@@ -4,18 +4,18 @@ import (
 	billingcore "github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// 资金来源保存请求已经取得的授权和订阅信息。
+// These context keys store funding authorization and subscription data for the request.
 const (
 	ContextKeyAPIKeyBilling = "api_key_billing"
 	ContextKeySubscription  = "subscription"
 )
 
-// ContextGetter 让 Gin 上下文读取方法可被轻量测试替代。
+// ContextGetter supports Gin context lookup and lightweight test substitutes.
 type ContextGetter interface {
 	Get(key string) (value any, exists bool)
 }
 
-// GetAPIKeyBillingContext 读取中间件保存的结算来源。
+// GetAPIKeyBillingContext reads the funding source saved by middleware.
 func GetAPIKeyBillingContext(c ContextGetter) (*billingcore.APIKeyBillingContext, bool) {
 	if c == nil {
 		return nil, false

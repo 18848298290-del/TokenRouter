@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// gatewayBillingRates 保存两套独立的完成倍率缓存，供完成器和应用清理任务共享。
+// gatewayBillingRates holds separate completion rate caches shared with application cleanup tasks.
 type gatewayBillingRates struct {
 	Forward *billing.GroupRateResolver
 	OpenAI  *billing.GroupRateResolver
@@ -22,7 +22,7 @@ func provideGatewayBillingRates(repo billing.UserGroupRateRepository, cfg *confi
 	}
 }
 
-// gatewayGroupRateCacheTTL 返回配置的正数 TTL，其他情况使用默认值。
+// gatewayGroupRateCacheTTL returns a positive configured TTL, or the billing default otherwise.
 func gatewayGroupRateCacheTTL(cfg *config.Config) time.Duration {
 	if cfg == nil || cfg.Gateway.UserGroupRateCacheTTLSeconds <= 0 {
 		return billing.DefaultGroupRateCacheTTL
@@ -30,7 +30,7 @@ func gatewayGroupRateCacheTTL(cfg *config.Config) time.Duration {
 	return time.Duration(cfg.Gateway.UserGroupRateCacheTTLSeconds) * time.Second
 }
 
-// Expire 由应用时间轮调用，清理两套完成缓存，并随时间轮停止。
+// Expire removes expired entries from both completion caches when called by the application timing wheel.
 func (r *gatewayBillingRates) Expire() {
 	if r != nil {
 		r.Forward.DeleteExpired()

@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestPrivacyObservationIdentityAndOutbox 检查隐私观测与 Extra/outbox 一起提交，身份变化或事件失败时拒绝成功模式写入。
+// TestPrivacyObservationIdentityAndOutbox checks that privacy state and outbox events commit together.
+// Credential or status changes reject the observation; an outbox failure rolls back the privacy update.
 func TestPrivacyObservationIdentityAndOutbox(t *testing.T) {
 	for _, platform := range []string{provider.PlatformOpenAI, provider.PlatformAntigravity} {
 		for _, scenario := range []string{"success", "credential_changed", "status_changed", "outbox_failure"} {

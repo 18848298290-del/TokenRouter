@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// ForwardPorts 是一个提供商的一次平台执行，提供商切换由 gateway/text 拥有。
+// ForwardPorts executes one provider attempt; gateway/text owns provider switching.
 type ForwardPorts struct {
 	EnforceOpenAIClientPolicyForRequest func(ctx context.Context, c *gin.Context, provider *gatewaycapture.ExecutionProvider, body []byte, tlsRouterMatch egress.TLSFingerprintRouterMatchResult) error
 	Forward                             func(ctx context.Context, c *gin.Context, provider *gatewaycapture.ExecutionProvider, body []byte) (*forwardcore.OpenAIResult, error)
@@ -37,7 +37,7 @@ type ForwardPorts struct {
 	ReplaceModelInBody                        func(body []byte, newModel string) []byte
 }
 
-// SelectionPorts 使用同一调度与健康实例。
+// SelectionPorts shares scheduler and health services.
 type SelectionPorts struct {
 	SelectImages    func(context.Context, *int64, string, string, map[int64]struct{}, providercore.OpenAIImagesCapability) (*gatewaycapture.SelectionResult, scheduler.PlatformDecision, error)
 	RecordSwitch    func()
@@ -76,7 +76,7 @@ type SelectionPorts struct {
 	UpdateCodexUsageSnapshotFromHeaders func(ctx context.Context, providerID int64, headers http.Header)
 }
 
-// Bindings 保存构造时注入的共享资源和执行接口。
+// Bindings holds shared resources and execution interfaces injected at construction.
 type Bindings struct {
 	Fallback          GroupFallbackPorts
 	Sessions          SessionPorts
@@ -169,7 +169,7 @@ type openAIExecutionDependencies struct {
 	submitOpenAIUsageRecordTask          func(c *gin.Context, result *forwardcore.OpenAIResult, task completion.UsageRecordTask)
 }
 
-// New 保存依赖，Open 创建当前请求的尝试状态。
+// New stores dependencies; Open creates per-request attempt state.
 func New(b Bindings) *Runtime {
 	support := b.Support
 	output := gatewayhttp.DefaultOpenAIErrorOutput()

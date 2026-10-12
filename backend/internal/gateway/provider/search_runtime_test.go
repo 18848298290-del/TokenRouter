@@ -18,14 +18,14 @@ import (
 )
 
 var (
-	// webSearchToolBody 包含一个 web_search 工具。
+	// webSearchToolBody contains a web_search tool.
 	webSearchToolBody = []byte(`{"tools":[{"type":"web_search"}],"messages":[{"role":"user","content":"test"}]}`)
 
-	// nonWebSearchToolBody 包含普通请求输入。
+	// nonWebSearchToolBody contains a non-search tool.
 	nonWebSearchToolBody = []byte(`{"tools":[{"type":"text_editor"}],"messages":[{"role":"user","content":"test"}]}`)
 )
 
-// searchSettingRows 返回测试保存的 JSON 配置。
+// searchSettingRows returns the fixture's saved JSON configuration.
 type searchSettingRows struct {
 	search.ConfigRepository
 	data string
@@ -58,7 +58,7 @@ func newPricingConfigServiceWithCache(groupID int64, ch *testkit.Configuration) 
 	return testkit.NewPricingConfigService(searchPricingConfigRows{pricingConfigs: []testkit.Configuration{*value}}, nil, routing.PricingConfigOptions{Now: time.Now})
 }
 
-// newSearchProviderPolicy 为指定搜索模拟模式创建测试提供商。
+// newSearchProviderPolicy creates a provider with the given search-emulation mode.
 func newSearchProviderPolicy(mode string) *searchtools.ProviderPolicy {
 	return &searchtools.ProviderPolicy{
 		ID:       1,
@@ -99,7 +99,7 @@ func TestShouldEmulateWebSearch_GlobalDisabled(t *testing.T) {
 	registry.Set(mgr)
 	defer registry.Set(nil)
 
-	// 全局设置关闭搜索模拟。
+	// The global setting disables search emulation.
 
 	settingSvc := newSearchSettingsFixture(false, registry)
 	svc := NewSearchTools(settingSvc, nil)
@@ -184,7 +184,7 @@ func TestShouldEmulateWebSearch_DefaultMode_NilGroupID(t *testing.T) {
 	settingSvc := newSearchSettingsFixture(true, registry)
 	svc := NewSearchTools(settingSvc, nil)
 	provider := newSearchProviderPolicy(searchtools.ModeDefault)
-	// 未指定分组且采用默认模式时，搜索模拟关闭。
+	// Default mode disables emulation when no group is supplied.
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
@@ -198,6 +198,6 @@ func TestShouldEmulateWebSearch_DefaultMode_NilPricingConfigService(t *testing.T
 	svc := NewSearchTools(settingSvc, nil)
 	provider := newSearchProviderPolicy(searchtools.ModeDefault)
 	groupID := int64(42)
-	// 缺少价格配置服务且采用默认模式时，搜索模拟关闭。
+	// Default mode disables emulation when pricing configuration is unavailable.
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: &groupID}))
 }

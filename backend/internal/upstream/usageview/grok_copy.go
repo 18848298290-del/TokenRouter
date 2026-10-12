@@ -4,7 +4,7 @@ import (
 	"slices"
 )
 
-// CloneQuotaWindow 只复制展示值，保留 nil 与空集合。
+// CloneQuotaWindow copies the window and its pointed-to values; nil remains nil.
 func CloneQuotaWindow(value *QuotaWindow) *QuotaWindow {
 	if value == nil {
 		return nil
@@ -16,7 +16,7 @@ func CloneQuotaWindow(value *QuotaWindow) *QuotaWindow {
 	return &out
 }
 
-// CloneBillingSummary 只复制展示值，保留 nil 与空集合。
+// CloneBillingSummary copies the summary, slices, and pointed-to values, preserving nil and empty slices.
 func CloneBillingSummary(value *BillingSummary) *BillingSummary {
 	if value == nil {
 		return nil

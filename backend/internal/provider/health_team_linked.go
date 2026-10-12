@@ -16,20 +16,20 @@ const (
 	OpenAITeamLinkedErrorBlockReason   = "team_linked_error"
 )
 
-// TeamLinkedStore 按平台筛选提供商，并逐个独立写入状态。
+// TeamLinkedStore lists providers by platform and writes each provider's error state separately.
 type TeamLinkedStore interface {
 	ListByPlatform(context.Context, string) ([]Record, error)
 	SetError(context.Context, int64, string) error
 }
 
-// TeamLinkedOptions 接收 app 绑定的运行阻断和日志函数。
+// TeamLinkedOptions supplies runtime blocking, logging, and the clock.
 type TeamLinkedOptions struct {
 	Now   func() time.Time
 	Warn  func(string, ...any)
 	Block func(*Record, time.Time, string)
 }
 
-// TeamLinkedHealth 独占工作区联动的原进程内去重状态，构造不启动后台任务。
+// TeamLinkedHealth owns process-local deduplication for workspace-wide error propagation.
 type TeamLinkedHealth struct {
 	providerRepo           TeamLinkedStore
 	options                TeamLinkedOptions
@@ -50,10 +50,9 @@ func NewTeamLinkedHealth(store TeamLinkedStore, options TeamLinkedOptions) *Team
 	return &TeamLinkedHealth{providerRepo: store, options: options}
 }
 
-// HandleWorkspaceDeactivated 在 OpenAI OAuth 提供商收到 402 deactivated_workspace
-// （ChatGPT Team 工作区被停用）时，把同一 Team（credentials.chatgpt_account_id 相同）
-// 的其余 active 提供商一并置为 error 并立即熔断。触发提供商自身不在 fan-out 范围内，
-// 仍由常规 402 处理标记。
+// HandleWorkspaceDeactivated marks other providers with the same ChatGPT account ID as errored.
+// It blocks matching non-shadow records returned by the store before writing their state.
+// The triggering provider is handled by the ordinary 402 path.
 func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provider *Record, deactivated bool) {
 	if s == nil || s.providerRepo == nil || !deactivated || provider == nil || !provider.IsOpenAIOAuthLike() {
 		return
@@ -65,7 +64,7 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	if !s.markOpenAITeamLinkedFired(teamID) {
 		return
 	}
-	// 上游报错场景请求 ctx 往往已被取消，落库需要独立生命周期。
+	// Persistence has a separate budget because the failed request may already be canceled.
 	baseCtx := context.Background()
 	if ctx != nil {
 		baseCtx = context.WithoutCancel(ctx)
@@ -89,15 +88,15 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	if len(targets) == 0 {
 		return
 	}
-	// 先在进程内阻断全部关联提供商，再逐个写入数据库。
+	// Block all matching providers locally before writing their states one at a time.
 	for _, acc := range targets {
 		s.options.Block(acc, time.Time{}, OpenAITeamLinkedErrorBlockReason)
 	}
 	errorMsg := fmt.Sprintf("Workspace deactivated (402): team-linked error triggered by provider #%d", provider.ID)
 	marked := 0
 	for _, acc := range targets {
-		// 单提供商写入失败不中断其余提供商；进程内熔断已先行，且该提供商仍为 active，
-		// 下一个 402 在去重 TTL 过期后会重新触发 fan-out。
+		// Continue after an individual write failure. The runtime block is already installed,
+		// and another failure after the deduplication TTL can retry the persistent update.
 		if err := s.providerRepo.SetError(opCtx, acc.ID, errorMsg); err != nil {
 			s.options.Warn("openai_team_linked_error_set_error_failed", "provider_id", acc.ID, "error", err)
 			continue
@@ -112,7 +111,7 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	)
 }
 
-// markOpenAITeamLinkedFired 以 teamID 为键做进程内去重：TTL 内同一 Team 只允许一次 fan-out。
+// markOpenAITeamLinkedFired admits one propagation per team per TTL within this process.
 func (s *TeamLinkedHealth) markOpenAITeamLinkedFired(teamID string) bool {
 	now := s.options.Now()
 	s.openaiTeamLinkedMu.Lock()

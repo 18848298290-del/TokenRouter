@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// TestCalendarKeepsExplicitLocation 验证不同时区对象互不影响，并保持夏令时日界。
+// TestCalendarKeepsExplicitLocation checks independent locations and DST day bounds.
 func TestCalendarKeepsExplicitLocation(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -31,7 +31,7 @@ func TestCalendarKeepsExplicitLocation(t *testing.T) {
 	}
 }
 
-// TestUninitializedClockKeepsMonotonicReading 检查默认时钟及用户时区回退结果中的单调读数。
+// TestUninitializedClockKeepsMonotonicReading checks that default clock values retain monotonic data.
 func TestUninitializedClockKeepsMonotonicReading(t *testing.T) {
 	calendar := NewCalendar(nil)
 	for name, value := range map[string]time.Time{
@@ -39,14 +39,14 @@ func TestUninitializedClockKeepsMonotonicReading(t *testing.T) {
 		"invalid_user": calendar.NowInUserLocation("invalid/timezone"),
 		"calendar":     calendar.Now(),
 	} {
-		// 比较完整 Time 值，以区分是否携带单调时钟读数。
+		// Compare full Time values because Round(0) removes monotonic data.
 		if reflect.DeepEqual(value, value.Round(0)) {
 			t.Errorf("%s: initialization fallback must preserve monotonic time", name)
 		}
 	}
 }
 
-// TestCalendarInjectedClock 检查固定时钟用于日界线及用户时区转换。
+// TestCalendarInjectedClock checks date boundaries and user-zone conversion with a fixed clock.
 func TestCalendarInjectedClock(t *testing.T) {
 	fixed := time.Date(2026, time.October, 5, 23, 30, 0, 0, time.UTC)
 	loc := time.FixedZone("UTC+8", 8*60*60)
@@ -65,7 +65,7 @@ func TestCalendarInjectedClock(t *testing.T) {
 	}
 }
 
-// testCalendar 为测试创建指定时区的日期对象。
+// testCalendar creates a calendar using the named test location.
 func testCalendar(t *testing.T, name string) Calendar {
 	t.Helper()
 	location, err := time.LoadLocation(name)

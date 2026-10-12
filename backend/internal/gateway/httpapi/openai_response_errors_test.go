@@ -258,7 +258,7 @@ func newOpenAIUpstreamClientErrorTestProvider() *gatewayprovider.ExecutionProvid
 	return &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Name: "acct"}}
 }
 
-// newOpenAIUpstreamErrorTestContext 创建上游错误测试上下文。
+// newOpenAIUpstreamErrorTestContext creates an upstream error fixture.
 func newOpenAIUpstreamErrorTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	return newOpenAIUpstreamClientErrorTestContext()
@@ -359,7 +359,8 @@ func TestHandleErrorResponse_PoolRetryable400StillFailsOver(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
-// TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502 验证 404、422 和 5xx 等默认分支返回通用 502，400 使用单独处理。
+// TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502 checks generic 502 handling for default
+// statuses such as 404, 422, and 5xx.
 func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -369,7 +370,7 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 		wantType   string
 		wantMsg    string
 	}{
-		// 404/405 可能是上游 base_url 配错（运营方问题），不当成客户端错误暴露。
+		// A 404 or 405 can indicate an operator base_url error, so it is not exposed as a client request error.
 		{
 			"not_found", http.StatusNotFound, `{"error":{"message":"Unknown request URL"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream request failed",
@@ -378,8 +379,8 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 			"unprocessable", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid schema for field messages"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream request failed",
 		},
-		// 401/402/403 表示运营方的凭据或账单问题，客户端收到转换后的错误状态。
-		// 403 的自由文本不能升级成 durable access-state typed failover；只有明确结构化 code 才可以。
+		// Credential and billing errors from 401, 402, and 403 are mapped to client-facing statuses.
+		// Free-form 403 text cannot establish a durable access-state failure; a structured code is required.
 		{
 			"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator",
@@ -388,7 +389,7 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 			"forbidden", http.StatusForbidden, `{"error":{"message":"Your provider is deactivated"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator",
 		},
-		// 429 保持独立映射。
+		// Rate limiting has its own status mapping.
 		{
 			"rate_limited", http.StatusTooManyRequests, `{"error":{"message":"Rate limit reached"}}`,
 			http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later",
@@ -417,7 +418,8 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 	}
 }
 
-// TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch 验证顺序守卫：管理员配置的错误透传规则在更上游命中，新分支不得抢在它前面。
+// TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch checks that administrator passthrough rules
+// precede deterministic 400 handling.
 func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T) {
 	c, rec := newOpenAIUpstreamErrorTestContext(t)
 	ruleSvc := gatewaytestkit.ErrorRules([]*errorpolicy.ErrorPassthroughRule{

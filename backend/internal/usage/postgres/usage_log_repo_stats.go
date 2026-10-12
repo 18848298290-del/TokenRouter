@@ -17,31 +17,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// UsageStats 表示用量统计。
+// UsageStats summarizes usage and cost.
 type UsageStats = usage.UsageStats
 
-// BatchUserUsageStats 表示单个用户的批量用量统计。
+// BatchUserUsageStats contains one user's entry in a batch query.
 type BatchUserUsageStats = usage.BatchUserUsageStats
 
-// PlatformUsage 表示按平台拆分的用量明细。
+// PlatformUsage contains usage attributed to one platform.
 type PlatformUsage = usage.PlatformUsage
 
-// BatchAPIKeyUsageStats 表示单个 API Key 的批量用量统计。
+// BatchAPIKeyUsageStats contains one API key's entry in a batch query.
 type BatchAPIKeyUsageStats = usage.BatchAPIKeyUsageStats
 
-// ProviderUsageHistory 表示提供商的每日用量历史。
+// ProviderUsageHistory contains a provider's daily usage history.
 type ProviderUsageHistory = usage.ProviderUsageHistory
 
-// ProviderUsageSummary 表示提供商的用量汇总统计。
+// ProviderUsageSummary summarizes a provider's usage.
 type ProviderUsageSummary = usage.ProviderUsageSummary
 
-// ProviderUsageStatsResponse 表示提供商完整的用量统计响应。
+// ProviderUsageStatsResponse contains a provider's summary and usage breakdowns.
 type ProviderUsageStatsResponse = usage.ProviderUsageStatsResponse
 
-// EndpointStat represents endpoint usage statistics row.
+// EndpointStat contains one endpoint usage row.
 type EndpointStat = usage.EndpointStat
 
-// GetProviderWindowStatsPair 扫描两个窗口的并集，分别计算各自起点后的统计。
+// GetProviderWindowStatsPair scans the union of both windows and aggregates each start separately.
 func (r *Store) GetProviderWindowStatsPair(ctx context.Context, id int64, firstStart, secondStart time.Time) (*usage.ProviderStats, *usage.ProviderStats, error) {
 	const query = `SELECT
 	 COUNT(*) FILTER (WHERE created_at >= $2),
@@ -64,7 +64,7 @@ func (r *Store) GetProviderWindowStatsPair(ctx context.Context, id int64, firstS
 	return a, b, nil
 }
 
-// GetUserStatsAggregated returns aggregated usage statistics for a user using database-level aggregation.
+// GetUserStatsAggregated computes a user's usage summary in SQL.
 func (r *Store) GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usage.UsageStats, error) {
 	query := `
 		SELECT
@@ -103,7 +103,7 @@ func (r *Store) GetUserStatsAggregated(ctx context.Context, userID int64, startT
 	return &stats, nil
 }
 
-// GetAPIKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation.
+// GetAPIKeyStatsAggregated computes an API key's usage summary in SQL.
 func (r *Store) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usage.UsageStats, error) {
 	query := `
 		SELECT
@@ -142,17 +142,7 @@ func (r *Store) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, st
 	return &stats, nil
 }
 
-// GetProviderStatsAggregated 使用 SQL 聚合统计提供商使用数据
-//
-// 性能优化说明：
-// 原实现先查询所有日志记录，再在应用层循环计算统计值：
-// 1. 需要传输大量数据到应用层
-// 2. 应用层循环计算增加 CPU 和内存开销
-//
-// 新实现使用 SQL 聚合函数：
-// 1. 在数据库层完成 COUNT/SUM/AVG 计算
-// 2. 只返回单行聚合结果，大幅减少数据传输量
-// 3. 利用数据库索引优化聚合查询性能。
+// GetProviderStatsAggregated computes provider usage with SQL aggregates and returns one summary row.
 func (r *Store) GetProviderStatsAggregated(ctx context.Context, providerID int64, startTime, endTime time.Time) (*usage.UsageStats, error) {
 	query := `
 		SELECT
@@ -191,8 +181,7 @@ func (r *Store) GetProviderStatsAggregated(ctx context.Context, providerID int64
 	return &stats, nil
 }
 
-// GetModelStatsAggregated 使用 SQL 聚合统计模型使用数据
-// 性能优化：数据库层聚合计算，避免应用层循环统计。
+// GetModelStatsAggregated computes usage totals for the stored model with SQL aggregates.
 func (r *Store) GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usage.UsageStats, error) {
 	query := fmt.Sprintf(`
 		SELECT
@@ -231,8 +220,7 @@ func (r *Store) GetModelStatsAggregated(ctx context.Context, modelName string, s
 	return &stats, nil
 }
 
-// GetDailyStatsAggregated 使用 SQL 聚合统计用户的每日使用数据
-// 性能优化：使用 GROUP BY 在数据库层按日期分组聚合，避免应用层循环分组统计。
+// GetDailyStatsAggregated groups a user's usage by day in the database.
 func (r *Store) GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (result []map[string]any, err error) {
 	tzName := r.resolveUsageStatsTimezone()
 	query := `
@@ -307,8 +295,8 @@ func (r *Store) GetDailyStatsAggregated(ctx context.Context, userID int64, start
 	return result, nil
 }
 
-// resolveUsageStatsTimezone 获取用于 SQL 分组的时区名称。
-// 优先使用装配传入的时区，其次尝试读取 TZ 环境变量，最后回落为 UTC。
+// resolveUsageStatsTimezone returns the timezone name used for SQL grouping.
+// It prefers the injected calendar, then TZ, then UTC.
 func (r *Store) resolveUsageStatsTimezone() string {
 	tzName := r.calendar.Location().String()
 	if tzName != "" && tzName != "Local" {
@@ -320,7 +308,7 @@ func (r *Store) resolveUsageStatsTimezone() string {
 	return "UTC"
 }
 
-// GetProviderTodayStats 获取提供商今日统计。
+// GetProviderTodayStats aggregates provider usage since local midnight.
 func (r *Store) GetProviderTodayStats(ctx context.Context, providerID int64) (*usage.ProviderStats, error) {
 	today := r.calendar.Today()
 
@@ -352,7 +340,7 @@ func (r *Store) GetProviderTodayStats(ctx context.Context, providerID int64) (*u
 	return stats, nil
 }
 
-// GetProviderWindowStats 获取提供商时间窗口内的统计。
+// GetProviderWindowStats aggregates provider usage at or after startTime, including future-dated records.
 func (r *Store) GetProviderWindowStats(ctx context.Context, providerID int64, startTime time.Time) (*usage.ProviderStats, error) {
 	query := `
 		SELECT
@@ -382,8 +370,8 @@ func (r *Store) GetProviderWindowStats(ctx context.Context, providerID int64, st
 	return stats, nil
 }
 
-// GetProviderWindowStatsBatch 批量获取同一窗口起点下多个提供商的统计数据。
-// 返回 map[providerID]*ProviderStats，未命中的提供商会返回零值统计，便于上层直接复用。
+// GetProviderWindowStatsBatch aggregates multiple providers from a shared start time.
+// Requested providers with no matching records receive zero-valued statistics.
 func (r *Store) GetProviderWindowStatsBatch(ctx context.Context, providerIDs []int64, startTime time.Time) (map[int64]*usage.ProviderStats, error) {
 	result := make(map[int64]*usage.ProviderStats, len(providerIDs))
 	if len(providerIDs) == 0 {
@@ -435,8 +423,8 @@ func (r *Store) GetProviderWindowStatsBatch(ctx context.Context, providerIDs []i
 	return result, nil
 }
 
-// GetGeminiUsageTotalsBatch 批量聚合 Gemini 提供商在窗口内的 Pro/Flash 请求与用量。
-// 模型分类规则与 usage.geminiModelClassFromName 一致：model 包含 flash/lite 视为 flash，其余视为 pro。
+// GetGeminiUsageTotalsBatch aggregates Pro and Flash usage for each provider in the window.
+// Models containing flash or lite, ignoring case, count as Flash; other models count as Pro.
 func (r *Store) GetGeminiUsageTotalsBatch(ctx context.Context, providerIDs []int64, startTime, endTime time.Time) (map[int64]provider.GeminiUsageTotals, error) {
 	result := make(map[int64]provider.GeminiUsageTotals, len(providerIDs))
 	if len(providerIDs) == 0 {
@@ -518,7 +506,7 @@ func (r *Store) GetBatchUserUsageStats(ctx context.Context, userIDs []int64, sta
 		return result, nil
 	}
 
-	// 默认最近 30 天
+	// A zero start time selects the last 30 days.
 	if startTime.IsZero() {
 		startTime = time.Now().AddDate(0, 0, -30)
 	}
@@ -535,8 +523,8 @@ func (r *Store) GetBatchUserUsageStats(ctx context.Context, userIDs []int64, sta
 		result[id] = &BatchUserUsageStats{UserID: id}
 	}
 
-	// GROUP BY (user_id, effective_platform) 一次查询同时得到总值与按平台拆分。
-	// 应用层把同一 user_id 的多行累加为总值，并把非空 platform 行收集到 ByPlatform。
+	// Grouping by user and stored platform produces totals and platform breakdowns in one query.
+	// Sum each user's rows and collect nonempty platforms in ByPlatform.
 	query := `
 		SELECT
 			ul.user_id,
@@ -598,7 +586,7 @@ func (r *Store) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64,
 		return result, nil
 	}
 
-	// 默认最近 30 天
+	// A zero start time selects the last 30 days.
 	if startTime.IsZero() {
 		startTime = time.Now().AddDate(0, 0, -30)
 	}
@@ -704,12 +692,12 @@ func (r *Store) GetGlobalStats(ctx context.Context, startTime, endTime time.Time
 	return stats, nil
 }
 
-// GetStatsWithFilters 按可选过滤条件获取用量统计。
+// GetStatsWithFilters summarizes usage matching the supplied filters.
 func (r *Store) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	return r.getStatsWithFilters(ctx, filters, true)
 }
 
-// GetUserStatsWithFilters 跳过用户响应不会返回的上游端点和路径统计。
+// GetUserStatsWithFilters omits upstream endpoint and path queries from the user summary.
 func (r *Store) GetUserStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	return r.getStatsWithFilters(ctx, filters, false)
 }
@@ -803,7 +791,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 
 	var endpoints, upstreamEndpoints, endpointPaths []EndpointStat
 
-	// 汇总查询:失败即致命。
+	// A failed summary query fails the request.
 	runSummary := func(c context.Context) error {
 		if stats.TotalProviderCost != nil {
 			return nil
@@ -822,7 +810,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 			&stats.AverageDurationMs,
 		)
 	}
-	// endpoint 明细:best-effort(失败 log + 返空),不致命。
+	// Endpoint failures return empty details; non-cancellation errors are logged.
 	runEndpoints := func(c context.Context) {
 		if filters.EndpointSource != "" && filters.EndpointSource != "inbound" {
 			return
@@ -864,7 +852,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 	}
 
 	if r.db != nil {
-		// 生产路径:r.sql 是 *sql.DB 连接池,可并发。4 条查询并行,延迟取最大值。
+		// Pool-backed queries can run concurrently because each can acquire its own connection.
 		g, gctx := errgroup.WithContext(ctx)
 		g.Go(func() error { return runSummary(gctx) })
 		g.Go(func() error { runEndpoints(gctx); return nil })
@@ -876,7 +864,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 			return nil, err
 		}
 	} else {
-		// Ent 事务不能并发查询，此处按顺序执行。
+		// Run Ent transaction queries sequentially on their shared connection.
 		if err := runSummary(ctx); err != nil {
 			return nil, err
 		}
@@ -917,7 +905,7 @@ func (r *Store) getEndpointStatsByColumnWithFilters(ctx context.Context, endpoin
 			r.logUsageAnalyticsFallback("inbound_endpoint_stats", aggregateErr)
 		}
 	}
-	// 端点统计的“实际”保持用户扣费口径，不能因提供商筛选切换为提供商成本。
+	// Actual cost means user charges even when filtering by provider.
 	args := []any{startTime, endTime}
 	source, scopeCondition, args, scopeErr := r.buildUsageLogScopeSource(ctx, args, userID, includeOwnedTeam, "")
 	if scopeErr != nil {
@@ -1002,7 +990,7 @@ func (r *Store) getEndpointPathStatsWithFilters(ctx context.Context, startTime, 
 		requestID = strings.TrimSpace(requestIDs[0])
 	}
 
-	// 路径统计与单端点统计保持同一费用口径。
+	// Path statistics use the same user-charge measure as individual endpoints.
 	args := []any{startTime, endTime}
 	source, scopeCondition, args, scopeErr := r.buildUsageLogScopeSource(ctx, args, userID, includeOwnedTeam, "")
 	if scopeErr != nil {
@@ -1095,7 +1083,7 @@ func (r *Store) GetUpstreamEndpointStatsWithFilters(ctx context.Context, startTi
 	return r.getEndpointStatsByColumnWithFilters(ctx, "upstream_endpoint", startTime, endTime, userID, apiKeyID, providerID, groupID, 0, model, "", requestType, stream, billingType, "", false, false, nil)
 }
 
-// GetProviderUsageStats 返回提供商在指定时间范围内的完整用量统计。
+// GetProviderUsageStats returns the provider's complete report for the requested range.
 func (r *Store) GetProviderUsageStats(ctx context.Context, providerID int64, startTime, endTime time.Time) (resp *ProviderUsageStatsResponse, err error) {
 	daysCount := int(endTime.Sub(startTime).Hours()/24) + 1
 	if daysCount <= 0 {

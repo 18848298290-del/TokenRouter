@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// TestCompletionContextSnapshotsModelTraceAndKeepsWorkerBudget 验证交接后继续推进 turn，已排队任务只能看到提交时的模型链。
+// TestCompletionContextSnapshotsModelTraceAndKeepsWorkerBudget checks that queued tasks retain the submitted model chain as later turns advance.
 func TestCompletionContextSnapshotsModelTraceAndKeepsWorkerBudget(t *testing.T) {
 	trace := modeltrace.NewAPIKeyModelRedirectTrace("client", "source", "first")
 	source, cancelSource := context.WithCancel(modeltrace.WithContext(context.WithValue(context.Background(), telemetry.RequestID, "request-id"), trace))

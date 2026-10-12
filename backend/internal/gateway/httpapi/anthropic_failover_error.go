@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// WriteAnthropicFailover 依次处理静默拒绝、错误规则和默认映射，生成客户端响应。
+// WriteAnthropicFailover applies silent rejection, configured error rules, then default status mapping.
 func WriteAnthropicFailover(c *gin.Context, failoverErr *forwardcore.UpstreamFailoverError, platform string, streamStarted bool, rules ErrorRuleMatcher, silent func([]byte) bool, silentMessage string) {
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
@@ -19,16 +19,14 @@ func WriteAnthropicFailover(c *gin.Context, failoverErr *forwardcore.UpstreamFai
 		return
 	}
 
-	// 先检查透传规则
+	// Configured rules take precedence over the default mapping.
 	if rules != nil && len(responseBody) > 0 {
 		if rule := rules.MatchRule(platform, statusCode, responseBody); rule != nil {
-			// 确定响应状态码
 			respCode := statusCode
 			if !rule.PassthroughCode && rule.ResponseCode != nil {
 				respCode = *rule.ResponseCode
 			}
 
-			// 确定响应消息
 			msg := upstream.ExtractErrorMessage(responseBody)
 			if !rule.PassthroughBody && rule.CustomMessage != nil {
 				msg = *rule.CustomMessage
@@ -43,11 +41,10 @@ func WriteAnthropicFailover(c *gin.Context, failoverErr *forwardcore.UpstreamFai
 		}
 	}
 
-	// 记录上游状态码，供 Ops 错误日志使用。
+	// Record the upstream status and message for Ops error logs.
 	upstreamMsg := upstream.ExtractErrorMessage(responseBody)
 	SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射
 	status, errType, errMsg := AnthropicUpstreamError(statusCode)
 	writeAnthropicFailure(c, status, errType, errMsg, streamStarted)
 }
@@ -69,7 +66,7 @@ func AnthropicUpstreamError(statusCode int) (int, string, string) {
 	}
 }
 
-// writeAnthropicFailure 保留已提交输出的终态事件和 Ops 观察。
+// writeAnthropicFailure writes a terminal stream error and records it for Ops when output has started.
 func writeAnthropicFailure(c *gin.Context, status int, kind, message string, started bool) {
 	WriteAnthropicStreamError(c, status, kind, "", message, started, MarkOpsStreamError)
 }

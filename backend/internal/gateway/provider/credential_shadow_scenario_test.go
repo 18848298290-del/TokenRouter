@@ -1,6 +1,6 @@
 package provider
 
-// 本文件检查 credential_target.go、execution_provider.go 和 execution_store.go 的影子提供商凭据、资格与健康状态。
+// This file checks shadow-provider credentials, eligibility, and parent health.
 
 import (
 	"context"
@@ -15,14 +15,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestSparkShadowIntegration 检查 Spark 影子的令牌读取、模型资格和母提供商健康限制。
-// 母提供商轮换令牌后，影子读取新值。模型资格由 model_mapping 决定。
-// 母提供商 Status=error 时影子不可用，手动暂停或全局限流时影子仍可使用其凭据。
+// TestSparkShadowIntegration covers token lookup, model eligibility, and parent credential health.
+// Shadows read rotated parent tokens, while model_mapping determines model eligibility.
+// A parent error blocks shadows; scheduling pauses and global rate limits leave credentials usable.
 func TestSparkShadowIntegration(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
 
-	// 共享母提供商：Credentials 为 map（引用型），可原地轮换而无需重建 stub。
+	// Mutate the shared credential map to simulate rotation without rebuilding the stub.
 	parent := &ExecutionProvider{
 		Record: provider.Record{
 			LoadLocation: time.LoadLocation, ID: 100,
@@ -35,7 +35,7 @@ func TestSparkShadowIntegration(t *testing.T) {
 			},
 		},
 	}
-	// 影子提供商通过母提供商读取凭据，QuotaDimensionSpark 标记 spark 维度。
+	// The shadow reads parent credentials and uses the Spark quota dimension.
 	shadow := &ExecutionProvider{
 		Record: provider.Record{
 			LoadLocation: time.LoadLocation, ID: 200,
@@ -48,18 +48,18 @@ func TestSparkShadowIntegration(t *testing.T) {
 		},
 	}
 
-	// repo：stubCredRepo（credential_shadow_test.go）保存执行目标指针，
-	// Credentials map 变更直接可见，无需重建 stub。
+	// The repository stores execution-target pointers,
+	// so credential-map mutations are visible on the next lookup.
 	repo := newStubCredRepo(parent)
 	credentials := &provider.OpenAIExecutionCredentials{Parent: func(ctx context.Context, id int64) (*provider.Record, error) {
 		value, err := repo.GetByID(ctx, id)
 		return ExecutionRecord(value), err
 	}}
 
-	// 属性 1：凭据轮换读透（脱钩命门）
+	// Credential rotation must be visible through the shadow.
 
 	t.Run("credential_readthrough_initial_T1", func(t *testing.T) {
-		// 影子无凭据，resolveCredentialProvider 必须透传到母提供商。
+		// A shadow without credentials resolves to its parent.
 		got, err := CredentialProvider(ctx, repo, shadow)
 		require.NoError(t, err)
 		require.Equal(t, int64(100), got.Record.ID, "解析结果应为母提供商")
@@ -68,8 +68,8 @@ func TestSparkShadowIntegration(t *testing.T) {
 	})
 
 	t.Run("credential_readthrough_after_rotation_T2", func(t *testing.T) {
-		// 模拟 refresh_token 轮换：原地更新母提供商凭据。
-		// 影子的凭据来自母提供商，下次解析读取母提供商的新值。
+		// Rotate the parent token in place.
+		// The next shadow lookup must read the updated value.
 		parent.Record.Credentials["access_token"] = "T2"
 
 		got, err := CredentialProvider(ctx, repo, shadow)
@@ -79,8 +79,8 @@ func TestSparkShadowIntegration(t *testing.T) {
 	})
 
 	t.Run("get_access_token_e2e_reads_through_T3", func(t *testing.T) {
-		// 经凭据源 Resolve 检查影子读取到的轮换后令牌。
-		// openAITokenProvider=nil → 降级到直接读 provider.GetOpenAIAccessToken()。
+		// Resolve through the credential source after another rotation.
+		// With no token provider, Resolve reads GetOpenAIAccessToken directly.
 		parent.Record.Credentials["access_token"] = "T3"
 		token, tokenType, err := credentials.Resolve(ctx, ExecutionRecord(shadow))
 		require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestSparkShadowIntegration(t *testing.T) {
 	})
 
 	t.Run("normal_provider_returns_its_own_token", func(t *testing.T) {
-		// 对照组：普通提供商（非影子）直接返回自身凭据，不经 resolveCredentialProvider。
+		// An ordinary provider returns its own credentials.
 		ordinary := &ExecutionProvider{
 			Record: provider.Record{
 				LoadLocation: time.LoadLocation, ID: 300,
@@ -108,10 +108,10 @@ func TestSparkShadowIntegration(t *testing.T) {
 		require.Equal(t, "ordinary-token", token)
 	})
 
-	// 属性 2：路由不变量（路由资格由 IsModelSupported 决定）
+	// Model support determines routing eligibility.
 
 	t.Run("routing_invariant", func(t *testing.T) {
-		// 路由资格已从「按提供商类型」改为「按提供商支持模型」(model_mapping / IsModelSupported)。
+		// Eligibility follows model_mapping and IsModelSupported.
 		sparkModel := "gpt-5.3-codex-spark"
 		normalModel := "gpt-5.3-codex"
 		sparkCreds := map[string]any{"model_mapping": provideradapter.DefaultSparkShadowModels()}
@@ -131,10 +131,10 @@ func TestSparkShadowIntegration(t *testing.T) {
 		require.False(t, ExecutionProtocolRecord(normalNoSpark).IsModelSupported(sparkModel, provideradapter.ModelDefaults(), provideradapter.ModelRules(ExecutionProtocolRecord(normalNoSpark))), "普通提供商显式白名单不含 Spark 时拒绝")
 	})
 
-	// 属性 3：母提供商健康度联动（parentHealthyForShadow）
+	// Parent credential health constrains shadow eligibility.
 
 	t.Run("parent_health_propagated_to_shadow", func(t *testing.T) {
-		// 恢复母提供商健康状态（属性 1/2 测试可能改过）
+		// Reset parent health before testing each restriction.
 		parent.Record.Status = billing.StatusActive
 		parent.Record.Schedulable = true
 
@@ -145,25 +145,25 @@ func TestSparkShadowIntegration(t *testing.T) {
 			return nil
 		}
 
-		// 母健康 → 影子健康
+		// A healthy parent permits the shadow.
 		require.True(t, provider.ParentHealthyForShadow(ExecutionRecord(shadow), func(id int64) *provider.Record {
 			return ExecutionRecord(lookup(id))
 		}), "健康母提供商时影子应健康")
 
-		// 母 Status=error(凭据不可用)→ 影子不健康
+		// A parent credential error blocks the shadow.
 		parent.Record.Status = provider.StatusError
 		require.False(t, provider.ParentHealthyForShadow(ExecutionRecord(shadow), func(id int64) *provider.Record {
 			return ExecutionRecord(lookup(id))
 		}), "Status=error 母提供商时影子应不健康")
 
-		// 母提供商手动暂停调度时，影子仍可使用有效凭据。
+		// A scheduling pause leaves the parent credentials usable by the shadow.
 		parent.Record.Status = billing.StatusActive
 		parent.Record.Schedulable = false
 		require.True(t, provider.ParentHealthyForShadow(ExecutionRecord(shadow), func(id int64) *provider.Record {
 			return ExecutionRecord(lookup(id))
 		}), "母提供商手动暂停不应连坐影子(凭据仍可用)")
 
-		// 母提供商全局限流期间，Spark 影子按自己的资格参与调度。
+		// The shadow uses its own eligibility during a parent-wide rate limit.
 		parent.Record.Schedulable = true
 		resetAt := time.Now().Add(1 * time.Hour)
 		parent.Record.RateLimitResetAt = &resetAt
@@ -172,7 +172,7 @@ func TestSparkShadowIntegration(t *testing.T) {
 		}), "母提供商 global 限流不应连坐 spark 影子")
 		parent.Record.RateLimitResetAt = nil
 
-		// 对照组：非影子提供商 parentHealthyForShadow 始终 true，不调用 lookup
+		// An ordinary provider passes without a parent lookup.
 		parent.Record.Schedulable = true
 		lookupNotCalled := func(_ int64) *ExecutionProvider {
 			t.Error("非影子提供商不应调用 lookup")

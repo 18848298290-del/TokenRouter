@@ -5,11 +5,12 @@ import (
 )
 
 // APIKeyRateLimitCacheData holds rate limit usage data cached in Redis.
+// All window start fields use Unix seconds; zero means not started.
 type APIKeyRateLimitCacheData struct {
 	Usage5h  float64 `json:"usage_5h"`
 	Usage1d  float64 `json:"usage_1d"`
 	Usage7d  float64 `json:"usage_7d"`
-	Window5h int64   `json:"window_5h"` // unix timestamp, 0 = not started
+	Window5h int64   `json:"window_5h"`
 	Window1d int64   `json:"window_1d"`
 	Window7d int64   `json:"window_7d"`
 }

@@ -66,9 +66,9 @@ type Sub2APISubscription struct {
 	ExpiresAt          *time.Time `json:"expires_at"`
 }
 
-// ZivvUsageAdapter 对接 Zivv 自研网关公开给 API Key 的余额接口。
-// Zivv 的 Anthropic Base URL 通常是站点根地址，因此显式请求带版本段的
-// /v1/user/balance；已有的 URL 构造器会避免提供商 Base URL 已带 /v1 时重复拼接。
+// ZivvUsageAdapter queries the API key balance endpoint of the Zivv gateway.
+// It requests /v1/user/balance from the site base URL;
+// endpoint construction avoids duplicating an existing /v1 suffix.
 type ZivvUsageAdapter struct{}
 
 type ZivvUsageResponse struct {
@@ -378,8 +378,8 @@ func NormalizeSub2APIRateLimits(raw []Sub2APIRateLimit) ([]usageview.UpstreamUsa
 func ValidateSub2APIWindowStart(raw json.RawMessage) error {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
-		// 当前 /v1/usage 合约要求字段存在；只有明确的 JSON null 才表示
-		// 该窗口没有可用的起始时间。
+		// /v1/usage requires the field to be present.
+		// JSON null denotes an unavailable window start.
 		return usageview.ErrUpstreamUsageInvalidResponse
 	}
 	if trimmed == "null" {
@@ -443,7 +443,7 @@ func ParseZivvUsage(body []byte) (*usageview.UpstreamUsageInfo, error) {
 		Balance:  &usageview.UpstreamUsageAmount{Used: response.TotalUsed, Total: &total, Remaining: response.Balance},
 	}
 	if *response.KeyLimit <= 0 {
-		// Zivv 以 0 表示不设置 Key 累计限额；不要把它传成数值哨兵。
+		// A zero key limit means unlimited; represent that with the subscription flag.
 		usage.Subscription = &usageview.UpstreamUsageSubscription{PlanName: planName, Unlimited: true}
 		return usage, nil
 	}
@@ -462,8 +462,8 @@ func (a *NewAPIUsageAdapter) Query(ctx context.Context, input *usagecontract.Req
 	displayCtx, cancelDisplay := context.WithTimeout(ctx, StatusTimeout)
 	display := a.queryDisplaySettings(displayCtx, client)
 	cancelDisplay()
-	// 状态接口只是可选的单位探测；真正的 Token 额度请求使用整次查询的
-	// 总截止时间，避免慢实例在短探测超时内被误判为失败。
+	// The optional unit probe has a shorter timeout.
+	// Token quota requests use the full query deadline so slow instances can still respond.
 	tokenUsage, tokenResponse, tokenErr := a.queryTokenUsage(ctx, client, display)
 	if tokenErr != nil {
 		return nil, tokenErr
@@ -476,12 +476,12 @@ func (a *NewAPIUsageAdapter) Query(ctx context.Context, input *usagecontract.Req
 		return nil, usageview.ErrUpstreamUsageWalletUnavailable
 	}
 	if tokenUsage.Unit != "" && wallet.Unit != "" && tokenUsage.Unit != wallet.Unit {
-		// 一个结果只有一个 unit；不同货币没有可靠汇率时不能把 Key quota
-		// 贴上钱包货币标签，否则会产生比缺失结果更危险的误导。
+		// A result has one unit. Reject mismatched currencies because labeling
+		// key quota with the wallet currency would misstate the amount.
 		return nil, usageview.ErrUpstreamUsageInvalidResponse
 	}
-	// New API 的 balance 字段只表示用户钱包；当前 API Key 的 quota
-	// 保留在 limits/subscription 中，避免把 token 限额显示成钱包余额。
+	// Balance is the user wallet; keep API key quota in Limits and Subscription
+	// so the frontend can display both independently.
 	tokenUsage.Mode = "balance"
 	tokenUsage.Unit = wallet.Unit
 	tokenUsage.Balance = wallet.Balance
@@ -545,9 +545,9 @@ func (a *NewAPIUsageAdapter) queryTokenUsage(ctx context.Context, client *usagec
 	return usage, response, nil
 }
 
-// queryWallet 查询用户钱包。不同 New API 分支的认证方式并不一致：
-// 配置用户 PAT 时先请求官方 /api/user/self，否则尝试带 API Key 的 /user/balance。
-// 两个路径都是适配器固定协议，不能由提供商配置改写。
+// queryWallet first uses any balance embedded in the token response.
+// Otherwise it tries /api/user/self with a configured PAT, then /user/balance with the API key.
+// Both endpoint paths are fixed by the adapter.
 func (a *NewAPIUsageAdapter) queryWallet(
 	ctx context.Context,
 	client *usageclient.Client,
@@ -567,8 +567,8 @@ func (a *NewAPIUsageAdapter) queryWallet(
 		return nil, err
 	}
 	var lastRequestErr error
-	// 官方实例的用户自查询需要 PAT；如果已配置，优先使用它，避免
-	// 先访问一个会返回前端 HTML 的兼容路径。
+	// A configured PAT enables the official self-query endpoint before trying
+	// the compatibility endpoint, which may serve frontend HTML.
 	if userToken != "" {
 		endpoint, endpointErr := usageclient.UpstreamUsageUserSelfEndpoint(client.BaseURL)
 		if endpointErr != nil {
@@ -598,8 +598,8 @@ func (a *NewAPIUsageAdapter) queryWallet(
 		}
 	}
 
-	// 部分 fork 允许 relay API Key 直接访问 /user/balance；官方 New API
-	// 没有该路由时通常返回 404 或 SPA HTML，此时返回明确的钱包不可用错误。
+	// Some forks support API keys on /user/balance. A missing route or SPA HTML
+	// response is reported as unavailable wallet data.
 	endpoint, err := usageclient.UpstreamUsageWalletEndpoint(client.BaseURL)
 	if err != nil {
 		return nil, err
@@ -626,8 +626,8 @@ func (a *NewAPIUsageAdapter) queryWallet(
 	return nil, usageview.ErrUpstreamUsageWalletUnavailable
 }
 
-// NormalizeNewAPITokenWallet 兼容部分 fork 直接在 token 响应中附带钱包余额。
-// display 字段已经是站点展示单位，原始 user_balance 仍按 /api/status 换算。
+// NormalizeNewAPITokenWallet reads wallet balances embedded by some forks in token responses.
+// Display values already use the site unit; raw user_balance uses the /api/status conversion.
 func NormalizeNewAPITokenWallet(response *NewAPITokenUsageResponse, settings NewAPIUsageDisplaySettings) (*usageview.UpstreamUsageInfo, bool, error) {
 	if response == nil || response.Data == nil {
 		return nil, false, nil
@@ -669,8 +669,8 @@ func ParseNewAPIWalletBalance(body []byte, settings NewAPIUsageDisplaySettings) 
 	for pass := range 2 {
 		for _, info := range infos {
 			unit, displayValue := NormalizeNewAPIWalletUnit(info.Currency, settings.Unit)
-			// balance_infos 的 total_balance 是钱包展示值；部分 fork 省略
-			// currency，此时不能按内部 quota 再除一次 quota_per_unit。
+			// balance_infos amounts already use display units when currency is absent.
+			// Dividing again by quota_per_unit would understate the wallet balance.
 			if strings.TrimSpace(info.Currency) == "" {
 				displayValue = true
 			}
@@ -810,8 +810,8 @@ func ParseNewAPIUserSelfWallet(body []byte, settings NewAPIUsageDisplaySettings,
 		remainingValue := NormalizeNewAPIQuota(*remaining, settings)
 		remaining = &remainingValue
 	}
-	// used_quota 是提供商生命周期累计用量，并非某个钱包周期内的已用金额；
-	// 这里仅返回当前可用余额，避免虚构“钱包总额”。
+	// used_quota is lifetime usage, not usage within a wallet period.
+	// Return remaining balance without deriving a wallet total from that counter.
 	return NewAPIWalletAmountUsage(unit, nil, nil, remaining)
 }
 
@@ -906,8 +906,8 @@ func ParseNewAPITokenUsage(body []byte) (*NewAPITokenUsageResponse, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, usageview.ErrUpstreamUsageInvalidResponse.WithCause(err)
 	}
-	// New API 的无效 token 在部分版本中会以 200 + success/code=false 返回，
-	// 不能把这种明确的身份失败误报成响应格式错误。
+	// Some New API versions reject tokens with HTTP 200 and success/code=false.
+	// Classify that as an authentication failure before validating the response shape.
 	if response.Code != nil && !*response.Code || response.Success != nil && !*response.Success {
 		return nil, usageview.ErrUpstreamUsageAuthFailed
 	}
@@ -917,9 +917,9 @@ func ParseNewAPITokenUsage(body []byte) (*NewAPITokenUsageResponse, error) {
 		return nil, usageview.ErrUpstreamUsageInvalidResponse
 	}
 	if *response.Data.UnlimitedQuota {
-		// New API 的无限量 token 在部分版本使用 32 位整数计算，溢出后
-		// total_granted/total_available 可能为负数；无限量结果不会使用这些
-		// 数值，因此只校验它们若存在必须是有限数，避免把溢出值传到前端。
+		// Unlimited token counters can be negative after upstream 32-bit overflow.
+		// These counters are omitted from normalized unlimited results,
+		// so require finite values when present but allow negative counters.
 		for _, value := range []*float64{response.Data.TotalGranted, response.Data.TotalUsed, response.Data.TotalAvailable} {
 			if value != nil && !usageview.ValidFiniteNumber(*value) {
 				return nil, usageview.ErrUpstreamUsageInvalidResponse
@@ -1004,7 +1004,7 @@ func NormalizeNewAPITime(value int64) (*time.Time, error) {
 	if value <= 0 {
 		return nil, nil
 	}
-	// 新版接口返回秒；兼容少数部署返回毫秒的实现。
+	// Accept Unix seconds and the millisecond values returned by some deployments.
 	if value > 253402300799 {
 		if value > 253402300799000 {
 			return nil, usageview.ErrUpstreamUsageInvalidResponse

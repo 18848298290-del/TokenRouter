@@ -8,58 +8,58 @@ const (
 	ModelSourceMapping   = "mapping"
 )
 
-// DashboardStats 仪表盘统计。
+// DashboardStats contains administrator dashboard counters and totals.
 type DashboardStats struct {
-	// 用户统计
+	// User counts.
 	TotalUsers    int64 `json:"total_users"`
-	TodayNewUsers int64 `json:"today_new_users"` // 今日新增用户数
-	ActiveUsers   int64 `json:"active_users"`    // 今日有请求的用户数
-	// 小时活跃用户数（UTC 当前小时）
+	TodayNewUsers int64 `json:"today_new_users"` // Users created today.
+	ActiveUsers   int64 `json:"active_users"`    // Users with requests today.
+	// Users active in the current UTC hour.
 	HourlyActiveUsers int64 `json:"hourly_active_users"`
 
-	// 预聚合新鲜度
+	// Aggregation freshness.
 	StatsUpdatedAt string `json:"stats_updated_at"`
 	StatsStale     bool   `json:"stats_stale"`
 
-	// API Key 统计
+	// API key counts.
 	TotalAPIKeys  int64 `json:"total_api_keys"`
-	ActiveAPIKeys int64 `json:"active_api_keys"` // 状态为 active 的 API Key 数
+	ActiveAPIKeys int64 `json:"active_api_keys"` // Keys with active status.
 
-	// 提供商统计
+	// Provider counts by status.
 	TotalProviders     int64 `json:"total_providers"`
-	NormalProviders    int64 `json:"normal_providers"`    // 正常提供商数 (schedulable=true, status=active)
-	ErrorProviders     int64 `json:"error_providers"`     // 异常提供商数 (status=error)
-	RateLimitProviders int64 `json:"ratelimit_providers"` // 限流提供商数
-	OverloadProviders  int64 `json:"overload_providers"`  // 过载提供商数
+	NormalProviders    int64 `json:"normal_providers"`    // Active, schedulable providers.
+	ErrorProviders     int64 `json:"error_providers"`     // Providers with error status.
+	RateLimitProviders int64 `json:"ratelimit_providers"` // Rate-limited providers.
+	OverloadProviders  int64 `json:"overload_providers"`  // Overloaded providers.
 
-	// 累计 Token 使用统计
+	// Retained usage totals.
 	TotalRequests            int64   `json:"total_requests"`
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalTokens              int64   `json:"total_tokens"`
-	TotalCost                float64 `json:"total_cost"`          // 累计标准计费
-	TotalActualCost          float64 `json:"total_actual_cost"`   // 累计实际扣除
-	TotalProviderCost        float64 `json:"total_provider_cost"` // 累计提供商成本
+	TotalCost                float64 `json:"total_cost"`          // Total cost before the user multiplier.
+	TotalActualCost          float64 `json:"total_actual_cost"`   // Total amount charged.
+	TotalProviderCost        float64 `json:"total_provider_cost"` // Total provider cost.
 
-	// 今日 Token 使用统计
+	// Today's usage totals.
 	TodayRequests            int64   `json:"today_requests"`
 	TodayInputTokens         int64   `json:"today_input_tokens"`
 	TodayOutputTokens        int64   `json:"today_output_tokens"`
 	TodayCacheCreationTokens int64   `json:"today_cache_creation_tokens"`
 	TodayCacheReadTokens     int64   `json:"today_cache_read_tokens"`
 	TodayTokens              int64   `json:"today_tokens"`
-	TodayCost                float64 `json:"today_cost"`          // 今日标准计费
-	TodayActualCost          float64 `json:"today_actual_cost"`   // 今日实际扣除
-	TodayProviderCost        float64 `json:"today_provider_cost"` // 今日提供商成本
+	TodayCost                float64 `json:"today_cost"`          // Today's cost before the user multiplier.
+	TodayActualCost          float64 `json:"today_actual_cost"`   // Today's amount charged.
+	TodayProviderCost        float64 `json:"today_provider_cost"` // Today's provider cost.
 
-	// 系统运行统计
-	AverageDurationMs float64 `json:"average_duration_ms"` // 平均响应时间
+	// Request latency.
+	AverageDurationMs float64 `json:"average_duration_ms"` // Average duration in milliseconds.
 
-	// 性能指标
-	Rpm int64 `json:"rpm"` // 近5分钟平均每分钟请求数
-	Tpm int64 `json:"tpm"` // 近5分钟平均每分钟Token数
+	// Recent request and token rates.
+	Rpm int64 `json:"rpm"` // Requests per minute averaged over the last five minutes.
+	Tpm int64 `json:"tpm"` // Tokens per minute averaged over the last five minutes.
 }
 
 // TrendDataPoint represents a single point in trend data.
@@ -71,8 +71,8 @@ type TrendDataPoint struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`        // 标准计费
-	ActualCost          float64 `json:"actual_cost"` // 实际扣除
+	Cost                float64 `json:"cost"`        // Cost before the user multiplier.
+	ActualCost          float64 `json:"actual_cost"` // Amount charged.
 }
 
 // ModelStat represents usage statistics for a single model.
@@ -84,9 +84,9 @@ type ModelStat struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`          // 标准计费
-	ActualCost          float64 `json:"actual_cost"`   // 实际扣除
-	ProviderCost        float64 `json:"provider_cost"` // 提供商成本
+	Cost                float64 `json:"cost"`          // Cost before the user multiplier.
+	ActualCost          float64 `json:"actual_cost"`   // Amount charged.
+	ProviderCost        float64 `json:"provider_cost"` // Provider cost.
 }
 
 // EndpointStat represents usage statistics for a single request endpoint.
@@ -94,11 +94,11 @@ type EndpointStat struct {
 	Endpoint    string  `json:"endpoint"`
 	Requests    int64   `json:"requests"`
 	TotalTokens int64   `json:"total_tokens"`
-	Cost        float64 `json:"cost"`        // 标准计费
-	ActualCost  float64 `json:"actual_cost"` // 实际扣除
+	Cost        float64 `json:"cost"`        // Cost before the user multiplier.
+	ActualCost  float64 `json:"actual_cost"` // Amount charged.
 }
 
-// GroupUsageSummary 表示单个分组的今日、昨日和累计实际扣费。
+// GroupUsageSummary contains today's, yesterday's, and retained-total charges for a group.
 type GroupUsageSummary struct {
 	GroupID       int64   `json:"group_id"`
 	TodayCost     float64 `json:"today_cost"`
@@ -112,9 +112,9 @@ type GroupStat struct {
 	GroupName    string  `json:"group_name"`
 	Requests     int64   `json:"requests"`
 	TotalTokens  int64   `json:"total_tokens"`
-	Cost         float64 `json:"cost"`          // 标准计费
-	ActualCost   float64 `json:"actual_cost"`   // 实际扣除
-	ProviderCost float64 `json:"provider_cost"` // 提供商成本
+	Cost         float64 `json:"cost"`          // Cost before the user multiplier.
+	ActualCost   float64 `json:"actual_cost"`   // Amount charged.
+	ProviderCost float64 `json:"provider_cost"` // Provider cost.
 }
 
 // UserUsageTrendPoint represents user usage trend data point.
@@ -125,8 +125,8 @@ type UserUsageTrendPoint struct {
 	Username   string  `json:"username"`
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
-	Cost       float64 `json:"cost"`        // 标准计费
-	ActualCost float64 `json:"actual_cost"` // 实际扣除
+	Cost       float64 `json:"cost"`        // Cost before the user multiplier.
+	ActualCost float64 `json:"actual_cost"` // Amount charged.
 }
 
 // UserSpendingRankingItem represents a user spending ranking row.
@@ -134,7 +134,7 @@ type UserSpendingRankingItem struct {
 	UserID     int64   `json:"user_id"`
 	Email      string  `json:"email"`
 	Username   string  `json:"username"`
-	ActualCost float64 `json:"actual_cost"` // 实际扣除
+	ActualCost float64 `json:"actual_cost"` // Amount charged.
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
 }
@@ -147,7 +147,7 @@ type UserSpendingRankingResponse struct {
 	TotalTokens     int64                     `json:"total_tokens"`
 }
 
-// UsageRankingItem 表示用户侧用量排行中的一行。
+// UsageRankingItem is one row in the user-visible usage ranking.
 type UsageRankingItem struct {
 	Rank                int     `json:"rank"`
 	UserID              int64   `json:"user_id"`
@@ -159,10 +159,10 @@ type UsageRankingItem struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	ActualCost          float64 `json:"actual_cost"` // 实际扣除
+	ActualCost          float64 `json:"actual_cost"` // Amount charged.
 }
 
-// UsageRankingResponse 表示用户侧用量排行及统计汇总。
+// UsageRankingResponse contains user-visible rankings and aggregate totals.
 type UsageRankingResponse struct {
 	Ranking         []UsageRankingItem `json:"ranking"`
 	TotalRequests   int64              `json:"total_requests"`
@@ -175,13 +175,13 @@ type UserBreakdownItem struct {
 	UserID       int64   `json:"user_id"`
 	Email        string  `json:"email"`
 	Requests     int64   `json:"requests"`
-	InputTokens  int64   `json:"input_tokens"`  // 输入 token 累计
-	OutputTokens int64   `json:"output_tokens"` // 输出 token 累计
-	CacheTokens  int64   `json:"cache_tokens"`  // 缓存创建 + 读取 token 累计
-	TotalTokens  int64   `json:"total_tokens"`  // 输入+输出+缓存 token 累计
-	Cost         float64 `json:"cost"`          // 标准计费
-	ActualCost   float64 `json:"actual_cost"`   // 实际扣除
-	ProviderCost float64 `json:"provider_cost"` // 提供商成本
+	InputTokens  int64   `json:"input_tokens"`  // Total input tokens.
+	OutputTokens int64   `json:"output_tokens"` // Total output tokens.
+	CacheTokens  int64   `json:"cache_tokens"`  // Cache creation plus cache read tokens.
+	TotalTokens  int64   `json:"total_tokens"`  // Input, output, and cache tokens combined.
+	Cost         float64 `json:"cost"`          // Cost before the user multiplier.
+	ActualCost   float64 `json:"actual_cost"`   // Amount charged.
+	ProviderCost float64 `json:"provider_cost"` // Provider cost.
 }
 
 // UserBreakdownDimension specifies the dimension to filter for user breakdown.
@@ -197,10 +197,10 @@ type UserBreakdownDimension struct {
 	ProviderID  int64  // filter by provider_id (>0 to enable)
 	RequestType *int16 // filter by request_type (non-nil to enable)
 	Stream      *bool  // filter by stream flag (non-nil to enable)
-	// NativeCompactionV2 按 OpenAI 远程 compaction v2 标记过滤。
+	// NativeCompactionV2 filters OpenAI remote compaction v2 requests.
 	NativeCompactionV2 *bool
 	BillingType        *int8 // filter by billing_type (non-nil to enable)
-	// SortBy 指定排序列(空 = 默认按 actual_cost)。合法值由 repo 层 allowlist 校验。
+	// SortBy selects an allowlisted column; empty or invalid values default to actual_cost.
 	SortBy string
 }
 
@@ -213,7 +213,7 @@ type APIKeyUsageTrendPoint struct {
 	Tokens   int64  `json:"tokens"`
 }
 
-// APIKeyDailyUsagePoint 表示单个 API Key 某一天的用量。
+// APIKeyDailyUsagePoint summarizes one API key's usage for a day.
 type APIKeyDailyUsagePoint struct {
 	Date             string  `json:"date"`
 	Requests         int64   `json:"requests"`
@@ -222,48 +222,48 @@ type APIKeyDailyUsagePoint struct {
 	CacheReadTokens  int64   `json:"cache_read_tokens"`
 	CacheWriteTokens int64   `json:"cache_write_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
-	Cost             float64 `json:"cost"`        // 标准计费
-	ActualCost       float64 `json:"actual_cost"` // 实际扣除
+	Cost             float64 `json:"cost"`        // Cost before the user multiplier.
+	ActualCost       float64 `json:"actual_cost"` // Amount charged.
 }
 
-// UserDashboardStats 用户仪表盘统计。
+// UserDashboardStats contains user dashboard counters and totals.
 type UserDashboardStats struct {
-	// API Key 统计
+	// API key counts.
 	TotalAPIKeys  int64 `json:"total_api_keys"`
 	ActiveAPIKeys int64 `json:"active_api_keys"`
 
-	// 累计 Token 使用统计
+	// Retained usage totals.
 	TotalRequests            int64   `json:"total_requests"`
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalTokens              int64   `json:"total_tokens"`
-	TotalCost                float64 `json:"total_cost"`        // 累计标准计费
-	TotalActualCost          float64 `json:"total_actual_cost"` // 累计实际扣除
+	TotalCost                float64 `json:"total_cost"`        // Total cost before the user multiplier.
+	TotalActualCost          float64 `json:"total_actual_cost"` // Total amount charged.
 
-	// 今日 Token 使用统计
+	// Today's usage totals.
 	TodayRequests            int64   `json:"today_requests"`
 	TodayInputTokens         int64   `json:"today_input_tokens"`
 	TodayOutputTokens        int64   `json:"today_output_tokens"`
 	TodayCacheCreationTokens int64   `json:"today_cache_creation_tokens"`
 	TodayCacheReadTokens     int64   `json:"today_cache_read_tokens"`
 	TodayTokens              int64   `json:"today_tokens"`
-	TodayCost                float64 `json:"today_cost"`        // 今日标准计费
-	TodayActualCost          float64 `json:"today_actual_cost"` // 今日实际扣除
+	TodayCost                float64 `json:"today_cost"`        // Today's cost before the user multiplier.
+	TodayActualCost          float64 `json:"today_actual_cost"` // Today's amount charged.
 
-	// 性能统计
+	// Request latency in milliseconds.
 	AverageDurationMs float64 `json:"average_duration_ms"`
 
-	// 性能指标
-	Rpm int64 `json:"rpm"` // 近5分钟平均每分钟请求数
-	Tpm int64 `json:"tpm"` // 近5分钟平均每分钟Token数
+	// Recent request and token rates.
+	Rpm int64 `json:"rpm"` // Requests per minute averaged over the last five minutes.
+	Tpm int64 `json:"tpm"` // Tokens per minute averaged over the last five minutes.
 
-	// 按使用记录中的平台快照拆分，与运维统计保持一致。
+	// Group by the platform snapshot stored on usage records, as in Ops reports.
 	ByPlatform []PlatformDashboardStats `json:"by_platform,omitempty"`
 }
 
-// PlatformDashboardStats 单个平台的用量明细。
+// PlatformDashboardStats summarizes usage for one platform.
 type PlatformDashboardStats struct {
 	Platform        string  `json:"platform"`
 	TotalRequests   int64   `json:"total_requests"`
@@ -274,37 +274,37 @@ type PlatformDashboardStats struct {
 	TodayActualCost float64 `json:"today_actual_cost"`
 }
 
-// UsageLogFilters 表示用量日志查询过滤条件。
+// UsageLogFilters selects usage records for queries.
 type UsageLogFilters struct {
-	// EndpointSource 选择统计中的端点图，空值返回全部端点维度。
+	// EndpointSource selects an endpoint chart; empty includes all endpoint dimensions.
 	EndpointSource string
 	UserID         int64
 	APIKeyID       int64
 	ProviderID     int64
 	GroupID        int64
 	TeamID         int64
-	// IncludeOwnedTeam 在查询当前用户记录时，同时纳入其作为 Owner 的团队记录。
+	// IncludeOwnedTeam includes records from teams owned by the queried user.
 	IncludeOwnedTeam bool
-	// PersonalOnly 仅查询个人 Key 产生的记录，团队作用域使用独立接口。
+	// PersonalOnly selects personal-key records; team scope uses a separate query.
 	PersonalOnly bool
-	// RequestID 对 usage_logs.request_id 执行精确匹配。
+	// RequestID resolves local request IDs or external aliases through request_lookup_ids.
 	RequestID string
 	Model     string
-	// ModelFilterSource 控制 Model 的匹配维度，空值表示匹配 usage_logs.model。
+	// ModelFilterSource selects the model dimension; empty matches usage_logs.model.
 	ModelFilterSource string
 	RequestType       *int16
 	Stream            *bool
-	// NativeCompactionV2 过滤远程 compaction v2 请求。
+	// NativeCompactionV2 filters remote compaction v2 requests.
 	NativeCompactionV2 *bool
 	BillingType        *int8
 	BillingMode        string
 	StartTime          *time.Time
 	EndTime            *time.Time
-	// ExactTotal 要求分页使用精确 COUNT(*)；默认 false 以加速大表分页。
+	// ExactTotal requests an exact COUNT(*); false permits faster pagination on large tables.
 	ExactTotal bool
 }
 
-// UsageStats 表示用量统计。
+// UsageStats contains usage totals and endpoint breakdowns.
 type UsageStats struct {
 	TotalRequests            int64          `json:"total_requests"`
 	TotalInputTokens         int64          `json:"total_input_tokens"`
@@ -322,15 +322,15 @@ type UsageStats struct {
 	EndpointPaths            []EndpointStat `json:"endpoint_paths,omitempty"`
 }
 
-// PlatformUsage 表示某用户或 API Key 在单个平台的用量明细。
-// Platform 使用记录写入时的平台快照，与运维统计保持一致。
+// PlatformUsage summarizes a user's or API key's costs on one platform.
+// Platform uses the snapshot stored when usage was recorded, as in Ops reports.
 type PlatformUsage struct {
 	Platform        string  `json:"platform"`
 	TodayActualCost float64 `json:"today_actual_cost"`
 	TotalActualCost float64 `json:"total_actual_cost"`
 }
 
-// BatchUserUsageStats 表示单个用户的批量用量统计。
+// BatchUserUsageStats is one user's result in a batch usage query.
 type BatchUserUsageStats struct {
 	UserID          int64           `json:"user_id"`
 	TodayActualCost float64         `json:"today_actual_cost"`
@@ -345,27 +345,27 @@ type BatchAPIKeyUsageStats struct {
 	TotalActualCost float64 `json:"total_actual_cost"`
 }
 
-// ProviderUsageHistory 表示提供商的每日用量历史。
+// ProviderUsageHistory contains a provider's daily usage totals.
 type ProviderUsageHistory struct {
 	Date       string  `json:"date"`
 	Label      string  `json:"label"`
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
-	Cost       float64 `json:"cost"`        // 标准计费（total_cost）
-	ActualCost float64 `json:"actual_cost"` // 提供商费用（提供商成本基数 * provider_rate_multiplier）
-	UserCost   float64 `json:"user_cost"`   // 用户费用（actual_cost，受分组倍率影响）
+	Cost       float64 `json:"cost"`        // Cost before the user multiplier (total_cost).
+	ActualCost float64 `json:"actual_cost"` // Provider-cost base multiplied by provider_rate_multiplier.
+	UserCost   float64 `json:"user_cost"`   // User charge (actual_cost), including the group multiplier.
 }
 
-// ProviderUsageSummary 表示提供商的用量汇总统计。
+// ProviderUsageSummary aggregates provider usage over a reporting period.
 type ProviderUsageSummary struct {
 	Days              int     `json:"days"`
 	ActualDaysUsed    int     `json:"actual_days_used"`
-	TotalCost         float64 `json:"total_cost"`      // 提供商费用
-	TotalUserCost     float64 `json:"total_user_cost"` // 用户费用
+	TotalCost         float64 `json:"total_cost"`      // Provider cost.
+	TotalUserCost     float64 `json:"total_user_cost"` // User charges.
 	TotalStandardCost float64 `json:"total_standard_cost"`
 	TotalRequests     int64   `json:"total_requests"`
 	TotalTokens       int64   `json:"total_tokens"`
-	AvgDailyCost      float64 `json:"avg_daily_cost"` // 提供商日均费用
+	AvgDailyCost      float64 `json:"avg_daily_cost"` // Average daily provider cost.
 	AvgDailyUserCost  float64 `json:"avg_daily_user_cost"`
 	AvgDailyRequests  float64 `json:"avg_daily_requests"`
 	AvgDailyTokens    float64 `json:"avg_daily_tokens"`
@@ -393,7 +393,7 @@ type ProviderUsageSummary struct {
 	} `json:"highest_request_day"`
 }
 
-// ProviderUsageStatsResponse 表示提供商完整的用量统计响应。
+// ProviderUsageStatsResponse combines provider history, totals, and model/endpoint breakdowns.
 type ProviderUsageStatsResponse struct {
 	History           []ProviderUsageHistory `json:"history"`
 	Summary           ProviderUsageSummary   `json:"summary"`

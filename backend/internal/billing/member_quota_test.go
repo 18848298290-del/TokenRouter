@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestMemberQuotaCalendarProjection 验证 DST 日界、未过期窗口和读取投影隔离，不改变原消费计数。
+// TestMemberQuotaCalendarProjection checks DST day boundaries and resets expired windows in a copy while retaining
+// current windows.
 func TestMemberQuotaCalendarProjection(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -30,7 +31,7 @@ func TestMemberQuotaCalendarProjection(t *testing.T) {
 	require.NoError(t, CheckMemberQuotaSnapshot(got))
 }
 
-// TestMemberQuotaThresholdOrder 检查额度阈值，以及日、周、月限额的拒绝顺序。窗口在校验后保持原值。
+// TestMemberQuotaThresholdOrder checks daily, weekly, then monthly rejection and unlimited zero limits.
 func TestMemberQuotaThresholdOrder(t *testing.T) {
 	snapshot := MemberQuotaSnapshot{DailyLimitUSD: 1, WeeklyLimitUSD: 2, MonthlyLimitUSD: 3, DailyUsageUSD: 1, WeeklyUsageUSD: 2, MonthlyUsageUSD: 3}
 	require.ErrorIs(t, CheckMemberQuotaSnapshot(snapshot), ErrTeamMemberDailyExceeded)

@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// classifyNoProviderErrorFromGin 从已认证 Key 取得错误输入，调用 HTTP 错误分类和响应生成函数。
+// classifyNoProviderErrorFromGin uses the authenticated key and request context to diagnose a selection error.
 func classifyNoProviderErrorFromGin(c *gin.Context, diag routing.ModelAvailabilityDiagnoser, key *apikey.APIKey, model, display, platform string) gatewayhttp.SelectionErrorResponse {
 	ctx := context.Background()
 	if c != nil && c.Request != nil {

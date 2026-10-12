@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// configFixture 控制配置回源与保存的交错，并可注入写入失败。
+// configFixture controls overlapping reads and saves and can inject write failures.
 type configFixture struct {
 	mu        sync.Mutex
 	raw       string
@@ -104,7 +104,7 @@ func TestParseWebSearchConfigJSON_InvalidJSON(t *testing.T) {
 }
 
 func TestParseWebSearchConfigJSON_BackwardCompatibility(t *testing.T) {
-	// priority 和 quota_refresh_interval 字段兼容早期配置。
+	// Legacy priority and quota_refresh_interval fields are accepted as unknown JSON fields.
 	raw := `{"enabled":true,"providers":[{"type":"brave","priority":1,"quota_refresh_interval":"monthly","quota_limit":1000}]}`
 	cfg := ParseConfig(raw)
 	require.True(t, cfg.Enabled)
@@ -176,7 +176,7 @@ func TestPopulateWebSearchUsage_NilInput(t *testing.T) {
 func TestPopulateWebSearchUsage_NoManager_QuotaUsedZero(t *testing.T) {
 	registry := NewRegistry()
 
-	// 空注册表的供应商用量为零。
+	// An empty registry leaves this fixture's zero usage unchanged.
 	registry.Set(nil)
 	defer registry.Set(nil)
 
@@ -256,7 +256,7 @@ func TestPopulateWebSearchUsage_NonNilQuotaLimit(t *testing.T) {
 func TestPopulateWebSearchUsage_WithManager_NilRedis(t *testing.T) {
 	registry := NewRegistry()
 
-	// 未配置 Redis 时，Manager 返回零用量。
+	// A Manager with no quota store reports zero usage.
 	mgr := NewManager([]ProviderConfig{
 		{Type: "brave", APIKey: "k"},
 	}, nil, searchprovider.NewExecutor(), nil)
@@ -285,7 +285,7 @@ func TestPopulateWebSearchUsage_DoesNotMutateOriginal(t *testing.T) {
 		},
 	}
 	_ = PopulateWebSearchUsage(context.Background(), cfg, registry)
-	// 调用方传入的配置保存密钥和用量。
+	// Populating usage leaves the caller's key and usage fields unchanged.
 	require.Equal(t, "secret", cfg.Providers[0].APIKey)
 	require.Equal(t, int64(0), cfg.Providers[0].QuotaUsed)
 }
@@ -398,7 +398,7 @@ func TestConsecutiveSavesKeepLastPublication(t *testing.T) {
 	require.Equal(t, "second", service.Registry().Get().ProviderConfigs()[0].APIKey)
 }
 
-// searchQuotaFixture 返回额度值的指针。
+// searchQuotaFixture returns a pointer to a quota value.
 func searchQuotaFixture(v int64) *int64 { return &v }
 
 func (r *configFixture) GetValue(_ context.Context, _ string) (string, error) {

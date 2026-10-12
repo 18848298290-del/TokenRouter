@@ -8,7 +8,7 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
-// TestProviderEntityProjectionIsolatesNestedCredentials 检查 Ent 行转换出的记录持有独立凭据副本，修改副本后源行保持不变。
+// TestProviderEntityProjectionIsolatesNestedCredentials checks that editing converted credentials leaves the source Ent row intact.
 func TestProviderEntityProjectionIsolatesNestedCredentials(t *testing.T) {
 	entity := &dbent.Provider{ID: 1, Credentials: map[string]any{"extension": map[string]any{"value": "original"}}}
 	projected := RecordFromEntity(entity)

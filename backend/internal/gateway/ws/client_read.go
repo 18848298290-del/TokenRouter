@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// ClientConn 支持关闭帧发送后等待当前读取任务结束。
+// ClientConn supports sending a close frame before joining the active reader.
 type ClientConn interface {
 	Read(context.Context) (int, []byte, error)
 	Close(int, string) error
 	CloseNow() error
 }
 
-// ClientCloseError 指定 HTTP 适配器要发送的关闭帧。
+// ClientCloseError records the close status, reason, and underlying cause.
 type ClientCloseError struct {
 	Status int
 	Reason string
@@ -51,8 +51,8 @@ func (e *ClientCloseError) Unwrap() error {
 	return e.Cause
 }
 
-// ReadClientMessage 在控制事件发送关闭帧期间保留唯一读协程，
-// 随后强制关闭底层连接并等待读协程退出。
+// ReadClientMessage keeps one reader alive while a control event sends the close frame,
+// then closes the transport and waits for the reader to exit.
 func ReadClientMessage(
 	controlCtx context.Context,
 	conn ClientConn,
@@ -71,8 +71,8 @@ func ReadClientMessage(
 	)
 }
 
-// ReadClientMessageWithTimeoutStart 支持在状态转换后才开始计时，
-// 例如 passthrough 一轮完成后等待下一轮。timeoutActive 为 nil 时，正数超时会立即起算。
+// ReadClientMessageWithTimeoutStart can start the timer after a state transition, such as turn completion.
+// A positive timeout starts immediately when timeoutActive is nil or returns true.
 func ReadClientMessageWithTimeoutStart(
 	controlCtx context.Context,
 	conn ClientConn,

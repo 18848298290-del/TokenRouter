@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestResolveUsageAnalyticsWindowUsesCoveredMiddle 验证未完成回填时只让未覆盖头部读取原始表。
+// TestResolveUsageAnalyticsWindowUsesCoveredMiddle checks that the unbackfilled head uses raw records.
 func TestResolveUsageAnalyticsWindowUsesCoveredMiddle(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -39,7 +39,7 @@ func TestResolveUsageAnalyticsWindowUsesCoveredMiddle(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryUsesHalfOpenRanges 验证组合查询的首尾原始区间互不重叠。
+// TestBuildUsageAnalyticsQueryUsesHalfOpenRanges checks that raw head and tail ranges do not overlap.
 func TestBuildUsageAnalyticsQueryUsesHalfOpenRanges(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -70,14 +70,14 @@ func TestBuildUsageAnalyticsQueryUsesHalfOpenRanges(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary 验证东八区今日在 UTC 零点前不会包含昨日小时桶。
+// TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary excludes yesterday's hourly buckets before UTC midnight.
 func TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
 		Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60},
 	})
 	repo := &Store{sql: db, preAggregation: settings}
-	// 北京时间 2026-08-06 00:00 至 03:30 对应同一 UTC 日内的不完整窗口。
+	// Beijing time 2026-08-06 00:00 to 03:30 is a partial window within one UTC day.
 	start := time.Date(2026, 8, 5, 16, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 5, 19, 30, 0, 0, time.UTC)
 	watermark := time.Date(2026, 8, 5, 19, 25, 0, 0, time.UTC)
@@ -89,7 +89,7 @@ func TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary(t *testing.
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, query.args, 9)
-	// 日表区间为空，小时表的分割点固定在今日开始，不能回退到前一个 UTC 午夜。
+	// An empty daily range keeps the hourly split at today's start, not the preceding UTC midnight.
 	require.Equal(t, start, query.args[5])
 	require.Equal(t, start, query.args[6])
 	require.Equal(t, "2026-08-05", query.args[7])
@@ -164,7 +164,7 @@ func TestGetAllGroupUsageSummaryFallbackIncludesYesterday(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageAnalyticsFallbackWarningIsRateLimited 验证同一操作一分钟内只产生一次聚合故障告警。
+// TestUsageAnalyticsFallbackWarningIsRateLimited checks one warning per operation per minute.
 func TestUsageAnalyticsFallbackWarningIsRateLimited(t *testing.T) {
 	operation := "test_rate_limit_analytics_fallback"
 	started := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
@@ -182,7 +182,7 @@ func TestUsageAnalyticsFallbackWarningIsRateLimited(t *testing.T) {
 	require.True(t, shouldLogUsageAnalyticsFallback(operation, started.Add(time.Minute)))
 }
 
-// TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs 验证小时查询不携带未引用的日边界参数。
+// TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs checks that hourly queries omit unused daily bounds.
 func TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -202,7 +202,7 @@ func TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously 验证团队范围与筛选参数从基础边界后连续编号。
+// TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously checks contiguous parameters after the time bounds.
 func TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -241,7 +241,7 @@ func TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource 验证未覆盖原始区间不会恢复成标量子查询 OR。
+// TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource checks separate raw user and team scans.
 func TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -269,7 +269,7 @@ func TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters 验证聚合表缺少的维度会透明回退原始查询。
+// TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters checks that missing aggregate dimensions require raw queries.
 func TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters(t *testing.T) {
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
 		Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60},
@@ -296,7 +296,7 @@ func TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters(t *testing.T) {
 	}
 }
 
-// TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping 验证未聚合的模型维度不会误用请求模型结果。
+// TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping rejects dimensions absent from request-model aggregates.
 func TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping(t *testing.T) {
 	repo := &Store{}
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -311,7 +311,7 @@ func TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping(t *testing.T) {
 	}
 }
 
-// TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername 验证预聚合排行会关联当前用户身份字段。
+// TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername checks that rankings join current user identity fields.
 func TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -339,7 +339,7 @@ func TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUsageRankingFromAnalyticsGroupsByBillingUser 验证公开排行按付款主体合并团队成员用量。
+// TestGetUsageRankingFromAnalyticsGroupsByBillingUser combines team members under their billing user.
 func TestGetUsageRankingFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -368,7 +368,7 @@ func TestGetUsageRankingFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser 验证 Top 用户趋势按付款主体合并团队成员用量。
+// TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser combines team usage under the paying user in top-user trends.
 func TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -394,7 +394,7 @@ func TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST 验证趋势分桶把命名时区交给 PostgreSQL 处理夏令时。
+// TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST passes a named timezone to PostgreSQL for DST-aware buckets.
 func TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -404,7 +404,7 @@ func TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST(t *testing.T) {
 		Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60},
 	})
 	repo := &Store{sql: db, preAggregation: settings, calendar: timezone.NewCalendar(loc)}
-	// 该 UTC 窗口跨越纽约 2026 年秋季夏令时回拨点。
+	// This UTC range crosses New York's autumn 2026 clock change.
 	start := time.Date(2026, 11, 1, 4, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
 	mock.ExpectQuery("(?s)SELECT live_watermark, coverage_start.*usage_analytics_aggregation_state").
@@ -422,7 +422,7 @@ func TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition 验证批量 Key 今日查询紧接 5 个边界参数编号。
+// TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition places key IDs after the five time bounds.
 func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -435,12 +435,12 @@ func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	todayStart := timezone.NewCalendar(time.Local).
 		Today().UTC()
 	coverage := todayStart.Add(-time.Hour).Truncate(time.Hour)
-	// 水位线紧邻当前时间，确保任意服务器时区及 UTC 零点首小时都有可用聚合窗口。
+	// A watermark just before now leaves usable aggregates across server timezones and near UTC midnight.
 	watermark := now.Add(-time.Nanosecond)
 	mock.ExpectQuery("(?s)SELECT live_watermark, coverage_start.*usage_analytics_aggregation_state").
 		WillReturnRows(sqlmock.NewRows([]string{"live_watermark", "coverage_start"}).AddRow(watermark, coverage))
 
-	// 首次查询使用日表形态，共 10 个参数（批量 ID 加 9 个边界）。
+	// The daily query takes ten arguments: the ID array and nine time bounds.
 	mock.ExpectQuery("(?s)SELECT api_key_id, COALESCE\\(SUM\\(actual_cost\\), 0\\).*FROM combined").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "actual_cost"}))
@@ -456,7 +456,7 @@ func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition 验证批量用户今日查询紧接 5 个边界参数编号。
+// TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition places user IDs after the five time bounds.
 func TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -469,7 +469,7 @@ func TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	todayStart := timezone.NewCalendar(time.Local).
 		Today().UTC()
 	coverage := todayStart.Add(-time.Hour).Truncate(time.Hour)
-	// 水位线紧邻当前时间，确保任意服务器时区及 UTC 零点首小时都有可用聚合窗口。
+	// A watermark just before now leaves usable aggregates across server timezones and near UTC midnight.
 	watermark := now.Add(-time.Nanosecond)
 	mock.ExpectQuery("(?s)SELECT live_watermark, coverage_start.*usage_analytics_aggregation_state").
 		WillReturnRows(sqlmock.NewRows([]string{"live_watermark", "coverage_start"}).AddRow(watermark, coverage))

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// SnapshotContext 将请求标识、模型映射和请求记录器传给后台完成任务。
+// SnapshotContext copies request identity, model mappings, and request capture into a background context.
 func SnapshotContext(source context.Context) context.Context {
 	return copyCompletionContext(context.Background(), source)
 }
@@ -35,7 +35,7 @@ func copyCompletionContext(destination, source context.Context) context.Context 
 	return telemetry.CopyRequestCapture(destination, source)
 }
 
-// WrapTaskContext 在提交时冻结来源，执行时保留 worker 自己的预算。
+// WrapTaskContext snapshots source values at submission and retains the worker context cancellation and deadline.
 func WrapTaskContext(source context.Context, task func(context.Context)) func(context.Context) {
 	if task == nil {
 		return nil

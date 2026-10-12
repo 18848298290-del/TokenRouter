@@ -18,10 +18,10 @@ const (
 
 var ErrManagedRecoveryUnavailable = errors.New("managed refresh conditional recovery is not configured")
 
-// ManagedRecoveryStep 保留手动刷新原五次独立提交，禁止把恢复扩展成任意字段写入。
+// ManagedRecoveryStep identifies one of five independently committed recovery updates.
 type ManagedRecoveryStep uint8
 
-// ManagedRecoveryVersion 冻结交换前身份及待清理状态，只用于内部条件写入。
+// ManagedRecoveryVersion captures credential identity and health state for conditional recovery writes.
 type ManagedRecoveryVersion struct {
 	UsageObservationVersion
 	ErrorMessage string         `json:"-"`
@@ -34,7 +34,7 @@ type ManagedRecoveryWriter interface {
 	ApplyManagedRecoveryStep(context.Context, ManagedRecoveryStep, ManagedRecoveryVersion) (bool, error)
 }
 
-// ManagedRecoveryUnblocker 使用原运行时代次，防止迟到恢复清除新安装的阻断。
+// ManagedRecoveryUnblocker uses a runtime generation to prevent late recovery from clearing a newer block.
 type ManagedRecoveryUnblocker interface {
 	ManagedRecoveryFence(int64) uint64
 	ClearProviderSchedulingBlockIfFence(int64, uint64) bool
@@ -51,7 +51,7 @@ func ObserveManagedRecovery(value *Record) ManagedRecoveryVersion {
 	}
 }
 
-// Advance 在对应步骤提交成功后，更新内部保存的下一步比较条件。
+// Advance updates the expected state after the corresponding step commits successfully.
 func (v *ManagedRecoveryVersion) Advance(step ManagedRecoveryStep) {
 	switch step {
 	case ManagedRecoveryError:
@@ -72,7 +72,7 @@ func (v ManagedRecoveryVersion) Matches(value *Record) bool {
 		return false
 	}
 	current := ObserveManagedRecovery(value)
-	// 额外配置允许并发编辑，只比较此恢复拥有的两个键。
+	// Compare the two extra keys owned by recovery so unrelated configuration can change concurrently.
 	for _, key := range []string{"antigravity_quota_scopes", "model_rate_limits"} {
 		want, hasWant := v.Extra[key]
 		got, hasGot := current.Extra[key]
@@ -84,7 +84,8 @@ func (v ManagedRecoveryVersion) Matches(value *Record) bool {
 	return reflect.DeepEqual(current, v)
 }
 
-// ClearManagedRefreshError 独立提交条件更新，冲突或写入失败时结束恢复。
+// ClearManagedRefreshError clears an Antigravity missing-project error through conditional steps, stopping on
+// conflict or failure.
 func (s *Admin) ClearManagedRefreshError(ctx context.Context, value *Record) (*Record, bool, error) {
 	if value == nil || value.Platform != PlatformAntigravity || value.Status != StatusError || !strings.Contains(value.ErrorMessage, "missing_project_id:") {
 		return nil, false, nil

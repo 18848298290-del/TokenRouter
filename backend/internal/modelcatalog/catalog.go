@@ -18,18 +18,18 @@ import (
 const RemoteURL = "https://models.dev/catalog.json?type=all"
 
 var (
-	// offlineData 保存经过解析验证的 models.dev 发布快照，支持离线首次启动。
+	// offlineData contains a validated models.dev snapshot for offline startup.
 	//
 	//go:embed catalog.json.gz
 	offlineData []byte
 
-	// modelSupplements 保存随版本发布的官方补充，运行时无需读取外部资源。
+	// modelSupplements contains the official supplements shipped with the binary.
 	//
 	//go:embed model_supplements.json
 	modelSupplements string
 )
 
-// Cost 保留源数据的美元/百万 token 单位及缺失值。
+// Cost preserves missing prices and the source unit of USD per million tokens.
 type Cost struct {
 	Input      *float64 `json:"input"`
 	Output     *float64 `json:"output"`
@@ -37,7 +37,7 @@ type Cost struct {
 	CacheWrite *float64 `json:"cache_write"`
 }
 
-// CostTier 使用明确的上下文阈值，不能从兼容字段名称猜测阈值。
+// CostTier carries an explicit context threshold; consumers must not infer it from compatibility field names.
 type CostTier struct {
 	Cost
 	Tier struct {
@@ -46,7 +46,7 @@ type CostTier struct {
 	} `json:"tier"`
 }
 
-// Entry 同时保存属性与报价，价格缺失不影响属性可见性。
+// Entry contains attributes and prices. Attributes remain available when prices are missing.
 type Entry struct {
 	Model            string            `json:"model"`
 	Provider         string            `json:"provider"`
@@ -61,13 +61,13 @@ type Entry struct {
 	originalEndpoint bool
 }
 
-// Catalog 是一次不可变的目录版本；所有消费者只接收值副本。
+// Catalog holds a parsed catalog version. Apply supplements before publishing it to readers.
 type Catalog struct {
 	Version   string
 	Entries   map[string]Entry
 	Providers map[string]bool
 	Ambiguous map[string]bool
-	// attributeFallbacks 保存归属一致的公共模型属性，供属性查询回退使用。
+	// attributeFallbacks holds public attributes whose canonical identity agrees across providers.
 	attributeFallbacks map[string]Attributes
 	publicEntries      map[string]Entry
 }
@@ -99,12 +99,12 @@ type sourceModel struct {
 	Experimental json.RawMessage `json:"experimental"`
 }
 
-// Supplements 返回官方补充正文，调用者负责校验并合并自定义补充。
+// Supplements returns the official supplement body. Callers validate and merge custom supplements.
 func Supplements() []byte {
 	return []byte(modelSupplements)
 }
 
-// Offline 返回离线目录正文，调用者负责应用本地价格覆盖。
+// Offline decompresses the bundled catalog. Callers apply local pricing supplements.
 func Offline() ([]byte, error) {
 	r, err := gzip.NewReader(bytes.NewReader(offlineData))
 	if err != nil {
@@ -114,7 +114,7 @@ func Offline() ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-// Parse 校验整个候选目录，构建原厂优先、供应商精确匹配的索引。
+// Parse validates the catalog and builds an index with first-party preference and exact provider matching.
 func Parse(body []byte) (*Catalog, error) {
 	var source struct {
 		Providers map[string]struct {
@@ -147,7 +147,7 @@ func Parse(body []byte) (*Catalog, error) {
 			}
 			_, canonicalExists := source.Models[lab+"/"+id]
 			entry.FirstParty = canonicalExists || knownOrigin
-			// 明确的归属优先，不能把原厂端点上的其他作者模型判为自有模型。
+			// Explicit authorship takes precedence when a first-party endpoint hosts another author's model.
 			if model.Canonical != "" {
 				entry.FirstParty = strings.HasPrefix(model.Canonical, lab+"/")
 			}
@@ -188,7 +188,7 @@ func Parse(body []byte) (*Catalog, error) {
 	}
 	publicAttributes := make(map[string]Attributes, len(source.Models))
 	catalog.publicEntries = make(map[string]Entry, len(source.Models))
-	// 模型资料可独立查询，报价按各供应商记录解析。
+	// Public model attributes can be queried independently of provider prices.
 	for id, model := range source.Models {
 		entry, err := model.entry(id, strings.SplitN(id, "/", 2)[0])
 		if err != nil {
@@ -230,8 +230,8 @@ func Parse(body []byte) (*Catalog, error) {
 	return catalog, nil
 }
 
-// firstPartyProviderLab 为已知原厂端点补充缺失的 canonical 关联。
-// 聚合供应商不进入此表；其他来源仍须由明确的模型资料确认归属。
+// firstPartyProviderLab identifies known first-party endpoints when canonical metadata is missing.
+// Aggregators require explicit model metadata to establish authorship.
 func firstPartyProviderLab(provider string) (string, bool) {
 	switch provider {
 	case "openai", "anthropic", "google", "xai", "deepseek", "moonshotai", "mistral", "typesafe":
@@ -245,7 +245,8 @@ func firstPartyProviderLab(provider string) (string, bool) {
 	}
 }
 
-// FirstPartyAliases 返回同一原厂记录的查价键，不把日期版本或中继视为同一报价。
+// FirstPartyAliases returns lookup keys for the same first-party record. Dated versions and relays have
+// separate prices.
 func (c *Catalog) FirstPartyAliases(model string) []string {
 	if c == nil {
 		return []string{model}
@@ -343,7 +344,7 @@ func validateCost(cost Cost) error {
 
 func normalize(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
 
-// Lookup 仅沿明确的身份候选查询，返回独立属性值。
+// Lookup searches the supplied identity candidates and returns independently mutable attributes.
 func (c *Catalog) Lookup(candidates []string) (Entry, bool) {
 	if c == nil {
 		return Entry{}, false
@@ -358,8 +359,8 @@ func (c *Catalog) Lookup(candidates []string) (Entry, bool) {
 	return Entry{}, false
 }
 
-// LookupAttributes 优先查询现有身份，仅为裸名歧义使用归属一致的公共属性。
-// 供应商限定查询不回退，返回值也不会带入任何供应商报价。
+// LookupAttributes tries exact identities before using public attributes for an ambiguous bare model name.
+// Provider-qualified names require an exact match. This lookup returns no pricing data.
 func (c *Catalog) LookupAttributes(model string, candidates []string) (Attributes, bool) {
 	if entry, found := c.Lookup(c.IdentityCandidates(model, candidates)); found {
 		return entry.Attributes, true
@@ -374,7 +375,7 @@ func (c *Catalog) LookupAttributes(model string, candidates []string) (Attribute
 	return attributes.Clone(), true
 }
 
-// Rows 返回稳定排序的可查询索引，明确保留供应商限定名称。
+// Rows returns the queryable index sorted by model name, including provider-qualified names.
 func (c *Catalog) Rows() []Entry {
 	rows := []Entry{}
 	if c == nil {
@@ -390,7 +391,7 @@ func (c *Catalog) Rows() []Entry {
 	return rows
 }
 
-// IdentityCandidates 保留已知供应商限定名，不能因名称归一化退回另一供应商。
+// IdentityCandidates keeps known provider qualifiers so normalization cannot select another provider.
 func (c *Catalog) IdentityCandidates(model string, candidates []string) []string {
 	result := []string{normalize(model)}
 	prefix, _, qualified := strings.Cut(normalize(model), "/")
@@ -408,7 +409,7 @@ func (c *Catalog) IdentityCandidates(model string, candidates []string) []string
 	return append(result, candidates...)
 }
 
-// RequiresExact 禁止存在歧义或供应商限定名称的价格借用其它来源。
+// RequiresExact reports whether ambiguity or a provider qualifier requires an exact pricing identity.
 func (c *Catalog) RequiresExact(model string) bool {
 	if c == nil {
 		return false

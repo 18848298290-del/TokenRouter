@@ -19,7 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AuxiliaryHTTPInput 固化分组映射、原报文与客户端模型；实际认证实体留在调用方 Adapter。
+// AuxiliaryHTTPInput holds the group mapping, original body, and client model.
+// The calling adapter retains the authenticated entities.
 type AuxiliaryHTTPInput struct {
 	Subject                      MediaSubject
 	Model, SessionHash, Endpoint string
@@ -32,7 +33,7 @@ type RealtimeHTTPExecution interface {
 	CompleteRealtime(context.Context, provider.ProviderSnapshot, string, time.Duration)
 }
 
-// AuxiliaryHTTPPorts 提供辅助 HTTP 入口的依赖。
+// AuxiliaryHTTPPorts provides dependencies for auxiliary HTTP endpoints.
 type AuxiliaryHTTPPorts interface {
 	MediaHTTPPorts
 	HTTPTransport(*gin.Context)
@@ -48,7 +49,7 @@ type AuxiliaryHTTPPorts interface {
 	RealtimeDialTimeout() time.Duration
 }
 
-// AuxiliaryHandler 处理 SystemOne、Embeddings、AlphaSearch、Voice 和 Realtime 的 HTTP 请求。
+// AuxiliaryHandler handles SystemOne, Embeddings, AlphaSearch, Voice, and Realtime requests.
 type AuxiliaryHandler struct {
 	RequestLifetime
 

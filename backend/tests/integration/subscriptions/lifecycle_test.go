@@ -15,13 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// 订阅停止能力由缓存公开实现提供，不绑定旧包的私有类型。
+// stoppableTLSFingerprintCache exposes the cache subscription lifecycle used by these tests.
 type stoppableTLSFingerprintCache interface {
 	SubscribeUpdates(context.Context, func())
 	StopSubscription()
 }
 
-// TestSubscriptionsWaitForInFlightCallback 验证真实 Redis 订阅的最后一个回调返回前，Stop 不得允许关闭共享连接。
+// TestSubscriptionsWaitForInFlightCallback checks that StopSubscription waits for the active Redis callback before returning.
 func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 	for _, factory := range []struct {
 		name, channel string

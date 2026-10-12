@@ -18,17 +18,17 @@ const (
 	CnZhipuWindow5h
 	CnZhipuWindowWeekly
 
-	// DefaultTestModel 是智谱提供商的默认探测型号。
+	// DefaultTestModel is the default Zhipu probe model.
 	DefaultTestModel = "glm-4.7"
 )
 
-// CnZhipuWindow 标识智谱 TOKENS_LIMIT 条目所属窗口。
+// CnZhipuWindow identifies the window of a Zhipu TOKENS_LIMIT entry.
 type CnZhipuWindow int
 
 type ZhipuCodingUsageAdapter struct{}
 
-// ClassifyZhipuWindowUnit 按 unit 字段判定窗口类型（3=5h，6=7d）。
-// unit 缺失或未识别时返回 Unknown，由调用方走 reset 时间启发式兜底。
+// ClassifyZhipuWindowUnit maps unit 3 to five hours and unit 6 to seven days.
+// Unknown or missing units return Unknown for reset-based classification by the caller.
 func ClassifyZhipuWindowUnit(unit int64) CnZhipuWindow {
 	switch unit {
 	case 3:
@@ -40,18 +40,18 @@ func ClassifyZhipuWindowUnit(unit int64) CnZhipuWindow {
 	}
 }
 
-// ParseZhipuTokenTiers 解析智谱额度响应 data.limits 为 5h + weekly 两档。
+// ParseZhipuTokenTiers maps data.limits to five-hour and weekly windows.
 //
-// 分类优先级（对齐 cc-switch parse_zhipu_token_tiers，issue #3036）：
-//  1. 按 unit 字段分类（3=5h / 6=weekly）。周期末尾周窗口会比 5h 更早重置，
-//     按 reset 排序会把两类窗口标反。
-//  2. unit 缺失/未识别：无 nextResetTime 的条目优先归 5h（0% 状态下 5h 桶可能
-//     没有 reset），其余按 reset 升序依次填入仍空缺的槽位。
+// Classification follows cc-switch parse_zhipu_token_tiers (issue #3036):
+//  1. Use unit 3 for five hours and unit 6 for weekly. Near a period end, the
+//     weekly reset can precede the five-hour reset, so reset order alone is insufficient.
+//  2. For unclassified entries, fill vacant slots with missing resets first,
+//     then numeric resets in ascending order. A zero-use five-hour entry may lack a reset.
 //
-// CREDIT_LIMIT（信用额度）与 TOKENS_LIMIT（token 窗口）度量不同：两者同时返回时
-// 只让 TOKENS_LIMIT 参与 5h/weekly 槽位竞争，避免信用额度百分比污染阈值停调
-// 快照；仅当无任何 TOKENS_LIMIT 条目时才降级用 CREDIT_LIMIT 展示。
-// 老套餐只回 1 条 TOKENS_LIMIT，自然降级为仅 5h；新套餐回 2 条。
+// CREDIT_LIMIT and TOKENS_LIMIT measure different allowances. When token entries
+// exist, exclude credit entries so credit percentages cannot affect token-window
+// scheduling thresholds. Use credit entries for display only when token entries are absent.
+// Older plans may return a single five-hour entry; newer plans can return both windows.
 func ParseZhipuTokenTiers(data gjson.Result) []usageview.CNQuotaTier {
 	type entry struct {
 		resetMs    int64
@@ -123,12 +123,12 @@ func ParseZhipuTokenTiers(data gjson.Result) []usageview.CNQuotaTier {
 		return true
 	})
 
-	// 无任何 TOKENS_LIMIT 条目（部分套餐只报信用额度）：降级用 CREDIT_LIMIT 展示。
+	// Some plans report credit allowances only; use those for display when token windows are absent.
 	if !hasTokensLimit {
 		unclassified = append(unclassified, creditFallback...)
 	}
 
-	// 无 reset 的条目排前，再按 reset 升序，依次填入仍空缺的槽位。
+	// Fill vacant slots with missing resets first, then by numeric reset time.
 	sort.SliceStable(unclassified, func(i, j int) bool {
 		if unclassified[i].hasReset != unclassified[j].hasReset {
 			return !unclassified[i].hasReset
@@ -161,14 +161,14 @@ func (*ZhipuCodingUsageAdapter) Query(ctx context.Context, input *usagecontract.
 	if err != nil {
 		return nil, usageview.ErrUpstreamUsageConfigInvalid.WithCause(err)
 	}
-	// 智谱 Coding Plan 额度接口使用裸 API key，不是 Bearer token。
+	// The Coding Plan endpoint expects the raw API key in Authorization.
 	teamHeaders := map[string]string{"Authorization": client.APIKey}
 	organization := strings.TrimSpace(client.ZhipuOrganization)
 	if organization != "" {
 		if strings.ContainsAny(organization, "\r\n") {
 			return nil, usageview.ErrUpstreamUsageConfigInvalid
 		}
-		// 团队版接口通过 type=2 和组织请求头区分个人 Coding Plan。
+		// Team requests use type=2 and an organization header.
 		parsed, parseErr := url.Parse(endpoint)
 		if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
 			return nil, usageview.ErrUpstreamUsageConfigInvalid

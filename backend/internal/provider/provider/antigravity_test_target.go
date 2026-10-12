@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityProviderTest 通过 OAuth 探测接口执行重试和额度检查。
+// AntigravityProviderTest reports OAuth probe results as test events.
 type AntigravityProviderTest struct {
 	Probe func(context.Context, *provider.Record, provider.PreparedTestRequest) (*antigravity.TestConnectionResult, error)
 }

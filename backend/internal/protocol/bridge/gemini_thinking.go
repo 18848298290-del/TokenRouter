@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// GeminiThinkingInput 保存客户端明确指定的推理控制，转换中生成的默认值由调用方排除。
+// GeminiThinkingInput contains client-requested reasoning controls. Callers exclude conversion defaults.
 type GeminiThinkingInput struct {
 	Enabled  *bool
 	Effort   string
@@ -15,7 +15,7 @@ type GeminiThinkingInput struct {
 	Adaptive bool
 }
 
-// GeminiThinkingOptions 由目标能力解析器提供，转换器按可用字段选择 level 或 budget。
+// GeminiThinkingOptions contains resolved capabilities used to choose level or budget controls.
 type GeminiThinkingOptions struct {
 	// ControlsKnown distinguishes omitted options from an explicitly empty set.
 	ControlsKnown        bool
@@ -73,7 +73,7 @@ func ParseGeminiThinkingInput(body []byte) GeminiThinkingInput {
 	return result
 }
 
-// ResolveGeminiThinking 生成互斥的 thinkingLevel 或 thinkingBudget，缺少控制时使用上游默认行为。
+// ResolveGeminiThinking selects mutually exclusive level or budget controls; absent input leaves upstream defaults.
 func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOptions) (*GeminiThinkingConfig, error) {
 	if input.Enabled == nil && input.Effort == "" && input.Budget == nil {
 		return nil, nil

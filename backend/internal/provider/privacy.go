@@ -24,7 +24,7 @@ type PrivacyProxyReader interface {
 	GetByID(context.Context, int64) (*egress.Proxy, error)
 }
 
-// PrivacyOptions 提供平台请求和状态记录接口。
+// PrivacyOptions supplies platform privacy requests and observation callbacks.
 type PrivacyOptions struct {
 	OpenAI       func(context.Context, string, string) string
 	Antigravity  func(context.Context, string, string, string) string
@@ -77,7 +77,8 @@ func ApplyAntigravityPrivacyMode(value *Record, mode string) {
 	value.Extra = extra
 }
 
-// proxyURL 区分没有代理与代理失效，后者不能退回空 URL 发起直连。
+// proxyURL distinguishes direct access from an unavailable configured proxy, which must not trigger direct
+// access.
 func (s *PrivacyService) proxyURL(ctx context.Context, value *Record) (string, bool) {
 	if value.ProxyID == nil {
 		return "", true
@@ -99,7 +100,7 @@ func (s *PrivacyService) apply(ctx context.Context, value *Record, platform stri
 		return ""
 	}
 	if platform == PlatformOpenAI {
-		// 保留管理入口的影子拒绝；后台入口的资格由其刷新准入先行决定。
+		// Administrative operations reject shadows; the refresh caller checks eligibility before this path.
 		if operation != privacyRefresh && value.IsCredentialShadow() {
 			return ""
 		}
@@ -215,7 +216,7 @@ func (s *PrivacyService) RefreshAntigravityPrivacy(ctx context.Context, v *Recor
 	s.apply(ctx, v, PlatformAntigravity, privacyRefresh)
 }
 
-// StopContext 取消并等待隐私请求，app 等待已排队任务完成，后续调用返回停止错误。
+// StopContext cancels and waits for privacy operations. Later privacy calls return empty results.
 func (s *PrivacyService) StopContext(ctx context.Context) error {
 	return s.activity.stop(ctx, "provider privacy maintenance")
 }

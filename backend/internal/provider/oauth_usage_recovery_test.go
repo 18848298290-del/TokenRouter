@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 成功用量查询的迟到恢复只能清理本轮观察到的错误身份。
+// usageRecoveryRaceRepo models identity checks that reject recovery after an administrator changes the record.
 type usageRecoveryRaceRepo struct {
 	OAuthUsageReader
 	current *Record
 	writes  int
 }
 
-// ClearUsageErrorIfUnchanged 比较当前行的身份字段，发生冲突时返回 false。
+// ClearUsageErrorIfUnchanged returns false when the current identity or error differs from the observation.
 func (r *usageRecoveryRaceRepo) ClearUsageErrorIfUnchanged(ctx context.Context, v UsageRecoveryVersion) (bool, error) {
 	c := r.current
 	if c.ID != v.ID || c.Platform != v.Platform || c.Type != v.Type || c.Status != v.Status || c.ErrorMessage != v.ErrorMessage || !reflect.DeepEqual(c.Credentials, v.Credentials) || !reflect.DeepEqual(c.ProxyID, v.ProxyID) {

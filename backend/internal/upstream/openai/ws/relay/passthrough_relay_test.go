@@ -15,7 +15,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// MetricsSnapshot 记录用量解析失败次数。
+// MetricsSnapshot counts usage parsing failures.
 type MetricsSnapshot struct {
 	UsageParseFailureTotal int64
 }
@@ -47,10 +47,10 @@ type cancelJoinProbeFrameConn struct {
 	returnOnce   sync.Once
 }
 
-// errorOnWriteFrameConn 是一个写入总是失败的 FrameConn 实现，用于测试首包写入失败。
+// errorOnWriteFrameConn fails every write to test first-frame failure handling.
 type errorOnWriteFrameConn struct{}
 
-// SnapshotMetrics 返回当前 passthrough 指标快照。
+// SnapshotMetrics returns the current passthrough usage-parse failure count.
 func SnapshotMetrics() MetricsSnapshot {
 	return MetricsSnapshot{
 		UsageParseFailureTotal: passthroughUsageParseFailureTotal.Load(),
@@ -541,7 +541,7 @@ func TestOpenAICacheCreationTokensFromUsageNestedZeroWins(t *testing.T) {
 func TestEmitTurnCompleteCoverage(t *testing.T) {
 	t.Parallel()
 
-	// 非 terminal 事件不应触发。
+	// Nonterminal events do not complete a turn.
 	called := 0
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
@@ -553,7 +553,7 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 	})
 	require.Equal(t, 0, called)
 
-	// 非 error 终态缺少 response_id 时不应触发。
+	// A non-error terminal event requires a response ID to complete a turn.
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
 	}, &relayState{requestModel: "gpt-5"}, observedUpstreamEvent{
@@ -578,7 +578,7 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 	require.Equal(t, "error", bareError.TerminalEventType)
 	require.Equal(t, Usage{InputTokens: 4, OutputTokens: 1}, bareError.Usage)
 
-	// terminal 且 response_id 存在，应该触发；state=nil 时 model 为空串。
+	// A terminal event with a response ID completes a turn; nil state leaves its request model empty.
 	var got RelayTurnResult
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
@@ -662,7 +662,6 @@ func TestRelayTurnTimingHelpersCoverage(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(100, 0)
-	// nil state
 	require.Nil(t, openAIWSRelayGetOrInitTurnTiming(nil, "resp_nil", now))
 	_, ok := openAIWSRelayDeleteTurnTiming(nil, "resp_nil")
 	require.False(t, ok)
@@ -672,17 +671,15 @@ func TestRelayTurnTimingHelpersCoverage(t *testing.T) {
 	require.NotNil(t, timing)
 	require.Equal(t, now, timing.startAt)
 
-	// 再次获取返回同一条 timing
+	// Repeated lookup keeps the initial start time.
 	timing2 := openAIWSRelayGetOrInitTurnTiming(state, "resp_a", now.Add(5*time.Second))
 	require.NotNil(t, timing2)
 	require.Equal(t, now, timing2.startAt)
 
-	// 删除存在键
 	deleted, ok := openAIWSRelayDeleteTurnTiming(state, "resp_a")
 	require.True(t, ok)
 	require.Equal(t, now, deleted.startAt)
 
-	// 删除不存在键
 	_, ok = openAIWSRelayDeleteTurnTiming(state, "resp_a")
 	require.False(t, ok)
 }
@@ -698,7 +695,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 		return now
 	}
 
-	// 非 terminal 事件的顶层 id 是事件标识。
+	// A nonterminal top-level ID identifies the event, not the response.
 	observed := observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.output_text.delta","id":"evt_123","delta":"hi"}`),
@@ -710,7 +707,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	require.False(t, observed.terminal)
 	require.Equal(t, "", observed.responseID)
 
-	// terminal 事件缺少响应标识时使用顶层 id。
+	// Terminal events may use a top-level ID when the response ID is absent.
 	observed = observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","id":"resp_fallback","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -764,7 +761,7 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 	enrichResult(&result, state, now.Sub(startAt))
 	require.Equal(t, "default", result.ResponseServiceTier)
 
-	// 后续未声明档位的 turn 不应继承上一轮结果。
+	// A later turn without a tier must not inherit the previous turn's value.
 	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"resp_2","model":"gpt-5.6-sol"}}`), startAt, nowFn, nil, nil)
 	second := observeUpstreamMessage(
 		state,
@@ -777,7 +774,7 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 	require.Equal(t, "", second.responseServiceTier)
 }
 
-// TestRelayResponseModelsAreIsolated 验证交错 turn 不共享模型，终态可修正首次声明。
+// TestRelayResponseModelsAreIsolated checks per-turn model tracking and terminal model corrections.
 func TestRelayResponseModelsAreIsolated(t *testing.T) {
 	state := &relayState{requestModel: "sent"}
 	start := time.Now()
@@ -980,16 +977,16 @@ func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {
 func TestRelay_UpstreamDisconnect(t *testing.T) {
 	t.Parallel()
 
-	// 上游立即关闭（EOF），客户端不发送额外帧
+	// The upstream closes before declaring a response; the client sends no additional frames.
 	clientConn := newPassthroughTestFrameConn(nil, false)
-	upstreamConn := newPassthroughTestFrameConn(nil, true) // 立即 close -> EOF
+	upstreamConn := newPassthroughTestFrameConn(nil, true)
 
 	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	// 上游 EOF 属于 disconnect，标记为 graceful
+	// EOF is graceful here because no upstream response ID established an active turn.
 	require.Nil(t, relayExit, "上游 EOF 应被视为 graceful disconnect")
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
@@ -1029,8 +1026,8 @@ func TestRelay_UpstreamNormalCloseBeforeTerminalIsFailure(t *testing.T) {
 func TestRelay_ClientDisconnect(t *testing.T) {
 	t.Parallel()
 
-	// 客户端立即关闭（EOF），上游阻塞读取直到 context 取消
-	clientConn := newPassthroughTestFrameConn(nil, true) // 立即 close -> EOF
+	// The client closes immediately while the upstream read waits for cancellation.
+	clientConn := newPassthroughTestFrameConn(nil, true)
 	upstreamConn := newPassthroughTestFrameConn(nil, false)
 
 	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
@@ -1080,7 +1077,7 @@ func TestRelay_ClientDisconnect_DrainCapturesLateUsage(t *testing.T) {
 func TestRelay_IdleTimeout(t *testing.T) {
 	t.Parallel()
 
-	// 客户端和上游都不发送帧，idle timeout 应触发
+	// Neither peer sends more frames, so the relay reaches its idle timeout.
 	clientConn := newPassthroughTestFrameConn(nil, false)
 	upstreamConn := newPassthroughTestFrameConn(nil, false)
 
@@ -1088,16 +1085,15 @@ func TestRelay_IdleTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 使用快进时间来加速 idle timeout
+	// Advance the clock after initialization to trigger the watchdog quickly.
 	now := time.Now()
 	callCount := 0
 	nowFn := func() time.Time {
 		callCount++
-		// 前几次调用返回正常时间（初始化阶段），之后快进
 		if callCount <= 5 {
 			return now
 		}
-		return now.Add(time.Hour) // 快进到超时
+		return now.Add(time.Hour)
 	}
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{
@@ -1217,7 +1213,7 @@ func TestRelay_NilConnections(t *testing.T) {
 func TestRelay_MultipleUpstreamMessages(t *testing.T) {
 	t.Parallel()
 
-	// 上游发送多个事件（delta + completed），验证多帧中继和 usage 聚合
+	// Relay deltas and a completion frame, including the terminal usage.
 	clientConn := newPassthroughTestFrameConn(nil, false)
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 		{
@@ -1247,7 +1243,6 @@ func TestRelay_MultipleUpstreamMessages(t *testing.T) {
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 	require.NotNil(t, result.FirstTokenMs)
 
-	// 验证所有 3 个上游帧都转发给了客户端
 	clientWrites := clientConn.Writes()
 	require.Len(t, clientWrites, 3)
 }
@@ -1533,7 +1528,7 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 func TestRelay_BinaryFramePassthrough(t *testing.T) {
 	t.Parallel()
 
-	// 验证 binary frame 被透传但不进行 usage 解析
+	// Binary frames pass through unchanged and contribute no usage.
 	binaryPayload := []byte{0x00, 0x01, 0x02, 0x03}
 	clientConn := newPassthroughTestFrameConn(nil, false)
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
@@ -1549,7 +1544,6 @@ func TestRelay_BinaryFramePassthrough(t *testing.T) {
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
 	require.Nil(t, relayExit)
-	// binary frame 不解析 usage
 	require.Equal(t, 0, result.Usage.InputTokens)
 
 	clientWrites := clientConn.Writes()
@@ -1633,7 +1627,7 @@ func TestRelay_PreservesFirstMessageType(t *testing.T) {
 func TestRelay_UsageParseFailureDoesNotBlockRelay(t *testing.T) {
 	baseline := SnapshotMetrics().UsageParseFailureTotal
 
-	// 上游发送无效 JSON（非 usage 格式），不应影响透传
+	// The JSON is valid but usage has the wrong type; forwarding must continue.
 	clientConn := newPassthroughTestFrameConn(nil, false)
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 		{
@@ -1648,11 +1642,10 @@ func TestRelay_UsageParseFailureDoesNotBlockRelay(t *testing.T) {
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
 	require.Nil(t, relayExit)
-	// usage 解析失败，值为 0 但不影响透传
+	// Invalid usage contributes zero tokens while the terminal event remains observable.
 	require.Equal(t, 0, result.Usage.InputTokens)
 	require.Equal(t, "response.completed", result.TerminalEventType)
 
-	// 帧仍然被转发
 	clientWrites := clientConn.Writes()
 	require.Len(t, clientWrites, 1)
 	require.GreaterOrEqual(t, SnapshotMetrics().UsageParseFailureTotal, baseline+1)
@@ -1661,11 +1654,10 @@ func TestRelay_UsageParseFailureDoesNotBlockRelay(t *testing.T) {
 func TestRelay_WriteUpstreamFirstMessageFails(t *testing.T) {
 	t.Parallel()
 
-	// 上游连接立即关闭，首包写入失败
 	upstreamConn := newPassthroughTestFrameConn(nil, true)
 	_ = upstreamConn.Close()
 
-	// 覆盖 WriteFrame 使其返回错误
+	// Use the failing writer for the relay's first upstream frame.
 	errConn := &errorOnWriteFrameConn{}
 	clientConn := newPassthroughTestFrameConn(nil, false)
 
@@ -1686,12 +1678,11 @@ func TestRelay_ContextCanceled(t *testing.T) {
 
 	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
 
-	// 立即取消 context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	_, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	// context 取消导致写首包失败
+	// Cancellation prevents the first upstream write.
 	require.NotNil(t, relayExit)
 }
 

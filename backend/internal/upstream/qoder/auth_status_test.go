@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// decodeAuthStatusRequest 解码并校验测试请求中的 Gateway 外层载荷。
+// decodeAuthStatusRequest decodes and validates the Gateway test request envelope.
 func decodeAuthStatusRequest(t *testing.T, r *http.Request) (gatewayHTTPPayload, AuthStatusParams) {
 	t.Helper()
 	decoded, err := DecodeString(readAllString(t, r))
@@ -29,7 +29,7 @@ func decodeAuthStatusRequest(t *testing.T, r *http.Request) (gatewayHTTPPayload,
 	return envelope, params
 }
 
-// mapKeys 返回 JSON 对象的字段名，供测试校验外层载荷没有多余字段。
+// mapKeys exposes the JSON field set so tests can reject unexpected envelope fields.
 func mapKeys(values map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {

@@ -24,8 +24,8 @@ import (
 
 type grokUpstreamFrames struct{ conn openai.WSClientConn }
 
-// ForwardGrokVoice 转发官方 xAI Voice HTTP API，包括 TTS、STT 和自定义 Voice 子资源。
-// TTS 返回音频字节、STT 返回 JSON，且 xAI 可能附加格式专用响应头，因此响应保持透传。
+// ForwardGrokVoice forwards xAI TTS, STT, and custom Voice HTTP resources.
+// Pass responses through because TTS returns audio, STT returns JSON, and each can have format-specific headers.
 func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, endpoint string, body []byte, contentType string) (*forwardcore.OpenAIResult, error) {
 	if s == nil || provider == nil {
 		return nil, fmt.Errorf("grok voice service/provider is required")
@@ -141,7 +141,8 @@ func (s *GrokExecutor) OpenGrokRealtime(ctx context.Context, provider *gatewaypr
 	return mediaprovider.DialRealtime(ctx, s.grokRealtimeOptions(provider, base, token, model))
 }
 
-// HandleGrokRealtimeUpstreamError 为下游升级前失败的 WebSocket 握手应用共享 Grok 提供商策略。
+// HandleGrokRealtimeUpstreamError applies Grok provider policy to a failed handshake before downstream WebSocket
+// upgrade.
 func (s *GrokExecutor) HandleGrokRealtimeUpstreamError(ctx context.Context, provider *gatewayprovider.ExecutionProvider, statusCode int, body []byte) {
 	if statusCode <= 0 {
 		statusCode = http.StatusBadGateway
@@ -159,7 +160,7 @@ func (c grokUpstreamFrames) WriteFrame(ctx context.Context, _ upstreamcore.Frame
 }
 func (c grokUpstreamFrames) Close() error { return c.conn.Close() }
 
-// grokRealtimeOptions 装配既有 WS dialer、代理和 TLS 快照，不更改共享客户端。
+// grokRealtimeOptions binds the shared dialer with this provider's proxy and TLS settings.
 func (s *GrokExecutor) grokRealtimeOptions(provider *gatewayprovider.ExecutionProvider, base, token, model string) mediaprovider.RealtimeOptions {
 	proxyURL := ""
 	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
@@ -185,7 +186,7 @@ func (s *GrokExecutor) grokRealtimeOptions(provider *gatewayprovider.ExecutionPr
 	return options
 }
 
-// RelayGrokRealtimeFrames 只连接原生帧中继；入站升级与槽位由媒体 HTTP/core 拥有。
+// RelayGrokRealtimeFrames relays frames; media HTTP and core code own the inbound upgrade and concurrency slots.
 func (s *GrokExecutor) RelayGrokRealtimeFrames(ctx context.Context, client, server upstreamcore.FrameConn) (bool, error) {
 	return grok.RelayRealtime(ctx, client, server)
 }

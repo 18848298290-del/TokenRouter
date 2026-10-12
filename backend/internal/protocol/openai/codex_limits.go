@@ -23,8 +23,8 @@ type NormalizedCodexLimits struct {
 }
 
 // Normalize converts primary/secondary fields to canonical 5h/7d fields.
-// Strategy: Compare window_minutes to determine which is 5h vs 7d.
-// Returns nil if snapshot is nil or has no useful data.
+// It classifies windows by duration; absent durations use primary=7d and secondary=5h.
+// A nil snapshot returns nil; an empty snapshot returns a struct with nil fields.
 func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 	if s == nil {
 		return nil
@@ -46,31 +46,28 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 		hasSecondaryWindow = true
 	}
 
-	// Determine mapping based on window_minutes
 	use5hFromPrimary := false
 	use7dFromPrimary := false
 
 	if hasPrimaryWindow && hasSecondaryWindow {
-		// Both known: smaller window is 5h, larger is 7d
+		// The shorter window maps to 5h; ties map primary to 7d.
 		if primaryMins < secondaryMins {
 			use5hFromPrimary = true
 		} else {
 			use7dFromPrimary = true
 		}
 	} else if hasPrimaryWindow {
-		// Only primary known: classify by threshold (<=360 min = 6h -> 5h window)
+		// With one known duration, use six hours as the short-window threshold.
 		if primaryMins <= 360 {
 			use5hFromPrimary = true
 		} else {
 			use7dFromPrimary = true
 		}
 	} else if hasSecondaryWindow {
-		// Only secondary known: classify by threshold
+		// Apply the same threshold when only the secondary duration is known.
 		if secondaryMins <= 360 {
-			// 5h from secondary, so primary (if any data) is 7d
 			use7dFromPrimary = true
 		} else {
-			// 7d from secondary, so primary (if any data) is 5h
 			use5hFromPrimary = true
 		}
 	} else {
@@ -78,7 +75,6 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 		use7dFromPrimary = true
 	}
 
-	// Assign values
 	if use5hFromPrimary {
 		result.Used5hPercent = s.PrimaryUsedPercent
 		result.Reset5hSeconds = s.PrimaryResetAfterSeconds

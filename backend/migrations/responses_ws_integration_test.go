@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestResponsesWSMigration 验证旧模式转换、空协议集合和重复执行。
+// TestResponsesWSMigration checks legacy mode conversion, empty protocol sets, and replay.
 func TestResponsesWSMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("responses_ws"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())

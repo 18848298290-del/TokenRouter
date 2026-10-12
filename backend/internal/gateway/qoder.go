@@ -23,19 +23,19 @@ const (
 	FailureUpstream       FailureStage = "upstream"
 )
 
-// Request 使用已认证主体及最终路由计划，不定义第二套身份或路由实体。
+// Request carries the authenticated subject and final routing plan.
 type Request = execution.Request
 
 type FailureStage string
 
-// Failure 保留原始错误与失败阶段，协议状态码由 HTTP 适配器映射。
+// Failure holds the cause and failed stage; the HTTP adapter maps protocol status codes.
 type Failure struct {
 	Stage     FailureStage
 	Cause     error
 	Attempted bool
 }
 
-// Selection 的回调提供当前执行目标，不拥有重试循环或共享状态。
+// Selection provides the current execution target and attempt callbacks.
 type Selection struct {
 	WaitWithoutCounter bool
 	Snapshot           provider.ProviderSnapshot
@@ -52,7 +52,7 @@ type Selection struct {
 	Switched           func()
 }
 
-// RequestPorts 由 app 绑定请求服务，Check(afterWait) 复查资金，RPM 在等待前累计。
+// RequestPorts binds request services; Check(afterWait) rechecks funds after waiting, with RPM counted before waiting.
 type RequestPorts struct {
 	Concurrency    *scheduler.ConcurrencyService
 	Check          func(context.Context, bool) error
@@ -64,7 +64,7 @@ type RequestPorts struct {
 	QueueFailure   func(string, error)
 }
 
-// QoderUseCase 只保存静态尝试上限和等待预算，所有请求状态位于 Run 栈上。
+// QoderUseCase holds execution dependencies and limits; Run keeps per-request state locally.
 type QoderUseCase struct {
 	MaxProviders int
 	WaitTimeout  time.Duration
@@ -85,13 +85,13 @@ func NewQoderUseCase(maxProviders int, waitTimeout time.Duration) *QoderUseCase 
 	return &QoderUseCase{MaxProviders: maxProviders, WaitTimeout: waitTimeout}
 }
 
-// Run 贯通已有准入、Lease、平台执行与完成处理，只有这里拥有本请求的提供商尝试循环。
+// Run manages admission, leases, provider attempts, and completion through one provider loop.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#qoder_gateway_execution
 func (u *QoderUseCase) Run(ctx context.Context, request Request, ports RequestPorts, output *OutputTracker) error {
 	return u.run(ctx, request, ports, output, nil)
 }
 
-// run 为测试和执行入口提供提供商尝试循环。
+// run executes the provider loop with optional result capture.
 func (u *QoderUseCase) run(ctx context.Context, request Request, ports RequestPorts, output *OutputTracker, execution *ExecutionResult) error {
 	if u.Enter != nil {
 		done, err := u.Enter()
@@ -115,7 +115,7 @@ func (u *QoderUseCase) run(ctx context.Context, request Request, ports RequestPo
 	lease := scheduler.NewLease(ctx, mode)
 	defer lease.Release()
 	if ports.Concurrency != nil {
-		// 保留 Qoder 在首次抢用户槽前登记外层等待名额的时机。
+		// Reserve a user wait-queue position before the first slot acquisition.
 		waiting, waitErr := ports.Concurrency.EnterUserWait(ctx, request.UserID, scheduler.CalculateMaxWait(request.Concurrency))
 		defer waiting.Release()
 		if waitErr != nil {

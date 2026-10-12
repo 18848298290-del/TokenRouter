@@ -20,13 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// OpenAICountTarget 提供选择快照读取和计数执行接口。
+// OpenAICountTarget supplies the selected provider snapshot and token-count execution.
 type OpenAICountTarget interface {
 	Snapshot() provider.ProviderSnapshot
 	ForwardCount(context.Context, *gin.Context, []byte, string) error
 }
 
-// InputTokensTarget 保留单次尝试的原生预检与重试预算。
+// InputTokensTarget performs native preflight with a per-attempt retry budget.
 type InputTokensTarget interface {
 	Snapshot() provider.ProviderSnapshot
 	RetryLimit() int
@@ -38,7 +38,8 @@ type InputTokensSelection struct {
 	Release func()
 }
 
-// OpenAITokenExecution 是计数所需的受控执行能力；不包含资金写入或完成提交。
+// OpenAITokenExecution supplies token-count execution capabilities without funding writes or completion
+// submission.
 type OpenAITokenExecution interface {
 	PlanTokenRoute(context.Context, *apikey.APIKey, string) routing.RoutePlan
 	TokenSessionHash(*gin.Context, []byte) string
@@ -50,7 +51,7 @@ type TokenFunding interface {
 	CheckKey(context.Context, *apikey.APIKey, *billing.UserSubscription, string, bool) error
 }
 
-// OpenAITokenPorts 固定绑定只读用例和共享实例，每个请求单独构造尝试状态。
+// OpenAITokenPorts binds shared readers and services; each request creates its own attempt state.
 type OpenAITokenPorts struct {
 	Diagnoser           routing.ModelAvailabilityDiagnoser
 	ResolvedDiagnoser   routing.ModelAvailabilityDiagnoser
@@ -132,7 +133,7 @@ func (OpenAITokenPorts) AuthLatency(c *gin.Context, ms int64) {
 	SetOpsLatencyMs(c, OpsAuthLatencyMsKey, ms)
 }
 
-// tokenSelectionError 分别记录模型不支持和容量不足。
+// tokenSelectionError distinguishes unsupported models from capacity exhaustion.
 func tokenSelectionError(c *gin.Context, diagnose routing.ModelAvailabilityDiagnoser, key *apikey.APIKey, routingModel, displayModel string) SelectionErrorResponse {
 	var group *int64
 	if key != nil {
@@ -145,7 +146,7 @@ func tokenSelectionError(c *gin.Context, diagnose routing.ModelAvailabilityDiagn
 	return result
 }
 
-// OpenAICompatibleSelectionErrorForLog 保持 Grok 计数选择日志的原平台替换。
+// OpenAICompatibleSelectionErrorForLog replaces OpenAI provider labels with Grok labels for Grok requests.
 func OpenAICompatibleSelectionErrorForLog(err error, platform string) error {
 	if err == nil || platform != "grok" {
 		return err

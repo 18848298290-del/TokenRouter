@@ -10,13 +10,13 @@ import (
 
 const CodexAutoPauseStaleAfter = 2 * time.Hour
 
-// QuotaAutoPauseSettings 提供动态阈值，缺省项由调用方使用回退值。
+// QuotaAutoPauseSettings supplies default thresholds for providers without overrides.
 type QuotaAutoPauseSettings struct {
 	DefaultThreshold5h float64 `json:"default_threshold_5h"`
 	DefaultThreshold7d float64 `json:"default_threshold_7d"`
 }
 
-// QuotaAutoPauseDecision 仅表达窗口裁决，不写数据库或调度缓存。
+// QuotaAutoPauseDecision describes the quota window that triggered a pause.
 type QuotaAutoPauseDecision struct {
 	Window                 string
 	Threshold, Utilization float64
@@ -32,8 +32,8 @@ func quotaClamp(value float64) float64 {
 	return value
 }
 
-// ResolveProviderExtraBool 从提供商 extra 中读取类 bool 值，并兼容 JSON 反序列化
-// 可能产生的几种形态（bool、"true"/"false" 字符串、0/1 数字）。
+// ResolveProviderExtraBool reads booleans, ParseBool-compatible strings, and numeric values from extra.
+// Nonzero supported numeric values are true; missing or unrecognized values are false.
 func ResolveProviderExtraBool(extra map[string]any, key string) bool {
 	if len(extra) == 0 {
 		return false
@@ -97,7 +97,7 @@ func ResolveProviderExtraNumber(extra map[string]any, keys ...string) (float64, 
 	return 0, false
 }
 
-// ResolveOpenAIQuotaUtilization 返回有效窗口利用率，已重置或陈旧的快照按可用处理。
+// ResolveOpenAIQuotaUtilization returns a window utilization ratio; reset or stale snapshots are ignored.
 func ResolveOpenAIQuotaUtilization(extra map[string]any, window string, now time.Time) (float64, bool) {
 	usedPercent := ReadOpenAIQuotaUsedPercent(extra, window)
 	if usedPercent <= 0 {
@@ -106,15 +106,15 @@ func ResolveOpenAIQuotaUtilization(extra map[string]any, window string, now time
 	if OpenAIQuotaWindowReset(extra, window, now) {
 		return 0, false
 	}
-	// 快照陈旧时允许请求通过，随后用响应头更新快照，
-	// 提供商可重新取得当前窗口的用量（issue #2994）。
+	// Allow requests through when the snapshot is stale so response headers can refresh
+	// the current window usage (issue #2994).
 	if OpenAICodexSnapshotStaleForPause(extra, now) {
 		return 0, false
 	}
 	return usedPercent / 100, true
 }
 
-// OpenAICodexSnapshotStaleForPause 按写入时间判断快照是否陈旧，时间缺失或无法解析时视为有效。
+// OpenAICodexSnapshotStaleForPause checks snapshot age; missing or invalid timestamps are treated as fresh.
 func OpenAICodexSnapshotStaleForPause(extra map[string]any, now time.Time) bool {
 	if len(extra) == 0 {
 		return false
@@ -130,7 +130,7 @@ func OpenAICodexSnapshotStaleForPause(extra map[string]any, now time.Time) bool 
 	return now.Sub(updatedAt) >= CodexAutoPauseStaleAfter
 }
 
-// OpenAIQuotaWindowReset 优先绝对重置时间，再使用以快照写入时间为基准的相对秒数。
+// OpenAIQuotaWindowReset prefers an absolute reset time, then relative seconds from the snapshot time.
 func OpenAIQuotaWindowReset(extra map[string]any, window string, now time.Time) bool {
 	if len(extra) == 0 {
 		return false
@@ -185,9 +185,9 @@ func EvaluateQuotaAutoPause(platform string, extra map[string]any, settings Quot
 	if platform != PlatformOpenAI {
 		return false, QuotaAutoPauseDecision{}
 	}
-	// 提供商的禁用标记优先于全局默认值。提供商阈值留空时表示“使用全局默认”，
-	// 一旦存在全局默认值，管理员就无法让单个提供商豁免自动暂停。
-	// 禁用标记按窗口拆分，因此提供商可以只退出 5h 或只退出 7d 自动暂停。
+	// Per-window disable flags override global defaults. Empty provider thresholds inherit defaults,
+	// so an explicit disable flag lets administrators exempt an individual provider.
+	// The 5h and 7d windows can be disabled independently.
 	disabled5h := ResolveProviderExtraBool(extra, "auto_pause_5h_disabled")
 	disabled7d := ResolveProviderExtraBool(extra, "auto_pause_7d_disabled")
 	threshold5h, threshold7d := ResolveQuotaAutoPauseThresholds(extra, settings)

@@ -17,13 +17,13 @@ const (
 	subscriptionExpiryReminderSendTimeout         = 30 * time.Second
 	subscriptionExpiryReminderSMTPWarningInterval = time.Minute
 	subscriptionExpiryReminderLeaderLockKey       = "subscription:expiry:reminder:leader"
-	// 提醒扫描可能分页遍历大量订阅，锁存活时间需要明显长于单轮扫描时间。
+	// The lease covers a paginated reminder scan, which can outlast an individual database operation.
 	subscriptionExpiryReminderLeaderLockTTL = 5 * time.Minute
 )
 
 var ErrReminderTransportUnconfigured = errors.New("subscription reminder transport is not configured")
 
-// ExpiryReminder 是资格与阈值判断完成后的通知事实，发送器只负责投递。
+// ExpiryReminder contains a reminder already selected by eligibility and timing rules for delivery.
 type ExpiryReminder struct {
 	UserID, SubscriptionID                  int64
 	RecipientEmail, RecipientName, PlanName string
@@ -32,7 +32,7 @@ type ExpiryReminder struct {
 	PlanLocalization                        PlanLocalization
 }
 
-// ExpiryNotifier 由通知适配层报告配置状态并投递提醒。
+// ExpiryNotifier reports delivery readiness and sends subscription reminders.
 type ExpiryNotifier interface {
 	Ready(context.Context) error
 	Send(context.Context, ExpiryReminder) error
@@ -43,7 +43,7 @@ type ExpirySettings interface {
 }
 type ExpiryLease func(context.Context, string, string, time.Duration) (func(), bool)
 
-// ExpiryOptions 配置订阅过期任务的周期、时钟和锁。后台任务由 Start 启动。
+// ExpiryOptions configures the expiry scan's interval, clock, and lease; Start launches the worker.
 type ExpiryOptions struct {
 	Interval time.Duration
 	Owner    string
@@ -54,7 +54,7 @@ type ExpiryOptions struct {
 	Lease    ExpiryLease
 }
 
-// SubscriptionExpiryService 唯一拥有过期扫描、提醒规则及运行资源。
+// SubscriptionExpiryService owns expiry scanning, reminder selection, and worker lifecycle.
 type SubscriptionExpiryService struct {
 	userSubRepo                                                       UserSubscriptionRepository
 	settingRepo                                                       ExpirySettings
@@ -85,7 +85,7 @@ func NewSubscriptionExpiryService(repo UserSubscriptionRepository, options Expir
 	return &SubscriptionExpiryService{userSubRepo: repo, settingRepo: options.Settings, notificationEmailService: options.Notifier, interval: options.Interval, updateTimeout: subscriptionExpiryUpdateTimeout, reminderListTimeout: subscriptionExpiryReminderListTimeout, reminderSendTimeout: subscriptionExpiryReminderSendTimeout, instanceID: options.Owner, now: options.Now, observe: options.Observe, lease: options.Lease, done: make(chan struct{})}
 }
 
-// Start 只启动一次；绑定在构造后完成，停止后不重新开启扫描。
+// Start launches at most one worker and cannot restart a stopped service.
 func (s *SubscriptionExpiryService) Start() {
 	if s == nil {
 		return
@@ -117,7 +117,7 @@ func (s *SubscriptionExpiryService) Start() {
 	}()
 }
 
-// StopContext 取消扫描并等待在途存储和投递；调用者预算约束实际等待。
+// StopContext cancels scanning and waits for in-flight work until the caller's context expires.
 func (s *SubscriptionExpiryService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -293,7 +293,7 @@ func subscriptionReminderPlanName(sub *UserSubscription) string {
 	return sub.Plan.Name
 }
 
-// isFalseReminderSetting 设置值与旧入口保持同一缺省语义，空字符串仍启用提醒。
+// isFalseReminderSetting recognizes disabled values; an empty or unrecognized value leaves reminders enabled.
 func isFalseReminderSetting(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "false", "0", "off", "disabled":

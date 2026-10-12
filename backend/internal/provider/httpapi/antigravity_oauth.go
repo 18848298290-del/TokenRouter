@@ -30,7 +30,7 @@ type AntigravityRefreshTokenRequest struct {
 	ProxyID      *int64 `json:"proxy_id"`
 }
 
-// AntigravityAuthorizationUseCase 只暴露管理授权所需的三个操作。
+// AntigravityAuthorizationUseCase provides authorization URL, code exchange, and refresh-token validation operations.
 type AntigravityAuthorizationUseCase interface {
 	GenerateAuthURL(context.Context, *int64) (*provider.AntigravityAuthURLResult, error)
 	ExchangeCode(context.Context, *provider.AntigravityExchangeCodeInput) (*provider.AntigravityTokenInfo, error)
@@ -59,7 +59,7 @@ func (h *AntigravityOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ExchangeCode 用 authorization code 交换 token
+// ExchangeCode exchanges an authorization code for tokens.
 // POST /api/v1/admin/antigravity/oauth/exchange-code
 func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req AntigravityExchangeCodeRequest

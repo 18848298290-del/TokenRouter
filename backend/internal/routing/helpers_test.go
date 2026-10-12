@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// groupAvailabilityProbeRunnerRepoStub 记录领取参数，并可阻塞首轮领取以验证 runner 非重入。
+// groupAvailabilityProbeRunnerRepoStub records claims and can block the first claim to test overlapping rounds.
 type groupAvailabilityProbeRunnerRepoStub struct {
 	mu           sync.Mutex
 	claimCalls   int

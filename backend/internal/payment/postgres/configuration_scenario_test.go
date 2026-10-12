@@ -1,6 +1,6 @@
 package postgres_test
 
-// 本场景覆盖 payment/configuration.go、payment/configuration_limits.go、payment/configuration_providers.go、payment/visible_methods.go、payment/types.go，以及本包 instances.go、management.go 的配置存取。
+// These scenarios cover payment configuration, limits, providers, visible methods, and types, with persistence through instances.go and management.go.
 
 import (
 	"context"
@@ -165,15 +165,15 @@ func TestPcGroupByPaymentType(t *testing.T) {
 
 		groups := payment.ConfigPcGroupByPaymentType([]*payment.ProviderInstance{stripe, easypay})
 
-		// Stripe 实例归入 stripe 分组。
+		// Stripe instances share the stripe group.
 		if len(groups[payment.TypeStripe]) != 1 || groups[payment.TypeStripe][0].ID != 1 {
 			t.Fatalf("stripe group should contain only stripe instance, got %v", groups[payment.TypeStripe])
 		}
-		// alipay 分组包含 EasyPay 实例。
+		// EasyPay supplies the alipay group.
 		if len(groups[payment.TypeAlipay]) != 1 || groups[payment.TypeAlipay][0].ID != 2 {
 			t.Fatalf("alipay group should contain only easypay instance, got %v", groups[payment.TypeAlipay])
 		}
-		// wxpay 分组包含 EasyPay 实例。
+		// EasyPay also supplies the wxpay group.
 		if len(groups[payment.TypeWxpay]) != 1 || groups[payment.TypeWxpay][0].ID != 2 {
 			t.Fatalf("wxpay group should contain only easypay instance, got %v", groups[payment.TypeWxpay])
 		}
@@ -732,7 +732,7 @@ func TestIsSensitiveProviderConfigField(t *testing.T) {
 		field       string
 		wantSen     bool
 	}{
-		// Stripe 的 publishableKey 是公开密钥，secretKey 和 webhookSecret 需要隐藏。
+		// Stripe publishableKey is public; secretKey and webhookSecret are masked.
 		{"stripe", "secretKey", true},
 		{"stripe", "webhookSecret", true},
 		{"stripe", "SecretKey", true}, // case-insensitive
@@ -768,7 +768,7 @@ func TestIsSensitiveProviderConfigField(t *testing.T) {
 		{payment.TypeAirwallex, "accountId", false},
 		{payment.TypeAirwallex, "currency", false},
 
-		// 未知渠道的字段按普通配置处理。
+		// Fields of unknown providers are treated as ordinary configuration.
 		{"unknown", "secretKey", false},
 	}
 

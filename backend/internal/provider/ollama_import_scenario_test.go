@@ -1,6 +1,6 @@
 package provider_test
 
-// 本文件检查 create_record.go 与 crs_sync.go 的 Ollama 管理字段清理。
+// These scenarios check managed Ollama fields during creation and CRS synchronization.
 
 import (
 	"testing"

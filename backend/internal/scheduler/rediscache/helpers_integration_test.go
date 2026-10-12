@@ -25,8 +25,8 @@ type prefixHook struct {
 	prefix string
 }
 
-// IntegrationRedisSuite 提供 Redis 集成测试的上下文和客户端。
-// 嵌入它的测试套件调用 SetupTest 初始化 ctx 和 rdb。
+// IntegrationRedisSuite provides the context and client for Redis integration tests.
+// Embedding suites call SetupTest to initialize ctx and rdb.
 type IntegrationRedisSuite struct {
 	suite.Suite
 	ctx context.Context
@@ -125,7 +125,7 @@ func (h prefixHook) prefixCmd(cmd redisclient.Cmder) {
 	}
 
 	switch strings.ToLower(cmd.Name()) {
-	// GETDEL 与 SET 使用相同测试命名空间，测试才能读取并消费预置的会话。
+	// GETDEL and SET need the same namespace so a test can consume its preseeded session.
 	case "get", "getdel", "set", "setnx", "setex", "psetex", "incr", "decr", "incrby", "expire", "pexpire", "ttl", "pttl",
 		"hgetall", "hget", "hset", "hdel", "hincrbyfloat", "exists",
 		"zadd", "zcard", "zrange", "zrangebyscore", "zrem", "zremrangebyscore", "zrevrange", "zrevrangebyscore", "zscore":
@@ -159,19 +159,19 @@ func (h prefixHook) prefixCmd(cmd redisclient.Cmder) {
 	}
 }
 
-// SetupTest 为每个测试方法初始化上下文和 Redis 客户端。
+// SetupTest initializes a context and Redis client for each test method.
 func (s *IntegrationRedisSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.rdb = testRedis(s.T())
 }
 
-// RequireNoError 使用当前测试检查错误。
+// RequireNoError checks err against the current test.
 func (s *IntegrationRedisSuite) RequireNoError(err error, msgAndArgs ...any) {
 	s.T().Helper()
 	require.NoError(s.T(), err, msgAndArgs...)
 }
 
-// AssertTTLWithin 检查 TTL 是否在 [min, max] 内。
+// AssertTTLWithin checks that ttl lies within the inclusive [min, max] range.
 func (s *IntegrationRedisSuite) AssertTTLWithin(ttl, min, max time.Duration) {
 	s.T().Helper()
 	assertTTLWithin(s.T(), ttl, min, max)

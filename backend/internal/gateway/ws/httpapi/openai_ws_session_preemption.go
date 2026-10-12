@@ -23,7 +23,7 @@ type openAIWSSessionPreemptKey struct {
 
 type openAIWSSessionPreemptContextKey struct{}
 
-// 旧注册表保留零值构造能力；唯一所有者代次与取消表位于 gateway/ws。
+// openAIWSSessionPreemptRegistry is usable at its zero value and embeds gateway-owned generations and cancellation state.
 type openAIWSSessionPreemptRegistry struct{ gatewayws.PreemptRegistry }
 
 // BeginOpenAIWSIngressSessionPreemption keeps a persistent inbound WS session
@@ -113,7 +113,7 @@ func (s *OpenAIWebSocketExecutor) openAIWSSessionPreemptionCache() session.OpenA
 	return cache
 }
 
-// wsPreemption 返回应用实例中的会话依赖。
+// wsPreemption returns this executor's session-preemption dependencies.
 func (s *OpenAIWebSocketExecutor) wsPreemption() *gatewayws.Preemption {
 	return &gatewayws.Preemption{Registry: &s.openaiWSSessionPreemptions.PreemptRegistry, Cache: s.openAIWSSessionPreemptionCache(), State: s.State, RedisTimeout: session.StateStoreRedisTimeout}
 }

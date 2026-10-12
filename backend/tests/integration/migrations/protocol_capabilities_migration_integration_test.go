@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUnifiedProtocolMigration 验证独立 schema 验证真实迁移与重放，包含自定义端点、空集合、禁用图片和异步绑定。
+// TestUnifiedProtocolMigration checks replay, custom endpoints, empty protocol sets, image restrictions, and
+// video-job bindings in an isolated schema.
 func TestUnifiedProtocolMigration(t *testing.T) {
 	tx, err := integrationDB.BeginTx(context.Background(), nil)
 	require.NoError(t, err)

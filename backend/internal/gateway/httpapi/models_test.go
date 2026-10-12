@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// 模型查询测试在读取正文、取得槽位或检查资金时失败。
+// modelForbiddenBody panics if a model query tries to read the request body.
 type modelForbiddenBody struct{}
 
 func (modelForbiddenBody) Read([]byte) (int, error) { panic("models endpoint read request body") }
@@ -39,7 +39,7 @@ func TestModelsBoundEmptyDoesNotFallBackOrConsume(t *testing.T) {
 	require.Empty(t, p.paths)
 }
 
-// TestGeminiModelsEmptyCapabilityDoesNotQueryUpstream 验证空能力目录不能用任何上游目录或内置模型补全。
+// TestGeminiModelsEmptyCapabilityDoesNotQueryUpstream checks that an empty capability catalogue stays empty.
 func TestGeminiModelsEmptyCapabilityDoesNotQueryUpstream(t *testing.T) {
 	p := &modelsBackendStub{key: prefaceKey(), response: &ModelHTTPResponse{StatusCode: 200, Body: []byte(`{"models":[{"name":"models/phantom"}]}`)}}
 	c, w := modelsContext()

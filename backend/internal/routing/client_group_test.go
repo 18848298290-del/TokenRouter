@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle 检查回退循环返回分组限制错误。
+// TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle checks rejection of cyclic group fallbacks.
 func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)
@@ -37,7 +37,8 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	require.Contains(t, err.Error(), "fallback group cycle")
 }
 
-// TestClientGroupResolutionKeepsReadOrder 验证先读取分组、再读取客户端标志，以及未受限目标的短路。
+// TestClientGroupResolutionKeepsReadOrder checks group reads before client checks and short-circuiting for
+// unrestricted groups.
 func TestClientGroupResolutionKeepsReadOrder(t *testing.T) {
 	first, next := int64(1), int64(2)
 	var sequence []string
@@ -59,7 +60,7 @@ func TestClientGroupResolutionKeepsReadOrder(t *testing.T) {
 	require.Equal(t, []string{"first", "client", "next"}, sequence)
 }
 
-// TestClientGroupResolutionKeepsFallbackIDPolicies 检查两个入口对无效回退 ID 的错误优先级。
+// TestClientGroupResolutionKeepsFallbackIDPolicies checks error precedence for invalid fallback IDs.
 func TestClientGroupResolutionKeepsFallbackIDPolicies(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		id, invalid := int64(1), int64(0)
@@ -82,7 +83,7 @@ func TestClientGroupResolutionKeepsFallbackIDPolicies(t *testing.T) {
 	}
 }
 
-// TestClientGroupResolutionKeepsMissingSnapshot 检查缺失快照时返回输入 ID，并记录数据库读取和客户端判断次数。
+// TestClientGroupResolutionKeepsMissingSnapshot checks retained IDs and call counts when a snapshot is missing.
 func TestClientGroupResolutionKeepsMissingSnapshot(t *testing.T) {
 	id := int64(9)
 	group, resolved, err := ResolveClientGroup(context.Background(), &id, func(context.Context, int64) (*Group, error) {

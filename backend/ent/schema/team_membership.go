@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// TeamMembership 保存用户在团队内的角色、限额和自然周期用量。
+// TeamMembership stores a member's role, limits, and calendar-period usage.
 type TeamMembership struct {
 	ent.Schema
 }

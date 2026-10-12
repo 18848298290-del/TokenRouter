@@ -21,19 +21,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// LiveExecution 提供已装配的 Live 用例。
+// LiveExecution provides session creation, lookup, and proxying for Live.
 type LiveExecution interface {
 	Create(context.Context, *session.LiveCallRequest, session.LiveCallIdentity, int) (*gatewaylive.Created, error)
 	Lookup(context.Context, string, session.LiveCallIdentity) (*session.LiveCallRecord, error)
 	Proxy(context.Context, *session.LiveCallRecord, *coderws.Conn) error
 }
 
-// LiveSlots 保留 Live 入口的即时用户槽获取，不进入普通请求等待队列。
+// LiveSlots acquires user slots immediately, without the ordinary request wait queue.
 type LiveSlots interface {
 	AcquireUserSlot(context.Context, int64, int) (*scheduler.AcquireResult, error)
 }
 
-// LivePorts 固定绑定审核、资金、并发与受控 Live 执行入口，不构造旧 Handler。
+// LivePorts binds moderation, funding, concurrency, and Live execution.
 type LivePorts struct {
 	Execution  LiveExecution
 	Funding    TokenFunding
@@ -67,7 +67,6 @@ func (a LivePorts) Subscription(c *gin.Context) (*LiveSubscription, bool) {
 }
 
 func (a LivePorts) Redirect(ctx context.Context, key *LiveAPIKey, model string) (context.Context, string) {
-	// 模型重定向从模型映射读取目标。
 	return APIKeyModelRedirectContext(ctx, &apikey.APIKey{ID: key.ID, ModelMapping: key.ModelMapping}, model)
 }
 

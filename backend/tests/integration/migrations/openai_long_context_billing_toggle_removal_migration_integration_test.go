@@ -20,7 +20,8 @@ func TestMigration241RemovesOpenAILongContextBillingToggleIdempotently(t *testin
 	removalSQL, err := dbmigrations.FS.ReadFile("241_remove_openai_long_context_billing_toggle.sql")
 	require.NoError(t, err)
 
-	// 测试数据库可能已经应用最新迁移，先恢复历史触发器以验证完整升级路径。
+	// The historical database includes the removal migration, so restore the old triggers before testing their
+	// removal.
 	_, err = tx.ExecContext(ctx, string(legacySQL))
 	require.NoError(t, err)
 

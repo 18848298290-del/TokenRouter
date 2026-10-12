@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// anthropicInboundBlockTypes 是 Anthropic Messages 接受的 content block 类型集合。
-// 输出集合外的类型会触发 400 Request body format invalid（issue #5329）。
+// anthropicInboundBlockTypes lists content types accepted by these Messages conversion tests.
+// Responses-only types can trigger Request body format invalid (issue #5329).
 var anthropicInboundBlockTypes = map[string]bool{
 	"text":              true,
 	"image":             true,
@@ -194,8 +194,8 @@ func TestConvertResponsesInputToAnthropic_DeveloperRole(t *testing.T) {
 	})
 }
 
-// TestResponsesToAnthropic_ReasoningItemWithContentIsDropped 检查带 content 的 reasoning 回放项被丢弃（issue #5329）。
-// Anthropic 请求不接受 reasoning_text 块。
+// TestResponsesToAnthropic_ReasoningItemWithContentIsDropped covers replayed reasoning content (issue #5329).
+// Anthropic request content does not accept reasoning_text.
 func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run a shell command"}]},
@@ -208,7 +208,6 @@ func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
 	require.NotContains(t, string(messages[0].Content), "let me think")
 }
 
-// TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped 检查仅含 summary 和 encrypted_content 的 reasoning item 被丢弃。
 func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
@@ -220,7 +219,6 @@ func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T)
 	require.NotContains(t, string(messages[0].Content), "gAAAA")
 }
 
-// TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized 检查未知 item type 中的内容按 Anthropic 支持的分片类型过滤。
 func TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"web_search_call","id":"ws_1","content":[{"type":"web_search_result","text":"payload"}]}
@@ -230,7 +228,6 @@ func TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized(t *testing.T) {
 	require.Empty(t, messages, "整条内容都无法映射时不应发出消息")
 }
 
-// TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText 检查未知 item type 中的可识别文本被保留。
 func TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"some_future_item","content":[
@@ -245,7 +242,7 @@ func TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText(t *testing.T)
 	require.NotContains(t, string(messages[0].Content), "drop me")
 }
 
-// TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped 检查仅含未知分片的 user 消息被丢弃，Anthropic 拒收空内容消息。
+// TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped prevents empty messages after filtering.
 func TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_file","file_id":"file_1"}]}
@@ -255,7 +252,7 @@ func TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped(t *testin
 	require.Empty(t, messages)
 }
 
-// TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped 检查仅含未知分片的 assistant 消息被丢弃，Anthropic 拒收空文本块。
+// TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped prevents empty text blocks after filtering.
 func TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
@@ -267,8 +264,8 @@ func TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped(t *t
 	require.Equal(t, "user", messages[0].Role)
 }
 
-// TestResponsesToAnthropic_BlankTextMessagesAreDropped 验证 user、assistant 和未来 item 中的纯空白文本都必须丢弃；Anthropic 对字符串与
-// text block 使用相同的非空白约束。
+// TestResponsesToAnthropic_BlankTextMessagesAreDropped covers blank strings and text blocks
+// across user, assistant, and unknown item types.
 func TestResponsesToAnthropic_BlankTextMessagesAreDropped(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -288,7 +285,6 @@ func TestResponsesToAnthropic_BlankTextMessagesAreDropped(t *testing.T) {
 	}
 }
 
-// TestResponsesToAnthropic_BlankTextBesideImageKeepsImage 检查空白文本被移除后，合法图片仍在输出中。
 func TestResponsesToAnthropic_BlankTextBesideImageKeepsImage(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[
@@ -304,8 +300,8 @@ func TestResponsesToAnthropic_BlankTextBesideImageKeepsImage(t *testing.T) {
 	require.Equal(t, "image", blocks[0].Type)
 }
 
-// TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable 验证完整的 Codex 工具续接回放：tool_use / tool_result 配对必须保持不变，
-// 同时整个序列满足可发送不变式。
+// TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable checks that reasoning filtering
+// retains paired tool calls and sendable message content.
 func TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run ls"}]},
@@ -374,8 +370,8 @@ func TestAnthropicContentIsOnlyBlankText(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_DeveloperMessageBetween 验证 function_call 和 output 之间插入的 developer/审批消息必须移出 tool_use→tool_result 邻接关系，
-// 这是线上触发 “tool_result 必须在前一条消息有对应 tool_use” 400 的典型形态。
+// TestAnthropicPairing_DeveloperMessageBetween covers an approval message inserted between
+// a call and its result; Anthropic requires the result adjacent to its call.
 func TestAnthropicPairing_DeveloperMessageBetween(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"do it"}]},
@@ -383,7 +379,6 @@ func TestAnthropicPairing_DeveloperMessageBetween(t *testing.T) {
 		{"type":"message","role":"developer","content":[{"type":"input_text","text":"Approved command prefix saved"}]},
 		{"type":"function_call_output","call_id":"call_A","output":"ok"}
 	]`)
-	// assistant tool_use 消息后紧跟对应 tool_result。
 	for i, m := range msgs {
 		if hasToolUse(parseContentBlocks(m.Content), "call_A") {
 			require.Equal(t, "user", msgs[i+1].Role)
@@ -392,8 +387,8 @@ func TestAnthropicPairing_DeveloperMessageBetween(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_ParallelBothAnswered 验证并行工具调用的两个输出都到达时，应保持为一条 assistant 消息包含两个 tool_use，
-// 下一条 user 消息包含两个结果。
+// TestAnthropicPairing_ParallelBothAnswered keeps parallel calls together in one assistant
+// message followed by a user message containing their results.
 func TestAnthropicPairing_ParallelBothAnswered(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"features?"}]},
@@ -412,7 +407,6 @@ func TestAnthropicPairing_ParallelBothAnswered(t *testing.T) {
 	require.True(t, sawGrouped, "parallel tool_use blocks should share one assistant message")
 }
 
-// TestAnthropicPairing_ParallelOneUnanswered 检查并行调用中缺少输出的调用被丢弃，剩余 tool_use 各自有结果。
 func TestAnthropicPairing_ParallelOneUnanswered(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -426,7 +420,6 @@ func TestAnthropicPairing_ParallelOneUnanswered(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_OrphanToolResultDropped 验证没有对应 tool_use 的孤儿 tool_result 必须丢弃。
 func TestAnthropicPairing_OrphanToolResultDropped(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -438,7 +431,7 @@ func TestAnthropicPairing_OrphanToolResultDropped(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_DanglingCallDropped 验证历史末尾尚无输出的悬空 tool_call 会丢弃只包含该调用的 assistant 消息。
+// TestAnthropicPairing_DanglingCallDropped removes an unanswered call and its empty assistant message.
 func TestAnthropicPairing_DanglingCallDropped(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -450,7 +443,6 @@ func TestAnthropicPairing_DanglingCallDropped(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_SingleCall 验证基线：单个已回答调用应正确配对，并保留前后轮次。
 func TestAnthropicPairing_SingleCall(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest sha?"}]},
@@ -458,7 +450,7 @@ func TestAnthropicPairing_SingleCall(t *testing.T) {
 		{"type":"function_call_output","call_id":"call_A","output":"deadbeef"},
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"It is deadbeef."}]}
 	]`)
-	// 顺序应为 user、assistant(tool_use)、user(tool_result)、assistant(text)。
+	// Expected order: user, assistant call, user result, assistant text.
 	require.GreaterOrEqual(t, len(msgs), 4)
 	require.Equal(t, "user", msgs[0].Role)
 	require.True(t, hasToolUse(parseContentBlocks(msgs[1].Content), "call_A"))
@@ -614,8 +606,8 @@ func responsesToAnthropicMessages(t *testing.T, input string) []AnthropicMessage
 	return out.Messages
 }
 
-// requireAnthropicMessagesAreSendable 断言消息序列不含 Anthropic 会拒收的形态：
-// 未知 block 类型、空内容消息、纯空白 text 块。
+// requireAnthropicMessagesAreSendable rejects unknown block types, empty messages,
+// and blank text blocks in converted test output.
 func requireAnthropicMessagesAreSendable(t *testing.T, messages []AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
@@ -648,13 +640,12 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return b
 }
 
-// assertAnthropicPairing 校验 Anthropic Messages 的工具配对，配对错误会使上游返回 400。
+// assertAnthropicPairing checks alternating roles and adjacent tool call/result pairs.
 func assertAnthropicPairing(t *testing.T, messages []AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
 		blocks := parseContentBlocks(m.Content)
 
-		// 不允许连续两条消息角色相同。
 		if i > 0 {
 			require.NotEqualf(t, messages[i-1].Role, m.Role, "consecutive %s messages at %d", m.Role, i)
 		}
@@ -662,13 +653,11 @@ func assertAnthropicPairing(t *testing.T, messages []AnthropicMessage) {
 		for _, b := range blocks {
 			switch b.Type {
 			case "tool_result":
-				// tool_result 与前一条消息的 tool_use 配对。
 				require.Positivef(t, i, "tool_result %s has no previous message", b.ToolUseID)
 				prev := parseContentBlocks(messages[i-1].Content)
 				require.Truef(t, hasToolUse(prev, b.ToolUseID),
 					"tool_result %s has no corresponding tool_use in previous message", b.ToolUseID)
 			case "tool_use":
-				// tool_use 与后一条消息的 tool_result 配对。
 				require.Lessf(t, i+1, len(messages), "tool_use %s has no following message", b.ID)
 				next := parseContentBlocks(messages[i+1].Content)
 				require.Truef(t, hasToolResult(next, b.ID),

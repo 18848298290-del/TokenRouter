@@ -22,7 +22,7 @@ type ClaudeOAuthServiceSuite struct {
 	client *OAuthClient
 }
 
-// requestCapture 保存请求内容，供主 goroutine 断言。
+// requestCapture holds request data for assertions in the test goroutine.
 type requestCapture struct {
 	path        string
 	method      string
@@ -226,7 +226,7 @@ func (s *ClaudeOAuthServiceSuite) TestExchangeCodeForToken() {
 				require.Equal(s.T(), oauth.ClientID, captured.bodyJSON["client_id"])
 				require.Equal(s.T(), oauth.RedirectURI, captured.bodyJSON["redirect_uri"])
 				require.Equal(s.T(), "ver", captured.bodyJSON["code_verifier"])
-				// 普通 OAuth 请求省略 expires_in。
+				// Regular OAuth omits expires_in.
 				require.Nil(s.T(), captured.bodyJSON["expires_in"], "regular OAuth should not include expires_in")
 			},
 		},
@@ -321,10 +321,8 @@ func (s *ClaudeOAuthServiceSuite) TestRefreshToken() {
 			},
 			validate: func(captured requestCapture) {
 				require.Equal(s.T(), http.MethodPost, captured.method, "expected POST")
-				// 请求使用 JSON 格式。
 				require.True(s.T(), strings.HasPrefix(captured.contentType, "application/json"),
 					"expected JSON content-type, got: %s", captured.contentType)
-				// 验证 JSON body 内容
 				require.Equal(s.T(), "refresh_token", captured.bodyJSON["grant_type"])
 				require.Equal(s.T(), "rt", captured.bodyJSON["refresh_token"])
 				require.Equal(s.T(), oauth.ClientID, captured.bodyJSON["client_id"])
@@ -396,7 +394,7 @@ func TestClaudeOAuthServiceSuite(t *testing.T) {
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// newInProcessTransport 在进程内调用 handler，并在调用前捕获和重置请求体。
+// newInProcessTransport captures and restores the body before calling the handler in process.
 func newInProcessTransport(handler http.HandlerFunc, capture func(r *http.Request, body []byte)) http.RoundTripper {
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body []byte

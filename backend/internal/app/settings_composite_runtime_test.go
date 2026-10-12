@@ -40,7 +40,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// settingAtomicRepo 分别模拟写入失败和提交后回读失败，检查 HTTP 返回的持久化状态。
+// settingAtomicRepo injects write and post-commit read failures to check the persistence status returned by HTTP.
 type settingAtomicRepo struct {
 	*settingHandlerRepoStub
 	writes    int
@@ -315,8 +315,8 @@ func (s *settingsResponseMonitoring) IsMonitoringEnabled(context.Context) bool {
 
 func (s *settingsResponseMonitoring) SetMonitoringEnabled(bool) {}
 
-// newCompositeSettingsHTTPFixture 组合设置读取、准备和保存组件，套餐校验使用空回调。
-// 夹具绑定可信代理发布与更新通知函数。
+// newCompositeSettingsHTTPFixture binds settings reads, preparation, and persistence with a no-op plan validator.
+// The fixture publishes trusted-proxy settings and update notifications.
 func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.Config) (settingshttp.HandlerOptions, *settingscore.Store) {
 	store := settingscore.New(repo)
 	oauth := provideOAuthSettings(store, cfg)
@@ -347,13 +347,13 @@ func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.C
 	}
 	source := composite.NewRuntime(store, read, prepare, grants, gatewayRuntime, cfg.Totp.EncryptionKeyConfigured, applications)
 	participants := staticSettingsParticipants(&paymentcore.Runtime{}, grants, defaults, rules)
-	// 支付配置使用支付模块的准备器，提交后的渠道刷新使用空回调。
+	// Use the payment preparer with channel refresh disabled for this fixture.
 	participants[len(participants)-1] = paymentcore.SettingsParticipant(nil)
 	registry, err := settingscore.NewRegistry(participants...)
 	return settingshttp.HandlerOptions{Settings: source, Participants: registry, ParticipantError: err}, store
 }
 
-// TestSettingsFieldOwnership 检查 app 登记覆盖全部扁平输入，缺少字段登记时失败。
+// TestSettingsFieldOwnership checks complete, unique registration of flattened request fields.
 func TestSettingsFieldOwnership(t *testing.T) {
 	defaults := scheduler.DefaultAdminSettingsDefaults()
 	participants := staticSettingsParticipants(&paymentcore.Runtime{}, nil, &defaults, provideGatewayAdminRules())
@@ -387,7 +387,7 @@ func TestSettingsFieldOwnership(t *testing.T) {
 	require.Empty(t, owners, "参与者不应声明不存在的输入字段")
 }
 
-// TestSettingsRejectedFastPolicyHasNoWrites 验证后段校验失败时前段配置是否已经写入。
+// TestSettingsRejectedFastPolicyHasNoWrites checks that later validation failure prevents earlier fields from being saved.
 func TestSettingsRejectedFastPolicyHasNoWrites(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{site.SettingKeySiteName: "before"})
 	rec := doUpdateSettings(t, h, map[string]any{"site_name": "after", "openai_fast_policy_settings": map[string]any{"rules": []map[string]any{{"service_tier": "priority", "action": "bogus", "scope": "all"}}}}, nil)
@@ -571,7 +571,7 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
-// TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL 检查菜单地址规范化和浏览器生成的内容标识。
+// TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL checks URL normalization and browser-generated content IDs.
 func TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL(t *testing.T) {
 	for _, test := range []struct {
 		id     string
@@ -966,7 +966,7 @@ func newDingTalkSettingsHandler() (*settingshttp.Handler, *settingHandlerRepoStu
 	return handler, repo
 }
 
-// baseValidDingTalkBody 返回一个可以通过所有校验的最小合法 body。
+// baseValidDingTalkBody returns a minimal valid DingTalk settings body.
 func baseValidDingTalkBody() map[string]any {
 	return map[string]any{
 		"dingtalk_connect_enabled":                 true,
@@ -977,14 +977,14 @@ func baseValidDingTalkBody() map[string]any {
 	}
 }
 
-// TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID 检查 internal_only 策略下
-// internal_corp_id 为空时保存成功并返回 200。
+// TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID checks successful persistence
+// when internal_only has an empty internal_corp_id.
 func TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
 	body := baseValidDingTalkBody()
 	body["dingtalk_connect_corp_restriction_policy"] = "internal_only"
-	body["dingtalk_connect_internal_corp_id"] = "" // 空值现在合法
+	body["dingtalk_connect_internal_corp_id"] = ""
 
 	rawBody, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -999,7 +999,7 @@ func TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_HappyPath_None 检查 none 策略下保存返回 200。
+// TestSettingsPUT_DingTalk_HappyPath_None checks successful persistence with the none policy.
 func TestSettingsPUT_DingTalk_HappyPath_None(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1024,7 +1024,7 @@ func TestSettingsPUT_DingTalk_HappyPath_None(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_enabled"])
 }
 
-// TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID 检查 internal_only 策略提供 corp_id 时返回 200。
+// TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID checks internal_only with a corporate ID.
 func TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1045,8 +1045,8 @@ func TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip 验证 bypass_registration 字段 save+load。
-// bypass_registration 在 internal_only 策略下生效，其他策略写入 false。
+// TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip checks persistence and response of bypass_registration.
+// The internal_only policy permits bypass_registration.
 func TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1072,15 +1072,15 @@ func TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_bypass_registration"])
 }
 
-// TestSettingsPUT_DingTalk_Disabled_SkipsValidation 检查禁用钉钉时跳过企业信息校验并返回 200。
-// 测试将 client_id 留空，启用时该输入会返回 Client ID is required when enabled，
-// 禁用时保存成功。
+// TestSettingsPUT_DingTalk_Disabled_SkipsValidation checks that disabled DingTalk accepts incomplete credentials.
+// An empty client_id is accepted here; enabling DingTalk would reject it with
+// "Client ID is required when enabled".
 func TestSettingsPUT_DingTalk_Disabled_SkipsValidation(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
 	body := map[string]any{
 		"dingtalk_connect_enabled":                 false,
-		"dingtalk_connect_client_id":               "", // 这种空值在 enabled=true 时会被 400 拒绝
+		"dingtalk_connect_client_id":               "",
 		"dingtalk_connect_corp_restriction_policy": "internal_only",
 	}
 
@@ -1097,7 +1097,7 @@ func TestSettingsPUT_DingTalk_Disabled_SkipsValidation(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip 验证三个 sync 开关在 internal_only 下可正常 save+load。
+// TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip checks all three sync switches under internal_only.
 func TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1127,7 +1127,7 @@ func TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_sync_dept"], "sync_dept should be true for internal_only")
 }
 
-// TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse 验证 policy=none 时三个 sync 开关被 coerce 为 false。
+// TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse checks that none disables all three sync switches.
 func TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1157,9 +1157,9 @@ func TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse(t *testing.T) 
 	require.Equal(t, false, data["dingtalk_connect_sync_dept"], "sync_dept must be coerced to false when policy=none")
 }
 
-// TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone 检查兼容的 whitelist 输入：
-// 管理员通过 API 提交 corp_restriction_policy=whitelist 时，
-// 服务端将其转换为 none 后保存。
+// TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone checks compatibility with whitelist input.
+// An API request with corp_restriction_policy=whitelist
+// is normalized to none before persistence.
 func TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone(t *testing.T) {
 	handler, repo := newDingTalkSettingsHandler()
 
@@ -1181,7 +1181,7 @@ func TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone(t *testing.T) {
 		"stale whitelist 应在写入路径被 coerce 为 none")
 }
 
-// TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip 验证 3 个 attr key 字段 save+load + 空值 fallback 到默认值。
+// TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip checks custom attribute keys and defaults for empty values.
 func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 	t.Run("custom_attr_keys_saved", func(t *testing.T) {
 		handler, repo := newDingTalkSettingsHandler()
@@ -1207,12 +1207,10 @@ func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		// 验证写入 DB 的 key
 		require.Equal(t, "my_email_attr", repo.values[identity.SettingKeyDingTalkConnectSyncCorpEmailAttrKey])
 		require.Equal(t, "my_name_attr", repo.values[identity.SettingKeyDingTalkConnectSyncDisplayNameAttrKey])
 		require.Equal(t, "my_dept_attr", repo.values[identity.SettingKeyDingTalkConnectSyncDeptAttrKey])
 
-		// 验证响应中的 attr key
 		var resp response.Response
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		data, ok := resp.Data.(map[string]any)
@@ -1227,7 +1225,7 @@ func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 
 		body := baseValidDingTalkBody()
 		body["dingtalk_connect_corp_restriction_policy"] = "internal_only"
-		// 省略 attr key 时，写入层使用默认值。
+		// Explicit empty attribute keys request the defaults.
 		body["dingtalk_connect_sync_corp_email_attr_key"] = ""
 		body["dingtalk_connect_sync_display_name_attr_key"] = ""
 		body["dingtalk_connect_sync_dept_attr_key"] = ""
@@ -1244,7 +1242,7 @@ func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		// 空值应 fallback 到默认值并持久化
+		// The resolved defaults are persisted.
 		require.Equal(t, "dingtalk_email", repo.values[identity.SettingKeyDingTalkConnectSyncCorpEmailAttrKey])
 		require.Equal(t, "dingtalk_name", repo.values[identity.SettingKeyDingTalkConnectSyncDisplayNameAttrKey])
 		require.Equal(t, "dingtalk_department", repo.values[identity.SettingKeyDingTalkConnectSyncDeptAttrKey])
@@ -1337,7 +1335,7 @@ func TestUpdateSettingsPartialPayloadKeepsUnsentKeys(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyTurnstileEnabled])
 }
 
-// TestUpdateSettingsFullPayloadStillClearsSentEmptyFields 检查请求发送零值字段时清空对应设置。
+// TestUpdateSettingsFullPayloadStillClearsSentEmptyFields checks that an explicit empty value clears the setting.
 func TestUpdateSettingsFullPayloadStillClearsSentEmptyFields(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		site.SettingKeySiteName: "Example Gateway",
@@ -1350,8 +1348,8 @@ func TestUpdateSettingsFullPayloadStillClearsSentEmptyFields(t *testing.T) {
 		"明确发送的空值表示主动清空，而不是省略字段")
 }
 
-// TestUpdateSettingsSMTPFromAliasIsWritable 验证 smtp_from_email 是唯一一个 JSON 名称与持久化设置键不同的请求字段，
-// 别名映射用于识别请求中的 smtp_from_email 字段。
+// TestUpdateSettingsSMTPFromAliasIsWritable checks the smtp_from_email request alias.
+// The alias maps the request field to the SMTP sender storage key.
 func TestUpdateSettingsSMTPFromAliasIsWritable(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		notification.SettingKeySMTPFrom: "old@example.com",
@@ -1363,7 +1361,7 @@ func TestUpdateSettingsSMTPFromAliasIsWritable(t *testing.T) {
 	require.Equal(t, "new@example.com", repo.values[notification.SettingKeySMTPFrom])
 }
 
-// TestUpdateSettingsCreativeEnabledPartialSemantics 检查创作台开关在请求携带字段时写入，省略时保持存储值。
+// TestUpdateSettingsCreativeEnabledPartialSemantics checks that explicit values are saved and omission retains stored values.
 func TestUpdateSettingsCreativeEnabledPartialSemantics(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeEnabled: "true",
@@ -1388,17 +1386,17 @@ func TestUpdateSettingsCreativeModelSettingsPartialSemantics(t *testing.T) {
 		creative.SettingKeyCreativeModelSettings: stored,
 	})
 
-	// 请求省略白名单字段时，保持当前白名单。
+	// Omitting the allowlist retains the stored model settings.
 	rec := doUpdateSettings(t, h, map[string]any{"risk_control_enabled": true}, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, stored, repo.values[creative.SettingKeyCreativeModelSettings])
 
-	// 空数组表示管理员关闭全部生图模型。
+	// An empty array disables all creative image models.
 	rec = doUpdateSettings(t, h, map[string]any{"creative_model_settings": []any{}}, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, "[]", repo.values[creative.SettingKeyCreativeModelSettings])
 
-	// 非法能力在保存前拒绝，原值不被覆盖。
+	// Invalid capabilities are rejected before the stored settings are replaced.
 	rec = doUpdateSettings(t, h, map[string]any{
 		"creative_model_settings": []map[string]any{{
 			"group_id":   12,
@@ -1410,7 +1408,7 @@ func TestUpdateSettingsCreativeModelSettingsPartialSemantics(t *testing.T) {
 	require.JSONEq(t, "[]", repo.values[creative.SettingKeyCreativeModelSettings])
 }
 
-// TestUpdateSettingsCreativeWorkerCountPartialSemantics 检查 worker 数量在请求省略字段时保持存储值。
+// TestUpdateSettingsCreativeWorkerCountPartialSemantics checks that omission retains the stored worker count.
 func TestUpdateSettingsCreativeWorkerCountPartialSemantics(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeWorkerCount: "4",
@@ -1425,7 +1423,7 @@ func TestUpdateSettingsCreativeWorkerCountPartialSemantics(t *testing.T) {
 	require.Equal(t, "7", repo.values[creative.SettingKeyCreativeWorkerCount])
 }
 
-// TestUpdateSettingsRejectsInvalidCreativeWorkerCount 验证 worker 数量必须为正整数。
+// TestUpdateSettingsRejectsInvalidCreativeWorkerCount checks rejection of nonpositive worker counts.
 func TestUpdateSettingsRejectsInvalidCreativeWorkerCount(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeWorkerCount: "4",
@@ -1438,7 +1436,7 @@ func TestUpdateSettingsRejectsInvalidCreativeWorkerCount(t *testing.T) {
 	}
 }
 
-// TestUpdateSettingsNormalizesGeminiInpaintBeforeSave 校验管理员保存会清理旧 Gemini inpaint。
+// TestUpdateSettingsNormalizesGeminiInpaintBeforeSave checks that normalization removes unsupported Gemini inpaint before saving.
 func TestUpdateSettingsNormalizesGeminiInpaintBeforeSave(t *testing.T) {
 	repo := &settingHandlerRepoStub{values: map[string]string{}}
 	options, _ := newCompositeSettingsHTTPFixture(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -1500,7 +1498,7 @@ func TestListCreativeModelCandidates(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "grok-imagine")
 }
 
-// TestGetCreativeWorkerStatus 验证创作台 worker 状态接口返回回调快照，未注入回调时返回未运行零值。
+// TestGetCreativeWorkerStatus checks callback snapshots and the inactive zero status returned by a nil worker.
 func TestGetCreativeWorkerStatus(t *testing.T) {
 	var worker *creative.CreativeWorkerRuntime
 	h := creativehttp.NewSettingsHandler(nil, worker.Status)
@@ -1594,8 +1592,8 @@ func TestUpdateSettingsRetainsStoredTencentCaptchaCredentialsWhenInputsEmpty(t *
 	require.Equal(t, "stored-cloud-secret-key", repo.values[identity.SettingKeyTencentCaptchaCloudSecretKey])
 }
 
-// TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion 检查部分更新保持天御站点，前后端按同一站点选择 SDK 和接入点。
-// 部分载荷把它重置回中国站，会让已配国际站的部署在下一次任意保存后整体失效。
+// TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion checks that a partial update retains the configured region.
+// Resetting an international deployment to China would select the wrong SDK and verification endpoint.
 func TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTencentCaptchaRegion: identity.TencentCaptchaRegionINTL,
@@ -1656,7 +1654,7 @@ func newStepUpSwitchTestHandler(t *testing.T, stored map[string]string) (*settin
 	return settingshttp.NewHandler(options), repo
 }
 
-// TestUpdateSettingsEnableStepUpRejectsWithoutSession 检查 step-up 从关闭切为开启时，无认证上下文的请求被拒绝并返回专用错误标记。
+// TestUpdateSettingsEnableStepUpRejectsWithoutSession checks the dedicated error for enabling step-up without authentication.
 func TestUpdateSettingsEnableStepUpRejectsWithoutSession(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1667,7 +1665,7 @@ func TestUpdateSettingsEnableStepUpRejectsWithoutSession(t *testing.T) {
 	require.NotEqual(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsEnableStepUpRejectsAdminAPIKey 检查 admin API key 开启 step-up 时被拒绝，reason 供前端区分错误。
+// TestUpdateSettingsEnableStepUpRejectsAdminAPIKey checks the dedicated reason for rejecting admin API key authentication.
 func TestUpdateSettingsEnableStepUpRejectsAdminAPIKey(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1679,7 +1677,7 @@ func TestUpdateSettingsEnableStepUpRejectsAdminAPIKey(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
 }
 
-// TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService 检查开启 step-up 时，有会话但缺少 userService 的请求返回 500。
+// TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService checks a 500 response when the authenticated user cannot be validated.
 func TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1691,7 +1689,7 @@ func TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService(t *testing.T) {
 	require.NotEqual(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsDisableStepUpRequiresStepUp 检查关闭 step-up 时，无认证上下文的请求返回 401。
+// TestUpdateSettingsDisableStepUpRequiresStepUp checks a 401 response when disabling step-up without authentication.
 func TestUpdateSettingsDisableStepUpRequiresStepUp(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1703,7 +1701,7 @@ func TestUpdateSettingsDisableStepUpRequiresStepUp(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsDisableStepUpRejectsAdminAPIKey 检查 admin API key 关闭 step-up 时返回 403。
+// TestUpdateSettingsDisableStepUpRejectsAdminAPIKey checks a 403 response when an admin API key disables step-up.
 func TestUpdateSettingsDisableStepUpRejectsAdminAPIKey(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1718,7 +1716,7 @@ func TestUpdateSettingsDisableStepUpRejectsAdminAPIKey(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsStepUpNoTransitionSkipsGate 检查 step-up 保持关闭时常规保存成功，并持久化 false。
+// TestUpdateSettingsStepUpNoTransitionSkipsGate checks ordinary saving when step-up stays disabled.
 func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1726,11 +1724,11 @@ func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "false", repo.values[identity.SettingKeyStepUpEnabled])
-	// 会话 IP/UA 绑定默认关闭，未提交该字段时持久化 false。
+	// Session IP/User-Agent binding defaults to false and is persisted when omitted.
 	require.Equal(t, "false", repo.values[identity.SettingKeySessionBindingEnabled])
 }
 
-// TestUpdateSettingsStepUpKeepEnabledSkipsGate 检查 step-up 保持开启时直接执行常规保存。
+// TestUpdateSettingsStepUpKeepEnabledSkipsGate checks ordinary saving when step-up stays enabled.
 func TestUpdateSettingsStepUpKeepEnabledSkipsGate(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1742,8 +1740,8 @@ func TestUpdateSettingsStepUpKeepEnabledSkipsGate(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues 检查请求省略 step_up_enabled 和 session_binding_enabled 时保持存储值。
-// 开关保持开启时按常规流程保存。
+// TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues checks that omitted security switches retain their stored values.
+// Keeping the switches enabled does not trigger transition checks.
 func TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled:                       "true",
@@ -1761,7 +1759,7 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled 验证省略字段在开关本就关闭时同样保持关闭（默认值路径）。
+// TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled checks disabled defaults for omitted switches.
 func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1774,7 +1772,7 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	require.Equal(t, "false", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsEnablesUserEmailChange 检查邮箱换绑开关在合并部分更新请求后持久化为开启。
+// TestUpdateSettingsEnablesUserEmailChange checks that a partial update can enable email changes.
 func TestUpdateSettingsEnablesUserEmailChange(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1784,7 +1782,7 @@ func TestUpdateSettingsEnablesUserEmailChange(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue 检查请求省略默认 Key 上限时保持存储值。
+// TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue checks that omission retains the stored default key limit.
 func TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1796,7 +1794,7 @@ func TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue(t *testing.
 	require.Equal(t, "33", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit 检查请求发送默认 Key 上限 0 时设置为无限制。
+// TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit checks that zero sets an unlimited default key count.
 func TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1808,7 +1806,7 @@ func TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit(t *testing.T) {
 	require.Equal(t, "0", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit 验证负数设置在进入持久化前被拒绝，原值保持不变。
+// TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit checks rejection before persistence.
 func TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1821,7 +1819,7 @@ func TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit(t *testing.T) {
 	require.Equal(t, "33", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange 检查超出数据库 INTEGER 范围的默认值在保存前被拒绝，这类值会导致注册失败。
+// TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange checks rejection of limits beyond PostgreSQL INTEGER range.
 func TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1886,7 +1884,7 @@ func TestUpdateSettingsRejectsInvalidForwardedClientIPHeader(t *testing.T) {
 	require.JSONEq(t, `["X-Existing-IP"]`, repo.values[runtimeconfig.SettingKeyForwardedClientIPHeaders])
 }
 
-// TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields 检查已停用的 OpenAI 实验调度字段被拒绝，面板据此提示保存失败。
+// TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields checks dedicated errors for retired experimental scheduler fields.
 func TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields(t *testing.T) {
 	for _, field := range []string{
 		"advanced_scheduler_enabled",

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIsRealUserMessage 验证用户消息与工具回包必须保留不同的串行等待资格。
+// TestIsRealUserMessage distinguishes user input from tool results for serial queue eligibility.
 func TestIsRealUserMessage(t *testing.T) {
 	require.False(t, IsRealUserMessage(nil))
 	for _, tc := range []struct {

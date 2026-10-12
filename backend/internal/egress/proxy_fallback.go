@@ -4,13 +4,13 @@ import (
 	"time"
 )
 
-// ResolveProxyFallbackTarget 计算一个过期代理 start 应把提供商改投到哪里。
-// 返回 (targetID, change)：
-//   - change=false：不改动提供商（mode=none，或链路成环/无解的兜底）
-//   - change=true, targetID=nil：改投为直连
-//   - change=true, targetID!=nil：改投到该备用代理 id
+// ResolveProxyFallbackTarget resolves provider reassignment for an expired proxy.
+// The return values (targetID, change) mean:
+//   - change=false: leave providers bound when mode is none or the chain cannot resolve.
+//   - change=true, targetID=nil: switch to direct connections.
+//   - change=true, targetID!=nil: switch to the resolved backup proxy.
 //
-// byID 是「全部代理」的快照（id -> Proxy），now 为判定基准时间。
+// byID is a snapshot of all proxies; now is the expiration comparison time.
 func ResolveProxyFallbackTarget(start Proxy, byID map[int64]Proxy, now time.Time) (*int64, bool) {
 	switch start.FallbackMode {
 	case FallbackModeDirect:

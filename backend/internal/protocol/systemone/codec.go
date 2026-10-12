@@ -12,14 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// Question 保存请求的问题类型及结构化描述，其他字段在原报文中透传。
+// Question holds the question type and descriptions; other fields pass through in the raw request.
 type Question struct {
 	Type         string          `json:"type"`
 	Instructions json.RawMessage `json:"instructions"`
 	Criteria     json.RawMessage `json:"criteria"`
 }
 
-// Request 保存选路和响应检查需要的字段。
+// Request holds fields needed for routing and response validation.
 type Request struct {
 	Model     string              `json:"model"`
 	State     json.RawMessage     `json:"state"`
@@ -27,14 +27,14 @@ type Request struct {
 	Stream    bool                `json:"stream"`
 }
 
-// Response 记录答案及可选的有效用量，原响应字节由执行器交付。
+// Response holds the validated response model and optional usage; the executor delivers the raw answers.
 type Response struct {
 	Model    string
 	Usage    protocol.TokenUsage
 	HasUsage bool
 }
 
-// ParseRequest 校验同步 SystemOne 请求；问题描述允许 JSON 字符串、对象和数组。
+// ParseRequest validates synchronous SystemOne requests with string, object, or array descriptions.
 // @project-doc docs/interfaces/jev_upstream.md#systemone_execution
 func ParseRequest(body []byte) (Request, error) {
 	var request Request
@@ -94,7 +94,7 @@ func ParseRequest(body []byte) (Request, error) {
 	return request, nil
 }
 
-// description 检查 JSON 描述支持的顶层形态。
+// description checks the top-level shape of an already validated JSON value.
 func description(raw json.RawMessage, nullable bool) bool {
 	raw = bytes.TrimSpace(raw)
 	if nullable && bytes.Equal(raw, []byte("null")) {
@@ -103,12 +103,12 @@ func description(raw json.RawMessage, nullable bool) bool {
 	return len(raw) > 0 && (raw[0] == '"' || raw[0] == '{' || raw[0] == '[')
 }
 
-// ReplaceModel 修改顶层模型字段，保留问题、答案和扩展字段的字节内容。
+// ReplaceModel patches the top-level model while retaining question, answer, and extension bytes.
 func ReplaceModel(body []byte, model string) ([]byte, error) {
 	return sjson.SetBytes(body, "model", model)
 }
 
-// ModerationBody 解码 state、问题描述和条件中的文本，交给现有审核解析器。
+// ModerationBody decodes state and question text into a message body for content moderation.
 func (r Request) ModerationBody() []byte {
 	var content strings.Builder
 	appendModerationText(&content, r.State)
@@ -118,7 +118,7 @@ func (r Request) ModerationBody() []byte {
 	return body
 }
 
-// appendModerationText 读取已校验 JSON 的键和值，字符串解码一次，数字保持原精度。
+// appendModerationText reads keys and values from JSON, decoding strings once and retaining number precision.
 func appendModerationText(content *strings.Builder, raw json.RawMessage) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -136,7 +136,7 @@ func appendModerationText(content *strings.Builder, raw json.RawMessage) {
 	}
 }
 
-// ParseResponse 先检查答案，再独立解析用量。无效用量通过 HasUsage 表示。
+// ParseResponse validates answers, then parses usage independently; invalid usage leaves HasUsage false.
 func ParseResponse(body []byte, questions map[string]Question) (Response, error) {
 	var wire struct {
 		Model   string                     `json:"model"`
@@ -185,10 +185,10 @@ func ParseResponse(body []byte, questions map[string]Question) (Response, error)
 	return result, nil
 }
 
-// probability 检查概率是否已提供且处于零到一之间。
+// probability reports whether a supplied probability lies between zero and one inclusive.
 func probability(value *float64) bool { return value != nil && *value >= 0 && *value <= 1 }
 
-// ProbeBody 构造提供商手动测试和定时探测共用的最小请求。
+// ProbeBody builds the minimal request shared by manual provider tests and scheduled probes.
 func ProbeBody(model, state string) []byte {
 	if state == "" {
 		state = "The service is available."

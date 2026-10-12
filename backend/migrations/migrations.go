@@ -2,19 +2,19 @@ package migrations
 
 import "embed"
 
-// FS 包含本目录下所有嵌入的 SQL 迁移文件。
+// FS embeds all SQL migration files in this directory.
 //
-// 迁移命名规范：
-//   - 使用零填充的数字前缀确保正确的执行顺序
-//   - 格式：NNN_description.sql（如 001_init.sql, 002_add_users.sql）
-//   - 描述部分使用下划线分隔的小写单词
+// Migration names:
+//   - Use zero-padded numeric prefixes to determine execution order.
+//   - Use NNN_description.sql, such as 001_init.sql or 002_add_users.sql.
+//   - Write descriptions in lowercase words separated by underscores.
 //
-// 迁移文件要求：
-//   - 必须是幂等的（可重复执行而不产生错误）
-//   - 推荐使用 IF NOT EXISTS / IF EXISTS 语法
-//   - 一旦应用，不应修改已有的迁移文件（通过 checksum 校验）
+// Migration requirements:
+//   - Make statements safe to execute repeatedly.
+//   - Use IF NOT EXISTS or IF EXISTS where applicable.
+//   - Keep applied files unchanged; the runner validates their checksums.
 //
-// 示例迁移文件：
+// Example migration:
 //
 //	-- 001_init.sql
 //	CREATE TABLE IF NOT EXISTS users (

@@ -49,7 +49,6 @@ func NewOpenAIProviderImport(auth *OpenAIAuthorization, admin OpenAIProviderOper
 
 func (OpenAICodexPATCreateInput) String() string { return "OpenAI PAT provider creation input" }
 func (s *OpenAIProviderImport) RefreshProvider(ctx context.Context, providerID int64, platform string) (*Record, error) {
-	// Get provider
 	provider, err := s.Admin.GetProvider(ctx, providerID)
 	if err != nil {
 		return nil, err
@@ -59,13 +58,12 @@ func (s *OpenAIProviderImport) RefreshProvider(ctx context.Context, providerID i
 		return nil, &OpenAIProviderInputError{Message: "Provider platform does not match OAuth endpoint"}
 	}
 
-	// Only refresh OAuth-based providers
 	if !provider.IsOAuth() {
 		return nil, &OpenAIProviderInputError{Message: "Cannot refresh non-OAuth provider credentials"}
 	}
 
-	// Spark 影子使用母提供商凭据，刷新请求需要指定母提供商。
-	// 再被凭据写守卫拦下的无谓副作用。
+	// Spark shadows use parent credentials, so refresh requests must target the parent.
+	// Reject the shadow before the upstream exchange would cause a write that its credential guard rejects.
 	if provider.IsCredentialShadow() {
 		return nil, &OpenAIProviderInputError{Message: "Cannot refresh spark shadow provider; its credentials are managed by the parent provider"}
 	}
@@ -75,16 +73,14 @@ func (s *OpenAIProviderImport) RefreshProvider(ctx context.Context, providerID i
 		return nil, activityErr
 	}
 	defer finish()
-	// Use OpenAI OAuth service to refresh token
 	tokenInfo, err := s.Authorization.RefreshProviderToken(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build new credentials from token info
 	newCredentials := BuildOpenAIProviderCredentials(tokenInfo)
 
-	// Preserve non-token settings from existing credentials
+	// Retain stored fields omitted by the refresh result, including non-token settings.
 	for k, v := range provider.Credentials {
 		if _, exists := newCredentials[k]; !exists {
 			newCredentials[k] = v
@@ -108,7 +104,6 @@ func (s *OpenAIProviderImport) CreateOAuthProvider(ctx context.Context, req Open
 		return nil, activityErr
 	}
 	defer finish()
-	// Exchange code for tokens
 	tokenInfo, err := s.Authorization.ExchangeCode(ctx, &OpenAIExchangeCodeInput{
 		SessionID: req.SessionID,
 
@@ -126,7 +121,6 @@ func (s *OpenAIProviderImport) CreateOAuthProvider(ctx context.Context, req Open
 		return nil, err
 	}
 
-	// Build credentials from token info
 	credentials := BuildOpenAIProviderCredentials(tokenInfo)
 
 	// Use email as default name if not provided
@@ -140,13 +134,12 @@ func (s *OpenAIProviderImport) CreateOAuthProvider(ctx context.Context, req Open
 
 	var extra map[string]any
 	if req.TLSFingerprintRouterID != nil && *req.TLSFingerprintRouterID > 0 {
-		// 保持提供商与 TLS Router 的绑定，后台刷新使用同一套 token 指纹配置。
+		// Persist the TLS router binding so background refresh uses the same fingerprint configuration.
 		extra = map[string]any{
 			"tls_fingerprint_router_id": *req.TLSFingerprintRouterID,
 		}
 	}
 
-	// Create provider
 	provider, err := s.Admin.CreateProvider(ctx, &CreateProviderInput{
 		Name: name,
 

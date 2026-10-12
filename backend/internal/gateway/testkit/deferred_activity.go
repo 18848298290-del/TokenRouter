@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// deferredActivityRepository 记录最终的存储写入，供测试检查网关行为。
+// deferredActivityRepository captures persisted activity timestamps for gateway assertions.
 type deferredActivityRepository struct {
 	updates sync.Map
 }

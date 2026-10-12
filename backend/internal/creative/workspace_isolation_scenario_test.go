@@ -1,6 +1,6 @@
 package creative_test
 
-// 本文件覆盖 public.go 创建任务与 queries.go 查询、读取输出时的工作区隔离。
+// This file covers workspace isolation across Public.CreateRun and Queries task/output access.
 
 import (
 	"context"
@@ -12,7 +12,8 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// TestCreativeWorkspaceScopeIsolation 校验同一用户的不同浏览器工作区互不可见且幂等键隔离。
+// TestCreativeWorkspaceScopeIsolation checks task visibility and idempotency isolation between one user's
+// workspaces.
 func TestCreativeWorkspaceScopeIsolation(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()

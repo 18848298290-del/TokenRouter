@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// geminiSelector 的关联表只存在于本次调用，返回值继续使用原提供商读取快照。
+// geminiSelector keeps a per-call lookup so returned providers retain their corresponding read snapshots.
 func (s *Gemini) geminiSelector() (*scheduler.GeminiSelector, *projectionScope) {
 	scope := &projectionScope{providers: map[uint64]*gatewayadapter.ExecutionProvider{}, groups: map[uint64]*routing.Group{}}
 	ports := scheduler.GeminiSelectionPorts{

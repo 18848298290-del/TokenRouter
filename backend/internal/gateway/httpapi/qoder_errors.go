@@ -59,7 +59,7 @@ func WriteQoderError(c *gin.Context, status int, errType, message string, endpoi
 	})
 }
 
-// qoderRequestIsStream 该快照由原请求观测时点设置，不读取或重解析 body。
+// qoderRequestIsStream reads the stream flag captured during request observation.
 func qoderRequestIsStream(c *gin.Context) bool {
 	if c == nil {
 		return false

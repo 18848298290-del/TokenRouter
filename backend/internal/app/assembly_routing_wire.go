@@ -10,7 +10,7 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// routingAssemblyProviders 汇总 routing 模块的 Wire provider。
+// routingAssemblyProviders groups Wire providers for the routing module.
 var routingAssemblyProviders = wire.NewSet(
 	wire.Bind(new(creativeprovider.ExecutionGroups), new(*routingpostgres.GroupStore)),
 	provideRoutingSettings,

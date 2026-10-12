@@ -25,7 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// 返回旧交换失败之前，模拟管理员已经持久化一份新凭据。
+// oldFailureRefresher installs an administrator's new credentials before returning an older exchange failure.
 type oldFailureRefresher struct {
 	row     *providercore.Record
 	failure error
@@ -83,7 +83,7 @@ type tempUnschedCacheStub struct {
 	lastState   *providercore.TempUnschedState
 }
 
-// mockTokenCacheForRefreshAPI 用于 Path A 测试的 GeminiTokenCache mock。
+// mockTokenCacheForRefreshAPI records token-cache and lock operations for coordinated refresh tests.
 type mockTokenCacheForRefreshAPI struct {
 	lockResult   bool
 	lockErr      error
@@ -92,10 +92,10 @@ type mockTokenCacheForRefreshAPI struct {
 	deleteCtxErr error
 }
 
-// alwaysFreshRefresherStub 二次检查时认为不需要刷新（模拟已被其他路径刷新）。
+// alwaysFreshRefresherStub models a second check finding credentials already refreshed.
 type alwaysFreshRefresherStub struct{}
 
-// refreshAttemptFixture 为刷新测试装配尝试、清理和熔断组件。
+// refreshAttemptFixture binds refresh attempts, cleanup, and failure blocking for tests.
 type refreshAttemptFixture struct {
 	Attempts providercore.RefreshAttempts
 	Post     *providercore.RefreshPostActions
@@ -553,7 +553,7 @@ func TestTokenRefreshService_RefreshWithRetry_QoderInvalidatesCache(t *testing.T
 	require.Equal(t, 1, invalidator.calls)
 }
 
-// TestTokenRefreshService_RefreshWithRetry_Antigravity 测试 Antigravity 平台的缓存失效。
+// TestTokenRefreshService_RefreshWithRetry_Antigravity checks cache invalidation after refresh.
 func TestTokenRefreshService_RefreshWithRetry_Antigravity(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -576,7 +576,7 @@ func TestTokenRefreshService_RefreshWithRetry_Antigravity(t *testing.T) {
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
-	require.Equal(t, 1, invalidator.calls) // Antigravity 也应触发缓存失效
+	require.Equal(t, 1, invalidator.calls) // Antigravity invalidates its token cache too.
 }
 
 func TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker(t *testing.T) {
@@ -690,7 +690,8 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityForceRefreshInvalidGran
 	require.Contains(t, repo.lastErrorMessage, "non-retryable")
 }
 
-// TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider 测试非 OAuth 提供商不触发缓存失效。
+// TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider checks that API key providers skip OAuth cache
+// invalidation.
 func TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -702,7 +703,7 @@ func TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       9,
 		Platform: capability.PlatformGemini,
-		Type:     capability.ProviderTypeAPIKey, // 非 OAuth
+		Type:     capability.ProviderTypeAPIKey, // API key provider
 	}
 	refresher := &tokenRefresherStub{
 		credentials: map[string]any{
@@ -713,10 +714,10 @@ func TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider(t *testing.T) {
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
-	require.Equal(t, 0, invalidator.calls) // 非 OAuth 不触发缓存失效
+	require.Equal(t, 0, invalidator.calls) // API key refresh leaves the OAuth cache untouched.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth 测试所有 OAuth 平台都触发缓存失效。
+// TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth checks OpenAI OAuth cache invalidation.
 func TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -727,7 +728,7 @@ func TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth(t *testing.T) {
 	service := newRefreshAttemptFixture(repo, cfg, invalidator, nil, nil)
 	provider := &providercore.Record{
 		ID:       10,
-		Platform: capability.PlatformOpenAI, // OpenAI OAuth 提供商
+		Platform: capability.PlatformOpenAI, // OpenAI OAuth fixture
 		Type:     capability.ProviderTypeOAuth,
 	}
 	refresher := &tokenRefresherStub{
@@ -740,7 +741,7 @@ func TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
 	require.Equal(t, 1, repo.updateCredentialsCalls)
-	require.Equal(t, 1, invalidator.calls) // 所有 OAuth 提供商刷新后触发缓存失效
+	require.Equal(t, 1, invalidator.calls) // Invalidate the OAuth token after persisting credentials.
 }
 
 func TestTokenRefreshService_RefreshWithRetry_UsesCredentialsUpdater(t *testing.T) {
@@ -774,7 +775,7 @@ func TestTokenRefreshService_RefreshWithRetry_UsesCredentialsUpdater(t *testing.
 	require.WithinDuration(t, resetAt, *provider.RateLimitResetAt, time.Second)
 }
 
-// TestTokenRefreshService_RefreshWithRetry_UpdateFailed 测试更新失败的情况。
+// TestTokenRefreshService_RefreshWithRetry_UpdateFailed checks that persistence failure skips cache invalidation.
 func TestTokenRefreshService_RefreshWithRetry_UpdateFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{updateErr: errors.New("update failed")}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -798,10 +799,10 @@ func TestTokenRefreshService_RefreshWithRetry_UpdateFailed(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to save credentials")
 	require.Equal(t, 1, repo.updateCalls)
-	require.Equal(t, 0, invalidator.calls) // 更新失败时不应触发缓存失效
+	require.Equal(t, 0, invalidator.calls) // Persistence failed, so keep the cached token.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_RefreshFailed 测试可重试错误耗尽不标记 error。
+// TestTokenRefreshService_RefreshWithRetry_RefreshFailed leaves retryable failures eligible for a later cycle.
 func TestTokenRefreshService_RefreshWithRetry_RefreshFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -821,12 +822,13 @@ func TestTokenRefreshService_RefreshWithRetry_RefreshFailed(t *testing.T) {
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
-	require.Equal(t, 0, repo.updateCalls)   // 刷新失败不应更新
-	require.Equal(t, 0, invalidator.calls)  // 刷新失败不应触发缓存失效
-	require.Equal(t, 0, repo.setErrorCalls) // 可重试错误耗尽不标记 error，下个周期继续重试
+	require.Equal(t, 0, repo.updateCalls)   // Failed exchange leaves credentials unchanged.
+	require.Equal(t, 0, invalidator.calls)  // Failed exchange leaves the cached token unchanged.
+	require.Equal(t, 0, repo.setErrorCalls) // Exhausted retries can run again next cycle.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed 测试 Antigravity 刷新失败不设置错误状态。
+// TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed leaves retryable failures out of permanent
+// error state.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -841,17 +843,17 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed(t *testin
 		Type:     capability.ProviderTypeOAuth,
 	}
 	refresher := &tokenRefresherStub{
-		err: errors.New("network error"), // 可重试错误
+		err: errors.New("network error"), // retryable network failure
 	}
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
 	require.Equal(t, 0, repo.updateCalls)
 	require.Equal(t, 0, invalidator.calls)
-	require.Equal(t, 0, repo.setErrorCalls) // Antigravity 可重试错误不设置错误状态
+	require.Equal(t, 0, repo.setErrorCalls) // Retryable failure does not mark a permanent error.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError 测试 Antigravity 不可重试错误。
+// TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError checks permanent credential failures.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -866,17 +868,18 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError(t *te
 		Type:     capability.ProviderTypeOAuth,
 	}
 	refresher := &tokenRefresherStub{
-		err: errors.New("invalid_grant: token revoked"), // 不可重试错误
+		err: errors.New("invalid_grant: token revoked"), // permanent credential failure
 	}
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
 	require.Equal(t, 0, repo.updateCalls)
 	require.Equal(t, 1, invalidator.calls)
-	require.Equal(t, 1, repo.setErrorCalls) // 不可重试错误应设置错误状态
+	require.Equal(t, 1, repo.setErrorCalls) // Permanent failure marks the provider as erroneous.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable 测试刷新成功后清除临时不可调度（DB + Redis）。
+// TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable clears database and Redis suspension after
+// success.
 func TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -902,11 +905,12 @@ func TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable(t *testing
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
-	require.Equal(t, 1, repo.clearTempCalls)   // DB 清除
-	require.Equal(t, 1, tempCache.deleteCalls) // Redis 缓存也应清除
+	require.Equal(t, 1, repo.clearTempCalls)   // database suspension cleared
+	require.Equal(t, 1, tempCache.deleteCalls) // Redis suspension cleared
 }
 
-// TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms 测试所有平台不可重试错误都 SetError。
+// TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms checks permanent failure handling
+// across platforms.
 func TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -938,7 +942,7 @@ func TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms(t *t
 
 			err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 			require.Error(t, err)
-			require.Equal(t, 1, repo.setErrorCalls) // 所有平台不可重试错误都应 SetError
+			require.Equal(t, 1, repo.setErrorCalls) // Permanent errors apply across platforms.
 		})
 	}
 }
@@ -966,7 +970,7 @@ func TestTokenRefreshService_RefreshWithRetry_NoRefreshTokenDoesNotTempUnschedul
 	require.Equal(t, 1, repo.setErrorCalls, "missing refresh token should be treated as a non-retryable credential state")
 }
 
-// TestPathA_Success 统一 API 路径正常成功：刷新 + DB 更新 + postRefreshActions。
+// TestPathA_Success checks exchange, persistence, and post-refresh cleanup through the coordinator.
 func TestPathA_Success(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       100,
@@ -983,9 +987,9 @@ func TestPathA_Success(t *testing.T) {
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.NoError(t, err)
-	require.Equal(t, 1, repo.updateCalls)   // DB 更新被调用
-	require.Equal(t, 1, invalidator.calls)  // 缓存失效被调用
-	require.Equal(t, 1, cache.releaseCalls) // 锁被释放
+	require.Equal(t, 1, repo.updateCalls)   // credentials persisted
+	require.Equal(t, 1, invalidator.calls)  // cached token invalidated
+	require.Equal(t, 1, cache.releaseCalls) // refresh lock released
 }
 
 func TestPathA_GrokSuccessPersistenceFailureContainsProviderWithoutRetryOrMutation(t *testing.T) {
@@ -1183,7 +1187,7 @@ func TestPathA_ParentCancellationAfterPersistStillSynchronizesCacheState(t *test
 	require.NoError(t, scheduler.ctxErr, "scheduler sync must use bounded cleanup context")
 }
 
-// TestPathA_LockHeld 锁被其他 worker 持有 → 返回 providercore.ErrRefreshSkipped。
+// TestPathA_LockHeld returns ErrRefreshSkipped when another worker owns the lock.
 func TestPathA_LockHeld(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       101,
@@ -1193,19 +1197,19 @@ func TestPathA_LockHeld(t *testing.T) {
 	}
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
-	cache := &mockTokenCacheForRefreshAPI{lockResult: false} // 锁获取失败（被占）
+	cache := &mockTokenCacheForRefreshAPI{lockResult: false} // lock held by another worker
 
 	service, refresher := buildPathAService(repo, cache, invalidator)
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.ErrorIs(t, err, providercore.ErrRefreshSkipped)
-	require.Equal(t, 0, repo.updateCalls)  // 不应更新 DB
-	require.Equal(t, 0, invalidator.calls) // 不应触发缓存失效
+	require.Equal(t, 0, repo.updateCalls)  // No credentials to persist after a skipped refresh.
+	require.Equal(t, 0, invalidator.calls) // A skipped refresh leaves the cached token unchanged.
 }
 
-// TestPathA_AlreadyRefreshed 二次检查发现已被其他路径刷新 → 返回 providercore.ErrRefreshSkipped。
+// TestPathA_AlreadyRefreshed returns ErrRefreshSkipped when the second freshness check passes.
 func TestPathA_AlreadyRefreshed(t *testing.T) {
-	// NeedsRefresh 返回 false → RefreshIfNeeded 返回 {Refreshed: false}
+	// A false NeedsRefresh result produces Refreshed=false.
 	provider := &providercore.Record{
 		ID:       102,
 		Platform: capability.PlatformGemini,
@@ -1219,11 +1223,10 @@ func TestPathA_AlreadyRefreshed(t *testing.T) {
 
 	service, _ := buildPathAService(repo, cache, invalidator)
 
-	// 使用一个 NeedsRefresh 返回 false 的 stub
 	noRefreshNeeded := &tokenRefresherStub{
 		credentials: map[string]any{"access_token": "token"},
 	}
-	// 使用单独的 stub 实现 NeedsRefresh。
+	// Use a separate freshness policy from the exchange stub.
 	alwaysFreshStub := &alwaysFreshRefresherStub{}
 
 	err := service.Attempts.Run(context.Background(), provider, noRefreshNeeded, alwaysFreshStub, time.Hour, nil)
@@ -1232,7 +1235,7 @@ func TestPathA_AlreadyRefreshed(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls)
 }
 
-// TestPathA_NonRetryableError 统一 API 路径返回不可重试错误 → SetError。
+// TestPathA_NonRetryableError checks that the coordinator marks permanent failures.
 func TestPathA_NonRetryableError(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       103,
@@ -1253,12 +1256,12 @@ func TestPathA_NonRetryableError(t *testing.T) {
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
-	require.Equal(t, 1, repo.setErrorCalls) // 应标记 error 状态
-	require.Equal(t, 0, repo.updateCalls)   // 不应更新 credentials
-	require.Equal(t, 1, invalidator.calls)  // 永久凭证失败后必须失效旧 token 缓存
+	require.Equal(t, 1, repo.setErrorCalls) // provider marked erroneous
+	require.Equal(t, 0, repo.updateCalls)   // credentials unchanged
+	require.Equal(t, 1, invalidator.calls)  // Invalidate the old cached token after permanent credential failure.
 }
 
-// TestPathA_RetryableErrorExhausted 统一 API 路径可重试错误耗尽 → 不标记 error。
+// TestPathA_RetryableErrorExhausted keeps retryable failures out of permanent error state.
 func TestPathA_RetryableErrorExhausted(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       104,
@@ -1285,9 +1288,9 @@ func TestPathA_RetryableErrorExhausted(t *testing.T) {
 
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
-	require.Equal(t, 0, repo.setErrorCalls) // 可重试错误不标记 error
-	require.Equal(t, 0, repo.updateCalls)   // 刷新失败不应更新
-	require.Equal(t, 0, invalidator.calls)  // 不应触发缓存失效
+	require.Equal(t, 0, repo.setErrorCalls) // retryable failure
+	require.Equal(t, 0, repo.updateCalls)   // credentials unchanged
+	require.Equal(t, 0, invalidator.calls)  // cached token unchanged
 }
 
 func TestPathA_GrokPermanentFailureCASLetsConcurrentProviderRepairWin(t *testing.T) {
@@ -1538,7 +1541,7 @@ func TestTokenRefreshService_GrokConditionalMutationErrorsContainProviderCycle(t
 	}
 }
 
-// TestPathA_DBUpdateFailed 统一 API 路径 DB 更新失败 → 返回 error，不执行 postRefreshActions。
+// TestPathA_DBUpdateFailed returns a persistence error and skips post-refresh actions.
 func TestPathA_DBUpdateFailed(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       105,
@@ -1556,11 +1559,11 @@ func TestPathA_DBUpdateFailed(t *testing.T) {
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, providercore.ErrRefreshCredentialPersist)
-	require.Equal(t, 1, repo.updateCalls)  // DB 更新被尝试
-	require.Equal(t, 0, invalidator.calls) // DB 失败时不应触发缓存失效
+	require.Equal(t, 1, repo.updateCalls)  // persistence attempted
+	require.Equal(t, 0, invalidator.calls) // Keep the cached token after persistence fails.
 }
 
-// TestIsNonRetryableRefreshError 测试不可重试错误判断。
+// TestIsNonRetryableRefreshError checks permanent refresh error classification.
 func TestIsNonRetryableRefreshError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1695,7 +1698,7 @@ func TestTokenRefreshService_ProcessProviderProvidersLegacyNilReleaseGateIsSafe(
 		MaxRetries:          1,
 		ProviderConcurrency: 1,
 	})
-	// 准入拒绝没有释放回调，直接刷新仍须传播跳过且不执行供应商交换。
+	// Admission rejection has no release callback; direct refresh must propagate the skip without an exchange.
 	gate := providercore.NewRefreshProviderState(&rejectedRefreshAttemptGate{err: providercore.ErrRefreshSkipped}, nil, svc.Tuning.FailureThreshold(), IsNonRetryableRefreshError)
 	state := &providercore.RefreshProviderExecution{
 		Platform: capability.PlatformGrok, State: gate,
@@ -1791,7 +1794,8 @@ func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSSt
 	)
 	repo := &poolHealthProviderRepo{}
 	refresher := &poolHealthRefresher{
-		// 前两个按 QPS 间隔启动的尝试会同时完成；若排队调用先占速率槽再等待容量，过期预约会并发冲向上游。
+		// The first two QPS-spaced attempts finish together, exposing stale rate reservations made before capacity
+		// becomes available.
 		startDelays: []time.Duration{
 			220 * time.Millisecond,
 			170 * time.Millisecond,
@@ -1837,10 +1841,10 @@ func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSSt
 	require.Len(t, starts, attemptCount)
 	configuredSpacing := time.Second / time.Duration(providerQPS)
 
-	// 时间戳在速率门放行后才记录，繁忙机器上的调度延迟可能压缩相邻观测间隔。
-	// 取配置间隔的十分之一仍可把正常的 50ms 节流与无节流时的微秒级启动区分开，
-	// 同时避免把调度抖动误判成限速失效。不能改为总跨度断言，因为总跨度主要受
-	// providerConcurrency 下单次刷新耗时影响，即使关闭速率门也可能通过。
+	// Timestamps are recorded after admission; scheduling delays can compress observed intervals.
+	// One tenth of the configured interval distinguishes 50ms throttling from microsecond starts
+	// while tolerating scheduling jitter. Total elapsed time would be a weak assertion because
+	// refresh duration under providerConcurrency can make it pass even with rate limiting disabled.
 	minimumObservedSpacing := configuredSpacing / 10
 	actualMinimumSpacing := starts[1].Sub(starts[0])
 	for i := 1; i < len(starts); i++ {
@@ -2298,7 +2302,7 @@ func (b *failureBlocker) PrepareRefreshFailure(int64) func(providercore.RefreshF
 	return func(providercore.RefreshFailureNotice) { b.calls++ }
 }
 
-// backgroundAttemptOptions 为后台刷新绑定替身接口，周期、尝试和成功后的清理使用生产组件。
+// backgroundAttemptOptions binds test dependencies to production refresh attempts and post-refresh cleanup.
 func backgroundAttemptOptions(repo providercore.CredentialUpdateStore, tuning *providercore.RefreshTuning) providercore.RefreshAttempts {
 	post := &providercore.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug,
@@ -2327,7 +2331,7 @@ func refreshAPIForFixture(repo providercore.RefreshRepository, cache providercor
 	return providercore.NewOAuthRefreshAPI(repo, cache, providercore.RefreshOptions{Platform: providercore.ProviderRefreshPlatformPolicy()})
 }
 
-// Update 将整行更新调用转交给凭据更新替身并记录写入次数。
+// Update records full-row writes and delegates to the credential-update stub.
 func (r *poolHealthProviderRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
@@ -2769,7 +2773,7 @@ func (m *mockTokenCacheForRefreshAPI) ReleaseRefreshLock(_ context.Context, _ st
 	return nil
 }
 
-// buildPathAService 构建注入了 refreshAPI 的 service（Path A 测试辅助）。
+// buildPathAService builds a refresh fixture with the shared refresh coordinator.
 func buildPathAService(repo *tokenRefreshProviderRepo, cache providercore.AccessTokenCache, invalidator providercore.TokenCacheInvalidator) (*refreshAttemptFixture, *tokenRefresherStub) {
 	for _, provider := range repo.providersByID {
 		if provider != nil && provider.Status == "" {

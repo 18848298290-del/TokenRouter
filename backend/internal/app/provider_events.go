@@ -29,12 +29,12 @@ type providerRecordsReader interface {
 
 type providerSchedulerEvents struct{ publisher scheduler.SnapshotPublisher }
 
-// provideProviderDeferred 为延迟写入绑定提供商存储和时间轮。
+// provideProviderDeferred binds the provider store and timing wheel for deferred writes.
 func provideProviderDeferred(store *providerpostgres.ProviderStore, wheel *timingwheel.Wheel) *acctcore.DeferredService {
 	return acctcore.NewDeferredService(store, wheel, acctcore.DeferredOptions{Interval: 10 * time.Second, Now: time.Now, Observe: log.Printf})
 }
 
-// newProviderEvents 将提供商写入事件接入唯一 scheduler outbox 与快照发布器。
+// newProviderEvents connects provider writes to the scheduler outbox and snapshot publisher.
 func newProviderEvents(reader providerRecordsReader, cache scheduler.SnapshotCache) providerpostgres.ProviderEvents {
 	return providerSchedulerEvents{publisher: scheduler.SnapshotPublisher{
 		Cache: cache, Diagnostics: scheduler.Diagnostics{
@@ -85,7 +85,7 @@ func providerSchedulerEventName(event providerpostgres.ProviderEvent) string {
 	}
 }
 
-// providerUsageEvents 为提供商累计用量绑定事件写入和快照发布函数。
+// providerUsageEvents binds change events and snapshot publication for accumulated provider usage.
 func providerUsageEvents(reader providerRecordsReader, cache scheduler.SnapshotCache, exec postgresinfra.Executor) billingpostgres.ProviderUsageOptions {
 	events := newProviderEvents(reader, cache)
 	return billingpostgres.ProviderUsageOptions{
@@ -110,7 +110,7 @@ func wrapSchedulerRecordPointers(values []*acctcore.Record) []scheduler.Snapshot
 	return out
 }
 
-// provideProviderStore 构造共享的提供商存储，并绑定数据转换和事件写入函数。
+// provideProviderStore binds record conversion and change events to the shared provider store.
 func provideProviderStore(client *dbent.Client, db *sql.DB, cache scheduler.SnapshotCache) *providerpostgres.ProviderStore {
 	store := providerpostgres.NewProviderStore(client, db, providerpostgres.ProviderStoreOptions{
 		Group: func(g *dbent.Group) *accessview.GroupConfig {

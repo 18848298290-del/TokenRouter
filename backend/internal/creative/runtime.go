@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// DefaultCreativeWorkerCount 是创作台任务 worker 的默认并发数。
+// DefaultCreativeWorkerCount is the default task worker pool size.
 const DefaultCreativeWorkerCount = 128
 
-// CreativeWorkerStatus 是创作台 worker 池状态快照，供管理端展示当前使用情况。
+// CreativeWorkerStatus is the pool usage snapshot displayed by the administration API.
 type CreativeWorkerStatus struct {
 	Running     bool `json:"running"`
 	WorkerCount int  `json:"worker_count"`
@@ -24,7 +24,7 @@ type creativeWorkerHandle struct {
 	stopping atomic.Bool
 }
 
-// CreativeWorkerRuntime 管理创作台 worker 池、delayed mover 与 stale recovery 生命周期。
+// CreativeWorkerRuntime owns task workers, queue recovery loops, and configured reconcilers.
 type CreativeWorkerRuntime struct {
 	worker  RuntimeWorker
 	options RuntimeOptions
@@ -42,7 +42,7 @@ type CreativeWorkerRuntime struct {
 	desiredWorkerCount int
 }
 
-// RuntimeWorker 是运行拥有者需要的最小任务执行接口。
+// RuntimeWorker supplies task execution, queue recovery, and busy-worker counts to the runtime.
 type RuntimeWorker interface {
 	RunUntilStopped(context.Context, <-chan struct{})
 	RunDelayedMover(context.Context)
@@ -50,7 +50,7 @@ type RuntimeWorker interface {
 	BusyCount() int
 }
 
-// RuntimeOptions 包含 app 提供的启用开关、worker 数量读取函数和两个恢复循环。
+// RuntimeOptions supplies the enable flag, worker-count reader, and optional outbox/transient recovery loops.
 type RuntimeOptions struct {
 	Enabled     bool
 	WorkerCount func(context.Context) int
@@ -62,7 +62,7 @@ func NewCreativeWorkerRuntime(worker RuntimeWorker, options RuntimeOptions) *Cre
 	return &CreativeWorkerRuntime{worker: worker, options: options, desiredWorkerCount: DefaultCreativeWorkerCount}
 }
 
-// Start 启动任务 worker 池、delayed mover 与 stale recovery；重复调用幂等。
+// Start starts the worker pool and recovery loops once; a stopped runtime cannot restart.
 func (r *CreativeWorkerRuntime) Start() {
 	if r == nil || r.worker == nil || !r.options.Enabled {
 		return
@@ -112,7 +112,7 @@ func (r *CreativeWorkerRuntime) Start() {
 	}()
 }
 
-// desiredWorkerCountValue 从数据库运行时设置读取初始 worker 数量，异常时回退默认值。
+// desiredWorkerCountValue prefers a positive configured count, then the stored desired count, then the default.
 func (r *CreativeWorkerRuntime) desiredWorkerCountValue() int {
 	if r != nil && r.options.WorkerCount != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -134,7 +134,7 @@ func (r *CreativeWorkerRuntime) desiredWorkerCountValue() int {
 	return DefaultCreativeWorkerCount
 }
 
-// SetWorkerCount 热更新任务 worker 数量；缩容采用优雅排空，不取消执行中的任务。
+// SetWorkerCount resizes the pool; scale-down drains selected workers after their current task.
 func (r *CreativeWorkerRuntime) SetWorkerCount(count int) {
 	if r == nil || count <= 0 {
 		return
@@ -151,7 +151,7 @@ func (r *CreativeWorkerRuntime) SetWorkerCount(count int) {
 	r.mu.Unlock()
 }
 
-// WorkerCount 返回当前期望的 worker 数量。
+// WorkerCount returns the desired pool size, including workers not yet started.
 func (r *CreativeWorkerRuntime) WorkerCount() int {
 	if r == nil {
 		return 0
@@ -164,7 +164,7 @@ func (r *CreativeWorkerRuntime) WorkerCount() int {
 	return r.desiredWorkerCount
 }
 
-// Status 返回 worker 池状态快照；未运行时返回 running=false 的零值快照。
+// Status returns pool usage, or a zero snapshot while the runtime is stopped.
 func (r *CreativeWorkerRuntime) Status() CreativeWorkerStatus {
 	if r == nil || r.worker == nil {
 		return CreativeWorkerStatus{}
@@ -186,7 +186,7 @@ func (r *CreativeWorkerRuntime) Status() CreativeWorkerStatus {
 	}
 }
 
-// reconcileWorkersLocked 使 worker 数量向 desiredWorkerCount 收敛；调用方必须持有 mu。
+// reconcileWorkersLocked adjusts active workers toward the desired count. The caller holds mu.
 func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	if r == nil || r.cancel == nil || r.ctx == nil || r.ctx.Err() != nil || r.wg == nil {
 		return
@@ -207,7 +207,7 @@ func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	if activeCount <= desired {
 		return
 	}
-	// 选择 ID 最大的 worker 缩容，保留较早启动的 worker 以减少调度抖动。
+	// Drain the newest workers first so earlier workers remain available.
 	toStop := activeCount - desired
 	for id := r.nextWorkerID; toStop > 0 && id > 0; id-- {
 		handle, ok := r.workers[id]
@@ -220,7 +220,7 @@ func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	}
 }
 
-// activeWorkerCountLocked 返回尚未收到排空信号的 worker 数量；调用方必须持有 mu。
+// activeWorkerCountLocked counts workers not signaled to drain. The caller holds mu.
 func (r *CreativeWorkerRuntime) activeWorkerCountLocked() int {
 	active := 0
 	for _, handle := range r.workers {
@@ -242,10 +242,10 @@ func (r *CreativeWorkerRuntime) runWorkerHandle(ctx context.Context, handle *cre
 	r.mu.Unlock()
 }
 
-// Stop 保留兼容入口，应用退出使用带预算的 StopContext。
+// Stop cancels the runtime and waits without a deadline; bounded shutdown uses StopContext.
 func (r *CreativeWorkerRuntime) Stop() { _ = r.StopContext(context.Background()) }
 
-// StopContext 固定首次结果；超时不意味着在途工作已排空。
+// StopContext cancels the runtime and caches the first stop result; a timeout may leave work in flight.
 func (r *CreativeWorkerRuntime) StopContext(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -284,7 +284,7 @@ func (r *CreativeWorkerRuntime) StopContext(ctx context.Context) error {
 	return err
 }
 
-// Running 报告 runtime 是否正在运行。
+// Running reports whether the runtime has started and has not been stopped.
 func (r *CreativeWorkerRuntime) Running() bool {
 	if r == nil {
 		return false

@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CodexIdentityNamespace 在构造 Header 和 metadata 时读取当前凭据并计算命名空间。
+// CodexIdentityNamespace derives an identity namespace from the current provider credentials.
 func CodexIdentityNamespace(provider *providercore.Record) string {
 	if provider == nil || !provider.IsOpenAIOAuthLike() {
 		return ""
@@ -27,7 +27,7 @@ func CodexIdentityNamespace(provider *providercore.Record) string {
 	return ""
 }
 
-// CodexFingerprintIDsFromRequest 只解析本 attempt 的客户端会话，复用原指纹生成器。
+// CodexFingerprintIDsFromRequest derives fingerprint IDs from this attempt's client session headers.
 func CodexFingerprintIDsFromRequest(value *providercore.Record, headers http.Header) *openai.FingerprintIDs {
 	if value == nil {
 		return nil
@@ -43,7 +43,7 @@ func CodexFingerprintIDsFromRequest(value *providercore.Record, headers http.Hea
 	return CodexFingerprintIDs(value, session, mode)
 }
 
-// SetChatGPTAccountHeaders 保留 OAuth 资格和无 Header 的短路。
+// SetChatGPTAccountHeaders adds account headers for OAuth-like providers when headers is non-nil.
 func SetChatGPTAccountHeaders(headers http.Header, value *providercore.Record) {
 	if headers == nil || value == nil || !value.IsOpenAIOAuthLike() {
 		return

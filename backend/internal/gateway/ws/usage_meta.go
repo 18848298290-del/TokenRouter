@@ -7,21 +7,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// UsageDecoder 调用协议和网关策略的档位解析函数。
+// UsageDecoder parses service-tier and reasoning-effort metadata.
 type UsageDecoder interface {
 	ServiceTier([]byte) *string
 	ReasoningEffort([]byte) *string
 	RequestedReasoningEffort([]byte) *string
 }
 
-// UsageMeta 保存双向 relay 共享的原子会话缺省值，turn 独立快照仍由 TurnPayload 拥有。
+// UsageMeta holds atomic session defaults shared by both relay directions; TurnPayload owns per-turn snapshots.
 type UsageMeta struct {
 	decoder                  UsageDecoder
 	ServiceTier              atomic.Pointer[string]
 	ReasoningEffort          atomic.Pointer[string]
 	RequestedReasoningEffort atomic.Pointer[string]
 
-	// 上下行共享会话缺省模型；每轮模型链仍由原快照固化。
+	// Shared session default; each turn retains its own model snapshot.
 	sessionRequestModel atomic.Pointer[string]
 }
 
@@ -43,7 +43,7 @@ func (m *UsageMeta) InitFromFirstFrame(policyOutput []byte) {
 	m.ReasoningEffort.Store(m.decoder.ReasoningEffort(policyOutput))
 }
 
-// CaptureRequestedReasoningEffort 在策略和模型改写前保存客户端档位。
+// CaptureRequestedReasoningEffort records client effort before policy and model rewrites.
 func (m *UsageMeta) CaptureRequestedReasoningEffort(originalBody []byte) {
 	if m == nil {
 		return
@@ -92,7 +92,7 @@ func RequestModelFromSessionFrame(payload []byte) string {
 	return strings.TrimSpace(gjson.GetBytes(payload, "session.model").String())
 }
 
-// LoadSessionRequestModel 原子读取上下行共用的会话请求模型，空值时使用回退模型。
+// LoadSessionRequestModel atomically reads the shared client model, returning empty when none is stored.
 func (m *UsageMeta) LoadSessionRequestModel() string {
 	if m == nil {
 		return ""

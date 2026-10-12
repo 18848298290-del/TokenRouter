@@ -11,8 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestPersistProviderCredentials_SkipsShadow 验证凭据写入唯一汇聚点
-// persistProviderCredentials 对 spark 影子早返 no-op,任何上游路径都无法把凭据落到影子行。
+// TestPersistProviderCredentials_SkipsShadow checks that PersistCredentials
+// returns without mutating or persisting authentication credentials for Spark shadows.
 func TestPersistProviderCredentials_SkipsShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()

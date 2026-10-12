@@ -81,7 +81,7 @@ func TestQoderGatewayNonStreamingSSEAgentLimitSetsRateLimited(t *testing.T) {
 	require.Equal(t, int64(1783841289162), repo.resetAt.UnixMilli())
 }
 
-// SetOverloaded 拒绝限流夹具中不应发生的另一类健康写入。
+// SetOverloaded rejects unexpected overload writes in the rate-limit fixture.
 func (r *qoderRateLimitRepoStub) SetOverloaded(context.Context, int64, time.Time) error {
 	panic("unexpected SetOverloaded call")
 }

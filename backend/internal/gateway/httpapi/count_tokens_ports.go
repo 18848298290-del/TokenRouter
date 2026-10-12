@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// CountTarget 保存所选计数目标，HTTP 读取其摘要数据。
+// CountTarget represents a selected token-count provider and exposes its execution and session cleanup.
 type CountTarget interface {
 	Snapshot() provider.ProviderSnapshot
 	RetryLimit() int
@@ -29,14 +29,14 @@ type CountTarget interface {
 	ReleaseSession(context.Context, string)
 }
 
-// CountExecutor 只暴露无槽选择、分组策略解析和既有临时停调能力。
+// CountExecutor selects count providers without slots, plans group routes, and temporarily excludes retryable failures.
 type CountExecutor interface {
 	SelectCountTarget(context.Context, *int64, string, string, map[int64]struct{}) (CountTarget, error)
 	PlanCountRoute(context.Context, *apikey.APIKey, string) routing.RoutePlan
 	TempUnscheduleRetryableError(context.Context, int64, *forwardcore.UpstreamFailoverError)
 }
 
-// CountHTTPPorts 在构造时绑定固定依赖；每请求只建立当前尝试状态。
+// CountHTTPPorts binds shared dependencies and creates request-specific attempt state.
 type CountHTTPPorts struct {
 	ClientGroupFallback ClientGroupFallbackResolver
 	Diagnoser           routing.ModelAvailabilityDiagnoser
@@ -60,15 +60,16 @@ type countAttempt struct {
 	target          CountTarget
 }
 
-// FailoverClientGone 判断请求 context 是否因下游断开而取消，已断开时结束换号。
-// 取消后重新选择提供商会返回 context.Canceled，容易误报为提供商耗尽的 502。在途的 detach 请求照常计费。
-// 响应尚未提交时标记 499（client closed request），供访问日志归类。
+// FailoverClientGone ends failover when the request context is canceled.
+// Reselecting with a canceled context could misreport provider exhaustion as 502; detached in-flight work still
+// settles.
+// An uncommitted response gets status 499 for access logging.
 func FailoverClientGone(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.Context().Err() == nil {
 		return false
 	}
-	// 先停止 compact 心跳，在互斥锁下等待心跳写入结束，再标记响应状态。
-	// 心跳已提交 200 时保留该状态码。
+	// Stop heartbeats and wait for their writes before setting the status.
+	// A heartbeat that already committed HTTP 200 keeps that status.
 	if StopOpenAICompactSSEKeepaliveCommitted(c) {
 		return true
 	}
@@ -124,7 +125,7 @@ func (p CountHTTPPorts) Execution(c *gin.Context, key *apikey.APIKey, parsed *re
 	return &countAttempt{ports: p, c: c, key: apikey.CopyAPIKey(key), parsed: parsed, hash: hash, log: log}
 }
 
-// PrepareGroupAttempt 从原报文克隆并解析当前分组的模型映射，保留每次尝试独立改写。
+// PrepareGroupAttempt clones the original body and resolves the current group mapping independently for each attempt.
 func PrepareGroupAttempt(ctx context.Context, parsed *requeststate.ParsedRequest, body []byte, key *apikey.APIKey, requested string, plan func(context.Context, *apikey.APIKey, string) routing.RoutePlan) (*requeststate.ParsedRequest, routing.GroupMappingResult, error) {
 	attempt, err := parsed.CloneForBody(body)
 	if err != nil {

@@ -79,10 +79,10 @@ func (m *Executor) getOrCreateHTTPClient(proxyURL string) (*http.Client, error) 
 	return c, nil
 }
 
-// newHTTPClient creates an HTTP client with proper timeout settings.
-// Uses proxy.ConfigureTransportProxy for unified proxy protocol support
-// (HTTP/HTTPS/SOCKS5/SOCKS5H).
-// Returns error if proxyURL is invalid — never falls back to direct connection.
+// newHTTPClient sets dial, TLS handshake, response-header, and whole-request deadlines.
+// Configured proxies use proxy.ConfigureTransportProxy for
+// HTTP, HTTPS, SOCKS5, and SOCKS5H support.
+// Invalid proxy configuration returns an error before any request can use a direct connection.
 func newHTTPClient(proxyURL string) (*http.Client, error) {
 	transport := &http.Transport{
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
@@ -115,24 +115,24 @@ func (m *Executor) buildProvider(cfg ProviderConfig, client *http.Client) Provid
 	}
 }
 
-// isProxyError checks whether the error is likely caused by proxy or network connectivity
-// (as opposed to an API-level error from the search provider).
+// isProxyError classifies network errors and proxy-related messages as connectivity failures.
+// This heuristic can also classify direct-connection failures.
 func isProxyError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Network-level errors (timeout, connection refused, DNS failure)
+	// Typed network errors include timeouts, refused connections, and DNS failures.
 	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
-	// TLS handshake failures (often caused by proxy intercepting/blocking)
+	// An invalid TLS record can indicate a failed connection through the proxy.
 	if _, ok := errors.AsType[*tls.RecordHeaderError](err); ok {
 		return true
 	}
-	// String-based detection for wrapped errors
+	// Recognize connectivity messages even when error types are unavailable.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "proxy") ||
 		strings.Contains(msg, "socks") ||

@@ -100,8 +100,7 @@ FROM combined`
 	qpsAvg := roundTo1DP(float64(requestCountTotal) / windowSeconds)
 	tpsAvg := roundTo1DP(float64(tokenConsumed) / windowSeconds)
 
-	// Keep "current" consistent with the dashboard overview semantics: last 1 minute.
-	// This remains "within the selected window" since end=start+window.
+	// Current rates cover the minute ending at the selected window end, as in the dashboard.
 	qpsCurrent, tpsCurrent, err := r.queryCurrentRates(ctx, filter, end)
 	if err != nil {
 		return nil, err

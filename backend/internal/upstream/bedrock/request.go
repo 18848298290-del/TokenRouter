@@ -19,7 +19,7 @@ import (
 const (
 	DefaultBedrockRegion = "us-east-1"
 
-	// FeatureKeyBedrockCCCompat 是 GroupRoutingPolicy.FeaturesConfig 中 Bedrock CC 兼容开关的配置键。
+	// FeatureKeyBedrockCCCompat names the Bedrock Claude Code compatibility group setting.
 	FeatureKeyBedrockCCCompat = "bedrock_cc_compat"
 
 	BedrockContextManagementBetaToken = "context-management-2025-06-27"
@@ -30,28 +30,27 @@ const (
 var (
 	BedrockCrossRegionPrefixes = []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."}
 
-	// BedrockSupportedBetaTokens 是 Bedrock Invoke 支持的 beta 头白名单
-	// 参考: AWS Bedrock 官方文档 + litellm anthropic_beta_headers_config.json
-	// 更新策略: 当 AWS Bedrock 新增支持的 beta token 时需同步更新此白名单。
+	// BedrockSupportedBetaTokens lists beta tokens allowed in Invoke requests.
+	// Sources: AWS Bedrock documentation and litellm anthropic_beta_headers_config.json.
+	// Verify upstream support when updating this allowlist.
 	BedrockSupportedBetaTokens = map[string]bool{
 		"computer-use-2025-01-24":                true,
 		"computer-use-2025-11-24":                true,
 		"context-1m-2025-08-07":                  true,
-		"context-management-2025-06-27":          true, // 支持压缩与 clear_thinking，AWS 文档已支持
-		"compact-2026-01-12":                     true, // 官方支持，仅 InvokeModel API（Opus 4.6+）
-		"fine-grained-tool-streaming-2025-05-14": true, // AWS 工具调用文档已支持
-		// "interleaved-thinking-2025-05-14": false, // 无官方文档支持
+		"context-management-2025-06-27":          true, // context compaction and clear_thinking
+		"compact-2026-01-12":                     true, // InvokeModel compaction for supported Opus models
+		"fine-grained-tool-streaming-2025-05-14": true, // fine-grained tool streaming
+		// interleaved-thinking-2025-05-14 is excluded pending documented Bedrock support.
 		"tool-search-tool-2025-10-19": true,
 		"tool-examples-2025-10-29":    true,
 	}
 
-	// BedrockBetaTokenTransforms 定义 Bedrock Invoke 特有的 beta 头转换规则
-	// Anthropic 直接 API 使用通用头，Bedrock Invoke 需要特定的替代头。
+	// BedrockBetaTokenTransforms maps Anthropic beta tokens to Bedrock equivalents.
 	BedrockBetaTokenTransforms = map[string]string{
 		"advanced-tool-use-2025-11-20": "tool-search-tool-2025-10-19",
 	}
 
-	// BedrockToolUseIDRe 匹配 Bedrock 允许的 tool_use ID 字符（字母、数字、下划线、连字符）。
+	// BedrockToolUseIDRe matches characters outside the allowed tool-use ID alphabet.
 	BedrockToolUseIDRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 )
 
@@ -105,22 +104,21 @@ func IsLikelyBedrockModelID(modelID string) bool {
 	return IsRegionalBedrockModelID(lower)
 }
 
-// ResolveBedrockModelID 为调度与模型目录解析区域对应的模型 ID。
+// ResolveBedrockModelID returns the routed model ID and whether resolution succeeded.
 func ResolveBedrockModelID(provider *RouteInput, requestedModel string) (string, bool) {
 	route, err := ResolveBedrockModelRoute(provider, requestedModel)
 	return route.ModelID, err == nil
 }
 
-// BuildBedrockURL 构建 Bedrock InvokeModel 的 URL
-// stream=true 时使用 invoke-with-response-stream 端点
-// modelID 中的特殊字符会被 URL 编码（与 litellm 的 urllib.parse.quote(safe="") 对齐）。
+// BuildBedrockURL builds the regional InvokeModel endpoint.
+// Streaming requests use invoke-with-response-stream.
+// The model ID is path-escaped, with colons encoded separately.
 func BuildBedrockURL(region, modelID string, stream bool) string {
 	if region == "" {
 		region = DefaultBedrockRegion
 	}
 	encodedModelID := url.PathEscape(modelID)
-	// url.PathEscape 不编码冒号（RFC 允许 path 中出现 ":"），
-	// 但 AWS Bedrock 期望模型 ID 中的冒号被编码为 %3A
+	// PathEscape leaves colons unchanged; encode them for the Bedrock model path.
 	encodedModelID = strings.ReplaceAll(encodedModelID, ":", "%3A")
 	if stream {
 		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke-with-response-stream", region, encodedModelID)
@@ -128,38 +126,31 @@ func BuildBedrockURL(region, modelID string, stream bool) string {
 	return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke", region, encodedModelID)
 }
 
-// PrepareBedrockRequestBody 处理请求体以适配 Bedrock API
-//  1. 注入 anthropic_version
-//  2. 注入 anthropic_beta（从客户端 anthropic-beta 头解析）
-//  3. 移除 Bedrock 不支持的字段（model, stream, output_format, output_config）
-//  4. 移除工具定义中的 custom 字段（Claude Code 会发送 custom: {defer_loading: true}）
-//  5. 清理 cache_control 中 Bedrock 不支持的字段（scope, ttl）
-//  6. 修复 thinking 字段兼容性（Opus 4.7 仅支持 adaptive，enabled 需要 budget_tokens）
-//  7. 清理 tool_use.id / tool_use_id 中 Bedrock 不接受的字符
-//  8. 根据最终 Bedrock beta tokens 剥离不再支持的 beta 字段
+// PrepareBedrockRequestBody resolves beta tokens and prepares an Invoke request body.
+// It sets the protocol version, removes unsupported fields, inlines output schemas,
+// and cleans tool definitions and cache controls.
+// Thinking and tool-use ID normalization require the ccCompat option in
+// PrepareBedrockRequestBodyWithTokens.
 func PrepareBedrockRequestBody(body []byte, modelID string, betaHeader string) ([]byte, error) {
 	betaTokens := ResolveBedrockBetaTokens(betaHeader, body, modelID)
 	return PrepareBedrockRequestBodyWithTokens(body, modelID, betaTokens, false)
 }
 
-// PrepareBedrockRequestBodyWithTokens 使用预解析的 beta token 准备 Bedrock 请求体。
-// ccCompat 启用 CC 兼容模式时额外处理 thinking 类型转换和 tool_use.id 清理。
+// PrepareBedrockRequestBodyWithTokens prepares an Invoke body with precomputed beta tokens.
+// ccCompat also normalizes thinking settings and tool-use IDs.
 func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens []string, ccCompat bool, rules ...modelcatalog.ExecutionRules) ([]byte, error) {
 	var err error
 
 	betaTokens = FilterBedrockBetaTokens(betaTokens)
 	body = SanitizeBedrockFieldsForBetaTokens(body, betaTokens)
 
-	// 注入 anthropic_version（Bedrock 要求）
+	// Bedrock carries the protocol version in the body.
 	body, err = sjson.SetBytes(body, "anthropic_version", "bedrock-2023-05-31")
 	if err != nil {
 		return nil, fmt.Errorf("inject anthropic_version: %w", err)
 	}
 
-	// 将 beta 标记写入 Bedrock 请求体的 anthropic_beta 字段。
-	// 1. 从客户端 anthropic-beta header 解析
-	// 2. 根据请求体内容自动补齐必要的 beta token
-	//    参考 litellm: AnthropicModelInfo.get_anthropic_beta_list() + _get_tool_search_beta_header_for_bedrock()
+	// Bedrock receives the filtered beta tokens in the request body.
 	if len(betaTokens) > 0 {
 		body, err = sjson.SetBytes(body, "anthropic_beta", betaTokens)
 		if err != nil {
@@ -170,41 +161,37 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 		body, _ = sjson.DeleteBytes(body, "anthropic_beta")
 	}
 
-	// 移除 Bedrock 不支持的 Anthropic 直连 API 专有顶层字段
+	// Drop direct-API metadata that is not part of this Invoke payload.
 	body, _ = sjson.DeleteBytes(body, "provider")
 	body, _ = sjson.DeleteBytes(body, "metadata")
 
-	// 移除 model 字段（Bedrock 通过 URL 指定模型）
+	// The model is selected by the URL.
 	body, err = sjson.DeleteBytes(body, "model")
 	if err != nil {
 		return nil, fmt.Errorf("remove model field: %w", err)
 	}
 
-	// 移除 stream 字段（Bedrock 通过不同端点控制流式，不接受请求体中的 stream 字段）
+	// The endpoint selects streaming; the body has no stream flag.
 	body, err = sjson.DeleteBytes(body, "stream")
 	if err != nil {
 		return nil, fmt.Errorf("remove stream field: %w", err)
 	}
 
-	// 转换 output_format（Bedrock Invoke 不支持此字段，但可将 schema 内联到最后一条 user message）
-	// 参考 litellm: _convert_output_format_to_inline_schema()
+	// Supply the requested schema as user text because Invoke omits output_format.
+	// See litellm _convert_output_format_to_inline_schema for the corresponding adaptation.
 	body = ConvertOutputFormatToInlineSchema(body)
 
-	// 移除 output_config 字段（Bedrock Invoke 不支持）
 	body, err = sjson.DeleteBytes(body, "output_config")
 	if err != nil {
 		return nil, fmt.Errorf("remove output_config field: %w", err)
 	}
 
-	// 移除工具定义中的 custom 字段
-	// Claude Code (v2.1.69+) 在 tool 定义中发送 custom: {defer_loading: true}，
-	// Anthropic API 接受但 Bedrock 会拒绝并报 "Extra inputs are not permitted"
+	// Remove the Claude Code custom tool extension before sending to Bedrock.
+	// For example, custom: {defer_loading: true} is outside the Invoke tool schema.
 	body = RemoveCustomFieldFromTools(body)
 
-	// 清理 cache_control 中 Bedrock 不支持的字段
 	body = SanitizeBedrockCacheControl(body, modelID, rules...)
 
-	// CC 兼容模式：修复 CC 发送的 Bedrock 不兼容字段
 	if ccCompat {
 		body = SanitizeBedrockThinking(body, modelID, rules...)
 		body = SanitizeBedrockToolUseIDs(body)
@@ -213,23 +200,22 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 	return body, nil
 }
 
-// ResolveBedrockBetaTokens computes the final Bedrock beta token list before policy filtering.
+// ResolveBedrockBetaTokens merges header and body-derived tokens, then filters them for Bedrock.
 func ResolveBedrockBetaTokens(betaHeader string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	betaTokens := ParseAnthropicBetaHeader(betaHeader)
 	betaTokens = AutoInjectBedrockBetaTokens(betaTokens, body, modelID, rules...)
 	return FilterBedrockBetaTokens(betaTokens)
 }
 
-// ConvertOutputFormatToInlineSchema 将 output_format 中的 JSON schema 内联到最后一条 user message
-// Bedrock Invoke 不支持 output_format 参数，litellm 的做法是将 schema 追加到用户消息中
-// 参考: litellm AmazonAnthropicClaudeMessagesConfig._convert_output_format_to_inline_schema()。
+// ConvertOutputFormatToInlineSchema removes object-valued output_format and appends its schema
+// as text to the last user message when that message has string or array content.
+// Missing schemas or suitable user messages leave the field removed without adding text.
 func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	outputFormat := gjson.GetBytes(body, "output_format")
 	if !outputFormat.Exists() || !outputFormat.IsObject() {
 		return body
 	}
 
-	// 先从请求体中移除 output_format
 	body, _ = sjson.DeleteBytes(body, "output_format")
 
 	schema := outputFormat.Get("schema")
@@ -237,7 +223,6 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 		return body
 	}
 
-	// 找到最后一条 user message
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return body
@@ -254,7 +239,6 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 		return body
 	}
 
-	// 将 schema 序列化为 JSON 文本追加到该 message 的 content 数组
 	schemaJSON, err := json.Marshal(json.RawMessage(schema.Raw))
 	if err != nil {
 		return body
@@ -264,12 +248,11 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	basePath := fmt.Sprintf("messages.%d.content", lastUserIdx)
 
 	if content.IsArray() {
-		// 追加一个 text block 到 content 数组末尾
 		idx := len(content.Array())
 		body, _ = sjson.SetBytes(body, fmt.Sprintf("%s.%d.type", basePath, idx), "text")
 		body, _ = sjson.SetBytes(body, fmt.Sprintf("%s.%d.text", basePath, idx), string(schemaJSON))
 	} else if content.Type == gjson.String {
-		// content 是纯字符串，转换为数组格式
+		// Preserve string content as the first text block when adding the schema.
 		originalText := content.String()
 		body, _ = sjson.SetBytes(body, basePath, []map[string]string{
 			{"type": "text", "text": originalText},
@@ -280,7 +263,7 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	return body
 }
 
-// RemoveCustomFieldFromTools 移除 tools 数组中每个工具定义的 custom 字段。
+// RemoveCustomFieldFromTools removes the custom extension from each tool definition.
 func RemoveCustomFieldFromTools(body []byte) []byte {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() {
@@ -290,26 +273,24 @@ func RemoveCustomFieldFromTools(body []byte) []byte {
 	for i := range tools.Array() {
 		body, err = sjson.DeleteBytes(body, fmt.Sprintf("tools.%d.custom", i))
 		if err != nil {
-			// 删除失败不影响整体流程，跳过
+			// Continue processing other tools when a deletion fails.
 			continue
 		}
 	}
 	return body
 }
 
-// IsBedrockClaude45OrNewer 查询已登记型号的缓存 TTL 支持。
+// IsBedrockClaude45OrNewer reports whether the catalog declares cache TTL support.
 func IsBedrockClaude45OrNewer(modelID string) bool {
 	return len(modelcatalog.BedrockExecutionRules(modelID).CacheTTL) > 0
 }
 
-// SanitizeBedrockCacheControl 清理 system 和 messages 中 cache_control 里
-// Bedrock 不支持的字段：
-//   - scope：Bedrock 不支持（如 "global" 跨请求缓存）
-//   - ttl：仅 Claude 4.5+ 支持 "5m" 和 "1h"，旧模型需要移除
+// SanitizeBedrockCacheControl removes unsupported cache fields from system and message blocks.
+// It removes scope and retains TTL only when the model rules declare TTL support.
+// Supported TTL values are "5m" and "1h".
 func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	isClaude45 := len(bedrockExecutionRules(modelID, rules).CacheTTL) > 0
 
-	// 清理 system 数组中的 cache_control
 	systemArr := gjson.GetBytes(body, "system")
 	if systemArr.Exists() && systemArr.IsArray() {
 		for i, item := range systemArr.Array() {
@@ -324,7 +305,6 @@ func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcata
 		}
 	}
 
-	// 清理 messages 中的 cache_control
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return body
@@ -352,14 +332,13 @@ func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcata
 	return body
 }
 
-// DeleteCacheControlUnsupportedFields 删除给定 cache_control 路径下 Bedrock 不支持的字段。
+// DeleteCacheControlUnsupportedFields removes scope and unsupported TTL values at basePath.
 func DeleteCacheControlUnsupportedFields(body []byte, basePath string, cc gjson.Result, isClaude45 bool) []byte {
-	// Bedrock 不支持 scope（如 "global"）
 	if cc.Get("scope").Exists() {
 		body, _ = sjson.DeleteBytes(body, basePath+".scope")
 	}
 
-	// ttl：仅 Claude 4.5+ 支持 "5m" 和 "1h"，其余情况移除
+	// The capability flag permits only the recognized TTL values.
 	ttl := cc.Get("ttl")
 	if ttl.Exists() {
 		shouldRemove := true
@@ -379,12 +358,12 @@ func DeleteCacheControlUnsupportedFields(body []byte, basePath string, cc gjson.
 
 func ParseAnthropicBetaHeader(header string) []string { return claude.ParseAnthropicBetaHeader(header) }
 
-// AutoInjectBedrockBetaTokens 根据请求体内容自动补齐必要的 beta token
-// 参考 litellm: AnthropicModelInfo.get_anthropic_beta_list() 和
-// AmazonAnthropicClaudeMessagesConfig._get_tool_search_beta_header_for_bedrock()
+// AutoInjectBedrockBetaTokens adds beta tokens required by tool features in the body.
+// The corresponding litellm helpers are get_anthropic_beta_list and
+// _get_tool_search_beta_header_for_bedrock.
 //
-// 客户端（特别是非 Claude Code 客户端）可能只在 body 中启用了功能而不在 header 中带对应 beta token，
-// 这里通过检测请求体特征自动补齐，确保 Bedrock Invoke 不会因缺少必要 beta 头而 400。
+// Some clients enable a body feature without sending its beta header.
+// The caller filters and translates the resulting tokens before sending.
 func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	seen := make(map[string]bool, len(tokens))
 	for _, t := range tokens {
@@ -398,11 +377,9 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, r
 		}
 	}
 
-	// 注意：thinking 字段不再自动注入 interleaved-thinking-2025-05-14
-	// 因为该 beta token 未在 AWS Bedrock 官方文档中确认支持
+	// Thinking alone does not add the unlisted interleaved-thinking beta.
 
-	// 检测 computer_use 工具
-	// tools 中有 type="computer_20xxxxxx" 的工具 → 需要 computer-use beta
+	// Computer tools select the computer-use beta.
 	tools := gjson.GetBytes(body, "tools")
 	if tools.Exists() && tools.IsArray() {
 		toolSearchUsed := false
@@ -424,14 +401,13 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, r
 			}
 		}
 		if programmaticToolCallingUsed || inputExamplesUsed {
-			// programmatic tool calling 和 input examples 需要 advanced-tool-use，
-			// 后续 FilterBedrockBetaTokens 会将其转换为 Bedrock 特定的 tool-search-tool
+			// Programmatic callers and examples select advanced-tool-use here.
+			// FilterBedrockBetaTokens later translates it to the Bedrock tool-search token.
 			inject("advanced-tool-use-2025-11-20")
 		}
 		rule := bedrockExecutionRules(modelID, rules)
 		if toolSearchUsed && rule.ToolSearch != nil && *rule.ToolSearch {
-			// 纯 tool search（无 programmatic/inputExamples）时直接注入 Bedrock 特定头，
-			// 跳过 advanced-tool-use → tool-search-tool 的转换步骤（与 litellm 对齐）
+			// Tool search on an eligible model can use the Bedrock token directly.
 			if !programmaticToolCallingUsed && !inputExamplesUsed {
 				inject("tool-search-tool-2025-10-19")
 			} else {
@@ -475,34 +451,29 @@ func ContainsStringInJSONArray(result gjson.Result, target string) bool {
 	return false
 }
 
-// BedrockModelSupportsToolSearch 判断 Bedrock 模型是否支持 tool search
-// 目前仅 Claude Opus/Sonnet 4.5+ 支持，Haiku 不支持。
+// BedrockModelSupportsToolSearch reports the catalog's tool-search capability.
 func BedrockModelSupportsToolSearch(modelID string) bool {
 	rules := modelcatalog.BedrockExecutionRules(modelID)
 	return rules.ToolSearch != nil && *rules.ToolSearch
 }
 
-// FilterBedrockBetaTokens 过滤并转换 beta token 列表，仅保留 Bedrock Invoke 支持的 token
-// 1. 应用转换规则（如 advanced-tool-use → tool-search-tool）
-// 2. 过滤掉 Bedrock 不支持的 token（如 output-128k, files-api, structured-outputs 等）
-// 3. 自动关联 tool-examples（当 tool-search-tool 存在时）。
+// FilterBedrockBetaTokens translates and deduplicates tokens in the Invoke allowlist.
+// It also adds tool-examples when tool-search-tool is selected.
 func FilterBedrockBetaTokens(tokens []string) []string {
 	seen := make(map[string]bool, len(tokens))
 	var result []string
 
 	for _, t := range tokens {
-		// 应用转换规则
 		if replacement, ok := BedrockBetaTokenTransforms[t]; ok {
 			t = replacement
 		}
-		// 只保留白名单中的 token，且去重
 		if BedrockSupportedBetaTokens[t] && !seen[t] {
 			result = append(result, t)
 			seen[t] = true
 		}
 	}
 
-	// 自动关联: tool-search-tool 存在时，确保 tool-examples 也存在
+	// The tool-search token also enables tool examples.
 	if seen["tool-search-tool-2025-10-19"] && !seen["tool-examples-2025-10-29"] {
 		result = append(result, "tool-examples-2025-10-29")
 	}
@@ -510,7 +481,7 @@ func FilterBedrockBetaTokens(tokens []string) []string {
 	return result
 }
 
-// SanitizeBedrockFieldsForBetaTokens 根据最终保留的 beta token 删除 Bedrock 不支持的请求字段。
+// SanitizeBedrockFieldsForBetaTokens removes fields whose required beta tokens are absent.
 func SanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte {
 	if !ContainsBedrockBetaToken(betaTokens, BedrockContextManagementBetaToken) && gjson.GetBytes(body, "context_management").Exists() {
 		body, _ = sjson.DeleteBytes(body, "context_management")
@@ -525,12 +496,12 @@ func SanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte
 	return body
 }
 
-// ContainsBedrockBetaToken 判断最终 beta token 列表中是否包含指定能力开关。
+// ContainsBedrockBetaToken reports whether the token list contains target.
 func ContainsBedrockBetaToken(tokens []string, target string) bool {
 	return slices.Contains(tokens, target)
 }
 
-// ContainsAnyBedrockBetaToken 判断 tokens 是否包含 targets 中的任意一个 token。
+// ContainsAnyBedrockBetaToken reports whether any target token is present.
 func ContainsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	for _, target := range targets {
 		if ContainsBedrockBetaToken(tokens, target) {
@@ -540,7 +511,7 @@ func ContainsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	return false
 }
 
-// IsBedrockOpus47OrNewer 查询已登记 Opus 型号的 adaptive 编码。
+// IsBedrockOpus47OrNewer checks for an Opus model with catalog-declared adaptive thinking.
 func IsBedrockOpus47OrNewer(modelID string) bool {
 	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "opus")
 }
@@ -549,9 +520,9 @@ func IsBedrockFable5(modelID string) bool {
 	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "fable")
 }
 
-// SanitizeBedrockThinking 按已解析的模式准备 thinking 字段。
-// enabled 转为 adaptive 时移除预算，Fable 的 adaptive 请求也移除预算。
-// 预算模式缺少 budget_tokens 时，使用协议默认值。
+// SanitizeBedrockThinking normalizes thinking according to the resolved model mode.
+// Converting enabled to adaptive removes the budget; adaptive Fable requests also drop it.
+// Budget-based enabled thinking receives a default when budget_tokens is missing.
 func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	thinking := gjson.GetBytes(body, "thinking")
 	if !thinking.Exists() || !thinking.IsObject() {
@@ -581,8 +552,8 @@ func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.
 	return body
 }
 
-// SanitizeBedrockToolUseIDs 清理 messages 中 tool_use.id 和 tool_result.tool_use_id
-// 的非法字符。Bedrock 要求 ID 匹配 '^[a-zA-Z0-9_-]+$'。
+// SanitizeBedrockToolUseIDs replaces unsupported characters in tool-use and tool-result IDs.
+// The accepted alphabet is ASCII letters, digits, underscores, and hyphens.
 func SanitizeBedrockToolUseIDs(body []byte) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
@@ -616,14 +587,10 @@ func SanitizeIDField(body []byte, id, path string) []byte {
 	return body
 }
 
-// SanitizeBedrockCCFields 处理 Claude Code 发送的 Bedrock 不兼容字段：
-//   - 移除 service_tier（Anthropic API 专有，Bedrock 不支持）
-//   - 移除 interface_geo（Anthropic API 专有，Bedrock 不支持）
-//   - 移除 context_management（Anthropic API 专有，Bedrock 不支持，CC v2.1.87+ 默认携带）
-//   - 无条件移除 fallbacks / fallback_credit_token（server-side refusal fallback，
-//     Anthropic 直连 beta API 专有；Bedrock Invoke 无对应 beta，永不支持）
-//   - 注入 max_tokens 默认值 81920（CC 可能省略，Bedrock 要求必须提供）
-//   - 注入 anthropic_version（CC 通过 HTTP 头发送，Bedrock 需要放在请求体中）
+// SanitizeBedrockCCFields removes unsupported Claude Code fields and fills required defaults.
+// It removes service_tier, interface_geo, context_management, fallbacks, and
+// fallback_credit_token regardless of the beta list.
+// Missing max_tokens and anthropic_version receive Bedrock defaults.
 func SanitizeBedrockCCFields(body []byte) []byte {
 	if gjson.GetBytes(body, "service_tier").Exists() {
 		body, _ = sjson.DeleteBytes(body, "service_tier")
@@ -649,8 +616,8 @@ func SanitizeBedrockCCFields(body []byte) []byte {
 	return body
 }
 
-// SanitizeBedrockCCBetaTokens 清理请求体中的 anthropic_beta 字段，只保留 Bedrock 支持的 beta token
-// CC 可能在请求体中注入了 Bedrock 不支持的 beta token（如 prompt-caching 等），导致 ValidationException。
+// SanitizeBedrockCCBetaTokens normalizes an existing anthropic_beta field for Invoke.
+// Unsupported tokens are removed to avoid upstream validation errors.
 func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	betaField := gjson.GetBytes(body, "anthropic_beta")
 	if !betaField.Exists() {
@@ -666,19 +633,16 @@ func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcata
 		}
 	}
 
-	originalTokens := append([]string(nil), tokens...) // 保存原始 tokens 用于日志
+	originalTokens := append([]string(nil), tokens...) // retained for diagnostics
+	// Body features can require beta tokens even when the existing token list is empty.
 
-	// 复用现有的 Bedrock beta token 过滤逻辑（自动注入 + 白名单过滤 + 转换）
-	// 即使 tokens 为空，也要执行自动注入（根据 body 内容补充必要的 beta token）
 	tokens = AutoInjectBedrockBetaTokens(tokens, body, modelID, rules...)
 	tokens = FilterBedrockBetaTokens(tokens)
 
 	if len(tokens) == 0 {
-		// 所有 token 都被过滤掉，删除 anthropic_beta 字段
 		body, _ = sjson.DeleteBytes(body, "anthropic_beta")
 		logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Removed all beta tokens: original=%v", originalTokens)
 	} else {
-		// 更新为过滤后的 token 列表
 		body, _ = sjson.SetBytes(body, "anthropic_beta", tokens)
 		if len(originalTokens) > 0 {
 			logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Filtered beta tokens: original=%v final=%v", originalTokens, tokens)

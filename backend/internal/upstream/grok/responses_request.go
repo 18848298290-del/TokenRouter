@@ -39,8 +39,8 @@ func BuildResponsesRequest(ctx context.Context, body []byte, o ResponsesRequestO
 	return req, nil
 }
 
-// ApplyCLIHeaders 将订阅流量标识为受支持的 Grok CLI 版本；缺少这些标识时，
-// CLI 网关会拒绝其它字段均有效的 OAuth 请求。
+// ApplyCLIHeaders supplies the supported Grok CLI identity required for subscription
+// OAuth traffic, including requests whose other fields already pass validation.
 func ApplyCLIHeaders(headers http.Header) {
 	if headers == nil {
 		return
@@ -53,7 +53,7 @@ func ApplyCLIHeaders(headers http.Header) {
 	headers.Set("X-Grok-Client-Mode", "interactive")
 }
 
-// ProviderTestBody 使用管理端提示词构造 Responses 探测请求体。
+// ProviderTestBody builds a Responses probe from the administrator-supplied prompt.
 func ProviderTestBody(model, prompt string) ([]byte, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {

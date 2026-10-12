@@ -9,12 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// groupRepoStubForAdmin 记录分组管理测试的存储读写。
+// groupRepoStubForAdmin records repository reads and writes for administrative tests.
 type groupRepoStubForAdmin struct {
-	created *Group // 记录 Create 调用的参数
-	updated *Group // 记录 Update 调用的参数
-	getByID *Group // GetByID 返回值
-	getErr  error  // GetByID 返回的错误
+	created *Group // Arguments received by Create.
+	updated *Group // Arguments received by Update.
+	getByID *Group // Result returned by GetByID.
+	getErr  error  // Error returned by GetByID.
 
 	listWithFiltersCalls       int
 	listWithFiltersParams      pagination.PaginationParams
@@ -182,7 +182,7 @@ func (s *groupRepoStubForAdmin) UpdateSortOrders(_ context.Context, _ []GroupSor
 	return nil
 }
 
-// LockGroupSortOrder 记录创建流程是否申请了排序位置锁。
+// LockGroupSortOrder records whether creation requested the ordering lock.
 func (s *groupRepoStubForAdmin) LockGroupSortOrder(_ context.Context) error {
 	s.groupSortOrderLockCalls++
 	return nil

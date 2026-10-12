@@ -9,7 +9,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// OllamaUsageHandler 只适配管理员输入与响应，查询/会话/设置都调用提供商用例。
+// OllamaUsageHandler adapts administrator requests to usage, session, and settings operations.
 type OllamaUsageHandler struct {
 	ollamaCloudUsage *provider.OllamaCloudUsageService
 }

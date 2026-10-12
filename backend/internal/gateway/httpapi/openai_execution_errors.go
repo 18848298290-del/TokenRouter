@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// WriteFastPolicyBlockedResponse 记录策略拒绝，并按当前响应状态写出 JSON 或 SSE 错误。
+// WriteFastPolicyBlockedResponse records a policy denial and writes JSON or SSE according to response state.
 func WriteFastPolicyBlockedResponse(c *gin.Context, err *tierpolicy.BlockedError) {
 	if c == nil || err == nil {
 		return
@@ -24,7 +24,7 @@ func WriteFastPolicyBlockedResponse(c *gin.Context, err *tierpolicy.BlockedError
 	})
 }
 
-// WriteForwardAnthropicError 写出 Anthropic JSON 错误。
+// WriteForwardAnthropicError writes an Anthropic JSON error.
 func WriteForwardAnthropicError(c *gin.Context, statusCode int, errType, message string) {
 	c.JSON(statusCode, gin.H{
 		"type": "error",
@@ -35,7 +35,7 @@ func WriteForwardAnthropicError(c *gin.Context, statusCode int, errType, message
 	})
 }
 
-// WriteForwardAnthropicErrorBody 将有效的 error 对象包装为 Anthropic 错误，否则原样写出正文。
+// WriteForwardAnthropicErrorBody wraps a valid error value in an Anthropic envelope or passes the body through.
 func WriteForwardAnthropicErrorBody(c *gin.Context, statusCode int, body []byte) {
 	errorObject := gjson.GetBytes(body, "error")
 	if !errorObject.Exists() || !gjson.Valid(errorObject.Raw) {
@@ -46,7 +46,7 @@ func WriteForwardAnthropicErrorBody(c *gin.Context, statusCode int, body []byte)
 	c.Data(statusCode, "application/json; charset=utf-8", wrapped)
 }
 
-// BuildForwardAnthropicStreamError 构造 Anthropic SSE error 事件。
+// BuildForwardAnthropicStreamError builds an Anthropic SSE error event.
 func BuildForwardAnthropicStreamError(errType, message string) string {
 	payload, err := json.Marshal(gin.H{
 		"type": "error",
@@ -61,7 +61,7 @@ func BuildForwardAnthropicStreamError(errType, message string) string {
 	return "event: error\ndata: " + string(payload) + "\n\n"
 }
 
-// WriteForwardChatError 标记响应提交并写出 Chat JSON 错误。
+// WriteForwardChatError marks the response committed and writes a Chat JSON error.
 func WriteForwardChatError(c *gin.Context, statusCode int, errType, message string) {
 	MarkResponseCommitted(c)
 	c.JSON(statusCode, gin.H{
@@ -72,13 +72,13 @@ func WriteForwardChatError(c *gin.Context, statusCode int, errType, message stri
 	})
 }
 
-// WriteForwardChatErrorBody 标记响应提交并写出 JSON 错误正文。
+// WriteForwardChatErrorBody marks the response committed and writes a JSON error body.
 func WriteForwardChatErrorBody(c *gin.Context, statusCode int, body []byte) {
 	MarkResponseCommitted(c)
 	c.Data(statusCode, "application/json; charset=utf-8", body)
 }
 
-// BuildForwardChatStreamError 构造 Chat SSE 错误事件。
+// BuildForwardChatStreamError builds a Chat SSE error event.
 func BuildForwardChatStreamError(code, message string) string {
 	payload, err := json.Marshal(gin.H{
 		"error": gin.H{
@@ -93,7 +93,7 @@ func BuildForwardChatStreamError(code, message string) string {
 	return "data: " + string(payload) + "\n\n"
 }
 
-// WriteForwardResponsesFallbackError 写出 Responses JSON 错误。
+// WriteForwardResponsesFallbackError writes a Responses JSON error.
 func WriteForwardResponsesFallbackError(c *gin.Context, statusCode int, errType, message string) {
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
@@ -103,7 +103,7 @@ func WriteForwardResponsesFallbackError(c *gin.Context, statusCode int, errType,
 	})
 }
 
-// WriteForwardPassthroughErrorHeaders 设置错误响应头并透传有效的 Retry-After。
+// WriteForwardPassthroughErrorHeaders sets error headers and copies a valid Retry-After value.
 func WriteForwardPassthroughErrorHeaders(dst, src http.Header) {
 	if dst == nil {
 		return
@@ -120,7 +120,7 @@ func WriteForwardPassthroughErrorHeaders(dst, src http.Header) {
 	}
 }
 
-// ValidForwardPassthroughRetryAfter 检查 Retry-After 是否为正秒数或未来时间。
+// ValidForwardPassthroughRetryAfter accepts positive seconds or a future HTTP date.
 func ValidForwardPassthroughRetryAfter(raw string, now time.Time) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -141,7 +141,7 @@ func ValidForwardPassthroughRetryAfter(raw string, now time.Time) bool {
 	return err == nil && parsed.After(now)
 }
 
-// WriteSanitizedForwardPassthroughError 按上游状态生成客户端错误消息，认证和权限错误返回 502。
+// WriteSanitizedForwardPassthroughError maps upstream statuses to client messages and maps 401 and 403 to 502.
 func WriteSanitizedForwardPassthroughError(c *gin.Context, upstreamStatus int, upstreamHeaders http.Header, compact func(*gin.Context, int, []byte) bool) {
 	downstreamStatus := upstreamStatus
 	message := "Upstream request failed"
@@ -160,7 +160,7 @@ func WriteSanitizedForwardPassthroughError(c *gin.Context, upstreamStatus int, u
 	WriteForwardPassthroughErrorEnvelope(c, downstreamStatus, upstreamHeaders, message, compact)
 }
 
-// WriteForwardPassthroughErrorEnvelope 优先写出 Compact 错误事件，其他请求写出 JSON 错误。
+// WriteForwardPassthroughErrorEnvelope offers the error to the Compact writer before writing JSON.
 func WriteForwardPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, upstreamHeaders http.Header, message string, compact func(*gin.Context, int, []byte) bool) {
 	if c == nil {
 		return
@@ -178,7 +178,8 @@ func WriteForwardPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, 
 	c.Data(downstreamStatus, "application/json; charset=utf-8", body)
 }
 
-// WriteForwardFastPolicyBlocked 保留 compact 心跳已提交时的终态 SSE，否则返回原 403 信封。
+// WriteForwardFastPolicyBlocked emits a terminal SSE error after a Compact heartbeat commit, or a 403 JSON
+// error otherwise.
 func WriteForwardFastPolicyBlocked(c *gin.Context, message string, stop func(*gin.Context) bool, failure func(*gin.Context, int, string, string)) {
 	if stop(c) {
 		failure(c, http.StatusForbidden, "permission_error", message)
@@ -187,7 +188,7 @@ func WriteForwardFastPolicyBlocked(c *gin.Context, message string, stop func(*gi
 	c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": message}})
 }
 
-// WriteOpenAIForwardRejection 按 OpenAI 错误格式写出拒绝原因及可选参数名。
+// WriteOpenAIForwardRejection writes an OpenAI error with an optional parameter name.
 func WriteOpenAIForwardRejection(c *gin.Context, status int, kind, message, param string) {
 	if c == nil {
 		return

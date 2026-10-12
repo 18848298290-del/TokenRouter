@@ -15,7 +15,8 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// TestGroupProbeLeaseAndAtomicResult 验证真实 PostgreSQL 租约竞争、到期回收、最终结果与下次时间的原子保存。
+// TestGroupProbeLeaseAndAtomicResult covers PostgreSQL lease contention, expiry, and atomic
+// result/schedule writes.
 func TestGroupProbeLeaseAndAtomicResult(t *testing.T) {
 	ctx := context.Background()
 	client, integrationDB := routingDatabase(t)
@@ -61,6 +62,7 @@ func TestGroupProbeLeaseAndAtomicResult(t *testing.T) {
 		return ids
 	}(), group.ID)
 
+	// Reject the schedule update so the result insert must roll back in the same transaction.
 	functionName := fmt.Sprintf("test_probe_result_fail_%d", suffix)
 	triggerName := fmt.Sprintf("test_probe_result_trigger_%d", suffix)
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.group_id = %d THEN RAISE EXCEPTION 'test forced schedule failure'; END IF; RETURN NEW; END $$`, functionName, group.ID))

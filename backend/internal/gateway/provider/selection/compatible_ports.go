@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// platformSelector 的关联表只存在于本次调用；缓存、Grok 资格观测和 EWMA 均复用原唯一实例。
+// platformSelector creates a per-call target lookup while sharing caches, Grok quota observations, and EWMA statistics.
 func (s *compatiblePicker) platformSelector() (*schedulercore.PlatformSelector, *projectionScope) {
 	scope := &projectionScope{providers: map[uint64]*gatewayprovider.ExecutionProvider{}, groups: map[uint64]*routing.Group{}}
 	available := s != nil && s.service != nil

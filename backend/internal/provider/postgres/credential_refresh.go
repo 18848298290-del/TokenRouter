@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// CredentialRefreshStore 复用原 Ent 事务并锁定比较行，持有锁直到凭据及原 outbox 一起提交。
-// Persist 接收相同事务 context；生产路径直接绑定同一 ProviderStore 的凭据写入。
+// CredentialRefreshStore locks the matching row in an Ent transaction until credentials and outbox changes commit.
+// Persist receives that transaction context and is bound to the same ProviderStore's credential writer in production.
 type CredentialRefreshStore struct {
 	Client  *dbent.Client
 	Persist func(context.Context, int64, map[string]any) error
 }
 
-// Apply 返回是否写入以及本调用是否已提交；加入外层事务时不发布提交后副作用。
+// Apply reports whether credentials were written and whether this call committed the transaction.
 func (s CredentialRefreshStore) Apply(ctx context.Context, version provider.CredentialVersion, credentials map[string]any) (applied, committed bool, err error) {
 	if s.Client == nil || s.Persist == nil {
 		return false, false, errors.New("provider credential refresh store is not configured")
@@ -79,7 +79,7 @@ func (s CredentialRefreshStore) Apply(ctx context.Context, version provider.Cred
 	return true, false, nil
 }
 
-// UpdateOAuthCredentialsIfUnchanged 只在本次持有的事务提交后同步快照。
+// UpdateOAuthCredentialsIfUnchanged synchronizes the snapshot after a transaction owned by this call commits.
 func (r *ProviderStore) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version provider.CredentialVersion, credentials map[string]any) (bool, error) {
 	applied, committed, err := (CredentialRefreshStore{Client: r.client, Persist: r.UpdateCredentials}).Apply(ctx, version, credentials)
 	if err == nil && committed {

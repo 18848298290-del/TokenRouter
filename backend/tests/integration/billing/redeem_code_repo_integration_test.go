@@ -307,7 +307,7 @@ func (s *RedeemCodeRepoSuite) TestUse_Idempotency() {
 	err := s.repo.Use(s.ctx, code.ID, user.ID)
 	s.Require().NoError(err, "Use first time")
 
-	// Second use should fail
+	// A single-use code rejects a second redemption.
 	err = s.repo.Use(s.ctx, code.ID, user.ID)
 	s.Require().Error(err, "Use expected error on second call")
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeUsed)
@@ -348,7 +348,7 @@ func (s *RedeemCodeRepoSuite) TestUse_ExpiredInvitationRejected() {
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeUsed)
 }
 
-// listUserHistory 读取用户兑换历史的第一页，页容量足够覆盖单个用例创建的记录。
+// listUserHistory reads the first ten redemptions, enough for each fixture in this suite.
 func (s *RedeemCodeRepoSuite) listUserHistory(userID int64) []billing.RedeemCode {
 	codes, _, err := s.repo.ListByUserPaginated(s.ctx, userID, pagination.PaginationParams{Page: 1, PageSize: 10}, "")
 	s.Require().NoError(err, "ListByUserPaginated")
@@ -364,7 +364,7 @@ func (s *RedeemCodeRepoSuite) TestListByUser() {
 
 	codes := s.listUserHistory(user.ID)
 	s.Require().Len(codes, 2)
-	// Ordered by used_at DESC, so USER-2 first
+	// Descending used_at order places USER-2 first.
 	s.Require().Equal("USER-2", codes[0].Code)
 	s.Require().Equal("USER-1", codes[1].Code)
 }
@@ -387,7 +387,7 @@ func (s *RedeemCodeRepoSuite) TestListByUser_Pages() {
 	s.createUsedCode(billing.RedeemTypeBalance, "PAGE-2", user.ID, base.Add(time.Hour), nil)
 	s.createUsedCode(billing.RedeemTypeBalance, "PAGE-3", user.ID, base.Add(2*time.Hour), nil)
 
-	// 第二页只剩最早的一条，总数仍按全部记录计算。
+	// The second page contains the oldest entry while Total counts all three.
 	codes, result, err := s.repo.ListByUserPaginated(s.ctx, user.ID, pagination.PaginationParams{Page: 2, PageSize: 2}, "")
 	s.Require().NoError(err)
 	s.Require().Len(codes, 1)
@@ -423,7 +423,7 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	codeA, err := s.repo.GetByCode(s.ctx, "CODEA")
 	s.Require().NoError(err, "GetByCode")
 
-	// Use fixed time instead of time.Sleep for deterministic ordering.
+	// Fixed timestamps make the redemption order deterministic.
 	codeBUsedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	_, err = s.client.RedeemCode.UpdateOneID(codeB.ID).
 		SetUsedAt(codeBUsedAt).
@@ -457,7 +457,7 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	s.Require().Equal("CODEA", used[0].Code, "expected newest used code first")
 }
 
-// uniqueTestValue 为兑换存储测试生成格式固定的唯一名称。
+// uniqueTestValue derives a stable fixture name from the prefix and test name.
 func uniqueTestValue(t *testing.T, prefix string) string {
 	t.Helper()
 	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())

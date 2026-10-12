@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// CreationOptions 提供构造提供商值所需的时钟、时区和 seed，不加载完整应用配置。
+// CreationOptions supplies the clock, time-zone loader, and fingerprint seed generator for provider construction.
 type CreationOptions struct {
 	Now          func() time.Time
 	LoadLocation func(string) (*time.Location, error)
@@ -13,7 +13,7 @@ type CreationOptions struct {
 }
 
 func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string]any, options CreationOptions) (*Record, error) {
-	// 受管会话状态由系统维护，废弃字段不得通过通用提供商接口写入。
+	// System-managed session state and deprecated fields cannot be supplied through ordinary creation.
 	DiscardDeprecatedProviderExtra(providerExtra)
 	if err := NormalizeUpstreamUsageExtra(providerExtra); err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string
 	if err := NormalizeProviderProtocols(provider); err != nil {
 		return nil, err
 	}
-	// 预计算固定时间重置的下次重置时间
+	// Validate fixed reset settings before calculating the next reset time.
 	if provider.Extra != nil {
 		if err := ValidateQuotaResetConfig(provider.Extra, options.LoadLocation); err != nil {
 			return nil, err

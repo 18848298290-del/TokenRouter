@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterUserAttributeRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterUserAttributeRoutes registers administrator attribute routes.
+// The caller installs authentication, rate limits, and auditing on the group.
 func RegisterUserAttributeRoutes(admin *gin.RouterGroup, endpoint *UserAttributeHandler) {
 	attrs := admin.Group("/user-attributes")
 	{
@@ -17,7 +18,7 @@ func RegisterUserAttributeRoutes(admin *gin.RouterGroup, endpoint *UserAttribute
 	}
 }
 
-// RegisterUserManagementRoutes 保留用户管理与属性读取的原 URL。
+// RegisterUserManagementRoutes registers administrator user and attribute-value operations.
 func RegisterUserManagementRoutes[K any](admin *gin.RouterGroup, endpoint *AdminUserHandler[K], attributes *UserAttributeHandler) {
 	users := admin.Group("/users")
 	{
@@ -36,7 +37,7 @@ func RegisterUserManagementRoutes[K any](admin *gin.RouterGroup, endpoint *Admin
 		users.POST("/:id/replace-group", endpoint.ReplaceGroup)
 		users.GET("/:id/rpm-status", endpoint.GetUserRPMStatus)
 
-		// 用户属性值
+		// User attribute values.
 		users.GET("/:id/attributes", attributes.GetUserAttributes)
 		users.PUT("/:id/attributes", attributes.UpdateUserAttributes)
 	}

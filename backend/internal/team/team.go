@@ -25,7 +25,7 @@ const (
 	TeamRoleMember      = "member"
 )
 
-// Team 表示团队的公开基础信息。
+// Team contains the team metadata exposed by the API.
 type Team struct {
 	ID                     int64      `json:"id"`
 	Name                   string     `json:"name"`
@@ -40,7 +40,7 @@ type Team struct {
 	DeletedAt              *time.Time `json:"-"`
 }
 
-// TeamMembership 同时保存角色、限额和当前自然周期用量。
+// TeamMembership contains a member's role, limits, and usage in calendar day, week, and month windows.
 type TeamMembership struct {
 	ID                 int64      `json:"id"`
 	TeamID             int64      `json:"team_id"`
@@ -61,14 +61,14 @@ type TeamMembership struct {
 	LastActiveAt       *time.Time `json:"last_active_at"`
 }
 
-// TeamContext 是前端初始化团队页面和作用域切换所需的完整上下文。
+// TeamContext contains the team, acting membership, and owner used by team pages and scope switching.
 type TeamContext struct {
 	Team       *Team           `json:"team"`
 	Membership *TeamMembership `json:"membership"`
 	Owner      *TeamMembership `json:"owner"`
 }
 
-// TeamInvitation 不返回令牌哈希，只暴露邀请生命周期信息。
+// TeamInvitation exposes invitation status and timestamps without the token hash.
 type TeamInvitation struct {
 	ID            int64      `json:"id"`
 	TeamID        int64      `json:"team_id"`
@@ -80,7 +80,7 @@ type TeamInvitation struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
-// TeamInvitationPreview 是受邀用户确认邀请前可查看的最小必要信息。
+// TeamInvitationPreview contains the details an invitee can inspect before accepting.
 type TeamInvitationPreview struct {
 	TeamName     string    `json:"team_name"`
 	InviterName  string    `json:"inviter_name"`
@@ -88,12 +88,12 @@ type TeamInvitationPreview struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-// TeamInvitationLimiter 对邀请和重发执行跨实例邮件频率限制。
+// TeamInvitationLimiter rate-limits invitation and resend emails across instances.
 type TeamInvitationLimiter interface {
 	CheckAndRecord(ctx context.Context, teamID int64, email string) (allowed bool, retryAfter time.Duration, err error)
 }
 
-// TeamOwnershipTransfer 表示待目标成员确认的所有权转让。
+// TeamOwnershipTransfer records an ownership transfer and its resolution status.
 type TeamOwnershipTransfer struct {
 	ID         int64      `json:"id"`
 	TeamID     int64      `json:"team_id"`
@@ -105,21 +105,21 @@ type TeamOwnershipTransfer struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// TeamAdminListItem 为平台管理员提供团队与所有者摘要。
+// TeamAdminListItem pairs team metadata with its owner for platform administration.
 type TeamAdminListItem struct {
 	Team
 	OwnerUserID int64  `json:"owner_user_id"`
 	OwnerEmail  string `json:"owner_email"`
 }
 
-// TeamAdminUpdate 表示管理员一次 PATCH 中经过完整校验的可选字段。
+// TeamAdminUpdate contains optional fields for an admin PATCH; AdminUpdate validates them before writing.
 type TeamAdminUpdate struct {
 	Name        *string
 	Status      *string
 	MemberLimit *int
 }
 
-// TeamUsageQuery 描述团队用量的时间范围与可选成员、Key 筛选条件。
+// TeamUsageQuery selects a time range and optional member and API key filters.
 type TeamUsageQuery struct {
 	From        time.Time
 	To          time.Time
@@ -129,14 +129,14 @@ type TeamUsageQuery struct {
 	Offset      int
 }
 
-// TeamUsageDaily 是团队用量趋势中的单个自然日。
+// TeamUsageDaily contains usage totals for one calendar day.
 type TeamUsageDaily struct {
 	Date         string  `json:"date"`
 	ActualCost   float64 `json:"actual_cost"`
 	RequestCount int64   `json:"request_count"`
 }
 
-// TeamUsageSummary 汇总团队 Key 在指定时间范围内的消费与令牌数。
+// TeamUsageSummary aggregates team key costs, requests, and tokens for a time range.
 type TeamUsageSummary struct {
 	ActualCost   float64          `json:"actual_cost"`
 	RequestCount int64            `json:"request_count"`
@@ -145,7 +145,7 @@ type TeamUsageSummary struct {
 	Daily        []TeamUsageDaily `json:"daily"`
 }
 
-// TeamMemberUsageSeries 同时覆盖当前成员和查询范围内存在历史消费的离队成员。
+// TeamMemberUsageSeries represents a current member or a departed member with usage in the queried range.
 type TeamMemberUsageSeries struct {
 	ActorUserID int64            `json:"actor_user_id"`
 	DisplayName string           `json:"display_name"`
@@ -153,7 +153,7 @@ type TeamMemberUsageSeries struct {
 	Summary     TeamUsageSummary `json:"summary"`
 }
 
-// TeamUsageLogItem 是团队页面可展示的脱敏用量明细。
+// TeamUsageLogItem contains the usage details exposed on team pages.
 type TeamUsageLogItem struct {
 	ID           int64     `json:"id"`
 	ActorUserID  int64     `json:"actor_user_id"`
@@ -168,7 +168,7 @@ type TeamUsageLogItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// TeamUsagePage 返回团队用量明细及分页总数。
+// TeamUsagePage contains usage records and pagination totals.
 type TeamUsagePage struct {
 	Items  []TeamUsageLogItem `json:"items"`
 	Total  int64              `json:"total"`
@@ -176,7 +176,7 @@ type TeamUsagePage struct {
 	Offset int                `json:"offset"`
 }
 
-// TeamAPIKeyItem 是团队管理视图使用的密钥元数据，永不序列化完整密钥。
+// TeamAPIKeyItem contains key metadata for team management; JSON serialization omits the full credential.
 type TeamAPIKeyItem struct {
 	ID            int64      `json:"id"`
 	UserID        int64      `json:"user_id"`
@@ -192,7 +192,8 @@ type TeamAPIKeyItem struct {
 	Key           string     `json:"-"`
 }
 
-// TeamRepository 定义团队生命周期所需的原子仓储操作。
+// TeamRepository stores team lifecycle data and usage queries. Membership and
+// ownership changes must keep their related writes in one transaction.
 type TeamRepository interface {
 	Create(ctx context.Context, name string, ownerUserID int64, memberLimit int) (*TeamContext, error)
 	GetContextByUserID(ctx context.Context, userID int64) (*TeamContext, error)
@@ -229,7 +230,7 @@ type TeamRepository interface {
 	DeleteTeamKey(ctx context.Context, teamID, keyID int64, actorUserID *int64) (string, error)
 }
 
-// TeamService 编排团队权限、令牌、邮件和缓存失效。
+// TeamService coordinates team permissions, tokens, email, and cache invalidation.
 type TeamService struct {
 	repo           TeamRepository
 	userRepo       UserReader
@@ -240,9 +241,9 @@ type TeamService struct {
 	options        *Options
 }
 
-// Options 保留启动团队开关与默认值，动态前端地址单独读取。
+// Options contains startup team settings and the default frontend URL.
 type Options struct {
-	// Now 保持原取时点，生产由 app 注入；旧构造器未指定时使用系统时钟。
+	// Now supplies the service clock; nil uses time.Now.
 	Now func() time.Time
 
 	Enabled, SelfServiceEnabled bool
@@ -338,7 +339,7 @@ func (s *TeamService) UpdateName(ctx context.Context, userID int64, name string)
 	return s.repo.GetContextByTeamID(ctx, teamCtx.Team.ID)
 }
 
-// UpdateDefaultMemberLimits 更新后续新成员加入团队时继承的默认限额。
+// UpdateDefaultMemberLimits sets the limits inherited by members who join later.
 func (s *TeamService) UpdateDefaultMemberLimits(ctx context.Context, userID int64, daily, weekly, monthly float64) (*TeamContext, error) {
 	teamCtx, err := s.requireOwner(ctx, userID)
 	if err != nil {
@@ -353,7 +354,7 @@ func (s *TeamService) UpdateDefaultMemberLimits(ctx context.Context, userID int6
 	return s.repo.GetContextByTeamID(ctx, teamCtx.Team.ID)
 }
 
-// SetStatus 允许 Owner 暂停或恢复自己的团队，恢复检查不能依赖团队当前为 active。
+// SetStatus lets an owner suspend or resume the team, including a currently suspended team.
 func (s *TeamService) SetStatus(ctx context.Context, userID int64, status string) (*TeamContext, error) {
 	if status != TeamStatusActive && status != TeamStatusSuspended {
 		return nil, infraerrors.BadRequest("TEAM_STATUS_INVALID", "无效的团队状态")
@@ -390,7 +391,7 @@ func (s *TeamService) ListMembers(ctx context.Context, userID int64) ([]TeamMemb
 	return filtered, nil
 }
 
-// GetUsageSummary 根据当前成员角色收紧团队用量的可见范围。
+// GetUsageSummary restricts non-owner queries to the acting member.
 func (s *TeamService) GetUsageSummary(ctx context.Context, userID int64, query TeamUsageQuery) (*TeamUsageSummary, error) {
 	teamCtx, err := s.requireMembership(ctx, userID)
 	if err != nil {
@@ -403,7 +404,7 @@ func (s *TeamService) GetUsageSummary(ctx context.Context, userID int64, query T
 	return s.repo.GetUsageSummary(ctx, teamCtx.Team.ID, query)
 }
 
-// ListMemberUsageSeries 返回 Owner 的全团队成员趋势，Member 只能读取自己。
+// ListMemberUsageSeries allows owners to query the team and restricts other members to themselves.
 func (s *TeamService) ListMemberUsageSeries(ctx context.Context, userID int64, query TeamUsageQuery) ([]TeamMemberUsageSeries, error) {
 	teamCtx, err := s.requireMembership(ctx, userID)
 	if err != nil {
@@ -416,7 +417,7 @@ func (s *TeamService) ListMemberUsageSeries(ctx context.Context, userID int64, q
 	return s.repo.ListMemberUsageSeries(ctx, teamCtx.Team.ID, query)
 }
 
-// ListUsageLogs 返回当前成员有权查看的团队 Key 用量明细。
+// ListUsageLogs returns team key usage visible to the acting member.
 func (s *TeamService) ListUsageLogs(ctx context.Context, userID int64, query TeamUsageQuery) (*TeamUsagePage, error) {
 	teamCtx, err := s.requireMembership(ctx, userID)
 	if err != nil {
@@ -433,7 +434,7 @@ func (s *TeamService) ListUsageLogs(ctx context.Context, userID int64, query Tea
 	return &TeamUsagePage{Items: items, Total: total, Limit: query.Limit, Offset: query.Offset}, nil
 }
 
-// ListTeamKeys 返回角色允许查看的团队 Key，并统一生成脱敏展示值。
+// ListTeamKeys applies the caller's role filter and masks credentials for display.
 func (s *TeamService) ListTeamKeys(ctx context.Context, userID int64) ([]TeamAPIKeyItem, error) {
 	teamCtx, err := s.requireMembershipIncludingSuspended(ctx, userID)
 	if err != nil {
@@ -451,7 +452,7 @@ func (s *TeamService) ListTeamKeys(ctx context.Context, userID int64) ([]TeamAPI
 	return items, nil
 }
 
-// DisableTeamKey 由 Owner 锁定任意团队 Key，Member 的普通更新不能解除锁定。
+// DisableTeamKey lets an owner lock a team key; ordinary member edits cannot clear that lock.
 func (s *TeamService) DisableTeamKey(ctx context.Context, userID, keyID int64) error {
 	teamCtx, err := s.requireOwnerIncludingSuspended(ctx, userID)
 	if err != nil {
@@ -465,7 +466,7 @@ func (s *TeamService) DisableTeamKey(ctx context.Context, userID, keyID int64) e
 	return nil
 }
 
-// EnableTeamKey 仅允许 Owner 清除团队锁定并恢复 Key。
+// EnableTeamKey lets the owner clear a team lock and reactivate the key.
 func (s *TeamService) EnableTeamKey(ctx context.Context, userID, keyID int64) error {
 	teamCtx, err := s.requireOwnerIncludingSuspended(ctx, userID)
 	if err != nil {
@@ -479,7 +480,7 @@ func (s *TeamService) EnableTeamKey(ctx context.Context, userID, keyID int64) er
 	return nil
 }
 
-// DeleteTeamKey 软删除团队 Key 并立即清除认证缓存。
+// DeleteTeamKey soft-deletes a team key and requests authentication cache invalidation.
 func (s *TeamService) DeleteTeamKey(ctx context.Context, userID, keyID int64) error {
 	teamCtx, err := s.requireOwnerIncludingSuspended(ctx, userID)
 	if err != nil {
@@ -500,7 +501,8 @@ func TeamKeyActorFilter(teamCtx *TeamContext, userID int64) *int64 {
 	return &userID
 }
 
-// NormalizeTeamUsageQueryAt 让日期缺省值沿用调用入口的取时点。
+// NormalizeTeamUsageQueryAt defaults the end to now and the start to 30 days before
+// the end, orders the dates, and bounds pagination.
 func NormalizeTeamUsageQueryAt(query TeamUsageQuery, now time.Time) TeamUsageQuery {
 	if query.To.IsZero() {
 		query.To = now
@@ -520,7 +522,7 @@ func NormalizeTeamUsageQueryAt(query TeamUsageQuery, now time.Time) TeamUsageQue
 	return query
 }
 
-// Invite 创建绑定邮箱的邀请，明文令牌只用于本次邮件发送。
+// Invite creates an email-bound invitation and uses the plaintext token in the invitation email only.
 func (s *TeamService) Invite(ctx context.Context, userID int64, email string) (*TeamInvitation, error) {
 	teamCtx, err := s.requireOwner(ctx, userID)
 	if err != nil {
@@ -621,7 +623,7 @@ func (s *TeamService) RevokeInvitation(ctx context.Context, userID, invitationID
 	return s.repo.RevokeInvitation(ctx, teamCtx.Team.ID, invitationID)
 }
 
-// PreviewInvitation 校验令牌归属后返回邀请弹窗所需的信息。
+// PreviewInvitation returns invitation details after checking the token against the current user's email.
 func (s *TeamService) PreviewInvitation(ctx context.Context, userID int64, token string) (*TeamInvitationPreview, error) {
 	if err := s.ensureEnabled(); err != nil {
 		return nil, err
@@ -785,7 +787,7 @@ func (s *TeamService) Dissolve(ctx context.Context, ownerUserID int64) error {
 	return nil
 }
 
-// AdminUpdateName 允许平台管理员修正团队名称，并复用统一的名称校验规则。
+// AdminUpdateName validates a team name before saving an administrator's correction.
 func (s *TeamService) AdminUpdateName(ctx context.Context, teamID int64, name string) error {
 	name, err := NormalizeTeamName(name)
 	if err != nil {
@@ -794,7 +796,7 @@ func (s *TeamService) AdminUpdateName(ctx context.Context, teamID int64, name st
 	return s.repo.UpdateName(ctx, teamID, name)
 }
 
-// AdminUpdate 在写入前校验所有字段，再由仓储使用一条语句原子更新。
+// AdminUpdate validates all supplied fields before passing them to one repository update.
 func (s *TeamService) AdminUpdate(ctx context.Context, teamID int64, update TeamAdminUpdate) (*TeamContext, error) {
 	if update.Name != nil {
 		name, err := NormalizeTeamName(*update.Name)
@@ -928,7 +930,7 @@ func (s *TeamService) invalidateKey(ctx context.Context, key string) {
 
 func (s *TeamService) FrontendLink(ctx context.Context, path, parameter, token string) (string, error) {
 	base := ""
-	// 管理后台保存的动态设置优先，未配置时兼容启动配置中的 server.frontend_url。
+	// Use the settings service when present; Options supplies the URL when that service is absent.
 	if s.settingService != nil {
 		base = strings.TrimRight(strings.TrimSpace(s.settingService.GetFrontendURL(ctx)), "/")
 	} else if s.options != nil {

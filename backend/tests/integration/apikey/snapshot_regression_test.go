@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// isolationKey 覆盖认证快照的可变引用，凭据与地址均为本地测试数据。
+// isolationKey includes mutable authentication snapshot fields and synthetic credentials and addresses.
 func isolationKey() *apikey.APIKey {
 	groupID, teamID, subscriptionID := int64(3), int64(4), int64(5)
 	threshold := 3.0
@@ -32,7 +32,7 @@ func isolationKey() *apikey.APIKey {
 	}
 }
 
-// TestAuthSnapshotIsolation 同一缓存快照的来源和每次物化都不能共享可变状态。
+// TestAuthSnapshotIsolation checks that mutations to a source or restored key leave the cached snapshot unchanged.
 func TestAuthSnapshotIsolation(t *testing.T) {
 	changes := map[string]func(*apikey.APIKey){
 		"group_id":         func(k *apikey.APIKey) { *k.GroupID = 99 },
@@ -81,7 +81,7 @@ func TestAuthSnapshotIsolation(t *testing.T) {
 	}
 }
 
-// TestCompositeSnapshotFastPolicy 复合选组必须保留显式 Fast 策略。
+// TestCompositeSnapshotFastPolicy checks that composite group Fast policies survive snapshot serialization.
 func TestCompositeSnapshotFastPolicy(t *testing.T) {
 	for _, policy := range []string{"force_off", "force_ultrafast"} {
 		t.Run(policy, func(t *testing.T) {

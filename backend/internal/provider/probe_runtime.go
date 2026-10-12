@@ -9,17 +9,17 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// ErrProbeStopped 表示拥有者已停止接纳探测，不能再启动网络或持久化工作。
+// ErrProbeStopped indicates that the runtime has stopped accepting work.
 var ErrProbeStopped = errors.New("provider probe runtime stopped")
 
-// ProbeRuntime 跟踪按需共享探测及关联维护任务；零值可用，构造不启动工作。
+// ProbeRuntime tracks shared on-demand probes and background tasks. Its zero value is ready to use.
 type ProbeRuntime struct {
 	activity   operationActivity
 	flights    singleflight.Group
 	background sync.Map
 }
 
-// Run 保留等待方独立取消；共享工作使用自身预算，并受拥有者停止约束。
+// Run lets each waiter cancel independently while shared work uses its own timeout and shutdown cancellation.
 func (r *ProbeRuntime) Run(ctx context.Context, key string, budget time.Duration, probe func(context.Context) (any, error)) (any, error) {
 	waitCtx, finishWait, err := r.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -28,7 +28,7 @@ func (r *ProbeRuntime) Run(ctx context.Context, key string, budget time.Duration
 	defer finishWait()
 	result := r.flights.DoChan(key, func() (any, error) {
 		shared, finish, err := r.activity.begin(context.WithoutCancel(ctx), ErrProbeStopped)
-		// 等待者已被接纳，停止后的派生竞争统一作为本次查询取消。
+		// An accepted waiter sees cancellation if shutdown prevents its shared work from starting.
 		if err == ErrProbeStopped {
 			return nil, context.Canceled
 		}
@@ -48,7 +48,7 @@ func (r *ProbeRuntime) Run(ctx context.Context, key string, budget time.Duration
 	}
 }
 
-// Schedule 在返回前登记任务；同 key 在途时合并，拒绝新任务时不遗留占位。
+// Schedule registers work before returning and rejects duplicate in-flight keys or stopped runtimes.
 func (r *ProbeRuntime) Schedule(key string, budget time.Duration, work func(context.Context)) bool {
 	if _, loaded := r.background.LoadOrStore(key, struct{}{}); loaded {
 		return false
@@ -68,7 +68,7 @@ func (r *ProbeRuntime) Schedule(key string, budget time.Duration, work func(cont
 	return true
 }
 
-// StopContext 取消并等待所有已登记任务；重复调用保持首次停止结果。
+// StopContext cancels and waits for registered work, retaining the first shutdown result.
 func (r *ProbeRuntime) StopContext(ctx context.Context) error {
 	return r.activity.stop(ctx, "provider probes")
 }

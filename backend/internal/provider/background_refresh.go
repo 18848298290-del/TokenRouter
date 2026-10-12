@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// BackgroundTokenRefresher 提供已选平台的资格和交换能力，核心不识别具体 SDK。
+// BackgroundTokenRefresher supplies platform eligibility checks and token exchange.
 type BackgroundTokenRefresher interface {
 	RefreshTokenOperation
 	CanRefresh(*Record) bool
@@ -20,7 +20,7 @@ type RefreshRegistration struct {
 	Executor  OAuthRefreshExecutor
 }
 
-// BackgroundRefreshOptions 接收 app 提供的静态配置和平台接口，刷新实例管理共享运行状态。
+// BackgroundRefreshOptions supplies configuration and platform services; the service owns shared runtime state.
 type BackgroundRefreshOptions struct {
 	Tuning                   *RefreshTuning
 	Pager                    OAuthRefreshCandidatePager
@@ -31,7 +31,7 @@ type BackgroundRefreshOptions struct {
 }
 
 // @project-doc docs/operations/provider_maintenance.md#account_credential_refresh
-// BackgroundRefreshService 统一持有周期、游标、平台准入及按需管理对账的生命周期。
+// BackgroundRefreshService owns periodic scans, their cursor, shared platform admission, and on-demand reconciliation.
 type BackgroundRefreshService struct {
 	options        BackgroundRefreshOptions
 	loop           *RefreshLoop
@@ -99,7 +99,7 @@ func (s *BackgroundRefreshService) StartContext(ctx context.Context) error {
 	return err
 }
 
-// StopContext 同时取消独立生产入口，并固定首次停止结果；依赖释放仍由 app 在其后执行。
+// StopContext cancels both entry points and retains the first stop result. The app releases dependencies afterward.
 func (s *BackgroundRefreshService) StopContext(ctx context.Context) error {
 	s.stopMu.Lock()
 	if s.stopDone != nil {
@@ -171,7 +171,7 @@ func (s *BackgroundRefreshService) execution(registration RefreshRegistration) *
 	}
 }
 
-// ScanCycle 保留每轮独立平台失败计数、共享准入及未完成页不推进游标。
+// ScanCycle uses per-cycle failure counts and shared admission; incomplete pages do not advance the cursor.
 func (s *BackgroundRefreshService) ScanCycle(parent context.Context) {
 	if parent == nil {
 		parent = context.Background()

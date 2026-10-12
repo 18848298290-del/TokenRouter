@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMediaAllocationRatesPreserveBalanceMultiplier 验证两类网关都保留订阅、余额各自的倍率；高峰只影响最终按 token 结算的请求。
+// TestMediaAllocationRatesPreserveBalanceMultiplier checks separate subscription and balance rates in both gateway paths; peak pricing applies to token billing.
 func TestMediaAllocationRatesPreserveBalanceMultiplier(t *testing.T) {
 	for _, gatewayKind := range []string{"openai", "generic"} {
 		for _, mode := range []routing.BillingMode{routing.BillingModeToken, routing.BillingModeImage, routing.BillingModePerRequest, routing.BillingModeVideo} {
@@ -87,7 +87,7 @@ func TestMediaAllocationRatesPreserveBalanceMultiplier(t *testing.T) {
 					require.InDelta(t, 2*scale, billingRepo.LastCmd.SubscriptionRateMultiplier, 1e-12)
 					require.InDelta(t, 2*scale, billingRepo.LastCmd.BalanceRateMultiplier, 1e-12)
 					require.InDelta(t, scale, billingRepo.LastCmd.SubscriptionRateMultiplierScale, 1e-12)
-					// 有效订阅享有 0.5 倍率，但不能把该倍率透传为余额部分的按量倍率。
+					// The subscription receives the 0.5x rate while balance allocation retains its own rate.
 					require.InDelta(t, 0.5*scale, logs.LastLog.RateMultiplier, 1e-12)
 				})
 			}

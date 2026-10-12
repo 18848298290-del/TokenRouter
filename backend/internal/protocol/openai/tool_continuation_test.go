@@ -12,7 +12,7 @@ import (
 var (
 	benchmarkToolContinuationBoolSink bool
 
-	// benchmarkIntSink 记录工具续链校验的执行次数。
+	// benchmarkIntSink counts completed tool continuation checks.
 	benchmarkIntSink int
 )
 
@@ -37,7 +37,7 @@ func BenchmarkToolContinuationValidationOptimized(b *testing.B) {
 }
 
 func TestNeedsToolContinuationSignals(t *testing.T) {
-	// 覆盖触发续接的各类信号。
+	// Each signal independently selects continuation handling.
 	cases := []struct {
 		name string
 		body map[string]any
@@ -68,7 +68,7 @@ func TestNeedsToolContinuationSignals(t *testing.T) {
 }
 
 func TestHasFunctionCallOutput(t *testing.T) {
-	// Codex 工具输出参与续接判断，WS 据此保留 previous_response_id。
+	// Codex tool outputs require continuation checks and inform WebSocket previous_response_id retention.
 	require.False(t, HasFunctionCallOutput(nil))
 	for _, typ := range []string{
 		"function_call_output",
@@ -86,7 +86,7 @@ func TestHasFunctionCallOutput(t *testing.T) {
 }
 
 func TestHasToolCallContext(t *testing.T) {
-	// 工具调用上下文必须包含 call_id，才能作为可关联上下文。
+	// Tool call context needs a nonempty call_id to be linkable.
 	require.False(t, AnalyzeToolContinuationSignals(nil).HasToolCallContext)
 	for _, typ := range []string{
 		"tool_call",
@@ -106,7 +106,7 @@ func TestHasToolCallContext(t *testing.T) {
 }
 
 func TestFunctionCallOutputCallIDs(t *testing.T) {
-	// 仅提取工具输出的非空 call_id，去重后返回。
+	// Collect distinct nonempty call IDs from tool outputs.
 	require.Empty(t, AnalyzeToolContinuationSignals(nil).FunctionCallOutputCallIDs)
 	callIDs := AnalyzeToolContinuationSignals(map[string]any{
 		"input": []any{
@@ -135,7 +135,7 @@ func TestHasFunctionCallOutputMissingCallID(t *testing.T) {
 }
 
 func TestHasItemReferenceForCallIDs(t *testing.T) {
-	// item_reference 需要覆盖所有 call_id 才视为可关联上下文。
+	// References must cover every requested call ID.
 	require.False(t, HasItemReferenceForCallIDs(nil, []string{"call_1"}))
 	require.False(t, HasItemReferenceForCallIDs(map[string]any{}, []string{"call_1"}))
 	req := map[string]any{
@@ -150,7 +150,7 @@ func TestHasItemReferenceForCallIDs(t *testing.T) {
 }
 
 func TestValidateFunctionCallOutputContextBytesMatchesMapValidation(t *testing.T) {
-	// handler 的 raw JSON 预校验与 service 的 map 校验应得到相同结果。
+	// Raw JSON and map validation should agree for these handler input scenarios.
 	cases := []struct {
 		name string
 		body map[string]any
@@ -262,8 +262,8 @@ func TestAnalyzeToolCallOutputContextCoverageBytes(t *testing.T) {
 			coversAllIDs: true,
 		},
 		{
-			// input 含一个调用的上下文，另一个输出的 call_id 仍需通过 previous_response_id 解析。
-			// 这类请求需要保留上游会话 ID。
+			// Input provides context for one call, while the other output still depends on previous_response_id.
+			// The request must retain its upstream session ID.
 			name: "partial_coverage_not_movable",
 			body: map[string]any{"input": []any{
 				map[string]any{"type": "function_call", "call_id": "call_a"},
@@ -550,7 +550,7 @@ func BenchmarkOpenAIResponses_LargeInputFunctionCallValidation(b *testing.B) {
 	}
 }
 
-// benchmarkBodySizes 指定工具调用上下文校验基准的目标输入大小。
+// benchmarkBodySizes lists target request sizes for tool context validation benchmarks.
 func benchmarkBodySizes() []struct {
 	name  string
 	bytes int
@@ -566,7 +566,7 @@ func benchmarkBodySizes() []struct {
 	}
 }
 
-// buildLargeOpenAIResponsesToolContinuationBody 构造同时包含 item_reference 和 function_call_output 的请求。
+// buildLargeOpenAIResponsesToolContinuationBody pairs item references with function call outputs.
 func buildLargeOpenAIResponsesToolContinuationBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)

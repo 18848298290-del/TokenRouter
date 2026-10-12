@@ -29,12 +29,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// PlanReader 是测试替身提供的套餐只读端口，校验仍调用 billing。
+// PlanReader supplies test plan lookups to billing's validation.
 type PlanReader interface {
 	GetByID(context.Context, int64) (*billing.SubscriptionPlan, error)
 }
 
-// Composite 暴露被测试的真实实例与装配选项，测试直接调用所属能力。
+// Composite exposes the real module instances and assembly options used by tests.
 type Composite struct {
 	Applications  []composite.Application
 	Runtime       *composite.Runtime
@@ -55,7 +55,7 @@ type Composite struct {
 	WorkerChanged func(int)
 }
 
-// NewComposite 不读写存储，不启动 worker；所有解释和缓存均使用实际所属模块。
+// NewComposite assembles module readers and caches for tests without reading storage or starting workers.
 func NewComposite(repo settings.Repository, cfg *config.Config) *Composite {
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -133,7 +133,7 @@ func NewComposite(repo settings.Repository, cfg *config.Config) *Composite {
 	return result
 }
 
-// Save 让原独立更新断言执行同一准备、单次提交及发布能力；不提供旧聚合 getter。
+// Save prepares settings, commits one batch, and runs the fixture's application steps.
 func (f *Composite) Save(ctx context.Context, value *composite.Snapshot) error {
 	session, err := f.Runtime.BeginSettingsUpdate(ctx)
 	if err != nil {
@@ -145,7 +145,7 @@ func (f *Composite) Save(ctx context.Context, value *composite.Snapshot) error {
 		return err
 	}
 	changes := []settings.PreparedChange{{Module: "contract-input", Values: values}}
-	// 原独立更新断言携带准备态的显式发布标记；HTTP 回读契约由 Runtime 单独验证。
+	// These tests apply the prepared snapshot with its presence flags; Runtime tests cover committed readback.
 	for _, step := range f.Applications {
 		changes = append(changes, settings.PreparedChange{Module: step.Module, Apply: func(ctx context.Context) error {
 			return step.Apply(ctx, value)

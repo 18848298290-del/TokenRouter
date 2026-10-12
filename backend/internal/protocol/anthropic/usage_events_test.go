@@ -145,7 +145,7 @@ func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {
 	ParseSSEUsagePassthrough("not-json", usage)
 	require.Equal(t, 3, usage.InputTokens)
 
-	// nil usage 不应 panic
+	// A nil destination must not panic.
 	ParseSSEUsagePassthrough(`{"type":"message_start"}`, nil)
 }
 

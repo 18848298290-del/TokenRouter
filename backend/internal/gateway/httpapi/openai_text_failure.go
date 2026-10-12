@@ -16,9 +16,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// httpFailover 对 >=400 的上游响应做 failover 判定：命中时
-// 记录 ops 事件、执行提供商级错误处置并返回 *UpstreamFailoverError；未命中返回
-// nil，调用方继续走各自端点格式的非 failover 错误处理链。
+// httpFailover classifies upstream HTTP failures for retry.
+// On failover it records Ops context, applies provider policy, and returns an UpstreamFailoverError.
+// Otherwise it returns nil so the caller can write its protocol-specific error.
 func (s *OpenAITextExecutor) httpFailover(
 	ctx context.Context,
 	c *gin.Context,
@@ -32,14 +32,14 @@ func (s *OpenAITextExecutor) httpFailover(
 	if provider != nil && provider.Record.Platform == capability.PlatformGrok {
 		shouldFailover = gatewayprovider.ShouldFailoverGrokResponse(resp.StatusCode, respBody)
 	}
-	// 请求级拒绝不能触发提供商策略或池模式重试。
+	// Request-scoped rejections bypass provider policy and pool retries.
 	if detectHit, _, _ := openai.DetectOpenAICyberPolicy(respBody); detectHit || gatewayprovider.IsOpenAICyberWarningPayload(respBody, upstreamMsg) ||
 		openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, respBody) ||
 		openai.IsOpenAIContextWindowError(upstreamMsg, respBody) ||
 		(provider != nil && provider.Record.Platform == capability.PlatformGrok && grok.IsGrokContentPolicyRejection(resp.StatusCode, respBody)) {
 		return nil
 	}
-	// 缺少 Gin 上下文时，按默认故障转移分类决定是否执行提供商策略。
+	// Without Gin context, the default failover classification controls provider policy.
 	if c == nil && !shouldFailover && (provider == nil || provider.Record.Platform != capability.PlatformGrok) {
 		return nil
 	}

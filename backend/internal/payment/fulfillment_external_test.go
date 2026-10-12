@@ -13,7 +13,7 @@ import (
 	paymenttestkit "github.com/TokenFlux/TokenRouter/internal/payment/testkit"
 )
 
-// TestParseLegacyPaymentOrderID 检查早期订单回调的解析范围。
+// TestParseLegacyPaymentOrderID checks which legacy callback identifiers may resolve to local orders.
 func TestParseLegacyPaymentOrderID(t *testing.T) {
 	t.Parallel()
 
@@ -60,7 +60,7 @@ func TestResolveRedeemAction_LookupError(t *testing.T) {
 
 func TestResolveRedeemAction_LookupErrorWithNonNilCode(t *testing.T) {
 	t.Parallel()
-	// 查询同时返回兑换码和错误时，按查询失败处理。
+	// A lookup error takes precedence even when a code is returned.
 	code := &billing.RedeemCode{Status: billing.StatusUnused}
 	action := payment.ResolveRedeemAction(code, errors.New("partial error"))
 	assert.Equal(t, payment.RedeemActionCreate, action, "non-nil error should always result in create regardless of code")
@@ -94,7 +94,7 @@ func TestResolveRedeemAction_CodeExistsAndUnused(t *testing.T) {
 
 func TestResolveRedeemAction_CodeExistsWithExpiredStatus(t *testing.T) {
 	t.Parallel()
-	// 过期兑换码进入兑换分支，由兑换规则处理状态。
+	// Expired codes enter redemption, where the redeem rules validate their status.
 	code := &billing.RedeemCode{
 		Code:   "expired-code",
 		Status: billing.StatusExpired,
@@ -161,7 +161,6 @@ func TestResolveRedeemAction_Table(t *testing.T) {
 
 func TestRedeemAction_DistinctValues(t *testing.T) {
 	t.Parallel()
-	// 三种动作使用不同的枚举值。
 	assert.NotEqual(t, payment.RedeemActionCreate, payment.RedeemActionRedeem)
 	assert.NotEqual(t, payment.RedeemActionCreate, payment.RedeemActionSkipCompleted)
 	assert.NotEqual(t, payment.RedeemActionRedeem, payment.RedeemActionSkipCompleted)
@@ -173,7 +172,6 @@ func TestResolveRedeemAction_IsUsedCanUseConsistency(t *testing.T) {
 	usedCode := &billing.RedeemCode{Status: billing.StatusUsed, MaxUses: 1, UsedCount: 1}
 	unusedCode := &billing.RedeemCode{Status: billing.StatusUnused, MaxUses: 1}
 
-	// 兑换动作与兑换码的使用状态对应。
 	assert.True(t, usedCode.IsUsed())
 	assert.False(t, usedCode.CanUse())
 	assert.Equal(t, payment.RedeemActionSkipCompleted, payment.ResolveRedeemAction(usedCode, nil))
@@ -368,7 +366,7 @@ func TestValidateProviderNotificationMetadataRejectsStripeCurrencyMismatch(t *te
 	assert.ErrorContains(t, err, "stripe currency mismatch")
 }
 
-// TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase 检查余额和订阅订单的返利基数。
+// TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase checks balance and subscription rebate bases.
 func TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase(t *testing.T) {
 	t.Parallel()
 	monthlyPoints := 1000.0

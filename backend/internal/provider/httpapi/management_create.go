@@ -9,7 +9,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BatchCreate 按幂等 scope 接收批量输入，首次执行时创建提供商并派发后置任务。
+// BatchCreate applies idempotency to batch creation and dispatches follow-up work on the first execution.
 func (h *ManagementHandler) BatchCreate(c *gin.Context) {
 	var req struct {
 		Providers []CreateProviderRequest `json:"providers" binding:"required,min=1"`

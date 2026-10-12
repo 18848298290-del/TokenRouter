@@ -62,13 +62,15 @@ func (s *Pages) visibility(ctx context.Context, slug string) (string, bool) {
 	return "", false
 }
 
-// ReadMarkdown 返回符合当前用户权限的页面正文。
+// ReadMarkdown returns the body of a menu-visible page, subject to admin access.
 func (s *Pages) ReadMarkdown(ctx context.Context, slug string, admin bool) ([]byte, error) {
 	content, _, err := s.ReadLocalizedMarkdown(ctx, slug, admin)
 	return content, err
 }
 
-// ReadLocalizedMarkdown 在权限检查后选择译文，管理员专用页面读取原文。
+// ReadLocalizedMarkdown selects a translation after checking menu visibility.
+// It returns the selected language, or an empty language for the source text.
+// Admin-only pages use the source text.
 func (s *Pages) ReadLocalizedMarkdown(ctx context.Context, slug string, admin bool) ([]byte, string, error) {
 	if !validSlugPattern.MatchString(slug) || len(slug) > 64 {
 		return nil, "", ErrPageSlug

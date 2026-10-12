@@ -7,7 +7,7 @@ import (
 	purepricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// ProviderStatsPricingConfig 不携带提供商或共享价格配置实体，只包含统计价卡。
+// ProviderStatsPricingConfig contains model-price rules for provider statistics.
 type ProviderStatsPricingConfig struct {
 	Rules []purepricing.ProviderStatsPricingRule
 }
@@ -15,9 +15,9 @@ type ProviderStatsSource interface {
 	ProviderStatsGroup(context.Context, int64) (*ProviderStatsPricingConfig, error)
 }
 
-// ProviderStatsCostInput 固定上游用量和最终服务层级，提供商倍率由结算快照另行处理。
+// ProviderStatsCostInput supplies upstream usage and final service tier; settlement applies the provider multiplier separately.
 type ProviderStatsCostInput struct {
-	// PreferRequestedModel 由实际提供商能力指定，不再读取分组平台。
+	// PreferRequestedModel is supplied by the actual provider's capabilities.
 	PreferRequestedModel                       bool
 	ProviderID, GroupID                        int64
 	UpstreamModel, RequestedModel, MappedModel string
@@ -47,7 +47,7 @@ func (r *PriceResolver) ResolveProviderStats(ctx context.Context, input Provider
 	return r.calculator.ModelFileStatsCost(input.UpstreamModel, input.Tokens, input.ServiceTier, input.ReasoningEffort)
 }
 
-// ModelFileStatsCost 使用与用户计费相同的纯规则，但不读取共享价格配置覆盖价。
+// ModelFileStatsCost calculates catalog cost with user billing rules and no shared configuration overrides.
 func (s *Calculator) ModelFileStatsCost(model string, tokens UsageTokens, serviceTier, effort string) *float64 {
 	breakdown, err := s.CalculateCostUnified(CostInput{Model: model, Tokens: tokens, RateMultiplier: 1, ServiceTier: purepricing.NormalizeBillingServiceTier(serviceTier), ReasoningEffort: effort})
 	if err != nil || breakdown == nil || breakdown.TotalCost <= 0 {

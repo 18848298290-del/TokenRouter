@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// RefreshFailureBlocks 只保存凭据版本级临时阻断，提供商级配额/容量阻断由 RuntimeBlockState 统一拥有。
-// 各在途凭据版本分别保存阻断截止时间。
+// RefreshFailureBlocks stores temporary blocks by credential identity; RuntimeBlockState owns provider quota
+// and capacity blocks.
+// Each in-flight credential version has an independent expiry time.
 type RefreshFailureBlocks struct {
 	mu      sync.Mutex
 	entries map[int64]map[string]time.Time
@@ -36,7 +37,7 @@ func (b *RefreshFailureBlocks) Block(id int64, identity string, until, now time.
 	}
 }
 
-// Blocked 在存在条目时调用 identity 计算身份哈希，identity 需要使用当前数据直接计算。
+// Blocked evaluates identity only when live entries exist; the callback must hash the current credential data.
 func (b *RefreshFailureBlocks) Blocked(id int64, now time.Time, identity func() string) bool {
 	if b == nil {
 		return false
@@ -54,7 +55,7 @@ func (b *RefreshFailureBlocks) Blocked(id int64, now time.Time, identity func() 
 		return false
 	}
 	b.mu.Unlock()
-	// 散列计算不占用全局锁，不同提供商可独立读取。
+	// Compute the identity outside the shared lock so other providers can be checked concurrently.
 	key := identity()
 	b.mu.Lock()
 	defer b.mu.Unlock()

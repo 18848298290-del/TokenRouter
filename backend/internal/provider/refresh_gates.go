@@ -23,7 +23,7 @@ func NewRefreshRateGate(qps int) *RefreshRateGate {
 	return NewRefreshRateGateWithInterval(time.Second / time.Duration(qps))
 }
 
-// NewRefreshRateGateWithInterval 是测试速率槽预约和取消的窄化时间注入点。
+// NewRefreshRateGateWithInterval creates a gate with explicit slot spacing for timing and cancellation tests.
 func NewRefreshRateGateWithInterval(interval time.Duration) *RefreshRateGate {
 	return &RefreshRateGate{interval: interval}
 }
@@ -85,7 +85,7 @@ func (g *RefreshConcurrencyGate) Acquire(ctx context.Context) (func(), error) {
 	}
 }
 
-// InFlight 返回当前占用的槽位数。
+// InFlight returns the number of occupied concurrency slots.
 func (g *RefreshConcurrencyGate) InFlight() int {
 	if g == nil {
 		return 0

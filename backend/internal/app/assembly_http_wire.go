@@ -9,7 +9,7 @@ import (
 	serverhttp "github.com/TokenFlux/TokenRouter/internal/server/httpapi"
 )
 
-// httpAssemblyProviders 汇总 HTTP 入口的 Wire provider。
+// httpAssemblyProviders groups HTTP server and route Wire providers.
 var httpAssemblyProviders = wire.NewSet(
 	nativeHTTPProviders,
 	server.ProviderSet,

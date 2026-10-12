@@ -2,7 +2,8 @@ package provider
 
 import "sync"
 
-// RefreshProviderGates 持有周期与管理对账共用的唯一平台准入实例，零值可用。
+// RefreshProviderGates shares per-platform admission gates across periodic and administrative work. The zero
+// value is usable.
 type RefreshProviderGates struct {
 	mu    sync.Mutex
 	rates map[string]*RefreshRateGate

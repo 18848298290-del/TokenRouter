@@ -36,7 +36,7 @@ const (
 
 var protocolCatalog = buildProtocolCatalog()
 
-// Protocol 描述协议标识、名称、适用平台及是否专供上游使用。
+// Protocol describes an ID, display name, supported platforms, and upstream-only status.
 // @project-doc docs/interfaces/protocol_capabilities.md#protocol_catalog
 type Protocol struct {
 	ID           ProtocolID `json:"id"`
@@ -45,7 +45,7 @@ type Protocol struct {
 	Platforms    []string   `json:"platforms"`
 }
 
-// ProtocolID 引用 protocol 包的协议标识类型。
+// ProtocolID is the shared protocol identifier type.
 type ProtocolID = protocol.ProtocolID
 
 func buildProtocolCatalog() []Protocol {
@@ -82,7 +82,7 @@ func buildProtocolCatalog() []Protocol {
 	}
 }
 
-// NativeProtocolOptions 返回该认证方式直接支持的协议。
+// NativeProtocolOptions returns protocols directly supported by the platform and authentication method.
 func NativeProtocolOptions(platform, providerType, authMode string) []ProtocolID {
 	var selected []ProtocolID
 	switch platform {
@@ -145,7 +145,7 @@ func NativeProtocolOptions(platform, providerType, authMode string) []ProtocolID
 	return out
 }
 
-// ProtocolFallbackTargets 返回适配器支持的单步转换目标，并跳过与来源相同的协议。
+// ProtocolFallbackTargets returns implemented single-step conversions, excluding the source protocol.
 func ProtocolFallbackTargets(platform string, source ProtocolID) []ProtocolID {
 	if !platformSupportsClientProtocol(platform, source) {
 		return []ProtocolID{}
@@ -187,7 +187,8 @@ func ProtocolFallbackTargets(platform string, source ProtocolID) []ProtocolID {
 	return out
 }
 
-// SupportsProtocolConversion 根据提供商平台、认证类型和认证模式判断是否支持单步转换。
+// SupportsProtocolConversion checks a single-step conversion for the platform, provider type, and
+// authentication mode.
 func SupportsProtocolConversion(platform, providerType, authMode string, source, target ProtocolID) bool {
 	if !slices.Contains(ProtocolFallbackTargets(platform, source), target) {
 		return false
@@ -201,7 +202,7 @@ func SupportsProtocolConversion(platform, providerType, authMode string, source,
 	return slices.Contains(NativeProtocolOptions(platform, providerType, authMode), target)
 }
 
-// ProtocolCatalog 返回协议目录的深复制副本，调用方修改副本时目录保持原值。
+// ProtocolCatalog returns a deep copy that callers may modify independently.
 func ProtocolCatalog() []Protocol {
 	out := slices.Clone(protocolCatalog)
 	for i := range out {
@@ -210,7 +211,7 @@ func ProtocolCatalog() []Protocol {
 	return out
 }
 
-// platformSupportsClientProtocol 校验具体上游已有的入口实现，独立于分组准入。
+// platformSupportsClientProtocol checks adapter entry support independently of group admission.
 func platformSupportsClientProtocol(platform string, source ProtocolID) bool {
 	for _, entry := range protocolCatalog {
 		if entry.ID == source {
@@ -220,7 +221,7 @@ func platformSupportsClientProtocol(platform string, source ProtocolID) bool {
 	return false
 }
 
-// AutomaticProtocolFallbackTargets 是所有候选共用的稳定转换顺序，只包含已实现的单步路线。
+// AutomaticProtocolFallbackTargets returns the stable shared order of implemented single-step conversions.
 func AutomaticProtocolFallbackTargets(source ProtocolID) []ProtocolID {
 	targets := []ProtocolID{}
 	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok, PlatformQoder, PlatformKimi, PlatformZhipu, PlatformDeepseek} {

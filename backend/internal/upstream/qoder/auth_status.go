@@ -10,21 +10,22 @@ import (
 )
 
 const (
-	// AuthStatusPath 是 QoderCN20 OpenAPI 身份换取最终 COSY 身份的逻辑路径。
+	// AuthStatusPath completes QoderCN20 OpenAPI credentials into a COSY identity.
 	AuthStatusPath = "/api/v3/user/status"
-	// CosyRefreshTokenPath 是国内手动 COSY token 的旧式刷新逻辑路径。
+	// CosyRefreshTokenPath refreshes manually imported CN COSY tokens.
 	CosyRefreshTokenPath = "/api/v3/user/refresh_token"
-	// QuotaUsagePath 是两站额度查询使用的逻辑路径。
+	// QuotaUsagePath is the quota-query path for both sites.
 	QuotaUsagePath = "/api/v2/quota/usage"
 )
 
-// AuthStatusAuthInfo 是 Gateway 身份请求内嵌的可选提供商信息。
+// AuthStatusAuthInfo contains optional provider details embedded in a Gateway identity request.
 type AuthStatusAuthInfo struct {
 	UserName       string `json:"userName,omitempty"`
 	OrganizationID string `json:"orgId,omitempty"`
 }
 
-// AuthStatusParams 完整对应官方 Gateway 身份请求结构；末尾三个零值字段也必须发送。
+// AuthStatusParams is the Gateway identity payload. Token fields, NeedRefresh, and AuthInfo
+// serialize even when empty.
 type AuthStatusParams struct {
 	AccessKey          string             `json:"accessKey,omitempty"`
 	SecretKey          string             `json:"secretKey,omitempty"`
@@ -39,14 +40,14 @@ type AuthStatusParams struct {
 	AuthInfo           AuthStatusAuthInfo `json:"authInfo"`
 }
 
-// gatewayHTTPPayload 对应官方 remoting.HttpPayload，是 Gateway 身份接口的外层载荷。
+// gatewayHTTPPayload is the remoting.HttpPayload envelope for Gateway identity requests.
 type gatewayHTTPPayload struct {
 	Payload       string `json:"payload"`
 	EncodeVersion string `json:"encodeVersion"`
 	RequestID     string `json:"requestId,omitempty"`
 }
 
-// AuthStatusResult 兼容国内 Gateway status/refresh 返回的完整身份字段。
+// AuthStatusResult contains identity fields returned by CN Gateway status and refresh.
 type AuthStatusResult struct {
 	Name                      string         `json:"name"`
 	ID                        string         `json:"id"`
@@ -71,7 +72,7 @@ type AuthStatusResult struct {
 	TeamSwitches              map[string]any `json:"teamSwitches"`
 }
 
-// ExchangeQoderCN20PATContext 完成国内现代 PAT 的 exchange、userinfo 和 status 链路。
+// ExchangeQoderCN20PATContext runs the CN PAT exchange, userinfo, and status sequence.
 func ExchangeQoderCN20PATContext(
 	ctx context.Context,
 	pat string,
@@ -102,7 +103,7 @@ func ExchangeQoderCN20PATContext(
 	return CompleteQoderCN20IdentityContext(ctx, normalized, token, user, machine, doer)
 }
 
-// RefreshQoderCN20SessionContext 完成国内标准 OAuth 的 refresh、userinfo 和 status 链路。
+// RefreshQoderCN20SessionContext runs the CN OAuth refresh, userinfo, and status sequence.
 func RefreshQoderCN20SessionContext(
 	ctx context.Context,
 	refreshToken string,
@@ -133,7 +134,7 @@ func RefreshQoderCN20SessionContext(
 	return CompleteQoderCN20IdentityContext(ctx, normalized, token, user, machine, doer)
 }
 
-// CompleteQoderCN20IdentityContext 将国内 OpenAPI token 换成可用于推理的最终 COSY 身份。
+// CompleteQoderCN20IdentityContext completes a CN OpenAPI token into an inference-ready COSY identity.
 func CompleteQoderCN20IdentityContext(
 	ctx context.Context,
 	profile Profile,
@@ -156,7 +157,7 @@ func CompleteQoderCN20IdentityContext(
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	// status 会校验用户与 token 的关联关系，必须优先使用设备 token 响应中的 user_id。
+	// status checks token ownership, so prefer the device token response user_id.
 	userID := firstNonEmpty(token.UserID, userIDFromInfo(user))
 	if userID == "" {
 		return nil, time.Time{}, fmt.Errorf("qoder: QoderCN20 completion requires user id")
@@ -169,7 +170,7 @@ func CompleteQoderCN20IdentityContext(
 		SecurityOauthToken: token.AccessTokenValue(),
 		RefreshToken:       strings.TrimSpace(token.RefreshToken),
 	}
-	// status 使用登录前 Appcode 签名模式，不构造或发送 COSY Authorization。
+	// status uses the pre-login Appcode signature, with no COSY Authorization header.
 	session := &SessionContext{
 		Machine:       machine,
 		Site:          normalized.Site,
@@ -193,13 +194,13 @@ func CompleteQoderCN20IdentityContext(
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	// 国内标准登录保留本次 OpenAPI 的 effective access/refresh token，status 只补充提供商状态。
+	// Keep the effective OpenAPI tokens; status supplies provider identity fields.
 	identity.SecurityOauthToken = provisional.SecurityOauthToken
 	identity.RefreshToken = strings.TrimSpace(token.RefreshToken)
 	return identity, expiresAt, nil
 }
 
-// RefreshCosySessionForProfileContext 使用国内 Gateway 旧式协议刷新手动 COSY token。
+// RefreshCosySessionForProfileContext uses the legacy CN Gateway flow for imported COSY tokens.
 func RefreshCosySessionForProfileContext(
 	ctx context.Context,
 	profile Profile,
@@ -259,7 +260,7 @@ func RefreshCosySessionForProfileContext(
 	return identity, nil
 }
 
-// marshalAuthStatusRequest 先把身份参数序列化成字符串，再按官方协议包入 EncodeVersion=1 的外层对象。
+// marshalAuthStatusRequest wraps JSON-encoded parameters as a string in an encodeVersion=1 envelope.
 func marshalAuthStatusRequest(params AuthStatusParams) ([]byte, error) {
 	inner, err := json.Marshal(params)
 	if err != nil {
@@ -287,7 +288,7 @@ func identityFromAuthStatus(status *AuthStatusResult, fallback *AuthIdentity) (*
 		OrganizationID:   firstNonEmpty(status.OrganizationID, fallbackIdentityValue(fallback, func(v *AuthIdentity) string { return v.OrganizationID })),
 		OrganizationName: firstNonEmpty(status.OrganizationName, fallbackIdentityValue(fallback, func(v *AuthIdentity) string { return v.OrganizationName })),
 		UserType:         firstNonEmpty(status.UserType, fallbackIdentityValue(fallback, func(v *AuthIdentity) string { return v.UserType }), "personal_standard"),
-		// QoderCN20 status 只负责校验并返回提供商状态，成功响应可能不重复回传请求中的 token。
+		// A successful QoderCN20 status response can omit the tokens already supplied in the request.
 		SecurityOauthToken: firstNonEmpty(status.SecurityOauthToken, fallbackIdentityValue(fallback, func(v *AuthIdentity) string { return v.SecurityOauthToken })),
 		RefreshToken:       firstNonEmpty(status.RefreshToken, fallbackIdentityValue(fallback, func(v *AuthIdentity) string { return v.RefreshToken })),
 	}

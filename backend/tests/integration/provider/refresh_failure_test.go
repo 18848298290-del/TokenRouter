@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestRefreshFailureVersionCAS 验证真实 PostgreSQL 检验旧交换版本的写权限，普通改名不干扰失败处理，其它身份更改必须拒绝。
+// TestRefreshFailureVersionCAS checks that a rename leaves a refresh failure eligible to apply,
+// while changes to credentials, status, scheduling, platform, type, or proxy reject it.
 func TestRefreshFailureVersionCAS(t *testing.T) {
 	for _, kind := range []provider.RefreshFailureKind{provider.RefreshFailurePermanent, provider.RefreshFailureCooldown} {
 		for _, change := range []string{"none", "name", "credentials", "platform", "type", "status", "schedulable", "proxy"} {
@@ -91,12 +92,13 @@ func TestRefreshFailureVersionCAS(t *testing.T) {
 	}
 }
 
-// TestRefreshFailureLongerCooldownAndOutboxFailure 验证更长 cooldown 是同身份的原有无变更结果；outbox 失败仍不回滚已经生效的健康写入。
+// TestRefreshFailureLongerCooldownAndOutboxFailure checks that a shorter cooldown leaves the row unchanged
+// and an outbox failure does not roll back a permanent refresh failure.
 func TestRefreshFailureLongerCooldownAndOutboxFailure(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	until := time.Now().Add(time.Hour).Truncate(time.Microsecond)
-	// 输入带纳秒的时间，比较 PostgreSQL 持久化后的微秒值。
+	// Include nanoseconds in the input, then compare against the value persisted at microsecond precision.
 	updatedAt := until.Add(-time.Hour).Add(123 * time.Nanosecond)
 	row, err := client.Provider.Create().SetName("refresh-failure-semantics").SetPlatform(provider.PlatformOpenAI).SetType(provider.ProviderTypeOAuth).SetStatus(provider.StatusActive).SetSchedulable(true).SetCredentials(map[string]any{}).SetTempUnschedulableUntil(until).SetTempUnschedulableReason("existing-longer").SetUpdatedAt(updatedAt).Save(ctx)
 	require.NoError(t, err)
@@ -126,7 +128,8 @@ func TestRefreshFailureLongerCooldownAndOutboxFailure(t *testing.T) {
 	require.False(t, current.Schedulable)
 }
 
-// TestAntigravityRefreshRequestClearCAS 验证强制刷新请求仍使用原 Extra/outbox 原子范围，并在后置清理时再次检查交换身份。
+// TestAntigravityRefreshRequestClearCAS checks credential identity before clearing refresh flags
+// and verifies that an outbox failure rolls back the Extra update.
 func TestAntigravityRefreshRequestClearCAS(t *testing.T) {
 	for _, mode := range []string{"success", "reauthorized", "outbox_failure"} {
 		t.Run(mode, func(t *testing.T) {

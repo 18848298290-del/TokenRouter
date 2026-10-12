@@ -1,7 +1,6 @@
 package httpapi
 
-// 本文件覆盖 session_handler.go、pending_handler.go、oauth_start.go 和 passkey_handler.go 的验证码请求字段。
-
+// These tests cover CAPTCHA request fields in session, pending, OAuth-start, and Passkey handlers.
 import (
 	"encoding/json"
 	"testing"

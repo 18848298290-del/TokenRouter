@@ -15,15 +15,15 @@ const (
 	antigravityTokenRefreshSkew = 3 * time.Minute
 	antigravityTokenCacheSkew   = 5 * time.Minute
 	antigravityBackfillCooldown = 5 * time.Minute
-	// antigravityRequestRefreshTimeout 请求路径上 token 刷新的最大等待时间。
-	// 超过此时间直接放弃刷新、标记提供商临时不可调度并触发 failover，
-	// 让后台 TokenRefreshService 在下个周期继续重试。
+	// antigravityRequestRefreshTimeout bounds token refresh on the request path.
+	// Refresh failures temporarily pause the provider; the configured policy decides whether to return the error.
+	// Background refresh can retry on a later cycle.
 	antigravityRequestRefreshTimeout = 8 * time.Second
 )
 
 type AntigravityTokenState struct{ backfillCooldown sync.Map }
 
-// AntigravityTokenSource 独占原 project 回填冷却，消费者共享同一实例。
+// AntigravityTokenSource owns project backfill cooldowns and is shared by its consumers.
 type AntigravityTokenSource struct {
 	state   AntigravityTokenState
 	Options AntigravityTokenOptions
@@ -61,7 +61,7 @@ func (s *AntigravityTokenSource) GetAccessToken(ctx context.Context, value *Reco
 	return s.state.GetAccessToken(ctx, value, s.Options)
 }
 
-// GetAccessToken returns a valid access_token.
+// GetAccessToken reads a cached token or refreshes near expiry according to the configured policy.
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_account_contract
 func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Record, options AntigravityTokenOptions) (string, error) {
 	if provider == nil {
@@ -77,23 +77,23 @@ func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Re
 
 	cacheKey := AntigravityTokenCacheKey(provider)
 
-	// 1) Try cache first.
+	// Use the cache before attempting refresh.
 	if options.Cache != nil {
 		if token, err := options.Cache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
 			return token, nil
 		}
 	}
 
-	// 2) Refresh if needed (pre-expiry skew).
+	// Refresh within the pre-expiry window.
 	expiresAt := provider.GetCredentialAsTime("expires_at")
 	needsRefresh := expiresAt == nil || time.Until(*expiresAt) <= antigravityTokenRefreshSkew
 	if needsRefresh && options.Refresh != nil {
-		// 请求路径使用短超时，代理连接失败时尽快返回，后台刷新会继续重试。
+		// Bound request-time refresh latency; background refresh can retry later.
 		refreshCtx, cancel := context.WithTimeout(ctx, antigravityRequestRefreshTimeout)
 		defer cancel()
 		result, err := options.Refresh(refreshCtx, provider, antigravityTokenRefreshSkew)
 		if err != nil {
-			// 标记提供商临时不可调度，后续请求会跳过它。
+			// Pause the provider so subsequent scheduling skips it.
 			p.markTempUnschedulable(provider, err, options)
 			if options.Policy.OnRefreshError == ProviderRefreshErrorReturn {
 				return "", err
@@ -104,13 +104,13 @@ func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Re
 					return token, nil
 				}
 			}
-			// default policy: continue with existing token.
+			// The default policy continues with the existing token.
 		} else {
 			provider = result.Provider
 			expiresAt = provider.GetCredentialAsTime("expires_at")
 		}
 	} else if needsRefresh && options.Cache != nil {
-		// Backward-compatible test path when refreshAPI is not injected.
+		// Acquire the cache lock when no refresh coordinator is injected.
 		locked, err := options.Cache.AcquireRefreshLock(ctx, cacheKey, 30*time.Second)
 		if err == nil && locked {
 			defer func() { _ = options.Cache.ReleaseRefreshLock(ctx, cacheKey) }()
@@ -122,7 +122,7 @@ func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Re
 		return "", errors.New("access_token not found in credentials")
 	}
 
-	// Backfill project_id online when missing, with cooldown to avoid hammering.
+	// Backfill a missing project_id with a per-provider cooldown.
 	if strings.TrimSpace(provider.GetCredential("project_id")) == "" && options.FillProject != nil {
 		if p.shouldAttemptBackfill(provider.ID) {
 			p.markBackfillAttempted(provider.ID)
@@ -138,7 +138,7 @@ func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Re
 		}
 	}
 
-	// 3) Populate cache with TTL.
+	// Recheck credential version before caching the token.
 	if options.Cache != nil {
 		latestProvider, isStale := CheckTokenVersion(ctx, provider, options.Repository, options.Debug)
 		if isStale && latestProvider != nil {
@@ -167,7 +167,7 @@ func (p *AntigravityTokenState) GetAccessToken(ctx context.Context, provider *Re
 	return accessToken, nil
 }
 
-// shouldAttemptBackfill checks backfill cooldown.
+// shouldAttemptBackfill reports whether the provider's backfill cooldown has elapsed.
 func (p *AntigravityTokenState) shouldAttemptBackfill(providerID int64) bool {
 	if v, ok := p.backfillCooldown.Load(providerID); ok {
 		if lastAttempt, ok := v.(time.Time); ok {
@@ -177,9 +177,9 @@ func (p *AntigravityTokenState) shouldAttemptBackfill(providerID int64) bool {
 	return true
 }
 
-// markTempUnschedulable 在请求路径上 token 刷新失败时标记提供商临时不可调度。
-// 同时写入数据库和 Redis，调度器据此跳过该提供商。
-// 使用 background context 因为请求 context 可能已超时。
+// markTempUnschedulable pauses a provider after request-time refresh failure.
+// It writes the scheduling state through the configured store and cache.
+// Use a background context because the request may already have timed out.
 func (p *AntigravityTokenState) markTempUnschedulable(provider *Record, refreshErr error, options AntigravityTokenOptions) {
 	if options.SetTempUnschedulable == nil || provider == nil {
 		return
@@ -200,7 +200,7 @@ func (p *AntigravityTokenState) markTempUnschedulable(provider *Record, refreshE
 		"until", until.Format(time.RFC3339),
 		"reason", reason,
 	)
-	// 同步写 Redis 缓存，调度器立即生效
+	// Update the cache synchronously so scheduling can observe the pause.
 	if options.TempUnschedCache != nil {
 		state := &TempUnschedState{
 			UntilUnix:       until.Unix(),

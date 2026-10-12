@@ -15,18 +15,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/intercept"
 )
 
-// SoftDeleteMixin 实现基于 deleted_at 时间戳的软删除功能。
+// SoftDeleteMixin implements soft deletion using deleted_at.
 //
-// 软删除特性：
-//   - 删除操作不会真正删除数据库记录，而是设置 deleted_at 时间戳
-//   - 所有查询默认自动过滤 deleted_at IS NULL，只返回"未删除"的记录
-//   - 通过 SkipSoftDelete(ctx) 可以绕过软删除过滤器，查询或真正删除记录
+// Default behavior:
+//   - Deletes set deleted_at to the current application time.
+//   - Ent queries filter for deleted_at IS NULL.
+//   - SkipSoftDelete allows queries to include deleted rows and deletes to remove rows physically.
 //
-// 实现原理：
-//   - 使用 Ent 的 Interceptor 拦截所有查询，自动添加 deleted_at IS NULL 条件
-//   - 使用 Ent 的 Hook 拦截删除操作，将 DELETE 转换为 UPDATE SET deleted_at = NOW()
+// Implementation:
+//   - An Ent traversal interceptor adds the deleted_at IS NULL predicate.
+//   - A mutation hook converts delete operations to updates of deleted_at.
 //
-// 使用示例：
+// Example:
 //
 //	func (User) Mixin() []ent.Mixin {
 //	    return []ent.Mixin{
@@ -37,15 +37,15 @@ type SoftDeleteMixin struct {
 	mixin.Schema
 }
 
-// softDeleteKey 是用于在 context 中标记跳过软删除的键类型。
-// 使用空结构体作为键可以避免与其他包的键冲突。
+// softDeleteKey marks contexts that bypass soft deletion.
+// Its private type prevents collisions with keys from other packages.
 type softDeleteKey struct{}
 
-// Fields 定义软删除所需的字段。
-// deleted_at 字段：
-//   - 类型为 TIMESTAMPTZ，精确记录删除时间
-//   - Optional 和 Nillable 确保新记录时该字段为 NULL
-//   - NULL 表示记录未被删除，非 NULL 表示已软删除
+// Fields defines the nullable deletion timestamp.
+// deleted_at uses:
+//   - PostgreSQL TIMESTAMPTZ for deletion time.
+//   - Optional and Nillable so omitted values are NULL.
+//   - NULL for active rows and a timestamp for deleted rows.
 func (SoftDeleteMixin) Fields() []ent.Field {
 	return []ent.Field{
 		field.Time("deleted_at").
@@ -57,57 +57,54 @@ func (SoftDeleteMixin) Fields() []ent.Field {
 	}
 }
 
-// SkipSoftDelete 返回一个新的 context，用于跳过软删除的拦截器和变更器。
+// SkipSoftDelete derives a context that bypasses query filtering and delete conversion.
 //
-// 使用场景：
-//   - 查询已软删除的记录（如管理员查看回收站）
-//   - 执行真正的物理删除（如彻底清理数据）
-//   - 恢复软删除的记录
+// Use it to:
+//   - Include soft-deleted rows in queries.
+//   - Delete rows physically.
+//   - Access deleted rows for restoration.
 //
-// 示例：
+// Example:
 //
-//	// 查询包含已删除记录的所有用户
+//	// Include soft-deleted users.
 //	users, err := client.User.Query().All(mixins.SkipSoftDelete(ctx))
 //
-//	// 真正删除记录
+//	// Physically delete the row.
 //	client.User.DeleteOneID(id).Exec(mixins.SkipSoftDelete(ctx))
 func SkipSoftDelete(parent context.Context) context.Context {
 	return context.WithValue(parent, softDeleteKey{}, true)
 }
 
-// Interceptors 返回查询拦截器列表。
-// 拦截器会自动为所有查询添加 deleted_at IS NULL 条件，
-// 确保软删除的记录不会出现在普通查询结果中。
+// Interceptors adds a filter for active rows to Ent query traversals.
+// The filter requires deleted_at IS NULL unless the context
+// was created with SkipSoftDelete.
 func (d SoftDeleteMixin) Interceptors() []ent.Interceptor {
 	return []ent.Interceptor{
 		intercept.TraverseFunc(func(ctx context.Context, q intercept.Query) error {
-			// 检查是否需要跳过软删除过滤
 			if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
 				return nil
 			}
-			// 生成的 intercept.Query 包装层提供 WhereP，可对不同实体统一追加 SQL 谓词。
+			// The generated query wrapper supplies WhereP for adding the predicate across entity types.
 			d.applyPredicate(q)
 			return nil
 		}),
 	}
 }
 
-// Hooks 返回变更钩子列表。
-// 钩子会拦截 DELETE 操作，将其转换为 UPDATE SET deleted_at = NOW()。
-// 删除操作将记录标记为已删除，数据仍保存在表中。
+// Hooks converts Ent delete operations to timestamp updates.
+// The hook uses time.Now from the application process for deleted_at.
+// Rows remain in the table until deleted with SkipSoftDelete.
 func (d SoftDeleteMixin) Hooks() []ent.Hook {
 	return []ent.Hook{
 		func(next ent.Mutator) ent.Mutator {
 			return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-				// 只处理删除操作
 				if m.Op() != ent.OpDelete && m.Op() != ent.OpDeleteOne {
 					return next.Mutate(ctx, m)
 				}
-				// 检查是否需要执行真正的删除
 				if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
 					return next.Mutate(ctx, m)
 				}
-				// 类型断言，获取 mutation 的扩展接口
+				// The generated mutation must support updating deleted_at and adding SQL predicates.
 				mx, ok := m.(interface {
 					SetOp(ent.Op)
 					SetDeletedAt(time.Time)
@@ -116,11 +113,9 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 				if !ok {
 					return nil, fmt.Errorf("unexpected mutation type %T", m)
 				}
-				// 添加软删除过滤条件，确保不会影响已删除的记录
+				// Exclude rows that have already been soft-deleted.
 				d.applyPredicate(mx)
-				// 将 DELETE 操作转换为 UPDATE 操作
 				mx.SetOp(ent.OpUpdate)
-				// 设置删除时间为当前时间
 				mx.SetDeletedAt(time.Now())
 				return mutateWithClient(ctx, m, next)
 			})
@@ -128,14 +123,15 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 	}
 }
 
-// applyPredicate 为查询添加 deleted_at IS NULL 条件。
-// 这是软删除过滤的核心实现。
+// applyPredicate restricts a query or mutation to rows with deleted_at IS NULL.
 func (d SoftDeleteMixin) applyPredicate(w interface{ WhereP(...func(*sql.Selector)) }) {
 	w.WhereP(
 		sql.FieldIsNull(d.Fields()[0].Descriptor().Name),
 	)
 }
 
+// mutateWithClient dispatches the converted update through the generated client.
+// Reflection avoids importing the generated ent package, which imports these mixins.
 func mutateWithClient(ctx context.Context, m ent.Mutation, fallback ent.Mutator) (ent.Value, error) {
 	clientMethod := reflect.ValueOf(m).MethodByName("Client")
 	if !clientMethod.IsValid() || clientMethod.Type().NumIn() != 0 || clientMethod.Type().NumOut() != 1 {

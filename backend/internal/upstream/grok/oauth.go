@@ -40,13 +40,13 @@ const (
 
 var (
 	oauthEndpointAllowedHosts = []string{"x.ai", "*.x.ai"}
-	// *.api.x.ai 覆盖 xAI 区域端点（us-east-1/us-west-2/eu-west-1 等），
-	// 运营方可在端点间手动切换以规避单点不可用。
+	// Regional API hosts allow operators to select another region when an endpoint
+	// is unavailable, including us-east-1, us-west-2, and eu-west-1.
 	baseURLAllowedHosts = []string{"api.x.ai", "*.api.x.ai", "cli-chat-proxy.grok.com"}
 )
 
-// BaseURLValidator 在拼接 xAI 端点路径前应用调用方的上游 URL 安全策略。
-// API-key 提供商由服务层注入全局 security.url_allowlist 策略，OAuth 提供商仍使用可信主机校验。
+// BaseURLValidator applies outbound URL policy before appending an xAI endpoint path.
+// API-key providers inject security.url_allowlist policy; OAuth uses trusted-host validation.
 type BaseURLValidator func(string) (string, error)
 
 type RuntimeSanityCheck struct {
@@ -233,12 +233,12 @@ func ValidateTrustedBaseURL(raw string) (string, error) {
 	return normalizeKnownBaseURLPath(normalized)
 }
 
-// normalizeKnownBaseURLPath 规范化 base URL 的 path 部分：
-//   - 官方主机固定使用 /v1 前缀（空 path 自动补齐，其余 path 拒绝）；
-//   - 其他主机保留管理员配置的任意 path 前缀（第三方转发地址常见
-//     /xxx/v1 之类的路由前缀），空 path 仍按惯例补 /v1。
+// normalizeKnownBaseURLPath normalizes the base URL path:
+//   - Official hosts require /v1; an empty path becomes /v1 and other paths fail.
+//   - Custom hosts retain configured prefixes such as /xxx/v1.
+//     An empty custom-host path also becomes /v1.
 //
-// 所有主机统一禁止 userinfo/query/fragment，并去除尾部斜杠。
+// All hosts reject userinfo, query, and fragment components and trim trailing slashes.
 func normalizeKnownBaseURLPath(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -267,7 +267,7 @@ func normalizeKnownBaseURLPath(raw string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-// IsOfficialBaseURLHost 报告 host 是否属于官方 API / 区域 API / CLI 网关主机。
+// IsOfficialBaseURLHost reports whether host is an xAI API, regional API, or CLI host.
 func IsOfficialBaseURLHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	for _, allowed := range baseURLAllowedHosts {
@@ -285,9 +285,9 @@ func IsOfficialBaseURLHost(host string) bool {
 	return false
 }
 
-// IsOfficialBaseURL 报告 raw 是否指向官方主机（api.x.ai / *.api.x.ai 区域端点 / CLI 网关），
-// 容忍存量凭证中的历史变体（大小写、显式 443 端口、百分号编码 path 等）。
-// 无法解析的值视为官方地址，调用方据此使用默认端点。
+// IsOfficialBaseURL recognizes official hosts, including case variants, explicit
+// ports, and encoded paths found in stored credentials.
+// Empty or unparseable URLs return true so callers select the default endpoint.
 func IsOfficialBaseURL(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -382,7 +382,7 @@ func BuildAuthorizationURL(state, codeChallenge, redirectURI, nonce string) (str
 	return fmt.Sprintf("%s?%s", authorizeURL, params.Encode()), nil
 }
 
-// ParseAuthorizationInput 支持完整回调 URL、查询字符串或纯授权码。
+// ParseAuthorizationInput accepts a callback URL, query string, or authorization code.
 func ParseAuthorizationInput(raw string) AuthorizationInput {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -481,8 +481,8 @@ func BuildVideoURLWithValidator(baseURL, requestID string, validator BaseURLVali
 	if requestID == "" {
 		return "", fmt.Errorf("request id is required")
 	}
-	// requestID 由客户端提供并拼进上游 URL 的 path。PathEscape 之外再要求它不是
-	// 纯点片段、不含控制字符，保证它只能是一个普通的路径片段。
+	// requestID becomes one URL path segment. Reject dot segments and NUL/CR/LF
+	// in addition to escaping the value so it cannot redirect path resolution.
 	if requestID == "." || requestID == ".." || strings.ContainsAny(requestID, "\x00\r\n") {
 		return "", fmt.Errorf("invalid request id")
 	}

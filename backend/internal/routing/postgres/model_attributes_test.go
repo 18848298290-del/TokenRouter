@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestAttributeBatchLookup 验证共享档案只返回一行，并限制结果中的分组范围。
+// TestAttributeBatchLookup checks one row per shared profile and limits results to requested groups.
 func TestAttributeBatchLookup(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestAttributeBatchLookup(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestAttributeBatchLookupFailure 丢弃失败查询的部分结果，空分组集合跳过 SQL。
+// TestAttributeBatchLookupFailure discards partial query results and skips SQL for an empty group list.
 func TestAttributeBatchLookupFailure(t *testing.T) {
 	for _, failure := range []string{"query", "decode", "rows"} {
 		t.Run(failure, func(t *testing.T) {

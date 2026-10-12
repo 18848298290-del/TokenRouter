@@ -10,14 +10,14 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CodexInviteResetCommands 是管理 HTTP 对提供商用例的窄操作接口。
+// CodexInviteResetCommands provides invitation status, sending, and reset consumption operations.
 type CodexInviteResetCommands interface {
 	GetStatus(context.Context, int64) (*provider.CodexInviteResetStatus, error)
 	SendInvite(context.Context, int64, []string) (*provider.CodexInviteResetInviteResult, error)
 	Consume(context.Context, int64, string) (*provider.CodexInviteResetConsumeResult, error)
 }
 
-// CodexInviteResetHandler 处理 Codex 邀请重置管理接口。
+// CodexInviteResetHandler handles administrator requests for Codex invitation resets.
 type CodexInviteResetHandler struct {
 	service CodexInviteResetCommands
 }
@@ -27,16 +27,16 @@ type codexInviteResetInviteRequest struct {
 }
 
 type codexInviteResetConsumeRequest struct {
-	// CreditID 可选；没有 credit 明细时由上游自动选择可用的重置机会。
+	// CreditID is optional; when omitted, the upstream selects an available reset credit.
 	CreditID string `json:"credit_id"`
 }
 
-// NewCodexInviteResetHandler 创建 Codex 邀请重置管理处理器。
+// NewCodexInviteResetHandler creates a Codex invitation reset handler.
 func NewCodexInviteResetHandler(service CodexInviteResetCommands) *CodexInviteResetHandler {
 	return &CodexInviteResetHandler{service: service}
 }
 
-// GetStatus 查询当前提供商的邀请资格和可用重置次数。
+// GetStatus returns the provider's invitation eligibility and available resets.
 func (h *CodexInviteResetHandler) GetStatus(c *gin.Context) {
 	providerID, ok := parseCodexInviteResetProviderID(c)
 	if !ok {
@@ -49,7 +49,7 @@ func (h *CodexInviteResetHandler) GetStatus(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// SendInvite 发送 Codex 邀请邮件。
+// SendInvite sends Codex invitation emails.
 func (h *CodexInviteResetHandler) SendInvite(c *gin.Context) {
 	providerID, ok := parseCodexInviteResetProviderID(c)
 	if !ok {
@@ -67,7 +67,7 @@ func (h *CodexInviteResetHandler) SendInvite(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// Consume 使用一次 Codex 重置机会。
+// Consume uses one Codex reset credit.
 func (h *CodexInviteResetHandler) Consume(c *gin.Context) {
 	providerID, ok := parseCodexInviteResetProviderID(c)
 	if !ok {

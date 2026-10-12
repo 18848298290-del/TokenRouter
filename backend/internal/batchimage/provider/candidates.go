@@ -12,14 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// CandidateProviders 保留批量任务的三种提供商查询，不提前扩大查询范围。
+// CandidateProviders supports lookup by ID, platform, or group and platform.
 type CandidateProviders interface {
 	ResultProviders
 	ListSchedulableByPlatform(context.Context, string) ([]provider.Record, error)
 	ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]provider.Record, error)
 }
 
-// Candidates 将查询到的提供商转换为批量任务候选，使用注入的注册表和模型观察函数。
+// Candidates builds batch candidates with the supplied registry and model observer.
 type Candidates struct {
 	Source       CandidateProviders
 	Registry     *batchimage.Registry[BatchImageProvider]
@@ -54,7 +54,7 @@ func (r *Candidates) project(values []provider.Record) []batchimage.Candidate {
 	return out
 }
 
-// Project 为批量图片的本次提供商读取准备模型和协议规则。
+// Project prepares model and protocol rules for one provider snapshot.
 func (r *Candidates) Project(value *provider.Record) *batchimage.Candidate {
 	if value == nil {
 		return nil
@@ -78,7 +78,7 @@ func (r *Candidates) Project(value *provider.Record) *batchimage.Candidate {
 		selected, _ := r.Registry.Get(name)
 		return BindProvider(selected, value)
 	}
-	// 批量提供商按 Gemini/Vertex 规则解析模型。
+	// Batch providers resolve models using Gemini/Vertex rules.
 	result.ResolveUpstream = func(ctx context.Context, model string) string {
 		resolved := strings.TrimSpace(models.ForwardMappedModel(model))
 		if r.ObserveModel != nil {
@@ -101,7 +101,7 @@ func (r candidateRules) ResolveMappedModel(model string) (string, bool) {
 	return r.models.ResolveMappedModel(model)
 }
 
-// GetConfiguredRequestModels 提供白名单和映射中的具体型号。
+// GetConfiguredRequestModels returns concrete names from model allowlists and mappings.
 func (r candidateRules) GetConfiguredRequestModels() []string {
 	return r.models.ConfiguredModels()
 }

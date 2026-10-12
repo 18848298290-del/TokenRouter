@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Runtime 只协调一次读写和按序应用；业务解释由所属模块拥有。
+// Runtime coordinates settings reads, preparation, and ordered application through the owning modules.
 type Runtime struct {
 	store          *settings.Store
 	read           ReadOptions
@@ -68,7 +68,7 @@ func (s *Runtime) ApplicationChanges() []settings.PreparedChange {
 	return ApplicationsForUpdate(s.GetAllSettings, s.applications)
 }
 
-// ApplyPersistedSettings 供旧消费接口兼容；生产更新按阶段报告模块应用失败。
+// ApplyPersistedSettings reads committed settings and applies modules in order, returning the first error.
 func (s *Runtime) ApplyPersistedSettings(ctx context.Context) error {
 	value, err := s.GetAllSettings(ctx)
 	if err != nil {

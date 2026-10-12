@@ -15,8 +15,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AuditLogHandler 操作审计日志管理接口。
-// 审计日志供管理员查看，全量清空需要 TOTP 验证。
+// AuditLogHandler exposes administrator audit-log queries and clearing.
+// Clearing all records requires a fresh TOTP verification.
 type AuditLogHandler struct {
 	auditService *audit.AuditLogService
 	totpService  TOTPVerifier
@@ -26,12 +26,12 @@ type auditLogClearRequest struct {
 	TotpCode string `json:"totp_code" binding:"required"`
 }
 
-// TOTPVerifier 只验证此次敏感操作的原 TOTP 凭据。
+// TOTPVerifier validates the TOTP code supplied for this operation.
 type TOTPVerifier interface {
 	VerifyCode(context.Context, int64, string) error
 }
 
-// NewAuditLogHandler 创建审计日志处理器。
+// NewAuditLogHandler creates the audit-log handler.
 func NewAuditLogHandler(auditService *audit.AuditLogService, totpService TOTPVerifier) *AuditLogHandler {
 	return &AuditLogHandler{
 		auditService: auditService,
@@ -39,7 +39,7 @@ func NewAuditLogHandler(auditService *audit.AuditLogService, totpService TOTPVer
 	}
 }
 
-// List 分页查询审计日志。
+// List returns a page of audit logs.
 // GET /api/v1/admin/audit-logs
 func (h *AuditLogHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
@@ -96,7 +96,7 @@ func (h *AuditLogHandler) List(c *gin.Context) {
 	response.Paginated(c, result.Logs, int64(result.Total), result.Page, result.PageSize)
 }
 
-// Get 查询单条审计日志详情（含脱敏后的请求体）。
+// Get returns an audit record, including its redacted request body.
 // GET /api/v1/admin/audit-logs/:id
 func (h *AuditLogHandler) Get(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
@@ -112,14 +112,14 @@ func (h *AuditLogHandler) Get(c *gin.Context) {
 	response.Success(c, item)
 }
 
-// Clear 全量清空审计日志。
+// Clear deletes all audit records and persists a trace of the operation.
 // POST /api/v1/admin/audit-logs/clear
 //
-// 安全要求（与需求对齐）：
-//  1. 每次清空都必须现场验证 TOTP 码（不复用 step-up sudo 窗口）
-//  2. 未启用 TOTP 的管理员不允许清空
-//  3. admin API key（机器凭证）不允许清空
-//  4. 清空完成后同步写入一条留痕记录（操作者、IP、UA、删除行数）
+// Authorization and trace requirements:
+//  1. Verify a fresh TOTP code for each clear, regardless of the step-up window.
+//  2. Reject administrators who have not enabled TOTP.
+//  3. Reject admin API keys.
+//  4. Persist the actor, IP, user agent, and deleted count in the clearing transaction.
 func (h *AuditLogHandler) Clear(c *gin.Context) {
 	if c.GetString("auth_method") == audit.AuditAuthMethodAdminAPIKey {
 		response.ErrorWithDetails(c, http.StatusForbidden,
@@ -141,7 +141,7 @@ func (h *AuditLogHandler) Clear(c *gin.Context) {
 		return
 	}
 
-	// 校验 TOTP：未启用（ErrTotpNotSetup）、码错误、尝试过多均在此拦截。
+	// Reject missing TOTP setup, invalid codes, and exhausted verification attempts.
 	if err := h.totpService.VerifyCode(c.Request.Context(), subject.UserID, strings.TrimSpace(req.TotpCode)); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -171,7 +171,7 @@ func (h *AuditLogHandler) Clear(c *gin.Context) {
 		return
 	}
 
-	// 留痕记录已同步落库，跳过异步审计中间件的重复记录。
+	// The clearing transaction already persisted a trace; avoid a duplicate asynchronous record.
 	SkipAudit(c)
 	response.Success(c, gin.H{"deleted": deleted})
 }

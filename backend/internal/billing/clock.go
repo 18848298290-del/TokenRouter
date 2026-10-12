@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// DateRuntime 显式注入时钟和日历；遗留无参数入口继续使用兼容默认值。
+// DateRuntime supplies the clock and calendar, defaulting to time.Now and time.Local when omitted.
 type DateRuntime struct {
 	Now      func() time.Time
 	Calendar *timezone.Calendar

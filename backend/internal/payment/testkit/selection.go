@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// CaptureLoadBalancer 记录测试请求，不执行渠道选择或读取配置。
+// CaptureLoadBalancer records selection inputs and returns them as the selected instance.
 type CaptureLoadBalancer struct {
 	LastProviderKey string
 	LastPaymentType string

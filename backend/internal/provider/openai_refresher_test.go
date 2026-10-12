@@ -35,13 +35,13 @@ func TestOpenAITokenRefresher_NeedsRefresh_SkipsProviderWithoutRefreshToken(t *t
 	require.True(t, refresher.NeedsRefresh(withRT, 5*time.Minute))
 }
 
-// TestOpenAITokenRefresherSkipsShadow 验证影子提供商不被后台 token 刷新器处理。
+// TestOpenAITokenRefresherSkipsShadow checks that background refresh excludes credential shadows.
 func TestOpenAITokenRefresherSkipsShadow(t *testing.T) {
 	pid := int64(100)
 	r := &OpenAITokenRefresher{}
-	// 影子提供商：ParentProviderID 非 nil → CanRefresh 应返回 false
+	// Credential shadows are excluded even when their platform and type match.
 	require.False(t, r.CanRefresh(&Record{ID: 200, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, ParentProviderID: &pid}))
-	// 普通提供商：有 refresh_token → CanRefresh 应返回 true
+	// A regular OpenAI OAuth provider is eligible; NeedsRefresh separately checks its refresh token.
 	require.True(t, r.CanRefresh(&Record{ID: 100, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"refresh_token": "RT"}}))
 }
 

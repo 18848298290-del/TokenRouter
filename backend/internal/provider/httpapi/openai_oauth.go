@@ -98,7 +98,7 @@ type OpenAICodexPATCreateRequest struct {
 	Extra              map[string]any `json:"extra"`
 }
 
-// CreateShadowRequest 是创建 Spark 影子提供商的请求体。
+// CreateShadowRequest contains the fields for creating a Spark shadow provider.
 type CreateShadowRequest struct {
 	Name        string  `json:"name"`
 	Priority    int     `json:"priority"`
@@ -138,7 +138,7 @@ func NewOpenAIOAuthHandler(auth *providercore.OpenAIAuthorization, admin OpenAIA
 func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req OpenAIGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// Allow empty body
+		// Binding failures use the default request, including an empty body.
 		req = OpenAIGenerateAuthURLRequest{}
 	}
 
@@ -211,7 +211,7 @@ func (h *OpenAIOAuthHandler) RefreshToken(c *gin.Context) {
 		}
 	}
 
-	// 未传 client_id 时，按请求路径的平台填入默认值。
+	// An omitted client_id uses the default for the platform identified by the request path.
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
 		platform := oauthPlatformFromPath(c)
@@ -292,7 +292,7 @@ func (h *OpenAIOAuthHandler) CreateProviderFromOAuth(c *gin.Context) {
 	response.Success(c, dto.ProviderFromRecord(value))
 }
 
-// CreateProviderFromCodexPAT 使用 Codex at-* Personal Access Token 创建 OpenAI OAuth 提供商。
+// CreateProviderFromCodexPAT creates an OpenAI OAuth provider from a Codex at-* personal access token.
 // POST /api/v1/admin/openai/create-from-codex-pat
 func (h *OpenAIOAuthHandler) CreateProviderFromCodexPAT(c *gin.Context) {
 	var req OpenAICodexPATCreateRequest
@@ -308,7 +308,7 @@ func (h *OpenAIOAuthHandler) CreateProviderFromCodexPAT(c *gin.Context) {
 	response.Success(c, dto.ProviderFromRecord(value))
 }
 
-// QueryQuota 查询 OpenAI OAuth 提供商的上游限流窗口和可用重置次数。
+// QueryQuota returns upstream rate-limit windows and available resets for an OpenAI OAuth provider.
 // GET /api/v1/admin/openai/providers/:id/quota
 func (h *OpenAIOAuthHandler) QueryQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -328,7 +328,7 @@ func (h *OpenAIOAuthHandler) QueryQuota(c *gin.Context) {
 	response.Success(c, usage)
 }
 
-// RefreshQuota 查询上游额度，并把带到期时间的重置次数快照持久化到提供商 extra。
+// RefreshQuota queries upstream quota and persists the reset-count snapshot with its expiry in Extra.
 // POST /api/v1/admin/openai/providers/:id/quota/refresh
 func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -354,7 +354,7 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	response.Success(c, output)
 }
 
-// CreateShadow 为母 OpenAI OAuth 提供商创建 spark 维度影子提供商。
+// CreateShadow creates a Spark shadow for a parent OpenAI OAuth provider.
 // POST /api/v1/admin/providers/:id/shadow
 func (h *OpenAIOAuthHandler) CreateShadow(c *gin.Context) {
 	parentID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -383,7 +383,7 @@ func (h *OpenAIOAuthHandler) CreateShadow(c *gin.Context) {
 	response.Success(c, dto.ProviderFromRecordShallow(shadow))
 }
 
-// ResetQuota 消耗一次 OpenAI OAuth 提供商的上游限流重置次数。
+// ResetQuota consumes one upstream rate-limit reset for an OpenAI OAuth provider.
 // POST /api/v1/admin/openai/providers/:id/reset-quota
 func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -415,12 +415,12 @@ func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 	response.Success(c, output)
 }
 
-// providerImport 无缓存用例只复用 handler 已持有的唯一提供商/授权依赖。
+// providerImport returns the configured importer or builds one from the handler's authorization and provider dependencies.
 func (h *OpenAIOAuthHandler) providerImport() *providercore.OpenAIProviderImport {
 	if h.Import != nil {
 		return h.Import
 	}
-	// 兼容原白盒测试直接构造的部分 handler；生产构造始终持有同一用例实例。
+	// Partially constructed test handlers need an importer; production constructors supply the shared instance.
 	return providercore.NewOpenAIProviderImport(h.Authorization, h.Admin, h.Options.ProxyURL)
 }
 
@@ -436,6 +436,6 @@ func (h *OpenAIOAuthHandler) quotaActions() *providercore.OpenAIQuotaActions {
 	if h.QuotaActions != nil {
 		return h.QuotaActions
 	}
-	// 兼容原白盒测试的部分构造；生产始终复用构造时装配的用例。
+	// Partially constructed test handlers need quota actions; production constructors supply the shared instance.
 	return providercore.NewOpenAIQuotaActions(h.Quota, h.Recovery, h.Admin, slog.Warn)
 }

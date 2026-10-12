@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 )
 
-// ConversionInput 保存本次平台类型，执行时通过凭据读取函数取得授权信息。
+// ConversionInput identifies OAuth requests; credentials are acquired during execution.
 type ConversionInput struct{ OAuth bool }
 
-// ErrorDecision 保存健康策略的处理结果。
+// ErrorDecision contains the provider health-policy outcome.
 type ErrorDecision struct{ Generic, Failover, RetrySameProvider bool }
 
-// ConversionPorts 提供网络请求和提供商检查的单步操作，转换流程决定调用及错误处理顺序。
+// ConversionPorts supplies request preparation, network exchange, health checks, and output for protocol conversion.
 type ConversionPorts interface {
 	NormalizeResponses([]byte) ([]byte, bool, error)
 	ResolveModel(context.Context, string) string
@@ -31,7 +31,7 @@ type ConversionPorts interface {
 	Output() Output
 }
 
-// MapStatus 保留上游五百类状态对客户端的映射。
+// MapStatus maps statuses of 500 or higher to 502 and passes lower values through.
 func MapStatus(status int) int {
 	if status >= 500 {
 		return 502

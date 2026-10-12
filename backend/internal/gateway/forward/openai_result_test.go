@@ -31,7 +31,7 @@ func TestOpenAIForwardResultSucceededForScheduling_TerminalEvents(t *testing.T) 
 	}
 }
 
-// TestOpenAIResultReplayStaysOutsideJSON 检查恢复输入在跨包读写后仍被结果 JSON 序列化忽略。
+// TestOpenAIResultReplayStaysOutsideJSON checks that replay setters do not expose input in result JSON.
 func TestOpenAIResultReplayStaysOutsideJSON(t *testing.T) {
 	result := &OpenAIResult{Model: "model-visible", LocalWarmup: true}
 	result.SetWSReplayInput([]json.RawMessage{json.RawMessage(`{"prompt":"replay-private"}`)}, true)
@@ -61,7 +61,7 @@ func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 	}))
 }
 
-// schedulingSucceeded 读取结果的调度成功判定。
+// schedulingSucceeded returns the result's scheduling success classification.
 func schedulingSucceeded(result *OpenAIResult) bool {
 	return result.SucceededForScheduling()
 }

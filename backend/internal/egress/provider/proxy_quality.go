@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
-// ProxyQualityHTTP 通过共享客户端逐个探测目标，按目标记录超时与诊断结果。
+// ProxyQualityHTTP probes targets sequentially through a shared client and records each result.
 type ProxyQualityHTTP struct{}
 
 func (ProxyQualityHTTP) ProbeTargets(ctx context.Context, proxyURL string, targets []egress.ProxyQualityTarget) ([]egress.ProxyQualityCheckItem, error) {
@@ -62,7 +62,7 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 		body = body[:egress.ProxyQualityMaxBodyBytes]
 	}
 
-	// Cloudflare challenge 检测
+	// Check challenges before allowed statuses, since a challenge is not a usable response.
 	if egress.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
 		item.Status = "challenge"
 		item.CFRay = egress.ExtractCloudflareRayID(resp.Header, body)
@@ -71,8 +71,8 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 	}
 
 	if _, ok := target.AllowedStatuses[resp.StatusCode]; ok {
-		// 白名单内的状态码均代表目标可达：2xx 表示接口直接可用，
-		// 401/405 等是无鉴权探测的预期结果，同样视为连通正常，不再扣分。
+		// Allowed statuses establish reachability. Unauthenticated probes can expect
+		// 401 or 405 responses, which pass the connectivity check without a score penalty.
 		item.Status = "pass"
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			item.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)

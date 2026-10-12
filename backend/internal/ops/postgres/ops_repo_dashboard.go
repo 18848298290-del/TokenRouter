@@ -280,15 +280,15 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 
 	tokenConsumed := preagg.tokenConsumed + head.tokenConsumed + tail.tokenConsumed
 
-	// 跨片段近似合并分位数：
-	// - 请求耗时的 p50/p90/avg 按 success_count 加权
-	// - p95/p99/max 使用最大值，保守保留长尾
+	// Approximate combined latency percentiles across segments:
+	// - Weight p50, p90, and the mean by success_count.
+	// - Take the largest p95, p99, and maximum to retain tail latency.
 	duration := combineApproxPercentiles([]opsPercentileSegment{
 		{weight: preagg.successCount, p: preagg.duration},
 		{weight: head.successCount, p: head.duration},
 		{weight: tail.successCount, p: tail.duration},
 	})
-	// 首 token 延迟只在流式请求中记录，按真实样本数加权，避免非流式成功请求稀释数值。
+	// Weight first-token latency by measured samples so requests without a sample do not dilute it.
 	ttft := combineApproxPercentiles([]opsPercentileSegment{
 		{weight: preagg.ttftSampleCount, p: preagg.ttft},
 		{weight: head.ttftSampleCount, p: head.ttft},
@@ -383,8 +383,8 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 	}, nil
 }
 
-// hasCompleteHourlyMetricsCoverage 使用全局桶确认每个稳定小时都已经由任务处理。
-// 过滤维度可能在某小时没有数据，因此不能用过滤后的结果行判断覆盖范围。
+// hasCompleteHourlyMetricsCoverage checks global buckets for every stable hour.
+// Filtered dimensions can legitimately have no rows, so they cannot establish coverage.
 func (r *Store) hasCompleteHourlyMetricsCoverage(ctx context.Context, start, end time.Time) (bool, error) {
 	if r == nil || r.db == nil {
 		return false, fmt.Errorf("nil ops repository")
@@ -435,12 +435,10 @@ func (r *Store) listHourlyMetricsRows(ctx context.Context, filter *ops.OpsDashbo
 		if platform != "" {
 			where += fmt.Sprintf(" AND platform = $%d", idx)
 			args = append(args, platform)
-			// idx++ removed - not used after this
 		}
 	case platform != "":
 		where += fmt.Sprintf(" AND platform = $%d AND group_id IS NULL", idx)
 		args = append(args, platform)
-		// idx++ removed - not used after this
 	default:
 		where += " AND platform IS NULL AND group_id IS NULL"
 	}
@@ -577,7 +575,7 @@ func aggregateHourlyRows(rows []opsHourlyMetricsRow) opsDashboardPartial {
 			}
 		}
 
-		// 首 token 延迟按记录了 first_token_ms 的流式请求数加权。
+		// Weight first-token latency by the count of recorded first_token_ms samples.
 		if row.ttftSampleCount > 0 {
 			if row.ttftP50.Valid {
 				ttftP50Sum += float64(row.ttftP50.Int64) * float64(row.ttftSampleCount)
@@ -1002,7 +1000,7 @@ func buildUsageWhere(filter *ops.OpsDashboardFilter, start, end time.Time, start
 		idx++
 	}
 	if platform != "" {
-		// 使用记录自身的平台快照，不依赖当前提供商或分组状态。
+		// Use the recorded platform snapshot, independent of current provider or group settings.
 		args = append(args, platform)
 		clauses = append(clauses, fmt.Sprintf("ul.platform = $%d", idx))
 		idx++

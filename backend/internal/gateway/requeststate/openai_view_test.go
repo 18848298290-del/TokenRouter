@@ -9,7 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// benchmarkStringSink 保存模型名与缓存键读取基准的结果。
+// benchmarkStringSink retains model and cache-key benchmark results.
 var benchmarkStringSink string
 
 func TestOpenAIRequestView_ExtractsRawScalars(t *testing.T) {
@@ -147,7 +147,7 @@ func TestGetOpenAIRequestBodyMap_ParseError(t *testing.T) {
 	require.Contains(t, err.Error(), "parse request")
 }
 
-// TestOpenAIViewCompatibility 验证视图保留首个重复字段、宽松读取及不展开未知字段的补丁行为。
+// TestOpenAIViewCompatibility checks first-duplicate selection and patches that retain unknown field bytes.
 func TestOpenAIViewCompatibility(t *testing.T) {
 	body := []byte(`{"model":" first ","model":"second","stream":true,"input":[{"future":{"value":123456789012345678}}],"reasoning":{"effort":" high "},"service_tier":" priority "}`)
 	view := NewOpenAIRequestView(body)
@@ -236,7 +236,7 @@ func BenchmarkOpenAIResponses_LargeInputRawPatch(b *testing.B) {
 	}
 }
 
-// buildLargeOpenAIResponsesBody 构造带函数工具定义的 Responses 文本请求。
+// buildLargeOpenAIResponsesBody builds a Responses text request with a function tool definition.
 func buildLargeOpenAIResponsesBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)

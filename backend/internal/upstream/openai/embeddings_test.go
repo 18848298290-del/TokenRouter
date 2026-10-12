@@ -36,7 +36,8 @@ func (s *embeddingsTestSink) Emit(event upstream.OutputEvent) error {
 
 func (b *embeddingsTestBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 
-// TestEmbeddingsExecutorLocalTLSAndResourceOwnership 通过本地 TLS 服务检查请求和同步输出，以及响应体先于活动登记释放的顺序。
+// TestEmbeddingsExecutorLocalTLSAndResourceOwnership checks local TLS requests, synchronous output,
+// and response-body closure before activity registration is released.
 func TestEmbeddingsExecutorLocalTLSAndResourceOwnership(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

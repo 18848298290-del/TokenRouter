@@ -26,13 +26,13 @@ import (
 	schedulerpostgres "github.com/TokenFlux/TokenRouter/internal/scheduler/postgres"
 )
 
-// subscriptionContractEmptyGroups 模拟未配置分组来源时的空查询结果。
+// subscriptionContractEmptyGroups returns no group details for these entitlement fixtures.
 type subscriptionContractEmptyGroups struct{}
 
-// billingUsersForContract 为余额和权益测试读取付款用户资料。
+// billingUsersForContract reads paying-user details for balance and entitlement tests.
 type billingUsersForContract struct{ repository identity.UserRepository }
 
-// committedEntitlementClient 在事务提交后按用户清理关联数据，隔离各个测试。
+// committedEntitlementClient returns the shared client and registers user-table cleanup for the test.
 func committedEntitlementClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	t.Cleanup(func() {
@@ -42,7 +42,7 @@ func committedEntitlementClient(t *testing.T) *dbent.Client {
 	return integrationEntClient
 }
 
-// entitlementTx 为订阅和额度存储测试创建事务，在测试结束时回滚。
+// entitlementTx starts a transaction and registers rollback at test cleanup.
 func entitlementTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 	tx, err := integrationEntClient.Tx(context.Background())
@@ -51,7 +51,7 @@ func entitlementTx(t *testing.T) *dbent.Tx {
 	return tx
 }
 
-// billingUserForContract 为资金测试提取用户资料。
+// billingUserForContract copies the user details needed by billing tests.
 func billingUserForContract(u *identity.User) *billing.UserSummary {
 	if u == nil {
 		return nil
@@ -89,7 +89,7 @@ func (subscriptionContractEmptyGroups) GetByIDLite(context.Context, int64) (*bil
 	return nil, nil
 }
 
-// newSettlementFixture 构造支持创作任务和批量图片任务的结算存储。
+// newSettlementFixture wires creative and batch-image task persistence into the settlement store.
 func newSettlementFixture(db *sql.DB) *billingpostgres.SettlementStore {
 	store := billingpostgres.NewSettlementStore(db, timezone.NewCalendar(time.Local), schedulerpostgres.EnqueueProviderQuotaChangedInTx, billingpostgres.TaskProjectionFactories{
 		creative.FundingScope: func(tx *sql.Tx, ref billing.TaskReference) billingpostgres.TaskProjection {

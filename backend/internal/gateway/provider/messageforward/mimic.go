@@ -8,13 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// mimicAttempt 的 systemRaw 接收 JSON 字符串或数组格式的系统提示。
+// mimicAttempt accepts a system prompt encoded as a JSON string or array in systemRaw.
 type mimicAttempt struct {
 	*attempt
 	systemRaw any
 }
 
-// shouldNormalizeDateline 日期指纹只在 Anthropic OAuth/SetupToken 的开关开启时处理。
+// shouldNormalizeDateline checks the feature flag for Anthropic OAuth and Setup Token providers.
 func (r *Runtime) shouldNormalizeDateline(ctx context.Context, target *gatewayadapter.ExecutionProvider) bool {
 	return target != nil && target.View().IsAnthropicOAuthOrSetupToken() && r.dependencies.Settings != nil && r.dependencies.Settings.IsClientDatelineNormalizationEnabled(ctx)
 }
@@ -53,7 +53,7 @@ func (a *mimicAttempt) MimicMetadata(ctx context.Context, body []byte) string {
 	return metadataUserIDFromBody(ctx, a.provider, fp, body)
 }
 
-// mimic 处理兼容协议请求体，与当前转换 attempt 共用状态。
+// mimic rewrites a compatible request body using the current conversion attempt's state.
 func (r *Runtime) mimic(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, body []byte, system any, model string) []byte {
 	a := newAttempt(r, output, target)
 	a.state = state

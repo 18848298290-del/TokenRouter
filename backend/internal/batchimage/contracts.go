@@ -186,7 +186,7 @@ type BatchImageItemsQuery struct {
 	Cursor string
 }
 
-// EffectiveBillingUserID 兼容个人 Key 和迁移前创建的批量任务调用参数。
+// EffectiveBillingUserID returns the payer, using UserID when no separate payer is set.
 func (o BatchImageOwner) EffectiveBillingUserID() int64 {
 	if o.BillingUserID > 0 {
 		return o.BillingUserID

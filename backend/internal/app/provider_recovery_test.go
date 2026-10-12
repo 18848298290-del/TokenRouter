@@ -20,7 +20,7 @@ func (p *healthRuntimeCounter) ResetOpenAI403Count(_ context.Context, id int64) 
 	return nil
 }
 
-// TestProviderHealthRuntimePublishesOneNativeGraph 检查健康状态组件构造后共享同一实例，存储在首次调用时读取。
+// TestProviderHealthRuntimePublishesOneNativeGraph checks shared health instances and deferred store access.
 func TestProviderHealthRuntimePublishesOneNativeGraph(t *testing.T) {
 	cfg := &config.Config{}
 	counter := &healthRuntimeCounter{}

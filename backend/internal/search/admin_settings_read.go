@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 )
 
-// AdminReadSettings 包含搜索模拟的启用状态。
+// AdminReadSettings reports whether configured search emulation is enabled.
 type AdminReadSettings struct{ WebSearchEmulationEnabled bool }
 
-// ReadAdminSettings 从传入的设置值解析搜索模拟的启用状态。
+// ReadAdminSettings reports enabled search emulation when valid settings contain at least one provider.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 

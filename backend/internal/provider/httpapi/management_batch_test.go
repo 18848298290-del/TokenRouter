@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// batchDeleteAdminService 记录批量删除并发数和结果，供 handler 测试使用。
+// batchDeleteAdminService records deletion concurrency and results for handler tests.
 type batchDeleteAdminService struct {
 	ProviderManagement
 

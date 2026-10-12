@@ -125,7 +125,6 @@ func (s *OpsAlertEvaluatorService) run() {
 }
 
 func (s *OpsAlertEvaluatorService) getInterval() time.Duration {
-	// Default.
 	interval := 60 * time.Second
 
 	if s == nil || s.opsService == nil {
@@ -698,7 +697,6 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 		}
 	}
 
-	// Apply/update rate limiter.
 	s.emailLimiter.SetLimit(emailCfg.Alert.RateLimitPerHour)
 
 	subject := fmt.Sprintf("[Ops Alert][%s] %s", strings.TrimSpace(rule.Severity), strings.TrimSpace(rule.Name))
@@ -1040,7 +1038,7 @@ func (l *slidingWindowLimiter) Allow(now time.Time) bool {
 
 // computeGroupAvailableRatio returns the available percentage for a group.
 // Formula: (AvailableCount / TotalProviders) * 100.
-// Returns 0 when TotalProviders is 0.
+// Returns zero for a nil group or a nonpositive provider count.
 func computeGroupAvailableRatio(group *GroupAvailability) float64 {
 	if group == nil || group.TotalProviders <= 0 {
 		return 0

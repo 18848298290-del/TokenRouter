@@ -48,18 +48,18 @@ func TestIsForceCacheBilling(t *testing.T) {
 func TestWithForceCacheBilling(t *testing.T) {
 	ctx := context.Background()
 
-	// 原始上下文没有标记
+	// An unmarked context defaults to false.
 	if IsForceCacheBilling(ctx) {
 		t.Error("original context should not have force cache billing")
 	}
 
-	// 使用 WithForceCacheBilling 后应该有标记
+	// Set the flag in a derived context.
 	newCtx := WithForceCacheBilling(ctx)
 	if !IsForceCacheBilling(newCtx) {
 		t.Error("new context should have force cache billing")
 	}
 
-	// 原始上下文应该不受影响
+	// The parent retains its independent flag value.
 	if IsForceCacheBilling(ctx) {
 		t.Error("original context should still not have force cache billing")
 	}
@@ -120,7 +120,7 @@ func TestExecutionHintsSnapshotIsolation(t *testing.T) {
 	value, present = ThinkingEnabledFromContext(parent)
 	require.True(t, value)
 	require.True(t, present)
-	// 修改取回的值不会污染已有 context，也不会影响随后创建的 attempt。
+	// Mutating a returned snapshot leaves existing contexts and later derived attempts unchanged.
 	snapshot := ExecutionHintsFromContext(parent)
 	snapshot.ThinkingEnabled.Value = false
 	require.True(t, ExecutionHintsFromContext(parent).ThinkingEnabled.Value)
@@ -139,7 +139,7 @@ func TestExecutionHintsMissingAndExplicitZero(t *testing.T) {
 	id, present := PrefetchedStickyGroupIDFromContext(ctx)
 	require.Zero(t, id)
 	require.True(t, present)
-	// context 为 nil 时返回空值。
+	// Nil contexts return empty hints.
 	var missing context.Context
 	require.Zero(t, ExecutionHintsFromContext(missing))
 	require.Nil(t, WithThinkingEnabled(missing, true))
@@ -163,7 +163,7 @@ func TestIsSingleProviderRetry_False_ExplicitFalse(t *testing.T) {
 }
 
 func TestIsSingleProviderRetry_False_WrongType(t *testing.T) {
-	// 执行参数从 ExecutionHints 读取，旧式字符串键的值应返回 false。
+	// An unrelated context key does not supply ExecutionHints.
 	type unrelatedKey struct{}
 	ctx := context.WithValue(context.Background(), unrelatedKey{}, "true")
 	value, _ := SingleProviderRetryFromContext(ctx)

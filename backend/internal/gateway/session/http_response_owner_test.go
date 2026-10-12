@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ownerReaderProbe 只提供持久化归属事实，验证授权条件与读取顺序。
+// ownerReaderProbe supplies stored ownership and counts authorization lookups.
 type ownerReaderProbe struct {
 	user, key int64
 	found     bool

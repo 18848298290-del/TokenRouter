@@ -34,9 +34,9 @@ const (
 
 var openAIWSIngressPreflightPingIdle = 20 * time.Second
 
-// WS 重试资格与当前轮重放载荷由 gateway/ws 唯一持有。
+// gateway/ws owns retry eligibility and the current turn's replay payload.
 
-// openAIWSFastModePolicyContext 为当前 turn 生成带最新单 Key Fast 策略的上下文。
+// openAIWSFastModePolicyContext adds the current turn's refreshed Key Fast policy to the context.
 func openAIWSFastModePolicyContext(ctx context.Context, hooks *gatewayws.OpenAIIngressHooks, turn int) context.Context {
 	if hooks == nil || hooks.ResolveFastModePolicy == nil {
 		return ctx
@@ -45,8 +45,8 @@ func openAIWSFastModePolicyContext(ctx context.Context, hooks *gatewayws.OpenAII
 		WithAPIKeyFastModePolicy(ctx, hooks.ResolveFastModePolicy(turn))
 }
 
-// resolveOpenAIWSTurnModels 按 R -> G -> U 顺序解析单个 WebSocket turn 的模型。
-// 调用方保存 originalModel，返回值用于通过提供商能力检查后的上游请求。
+// resolveOpenAIWSTurnModels resolves client, group, and upstream models in R -> G -> U order.
+// The caller retains originalModel; the returned models are used after provider eligibility checks.
 func resolveOpenAIWSTurnModels(provider *gatewayprovider.ExecutionProvider, hooks *gatewayws.OpenAIIngressHooks, turn int, requestedModel string, payload []byte) (string, string, error) {
 	routingModel := strings.TrimSpace(requestedModel)
 	if hooks != nil && hooks.ResolveRoutingModel != nil {
@@ -125,7 +125,7 @@ func (s *OpenAIWebSocketExecutor) openAIWSDialTimeout() time.Duration {
 }
 
 func (s *OpenAIWebSocketExecutor) openAIWSAcquireTimeout() time.Duration {
-	// Acquire 的预算覆盖连接复用、排队和新建连接，高并发排队也使用该预算。
+	// The acquisition budget covers reuse, queueing, and dialing, including waits under high concurrency.
 	dial := s.openAIWSDialTimeout()
 	if dial <= 0 {
 		dial = 10 * time.Second
@@ -133,8 +133,8 @@ func (s *OpenAIWebSocketExecutor) openAIWSAcquireTimeout() time.Duration {
 	return dial + 2*time.Second
 }
 
-// bindOpenAIWSResponseSessionOwner 将上游返回的 response_id 记录为当前分组的会话归属。
-// 后续客户端携带 previous_response_id 切到开启隔离的其它分组时，会被统一拦截。
+// bindOpenAIWSResponseSessionOwner records the response ID as belonging to the current group.
+// A later previous_response_id is rejected when used from another group with isolation enabled.
 func (s *OpenAIWebSocketExecutor) bindOpenAIWSResponseSessionOwner(ctx context.Context, c *gin.Context, responseID string) {
 	if s == nil || c == nil {
 		return

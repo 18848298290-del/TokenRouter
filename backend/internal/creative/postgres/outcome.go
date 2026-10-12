@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// RecordProviderOutcome 原子记录成功事实与 settle 恢复动作，不持久化图片字节。
+// RecordProviderOutcome atomically records success metadata and a settlement outbox action; image bytes remain transient.
 func (r *creativeRunRepository) RecordProviderOutcome(ctx context.Context, id string, providerID int64, outputs []creative.CreativeRunOutput, now time.Time) error {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
@@ -51,7 +51,7 @@ func (r *creativeRunRepository) RecordProviderOutcome(ctx context.Context, id st
 	return tx.Commit()
 }
 
-// CompleteProviderOutcome 交付丢失与成功均持久化实际费用，取消终态不能被改回成功。
+// CompleteProviderOutcome records actual cost for delivered or lost results while retaining cancelled status.
 func (r *creativeRunRepository) CompleteProviderOutcome(ctx context.Context, id string, cost float64, lost bool, now time.Time) error {
 	current, err := r.client.CreativeRun.Query().Where(creativerun.RunIDEQ(id)).Only(ctx)
 	if err != nil {

@@ -1,6 +1,6 @@
 package provider
 
-// 本文件检查 route_plan.go、model_qualification.go、response_image_policy.go 和 compatible_eligibility.go 的协议选择、图片策略与独立传输。
+// These scenarios cover protocol selection, image policy, and independent transports across route planning and provider eligibility.
 
 import (
 	"context"

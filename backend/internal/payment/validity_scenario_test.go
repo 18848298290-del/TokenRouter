@@ -1,13 +1,13 @@
 package payment
 
-// 本场景检查 billing/plan_validation.go 的套餐有效期换算，checkout_draft.go 使用该换算生成订单的套餐快照。
-
 import (
 	"testing"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// TestComputeValidityDaysSupportsSingularAndPluralUnits checks the billing conversion
+// used by checkout_draft.go to build plan snapshots.
 func TestComputeValidityDaysSupportsSingularAndPluralUnits(t *testing.T) {
 	t.Parallel()
 

@@ -22,12 +22,12 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// provideCalendar 在 bootstrap 完成时区初始化后固定日期计算位置；依赖关系保证装配顺序。
+// provideCalendar captures the timezone initialized by bootstrap; the Ent dependency enforces assembly order.
 func provideCalendar(_ *ent.Client) timezone.Calendar {
 	return timezone.NewCalendar(time.Local)
 }
 
-// databaseAdvisoryLease 绑定数据库连接来源，调用方决定锁身份和失败时的处理方式。
+// databaseAdvisoryLease binds the database pool; callers choose lock identities and handle acquisition failure.
 func databaseAdvisoryLease(db *sql.DB) func(context.Context, string) (func(), bool) {
 	if db == nil {
 		return nil
@@ -48,7 +48,7 @@ func provideEnt(ctx context.Context, cfg *config.Config, manager *lifecycle.Mana
 
 func provideRedis(ctx context.Context, cfg *config.Config, manager *lifecycle.Manager) (*redis.Client, error) {
 	client := bootstrap.InitRedis(cfg)
-	// 运行状态迁移完成后再构造后台任务和开放流量，限额从迁移后的键读取。
+	// Migrate runtime keys before constructing workers or accepting traffic so limits use the migrated names.
 	migrationCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	if err := redisinfra.MigrateProviderNames(migrationCtx, client); err != nil {
@@ -59,18 +59,18 @@ func provideRedis(ctx context.Context, cfg *config.Config, manager *lifecycle.Ma
 	return client, nil
 }
 
-// provideSettingsStore 直接构造唯一设置实例，所有接口共享版本、通知与更新协调器。
+// provideSettingsStore creates the shared version, notifications, and update coordinator.
 // @project-doc docs/interfaces/configuration.md#runtime_settings
 func provideSettingsStore(client *ent.Client) *settings.Store {
 	return settings.New(settingspostgres.NewSettingRepository(client))
 }
 
-// provideIdempotencyRepository 使用应用共享的 SQL 连接池构造幂等存储。
+// provideIdempotencyRepository uses the application SQL pool for idempotency storage.
 func provideIdempotencyRepository(db *sql.DB) idempotency.IdempotencyRepository {
 	return idempotencypostgres.NewIdempotencyRepository(db)
 }
 
-// provideSQLDB 返回 Ent 的连接池，连接池随 Ent 关闭。
+// provideSQLDB returns the pool owned and closed by Ent.
 func provideSQLDB(client *ent.Client) (*sql.DB, error) {
 	if client == nil {
 		return nil, errors.New("nil ent client")

@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestDashboardCacheLegacyKeyAndTTL 验证原键可直接读入新实现，新写入也可由原始 Redis 客户端按旧键读取。
+// TestDashboardCacheLegacyKeyAndTTL checks direct Redis interoperability through the persisted cache key and TTL.
 func TestDashboardCacheLegacyKeyAndTTL(t *testing.T) {
 	ctx := context.Background()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ExpiryRepository 暂停已到期且启用自动暂停的提供商。
+// ExpiryRepository pauses expired providers that have automatic expiry pausing enabled.
 type ExpiryRepository interface {
 	AutoPauseExpiredProviders(context.Context, time.Time) (int64, error)
 }
@@ -16,7 +16,7 @@ type ExpiryOptions struct {
 	Observe  func(string, ...any)
 }
 
-// ExpiryService 保留启动首轮和周期，构造不扫描，停止后不能重开。
+// ExpiryService scans immediately on Start and periodically afterward; construction starts no work and stopped services cannot restart.
 type ExpiryService struct {
 	repo             ExpiryRepository
 	options          ExpiryOptions
@@ -86,7 +86,7 @@ func (s *ExpiryService) scan(parent context.Context) {
 }
 func (s *ExpiryService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 取消周期与扫描并等待在途；第一次停止的超时结果不被后续调用改写。
+// StopContext cancels scans and waits for in-flight work; later calls retain the first stop result, including a timeout.
 func (s *ExpiryService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil

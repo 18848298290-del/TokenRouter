@@ -161,7 +161,7 @@ func (s *ClaudeAuthorization) ExchangeCode(ctx context.Context, input *ClaudeExc
 		return nil, fmt.Errorf("session not found or expired")
 	}
 
-	// Get proxy URL
+	// A resolved request proxy overrides the proxy saved in the session.
 	proxyURL := session.ProxyURL
 	if input.ProxyID != nil {
 		if resolved, ok := s.Options.ResolveProxy(ctx, *input.ProxyID); ok {
@@ -249,7 +249,7 @@ func (s *ClaudeAuthorization) CookieAuth(ctx context.Context, input *ClaudeCooki
 	return tokenInfo, nil
 }
 
-// getOrganizationUUID gets the organization UUID from claude.ai using sessionKey.
+// getOrganizationUUID resolves the organization using the supplied Claude session key.
 func (s *ClaudeAuthorization) getOrganizationUUID(ctx context.Context, sessionKey, proxyURL string) (string, error) {
 	return s.Client.GetOrganizationUUID(ctx, sessionKey, proxyURL)
 }

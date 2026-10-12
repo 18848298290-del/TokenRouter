@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestNewProxyExitInfoProberUsesConfiguredTargets 检查探测器使用配置指定的请求目标。
+// TestNewProxyExitInfoProberUsesConfiguredTargets checks that probes use the configured target URL.
 func TestNewProxyExitInfoProberUsesConfiguredTargets(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

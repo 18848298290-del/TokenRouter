@@ -17,7 +17,7 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// wsIngressAdapter 绑定单个技术操作，不拥有会话循环或恢复决策。
+// wsIngressAdapter supplies individual operations for the gateway session and recovery loop.
 type wsIngressAdapter struct {
 	RecoverAcquireFn func(context.Context) error
 	ParseFn          func(raw []byte, replace bool, turn int) (gatewayws.ClientPayload, error)
@@ -40,13 +40,13 @@ type wsIngressAdapter struct {
 	BindOwnerFn      func(ctx context.Context, responseID string)
 }
 
-// wsIngressLease 是池资源句柄；核心没有提供商凭据或具体客户端访问能力。
+// wsIngressLease exposes pool lease operations to the core while the adapter retains transport access.
 type wsIngressLease struct{ lease *openaiws.WSConnLease }
 
-// wsReplayCodec 调用供应商报文算法，网关决定重放条件和次数。
+// wsReplayCodec calls upstream payload algorithms; the gateway chooses when and how often to replay.
 type wsReplayCodec struct{}
 
-// wsStrictTurn 保存逐轮协议比较状态。
+// wsStrictTurn stores protocol comparison state across turns.
 type wsStrictTurn struct {
 	state *openai.WSPreviousTurnStrictState
 }

@@ -12,7 +12,7 @@ import (
 	"fmt"
 )
 
-// ServerPublicKeyPEM 是从官方 qodercli 二进制中提取的固定公钥。
+// ServerPublicKeyPEM is the fixed public key extracted from qodercli.
 const ServerPublicKeyPEM = `-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDA8iMH5c02LilrsERw9t6Pv5Nc
 4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPOh+Nx0spthYA2BqGz+l
@@ -22,7 +22,7 @@ XcW+ML9FoCI6AOvOzwIDAQAB
 
 var parsedPubKey *rsa.PublicKey
 
-// AuthIdentity 表示用户认证身份。
+// AuthIdentity holds the authenticated user identity and tokens.
 type AuthIdentity struct {
 	Name               string `json:"name"`
 	AID                string `json:"aid"`
@@ -35,14 +35,14 @@ type AuthIdentity struct {
 	RefreshToken       string `json:"refresh_token"`
 }
 
-// MachineIdentity 表示运行客户端的机器身份。
+// MachineIdentity identifies the client machine.
 type MachineIdentity struct {
 	MachineID    string
 	MachineToken string
 	MachineType  string
 }
 
-// SessionContext 保存 COSY 请求需要的加密 session 参数。
+// SessionContext holds encrypted parameters and identities used by COSY requests.
 type SessionContext struct {
 	TempKey       []byte
 	CosyKey       string
@@ -69,12 +69,12 @@ func init() {
 	}
 }
 
-// BuildAuthPayloadJSON 将 AuthIdentity 转换为紧凑 JSON 字节。
+// BuildAuthPayloadJSON marshals the identity as compact JSON.
 func BuildAuthPayloadJSON(identity *AuthIdentity) ([]byte, error) {
 	return json.Marshal(identity)
 }
 
-// BuildPayloadB64WithVersion 使用站点客户端版本构造 COSY header payload。
+// BuildPayloadB64WithVersion builds a COSY header payload with the site client version.
 func BuildPayloadB64WithVersion(info, requestID, clientVersion string) (string, error) {
 	if clientVersion == "" {
 		clientVersion = GlobalClientVersion
@@ -93,15 +93,15 @@ func BuildPayloadB64WithVersion(info, requestID, clientVersion string) (string, 
 	return base64.StdEncoding.EncodeToString(encoded), nil
 }
 
-// RSAEncrypt 使用服务端公钥按 PKCS1v15 加密数据。
+// RSAEncrypt encrypts with the server public key using PKCS#1 v1.5.
 func RSAEncrypt(data []byte) ([]byte, error) {
-	//nolint:staticcheck // Qoder COSY 协议要求使用 PKCS#1 v1.5，与官方 qodercli 保持兼容。
+	//nolint:staticcheck // Qoder COSY requires PKCS#1 v1.5 for qodercli compatibility.
 	return rsa.EncryptPKCS1v15(rand.Reader, parsedPubKey, data)
 }
 
-// AESEncrypt 使用 AES-128-CBC 加密数据，key 同时作为 IV。
+// AESEncrypt uses AES-128-CBC with PKCS#7 padding and key as the IV. The key must be 16 bytes.
 func AESEncrypt(data, key []byte) ([]byte, error) {
-	// 按 PKCS7 补齐明文。
+	// Add a full padding block when the plaintext is already block-aligned.
 	blockSize := aes.BlockSize
 	padding := blockSize - len(data)%blockSize
 	padText := make([]byte, len(data)+padding)
@@ -121,7 +121,7 @@ func AESEncrypt(data, key []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-// NewSessionForSite 为指定站点创建新的 COSY session 上下文。
+// NewSessionForSite creates a COSY session for the site.
 func NewSessionForSite(identity *AuthIdentity, machine *MachineIdentity, site Site) (*SessionContext, error) {
 	profile, err := ProfileForSite(site)
 	if err != nil {
@@ -130,7 +130,9 @@ func NewSessionForSite(identity *AuthIdentity, machine *MachineIdentity, site Si
 	return NewSessionForProfileWithKey(identity, machine, profile, nil)
 }
 
-// NewSessionForProfileWithKey 使用站点 profile 和可选临时 key 创建 COSY session。
+// NewSessionForProfileWithKey creates a COSY session with the given profile.
+// A nil tempKey generates a 16-byte key; a supplied key must be 16 bytes.
+// The session retains the identity, machine, and key supplied by the caller.
 func NewSessionForProfileWithKey(identity *AuthIdentity, machine *MachineIdentity, profile Profile, tempKey []byte) (*SessionContext, error) {
 	normalizedProfile, err := NormalizeProfile(profile)
 	if err != nil {
@@ -168,7 +170,7 @@ func NewSessionForProfileWithKey(identity *AuthIdentity, machine *MachineIdentit
 	}, nil
 }
 
-// AESDecrypt 使用 AES-128-CBC 解密数据，key 同时作为 IV。
+// AESDecrypt decrypts AES-128-CBC and validates PKCS#7 padding. The 16-byte key is also the IV.
 func AESDecrypt(ciphertext, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -186,7 +188,7 @@ func AESDecrypt(ciphertext, key []byte) ([]byte, error) {
 	mode := cipher.NewCBCDecrypter(block, key)
 	mode.CryptBlocks(plaintext, ciphertext)
 
-	// 移除 PKCS7 padding。
+	// Validate every padding byte before removing the padding.
 	paddingLen := int(plaintext[len(plaintext)-1])
 	if paddingLen > aes.BlockSize || paddingLen == 0 {
 		return nil, fmt.Errorf("qoder: invalid padding")

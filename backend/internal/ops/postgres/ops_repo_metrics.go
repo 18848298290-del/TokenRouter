@@ -145,7 +145,7 @@ INSERT INTO ops_system_metrics (
 		opsNullMetricInt(input.RedisConnTotal),
 		opsNullMetricInt(input.RedisConnIdle),
 
-		// 连接池计数的零值表示当前没有连接，不能按缺失值写成 NULL。
+		// Zero means no pool connections and must remain distinct from a missing measurement.
 		opsNullableIntPointer(input.DBConnActive),
 		opsNullableIntPointer(input.DBConnIdle),
 		opsNullableIntPointer(input.DBConnWaiting),

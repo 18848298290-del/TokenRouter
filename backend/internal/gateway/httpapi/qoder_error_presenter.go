@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// QoderErrorPresenter 使用错误展示函数，并接收供应商识别和目录读取接口。
+// QoderErrorPresenter combines Qoder error classification, display rules, and catalogue lookup.
 type QoderErrorPresenter struct {
 	Rules      ErrorRuleMatcher
 	Describe   func(error) forward.QoderErrorView
@@ -21,7 +21,7 @@ type QoderErrorPresenter struct {
 	Catalogue  modeldisplay.Catalog
 }
 
-// Details 保留规则覆盖与监控跳过时机，不改变健康和重试资格。
+// Details applies response overrides and monitoring exclusions to recognized upstream errors.
 func (p QoderErrorPresenter) Details(c *gin.Context, err error) (int, string, string, bool) {
 	value := p.Describe(err)
 	status, errType, message, ok := value.Status, value.Kind, value.Message, value.Recognized
@@ -50,7 +50,7 @@ func (p QoderErrorPresenter) Details(c *gin.Context, err error) (int, string, st
 	return status, errType, message, true
 }
 
-// Failure 映射原 Chat 完整链的失败阶段与 Retry-After。
+// Failure maps execution stages to HTTP errors and Retry-After values.
 func (p QoderErrorPresenter) Failure(c *gin.Context, err error) *HTTPFailure {
 	if direct, ok := errors.AsType[*HTTPFailure](err); ok {
 		return direct

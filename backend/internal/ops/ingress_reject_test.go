@@ -42,7 +42,7 @@ func TestOpsIngressRejectAggregatorUsesGlobalBucketCapacity(t *testing.T) {
 	a := NewOpsIngressRejectAggregator(repo)
 	a.Start()
 
-	// 所有维度集中到一个分片时，不应浪费其它分片的容量。
+	// Concentrating dimensions in one shard must still allow use of the total capacity.
 	inserted := 0
 	for i := 0; inserted < 600; i++ {
 		ip := fmt.Sprintf("target-%d", i)

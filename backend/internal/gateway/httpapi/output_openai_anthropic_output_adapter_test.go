@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// nativeAnthropicReaderFixture 为协议读取测试提供输出参数。
+// nativeAnthropicReaderFixture supplies output options for protocol-reader tests.
 type nativeAnthropicReaderFixture struct{ output *OpenAIResponseOutput }
 
 func newNativeAnthropicHangTestService(intervalSec int) *nativeAnthropicReaderFixture {
@@ -30,7 +30,7 @@ func newHangingUpstreamResponse() (*http.Response, *io.PipeReader, *io.PipeWrite
 	return &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}, pr, pw
 }
 
-// miniAnthropicSSEStream 是一段最小可转换的 Anthropic 事件流。
+// miniAnthropicSSEStream is a minimal convertible Anthropic event stream.
 func miniAnthropicSSEStream() string {
 	return strings.Join([]string{
 		"event: message_start",
@@ -308,8 +308,8 @@ func TestResponsesBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testi
 	}
 }
 
-// handleCCBufferedFromNativeAnthropic 读取 Anthropic SSE 事件并组装完整响应，
-// 再按 Anthropic → Responses → Chat Completions 转换。
+// handleCCBufferedFromNativeAnthropic collects Anthropic SSE into a complete response
+// and converts it through Responses to Chat Completions.
 func (s *nativeAnthropicReaderFixture) handleCCBufferedFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -323,8 +323,8 @@ func (s *nativeAnthropicReaderFixture) handleCCBufferedFromNativeAnthropic(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleCCStreamingFromNativeAnthropic 逐个读取 Anthropic SSE 事件，先转换为
-// Responses 事件，再转换为 Chat Completions 分块并写出。
+// handleCCStreamingFromNativeAnthropic converts each Anthropic SSE event to
+// Responses events and then writes Chat Completions chunks.
 func (s *nativeAnthropicReaderFixture) handleCCStreamingFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -339,8 +339,8 @@ func (s *nativeAnthropicReaderFixture) handleCCStreamingFromNativeAnthropic(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleResponsesBufferedFromNativeAnthropic 读取 Anthropic SSE 事件并组装完整
-// 响应，再按 Anthropic → Responses 转换。
+// handleResponsesBufferedFromNativeAnthropic collects Anthropic SSE into
+// a complete response and converts it to Responses.
 func (s *nativeAnthropicReaderFixture) handleResponsesBufferedFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -355,8 +355,8 @@ func (s *nativeAnthropicReaderFixture) handleResponsesBufferedFromNativeAnthropi
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleResponsesStreamingFromNativeAnthropic 逐个读取 Anthropic SSE 事件，
-// 转换为 Responses SSE 事件后写给客户端。
+// handleResponsesStreamingFromNativeAnthropic converts Anthropic SSE events
+// to Responses SSE events for the client.
 func (s *nativeAnthropicReaderFixture) handleResponsesStreamingFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,

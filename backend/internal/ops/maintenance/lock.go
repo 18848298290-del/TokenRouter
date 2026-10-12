@@ -49,7 +49,7 @@ type SystemOperationLockService struct {
 	ttl           time.Duration
 }
 
-// Options 配置系统维护锁的处理超时、TTL 和日志函数。
+// Options configures maintenance lock processing timeout, TTL, and logging.
 type Options struct {
 	Log                                   func(string, string, ...any)
 	ProcessingTimeout, SystemOperationTTL time.Duration
@@ -176,7 +176,7 @@ func (s *SystemOperationLockService) renewLoop(lock *SystemOperationLock) {
 			cancel()
 			if err != nil {
 				s.log("service.system_operation_lock", "[SystemOperationLock] renew failed operation_id=%s err=%v", lock.operationID, err)
-				// 瞬时故障不应导致续租协程退出，下一轮继续尝试续租。
+				// Retry renewal on the next tick after a transient failure.
 				continue
 			}
 			if !ok {
@@ -208,5 +208,5 @@ func (s *SystemOperationLockService) busyError(operationID string, lockedUntil *
 	return ErrSystemOperationBusy.WithMetadata(metadata)
 }
 
-// Context 在确认丢失所有权时取消后续阶段，浏览器断开不取消已接受操作。
+// Context cancels subsequent work after ownership loss; client disconnects do not cancel accepted operations.
 func (l *SystemOperationLock) Context() context.Context { return l.ctx }

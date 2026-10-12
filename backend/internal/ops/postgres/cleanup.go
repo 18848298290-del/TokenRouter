@@ -17,7 +17,7 @@ const (
 	opsCleanupDefaultBatchPause = ops.OpsCleanupDefaultBatchPause
 )
 
-// CleanupStore 使用连接池执行清理，每批单独提交事务并节流。
+// CleanupStore deletes through the connection pool in separately committed, throttled batches.
 type CleanupStore struct {
 	*Advisory
 	db *sql.DB
@@ -44,7 +44,7 @@ func opsCleanupRunOne(
 	return deleteOldRowsByCTID(ctx, db, table, timeCol, cutoff, batchSize, batchPause, castDate)
 }
 
-// deleteOldRowsByCTID 按时间顺序选取物理行并分批删除，避免为每批旧数据额外按主键排序。
+// deleteOldRowsByCTID selects batches in time and ID order, then deletes the selected physical rows by CTID.
 func deleteOldRowsByCTID(
 	ctx context.Context,
 	db *sql.DB,
@@ -114,7 +114,7 @@ WHERE target.ctid = batch.row_ctid
 	return result, nil
 }
 
-// sleepOpsCleanupWithContext 在节流等待期间响应任务取消，避免停机时无条件阻塞。
+// sleepOpsCleanupWithContext allows cancellation to interrupt cleanup throttling.
 func sleepOpsCleanupWithContext(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -126,8 +126,8 @@ func sleepOpsCleanupWithContext(ctx context.Context, delay time.Duration) error 
 	}
 }
 
-// truncateOpsTable 用 TRUNCATE TABLE 清空指定表，并从统计信息读取近似行数用于 heartbeat。
-// 这里不能执行 COUNT(*)，否则大表会在清空前再次触发全表扫描和文件页缓存压力。
+// truncateOpsTable empties a table and uses its estimated row count for the heartbeat.
+// Counting rows first would scan the entire table and load its pages into cache.
 func truncateOpsTable(ctx context.Context, db *sql.DB, table string) (int64, error) {
 	if db == nil {
 		return 0, nil

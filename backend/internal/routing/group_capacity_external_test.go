@@ -31,7 +31,7 @@ type testCapacityProviderBatch struct {
 
 type testCapacityGroups struct{ routing.GroupRepository }
 
-// capacityFixtureRepository 为容量测试提供分组内的可调度提供商。
+// capacityFixtureRepository supplies schedulable group providers for capacity tests.
 type capacityFixtureRepository interface {
 	ListSchedulableByGroupID(context.Context, int64) ([]provider.Record, error)
 }

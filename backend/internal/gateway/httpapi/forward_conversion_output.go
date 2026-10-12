@@ -17,7 +17,7 @@ import (
 
 var _ forwardcore.Output = ForwardConversionOutput{}
 
-// ForwardConversionOutput 保存当前 HTTP 输出和协议转换回调。
+// ForwardConversionOutput holds the current HTTP output and protocol conversion callbacks.
 type ForwardConversionOutput struct {
 	Context    *gin.Context
 	Filter     *egress.CompiledHeaderFilter
@@ -80,7 +80,7 @@ func (o ForwardConversionOutput) Event(kind string, body []byte) (int, error) {
 		frame = fmt.Sprintf("data: %s\n\n", body)
 	}
 	n, err := fmt.Fprint(o.Context.Writer, frame)
-	// 完整终态写出后标记响应已交付，外层仍可记录读取错误和用量。
+	// Mark delivery after a complete terminal frame; outer processing can still record read errors and usage.
 	if err == nil && n == len(frame) {
 		terminal := false
 		if o.Responses {
@@ -108,13 +108,13 @@ func (o ForwardConversionOutput) Observe(level, message string, err error, reque
 	o.Diagnostic(level, message, err, requestID, event)
 }
 
-// WriteForwardMessageGenericError 标记响应提交，并写出 Messages 通用错误。
+// WriteForwardMessageGenericError marks commitment and writes a generic Messages error.
 func WriteForwardMessageGenericError(c *gin.Context, commit func()) {
 	commit()
 	c.JSON(http.StatusInternalServerError, gin.H{"type": "error", "error": gin.H{"type": "upstream_error", "message": "Upstream gateway error"}})
 }
 
-// WriteForwardCountSuccess 在透传时使用上游 Content-Type，其他计数响应使用 JSON。
+// WriteForwardCountSuccess uses the upstream Content-Type for passthrough and JSON otherwise.
 func WriteForwardCountSuccess(c *gin.Context, status int, headers map[string][]string, body []byte, passthrough bool) {
 	contentType := "application/json"
 	if passthrough {
@@ -125,12 +125,12 @@ func WriteForwardCountSuccess(c *gin.Context, status int, headers map[string][]s
 	c.Data(status, contentType, body)
 }
 
-// WriteForwardCountError 按 Anthropic 格式写出计数错误，提交标记由调用方管理。
+// WriteForwardCountError writes an Anthropic count error; the caller manages the commit marker.
 func WriteForwardCountError(c *gin.Context, status int, kind, message string) {
 	c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": kind, "message": message}})
 }
 
-// WriteForwardGeminiErrorBody 写出调用方传入的 Gemini 错误。
+// WriteForwardGeminiErrorBody marks commitment and writes the supplied Gemini error.
 func WriteForwardGeminiErrorBody(c *gin.Context, status int, contentType string, body []byte, commit func()) {
 	commit()
 	c.Data(status, contentType, body)

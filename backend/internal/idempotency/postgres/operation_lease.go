@@ -11,7 +11,8 @@ import (
 	pg "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// ClaimOperation 将认领与代次替换放在同一原子语句中，兼容没有所有者元数据的旧记录。
+// ClaimOperation atomically acquires an available lease and replaces its ownership metadata.
+// Existing records can be reclaimed after their lock expires even if they have no ownership metadata.
 func (r *idempotencyRepository) ClaimOperation(ctx context.Context, c idempotency.OperationClaim) (*idempotency.IdempotencyRecord, bool, error) {
 	var id int64
 	err := pg.ScanSingleRow(ctx, r.sql, `INSERT INTO idempotency_records(scope,idempotency_key_hash,request_fingerprint,status,response_body,locked_until,expires_at)
@@ -67,7 +68,7 @@ func (r *idempotencyRepository) FinishOperation(ctx context.Context, id int64, o
 	return n == 1, err
 }
 
-// NewOperationLeaseStore 仅暴露维护专用的所有者比较能力。
+// NewOperationLeaseStore creates storage for maintenance claims with ownership checks.
 func NewOperationLeaseStore(executor Executor) idempotency.OperationLeaseStore {
 	return &idempotencyRepository{sql: executor}
 }

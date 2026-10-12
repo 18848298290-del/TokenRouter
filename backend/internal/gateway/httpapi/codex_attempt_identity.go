@@ -16,13 +16,13 @@ const (
 	codexFingerprintStateKey = "codex_fingerprint_ids"
 )
 
-// 两个 HTTP 状态通过 Gin 同步写入各自的键。
+// Identity and fingerprint state use separate Gin context keys.
 type (
 	codexIdentityState    struct{ source *provider.Record }
 	codexFingerprintState struct{ ids *openai.FingerprintIDs }
 )
 
-// PrepareCodexIdentity 每个所选 attempt 重读影子资格，覆盖上次身份；命名空间仍延迟计算。
+// PrepareCodexIdentity resolves shadow credentials for each attempt and replaces the previous identity.
 func PrepareCodexIdentity(ctx context.Context, c *gin.Context, reader gatewayadapter.ExecutionProviderReader, value *gatewayadapter.ExecutionProvider) (*provider.Record, error) {
 	source := value
 	if value != nil && value.View().IsShadow() {
@@ -50,7 +50,7 @@ func CodexIdentityRecord(c *gin.Context, fallback *provider.Record) *provider.Re
 	return fallback
 }
 
-// StageCodexFingerprintIDs 用当前值覆盖指纹 ID，包括 nil，failover 后使用当前提供商的结果。
+// StageCodexFingerprintIDs replaces staged IDs, including with nil, so failover uses the current provider.
 func StageCodexFingerprintIDs(c *gin.Context, ids *openai.FingerprintIDs) {
 	if c != nil {
 		c.Set(codexFingerprintStateKey, codexFingerprintState{ids: ids})

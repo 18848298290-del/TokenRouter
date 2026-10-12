@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// JSON 类型错误使用此结构名，执行前转换为独立请求值。
+// grokStandaloneSearchRequest gives JSON type errors an HTTP request type name; execution receives a standalone value.
 type grokStandaloneSearchRequest searchtools.StandaloneRequest
 
 type SearchAccess struct {
@@ -27,7 +27,7 @@ type SearchHTTPFailure struct {
 	RetryAfter    int
 }
 
-// SearchHTTPRun 在当前 HTTP 请求中使用平台 Adapter，完成入队前同步捕获独立快照。
+// SearchHTTPRun uses the selected platform adapter and captures completion data before queueing.
 type SearchHTTPRun interface {
 	searchtools.StandalonePorts
 	Complete(*gin.Context, searchtools.StandaloneRequest, searchtools.StandaloneResult, bool)
@@ -62,7 +62,7 @@ func searchError(c *gin.Context, status int, code, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
 }
 
-// WebSearch 依次解析请求、鉴权、检查资金、审核并选择提供商。
+// WebSearch parses and authenticates a request before funding, moderation, and provider selection.
 func (h *SearchHandler) WebSearch(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {

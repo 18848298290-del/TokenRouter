@@ -104,7 +104,7 @@ func NewPublicService(source PublicSource, calendar timezone.Calendar, timezoneN
 	return &PublicService{source: source, calendar: calendar, timezoneName: timezoneName}
 }
 
-// ServerTimezone 返回配置时区和调用时刻的 UTC 偏移，供 API 和 HTML 使用。
+// ServerTimezone returns the configured timezone and current UTC offset for API and HTML responses.
 func (s *PublicService) ServerTimezone() (string, string) {
 	return s.timezoneName, s.calendar.UTCOffset(s.calendar.Now())
 }
@@ -117,7 +117,7 @@ func (s *PublicService) GetPublicSettings(ctx context.Context) (*PublicSettings,
 	settings := ResolveSiteTexts(input.Values, locale.FromContext(ctx))
 	ResolveNavigation(settings, locale.FromContext(ctx))
 
-	// Password reset requires email verification to be enabled
+	// Password reset requires email verification to be enabled.
 	emailVerifyEnabled := settings[SettingKeyEmailVerifyEnabled] == "true"
 	passwordResetEnabled := emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true"
 	registrationEmailSuffixWhitelist := input.Auth.RegistrationSuffixes
@@ -168,7 +168,6 @@ func (s *PublicService) GetPublicSettings(ctx context.Context) (*PublicSettings,
 		_, textLanguages[key] = content.Resolve(locale.FromContext(ctx))
 	}
 	sort.Strings(overrides)
-	// 团队数据库开关与部署级开关需同时开启，避免在线设置绕过部署限制。
 	return &PublicSettings{
 		Locale:                              locale.FromContext(ctx),
 		SiteTextOverrides:                   overrides,
@@ -181,79 +180,80 @@ func (s *PublicService) GetPublicSettings(ctx context.Context) (*PublicSettings,
 		RegistrationEmailSuffixWhitelist:    registrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled: settings[SettingKeyRegistrationEmailDomainQuotaEnabled] == "true",
 		UserEmailChangeEnabled:              settings[SettingKeyUserEmailChangeEnabled] == "true",
-		PromoCodeEnabled:                    settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PromoCodeEnabled:                    settings[SettingKeyPromoCodeEnabled] != "false", // Enabled by default.
 		PasswordResetEnabled:                passwordResetEnabled,
 		InvitationCodeEnabled:               settings[SettingKeyInvitationCodeEnabled] == "true",
-		TeamEnabled:                         input.Auth.Team,
-		TeamSelfServiceEnabled:              input.Auth.TeamSelfService,
-		CreativeEnabled:                     settings[SettingKeyCreativeEnabled] != "false",
-		AffiliateEnabled:                    settings[SettingKeyAffiliateEnabled] == "true",
-		TotpEnabled:                         settings[SettingKeyTotpEnabled] == "true",
-		PasskeyEnabled:                      input.Auth.Passkey,
-		LoginAgreementEnabled:               settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
-		LoginAgreementMode:                  NormalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:             loginAgreementUpdatedAt,
-		LoginAgreementRevision:              agreementRevision,
-		LoginAgreementDocuments:             loginAgreementDocuments,
-		TurnstileEnabled:                    settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                    settings[SettingKeyTurnstileSiteKey],
-		TencentCaptchaEnabled:               settings[SettingKeyTencentCaptchaEnabled] == "true",
-		TencentCaptchaAppID:                 settings[SettingKeyTencentCaptchaAppID],
-		TencentCaptchaRegion:                input.Auth.TencentRegion,
-		AliyunCaptchaEnabled:                settings[SettingKeyAliyunCaptchaEnabled] == "true",
-		AliyunCaptchaSceneID:                settings[SettingKeyAliyunCaptchaSceneID],
-		AliyunCaptchaPrefix:                 settings[SettingKeyAliyunCaptchaPrefix],
-		AliyunCaptchaRegion:                 input.Auth.AliyunRegion,
-		SiteName:                            s.getStringOrDefault(settings, SettingKeySiteName, "TokenRouter"),
-		SiteLogo:                            settings[SettingKeySiteLogo],
-		SiteSubtitle:                        settings[SettingKeySiteSubtitle],
-		APIBaseURL:                          settings[SettingKeyAPIBaseURL],
-		ContactInfo:                         settings[SettingKeyContactInfo],
-		DocURL:                              settings[SettingKeyDocURL],
-		HomeContent:                         settings[SettingKeyHomeContent],
-		HideCcsImportButton:                 settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:         settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:             strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		TableDefaultPageSize:                tableDefaultPageSize,
-		TablePageSizeOptions:                tablePageSizeOptions,
-		UsageRankingLimit:                   usageRanking.Limit,
-		UsageRankingEnabled:                 usageRanking.Enabled,
-		UsageRankingSortBy:                  usageRanking.SortBy,
-		UsageRankingShowTotalTokens:         usageRanking.ShowTotalTokens,
-		UsageRankingShowRequests:            usageRanking.ShowRequests,
-		UsageRankingShowActualCost:          usageRanking.ShowActualCost,
-		CustomMenuItems:                     settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                     settings[SettingKeyCustomEndpoints],
-		FooterLinks:                         settings[SettingKeyFooterLinks],
-		FooterText:                          settings[SettingKeyFooterText],
-		HomeFeaturedModels:                  settings[SettingKeyHomeFeaturedModels],
-		LinuxDoOAuthEnabled:                 input.Auth.LinuxDo,
-		DingTalkOAuthEnabled:                input.Auth.DingTalk,
-		WeChatOAuthEnabled:                  input.Auth.WeChat,
-		WeChatOAuthOpenEnabled:              input.Auth.WeChatOpen,
-		WeChatOAuthMPEnabled:                input.Auth.WeChatMP,
-		WeChatOAuthMobileEnabled:            input.Auth.WeChatMobile,
-		BackendModeEnabled:                  settings[SettingKeyBackendModeEnabled] == "true",
-		PaymentEnabled:                      settings[SettingPaymentEnabled] == "true",
-		OIDCOAuthEnabled:                    input.Auth.OIDC,
-		OIDCOAuthProviderName:               locale.ResolveSettingText(settings, "oidc_connect_provider_name", input.Auth.OIDCName, locale.FromContext(ctx)),
-		GitHubOAuthEnabled:                  input.Auth.GitHub,
-		GoogleOAuthEnabled:                  input.Auth.Google,
-		GoogleOneTapEnabled:                 input.Auth.GoogleOneTap,
-		GoogleOAuthClientID:                 input.Auth.GoogleClientID,
-		BalanceUnitName:                     balanceUnitName,
-		BalanceUnitSymbol:                   balanceUnitSymbol,
-		BalanceIconSVG:                      strings.TrimSpace(settings[SettingKeyBalanceIconSVG]),
-		BalanceLowNotifyEnabled:             settings[SettingKeyBalanceLowNotifyEnabled] == "true",
-		ProviderQuotaNotifyEnabled:          settings[SettingKeyProviderQuotaNotifyEnabled] == "true",
-		RiskControlEnabled:                  settings[SettingKeyRiskControlEnabled] == "true",
-		BalanceLowNotifyThreshold:           balanceLowNotifyThreshold,
-		BalanceLowNotifyRechargeURL:         locale.ResolveSettingText(settings, SettingKeyBalanceLowNotifyRechargeURL, "", locale.FromContext(ctx)),
-		AllowUserViewErrorRequests:          settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		// app combines the database team setting with the deployment switch.
+		TeamEnabled:                 input.Auth.Team,
+		TeamSelfServiceEnabled:      input.Auth.TeamSelfService,
+		CreativeEnabled:             settings[SettingKeyCreativeEnabled] != "false",
+		AffiliateEnabled:            settings[SettingKeyAffiliateEnabled] == "true",
+		TotpEnabled:                 settings[SettingKeyTotpEnabled] == "true",
+		PasskeyEnabled:              input.Auth.Passkey,
+		LoginAgreementEnabled:       settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
+		LoginAgreementMode:          NormalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:     loginAgreementUpdatedAt,
+		LoginAgreementRevision:      agreementRevision,
+		LoginAgreementDocuments:     loginAgreementDocuments,
+		TurnstileEnabled:            settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:            settings[SettingKeyTurnstileSiteKey],
+		TencentCaptchaEnabled:       settings[SettingKeyTencentCaptchaEnabled] == "true",
+		TencentCaptchaAppID:         settings[SettingKeyTencentCaptchaAppID],
+		TencentCaptchaRegion:        input.Auth.TencentRegion,
+		AliyunCaptchaEnabled:        settings[SettingKeyAliyunCaptchaEnabled] == "true",
+		AliyunCaptchaSceneID:        settings[SettingKeyAliyunCaptchaSceneID],
+		AliyunCaptchaPrefix:         settings[SettingKeyAliyunCaptchaPrefix],
+		AliyunCaptchaRegion:         input.Auth.AliyunRegion,
+		SiteName:                    s.getStringOrDefault(settings, SettingKeySiteName, "TokenRouter"),
+		SiteLogo:                    settings[SettingKeySiteLogo],
+		SiteSubtitle:                settings[SettingKeySiteSubtitle],
+		APIBaseURL:                  settings[SettingKeyAPIBaseURL],
+		ContactInfo:                 settings[SettingKeyContactInfo],
+		DocURL:                      settings[SettingKeyDocURL],
+		HomeContent:                 settings[SettingKeyHomeContent],
+		HideCcsImportButton:         settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled: settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:     strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		TableDefaultPageSize:        tableDefaultPageSize,
+		TablePageSizeOptions:        tablePageSizeOptions,
+		UsageRankingLimit:           usageRanking.Limit,
+		UsageRankingEnabled:         usageRanking.Enabled,
+		UsageRankingSortBy:          usageRanking.SortBy,
+		UsageRankingShowTotalTokens: usageRanking.ShowTotalTokens,
+		UsageRankingShowRequests:    usageRanking.ShowRequests,
+		UsageRankingShowActualCost:  usageRanking.ShowActualCost,
+		CustomMenuItems:             settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:             settings[SettingKeyCustomEndpoints],
+		FooterLinks:                 settings[SettingKeyFooterLinks],
+		FooterText:                  settings[SettingKeyFooterText],
+		HomeFeaturedModels:          settings[SettingKeyHomeFeaturedModels],
+		LinuxDoOAuthEnabled:         input.Auth.LinuxDo,
+		DingTalkOAuthEnabled:        input.Auth.DingTalk,
+		WeChatOAuthEnabled:          input.Auth.WeChat,
+		WeChatOAuthOpenEnabled:      input.Auth.WeChatOpen,
+		WeChatOAuthMPEnabled:        input.Auth.WeChatMP,
+		WeChatOAuthMobileEnabled:    input.Auth.WeChatMobile,
+		BackendModeEnabled:          settings[SettingKeyBackendModeEnabled] == "true",
+		PaymentEnabled:              settings[SettingPaymentEnabled] == "true",
+		OIDCOAuthEnabled:            input.Auth.OIDC,
+		OIDCOAuthProviderName:       locale.ResolveSettingText(settings, "oidc_connect_provider_name", input.Auth.OIDCName, locale.FromContext(ctx)),
+		GitHubOAuthEnabled:          input.Auth.GitHub,
+		GoogleOAuthEnabled:          input.Auth.Google,
+		GoogleOneTapEnabled:         input.Auth.GoogleOneTap,
+		GoogleOAuthClientID:         input.Auth.GoogleClientID,
+		BalanceUnitName:             balanceUnitName,
+		BalanceUnitSymbol:           balanceUnitSymbol,
+		BalanceIconSVG:              strings.TrimSpace(settings[SettingKeyBalanceIconSVG]),
+		BalanceLowNotifyEnabled:     settings[SettingKeyBalanceLowNotifyEnabled] == "true",
+		ProviderQuotaNotifyEnabled:  settings[SettingKeyProviderQuotaNotifyEnabled] == "true",
+		RiskControlEnabled:          settings[SettingKeyRiskControlEnabled] == "true",
+		BalanceLowNotifyThreshold:   balanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL: locale.ResolveSettingText(settings, SettingKeyBalanceLowNotifyRechargeURL, "", locale.FromContext(ctx)),
+		AllowUserViewErrorRequests:  settings[SettingKeyAllowUserViewErrorRequests] == "true",
 	}, nil
 }
 
-// getStringOrDefault 获取字符串值或默认值。
+// getStringOrDefault returns defaultValue when the setting is absent or empty.
 func (s *PublicService) getStringOrDefault(settings map[string]string, key, defaultValue string) string {
 	if value, ok := settings[key]; ok && value != "" {
 		return value
@@ -396,7 +396,7 @@ func BuildLoginAgreementRevision(updatedAt string, docs []LoginAgreementDocument
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// GetLegalDocument 返回当前语言的公开协议正文。
+// GetLegalDocument returns a public legal document resolved for the request language.
 func (s *PublicService) GetLegalDocument(ctx context.Context, id string) (*LoginAgreementDocument, error) {
 	settings, err := s.GetPublicSettings(ctx)
 	if err != nil {
@@ -410,8 +410,9 @@ func (s *PublicService) GetLegalDocument(ctx context.Context, id string) (*Login
 	return nil, ErrPageNotFound
 }
 
-// GetPublicSettingsForInjection 返回适合 HTML 注入的公开设置。
-// 该方法实现 web.PublicSettingsProvider 接口。
+// GetPublicSettingsForInjection returns public settings for HTML injection,
+// with legal document bodies omitted.
+// It implements web.PublicSettingsProvider.
 func (s *PublicService) GetPublicSettingsForInjection(ctx context.Context) (any, error) {
 	settings, err := s.GetPublicSettings(ctx)
 	if err != nil {
@@ -422,14 +423,14 @@ func (s *PublicService) GetPublicSettingsForInjection(ctx context.Context) (any,
 		settings.LoginAgreementDocuments[i].ContentMD = ""
 	}
 
-	// Return a struct that matches the frontend's expected format
+	// JSON tags match the settings object consumed by the frontend.
 	return &struct {
 		RegistrationEnabled                 bool                         `json:"registration_enabled"`
 		EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
 		ForceEmailOnThirdPartySignup        bool                         `json:"force_email_on_third_party_signup"`
 		RegistrationEmailSuffixWhitelist    []string                     `json:"registration_email_suffix_whitelist"`
 		RegistrationEmailDomainQuotaEnabled bool                         `json:"registration_email_domain_quota_enabled"`
-		UserEmailChangeEnabled              bool                         `json:"user_email_change_enabled"` // 是否允许已有邮箱的用户换绑主邮箱
+		UserEmailChangeEnabled              bool                         `json:"user_email_change_enabled"` // Allows users with an email address to replace their primary email.
 		PromoCodeEnabled                    bool                         `json:"promo_code_enabled"`
 		PasswordResetEnabled                bool                         `json:"password_reset_enabled"`
 		InvitationCodeEnabled               bool                         `json:"invitation_code_enabled"`
@@ -495,7 +496,7 @@ func (s *PublicService) GetPublicSettingsForInjection(ctx context.Context) (any,
 		GoogleOneTapEnabled                 bool                         `json:"google_one_tap_enabled"`
 		GoogleOAuthClientID                 string                       `json:"google_oauth_client_id"`
 		Version                             string                       `json:"version,omitempty"`
-		// 服务器全局时区与当前 UTC 偏移，供前端标注高峰计费窗口等服务端本地时间。
+		// Server timezone and current UTC offset for displaying server-local times, such as peak billing windows.
 		ServerTimezone              string  `json:"server_timezone"`
 		ServerUTCOffset             string  `json:"server_utc_offset"`
 		BalanceUnitName             string  `json:"balance_unit_name"`
@@ -595,7 +596,7 @@ func (s *PublicService) GetPublicSettingsForInjection(ctx context.Context) (any,
 	}, nil
 }
 
-// FilterUserVisibleMenuItems 从菜单 JSON 数组中过滤 visibility 为 admin 的条目。
+// FilterUserVisibleMenuItems removes menu entries with admin visibility from a JSON array.
 func FilterUserVisibleMenuItems(raw string) json.RawMessage {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
@@ -608,7 +609,7 @@ func FilterUserVisibleMenuItems(raw string) json.RawMessage {
 		return json.RawMessage("[]")
 	}
 
-	// Parse full items to preserve all fields
+	// Keep each retained item as raw JSON so fields beyond visibility survive filtering.
 	var fullItems []json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &fullItems); err != nil {
 		return json.RawMessage("[]")
@@ -630,7 +631,8 @@ func FilterUserVisibleMenuItems(raw string) json.RawMessage {
 	return result
 }
 
-// SafeRawJSONArray 将有效 JSON 转为 json.RawMessage，无效时返回空数组。
+// SafeRawJSONArray returns valid JSON as a RawMessage, or [] for empty or invalid
+// input. It does not check whether valid JSON has an array shape.
 func SafeRawJSONArray(raw string) json.RawMessage {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -642,8 +644,8 @@ func SafeRawJSONArray(raw string) json.RawMessage {
 	return json.RawMessage("[]")
 }
 
-// GetFrameSrcOrigins returns deduplicated http(s) origins from home_content URL,
-// purchase_subscription_url, and all custom_menu_items URLs. Used by the router layer for CSP frame-src injection.
+// GetFrameSrcOrigins collects unique HTTP(S) origins across supported languages
+// from home content, enabled subscription links, and menu URLs for CSP frame-src.
 func (s *PublicService) GetFrameSrcOrigins(ctx context.Context) ([]string, error) {
 	seen := make(map[string]struct{})
 	var origins []string
@@ -662,15 +664,15 @@ func (s *PublicService) GetFrameSrcOrigins(ctx context.Context) ([]string, error
 		if err != nil {
 			return nil, err
 		}
-		// home content URL (when home_content is set to a URL for iframe embedding)
+		// Home content may be an iframe URL.
 		addOrigin(settings.HomeContent)
 
-		// purchase subscription URL
+		// Disabled subscription links do not need a frame-src origin.
 		if settings.PurchaseSubscriptionEnabled {
 			addOrigin(settings.PurchaseSubscriptionURL)
 		}
 
-		// all custom menu items (including admin-only, since CSP must allow all iframes)
+		// Admin menu entries also need their iframe origins allowed by CSP.
 		for _, item := range ParseCustomMenuItemURLs(settings.CustomMenuItems) {
 			addOrigin(item)
 		}
@@ -679,7 +681,7 @@ func (s *PublicService) GetFrameSrcOrigins(ctx context.Context) ([]string, error
 	return origins, nil
 }
 
-// ExtractOriginFromURL 提取 URL 的协议和主机，只接受 HTTP 和 HTTPS。
+// ExtractOriginFromURL returns the scheme and host of an HTTP(S) URL, or an empty string.
 func ExtractOriginFromURL(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -695,7 +697,7 @@ func ExtractOriginFromURL(rawURL string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// ParseCustomMenuItemURLs 从自定义菜单的 JSON 数组中提取 URL。
+// ParseCustomMenuItemURLs extracts nonempty URLs from a JSON array of menu items.
 func ParseCustomMenuItemURLs(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {

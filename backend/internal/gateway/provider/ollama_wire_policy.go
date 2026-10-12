@@ -11,7 +11,7 @@ func IsOllamaCloudRawChatCompletionsProvider(provider *ExecutionProvider) bool {
 	if provider == nil || provider.Record.Platform != capability.PlatformOpenAI || provider.Record.Type != capability.ProviderTypeAPIKey {
 		return false
 	}
-	// fork 将手动模式与探测状态分开存储；两者合并后的实际协议为 Chat 时才启用桥。
+	// Manual routing and probe results are stored separately; enable the bridge when their resolved protocol is Chat.
 	if providercore.ResolveUpstreamTextProtocol(
 		provider.Record.Extra,
 		providercore.TextProtocolResponses,

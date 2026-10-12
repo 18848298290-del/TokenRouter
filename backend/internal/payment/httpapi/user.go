@@ -92,7 +92,7 @@ type ResolveOrderByResumeTokenRequest struct {
 	ResumeToken string `json:"resume_token" binding:"required"`
 }
 
-// PublicOrderResult 是签名恢复 token 可读取的订单结果；token 已证明持有支付会话。
+// PublicOrderResult contains order details accessible with a signed payment-session resume token.
 type PublicOrderResult struct {
 	ID                  int64      `json:"id"`
 	OutTradeNo          string     `json:"out_trade_no"`
@@ -118,7 +118,7 @@ type PublicOrderResult struct {
 	PlanID              *int64     `json:"plan_id,omitempty"`
 }
 
-// PublicOrderVerifyResult 是匿名 out_trade_no 查单结果；out_trade_no 不是密钥，只返回最小状态信息。
+// PublicOrderVerifyResult exposes minimal state for anonymous order-number lookup; the number is not a credential.
 type PublicOrderVerifyResult struct {
 	OutTradeNo  string     `json:"out_trade_no"`
 	Status      string     `json:"status"`
@@ -186,14 +186,12 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// Fetch limits (methods + global range)
 	limitsResp, err := h.configService.GetAvailableMethodLimits(ctx)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// Fetch payment config
 	cfg, err := h.configService.GetPaymentConfig(ctx)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -208,7 +206,6 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		}
 	}
 
-	// Fetch plans
 	plans, _ := h.plans.ListPlansForSale(ctx)
 	planList := make([]UserCheckoutPlan, 0, len(plans))
 	for _, p := range plans {
@@ -402,7 +399,7 @@ func (h *PaymentHandler) GetOrder(c *gin.Context) {
 	response.Success(c, UserSanitizePaymentOrderForResponse(order))
 }
 
-// GetOrderInvoice 返回当前用户订单的 invoice 或历史 receipt 链接。
+// GetOrderInvoice returns the current user's order invoice or legacy receipt link.
 // GET /api/v1/payment/orders/:id/invoice
 func (h *PaymentHandler) GetOrderInvoice(c *gin.Context) {
 	subject, ok := UserRequireAuth(c)
@@ -580,7 +577,7 @@ func (h *PaymentHandler) VerifyOrderPublic(c *gin.Context) {
 	response.Success(c, UserBuildPublicOrderVerifyResult(order))
 }
 
-// ResolveOrderPublicByResumeToken 通过签名恢复 token 读取支付订单。
+// ResolveOrderPublicByResumeToken reads an order using a signed resume token.
 // POST /api/v1/payment/public/orders/resolve
 func (h *PaymentHandler) ResolveOrderPublicByResumeToken(c *gin.Context) {
 	var req ResolveOrderByResumeTokenRequest

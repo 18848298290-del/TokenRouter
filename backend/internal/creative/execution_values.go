@@ -17,8 +17,8 @@ func CreativePlatformImageModel(platform, model string) bool {
 	}
 }
 
-// NormalizeCreativeOutputs 对执行器输出做后处理：
-// 单张大小上限、固定取一张、sha256 去重。
+// NormalizeCreativeOutputs rejects oversized images, drops empty and duplicate bytes,
+// and returns the first usable image with index zero.
 func NormalizeCreativeOutputs(outputs []CreativeOutput) ([]CreativeOutput, error) {
 	if len(outputs) == 0 {
 		return nil, CreativeNonRetryableError("platform returned no image output")

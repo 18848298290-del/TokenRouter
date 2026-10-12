@@ -12,13 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// preaggregationFixture 保存设置值和读取次数，更新通知由控制器触发。
+// preaggregationFixture stores settings and counts reads; the controller owns update notifications.
 type preaggregationFixture struct {
 	values        map[string]string
 	getValueCalls int
 }
 
-// TestPreAggregationSettingsDefaultsFromDeployment 验证新设置缺失时只采用部署能力默认值。
+// TestPreAggregationSettingsDefaultsFromDeployment checks deployment defaults when the runtime setting is missing.
 func TestPreAggregationSettingsDefaultsFromDeployment(t *testing.T) {
 	repo := newPreaggregationFixture()
 	repo.values[ops.SettingKeyOpsAdvancedSettings] = `{"aggregation":{"aggregation_enabled":false}}`
@@ -33,7 +33,7 @@ func TestPreAggregationSettingsDefaultsFromDeployment(t *testing.T) {
 	require.Equal(t, 1, repo.getValueCalls)
 }
 
-// TestPreAggregationSettingsDeploymentCeiling 验证数据库设置不能绕过部署层硬开关。
+// TestPreAggregationSettingsDeploymentCeiling checks that stored settings cannot override deployment restrictions.
 func TestPreAggregationSettingsDeploymentCeiling(t *testing.T) {
 	repo := newPreaggregationFixture()
 	repo.values[preaggregation.SettingKeyPreAggregationSettings] = `{"usage":{"enabled":true,"interval_seconds":60},"ops":{"enabled":true}}`
@@ -48,7 +48,8 @@ func TestPreAggregationSettingsDeploymentCeiling(t *testing.T) {
 	require.False(t, service.OpsEnabled(context.Background()))
 }
 
-// TestPreAggregationSettingsUpdateNotifies 验证完整更新会规范化周期并立即通知任务。
+// TestPreAggregationSettingsUpdateNotifies checks interval normalization and synchronous notification after a
+// full update.
 func TestPreAggregationSettingsUpdateNotifies(t *testing.T) {
 	repo := newPreaggregationFixture()
 	cfg := &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60}, OpsEnabled: true, OpsAggregationEnabled: true}

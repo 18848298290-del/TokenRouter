@@ -24,7 +24,7 @@ type openAITextCountProbe struct {
 	call   OpenAICountCall
 }
 
-// 入口顺序夹具提供计数使用的依赖替身。
+// The entry-order fixture supplies dependencies for token counting.
 type tokenEntryProbeForTest struct {
 	OpenAITokenPorts
 	events      []string
@@ -32,7 +32,7 @@ type tokenEntryProbeForTest struct {
 	eligibility error
 }
 
-// CountExecution 为计数测试提供执行接口，调用槽位或完成提交时测试失败。
+// CountExecution supplies counting execution; slot acquisition or completion submission fails the test.
 func (p *tokenEntryProbeForTest) CountExecution(_ *gin.Context, call OpenAICountCall) textflow.SingleCountPorts {
 	p.mark("count-execution")
 	return &openAITextCountProbe{parent: p, call: call}
@@ -87,7 +87,7 @@ func TestOpenAITextCountTokensHTTP(t *testing.T) {
 	})
 }
 
-// newOpenAITokensEntryProbe 原计数断言改为构造独立原生入口。
+// newOpenAITokensEntryProbe constructs a standalone token-count entry for ordering assertions.
 func newOpenAITokensEntryProbe(p *tokenEntryProbeForTest) *OpenAITokensHandler {
 	return NewOpenAITokensHandler(OpenAITokenOptions{MaxBodyBytes: 1024 * 1024, MaxSwitches: 2}, p, p)
 }

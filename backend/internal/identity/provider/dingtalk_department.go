@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// ResolveDingTalkDeptPath 从叶部门递归向上拼 "公司/部门/子部门" 路径字符串。
-// 遇 dept_id=1（根）或 parent_id=0 停止。加 visited set 防循环，最多 50 层。
+// ResolveDingTalkDeptPath walks parent departments and returns their slash-separated names.
+// It stops at a missing parent, a cycle, or 50 levels, then omits the highest ancestor name.
 func ResolveDingTalkDeptPath(ctx context.Context, client *DingTalkClient, deptID int64) (string, error) {
 	slog.Info("dingtalk sync: resolve dept path start", "dept_id", deptID)
 	const maxDepth = 50
@@ -29,15 +29,15 @@ func ResolveDingTalkDeptPath(ctx context.Context, client *DingTalkClient, deptID
 		if strings.TrimSpace(info.Name) != "" {
 			parts = append([]string{strings.TrimSpace(info.Name)}, parts...)
 		}
-		// 钉钉根部门 dept_id=1，ParentID 通常为 0；遇到 0 / self 终止避免循环。
+		// Stop at the root or a self-reference.
 		if info.ParentID < 1 || info.ParentID == current {
 			break
 		}
 		current = info.ParentID
 	}
 
-	// 去除根组织名（parts[0] 始终是企业全称），仅保留部门层级。
-	// 例：["公司","A","B"] → "A/B"；["公司"] → ""（公司直属）。
+	// Drop the highest ancestor name from the collected path.
+	// For a complete hierarchy, this removes the organization name; a root-only path is empty.
 	if len(parts) > 0 {
 		parts = parts[1:]
 	}

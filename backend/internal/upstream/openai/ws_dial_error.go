@@ -6,12 +6,12 @@ import (
 	"net/http"
 )
 
-// WSDialError 保存拨号失败的状态码和响应信息。
 var (
 	ErrOpenAIWSConnQueueFull            = errors.New("openai ws connection queue full")
 	ErrOpenAIWSPreferredConnUnavailable = errors.New("openai ws preferred connection unavailable")
 )
 
+// WSDialError retains the handshake status, response, and underlying dial error.
 type WSDialError struct {
 	StatusCode      int
 	ResponseHeaders http.Header

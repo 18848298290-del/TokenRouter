@@ -23,8 +23,8 @@ type GeminiOAuthHandler struct {
 type GeminiGenerateAuthURLRequest struct {
 	ProxyID   *int64 `json:"proxy_id"`
 	ProjectID string `json:"project_id"`
-	// OAuth 类型: "code_assist" (需要 project_id) 或 "ai_studio" (不需要 project_id)
-	// 默认为 "code_assist" 以保持向后兼容
+	// OAuthType accepts "code_assist", "google_one", or "ai_studio".
+	// An omitted value defaults to "code_assist" for older clients.
 	OAuthType string `json:"oauth_type"`
 	// TierID is a user-selected tier to be used when auto detection is unavailable or fails.
 	TierID string `json:"tier_id"`
@@ -35,7 +35,7 @@ type GeminiExchangeCodeRequest struct {
 	State     string `json:"state" binding:"required"`
 	Code      string `json:"code" binding:"required"`
 	ProxyID   *int64 `json:"proxy_id"`
-	// OAuth 类型: "code_assist" 或 "ai_studio"，需要与 GenerateAuthURL 时的类型一致
+	// OAuthType must match the type used to generate the authorization URL.
 	OAuthType string `json:"oauth_type"`
 	// TierID is a user-selected tier to be used when auto detection is unavailable or fails.
 	// This field is optional; when omitted, the server uses the tier stored in the OAuth session.
@@ -62,7 +62,7 @@ func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		return
 	}
 
-	// 默认使用 code_assist 以保持向后兼容
+	// Default to code_assist for clients that omit oauth_type.
 	oauthType := strings.TrimSpace(req.OAuthType)
 	if oauthType == "" {
 		oauthType = "code_assist"
@@ -103,7 +103,7 @@ func (h *GeminiOAuthHandler) ExchangeCode(c *gin.Context) {
 		return
 	}
 
-	// 默认使用 code_assist 以保持向后兼容
+	// Default to code_assist for clients that omit oauth_type.
 	oauthType := strings.TrimSpace(req.OAuthType)
 	if oauthType == "" {
 		oauthType = "code_assist"

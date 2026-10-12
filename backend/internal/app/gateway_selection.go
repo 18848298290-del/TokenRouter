@@ -32,7 +32,7 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// gatewayModelAvailability 包含三种诊断函数，共用提供商存储和分组映射读取实例。
+// gatewayModelAvailability groups three diagnostic functions sharing provider storage and group mapping readers.
 type gatewayModelAvailability struct {
 	Messages   routing.ModelAvailabilityDiagnoser
 	Compatible routing.ModelAvailabilityDiagnoser
@@ -53,7 +53,7 @@ func provideGatewayModelAvailability(store *postgres.ProviderStore, modelConfigs
 	}
 }
 
-// provideGatewayRuntimeReaders 绑定共享读取器，动态设置在请求期间读取。
+// provideGatewayRuntimeReaders binds shared readers; dynamic settings are read during requests.
 func provideGatewayRuntimeReaders(store *settings.Store, gatewayRuntime *gateway.RuntimeSettings, providerRuntime *provider.RuntimeSettings, quota *provider.QuotaSettingsCache, routingRuntime *routing.RuntimeSettings, moderationRuntime *moderation.RuntimeSettings, searchRuntime *search.ConfigService, attributes *routing.ModelAttributeService) *gatewayadapter.RuntimeReaders {
 	antigravity.SetUserAgentVersionResolver(gatewayRuntime.GetAntigravityUserAgentVersion)
 	openai.SetCodexCanonicalUserAgentResolver(func() string { return gatewayRuntime.GetOpenAICodexUserAgent(context.Background()) })
@@ -61,17 +61,17 @@ func provideGatewayRuntimeReaders(store *settings.Store, gatewayRuntime *gateway
 	return readers
 }
 
-// provideModerationSettings 为网关审核绑定独立的设置缓存。
+// provideModerationSettings binds the moderation settings cache used by the gateway.
 func provideModerationSettings(store *settings.Store) *moderation.RuntimeSettings {
 	return moderation.NewRuntimeSettings(store, settings.ErrSettingNotFound)
 }
 
-// provideSelectionReads 组合选择器的数据查询函数，选择用例决定快照与数据库的查询顺序。
+// provideSelectionReads binds queries; selection determines the order of snapshot and database reads.
 func provideSelectionReads(providers gatewayadapter.ExecutionProviderStore, groups routing.GroupRepository, snapshots selection.Snapshots) selection.Reads {
 	return selection.Reads{Providers: providers, Groups: groups, Snapshot: snapshots}
 }
 
-// provideSelectionShared 发布共享的反馈、参数、计数、健康和分组策略读取实例。
+// provideSelectionShared shares feedback, settings, counters, health, and group policy readers.
 func provideSelectionShared(cache session.GatewayCache, concurrency *scheduler.ConcurrencyService, health *provideradapter.UpstreamHealth, modelConfigs *routing.PricingConfigService, shared *schedulerSharedState) selection.Shared {
 	return selection.Shared{
 		Cache:         cache,
@@ -83,7 +83,7 @@ func provideSelectionShared(cache session.GatewayCache, concurrency *scheduler.C
 	}
 }
 
-// selectionOptions 从启动配置读取选择器参数，配置中的零值直接传给选择器。
+// selectionOptions reads startup configuration and passes zero values through to selection.
 func selectionOptions(cfg *config.Config) selection.Options {
 	options := selection.DefaultOptions()
 	value := strings.ToLower(strings.TrimSpace(productEnv("DEBUG_MODEL_ROUTING")))
@@ -105,12 +105,13 @@ func selectionOptions(cfg *config.Config) selection.Options {
 	return options
 }
 
-// provideSelectionModelTransient 由执行反馈与选号共同持有一个模型瞬态状态。
+// provideSelectionModelTransient shares model transient state between execution feedback and selection.
 func provideSelectionModelTransient() *provider.ModelTransientState {
 	return provider.NewModelTransientState(0)
 }
 
-// provideSelectionProxyCircuit 用正数配置覆盖默认值，执行反馈与选择器共用代理隔离状态。
+// provideSelectionProxyCircuit applies positive overrides to defaults and shares proxy isolation state with
+// feedback and selection.
 func provideSelectionProxyCircuit(cfg *config.Config) *egress.ProxyStreamCircuit {
 	options := egress.DefaultProxyStreamCircuitSettings()
 	if cfg != nil {
@@ -168,7 +169,7 @@ func provideGeminiSelection(reads selection.Reads, shared selection.Shared, cfg 
 	return selection.NewGemini(selection.GeminiDependencies{Reads: reads, Shared: shared, QuotaPrecheck: quota}, selectionOptions(cfg))
 }
 
-// productEnv 优先读取 TOKENROUTER 变量，值为空时尝试旧名称，零值按已配置处理。
+// productEnv prefers TOKENROUTER variables and tries legacy names when empty; "0" counts as configured.
 func productEnv(suffix string) string {
 	value := os.Getenv("TOKENROUTER_" + suffix)
 	if value != "" {
@@ -177,7 +178,7 @@ func productEnv(suffix string) string {
 	return os.Getenv("SUB2API_" + suffix)
 }
 
-// gatewayCompatibilitySnapshot 返回共享粘性会话计数，metadata 计数为零。
+// gatewayCompatibilitySnapshot returns the shared sticky-session count and zero metadata entries.
 func gatewayCompatibilitySnapshot(shared *schedulerSharedState) gatewayhttp.CompatibilityLogSnapshot {
 	if shared == nil || shared.Sticky == nil {
 		return gatewayhttp.CompatibilityLogSnapshot{}
@@ -190,7 +191,7 @@ func gatewayCompatibilitySnapshot(shared *schedulerSharedState) gatewayhttp.Comp
 	return gatewayhttp.CompatibilityLogSnapshot{ReadTotal: total, ReadHit: hit, DualWrite: dual, ReadHitRate: rate}
 }
 
-// stopOpenAI429 将凭据资格传给重试预算规则。
+// stopOpenAI429 passes credential eligibility to the retry budget policy.
 func stopOpenAI429(value *gatewayadapter.ExecutionProvider, status, switches int, state *failover.OAuth429State) bool {
 	return failover.StopOAuth429(failover.OAuth429Provider{OpenAI: value != nil && value.View().IsOpenAIOAuthLike(), Grok: value != nil && value.Record.Platform == capability.PlatformGrok && value.Record.Type == capability.ProviderTypeOAuth}, status, switches, state)
 }

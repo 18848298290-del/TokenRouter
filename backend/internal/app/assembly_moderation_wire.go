@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// moderationAssemblyProviders 汇总 moderation 模块的 Wire provider。
+// moderationAssemblyProviders groups Wire providers for the moderation module.
 var moderationAssemblyProviders = wire.NewSet(
 	provideModerationStore,
 	provideModerationHashes,

@@ -12,34 +12,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Failure 携带尚未提交的压缩失败，HTTP 与恢复用例使用同一错误值。
+// Failure carries an uncommitted compact response for HTTP handling and recovery.
 type Failure struct {
 	Payload []byte
 	Message string
 }
 
-// Models 按需读取提供商专用规则和全局回退，不提前触发无须执行的映射。
+// Models reads provider-specific and global compact model rules on demand.
 type Models interface {
 	ProviderModel(string) (string, bool)
 	GlobalModel() string
 	ResolveGlobalModel(string) string
 }
 
-// Recovery 根据模型信息和协议报文决定压缩恢复方式。
+// Recovery selects compact recovery from model rules and response payloads.
 type Recovery struct {
 	Models        Models
 	ContextWindow func(string, []byte) bool
 	RewriteModel  func([]byte, string) []byte
 }
 
-// Request 固化当前请求的压缩意图，保持路径/触发器/native-v2 状态不变。
+// Request contains the compact intent and retry state for the current request.
 type Request struct {
 	Explicit, AlreadyRetried bool
 	RequestedModel           string
 	Body                     []byte
 }
 
-// RetryEffects 提供恢复决定后的单步输出和资源操作，恢复流程决定调用顺序。
+// RetryEffects supplies output and resource operations invoked after a recovery decision.
 type RetryEffects interface {
 	ObserveRetry([]byte, string)
 	CloseResponse()
@@ -54,7 +54,7 @@ func (f *Failure) Error() string {
 	return f.Message
 }
 
-// ResolveModel 保留提供商 compact 专用规则优先，以及全局规则的延迟求值。
+// ResolveModel prefers the provider compact rule and evaluates the global rule only when needed.
 func (r Recovery) ResolveModel(requested string) string {
 	requested = strings.TrimSpace(requested)
 	if mapped, ok := r.Models.ProviderModel(requested); ok {
@@ -69,7 +69,7 @@ func (r Recovery) ResolveModel(requested string) string {
 	return strings.TrimSpace(r.Models.ResolveGlobalModel(fallback))
 }
 
-// NewFailure 为压缩请求创建恢复信号，普通请求返回 nil。
+// NewFailure copies a recoverable compact failure; ordinary requests and other errors return nil.
 func (r Recovery) NewFailure(explicit bool, payload []byte, message string) *Failure {
 	if !explicit || !r.ModelFailure(400, message, payload) {
 		return nil
@@ -77,7 +77,7 @@ func (r Recovery) NewFailure(explicit bool, payload []byte, message string) *Fai
 	return &Failure{Payload: append([]byte(nil), payload...), Message: logredact.SanitizeUpstreamQueries(strings.TrimSpace(message))}
 }
 
-// Prepare 仅允许一次同提供商恢复，调用方仍独占输出与重试窗口。
+// Prepare permits one recovery on the same provider. The caller controls output and the retry window.
 func (r Recovery) Prepare(in Request, status int, message string, payload []byte) ([]byte, string, bool) {
 	if in.AlreadyRetried || !in.Explicit || !r.ModelFailure(status, message, payload) {
 		return in.Body, "", false
@@ -94,7 +94,7 @@ func (r Recovery) Prepare(in Request, status int, message string, payload []byte
 	return body, fallback, true
 }
 
-// ApplySignal 保留先记录恢复、关闭旧响应、更新模型观测、记录诊断的顺序。
+// ApplySignal records the retry, closes the old response, updates the model, then logs diagnostics.
 func (r Recovery) ApplySignal(in Request, failure *Failure, p RetryEffects) ([]byte, string, bool) {
 	if failure == nil {
 		return in.Body, "", false
@@ -111,7 +111,7 @@ func (r Recovery) ApplySignal(in Request, failure *Failure, p RetryEffects) ([]b
 	return body, model, true
 }
 
-// ModelFailure 复用平台提供的上下文窗口分类，拥有网关压缩恢复资格。
+// ModelFailure classifies context-window and model-availability errors as eligible for compact recovery.
 func (r Recovery) ModelFailure(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if r.ContextWindow(upstreamMsg, upstreamBody) {
 		return true
@@ -137,7 +137,7 @@ func (r Recovery) ModelFailure(statusCode int, upstreamMsg string, upstreamBody 
 			return true
 		}
 	}
-	// 仅失败空壳允许重试；业务或策略错误保留原报文。
+	// An empty failed response can be retried; a response with business or policy error details cannot.
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(upstreamBody, "response.status").String()), "failed") ||
 		strings.EqualFold(strings.TrimSpace(gjson.GetBytes(upstreamBody, "status").String()), "failed") {
 		for _, path := range []string{
@@ -171,7 +171,7 @@ func ExplicitModelAvailabilityMessage(value string) bool {
 			return true
 		}
 	}
-	// 模型不可用错误需要以模型为主语，提到不支持的输出特性时继续按普通错误处理。
+	// Require the model as the subject so unsupported output features are not mistaken for unavailable models.
 	if strings.HasPrefix(value, "the model ") || strings.HasPrefix(value, "model ") {
 		return strings.Contains(value, " does not exist") ||
 			strings.Contains(value, " was not found") ||
@@ -196,7 +196,7 @@ func NormalizeHTTPErrorPayload(signal *Failure) []byte {
 		bytes.Equal(bytes.TrimSpace(terminal.Response.Error), []byte("null")) {
 		return payload
 	}
-	// 流转为 HTTP 错误时，将嵌套 error 提到 HTTP 错误报文顶层。
+	// Move a nested stream error to the top-level HTTP error field.
 	normalized, err := json.Marshal(struct {
 		Error json.RawMessage `json:"error"`
 	}{Error: terminal.Response.Error})
@@ -206,7 +206,7 @@ func NormalizeHTTPErrorPayload(signal *Failure) []byte {
 	return normalized
 }
 
-// AsFailure 识别恢复信号，保留包装错误链和非空指针约束。
+// AsFailure unwraps an error chain and requires a nonnil recovery signal.
 func AsFailure(err error) (*Failure, bool) {
 	var failure *Failure
 	ok := errors.As(err, &failure)

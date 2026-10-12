@@ -14,16 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// 供应商 ping 通常只包含一行 event 和一行短 data。限制判定期间的缓冲量，
-// 防止上游用永不结束的帧持续占用网关内存；超过限制的帧保持原样透传。
+// Bound candidate ping buffering so an unterminated frame cannot grow indefinitely.
+// Frames exceeding either limit pass through unchanged.
 const (
 	ResponsesPingFrameMaxLines = 16
 	ResponsesPingFrameMaxBytes = 16 * 1024
 )
 
-// 严格客户端把 OpenAI Responses SSE 事件类型视为闭集，未知的 `event: ping`
-// 会中断整轮响应。Grok 订阅背后的供应商网关会注入计费或保活 ping，因此将其
-// 改写为所有解析器都会忽略的 SSE 注释，同时让下游连接继续保持活跃。
+// Strict Responses clients can reject unknown event: ping frames injected by
+// upstream billing or keepalive gateways. An SSE comment keeps the connection
+// active without introducing an application event.
 var responsesPingComment = []byte(": ping\n\n")
 
 type ResponsesBillingPingFilterBody struct {
@@ -72,7 +72,7 @@ func FilterGrokResponsesBillingPings(
 	scanner.Buffer(scanBuf[:0:initialBufferSize], maxLineSize)
 	scanner.Split(ScanSSELinesPreservingEndings)
 
-	// 仅缓冲以 `event: ping` 开始的候选帧；其它帧逐行直通，不额外复制。
+	// Buffer candidates beginning with event: ping; pass other frames through line by line.
 	pingFrame := make([][]byte, 0, 3)
 	pingFrameBytes := 0
 	inPassthroughFrame := false
@@ -87,8 +87,8 @@ func FilterGrokResponsesBillingPings(
 		pingFrameBytes = 0
 		return nil
 	}
-	// 对完整候选帧做最终判定：供应商 ping 改写为 SSE 注释，其它内容逐字回放。
-	// 当流在帧内结束时，blankLine 为 nil。
+	// Replace recognized pings with comments and replay other candidates byte for byte.
+	// blankLine is nil when the stream ends within a frame.
 	endPingFrame := func(blankLine []byte) error {
 		if IsGrokResponsesPingEventFrame(pingFrame) {
 			pingFrame = pingFrame[:0]
@@ -137,8 +137,8 @@ func FilterGrokResponsesBillingPings(
 				pingFrameBytes += len(line)
 				continue
 			}
-			// 出现意外字段或超过缓冲上限时，该帧不再可过滤；回放已缓冲内容，
-			// 并原样直通帧内剩余数据。
+			// Unexpected fields or buffer limits disqualify the frame. Replay buffered bytes
+			// and pass the remainder of this frame through unchanged.
 			if err := replayPingFrame(); err != nil {
 				abort(err)
 				return
@@ -151,7 +151,7 @@ func FilterGrokResponsesBillingPings(
 			continue
 		}
 
-		// 帧起点只有 `event: ping` 才进入候选缓冲。
+		// Only event: ping at the start of a frame begins a candidate.
 		if !isBlank {
 			if value, ok := wireopenai.ExtractSSEEventLine(string(TrimSSELineEnding(line))); ok && value == "ping" {
 				pingFrame = append(pingFrame, append([]byte(nil), line...))
@@ -203,8 +203,8 @@ func TrimSSELineEnding(line []byte) []byte {
 	return bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
 }
 
-// CanExtendGrokResponsesPingFrame 判断当前行是否仍可能属于供应商 ping 帧。
-// 只接受 data 行和 SSE 注释；第二个 event、id、retry 等字段说明它不是普通 ping。
+// CanExtendGrokResponsesPingFrame accepts data lines and comments within a candidate.
+// Additional event, id, or retry fields disqualify the frame.
 func CanExtendGrokResponsesPingFrame(rawLine []byte) bool {
 	line := TrimSSELineEnding(rawLine)
 	if len(line) > 0 && line[0] == ':' {
@@ -214,9 +214,9 @@ func CanExtendGrokResponsesPingFrame(rawLine []byte) bool {
 	return ok
 }
 
-// IsGrokResponsesPingEventFrame 判定首行为 `event: ping` 的候选帧。只有 data
-// 明确声明了不同事件类型时才原样回放；计费、保活、无 data 或畸形 JSON 等其它
-// 形态都会破坏严格的 Responses 客户端，因此统一改写为注释。
+// IsGrokResponsesPingEventFrame checks a candidate beginning with event: ping.
+// A different data.type preserves the frame; absent, malformed, or ping data
+// is treated as keepalive content for conversion to an SSE comment.
 func IsGrokResponsesPingEventFrame(rawLines [][]byte) bool {
 	dataParts := make([]string, 0, 1)
 	for _, rawLine := range rawLines[1:] {

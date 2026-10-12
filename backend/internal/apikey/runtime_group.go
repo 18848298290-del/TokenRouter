@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ResolveRuntimeGroup 为明确的运行时回退重新检查付款主体和组权限，不修改缓存或持久 Key。
+// ResolveRuntimeGroup rechecks payer and group access and returns a key copy bound to the target group.
 func (s *APIKeyService) ResolveRuntimeGroup(ctx context.Context, key *APIKey, id int64) (*APIKey, error) {
 	if !key.AllowsRuntimeGroup(id) || s == nil || s.groupRepo == nil {
 		return nil, apperror.Forbidden("GROUP_NOT_ALLOWED", "invalid fallback group")

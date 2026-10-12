@@ -23,7 +23,7 @@ type blockingAggregation struct {
 	canceled atomic.Bool
 }
 
-// stateRepo 控制手工回填读取状态的时点，用于交错实时进度写入。
+// stateRepo controls manual-backfill reads so tests can interleave live-progress writes.
 type stateRepo struct {
 	UsageAnalyticsAggregationRepository
 	mu      sync.Mutex
@@ -275,7 +275,7 @@ func TestDashboardAggregationService_RunScheduledAggregation_EpochUsesLiveLookba
 	require.WithinDuration(t, repo.lastEnd.Add(-120*time.Second), repo.lastStart, time.Second)
 }
 
-// TestDashboardAggregationServiceRuntimeDisabledStopsWrites 验证运行时关闭后定时轮次不会写聚合表。
+// TestDashboardAggregationServiceRuntimeDisabledStopsWrites checks that disabled scheduled rounds leave rollups untouched.
 func TestDashboardAggregationServiceRuntimeDisabledStopsWrites(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{watermark: time.Unix(0, 0).UTC()}
 	settingRepo := newRuntimeSettingRepoStub()
@@ -290,7 +290,7 @@ func TestDashboardAggregationServiceRuntimeDisabledStopsWrites(t *testing.T) {
 	require.Zero(t, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceRuntimeEnableTriggersImmediately 验证开启运行时开关会立即唤醒任务。
+// TestDashboardAggregationServiceRuntimeEnableTriggersImmediately checks that enabling aggregation wakes work immediately.
 func TestDashboardAggregationServiceRuntimeEnableTriggersImmediately(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{
 		watermark:        time.Unix(0, 0).UTC(),
@@ -322,7 +322,7 @@ func TestDashboardAggregationServiceRuntimeEnableTriggersImmediately(t *testing.
 	}
 }
 
-// TestDashboardAggregationServiceRunningJobPreservesWakeup 验证在途任务不会消费新的立即运行信号。
+// TestDashboardAggregationServiceRunningJobPreservesWakeup checks that active work leaves a new wakeup pending.
 func TestDashboardAggregationServiceRunningJobPreservesWakeup(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -341,7 +341,7 @@ func TestDashboardAggregationServiceRunningJobPreservesWakeup(t *testing.T) {
 	require.Zero(t, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled 验证删除后的内部重算不会留下陈旧聚合。
+// TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled checks that deletion repair runs while aggregation is disabled.
 func TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{aggregateStarted: make(chan struct{}, 1)}
 	settingRepo := newRuntimeSettingRepoStub()
@@ -441,7 +441,7 @@ func TestDashboardAggregationService_TriggerBackfill_TooLarge(t *testing.T) {
 	require.Equal(t, 0, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceTriggerBackfillPersistsManualRange 验证天数请求不会覆盖自动历史游标。
+// TestDashboardAggregationServiceTriggerBackfillPersistsManualRange checks that manual requests retain the automatic cursor.
 func TestDashboardAggregationServiceTriggerBackfillPersistsManualRange(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 35, 0, 0, time.UTC)
 	automaticCursor := now.AddDate(0, 0, -10).Truncate(time.Hour)
@@ -467,7 +467,7 @@ func TestDashboardAggregationServiceTriggerBackfillPersistsManualRange(t *testin
 	require.Zero(t, svc.lastBackfillAt.Load())
 }
 
-// TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart 验证手动任务到达目标后不会继续处理更早历史。
+// TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart checks that manual work stops at its target.
 func TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	target := now.Add(-2 * time.Hour)
@@ -498,7 +498,8 @@ func TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart(t *testi
 	require.Equal(t, 2, dashboardRepo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor 验证超过单轮上限的范围会续跑且不越过目标。
+// TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor checks resumption across round limits without
+// passing the target.
 func TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	target := now.Add(-26 * time.Hour)
@@ -532,7 +533,7 @@ func TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor(t *test
 	require.Nil(t, analyticsRepo.state.ManualBackfillCursor)
 }
 
-// TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays 验证迟到记录的回看范围仍会刷新已闭合日表。
+// TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays checks daily refresh throughout the late-record lookback.
 func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.T) {
 	analyticsRepo := &usageAnalyticsAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -550,7 +551,7 @@ func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.
 	}}, analyticsRepo.dailyCalls)
 
 	analyticsRepo.dailyCalls = nil
-	// 首轮完成后到达的前一日迟到记录，仍需通过跨日回看同步到日表。
+	// Yesterday's late records can arrive after the first round; crossing midnight must still refresh the daily bucket.
 	require.NoError(t, svc.aggregateLiveRange(context.Background(), start.Add(time.Minute), end.Add(time.Minute)))
 	require.Equal(t, []aggregationRangeCall{{
 		start: truncateToDayUTC(start),
@@ -558,12 +559,12 @@ func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.
 	}}, analyticsRepo.dailyCalls)
 
 	analyticsRepo.dailyCalls = nil
-	// 回看范围位于当前日期时，前一日日表保持已有结果。
+	// Once the lookback lies within today, yesterday's bucket needs no further refresh.
 	require.NoError(t, svc.aggregateLiveRange(context.Background(), start.Add(2*time.Minute), end.Add(2*time.Minute)))
 	require.Empty(t, analyticsRepo.dailyCalls)
 }
 
-// TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay 验证自动回填完成一个 UTC 日后只重建一次日表。
+// TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay checks one daily rebuild after completing a UTC day.
 func TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-24 * time.Hour)
@@ -587,7 +588,7 @@ func TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay(t *tes
 	require.Equal(t, "idle", analyticsRepo.state.Phase)
 }
 
-// TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay 验证到达最早的部分日期时也生成对应日表。
+// TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay checks daily rebuilding at the oldest partial day.
 func TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay(t *testing.T) {
 	cursor := time.Date(2026, 8, 2, 8, 0, 0, 0, time.UTC)
 	oldest := time.Date(2026, 8, 2, 5, 0, 0, 0, time.UTC)
@@ -611,7 +612,7 @@ func TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay(t 
 	require.Equal(t, oldest, *analyticsRepo.state.BackfillCursor)
 }
 
-// TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor 验证日表失败后保留旧游标并在下轮幂等重试。
+// TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor checks cursor retention and retry after a daily write fails.
 func TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor(t *testing.T) {
 	oldest := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
 	cursor := oldest.Add(time.Hour)
@@ -645,7 +646,8 @@ func TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor(t *testing.
 	require.Equal(t, "idle", analyticsRepo.state.Phase)
 }
 
-// TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill 验证完成块后的数据库主动取消不会误报异常。
+// TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill checks that timeout after progress pauses backfill
+// without an error state.
 func TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-4 * time.Hour)
@@ -682,7 +684,7 @@ func TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill(t *testing.T) 
 	require.Equal(t, cursor.Add(-time.Hour), *analyticsRepo.state.BackfillCursor)
 }
 
-// TestDashboardAggregationServiceFirstChunkTimeoutIsError 检查首个小时耗尽预算后进入错误状态。
+// TestDashboardAggregationServiceFirstChunkTimeoutIsError checks the error state when the first hour exhausts the budget.
 func TestDashboardAggregationServiceFirstChunkTimeoutIsError(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-2 * time.Hour)
@@ -711,7 +713,7 @@ func TestDashboardAggregationServiceFirstChunkTimeoutIsError(t *testing.T) {
 	require.Equal(t, cursor, *analyticsRepo.state.BackfillCursor)
 }
 
-// TestShouldStartBackfillChunkUsesPreviousDuration 验证尾部预算不足时不会启动大概率超时的新块。
+// TestShouldStartBackfillChunkUsesPreviousDuration checks that the next chunk waits when the remaining budget is too small.
 func TestShouldStartBackfillChunkUsesPreviousDuration(t *testing.T) {
 	require.True(t, shouldStartBackfillChunk(0, time.Millisecond, time.Second))
 	require.True(t, shouldStartBackfillChunk(1, 11*time.Millisecond, 10*time.Millisecond))
@@ -719,7 +721,7 @@ func TestShouldStartBackfillChunkUsesPreviousDuration(t *testing.T) {
 	require.False(t, shouldStartBackfillChunk(1, 0, time.Millisecond))
 }
 
-// TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets 验证删除修复不会复用实时部分桶接口。
+// TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets checks that deletion repair uses complete-bucket recomputation.
 func TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets(t *testing.T) {
 	analyticsRepo := &usageAnalyticsAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{

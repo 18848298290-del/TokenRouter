@@ -26,13 +26,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// 测试传输将已构造的 token 请求发送到本地 TLS 夹具。
+// openAILocalTransport sends constructed token requests to a local TLS fixture.
 type openAILocalTransport struct {
 	client *http.Client
 	target *url.URL
 }
 
-// 复用真实 OAuth 表单/响应解析；只指定现有可注入传输分支。
+// openAITLSClient exercises production OAuth encoding and parsing through the injectable TLS transport.
 type openAITLSClient struct{ *openai.OAuthClient }
 
 func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
@@ -120,7 +120,7 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 			cached, err := cache.GetAccessToken(ctx, provider.OpenAITokenCacheKey(provider.CloneRecord(value)))
 			require.NoError(t, err)
 			require.Equal(t, expected, cached)
-			// 第二次调用读取同一缓存，不重新交换；凭据未进入公共结果。
+			// A second call reads the cached token without another exchange.
 			token, err := tokenSource.GetAccessToken(ctx, provider.CloneRecord(persisted))
 			require.NoError(t, err)
 			require.Equal(t, expected, token)

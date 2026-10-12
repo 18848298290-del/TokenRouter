@@ -24,7 +24,7 @@ func (s *Compatible) CheckGroupModelRestriction(ctx context.Context, groupID *in
 	return s.groupPolicies.IsModelRestricted(ctx, *groupID, billingModel)
 }
 
-// resolveGroupRoutingModel 返回 OpenAI 提供商调度层使用的分组映射后模型。
+// resolveGroupRoutingModel returns the group-mapped model used by compatible selection.
 func (s *Compatible) resolveGroupRoutingModel(ctx context.Context, groupID *int64, requestedModel string) string {
 	if s == nil {
 		return requestedModel
@@ -34,7 +34,7 @@ func (s *Compatible) resolveGroupRoutingModel(ctx context.Context, groupID *int6
 	)
 }
 
-// UpstreamRoutingModelRestricted 使用已经完成分组映射及协议专用映射的提供商层模型检查最终上游模型。
+// UpstreamRoutingModelRestricted checks the final upstream model after group and protocol mapping.
 func (s *Compatible) UpstreamRoutingModelRestricted(ctx context.Context, groupID int64, provider *gatewayprovider.ExecutionProvider, routingModel string, requireCompact bool) bool {
 	if s.groupPolicies == nil {
 		return false
@@ -64,7 +64,7 @@ func (s *Compatible) NeedsUpstreamGroupRestriction(ctx context.Context, groupID 
 	return ch.RestrictionSource() == routing.BillingModelSourceUpstream
 }
 
-// shadowProtocolsAllowed 按母提供商的协议配置判断影子提供商是否可用。
+// shadowProtocolsAllowed checks the shadow against its parent's protocol configuration.
 func (s *Compatible) shadowProtocolsAllowed(ctx context.Context, provider *gatewayprovider.ExecutionProvider) bool {
 	if provider == nil || !provider.View().IsShadow() {
 		return true

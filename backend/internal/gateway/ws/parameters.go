@@ -9,7 +9,7 @@ import (
 
 const SettingKey = "responses_ws"
 
-// Parameters 是一份请求或轮次使用的运行参数，发布后按值读取。
+// Parameters contains runtime settings copied by value for each request or turn.
 // @project-doc docs/interfaces/openai_upstream.md#responses_ws_runtime
 type Parameters struct {
 	MaxConnsPerProvider                         int     `json:"max_conns_per_provider"`
@@ -34,12 +34,12 @@ type Parameters struct {
 	StickyResponseIDTTLSeconds                  int     `json:"sticky_response_id_ttl_seconds"`
 }
 
-// DefaultParameters 返回部署未配置时的默认参数。
+// DefaultParameters returns defaults used when deployment settings are absent.
 func DefaultParameters() Parameters {
 	return Parameters{MaxConnsPerProvider: 128, MinIdlePerProvider: 4, MaxIdlePerProvider: 12, DynamicMaxConnsByProviderConcurrencyEnabled: true, OAuthMaxConnsFactor: 1, APIKeyMaxConnsFactor: 1, QueueLimitPerConn: 64, PoolTargetUtilization: 0.7, PrewarmCooldownMS: 300, ClientFirstMessageTimeoutSeconds: 30, IngressInterTurnIdleTimeoutSeconds: 300, MaxIngressConnectionsPerAPIKey: 64, ClientReadLimitBytes: 64 * 1024 * 1024, HTTPBridgeThresholdBytes: 15 * 1024 * 1024, DialTimeoutSeconds: 10, ReadTimeoutSeconds: 900, WriteTimeoutSeconds: 120, IngressPreviousResponseRecoveryEnabled: true, StickySessionTTLSeconds: 3600, StickyResponseIDTTLSeconds: 3600}
 }
 
-// Validate 检查完整有效值，字段之间的约束在合并覆盖值后判断。
+// Validate checks a complete effective value, including constraints between merged fields.
 func (v Parameters) Validate() error {
 	if v.MaxConnsPerProvider <= 0 {
 		return fmt.Errorf("max_conns_per_provider must be positive")
@@ -105,7 +105,7 @@ func (v Parameters) Validate() error {
 	return nil
 }
 
-// ResolveParameters 在部署默认值上应用已保存的覆盖值。
+// ResolveParameters applies stored overrides to deployment defaults and validates the result.
 func ResolveParameters(defaults Parameters, raw string) (Parameters, error) {
 	if raw == "" {
 		raw = "{}"
@@ -128,7 +128,7 @@ func ResolveParameters(defaults Parameters, raw string) (Parameters, error) {
 	return value, value.Validate()
 }
 
-// PatchParameters 合并部分更新；null 清除覆盖，省略字段保持原值。
+// PatchParameters merges a partial update; null clears an override and omitted fields retain their values.
 func PatchParameters(defaults Parameters, stored string, patch json.RawMessage) (string, error) {
 	values := map[string]json.RawMessage{}
 	if stored != "" && !bytes.Equal(bytes.TrimSpace(patch), []byte("null")) {

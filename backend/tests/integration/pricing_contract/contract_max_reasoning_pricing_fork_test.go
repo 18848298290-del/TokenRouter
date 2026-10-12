@@ -20,7 +20,7 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestMaxReasoningPricing_IntervalsAndBillingModes 验证核对区间、缓存桶和分组倍率的组合，并确保按次费用不受推理倍率影响。
+// TestMaxReasoningPricing_IntervalsAndBillingModes checks interval and cache prices with group rates, and excludes reasoning multipliers from non-token modes.
 func TestMaxReasoningPricing_IntervalsAndBillingModes(t *testing.T) {
 	bs := newCalculator(nil)
 	resolver := billingtestkit.PriceResolver(nil, bs)
@@ -60,7 +60,7 @@ func TestMaxReasoningPricing_IntervalsAndBillingModes(t *testing.T) {
 	}
 }
 
-// TestMaxReasoningPricing_ProviderStatsPriority 验证提供商自定义价独立于用户费用，模型价兜底按实际档位计价。
+// TestMaxReasoningPricing_ProviderStatsPriority checks custom provider costs first, then catalog costs at the final reasoning effort.
 func TestMaxReasoningPricing_ProviderStatsPriority(t *testing.T) {
 	bs := newCalculator(nil)
 	pricingConfig := &routingtestkit.Configuration{ID: 1, Status: billing.StatusActive, ProviderStatsPricingRules: []routing.ProviderStatsPricingRule{{
@@ -80,7 +80,7 @@ func TestMaxReasoningPricing_ProviderStatsPriority(t *testing.T) {
 	require.InDelta(t, *standard*3, *cost, 1e-12)
 }
 
-// TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort 验证 OpenAI 兼容转发的账单按结果档位计算，策略前的 max 仅用于审计。
+// TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort checks that billing uses the final effort while the requested effort remains audit data.
 func TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort(t *testing.T) {
 	bs := newCalculator(nil)
 	for _, resolver := range []*billing.PriceResolver{nil, billingtestkit.PriceResolver(nil, bs)} {
@@ -105,5 +105,3 @@ func TestMaxReasoningPricing_RejectsInvalidMultipliers(t *testing.T) {
 		require.Error(t, routing.CheckBillingModeRequirements(routing.ModelPricingEntry{BillingMode: routing.BillingModeToken, MaxReasoningEffortMultiplier: &factor}))
 	}
 }
-
-// 从兼容入口实际转发，核对账单使用的结果档位与上游收到的档位一致。

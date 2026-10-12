@@ -22,7 +22,7 @@ import (
 
 type paymentOrderLifecycleRedeemRepo struct {
 	codesByCode map[string]*billing.RedeemCode
-	// 按兑换码和用户记录使用情况，供仓储查询重复兑换。
+	// Usage indexed by code and user for duplicate-redemption checks.
 	usageByRedeemCodeID map[int64]map[int64]*billing.RedeemCodeUsage
 	useCalls            []struct {
 		id     int64
@@ -30,7 +30,8 @@ type paymentOrderLifecycleRedeemRepo struct {
 	}
 }
 
-// fulfillmentBalance 提供可配置的余额读写。调用未配置的嵌入接口方法会 panic。
+// fulfillmentBalance supplies configurable balance reads and writes. Calls through its nil embedded
+// interface panic.
 type fulfillmentBalance struct {
 	billingpostgres.RedeemUserWriter
 	getByIDUser     *billing.UserSummary

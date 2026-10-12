@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	// TokenRefreshTempUnschedDuration token 刷新重试耗尽后临时不可调度的持续时间。
+	// TokenRefreshTempUnschedDuration is the scheduling cooldown after refresh retries are exhausted.
 	TokenRefreshTempUnschedDuration = 10 * time.Minute
 
 	DefaultTokenRefreshCandidatePageSize        = 200
@@ -27,7 +27,7 @@ const (
 	DefaultTokenRefreshCleanupTimeout           = 2 * time.Second
 )
 
-// RefreshTuning 保存 app 传入的后台刷新静态参数。
+// RefreshTuning holds application-supplied background refresh parameters.
 type RefreshTuning struct {
 	Enabled                  bool
 	CheckIntervalMinutes     int
@@ -92,7 +92,7 @@ func (s *RefreshTuning) RetryBackoff(providerID int64, attempt int) time.Duratio
 	shift := min(attempt-1, 10)
 	baseSeconds := min(s.RetryBackoffSeconds, int(MaxTokenRefreshRetryBackoff/time.Second))
 	base := time.Duration(baseSeconds) * time.Second * time.Duration(1<<shift)
-	// 重试间隔按稳定种子在 75% 到 125% 之间变化，不同实例的重试时间错开，同一输入可复现。
+	// Jitter varies from 75% to 125% using provider ID and attempt, spreading provider retries reproducibly.
 	jitterPercent := int64(75) + (providerID+int64(attempt*17))%51
 	backoff := base * time.Duration(jitterPercent) / 100
 	return min(backoff, MaxTokenRefreshRetryBackoff)

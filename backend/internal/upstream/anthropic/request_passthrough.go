@@ -26,7 +26,7 @@ func BuildRequestPassthrough(ctx context.Context, body []byte, token string, opt
 		return nil, nil, err
 	}
 	clientBeta := StripBetaTokensWithSet(GetHeaderRaw(clientHeaders, "anthropic-beta"), filterSet)
-	// 提供商覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
+	// Sanitize against the provider override, which becomes the outbound beta header.
 	if beta, ok := options.BetaOverride(); ok {
 		clientBeta = beta
 	}
@@ -54,13 +54,13 @@ func BuildRequestPassthrough(ctx context.Context, body []byte, token string, opt
 			AddHeaderRaw(req.Header, wireKey, v)
 		}
 	}
-	// 透传白名单可能写入 Key 改写前的值，按系统策略裁决后的 beta 覆盖。
+	// Replace forwarded betas with the value selected by policy.
 	DeleteHeaderAllForms(req.Header, "anthropic-beta")
 	if clientBeta != "" {
 		SetHeaderRaw(req.Header, "anthropic-beta", clientBeta)
 	}
 
-	// 覆盖入站鉴权残留，并注入上游认证
+	// Replace client authentication with upstream credentials.
 	req.Header.Del("authorization")
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
@@ -74,7 +74,7 @@ func BuildRequestPassthrough(ctx context.Context, body []byte, token string, opt
 		SetHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
 
-	// 提供商级请求头覆写（最终生效，覆盖上面所有来源的同名头）
+	// Provider overrides take precedence over all headers assembled above.
 	options.ApplyOverrides(req.Header)
 
 	return req, body, nil

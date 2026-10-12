@@ -51,7 +51,7 @@ func (p *OpenAIResponseOutput) BufferedReadFailure(
 	failoverErr := p.NewStreamPolicyFailure(
 		c, provider, false, requestID, responseHeaders, http.StatusBadGateway, payload, message, false,
 	)
-	// 错误码在重试耗尽后保持稳定，客户端与透传规则据此识别传输故障。
+	// Keep transport error codes stable after retry exhaustion so clients and passthrough rules can classify them.
 	failoverErr.ResponseBody = payload
 	return failoverErr
 }

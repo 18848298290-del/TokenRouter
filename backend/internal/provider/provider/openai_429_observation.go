@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CanRetryOpenAI429 只决定原同提供商恢复窗口资格；实际重试循环仍由网关拥有。
+// CanRetryOpenAI429 checks eligibility for the same-provider recovery window; the gateway owns retries.
 func CanRetryOpenAI429(state *provider.RuntimeBlockState, value *provider.Record, headers http.Header, body []byte) bool {
 	if state == nil || value == nil || !value.IsOpenAIOAuthLike() || value.IsShadow() ||
 		state.Blocked(value.ID, func() string { return provider.RefreshCredentialIdentity(value) }) {
@@ -22,7 +22,7 @@ func CanRetryOpenAI429(state *provider.RuntimeBlockState, value *provider.Record
 	return state.RetryWindowActive(value.ID)
 }
 
-// ClassifyOpenAI429 先识别额度耗尽，再依次读取重置响应头和正文。
+// ClassifyOpenAI429 checks exhausted quota windows, reset headers, and then the response body.
 func ClassifyOpenAI429(headers http.Header, body []byte) (provider.OpenAI429Disposition, *time.Time) {
 	if kind, reset := provider.OpenAIExhaustedWindow(openai.ParseCodexRateLimitHeaders(headers), time.Now); kind != provider.OpenAI429Transient {
 		return kind, reset

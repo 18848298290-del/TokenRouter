@@ -36,7 +36,8 @@ func (*quotaLifecycleClient) PostJSON(context.Context, string, map[string]any) (
 	return nil, errors.New("unexpected quota reset")
 }
 
-// TestOpenAIQuotaLifecycleCancelsAndWaits 验证停止须取消并等待实际请求；构造不读取提供商，关闭后也不能重新认领。
+// TestOpenAIQuotaLifecycleCancelsAndWaits checks cancellation, waiting, and rejection of queries after
+// shutdown.
 func TestOpenAIQuotaLifecycleCancelsAndWaits(t *testing.T) {
 	client := &quotaLifecycleClient{entered: make(chan struct{})}
 	var reads atomic.Int32
@@ -69,7 +70,7 @@ func TestOpenAIQuotaLifecycleCancelsAndWaits(t *testing.T) {
 	require.EqualValues(t, 1, reads.Load())
 }
 
-// TestOpenAIQuotaLifecycleReportsUnfinishedRequest 检查外部查询忽略取消时按停止预算返回，后续停止调用返回同一次未完成结果。
+// TestOpenAIQuotaLifecycleReportsUnfinishedRequest checks that repeated stops retain the first timeout result.
 func TestOpenAIQuotaLifecycleReportsUnfinishedRequest(t *testing.T) {
 	client := &quotaLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
 	service := NewOpenAIQuotaService(OpenAIQuotaOptions{
@@ -99,10 +100,10 @@ func TestOpenAIQuotaLifecycleReportsUnfinishedRequest(t *testing.T) {
 	require.Equal(t, err, service.StopContext(context.Background()))
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys 验证:
-//   - 产出包含 codex_5h_used_percent / codex_7d_used_percent
-//   - 不含任何 codex_spark_ 前缀的 key（Method Z 前缀已禁止）
-//   - 数值正确映射（primary 较短→5h，secondary 较长→7d）
+// TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys checks normalized Spark snapshot fields:
+//   - codex_5h_used_percent and codex_7d_used_percent are present.
+//   - No codex_spark_ keys are emitted.
+//   - The shorter primary window maps to five hours and the longer secondary to seven days.
 func TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys(t *testing.T) {
 	now := time.Now().UTC()
 	usage := &openai.OpenAIQuotaUsage{
@@ -128,27 +129,27 @@ func TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys(t *testing.T) {
 	updates := BuildCodexSparkWindowExtraUpdates(usage, now)
 	require.NotNil(t, updates, "expected non-nil updates for valid codex_bengalfox entry")
 
-	// 必须含有 codex_5h_* 和 codex_7d_* 键
+	// Publish the shared Codex window keys on the shadow record.
 	require.Contains(t, updates, "codex_5h_used_percent")
 	require.Contains(t, updates, "codex_7d_used_percent")
 
-	// 任何键不得含有 codex_spark_ 前缀（Method Z 已禁止）
+	// Separate codex_spark_ keys would bypass readers of the shared Codex fields.
 	for k := range updates {
 		require.False(t, strings.Contains(k, "codex_spark_"),
 			"unexpected Method-Z prefix in key: %s", k)
 	}
 
-	// 数值验证（primary=5h, secondary=7d）
+	// Values follow the window duration: primary is five hours, secondary is seven days.
 	require.InDelta(t, 0.42, updates["codex_5h_used_percent"], 1e-9)
 	require.InDelta(t, 0.15, updates["codex_7d_used_percent"], 1e-9)
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_NilUsage 验证 nil usage 返回 nil。
+// TestBuildCodexSparkWindowExtraUpdates_NilUsage checks the absent-observation result.
 func TestBuildCodexSparkWindowExtraUpdates_NilUsage(t *testing.T) {
 	require.Nil(t, BuildCodexSparkWindowExtraUpdates(nil, time.Now()))
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_NoBengalfox 验证无 codex_bengalfox 条目时返回 nil。
+// TestBuildCodexSparkWindowExtraUpdates_NoBengalfox checks that unrelated metered features produce no updates.
 func TestBuildCodexSparkWindowExtraUpdates_NoBengalfox(t *testing.T) {
 	usage := &openai.OpenAIQuotaUsage{
 		AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{

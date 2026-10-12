@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestAffiliateRecordFilterInjectedCalendar 检查返利查询包含指定时区结束日的最后一纳秒。
+// TestAffiliateRecordFilterInjectedCalendar includes the final nanosecond of the end date in the calendar's
+// time zone.
 func TestAffiliateRecordFilterInjectedCalendar(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	// UserPromptReplacementTypeStatic 表示替换成管理员填写的固定文本。
+	// UserPromptReplacementTypeStatic replaces a match with administrator-supplied text.
 	UserPromptReplacementTypeStatic = "static"
-	// UserPromptReplacementTypeTimezoneName 表示替换成规则配置的 IANA 时区名。
+	// UserPromptReplacementTypeTimezoneName substitutes the rule's IANA timezone name.
 	UserPromptReplacementTypeTimezoneName = "timezone_name"
-	// UserPromptReplacementTypeCurrentTime 表示替换成目标时区下的当前时间。
+	// UserPromptReplacementTypeCurrentTime substitutes the current time in the configured timezone.
 	UserPromptReplacementTypeCurrentTime = "current_time"
-	// UserPromptReplacementScopeEnvironmentContext 表示仅在单个 environment_context 块内执行规则。
+	// UserPromptReplacementScopeEnvironmentContext confines each match to one environment_context block.
 	UserPromptReplacementScopeEnvironmentContext = "environment_context"
 
 	defaultUserPromptReplacementTimezone   = "Asia/Tokyo"
@@ -36,13 +36,13 @@ const (
 
 var userPromptReplacementCache atomic.Value // *CompiledConfig
 
-// UserPromptReplacementConfig 是管理员配置的用户提示词替换规则集合。
+// UserPromptReplacementConfig holds administrator-defined user prompt replacement rules.
 type UserPromptReplacementConfig struct {
 	Enabled bool                        `json:"enabled"`
 	Rules   []UserPromptReplacementRule `json:"rules"`
 }
 
-// UserPromptReplacementRule 是单条用户文本替换规则。
+// UserPromptReplacementRule describes one user-text replacement.
 type UserPromptReplacementRule struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -68,20 +68,20 @@ type CompiledConfig struct {
 	expiresAt int64
 }
 
-// Settings 提供提示词替换配置的读写。
+// Settings reads and writes prompt replacement configuration.
 type Settings interface {
 	GetValue(context.Context, string) (string, error)
 	Set(context.Context, string, string) error
 }
 
-// Service 持有提示词替换规则的进程缓存，规则在读取时加载。
+// Service loads prompt rules on demand and uses the shared process cache.
 type Service struct {
 	store    Settings
 	notFound error
 	warn     func(string, ...any)
 }
 
-// DefaultUserPromptReplacementConfig 返回用户提示词替换的内置默认规则。
+// DefaultUserPromptReplacementConfig returns the built-in prompt replacement rules.
 func DefaultUserPromptReplacementConfig() *UserPromptReplacementConfig {
 	return &UserPromptReplacementConfig{
 		Enabled: true,
@@ -144,7 +144,7 @@ func normalizeUserPromptReplacementConfig(cfg *UserPromptReplacementConfig) (*Us
 		rule.Timezone = strings.TrimSpace(rule.Timezone)
 		rule.TimeFormat = strings.TrimSpace(rule.TimeFormat)
 		if rule.Scope == "" && isDefaultEnvironmentContextUserPromptReplacementRuleID(rule.ID) {
-			// 兼容已保存的默认规则：旧配置没有 scope 字段，但仍应只在单个 environment_context 块内生效。
+			// Older saved default rules omit scope but still need confinement to one environment_context block.
 			rule.Scope = UserPromptReplacementScopeEnvironmentContext
 		}
 		if rule.ID == "" {
@@ -231,7 +231,7 @@ func compileUserPromptReplacementConfig(cfg *UserPromptReplacementConfig, ttl ti
 	return compiled, nil
 }
 
-// GetUserPromptReplacementConfig 返回当前用户提示词替换配置。
+// GetUserPromptReplacementConfig reads prompt replacement settings, defaulting absent configuration.
 func (s *Service) GetUserPromptReplacementConfig(ctx context.Context) (*UserPromptReplacementConfig, error) {
 	if s == nil || s.store == nil {
 		return DefaultUserPromptReplacementConfig(), nil
@@ -331,7 +331,7 @@ func applyEnvironmentContextScopedUserPromptReplacementRule(text string, rule co
 			builder.Grow(len(text))
 		}
 		_, _ = builder.WriteString(text[cursor:start])
-		// 默认规则限定在单个 environment_context 块内，跨块匹配的 .*? 会误替换其他块。
+		// Match each environment_context block separately so .*? cannot consume text across blocks.
 		_, _ = builder.WriteString(applySingleUserPromptReplacementRule(text[start:end], rule, now))
 		cursor = end
 	}
@@ -359,7 +359,7 @@ func applySingleUserPromptReplacementRule(text string, rule compiledUserPromptRe
 	})
 }
 
-// ApplyUserPromptReplacementToBody 将用户提示词替换规则应用到指定协议的用户文本字段。
+// ApplyUserPromptReplacementToBody applies rules to user text fields in the selected protocol.
 func (s *Service) ApplyUserPromptReplacementToBody(ctx context.Context, body []byte, protocol string) []byte {
 	if s == nil || len(body) == 0 || !gjson.ValidBytes(body) {
 		return body
@@ -509,5 +509,5 @@ func emit(warn func(string, ...any), name string, fields ...any) {
 	}
 }
 
-// SharedCache 仅供旧批量设置失效转接；编译与命中逻辑仍在本包。
+// SharedCache exposes the compiled cache for bulk-settings invalidation.
 func SharedCache() *atomic.Value { return &userPromptReplacementCache }

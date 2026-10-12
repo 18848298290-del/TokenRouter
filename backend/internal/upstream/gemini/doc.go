@@ -1,15 +1,15 @@
-// Package gemini 适配 Gemini 的请求认证、协议交换、图片生成和批量任务接口。
+// Package gemini adapts Gemini authentication, protocol exchanges, image generation, and batch APIs.
 //
-// 阅读入口：
-//   - execute.go：按请求协议执行上游交换并汇总输出观测。
-//   - request.go：构造请求计划、认证信息和上游报文。
-//   - response.go：解析 Gemini 响应并向输出接口写入事件。
+// Reading entry points:
+//   - execute.go: Executes the selected protocol and collects output observations.
+//   - request.go: Builds request plans, authentication, and upstream payloads.
+//   - response.go: Parses Gemini responses and writes output events.
 //
-// 文件分组：
-//   - exchange*.go：Messages、Gemini 和 OpenAI 协议的流式与非流式交换。
-//   - response*.go：响应读取、协议输出和完成状态。
-//   - request.go、url.go、model_get.go：请求构建、模型地址和模型查询。
-//   - images.go、image_observation.go：图片生成、解码和输出计数。
-//   - batch*.go：批量客户端调用和 JSONL 编码。
-//   - quota_observation.go、retry_rules.go：额度信号和错误重试条件。
+// File groups:
+//   - exchange*.go: Streaming and buffered Messages, Gemini, and OpenAI exchanges.
+//   - response*.go: Response reads, protocol output, and completion state.
+//   - request.go, url.go, model_get.go: Request construction, model URLs, and model queries.
+//   - images.go, image_observation.go: Image generation, decoding, and output counts.
+//   - batch*.go: Batch API calls and JSONL encoding.
+//   - quota_observation.go, retry_rules.go: Quota signals and retry conditions.
 package gemini

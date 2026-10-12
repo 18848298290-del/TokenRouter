@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// attributeRepoFixture 记录属性查询次数，并提供按分组区分的档案。
+// attributeRepoFixture counts attribute queries and supplies profiles by group.
 type attributeRepoFixture struct {
 	config      *ModelAttributeConfig
 	groups      map[int64]*ModelAttributeConfig
@@ -48,7 +48,7 @@ func (r *attributeRepoFixture) Save(_ context.Context, value *ModelAttributeConf
 }
 func (r *attributeRepoFixture) Delete(context.Context, int64) error { r.config = nil; return nil }
 
-// TestModelAttributesRequestLanguage 检查单分组与批量查询使用同一请求语言。
+// TestModelAttributesRequestLanguage checks that single and batch reads use the request language.
 func TestModelAttributesRequestLanguage(t *testing.T) {
 	en := "en"
 	content := locale.Update[string]{Content: locale.Content[string]{
@@ -92,7 +92,7 @@ func TestModelAttributesUseFinalModelsWithoutChangingRoutes(t *testing.T) {
 	require.Equal(t, 1, *result["public-alias"].OutputLimit)
 	require.False(t, *result["public-alias"].ToolCall)
 	require.True(t, result["public-alias"].RouteDifferences)
-	// 命中精确规则时使用其输出上限，同档案的通配规则跳过。
+	// An exact rule supplies the output limit and takes precedence over wildcard rules.
 	result, err = service.ResolveModels(context.Background(), 1, []RequestableModel{{ID: "single", UpstreamModels: []string{"upstream-a"}}})
 	require.NoError(t, err)
 	require.True(t, *result["single"].ToolCall)
@@ -103,7 +103,7 @@ func TestModelAttributesUseFinalModelsWithoutChangingRoutes(t *testing.T) {
 	require.True(t, *result["public-alias"].ToolCall)
 }
 
-// TestModelAttributesBatchReads 验证分组覆盖隔离、单次批量读取和下一次请求的配置更新。
+// TestModelAttributesBatchReads checks group isolation, one batch read, and visibility of updates on the next query.
 func TestModelAttributesBatchReads(t *testing.T) {
 	no := false
 	limit := 100
@@ -137,7 +137,7 @@ func TestModelAttributesBatchReads(t *testing.T) {
 	require.Nil(t, result[1]["alias-a"].ToolCall)
 }
 
-// TestModelAttributesBatchEmptyAndFailure 覆盖空目录和数据库失败。
+// TestModelAttributesBatchEmptyAndFailure covers empty catalogues and repository failures.
 func TestModelAttributesBatchEmptyAndFailure(t *testing.T) {
 	repo := &attributeRepoFixture{err: errors.New("database unavailable")}
 	service := ModelAttributeService{Repo: repo}

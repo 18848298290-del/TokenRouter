@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 )
 
-// AdminReadSettings 保存网关设置在综合管理页中的展示字段。
+// AdminReadSettings contains gateway settings displayed by the administration page.
 type AdminReadSettings struct {
 	AntigravityUserAgentVersion            string
 	BackendModeEnabled                     bool
@@ -32,7 +32,7 @@ type AdminReadSettings struct {
 	UserPromptReplacementConfig            *promptpolicy.UserPromptReplacementConfig
 }
 
-// ReadAdminSettings 将传入的持久化值解析为管理页设置，缺省字段使用默认值。
+// ReadAdminSettings parses persisted values and applies defaults for missing settings.
 func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.BackendModeEnabled = settings[SettingKeyBackendModeEnabled] == "true"
@@ -53,7 +53,7 @@ func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *Ad
 	if v, ok := settings[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 		result.EnableFingerprintUnification = v == "true"
 	} else {
-		result.EnableFingerprintUnification = true // default: enabled (current behavior)
+		result.EnableFingerprintUnification = true
 	}
 	result.EnableMetadataPassthrough = settings[SettingKeyEnableMetadataPassthrough] == "true"
 	result.EnableCCHSigning = settings[SettingKeyEnableCCHSigning] == "true"
@@ -82,7 +82,7 @@ func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *Ad
 	return result
 }
 
-// parseAdminPromptConfig 调用提示词策略的解析和诊断函数。
+// parseAdminPromptConfig parses prompt policy settings and logs diagnostics.
 func parseAdminPromptConfig(raw string) *promptpolicy.UserPromptReplacementConfig {
 	return promptpolicy.ParseConfig(raw, slog.Warn)
 }

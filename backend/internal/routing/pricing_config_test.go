@@ -50,7 +50,7 @@ func TestGetModelPricing_ReturnsCopy(t *testing.T) {
 	result := ch.GetModelPricing("claude-sonnet-4")
 	require.NotNil(t, result)
 
-	// 修改返回副本的切片，检查输入值。
+	// Mutate the returned slice to check that the input is isolated.
 	result.Models = append(result.Models, "hacked")
 
 	// Original should be unchanged
@@ -84,7 +84,7 @@ func TestPricingConfigClone(t *testing.T) {
 	require.Equal(t, original.ID, cloned.ID)
 	require.Equal(t, original.Name, cloned.Name)
 
-	// 修改克隆对象的切片，检查输入值。
+	// Mutate the clone's slice to check that the input is isolated.
 	cloned.GroupIDs[0] = 999
 	require.Equal(t, int64(10), original.GroupIDs[0])
 

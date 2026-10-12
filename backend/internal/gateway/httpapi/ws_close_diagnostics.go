@@ -29,7 +29,7 @@ func SummarizeWSCloseErrorForLog(err error) (string, string) {
 	return closeStatus, closeReason
 }
 
-// ResponsesWSCloseInfo 提取客户端关闭错误的状态和原因。
+// ResponsesWSCloseInfo extracts the status and reason from a client close error.
 func ResponsesWSCloseInfo(err error) gatewayws.EntryClose {
 	if closed, ok := errors.AsType[*OpenAIWSClientCloseError](err); ok {
 		return gatewayws.EntryClose{Status: int(closed.StatusCode()), Reason: closed.Reason(), Present: true}

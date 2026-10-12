@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterPublicSettingsRoutes 使用 app 创建的公开限流组。
+// RegisterPublicSettingsRoutes adds settings routes to the public, rate-limited group supplied by app.
 func RegisterPublicSettingsRoutes(group *gin.RouterGroup, endpoint *PublicHandler) {
 	group.GET("/public", endpoint.GetPublicSettings)
 	group.GET("/legal/:id", endpoint.GetLegalDocument)

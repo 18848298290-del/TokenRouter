@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// identityAuthSettings 组合各模块的身份设置读取接口。
+// identityAuthSettings combines identity settings readers from the owning modules.
 type identityAuthSettings struct {
 	*identity.RuntimeSettings
 	*identity.GrantSettings
@@ -27,7 +27,7 @@ type identityAuthSettings struct {
 	promotion *promotion.RuntimeSettings
 }
 
-// identityAuthGraph 保存各认证入口共享的身份用例和事务适配器。
+// identityAuthGraph holds authentication use cases and transaction adapters shared by authentication endpoints.
 type identityAuthGraph struct {
 	Core   *identity.AuthService
 	State  *identitypostgres.AuthState
@@ -103,7 +103,8 @@ func provideIdentityAuthGraph(
 	return &identityAuthGraph{Core: core, State: state, Client: entClient}
 }
 
-// provideIdentityProfiles 使用 app 的任务跟踪器，在关闭前等待后台资料操作完成。
+// provideIdentityProfiles uses application task tracking to wait for background profile operations during
+// shutdown.
 func provideIdentityProfiles(users *identitypostgres.UserStore, settings settingscore.Repository, keys apikey.APIKeyAuthCacheInvalidator, cache billing.BillingCache, tasks *lifecycle.Tasks) *identity.UserService {
 	return identity.NewUserService(users, settings, keys, cache, func(name string, fn func()) bool { return tasks.Go(name, fn) }, time.Now)
 }

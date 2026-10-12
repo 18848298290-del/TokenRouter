@@ -24,7 +24,7 @@ import (
 	sitepostgres "github.com/TokenFlux/TokenRouter/internal/site/postgres"
 )
 
-// TestMigrationsLockReplayAndRollback 在隔离的 PostgreSQL 上检查锁、checksum、事务回滚和并发索引回放。
+// TestMigrationsLockReplayAndRollback checks locks, checksums, rollback, and concurrent-index replay on isolated PostgreSQL.
 func TestMigrationsLockReplayAndRollback(t *testing.T) {
 	fixture := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -73,7 +73,7 @@ func TestStorageContracts(t *testing.T) {
 		store := settings.New(settingspostgres.NewSettingRepository(fixture.client))
 		require.Same(t, store, settings.New(store), "接口投影必须保留同一设置状态")
 		require.NoError(t, store.Set(ctx, "test_existing", "before"))
-		// 用临时触发器模拟 SQL 执行失败。
+		// A temporary trigger injects a SQL failure.
 		_, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION test_reject_setting() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'test_reject' THEN RAISE EXCEPTION 'test injected failure'; END IF; RETURN NEW; END $$;
 CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH ROW EXECUTE FUNCTION test_reject_setting();`)
 		require.NoError(t, err)

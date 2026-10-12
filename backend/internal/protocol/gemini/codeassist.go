@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 )
 
-// LoadCodeAssistRequest matches done-hub's internal Code Assist call.
+// LoadCodeAssistRequest contains client metadata for the internal Code Assist call.
 type LoadCodeAssistRequest struct {
 	Metadata LoadCodeAssistMetadata `json:"metadata"`
 }

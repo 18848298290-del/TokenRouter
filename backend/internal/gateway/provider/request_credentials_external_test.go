@@ -39,14 +39,14 @@ type grokOAuthClientStub struct {
 	exchangeRedirectURI string
 }
 
-// credentialReadStore 提供凭据测试需要的提供商读取方法。
+// credentialReadStore supplies provider records for credential tests.
 type credentialReadStore struct {
 	gatewayprovider.ExecutionProviderStore
 	providersByID map[int64]*gatewayprovider.ExecutionProvider
 }
 
-// 占锁夹具调用 Apply，并在读取阶段阻塞。
-// 取消占锁操作后等待它退出，不执行任何条件写入。
+// The lock fixture calls Apply and blocks during the read.
+// Cancel and join the operation before releasing the fixture; it performs no conditional writes.
 type (
 	credentialMutationHoldKey struct{}
 	credentialMutationHold    struct {
@@ -100,7 +100,7 @@ type tokenRefresherStub struct {
 	calls       int
 }
 
-// 为网关测试提供提供商记录和存储参与能力，刷新逻辑由提供商模块执行。
+// tokenSourceFixtureReader supplies gateway test records to the provider module's refresh implementation.
 type tokenSourceFixtureReader struct {
 	source gatewayprovider.ExecutionProviderStore
 }
@@ -191,7 +191,7 @@ func (s *grokOAuthClientStub) ConvertSSOToBuild(context.Context, string, string)
 	return s.ssoResponse, nil
 }
 
-// newGrokAuthorizationForTest 为凭据测试构造 Grok 授权器和供应商替身。
+// newGrokAuthorizationForTest binds the proxy reader and authorization client fixture.
 func newGrokAuthorizationForTest(proxies egress.ProxyRepository, client providercore.GrokAuthorizationClient) *providercore.GrokAuthorization {
 	return providercore.NewGrokAuthorization(client, provideradapter.GrokAuthorizationOptions(proxies, nil))
 }
@@ -563,7 +563,7 @@ func (r *tokenRefresherStub) CacheKey(provider *providercore.Record) string {
 	return "test:stub:" + provider.Platform
 }
 
-// grokCredentialStoredSnapshot 复制执行目标并初始化凭据映射。
+// grokCredentialStoredSnapshot copies the execution target and initializes missing credentials.
 func grokCredentialStoredSnapshot(value *gatewayprovider.ExecutionProvider) *gatewayprovider.ExecutionProvider {
 	copy := gatewayprovider.NewExecutionProvider(gatewayprovider.ExecutionRecord(value))
 	if copy != nil && copy.Record.Credentials == nil {
@@ -641,7 +641,7 @@ func (c *grokTokenCacheForProviderTest) ReleaseRefreshLock(context.Context, stri
 	return nil
 }
 
-// UpdateOAuthCredentialsIfUnchanged 在凭据版本匹配时调用测试仓库的 UpdateCredentials。
+// UpdateOAuthCredentialsIfUnchanged updates fixture credentials when the observed version matches.
 func (r *tokenRefreshProviderRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	current := r.providersByID[version.ID]
 	if current == nil {
@@ -658,7 +658,7 @@ func (r *tokenRefreshProviderRepo) UpdateOAuthCredentialsIfUnchanged(ctx context
 	return err == nil, err
 }
 
-// ClearRefreshCooldownIfUnchanged 原稳定行夹具保留清理次数断言，存在当前行时同时核对条件写入输入。
+// ClearRefreshCooldownIfUnchanged checks the current row when present and records accepted cleanup calls.
 func (r *tokenRefreshProviderRepo) ClearRefreshCooldownIfUnchanged(ctx context.Context, v providercore.RefreshCooldownVersion) (bool, error) {
 	if current := r.providersByID[v.ID]; current != nil && !reflect.DeepEqual(providercore.ObserveRefreshCooldown(gatewayprovider.ExecutionRecord(current)), v) {
 		return false, nil
@@ -666,7 +666,7 @@ func (r *tokenRefreshProviderRepo) ClearRefreshCooldownIfUnchanged(ctx context.C
 	return true, r.ClearTempUnschedulable(ctx, v.ID)
 }
 
-// refreshFailureMatchesFixture 比较身份字段和凭据版本，nil 凭据按空对象比较。
+// refreshFailureMatchesFixture compares identity and credential versions, treating nil credentials as empty.
 func refreshFailureMatchesFixture(value *gatewayprovider.ExecutionProvider, version providercore.RefreshFailureVersion) bool {
 	if value == nil {
 		return false
@@ -678,7 +678,7 @@ func refreshFailureMatchesFixture(value *gatewayprovider.ExecutionProvider, vers
 	return value.Record.ID == version.ID && value.Record.Platform == version.Platform && value.Record.Type == version.Type && value.Record.Status == version.Status && value.Record.Schedulable == version.Schedulable && reflect.DeepEqual(credentials, version.Credentials) && reflect.DeepEqual(value.Record.ProxyID, version.ProxyID)
 }
 
-// ApplyOAuthRefreshFailure 在未设置读取集时接受调用版本；已设置读取集时，先比较当前行。
+// ApplyOAuthRefreshFailure compares the current row when a read set is configured; otherwise it accepts the supplied version.
 func (r *tokenRefreshProviderRepo) ApplyOAuthRefreshFailure(ctx context.Context, version providercore.RefreshFailureVersion, failure providercore.RefreshFailure) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -713,19 +713,19 @@ func (r *tokenRefreshProviderRepo) ClearAntigravityRefreshRequest(ctx context.Co
 	return err == nil, err
 }
 
-// newGrokTokenSourceForTest 将测试仓库和缓存接入 GrokTokenSource。
+// newGrokTokenSourceForTest binds the fixture repository and token cache.
 func newGrokTokenSourceForTest(repo gatewayprovider.ExecutionProviderStore, cache providercore.AccessTokenCache) *providercore.GrokTokenSource {
 	return &providercore.GrokTokenSource{Repository: tokenSourceFixtureRepository(repo), Cache: cache, Policy: providercore.GrokProviderRefreshPolicy()}
 }
 
-// bindGrokRefreshForTest 将测试刷新器绑定到令牌源。
+// bindGrokRefreshForTest binds the test refresher to the token source.
 func bindGrokRefreshForTest(source *providercore.GrokTokenSource, refresh *providercore.OAuthRefreshAPI, executor providercore.OAuthRefreshExecutor) {
 	source.Refresh = func(ctx context.Context, record *providercore.Record, window time.Duration) (*providercore.OAuthRefreshResult, error) {
 		return refresh.RefreshIfNeeded(ctx, record, executor, window)
 	}
 }
 
-// newGrokCredentialRefreshForTest 为测试仓库和缓存构造 OAuth 刷新器。
+// newGrokCredentialRefreshForTest creates a refresher using the fixture repository and cache.
 func newGrokCredentialRefreshForTest(repo gatewayprovider.ExecutionProviderStore, cache providercore.AccessTokenCache) *providercore.OAuthRefreshAPI {
 	return providercore.NewOAuthRefreshAPI(tokenSourceFixtureRepository(repo), cache, providercore.RefreshOptions{Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error, Platform: providercore.ProviderRefreshPlatformPolicy()})
 }

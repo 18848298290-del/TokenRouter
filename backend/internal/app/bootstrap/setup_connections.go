@@ -44,9 +44,9 @@ func BuildDatabaseConnectionDSNs(cfg *SetupDatabaseConfig) (bootstrapDSN, target
 	return BuildPostgresDSN(cfg, "postgres"), BuildPostgresDSN(cfg, cfg.DBName)
 }
 
-// TestSetupDatabaseConnection 检查数据库连接，并在目标数据库不存在时创建它。
+// TestSetupDatabaseConnection checks connectivity and creates the target database when absent.
 func TestSetupDatabaseConnection(cfg *SetupDatabaseConfig) error {
-	// 先连接维护数据库，否则目标数据库尚未创建时会直接连接失败。
+	// Connect to the maintenance database first because the target may not exist yet.
 	defaultDSN, targetDSN := BuildDatabaseConnectionDSNs(cfg)
 
 	db, err := postgresinfra.Open(defaultDSN, false)
@@ -70,16 +70,14 @@ func TestSetupDatabaseConnection(cfg *SetupDatabaseConfig) error {
 		return fmt.Errorf("ping failed: %w", err)
 	}
 
-	// 查询目标数据库是否存在。
 	var exists bool
 	row := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", cfg.DBName)
 	if err := row.Scan(&exists); err != nil {
 		return fmt.Errorf("failed to check database existence: %w", err)
 	}
 
-	// 目标数据库不存在时创建它。
 	if !exists {
-		// 数据库名通过前置输入校验后写入 SQL，驱动的参数绑定用于值参数。
+		// Callers validate the database identifier before interpolation; SQL parameters bind values.
 		_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", cfg.DBName))
 		if err != nil {
 			return fmt.Errorf("failed to create database '%s': %w", cfg.DBName, err)
@@ -87,7 +85,7 @@ func TestSetupDatabaseConnection(cfg *SetupDatabaseConfig) error {
 		logger.LegacyPrintf("setup", "Database '%s' created successfully", cfg.DBName)
 	}
 
-	// 连接目标数据库，检查创建结果。
+	// Reconnect to the target database to verify access.
 	if err := db.Close(); err != nil {
 		logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
 	}
@@ -114,7 +112,7 @@ func TestSetupDatabaseConnection(cfg *SetupDatabaseConfig) error {
 	return nil
 }
 
-// TestSetupRedisConnection 检查 Redis 连接。
+// TestSetupRedisConnection checks Redis connectivity.
 func TestSetupRedisConnection(cfg *SetupRedisConfig) error {
 	opts := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
@@ -147,7 +145,7 @@ func TestSetupRedisConnection(cfg *SetupRedisConfig) error {
 	return nil
 }
 
-// InitializeSetupDatabase 执行迁移，并在返回前关闭连接。
+// InitializeSetupDatabase applies migrations and closes its connection before returning.
 func InitializeSetupDatabase(ctx context.Context, cfg *SetupDatabaseConfig, timeout time.Duration) error {
 	db, err := postgresinfra.Open(BuildPostgresDSN(cfg, cfg.DBName), false)
 	if err != nil {
@@ -159,7 +157,7 @@ func InitializeSetupDatabase(ctx context.Context, cfg *SetupDatabaseConfig, time
 	return ApplyMigrations(ctx, db)
 }
 
-// InitializeSetupAdmin 用独立连接初始化管理员，操作预算为五秒。
+// InitializeSetupAdmin uses a separate connection with a five-second operation budget.
 func InitializeSetupAdmin(ctx context.Context, cfg *SetupDatabaseConfig, input identity.InitialAdminInput, password func() (string, error)) (bool, string, error) {
 	db, err := postgresinfra.Open(BuildPostgresDSN(cfg, cfg.DBName), false)
 	if err != nil {
@@ -171,7 +169,7 @@ func InitializeSetupAdmin(ctx context.Context, cfg *SetupDatabaseConfig, input i
 	return CreateInitialAdmin(ctx, db, input, password)
 }
 
-// CreateInitialAdmin 装配安装所需的身份存储并创建管理员。
+// CreateInitialAdmin delegates administrator creation to identity storage.
 func CreateInitialAdmin(ctx context.Context, db *sql.DB, input identity.InitialAdminInput, password func() (string, error)) (bool, string, error) {
 	return ip.CreateInitialAdmin(ctx, db, input, password)
 }

@@ -12,7 +12,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// provideClaudeAuthorizationHTTP 为 Claude 授权 HTTP 入口绑定授权用例。
+// provideClaudeAuthorizationHTTP binds Claude authorization to its HTTP handler.
 func provideClaudeAuthorizationHTTP(source *providerauth.ClaudeAuthorization) *providerhttp.ClaudeOAuthHandler {
 	return providerhttp.NewClaudeOAuthHandler(source)
 }
@@ -28,7 +28,7 @@ func provideClaudeAuthorization(proxies egress.ProxyRepository, client providera
 	return providerauth.NewClaudeAuthorization(client, options)
 }
 
-// provideClaudeTokens 绑定 OAuth 与 Vertex 凭据源，各来源按调用时机使用缓存。
+// provideClaudeTokens binds OAuth and Vertex credential sources with their cache policies.
 func provideClaudeTokens(store *postgres.ProviderStore, cache providerauth.AccessTokenCache, authorization *providerauth.ClaudeAuthorization, refresh *providerauth.OAuthRefreshAPI) *providerauth.ClaudeTokenSource {
 	executor := &providerauth.ClaudeTokenRefresher{Authorization: authorization}
 	return &providerauth.ClaudeTokenSource{Options: providerauth.ClaudeTokenOptions{
@@ -43,7 +43,7 @@ func provideClaudeTokens(store *postgres.ProviderStore, cache providerauth.Acces
 	}}
 }
 
-// provideMessageCredentials 复用 Claude 和 Vertex 凭据源，其他平台读取已保存的凭据。
+// provideMessageCredentials reuses Claude and Vertex token lookup; other platforms use stored credentials.
 func provideMessageCredentials(claude *providerauth.ClaudeTokenSource) *providerauth.MessageCredentialSource {
 	result := &providerauth.MessageCredentialSource{}
 	if claude != nil {

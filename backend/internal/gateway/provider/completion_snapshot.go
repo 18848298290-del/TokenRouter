@@ -17,10 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CompletionModels 提供用量结算时的候选型号。
+// CompletionModels supplies candidate model identifiers for settlement.
 type CompletionModels struct{}
 
-// ChatForwardResult 将供应商用量和模型名称转换为网关完成处理所需的结果。
+// ChatForwardResult converts upstream usage and model names into a completion result.
 func ChatForwardResult(result *openai.CompatResponseResult, billingModel string) *forwardcore.OpenAIResult {
 	if result == nil {
 		return nil
@@ -59,7 +59,7 @@ func ProjectCompletionKey(v *apikey.APIKey) *completion.KeySnapshot {
 	if v == nil {
 		return nil
 	}
-	// 图片权限通过字段判断，请求的分组引用由调用方管理。
+
 	policy := &apikey.APIKey{
 		BillingMode: v.BillingMode,
 		RateLimit5h: v.RateLimit5h,
@@ -194,7 +194,7 @@ func ProjectOpenAICompletionResult(v *forwardcore.OpenAIResult, a *provider.Reco
 	return completion.SnapshotResult(out)
 }
 
-// completionUserSummary 从身份记录提取权益和通知所需的数据。
+// completionUserSummary extracts entitlement and notification data from the user record.
 func completionUserSummary(u *identity.User) *billing.UserSummary {
 	if u == nil {
 		return nil
@@ -228,7 +228,7 @@ func completionUserSummary(u *identity.User) *billing.UserSummary {
 	return out
 }
 
-// ImagesForwardResult 将图片结果转换为网关交付和计费需要的格式。
+// ImagesForwardResult converts image results for delivery and billing.
 func ImagesForwardResult(result upstream.AttemptResult, parsed *media.ImageRequest, imageCount int) *forwardcore.OpenAIResult {
 	return &forwardcore.OpenAIResult{
 		RequestID:       result.RequestID,

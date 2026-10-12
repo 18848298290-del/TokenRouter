@@ -19,13 +19,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAIChatAttemptBridge 保存当前 Chat 请求的执行接口。
+// openAIChatAttemptBridge holds execution state for the current Chat request.
 type openAIChatAttemptBridge struct {
 	responsesAttemptBridge
 	promptCacheKey string
 }
 
-// Select 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// Select chooses a text-capable provider and records its identity in the request.
 func (b *openAIChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.ResponseSelection, error) {
 	b.reqLog.Debug("openai_chat_completions.provider_selecting", zap.Int("excluded_provider_count", len(excluded)))
 	var scheduleDecision scheduler.PlatformDecision
@@ -61,7 +61,7 @@ func (b *openAIChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.
 	return b.selectedView(), nil
 }
 
-// SelectionFailure 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// SelectionFailure writes a Chat selection or exhausted-failover error unless the client disconnected.
 func (b *openAIChatAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
@@ -95,7 +95,7 @@ func (b *openAIChatAttemptBridge) SelectionFailure(err error, excludedCount int,
 	}
 }
 
-// Forward 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// Forward applies group mapping and client policy, then records the Chat attempt result and timing.
 func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 	var err error
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsRoutingLatencyMsKey, time.Since(b.routingStart).Milliseconds())
@@ -143,7 +143,7 @@ func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 	return out
 }
 
-// Complete 提交 Chat 请求的完成记录。
+// Complete captures and submits the Chat completion record.
 func (b *openAIChatAttemptBridge) Complete() {
 	res := b.result
 
@@ -171,7 +171,7 @@ func (b *openAIChatAttemptBridge) Complete() {
 	})
 }
 
-// PartialImages 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// PartialImages logs forwarding failures that still produced images.
 func (b *openAIChatAttemptBridge) PartialImages(err error) {
 	b.reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -180,7 +180,7 @@ func (b *openAIChatAttemptBridge) PartialImages(err error) {
 	)
 }
 
-// RetryReady 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// RetryReady rejects retries after disconnection or output and reports eligible provider failures.
 func (b *openAIChatAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bool {
 	err := failure.Cause
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -206,7 +206,7 @@ func (b *openAIChatAttemptBridge) RetryReady(failure *textflow.AttemptFailure) b
 	return true
 }
 
-// RetryWait 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// RetryWait logs the same-provider retry budget and delay.
 func (b *openAIChatAttemptBridge) RetryWait(failure *textflow.AttemptFailure, retryLimit, retryCount int, retryDelay time.Duration) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -219,7 +219,7 @@ func (b *openAIChatAttemptBridge) RetryWait(failure *textflow.AttemptFailure, re
 	)
 }
 
-// Switching 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// Switching logs the provider switch count and limit.
 func (b *openAIChatAttemptBridge) Switching(failure *textflow.AttemptFailure, switchCount, maxProviderSwitches int) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -231,7 +231,7 @@ func (b *openAIChatAttemptBridge) Switching(failure *textflow.AttemptFailure, sw
 	)
 }
 
-// OtherFailure 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// OtherFailure records health and cyber warnings, then writes an error if none was delivered.
 func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	statusCode := 0
 	if v, ok := GetContextInt64(b.c, gatewayhttp.OpsUpstreamStatusCodeKey); ok {
@@ -258,7 +258,7 @@ func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Success 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// Success reports scheduling success and observed first-token latency.
 func (b *openAIChatAttemptBridge) Success() {
 	if b.result != nil {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, b.result), true, b.result.FirstTokenMs)
@@ -267,7 +267,7 @@ func (b *openAIChatAttemptBridge) Success() {
 	}
 }
 
-// Completed 保留 OpenAI Chat 适配差异，循环复用 gateway/text。
+// Completed logs the serving provider and total switch count.
 func (b *openAIChatAttemptBridge) Completed(switchCount int) {
 	b.reqLog.Debug("openai_chat_completions.request_completed",
 		zap.Int64("provider_id", b.provider.Record.ID),

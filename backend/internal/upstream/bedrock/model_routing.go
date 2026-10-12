@@ -12,7 +12,7 @@ const (
 	BedrockRoutingUnsupportedRegion BedrockRoutingFailure = "unsupported_region"
 	BedrockRoutingUnverifiedRegion  BedrockRoutingFailure = "unverified_region"
 
-	// 以下来源区域集合仅用于复用完全相同的已核实列表，不代表任意型号均支持这些区域。
+	// Reuse these source-region lists only for models whose verified region sets match.
 	BedrockUSSources         = "us-east-1 us-east-2 us-west-1 us-west-2 ca-central-1 ca-west-1"
 	BedrockEUSources         = "eu-central-1 eu-central-2 eu-north-1 eu-south-1 eu-south-2 eu-west-1 eu-west-2 eu-west-3"
 	BedrockJPSources         = "ap-northeast-1 ap-northeast-3"
@@ -23,9 +23,9 @@ const (
 )
 
 var (
-	// BedrockModelRegionRules 于 2026-09-09 核对 AWS 模型详情页的地域 ID、来源区域及全局支持表。
-	// 概览声称支持地域推理、但未列出对应精确 ID/来源关系的条目保留为未核实；不拼接 us-gov 等前缀。
-	// SourceURL 记录每个型号自身的证据，升级时必须同时核对地域与全局来源区域。
+	// BedrockModelRegionRules records the AWS model-page review dated 2026-09-09.
+	// Entries lacking an exact inference ID and source-region mapping remain unverified.
+	// SourceURL identifies each model's evidence; updates must check geographic and global sources.
 	BedrockModelRegionRules = map[string]BedrockModelRegionRule{
 		"anthropic.claude-opus-4-7": {
 			SourceURL: "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html",
@@ -161,20 +161,20 @@ var (
 			DocumentedRegions:    strings.Fields("us-east-1 us-east-2 us-west-1 us-west-2 eu-central-1 eu-north-1 eu-south-1 eu-south-2 eu-west-1 eu-west-3 ap-east-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 ap-south-2 ap-southeast-1 ap-southeast-2 ap-southeast-3 ap-southeast-4 ap-southeast-5 ap-southeast-7 il-central-1"),
 			UnverifiedGeoRegions: strings.Fields("ap-east-2 ap-southeast-3 ap-southeast-4 ap-southeast-5 ap-southeast-7"),
 		},
-		// Opus 4 的当前模型详情页已不可用，旧型号概览不能证明具体来源区域支持；保留显式的未核实状态。
+		// The legacy overview does not establish exact Opus 4 source regions; keep this entry unverified.
 		"anthropic.claude-opus-4-20250514-v1:0": {
 			SourceURL: "https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy",
 		},
 	}
 
-	// DefaultBedrockModelMapping 将 Anthropic 模型名映射为 Bedrock 默认模型 ID。
-	// ResolveBedrockModelRoute 根据来源区域和推理规则选择最终 ID。
+	// DefaultBedrockModelMapping maps Anthropic names to default Bedrock model IDs.
+	// ResolveBedrockModelRoute selects the final ID for the source region and inference mode.
 	DefaultBedrockModelMapping = map[string]string{
 		// Claude Fable
 		"claude-fable-5-1": "anthropic.claude-fable-5-1",
 		"claude-fable-5":   "anthropic.claude-fable-5",
 		// Claude Opus
-		// Opus 5、4.8 和 4.7 使用无版本后缀的 Bedrock ID。
+		// Opus 5, 4.8, and 4.7 use Bedrock IDs without version suffixes.
 		"claude-opus-5":            "us.anthropic.claude-opus-5",
 		"claude-opus-4-8":          "us.anthropic.claude-opus-4-8",
 		"claude-opus-4-7":          "us.anthropic.claude-opus-4-7",
@@ -198,7 +198,7 @@ var (
 	}
 )
 
-// BedrockModelRoute 同时保存推理 ID 和签名/请求端点使用的来源区域。
+// BedrockModelRoute pairs the inference ID with the endpoint and signing source region.
 type BedrockModelRoute struct {
 	ModelID      string
 	SourceRegion string
@@ -206,7 +206,7 @@ type BedrockModelRoute struct {
 
 type BedrockRoutingFailure string
 
-// BedrockModelRoutingError 对外只给出失败类别；提供商配置细节由管理员诊断单独读取。
+// BedrockModelRoutingError exposes a failure category through Error; diagnostics carry configuration details.
 type BedrockModelRoutingError struct {
 	Reason          BedrockRoutingFailure
 	ModelID         string
@@ -215,7 +215,7 @@ type BedrockModelRoutingError struct {
 	GlobalAvailable bool
 }
 
-// BedrockInferenceProfile 的来源区域按该推理 ID 对应的官方表记录。
+// BedrockInferenceProfile records the source regions verified for one exact inference ID.
 type BedrockInferenceProfile struct {
 	Id            string
 	SourceRegions []string
@@ -230,7 +230,7 @@ type BedrockModelRegionRule struct {
 	UnverifiedGeoRegions []string
 }
 
-// RouteInput 提供 Bedrock 模型路由所需的来源区域、推理范围和模型名。
+// RouteInput supplies the source region, inference mode, and configured model.
 type RouteInput struct {
 	Region      string
 	ForceGlobal bool
@@ -241,7 +241,7 @@ func (e *BedrockModelRoutingError) Error() string {
 	return "bedrock model routing failed: " + string(e.Reason)
 }
 
-// BedrockRoutingDiagnostic 仅用于管理员测试与内部日志，不向普通客户端暴露提供商区域。
+// BedrockRoutingDiagnostic formats provider details for administrator diagnostics and internal logs.
 func BedrockRoutingDiagnostic(err error) string {
 	var failure *BedrockModelRoutingError
 	if !errors.As(err, &failure) {
@@ -266,7 +266,7 @@ func BedrockRoutingDiagnostic(err error) string {
 	return message
 }
 
-// ResolveBedrockModelRoute 只从已核实的模型/来源区域规则选择推理 ID，不按区域名称猜测。
+// ResolveBedrockModelRoute selects known inference IDs from verified source-region rules.
 // @project-doc docs/interfaces/anthropic_upstream.md#bedrock_region_routing
 func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (BedrockModelRoute, error) {
 	route := BedrockModelRoute{SourceRegion: BedrockRuntimeRegion(provider)}
@@ -285,7 +285,7 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 	}
 	if !knownModel {
 		if !isDefaultAlias && IsLikelyBedrockModelID(modelID) {
-			// 完整未知 ID、其它厂商模型和 ARN 由上游解释，保留显式配置原样。
+			// Preserve explicit unknown vendor IDs and ARNs for upstream validation.
 			route.ModelID = modelID
 			return route, nil
 		}
@@ -296,7 +296,7 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 		return route, failure
 	}
 	failure.GlobalAvailable = rule.GlobalProfile.Supports(route.SourceRegion)
-	// 显式裸基础 ID 在已确认支持单区域调用的来源区域保持原样；默认地域预设仍按提供商路由。
+	// Explicit base IDs retain verified single-region routing; default aliases use inference profiles.
 	if !failure.ForceGlobal && !isDefaultAlias && modelID == baseID && slices.Contains(rule.InRegionSources, route.SourceRegion) {
 		route.ModelID = modelID
 		return route, nil
@@ -314,7 +314,7 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 			}
 		}
 	}
-	// 文档缺少该区域或具体地域 ID 时，不能把“未核实”表述为 AWS 明确不支持。
+	// Missing evidence is unverified, distinct from documented lack of support.
 	failure.Reason = BedrockRoutingUnverifiedRegion
 	if slices.Contains(rule.DocumentedRegions, route.SourceRegion) &&
 		(failure.ForceGlobal || !slices.Contains(rule.UnverifiedGeoRegions, route.SourceRegion)) {
@@ -326,7 +326,7 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 	return route, failure
 }
 
-// BedrockBaseModelID 仅识别推理范围前缀，不剥离版本、日期或 ARN 的任何组成部分。
+// BedrockBaseModelID strips a recognized inference prefix, retaining date and version suffixes.
 func BedrockBaseModelID(modelID string) string {
 	for _, prefix := range BedrockCrossRegionPrefixes {
 		if after, ok := strings.CutPrefix(modelID, prefix); ok {
@@ -340,7 +340,7 @@ func (p BedrockInferenceProfile) Supports(region string) bool {
 	return p.Id != "" && slices.Contains(p.SourceRegions, region)
 }
 
-// BedrockProfile 仅在初始化规则表时拆分来源区域，请求路径不分配区域列表。
+// BedrockProfile splits the source-region list when constructing the static rules.
 func BedrockProfile(id, sourceRegions string) BedrockInferenceProfile {
 	return BedrockInferenceProfile{Id: id, SourceRegions: strings.Fields(sourceRegions)}
 }

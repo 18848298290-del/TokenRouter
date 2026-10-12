@@ -22,7 +22,7 @@ func TestMaskAuditCredential(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("MaskAuditCredential(%q) = %q, want %q", tc.in, got, tc.want)
 			}
-			// 检查掩码结果是否泄漏完整凭证。
+			// The masked result must not contain the complete credential.
 			if len(tc.in) > 14 && strings.Contains(got, tc.in) {
 				t.Fatalf("masked value leaks full credential: %q", got)
 			}

@@ -15,7 +15,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// AsResponses 依次转换请求、取得凭据、调用上游并输出 Responses 响应。
+// AsResponses converts the request, obtains credentials, and returns the Anthropic result in Responses format.
 func AsResponses(ctx context.Context, p ConversionPorts, in ConversionInput, body []byte) (*Result, error) {
 	startTime := time.Now()
 
@@ -47,17 +47,17 @@ func AsResponses(ctx context.Context, p ConversionPorts, in ConversionInput, bod
 	anthropicReq.Stream = true
 	reqStream := true
 
-	// 4. 模型映射：分组映射已由 handler 写入 body，此处继续执行提供商映射和平台规范化。
+	// The handler applied group mapping; continue with provider mapping and platform normalization.
 	mappedModel := p.ResolveModel(ctx, originalModel)
 	if mappedModel == "" {
 		mappedModel = originalModel
 	}
 	reasoningEffort := p.Effort(body, false, mappedModel, originalModel)
-	// 按 Anthropic 出站档位记录，不能用 OpenAI 模型能力过滤掉 Claude 的 max。
+	// Record Anthropic effort directly so OpenAI capability rules do not strip Claude max.
 	if anthropicReq.OutputConfig != nil {
 		reasoningEffort = protocolcore.NormalizeClaudeOutputEffort(anthropicReq.OutputConfig.Effort)
 	}
-	// 国产模型缺少请求 effort 时，thinking 开启后补入默认展示档位。
+	// Supply a display effort for CN models with thinking enabled and no requested effort.
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, body, mappedModel)
 	anthropicReq.Model = mappedModel
 
@@ -68,8 +68,8 @@ func AsResponses(ctx context.Context, p ConversionPorts, in ConversionInput, bod
 		return nil, fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
-	// Responses 入口的 OAuth 转发执行与 Messages 相同的 system 改写、规范化和 metadata 注入。
-	// Anthropic 按客户端身份区分订阅额度和 extra usage，身份处理见 applyClaudeCodeOAuthMimicryToBody。
+	// OAuth forwarding applies the same system, normalization, and metadata rules as Messages.
+	// These client-identity fields affect Anthropic subscription and extra-usage attribution.
 	shouldMimicClaudeCode := in.OAuth
 
 	if shouldMimicClaudeCode {
@@ -125,7 +125,7 @@ func AsResponses(ctx context.Context, p ConversionPorts, in ConversionInput, bod
 	return result, handleErr
 }
 
-// AsChat 依次转换请求、取得凭据、调用上游并输出 Chat 响应。
+// AsChat converts the request, obtains credentials, and returns the Anthropic result in Chat format.
 func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []byte) (*Result, error) {
 	startTime := time.Now()
 
@@ -150,7 +150,7 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 	anthropicReq.Stream = true
 	reqStream := true
 
-	// 4. 模型映射：分组映射已由 handler 写入 body，此处继续执行提供商映射和平台规范化。
+	// The handler applied group mapping; continue with provider mapping and platform normalization.
 	mappedModel := p.ResolveModel(ctx, originalModel)
 	if mappedModel == "" {
 		mappedModel = originalModel
@@ -164,8 +164,8 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 		return nil, fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
-	// Chat Completions 入口的 OAuth 转发执行与 Messages 相同的 system 改写、规范化和 metadata 注入。
-	// Anthropic 按客户端身份区分订阅额度和 extra usage，身份处理见 applyClaudeCodeOAuthMimicryToBody。
+	// OAuth forwarding applies the same system, normalization, and metadata rules as Messages.
+	// These client-identity fields affect Anthropic subscription and extra-usage attribution.
 	shouldMimicClaudeCode := in.OAuth
 
 	if shouldMimicClaudeCode {
@@ -207,11 +207,11 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 	}
 
 	reasoningEffort := p.Effort(body, true, mappedModel, originalModel)
-	// 按 Anthropic 出站档位记录，不能用 OpenAI 模型能力过滤掉 Claude 的 max。
+	// Record Anthropic effort directly so OpenAI capability rules do not strip Claude max.
 	if anthropicReq.OutputConfig != nil {
 		reasoningEffort = protocolcore.NormalizeClaudeOutputEffort(anthropicReq.OutputConfig.Effort)
 	}
-	// 国产模型缺少请求 effort 时，thinking 开启后补入默认展示档位。
+	// Supply a display effort for CN models with thinking enabled and no requested effort.
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, body, mappedModel)
 
 	var result *Result
@@ -287,15 +287,15 @@ func LiftResponsesAdditionalTools(requestBody map[string]any) (bool, error) {
 	return true, nil
 }
 
-// ConversionOptionsForModel 在目标尚未确定时保存请求参数，最终能力由执行适配器解析。
+// ConversionOptionsForModel retains max effort until the execution adapter resolves final target capabilities.
 func ConversionOptionsForModel(_ string) bridge.RequestOptions {
 	return bridge.RequestOptions{
 		SupportsMaxEffort: true,
 	}
 }
 
-// ExtractEffort 优先读取 reasoning.effort，Chat 请求缺少该字段时读取 reasoning_effort。
-// 模型和档位由调用方提供的 normalize 函数规范化。
+// ExtractEffort prefers reasoning.effort, then reasoning_effort for Chat requests.
+// The supplied normalizer resolves the effort against the first nonempty model candidate.
 func ExtractEffort(body []byte, chat bool, normalize func(string, string) string, models ...string) *string {
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
 	if raw == "" && chat {

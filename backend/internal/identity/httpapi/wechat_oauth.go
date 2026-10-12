@@ -46,7 +46,7 @@ type WeChatHandler struct {
 
 type CompleteWeChatOAuthRequest struct {
 	InvitationCode   string `json:"invitation_code" binding:"required"`
-	AffCode          string `json:"aff_code,omitempty"` // 邀请返利码，仅注册新用户时绑定邀请关系。
+	AffCode          string `json:"aff_code,omitempty"` // Affiliate code used when registering a new user.
 	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
 	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
 }
@@ -62,7 +62,7 @@ func (h *WeChatHandler) FrontendCallback(ctx context.Context) string {
 	return WechatOAuthDefaultFrontendCB
 }
 
-// GetConfig 在读取动态配置前验证模式，保持 APIBaseURL 读取与提供方设置读取的原顺序。
+// GetConfig validates the mode before loading provider settings and resolving callback URLs.
 func (h *WeChatHandler) GetConfig(ctx context.Context, raw string, c *gin.Context) (identity.WeChatOAuthOptions, error) {
 	mode, e := ResolveWeChatOAuthMode(raw, c)
 	if e != nil {
@@ -94,7 +94,7 @@ func (h *WeChatHandler) GetConfig(ctx context.Context, raw string, c *gin.Contex
 	return cfg, nil
 }
 
-// WeChatOAuthStart 建立授权状态与统一 pending 流程所需的短期浏览器 cookie。
+// WeChatOAuthStart creates authorization state and short-lived cookies for the pending flow.
 func (h *WeChatHandler) WeChatOAuthStart(c *gin.Context) {
 	if !h.RequireActionCaptchaForOAuthLoginStart(c) {
 		return
@@ -151,7 +151,7 @@ func (h *WeChatHandler) WeChatOAuthStart(c *gin.Context) {
 	RespondOAuthStart(c, authURL)
 }
 
-// WeChatOAuthCallback 验证授权并解析 openid/unionid，随后进入统一 pending 流程。
+// WeChatOAuthCallback verifies authorization, resolves openid/unionid, and starts the pending flow.
 func (h *WeChatHandler) WeChatOAuthCallback(c *gin.Context) {
 	frontendCallback := h.FrontendCallback(c.Request.Context())
 

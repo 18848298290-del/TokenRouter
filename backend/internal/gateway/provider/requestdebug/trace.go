@@ -22,7 +22,7 @@ import (
 
 const debugGatewayBodyDefaultFilename = "gateway_debug.log"
 
-// Trace 由 app 共享。请求结束后才关闭文件，Close 的重复调用共用结果。
+// Trace is shared by the app. Callers close it after requests finish; repeated Close calls return the same result.
 type Trace struct {
 	file      *os.File
 	mimic     bool
@@ -47,7 +47,7 @@ func (s *Trace) Close() error {
 	return s.closeErr
 }
 
-// Capture 只在需要保留错误诊断或启用日志时读取报文。
+// Capture inspects the request when diagnostics are retained or mimic logging is enabled.
 func (s *Trace) Capture(req *http.Request, body []byte, target *gatewayprovider.ExecutionProvider, tokenType string, mimic, retain bool) string {
 	if !retain && (s == nil || !s.mimic) {
 		return ""
@@ -73,7 +73,7 @@ func redactAuthHeaderValue(v string) string {
 	if v == "" {
 		return ""
 	}
-	// 保留认证方案名称，隐藏凭据。
+	// Keep the Bearer scheme visible while redacting credentials.
 	if strings.HasPrefix(strings.ToLower(v), "bearer ") {
 		return "Bearer [redacted]"
 	}
@@ -124,7 +124,7 @@ func CaptureLine(req *http.Request, body []byte, provider *gatewayprovider.Execu
 		return ""
 	}
 
-	// 读取指纹字段，认证 Header 使用脱敏值。
+	// Capture fingerprint headers with redacted authentication values.
 	interesting := []string{
 		"user-agent",
 		"x-app",
@@ -156,7 +156,7 @@ func CaptureLine(req *http.Request, body []byte, provider *gatewayprovider.Execu
 	metaUserID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
 	sysPreview := strings.TrimSpace(extractSystemPreviewFromBody(body))
 
-	// 系统提示预览最多显示 300 字节。
+	// Limit the system prompt preview to 300 bytes before escaping line breaks.
 	if len(sysPreview) > 300 {
 		sysPreview = sysPreview[:300] + "..."
 	}
@@ -188,13 +188,13 @@ func (s *Trace) open(path string) {
 		path = debugGatewayBodyDefaultFilename
 	}
 
-	// 如果 path 指向一个已存在的目录，自动追加默认文件名
+	// An existing directory uses the default log filename.
 
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = filepath.Join(path, debugGatewayBodyDefaultFilename)
 	}
 
-	// 确保父目录存在
+	// Create the parent directory if needed.
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			slog.Error("failed to create gateway debug log directory", "dir", dir, "error", err)
@@ -211,15 +211,15 @@ func (s *Trace) open(path string) {
 	slog.Info("gateway debug logging enabled", "path", path)
 }
 
-// Snapshot 将网关请求的完整快照（headers + body）写入独立的调试日志文件，
-// 用于对比客户端原始请求和上游转发请求。
+// Snapshot writes headers and the full body to the debug log for comparison
+// between client input and upstream requests. Authentication headers are redacted.
 //
-// 启用方式（环境变量）：
+// Enable with an environment variable:
 //
-//	TOKENROUTER_DEBUG_GATEWAY_BODY=1                          # 写入 gateway_debug.log
-//	TOKENROUTER_DEBUG_GATEWAY_BODY=/tmp/gateway_debug.log     # 写入指定路径
+//	TOKENROUTER_DEBUG_GATEWAY_BODY=1                      # Use gateway_debug.log
+//	TOKENROUTER_DEBUG_GATEWAY_BODY=/tmp/gateway_debug.log # Use the specified path
 //
-// tag: "CLIENT_ORIGINAL" 或 "UPSTREAM_FORWARD"
+// Tags identify the capture point: "CLIENT_ORIGINAL" or "UPSTREAM_FORWARD".
 func (s *Trace) Snapshot(tag string, headers http.Header, body []byte, extra map[string]string) {
 	f := s.file
 	if f == nil {
@@ -230,7 +230,7 @@ func (s *Trace) Snapshot(tag string, headers http.Header, body []byte, extra map
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
 	fmt.Fprintf(&buf, "\n========== [%s] %s ==========\n", ts, tag)
 
-	// 按键排序输出请求上下文。
+	// Sort context keys for repeatable output.
 	if len(extra) > 0 {
 		fmt.Fprint(&buf, "--- context ---\n")
 		extraKeys := make([]string, 0, len(extra))
@@ -243,7 +243,7 @@ func (s *Trace) Snapshot(tag string, headers http.Header, body []byte, extra map
 		}
 	}
 
-	// 2. headers（按 Claude CLI 的发送顺序排列，便于与抓包对比，auth 脱敏）
+	// Use Claude CLI header order for packet-capture comparisons and redact authentication.
 	fmt.Fprint(&buf, "--- headers ---\n")
 	for _, k := range claude.SortHeadersByWireOrder(headers) {
 		for _, v := range headers[k] {
@@ -251,7 +251,7 @@ func (s *Trace) Snapshot(tag string, headers http.Header, body []byte, extra map
 		}
 	}
 
-	// 3. body（完整输出，格式化 JSON 便于 diff）
+	// Pretty-print the full JSON body for comparison.
 	fmt.Fprint(&buf, "--- body ---\n")
 	if len(body) == 0 {
 		fmt.Fprint(&buf, "  (empty)\n")
@@ -260,11 +260,11 @@ func (s *Trace) Snapshot(tag string, headers http.Header, body []byte, extra map
 		if json.Indent(&pretty, body, "  ", "  ") == nil {
 			fmt.Fprintf(&buf, "  %s\n", pretty.Bytes())
 		} else {
-			// JSON 格式化失败时原样输出
+			// Write the raw body when JSON formatting fails.
 			fmt.Fprintf(&buf, "  %s\n", body)
 		}
 	}
 
-	// 写入调试文件，并发写入的内容可能交错。
+	// Concurrent snapshots may interleave in the debug file.
 	_, _ = f.WriteString(buf.String())
 }

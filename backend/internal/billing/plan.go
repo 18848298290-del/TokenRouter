@@ -32,7 +32,7 @@ type SubscriptionPlan struct {
 	UpdatedAt            time.Time
 }
 
-// SubscriptionPlanGroup 是订阅套餐分组限制的名称摘要。
+// SubscriptionPlanGroup identifies a group covered by a plan and supplies its display name.
 type SubscriptionPlanGroup struct {
 	ID   int64
 	Name string

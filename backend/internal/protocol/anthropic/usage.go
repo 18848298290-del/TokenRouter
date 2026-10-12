@@ -1,12 +1,12 @@
 package anthropic
 
-// ClaudeUsageWindow Anthropic /api/oauth/usage 返回的单个用量窗口。
+// ClaudeUsageWindow is one window returned by Anthropic /api/oauth/usage.
 type ClaudeUsageWindow struct {
 	Utilization float64 `json:"utilization"`
 	ResetsAt    string  `json:"resets_at"`
 }
 
-// ClaudeUsageResponse Anthropic API 返回的 usage 结构。
+// ClaudeUsageResponse contains the Anthropic OAuth usage windows.
 type ClaudeUsageResponse struct {
 	FiveHour struct {
 		Utilization float64 `json:"utilization"`
@@ -20,8 +20,8 @@ type ClaudeUsageResponse struct {
 		Utilization float64 `json:"utilization"`
 		ResetsAt    string  `json:"resets_at"`
 	} `json:"seven_day_sonnet"`
-	// Fable 专属 7d 窗口（对应响应头 7d_oi，claim 名为 seven_day_overage_included，
-	// 见 anthropic-ratelimit-unified-representative-claim 头）。上游 usage API
-	// 若不下发该字段，GetUsage 会用被动采样数据回填。
+	// Fable's seven-day window corresponds to 7d_oi and the
+	// seven_day_overage_included representative claim. GetUsage fills this from
+	// passively sampled headers when the usage API omits it.
 	SevenDayOverageIncluded ClaudeUsageWindow `json:"seven_day_overage_included"`
 }

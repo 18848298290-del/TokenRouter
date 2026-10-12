@@ -10,11 +10,11 @@ const (
 	defaultOpenAIProxyStreamFailureWindow     = time.Minute
 	defaultOpenAIProxyStreamQuarantineTTL     = 10 * time.Minute
 	defaultOpenAIProxyStreamCircuitMaxEntries = 4096
-	// 同一代理或 HTTP/2 连接故障会同时中断多条复用流，短时间内只计一次底层故障。
+	// A failed proxy connection can interrupt many multiplexed streams; collapse bursts into one observation.
 	defaultOpenAIProxyStreamFailureCollapse = 3 * time.Second
 )
 
-// ProxyStreamCircuitSettings 描述按代理隔离的断流窗口和容量。
+// ProxyStreamCircuitSettings configures per-proxy failure windows, quarantine, and capacity.
 type ProxyStreamCircuitSettings struct {
 	Disabled         bool
 	FailureThreshold int
@@ -32,15 +32,15 @@ type openAIProxyStreamCircuitEntry struct {
 	lastTouched   time.Time
 }
 
-// ProxyStreamCircuit 是按代理 ID 隔离的进程内有界熔断器。
-// 进程重启会清空观察记录，已触发的隔离会在 TTL 到期后自动解除。
+// ProxyStreamCircuit tracks a bounded set of quarantined proxy IDs in memory.
+// Restarting clears observations, and quarantine expires at its TTL.
 type ProxyStreamCircuit struct {
 	mu       sync.Mutex
 	settings ProxyStreamCircuitSettings
 	entries  map[int64]openAIProxyStreamCircuitEntry
 }
 
-// NewProxyStreamCircuit 构造有界状态，不启动后台任务。
+// NewProxyStreamCircuit allocates bounded circuit state without starting background work.
 func NewProxyStreamCircuit(settings ProxyStreamCircuitSettings) *ProxyStreamCircuit {
 	if settings.FailureThreshold <= 0 {
 		settings.FailureThreshold = defaultOpenAIProxyStreamFailureThreshold
@@ -84,7 +84,7 @@ func (c *ProxyStreamCircuit) RecordFailure(proxyID int64, now time.Time) (bool, 
 		entry.windowStart = now
 		entry.blockedUntil = time.Time{}
 	}
-	// 复用连接断开会让同一代理的并发流同时报错，折叠为一次故障事件。
+	// Collapse concurrent failures from a shared connection into one proxy failure event.
 	if c.settings.CollapseInterval > 0 && !entry.lastFailureAt.IsZero() &&
 		now.Sub(entry.lastFailureAt) >= 0 && now.Sub(entry.lastFailureAt) < c.settings.CollapseInterval {
 		entry.lastTouched = now
@@ -132,7 +132,7 @@ func (c *ProxyStreamCircuit) IsBlocked(proxyID int64, now time.Time) bool {
 	return true
 }
 
-// ActiveBlockCount 返回当前仍在隔离期的代理数，用于判断是否需要第二次 fail-open 调度。
+// ActiveBlockCount counts quarantined proxies for the scheduler's fail-open decision.
 func (c *ProxyStreamCircuit) ActiveBlockCount(now time.Time) int {
 	if c == nil || c.settings.Disabled {
 		return 0
@@ -175,7 +175,7 @@ func (c *ProxyStreamCircuit) ensureCapacityLocked(now time.Time) {
 	}
 }
 
-// DefaultProxyStreamCircuitSettings 保留生产默认值，显式测试输入仍由构造器按原规则补齐。
+// DefaultProxyStreamCircuitSettings returns production defaults, including a three-second collapse interval.
 func DefaultProxyStreamCircuitSettings() ProxyStreamCircuitSettings {
 	return ProxyStreamCircuitSettings{FailureThreshold: defaultOpenAIProxyStreamFailureThreshold, FailureWindow: defaultOpenAIProxyStreamFailureWindow, QuarantineTTL: defaultOpenAIProxyStreamQuarantineTTL, CollapseInterval: defaultOpenAIProxyStreamFailureCollapse, MaxEntries: defaultOpenAIProxyStreamCircuitMaxEntries}
 }

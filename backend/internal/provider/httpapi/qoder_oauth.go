@@ -9,7 +9,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// QoderAuthorizationUseCase 提供 HTTP 层需要的 Qoder 授权操作。
+// QoderAuthorizationUseCase defines the Qoder authorization operations used by HTTP handlers.
 type QoderAuthorizationUseCase interface {
 	ValidateSite(string) (string, error)
 	GenerateAuthURLForSite(context.Context, string, *int64) (*provider.QoderAuthURLResult, error)
@@ -43,8 +43,8 @@ func NewQoderOAuthHandler(qoderOAuthService QoderAuthorizationUseCase) *QoderOAu
 	return &QoderOAuthHandler{qoderOAuthService: qoderOAuthService}
 }
 
-// GenerateAuthURL 生成 Qoder 浏览器授权 URL。
-// 路由：POST /api/v1/admin/qoder/oauth/auth-url。
+// GenerateAuthURL generates a Qoder browser authorization URL.
+// POST /api/v1/admin/qoder/oauth/auth-url
 func (h *QoderOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req QoderGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -66,8 +66,8 @@ func (h *QoderOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ExchangeCode 完成 Qoder 设备授权并返回提供商凭据。
-// 路由：POST /api/v1/admin/qoder/oauth/exchange-code。
+// ExchangeCode completes Qoder device authorization and returns provider credentials.
+// POST /api/v1/admin/qoder/oauth/exchange-code
 func (h *QoderOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req QoderExchangeCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -90,8 +90,8 @@ func (h *QoderOAuthHandler) ExchangeCode(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// Poll 检查 Qoder 浏览器授权是否已完成。
-// 路由：POST /api/v1/admin/qoder/oauth/poll。
+// Poll reports whether Qoder browser authorization has completed.
+// POST /api/v1/admin/qoder/oauth/poll
 func (h *QoderOAuthHandler) Poll(c *gin.Context) {
 	var req QoderPollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// resetViperWithJWTSecret 清空 Viper 与配置路径环境变量，并设置测试用 JWT 密钥。
+// resetViperWithJWTSecret clears Viper and configuration-path variables and sets a test JWT secret.
 func resetViperWithJWTSecret(t *testing.T) {
 	t.Helper()
 	viper.Reset()
@@ -20,7 +20,7 @@ func resetViperWithJWTSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 }
 
-// prepareLegacyConfigTest 清空兼容键的环境变量，并指定当前用例的临时配置文件。
+// prepareLegacyConfigTest clears alias environment variables and selects a temporary configuration file.
 func prepareLegacyConfigTest(t *testing.T, body string) string {
 	t.Helper()
 	resetViperWithJWTSecret(t)

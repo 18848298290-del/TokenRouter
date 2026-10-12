@@ -37,7 +37,7 @@ func TestRateLimitServiceAdvancedSchedulerScoreSnapshotUsesSharedRuntimeStats(t 
 		{ID: 7102, Platform: capability.PlatformGemini, Priority: 1},
 	}
 
-	// 没有样本时，共享统计和 nil 统计都把错误率按 0% 处理。
+	// With no samples, both shared and nil statistics use a zero error rate.
 	neutral := options.Score(context.Background(), (*accessview.GroupConfig)(group), providers, nil)
 	neutralCore, _ := scheduler.ScoreCandidates(scoreFixtureProviders(providers), nil, nil, weights, scheduler.ScoreInput{}, time.Now())
 	require.Len(t, neutralCore, 2)
@@ -57,7 +57,8 @@ func TestRateLimitServiceAdvancedSchedulerScoreSnapshotUsesSharedRuntimeStats(t 
 	for index, provider := range providers {
 		require.InDelta(t, core[index].Score, observed[provider.ID].BaseScore, 0.000001)
 	}
-	// 零基线下首次失败把错误率 EWMA 更新为 0.2，错误率因子降至 0.8；首次成功保持 1。
+	// The first failure moves error-rate EWMA from 0 to 0.2, reducing its score factor to 0.8.
+	// The first success leaves that factor at 1.
 	require.InDelta(t, 2.6, observed[providers[0].ID].BaseScore, 0.000001)
 	require.InDelta(t, 6.0, observed[providers[1].ID].BaseScore, 0.000001)
 	require.Less(t, observed[providers[0].ID].BaseScore, neutral[providers[0].ID].BaseScore)
@@ -119,7 +120,7 @@ func TestAdvancedSchedulerScoreSnapshotKeepsHardStickyInfinity(t *testing.T) {
 	require.Zero(t, snapshot.StickyScore)
 }
 
-// newScoreFixtureState 每个测试持有独立运行状态，生产装配则复用唯一 shared 对象。
+// newScoreFixtureState isolates each test; production consumers share one state instance.
 func newScoreFixtureState() *schedulerSharedState {
 	return &schedulerSharedState{Settings: scheduler.NewSettingsRuntime(scheduler.Diagnostics{}), Feedback: scheduler.NewRuntimeStats(time.Now)}
 }

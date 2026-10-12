@@ -255,7 +255,7 @@ func TestGetOIDCConnectOAuthConfig_DefaultsCompatibilityFlagsToSafeValuesWhenSet
 	require.True(t, got.ValidateIDToken)
 }
 
-// readOAuthAdminSettings 为认证设置夹具提供默认并发值，展示规则由身份模块拥有。
+// readOAuthAdminSettings supplies a fixture concurrency default; identity owns presentation rules.
 func readOAuthAdminSettings(source *identity.OAuthSettings, values map[string]string) *identity.AdminReadSettings {
 	return source.ReadAdminSettings(values, func() int { return 0 })
 }

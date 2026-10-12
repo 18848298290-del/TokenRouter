@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/authconfig"
 )
 
-// TestReadAdminSettingsStringFallbacks 覆盖数据库空值、配置默认值和内置默认值的优先级。
+// TestReadAdminSettingsStringFallbacks checks precedence among empty stored values, configuration defaults, and built-in defaults.
 func TestReadAdminSettingsStringFallbacks(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -36,7 +36,7 @@ func TestReadAdminSettingsStringFallbacks(t *testing.T) {
 	}
 }
 
-// TestReadAdminSettingsExplicitEmptyValues 覆盖允许清空的字段和需要区分缺失与零值的设置。
+// TestReadAdminSettingsExplicitEmptyValues checks clearable fields and settings that distinguish missing values from zero values.
 func TestReadAdminSettingsExplicitEmptyValues(t *testing.T) {
 	source := NewOAuthSettings(nil, &OAuthSettingsDefaults{
 		LinuxDo: authconfig.LinuxDoConnectConfig{ClientID: " padded "},

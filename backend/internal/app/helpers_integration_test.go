@@ -19,14 +19,14 @@ import (
 )
 
 var (
-	// NewProviderTestsForTest 供集成测试调用提供商测试组件的应用构造函数。
+	// NewProviderTestsForTest exposes the application's provider test constructor to integration tests.
 	NewProviderTestsForTest = provideProviderTests
 
-	// 健康状态集成测试使用应用构造函数。
+	// Health integration tests use the application constructor.
 	NewProviderHealthRuntimeForTest = provideProviderHealthRuntime
 	NewUpstreamHealthForTest        = provideUpstreamHealth
 
-	// NewProviderStoreForTest 为集成测试绑定提供商存储配置和事件写入函数。
+	// NewProviderStoreForTest binds provider store configuration and event writes for integration tests.
 	NewProviderStoreForTest = provideProviderStore
 )
 
@@ -38,7 +38,7 @@ type databaseFixture struct {
 	port   int
 }
 
-// newDatabaseFixture 构造测试数据库。
+// newDatabaseFixture constructs the test database.
 func newDatabaseFixture(t *testing.T) *databaseFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

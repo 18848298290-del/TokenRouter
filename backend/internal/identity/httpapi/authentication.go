@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthenticationHandler 汇总同一组实例，不在每个请求重新创建用例、存储或 provider 客户端。
+// AuthenticationHandler shares initialized handlers across requests.
 type AuthenticationHandler struct {
 	Session  *SessionHandler
 	Pending  *PendingHandler

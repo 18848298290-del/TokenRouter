@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// OrderIDPrefix 是新建商户订单号的前缀。
+	// OrderIDPrefix prefixes newly created merchant order numbers.
 	OrderIDPrefix = "tr_"
 )
 
@@ -62,11 +62,11 @@ type Order struct {
 	SrcURL               *string                          `json:"src_url,omitempty"`
 	CreatedAt            time.Time                        `json:"created_at,omitempty"`
 	UpdatedAt            time.Time                        `json:"updated_at,omitempty"`
-	// 订单查询返回的 HTTP 数据包含空 edges 字段。
+	// Order HTTP responses include an empty edges object for compatibility.
 	Edges struct{} `json:"edges"`
 }
 
-// Clone 复制订单及其快照，保持 JSON 数字与空集合类型。
+// Clone copies the order and snapshots while retaining JSON number and empty collection types.
 func (o *Order) Clone() *Order {
 	if o == nil {
 		return nil
@@ -218,14 +218,14 @@ func cloneOrderValue(value any) any {
 	}
 }
 
-// GenerateOutTradeNo 生成渠道使用的商户订单号，格式为 tr_、当前日期和 8 位随机字符。
+// GenerateOutTradeNo returns "tr_", the current date, and eight random alphanumeric characters.
 func GenerateOutTradeNo() string {
 	date := time.Now().Format("20060102")
 	rnd := GenerateMerchantRandomString(8)
 	return OrderIDPrefix + date + rnd
 }
 
-// GenerateMerchantRandomString 生成指定长度的字母数字字符串。
+// GenerateMerchantRandomString returns n random alphanumeric characters.
 func GenerateMerchantRandomString(n int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, n)

@@ -7,13 +7,9 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// StripMessageCacheControl 移除 $.messages[*].content[*].cache_control。
-// 与 Parrot _strip_message_cache_control 语义一致。
-//
-// 旧策略为什么整体清空：客户端（特别是 Claude Code）经常把 cache_control 打在
-// "当前最后一条 user message" 上；下一轮对话 messages 追加后，原本的最后一条
-// 变成中间某条，cache_control 还挂着就导致"前缀签名变化"，破坏缓存命中。
-// 统一由代理重新打断点（AddMessageCacheBreakpoints）才能在多轮间稳定。
+// StripMessageCacheControl removes cache_control from message content blocks.
+// Call it before rebuilding breakpoints with AddMessageCacheBreakpoints so
+// breakpoints from earlier turns do not accumulate as messages are appended.
 func StripMessageCacheControl(body []byte) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -43,18 +39,12 @@ func StripMessageCacheControl(body []byte) []byte {
 	return body
 }
 
-// AddMessageCacheBreakpoints 在 messages 上注入两个稳定的 cache 断点：
-//  1. 最后一条 message
-//  2. 当 messages 数量 ≥ 4 时，倒数第二个 role=user 的 message
+// AddMessageCacheBreakpoints targets the last message and, with at least four
+// messages, the second-to-last user message. Together with one system and one
+// tool breakpoint, these fit the four-breakpoint limit.
 //
-// 与 Parrot add_cache_breakpoints 一致。两个断点 + system prompt block 的断点
-// + tools[-1] 的断点共同构成最多 4 个断点（Anthropic 上限）。
-//
-// cache_control ttl 策略：
-//   - 若目标 block 已有 cache_control.ttl → 不覆盖
-//   - 否则写入 {"type":"ephemeral","ttl": DefaultCacheControlTTL}
-//
-// 调用前应先 StripMessageCacheControl 以保证幂等和稳定。
+// Existing nonempty TTLs are retained; missing TTLs use DefaultCacheControlTTL.
+// Call StripMessageCacheControl first when replacing client breakpoints.
 func AddMessageCacheBreakpoints(body []byte) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -84,11 +74,9 @@ func AddMessageCacheBreakpoints(body []byte) []byte {
 	return body
 }
 
-// InjectCacheControlOnLastContentBlock 把 cache_control 断点打在 messages[idx]
-// 的最后一个 content block 上。若 content 是 string，先升级成单块 text 数组
-// （对齐 Parrot _inject_cache_on_msg 的行为）。
-//
-// msg 是调用方已持有的 gjson.Result 快照，用于省一次 GetBytes。
+// InjectCacheControlOnLastContentBlock adds a breakpoint to the last content
+// block at idx, converting string content to a text-block array.
+// msg must be the caller's snapshot of that message. Existing nonempty TTLs are retained.
 func InjectCacheControlOnLastContentBlock(body []byte, idx int, msg *gjson.Result) []byte {
 	content := msg.Get("content")
 
@@ -133,8 +121,8 @@ func InjectCacheControlOnLastContentBlock(body []byte, idx int, msg *gjson.Resul
 	return body
 }
 
-// MustJSONString 把一个 Go string 序列化为合法 JSON string（含引号），
-// 用于 sjson.SetRawBytes 场景下手工拼 JSON。
+// MustJSONString returns the Go-quoted representation used when building raw JSON.
+// Callers must account for Go escapes, such as \xNN, that JSON does not accept.
 func MustJSONString(s string) string {
 	return fmt.Sprintf("%q", s)
 }

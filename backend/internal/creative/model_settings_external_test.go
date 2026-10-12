@@ -25,7 +25,7 @@ func TestCreativeOperationsForModelIntersectsPlatformSupport(t *testing.T) {
 	require.Empty(t, operations)
 }
 
-// TestNormalizeCreativeModelSettingsForSaveByPlatform 校验已解析模型的能力，未解析模型保留配置。
+// TestNormalizeCreativeModelSettingsForSaveByPlatform checks resolved capabilities and retains unresolved entries.
 func TestNormalizeCreativeModelSettingsForSaveByPlatform(t *testing.T) {
 	svc := newCreativeTestService()
 	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)

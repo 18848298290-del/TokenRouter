@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-// SessionAttempts 保存当前请求的会话完成状态。资源可在取消或接受请求时先行释放，
-// 会话保留与注销以执行层观测到的成功或可结算部分结果为准。
+// SessionAttempts tracks session completion for a request. Resources may be released early,
+// while session retention depends on whether execution served a successful or billable partial result.
 type SessionAttempts struct {
 	mu          sync.Mutex
 	closed      bool
@@ -19,7 +19,7 @@ func NewSessionAttempts(cache SessionLimitCache, diagnostics Diagnostics) *Sessi
 	return &SessionAttempts{cache: cache, diagnostics: diagnostics, entries: map[int64]*AttemptLease{}}
 }
 
-// Track 登记入口处理后的会话绑定，再次选中同一提供商时使用最新绑定。
+// Track records a session binding, replacing it when the same provider is selected again.
 func (s *SessionAttempts) Track(binding SessionBinding) {
 	if binding.SessionID == "" {
 		return
@@ -40,7 +40,7 @@ func (s *SessionAttempts) Track(binding SessionBinding) {
 	s.mu.Unlock()
 }
 
-// Own 将本次提供商或串行资源交给对应尝试；提前释放与最终 Finish 共用同一个释放函数。
+// Own attaches a resource release to an attempt, shared by early release and final completion.
 func (s *SessionAttempts) Own(id int64, release func()) {
 	if release == nil {
 		return
@@ -55,7 +55,7 @@ func (s *SessionAttempts) Own(id int64, release func()) {
 	}
 }
 
-// Abandon 在切换提供商时立即注销前一个提供商的会话。
+// Abandon unregisters the previous provider's session when switching providers.
 func (s *SessionAttempts) Abandon(id int64) {
 	s.mu.Lock()
 	attempt := s.entries[id]
@@ -66,7 +66,7 @@ func (s *SessionAttempts) Abandon(id int64) {
 	}
 }
 
-// Reset 在分组回退前完成本轮尝试，下一轮仍可登记。
+// Reset finishes the current attempts before group fallback and permits new registrations.
 func (s *SessionAttempts) Reset() {
 	s.mu.Lock()
 	entries := s.entries
@@ -77,7 +77,7 @@ func (s *SessionAttempts) Reset() {
 	}
 }
 
-// Finish 按请求的最终结果结束所有尝试，重复调用保持首次结果。
+// Finish completes all attempts with the final outcome; subsequent calls have no effect.
 func (s *SessionAttempts) Finish(outcome AttemptOutcome) {
 	s.mu.Lock()
 	if s.closed {

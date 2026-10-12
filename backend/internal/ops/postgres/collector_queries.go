@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// MetricsQueries 查询监控指标所需的业务表。
+// MetricsQueries reads business tables for monitoring samples.
 type MetricsQueries struct {
 	*Advisory
 	db *sql.DB

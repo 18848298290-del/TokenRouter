@@ -28,7 +28,7 @@ type openAIImagesReadErrorBody struct {
 	err error
 }
 
-// countingModelRateLimitRepo 记录 SetModelRateLimit 调用，用于断言"没写提供商状态"。
+// countingModelRateLimitRepo records cooldown writes for assertions about provider state.
 type countingModelRateLimitRepo struct {
 	gatewayprovider.ExecutionProviderStore
 	calls  int
@@ -77,7 +77,8 @@ func TestOpenAIImagesOAuthBodyReadTransportErrorFailover(t *testing.T) {
 	require.Equal(t, "Upstream HTTP/2 stream failed", events[0].Message)
 }
 
-// TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified 验证本地取消、超限和业务错误不会伪装成传输故障。
+// TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified checks that cancellation, size limits, and semantic
+// errors keep their classifications.
 func TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified(t *testing.T) {
 	tests := []struct {
 		name string
@@ -107,7 +108,8 @@ func TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified(t *testing.T) {
 	}
 }
 
-// TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover 验证下游开始输出后出现传输错误时停止换号。
+// TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover checks that output closes the
+// failover window.
 func TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -242,7 +244,7 @@ func TestShouldCoolOpenAIImagesToolForError(t *testing.T) {
 			want: false,
 		},
 		{
-			// 网关从模型文字里推断出来的判据：只说明这一轮没出图。
+			// A verdict inferred from model text describes this attempt's missing image.
 			name: "synthesized_from_model_text",
 			err: &upstreamopenai.OpenAIImagesUpstreamError{
 				StatusCode:               http.StatusBadGateway,
@@ -252,7 +254,7 @@ func TestShouldCoolOpenAIImagesToolForError(t *testing.T) {
 			want: false,
 		},
 		{
-			// 上游自己在 error 帧里点名该状态：这才是提供商级证据，保持冷却。
+			// A structured upstream error supplies evidence for provider cooldown.
 			name: "structured_upstream_error_frame",
 			err: &upstreamopenai.OpenAIImagesUpstreamError{
 				StatusCode: http.StatusBadGateway,
@@ -269,7 +271,8 @@ func TestShouldCoolOpenAIImagesToolForError(t *testing.T) {
 	}
 }
 
-// TestHandleOpenAIImagesOAuthResponseError_TextFallbackDoesNotCoolProvider 验证仅返回文字时提供商冷却状态保持原样。
+// TestHandleOpenAIImagesOAuthResponseError_TextFallbackDoesNotCoolProvider checks that text-only output
+// leaves cooldown unchanged.
 func TestHandleOpenAIImagesOAuthResponseError_TextFallbackDoesNotCoolProvider(t *testing.T) {
 	c, _ := newImagesCooldownContext(t)
 	repo := &countingModelRateLimitRepo{}
@@ -287,12 +290,13 @@ func TestHandleOpenAIImagesOAuthResponseError_TextFallbackDoesNotCoolProvider(t 
 
 	require.Zero(t, repo.calls, "模型闲聊不构成提供商级证据，不得写 30 分钟冷却")
 
-	// 仅返回文字时仍触发换号。
+	// Text-only output still permits provider failover.
 	var failover *forwardcore.UpstreamFailoverError
 	require.True(t, errors.As(err, &failover), "仍应触发换号，got %T", err)
 }
 
-// TestHandleOpenAIImagesOAuthResponseError_StructuredUnavailableStillCoolsProvider 验证对照不变式：上游 error 帧点名该状态时仍然冷却，否则等于把功能整个废掉。
+// TestHandleOpenAIImagesOAuthResponseError_StructuredUnavailableStillCoolsProvider checks cooldown for
+// structured image_generation_unavailable errors.
 func TestHandleOpenAIImagesOAuthResponseError_StructuredUnavailableStillCoolsProvider(t *testing.T) {
 	c, _ := newImagesCooldownContext(t)
 	repo := &countingModelRateLimitRepo{}
@@ -315,7 +319,8 @@ func TestHandleOpenAIImagesOAuthResponseError_StructuredUnavailableStillCoolsPro
 	require.Equal(t, []string{providerimages.OpenAIImageGenerationRateLimitKey}, repo.scopes)
 }
 
-// TestOpenAIImagesTextFallback_MarksSynthesizedVerdicts 验证两个文字响应入口添加合成判定标记，违规拦截分支保持自身判定。
+// TestOpenAIImagesTextFallback_MarksSynthesizedVerdicts checks text-derived markers and the separate policy
+// refusal classification.
 func TestOpenAIImagesTextFallback_MarksSynthesizedVerdicts(t *testing.T) {
 	t.Run("plain_text_reply_is_synthesized", func(t *testing.T) {
 		err := upstreamopenai.OpenAIImagesTextFallbackErrorForText("Here's a polished image prompt for your request.")
@@ -340,8 +345,8 @@ func TestOpenAIImagesTextFallback_MarksSynthesizedVerdicts(t *testing.T) {
 		require.NotNil(t, err)
 		require.Equal(t, "content_policy_violation", err.Code)
 		require.Equal(t, http.StatusBadRequest, err.StatusCode)
-		// 该分支本来就不走冷却（Code 不匹配），标记与否都不改变行为；
-		// 违规拦截结果的合成判定标记为 false。
+		// Policy refusals have a different code and do not enter image-unavailable cooldown.
+		// Their synthesized-from-text marker remains false.
 		require.False(t, err.SynthesizedFromModelText)
 	})
 
@@ -350,8 +355,8 @@ func TestOpenAIImagesTextFallback_MarksSynthesizedVerdicts(t *testing.T) {
 	})
 }
 
-// TestOpenAIImagesTextFallback_RemainsRetryableAndThusCascades 验证级联的前提条件：该错误确实是可重试的，所以会带着"已写冷却"的副作用换号。
-// 此用例检查 502 的重试资格。
+// TestOpenAIImagesTextFallback_RemainsRetryableAndThusCascades checks that text-only 502 errors permit retry.
+// This retry eligibility makes provider cooldown on text-only results unsafe across a pool.
 func TestOpenAIImagesTextFallback_RemainsRetryableAndThusCascades(t *testing.T) {
 	err := upstreamopenai.OpenAIImagesTextFallbackErrorForText("Here's a polished image prompt for your request.")
 	require.NotNil(t, err)

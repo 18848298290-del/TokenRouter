@@ -9,12 +9,12 @@ var ErrRefreshStopped = errors.New("oauth refresh coordinator is stopped")
 
 type refreshActivity = operationActivity
 
-// beginRefresh 为刷新操作登记活动和取消函数，停止后拒绝新操作。
+// beginRefresh registers active work and cancellation, rejecting operations after stop.
 func (api *OAuthRefreshAPI) beginRefresh(parent context.Context) (context.Context, func(), error) {
 	return api.activity.begin(parent, ErrRefreshStopped)
 }
 
-// checkRefreshActive 在取得提供商锁后复查停止状态，已停止时拒绝 token 交换。
+// checkRefreshActive rechecks stop state after locking so a stopped coordinator cannot begin an exchange.
 func (api *OAuthRefreshAPI) checkRefreshActive(ctx context.Context) error {
 	api.activity.mu.Lock()
 	defer api.activity.mu.Unlock()
@@ -24,7 +24,7 @@ func (api *OAuthRefreshAPI) checkRefreshActive(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// StopContext 复用首次停止结果，超时不能报告已排空。
+// StopContext retains the first stop result, including a timeout with unfinished work.
 func (api *OAuthRefreshAPI) StopContext(ctx context.Context) error {
 	if api == nil {
 		return nil

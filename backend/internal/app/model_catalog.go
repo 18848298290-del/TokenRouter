@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// provideModelAttributes 为管理和展示接口提供模型属性服务。
+// provideModelAttributes supplies model attributes for administration and display.
 func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator, catalogue *routing.RequestableCatalogue) *routing.ModelAttributeService {
 	return &routing.ModelAttributeService{
 		Repo:        repo,
@@ -35,8 +35,9 @@ func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provide
 	}
 }
 
-// provideModelCatalogService 从 bootstrap 配置提取模型目录服务的参数。
-// ModelCatalogInitialization 和 ModelCatalogService hook 分别负责初始化及周期更新的启停。
+// provideModelCatalogService extracts catalogue options from bootstrap configuration.
+// ModelCatalogInitialization and ModelCatalogService hooks manage initialization and periodic updates,
+// respectively.
 func provideModelCatalogService(cfg *config.Config, remote provider.RemoteClient) (*provider.Service, error) {
 	options := provider.Options{
 		DataDir:               cfg.Pricing.DataDir,
@@ -52,7 +53,7 @@ func provideModelCatalogService(cfg *config.Config, remote provider.RemoteClient
 	return provider.NewService(options, remote), nil
 }
 
-// provideModelCatalogRemoteClient 配置更新代理和直连回退开关。
+// provideModelCatalogRemoteClient configures the update proxy and direct-connection fallback.
 func provideModelCatalogRemoteClient(cfg *config.Config) provider.RemoteClient {
 	return provider.NewRemoteClient(cfg.Update.ProxyURL, cfg.Security.ProxyFallback.AllowDirectOnError)
 }

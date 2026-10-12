@@ -13,15 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// ApiKeyModelResponseWriter 只恢复已登记内部模型对应的协议元数据字段。
+// ApiKeyModelResponseWriter restores protocol model metadata for registered internal model names.
 type ApiKeyModelResponseWriter struct {
 	gin.ResponseWriter
 	trace       *modeltrace.APIKeyModelRedirectTrace
 	clientModel string
 }
 
-// ApplyAPIKeyModelRedirect 在复合 Key 选组后应用单 Key 模型重定向。
-// 解析失败时原请求交给协议处理器返回校验错误。
+// ApplyAPIKeyModelRedirect applies key-level model redirection after composite group selection.
+// On parse failure, the protocol handler receives the request and reports validation errors.
 // @project-doc docs/domains/api_key_model_redirects.md#redirect_order
 func ApplyAPIKeyModelRedirect(c *gin.Context, apiKey *apikey.APIKey) {
 	if c == nil || c.Request == nil || apiKey == nil || len(apiKey.ModelMapping) == 0 {
@@ -48,7 +48,7 @@ func ApplyAPIKeyModelRedirect(c *gin.Context, apiKey *apikey.APIKey) {
 	SetAPIKeyModelRedirectContext(c, sourceModel, targetModel)
 }
 
-// ApiKeyRequestModel 读取当前协议的主模型；没有模型的管理类入口直接跳过。
+// ApiKeyRequestModel reads the primary model and reports whether it came from a Gemini URL and was parsed successfully.
 func ApiKeyRequestModel(c *gin.Context) (string, bool, bool) {
 	if IsGeminiNativeModelEndpoint(c.Request.URL.Path) {
 		model, err := CompositeGeminiModelFromParams(c)
@@ -58,7 +58,7 @@ func ApiKeyRequestModel(c *gin.Context) (string, bool, bool) {
 	return model, false, err == nil && strings.TrimSpace(model) != ""
 }
 
-// RewriteAPIKeyAdditionalModels 重定向 Responses 工具声明中的附加模型。
+// RewriteAPIKeyAdditionalModels redirects additional models declared by Responses tools.
 func RewriteAPIKeyAdditionalModels(request *http.Request, apiKey *apikey.APIKey) error {
 	if request == nil || apiKey == nil {
 		return nil
@@ -79,7 +79,7 @@ func RewriteAPIKeyAdditionalModels(request *http.Request, apiKey *apikey.APIKey)
 	return nil
 }
 
-// SetAPIKeyModelRedirectContext 保存日志模型并安装响应恢复写入器。
+// SetAPIKeyModelRedirectContext records the client model for logs and installs response model restoration.
 func SetAPIKeyModelRedirectContext(c *gin.Context, sourceModel, targetModel string) {
 	clientModel := strings.TrimSpace(sourceModel)
 	responseModel := clientModel
@@ -116,7 +116,7 @@ func (w *ApiKeyModelResponseWriter) WriteString(value string) (int, error) {
 	return w.Write([]byte(value))
 }
 
-// APIKeyModelRedirectContext 为非 HTTP 请求体入口创建单次 Key 重定向上下文。
+// APIKeyModelRedirectContext applies one key-level redirect for entries whose model is outside the HTTP body.
 func APIKeyModelRedirectContext(ctx context.Context, apiKey *apikey.APIKey, clientModel string) (context.Context, string) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -132,7 +132,7 @@ func APIKeyModelRedirectContext(ctx context.Context, apiKey *apikey.APIKey, clie
 	return ctx, targetModel
 }
 
-// PropagateAPIKeyModelRedirectTrace 将模型重定向记录和客户端模型复制到异步任务上下文。
+// PropagateAPIKeyModelRedirectTrace carries the redirect trace and client model into an asynchronous task context.
 func PropagateAPIKeyModelRedirectTrace(dst, src context.Context) context.Context {
 	trace, ok := modeltrace.FromContext(src)
 	if !ok {

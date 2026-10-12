@@ -39,8 +39,8 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 	})
 
 	t.Run("alpha search 允许 OpenAI OAuth/PAT 与 APIKey 提供商，拒绝 Grok", func(t *testing.T) {
-		// OAuth/PAT 走 chatgpt.com Codex 端点，APIKey 走 {base_url}/v1/alpha/search，
-		// 两类都能承接独立搜索（APIKey 被排除曾导致纯 APIKey 分组搜索失效的回归）。
+		// OAuth/PAT search uses the Codex endpoint; API key search uses the configured /v1/alpha/search endpoint.
+		// Both credential types must remain eligible for standalone search.
 		apiKey := &acct.Record{
 			Platform: capability.PlatformOpenAI,
 			Type:     capability.ProviderTypeAPIKey,
@@ -82,7 +82,7 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 		}
 
 		require.True(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityTextGeneration))
-		// Chat 能力允许 Alpha Search，OAuth 与 API Key 使用同一规则。
+		// Text-generation capability also permits Alpha Search for OAuth and API key providers.
 		require.True(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityAlphaSearch))
 		require.False(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityEmbeddings))
 	})
@@ -99,7 +99,7 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 		require.True(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityAlphaSearch))
 	})
 
-	// OAuth 历史数据可能保留空能力容器，应与缺失字段一样不阻断文本调度。
+	// Legacy OAuth records can contain empty capability containers; treat these as unconfigured.
 	for _, emptyCapabilities := range []struct {
 		name  string
 		value any
@@ -211,7 +211,6 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 		}
 
 		require.True(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityResponses))
-		// 非生图路径仍可选中（只要求 chat_completions）。
 		require.True(t, SupportsOpenAIEndpoint(provider, acct.OpenAIEndpointCapabilityTextGeneration))
 	})
 
@@ -246,7 +245,7 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 	})
 
 	t.Run("responses 能力：仍需通过 chat_completions 配置集校验", func(t *testing.T) {
-		// 默认支持 Responses，配置的能力集合省略了 Chat Completions。
+		// An embeddings-only workload list excludes Responses despite its default protocol support.
 		provider := &acct.Record{
 			Platform: capability.PlatformOpenAI,
 			Type:     capability.ProviderTypeAPIKey,
@@ -259,7 +258,7 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 	})
 }
 
-// TestGrokProviderModelMappingRemainsExplicit 验证平台内置别名不会重新混入提供商配置。
+// TestGrokProviderModelMappingRemainsExplicit checks that built-in aliases are not added to saved mappings.
 func TestGrokProviderModelMappingRemainsExplicit(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -288,10 +287,7 @@ func TestGrokProviderModelMappingRemainsExplicit(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &acct.Record{Platform: capability.PlatformGrok, Credentials: test.credentials}
-			require.Equal(t, test.want, acct.ResolveModelMapping(provider, ModelDefaults(
-
-			// TestGrokWhitelistRunsBeforeBuiltinNormalization 验证白名单只检查提供商映射后的模型。
-			)))
+			require.Equal(t, test.want, acct.ResolveModelMapping(provider, ModelDefaults()))
 		})
 	}
 }
@@ -327,7 +323,6 @@ func TestGrokWhitelistRunsBeforeBuiltinNormalization(t *testing.T) {
 	}
 	require.True(t, legacy.IsModelSupported("grok-4.5", ModelDefaults(), ModelRules(
 
-		// TestGrokFinalUpstreamModelNormalization 验证 OAuth 和 API Key 共用 Grok 最终标准化。
 		legacy)))
 	require.True(t, legacy.IsModelSupported("grok", ModelDefaults(), ModelRules(legacy)))
 }
@@ -351,7 +346,7 @@ func TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate(t *testing.
 }
 
 func TestMixedGroupProviderModelScope(t *testing.T) {
-	// 空配置允许代理提供商接收任意型号，白名单限定最终模型。
+	// Empty configuration accepts unknown models; a whitelist restricts the final mapped name.
 	claude := "claude-sonnet-4-6"
 	gpt := "gpt-5.4"
 	for _, tc := range []struct {
@@ -400,7 +395,7 @@ func TestProviderIsModelSupported(t *testing.T) {
 		requestedModel string
 		expected       bool
 	}{
-		// 空白名单允许目录未知的具体型号。
+		// An empty whitelist accepts specific models absent from the catalogue.
 		{
 			name:           "missing mapping allows unknown model",
 			credentials:    nil,
@@ -414,7 +409,6 @@ func TestProviderIsModelSupported(t *testing.T) {
 			expected:       true,
 		},
 
-		// 精确匹配
 		{
 			name: "exact match supported",
 			credentials: map[string]any{
@@ -436,7 +430,6 @@ func TestProviderIsModelSupported(t *testing.T) {
 			expected:       true,
 		},
 
-		// 通配符匹配
 		{
 			name: "wildcard match supported",
 			credentials: map[string]any{
@@ -748,7 +741,6 @@ func TestProviderGetMappedModel(t *testing.T) {
 		requestedModel string
 		expected       string
 	}{
-		// 无映射 = 返回原始模型
 		{
 			name:           "no mapping returns original",
 			credentials:    nil,
@@ -763,7 +755,6 @@ func TestProviderGetMappedModel(t *testing.T) {
 			expected:       "gemini-3.1-pro-preview-customtools",
 		},
 
-		// 精确匹配
 		{
 			name: "exact match",
 			credentials: map[string]any{
@@ -775,7 +766,6 @@ func TestProviderGetMappedModel(t *testing.T) {
 			expected:       "target-model",
 		},
 
-		// 通配符匹配（最长优先）
 		{
 			name: "wildcard longest match",
 			credentials: map[string]any{
@@ -788,7 +778,6 @@ func TestProviderGetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-mapped",
 		},
 
-		// 无匹配返回原始模型
 		{
 			name:     "gemini customtools alias resolves through normalized mapping",
 			platform: capability.PlatformGemini,
@@ -838,7 +827,8 @@ func TestProviderGetMappedModel(t *testing.T) {
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases 检查读取配置后 Gemini 3.1 Pro 映射保持管理员保存的值。
+// TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases returns administrator-saved
+// mappings unchanged.
 func TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "gemini-pro-agent", "gemini-3.1-pro-high": "gemini-3.1-pro-high", "gemini-3.1-pro-preview": "gemini-3.1-pro-high"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -853,7 +843,7 @@ func TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *test
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides 检查管理员设置的 Gemini 3.1 Pro 覆盖值按配置返回。
+// TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides retains configured target values.
 func TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "custom-model", "gemini-3.1-pro-high": "another-model"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -984,7 +974,8 @@ func TestProviderResolveMappedModel(t *testing.T) {
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs 检查读取 Gemini 映射时返回管理员配置的集合。
+// TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs returns the configured set
+// without adding entries.
 func TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *testing.T) {
 	raw := map[string]any{"gemini-3-pro-high": "gemini-3.1-pro-high"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -999,7 +990,7 @@ func TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *
 	}
 }
 
-// TestGoogleOneEmptyWhitelistAllowsUnknownModel 检查 Google One 使用通用白名单规则。
+// TestGoogleOneEmptyWhitelistAllowsUnknownModel applies the shared whitelist rules to Google One.
 func TestGoogleOneEmptyWhitelistAllowsUnknownModel(t *testing.T) {
 	value := &acct.Record{Platform: capability.PlatformGemini, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"oauth_type": "google_one"}}
 	if len(acct.ResolveModelMapping(value, ModelDefaults())) != 0 {
@@ -1125,7 +1116,7 @@ func TestProviderGetModelMapping_CacheInvalidatesOnInPlaceValueChange(t *testing
 	}
 }
 
-// TestModelMappingResultIsolation 验证返回模型规则不能暴露提供商内部派生状态，调用方的临时修改不得污染后续请求。
+// TestModelMappingResultIsolation checks that caller mutations cannot affect later mapping reads.
 func TestModelMappingResultIsolation(t *testing.T) {
 	provider := &acct.Record{Platform: capability.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "target"}}}
 	first := acct.ResolveModelMapping(provider, ModelDefaults())
@@ -1133,7 +1124,7 @@ func TestModelMappingResultIsolation(t *testing.T) {
 	require.Equal(t, "target", acct.ResolveModelMapping(provider, ModelDefaults())["alias"])
 }
 
-// TestModelMappingConcurrentReads 验证调度与展示可以并发读取同一配置，纯模型规则的读取不能写入共享提供商字段。
+// TestModelMappingConcurrentReads checks concurrent reads of shared provider configuration.
 func TestModelMappingConcurrentReads(t *testing.T) {
 	provider := &acct.Record{Platform: capability.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "target"}}}
 	start := make(chan struct{})
@@ -1165,8 +1156,7 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingAllowsUnknownModels(t *testing.
 func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 
-	// Codex 上游必然以不可重试的 400 拒绝这些厂商家族，调度阶段就应跳过
-	// 该提供商，让明确支持的 API Key 提供商接手。
+	// The OAuth model policy excludes these foreign model families before an upstream request.
 	foreign := []string{
 		"deepseek-v4",
 		"deepseek-chat",
@@ -1180,8 +1170,8 @@ func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testin
 		"qwen3-max",
 		"minimax-m2.5",
 		"llama-3.3-70b",
-		"provider/deepseek-v4", // vendor/model 形式取最后一段判定。
-		"provider/k3",          // Kimi Code bare ID 的 vendor/model 形式。
+		"provider/deepseek-v4", // Check the model segment of a vendor-qualified ID.
+		"provider/k3",          // Vendor-qualified Kimi Code ID.
 	}
 	for _, model := range foreign {
 		require.False(t, provider.IsModelSupported(model, ModelDefaults(), ModelRules(provider)), "expected %q to be rejected by empty-mapping OpenAI OAuth provider", model)
@@ -1194,7 +1184,7 @@ func TestIsModelSupported_OpenAIOAuthMappingKeepsForkSemantics(t *testing.T) {
 		"model_mapping": map[string]any{"deepseek-v4": "gpt-5.4", "k3": "gpt-5.4"},
 	}
 
-	// 映射可以引入别名；未命中的模型继续检查认证资格。
+	// Configured aliases resolve before authentication-specific model eligibility is checked.
 	require.True(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
 	require.True(t, provider.IsModelSupported("k3", ModelDefaults(), ModelRules(provider)))
 	require.False(t, provider.IsModelSupported("glm-4.7", ModelDefaults(), ModelRules(provider)))
@@ -1208,7 +1198,7 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingRespectsWhitelist(t *testing.T)
 	provider := newOpenAIOAuthProviderForModelTest()
 	provider.Credentials = map[string]any{"model_whitelist": []any{"gpt-5.4", "deepseek-v4"}}
 
-	// 最终白名单仍先限制允许范围，但不能让 Codex 上游无法服务的厂商模型绕过平台限制。
+	// A whitelist cannot override the platform's model eligibility rules.
 	require.True(t, provider.IsModelSupported("gpt-5.4", ModelDefaults(), ModelRules(provider)))
 	require.False(t, provider.IsModelSupported("gpt-5.3-codex", ModelDefaults(), ModelRules(provider)))
 	require.False(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
@@ -1372,7 +1362,7 @@ func TestProviderIsModelSupported_QoderSiteCompatibility(t *testing.T) {
 	require.True(t, cn.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(cn)), "别名可以映射到该站点支持的模型")
 }
 
-// TestUnrestrictedModels 接受目录未知型号，白名单在映射之后限制最终型号。
+// TestUnrestrictedModels accepts unknown names and checks the whitelist after mapping.
 func TestUnrestrictedModels(t *testing.T) {
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "qoder", "grok", "kimi", "zhipu", "deepseek"} {
 		t.Run(platform, func(t *testing.T) {
@@ -1393,7 +1383,7 @@ func TestUnrestrictedModels(t *testing.T) {
 	}
 }
 
-// TestSparkModelScope 检查 Spark 独立配额对应的型号限制。
+// TestSparkModelScope checks model restrictions for the independent Spark quota.
 func TestSparkModelScope(t *testing.T) {
 	parent := int64(1)
 	value := &acct.Record{Platform: "openai", Type: "oauth", ParentProviderID: &parent}

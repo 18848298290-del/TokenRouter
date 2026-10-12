@@ -33,7 +33,7 @@ var (
 	ErrTeamMemberMonthlyExceeded = billing.ErrTeamMemberMonthlyExceeded
 )
 
-// APIKeyAuthCacheConfig API Key 认证缓存配置。
+// APIKeyAuthCacheConfig configures authentication caching and lookup protection.
 type APIKeyAuthCacheConfig struct {
 	L1Size             int                    `mapstructure:"l1_size"`
 	L1TTLSeconds       int                    `mapstructure:"l1_ttl_seconds"`
@@ -53,7 +53,7 @@ type InvalidAuthAbuseConfig struct {
 	Capacity      int  `mapstructure:"capacity"`
 }
 
-// Options 是认证缓存、Key 生成及团队开关的启动快照。
+// Options contains startup settings for authentication, key generation, and team access.
 type Options struct {
 	Now             func() time.Time
 	Calendar        timezone.Calendar
@@ -109,7 +109,7 @@ func subscriptionPlanIncludesGroup(plan *billing.SubscriptionPlan, id int64) boo
 	return billing.SubscriptionAllowsGroup(&billing.UserSubscription{Plan: plan}, id)
 }
 
-// SetGroupFastPolicy 注入分组 Fast 策略的只读计算。
+// SetGroupFastPolicy installs the group Fast policy resolver.
 func (s *APIKeyService) SetGroupFastPolicy(policy func(string, bool) string) {
 	s.groupFastPolicy = policy
 }
@@ -121,6 +121,6 @@ func (s *APIKeyService) groupPolicy(g *routing.Group) string {
 	if s.cfg != nil && s.cfg.GroupFastPolicy != nil {
 		return s.cfg.GroupFastPolicy(g.OpenAIFastPolicy, g.ForceOpenAIFast)
 	}
-	// 独立调用者可传入已经归一化的策略值。
+	// Standalone callers can provide an already-normalized policy.
 	return g.OpenAIFastPolicy
 }

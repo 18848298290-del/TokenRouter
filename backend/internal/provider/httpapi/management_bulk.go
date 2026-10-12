@@ -48,7 +48,7 @@ func (h *ManagementHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "provider_ids or filters is required")
 		return
 	}
-	// base_rpm 输入校验：负值归零，超过 10000 截断
+	// Clamp base_rpm to the supported range of 0 through 10000.
 	SanitizeExtraBaseRPM(req.Extra)
 	if err := providercore.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)

@@ -17,7 +17,7 @@ import (
 const (
 	AnthropicFableRateLimitKey = "claude-fable-5"
 
-	// 阈值键不包含消费累计，普通更新不会写入提供商资金快照。
+	// SettingKeyProviderSchedulingThresholds stores scheduling limits separately from accumulated spending.
 	SettingKeyProviderSchedulingThresholds = "provider_scheduling_thresholds"
 
 	providerSchedulingThresholdsCacheTTL  = 60 * time.Second
@@ -25,9 +25,9 @@ const (
 	providerSchedulingThresholdsDBTimeout = 5 * time.Second
 )
 
-// AllowedSchedulingThresholdPlatforms 是允许设置提供商自动停调阈值的平台列表。
-// openai/anthropic/grok 有原生用量窗口；kimi/zhipu 的 Coding Plan 同样暴露 5h/weekly
-// 滚动窗口，纳入阈值评估。DeepSeek 使用余额检测。
+// AllowedSchedulingThresholdPlatforms lists platforms with configurable usage-window thresholds.
+// OpenAI, Anthropic, and Grok expose native windows; Kimi and Zhipu expose Coding Plan windows.
+// DeepSeek uses balance checks.
 var AllowedSchedulingThresholdPlatforms = []string{
 	PlatformOpenAI,
 	PlatformAnthropic,
@@ -36,10 +36,10 @@ var AllowedSchedulingThresholdPlatforms = []string{
 	PlatformZhipu,
 }
 
-// cachedProviderSchedulingThresholds 缓存各平台自动停调阈值。
+// cachedProviderSchedulingThresholds holds platform thresholds and their expiration time.
 type cachedProviderSchedulingThresholds struct {
 	thresholds map[string]int
-	expiresAt  int64 // Unix 纳秒时间戳
+	expiresAt  int64 // Unix nanoseconds
 }
 
 func DefaultProviderSchedulingThresholds() map[string]int {
@@ -99,7 +99,8 @@ func CloneProviderSchedulingThresholds(input map[string]int) map[string]int {
 	return cloned
 }
 
-// GetProviderSchedulingThresholds 按正常或故障 TTL 缓存结果，以 singleflight 合并查询，并返回独立副本。
+// GetProviderSchedulingThresholds coalesces reads, caches defaults briefly on read errors, and returns an
+// independent map.
 func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) map[string]int {
 	if s == nil || s.settingRepo == nil {
 		return DefaultProviderSchedulingThresholds()
@@ -124,7 +125,7 @@ func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) m
 		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyProviderSchedulingThresholds)
 		if err != nil {
 			if errors.Is(err, s.notFound) {
-				// 未配置阈值时按正常 TTL 缓存默认结果。
+				// A missing setting caches defaults for the normal TTL.
 				s.providerSchedulingThresholdsCache.Store(&cachedProviderSchedulingThresholds{
 					thresholds: CloneProviderSchedulingThresholds(thresholds),
 					expiresAt:  time.Now().Add(providerSchedulingThresholdsCacheTTL).UnixNano(),
@@ -162,7 +163,7 @@ func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) m
 	return DefaultProviderSchedulingThresholds()
 }
 
-// ApplySchedulingThresholds 仅在设置提交后发布；省略时保持原清缓存行为。
+// ApplySchedulingThresholds publishes committed settings. Call it after saving; nil invalidates the cache.
 func (s *RuntimeSettings) ApplySchedulingThresholds(value map[string]int) {
 	s.providerSchedulingThresholdsSF.Forget(SettingKeyProviderSchedulingThresholds)
 	if value != nil {
@@ -175,7 +176,7 @@ func (s *RuntimeSettings) ApplySchedulingThresholds(value map[string]int) {
 			expiresAt:  time.Now().Add(providerSchedulingThresholdsCacheTTL).UnixNano(),
 		})
 	} else {
-		// 请求体部分更新或省略该字段时清除缓存，使下次热点读取从数据库重新加载。
+		// Reload from storage on the next read when a partial update omits thresholds.
 		s.providerSchedulingThresholdsCache.Store(&cachedProviderSchedulingThresholds{})
 	}
 }

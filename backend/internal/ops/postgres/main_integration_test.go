@@ -40,11 +40,11 @@ var (
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
-	// 测试资源使用 UTC 时区。
+	// Use UTC for test timestamps.
 	time.Local = time.UTC
 
 	if !dockerIsAvailable(ctx) {
-		// CI 和严格验证要求 Docker 可用。
+		// CI and strict verification require Docker.
 		if os.Getenv("CI") != "" || os.Getenv("TOKENROUTER_VERIFY_STRICT") == "1" {
 			log.Printf("docker is not available (CI=true); failing integration tests")
 			os.Exit(1)
@@ -94,7 +94,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// 创建 ent client 用于集成测试
+	// Use the migrated database for Ent queries.
 	drv := entsql.OpenDB(dialect.Postgres, integrationDB)
 	integrationEntClient = dbent.NewClient(dbent.Driver(drv))
 
@@ -131,12 +131,12 @@ func dockerIsAvailable(ctx context.Context) bool {
 	return cmd.Run() == nil
 }
 
-// selectDockerImage 为集成测试框架解析容器镜像。
+// selectDockerImage resolves the container image for integration tests.
 //
-// TOKENROUTER_TEST_POSTGRES_IMAGE 可覆盖 PostgreSQL 镜像，使测试能在文档声明的
-// 最低支持版本上运行。SQL 行为会随 PostgreSQL 版本变化：
-// PostgreSQL 17 起 jsonpath .datetime() 才接受 ISO-8601 的 "Z" 标识，
-// 固定使用 18 的测试无法发现 14 至 16 上的故障。
+// TOKENROUTER_TEST_POSTGRES_IMAGE overrides the image to test supported older versions.
+// PostgreSQL versions differ in SQL behavior: jsonpath .datetime() accepts ISO-8601
+// "Z" suffixes starting in PostgreSQL 17. Running only PostgreSQL 18 would miss
+// compatibility failures on versions 14 through 16.
 //
 //	TOKENROUTER_TEST_POSTGRES_IMAGE=postgres:15-alpine go test -tags integration ./internal/ops/postgres/
 func selectDockerImage(ctx context.Context, preferred string) string {

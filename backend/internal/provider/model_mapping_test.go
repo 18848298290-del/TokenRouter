@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestModelMappingDefaultsAreLazyAndIsolated 检查有效映射直接返回，缺省映射按需读取并复制平台目录。
+// TestModelMappingDefaultsAreLazyAndIsolated checks that defaults are read on demand and copied.
 func TestModelMappingDefaultsAreLazyAndIsolated(t *testing.T) {
 	calls := 0
 	defaults := map[string]string{"alias": "default-model"}
@@ -23,7 +23,7 @@ func TestModelMappingDefaultsAreLazyAndIsolated(t *testing.T) {
 	require.Equal(t, "default-model", ResolveModelMapping(r, options)["alias"])
 }
 
-// TestResolveMappedModelPreservesMatchOrder 检查原始精确值、通配符和去空白后的匹配顺序。
+// TestResolveMappedModelPreservesMatchOrder checks raw exact, raw wildcard, then trimmed matching.
 func TestResolveMappedModelPreservesMatchOrder(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -47,7 +47,7 @@ func TestResolveMappedModelPreservesMatchOrder(t *testing.T) {
 	}
 }
 
-// TestExplicitAntigravityMappingIsNotAugmented 验证读取不补默认项，也不改写已保存的目标。
+// TestExplicitAntigravityMappingIsNotAugmented checks that explicit mappings stay separate from defaults.
 func TestExplicitAntigravityMappingIsNotAugmented(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "custom", "gemini-3.1-pro-high": "gemini-3.1-pro-high"}
 	value := &Record{Platform: PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}

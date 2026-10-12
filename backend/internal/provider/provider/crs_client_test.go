@@ -20,7 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// 在 CRS 交换 token 期间修改持久凭据，检查迟到结果的处理。
+// crsStaleCredentialRepo holds credentials replaced during token exchange to check rejection of stale
+// results.
 type crsStaleCredentialRepo struct {
 	providercore.CRSProviderStore
 	current *providercore.Record
@@ -44,7 +45,8 @@ type crsOpenAIDeprecatedExtraSource struct {
 	extra       map[string]any
 }
 
-// TestCRSClientHTTPContract 通过本地服务器检查 HTTP 顺序、认证头、错误和响应读取上限。
+// TestCRSClientHTTPContract checks request order, authentication, errors, and body limits against a
+// local server.
 func TestCRSClientHTTPContract(t *testing.T) {
 	for _, mode := range []string{"success", "login_error", "blank_token", "login_oversize", "export_error", "export_oversize"} {
 		t.Run(mode, func(t *testing.T) {
@@ -208,7 +210,8 @@ func TestCRSSyncDiscardsDeprecatedOpenAILongContextBillingExtra(t *testing.T) {
 	}
 }
 
-// UpdateOAuthCredentialsIfUnchanged 条件写入替身核对当前记录的身份和凭据版本，匹配后复用凭据更新逻辑。
+// UpdateOAuthCredentialsIfUnchanged checks the current identity and credential version before applying
+// the update.
 func (r *crsStaleCredentialRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, v providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	c := r.current
 	if c.ID != v.ID || c.Platform != v.Platform || c.Type != v.Type || c.Status != v.Status || !reflect.DeepEqual(c.Credentials, v.Credentials) || !reflect.DeepEqual(c.ProxyID, v.ProxyID) {
@@ -325,7 +328,7 @@ func runCRSOpenAIDeprecatedExtraSync(t *testing.T, repo providercore.CRSProvider
 	return result
 }
 
-// UpdateConfiguration 夹具保存本次配置更新，调用由测试顺序执行。
+// UpdateConfiguration stores the update; fixture calls are sequential.
 func (r *crsDeprecatedExtraProviderRepo) UpdateConfiguration(ctx context.Context, record *providercore.Record, _ providercore.ConfigurationChange) error {
 	return r.Update(ctx, record)
 }

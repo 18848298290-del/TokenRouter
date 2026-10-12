@@ -16,7 +16,7 @@ type Request struct {
 	Endpoint                                                           func(string, string) string                 `json:"-"`
 }
 
-// Adapter 每次查询创建自己的请求读取器，不拥有提供商缓存或健康写入。
+// Adapter creates a request reader per query; provider orchestration owns caches and health updates.
 type Adapter interface {
 	Name() string
 	Query(context.Context, *Request) (*usageview.UpstreamUsageInfo, error)

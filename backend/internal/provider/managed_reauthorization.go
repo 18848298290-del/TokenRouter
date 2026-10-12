@@ -11,7 +11,8 @@ type ManagedReauthorizationInput struct {
 	Credentials, Extra map[string]any
 }
 
-// Reauthorize 分步写入凭据和 Extra，再清理错误和 token 缓存。Extra 合并失败时记录日志。
+// Reauthorize saves credentials, merges extra, then attempts error and token-cache cleanup. Extra merge
+// failures are logged.
 func (s *ManagedRefreshService) Reauthorize(ctx context.Context, existing *Record, req ManagedReauthorizationInput) (*Record, error) {
 	if existing == nil {
 		return nil, ErrProviderNotFound
@@ -25,7 +26,7 @@ func (s *ManagedRefreshService) Reauthorize(ctx context.Context, existing *Recor
 		return nil, err
 	}
 
-	// 重新授权后仍只保留可持久化的 OAuth 凭据。
+	// Sanitize newly authorized credentials before persisting them.
 	req.Credentials = SanitizeStoredCredentials(existing.Platform, req.Credentials)
 	updatedProvider, err := s.options.Store.UpdateProvider(ctx, providerID, &UpdateProviderInput{
 		Type:        req.Type,
@@ -35,7 +36,7 @@ func (s *ManagedRefreshService) Reauthorize(ctx context.Context, existing *Recor
 		return nil, err
 	}
 
-	// Extra 按字段合并，写入失败时记录日志，已保存的 token 保持有效。
+	// Merge extra fields separately; a failed merge leaves the saved tokens in place.
 	if len(req.Extra) > 0 {
 		if extraErr := s.options.Store.UpdateProviderExtra(ctx, providerID, req.Extra); extraErr != nil {
 			extraKeys := make([]string, 0, len(req.Extra))
@@ -50,7 +51,7 @@ func (s *ManagedRefreshService) Reauthorize(ctx context.Context, existing *Recor
 		}
 	}
 
-	// 重新认证成功后，清除 Grok 的消费限额软性重新认证标记。
+	// Successful reauthorization clears Grok spending-limit reauthorization markers.
 	if existing.Platform == PlatformGrok {
 		if clearErr := s.options.Store.UpdateProviderExtra(ctx, providerID, map[string]any{
 			"grok_needs_reauth":        false,

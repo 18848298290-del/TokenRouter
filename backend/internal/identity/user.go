@@ -24,14 +24,14 @@ const (
 	DingTalkConnectSyntheticEmailDomain = "@dingtalk-connect.invalid"
 )
 
-// ErrUserNotFound 与资金消费者维持同一个用户缺失错误。
+// ErrUserNotFound is shared with billing callers.
 var ErrUserNotFound = billing.ErrUserNotFound
 
 type User struct {
 	Subscriptions []billing.UserSubscription
 	ID            int64
 	Email         string
-	// PreferredLocale 为空时使用浏览器或站点默认语言。
+	// PreferredLocale is empty when browser or site defaults should select the language.
 	PreferredLocale *string
 	Username        string
 	Notes           string
@@ -47,11 +47,11 @@ type User struct {
 	Concurrency     int
 	Status          string
 	AllowedGroups   []int64
-	// DisabledPublicGroups 保存管理员为该用户显式禁止使用的公开分组 ID。
+	// DisabledPublicGroups contains public group IDs denied to this user by an administrator.
 	DisabledPublicGroups []int64
-	// GroupRestrictionsLoaded 表示用户分组授权/禁用列表已从仓储加载，避免认证缓存误判空列表。
+	// GroupRestrictionsLoaded distinguishes loaded empty grants from missing repository data in auth caches.
 	GroupRestrictionsLoaded bool
-	TokenVersion            int64 // Incremented on password change to invalidate existing tokens
+	TokenVersion            int64 // Credential version used by token validation; see ResolvedTokenVersion.
 	// TokenVersionResolved indicates TokenVersion already contains the fingerprint-derived
 	// value expected in JWT claims and refresh-token state.
 	TokenVersionResolved bool
@@ -61,40 +61,40 @@ type User struct {
 	LastUsedAt           *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
-	DeletedAt            *time.Time // 非 nil 表示用户已软删除
+	DeletedAt            *time.Time // Non-nil for a soft-deleted user.
 
-	// GroupRates 用户专属分组倍率配置
+	// GroupRates contains user-specific group price multipliers.
 	// map[groupID]rateMultiplier
 	GroupRates map[int64]float64
 
-	// TOTP 双因素认证字段
-	TotpSecretEncrypted *string    // AES-256-GCM 加密的 TOTP 密钥
-	TotpEnabled         bool       // 是否启用 TOTP
-	TotpEnabledAt       *time.Time // TOTP 启用时间
+	// TOTP authentication state.
+	TotpSecretEncrypted *string    // AES-256-GCM encrypted TOTP secret.
+	TotpEnabled         bool       // Whether TOTP is enabled.
+	TotpEnabledAt       *time.Time // TOTP activation time.
 
-	// 余额不足通知
+	// Low-balance notification settings.
 	BalanceNotifyEnabled       bool
 	BalanceNotifyThresholdType string // "fixed" (default) | "percentage"
 	BalanceNotifyThreshold     *float64
 	BalanceNotifyExtraEmails   []NotifyEmailEntry
 	TotalRecharged             float64
 
-	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）。仅在所用分组未设置 rpm_limit
-	// 且该 (用户, 分组) 无 rpm_override 时作为全局兜底生效，计数键 rpm:u:{userID}:{min}。
+	// RPMLimit is the per-user requests-per-minute limit; zero means unlimited. It applies when
+	// the group has no rpm_limit and the user/group pair has no rpm_override, using rpm:u:{userID}:{min}.
 	RPMLimit int
-	// APIKeyLimit 是用户可创建的 API Key 数量上限，0 表示不限制。
+	// APIKeyLimit bounds the number of API keys a user may create; zero means unlimited.
 	APIKeyLimit int
 
-	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
-	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，
-	// 避免每请求查 DB。字段不持久化到数据库。
+	// UserGroupRPMOverride contains the auth snapshot's user/group RPM override.
+	// Nil means no override for this key's user/group pair; checkRPM uses a non-nil value directly.
+	// The field is transient and avoids a database lookup on each request.
 	UserGroupRPMOverride *int
 }
 
-// NotifyEmailEntry 是已验证的通知邮箱值；验证流程归用户用例。
+// NotifyEmailEntry is a verified notification address; user operations own verification.
 type NotifyEmailEntry = contact.Entry
 
-// Principal 是通过认证的调用方身份。
+// Principal identifies the authenticated caller.
 type Principal struct {
 	UserID         int64
 	Role           string
@@ -110,17 +110,17 @@ func (u *User) IsActive() bool {
 	return u.Status == StatusActive
 }
 
-// CanBindGroup 检查用户是否可以绑定指定分组。
-// 公开分组默认可用，但如果出现在 DisabledPublicGroups 中则禁止；专属分组必须在 AllowedGroups 中。
+// CanBindGroup reports whether the user may bind the given group.
+// Public groups are allowed unless disabled for the user; exclusive groups require an explicit grant.
 func (u *User) CanBindGroup(groupID int64, isExclusive bool) bool {
 	if u == nil || groupID <= 0 {
 		return false
 	}
 	if !isExclusive {
-		// 公开分组默认可用，只按用户级禁用列表做排除。
+		// Public groups use the user-specific deny list.
 		return !slices.Contains(u.DisabledPublicGroups, groupID)
 	}
-	// 专属分组：需要在 AllowedGroups 中
+	// Exclusive groups require membership in AllowedGroups.
 	return slices.Contains(u.AllowedGroups, groupID)
 }
 
@@ -137,7 +137,7 @@ func (u *User) CheckPassword(password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
 }
 
-// ParseNotifyEmails 复用身份联系邮箱序列化兼容。
+// ParseNotifyEmails accepts both legacy string lists and notification-entry lists.
 func ParseNotifyEmails(raw string) []NotifyEmailEntry { return contact.ParseNotifyEmails(raw) }
 
 func MarshalNotifyEmails(entries []NotifyEmailEntry) string {
@@ -152,8 +152,8 @@ func IsReservedEmail(email string) bool {
 		strings.HasSuffix(normalized, DingTalkConnectSyntheticEmailDomain)
 }
 
-// CopyUser 浅复制用户结构体。
-// 关联切片、映射和指针共享引用。跨请求缓存通过各自的入口深复制。
+// CopyUser returns a shallow copy of the user.
+// Slices, maps, and pointers remain shared; cross-request caches perform their own deep copies.
 func CopyUser(user *User) *User {
 	if user == nil {
 		return nil

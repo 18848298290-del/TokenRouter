@@ -22,7 +22,7 @@ const (
 	chatGPTApplicationPath = "/Applications/ChatGPT.app"
 	attestationTimeout     = 5 * time.Second
 
-	// deviceCheckScript 使用 ChatGPT App 原生模块生成 token，并编码其要求的 CBOR 载荷。
+	// deviceCheckScript generates a token with the ChatGPT App native module and encodes its CBOR payload.
 	deviceCheckScript = `
 const addon = require(process.env.TOKENROUTER_DEVICECHECK_MODULE);
 const signals = JSON.parse(process.env.TOKENROUTER_ATTESTATION_SIGNALS);
@@ -116,7 +116,7 @@ type macOSSignals struct {
 	Scale     float64  `json:"scale"`
 }
 
-// NewProvider 创建基于 macOS ChatGPT App DeviceCheck 模块的证明提供器。
+// NewProvider creates an attestation provider backed by the macOS ChatGPT App DeviceCheck module.
 func NewProvider() Provider {
 	paths := []string{chatGPTApplicationPath}
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
@@ -135,7 +135,7 @@ func (p *darwinProvider) Check(ctx context.Context) error {
 	return err
 }
 
-// resolveRuntime 仅接受官方 ChatGPT App 内随包分发的运行时和原生模块。
+// resolveRuntime accepts the runtime and native module bundled with the official ChatGPT App.
 func (p *darwinProvider) resolveRuntime(ctx context.Context) (string, string, string, error) {
 	if runtime.GOARCH != "arm64" {
 		return "", "", "", errors.New("live attestation currently requires Apple Silicon; Intel macOS is not supported")
@@ -162,7 +162,7 @@ func (p *darwinProvider) resolveRuntime(ctx context.Context) (string, string, st
 	return nodePath, modulePath, bundleID, nil
 }
 
-// Generate 在短时子进程中生成并校验 DeviceCheck attestation JSON。
+// Generate runs a bounded subprocess and validates its DeviceCheck attestation JSON.
 func (p *darwinProvider) Generate(ctx context.Context) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, attestationTimeout)
 	defer cancel()
@@ -240,7 +240,7 @@ func readBundleIdentifier(ctx context.Context, appPath string) (string, error) {
 	return bundleID, nil
 }
 
-// readSignals 读取 ChatGPT App 证明所需的有限设备信号并约束字段长度。
+// readSignals reads the device fields needed for attestation and bounds their lengths.
 func (p *darwinProvider) readSignals(ctx context.Context) (deviceSignals, error) {
 	const script = `ObjC.import("Foundation"); ObjC.import("AppKit");
 const screen = $.NSScreen.mainScreen;

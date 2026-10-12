@@ -13,20 +13,20 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ProviderSchedulerDiagnostics 读取诊断数据并调用 scheduler 计算评分。
+// ProviderSchedulerDiagnostics supplies score diagnostics computed by scheduler.
 type ProviderSchedulerDiagnostics interface {
 	GetOverview(context.Context, int64) (*policy.AdvancedSchedulerScoreDiagnosticResponse, error)
 	GetDetail(context.Context, int64, policy.AdvancedSchedulerScoreDiagnosticRequest) (*policy.AdvancedSchedulerScoreDiagnosticResponse, error)
 }
 
-// DiagnosticsHandler 通过评分诊断用例处理 HTTP 请求。
+// DiagnosticsHandler handles HTTP requests for scheduler score diagnostics.
 type DiagnosticsHandler struct{ diagnostics ProviderSchedulerDiagnostics }
 
 func NewDiagnosticsHandler(source ProviderSchedulerDiagnostics) *DiagnosticsHandler {
 	return &DiagnosticsHandler{diagnostics: source}
 }
 
-// GetAdvancedSchedulerScore 返回提供商所属高级调度分组的摘要，或指定分组的完整评分解释。
+// GetAdvancedSchedulerScore returns advanced group summaries or a full explanation for one group.
 // GET /api/v1/admin/providers/:id/advanced-scheduler-score?group_id=:groupID
 func (h *DiagnosticsHandler) GetAdvancedSchedulerScore(c *gin.Context) {
 	providerID, ok := parseAdvancedSchedulerScoreProviderID(c)
@@ -65,7 +65,7 @@ func (h *DiagnosticsHandler) GetAdvancedSchedulerScore(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// PreviewAdvancedSchedulerScore 使用安全、无状态的场景字段模拟高级调度评分。
+// PreviewAdvancedSchedulerScore simulates scores using model and provider IDs without session state.
 // POST /api/v1/admin/providers/:id/advanced-scheduler-score/preview
 func (h *DiagnosticsHandler) PreviewAdvancedSchedulerScore(c *gin.Context) {
 	providerID, ok := parseAdvancedSchedulerScoreProviderID(c)
@@ -126,7 +126,7 @@ func ensureAdvancedSchedulerScorePreviewEOF(decoder *json.Decoder) error {
 	return err
 }
 
-// RegisterProviderDiagnostics 在提供商路径下注册评分诊断路由，分组权限由 app 安装。
+// RegisterProviderDiagnostics registers provider score routes; app installs group authorization.
 func RegisterProviderDiagnostics(providers *gin.RouterGroup, endpoint *DiagnosticsHandler) {
 	providers.GET("/:id/advanced-scheduler-score", endpoint.GetAdvancedSchedulerScore)
 	providers.POST("/:id/advanced-scheduler-score/preview", endpoint.PreviewAdvancedSchedulerScore)

@@ -7,7 +7,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestResponseLifecycleNormalizer 验证兼容字段不会覆盖上游响应内容或把失败改成成功。
+// TestResponseLifecycleNormalizer checks content retention and that compatibility repair does not invent success.
 func TestResponseLifecycleNormalizer(t *testing.T) {
 	tests := []struct {
 		name, header, payload, wantType, wantStatus string

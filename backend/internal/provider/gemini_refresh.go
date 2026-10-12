@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// GeminiTokenRefresher 保留平台资格与合并规则，技术缓存身份由外层注入。
+// GeminiTokenRefresher applies Gemini refresh eligibility and credential merging with an injected cache-key function.
 type GeminiTokenRefresher struct {
 	Authorization *GeminiAuthorization
 	Key           func(*Record) string

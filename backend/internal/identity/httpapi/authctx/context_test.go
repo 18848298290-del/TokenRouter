@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// TestPrincipalOwnsLegacyProjection 检查认证主体与 Gin 展示字段使用独立数据。
+// TestPrincipalOwnsLegacyProjection checks that compatibility context writes do not overwrite the authentication record.
 func TestPrincipalOwnsLegacyProjection(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	principal := identity.Principal{UserID: 7, Role: "user", SessionID: "session-1", CredentialKind: "jwt"}
@@ -27,7 +27,7 @@ func TestPrincipalOwnsLegacyProjection(t *testing.T) {
 	require.Equal(t, "user", role)
 }
 
-// TestAPIKeyPrincipalKeepsActorSeparateFromPayer 检查 API Key 主体与付款用户的上下文分别存储。
+// TestAPIKeyPrincipalKeepsActorSeparateFromPayer checks that the caller and paying user remain distinct.
 func TestAPIKeyPrincipalKeepsActorSeparateFromPayer(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set(ContextKeyUser, AuthSubject{UserID: 11, Concurrency: 4})
@@ -46,7 +46,7 @@ func TestAPIKeyPrincipalKeepsActorSeparateFromPayer(t *testing.T) {
 	require.Equal(t, "admin", role, "旧网关展示投影仍按原付款用户提供")
 }
 
-// TestLegacyOnlyContextRemainsReadable 检查通过 Gin 字段读取用户身份和角色。
+// TestLegacyOnlyContextRemainsReadable checks reading user and role data from compatibility Gin fields.
 func TestLegacyOnlyContextRemainsReadable(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set(ContextKeyUser, AuthSubject{UserID: 9})

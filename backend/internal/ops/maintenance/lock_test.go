@@ -36,7 +36,7 @@ type systemLockRepoStub struct {
 
 type IdempotencyRecord = idempotency.IdempotencyRecord
 
-// inMemoryIdempotencyRepo 为维护锁测试保存幂等记录。
+// inMemoryIdempotencyRepo stores idempotency records for maintenance lock tests.
 type inMemoryIdempotencyRepo struct {
 	mu     sync.Mutex
 	nextID int64
@@ -117,7 +117,7 @@ func TestSystemOperationLockService_RenewLeaseContinuesAfterTransientFailure(t *
 	require.NotNil(t, initial.LockedUntil)
 	initialLockedUntil := *initial.LockedUntil
 
-	// 首次续租失败后，下一轮应继续尝试并成功更新锁过期时间。
+	// After the first renewal fails, the next tick must retry and extend the lease.
 	require.Eventually(t, func() bool {
 		updated, _ := repo.GetByScopeAndKeyHash(context.Background(), systemOperationLockScope, keyHash)
 		if updated == nil || updated.LockedUntil == nil {
@@ -163,7 +163,7 @@ func TestSystemOperationLockService_RecoverAfterLeaseExpired(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, lock1)
 
-	// 模拟实例在停止续租后异常退出。
+	// Simulate a process crash after lease renewal stops.
 	lock1.stopOnce.Do(func() {
 		close(lock1.stopCh)
 	})
@@ -275,7 +275,7 @@ func TestSystemOperationLockService_ReleaseBranchesAndOperationID(t *testing.T) 
 	require.Equal(t, errorCode(ErrSystemOperationBusy), errorCode(err))
 }
 
-// TestSameOperationReclaimed 检查同一业务 operation ID 再次认领时分配独立的认领者标识。
+// TestSameOperationReclaimed checks that reclaiming the same operation ID assigns a new owner token.
 func TestSameOperationReclaimed(t *testing.T) {
 	repo := newInMemoryIdempotencyRepo()
 	s := NewSystemOperationLockService(repo, Options{ProcessingTimeout: time.Hour, SystemOperationTTL: 2 * time.Hour})
@@ -313,7 +313,7 @@ func errorReason(err error) string { return apperror.FromError(err).Reason }
 
 func closedTestChannel() chan struct{} { ch := make(chan struct{}); close(ch); return ch }
 
-// ClaimOperation 按租约有效期判断是否可以认领操作，并保存认领者标识。
+// ClaimOperation checks lease expiration and records the new owner token.
 func (r *inMemoryIdempotencyRepo) ClaimOperation(ctx context.Context, c idempotency.OperationClaim) (*idempotency.IdempotencyRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -19,13 +19,13 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// panelRateLimitStubRepo 内存版 SettingRepository，仅覆盖本测试用到的方法。
+// panelRateLimitStubRepo implements the settings operations used by these tests in memory.
 type panelRateLimitStubRepo struct {
 	mu     sync.Mutex
 	values map[string]string
 }
 
-// fakePanelAllower 内存计数版限流原语。
+// fakePanelAllower counts requests in memory without expiring windows.
 type fakePanelAllower struct {
 	mu     sync.Mutex
 	counts map[string]int64
@@ -167,12 +167,12 @@ func TestPanelRateLimiterGlobalPerUser(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, performPanelRequest(userA, "127.0.0.1:1000").Code)
 	require.Equal(t, http.StatusOK, performPanelRequest(userA, "127.0.0.1:1000").Code)
-	// 用户 A 超限
+	// User A exhausts its limit.
 	third := performPanelRequest(userA, "127.0.0.1:1000")
 	require.Equal(t, http.StatusTooManyRequests, third.Code)
 	require.NotEmpty(t, third.Header().Get("Retry-After"))
 	require.Contains(t, third.Body.String(), "RATE_LIMITED")
-	// 用户 B 不受影响（同一来源 IP 也互不干扰）
+	// User B has a separate bucket despite sharing the same source IP.
 	require.Equal(t, http.StatusOK, performPanelRequest(userB, "127.0.0.1:1000").Code)
 
 	allower.mu.Lock()
@@ -198,7 +198,7 @@ func TestPanelRateLimiterHeavyUsesHeavyRPM(t *testing.T) {
 }
 
 func TestPanelRateLimiterAdminExemption(t *testing.T) {
-	// 豁免开启：管理员不计数
+	// Exempt administrators bypass counting.
 	p := &PanelRateLimiter{
 		limiter:        &fakePanelAllower{},
 		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":true,"public_ip_rpm":0}`),
@@ -208,7 +208,7 @@ func TestPanelRateLimiterAdminExemption(t *testing.T) {
 		require.Equal(t, http.StatusOK, performPanelRequest(admin, "127.0.0.1:1000").Code)
 	}
 
-	// 豁免关闭：管理员一样受限
+	// Disabling the exemption subjects administrators to the same limit.
 	p2 := &PanelRateLimiter{
 		limiter:        &fakePanelAllower{},
 		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":0}`),
@@ -219,7 +219,7 @@ func TestPanelRateLimiterAdminExemption(t *testing.T) {
 }
 
 func TestPanelRateLimiterDisabledOrMissingSubject(t *testing.T) {
-	// 总开关关闭
+	// The disabled limiter allows requests.
 	p := &PanelRateLimiter{
 		limiter:        &fakePanelAllower{},
 		settingService: newPanelRateLimitTestService(t, `{"enabled":false,"user_rpm":1,"heavy_rpm":1,"exempt_admin":true,"public_ip_rpm":1}`),
@@ -229,7 +229,7 @@ func TestPanelRateLimiterDisabledOrMissingSubject(t *testing.T) {
 		require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
 	}
 
-	// 无认证主体：放行（防御分支）
+	// Missing authentication subjects bypass user counting.
 	p2 := &PanelRateLimiter{
 		limiter:        &fakePanelAllower{},
 		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":true,"public_ip_rpm":0}`),
@@ -239,12 +239,12 @@ func TestPanelRateLimiterDisabledOrMissingSubject(t *testing.T) {
 		require.Equal(t, http.StatusOK, performPanelRequest(anonymous, "127.0.0.1:1000").Code)
 	}
 
-	// nil 限流器（测试环境注入 nil）：直接放行
+	// A nil limiter allows requests.
 	var nilLimiter *PanelRateLimiter
 	nilRouter := newPanelTestRouter(nilLimiter.Global(), &panelTestIdentity{userID: 3, role: identitycore.RoleUser})
 	require.Equal(t, http.StatusOK, performPanelRequest(nilRouter, "127.0.0.1:1000").Code)
 
-	// Redis 客户端未初始化时也必须 fail-open，不能在请求路径空指针崩溃。
+	// A missing Redis counter must allow requests without panicking.
 	withoutRedis := NewPanelRateLimiter(nil, newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":1}`))
 	withoutRedisRouter := newPanelTestRouter(withoutRedis.Global(), &panelTestIdentity{userID: 3, role: identitycore.RoleUser})
 	require.Equal(t, http.StatusOK, performPanelRequest(withoutRedisRouter, "127.0.0.1:1000").Code)
@@ -274,13 +274,13 @@ func TestPanelRateLimiterPublicIP(t *testing.T) {
 	}
 	router := newPanelTestRouter(p.PublicIP(), nil)
 
-	// 公网 IP：第二次被限
+	// The second request from this public IP exceeds the limit.
 	require.Equal(t, http.StatusOK, performPanelRequest(router, "203.0.113.9:1000").Code)
 	require.Equal(t, http.StatusTooManyRequests, performPanelRequest(router, "203.0.113.9:1000").Code)
-	// 其他公网 IP 独立计数
+	// A different public IP has a separate bucket.
 	require.Equal(t, http.StatusOK, performPanelRequest(router, "198.51.100.7:1000").Code)
 
-	// 回环/内网地址（反代内部转发地址）：跳过计数，绝不误拦
+	// Loopback and private proxy addresses bypass counting.
 	for range 5 {
 		require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
 		require.Equal(t, http.StatusOK, performPanelRequest(router, "10.0.0.8:1000").Code)

@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// SubscriptionMutations 只负责权益事务取得、复用、固定锁序与 Key 改绑。
+// SubscriptionMutations manages entitlement transactions, user-before-subscription lock ordering, and Key rebinding.
 type SubscriptionMutations struct {
 	client *dbent.Client
 	bound  *dbent.Tx
@@ -22,7 +22,7 @@ func NewSubscriptionMutations(client *dbent.Client) *SubscriptionMutations {
 	return &SubscriptionMutations{client: client}
 }
 
-// SubscriptionMutationsInTx 显式绑定外层已有事务；此适配永不提交或回滚它。
+// SubscriptionMutationsInTx binds the caller's transaction; the caller retains commit and rollback ownership.
 func SubscriptionMutationsInTx(tx *dbent.Tx) *SubscriptionMutations {
 	return &SubscriptionMutations{bound: tx, client: tx.Client()}
 }
@@ -110,8 +110,8 @@ func (m *SubscriptionMutations) RebindKeys(ctx context.Context, oldID, newID int
 	return client.APIKey.Update().Where(apikey.BillingModeEQ(billing.APIKeyBillingModeSubscription), apikey.PreferredSubscriptionIDEQ(oldID), apikey.DeletedAtIsNil()).SetPreferredSubscriptionID(newID).SetUpdatedAt(time.Now()).Save(ctx)
 }
 
-// LockSubscription 先取得稳定的用户锁再锁权益行，与发放、恢复、结算保持相同锁序。
-// 用户 ID 仅用于定位锁；调用方在获得锁后重新读取完整权益状态。
+// LockSubscription locks the user before the subscription, matching grant, restore, and settlement ordering.
+// The initial read locates the user lock; callers reread full subscription state after acquiring locks.
 func (m *SubscriptionMutations) LockSubscription(ctx context.Context, id int64) error {
 	tx := m.transaction(ctx)
 	if tx == nil {

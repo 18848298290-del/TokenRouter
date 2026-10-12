@@ -5,15 +5,15 @@ import (
 	"time"
 )
 
-// 评分考虑缺省中性值、次窗口折扣和观测有效期。
+// Headroom scoring uses neutral defaults, a low-secondary-quota discount, and snapshot expiry.
 const (
 	openAIQuotaHeadroomNeutralFactor      = 0.5
 	openAIQuotaHeadroomSecondaryLowRemain = 0.10
 	openAIQuotaHeadroomSnapshotStaleAfter = 8 * time.Hour
 )
 
-// OpenAIQuotaHeadroomFactor 把 Codex quota 快照转换成 0..1 的调度因子。
-// 7d/primary 剩余额度越高分越高；5h/secondary 接近耗尽时会折扣该分值。
+// OpenAIQuotaHeadroomFactor converts a Codex quota snapshot into a scheduling factor from zero to one.
+// It scores primary usage, falling back to seven-day usage, and discounts low secondary or five-hour headroom.
 func OpenAIQuotaHeadroomFactor(provider *Record, now time.Time) float64 {
 	if provider == nil || len(provider.Extra) == 0 || openAIQuotaHeadroomSnapshotStale(provider.Extra, now) {
 		return openAIQuotaHeadroomNeutralFactor
@@ -34,7 +34,7 @@ func OpenAIQuotaHeadroomFactor(provider *Record, now time.Time) float64 {
 	return factor
 }
 
-// openAIQuotaHeadroomSnapshotStale 判断 quota 快照是否过旧到只能按中性分参与调度。
+// openAIQuotaHeadroomSnapshotStale reports missing, invalid, or expired snapshot timestamps.
 func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool {
 	updatedRaw, ok := extra["codex_usage_updated_at"]
 	if !ok {
@@ -47,7 +47,7 @@ func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool 
 	return now.Sub(updatedAt) >= openAIQuotaHeadroomSnapshotStaleAfter
 }
 
-// openAIQuotaWindowResetAny 支持同时检查 primary/7d 或 secondary/5h 兼容字段。
+// openAIQuotaWindowResetAny checks reset timing across compatible window field names.
 func openAIQuotaWindowResetAny(extra map[string]any, now time.Time, windows ...string) bool {
 	for _, window := range windows {
 		if OpenAIQuotaWindowReset(extra, window, now) {

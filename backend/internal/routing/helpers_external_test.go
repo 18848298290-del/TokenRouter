@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// groupAdminPricingStore 为目录测试提供空价卡，模型权限只由分组配置决定。
+// groupAdminPricingStore supplies empty price cards so catalog tests derive model access from group configuration.
 type groupAdminPricingStore struct {
 	routing.PricingConfigRepository
 }
@@ -22,7 +22,7 @@ type groupDuplicatePortFixture struct {
 	routing.GroupDuplicateRepository
 }
 
-// groupRepoStubForAdmin 记录分组管理测试的存储读写。
+// groupRepoStubForAdmin records group administration repository operations.
 type groupRepoStubForAdmin struct {
 	created *routing.
 		Group
@@ -30,7 +30,7 @@ type groupRepoStubForAdmin struct {
 		Group
 	getByID *routing.
 		Group
-	getErr error // GetByID 返回的错误
+	getErr error // Error returned by GetByID.
 
 	listWithFiltersCalls       int
 	listWithFiltersParams      pagination.PaginationParams
@@ -48,12 +48,13 @@ func (groupAdminPricingStore) ListAll(context.Context) ([]routing.PricingConfig,
 	return nil, nil
 }
 
-// newGroupAdminForTest 使用独立存储副本及默认策略构造分组管理用例。
+// newGroupAdminForTest constructs group administration with fixture repositories and default policies.
 func newGroupAdminForTest(repo routing.GroupRepository, duplicate routing.GroupDuplicateRepository, pricingConfigs routing.GroupPricingInvalidator) *routing.GroupAdmin {
 	return newGroupAdminPortsForTest(repo, duplicate, pricingConfigs, nil, nil, nil, nil)
 }
 
-// newGroupAdminPortsForTest 装配分组管理测试需要的存储、提供商查询和缓存失效接口。
+// newGroupAdminPortsForTest supplies repositories, provider reads, and invalidators for group administration
+// tests.
 func newGroupAdminPortsForTest(repo routing.GroupRepository, duplicate routing.GroupDuplicateRepository, pricingConfigs routing.GroupPricingInvalidator, sortOrder routing.GroupSortOrderRepository, providers routing.GroupProviders, invalidator routing.GroupAdminInvalidator, weights *policy.ConfigScoreWeights, keyReaders ...routing.GroupKeyReader) *routing.GroupAdmin {
 	var keys routing.GroupKeyReader
 	if len(keyReaders) > 0 {
@@ -248,7 +249,7 @@ func (s *groupRepoStubForAdmin) UpdateSortOrders(_ context.Context, _ []routing.
 	return nil
 }
 
-// LockGroupSortOrder 记录创建流程是否申请了排序位置锁。
+// LockGroupSortOrder records whether creation requests the ordering lock.
 func (s *groupRepoStubForAdmin) LockGroupSortOrder(_ context.Context) error {
 	s.groupSortOrderLockCalls++
 	return nil

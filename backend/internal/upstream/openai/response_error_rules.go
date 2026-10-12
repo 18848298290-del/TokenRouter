@@ -115,11 +115,9 @@ func OpenAIStreamDataStartsClientOutput(data, eventType string) bool {
 	case "response.failed":
 		return false
 	case "error":
-		// 上游降载/瞬时故障会先推 {"type":"error"} 帧、再以 response.failed 收尾。
-		// 可重试类错误帧不能算客户端输出：一旦把它当首输出 flush，
-		// clientOutputStarted 即被固化，随后的 failed 事件永远进不了 pre-output
-		// failover 分支，只能把致命错误原样转发给客户端。不可重试类
-		// （content_policy / invalid_request 等）维持原样转发，保留上游错误细节。
+		// Retryable bare errors may precede response.failed. Flushing them as first output
+		// would close the failover window before the terminal failure arrives. Forward
+		// non-retryable errors, such as content-policy failures, with their upstream detail.
 		payload := []byte(trimmed)
 		return !OpenAIStreamFailedEventShouldFailover(payload, ExtractOpenAISSEErrorMessage(payload))
 	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added":
@@ -128,8 +126,8 @@ func OpenAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !OpenAIStreamEventIsPreamble(eventType)
 }
 
-// OpenAIStreamDataStartsSemanticTTFT 使用客户端语义事件作为 TTFT 起点；空的
-// reasoning/content 结构只表示协议进度，不能提交首输出阶段或阻断故障转移。
+// OpenAIStreamDataStartsSemanticTTFT identifies events that can start semantic TTFT.
+// Empty reasoning and content structures are protocol progress and keep first-output failover available.
 func OpenAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 	trimmed := strings.TrimSpace(data)
 	if trimmed == "" || trimmed == "[DONE]" {
@@ -143,7 +141,7 @@ func OpenAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 	case "response.failed":
 		return false
 	case "response.completed", "response.done":
-		// 仅携带 usage 的终态不是语义输出，不能虚构首 token。
+		// A usage-only terminal event does not establish a first output token.
 		return wire.StreamDataStartsVisibleOutput(trimmed, eventType)
 	case "error":
 		payload := []byte(trimmed)
@@ -153,8 +151,7 @@ func OpenAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 	}
 }
 
-// OpenAIStreamFailedEventErrorCode 提取流内 failed 事件的错误码（小写），
-// 兼容 response.failed 的嵌套形态与裸 error 形态。
+// OpenAIStreamFailedEventErrorCode reads a lowercase code from response.error or error.
 func OpenAIStreamFailedEventErrorCode(payload []byte) string {
 	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
 	if code == "" {
@@ -163,9 +160,8 @@ func OpenAIStreamFailedEventErrorCode(payload []byte) string {
 	return code
 }
 
-// IsOpenAIUpstreamCapacityShedEvent 判断流内 failed 事件是否为上游容量降载信号。
-// 上游在容量紧张时会把请求丢进降载路径：HTTP 200 之后立刻推 event: error
-// （code=server_is_overloaded / slow_down）并以 response.failed 收尾。
+// IsOpenAIUpstreamCapacityShedEvent recognizes overload codes or messages in stream errors.
+// Such errors can arrive over HTTP 200 before a response.failed terminal event.
 func IsOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
 	switch OpenAIStreamFailedEventErrorCode(payload) {
 	case "server_is_overloaded", "slow_down":
@@ -179,12 +175,9 @@ func IsOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
 	return false
 }
 
-// SanitizeOpenAICapacityShedErrorCodeForClient 把即将写给下游客户端的
-// error / response.failed 事件中的容量降载错误码改写为客户端可重试的错误码。
-// 走到转发这一步说明网关侧 failover 已不可用（流中途）或已用尽；保留原始降载码
-// 只会让客户端就地终止会话。错误消息原样保留；监控与提供商状态判定都基于改写前
-// 的原始 payload，不受影响。rate_limit 等其他错误码一律不动（客户端依赖
-// rate_limit_exceeded 原码解析重试延时）。
+// SanitizeOpenAICapacityShedErrorCodeForClient rewrites capacity-shed codes to a client-retryable code.
+// Call for client delivery after gateway failover is unavailable, retaining the original payload
+// for health and monitoring. Messages and other codes, including rate_limit_exceeded, remain unchanged.
 func SanitizeOpenAICapacityShedErrorCodeForClient(payload []byte) ([]byte, bool) {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) || !IsOpenAIUpstreamCapacityShedEvent(payload) {
 		return payload, false
@@ -214,8 +207,8 @@ func OpenAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	if IsOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
 	}
-	// 聚合上游可能在 HTTP 200 的 response.failed 中携带真实状态码；
-	// 必须优先保留，才能让任意自定义错误码命中统一提供商策略。
+	// After context-window classification, retain explicit error statuses from HTTP 200
+	// stream failures so provider policies can match codes such as 422.
 	for _, path := range []string{
 		"response.error.status_code",
 		"response.error.status",
@@ -244,7 +237,7 @@ func OpenAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		}
 	}
 	switch {
-	// 上游可能用泛化 invalid_request 类型包装真实限流代码，限流信号优先。
+	// A rate-limit code takes precedence over a generic invalid_request type.
 	case strings.Contains(combined, "rate_limit"):
 		return http.StatusTooManyRequests
 	case strings.Contains(errType, "invalid_request"):
@@ -267,8 +260,8 @@ func OpenAIStreamFailureStatus(payload []byte, message string) int {
 		return http.StatusBadGateway
 	}
 	semanticStatus := OpenAIStreamFailedEventSemanticStatus(payload, message)
-	// response.failed 可能携带任意明确的 HTTP 状态码（例如 422 自定义策略），
-	// 该状态必须传递给统一策略与故障转移错误，而不能退化为 502。
+	// Forward explicit error statuses, including custom-policy statuses such as 422,
+	// to provider policy and failover handling instead of reducing them to 502.
 	for _, path := range []string{"response.error.status_code", "response.error.status", "error.status_code", "error.status", "status_code"} {
 		status := int(gjson.GetBytes(payload, path).Int())
 		if status >= http.StatusBadRequest && status <= 599 {
@@ -375,8 +368,8 @@ func OpenAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	return true
 }
 
-// OpenAIStreamErrorEventShouldFailover 只处理尚未写出语义内容的裸 error 事件。
-// response.failed 仍由统一提供商策略处理，避免重复记录或重复切号。
+// OpenAIStreamErrorEventShouldFailover classifies bare errors for use before semantic output.
+// The caller owns the output-state check; response.failed uses the terminal provider policy.
 func OpenAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if hit, _, _ := DetectOpenAICyberPolicy(payload); hit {
 		return false
@@ -468,8 +461,8 @@ func IsOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
 }
 
-// IsOpenAIClientInvalidRequestError 仅识别已确认由客户端参数触发的 OpenAI 400。
-// 不能只判断 invalid_request_error，否则会把网关字段转换错误也排除出 SLA。
+// IsOpenAIClientInvalidRequestError recognizes known client-parameter HTTP 400 failures.
+// The invalid_request_error type alone could also describe gateway conversion defects.
 func IsOpenAIClientInvalidRequestError(upstreamStatusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if upstreamStatusCode != http.StatusBadRequest || len(upstreamBody) == 0 {
 		return false
@@ -482,7 +475,7 @@ func IsOpenAIClientInvalidRequestError(upstreamStatusCode int, upstreamMsg strin
 	return errType == "invalid_request_error" && errCode == OpenAIPropertyNameAboveMaxLengthCode
 }
 
-// IsOpenAICapacityShedMessage 识别没有稳定错误码时的上游容量降载文案。
+// IsOpenAICapacityShedMessage recognizes overload messages when a stable error code is absent.
 func IsOpenAICapacityShedMessage(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	return strings.Contains(lower, "server is overloaded") ||
@@ -600,9 +593,8 @@ func SanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		return payload, false
 	}
 	updated := payload
-	// 容量降载码对 Codex CLI 是致命错误；事件既然要写给客户端（failover 已不可用），
-	// 就改写为客户端可重试的错误码。error 帧与 response.failed 都要改：上游降载
-	// 总是先推 error 帧再收 failed，两帧携带同一个错误。
+	// Rewrite capacity-shed codes in both bare errors and response.failed so Codex can retry
+	// when gateway failover is unavailable. Upstream may send both frames for one failure.
 	if rewritten, changed := SanitizeOpenAICapacityShedErrorCodeForClient(updated); changed {
 		updated = rewritten
 	}
@@ -633,8 +625,8 @@ func SanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	if !gjson.GetBytes(updated, "response").Exists() {
 		return updated, !bytes.Equal(updated, payload)
 	}
-	// response.failed 的 response 可能回显完整 instructions/output/tools 等大字段；
-	// 客户端只需要错误信息，先保留内部计费/告警使用的原始 payload，再裁剪下发内容。
+	// Failed responses may echo large request and output fields. Callers retain the raw
+	// payload for billing and alerts before trimming the client-facing error.
 	for _, path := range []string{
 		"response.instructions",
 		"response.output",
@@ -658,7 +650,7 @@ func SanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	return updated, !bytes.Equal(updated, payload)
 }
 
-// DetectOpenAICyberPolicy 精确识别 error.code 或 response.error.code 为 cyber_policy 的响应。
+// DetectOpenAICyberPolicy matches cyber_policy in error.code, then response.error.code.
 func DetectOpenAICyberPolicy(payload []byte) (bool, string, string) {
 	code := gjson.GetBytes(payload, "error.code").String()
 	if code == "" {
@@ -674,13 +666,13 @@ func DetectOpenAICyberPolicy(payload []byte) (bool, string, string) {
 	return true, "cyber_policy", strings.TrimSpace(msg)
 }
 
-// IsOpenAICyberWarningText 判断上游错误文本是否属于 OpenAI cyber 风控拒绝。
+// IsOpenAICyberWarningText recognizes OpenAI cyber-policy refusal wording.
 func IsOpenAICyberWarningText(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "" {
 		return false
 	}
-	// 只用明确的 cyber 风控锚点命中，避免普通 usage policy/flagged 错误被当成 cyber 拒绝。
+	// Require cyber-specific markers so ordinary usage-policy failures do not match.
 	if strings.Contains(lower, "cybersecurity risk") ||
 		strings.Contains(lower, "chatgpt.com/cyber") ||
 		strings.Contains(lower, "cyber abuse") ||
@@ -693,7 +685,7 @@ func IsOpenAICyberWarningText(text string) bool {
 			strings.Contains(lower, "security work"))
 }
 
-// IsCodexPlanGatedModelError 识别 ChatGPT OAuth 套餐拒绝目标模型的错误。
+// IsCodexPlanGatedModelError recognizes HTTP 400 model rejections tied to a Codex plan.
 func IsCodexPlanGatedModelError(status int, body []byte) bool {
 	if status != http.StatusBadRequest {
 		return false

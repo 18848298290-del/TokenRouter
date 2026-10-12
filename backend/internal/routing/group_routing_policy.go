@@ -10,18 +10,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// GroupPolicyView 包含当前分组的路由策略和允许的协议。
+// GroupPolicyView contains the group's routing rules and allowed protocols.
 type GroupPolicyView struct {
 	GroupRoutingPolicy
 	AllowedProtocols  []protocol.ProtocolID
 	ProtocolFallbacks map[protocol.ProtocolID][]protocol.ProtocolID
 	RequireOAuthOnly  bool
-	// ModelsList 保存已启用的自定义展示型号，供目录生成候选。
+	// ModelsList contains enabled custom display IDs used as catalog candidates.
 	ModelsList []string
 }
 
-// PlatformBoolOverride 读取分组的布尔覆盖，兼容按平台保存的对象。
-// 未配置或值类型不匹配时返回 nil，由调用方使用默认策略。
+// PlatformBoolOverride reads a boolean override, including legacy per-platform objects.
+// It returns nil for missing or incorrectly typed values so the caller can apply its default.
 func PlatformBoolOverride(values map[string]any, key string, platform string) *bool {
 	if values == nil {
 		return nil
@@ -52,7 +52,7 @@ func BoolOverridePtr(v bool) *bool {
 	return &v
 }
 
-// DecodeGroupRoutingPolicy 解析存储的策略，数据损坏时返回拒绝全部模型的策略。
+// DecodeGroupRoutingPolicy parses stored rules and returns a deny-all model policy for malformed data.
 func DecodeGroupRoutingPolicy(raw []byte) GroupRoutingPolicy {
 	var policy GroupRoutingPolicy
 	if len(raw) > 0 && json.Unmarshal(raw, &policy) != nil {
@@ -61,7 +61,7 @@ func DecodeGroupRoutingPolicy(raw []byte) GroupRoutingPolicy {
 	return policy
 }
 
-// ValidateGroupRoutingPolicy 在写入前校验检查阶段及分组内的模型规则。
+// ValidateGroupRoutingPolicy checks the allowlist stage and model rules before storage.
 func ValidateGroupRoutingPolicy(p GroupRoutingPolicy) error {
 	switch p.RestrictionModelSource {
 	case "", BillingModelSourceRequested, BillingModelSourceGroupMapped, BillingModelSourceUpstream:
@@ -87,7 +87,7 @@ func ValidateGroupRoutingPolicy(p GroupRoutingPolicy) error {
 	return nil
 }
 
-// GetGroupPolicy 读取分组策略，生产装配优先使用当前请求的可信认证快照。
+// GetGroupPolicy copies policy from the injected group reader, which can use the trusted request snapshot.
 func (s *PricingConfigService) GetGroupPolicy(ctx context.Context, groupID int64) (*GroupPolicyView, error) {
 	if s == nil || s.options.ReadGroup == nil {
 		return nil, nil
@@ -117,7 +117,7 @@ func (p *GroupPolicyView) RestrictionSource() string {
 	return p.RestrictionModelSource
 }
 
-// ResolveModel 在分组内先精确匹配，再按有序前缀匹配，只改写一次。
+// ResolveModel applies one group mapping, trying exact matches before ordered prefix patterns.
 func (p *GroupPolicyView) ResolveModel(model string) string {
 	if p == nil {
 		return model
@@ -151,7 +151,7 @@ func (p *GroupPolicyView) IsModelRestricted(model string) bool {
 	return true
 }
 
-// IsWebSearchEmulationEnabled 读取平台开关，配置值为非对象时返回 false。
+// IsWebSearchEmulationEnabled reads the platform flag and returns false for missing or non-object configuration.
 func (p *GroupPolicyView) IsWebSearchEmulationEnabled(platform string) bool {
 	if p == nil {
 		return false
@@ -172,8 +172,8 @@ func (p *GroupPolicyView) IsBedrockCCCompatEnabled(platform string) bool {
 	return value != nil && *value
 }
 
-// ModelForRestriction 根据分组白名单检查阶段确定限制检查使用的模型。
-// upstream 返回空（需逐提供商检查）。
+// ModelForRestriction selects the model for the configured allowlist stage.
+// The upstream stage returns an empty string because it requires a per-provider check.
 func ModelForRestriction(source, requestedModel, groupMappedModel string) string {
 	switch source {
 	case BillingModelSourceRequested:

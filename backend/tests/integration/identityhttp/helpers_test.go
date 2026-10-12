@@ -124,7 +124,7 @@ type wechatOAuthSettingRepoStub struct {
 
 type wechatOAuthRefreshTokenCacheStub struct{}
 
-// authHTTPFixture 保存测试依赖和认证、微信支付 HTTP 处理器。
+// authHTTPFixture holds dependencies and the authentication and WeChat payment handlers.
 type authHTTPFixture struct {
 	*identityhttp.AuthenticationHandler
 	*paymenthttp.WeChatPaymentHandler
@@ -140,10 +140,10 @@ type authHTTPFixture struct {
 	googleIDTokenVerifier provider.GoogleIDTokenVerifier
 }
 
-// googleVerifierFixture 使用注入的 Google 令牌验证器，未注入时使用 GoogleAPIIDTokenVerifier。
+// googleVerifierFixture uses the injected verifier or GoogleAPIIDTokenVerifier when none is set.
 type googleVerifierFixture struct{ h *authHTTPFixture }
 
-// authSettingsFixture 组合认证设置读取器，共用同一个测试存储。
+// authSettingsFixture combines settings readers backed by the same test store.
 type authSettingsFixture struct {
 	*identitycore.RuntimeSettings
 	*identitycore.GrantSettings
@@ -1228,12 +1228,12 @@ func (oauthPendingFlowTotpEncryptorStub) Decrypt(ciphertext string) (string, err
 	return ciphertext, nil
 }
 
-// ConsumeRefreshToken 返回刷新凭据未命中。
+// ConsumeRefreshToken reports a missing refresh credential.
 func (s *oauthPendingFlowRefreshTokenCacheStub) ConsumeRefreshToken(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-// WithLockedInviter 在替身中同步执行回调，行锁由 PostgreSQL 集成测试检查。
+// WithLockedInviter runs the callback synchronously; PostgreSQL integration tests cover row locking.
 func (r *oauthPendingFlowAffiliateRepo) WithLockedInviter(ctx context.Context, _ int64, fn func(context.Context) error) error {
 	return fn(ctx)
 }
@@ -1442,12 +1442,12 @@ func (s *wechatOAuthRefreshTokenCacheStub) IsTokenInFamily(context.Context, stri
 	return false, nil
 }
 
-// ConsumeRefreshToken 返回刷新凭据未命中。
+// ConsumeRefreshToken reports a missing refresh credential.
 func (s *wechatOAuthRefreshTokenCacheStub) ConsumeRefreshToken(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-// authBackgroundFixture 的后台工作由测试拥有，数据库释放前先等待已接受操作。
+// authBackgroundFixture waits for accepted background work before test database cleanup.
 func authBackgroundFixture(t *testing.T) func(string, func()) bool {
 	t.Helper()
 	tasks := lifecycle.NewTasks()
@@ -1467,7 +1467,7 @@ func newAuthHTTPFixture(t *testing.T, input *authHTTPFixture) *authHTTPFixture {
 	return input
 }
 
-// bindAuthHTTPFixture 在测试替换输入后重新装配处理器。
+// bindAuthHTTPFixture rebuilds handlers after a test replaces dependencies.
 func bindAuthHTTPFixture(t *testing.T, h *authHTTPFixture) {
 	t.Helper()
 	var client *dbent.Client
@@ -1633,7 +1633,7 @@ func (v googleVerifierFixture) Verify(ctx context.Context, credential, audience 
 	return verifier.Verify(ctx, credential, audience)
 }
 
-// paymentResume 使用配置密钥或历史测试密钥创建 payment 恢复服务。
+// paymentResume resolves the environment signing key and configured encryption-key fallback.
 func (h *authHTTPFixture) paymentResume() *payment.PaymentResumeService {
 	var raw string
 	var configured bool

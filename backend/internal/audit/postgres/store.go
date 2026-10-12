@@ -41,13 +41,13 @@ request_body, status_code, latency_ms, extra`
   COALESCE(l.extra::text, '{}')`
 )
 
-// Store 审计日志仓储（raw SQL，append-only）。
-// 刻意不实现单条删除：审计日志只允许追加、按保留期批量清理、以及带 2FA 的全量清空。
+// Store persists audit records through raw SQL.
+// Deletion is exposed as retention batches or full clearing; callers authorize full clearing with 2FA.
 type Store struct {
 	db *sql.DB
 }
 
-// NewAuditLogRepository 创建审计日志仓储。
+// NewAuditLogRepository creates the audit-log store.
 func NewAuditLogRepository(db *sql.DB) *Store {
 	return &Store{db: db}
 }
@@ -288,7 +288,7 @@ LIMIT $` + strconv.Itoa(len(args)+1) + ` OFFSET $` + strconv.Itoa(len(args)+2)
 		if err != nil {
 			return nil, err
 		}
-		// 列表页不返回 body，降低载荷；详情接口返回完整记录。
+		// Omit bodies from list responses to reduce payload size; details include the full record.
 		item.RequestBody = ""
 		logs = append(logs, item)
 	}
@@ -357,7 +357,7 @@ DELETE FROM audit_logs WHERE id IN (SELECT id FROM batch)`, cutoff.UTC(), batchS
 	return res.RowsAffected()
 }
 
-// ClearWithTrace 把原记录清空与必须持久的留痕放在同一 PostgreSQL 事务中。
+// ClearWithTrace clears records and persists the clearing trace in one PostgreSQL transaction.
 func (r *Store) ClearWithTrace(ctx context.Context, trace *audit.AuditLog) (int64, error) {
 	if trace == nil {
 		return 0, fmt.Errorf("audit clear trace is required")

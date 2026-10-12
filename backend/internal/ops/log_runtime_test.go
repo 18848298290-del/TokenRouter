@@ -69,7 +69,7 @@ func TestValidateRuntimeLogConfigErrors(t *testing.T) {
 	}
 }
 
-// TestNormalizeRuntimeLogConfigNilInputs 检查运行日志配置规范化接受空参数。
+// TestNormalizeRuntimeLogConfigNilInputs checks normalization with nil inputs.
 func TestNormalizeRuntimeLogConfigNilInputs(t *testing.T) {
 	normalizeOpsRuntimeLogConfig(nil, &OpsRuntimeLogConfig{Level: "info"})
 	normalizeOpsRuntimeLogConfig(&OpsRuntimeLogConfig{Level: "debug"}, nil)

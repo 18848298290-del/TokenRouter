@@ -45,7 +45,9 @@ Promo Code 在用户注册成功后赠送余额，字段包括 code、赠送金�
 
 ## 幂等与审计
 
-订单返利用 `source_order_id` 关联来源，PostgreSQL 存储对同一来源只计提一次，支付 webhook 重放不会重复计提。Promo Code 依靠唯一的使用记录和行锁，防止并发重复赠送。邀请码绑定、比例调整、解冻、转账和管理员改码，都保留操作记录或可审计的状态。
+订单返利用 `source_order_id` 关联来源。支付履约通过 `payment/postgres.OrderStore.ApplyOrderRebate` 在事务中先认领订单审计记录，再使用同一事务计提返利。`payment_audit_logs` 的 `(order_id, action)` 唯一索引和已应用、已跳过记录的检查共同处理回调重放。推广流水的 `source_order_id` 使用普通索引，直接调用 `promotion.AffiliateService.AccrueInviteRebateForOrder` 的调用方需要协调重复请求。
+
+Promo Code 依靠唯一的使用记录和行锁，防止并发重复赠送。邀请码绑定、比例调整、解冻、转账和管理员改码，都保留操作记录或可审计的状态。
 
 补偿时，先分别判断订单履约、返利记录和余额流水是否已经写入，只重试还没完成、并且有幂等保护的步骤。资金相关的缓存失效失败时发出告警，数据以数据库事务的结果为准。
 

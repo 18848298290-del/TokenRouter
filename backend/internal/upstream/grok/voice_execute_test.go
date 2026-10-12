@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// 捕获同步输出，不另建队列或输出协程。
+// voiceOutput captures synchronous emissions for assertions.
 type voiceOutput struct {
 	head   upstream.OutputHead
 	events []upstream.OutputEvent
@@ -35,7 +35,7 @@ func (s *voiceOutput) Emit(event upstream.OutputEvent) error {
 
 func (b *voiceBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 
-// TestVoiceExecuteLocalHTTP 验证本地 HTTP 从构造请求到同步输出，核对原生协议、音频单位和响应关闭。
+// Local HTTP checks Voice request construction, output, audio units, and response cleanup.
 func TestVoiceExecuteLocalHTTP(t *testing.T) {
 	cases := []struct {
 		endpoint                       string
@@ -102,7 +102,7 @@ func TestVoiceExecuteLocalHTTP(t *testing.T) {
 	}
 }
 
-// TestVoiceExecuteHTTPErrorDoesNotEmitOrMeter 验证失败策略的处理发生在输出和计量之前，同时仍由执行器关闭响应。
+// Error policy runs before output and metering; the executor still closes the response.
 func TestVoiceExecuteHTTPErrorDoesNotEmitOrMeter(t *testing.T) {
 	var closed atomic.Int64
 	req, err := http.NewRequest(http.MethodPost, "https://fixture.invalid", strings.NewReader(`{}`))

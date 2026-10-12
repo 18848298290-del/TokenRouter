@@ -26,7 +26,7 @@ const (
 )
 
 // ApplyOpenCodeSessionHeader forwards the caller-owned conversation identifier
-// only to OpenCode's official API origin. The caller applies this after provider
+// to HTTPS targets on opencode.ai. The caller applies this after provider
 // header overrides so a per-conversation value cannot be replaced by a fixed
 // provider-wide override.
 func ApplyOpenCodeSessionHeader(c *gin.Context, provider *gatewayprovider.ExecutionProvider, targetURL string, headers http.Header) {
@@ -60,7 +60,7 @@ func ResolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool, rout
 	}, isOfficialClient, routerMatch...)
 }
 
-// ResolveOpenAIUpstreamOriginatorForClient 将路由结果交给 upstream 解析 originator。
+// ResolveOpenAIUpstreamOriginatorForClient passes the router match to the upstream originator resolver.
 func ResolveOpenAIUpstreamOriginatorForClient(read func() string, official bool, matches ...egress.TLSFingerprintRouterMatchResult) string {
 	var match egress.TLSFingerprintRouterMatchResult
 	if len(matches) > 0 {
@@ -69,15 +69,15 @@ func ResolveOpenAIUpstreamOriginatorForClient(read func() string, official bool,
 	return openai.ResolveUpstreamOriginator(read, official, match.Matched, match.UpstreamOriginator)
 }
 
-// SetOpenAICodexRoutingHint 为 OpenAI OAuth 请求生成 Codex 后端路由提示。
-// 调用方传入最终上游模型名，以及应用本地改写和过滤策略后的 serviceTier。
+// SetOpenAICodexRoutingHint generates a Codex routing hint for OpenAI OAuth requests.
+// Callers supply the final upstream model and service tier after local rewrites and filtering.
 func SetOpenAICodexRoutingHint(headers http.Header, provider *gatewayprovider.ExecutionProvider, model string, serviceTier string) {
 	if headers == nil {
 		return
 	}
 
-	// 生成路由提示前删除同名头的全部大小写变体，网关写入的提示使用最终值。
-	// Header.Del 只删除规范化键，入站映射还可能包含小写键。
+	// Remove every casing variant before writing the final routing hint.
+	// Header.Del removes the canonical key, but inbound maps may also contain lowercase keys.
 	DeleteOpenAIHeaderEqualFold(headers, OpenAICodexRoutingHintHeader)
 	if provider == nil || !provider.View().IsOpenAIOAuthLike() {
 		return
@@ -88,10 +88,10 @@ func SetOpenAICodexRoutingHint(headers http.Header, provider *gatewayprovider.Ex
 		return
 	}
 
-	// Codex 的 default 表示标准路由，发送时省略服务层级。fast 规范化为 priority，flex 和 ultrafast 保持原样。
+	// Codex default omits the tier; fast becomes priority, while flex and ultrafast remain unchanged.
 	canonicalTier := protocolopenai.ServiceTierValue(serviceTier)
-	// 当前回移不含 Codex 模型目录快照，无法校验任意层级 ID，因此只发送
-	// Codex 实际选择的有效层级；default、空值和其他兼容 API 值仅保留模型。
+	// Without a Codex model catalogue snapshot, arbitrary tier IDs cannot be validated.
+	// Send recognized Codex tiers; default, empty, and other compatibility values send only the model.
 	switch canonicalTier {
 	case tierpolicy.OpenAIFastTierPriority, tierpolicy.OpenAIFastTierFlex, tierpolicy.OpenAIFastTierUltrafast:
 	default:
@@ -125,7 +125,7 @@ func SetOpenAICodexRoutingHintFromBody(headers http.Header, provider *gatewaypro
 	SetOpenAICodexRoutingHint(headers, provider, fields[0].String(), fields[1].String())
 }
 
-// LogOpenAIRoutingDiagnostics 记录网关推导的路由状态，日志字段为路由诊断值。
+// LogOpenAIRoutingDiagnostics records routing values derived by the gateway.
 func LogOpenAIRoutingDiagnostics(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,

@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// usageAssemblyProviders 汇总 usage 模块的 Wire provider。
+// usageAssemblyProviders groups Wire providers for the usage module.
 var usageAssemblyProviders = wire.NewSet(
 	provideUsageDashboardCache,
 	providePublicUsage,

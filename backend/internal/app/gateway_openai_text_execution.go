@@ -25,7 +25,7 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// provideCompactExecutor 为上下文恢复执行器提供所需的静态参数。
+// provideCompactExecutor supplies static configuration for context recovery.
 func provideCompactExecutor(cfg *config.Config) *gatewayhttp.CompactExecutor {
 	value := &gatewayhttp.CompactExecutor{}
 	if cfg != nil {
@@ -36,7 +36,7 @@ func provideCompactExecutor(cfg *config.Config) *gatewayhttp.CompactExecutor {
 	return value
 }
 
-// provideExecutionAgentIdentity 与所有提供商查询共用协调器和连接失效拥有者。
+// provideExecutionAgentIdentity shares the task coordinator and connection invalidation with provider queries.
 func provideExecutionAgentIdentity(tasks *provider.OpenAITaskCoordinator, store gatewayadapter.ExecutionProviderStore, connections *openaiws.OpenAIWSConnections) *gatewayadapter.ExecutionAgentIdentity {
 	return gatewayadapter.NewExecutionAgentIdentity(tasks, store, func(ctx context.Context, value *provider.Record) (string, error) {
 		return provideradapter.RegisterAgentIdentityTask(ctx, value, "https://auth.openai.com/api/accounts")
@@ -47,7 +47,8 @@ func provideAnthropicPromptCache() *session.AnthropicPromptCache {
 	return session.NewAnthropicPromptCache(time.Now)
 }
 
-// provideOpenAITextExecutor 构造独立的文本能力，共用请求、输出和后台观察实例。
+// provideOpenAITextExecutor builds the text executor with shared request, output, and background task
+// dependencies.
 func provideOpenAITextExecutor(cfg *config.Config, store gatewayadapter.ExecutionProviderStore, identity *gatewayadapter.ExecutionAgentIdentity, credentials *provider.OpenAIExecutionCredentials, transport httpclient.UpstreamTransport, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, readers *gatewayadapter.RuntimeReaders, grok *gatewayhttp.GrokExecutor, output *gatewayhttp.OpenAIResponseOutput, cache *session.AnthropicPromptCache, choices *selection.Compatible, compact *gatewayhttp.CompactExecutor, tasks *lifecycle.Tasks) *gatewayhttp.OpenAITextExecutor {
 	text := openAITextExecution(cfg, store, identity, credentials, transport, profiles, routers, readers, grok, output, cache, choices.OpenAIHTTPResponseStickyTTL, compact)
 	text.CodexUsage.Go = tasks.Go
@@ -74,13 +75,13 @@ func provideOpenAIResponses(text *gatewayhttp.OpenAITextExecutor, choices *selec
 	return &gatewayhttp.OpenAIResponsesExecutor{Requests: text.Requests, Output: text.Output, Text: text, Grok: text.Grok, Lineage: lineage, ImageBridge: imagePolicy}
 }
 
-// provideOpenAIAuxiliary 复用 app 已构造的请求、输出、授权和后台观察实例。
+// provideOpenAIAuxiliary reuses the application's request, output, authorization, and usage observer instances.
 func provideOpenAIAuxiliary(text *gatewayhttp.OpenAITextExecutor, authorization *provider.OpenAIAuthorization, activity *gatewayRequestActivity) *gatewayhttp.OpenAIAuxiliary {
 	executor := &gatewayhttp.OpenAIAuxiliary{Requests: text.Requests, Output: text.Output, CodexUsage: text.CodexUsage, Authorization: authorization, Enter: activity.Enter}
 	return executor
 }
 
-// provideOpenAIImages 绑定共享的请求、输出和任务跟踪器，模型冷却由提供商模块管理。
+// provideOpenAIImages shares request, output, and activity tracking; the provider module manages image cooldowns.
 func provideOpenAIImages(text *gatewayhttp.OpenAITextExecutor, activity *gatewayRequestActivity) *gatewayhttp.OpenAIImagesExecutor {
 	cooldown := &provideradapter.ImageToolCooldown{Store: text.Requests.Providers}
 	if text.Requests.Readers != nil {
@@ -90,7 +91,7 @@ func provideOpenAIImages(text *gatewayhttp.OpenAITextExecutor, activity *gateway
 	return result
 }
 
-// openAITextExecution 固定注入已构造的资源，动态策略仍按请求读取。
+// openAITextExecution binds shared resources while dynamic policy is read per request.
 func openAITextExecution(cfg *config.Config, store gatewayadapter.ExecutionProviderStore, identity *gatewayadapter.ExecutionAgentIdentity, credentials *provider.OpenAIExecutionCredentials, transport httpclient.UpstreamTransport, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, readers *gatewayadapter.RuntimeReaders, grok *gatewayhttp.GrokExecutor, output *gatewayhttp.OpenAIResponseOutput, prompts *session.AnthropicPromptCache, ttl func() time.Duration, compact *gatewayhttp.CompactExecutor) *gatewayhttp.OpenAITextExecutor {
 	policy := &provideradapter.OpenAIProbePolicy{Available: true, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Profiles: profiles}
 	requests := &gatewayhttp.OpenAIRequests{Providers: store, Identity: identity, Credentials: credentials, Transport: transport, Profiles: profiles, Routers: routers, Readers: readers, ClientPolicy: policy}
@@ -124,7 +125,7 @@ func openAITextExecution(cfg *config.Config, store gatewayadapter.ExecutionProvi
 	return executor
 }
 
-// provideUnifiedTextExecutor 注入共享的执行器，跨平台切换提供商时复用连接和资源池。
+// provideUnifiedTextExecutor shares executors so cross-platform failover reuses connections and resource pools.
 func provideUnifiedTextExecutor(openai *gatewayhttp.OpenAIResponsesExecutor, anthropic *gatewayhttp.MessagesExecutor, gemini *gatewayhttp.GeminiExecutor, antigravity *gatewayhttp.AntigravityExecutor, qoder *gatewayadapter.QoderRuntime, refresh *provideradapter.QoderRequestRefresh, queue *scheduler.UserMessageQueueService, cfg *config.Config, prices *billing.PriceResolver) *gatewayhttp.UnifiedTextExecutor {
 	executor := &gatewayhttp.UnifiedTextExecutor{OpenAI: openai, Anthropic: anthropic, Gemini: gemini, Antigravity: antigravity, Qoder: qoder, QoderRefresh: refresh}
 	executor.Pricing = &admission.ModelPricing{Resolver: prices}

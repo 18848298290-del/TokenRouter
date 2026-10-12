@@ -9,7 +9,7 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// GroupLinks 在调用方连接中维护提供商关联，调用方负责提交和缓存失效。
+// GroupLinks updates provider associations on the caller's connection; the caller owns commit and cache invalidation.
 type GroupLinks struct{ exec postgresinfra.Executor }
 
 func GroupLinksInTx(exec postgresinfra.Executor) GroupLinks { return GroupLinks{exec: exec} }

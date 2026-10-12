@@ -14,8 +14,8 @@ type CodexSeenIdentity struct {
 	userID string
 }
 
-// BuildCodexStoredIdentityKeys 生成存量提供商索引键，保留 user/provider 维度，
-// 让 accessToken-only 提供商后续升级为完整 OAuth 时仍能命中并更新原提供商。
+// BuildCodexStoredIdentityKeys indexes stored provider and user identities
+// so a later full OAuth import can update an access-token-only provider.
 func BuildCodexStoredIdentityKeys(providerID, userID, email, accessToken string) []string {
 	keys := make([]string, 0, 3)
 	providerID = strings.TrimSpace(providerID)
@@ -53,7 +53,7 @@ func (i *CodexProviderIndex) Add(provider Record) {
 	if i == nil {
 		return
 	}
-	// 索引不借用调用者的可变提供商图。
+	// The index owns a copy of the caller's mutable provider data.
 	provider = *CloneRecord(&provider)
 	if i.providersByKey == nil {
 		i.providersByKey = map[string][]Record{}
@@ -121,8 +121,8 @@ func (i *CodexProviderIndex) removeFromKey(key string, providerID int64) {
 	i.providersByKey[key] = kept
 }
 
-// upsertCodexProvider 保留共享键的全部候选提供商，并原位替换已有提供商，
-// 身份匹配有多个候选时，按候选顺序处理。
+// upsertCodexProvider retains all candidates sharing a key and replaces existing IDs in place.
+// Matching considers candidates in their stored order.
 func upsertCodexProvider(providers []Record, provider Record) []Record {
 	for idx := range providers {
 		if providers[idx].ID == provider.ID {
@@ -133,7 +133,7 @@ func upsertCodexProvider(providers []Record, provider Record) []Record {
 	return append(providers, provider)
 }
 
-// Find 返回第一个通过跨用户校验的候选提供商及其命中的匹配键。
+// Find returns the first candidate passing the user-identity check and the key that matched.
 func (i *CodexProviderIndex) Find(keys []string, userID string) (*Record, string) {
 	if i == nil {
 		return nil, ""
@@ -149,10 +149,10 @@ func (i *CodexProviderIndex) Find(keys []string, userID string) (*Record, string
 	return nil, ""
 }
 
-// codexIdentityConflicts 判断 provider: 键的命中是否把同一 ChatGPT 团队的两个
-// 不同成员误连到一起：双方都携带 user id 且不相等时视为冲突。存量索引侧
-// 仍保留 provider 键，任一侧缺少 user id 时允许匹配，使含 refresh_token
-// 的常规导入和 accessToken-only 提供商升级为完整 OAuth 时仍能更新原提供商。
+// codexIdentityConflicts detects different users sharing a ChatGPT team provider key.
+// A conflict requires nonempty, unequal user IDs on both sides.
+// Provider keys remain indexed; a missing user ID on either side permits matching,
+// including full OAuth imports that upgrade existing access-token-only providers.
 func codexIdentityConflicts(key, userID, storedUserID string) bool {
 	if !strings.HasPrefix(key, "provider:") {
 		return false

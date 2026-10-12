@@ -2,7 +2,7 @@ package openaiforward
 
 import "net/http"
 
-// PassthroughFailureOptions 包含透传错误分类所需的查询函数。
+// PassthroughFailureOptions supplies predicates for passthrough failure classification.
 type PassthroughFailureOptions struct {
 	Cyber         func([]byte) bool
 	ContextWindow func([]byte) bool

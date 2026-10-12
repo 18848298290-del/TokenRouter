@@ -12,13 +12,13 @@ const (
 	PricingSourceUnpriced = purepricing.PricingSourceUnpriced
 )
 
-// ResolvedPricing 保留旧解析结果入口，由纯定价包唯一拥有。
+// ResolvedPricing aliases the result owned by the pricing package.
 type ResolvedPricing = purepricing.ResolvedPricing
 
-// PricingInput 定价解析输入。
+// PricingInput identifies the model and optional group whose prices to resolve.
 type PricingInput struct {
 	Model   string
-	GroupID *int64 // nil 表示不检查共享价格配置
+	GroupID *int64 // nil skips shared pricing configuration lookup
 }
 
 type ConfigPrices interface {
@@ -29,7 +29,7 @@ type ModelIdentity struct {
 }
 type ModelCandidates func(string) ModelIdentity
 
-// PriceResolver 按分组关联读取共享价格配置，并按需查询模型目录。
+// PriceResolver reads the group's shared pricing configuration and queries the model catalog as needed.
 type PriceResolver struct {
 	pricingConfigs ConfigPrices
 	calculator     *Calculator
@@ -49,7 +49,7 @@ func NewPriceResolver(pricingConfigs ConfigPrices, calculator *Calculator, looku
 	return &PriceResolver{pricingConfigs: pricingConfigs, calculator: calculator, lookup: lookup, observe: observe, providerStats: providerStats}
 }
 
-// Resolve 按关联价格配置与内置价格解析价卡及计费设置。
+// Resolve combines configured and catalog prices with the group's billing settings.
 // @project-doc docs/domains/routing_and_billing.md#group_model_pricing
 func (r *PriceResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
 	var configPricing *ModelPricingEntry
@@ -65,7 +65,7 @@ func (r *PriceResolver) Resolve(ctx context.Context, input PricingInput) *Resolv
 	return purepricing.ResolvePriceCards(configPricing, base, source, settings.LongContextPricingEnabled)
 }
 
-// ResolveBasePricing 从完整型号的目录与静态价项获取基础定价。
+// ResolveBasePricing retrieves catalog pricing for the full model name.
 func (r *PriceResolver) ResolveBasePricing(model string) (*ModelPricing, string) {
 	pricing, err := r.calculator.GetModelPricing(model)
 	if err != nil {
@@ -75,8 +75,8 @@ func (r *PriceResolver) ResolveBasePricing(model string) (*ModelPricing, string)
 	return pricing, PricingSourceCatalog
 }
 
-// LookupConfigPricingNormalized 优先匹配原始请求，再复用目录的明确身份候选。
-// 候选解析同一型号的协议资源路径，目录尚未收录的型号也可查询手动配置。
+// LookupConfigPricingNormalized tries the requested name before catalog identity candidates.
+// Candidates resolve protocol resource paths for the same model; manual prices can cover uncataloged models.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_metadata_lookup
 func (r *PriceResolver) LookupConfigPricingNormalized(ctx context.Context, groupID int64, model string) *ModelPricingEntry {
 	if r == nil || r.pricingConfigs == nil {
@@ -87,7 +87,7 @@ func (r *PriceResolver) LookupConfigPricingNormalized(ctx context.Context, group
 	}, r.lookup)
 }
 
-// LookupPricingForModel 统一共享价格配置的候选顺序，完整请求名的精确/通配价卡优先。
+// LookupPricingForModel tries exact or wildcard cards for the full requested name before identity candidates.
 func LookupPricingForModel(model string, lookup func(string) *ModelPricingEntry, identities ModelCandidates) *ModelPricingEntry {
 	if pricing := lookup(model); pricing != nil {
 		return pricing
@@ -108,7 +108,7 @@ func LookupPricingForModel(model string, lookup func(string) *ModelPricingEntry,
 	return nil
 }
 
-// BillingSettings 读取分组关联的有效配置，无关联时使用统一默认值。
+// BillingSettings returns the group's effective settings, or defaults when no settings source is available.
 func (r *PriceResolver) BillingSettings(ctx context.Context, groupID *int64) purepricing.BillingSettings {
 	if r != nil && groupID != nil {
 		if source, ok := r.pricingConfigs.(interface {

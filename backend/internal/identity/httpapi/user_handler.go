@@ -14,7 +14,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UserHandler 处理用户资料与身份绑定；推广资金入口留在所属用例。
+// UserHandler handles user profiles and identity bindings.
 type UserHandler struct {
 	userService  *identity.UserService
 	authService  *identity.AuthService
@@ -76,23 +76,23 @@ type SendEmailBindingCodeRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
-// SendNotifyEmailCodeRequest represents the request to send notify email verification code.
+// SendNotifyEmailCodeRequest identifies the notification address to verify.
 type SendNotifyEmailCodeRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
-// VerifyNotifyEmailRequest represents the request to verify and add notify email.
+// VerifyNotifyEmailRequest contains a notification address and its verification code.
 type VerifyNotifyEmailRequest struct {
 	Email string `json:"email" binding:"required,email"`
 	Code  string `json:"code" binding:"required,len=6"`
 }
 
-// RemoveNotifyEmailRequest represents the request to remove a notify email.
+// RemoveNotifyEmailRequest identifies the notification address to remove.
 type RemoveNotifyEmailRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
-// ToggleNotifyEmailRequest represents the request to toggle a notify email's disabled state.
+// ToggleNotifyEmailRequest specifies the disabled state of a notification address.
 type ToggleNotifyEmailRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Disabled bool   `json:"disabled"`
@@ -102,7 +102,7 @@ func NewUserHandler(users *identity.UserService, auth *identity.AuthService, ema
 	return &UserHandler{users, auth, email, cache}
 }
 
-// GetProfile handles getting user profile
+// GetProfile returns the authenticated user's profile.
 // GET /api/v1/users/me
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -126,7 +126,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	response.Success(c, profileResp)
 }
 
-// ChangePassword handles changing user password
+// ChangePassword changes the authenticated user's password.
 // POST /api/v1/users/me/password
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -154,7 +154,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Password changed successfully"})
 }
 
-// UpdateProfile handles updating user profile
+// UpdateProfile updates the authenticated user's profile.
 // PUT /api/v1/users/me
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -169,7 +169,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	if len(req.Email) > 0 {
-		// 主邮箱会影响登录身份，必须走验证码绑定/换绑流程，不能通过资料接口直接修改。
+		// Primary email changes affect sign-in and require the verified email binding flow.
 		response.ErrorFrom(c, identity.ErrProfileEmailChangeForbidden)
 		return
 	}
@@ -331,7 +331,7 @@ func (h *UserHandler) SendEmailBindingCode(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Verification code sent successfully"})
 }
 
-// SendNotifyEmailCode sends verification code to extra notification email
+// SendNotifyEmailCode sends a code to an additional notification address.
 // POST /api/v1/user/notify-email/send-code
 func (h *UserHandler) SendNotifyEmailCode(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -355,7 +355,7 @@ func (h *UserHandler) SendNotifyEmailCode(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Verification code sent successfully"})
 }
 
-// VerifyNotifyEmail verifies code and adds email to notification list
+// VerifyNotifyEmail verifies a code and adds the address to the notification list.
 // POST /api/v1/user/notify-email/verify
 func (h *UserHandler) VerifyNotifyEmail(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -376,7 +376,6 @@ func (h *UserHandler) VerifyNotifyEmail(c *gin.Context) {
 		return
 	}
 
-	// Return updated user
 	updatedUser, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -392,7 +391,7 @@ func (h *UserHandler) VerifyNotifyEmail(c *gin.Context) {
 	response.Success(c, profileResp)
 }
 
-// RemoveNotifyEmail removes email from notification list
+// RemoveNotifyEmail removes an address from the notification list.
 // DELETE /api/v1/user/notify-email
 func (h *UserHandler) RemoveNotifyEmail(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -413,7 +412,6 @@ func (h *UserHandler) RemoveNotifyEmail(c *gin.Context) {
 		return
 	}
 
-	// Return updated user
 	updatedUser, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -429,7 +427,7 @@ func (h *UserHandler) RemoveNotifyEmail(c *gin.Context) {
 	response.Success(c, profileResp)
 }
 
-// ToggleNotifyEmail toggles the disabled state of a notification email
+// ToggleNotifyEmail sets the disabled state of a notification address.
 // PUT /api/v1/user/notify-email/toggle
 func (h *UserHandler) ToggleNotifyEmail(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

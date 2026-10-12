@@ -22,7 +22,7 @@ const (
 	OpenAIChatGPTStartURL             = "https://chatgpt.com/"
 	OpenAIChatGPTFilesURL             = "https://chatgpt.com/backend-api/files"
 	OpenAIImageBackendUserAgent       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-	OpenAIImageMaxDownloadBytes       = 20 << 20 // 20MB per image download
+	OpenAIImageMaxDownloadBytes       = 20 << 20 // 20 MiB per image download
 )
 
 type ImagePointerInfo struct {

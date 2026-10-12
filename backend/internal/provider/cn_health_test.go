@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 健康规则测试检查处理顺序和输入，适配器负责转换模型数据。
+// cnHealthFailureStore records health-operation order and inputs.
 type cnHealthFailureStore struct {
 	HealthStore
 	order *[]string
@@ -38,7 +38,7 @@ func TestCNConcurrencyRepositoryFailureKeepsRuntimeBlock(t *testing.T) {
 	require.Same(t, original, blocked)
 }
 
-// TestCNProviderQuotaSnapshotReset Coding Plan 429 冷却：取快照中最早的「仍在未来」窗口重置点。
+// TestCNProviderQuotaSnapshotReset checks the earliest future Coding Plan reset used for 429 cooldowns.
 func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -46,7 +46,7 @@ func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	futureWeekly := now.Add(3 * 24 * time.Hour)
 	pastWeekly := now.Add(-24 * time.Hour)
 
-	// 5h 在未来、weekly 已过期 → 返回 5h。
+	// The future 5h reset wins when the weekly reset has expired.
 	used := 100.0
 	provider := cnCodingTestProvider(capability.PlatformKimi)
 	attachCNMonitorLimits(provider, now, []UpstreamUsageLimit{
@@ -57,7 +57,7 @@ func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	require.NotNil(t, got)
 	require.True(t, future5h.Equal(*got))
 
-	// 两个窗口都尚未重置时取较早时间，429 通常由 5h 窗口触发。
+	// When both resets are in the future, choose the earlier one.
 	both := cnCodingTestProvider(capability.PlatformKimi)
 	attachCNMonitorLimits(both, now, []UpstreamUsageLimit{
 		{Name: "5h", Used: &used, ResetAt: &future5h},
@@ -67,7 +67,7 @@ func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	require.NotNil(t, gotBoth)
 	require.True(t, future5h.Equal(*gotBoth))
 
-	// 两窗口均过期 → nil。
+	// Both resets have expired.
 	expired := cnCodingTestProvider(capability.PlatformKimi)
 	attachCNMonitorLimits(expired, now, []UpstreamUsageLimit{
 		{Name: "5h", Used: &used, ResetAt: &pastWeekly},
@@ -75,7 +75,7 @@ func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	})
 	require.Nil(t, CNProviderQuotaSnapshotReset(expired, now))
 
-	// payg 提供商（非 coding）→ nil（余额型走余额检测）。
+	// Pay-as-you-go providers use balance monitoring rather than Coding Plan windows.
 	payg := cnCodingTestProvider(capability.PlatformKimi)
 	payg.Credentials["provider_mode"] = ProviderModePayG
 	require.Nil(t, CNProviderQuotaSnapshotReset(payg, now))

@@ -32,7 +32,7 @@ type RedeemCodeRepository interface {
 
 	List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error)
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]RedeemCode, *pagination.PaginationResult, error)
-	// ListByUserPaginated returns paginated balance/concurrency history for a specific user.
+	// ListByUserPaginated returns a user's paginated redemption and adjustment history.
 	// codeType filter is optional - pass empty string to return all types.
 	ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]RedeemCode, *pagination.PaginationResult, error)
 	// SumPositiveBalanceByUser returns the total recharged amount (sum of positive balance values) for a user.
@@ -49,7 +49,7 @@ type RedeemCodeBatchUpdateFields struct {
 	ExpiresAt NullableTimeUpdate
 	Notes     *string
 
-	// 这些核心字段只用于显式拒绝批量修改，避免绕过单条编辑里的权益一致性校验。
+	// These fields let batch updates reject core changes that require single-code entitlement consistency checks.
 	Type    *string
 	Value   *float64
 	MaxUses *int

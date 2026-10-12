@@ -22,7 +22,7 @@ func TestListRequestDetailsSLAOnlyUsesSLAErrorScope(t *testing.T) {
 	start := time.Date(2026, 6, 18, 1, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
 
-	// SLA 详情里的错误明细要排除配置的客户端侧状态码，避免和 SLA 卡片数字不一致。
+	// SLA drilldown excludes configured client statuses to match the summary card.
 	slaScopePattern := regexp.QuoteMeta("COALESCE(o.status_code, 0) IN (401, 403)") +
 		`(?s).*` +
 		regexp.QuoteMeta("o.upstream_status_code IS NOT NULL")

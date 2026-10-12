@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// resolveAntigravityModel 只执行一次映射，白名单在 thinking 规范化之后检查。
+// resolveAntigravityModel applies one mapping; callers check the whitelist after thinking normalization.
 func resolveAntigravityModel(value *provider.Record, requested string) string {
 	if value == nil {
 		return ""
@@ -21,12 +21,12 @@ func resolveAntigravityModel(value *provider.Record, requested string) string {
 	return mapped
 }
 
-// MapAntigravityModel 返回不改变 thinking 档位时的最终可用模型。
+// MapAntigravityModel resolves an allowed model without changing its thinking suffix.
 func MapAntigravityModel(value *provider.Record, requested string) string {
 	return FinalAntigravityModel(value, requested, nil)
 }
 
-// FinalAntigravityModel 在单跳映射和 thinking 规范化后检查最终白名单。
+// FinalAntigravityModel checks the whitelist after one mapping and thinking normalization.
 func FinalAntigravityModel(value *provider.Record, requested string, thinking *bool) string {
 	mapped := resolveAntigravityModel(value, requested)
 	if mapped == "" {
@@ -37,7 +37,7 @@ func FinalAntigravityModel(value *provider.Record, requested string, thinking *b
 	})
 }
 
-// FinalAntigravityModelWithRules 使用已准备的映射和白名单处理 thinking 型号。
+// FinalAntigravityModelWithRules resolves thinking variants using prepared mappings and a whitelist.
 func FinalAntigravityModelWithRules(rules *provider.ModelRulesSnapshot, requested string, thinking *bool) string {
 	requested = strings.TrimSpace(strings.TrimPrefix(requested, "models/"))
 	if requested == "" {

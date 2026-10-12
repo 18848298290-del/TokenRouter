@@ -1,6 +1,6 @@
 package postgres
 
-// 本文件检查 settlement.go 的结算累计和 member_usage.go 的管理重置使用同一时区。
+// These tests compare settlement.go usage accumulation with member_usage.go administrator resets in the same time zone.
 
 import (
 	"context"
@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestMemberWritesUseInjectedCalendar 验证结算与管理重置在同一注入时区计算 SQL 窗口。
+// TestMemberWritesUseInjectedCalendar checks that settlement and administrator resets use the injected calendar
+// for SQL windows.
 func TestMemberWritesUseInjectedCalendar(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

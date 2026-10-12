@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony 检查缺少腾讯验证码票据时拒绝创建 Passkey 会话。
+// TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony checks that missing CAPTCHA proof blocks ceremony creation.
 func TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony(t *testing.T) {
 	authHandler, verifier := newOAuthCaptchaTestHandler(true)
 	passkeys := identity.NewPasskeyService(false, nil, nil, nil, nil)
@@ -30,8 +30,8 @@ func TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony(t *testing.T) {
 	require.Zero(t, verifier.calls)
 }
 
-// TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService 检查票据通过后调用 Passkey 服务。
-// 测试中的禁用实例返回功能关闭错误。
+// TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService checks that valid proof reaches the Passkey service.
+// The disabled service fixture then returns its feature-disabled error.
 func TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService(t *testing.T) {
 	authHandler, verifier := newOAuthCaptchaTestHandler(true)
 	passkeys := identity.NewPasskeyService(false, nil, nil, nil, nil)

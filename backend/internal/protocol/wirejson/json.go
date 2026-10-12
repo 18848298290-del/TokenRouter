@@ -40,11 +40,11 @@ func Marshal(v any) ([]byte, error) {
 	return out, nil
 }
 
-// ParseView 直接引用 raw 的内容并解析 JSON。
+// ParseView parses JSON using a view of raw. Callers must not mutate raw while the result or its derived strings are in use.
 func ParseView(raw []byte) gjson.Result {
 	if len(raw) == 0 {
 		return gjson.Result{}
 	}
-	// 同步解析直接引用 raw，适用于较大的 messages 和 contents。
+	// Sharing the backing bytes avoids copying large messages and contents.
 	return gjson.Parse(*(*string)(unsafe.Pointer(&raw)))
 }

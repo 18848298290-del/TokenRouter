@@ -18,7 +18,7 @@ const stickySessionTTL = time.Hour
 
 var ErrNoAvailableProviders = errors.New("no available providers")
 
-// FlowProvider 保存本次选择使用的提供商数据，ProjectionID 供调用方关联执行目标。
+// FlowProvider contains selection data; ProjectionID lets the caller find the corresponding execution target.
 type FlowProvider struct {
 	Plan                                       *routing.CandidatePlan
 	ProjectionID                               uint64
@@ -58,7 +58,7 @@ type FlowOptions struct {
 	FallbackWaitTimeout, StickySessionWaitTimeout time.Duration
 }
 
-// GenericSelectionPorts 提供平台资格检查、路由数据转换和提供商读写函数，选择顺序由 GenericSelector 决定。
+// GenericSelectionPorts supplies eligibility checks, routing conversions, and provider access. GenericSelector orders these operations.
 type GenericSelectionPorts struct {
 	ReadGroup                    func(context.Context, int64) (*FlowGroup, error)
 	ForcePlatform                func(context.Context) (string, bool)
@@ -101,7 +101,7 @@ type GenericSelectionPorts struct {
 	PrefetchedSticky                             func(context.Context, *int64) int64
 }
 
-// GenericSelector 使用 app 提供的计数、粘性缓存和反馈实例选择提供商。
+// GenericSelector selects providers using the counters, sticky cache, and feedback supplied by app.
 type GenericSelector struct {
 	ports              GenericSelectionPorts
 	cache              StickyCache
@@ -146,7 +146,7 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 	}
 	ctx = s.ports.WithGroupContext(ctx, group)
 	usesAdvancedScheduler := group != nil && group.UsesAdvancedScheduler()
-	// 高级调度开启粘性加权后，会话粘性参与候选评分。关闭加权时优先尝试硬粘性绑定。
+	// Weighted stickiness contributes to advanced scores; otherwise the hard binding is tried first.
 	advancedStickyWeighted := usesAdvancedScheduler && s.ports.AdvancedSchedulerEffectiveSettingsForRequest(ctx, groupID).StickyWeightedEnabled
 
 	if s.ports.CheckGroupModelRestriction(ctx, groupID, requestedModel) {
@@ -202,7 +202,7 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 			derefGroupID(groupID), groupPlatform, requestedModel, shortFlowSessionHash(sessionHash), stickyProviderID, cfg.LoadBatchEnabled, s.concurrencyService != nil)
 	}
 
-	// 基础调度器在负载批查询不可用时走单次选择。高级分组仍执行评分，缺失负载按中性信号处理。
+	// Basic selection tries candidates individually when batch load reads are unavailable. Advanced scoring uses neutral load values.
 	if !usesAdvancedScheduler && (s.concurrencyService == nil || !cfg.LoadBatchEnabled) {
 		localExcluded := make(map[int64]struct{})
 		maps.Copy(localExcluded, excludedIDs)
@@ -278,7 +278,7 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 		_, excluded := excludedIDs[providerID]
 		return excluded
 	}
-	// 使用 upstream 模型时逐提供商计算最终模型，所有按负载选择的入口共用此过滤规则。
+	// Upstream model restrictions use each provider's final model across load-aware selection paths.
 	needsUpstreamCheck := s.ports.NeedsUpstreamGroupRestrictionCheck(ctx, groupID)
 	isUpstreamAllowed := func(provider *FlowProvider) bool {
 		return !needsUpstreamCheck || !s.ports.IsUpstreamModelRestrictedByGroup(ctx, *groupID, provider, requestedModel)
@@ -420,9 +420,9 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 									if !s.ports.CheckAndRegisterSession(ctx, stickyProvider, sessionHash) {
 										stickyCacheMissReason = "session_limit"
 									} else {
-										// 必须走 newSelectionResult 以 hydrate 提供商凭证：
-										// 调度快照中的提供商是精简版（OAuth token 等被剥离），
-										// 直接返回会导致后续转发缺少凭证而鉴权失败。
+										// Use NewSelectionResult to hydrate credentials before returning the provider.
+										// Scheduling snapshots strip credentials such as OAuth tokens.
+										// Returning the snapshot directly would leave forwarding without authentication credentials.
 										return s.ports.NewSelectionResult(ctx, stickyProvider, false, nil, &ProviderWaitPlan{
 											ProviderID:     stickyProviderID,
 											MaxConcurrency: stickyProvider.Concurrency,
@@ -487,8 +487,8 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 			}
 
 			if len(routingAvailable) > 0 {
-				// 模型路由提供符合硬约束的候选，高级分组将这些候选交给通用评分函数，
-				// 候选耗尽后返回无可用提供商。
+				// Model routing supplies candidates that satisfy eligibility checks; advanced groups score them together.
+				// Exhausting these candidates returns no available provider.
 				if usesAdvancedScheduler {
 					if selection, ok, selectErr := s.TryAdvanced(ctx, groupID, sessionHash, routingAvailable); selectErr != nil {
 						return nil, selectErr
@@ -777,7 +777,7 @@ func (s *GenericSelector) Select(ctx context.Context, input SelectionInput) (*Fl
 			} else if ok {
 				return selection, nil
 			}
-			// 高级分组已尝试候选和等待计划，耗尽后返回无可用提供商。
+			// The advanced path has exhausted its candidates and wait plans.
 			return nil, ErrNoAvailableProviders
 		}
 
@@ -846,7 +846,7 @@ func (s *GenericSelector) TryAdvancedWithoutLoad(
 		}
 		available = append(available, FlowLoad{
 			Provider: provider,
-			// 负载批查询失败时，评分使用中性负载因子。
+			// A failed batch read leaves load as a neutral scoring signal.
 			LoadInfo: nil,
 		})
 	}
@@ -954,9 +954,9 @@ func (s *GenericSelector) TryLegacyOrder(ctx context.Context, candidates []*Flow
 	for _, acc := range ordered {
 		result, err := s.ports.TryAcquireProviderSlot(ctx, acc.ID, acc.Concurrency)
 		if err == nil && result.Acquired {
-			// 会话数量限制检查
+			// Check the session limit before accepting the slot.
 			if !s.ports.CheckAndRegisterSession(ctx, acc, sessionHash) {
-				result.ReleaseFunc() // 释放槽位，继续尝试下一个提供商
+				result.ReleaseFunc() // Return the slot before trying another provider.
 				continue
 			}
 			if sessionHash != "" && s.cache != nil {
@@ -975,11 +975,11 @@ func (s *GenericSelector) TryLegacyOrder(ctx context.Context, candidates []*Flow
 
 func (s *GenericSelector) SortCandidatesForFallback(providers []*FlowProvider, preferOAuth bool, mode string) {
 	if mode == "random" {
-		// 先按优先级排序，然后在同优先级内随机打乱
+		// Sort by priority, then shuffle within equal priorities.
 		flowSortProvidersByPriorityOnly(providers, preferOAuth)
 		flowShuffleWithinPriority(providers, s.now)
 	} else {
-		// 默认按最后使用时间排序
+		// Use last-used time for the default ordering.
 		flowSortProvidersByPriorityAndLastUsed(providers, preferOAuth)
 	}
 }
@@ -994,7 +994,7 @@ func shortFlowSessionHash(sessionHash string) string {
 	return sessionHash[:8]
 }
 
-// SelectOnly 按路由和资格检查顺序选择提供商，供无需占槽和注册会话的辅助入口调用。
+// SelectOnly follows routing and eligibility checks for callers that need no slots or session registration.
 func (s *GenericSelector) SelectOnly(ctx context.Context, input SelectionInput) (*FlowProvider, error) {
 	return s.selectRoutes(WithSelectOnly(ctx), input.GroupID, input.SessionHash, input.RequestedModel, input.ExcludedIDs)
 }

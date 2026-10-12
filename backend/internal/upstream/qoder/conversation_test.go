@@ -26,31 +26,31 @@ func TestQoderConversationStoreExpiresState(t *testing.T) {
 	require.Len(t, next.MessagesToSend, 1)
 }
 
-// TestQoderConversationStoreConcurrent 检查并发提交和回滚后的会话版本。
+// TestQoderConversationStoreConcurrent checks state and version after concurrent commits.
 func TestQoderConversationStoreConcurrent(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 
 	const numGoroutines = 50
 	const numOpsPerGoroutine = 100
 
-	// 请求共享 key 和 sessionID，各 goroutine 提交相同的 fingerprints。
+	// All workers share the conversation and commit the same fingerprints.
 	key := "test_conversation_key"
 	sessionID := "test_session_id"
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	// 并发请求会在同一会话中交错读取、提交和回滚。
+	// Interleave reads, commits, and rollback calls for one conversation.
 	for i := range numGoroutines {
 		go func(workerID int) {
 			defer wg.Done()
 			for j := range numOpsPerGoroutine {
-				// 每次操作根据当时读取的版本构造计划。
+				// Capture the state visible to this operation.
 				store.Mu.Lock()
 				currentState := store.Items[key]
 				store.Mu.Unlock()
 
-				// previousState 是本次提交失败时的恢复目标。
+				// PreviousState is the restoration target if this plan is rolled back.
 				plan := &QoderConversationPlan{
 					Store:             store,
 					Key:               key,
@@ -60,11 +60,11 @@ func TestQoderConversationStoreConcurrent(t *testing.T) {
 					PreviousState:     CloneQoderConversationState(currentState),
 				}
 
-				// 提交使当前版本递增。
+				// Each commit increments the version.
 				fingerprints := []string{"msg_1", "msg_2", "msg_3"}
 				plan.CommitFingerprints(fingerprints)
 
-				// 偶数编号的 goroutine 每十次操作模拟一次失败回滚。
+				// Exercise the rollback guard without an accepted state on selected operations.
 				if workerID%2 == 0 && j%10 == 0 {
 					plan.AcceptedCommitted = true
 					plan.RollbackAccepted()
@@ -75,7 +75,7 @@ func TestQoderConversationStoreConcurrent(t *testing.T) {
 
 	wg.Wait()
 
-	// 会话经过并发提交后仍应存在。
+	// Concurrent commits leave a valid versioned conversation.
 	store.Mu.Lock()
 	finalState := store.Items[key]
 	store.Mu.Unlock()
@@ -91,13 +91,13 @@ func TestQoderConversationStoreConcurrent(t *testing.T) {
 	}
 }
 
-// TestQoderConversationRollbackVersionControl 验证 rollback 版本控制防止并发覆盖。
+// TestQoderConversationRollbackVersionControl checks that stale rollback cannot overwrite a later commit.
 func TestQoderConversationRollbackVersionControl(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 	key := "test_key"
 	sessionID := "session_1"
 
-	// 初始状态：version 1
+	// Establish version 1.
 	plan1 := &QoderConversationPlan{
 		Store:             store,
 		Key:               key,
@@ -114,12 +114,12 @@ func TestQoderConversationRollbackVersionControl(t *testing.T) {
 		t.Fatalf("expected version=1, got=%v", state1)
 	}
 
-	// 保存 previousState 用于后续 rollback
+	// Record the state accepted by plan1 for the rollback comparison.
 	plan1.PreviousState = CloneQoderConversationState(state1)
 	plan1.AcceptedState = CloneQoderConversationState(state1)
 	plan1.AcceptedCommitted = true
 
-	// 另一个 plan 提交新状态：version 2
+	// A competing plan advances the conversation to version 2.
 	plan2 := &QoderConversationPlan{
 		Store:             store,
 		Key:               key,
@@ -136,8 +136,8 @@ func TestQoderConversationRollbackVersionControl(t *testing.T) {
 		t.Fatalf("expected version=2, got=%v", state2)
 	}
 
-	// plan1 尝试 rollback（基于 version 1 的 previousState）
-	// 当前 version 已经是 2，回滚 version 1 的计划应被拒绝。
+	// plan1 still refers to accepted version 1.
+	// Its rollback must leave version 2 intact.
 	plan1.RollbackAccepted()
 
 	store.Mu.Lock()

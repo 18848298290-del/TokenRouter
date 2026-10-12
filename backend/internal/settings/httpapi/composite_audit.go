@@ -652,12 +652,12 @@ func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeA
 	if before.AdvancedSchedulerWeightSessionSticky != after.AdvancedSchedulerWeightSessionSticky {
 		changed = append(changed, "advanced_scheduler_weight_session_sticky")
 	}
-	// OpenAI 配额自动暂停阈值迁移到系统设置后，变更也需要进入审计日志。
+	// Audit changes to global OpenAI quota auto-pause thresholds.
 	if before.OpenAIQuotaAutoPauseSettings.DefaultThreshold5h != after.OpenAIQuotaAutoPauseSettings.DefaultThreshold5h ||
 		before.OpenAIQuotaAutoPauseSettings.DefaultThreshold7d != after.OpenAIQuotaAutoPauseSettings.DefaultThreshold7d {
 		changed = append(changed, "openai_provider_quota_auto_pause")
 	}
-	// 余额、订阅到期与提供商限额通知
+	// Balance, subscription expiry, and provider quota notifications.
 	if before.BalanceLowNotifyEnabled != after.BalanceLowNotifyEnabled {
 		changed = append(changed, "balance_low_notify_enabled")
 	}
@@ -676,7 +676,6 @@ func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeA
 	if !equalNotifyEmailEntries(before.ProviderQuotaNotifyEmails, after.ProviderQuotaNotifyEmails) {
 		changed = append(changed, "provider_quota_notify_emails")
 	}
-	// 默认平台限额（JSON map，整体比较）
 	if !equalProviderSchedulingThresholds(before.ProviderSchedulingThresholds, after.ProviderSchedulingThresholds) {
 		changed = append(changed, provider.SettingKeyProviderSchedulingThresholds)
 	}
@@ -874,7 +873,7 @@ func stringSetting(value *string, fallback string) string {
 	return *value
 }
 
-// equalUserPromptReplacementConfig 比较序列化后的提示词替换配置，比较范围包含 rules 内的嵌套字段。
+// equalUserPromptReplacementConfig compares serialized configurations, including nested rule fields.
 func equalUserPromptReplacementConfig(a, b *promptpolicy.UserPromptReplacementConfig) bool {
 	rawA, _ := json.Marshal(a)
 	rawB, _ := json.Marshal(b)

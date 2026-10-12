@@ -23,7 +23,7 @@ type grokFreeQuotaUsageRepoStub struct {
 
 type quotaTestStats struct{ Tokens int64 }
 
-// 夹具将提供商资格传给免费额度检查器，并按输入顺序返回结果。
+// quotaTestRuntime supplies eligibility to the gate and returns admitted providers in input order.
 type quotaTestRuntime struct{ gate *FreeQuotaGate }
 
 func (r *grokFreeQuotaUsageRepoStub) GetProviderWindowStatsBatch(_ context.Context, providerIDs []int64, start time.Time) (map[int64]*quotaTestStats, error) {
@@ -62,7 +62,7 @@ func TestFilterGrokFreeQuotaProvidersOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 		{ID: 4, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"subscription_tier": "FREE"}},
 	}
 
-	// 首次执行时缓存未命中并失败开放，同时安排后台刷新，不阻断提供商。
+	// The first miss allows admission and schedules a background refresh.
 	filtered := scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)
 	require.Equal(t, []int64{1, 2, 3, 4}, providerIDs(filtered), "miss fails open on hot path")
 
@@ -73,7 +73,7 @@ func TestFilterGrokFreeQuotaProvidersOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	waitGrokFreeQuotaTestGate(t, scheduler.gate)
 
-	// 第二次执行使用已刷新缓存，并阻断超过门禁的免费 OAuth 提供商。
+	// The refreshed cache blocks a free OAuth provider above the threshold.
 	filtered = scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)
 	require.Equal(t, []int64{2, 3, 4}, providerIDs(filtered), "paid and unknown fail-open; API-key free marker is not gated")
 	require.Equal(t, []int64{1}, repo.lastIDs, "paid, unknown, and API-key providers must not enter the local free-tier query")
@@ -97,7 +97,7 @@ func TestFilterGrokFreeQuotaProvidersStatsFailureFailsOpen(t *testing.T) {
 		return repo.calls >= 1
 	}, 2*time.Second, 10*time.Millisecond)
 	waitGrokFreeQuotaTestGate(t, scheduler.gate)
-	// 负缓存命中时继续放行，缓存有效期内复用查询失败的结果。
+	// A cached query failure allows admission and suppresses retries until the entry expires.
 	filtered = scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)
 	require.Equal(t, []int64{1}, providerIDs(filtered))
 	require.Equal(t, 1, repo.calls)
@@ -131,7 +131,7 @@ func TestFilterGrokFreeQuotaProvidersRecoversAfterRollingUsageFalls(t *testing.T
 		Credentials: map[string]any{"plan_type": "free"},
 	}}
 
-	// 未命中时失败开放，后台填充后阻断超过门禁的提供商。
+	// The initial miss allows admission; populated usage then blocks the provider.
 	require.Equal(t, []int64{1}, providerIDs(scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)))
 	require.Eventually(t, func() bool {
 		filtered := scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)
@@ -141,18 +141,18 @@ func TestFilterGrokFreeQuotaProvidersRecoversAfterRollingUsageFalls(t *testing.T
 	repo.mu.Lock()
 	repo.stats[1] = &quotaTestStats{Tokens: 100_000}
 	repo.mu.Unlock()
-	// 新鲜的正缓存会持续执行软性门禁，直到 TTL 过期。
+	// Fresh usage continues to enforce the gate until the TTL expires.
 	require.Empty(t, scheduler.filterGrokFreeQuotaProviders(context.Background(), providers), "fresh cache keeps the soft-gate hold")
 
-	// 使条目过期后，缓存未命中会失败开放，并使用恢复后的用量安排刷新。
+	// Expired usage allows admission and starts a refresh using the recovered usage.
 	waitGrokFreeQuotaTestGate(t, scheduler.gate)
 	repo.mu.Lock()
 	callsBeforeExpire := repo.calls
 	repo.mu.Unlock()
 	scheduler.gate.cache.Store(int64(1), grokFreeQuotaGateCacheEntry{
-		tokens: 490_000, checkedAt: time.Now().Add(-2 * time.Minute), known: true, // TTL=60s → stale
+		tokens: 490_000, checkedAt: time.Now().Add(-2 * time.Minute), known: true, // Beyond the 60-second TTL.
 	})
-	// 刷新进行期间热点路径保持失败开放。
+	// Requests remain admitted while the refresh runs.
 	require.Equal(t, []int64{1}, providerIDs(scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)))
 	require.Eventually(t, func() bool {
 		filtered := scheduler.filterGrokFreeQuotaProviders(context.Background(), providers)
@@ -177,18 +177,15 @@ func TestIsExplicitGrokFreeOAuthProvider_OnlyExactFree(t *testing.T) {
 	require.False(t, IsExplicitGrokFreeOAuthProvider(&Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"subscription_tier": "free"}}))
 	require.True(t, IsExplicitGrokFreeOAuthProvider(&Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}}))
 	require.True(t, IsExplicitGrokFreeOAuthProvider(&Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}))
-	// basic 或推断出的免费状态不参与软性门禁，只有明确的 free 层参与。
+	// Only an explicit free tier qualifies; basic and inferred free tiers do not.
 	require.False(t, IsExplicitGrokFreeOAuthProvider(&Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"subscription_tier": "basic"}}))
 	require.False(t, IsExplicitGrokFreeOAuthProvider(&Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}))
 }
 
-// TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered 验证管理端 QueryQuota 与导入探测路径绝不调用 filterGrokFreeQuotaProviders。
-// 此测试记录并断言调度过滤器是唯一门禁入口。
+// TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered checks that selection filtering
+// leaves the provider record unchanged for other callers.
 func TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered(t *testing.T) {
-	// 构造管理端探测会检查的相同提供商。GrokQuotaService.QueryQuota 与 GetUsage
-	// 不会调用该过滤器；只通过调度器类型调用可确保免费提供商超过软性门禁时，
-	// 管理端流量仍不受阻断。
-	// 基本校验：只有调度过滤器运行时才过滤超过门禁的免费提供商。
+	// An over-limit free provider is excluded by the scheduling fixture.
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*quotaTestStats{
 		9: {Tokens: 500_000},
 	}}
@@ -199,7 +196,7 @@ func TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered(t *testing.T) {
 		_ = scheduler.filterGrokFreeQuotaProviders(context.Background(), []Record{overGate})
 		return len(scheduler.filterGrokFreeQuotaProviders(context.Background(), []Record{overGate})) == 0
 	}, 2*time.Second, 10*time.Millisecond)
-	// 未经过调度过滤器时，提供商对象本身保持不变。
+	// Filtering leaves the source record available to other callers.
 	require.True(t, IsExplicitGrokFreeOAuthProvider(&overGate))
 	require.Equal(t, int64(9), overGate.ID)
 }
@@ -207,7 +204,7 @@ func TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered(t *testing.T) {
 func TestSweepGrokFreeQuotaGateCacheDropsStaleEntries(t *testing.T) {
 	now := time.Now().UTC()
 	cacheTTL := 5 * time.Second
-	// maxAge 的下限为 grokFreeQuotaGateCacheMinSweepAge。
+	// Entries younger than grokFreeQuotaGateCacheMinSweepAge survive the sweep.
 	var cache sync.Map
 	cache.Store(int64(1), grokFreeQuotaGateCacheEntry{tokens: 10, checkedAt: now, known: true})
 	cache.Store(int64(2), grokFreeQuotaGateCacheEntry{tokens: 20, checkedAt: now.Add(-time.Minute), known: true})
@@ -225,7 +222,7 @@ func TestSweepGrokFreeQuotaGateCacheDropsStaleEntries(t *testing.T) {
 	})
 	require.ElementsMatch(t, []int64{1, 2}, remaining)
 
-	// 禁用缓存（TTL 为零）表示调用方从未填充缓存，应保持不变。
+	// A zero TTL disables expiry, so the sweep retains existing entries.
 	var untouched sync.Map
 	untouched.Store(int64(7), grokFreeQuotaGateCacheEntry{checkedAt: now.Add(-time.Hour), known: true})
 	sweepGrokFreeQuotaGateCache(&untouched, now, 0)
@@ -239,14 +236,14 @@ func TestFilterGrokFreeQuotaProvidersEvictsDepartedProviders(t *testing.T) {
 	}}
 	runtime := newQuotaTestRuntime(repo)
 	cache := &runtime.gate.cache
-	// 提供商 99 曾参与调度，当前批次已将其排除。
-	// 查询其他提供商后，其条目不得继续保留。
+	// Provider 99 has left the current selection and has a stale cache entry.
+	// Refreshing another provider also evicts this stale entry.
 	cache.Store(int64(99), grokFreeQuotaGateCacheEntry{tokens: 5, checkedAt: time.Now().UTC().Add(-2 * time.Hour), known: true})
 
 	providers := []Record{
 		{ID: 1, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}},
 	}
-	// 首次调用会安排异步刷新，此时清理过程可能尚未完成。
+	// The initial refresh is asynchronous; eviction may still be pending when the call returns.
 	_ = runtime.filterGrokFreeQuotaProviders(context.Background(), providers)
 	require.Eventually(t, func() bool {
 		_, departedStillCached := cache.Load(int64(99))
@@ -293,7 +290,7 @@ func (r *quotaTestRuntime) filterGrokFreeQuotaProviders(_ context.Context, value
 	return result
 }
 
-// waitGrokFreeQuotaTestGate 等待后台刷新退出后再修改测试缓存。
+// waitGrokFreeQuotaTestGate waits for background refreshes before tests mutate the cache.
 func waitGrokFreeQuotaTestGate(t *testing.T, gate *FreeQuotaGate) {
 	t.Helper()
 	require.Eventually(t, func() bool {

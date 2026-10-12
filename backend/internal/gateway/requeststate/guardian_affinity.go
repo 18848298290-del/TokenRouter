@@ -7,7 +7,7 @@ import (
 
 type guardianParentAffinityKey struct{}
 
-// GuardianParentAffinity 保存本次请求的父会话散列。
+// GuardianParentAffinity holds the current and legacy parent-session hashes for this request.
 type GuardianParentAffinity struct{ CurrentSessionHash, LegacySessionHash string }
 
 func WithGuardianParentAffinity(ctx context.Context, value GuardianParentAffinity) context.Context {
@@ -22,7 +22,7 @@ func GuardianParentAffinityFromContext(ctx context.Context) (GuardianParentAffin
 	return value, ok && value.CurrentSessionHash != ""
 }
 
-// PreserveGuardianParentBinding 保留父线程的当前和旧散列绑定，不允许子请求覆盖。
+// PreserveGuardianParentBinding reports whether a hash belongs to the parent and should be protected from child rebinding.
 func PreserveGuardianParentBinding(ctx context.Context, hash string) bool {
 	value, ok := GuardianParentAffinityFromContext(ctx)
 	if !ok {

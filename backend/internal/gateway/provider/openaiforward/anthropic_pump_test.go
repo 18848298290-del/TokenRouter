@@ -34,7 +34,7 @@ func TestAnthropicNativeLinePump_DataResetsTimer(t *testing.T) {
 
 	go func() {
 		_, _ = pw.Write([]byte("event: ping\n"))
-		// 流保持打开且停止发送数据，第二次 Next 应触发超时。
+		// Keep the stream open without more data so the second Next call times out.
 		time.Sleep(3 * time.Second)
 		_ = pw.Close()
 	}()

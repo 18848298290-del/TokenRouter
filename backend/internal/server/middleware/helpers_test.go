@@ -25,13 +25,13 @@ type testLogSink struct {
 }
 
 func init() {
-	// Gin 测试模式由 TestMain 设置。
+	// TestMain sets Gin's test mode.
 }
 
 func init() {
 }
 
-// NewAPIKeyAuthMiddleware 为中间件测试组合 API Key 认证和订阅检查。
+// NewAPIKeyAuthMiddleware combines API-key authentication and subscription checks for middleware tests.
 func NewAPIKeyAuthMiddleware(apiKeyService *apikey.APIKeyService, subscriptionService *billing.SubscriptionService, cfg *config.Config) keyhttp.APIKeyAuthMiddleware {
 	return keyhttp.APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, cfg))
 }
@@ -40,7 +40,7 @@ func apiKeyAuthWithSubscription(apiKeyService *apikey.APIKeyService, subscriptio
 	return newGatewayAuthorization(apiKeyService, subscriptionService, cfg, false)
 }
 
-// newGatewayAuthorization 为测试装配 API Key 认证和订阅检查。
+// newGatewayAuthorization assembles API-key authentication and subscription checks for tests.
 func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.SubscriptionService, cfg *config.Config, google bool) gin.HandlerFunc {
 	options := gatewayhttp.APIKeyAuthorizationOptions{
 		Authentication: keyhttp.AuthenticationOptions{
@@ -77,7 +77,7 @@ func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.
 	return gatewayhttp.NewAPIKeyAuthorization(nativeKeys, reader, options)
 }
 
-// setGroupContext 将有效分组写入测试请求上下文。
+// setGroupContext attaches a valid group to the test request context.
 func setGroupContext(c *gin.Context, group *routing.Group) {
 	if !routing.IsGroupContextValid(group) {
 		return
@@ -89,7 +89,7 @@ func setGroupContext(c *gin.Context, group *routing.Group) {
 	c.Request = c.Request.WithContext(ctx)
 }
 
-// invalidAuthClientKey 返回无效认证请求的客户端分桶键。
+// invalidAuthClientKey returns the client bucket for invalid-authentication requests.
 func invalidAuthClientKey(c *gin.Context) string { return InvalidAuthClientKey(c) }
 
 func (s *testLogSink) WriteLogEvent(event *logging.LogEvent) {

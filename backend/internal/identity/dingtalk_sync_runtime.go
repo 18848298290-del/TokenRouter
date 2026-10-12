@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// DingTalkSyncRuntime 持有配置读取与任务端口，保存原后台同步时机和 30 秒预算。
+// DingTalkSyncRuntime wires configuration, provider access, and background profile synchronization.
 type DingTalkSyncRuntime struct {
 	LoadConfig func(context.Context) (DingTalkOAuthOptions, error)
 	Client     func(DingTalkOAuthOptions) DingTalkOAuthClient
@@ -41,7 +41,8 @@ func (s *DingTalkSyncRuntime) Pending(ctx context.Context, p *PendingAuthSession
 	s.FromClaims(ctx, cfg, s.Client(cfg), id, p.UpstreamIdentityClaims, username)
 }
 
-// RunDingTalkSync 复制请求 context 的值并解除取消关联，由注入的任务调度函数接收和等待任务。
+// RunDingTalkSync submits a task with parent context values and an independent 30-second timeout.
+// The injected runner owns task scheduling and shutdown waiting.
 func RunDingTalkSync(parent context.Context, run func(string, func()) bool, observe ProfileSyncObserver, fn func(context.Context)) {
 	if run == nil {
 		return

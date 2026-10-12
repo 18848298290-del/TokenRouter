@@ -66,9 +66,6 @@ func TestPricingConfigToResponse_FullPricingConfig(t *testing.T) {
 	require.Equal(t, "2025-06-01T12:00:00Z", resp.CreatedAt)
 	require.Equal(t, "2025-06-01T13:00:00Z", resp.UpdatedAt)
 
-	// 模型映射
-
-	// 定价信息
 	require.Len(t, resp.ModelPricing, 1)
 	p := resp.ModelPricing[0]
 	require.Equal(t, int64(10), p.ID)
@@ -427,7 +424,7 @@ func TestPricingRequestToService_NilPriceFields(t *testing.T) {
 		{
 			Models:      []string{"m1"},
 			BillingMode: "token",
-			// 所有价格字段默认均为空
+			// Leave prices unset to check that conversion preserves missing values.
 		},
 	}
 

@@ -7,20 +7,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TokenCacheInvalidator 根据提供商快照清理各平台的凭据缓存。
+// TokenCacheInvalidator clears credential caches using a provider snapshot.
 type TokenCacheInvalidator interface {
 	InvalidateToken(ctx context.Context, provider *Record) error
 }
 
-// SessionInvalidator 提供提供商会话的失效操作。
+// SessionInvalidator invalidates sessions for a provider ID.
 type SessionInvalidator interface {
 	Invalidate(int64)
 }
 
-// CompositeTokenCacheInvalidator 保留各平台独立键及尽力删除顺序。
+// CompositeTokenCacheInvalidator deletes platform-specific token keys and logs deletion failures when a
+// warning callback is set.
 type CompositeTokenCacheInvalidator struct {
 	warn               func(string, ...any)
-	cache              AccessTokenCache // 统一使用一个缓存接口，通过缓存键前缀区分平台
+	cache              AccessTokenCache // Platform prefixes share one cache.
 	qoderTokenProvider SessionInvalidator
 }
 
@@ -46,13 +47,13 @@ func (c *CompositeTokenCacheInvalidator) InvalidateToken(ctx context.Context, pr
 
 	switch provider.Platform {
 	case capability.PlatformGemini:
-		// Gemini 可能有两种缓存键：project_id 或 provider_id
-		// 首次获取 token 时可能没有 project_id，之后自动检测到 project_id 后会使用新 key
-		// 刷新时删除两种缓存键。
+		// Tokens may be cached by provider ID before a project ID is discovered.
+		// After discovery the project key is used, so both keys can remain populated.
+		// Invalidate both identities.
 		keysToDelete = append(keysToDelete, GeminiOAuthTokenCacheKey(provider))
 		keysToDelete = append(keysToDelete, "gemini:"+providerIDKey)
 	case capability.PlatformAntigravity:
-		// Antigravity 同样可能有两种缓存键
+		// Antigravity also uses project and provider identities.
 		keysToDelete = append(keysToDelete, AntigravityTokenCacheKey(provider))
 		keysToDelete = append(keysToDelete, "ag:"+providerIDKey)
 	case capability.PlatformOpenAI:
@@ -77,7 +78,7 @@ func (c *CompositeTokenCacheInvalidator) InvalidateToken(ctx context.Context, pr
 		return nil
 	}
 
-	// 删除所有可能的缓存键（去重后）
+	// Project lookup may resolve to the provider key; delete each key once.
 	seen := make(map[string]bool)
 	for _, key := range keysToDelete {
 		if seen[key] {

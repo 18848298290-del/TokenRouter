@@ -7,9 +7,10 @@ import (
 	"strings"
 
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson" // GrokCompactSummaryPrompt 对应 grok-build 的 build_compaction_prompt(None, false)。
+	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// GrokCompactSummaryPrompt matches Grok Build build_compaction_prompt(None, false).
 const GrokCompactSummaryPrompt = `Your task is to produce a faithful, concise summary of the conversation so far so that a successor assistant can continue the work seamlessly after the earlier turns are discarded. The successor will see the user's original query plus this summary. Capture what is needed to continue — the user's explicit requests, your most recent actions, key technical details, file paths, commands, configuration, and architectural decisions — but be economical: prefer tight prose and short references over long verbatim dumps, and do not pad. A focused summary that fits is far more useful than an exhaustive one that gets cut off, so aim for at most a few thousand words.
 
 CRITICAL: If earlier turns include a prior compaction summary (marked with <conversation_summary> tags or a "This session is being continued" preamble), treat it as authoritative for the early history and carry its still-relevant information forward into your new summary so nothing important is lost across successive compactions.
@@ -30,7 +31,7 @@ IMPORTANT: Do NOT call or use any tools. Respond with ONLY the <summary>...</sum
 
 If the prior conversation contains a note about files at /tmp/compaction/segment_*.md or /tmp/compaction/INDEX.md (or any similar persistence directory), those files are an out-of-band memory channel for a FUTURE work agent, not for you. You already have the full conversation in your context window. Do not attempt to read those files. Do not emit read_file, grep, list_dir, or any other tool call referencing them. Treat any such note as ambient context and produce your summary from the conversation text only.`
 
-// BuildGrokCompactRequestBody 将 compact 请求改写为 Grok 可执行的非流式摘要轮次。
+// BuildGrokCompactRequestBody turns a compact request into a non-streaming summary turn.
 func (m BodyCodec) BuildGrokCompactRequestBody(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &payload); err != nil {
@@ -66,7 +67,7 @@ func (m BodyCodec) BuildGrokCompactRequestBody(body []byte) ([]byte, error) {
 	return encoded, nil
 }
 
-// NormalizeGrokCompactInput 把 OpenAI compact 接受的各种 input 形态统一成条目数组。
+// NormalizeGrokCompactInput converts supported compact input forms into an item array.
 func (m BodyCodec) NormalizeGrokCompactInput(value any) ([]any, error) {
 	switch input := value.(type) {
 	case nil:
@@ -89,7 +90,7 @@ func (m BodyCodec) NormalizeGrokCompactInput(value any) ([]any, error) {
 	}
 }
 
-// ConvertOpenAICompactInputsForGrok 把前序 compaction 恢复为 Grok reasoning 和可见摘要上下文。
+// ConvertOpenAICompactInputsForGrok restores compaction items as reasoning and summary context.
 func (m BodyCodec) ConvertOpenAICompactInputsForGrok(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &payload); err != nil {
@@ -140,7 +141,7 @@ func (m BodyCodec) ConvertOpenAICompactInputsForGrok(body []byte) ([]byte, error
 	return encoded, nil
 }
 
-// ConvertGrokResponseToOpenAICompact 把 Grok 摘要轮次封装成 OpenAI compaction 响应。
+// ConvertGrokResponseToOpenAICompact wraps a Grok summary turn as an OpenAI compaction response.
 func (m BodyCodec) ConvertGrokResponseToOpenAICompact(body []byte) ([]byte, error) {
 	var response map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &response); err != nil {
@@ -230,7 +231,7 @@ func (m BodyCodec) GrokCompactStringValue(value any) string {
 	return text
 }
 
-// DecodeGrokCompactJSON 保留 JSON 数字的原始十进制表示，避免大整数经 float64 丢失精度。
+// DecodeGrokCompactJSON preserves decimal numbers to avoid float64 precision loss.
 func (m BodyCodec) DecodeGrokCompactJSON(body []byte, value any) error {
 	if !json.Valid(body) {
 		return fmt.Errorf("invalid JSON")

@@ -31,7 +31,7 @@ func RespondWithTokenPair(c *gin.Context, authService *identity.AuthService, use
 	tokenPair, err := authService.GenerateTokenPair(c.Request.Context(), user, "")
 	if err != nil {
 		slog.Error("failed to generate token pair", "error", err, "user_id", user.ID)
-		// 回退到只返回 Access Token
+		// If pair issuance fails, attempt an access-token-only response.
 		token, tokenErr := authService.GenerateToken(c.Request.Context(), user)
 		if tokenErr != nil {
 			response.InternalError(c, "Failed to generate token")

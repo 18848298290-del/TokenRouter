@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes 注册所属用户接口，共享鉴权、限流和审计已由 app 安装。
+// RegisterUserRoutes registers creative endpoints after app authentication, rate limiting, and audit middleware.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *CreativeHandler, heavy gin.HandlerFunc) {
 	creative := authenticated.Group("/creative")
 	{

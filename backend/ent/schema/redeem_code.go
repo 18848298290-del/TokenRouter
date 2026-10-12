@@ -16,13 +16,11 @@ import (
 
 // RedeemCode holds the schema definition for the RedeemCode entity.
 //
-// 删除策略：硬删除
-// RedeemCode 使用硬删除：
-//   - 兑换码具有一次性使用特性，删除后无需保留历史记录
-//   - 已使用的兑换码通过 status 和 used_at 字段追踪，无需依赖软删除
-//   - 减少数据库存储压力和查询复杂度
+// Redemption codes are hard-deleted.
+// max_uses controls how many times a code can be redeemed.
+// status and used_at track redemption state.
 //
-// 如需审计已删除的兑换码，建议在删除前将关键信息写入审计日志表。
+// Archive any required audit information before deleting a code.
 type RedeemCode struct {
 	ent.Schema
 }
@@ -35,7 +33,7 @@ func (RedeemCode) Annotations() []schema.Annotation {
 
 func (RedeemCode) Fields() []ent.Field {
 	return []ent.Field{
-		// 兑换码最多 32 个 Unicode 字符，与 API 的长度校验一致。
+		// Codes contain at most 32 Unicode code points, matching API validation.
 		field.String("code").
 			MaxRuneLen(32).
 			NotEmpty().
@@ -49,7 +47,7 @@ func (RedeemCode) Fields() []ent.Field {
 		field.String("status").
 			MaxLen(20).
 			Default(billing.StatusUnused),
-		// 领取前检查用户是否有成功付款记录。
+		// Require a successful payment before redemption when enabled.
 		field.Bool("requires_payment").
 			Default(false),
 		field.Int("max_uses").
@@ -97,7 +95,7 @@ func (RedeemCode) Edges() []ent.Edge {
 
 func (RedeemCode) Indexes() []ent.Index {
 	return []ent.Index{
-		// code 字段已在 Fields() 中声明 Unique()，无需重复索引
+		// Fields declares the unique code constraint.
 		index.Fields("status"),
 		index.Fields("expires_at"),
 		index.Fields("used_by"),

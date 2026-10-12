@@ -2,7 +2,7 @@
 
 package rediscache
 
-// 本文件覆盖 health_counter.go 和 temp_unsched_cache.go 共用 Redis 时的计数与调度状态。
+// These tests cover shared Redis counters and suspension state from health_counter.go and temp_unsched_cache.go.
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestProviderHealthRedisCompatibility 检查独立缓存实例共用 Redis 命名空间，Lua 操作读写同一份计数和限流状态。
+// TestProviderHealthRedisCompatibility checks shared namespaces and Lua state across independent cache instances.
 func TestProviderHealthRedisCompatibility(t *testing.T) {
 	client := rediscontainer.New(t)
 	ctx := context.Background()

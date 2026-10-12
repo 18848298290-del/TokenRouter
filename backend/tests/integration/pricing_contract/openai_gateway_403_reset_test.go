@@ -22,7 +22,7 @@ type openAI403CounterResetStub struct {
 	resetCalls []int64
 }
 
-// forbiddenResetFixture 只将完成器的窄通知签名绑定到实际提供商健康实例。
+// forbiddenResetFixture forwards completion counter resets to the provider health service.
 type forbiddenResetFixture struct{ core *providercore.HealthService }
 
 func (s *openAI403CounterResetStub) IncrementOpenAI403Count(context.Context, int64, int) (int64, error) {

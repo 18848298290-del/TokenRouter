@@ -349,7 +349,7 @@ func TestLoadTrustedProxiesPresenceFromYAML(t *testing.T) {
 	}
 }
 
-// TestLoadTrustedProxiesFromConfigFile 验证显式配置文件参与完整配置加载。
+// TestLoadTrustedProxiesFromConfigFile checks that Load reads the explicit configuration file.
 func TestLoadTrustedProxiesFromConfigFile(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")
@@ -370,7 +370,7 @@ func TestLoadTrustedProxiesFromConfigFile(t *testing.T) {
 	require.True(t, cfg.Server.TrustedProxiesConfigured)
 }
 
-// TestConfigFileTakesPrecedenceOverDataDir 验证显式文件优先于 DATA_DIR 搜索结果。
+// TestConfigFileTakesPrecedenceOverDataDir checks explicit-file precedence over DATA_DIR.
 func TestConfigFileTakesPrecedenceOverDataDir(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	dataDir := t.TempDir()
@@ -385,7 +385,7 @@ func TestConfigFileTakesPrecedenceOverDataDir(t *testing.T) {
 	require.Equal(t, "192.0.2.30", cfg.Server.Host)
 }
 
-// TestLoadReturnsErrorForMissingConfigFile 验证显式路径错误不会静默回退到默认配置。
+// TestLoadReturnsErrorForMissingConfigFile checks that an invalid explicit path fails loading.
 func TestLoadReturnsErrorForMissingConfigFile(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "missing.yaml"))
@@ -782,7 +782,7 @@ func TestLoadDefaultSecurityToggles(t *testing.T) {
 	if !cfg.Security.URLAllowlist.AllowPrivateHosts {
 		t.Fatalf("URLAllowlist.AllowPrivateHosts = false, want true")
 	}
-	// 国产供应商的官方站点都应允许作为默认上游。
+	// Default upstream hosts include the Chinese suppliers' official endpoints.
 	for _, host := range []string{
 		"api.kimi.com",
 		"api.moonshot.ai",
@@ -1255,7 +1255,7 @@ func TestGetServerAddressFromEnv(t *testing.T) {
 	}
 }
 
-// TestGetServerAddressFromConfigFile 验证启动阶段地址读取使用同一显式配置源。
+// TestGetServerAddressFromConfigFile checks that startup address lookup uses CONFIG_FILE.
 func TestGetServerAddressFromConfigFile(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "setup.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.40\n  port: 9191\n"), 0o600))
@@ -2384,7 +2384,7 @@ func TestValidateConfig_AutoScaleDisabledIgnoreAutoScaleFields(t *testing.T) {
 	cfg.Gateway.UsageRecord.AutoScaleEnabled = false
 	cfg.Gateway.UsageRecord.WorkerCount = 64
 
-	// 自动扩缩容关闭时，这些字段应被忽略，不应导致校验失败。
+	// Invalid autoscaling fields are ignored while autoscaling is disabled.
 	cfg.Gateway.UsageRecord.AutoScaleMinWorkers = 0
 	cfg.Gateway.UsageRecord.AutoScaleMaxWorkers = 0
 	cfg.Gateway.UsageRecord.AutoScaleUpQueuePercent = 0
@@ -2558,7 +2558,7 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 	}
 }
 
-// TestLoadIgnoresLegacyRunMode 验证旧部署参数作为未知键忽略，不改变任何启动配置。
+// TestLoadIgnoresLegacyRunMode checks that the retired key leaves startup configuration unchanged.
 func TestLoadIgnoresLegacyRunMode(t *testing.T) {
 	for _, legacy := range []struct{ name, env, yaml string }{
 		{name: "未设置"},
@@ -2580,7 +2580,7 @@ func TestLoadIgnoresLegacyRunMode(t *testing.T) {
 			require.NoError(t, os.WriteFile(file, []byte("timezone: UTC\n"+legacy.yaml), 0o600))
 			actual, err := Load()
 			require.NoError(t, err)
-			// 配置内含原子缓存指针，只比较对外配置值。
+			// Compare exported values because configuration also contains an atomic cache pointer.
 			before, err := json.Marshal(baseline)
 			require.NoError(t, err)
 			after, err := json.Marshal(actual)
@@ -2590,7 +2590,7 @@ func TestLoadIgnoresLegacyRunMode(t *testing.T) {
 	}
 }
 
-// TestLoadIgnoresRetiredSubscriptionMaintenance 验证旧队列配置不会阻止正常启动。
+// TestLoadIgnoresRetiredSubscriptionMaintenance checks that retired queue settings permit startup.
 func TestLoadIgnoresRetiredSubscriptionMaintenance(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	configFile := filepath.Join(t.TempDir(), "config.yaml")
@@ -2605,7 +2605,7 @@ func TestLoadIgnoresRetiredSubscriptionMaintenance(t *testing.T) {
 	require.ErrorContains(t, cfg.Validate(), "jwt.expire_hour")
 }
 
-// TestLoadIgnoresRetiredOpenAIWSFallbackCooldown 验证旧冷却键被忽略，重试配置仍按原规则读取和校验。
+// TestLoadIgnoresRetiredOpenAIWSFallbackCooldown checks that the retired key leaves the dial timeout unchanged.
 func TestLoadIgnoresRetiredOpenAIWSFallbackCooldown(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_WS_FALLBACK_COOLDOWN_SECONDS", "-2")
@@ -2614,7 +2614,7 @@ func TestLoadIgnoresRetiredOpenAIWSFallbackCooldown(t *testing.T) {
 	require.Equal(t, 10, cfg.Gateway.OpenAIWS.DialTimeoutSeconds)
 }
 
-// TestProductConfigDirectories 验证显式路径不回退，默认搜索同时兼容新旧系统目录。
+// TestProductConfigDirectories checks explicit-path selection and both current and legacy search paths.
 func TestProductConfigDirectories(t *testing.T) {
 	t.Setenv("CONFIG_FILE", "")
 	t.Setenv("DATA_DIR", "/fixture/data")
@@ -2632,9 +2632,9 @@ func TestProductConfigDirectories(t *testing.T) {
 	}
 }
 
-// TestConfigKeysAreEnvReachable 检查配置标量字段是否注册为 Viper 可读取的键。
-// Unmarshal 根据 AllKeys 返回的默认值、文件和 BindEnv 键解码，AutomaticEnv 覆盖已注册键。
-// 缺失键需要在 setEnvReachableDefaults 注册零值默认项。map 和结构体切片由配置文件设置。
+// TestConfigKeysAreEnvReachable checks that Viper registers scalar configuration fields.
+// Unmarshal decodes AllKeys entries from defaults, files, and BindEnv; AutomaticEnv overrides those entries.
+// Register missing keys in setEnvReachableDefaults. Maps and slices of structs come from files.
 func TestConfigKeysAreEnvReachable(t *testing.T) {
 	bound := map[string]string{}
 	collectMapstructureKeys(reflect.TypeFor[Config](), "", bound)
@@ -2661,7 +2661,7 @@ func TestConfigKeysAreEnvReachable(t *testing.T) {
 	}
 }
 
-// TestPricingCatalogLegacySourceMigration 检查公共旧价格源的地址转换，以及自定义地址的读取。
+// TestPricingCatalogLegacySourceMigration checks known-source migration and custom-source retention.
 func TestPricingCatalogLegacySourceMigration(t *testing.T) {
 	for _, source := range []string{
 		"https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json",
@@ -2687,7 +2687,7 @@ func TestPricingCatalogLegacySourceMigration(t *testing.T) {
 	}
 }
 
-// TestPricingCatalogConfigAliases 检查别名、环境变量优先级和退役键的加载。
+// TestPricingCatalogConfigAliases checks aliases, environment precedence, and retired keys.
 func TestPricingCatalogConfigAliases(t *testing.T) {
 	for _, tc := range []struct {
 		name, yaml, oldEnv, newEnv string
@@ -2717,7 +2717,7 @@ func TestPricingCatalogConfigAliases(t *testing.T) {
 	}
 }
 
-// TestPricingCatalogPackagedFallbackMigration 检查缺失的打包路径迁移，以及管理员已有文件的保留。
+// TestPricingCatalogPackagedFallbackMigration checks missing packaged paths and existing custom files.
 func TestPricingCatalogPackagedFallbackMigration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	old := "./resources/model-pricing/model_prices_and_context_window.json"
@@ -2734,7 +2734,7 @@ func TestPricingCatalogPackagedFallbackMigration(t *testing.T) {
 	require.Equal(t, "./custom/model_prices_and_context_window.json", cfg.Pricing.FallbackFile)
 }
 
-// TestPricingCatalogSupplementConfig 检查空的默认补充路径、自定义路径与环境变量优先级。
+// TestPricingCatalogSupplementConfig checks empty defaults, custom paths, and environment precedence.
 func TestPricingCatalogSupplementConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name, yaml, env, want string
@@ -2758,7 +2758,7 @@ func TestPricingCatalogSupplementConfig(t *testing.T) {
 	}
 }
 
-// TestRetiredPricingOverrideWarnsWithoutRewritingFiles 检查旧键的迁移提示与配置文件内容。
+// TestRetiredPricingOverrideWarnsWithoutRewritingFiles checks the warning and unchanged files.
 func TestRetiredPricingOverrideWarnsWithoutRewritingFiles(t *testing.T) {
 	for _, env := range []bool{false, true} {
 		t.Run(fmt.Sprint(env), func(t *testing.T) {
@@ -2854,8 +2854,8 @@ func TestValidateDingTalkConfig_V1_InternalOnlyRequiresInternalAppType(t *testin
 	require.ErrorIs(t, err, ErrDingTalkV1AppTypeMismatch)
 }
 
-// TestValidateDingTalkConfig_V3_InternalOnlyAllowsEmptyCorpID 检查 internal_only 策略接受空的企业 ID。
-// 企业隔离由钉钉的 internal 应用类型提供。
+// TestValidateDingTalkConfig_V3_InternalOnlyAllowsEmptyCorpID checks internal_only with an empty corporation ID.
+// DingTalk's internal app type supplies enterprise isolation.
 func TestValidateDingTalkConfig_V3_InternalOnlyAllowsEmptyCorpID(t *testing.T) {
 	err := ValidateDingTalkConfig(DingTalkConnectConfig{
 		Enabled:               true,
@@ -2971,11 +2971,11 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 	}
 }
 
-// collectMapstructureKeys 遍历配置结构，返回 viper 填充结构所需的全部点分键。
+// collectMapstructureKeys records dotted keys needed to decode scalar configuration fields.
 func collectMapstructureKeys(t reflect.Type, prefix string, out map[string]string) {
 	for field := range t.Fields() {
 		if field.PkgPath != "" {
-			continue // 跳过未导出字段
+			continue // Skip unexported fields.
 		}
 		tag := field.Tag.Get("mapstructure")
 		name, _, _ := strings.Cut(tag, ",")
@@ -2999,7 +2999,7 @@ func collectMapstructureKeys(t reflect.Type, prefix string, out map[string]strin
 			continue
 		}
 		if ft.Kind() == reflect.Map {
-			// map 字段由配置文件解码。
+			// Maps are decoded from configuration files.
 			continue
 		}
 		if ft.Kind() == reflect.Slice {
@@ -3008,7 +3008,7 @@ func collectMapstructureKeys(t reflect.Type, prefix string, out map[string]strin
 				elem = elem.Elem()
 			}
 			if elem.Kind() == reflect.Struct {
-				// 结构体切片由配置文件解码。
+				// Slices of structs are decoded from configuration files.
 				continue
 			}
 		}
@@ -3016,7 +3016,7 @@ func collectMapstructureKeys(t reflect.Type, prefix string, out map[string]strin
 	}
 }
 
-// TestPricingCatalogIncludesDecisionModels 检查旧官方地址升级和自定义查询参数。
+// TestPricingCatalogIncludesDecisionModels checks the legacy official URL and custom query strings.
 func TestPricingCatalogIncludesDecisionModels(t *testing.T) {
 	for _, source := range []string{"https://models.dev/catalog.json", "https://models.dev/catalog.json?type=all", "https://models.dev/catalog.json?type=language", "https://mirror.example/catalog.json"} {
 		cfg := Config{Pricing: PricingConfig{RemoteURL: source}}

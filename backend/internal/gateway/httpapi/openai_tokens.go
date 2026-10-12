@@ -17,7 +17,7 @@ type OpenAITokenOptions struct {
 	MaxSwitches  int
 }
 
-// OpenAITokenBackend 只拥有计数链所需的读取、资格与单步执行。
+// OpenAITokenBackend supplies readers, eligibility checks, and single-attempt token counting.
 type OpenAITokenBackend interface {
 	Access(*gin.Context) (*apikey.APIKey, bool)
 	Dependencies(*gin.Context, *zap.Logger) bool
@@ -47,7 +47,7 @@ func NewOpenAITokensHandler(options OpenAITokenOptions, backend OpenAITokenBacke
 	return &OpenAITokensHandler{options: options, backend: backend, prompt: prompt}
 }
 
-// errorResponse 使用共享错误输出处理已提交的 Compact 响应。
+// errorResponse uses shared output handling for committed Compact responses.
 func (h *OpenAITokensHandler) errorResponse(c *gin.Context, status int, kind, message string) {
 	writeOpenAITokenError(c, status, kind, message)
 }
@@ -56,7 +56,7 @@ func (h *OpenAITokensHandler) anthropicErrorResponse(c *gin.Context, status int,
 	WriteAnthropicError(c, status, kind, "", message)
 }
 
-// writeOpenAITokenError 使用与普通文本入口一致的技术输出能力。
+// writeOpenAITokenError uses the same HTTP error output as text entries.
 func writeOpenAITokenError(c *gin.Context, status int, kind, message string) {
 	writeOpenAIRequestError(c, status, kind, message, StopOpenAICompactSSEKeepaliveCommitted, func(c *gin.Context, k, m string, s int) { MarkOpsStreamError(c, k, m, s) }, func(c *gin.Context) (string, string) { return ErrorRequestID(c), ErrorRequestModel(c) })
 }

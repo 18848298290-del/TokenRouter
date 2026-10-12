@@ -11,6 +11,9 @@ type Entry struct {
 	Payload   any
 	ExpiresAt time.Time
 }
+
+// Cache stores expiring query snapshots and coalesces loads by key.
+// Payloads must satisfy Clone's restrictions on cycles and shared references.
 type Cache struct {
 	mu     sync.RWMutex
 	ttl    time.Duration
@@ -48,7 +51,7 @@ func (c *Cache) Get(key string) (Entry, bool) {
 	}
 	if now.After(entry.ExpiresAt) {
 		c.mu.Lock()
-		// 等待写锁期间可能已有查询刷新了缓存。
+		// A load may have refreshed this entry while the write lock was pending.
 		if current, exists := c.items[key]; exists && now.After(current.ExpiresAt) {
 			delete(c.items, key)
 		}
@@ -75,6 +78,8 @@ func (c *Cache) Set(key string, payload any) Entry {
 	return Clone(entry)
 }
 
+// GetOrLoad returns a cached or loaded snapshot. The bool reports a cache hit;
+// callers sharing a newly loaded result receive false. Load errors are not cached.
 func (c *Cache) GetOrLoad(key string, load func() (any, error)) (Entry, bool, error) {
 	if load == nil {
 		return Entry{}, false, nil

@@ -11,10 +11,10 @@ const (
 	ReleaseOnCancel
 )
 
-// ReleaseMode 由执行入口选择。ReleaseOnCompletion 在上游执行完成后归还容量。
+// ReleaseMode lets the entry point choose cancellation cleanup or release after upstream completion.
 type ReleaseMode uint8
 
-// Lease 持有本次请求实际取得的资源，按取得顺序的逆序清理。
+// Lease owns acquired request resources and releases them in reverse acquisition order.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#account_selection_and_failover
 type Lease struct {
 	mu        sync.Mutex
@@ -24,22 +24,22 @@ type Lease struct {
 	once      sync.Once
 }
 
-// AttemptOutcome 中 Served 包括可结算的部分结果，决定空闲会话是否继续保留。
+// AttemptOutcome determines whether an idle session is retained. Served includes billable partial results.
 type AttemptOutcome struct {
 	Served bool
 }
 
-// AttemptLease 管理本次提供商尝试的资源，父请求可在其结束后继续尝试其他提供商。
+// AttemptLease owns one provider attempt's resources; the parent request may try another provider afterward.
 type AttemptLease struct {
 	resources *Lease
 	finish    func(AttemptOutcome)
 	once      sync.Once
 }
 
-// requestLeaseKey 标识 context 中管理当前请求资源的 Lease。
+// requestLeaseKey identifies the request resource owner in the context.
 type requestLeaseKey struct{}
 
-// NewLease 先登记资源再关联取消，传入已取消的 context 时也会释放刚取得的资源。
+// NewLease registers resources before cancellation. ReleaseOnCancel also cleans up when ctx is already canceled.
 func NewLease(ctx context.Context, mode ReleaseMode, resources ...func()) *Lease {
 	l := &Lease{}
 	for _, release := range resources {
@@ -59,7 +59,7 @@ func NewLease(ctx context.Context, mode ReleaseMode, resources ...func()) *Lease
 	return l
 }
 
-// Own 转移一个已取得资源的释放责任；租约已结束时立即归还并返回 false。
+// Own takes responsibility for releasing an acquired resource. A closed lease releases it immediately and returns false.
 func (l *Lease) Own(release func()) bool {
 	if release == nil {
 		return true
@@ -75,7 +75,7 @@ func (l *Lease) Own(release func()) bool {
 	return true
 }
 
-// Release 在取消、错误补偿和请求完成并发发生时清理一次，重复调用等待这次清理完成。
+// Release cleans up once across cancellation, error, and completion paths. Concurrent calls wait for that cleanup.
 func (l *Lease) Release() {
 	if l == nil {
 		return
@@ -95,7 +95,7 @@ func (l *Lease) Release() {
 	})
 }
 
-// WrapRelease 返回 Lease 的释放函数，取消处理和重复释放由 Lease 管理。
+// WrapRelease returns a lease-managed release function, or nil when release is nil.
 func WrapRelease(ctx context.Context, mode ReleaseMode, release func()) func() {
 	if release == nil {
 		return nil
@@ -103,7 +103,7 @@ func WrapRelease(ctx context.Context, mode ReleaseMode, release func()) func() {
 	return NewLease(ctx, mode, release).Release
 }
 
-// NewAttemptLease 注册到请求拥有者；没有完成结果的异常退出按失败清理。
+// NewAttemptLease registers with the parent; an unfinished attempt is cleaned up as a failure.
 func NewAttemptLease(parent *Lease, finish func(AttemptOutcome), resources ...func()) *AttemptLease {
 	a := &AttemptLease{resources: NewLease(context.Background(), ReleaseOnCompletion, resources...), finish: finish}
 	if parent != nil {
@@ -112,7 +112,7 @@ func NewAttemptLease(parent *Lease, finish func(AttemptOutcome), resources ...fu
 	return a
 }
 
-// Finish 先记录会话结果，再释放本次资源。父租约和本方法共用一次清理。
+// Finish records the outcome before releasing resources. Parent cleanup and Finish share one execution.
 func (a *AttemptLease) Finish(outcome AttemptOutcome) {
 	if a == nil {
 		return
@@ -125,10 +125,10 @@ func (a *AttemptLease) Finish(outcome AttemptOutcome) {
 	})
 }
 
-// Release 将尚未完成的尝试按失败结果结束。
+// Release finishes an unfinished attempt as a failure.
 func (a *AttemptLease) Release() { a.Finish(AttemptOutcome{}) }
 
-// WithRequestLease 将已经取得的用户租约传递给后续提供商尝试，执行层继续决定释放时机。
+// WithRequestLease passes the acquired user lease to provider attempts; the execution layer controls release timing.
 func WithRequestLease(ctx context.Context, lease *Lease) context.Context {
 	return context.WithValue(ctx, requestLeaseKey{}, lease)
 }
@@ -141,7 +141,7 @@ func RequestLease(ctx context.Context) *Lease {
 	return lease
 }
 
-// ownRequestResource 登记请求异常返回时的清理函数，attempt 完成和请求清理共用一次释放。
+// ownRequestResource registers cleanup for request exit; lease-managed callbacks tolerate earlier attempt cleanup.
 func ownRequestResource(ctx context.Context, release func()) {
 	if owner := RequestLease(ctx); owner != nil {
 		owner.Own(release)

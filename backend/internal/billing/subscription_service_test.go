@@ -17,11 +17,11 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
-// subscriptionSelectionGroupFixture 拒绝订阅选择测试中未预期的分组回源。
+// subscriptionSelectionGroupFixture rejects unexpected group lookups in subscription selection tests.
 type subscriptionSelectionGroupFixture struct{}
 
-// resetQuotaUserSubRepoStub 支持 GetByID、ResetUsageWindows，
-// 其余方法继承 billingtestkit.SubscriptionRepositoryNoop（panic）。
+// resetQuotaUserSubRepoStub implements GetByID and ResetUsageWindows.
+// Other methods panic through the embedded SubscriptionRepositoryNoop.
 type resetQuotaUserSubRepoStub struct {
 	billingtestkit.SubscriptionRepositoryNoop
 
@@ -35,13 +35,13 @@ type resetQuotaUserSubRepoStub struct {
 	resetMonthlyErr    error
 }
 
-// transactionTrackingUserSubRepo 记录订阅写操作使用的事务上下文。
+// transactionTrackingUserSubRepo records the contexts used for subscription writes.
 type transactionTrackingUserSubRepo struct {
 	*billingtestkit.SubscriptionRepository
 	writeContexts []context.Context
 }
 
-// subscriptionContextTransactions 用 SQLite 检查事务对象是否复用。PostgreSQL 集成测试检查锁和回滚。
+// subscriptionContextTransactions checks transaction reuse with SQLite; PostgreSQL integration tests cover locking and rollback.
 type subscriptionContextTransactions struct {
 	*billingpostgres.SubscriptionMutations
 	t  *testing.T
@@ -580,7 +580,7 @@ func TestCalculateProgress_OverLimit_ClampedTo100Percent(t *testing.T) {
 		ID:               1,
 		ExpiresAt:        now.Add(10 * 24 * time.Hour),
 		DailyLimitUSD:    ptrFloat64(10.0),
-		DailyUsageUSD:    15.0, // 超过限额
+		DailyUsageUSD:    15.0, // Exceeds the daily limit.
 		DailyWindowStart: ptrTime(now.Add(-1 * time.Hour)),
 	}
 
@@ -595,7 +595,7 @@ func TestCalculateProgress_NoWindowStart_NoProgress(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now().UTC()
 
-	// 有限额但无窗口起始时间（订阅未激活）
+	// Finite quotas have no window start until activation.
 	sub := &billing.UserSubscription{
 		ID:             1,
 		ExpiresAt:      now.Add(10 * 24 * time.Hour),
@@ -645,7 +645,7 @@ func TestCalculateProgress_ExpiredSubscription(t *testing.T) {
 
 	sub := &billing.UserSubscription{
 		ID:        1,
-		ExpiresAt: time.Now().UTC().Add(-24 * time.Hour), // 已过期
+		ExpiresAt: time.Now().UTC().Add(-24 * time.Hour), // Expired.
 	}
 
 	progress := svc.CalculateProgress(sub)
@@ -655,7 +655,7 @@ func TestCalculateProgress_ExpiredSubscription(t *testing.T) {
 
 func TestCalculateProgress_ResetsInSeconds_NotNegative(t *testing.T) {
 	svc := newTestSubscriptionService()
-	// 使用过去的窗口起始时间，使得重置时间已过
+	// Place the reset deadline in the past to check that the countdown stays nonnegative.
 	pastStart := time.Now().UTC().Add(-48 * time.Hour)
 
 	sub := &billing.UserSubscription{
@@ -816,8 +816,8 @@ func TestAdminResetQuota_ReturnsRefreshedSub(t *testing.T) {
 	result, err := svc.AdminResetQuota(context.Background(), 6, true, false, false)
 
 	require.NoError(t, err)
-	// ResetUsageWindows stub 会将 sub.DailyUsageUSD 归零，
-	// 服务返回第二次 GetByID 读到的已归零值。
+	// ResetUsageWindows clears daily usage in the stub.
+	// The service rereads that value with GetByID before returning.
 	require.Equal(t, float64(0), result.DailyUsageUSD, "返回的订阅应反映已归零的用量")
 	require.True(t, stub.resetDailyCalled)
 }
@@ -1250,12 +1250,12 @@ func (subscriptionSelectionGroupFixture) GetByIDLite(context.Context, int64) (*b
 	panic("unexpected GetByIDLite call")
 }
 
-// newSubscriptionServiceForTest 使用给定仓储和无数据库连接的事务适配器构造订阅服务。
+// newSubscriptionServiceForTest pairs the repository with a transaction adapter that has no database connection.
 func newSubscriptionServiceForTest(repo billing.UserSubscriptionRepository) *billing.SubscriptionService {
 	return billing.NewSubscriptionService(subscriptionSelectionGroupFixture{}, repo, billingpostgres.NewSubscriptionMutations(nil), subscriptionClockFixture())
 }
 
-// subscriptionClockFixture 返回使用 UTC 的测试时钟和日期对象。
+// subscriptionClockFixture returns a UTC clock and calendar.
 func subscriptionClockFixture() billing.DateRuntime {
 	calendar := timezone.NewCalendar(time.UTC)
 	return billing.DateRuntime{Now: func() time.Time { return time.Now().UTC() }, Calendar: &calendar}

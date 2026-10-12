@@ -11,12 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 影子测试通过内存替身读写提供商记录。
+// crsShadowStore holds provider records for shadow tests.
 type crsShadowStore struct {
 	rows map[int64]*Record
 }
 
-// windowPairReader 记录查询次数并提供失败和取消场景。
+// windowPairReader records query counts and simulates failure or cancellation.
 type windowPairReader struct {
 	LocalUsageStats
 	pairs    int
@@ -26,7 +26,7 @@ type windowPairReader struct {
 	cancel   context.CancelFunc
 }
 
-// 本地交换器通过闸门控制何时响应取消。
+// lifecycleRefreshExecutor controls whether refresh exits on cancellation or waits for release.
 type lifecycleRefreshExecutor struct {
 	started      chan struct{}
 	release      chan struct{}
@@ -105,7 +105,7 @@ func (s *crsShadowStore) UpdateConfiguration(ctx context.Context, record *Record
 	return s.Update(ctx, record)
 }
 
-// GetProviderWindowStatsPair 记录合并调用，并模拟可恢复错误或请求取消。
+// GetProviderWindowStatsPair records a combined query and can return an error or cancel its caller.
 func (r *windowPairReader) GetProviderWindowStatsPair(_ context.Context, _ int64, a, b time.Time) (*WindowStats, *WindowStats, error) {
 	r.pairs++
 	r.starts = []time.Time{a, b}
@@ -120,7 +120,7 @@ func (r *windowPairReader) GetProviderWindowStatsPair(_ context.Context, _ int64
 	return value, value, nil
 }
 
-// GetProviderWindowStats 模拟两个窗口中一项成功、另一项失败。
+// GetProviderWindowStats fails its second call to simulate a partially available window pair.
 func (r *windowPairReader) GetProviderWindowStats(context.Context, int64, time.Time) (*WindowStats, error) {
 	r.singles++
 	if r.singles == 2 {

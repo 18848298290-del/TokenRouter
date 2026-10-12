@@ -39,7 +39,7 @@ type balanceLoadUserRepoStub struct {
 	balance float64
 }
 
-// mediaPriceCards 保存图片计费测试的完整型号价卡。
+// mediaPriceCards supplies a full-model image billing price card.
 type mediaPriceCards struct {
 	card *ModelPricingEntry
 }
@@ -70,7 +70,7 @@ func (s *balanceEligibilityCacheStub) InvalidateUserBalance(context.Context, int
 	return nil
 }
 
-// newEligibilityForTest 构造资金准入检查器，用 goroutine 执行缓存回填。
+// newEligibilityForTest injects a goroutine runner for background cache maintenance.
 func newEligibilityForTest(cache BillingCache, users BalanceReader, keys APIKeyRateLimitLoader, options *EligibilityOptions) *Eligibility {
 	return NewEligibility(cache, users, keys, func() EligibilityOptions { return *options }, nil, func(_ string, fn func()) { go fn() })
 }
@@ -122,7 +122,7 @@ func (s *balanceLoadUserRepoStub) GetByID(ctx context.Context, id int64) (*UserS
 	return &UserSummary{ID: id, Balance: s.balance}, nil
 }
 
-// GetEffectiveConfigModelPricing 返回测试配置的价卡。
+// GetEffectiveConfigModelPricing returns the test's configured price card.
 func (s mediaPriceCards) GetEffectiveConfigModelPricing(context.Context, int64, string) *ModelPricingEntry {
 	return s.card
 }

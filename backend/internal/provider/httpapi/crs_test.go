@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// 通过 handler 和用例检查默认值、响应字段和故障响应。
+// These fixtures exercise defaults, response fields, and failures through the handler and use case.
 type crsHTTPStore struct{ provider.CRSProviderStore }
 
 type crsHTTPProxy struct{ reads int }

@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRefreshLoopConcurrentStartAndBoundedStop 验证多个同时到达的启动调用只能取得一次立即扫描，停止等待该轮实际退出。
+// TestRefreshLoopConcurrentStartAndBoundedStop checks that concurrent starts launch one initial scan and stop
+// waits for it to exit.
 func TestRefreshLoopConcurrentStartAndBoundedStop(t *testing.T) {
 	var cycles, starts atomic.Int32
 	entered := make(chan struct{})

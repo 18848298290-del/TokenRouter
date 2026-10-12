@@ -35,7 +35,7 @@ const (
 	opsUpstreamModelKey = OpsUpstreamModelKey
 	opsRequestTypeKey   = "ops_request_type"
 
-	// 错误过滤匹配常量由 shouldSkipOpsErrorLog 和错误分类共用。
+	// Error filtering and classification share these matching constants.
 	opsErrContextCanceled             = "context canceled"
 	opsErrNoAvailableProviders        = "no available providers"
 	opsErrInvalidAPIKey               = "invalid_api_key"
@@ -60,12 +60,12 @@ var (
 	_ gin.ResponseWriter = (*opsCaptureWriter)(nil)
 )
 
-// OpsErrorLogQueue 将已冻结的请求观测值加入日志队列，app 管理队列的启停。
+// OpsErrorLogQueue enqueues frozen request observations; the app manages queue startup and shutdown.
 type OpsErrorLogQueue interface {
 	Enqueue(*opscore.OpsService, *opscore.OpsInsertErrorLogInput)
 }
 
-// OpsObservationAccess 为错误日志提供身份数据和准入拒绝信息。
+// OpsObservationAccess supplies identity and admission-rejection data for error logging.
 type OpsObservationAccess struct {
 	APIKey   func(*gin.Context) *apikey.APIKey
 	Rejected func(*gin.Context) bool
@@ -123,7 +123,7 @@ func (a OpsObservationAccess) rejected(c *gin.Context) bool {
 	return a.Rejected != nil && a.Rejected(c)
 }
 
-// keyPrefix 返回脱敏前缀(前 n 个字符);不足 n 则原样返回。
+// keyPrefix returns the first n bytes, or the entire key when it is shorter.
 func keyPrefix(key string, n int) string {
 	if len(key) <= n {
 		return key
@@ -184,7 +184,7 @@ func SetOpsSelectedProvider(c *gin.Context, providerID int64, platform ...string
 	}
 }
 
-// MarkOpsRoutingCapacityLimited 标记本地路由容量不足，SLA 统计排除此类失败。
+// MarkOpsRoutingCapacityLimited marks local routing capacity failures for exclusion from SLA statistics.
 func MarkOpsRoutingCapacityLimited(c *gin.Context) {
 	if c == nil {
 		return
@@ -192,7 +192,8 @@ func MarkOpsRoutingCapacityLimited(c *gin.Context) {
 	c.Set(opsRoutingCapacityLimitedKey, true)
 }
 
-// MarkOpsRoutingCapacityLimitedIfNoAvailable 只把无可用提供商类错误归为本地容量限制。
+// MarkOpsRoutingCapacityLimitedIfNoAvailable marks only no-available-provider errors as local capacity
+// failures.
 func MarkOpsRoutingCapacityLimitedIfNoAvailable(c *gin.Context, err error) {
 	if !IsOpsNoAvailableProviderError(err) {
 		return
@@ -739,19 +740,19 @@ func (state *opsCaptureWriterState) shouldCapture() bool {
 	return state.rejected == nil || !state.rejected(state.ctx)
 }
 
-// OpsErrorLoggerMiddleware records error responses (status >= 400) into ops_error_logs.
+// OpsErrorLoggerMiddleware records HTTP errors, stream failures, and recovered upstream errors.
 //
-// Notes:
-// - It buffers response bodies only for status >= 400 or terminal SSE frames.
-// - Streaming errors after the response has started (SSE) may still need explicit logging.
+// Capture behavior:
+// Response bodies are buffered for HTTP errors or terminal SSE frames.
+// In-band errors can also be recorded through MarkOpsStreamError.
 func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, access OpsObservationAccess) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		originalWriter := c.Writer
 		w := acquireOpsCaptureWriter(originalWriter)
 		w.setContext(c, access.Rejected)
 		defer func() {
-			// Restore the original writer before returning so outer middlewares
-			// don't observe a pooled wrapper that has been released.
+			// Restore the original writer so outer middleware cannot access a wrapper
+			// whose pooled state lease has been released.
 			if c.Writer == w {
 				c.Writer = originalWriter
 			}
@@ -798,8 +799,8 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 			if parsed.StreamFailure {
 				status = inferStreamFailureStatus(c, parsed)
 			} else {
-				// 已固化为 200 的流内错误按请求失败记录；其余重试或切号事件保留
-				// 2xx 状态，只用于展示被恢复的上游健康异常。
+				// Record marked stream errors even after HTTP 200 commitment. Recovered retries and switches
+				// retain their successful wire status as upstream health diagnostics.
 				if len(GetOpsStreamErrors(c)) > 0 {
 					logOpsStreamError(c, ops, status, queue, access)
 				} else {
@@ -814,7 +815,7 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 			return
 		}
 
-		// 按设置过滤无需记录的错误。
+		// Apply configured error-log filters.
 		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path) {
 			return
 		}
@@ -925,7 +926,7 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
-			// 有效 key 报错时快照前缀，key 之后被删也保留。
+			// Snapshot the key prefix so it remains available after the key is deleted.
 			entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
 			if apiKey.User != nil {
 				entry.UserID = &apiKey.User.ID
@@ -1075,13 +1076,13 @@ func opsRequestTypeFromContext(c *gin.Context) *int16 {
 	return nil
 }
 
-// logOpsStreamError 记录一次挂在已固化 HTTP 200 SSE 流上的就地错误。
-// 由于实际状态码停留在 200，常规的 status>=400 捕获路径永远不会触发；
-// handleStreamingAwareError 通过 service.MarkOpsStreamError 标记这类错误，
-// 此函数据此补记一条错误日志，让并发限流/流内失败在错误看板里可见。
+// logOpsStreamError records marked failures after the response status has been committed.
+// HTTP status alone cannot identify these in-band failures.
+// MarkOpsStreamError records their intended status and client error details;
+// the middleware uses those observations for logging.
 //
-// 仅在 status<400 且不存在上游错误上下文时调用：上游透传错误已由中间件的
-// upstream-context 分支落库，无需在此重复记录。
+// Call this for status < 400 when no captured terminal failure supplied a logical status.
+// Each recorded stream error is processed with its own monitoring decision.
 func logOpsStreamError(c *gin.Context, ops *opscore.OpsService, wireStatus int, queue OpsErrorLogQueue, access OpsObservationAccess) {
 	for _, streamErr := range GetOpsStreamErrors(c) {
 		logOpsStreamErrorValue(c, ops, wireStatus, streamErr, queue, access)
@@ -1089,17 +1090,17 @@ func logOpsStreamError(c *gin.Context, ops *opscore.OpsService, wireStatus int, 
 }
 
 func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus int, streamErr OpsStreamError, queue OpsErrorLogQueue, access OpsObservationAccess) {
-	// 命中 skip_monitoring=true 透传规则的请求跳过落库，与其它分支一致。
+	// Skip failures covered by skip_monitoring=true.
 	if streamErr.SkipMonitoring || (streamErr.Turn == 0 && shouldSkipFinalOpsFailure(c)) {
 		return
 	}
 
-	// 复用与 status>=400 分支相同的设置过滤（context canceled / 无可用提供商等）。
+	// Apply the same configured filters as the HTTP error path.
 	if shouldSkipOpsErrorLog(c.Request.Context(), ops, streamErr.Message, streamErr.Message, c.Request.URL.Path) {
 		return
 	}
 
-	// 分级用「本应返回的状态码」（如并发限流 429），缺省时回退到实际状态码。
+	// Classify using the intended status, falling back to the wire status when absent.
 	classifyStatus := streamErr.IntendedStatus
 	if classifyStatus <= 0 {
 		classifyStatus = wireStatus
@@ -1158,7 +1159,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus 
 			}
 			return ""
 		}(),
-		// 就地 SSE 错误只出现在流式请求上。
+		// In-band errors belong to streaming requests.
 		Stream:           true,
 		InboundEndpoint:  GetInboundEndpoint(c),
 		UpstreamEndpoint: GetUpstreamEndpoint(c, platform),
@@ -1307,8 +1308,9 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *opscore.OpsInsertEr
 	entry.TimeToFirstTokenMs = getContextLatencyMs(c, OpsTimeToFirstTokenMsKey)
 }
 
-// applyOpsUpstreamFieldsFromContext 捕获每次尝试的上游上下文。
-// 最后的 provider_auth 事件接管顶层状态并将其置零，之前的推理状态仍保留在 UpstreamErrors 中。
+// applyOpsUpstreamFieldsFromContext copies attempt observations into the log entry.
+// A final provider_auth event sets the top-level upstream status to zero; earlier inference statuses remain in
+// UpstreamErrors.
 func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *opscore.OpsInsertErrorLogInput) {
 	if c == nil || entry == nil {
 		return
@@ -1710,7 +1712,7 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 	return http.StatusBadGateway
 }
 
-// selectedOpsPlatform 只使用已选提供商的快照，尚未选号的错误保留 unknown。
+// selectedOpsPlatform reads the telemetry platform snapshot, returning unknown when absent.
 func selectedOpsPlatform(c *gin.Context) string {
 	if c != nil && c.Request != nil {
 		if platform, ok := c.Request.Context().Value(telemetry.Platform).(string); ok && strings.TrimSpace(platform) != "" {
@@ -1727,7 +1729,7 @@ func resolveOpsPlatform(_ *apikey.APIKey, actual string) string {
 	return actual
 }
 
-// classifyOpsErrorLog 根据上游错误上下文和本地路由标记生成 Ops 错误分类。
+// classifyOpsErrorLog classifies upstream context and local routing markers for Ops.
 func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status int) (phase string, isBusinessLimited bool, errorOwner string, errorSource string) {
 	return opscore.ClassifyRequestError(opscore.ErrorClassificationInput{
 		Type: errType, Message: message, Code: code, Status: status,
@@ -1740,8 +1742,9 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	})
 }
 
-// isOpsUpstreamClientInvalidRequest 判断下游和上游均为 400 的参数型错误。
-// 这类记录仍写入错误表用于排障，但不应降低服务 SLA。
+// isOpsUpstreamClientInvalidRequest recognizes property-name-length errors with upstream and downstream 400
+// statuses.
+// These errors remain available for diagnostics but are excluded from service SLA failures.
 func isOpsUpstreamClientInvalidRequest(c *gin.Context, errType, code string, status int) bool {
 	if c == nil || status != http.StatusBadRequest || errType != "invalid_request_error" ||
 		!strings.EqualFold(strings.TrimSpace(code), openai.OpenAIPropertyNameAboveMaxLengthCode) {
@@ -1761,7 +1764,7 @@ func isOpsUpstreamClientInvalidRequest(c *gin.Context, errType, code string, sta
 	}
 }
 
-// hasOpsUpstreamErrorContext 检查上游响应上下文，用于区分上游错误和本地认证、路由错误。
+// hasOpsUpstreamErrorContext distinguishes upstream failures from local authentication and routing errors.
 func hasOpsUpstreamErrorContext(c *gin.Context) bool {
 	if c == nil {
 		return false

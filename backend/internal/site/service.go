@@ -27,7 +27,7 @@ type CreateAnnouncementInput struct {
 	Targeting    AnnouncementTargeting
 	StartsAt     *time.Time
 	EndsAt       *time.Time
-	ActorID      *int64 // 管理员用户ID
+	ActorID      *int64 // Administrator user ID.
 }
 
 type UpdateAnnouncementInput struct {
@@ -37,9 +37,10 @@ type UpdateAnnouncementInput struct {
 	Status       *string
 	NotifyMode   *string
 	Targeting    *AnnouncementTargeting
-	StartsAt     **time.Time
-	EndsAt       **time.Time
-	ActorID      *int64 // 管理员用户ID
+	// For schedule fields, nil leaves the value unchanged; a pointer to nil clears it.
+	StartsAt **time.Time
+	EndsAt   **time.Time
+	ActorID  *int64 // Administrator user ID.
 }
 
 type UserAnnouncement struct {
@@ -257,7 +258,8 @@ func (s *AnnouncementService) archiveExpired(ctx context.Context, now time.Time)
 	return nil
 }
 
-// archiveAnnouncementIfExpired 保证新建或编辑后的展示中公告不会保留已过期状态。
+// archiveAnnouncementIfExpired changes an active announcement to archived when
+// its end time is at or before now.
 func archiveAnnouncementIfExpired(a *Announcement, now time.Time) {
 	if a == nil || a.Status != AnnouncementStatusActive || a.EndsAt == nil || a.EndsAt.After(now) {
 		return
@@ -332,7 +334,7 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 		})
 	}
 
-	// 未读优先、同状态按创建时间倒序
+	// Unread announcements come first; each group is ordered by descending ID.
 	sort.Slice(out, func(i, j int) bool {
 		ai, aj := out[i], out[j]
 		if (ai.ReadAt == nil) != (aj.ReadAt == nil) {
@@ -345,7 +347,7 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 }
 
 func (s *AnnouncementService) MarkRead(ctx context.Context, userID, announcementID int64) error {
-	// 安全：仅允许标记当前用户“可见”的公告
+	// Check schedule and targeting before allowing this user to mark the announcement read.
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
@@ -460,7 +462,7 @@ func isValidAnnouncementNotifyMode(mode string) bool {
 	}
 }
 
-// validateAnnouncementCopy 对每个语言版本校验完整标题和正文。
+// validateAnnouncementCopy validates a title and body together for one language.
 func validateAnnouncementCopy(copy AnnouncementCopy) error {
 	if strings.TrimSpace(copy.Title) == "" || len([]rune(copy.Title)) > 200 {
 		return ErrAnnouncementInvalidTitle

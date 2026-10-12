@@ -12,29 +12,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// ExecutionProvider 保存提供商记录和本次请求的路线。
-// Route 用于本次请求，provider.Record 提供提供商规则。
+// ExecutionProvider holds a provider record and the route for one request.
+// Route is request-local; Record supplies provider rules.
 type ExecutionProvider struct {
 	Capabilities *modelcatalog.Resolution  `json:"-"`
 	Record       provider.Record           `json:"-"`
 	Route        requeststate.AttemptRoute `json:"-"`
 }
 
-// BindExecutionHeaders 返回绑定提供商的 Header 设置函数，调用时读取最新字段。
+// BindExecutionHeaders returns a header setter that reads the bound provider on each call.
 func BindExecutionHeaders(value *ExecutionProvider) func(http.Header) {
 	return func(headers http.Header) {
 		provideradapter.ApplyProviderHeaderOverrides(ExecutionProtocolRecord(value), headers)
 	}
 }
 
-// BindExecutionHeaderValue 返回绑定提供商的 Header 查询函数，调用时读取字段值。
+// BindExecutionHeaderValue returns a header lookup that reads the bound provider on each call.
 func BindExecutionHeaderValue(value *ExecutionProvider) func(string) (string, bool) {
 	return func(name string) (string, bool) {
 		return provideradapter.HeaderOverrideValue(ExecutionProtocolRecord(value), name)
 	}
 }
 
-// NewExecutionProvider 复制提供商记录并设置时钟函数。
+// NewExecutionProvider copies the provider record and supplies its clock function.
 func NewExecutionProvider(value *provider.Record) *ExecutionProvider {
 	if value == nil {
 		return nil
@@ -46,7 +46,7 @@ func NewExecutionProvider(value *provider.Record) *ExecutionProvider {
 	return out
 }
 
-// View 返回提供商记录，接收者为 nil 时返回 nil。
+// View returns the embedded provider record, or nil for a nil receiver.
 func (value *ExecutionProvider) View() *provider.Record {
 	if value == nil {
 		return nil
@@ -64,7 +64,7 @@ func ExecutionRecord(value *ExecutionProvider) *provider.Record {
 	return out
 }
 
-// ApplyExecutionRecord 原地更新记录，Record 地址和本次路线保持不变。
+// ApplyExecutionRecord updates Record in place, retaining its address and the request route.
 func ApplyExecutionRecord(out *ExecutionProvider, value *provider.Record) {
 	if out == nil || value == nil {
 		return
@@ -171,7 +171,7 @@ func ExecutionRuntimeConfig(value *ExecutionProvider) *provider.RuntimeConfig {
 	return &provider.RuntimeConfig{Extra: v.Extra, Concurrency: v.Concurrency, SessionWindowStart: v.SessionWindowStart, SessionWindowEnd: v.SessionWindowEnd}
 }
 
-// ExecutionCompletionRecord 返回完成记录需要的提供商字段。
+// ExecutionCompletionRecord returns provider fields needed for completion.
 func ExecutionCompletionRecord(value *ExecutionProvider) *provider.Record {
 	if value == nil {
 		return nil
@@ -180,7 +180,7 @@ func ExecutionCompletionRecord(value *ExecutionProvider) *provider.Record {
 	return &provider.Record{ID: v.ID, Name: v.Name, Platform: v.Platform, Type: v.Type, Credentials: v.Credentials, Extra: v.Extra, RateMultiplier: v.RateMultiplier, ParentProviderID: v.ParentProviderID}
 }
 
-// ExecutionTLSSelection 提取 TLS 资格与配置 ID，供 egress 选择策略。
+// ExecutionTLSSelection extracts TLS eligibility and configuration IDs for egress selection.
 func ExecutionTLSSelection(value *ExecutionProvider, routerMatch []egress.TLSFingerprintRouterMatchResult) egress.TLSSelection {
 	selection := egress.TLSSelection{}
 	if value != nil {

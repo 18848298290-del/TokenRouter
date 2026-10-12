@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestAuthorizeURLMatchesClaudeCodeCLI 验证浏览器授权地址与 Claude Code OAuth 流程保持一致。
+// TestAuthorizeURLMatchesClaudeCodeCLI checks the browser OAuth endpoint and parameters.
 func TestAuthorizeURLMatchesClaudeCodeCLI(t *testing.T) {
 	const want = "https://claude.com/cai/oauth/authorize"
 	if AuthorizeURL != want {

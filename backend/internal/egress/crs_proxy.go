@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// CRSProxySpec 是导入文件中的代理身份，不包含运行客户端或提供商。
+// CRSProxySpec contains proxy connection details from a CRS import.
 type CRSProxySpec struct {
 	Protocol string `json:"protocol"`
 	Host     string `json:"host"`
@@ -15,13 +15,13 @@ type CRSProxySpec struct {
 	Password string `json:"password"`
 }
 
-// CRSProxyStore 保留 CRS 对活动代理的身份匹配及无探测创建路径。
+// CRSProxyStore lists active proxies and creates records without connectivity probes.
 type CRSProxyStore interface {
 	ListActive(context.Context) ([]Proxy, error)
 	Create(context.Context, *Proxy) error
 }
 
-// MatchOrCreateCRSProxy 解析 socks 别名，复用已有活动代理，缺失时逐项创建代理记录。
+// MatchOrCreateCRSProxy normalizes SOCKS aliases and reuses or creates an active proxy.
 func MatchOrCreateCRSProxy(ctx context.Context, store CRSProxyStore, enabled bool, cached *[]Proxy, src *CRSProxySpec, defaultName string) (*int64, error) {
 	if !enabled || src == nil {
 		return nil, nil
@@ -45,7 +45,7 @@ func MatchOrCreateCRSProxy(ctx context.Context, store CRSProxyStore, enabled boo
 		return nil, nil
 	}
 
-	// 仅复用预先读取的活动代理。
+	// Reuse active proxies supplied by the caller or created earlier in this import.
 	for _, p := range *cached {
 		if strings.EqualFold(p.Protocol, protocol) &&
 			p.Host == host &&
@@ -57,7 +57,7 @@ func MatchOrCreateCRSProxy(ctx context.Context, store CRSProxyStore, enabled boo
 		}
 	}
 
-	// 原 CRS 创建不启动管理端延迟探测。
+	// Create the record directly so CRS imports do not start admin latency probes.
 	proxy := &Proxy{
 		Name:     CRSDefaultProxyName(defaultName, protocol, host, port),
 		Protocol: protocol,

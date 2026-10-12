@@ -10,13 +10,14 @@ import (
 )
 
 var (
-	// CcVersionInBillingRe 匹配 cc_version 中的三段版本号。
+	// CcVersionInBillingRe matches the three-part version in cc_version.
 	CcVersionInBillingRe = regexp.MustCompile(`cc_version=\d+\.\d+\.\d+`)
 
 	CcVersionWithFingerprintInBillingRe = regexp.MustCompile(`cc_version=\d+\.\d+\.\d+\.[0-9a-fA-F]{3}\b`)
 )
 
-// EffectiveBillingUserAgent OAuth 伪装会在提供商指纹之后强制写入运行时 CLI User-Agent，计费标记必须与其一致。
+// EffectiveBillingUserAgent returns the outbound UA used to synchronize the billing marker.
+// OAuth mimic overrides the provider fingerprint with the runtime CLI defaults.
 // @project-doc docs/interfaces/anthropic_upstream.md#claude_billing_fingerprint
 func EffectiveBillingUserAgent(tokenType string, mimicClaudeCode bool, fingerprint *Fingerprint) string {
 	if tokenType == "oauth" && mimicClaudeCode {
@@ -28,8 +29,8 @@ func EffectiveBillingUserAgent(tokenType string, mimicClaudeCode bool, fingerpri
 	return fingerprint.UserAgent
 }
 
-// SyncBillingHeaderVersion 将计费标记的版本和指纹后缀同步到实际出站 User-Agent。
-// 后缀依赖版本和用户消息，因此版本改变后必须重算；只处理 system 数组中的计费标记。
+// SyncBillingHeaderVersion updates system-array billing markers to match the outbound UA.
+// The suffix depends on the version and user text, so a version change recomputes it.
 func SyncBillingHeaderVersion(body []byte, userAgent string) []byte {
 	version := ExtractCLIVersion(userAgent)
 	if version == "" {

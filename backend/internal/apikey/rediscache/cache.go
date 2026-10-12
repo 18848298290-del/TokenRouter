@@ -104,7 +104,7 @@ func (c *ApiKeyCache) PublishAuthCacheInvalidation(ctx context.Context, cacheKey
 func (c *ApiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error {
 	pubsub := c.rdb.Subscribe(ctx, AuthCacheInvalidateChannel)
 
-	// Verify subscription is working
+	// Wait for the subscription acknowledgement before reporting readiness.
 	_, err := pubsub.Receive(ctx)
 	if err != nil {
 		_ = pubsub.Close()

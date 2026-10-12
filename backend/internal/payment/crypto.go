@@ -19,10 +19,8 @@ const AES256KeySize = 32
 // The output format is "iv:authTag:ciphertext" where each component is base64-encoded,
 // matching the Node.js crypto.ts format for cross-compatibility.
 //
-// Deprecated: payment provider configs are now stored as plaintext JSON.
-// This function is kept only for seeding legacy ciphertext in tests and for
-// the transitional Decrypt fallback. Scheduled for removal after all live
-// deployments complete migration by re-saving their configs.
+// Deprecated: provider configuration is stored as plaintext JSON.
+// Encrypt remains available to create legacy ciphertext fixtures.
 func Encrypt(plaintext string, key []byte) (string, error) {
 	if len(key) != AES256KeySize {
 		return "", fmt.Errorf("encryption key must be %d bytes, got %d", AES256KeySize, len(key))
@@ -62,10 +60,8 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 // Decrypt decrypts a ciphertext string produced by Encrypt.
 // The input format is "iv:authTag:ciphertext" where each component is base64-encoded.
 //
-// Deprecated: payment provider configs are now stored as plaintext JSON.
-// This function remains only as a read-path fallback for pre-migration
-// ciphertext records. Scheduled for removal once all deployments re-save
-// their provider configs through the admin UI.
+// Deprecated: provider configuration is stored as plaintext JSON.
+// Decrypt reads legacy ciphertext until those records are saved again as JSON.
 func Decrypt(ciphertext string, key []byte) (string, error) {
 	if len(key) != AES256KeySize {
 		return "", fmt.Errorf("encryption key must be %d bytes, got %d", AES256KeySize, len(key))
@@ -112,7 +108,7 @@ func Decrypt(ciphertext string, key []byte) (string, error) {
 	return string(plaintext), nil
 }
 
-// ConfiguredEncryptionKey 校验配置中的十六进制 AES-256 密钥，并返回配置缺失时的警告。
+// ConfiguredEncryptionKey validates the hexadecimal AES-256 key and warns when it is unavailable.
 func ConfiguredEncryptionKey(raw string, configured bool) (EncryptionKey, string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -131,7 +127,7 @@ func ConfiguredEncryptionKey(raw string, configured bool) (EncryptionKey, string
 	return EncryptionKey(key), "", nil
 }
 
-// parseProviderConfig 读取 JSON 或 AES-256-GCM 密文，第二个返回值表示配置可读。
+// parseProviderConfig reads JSON or AES-256-GCM ciphertext and reports whether it was readable.
 func parseProviderConfig(stored string, encryptionKey []byte) (map[string]string, bool) {
 	if stored == "" {
 		return nil, true
@@ -140,7 +136,7 @@ func parseProviderConfig(stored string, encryptionKey []byte) (map[string]string
 	if err := json.Unmarshal([]byte(stored), &config); err == nil {
 		return config, true
 	}
-	// 历史支付实例可能仍存有密文，需要使用部署时配置的密钥读取。
+	// Legacy instances can contain ciphertext encrypted with the deployment key.
 	if len(encryptionKey) == AES256KeySize {
 		if plaintext, err := Decrypt(stored, encryptionKey); err == nil {
 			if err := json.Unmarshal([]byte(plaintext), &config); err == nil {

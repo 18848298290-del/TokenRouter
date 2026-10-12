@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestProviderRuntimeBlockBindingSharesRecoveryFence 检查恢复操作与执行入口观察同一停调代次。
+// TestProviderRuntimeBlockBindingSharesRecoveryFence checks that recovery and execution observe the same scheduling-block generation.
 func TestProviderRuntimeBlockBindingSharesRecoveryFence(t *testing.T) {
 	state := provider.NewRuntimeBlockState(time.Now)
 	gateway := provideOpenAIResponseHealth(nil, state, nil, nil).Runtime
@@ -29,7 +29,7 @@ func TestProviderRuntimeBlockBindingSharesRecoveryFence(t *testing.T) {
 	require.Greater(t, state.ManagedRecoveryFence(value.Record.ID), fence)
 }
 
-// TestSchedulerSharedStateBindsLegacyConsumers 检查反馈与兼容参数读取接口绑定同一实例。
+// TestSchedulerSharedStateBindsLegacyConsumers checks shared feedback and compatible parameter readers.
 func TestSchedulerSharedStateBindsLegacyConsumers(t *testing.T) {
 	state := provideSchedulerSharedState(nil, nil)
 	snapshot := gatewayCompatibilitySnapshot(state)
@@ -37,7 +37,7 @@ func TestSchedulerSharedStateBindsLegacyConsumers(t *testing.T) {
 	other := provideSchedulerSharedState(nil, nil)
 	require.NotSame(t, state.Settings, other.Settings)
 	require.NotSame(t, state.Sticky, other.Sticky)
-	// 从已绑定的执行入口上报，各次装配的反馈状态彼此独立。
+	// Reports through the bound execution entry affect only that application instance.
 	selection.NewGeneric(selection.GenericDependencies{Shared: provideSelectionShared(nil, nil, nil, nil, state)}, selection.DefaultOptions()).ReportAdvancedProviderScheduleResult(&gatewayprovider.SelectionResult{AdvancedScheduler: true}, 51, false, nil)
 	observed, _, _ := state.Feedback.Snapshot(51)
 	require.Greater(t, observed, 0.0)
@@ -45,7 +45,7 @@ func TestSchedulerSharedStateBindsLegacyConsumers(t *testing.T) {
 	require.Zero(t, untouched)
 }
 
-// TestGatewayBackgroundTasksUseApplicationOwner 检查应用等待两个执行入口的后台任务，停止后拒绝新的任务。
+// TestGatewayBackgroundTasksUseApplicationOwner checks task draining and rejection after shutdown for both execution paths.
 func TestGatewayBackgroundTasksUseApplicationOwner(t *testing.T) {
 	for _, name := range []string{"messages", "openai"} {
 		t.Run(name, func(t *testing.T) {

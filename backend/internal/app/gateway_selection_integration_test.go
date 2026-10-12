@@ -13,17 +13,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// NewModelAvailabilityForTest 为集成测试构造模型诊断组件。
+// NewModelAvailabilityForTest constructs model diagnostics for integration tests.
 var NewModelAvailabilityForTest = provideGatewayModelAvailability
 
-// TestModelAvailabilityUsesPersistentProviderStore 检查诊断读取持久配置，处于瞬时冷却的已配置模型仍可被查到。
+// TestModelAvailabilityUsesPersistentProviderStore checks that configured models remain discoverable during
+// transient cooldowns.
 func TestModelAvailabilityUsesPersistentProviderStore(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
 	group, err := f.client.Group.Create().SetName("test-diagnostic-group").SetAllowedProtocols([]protocol.ProtocolID{protocol.ProtocolOpenAIResponses}).Save(ctx)
 	require.NoError(t, err)
 	cooldown := time.Now().Add(time.Hour)
-	// 白名单限定可诊断型号，模型映射负责上游名称转换。
+	// The allowlist limits diagnostic candidates; mapping converts upstream model names.
 	row, err := f.client.Provider.Create().
 		SetName("test-diagnostic-provider").
 		SetPlatform(capability.PlatformOpenAI).
@@ -64,7 +65,7 @@ func TestModelAvailabilityUsesPersistentProviderStore(t *testing.T) {
 		require.True(t, result.HasProvidersInPool)
 		require.True(t, result.HasModelSupport)
 	})
-	// 管理禁用的提供商从诊断候选中排除。
+	// Administratively disabled providers are excluded from diagnostic candidates.
 	require.NoError(t, f.client.Provider.UpdateOneID(row.ID).SetStatus(provider.StatusDisabled).Exec(ctx))
 	result := diagnoser.Compatible.DiagnoseModelAvailabilityForPlatform(ctx, &group.ID, "public-known", capability.PlatformOpenAI)
 	require.False(t, result.HasProvidersInPool)

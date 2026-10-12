@@ -9,10 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ErrNoProvider 表示协议和模型筛选后没有可用提供商。
+// ErrNoProvider indicates that protocol and model filtering found no available provider.
 var ErrNoProvider = errors.New("no available SystemOne provider")
 
-// Outcome 保存一次交换结果及网关允许的重试状态。
+// Outcome holds an exchange result and the retry state allowed by the gateway.
 type Outcome struct {
 	Result     upstream.AttemptResult
 	Err        error
@@ -20,7 +20,7 @@ type Outcome struct {
 	RetryLimit int
 }
 
-// Ports 绑定当前请求的选号、并发、交换、完成和健康反馈。
+// Ports supplies provider selection, slot acquisition, exchange, completion, and health feedback for a request.
 type Ports interface {
 	Select(context.Context, map[int64]struct{}) (provider.ProviderSnapshot, error)
 	Acquire(context.Context) (func(), bool)
@@ -31,7 +31,8 @@ type Ports interface {
 	Switch()
 }
 
-// Run 在输出前有限换号，成功答案的完成快照在释放提供商槽之前捕获。
+// Run switches providers within the retry budget before output is committed.
+// It captures completion for served answers before releasing the provider slot.
 // @project-doc docs/interfaces/jev_upstream.md#systemone_usage
 func Run(ctx context.Context, maxSwitches int, ports Ports) error {
 	excluded := make(map[int64]struct{})
@@ -79,7 +80,7 @@ func Run(ctx context.Context, maxSwitches int, ports Ports) error {
 	return last
 }
 
-// runSelected 在同一提供商租约内完成池重试，等待可由请求取消。
+// runSelected retries within one provider lease, with cancellable retry waits.
 func runSelected(ctx context.Context, ports Ports) Outcome {
 	for retries := 0; ; retries++ {
 		outcome := ports.Forward(ctx)
@@ -101,7 +102,7 @@ func runSelected(ctx context.Context, ports Ports) Outcome {
 	}
 }
 
-// canRetry 检查答案交付、错误分类和重试提交状态。
+// canRetry requires a retryable failure before serving or committing the response.
 func (o Outcome) canRetry() bool {
 	return o.Err != nil && o.Failure != nil && o.Failure.RetryNext && !o.Result.Served && !o.Result.HTTPCommitted && !o.Result.RetryCommitted
 }

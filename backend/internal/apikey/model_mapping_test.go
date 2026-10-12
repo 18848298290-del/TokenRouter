@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeAPIKeyModelMapping 验证 API Key 模型映射的规范化与非法规则校验。
+// TestNormalizeAPIKeyModelMapping checks trimming and validation of model redirect rules.
 func TestNormalizeAPIKeyModelMapping(t *testing.T) {
 	normalized, err := NormalizeAPIKeyModelMapping(map[string]string{
 		" codex-auto-review ": " gpt-5.6-luna ",

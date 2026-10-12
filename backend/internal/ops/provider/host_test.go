@@ -12,10 +12,10 @@ const (
 	testGiB = 1024 * testMiB
 )
 
-// TestResolveMemoryStatsCgroupUsageButUnlimitedFallsBackToHost 检查 cgroup v2
-// 的 memory.max 为“max”时，已用量、总量和使用率都取自宿主机。
+// TestResolveMemoryStatsCgroupUsageButUnlimitedFallsBackToHost checks that memory.max="max"
+// selects host usage, capacity, and percentage together.
 func TestResolveMemoryStatsCgroupUsageButUnlimitedFallsBackToHost(t *testing.T) {
-	const cgroupUsed = uint64(64573440) // memory.current，约 61 MiB。
+	const cgroupUsed = uint64(64573440) // memory.current, approximately 61 MiB.
 	host := &mem.VirtualMemoryStat{
 		Used:        16 * testGiB,
 		Total:       24 * testGiB,
@@ -28,21 +28,21 @@ func TestResolveMemoryStatsCgroupUsageButUnlimitedFallsBackToHost(t *testing.T) 
 	require.NotNil(t, totalMB)
 	require.NotNil(t, pct)
 
-	// 三个内存值均取自宿主机。
+	// All three measurements come from the host.
 	require.Equal(t, int64(16*1024), *usedMB, "used must be host used, not container used")
 	require.Equal(t, int64(24*1024), *totalMB, "total must be host total")
 	require.InDelta(t, 66.7, *pct, 0.05, "percent must be host-derived, not container/host mix")
 
-	// 防止回归到具体缺陷：容器 used（约 61 MiB）与宿主机 total 混算成约 0.3%。
+	// Mixing container usage with host capacity would incorrectly report about 0.3%.
 	require.NotEqual(t, int64(cgroupUsed/testMiB), *usedMB, "must not report the container used value")
 	require.Greater(t, *pct, 1.0, "percent must not collapse to the ~0.3%% mixed value")
 }
 
-// TestResolveMemoryStatsExplicitContainerLimitUsesCgroup 检查设置容器内存上限后使用 cgroup 数据。
-// memory.current 为 512 MiB、memory.max 为 2 GiB 时，使用率为 25%。
+// TestResolveMemoryStatsExplicitContainerLimitUsesCgroup checks selection of a finite container limit.
+// 512 MiB of usage with a 2 GiB limit yields 25%.
 func TestResolveMemoryStatsExplicitContainerLimitUsesCgroup(t *testing.T) {
 	host := &mem.VirtualMemoryStat{
-		Used:        16 * testGiB, // 宿主机用量与容器用量不同。
+		Used:        16 * testGiB, // Host usage differs from container usage.
 		Total:       24 * testGiB,
 		UsedPercent: 66.7,
 	}
@@ -58,7 +58,7 @@ func TestResolveMemoryStatsExplicitContainerLimitUsesCgroup(t *testing.T) {
 	require.InDelta(t, 25.0, *pct, 0.05)
 }
 
-// TestResolveMemoryStatsNoCgroupUsesHost 覆盖裸机或没有 cgroup 的主机：三个值都来自宿主机。
+// TestResolveMemoryStatsNoCgroupUsesHost checks host measurements when cgroup data is unavailable.
 func TestResolveMemoryStatsNoCgroupUsesHost(t *testing.T) {
 	host := &mem.VirtualMemoryStat{
 		Used:        16 * testGiB,
@@ -76,7 +76,7 @@ func TestResolveMemoryStatsNoCgroupUsesHost(t *testing.T) {
 	require.InDelta(t, 66.7, *pct, 0.05)
 }
 
-// TestResolveMemoryStatsNoDataReturnsNil 检查 cgroup 和宿主机数据都不可用时，所有输出均为空。
+// TestResolveMemoryStatsNoDataReturnsNil checks missing measurements from both sources.
 func TestResolveMemoryStatsNoDataReturnsNil(t *testing.T) {
 	usedMB, totalMB, pct := resolveMemoryStats(0, 0, false, nil)
 	require.Nil(t, usedMB)
@@ -84,8 +84,8 @@ func TestResolveMemoryStatsNoDataReturnsNil(t *testing.T) {
 	require.Nil(t, pct)
 }
 
-// TestResolveMemoryStatsHostWithoutTotalKeepsGopsutilPercent 检查宿主机没有 total 时，
-// 仍返回 used 值和 gopsutil 自身的百分比。
+// TestResolveMemoryStatsHostWithoutTotalKeepsGopsutilPercent checks that missing host capacity
+// still permits returning usage and gopsutil's percentage.
 func TestResolveMemoryStatsHostWithoutTotalKeepsGopsutilPercent(t *testing.T) {
 	host := &mem.VirtualMemoryStat{
 		Used:        8 * testGiB,

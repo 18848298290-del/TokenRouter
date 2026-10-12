@@ -233,8 +233,8 @@ func TestHasGeminiThirdPartyBaseURL(t *testing.T) {
 	}
 }
 
-// TestGetOpenAIProtocolAPIKey_CNProviders 验证 OpenAI 协议族密钥读取覆盖国产供应商，
-// IsOpenAIApiKey 在 OpenAI 平台返回 true，调度倍率和 WS 准入按平台判断。
+// TestGetOpenAIProtocolAPIKey_CNProviders checks API key access for Chinese providers.
+// IsOpenAIApiKey remains OpenAI-specific for scheduling and WebSocket eligibility.
 func TestGetOpenAIProtocolAPIKey_CNProviders(t *testing.T) {
 	t.Parallel()
 
@@ -246,7 +246,7 @@ func TestGetOpenAIProtocolAPIKey_CNProviders(t *testing.T) {
 	require.Equal(t, "sk-kimi", kimi.GetOpenAIProtocolAPIKey())
 	require.False(t, kimi.IsOpenAIApiKey(), "IsOpenAIApiKey stays openai-only for scheduling gates")
 
-	// 非 APIKey 类型的 CN 提供商不返回密钥
+	// A Chinese provider with a non-API-Key type must not expose its stored key.
 	notAPIKey := &Record{
 		Platform:    capability.PlatformDeepseek,
 		Type:        capability.ProviderTypeOAuth,
@@ -254,7 +254,7 @@ func TestGetOpenAIProtocolAPIKey_CNProviders(t *testing.T) {
 	}
 	require.Equal(t, "", notAPIKey.GetOpenAIProtocolAPIKey())
 
-	// OpenAI 提供商使用 OpenAI API Key 分支。
+	// OpenAI uses its platform-specific API key accessor.
 	openai := &Record{
 		Platform:    capability.PlatformOpenAI,
 		Type:        capability.ProviderTypeAPIKey,
@@ -525,7 +525,7 @@ func TestEffectiveLoadFactor_ZeroLoadFactor_ZeroConcurrency(t *testing.T) {
 	require.Equal(t, 1, a.EffectiveLoadFactor())
 }
 
-// TestProviderCompactionControlledByAdministrator 验证管理员配置覆盖历史探测结论，两种压缩能力相互独立。
+// TestProviderCompactionControlledByAdministrator checks independent switches that override historical probe results.
 func TestProviderCompactionControlledByAdministrator(t *testing.T) {
 	for _, mode := range []string{"", "force_on", "force_off"} {
 		for _, probed := range []bool{false, true} {
@@ -1241,7 +1241,7 @@ func TestLastFixedDailyReset_BeforeResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 6, 0, 0, 0, tz)
 	got := LastFixedDailyReset(9, tz, now)
-	// 当前早于今日 9:00，上次重置在昨日 9:00。
+	// Before today's 09:00 reset, the last reset is yesterday at 09:00.
 	want := time.Date(2026, 3, 13, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
@@ -1250,7 +1250,7 @@ func TestLastFixedDailyReset_AtResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
 	got := LastFixedDailyReset(9, tz, now)
-	// 当前等于重置时刻，上次重置为今日 9:00。
+	// At the reset instant, today's 09:00 reset has taken effect.
 	want := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
@@ -1259,37 +1259,37 @@ func TestLastFixedDailyReset_AfterResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 15, 0, 0, 0, tz)
 	got := LastFixedDailyReset(9, tz, now)
-	// 当前晚于 9:00，上次重置为今日 9:00。
+	// After 09:00, the last reset is today at 09:00.
 	want := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestLastFixedWeeklyReset_SameDay_AfterHour(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-16 星期一 15:00，每周一 9:00 重置。
+	// Monday, 2026-03-16 at 15:00, with a Monday 09:00 reset.
 	now := time.Date(2026, 3, 16, 15, 0, 0, 0, tz)
 	got := LastFixedWeeklyReset(1, 9, tz, now)
-	// 重置时间为今日 9:00。
+	// The reset is today at 09:00.
 	want := time.Date(2026, 3, 16, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestLastFixedWeeklyReset_SameDay_BeforeHour(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-16 星期一 06:00，每周一 9:00 重置。
+	// Monday, 2026-03-16 at 06:00, before the Monday 09:00 reset.
 	now := time.Date(2026, 3, 16, 6, 0, 0, 0, tz)
 	got := LastFixedWeeklyReset(1, 9, tz, now)
-	// 上次重置时间为 2026-03-09 星期一 9:00。
+	// The last reset is Monday, 2026-03-09 at 09:00.
 	want := time.Date(2026, 3, 9, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestLastFixedWeeklyReset_DifferentDay(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-18 星期三，每周一重置。
+	// Wednesday, 2026-03-18, with a Monday reset.
 	now := time.Date(2026, 3, 18, 10, 0, 0, 0, tz)
 	got := LastFixedWeeklyReset(1, 9, tz, now)
-	// 本周一为 2026-03-16。
+	// The preceding Monday is 2026-03-16.
 	want := time.Date(2026, 3, 16, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
@@ -1309,7 +1309,7 @@ func TestIsFixedDailyPeriodExpired_NotExpired(t *testing.T) {
 		"quota_daily_reset_hour": float64(9),
 		"quota_reset_timezone":   "UTC",
 	}}
-	// 测试时间固定为当天 UTC 12:00，晚于 09:00 的重置点。
+	// Start the period at noon UTC today, after the latest daily reset.
 	now := time.Now().UTC()
 	periodStart := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	assert.False(t, a.IsFixedDailyPeriodExpired(periodStart))
@@ -1321,7 +1321,7 @@ func TestIsFixedDailyPeriodExpired_Expired(t *testing.T) {
 		"quota_daily_reset_hour": float64(9),
 		"quota_reset_timezone":   "UTC",
 	}}
-	// 窗口起始于三天前，已超过每日周期。
+	// A start three days ago is outside the current daily period.
 	periodStart := time.Now().Add(-72 * time.Hour)
 	assert.True(t, a.IsFixedDailyPeriodExpired(periodStart))
 }
@@ -1332,7 +1332,7 @@ func TestIsFixedDailyPeriodExpired_InvalidTimezone(t *testing.T) {
 		"quota_daily_reset_hour": float64(9),
 		"quota_reset_timezone":   "Invalid/Timezone",
 	}}
-	// 无效时区按 UTC 处理。
+	// An invalid timezone falls back to UTC.
 	periodStart := time.Now().Add(-72 * time.Hour)
 	assert.True(t, a.IsFixedDailyPeriodExpired(periodStart))
 }
@@ -1354,7 +1354,7 @@ func TestIsFixedWeeklyPeriodExpired_NotExpired(t *testing.T) {
 		"quota_weekly_reset_hour": float64(9),
 		"quota_reset_timezone":    "UTC",
 	}}
-	// 测试时间固定为当天 UTC 12:00，晚于最近一次周一 09:00 的重置点。
+	// Start the period at noon UTC today, after the latest Monday 09:00 reset.
 	now := time.Now().UTC()
 	periodStart := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	assert.False(t, a.IsFixedWeeklyPeriodExpired(periodStart))
@@ -1367,7 +1367,7 @@ func TestIsFixedWeeklyPeriodExpired_Expired(t *testing.T) {
 		"quota_weekly_reset_hour": float64(9),
 		"quota_reset_timezone":    "UTC",
 	}}
-	// 窗口起始于十天前，已超过每周周期。
+	// A start ten days ago is outside the current weekly period.
 	periodStart := time.Now().Add(-240 * time.Hour)
 	assert.True(t, a.IsFixedWeeklyPeriodExpired(periodStart))
 }
@@ -1473,7 +1473,7 @@ func TestValidateQuotaResetConfig_InvalidWeeklyHour(t *testing.T) {
 }
 
 func TestValidateQuotaResetConfig_BoundaryValues(t *testing.T) {
-	// 各字段的最大值和最小值均有效。
+	// Both ends of each accepted range are valid.
 	extra := map[string]any{
 		"quota_daily_reset_hour":  float64(23),
 		"quota_weekly_reset_day":  float64(0), // Sunday
@@ -1490,7 +1490,7 @@ func TestValidateQuotaResetConfig_BoundaryValues(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(extra2, time.LoadLocation))
 }
 
-// TestProviderIsSchedulable_TempUnschedulable 测试临时限流提供商不可调度。
+// TestProviderIsSchedulable_TempUnschedulable checks temporary scheduling blocks and expiry.
 func TestProviderIsSchedulable_TempUnschedulable(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	past := time.Now().Add(-10 * time.Minute)
@@ -1535,7 +1535,7 @@ func TestProviderIsSchedulable_TempUnschedulable(t *testing.T) {
 				TempUnschedulableUntil: &future,
 				RateLimitResetAt:       &past,
 			},
-			want: false, // 临时限流生效
+			want: false, // The temporary block still applies after the rate limit expires.
 		},
 	}
 
@@ -1547,7 +1547,7 @@ func TestProviderIsSchedulable_TempUnschedulable(t *testing.T) {
 	}
 }
 
-// TestProvider_IsTempUnschedulableEnabled 测试临时限流开关。
+// TestProvider_IsTempUnschedulableEnabled checks the temporary scheduling switch.
 func TestProvider_IsTempUnschedulableEnabled(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1588,7 +1588,7 @@ func TestProvider_IsTempUnschedulableEnabled(t *testing.T) {
 	}
 }
 
-// TestProvider_GetTempUnschedulableRules 测试获取临时限流规则。
+// TestProvider_GetTempUnschedulableRules checks configured and absent rule lists.
 func TestProvider_GetTempUnschedulableRules(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1640,7 +1640,7 @@ func TestProvider_GetTempUnschedulableRules(t *testing.T) {
 	}
 }
 
-// TestTempUnschedulableRule_Parse 测试规则解析。
+// TestTempUnschedulableRule_Parse checks status, keywords, and duration decoded from credentials.
 func TestTempUnschedulableRule_Parse(t *testing.T) {
 	provider := &Record{LoadLocation: time.LoadLocation, Credentials: map[string]any{
 		"temp_unschedulable_rules": []any{
@@ -1661,7 +1661,7 @@ func TestTempUnschedulableRule_Parse(t *testing.T) {
 	require.Equal(t, 5, rule.DurationMinutes)
 }
 
-// TestProvider_TempUnschedulableUntil 测试临时限流时间字段。
+// TestProvider_TempUnschedulableUntil checks active, expired, and absent temporary blocks.
 func TestProvider_TempUnschedulableUntil(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	past := time.Now().Add(-10 * time.Minute)

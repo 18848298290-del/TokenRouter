@@ -23,7 +23,7 @@ type Target struct {
 	StartedAt                    time.Time
 	Passthrough, MimicClaudeCode bool
 	Enter                        func() (func(), error)
-	// BeforeResponse 衔接 HTTP 错误处理与提供商观测；stop 表示外层已处理响应。
+	// BeforeResponse handles HTTP errors and provider observations; stop means the response is handled.
 	BeforeResponse func(context.Context, *http.Response, []byte) (stop bool, err error)
 	BeforeStream   func()
 	OnStream       func(*StreamResult, error)
@@ -44,7 +44,7 @@ func (t *Target) String() string   { return fmt.Sprintf("anthropic target provid
 func (t *Target) GoString() string { return t.String() }
 
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	// 失败路径也返回取消与耗时分类；未发生服务时不生成用量或成功结果。
+	// Failures retain cancellation and timing information even before usage is observed.
 	enteredAt := time.Now()
 	defer func() {
 		if failure != nil {

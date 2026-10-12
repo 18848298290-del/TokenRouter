@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestCRSRefreshDatabaseInterleaving 验证 PostgreSQL 真正提交管理员修改，与导入交换结果交错，确认不会被后续 CAS 覆盖。
+// TestCRSRefreshDatabaseInterleaving checks that refresh compare-and-swap writes respect concurrent committed
+// administrator changes.
 func TestCRSRefreshDatabaseInterleaving(t *testing.T) {
 	for _, mode := range []string{"success", "credentials", "disabled", "cancelled", "outbox_failure"} {
 		t.Run(mode, func(t *testing.T) {

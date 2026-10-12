@@ -20,17 +20,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// CheckTextModelPricing 按本次映射和计费来源检查价格，提供商切换后重新计算。
-// compact 为 nil 时按普通请求查价，Compact 请求传入对应的执行器。
+// CheckTextModelPricing checks the model selected by this attempt's mapping and billing source.
+// Pass a CompactExecutor for Compact requests; nil uses ordinary request pricing.
 func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, key *apikey.APIKey, target *gatewayprovider.ExecutionProvider, requested, mapped string, compact *CompactExecutor, source protocol.ProtocolID) error {
 	if prices == nil {
 		return nil
 	}
-	// 图片型号由媒体计价处理，文本请求声明图片工具时仍需检查文本价格。
+	// Media pricing handles image models; text requests with image tools still need text pricing.
 	if media.IsImageGenerationModel(mapped) {
 		return nil
 	}
-	// 上游协议决定模型转换和透传的计费来源，预检与执行复用同一次请求的路由规则。
+	// Preflight and execution use the same request route rules to resolve upstream protocol and model.
 	target, err := gatewayprovider.ProviderForProtocolAttempt(ctx, target)
 	if err != nil {
 		return err
@@ -55,13 +55,13 @@ func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, 
 	case protocol.ProtocolOpenAIResponses:
 		profile := openAIForwardProfile(target)
 		if compact != nil && target.View().IsOpenAICompatible() && !profile.Grok && !profile.RawChat && !profile.Anthropic {
-			// Compact 的提供商映射优先于全局模型，普通 Responses 使用常规模型映射。
+			// Compact provider mappings take precedence over its global model; ordinary Responses uses regular mappings.
 			if model := compact.ResolveModel(target, mapped); model != "" {
 				result.UpstreamModel = model
 			}
 		}
 		if profile.Passthrough && !profile.RawChat && !profile.Anthropic {
-			// HTTP 透传的完成结果以分组映射后的请求名保存 Model。
+			// HTTP passthrough completion uses the group-mapped request name as Model.
 			result.BillingModel = ""
 		}
 	}
@@ -73,7 +73,7 @@ func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, 
 	return prices.Check(ctx, groupID, model)
 }
 
-// checkPricing 在文本执行前输出当前客户端协议的缺价错误。
+// checkPricing writes a missing-price error in the client's protocol before text execution.
 func (e *UnifiedTextExecutor) checkPricing(c *gin.Context, target *gatewayprovider.ExecutionProvider, body []byte, source protocol.ProtocolID) error {
 	if e.Pricing == nil {
 		return nil

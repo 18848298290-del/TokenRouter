@@ -17,12 +17,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// liveCreatePorts 只连接原生选择器、模型轨迹和供应商单次创建能力。
+// liveCreatePorts supplies selection, model tracing, and single-provider session creation.
 type liveCreatePorts struct {
 	service *OpenAILiveExecutor
 }
 
-// liveCreateTarget 保存本次选择取得的凭据，供后续执行使用。
+// liveCreateTarget holds the selected provider and routing inputs for session creation.
 type liveCreateTarget struct {
 	service  *OpenAILiveExecutor
 	provider *gatewayprovider.ExecutionProvider

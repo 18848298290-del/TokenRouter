@@ -31,7 +31,6 @@ func RunCLI() error {
 		},
 	}
 
-	// Database configuration with validation
 	fmt.Println("── Database Configuration ──")
 
 	for {
@@ -84,7 +83,6 @@ func RunCLI() error {
 	}
 	fmt.Println("OK")
 
-	// Redis configuration with validation
 	fmt.Println()
 	fmt.Println("── Redis Configuration ──")
 
@@ -124,7 +122,6 @@ func RunCLI() error {
 	}
 	fmt.Println("OK")
 
-	// Admin configuration with validation
 	fmt.Println()
 	fmt.Println("── Admin Account ──")
 
@@ -138,7 +135,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Admin.Password = promptPassword("Admin Password")
-		// SECURITY: Match Web API requirement of 8 characters minimum
+		// Match the Web setup API's eight-byte minimum.
 		if len(cfg.Admin.Password) < 8 {
 			fmt.Println("  Password must be at least 8 characters")
 			continue
@@ -155,7 +152,6 @@ func RunCLI() error {
 		break
 	}
 
-	// Server configuration with validation
 	fmt.Println()
 	fmt.Println("── Server Configuration ──")
 
@@ -167,7 +163,6 @@ func RunCLI() error {
 		fmt.Println("  Invalid port. Must be between 1 and 65535.")
 	}
 
-	// Confirm and install
 	fmt.Println()
 	fmt.Println("── Configuration Summary ──")
 	fmt.Printf("Database: %s@%s:%d/%s\n", cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
@@ -240,7 +235,7 @@ func promptInt(reader *bufio.Reader, prompt string, defaultVal int) int {
 func promptPassword(prompt string) string {
 	fmt.Printf("  %s: ", prompt)
 
-	// Try to read password without echo
+	// Suppress terminal echo while reading credentials.
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		password, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
@@ -249,7 +244,7 @@ func promptPassword(prompt string) string {
 		}
 	}
 
-	// Fallback to regular input
+	// Use line input when stdin is redirected or terminal password reading fails.
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	return strings.TrimSpace(input)

@@ -16,13 +16,13 @@ import (
 
 var claudeCodeValidator = clientmeta.NewClaudeCodeValidator()
 
-// ClientDetection 只携带识别结果；请求许可与平台默认值仍由相应用例裁决。
+// ClientDetection contains the client identity result used by admission and platform policy checks.
 type ClientDetection struct {
 	ClaudeCode bool
 	Version    string
 }
 
-// SetClaudeCodeClientContext 将客户端识别结果写入 HTTP 请求上下文，供后续处理读取。
+// SetClaudeCodeClientContext stores client identity in the HTTP request context for later processing.
 func SetClaudeCodeClientContext(c *gin.Context, body []byte, parsed *requeststate.ParsedRequest) {
 	if c == nil || c.Request == nil {
 		return
@@ -36,23 +36,23 @@ func SetClaudeCodeClientContext(c *gin.Context, body []byte, parsed *requeststat
 	c.Request = c.Request.WithContext(ctx)
 }
 
-// DetectClaudeCodeRequest 返回客户端识别结果，兼容入口将结果写入 context。
+// DetectClaudeCodeRequest detects Claude Code identity and version from request metadata.
 func DetectClaudeCodeRequest(c *gin.Context, body []byte, parsedReq *requeststate.ParsedRequest, probe bool) ClientDetection {
 	if c == nil || c.Request == nil {
 		return ClientDetection{}
 	}
 	ua := c.GetHeader("User-Agent")
-	// 非 Claude CLI UA 直接返回 false，省去 JSON 反序列化。
+	// Reject other user agents before decoding JSON.
 	if !claudeCodeValidator.ValidateUserAgent(ua) {
 		return ClientDetection{}
 	}
 
 	isClaudeCode := false
 	if !strings.Contains(c.Request.URL.Path, "messages") {
-		// 与 Validate 行为一致：非 messages 路径 UA 命中即可视为 Claude Code 客户端。
+		// Outside Messages routes, a matching user agent is sufficient for Claude Code detection.
 		isClaudeCode = true
 	} else {
-		// 仅在确认为 Claude CLI 且 messages 路径时再做 body 解析。
+		// For Messages, validate the body and headers after the user agent matches.
 		bodyMap := ClaudeCodeBodyMapFromParsedRequest(parsedReq)
 		if bodyMap == nil && len(body) > 0 {
 			_ = json.Unmarshal(body, &bodyMap)
@@ -87,9 +87,9 @@ func ClaudeCodeBodyMapFromParsedRequest(parsedReq *requeststate.ParsedRequest) m
 	return bodyMap
 }
 
-// PrepareMessageClientContext 在路由与提供商选择前解析客户端、探针和 thinking 的可信请求内状态。
+// PrepareMessageClientContext resolves client, probe, and thinking state before routing and provider selection.
 func PrepareMessageClientContext(c *gin.Context, body []byte, bounds func(context.Context) (string, string)) error {
-	// 身份探测宽松读取 stream，规范化解析副本，出站使用原报文。
+	// Normalize stream in the identity-parsing copy; outbound forwarding uses the original body.
 	identityBody := body
 	if value := gjson.GetBytes(body, "stream"); value.Exists() && value.Type != gjson.True && value.Type != gjson.False {
 		var err error

@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// SettingsParticipant 为综合设置登记字段和完整参数校验。
+// SettingsParticipant registers the settings field and validation of the merged effective parameters.
 func SettingsParticipant(defaults Parameters) settings.Participant {
 	return settings.Participant{Module: "responses-ws", Fields: []string{SettingKey}, Keys: []string{SettingKey}, Prepare: func(_ context.Context, fields settings.Fields, current map[string]string) (settings.PreparedChange, error) {
 		raw, present := fields[SettingKey]

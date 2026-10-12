@@ -2,7 +2,7 @@ package requeststate
 
 import "sync"
 
-// ResponseFailureEffects 记录已经执行的提供商副作用，只能由后续输出消费一次。
+// ResponseFailureEffects stores provider side effects; Consume reports each stored result as present once.
 type ResponseFailureEffects struct {
 	mu       sync.Mutex
 	status   int

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// DefaultAuthDir 返回默认的 Qoder 认证目录。
+// DefaultAuthDir returns the local Qoder authentication directory, or empty if the home directory is unavailable.
 func DefaultAuthDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -19,7 +19,7 @@ func DefaultAuthDir() string {
 	return filepath.Join(home, ".qoder", ".auth")
 }
 
-// ReadLocalAuth 从本地文件系统读取并解密 Qoder 认证数据。
+// ReadLocalAuth reads and decrypts local credentials, using DefaultAuthDir when authDir is empty.
 func ReadLocalAuth(authDir string) (*qoder.AuthInfo, error) {
 	if authDir == "" {
 		authDir = DefaultAuthDir()
@@ -30,7 +30,7 @@ func ReadLocalAuth(authDir string) (*qoder.AuthInfo, error) {
 		return nil, fmt.Errorf("qoder: read machine_id: %w", err)
 	}
 	machineID = []byte(string(machineID))[:len(machineID)]
-	// 去掉结尾空白和换行。
+	// Strip trailing CR and LF bytes from the machine ID.
 	for len(machineID) > 0 && (machineID[len(machineID)-1] == '\n' || machineID[len(machineID)-1] == '\r') {
 		machineID = machineID[:len(machineID)-1]
 	}
@@ -39,7 +39,7 @@ func ReadLocalAuth(authDir string) (*qoder.AuthInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("qoder: read user: %w", err)
 	}
-	// 去掉结尾空白。
+	// Strip trailing CR and LF bytes before base64 decoding.
 	for len(userB64) > 0 && (userB64[len(userB64)-1] == '\n' || userB64[len(userB64)-1] == '\r') {
 		userB64 = userB64[:len(userB64)-1]
 	}
@@ -49,7 +49,7 @@ func ReadLocalAuth(authDir string) (*qoder.AuthInfo, error) {
 		return nil, fmt.Errorf("qoder: decode user base64: %w", err)
 	}
 
-	// key 取 machine_id 的前 16 个 ASCII 字节。
+	// Use the first 16 machine ID bytes, zero-padding a shorter ID.
 	key := make([]byte, 16)
 	copy(key, machineID)
 

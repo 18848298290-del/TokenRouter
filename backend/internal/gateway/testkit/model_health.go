@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ModelHealthStore 记录模型冷却并保留写入错误注入。
+// ModelHealthStore records model cooldowns and supports injected write errors.
 type ModelHealthStore struct {
 	HealthStoreBase
 	TempCalls           int

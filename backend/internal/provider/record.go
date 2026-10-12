@@ -26,28 +26,28 @@ const (
 	GeminiProviderTypeThirdParty    = "third_party"
 	GeminiOfficialAPIHost           = "generativelanguage.googleapis.com"
 
-	// GrokMediaEligibleExtraKey 是 providers.extra 中可选的提供商级覆盖：true 强制允许
-	// 媒体调度，false 禁用，缺失或 null 时使用上游观测自动判断。
+	// GrokMediaEligibleExtraKey overrides media eligibility in providers.extra: true enables
+	// media scheduling, false disables it, and missing or null uses upstream observations.
 	GrokMediaEligibleExtraKey = "grok_media_eligible"
 
 	OpenAIAuthModePersonalAccessToken = "personalAccessToken"
 	OpenAIAuthModeCredentialKey       = "auth_mode"
 	OpenAIAuthModeLegacyCredentialKey = "openai_auth_mode"
 
-	// OpenAICompactModeForceOn 表示管理员启用对应压缩能力。
+	// OpenAICompactModeForceOn enables the corresponding compaction capability.
 	OpenAICompactModeForceOn = "force_on"
-	// OpenAICompactModeForceOff 表示管理员关闭对应压缩能力。
+	// OpenAICompactModeForceOff disables the corresponding compaction capability.
 	OpenAICompactModeForceOff            = "force_off"
 	OpenAINativeCompactionV2ModeExtraKey = "openai_native_compaction_v2_mode"
 
 	DefaultPoolModeRetryCount = 3
 	MaxPoolModeRetryCount     = 10
 
-	// OpenAIOAuthClientPolicyAny 表示 OpenAI OAuth 提供商允许任意客户端访问。
+	// OpenAIOAuthClientPolicyAny allows any client to use the OpenAI OAuth provider.
 	OpenAIOAuthClientPolicyAny = "any"
-	// OpenAIOAuthClientPolicyCodexOnly 表示仅允许官方 Codex 客户端访问。
+	// OpenAIOAuthClientPolicyCodexOnly restricts access to official Codex clients.
 	OpenAIOAuthClientPolicyCodexOnly = "codex_only"
-	// OpenAIOAuthClientPolicyTLSRouterMatchedOnly 表示仅允许 TLS 路由器命中的 UA 访问。
+	// OpenAIOAuthClientPolicyTLSRouterMatchedOnly requires a UA matched by the TLS router.
 	OpenAIOAuthClientPolicyTLSRouterMatchedOnly = "tls_router_matched_only"
 
 	// Status constants.
@@ -67,19 +67,19 @@ const (
 	PlatformDeepseek    = capability.PlatformDeepseek
 	PlatformJev         = capability.PlatformJev
 
-	// 提供商接入模式（国产供应商）：按量付费 vs Coding Plan。
+	// Access modes for Chinese providers: pay-as-you-go and Coding Plan.
 	ProviderModePayG   = "payg"
 	ProviderModeCoding = "coding"
 
-	// API 协议名称用于凭据兼容字段和管理端测试。
+	// API protocol names used by compatibility credentials and administrator tests.
 	APIProtocolChatCompletions = "chat_completions"
 	APIProtocolAnthropic       = "anthropic"
 	APIProtocolResponses       = "responses"
 	APIProtocolAdaptive        = "adaptive"
 	APIProtocolSystemOne       = string(capability.ProtocolSystemOne)
 
-	// 国产 OpenAI 兼容供应商各模式的默认 base_url。
-	// 与前端 credentialsBuilder.ts 中的预设保持一致。
+	// Default OpenAI-compatible base URLs for each Chinese provider mode.
+	// Keep these values consistent with the frontend credentialsBuilder.ts presets.
 	DefaultKimiPayGBaseURL    = "https://api.moonshot.cn/v1"
 	DefaultKimiCodingBaseURL  = "https://api.kimi.com/coding/v1"
 	DefaultZhipuPayGBaseURL   = "https://open.bigmodel.cn/api/paas/v4"
@@ -87,21 +87,21 @@ const (
 	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
 	DefaultJevBaseURL         = "https://api.typesafe.ai"
 
-	// 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
-	// 与前端 credentialsBuilder.ts 中的预设保持一致。
+	// Default Anthropic-compatible base URLs; requests append /v1/messages.
+	// Keep these values consistent with the frontend credentialsBuilder.ts presets.
 	DefaultKimiPayGAnthropicBaseURL   = "https://api.moonshot.cn/anthropic"
 	DefaultKimiCodingAnthropicBaseURL = "https://api.kimi.com/coding"
 	DefaultZhipuAnthropicBaseURL      = "https://open.bigmodel.cn/api/anthropic"
 	DefaultDeepseekAnthropicBaseURL   = "https://api.deepseek.com/anthropic"
 
 	// Provider type constants.
-	ProviderTypeOAuth          = capability.ProviderTypeOAuth          // OAuth类型提供商（full scope: profile + inference）
-	ProviderTypeSetupToken     = capability.ProviderTypeSetupToken     // Setup Token类型提供商（inference only scope）
-	ProviderTypeAPIKey         = capability.ProviderTypeAPIKey         // API Key类型提供商
-	ProviderTypeUpstream       = capability.ProviderTypeUpstream       // 上游透传类型提供商（通过 Base URL + API Key 连接上游）
-	ProviderTypeBedrock        = capability.ProviderTypeBedrock        // AWS Bedrock 类型提供商（通过 SigV4 签名或 API Key 连接 Bedrock，由 credentials.auth_mode 区分）
-	ProviderTypeServiceAccount = capability.ProviderTypeServiceAccount // Google Service Account 类型提供商（用于 Vertex AI）
-	ProviderTypeCosy           = capability.ProviderTypeCosy           // Qoder COSY 协议提供商
+	ProviderTypeOAuth          = capability.ProviderTypeOAuth          // OAuth with profile and inference scopes.
+	ProviderTypeSetupToken     = capability.ProviderTypeSetupToken     // Setup Token with inference scope.
+	ProviderTypeAPIKey         = capability.ProviderTypeAPIKey         // API Key authentication.
+	ProviderTypeUpstream       = capability.ProviderTypeUpstream       // Upstream passthrough using a base URL and API key.
+	ProviderTypeBedrock        = capability.ProviderTypeBedrock        // AWS Bedrock using SigV4 or an API key, selected by credentials.auth_mode.
+	ProviderTypeServiceAccount = capability.ProviderTypeServiceAccount // Google Service Account for Vertex AI.
+	ProviderTypeCosy           = capability.ProviderTypeCosy           // Qoder COSY protocol.
 
 	// QuotaDimension constants for spark shadow providers.
 	QuotaDimensionGlobal = "global"
@@ -123,12 +123,12 @@ const (
 	quotaDimTotal      = "total"
 )
 
-// DefaultPoolModeRetryableStatusCodes 池模式下默认触发同提供商重试的状态码。
-// Provider.Credentials 缺少 pool_mode_retry_status_codes 时使用。
+// DefaultPoolModeRetryableStatusCodes lists statuses that retry the same provider in pool mode.
+// It applies when Credentials lacks pool_mode_retry_status_codes.
 var DefaultPoolModeRetryableStatusCodes = []int{401, 403, 429}
 
-// Record 保存提供商的配置和运行数据，对外调用使用对应的快照。
-// Credentials 使用 JSON 忽略标记，普通日志输出提供商 ID。
+// Record holds provider configuration and runtime data used to build caller snapshots.
+// Credentials are excluded from JSON; string formatting exposes the provider ID.
 type Record struct {
 	Proxy                   *egress.Proxy `json:"-"`
 	Groups                  []*accessview.GroupConfig
@@ -180,7 +180,7 @@ type TempUnschedulableRule struct {
 
 type OpenAIImagesCapability string
 
-// GroupMembership 保存提供商与分组的关联。
+// GroupMembership associates a provider with a group.
 type GroupMembership struct {
 	ProviderID int64
 	GroupID    int64
@@ -218,10 +218,10 @@ func (r *Record) IsActive() bool {
 	return r.Status == StatusActive
 }
 
-// BillingRateMultiplier 返回提供商计费倍率。
-// - nil 表示未配置/旧缓存缺字段，按 1.0 处理
-// - 允许 0，表示该提供商计费为 0
-// - 负数属于非法数据，出于安全考虑按 1.0 处理。
+// BillingRateMultiplier returns the provider billing multiplier.
+// - Missing values, including older cache entries, default to 1.0.
+// - Zero is valid and produces zero provider charges.
+// - Negative values are invalid and default to 1.0.
 func (r *Record) BillingRateMultiplier() float64 {
 	if r == nil || r.RateMultiplier == nil {
 		return 1.0
@@ -268,11 +268,13 @@ func (r *Record) IsSchedulable() bool {
 	return true
 }
 
-// IsCredentialUsableForShadow 判断母提供商的凭据和传输是否可供影子使用，nil 或非 active 提供商返回 false。
-// 开启到期暂停时，ExpiresAt 需要晚于当前时间；缺省 ExpiresAt 时跳过到期检查。
-// TempUnschedulableUntil 为空或当前时间已到达截止时刻时，临时冷却检查通过。
-// OpenAI 的 401、token 刷新耗尽及代理或传输故障会设置临时冷却，影子共用母提供商的 token 和代理。
-// 影子使用自己的 Spark 配额窗口和 Schedulable 开关，母提供商的全局限流与过载由其自身调度检查处理。
+// IsCredentialUsableForShadow checks parent availability for shared credentials and transport; nil or inactive
+// parents fail.
+// When expiry pausing is enabled, a nonnil ExpiresAt must be in the future.
+// A temporary cooldown passes when unset or elapsed.
+// Shadows share the parent token and proxy, so credential and transport cooldowns apply to both.
+// Shadows use their own Spark quota window and scheduling switch; parent rate limits and overloads are checked
+// separately.
 func (r *Record) IsCredentialUsableForShadow() bool {
 	if r == nil || !r.IsActive() {
 		return false
@@ -298,10 +300,10 @@ func (r *Record) IsOAuth() bool {
 	return r.Type == ProviderTypeOAuth || r.Type == ProviderTypeSetupToken
 }
 
-// IsPrivacySet 检查提供商的 privacy 是否已成功设置。
+// IsPrivacySet reports whether the platform privacy setting was applied successfully.
 // OpenAI: privacy_mode == "training_off"
 // Antigravity: privacy_mode == "privacy_set"
-// 其他平台: 无 privacy 概念，始终返回 true。
+// Other platforms pass this check without a privacy setting.
 func (r *Record) IsPrivacySet() bool {
 	switch r.Platform {
 	case PlatformOpenAI:
@@ -325,14 +327,14 @@ func (r *Record) IsGrokOAuth() bool {
 	return r.IsGrok() && r.Type == ProviderTypeOAuth
 }
 
-// IsCNProvider 报告是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）。
+// IsCNProvider reports whether the provider is Kimi, Zhipu, or DeepSeek.
 func (r *Record) IsCNProvider() bool {
 	return r != nil && IsCNProvider(r.Platform)
 }
 
-// IsOpenAICompatible 报告提供商是否走 OpenAI 网关（OpenAI 协议族）。
-// openai/grok 原生走 OpenAI 网关；kimi/zhipu/deepseek 同为 OpenAI Chat Completions
-// 兼容上游，也经 OpenAI 网关转发。
+// IsOpenAICompatible reports whether the provider uses the OpenAI gateway protocol family.
+// OpenAI and Grok use this gateway, as do the OpenAI Chat Completions-compatible
+// Kimi, Zhipu, and DeepSeek upstreams.
 func (r *Record) IsOpenAICompatible() bool {
 	return r != nil && (r.Platform == PlatformOpenAI || r.Platform == PlatformGrok ||
 		r.Platform == PlatformKimi || r.Platform == PlatformZhipu || r.Platform == PlatformDeepseek)
@@ -354,8 +356,8 @@ func (r *Record) GeminiTierID() string {
 	return tierID
 }
 
-// IsGeminiThirdPartyProvider 判断 Gemini API Key 是否通过第三方提供商接入。
-// 该标记用于本地官方配额模拟，Gemini 请求仍按提供商类型认证和转发。
+// IsGeminiThirdPartyProvider reports whether a Gemini API Key uses a third-party provider.
+// This flag controls local official-quota simulation; authentication and forwarding still follow the provider type.
 func (r *Record) IsGeminiThirdPartyProvider() bool {
 	if r == nil || r.Platform != PlatformGemini || r.Type != ProviderTypeAPIKey {
 		return false
@@ -363,8 +365,8 @@ func (r *Record) IsGeminiThirdPartyProvider() bool {
 	return strings.EqualFold(r.GetCredential(GeminiProviderTypeCredentialKey), GeminiProviderTypeThirdParty)
 }
 
-// HasGeminiThirdPartyBaseURL 判断第三方 Gemini API Key 是否配置了非官方端点。
-// 第三方来源不能依赖官方默认地址，否则会在关闭官方模拟配额的同时仍请求 Google 端点。
+// HasGeminiThirdPartyBaseURL reports whether a third-party Gemini API Key has a nonofficial endpoint.
+// Requiring a separate endpoint prevents bypassing local official-quota checks while still sending to Google.
 func (r *Record) HasGeminiThirdPartyBaseURL() bool {
 	if !r.IsGeminiThirdPartyProvider() {
 		return false
@@ -388,7 +390,7 @@ func (r *Record) IsGeminiCodeAssist() bool {
 	return oauthType == "code_assist"
 }
 
-// IsGeminiGoogleOne 判断提供商是否使用旧版消费者 Gemini CLI / Code Assist OAuth 通道。
+// IsGeminiGoogleOne identifies the legacy consumer Gemini CLI / Code Assist OAuth channel.
 func (r *Record) IsGeminiGoogleOne() bool {
 	return r.Platform == PlatformGemini && r.Type == ProviderTypeOAuth && r.GeminiOAuthType() == "google_one"
 }
@@ -406,15 +408,15 @@ func (r *Record) GetCredential(key string) string {
 		return ""
 	}
 
-	// 支持多种类型（兼容历史数据中 expires_at 等字段可能是数字或字符串）
+	// Historical credentials such as expires_at may contain either numbers or strings.
 	switch val := v.(type) {
 	case string:
 		return val
 	case json.Number:
-		// GORM datatypes.JSONMap 使用 UseNumber() 解析，数字类型为 json.Number
+		// JSON decoded with UseNumber represents numbers as json.Number.
 		return val.String()
 	case float64:
-		// JSON 解析后数字默认为 float64
+		// Standard JSON decoding represents numbers as float64.
 		return strconv.FormatInt(int64(val), 10)
 	case int64:
 		return strconv.FormatInt(val, 10)
@@ -425,21 +427,21 @@ func (r *Record) GetCredential(key string) string {
 	}
 }
 
-// GetCredentialAsTime 解析凭证中的时间戳字段，支持多种格式
-// 兼容以下格式：
-//   - RFC3339 字符串: "2025-01-01T00:00:00Z"
-//   - Unix 时间戳字符串: "1735689600"
-//   - Unix 时间戳数字: 1735689600 (float64/int64/json.Number)
+// GetCredentialAsTime parses credential timestamps in the following formats:
+// Numeric values represent Unix seconds.
+//   - RFC3339 string: "2025-01-01T00:00:00Z"
+//   - Unix timestamp string: "1735689600"
+//   - Unix timestamp number: 1735689600 (float64/int64/json.Number)
 func (r *Record) GetCredentialAsTime(key string) *time.Time {
 	s := r.GetCredential(key)
 	if s == "" {
 		return nil
 	}
-	// 尝试 RFC3339 格式
+	// Accept RFC3339 before interpreting numeric timestamps.
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return &t
 	}
-	// 尝试 Unix 时间戳（纯数字字符串）
+	// Numeric timestamps use seconds since the Unix epoch.
 	if ts, err := strconv.ParseInt(s, 10, 64); err == nil {
 		t := time.Unix(ts, 0)
 		return &t
@@ -447,8 +449,8 @@ func (r *Record) GetCredentialAsTime(key string) *time.Time {
 	return nil
 }
 
-// GetCredentialAsInt64 解析凭证中的 int64 字段
-// 用于读取 _token_version 等内部字段。
+// GetCredentialAsInt64 parses an integer credential, returning zero for missing or invalid values.
+// Internal fields such as _token_version use this representation.
 func (r *Record) GetCredentialAsInt64(key string) int64 {
 	if r == nil || r.Credentials == nil {
 		return 0
@@ -603,14 +605,14 @@ func StringMappingFromRaw(raw any) map[string]string {
 	}
 }
 
-// ResolveRequestedModelInMapping 按精确名称和末尾通配符查找模型映射。
+// ResolveRequestedModelInMapping resolves exact names and trailing wildcard mappings.
 func ResolveRequestedModelInMapping(mapping map[string]string, requestedModel string) (mappedModel string, matched bool) {
 	return modelmap.Resolve(mapping, requestedModel)
 }
 
-// ExtractFinalModelWhitelist 从 model_mapping 中提取“最终模型白名单”。
-// 约定：只有精确自映射（from == to，且不含通配符）的条目才算白名单。
-// 这样既能兼容历史上把白名单持久化为 key=value 的做法，又不会把普通映射规则误判成白名单。
+// ExtractFinalModelWhitelist extracts final model names from legacy model_mapping entries.
+// Exact identity mappings qualify when the source has no wildcard.
+// This recognizes legacy key=value whitelist entries while excluding ordinary remapping rules.
 func ExtractFinalModelWhitelist(mapping map[string]string) map[string]struct{} {
 	if len(mapping) == 0 {
 		return nil
@@ -633,8 +635,8 @@ func ExtractFinalModelWhitelist(mapping map[string]string) map[string]struct{} {
 	return whitelist
 }
 
-// ExtractExplicitFinalModelWhitelist 从独立的 model_whitelist 字段提取最终模型白名单。
-// 支持精确名称和末尾通配符；非法的中间通配符仍被忽略。
+// ExtractExplicitFinalModelWhitelist reads the separate model_whitelist field.
+// Exact names and trailing wildcards are accepted; embedded wildcards are ignored.
 func ExtractExplicitFinalModelWhitelist(rawWhitelist any) map[string]struct{} {
 	if rawWhitelist == nil {
 		return nil
@@ -671,8 +673,8 @@ func ExtractExplicitFinalModelWhitelist(rawWhitelist any) map[string]struct{} {
 	return whitelist
 }
 
-// ResolveFinalModelWhitelist 优先读取独立的 model_whitelist 字段；
-// 若该字段不存在，则回退到旧版“自映射即白名单”的兼容解析。
+// ResolveFinalModelWhitelist prefers the separate model_whitelist field.
+// When absent, platforms other than Qoder accept legacy identity mappings as a whitelist.
 func ResolveFinalModelWhitelist(platform string, credentials map[string]any, mapping map[string]string) (map[string]struct{}, bool) {
 	if credentials != nil {
 		if rawWhitelist, exists := credentials["model_whitelist"]; exists {
@@ -685,8 +687,8 @@ func ResolveFinalModelWhitelist(platform string, credentials map[string]any, map
 	return ExtractFinalModelWhitelist(mapping), false
 }
 
-// GetOpenAICompactMode 返回管理员选择的旧版压缩开关。
-// 缺省为开启，写入时规范化历史输入。
+// GetOpenAICompactMode returns the administrator switch for legacy compaction.
+// OpenAI providers default to enabled; other platforms return disabled.
 func (r *Record) GetOpenAICompactMode() string {
 	if r == nil || !r.IsOpenAI() {
 		return OpenAICompactModeForceOff
@@ -698,12 +700,12 @@ func (r *Record) GetOpenAICompactMode() string {
 	return OpenAICompactModeForceOn
 }
 
-// AllowsOpenAICompact 判断管理员是否启用旧版压缩。
+// AllowsOpenAICompact reports whether legacy compaction is enabled for this OpenAI provider.
 func (r *Record) AllowsOpenAICompact() bool {
 	return r != nil && r.IsOpenAI() && r.GetOpenAICompactMode() == OpenAICompactModeForceOn
 }
 
-// GetOpenAINativeCompactionV2Mode 返回原生 V2 压缩的管理员开关。
+// GetOpenAINativeCompactionV2Mode returns the administrator switch for native V2 compaction.
 func (r *Record) GetOpenAINativeCompactionV2Mode() string {
 	if r == nil || !r.IsOpenAI() {
 		return OpenAICompactModeForceOff
@@ -715,7 +717,7 @@ func (r *Record) GetOpenAINativeCompactionV2Mode() string {
 	return OpenAICompactModeForceOn
 }
 
-// AllowsOpenAINativeCompactionV2 判断管理员是否启用原生 V2 压缩。
+// AllowsOpenAINativeCompactionV2 reports whether native V2 compaction is enabled.
 func (r *Record) AllowsOpenAINativeCompactionV2() bool {
 	return r != nil && r.IsOpenAI() && r.GetOpenAINativeCompactionV2Mode() == OpenAICompactModeForceOn
 }
@@ -754,7 +756,7 @@ func (r *Record) GetBaseURL() string {
 	return baseURL
 }
 
-// GetGeminiBaseURL 返回 Gemini 兼容端点的 base URL。
+// GetGeminiBaseURL returns the configured Gemini endpoint or defaultBaseURL when blank.
 func (r *Record) GetGeminiBaseURL(defaultBaseURL string) string {
 	baseURL := strings.TrimSpace(r.GetCredential("base_url"))
 	if baseURL == "" {
@@ -805,8 +807,9 @@ func (r *Record) IsCustomErrorCodesEnabled() bool {
 	return false
 }
 
-// IsPoolMode 检查 API Key 提供商是否启用池模式。
-// 上游错误默认交给池处理，管理员配置的错误策略优先，配置的重试状态码可在同一提供商上重试。
+// IsPoolMode reports whether pool mode is enabled for an API Key or Bedrock provider.
+// Pool mode delegates upstream errors to the pool; administrator error policies take precedence and selected
+// statuses permit same-provider retries.
 func (r *Record) IsPoolMode() bool {
 	if !r.IsAPIKeyOrBedrock() || r.Credentials == nil {
 		return false
@@ -819,8 +822,8 @@ func (r *Record) IsPoolMode() bool {
 	return false
 }
 
-// GetPoolModeRetryCount 返回池模式同提供商重试次数。
-// 未配置或配置非法时回退为默认值 3；小于 0 按 0 处理；过大则截断到 10。
+// GetPoolModeRetryCount returns the same-provider retry count for pool mode.
+// Missing or invalid values default to 3; configured values are clamped to 0 through 10.
 func (r *Record) GetPoolModeRetryCount() int {
 	if r == nil || !r.IsPoolMode() || r.Credentials == nil {
 		return DefaultPoolModeRetryCount
@@ -859,18 +862,20 @@ func ParsePoolModeRetryCount(value any) int {
 	return DefaultPoolModeRetryCount
 }
 
-// IsPoolModeRetryableStatus 池模式下应触发同提供商重试的状态码（默认列表）。
+// IsPoolModeRetryableStatus reports whether the status belongs to the default pool retry list.
 func IsPoolModeRetryableStatus(statusCode int) bool {
 	return slices.Contains(DefaultPoolModeRetryableStatusCodes, statusCode)
 }
 
-// GetPoolModeRetryStatusCodes 返回提供商自定义的池模式同提供商重试状态码列表。
+// GetPoolModeRetryStatusCodes returns the provider override for pool-mode retry statuses.
 //
-// 返回值含义：
-//   - nil：未配置 → 调用方应回退到默认值 [401, 403, 429]
+// The result distinguishes inherited defaults from disabled retries:
 //
-// - 长度为 0 的切片表示关闭按状态码触发的同提供商重试。
-//   - 非空切片：去重、过滤为合法 HTTP 状态码（100-599）后的覆盖列表
+//   - nil means missing or invalid configuration; callers use the default [401, 403, 429].
+//
+//   - An empty slice disables status-triggered same-provider retries.
+//
+//   - A nonempty slice is sorted, deduplicated, and restricted to HTTP statuses 100 through 599.
 func (r *Record) GetPoolModeRetryStatusCodes() []int {
 	if r == nil || r.Credentials == nil {
 		return nil
@@ -922,8 +927,8 @@ func (r *Record) GetPoolModeRetryStatusCodes() []int {
 	return codes
 }
 
-// IsPoolModeRetryableStatus 在提供商上下文中判断给定状态码是否应触发同提供商重试。
-// 若提供商未配置 pool_mode_retry_status_codes，则回退到默认列表。
+// IsPoolModeRetryableStatus reports whether the provider retries the given status.
+// Missing override configuration uses the default status list.
 func (r *Record) IsPoolModeRetryableStatus(statusCode int) bool {
 	codes := r.GetPoolModeRetryStatusCodes()
 	if codes == nil {
@@ -983,7 +988,7 @@ func (r *Record) IsBedrockAPIKey() bool {
 	return r.IsBedrock() && r.GetCredential("auth_mode") == "apikey"
 }
 
-// IsAPIKeyOrBedrock 返回提供商类型是否支持配额和池模式等特性。
+// IsAPIKeyOrBedrock reports whether the type supports quota limits and pool mode.
 func (r *Record) IsAPIKeyOrBedrock() bool {
 	return r.Type == ProviderTypeAPIKey || r.Type == ProviderTypeBedrock
 }
@@ -1015,8 +1020,8 @@ func (r *Record) IsOpenAIOAuthLike() bool {
 	return r != nil && r.IsOpenAI() && (r.Type == ProviderTypeOAuth || r.Type == ProviderTypeSetupToken)
 }
 
-// UsesOpenAICodexProtocol preserves legacy OpenAI gateway OAuth routing for
-// providers whose platform is implicit, while adding OpenAI SetupToken.
+// UsesOpenAICodexProtocol accepts OAuth providers with an implicit platform,
+// and OpenAI providers using OAuth or Setup Token credentials.
 func (r *Record) UsesOpenAICodexProtocol() bool {
 	return r != nil && (r.Type == ProviderTypeOAuth || r.IsOpenAIOAuthLike())
 }
@@ -1033,7 +1038,7 @@ func (r *Record) IsOpenAIChatGPTSubscription() bool {
 	}
 }
 
-// IsOpenAIPersonalAccessToken 判断 OpenAI OAuth 提供商是否使用 Codex PAT 认证模式。
+// IsOpenAIPersonalAccessToken reports whether OpenAI OAuth uses Codex PAT authentication.
 func (r *Record) IsOpenAIPersonalAccessToken() bool {
 	if r == nil || !r.IsOpenAIOAuth() {
 		return false
@@ -1046,8 +1051,8 @@ func (r *Record) IsOpenAIApiKey() bool {
 	return r.IsOpenAI() && r.Type == ProviderTypeAPIKey
 }
 
-// GetProviderMode 返回国产平台提供商的接入模式（payg / coding）。历史提供商缺少字段时
-// 按 payg 读取；非国产供应商返回空串。存储于 credentials["provider_mode"]。
+// GetProviderMode reads credentials.provider_mode for Chinese providers, defaulting to payg
+// when missing or invalid. Other platforms return an empty string.
 func (r *Record) GetProviderMode() string {
 	if r == nil || !r.IsCNProvider() {
 		return ""
@@ -1059,14 +1064,14 @@ func (r *Record) GetProviderMode() string {
 	return ProviderModePayG
 }
 
-// IsCodingPlan 报告提供商是否为 Coding Plan 模式（用于滚动用量窗口冷却）。
+// IsCodingPlan reports whether Coding Plan mode is selected for rolling usage-window cooldowns.
 func (r *Record) IsCodingPlan() bool {
 	return r.GetProviderMode() == ProviderModeCoding
 }
 
-// SupportsNativeCNResponses 报告该国产供应商是否提供原生 Responses 端点。
-// DeepSeek 官方为 /responses（无 /v1）；Kimi 按量付费与 Coding Plan 均为
-// /v1/responses（moonshot.cn / kimi.com/coding）。
+// SupportsNativeCNResponses reports whether the Chinese provider has a native Responses endpoint.
+// DeepSeek uses /responses; Kimi pay-as-you-go and Coding Plan use
+// /v1/responses on their respective base URLs.
 func (r *Record) SupportsNativeCNResponses() bool {
 	if r == nil {
 		return false
@@ -1112,7 +1117,7 @@ func (r *Record) DefaultCNProtocolBaseURL(protocol string) string {
 	return ""
 }
 
-// IsDefaultCNAnthropicBaseURL 判断地址是否为内置官方端点，同时比较主机和路径。
+// IsDefaultCNAnthropicBaseURL matches a built-in endpoint, including its host and path.
 func IsDefaultCNAnthropicBaseURL(baseURL string) bool {
 	normalized := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	switch normalized {
@@ -1126,8 +1131,8 @@ func IsDefaultCNAnthropicBaseURL(baseURL string) bool {
 	}
 }
 
-// StripCNAnthropicPathSuffix 将自定义中继的 Anthropic 协议根转换为同一中继的
-// OpenAI 格式根，解析失败时返回输入值，由调用方的 URL 校验报告错误。
+// StripCNAnthropicPathSuffix removes a relay URL's trailing /anthropic path segment.
+// Parse failures return the trimmed input for the caller's URL validation to reject.
 func StripCNAnthropicPathSuffix(baseURL string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(trimmed)
@@ -1145,8 +1150,8 @@ func StripCNAnthropicPathSuffix(baseURL string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-// GetCNAPIKey 返回国产 OpenAI 兼容提供商的 api_key 凭据（kimi/zhipu/deepseek）。
-// 与 openai 的 GetOpenAIApiKey 区分：后者仅对 openai 平台返回。
+// GetCNAPIKey returns the api_key credential for Kimi, Zhipu, or DeepSeek.
+// GetOpenAIApiKey handles the OpenAI platform separately.
 func (r *Record) GetCNAPIKey() string {
 	if r == nil || !r.IsCNProvider() {
 		return ""
@@ -1154,8 +1159,8 @@ func (r *Record) GetCNAPIKey() string {
 	return r.GetCredential("api_key")
 }
 
-// GetCodingPlanProvider 根据提供商平台识别 Coding Plan 供应商。管理员可以使用自定义
-// 中继地址，因此不得通过 URL 内容反推供应商身份。
+// GetCodingPlanProvider identifies a Coding Plan supplier by platform.
+// Custom relay URLs are allowed, so their contents cannot identify the supplier.
 func (r *Record) GetCodingPlanProvider() string {
 	if r == nil || r.GetProviderMode() != ProviderModeCoding {
 		return ""
@@ -1205,8 +1210,8 @@ func (r *Record) GetOpenAIApiKey() string {
 	return r.GetCredential("api_key")
 }
 
-// GetOpenAIProtocolAPIKey 返回 OpenAI、Kimi、Zhipu 和 DeepSeek API Key 提供商的密钥。
-// 转发鉴权和模型同步共用此方法，调度倍率与 WS 准入通过 IsOpenAIApiKey 判断 OpenAI 平台资格。
+// GetOpenAIProtocolAPIKey returns an API key for OpenAI, Kimi, Zhipu, or DeepSeek.
+// Forwarding and model sync share this accessor; OpenAI-specific eligibility uses IsOpenAIApiKey.
 func (r *Record) GetOpenAIProtocolAPIKey() string {
 	if r == nil {
 		return ""
@@ -1234,7 +1239,7 @@ func (r *Record) GetChatGPTAccountID() string {
 	return r.GetCredential("chatgpt_account_id")
 }
 
-// IsChatGPTAccountFedRAMP 读取 ChatGPT 提供商是否为 FedRAMP 环境。
+// IsChatGPTAccountFedRAMP reports whether the ChatGPT credentials specify a FedRAMP environment.
 func (r *Record) IsChatGPTAccountFedRAMP() bool {
 	if !r.IsOpenAIOAuthLike() || r.Credentials == nil {
 		return false
@@ -1300,7 +1305,7 @@ func (r *Record) OpenAIWorkloadCapabilitySet() (map[string]bool, bool) {
 		result[value] = true
 	}
 
-	// OAuth 和 SetupToken 的空容器按未配置处理，API Key 空集合表示禁用。
+	// Empty OAuth and Setup Token containers mean unconfigured; an empty API Key set disables all capabilities.
 	switch capabilities := raw.(type) {
 	case []any:
 		if len(capabilities) == 0 && r.IsOpenAIOAuthLike() {
@@ -1357,7 +1362,7 @@ func (r *Record) SupportsOpenAIImageCapability(capability OpenAIImagesCapability
 	}
 }
 
-// IsOveragesEnabled 检查 Antigravity 提供商是否启用 AI Credits 超量请求。
+// IsOveragesEnabled reports whether Antigravity AI Credits overage requests are enabled.
 func (r *Record) IsOveragesEnabled() bool {
 	if r.Platform != PlatformAntigravity {
 		return false
@@ -1373,11 +1378,11 @@ func (r *Record) IsOveragesEnabled() bool {
 	return false
 }
 
-// IsOpenAIPassthroughEnabled 返回 OpenAI 提供商是否启用"自动透传（仅替换认证）"。
+// IsOpenAIPassthroughEnabled reports whether OpenAI passthrough with authentication replacement is enabled.
 //
-// 新字段：providers.extra.openai_passthrough。
-// 兼容字段：providers.extra.openai_oauth_passthrough（历史 OAuth 开关）。
-// 字段缺失或类型不正确时，按 false（关闭）处理。
+// The primary field is providers.extra.openai_passthrough.
+// The legacy OAuth field providers.extra.openai_oauth_passthrough remains accepted.
+// Missing or incorrectly typed fields default to false.
 func (r *Record) IsOpenAIPassthroughEnabled() bool {
 	if r == nil || !r.IsOpenAI() || r.Extra == nil {
 		return false
@@ -1391,9 +1396,9 @@ func (r *Record) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
-// IsOpenAIResponsesFlattenNamespacesEnabled 返回提供商级 Codex namespace 工具摊平开关。
-// 字段 providers.extra.openai_responses_flatten_namespaces 缺省为 false，即原样保留。
-// 该兼容开关仅对 OpenAI OAuth 提供商生效，用于仍不支持 namespace 的中转上游。
+// IsOpenAIResponsesFlattenNamespacesEnabled reports whether Codex namespace tools are flattened.
+// providers.extra.openai_responses_flatten_namespaces defaults to false, retaining namespaces.
+// This OpenAI OAuth compatibility switch supports relays that do not accept namespaces.
 func (r *Record) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
 	if r == nil || !r.IsOpenAIOAuth() || r.Extra == nil {
 		return false
@@ -1402,8 +1407,8 @@ func (r *Record) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
 	return ok && enabled
 }
 
-// IsOpenAIWSAllowStoreRecoveryEnabled 返回提供商级 store 恢复开关。
-// 字段：providers.extra.openai_ws_allow_store_recovery。
+// IsOpenAIWSAllowStoreRecoveryEnabled reports whether WebSocket store recovery is enabled.
+// The setting is providers.extra.openai_ws_allow_store_recovery.
 func (r *Record) IsOpenAIWSAllowStoreRecoveryEnabled() bool {
 	if r == nil || !r.IsOpenAI() || r.Extra == nil {
 		return false
@@ -1412,14 +1417,15 @@ func (r *Record) IsOpenAIWSAllowStoreRecoveryEnabled() bool {
 	return ok && enabled
 }
 
-// IsOpenAIOAuthPassthroughEnabled 兼容旧接口，等价于 OAuth 提供商的 IsOpenAIPassthroughEnabled。
+// IsOpenAIOAuthPassthroughEnabled exposes the legacy OAuth-only passthrough check.
 func (r *Record) IsOpenAIOAuthPassthroughEnabled() bool {
 	return r != nil && r.IsOpenAIOAuth() && r.IsOpenAIPassthroughEnabled()
 }
 
-// IsAnthropicAPIKeyPassthroughEnabled 返回 Anthropic API Key 提供商是否启用"自动透传（仅替换认证）"。
-// 字段：providers.extra.anthropic_passthrough。
-// 字段缺失或类型不正确时，按 false（关闭）处理。
+// IsAnthropicAPIKeyPassthroughEnabled reports whether Anthropic API Key passthrough with authentication
+// replacement is enabled.
+// The setting is providers.extra.anthropic_passthrough.
+// Missing or incorrectly typed values default to false.
 func (r *Record) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	if r == nil || r.Platform != PlatformAnthropic || r.Type != ProviderTypeAPIKey || r.Extra == nil {
 		return false
@@ -1428,13 +1434,13 @@ func (r *Record) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	return ok && enabled
 }
 
-// IsCodexCLIOnlyEnabled 返回 OpenAI OAuth 提供商是否启用"仅允许 Codex 官方客户端"。
-// 新字段 openai_oauth_client_policy 优先；旧字段 providers.extra.codex_cli_only 仅用于兼容。
+// IsCodexCLIOnlyEnabled reports whether the OpenAI OAuth client policy is Codex-only.
+// openai_oauth_client_policy takes precedence over the legacy providers.extra.codex_cli_only flag.
 func (r *Record) IsCodexCLIOnlyEnabled() bool {
 	return r.GetOpenAIOAuthClientPolicy() == OpenAIOAuthClientPolicyCodexOnly
 }
 
-// GetOpenAIOAuthClientPolicy 返回 OpenAI OAuth 提供商的客户端访问策略。
+// GetOpenAIOAuthClientPolicy returns the client access policy for an OpenAI OAuth provider.
 func (r *Record) GetOpenAIOAuthClientPolicy() string {
 	if r == nil || !r.IsOpenAIOAuth() || r.Extra == nil {
 		return OpenAIOAuthClientPolicyAny
@@ -1456,14 +1462,14 @@ func (r *Record) GetOpenAIOAuthClientPolicy() string {
 	return OpenAIOAuthClientPolicyAny
 }
 
-// IsOpenAIOAuthTLSRouterMatchedOnly 返回提供商是否仅允许 TLS 路由器命中的客户端。
+// IsOpenAIOAuthTLSRouterMatchedOnly reports whether client access requires a TLS router match.
 func (r *Record) IsOpenAIOAuthTLSRouterMatchedOnly() bool {
 	return r.GetOpenAIOAuthClientPolicy() == OpenAIOAuthClientPolicyTLSRouterMatchedOnly
 }
 
-// GetCodexCLIOnlyAllowedClients 返回 codex_cli_only 之上额外放行的命名客户端预设 ID 列表。
-// 仅 OpenAI OAuth 提供商生效；缺失或类型不符时返回空。预设 ID 的具体匹配规则由
-// openai 包的 registry 固化，配置只能引用预设键、不能自定义规则。
+// GetCodexCLIOnlyAllowedClients returns preset client IDs additionally allowed by the Codex-only policy.
+// It applies to OpenAI OAuth and returns no IDs for missing or incorrectly typed settings.
+// The OpenAI client registry defines matching rules; configuration references its preset IDs.
 func (r *Record) GetCodexCLIOnlyAllowedClients() []string {
 	if r == nil || !r.IsOpenAIOAuth() || r.Extra == nil {
 		return nil
@@ -1493,8 +1499,8 @@ func (r *Record) GetCodexCLIOnlyAllowedClients() []string {
 	return nil
 }
 
-// IsAnthropicOAuthOrSetupToken 判断是否为 Anthropic OAuth 或 SetupToken 类型提供商
-// 仅这两类提供商支持 5h 窗口额度控制和会话数量控制。
+// IsAnthropicOAuthOrSetupToken identifies Anthropic OAuth and Setup Token providers.
+// These types support five-hour window spending and session-count limits.
 func (r *Record) IsAnthropicOAuthOrSetupToken() bool {
 	if r == nil {
 		return false
@@ -1502,8 +1508,8 @@ func (r *Record) IsAnthropicOAuthOrSetupToken() bool {
 	return r.Platform == PlatformAnthropic && (r.Type == ProviderTypeOAuth || r.Type == ProviderTypeSetupToken)
 }
 
-// SupportsTLSFingerprint 返回提供商是否支持 TLS 指纹伪装。
-// 当前支持 Anthropic OAuth/SetupToken、OpenAI OAuth 与 Qoder COSY。
+// SupportsTLSFingerprint reports whether the provider supports TLS fingerprint emulation.
+// Supported types include Anthropic OAuth/Setup Token, OpenAI OAuth, Chinese API Key providers, and Qoder COSY.
 func (r *Record) SupportsTLSFingerprint() bool {
 	if r == nil {
 		return false
@@ -1516,8 +1522,8 @@ func (r *Record) SupportsTLSFingerprint() bool {
 		r.IsQoderCosy()
 }
 
-// IsTLSFingerprintEnabled 检查是否启用 TLS 指纹伪装
-// 仅适用于支持 TLS 指纹伪装的提供商，启用后模拟 Node.js/Claude Code/Codex CLI 客户端握手特征。
+// IsTLSFingerprintEnabled reports whether TLS fingerprint emulation is enabled for a supported provider.
+// The selected profile controls the emulated client handshake.
 func (r *Record) IsTLSFingerprintEnabled() bool {
 	if !r.SupportsTLSFingerprint() {
 		return false
@@ -1533,8 +1539,8 @@ func (r *Record) IsTLSFingerprintEnabled() bool {
 	return false
 }
 
-// GetTLSFingerprintProfileID 获取提供商绑定的 TLS 指纹模板 ID
-// 返回 0 表示未绑定（使用内置默认 profile）。
+// GetTLSFingerprintProfileID returns the configured TLS fingerprint profile ID.
+// Zero selects the built-in default profile.
 func (r *Record) GetTLSFingerprintProfileID() int64 {
 	if r.Extra == nil {
 		return 0
@@ -1558,8 +1564,8 @@ func (r *Record) GetTLSFingerprintProfileID() int64 {
 	return 0
 }
 
-// GetTLSFingerprintRouterID 获取提供商绑定的 TLS 路由器 ID。
-// 返回 0 表示未绑定路由器。
+// GetTLSFingerprintRouterID returns the configured TLS router ID.
+// Zero means no router is selected.
 func (r *Record) GetTLSFingerprintRouterID() int64 {
 	if r.Extra == nil {
 		return 0
@@ -1583,10 +1589,10 @@ func (r *Record) GetTLSFingerprintRouterID() int64 {
 	return 0
 }
 
-// IsSessionIDMaskingEnabled 检查是否启用会话 ID 伪装
-// 仅适用于 Anthropic OAuth/SetupToken 类型提供商
-// 启用后将在一段时间内（15 分钟）固定 metadata.user_id 中的 session ID，
-// 使上游认为请求来自同一个会话。
+// IsSessionIDMaskingEnabled reports whether session ID masking is enabled
+// for an Anthropic OAuth or Setup Token provider.
+// Masking reuses the session ID in metadata.user_id across requests
+// with a 15-minute idle TTL renewed on each request so upstream can associate them with one session.
 func (r *Record) IsSessionIDMaskingEnabled() bool {
 	if !r.IsAnthropicOAuthOrSetupToken() {
 		return false
@@ -1602,8 +1608,8 @@ func (r *Record) IsSessionIDMaskingEnabled() bool {
 	return false
 }
 
-// IsCustomBaseURLEnabled 检查是否启用自定义 base URL 中继转发
-// 仅适用于 Anthropic OAuth/SetupToken 类型提供商。
+// IsCustomBaseURLEnabled reports whether relay forwarding through a custom base URL is enabled.
+// This setting applies to Anthropic OAuth and Setup Token providers.
 func (r *Record) IsCustomBaseURLEnabled() bool {
 	if !r.IsAnthropicOAuthOrSetupToken() {
 		return false
@@ -1619,14 +1625,14 @@ func (r *Record) IsCustomBaseURLEnabled() bool {
 	return false
 }
 
-// GetCustomBaseURL 返回自定义中继服务的 base URL。
+// GetCustomBaseURL returns the custom relay base URL.
 func (r *Record) GetCustomBaseURL() string {
 	return r.GetExtraString("custom_base_url")
 }
 
-// IsCacheTTLOverrideEnabled 检查是否启用缓存 TTL 强制替换
-// 仅适用于 Anthropic OAuth/SetupToken 类型提供商
-// 启用后将所有 cache creation tokens 归入指定的 TTL 类型（5m 或 1h）。
+// IsCacheTTLOverrideEnabled reports whether cache-creation tokens use a forced TTL category.
+// This setting applies to Anthropic OAuth and Setup Token providers.
+// The selected category is 5m or 1h.
 func (r *Record) IsCacheTTLOverrideEnabled() bool {
 	if !r.IsAnthropicOAuthOrSetupToken() {
 		return false
@@ -1642,8 +1648,8 @@ func (r *Record) IsCacheTTLOverrideEnabled() bool {
 	return false
 }
 
-// GetCacheTTLOverrideTarget 获取缓存 TTL 强制替换的目标类型
-// 返回 "5m" 或 "1h"，默认 "5m"。
+// GetCacheTTLOverrideTarget returns the forced cache TTL category.
+// Valid values are "5m" and "1h"; missing or invalid values default to "5m".
 func (r *Record) GetCacheTTLOverrideTarget() string {
 	if r.Extra == nil {
 		return "5m"
@@ -1656,38 +1662,38 @@ func (r *Record) GetCacheTTLOverrideTarget() string {
 	return "5m"
 }
 
-// GetQuotaLimit 获取 API Key 提供商的配额限制（美元）
-// 返回 0 表示未启用。
+// GetQuotaLimit returns the provider's total quota limit in USD.
+// Zero disables the limit.
 func (r *Record) GetQuotaLimit() float64 {
 	return r.GetExtraFloat64("quota_limit")
 }
 
-// GetQuotaUsed 获取 API Key 提供商的已用配额（美元）。
+// GetQuotaUsed returns the total quota used in USD.
 func (r *Record) GetQuotaUsed() float64 {
 	return r.GetExtraFloat64("quota_used")
 }
 
-// GetQuotaDailyLimit 获取日额度限制（美元），0 表示未启用。
+// GetQuotaDailyLimit returns the daily quota limit in USD; zero disables it.
 func (r *Record) GetQuotaDailyLimit() float64 {
 	return r.GetExtraFloat64("quota_daily_limit")
 }
 
-// GetQuotaDailyUsed 获取当日已用额度（美元）。
+// GetQuotaDailyUsed returns the daily quota used in USD.
 func (r *Record) GetQuotaDailyUsed() float64 {
 	return r.GetExtraFloat64("quota_daily_used")
 }
 
-// GetQuotaWeeklyLimit 获取周额度限制（美元），0 表示未启用。
+// GetQuotaWeeklyLimit returns the weekly quota limit in USD; zero disables it.
 func (r *Record) GetQuotaWeeklyLimit() float64 {
 	return r.GetExtraFloat64("quota_weekly_limit")
 }
 
-// GetQuotaWeeklyUsed 获取本周已用额度（美元）。
+// GetQuotaWeeklyUsed returns the weekly quota used in USD.
 func (r *Record) GetQuotaWeeklyUsed() float64 {
 	return r.GetExtraFloat64("quota_weekly_used")
 }
 
-// GetExtraFloat64 从 Extra 中读取指定 key 的 float64 值。
+// GetExtraFloat64 parses a numeric Extra value, returning zero when absent.
 func (r *Record) GetExtraFloat64(key string) float64 {
 	if r.Extra == nil {
 		return 0
@@ -1698,7 +1704,7 @@ func (r *Record) GetExtraFloat64(key string) float64 {
 	return 0
 }
 
-// GetExtraTime 从 Extra 中读取 RFC3339 时间戳。
+// GetExtraTime reads an RFC3339 timestamp from Extra.
 func (r *Record) GetExtraTime(key string) time.Time {
 	if r.Extra == nil {
 		return time.Time{}
@@ -1709,7 +1715,7 @@ func (r *Record) GetExtraTime(key string) time.Time {
 	return time.Time{}
 }
 
-// GetExtraBool 从 Extra 中读取指定 key 的 bool 值。
+// GetExtraBool reads a boolean Extra value, returning false when absent or incorrectly typed.
 func (r *Record) GetExtraBool(key string) bool {
 	if r.Extra == nil {
 		return false
@@ -1722,7 +1728,7 @@ func (r *Record) GetExtraBool(key string) bool {
 	return false
 }
 
-// GetExtraStringDefault 读取 Extra 中的字符串值，缺失或为空时返回 defaultVal。
+// GetExtraStringDefault returns defaultVal when the Extra string is missing or empty.
 func (r *Record) GetExtraStringDefault(key, defaultVal string) string {
 	if v := r.GetExtraString(key); v != "" {
 		return v
@@ -1730,7 +1736,7 @@ func (r *Record) GetExtraStringDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-// GetExtraInt 从 Extra 中读取指定 key 的 int 值。
+// GetExtraInt converts a numeric Extra value to an integer.
 func (r *Record) GetExtraInt(key string) int {
 	if r.Extra == nil {
 		return 0
@@ -1741,7 +1747,7 @@ func (r *Record) GetExtraInt(key string) int {
 	return 0
 }
 
-// GetQuotaDailyResetMode 获取日额度重置模式："rolling"（默认）或 "fixed"。
+// GetQuotaDailyResetMode returns "fixed" when selected, otherwise "rolling".
 func (r *Record) GetQuotaDailyResetMode() string {
 	if m := r.GetExtraString("quota_daily_reset_mode"); m == "fixed" {
 		return "fixed"
@@ -1749,12 +1755,12 @@ func (r *Record) GetQuotaDailyResetMode() string {
 	return "rolling"
 }
 
-// GetQuotaDailyResetHour 获取固定重置的小时（0-23），默认 0。
+// GetQuotaDailyResetHour returns the configured reset hour (0-23), defaulting to zero.
 func (r *Record) GetQuotaDailyResetHour() int {
 	return r.GetExtraInt("quota_daily_reset_hour")
 }
 
-// GetQuotaWeeklyResetMode 获取周额度重置模式："rolling"（默认）或 "fixed"。
+// GetQuotaWeeklyResetMode returns "fixed" when selected, otherwise "rolling".
 func (r *Record) GetQuotaWeeklyResetMode() string {
 	if m := r.GetExtraString("quota_weekly_reset_mode"); m == "fixed" {
 		return "fixed"
@@ -1762,7 +1768,7 @@ func (r *Record) GetQuotaWeeklyResetMode() string {
 	return "rolling"
 }
 
-// GetQuotaWeeklyResetDay 获取固定重置的星期几（0=周日, 1=周一, ..., 6=周六），默认 1（周一）。
+// GetQuotaWeeklyResetDay returns the reset weekday (Sunday=0 through Saturday=6), defaulting to Monday.
 func (r *Record) GetQuotaWeeklyResetDay() int {
 	if r.Extra == nil {
 		return 1
@@ -1773,12 +1779,12 @@ func (r *Record) GetQuotaWeeklyResetDay() int {
 	return r.GetExtraInt("quota_weekly_reset_day")
 }
 
-// GetQuotaWeeklyResetHour 获取周配额固定重置的小时（0-23），默认 0。
+// GetQuotaWeeklyResetHour returns the configured weekly reset hour (0-23), defaulting to zero.
 func (r *Record) GetQuotaWeeklyResetHour() int {
 	return r.GetExtraInt("quota_weekly_reset_hour")
 }
 
-// GetQuotaResetTimezone 获取固定重置的时区名（IANA），默认 "UTC"。
+// GetQuotaResetTimezone returns the IANA reset timezone, defaulting to "UTC".
 func (r *Record) GetQuotaResetTimezone() string {
 	if tz := r.GetExtraString("quota_reset_timezone"); tz != "" {
 		return tz
@@ -1848,7 +1854,7 @@ func LastFixedWeeklyReset(day, hour int, tz *time.Location, now time.Time) time.
 	return billing.LastFixedWeeklyReset(day, hour, tz, now)
 }
 
-// IsFixedDailyPeriodExpired 检查日配额是否在固定时间模式下已过期。
+// IsFixedDailyPeriodExpired reports whether the period started before the latest fixed daily reset.
 func (r *Record) IsFixedDailyPeriodExpired(periodStart time.Time) bool {
 	if periodStart.IsZero() {
 		return true
@@ -1861,7 +1867,7 @@ func (r *Record) IsFixedDailyPeriodExpired(periodStart time.Time) bool {
 	return periodStart.Before(lastReset)
 }
 
-// IsFixedWeeklyPeriodExpired 检查周配额是否在固定时间模式下已过期。
+// IsFixedWeeklyPeriodExpired reports whether the period started before the latest fixed weekly reset.
 func (r *Record) IsFixedWeeklyPeriodExpired(periodStart time.Time) bool {
 	if periodStart.IsZero() {
 		return true
@@ -1874,44 +1880,44 @@ func (r *Record) IsFixedWeeklyPeriodExpired(periodStart time.Time) bool {
 	return periodStart.Before(lastReset)
 }
 
-// ValidateQuotaResetConfig 校验配额固定重置时间配置的合法性。
+// ValidateQuotaResetConfig validates reset modes, clock values, and the timezone.
 func ValidateQuotaResetConfig(extra map[string]any, loadLocation func(string) (*time.Location, error)) error {
 	if extra == nil {
 		return nil
 	}
-	// 校验时区
+	// Validate the IANA timezone name.
 	if tz, ok := extra["quota_reset_timezone"].(string); ok && tz != "" {
 		if _, err := loadLocation(tz); err != nil {
 			return errors.New("invalid quota_reset_timezone: must be a valid IANA timezone name")
 		}
 	}
-	// 日配额重置模式
+	// Daily reset mode.
 	if mode, ok := extra["quota_daily_reset_mode"].(string); ok {
 		if mode != "rolling" && mode != "fixed" {
 			return errors.New("quota_daily_reset_mode must be 'rolling' or 'fixed'")
 		}
 	}
-	// 日配额重置小时
+	// Daily reset hour.
 	if v, ok := extra["quota_daily_reset_hour"]; ok {
 		hour := int(ParseExtraFloat64(v))
 		if hour < 0 || hour > 23 {
 			return errors.New("quota_daily_reset_hour must be between 0 and 23")
 		}
 	}
-	// 周配额重置模式
+	// Weekly reset mode.
 	if mode, ok := extra["quota_weekly_reset_mode"].(string); ok {
 		if mode != "rolling" && mode != "fixed" {
 			return errors.New("quota_weekly_reset_mode must be 'rolling' or 'fixed'")
 		}
 	}
-	// 周配额重置星期几
+	// Weekly reset weekday.
 	if v, ok := extra["quota_weekly_reset_day"]; ok {
 		day := int(ParseExtraFloat64(v))
 		if day < 0 || day > 6 {
 			return errors.New("quota_weekly_reset_day must be between 0 (Sunday) and 6 (Saturday)")
 		}
 	}
-	// 周配额重置小时
+	// Weekly reset hour.
 	if v, ok := extra["quota_weekly_reset_hour"]; ok {
 		hour := int(ParseExtraFloat64(v))
 		if hour < 0 || hour > 23 {
@@ -1921,20 +1927,20 @@ func ValidateQuotaResetConfig(extra map[string]any, loadLocation func(string) (*
 	return nil
 }
 
-// HasAnyQuotaLimit 检查是否配置了任一维度的配额限制。
+// HasAnyQuotaLimit reports whether any quota dimension has a positive limit.
 func (r *Record) HasAnyQuotaLimit() bool {
 	return r.GetQuotaLimit() > 0 || r.GetQuotaDailyLimit() > 0 || r.GetQuotaWeeklyLimit() > 0
 }
 
-// IsPeriodExpired 检查指定周期（自 periodStart 起经过 dur）是否已过期。
+// IsPeriodExpired reports whether dur has elapsed since periodStart; a zero start is expired.
 func IsPeriodExpired(periodStart time.Time, dur time.Duration) bool {
 	if periodStart.IsZero() {
-		return true // 从未使用过，视为过期（下次 increment 会初始化）
+		return true // The next usage increment initializes an unused period.
 	}
 	return time.Since(periodStart) >= dur
 }
 
-// IsDailyQuotaPeriodExpired 检查日配额周期是否已过期（用于显示层判断是否需要将 used 归零）。
+// IsDailyQuotaPeriodExpired reports whether daily usage should display as zero for an elapsed period.
 func (r *Record) IsDailyQuotaPeriodExpired() bool {
 	start := r.GetExtraTime("quota_daily_start")
 	if r.GetQuotaDailyResetMode() == "fixed" {
@@ -1943,7 +1949,7 @@ func (r *Record) IsDailyQuotaPeriodExpired() bool {
 	return IsPeriodExpired(start, 24*time.Hour)
 }
 
-// IsWeeklyQuotaPeriodExpired 检查周配额周期是否已过期（用于显示层判断是否需要将 used 归零）。
+// IsWeeklyQuotaPeriodExpired reports whether weekly usage should display as zero for an elapsed period.
 func (r *Record) IsWeeklyQuotaPeriodExpired() bool {
 	start := r.GetExtraTime("quota_weekly_start")
 	if r.GetQuotaWeeklyResetMode() == "fixed" {
@@ -1952,13 +1958,13 @@ func (r *Record) IsWeeklyQuotaPeriodExpired() bool {
 	return IsPeriodExpired(start, 7*24*time.Hour)
 }
 
-// IsQuotaExceeded 检查 API Key 提供商配额是否已超限（任一维度超限即返回 true）。
+// IsQuotaExceeded reports whether any configured quota dimension has reached its limit.
 func (r *Record) IsQuotaExceeded() bool {
-	// 总额度
+	// Total quota has no reset period.
 	if limit := r.GetQuotaLimit(); limit > 0 && r.GetQuotaUsed() >= limit {
 		return true
 	}
-	// 日额度（周期过期视为未超限，下次 increment 会重置）
+	// Expired daily usage is ignored; the next increment resets the period.
 	if limit := r.GetQuotaDailyLimit(); limit > 0 {
 		start := r.GetExtraTime("quota_daily_start")
 		var expired bool
@@ -1971,7 +1977,7 @@ func (r *Record) IsQuotaExceeded() bool {
 			return true
 		}
 	}
-	// 周额度
+	// Weekly limits also ignore elapsed periods.
 	if limit := r.GetQuotaWeeklyLimit(); limit > 0 {
 		start := r.GetExtraTime("quota_weekly_start")
 		var expired bool
@@ -1987,13 +1993,13 @@ func (r *Record) IsQuotaExceeded() bool {
 	return false
 }
 
-// IsShadow 报告提供商是否为影子提供商（parent_provider_id 非空；当前唯一预设是 spark 维度）。
+// IsShadow reports whether parent_provider_id is set; Spark is the current shadow preset.
 func (r *Record) IsShadow() bool { return r != nil && r.ParentProviderID != nil }
 
-// IsCredentialShadow 判断提供商是否为凭据影子，管理和后台授权据此跳过独立凭据操作。
+// IsCredentialShadow identifies shadows whose credential operations are handled through the parent.
 func (r *Record) IsCredentialShadow() bool { return r.IsShadow() }
 
-// QuotaDimensionOrDefault 返回提供商的用量维度，未设置时回退 "global"。
+// QuotaDimensionOrDefault returns the provider usage dimension, defaulting to "global".
 func (r *Record) QuotaDimensionOrDefault() string {
 	if r == nil || strings.TrimSpace(r.QuotaDimension) == "" {
 		return QuotaDimensionGlobal
@@ -2001,7 +2007,7 @@ func (r *Record) QuotaDimensionOrDefault() string {
 	return r.QuotaDimension
 }
 
-// IsCNProvider 判断平台是否属于国产供应商集合。
+// IsCNProvider reports whether the platform is Kimi, Zhipu, or DeepSeek.
 func IsCNProvider(platform string) bool {
 	switch platform {
 	case PlatformKimi, PlatformZhipu, PlatformDeepseek:

@@ -21,10 +21,11 @@ import (
 	servermiddleware "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// 兼容路径测试使用备份 HTTP 适配器的 ID 校验。
+// Compatibility route tests use the backup HTTP adapter's ID validation.
 var requireCanonicalBackupID = backuphttp.RequireCanonicalBackupID
 
-// TestProtocolCatalogHTTPContract 检查管理员目录的认证和审计顺序，以及 HTTP 使用注入数据的独立副本。
+// TestProtocolCatalogHTTPContract checks authentication before auditing and isolation from changes to injected
+// catalogue data.
 func TestProtocolCatalogHTTPContract(t *testing.T) {
 	endpoints := testEndpoints()
 	expected, err := json.Marshal(routinghttpapi.AdminProtocolCatalog(endpoints))
@@ -81,7 +82,8 @@ func TestProtocolCatalogHTTPContract(t *testing.T) {
 	}
 }
 
-// TestAdminImageStorageRoutesAreRemoved 验证异步图片存储配置下线且备份配置仍可用。
+// TestAdminImageStorageRoutesAreRemoved checks that retired image storage settings are absent and backup
+// settings remain reachable.
 func TestAdminImageStorageRoutesAreRemoved(t *testing.T) {
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")
@@ -131,7 +133,8 @@ func TestAdminImageStorageRoutesAreRemoved(t *testing.T) {
 	}
 }
 
-// TestAdminUpstreamBillingProbeRoutesAreRemoved 锁定声明倍率探测管理接口全部返回普通 404。
+// TestAdminUpstreamBillingProbeRoutesAreRemoved checks ordinary 404 responses for retired billing multiplier
+// probe endpoints.
 func TestAdminUpstreamBillingProbeRoutesAreRemoved(t *testing.T) {
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")
@@ -188,7 +191,7 @@ func TestAdminAdvancedSchedulerScoreRoutesAreRegistered(t *testing.T) {
 	require.True(t, registered["POST /api/v1/admin/providers/:id/advanced-scheduler-score/preview"])
 }
 
-// TestCanonicalBackupIDRouteGuard 验证备份通配路由只接受服务实际生成的 ID 格式。
+// TestCanonicalBackupIDRouteGuard checks that backup wildcard routes accept the service's generated ID format.
 func TestCanonicalBackupIDRouteGuard(t *testing.T) {
 	router := gin.New()
 	router.GET("/backups/:id", requireCanonicalBackupID, func(c *gin.Context) {
@@ -217,7 +220,7 @@ func TestCanonicalBackupIDRouteGuard(t *testing.T) {
 	}
 }
 
-// TestRetiredAdminStatisticsNativeRoutes 检查管理员通过鉴权后访问已下线路由的响应。
+// TestRetiredAdminStatisticsNativeRoutes checks retired routes after administrator authentication.
 func TestRetiredAdminStatisticsNativeRoutes(t *testing.T) {
 	router := gin.New()
 	checked := 0
@@ -253,7 +256,7 @@ func TestRetiredAdminStatisticsNativeRoutes(t *testing.T) {
 			}
 		})
 	}
-	// 不存在的路由由 Gin 返回 404，兑换码动态路由先经过管理员鉴权。
+	// Gin returns 404 for absent routes; the redeem-code wildcard route authenticates first.
 	require.Equal(t, 1, checked)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes/stats", nil))

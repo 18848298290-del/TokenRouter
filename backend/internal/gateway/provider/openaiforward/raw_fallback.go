@@ -22,7 +22,6 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	profile := p.Profile()
 	startTime := time.Now()
 
-	// 1. 解析 Anthropic 请求。
 	var anthropicReq protocolanthropic.AnthropicRequest
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {
 		p.Error(http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -42,7 +41,7 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	upstreamModel := p.UpstreamModel(billingModel)
 	anthropicReq.Model = upstreamModel
 
-	// 2. 将 Anthropic 请求直接转换为 Chat Completions。
+	// Convert Messages directly to Chat Completions.
 	chatReq, err := p.AnthropicToChat(&anthropicReq)
 	if err != nil {
 		p.Error(http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -69,7 +68,7 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	if err != nil {
 		return nil, err
 	}
-	// Messages 桥只对客户端显式指定的推理强度执行分组超限策略。
+	// The Messages bridge applies group effort limits to client-specified reasoning controls.
 	if profile.OpenAI {
 		policyBody, changed, policyErr := p.ApplyEffort(ctx, chatBody)
 		if policyErr != nil {
@@ -98,7 +97,7 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 		zap.Bool("stream", clientStream),
 	)
 
-	// 3. 通过共享 CC 管线构造并发送上游请求。
+	// Use the shared Chat transport to build and send the request.
 	apiKey, targetURL, err := p.Target(ctx)
 	if err != nil {
 		return nil, err
@@ -110,18 +109,16 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 4. 处理上游错误响应。
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := p.ReadUpstreamError(resp)
 		if foErr := p.FailoverHTTP(ctx, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
-		// 非 failover 错误交给共享兼容处理器返回 Anthropic 格式，确保错误
-		// 透传规则、ops 记录和 cyber_policy 检测保持一致。
+		// The shared Anthropic error handler applies passthrough rules, Ops observations,
+		// and cyber-policy detection after failover checks.
 		return p.AnthropicError(resp, billingModel)
 	}
 
-	// 5. 转换上游响应。
 	output := upstream.NewDeferredOutputContext(p.Sink())
 	options := p.RawOptions(resp, billingModel, upstreamModel, serviceTier)
 	var result *openai.CompatResponseResult
@@ -150,10 +147,9 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 
 	clientStream := responsesReq.Stream
 	serviceTier := p.ServiceTier(body)
-	// custom 工具（如 codex 的 exec）降级为 function 工具转发，回程需按名字还原为
-	// custom_tool_call 项，先记下名字集合；tool_search 工具同理，回程还原为
-	// tool_search_call 项；namespace 子工具（如 MCP 工具）摊平转发，回程按映射还原
-	// 为带 namespace 字段的 function_call 项。
+	// Save tool identities before converting them to Chat function tools. Response conversion
+	// restores custom_tool_call and tool_search_call items by these names and flags.
+	// Flattened namespace tools use the saved map to regain function_call.namespace.
 	effectiveTools, err := bridge.EffectiveResponsesTools(&responsesReq)
 	if err != nil {
 		p.Error(http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -164,7 +160,7 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 	toolSearch := bridge.HasToolSearchTool(effectiveTools)
 	namespaceTools := bridge.NamespaceToolNames(effectiveTools)
 
-	// 带明文 summary 的历史 reasoning 顺手刷新缓存，帮助 encrypted-only 副本自愈。
+	// Refresh cached reasoning from plaintext summaries so later encrypted-only copies can be resolved.
 	p.RecacheInput(responsesReq.Input)
 	chatReq, err := bridge.ResponsesToChatCompletionsRequestWithOptions(&responsesReq, &bridge.ResponsesToChatOptions{
 		ReasoningContentByID: p.ReasoningContent,
@@ -189,9 +185,9 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 	if err != nil {
 		return nil, err
 	}
-	// Usage Log 以 Responses→Chat 转换和策略处理后的最终上游请求为准。
+	// Usage records use effort from the final Chat request after conversion and policy processing.
 	reasoningEffort := p.EffectiveEffort(chatBody, body, upstreamModel, billingModel, originalModel)
-	// 国产模型没有显式 effort 档位时，thinking 启用后补默认展示值。
+	// Record a default display effort for supported CN models with thinking enabled and no explicit effort.
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, chatBody, billingModel)
 	if serviceTier == nil {
 		serviceTier = p.ServiceTier(chatBody)
@@ -206,7 +202,7 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 	)
 	p.ObserveModel(upstreamModel)
 
-	// 通过共享 CC 管线构造并发送上游请求。
+	// Use the shared Chat transport to build and send the request.
 	apiKey, targetURL, err := p.Target(ctx)
 	if err != nil {
 		return nil, err

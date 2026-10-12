@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// 死锁重试始终复用 infra 的完整操作闭包机制。
+// postgresDeadlockMaxAttempts follows infra's whole-operation retry policy.
 const postgresDeadlockMaxAttempts = infra.DeadlockMaxAttempts
 
 type (
@@ -76,7 +76,7 @@ func retryPostgresDeadlock[T any](ctx context.Context, operation string, size in
 func postgresSQLState(err error) string { return infra.SQLState(err) }
 func isPostgresDeadlock(err error) bool { return infra.IsDeadlock(err) }
 
-// clientFromContext 读取 context 中的 Ent 事务客户端，缺失时使用 fallback。
+// clientFromContext returns the context's Ent transaction client or the supplied default client.
 func clientFromContext(ctx context.Context, fallback *ent.Client) *ent.Client {
 	if tx := ent.TxFromContext(ctx); tx != nil {
 		return tx.Client()

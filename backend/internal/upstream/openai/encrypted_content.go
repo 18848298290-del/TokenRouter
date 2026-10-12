@@ -17,9 +17,8 @@ func OpenAIEncryptedContentDigest(encrypted string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// OpenAIEncryptedLineageItemType 限定 lineage 覆盖的项类型，与剥离端
-// wire.SanitizeEncryptedReasoningInputItem 能处理的类型对称；其他类型即使携带
-// encrypted_content 也不收摘要，避免记入永远剥不掉的摘要后每轮空转解码。
+// OpenAIEncryptedLineageItemType matches the types handled by wire.SanitizeEncryptedReasoningInputItem.
+// Collecting digests for other types would repeatedly trigger decoding of content that cannot be stripped.
 func OpenAIEncryptedLineageItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
 	case "reasoning", "compaction", "compaction_summary":
@@ -29,8 +28,8 @@ func OpenAIEncryptedLineageItemType(itemType string) bool {
 	}
 }
 
-// CollectOpenAIEncryptedContentDigestsRaw 收集 input 中 lineage 覆盖类型所携
-// 密文的摘要。payload 须遵守 replay 所有权不变式（零拷贝视图解析）。
+// CollectOpenAIEncryptedContentDigestsRaw collects ciphertext digests from supported input types.
+// Keep payload immutable during the call: parsing uses a zero-copy string view.
 func CollectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	if len(payload) == 0 {
 		return nil
@@ -62,10 +61,9 @@ func CollectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	return digests
 }
 
-// StripOpenAIInvalidEncryptedContentItems 剥离 input 中摘要命中 invalid 的密文
-// 项，剥离语义与 trimOpenAIEncryptedReasoningItems 对齐：reasoning 仅剥
-// encrypted_content（连带 content:null 清理与空骨架删除），compaction/
-// compaction_summary 整项删除。返回被改写的项数。
+// StripOpenAIInvalidEncryptedContentItems sanitizes input items whose ciphertext digest is invalid.
+// Reasoning loses encrypted_content, null content and empty shells; compaction and
+// compaction_summary items are removed. The return value counts changed items.
 func StripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map[string]struct{}) int {
 	if len(reqBody) == 0 || len(invalid) == 0 {
 		return 0
@@ -131,9 +129,8 @@ func StripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 	}
 }
 
-// OpenAIRawPayloadHasInvalidEncryptedContent 探测 raw payload 是否携带命中
-// invalid 摘要的密文项；零命中的常态路径不做任何改写。payload 须遵守 replay
-// 所有权不变式（零拷贝视图解析）。
+// OpenAIRawPayloadHasInvalidEncryptedContent checks input ciphertext against invalid digests.
+// Keep payload immutable during the call: parsing uses a zero-copy string view.
 func OpenAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[string]struct{}) bool {
 	if len(payload) == 0 || len(invalid) == 0 {
 		return false
@@ -167,9 +164,9 @@ func OpenAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[stri
 	return false
 }
 
-// StripOpenAIInvalidEncryptedContentFromReplayItems 对 replay 历史序列做同款
-// 剥离。有改动时返回新头数组，命中项以重写后的新正文整体替换（遵守 replay
-// 所有权不变式，原正文不被修改）；未命中时原样返回。
+// StripOpenAIInvalidEncryptedContentFromReplayItems sanitizes matching replay items.
+// Changes produce a new slice and replacement bodies; unmatched bodies are shared.
+// It returns the original slice when nothing changes and never mutates input bodies.
 func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, invalid map[string]struct{}) ([]json.RawMessage, int) {
 	if len(items) == 0 || len(invalid) == 0 {
 		return items, 0
@@ -228,8 +225,8 @@ func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	return next, stripped
 }
 
-// StripOpenAIInvalidEncryptedContentRaw 是 raw JSON 版剥离：先零成本探测，命中
-// 才解码改写重编码。返回改写后的 payload 与剥离项数；未命中时原样返回。
+// StripOpenAIInvalidEncryptedContentRaw probes for invalid ciphertext before decoding and rewriting.
+// It returns the changed-item count, or the original payload when nothing changes.
 func StripOpenAIInvalidEncryptedContentRaw(payload []byte, invalid map[string]struct{}) ([]byte, int, error) {
 	if !OpenAIRawPayloadHasInvalidEncryptedContent(payload, invalid) {
 		return payload, 0, nil

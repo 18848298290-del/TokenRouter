@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// ProxyExpiryService 拥有代理到期扫描的启动与停止屏障。
-// 构造不启动；单次扫描保留十秒预算，停止时取消并等待当前扫描。
+// ProxyExpiryService owns the proxy expiration worker's startup and shutdown.
+// Construction is idle. Each sweep has a ten-second budget; stopping cancels and waits for it.
 type ProxyExpiryService struct {
 	proxyRepo ProxyRepository
 	interval  time.Duration
@@ -29,7 +29,7 @@ func NewProxyExpiryService(repo ProxyRepository, interval time.Duration, clocks 
 	return &ProxyExpiryService{proxyRepo: repo, interval: interval, now: now}
 }
 
-// Start 保留立即首轮，只允许同一实例启动一次。
+// Start launches the worker once per instance and runs its first sweep immediately.
 // @project-doc docs/operations/upstream_transport_security.md#upstream_proxy_lifecycle
 func (s *ProxyExpiryService) Start() {
 	if s == nil || s.proxyRepo == nil || s.interval <= 0 {
@@ -81,7 +81,7 @@ func (s *ProxyExpiryService) sweep(parent context.Context) {
 	}
 }
 
-// StopContext 不把超时返回当作扫描完成，生命周期继续保护其共享依赖。
+// StopContext cancels the worker and waits; a context timeout leaves completion pending.
 func (s *ProxyExpiryService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil

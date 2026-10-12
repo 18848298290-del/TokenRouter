@@ -70,7 +70,7 @@ func TestResolvedOpenAIUpstreamServiceTier(t *testing.T) {
 	})
 }
 
-// TestResponseModelRetryClearsPreviousObservation 验证失败尝试不会污染缺失模型的下一响应。
+// TestResponseModelRetryClearsPreviousObservation checks that a failed attempt's model is cleared before the next response.
 func TestResponseModelRetryClearsPreviousObservation(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	o := BeginUpstreamResponseModelObservation(c)

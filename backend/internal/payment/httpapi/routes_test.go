@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// routePlansStub 为路由注册测试提供套餐处理方法。
+// routePlansStub supplies plan handlers for route-registration tests.
 type routePlansStub struct{}
 
 func TestPaymentRoutesDoNotExposeAIChannels(t *testing.T) {

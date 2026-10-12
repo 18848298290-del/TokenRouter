@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestMain 在测试运行前设置 Gin 模式，所有测试共用该设置。
+// TestMain sets Gin test mode before any tests run.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	m.Run()

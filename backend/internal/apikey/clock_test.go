@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestKeyClockExpiryBoundary 保留结束时刻相等仍未过期，且无到期字段不额外取时。
+// TestKeyClockExpiryBoundary checks that equality is unexpired and keys without expiry do not read the clock.
 func TestKeyClockExpiryBoundary(t *testing.T) {
 	now := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	calls := 0

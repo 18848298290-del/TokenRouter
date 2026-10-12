@@ -18,7 +18,7 @@ func TestLookupVideoBillingResolutionReportsUnknownTiers(t *testing.T) {
 		require.False(t, ok, "input=%q", in)
 		require.Empty(t, normalized)
 	}
-	// 上游返回无法识别的值时，运行时计费仍需要一个档位。
+	// Runtime billing still selects a tier when the upstream resolution is unrecognized.
 	require.Equal(t, VideoBillingResolution480P, NormalizeVideoBillingResolutionOrDefault("4k"))
 	require.Equal(t, VideoBillingResolution1080P, NormalizeVideoBillingResolutionOrDefault("full_hd"))
 }

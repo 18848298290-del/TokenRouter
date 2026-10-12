@@ -56,7 +56,7 @@ func TestS3BackupStoreUploadFileWithProgressUsesConcurrentMultipart(t *testing.T
 			}
 			uploadedBytes.Add(n)
 			uploadPartCount.Add(1)
-			// 保持请求短暂重叠，测试能稳定观察到 transfermanager 的并发分片上传。
+			// Overlap requests long enough to observe concurrent multipart uploads.
 			time.Sleep(100 * time.Millisecond)
 			activeParts.Add(-1)
 			w.Header().Set("ETag", `"`+query.Get("partNumber")+`"`)
@@ -312,12 +312,12 @@ func TestS3BackupStoreUploadSpooledPutRemovesTemporaryFileOnReadError(t *testing
 	require.Empty(t, tempFiles)
 }
 
-// Read 模拟备份流在落盘过程中读取失败。
+// Read simulates a backup stream failing during disk spooling.
 func (failingBackupReader) Read([]byte) (int, error) {
 	return 0, errors.New("read backup failed")
 }
 
-// Read 按需生成备份字节，测试大输入时不在内存中创建完整 payload。
+// Read generates bytes on demand so large-input tests do not allocate the whole payload.
 func (r *generatedBackupReader) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
 		return 0, io.EOF

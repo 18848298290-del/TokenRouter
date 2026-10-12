@@ -124,7 +124,7 @@ func TestUsageLogFromService_IncludesServiceTierForUserAndAdmin(t *testing.T) {
 	require.InDelta(t, 1.5, *adminDTO.ProviderRateMultiplier, 1e-12)
 }
 
-// TestUsageLogFromService_IncludesRequestedEffort 检查 DTO 同时提供请求档位和实际档位。
+// TestUsageLogFromService_IncludesRequestedEffort checks separate requested and forwarded effort fields.
 func TestUsageLogFromService_IncludesRequestedEffort(t *testing.T) {
 	t.Parallel()
 	requested := "max"
@@ -148,7 +148,7 @@ func TestUsageLogFromService_IncludesRequestedEffort(t *testing.T) {
 	require.Contains(t, string(userJSON), "requested_reasoning_effort")
 }
 
-// TestUsageLogFromService_PreservesEquivalentRequestedEffort 检查相同档位分别填入请求和实际字段。
+// TestUsageLogFromService_PreservesEquivalentRequestedEffort checks that an unchanged requested effort remains present.
 func TestUsageLogFromService_PreservesEquivalentRequestedEffort(t *testing.T) {
 	t.Parallel()
 	effort := "x-high"
@@ -309,5 +309,5 @@ func f64Ptr(value float64) *float64 {
 	return &value
 }
 
-// requestTypeStringPtr 将请求类型指针转换为展示字符串。
+// requestTypeStringPtr converts a request-type pointer to its display string.
 func requestTypeStringPtr(v *int16) *string { return RequestTypeStringPtr(v) }

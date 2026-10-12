@@ -12,7 +12,7 @@ const (
 	CodexPlanGatedModelReason   = "upstream_400_codex_plan_gated_model"
 )
 
-// ModelFailureObservation 保存当前尝试的端点和最终模型。
+// ModelFailureObservation carries the current attempt's endpoint, model, and failure classification.
 type ModelFailureObservation struct {
 	NotFound       bool
 	CodexPlanGated bool
@@ -21,7 +21,7 @@ type ModelFailureObservation struct {
 	ImagesEndpoint bool
 }
 
-// ApplyModelUnavailable 按池模式和错误码规则暂停当前提供商与模型组合。
+// ApplyModelUnavailable pauses a provider/model pair subject to pool-mode and error-code policies.
 func (s *HealthService) ApplyModelUnavailable(ctx context.Context, value *Record, status int, observation ModelFailureObservation) bool {
 	if s == nil || s.providerRepo == nil || value == nil || value.IsPoolMode() || !value.ShouldHandleErrorCode(status) {
 		return false
@@ -39,7 +39,7 @@ func (s *HealthService) ApplyModelUnavailable(ctx context.Context, value *Record
 	if observation.ModelKey == "" {
 		return false
 	}
-	// 文本端点对图片模型的套餐拒绝不冷却专用 Images 能力。
+	// A text-endpoint plan rejection for an image model does not establish failure of its Images endpoint.
 	if reason == CodexPlanGatedModelReason && !observation.ImagesEndpoint && observation.ImageModel {
 		return true
 	}

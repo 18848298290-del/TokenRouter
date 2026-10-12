@@ -11,23 +11,21 @@ import (
 )
 
 var (
-	// datelineRegexes 匹配带指纹的 dateline 句子，覆盖野外观察到的 4 种撇号码点和两种日期分隔符。
-	// Go 的 RE2 正则不支持反向引用，因此这里用两个正则分别匹配 "-" 与 "/"，保证
-	// YYYY?MM?DD 中两个分隔符一致，避免误匹配 "Today's date is 2026-07/01." 这类混合分隔符，
-	// 也避免碰触 "Today is foo."、"His date is 2026-06-30." 这类用户自然文本。
+	// Separate patterns enforce matching date separators because RE2 has no
+	// backreferences. Restrict matching to the observed dateline phrase and
+	// apostrophe variants to avoid rewriting unrelated user text.
 	datelineRegexHyphen = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})-(\d{2})-(\d{2})\.`)
 	datelineRegexSlash  = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})/(\d{2})/(\d{2})\.`)
 
-	// systemReminderRegex 匹配 <system-reminder> 块。多轮对话后 dateline 常出现在该块中，
-	// 因此 messages[].content[] 只扫描这些标签内部，避免影响普通用户文本。
+	// systemReminderRegex scopes message-text normalization to system reminders.
 	systemReminderRegex = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
 )
 
-// DatelineHit 记录单次归一化命中的指纹形态，便于观测。
+// DatelineHit records the original punctuation of a normalized dateline.
 type DatelineHit struct {
-	// ApostropheVariant 为 "ascii"（U+0027）、"u2019"、"u02bc"、"u02b9" 之一。
+	// ApostropheVariant is "ascii", "u2019", "u02bc", or "u02b9".
 	ApostropheVariant string
-	// DateSeparator 是归一化前观察到的 "-" 或 "/"。
+	// DateSeparator is the original "-" or "/".
 	DateSeparator string
 }
 
@@ -38,7 +36,7 @@ type datelineMatch struct {
 	year, month, day string
 }
 
-// canonicalize 返回命中 dateline 句子的规范形态，固定使用 ASCII 撇号和短横线日期分隔符。
+// canonicalize uses an ASCII apostrophe and hyphenated date.
 func canonicalize(year, month, day string) string {
 	return fmt.Sprintf("Today's date is %s-%s-%s.", year, month, day)
 }
@@ -81,8 +79,8 @@ func collectMatches(text string, re *regexp.Regexp, sep string) []datelineMatch 
 	return out
 }
 
-// NormalizeText 将文本中带指纹的 dateline 句子替换为规范形态。
-// 未命中时返回原始字符串本身和 nil 命中列表。
+// NormalizeText canonicalizes matching datelines. If no text changes, it returns
+// the original string and a nil hit list.
 func NormalizeText(text string) (string, []DatelineHit) {
 	if !strings.Contains(text, "date is ") {
 		return text, nil
@@ -103,7 +101,7 @@ func NormalizeText(text string) (string, []DatelineHit) {
 		full := text[m.start:m.end]
 		canonical := canonicalize(m.year, m.month, m.day)
 		if canonical == full {
-			// 已经是规范形态时不记录命中。
+			// Already canonical text does not count as a hit.
 			continue
 		}
 		_, _ = b.WriteString(text[prev:m.start])
@@ -122,8 +120,8 @@ func NormalizeText(text string) (string, []DatelineHit) {
 	return b.String(), hits
 }
 
-// normalizeSystemReminderScopedText 只扫描文本中的 <system-reminder> 块并归一化其中的 dateline。
-// 块外文本逐字节保留，因此普通用户文本、tool_result、代码块或 shell 命令不会被误改。
+// normalizeSystemReminderScopedText canonicalizes datelines inside system-reminder
+// tags, preserving text outside the tags byte for byte.
 func normalizeSystemReminderScopedText(text string) (string, []DatelineHit) {
 	if !strings.Contains(text, "<system-reminder>") {
 		return text, nil
@@ -155,15 +153,10 @@ func normalizeSystemReminderScopedText(text string) (string, []DatelineHit) {
 	return b.String(), hits
 }
 
-// NormalizeDateline 扫描 Anthropic /v1/messages 请求体，将带指纹的 dateline 句子还原为规范 ASCII 形态。
-//
-// 作用范围与真实客户端放置 dateline 的位置保持一致：
-//   - 顶层 `system` 字符串，或 `system` 文本块中的 `.text` 字段。
-//   - `messages[i].content` 中位于 `<system-reminder>...</system-reminder>` 标签内的文本。
-//
-// 普通用户文本、tool_use.input、tool_result.content 和其它 block 类型不会扫描，
-// 避免意外改写代码块、shell 命令或正常聊天内容。该函数为纯转换：不会修改输入切片；
-// 无需改写时返回原始切片、nil 命中列表和 changed=false。
+// NormalizeDateline canonicalizes datelines in system text and message text
+// inside system-reminder tags. Tool inputs, tool results, and other block types
+// are excluded so user code and command output remain unchanged.
+// It does not mutate body. When no changes are needed, it returns body, nil, false.
 func NormalizeDateline(body []byte) ([]byte, []DatelineHit, bool) {
 	if len(body) == 0 {
 		return body, nil, false

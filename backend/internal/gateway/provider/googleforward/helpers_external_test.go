@@ -58,7 +58,7 @@ type queuedHTTPUpstreamStub struct {
 
 type antigravitySettingRepoStub struct{}
 
-// geminiDependencies 包含测试所需的令牌源、传输和健康观测器。
+// geminiDependencies holds token, transport, and health-observation test dependencies.
 type geminiDependencies struct {
 	cfg                  *googleforward.Options
 	providerRepo         gatewayprovider.ExecutionProviderStore
@@ -123,7 +123,7 @@ func newAntigravityCompatContext(method, path string, body []byte) (*gin.Context
 	return c, recorder
 }
 
-// newAntigravityStreamFixture 创建用于流式测试的 AntigravityGatewayService。
+// newAntigravityStreamFixture constructs an Antigravity instance for stream tests.
 func newAntigravityStreamFixture(cfg *googleforward.Options) *googleforward.Antigravity {
 	return newAntigravityFixture(antigravityDependencies{
 		settingService: newExecutionReadersFixture(nil), options: fixtureOptions(cfg),
@@ -307,7 +307,7 @@ func newAntigravityFixture(d antigravityDependencies) *googleforward.Antigravity
 	return r
 }
 
-// newExecutionReadersFixture 将测试替身绑定到执行时的设置读取接口。
+// newExecutionReadersFixture binds test settings to execution-time readers.
 func newExecutionReadersFixture(repo settingscore.Repository) *gatewayprovider.RuntimeReaders {
 	if repo != nil {
 		repo = settingscore.New(repo)
@@ -409,7 +409,7 @@ func (s *geminiCompatHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL str
 	return s.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
-// newGeminiTokenSourceForTest 使用零值配置构造测试用 Gemini 令牌源。
+// newGeminiTokenSourceForTest constructs a token source with default test options.
 func newGeminiTokenSourceForTest() *providercore.GeminiTokenSource {
 	return &providercore.GeminiTokenSource{Options: providercore.GeminiTokenOptions{
 		Debug: slog.Debug,
@@ -427,7 +427,7 @@ func newAntigravityTokenSourceForTest(cache providercore.AccessTokenCache) *prov
 	}}
 }
 
-// newUpstreamHealthForTest 根据测试配置构造上游健康观测器。
+// newUpstreamHealthForTest constructs a health observer from test dependencies.
 func newUpstreamHealthForTest(store gatewayprovider.ExecutionProviderStore, _ *googleforward.Options, cache providercore.TempUnschedCache, options providercore.HealthOptions, readers *gatewayprovider.RuntimeReaders) *provideradapter.UpstreamHealth {
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{Store: store, Cache: cache, Options: options, Readers: readers})
 }

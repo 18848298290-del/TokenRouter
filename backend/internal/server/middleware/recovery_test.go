@@ -15,7 +15,7 @@ import (
 )
 
 func TestRecovery_PanicLogContainsInfo(t *testing.T) {
-	// 临时替换 DefaultErrorWriter 以捕获日志输出
+	// Capture Gin's panic log and restore the process-wide writer after the test.
 	var buf bytes.Buffer
 	originalWriter := gin.DefaultErrorWriter
 	gin.DefaultErrorWriter = &buf

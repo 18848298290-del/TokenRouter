@@ -8,8 +8,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestStripEmptyChatToolCallIdentity_FirstChunkIdentityUntouched 首包带合法
-// id/name 的 delta 返回 changed=false。
 func TestStripEmptyChatToolCallIdentity_FirstChunkIdentityUntouched(t *testing.T) {
 	payload := []byte(`{"id":"chatcmpl_tool","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_example","type":"function","function":{"name":"web_search","arguments":""}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -17,14 +15,13 @@ func TestStripEmptyChatToolCallIdentity_FirstChunkIdentityUntouched(t *testing.T
 	require.Equal(t, string(payload), string(rewritten))
 	require.Equal(t, "call_example", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.id").String())
 	require.Equal(t, "web_search", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.name").String())
-	// 首包 arguments 为空串也不应被删除。
+	// An empty arguments string is still part of the first tool delta.
 	require.True(t, gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").Exists())
 	require.Equal(t, "", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_FollowingDelta 后续参数 delta 的
-// `"id":""` 与 `"function":{"name":""}` 应被删除；arguments 碎片、
-// index、type 保留。
+// TestStripEmptyChatToolCallIdentity_FollowingDelta removes empty identity from later
+// argument fragments while retaining their arguments, index, and type.
 func TestStripEmptyChatToolCallIdentity_FollowingDelta(t *testing.T) {
 	payload := []byte(`{"id":"chatcmpl_tool","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"query\":"}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -34,13 +31,10 @@ func TestStripEmptyChatToolCallIdentity_FollowingDelta(t *testing.T) {
 	require.Equal(t, `{"query":`, gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").String())
 	require.Equal(t, int64(0), gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.index").Int())
 	require.Equal(t, "function", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.type").String())
-	// 空串字段不得再出现在 payload 里。
 	require.NotContains(t, string(rewritten), `"id":""`)
 	require.NotContains(t, string(rewritten), `"name":""`)
 }
 
-// TestStripEmptyChatToolCallIdentity_OnlyEmptyName / _OnlyEmptyID 只删
-// 空的那一个，非空字段保持原值。
 func TestStripEmptyChatToolCallIdentity_OnlyEmptyName(t *testing.T) {
 	payload := []byte(`{"id":"chatcmpl_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"","arguments":"{}"}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -50,8 +44,7 @@ func TestStripEmptyChatToolCallIdentity_OnlyEmptyName(t *testing.T) {
 	require.Equal(t, "{}", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_OnlyEmptyID 覆盖 `"id": ""` 带空格的
-// JSON 形式，确认 gjson/sjson 均能识别。
+// TestStripEmptyChatToolCallIdentity_OnlyEmptyID covers whitespace around the JSON key and value.
 func TestStripEmptyChatToolCallIdentity_OnlyEmptyID(t *testing.T) {
 	payload := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id" : "" , "type" : "function","function":{"name":"get_weather","arguments":"{}"}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -61,8 +54,6 @@ func TestStripEmptyChatToolCallIdentity_OnlyEmptyID(t *testing.T) {
 	require.Equal(t, "{}", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_EmptyArgumentsKept 空 arguments 不删，
-// 只有 id/name 空串被剔除。
 func TestStripEmptyChatToolCallIdentity_EmptyArgumentsKept(t *testing.T) {
 	payload := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":""}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -73,8 +64,8 @@ func TestStripEmptyChatToolCallIdentity_EmptyArgumentsKept(t *testing.T) {
 	require.Equal(t, "", gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.0.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_TwoParallelToolCalls 两个并行 index 都要
-// 处理：合法的 index 0 保留，后续参数 delta 的 index 1 剔除空 id/name。
+// TestStripEmptyChatToolCallIdentity_TwoParallelToolCalls retains index 0 identity
+// while removing empty identity fields from the index 1 argument delta.
 func TestStripEmptyChatToolCallIdentity_TwoParallelToolCalls(t *testing.T) {
 	payload := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"tool_a","arguments":"{\"x\":"}},{"index":1,"id":"","type":"function","function":{"name":"","arguments":"{\"y\":"}}]}}]}`)
 	rewritten, changed := StripEmptyChatToolCallIdentity(payload)
@@ -87,8 +78,6 @@ func TestStripEmptyChatToolCallIdentity_TwoParallelToolCalls(t *testing.T) {
 	require.Equal(t, `{"y":`, gjson.GetBytes(rewritten, "choices.0.delta.tool_calls.1.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_Passthrough 无 tool_calls、无 choices、
-// 非数组 tool_calls、非法 JSON 原样返回。
 func TestStripEmptyChatToolCallIdentity_Passthrough(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -110,8 +99,6 @@ func TestStripEmptyChatToolCallIdentity_Passthrough(t *testing.T) {
 	}
 }
 
-// TestStripEmptyChatToolCallIdentityFromSSELine_Passthrough SSE 行级：非
-// data 行、[DONE]、空行原样；data 行保留 `data: ` 前缀。
 func TestStripEmptyChatToolCallIdentityFromSSELine_Passthrough(t *testing.T) {
 	tests := []struct {
 		name string
@@ -130,8 +117,6 @@ func TestStripEmptyChatToolCallIdentityFromSSELine_Passthrough(t *testing.T) {
 	}
 }
 
-// TestStripEmptyChatToolCallIdentityFromSSELine_KeepsDataPrefix 改写后的
-// SSE 行带有 `data: ` 前缀。
 func TestStripEmptyChatToolCallIdentityFromSSELine_KeepsDataPrefix(t *testing.T) {
 	line := `data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{}"}}]}}]}`
 	got := StripEmptyChatToolCallIdentityFromSSELine(line)
@@ -143,9 +128,9 @@ func TestStripEmptyChatToolCallIdentityFromSSELine_KeepsDataPrefix(t *testing.T)
 	require.Equal(t, "{}", gjson.Get(payload, "choices.0.delta.tool_calls.0.function.arguments").String())
 }
 
-// TestStripEmptyChatToolCallIdentity_DshClientMerge 模拟 dsh rc.2 adapter 的
-// 合并逻辑（字段存在时覆盖，包括空串）：清理后再合并，最终 id/name 应
-// 仍是首包合法值，arguments 为各碎片拼接。
+// TestStripEmptyChatToolCallIdentity_DshClientMerge models the dsh adapter overwriting
+// every present identity field. Sanitized fragments retain the first ID and name
+// while appending arguments.
 func TestStripEmptyChatToolCallIdentity_DshClientMerge(t *testing.T) {
 	lines := []string{
 		`data: {"id":"chatcmpl_tool","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_example","type":"function","function":{"name":"web_search","arguments":""}}]}}]}`,
@@ -217,7 +202,7 @@ func TestOpenAIRawStreamTerminalState(t *testing.T) {
 			wantTruncated: true,
 		},
 		{
-			// 上游对 stream 请求返回裸 JSON 时，按原字节透传。
+			// An upstream may return a plain JSON body for a streaming request.
 			name:          "non-sse body already forwarded",
 			payloads:      nil,
 			clientStarted: true,

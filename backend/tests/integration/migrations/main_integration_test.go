@@ -22,16 +22,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// integrationEntClient 管理迁移测试使用的 Ent 数据库连接。
+// integrationEntClient owns the database connection used by migration tests.
 var integrationEntClient *dbent.Client
 
-// TestMain 统一测试时区，并在 PostgreSQL 初始化后运行迁移测试。
+// TestMain sets the local timezone to UTC and runs tests after PostgreSQL initialization.
 func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	os.Exit(runPostgresTests(m))
 }
 
-// runPostgresTests 启动 PostgreSQL、应用迁移，并在测试结束后关闭数据库和容器。
+// runPostgresTests starts PostgreSQL, applies migrations, and closes the database and container after tests.
 func runPostgresTests(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 gateway_completion_billing.go、gateway_message_attempts.go 与 gateway_openai_attempts.go 共用的记录器。
+// These tests cover the recorder instances shared by completion and platform-attempt bindings.
 
 import (
 	"context"
@@ -27,7 +27,8 @@ func (r *completionRateScopeFixture) GetByUserAndGroup(context.Context, int64, i
 	return &value, nil
 }
 
-// TestCompletionRuntimeOwnsIsolatedRatesAndSharedRecorders 检查两种完成流程各有独立倍率缓存，执行入口共用 app 构造的完成实例。
+// TestCompletionRuntimeOwnsIsolatedRatesAndSharedRecorders checks independent rate caches and shared recorder
+// instances at execution entry points.
 func TestCompletionRuntimeOwnsIsolatedRatesAndSharedRecorders(t *testing.T) {
 	cfg := &config.Config{}
 	repo := &completionRateScopeFixture{value: 2}
@@ -45,7 +46,7 @@ func TestCompletionRuntimeOwnsIsolatedRatesAndSharedRecorders(t *testing.T) {
 
 	require.Same(t, recorders.Forward, forward.Recorder)
 	require.Same(t, recorders.OpenAI, openai.Recorder)
-	// 后续请求复用装配时创建的摘要缓存。
+	// Subsequent requests reuse the digest cache created during assembly.
 	bindings := text.PromptCache
 	bindings.Bind(5, 7, "s:a-u:b", "cache-key", "", time.Hour)
 	require.Same(t, bindings, text.PromptCache)

@@ -15,8 +15,8 @@ func ShouldRepairOpenAIResponsesNullToolSchemaType(platform string) bool {
 	return platform == capability.PlatformOpenAI || platform == capability.PlatformAnthropic || platform == capability.PlatformGrok || provider.IsCNProvider(platform)
 }
 
-// ShouldSanitizeOpenAIResponsesToolSchemaPatterns is intentionally narrower:
-// regex lookaround rejection is an OpenAI-specific schema constraint.
+// ShouldSanitizeOpenAIResponsesToolSchemaPatterns reports whether regex lookaround needs removal
+// for OpenAI's schema restrictions.
 func ShouldSanitizeOpenAIResponsesToolSchemaPatterns(platform string) bool {
 	return platform == capability.PlatformOpenAI
 }

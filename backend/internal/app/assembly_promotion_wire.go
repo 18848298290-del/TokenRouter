@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// promotionAssemblyProviders 汇总 promotion 模块的 Wire provider。
+// promotionAssemblyProviders groups Wire providers for the promotion module.
 var promotionAssemblyProviders = wire.NewSet(
 	providePromotionPromoHTTP,
 	providePromotionAffiliateHTTP,

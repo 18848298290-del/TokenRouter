@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestManagerOrdersStartAndDrain 检查生产者退出后排空消费者，消费者完成后才关闭数据库。
+// TestManagerOrdersStartAndDrain checks that producers stop before consumers drain and the database closes last.
 func TestManagerOrdersStartAndDrain(t *testing.T) {
 	m := New()
 	var events []string
@@ -95,7 +95,8 @@ func TestManagerStopWaitsForPartialStartup(t *testing.T) {
 	require.NoError(t, <-startResult)
 }
 
-// TestManagerReportingIsBounded 检查记录输出受停止预算限制，超时后依赖资源保持打开。
+// TestManagerReportingIsBounded checks that reporting uses the shutdown budget and leaves dependencies open on
+// timeout.
 func TestManagerReportingIsBounded(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)

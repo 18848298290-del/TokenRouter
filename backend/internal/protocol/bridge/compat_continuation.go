@@ -27,8 +27,8 @@ func TrimCompatResponsesInputToLatestTurn(req *protocolopenai.ResponsesRequest) 
 	}
 }
 
-// latestAnthropicCompatResponsesInputTurnStart 保留最新一轮输入时，需要把对应的 function_call 一起带上，
-// 否则只剩 function_call_output 会让上游无法解析调用上下文。
+// latestAnthropicCompatResponsesInputTurnStart finds the latest input suffix,
+// expanding it to include calls whose outputs would otherwise lose their context.
 func latestAnthropicCompatResponsesInputTurnStart(items []protocolopenai.ResponsesInputItem) int {
 	if len(items) == 0 {
 		return 0
@@ -52,7 +52,7 @@ func latestAnthropicCompatResponsesInputTurnStart(items []protocolopenai.Respons
 	return expandAnthropicCompatResponsesInputToolCallStart(items, start)
 }
 
-// expandAnthropicCompatResponsesInputToolCallStart 从需要保留的 function_call_output 往前补齐匹配的 function_call。
+// expandAnthropicCompatResponsesInputToolCallStart includes earlier calls matching retained outputs.
 func expandAnthropicCompatResponsesInputToolCallStart(items []protocolopenai.ResponsesInputItem, start int) int {
 	if start < 0 || start >= len(items) {
 		return start

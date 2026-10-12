@@ -14,18 +14,18 @@ type AntigravityRefreshRules struct {
 	Printf, Logf             func(string, ...any)
 }
 
-// CacheKey 与原请求、后台刷新共用同一提供商锁键。
+// CacheKey shares the provider lock key with request-time and background refresh.
 func (r *AntigravityRefreshRules) CacheKey(value *Record) string {
 	return AntigravityTokenCacheKey(value)
 }
 
-// CanRefresh 检查是否可以刷新此提供商。
+// CanRefresh reports whether this is an Antigravity OAuth provider.
 func (r *AntigravityRefreshRules) CanRefresh(provider *Record) bool {
 	return provider.Platform == PlatformAntigravity && provider.Type == ProviderTypeOAuth
 }
 
-// NeedsRefresh 检查提供商是否需要刷新
-// Antigravity 使用固定的 15 分钟刷新窗口，忽略全局配置。
+// NeedsRefresh checks expiry and forced-refresh state.
+// Antigravity uses a fixed 15-minute window regardless of the global setting.
 func (r *AntigravityRefreshRules) NeedsRefresh(provider *Record, _ time.Duration) bool {
 	if !r.CanRefresh(provider) {
 		return false
@@ -46,7 +46,7 @@ func (r *AntigravityRefreshRules) NeedsRefresh(provider *Record, _ time.Duration
 	return needsRefresh
 }
 
-// AntigravityForceTokenRefreshExtra 构造强制刷新标记的持久化字段。
+// AntigravityForceTokenRefreshExtra builds persistent forced-refresh fields.
 func AntigravityForceTokenRefreshExtra(reason string) map[string]any {
 	return map[string]any{
 		AntigravityForceTokenRefreshExtraKey:       true,
@@ -55,7 +55,7 @@ func AntigravityForceTokenRefreshExtra(reason string) map[string]any {
 	}
 }
 
-// Refresh 执行 token 刷新。
+// Refresh refreshes tokens and merges the returned credential fields.
 func (r *AntigravityRefreshRules) Refresh(ctx context.Context, provider *Record) (map[string]any, error) {
 	tokenInfo, err := r.RefreshProviderToken(ctx, provider)
 	if err != nil {
@@ -63,26 +63,26 @@ func (r *AntigravityRefreshRules) Refresh(ctx context.Context, provider *Record)
 	}
 
 	newCredentials := r.BuildProviderCredentials(tokenInfo)
-	// 合并旧的 credentials，保留新 credentials 中不存在的字段
+	// Retain stored fields omitted by the refresh response.
 	newCredentials = MergeCredentials(provider.Credentials, newCredentials)
 
-	// 特殊处理 project_id：如果新值为空但旧值非空，保留旧值
-	// LoadCodeAssist 失败时，已有的 project_id 可继续使用。
+	// Keep a nonempty stored project_id when discovery returns an empty value.
+	// The stored project remains usable if LoadCodeAssist fails.
 	if newProjectID, _ := newCredentials["project_id"].(string); newProjectID == "" {
 		if oldProjectID := strings.TrimSpace(provider.GetCredential("project_id")); oldProjectID != "" {
 			newCredentials["project_id"] = oldProjectID
 		}
 	}
 
-	// project_id 获取失败时记录警告，刷新流程继续。
-	// LoadCodeAssist 失败可能来自临时网络错误，此处允许后续重试。
-	// Token 刷新本身是成功的（access_token 和 refresh_token 已更新）
+	// Warn on project discovery failure while retaining the refreshed tokens.
+	// A later refresh can retry discovery after a transient network failure.
+	// The token exchange itself has already succeeded.
 	if tokenInfo.ProjectIDMissing {
 		if tokenInfo.ProjectID != "" {
-			// 有旧的 project_id，本次获取失败，保留旧值
+			// Discovery failed, but an existing project ID remains available.
 			r.Logf("[AntigravityTokenRefresher] Provider %d: LoadCodeAssist 临时失败，保留旧 project_id", provider.ID)
 		} else {
-			// 从未获取过 project_id，本次也失败，但不返回错误以允许下次重试
+			// Allow future discovery attempts when no project ID has ever been obtained.
 			r.Logf("[AntigravityTokenRefresher] Provider %d: LoadCodeAssist 失败，project_id 缺失，但 token 已更新，将在下次刷新时重试", provider.ID)
 		}
 	}

@@ -29,14 +29,14 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// routingGroupProviders 转换提供商存储记录，平台默认模型目录按需查询。
+// routingGroupProviders converts provider records for group queries.
 type routingGroupProviders struct {
 	Store *providerpostgres.ProviderStore
 }
 
 func (r routingGroupProviders) GetByIDs(ctx context.Context, ids []int64) ([]routing.GroupProvider, error) {
 	values, err := r.Store.GetByIDs(ctx, ids)
-	// 批量查询无结果时返回空数组，列表查询的 nil 结果保持为 nil。
+	// Return an empty slice for a batch miss; schedulable list conversion retains nil results.
 	out := make([]routing.GroupProvider, len(values))
 	for i, v := range values {
 		out[i] = r.project(v)
@@ -53,7 +53,7 @@ func (r routingGroupProviders) project(v *provider.Record) routing.GroupProvider
 	return routing.GroupProvider{ID: v.ID, Platform: v.Platform, Type: v.Type}
 }
 
-// provideRoutingGroupStore 为分组读取入口构造共享存储和同连接事务参与工厂。
+// provideRoutingGroupStore binds shared group storage and transaction participants using the same executor.
 func provideRoutingGroupStore(client *dbent.Client, db *sql.DB) *routingpostgres.GroupStore {
 	return routingpostgres.NewGroupStore(client, db, routingpostgres.GroupStoreOptions{
 		Providers: func(exec postgresinfra.Executor) routingpostgres.GroupLinkParticipant {
@@ -85,7 +85,7 @@ func provideRoutingGroupAdmin(catalog *catalogprovider.Service, store *routingpo
 	})
 }
 
-// provideGroupProbeRunner 注入时区、实例租约标识和探测执行器，cron 在生命周期 Start 时启动。
+// provideGroupProbeRunner binds timezone, lease identity, and probe execution; lifecycle startup starts cron.
 func provideGroupProbeRunner(repo routing.GroupAvailabilityProbeRepository, tests *provider.TestService, gateway *selection.Generic, openai *selection.Compatible, gemini *selection.Gemini, cfg *config.Config) *routing.GroupAvailabilityProbeRunnerService {
 	location := time.Local
 	if cfg != nil {

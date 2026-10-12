@@ -71,14 +71,13 @@ func (c *refreshTokenCache) DeleteRefreshToken(ctx context.Context, tokenHash st
 	return c.rdb.Del(ctx, key).Err()
 }
 
-// ConsumeRefreshToken 使用原 key 的 DEL 结果决定唯一消费权，不新增缓存协议或索引。
+// ConsumeRefreshToken grants consumption rights only when DEL removes the token key.
 func (c *refreshTokenCache) ConsumeRefreshToken(ctx context.Context, tokenHash string) (bool, error) {
 	deleted, err := c.rdb.Del(ctx, refreshTokenKey(tokenHash)).Result()
 	return deleted == 1, err
 }
 
 func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID int64) error {
-	// Get all token hashes for this user
 	tokenHashes, err := c.GetUserTokenHashes(ctx, userID)
 	if err != nil && err != redis.Nil {
 		return fmt.Errorf("get user token hashes: %w", err)
@@ -88,14 +87,12 @@ func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID 
 		return nil
 	}
 
-	// Build keys to delete
 	keys := make([]string, 0, len(tokenHashes)+1)
 	for _, hash := range tokenHashes {
 		keys = append(keys, refreshTokenKey(hash))
 	}
 	keys = append(keys, userRefreshTokensKey(userID))
 
-	// Delete all keys in a pipeline
 	pipe := c.rdb.Pipeline()
 	for _, key := range keys {
 		pipe.Del(ctx, key)
@@ -105,7 +102,6 @@ func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID 
 }
 
 func (c *refreshTokenCache) DeleteTokenFamily(ctx context.Context, familyID string) error {
-	// Get all token hashes in this family
 	tokenHashes, err := c.GetFamilyTokenHashes(ctx, familyID)
 	if err != nil && err != redis.Nil {
 		return fmt.Errorf("get family token hashes: %w", err)
@@ -115,14 +111,12 @@ func (c *refreshTokenCache) DeleteTokenFamily(ctx context.Context, familyID stri
 		return nil
 	}
 
-	// Build keys to delete
 	keys := make([]string, 0, len(tokenHashes)+1)
 	for _, hash := range tokenHashes {
 		keys = append(keys, refreshTokenKey(hash))
 	}
 	keys = append(keys, tokenFamilyKey(familyID))
 
-	// Delete all keys in a pipeline
 	pipe := c.rdb.Pipeline()
 	for _, key := range keys {
 		pipe.Del(ctx, key)

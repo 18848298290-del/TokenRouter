@@ -8,7 +8,8 @@ import (
 )
 
 // SanitizeOpenAIResponsesOrphanToolOutputs removes tool-output items that have
-// no matching call or item reference anywhere in the current input.
+// no matching call or item reference in input when previous_response_id is absent.
+// It replaces reqBody["input"] and returns true when any output was removed.
 func SanitizeOpenAIResponsesOrphanToolOutputs(reqBody map[string]any, input []any, hasPreviousResponseID bool) bool {
 	if len(input) == 0 || hasPreviousResponseID {
 		return false

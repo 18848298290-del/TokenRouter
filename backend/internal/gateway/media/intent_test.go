@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// imagePolicyFixture 使用可观察的纯规则替身，验证目标策略没有另建平台资格判断。
+// imagePolicyFixture supplies tool-rule stubs to test delegation and explicit image intent.
 func imagePolicyFixture() ImageIntentPolicy {
 	return NewImageIntentPolicy(ImageToolRules{
 		IsImageType:     func(s string) bool { return strings.TrimSpace(s) == "image_generation" },

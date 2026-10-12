@@ -74,7 +74,7 @@ func (s *OpenAIWebSocketExecutor) buildOpenAIResponsesWSURL(provider *gatewaypro
 	case "http":
 		parsed.Scheme = "ws"
 	case "wss", "ws":
-		// 保持不变
+		// WebSocket schemes already match the target transport.
 	default:
 		return "", fmt.Errorf("unsupported scheme for ws: %s", parsed.Scheme)
 	}

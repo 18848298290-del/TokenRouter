@@ -30,18 +30,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// liveModerationSettings 只供应原 HTTP 测试的设置快照，实际审核仍执行原生服务与 HTTP 客户端。
+// liveModerationSettings supplies test settings while the moderation service and HTTP client execute normally.
 type liveModerationSettings struct {
 	settings.Repository
 	values map[string]string
 }
 
-// liveModerationLogs 为测试提供无历史违规记录的查询结果。
+// liveModerationLogs supplies empty violation history for tests.
 type liveModerationLogs struct {
 	moderation.ContentModerationRepository
 }
 
-// newLiveModerationRuntime 仅装配实际审核核心与本地协议客户端；后台工作由当前测试等待。
+// newLiveModerationRuntime binds moderation to a local protocol client and waits for background work during test
+// cleanup.
 func newLiveModerationRuntime(t *testing.T, settings moderation.SettingRepository, repo moderation.ContentModerationRepository) *moderation.ContentModerationService {
 	t.Helper()
 	var background sync.WaitGroup
@@ -215,7 +216,7 @@ func TestLiveContentModerationBlocksBeforeBilling(t *testing.T) {
 	context.Set(string(keyhttp.ContextKeyAPIKey), apiKey)
 	context.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: 1, Concurrency: 1})
 
-	// 不注入计费服务，以状态码证明内容审核在计费检查之前完成阻断。
+	// Omit funding services so the forbidden response proves moderation blocks before billing checks.
 	NewLiveHandler(LivePorts{Moderation: moderationSvc}).Live(context)
 
 	require.Equal(t, http.StatusForbidden, recorder.Code)

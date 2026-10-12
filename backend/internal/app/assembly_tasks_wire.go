@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// tasksAssemblyProviders 汇总 tasks 模块的 Wire provider。
+// tasksAssemblyProviders groups Wire providers for the tasks module.
 var tasksAssemblyProviders = wire.NewSet(
 	provideTaskActivity,
 	provideCreativePublic,

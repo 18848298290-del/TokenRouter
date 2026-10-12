@@ -22,7 +22,7 @@ func TestValidateURLFormat(t *testing.T) {
 		t.Fatalf("expected invalid port to fail")
 	}
 
-	// 验证末尾斜杠被移除
+	// Remove a trailing slash.
 	normalized, err := ValidateURLFormat("https://example.com/", false)
 	if err != nil {
 		t.Fatalf("expected trailing slash url to pass, got %v", err)
@@ -31,7 +31,7 @@ func TestValidateURLFormat(t *testing.T) {
 		t.Fatalf("expected trailing slash to be removed, got %s", normalized)
 	}
 
-	// 验证多个末尾斜杠被移除
+	// Remove every trailing slash.
 	normalized, err = ValidateURLFormat("https://example.com///", false)
 	if err != nil {
 		t.Fatalf("expected multiple trailing slashes to pass, got %v", err)
@@ -40,7 +40,7 @@ func TestValidateURLFormat(t *testing.T) {
 		t.Fatalf("expected all trailing slashes to be removed, got %s", normalized)
 	}
 
-	// 验证带路径的 URL 末尾斜杠被移除
+	// Remove trailing slashes from the URL path as well.
 	normalized, err = ValidateURLFormat("https://example.com/api/v1/", false)
 	if err != nil {
 		t.Fatalf("expected trailing slash url with path to pass, got %v", err)

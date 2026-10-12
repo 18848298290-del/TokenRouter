@@ -19,7 +19,7 @@ func provideGroupRateAdmin(repo billing.UserGroupRateRepository, keys *apikey.AP
 	return billing.NewGroupRateAdmin(repo, keys)
 }
 
-// provideRoutingGroupHTTP 为 routing Handler 绑定分组用例和展示数据查询。
+// provideRoutingGroupHTTP binds group administration and display queries to routing HTTP.
 func provideRoutingGroupHTTP(core *routing.GroupAdmin, capacity *routing.CapacityService, keys *apikey.Admin, rates *billing.GroupRateAdmin, dashboard *usage.DashboardService, calendar timezone.Calendar) *routinghttp.GroupHandler {
 	resources := routinghttp.GroupResources{
 		Capacity: capacity, Rates: rates, Today: calendar.Today,

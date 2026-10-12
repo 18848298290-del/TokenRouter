@@ -24,7 +24,7 @@ type refundBalanceParticipant struct {
 	balances *billingpostgres.BalanceStore
 }
 
-// assertRefundPostgresState 从事务外读取余额、订单状态和审计记录。
+// assertRefundPostgresState reads balance, order status, and success audits outside the refund transaction.
 func assertRefundPostgresState(t *testing.T, ctx context.Context, client *dbent.Client, userID, orderID int64, balance float64, status string, audits int) {
 	t.Helper()
 	user, err := client.User.Get(ctx, userID)
@@ -56,7 +56,7 @@ func (p refundBalanceParticipant) CompensateBalance(ctx context.Context, id int6
 	return p.balances.CompensateRefundBalance(ctx, id, amount)
 }
 
-// newPostgresRefundWorkflow 将余额扣减和退款订单写入绑定到同一个 Ent 事务。
+// newPostgresRefundWorkflow binds balance deductions and refund writes to the same Ent transaction.
 func newPostgresRefundWorkflow(client *dbent.Client) *payment.RefundWorkflow {
 	instances := paymentpostgres.NewInstanceStore(client)
 	bindings := payment.NewProviderBindings(instances, payment.NewRegistry(), payment.NewDefaultLoadBalancer(instances, nil), payment.BindingRuntime{Factory: paymentadapter.CreateProvider, RegistryFactory: paymentadapter.CreateProvider}, false)

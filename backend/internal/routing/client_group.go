@@ -6,17 +6,17 @@ import (
 	"fmt"
 )
 
-// ErrClaudeCodeOnly 表示该分组仅允许 Claude Code 客户端。
+// ErrClaudeCodeOnly indicates that a group accepts only Claude Code clients.
 var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 
-// ClientGroupPolicy 明确保留两个已有入口的快照缺失与回退 ID 差异。
+// ClientGroupPolicy controls missing-snapshot handling and nonpositive fallback IDs.
 type ClientGroupPolicy struct {
 	KeepMissingSnapshot       bool
 	RejectNonPositiveFallback bool
 }
 
-// ResolveClientGroup 按原顺序读取并跟随客户端限制回退，不新增提供商或资金查询。
-// 通用入口的读取端口必须返回有效分组或错误；快照入口可明确保留未解析分组。
+// ResolveClientGroup follows client-restriction fallbacks, reading each group before checking the client.
+// Unless KeepMissingSnapshot is set, read must return a non-nil group or an error.
 // @project-doc docs/domains/gateway_policy_controls.md#gateway_policy_layers
 func ResolveClientGroup(ctx context.Context, groupID *int64, read func(context.Context, int64) (*Group, error), isClient func(context.Context) bool, policy ClientGroupPolicy) (*Group, *int64, error) {
 	if groupID == nil {

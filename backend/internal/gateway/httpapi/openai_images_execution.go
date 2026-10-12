@@ -28,7 +28,8 @@ const (
 	openAIImagesEditsURL       = "https://api.openai.com/v1/images/edits"
 )
 
-// OpenAIImagesExecutor 执行单次图片请求，绑定请求构造、响应输出和工具冷却。
+// OpenAIImagesExecutor executes one image attempt with request building, response output, and tool cooldown
+// dependencies.
 type OpenAIImagesExecutor struct {
 	Requests *OpenAIRequests
 	Output   *OpenAIResponseOutput
@@ -90,9 +91,10 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
-	// 生图请求与客户端取消分离，上游继续完成生成并返回计费用量。
-	// 非流式请求若使用 DetachStreamUpstreamContext，会传递客户端取消，导致上游已产生费用而本地仅记录 502。
-	// 图片 OAuth 和 Grok 媒体也采用取消分离，上游等待响应头受 ResponseHeaderTimeout 限制。
+	// Detach image generation from client cancellation so completion can return billable usage.
+	// DetachStreamUpstreamContext propagates cancellation for non-streaming requests, which can discard usage
+	// after upstream costs accrue.
+	// Upstream response-header waits remain bounded by ResponseHeaderTimeout.
 	upstreamCtx, releaseUpstreamCtx := gatewayprovider.DetachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 

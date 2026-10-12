@@ -5,7 +5,8 @@ import (
 	"fmt"
 )
 
-// ManagementProviderMissing 保留批量预验证阶段的 404 展示，原始原因供内部错误链读取。
+// ManagementProviderMissing reports a missing provider during batch prevalidation and wraps the underlying
+// lookup error.
 type ManagementProviderMissing struct {
 	ID    int64
 	Cause error
@@ -25,7 +26,7 @@ type ManagementPatchResult struct {
 func (e *ManagementProviderMissing) Error() string { return fmt.Sprintf("Provider %d not found", e.ID) }
 func (e *ManagementProviderMissing) Unwrap() error { return e.Cause }
 
-// ValidateCredentialFieldValue 只允许原管理接口的三个字段和既有值类型。
+// ValidateCredentialFieldValue accepts a boolean warmup flag or nullable string account_uuid and org_uuid fields.
 func ValidateCredentialFieldValue(field string, value any) error {
 	switch field {
 	case "intercept_warmup_requests":
@@ -44,7 +45,8 @@ func ValidateCredentialFieldValue(field string, value any) error {
 	return nil
 }
 
-// PatchCredentials 保留先完整预验证、再逐项提交；只发送明确字段，锁内继承其他最新凭据与配置。
+// PatchCredentials validates every provider before submitting one-field patches, leaving other current
+// credentials to the store's merge.
 func (s *ManagementBatch) PatchCredentials(ctx context.Context, ids []int64, field string, value any) (*ManagementPatchResult, error) {
 	if err := ValidateCredentialFieldValue(field, value); err != nil {
 		return nil, err

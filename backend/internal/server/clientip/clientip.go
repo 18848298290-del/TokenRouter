@@ -35,7 +35,7 @@ func init() {
 	}
 }
 
-// SetForwardedIPSettings 为当前请求保存转发 IP 模式和自定义请求头列表的快照。
+// SetForwardedIPSettings copies forwarding mode and custom header names into the request snapshot.
 func SetForwardedIPSettings(c *gin.Context, enabled bool, headers []string) {
 	if c == nil {
 		return
@@ -63,9 +63,9 @@ func requestUsesLegacyForwardedIPTrust(c *gin.Context) bool {
 	return !ok || settings.trustForwarded
 }
 
-// GetClientIP 按可信代理加固前的转发头优先级解析客户端地址。
-// 该方法用于兼容请求元数据、用量和错误日志；安全敏感调用应使用
-// GetTrustedClientIP 或 GetSecurityClientIP。
+// GetClientIP resolves the client address using the request's forwarding policy.
+// Legacy mode trusts raw forwarding headers; security-sensitive callers should use
+// GetTrustedClientIP or GetSecurityClientIP to select the intended trust policy.
 func GetClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -80,8 +80,8 @@ func GetClientIP(c *gin.Context) string {
 		return customIP
 	}
 
-	// 保留现有反向代理部署依赖的历史优先级；当 XFF 中存在公网地址时，
-	// 跳过代理写入 X-Real-IP 的 Docker/Nginx 内部网桥地址。
+	// Prefer public forwarded addresses over private proxy bridge addresses,
+	// including Docker or Nginx addresses supplied in X-Real-IP.
 	legacyIP, legacyFallback := resolveLegacyForwardedHeaderIP(c)
 	if legacyIP != "" {
 		return legacyIP
@@ -157,9 +157,9 @@ func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
 	return "", fallback
 }
 
-// GetTrustedClientIP 从 Gin 的可信代理解析链提取客户端 IP。
-// 该方法依赖 gin.Engine.SetTrustedProxies 配置，不会优先直接信任原始转发头值。
-// 适用于 ACL / 风控等安全敏感场景。
+// GetTrustedClientIP normalizes the client IP resolved by Gin.
+// Configure gin.Engine.SetTrustedProxies to define which peers may supply forwarding headers.
+// Use this policy for ACL and other security-sensitive decisions.
 func GetTrustedClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -167,9 +167,9 @@ func GetTrustedClientIP(c *gin.Context) string {
 	return ipmatch.NormalizeIP(c.ClientIP())
 }
 
-// GetSecurityClientIP 返回安全敏感链路使用的客户端地址。
-// 兼容模式开启时由原始转发头接管解析；关闭时以 Gin 的
-// server.trusted_proxies 可信代理链为唯一权威来源。
+// GetSecurityClientIP resolves the address used by security-sensitive callers.
+// The request snapshot overrides trustForwarded. Legacy mode trusts raw headers;
+// otherwise Gin resolves the address using server.trusted_proxies.
 // @project-doc docs/operations/edge_security.md#trusted_client_ip
 func GetSecurityClientIP(c *gin.Context, trustForwarded bool) string {
 	if requestSettings, ok := requestForwardedIPSettings(c); ok {
@@ -181,7 +181,7 @@ func GetSecurityClientIP(c *gin.Context, trustForwarded bool) string {
 	return GetTrustedClientIP(c)
 }
 
-// normalizeValidIP 规范化并验证代理头中的候选值，避免把 unknown、主机名等非法值传给安全服务。
+// normalizeValidIP rejects hostnames, unknown, and other invalid header values and canonicalizes IP literals.
 func normalizeValidIP(value string) string {
 	normalized := ipmatch.NormalizeIP(value)
 	parsed := net.ParseIP(normalized)

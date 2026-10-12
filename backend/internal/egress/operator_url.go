@@ -1,6 +1,6 @@
 package egress
 
-// OperatorURLPolicy 保留运营方自定义出站地址的白名单和格式规则，不包含平台默认地址。
+// OperatorURLPolicy validates operator-supplied outbound URLs and their host allowlist.
 type OperatorURLPolicy struct {
 	Enabled           bool
 	AllowInsecureHTTP bool

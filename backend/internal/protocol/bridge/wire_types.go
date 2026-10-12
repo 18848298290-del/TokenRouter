@@ -10,7 +10,7 @@ import (
 
 const minMaxOutputTokens = 128
 
-// 桥接通过别名使用各 wire 包的协议类型和编解码。
+// Aliases share protocol types and JSON codecs with their owning wire packages.
 type (
 	AnthropicRequest      = anthropic.AnthropicRequest
 	AnthropicOutputConfig = anthropic.AnthropicOutputConfig

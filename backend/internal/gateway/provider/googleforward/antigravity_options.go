@@ -28,10 +28,10 @@ func (s *Antigravity) readUpstreamErrorBody(resp *http.Response) []byte {
 	return body
 }
 
-// getLogConfig 获取上游错误日志配置
-// 返回是否记录日志体和最大字节数。
+// getLogConfig returns whether to log upstream error bodies
+// and the maximum body length in bytes.
 func (s *Antigravity) getLogConfig() (logBody bool, maxBytes int) {
-	maxBytes = 2048 // 默认值
+	maxBytes = 2048 // Default byte limit.
 	if !s.Options.Configured {
 		return false, maxBytes
 	}
@@ -42,7 +42,7 @@ func (s *Antigravity) getLogConfig() (logBody bool, maxBytes int) {
 	return cfg.LogErrorBody, maxBytes
 }
 
-// getUpstreamErrorDetail 获取上游错误详情（用于日志记录）。
+// getUpstreamErrorDetail returns the configured, truncated error-body detail for logging.
 func (s *Antigravity) getUpstreamErrorDetail(body []byte) string {
 	logBody, maxBytes := s.getLogConfig()
 	if !logBody {
@@ -51,8 +51,8 @@ func (s *Antigravity) getUpstreamErrorDetail(body []byte) string {
 	return logredact.TruncateUTF8(string(body), maxBytes)
 }
 
-// getMappedModel 获取映射后的模型名
-// 优先使用提供商模型映射（支持通配符），未命中时使用默认映射。
+// getMappedModel resolves the upstream model.
+// Provider mappings, including wildcards, take precedence over the default mapping.
 func (s *Antigravity) getMappedModel(provider *gatewayprovider.ExecutionProvider, requestedModel string) string {
 	return provideradapter.MapAntigravityModel(gatewayprovider.ExecutionRecord(provider), requestedModel)
 }

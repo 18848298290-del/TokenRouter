@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	// gpt56LadderCatalogJSON 提供 GPT-5.6 的目录阶梯价格。
+	// gpt56LadderCatalogJSON supplies tiered GPT-5.6 catalog prices.
 	gpt56LadderCatalogJSON = `{
 	"gpt-5.6-sol": {"provider": "openai", "mode": "chat", "cache_write_multiplier": 1.25, "flex_multiplier": 0.5,
 		"input_cost_per_token": 5e-06, "input_cost_per_token_priority": 1e-05,
@@ -44,8 +44,8 @@ const (
 		"cache_read_input_token_cost_above_272k_tokens": 4e-08}
 }`
 
-	// openAILadderCatalogJSON 模拟同步目录：长上下文使用 above_272k 绝对价字段，
-	// 解析器将绝对价折算为计费阈值和倍率。
+	// openAILadderCatalogJSON models synced catalog data with absolute above_272k rates.
+	// The parser converts those rates into a threshold and multipliers.
 	openAILadderCatalogJSON = `{
 	"gpt-5.4": {"provider": "openai", "mode": "chat", "fast_multiplier": 2, "flex_multiplier": 0.5,
 		"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05,
@@ -60,7 +60,7 @@ const (
 }`
 )
 
-// TestCalculateCost_RateMultiplier_NegativeClampedToZero 检查负数倍率按零价计费。
+// TestCalculateCost_RateMultiplier_NegativeClampedToZero checks that negative multipliers produce zero charges.
 func TestCalculateCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 1000, OutputTokens: 500}
@@ -86,7 +86,8 @@ func TestCalculateCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 	}
 }
 
-// TestCalculateImageCost_RateMultiplier_NegativeClampedToZero 检查图片计费将负数倍率限制为零。
+// TestCalculateImageCost_RateMultiplier_NegativeClampedToZero checks that image charges clamp negative multipliers
+// to zero.
 func TestCalculateImageCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -116,7 +117,7 @@ func TestCalculateImageCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 func TestCalculateCost_BasicComputation(t *testing.T) {
 	svc := newTestCalculator()
 
-	// 使用 claude-sonnet-4 的回退价格：Input $3/MTok, Output $15/MTok
+	// The fixture prices claude-sonnet-4 at $3/MTok input and $15/MTok output.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:  1000,
 		OutputTokens: 500,
@@ -165,7 +166,7 @@ func TestCalculateCost_RateMultiplier(t *testing.T) {
 	cost2x, err := svc.CalculateCost("claude-sonnet-4", tokens, 2.0)
 	require.NoError(t, err)
 
-	// TotalCost 不受倍率影响，ActualCost 翻倍
+	// The multiplier leaves TotalCost unchanged and doubles ActualCost.
 	require.InDelta(t, cost1x.TotalCost, cost2x.TotalCost, 1e-10)
 	require.InDelta(t, cost1x.ActualCost*2, cost2x.ActualCost, 1e-10)
 }
@@ -216,7 +217,7 @@ func TestGetModelPricing_GLM52UsesOwnPrice(t *testing.T) {
 	pricing, err := svc.GetModelPricing("glm-5.2")
 	require.NoError(t, err)
 	require.NotNil(t, pricing)
-	// GLM-5.2 与 GLM-5.1 同价，不能被裸 glm-5 的子串匹配抢走。
+	// GLM-5.2 uses its own fixture rates, matching GLM-5.1; a glm-5 substring must not select another price.
 	require.InDelta(t, 1.4e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 4.4e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 0.26e-6, pricing.CacheReadPricePerToken, 1e-12)
@@ -246,7 +247,7 @@ func TestGetModelPricing_OpenAIGPT54Fallback(t *testing.T) {
 	require.InDelta(t, 2.5e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 0.25e-6, pricing.CacheReadPricePerToken, 1e-12)
-	// 长上下文阶梯来自目录的 above 字段。
+	// Long-context tiers require above-threshold catalog fields, which this fixture omits.
 	require.Zero(t, pricing.LongContextInputThreshold)
 	require.Zero(t, pricing.LongContextInputMultiplier)
 	require.Zero(t, pricing.LongContextOutputMultiplier)
@@ -542,12 +543,13 @@ func TestCalculateCost_OpenAIGPT55ProLongContextAppliesWholeSessionMultipliers(t
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead 覆盖问题 #2293：长上下文的缓存读取费用乘以 LongContextInputMultiplier。
-// 此处 CacheReadCost = tokens * 0.25e-6 * 2.0。
+// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead covers issue #2293: cache reads use
+// LongContextInputMultiplier.
+// Here CacheReadCost = tokens * 0.25e-6 * 2.0.
 func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 1000 + 300000 = 301000 > 272000 阈值
+	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:     1000,
 		CacheReadTokens: 300000,
@@ -571,11 +573,11 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead(t *tes
 	require.InDelta(t, expectedTotal, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice 检查普通上下文使用缓存读取基础价。
+// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice checks base cache-read rates below the threshold.
 func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 1000 + 100000 = 101000 < 272000 阈值，不触发长上下文
+	// InputTokens + CacheReadTokens = 101000, below the 272000 threshold.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:     1000,
 		CacheReadTokens: 100000,
@@ -590,12 +592,13 @@ func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice(t *test
 		"cache_read_cost should remain at base price when below long-context threshold")
 }
 
-// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation 覆盖问题 #2816：长上下文的缓存写入费用乘以 LongContextInputMultiplier。
-// 缓存写入独立读取价格，倍率为 2.0 时，漏乘会少计一半费用。
+// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation covers issue #2816: cache writes use
+// LongContextInputMultiplier.
+// Cache-write rates are read separately; omitting the 2x multiplier would halve their charge.
 func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 1000 + 300000 = 301000 > 272000 阈值
+	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:         1000,
 		CacheReadTokens:     300000,
@@ -606,17 +609,18 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation(t 
 	cost, err := svc.CalculateCost("gpt-5.4", tokens, 1.0)
 	require.NoError(t, err)
 
-	// gpt-5.4 fallback: CacheCreationPricePerToken = 2.5e-6, LongContextInputMultiplier = 2.0
+	// The fixture sets CacheCreationPricePerToken to 2.5e-6 and LongContextInputMultiplier to 2.0.
 	expectedCacheCreation := float64(tokens.CacheCreationTokens) * 2.5e-6 * 2.0
 	require.InDelta(t, expectedCacheCreation, cost.CacheCreationCost, 1e-10,
 		"cache_creation_cost should be scaled by LongContextInputMultiplier when long-context pricing applies")
 }
 
-// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice 检查普通上下文使用缓存写入基础价。
+// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice checks base cache-write rates below the
+// threshold.
 func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 1000 + 100000 = 101000 < 272000 阈值，不触发长上下文
+	// InputTokens + CacheReadTokens = 101000, below the 272000 threshold.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:         1000,
 		CacheReadTokens:     100000,
@@ -632,9 +636,10 @@ func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice(t *
 		"cache_creation_cost should remain at base price when below long-context threshold")
 }
 
-// TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h 验证覆盖 5m / 1h ephemeral 分类计费路径：长上下文触发时两档价格都应被倍率缩放。
-// 使用手工构造的 pricing（参考 TestCalculateCost_SupportsCacheBreakdown 的写法）
-// 以便同时控制 SupportsCacheBreakdown + 长上下文阈值。
+// TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h checks that both ephemeral cache-write
+// tiers receive the long-context multiplier.
+// A custom price fixture controls both cache breakdown support
+// and the long-context threshold.
 func TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h(t *testing.T) {
 	svc := newCalculatorWithPrices(nil, map[string]*billingpricing.ModelPricing{
 		"claude-sonnet-4": {
@@ -650,7 +655,7 @@ func TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h(t *tes
 		},
 	})
 
-	// InputTokens + CacheReadTokens = 1000 + 300000 = 301000 > 272000 阈值
+	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:           1000,
 		CacheReadTokens:       300000,
@@ -689,12 +694,12 @@ func TestGetModelPricing_DoubaoEmbeddingVisionImageInputRate(t *testing.T) {
 	}
 }
 
-// TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput 检查文本和图片输入分别计费。
-// 图片输入为零时按文本价计算，图片输入超过总输入时文本计费量为零。
+// TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput checks separate text and image input charges.
+// Zero image tokens use text rates; excess image tokens are capped at total input, leaving no text charge.
 func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	svc := newTestCalculator()
 
-	// 图文混合输入：prompt_tokens=1340，其中图片 token=28、文本 token=1312。
+	// Mixed input has 1340 prompt tokens: 28 image and 1312 text tokens.
 	cost, err := svc.CalculateCost("doubao-embedding-vision", billingpricing.UsageTokens{
 		InputTokens:      1340,
 		ImageInputTokens: 28,
@@ -707,14 +712,14 @@ func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	require.InDelta(t, wantText+wantImage, cost.TotalCost, 1e-15, "TotalCost 口径不变")
 	require.Zero(t, cost.OutputCost)
 
-	// 纯文本输入全部按文本价计算。
+	// Text-only input uses the text rate throughout.
 	textOnly := billingpricing.UsageTokens{InputTokens: 1340}
 	costText, err := svc.CalculateCost("doubao-embedding-vision", textOnly, 1.0)
 	require.NoError(t, err)
 	require.InDelta(t, float64(1340)*0.098e-6, costText.InputCost, 1e-15)
 	require.Zero(t, costText.ImageInputCost)
 
-	// 上游回传的图片 token 超过总输入时，图片计费量取总输入量。
+	// Cap upstream image token counts at total input tokens.
 	costWeird, err := svc.CalculateCost("doubao-embedding-vision", billingpricing.UsageTokens{
 		InputTokens:      10,
 		ImageInputTokens: 50,
@@ -725,10 +730,10 @@ func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	require.InDelta(t, float64(10)*0.252e-6, costWeird.TotalCost, 1e-15)
 }
 
-// TestComputeTokenBreakdown_GptImage2ImageEditIssue4386 验证复现 issue #4386：gpt-image-2 /v1/images/edits 带 1 张输入图。
-// 上游 usage：input_tokens=371（image_tokens=352 + text_tokens=19），
-// output_tokens=439（全部图片输出）。官方定价：文本输入 $5/1M、图片输入 $8/1M、
-// 文本输出 $10/1M、图片输出 $30/1M。图片输入按文本价计算会少计约 6.6%。
+// TestComputeTokenBreakdown_GptImage2ImageEditIssue4386 covers one input image in gpt-image-2 edits from issue #4386.
+// The fixture has 371 input tokens (352 image and 19 text) and 439 image output tokens.
+// Rates per million tokens are $5 text input, $8 image input, $10 text output, and $30 image output.
+// Charging image input at the text rate would undercharge this request by about 6.6%.
 func TestComputeTokenBreakdown_GptImage2ImageEditIssue4386(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -781,7 +786,7 @@ func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
-	// duration <= 0 时按上游默认 8 秒计费，超过 15 秒时按 15 秒计费。
+	// Nonpositive duration defaults to 8 seconds; duration above 15 seconds is capped at 15.
 	defaultDuration, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "720p", 1, 0, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -826,7 +831,7 @@ func TestCalculateGrokImagineImageCostUsesDefaultRateCard(t *testing.T) {
 func TestCalculateGrokImagineVideoCostUsesDefaultRateCard(t *testing.T) {
 	svc := newTestCalculator()
 
-	// 默认价目为 xAI 官方每秒价格，按 1 秒时长验证每秒单价。
+	// Use one second to check the fixture's per-second rates.
 	standard480P, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "480p", 1, 1, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -995,7 +1000,7 @@ func TestGetModelPricing_UnknownGrokTextFallsBackToGrok46(t *testing.T) {
 		require.ErrorIs(t, err, billingpricing.ErrModelPricingUnavailable)
 	}
 
-	// 已知价格卡保持自身费率，不回退到 4.5 系列底价。
+	// The registered price card takes precedence over a 4.5 family price.
 	build, err := svc.GetModelPricing("grok-build-0.1")
 	require.NoError(t, err)
 	require.InDelta(t, 1e-6, build.InputPricePerToken, 1e-12)
@@ -1339,7 +1344,7 @@ func TestCalculateCostWithServiceTier_ClaudeOpus48FastUsesDoublePricing(t *testi
 	fastCost, err := svc.CalculateCostWithServiceTier("claude-opus-4-8", tokens, 1.0, "priority")
 	require.NoError(t, err)
 
-	// Claude Opus 4.8 Fast mode 官方价格是常规定价的 2 倍。
+	// The fixture's Claude Opus 4.8 Fast rates are twice its standard rates.
 	require.InDelta(t, baseCost.InputCost*2, fastCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*2, fastCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost*2, fastCost.CacheCreationCost, 1e-10)
@@ -1494,11 +1499,11 @@ func TestGetModelPricingWithConfig_OverrideInputPriceOnly(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// InputPrice overridden; this fallback model has no catalog priority price.
+	// The input override applies to standard rates; this catalog model has no priority price.
 	require.InDelta(t, 99e-6, pricing.InputPricePerToken, 1e-12)
 	require.Zero(t, pricing.InputPricePerTokenPriority)
 
-	// OutputPrice unchanged (claude-sonnet-4 fallback = 15e-6)
+	// The catalog output price remains 15e-6.
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
@@ -1512,7 +1517,7 @@ func TestGetModelPricingWithConfig_PriceMultiplierAppliesAfterOverrides(t *testi
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// 手动输入价和继承的默认输出价都在最终阶段应用倍率。
+	// The multiplier applies after merging the manual input rate and inherited output rate.
 	require.InDelta(t, 20e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 30e-6, pricing.OutputPricePerToken, 1e-12)
 }
@@ -1528,7 +1533,7 @@ func TestGetModelPricingWithConfig_PreservesNativeTierRatio(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GPT-5.4 的目录 priority 价为普通价 2 倍；目录未提供 cache-write priority 时继续保持未配置。
+	// GPT-5.4 priority rates are twice standard rates; an absent cache-write priority price stays unset.
 	require.InDelta(t, 20e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 80e-6, pricing.OutputPricePerTokenPriority, 1e-12)
 	require.Zero(t, pricing.CacheCreationPricePerTokenPriority)
@@ -1561,7 +1566,7 @@ func TestCalculateCostWithPricingConfigFastModeMultiplierUsesFinalStandardPrice(
 	fast, err := svc.CalculateCostInternal("gpt-5.4", tokens, 1, "priority", configPricing)
 	require.NoError(t, err)
 
-	// 共享价格配置倍率覆盖模型内置 priority 单价，并作用于文本、图片和缓存费用。
+	// The configured multiplier overrides catalog priority rates for text, image, and cache charges.
 	require.InDelta(t, standard.InputCost*1.5, fast.InputCost, 1e-12)
 	require.InDelta(t, standard.ImageInputCost*1.5, fast.ImageInputCost, 1e-12)
 	require.InDelta(t, standard.OutputCost*1.5, fast.OutputCost, 1e-12)
@@ -1595,11 +1600,11 @@ func TestGetModelPricingWithConfig_OverrideOutputPriceOnly(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// OutputPrice overridden; this fallback model has no catalog priority price.
+	// The output override applies to standard rates; this catalog model has no priority price.
 	require.InDelta(t, 88e-6, pricing.OutputPricePerToken, 1e-12)
 	require.Zero(t, pricing.OutputPricePerTokenPriority)
 
-	// InputPrice unchanged (claude-sonnet-4 fallback = 3e-6)
+	// The catalog input price remains 3e-6.
 	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
 }
 
@@ -1680,7 +1685,7 @@ func TestGetModelPricingWithConfig_CacheReadPriceAffectsPriority(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// CacheReadPrice 覆盖普通价，此型号未配置 priority 价。
+	// CacheReadPrice overrides the standard rate; this model has no configured priority rate.
 	require.InDelta(t, 2e-6, pricing.CacheReadPricePerToken, 1e-12)
 	require.Zero(t, pricing.CacheReadPricePerTokenPriority)
 }
@@ -1703,7 +1708,7 @@ func TestGetModelPricingWithConfig_NilImageOutputPriceZerosAndMarksExplicit(t *t
 	chPricing := &routing.ModelPricingEntry{
 		InputPrice:  testPtrFloat64(10e-6),
 		OutputPrice: testPtrFloat64(20e-6),
-		// 图片输出价格有意保持为空
+		// Leave image output pricing unset to test inheritance.
 	}
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
@@ -1728,9 +1733,9 @@ func TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback(t *testing.T) {
 	}
 	bd := svc.ComputeTokenBreakdown(pricing, tokens, 1.0, "", false)
 
-	// 图片输出令牌不应回退到常规输出价格
+	// An explicit zero image-output rate prevents use of the text-output rate.
 	require.Equal(t, 0.0, bd.ImageOutputCost)
-	// 文本输出令牌 = 200 - 50 = 150
+	// Text output tokens = 200 - 50 = 150.
 	require.InDelta(t, 150*15e-6, bd.OutputCost, 1e-12)
 }
 
@@ -1750,13 +1755,13 @@ func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *te
 	}
 	bd := svc.ComputeTokenBreakdown(pricing, tokens, 1.0, "", false)
 
-	// 未设置图片输出价时使用常规输出价。
+	// An unset image-output rate uses the text-output rate.
 	require.InDelta(t, 50*15e-6, bd.ImageOutputCost, 1e-12)
-	// 文本输出令牌 = 200 - 50 = 150
+	// Text output tokens = 200 - 50 = 150.
 	require.InDelta(t, 150*15e-6, bd.OutputCost, 1e-12)
 }
 
-// TestCalculateCostUnified_LongContextContract 覆盖当前入口的整段计价及实际扣费标记。
+// TestCalculateCostUnified_LongContextContract checks whole-request pricing and the actual-charge marker.
 func TestCalculateCostUnified_LongContextContract(t *testing.T) {
 	svc := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, svc)
@@ -1818,12 +1823,12 @@ func TestCalculateCostUnified_NilResolver_FallsBackToOldPath(t *testing.T) {
 	cost, err := svc.CalculateCostUnified(input)
 	require.NoError(t, err)
 
-	// 缺少解析器时，结果等于 CalculateCost 的结果。
+	// With no resolver, costs match the direct token calculation.
 	expected, err := svc.CalculateCostInternal("claude-sonnet-4", tokens, 1.0, "", nil)
 	require.NoError(t, err)
 	require.InDelta(t, expected.TotalCost, cost.TotalCost, 1e-10)
 	require.InDelta(t, expected.ActualCost, cost.ActualCost, 1e-10)
-	// Resolver 为 nil 时，CalculateCostUnified 返回的 BillingMode 为空。
+	// The no-resolver path leaves BillingMode empty.
 	require.Empty(t, cost.BillingMode)
 }
 
@@ -1929,7 +1934,7 @@ func TestCalculateCostUnified_AppliesPricingConfigPriceMultiplierBeforeRateMulti
 	})
 	require.NoError(t, err)
 
-	// 输入价 5e-6、继承输出价 15e-6，先乘共享价格配置 2x，再乘分组 3x。
+	// Input 5e-6 and inherited output 15e-6 receive the configured 2x multiplier, then the group 3x multiplier.
 	expectedTotal := 100*10e-6 + 10*30e-6
 	require.InDelta(t, expectedTotal, cost.TotalCost, 1e-12)
 	require.InDelta(t, expectedTotal*3, cost.ActualCost, 1e-12)
@@ -1958,7 +1963,6 @@ func TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens(t *tes
 }
 
 func TestCalculateCostUnified_PerRequestMode(t *testing.T) {
-	// Set up a PricingConfigService with a per-request pricing configPricing
 	cs := newTestPricingConfigServiceWithCache(t, &routingtestkit.ModelConfigData{
 		Prices: map[routingtestkit.ModelKey]*routing.ModelPricingEntry{
 			{GroupID: 1, Model: "claude-sonnet-4"}: {
@@ -2128,8 +2132,8 @@ func TestCalculateCostUnified_ImageMode(t *testing.T) {
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
 }
 
-// TestCalculateCostUnified_RateMultiplierZeroProducesZero 检查零倍率的计费结果。
-// 保存时要求倍率大于 0，计费层收到 0 时按零价计费。
+// TestCalculateCostUnified_RateMultiplierZeroProducesZero checks zero-multiplier charges.
+// The calculation accepts zero even though saved group multipliers must be positive.
 func TestCalculateCostUnified_RateMultiplierZeroProducesZero(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -2148,7 +2152,8 @@ func TestCalculateCostUnified_RateMultiplierZeroProducesZero(t *testing.T) {
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCostUnified_NegativeRateMultiplierClampedToZero 检查统一计费把负数倍率限制为零。
+// TestCalculateCostUnified_NegativeRateMultiplierClampedToZero checks that unified billing clamps negative
+// multipliers to zero.
 func TestCalculateCostUnified_NegativeRateMultiplierClampedToZero(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -2209,7 +2214,8 @@ func TestCalculateCostUnified_UsesPreResolvedPricing(t *testing.T) {
 	require.Equal(t, string(routing.BillingModePerRequest), cost.BillingMode)
 }
 
-// TestEmptyCatalogNeverRecreatesHistoricalPrices 覆盖原静态表全部型号，防止在其他入口恢复回退。
+// TestEmptyCatalogNeverRecreatesHistoricalPrices checks all historical fixture models remain unpriced without a
+// catalog.
 func TestEmptyCatalogNeverRecreatesHistoricalPrices(t *testing.T) {
 	calculator := billing.NewCalculator(nil, billing.CalculatorOptions{})
 	for model := range testkit.HistoricalPrices() {
@@ -2224,13 +2230,13 @@ func TestCalculateSearchCost(t *testing.T) {
 	t.Parallel()
 	s := testkit.Calculator(nil, map[string]*billingpricing.ModelPricing{})
 	require.Equal(t, 0.0, s.CalculateSearchCost(0, floatPtr(10), 1).ActualCost)
-	// 配置和目录均缺价时，费用记为零。
+	// Missing configured and catalog rates produce zero cost.
 	require.Zero(t, s.CalculateSearchCost(5, nil, 1).ActualCost)
-	// 配置值为零表示免费。
+	// An explicit zero price means free usage.
 	require.Equal(t, 0.0, s.CalculateSearchCost(5, floatPtr(0), 1).ActualCost)
 	price := 10.0
 	cost := s.CalculateSearchCost(100, &price, 1.5)
-	// 计算方式为 10 / 1000 * 100 * 1.5 = 1.5。
+	// The charge is 10 / 1000 * 100 * 1.5 = 1.5.
 	require.InDelta(t, 1.0, cost.TotalCost, 1e-9)
 	require.InDelta(t, 1.5, cost.ActualCost, 1e-9)
 }
@@ -2244,20 +2250,20 @@ func TestCalculateAudioCost(t *testing.T) {
 	require.InDelta(t, 1.5, s.CalculateAudioCost("tts", 0.1, cfg, 1).ActualCost, 1e-9)
 	require.InDelta(t, 0.25, s.CalculateAudioCost("stt", 0.5, cfg, 1).ActualCost, 1e-9)
 	require.Equal(t, 0.0, s.CalculateAudioCost("unknown", 1, cfg, 1).ActualCost)
-	// 没有操作价格目录时各模式均不猜默认金额。
+	// Without operation prices, each mode records zero cost.
 	require.Zero(t, s.CalculateAudioCost("realtime", 1, nil, 1).ActualCost)
 	require.Zero(t, s.CalculateAudioCost("tts", 1, nil, 1).ActualCost)
 	require.Zero(t, s.CalculateAudioCost("stt", 1, nil, 1).ActualCost)
-	// 配置值为零表示免费。
+	// An explicit zero price means free usage.
 	zero := 0.0
 	require.Equal(t, 0.0, s.CalculateAudioCost("realtime", 1, &billingpricing.AudioPriceConfig{RealtimePerMin: &zero}, 1).ActualCost)
 }
 
-// TestCalculateImageCost_DefaultPricing 测试无分组配置时使用目录的独立按张价格。
+// TestCalculateImageCost_DefaultPricing checks per-image catalog rates without group overrides.
 func TestCalculateImageCost_DefaultPricing(t *testing.T) {
-	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{}) // 使用完整型号的目录价
+	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{}) // Use the full model name's catalog entry.
 
-	// 目录的 2K 单张价格为 $0.201。
+	// The fixture's 2K rate is $0.201 per image.
 	cost, mediaErr := svc.CalculateImageCost("gemini-3-pro-image", "2K", 1, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -2265,7 +2271,6 @@ func TestCalculateImageCost_DefaultPricing(t *testing.T) {
 	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)
 	require.InDelta(t, 0.201, cost.ActualCost, 0.0001)
 
-	// 多张图片
 	cost, mediaErr = svc.CalculateImageCost("gemini-3-pro-image", "2K", 3, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -2288,11 +2293,11 @@ func TestCalculateImageCost_NormalizesInvalidSizeTo2K(t *testing.T) {
 	}
 }
 
-// TestCalculateImageCost_Explicit4KPrice 检查目录的 4K 单张价格。
+// TestCalculateImageCost_Explicit4KPrice checks the catalog's 4K per-image rate.
 func TestCalculateImageCost_Explicit4KPrice(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
-	// 目录的 4K 单张价格为 $0.268。
+	// The fixture's 4K rate is $0.268 per image.
 	cost, mediaErr := svc.CalculateImageCost("gemini-3-pro-image", "4K", 1, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -2300,19 +2305,17 @@ func TestCalculateImageCost_Explicit4KPrice(t *testing.T) {
 	require.InDelta(t, 0.268, cost.TotalCost, 0.0001)
 }
 
-// TestCalculateImageCost_RateMultiplier 测试费率倍数。
+// TestCalculateImageCost_RateMultiplier checks that image charges apply the group multiplier.
 func TestCalculateImageCost_RateMultiplier(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
-	// 费率倍数 1.5x
 	cost, mediaErr := svc.CalculateImageCost("gemini-3-pro-image", "2K", 1, 1.5)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
-	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)   // TotalCost = 0.134 * 1.5
+	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)   // TotalCost uses the 2K unit price before the group multiplier.
 	require.InDelta(t, 0.3015, cost.ActualCost, 0.0001) // ActualCost = 0.201 * 1.5
 
-	// 费率倍数 2.0x
 	cost, mediaErr = svc.CalculateImageCost("gemini-3-pro-image", "2K", 2, 2.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -2321,7 +2324,7 @@ func TestCalculateImageCost_RateMultiplier(t *testing.T) {
 	require.InDelta(t, 0.804, cost.ActualCost, 0.0001)
 }
 
-// TestCalculateImageCost_ZeroCount 测试 imageCount=0。
+// TestCalculateImageCost_ZeroCount checks that no images produce zero cost.
 func TestCalculateImageCost_ZeroCount(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2333,7 +2336,7 @@ func TestCalculateImageCost_ZeroCount(t *testing.T) {
 	require.Equal(t, 0.0, cost.ActualCost)
 }
 
-// TestCalculateImageCost_NegativeCount 测试 imageCount=-1。
+// TestCalculateImageCost_NegativeCount checks that negative counts produce zero cost.
 func TestCalculateImageCost_NegativeCount(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2345,7 +2348,7 @@ func TestCalculateImageCost_NegativeCount(t *testing.T) {
 	require.Equal(t, 0.0, cost.ActualCost)
 }
 
-// TestCalculateImageCost_ZeroRateMultiplier 检查图片计费收到零倍率时返回零费用。
+// TestCalculateImageCost_ZeroRateMultiplier checks that a zero multiplier produces zero image charges.
 func TestCalculateImageCost_ZeroRateMultiplier(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2357,7 +2360,7 @@ func TestCalculateImageCost_ZeroRateMultiplier(t *testing.T) {
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 }
 
-// TestGetDefaultImagePrice_UnknownModel 验证缺少目录报价时返回缺价错误。
+// TestGetDefaultImagePrice_UnknownModel checks that absent catalog prices return the missing-price error.
 func TestGetDefaultImagePrice_UnknownModel(t *testing.T) {
 	svc := testkit.Calculator(nil, nil)
 	for _, size := range []string{"1K", "2K", "4K"} {
@@ -2456,7 +2459,7 @@ func TestDisplayPricingCarriesConfigTimePricingAndMaxReasoningMultiplier(t *test
 
 	display := service.DisplayPricingWithResolvedMultipliers("claude-sonnet-4", 2, resolved)
 
-	// 单价按 1x 时段展示，分时规则和 Max 倍率交给前端单独说明。
+	// Display base rates at 1x; expose time schedules and Max multipliers separately for the UI.
 	require.InDelta(t, 10e-6, display.InputPricePerToken, 1e-15)
 	require.NotNil(t, display.MaxReasoningEffortMultiplier)
 	require.Equal(t, 1.5, *display.MaxReasoningEffortMultiplier)
@@ -2476,7 +2479,7 @@ func TestDisplayPricingOmitsNeutralModifiers(t *testing.T) {
 		ConfigPricing: &routing.ModelPricingEntry{
 			BillingMode: routing.BillingModeToken,
 			InputPrice:  floatPtr(5e-6),
-			// 重叠时段在结算时按 1x 处理，展示同样省略。
+			// Overlapping periods are omitted from display because settlement treats them as 1x.
 			TimePricing: &routing.TimePricingConfig{
 				Timezone: "UTC",
 				Periods: []routing.TimePricingPeriod{
@@ -2519,7 +2522,7 @@ func newLadderCalculator(t *testing.T) *billing.Calculator {
 	return newCalculator(newStubCatalogFromJSON(t, openAILadderCatalogJSON))
 }
 
-// newTestPricingConfigServiceWithCache 用给定缓存快照构造价格配置服务。
+// newTestPricingConfigServiceWithCache constructs a pricing service from the supplied cache snapshot.
 func newTestPricingConfigServiceWithCache(t *testing.T, cache *routingtestkit.ModelConfigData) *routing.PricingConfigService {
 	t.Helper()
 
@@ -2528,7 +2531,7 @@ func newTestPricingConfigServiceWithCache(t *testing.T, cache *routingtestkit.Mo
 	return cs
 }
 
-// newStubCatalogFromJSON 通过与生产相同的解析路径创建价格目录 stub。
+// newStubCatalogFromJSON parses a catalog fixture through the production decoder and validator.
 func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	t.Helper()
 	raw, err := billingpricing.DecodeCatalogEntries([]byte(body))

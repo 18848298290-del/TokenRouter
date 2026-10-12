@@ -7,12 +7,12 @@ import (
 	"syscall"
 )
 
-// TransportFailure 只描述技术故障，提供商摘除、重试和观察仍由调用方决定。
+// TransportFailure classifies technical failures; callers decide provider removal and retries.
 type TransportFailure struct {
 	Persistent bool
 }
 
-// ClassifyTransportFailure 按 errno、DNS 和代理错误文本分类传输故障。
+// ClassifyTransportFailure identifies persistent failures from errno, DNS, and proxy error text.
 func ClassifyTransportFailure(err error) TransportFailure {
 	if err == nil {
 		return TransportFailure{}

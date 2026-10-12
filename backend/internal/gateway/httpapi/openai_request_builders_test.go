@@ -70,7 +70,7 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
 
-	// 与相同 OAuth 请求对照，检查认证模式下的会话隔离和提示缓存结果。
+	// Compare the same OAuth request to check session isolation and prompt caching across authentication modes.
 	oauthProvider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, ID: 26,
@@ -159,7 +159,7 @@ func newFingerprintExecutionProvider(id int64, extra map[string]any) *gatewaypro
 
 func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
-	// 开启指纹统一开关后，检查透传请求的出站头（#5610）。
+	// Check outbound passthrough headers with fingerprint unification enabled (#5610).
 	provider := newFingerprintExecutionProvider(2001, map[string]any{
 		"openai_oauth_passthrough": true,
 		"codex_fingerprint_mode":   "session",
@@ -171,7 +171,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	c.Request.Header.Set("originator", "codex_cli_rs")
 	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt"}`)
 
-	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（默认 session 模式）
+	// Reproduce passthrough parsing and staging with the default session mode.
 	ids := provideradapter.CodexFingerprintIDsFromRequest(provider.View(), c.Request.Header)
 	require.NotNil(t, ids)
 	StageCodexFingerprintIDs(c, ids)
@@ -518,8 +518,8 @@ func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testi
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t *testing.T) {
-	// 上游要求 originator 与最终 User-Agent 首段配套（issue #3901）：
-	// originator 一律由最终 UA 推导；推导不出官方身份时整体回退默认 Codex TUI 身份。
+	// The upstream requires originator to match the leading token of the final User-Agent (issue #3901).
+	// Derive originator from the final UA; an unrecognized identity uses the default Codex TUI identity.
 	tests := []struct {
 		name           string
 		userAgent      string

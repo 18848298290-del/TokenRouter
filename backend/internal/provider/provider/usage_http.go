@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usagecontract"
 )
 
-// UsageHTTPOptions 保存用量查询接口和出站策略。
+// UsageHTTPOptions supplies usage-query transport and outbound URL policy.
 type UsageHTTPOptions struct {
 	Available  bool
 	Policy     egress.UsageURLPolicy
@@ -80,7 +80,7 @@ func usageHTTPRequest(value *provider.Record, query provider.UpstreamUsageQueryC
 	}, nil
 }
 
-// UpstreamUsageBaseURL 只选择原查询根地址，具体供应商仍按原规则替换路径。
+// UpstreamUsageBaseURL selects a platform root; the usage adapter supplies its endpoint path.
 func UpstreamUsageBaseURL(value *provider.Record) string {
 	if value == nil {
 		return ""

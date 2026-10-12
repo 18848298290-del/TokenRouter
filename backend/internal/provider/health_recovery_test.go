@@ -35,7 +35,7 @@ type recoverTokenInvalidatorStub struct {
 	err       error
 }
 
-// 恢复反馈夹具只记录已提交的清理通知。
+// runtimeBlockRecorder records scheduling-block cleanup notifications.
 type runtimeBlockRecorder struct{ clearedIDs []int64 }
 
 func (r *rateLimitClearRepoStub) GetByID(ctx context.Context, id int64) (*Record, error) {

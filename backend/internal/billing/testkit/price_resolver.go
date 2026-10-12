@@ -16,12 +16,12 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// ResolverCalculator 为区间用例提供独立的基础价输入。
+// ResolverCalculator supplies independent base prices for interval tests.
 func ResolverCalculator() *billing.Calculator {
 	return Calculator(nil, ResolverFallbackPrices())
 }
 
-// ResolverFallbackPrices 每个夹具独立持有输入，避免从计算器读取私有状态。
+// ResolverFallbackPrices returns a fresh price map for each fixture.
 func ResolverFallbackPrices() map[string]*billingpricing.ModelPricing {
 	return map[string]*billingpricing.ModelPricing{"claude-sonnet-4": {
 		InputPricePerToken:         3e-6,
@@ -32,7 +32,7 @@ func ResolverFallbackPrices() map[string]*billingpricing.ModelPricing {
 	}}
 }
 
-// ResolverWithCards 使用指定的基础定价构造共享价格配置解析器。
+// ResolverWithCards constructs a shared pricing configuration resolver with the given base prices.
 func ResolverWithCards(t *testing.T, bs *billing.Calculator, pricing []routing.ModelPricingEntry) *billing.PriceResolver {
 	t.Helper()
 	const groupID = 100
@@ -62,10 +62,10 @@ func ResolverWithCards(t *testing.T, bs *billing.Calculator, pricing []routing.M
 	return PriceResolver(cs, bs)
 }
 
-// GroupID 返回约定的测试分组编号。
+// GroupID returns the group ID used by ResolverWithCards.
 func GroupID() *int64 { v := int64(100); return &v }
 
-// PriceResolver 仅组合测试输入，测试直接使用原生解析器。
+// PriceResolver wires test inputs into the production resolver.
 func PriceResolver(pricingConfigs *routing.PricingConfigService, calculator *billing.Calculator) *billing.PriceResolver {
 	var source billing.ConfigPrices
 	var stats billing.ProviderStatsSource
@@ -78,7 +78,7 @@ func PriceResolver(pricingConfigs *routing.PricingConfigService, calculator *bil
 	}, stats)
 }
 
-// SharedPriceResolver 用真实配置服务为单个测试分组提供价卡和计费设置。
+// SharedPriceResolver supplies cards and billing settings for one group through the configuration service.
 func SharedPriceResolver(calculator *billing.Calculator, groupID int64, settings billingpricing.BillingSettings, cards []routing.ModelPricingEntry) *billing.PriceResolver {
 	rows := []routingtestkit.Configuration{{ID: groupID, Status: routing.StatusActive, GroupIDs: []int64{groupID}, BillingSettings: &settings, ModelPricing: cards}}
 	configs := routingtestkit.ModelConfigFromData(routingtestkit.ModelConfigDataFromRows(rows, nil))

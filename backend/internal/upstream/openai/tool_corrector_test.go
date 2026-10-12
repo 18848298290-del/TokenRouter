@@ -417,14 +417,14 @@ func TestComplexSSEData(t *testing.T) {
 	}
 }
 
-// TestCorrectToolParameters 测试工具参数修正。
+// TestCorrectToolParameters checks OpenCode argument key conversion.
 func TestCorrectToolParameters(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
 	tests := []struct {
 		name     string
 		input    string
-		expected map[string]bool // key: 期待存在的参数, value: true表示应该存在
+		expected map[string]bool // parameter name -> expected presence
 	}{
 		{
 			name: "rename work_dir to workdir in bash tool",
@@ -470,13 +470,11 @@ func TestCorrectToolParameters(t *testing.T) {
 				t.Error("expected data to be corrected")
 			}
 
-			// 解析修正后的数据
 			var result map[string]any
 			if err := json.Unmarshal([]byte(corrected), &result); err != nil {
 				t.Fatalf("failed to parse corrected data: %v", err)
 			}
 
-			// 检查工具调用
 			toolCalls, ok := result["tool_calls"].([]any)
 			if !ok || len(toolCalls) == 0 {
 				t.Fatal("no tool_calls found in corrected data")
@@ -502,7 +500,6 @@ func TestCorrectToolParameters(t *testing.T) {
 				t.Fatalf("failed to parse arguments: %v", err)
 			}
 
-			// 验证期望的参数
 			for param, shouldExist := range tt.expected {
 				_, exists := args[param]
 				if shouldExist && !exists {
@@ -516,7 +513,7 @@ func TestCorrectToolParameters(t *testing.T) {
 	}
 }
 
-// ResetStats 重置统计信息。
+// ResetStats clears the tool rename counters under the statistics lock.
 func (c *CodexToolCorrector) ResetStats() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -525,17 +522,15 @@ func (c *CodexToolCorrector) ResetStats() {
 	c.stats.CorrectionsByTool = make(map[string]int)
 }
 
-// GetToolNameMapping 获取工具名称映射表。
+// GetToolNameMapping returns an independent copy of the tool-name mappings.
 func GetToolNameMapping() map[string]string {
-	// 返回副本以避免外部修改
 	mapping := make(map[string]string, len(codexToolNameMapping))
 	maps.Copy(mapping, codexToolNameMapping)
 	return mapping
 }
 
-// TestOpenAIGatewayService_ToolCorrection 检查响应体中的工具名称修正。
+// TestOpenAIGatewayService_ToolCorrection checks response-body tool renames and unchanged payloads.
 func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
-	// 修正器同时记录工具名称修改次数。
 	corrector := NewCodexToolCorrector()
 
 	tests := []struct {
@@ -585,17 +580,14 @@ func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 			result := corrector.CorrectResponseBody(tt.input)
 			resultStr := string(result)
 
-			// 检查是否包含期望的工具名称
 			if !strings.Contains(resultStr, tt.expected) {
 				t.Errorf("expected result to contain %q, got %q", tt.expected, resultStr)
 			}
 
-			// 对于预期有变化的情况，验证结果与输入不同
 			if tt.changed && string(result) == string(tt.input) {
 				t.Error("expected result to be different from input, but they are the same")
 			}
 
-			// 对于预期无变化的情况，验证结果与输入相同
 			if !tt.changed && string(result) != string(tt.input) {
 				t.Error("expected result to be same as input, but they are different")
 			}
@@ -603,7 +595,7 @@ func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 	}
 }
 
-// TestOpenAIGatewayService_ToolCorrectorInitialization 测试工具修正器是否正确初始化。
+// TestOpenAIGatewayService_ToolCorrectorInitialization verifies that a fresh corrector can rename a tool.
 func TestOpenAIGatewayService_ToolCorrectorInitialization(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
@@ -611,7 +603,6 @@ func TestOpenAIGatewayService_ToolCorrectorInitialization(t *testing.T) {
 		t.Fatal("toolCorrector should not be nil")
 	}
 
-	// 测试修正器可以正常工作
 	data := `{"tool_calls":[{"function":{"name":"apply_patch"}}]}`
 	corrected, changed := corrector.CorrectToolCallsInSSEData(data)
 
@@ -624,11 +615,10 @@ func TestOpenAIGatewayService_ToolCorrectorInitialization(t *testing.T) {
 	}
 }
 
-// TestToolCorrectionStats 测试工具修正统计功能。
+// TestToolCorrectionStats checks total and per-rename counts across repeated tools.
 func TestToolCorrectionStats(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
-	// 执行几次修正
 	testData := []string{
 		`{"tool_calls":[{"function":{"name":"apply_patch"}}]}`,
 		`{"tool_calls":[{"function":{"name":"update_plan"}}]}`,

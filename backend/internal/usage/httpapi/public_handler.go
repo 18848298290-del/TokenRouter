@@ -58,7 +58,7 @@ func (h *PublicUsageHandler) calculateSubscriptionRemaining(sub *billingcore.Use
 	return billingcore.SubscriptionRemainingForDisplay(sub)
 }
 
-// apiKeyUsageSubscriptionPayload 返回订阅资金来源的额度快照。
+// apiKeyUsageSubscriptionPayload returns a subscription funding snapshot.
 func apiKeyUsageSubscriptionPayload(subscription *billingcore.UserSubscription) gin.H {
 	if subscription == nil {
 		return nil
@@ -78,8 +78,8 @@ func apiKeyUsageSubscriptionPayload(subscription *billingcore.UserSubscription) 
 	}
 }
 
-// buildAPIKeyUsageBilling 生成 /v1/usage 的稳定资金来源视图。
-// 返回内容严格遵循 Key 的结算模式，不能因为查询时套餐失效而泄露或回退到余额。
+// buildAPIKeyUsageBilling builds the funding-source view for /v1/usage.
+// It follows the key's billing mode; an unavailable selected subscription must not expose wallet funds.
 func (h *PublicUsageHandler) buildAPIKeyUsageBilling(c *gin.Context, ctx context.Context, apiKey *keycore.APIKey, subject authctx.AuthSubject, balanceUnitName string) (gin.H, *billingcore.UserSubscription, *float64, error) {
 	mode := keycore.APIKeyEffectiveBillingMode(apiKey)
 	billing := gin.H{
@@ -132,7 +132,7 @@ func (h *PublicUsageHandler) buildAPIKeyUsageBilling(c *gin.Context, ctx context
 	return billing, nil, &balance, nil
 }
 
-// UsageUnrestricted 处理 unrestricted 模式的响应（向后兼容）。
+// UsageUnrestricted returns subscription or wallet details using the unrestricted response format.
 func (h *PublicUsageHandler) UsageUnrestricted(c *gin.Context, ctx context.Context, apiKey *keycore.APIKey, subject authctx.AuthSubject, usageData gin.H, dailyUsage any, modelStats any, balanceUnitName string) {
 	billing, subscription, balance, billingErr := h.buildAPIKeyUsageBilling(c, ctx, apiKey, subject, balanceUnitName)
 	if billingErr != nil {
@@ -181,7 +181,7 @@ func (h *PublicUsageHandler) UsageUnrestricted(c *gin.Context, ctx context.Conte
 		return
 	}
 
-	// 余额模式只返回付款主体余额，指定订阅失效时不会到达这个分支。
+	// This branch exposes the payer's wallet; unavailable selected subscriptions remain in the subscription branch.
 	currentBalance := 0.0
 	if balance != nil {
 		currentBalance = *balance
@@ -208,7 +208,7 @@ func (h *PublicUsageHandler) UsageUnrestricted(c *gin.Context, ctx context.Conte
 	c.JSON(http.StatusOK, resp)
 }
 
-// usageQuotaLimited 处理 quota_limited 模式的响应。
+// usageQuotaLimited returns key limits and usage in the quota_limited format.
 func (h *PublicUsageHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, apiKey *keycore.APIKey, subject authctx.AuthSubject, usageData gin.H, dailyUsage any, modelStats any, balanceUnitName string) {
 	resp := gin.H{
 		"mode":    "quota_limited",
@@ -233,7 +233,7 @@ func (h *PublicUsageHandler) usageQuotaLimited(c *gin.Context, ctx context.Conte
 		resp["balance"] = *balance
 	}
 
-	// 总额度信息
+	// Lifetime key quota.
 	if apiKey.Quota > 0 {
 		remaining := apiKey.GetQuotaRemaining()
 		resp["quota"] = gin.H{
@@ -246,7 +246,7 @@ func (h *PublicUsageHandler) usageQuotaLimited(c *gin.Context, ctx context.Conte
 		resp["unit"] = balanceUnitName
 	}
 
-	// 速率限制信息（从 DB 获取实时用量）
+	// Read current spending-window usage from the key service.
 	if apiKey.HasRateLimits() && h.apiKeyService != nil {
 		rateLimitData, err := h.apiKeyService.GetRateLimitData(ctx, apiKey.ID)
 		if err == nil && rateLimitData != nil {
@@ -299,7 +299,7 @@ func (h *PublicUsageHandler) usageQuotaLimited(c *gin.Context, ctx context.Conte
 		}
 	}
 
-	// 过期时间
+	// Key expiration.
 	if apiKey.ExpiresAt != nil {
 		resp["expires_at"] = apiKey.ExpiresAt
 		resp["days_until_expiry"] = apiKey.GetDaysUntilExpiry()
@@ -330,7 +330,7 @@ func (h *PublicUsageHandler) buildAPIKeyDailyUsage(c *gin.Context, apiKeyID int6
 	return stats
 }
 
-// buildUsageData 构建 today/total 用量摘要。
+// buildUsageData builds today's and retained-total usage summaries.
 func (h *PublicUsageHandler) buildUsageData(ctx context.Context, apiKeyID int64) gin.H {
 	if h.usageService == nil {
 		return nil
@@ -366,7 +366,7 @@ func (h *PublicUsageHandler) buildUsageData(ctx context.Context, apiKeyID int64)
 	}
 }
 
-// parseUsageDateRange 解析 start_date / end_date query params，默认返回近 30 天范围。
+// parseUsageDateRange parses date filters and defaults missing or invalid values to the last 30 days.
 func (h *PublicUsageHandler) parseUsageDateRange(c *gin.Context) (time.Time, time.Time) {
 	now := h.calendar.Now()
 	endTime := now
@@ -389,7 +389,7 @@ func (h *PublicUsageHandler) parseUsageDateRange(c *gin.Context) (time.Time, tim
 	return startTime, endTime
 }
 
-// Usage 向 CC Switch 返回当前用户的余额和用量统计。
+// Usage returns API-key funding and usage statistics for CC Switch.
 // GET /v1/usage
 //
 // Two modes:
@@ -416,7 +416,7 @@ func (h *PublicUsageHandler) Usage(c *gin.Context) {
 		balanceUnitName = h.settingService.GetBalanceUnitName(ctx)
 	}
 
-	// 解析可选的日期范围参数（用于 model_stats 查询）
+	// The optional date range controls model_stats.
 	startTime, endTime := h.parseUsageDateRange(c)
 	days, ok := ParseAPIKeyDailyUsageDays(c.DefaultQuery("days", ""))
 	if !ok {
@@ -424,11 +424,11 @@ func (h *PublicUsageHandler) Usage(c *gin.Context) {
 		return
 	}
 
-	// Best-effort: 获取用量统计（按当前 API Key 过滤），失败不影响基础响应
+	// Usage enrichment is best-effort; failures leave the base funding response available.
 	usageData := h.buildUsageData(ctx, apiKey.ID)
 	dailyUsage := h.buildAPIKeyDailyUsage(c, apiKey.ID, days)
 
-	// Best-effort: 获取模型统计
+	// Model-statistics failures also leave the base response available.
 	var modelStats any
 	if h.usageService != nil {
 		if stats, err := h.usageService.GetAPIKeyModelStats(ctx, apiKey.ID, startTime, endTime); err == nil && len(stats) > 0 {
@@ -436,7 +436,7 @@ func (h *PublicUsageHandler) Usage(c *gin.Context) {
 		}
 	}
 
-	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
+	// Keys with a lifetime quota or spending-window limits use quota_limited.
 	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
 
 	if isQuotaLimited {

@@ -11,13 +11,13 @@ import (
 	schedulerhttp "github.com/TokenFlux/TokenRouter/internal/scheduler/httpapi"
 )
 
-// providerDiagnosticSource 将管理查询结果转换为调度诊断数据，诊断共用资格检查和反馈实例。
+// providerDiagnosticSource converts admin query results for scheduler diagnostics.
 type providerDiagnosticSource struct {
 	providers *provider.Admin
 	groups    *routing.GroupAdmin
 }
 
-// provideProviderDiagnostics 为诊断绑定调度使用的资格规则、参数和反馈实例。
+// provideProviderDiagnostics shares selection eligibility rules, parameters, and feedback with diagnostics.
 func provideProviderDiagnostics(admin *provider.Admin, groups *routing.GroupAdmin, concurrency *scheduler.ConcurrencyService,
 
 	gateway *selection.Generic, openai *selection.Compatible, shared *schedulerSharedState,
@@ -25,7 +25,7 @@ func provideProviderDiagnostics(admin *provider.Admin, groups *routing.GroupAdmi
 	return selection.NewDiagnostics(providerDiagnosticSource{providers: admin, groups: groups}, selection.Shared{Concurrency: concurrency, Parameters: shared.Parameters, Feedback: shared.Feedback}, gateway, openai)
 }
 
-// provideSchedulerDiagnosticsHTTP 直接将只读诊断用例装配到 scheduler HTTP。
+// provideSchedulerDiagnosticsHTTP exposes read-only diagnostics through scheduler HTTP.
 func provideSchedulerDiagnosticsHTTP(core *selection.Diagnostics) *schedulerhttp.DiagnosticsHandler {
 	return schedulerhttp.NewDiagnosticsHandler(core)
 }

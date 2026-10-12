@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestReadLocalAuthFromDisk 从本地 Qoder 目录读取并解密认证信息。
+// TestReadLocalAuthFromDisk reads local credentials when a local-auth or real-API test flag is enabled.
 func TestReadLocalAuthFromDisk(t *testing.T) {
 	if os.Getenv("QODER_RUN_LOCAL_AUTH_TESTS") != "1" && os.Getenv("QODER_RUN_REAL_API_TESTS") != "1" {
 		t.Skip("set QODER_RUN_LOCAL_AUTH_TESTS=1 to run local Qoder auth import test")

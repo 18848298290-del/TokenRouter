@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestObserverStopCancelsAndWaitsForEnteredTask 验证原观察任务退出前，停止不能把依赖报告为可关闭；停止后不得重新登记。
+// TestObserverStopCancelsAndWaitsForEnteredTask checks that Stop waits for cleanup and rejects new observers.
 func TestObserverStopCancelsAndWaitsForEnteredTask(t *testing.T) {
 	var mu sync.Mutex
 	var stopped bool

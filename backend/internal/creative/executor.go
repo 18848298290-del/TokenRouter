@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// ExecutionGroup 提供当前分组的模型策略和本次调度所需的协议配置。
+// ExecutionGroup supplies current model policy and protocol settings for provider selection.
 type ExecutionGroup struct {
 	RoutingPolicy    routing.GroupRoutingPolicy
 	AllowsOperation  func(string, string) bool
@@ -127,7 +127,7 @@ func (e *Executor) Prepare(ctx context.Context, run CreativeRun) (*CreativeExecu
 }
 func (e *Executor) IsRetryable(err error) bool { return IsRetryableCreativeError(err) }
 
-// NewExecutionTarget 将本次提供商、模型、反馈及预算固化，不再次选取提供商。
+// NewExecutionTarget binds the selected provider, model, feedback, and budget for this attempt.
 func NewExecutionTarget(selection *Selection, model string, timeout time.Duration) ExecutionTarget {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute

@@ -19,17 +19,17 @@ const (
 	requestWriteTimeout   = 5 * time.Second
 )
 
-// ErrInvalidRecord 表示快照内容无法存储，重复写入同一版本仍会失败。
+// ErrInvalidRecord marks snapshot content that cannot be stored by retrying the same version.
 var ErrInvalidRecord = errors.New("invalid request record")
 
-// Repository 保存请求摘要，并按调用者权限查询现存记录。
+// Repository stores request summaries and restricts queries to the caller's access.
 type Repository interface {
 	Save(context.Context, []telemetry.RequestRecord) error
 	Find(context.Context, string, int64, bool) ([]Detail, error)
 	Cleanup(context.Context, time.Time) error
 }
 
-// Usage 是请求详情中的费用和用量摘要。
+// Usage summarizes cost and tokens in request details.
 type Usage struct {
 	ID           int64   `json:"id"`
 	Model        string  `json:"model"`
@@ -38,14 +38,14 @@ type Usage struct {
 	ActualCost   float64 `json:"actual_cost"`
 }
 
-// Failure 是经过归属检查的错误引用。
+// Failure references an error record whose ownership has been checked.
 type Failure struct {
 	ID     int64  `json:"id"`
 	Status int    `json:"status_code"`
 	Phase  string `json:"phase"`
 }
 
-// Detail 汇总请求摘要及仍在保留期内的业务记录。
+// Detail combines a request summary with retained business records.
 type Detail struct {
 	telemetry.RequestRecord
 	Usage    []Usage   `json:"usage"`
@@ -55,13 +55,13 @@ type Detail struct {
 	Pending  bool      `json:"pending,omitempty"`
 }
 
-// Health 表示待写记录和累计写入故障。
+// Health reports pending snapshots and cumulative write failures.
 type Health struct {
 	Pending  int    `json:"pending"`
 	Failures uint64 `json:"failures"`
 }
 
-// Service 在内存中合并请求快照，由后台按批写入数据库。
+// Service merges request snapshots in memory and writes them in background batches.
 type Service struct {
 	repo      Repository
 	retention time.Duration
@@ -83,7 +83,7 @@ type Service struct {
 	stopErr   error
 }
 
-// NewService 配置请求摘要的批写和留存。
+// NewService configures request-summary batching and retention; nonpositive retention defaults to 30 days.
 // @project-doc docs/operations/request_lookup.md#request_storage
 func NewService(repo Repository, retentionDays int, logf func(string, ...any)) *Service {
 	if retentionDays <= 0 {
@@ -97,7 +97,7 @@ func NewService(repo Repository, retentionDays int, logf func(string, ...any)) *
 	}
 }
 
-// Observe 合并同一请求的待写快照，缓冲已满或服务停止时同步写库。
+// Observe merges pending snapshots for a request and writes synchronously when full or stopped.
 func (s *Service) Observe(record telemetry.RequestRecord) {
 	if s == nil || s.repo == nil {
 		return
@@ -119,7 +119,7 @@ func (s *Service) Observe(record telemetry.RequestRecord) {
 			s.mu.Unlock()
 			return
 		}
-		// 关闭入队后等待已经开始的同步写入，停止后的调用自行完成写库。
+		// Stop waits for synchronous writes already started here; calls arriving after shutdown finish their own writes.
 		s.writes.Add(1)
 		defer s.writes.Done()
 	}
@@ -152,7 +152,7 @@ func (s *Service) run() {
 				if s.ctx.Err() == nil {
 					s.report("flush request records", err)
 				}
-				// 持续失败时降低重试频率，数据库恢复后再按批写窗口调度。
+				// Slow retries after failures and restore the normal batch interval after a successful flush.
 				ticker.Reset(requestRetryInterval)
 			} else {
 				ticker.Reset(requestFlushInterval)
@@ -168,7 +168,7 @@ func (s *Service) run() {
 	}
 }
 
-// Stop 关闭内存入队并排空，等待时间由应用的关闭期限控制。
+// Stop closes memory admission and drains pending records within the supplied shutdown context.
 func (s *Service) Stop(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
@@ -204,7 +204,7 @@ func (s *Service) drain(ctx context.Context) error {
 	}
 }
 
-// Flush 批量写入快照，失败时在同一超时窗口内尝试逐条写入。
+// Flush writes a snapshot batch and retries records individually within the same timeout after batch failure.
 func (s *Service) Flush(ctx context.Context) error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
@@ -257,7 +257,7 @@ func (s *Service) Flush(ctx context.Context) error {
 	return nil
 }
 
-// discardInvalid 移除已确认无效的版本，并通过日志和故障计数报告丢弃。
+// discardInvalid removes a confirmed invalid version and reports the discard through logs and failure counts.
 func (s *Service) discardInvalid(record telemetry.RequestRecord, err error) bool {
 	if !errors.Is(err, ErrInvalidRecord) {
 		return false
@@ -267,7 +267,7 @@ func (s *Service) discardInvalid(record telemetry.RequestRecord, err error) bool
 	return true
 }
 
-// ack 移除指定版本，写库期间收到的更新继续等待下一批。
+// ack removes the acknowledged version; updates received during the write remain pending.
 func (s *Service) ack(record telemetry.RequestRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

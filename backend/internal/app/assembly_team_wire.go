@@ -8,7 +8,7 @@ import (
 	teamredis "github.com/TokenFlux/TokenRouter/internal/team/rediscache"
 )
 
-// teamAssemblyProviders 汇总 team 模块的 Wire provider。
+// teamAssemblyProviders groups Wire providers for the team module.
 var teamAssemblyProviders = wire.NewSet(
 	teamHTTPProviders,
 	provideTeam,

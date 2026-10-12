@@ -25,7 +25,7 @@ const (
 	QoderResponses QoderEndpoint = "responses"
 )
 
-// QoderEndpoint 保留三种 HTTP 外形，不作为任意供应商识别规则。
+// QoderEndpoint identifies the client-facing Qoder protocol format.
 type QoderEndpoint string
 
 type QoderCompatibleCall struct {
@@ -69,7 +69,7 @@ func NewQoderCompatibleHandler(backend QoderCompatibleBackend, concurrency *Conc
 func (h *QoderCompatibleHandler) Messages(c *gin.Context)  { h.handle(c, QoderMessages) }
 func (h *QoderCompatibleHandler) Responses(c *gin.Context) { h.handle(c, QoderResponses) }
 
-// ChatCompletions 提供手动装配入口，生产 Chat 调用 Execute。
+// ChatCompletions supports manually assembled handlers; the production Chat path calls Execute.
 func (h *QoderCompatibleHandler) ChatCompletions(c *gin.Context) { h.handle(c, QoderChat) }
 
 func (h *QoderCompatibleHandler) errorResponse(c *gin.Context, status int, kind, message string, endpoint QoderEndpoint) {

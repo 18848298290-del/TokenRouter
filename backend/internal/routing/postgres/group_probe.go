@@ -36,7 +36,7 @@ func (r *GroupAvailabilityProbeStore) ClaimDue(ctx context.Context, now time.Tim
 		_ = tx.Rollback()
 	}()
 
-	// 先将启用探测的分组补进状态表；分组被禁用时再清掉状态，避免长期扫描无效记录。
+	// Add enabled groups to probe state, then remove disabled groups so future scans skip them.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO group_availability_probe_states (group_id, next_run_at, created_at, updated_at)
 		SELECT id, $1, NOW(), NOW()
@@ -166,7 +166,7 @@ func (r *GroupAvailabilityProbeStore) SaveResultAndScheduleNext(ctx context.Cont
 	return tx.Commit()
 }
 
-// GetSummaryByGroupIDs 返回窗口内的可用率，并按分组索引读取最近一次探测。
+// GetSummaryByGroupIDs returns window availability and loads each group's latest probe through the group index.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#group_availability_probe
 func (r *GroupAvailabilityProbeStore) GetSummaryByGroupIDs(ctx context.Context, groupIDs []int64, days int, bucketMinutes int, timezoneName string, now time.Time) (map[int64]*routing.GroupAvailabilitySummary, error) {
 	out := make(map[int64]*routing.GroupAvailabilitySummary, len(groupIDs))
@@ -295,7 +295,7 @@ func nextLocalBucketBoundary(t time.Time, bucketDuration time.Duration) time.Tim
 	if bucketDuration <= 0 {
 		bucketDuration = 24 * time.Hour
 	}
-	// 以本地自然日零点对齐，避免非 UTC 时区下使用 time.Truncate 产生偏移桶。
+	// Align to local midnight; time.Truncate can offset buckets in non-UTC timezones.
 	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	bucketStart := dayStart.Add(t.Sub(dayStart) / bucketDuration * bucketDuration)
 	if bucketStart.Before(t) {

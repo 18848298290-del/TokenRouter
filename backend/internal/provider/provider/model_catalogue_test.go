@@ -24,8 +24,9 @@ type modelCatalogueTransportFixture struct {
 	lastReq *http.Request
 }
 
-// TestBuildUpstreamModelsRequest_CNProviders 验证“同步上游支持的模型”对国产供应商可用：
-// 密钥经 GetOpenAIProtocolAPIKey 读取，/models 端点拼接到提供商 base_url（含默认值）。
+// TestBuildUpstreamModelsRequest_CNProviders checks credential and endpoint selection for CN model
+// synchronization.
+// The OpenAI-format base URL includes platform defaults when no address is configured.
 func TestBuildUpstreamModelsRequest_CNProviders(t *testing.T) {
 	t.Parallel()
 
@@ -58,7 +59,7 @@ func TestBuildUpstreamModelsRequest_CNProviders(t *testing.T) {
 	}
 }
 
-// TestBuildUpstreamModelsRequest_AnthropicProtocol 模型同步使用协议感知 base。
+// TestBuildUpstreamModelsRequest_AnthropicProtocol uses the OpenAI-format base for model synchronization.
 func TestBuildUpstreamModelsRequest_AnthropicProtocol(t *testing.T) {
 	t.Parallel()
 	svc := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
@@ -307,7 +308,7 @@ func TestBuildUpstreamModelsRequestsForAPIKeyProviders(t *testing.T) {
 	require.Equal(t, "https://xai.example.com/v1/models", grokReq.URL.String())
 	require.Equal(t, "Bearer xai-key", grokReq.Header.Get("Authorization"))
 
-	// 未配置地址时使用 Grok API Key 转发所用的官方默认地址。
+	// Unconfigured API key providers use the same official endpoint as forwarding.
 	defaultGrokReq, err := svc.buildUpstreamModelsRequest(ctx, &providercore.Record{
 		Platform: capability.PlatformGrok,
 		Type:     capability.ProviderTypeAPIKey,
@@ -549,7 +550,7 @@ func grokOAuthModelSyncTestProvider(baseURL string) *providercore.Record {
 	}
 }
 
-// upstreamModelSyncTestConfig 为测试提供 URL 策略和响应读取上限。
+// upstreamModelSyncTestConfig supplies URL validation and a response-body limit.
 func upstreamModelSyncTestConfig() ModelCatalogueOptions {
 	policy := egress.OperatorURLPolicy{}
 	return ModelCatalogueOptions{ValidateURL: policy.Validate, OperatorValidator: policy.Validate, BodyLimit: 8 << 20, CodexModelsURL: DefaultCodexModelsURL}
@@ -560,7 +561,7 @@ func (f *modelCatalogueTransportFixture) DoWithTLS(req *http.Request, _ string, 
 	return f.resp, nil
 }
 
-// TestJevModelSyncUsesNames 检查官方地址、认证和 models[].name 格式。
+// TestJevModelSyncUsesNames checks the official endpoint, authentication, and models[].name response format.
 func TestJevModelSyncUsesNames(t *testing.T) {
 	service := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
 	value := &providercore.Record{Platform: providercore.PlatformJev, Type: providercore.ProviderTypeAPIKey, Credentials: map[string]any{"api_key": "test"}}

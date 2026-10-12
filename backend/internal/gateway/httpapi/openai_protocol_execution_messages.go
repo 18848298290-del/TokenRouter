@@ -12,7 +12,7 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
-// Messages 调用目标执行器处理 Messages 请求和错误恢复。
+// Messages executes a Messages request and handles upstream recovery.
 func (s *OpenAITextExecutor) Messages(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, promptCacheKey, defaultMappedModel string, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	result, err := openaiexecution.RunMessages(ctx, body, promptCacheKey, defaultMappedModel, &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch})
 	out := openaiexecution.ToForwardResult(result)

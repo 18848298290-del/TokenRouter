@@ -10,6 +10,8 @@ const (
 
 type usageLogCreateDisposition int
 
+// UsageLogCreateError wraps a write failure with its persistence disposition.
+// The disposition distinguishes a confirmed unwritten record from a dropped best-effort submission.
 type UsageLogCreateError struct {
 	err         error
 	disposition usageLogCreateDisposition

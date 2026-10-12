@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration280RemovesMessagesOverride 验证删除专用覆盖不会改写通用分组映射或分组身份，迁移支持重复执行。
+// TestMigration280RemovesMessagesOverride checks replay and retention of general group mappings and identity
+// after override removal.
 func TestMigration280RemovesMessagesOverride(t *testing.T) {
 	ctx := context.Background()
 	tx := historicalTx(t, "280_")

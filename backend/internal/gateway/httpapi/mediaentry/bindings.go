@@ -29,13 +29,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Options 配置提供商切换次数和非流式图片心跳预算。
+// Options configures provider switch limits and the non-streaming image heartbeat interval.
 type Options struct {
 	MaxSwitches    int
 	ImageKeepalive time.Duration
 }
 
-// PlatformPorts 执行已选提供商的一次请求，调用方管理重试和完成处理。
+// PlatformPorts supplies provider selection and single-attempt operations.
+// Callers manage retries and completion.
 type PlatformPorts struct {
 	SystemOne     func(context.Context, *gin.Context, *gatewayadapter.ExecutionProvider, []byte) (upstream.AttemptResult, error)
 	SelectImages  func(context.Context, *int64, string, string, map[int64]struct{}, provider.OpenAIImagesCapability) (*gatewayadapter.SelectionResult, scheduler.PlatformDecision, error)
@@ -52,7 +53,7 @@ type PlatformPorts struct {
 	ReportSwitch  func()
 }
 
-// Bindings 接收应用装配的共享实例和可选额度接口。
+// Bindings contains application-owned dependencies and an optional quota updater.
 type Bindings struct {
 	Common            openaiattempt.Bindings
 	Platform          PlatformPorts
@@ -67,7 +68,7 @@ type Bindings struct {
 	EligibilityProber gatewayadapter.GrokMediaEligibilityProber
 }
 
-// Runtime 保存构造时绑定的接口，每次 HTTP 调用创建独立请求适配器。
+// Runtime holds dependencies bound at construction and creates an adapter for each HTTP request.
 type Runtime struct{ bindings Bindings }
 
 func New(b Bindings) *Runtime { return &Runtime{bindings: b} }

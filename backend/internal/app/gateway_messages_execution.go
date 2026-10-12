@@ -30,14 +30,14 @@ func provideGatewayErrorRules(repo errorpolicy.ErrorPassthroughRepository, cache
 	return errorpolicy.NewErrorPassthroughService(repo, cache, telemetry.ErrorRules)
 }
 
-// provideGatewayRequestDebug 调试输出共享一个句柄；请求与完成工作退出后再关闭。
+// provideGatewayRequestDebug shares a trace handle and closes it after requests and completion work finish.
 func provideGatewayRequestDebug(manager *lifecycle.Manager) *requestdebug.Trace {
 	trace := requestdebug.New(productEnv("DEBUG_GATEWAY_BODY"), productEnv("DEBUG_CLAUDE_MIMIC"))
 	manager.Register(lifecycle.Hook{Name: "GatewayRequestDebug", StopOrder: 90, Stop: func(context.Context) error { return trace.Close() }})
 	return trace
 }
 
-// provideMessagesExecution 绑定 Messages 转发、兼容转换和 token 计数组件。
+// provideMessagesExecution binds Messages forwarding, compatible conversions, and token counting.
 // @project-doc docs/architecture/system_architecture.md#dependency_layers
 func provideMessagesExecution(credentials *provider.MessageCredentialSource, fingerprint *anthropic.RequestFingerprint, transport httpclient.UpstreamTransport, health *provideradapter.UpstreamHealth, tls *egressprovider.TLSProfiles, readers *gatewayadapter.RuntimeReaders, prices *billing.PriceResolver, search *searchtools.Emulator, activity *gatewayRequestActivity, debug *requestdebug.Trace, providers gatewayadapter.ExecutionProviderStore, deferred *provider.DeferredService, cfg *config.Config, filter *egress.CompiledHeaderFilter, modelConfigs *routing.PricingConfigService) *gatewayhttp.MessagesExecutor {
 	deps := messageforward.Dependencies{Credentials: credentials, Fingerprint: fingerprint, Transport: transport, Health: health, TLS: tls, Prices: prices, Search: search, ProviderState: providers, Deferred: deferred}
@@ -57,7 +57,7 @@ func provideMessagesExecution(credentials *provider.MessageCredentialSource, fin
 	return gatewayhttp.NewMessagesExecutor(messageforward.NewRuntime(deps, messageExecutionOptions(cfg)), filter)
 }
 
-// messageExecutionOptions 在装配时读取静态参数，动态设置在请求中读取。
+// messageExecutionOptions captures startup parameters; execution reads runtime settings per request.
 func messageExecutionOptions(cfg *config.Config) messageforward.Options {
 	options := messageforward.Options{ResponseReadLimit: config.DefaultUpstreamResponseReadMaxBytes}
 	if cfg == nil {
@@ -82,7 +82,7 @@ func messageExecutionOptions(cfg *config.Config) messageforward.Options {
 	return options
 }
 
-// provideGatewayPromptPolicy 绑定设置表和诊断日志，提示词策略由服务缓存并更新。
+// provideGatewayPromptPolicy binds the settings store and diagnostics to the cached prompt-policy service.
 func provideGatewayPromptPolicy(store *settings.Store) *promptpolicy.Service {
 	return promptpolicy.New(store, settings.ErrSettingNotFound, slog.Warn)
 }

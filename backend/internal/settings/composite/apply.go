@@ -6,13 +6,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Application 指定所属模块对已提交快照的应用，不携带待保存请求。
+// Application applies a committed snapshot to one module.
 type Application struct {
 	Module string
 	Apply  func(context.Context, *Snapshot) error
 }
 
-// ApplicationsForUpdate 给一次更新创建独立的回读状态；未成功回读时不发布其它模块。
+// ApplicationsForUpdate creates update-local readback state shared by the ordered application steps. A nil
+// snapshot skips module application.
 func ApplicationsForUpdate(load func(context.Context) (*Snapshot, error), steps []Application) []settings.PreparedChange {
 	var snapshot *Snapshot
 	changes := []settings.PreparedChange{{Module: "system", Apply: func(ctx context.Context) error { var err error; snapshot, err = load(ctx); return err }}}

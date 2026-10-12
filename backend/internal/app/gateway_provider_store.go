@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// executionProviderStore 通过提供商存储执行读写操作。
+// executionProviderStore adapts provider records and billing usage writes for gateway execution.
 type executionProviderStore struct {
 	usage *billingpostgres.ProviderUsageStore
 	data  *providerpostgres.ProviderStore

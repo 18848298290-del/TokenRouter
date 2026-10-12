@@ -11,7 +11,7 @@ import (
 
 const VertexLockWaitTime = 200 * time.Millisecond
 
-// VertexTokenOptions 提供本次请求的身份和 token 交换接口。
+// VertexTokenOptions supplies request identity, token caching, and the exchange callback.
 type VertexTokenOptions struct {
 	ProviderID int64
 	CacheKey   string
@@ -32,7 +32,8 @@ func VertexServiceAccountCacheKey(providerID int64, email, keyID string, hasKey 
 	return "vertex:service_account:" + fingerprint
 }
 
-// GetVertexServiceAccountAccessToken 管理凭据缓存、刷新锁与故障降级，等锁响应 context 取消。
+// GetVertexServiceAccountAccessToken reads or exchanges a token, using a refresh lock when available.
+// Lock contention waits briefly and respects cancellation; cache failures still allow an exchange.
 // @project-doc docs/interfaces/gemini_upstream.md#vertex_service_account_execution
 func GetVertexServiceAccountAccessToken(ctx context.Context, options VertexTokenOptions) (string, error) {
 	if options.Cache != nil {
@@ -58,7 +59,7 @@ func GetVertexServiceAccountAccessToken(ctx context.Context, options VertexToken
 				return "", ctx.Err()
 			case <-timer.C:
 			}
-			// 即使定时器与取消同时就绪，也不能继续回读缓存或交换。
+			// Cancellation may be ready with the timer; check it before reading or exchanging again.
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}

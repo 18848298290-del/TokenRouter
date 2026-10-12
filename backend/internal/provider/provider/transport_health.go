@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TransportHealth 复用提供商运行阻断与存储，处理已经分类的持久传输故障。
+// TransportHealth records classified persistent transport failures in runtime and stored provider state.
 type TransportHealth struct {
 	Runtime  *provider.RuntimeBlockState
 	Deferred *provider.DeferredService
@@ -19,7 +19,7 @@ type TransportHealth struct {
 	}
 }
 
-// Attempt 只记录实际进入网络传输的 Ollama Cloud 活动。
+// Attempt records Ollama Cloud activity when called as network transport begins.
 func (s *TransportHealth) Attempt(value *provider.Record) {
 	if s == nil || s.Deferred == nil || value == nil || !provider.IsOllamaCloudUsageProvider(value) {
 		return
@@ -27,7 +27,7 @@ func (s *TransportHealth) Attempt(value *provider.Record) {
 	s.Deferred.ScheduleLastUsedUpdate(value.ID)
 }
 
-// Persistent 先阻断进程内调度，再用原五秒独立预算保存十分钟暂停。
+// Persistent blocks local scheduling, then uses an independent five-second budget to persist a ten-minute pause.
 func (s *TransportHealth) Persistent(ctx context.Context, value *provider.Record, safeError string) {
 	if s == nil || value == nil {
 		return

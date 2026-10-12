@@ -14,7 +14,7 @@ type catalogProvider struct {
 	protocols capability.ProviderProtocols
 }
 
-// CatalogProvider 向公开目录提供模型规则。
+// CatalogProvider supplies model rules to the public catalogue.
 func CatalogProvider(value *provider.Record) creative.CatalogProvider {
 	if value == nil {
 		return nil
@@ -22,7 +22,7 @@ func CatalogProvider(value *provider.Record) creative.CatalogProvider {
 	return CatalogProviderWithRules(value, provider.PrepareModelRules(value, provideradapter.ModelDefaults(), provideradapter.ModelRules(value)))
 }
 
-// CatalogProviderWithRules 在网关目录和创作台之间共享本次查询的规则。
+// CatalogProviderWithRules shares prepared rules between the gateway catalogue and creative queries.
 func CatalogProviderWithRules(value *provider.Record, rules *provider.ModelRulesSnapshot) creative.CatalogProvider {
 	return catalogProvider{Record: value, models: rules, protocols: value.RoutingSnapshot().Protocols()}
 }

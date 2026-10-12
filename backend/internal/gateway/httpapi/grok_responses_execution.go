@@ -41,7 +41,8 @@ func (s *GrokExecutor) BridgeComposerImages(
 	})
 }
 
-// DescribeComposerImage 使用 Grok Responses 配置执行单张图片预检，共用提供商快照、错误记录和故障转移策略。
+// DescribeComposerImage runs a single-image preflight with Grok Responses configuration and shared provider
+// observation and error handling.
 func (s *GrokExecutor) DescribeComposerImage(
 	ctx context.Context,
 	c *gin.Context,

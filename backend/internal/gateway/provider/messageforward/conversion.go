@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// conversionAttempt 保存本次转换的状态、凭据和网络句柄。
+// conversionAttempt holds conversion state, credentials, and network handles for one attempt.
 type conversionAttempt struct {
 	s                          *Runtime
 	c                          HTTPBoundary
@@ -132,7 +132,7 @@ func (a *conversionAttempt) Output() forwardcore.Output {
 	return a.c.ConversionOutput(a.responses, a.state)
 }
 
-// forwardResponse 为转换流创建扫描器，初始缓冲为 64 KiB，行长上限读取 MaxLineSize。
+// forwardResponse creates a scanner with a 64 KiB initial buffer and the configured line limit.
 func (s *Runtime) forwardResponse(resp *http.Response) forwardcore.Response {
 	maxLineSize := 500 * 1024 * 1024
 	if s.options.MaxLineSize > 0 {

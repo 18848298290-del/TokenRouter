@@ -85,7 +85,7 @@ func CompleteAuthorization(ctx context.Context, session *AuthorizationFlow, fact
 		if !completedExpiry.IsZero() {
 			expiresAt = completedExpiry
 		}
-		// status 是国内身份主数据；仅在缺少组织字段时使用 OpenAPI tags 补充。
+		// CN status supplies the identity; OpenAPI tags fill a missing organization ID.
 		organizationLookupUID := FirstNonEmptyQoder(tokenResp.UserID, tokenResp.ID)
 		if userInfo != nil {
 			organizationLookupUID = FirstNonEmptyQoder(userInfo.UserID, userInfo.ID, organizationLookupUID)

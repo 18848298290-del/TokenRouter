@@ -35,8 +35,8 @@ type ImageOptions struct {
 	Enter                              func() (func(), error)
 }
 
-// BuildImageRequest 构造 Gemini generateContent 请求体：
-// parts 为 prompt 文本与每张参考图 inlineData；创作台不向 Gemini 发送独立 mask。
+// BuildImageRequest builds generateContent parts from the prompt and inline reference images.
+// Creative requests do not send a separate mask to Gemini.
 func BuildImageRequest(input ImageRequestInput) wire.ImageGenerateRequest {
 	parts := make([]wire.BatchPart, 0, len(input.Sources)+1)
 	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
@@ -72,7 +72,7 @@ func BuildImageRequest(input ImageRequestInput) wire.ImageGenerateRequest {
 	}
 }
 
-// ParseImageOutputs 从 generateContent 响应中提取 inlineData 图片输出。
+// ParseImageOutputs returns the last decodable inline image from generateContent.
 func ParseImageOutputs(body []byte, httpError func(int, string) error) ([]upstream.ImageOutput, error) {
 	parts := gjson.GetBytes(body, "candidates.0.content.parts")
 	if !parts.IsArray() || len(parts.Array()) == 0 {
@@ -107,7 +107,7 @@ func ParseImageOutputs(body []byte, httpError func(int, string) error) ([]upstre
 	if len(outputs) == 0 {
 		return nil, httpError(http.StatusBadGateway, "gemini upstream returned no image output")
 	}
-	// Vertex 高分辨率生成可能先返回 thought image，再返回最终图片；最终图片位于最后一个 image part。
+	// Use the last image because Vertex high-resolution output can place thought images before the final image.
 	outputs = outputs[len(outputs)-1:]
 	for index := range outputs {
 		outputs[index].Index = index
@@ -132,13 +132,13 @@ func GenerateImages(ctx context.Context, request wire.ImageGenerateRequest, opti
 	projectID := strings.TrimSpace(options.ProjectID)
 	switch {
 	case options.Mode == ServiceAccountCredential:
-		// Vertex 服务账号：{location}-aiplatform.../v1/projects/.../models/{model}:generateContent + Bearer。
+		// Vertex service accounts use a project-scoped model URL and bearer authentication.
 		targetURL, err = options.VertexURL()
 		if err != nil {
 			return nil, options.Invalid("build vertex gemini url: %s", err.Error())
 		}
 	case options.Mode == OAuthCredential && projectID != "":
-		// Code Assist：v1internal 包装请求。
+		// Code Assist wraps the request for the v1internal endpoint.
 		baseURL, validateErr := options.ValidateURL(codeassist.GeminiCliBaseURL)
 		if validateErr != nil {
 			return nil, options.HTTPError(0, validateErr.Error())
@@ -168,7 +168,7 @@ func GenerateImages(ctx context.Context, request wire.ImageGenerateRequest, opti
 			return nil, options.Invalid("build gemini url: %s", err.Error())
 		}
 	default:
-		// OAuth（无 project_id）：AI Studio Bearer 模式。
+		// OAuth without a project uses AI Studio bearer authentication.
 		baseURL, validateErr := options.ValidateGeminiBaseURL(options.BaseURL())
 		if validateErr != nil {
 			return nil, options.Invalid("gemini base url invalid: %s", validateErr.Error())
@@ -187,7 +187,7 @@ func GenerateImages(ctx context.Context, request wire.ImageGenerateRequest, opti
 	if err := applyImageAuth(ctx, req, options); err != nil {
 		return nil, err
 	}
-	// 提供商级请求头覆写最后应用，配置值优先于内置默认头。
+	// Provider header overrides take precedence over built-in defaults.
 	options.ApplyHeaders(req.Header)
 
 	resp, err := options.Do(req)
@@ -202,7 +202,7 @@ func GenerateImages(ctx context.Context, request wire.ImageGenerateRequest, opti
 	if resp.StatusCode >= 400 {
 		return nil, options.HTTPError(resp.StatusCode, options.ErrorMessage(respBody))
 	}
-	// Code Assist 模式的响应包裹在 response 字段内。
+	// Code Assist wraps its payload in the response field.
 	if options.Mode == OAuthCredential && projectID != "" {
 		respBody, err = UnwrapGeminiResponse(respBody)
 		if err != nil {
@@ -212,7 +212,7 @@ func GenerateImages(ctx context.Context, request wire.ImageGenerateRequest, opti
 	return ParseImageOutputs(respBody, options.HTTPError)
 }
 
-// applyImageAuth 按提供商类型设置鉴权头：apikey 用 x-goog-api-key，其余用 Bearer token。
+// applyImageAuth uses x-goog-api-key for API keys and bearer authentication for other modes.
 func applyImageAuth(ctx context.Context, req *http.Request, options ImageOptions) error {
 	if options.Mode == APIKeyCredential {
 		apiKey := strings.TrimSpace(options.APIKey())

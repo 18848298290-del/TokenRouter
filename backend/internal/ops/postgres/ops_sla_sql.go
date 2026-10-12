@@ -34,7 +34,7 @@ func opsIgnoredStatusCodeSQL(statusExpr string, ignoredStatusCodes []int) string
 }
 
 func opsClientSideStatusExcludedSQL(statusExpr, upstreamStatusExpr, upstreamErrorsExpr, ownerExpr string, ignoredStatusCodes []int) string {
-	// 客户端侧忽略状态码通常是调用方凭据或权限问题；存在上游上下文时仍计入 SLA。
+	// Ignored client statuses still count toward SLA when upstream context is present.
 	return fmt.Sprintf("(%s AND NOT %s)", opsIgnoredStatusCodeSQL(statusExpr, ignoredStatusCodes), opsUpstreamContextSQL(upstreamStatusExpr, upstreamErrorsExpr, ownerExpr))
 }
 

@@ -11,8 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestPropagateProviderProxyToShadows CRS/管理端 改母提供商 proxy 后,
-// 影子 proxy 必须跟随(影子 proxy 恒继承母提供商,否则出站漂移)。
+// TestPropagateProviderProxyToShadows checks that proxy changes from CRS or admin
+// updates reach shadows, which share their parent's outbound proxy.
 func TestPropagateProviderProxyToShadows(t *testing.T) {
 	ctx := context.Background()
 	repo := newCRSShadowStore()
@@ -39,18 +39,18 @@ func TestPropagateProviderProxyToShadows(t *testing.T) {
 	require.NotNil(t, got.ProxyID)
 	require.Equal(t, newProxy, *got.ProxyID, "shadow proxy must follow the parent's new proxy")
 
-	// 清空母 proxy 也应传播为 nil。
+	// Clearing the parent proxy also clears the shadow proxy.
 	require.NoError(t, PropagateProviderProxyToShadows(ctx, repo, parentID, nil))
 	got, err = repo.GetByID(ctx, shadow.ID)
 	require.NoError(t, err)
 	require.Nil(t, got.ProxyID, "clearing parent proxy must clear the shadow proxy too")
 }
 
-// TestParentHealthyForShadow 检查调度、网关选择和 WebSocket 转发使用的母提供商健康判断。
+// TestParentHealthyForShadow checks the parent health rule shared by scheduling and forwarding.
 func TestParentHealthyForShadow(t *testing.T) {
 	pid := int64(100)
 
-	// 母提供商夹具统一设为 OpenAI OAuth，让每个用例只触发自身要验证的健康条件。
+	// OpenAI OAuth fixtures isolate each parent health condition.
 	healthyParent := &Record{
 		ID:          100,
 		Platform:    capability.PlatformOpenAI,
@@ -63,7 +63,7 @@ func TestParentHealthyForShadow(t *testing.T) {
 		Platform:    capability.PlatformOpenAI,
 		Type:        capability.ProviderTypeOAuth,
 		Status:      StatusError,
-		Schedulable: true, // Schedulable flag is set, but Status=error → IsSchedulable()==false
+		Schedulable: true, // Error status overrides the schedulable flag.
 	}
 	shadow := &Record{
 		ID:               200,
@@ -91,7 +91,7 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("shadow_of_unhealthy_parent_is_not_healthy", func(t *testing.T) {
-		// 母提供商状态为 error 时，IsActive 和 IsSchedulable 均返回 false。
+		// Error status makes both IsActive and IsSchedulable return false.
 		require.False(t, unhealthyParent.IsSchedulable(), "precondition: unhealthy parent must not be schedulable")
 		lookup := func(id int64) *Record {
 			if id == unhealthyParent.ID {
@@ -108,7 +108,7 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("normal_provider_always_healthy", func(t *testing.T) {
-		// 普通提供商无需查询母提供商。
+		// Ordinary providers need no parent lookup.
 		calledLookup := false
 		lookup := func(_ int64) *Record {
 			calledLookup = true
@@ -124,8 +124,8 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("manual_schedulable_false_parent_does_not_block_shadow", func(t *testing.T) {
-		// 母提供商 Schedulable=false 时，影子仍按自己的 Schedulable 判断调度资格。
-		// 母提供商凭据处于 active 且未过期时，影子的凭据检查通过。
+		// A shadow uses its own scheduling switch when its parent is manually paused.
+		// Active, unexpired parent credentials remain eligible for the shadow.
 		manualPausedParent := &Record{
 			ID:          100,
 			Platform:    capability.PlatformOpenAI,
@@ -145,8 +145,8 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("global_rate_limited_parent_does_not_block_shadow", func(t *testing.T) {
-		// F1 核心修复:母提供商 global 429(RateLimitResetAt 未来)是 global 维度限流,
-		// spark 有独立窗口 → 不得连坐影子,否则违背「global 枯竭后 spark 仍独立」目标。
+		// Spark has its own quota window, so a global rate limit on the parent
+		// does not block the shadow.
 		resetAt := time.Now().Add(1 * time.Hour)
 		rateLimitedParent := &Record{
 			ID:               100,
@@ -168,7 +168,7 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("overloaded_parent_does_not_block_shadow", func(t *testing.T) {
-		// 过载退避(OverloadUntil)同属 global 维度运行态,不连坐影子。
+		// Global overload backoff does not block the independent Spark shadow.
 		until := time.Now().Add(30 * time.Minute)
 		overloadedParent := &Record{
 			ID:            100,
@@ -190,8 +190,8 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("temp_unschedulable_parent_blocks_shadow", func(t *testing.T) {
-		// G2:TempUnschedulableUntil 对 OpenAI 提供商由 401/token 刷新耗尽/transport·proxy 写入,
-		// 代表共享凭据/传输坏死 → 影子共享母 token+proxy,应被挡(与 global 限流 RateLimitResetAt 区分)。
+		// Temporary suspension blocks shadows that share the parent token and proxy.
+		// This differs from the parent's global quota window.
 		until := time.Now().Add(15 * time.Minute)
 		tempUnschedParent := &Record{
 			ID:                     100,
@@ -212,7 +212,7 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("expired_parent_credentials_block_shadow", func(t *testing.T) {
-		// 凭据真正过期(AutoPauseOnExpired + ExpiresAt 已过)→ 透传 token 不可用 → 影子应被挡。
+		// Expiry blocks the shadow when AutoPauseOnExpired is enabled.
 		expiredAt := time.Now().Add(-1 * time.Hour)
 		expiredParent := &Record{
 			ID:                 100,
@@ -234,8 +234,8 @@ func TestParentHealthyForShadow(t *testing.T) {
 	})
 
 	t.Run("non_oauth_parent_blocks_shadow", func(t *testing.T) {
-		// 母提供商被改成非 OpenAI OAuth(如 apikey)后,透传凭据解析必失败,
-		// 影子应 fail-closed 不进调度候选(即便提供商 active、凭据未过期)。
+		// Shadows require an OpenAI OAuth parent even when another provider type
+		// is active and unexpired.
 		apikeyParent := &Record{
 			ID:          100,
 			Platform:    capability.PlatformOpenAI,

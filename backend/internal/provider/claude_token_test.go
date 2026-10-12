@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// claudeTokenCacheStub 记录 Claude 令牌缓存操作。
+// claudeTokenCacheStub records Claude token cache operations.
 type claudeTokenCacheStub struct {
 	mu               sync.Mutex
 	tokens           map[string]string
@@ -32,7 +32,7 @@ type claudeTokenCacheStub struct {
 	simulateLockRace bool
 }
 
-// claudeProviderRepoStub 模拟 Claude 令牌来源所需的存储操作。
+// claudeProviderRepoStub supplies storage operations for token-source tests.
 type claudeProviderRepoStub struct {
 	provider     *Record
 	getErr       error
@@ -41,14 +41,14 @@ type claudeProviderRepoStub struct {
 	updateCalled int32
 }
 
-// claudeOAuthServiceStub 返回测试设置的 Claude 令牌交换结果。
+// claudeOAuthServiceStub returns configured Claude token exchange results.
 type claudeOAuthServiceStub struct {
 	tokenInfo     *ClaudeTokenInfo
 	refreshErr    error
 	refreshCalled int32
 }
 
-// Claude 执行器注入测试交换结果，并调用凭据资格判断和合并函数。
+// claudeExchangeFixture combines the stub exchange with provider eligibility and credential merging.
 type claudeExchangeFixture struct{ exchange *claudeOAuthServiceStub }
 
 func newClaudeTokenCacheStub() *claudeTokenCacheStub {
@@ -143,7 +143,7 @@ func TestClaudeTokenProvider_TokenRefresh(t *testing.T) {
 		},
 	}
 
-	// 令牌处于刷新提前量内。
+	// The token is within the refresh window.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       102,
@@ -171,7 +171,7 @@ func TestClaudeTokenProvider_LockRaceCondition(t *testing.T) {
 	cache.simulateLockRace = true
 	providerRepo := &claudeProviderRepoStub{}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       103,
@@ -185,7 +185,7 @@ func TestClaudeTokenProvider_LockRaceCondition(t *testing.T) {
 	}
 	providerRepo.provider = provider
 
-	// 模拟其他 worker 已完成刷新并写入缓存。
+	// Simulate another worker completing refresh and populating the cache.
 	cacheKey := ClaudeTokenCacheKey(provider)
 	go func() {
 		time.Sleep(5 * time.Millisecond)
@@ -208,7 +208,7 @@ func TestClaudeTokenProvider_RefreshError(t *testing.T) {
 		refreshErr: errors.New("oauth refresh failed"),
 	}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       111,
@@ -225,17 +225,17 @@ func TestClaudeTokenProvider_RefreshError(t *testing.T) {
 
 	tokenSource := newClaudeRefreshSourceFixture(providerRepo, cache, oauthService)
 
-	// 刷新失败时返回已有令牌。
+	// Refresh failure returns the existing token under the default policy.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	require.Equal(t, "old-token", token) // Fallback to existing token
+	require.Equal(t, "old-token", token) // Existing token retained.
 }
 
 func TestClaudeTokenProvider_OAuthServiceNotConfigured(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
 	providerRepo := &claudeProviderRepoStub{}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       112,
@@ -251,10 +251,10 @@ func TestClaudeTokenProvider_OAuthServiceNotConfigured(t *testing.T) {
 
 	tokenSource := newClaudeRefreshSourceFixture(providerRepo, cache, nil)
 
-	// 未配置 OAuth 服务时返回已有令牌。
+	// An unconfigured OAuth service leaves the existing token usable.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	require.Equal(t, "old-token", token) // Fallback to existing token
+	require.Equal(t, "old-token", token) // Existing token retained.
 }
 
 func TestClaudeTokenProvider_ProviderRepoGetError(t *testing.T) {
@@ -272,7 +272,7 @@ func TestClaudeTokenProvider_ProviderRepoGetError(t *testing.T) {
 		},
 	}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       113,
@@ -288,7 +288,7 @@ func TestClaudeTokenProvider_ProviderRepoGetError(t *testing.T) {
 
 	tokenSource := newClaudeRefreshSourceFixture(providerRepo, cache, oauthService)
 
-	// 刷新协调器读取失败时，调用方使用已有 token。
+	// A coordinator read failure returns the existing token under the default policy.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "old-token", token)
@@ -312,7 +312,7 @@ func TestClaudeTokenProvider_ProviderUpdateError(t *testing.T) {
 		},
 	}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       114,
@@ -329,7 +329,7 @@ func TestClaudeTokenProvider_ProviderUpdateError(t *testing.T) {
 
 	tokenSource := newClaudeRefreshSourceFixture(providerRepo, cache, oauthService)
 
-	// 持久化失败不能发布未保存的令牌，也不能污染传入的凭据快照。
+	// Persistence failure must not publish unsaved tokens or mutate the input snapshot.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "old-token", token)
@@ -352,7 +352,7 @@ func TestClaudeTokenProvider_RefreshPreservesExistingCredentials(t *testing.T) {
 		},
 	}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       115,
@@ -375,10 +375,10 @@ func TestClaudeTokenProvider_RefreshPreservesExistingCredentials(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "new-access-token", token)
 
-	// 检查已有凭据字段。
+	// Stored non-token credential fields remain.
 	require.Equal(t, "should-be-preserved", providerRepo.provider.Credentials["custom_field"])
 	require.Equal(t, "test-org", providerRepo.provider.Credentials["organization"])
-	// 检查交换结果中的凭据字段。
+	// Exchange results replace the token fields.
 	require.Equal(t, "new-access-token", providerRepo.provider.Credentials["access_token"])
 	require.Equal(t, "new-refresh-token", providerRepo.provider.Credentials["refresh_token"])
 }
@@ -396,7 +396,7 @@ func TestClaudeTokenProvider_DoubleCheckCacheAfterLock(t *testing.T) {
 		},
 	}
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       116,
@@ -411,7 +411,7 @@ func TestClaudeTokenProvider_DoubleCheckCacheAfterLock(t *testing.T) {
 	providerRepo.provider = provider
 	cacheKey := ClaudeTokenCacheKey(provider)
 
-	// 模拟其他 worker 在取得锁之前写入令牌缓存。
+	// Simulate another worker populating the token cache before lock acquisition.
 	go func() {
 		time.Sleep(5 * time.Millisecond)
 		cache.mu.Lock()
@@ -450,7 +450,7 @@ func TestClaudeTokenProvider_CacheHit(t *testing.T) {
 
 func TestClaudeTokenProvider_CacheMiss_FromCredentials(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
-	// 令牌距离到期时间较远，读取时跳过刷新。
+	// The token is outside the refresh window.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       101,
@@ -468,7 +468,7 @@ func TestClaudeTokenProvider_CacheMiss_FromCredentials(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "credential-token", token)
 
-	// 令牌应已写入缓存。
+	// The credential token is cached.
 	cacheKey := ClaudeTokenCacheKey(provider)
 	require.Equal(t, "credential-token", cache.tokens[cacheKey])
 }
@@ -525,7 +525,7 @@ func TestClaudeTokenProvider_SetupTokenType(t *testing.T) {
 }
 
 func TestClaudeTokenProvider_NilCache(t *testing.T) {
-	// 令牌处于有效期内。
+	// The token is outside the refresh window.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       107,
@@ -548,7 +548,7 @@ func TestClaudeTokenProvider_CacheGetError(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
 	cache.getErr = errors.New("redis connection failed")
 
-	// 令牌处于有效期内。
+	// The token is outside the refresh window.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       108,
@@ -562,7 +562,7 @@ func TestClaudeTokenProvider_CacheGetError(t *testing.T) {
 
 	tokenSource := newClaudeTokenSourceContract(cache)
 
-	// 缓存读取失败时，从凭据返回令牌。
+	// Cache read failure falls back to the credential token.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "fallback-token", token)
@@ -585,7 +585,7 @@ func TestClaudeTokenProvider_CacheSetError(t *testing.T) {
 
 	tokenSource := newClaudeTokenSourceContract(cache)
 
-	// 缓存写入失败时仍返回令牌。
+	// Cache write failure still returns the token.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "still-works-token", token)
@@ -600,7 +600,7 @@ func TestClaudeTokenProvider_MissingAccessToken(t *testing.T) {
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
 			"expires_at": expiresAt,
-			// 缺少 access_token。
+			// access_token is absent.
 		},
 	}
 
@@ -650,19 +650,19 @@ func TestClaudeTokenProvider_TTLCalculation(t *testing.T) {
 			_, err := tokenSource.GetAccessToken(context.Background(), provider)
 			require.NoError(t, err)
 
-			// 检查缓存中的令牌。
+			// Check the cached token.
 			cacheKey := ClaudeTokenCacheKey(provider)
 			require.Equal(t, "test-token", cache.tokens[cacheKey])
 		})
 	}
 }
 
-// TestClaudeTokenProvider_Real_LockFailedWait 检查 Claude token 源获取锁失败后的等待行为。
+// TestClaudeTokenProvider_Real_LockFailedWait checks waiting after refresh lock contention.
 func TestClaudeTokenProvider_Real_LockFailedWait(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
-	cache.lockAcquired = false // Lock acquisition fails
+	cache.lockAcquired = false // Lock acquisition fails.
 
-	// 令牌处于刷新提前量内，触发取锁。
+	// Near expiry triggers lock acquisition.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       300,
@@ -674,7 +674,7 @@ func TestClaudeTokenProvider_Real_LockFailedWait(t *testing.T) {
 		},
 	}
 
-	// 等待刷新锁期间，模拟其他 worker 写入令牌缓存。
+	// Simulate another worker populating the cache while this request waits.
 	cacheKey := ClaudeTokenCacheKey(provider)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -691,9 +691,9 @@ func TestClaudeTokenProvider_Real_LockFailedWait(t *testing.T) {
 
 func TestClaudeTokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
-	cache.lockAcquired = false // Lock acquisition fails
+	cache.lockAcquired = false // Lock acquisition fails.
 
-	// 令牌即将到期。
+	// The token is near expiry.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       301,
@@ -706,7 +706,7 @@ func TestClaudeTokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 	}
 
 	cacheKey := ClaudeTokenCacheKey(provider)
-	// 开始等待后立即写入令牌缓存。
+	// Populate the token cache after waiting starts.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cache.mu.Lock()
@@ -722,9 +722,9 @@ func TestClaudeTokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 
 func TestClaudeTokenProvider_Real_NoExpiresAt(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
-	cache.lockAcquired = false // Prevent entering refresh logic
+	cache.lockAcquired = false // Simulate a lock held by another worker.
 
-	// 令牌未设置 expires_at。
+	// expires_at is absent.
 	provider := &Record{
 		ID:       302,
 		Platform: capability.PlatformAnthropic,
@@ -734,7 +734,7 @@ func TestClaudeTokenProvider_Real_NoExpiresAt(t *testing.T) {
 		},
 	}
 
-	// 等待锁结束后，从凭据返回令牌。
+	// Return the credential token after lock waiting finishes.
 	tokenSource := newClaudeTokenSourceContract(cache)
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
@@ -744,7 +744,7 @@ func TestClaudeTokenProvider_Real_NoExpiresAt(t *testing.T) {
 func TestClaudeTokenProvider_Real_WhitespaceToken(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
 	cacheKey := "claude:provider:303"
-	cache.tokens[cacheKey] = "   " // Whitespace only - should be treated as empty
+	cache.tokens[cacheKey] = "   " // Whitespace-only cache entries are treated as empty.
 
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
@@ -772,7 +772,7 @@ func TestClaudeTokenProvider_Real_EmptyCredentialToken(t *testing.T) {
 		Platform: capability.PlatformAnthropic,
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
-			"access_token": "   ", // Whitespace only
+			"access_token": "   ", // Whitespace only.
 			"expires_at":   expiresAt,
 		},
 	}
@@ -788,7 +788,7 @@ func TestClaudeTokenProvider_Real_LockError(t *testing.T) {
 	cache := newClaudeTokenCacheStub()
 	cache.lockErr = errors.New("redis lock failed")
 
-	// 令牌处于刷新提前量内。
+	// The token is within the refresh window.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       305,
@@ -816,7 +816,7 @@ func TestClaudeTokenProvider_Real_NilCredentials(t *testing.T) {
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
 			"expires_at": expiresAt,
-			// 凭据中缺少 access_token。
+			// access_token is absent from credentials.
 		},
 	}
 
@@ -827,7 +827,7 @@ func TestClaudeTokenProvider_Real_NilCredentials(t *testing.T) {
 	require.Empty(t, token)
 }
 
-// newClaudeTokenSourceContract 原缓存与等待断言直接执行提供商 token 用例。
+// newClaudeTokenSourceContract constructs the token source for cache and wait-policy tests.
 func newClaudeTokenSourceContract(cache AccessTokenCache) *ClaudeTokenSource {
 	return &ClaudeTokenSource{Options: ClaudeTokenOptions{
 		Cache: cache, Policy: ClaudeProviderRefreshPolicy(), Debug: slog.Debug, Warn: slog.Warn,

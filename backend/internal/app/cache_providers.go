@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/rediscache"
 )
 
-// cacheProviders 绑定各缓存实现，使用方共用周期任务锁。
+// cacheProviders supplies counter caches and the shared periodic-task leader lock.
 var cacheProviders = wire.NewSet(
 	rediscache.NewInternal500CounterCache,
 	redisinfra.NewLeaderLockCache,

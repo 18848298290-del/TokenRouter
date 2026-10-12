@@ -2,7 +2,7 @@ package contract
 
 import "context"
 
-// Provider is the interface every search backend must implement.
+// Provider performs searches against an external search service.
 type Provider interface {
 	// Name returns the provider identifier ("brave" or "tavily").
 	Name() string

@@ -14,13 +14,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ReadImagesNonStreaming 保留 API Key 图片交付及用量观测的原顺序。
+// ReadImagesNonStreaming observes API-key image usage before backfilling and writing the response.
 func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, options ImageResponseOptions) (wire.ForwardUsage, int, []string, error) {
 	body, err := options.ReadBody(resp.Body)
 	if err != nil {
 		return wire.ForwardUsage{}, 0, nil, err
 	}
-	// 回填只影响交付格式，计费仍使用原始上游用量与图片尺寸。
+	// Backfill changes delivery format; usage and image dimensions come from the upstream body.
 	usage, _ := wire.ExtractOpenAIUsageFromJSONBytes(body)
 	imageCount := wire.CountOpenAIResponseImageOutputsFromJSONBytes(body)
 	imageSizes := wire.CollectOpenAIResponseImageOutputSizesFromJSONBytes(body)
@@ -38,7 +38,7 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 	return usage, imageCount, imageSizes, nil
 }
 
-// ReadImagesStreaming 保留 API Key 图片交付及用量观测的原顺序。
+// ReadImagesStreaming forwards API-key image data and drains after disconnect to collect usage.
 func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions, startTime time.Time) (wire.ForwardUsage, int, []string, *int, error) {
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))

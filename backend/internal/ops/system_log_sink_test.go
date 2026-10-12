@@ -25,7 +25,7 @@ func opsSystemLogBackoffEvent() *logevent.LogEvent {
 	}
 }
 
-// pumpOpsSystemLogEvents 持续投递日志事件，模拟故障期间业务侧不断产生 WARN/ERROR。
+// pumpOpsSystemLogEvents keeps sending events to simulate WARN/ERROR traffic during a storage failure.
 func pumpOpsSystemLogEvents(t *testing.T, sink *OpsSystemLogSink) {
 	t.Helper()
 	stop := make(chan struct{})
@@ -86,7 +86,7 @@ func TestOpsSystemLogSinkFlushBackoffFor(t *testing.T) {
 	}
 }
 
-// TestOpsSystemLogSinkFlushBackoffForFallbacks 检查缺失配置使用默认值，max 小于 base 时使用 base。
+// TestOpsSystemLogSinkFlushBackoffForFallbacks checks default delays and a maximum below the base delay.
 func TestOpsSystemLogSinkFlushBackoffForFallbacks(t *testing.T) {
 	zero := &OpsSystemLogSink{}
 	if got := zero.flushBackoffFor(1); got != defaultOpsSystemLogFlushBackoff {
@@ -102,9 +102,9 @@ func TestOpsSystemLogSinkFlushBackoffForFallbacks(t *testing.T) {
 	}
 }
 
-// TestOpsSystemLogSinkSuppressesRetriesDuringBackoff 验证 issue #5265：写入失败后如果按 flushInterval 继续每秒重试，每一轮都会占用并取消
-// 一条池内连接（远程 PG 上 COPY 取消会让连接协议失步而被销毁），小连接池会被日志
-// 通道长期占满，业务侧最终报 Billing 503。失败后必须退避。
+// TestOpsSystemLogSinkSuppressesRetriesDuringBackoff covers issue #5265: frequent retries after failed writes
+// can exhaust a small connection pool when canceled PostgreSQL COPY operations discard connections.
+// Backoff gives business queries a chance to acquire connections.
 func TestOpsSystemLogSinkSuppressesRetriesDuringBackoff(t *testing.T) {
 	var calls int64
 	repo := &opsRepoMock{
@@ -127,13 +127,13 @@ func TestOpsSystemLogSinkSuppressesRetriesDuringBackoff(t *testing.T) {
 		t.Fatalf("first flush never happened")
 	}
 
-	// 退避窗口内不得再打上游：修复前 5ms 的 flushInterval 会在这 300ms 里打出上百次。
+	// The backoff window must suppress writes despite the 5 ms flush interval.
 	time.Sleep(300 * time.Millisecond)
 	if got := atomic.LoadInt64(&calls); got != 1 {
 		t.Fatalf("upstream calls during backoff = %d, want 1", got)
 	}
 
-	// 被抑制的批次记为 dropped。write_failed 统计已尝试写入的失败批次。
+	// Suppressed entries count as dropped; write_failed counts entries in attempted failed batches.
 	health := sink.Health()
 	if health.DroppedCount == 0 {
 		t.Fatalf("dropped_count should grow while flushing is suppressed")
@@ -143,7 +143,7 @@ func TestOpsSystemLogSinkSuppressesRetriesDuringBackoff(t *testing.T) {
 	}
 }
 
-// TestOpsSystemLogSinkResumesAfterBackoffWindow 验证退避到期后必须自动恢复，不能变成永久停写。
+// TestOpsSystemLogSinkResumesAfterBackoffWindow checks that writes resume after the delay expires.
 func TestOpsSystemLogSinkResumesAfterBackoffWindow(t *testing.T) {
 	var calls int64
 	repo := &opsRepoMock{
@@ -167,7 +167,7 @@ func TestOpsSystemLogSinkResumesAfterBackoffWindow(t *testing.T) {
 	}
 }
 
-// TestOpsSystemLogSinkSuccessClearsSuppression 验证一次成功必须清空失败计数与抑制窗口，否则短暂抖动后写入速率无法恢复。
+// TestOpsSystemLogSinkSuccessClearsSuppression checks that success resets failures and the backoff window.
 func TestOpsSystemLogSinkSuccessClearsSuppression(t *testing.T) {
 	var calls int64
 	repo := &opsRepoMock{
@@ -188,7 +188,7 @@ func TestOpsSystemLogSinkSuccessClearsSuppression(t *testing.T) {
 	defer sink.Stop()
 	pumpOpsSystemLogEvents(t, sink)
 
-	// 第 2 次调用（恢复后的首次成功）之后不应再有抑制：调用次数需要快速爬升。
+	// After the second call succeeds, subsequent writes should proceed without backoff.
 	if !waitForOpsSystemLogCondition(t, 3*time.Second, func() bool { return atomic.LoadInt64(&calls) >= 2 }) {
 		t.Fatalf("sink never retried after the first failure")
 	}
@@ -202,7 +202,7 @@ func TestOpsSystemLogSinkSuccessClearsSuppression(t *testing.T) {
 	}
 }
 
-// TestOpsSystemLogSinkHealthyPathNeverSuppressed 验证健康路径不受影响：一直成功就永远不进入退避。
+// TestOpsSystemLogSinkHealthyPathNeverSuppressed checks that successful writes never enter backoff.
 func TestOpsSystemLogSinkHealthyPathNeverSuppressed(t *testing.T) {
 	var calls int64
 	repo := &opsRepoMock{

@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	// 现有规范等级 ID，保持已存储字符串不变。
+	// Canonical tier IDs are persisted in provider credentials.
 	GeminiTierGoogleOneFree    = "google_one_free"
 	GeminiTierGoogleAIPro      = "google_ai_pro"
 	GeminiTierGoogleAIUltra    = "google_ai_ultra"
@@ -15,7 +15,7 @@ const (
 	GeminiTierAIStudioPaid     = "aistudio_paid"
 	GeminiTierGoogleOneUnknown = "google_one_unknown"
 
-	// 历史数据与上游响应中的兼容等级 ID。
+	// Legacy tier IDs accepted from stored credentials and upstream responses.
 	LegacyTierAIPremium          = "AI_PREMIUM"
 	LegacyTierGoogleOneStandard  = "GOOGLE_ONE_STANDARD"
 	LegacyTierGoogleOneBasic     = "GOOGLE_ONE_BASIC"
@@ -45,7 +45,7 @@ func CanonicalGeminiTierID(raw string) string {
 
 	upper := strings.ToUpper(raw)
 	switch upper {
-	// Google One 的历史等级。
+	// Legacy Google One tiers.
 	case LegacyTierAIPremium:
 		return GeminiTierGoogleAIPro
 	case LegacyTierGoogleOneUnlimited:
@@ -55,14 +55,14 @@ func CanonicalGeminiTierID(raw string) string {
 	case LegacyTierGoogleOneUnknown:
 		return GeminiTierGoogleOneUnknown
 
-	// Code Assist 的历史等级。
+	// Legacy Code Assist tiers.
 	case "STANDARD", "PRO", "LEGACY":
 		return GeminiTierGCPStandard
 	case "ENTERPRISE", "ULTRA":
 		return GeminiTierGCPEnterprise
 	}
 
-	// 部分 Code Assist 响应使用短横线分隔的等级标识。
+	// Code Assist also returns hyphenated tier IDs.
 	switch lower {
 	case "standard-tier", "pro-tier":
 		return GeminiTierGCPStandard
@@ -103,7 +103,7 @@ func CanonicalGeminiTierIDForOAuthType(oauthType, tierID string) string {
 			return ""
 		}
 	default:
-		// 未知 OAuth 类型继续接受规范等级。
+		// Unknown OAuth types accept any recognized canonical tier.
 		return canonical
 	}
 }

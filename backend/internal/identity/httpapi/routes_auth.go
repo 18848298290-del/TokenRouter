@@ -6,38 +6,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthRouteMiddleware 保留调用方已绑定的认证、审计和故障关闭限流。
+// AuthRouteMiddleware contains caller-supplied guards, auditing, and rate limits.
+// Production Limit middleware rejects requests when its store is unavailable.
 type AuthRouteMiddleware struct {
 	JWT, Audit, BackendAuth, BackendUser, Panel gin.HandlerFunc
 	Limit                                       func(string, int, time.Duration) gin.HandlerFunc
 }
 
-// RegisterAuthenticationRoutes 只注册身份流程，支付回环由 app 注入所属模块的注册函数。
+// RegisterAuthenticationRoutes registers identity routes and invokes the supplied payment-auth route registrar.
 func RegisterAuthenticationRoutes(v1 *gin.RouterGroup, endpoints AuthEndpoints, passkeys *PasskeyHandler, guards AuthRouteMiddleware, registerPaymentAuth func(*gin.RouterGroup)) {
-	// 公开接口
+	// Public authentication endpoints.
 	auth := v1.Group("/auth")
 	auth.Use(guards.BackendAuth)
-	// 认证事件（登录/注册/2FA/token 刷新失败）入审计
+	// Audit login, registration, two-factor authentication, and token-refresh events.
 	auth.Use(guards.Audit)
 	{
-		// 注册/登录/2FA/验证码发送均属于高风险入口，增加服务端兜底限流（Redis 故障时 fail-close）
+		// Rate-limit credential and challenge endpoints; the production limiter fails closed on Redis errors.
 		auth.POST("/register", guards.Limit("auth-register", 5, time.Minute), endpoints.Register)
 		auth.POST("/login", guards.Limit("auth-login", 20, time.Minute), endpoints.Login)
 		auth.POST("/login/2fa", guards.Limit("auth-login-2fa", 20, time.Minute), endpoints.Login2FA)
 		auth.POST("/passkey/login/begin", guards.Limit("passkey-login-begin", 20, time.Minute), passkeys.BeginLogin)
 		auth.POST("/passkey/login/finish", guards.Limit("passkey-login-finish", 20, time.Minute), passkeys.FinishLogin)
 		auth.POST("/send-verify-code", guards.Limit("auth-send-verify-code", 5, time.Minute), endpoints.SendVerifyCode)
-		// Token 刷新接口添加速率限制：每分钟最多 30 次（Redis 故障时 fail-close）
+		// Refresh is limited to 30 requests per minute.
 		auth.POST("/refresh", guards.Limit("refresh-token", 30, time.Minute), endpoints.RefreshToken)
-		// 登出接口（公开，允许未认证用户调用以撤销 Refresh Token）
+		// Logout is public so clients can revoke a refresh token without an access token.
 		auth.POST("/logout", endpoints.Logout)
-		// 优惠码验证接口添加速率限制：每分钟最多 10 次（Redis 故障时 fail-close）
+		// Promo validation is limited to 10 requests per minute.
 		auth.POST("/validate-promo-code", guards.Limit("validate-promo", 10, time.Minute), endpoints.ValidatePromoCode)
-		// 邀请码验证接口添加速率限制：每分钟最多 10 次（Redis 故障时 fail-close）
+		// Invitation validation is limited to 10 requests per minute.
 		auth.POST("/validate-invitation-code", guards.Limit("validate-invitation", 10, time.Minute), endpoints.ValidateInvitationCode)
-		// 忘记密码接口添加速率限制：每分钟最多 5 次（Redis 故障时 fail-close）
+		// Reset-email requests are limited to 5 per minute.
 		auth.POST("/forgot-password", guards.Limit("forgot-password", 5, time.Minute), endpoints.ForgotPassword)
-		// 重置密码接口添加速率限制：每分钟最多 10 次（Redis 故障时 fail-close）
+		// Password resets are limited to 10 requests per minute.
 		auth.POST("/reset-password", guards.Limit("reset-password", 10, time.Minute), endpoints.ResetPassword)
 		auth.GET("/oauth/linuxdo/start", endpoints.LinuxDoOAuthStart)
 		auth.POST("/oauth/linuxdo/start", guards.Limit("oauth-linuxdo-start", 20, time.Minute), endpoints.LinuxDoOAuthStart)
@@ -158,7 +159,7 @@ func RegisterAuthenticationRoutes(v1 *gin.RouterGroup, endpoints AuthEndpoints, 
 	}
 }
 
-// RegisterSessionRoutes 保留当前用户、会话撤销及绑定 Cookie 的原鉴权次序。
+// RegisterSessionRoutes applies JWT authentication and backend-mode checks to session operations.
 func RegisterSessionRoutes(v1 *gin.RouterGroup, endpoints AuthEndpoints, guards AuthRouteMiddleware) {
 	authenticated := v1.Group("")
 	authenticated.Use(guards.JWT)

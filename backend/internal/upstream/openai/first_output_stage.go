@@ -24,6 +24,8 @@ var (
 	ErrOpenAIFirstOutputScannerLimit = errors.New("openai pre-output scanner token limit exceeded")
 )
 
+// OpenAIFirstOutputStage buffers one attempt until its output can be committed.
+// The caller serializes access and closes the stage on every return path.
 type OpenAIFirstOutputStage struct {
 	limit      int64
 	size       int64
@@ -73,8 +75,8 @@ func OpenAIFirstOutputDynamicScanLines(guardActive *atomic.Bool) bufio.SplitFunc
 			}
 			return advance, token, nil
 		}
-		// 已达到上限且没有分隔符时，再读取一个字节必然超过受保护 token 预算；
-		// 在 Scanner 继续增长到 MaxLineSize 前失败。
+		// With no delimiter at the budget limit, further scanner growth would exceed
+		// the guarded token budget. Fail before Scanner grows toward MaxLineSize.
 		if len(data) >= limit {
 			return 0, nil, ErrOpenAIFirstOutputScannerLimit
 		}
@@ -140,8 +142,8 @@ func (s *OpenAIFirstOutputStage) prepareWrite(incoming int) error {
 		return fmt.Errorf("create first-output spool: %w", err)
 	}
 	path := file.Name()
-	// 写入任何请求数据前先 unlink。Unix 仍可通过文件描述符读取，进程崩溃或 SIGKILL
-	// 也不会留下带名称的明文暂存文件。
+	// Unlink before writing request data. Unix keeps the descriptor readable while
+	// a crash or SIGKILL cannot leave a named plaintext spool file.
 	if unlinkErr := s.removeFile(path); unlinkErr != nil {
 		closeErr := file.Close()
 		removeErr := s.removeFile(path)
@@ -187,8 +189,8 @@ func (s *OpenAIFirstOutputStage) CommitTo(dst io.Writer) error {
 		}
 	}
 	if err := s.Close(); err != nil {
-		// 数据已成功交付；保留清理错误供 handler 的延迟清理/日志阶段处理，
-		// 不把已经提交的字节转换成流错误。
+		// Delivery succeeded. Retain cleanup errors for deferred cleanup or logging
+		// instead of reporting already-delivered bytes as a stream failure.
 		s.cleanupErr = errors.Join(s.cleanupErr, err)
 	}
 	return nil
@@ -221,8 +223,8 @@ func (s *OpenAIFirstOutputStage) Close() error {
 	return closeErr
 }
 
-// Closed 供兼容输出器判断提交后的写入路径，不允许外部修改暂存状态。
+// Closed reports whether staging has ended, so output can use the post-commit path.
 func (s *OpenAIFirstOutputStage) Closed() bool { return s.closed }
 
-// Limit 只读返回当前尝试的暂存上限，供调用者核对其与 scanner 预算的区别。
+// Limit returns the staging budget in bytes, separate from the scanner budget.
 func (s *OpenAIFirstOutputStage) Limit() int64 { return s.limit }

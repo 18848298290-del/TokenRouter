@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// DecisionInput 保存平台和分组，按评估顺序按需读取设置和价格能力。
+// DecisionInput supplies platform and group policy, with lazy policy and pricing checks.
 type DecisionInput struct {
 	Model            string
 	GroupPolicy      string
@@ -21,20 +21,20 @@ type DecisionInput struct {
 	ForceOnSupported func() bool
 }
 
-// Decision 描述最终应写入、删除或拒绝的 OpenAI Fast 决策。
+// Decision describes the service tier to write, remove, or reject.
 type Decision struct {
 	Tier        string
 	DeleteField bool
 	Blocked     *BlockedError
 }
 
-// IsAcceleratedTier 同时覆盖 Fast 和 Ultra Fast。
+// IsAcceleratedTier reports whether the tier is Fast or Ultra Fast.
 func IsAcceleratedTier(tier string) bool {
 	return tier == OpenAIFastTierPriority || tier == OpenAIFastTierUltrafast
 }
 
-// Resolve 解析系统策略和单 Key 策略。
-// 先对请求档位应用系统策略，Key 改写后再次应用系统策略，使 filter/block 对 force_on 结果也生效。
+// Resolve applies group, system, and API key service tier policies.
+// System rules run before key overrides and again after a key changes the tier, so filter/block also covers force_on.
 func Resolve(input DecisionInput, rawTier string, hasField bool) Decision {
 	normTier := openai.ServiceTierValue(rawTier)
 	groupPolicy := input.GroupPolicy
@@ -63,14 +63,14 @@ func Resolve(input DecisionInput, rawTier string, hasField bool) Decision {
 		}
 	}
 
-	// 原始请求已命中的非 pass 系统动作直接生效，Key 策略不能覆盖。
+	// A system action other than pass takes precedence over key policy.
 	if normTier != "" {
 		if decision, handled := applySystemAction(normTier); handled {
 			return decision
 		}
 	}
 
-	// 全局先裁决；分组关闭后，单 Key 不得重新开启。
+	// After system evaluation, a group force_off prevents a key from enabling Fast.
 	if groupPolicy == routing.GroupOpenAIFastPolicyForceOff {
 		if IsAcceleratedTier(normTier) {
 			return Decision{DeleteField: hasField}
@@ -84,19 +84,19 @@ func Resolve(input DecisionInput, rawTier string, hasField bool) Decision {
 	case apikey.APIKeyFastModePolicyForceOn:
 		keyPolicyApplicable = input.ForceOnSupported()
 	case apikey.APIKeyFastModePolicyForceOff:
-		// 强制关闭时清除 priority，其他档位保持原值。
+		// Key force_off applies to OpenAI accelerated tiers.
 		keyPolicyApplicable = input.OpenAI
 	}
 	candidateChanged := false
 	if keyPolicyApplicable {
 		switch policy {
 		case apikey.APIKeyFastModePolicyForceOn:
-			// 单 Key 开启 Fast 不降低分组强制的 Ultra Fast。
+			// Enabling Fast on a key must not downgrade a group-forced Ultra Fast tier.
 			if groupPolicy != routing.GroupOpenAIFastPolicyForceUltrafast {
 				candidateTier = OpenAIFastTierPriority
 			}
 		case apikey.APIKeyFastModePolicyForceOff:
-			// flex 是低优先级模式，auto/default/scale 也是官方合法 tier，均需保留。
+			// Keep non-accelerated tiers such as flex, auto, default, and scale.
 			if IsAcceleratedTier(normTier) {
 				candidateTier = ""
 			}
@@ -104,7 +104,7 @@ func Resolve(input DecisionInput, rawTier string, hasField bool) Decision {
 		candidateChanged = candidateTier != normTier
 	}
 
-	// Key 注入或改写出的 tier 必须重新接受系统策略裁决。
+	// Recheck system policy after a key injects or changes the tier.
 	if candidateTier != "" {
 		if candidateChanged {
 			if decision, handled := applySystemAction(candidateTier); handled {
@@ -119,9 +119,9 @@ func Resolve(input DecisionInput, rawTier string, hasField bool) Decision {
 	return Decision{}
 }
 
-// ApplyBody 对请求体应用系统和单 Key Fast 策略，并规范化 service_tier。
-// Chat 和 Messages 入口此前已规范化，透传和 Responses 入口由此处完成。
-// fast 需要转换为 priority，上游直接收到 fast 会返回 400。
+// ApplyBody applies group, system, and key Fast policies and normalizes service_tier.
+// Chat and Messages normalize earlier; passthrough and Responses rely on this step.
+// The fast alias must become priority to avoid upstream rejection.
 func ApplyBody(body []byte, input DecisionInput) ([]byte, error) {
 	if len(body) == 0 {
 		return body, nil

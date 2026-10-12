@@ -16,7 +16,7 @@ type OpenAIOptions struct {
 	AuthHeaders  func(context.Context, string) (http.Header, error)
 	ApplyHeaders func(http.Header)
 	Do           func(*http.Request) (*http.Response, error)
-	// FetchImage 下载结果图片，不应用生图请求的认证或自定义请求头。
+	// FetchImage downloads result images; implementations must omit generation credentials and custom headers.
 	FetchImage func(context.Context, string) (string, error)
 }
 type GrokOptions struct {
@@ -33,7 +33,7 @@ type Target struct {
 	Gemini func(string) gemininative.ImageOptions
 }
 
-// ExecutePlatform 按任务提供商的平台分派执行，协议与错误由各平台实现处理。
+// ExecutePlatform dispatches to the run provider platform, which handles its protocol and errors.
 func (t *Target) ExecutePlatform(ctx context.Context, platform string, run creative.CreativeRun, payload creative.CreativeRunPayload, model string) ([]creative.CreativeOutput, error) {
 	switch platform {
 	case creative.PlatformOpenAI:

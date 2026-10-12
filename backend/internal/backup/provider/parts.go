@@ -17,7 +17,7 @@ import (
 
 const defaultBackupPartSizeBytes int64 = 4 * 1024 * 1024 * 1024
 
-// BackupPart 描述一个 gzip 字节分卷；StorageKey 为当前字段，S3Key 兼容上游和旧客户端。
+// BackupPart describes a gzip archive segment; StorageKey is current and S3Key supports legacy clients.
 type BackupPart = backup.BackupPart
 
 type localBackupPart struct {
@@ -32,8 +32,8 @@ type contextReader struct {
 	reader io.Reader
 }
 
-// spoolNextBackupPart 只落盘一个有界分卷，并通过 bufio.Peek 判断后续是否还有数据。
-// 调用方必须在使用完返回路径后删除临时文件。
+// spoolNextBackupPart writes one bounded part and peeks for remaining input.
+// The caller removes the returned temporary file after use.
 func spoolNextBackupPart(ctx context.Context, src *bufio.Reader, index int, partSize int64) (part localBackupPart, hasPart bool, hasMore bool, err error) {
 	if partSize <= 0 {
 		return part, false, false, errors.New("backup part size must be positive")
@@ -82,7 +82,7 @@ func spoolNextBackupPart(ctx context.Context, src *bufio.Reader, index int, part
 	}, true, hasMore, nil
 }
 
-// Read 在每次读取前检查取消信号，避免临时卷写入阶段忽略任务超时。
+// Read checks cancellation before each read so part spooling observes task deadlines.
 func (r *contextReader) Read(p []byte) (int, error) {
 	select {
 	case <-r.ctx.Done():

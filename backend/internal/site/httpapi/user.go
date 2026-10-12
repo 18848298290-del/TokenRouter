@@ -23,7 +23,7 @@ func NewAnnouncementHandler(announcementService *site.AnnouncementService) *Anno
 	}
 }
 
-// List handles listing announcements visible to current user
+// List returns announcements visible to the authenticated user.
 // GET /api/v1/announcements
 func (h *AnnouncementHandler) List(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -47,7 +47,7 @@ func (h *AnnouncementHandler) List(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// MarkRead marks an announcement as read for current user
+// MarkRead records that the authenticated user has read a visible announcement.
 // POST /api/v1/announcements/:id/read
 func (h *AnnouncementHandler) MarkRead(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

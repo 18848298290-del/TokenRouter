@@ -2,7 +2,7 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/scheduler"
 
-// ApplySchedulerAdminReadSettings 将调度读取结果写入综合快照。
+// ApplySchedulerAdminReadSettings copies the scheduler read result into the snapshot.
 func (s *Snapshot) ApplySchedulerAdminReadSettings(value *scheduler.AdminReadSettings) {
 	s.AdvancedSchedulerEWMAErrorRateAlpha = value.AdvancedSchedulerEWMAErrorRateAlpha
 	s.AdvancedSchedulerEWMATTFTAlpha = value.AdvancedSchedulerEWMATTFTAlpha

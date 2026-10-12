@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// Reauthenticate 直接回源复核长连接身份；不修改已放行轮次的归属和计费快照。
+// Reauthenticate reloads long-lived connection identity from storage and returns a fresh key view.
 func (s *APIKeyService) Reauthenticate(ctx context.Context, previous *APIKey, input AuthenticationInput) (*APIKey, error) {
 	if s == nil || previous == nil || previous.User == nil || previous.Key == "" || len(previous.Key) > MaxAPIKeyCredentialBytes {
 		return nil, ErrAPIKeyNotFound
@@ -27,7 +27,7 @@ func (s *APIKeyService) Reauthenticate(ctx context.Context, previous *APIKey, in
 	if _, err := s.authenticateKey(key, input); err != nil {
 		return nil, err
 	}
-	// 付款主体或结算来源变化必须重连，避免旧连接按旧归属继续消费。
+	// A changed payer or funding source requires reconnection before more spending.
 	if key.User.ID != previous.User.ID || APIKeyEffectiveBillingMode(key) != APIKeyEffectiveBillingMode(previous) || !sameKeyID(key.PreferredSubscriptionID, previous.PreferredSubscriptionID) {
 		return nil, ErrAPIKeyNotFound
 	}
@@ -40,7 +40,7 @@ func (s *APIKeyService) Reauthenticate(ctx context.Context, previous *APIKey, in
 	if key.Status == StatusAPIKeyQuotaExhausted {
 		return nil, ErrAPIKeyQuotaExhausted
 	}
-	// 连接保持已选分组；复合 Key 与回退分组仍须通过当前权限检查。
+	// Retain the connection's selected group after checking current permissions and composite bindings.
 	if previous.GroupID != nil {
 		key, err = s.ResolveRuntimeGroup(ctx, key, *previous.GroupID)
 		if err != nil {

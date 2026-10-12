@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// PlanRecordResponse 是管理员套餐接口的 JSON 响应。
+// PlanRecordResponse is the JSON representation returned by administrator plan endpoints.
 type PlanRecordResponse struct {
 	Localization         billing.PlanLocalization `json:"localization"`
 	ID                   int64                    `json:"id,omitempty"`

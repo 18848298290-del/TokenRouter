@@ -13,13 +13,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// 固定时长用于平台重试预算。
+// These limits bound retries within one provider.
 const (
 	maxRetryAttempts = 5
 	maxRetryElapsed  = 10 * time.Second
 )
 
-// streamOptions 配置响应窗口观测和逐事件缓存规则读取函数。
+// streamOptions configures session-window observations and per-event cache policy reads.
 func (r *Runtime) streamOptions(output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider) anthropic.StreamOptions {
 	options := anthropic.StreamOptions{
 		ProviderID: target.Record.ID,
@@ -78,7 +78,7 @@ func (r *Runtime) responseOptions(ctx context.Context, output HTTPBoundary, stat
 	return options
 }
 
-// readErrorBody 保留错误诊断上限与读取失败，不替代成功响应的独立大小限制。
+// readErrorBody bounds diagnostic reads and returns read errors. Success responses use a separate limit.
 func (r *Runtime) readErrorBody(response *http.Response) ([]byte, error) {
 	if response == nil || response.Body == nil {
 		return nil, nil

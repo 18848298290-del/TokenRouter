@@ -43,7 +43,7 @@ func TestIsolateOpenAISessionID(t *testing.T) {
 	t.Run("zero_apiKeyID_still_works", func(t *testing.T) {
 		result := IsolateSessionID(0, "session")
 		assert.NotEmpty(t, result)
-		// apiKeyID=0 与 apiKeyID=1 应产生不同结果
+		// Zero remains a distinct API key scope.
 		other := IsolateSessionID(1, "session")
 		assert.NotEqual(t, result, other)
 	})

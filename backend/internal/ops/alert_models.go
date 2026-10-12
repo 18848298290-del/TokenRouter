@@ -2,8 +2,6 @@ package ops
 
 import "time"
 
-// OpsAlertRule 是管理端告警规则，JSON 字段与运维仪表盘对应。
-
 const (
 	OpsAlertStatusFiring         = "firing"
 	OpsAlertStatusResolved       = "resolved"

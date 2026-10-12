@@ -11,116 +11,116 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// ErrorPassthroughRule 定义全局错误透传规则的 schema。
+// ErrorPassthroughRule defines how upstream errors are returned to clients.
 //
-// 错误透传规则用于控制上游错误如何返回给客户端：
-//   - 匹配条件：错误码 + 关键词组合
-//   - 响应行为：透传原始信息 或 自定义错误信息
-//   - 响应状态码：可指定返回给客户端的状态码
-//   - 平台范围：规则适用的平台（Anthropic、OpenAI、Gemini、Antigravity、Qoder、Grok）
+// Rules combine the following settings:
+//   - Match error codes and keywords.
+//   - Pass through the upstream message or return a custom message.
+//   - Select the response status code.
+//   - Restrict the rule to selected platforms.
 type ErrorPassthroughRule struct {
 	ent.Schema
 }
 
-// Annotations 返回 schema 的注解配置。
+// Annotations sets the database table name.
 func (ErrorPassthroughRule) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "error_passthrough_rules"},
 	}
 }
 
-// Mixin 返回该 schema 使用的混入组件。
+// Mixin supplies creation and update timestamps.
 func (ErrorPassthroughRule) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
 	}
 }
 
-// Fields 定义错误透传规则实体的所有字段。
+// Fields defines error matching and response settings.
 func (ErrorPassthroughRule) Fields() []ent.Field {
 	return []ent.Field{
-		// name: 规则名称，用于在界面中标识规则
+		// Display name for the rule.
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
 
-		// enabled: 是否启用该规则
+		// Whether the rule is enabled.
 		field.Bool("enabled").
 			Default(true),
 
-		// priority: 规则优先级，数值越小优先级越高
-		// 匹配时按优先级顺序检查，命中第一个匹配的规则
+		// Lower priority values are checked first.
+		// The first matching rule determines the response.
 		field.Int("priority").
 			Default(0),
 
-		// error_codes: 匹配的错误码列表（OR 关系）
-		// 例如：[422, 400] 表示匹配 422 或 400 错误码
+		// Match any listed error code.
+		// For example, [422, 400] matches either code.
 		field.JSON("error_codes", []int{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// keywords: 匹配的关键词列表（OR 关系）
-		// 例如：["context limit", "model not supported"]
-		// 关键词匹配不区分大小写
+		// Match any listed keyword.
+		// For example, ["context limit", "model not supported"].
+		// Keyword matching is case-insensitive.
 		field.JSON("keywords", []string{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// match_mode: 匹配模式
-		// - "any": 错误码匹配 OR 关键词匹配（任一条件满足即可）
-		// - "all": 错误码匹配 AND 关键词匹配（所有条件都必须满足）
+		// match_mode combines code and keyword matches:
+		// - "any": either a code or a keyword matches.
+		// - "all": both a code and a keyword match.
 		field.String("match_mode").
 			MaxLen(10).
 			Default("any"),
 
-		// platforms: 适用平台列表
-		// 例如：["anthropic", "openai", "gemini", "antigravity", "qoder", "grok"]
-		// 空列表表示适用于所有平台
+		// Platforms to which the rule applies.
+		// For example, ["anthropic", "openai", "gemini", "antigravity", "qoder", "grok"].
+		// An empty list applies to all platforms.
 		field.JSON("platforms", []string{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// passthrough_code: 是否透传上游原始状态码
-		// true: 使用上游返回的状态码
-		// false: 使用 response_code 指定的状态码
+		// Selects whether to pass through the upstream status code.
+		// true uses the upstream status code.
+		// false uses response_code.
 		field.Bool("passthrough_code").
 			Default(true),
 
-		// response_code: 自定义响应状态码
-		// 当 passthrough_code=false 时使用此状态码
+		// Custom response status code.
+		// Used when passthrough_code is false.
 		field.Int("response_code").
 			Optional().
 			Nillable(),
 
-		// passthrough_body: 是否透传上游原始错误信息
-		// true: 使用上游返回的错误信息
-		// false: 使用 custom_message 指定的错误信息
+		// Selects whether to pass through the upstream error message.
+		// true uses the upstream error message.
+		// false uses custom_message.
 		field.Bool("passthrough_body").
 			Default(true),
 
-		// custom_message: 自定义错误信息
-		// 当 passthrough_body=false 时使用此错误信息
+		// Custom error message.
+		// Used when passthrough_body is false.
 		field.Text("custom_message").
 			Optional().
 			Nillable(),
 
-		// skip_monitoring: 是否跳过运维监控记录
-		// true: 匹配此规则的错误不会被记录到 ops_error_logs
-		// false: 正常记录到运维监控（默认行为）
+		// Controls whether matched errors are recorded in operations monitoring.
+		// true omits matched errors from ops_error_logs.
+		// false records them, which is the default.
 		field.Bool("skip_monitoring").
 			Default(false),
 
-		// description: 规则描述，用于说明规则的用途
+		// Describes the rule's purpose.
 		field.Text("description").
 			Optional().
 			Nillable(),
 	}
 }
 
-// Indexes 定义数据库索引，优化查询性能。
+// Indexes supports enabled-rule lookup and priority ordering.
 func (ErrorPassthroughRule) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("enabled"),  // 筛选启用的规则
-		index.Fields("priority"), // 按优先级排序
+		index.Fields("enabled"),  // Enabled-rule lookup.
+		index.Fields("priority"), // Priority ordering.
 	}
 }

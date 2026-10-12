@@ -21,7 +21,7 @@ type trackedBody struct {
 
 func (b *trackedBody) Close() error { b.closes++; return nil }
 
-// TestRunHTTPRecoveryBoundaries 使用固定上游错误检查同提供商恢复的次数和时间限制。
+// TestRunHTTPRecoveryBoundaries checks recovery counts and response-body cleanup with fixed upstream errors.
 func TestRunHTTPRecoveryBoundaries(t *testing.T) {
 	for _, kind := range []string{"agent", "encrypted", "plain"} {
 		t.Run(kind, func(t *testing.T) {

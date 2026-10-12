@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// 身份模块拥有动态键和默认值，旧格式保持不变。
+// Runtime keys for identity provider settings.
 const (
 	SettingKeyDingTalkConnectBypassRegistration     = "dingtalk_connect_bypass_registration"
 	SettingKeyDingTalkConnectClientID               = "dingtalk_connect_client_id"
@@ -87,7 +87,7 @@ const (
 	OAuthDefaultWeChatConnectScopes                 = "snsapi_login"
 )
 
-// OAuthSettingsDefaults 包含启动时提供的身份认证默认值。
+// OAuthSettingsDefaults contains authentication defaults supplied at startup.
 type OAuthSettingsDefaults struct {
 	LinuxDo     authconfig.LinuxDoConnectConfig
 	DingTalk    authconfig.DingTalkConnectConfig
@@ -97,19 +97,19 @@ type OAuthSettingsDefaults struct {
 	GoogleOAuth authconfig.EmailOAuthProviderConfig
 }
 
-// OAuthSettingsStore 提供 OAuth 配置的批量读取。
+// OAuthSettingsStore reads OAuth settings in batches.
 type OAuthSettingsStore interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 }
 
-// OAuthSettings 解释动态覆盖及兼容安全默认，发现文档通过外部端口读取。
+// OAuthSettings applies runtime overrides and resolves provider discovery metadata.
 type OAuthSettings struct {
 	settingRepo     OAuthSettingsStore
 	defaults        *OAuthSettingsDefaults
 	resolveMetadata func(context.Context, string) (*OAuthProviderMetadata, error)
 }
 
-// OAuthProviderMetadata 是发现文档返回的纯值。
+// OAuthProviderMetadata contains endpoints returned by provider discovery.
 type OAuthProviderMetadata struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
@@ -136,7 +136,7 @@ type WeChatConnectOAuthConfig struct {
 	FrontendRedirectURL string
 }
 
-// NewOAuthSettings 构造没有 I/O；接收默认值副本，防止输出污染启动配置。
+// NewOAuthSettings copies startup defaults, including the mutable attribute-sync slice.
 func NewOAuthSettings(repo OAuthSettingsStore, defaults *OAuthSettingsDefaults, resolver func(context.Context, string) (*OAuthProviderMetadata, error)) *OAuthSettings {
 	var snapshot *OAuthSettingsDefaults
 	if defaults != nil {
@@ -588,7 +588,7 @@ func (s *OAuthSettings) GetLinuxDoConnectOAuthConfig(ctx context.Context) (authc
 		return authconfig.LinuxDoConnectConfig{}, apperror.NotFound("OAUTH_DISABLED", "oauth login is disabled")
 	}
 
-	// 基础健壮性校验（避免把用户重定向到一个必然失败或不安全的 OAuth 流程里）。
+	// Reject incomplete or unsafe settings before starting authorization.
 	if strings.TrimSpace(effective.ClientID) == "" {
 		return authconfig.LinuxDoConnectConfig{}, apperror.InternalServer("OAUTH_CONFIG_INVALID", "oauth client id not configured")
 	}
@@ -688,8 +688,8 @@ func (s *OAuthSettings) GetDingTalkConnectOAuthConfig(ctx context.Context) (auth
 	if v, ok := settings[SettingKeyDingTalkConnectBypassRegistration]; ok && strings.TrimSpace(v) != "" {
 		effective.BypassRegistration = strings.EqualFold(strings.TrimSpace(v), "true")
 	}
-	// bypass_registration 仅在 internal_only 模式下有意义；其它策略下强制 false，
-	// 以保证 OAuth callback 看到的 effective config 永远是一致状态。
+	// Registration bypass applies only to internal_only organizations.
+	// Clear it for other policies before returning the effective settings.
 	if effective.CorpRestrictionPolicy != "internal_only" {
 		effective.BypassRegistration = false
 	}
@@ -703,14 +703,14 @@ func (s *OAuthSettings) GetDingTalkConnectOAuthConfig(ctx context.Context) (auth
 	if v, ok := settings[SettingKeyDingTalkConnectSyncDept]; ok && strings.TrimSpace(v) != "" {
 		effective.SyncDept = strings.EqualFold(strings.TrimSpace(v), "true")
 	}
-	// 身份同步三开关仅在 internal_only 模式下有意义；其它策略强制 false。
+	// Profile synchronization applies only to internal_only organizations.
 	if effective.CorpRestrictionPolicy != "internal_only" {
 		effective.SyncCorpEmail = false
 		effective.SyncDisplayName = false
 		effective.SyncDept = false
 	}
 
-	// 身份同步目标 attr key（DB 空 → fallback 默认值）
+	// Use configured attribute keys, then startup or built-in defaults when empty.
 	if v := strings.TrimSpace(settings[SettingKeyDingTalkConnectSyncCorpEmailAttrKey]); v != "" {
 		effective.SyncCorpEmailAttrKey = v
 	}
@@ -734,7 +734,7 @@ func (s *OAuthSettings) GetDingTalkConnectOAuthConfig(ctx context.Context) (auth
 		return authconfig.DingTalkConnectConfig{}, apperror.NotFound("OAUTH_DISABLED", "dingtalk oauth login is disabled")
 	}
 
-	// 基础健壮性校验（避免把用户重定向到一个必然失败或不安全的 OAuth 流程里）。
+	// Reject incomplete or unsafe settings before starting authorization.
 	if strings.TrimSpace(effective.ClientID) == "" {
 		return authconfig.DingTalkConnectConfig{}, apperror.InternalServer("OAUTH_CONFIG_INVALID", "dingtalk oauth client id not configured")
 	}
@@ -773,7 +773,7 @@ func (s *OAuthSettings) GetDingTalkConnectOAuthConfig(ctx context.Context) (auth
 		return authconfig.DingTalkConnectConfig{}, apperror.InternalServer("OAUTH_CONFIG_INVALID", "dingtalk oauth client secret not configured")
 	}
 
-	// 镜像 admin handler 行为：internal_only policy 隐式要求 AppType=internal
+	// The internal_only policy requires the internal application type.
 	if effective.CorpRestrictionPolicy == "internal_only" {
 		effective.AppType = "internal"
 	}
@@ -1137,7 +1137,7 @@ func (cfg WeChatConnectOAuthConfig) AppSecretForMode(mode string) string {
 	return strings.TrimSpace(oauthSettingsFirstNonEmpty(cfg.OpenAppSecret, cfg.LegacyAppSecret))
 }
 
-// oauthSettingsFirstNonEmpty 返回首个非空值。
+// oauthSettingsFirstNonEmpty returns the first value that is nonempty after trimming whitespace.
 func oauthSettingsFirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {

@@ -33,32 +33,32 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		{"/v1/videos/req_123", EndpointVideos},
 		{"/v1beta/models", EndpointGeminiModels},
 
-		// 带平台前缀的根 Responses 路径。
+		// Platform-prefixed Responses root paths.
 		{"/antigravity/v1/messages", EndpointMessages},
 		{"/openai/v1/responses", EndpointResponses},
 		{"/openai/v1/images/generations", EndpointImagesGenerations},
 		{"/openai/v1/images/edits", EndpointImagesEdits},
 		{"/antigravity/v1beta/models/gemini:generateContent", EndpointGeminiModels},
 
-		// 带平台前缀的 Compact 路径归为独立入站端点。
+		// Platform-prefixed compact paths have a separate inbound endpoint.
 		{"/openai/v1/responses/compact", EndpointResponsesCompact},
 		{"/openai/v1/responses/compact/detail", EndpointResponsesCompact},
 
-		// 顶级裸别名路径需要区分根端点与 Compact。
+		// Bare aliases distinguish the root from compact endpoints.
 		{"/responses", EndpointResponses},
 		{"/responses/input_tokens", EndpointResponsesInputTokens},
 		{"/responses/compact", EndpointResponsesCompact},
 		{"/responses/compact/detail", EndpointResponsesCompact},
 		{"/alpha/search", EndpointAlphaSearch},
 
-		// Codex 直连别名路径需要区分根端点与 Compact。
+		// Codex aliases distinguish the root from compact endpoints.
 		{"/backend-api/codex/responses", EndpointResponses},
 		{"/backend-api/codex/responses/input_tokens", EndpointResponsesInputTokens},
 		{"/backend-api/codex/responses/compact", EndpointResponsesCompact},
 		{"/backend-api/codex/responses/compact/detail", EndpointResponsesCompact},
 		{"/backend-api/codex/alpha/search", EndpointAlphaSearch},
 
-		// 不得泛化到仅以 Responses 路径结尾、但不属于已知别名根的任意路径。
+		// Unknown prefixes ending in a Responses path must not be accepted as known bare aliases.
 		{"/foo/responses", "/foo/responses"},
 		{"/foo/responses/compact", "/foo/responses/compact"},
 
@@ -88,11 +88,11 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 		// Gemini.
 		{"gemini models", EndpointGeminiModels, "/v1beta/models/gemini:gen", capability.PlatformGemini, EndpointGeminiModels},
 
-		// OpenAI 根 Responses 端点。
+		// OpenAI Responses roots.
 		{"openai responses root", EndpointResponses, "/v1/responses", capability.PlatformOpenAI, EndpointResponses},
 		{"openai responses input tokens", EndpointResponsesInputTokens, "/v1/responses/input_tokens", capability.PlatformOpenAI, EndpointResponsesInputTokens},
 
-		// 从 OpenAI Compact 原始路径提取的后缀会保存在上游端点中。
+		// Keep compact subresource suffixes from the raw path in the upstream endpoint.
 		{"openai responses compact", EndpointResponsesCompact, "/openai/v1/responses/compact", capability.PlatformOpenAI, "/v1/responses/compact"},
 		{"openai responses nested", EndpointResponsesCompact, "/openai/v1/responses/compact/detail", capability.PlatformOpenAI, "/v1/responses/compact/detail"},
 		{"openai bare responses compact", EndpointResponsesCompact, "/responses/compact", capability.PlatformOpenAI, "/v1/responses/compact"},
@@ -100,11 +100,11 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 		{"openai codex direct responses compact", EndpointResponsesCompact, "/backend-api/codex/responses/compact", capability.PlatformOpenAI, "/v1/responses/compact"},
 		{"openai codex direct responses compact detail", EndpointResponsesCompact, "/backend-api/codex/responses/compact/detail", capability.PlatformOpenAI, "/v1/responses/compact/detail"},
 
-		// OpenAI 根端点裸别名统一归一化为根 Responses。
+		// Bare root aliases normalize to the Responses endpoint.
 		{"openai bare responses", EndpointResponses, "/responses", capability.PlatformOpenAI, EndpointResponses},
 		{"openai codex direct responses", EndpointResponses, "/backend-api/codex/responses", capability.PlatformOpenAI, EndpointResponses},
 
-		// 入站已是规范 Compact 端点且原始路径无法派生后缀时，使用 Compact 后缀。
+		// Use the canonical compact suffix when only the inbound endpoint identifies compaction.
 		{"openai responses compact inbound only, unrelated raw path", EndpointResponsesCompact, "/v1/messages", capability.PlatformOpenAI, EndpointResponsesCompact},
 
 		{"openai from messages", EndpointMessages, "/v1/messages", capability.PlatformOpenAI, EndpointResponses},
@@ -120,11 +120,11 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 		{"grok video extensions", EndpointVideosExtensions, "/videos/extensions", capability.PlatformGrok, EndpointVideosExtensions},
 		{"grok video status", EndpointVideos, "/videos/req_123", capability.PlatformGrok, EndpointVideos},
 
-		// Antigravity 根据入站端点选择 Claude 或 Gemini 上游。
+		// Antigravity chooses Claude or Gemini from the inbound endpoint.
 		{"antigravity claude", EndpointMessages, "/antigravity/v1/messages", capability.PlatformAntigravity, EndpointMessages},
 		{"antigravity gemini", EndpointGeminiModels, "/antigravity/v1beta/models", capability.PlatformAntigravity, EndpointGeminiModels},
 
-		// 未知平台按传入值处理。
+		// Unknown platforms retain the inbound endpoint.
 		{"unknown platform", "/v1/embeddings", "/v1/embeddings", "unknown", "/v1/embeddings"},
 	}
 	for _, tt := range tests {
@@ -203,13 +203,13 @@ func TestGetInboundEndpoint_FallbackWithoutMiddleware(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/antigravity/v1/messages", nil)
 
-	// 中间件未运行时，规范化 c.Request.URL.Path。
+	// Without middleware, normalize the request URL.
 	got := GetInboundEndpoint(c)
 	require.Equal(t, EndpointMessages, got)
 }
 
-// TestInboundEndpointMiddleware_WildcardRoutes 验证 Gin 通配路由按请求 URL 规范化。
-// 使用 c.FullPath() 的路由模式会将 Compact 请求误归为根端点。
+// TestInboundEndpointMiddleware_WildcardRoutes checks normalization using the actual request URL.
+// FullPath returns the route pattern, which would misclassify compact requests as the Responses root.
 func TestInboundEndpointMiddleware_WildcardRoutes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -275,8 +275,8 @@ func TestInboundEndpointMiddleware_WildcardRoutes(t *testing.T) {
 	}
 }
 
-// TestInboundEndpointMiddleware_GeminiWildcardRoute 验证 Gemini 通配路由同样
-// 使用请求 URL 路径，规范化为 EndpointGeminiModels。
+// TestInboundEndpointMiddleware_GeminiWildcardRoute checks that the request URL
+// on a Gemini wildcard route normalizes to EndpointGeminiModels.
 func TestInboundEndpointMiddleware_GeminiWildcardRoute(t *testing.T) {
 	router := gin.New()
 	router.Use(InboundEndpointMiddleware())
@@ -295,15 +295,15 @@ func TestInboundEndpointMiddleware_GeminiWildcardRoute(t *testing.T) {
 	require.Equal(t, EndpointGeminiModels, captured)
 }
 
-// TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware 验证中间件未运行时，
-// 回退时优先使用 c.Request.URL.Path，通配路由下的 Compact 请求据此归类。
+// TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware checks request-URL
+// normalization for compact requests when middleware has not saved an endpoint.
 func TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware(t *testing.T) {
 	router := gin.New()
-	// 此处刻意不注册 InboundEndpointMiddleware。
+	// Leave InboundEndpointMiddleware unregistered to exercise on-demand normalization.
 
 	var captured string
 	router.POST("/v1/responses/*subpath", func(c *gin.Context) {
-		// 通配路由命中时，FullPath 返回路由模式。
+		// FullPath is the route pattern even when the request selects a specific subpath.
 		require.Equal(t, "/v1/responses/*subpath", c.FullPath())
 		captured = GetInboundEndpoint(c)
 		c.Status(http.StatusOK)
@@ -329,9 +329,9 @@ func TestGetUpstreamEndpoint_FullFlow(t *testing.T) {
 	require.Equal(t, "/v1/responses/compact", got)
 }
 
-// TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint verifies that the
-// unified GetUpstreamEndpoint helper produces the same results as the
-// former normalizedOpenAIUpstreamEndpoint for OpenAI platform requests.
+// TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint checks endpoint derivation
+// for OpenAI requests through the shared context helper.
+
 func TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint(t *testing.T) {
 	tests := []struct {
 		name string

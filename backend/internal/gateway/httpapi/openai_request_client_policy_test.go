@@ -23,14 +23,14 @@ type requestClientDetectorFixture struct {
 	result providerpolicy.CodexClientRestrictionDetectionResult
 }
 
-// tlsProfileTestStore 通过相同读取入口提供固定测试策略。
+// tlsProfileTestStore supplies fixed policy through the production lookup interface.
 type tlsProfileTestStore struct {
 	egress.TLSFingerprintProfileRepository
 	profiles []*egress.TLSFingerprintProfile
 }
 
 func TestLogCodexCLIOnlyDetection_NilSafety(t *testing.T) {
-	// 不校验日志内容，仅保证在 nil 入参下不会 panic。
+	// Nil inputs must not panic; log contents are outside this assertion.
 	require.NotPanics(t, func() {
 		LogCodexCLIOnlyDetection(context.TODO(), nil, nil, 0, providerpolicy.CodexClientRestrictionDetectionResult{Enabled: true, Matched: false, Reason: "test"}, nil)
 		LogCodexCLIOnlyDetection(context.Background(), nil, nil, 0, providerpolicy.CodexClientRestrictionDetectionResult{Enabled: false, Matched: false, Reason: "disabled"}, nil)
@@ -188,7 +188,7 @@ func TestOpenAIGatewayService_ResolveTLSProfileRouterFallback(t *testing.T) {
 
 	svc := newResponsesFixture(responsesFixtureInputs{profiles: profileSvc})
 
-	// 路由器命中优先使用规则目标模板。
+	// A matching router rule takes precedence over the provider profile.
 	routerProfile := svc.Requests.TLSProfile(provider, egress.TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		TLSFingerprintProfileID: 20,
@@ -196,7 +196,7 @@ func TestOpenAIGatewayService_ResolveTLSProfileRouterFallback(t *testing.T) {
 	require.NotNil(t, routerProfile)
 	require.Equal(t, "router", routerProfile.Name)
 
-	// 规则目标模板不可用时安全回退提供商固定模板。
+	// An unavailable rule profile falls back to the fixed provider profile.
 	fallbackProfile := svc.Requests.TLSProfile(provider, egress.TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		TLSFingerprintProfileID: 404,

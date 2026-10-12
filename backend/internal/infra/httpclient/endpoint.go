@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// BuildOpenAIEndpointURL 按 OpenAI 兼容上游 base_url 形态拼出目标端点。
-// 已包含完整端点时原样返回；base_url 以 /v1、/v4、/v1beta 等版本段结尾时，
-// 直接追加不带 /v1 前缀的相对端点；其它情况追加完整默认端点。
+// BuildOpenAIEndpointURL appends an endpoint to an OpenAI-compatible base URL.
+// An existing endpoint suffix is reused; a versioned base such as /v1 or /v4 gets
+// only the relative endpoint. Parsed URLs retain queries and discard fragments.
 func BuildOpenAIEndpointURL(base string, endpoint string) string {
 	normalized := strings.TrimSpace(base)
 	endpoint = "/" + strings.TrimLeft(strings.TrimSpace(endpoint), "/")
@@ -38,7 +38,7 @@ func BuildOpenAIResponsesInputTokensURL(base string) string {
 	return BuildOpenAIEndpointURL(base, "/v1/responses/input_tokens")
 }
 
-// OpenAIBaseURLHasVersionSuffix 判断 base_url 路径最后一段是否是 API 版本段。
+// OpenAIBaseURLHasVersionSuffix reports whether the final path segment is an API version.
 func OpenAIBaseURLHasVersionSuffix(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -64,7 +64,7 @@ func OpenAIBaseURLHasVersionSuffix(raw string) bool {
 	return IsOpenAIAPIVersionSegment(segment)
 }
 
-// IsOpenAIAPIVersionSegment 识别 v1、v4、v1.1、v1beta、v1-preview 等版本段。
+// IsOpenAIAPIVersionSegment recognizes versions such as v1, v4, v1.1, v1beta, and v1preview.
 func IsOpenAIAPIVersionSegment(segment string) bool {
 	s := strings.ToLower(strings.TrimSpace(segment))
 	if len(s) < 2 || s[0] != 'v' || !IsASCIIDigit(s[1]) {

@@ -21,7 +21,7 @@ type prefixHook struct {
 	prefix string
 }
 
-// IntegrationRedisSuite 为更新缓存测试提供上下文和带独立键前缀的 Redis 客户端。
+// IntegrationRedisSuite provides a context and Redis client with an isolated key prefix.
 type IntegrationRedisSuite struct {
 	suite.Suite
 	ctx context.Context
@@ -66,7 +66,7 @@ func (s *UpdateCacheSuite) TestSetUpdateInfo_Overwrite() {
 }
 
 func (s *UpdateCacheSuite) TestSetUpdateInfo_ZeroTTL() {
-	// Redis SET 的 TTL=0 表示永久保存。
+	// SET with a zero TTL stores the value indefinitely.
 	require.NoError(s.T(), s.cache.SetUpdateInfo(s.ctx, "v0.0.0", 0))
 
 	info, err := s.cache.GetUpdateInfo(s.ctx)
@@ -75,7 +75,7 @@ func (s *UpdateCacheSuite) TestSetUpdateInfo_ZeroTTL() {
 
 	ttl, err := s.rdb.TTL(s.ctx, updateCacheKey).Result()
 	require.NoError(s.T(), err)
-	// TTL=-1 表示永久保存，TTL=-2 表示键不存在。
+	// TTL -1 means no expiry; -2 means the key is absent.
 	require.Equal(s.T(), time.Duration(-1), ttl, "expected TTL=-1 for key with no expiry")
 }
 
@@ -175,7 +175,7 @@ func (h prefixHook) prefixCmd(cmd redis.Cmder) {
 	}
 
 	switch strings.ToLower(cmd.Name()) {
-	// GETDEL 与 SET 使用相同测试前缀，供写入和消费同一键。
+	// GETDEL and SET share the test prefix so both address the same key.
 	case "get", "getdel", "set", "setnx", "setex", "psetex", "incr", "decr", "incrby", "expire", "pexpire", "ttl", "pttl",
 		"hgetall", "hget", "hset", "hdel", "hincrbyfloat", "exists",
 		"zadd", "zcard", "zrange", "zrangebyscore", "zrem", "zremrangebyscore", "zrevrange", "zrevrangebyscore", "zscore":
@@ -209,13 +209,13 @@ func (h prefixHook) prefixCmd(cmd redis.Cmder) {
 	}
 }
 
-// SetupTest 为每个测试方法初始化上下文和 Redis 客户端。
+// SetupTest initializes the context and Redis client for each test.
 func (s *IntegrationRedisSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.rdb = testRedis(s.T())
 }
 
-// AssertTTLWithin 检查 TTL 落在 min 和 max 之间。
+// AssertTTLWithin checks that the TTL lies between min and max.
 func (s *IntegrationRedisSuite) AssertTTLWithin(ttl, min, max time.Duration) {
 	s.T().Helper()
 	assertTTLWithin(s.T(), ttl, min, max)

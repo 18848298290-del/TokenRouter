@@ -18,7 +18,7 @@ type windowCostsBatch struct {
 	batch windowCostBatch
 }
 
-// WindowCosts 适配测试用量来源，支持可选的批量查询和 nil 结果。
+// WindowCosts adapts usage fixtures, retaining optional batch lookup and nil results.
 func WindowCosts(source usage.UsageLogRepository) billing.WindowCostSource {
 	if source == nil {
 		return nil

@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestGroupClientProtocolsDoNotRecoverLegacyPolicy 锁定空集合即全部禁用，不读取旧开关恢复协议。
+// TestGroupClientProtocolsDoNotRecoverLegacyPolicy checks that an empty set disables all entries regardless of
+// legacy switches.
 func TestGroupClientProtocolsDoNotRecoverLegacyPolicy(t *testing.T) {
 	group := &routing.Group{
 		AllowMessagesDispatch: true,
@@ -20,7 +21,7 @@ func TestGroupClientProtocolsDoNotRecoverLegacyPolicy(t *testing.T) {
 	require.False(t, group.AllowsClientProtocol(protocol.ProtocolAnthropicMessages))
 }
 
-// TestGroupProtocolMembershipAndSnapshotIsolation 验证查询直接读取集合，响应快照仍隔离可变数据。
+// TestGroupProtocolMembershipAndSnapshotIsolation checks direct membership and independent response snapshots.
 func TestGroupProtocolMembershipAndSnapshotIsolation(t *testing.T) {
 	var missing *routing.Group
 	require.False(t, missing.AllowsClientProtocol(protocol.ProtocolOpenAIResponses))

@@ -55,7 +55,7 @@ type batchImageDownloadPermit struct {
 	err  error
 }
 
-// DownloadOptions 配置每用户下载并发数和最长下载时间。
+// DownloadOptions configures per-user concurrency and the active-counter expiry.
 type DownloadOptions struct {
 	MaxDownloadConcurrencyPerUser int
 	MaxDownloadDurationSeconds    int

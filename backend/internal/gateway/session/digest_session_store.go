@@ -8,29 +8,29 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-// digestSessionTTL 摘要会话默认 TTL。
+// digestSessionTTL is the default lifetime of a digest session.
 const digestSessionTTL = 5 * time.Minute
 
-// sessionEntry flat cache 条目。
+// sessionEntry binds a digest chain to a session and provider.
 type sessionEntry struct {
 	uuid       string
 	providerID int64
 }
 
-// DigestSessionStore 内存摘要会话存储（flat cache 实现）
-// key: "{groupID}:{prefixHash}|{digestChain}" → *sessionEntry
+// DigestSessionStore stores digest sessions in memory.
+// Keys have the form "{groupID}:{prefixHash}|{digestChain}".
 type DigestSessionStore struct {
 	cache *gocache.Cache
 }
 
-// NewDigestSessionStore 创建内存摘要会话存储。
+// NewDigestSessionStore creates an in-memory digest store with external expiry cleanup.
 func NewDigestSessionStore() *DigestSessionStore {
 	return &DigestSessionStore{
 		cache: gocache.New(digestSessionTTL, 0),
 	}
 }
 
-// Save 保存摘要会话。oldDigestChain 为 Find 返回的 matchedChain，用于删旧 key。
+// Save stores the session and removes oldDigestChain when it differs. Pass the matchedChain returned by Find.
 func (s *DigestSessionStore) Save(groupID int64, prefixHash, digestChain, uuid string, providerID int64, oldDigestChain string) {
 	if s == nil || digestChain == "" {
 		return
@@ -42,7 +42,7 @@ func (s *DigestSessionStore) Save(groupID int64, prefixHash, digestChain, uuid s
 	}
 }
 
-// Find 查找摘要会话，从完整 chain 逐段截断，返回最长匹配及对应 matchedChain。
+// Find returns the longest stored prefix of digestChain and its session binding.
 func (s *DigestSessionStore) Find(groupID int64, prefixHash, digestChain string) (uuid string, providerID int64, matchedChain string, found bool) {
 	if s == nil || digestChain == "" {
 		return "", 0, "", false
@@ -63,12 +63,12 @@ func (s *DigestSessionStore) Find(groupID int64, prefixHash, digestChain string)
 	}
 }
 
-// buildNS 构建 namespace 前缀。
+// buildNS scopes digest chains by group and request prefix.
 func buildNS(groupID int64, prefixHash string) string {
 	return strconv.FormatInt(groupID, 10) + ":" + prefixHash + "|"
 }
 
-// ExpireRuntimeCaches 由应用时间轮定期调用，清理到期的运行缓存。
+// ExpireRuntimeCaches removes expired entries when called by the application timing wheel.
 func (s *DigestSessionStore) ExpireRuntimeCaches() {
 	if s != nil {
 		if s.cache != nil {

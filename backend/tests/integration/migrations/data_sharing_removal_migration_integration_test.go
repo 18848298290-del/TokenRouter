@@ -14,14 +14,14 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration265RemovesDataSharing 验证迁移可重复执行，并且只改动目标 schema 与设置。
+// TestMigration265RemovesDataSharing checks replay and targeted schema and settings cleanup.
 func TestMigration265RemovesDataSharing(t *testing.T) {
 	ctx := context.Background()
 	migrationSQL, err := dbmigrations.FS.ReadFile("265_remove_data_sharing.sql")
 	require.NoError(t, err)
 	tx := testTx(t)
 
-	// 集成测试库已位于最新 schema，先恢复旧版本中的数据共享对象以模拟升级。
+	// Restore retired data-sharing objects in the current test schema to simulate an upgrade.
 	_, err = tx.ExecContext(ctx, `
 CREATE TABLE data_share_sessions (id BIGSERIAL PRIMARY KEY);
 CREATE TABLE data_share_export_artifacts (id BIGSERIAL PRIMARY KEY);
@@ -97,7 +97,7 @@ SELECT COUNT(*) FROM settings WHERE key LIKE 'data_sharing_%'
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'migration_265_preserved'`).Scan(&preserved))
 	require.Equal(t, "unchanged", preserved)
 
-	// 非法历史值保持原样，同时迁移仍需成功并继续清理目标设置。
+	// Malformed legacy values remain intact while targeted settings are still removed.
 	_, err = tx.ExecContext(ctx, `
 UPDATE settings SET value = 'not-json' WHERE key = 'backup_content_config';
 INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
@@ -110,7 +110,7 @@ INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = 'data_sharing_enabled'`).Scan(&removedSettingCount))
 	require.Zero(t, removedSettingCount)
 
-	// 包含 NUL Unicode 转义的 JSON 文本语法有效，但 PostgreSQL JSONB 无法表示它。
+	// Escaped NUL is valid JSON text but cannot be represented by PostgreSQL JSONB.
 	invalidJSONB := `{"note":"\u0000"}`
 	_, err = tx.ExecContext(ctx, `UPDATE settings SET value = $1 WHERE key = 'backup_content_config'`, invalidJSONB)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = 'data_sharing_enabled'`).Scan(&removedSettingCount))
 	require.Zero(t, removedSettingCount)
 
-	// 非 JSON 转换错误必须继续阻断迁移，不能被异常处理吞掉。
+	// Errors unrelated to JSON conversion must abort the migration.
 	_, err = tx.ExecContext(ctx, `UPDATE settings SET value = '{"include_data_share_sessions":true}' WHERE key = 'backup_content_config'`)
 	require.NoError(t, err)
 	functionName := fmt.Sprintf("fail_data_sharing_backup_update_%d", time.Now().UnixNano())

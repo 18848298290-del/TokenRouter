@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// schedulerAssemblyProviders 汇总 scheduler 模块的 Wire provider。
+// schedulerAssemblyProviders groups Wire providers for the scheduler module.
 var schedulerAssemblyProviders = wire.NewSet(
 	schedulerProviders,
 	provideProviderDiagnostics,

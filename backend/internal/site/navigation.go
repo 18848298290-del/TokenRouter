@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
-// 站点展示的值类型由纯内容包定义，管理端和用户端共用编码格式。
+// These content types give admin and user views a shared serialization format.
 type (
 	NavigationCopy  = content.NavigationCopy
 	CustomMenuItem  = content.CustomMenuItem
@@ -20,16 +20,17 @@ type (
 	FooterLink      = content.FooterLink
 )
 
-// ParseMenus 解析菜单的稳定标识和展示文案。
+// ParseMenus parses menu items with stable IDs and display text.
 func ParseMenus(raw string) []CustomMenuItem { return content.ParseMenus(raw) }
 
-// ParseEndpoints 解析接口复制入口的名称和说明。
+// ParseEndpoints parses the names and descriptions of copyable endpoints.
 func ParseEndpoints(raw string) []CustomEndpoint { return content.ParseEndpoints(raw) }
 
-// ParseFooterGroups 解析页脚分组和链接。
+// ParseFooterGroups parses footer groups and their links.
 func ParseFooterGroups(raw string) []FooterLinkGroup { return content.ParseFooterGroups(raw) }
 
-// validateNavigationCopy 拒绝可执行 URL，Markdown 页面使用稳定 slug。
+// validateNavigationCopy requires a label and accepts relative, HTTP, HTTPS,
+// mailto, and md: links.
 func validateNavigationCopy(copy NavigationCopy) error {
 	if strings.TrimSpace(copy.Label) == "" {
 		return apperror.BadRequest("NAVIGATION_LABEL_REQUIRED", "Link label is required.")
@@ -45,7 +46,8 @@ func validateNavigationCopy(copy NavigationCopy) error {
 	return nil
 }
 
-// prepareCopy 允许未修改的历史原文继续保存，修改时执行通用版本检查。
+// prepareCopy retains previous content when input is omitted; supplied updates
+// pass through the shared localization revision checks.
 func prepareCopy[T any](previous *locale.Update[T], source T, input *locale.Update[T], validate func(T) error) (*locale.Update[T], error) {
 	if input == nil {
 		return previous, nil
@@ -61,7 +63,8 @@ func prepareCopy[T any](previous *locale.Update[T], source T, input *locale.Upda
 	return &locale.Update[T]{Content: next}, nil
 }
 
-// PrepareNavigation 按稳定 ID 校验嵌套译文，整个设置的并发检查由数据库执行。
+// PrepareNavigation matches nested translations by stable ID and validates their
+// revisions. The settings write checks for concurrent changes in the database.
 func PrepareNavigation(key, raw, prior string) (string, error) {
 	switch key {
 	case SettingKeyCustomMenuItems:
@@ -184,7 +187,8 @@ func PrepareNavigation(key, raw, prior string) (string, error) {
 	return raw, nil
 }
 
-// ResolveNavigation 生成用户展示数据，响应里省略管理端译文草稿。
+// ResolveNavigation mutates values with resolved display text and removes
+// localization data used by the admin editor.
 func ResolveNavigation(values map[string]string, code string) {
 	menus := ParseMenus(values[SettingKeyCustomMenuItems])
 	for i := range menus {

@@ -104,6 +104,8 @@ func (s *QoderAuthorizationStore[F]) Get(sessionID string) (*QoderAuthorizationS
 	return session, true
 }
 
+// BeginCompletion returns a cached result, a channel for an active completion, or a claimed session.
+// A caller receiving a claimed session must call FinishCompletion, including on failure or pending results.
 func (s *QoderAuthorizationStore[F]) BeginCompletion(sessionID, state string) (*QoderAuthorizationSession[F], *QoderTokenInfo, <-chan struct{}, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -155,7 +157,7 @@ func (s *QoderAuthorizationStore[F]) FinishCompletion(sessionID string, tokenInf
 	}
 }
 
-// Start 启动当前会话实例的清理循环。
+// Start launches session cleanup once, unless the store has stopped.
 func (s *QoderAuthorizationStore[F]) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -166,7 +168,7 @@ func (s *QoderAuthorizationStore[F]) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanup() })
 }
 
-// Stop 幂等停止并等待清理循环，未启动实例也可安全关闭。
+// Stop stops and waits for cleanup. Repeated calls and stopping before Start are safe.
 func (s *QoderAuthorizationStore[F]) Stop() {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {
@@ -253,7 +255,7 @@ func (s *QoderAuthorization[F]) completeSession(ctx context.Context, sessionID, 
 	}
 	defer done()
 	ctx = operation
-	// OAuth 会话使用创建时固定的代理，proxyID 字段供旧客户端传入。
+	// The session retains its creation-time proxy; proxyID is accepted for older clients.
 	_ = proxyID
 	for {
 		session, cachedTokenInfo, waitCh, err := s.Store.BeginCompletion(sessionID, state)

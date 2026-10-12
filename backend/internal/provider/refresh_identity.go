@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-// RefreshFailureNotice 不含凭据；Identity 仅用于当前进程区分认证版本，不进入 JSON 或日志。
+// RefreshFailureNotice identifies a failed credential version; Identity is process-local and omitted from JSON
+// and string formatting.
 type RefreshFailureNotice struct {
 	ProviderID     int64
 	Platform, Type string
@@ -17,7 +18,7 @@ type RefreshFailureNotice struct {
 	Reason         string
 }
 
-// Prepare 在条件写入前读取停止代次，返回的发布函数按代次检查当前阻断状态。
+// RefreshFailureObserver captures the block generation before a conditional write and checks it when publishing.
 type RefreshFailureObserver interface {
 	PrepareRefreshFailure(int64) func(RefreshFailureNotice)
 }
@@ -27,7 +28,7 @@ func (n RefreshFailureNotice) String() string {
 }
 func (n RefreshFailureNotice) GoString() string { return n.String() }
 
-// PrepareRefreshFailureNotice 在写入前固定认证身份和通知代次，发布时据此检查阻断状态。
+// PrepareRefreshFailureNotice captures the authentication identity and observer generation before persistence.
 func PrepareRefreshFailureNotice(observer RefreshFailureObserver, value *Record) func(time.Time, string) {
 	if observer == nil || value == nil {
 		return func(time.Time, string) {}
@@ -41,7 +42,8 @@ func PrepareRefreshFailureNotice(observer RefreshFailureObserver, value *Record)
 	}
 }
 
-// RefreshCredentialIdentity 与凭据 CAS 使用相同平台/type/凭据/代理维度，不包含被失败操作改变的健康字段。
+// RefreshCredentialIdentity hashes platform, type, credentials, and proxy, excluding health fields changed by
+// failure handling.
 func RefreshCredentialIdentity(value *Record) string {
 	if value == nil {
 		return ""

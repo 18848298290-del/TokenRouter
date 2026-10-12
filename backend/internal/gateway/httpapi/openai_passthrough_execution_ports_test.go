@@ -431,8 +431,9 @@ func TestOpenAIResponsesRejectedFieldRetryStateAllowsPromptCacheBreakpointVarian
 	require.False(t, state.Allow(retryBody))
 }
 
-// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType 验证重放会话包含多个同类型项目，且每项都带有上游 schema 拒绝的 status。
-// 一次拒绝应清理全部同类型项目，否则逐个索引重试会耗尽有限预算。
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType covers repeated items with a
+// rejected status field.
+// Clear all items of the same type in one retry so per-index repairs do not exhaust the budget.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType(t *testing.T) {
 	input := make([]string, 0, 12)
 	for i := range 10 {
@@ -457,7 +458,8 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType(
 		"a different item type keeps its status: the rejection only proves this type has none")
 }
 
-// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly 验证被拒绝项可能没有可用于匹配的 type。
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly covers rejected items
+// without a type.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly(t *testing.T) {
 	body := []byte(`{"input":[{"status":"keep_a"},{"status":"remove"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[1].status'.","param":"input[1].status"}}`)

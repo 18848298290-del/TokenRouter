@@ -5,13 +5,14 @@ import (
 	"strings"
 )
 
-// HTTPResponseOwnerReader 读取 HTTP 响应所属的用户和 API Key。
+// HTTPResponseOwnerReader reads the user and API key that own an HTTP response.
 type HTTPResponseOwnerReader interface {
 	GetHTTPResponseOwner(context.Context, int64, string) (int64, int64, bool, error)
 }
 
-// ValidateHTTPResponseOwner 允许同一用户跨 Key 续接，缺少用户归属的历史记录按 Key 检查。
-// 输入无效时直接返回 false，其余情况读取一次存储。
+// ValidateHTTPResponseOwner permits continuation across keys owned by the same user.
+// Legacy records without a user owner must match the API key.
+// Invalid inputs or an unavailable reader return false; valid inputs trigger one ownership lookup.
 func ValidateHTTPResponseOwner(ctx context.Context, read func() HTTPResponseOwnerReader, groupID int64, responseID string, userID, keyID int64) (bool, error) {
 	if read == nil || strings.TrimSpace(responseID) == "" || userID <= 0 || keyID <= 0 {
 		return false, nil

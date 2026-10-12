@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
-	// 使用在三个维度均配置额度通知的提供商。
+	// Configure all three dimensions, including a disabled total-quota notification.
 	a := &provider.Record{
 		Platform: capability.PlatformAnthropic,
 		Type:     capability.ProviderTypeAPIKey,
@@ -34,7 +34,6 @@ func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
 	dims := QuotaNotification(a).Dimensions
 	require.Len(t, dims, 3)
 
-	// Daily
 	require.Equal(t, "daily", dims[0].Name)
 	require.True(t, dims[0].Enabled)
 	require.Equal(t, 100.0, dims[0].Threshold)
@@ -42,14 +41,12 @@ func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
 	require.Equal(t, 500.0, dims[0].Limit)
 	require.Equal(t, 50.0, dims[0].CurrentUsed)
 
-	// Weekly
 	require.Equal(t, "weekly", dims[1].Name)
 	require.True(t, dims[1].Enabled)
 	require.Equal(t, 20.0, dims[1].Threshold)
 	require.Equal(t, "percentage", dims[1].ThresholdType)
 	require.Equal(t, 2000.0, dims[1].Limit)
 
-	// Total
 	require.Equal(t, "total", dims[2].Name)
 	require.False(t, dims[2].Enabled)
 	require.Equal(t, 10000.0, dims[2].Limit)

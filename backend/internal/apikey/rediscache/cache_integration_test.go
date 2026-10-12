@@ -70,7 +70,7 @@ func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// 每个 case 重新获取隔离资源
+			// Use isolated Redis resources for each case.
 			rdb := s.Client(s.T())
 			cache, ok := NewAPIKeyCache(rdb).(*ApiKeyCache)
 			require.True(s.T(), ok, "Key Redis adapter type")

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// qoderFixtureValue 检查解码夹具的类型，类型不符时终止测试。
+// qoderFixtureValue returns the decoded fixture as T or fails the test.
 func qoderFixtureValue[T any](t *testing.T, raw any) T {
 	t.Helper()
 	value, ok := raw.(T)

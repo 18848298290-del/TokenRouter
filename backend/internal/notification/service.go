@@ -59,7 +59,7 @@ const (
 )
 
 var (
-	// ErrSettingNotFound 表示通知设置不存在。
+	// ErrSettingNotFound indicates that a notification setting is missing.
 	ErrSettingNotFound = settings.ErrSettingNotFound
 
 	notificationEmailPlaceholderPattern = regexp.MustCompile(`{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}`)
@@ -71,7 +71,7 @@ var (
 		return codes
 	}()
 	notificationEmailCommonPlaceholders = []string{"site_name", "recipient_name", "recipient_email"}
-	// 摘要指标保持独立占位符，方便管理员在模板中重排或省略单项指标。
+	// Separate metric placeholders let administrators reorder or omit individual summary values.
 	notificationEmailOpsSummaryPlaceholders = contract.SummaryPlaceholders()
 
 	notificationEmailEvents = []NotificationEmailEventInfo{
@@ -490,7 +490,7 @@ var (
 	}
 )
 
-// SettingRepository 读写通知设置。
+// SettingRepository reads and writes notification settings.
 type SettingRepository = settings.Repository
 
 type (
@@ -973,12 +973,12 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 	variables := s.sampleVariables(ctx, event, languageCode)
 	maps.Copy(variables, input.Variables)
 	if event == NotificationEmailEventOpsScheduledReport {
-		// 集成方可能只提供 report_html；此时不能让预览样例值混入真实邮件。
+		// Callers may provide only report_html; replace preview samples before sending a real report.
 		if _, ok := input.Variables["report_html"]; !ok {
 			variables["report_html"] = ""
 		}
 		if _, ok := input.Variables["report_detail_display"]; !ok {
-			// 仅渲染 report_html 的历史或自定义模板仍需正常显示详情。
+			// Templates that render only report_html still need the detail section displayed.
 			variables["report_detail_display"] = "block"
 		}
 		hasSummaryValues := false
@@ -1240,7 +1240,7 @@ func normalizeNotificationLocale(raw string) string {
 	return locale.Negotiate(raw, notificationEmailDefaultLocale)
 }
 
-// SetRecipientLocaleReader 由 app 注入账户语言读取，通知模块接收最终偏好值。
+// SetRecipientLocaleReader installs the account-language reader supplied by app assembly.
 func (s *NotificationEmailService) SetRecipientLocaleReader(read func(context.Context, int64, string) string) {
 	s.recipientLocale = read
 }
@@ -1437,7 +1437,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 	return variables
 }
 
-// addNotificationEmailOpsSummarySampleVariables 填充运维摘要模板的预览指标。
+// addNotificationEmailOpsSummarySampleVariables fills preview metrics for the operations summary.
 func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) {
 	variables["report_summary_display"] = "block"
 	variables["report_detail_display"] = "none"
@@ -1464,7 +1464,7 @@ func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) 
 	variables["report_tps_avg"] = "1406.8"
 }
 
-// notificationEmailOpsScheduledReportTemplate 返回指定语言的官方运维报表模板。
+// notificationEmailOpsScheduledReportTemplate returns the built-in operations report in the requested locale.
 func notificationEmailOpsScheduledReportTemplate(locale string) string {
 	if normalizeNotificationLocale(locale) == notificationEmailLocaleChinese {
 		return `<!DOCTYPE html>
@@ -1657,7 +1657,7 @@ func notificationEmailOpsScheduledReportTemplate(locale string) string {
 </html>`
 }
 
-// notificationEmailChineseCard 为中文事件使用中文页脚。
+// notificationEmailChineseCard uses a Chinese footer for Chinese event templates.
 func notificationEmailChineseCard(accent, title, content string) string {
 	return notificationEmailCard(accent, title, content, "zh-Hans")
 }

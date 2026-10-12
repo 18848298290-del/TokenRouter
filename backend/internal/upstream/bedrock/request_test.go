@@ -10,18 +10,14 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// TestPrepareBedrockRequestBody_BasicFields 验证 Bedrock 请求体的基础字段转换。
 func TestPrepareBedrockRequestBody_BasicFields(t *testing.T) {
 	input := `{"model":"claude-opus-4-6","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`
 	result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "")
 	require.NoError(t, err)
 
-	// anthropic_version 应被注入
 	assert.Equal(t, "bedrock-2023-05-31", gjson.GetBytes(result, "anthropic_version").String())
-	// model 和 stream 应被移除
 	assert.False(t, gjson.GetBytes(result, "model").Exists())
 	assert.False(t, gjson.GetBytes(result, "stream").Exists())
-	// max_tokens 应保留
 	assert.Equal(t, int64(1024), gjson.GetBytes(result, "max_tokens").Int())
 }
 
@@ -32,7 +28,7 @@ func TestPrepareBedrockRequestBody_OutputFormatInlineSchema(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.False(t, gjson.GetBytes(result, "output_format").Exists())
-		// schema 应内联到最后一条 user message 的 content 数组末尾
+		// The schema follows the original user text as another text block.
 		contentArr := gjson.GetBytes(result, "messages.0.content").Array()
 		require.Len(t, contentArr, 2)
 		assert.Equal(t, "text", contentArr[1].Get("type").String())
@@ -88,14 +84,10 @@ func TestRemoveCustomFieldFromTools(t *testing.T) {
 
 	tools := gjson.GetBytes(result, "tools").Array()
 	require.Len(t, tools, 3)
-	// custom 应被移除
 	assert.False(t, tools[0].Get("custom").Exists())
-	// name/description 应保留
 	assert.Equal(t, "tool1", tools[0].Get("name").String())
 	assert.Equal(t, "desc1", tools[0].Get("description").String())
-	// 没有 custom 的工具不受影响
 	assert.Equal(t, "tool2", tools[1].Get("name").String())
-	// 第三个工具的 custom 也应被移除
 	assert.False(t, tools[2].Get("custom").Exists())
 	assert.Equal(t, "tool3", tools[2].Get("name").String())
 }
@@ -103,7 +95,6 @@ func TestRemoveCustomFieldFromTools(t *testing.T) {
 func TestRemoveCustomFieldFromTools_NoTools(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hi"}]}`
 	result := RemoveCustomFieldFromTools([]byte(input))
-	// 无 tools 时不改变原始数据
 	assert.JSONEq(t, input, string(result))
 }
 
@@ -114,10 +105,8 @@ func TestSanitizeBedrockCacheControl_RemoveScope(t *testing.T) {
 	}`
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-opus-4-6-v1")
 
-	// scope 应被移除
 	assert.False(t, gjson.GetBytes(result, "system.0.cache_control.scope").Exists())
 	assert.False(t, gjson.GetBytes(result, "messages.0.content.0.cache_control.scope").Exists())
-	// type 应保留
 	assert.Equal(t, "ephemeral", gjson.GetBytes(result, "system.0.cache_control.type").String())
 	assert.Equal(t, "ephemeral", gjson.GetBytes(result, "messages.0.content.0.cache_control.type").String())
 }
@@ -126,7 +115,7 @@ func TestSanitizeBedrockCacheControl_TTL_OldModel(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"5m"}}]
 	}`
-	// 旧模型（Claude 3.5）不支持 ttl
+	// This catalog entry has no cache TTL capability.
 	result := SanitizeBedrockCacheControl([]byte(input), "anthropic.claude-3-5-sonnet-20241022-v2:0")
 
 	assert.False(t, gjson.GetBytes(result, "system.0.cache_control.ttl").Exists())
@@ -137,7 +126,7 @@ func TestSanitizeBedrockCacheControl_TTL_Claude45_Supported(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"5m"}}]
 	}`
-	// Claude 4.5+ 支持 "5m" 和 "1h"
+	// The registered Sonnet 4.5 entry permits the recognized TTL values.
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
 	assert.True(t, gjson.GetBytes(result, "system.0.cache_control.ttl").Exists())
@@ -148,7 +137,7 @@ func TestSanitizeBedrockCacheControl_TTL_Claude45_UnsupportedValue(t *testing.T)
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"10m"}}]
 	}`
-	// Claude 4.5 不支持 "10m"
+	// Even a TTL-capable model rejects unrecognized durations.
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
 	assert.False(t, gjson.GetBytes(result, "system.0.cache_control.ttl").Exists())
@@ -167,7 +156,6 @@ func TestSanitizeBedrockCacheControl_TTL_Claude46(t *testing.T) {
 func TestSanitizeBedrockCacheControl_NoCacheControl(t *testing.T) {
 	input := `{"system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-opus-4-6-v1")
-	// 无 cache_control 时不改变原始数据
 	assert.JSONEq(t, input, string(result))
 }
 
@@ -186,13 +174,11 @@ func TestIsBedrockClaude45OrNewer(t *testing.T) {
 		{"anthropic.claude-3-5-sonnet-20241022-v2:0", false},
 		{"anthropic.claude-3-opus-20240229-v1:0", false},
 		{"anthropic.claude-3-haiku-20240307-v1:0", false},
-		// 未登记的版本不推断能力。
+		// An unregistered version must not inherit another model's capabilities.
 		{"us.anthropic.claude-sonnet-5-0-v1", false},
 		{"us.anthropic.claude-opus-4-7", true},
-		// 旧版本
 		{"anthropic.claude-opus-4-1-v1", false},
 		{"anthropic.claude-sonnet-4-0-v1", false},
-		// 非 Claude 模型
 		{"amazon.nova-pro-v1", false},
 		{"meta.llama3-70b", false},
 	}
@@ -204,7 +190,7 @@ func TestIsBedrockClaude45OrNewer(t *testing.T) {
 }
 
 func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
-	// 模拟一个完整的 Claude Code 请求
+	// Combine Claude Code extensions to exercise their interaction during preparation.
 	input := `{
 		"model": "claude-opus-4-6",
 		"stream": true,
@@ -225,33 +211,29 @@ func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
 	result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", betaHeader)
 	require.NoError(t, err)
 
-	// 基本字段
 	assert.Equal(t, "bedrock-2023-05-31", gjson.GetBytes(result, "anthropic_version").String())
 	assert.False(t, gjson.GetBytes(result, "model").Exists())
 	assert.False(t, gjson.GetBytes(result, "stream").Exists())
 	assert.Equal(t, int64(16384), gjson.GetBytes(result, "max_tokens").Int())
 
-	// anthropic_beta 应包含所有 beta tokens
 	betaArr := gjson.GetBytes(result, "anthropic_beta").Array()
 	require.Len(t, betaArr, 2)
 	assert.Equal(t, "context-1m-2025-08-07", betaArr[0].String())
 	assert.Equal(t, "compact-2026-01-12", betaArr[1].String())
 
-	// output_format 应被移除，schema 内联到最后一条 user message
 	assert.False(t, gjson.GetBytes(result, "output_format").Exists())
 	assert.False(t, gjson.GetBytes(result, "output_config").Exists())
-	// content 数组：原始 text block + 内联 schema block
+	// Keep the original text before the inlined schema.
 	contentArr := gjson.GetBytes(result, "messages.0.content").Array()
 	require.Len(t, contentArr, 2)
 	assert.Equal(t, "hello", contentArr[0].Get("text").String())
 	assert.Contains(t, contentArr[1].Get("text").String(), `"result":"string"`)
 
-	// tools 中的 custom 应被移除
 	assert.False(t, gjson.GetBytes(result, "tools.0.custom").Exists())
 	assert.Equal(t, "bash", gjson.GetBytes(result, "tools.0.name").String())
 	assert.Equal(t, "read", gjson.GetBytes(result, "tools.1.name").String())
 
-	// cache_control: scope 应被移除，ttl 在 Claude 4.6 上保留合法值
+	// Scope is removed while the catalog-supported TTL values survive.
 	assert.False(t, gjson.GetBytes(result, "system.0.cache_control.scope").Exists())
 	assert.Equal(t, "ephemeral", gjson.GetBytes(result, "system.0.cache_control.type").String())
 	assert.Equal(t, "5m", gjson.GetBytes(result, "system.0.cache_control.ttl").String())
@@ -320,7 +302,7 @@ func TestFilterBedrockBetaTokens(t *testing.T) {
 		tokens := []string{"advanced-tool-use-2025-11-20"}
 		result := FilterBedrockBetaTokens(tokens)
 		assert.Contains(t, result, "tool-search-tool-2025-10-19")
-		// tool-examples 自动关联
+		// Tool search also enables tool examples.
 		assert.Contains(t, result, "tool-examples-2025-10-29")
 	})
 
@@ -435,7 +417,7 @@ func TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedB
 	})
 }
 
-// bedrockAnthropicBetaNames 提取请求体中的 anthropic_beta 字符串列表。
+// bedrockAnthropicBetaNames extracts the body's beta token strings.
 func bedrockAnthropicBetaNames(body []byte) []string {
 	arr := gjson.GetBytes(body, "anthropic_beta").Array()
 	names := make([]string, len(arr))
@@ -449,7 +431,7 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 	t.Run("no auto-inject for thinking (interleaved-thinking not supported)", func(t *testing.T) {
 		body := []byte(`{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[{"role":"user","content":"hi"}]}`)
 		result := AutoInjectBedrockBetaTokens(nil, body, "us.anthropic.claude-opus-4-6-v1")
-		// 白名单排除了 interleaved-thinking-2025-05-14。
+		// Thinking alone must not inject the unlisted interleaved-thinking beta.
 		assert.Empty(t, result)
 	})
 
@@ -480,7 +462,6 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 	t.Run("inject tool-search-tool directly for pure tool search (no programmatic/inputExamples)", func(t *testing.T) {
 		body := []byte(`{"tools":[{"type":"tool_search_tool_regex_20251119","name":"search"}],"messages":[{"role":"user","content":"hi"}]}`)
 		result := AutoInjectBedrockBetaTokens(nil, body, "us.anthropic.claude-sonnet-4-6")
-		// 纯 tool search 请求直接注入 Bedrock 的工具搜索 beta。
 		assert.Contains(t, result, "tool-search-tool-2025-10-19")
 		assert.NotContains(t, result, "advanced-tool-use-2025-11-20")
 	})
@@ -488,7 +469,7 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 	t.Run("inject advanced-tool-use when tool search combined with programmatic calling", func(t *testing.T) {
 		body := []byte(`{"tools":[{"type":"tool_search_tool_regex_20251119","name":"search"},{"name":"bash","allowed_callers":["code_execution_20250825"]}],"messages":[{"role":"user","content":"hi"}]}`)
 		result := AutoInjectBedrockBetaTokens(nil, body, "us.anthropic.claude-sonnet-4-6")
-		// 混合场景使用 advanced-tool-use（后续由 filter 转换为 tool-search-tool）
+		// The filter later translates advanced-tool-use to the Bedrock tool-search token.
 		assert.Contains(t, result, "advanced-tool-use-2025-11-20")
 	})
 
@@ -517,7 +498,6 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 		result := AutoInjectBedrockBetaTokens(existing, body, "us.anthropic.claude-opus-4-6-v1")
 		assert.Contains(t, result, "context-1m-2025-08-07")
 		assert.Contains(t, result, "compact-2026-01-12")
-		// 请求中没有自动注入的 interleaved-thinking。
 		assert.NotContains(t, result, "interleaved-thinking-2025-05-14")
 	})
 }
@@ -542,7 +522,7 @@ func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
 		input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100,"thinking":{"type":"enabled","budget_tokens":10000}}`
 		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "")
 		require.NoError(t, err)
-		// 白名单排除了 interleaved-thinking。
+		// No supported beta is inferred from thinking alone.
 		assert.False(t, gjson.GetBytes(result, "anthropic_beta").Exists())
 	})
 
@@ -556,7 +536,6 @@ func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
 			names[i] = v.String()
 		}
 		assert.Contains(t, names, "context-1m-2025-08-07")
-		// 请求中没有自动注入的 interleaved-thinking。
 		assert.NotContains(t, names, "interleaved-thinking-2025-05-14")
 	})
 }
@@ -571,12 +550,9 @@ func TestIsBedrockOpus47OrNewer(t *testing.T) {
 		{"us.anthropic.claude-opus-4-6-v1", false},
 		{"us.anthropic.claude-opus-4-5-20251101-v1:0", false},
 		{"us.anthropic.claude-opus-5-0-v1", false},
-		// Sonnet 4.7 不是 Opus，应返回 false。
 		{"us.anthropic.claude-sonnet-4-7-v1", false},
 		{"us.anthropic.claude-sonnet-4-6", false},
-		// Haiku 不是 Opus。
 		{"us.anthropic.claude-haiku-4-5-20251001-v1:0", false},
-		// 非 Claude 模型。
 		{"amazon.nova-pro-v1", false},
 	}
 	for _, tt := range tests {
@@ -732,7 +708,7 @@ func TestSanitizeBedrockThinking_EdgeCases(t *testing.T) {
 		assert.Equal(t, int64(5000), gjson.GetBytes(result, "thinking.budget_tokens").Int())
 	})
 
-	// Forward() 传入的是 parsed.Model（如 "claude-opus-4-7" 这类标准模型名）。
+	// Accept standard Anthropic model names as well as Bedrock IDs.
 	t.Run("standard model name opus 4.7 converts enabled to adaptive", func(t *testing.T) {
 		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
 		result := SanitizeBedrockThinking([]byte(input), "claude-opus-4-7")
@@ -757,7 +733,7 @@ func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
 		{"anthropic.claude-opus-4-7", true},
 		{"us.anthropic.claude-opus-4-7-20270101-v1:0", false},
 		{"", false},
-		// Forward() 传入的是 parsed.Model（标准模型名），不一定是 Bedrock 模型 ID。
+		// Standard model names are valid capability lookup inputs.
 		{"claude-opus-4-8", true},
 		{"claude-opus-4-7", true},
 		{"claude-opus-4-6", false},
@@ -916,7 +892,7 @@ func TestSanitizeBedrockCCBetaTokens(t *testing.T) {
 		result := SanitizeBedrockCCBetaTokens([]byte(input), "claude-opus-4-6")
 		beta := gjson.GetBytes(result, "anthropic_beta")
 		tokens := beta.Array()
-		assert.Equal(t, 2, len(tokens)) // tool-search-tool + 自动关联的 tool-examples
+		assert.Equal(t, 2, len(tokens)) // tool-search-tool and its associated tool-examples token
 		assert.Contains(t, []string{tokens[0].String(), tokens[1].String()}, "tool-search-tool-2025-10-19")
 		assert.Contains(t, []string{tokens[0].String(), tokens[1].String()}, "tool-examples-2025-10-29")
 	})

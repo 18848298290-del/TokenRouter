@@ -10,7 +10,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// invalidJSONObservation 将 JSON 解析失败交给健康策略处理并构造转发错误。
+// invalidJSONObservation applies health policy to JSON failures and builds forwarding errors.
 type invalidJSONObservation struct {
 	rateLimit *provideradapter.UpstreamHealth
 
@@ -38,7 +38,7 @@ func (a invalidJSONObservation) Failover(status int, headers map[string][]string
 	return &forwardcore.UpstreamFailoverError{StatusCode: status, ResponseBody: body, ResponseHeaders: headers, RetryableOnSameProvider: retry}
 }
 
-// NonJSONUpstreamFailure 让 Anthropic 直连与兼容输出共用健康反馈和切号错误。
+// NonJSONUpstreamFailure shares health feedback and failover errors between direct Anthropic and compatible output.
 func NonJSONUpstreamFailure(
 	ctx context.Context,
 	healthObserver *provideradapter.UpstreamHealth,

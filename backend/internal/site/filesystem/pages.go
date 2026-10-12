@@ -26,7 +26,8 @@ func (s *Pages) ReadMarkdown(ctx context.Context, slug string) ([]byte, error) {
 	return s.readMarkdownPath(ctx, slug+".md")
 }
 
-// ReadLocalizedMarkdown 依次读取请求语言和原文，文件错误原样返回。
+// ReadLocalizedMarkdown tries candidate locales before source content, returning errors other than not-found
+// immediately.
 func (s *Pages) ReadLocalizedMarkdown(ctx context.Context, slug, language string) ([]byte, string, error) {
 	for _, code := range locale.Candidates(language) {
 		content, err := s.readMarkdownPath(ctx, filepath.Join(slug, code+".md"))
@@ -41,7 +42,7 @@ func (s *Pages) ReadLocalizedMarkdown(ctx context.Context, slug, language string
 	return content, "", err
 }
 
-// readMarkdownPath 在同一个文件句柄上检查读取范围和内容大小。
+// readMarkdownPath confines access to the pages root and checks size on the same handle used for the bounded read.
 func (s *Pages) readMarkdownPath(ctx context.Context, relative string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func resolvePageImagePath(pagesDir, imagesDir, filename string) (string, bool) {
 	return realTarget, true
 }
 
-// isPageImage 限制公开图片路径，符号链接解析后的文件也接受此检查。
+// isPageImage checks allowed image extensions for both requested and resolved symlink paths.
 func isPageImage(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".ico", ".bmp":

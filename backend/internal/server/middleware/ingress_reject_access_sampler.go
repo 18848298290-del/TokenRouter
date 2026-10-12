@@ -32,7 +32,7 @@ func newIngressRejectAccessSampler(limit int, window, summaryPeriod time.Duratio
 	return &ingressRejectAccessSampler{limit: limit, window: window, summaryPeriod: summaryPeriod}
 }
 
-// allow 应用进程级固定窗口预算，不存储攻击者维度，因此即使 Key 和地址不断变化，内存占用仍保持恒定。
+// allow applies a process-wide fixed-window budget using constant memory even as keys and addresses vary.
 func (s *ingressRejectAccessSampler) allow(now time.Time) (allowed bool, droppedSummary uint64) {
 	if s == nil || s.limit <= 0 || s.window <= 0 {
 		return false, 0

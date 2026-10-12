@@ -27,7 +27,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// grokRealtimeAdapter 将已选提供商转换为 Realtime 连接。
+// grokRealtimeAdapter opens a Realtime connection for the selected provider.
 type grokRealtimeAdapter struct {
 	h         *Runtime
 	c         *gin.Context
@@ -36,7 +36,7 @@ type grokRealtimeAdapter struct {
 	selection *gatewaycapture.SelectionResult
 }
 
-// grokVoiceAdapter 连接单次提供商选择、HTTP 执行和完成数据捕获。
+// grokVoiceAdapter connects provider selection, HTTP execution, and completion capture.
 type grokVoiceAdapter struct {
 	h            *Runtime
 	c            *gin.Context
@@ -54,7 +54,7 @@ func grokRealtimeBillingResult(model string, elapsed time.Duration, audioObserve
 	return &forwardcore.OpenAIResult{RequestID: gatewaycapture.StableRealtimeBillingRequestID(""), Model: model, Duration: elapsed, AudioUsage: usage}
 }
 
-// recordGrokVoiceUsage 在存在 AudioUsage 时按分组音频价格结算 TTS、STT 或 Realtime。
+// recordGrokVoiceUsage settles TTS, STT, or Realtime audio usage using group audio pricing.
 func (h *Runtime) recordGrokVoiceUsage(
 	c *gin.Context,
 	apiKey *apikey.APIKey,
@@ -70,7 +70,7 @@ func (h *Runtime) recordGrokVoiceUsage(
 	if result.AudioUsage == nil {
 		return
 	}
-	// 即使调用方遗漏，也为 Realtime、TTS 和 STT 强制生成持久结算 ID。
+	// Generate a settlement ID for Realtime, TTS, and STT when the caller omitted one.
 	if mode := strings.TrimSpace(result.AudioUsage.Mode); mode == "realtime" {
 		result.RequestID = gatewaycapture.StableRealtimeBillingRequestID(result.RequestID)
 	} else {
@@ -195,7 +195,7 @@ func (p *grokVoiceAdapter) CompleteVoice(_ context.Context, _ providercore.Provi
 	p.h.recordGrokVoiceUsage(p.c, p.apiKey, p.selection.Provider, p.subscription, request.Endpoint, request.Body, value)
 }
 
-// cloneGrokAudioUsage 在同步执行与完成输入之间保留独立计量快照。
+// cloneGrokAudioUsage gives completion its own usage snapshot.
 func cloneGrokAudioUsage(value *protocol.AudioUsage) *protocol.AudioUsage {
 	if value == nil {
 		return nil

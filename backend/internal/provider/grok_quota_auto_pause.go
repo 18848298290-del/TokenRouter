@@ -8,7 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// EvaluateGrokQuotaAutoPause 保留先解析快照、再取时的原判断顺序，不写入健康状态。
+// EvaluateGrokQuotaAutoPause reads the quota snapshot, then samples the clock to decide whether scheduling
+// should pause.
 func EvaluateGrokQuotaAutoPause(provider *Record, clock func() time.Time) (bool, QuotaAutoPauseDecision) {
 	if provider == nil || !provider.IsGrok() || provider.Type != capability.ProviderTypeOAuth {
 		return false, QuotaAutoPauseDecision{}
@@ -48,7 +49,7 @@ func grokQuotaRetryAfterActive(snapshot *usageview.QuotaSnapshot, now time.Time)
 	return now.Before(retryAfterUntil)
 }
 
-// GrokQuotaWindowAutoPause 根据观测窗口判断是否暂时停止调度。
+// GrokQuotaWindowAutoPause reports whether an unexpired observed window has exhausted its quota.
 func GrokQuotaWindowAutoPause(name string, window *usageview.QuotaWindow, now time.Time) (bool, QuotaAutoPauseDecision) {
 	if window == nil || window.Limit == nil || window.Remaining == nil || *window.Limit <= 0 {
 		return false, QuotaAutoPauseDecision{}

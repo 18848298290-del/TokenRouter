@@ -1,14 +1,14 @@
-// Package antigravity 通过 Antigravity v1internal 接口转发 Claude 和 Gemini 请求。
+// Package antigravity forwards Claude and Gemini requests through Antigravity v1internal.
 //
-// 阅读入口：
-//   - execute.go：执行单次上游请求并输出客户端协议对应的响应。
-//   - request_transformer.go：将 Claude 请求转换为 Gemini 请求并包装 v1internal 字段。
-//   - retry_loop.go：处理上游限流、容量不足和重试。
+// Start with:
+//   - execute.go: one upstream exchange and client-protocol output.
+//   - request_transformer.go: Claude-to-Gemini conversion and the v1internal envelope.
+//   - retry_loop.go: rate limits, capacity exhaustion, and retries.
 //
-// 文件分组：
-//   - oauth.go、client.go：OAuth 配置、令牌交换、账户层级和模型查询。
-//   - request_transformer.go、payload.go、gemini_types.go：请求格式、模型映射和 JSON Schema 清理。
-//   - response*.go、stream_transformer.go：流式与非流式响应读取和协议转换。
-//   - retry*.go、quota_errors.go、recovery*.go：重试、额度错误和 Claude/Gemini 请求恢复。
-//   - execute.go、probe.go：请求执行与提供商连接测试。
+// File groups:
+//   - oauth.go, client.go: OAuth configuration, tokens, tiers, and model queries.
+//   - request_transformer.go, payload.go, gemini_types.go: request formats, model mapping, and schema cleanup.
+//   - response*.go, stream_transformer.go: streaming and non-streaming response conversion.
+//   - retry*.go, quota_errors.go, recovery*.go: retries, quota errors, and request recovery.
+//   - execute.go, probe.go: execution and provider connection probes.
 package antigravity

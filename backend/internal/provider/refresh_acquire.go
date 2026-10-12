@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-// acquireRefreshLock 保留进程锁、Redis 竞争与故障降级；停止等待由调用者的活动上下文约束。
+// acquireRefreshLock acquires local and distributed locks; ctx bounds waits and Redis errors retain local protection.
 func (api *OAuthRefreshAPI) acquireRefreshLock(ctx context.Context, providerID int64, cacheKey string) (func(), bool, error) {
-	// 0. 获取进程内互斥锁（防止同一进程内的并发刷新竞争）
+	// Serialize exchanges for this key within the process.
 	distributed := false
 	localMu := api.getLocalLock(cacheKey)
 	if err := localMu.Lock(ctx); err != nil {
@@ -19,18 +19,18 @@ func (api *OAuthRefreshAPI) acquireRefreshLock(ctx context.Context, providerID i
 		return nil, false, err
 	}
 
-	// 1. 获取分布式锁
+	// Attempt cross-process locking when a cache is configured.
 	if api.tokenCache != nil {
 		acquired, lockErr := api.tokenCache.AcquireRefreshLock(ctx, cacheKey, api.lockTTL)
 		if lockErr != nil {
-			// Redis 错误，降级为无锁刷新（进程内互斥锁仍生效）
+			// Continue under the local lock when Redis is unavailable.
 			api.options.Warn("oauth_refresh_lock_failed_degraded",
 				"provider_id", providerID,
 				"cache_key", cacheKey,
 				"error", lockErr,
 			)
 		} else if !acquired {
-			// 锁被其他 worker 持有
+			// Another worker holds the distributed lock; release the local lock and report contention.
 			localMu.Unlock()
 			return nil, true, nil
 		} else {

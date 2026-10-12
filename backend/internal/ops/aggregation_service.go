@@ -20,7 +20,7 @@ const (
 	opsAggHourlyInterval = 10 * time.Minute
 	opsAggDailyInterval  = 1 * time.Hour
 
-	// 默认回填窗口与运维数据保留期相同，为 30 天。
+	// Limit automatic backfill to the latest stable hour.
 	opsAggBackfillWindow = 1 * time.Hour
 
 	// Recompute overlap to absorb late-arriving rows near boundaries.
@@ -48,7 +48,7 @@ const (
 // OpsAggregationService periodically backfills ops_metrics_hourly / ops_metrics_daily
 // for stable long-window dashboard queries.
 //
-// It is safe to run in multi-replica deployments when Redis is available (leader lock).
+// Each run claims a Redis leader lock, falling back to a database advisory lock on Redis errors.
 type OpsAggregationService struct {
 	lifecycleMu            sync.Mutex
 	lifecycleStopped       bool
@@ -104,7 +104,7 @@ func NewOpsAggregationService(
 	return svc
 }
 
-// TriggerNow 唤醒小时和日聚合循环，连续触发合并为一次待执行任务。
+// TriggerNow wakes both aggregation loops, coalescing repeated triggers into one pending run per loop.
 func (s *OpsAggregationService) TriggerNow() {
 	if s == nil {
 		return
@@ -119,7 +119,7 @@ func (s *OpsAggregationService) TriggerNow() {
 	}
 }
 
-// RuntimeStatus 返回运维预聚合任务的最近一次持久化心跳。
+// RuntimeStatus returns the most recent persisted aggregation heartbeats.
 func (s *OpsAggregationService) RuntimeStatus(ctx context.Context) preaggregation.PreAggregationRuntimeStatus {
 	status := preaggregation.PreAggregationRuntimeStatus{Phase: "unavailable"}
 	if s == nil || s.opsRepo == nil {

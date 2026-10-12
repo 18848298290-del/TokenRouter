@@ -8,10 +8,11 @@ import (
 	"slices"
 )
 
-// Fields 保留扁平 HTTP 文档的字段存在性，JSON null 与缺省不混同。
+// Fields distinguishes absent fields from JSON null in the flat request payload.
 type Fields map[string]json.RawMessage
 
-// Participant 在装配时固定所有权与准备能力；准备阶段不能提交数据库或发布运行状态。
+// Participant declares settings ownership and preparation at assembly time. Prepare must not persist data or
+// publish runtime state.
 type Participant struct {
 	Module  string
 	Fields  []string
@@ -19,10 +20,10 @@ type Participant struct {
 	Prepare func(context.Context, Fields, map[string]string) (PreparedChange, error)
 }
 
-// Registry 按构造时的顺序保存设置更新参与者。
+// Registry holds settings participants in registration order.
 type Registry struct{ participants []Participant }
 
-// NewRegistry 在构造期间拒绝重复字段、键或模块，避免运行更新互相覆盖。
+// NewRegistry rejects duplicate fields, keys, or modules to prevent overlapping updates.
 func NewRegistry(participants ...Participant) (*Registry, error) {
 	fields, keys, modules := map[string]string{}, map[string]string{}, map[string]bool{}
 	result := &Registry{participants: make([]Participant, len(participants))}
@@ -50,7 +51,8 @@ func NewRegistry(participants ...Participant) (*Registry, error) {
 	return result, nil
 }
 
-// Prepare 按注册顺序准备各模块；只给出所属输入和旧值，返回值也必须属于声明的键。
+// Prepare invokes participants in registration order with their owned inputs and current values, rejecting
+// writes to undeclared keys.
 func (r *Registry) Prepare(ctx context.Context, input Fields, current map[string]string) ([]PreparedChange, error) {
 	changes := make([]PreparedChange, 0, len(r.participants))
 	for _, p := range r.participants {
@@ -92,7 +94,7 @@ func (r *Registry) Prepare(ctx context.Context, input Fields, current map[string
 	return changes, nil
 }
 
-// OwnedKeys 返回独立的静态键清单，供装配检查键所有权。
+// OwnedKeys returns a separate list of declared keys for ownership checks.
 func (r *Registry) OwnedKeys() []string {
 	var keys []string
 	for _, p := range r.participants {

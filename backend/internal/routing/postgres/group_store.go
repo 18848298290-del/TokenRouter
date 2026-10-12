@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	// 分组页的“可用”提供商数使用 ListSchedulableByGroupID 的过滤条件。
+	// The group's available-provider count uses the same eligibility filters as ListSchedulableByGroupID.
 	groupProviderAvailableSQL = `a.deleted_at IS NULL
 				AND a.status = 'active'
 				AND a.schedulable = true
@@ -32,7 +32,7 @@ const (
 				AND (a.overload_until IS NULL OR a.overload_until <= NOW())
 				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())`
 
-	// RateLimitedProviderCount 统计处于暂时退出调度时间窗口内的提供商数量。
+	// groupProviderTemporarilyLimitedSQL counts providers inside temporary scheduling-block windows.
 	groupProviderTemporarilyLimitedSQL = `a.deleted_at IS NULL
 				AND a.status = 'active'
 				AND a.schedulable = true
@@ -76,7 +76,7 @@ func NewGroupStore(client *dbent.Client, db postgresinfra.Executor, options Grou
 	return &GroupStore{client: client, sql: db, options: options}
 }
 
-// Mutate 在可用时为分组变更开启事务，保证分组及关联变更原子化。
+// Mutate runs group and association changes in an Ent transaction, reusing one already in ctx.
 func (r *GroupStore) Mutate(ctx context.Context, fn func(context.Context) error) error {
 	if dbent.TxFromContext(ctx) != nil || r.client == nil {
 		return fn(ctx)
@@ -105,7 +105,7 @@ func (r *GroupStore) sqlExecutorFromContext(ctx context.Context) postgresinfra.E
 	return r.sql
 }
 
-// LockGroupSortOrder 在当前事务内串行化末尾排序值的读取和分组创建。
+// LockGroupSortOrder serializes tail-sort reads and group creation within the current transaction.
 func (r *GroupStore) LockGroupSortOrder(ctx context.Context) error {
 	if dbent.TxFromContext(ctx) == nil {
 		return errors.New("group sort order lock requires transaction")
@@ -188,12 +188,11 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *routi
 		builder = builder.SetDuplicateOperationID(groupIn.DuplicateOperationID)
 	}
 
-	// 设置模型路由配置
 	if groupIn.ModelRouting != nil {
 		builder = builder.SetModelRouting(groupIn.ModelRouting)
 	}
 
-	// 模型系列为空数组时，分组接受所有系列。
+	// Persist the legacy model-family metadata, including an empty list.
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
 	created, err := builder.Save(ctx)
@@ -224,7 +223,7 @@ func (r *GroupStore) FindByDuplicateOperationID(ctx context.Context, operationID
 	return GroupFromEnt(row), nil
 }
 
-// CreateFromSource 原子保存分组副本、源提供商绑定和调度事件。
+// CreateFromSource saves a duplicate group, source provider bindings, and its scheduling event in one transaction.
 func (r *GroupStore) CreateFromSource(ctx context.Context, groupIn *routing.Group, sourceGroupID int64) error {
 	if groupIn == nil {
 		return errors.New("group is nil")
@@ -285,7 +284,7 @@ func (r *GroupStore) GetByID(ctx context.Context, id int64) (*routing.Group, err
 func (r *GroupStore) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	client := clientFromContext(ctx, r.client)
 
-	// 需要 ProviderCount 时调用 GetByID。
+	// Use GetByID when provider counts are needed.
 	m, err := client.Group.Query().
 		Where(group.IDEQ(id)).
 		Only(ctx)
@@ -347,33 +346,32 @@ func (r *GroupStore) Update(ctx context.Context, groupIn *routing.Group) error {
 		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings)
 
-	// 处理 FallbackGroupID：nil 时清除，否则设置
+	// Nil clears the stored fallback; this method receives the complete group state.
 	if groupIn.FallbackGroupID != nil {
 		builder = builder.SetFallbackGroupID(*groupIn.FallbackGroupID)
 	} else {
 		builder = builder.ClearFallbackGroupID()
 	}
-	// 处理 FallbackGroupIDOnInvalidRequest：nil 时清除，否则设置
+
 	if groupIn.FallbackGroupIDOnInvalidRequest != nil {
 		builder = builder.SetFallbackGroupIDOnInvalidRequest(*groupIn.FallbackGroupIDOnInvalidRequest)
 	} else {
 		builder = builder.ClearFallbackGroupIDOnInvalidRequest()
 	}
-	// 处理 UnavailableFallbackGroupID：nil 时清除，否则设置
+
 	if groupIn.UnavailableFallbackGroupID != nil {
 		builder = builder.SetUnavailableFallbackGroupID(*groupIn.UnavailableFallbackGroupID)
 	} else {
 		builder = builder.ClearUnavailableFallbackGroupID()
 	}
 
-	// 处理 ModelRouting：nil 时清除，否则设置
 	if groupIn.ModelRouting != nil {
 		builder = builder.SetModelRouting(groupIn.ModelRouting)
 	} else {
 		builder = builder.ClearModelRouting()
 	}
 
-	// SupportedModelScopes 为空数组时，分组接受所有系列。
+	// Persist the legacy model-family metadata, including an empty list.
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
 	updated, err := builder.Save(ctx)
@@ -469,7 +467,7 @@ func (r *GroupStore) ListWithFilters(ctx context.Context, params pagination.Pagi
 }
 
 func (r *GroupStore) listWithProviderCountSort(ctx context.Context, q *dbent.GroupQuery, params pagination.PaginationParams, total int) ([]routing.Group, *pagination.PaginationResult, error) {
-	// 先查询全部 ID 和 sort_order，供 provider_count 全量排序。
+	// Load IDs and sort order for the full result set before sorting by provider count.
 	rows, err := q.Clone().
 		Select(group.FieldID, group.FieldSortOrder).
 		Order(dbent.Asc(group.FieldSortOrder), dbent.Asc(group.FieldID)).
@@ -490,7 +488,7 @@ func (r *GroupStore) listWithProviderCountSort(ctx context.Context, q *dbent.Gro
 		entries = append(entries, sortEntry{id: r.ID, sortOrder: r.SortOrder})
 	}
 
-	// 一次 SQL 读取各分组的提供商数量。
+	// Fetch counts in one query for all candidate groups.
 	counts, err := r.loadProviderCounts(ctx, groupIDs)
 	if err != nil {
 		return nil, nil, err
@@ -502,7 +500,7 @@ func (r *GroupStore) listWithProviderCountSort(ctx context.Context, q *dbent.Gro
 		}
 	}
 
-	// 按分组总数在 Go 中排序，分组数量通常少于 200。
+	// Sort the full set before pagination; configured sort order and ID break count ties.
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderDesc)
 	tieCmp := func(a, b sortEntry) bool {
 		if a.sortOrder == b.sortOrder {
@@ -520,7 +518,7 @@ func (r *GroupStore) listWithProviderCountSort(ctx context.Context, q *dbent.Gro
 		return entries[i].providerCount > entries[j].providerCount
 	})
 
-	// 分页后加载当前页的完整分组。
+	// Load full group records only for the selected page.
 	page := pagination.Slice(entries, params)
 	if len(page) == 0 {
 		return nil, pagination.ResultFromTotal(int64(total), params), nil
@@ -641,7 +639,7 @@ func (r *GroupStore) ListActive(ctx context.Context) ([]routing.Group, error) {
 	return outGroups, nil
 }
 
-// ListActiveIDs 仅加载活跃分组 ID，供容量汇总等不需要完整分组数据的路径使用。
+// ListActiveIDs loads active group IDs for queries such as capacity aggregation.
 func (r *GroupStore) ListActiveIDs(ctx context.Context) ([]int64, error) {
 	if r.sql != nil {
 		rows, err := r.sql.QueryContext(ctx, `
@@ -690,8 +688,8 @@ func (r *GroupStore) ExistsByName(ctx context.Context, name string) (bool, error
 	return client.Group.Query().Where(group.NameEQ(name)).Exist(ctx)
 }
 
-// ExistsByIDs 批量检查分组是否存在（仅检查未软删除记录）。
-// 返回结构：map[groupID]exists。
+// ExistsByIDs checks non-deleted groups in a batch.
+// Missing IDs have no entry in the returned map.
 func (r *GroupStore) ExistsByIDs(ctx context.Context, ids []int64) (map[int64]bool, error) {
 	sqlq := r.sqlExecutorFromContext(ctx)
 	result := make(map[int64]bool, len(ids))
@@ -774,8 +772,8 @@ func (r *GroupStore) DeleteCascade(ctx context.Context, id int64) ([]int64, erro
 	}
 	_ = GroupFromEnt(g)
 
-	// Ent 事务将级联删除作为一次变更提交。
-	// 手工基于 *sql.Tx 构造 Ent client 会触发驱动断言问题。
+	// Use an Ent transaction to commit the cascade together.
+	// Ent's transaction driver must also back the client used by the cascade.
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return nil, err
@@ -787,10 +785,10 @@ func (r *GroupStore) DeleteCascade(ctx context.Context, id int64) ([]int64, erro
 		exec = tx.Client()
 		txClient = exec
 	}
-	// err 为 dbent.ErrTxStarted 时，复用当前 client 参与同一事务。
+	// ErrTxStarted means the current client already participates in the transaction.
 
-	// 分组行锁使级联删除与并发写入串行执行。
-	// exec.QueryContext 在当前事务内加锁，扫描结果区分“未找到”和其他错误。
+	// Lock the group row to serialize the cascade with concurrent writes.
+	// Read through the transaction client to distinguish a missing group from a query failure.
 	rows, err := exec.QueryContext(ctx, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
 	if err != nil {
 		return nil, err
@@ -821,7 +819,7 @@ func (r *GroupStore) DeleteCascade(ctx context.Context, id int64) ([]int64, erro
 		return nil, err
 	}
 
-	// 软删除分组自身。
+	// The Ent delete hook soft-deletes the group.
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
 	}
@@ -882,7 +880,7 @@ func (r *GroupStore) loadProviderCounts(ctx context.Context, groupIDs []int64) (
 	return counts, nil
 }
 
-// GetProviderIDsByGroupIDs 获取多个分组的所有提供商 ID（去重）。
+// GetProviderIDsByGroupIDs returns distinct provider IDs across the supplied groups.
 func (r *GroupStore) GetProviderIDsByGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error) {
 	sqlq := r.sqlExecutorFromContext(ctx)
 	if len(groupIDs) == 0 {
@@ -914,20 +912,19 @@ func (r *GroupStore) GetProviderIDsByGroupIDs(ctx context.Context, groupIDs []in
 	return providerIDs, nil
 }
 
-// BindProvidersToGroup 将多个提供商绑定到指定分组（批量插入，忽略已存在的绑定）。
+// BindProvidersToGroup bulk-binds providers, ignoring existing associations.
 func (r *GroupStore) BindProvidersToGroup(ctx context.Context, groupID int64, providerIDs []int64) error {
 	sqlq := r.sqlExecutorFromContext(ctx)
 	if len(providerIDs) == 0 {
 		return nil
 	}
 
-	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
 	err := r.options.Providers(sqlq).Bind(ctx, groupID, providerIDs)
 	if err != nil {
 		return err
 	}
 
-	// 发送调度器事件
+	// Failure to enqueue is logged after the binding succeeds.
 	if err := r.options.Enqueue(ctx, sqlq, &groupID); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue bind providers to group failed: group=%d err=%v", groupID, err)
 	}
@@ -935,14 +932,14 @@ func (r *GroupStore) BindProvidersToGroup(ctx context.Context, groupID int64, pr
 	return nil
 }
 
-// UpdateSortOrders 批量更新分组排序。
+// UpdateSortOrders updates group sort order in a batch.
 func (r *GroupStore) UpdateSortOrders(ctx context.Context, updates []routing.GroupSortOrderUpdate) error {
 	sqlq := r.sqlExecutorFromContext(ctx)
 	if len(updates) == 0 {
 		return nil
 	}
 
-	// 同一分组出现多次时，CASE 分支使用最后一次排序值。
+	// For repeated group IDs, the last supplied sort order wins.
 	sortOrderByID := make(map[int64]int, len(updates))
 	groupIDs := make([]int64, 0, len(updates))
 	for _, u := range updates {
@@ -958,7 +955,7 @@ func (r *GroupStore) UpdateSortOrders(ctx context.Context, updates []routing.Gro
 		return nil
 	}
 
-	// 分组不存在或已删除时，返回 not found 并终止更新。
+	// Reject the update if any requested group is missing or deleted.
 	var existingCount int
 	if err := postgresinfra.ScanSingleRow(
 		ctx,
@@ -1012,7 +1009,7 @@ func (r *GroupStore) UpdateSortOrders(ctx context.Context, updates []routing.Gro
 	return nil
 }
 
-// clientFromContext 返回 context 中的事务 client，未开启事务时返回默认 client。
+// clientFromContext returns the current transaction client or the supplied default.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1020,19 +1017,18 @@ func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.
 	return defaultClient
 }
 
-// translatePersistenceError 将无记录和唯一约束错误转换为指定的业务错误，附带数据库错误原因。
-// 未提供对应业务错误或错误类型不匹配时，返回数据库错误。
+// translatePersistenceError attaches database causes to the supplied not-found or conflict errors.
+// Unmatched errors, or errors with no supplied mapping, pass through unchanged.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
 	}
 
-	// Ent 的 NotFoundError 和 database/sql 的 ErrNoRows 使用同一业务错误。
+	// Ent and database/sql missing-row errors map to the same domain error.
 	if notFound != nil && (errors.Is(err, sql.ErrNoRows) || dbent.IsNotFound(err)) {
 		return notFound.WithCause(err)
 	}
 
-	// 处理唯一约束冲突（如邮箱已存在、名称重复等）
 	if conflict != nil && postgresinfra.IsUniqueConstraintViolation(err) {
 		return conflict.WithCause(err)
 	}

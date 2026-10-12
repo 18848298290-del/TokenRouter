@@ -99,7 +99,7 @@ func (s *dailyUsageAPIKeyRepoStub) GetByID(ctx context.Context, id int64) (*port
 
 func newDailyUsageTestRouter(usageRepo *dailyUsageRepoStub, apiKeyRepo *dailyUsageAPIKeyRepoStub, userID int64) *gin.Engine {
 	usageSvc := usage.NewUsageService(usageRepo)
-	// Key 查询返回所属用户，用于检查跨用户访问。
+	// Key lookup returns ownership data for cross-user access checks.
 	handler := NewUsageHandler(usageSvc, apiKeyRepo, nil, nil, timezone.NewCalendar(time.Local))
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -709,7 +709,7 @@ func TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort(t *testing.T) {
 	require.NotContains(t, rows[0], "actual_cost")
 }
 
-// TestRequestIDFiltersKeepScopeAndUseFullHistory 按 ID 查询时保留主体限制，并忽略缺省时间窗口。
+// TestRequestIDFiltersKeepScopeAndUseFullHistory checks that ID lookup retains user scope and skips default date limits.
 func TestRequestIDFiltersKeepScopeAndUseFullHistory(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)

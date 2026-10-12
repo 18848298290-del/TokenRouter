@@ -15,7 +15,7 @@ type providerGeminiUsageBatchReader struct {
 	provider.GeminiUsageTotalsBatchReader
 }
 
-// projectGeminiModelUsage 读取提供商成本字段。
+// projectGeminiModelUsage uses provider cost when converting usage statistics.
 func projectGeminiModelUsage(rows []usage.ModelStat) []provider.GeminiModelUsage {
 	if rows == nil {
 		return nil
@@ -32,7 +32,7 @@ func (s providerGeminiUsageReader) GetModelUsage(ctx context.Context, id int64, 
 	return projectGeminiModelUsage(rows), err
 }
 
-// newProviderGeminiUsageReader 绑定批量用量查询及查询参数。
+// newProviderGeminiUsageReader exposes batch totals when the source supports them.
 func newProviderGeminiUsageReader(source usage.UsageLogRepository) provider.GeminiQuotaUsageReader {
 	if source == nil {
 		return nil

@@ -19,13 +19,13 @@ const (
 	nativeMessageInterceptedKey = "native_message_intercepted"
 )
 
-// NativeMessageQueue 连接既有消息队列服务，统一执行器不另建锁或等待循环。
+// NativeMessageQueue connects the unified executor to the shared message queue service.
 type NativeMessageQueue interface {
 	AcquireWithWait(*gin.Context, int64, int, bool, *bool, time.Duration, *zap.Logger) (func(), error)
 	ThrottleWithPing(*gin.Context, int64, int, bool, *bool, time.Duration, *zap.Logger) error
 }
 
-// BindNativeMessageStreamState 让消息排队的 SSE ping 与外层尝试共享已输出状态。
+// BindNativeMessageStreamState shares queue-ping output state with the outer attempt.
 func BindNativeMessageStreamState(c *gin.Context, started *bool) {
 	c.Set(nativeMessageStreamKey, started)
 }
@@ -36,7 +36,7 @@ func NativeMessageIntercepted(c *gin.Context) bool {
 	return intercepted
 }
 
-// prepareNativeMessages 保留预热、消息串行化与 Bedrock 清理的先后顺序。
+// prepareNativeMessages applies warmup interception, message queueing, then Bedrock cleanup.
 func (e *UnifiedTextExecutor) prepareNativeMessages(c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte) (*requeststate.ParsedRequest, func(), bool, error) {
 	parsed, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), "anthropic")
 	if err != nil {

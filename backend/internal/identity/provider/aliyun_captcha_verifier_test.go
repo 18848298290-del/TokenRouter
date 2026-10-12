@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// newAliyunCaptchaTestTarget 起一个假的阿里云端点，让真实 SDK 走完整的签名/序列化链路。
+// newAliyunCaptchaTestTarget uses a local endpoint with real SDK signing and serialization.
 func newAliyunCaptchaTestTarget(t *testing.T, handler http.HandlerFunc) (*aliyunCaptchaVerifier, identity.AliyunCaptchaCredentials) {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -76,7 +76,7 @@ func TestAliyunCaptchaVerifier_APIErrorNormalized(t *testing.T) {
 func TestAliyunCaptchaVerifier_TransportError(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	endpoint := strings.TrimPrefix(server.URL, "http://")
-	server.Close() // 立即关闭，制造连接失败
+	server.Close() // Force a connection failure.
 
 	verifier := &aliyunCaptchaVerifier{protocol: "HTTP", timeoutMillis: 2_000}
 	cred := identity.AliyunCaptchaCredentials{

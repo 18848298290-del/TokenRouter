@@ -29,7 +29,7 @@ func TestRoutingStateIsolatesRequestAndAttempt(t *testing.T) {
 	childGroup, _ := GroupFromContext(child)
 	require.Equal(t, int64(7), parentGroup.ID)
 	require.Equal(t, int64(8), childGroup.ID)
-	// 分组改变后保留已解析的协议计划，执行层通过 ID 检查两者是否匹配。
+	// Changing groups retains the resolved plan; execution checks that their group IDs match.
 	plan, ok := RoutePlanFromContext(child)
 	require.True(t, ok)
 	require.Equal(t, int64(7), plan.GroupID())

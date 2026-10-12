@@ -2,7 +2,7 @@
 
 package app
 
-// 本文件检查 scheduler.go 与 billing.go 对会话窗口缓存的共用。
+// These tests cover session and billing-window caches sharing the application Redis client.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestSessionAndWindowCachesKeepIndependentState 检查会话与窗口缓存使用各自的键，数据彼此独立。
+// TestSessionAndWindowCachesKeepIndependentState checks separate keys and independent cache contents.
 func TestSessionAndWindowCachesKeepIndependentState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

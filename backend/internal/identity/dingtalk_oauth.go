@@ -18,11 +18,11 @@ type DingTalkOAuthOptions struct {
 	RedirectURL         string `mapstructure:"redirect_url"`
 	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"`
 
-	// 平台底座 + 业务行为
-	DingTalkAppKind string `mapstructure:"dingtalk_app_kind"` // 仅 "internal_app"（V4 fail-closed）
+	// Application kind and login mode.
+	DingTalkAppKind string `mapstructure:"dingtalk_app_kind"` // Enabled configurations require internal_app.
 	AppType         string `mapstructure:"app_type"`          // "public" (default) | "internal"
 
-	// Corp 限定（none | internal_only）
+	// Organization restriction: none or internal_only.
 	CorpRestrictionPolicy   string `mapstructure:"corp_restriction_policy"`
 	InternalCorpID          string `mapstructure:"internal_corp_id"`
 	BypassRegistration      bool   `mapstructure:"bypass_registration"`
@@ -36,11 +36,11 @@ type DingTalkOAuthOptions struct {
 	SyncDisplayNameAttrName string `mapstructure:"sync_display_name_attr_name"`
 	SyncDeptAttrName        string `mapstructure:"sync_dept_attr_name"`
 
-	// 邮箱 + Username
+	// Email and username policy.
 	RequireEmail            bool   `mapstructure:"require_email"`
 	UsernameOverwritePolicy string `mapstructure:"username_overwrite_policy"`
 
-	// Attribute（私有版扩展点；开源版仅声明）
+	// Attribute matching and synchronization extension settings.
 	UsernameAttributeKey         string   `mapstructure:"username_attribute_key"`
 	EnableAttributeMatching      bool     `mapstructure:"enable_attribute_matching"`
 	EnableAttributeSync          bool     `mapstructure:"enable_attribute_sync"`
@@ -59,7 +59,8 @@ type DingTalkAPIError struct {
 	HTTP    int
 }
 
-// DingTalkOAuthClient 暴露原四步验证链与部门读取，令牌缓存仍由 provider 唯一持有。
+// DingTalkOAuthClient exchanges authorization codes and reads user and department data.
+// The provider implementation owns the token cache.
 type DingTalkOAuthClient interface {
 	ExchangeCodeForUserToken(context.Context, string) (*DingTalkUserTokenResp, error)
 	GetUnionIdByUserToken(context.Context, string) (string, string, error)
@@ -94,22 +95,21 @@ func DingTalkUpstreamClaims(staff *DingTalkProfileSnapshot, unionID, corpID stri
 		"email":           staff.Email,
 		"username":        staff.Name,
 		"nickname":        staff.Nickname,
-		"subject":         unionID,      // 与 identityKey.ProviderSubject 保持一致（全局唯一 unionID）
-		"corp_user_id":    staff.UserID, // 企业 userid（跨组织时为空），保留作独立字段用于 audit
+		"subject":         unionID,      // Global unionID, matching identityKey.ProviderSubject.
+		"corp_user_id":    staff.UserID, // Organization-local user ID for auditing; empty for cross-organization users.
 		"union_id":        unionID,
 		"corp_id":         corpID,
-		"primary_dept_id": primaryDeptID, // 首个部门 ID，用于 internal_only 同步路径
+		"primary_dept_id": primaryDeptID, // First department ID used by internal_only profile synchronization.
 	}
 }
 
 func DingTalkCorpAllowed(cfg DingTalkOAuthOptions, corpID string) bool {
 	switch cfg.CorpRestrictionPolicy {
 	case "internal_only":
-		// 方案 A：完全跳过 corpID 字段校验，由 step 3 `GetUserIdByUnionId` 做真实判定。
-		// 原因：钉钉 /v1.0/oauth2/userAccessToken 在部分授权场景（扫码登录、非企业工作台入口）
-		// 不会返回 corpId 字段。而 step 3 用本企业 appToken 查 unionId→userId 映射，
-		// 跨企业用户会被钉钉拒绝（错误码 60011/60121），mapDingTalkErrorCode 已将其映射回 "corp_rejected"。
-		// AppType=internal 已由 ValidateDingTalkConfig 强制保证应用属性。
+		// Organization membership is checked by GetUserIdByUnionId with the app token.
+		// Some authorization responses omit corpId, so this check accepts missing values.
+		// The provider maps membership lookup errors 60011/60121 to corp_rejected.
+		// ValidateDingTalkConfig requires AppType=internal for this policy.
 		return true
 	case "none", "":
 		return true
@@ -118,7 +118,7 @@ func DingTalkCorpAllowed(cfg DingTalkOAuthOptions, corpID string) bool {
 	}
 }
 
-// DingTalkErrorCode 把 DingTalkAPIError 映射到 redirectOAuthError 用的字符串 code。
+// DingTalkErrorCode maps provider errors to OAuth redirect error codes.
 func DingTalkErrorCode(err error) string {
 	var apiErr *DingTalkAPIError
 	if !errors.As(err, &apiErr) {
@@ -178,9 +178,8 @@ func PrepareDingTalkChoice(
 	if forceEmailOnSignup && compatEmailUser == nil {
 		completionResponse["choice_reason"] = "force_email_on_signup"
 	}
-	// 注册被拦：无论是否匹配到 compat email user，都跳过 choice，直接进 bind_login。
-	// "开放注册" 关闭 且 "钉钉企业模式豁免" 也关闭时，唯一合法出口是绑定已有账户，
-	// 不应该让用户看到"创建新账户"按钮；compat user 命中只是让 bind_login 的邮箱字段预填得更准。
+	// When signup is blocked, send the user directly to existing-account binding.
+	// A compatible email match can prefill that form, but cannot enable account creation.
 	if signupBlocked {
 		completionResponse["step"] = "bind_login_required"
 		completionResponse["existing_account_bindable"] = true
@@ -204,7 +203,7 @@ func PrepareDingTalkChoice(
 	}
 }
 
-// DingTalkSignupBlocked 只判断已经读取的注册开关，HTTP 保留动态读取时机。
+// DingTalkSignupBlocked evaluates the supplied registration setting; HTTP callers control when it is read.
 func DingTalkSignupBlocked(cfg DingTalkOAuthOptions, enabled bool) bool {
 	return !enabled && (!cfg.BypassRegistration || cfg.CorpRestrictionPolicy != "internal_only")
 }

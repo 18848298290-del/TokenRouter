@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// contextResult 保存异步查询返回给主测试协程的结果。
+// contextResult carries an asynchronous load result to the test goroutine.
 type contextResult struct {
 	entry Entry
 	err   error
 }
 
-// awaitContextWaiters 等待调用方完成登记，取消顺序不依赖调度时机。
+// awaitContextWaiters waits for registration so cancellation ordering is deterministic.
 func awaitContextWaiters(t *testing.T, c *Cache, key string, count int) *contextLoad {
 	t.Helper()
 	var flight *contextLoad
@@ -28,14 +28,14 @@ func awaitContextWaiters(t *testing.T, c *Cache, key string, count int) *context
 	return flight
 }
 
-// startContextLoad 将测试结果传回主测试协程。
+// startContextLoad returns an asynchronous load result through a buffered channel.
 func startContextLoad(c *Cache, ctx context.Context, key string, load func(context.Context) (any, error)) <-chan contextResult {
 	done := make(chan contextResult, 1)
 	go func() { entry, _, err := c.GetOrLoadContext(ctx, key, load); done <- contextResult{entry, err} }()
 	return done
 }
 
-// TestContextLoadCallerCancellationKeepsWaiters 覆盖首个请求和后加入请求的独立取消。
+// TestContextLoadCallerCancellationKeepsWaiters checks independent cancellation of early and late waiters.
 func TestContextLoadCallerCancellationKeepsWaiters(t *testing.T) {
 	for _, cancelFirst := range []bool{true, false} {
 		c := NewCache(time.Minute)
@@ -82,7 +82,7 @@ func TestContextLoadCallerCancellationKeepsWaiters(t *testing.T) {
 	}
 }
 
-// TestContextLoadLastWaiterCancelsAndDiscardsLateValue 后续请求不会加入已取消的查询。
+// TestContextLoadLastWaiterCancelsAndDiscardsLateValue checks new callers do not join an abandoned load.
 func TestContextLoadLastWaiterCancelsAndDiscardsLateValue(t *testing.T) {
 	c := NewCache(time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,7 +103,7 @@ func TestContextLoadLastWaiterCancelsAndDiscardsLateValue(t *testing.T) {
 	require.Equal(t, "new", entry.Payload)
 }
 
-// TestContextLoadDeadlineAndErrors 覆盖已过期调用、独立截止时间及失败后的重新加载。
+// TestContextLoadDeadlineAndErrors covers expired callers, independent deadlines, and reloading after failure.
 func TestContextLoadDeadlineAndErrors(t *testing.T) {
 	c := NewCache(time.Minute)
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))

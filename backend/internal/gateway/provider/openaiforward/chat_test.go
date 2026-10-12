@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// TestCursorMixedShapeDetection 检查 Responses 报文改写模型后的 input 和其他字段。
+// TestCursorMixedShapeDetection checks input and extension fields after rewriting a Responses model.
 func TestCursorMixedShapeDetection(t *testing.T) {
 	cursorBody := []byte(`{
 		"user": "85df22e7463ab6c2",
@@ -58,7 +58,7 @@ func TestCursorMixedShapeDetection(t *testing.T) {
 		"rewritten body must not collapse input to null")
 }
 
-// TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected 检查含 messages 的请求采用 Chat Completions 分支。
+// TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected checks dispatch for bodies with messages.
 func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
@@ -74,7 +74,7 @@ func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T)
 		"standard Chat Completions body must NOT be detected as Responses-shape")
 }
 
-// TestCursorMixedShapeDetection_BothFieldsPrefersMessages 检查同时含 messages 和 input 的请求优先使用 messages。
+// TestCursorMixedShapeDetection_BothFieldsPrefersMessages checks that messages wins when input also exists.
 func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
@@ -90,7 +90,7 @@ func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
 		"when both messages and input are present, must not take the Cursor shortcut")
 }
 
-// TestCursorMixedShapeDetection_EmptyBody 检查空报文的请求形状判断。
+// TestCursorMixedShapeDetection_EmptyBody checks shape detection for an empty body.
 func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":true}`)
 
@@ -102,7 +102,7 @@ func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
 		"body with neither messages nor input must not be taken as Cursor shape")
 }
 
-// TestCursorMixedShape_JSONRoundtrip 检查 Responses 报文的 JSON 往返。
+// TestCursorMixedShape_JSONRoundtrip checks Responses fields through a JSON round trip.
 func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
 	cursorBody := []byte(`{"model":"gpt-5.4","stream":true,"input":[{"role":"user","content":"hi"}]}`)
 
@@ -120,7 +120,7 @@ func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
 	require.Len(t, inputArr, 1)
 }
 
-// TestCursorMixedShape_StripsUnsupportedFields 检查 Cursor 请求中不受支持字段的清理。
+// TestCursorMixedShape_StripsUnsupportedFields checks removal of unsupported Cursor request fields.
 func TestCursorMixedShape_StripsUnsupportedFields(t *testing.T) {
 	cursorBody := []byte(`{
 		"model": "gpt-5.4",

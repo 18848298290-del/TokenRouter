@@ -37,7 +37,7 @@ const (
 	OauthPromoCodeStateKey     = identity.OAuthPromoCodeStateKey
 )
 
-// PendingHTTPOptions 包含 HTTP 回调和测试观察函数。
+// PendingHTTPOptions contains completion callbacks and test observers.
 type PendingHTTPOptions struct {
 	AfterLogin        func(context.Context, *identity.PendingAuthSession, int64)
 	AfterRegistration func(context.Context, *identity.PendingAuthSession, int64)
@@ -565,7 +565,7 @@ func (h *PendingHandler) BindPendingLoginForProvider(c *gin.Context, provider st
 	}
 
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
-	// bindPendingOAuthLogin = 绑定已有账户登录，不动 users.username（用户已有自己的名字）
+	// Existing-account binding retains the user's chosen username.
 	if h.pendingOptions.AfterLogin != nil {
 		h.pendingOptions.AfterLogin(c.Request.Context(), session, user.ID)
 	}
@@ -700,7 +700,7 @@ func (h *PendingHandler) CreatePendingAccountForProvider(c *gin.Context, provide
 
 	h.authService.ApplyOAuthSignupPromoCode(c.Request.Context(), user.ID, PendingOAuthPromoCode(session))
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
-	// createPendingOAuthAccount = 注册新账户，需要把钉钉昵称同步到 users.username 作为初始值
+	// The registration callback can set the initial username from the DingTalk profile.
 	if h.pendingOptions.AfterRegistration != nil {
 		h.pendingOptions.AfterRegistration(c.Request.Context(), session, user.ID)
 	}
@@ -813,11 +813,11 @@ func (h *PendingHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 		response.Success(c, payload)
 		return
 	}
-	// 绑定需要满足以下任一条件：canIssueTokenPair 为 true，身份已通过认证并绑定用户；
-	// 或 intent 为 bind_current_user，目标用户来自已登录的会话 cookie。
-	// 非终态 session 的 TargetUserID 可能只是根据提交的邮箱查到的用户，尚未完成密码或邮箱验证。
-	// 这时执行 applyPendingOAuthAdoption 会把外部身份绑定到该用户，造成账户被接管。
-	// 其他状态返回 payload，session 保持待处理。
+	// Adopt the provider identity only after token issuance is authorized or the intent
+	// binds an already authenticated current user.
+	// A nonterminal session can contain a TargetUserID found from an unverified email.
+	// Binding to that ID before password or email verification would allow account takeover.
+	// Return the payload and leave all other sessions pending.
 	if !canIssueTokenPair && !strings.EqualFold(strings.TrimSpace(session.Intent), oauthIntentBindCurrentUser) {
 		response.Success(c, payload)
 		return
@@ -882,7 +882,7 @@ func SanitizeFrontendRedirectPath(path string) string {
 	if len(path) > linuxDoOAuthMaxRedirectLen {
 		return ""
 	}
-	// 只允许同源相对路径（避免开放重定向）。
+	// Accept same-origin relative paths to prevent open redirects.
 	if !strings.HasPrefix(path, "/") {
 		return ""
 	}
@@ -926,7 +926,7 @@ func ReadCookieDecoded(c *gin.Context, name string) (string, error) {
 	return DecodeCookieValue(ck.Value)
 }
 
-// CreateEmailRegistrationSession 在生成浏览器随机状态后准备草稿，保持原 cookie 设置时机。
+// CreateEmailRegistrationSession generates browser state and prepares the pending registration before setting cookies.
 func (h *PendingHandler) CreateEmailRegistrationSession(c *gin.Context, provider, frontendCallback, redirectTo string, profile *identity.EmailOAuthProfile, affCode, promoCode string) error {
 	if h == nil || profile == nil {
 		return infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")

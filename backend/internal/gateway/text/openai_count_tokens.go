@@ -1,6 +1,6 @@
 package text
 
-// SingleCountPorts 为计数入口提供一次选择，适配器管理提供商和上游资源并返回可用性及错误。
+// SingleCountPorts supplies one selection and count operation. Its adapter owns provider and upstream resources.
 type SingleCountPorts interface {
 	Select() (bool, error)
 	Selected()
@@ -9,7 +9,7 @@ type SingleCountPorts interface {
 	ForwardFailed(error)
 }
 
-// RunSingleCountTokens 不给原本无切号的 OpenAI 计数入口添加重试或费用路径。
+// RunSingleCountTokens performs one OpenAI counting attempt with no retry or billing step.
 func RunSingleCountTokens(p SingleCountPorts) {
 	available, err := p.Select()
 	p.Selected()

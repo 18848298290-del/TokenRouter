@@ -17,7 +17,7 @@ func payloadString(body []byte, key string) string {
 	return strings.TrimSpace(gjson.GetBytes(body, key).String())
 }
 
-// Run 拥有整条入站连接的逐轮循环；平台 Adapter 只处理单次解析、租约和转发。
+// Run owns the ingress connection's turn loop; adapters parse, acquire leases, and forward individual turns.
 func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	p, codec, o, state := s.Port, s.Codec, s.Options, s.State
 	refresh := func() {
@@ -65,7 +65,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			state.StoreDisabled,
 		))
 		currentBridgePayload := firstPayload
-		// 首轮请求提供会话种子，后续每轮重新解析模型映射，并使用对应模型的缓存身份。
+		// The first request seeds the session; each later turn resolves its model and corresponding cache identity.
 		grokCacheSeedPayload := firstPayload.PayloadRaw
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
@@ -94,8 +94,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				}
 			}
 			p.SetRequestState(state.TurnState, state.SessionHash)
-			// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
-			// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+			// Strip known-invalid ciphertext so replayed history does not trigger the same upstream rejection.
+			// Strip history as well to keep prefix matching aligned with the current input.
 			if invalidDigests := p.InvalidDigests(groupID, state.SessionHash); len(invalidDigests) > 0 {
 				strippedPayload, strippedCount := p.StripInvalid(
 					currentBridgePayload.PayloadRaw, invalidDigests, "ingress_ws_http_bridge_invalid_encrypted_lineage_strip", o.ProviderID, turn,
@@ -116,7 +116,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			toolOutputCoverage := wire.AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.PayloadRaw)
 			needsBridgeReplay := currentBridgePayload.PreviousResponseID != "" ||
 				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
-			// 一次解析当前 input，正常 replay 与 provider-failover 两份序列共享同一批正文。
+			// Parse input once and share immutable item bodies between normal and provider-failover replay.
 			bridgeCurrentItems, bridgeCurrentItemsExist, extractErr := codec.Extract(
 				currentBridgePayload.PayloadRaw,
 			)
@@ -202,8 +202,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
 			}
-			// turnReplayInput/turnProviderFailoverInput 可能共享同一头数组（转移自
-			// bridgeCurrentItems），保存历史必须经 combine 新建头，禁止就地 append。
+			// Both replay slices can share the array transferred from bridgeCurrentItems.
+			// Use Combine to create a new slice array when extending history; do not append in place.
 			bridgeReplayInput = turnReplayInput
 			bridgeReplayInputExists = turnReplayInputExists
 			if result.WSReplayInputExists {
@@ -310,9 +310,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			pinnedSessionConnID = connID
 		}
 	}
-	// lastTurnClean 标记最后一轮 sendAndRelay 是否正常完成（收到终端事件且客户端未断连）。
-	// 所有异常路径（读写错误、error 事件、客户端断连）已在各自分支或上层（L3403）中 MarkBroken，
-	// 因此 releaseSessionLease 中只需在非正常结束时 MarkBroken。
+	// lastTurnClean records a terminal response completed without client disconnection.
+	// Error paths can mark the lease broken before cleanup.
+	// Cleanup also marks the lease broken whenever the last turn did not finish cleanly.
 	lastTurnClean := false
 	releaseSessionLease := func() {
 		if sessionLease == nil {
@@ -370,15 +370,15 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		if turnPrevRecoveryTried || !o.PreviousRecovery {
 			return false
 		}
-		// 携带 function_call_output 的请求不能丢弃 previous_response_id：
-		// 上游 API 需要 response chain 来匹配 tool_result 与之前的 tool_use，
-		// 丢弃后会导致 "No tool call found for function call output" 400 错误。
+		// Keep previous_response_id when tool outputs need the upstream response chain
+		// to match each function_call_output to its function call.
+		// Dropping the chain can cause a 400 "No tool call found for function call output" response.
 		if hasCurrentOrReplayFunctionCallOutput(currentPayload) {
 			return false
 		}
 		if isStrictAffinityTurn(currentPayload) {
-			// 固定提供商续接遇到 previous_response_not_found 时，删除 previous_response_id 并重放一次。
-			// 该错误表示上游续接点已失效。
+			// For strict affinity, a missing continuation point permits one replay
+			// after removing previous_response_id.
 			p.Log(fmt.Sprintf(
 				"ingress_ws_prev_response_recovery_layer2 provider_id=%d turn=%d conn_id=%s store_disabled_conn_mode=%s action=drop_previous_response_id_retry",
 				o.ProviderID,
@@ -479,8 +479,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			}
 		}
 		skipBeforeTurn = false
-		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
-		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+		// Strip known-invalid ciphertext from the request and replay history.
+		// Both sequences must stay aligned for prefix reuse.
 		if invalidDigests := p.InvalidDigests(groupID, state.SessionHash); len(invalidDigests) > 0 {
 			strippedPayload, strippedCount := p.StripInvalid(
 				currentPayload, invalidDigests, "ingress_ws_invalid_encrypted_lineage_strip", o.ProviderID, turn,
@@ -505,7 +505,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			}
 		}
 		hasFunctionCallOutput := toolSignals.HasFunctionCallOutput
-		// store=false 的工具输出需要续接点，客户端缺少 previous_response_id 时填入上一轮响应 ID，供上游关联 call_id。
+		// For store=false tool output, infer the previous response ID when needed so upstream can associate call_id.
 		if codec.ShouldInfer(
 			state.StoreDisabled,
 			turn,
@@ -673,9 +673,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 					p.TruncateLog(pingErr.Error(), 160),
 				))
 				if forcePreferredConn {
-					// 携带 function_call_output 的请求不能丢弃 previous_response_id：
-					// 上游 API 需要 response chain 来匹配 tool_result 与之前的 tool_use，
-					// 除非 replay input 已经包含与每个 tool_result 匹配的 tool_use 上下文。
+					// Tool outputs need previous_response_id to recover their calls from the chain,
+					// unless replay input supplies every matching function call.
+					// Only that complete context makes dropping the continuation safe.
 					hasFCOutput := hasFunctionCallOutput
 					hasReplayToolContext := hasFCOutput &&
 						currentTurnReplayInputExists &&
@@ -834,8 +834,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
-		// 正文共享：currentPayload/currentTurnReplayInput 均不可变，历史直接引用；
-		// collector 增量经 combine 合并（新头数组）。
+		// Keep shared references to immutable request and replay bodies.
+		// Combine allocates a new slice array when adding collected output.
 		lastTurnReplayInput = currentTurnReplayInput
 		lastTurnReplayInputExists = currentTurnReplayInputExists
 		if result.WSReplayInputExists {
@@ -845,7 +845,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		nextStrictState, strictStateErr := codec.BuildStrict(currentPayload)
 		if strictStateErr != nil {
 			lastTurnStrictState = nil
-			// strict 状态不可用时保留整份上一轮 payload 供慢路径比较。
+			// Retain the full previous payload for comparison when strict state cannot be built.
 			lastTurnPayload = currentPayload
 			p.Log(fmt.Sprintf(
 				"ingress_ws_prev_response_strict_state_skip provider_id=%d turn=%d conn_id=%s reason=build_error cause=%s",

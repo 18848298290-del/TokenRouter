@@ -16,7 +16,7 @@ import (
 
 type promotionAuthSettings = promotion.RuntimeSettings
 
-// authSettingsFixture 组合认证设置读取器，并为认证测试提供固定站点名。
+// authSettingsFixture combines authentication settings readers with a fixed test site name.
 type authSettingsFixture struct {
 	*identity.RuntimeSettings
 	*identity.GrantSettings
@@ -34,7 +34,8 @@ func (s authSettingsFixture) GetDingTalkConnectOAuthConfig(ctx context.Context) 
 	}, err
 }
 
-// newIdentityAuthForTest 用传入的数据库连接、设置和依赖构造认证服务。
+// newIdentityAuthForTest constructs authentication services from the supplied database, settings, and
+// dependencies.
 func newIdentityAuthForTest(
 	client *dbent.Client,
 	users identity.UserRepository,

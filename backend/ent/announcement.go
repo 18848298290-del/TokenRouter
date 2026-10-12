@@ -21,23 +21,23 @@ type Announcement struct {
 	ID int64 `json:"id,omitempty"`
 	// Localization holds the value of the "localization" field.
 	Localization site.AnnouncementLocalization `json:"localization,omitempty"`
-	// 公告标题
+	// Announcement title
 	Title string `json:"title,omitempty"`
-	// 公告内容（支持 Markdown）
+	// Announcement content, with Markdown support
 	Content string `json:"content,omitempty"`
-	// 状态: draft, active, archived
+	// Status: draft, active, archived
 	Status string `json:"status,omitempty"`
-	// 通知模式: silent(仅铃铛), popup(弹窗提醒)
+	// Notification mode: silent (bell only) or popup
 	NotifyMode string `json:"notify_mode,omitempty"`
-	// 展示条件（JSON 规则）
+	// Display conditions as JSON rules
 	Targeting site.AnnouncementTargeting `json:"targeting,omitempty"`
-	// 开始展示时间（为空表示立即生效）
+	// Display start time; null takes effect immediately
 	StartsAt *time.Time `json:"starts_at,omitempty"`
-	// 结束展示时间（为空表示永久生效）
+	// Display end time; null means no end date
 	EndsAt *time.Time `json:"ends_at,omitempty"`
-	// 创建人用户ID（管理员）
+	// User ID of the creating administrator
 	CreatedBy *int64 `json:"created_by,omitempty"`
-	// 更新人用户ID（管理员）
+	// User ID of the updating administrator
 	UpdatedBy *int64 `json:"updated_by,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`

@@ -24,7 +24,7 @@ func TestNewTimingWheelService_InitFail_NoPanicAndReturnError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("期望返回 error，但得到 nil")
 	}
-	svc.Stop() // 失败的部分资源也必须允许安全回收。
+	svc.Stop() // Cleanup must be safe after initialization fails.
 }
 
 func TestNewTimingWheelService_Success(t *testing.T) {
@@ -132,7 +132,7 @@ func TestTimingWheelService_Schedule_AfterStop_LogsError(t *testing.T) {
 	}
 	svc.Stop()
 
-	// Stop 后调用 Schedule 应走 error 日志路径，不应 panic
+	// Scheduling after Stop should log the failure and return without panicking.
 	svc.Schedule("after-stop", 100*time.Millisecond, func() {
 		t.Fatal("不应被执行")
 	})
@@ -146,7 +146,7 @@ func TestTimingWheelService_ScheduleRecurring_AfterStop_LogsError(t *testing.T) 
 	}
 	svc.Stop()
 
-	// Stop 后调用 ScheduleRecurring 应走 error 日志路径，不应 panic
+	// Recurring scheduling after Stop should log the failure and return without panicking.
 	svc.ScheduleRecurring("after-stop-rec", 100*time.Millisecond, func() {
 		t.Fatal("不应被执行")
 	})
@@ -159,7 +159,7 @@ func TestTimingWheelService_Stop_Idempotent(t *testing.T) {
 		t.Fatalf("期望 err 为 nil，但得到: %v", err)
 	}
 	svc.Stop()
-	svc.Stop() // 第二次调用不应 panic
+	svc.Stop() // Repeated Stop calls are safe.
 }
 
 func TestTimingWheelService_ScheduleRecurring_ExecutesMultipleTimes(t *testing.T) {
@@ -189,7 +189,8 @@ func TestTimingWheelService_ScheduleRecurring_ExecutesMultipleTimes(t *testing.T
 	}
 }
 
-// TestWheelCancelWaitsAndPreventsRearm 检查取消操作等待当前回调完成，并停止周期任务再次入队。
+// TestWheelCancelWaitsAndPreventsRearm checks that cancellation waits for an active callback
+// and prevents the recurring task from being scheduled again.
 func TestWheelCancelWaitsAndPreventsRearm(t *testing.T) {
 	original := newTimingWheel
 	newTimingWheel = func(_ time.Duration, _ int, execute collection.Execute) (*collection.TimingWheel, error) {

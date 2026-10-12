@@ -7,25 +7,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/httpapi/dto"
 )
 
-// ProviderWithConcurrency 包含管理端的实时并发与调度展示字段。
+// ProviderWithConcurrency includes live concurrency and scheduler display fields for administrators.
 type ProviderWithConcurrency struct {
 	*dto.Provider
 	CurrentConcurrency int                           `json:"current_concurrency"`
 	SchedulerScore     *ProviderSchedulerScore       `json:"scheduler_score,omitempty"`
 	SchedulerScores    []ProviderSchedulerGroupScore `json:"scheduler_scores,omitempty"`
-	// 以下字段仅对 Anthropic OAuth/SetupToken 提供商有效，且仅在启用相应功能时返回
-	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
-	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
-	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
+	// These fields are returned for Anthropic OAuth/Setup Token providers when the corresponding feature is enabled.
+	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // Cost in the current window.
+	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // Active session count.
+	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // Requests counted in the current minute.
 }
 
-// 提供商管理用例计算调度展示值，HTTP 将其编码为 JSON。
+// Provider use cases calculate scheduler display values for JSON encoding here.
 type (
 	ProviderSchedulerScore      = providercore.ProviderSchedulerScore
 	ProviderSchedulerGroupScore = providercore.ProviderSchedulerGroupScore
 )
 
-// RuntimePresenter 将运行数据和母提供商信息转换为管理 DTO，查询和阈值计算由提供商用例执行。
+// RuntimePresenter converts runtime and parent-provider data into management DTOs; provider use cases perform queries and threshold calculations.
 type RuntimePresenter struct {
 	status  *providercore.RuntimeStatusReader
 	parents interface {
@@ -48,8 +48,8 @@ func (p *RuntimePresenter) Present(ctx context.Context, v *providercore.Record) 
 	return item
 }
 
-// EnrichShadowParentInfo 把母提供商的展示信息回填到影子行的 parent_* 字段。
-// 纯函数：仅依赖传入的母提供商 map，便于单测；非影子或母提供商缺失时优雅留空。
+// EnrichShadowParentInfo fills parent_* fields in items from the supplied parent map.
+// It mutates matching shadow DTOs and leaves non-shadows or entries with missing parents unchanged.
 func EnrichShadowParentInfo(items []ProviderWithConcurrency, parents map[int64]*providercore.Record) {
 	for i := range items {
 		a := items[i].Provider
@@ -68,8 +68,8 @@ func EnrichShadowParentInfo(items []ProviderWithConcurrency, parents map[int64]*
 	}
 }
 
-// EnrichShadowParents 收集本批影子的母提供商 ID，批量查询后回填展示数据。
-// 解析失败时不报错（parent_* 留空，降级）。
+// EnrichShadowParents loads distinct parent IDs in one batch and fills shadow display fields.
+// If the lookup fails, the fields remain unchanged and no error is returned.
 func (p *RuntimePresenter) EnrichShadowParents(ctx context.Context, items []ProviderWithConcurrency) {
 	seen := make(map[int64]struct{})
 	for i := range items {
@@ -97,7 +97,7 @@ func (p *RuntimePresenter) EnrichShadowParents(ctx context.Context, items []Prov
 	EnrichShadowParentInfo(items, pmap)
 }
 
-// Project 将已读取的运行状态转换为管理展示字段。
+// Project converts loaded runtime status into administrator display fields.
 func (p *RuntimePresenter) Project(state providercore.RuntimeStatus) ProviderWithConcurrency {
 	item := ProviderWithConcurrency{Provider: dto.ProviderFromRecord(state.Record), CurrentConcurrency: state.CurrentConcurrency, CurrentWindowCost: state.CurrentWindowCost, ActiveSessions: state.ActiveSessions, CurrentRPM: state.CurrentRPM, SchedulerScore: state.SchedulerScore, SchedulerScores: state.SchedulerScores}
 	if item.Provider == nil {

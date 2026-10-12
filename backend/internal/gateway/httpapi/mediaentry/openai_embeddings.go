@@ -23,7 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// embeddingRequestAdapter 处理当前请求、已选提供商和 HTTP 输出，media 执行尝试循环。
+// embeddingRequestAdapter holds request and provider state and writes HTTP output.
+// The media package runs the attempt loop.
 type embeddingRequestAdapter struct {
 	userID        int64
 	h             *Runtime
@@ -167,7 +168,7 @@ func (p *embeddingRequestAdapter) CompleteEmbedding(_ context.Context, _ provide
 	upstreamEndpoint := gatewayhttp.GetUpstreamEndpoint(c, provider.Record.Platform)
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(c)
-	// 异步任务使用此处捕获的分组映射快照。
+	// Capture group mapping fields before submitting the asynchronous task.
 	pricingFields := p.groupMapping.ToUsageFields(p.reqModel, result.UpstreamModel)
 	subscription, reqModel, userID := p.subscription, p.reqModel, p.userID
 	completionInput := gatewaycapture.CaptureOpenAI(c.Request.Context(), &gatewaycapture.OpenAICapture{Result: result, APIKey: apiKey, User: apiKey.User, Provider: gatewaycapture.ExecutionCompletionRecord(provider), Subscription: subscription, InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, IPAddress: clientIP, APIKeyService: h.bindings.Quota, ClientSessionID: clientSessionID, PricingUsageFields: pricingFields})

@@ -32,7 +32,7 @@ func TestBuildContentModerationInputTeamKeyUsesActorAndKeepsBillingAttribution(t
 	require.Equal(t, "member@example.com", input.UserEmail)
 	require.Equal(t, int64(101), input.BillingUserID)
 	require.Equal(t, teamID, *input.TeamID)
-	// 风控快照复制团队 ID，使用独立指针。
+	// The moderation snapshot owns its copy of the team ID.
 	require.NotSame(t, apiKey.TeamID, input.TeamID)
 }
 
@@ -95,7 +95,7 @@ func TestResolveContentModerationIdentityWithoutAPIKeyFallsBackToSubject(t *test
 	require.Nil(t, identity.TeamID)
 }
 
-// newContentModerationHelperTestContext 构造具备请求路径的最小网关上下文。
+// newContentModerationHelperTestContext creates a gateway context with a request path.
 func newContentModerationHelperTestContext() *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)

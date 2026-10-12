@@ -23,7 +23,7 @@ type passkeyScanner interface {
 	Scan(dest ...any) error
 }
 
-// NewPasskeyRepository 创建 Passkey 凭据持久化仓库。
+// NewPasskeyRepository creates a SQL-backed credential repository.
 func NewPasskeyRepository(db *sql.DB) identity.PasskeyRepository {
 	return &passkeyRepository{db: db}
 }
@@ -36,7 +36,7 @@ func (r *passkeyRepository) EnsureUserHandle(
 	if len(candidate) < 16 || len(candidate) > 64 {
 		return nil, fmt.Errorf("passkey user handle must contain 16-64 bytes")
 	}
-	// 并发注册时只允许首个候选值落库，随后统一读取已持久化的稳定 handle。
+	// Concurrent registrations keep the first stored handle; every caller then reads that stable value.
 	if _, err := r.db.ExecContext(ctx, `
 		INSERT INTO passkey_user_handles (user_id, user_handle)
 		VALUES ($1, $2)
@@ -99,7 +99,7 @@ func (r *passkeyRepository) ListByUserID(
 	if err != nil {
 		return nil, fmt.Errorf("list passkey credentials: %w", err)
 	}
-	// 查询提前退出时也要关闭游标，并在原流程成功时向上返回关闭错误。
+	// Close rows on early exits and report close failures when no earlier error occurred.
 	defer func() {
 		if closeErr := rows.Close(); retErr == nil && closeErr != nil {
 			retErr = fmt.Errorf("close passkey credential rows: %w", closeErr)

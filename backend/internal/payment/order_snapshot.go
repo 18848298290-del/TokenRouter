@@ -72,6 +72,8 @@ func PsSnapshotIntValue(value any) int {
 	return 0
 }
 
+// ValidateProviderSnapshotMetadata compares reported merchant identity and currency with the order snapshot.
+// A missing snapshot or empty metadata skips validation for legacy orders and providers.
 func ValidateProviderSnapshotMetadata(order *Order, providerKey string, metadata map[string]string) error {
 	if order == nil || len(metadata) == 0 {
 		return nil

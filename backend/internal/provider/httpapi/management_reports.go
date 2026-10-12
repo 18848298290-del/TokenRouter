@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// ProviderReportOptions 提供详细用量查询函数。
+// ProviderReportOptions supplies usage queries and calendar-day calculations.
 type ProviderReportOptions struct {
 	Now        func() time.Time
 	StartOfDay func(time.Time) time.Time
@@ -27,7 +27,7 @@ func (h *ManagementHandler) GetStats(c *gin.Context) {
 		return
 	}
 
-	// 请求范围为 1 到 90 天，默认 30 天。
+	// Values outside 1 through 90 days, including malformed input, use the 30-day default.
 	days := 30
 	if daysStr := c.Query("days"); daysStr != "" {
 		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 90 {
@@ -35,7 +35,7 @@ func (h *ManagementHandler) GetStats(c *gin.Context) {
 		}
 	}
 
-	// 日界仍按应用装配的同一时区计算。
+	// Day boundaries use the timezone supplied during application assembly.
 	now := h.reports.Now()
 	endTime := h.reports.StartOfDay(now.AddDate(0, 0, 1))
 	startTime := h.reports.StartOfDay(now.AddDate(0, 0, -days+1))

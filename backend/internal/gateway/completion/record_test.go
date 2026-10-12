@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// recordStore 记录结算调用次数，用于检查日志重试时结算仍仅执行一次。
+// recordStore counts settlement calls to detect duplicate settlement during log retries.
 type recordStore struct {
 	calls   int
 	err     error
@@ -32,7 +32,7 @@ type recordEffects struct{ events *[]string }
 
 type recordModels struct{}
 
-// recordPriceCatalog 仅为资金和日志时序测试提供明确目录价。
+// recordPriceCatalog supplies known prices for settlement and log-order tests.
 type recordPriceCatalog struct{}
 
 func (s *recordStore) Apply(ctx context.Context, c *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {
@@ -158,7 +158,7 @@ func (recordPriceCatalog) GetModelPricing(model string) *pricing.CatalogModelPri
 
 func (recordPriceCatalog) ForceUpdate() error { return nil }
 
-// TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure 检查 Cyber 记录分类和结算失败后的日志。
+// TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure checks Cyber classification and logs after settlement failure.
 func TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		core, funds, logs, in, _ := recordFixture()
@@ -181,7 +181,7 @@ func TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure(t *testing.T)
 	}
 }
 
-// TestRecordCyberPreservesZeroUsage 验证零用量审核记录也进入结算，金额保持为零。
+// TestRecordCyberPreservesZeroUsage checks that zero-usage audit records pass through settlement with zero charges.
 func TestRecordCyberPreservesZeroUsage(t *testing.T) {
 	core, funds, logs, in, _ := recordFixture()
 	in.Result.Usage = TokenUsage{}

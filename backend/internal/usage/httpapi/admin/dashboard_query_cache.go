@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// snapshotCache 缓存 HTTP 快照及其 ETag。
+// snapshotCache stores HTTP snapshots and their ETags.
 type snapshotCache = httpx.SnapshotCache
 
 func (h *DashboardHandler) getUsageTrendCached(
@@ -65,16 +65,16 @@ func cacheStatusValue(hit bool) string {
 	return "miss"
 }
 
-// newSnapshotCache 创建指定有效期的 HTTP 快照缓存。
+// newSnapshotCache creates an HTTP snapshot cache with the given TTL.
 func newSnapshotCache(ttl time.Duration) *snapshotCache { return httpx.NewSnapshotCache(ttl) }
 
-// parseBoolQueryWithDefault 解析布尔查询参数，空值使用默认值。
+// parseBoolQueryWithDefault parses a boolean and defaults an empty value.
 func parseBoolQueryWithDefault(raw string, def bool) bool {
 	return httpx.ParseBoolQueryWithDefault(raw, def)
 }
 
-// normalizeInt64IDList 规范化批量查询的 ID 列表。
+// normalizeInt64IDList normalizes IDs for batch queries.
 func normalizeInt64IDList(v []int64) []int64 { return httpx.NormalizeInt64IDList(v) }
 
-// ifNoneMatchMatched 判断请求的 If-None-Match 是否匹配 ETag。
+// ifNoneMatchMatched reports whether If-None-Match matches the supplied ETag.
 func ifNoneMatchMatched(raw, tag string) bool { return httpx.IfNoneMatchMatched(raw, tag) }

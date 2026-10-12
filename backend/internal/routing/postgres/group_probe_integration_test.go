@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// TestGroupProbeLatestResults 覆盖同时间排序、窗口外最新记录和无探测记录。
+// TestGroupProbeLatestResults covers timestamp ties, latest results outside the window, and groups with no probes.
 func TestGroupProbeLatestResults(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := context.Background()

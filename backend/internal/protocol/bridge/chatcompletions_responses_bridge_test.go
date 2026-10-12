@@ -501,7 +501,7 @@ func TestChatCompletionsChunkToResponsesEvents_CustomToolCallStream(t *testing.T
 	assert.Equal(t, "dir", itemDone.Item.Input)
 	assert.Empty(t, itemDone.Item.Arguments)
 
-	// response.completed 的 output 数组同样携带 custom_tool_call 项。
+	// The terminal response must include the custom_tool_call item too.
 	final := events[len(events)-1]
 	require.Equal(t, "response.completed", final.Type)
 	require.NotNil(t, final.Response)
@@ -606,9 +606,9 @@ func TestResponsesToChatCompletionsRequest_DropsDeferredFlagWithToolSearch(t *te
 	require.Contains(t, string(encoded), `"name":"tool_search"`)
 }
 
-// TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem 验证 codex 只在 ResponseItem 为 tool_search_call 变体且 execution=client 时执行
-// tool search；同名 function_call 会命中 ToolSearchHandler 后因 payload 不匹配
-// 触发 FunctionCallError::Fatal，直接中止整个 turn，因此回程必须还原项类型。
+// TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem checks restoration
+// of tool_search_call with execution=client. Codex rejects a same-named function_call
+// in ToolSearchHandler because the payload type does not match.
 func TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID: "cc-1",
@@ -629,8 +629,8 @@ func TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem(t *testing.
 	assert.Equal(t, "tool_search_call", item.Type)
 	assert.Equal(t, "call_s", item.CallID)
 
-	// 线上形态：execution 必须为 "client"（codex 的必填字段，非 client 被忽略），
-	// arguments 编码为 JSON 对象，Codex 从对象中解析 query/limit。
+	// The serialized item needs execution=client and object-valued arguments
+	// from which Codex reads query and limit.
 	b, err := json.Marshal(item)
 	require.NoError(t, err)
 	var m map[string]any
@@ -653,7 +653,7 @@ func TestChatCompletionsResponseToResponses_ToolSearchNotDeclaredKeepsFunctionCa
 		}},
 	}
 
-	// 客户端未声明 type=tool_search 时，同名普通 function 工具不受影响。
+	// Without a tool_search declaration, a normal function with that name keeps its type.
 	out := ChatCompletionsResponseToResponses(testRuntime(), resp, "glm-5.2", nil, nil, false, nil)
 	require.Len(t, out.Output, 1)
 	assert.Equal(t, "function_call", out.Output[0].Type)
@@ -704,14 +704,14 @@ func TestChatCompletionsChunkToResponsesEvents_ToolSearchCallStream(t *testing.T
 	require.NotNil(t, itemDone, "缺少 tool_search_call 的 output_item.done")
 	assert.Equal(t, "call_s", itemDone.Item.CallID)
 
-	// SSE JSON 由 responsesItemWire 按允许的字段重组，测试直接检查序列化结果。
+	// Check serialized SSE because responsesItemWire reconstructs fields from an allowlist.
 	sse, err := ResponsesEventToSSE(*itemDone)
 	require.NoError(t, err)
 	assert.Contains(t, sse, `"execution":"client"`)
 	assert.Contains(t, sse, `"arguments":{"query":"gmail"}`)
 	assert.Contains(t, sse, `"call_id":"call_s"`)
 
-	// response.completed 的 output 数组同样携带 tool_search_call 项。
+	// The terminal output must also include the tool_search_call item.
 	final := events[len(events)-1]
 	require.Equal(t, "response.completed", final.Type)
 	require.NotNil(t, final.Response)
@@ -771,7 +771,7 @@ func TestFlattenNamespaceToolName_CapsAt64WithHashSuffix(t *testing.T) {
 	long := flattenNamespaceToolName("very_long_namespace_prefix_for_testing_purposes", "and_a_rather_long_tool_name_too")
 	assert.LessOrEqual(t, len(long), 64)
 	assert.Contains(t, long, "__")
-	// 同输入结果稳定
+	// Identical input produces a stable name.
 	assert.Equal(t, long, flattenNamespaceToolName("very_long_namespace_prefix_for_testing_purposes", "and_a_rather_long_tool_name_too"))
 }
 
@@ -953,7 +953,7 @@ func TestNamespaceToolNames_MapsFlattenedNames(t *testing.T) {
 	assert.Equal(t, NamespacedToolName{Namespace: "gmail", Name: "send"}, m["gmail__send"])
 	assert.Equal(t, NamespacedToolName{Namespace: "crm", Name: "query"}, m["crm__query"])
 
-	// 摊平名称超长时会截断并加哈希，回程通过映射查回原名称。
+	// Long flattened names are truncated and hashed; the map restores the full identity.
 	longNS := "very_long_namespace_prefix_for_testing_purposes"
 	longChild := "and_a_rather_long_tool_name_too"
 	m2 := NamespaceToolNames([]ResponsesTool{{
@@ -966,10 +966,10 @@ func TestNamespaceToolNames_MapsFlattenedNames(t *testing.T) {
 	assert.Nil(t, NamespaceToolNames(nil))
 }
 
-// TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict 检查 tool_search 代理与客户端工具重名时拒绝请求。
-// Codex 按 tool_search 名称调用，重名会使回程把普通工具调用还原为 tool_search_call。
+// TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict checks proxy-name conflicts.
+// A collision would restore an ordinary call as tool_search_call on return.
 func TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict(t *testing.T) {
-	// 与顶层 function 工具同名。
+	// A top-level function conflicts with the proxy name.
 	_, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -981,7 +981,7 @@ func TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict(t *test
 	require.Error(t, err, "与内置 tool_search 代理撞名的 function 工具必须拒绝")
 	assert.Contains(t, err.Error(), "tool_search")
 
-	// 与顶层 custom 工具同名。
+	// A top-level custom tool conflicts with the proxy name.
 	_, err = ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -992,7 +992,7 @@ func TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict(t *test
 	}, nil)
 	require.Error(t, err, "与内置 tool_search 代理撞名的 custom 工具必须拒绝")
 
-	// 重复声明 type=tool_search 去重后产出一个代理。
+	// Repeated tool_search declarations produce one proxy.
 	out, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -1020,10 +1020,10 @@ func TestResponsesToChatCompletionsRequest_RejectsDuplicateTopLevelExecutableNam
 	}
 }
 
-// TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool 验证 tool_choice 指向被转换丢弃的工具（如 web_search）或不存在的名字时不能原样转发，
-// chat 上游会因选择项指向未声明工具而 400；字符串形式与指向幸存工具的选择保持转发。
+// TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool checks choices of omitted or absent tools.
+// Those choices cause upstream 400 errors; strings and choices of retained tools still convert.
 func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *testing.T) {
-	// web_search 被丢弃时，指向它的强制选择项一并丢弃。
+	// Drop the forced web_search choice along with the tool.
 	out, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -1051,7 +1051,7 @@ func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *test
 	require.Len(t, out.Tools, 2)
 	assert.Empty(t, out.ToolChoice, "surviving x_search must not keep a function tool_choice named web_search")
 
-	// 具名选择指向不存在的工具名。
+	// The named choice targets an absent tool.
 	out, err = ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model:      "glm-5.2",
 		Input:      json.RawMessage(`"hi"`),
@@ -1061,7 +1061,7 @@ func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *test
 	require.NoError(t, err)
 	assert.Empty(t, out.ToolChoice, "指向不存在工具名的 tool_choice 必须丢弃")
 
-	// 字符串形式和指向保留工具的选择原样转发。
+	// Retain string choices and convert choices targeting surviving tools.
 	out, err = ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model:      "glm-5.2",
 		Input:      json.RawMessage(`"hi"`),
@@ -1081,8 +1081,8 @@ func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *test
 	assert.JSONEq(t, `{"type":"function","function":{"name":"wait"}}`, string(out.ToolChoice))
 }
 
-// TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy 检查 tool_search 的强制选择转换为对应 function 代理的选择。
-// 丢弃选择项会让模型自行决定是否搜索。
+// TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy checks forced proxy selection.
+// Dropping this choice would let the model decide whether to search.
 func TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy(t *testing.T) {
 	out, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model:      "glm-5.2",
@@ -1093,7 +1093,7 @@ func TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy(t *te
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"type":"function","function":{"name":"tool_search"}}`, string(out.ToolChoice))
 
-	// 未声明 type=tool_search 时强制选择它没有可指向的代理，丢弃选择项。
+	// Without a tool_search declaration, the choice has no proxy target and is omitted.
 	out, err = ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model:      "glm-5.2",
 		Input:      json.RawMessage(`"hi"`),
@@ -1104,10 +1104,10 @@ func TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy(t *te
 	assert.Empty(t, out.ToolChoice)
 }
 
-// TestResponsesToChatCompletionsRequest_RejectsAmbiguousFlattenedNames 检查 namespace 摊平后重名的请求返回 400。
-// Responses 按 namespace 和 name 区分工具，摊平后的 Chat 工具只能按名称区分，重名会导致回程还原到错误工具。
+// TestResponsesToChatCompletionsRequest_RejectsAmbiguousFlattenedNames checks conversion errors for name collisions.
+// Chat dispatches by name alone; ambiguous flattened names would restore the wrong tool.
 func TestResponsesToChatCompletionsRequest_RejectsAmbiguousFlattenedNames(t *testing.T) {
-	// 摊平名与顶层 function 工具撞名。
+	// The flattened name conflicts with a top-level function.
 	_, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -1119,7 +1119,7 @@ func TestResponsesToChatCompletionsRequest_RejectsAmbiguousFlattenedNames(t *tes
 	require.Error(t, err, "与顶层工具撞名的摊平必须拒绝")
 	assert.Contains(t, err.Error(), "gmail__send")
 
-	// 不同 namespace 组合产生相同摊平名。
+	// Two namespace/name pairs flatten to the same name.
 	_, err = ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
 		Input: json.RawMessage(`"hi"`),
@@ -1132,7 +1132,7 @@ func TestResponsesToChatCompletionsRequest_RejectsAmbiguousFlattenedNames(t *tes
 	assert.Contains(t, err.Error(), "a__b__c")
 }
 
-// TestResponsesToChatCompletionsRequest_DedupesIdenticalNamespaceChildren 检查重复的同名 namespace 子工具可以去重并完成转换。
+// TestResponsesToChatCompletionsRequest_DedupesIdenticalNamespaceChildren checks repeated child declarations.
 func TestResponsesToChatCompletionsRequest_DedupesIdenticalNamespaceChildren(t *testing.T) {
 	out, err := ResponsesToChatCompletionsRequestWithOptions(&ResponsesRequest{
 		Model: "glm-5.2",
@@ -1149,9 +1149,9 @@ func TestResponsesToChatCompletionsRequest_DedupesIdenticalNamespaceChildren(t *
 	assert.Equal(t, "gmail__send", out.Tools[0].Function.Name)
 }
 
-// TestChatCompletionsResponseToResponses_NamespacedToolCallRestored 验证 codex 按 namespace+name 路由 namespace 子工具的调用：回程必须把摊平名还原为
-// 裸子工具名并带独立 namespace 字段，平铺名的 function_call 会被 codex 判为
-// unsupported call 拒绝执行。
+// TestChatCompletionsResponseToResponses_NamespacedToolCallRestored checks separate namespace/name fields.
+// Codex dispatches by both fields and rejects an unrestored flattened name
+// as an unsupported call.
 func TestChatCompletionsResponseToResponses_NamespacedToolCallRestored(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID: "cc-1",
@@ -1179,13 +1179,13 @@ func TestChatCompletionsResponseToResponses_NamespacedToolCallRestored(t *testin
 	assert.Equal(t, "call_n", item.CallID)
 	assert.Equal(t, `{"text":"hi"}`, item.Arguments)
 
-	// 非流式响应经 ResponsesOutput.MarshalJSON 编码后包含 namespace。
+	// The serialized non-streaming item must include namespace.
 	b, err := json.Marshal(item)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"namespace":"mcp__svc"`)
 	assert.Contains(t, string(b), `"name":"echo"`)
 
-	// 未命中映射的普通 function 调用不受影响，且不携带 namespace 字段。
+	// A normal function outside the map keeps its name and omits namespace.
 	assert.Equal(t, "wait", out.Output[1].Name)
 	assert.Empty(t, out.Output[1].Namespace)
 	b2, err := json.Marshal(out.Output[1])
@@ -1244,14 +1244,14 @@ func TestChatCompletionsChunkToResponsesEvents_NamespacedToolCallStream(t *testi
 	assert.Equal(t, "mcp__svc", itemDone.Item.Namespace)
 	assert.Equal(t, `{"text":"hi"}`, itemDone.Item.Arguments)
 
-	// SSE JSON 由 responsesItemWire 重组，测试检查序列化结果中的 namespace。
+	// Check namespace after responsesItemWire serializes the SSE item.
 	sse, err := ResponsesEventToSSE(*itemDone)
 	require.NoError(t, err)
 	assert.Contains(t, sse, `"namespace":"mcp__svc"`)
 	assert.Contains(t, sse, `"name":"echo"`)
 	assert.Contains(t, sse, `"call_id":"call_n"`)
 
-	// response.completed 的 output 数组同样携带还原后的 namespace 调用项。
+	// The terminal response must include the restored namespace call too.
 	final := events[len(events)-1]
 	require.Equal(t, "response.completed", final.Type)
 	require.NotNil(t, final.Response)
@@ -1401,7 +1401,7 @@ func TestExtractResponsesReasoningItem(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestGolden_SingleToolCall 验证单个工具调用回合，覆盖最初触发“no response”/400 的 Codex 形状。
+// TestGolden_SingleToolCall covers a Codex turn with reasoning, one call, and its reply.
 func TestGolden_SingleToolCall(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest sha?"}]},
@@ -1410,7 +1410,7 @@ func TestGolden_SingleToolCall(t *testing.T) {
 		{"type":"function_call_output","call_id":"call_a","output":"deadbeef"}
 	]`)
 	assertChatInvariants(t, msgs)
-	// reasoning_content 写入 assistant 的工具调用消息。
+	// Reasoning belongs on the assistant tool-call message.
 	var asst *ChatMessage
 	for i := range msgs {
 		if len(msgs[i].ToolCalls) > 0 {
@@ -1421,7 +1421,7 @@ func TestGolden_SingleToolCall(t *testing.T) {
 	require.Equal(t, "need to run curl", asst.ReasoningContent)
 }
 
-// TestGolden_ParallelToolCalls 验证并行工具调用，模拟 Codex 同时运行多个命令。
+// TestGolden_ParallelToolCalls covers Codex running multiple commands in one turn.
 func TestGolden_ParallelToolCalls(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"features?"}]},
@@ -1432,7 +1432,7 @@ func TestGolden_ParallelToolCalls(t *testing.T) {
 		{"type":"function_call_output","call_id":"c1","output":"tags"}
 	]`)
 	assertChatInvariants(t, msgs)
-	// 并行调用合入同一个 assistant message。
+	// Parallel calls share one assistant message.
 	var toolMsgs int
 	for _, m := range msgs {
 		if len(m.ToolCalls) == 2 {
@@ -1446,8 +1446,8 @@ func TestGolden_ParallelToolCalls(t *testing.T) {
 	require.Equal(t, 2, toolMsgs)
 }
 
-// TestGolden_UnknownItemBetweenToolCallAndOutput 验证未知 item type（例如联网查询产生的 web_search_call）即使夹在 function_call
-// 和 output 之间，也不能破坏 tool/reply 邻接关系。
+// TestGolden_UnknownItemBetweenToolCallAndOutput checks that unsupported items
+// between a call and its output do not break call/reply adjacency.
 func TestGolden_UnknownItemBetweenToolCallAndOutput(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"search"}]},
@@ -1459,7 +1459,7 @@ func TestGolden_UnknownItemBetweenToolCallAndOutput(t *testing.T) {
 	assertChatInvariants(t, msgs)
 }
 
-// TestRequest_SequentialToolCallsStaySeparate 验证中间已有 tool reply 的顺序工具调用必须保留为不同 assistant message。
+// TestRequest_SequentialToolCallsStaySeparate checks that a reply separates sequential call messages.
 func TestRequest_SequentialToolCallsStaySeparate(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"function_call","call_id":"c1","name":"exec","arguments":"{}"},
@@ -1477,8 +1477,8 @@ func TestRequest_SequentialToolCallsStaySeparate(t *testing.T) {
 	require.Equal(t, 2, assistants)
 }
 
-// TestGolden_MessageBetweenToolCallAndOutput 验证 Codex 有时会在 function_call 和 output 之间插入通知消息；这类中间消息必须
-// 移到 tool reply 之后，保证 assistant tool_calls 后面紧跟对应回复。
+// TestGolden_MessageBetweenToolCallAndOutput covers an intervening Codex notification.
+// Move it after the tool reply so the call and reply remain adjacent.
 func TestGolden_MessageBetweenToolCallAndOutput(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"do it"}]},
@@ -1488,7 +1488,7 @@ func TestGolden_MessageBetweenToolCallAndOutput(t *testing.T) {
 		{"type":"function_call_output","call_id":"A","output":"ok"}
 	]`)
 	assertChatInvariants(t, msgs)
-	// assistant tool_calls message 后紧跟对应 tool reply。
+	// The corresponding tool reply immediately follows the assistant call message.
 	for i, m := range msgs {
 		if len(m.ToolCalls) > 0 {
 			require.Equal(t, "tool", msgs[i+1].Role)
@@ -1497,8 +1497,8 @@ func TestGolden_MessageBetweenToolCallAndOutput(t *testing.T) {
 	}
 }
 
-// TestGolden_PartialParallelDropsUnansweredCall 验证并行工具调用里某个 sibling 输出缺失时（例如执行中断或重连），必须丢弃未回答
-// 的 tool_call，保证保留下来的 assistant tool_calls 全部有回复。
+// TestGolden_PartialParallelDropsUnansweredCall covers a missing parallel reply,
+// such as after interruption; every retained call must have an output.
 func TestGolden_PartialParallelDropsUnansweredCall(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -1515,7 +1515,7 @@ func TestGolden_PartialParallelDropsUnansweredCall(t *testing.T) {
 	}
 }
 
-// TestGolden_DanglingToolCallDropped 验证历史末尾悬空的 tool_call（尚无 output）必须被整体丢弃。
+// TestGolden_DanglingToolCallDropped checks that an unanswered trailing call is removed.
 func TestGolden_DanglingToolCallDropped(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -1528,7 +1528,7 @@ func TestGolden_DanglingToolCallDropped(t *testing.T) {
 	}
 }
 
-// TestNormalize_DropsOrphanToolReply 验证 normalizeChatMessages 会丢弃没有对应 assistant tool_call 的孤儿 tool reply。
+// TestNormalize_DropsOrphanToolReply checks removal of replies with no assistant call.
 func TestNormalize_DropsOrphanToolReply(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -1539,7 +1539,7 @@ func TestNormalize_DropsOrphanToolReply(t *testing.T) {
 	}
 }
 
-// TestStream_ReasoningOpensItemBeforeDelta 检查 reasoning delta 之前已发布对应 item。
+// TestStream_ReasoningOpensItemBeforeDelta checks announcement before reasoning deltas.
 func TestStream_ReasoningOpensItemBeforeDelta(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""}}]}`,
@@ -1548,7 +1548,7 @@ func TestStream_ReasoningOpensItemBeforeDelta(t *testing.T) {
 		`{"choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
 	})
 
-	open := map[int]string{} // output_index 到 item type 的映射
+	open := map[int]string{} // output index to item type
 	for _, e := range events {
 		switch e.Type {
 		case "response.output_item.added":
@@ -1662,8 +1662,8 @@ func TestStream_ReasoningThenToolCallDoesNotSynthesizeVisibleText(t *testing.T) 
 	}
 }
 
-// TestStream_ToolCallLifecycleComplete 检查工具调用的关闭事件，Codex 执行工具
-// 前需要收到 function_call_arguments.done 和 output_item.done。
+// TestStream_ToolCallLifecycleComplete checks function_call_arguments.done and
+// output_item.done, both needed by Codex before executing the tool.
 func TestStream_ToolCallLifecycleComplete(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"plan"}}]}`,
@@ -1695,8 +1695,8 @@ func TestStream_ToolCallLifecycleComplete(t *testing.T) {
 	require.True(t, sawItemDone, "function_call output_item.done missing")
 }
 
-// TestStream_ToolCallArgumentsInFirstChunkNotDoubled 覆盖 GLM/Zhipu 的单帧形态：
-// 同一个 tool_call delta 里同时携带 id、name 和 arguments。
+// TestStream_ToolCallArgumentsInFirstChunkNotDoubled covers GLM/Zhipu chunks
+// containing the ID, name, and arguments in one tool-call delta.
 func TestStream_ToolCallArgumentsInFirstChunkNotDoubled(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
@@ -2193,8 +2193,8 @@ func TestChatCompletionsResponseToResponses_CarriesCreatedAt(t *testing.T) {
 	})
 }
 
-// TestChatCompletionsToResponsesStream_CreatedAtStableAcrossEvents 验证同一条流里 response.created 与终止事件必须报同一个 created_at
-// created_at 表示本次 response 的创建时刻，各事件使用同一时间。
+// TestChatCompletionsToResponsesStream_CreatedAtStableAcrossEvents checks one creation time per response.
+// response.created and the terminal event must use the same timestamp.
 func TestChatCompletionsToResponsesStream_CreatedAtStableAcrossEvents(t *testing.T) {
 	state := NewChatCompletionsToResponsesStreamState(testRuntime(), "deepseek-v4-flash")
 	require.Greater(t, state.Created, int64(0), "前提：state 早就采集了时间戳")
@@ -2260,13 +2260,13 @@ func TestChatCompletionsChunkToResponsesEvents_PreservesServiceTier(t *testing.T
 	events := ChatCompletionsChunkToResponsesEvents(testRuntime(), chunk, state)
 	require.NotEmpty(t, events)
 
-	// response.created 携带 service_tier。
+	// The creation event carries service_tier.
 	created := findEvent(events, "response.created")
 	require.NotNil(t, created)
 	require.NotNil(t, created.Response)
 	require.Equal(t, "flex", created.Response.ServiceTier)
 
-	// 终止事件同样携带。
+	// The terminal response carries it too.
 	final := FinalizeChatCompletionsResponsesStream(testRuntime(), state)
 	completed := findEvent(final, "response.completed")
 	require.NotNil(t, completed)
@@ -2294,12 +2294,12 @@ func chatMessageRoles(messages []ChatMessage) []string {
 	return roles
 }
 
-// assertChatInvariants 校验 DeepSeek / OpenAI Chat Completions 的消息不变量；
-// 这些不变量一旦被破坏，上游通常会返回 400。这里用它验证 Codex 请求形状。
+// assertChatInvariants checks tool-reply ordering and assistant-message shape
+// for Codex fixtures converted to DeepSeek/OpenAI Chat requests.
 func assertChatInvariants(t *testing.T, messages []ChatMessage) {
 	t.Helper()
 	for i, m := range messages {
-		// assistant tool_calls 后按顺序紧跟对应的 tool message。
+		// Replies immediately follow the assistant's calls in call order.
 		if len(m.ToolCalls) > 0 {
 			for j, tc := range m.ToolCalls {
 				k := i + 1 + j
@@ -2308,11 +2308,11 @@ func assertChatInvariants(t *testing.T, messages []ChatMessage) {
 				require.Equalf(t, tc.ID, messages[k].ToolCallID, "tool reply order mismatch for %s", tc.ID)
 			}
 		}
-		// 不允许连续两个 assistant message。
+		// These fixtures must not produce consecutive assistant messages.
 		if i > 0 && m.Role == "assistant" && messages[i-1].Role == "assistant" {
 			t.Fatalf("consecutive assistant messages at %d", i)
 		}
-		// 不允许孤儿 tool reply。
+		// Every tool message needs a call ID.
 		if m.Role == "tool" {
 			require.NotEmptyf(t, m.ToolCallID, "tool message without tool_call_id at %d", i)
 		}

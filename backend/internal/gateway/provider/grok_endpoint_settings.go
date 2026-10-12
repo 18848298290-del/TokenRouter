@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokBaseURLForMode 将已选设置映射到平台端点，不创建客户端或复制运行缓存。
+// GrokBaseURLForMode maps a configured mode to its platform endpoint.
 func GrokBaseURLForMode(mode string) string {
 	switch gateway.NormalizeGrokDefaultBaseURLMode(mode) {
 	case "api":
@@ -23,7 +23,7 @@ func GrokBaseURLForMode(mode string) string {
 	}
 }
 
-// GrokDefaultBaseURLReader 每次查询时读取动态默认地址设置。
+// GrokDefaultBaseURLReader returns a function that reads the current default endpoint setting.
 func GrokDefaultBaseURLReader(settings *gateway.RuntimeSettings) func(context.Context) string {
 	return func(ctx context.Context) string { return GrokBaseURLForMode(settings.GetGrokDefaultBaseURLMode(ctx)) }
 }

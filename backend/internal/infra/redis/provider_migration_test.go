@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderMigrationPreservesStateAndTTL 验证迁移不能清空限流、会话或费用状态，并且须保留各类型与到期时间。
+// TestProviderMigrationPreservesStateAndTTL checks values, types, TTLs, and unrelated keys.
 func TestProviderMigrationPreservesStateAndTTL(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -32,7 +32,8 @@ func TestProviderMigrationPreservesStateAndTTL(t *testing.T) {
 	require.NoError(t, MigrateProviderNames(ctx, client))
 }
 
-// TestProviderMigrationResumesWithoutOverwritingConflict 验证已迁移批次保持有效；冲突保留双方，人工解决后继续执行。
+// TestProviderMigrationResumesWithoutOverwritingConflict checks that both conflicting values
+// survive and completed batches remain valid when the migration resumes.
 func TestProviderMigrationResumesWithoutOverwritingConflict(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})

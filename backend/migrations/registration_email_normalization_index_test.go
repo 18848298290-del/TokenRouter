@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRegistrationEmailNormalizationIndexMigration 固定非事务索引及供应商感知归一化规则。
+// TestRegistrationEmailNormalizationIndexMigration checks concurrent indexing and email-provider
+// normalization rules.
 func TestRegistrationEmailNormalizationIndexMigration(t *testing.T) {
 	content, err := FS.ReadFile("220_users_registration_email_normalized_index_notx.sql")
 	require.NoError(t, err)

@@ -180,7 +180,7 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 		"api_key",
 		"project_id",
 		"oauth_type",
-		// Gemini 配额预检在补全凭据前执行，需要第三方来源和官方等级来选择配额策略。
+		// Gemini quota checks run before hydration and need the third-party source and official tier to choose a quota policy.
 		"provider_type",
 		"tier_id",
 		"plan_type",
@@ -225,9 +225,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_compact_mode",
 		"openai_native_compaction_v2_mode",
 		"openai_responses_continuation_supported",
-		// 候选过滤 ListSchedulableProviders 读取此快照，IsModelSupported 使用这两个透传开关决定是否跳过 model_mapping。
-		// 丢失开关会使选号退回白名单检查，即使提供商可透传，也可能被判为 model_not_supported，
-		// 导致单独测试提供商成功、网关返回 no available providers。
+		// Candidate filtering reads this snapshot, so retain the passthrough mode inputs
+		// used when evaluating a provider's protocol and model support.
+		// A snapshot missing these settings can disagree with the full provider record.
 		"openai_passthrough",
 		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
@@ -244,7 +244,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"auto_pause_5h_disabled",
 		"auto_pause_7d_disabled",
 		"model_rate_limits",
-		// 媒体资格检查使用管理员覆盖值和计费观测，调度缓存同时保存这两项。
+		// Media eligibility reads both the administrator override and observed billing state.
 		providercore.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
 	}

@@ -25,13 +25,13 @@ import (
 	groupdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
-// adminResetGroupProjection 将分组读取转交注入的 GroupRepository。
+// adminResetGroupProjection forwards group reads to the injected repository.
 type adminResetGroupProjection struct {
 	apikey.GroupRepository
 	reader routing.GroupRepository
 }
 
-// TestAdminKeyResetAndInvalidGroupAreAtomic 验证同一管理请求失败时不保留消费重置。
+// TestAdminKeyResetAndInvalidGroupAreAtomic checks that a failed request rolls back usage resets.
 func TestAdminKeyResetAndInvalidGroupAreAtomic(t *testing.T) {
 	ctx := context.Background()
 	integrationDB, client := identityDatabase(t)
@@ -60,7 +60,7 @@ func TestAdminKeyResetAndInvalidGroupAreAtomic(t *testing.T) {
 	require.WithinDuration(t, now, *stored.Window5hStart, time.Millisecond)
 }
 
-// TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure 验证真实数据库拒绝配置写入时，消费重置也回滚。
+// TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure checks reset rollback after a database write fails.
 func TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure(t *testing.T) {
 	ctx := context.Background()
 	integrationDB, client := identityDatabase(t)

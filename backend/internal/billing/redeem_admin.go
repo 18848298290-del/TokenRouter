@@ -11,14 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// RedeemAdminTransactions 固定管理变更与调整记录的事务边界，核心不接触 ORM。
+// RedeemAdminTransactions runs administrative mutations and adjustment records in database transactions.
 type RedeemAdminTransactions interface {
 	Mutation(context.Context, func(context.Context) error) error
 	Adjustment(context.Context, func(context.Context) error) error
 	PlanExists(context.Context, int64) error
 }
 
-// RedeemAdmin 拥有兑换码管理和调整记录，用户资料管理仍留旧用例。
+// RedeemAdmin manages redeem codes and entitlement adjustment records.
 type RedeemAdmin struct {
 	redeemCodeRepo RedeemCodeRepository
 	transactions   RedeemAdminTransactions
@@ -26,30 +26,30 @@ type RedeemAdmin struct {
 }
 
 type GenerateRedeemCodesInput struct {
-	RequiresPayment bool // 领取前要求用户有成功付款记录
+	RequiresPayment bool // Require a paid-order history before redemption.
 	Code            string
 	Count           int
 	Type            string
 	Value           float64
 	MaxUses         *int
 	ExpiresAt       *time.Time
-	PlanID          *int64 // 订阅类型专用：关联的套餐ID
+	PlanID          *int64 // Plan ID for subscription codes.
 }
 
 type UpdateRedeemCodeInput struct {
-	RequiresPayment *bool // nil 表示保持领取条件
+	RequiresPayment *bool // nil leaves the payment requirement unchanged.
 	Value           *float64
 	MaxUses         *int
 	ExpiresAt       *time.Time
 	ExpiresAtSet    bool
-	PlanID          *int64 // 订阅类型专用：关联的套餐ID
+	PlanID          *int64 // Plan ID for subscription codes.
 }
 
 func NewRedeemAdmin(repo RedeemCodeRepository, transactions RedeemAdminTransactions, now func() time.Time) *RedeemAdmin {
 	return &RedeemAdmin{redeemCodeRepo: repo, transactions: transactions, now: now}
 }
 
-// ListRedeemCodes 按筛选条件分页查询兑换码，并返回总数。
+// ListRedeemCodes returns filtered, paginated codes and the total count.
 func (s *RedeemAdmin) ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string, sortBy, sortOrder string) ([]RedeemCode, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	codes, result, err := s.redeemCodeRepo.ListWithFilters(ctx, params, codeType, status, search)
@@ -80,13 +80,13 @@ func (s *RedeemAdmin) GenerateRedeemCodes(ctx context.Context, input *GenerateRe
 		if input.Count != 1 {
 			return nil, apperror.BadRequest("REDEEM_CODE_CUSTOM_COUNT_INVALID", "count must be 1 when code is provided")
 		}
-		// 长度按 Unicode 字符计数，中文每字占一个名额。
+		// Count Unicode code points so each Han character, including supplementary-plane characters, counts once.
 		if utf8.RuneCountInString(customCode) > 32 {
 			return nil, apperror.BadRequest("REDEEM_CODE_TOO_LONG", "code must be at most 32 characters")
 		}
 	}
 
-	// 如果是订阅类型，验证必须有 plan_id
+	// Subscription codes require an existing plan.
 	if input.Type == RedeemTypeSubscription {
 		if input.PlanID == nil || *input.PlanID <= 0 {
 			return nil, apperror.BadRequest("REDEEM_CODE_PLAN_REQUIRED", "plan_id is required for subscription type")
@@ -173,7 +173,7 @@ func (s *RedeemAdmin) GetUserBalanceHistory(ctx context.Context, userID int64, p
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	// Aggregate total recharged amount (only once, regardless of type filter)
+	// The recharge total is independent of the history type filter.
 	totalRecharged, err := s.redeemCodeRepo.SumPositiveBalanceByUser(ctx, userID)
 	if err != nil {
 		return nil, 0, 0, err
@@ -216,7 +216,7 @@ func (s *RedeemAdmin) UpdateRedeemCode(ctx context.Context, id int64, input *Upd
 		}
 
 		if input.Value != nil || input.PlanID != nil {
-			// 已兑换记录没有面值快照，修改面值或套餐会让历史展示与实际发放权益不一致。
+			// Usage records have no value snapshot; changing value or plan would misrepresent already granted benefits.
 			if code.UsedCount > 0 {
 				return apperror.Conflict("REDEEM_CODE_VALUE_LOCKED", "value or plan cannot be updated after the code has been redeemed")
 			}
@@ -229,7 +229,7 @@ func (s *RedeemAdmin) UpdateRedeemCode(ctx context.Context, id int64, input *Upd
 			code.MaxUses = 1
 		}
 		if code.Status == StatusExpired && !code.IsNaturallyExpired() {
-			// 更新次数或过期时间后，允许管理员把手动过期的普通兑换码恢复为可兑换状态。
+			// An update can reactivate a manually expired code once its expiry time permits use.
 			code.Status = StatusUnused
 		}
 		code.Status = code.PersistedStatus()

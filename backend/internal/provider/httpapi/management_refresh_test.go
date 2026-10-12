@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// 管理刷新和 SDK 解析使用生产实现，网络交换返回固定的本地响应。
+// Tests use production refresh and SDK parsing with fixed local transport responses.
 type agRecoveryIdentityAdmin struct {
 	providercore.ManagedCredentialStore
 	current providercore.Record
@@ -84,7 +84,7 @@ func TestRefreshSingleProviderRoutesGrokThroughGrokOAuthService(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, warning)
 	require.Equal(t, 1, grokOAuth.calls)
-	// 传入完整的提供商记录，值比较跳过记录中的时钟函数。
+	// The exchange receives the complete provider record.
 	require.Equal(t, provider, grokOAuth.provider)
 	require.Equal(t, "new-access", adminSvc.updatedCredentials["access_token"])
 	require.Equal(t, "new-refresh", adminSvc.updatedCredentials["refresh_token"])
@@ -94,15 +94,15 @@ func TestRefreshSingleProviderRoutesGrokThroughGrokOAuthService(t *testing.T) {
 	require.Equal(t, adminSvc.updatedCredentials, updated.Credentials)
 }
 
-// TestRefreshSingleProvider_RejectsShadow 检查手动刷新在调用上游前拒绝 Spark 影子提供商。
-// 影子提供商使用母提供商的凭据，单条和批量刷新共用这项检查。
+// TestRefreshSingleProvider_RejectsShadow checks that manual refresh rejects Spark shadows before contacting upstream.
+// Shadows use their parent's credentials; single and batch refresh share this check.
 func TestRefreshSingleProvider_RejectsShadow(t *testing.T) {
-	h := providercore.NewManagedRefreshService(providercore.ManagedRefreshOptions{}) // 影子在使用任何依赖前即返回,无需注入
+	h := providercore.NewManagedRefreshService(providercore.ManagedRefreshOptions{}) // Shadow validation returns before using dependencies.
 	parentID := int64(5)
 	shadow := &providercore.Record{
 		ID:               9,
 		Platform:         capability.PlatformOpenAI,
-		Type:             capability.ProviderTypeOAuth, // IsOAuth()=true,确保不是先撞 NOT_OAUTH
+		Type:             capability.ProviderTypeOAuth, // OAuth eligibility passes so the shadow check is exercised.
 		ParentProviderID: &parentID,
 		QuotaDimension:   providercore.QuotaDimensionSpark,
 	}
@@ -175,7 +175,7 @@ func TestProviderHandlerApplyOAuthCredentials_MergesExtraAndInvalidatesToken(t *
 	require.Equal(t, int64(3), invalidator.providers[0].ID)
 }
 
-// TestManualRefreshDoesNotOverwriteNewAdministratorCredentials 检查交换期间管理员重新授权后，迟到的手动刷新结果被丢弃。
+// TestManualRefreshDoesNotOverwriteNewAdministratorCredentials checks that reauthorization during exchange discards a late refresh result.
 func TestManualRefreshDoesNotOverwriteNewAdministratorCredentials(t *testing.T) {
 	adminSvc := newManagementMutationFixture()
 	adminSvc.providers = []providercore.Record{{ID: 977, Platform: capability.PlatformQoder, Type: capability.ProviderTypeCosy, Status: billing.StatusActive, Credentials: map[string]any{"refresh_token": "observed", "security_oauth_token": "old", "machine_id": "machine"}}}
@@ -228,7 +228,7 @@ func (t agRecoveryIdentityTransport) RoundTrip(r *http.Request) (*http.Response,
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
 
-// ClearManagedRefreshError 模拟条件更新，integration 测试覆盖 SQL 交错执行。
+// ClearManagedRefreshError models the conditional update; integration tests cover SQL interleaving.
 func (s *agRecoveryIdentityAdmin) ClearManagedRefreshError(_ context.Context, old *providercore.Record) (*providercore.Record, bool, error) {
 	if !providercore.ObserveManagedRecovery(old).Matches(&s.current) {
 		return &s.current, false, nil

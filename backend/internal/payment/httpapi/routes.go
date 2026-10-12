@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PlanEndpoints 是支付页面使用的套餐 HTTP 接口，由 billing 的处理器实现。
+// PlanEndpoints contains the billing handlers used by payment pages.
 type PlanEndpoints interface {
 	GetPlans(*gin.Context)
 	ListPlans(*gin.Context)
@@ -13,18 +13,18 @@ type PlanEndpoints interface {
 	DeletePlan(*gin.Context)
 }
 
-// RouteMiddleware 提供支付路由使用的鉴权、限流和审计处理器。
+// RouteMiddleware supplies authentication, rate limiting, and audit handlers for payment routes.
 type RouteMiddleware struct {
 	JWT, BackendMode, Panel, Admin, Audit gin.HandlerFunc
 }
 
-// WeChatAuthEndpoints 提供支付 OAuth 的发起与回调处理方法。
+// WeChatAuthEndpoints starts and completes payment OAuth.
 type WeChatAuthEndpoints interface {
 	WeChatPaymentOAuthStart(*gin.Context)
 	WeChatPaymentOAuthCallback(*gin.Context)
 }
 
-// RegisterRoutes 注册用户支付、公开查询、渠道回调和管理接口。
+// RegisterRoutes registers user payments, public lookups, provider callbacks, and admin endpoints.
 func RegisterRoutes(
 	v1 *gin.RouterGroup,
 	paymentHandler *PaymentHandler,
@@ -33,11 +33,10 @@ func RegisterRoutes(
 	planHandler PlanEndpoints,
 	guards RouteMiddleware,
 ) {
-	// 用户支付接口使用 JWT 鉴权。
 	authenticated := v1.Group("/payment")
 	authenticated.Use(guards.JWT)
 	authenticated.Use(guards.BackendMode)
-	// 面板全局按用户限流
+	// Apply the panel-wide per-user rate limit.
 	authenticated.Use(guards.Panel)
 	{
 		authenticated.GET("/config", paymentHandler.GetPaymentConfig)
@@ -58,17 +57,17 @@ func RegisterRoutes(
 		}
 	}
 
-	// 公开查单优先使用签名恢复令牌。匿名订单号查单返回已保存的状态，供分批升级期间的客户端查询。
+	// Public recovery uses signed resume tokens; anonymous order-number lookup returns saved state for older clients.
 	public := v1.Group("/payment/public")
 	{
 		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
 		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
 	}
 
-	// 渠道回调通过支付提供商的签名鉴权。
+	// Provider signatures authenticate callbacks.
 	webhook := v1.Group("/payment/webhook")
 	{
-		// EasyPay 的 GET 回调从查询参数读取通知。
+		// EasyPay GET callbacks carry notification fields in the query string.
 		webhook.GET("/easypay", webhookHandler.EasyPayNotify)
 		webhook.POST("/easypay", webhookHandler.EasyPayNotify)
 		webhook.POST("/alipay", webhookHandler.AlipayNotify)
@@ -77,10 +76,9 @@ func RegisterRoutes(
 		webhook.POST("/airwallex", webhookHandler.AirwallexWebhook)
 	}
 
-	// 支付管理接口使用管理员鉴权。
 	adminGroup := v1.Group("/admin/payment")
 	adminGroup.Use(guards.Admin)
-	// 支付管理路由独立注册，因此需要单独接入管理员面板限流。
+	// Payment admin routes are registered separately and need their own panel rate-limit middleware.
 	adminGroup.Use(guards.Panel)
 	adminGroup.Use(guards.Audit)
 	{
@@ -125,7 +123,7 @@ func RegisterRoutes(
 	}
 }
 
-// RegisterWeChatAuthRoutes 在身份路由组上注册支付 OAuth 的发起与回调接口。
+// RegisterWeChatAuthRoutes registers payment OAuth endpoints on the identity route group.
 func RegisterWeChatAuthRoutes(auth *gin.RouterGroup, endpoint WeChatAuthEndpoints) {
 	auth.GET("/oauth/wechat/payment/start", endpoint.WeChatPaymentOAuthStart)
 	auth.GET("/oauth/wechat/payment/callback", endpoint.WeChatPaymentOAuthCallback)

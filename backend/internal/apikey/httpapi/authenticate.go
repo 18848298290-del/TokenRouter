@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AuthenticationOptions 仅描述 HTTP 输入和观察端口；网关转换/计费仍由后续执行层拥有。
+// AuthenticationOptions supplies HTTP input readers and authentication observation callbacks.
 type AuthenticationOptions struct {
 	Google          bool
 	Context         func(*gin.Context) context.Context
@@ -29,7 +29,7 @@ type AuthenticationOptions struct {
 }
 
 func AbortWithError(c *gin.Context, status int, code, message string) {
-	// API Key 鉴权错误使用固定英文提示。
+	// Authentication callers supply fixed English messages.
 	c.JSON(status, httpx.NewErrorResponse(code, message))
 	c.Abort()
 }
@@ -54,7 +54,7 @@ func (o AuthenticationOptions) abort(c *gin.Context, status int, code, message s
 	}
 }
 
-// Authenticate 提取通用/Google 凭据并运行唯一核心认证，不读取请求体或提前执行路由策略。
+// Authenticate extracts standard or Google credentials and validates identity before body parsing and routing.
 func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOptions) (*apikey.AccessSnapshot, bool) {
 	clientKey := ""
 	if o.AbuseClientKey != nil {
@@ -202,7 +202,7 @@ func (o AuthenticationOptions) abortTeam(c *gin.Context, err error) bool {
 	return ok
 }
 
-// SetAccessPrincipal 只在路由/计费门禁全部通过后记录行为身份，Key 不赋予管理员会话权限。
+// SetAccessPrincipal records the actor after routing and billing admission. Callers must complete those checks first.
 func SetAccessPrincipal(c *gin.Context, a *apikey.AccessSnapshot) {
 	if a == nil {
 		return
@@ -212,7 +212,7 @@ func SetAccessPrincipal(c *gin.Context, a *apikey.AccessSnapshot) {
 	authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: a.ActorUserID, CredentialKind: "api_key"})
 }
 
-// recordAccessOwnership 保存已匹配凭据的归属，认证结果由 Authenticate 的错误值决定。
+// recordAccessOwnership records the matched credential for diagnostics; it does not authenticate the request.
 func recordAccessOwnership(c *gin.Context, access *apikey.AccessSnapshot) {
 	if c == nil || c.Request == nil || access == nil {
 		return

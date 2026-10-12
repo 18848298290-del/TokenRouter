@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestGroupLocalizationWithoutCopy 覆盖新建时省略文案，以及零版本记录的后续编辑。
+// TestGroupLocalizationWithoutCopy checks omitted creation copy and later editing of a zero-revision record.
 func TestGroupLocalizationWithoutCopy(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	admin := newGroupAdminForTest(repo, nil, nil)

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestNormalizeCreativeWorkspaceID 校验工作区 header 的缺失、非法与规范化行为。
+// TestNormalizeCreativeWorkspaceID checks required and valid UUIDs and positive user IDs.
 func TestNormalizeCreativeWorkspaceID(t *testing.T) {
 	_, err := creative.NormalizeCreativeWorkspaceID("")
 	require.ErrorIs(t, err, creative.ErrCreativeWorkspaceRequired)
@@ -24,20 +24,20 @@ func TestNormalizeCreativeWorkspaceID(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrCreativeRunNotFound)
 }
 
-// TestCanTransitionCreativeRun 校验创作台任务状态机。
+// TestCanTransitionCreativeRun covers accepted and rejected status transitions.
 func TestCanTransitionCreativeRun(t *testing.T) {
 	valid := []struct{ from, to string }{
 		{creative.CreativeRunStatusQueued, creative.CreativeRunStatusRunning},
 		{creative.CreativeRunStatusQueued, creative.CreativeRunStatusCancelled},
-		// 创建失败回滚路径允许 queued 直接转 failed。
+		// Creation failure permits a direct queued-to-failed transition.
 		{creative.CreativeRunStatusQueued, creative.CreativeRunStatusFailed},
-		// worker 恢复发现载荷过期时允许 queued 直接转 result_lost。
+		// Payload loss permits queued-to-result_lost before execution starts.
 		{creative.CreativeRunStatusQueued, creative.CreativeRunStatusResultLost},
 		{creative.CreativeRunStatusRunning, creative.CreativeRunStatusSucceeded},
 		{creative.CreativeRunStatusRunning, creative.CreativeRunStatusFailed},
 		{creative.CreativeRunStatusRunning, creative.CreativeRunStatusCancelled},
 		{creative.CreativeRunStatusRunning, creative.CreativeRunStatusResultLost},
-		// 成功任务的临时输出过期后可降级为 result_lost。
+		// A succeeded task may lose its temporary output.
 		{creative.CreativeRunStatusSucceeded, creative.CreativeRunStatusResultLost},
 	}
 	for _, tc := range valid {

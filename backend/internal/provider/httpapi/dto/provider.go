@@ -14,8 +14,8 @@ type Provider struct {
 	Notes    *string `json:"notes"`
 	Platform string  `json:"platform"`
 	Type     string  `json:"type"`
-	// Credentials 经 RedactCredentials 处理后只含非敏感子键；敏感 token / api_key / 私钥
-	// 的存在性通过 CredentialsStatus（has_<key>）暴露，原始值不返回前端。
+	// Credentials contains non-sensitive keys after RedactCredentials runs. CredentialsStatus
+	// exposes sensitive token, API key, and private-key presence through has_<key> flags.
 	Credentials             map[string]any                  `json:"credentials"`
 	CredentialsStatus       map[string]bool                 `json:"credentials_status,omitempty"`
 	Extra                   map[string]any                  `json:"extra"`
@@ -44,54 +44,54 @@ type Provider struct {
 	TempUnschedulableUntil  *time.Time `json:"temp_unschedulable_until"`
 	TempUnschedulableReason string     `json:"temp_unschedulable_reason"`
 
-	// QuotaAutoPaused 表示 OpenAI 提供商当前因 5h/7d 配额阈值被自动暂停调度。
+	// QuotaAutoPaused reports whether an OpenAI provider is paused by a 5h or 7d quota threshold.
 	QuotaAutoPaused bool `json:"quota_auto_paused"`
 
 	SessionWindowStart  *time.Time `json:"session_window_start"`
 	SessionWindowEnd    *time.Time `json:"session_window_end"`
 	SessionWindowStatus string     `json:"session_window_status"`
 
-	// 5h 窗口费用控制（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 从 extra 字段提取，方便前端显示和编辑
+	// Five-hour cost controls for Anthropic OAuth and Setup Token providers.
+	// Extracted from Extra for display and editing.
 	WindowCostLimit         *float64 `json:"window_cost_limit,omitempty"`
 	WindowCostStickyReserve *float64 `json:"window_cost_sticky_reserve,omitempty"`
 
-	// 会话数量控制（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 从 extra 字段提取，方便前端显示和编辑
+	// Session-count controls for Anthropic OAuth and Setup Token providers.
+	// Extracted from Extra for display and editing.
 	MaxSessions           *int `json:"max_sessions,omitempty"`
 	SessionIdleTimeoutMin *int `json:"session_idle_timeout_minutes,omitempty"`
 
-	// RPM 限制（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 从 extra 字段提取，方便前端显示和编辑
+	// RPM limits for Anthropic OAuth and Setup Token providers.
+	// Extracted from Extra for display and editing.
 	BaseRPM          *int    `json:"base_rpm,omitempty"`
 	RPMStrategy      *string `json:"rpm_strategy,omitempty"`
 	RPMStickyBuffer  *int    `json:"rpm_sticky_buffer,omitempty"`
 	UserMsgQueueMode *string `json:"user_msg_queue_mode,omitempty"`
 
-	// TLS 指纹伪装（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 从 extra 字段提取，方便前端显示和编辑
+	// TLS fingerprint settings for Anthropic OAuth/Setup Token and OpenAI OAuth providers.
+	// Extracted from Extra for display and editing.
 	EnableTLSFingerprint    *bool  `json:"enable_tls_fingerprint,omitempty"`
 	TLSFingerprintProfileID *int64 `json:"tls_fingerprint_profile_id,omitempty"`
 	TLSFingerprintRouterID  *int64 `json:"tls_fingerprint_router_id,omitempty"`
 
-	// OpenAI OAuth 客户端访问策略。
+	// OpenAI OAuth client access policy.
 	OpenAIOAuthClientPolicy *string `json:"openai_oauth_client_policy,omitempty"`
 
-	// 会话 ID 伪装（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 启用后将在 15 分钟内固定 metadata.user_id 中的 session ID
-	// 从 extra 字段提取，方便前端显示和编辑
+	// Session ID masking for Anthropic OAuth and Setup Token providers.
+	// When enabled, metadata.user_id keeps the same session ID for 15 minutes.
+	// Extracted from Extra for display and editing.
 	EnableSessionIDMasking *bool `json:"session_id_masking_enabled,omitempty"`
 
-	// 缓存 TTL 强制替换（仅 Anthropic OAuth/SetupToken 提供商有效）
-	// 启用后将所有 cache creation tokens 归入指定的 TTL 类型计费
+	// Cache TTL overrides for Anthropic OAuth and Setup Token providers.
+	// When enabled, all cache creation tokens are billed using the selected TTL category.
 	CacheTTLOverrideEnabled *bool   `json:"cache_ttl_override_enabled,omitempty"`
 	CacheTTLOverrideTarget  *string `json:"cache_ttl_override_target,omitempty"`
 
-	// 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 提供商有效）
+	// Custom Base URL relay settings for Anthropic OAuth and Setup Token providers.
 	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
 	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
 
-	// API Key 提供商配额限制
+	// Quota limits for API key and Bedrock providers.
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`
 	QuotaDailyLimit  *float64 `json:"quota_daily_limit,omitempty"`
@@ -99,7 +99,7 @@ type Provider struct {
 	QuotaWeeklyLimit *float64 `json:"quota_weekly_limit,omitempty"`
 	QuotaWeeklyUsed  *float64 `json:"quota_weekly_used,omitempty"`
 
-	// 配额固定时间重置配置
+	// Fixed-time quota reset settings.
 	QuotaDailyResetMode  *string `json:"quota_daily_reset_mode,omitempty"`
 	QuotaDailyResetHour  *int    `json:"quota_daily_reset_hour,omitempty"`
 	QuotaWeeklyResetMode *string `json:"quota_weekly_reset_mode,omitempty"`
@@ -109,7 +109,7 @@ type Provider struct {
 	QuotaDailyResetAt    *string `json:"quota_daily_reset_at,omitempty"`
 	QuotaWeeklyResetAt   *string `json:"quota_weekly_reset_at,omitempty"`
 
-	// 配额通知配置
+	// Quota notification settings.
 	QuotaNotifyDailyEnabled    *bool    `json:"quota_notify_daily_enabled,omitempty"`
 	QuotaNotifyDailyThreshold  *float64 `json:"quota_notify_daily_threshold,omitempty"`
 	QuotaNotifyWeeklyEnabled   *bool    `json:"quota_notify_weekly_enabled,omitempty"`
@@ -117,11 +117,11 @@ type Provider struct {
 	QuotaNotifyTotalEnabled    *bool    `json:"quota_notify_total_enabled,omitempty"`
 	QuotaNotifyTotalThreshold  *float64 `json:"quota_notify_total_threshold,omitempty"`
 
-	// 影子提供商关系（spark 维度影子）
+	// Spark shadow relationship.
 	ParentProviderID *int64 `json:"parent_provider_id,omitempty"`
 	QuotaDimension   string `json:"quota_dimension,omitempty"`
 
-	// 影子提供商回填的母提供商信息（仅影子非空，源自母提供商 Credentials/Extra）
+	// Parent credentials and Extra fields populated for shadow providers.
 	ParentEmail                 string `json:"parent_email,omitempty"`
 	ParentPlanType              string `json:"parent_plan_type,omitempty"`
 	ParentPrivacyMode           string `json:"parent_privacy_mode,omitempty"`

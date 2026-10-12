@@ -9,10 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
-// settingsRuntimeReady 标记转发设置加载和默认模型设置迁移已登记到启动流程。
+// settingsRuntimeReady marks registration of forwarding settings load and default-model migration.
 type settingsRuntimeReady struct{}
 
-// provideSettingsRuntime 在目录初始化前加载运行设置；单项失败记录告警并继续启动。
+// provideSettingsRuntime loads runtime settings before the catalog; individual failures log warnings and allow startup to continue.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func provideSettingsRuntime(
 	manager *lifecycle.Manager,

@@ -14,7 +14,7 @@ import (
 
 const LegacyEncryptionKey = "0123456789abcdef0123456789abcdef"
 
-// 固定历史密文保留旧格式解密契约，不重新调用旧加密入口生成。
+// Fixed historical ciphertext tests legacy decryption independently of the current encryption implementation.
 //
 //go:embed testdata/legacy_webhook_configs.json
 var legacyConfigsJSON []byte
@@ -28,7 +28,7 @@ func LegacyConfig(t *testing.T, name string) string {
 	return value
 }
 
-// LegacyLoadBalancer 使用上述历史密文对应的固定测试密钥。
+// LegacyLoadBalancer uses the fixed test key matching the embedded historical ciphertext.
 func LegacyLoadBalancer(client *dbent.Client) payment.LoadBalancer {
 	return payment.NewDefaultLoadBalancer(paymentpostgres.NewInstanceStore(client), []byte(LegacyEncryptionKey))
 }

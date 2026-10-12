@@ -3,18 +3,18 @@ package provider
 import "maps"
 
 var (
-	// SensitiveCredentialKeys 列出向前端返回凭据时需要移除的敏感字段。
-	// dto 响应脱敏和服务更新合并共用此清单，添加凭据类型时需要同步更新。
+	// SensitiveCredentialKeys lists fields removed from credentials returned to the UI.
+	// DTO redaction and update merging share this list; extend it when introducing new secret fields.
 	SensitiveCredentialKeys = []string{
 		// OAuth
 		"access_token", "refresh_token", "id_token", "agent_private_key",
-		// Qoder COSY 凭据
+		// Qoder COSY credentials.
 		"pat", "security_oauth_token", "machine_token",
-		// API Key 类及 New API 用户钱包查询凭据
+		// API keys and New API user-wallet query credentials.
 		"api_key", "session_key", "cookie", "new_api_user_access_token",
-		// Grok Web SSO 与密码在兑换 Build OAuth 后不得持久化或回显。
+		// Temporary Grok Web SSO and passwords must not be stored or returned after Build OAuth exchange.
 		"password", "sso_token", "sso", "sso-rw", "clearTextPassword",
-		// 云服务凭据
+		// Cloud credentials.
 		"aws_secret_access_key", "aws_session_token",
 		"service_account_json", "service_account", "private_key",
 	}
@@ -28,15 +28,15 @@ var (
 	}()
 )
 
-// IsSensitiveCredentialKey 判断指定键是否为敏感凭证子键。
+// IsSensitiveCredentialKey reports whether a credential key is sensitive.
 func IsSensitiveCredentialKey(key string) bool {
 	_, ok := sensitiveCredentialKeySet[key]
 	return ok
 }
 
-// MergePreservingSensitiveCreds 将 incoming 复制为新 map，并从 existing 补齐省略的敏感字段。
-// 前端提交脱敏后的完整对象时，已有 token 通过此规则保留。
-// 非敏感字段以 incoming 为准，敏感字段在 incoming 携带该键时按输入覆盖。
+// MergePreservingSensitiveCreds shallow-copies incoming and fills omitted secrets from existing.
+// This retains tokens omitted by the UI when submitting a redacted credential object.
+// Non-secret fields come from incoming; a supplied secret key replaces the stored value, including with an empty value.
 func MergePreservingSensitiveCreds(existing, incoming map[string]any) map[string]any {
 	out := make(map[string]any, len(incoming)+len(SensitiveCredentialKeys))
 	maps.Copy(out, incoming)
@@ -51,8 +51,8 @@ func MergePreservingSensitiveCreds(existing, incoming map[string]any) map[string
 	return out
 }
 
-// SanitizeStoredCredentials 移除 OAuth 兑换后不得写入提供商凭据的 Grok SSO、密码和 cookie。
-// 批量操作可能缺少平台标识，所有平台都清理 cookie。
+// SanitizeStoredCredentials removes temporary SSO, password, and cookie fields before storage.
+// Cookies are removed for all platforms, including bulk updates with an empty platform.
 func SanitizeStoredCredentials(platform string, creds map[string]any) map[string]any {
 	if creds == nil {
 		return nil

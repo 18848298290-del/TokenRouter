@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIProviderTest 绑定提供商存储、共享传输和请求策略，TestRun 保存单次状态。
+// OpenAIProviderTest binds storage, transport, and request policy; TestRun holds per-test state.
 type OpenAIProviderTest struct {
 	Store        OpenAIProviderTestStore
 	Transport    QoderTransport
@@ -33,7 +33,7 @@ type OpenAIProviderTest struct {
 	Prepare func(*TestRun, *providercore.Record) error
 }
 
-// OpenAIProviderTestStore 只暴露测试路径原本使用的字段操作。
+// OpenAIProviderTestStore supplies provider reads and health and usage writes for probes.
 type OpenAIProviderTestStore interface {
 	GetByID(context.Context, int64) (*providercore.Record, error)
 	UpdateExtra(context.Context, int64, map[string]any) error
@@ -43,19 +43,18 @@ type OpenAIProviderTestStore interface {
 	providercore.OpenAIPlanWriter
 }
 
-// Execute 按提供商凭据、模式和测试类型执行 OpenAI 测试。
+// Execute runs an OpenAI probe using the provider credentials, mode, and test type.
 func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, mode string, testTypes ...string) error {
 	ctx := c.Context
 	mode, testType, explicitTestType := providercore.ResolveProviderTestModeAndType(mode, testTypes...)
 
-	// 保留 OpenAI 缺省测试模型。
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = openai.DefaultTestModel
 	}
 
-	// 原生 V2 与普通 Responses 一样只使用常规模型映射；旧端点兼容性测试才
-	// 在其基础上追加 compact_model_mapping。
+	// Native V2 uses ordinary Responses model mapping. Legacy compact probes additionally
+	// apply compact_model_mapping.
 	testModelID = mappedTestModel(value, testModelID)
 	if mode == providercore.ProviderTestModeCompact {
 		return s.executeNativeCompaction(c, value, testModelID)
@@ -65,7 +64,7 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return s.executeLegacyCompact(c, value, testModelID)
 	}
 
-	// 指定的测试类型优先，省略时按模型名判断图片请求。
+	// An explicit test type takes precedence over image detection by model name.
 	if (explicitTestType && testType == providercore.ProviderTestTypeImage) ||
 		(!explicitTestType && strings.HasPrefix(strings.ToLower(testModelID), "gpt-image-")) {
 		imagePrompt := strings.TrimSpace(prompt)
@@ -87,14 +86,13 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		credentialProvider = resolved
 	}
 
-	// 按原顺序解析认证与端点。
 	var authToken string
 	var apiURL string
 	var isOAuth bool
 
 	if credentialProvider.IsOAuth() {
 		isOAuth = true
-		// Agent Identity 对每次请求单独签名，不保存 OAuth token。
+		// Agent Identity signs each request instead of storing an OAuth token.
 		if !credentialProvider.IsOpenAIAgentIdentity() {
 			authToken = credentialProvider.GetOpenAIAccessToken()
 		}
@@ -102,11 +100,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 			return (TestStreamOutput{}).Error(c, "No access token available")
 		}
 
-		// OAuth 继续使用 ChatGPT 内部端点。
 		apiURL = "https://chatgpt.com/backend-api/codex/responses"
 	} else if credentialProvider.Type == "apikey" {
-		// API Key 使用平台端点。
-		// 国产 OpenAI 兼容供应商通过协议族密钥读取器复用此探针。
+		// The protocol-family key accessor also supports Chinese OpenAI-compatible providers.
 		authToken = credentialProvider.GetOpenAIProtocolAPIKey()
 		if authToken == "" {
 			return (TestStreamOutput{}).Error(c, "No API key available")
@@ -132,10 +128,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Unsupported provider type: %s", value.Type))
 	}
 
-	// 保留事件流提交时机。
 	c.Begin(true)
 
-	// OAuth 提供商使用 ChatGPT Codex 上游，测试与转发共用模型归一化规则。
+	// OAuth probes trim model names for the ChatGPT Codex endpoint.
 	upstreamTestModelID := testModelID
 	if isOAuth {
 		upstreamTestModelID = strings.TrimSpace(testModelID)
@@ -143,7 +138,7 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	payload := openai.TestResponsesPayload(upstreamTestModelID, prompt, isOAuth)
 	payloadBytes, _ := json.Marshal(payload)
 
-	// task 失效时会注册新 task 并重试探针，因此开始事件只发送一次。
+	// Task recovery retries the probe, so emit the start event only on the first attempt.
 	if !c.TaskRecoveryTried {
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
 	}
@@ -154,7 +149,6 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	}
 	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
 
-	// 设置共同协议 Header。
 	req.Header.Set("Content-Type", "application/json")
 	if credentialProvider.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := s.agentHeaders(ctx, credentialProvider)
@@ -170,7 +164,6 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 
-	// 按原顺序设置 ChatGPT OAuth 专用 Header。
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("accept", "text/event-stream")
@@ -185,14 +178,13 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	}
 	s.ApplyRouting(c, value, req, isOAuth)
 	if value.Type == capability.ProviderTypeOAuth {
-		// 必须在测试专用 UA 覆写之后配对身份，否则测试请求仍可能因头部错配返回 404。
+		// Pair identity after the probe UA override to prevent mismatched headers from causing a 404.
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// 测试与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider header overrides after routing, as forwarding does.
 	applyGrokQuotaHeaders(credentialProvider, req.Header)
 
-	// 保留提供商关联代理。
 	proxyURL := ""
 	if value.ProxyID != nil && value.Proxy != nil {
 		proxyURL = value.Proxy.URL()
@@ -225,7 +217,7 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, value, resp.Header, body)
 		}
-		// 401 Unauthorized: 标记提供商为永久错误
+		// Persist a 401 as a provider authentication error.
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
@@ -233,11 +225,10 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// 逐事件解析响应流。
 	return (TestStreamOutput{}).Responses(c, resp.Body)
 }
 
-// executeChat 通过原始 /v1/chat/completions 端点测试 OpenAI 兼容 API Key 提供商。
+// executeChat probes OpenAI-compatible API key providers through /v1/chat/completions.
 func (s *OpenAIProviderTest) executeChat(
 	c *TestRun,
 	value *providercore.Record,
@@ -267,7 +258,7 @@ func (s *OpenAIProviderTest) executeChat(
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	s.ApplyRouting(c, value, req, false)
 
-	// 测试与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider header overrides after routing, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -296,8 +287,8 @@ func (s *OpenAIProviderTest) executeChat(
 	return (TestStreamOutput{}).ChatCompletions(c, resp.Body)
 }
 
-// executeNativeCompaction 测试原生 V2（流式 /responses +
-// compaction_trigger）。它使用普通模型映射，测试结果不改变管理员开关。
+// executeNativeCompaction probes streaming /responses with compaction_trigger.
+// It uses ordinary model mapping and leaves the administrator's capability setting unchanged.
 func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *providercore.Record, testModelID string) error {
 	ctx := c.Context
 	credentialProvider := value
@@ -357,7 +348,7 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	// 提供商请求头覆盖完成后会补齐 V2 协商头。
+	// Reapply this negotiation header after provider overrides below.
 	openai.EnsureRemoteCompactionV2Header(req.Header)
 	if credentialProvider.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := s.agentHeaders(ctx, credentialProvider)
@@ -391,7 +382,7 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// 先应用提供商请求头覆盖，再补齐 V2 协商头，测试与转发顺序一致。
+	// Restore V2 negotiation after provider header overrides, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 	openai.EnsureRemoteCompactionV2Header(req.Header)
 
@@ -419,7 +410,7 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 
 	compactionFound := openai.CompactionTestHasOutput(body)
 	if s.Store != nil {
-		// 手动测试保存额度观测，管理员开关保持配置值。
+		// Save quota observations while leaving the administrator's capability setting unchanged.
 		var updates map[string]any
 		if codexUpdates, err := ExtractOpenAIUsageUpdates(resp, time.Now()); err == nil && len(codexUpdates) > 0 {
 			updates = mergeTestExtraUpdates(updates, codexUpdates)
@@ -449,8 +440,8 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	return nil
 }
 
-// executeLegacyCompact 测试 /responses/compact 连接。
-// 本次结果不写入能力状态或管理员开关，认证错误和限流仍按提供商测试流程处理。
+// executeLegacyCompact probes /responses/compact without writing capability settings.
+// Authentication and rate-limit failures still update provider health.
 func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercore.Record, testModelID string) error {
 	ctx := c.Context
 	credentialProvider := value
@@ -535,11 +526,11 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setTestChatGPTHeaders(req.Header, credentialProvider)
-		// Compact 连接测试同样访问 Codex 上游，测试 UA 覆写完成后必须重新配对身份头。
+		// Re-pair Codex identity headers after applying the probe UA override.
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// 测试与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider header overrides after routing, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -565,7 +556,7 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	}
 
 	if s.Store != nil {
-		// 手动测试保存额度观测，管理员开关保持配置值。
+		// Save quota observations while leaving the administrator's capability setting unchanged.
 		var updates map[string]any
 		if codexUpdates, err := ExtractOpenAIUsageUpdates(resp, time.Now()); err == nil && len(codexUpdates) > 0 {
 			updates = mergeTestExtraUpdates(updates, codexUpdates)
@@ -574,7 +565,7 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 			_ = s.Store.UpdateExtra(ctx, value.ID, updates)
 			value.Extra = providercore.MergeUsageExtra(value.Extra, updates)
 		}
-		// 手动测试返回 429 时同步限流状态，调度器据此暂停该提供商。
+		// Persist the observed 429 reset so scheduling can pause this provider.
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, value, resp.Header, body)
 		}
@@ -628,7 +619,7 @@ func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value 
 	}
 }
 
-// ExecuteImageAPIKey 使用 API Key 请求图片端点并输出原预览事件。
+// ExecuteImageAPIKey calls the image endpoint with an API key and emits preview events.
 func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context, value *providercore.Record, modelID, prompt string) error {
 	authToken := value.GetOpenAIApiKey()
 	if authToken == "" {
@@ -645,7 +636,6 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	}
 	apiURL := httpclient.BuildOpenAIEndpointURL(normalizedBaseURL, upstream.OpenAIImagesGenerationsEndpoint)
 
-	// 保留事件流提交时机。
 	c.Begin(true)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: modelID})
@@ -667,7 +657,7 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	s.ApplyRouting(c, value, req, false)
 
-	// 测试与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider header overrides after routing, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -690,7 +680,7 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// 兼容 b64_json 与 url 两种图片返回形式，部分中转站会忽略 response_format 直接返回链接。
+	// Accept b64_json and URL results because relays may ignore response_format and return links.
 	var result struct {
 		Data []struct {
 			B64JSON       string `json:"b64_json"`
@@ -724,7 +714,7 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 			(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "image", ImageURL: item.URL})
 		}
 	}
-	// 上游返回 data 但缺少可展示图片时，测试失败。
+	// A nonempty data array can still contain no displayable images.
 	if images == 0 {
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Upstream returned no image data: %s", logredact.TruncateLine(body, 512)))
 	}
@@ -733,7 +723,7 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	return nil
 }
 
-// ExecuteImageOAuth 使用 OAuth 的 Codex Responses 图片工具。
+// ExecuteImageOAuth probes the Codex Responses image tool with OAuth credentials.
 func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, value *providercore.Record, modelID, prompt string) error {
 	credentialProvider := value
 	if value.IsShadow() {
@@ -751,7 +741,6 @@ func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, 
 		return (TestStreamOutput{}).Error(c, "No access token available")
 	}
 
-	// 保留事件流提交时机。
 	c.Begin(true)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: modelID})
@@ -799,7 +788,7 @@ func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, 
 	}
 	s.ApplyRouting(c, value, req, true)
 	setTestChatGPTHeaders(req.Header, credentialProvider)
-	// originator 与最终 User-Agent 的首段保持匹配，错配会触发 404（issue #3901）。
+	// Match originator to the final User-Agent prefix to prevent a 404 (issue #3901).
 	openai.EnforceCodexIdentityHeaders(req.Header)
 
 	proxyURL := ""

@@ -91,7 +91,8 @@ func TestAnnouncementServiceUpdateRejectsEqualStartEndTimes(t *testing.T) {
 	require.ErrorIs(t, err, ErrAnnouncementInvalidSchedule)
 }
 
-// TestAnnouncementServiceListArchivesExpiredBeforeQuery 检查管理端查询前归档到期公告的调用顺序。
+// TestAnnouncementServiceListArchivesExpiredBeforeQuery verifies that archival
+// runs before the admin list query.
 func TestAnnouncementServiceListArchivesExpiredBeforeQuery(t *testing.T) {
 	repo := &announcementRepoStub{items: []Announcement{{ID: 1, Status: AnnouncementStatusArchived}}}
 	svc := NewAnnouncementService(repo, nil, nil, nil)
@@ -103,7 +104,8 @@ func TestAnnouncementServiceListArchivesExpiredBeforeQuery(t *testing.T) {
 	require.Equal(t, AnnouncementStatusArchived, items[0].Status)
 }
 
-// TestAnnouncementServiceListStopsWhenArchivingExpiredFails 检查归档失败时列表查询返回该错误。
+// TestAnnouncementServiceListStopsWhenArchivingExpiredFails verifies that an
+// archival error stops the list query and reaches the caller.
 func TestAnnouncementServiceListStopsWhenArchivingExpiredFails(t *testing.T) {
 	archiveErr := errors.New("archive failed")
 	repo := &announcementRepoStub{archiveExpiredErr: archiveErr}
@@ -115,7 +117,8 @@ func TestAnnouncementServiceListStopsWhenArchivingExpiredFails(t *testing.T) {
 	require.Equal(t, []string{"archive"}, repo.callOrder)
 }
 
-// TestAnnouncementServiceCreateArchivesAlreadyExpiredAnnouncement 检查新建已过期公告时将展示中状态转为已归档。
+// TestAnnouncementServiceCreateArchivesAlreadyExpiredAnnouncement verifies that
+// creating an expired active announcement saves it as archived.
 func TestAnnouncementServiceCreateArchivesAlreadyExpiredAnnouncement(t *testing.T) {
 	repo := &announcementRepoStub{}
 	svc := NewAnnouncementService(repo, nil, nil, nil)
@@ -133,7 +136,8 @@ func TestAnnouncementServiceCreateArchivesAlreadyExpiredAnnouncement(t *testing.
 	require.Equal(t, AnnouncementStatusArchived, created.Status)
 }
 
-// TestAnnouncementServiceUpdateArchivesAlreadyExpiredAnnouncement 检查更新结束时间后对已过期公告的自动归档。
+// TestAnnouncementServiceUpdateArchivesAlreadyExpiredAnnouncement verifies that
+// setting a past end time archives an active announcement.
 func TestAnnouncementServiceUpdateArchivesAlreadyExpiredAnnouncement(t *testing.T) {
 	repo := &announcementRepoStub{item: &Announcement{
 		ID:         1,

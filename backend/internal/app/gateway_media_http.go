@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// provideMediaRuntime 为媒体执行绑定单次调用组件和应用任务跟踪器。
+// provideMediaRuntime binds platform attempts and shared execution resources for media requests.
 func provideMediaRuntime(
 	source *gatewayhttp.OpenAIResponsesExecutor, credentials *gatewayhttp.RequestCredentialExecutor,
 	keys *apikey.APIKeyService,
@@ -44,7 +44,7 @@ func provideAuxiliaryHTTP(runtime *mediaentry.Runtime, activity *gatewayRequestA
 	return result
 }
 
-// mediaBindings 组合执行组件和静态参数，在调用时取得视频组件。
+// mediaBindings combines platform calls and startup options, exposing video tasks through a callback.
 func mediaBindings(
 	source *gatewayhttp.OpenAIResponsesExecutor, credentials *gatewayhttp.RequestCredentialExecutor,
 	keys *apikey.APIKeyService,
@@ -108,7 +108,7 @@ func mediaBindings(
 	return b
 }
 
-// provideGrokVideoTasks 从共享缓存取得可选的计费接口。
+// provideGrokVideoTasks uses the shared cache and its optional video-billing interface.
 func provideGrokVideoTasks(cache session.GatewayCache, cfg *config.Config) *media.VideoTasks {
 	billing, _ := cache.(session.GrokVideoBillingCache)
 	var options media.VideoOptions

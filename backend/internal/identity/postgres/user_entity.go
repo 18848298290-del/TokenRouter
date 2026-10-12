@@ -47,7 +47,7 @@ func UserFromEntity(u *dbent.User) *identitycore.User {
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
 	}
-	// Parse extra emails JSON (supports both old []string and new []NotifyEmailEntry format)
+	// Accept both legacy string lists and NotifyEmailEntry lists.
 	if u.BalanceNotifyExtraEmails != "" && u.BalanceNotifyExtraEmails != "[]" {
 		out.BalanceNotifyExtraEmails = identitycore.ParseNotifyEmails(u.BalanceNotifyExtraEmails)
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestTargets 读取提供商后返回对应平台的测试组件。
+// TestTargets reads a provider and selects its platform's test executor.
 type TestTargets struct {
 	Jev         *JevProviderTest
 	Read        func(context.Context, int64) (*provider.Record, error)

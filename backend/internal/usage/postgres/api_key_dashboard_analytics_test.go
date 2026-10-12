@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// TestAPIKeyDashboardAnalyticsFallback 聚合状态读取失败时，完整使用原始累计和今日结果。
+// TestAPIKeyDashboardAnalyticsFallback checks full raw totals and daily statistics after state lookup fails.
 func TestAPIKeyDashboardAnalyticsFallback(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, calendar: timezone.NewCalendar(time.UTC), preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}
@@ -30,7 +30,7 @@ func TestAPIKeyDashboardAnalyticsFallback(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestAPIKeyDashboardWithoutRecords 忽略可能尚未清理的旧聚合桶。
+// TestAPIKeyDashboardWithoutRecords ignores stale rollups after all raw records are gone.
 func TestAPIKeyDashboardWithoutRecords(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, calendar: timezone.NewCalendar(time.UTC), preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}

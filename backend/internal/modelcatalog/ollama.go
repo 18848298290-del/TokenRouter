@@ -4,8 +4,8 @@ import "encoding/json"
 
 const OllamaOutputCapExtraKey = "ollama_max_tokens_cap"
 
-// OllamaOutputCap 读取提供商的输出参数上限，缺失或无效的类型使用默认值。
-// 非正数表示关闭参数裁剪。
+// OllamaOutputCap reads the provider output cap, using the default for missing or invalid values.
+// A nonpositive cap disables output-parameter clamping.
 func OllamaOutputCap(value any, present bool) int64 {
 	if !present {
 		return OllamaDefaultOutputLimit

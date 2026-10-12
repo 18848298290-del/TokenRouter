@@ -298,9 +298,9 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 	return gatewayprovider.ImagesForwardResult(result, parsed, imageCount), err
 }
 
-// shouldCoolOpenAIImagesToolForError 在上游错误帧报告 image_generation_unavailable 时启用 openAIImagesOAuthUnavailableCooldown 冷却。
-// 模型仅返回文字可能由提示词引起，健康提供商也会出现。该结果按 >= 500 的可重试错误换号，提供商状态保持原样。
-// 若为文字响应设置 30 分钟冷却，换号会逐个冷却池中的提供商。alpha/search 的工具端点故障也使用请求换号、保留提供商状态的处理。
+// shouldCoolOpenAIImagesToolForError reports whether the error came from structured upstream data.
+// Callers check the error code before applying cooldown. Text-only model output can be prompt-dependent
+// and remains retryable without cooling each provider encountered during failover.
 func shouldCoolOpenAIImagesToolForError(upstreamErr *openai.OpenAIImagesUpstreamError) bool {
 	return upstreamErr != nil && !upstreamErr.SynthesizedFromModelText
 }
@@ -317,8 +317,8 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 ) error {
 	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	if code, message, ok := openai.OpenAIUpstreamStreamReadErrorDetails(err); ok {
-		// HTTP 成功后响应体传输中断时，在首个图片内容输出前允许重试。
-		// 复制上游响应头，供响应释放后的 failover 诊断使用。
+		// Body transport failures after HTTP success remain retryable until image output starts.
+		// Clone headers for failover diagnostics after the response is released.
 		headers := http.Header(nil)
 		requestID := ""
 		statusCode := http.StatusBadGateway

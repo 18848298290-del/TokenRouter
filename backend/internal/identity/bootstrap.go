@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// InitialAdminInput 包含安装时创建管理员的邮箱、密码、并发数和时钟。
+// InitialAdminInput contains the setup administrator credentials, concurrency limit, and clock.
 type InitialAdminInput struct {
 	Email, Password string
 	Concurrency     int

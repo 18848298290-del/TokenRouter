@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// MediaAccess 仅包含 HTTP 准入、日志和复合资源查找所需字段。
+// MediaAccess contains the fields needed for HTTP admission, logging, and composite resource lookup.
 type MediaAccess struct {
 	HasGroup                 bool
 	ID                       int64
@@ -38,7 +38,7 @@ type MediaHTTPFailure struct {
 	Err           error
 }
 
-// GenerationHTTPInput 把已解析的输入交给固定依赖工厂，不携带旧身份或提供商对象。
+// GenerationHTTPInput supplies parsed request data to the generation adapter factory.
 type GenerationHTTPInput struct {
 	Grok                                           bool
 	Subject                                        MediaSubject
@@ -79,7 +79,8 @@ type MediaHTTPPorts interface {
 	RewriteGrok([]byte, string, string) ([]byte, string, error)
 }
 
-// MediaHandler 独占媒体路由的 HTTP 准入、错误响应和同步输出；业务尝试由 media 执行。
+// MediaHandler handles HTTP admission, errors, and synchronous media output.
+// The media package runs provider attempts.
 type MediaHandler struct {
 	RequestLifetime
 	ports MediaHTTPPorts
@@ -144,7 +145,8 @@ func (h *MediaHandler) Images(c *gin.Context) {
 	if routingModel == "" {
 		routingModel = strings.TrimSpace(requestModel)
 	}
-	// 分组映射后仍可能是提供商别名，图片模型资格由逐候选的最终上游模型校验。
+	// The group-mapped name may still be a provider alias. Image eligibility is checked
+	// against each candidate's final upstream model.
 	routed := *parsed
 	routed.Model = routingModel
 	parsed.RequiredCapability = media.ClassifyImageCapability(&routed)
@@ -330,7 +332,8 @@ func (h *MediaHandler) GrokMedia(c *gin.Context, endpoint, requestID string) {
 	media.RunGrokMedia(ctx, media.GenerationRequest{Body: forwardBody, MaxSwitches: h.ports.MaxSwitches(), RoutingStarted: time.Now(), Generation: generation, VideoLookup: lookup, BoundProviderID: bound}, h.ports.NewGenerationPorts(c, input, log, &streamStarted))
 }
 
-// recoverMedia 在直接 defer 中读取 panic，保留旧 fallback 与诊断字段。
+// recoverMedia must be deferred directly so recover can intercept the panic.
+// It writes an error if needed and logs the panic and stack.
 func (h *MediaHandler) recoverMedia(c *gin.Context, stream *bool) {
 	recovered := recover()
 	if recovered == nil {

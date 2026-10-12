@@ -19,7 +19,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// mockProviderRepoForGemini Gemini 测试用的 mock。
+// mockProviderRepoForGemini supplies provider records for Gemini tests.
 type mockProviderRepoForGemini struct {
 	providers          []gatewayprovider.ExecutionProvider
 	providersByID      map[int64]*gatewayprovider.ExecutionProvider
@@ -27,7 +27,7 @@ type mockProviderRepoForGemini struct {
 	listByPlatformFunc func(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error)
 }
 
-// mockGatewayCacheForGemini Gemini 测试用的 cache mock。
+// mockGatewayCacheForGemini stores Gemini test session bindings.
 type mockGatewayCacheForGemini struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
@@ -52,7 +52,7 @@ func (m *mockProviderRepoForGemini) ListSchedulableByPlatform(ctx context.Contex
 }
 
 func (m *mockProviderRepoForGemini) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
-	// 测试时不区分 groupID，直接按 platform 过滤
+	// This fixture filters by platform and ignores groupID.
 	for i := range m.providers {
 		prepareSelectionFixtureProvider(ctx, &m.providers[i], &groupID)
 	}
@@ -129,7 +129,7 @@ func (m *mockGatewayCacheForGemini) DeleteSessionProviderID(ctx context.Context,
 	return nil
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform 测试 Gemini 单平台选择。
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform checks selection from the Gemini fixture pool.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform(t *testing.T) {
 	ctx := context.Background()
 
@@ -137,7 +137,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Gemini
 		providers: []gatewayprovider.ExecutionProvider{
 			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},
 			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformGemini, Priority: 2, Status: billing.StatusActive, Schedulable: true}},
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // 应被隔离
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Antigravity candidate.
 		},
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
 	}
@@ -150,7 +150,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Gemini
 
 	svc := newGeminiSelectionForTest(GeminiDependencies{Reads: Reads{Providers: repo, Groups: groupRepo}, Shared: Shared{Cache: cache}}, nil)
 
-	// 无分组时使用 gemini 平台
+	// Use the fixture group for Gemini selection.
 	acc, err := svc.SelectProviderForModelWithExclusions(ctx, selectionFixtureGroupID(ctx), "", "gemini-2.5-flash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, acc)
@@ -263,14 +263,14 @@ func TestGeminiMessagesCompatService_GroupResolution_UsesLiteFetch(t *testing.T)
 	require.Equal(t, 1, groupRepo.getByIDLiteCalls)
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference 测试 antigravity 分组。
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference checks an Antigravity candidate in a group with no platform preference.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference(t *testing.T) {
 	ctx := context.Background()
 
 	repo := &mockProviderRepoForGemini{
 		providers: []gatewayprovider.ExecutionProvider{
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},      // 应被隔离
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // 应被选择
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},      // Lower-priority candidate.
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Preferred candidate.
 		},
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
 	}
@@ -295,7 +295,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupH
 	require.Equal(t, capability.PlatformGemini, acc.Record.Platform, "分组不按平台排除合格提供商")
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred 测试 OAuth 优先。
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred checks the OAuth tie-break preference.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred(t *testing.T) {
 	ctx := context.Background()
 
@@ -322,7 +322,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthP
 	require.Equal(t, capability.ProviderTypeOAuth, acc.Record.Type)
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders 测试无可用提供商。
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders checks an empty provider pool.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders(t *testing.T) {
 	ctx := context.Background()
 
@@ -342,7 +342,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvai
 	require.Contains(t, err.Error(), "no available")
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession 测试粘性会话。
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession checks session stickiness.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession(t *testing.T) {
 	ctx := context.Background()
 
@@ -358,7 +358,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 			repo.providersByID[repo.providers[i].Record.ID] = &repo.providers[i]
 		}
 
-		// 注意：缓存键使用 "gemini:" 前缀
+		// Gemini session cache keys use the gemini: prefix.
 		cache := &mockGatewayCacheForGemini{
 			sessionBindings: map[string]int64{"gemini:session-123": 1},
 		}
@@ -375,7 +375,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 	t.Run("混合分组保留兼容提供商的粘性", func(t *testing.T) {
 		repo := &mockProviderRepoForGemini{
 			providers: []gatewayprovider.ExecutionProvider{
-				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAntigravity, Priority: 2, Status: billing.StatusActive, Schedulable: true}}, // 粘性会话绑定
+				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAntigravity, Priority: 2, Status: billing.StatusActive, Schedulable: true}}, // Bind the session.
 				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},
 			},
 			providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
@@ -385,13 +385,13 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 		}
 
 		cache := &mockGatewayCacheForGemini{
-			sessionBindings: map[string]int64{"gemini:session-123": 1}, // 绑定 antigravity 提供商
+			sessionBindings: map[string]int64{"gemini:session-123": 1}, // Bind an Antigravity provider.
 		}
 		groupRepo := &mockGroupRepoForGemini{groups: map[int64]*routing.Group{}}
 
 		svc := newGeminiSelectionForTest(GeminiDependencies{Reads: Reads{Providers: repo, Groups: groupRepo}, Shared: Shared{Cache: cache}}, nil)
 
-		// 同组 Antigravity 提供商可服务当前模型，继续使用会话绑定。
+		// The Antigravity group member supports this model, so its session binding remains usable.
 		acc, err := svc.SelectProviderForModelWithExclusions(ctx, selectionFixtureGroupID(ctx), "session-123", "gemini-2.5-flash", nil)
 		require.NoError(t, err)
 		require.NotNil(t, acc)
@@ -411,7 +411,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 			repo.providersByID[repo.providers[i].Record.ID] = &repo.providers[i]
 		}
 
-		// 缓存键没有 "gemini:" 前缀，不应命中
+		// A key lacking the gemini: prefix must miss.
 		cache := &mockGatewayCacheForGemini{
 			sessionBindings: map[string]int64{"session-123": 1},
 		}
@@ -422,7 +422,7 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 		acc, err := svc.SelectProviderForModelWithExclusions(ctx, selectionFixtureGroupID(ctx), "session-123", "gemini-2.5-flash", nil)
 		require.NoError(t, err)
 		require.NotNil(t, acc)
-		// 粘性会话未命中，按优先级选择
+		// After a sticky miss, select by priority.
 		require.Equal(t, int64(2), acc.Record.ID, "粘性会话未命中，应按优先级选择")
 	})
 
@@ -721,12 +721,12 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Prefer
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
-// TestGeminiPlatformRouting_DocumentRouteDecision 测试平台路由决策逻辑。
+// TestGeminiPlatformRouting_DocumentRouteDecision checks platform-based forwarding decisions.
 func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 	tests := []struct {
 		name            string
 		platform        string
-		expectedService string // "gemini" 表示 ForwardNative, "antigravity" 表示 ForwardGemini
+		expectedService string // gemini selects ForwardNative; antigravity selects ForwardGemini.
 	}{
 		{
 			name:            "Gemini平台走ForwardNative",
@@ -744,7 +744,7 @@ func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation:
 
-			// 模拟 Handler 层的路由逻辑
+			// Model the handler's platform dispatch.
 			time.LoadLocation, Platform: tt.platform}}
 
 			var serviceName string

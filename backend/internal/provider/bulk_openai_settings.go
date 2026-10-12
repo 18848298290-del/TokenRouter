@@ -8,7 +8,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// bulkOpenAISettings 描述批量 OpenAI API Key 配置中需要统一校验的字段。
+// bulkOpenAISettings tracks fields requiring bulk OpenAI API Key validation.
 type bulkOpenAISettings struct {
 	workloadCapabilities    bool
 	textRouteMode           bool
@@ -21,8 +21,8 @@ func (s bulkOpenAISettings) any() bool {
 	return s.workloadCapabilities || s.textRouteMode || s.continuationSupported
 }
 
-// normalizeBulkOpenAISettings 校验批量配置，每个提供商的组合均需满足路由条件。
-// long-context 计费开关不属于 fork 的提供商配置，因此这里不会识别或生成该字段。
+// normalizeBulkOpenAISettings validates shared settings before checking each target's route combination.
+// Long-context billing is not part of this provider configuration.
 func normalizeBulkOpenAISettings(input *BulkUpdateProvidersInput) (bulkOpenAISettings, error) {
 	var settings bulkOpenAISettings
 	if input == nil {
@@ -79,7 +79,7 @@ func normalizeBulkOpenAISettings(input *BulkUpdateProvidersInput) (bulkOpenAISet
 		if input.Extra == nil {
 			input.Extra = make(map[string]any, 1)
 		}
-		// 仅启用 embeddings 时清除强制文本路由配置，提供商按嵌入能力参与选择。
+		// Embedding-only providers use the client protocol mode instead of a forced text route.
 		input.Extra[ExtraKeyTextRouteMode] = string(TextRouteModePreserveClientProtocol)
 		settings.textRouteMode = true
 	}
@@ -199,7 +199,7 @@ func validateBulkOpenAIResponsesContinuationSupported(raw any) error {
 	return nil
 }
 
-// validateBulkOpenAISettingsTargets 在批量写入前检查全部目标的 ID 和 API Key 类型。
+// validateBulkOpenAISettingsTargets checks target IDs, API Key eligibility, and route combinations before writing.
 func validateBulkOpenAISettingsTargets(input *BulkUpdateProvidersInput, settings bulkOpenAISettings, targetsByID map[int64]*Record) error {
 	if input == nil || !settings.any() {
 		return nil

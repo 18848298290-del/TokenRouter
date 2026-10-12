@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// testSessionString 生成 Claude Code 风格的会话标识。
-// 格式沿用 DefaultHeaders 中的 UA 版本，使 user_id 与上游请求 UA 保持一致。
+// testSessionString creates a random CLI-style identity using the metadata
+// format matching the User-Agent in DefaultHeaders.
 func testSessionString() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -21,7 +21,7 @@ func testSessionString() (string, error) {
 	return FormatMetadataUserID(hex64, "", sessionUUID, uaVersion), nil
 }
 
-// TestPayloadWithPrompt 创建 Claude Code 风格测试请求，并允许主动探测传入轻量提示词。
+// TestPayloadWithPrompt builds a streaming CLI-style probe, defaulting a blank prompt to "hi".
 func TestPayloadWithPrompt(modelID string, prompt string) (map[string]any, error) {
 	sessionID, err := testSessionString()
 	if err != nil {

@@ -31,7 +31,7 @@ type AnthropicOutputOptions struct {
 	Warn           func(string, ...zap.Field)
 }
 
-// AnthropicUsageToOpenAI 将 Anthropic 输入与缓存计数转换为 OpenAI 用量格式。
+// AnthropicUsageToOpenAI includes cache creation and cache reads in the OpenAI input total.
 func AnthropicUsageToOpenAI(u *upstream.TokenUsage) protocolopenai.ForwardUsage {
 	if u == nil {
 		return protocolopenai.ForwardUsage{}
@@ -55,7 +55,7 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 	var finalResp *protocolanthropic.AnthropicResponse
 	var usage upstream.TokenUsage
 
-	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
+	// Bound idle reads so a stalled upstream can return 502 before buffered output is committed.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -87,7 +87,7 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 			logReadErr(rerr)
 			break
 		}
-		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等上游返回紧凑格式。
+		// SSE permits event:xxx without a space, as emitted by compatible upstreams such as Kimi.
 		if _, ok := protocolopenai.ExtractSSEEventLine(line); !ok {
 			continue
 		}
@@ -159,7 +159,7 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 	responsesResp.Model = originalModel
 
 	o.CopyHeaders(c.Writer.Header(), resp.Header)
-	// 非流式响应必须是 application/json（上游被强制流式，透传头会污染）。
+	// The client receives JSON even though the upstream Content-Type describes an SSE stream.
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if respBytes, err := json.Marshal(responsesResp); err == nil {
 		respBytes = o.ReverseTools(respBytes)
@@ -232,9 +232,8 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		}
 	}
 
-	// 读间隔上限：上游挂住 SSE（不发数据也不断连）时结束转换循环。上游 ctx 为
-	// WithoutCancel 且 http.Client 无整体 Timeout，无此界限则 scanner.Scan()
-	// 永久阻塞（见 anthropic native pump 文件注释）。
+	// Bound idle reads so draining a detached upstream request cannot wait indefinitely
+	// when the upstream keeps its connection open without sending more lines.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -256,8 +255,8 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 	}
 
-	// 客户端断开后不再写出，但继续推进状态机并排水上游；最终 output_tokens
-	// 位于末尾 message_delta，提前退出会漏记上游已经产生的用量。
+	// After client disconnection, keep advancing conversion state and draining usage.
+	// The final output token count arrives in a trailing message_delta event.
 	processAnthropicEvent := func(event *protocolanthropic.AnthropicStreamEvent) {
 		if firstChunk {
 			firstChunk = false
@@ -334,7 +333,7 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		processAnthropicEvent(&event)
 	}
 
-	// 终态在断开后仍计算，但只在客户端连接存在时写出；工具名恢复与普通事件一致。
+	// Finalize after disconnection too; write restored terminal events only while the client remains connected.
 	if finalEvents := bridge.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 && !clientDisconnected {
 		wrote := false
 		for _, evt := range finalEvents {
@@ -383,7 +382,7 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 	var finalResp *protocolanthropic.AnthropicResponse
 	var usage upstream.TokenUsage
 
-	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
+	// Bound idle reads so a stalled upstream can return 502 before buffered output is committed.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -415,8 +414,8 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 			logReadErr(rerr)
 			break
 		}
-		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
-		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
+		// SSE permits event:xxx without a space. Requiring "event: " would drop compact
+		// events from compatible upstreams such as Kimi (issue #4653).
 		if _, ok := protocolopenai.ExtractSSEEventLine(line); !ok {
 			continue
 		}
@@ -488,7 +487,7 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 	ccResp := bridge.ResponsesToChatCompletions(o.Runtime, responsesResp, originalModel)
 
 	o.CopyHeaders(c.Writer.Header(), resp.Header)
-	// 非流式响应必须是 application/json（上游被强制流式，透传头会污染）。
+	// The client receives JSON even though the upstream Content-Type describes an SSE stream.
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if respBytes, err := json.Marshal(ccResp); err == nil {
 		respBytes = o.ReverseTools(respBytes)
@@ -559,9 +558,8 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		}
 	}
 
-	// 读间隔上限：上游挂住 SSE（不发数据也不断连）时结束排水。上游 ctx 为
-	// WithoutCancel 且 http.Client 无整体 Timeout，无此界限则客户端断开后
-	// scanner.Scan() 永久阻塞（见 anthropic native pump 文件注释）。
+	// Bound idle reads while draining a detached upstream request after client disconnection.
+	// A connection left open without more data would otherwise keep the scanner blocked.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -574,8 +572,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			)
 		}
 	}
-	// onIdle 关闭上游连接（解除阻塞的读、归还连接池位），并按已累计 usage
-	// 返回，按 Messages 的空闲超时规则处理部分用量。
+	// Close the body to unblock the reader, and return the usage collected before the timeout.
 	onIdle := func() (*Result, error) {
 		_ = resp.Body.Close()
 		if !clientDisconnected {
@@ -589,7 +586,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 
 	writeChunk := func(chunk protocolopenai.ChatCompletionsChunk) bool {
 		if clientDisconnected {
-			return false // 已断开：不再写客户端，只排水上游累计 usage
+			return false // Continue draining usage after writes stop.
 		}
 		sse, err := bridge.ChatChunkToSSE(chunk)
 		if err != nil {
@@ -610,7 +607,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			firstTokenMs = &ms
 		}
 
-		// usage 恒累计（含客户端断开后的排水阶段，payg 上游照常计费）。
+		// Keep collecting billable upstream usage after the client disconnects.
 		if event.Type == "message_delta" && event.Usage != nil {
 			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
 		}
@@ -618,8 +615,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 
-		// 客户端已断开：跳过转换与写出，继续读上游直到流结束（usage 完整、
-		// 连接及时归还），不再提前 return。
+		// After disconnection, skip conversion and output while the outer loop drains usage.
 		if clientDisconnected {
 			return false
 		}
@@ -655,7 +651,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			if errors.Is(rerr, ErrAnthropicStreamIdle) {
 				return onIdle()
 			}
-			// EOF / 读错误：事件行后流终止，进入 finalize。
+			// Finalize when the stream ends or fails between the event and data lines.
 			logReadErr(rerr)
 			break
 		}
@@ -675,7 +671,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		}
 	}
 
-	// Finalize both state machines（客户端已断开时仍执行，保证 usage 汇总完整）。
+	// Finalize both converters; writeChunk suppresses output after disconnection.
 	finalResEvents := bridge.FinalizeAnthropicResponsesStream(anthState)
 	for _, resEvt := range finalResEvents {
 		ccChunks := bridge.ResponsesEventToChatChunks(&resEvt, ccState)

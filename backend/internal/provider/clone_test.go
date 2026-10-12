@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// TestCloneValuesPreservesShapesAndIsolation 检查复制保留载荷和值类型，共享前缀但长度不同的切片各自复制。
+// TestCloneValuesPreservesShapesAndIsolation checks payloads, value types, and independent copies of slices sharing a prefix.
 func TestCloneValuesPreservesShapesAndIsolation(t *testing.T) {
 	nested := []any{map[string]any{"number": json.Number("1.123456789")}, "second"}
 	values := map[string]any{"short": nested[:1], "long": nested, "nil": []any(nil), "empty": []any{}, "raw": json.RawMessage(`{"ok":true}`)}
@@ -68,7 +68,7 @@ func TestCloneRecordIsolatesRelationsAndPrivateValues(t *testing.T) {
 	require.NotContains(t, string(payload), "private-")
 }
 
-// TestCloneValuesCopiesNormalizedProtocolIDs 验证统一协议规范化会产生具名切片，复制不能只覆盖 JSON 解码得到的 []any。
+// TestCloneValuesCopiesNormalizedProtocolIDs checks named protocol slices as well as JSON-decoded []any values.
 func TestCloneValuesCopiesNormalizedProtocolIDs(t *testing.T) {
 	protocols := []protocol.ProtocolID{protocol.ProtocolOpenAIResponses}
 	cloned := CloneValues(map[string]any{"upstream_protocols": protocols})
@@ -82,7 +82,7 @@ func TestCloneValuesCopiesNormalizedProtocolIDs(t *testing.T) {
 	}
 }
 
-// TestCopyRecordIntoKeepsRootAndSupportsSameRecord 检查原地复制保持根对象自引用，已绑定的方法读取更新后的记录。
+// TestCopyRecordIntoKeepsRootAndSupportsSameRecord checks root references and methods bound before an in-place copy.
 func TestCopyRecordIntoKeepsRootAndSupportsSameRecord(t *testing.T) {
 	source := &Record{ID: 1, Credentials: map[string]any{"token": "source"}}
 	source.ProviderGroups = []GroupMembership{{Provider: source}}

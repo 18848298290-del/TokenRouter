@@ -8,7 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestResponseHeaderFilterConfigurationProjection 检查响应头过滤配置的 nil、默认值、增删规则及输入副本隔离。
+// TestResponseHeaderFilterConfigurationProjection checks nil and default options, allow/remove rules, and
+// isolation from input mutations.
 func TestResponseHeaderFilterConfigurationProjection(t *testing.T) {
 	require.Nil(t, provideResponseHeaderFilter(nil))
 	cfg := &config.Config{}

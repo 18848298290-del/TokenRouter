@@ -64,26 +64,26 @@ var protocolEndpoints = []ProtocolEndpoint{
 	{ID: ProtocolVertexBatch, Endpoint: "POST /v1/projects/{project}/locations/{location}/batchPredictionJobs"},
 }
 
-// 路由声明复用唯一的协议 ID。
+// ProtocolID identifies a protocol in the shared catalogue.
 type ProtocolID = protocol.ProtocolID
 
-// ProtocolRoute 描述需要分组准入的标准化入口；别名在路由层统一去除前缀。
+// ProtocolRoute describes a normalized endpoint subject to group admission; routing removes alias prefixes.
 type ProtocolRoute struct {
-	// 空方法匹配所有方法，子资源按完整路径段匹配。
+	// An empty method matches all methods. Prefix matches require a complete path segment.
 	Method    string
 	Path      string
 	Prefix    bool
 	WebSocket bool
 }
 
-// ProtocolEndpoint 保存 HTTP 展示和准入的共同声明。
+// ProtocolEndpoint holds the shared HTTP display and admission metadata.
 type ProtocolEndpoint struct {
 	ID       ProtocolID
 	Endpoint string
 	Routes   []ProtocolRoute
 }
 
-// httpProtocol 使用门禁的路径元数据生成目录展示。
+// httpProtocol derives the catalogue display from admission route metadata.
 func httpProtocol(id ProtocolID, primary ProtocolRoute, aliases ...ProtocolRoute) ProtocolEndpoint {
 	endpoint := "/v1" + primary.Path
 	if primary.Method != "" {
@@ -95,7 +95,7 @@ func httpProtocol(id ProtocolID, primary ProtocolRoute, aliases ...ProtocolRoute
 	return ProtocolEndpoint{ID: id, Endpoint: endpoint, Routes: append([]ProtocolRoute{primary}, aliases...)}
 }
 
-// ProtocolForRoute 根据目录中的入口元数据解析扩展路由归属。
+// ProtocolForRoute resolves a normalized method and path to an extended protocol.
 func ProtocolForRoute(method, path string) (ProtocolID, bool) {
 	for _, protocol := range protocolEndpoints {
 		for _, route := range protocol.Routes {
@@ -110,7 +110,7 @@ func ProtocolForRoute(method, path string) (ProtocolID, bool) {
 	return "", false
 }
 
-// ProtocolEndpoints 返回独立副本，调用方不能修改路由准入。
+// ProtocolEndpoints returns independent copies, including route slices, for callers to modify.
 func ProtocolEndpoints() []ProtocolEndpoint {
 	out := slices.Clone(protocolEndpoints)
 	for i := range out {

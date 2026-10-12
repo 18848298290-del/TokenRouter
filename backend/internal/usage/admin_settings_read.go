@@ -1,6 +1,6 @@
 package usage
 
-// AdminReadSettings 包含用量排行和用户错误记录的展示设置。
+// AdminReadSettings controls usage rankings and user access to error records.
 type AdminReadSettings struct {
 	AllowUserViewErrorRequests  bool
 	UsageRankingEnabled         bool
@@ -11,7 +11,7 @@ type AdminReadSettings struct {
 	UsageRankingSortBy          string
 }
 
-// ReadAdminSettings 从传入的设置值解析用量排行和用户错误记录的展示设置。
+// ReadAdminSettings parses ranking and error-record visibility settings.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	usageRanking := ParseRankingSettings(settings)
 	result := &AdminReadSettings{}

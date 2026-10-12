@@ -59,18 +59,18 @@ func TestJitteredTTL(t *testing.T) {
 }
 
 func TestJitteredTTL_HasVariation(t *testing.T) {
-	// 多次调用应该产生不同的值（验证抖动存在）
+	// Repeated calls exercise randomized expiration times.
 	seen := make(map[time.Duration]struct{}, 50)
 	for range 50 {
 		seen[jitteredTTL()] = struct{}{}
 	}
-	// 50 次调用中应该至少有 2 个不同的值
+	// Require more than one TTL across 50 samples.
 	require.Greater(t, len(seen), 1, "jitteredTTL() 应产生不同的 TTL 值")
 }
 
 func TestJitteredTTL_WithinExpectedRange(t *testing.T) {
-	// jitteredTTL 使用减法抖动: billingCacheTTL - [0, billingCacheJitter)
-	// 所以结果应在 [billingCacheTTL - billingCacheJitter, billingCacheTTL] 范围内
+	// jitteredTTL subtracts a duration in [0, billingCacheJitter).
+	// The bounds below conservatively cover the resulting TTL range.
 	lowerBound := billingCacheTTL - billingCacheJitter // 5min - 30s = 4min30s
 	upperBound := billingCacheTTL                      // 5min
 
@@ -84,7 +84,7 @@ func TestJitteredTTL_WithinExpectedRange(t *testing.T) {
 }
 
 func TestJitteredTTL_NeverExceedsBase(t *testing.T) {
-	// 减法抖动产生的 TTL 不超过 billingCacheTTL。
+	// Subtractive jitter cannot exceed billingCacheTTL.
 	for range 500 {
 		ttl := jitteredTTL()
 		assert.LessOrEqual(t, int64(ttl), int64(billingCacheTTL),
@@ -93,7 +93,7 @@ func TestJitteredTTL_NeverExceedsBase(t *testing.T) {
 }
 
 func TestJitteredTTL_HasVariance(t *testing.T) {
-	// 验证抖动确实产生了不同的值
+	// Sample repeated calls to detect a constant TTL.
 	results := make(map[time.Duration]bool)
 	for range 100 {
 		ttl := jitteredTTL()
@@ -105,7 +105,7 @@ func TestJitteredTTL_HasVariance(t *testing.T) {
 }
 
 func TestJitteredTTL_AverageNearCenter(t *testing.T) {
-	// 验证平均值大约在抖动范围中间
+	// The sample mean should lie near the center of the jitter range.
 	var sum time.Duration
 	runs := 1000
 	for range runs {
@@ -115,7 +115,7 @@ func TestJitteredTTL_AverageNearCenter(t *testing.T) {
 	avg := sum / time.Duration(runs)
 	expectedCenter := billingCacheTTL - billingCacheJitter/2 // 4min45s
 
-	// 允许 ±5s 的误差
+	// Allow a 5-second sampling tolerance.
 	tolerance := 5 * time.Second
 	assert.InDelta(t, float64(expectedCenter), float64(avg), float64(tolerance),
 		"平均 TTL 应接近抖动范围中心 %v", expectedCenter)

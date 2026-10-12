@@ -1,6 +1,6 @@
 package pricing
 
-// 本文件检查 catalog_query.go、model_price.go 和 card.go 使用完整模型名查询价格与匹配价卡。
+// These scenarios check full model identity across catalog lookup, model pricing, and card matching.
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingUsesCompleteIdentity 检查目录查询、模型价格解析和价卡匹配使用完整型号。
+// TestPricingUsesCompleteIdentity checks that price lookup and card matching retain full model names.
 func TestPricingUsesCompleteIdentity(t *testing.T) {
 	price := &CatalogModelPricing{InputCostPerToken: 5e-6}
 	query := &CatalogQuery{Entries: map[string]*CatalogModelPricing{

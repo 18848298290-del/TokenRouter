@@ -12,18 +12,19 @@ type RedeemParticipant struct {
 	mutations *RedeemMutations
 }
 
-// BalanceInTx 显式复用调用方事务，所有方法均不取得或结束事务，也不发布副作用。
+// BalanceInTx binds balance writes to the caller's transaction. The caller owns commit, rollback, and post-commit
+// notifications.
 func BalanceInTx(tx *dbent.Tx) *BalanceStore {
 	return NewBalanceStore(tx.Client())
 }
 
-// SubscriptionsInTx 让初始读取、计划读取及后续写入全部使用同一事务连接。
+// SubscriptionsInTx binds subscription reads, plan reads, and writes to one transaction connection.
 func SubscriptionsInTx(tx *dbent.Tx, groups billing.SubscriptionGroupReader, clock billing.DateRuntime) *billing.SubscriptionService {
 	return billing.NewSubscriptionService(groups, NewUserSubscriptionRepository(tx.Client()), SubscriptionMutationsInTx(tx), clock)
 }
 
-// RedeemInTx 只提供兑换资金/并发数增量参与能力，兑换闭合用例仍由 RedeemService 持有。
-// 用于旧外层事务的精确适配，不允许通过本入口独立提交权益。
+// RedeemInTx supplies balance and concurrency adjustments within the caller's transaction.
+// The caller owns commit and rollback; RedeemService coordinates complete redemptions.
 func RedeemInTx(tx *dbent.Tx, concurrency ...RedeemConcurrencyWriter) *RedeemParticipant {
 	var writer RedeemConcurrencyWriter
 	if len(concurrency) > 0 {
@@ -40,13 +41,14 @@ func (p *RedeemParticipant) ApplyConcurrency(ctx context.Context, id int64, delt
 	return p.mutations.ApplyConcurrency(dbent.NewTxContext(ctx, p.tx), id, delta)
 }
 
-// DeductRefundBalance 复用原非负实际扣减 SQL，调用方事务拥有者负责提交。
+// DeductRefundBalance returns the amount removed from the available nonnegative balance. The caller commits its
+// transaction.
 func (r *BalanceStore) DeductRefundBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	_, deducted, err := DeductAvailableBalance(ctx, clientFromContext(ctx, r.client), id, amount)
 	return deducted, err
 }
 
-// CompensateRefundBalance 补回退款余额，正数金额同时计入累计充值。
+// CompensateRefundBalance restores a refund amount; positive amounts also increase total recharged.
 func (r *BalanceStore) CompensateRefundBalance(ctx context.Context, id int64, amount float64) error {
 	return r.UpdateBalance(ctx, id, amount)
 }

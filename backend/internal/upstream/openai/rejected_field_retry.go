@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// 单次转发最多执行六次字段降级，避免异常上游持续诱导请求变形。
+// MaxResponsesRejectedFieldRetries bounds field repairs to six attempts per shared budget.
 const MaxResponsesRejectedFieldRetries = 6
 
 var (
@@ -92,8 +92,8 @@ func (s *ResponsesRejectedFieldRetryState) rememberLocked(body []byte) {
 	s.seenBodyHashes[sha256.Sum256(body)] = struct{}{}
 }
 
-// NormalizeOpenAIResponsesRejectedFieldRetryBody 只处理上游明确指出的已知可选字段，
-// 并且每次仅删除被拒绝的精确路径，避免根据模糊错误文案扩大请求变更范围。
+// NormalizeOpenAIResponsesRejectedFieldRetryBody repairs recognized fields after an explicit upstream 400 rejection.
+// Repairs follow field-specific rules, including same-type status cleanup and tool schema normalization.
 func NormalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, responseBody []byte) ([]byte, string, bool, error) {
 	if statusCode != http.StatusBadRequest || len(body) == 0 || len(responseBody) == 0 {
 		return nil, "", false, nil
@@ -254,11 +254,9 @@ func OpenAIResponsesRejectedInputIndex(pattern *regexp.Regexp, param string) (in
 	return 0, false
 }
 
-// RemoveOpenAIResponsesRejectedStatusAtIndex 会清理上游拒绝的 status，
-// 以及与被拒绝项类型相同的其他 input 项的 status。
-// 上游每次响应只指出一个问题索引，但重放会话通常包含多个同类型项目，
-// 每个项目都带有上游 schema 不接受的 status。逐个索引重试会耗尽有限的重试预算；
-// 其他类型的 status 保持不变，因为拒绝只证明被指出的类型不支持该字段。
+// RemoveOpenAIResponsesRejectedStatusAtIndex removes rejected status fields from the named item
+// and other input items of the same type. Cleaning them together avoids exhausting
+// the retry budget one index at a time. Other item types retain their status.
 func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	rejected := gjson.GetBytes(body, itemPath)
@@ -273,7 +271,7 @@ func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte,
 	cleared := 0
 	rejectedType := strings.TrimSpace(rejected.Get("type").String())
 	if input := gjson.GetBytes(body, "input"); rejectedType != "" && input.IsArray() {
-		// 删除字段不会改变数组索引，因此原始 body 中读取的位置在改写后仍然有效。
+		// Deleting fields leaves array indexes stable while reading positions from the original body.
 		for itemIndex, item := range input.Array() {
 			if !item.IsObject() || strings.TrimSpace(item.Get("type").String()) != rejectedType {
 				continue
@@ -291,7 +289,7 @@ func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte,
 		}
 	}
 	if cleared == 0 {
-		// 被拒绝项没有可匹配的类型时，退回到只清理上游指出的索引。
+		// Without a matching item type, clear only the index named by upstream.
 		next, err := sjson.DeleteBytes(retryBody, itemPath+".status")
 		if err != nil {
 			return nil, "", false, fmt.Errorf("delete rejected status at input[%d]: %w", index, err)
@@ -363,7 +361,7 @@ func RemoveOpenAIResponsesRejectedReasoningContentAtIndex(body []byte, index int
 func RemoveOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	itemType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, itemPath+".type").String()))
-	// namespace 只允许从已知工具调用项删除，普通消息中的同名业务字段必须保留。
+	// Remove namespace only from known tool calls; ordinary message fields retain their meaning.
 	switch itemType {
 	case "function_call", "tool_call", "custom_tool_call", "mcp_tool_call":
 	default:
@@ -381,7 +379,7 @@ func RemoveOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]by
 	return retryBody, "indexed namespace parameter rejection", true, nil
 }
 
-// Budget 只暴露预算句柄身份，计数和同步仍由状态内部持有。
+// Budget returns the shared retry-budget handle; its counters and locking remain internal.
 func (s *ResponsesRejectedFieldRetryState) Budget() *ResponsesRejectedFieldRetryBudget {
 	if s == nil {
 		return nil

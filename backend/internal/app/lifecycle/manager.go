@@ -9,8 +9,9 @@ import (
 	"sync"
 )
 
-// Hook 由 app 登记，数字越小越早启动或停止，同一停止层的任务彼此独立。
-// 没有 Start 的 Hook 表示已经取得的资源，即使应用构造失败也需要回收。
+// Hook describes a registered lifecycle action. Lower orders run first; hooks at the same stop order run
+// concurrently.
+// A nil Start means the resource is already acquired and needs cleanup even if construction fails.
 type Hook struct {
 	Name       string
 	StartOrder int
@@ -24,8 +25,8 @@ type entry struct {
 	active bool
 }
 
-// Manager 接收 app 在启停前登记的资源和任务。
-// 动态资源由已登记的组件管理。
+// Manager accepts resource and task registrations before startup or shutdown.
+// Registered components manage resources created during operation.
 type Manager struct {
 	mu        sync.Mutex
 	entries   []*entry
@@ -39,10 +40,10 @@ type Manager struct {
 	report    Reporter
 }
 
-// Reporter 记录启停结果，Stop 返回后才发送 stopped 事件。
+// Reporter receives lifecycle events; "stopped" is emitted after the hook's Stop returns successfully.
 type Reporter func(name, event string, err error)
 
-// New 创建尚未启动的生命周期管理器。
+// New creates a lifecycle manager that has not started.
 func New(reporters ...Reporter) *Manager {
 	m := &Manager{stopDone: make(chan struct{})}
 	if len(reporters) > 0 {
@@ -57,7 +58,7 @@ func (m *Manager) emit(name, event string, err error) {
 	}
 }
 
-// Register 登记拥有者；无启动函数的资源立即纳入失败回收。
+// Register adds a hook before startup or shutdown, and marks resources with no Start for cleanup immediately.
 func (m *Manager) Register(h Hook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -67,8 +68,9 @@ func (m *Manager) Register(h Hook) {
 	m.entries = append(m.entries, &entry{hook: h, active: h.Start == nil})
 }
 
-// Start 串行启动依赖图，重复调用等待并返回第一次启动结果。
-// 失败项可能已取得部分资源，因此在调用它之前就登记为需要停止。
+// Start runs hooks serially. Repeated calls wait for the first result unless their context expires or the
+// manager is closed.
+// A hook becomes eligible for cleanup before Start runs because a failed start may acquire resources.
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	if m.closed {
@@ -128,12 +130,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop 按依赖层停止，超时后仍被未完成任务使用的资源保持打开。
+// Stop drains hooks by stop order and leaves later dependencies open when its context expires.
 func (m *Manager) Stop(ctx context.Context) error {
 	return m.stop(ctx, false)
 }
 
-// Rollback 用于初始化失败，按成功取得/尝试启动的逆序释放资源。
+// Rollback releases acquired or attempted hooks in reverse StartOrder, reversing registration order for ties.
 func (m *Manager) Rollback(ctx context.Context) error {
 	return m.stop(ctx, true)
 }
@@ -165,14 +167,14 @@ func (m *Manager) stop(ctx context.Context, rollback bool) error {
 			m.stopErr = stopEntries(ctx, entries, rollback, m.report)
 		}()
 	})
-	// 内部每次等待都受首次停止的 context 限制；所有调用共享最终结果。
+	// The first stop context bounds all internal waits; callers share the final result.
 	<-m.stopDone
 	return m.stopErr
 }
 
 func stopEntries(ctx context.Context, entries []*entry, rollback bool, report Reporter) error {
 	if rollback {
-		// 资源先取得，worker 后启动，同类资源按登记的逆序回收。
+		// Reverse startup order, including registration order within the same startup level.
 		sort.SliceStable(entries, func(i, j int) bool {
 			return entries[i].hook.StartOrder < entries[j].hook.StartOrder
 		})
@@ -215,7 +217,7 @@ func stopEntries(ctx context.Context, entries []*entry, rollback bool, report Re
 					if r.err != nil {
 						event = "stop_failed"
 					}
-					// 日志输出的等待时间也计入整个停止阶段的预算。
+					// Waiting for log output also consumes the shutdown budget.
 					reported := make(chan struct{})
 					go func() { report(r.name, event, r.err); close(reported) }()
 					select {

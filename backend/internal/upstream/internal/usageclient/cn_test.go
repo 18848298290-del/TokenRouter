@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCNParseF64 兼容 JSON 数值与字符串（cc-switch 与上游字段类型不一致）。
+// Accept JSON numbers and numeric strings because cc-switch and upstream field types differ.
 func TestCNParseF64(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -35,27 +35,27 @@ func TestCNParseF64(t *testing.T) {
 	}
 }
 
-// TestCNMillisToRFC3339 秒级（<1e12）按秒、毫秒级按毫秒处理；非正返回空串。
+// Seconds and milliseconds identify the same instant; nonpositive timestamps are absent.
 func TestCNMillisToRFC3339(t *testing.T) {
 	t.Parallel()
-	// 1700000000 秒 = 1700000000000 毫秒
+	// 1700000000 seconds equals 1700000000000 milliseconds.
 	want := time.UnixMilli(1700000000000).UTC().Format(time.RFC3339)
-	require.Equal(t, want, CnMillisToRFC3339(1700000000))    // 秒级
-	require.Equal(t, want, CnMillisToRFC3339(1700000000000)) // 毫秒级
-	require.Equal(t, "", CnMillisToRFC3339(0))               // 非正
+	require.Equal(t, want, CnMillisToRFC3339(1700000000))    // seconds
+	require.Equal(t, want, CnMillisToRFC3339(1700000000000)) // milliseconds
+	require.Equal(t, "", CnMillisToRFC3339(0))               // absent timestamp
 	require.Equal(t, "", CnMillisToRFC3339(-1))
 }
 
-// TestCnnormalizeResetTime 覆盖 ISO8601 字符串 / 数字（秒、毫秒）/ 非法输入。
+// Normalize timestamp strings and numeric units; reject invalid input.
 func TestCnnormalizeResetTime(t *testing.T) {
 	t.Parallel()
-	// ISO8601 字符串归一化为 RFC3339（UTC）。
+	// String timestamps use UTC RFC3339.
 	require.Equal(t, "2026-08-14T10:00:00Z", CnNormalizeResetTime("2026-08-14T10:00:00Z"))
-	// 毫秒级 float64。
+	// JSON numbers arrive as float64 milliseconds.
 	require.Equal(t,
 		time.UnixMilli(1700000000000).UTC().Format(time.RFC3339),
 		CnNormalizeResetTime(float64(1700000000000)))
-	// 非法字符串。
+	// Invalid and empty strings carry no reset time.
 	require.Equal(t, "", CnNormalizeResetTime("not-a-time"))
 	require.Equal(t, "", CnNormalizeResetTime(""))
 }

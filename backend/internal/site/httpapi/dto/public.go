@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
-// LocalizedTexts 是管理端站点文案的编辑格式。
+// LocalizedTexts is the admin editing format for site text.
 type LocalizedTexts = locale.TextUpdates
 
 type (
@@ -21,11 +21,11 @@ type (
 		ForceEmailOnThirdPartySignup        bool                         `json:"force_email_on_third_party_signup"`
 		RegistrationEmailSuffixWhitelist    []string                     `json:"registration_email_suffix_whitelist"`
 		RegistrationEmailDomainQuotaEnabled bool                         `json:"registration_email_domain_quota_enabled"`
-		UserEmailChangeEnabled              bool                         `json:"user_email_change_enabled"` // 是否允许已有邮箱的用户换绑主邮箱
+		UserEmailChangeEnabled              bool                         `json:"user_email_change_enabled"` // allow users with an email identity to replace their primary email
 		PromoCodeEnabled                    bool                         `json:"promo_code_enabled"`
 		PasswordResetEnabled                bool                         `json:"password_reset_enabled"`
 		InvitationCodeEnabled               bool                         `json:"invitation_code_enabled"`
-		TotpEnabled                         bool                         `json:"totp_enabled"` // TOTP 双因素认证
+		TotpEnabled                         bool                         `json:"totp_enabled"` // TOTP two-factor authentication
 		PasskeyEnabled                      bool                         `json:"passkey_enabled"`
 		LoginAgreementEnabled               bool                         `json:"login_agreement_enabled"`
 		LoginAgreementMode                  string                       `json:"login_agreement_mode"`
@@ -82,7 +82,7 @@ type (
 		TeamSelfServiceEnabled              bool                         `json:"team_self_service_enabled"`
 		CreativeEnabled                     bool                         `json:"creative_enabled"`
 		Version                             string                       `json:"version"`
-		// 服务器全局时区与当前 UTC 偏移，供前端标注高峰计费窗口等服务端本地时间。
+		// Server timezone and current UTC offset used to label server-local times such as peak billing windows.
 		ServerTimezone              string  `json:"server_timezone"`
 		ServerUTCOffset             string  `json:"server_utc_offset"`
 		BalanceUnitName             string  `json:"balance_unit_name"`
@@ -90,14 +90,14 @@ type (
 		BalanceIconSVG              string  `json:"balance_icon_svg"`
 		BalanceLowNotifyEnabled     bool    `json:"balance_low_notify_enabled"`
 		ProviderQuotaNotifyEnabled  bool    `json:"provider_quota_notify_enabled"`
-		RiskControlEnabled          bool    `json:"risk_control_enabled"` // 风控中心入口开关
+		RiskControlEnabled          bool    `json:"risk_control_enabled"` // risk center entry
 		CyberSessionBlockEnabled    bool    `json:"cyber_session_block_enabled"`
 		CyberSessionBlockTTLSeconds int     `json:"cyber_session_block_ttl_seconds"`
-		AffiliateEnabled            bool    `json:"affiliate_enabled"` // 邀请返利入口开关
+		AffiliateEnabled            bool    `json:"affiliate_enabled"` // affiliate rebate entry
 		BalanceLowNotifyThreshold   float64 `json:"balance_low_notify_threshold"`
 		BalanceLowNotifyRechargeURL string  `json:"balance_low_notify_recharge_url"`
 
-		// 允许终端用户在用量页查看自己的失败请求
+		// Allow users to view their own failed requests on the usage page.
 		AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
 	}
 )

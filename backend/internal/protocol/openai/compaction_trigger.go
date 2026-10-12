@@ -47,9 +47,9 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	return encoded, true, nil
 }
 
-// HasCompactionTriggerInInput 检测 input 中 type="compaction_trigger" 的条目。
-// handler 会结合请求路径和 stream 字段，区分原生 remote compaction v2 流式协议
-// 与旧的 /responses/compact 桥接协议。
+// HasCompactionTriggerInInput detects a compaction_trigger item in the input array.
+// Handlers combine this signal with the path and stream flag to distinguish remote
+// compaction v2 from the legacy /responses/compact bridge.
 func HasCompactionTriggerInInput(body []byte) bool {
 	if len(body) == 0 {
 		return false

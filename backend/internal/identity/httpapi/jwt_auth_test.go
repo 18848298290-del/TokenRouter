@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// stubJWTUserRepo 实现 UserRepository 的最小子集，仅支持 GetByID。
+// stubJWTUserRepo implements GetByID for middleware tests.
 type stubJWTUserRepo struct {
 	identity.
 		UserRepository
@@ -54,8 +54,8 @@ func (r *recordingActivityToucher) TouchLastActiveForUser(_ context.Context, use
 	r.userIDs = append(r.userIDs, user.ID)
 }
 
-// newJWTTestEnv 创建 JWT 认证中间件测试环境。
-// 返回 gin.Engine（已注册 JWT 中间件）和 AuthService（用于生成 Token）。
+// newJWTTestEnv returns a router with JWT authentication and a session service
+// that tests use to issue tokens.
 func newJWTTestEnv(users map[int64]*identity.User) (*gin.Engine, *identity.SessionService) {
 	cfg := &config.Config{}
 	cfg.JWT.Secret = "test-jwt-secret-32bytes-long!!!"
@@ -233,7 +233,7 @@ func TestJWTAuth_TamperedToken(t *testing.T) {
 }
 
 func TestJWTAuth_UserNotFound(t *testing.T) {
-	// 使用 user ID=1 的 token，但 repo 中没有该用户
+	// Issue a token for a user absent from the repository.
 	fakeUser := &identity.User{
 		ID:           999,
 		Email:        "ghost@example.com",
@@ -241,7 +241,7 @@ func TestJWTAuth_UserNotFound(t *testing.T) {
 		Status:       billing.StatusActive,
 		TokenVersion: 1,
 	}
-	// 创建环境时不注入此用户，这样 GetByID 会失败
+
 	router, authSvc := newJWTTestEnv(map[int64]*identity.User{})
 
 	token, err := authSvc.GenerateToken(context.Background(), fakeUser)
@@ -283,7 +283,7 @@ func TestJWTAuth_UserInactive(t *testing.T) {
 }
 
 func TestJWTAuth_TokenVersionMismatch(t *testing.T) {
-	// Token 生成时 TokenVersion=1，但数据库中用户已更新为 TokenVersion=2（密码修改）
+	// The issued token has version 1 while current user state has version 2.
 	userForToken := &identity.User{
 		ID:           1,
 		Email:        "test@example.com",
@@ -296,7 +296,7 @@ func TestJWTAuth_TokenVersionMismatch(t *testing.T) {
 		Email:        "test@example.com",
 		Role:         "user",
 		Status:       billing.StatusActive,
-		TokenVersion: 2, // 密码修改后版本递增
+		TokenVersion: 2, // Changed password version.
 	}
 	router, authSvc := newJWTTestEnv(map[int64]*identity.User{1: userInDB})
 

@@ -24,7 +24,7 @@ type providerUsageHTTPUpstreamStub struct {
 	providerID int64
 }
 
-// OpenAI 异步写回保留独立取消，但只能写入产生该响应的提供商身份。
+// openAIObservationIdentityRepo checks that asynchronous writes target the identity observed by the probe.
 type openAIObservationIdentityRepo struct {
 	qoderObservationIdentityRepo
 	written chan struct{}

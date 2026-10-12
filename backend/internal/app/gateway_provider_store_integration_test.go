@@ -16,10 +16,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// NewExecutionProviderStoreForTest 为集成测试构造执行提供商存储。
+// NewExecutionProviderStoreForTest builds the execution provider store for integration tests.
 var NewExecutionProviderStoreForTest = provideExecutionProviderStore
 
-// TestExecutionStoreUsesNativeStateAndOuterTransaction 检查执行入口使用提供商存储的资金字段保护，并加入外层 Ent 事务。
+// TestExecutionStoreUsesNativeStateAndOuterTransaction checks funding field protection and participation in an
+// outer Ent transaction.
 func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
@@ -58,7 +59,7 @@ func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	txctx := dbent.NewTxContext(ctx, tx)
 	value.Record.Name = "uncommitted"
 	require.NoError(t, writer.UpdateConfiguration(txctx, value, provider.ConfigurationChange{Fields: provider.ConfigName}))
-	// 普通查询使用独立连接，事务调用方通过参与接口读取尚未提交的数据。
+	// Ordinary queries use a separate connection; transaction participants can read uncommitted data.
 	within, err := tx.Client().Provider.Get(txctx, row.ID)
 	require.NoError(t, err)
 	require.Equal(t, "uncommitted", within.Name)

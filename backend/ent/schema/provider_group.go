@@ -12,8 +12,8 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// ProviderGroup 定义 provider_groups 关联表。
-// 该表保存绑定创建时间，并使用联合主键。
+// ProviderGroup defines the provider_groups join table.
+// Each membership records its creation time and uses a composite primary key.
 type ProviderGroup struct {
 	ent.Schema
 }

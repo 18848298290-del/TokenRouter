@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// ValidateUnavailableFallbackGroup 校验分组不可用时的指定回退分组。
-// 该回退会继承入口平台语义，因此必须指向同平台且当前可用的分组。
+// ValidateUnavailableFallbackGroup requires an existing active fallback group.
+// The target cannot be the current group.
 func (s *GroupAdmin) ValidateUnavailableFallbackGroup(ctx context.Context, currentGroupID int64, platform string, fallbackGroupID int64) error {
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as unavailable fallback group")
@@ -45,7 +45,7 @@ func FilterModelsListCandidates(candidates []string, selectedModels []string) []
 		}
 	}
 
-	// 按自定义模型列表顺序输出，确保探测下拉与管理员配置顺序一致。
+	// Keep custom-list order so probe choices match the administrator's configuration.
 	filtered := make([]string, 0, len(normalizedSelected))
 	for _, model := range normalizedSelected {
 		if ModelsListCandidateAllowsModel(allowed, model) {
@@ -92,6 +92,6 @@ func SanitizeGroupMessagesDispatchFields(g *Group) {
 	if g == nil {
 		return
 	}
-	// 派生镜像只表达入口准入；模型映射是否适用由实际执行提供商判断。
+	// This compatibility field mirrors protocol admission; execution providers determine model-mapping applicability.
 	g.AllowMessagesDispatch = g.AllowsClientProtocol(protocol.ProtocolAnthropicMessages)
 }

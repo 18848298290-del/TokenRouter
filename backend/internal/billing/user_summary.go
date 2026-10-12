@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/contact"
 )
 
-// UserSummary 包含权益查询所需的用户资料。
+// UserSummary contains user details needed by entitlement queries.
 type UserSummary struct {
 	ID                         int64
 	Email                      string
@@ -31,8 +31,8 @@ type UserSummary struct {
 	DeletedAt                  *time.Time
 }
 
-// NotifyEmailSummary 是身份联系邮箱记录。
+// NotifyEmailSummary is a contact email record.
 type NotifyEmailSummary = contact.Entry
 
-// ParseNotifyEmails 解析字符串数组或邮箱记录数组格式的通知邮箱。
+// ParseNotifyEmails accepts JSON arrays of email strings or contact records.
 func ParseNotifyEmails(raw string) []NotifyEmailSummary { return contact.ParseNotifyEmails(raw) }

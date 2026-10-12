@@ -20,7 +20,7 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// TestResolveCatalogAliasesPreserveConfigPricing 检查别名缺价时，完整型号配置的零价独立生效。
+// TestResolveCatalogAliasesPreserveConfigPricing checks that an unpriced alias can have an independent zero-price card.
 func TestResolveCatalogAliasesPreserveConfigPricing(t *testing.T) {
 	previous := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(previous) })
@@ -52,12 +52,12 @@ func TestResolveCatalogAliasesPreserveConfigPricing(t *testing.T) {
 				input := billing.PricingInput{Model: tc.alias, GroupID: &groupID}
 				resolved := resolver.Resolve(context.Background(), input)
 				require.True(t, resolved.IsUnpriced(), "catalog=%v", hasCatalog)
-				// 完整型号可以分别配置独立价卡。
+				// Distinct full model names can have independent cards.
 				if billingpricing.NormalizePriceModelName(tc.base) == billingpricing.NormalizePriceModelName(tc.alias) {
 					continue
 				}
 
-				// 完整请求名价卡中的零价优先于基础名价格。
+				// An explicit zero price on the full request name takes precedence over the base name's price.
 				zero := 0.0
 				configPricing.ModelPricing = append(configPricing.ModelPricing, routing.ModelPricingEntry{
 					Models: []string{tc.alias}, BillingMode: routing.BillingModeToken, InputPrice: &zero,
@@ -74,7 +74,7 @@ func TestResolveCatalogAliasesPreserveConfigPricing(t *testing.T) {
 	}
 }
 
-// TestResolveCatalogAliasesUseUnifiedPricingConfig 验证共享价表中的基名价格不会自动用于后缀型号。
+// TestResolveCatalogAliasesUseUnifiedPricingConfig checks that base-name prices do not apply to suffixed models.
 func TestResolveCatalogAliasesUseUnifiedPricingConfig(t *testing.T) {
 	groupID := int64(999)
 	price := 9e-6
@@ -93,7 +93,7 @@ func TestResolveCatalogAliasesUseUnifiedPricingConfig(t *testing.T) {
 	require.True(t, resolved.IsUnpriced())
 }
 
-// TestGroupAndPricingCatalogAliasPrecedence 验证完整名和通配价卡生效，空条目不会借用基名价格。
+// TestGroupAndPricingCatalogAliasPrecedence checks full-name and wildcard cards and rejects base-name borrowing.
 func TestGroupAndPricingCatalogAliasPrecedence(t *testing.T) {
 	for _, tc := range []struct{ platform, base, alias string }{
 		{capability.PlatformOpenAI, "gpt-5.6-luna", "gpt-5.6-luna-high"},
@@ -154,8 +154,8 @@ func TestResolve_NoGroupID(t *testing.T) {
 	require.Equal(t, routing.BillingModeToken, resolved.Mode)
 	require.NotNil(t, resolved.BasePricing)
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
-	// BillingService.GetModelPricing uses fallback internally, but resolveBasePricing
-	// reports "catalog" when GetModelPricing succeeds (regardless of internal source)
+	// ResolveBasePricing labels successful Calculator.GetModelPricing lookups as catalog prices,
+	// including prices supplied by the test catalog.
 	require.Equal(t, "catalog", resolved.Source)
 }
 
@@ -178,7 +178,7 @@ func TestResolve_UnknownModel(t *testing.T) {
 
 	require.NotNil(t, resolved)
 	require.Nil(t, resolved.BasePricing)
-	// 未知型号返回缺价状态，不借用默认型号价格。
+	// Unknown models remain unpriced.
 	require.Equal(t, "unpriced", resolved.Source)
 }
 
@@ -341,7 +341,7 @@ func TestResolve_WithPricingConfigOverride_TokenFlat(t *testing.T) {
 	require.Equal(t, "pricing_config", resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
 	require.InDelta(t, 10e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
-	// claude-sonnet-4 没有目录 priority 价，共享价格配置覆盖不能凭空制造 tier 价格。
+	// A standard-price override cannot invent a priority price missing from the catalog.
 	require.Zero(t, resolved.BasePricing.InputPricePerTokenPriority)
 	require.InDelta(t, 50e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 	require.Zero(t, resolved.BasePricing.OutputPricePerTokenPriority)
@@ -374,7 +374,7 @@ func TestResolve_WithPricingConfigOverride_TokenFlatPreservesNativeTierRatio(t *
 }
 
 func TestResolve_WithPricingConfigOverride_TokenPartialOverride(t *testing.T) {
-	// PricingConfig only sets InputPrice; OutputPrice should remain from the base (模型目录/fallback).
+	// The card overrides InputPrice; OutputPrice comes from the base pricing.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
@@ -408,7 +408,7 @@ func TestResolve_WithPricingConfigOverride_PriceMultiplierOnlyIsIgnored(t *testi
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// 非法的仅倍率存量数据不能改变默认模型价格。
+	// Invalid multiplier-only stored data leaves the default model price unchanged.
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceCatalog, resolved.Source)
 	require.False(t, resolved.HasEffectivePricing())
@@ -776,7 +776,7 @@ func TestResolve_WithPricingConfigOverride_PriceMultiplierScalesIntervalsAndFall
 	pricing := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.NotNil(t, pricing)
 	require.InDelta(t, 4e-6, pricing.InputPricePerToken, 1e-12)
-	// 区间未配置输出价时继承模型默认价，再统一乘以倍率。
+	// An omitted interval output price inherits the model default before applying the multiplier.
 	require.InDelta(t, 30e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
@@ -824,12 +824,12 @@ func TestResolve_WithPricingConfigOverride_FastModeMultiplierAppliesToIntervals(
 		Resolved:    resolved,
 	})
 	require.NoError(t, err)
-	// 区间价先应用普通定价倍率，再以最终普通价格为基准应用 Fast 倍率。
+	// The price multiplier applies first; the Fast multiplier scales the resulting standard price.
 	require.InDelta(t, standard.TotalCost*2, fast.TotalCost, 1e-12)
 }
 
 func TestResolve_WithPricingConfigOverride_TokenNilBasePricing(t *testing.T) {
-	// Base pricing is nil (unknown model), configPricing has flat prices → creates new BasePricing.
+	// For an unknown model, flat card prices supply the missing BasePricing.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"unknown-model-xyz"},
 		BillingMode: routing.BillingModeToken,
@@ -844,7 +844,7 @@ func TestResolve_WithPricingConfigOverride_TokenNilBasePricing(t *testing.T) {
 
 	require.NotNil(t, resolved)
 	require.Equal(t, "pricing_config", resolved.Source)
-	// BasePricing was nil from resolveBasePricing but applyTokenOverrides creates a new one
+	// ApplyTokenOverrides creates BasePricing from the explicit card prices.
 	require.NotNil(t, resolved.BasePricing)
 	require.InDelta(t, 7e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 21e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
@@ -1053,8 +1053,8 @@ func TestGetIntervalPricing_PricingConfigIntervalsNoMatch(t *testing.T) {
 }
 
 func TestResolve_WithPricingConfigOverride_CacheError(t *testing.T) {
-	// When ListAll returns an error, the PricingConfigService cache build fails.
-	// Resolve should gracefully fall back to base pricing without panicking.
+	// A ListAll failure prevents PricingConfigService from building its cache.
+	// Resolve then uses the available base pricing.
 	repo := &routingtestkit.PricingConfigRepositoryStub{
 		ListAllFn: func(_ context.Context) ([]routingtestkit.Configuration, error) {
 			return nil, errors.New("database unavailable")
@@ -1078,9 +1078,9 @@ func TestResolve_WithPricingConfigOverride_CacheError(t *testing.T) {
 	})
 
 	require.NotNil(t, resolved)
-	// Should NOT panic, should NOT have source "configPricing"
+	// The failed configuration lookup must not select configuration pricing.
 	require.NotEqual(t, "pricing_config", resolved.Source)
-	// Base pricing should still be present (from BillingService fallback)
+	// The test catalog's base pricing remains available.
 	require.NotNil(t, resolved.BasePricing)
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 }
@@ -1293,7 +1293,7 @@ func TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit(t *testing.T) {
 		BillingMode: routing.BillingModeToken,
 		InputPrice:  testPtrFloat64(3e-6),
 		OutputPrice: testPtrFloat64(15e-6),
-		// 图片输出价格有意保持为空
+		// Image output price intentionally omitted.
 	}})
 	resolved := r.Resolve(context.Background(), billing.PricingInput{
 		Model:   "claude-sonnet-4",
@@ -1391,7 +1391,7 @@ func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) 
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
-		// 不配置图片输出价格
+		// Image output price intentionally omitted.
 		Intervals: []routing.PricingInterval{
 			{MinTokens: 0, MaxTokens: testPtrInt(100000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)},
 		},
@@ -1401,11 +1401,11 @@ func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) 
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// 基础定价记录图片输出价已配置，区间未命中时读取该标记。
+	// The base price records explicit image pricing for requests outside configured intervals.
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
 	require.Equal(t, 0.0, resolved.BasePricing.ImageOutputPricePerToken)
 
-	// 区间定价也记录图片输出价已配置。
+	// Interval pricing also records that the image output price is explicit.
 	pricing := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.True(t, pricing.ImageOutputPriceExplicit)
 	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
@@ -1430,15 +1430,15 @@ func TestIntervalToModelPricingWithBaseClearsImageOutputWhenPricingConfigUnset(t
 	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
 }
 
-// TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices 检查价格覆盖操作修改 BasePricing 的副本。
+// TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices checks that overrides modify a BasePricing copy.
 func TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	calculator := newCalculatorWithPrices(nil, prices)
 	r := billingtestkit.ResolverWithCards(t, calculator, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
-		InputPrice:  testPtrFloat64(10e-6), // 基础价格为 3e-6
-		OutputPrice: testPtrFloat64(50e-6), // 基础价格为 15e-6
+		InputPrice:  testPtrFloat64(10e-6), // Base input price: 3e-6.
+		OutputPrice: testPtrFloat64(50e-6), // Base output price: 15e-6.
 	}})
 
 	resolved := r.Resolve(context.Background(), billing.PricingInput{
@@ -1446,19 +1446,19 @@ func TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices(t *testing.T) {
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// 解析结果应采用共享价格配置覆盖价格。
+	// The resolved price uses the shared configuration override.
 	require.NotNil(t, resolved)
 	require.InDelta(t, 10e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 50e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 
-	// 共享的基础价格保持 3e-6 和 15e-6。
+	// Shared base prices remain 3e-6 and 15e-6.
 	fp := prices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fp.InputPricePerToken, 1e-12, "fallback InputPricePerToken polluted")
 	require.InDelta(t, 15e-6, fp.OutputPricePerToken, 1e-12, "fallback OutputPricePerToken polluted")
 	require.False(t, fp.ImageOutputPriceExplicit, "fallback ImageOutputPriceExplicit polluted")
 }
 
-// TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices 检查区间覆盖操作修改基础定价的副本。
+// TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices checks that interval overrides copy base pricing.
 func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	calculator := newCalculatorWithPrices(nil, prices)
@@ -1478,7 +1478,7 @@ func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) 
 	require.NotNil(t, resolved)
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
 
-	// 共享的基础价格保持 3e-6 和 15e-6。
+	// Shared base prices remain 3e-6 and 15e-6.
 	fp := prices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fp.InputPricePerToken, 1e-12, "fallback InputPricePerToken polluted")
 	require.InDelta(t, 15e-6, fp.OutputPricePerToken, 1e-12, "fallback OutputPricePerToken polluted")
@@ -1532,10 +1532,10 @@ func TestResolve_ConfigIntervalsOverridePresetRegardlessOfToggle(t *testing.T) {
 	require.InDelta(t, 2.0, resolved.BasePricing.LongContextInputMultiplier, 1e-12)
 }
 
-// testPtrInt 返回区间端点的整数指针。
+// testPtrInt returns a pointer to an interval endpoint.
 func testPtrInt(v int) *int { return &v }
 
-// newResolverWithPricingConfig 创建带指定共享价格配置定价的解析器，分组平台跟随首条定价配置。
+// newResolverWithPricingConfig combines the supplied cards with the resolver test catalog.
 func newResolverWithPricingConfig(t *testing.T, pricing []routing.ModelPricingEntry) *billing.PriceResolver {
 	t.Helper()
 	return billingtestkit.ResolverWithCards(t, billingtestkit.ResolverCalculator(), pricing)

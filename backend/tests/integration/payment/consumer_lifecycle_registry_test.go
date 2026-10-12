@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// 测试驱动返回预设结果，供生命周期用例控制执行进度。
+// paymentDriver blocks the first query when configured, then returns a fixture error to control lifecycle
+// progress.
 type paymentDriver struct {
 	dialect.Driver
 	calls   atomic.Int32

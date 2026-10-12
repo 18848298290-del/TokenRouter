@@ -9,11 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ErrExecutionRejected 表示前置之后的同步操作已拒绝请求，具体 HTTP 错误已由输出适配器写出。
+// ErrExecutionRejected indicates that a request operation rejected execution after preflight.
+// The output adapter writes the specific HTTP error.
 var ErrExecutionRejected = errors.New("text execution rejected by request operation")
 
-// MessageRuntime 在构造时绑定执行依赖，Open 创建本次请求状态。
-// 适配会话实现 MessagePorts，RunMessages 执行提供商尝试循环。
+// MessageRuntime binds execution dependencies at construction; Open creates request-local state.
+// The returned session implements MessagePorts for the RunMessages provider loop.
 type MessageRuntime interface {
 	Open(context.Context, execution.Request, upstream.OutputSink) (MessagePorts, error)
 }
@@ -33,7 +34,7 @@ func NewMessagesExecutor(runtime MessageRuntime, messages, gemini MessageOptions
 	return &MessagesExecutor{runtime: runtime, messages: messages, gemini: gemini}
 }
 
-// Execute 执行本次文本请求并记录结果观测，供 HTTP 入口调用。
+// Execute runs a text request and returns the observed attempt result to the HTTP entry.
 func (e *MessagesExecutor) Execute(ctx context.Context, in execution.Request, sink upstream.OutputSink) (execution.ExecutionResult, error) {
 	ctx = requeststate.WithExecutionHints(ctx, in.Hints)
 	ctx = requeststate.WithRoutingState(ctx, in.Routing)

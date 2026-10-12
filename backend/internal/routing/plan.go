@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ModelChain 分别保存客户端、Key 重定向后、分组映射后与提供商映射后的模型。每个阶段应用一次映射。
-// 执行层完成供应商名称规范化和响应恢复，用量记录读取本次模型链。
+// ModelChain records client, key-redirected, group-mapped, and provider-mapped models, with one mapping per stage.
+// Execution normalizes vendor names and restores response models; usage records consume this chain.
 type ModelChain struct {
 	ClientModel, RequestedModel, GroupMappedModel, ProviderMappedModel string
 	APIKeyRedirected, GroupMapped                                      bool
@@ -19,7 +19,7 @@ type ModelChain struct {
 	BillingModelSource                                                 string
 }
 
-// PlanInput 包含最终分组、请求模型和客户端协议。
+// PlanInput contains the admitted group, requested model, and client protocol.
 type PlanInput struct {
 	GroupID        *int64
 	RequestedModel string
@@ -28,8 +28,8 @@ type PlanInput struct {
 	ClientProtocol capability.ProtocolID
 }
 
-// RoutePlan 保存本次分组和协议策略，候选解析时确定提供商及其模型映射。
-// 私有字段保存一次尝试使用的协议回退表。
+// RoutePlan snapshots group and protocol policy; candidate resolution supplies provider-specific results.
+// The protocol fallback map is copied when the plan is built.
 type RoutePlan struct {
 	models         ModelChain
 	groupID        int64
@@ -39,7 +39,7 @@ type RoutePlan struct {
 	fallbacks      map[capability.ProtocolID][]capability.ProtocolID
 }
 
-// CandidatePlan 是单个候选的本次路由结果。
+// CandidatePlan contains the route resolved for one provider attempt.
 type CandidatePlan struct {
 	Models           ModelChain
 	ProviderID       int64
@@ -48,7 +48,7 @@ type CandidatePlan struct {
 	UpstreamProtocol capability.ProtocolID
 }
 
-// Mapping 从路由计划返回本次模型映射、白名单阶段和计费元数据。
+// Mapping returns group mapping, whitelist-stage, and billing metadata from the plan.
 func (p RoutePlan) Mapping() GroupMappingResult {
 	return GroupMappingResult{
 		MappedModel:            p.models.GroupMappedModel,
@@ -64,14 +64,14 @@ func (p RoutePlan) Mapping() GroupMappingResult {
 
 func (p RoutePlan) Models() ModelChain { return p.models }
 
-// ResolveModel 使用本次提供商快照解析模型，返回候选的模型映射结果。
+// ResolveModel returns a copy with the provider-mapped model resolved from the supplied snapshot.
 func (p CandidatePlan) ResolveModel(snapshot provider.ProviderSnapshot, requested string) (CandidatePlan, bool) {
 	mapped, matched := snapshot.ModelPolicy.Resolve(requested)
 	p.Models.ProviderMappedModel = mapped
 	return p, matched
 }
 
-// Plan 复制已通过入口准入的分组数据，构造请求路由计划。
+// Plan snapshots group policy after the caller has admitted the request.
 func Plan(input PlanInput) RoutePlan {
 	plan := RoutePlan{
 		clientProtocol: input.ClientProtocol,
@@ -99,7 +99,8 @@ func Plan(input PlanInput) RoutePlan {
 	return plan
 }
 
-// ResolveCandidate 优先选择提供商直接支持的协议，其次尝试单步转换，每次候选刷新或数据库复核时重新调用。
+// ResolveCandidate prefers native support, then a single conversion. Call it again after refreshing or rechecking
+// a provider.
 func (p RoutePlan) ResolveCandidate(candidate provider.ProviderSnapshot) (CandidatePlan, bool) {
 	target, ok := capability.ResolveRoute(candidate.Protocols(), p.clientProtocol, p.fallbacks)
 	if !ok {
@@ -108,14 +109,14 @@ func (p RoutePlan) ResolveCandidate(candidate provider.ProviderSnapshot) (Candid
 	return CandidatePlan{Models: p.models, ProviderID: candidate.ID, GroupID: p.groupID, ClientProtocol: p.clientProtocol, UpstreamProtocol: target}, true
 }
 
-// GroupID 返回计划中的最终分组 ID。
+// GroupID returns the plan's final group ID.
 func (p RoutePlan) GroupID() int64 { return p.groupID }
 
 func (p RoutePlan) SchedulerType() GroupSchedulerType { return p.schedulerType }
 
 func (p RoutePlan) AllowedProtocols() []capability.ProtocolID { return slices.Clone(p.allowed) }
 
-// WithClientProtocol 使用执行层已确定的业务入口，保留计划其它不可变值。
+// WithClientProtocol returns a copy using the execution layer's selected client protocol.
 func (p RoutePlan) WithClientProtocol(source capability.ProtocolID) RoutePlan {
 	p.clientProtocol = source
 	return p

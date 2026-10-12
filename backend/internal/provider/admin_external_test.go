@@ -20,7 +20,7 @@ type openAICodexExtraListRepo struct {
 	rateLimitCh chan time.Time
 }
 
-// codexListRecordsFixture 返回列表查询需要的提供商记录。
+// codexListRecordsFixture supplies provider records for list queries.
 type codexListRecordsFixture struct {
 	provider.AdminStore
 	providers []provider.Record
@@ -74,7 +74,7 @@ func TestAdminService_ListProviders_ExhaustedCodexExtraDoesNotSetRateLimit(t *te
 	}
 }
 
-// TestResetProviderQuota_RejectsShadow 检查影子的额度重置返回 400，母提供商可正常重置。
+// TestResetProviderQuota_RejectsShadow checks that shadow resets return 400 while parent resets succeed.
 func TestResetProviderQuota_RejectsShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()

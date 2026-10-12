@@ -16,8 +16,8 @@ import (
 
 type idempotencyHTTPReady struct{}
 
-// provideIdempotencyHTTP 在开放 HTTP 前把全部幂等入口绑定到应用唯一协调器。
-// 各应用实例持有独立的协调器绑定。
+// provideIdempotencyHTTP binds all idempotent endpoints to the application's coordinator before HTTP starts.
+// Each application instance has its own coordinator binding.
 func provideIdempotencyHTTP(
 	coordinator *idempotency.IdempotencyCoordinator,
 	providers *providerhttp.ManagementHandler,

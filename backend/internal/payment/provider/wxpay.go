@@ -78,9 +78,7 @@ type Wxpay struct {
 }
 
 func NewWxpay(instanceID string, config map[string]string) (*Wxpay, error) {
-	// All fields are required. Platform-certificate mode is intentionally unsupported —
-	// WeChat has been migrating all merchants to the pubkey verifier since 2024-10,
-	// and newly-provisioned merchants cannot download platform certificates at all.
+	// This adapter uses public-key verification and requires all listed credentials.
 	required := []string{"appId", "mchId", "privateKey", "apiV3Key", "certSerial", "publicKey", "publicKeyId"}
 	for _, k := range required {
 		if config[k] == "" {
@@ -477,7 +475,7 @@ func (w *Wxpay) Refund(ctx context.Context, req payment.RefundRequest) (*payment
 	return &payment.RefundResponse{RefundID: outRefundNo, Status: st}, nil
 }
 
-// QueryRefund 使用确定性商户退款单号查询微信退款最终状态。
+// QueryRefund checks WeChat refund status using the supplied or deterministic merchant refund number.
 func (w *Wxpay) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
 	c, err := w.ensureClient()
 	if err != nil {

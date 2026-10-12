@@ -8,6 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// SseUsagePatch separates counter presence from value so cache TTL details can reset to zero.
 type SseUsagePatch struct {
 	InputTokens              int
 	HasInputTokens           bool

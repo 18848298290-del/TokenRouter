@@ -1,6 +1,6 @@
 package openaiattempt
 
-// 本文件检查 responses_attempts.go、openai_chat_attempts.go、openai_messages_attempts.go 和 group_fallback.go 的换组与完成捕获。
+// These scenarios cover group fallback and completion capture across Responses, Chat, and Messages attempts.
 
 import (
 	"context"

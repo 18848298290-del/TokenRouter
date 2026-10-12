@@ -8,19 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUsageBillingCommandQuantizesAPIKeyCountersIdentically 验证复现 #5229：同一笔 ActualCost 分别流向
+// TestUsageBillingCommandQuantizesAPIKeyCountersIdentically covers the rounding discrepancy in #5229:
 //
 //	balance    = balance - $1
 //	quota_used = quota_used + $1
 //
-// 两列都是 NUMERIC(20,8)，PostgreSQL 按 half-away-from-zero 舍入运算结果。
-// 金额在第 9 位恰为 5 时，减法与加法会朝相反方向舍入，
-// 导致余额 delta 与 Key 配额 delta 相差 1e-8。
+// Both columns use NUMERIC(20,8), with half-away-from-zero rounding of each result.
+// When the ninth decimal is a tie, subtraction and addition can round in opposite directions,
+// making the balance and quota deltas differ by 1e-8.
 //
-// 两个 SQL 接收量化到 8 位小数的金额，存储时金额保持不变。
+// Quantizing the amount to eight decimals before either operation prevents that discrepancy.
 func TestUsageBillingCommandQuantizesAPIKeyCountersIdentically(t *testing.T) {
-	// 10 个输入 token × 0.00000125 + 5 个输出 token × 0.00001000 = 0.0000625
-	// 0.0000625 × 1.25（分组倍率） = 0.000078125
+	// 10 input tokens * 0.00000125 + 5 output tokens * 0.00001000 = 0.0000625.
+	// 0.0000625 * 1.25 (group rate) = 0.000078125.
 	const actualCost = 0.000078125
 
 	cmd := &UsageBillingCommand{
@@ -39,7 +39,7 @@ func TestUsageBillingCommandQuantizesAPIKeyCountersIdentically(t *testing.T) {
 		"金额超过 NUMERIC(20,8) 刻度时 PostgreSQL 仍会在存储阶段舍入")
 }
 
-// TestQuantizeUsageBillingAmountBoundaries 覆盖第 9 位小数在 5 附近的舍入。
+// TestQuantizeUsageBillingAmountBoundaries covers rounding around a ninth-decimal tie.
 func TestQuantizeUsageBillingAmountBoundaries(t *testing.T) {
 	cases := []struct {
 		name string
@@ -63,13 +63,13 @@ func TestQuantizeUsageBillingAmountBoundaries(t *testing.T) {
 			want, _ := decimal.NewFromFloat(tc.in).Round(UsageBillingMonetaryScale).Float64()
 			require.Equal(t, want, got)
 
-			// 量化误差不得超过半个刻度（5e-9）。
+			// Rounding error cannot exceed half an eight-decimal unit (5e-9).
 			require.LessOrEqual(t, math.Abs(got-tc.in), 5e-9)
 		})
 	}
 }
 
-// TestQuantizedAmountsReconcileExactlyOverManyApplications 检查重复扣费后的余额变化和配额增量精确相等。
+// TestQuantizedAmountsReconcileExactlyOverManyApplications checks exact balance/quota parity after repeated charges.
 func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
 	const actualCost = 0.000078125
 
@@ -80,7 +80,7 @@ func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
 		balance := decimal.NewFromInt(10000).Sub(total)
 		quotaUsed := total
 
-		// NUMERIC(20,8) 存储不改变任何一侧的值。
+		// Storing at NUMERIC(20,8) precision leaves both results unchanged.
 		require.True(t, balance.Equal(balance.Round(UsageBillingMonetaryScale)),
 			"n=%d 余额结果超出 NUMERIC(20,8) 刻度", n)
 		require.True(t, quotaUsed.Equal(quotaUsed.Round(UsageBillingMonetaryScale)),
@@ -92,7 +92,7 @@ func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
 	}
 }
 
-// TestNormalizeQuantizesStorageBoundMonetaryFields 验证直接落入 8 位存储列的计数金额都要量化；结算基础金额保留给 10 位精度的订阅事实。
+// TestNormalizeQuantizesStorageBoundMonetaryFields checks counter rounding while retaining settlement amount precision.
 func TestNormalizeQuantizesStorageBoundMonetaryFields(t *testing.T) {
 	const raw = 0.0000781234567
 
@@ -120,9 +120,9 @@ func TestNormalizeQuantizesStorageBoundMonetaryFields(t *testing.T) {
 	require.Equal(t, raw, cmd.BaseAmountUSD)
 }
 
-// TestNormalizeKeepsFingerprintDerivedFromRawAmounts 验证指纹是请求幂等键，必须仍由原始金额派生：
-// 若量化发生在指纹之前，升级前后同一 request_id 的重试会算出不同指纹，
-// 被误判为 fingerprint conflict。
+// TestNormalizeKeepsFingerprintDerivedFromRawAmounts checks that fingerprinting precedes quantization.
+// Reversing that order could change the fingerprint on a retry across an upgrade,
+// producing a false fingerprint conflict for the same request ID.
 func TestNormalizeKeepsFingerprintDerivedFromRawAmounts(t *testing.T) {
 	const raw = 0.000078125
 
@@ -144,7 +144,7 @@ func TestNormalizeKeepsFingerprintDerivedFromRawAmounts(t *testing.T) {
 	require.Equal(t, expected, cmd.RequestFingerprint)
 }
 
-// TestNormalizePreservesExplicitFingerprint 检查已有指纹保持不变，金额按存储精度量化。
+// TestNormalizePreservesExplicitFingerprint checks that preset fingerprints survive storage-precision rounding.
 func TestNormalizePreservesExplicitFingerprint(t *testing.T) {
 	cmd := &UsageBillingCommand{
 		RequestID:          "req-5229-explicit",
@@ -164,7 +164,7 @@ func TestQuantizeUsageBillingAmountPassesThroughNonFinite(t *testing.T) {
 	require.True(t, math.IsInf(QuantizeUsageBillingAmount(math.Inf(-1)), -1))
 }
 
-// TestQuantizeUsageBillingAmountHandlesNegativeAmounts 验证退款/负向金额同样按 half-away-from-zero 对称处理。
+// TestQuantizeUsageBillingAmountHandlesNegativeAmounts checks symmetric half-away-from-zero rounding for negative amounts.
 func TestQuantizeUsageBillingAmountHandlesNegativeAmounts(t *testing.T) {
 	got := QuantizeUsageBillingAmount(-0.000078125)
 	want, _ := decimal.NewFromFloat(-0.000078125).Round(UsageBillingMonetaryScale).Float64()
@@ -174,8 +174,8 @@ func TestQuantizeUsageBillingAmountHandlesNegativeAmounts(t *testing.T) {
 		"正负金额必须对称量化")
 }
 
-// decimalPlaces 返回 float64 最短十进制表示的小数位数，
-// 即 PostgreSQL 把 float8 参数转成 numeric 时看到的刻度。
+// decimalPlaces returns the scale of the float's shortest decimal representation,
+// as used by decimal.NewFromFloat.
 func decimalPlaces(v float64) int32 {
 	return -decimal.NewFromFloat(v).Exponent()
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// BuildOpenAIResponseFailedSSE 构造可被客户端解析的 Responses 失败事件。
+// BuildOpenAIResponseFailedSSE formats a Responses failure event with an ID, model, and error.
 func BuildOpenAIResponseFailedSSE(responseID, model string, source []byte, fallbackMessage string) string {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {

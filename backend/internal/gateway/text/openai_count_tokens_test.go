@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 单次计数的失败不得升级为普通生成的重试、会话或计量流程。
+// singleCountProbe checks that counting failures stop after one attempt without generation or billing work.
 type singleCountProbe struct {
 	available             bool
 	selectErr, forwardErr error

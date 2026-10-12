@@ -9,7 +9,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ClassifyWSAcquireError 根据握手状态码和错误内容分类连接获取失败。
+// ClassifyWSAcquireError classifies acquisition failures by handshake status and error identity.
 func ClassifyWSAcquireError(err error) string {
 	if err == nil {
 		return "acquire_conn"

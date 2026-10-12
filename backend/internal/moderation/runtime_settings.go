@@ -18,7 +18,7 @@ const (
 	cyberSessionBlockRuntimeDBTimeout = 5 * time.Second
 )
 
-// RuntimeSettings 缓存审核开关。
+// RuntimeSettings caches Cyber session-block enablement and TTL.
 type RuntimeSettings struct {
 	settingRepo            RuntimeSettingsStore
 	notFound               error
@@ -32,10 +32,10 @@ type RuntimeSettingsStore interface {
 type cachedCyberSessionBlockRuntime struct {
 	enabled   bool
 	ttl       time.Duration
-	expiresAt int64 // unix nano
+	expiresAt int64 // Unix nanoseconds.
 }
 
-// NewRuntimeSettings 构造不回源，保持原请求读取时点。
+// NewRuntimeSettings defers storage reads until GetCyberSessionBlockRuntime is called.
 func NewRuntimeSettings(repo RuntimeSettingsStore, notFound error) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo, notFound: notFound}
 }

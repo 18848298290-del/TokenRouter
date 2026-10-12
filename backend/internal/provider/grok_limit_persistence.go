@@ -17,7 +17,8 @@ type grokRateLimitRecoveryWriter interface {
 	ClearRateLimitIfObserved(context.Context, int64, time.Time, time.Time) (bool, error)
 }
 
-// PersistGrokRateLimit 保留窗口归一化、独立五秒预算及仅延长现有窗口的写入优先级。
+// PersistGrokRateLimit normalizes the deadline and writes within an independent five-second budget, preferring
+// an extension-only write.
 func PersistGrokRateLimit(ctx context.Context, writer GrokRateLimitWriter, value *Record, reset time.Time, warn func(string, ...any)) {
 	if writer == nil || value == nil || value.ID <= 0 {
 		return
@@ -40,7 +41,7 @@ func PersistGrokRateLimit(ctx context.Context, writer GrokRateLimitWriter, value
 	}
 }
 
-// ClearGrokRateLimitAfterRecovery 比较本轮观察的代次，匹配后清除限流。
+// ClearGrokRateLimitAfterRecovery clears a limit only when its stored timestamps match the observed ones.
 func ClearGrokRateLimitAfterRecovery(ctx context.Context, writer GrokRateLimitWriter, value *Record, warn func(string, ...any)) {
 	if writer == nil || value == nil || value.RateLimitedAt == nil || value.RateLimitResetAt == nil || ctx.Err() != nil {
 		return

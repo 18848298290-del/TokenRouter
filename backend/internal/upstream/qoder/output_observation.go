@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// executionOutput 分离语义输出与协议进度，写失败后保留观测供完成处理使用。
+// executionOutput tracks semantic output and disconnects for completion handling, including failed writes.
 type executionOutput struct {
 	sink          upstream.OutputSink
 	started       time.Time

@@ -71,7 +71,7 @@ func TestOpenAIProviderSchedulerGuardianAffinitySelectsParent(t *testing.T) {
 		selection.ReleaseFunc()
 	}
 
-	// 子请求不能用自己的结果覆盖父线程绑定。
+	// A child request must leave the parent's binding intact.
 	require.NoError(t, svc.BindStickySession(ctx, &groupID, parentHash, 39002))
 	require.Equal(t, int64(39001), cache.sessionBindings["openai:"+parentHash])
 }

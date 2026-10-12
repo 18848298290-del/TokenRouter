@@ -13,11 +13,10 @@ import (
 
 // PaymentProviderInstance holds the schema definition for the PaymentProviderInstance entity.
 //
-// 删除策略：硬删除
-// PaymentProviderInstance 使用硬删除：
-//   - 服务商实例为管理员配置的支付通道，删除即表示废弃
-//   - 通过 enabled 字段控制是否启用，删除仅用于彻底移除
-//   - config 字段存储加密后的密钥信息，删除时应彻底清除
+// Provider instances are hard-deleted.
+// Each instance is an administrator-configured payment channel.
+// Use enabled to suspend a channel; deletion removes its configuration.
+// config contains encrypted credentials and is removed with the row.
 type PaymentProviderInstance struct {
 	ent.Schema
 }

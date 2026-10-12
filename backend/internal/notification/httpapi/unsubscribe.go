@@ -10,12 +10,12 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// RegisterUnsubscribeRoute 在公开设置路由组登记邮件退订处理器。
+// RegisterUnsubscribeRoute registers email unsubscribe handling on the public settings group.
 func RegisterUnsubscribeRoute(group *gin.RouterGroup, endpoint *Handler) {
 	group.GET("/email-unsubscribe", endpoint.UnsubscribeNotificationEmail)
 }
 
-// UnsubscribeNotificationEmail 处理可选通知邮件的退订请求。
+// UnsubscribeNotificationEmail handles unsubscribe requests for optional notification events.
 // GET /api/v1/settings/email-unsubscribe?token=...
 func (h *Handler) UnsubscribeNotificationEmail(c *gin.Context) {
 	if h.notificationEmailService == nil {

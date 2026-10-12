@@ -10,7 +10,8 @@ var openAIPersonalAccessTokenOAuthCredentialKeys = [...]string{
 	"client_id",
 }
 
-// NormalizeOpenAIPersonalAccessTokenCredentials 移除 PAT 提供商中只属于 OAuth 刷新的凭证字段。
+// NormalizeOpenAIPersonalAccessTokenCredentials removes OAuth refresh fields and sets PAT authentication
+// fields in place.
 func NormalizeOpenAIPersonalAccessTokenCredentials(provider *Record, tokenInfo *OpenAITokenInfo, credentials map[string]any) map[string]any {
 	if credentials == nil || !isOpenAIPersonalAccessTokenCredentialSet(provider, tokenInfo, credentials) {
 		return credentials

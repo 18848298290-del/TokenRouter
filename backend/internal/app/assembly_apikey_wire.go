@@ -10,7 +10,7 @@ import (
 	keyredis "github.com/TokenFlux/TokenRouter/internal/apikey/rediscache"
 )
 
-// apikeyAssemblyProviders 汇总 apikey 模块的 Wire provider。
+// apikeyAssemblyProviders groups Wire providers for the apikey module.
 var apikeyAssemblyProviders = wire.NewSet(
 	provideKeyAdminHTTP,
 	provideKeyHTTP,

@@ -24,7 +24,7 @@ func (f *freeQuotaReaderFixture) GetProviderWindowStatsBatch(_ context.Context, 
 	return map[int64]*usage.ProviderStats{7: {Tokens: 480_000}}, nil
 }
 
-// TestFreeQuotaBindingPreservesCacheScopesAndTaskOwner 检查三种选择流程使用独立缓存，各自在首次缺失时批量读取统计。
+// TestFreeQuotaBindingPreservesCacheScopesAndTaskOwner checks that each selector fills its own cache on a miss.
 func TestFreeQuotaBindingPreservesCacheScopesAndTaskOwner(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
@@ -50,7 +50,7 @@ func TestFreeQuotaBindingPreservesCacheScopesAndTaskOwner(t *testing.T) {
 		require.True(t, gate.Blocked(candidates)[7])
 	}
 	require.Equal(t, int64(4), reader.calls.Load())
-	// 停止后台任务后，已缓存的数据仍可读取，缺失的提供商返回空结果。
+	// After task shutdown, a cache miss returns no blocked providers and starts no refresh.
 	require.NoError(t, tasks.Stop(ctx))
 	require.Empty(t, bound.Generic.Blocked([]provider.FreeQuotaCandidate{{ID: 8, Eligible: true}}))
 	require.Equal(t, int64(4), reader.calls.Load())

@@ -20,13 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
-// 包装本地 TLS 响应，检查查询适配器关闭每个响应体。
+// usageTrackedBody records closure of local TLS responses by usage adapters.
 type usageTrackedBody struct {
 	io.ReadCloser
 	closed *atomic.Int64
 }
 
-// TestNativeUsageAdaptersLocalTLS 通过本地 TLS 检查七种用量适配器的请求端点、认证头覆盖顺序和计量结果。
+// TestNativeUsageAdaptersLocalTLS checks seven adapters' endpoints, authentication precedence, and normalized usage.
 func TestNativeUsageAdaptersLocalTLS(t *testing.T) {
 	tests := []struct {
 		name                string

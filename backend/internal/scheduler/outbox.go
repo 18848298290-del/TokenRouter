@@ -23,22 +23,22 @@ type SchedulerOutboxEvent struct {
 	CreatedAt  time.Time
 }
 
-// SchedulerOutboxRepository 提供调度 outbox 的读取接口。
+// SchedulerOutboxRepository reads scheduling events and coordinates consumed-event cleanup.
 type SchedulerOutboxRepository interface {
 	ListAfterAndReleaseDedup(ctx context.Context, afterID int64, limit int) ([]SchedulerOutboxEvent, error)
-	// FirstCreatedAtAfter 读取指定水位之后第一条待消费事件的创建时间。
+	// FirstCreatedAtAfter returns the creation time of the first pending event after the watermark.
 	FirstCreatedAtAfter(ctx context.Context, afterID int64) (time.Time, bool, error)
 	MaxID(ctx context.Context) (int64, error)
 	DeleteConsumedUpTo(ctx context.Context, watermark int64, limit int) (int64, error)
 	TryAcquireCleanupLock(ctx context.Context) (SchedulerOutboxCleanupLease, bool, error)
 }
 
-// SchedulerOutboxCleanupLease 持有调度 outbox 清理使用的 PostgreSQL 咨询锁。
+// SchedulerOutboxCleanupLease holds the PostgreSQL advisory lock for outbox cleanup.
 type SchedulerOutboxCleanupLease interface {
 	Release()
 }
 
-// GroupPayload 在分组为空时返回 untyped nil，该值参与持久化去重指纹计算。
+// GroupPayload returns untyped nil for no groups; this representation participates in persisted deduplication hashes.
 func GroupPayload(groupIDs []int64) any {
 	if len(groupIDs) == 0 {
 		return nil

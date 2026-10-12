@@ -52,7 +52,7 @@ func TestServiceAccountSignedExchange(t *testing.T) {
 	require.Equal(t, 55*time.Minute, ttl)
 }
 
-// TestVertexServiceAccountHTTPClientRecordsDependency 检查服务账号客户端记录 HTTP 耗时。
+// Service-account token clients contribute HTTP timing to the request collector.
 func TestVertexServiceAccountHTTPClientRecordsDependency(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

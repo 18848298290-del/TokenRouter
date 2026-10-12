@@ -41,7 +41,7 @@ func billingEligibilityOptions(c *config.Config, calendar timezone.Calendar) bil
 	return billing.EligibilityOptions{Dates: billing.DateRuntime{Now: time.Now, Calendar: &calendar}, Billing: billing.BillingOptions{MinimumBalanceReserve: c.Billing.MinimumBalanceReserve, CircuitBreaker: billing.CircuitBreakerOptions{Enabled: c.Billing.CircuitBreaker.Enabled, FailureThreshold: c.Billing.CircuitBreaker.FailureThreshold, ResetTimeoutSeconds: c.Billing.CircuitBreaker.ResetTimeoutSeconds, HalfOpenRequests: c.Billing.CircuitBreaker.HalfOpenRequests}}}
 }
 
-// provideBillingEligibility 绑定余额与 Key 限额准入的共享缓存。
+// provideBillingEligibility shares the balance and API key limit admission cache.
 func provideBillingEligibility(cache billing.BillingCache, users *identitypostgres.UserStore, keys apikey.APIKeyRepository, cfg *config.Config, tasks *lifecycle.Tasks, calendar timezone.Calendar) *billing.Eligibility {
 	options := billingEligibilityOptions(cfg, calendar)
 	return billing.NewEligibility(cache, billingIdentityUsers{Repository: users}, keys, func() billing.EligibilityOptions { return options }, logging.LegacyPrintf, func(name string, fn func()) { tasks.Go(name, fn) })
@@ -67,7 +67,7 @@ func provideBillingFunds(store *billingpostgres.SettlementStore) *billing.Funds 
 }
 
 func provideBillingRedeem(repo billing.RedeemCodeRepository, users *identitypostgres.UserStore, subs *billing.SubscriptionService, cache billing.RedeemCache, eligibility *billing.Eligibility, client *dbent.Client, auth apikey.APIKeyAuthCacheInvalidator, affiliate *promotion.AffiliateService, tasks *lifecycle.Tasks) *billing.RedeemService {
-	// 付款历史查询与兑换写入共用事务连接。
+	// Redemption mutations and paid-order lookup use stores built from the shared Ent client.
 	mutations := billingpostgres.NewRedeemMutations(client, billingpostgres.RedeemWriters{
 		Balances:    billingpostgres.NewBalanceStore(client),
 		Concurrency: identitypostgres.NewConcurrencyStore(client),
@@ -93,19 +93,19 @@ func provideBillingPlans(client *dbent.Client, orders *paymentpostgres.InstanceS
 	return billing.NewPlans(billingpostgres.NewPlanStore(client), orders)
 }
 
-// provideSubscriptionExpiry 为订阅过期提醒绑定通知和锁操作，后台任务由生命周期管理器启动。
+// provideSubscriptionExpiry binds notifications and leader leases; lifecycle startup runs the reminder worker.
 func provideSubscriptionExpiry(repo billing.UserSubscriptionRepository, settings settingscore.Repository, notification *notificationcore.NotificationEmailService, lock provider.CNMonitorLeader, db *sql.DB) *billing.SubscriptionExpiryService {
 	return billing.NewSubscriptionExpiryService(repo, billing.ExpiryOptions{Interval: time.Minute, Owner: uuid.NewString(), Now: time.Now, Observe: func(format string, args ...any) { logging.LegacyPrintf("service.subscription_expiry", format, args...) }, Settings: settings, Notifier: expiryNotifications{Service: notification}, Lease: func(ctx context.Context, key, owner string, ttl time.Duration) (func(), bool) {
 		return provider.AcquireSingletonLease(ctx, lock, databaseAdvisoryLease(db), key, owner, ttl)
 	}})
 }
 
-// provideWindowCostCache 使用共享 Redis 客户端和资金窗口命名空间构造缓存。
+// provideWindowCostCache uses the shared Redis client for billing window costs.
 func provideWindowCostCache(rdb *redis.Client) billing.WindowCostCache {
 	return billingredis.NewWindowCostCache(rdb)
 }
 
-// provideBillingCalculator 构造使用模型目录和应用时钟的共享计算器。
+// provideBillingCalculator supplies the shared model catalog and application clock.
 func provideBillingCalculator(catalog *catalogprovider.Service, calendar timezone.Calendar) *billing.Calculator {
 	return billing.NewCalculator(catalog, billing.CalculatorOptions{Now: calendar.Now, LoadLocation: billingadapter.LoadPricingLocation})
 }

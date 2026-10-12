@@ -29,7 +29,7 @@ func publicLoginAgreementDocumentsToDTO(items []site.LoginAgreementDocument) []d
 	return result
 }
 
-// GetPublicSettings 获取公开设置
+// GetPublicSettings returns public site settings.
 // GET /api/v1/settings/public
 func (h *PublicHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
@@ -126,7 +126,7 @@ func (h *PublicHandler) GetPublicSettings(c *gin.Context) {
 	})
 }
 
-// GetLegalDocument 按当前语言返回公开协议，正文在用户打开时读取。
+// GetLegalDocument returns the public agreement in the current language when requested.
 func (h *PublicHandler) GetLegalDocument(c *gin.Context) {
 	doc, err := h.settingService.GetLegalDocument(c.Request.Context(), c.Param("id"))
 	if err != nil {

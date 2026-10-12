@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpsWSShutdownCancelsIdleTimer 验证最后一个 WS 离开后的三十秒空闲定时器不能拖延应用退出或在退出后重新安排。
+// TestOpsWSShutdownCancelsIdleTimer checks that the idle timer cannot delay shutdown or restart sampling afterward.
 func TestOpsWSShutdownCancelsIdleTimer(t *testing.T) {
 	rt := NewRealtimeRuntime()
 
@@ -26,7 +26,7 @@ func TestOpsWSShutdownCancelsIdleTimer(t *testing.T) {
 	rt.Stop()
 }
 
-// TestRealtimePayloadRequestIsolation 验证跨请求的序列化快照仍是独立副本，不允许下游改写共享缓存。
+// TestRealtimePayloadRequestIsolation checks that returned payloads are copies that callers can modify independently.
 func TestRealtimePayloadRequestIsolation(t *testing.T) {
 	r := NewRealtimeRuntime()
 	r.cache.payload.Store([]byte(`{"type":"qps_update"}`))

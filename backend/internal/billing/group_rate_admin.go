@@ -7,7 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GroupRateAdmin 校验并写入用户专属倍率和 RPM，提交后使认证缓存失效。
+// GroupRateAdmin validates and writes user-specific rates and RPM overrides. RPM updates invalidate authentication
+// caches.
 type GroupRateAdmin struct {
 	userGroupRateRepo    UserGroupRateRepository
 	authCacheInvalidator interface{ InvalidateAuthCacheByGroupID(context.Context, int64) }
@@ -50,7 +51,7 @@ func (s *GroupRateAdmin) ClearGroupRPMOverrides(ctx context.Context, groupID int
 	if err := s.userGroupRateRepo.ClearGroupRPMOverrides(ctx, groupID); err != nil {
 		return err
 	}
-	// RPM override 已嵌入 auth cache snapshot (v7)，变更后必须失效相关缓存。
+	// Authentication snapshots contain RPM overrides and need invalidation after changes.
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
 	}
@@ -69,7 +70,7 @@ func (s *GroupRateAdmin) BatchSetGroupRPMOverrides(ctx context.Context, groupID 
 	if err := s.userGroupRateRepo.SyncGroupRPMOverrides(ctx, groupID, entries); err != nil {
 		return err
 	}
-	// RPM override 已嵌入 auth cache snapshot (v7)，变更后必须失效相关缓存。
+	// Authentication snapshots contain RPM overrides and need invalidation after changes.
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
 	}

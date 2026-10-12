@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestSuiteIsolation 验证并行测试使用相同数据仍能独立提交和回滚。
+// TestSuiteIsolation checks that parallel tests can independently commit and roll back identical data.
 func TestSuiteIsolation(t *testing.T) {
 	var suite Suite
 	t.Cleanup(func() { require.NoError(t, suite.Close()) })
@@ -52,7 +52,7 @@ func TestSuiteIsolation(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestSuiteMatchesMigrations 对照完整迁移与模板克隆的结构和迁移校验和。
+// TestSuiteMatchesMigrations compares schema and migration checksums from cloning and full migration.
 func TestSuiteMatchesMigrations(t *testing.T) {
 	var suite Suite
 	t.Cleanup(func() { require.NoError(t, suite.Close()) })
@@ -76,7 +76,7 @@ func TestSuiteMatchesMigrations(t *testing.T) {
 	require.Error(t, blocked.Ping())
 }
 
-// queryStrings 读取排序后的数据库结构，保留每一项供差异断言。
+// queryStrings collects a single-column query in result order for comparison assertions.
 func queryStrings(t *testing.T, db *sql.DB, query string) []string {
 	t.Helper()
 	rows, err := db.Query(query)
@@ -92,7 +92,7 @@ func queryStrings(t *testing.T, db *sql.DB, query string) []string {
 	return values
 }
 
-// TestSuiteDropWithOpenConnection 验证仍有连接时数据库也能删除。
+// TestSuiteDropWithOpenConnection checks database deletion with an active connection.
 func TestSuiteDropWithOpenConnection(t *testing.T) {
 	var suite Suite
 	t.Cleanup(func() { require.NoError(t, suite.Close()) })
@@ -103,7 +103,7 @@ func TestSuiteDropWithOpenConnection(t *testing.T) {
 	require.NoError(t, err)
 	leaked, err := sql.Open("postgres", suite.databaseDSN("verification_leak"))
 	require.NoError(t, err)
-	// 连接已被 DROP ... WITH (FORCE) 终止，关闭时的错误与本测试无关。
+	// DROP ... WITH (FORCE) terminates this connection; closing it may report an expected error.
 	defer func() { _ = leaked.Close() }()
 	require.NoError(t, leaked.PingContext(ctx))
 	require.NoError(t, suite.drop(ctx, "verification_leak"))
@@ -112,7 +112,7 @@ func TestSuiteDropWithOpenConnection(t *testing.T) {
 	require.False(t, exists)
 }
 
-// TestSuiteMigrationFailure 验证初始化错误返回后仍可回收已启动容器。
+// TestSuiteMigrationFailure checks that a container can be cleaned up after initialization fails.
 func TestSuiteMigrationFailure(t *testing.T) {
 	var suite Suite
 	t.Cleanup(func() { require.NoError(t, suite.Close()) })

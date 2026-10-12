@@ -23,21 +23,21 @@ type tlsFingerprintProfileCache struct {
 	localCache []*egress.TLSFingerprintProfile
 	localMu    sync.RWMutex
 
-	// 订阅协程由缓存自身持有取消句柄，关闭时必须在 Redis 之前完成退出。
+	// The cache owns subscriber cancellation; stop the subscriber before closing Redis.
 	subscriptionMu      sync.Mutex
 	subscriptionCancel  context.CancelFunc
 	subscriptionWG      sync.WaitGroup
 	subscriptionStopped bool
 }
 
-// NewTLSFingerprintProfileCache 创建 TLS 指纹模板缓存。
+// NewTLSFingerprintProfileCache creates a TLS profile cache.
 func NewTLSFingerprintProfileCache(rdb *redis.Client) egress.TLSFingerprintProfileCache {
 	return &tlsFingerprintProfileCache{
 		rdb: rdb,
 	}
 }
 
-// Get 从缓存获取模板列表。
+// Get returns independent profile copies from local cache or Redis and reports a cache hit.
 func (c *tlsFingerprintProfileCache) Get(ctx context.Context) ([]*egress.TLSFingerprintProfile, bool) {
 	c.localMu.RLock()
 	if c.localCache != nil {
@@ -68,7 +68,7 @@ func (c *tlsFingerprintProfileCache) Get(ctx context.Context) ([]*egress.TLSFing
 	return profiles, true
 }
 
-// Set 设置缓存。
+// Set writes profiles to Redis and stores an independent local copy.
 func (c *tlsFingerprintProfileCache) Set(ctx context.Context, profiles []*egress.TLSFingerprintProfile) error {
 	data, err := json.Marshal(profiles)
 	if err != nil {
@@ -86,7 +86,7 @@ func (c *tlsFingerprintProfileCache) Set(ctx context.Context, profiles []*egress
 	return nil
 }
 
-// Invalidate 使缓存失效。
+// Invalidate clears the local and Redis profile caches.
 func (c *tlsFingerprintProfileCache) Invalidate(ctx context.Context) error {
 	c.localMu.Lock()
 	c.localCache = nil
@@ -95,12 +95,12 @@ func (c *tlsFingerprintProfileCache) Invalidate(ctx context.Context) error {
 	return c.rdb.Del(ctx, tlsFPProfileCacheKey).Err()
 }
 
-// NotifyUpdate 通知其他实例刷新缓存。
+// NotifyUpdate publishes a profile refresh notification to subscribed instances.
 func (c *tlsFingerprintProfileCache) NotifyUpdate(ctx context.Context) error {
 	return c.rdb.Publish(ctx, tlsFPProfilePubSubKey, "refresh").Err()
 }
 
-// SubscribeUpdates 订阅缓存更新通知。
+// SubscribeUpdates starts one subscriber that clears local profiles before calling handler.
 func (c *tlsFingerprintProfileCache) SubscribeUpdates(ctx context.Context, handler func()) {
 	subscriberCtx, cancel := context.WithCancel(ctx)
 	c.subscriptionMu.Lock()
@@ -143,7 +143,7 @@ func (c *tlsFingerprintProfileCache) SubscribeUpdates(ctx context.Context, handl
 	}()
 }
 
-// StopSubscription 取消并等待缓存订阅协程退出。
+// StopSubscription prevents new subscriptions, cancels the subscriber, and waits for its exit.
 func (c *tlsFingerprintProfileCache) StopSubscription() {
 	c.subscriptionMu.Lock()
 	cancel := c.subscriptionCancel

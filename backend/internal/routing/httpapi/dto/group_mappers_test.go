@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestGroupMapperExposesOpenAIFastOnlyToAdmins 验证组级 Fast 策略不会泄露到公开分组接口。
+// TestGroupMapperExposesOpenAIFastOnlyToAdmins checks that public group responses omit Fast policy.
 func TestGroupMapperExposesOpenAIFastOnlyToAdmins(t *testing.T) {
 	group := &routing.Group{
 		ID: 7, Name: "fast", Status: billing.StatusActive,

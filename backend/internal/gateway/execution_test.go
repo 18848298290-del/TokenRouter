@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// fixedExecutionRuntime 使用同一固定实例记录实际调用，验证请求状态不被实例复用污染。
+// fixedExecutionRuntime counts calls through one shared runtime to detect leaked state between requests.
 type fixedExecutionRuntime struct {
 	prepares  atomic.Int64
 	checks    atomic.Int64

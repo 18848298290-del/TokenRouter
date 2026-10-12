@@ -59,8 +59,9 @@ type openAIImageTestSSEEvent struct {
 	Data string
 }
 
-// TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver 验证回归：failover 第 2+ 轮时，上一轮心跳残留的空白字节不得被误判为“已写响应”，
-// 可重试上游错误转换为 UpstreamFailoverError，交给换号流程。
+// TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver checks that padding from an earlier
+// attempt
+// does not block retryable errors from returning as UpstreamFailoverError.
 func TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
 
@@ -86,7 +87,7 @@ func TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver(t *testi
 	parsed, err := media.ParseImageRequest(c.Request.URL.Path, c.GetHeader("Content-Type"), body, true)
 	require.NoError(t, err)
 
-	// 模拟上一轮 failover 已发生：心跳已提交 200 并写出空白字节。
+	// Simulate an earlier attempt whose heartbeat committed HTTP 200 and padding bytes.
 	stop := StartOpenAIImagesJSONKeepalive(c, 5*time.Millisecond)
 	defer stop()
 	waitForImageExecutionKeepalive(t, c)
@@ -122,7 +123,8 @@ func TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver(t *testi
 	require.Equal(t, http.StatusBadGateway, events[0].UpstreamStatusCode)
 }
 
-// waitForImageExecutionKeepalive 等待实际首个心跳提交；Writer.Written 使用生产包装器的同一把锁，不读取其私有状态。
+// waitForImageExecutionKeepalive waits for the first heartbeat commit through the synchronized
+// Writer.Written method.
 func waitForImageExecutionKeepalive(t *testing.T, c *gin.Context) {
 	t.Helper()
 	require.True(t, OpenAIImagesJSONKeepalivePresent(c))
@@ -420,8 +422,9 @@ func TestOpenAIGatewayServiceForwardImages_ImageRateLimitReturnsFailoverAndCools
 	require.Equal(t, providerimages.OpenAIImageGenerationRateLimitKey, repo.ModelRateLimitCalls[0].Scope)
 }
 
-// TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapability 验证上游仅返回文字时，提供商图片能力状态保持原样（#6171）。
-// 文字结果按可重试的 502 换号，冷却依据是结构化上游错误。如果为每次文字结果设置 30 分钟冷却，换号会依次冷却整个池。
+// TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapability checks that text-only output
+// leaves image capability available (#6171).
+// The response is retryable as 502; cooling each text-only result could disable every candidate in the pool.
 func TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapability(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
@@ -461,15 +464,15 @@ func TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapabilit
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.False(t, failoverErr.RetryableOnSameProvider)
-	// 换号行为不变：该判据仍足以放弃本提供商重试这一次请求……
+	// The text-only result permits this request to retry on another provider.
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	// 提供商状态保持原样，重试过程中各提供商的冷却时间也保持原样。
+	// No image cooldown is written for the text-only result.
 	require.Empty(t, repo.ModelRateLimitCalls,
 		"模型回文字只说明这一轮没出图，不构成提供商 30 分钟不可用的证据")
 }
 
-// TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability 验证对照不变式：上游 error 帧点名 image_generation_unavailable 时仍写冷却，
-// 保证 #6171 的修复没有把这项能力保护整个废掉。
+// TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability checks that a structured
+// image_generation_unavailable error still triggers image capability cooldown (#6171).
 func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
@@ -883,7 +886,8 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsNonImageModel(t *te
 	require.ErrorContains(t, err, `images endpoint requires an image model, got "gpt-5.4"`)
 }
 
-// TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting 验证模型校验前先完成分组别名映射 R -> G。
+// TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting checks group alias mapping before model
+// validation.
 func TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting(t *testing.T) {
 	body := []byte(`{"model":"draw-alias","prompt":"draw a cat"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -1347,7 +1351,8 @@ func TestOpenAIGatewayServiceForwardImages_OAuth429CarriesSameProviderRetryWindo
 	require.WithinDuration(t, startedAt.Add(providerimages.RuntimeRetryWindow), failoverErr.SameProviderRetryDeadline, time.Second)
 }
 
-// TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings 验证传输错误与取消错误的分类。
+// TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings distinguishes transport failures from
+// request cancellation.
 func TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings(t *testing.T) {
 	for _, message := range []string{"unexpected EOF", "connection reset by peer", "broken pipe", "use of closed network connection"} {
 		t.Run(message, func(t *testing.T) {
@@ -2315,10 +2320,11 @@ func openAIImagesJSONResponse() *http.Response {
 	}
 }
 
-// TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext 验证 issue #5411：生图是长耗时、上游侧已经产生实际成本的操作。客户端中途断开时，
-// 如果连带取消上游请求，就会出现「上游已出图并计费、网关记 502 context canceled、
-// 用户不扣费」。非流式路径以前走 gatewayprovider.DetachStreamUpstreamContext(ctx, false)，
-// 该函数在非流式时原样返回请求 context，因此不脱钩。
+// TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext checks cancellation isolation for
+// non-streaming images (#5411).
+// Cancelling upstream work when the client disconnects can discard usage for images already billed upstream.
+// DetachStreamUpstreamContext(ctx, false) retains cancellation, so image requests need unconditional
+// detachment.
 func TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
 	c, _ := newOpenAIImagesTestContext(t, body)
@@ -2331,7 +2337,7 @@ func TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext(t *testing.T
 	require.False(t, parsed.Stream, "本用例覆盖非流式生图")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 客户端已断开
+	cancel() // The client has disconnected.
 
 	result, err := svc.ForwardImages(ctx, c, newOpenAIImagesAPIKeyProvider(), body, parsed, "")
 
@@ -2344,7 +2350,8 @@ func TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext(t *testing.T
 		"交给上游的请求 context 必须已脱钩，不随客户端断开取消")
 }
 
-// TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext 验证流式路径本来就脱钩，这条守卫防止对齐时把它改坏。
+// TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext checks cancellation isolation for
+// streaming images.
 func TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"response_format":"b64_json"}`)
 	c, _ := newOpenAIImagesTestContext(t, body)
@@ -2377,7 +2384,7 @@ func TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext(t *testing
 		"流式路径原本就脱钩，不能被改回随客户端取消")
 }
 
-// TestDetachUpstreamContextSemantics 验证两个 detach 辅助函数对请求取消的不同处理。
+// TestDetachUpstreamContextSemantics compares cancellation behavior of both detachment helpers.
 func TestDetachUpstreamContextSemantics(t *testing.T) {
 	t.Run("detachUpstreamContext_always_detaches", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())

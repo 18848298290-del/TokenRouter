@@ -9,16 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// creativeRuntimeSettingsFixture 按键读取测试设置，缺键时返回设置不存在错误。
+// creativeRuntimeSettingsFixture returns stored values or ErrSettingNotFound for missing keys.
 type creativeRuntimeSettingsFixture struct{ values map[string]string }
 
-// TestSettingService_IsCreativeEnabled 检查请求期的创作台开关：值为“false”时关闭，键缺失或读取失败时开启。
+// TestSettingService_IsCreativeEnabled checks that false disables the feature and a missing key enables it.
 func TestSettingService_IsCreativeEnabled(t *testing.T) {
 	repo := &creativeRuntimeSettingsFixture{values: map[string]string{SettingKeyCreativeEnabled: "false"}}
 	svc := NewRuntimeSettings(repo, settings.ErrSettingNotFound)
 	require.False(t, svc.IsCreativeEnabled(context.Background()))
 
-	// 键缺失时默认开启。
+	// A missing key defaults to enabled.
 	repo = &creativeRuntimeSettingsFixture{values: map[string]string{}}
 	svc = NewRuntimeSettings(repo, settings.ErrSettingNotFound)
 	require.True(t, svc.IsCreativeEnabled(context.Background()))

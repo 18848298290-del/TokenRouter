@@ -91,8 +91,8 @@ func TestFlushBestEffortBatch_DeadlockRetryExhaustedUsesSingleFallback(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes 覆盖两条不经占位符生成器、
-// 直接手写 $1..$N 的 INSERT 路径，防止加列后漏补占位符只在集成测试才暴露。
+// TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes checks both INSERT paths with handwritten placeholders.
+// It catches missing placeholders after column additions without requiring PostgreSQL.
 func TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes(t *testing.T) {
 	upstreamRequestID := "20260902080329-oneapi"
 	log := &usage.UsageLog{
@@ -140,8 +140,8 @@ func TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes(t *testing.T) {
 	})
 }
 
-// TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring 把 upstream_request_id 钉在
-// session_id 之前，与参数类型表位置一致，缺失值写入 NULL。
+// TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring checks upstream_request_id before session_id
+// in the argument and type lists, including SQL NULL for missing values.
 func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	upstreamRequestID := "req_upstream_123"
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
@@ -195,7 +195,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 	mock.ExpectQuery("INSERT INTO usage_logs").
 		WithArgs(
 			log.UserID,
-			log.UserID,       // billing_user_id 默认与调用者一致
+			log.UserID,       // billing_user_id defaults to the calling user
 			sqlmock.AnyArg(), // team_id
 			log.APIKeyID,
 			log.ProviderID,
@@ -236,13 +236,13 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // ip_address
 			log.ImageCount,
 			sqlmock.AnyArg(), // image_size
-			sqlmock.AnyArg(), // 图片输入尺寸
-			sqlmock.AnyArg(), // 图片输出尺寸
-			sqlmock.AnyArg(), // 图片尺寸来源
-			sqlmock.AnyArg(), // 图片尺寸明细
-			sqlmock.AnyArg(), // 视频数量
-			sqlmock.AnyArg(), // 视频分辨率
-			sqlmock.AnyArg(), // 视频时长
+			sqlmock.AnyArg(), // image_input_size
+			sqlmock.AnyArg(), // image_output_size
+			sqlmock.AnyArg(), // image_size_source
+			sqlmock.AnyArg(), // image_size_breakdown
+			sqlmock.AnyArg(), // video_count
+			sqlmock.AnyArg(), // video_resolution
+			sqlmock.AnyArg(), // video_duration_seconds
 			sqlmock.AnyArg(), // service_tier
 			sqlmock.AnyArg(), // reasoning_effort
 			sqlmock.AnyArg(), // inbound_endpoint
@@ -259,7 +259,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			createdAt,
 			sqlmock.AnyArg(), // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			nil, // billing_key
@@ -297,7 +297,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 	mock.ExpectQuery("INSERT INTO usage_logs").
 		WithArgs(
 			log.UserID,
-			log.UserID,       // billing_user_id 默认与调用者一致
+			log.UserID,       // billing_user_id defaults to the calling user
 			sqlmock.AnyArg(), // team_id
 			log.APIKeyID,
 			log.ProviderID,
@@ -338,13 +338,13 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(),
 			log.ImageCount,
 			sqlmock.AnyArg(),
-			sqlmock.AnyArg(), // 图片输入尺寸
-			sqlmock.AnyArg(), // 图片输出尺寸
-			sqlmock.AnyArg(), // 图片尺寸来源
-			sqlmock.AnyArg(), // 图片尺寸明细
-			sqlmock.AnyArg(), // 视频数量
-			sqlmock.AnyArg(), // 视频分辨率
-			sqlmock.AnyArg(), // 视频时长
+			sqlmock.AnyArg(), // image_input_size
+			sqlmock.AnyArg(), // image_output_size
+			sqlmock.AnyArg(), // image_size_source
+			sqlmock.AnyArg(), // image_size_breakdown
+			sqlmock.AnyArg(), // video_count
+			sqlmock.AnyArg(), // video_resolution
+			sqlmock.AnyArg(), // video_duration_seconds
 			serviceTier,
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
@@ -361,7 +361,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			createdAt,
 			sqlmock.AnyArg(), // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			nil, // billing_key
@@ -549,8 +549,7 @@ func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 	require.NotContains(t, strings.ToUpper(query), "DO UPDATE")
 }
 
-// TestPrepareUsageLogInsert_SessionIDArgWiring 检查 session_id 在参数切片、类型表
-// 和 INSERT 列表中的位置。字段扩展时追加在末尾。
+// TestPrepareUsageLogInsert_SessionIDArgWiring checks the session_id position in arguments and type metadata.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, usageLogInsertArgTypes, 69, "arg-type table must include billing key")
 
@@ -560,7 +559,7 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes),
 		"prepared args must match the arg-type table length")
 
-	// session_id 位于 created_at 之前，字段扩展时按顺序追加在末尾。
+	// session_id precedes created_at; later fields follow created_at in the positional lists.
 	sessionArg := prepared.args[len(prepared.args)-8]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
@@ -577,8 +576,7 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 		"native compaction arg type must be boolean")
 }
 
-// TestPrepareUsageLogInsert_SessionIDNullWhenAbsent 验证缺失的会话标识会持久化为
-// SQL NULL。
+// TestPrepareUsageLogInsert_SessionIDNullWhenAbsent checks SQL NULL for missing and empty IDs.
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
 	sessionArg := prepared.args[len(prepared.args)-8]
@@ -592,8 +590,7 @@ func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 
-// TestUsageLogInsertQueries_IncludeSessionID 验证每条 INSERT 路径和 SELECT 列表
-// 都包含 session_id。
+// TestUsageLogInsertQueries_IncludeSessionID checks the SELECT list and both batch INSERT shapes.
 func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	require.Contains(t, usageLogSelectColumns, "session_id",
 		"SELECT column list must include session_id")
@@ -610,7 +607,7 @@ func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	batchQuery, batchArgs := buildUsageLogBatchInsertQuery([]string{key},
 		map[string]usageLogInsertPrepared{key: prepared})
 	require.Contains(t, batchQuery, "session_id")
-	// 两处列引用（INSERT 列表和 SELECT ... FROM input）加上一处 CTE 定义。
+	// The field appears in the INSERT list, the SELECT from input, and the CTE definition.
 	require.GreaterOrEqual(t, strings.Count(batchQuery, "session_id"), 3)
 	require.Len(t, batchArgs, len(prepared.args)+1,
 		"batch args include the synthetic input_index before usage-log values")
@@ -620,7 +617,7 @@ func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	require.Len(t, bestEffortArgs, len(prepared.args))
 }
 
-// TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring 检查 requested_reasoning_effort 在参数末尾的位置。
+// TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring checks the field's positional argument.
 func TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring(t *testing.T) {
 	requested := "max"
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
@@ -654,8 +651,8 @@ func newUsageLogBestEffortRequestForTest() usageLogBestEffortRequest {
 	}
 }
 
-// newSQLCapturingMock 把执行的 SQL 记录到 captured，并接受所有语句。
-// WithArgs 校验查询参数。
+// newSQLCapturingMock records executed SQL in captured and accepts any query text.
+// WithArgs expectations still validate arguments.
 func newSQLCapturingMock(t *testing.T, captured *[]string) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	matcher := sqlmock.QueryMatcherFunc(func(_, actualSQL string) error {
@@ -668,8 +665,8 @@ func newSQLCapturingMock(t *testing.T, captured *[]string) (*sql.DB, sqlmock.Sql
 	return db, mock
 }
 
-// requireStaticInsertMatchesArgTypes 断言手写的 INSERT：列清单长度与 VALUES 占位符数量
-// 都等于 usageLogInsertArgTypes，且占位符恰为 $1..$N 各出现一次。
+// requireStaticInsertMatchesArgTypes checks that column and placeholder counts match the type list,
+// with each placeholder from $1 through $N appearing exactly once.
 func requireStaticInsertMatchesArgTypes(t *testing.T, query string) {
 	t.Helper()
 	m := usageLogStaticInsertShapeRe.FindStringSubmatch(query)

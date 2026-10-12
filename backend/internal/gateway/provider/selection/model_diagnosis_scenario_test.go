@@ -1,6 +1,6 @@
 package selection
 
-// 模型诊断场景覆盖 generic.go、compatible.go 的候选选择与 compatible_picker.go 的模型限制判断。
+// These scenarios compare model diagnostics with generic and compatible provider selection.
 
 import (
 	"context"
@@ -21,10 +21,10 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// selectionAvailabilityFixture 筛选候选并返回模型诊断需要的记录。
+// selectionAvailabilityFixture filters provider records for model diagnostics.
 type selectionAvailabilityFixture struct{ *mockProviderRepoForPlatform }
 
-// newBedrockRoutingTestProvider 用虚构凭据构造测试用可调度提供商。
+// newBedrockRoutingTestProvider creates a schedulable Bedrock fixture with fictitious credentials.
 func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) gatewayprovider.ExecutionProvider {
 	provider := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -42,7 +42,7 @@ func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) ga
 	return provider
 }
 
-// TestBedrockRegionRouting_SchedulerAndDiagnosisAgree 检查提供商筛选和错误诊断使用相同的区域规则，跳过区域不支持的粘性提供商。
+// TestBedrockRegionRouting_SchedulerAndDiagnosisAgree checks matching region rules and rejection of an unsupported sticky provider.
 func TestBedrockRegionRouting_SchedulerAndDiagnosisAgree(t *testing.T) {
 	groupID := int64(5200)
 	invalid := newBedrockRoutingTestProvider(1, "ap-northeast-1", false)
@@ -140,7 +140,7 @@ func TestModelAvailabilityDiagnosisAcceptsPricingConfigAlias(t *testing.T) {
 	require.True(t, diagnosis.HasModelSupport)
 }
 
-// TestOpenAIHTTPPassthroughKeepsExplicitModelScope 检查透传提供商的最终模型白名单。
+// TestOpenAIHTTPPassthroughKeepsExplicitModelScope checks the final-model allowlist for passthrough providers.
 func TestOpenAIHTTPPassthroughKeepsExplicitModelScope(t *testing.T) {
 	provider := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{

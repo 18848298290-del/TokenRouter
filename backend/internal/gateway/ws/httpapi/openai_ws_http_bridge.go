@@ -43,7 +43,7 @@ const (
 	openAIWSHTTPBridgeErrorBodyLimitBytes         = 64 * 1024
 )
 
-// openAIWSToolCallReplayCollector 收集上游输出里的工具调用上下文，供后续 bridge turn 重放。
+// openAIWSToolCallReplayCollector collects upstream output for replay in later bridge turns.
 type openAIWSToolCallReplayCollector struct {
 	items    []json.RawMessage
 	seen     map[string]struct{}
@@ -78,7 +78,7 @@ func openAIWSHTTPBridgeToolUpstreamName(provider *gatewayprovider.ExecutionProvi
 	return "OpenAI WS HTTP bridge"
 }
 
-// ResolveOpenAIWSClientFirstMessageTimeout 返回生效的客户端入站首消息截止时间。
+// ResolveOpenAIWSClientFirstMessageTimeout returns the first-client-message timeout, defaulting to 30 seconds.
 func ResolveOpenAIWSClientFirstMessageTimeout(cfg *OpenAIWSOptions) time.Duration {
 	seconds := 30
 	if cfg != nil && cfg.ClientFirstMessageTimeoutSeconds > 0 {
@@ -87,7 +87,7 @@ func ResolveOpenAIWSClientFirstMessageTimeout(cfg *OpenAIWSOptions) time.Duratio
 	return time.Duration(seconds) * time.Second
 }
 
-// ResolveOpenAIWSClientReadLimitBytes 返回入站客户端 WS 单帧读取上限。
+// ResolveOpenAIWSClientReadLimitBytes returns the client WebSocket message read limit.
 func ResolveOpenAIWSClientReadLimitBytes(cfg *OpenAIWSOptions) int64 {
 	if cfg == nil || cfg.ClientReadLimitBytes <= 0 {
 		return openAIWSClientReadLimitBytesDefault
@@ -95,12 +95,12 @@ func ResolveOpenAIWSClientReadLimitBytes(cfg *OpenAIWSOptions) int64 {
 	return cfg.ClientReadLimitBytes
 }
 
-// openAIWSHTTPBridgeEnabled 判断是否允许过大首帧走 HTTP bridge。
+// openAIWSHTTPBridgeEnabled reports whether an executor is available for oversized-frame bridging.
 func (s *OpenAIWebSocketExecutor) openAIWSHTTPBridgeEnabled() bool {
 	return s != nil
 }
 
-// openAIWSHTTPBridgeThresholdBytes 返回触发 HTTP bridge 的 payload 阈值。
+// openAIWSHTTPBridgeThresholdBytes returns the payload size that triggers HTTP bridging.
 func (s *OpenAIWebSocketExecutor) openAIWSHTTPBridgeThresholdBytes() int64 {
 	if s == nil || s.Options == nil || s.Options.HTTPBridgeThresholdBytes <= 0 {
 		return openAIWSHTTPBridgeThresholdBytesDefault
@@ -108,7 +108,7 @@ func (s *OpenAIWebSocketExecutor) openAIWSHTTPBridgeThresholdBytes() int64 {
 	return s.Options.HTTPBridgeThresholdBytes
 }
 
-// shouldBridgeOpenAIWSHTTP 判断当前 WS 首帧是否应改用 HTTP Responses 上游。
+// shouldBridgeOpenAIWSHTTP checks whether a first frame should use the HTTP upstream.
 func (s *OpenAIWebSocketExecutor) shouldBridgeOpenAIWSHTTP(provider *gatewayprovider.ExecutionProvider, payloadBytes int, previousResponseID string) bool {
 	if provider != nil && provider.Record.Platform == capability.PlatformGrok {
 		return true
@@ -123,7 +123,7 @@ func (s *OpenAIWebSocketExecutor) shouldBridgeOpenAIWSHTTP(provider *gatewayprov
 	return threshold > 0 && int64(payloadBytes) >= threshold
 }
 
-// shouldBridgeOpenAIWSPassthroughFirstMessage 判断透传首帧是否应切换到 HTTP bridge。
+// shouldBridgeOpenAIWSPassthroughFirstMessage checks whether the passthrough first frame qualifies for HTTP bridging.
 func (s *OpenAIWebSocketExecutor) shouldBridgeOpenAIWSPassthroughFirstMessage(provider *gatewayprovider.ExecutionProvider, payload []byte) bool {
 	if provider != nil && provider.Record.Platform == capability.PlatformGrok {
 		return true
@@ -151,13 +151,13 @@ func (s *OpenAIWebSocketExecutor) shouldBridgeOpenAIWSPassthroughFirstMessage(pr
 		keyStart := i
 		keyEnd := scanOpenAIWSJSONString(payload, keyStart)
 		i = skipOpenAIWSJSONSpace(payload, keyEnd)
-		i++ // json.Valid 已保证此处为冒号。
+		i++ // json.Valid guarantees a colon here.
 		i = skipOpenAIWSJSONSpace(payload, i)
 		valueStart := i
 		i = skipOpenAIWSJSONValue(payload, i)
 
 		key := ""
-		// 这些字段解码后最多约 20 字节，检查编码长度后再分配键的内存。
+		// Relevant keys decode to about 20 bytes at most; cap encoded length before allocating for a key.
 		if keyEnd-keyStart <= 128 {
 			_ = json.Unmarshal(payload[keyStart:keyEnd], &key)
 		}
@@ -248,7 +248,7 @@ func skipOpenAIWSJSONValue(payload []byte, i int) int {
 	return len(payload)
 }
 
-// prepareOpenAIWSHTTPBridgeBody 将 response.create WS payload 转成 HTTP Responses body。
+// prepareOpenAIWSHTTPBridgeBody converts a response.create frame to an HTTP Responses body.
 func prepareOpenAIWSHTTPBridgeBody(provider *gatewayprovider.ExecutionProvider, payload []byte) ([]byte, error) {
 	var body map[string]any
 	if err := wirejson.DecodeUseNumber(payload, &body); err != nil {
@@ -264,7 +264,7 @@ func prepareOpenAIWSHTTPBridgeBody(provider *gatewayprovider.ExecutionProvider, 
 	return json.Marshal(body)
 }
 
-// AddEvent 从上游事件中提取可重放的 function_call 项。
+// AddEvent collects completed output items and their function-call subset for replay.
 func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []byte) {
 	switch strings.TrimSpace(eventType) {
 	case "response.output_item.done":
@@ -283,14 +283,14 @@ func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []b
 	}
 }
 
-// Items 返回已收集工具调用上下文的拷贝。
-// Items/AllItems 返回浅拷贝头数组；正文由 collector 独立分配且此后不可变，
-// 调用方按 replay 所有权不变式共享持有。
+// Items returns a copy of the collected function-call slice.
+// Items and AllItems copy slice headers; their bodies are allocated by the collector and then immutable.
+// Callers may share the bodies for replay but must not mutate them.
 func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
 	return slices.Clone(c.items)
 }
 
-// AllItems 返回完整输出项，供提供商切换时重建当前回合上下文。
+// AllItems returns a copied output-item slice with shared immutable bodies for provider-failover replay.
 func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
 	return slices.Clone(c.allItems)
 }
@@ -371,8 +371,8 @@ func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 	return body
 }
 
-// buildOpenAIWSHTTPBridgeFailedEvent 将没有正式 response.failed 事件的上游错误
-// 封装成客户端可消费的 Responses 终止事件，并保留上游错误码和消息。
+// buildOpenAIWSHTTPBridgeFailedEvent wraps an error that lacks response.failed in a terminal event,
+// retaining the upstream error code and message when available.
 func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte, fallbackMessage string) []byte {
 	errorType := strings.TrimSpace(gjson.GetBytes(source, "error.type").String())
 	if errorType == "" {
@@ -410,7 +410,7 @@ func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte,
 	return body
 }
 
-// proxyOpenAIWSHTTPBridgeTurn 使用 HTTP Responses 上游完成一个 WS ingress turn，并把 SSE 事件转回 WS 消息。
+// proxyOpenAIWSHTTPBridgeTurn executes one ingress turn over HTTP and returns SSE events as WS messages.
 func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	ctx context.Context,
 	c *gin.Context,
@@ -485,7 +485,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			return nil, fmt.Errorf("adapt %s client tools: %w", openAIWSHTTPBridgeToolUpstreamName(provider), err)
 		}
 		if provider.Record.Platform == capability.PlatformGrok && !grokExplicitToolsField && !grokExplicitToolIntent && len(inheritedLoweredTools) > 0 && grok.HasGrokResponsesToolIntent(body) {
-			// 本轮省略 tools 时，缓存路由使用继承后的声明识别客户端函数。
+			// When tools are omitted, cache routing identifies client functions from inherited declarations.
 			grokIntentSourceBody = append(grokIntentSourceBody[:0], body...)
 		}
 		loweredTools := inheritedState.LoweredTools
@@ -497,7 +497,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			LoweredTools:  loweredTools,
 		})
 	}
-	// 预热先保存工具声明和名称映射，后续省略 tools 的轮次据此续接。
+	// Save warmup tool declarations and name mappings for later turns that omit tools.
 	if openai.IsWSWarmupPayload(payload) {
 		return completeHTTPBridgeWarmup(originalModel, writeClientMessage)
 	}
@@ -522,7 +522,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		billingModel = gatewayprovider.ExecutionModelPolicy(provider).Mapped(routingModel)
 		mappedModel = gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(billingModel)
 	}
-	// 客户端提供模型时回写该值，缺省时保留默认模型。
+	// Restore the client model in output when mapping changed it; retain the default when none was supplied.
 	needModelReplace := routingModel != "" && mappedModel != "" && mappedModel != originalModel
 	var mappedModelBytes []byte
 	if needModelReplace {
@@ -847,7 +847,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 
 		var upstreamEventErr error
 		if officialOpenAIResponses && bareErrorPending && (eventType == "response.completed" || eventType == "response.done") {
-			// 成功终态覆盖此前可恢复的裸错误，并清除该错误的副作用状态。
+			// A successful terminal supersedes the recoverable bare error and clears its pending state.
 			bareErrorPending = false
 			bareErrorPayload = nil
 			bareErrorMessage = ""
@@ -895,7 +895,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 				(turn == 1 || statusCode == http.StatusTooManyRequests) {
 				retrySame := requestScopedCapacity || terminalPolicy.Decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), statusCode)
 				if !requestScopedCapacity {
-					// 终止事件策略已执行，错误构造器消费其一次性状态，模型限流写入一次。
+					// Mark the applied terminal policy so the error builder consumes it without repeating model-limit writes.
 					gatewayhttp.MarkOpenAIResponseFailureEffects(c, statusCode, terminalPolicy.Decision.StopScheduling)
 				}
 				return nil, s.Output.NewStreamPolicyFailureWithModel(c, provider, true, resp.Header.Get("x-request-id"), resp.Header, statusCode, upstreamMessage, errMessage, retrySame, mappedModel)
@@ -926,9 +926,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 				requestScopedError = true
 				defaultFailover = true
 			} else if provider.Record.Platform == capability.PlatformGrok {
-				// SSE 错误事件不携带 HTTP 状态码，本地映射会把未知 xAI 错误码
-				// （例如 new_sensitive）默认映射为 502；应用基于状态码的故障转移或
-				// 提供商状态变更前，先按请求级 403 内容拒绝检查响应体。
+				// SSE errors may omit an HTTP status; unknown xAI codes such as new_sensitive
+				// then map to 502. Check the body for request-scoped content rejection first,
+				// before applying status-based failover or provider health changes.
 				if grok.IsGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
 					requestScopedError = true
 					defaultFailover = false
@@ -950,7 +950,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			if !requestScopedError && provider.Record.Platform == capability.PlatformOpenAI &&
 				(policyStatus == http.StatusUnauthorized || policyStatus == http.StatusTooManyRequests || policyStatus == 529 ||
 					(policyStatus == http.StatusForbidden && upstreamopenai.OpenAIStream403ProviderFailure(upstreamMessage, errMessage))) {
-				// error 和 response.failed 成对出现时，前者执行提供商状态更新，后者写出客户端事件，限流状态更新一次。
+				// For paired error and response.failed events, apply provider side effects once before delivering the terminal.
 				failureProviderSideEffectsApplied = true
 			}
 			if decision.ShouldReturnGenericError() && !requestScopedCapacity {
@@ -981,10 +981,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			bareErrorPending = false
 		}
 
-		// 客户端写出副本改写容量降载码：Codex 对 error/response.failed 中的
-		// server_is_overloaded / slow_down 判致命并终止会话，改写后走客户端内置
-		// 重试。提供商状态与终止事件判定（下方 handleOpenAIWSTerminalTransientFailure）
-		// 仍使用未改写的 upstreamMessage。
+		// Rewrite capacity codes in the client copy so the client can retry.
+		// Codes such as server_is_overloaded and slow_down otherwise end the Codex session.
+		// Provider health and terminal classification continue to use the upstream payload.
 		clientMessage := upstreamMessage
 		if eventType == "error" || eventType == "response.failed" {
 			if rewritten, changed := upstreamopenai.SanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
@@ -1109,7 +1108,7 @@ func resolveGrokWSUpstreamModel(provider *gatewayprovider.ExecutionProvider, bod
 	return upstreamModel
 }
 
-// resolveGrokWSModels 只解析一次提供商映射与 Grok 平台规范化，供请求、错误状态和结果记录复用。
+// resolveGrokWSModels applies provider mapping and Grok normalization once for requests, health updates, and results.
 func resolveGrokWSModels(provider *gatewayprovider.ExecutionProvider, body []byte, originalModel string) (string, string) {
 	requestedModel := strings.TrimSpace(originalModel)
 	if requestedModel == "" {
@@ -1126,7 +1125,7 @@ func resolveGrokWSModels(provider *gatewayprovider.ExecutionProvider, body []byt
 	return billingModel, upstreamModel
 }
 
-// completeHTTPBridgeWarmup 在本地完成预热，入站会话继续保存输入供下一轮重放。
+// completeHTTPBridgeWarmup emits local warmup events; ingress retains input for replay on the next turn.
 func completeHTTPBridgeWarmup(model string, write func([]byte) error) (*forward.OpenAIResult, error) {
 	started := time.Now()
 	responseID := "resp_ws_warmup_" + uuid.NewString()

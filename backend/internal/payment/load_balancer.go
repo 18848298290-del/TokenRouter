@@ -48,10 +48,10 @@ type contextKey string
 // instanceCandidate pairs an instance with its pre-fetched daily usage.
 type instanceCandidate struct {
 	inst      *ProviderInstance
-	dailyUsed float64 // 包含待支付和渠道处理中的订单
+	dailyUsed float64 // Includes pending and provider-processing orders.
 }
 
-// InstanceSource 查询支付实例及其当日用量。
+// InstanceSource queries payment instances and their daily usage.
 type InstanceSource interface {
 	EnabledInstances(context.Context, string) ([]*ProviderInstance, error)
 	Instance(context.Context, int64) (*ProviderInstance, error)
@@ -60,9 +60,9 @@ type InstanceSource interface {
 }
 
 type (
-	// SelectionObserver 接收渠道选择过程中的日志。
+	// SelectionObserver receives provider-selection log events.
 	SelectionObserver func(string, string, ...any)
-	// SelectionRuntime 提供渠道选择使用的时钟和日志函数。
+	// SelectionRuntime supplies the clock and logging callback for provider selection.
 	SelectionRuntime struct {
 		Now     func() time.Time
 		Observe SelectionObserver
@@ -101,10 +101,10 @@ func wxpayJSAPIAppIDFromContext(ctx context.Context) string {
 //
 // Flow:
 //  1. Query all enabled instances for providerKey, filter by supported paymentType
-//  2. 批量查询所有候选实例的当日占用（PENDING + PROCESSING + PAID + COMPLETED + RECHARGING）
+//  2. Batch-read daily usage for PENDING, PROCESSING, PAID, COMPLETED, and RECHARGING orders.
 //  3. Filter out instances where: single-min/max violated OR daily remaining < orderAmount
-//  4. Pick from survivors using the configured strategy (round-robin / least-amount)
-//  5. If all filtered out, fall back to full list (let the provider itself reject)
+//  4. If every instance is filtered out, use the full candidate list.
+//  5. Select by round-robin or least daily amount.
 func (lb *DefaultLoadBalancer) SelectInstance(
 	ctx context.Context,
 	providerKey string,
@@ -112,16 +112,13 @@ func (lb *DefaultLoadBalancer) SelectInstance(
 	strategy Strategy,
 	orderAmount float64,
 ) (*InstanceSelection, error) {
-	// Step 1: query enabled instances matching payment type.
 	instances, err := lb.queryEnabledInstances(ctx, providerKey, paymentType)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 2: batch-fetch daily usage for all candidates.
 	candidates := lb.attachDailyUsage(ctx, instances)
 
-	// Step 3: filter by limits.
 	available := filterByLimits(candidates, paymentType, orderAmount, lb.runtime.Observe)
 	if len(available) == 0 {
 		lb.observe("warn", "all instances exceeded limits, using full candidate list",
@@ -130,7 +127,6 @@ func (lb *DefaultLoadBalancer) SelectInstance(
 		available = candidates
 	}
 
-	// Step 4: pick by strategy.
 	selected := lb.pickByStrategy(available, strategy)
 	return lb.buildSelection(selected.inst), nil
 }
@@ -152,7 +148,7 @@ func (lb *DefaultLoadBalancer) queryEnabledInstances(
 	var matched []*ProviderInstance
 	expectedWxpayJSAPIAppID := wxpayJSAPIAppIDFromContext(ctx)
 	for _, inst := range instances {
-		// Stripe 按 provider_key 匹配，兼容旧 supported_types 子方式和新的服务商级 "stripe" 配置。
+		// Match Stripe by provider key to support both legacy subtypes and the "stripe" method.
 		if paymentType == TypeStripe {
 			if inst.ProviderKey == TypeStripe {
 				matched = append(matched, inst)
@@ -174,14 +170,13 @@ func (lb *DefaultLoadBalancer) queryEnabledInstances(
 }
 
 // attachDailyUsage queries daily usage for each instance in a single pass.
-// 占用量包含待支付和渠道处理中的订单。
+// Usage includes pending and provider-processing orders.
 func (lb *DefaultLoadBalancer) attachDailyUsage(
 	ctx context.Context,
 	instances []*ProviderInstance,
 ) []instanceCandidate {
 	todayStart := startOfDay(lb.runtime.Now())
 
-	// Collect instance IDs.
 	ids := make([]string, len(instances))
 	for i, inst := range instances {
 		ids[i] = fmt.Sprintf("%d", inst.ID)
@@ -269,7 +264,7 @@ func (lb *DefaultLoadBalancer) pickByStrategy(candidates []instanceCandidate, st
 }
 
 // pickLeastAmount selects the instance with the lowest daily usage.
-// 当日用量由 attachDailyUsage 预先读取。
+// attachDailyUsage supplies the daily totals before selection.
 func pickLeastAmount(candidates []instanceCandidate) instanceCandidate {
 	best := candidates[0]
 	for _, c := range candidates[1:] {
@@ -280,7 +275,7 @@ func pickLeastAmount(candidates []instanceCandidate) instanceCandidate {
 	return best
 }
 
-// buildSelection 将支付实例配置和支付模式整理为渠道选择结果。
+// buildSelection combines instance configuration and payment mode into a selection result.
 func (lb *DefaultLoadBalancer) buildSelection(selected *ProviderInstance) *InstanceSelection {
 	config := lb.decryptConfig(selected.Config)
 	if config == nil {
@@ -300,7 +295,7 @@ func (lb *DefaultLoadBalancer) buildSelection(selected *ProviderInstance) *Insta
 	}
 }
 
-// decryptConfig 读取支付实例配置，无法解析时记录日志并返回空配置。
+// decryptConfig reads instance configuration, logging parse failures and returning nil.
 func (lb *DefaultLoadBalancer) decryptConfig(stored string) map[string]string {
 	config, ok := parseProviderConfig(stored, lb.encryptionKey)
 	if !ok {
@@ -359,7 +354,7 @@ func resolveWxpayJSAPIAppID(config map[string]string) string {
 	return strings.TrimSpace(config["appId"])
 }
 
-// GetInstanceConfig 读取支付实例配置，无法解析时返回可写的空配置。
+// GetInstanceConfig returns instance configuration or a writable empty map when parsing fails.
 func (lb *DefaultLoadBalancer) GetInstanceConfig(ctx context.Context, instanceID int64) (map[string]string, error) {
 	inst, err := lb.source.Instance(ctx, instanceID)
 	if err != nil {
@@ -372,7 +367,7 @@ func (lb *DefaultLoadBalancer) GetInstanceConfig(ctx context.Context, instanceID
 	return config, nil
 }
 
-// observe 将日志级别、消息和字段传给注入的观察函数。
+// observe sends the level, message, and fields to the injected observer.
 func (lb *DefaultLoadBalancer) observe(level, message string, attrs ...any) {
 	if lb.runtime.Observe != nil {
 		lb.runtime.Observe(level, message, attrs...)

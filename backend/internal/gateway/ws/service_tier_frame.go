@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// ApplyServiceTierFrame 对发往上游的 response.create 帧应用与 HTTP 相同的 OpenAI Fast 策略。
-// pass 保留档位并将 fast 规范化为 priority，filter 删除顶层 service_tier，force_priority 写入 priority，block 返回策略错误。
-// 所有帧先校验 Ultra，其他类型（包括空 type）通过该校验后原样转发，空 type 由上游拒绝。
-// service_tier 位于帧顶层，与 Responses HTTP 请求一致，调用方传入本轮上游模型。
+// ApplyServiceTierFrame applies HTTP Fast policy rules to upstream response.create frames.
+// Pass normalizes fast to priority; filter removes the tier; force actions set the tier; block returns a policy rejection.
+// Valid JSON frames first undergo reasoning-effort validation. Other frame types then pass through unchanged.
+// The tier is a top-level field; callers supply this turn's upstream model for policy matching.
 func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.DecisionInput) ([]byte, *tierpolicy.BlockedError, error) {
 	if len(frame) == 0 {
 		return frame, nil, nil
@@ -24,12 +24,12 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 	if !gjson.ValidBytes(frame) {
 		return frame, nil, nil
 	}
-	// WS 会话允许逐帧切换参数，因此每个客户端帧都必须在上游转发前拒绝 Ultra。
+	// Validate reasoning effort on each frame because session parameters can change between frames.
 	if err := requeststate.ValidateOpenAIReasoningEffort(frame, model); err != nil {
 		return frame, nil, err
 	}
 	frameType := strings.TrimSpace(gjson.GetBytes(frame, "type").String())
-	// response.create 执行 Fast 策略检查，其他事件原样转发。Realtime 要求 type，缺失时由上游拒绝。
+	// Apply Fast policy to response.create; leave other event types to upstream validation.
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
@@ -55,27 +55,21 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 	return frame, nil, nil
 }
 
-// newOpenAIFastPolicyWSEventID returns a Realtime-style event_id for a
-// server-emitted error event. Matches the loose "evt_<rand>" convention used
-// by upstream Realtime servers; the exact value is not load-bearing and is
-// only required for client-side log correlation. We reuse the existing
-// google/uuid dependency rather than pulling a new one.
+// newOpenAIFastPolicyWSEventID returns an evt_-prefixed random identifier
+// for correlating a server-emitted policy error in client logs.
 func newOpenAIFastPolicyWSEventID() string {
 	id, err := uuid.NewRandom()
 	if err != nil {
-		// Extremely unlikely; fall back to a fixed prefix so the field is
-		// still non-empty and the schema stays self-consistent.
+		// Keep the identifier non-empty if random generation fails.
 		return "evt_openai_fast_policy"
 	}
-	// Strip dashes so it visually matches "evt_<hex>" rather than UUID v4
-	// canonical form, mirroring what real Realtime traces look like.
+	// Use a compact hexadecimal UUID after the event prefix.
 	return "evt_" + strings.ReplaceAll(id.String(), "-", "")
 }
 
-// BuildFastPolicyBlockedEvent renders an OpenAI Realtime/Responses
-// style "error" event payload for a request blocked by the OpenAI fast
-// policy. The shape mirrors Realtime error events as observed in upstream
-// traces and per the spec's server "error" event:
+// BuildFastPolicyBlockedEvent renders a Realtime-style error for a Fast policy rejection.
+// The event ID supports log correlation and policy_violation gives clients a stable error code.
+// It returns nil when err is nil.
 //
 //	{
 //	  "event_id": "evt_<random>",
@@ -86,10 +80,6 @@ func newOpenAIFastPolicyWSEventID() string {
 //	    "message": "..."
 //	  }
 //	}
-//
-// event_id lets clients correlate the rejection in their logs; "code" gives
-// programmatic clients a stable identifier (HTTP-side equivalent is the
-// 403 permission_error JSON body).
 func BuildFastPolicyBlockedEvent(err *tierpolicy.BlockedError) []byte {
 	if err == nil {
 		return nil
@@ -105,8 +95,7 @@ func BuildFastPolicyBlockedEvent(err *tierpolicy.BlockedError) []byte {
 		},
 	})
 	if mErr != nil {
-		// Fallback to a minimal hand-rolled payload; Marshal of the literal
-		// shape above should never fail in practice.
+		// Return a minimal event if encoding fails.
 		return []byte(`{"event_id":"` + eventID + `","type":"error","error":{"type":"invalid_request_error","code":"policy_violation","message":"openai fast policy blocked this request"}}`)
 	}
 	return payload

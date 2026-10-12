@@ -24,22 +24,22 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// HTTPUpstreamSuite HTTP 上游服务测试套件
-// 使用 testify/suite 组织测试，支持 SetupTest 初始化。
+// HTTPUpstreamSuite tests upstream transport settings with a fresh Options value per test.
+
 type HTTPUpstreamSuite struct {
 	suite.Suite
-	cfg *Options // 测试用配置
+	cfg *Options
 }
 
-// roundTripFunc 用测试函数处理 HTTP 请求。
+// roundTripFunc handles test requests with a supplied function.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
-// testUpstreamPool 执行请求的客户端适配与结果通知。
+// testUpstreamPool applies client hooks and reports request results.
 type testUpstreamPool struct {
 	transport http.RoundTripper
 }
 
-// upstreamClientView 记录执行请求时使用的客户端、代理和 TLS 配置。
+// upstreamClientView captures the client, proxy key, and TLS settings selected for a request.
 type upstreamClientView struct {
 	tlsProfile   *tlsfingerprint.Profile
 	client       *http.Client
@@ -504,7 +504,7 @@ func TestApplyGrokCLIProxyHeaders(t *testing.T) {
 		require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), req.Header.Get("User-Agent"))
 	})
 
-	// 所有样本版本都高于固定版本，预期因 SemVer 格式非法而被拒绝。
+	// These inputs exercise the accepted version syntax, including rejection of build metadata.
 	for _, version := range []string{
 		"0.2.0121",
 		"0.2.121-alpha..1",
@@ -538,22 +538,19 @@ func TestApplyGrokCLIProxyHeaders(t *testing.T) {
 	})
 }
 
-// SetupTest 每个测试用例执行前的初始化
-// 创建空配置，各测试用例可按需覆盖。
+// SetupTest creates options that each test can override.
 func (s *HTTPUpstreamSuite) SetupTest() {
 	s.cfg = &Options{}
 }
 
-// newService 创建测试用的 Client 实例
-// 返回具体类型以便访问内部状态进行断言。
+// newService returns a client that reads the suite options.
 func (s *HTTPUpstreamSuite) newService() *Client {
 	up := New(func() *Options { return s.cfg })
 	svc := up
 	return svc
 }
 
-// TestDefaultResponseHeaderTimeout 测试默认响应头超时配置
-// 配置为 0 时禁用响应头超时。
+// TestDefaultResponseHeaderTimeout checks that a zero option disables the header timeout.
 func (s *HTTPUpstreamSuite) TestDefaultResponseHeaderTimeout() {
 	svc := s.newService()
 	entry := mustGetOrCreateClient(s.T(), svc, "", 0, 0)
@@ -562,7 +559,7 @@ func (s *HTTPUpstreamSuite) TestDefaultResponseHeaderTimeout() {
 	require.Equal(s.T(), time.Duration(0), transport.ResponseHeaderTimeout, "ResponseHeaderTimeout mismatch")
 }
 
-// TestNilConfigResponseHeaderTimeoutFallback 检查 nil 配置是否使用代码定义的默认值。
+// TestNilConfigResponseHeaderTimeoutFallback checks that absent options select the built-in timeout.
 func (s *HTTPUpstreamSuite) TestNilConfigResponseHeaderTimeoutFallback() {
 	up := New(nil)
 	svc := up
@@ -572,8 +569,7 @@ func (s *HTTPUpstreamSuite) TestNilConfigResponseHeaderTimeoutFallback() {
 	require.Equal(s.T(), 300*time.Second, transport.ResponseHeaderTimeout, "ResponseHeaderTimeout mismatch")
 }
 
-// TestCustomResponseHeaderTimeout 测试自定义响应头超时配置
-// 验证配置值能正确应用到 Transport。
+// TestCustomResponseHeaderTimeout checks that the transport receives the configured seconds.
 func (s *HTTPUpstreamSuite) TestCustomResponseHeaderTimeout() {
 	*s.cfg = Options{ResponseHeaderTimeout: 7}
 	svc := s.newService()
@@ -583,8 +579,7 @@ func (s *HTTPUpstreamSuite) TestCustomResponseHeaderTimeout() {
 	require.Equal(s.T(), 7*time.Second, transport.ResponseHeaderTimeout, "ResponseHeaderTimeout mismatch")
 }
 
-// TestGetOrCreateClient_InvalidURLReturnsError 测试无效代理 URL 返回错误
-// 验证解析失败时拒绝回退到直连模式。
+// TestGetOrCreateClient_InvalidURLReturnsError checks that a malformed proxy prevents client selection.
 func (s *HTTPUpstreamSuite) TestGetOrCreateClient_InvalidURLReturnsError() {
 	svc := s.newService()
 	_, err := svc.getClientEntry("://bad-proxy-url", 1, 1, upstreamcore.HTTPUpstreamProfileDefault, false, false)
@@ -641,7 +636,7 @@ func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintDoesNotInheritGeneric
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH1, entry.protocolMode, "未声明 h2 的 TLS 模板应保持 HTTP/1.1")
 }
 
-//nolint:staticcheck // 此测试检查 uTLS 裸连接适配所需的 x/net/http2 Transport 和 PING 设置。
+//nolint:staticcheck // Check the x/net/http2 transport and PING settings used with raw uTLS connections.
 func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintUsesHTTP2WhenALPNAllowsH2() {
 	*s.cfg = Options{
 		OpenAIHTTP2: HTTP2Options{
@@ -662,7 +657,7 @@ func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintUsesHTTP2WhenALPNAllo
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, entry.protocolMode)
 }
 
-// TestOpenAIProfileTLSFingerprintHTTP2HeaderTimeout 验证本场景验证配置到技术快照的映射；裸 H2 的超时行为由机制测试覆盖。
+// TestOpenAIProfileTLSFingerprintHTTP2HeaderTimeout checks how configuration maps to pool options.
 func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintHTTP2HeaderTimeout() {
 	*s.cfg = Options{OpenAIResponseHeaderTimeout: 1, OpenAIHTTP2: HTTP2Options{Enabled: true}}
 	svc := s.newService()
@@ -801,8 +796,7 @@ func (s *HTTPUpstreamSuite) TestOpenAIHTTP2ProxyCompatibilityErrorActivatesFallb
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH1Fallback, entry.protocolMode)
 }
 
-// TestNormalizeProxyURL_Canonicalizes 测试代理 URL 规范化
-// 验证等价地址能够映射到同一缓存键。
+// TestNormalizeProxyURL_Canonicalizes checks that equivalent proxy URLs share a cache key.
 func (s *HTTPUpstreamSuite) TestNormalizeProxyURL_Canonicalizes() {
 	key1, _, err1 := normalizeProxyURL("http://proxy.local:8080")
 	require.NoError(s.T(), err1)
@@ -811,13 +805,8 @@ func (s *HTTPUpstreamSuite) TestNormalizeProxyURL_Canonicalizes() {
 	require.Equal(s.T(), key1, key2, "expected normalized proxy keys to match")
 }
 
-// TestAcquireClient_OverLimitReturnsError 测试连接池缓存上限保护
-// 验证超限且无可淘汰条目时返回错误
-
-// TestDo_WithoutProxy_GoesDirect 测试无代理时直连
-// 验证空代理 URL 时请求直接发送到目标服务器。
+// TestDo_WithoutProxy_GoesDirect checks that an empty proxy URL reaches the target server.
 func (s *HTTPUpstreamSuite) TestDo_WithoutProxy_GoesDirect() {
-	// 创建模拟上游服务器
 	upstream := newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "direct")
 	}))
@@ -836,14 +825,12 @@ func (s *HTTPUpstreamSuite) TestDo_WithoutProxy_GoesDirect() {
 	require.Equal(s.T(), "direct", string(b), "unexpected body")
 }
 
-// TestDo_WithHTTPProxy_UsesProxy 测试 HTTP 代理功能
-// 验证请求通过代理服务器转发，使用绝对 URI 格式。
+// TestDo_WithHTTPProxy_UsesProxy checks that the proxy receives an absolute-form request URI.
 func (s *HTTPUpstreamSuite) TestDo_WithHTTPProxy_UsesProxy() {
-	// 用于接收代理请求的通道
 	seen := make(chan string, 1)
-	// 创建模拟代理服务器
+
 	proxySrv := newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.RequestURI // 记录请求 URI
+		seen <- r.RequestURI
 		_, _ = io.WriteString(w, "proxied")
 	}))
 	s.T().Cleanup(proxySrv.Close)
@@ -851,7 +838,6 @@ func (s *HTTPUpstreamSuite) TestDo_WithHTTPProxy_UsesProxy() {
 	*s.cfg = Options{ResponseHeaderTimeout: 1}
 	up := New(func() *Options { return s.cfg })
 
-	// 发送请求到外部地址，应通过代理
 	req, err := http.NewRequest(http.MethodGet, "http://example.com/test", nil)
 	require.NoError(s.T(), err, "NewRequest")
 	resp, err := up.Do(req, proxySrv.URL, 1, 1)
@@ -862,7 +848,6 @@ func (s *HTTPUpstreamSuite) TestDo_WithHTTPProxy_UsesProxy() {
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(s.T(), "proxied", string(b), "unexpected body")
 
-	// 验证代理收到的是绝对 URI 格式（HTTP 代理规范要求）
 	select {
 	case uri := <-seen:
 		require.Equal(s.T(), "http://example.com/test", uri, "expected absolute-form request URI")
@@ -871,8 +856,7 @@ func (s *HTTPUpstreamSuite) TestDo_WithHTTPProxy_UsesProxy() {
 	}
 }
 
-// TestDo_EmptyProxy_UsesDirect 测试空代理字符串
-// 验证空字符串代理等同于直连。
+// TestDo_EmptyProxy_UsesDirect checks direct requests with an empty proxy string.
 func (s *HTTPUpstreamSuite) TestDo_EmptyProxy_UsesDirect() {
 	upstream := newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "direct-empty")
@@ -891,56 +875,51 @@ func (s *HTTPUpstreamSuite) TestDo_EmptyProxy_UsesDirect() {
 	require.Equal(s.T(), "direct-empty", string(b))
 }
 
-// TestProviderIsolation_DifferentProviders 测试提供商隔离模式
-// 验证不同提供商使用独立的连接池。
+// TestProviderIsolation_DifferentProviders checks that provider IDs separate connection pools.
 func (s *HTTPUpstreamSuite) TestProviderIsolation_DifferentProviders() {
 	*s.cfg = Options{ConnectionPoolIsolation: "provider"}
 	svc := s.newService()
-	// 同一代理，不同提供商
+
 	entry1 := mustGetOrCreateClient(s.T(), svc, "http://proxy.local:8080", 1, 3)
 	entry2 := mustGetOrCreateClient(s.T(), svc, "http://proxy.local:8080", 2, 3)
 	require.NotSame(s.T(), entry1.client.Transport, entry2.client.Transport, "不同提供商不应共享连接池")
 }
 
-// TestProviderProxyIsolation_DifferentProxy 测试提供商+代理组合隔离模式
-// 验证同一提供商使用不同代理时创建独立连接池。
+// TestProviderProxyIsolation_DifferentProxy checks that proxy changes separate pools for the same provider.
 func (s *HTTPUpstreamSuite) TestProviderProxyIsolation_DifferentProxy() {
 	*s.cfg = Options{ConnectionPoolIsolation: "provider_proxy"}
 	svc := s.newService()
-	// 同一提供商，不同代理
+
 	entry1 := mustGetOrCreateClient(s.T(), svc, "http://proxy-a:8080", 1, 3)
 	entry2 := mustGetOrCreateClient(s.T(), svc, "http://proxy-b:8080", 1, 3)
 	require.NotSame(s.T(), entry1.client.Transport, entry2.client.Transport, "提供商+代理隔离应区分不同代理")
 }
 
-// TestProviderModeProxyChangeClearsPool 测试提供商模式下代理变更
-// TestProviderModeProxyChangeClearsPool 检查提供商切换代理时清理旧连接池。
+// TestProviderModeProxyChangeClearsPool checks that switching a provider proxy replaces its transport.
 func (s *HTTPUpstreamSuite) TestProviderModeProxyChangeClearsPool() {
 	*s.cfg = Options{ConnectionPoolIsolation: "provider"}
 	svc := s.newService()
-	// 同一提供商，先后使用不同代理
+
 	entry1 := mustGetOrCreateClient(s.T(), svc, "http://proxy-a:8080", 1, 3)
 	entry2 := mustGetOrCreateClient(s.T(), svc, "http://proxy-b:8080", 1, 3)
 	require.NotSame(s.T(), entry1.client.Transport, entry2.client.Transport, "提供商切换代理应创建新连接池")
 }
 
-// TestProviderConcurrencyOverridesPoolSettings 测试提供商并发数覆盖连接池配置
-// 验证提供商隔离模式下，连接池大小与提供商并发数对应。
+// TestProviderConcurrencyOverridesPoolSettings checks connection limits against provider concurrency.
 func (s *HTTPUpstreamSuite) TestProviderConcurrencyOverridesPoolSettings() {
 	*s.cfg = Options{ConnectionPoolIsolation: "provider"}
 	svc := s.newService()
-	// 提供商并发数为 12
+
 	entry := mustGetOrCreateClient(s.T(), svc, "", 1, 12)
 	transport, ok := entry.client.Transport.(*http.Transport)
 	require.True(s.T(), ok, "expected *http.Transport")
-	// 连接池参数应与并发数一致
+
 	require.Equal(s.T(), 12, transport.MaxConnsPerHost, "MaxConnsPerHost mismatch")
 	require.Equal(s.T(), 12, transport.MaxIdleConns, "MaxIdleConns mismatch")
 	require.Equal(s.T(), 12, transport.MaxIdleConnsPerHost, "MaxIdleConnsPerHost mismatch")
 }
 
-// TestProviderConcurrencyFallbackToDefault 测试提供商并发数为 0 时回退到默认配置
-// 验证未指定并发数时使用全局配置值。
+// TestProviderConcurrencyFallbackToDefault checks that zero concurrency uses global pool limits.
 func (s *HTTPUpstreamSuite) TestProviderConcurrencyFallbackToDefault() {
 	*s.cfg = Options{
 		ConnectionPoolIsolation: "provider",
@@ -949,7 +928,7 @@ func (s *HTTPUpstreamSuite) TestProviderConcurrencyFallbackToDefault() {
 		MaxConnsPerHost:         66,
 	}
 	svc := s.newService()
-	// 提供商并发数为 0，应使用全局配置
+
 	entry := mustGetOrCreateClient(s.T(), svc, "", 1, 0)
 	transport, ok := entry.client.Transport.(*http.Transport)
 	require.True(s.T(), ok, "expected *http.Transport")
@@ -958,21 +937,10 @@ func (s *HTTPUpstreamSuite) TestProviderConcurrencyFallbackToDefault() {
 	require.Equal(s.T(), 55, transport.MaxIdleConnsPerHost, "MaxIdleConnsPerHost fallback mismatch")
 }
 
-// TestHTTPUpstreamSuite 测试超出数量限制时的 LRU 淘汰
-// 验证优先淘汰最久未使用的空闲客户端
-
-// TestIdleTTLDoesNotEvictActive 测试活跃请求保护
-// 验证有进行中请求的客户端不会被空闲超时淘汰
-
-// TestHTTPUpstreamSuite 运行测试套件。
+// TestHTTPUpstreamSuite runs the transport suite.
 func TestHTTPUpstreamSuite(t *testing.T) {
 	suite.Run(t, new(HTTPUpstreamSuite))
 }
-
-// mustGetOrCreateClient 测试辅助函数，调用 getOrCreateClient 并断言无错误
-
-// hasEntry 检查客户端是否存在于缓存中
-// 辅助函数，用于验证淘汰逻辑
 
 func TestHTTPUpstreamDoPublicHostsOnlyRejectsPrivateDestinationBeforeConnecting(t *testing.T) {
 	var calls atomic.Int64
@@ -1033,7 +1001,8 @@ func TestHTTPUpstreamPublicHostsOnlyValidatesEveryRedirectHop(t *testing.T) {
 	require.Error(t, client.CheckRedirect(publicHop, make([]*http.Request, 10)), "redirect chain stays capped")
 }
 
-// TestHTTPUpstreamPublicHostsOnlyPreservesExistingRedirectPolicy 验证公网下载约束与已有的重定向策略必须同时生效，且不能污染缓存客户端。
+// TestHTTPUpstreamPublicHostsOnlyPreservesExistingRedirectPolicy checks that public-host checks
+// run before the existing redirect callback on a cloned client.
 func TestHTTPUpstreamPublicHostsOnlyPreservesExistingRedirectPolicy(t *testing.T) {
 	upstream := New(nil)
 	called := false
@@ -1057,7 +1026,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-// newLocalTestServer 在环境无法监听时跳过测试。
+// newLocalTestServer skips the test when a preliminary loopback listen fails.
 func newLocalTestServer(tb testing.TB, handler http.Handler) *httptest.Server {
 	tb.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

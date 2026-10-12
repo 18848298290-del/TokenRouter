@@ -116,6 +116,8 @@ func (r *CleanupStore) ListTasks(ctx context.Context, params pagination.Paginati
 	return tasks, paginationResultFromTotal(total, params), nil
 }
 
+// ClaimNextPendingTask atomically claims the oldest pending or stale running task, skipping locked candidates.
+// A nonpositive stale timeout defaults to 1800 seconds; no eligible task returns nil.
 func (r *CleanupStore) ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*usage.UsageCleanupTask, error) {
 	if staleRunningAfterSeconds <= 0 {
 		staleRunningAfterSeconds = 1800
@@ -323,6 +325,7 @@ func (r *CleanupStore) DeleteUsageLogsBatch(ctx context.Context, filters usage.U
 	return deleted, nil
 }
 
+// buildUsageCleanupWhere includes both time endpoints; aggregate repair must rebuild the bucket containing EndTime.
 func buildUsageCleanupWhere(filters usage.UsageCleanupFilters) (string, []any) {
 	conditions := make([]string, 0, 8)
 	args := make([]any, 0, 8)

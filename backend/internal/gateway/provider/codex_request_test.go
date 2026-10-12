@@ -14,7 +14,7 @@ import (
 )
 
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
-	// 续链场景：保留 item_reference 与 id，但不再强制 store=true。
+	// Continuation requests retain item references and IDs with store=false.
 
 	reqBody := map[string]any{
 		"model": "gpt-5.2",
@@ -27,7 +27,7 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 
 	ApplyCodexOAuthTransform(reqBody, false, false)
 
-	// 未设置 store=true 时默认为 false。
+	// Storage defaults to false.
 	store, ok := reqBody["store"].(bool)
 	require.True(t, ok)
 	require.False(t, store)
@@ -36,13 +36,11 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, input, 2)
 
-	// 确认 input[0] 是 map 后读取字段。
 	first, ok := input[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "item_reference", first["type"])
 	require.Equal(t, "ref1", first["id"])
 
-	// 校验 input[1] 为 map，确保后续字段断言安全。
 	second, ok := input[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "o1", second["id"])
@@ -195,8 +193,8 @@ func TestApplyCodexOAuthTransform_BoundsLongCallIDsAndPreservesPairing(t *testin
 }
 
 func TestApplyCodexOAuthTransform_PreservesCallIDsWithinLimitWhenRequested(t *testing.T) {
-	// preserve 模式下不超过 64 字符的 id 原样透传（包含长度正好为 64 的情况），
-	// 不做任何前缀改写或压缩。
+	// Preserve mode passes IDs of up to 64 characters through unchanged,
+	// including IDs exactly at the limit.
 	for _, tc := range []struct {
 		name   string
 		callID string
@@ -231,8 +229,8 @@ func TestApplyCodexOAuthTransform_PreservesCallIDsWithinLimitWhenRequested(t *te
 }
 
 func TestApplyCodexOAuthTransform_CompactsOverlongCallIDsWhenPreserveRequested(t *testing.T) {
-	// preserve 模式下超过 64 字符的 id 若原样透传，上游必然返回 400；
-	// function_call 与 function_call_output 两侧使用相同的确定性压缩结果。
+	// IDs longer than 64 characters must be shortened even in preserve mode.
+	// Calls and their outputs must receive the same deterministic replacement.
 	callID := "srvtoolu_" + strings.Repeat("x", 69)
 	require.Len(t, callID, 78)
 	reqBody := map[string]any{
@@ -622,8 +620,6 @@ func TestCodexInputItemRequiresNameTypesAllowCallID(t *testing.T) {
 }
 
 func TestApplyCodexOAuthTransform_ExplicitStoreFalsePreserved(t *testing.T) {
-	// 续链请求中的 store=false 保持为 false。
-
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
 		"store": false,
@@ -641,8 +637,6 @@ func TestApplyCodexOAuthTransform_ExplicitStoreFalsePreserved(t *testing.T) {
 }
 
 func TestApplyCodexOAuthTransform_ExplicitStoreTrueForcedFalse(t *testing.T) {
-	// store=true 会被强制设置为 false。
-
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
 		"store": true,
@@ -676,7 +670,7 @@ func TestApplyCodexOAuthTransform_CompactForcesNonStreaming(t *testing.T) {
 }
 
 func TestApplyCodexOAuthTransform_NonContinuationDefaultsStoreFalseAndStripsIDs(t *testing.T) {
-	// 非续链场景：未设置 store 时默认 false，并移除 input 中的 id。
+	// Requests without continuation default to store=false and strip input IDs.
 
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
@@ -694,7 +688,7 @@ func TestApplyCodexOAuthTransform_NonContinuationDefaultsStoreFalseAndStripsIDs(
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
 	require.Len(t, input, 1)
-	// 确认 input[0] 是 map 后读取字段。
+
 	item, ok := input[0].(map[string]any)
 	require.True(t, ok)
 	_, hasID := item["id"]
@@ -702,7 +696,7 @@ func TestApplyCodexOAuthTransform_NonContinuationDefaultsStoreFalseAndStripsIDs(
 }
 
 func TestApplyCodexOAuthTransform_PreservesReasoningInput(t *testing.T) {
-	// HTTP 非透传路径保留 reasoning item，多轮任务通过这些项传递交错思考上下文。
+	// The HTTP conversion path retains reasoning items for interleaved thinking across turns.
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
 		"input": []any{
@@ -735,7 +729,7 @@ func TestFilterCodexInput_RemovesItemReferenceWhenNotPreserved(t *testing.T) {
 
 	filtered := openai.FilterCodexInputWithOptions(input, openai.CodexInputFilterOptions{PreserveReferences: false})
 	require.Len(t, filtered, 1)
-	// 校验 filtered[0] 为 map，确保字段检查可靠。
+
 	item, ok := filtered[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "text", item["type"])
@@ -1143,7 +1137,7 @@ func TestApplyCodexOAuthTransform_DoesNotAddSparkImageUnsupportedForNonSpark(t *
 	require.NotContains(t, instructions, openai.CodexSparkImageUnsupportedMarker)
 }
 
-// TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark 验证 gpt-5.3-codex-spark 上游会拒绝 image_generation 工具，OAuth 转换需要剥离该工具并保留其它工具。
+// TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark checks that Spark drops image generation while retaining other tools.
 func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.3-codex-spark",
@@ -1167,7 +1161,7 @@ func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark(t *testing.T
 	require.Equal(t, "shell", first["name"])
 }
 
-// TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias 验证 Spark 推理强度别名会归一化为 gpt-5.3-codex-spark，也需要剥离 image_generation。
+// TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias checks removal of the sole image generation tool.
 func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.3-codex-spark",
@@ -1180,7 +1174,7 @@ func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias(t *test
 	result := ApplyCodexOAuthTransform(reqBody, true, false)
 	require.True(t, result.Modified)
 	require.False(t, openai.HasOpenAIImageGenerationTool(reqBody))
-	// 剥离唯一工具后 tools 会被清空并删除字段。
+	// An empty tool list is omitted.
 	_, hasTools := reqBody["tools"]
 	require.False(t, hasTools)
 }
@@ -1289,7 +1283,7 @@ func TestStripOpenAIImageGenerationTools_KeepsCustomImagegenFunctionChoice(t *te
 	require.Contains(t, reqBody, "tool_choice")
 }
 
-// TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark 验证非 Spark Codex 模型支持 image_generation，工具应保持不变。
+// TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark checks image generation support on a non-Spark model.
 func TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.3-codex",
@@ -1372,8 +1366,6 @@ func TestValidateOpenAIResponsesImageModel_RejectsImageOnlyModel(t *testing.T) {
 }
 
 func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
-	// 空 input 应保持为空且不触发异常。
-
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
 		"input": []any{},
@@ -1386,7 +1378,7 @@ func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
 	require.Len(t, input, 0)
 }
 
-// TestCodexTransformPreservesModelID 检查 Codex 请求中的完整型号。
+// TestCodexTransformPreservesModelID checks that full model identifiers pass through unchanged.
 func TestCodexTransformPreservesModelID(t *testing.T) {
 	cases := map[string]string{
 		"gpt-5.4":                   "gpt-5.4",
@@ -1434,7 +1426,7 @@ func TestCodexTransformPreservesModelID(t *testing.T) {
 	}
 }
 
-// TestCodexTransformPreservesLegacyModelID 检查历史型号和空字段的转发值。
+// TestCodexTransformPreservesLegacyModelID covers older identifiers and empty model fields.
 func TestCodexTransformPreservesLegacyModelID(t *testing.T) {
 	cases := map[string]string{
 		"":                   "",
@@ -1486,8 +1478,6 @@ func TestApplyCodexOAuthTransform_TrimmedModelWithoutPolicyRewrite(t *testing.T)
 }
 
 func TestApplyCodexOAuthTransform_CodexCLI_PreservesExistingInstructions(t *testing.T) {
-	// Codex CLI 场景：已有 instructions 时不修改
-
 	reqBody := map[string]any{
 		"model":        "gpt-5.1",
 		"instructions": "existing instructions",
@@ -1498,16 +1488,14 @@ func TestApplyCodexOAuthTransform_CodexCLI_PreservesExistingInstructions(t *test
 	instructions, ok := reqBody["instructions"].(string)
 	require.True(t, ok)
 	require.Equal(t, "existing instructions", instructions)
-	// Modified 仍可能为 true（因为其他字段被修改），但 instructions 应保持不变
+	// Other transformations may set Modified even when instructions remain unchanged.
 	_ = result
 }
 
 func TestApplyCodexOAuthTransform_CodexCLI_SuppliesDefaultWhenEmpty(t *testing.T) {
-	// Codex CLI 场景：无 instructions 时补充默认值
-
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
-		// 没有 instructions 字段
+		// Instructions are absent.
 	}
 
 	result := ApplyCodexOAuthTransform(reqBody, true, false) // isCodexCLI=true
@@ -1534,7 +1522,7 @@ func TestApplyCodexOAuthTransform_GPT55SuppliesModelSpecificInstructions(t *test
 }
 
 func TestApplyCodexOAuthTransform_NonCodexCLI_PreservesExistingInstructions(t *testing.T) {
-	// 非 Codex CLI 场景中，已有 instructions 使用客户端的值。
+	// Non-CLI requests also retain client instructions.
 
 	reqBody := map[string]any{
 		"model":        "gpt-5.1",
@@ -1778,8 +1766,8 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 	})
 }
 
-// TestApplyCodexOAuthTransform_StripsPromptCacheRetention 检查删除客户端传入的 prompt_cache_retention。
-// ChatGPT 内部 Codex 端点会以 Unsupported parameter: prompt_cache_retention 拒绝该字段。
+// TestApplyCodexOAuthTransform_StripsPromptCacheRetention checks removal of the client retention field.
+// The internal Codex endpoint rejects it with Unsupported parameter: prompt_cache_retention.
 func TestApplyCodexOAuthTransform_StripsPromptCacheRetention(t *testing.T) {
 	reqBody := map[string]any{
 		"model":                  "gpt-5.1",
@@ -1949,8 +1937,8 @@ func TestIsInstructionsEmpty(t *testing.T) {
 	}
 }
 
-// TestFilterCodexInput_PreservesReasoningStripsID 检查 OAuth 续链保留 reasoning 内容及 encrypted_content。
-// store=false 时通过加密内容重放推理上下文；rs_* 引用会触发上游 404，因此在两种引用保留模式下都会删除。
+// TestFilterCodexInput_PreservesReasoningStripsID checks replay of reasoning and encrypted content.
+// With store=false, replay uses encrypted content; both reference modes strip unreachable rs_* IDs.
 func TestFilterCodexInput_PreservesReasoningStripsID(t *testing.T) {
 	build := func() []any {
 		return []any{
@@ -1971,16 +1959,16 @@ func TestFilterCodexInput_PreservesReasoningStripsID(t *testing.T) {
 
 			item, ok := filtered[0].(map[string]any)
 			require.True(t, ok)
-			// reasoning 项经过过滤后仍存在。
+
 			require.Equal(t, "reasoning", item["type"])
-			// encrypted_content 按输入内容输出。
+
 			require.Equal(t, "gAAAAAB-enc-payload", item["encrypted_content"])
-			// PreserveReferences=true 时也删除 rs_* ID，上游会通过该 ID 查询历史项并返回 404。
+			// PreserveReferences also strips rs_* IDs because upstream lookup of unstored items returns 404.
 			_, hasID := item["id"]
 			require.False(t, hasID)
 			_, hasCallID := item["call_id"]
 			require.False(t, hasCallID)
-			// summary 按输入内容输出。
+
 			summary, ok := item["summary"].([]any)
 			require.True(t, ok)
 			require.Len(t, summary, 0)
@@ -1988,8 +1976,8 @@ func TestFilterCodexInput_PreservesReasoningStripsID(t *testing.T) {
 	}
 }
 
-// TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary 检查删除 reasoning 的 rs_* ID，并补齐空 summary。
-// 缺少 summary 会触发上游 400：Missing required parameter input[N].summary。
+// TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary checks ID removal and an empty default summary.
+// Missing summary triggers upstream error Missing required parameter input[N].summary.
 func TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary(t *testing.T) {
 	input := []any{
 		map[string]any{"type": "message", "id": "msg_0", "role": "user", "content": "hi"},
@@ -2013,7 +2001,7 @@ func TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary(t *testing.T) {
 }
 
 func TestFilterCodexInput_ReasoningBackfillsMissingSummary(t *testing.T) {
-	// 上游要求 reasoning item 带 summary；缺失时补空数组，同时保留 encrypted_content。
+	// Reasoning requires a summary; supply an empty array while retaining encrypted content.
 	input := []any{
 		map[string]any{
 			"type":              "reasoning",
@@ -2034,7 +2022,7 @@ func TestFilterCodexInput_ReasoningBackfillsMissingSummary(t *testing.T) {
 }
 
 func TestFilterCodexInput_PreservesReasoningSummaryContentAndEncryptedContent(t *testing.T) {
-	// store=false 时移除不可续链的 rs_* id，其他 reasoning 字段原样保留。
+	// With store=false, strip unreachable rs_* IDs and retain other reasoning fields.
 	summary := []any{map[string]any{"type": "summary_text", "text": "checked files"}}
 	content := []any{map[string]any{"type": "reasoning_text", "text": "private state"}}
 	input := []any{
@@ -2059,7 +2047,7 @@ func TestFilterCodexInput_PreservesReasoningSummaryContentAndEncryptedContent(t 
 }
 
 func TestFilterCodexInput_StripsReasoningIDsWhenReferencesArePreserved(t *testing.T) {
-	// 续链时移除 reasoning item 的 rs_* id，因为 store=false 时这些引用不可达。
+	// Continuation also strips rs_* IDs because store=false leaves those references unreachable.
 	input := []any{
 		map[string]any{
 			"type":    "reasoning",
@@ -2077,10 +2065,10 @@ func TestFilterCodexInput_StripsReasoningIDsWhenReferencesArePreserved(t *testin
 	require.NotContains(t, reasoning, "id")
 }
 
-// TestApplyCodexClientMetadata 验证 Codex 客户端元数据的注入。
-// gatewayprovider.ApplyCodexClientMetadata：使用提供商的 device_id 补充缺失的 installation 标识，重复调用结果相同。
+// TestApplyCodexClientMetadata checks installation metadata injection.
+// The provider device_id fills a missing installation key, and repeated calls are idempotent.
 func TestApplyCodexClientMetadata(t *testing.T) {
-	// 仅 OpenAI OAuth 提供商才有 device_id（GetOpenAIDeviceID 的门控）。
+	// GetOpenAIDeviceID exposes the device ID only for OpenAI OAuth providers.
 	acc := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Extra: map[string]any{"openai_device_id": "dev-xyz"}}}
 
 	body := map[string]any{}
@@ -2088,16 +2076,16 @@ func TestApplyCodexClientMetadata(t *testing.T) {
 	cm, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "dev-xyz", cm["x-codex-installation-id"])
-	// 幂等
+	// Repeated injection is a no-op.
 	require.False(t, ApplyCodexClientMetadata(body, acc))
 
-	// OAuth 提供商但无 device_id → 不写入（不伪造）
+	// An OAuth provider without device_id supplies no installation key.
 	body2 := map[string]any{}
 	require.False(t, ApplyCodexClientMetadata(body2, &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}))
 	_, ok = body2["client_metadata"]
 	require.False(t, ok)
 
-	// 既有 client_metadata（如 turn metadata）保留，仅补 installation 键
+	// Retain existing client metadata and add the missing installation key.
 	body3 := map[string]any{"client_metadata": map[string]any{"x-codex-turn-metadata": "t"}}
 	require.True(t, ApplyCodexClientMetadata(body3, acc))
 	cm3, _ := body3["client_metadata"].(map[string]any)

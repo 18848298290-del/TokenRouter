@@ -8,22 +8,21 @@ import (
 )
 
 func messageFailover400(respBody []byte) bool {
-	// 只对"可能是兼容性差异导致"的 400 允许切换，避免无意义重试。
-	// 默认保守：无法识别则不切换。
+	// Allow failover for recognized compatibility errors that another provider may accept.
+	// Unrecognized 400 responses remain terminal.
 	msg := strings.ToLower(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
 	if msg == "" {
 		return false
 	}
 
-	// 缺少/错误的 beta header：换提供商/链路可能成功（尤其是混合调度时）。
-	// 更精确匹配 beta 相关的兼容性问题，避免误触发切换。
+	// A different provider may support the requested beta features.
 	if strings.Contains(msg, "anthropic-beta") ||
 		strings.Contains(msg, "beta feature") ||
 		strings.Contains(msg, "requires beta") {
 		return true
 	}
 
-	// thinking/tool streaming 等兼容性约束（常见于中间转换链路）
+	// Thinking signatures and tool support can differ between upstreams.
 	if strings.Contains(msg, "thinking") || strings.Contains(msg, "thought_signature") || strings.Contains(msg, "signature") {
 		return true
 	}

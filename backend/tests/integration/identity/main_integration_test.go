@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// databaseSuite 在当前测试进程内共享迁移模板。
+// databaseSuite shares the migration template within this test process.
 var databaseSuite postgrescontainer.Suite
 
-// runIdentityTests 在身份测试完成后回收共享容器。
+// runIdentityTests releases shared containers after the identity tests finish.
 func runIdentityTests(m *testing.M) int { return databaseSuite.Run(m) }

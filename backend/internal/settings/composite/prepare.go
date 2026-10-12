@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// PrepareOptions 固定原有校验顺序所需的只读能力，准备阶段不接受写入或通知端口。
+// PrepareOptions provides validation, reads, and defaults for preparing settings before persistence.
 type PrepareOptions struct {
 	ValidatePlans func(context.Context, []billing.DefaultSubscriptionSetting) error
 	ReadValues    func(context.Context) (map[string]string, error)
@@ -34,7 +34,7 @@ type PrepareOptions struct {
 	Scheduler     scheduler.AdminDefaults
 }
 
-// Prepare 组合所属模块准备结果，保留原完整文档入口的错误优先级。
+// Prepare collects module settings in validation order and updates the snapshot with normalized values.
 func Prepare(ctx context.Context, settings *Snapshot, options PrepareOptions) (map[string]string, error) {
 	if err := options.ValidatePlans(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func Prepare(ctx context.Context, settings *Snapshot, options PrepareOptions) (m
 	return updates, nil
 }
 
-// prepareQuotaMerge 保留额外 GetAll 的原时点，Ops 独占共享 JSON 合并。
+// prepareQuotaMerge reads current settings and delegates the shared JSON merge to ops.
 func prepareQuotaMerge(ctx context.Context, options PrepareOptions, quota provider.QuotaAutoPauseSettings) (*ops.OpsAdvancedSettings, error) {
 	values, err := options.ReadValues(ctx)
 	if err != nil {

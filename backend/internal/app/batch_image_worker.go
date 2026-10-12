@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// batchPricingGroups 返回任务报价需要的分组字段，由任务用例按需读取。
+// batchPricingGroups reads group fields and billing settings used to quote batch tasks.
 type batchPricingGroups struct {
 	source   routing.GroupRepository
 	settings *routing.PricingConfigService
@@ -55,7 +55,7 @@ func batchVertexOptions(cfg *config.Config) batchprovider.VertexBatchImageProvid
 	}
 }
 
-// provideBatchRuntime 绑定批量图片的资金、处理和恢复实例及后台运行循环。
+// provideBatchRuntime binds batch image funding, processing, settlement, recovery, and worker loops.
 func provideBatchRuntime(requests *requestlog.Service, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, queue batchimage.BatchImageQueue, funds *billing.Funds, logs usage.UsageLogRepository, pricing *batchimage.Pricing, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Runtime {
 	funding := batchimage.Funding{Store: funds, Observe: creativeObserve}
 	processor := &batchimage.ProviderProcessor{Repo: repo, Funding: funding, Observe: creativeObserve, ResolveProvider: (batchprovider.ResultAccess{Registry: registry, Providers: providers}).Process}
@@ -86,7 +86,7 @@ func provideBatchRuntime(requests *requestlog.Service, repo batchimage.BatchImag
 	return batchimage.NewWorkerRuntime(worker, recovery, cfg != nil && cfg.BatchImage.QueueEnabled)
 }
 
-// batchWorkerOptions 从启动配置读取 worker 参数，默认值和校验由任务模块维护。
+// batchWorkerOptions reads startup configuration; the batch image module supplies defaults and validation.
 func batchWorkerOptions(cfg *config.Config) batchimage.BatchImageWorkerOptions {
 	if cfg == nil {
 		return batchimage.NormalizeBatchImageWorkerOptions(batchimage.BatchImageWorkerOptions{})

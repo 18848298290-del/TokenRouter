@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 健康替身记录模型范围的状态写入，其他接口留空。
+// imageHealthStore records model-scoped writes; unimplemented health methods panic.
 type imageHealthStore struct {
 	providercore.HealthStore
 	modelRateLimitCalls []imageHealthWrite

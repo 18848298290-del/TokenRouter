@@ -28,7 +28,6 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	}
 	startTime := time.Now()
 
-	// 1. Parse Anthropic request
 	var anthropicReq protocolanthropic.AnthropicRequest
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {
 		return nil, fmt.Errorf("parse anthropic request: %w", err)
@@ -42,7 +41,6 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	normalizedModel := anthropicReq.Model
 	clientStream := anthropicReq.Stream // client's original stream preference
 
-	// 2. Model mapping
 	billingModel := p.BillingModel(normalizedModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
 	anthropicReq.Model = upstreamModel
@@ -51,9 +49,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	anthropicDigestChain := ""
 	anthropicMatchedDigestChain := ""
 	compatPromptCacheInjected := false
-	// Grok 不经过 gpt-5/codex 兼容注入器，但 Claude Code 仍携带稳定的会话标识。
-	// 优先将它作为 Grok 提示缓存种子，使多轮 /v1/messages 流量可以命中 xAI
-	// 服务端缓存。
+	// Use Claude Code's stable session identity as Grok's cache seed when available.
+	// Grok skips the GPT/Codex key injector, so this lets successive Messages turns
+	// reuse the xAI cache identity.
 	if promptCacheKey == "" && profile.Platform == "grok" {
 		if sessionSeed := p.ClaudeSession(body); sessionSeed != "" {
 			promptCacheKey = sessionSeed
@@ -89,23 +87,23 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	compatContinuationDisabled := compatContinuationEnabled &&
 		p.ContinuationDisabled(ctx, promptCacheKey)
 	compatTurnState := ""
-	// ChatGPT/Codex 凭据依赖 session_id 与 x-codex-turn-state；截成 12 条滑动窗口
-	// 会让缓存前缀停留在 system/tools，因此保留完整重放供上游逐轮扩展缓存。
+	// Codex uses session_id and x-codex-turn-state for caching. Keep the full replay
+	// so the cached prefix can grow beyond system instructions and tools between turns.
 	if compatReplayGuardEnabled && !profile.UsesCodex && previousResponseID == "" && !compatContinuationDisabled {
 		compatReplayTrimmed = p.ReplayGuard(&anthropicReq)
 	}
 
-	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
+	// Convert after applying the compatibility replay guard.
 	responsesReq, err := p.Convert(&anthropicReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
 
-	// 上游保持流式，兼容不支持同步模式的端点；回程格式由客户端原始偏好决定。
+	// Force upstream streaming for endpoints that require it; client preference controls the response format.
 	responsesReq.Stream = true
 	isStream := true
 
-	// 3b. Handle BetaFastMode → service_tier: "priority"
+	// Map the Anthropic fast-mode beta to the Responses priority tier.
 	if p.BetaFast() {
 		responsesReq.ServiceTier = "priority"
 	}
@@ -154,7 +152,6 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	}
 	p.Debug("openai messages: model mapping applied", logFields...)
 
-	// 4. Marshal Responses request body, then apply the ChatGPT/Codex transform.
 	responsesBody, err := json.Marshal(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -207,7 +204,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if p.AutoCacheKey(upstreamModel) {
 			compatTurnState = p.TurnState(ctx, promptCacheKey)
 		}
-		// OAuth Codex 转换固定上游 stream=true，读取始终使用流式处理器。
+		// The Codex transform forces stream=true, so read its response as a stream.
 		isStream = true
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
@@ -215,8 +212,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// API Key 提供商也通过请求体传递 prompt_cache_key，供兼容 Responses 的上游
-	// 推导稳定会话标识，使 Messages 桥与 Responses 客户端使用相同的缓存标识。
+	// API key providers receive prompt_cache_key in the body, sharing the same
+	// upstream cache identity convention as Responses clients.
 	if profile.Type == "apikey" {
 		if trimmedKey := strings.TrimSpace(promptCacheKey); trimmedKey != "" {
 			var reqBody map[string]any
@@ -233,7 +230,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			}
 		}
 	}
-	// 客户端提供 output_config.effort 时绑定策略，在模型和提示词改写完成后应用到出站请求和计费结果。
+	// Apply the policy bound to client output_config.effort after model and prompt rewriting.
 	if profile.Platform == "openai" {
 		policyBody, changed, policyErr := p.ApplyEffort(ctx, responsesBody)
 		if policyErr != nil {
@@ -247,8 +244,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// 4c. Apply OpenAI fast policy (may filter service_tier or block the request).
-	// 按请求体 service_tier 应用 Claude fast-mode beta 的过滤规则。
+	// Apply fast-mode policy to the outgoing tier, including the Claude beta filter.
 	updatedBody, policyErr := p.ApplyFast(ctx, upstreamModel, responsesBody)
 	if policyErr != nil {
 		return nil, policyErr
@@ -277,17 +273,15 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// 5. Get access token
 	token, err := p.Credential(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build upstream request
 	if profile.UsesCodex && profile.Platform != "grok" {
-		// Messages 兼容桥即使 body 未带 todo-guard/prompt_cache_key 标记（如映射到非
-		// gpt-5/codex 模型），也必须让 buildUpstreamRequest 走 bridge 分支，以保留
-		// 既有 body/session/conversation 行为。身份头在 post-build 阶段统一恢复。
+		// Select Messages bridge construction even when the body lacks todo-guard or cache-key
+		// markers, such as after mapping to another model family. This controls body and session handling.
+		// Restore identity headers after construction.
 		p.BindMessagesBridge(true)
 	}
 	upstreamCtx, releaseUpstreamCtx := p.UpstreamContext(ctx)
@@ -297,7 +291,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	// 使用隔离会话键派生的确定性 UUID 覆盖 session_id，保持不同 Key 的会话隔离。
+	// Derive a deterministic session UUID from the isolated key to separate API key sessions.
 	if profile.Platform != "grok" && promptCacheKey != "" {
 		isolatedSessionID := p.IsolatedSessionID(apiKeyID, promptCacheKey)
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
@@ -306,9 +300,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 	if profile.UsesCodex && profile.Platform != "grok" {
-		// buildUpstreamRequest 保留 Messages bridge 的 body/session 兼容行为，并会先
-		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失
-		// originator/OpenAI-Beta 返回 404（issue #3901）。
+		// Bridge construction removes identity headers. Restore originator and OpenAI-Beta
+		// before sending; the Codex upstream can return 404 when they are missing (issue #3901).
 		p.RestoreIdentity(upstreamReq.Header)
 		p.Debug("openai messages: upstream identity restored",
 			zap.Int64("provider_id", profile.ID),
@@ -323,11 +316,10 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
 	}
 
-	// 发送前取得代理信息，本次重试复用该值。
+	// Prepare transport once before the send loop.
 	p.PrepareTransport()
-	// Grok 可能拒绝在不同 OAuth 提供商或缓存身份下回放的加密推理。与
-	// forwardGrokResponses 保持一致：先剥离密文并重试一次，再将 400 作为硬失败
-	// 或故障转移触发条件处理。
+	// Grok can reject encrypted reasoning replayed under another OAuth provider or cache identity.
+	// Remove that ciphertext and retry once before treating the 400 as terminal or requesting failover.
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
@@ -352,8 +344,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		// 优先识别明确的解密错误；若出站请求仍带有 reasoning.encrypted_content，
-		// 任意 400 也允许剥离一次（提供商切换经常只返回不透明的 "Upstream error: 400"）。
+		// Recognize decryption errors first. An opaque 400 also permits one repair attempt
+		// when the outbound body still contains encrypted reasoning.
 		shouldStrip := p.GrokInvalidEncrypted(resp.StatusCode, respBody) ||
 			p.GrokHasEncrypted(responsesBody)
 		if !shouldStrip {
@@ -377,7 +369,6 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, _ := p.ReadUpstreamError(resp)
 		if !p.AgentRecoveryTried(ctx) && p.IsAgentIdentity(ctx) && p.InvalidAgentTask(resp.StatusCode, respBody) {
@@ -403,8 +394,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			)
 			return RunMessages(ctx, body, promptCacheKey, defaultMappedModel, p)
 		}
-		// Grok 切换提供商后的历史记录经常解密失败；在客户端请求体层剥离一次加密推理，
-		// 让故障转移提供商可以接收多轮工具续接，避免连续返回 400。
+		// A decryption failure can survive provider switching. Strip client-body thinking
+		// signatures once so the next attempt can replay the tool continuation.
 		if profile.Platform == "grok" &&
 			p.GrokInvalidEncrypted(resp.StatusCode, respBody) &&
 			!p.GrokStripRetried(ctx) {
@@ -418,7 +409,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if foErr := p.FailoverHTTP(ctx, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
-		// 非 failover 错误按 Anthropic 格式返回。
+		// Format errors that remain after failover checks as Anthropic errors.
 		return p.ErrorResponse(resp, billingModel)
 	}
 	if profile.Platform == "grok" && profile.Type == "oauth" && !profile.Shadow {
@@ -431,8 +422,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// 9. Handle normal response
-	// 上游始终流式，回程按客户端偏好选择格式。
+	// Read the upstream stream and format output according to the client's preference.
 	var result *Result
 	var handleErr error
 	var nativeResult *openai.CompatResponseResult
@@ -451,7 +441,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		return nil, handleErr
 	}
 
-	// 将档位和最终 effort 传入完成结果供计费使用
+	// Save continuation state and the final billing controls after successful output.
 	if handleErr == nil && result != nil {
 		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			p.BindResponseID(ctx, promptCacheKey, result.ResponseID)
@@ -459,8 +449,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if promptCacheKey != "" && anthropicDigestChain != "" {
 			p.BindDigestKey(apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
 		}
-		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
-		// fast policy filter/force 之后）里的 tier。
+		// Prefer the upstream's echoed tier; otherwise use the outgoing body's tier
+		// after fast-policy filtering or forcing.
 		if tier := p.ResolvedServiceTier(p.ServiceTier(responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}
@@ -470,8 +460,8 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// OAuth 提供商从响应头提取并保存 Codex 用量快照。
-	// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新。
+	// Update OAuth Codex usage from response headers.
+	// Spark shadows obtain their codex_* snapshot through QueryUsage's bengalfox query.
 	if handleErr == nil && profile.Type == "oauth" && !profile.Shadow && profile.Platform != "grok" {
 		p.UpdateCodexUsage(ctx, resp.Header)
 	}

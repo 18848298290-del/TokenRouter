@@ -2,7 +2,7 @@ package scheduler
 
 import "context"
 
-// LiveConcurrencyCache 管理同时计入提供商、用户和 API Key 的长会话租约。
+// LiveConcurrencyCache manages long-lived leases counted against provider, user, and API key limits.
 type LiveConcurrencyCache interface {
 	AcquireLiveLease(
 		ctx context.Context,

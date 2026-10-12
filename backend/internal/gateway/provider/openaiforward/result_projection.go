@@ -50,7 +50,7 @@ func ToForwardResult(result *Result) *forwardcore.OpenAIResult {
 	return value
 }
 
-// FromForwardResult 将网关完成结果转换为本包的转发结果。
+// FromForwardResult converts a gateway completion result into this package's forwarding result.
 func FromForwardResult(r *forwardcore.OpenAIResult) *Result {
 	if r == nil {
 		return nil
@@ -96,7 +96,7 @@ func FromForwardResult(r *forwardcore.OpenAIResult) *Result {
 	return value
 }
 
-// FromCompatResult 将兼容响应结果转换为转发结果并附加计费模型。
+// FromCompatResult converts a compatibility response result and attaches the billing model.
 func FromCompatResult(r *openai.CompatResponseResult, billing string) *Result {
 	if r == nil {
 		return nil

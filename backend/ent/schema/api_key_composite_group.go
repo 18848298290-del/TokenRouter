@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// APIKeyCompositeGroup 保存复合 API Key 的分组前缀映射。
+// APIKeyCompositeGroup stores group prefix mappings for composite API keys.
 type APIKeyCompositeGroup struct {
 	ent.Schema
 }

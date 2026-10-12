@@ -11,9 +11,9 @@ import (
 )
 
 func NormalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
-	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
-	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
-	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
+	// Resumed tasks can include previous_response_id and historical calls with IDs.
+	// Delegation envelopes represent client-injected user input rather than historical call results,
+	// so they can coexist with identifiable historical items.
 	return NormalizeCodexCallOutputBootstrap(body, IsCodexDelegationCandidate, true)
 }
 
@@ -42,8 +42,8 @@ func NormalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 		return body, false
 	}
 
-	// 按 *_call 和 *_call_output 的报文形状识别内置调用。
-	// delegation 在 ID 配对后可与历史锚点共存，automation 使用首次引导位置。
+	// Recognize built-in calls by *_call and *_call_output shapes.
+	// Delegation permits historical items with IDs; automation requires bootstrap context.
 	for _, raw := range input {
 		item, ok := raw.(map[string]any)
 		if !ok {

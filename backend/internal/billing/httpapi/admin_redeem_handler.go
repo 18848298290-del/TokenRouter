@@ -18,7 +18,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// RedeemAdministrator 只包含兑换 HTTP 所需的完整用例。
+// RedeemAdministrator provides the redemption management operations used by HTTP handlers.
 type RedeemAdministrator interface {
 	ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string, sortBy, sortOrder string) ([]billing.RedeemCode, int64, error)
 	GetRedeemCode(ctx context.Context, id int64) (*billing.RedeemCode, error)
@@ -37,9 +37,9 @@ type AdminRedeemHandler struct {
 	redeemService *billing.RedeemService
 }
 
-// GenerateRedeemCodesRequest represents generate redeem codes request.
+// GenerateRedeemCodesRequest supplies redemption code generation parameters.
 type GenerateRedeemCodesRequest struct {
-	RequiresPayment bool    `json:"requires_payment"` // 默认允许所有用户领取
+	RequiresPayment bool    `json:"requires_payment"` // False allows users with no payment history.
 	Code            string  `json:"code" binding:"omitempty,max=32"`
 	Count           int     `json:"count" binding:"required,min=1,max=100"`
 	Type            string  `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
@@ -47,32 +47,32 @@ type GenerateRedeemCodesRequest struct {
 	MaxUses         *int    `json:"max_uses" binding:"omitempty,min=0"`
 	ExpiresAt       *int64  `json:"expires_at" binding:"omitempty,min=0"`
 	ExpiresInDays   *int    `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
-	PlanID          *int64  `json:"plan_id"` // 订阅类型必填
+	PlanID          *int64  `json:"plan_id"` // Required for subscription codes.
 }
 
-// UpdateRedeemCodeRequest 表示更新兑换码请求。
+// UpdateRedeemCodeRequest supplies optional redemption code changes.
 type UpdateRedeemCodeRequest struct {
-	RequiresPayment *bool    `json:"requires_payment"` // 省略时保持领取条件
+	RequiresPayment *bool    `json:"requires_payment"` // Omission keeps the eligibility requirement unchanged.
 	Value           *float64 `json:"value"`
 	MaxUses         *int     `json:"max_uses" binding:"omitempty,min=0"`
 	ExpiresAt       *int64   `json:"expires_at" binding:"omitempty,min=0"`
-	PlanID          *int64   `json:"plan_id"` // 订阅类型专用
+	PlanID          *int64   `json:"plan_id"` // Applies to subscription codes.
 }
 
 // CreateAndRedeemCodeRequest represents creating a fixed code and redeeming it for a target user.
-// Type 使用 omitempty，未传入时默认为 balance。
+// An omitted Type defaults to balance.
 type CreateAndRedeemCodeRequest struct {
 	Code          string  `json:"code" binding:"required,min=3,max=128"`
-	Type          string  `json:"type" binding:"omitempty,oneof=balance concurrency subscription invitation"` // 不传时默认 balance（向后兼容）
+	Type          string  `json:"type" binding:"omitempty,oneof=balance concurrency subscription invitation"`
 	Value         float64 `json:"value" binding:"required"`
 	UserID        int64   `json:"user_id" binding:"required,gt=0"`
-	PlanID        *int64  `json:"plan_id"` // subscription 类型必填
+	PlanID        *int64  `json:"plan_id"` // Required for subscription codes.
 	Notes         string  `json:"notes"`
 	ExpiresAt     *int64  `json:"expires_at" binding:"omitempty,min=0"`
 	ExpiresInDays *int    `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
 
-// NewAdminRedeemHandler 创建管理员兑换码处理器。
+// NewAdminRedeemHandler constructs the administrator redemption handler.
 func NewAdminRedeemHandler(adminService RedeemAdministrator, redeemService *billing.RedeemService) *AdminRedeemHandler {
 	return &AdminRedeemHandler{
 		adminService:  adminService,
@@ -80,7 +80,8 @@ func NewAdminRedeemHandler(adminService RedeemAdministrator, redeemService *bill
 	}
 }
 
-// ResolveRedeemCodeExpiresAt 兼容绝对过期时间和相对天数，统一返回 UTC 过期时间。
+// ResolveRedeemCodeExpiresAt accepts either Unix seconds or days from now and returns UTC. Zero or omitted expiry
+// returns nil.
 func ResolveRedeemCodeExpiresAt(expiresAt *int64, expiresInDays *int) (*time.Time, error) {
 	if expiresAt != nil && *expiresAt < 0 {
 		return nil, apperror.BadRequest("REDEEM_CODE_EXPIRES_AT_INVALID", "expires_at must be greater than or equal to zero")
@@ -131,7 +132,7 @@ func (h *AdminRedeemHandler) List(c *gin.Context) {
 	response.Paginated(c, out, total, page, pageSize)
 }
 
-// normalizeRedeemSearch 去掉搜索词首尾空白，并截取前 100 个 Unicode 字符。
+// normalizeRedeemSearch trims surrounding whitespace and keeps at most 100 Unicode code points.
 func normalizeRedeemSearch(search string) string {
 	search = strings.TrimSpace(search)
 	count := 0
@@ -162,7 +163,7 @@ func (h *AdminRedeemHandler) GetByID(c *gin.Context) {
 	response.Success(c, RedeemCodeFromServiceAdmin(code))
 }
 
-// Update 处理更新兑换码。
+// Update applies optional changes to a redemption code.
 // PUT /api/v1/admin/redeem-codes/:id
 func (h *AdminRedeemHandler) Update(c *gin.Context) {
 	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -185,7 +186,7 @@ func (h *AdminRedeemHandler) Update(c *gin.Context) {
 		ExpiresAtSet:    req.ExpiresAt != nil,
 	}
 	if req.ExpiresAt != nil && *req.ExpiresAt > 0 {
-		// expires_at=0 表示清除过期时间；省略字段表示保持不变。
+		// Zero clears expiry; omission leaves it unchanged.
 		t := time.Unix(*req.ExpiresAt, 0)
 		input.ExpiresAt = &t
 	}
@@ -251,8 +252,8 @@ func (h *AdminRedeemHandler) CreateAndRedeem(c *gin.Context) {
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
-	// 向后兼容：旧版调用方（如 Sub2ApiPay）不传 type 字段，默认当作 balance 充值处理。
-	// 请勿删除此默认值逻辑，否则会导致旧版调用方 400 报错。
+	// Older callers, including Sub2ApiPay, omit type for balance top-ups.
+	// Default it before validation to keep those requests valid.
 	if req.Type == "" {
 		req.Type = "balance"
 	}
@@ -289,7 +290,7 @@ func (h *AdminRedeemHandler) CreateAndRedeem(c *gin.Context) {
 			ExpiresAt: expiresAt,
 		})
 		if createErr != nil {
-			// 唯一码并发创建时，如果此时已能查到固定码，则按 used_by 做幂等处理。
+			// A concurrent creator may have won the unique-code race. Re-read and check used_by for idempotent success.
 			existingAfterCreateErr, getErr := h.redeemService.GetByCode(ctx, req.Code)
 			if getErr == nil {
 				return h.resolveCreateAndRedeemExisting(ctx, existingAfterCreateErr, req.UserID)
@@ -314,7 +315,7 @@ func (h *AdminRedeemHandler) resolveCreateAndRedeemExisting(ctx context.Context,
 		return gin.H{"redeem_code": RedeemCodeFromServiceAdmin(existing)}, nil
 	}
 
-	// 如果上一次请求已创建固定码但在兑换前中断，这里补偿完成兑换。
+	// Resume redemption when an earlier request created the code but stopped before redeeming it.
 	if existing.IsExpired() {
 		return nil, billing.ErrRedeemCodeExpired
 	}
@@ -379,7 +380,7 @@ func (h *AdminRedeemHandler) BatchDelete(c *gin.Context) {
 	})
 }
 
-// BatchUpdate 批量修改兑换码的非权益字段。
+// BatchUpdate applies batch field changes through the redemption service.
 // POST /api/v1/admin/redeem-codes/batch-update
 func (h *AdminRedeemHandler) BatchUpdate(c *gin.Context) {
 	if h.redeemService == nil {
@@ -450,18 +451,16 @@ func (h *AdminRedeemHandler) Export(c *gin.Context) {
 	sortBy := c.DefaultQuery("sort_by", "id")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	// Get all codes without pagination (use large page size)
+	// Export at most 10000 matching codes using the first page.
 	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, search, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// Create CSV buffer
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
 
-	// Write header
 	if err := writer.Write([]string{
 		"id",
 		"code",
@@ -480,7 +479,6 @@ func (h *AdminRedeemHandler) Export(c *gin.Context) {
 		return
 	}
 
-	// Write data rows
 	for _, code := range codes {
 		usedBy := ""
 		if code.UsedBy != nil {

@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// StreamClient 发送一次已准备的 Qoder 请求。
+// StreamClient sends a prepared Qoder request.
 type StreamClient interface {
 	StreamRequestContext(context.Context, *SessionContext, string, []byte, map[string]string) (*http.Response, error)
 }
@@ -23,7 +23,7 @@ type streamClientWithDoer interface {
 	StreamRequestContextWithDoer(context.Context, *SessionContext, string, []byte, map[string]string, RequestDoer) (*http.Response, error)
 }
 
-// Target 保存本次 Qoder 请求的站点、元数据和会话获取函数。
+// Target holds the request site, metadata, and session and client factories.
 type Target struct {
 	Attributes func(context.Context, string, protocol.ProtocolID) (modelcatalog.Resolution, error)
 	ProviderID int64
@@ -35,7 +35,7 @@ type Target struct {
 	Doer       RequestDoer
 }
 
-// ExecuteOptions 配置会话存储、执行超时和活动登记函数。
+// ExecuteOptions configures conversation storage, the execution timeout, and activity registration.
 type ExecuteOptions struct {
 	Conversations *QoderConversationStore
 	Timeout       time.Duration
@@ -54,7 +54,7 @@ func (t *Target) TargetID() int64 {
 	return t.ProviderID
 }
 
-// String 防止诊断格式化展开闭包、代理及凭据。
+// String reports the provider ID without exposing credentials or transport details.
 func (t *Target) String() string { return fmt.Sprintf("qoder target provider=%d", t.TargetID()) }
 
 func NewExecutor(options ExecuteOptions) *Executor {
@@ -67,7 +67,7 @@ func NewExecutor(options ExecuteOptions) *Executor {
 	return &Executor{conversations: options.Conversations, timeout: options.Timeout, enter: options.Enter}
 }
 
-// PrepareConversation 只推进请求计划；成功接受与完成的提交分别由 Execute 驱动。
+// PrepareConversation builds the request plan; Execute commits acceptance and completion.
 func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.ProtocolID, request QoderPayloadRequest) (map[string]any, string, *QoderConversationPlan) {
 	request.UserType = target.UserType
 	request.Site = target.Site
@@ -78,7 +78,7 @@ func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.Pro
 	return payload, model, plan
 }
 
-// Execute 是三种客户端 wire 的唯一执行实现；错误不抹掉已确认的部分用量。
+// Execute serves Chat, Messages, and Responses and retains observed partial usage on stream errors.
 // @project-doc docs/interfaces/qoder_upstream.md#qoder_execution_boundary
 func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, executionErr error) {
 	if e.enter != nil {
@@ -157,7 +157,7 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 	if err != nil {
 		return upstream.AttemptResult{}, fmt.Errorf("marshal qoder payload: %w", err)
 	}
-	// 凭据等待使用原请求取消；仅已进入推理的流继续有界收集尾部用量。
+	// Credential waits follow request cancellation. Started streams collect trailing usage within the execution timeout.
 	if err := ctx.Err(); err != nil {
 		return upstream.AttemptResult{}, err
 	}
@@ -241,7 +241,7 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 			return upstream.AttemptResult{}, err
 		}
 		result.Served = true
-		// 非流式输出写入失败时，已完成的上游服务仍进入结算。
+		// Completed upstream work remains billable when the non-streaming response write fails.
 		if writeErr := sink.Begin(upstream.OutputHead{Status: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json; charset=utf-8"}}}); writeErr != nil {
 			result.ClientDisconnect = true
 		} else if writeErr = sink.Emit(upstream.OutputEvent{Data: responseBody, Semantic: true, CommitForRetry: true, Terminal: true}); writeErr != nil {

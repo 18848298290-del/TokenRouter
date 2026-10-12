@@ -51,13 +51,13 @@ func (s *ProxyProbeServiceSuite) TestProbeProxy_UnsupportedProxyScheme() {
 
 func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPAPI() {
 	s.setupProxyServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 检查是否是 ip-api 请求
+		// Serve a successful response only for the first probe target.
 		if strings.Contains(r.RequestURI, "ip-api.com") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"status":"success","query":"1.2.3.4","city":"c","regionName":"r","country":"cc","countryCode":"CC"}`)
 			return
 		}
-		// 其他请求返回错误
+		// Reject other targets so success depends on parsing ip-api.
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 
@@ -73,12 +73,12 @@ func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPAPI() {
 
 func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPifyFallback() {
 	s.setupProxyServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// ip-api 失败
+		// Fail the first target to exercise the ipify fallback.
 		if strings.Contains(r.RequestURI, "ip-api.com") {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		// ipify 成功
+		// The second target succeeds.
 		if strings.Contains(r.RequestURI, "api64.ipify.org") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ip": "5.6.7.8"}`)
@@ -110,7 +110,7 @@ func (s *ProxyProbeServiceSuite) TestProbeProxy_InvalidJSON() {
 			_, _ = io.WriteString(w, "not-json")
 			return
 		}
-		// ipify 也返回无效响应
+		// Return invalid JSON from the fallback target too.
 		if strings.Contains(r.RequestURI, "api64.ipify.org") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, "not-json")

@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// openAIImageTryAgainPattern 依次提取重试提示中的数值和时间单位。
+// openAIImageTryAgainPattern captures the numeric delay and time unit in retry hints.
 var openAIImageTryAgainPattern = regexp.MustCompile(`(?i)try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes)`)
 
-// IsImageCapabilityLossError 判断上游是否拒绝了 tokenrouter 自己写入请求体的 image_generation 工具选择。
-// 该判定仅对自构造图片请求有意义，因为这类请求始终包含匹配的 image_generation 项；
-// 上游仍称其不存在即表示提供商失去该能力。
+// IsImageCapabilityLossError recognizes rejection of an image_generation tool choice.
+// Use it for gateway-built image requests, which contain a matching tool declaration;
+// in that context a missing-tool error indicates provider capability loss.
 func IsImageCapabilityLossError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest || len(body) == 0 {
 		return false

@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// 夹具记录传输请求和同步事件，执行使用平台测试组件。
+// geminiTestTransportFixture captures the request built by the production probe executor.
 type geminiTestTransportFixture struct {
 	request *http.Request
 	body    string

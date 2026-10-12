@@ -22,7 +22,7 @@ import (
 
 const usageLogSelectColumns = "id, user_id, billing_user_id, team_id, api_key_id, provider_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, subscription_amount_usd, balance_amount_usd, billing_allocations, rate_multiplier, provider_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, pricing_config_id, model_mapping_chain, billing_tier, billing_mode, provider_stats_cost, upstream_request_id, session_id, created_at, requested_reasoning_effort, native_compaction_v2, platform, upstream_response_model, upstream_model_mismatch"
 
-// UsageLogFilters 表示用量日志查询过滤条件。
+// UsageLogFilters selects usage log records.
 type UsageLogFilters = usage.UsageLogFilters
 
 type usageLogIDs struct {
@@ -40,8 +40,8 @@ func (r *Store) GetByID(ctx context.Context, id int64) (log *usage.UsageLog, err
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			log = nil
@@ -104,7 +104,7 @@ func (r *Store) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ListWithFilters 按可选过滤条件列出用量日志。
+// ListWithFilters lists usage logs matching the supplied filters.
 func (r *Store) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters UsageLogFilters) ([]usage.UsageLog, *pagination.PaginationResult, error) {
 	conditions := make([]string, 0, 9)
 	args := make([]any, 0, 9)
@@ -177,7 +177,7 @@ func (r *Store) ListWithFilters(ctx context.Context, params pagination.Paginatio
 	return logs, page, nil
 }
 
-// usageRequestIDCondition 将候选 ID 转为数组，使列表和统计能按 ID 索引筛选。
+// usageRequestIDCondition builds an indexable ID lookup; an exact local ID suppresses upstream-alias matches.
 func usageRequestIDCondition(prefix string, parameter int) string {
 	lookup := fmt.Sprintf("ARRAY(SELECT id FROM request_lookup_ids($%d))", parameter)
 	return fmt.Sprintf("(%srequest_id = ANY(%s) OR (%supstream_request_id = $%d"+
@@ -185,7 +185,7 @@ func usageRequestIDCondition(prefix string, parameter int) string {
 		prefix, lookup, prefix, parameter, parameter)
 }
 
-// buildUsageLogScopeSource 将用户与 Owner 团队范围拆为两个可索引且去重的分支。
+// buildUsageLogScopeSource splits user and owned-team records into disjoint, indexable branches.
 func (r *Store) buildUsageLogScopeSource(ctx context.Context, args []any, userID int64, includeOwnedTeam bool, alias string) (string, string, []any, error) {
 	sourceAlias := alias
 	if sourceAlias == "" {
@@ -231,7 +231,7 @@ func shouldUseFastUsageLogTotal(filters UsageLogFilters) bool {
 	if filters.ExactTotal {
 		return false
 	}
-	// 强选择过滤下记录集通常较小，保留精确总数。
+	// User, key, provider, and team filters retain exact totals for their narrower record sets.
 	return filters.UserID == 0 && filters.APIKeyID == 0 && filters.ProviderID == 0 && filters.TeamID == 0
 }
 
@@ -279,7 +279,7 @@ func (r *Store) listUsageLogsWithFastPaginationFrom(ctx context.Context, source,
 
 	total := int64(offset) + int64(len(logs))
 	if hasMore {
-		// 只保证“还有下一页”，避免对超大表做全量 COUNT(*)。
+		// The extra row proves another page exists; the total is a lower bound, avoiding a full COUNT(*).
 		total = int64(offset) + int64(limit) + 1
 	}
 
@@ -312,8 +312,8 @@ func (r *Store) queryUsageLogs(ctx context.Context, query string, args ...any) (
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			logs = nil
@@ -336,7 +336,7 @@ func (r *Store) queryUsageLogs(ctx context.Context, query string, args ...any) (
 }
 
 func (r *Store) hydrateUsageLogAssociations(ctx context.Context, logs []usage.UsageLog) error {
-	// 关联数据使用 Ent 批量加载，避免把复杂 SQL 继续膨胀。
+	// Load associations in batches through Ent to keep joins out of the usage query.
 	if len(logs) == 0 {
 		return nil
 	}
@@ -422,7 +422,7 @@ func (r *Store) loadUsers(ctx context.Context, ids []int64) (map[int64]*usage.Us
 	if len(ids) == 0 {
 		return out, nil
 	}
-	// 无条件穿透软删除：ids 来自调用方已按 user_id 筛选的日志行；普通用户路径强制 UserID=本人（本人必为活跃用户），不会借此解析他人已删身份；仅 admin 路径可借此显示已删用户。
+	// Include soft-deleted users for historical logs. The caller must restrict the log rows to the authorized scope before collecting IDs.
 	models, err := r.client.User.Query().Where(dbuser.IDIn(ids...)).All(mixins.SkipSoftDelete(ctx))
 	if err != nil {
 		return nil, err
@@ -678,7 +678,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*usage.UsageLog, err
 		CreatedAt:                 createdAt,
 		NativeCompactionV2:        nativeCompactionV2,
 	}
-	// 先回填 legacy 字段，再基于 legacy + request_type 计算最终请求类型，保证历史数据兼容。
+	// Populate legacy flags before resolving the request type, then normalize the flags from that type.
 	log.Stream = stream
 	log.OpenAIWSMode = openaiWSMode
 	log.RequestType = log.EffectiveRequestType()

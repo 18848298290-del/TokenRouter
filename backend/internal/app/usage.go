@@ -29,7 +29,7 @@ import (
 	usageredis "github.com/TokenFlux/TokenRouter/internal/usage/rediscache"
 )
 
-// publicBalanceUnit 从 billing 读取余额展示单位。
+// publicBalanceUnit reads the balance display unit through billing.
 type publicBalanceUnit struct{ store *settings.Store }
 
 func (r publicBalanceUnit) GetBalanceUnitName(ctx context.Context) string {
@@ -138,7 +138,7 @@ func provideUsageDashboard(store *usagepg.Store, agg usage.DashboardAggregationR
 	return s
 }
 
-// provideUsageDashboardCache 使用仪表盘缓存前缀和共享 Redis 客户端。
+// provideUsageDashboardCache binds the configured key prefix and shared Redis client.
 func provideUsageDashboardCache(r *redis.Client, cfg *config.Config) usage.DashboardStatsCache {
 	prefix := "tokenrouter:"
 	if cfg != nil {

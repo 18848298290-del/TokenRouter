@@ -1,16 +1,16 @@
-// Package httpapi 把 Responses WebSocket 请求接入会话执行器，转换请求帧并连接上游传输。
+// Package httpapi connects Responses WebSocket requests to session execution, frame conversion, and upstream transports.
 //
-// 阅读入口：
-//   - responses_ws.go：处理 Responses WebSocket HTTP 请求。
-//   - entry_bindings.go：连接请求授权、模型选择和会话资源。
-//   - openai_ws_forwarder_ingress.go：接收客户端连接并启动逐轮转发。
+// Start with:
+//   - responses_ws.go: Responses WebSocket HTTP entry handling.
+//   - entry_bindings.go: authorization, model selection, and session resources.
+//   - openai_ws_forwarder_ingress.go: client connections and per-turn forwarding.
 //
-// 文件分组：
-//   - openai_ws_executor.go、openai_ws_forwarder.go：构造执行器并读取每轮转发参数。
-//   - openai_ws_ingress_adapter.go、openai_ws_ingress_execution_adapter.go：适配入站请求和上游连接。
-//   - openai_ws_forwarder_payload.go、openai_ws_request_adapter.go：构造请求头和转发载荷。
-//   - openai_ws_http_bridge.go：把 WebSocket 轮次转成 HTTP 请求并回传事件。
-//   - openai_ws_v2_passthrough_adapter.go、openai_ws_passthrough_execution_adapter.go：接入帧透传。
-//   - openai_ws_stream_adapter.go、openai_ws_relay_adapter.go：转换流事件和中继结果。
-//   - openai_ws_forwarder_support.go、openai_ws_session_preemption.go：处理失败归因和同会话抢占。
+// File groups:
+//   - openai_ws_executor.go and openai_ws_forwarder.go: executor construction and turn parameters.
+//   - openai_ws_ingress_adapter.go and openai_ws_ingress_execution_adapter.go: ingress and upstream adapters.
+//   - openai_ws_forwarder_payload.go and openai_ws_request_adapter.go: request headers and payloads.
+//   - openai_ws_http_bridge.go: WebSocket turns executed over HTTP and returned as events.
+//   - openai_ws_v2_passthrough_adapter.go and openai_ws_passthrough_execution_adapter.go: passthrough adapters.
+//   - openai_ws_stream_adapter.go and openai_ws_relay_adapter.go: stream events and relay results.
+//   - openai_ws_forwarder_support.go and openai_ws_session_preemption.go: failure attribution and session preemption.
 package httpapi

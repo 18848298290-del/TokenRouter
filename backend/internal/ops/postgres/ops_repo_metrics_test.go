@@ -23,7 +23,7 @@ func TestOpsRepositoryInsertSystemMetricsPreservesZeroDBPoolCounts(t *testing.T)
 	for i := range args {
 		args[i] = sqlmock.AnyArg()
 	}
-	// 参数索引 38、39、40 分别对应活跃、空闲和等待连接数，等待连接缺失时仍应写入 NULL。
+	// Zero-based arguments 38, 39, and 40 hold active, idle, and waiting counts; a missing waiting count remains NULL.
 	args[38] = int64(0)
 	args[39] = int64(10)
 	args[40] = nil

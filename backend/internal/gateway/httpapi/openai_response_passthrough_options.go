@@ -83,7 +83,7 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 	}
 	nonstream := p.NonStreamOptions(ctx, c, provider)
 	nonstream.TerminalFailover = func(resp *http.Response, event string, body []byte, message, model string) error {
-		//nolint:revive // 函数返回具体指针类型，直接 return 会把 nil 指针包成非 nil 的 error。
+		//nolint:revive // Returning the concrete pointer directly would wrap a nil pointer in a non-nil error.
 		if failure := p.nonStreamingTerminalFailure(c, resp, provider, true, event, body, message, model); failure != nil {
 			return failure
 		}
@@ -99,7 +99,7 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 			WriteOpenAIPassthroughResponseHeaders(dst, src, p.Headers)
 		},
 		StartKeepalive: func(headers http.Header) func() {
-			// 原 Header 在启动心跳前已设置；这里只把本次输出适配中的元数据同步至 HTTP。
+			// Headers were set before heartbeats started; synchronize metadata from the current output adapter here.
 			for key, values := range headers {
 				c.Writer.Header()[key] = append([]string(nil), values...)
 			}

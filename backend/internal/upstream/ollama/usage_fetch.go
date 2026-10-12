@@ -33,7 +33,7 @@ type FetchOptions struct {
 func (i FetchInput) String() string   { return "ollama usage input" }
 func (i FetchInput) GoString() string { return i.String() }
 
-// FetchUsage 使用给定会话读取 Ollama 设置页并解析用量。
+// FetchUsage reads the Ollama settings page with the supplied session and parses usage.
 func FetchUsage(ctx context.Context, input FetchInput, options FetchOptions) (*usageview.OllamaUsageObservation, error) {
 	if options.Do == nil {
 		return nil, options.Unavailable
@@ -91,7 +91,7 @@ func IsExactSettingsURL(parsed *url.URL) bool {
 		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.RawPath == ""
 }
 
-// RetryAfter 解析上游限流响应要求的最短重试间隔。
+// RetryAfter returns the positive delay requested by Retry-After, or zero when unavailable.
 func RetryAfter(header http.Header, now time.Time) time.Duration {
 	value := strings.TrimSpace(header.Get("Retry-After"))
 	if value == "" {

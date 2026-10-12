@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// FailingWriter 在指定写入次数后返回固定错误，保留其它 ResponseWriter 能力。
+// FailingWriter simulates a client write failure while retaining the embedded writer's other capabilities.
 type FailingWriter struct {
 	gin.ResponseWriter
 	FailAfter int

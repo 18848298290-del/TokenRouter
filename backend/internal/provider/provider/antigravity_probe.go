@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityProbe 是指定提供商测试的闭合入口，复用实际平台重试与应用尝试屏障。
+// AntigravityProbe runs a selected-provider probe through platform retries and the application attempt gate.
 type AntigravityProbe struct {
 	Tokens *provider.AntigravityTokenSource
 	Retry  *AntigravityRetry

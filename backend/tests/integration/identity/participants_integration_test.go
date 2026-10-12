@@ -22,7 +22,7 @@ import (
 	teampostgres "github.com/TokenFlux/TokenRouter/internal/team/postgres"
 )
 
-// 在 Key 已写入后注入错误，验证成员和 Key 实际使用同一事务连接。
+// failingMemberKeys fails after key writes to check that members and keys share a transaction.
 type failingMemberKeys struct {
 	*keypostgres.TeamKeys
 	err error
@@ -109,7 +109,7 @@ func TestInitialFundsDoNotCountAsRecharge(t *testing.T) {
 	require.Zero(t, stored.TotalRecharged, "注册初始资金不能套用累计充值语义")
 }
 
-// TestRegistrationInvitationUsesOuterTransaction 验证注册邀请码沿用同一事务，不混入普通多次兑换的 usage 语义。
+// TestRegistrationInvitationUsesOuterTransaction checks invitation consumption in the outer transaction without redeem usage rows.
 func TestRegistrationInvitationUsesOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 	_, client := identityDatabase(t)

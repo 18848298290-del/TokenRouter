@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// 用本地 HTTP 控制隐私查询与管理员修改身份的执行顺序。
+// privacyIdentityWriter models identity changes during a local HTTP privacy query.
 type privacyIdentityWriter struct {
 	mu      sync.Mutex
 	current providercore.Record
@@ -32,9 +32,9 @@ type privacyProviderWriter struct {
 	writes atomic.Int32
 }
 
-// TestEnsureOpenAIPrivacySkipsShadow 验证影子提供商跳过隐私设置（不调用 privacyClientFactory）。
-// 影子提供商透传母提供商凭据，但 Extra 通常为空，需给它一个 access_token 才能让
-// 测试提供非空 token，使请求进入影子提供商检查。
+// TestEnsureOpenAIPrivacySkipsShadow verifies that shadow providers skip the privacy client factory.
+// Supply a nonempty access_token so the request reaches the shadow check instead of
+// returning early for missing credentials.
 func TestEnsureOpenAIPrivacySkipsShadow(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -141,7 +141,8 @@ func TestPrivacyObservationDoesNotOverwriteNewIdentity(t *testing.T) {
 	require.Equal(t, "new-identity-mode", writer.current.Extra["privacy_mode"])
 }
 
-// TestPrivacyProxyLookupFailureDoesNotConnectDirectly 通过本地 HTTP 检查代理读取失败后请求结束，成功状态保持未写入。
+// TestPrivacyProxyLookupFailureDoesNotConnectDirectly rejects direct requests and success writes after proxy
+// lookup fails.
 func TestPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ensure", true: "force"}[force], func(t *testing.T) {
@@ -167,7 +168,7 @@ func TestPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	}
 }
 
-// TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly 验证后台刷新同样不能因代理仓储缺失或回源失败而退回直连。
+// TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly checks that background refresh honors required proxies.
 func TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "lookup_failure", true: "missing_reader"}[missing], func(t *testing.T) {
@@ -193,7 +194,7 @@ func TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	}
 }
 
-// UpdatePrivacyModeIfUnchanged 模拟 PostgreSQL 身份比较，发生冲突时跳过写入。
+// UpdatePrivacyModeIfUnchanged models PostgreSQL identity checks and skips writes after a conflict.
 func (w *privacyIdentityWriter) UpdatePrivacyModeIfUnchanged(_ context.Context, v providercore.UsageObservationVersion, mode string) (bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

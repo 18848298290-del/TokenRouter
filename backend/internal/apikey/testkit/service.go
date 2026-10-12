@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// groupSource 只补充原生分组接口的默认组读取，选择规则仍由 routing 拥有。
+// groupSource adapts the routing repository for authentication fixtures.
 type groupSource struct{ routing.GroupRepository }
 
-// NewService 使跨模块旧夹具直接构造原生认证服务；生产装配仍由 app 注入。
+// NewService constructs an authentication service for cross-module tests; callers start its lifecycle.
 func NewService(keys apikey.APIKeyRepository, users identity.UserRepository, groups routing.GroupRepository, subs billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository, cache apikey.APIKeyCache, cfg *config.Config) *apikey.APIKeyService {
 	var groupReader apikey.GroupRepository
 	if groups != nil {

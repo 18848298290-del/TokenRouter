@@ -9,10 +9,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// openAIResponsesToolCallItemTypes 是携带 namespace 的调用项类型集合。与
-// removeOpenAIResponsesRejectedNamespaceAtIndex 的反应式白名单保持一致；codex-rs
-// protocol/src/models.rs 中只有 FunctionCall 与 CustomToolCall 序列化 namespace，
-// 其余类型带该字段一定是非 Codex 客户端或历史残留，清掉才安全。
+// openAIResponsesToolCallItemTypes lists call types eligible to retain namespace.
+// Keep it consistent with removeOpenAIResponsesRejectedNamespaceAtIndex.
+// Codex FunctionCall and CustomToolCall use namespace; the additional call aliases
+// support compatible clients.
 var openAIResponsesToolCallItemTypes = map[string]bool{
 	"function_call":    true,
 	"tool_call":        true,
@@ -36,9 +36,9 @@ func HasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 	return found
 }
 
-// StripOpenAIResponsesInputNamespaces 仅移除 input 数组直接子项的 namespace，
-// 保留工具声明和嵌套内容中的同名字段。keepToolCallNamespaces 为 true 时，调用项
-// 保留 namespace。一次性重建 input 数组可让长历史记录保持线性处理。
+// StripOpenAIResponsesInputNamespaces removes namespace from direct input items.
+// Tool declarations and nested fields remain intact. keepToolCallNamespaces retains it on call items.
+// Rebuilding input once keeps processing linear in the history size.
 func StripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces bool) ([]byte, error) {
 	if !bytes.Contains(body, []byte(`"namespace"`)) {
 		return body, nil

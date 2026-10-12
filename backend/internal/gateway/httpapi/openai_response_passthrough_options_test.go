@@ -38,7 +38,8 @@ type passthroughFlushTestErrorBody struct {
 	sent    bool
 }
 
-// TestHandlePassthroughSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput 验证透传提取使用 raw compaction item 补充空终态 output。
+// TestHandlePassthroughSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput checks raw compaction
+// recovery into empty terminal output.
 func TestHandlePassthroughSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -66,7 +67,8 @@ func TestHandlePassthroughSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminal
 	require.Len(t, gjson.Get(events[1][1], "response.output").Array(), 1)
 }
 
-// TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE 验证透传分支（OAuth passthrough）同样命中桥接。
+// TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE checks Compact bridging in OAuth
+// passthrough.
 func TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -141,7 +143,7 @@ func TestOpenAIStreamingPassthroughFlushesAtCompleteEventBoundaries(t *testing.T
 		"id: event-1\n" +
 		`data: {"type":"response.output_text.delta","delta":"hello"}` + "\n\n"
 	heartbeat := ": keepalive\n\n"
-	// 提供完整 output，测试检查 Flush 调用。
+	// Provide complete output so the test can check Flush calls.
 	terminalEvent := "event: response.completed\n" +
 		`data: {"type":"response.completed","response":{"id":"resp_flush","usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}` + "\n\n"
 	upstream := firstEvent + heartbeat + terminalEvent
@@ -485,7 +487,7 @@ func TestOpenAIStreamingPassthroughPostOutputDisconnectQuarantinesSharedProxy(t 
 	proxyID := int64(4698)
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 469804, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, ProxyID: &proxyID}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize}}})
-	// 本用例需要把两次循环视为独立故障，关闭生产环境的并发断流折叠窗口。
+	// Disable concurrent-truncation coalescing so the two loops count as independent failures.
 	svc.Output.ProxyCircuit = egress.NewProxyStreamCircuit(egress.ProxyStreamCircuitSettings{
 		FailureThreshold: 2,
 		FailureWindow:    time.Minute,
@@ -586,7 +588,7 @@ func TestOpenAIStreamingPassthroughContextWindowResponseFailedBeforeOutputApplie
 	require.Equal(t, upstreamMessage, gjson.Get(body, "error.message").String())
 	require.NotContains(t, body, "response.failed")
 	require.NotContains(t, body, "Upstream request failed")
-	// 命中透传规则也应记录 ops 上游错误事件（对齐 CC/Messages 与 antigravity 先例）。
+	// A matched passthrough rule still records an Ops upstream error event.
 	opsVal, opsRecorded := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, opsRecorded, "passthrough hit should record an ops upstream error event")
 	opsEvents, _ := opsVal.([]*ops.OpsUpstreamErrorEvent)
@@ -749,7 +751,8 @@ func TestOpenAIGatewayServiceHandleResponsesImageOutputs_StreamingPassthrough(t 
 	require.Equal(t, 2, strings.Count(recorder.Body.String(), `"status":"completed"`))
 }
 
-// TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver 验证透传路径收到容量失败事件时换号。
+// TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver checks failover on passthrough capacity
+// failure events.
 func TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()

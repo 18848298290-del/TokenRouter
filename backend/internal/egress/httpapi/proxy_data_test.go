@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// proxyTaskFixture 异步执行导入探测，测试结束时等待回调完成。
+// proxyTaskFixture runs import probes asynchronously; test cleanup waits for completion.
 type proxyTaskFixture struct{ wg sync.WaitGroup }
 
 type proxyDataResponse struct {

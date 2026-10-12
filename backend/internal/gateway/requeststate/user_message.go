@@ -2,8 +2,8 @@ package requeststate
 
 import "github.com/tidwall/gjson"
 
-// IsRealUserMessage 判断最后一条消息是否为用户输入，与 claude-relay-service 使用相同条件：
-// messages 非空，最后一条 role 为 user，且数组 content 中没有 tool_result 或 tool_use_result。
+// IsRealUserMessage reports whether the last message is user input:
+// its role is user and its content array contains no tool_result or tool_use_result blocks.
 func IsRealUserMessage(parsed *ParsedRequest) bool {
 	if parsed == nil {
 		return false

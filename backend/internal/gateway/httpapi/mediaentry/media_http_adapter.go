@@ -25,7 +25,7 @@ import (
 
 type mediaHTTPAdapter struct{ h *Runtime }
 
-// MediaHTTPHandler 提供应用装配使用的媒体路由处理器。
+// MediaHTTPHandler returns a media handler for application route registration.
 func (h *Runtime) MediaHTTPHandler() *gatewayhttp.MediaHandler {
 	return gatewayhttp.NewMediaHandler(mediaHTTPAdapter{h})
 }
@@ -138,7 +138,7 @@ func (p mediaHTTPAdapter) Billing(c *gin.Context) *gatewayhttp.MediaHTTPFailure 
 	return p.checkFunding(c, false)
 }
 
-// checkFunding 在等待后复查资金，RPM 在首次准入时累计。
+// checkFunding rechecks funds after waiting; RPM is counted during initial admission.
 func (p mediaHTTPAdapter) checkFunding(c *gin.Context, afterWait bool) *gatewayhttp.MediaHTTPFailure {
 	key, _ := keyhttp.GetAPIKeyFromContext(c)
 	subscription, _ := gatewayhttp.SubscriptionFromContext(c)
@@ -196,7 +196,7 @@ func (p mediaHTTPAdapter) RewriteGrok(body []byte, contentType, model string) ([
 	return gatewayadapter.GrokMediaCodec().RewriteGrokMediaRequestModel(body, contentType, model)
 }
 
-// AuxiliaryHTTPHandler 可直接用于父侧辅助路由绑定。
+// AuxiliaryHTTPHandler returns a handler for auxiliary routes.
 func (h *Runtime) AuxiliaryHTTPHandler() *gatewayhttp.AuxiliaryHandler {
 	return gatewayhttp.NewAuxiliaryHandler(mediaHTTPAdapter{h})
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// 创作台临时存储 Redis 键前缀。
-// 输入载荷、源图字节、mask 与输出图片本体只保存在这些键下，TTL 到期即失效。
+// Redis prefixes for expiring Creative Studio payloads and media.
+// Prompts, source images, masks, and output bytes become unavailable when their keys expire.
 const (
 	defaultCreativePayloadKeyPrefix = "creative:payload:"
 	defaultCreativeInputKeyPrefix   = "creative:input:"
@@ -23,8 +23,8 @@ const (
 
 var _ creative.CreativeTransientStore = (*creativeTransientStore)(nil)
 
-// creativeTransientStore 基于 Redis 的创作台临时存储。
-// Redis 不可用时所有写操作返回明确错误，由服务层 fail-close 拒绝新任务。
+// creativeTransientStore stores temporary Creative Studio data in Redis.
+// Redis write failures return errors so task creation can reject unsaved inputs.
 type creativeTransientStore struct {
 	rdb           *redis.Client
 	payloadPrefix string
@@ -38,7 +38,7 @@ type TransientOptions struct {
 	TransientTTLSeconds int
 }
 
-// NewCreativeTransientStore 创建创作台临时存储。
+// NewCreativeTransientStore creates storage with a 30-minute TTL unless a positive TTL is configured.
 func NewCreativeTransientStore(rdb *redis.Client, cfg *TransientOptions) creative.CreativeTransientStore {
 	store := &creativeTransientStore{
 		rdb:           rdb,
@@ -63,7 +63,7 @@ func (s *creativeTransientStore) SavePayload(ctx context.Context, runID string, 
 		return err
 	}
 	key := s.payloadPrefix + runID
-	// 写前删除再设置，保证重复保存同一任务时 TTL 与内容一致（幂等覆盖）。
+	// Replace the payload and reset its TTL in one Redis transaction.
 	pipe := s.rdb.TxPipeline()
 	pipe.Del(ctx, key)
 	pipe.Set(ctx, key, body, s.defaultTTL)
@@ -195,14 +195,14 @@ func (s *creativeTransientStore) DeleteOutput(ctx context.Context, runID string,
 	if s.rdb == nil {
 		return fmt.Errorf("%w: redis client is nil", creative.ErrCreativeTransientUnavailable)
 	}
-	// DEL 对不存在的键天然幂等。
+	// DEL succeeds even when the key has already expired or been deleted.
 	if err := s.rdb.Del(ctx, s.outputKey(runID, index)).Err(); err != nil {
 		return fmt.Errorf("%w: %v", creative.ErrCreativeTransientUnavailable, err)
 	}
 	return nil
 }
 
-// DeleteRunTransient 删除任务全部临时键；inputCount/outputCount 未知时传 0 会退化为通配扫描。
+// DeleteRunTransient deletes task keys; nonpositive input/output counts use wildcard KEYS lookups.
 func (s *creativeTransientStore) DeleteRunTransient(ctx context.Context, runID string, inputCount, outputCount int) error {
 	if s.rdb == nil {
 		return fmt.Errorf("%w: redis client is nil", creative.ErrCreativeTransientUnavailable)
@@ -217,7 +217,7 @@ func (s *creativeTransientStore) DeleteRunTransient(ctx context.Context, runID s
 	for index := range outputCount {
 		keys = append(keys, s.outputKey(runID, index))
 	}
-	// 计数未知（如取消路径）时按前缀扫描补齐，保证清理完整。
+	// Discover keys when counts are unknown; failed lookups are skipped and TTL expiry remains the backstop.
 	if inputCount <= 0 {
 		if scanned, err := s.rdb.Keys(ctx, s.inputPrefix+runID+":*").Result(); err == nil {
 			keys = append(keys, scanned...)

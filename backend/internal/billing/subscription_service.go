@@ -36,13 +36,13 @@ var (
 	ErrSubscriptionInvalid = apperror.Forbidden("SUBSCRIPTION_INVALID", "subscription is invalid or expired")
 )
 
-// SubscriptionGroupReader 只读取权益展示所需的分组名称。
+// SubscriptionGroupReader reads group names for subscription displays.
 type SubscriptionGroupReader interface {
 	GetByIDLite(context.Context, int64) (*SubscriptionPlanGroup, error)
 }
 
-// SubscriptionTransactions 将权益变更闭包限制在同一个持久化事务，锁序由适配层固定。
-// 回调通过 context 使用事务。
+// SubscriptionTransactions runs entitlement mutations in a shared persistence transaction.
+// Callbacks use the transaction carried by context; the adapter defines lock order.
 type SubscriptionTransactions interface {
 	HasPersistence(context.Context) bool
 	Within(context.Context, func(context.Context) error) error
@@ -53,7 +53,7 @@ type SubscriptionTransactions interface {
 	RebindKeys(context.Context, int64, int64) (int, error)
 }
 
-// SubscriptionService 唯一拥有订阅资格、时间链、窗口和展示规则。
+// SubscriptionService manages subscription eligibility, renewal chains, quota windows, and displays.
 type SubscriptionService struct {
 	groupRepo    SubscriptionGroupReader
 	userSubRepo  UserSubscriptionRepository
@@ -61,7 +61,7 @@ type SubscriptionService struct {
 	clock        DateRuntime
 }
 
-// SelfRevokeSubscriptionResult 描述用户撤销耗尽套餐后的接续结果。
+// SelfRevokeSubscriptionResult identifies the replacement subscription and rebound keys after revocation.
 type SelfRevokeSubscriptionResult struct {
 	RevokedSubscriptionID     int64
 	ReplacementSubscriptionID *int64
@@ -136,7 +136,7 @@ type UsageWindowProgress struct {
 	ResetsInSeconds int64     `json:"resets_in_seconds"`
 }
 
-// NewSubscriptionService 构造订阅用例，不启动后台任务。
+// NewSubscriptionService constructs the subscription service with its repositories and clock.
 func NewSubscriptionService(groups SubscriptionGroupReader, repo UserSubscriptionRepository, transactions SubscriptionTransactions, clocks ...DateRuntime) *SubscriptionService {
 	clock := DateRuntime{}
 	if len(clocks) > 0 {
@@ -145,7 +145,7 @@ func NewSubscriptionService(groups SubscriptionGroupReader, repo UserSubscriptio
 	return &SubscriptionService{groupRepo: groups, userSubRepo: repo, transactions: transactions, clock: clock}
 }
 
-// EnrichSubscriptionPlanGroups 为用户订阅列表补充分组名称；套餐未限制分组时返回空列表表示全部分组。
+// EnrichSubscriptionPlanGroups populates group names and marks plans with no group IDs as unrestricted.
 func (s *SubscriptionService) EnrichSubscriptionPlanGroups(ctx context.Context, subscriptions []UserSubscription) {
 	if s == nil {
 		return
@@ -413,8 +413,8 @@ func (s *SubscriptionService) revokeSubscriptionLocked(ctx context.Context, subs
 	})
 }
 
-// RevokeOwnExhaustedSubscription 仅允许用户撤销本人当前且最高层额度已耗尽的订阅。
-// 撤销、后续订阅平移和显式订阅 Key 改绑必须在同一个事务中完成。
+// RevokeOwnExhaustedSubscription revokes an active subscription owned by the user when its outermost finite quota is exhausted.
+// Revocation, shifting later subscriptions, and rebinding subscription-funded keys share one transaction.
 func (s *SubscriptionService) RevokeOwnExhaustedSubscription(ctx context.Context, userID, subscriptionID int64) (*SelfRevokeSubscriptionResult, error) {
 	if userID <= 0 || subscriptionID <= 0 {
 		return nil, ErrSubscriptionNotFound
@@ -504,7 +504,7 @@ func (s *SubscriptionService) revokeOwnExhaustedSubscriptionInTx(ctx context.Con
 	return result, nil
 }
 
-// RestoreSubscription 恢复已撤销订阅。
+// RestoreSubscription restores a revoked subscription after checking its renewal chain.
 func (s *SubscriptionService) RestoreSubscription(ctx context.Context, subscriptionID int64) (*UserSubscription, error) {
 	if !s.transactions.HasPersistence(ctx) {
 		return s.restoreSubscriptionUnlocked(ctx, subscriptionID)
@@ -553,7 +553,7 @@ func (s *SubscriptionService) restoreSubscriptionUnlocked(ctx context.Context, s
 	return s.userSubRepo.Restore(ctx, subscriptionID, restoredStatus)
 }
 
-// RestoredSubscriptionStatus 根据恢复后的时间窗口重新计算状态，避免把已过期撤销记录恢复为 active。
+// RestoredSubscriptionStatus computes the effective status after clearing the deletion marker.
 func RestoredSubscriptionStatus(sub *UserSubscription, now time.Time) string {
 	if sub == nil {
 		return SubscriptionStatusExpired
@@ -563,7 +563,7 @@ func RestoredSubscriptionStatus(sub *UserSubscription, now time.Time) string {
 	return cp.EffectiveStatus(now)
 }
 
-// SubscriptionRestoreWouldOverlap 防止恢复后的套餐窗口与同一用户同一套餐的现有链路重叠。
+// SubscriptionRestoreWouldOverlap reports whether restoration overlaps an undeleted, unexpired entry in the supplied chain.
 func SubscriptionRestoreWouldOverlap(restored *UserSubscription, chain []UserSubscription, now time.Time) bool {
 	if restored == nil {
 		return false
@@ -767,8 +767,8 @@ func (s *SubscriptionService) GetByID(ctx context.Context, id int64) (*UserSubsc
 	return sub, nil
 }
 
-// GetSubscriptionForAPIKey 按付款主体读取指定订阅。
-// 归属不匹配时统一按不存在处理，避免通过 API Key 推测其它用户的订阅 ID。
+// GetSubscriptionForAPIKey reads the subscription belonging to the paying user.
+// Ownership mismatches return ErrSubscriptionNotFound to prevent probing other users' subscription IDs.
 func (s *SubscriptionService) GetSubscriptionForAPIKey(ctx context.Context, userID, subscriptionID int64) (*UserSubscription, error) {
 	if s == nil || s.userSubRepo == nil || userID <= 0 || subscriptionID <= 0 {
 		return nil, ErrSubscriptionNotFound
@@ -949,7 +949,7 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 	return s.CheckAndResetWindowsAt(ctx, sub, s.clock.now())
 }
 
-// CheckAndResetWindowsAt 使用同一时刻判断并推进所有额度窗口，避免跨零点时前后判断不一致。
+// CheckAndResetWindowsAt evaluates all quota windows at now so a midnight crossing cannot split the reset decisions.
 func (s *SubscriptionService) CheckAndResetWindowsAt(ctx context.Context, sub *UserSubscription, now time.Time) error {
 	windowStart := startOfDay(now)
 	if dailyWindowStart, ok := sub.AutomaticDailyWindowStartWithCalendar(now, s.clock.calendar()); ok {
@@ -979,8 +979,8 @@ func (s *SubscriptionService) CheckAndResetWindowsAt(ctx context.Context, sub *U
 	return nil
 }
 
-// EnsureWindowMaintenance 在放行请求前同步推进过期用量窗口，并回读数据库
-// 快照。并发请求可能先完成条件重置，回读可避免失败方使用本地归零值校验。
+// EnsureWindowMaintenance activates or resets quota windows and rereads the stored subscription.
+// A concurrent request may win the conditional reset; rereading prevents admission using locally cleared usage.
 func (s *SubscriptionService) EnsureWindowMaintenance(ctx context.Context, sub *UserSubscription) (*UserSubscription, error) {
 	if sub == nil {
 		return nil, ErrSubscriptionNilInput
@@ -1015,15 +1015,15 @@ func SubscriptionWindowLimitExceeded(limit *float64, used float64, additionalCos
 	if limit == nil || *limit <= 0 {
 		return false
 	}
-	// 请求前无法预知实际费用，追加费用为 0 时要求窗口仍有正数余额。
+	// A zero additional cost is an admission check before the final cost is known, so some quota must remain.
 	if additionalCost == 0 {
 		return used >= *limit
 	}
 	return used+additionalCost > *limit
 }
 
-// ValidateAndCheckLimits 只执行内存预检查；返回 needsMaintenance 时，调用方
-// 必须在放行请求前执行 EnsureWindowMaintenance 并用回读快照重新校验。
+// ValidateAndCheckLimits performs an in-memory precheck and clears stale usage in sub.
+// When needsMaintenance is true, callers must run EnsureWindowMaintenance and recheck its result before admission.
 func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription) (needsMaintenance bool, err error) {
 	switch sub.EffectiveStatus(s.clock.now()) {
 	case SubscriptionStatusExpired:
@@ -1134,7 +1134,7 @@ func NormalizedWindowProgress(limit *float64, used float64, resetAt, windowStart
 	}, true
 }
 
-// RevokeSubscription 在完整事务和用户锁内重新读取权益状态，避免并发时间链被旧快照覆盖。
+// RevokeSubscription revokes the subscription and shifts its renewal chain under the persistence lock.
 func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscriptionID int64) error {
 	_, err := withLockedSubscription(s, ctx, subscriptionID, func(txCtx context.Context) (struct{}, error) {
 		return struct{}{}, s.revokeSubscriptionLocked(txCtx, subscriptionID)
@@ -1142,21 +1142,21 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 	return err
 }
 
-// ExtendSubscription 在完整事务和用户锁内重新读取权益状态，避免并发时间链被旧快照覆盖。
+// ExtendSubscription extends the subscription and shifts later entries under the persistence lock.
 func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int) (*UserSubscription, error) {
 	return withLockedSubscription(s, ctx, subscriptionID, func(txCtx context.Context) (*UserSubscription, error) {
 		return s.extendSubscriptionLocked(txCtx, subscriptionID, days)
 	})
 }
 
-// SetSubscriptionValidityDays 在完整事务和用户锁内重新读取权益状态，避免并发时间链被旧快照覆盖。
+// SetSubscriptionValidityDays changes the expiry and shifts later entries under the persistence lock.
 func (s *SubscriptionService) SetSubscriptionValidityDays(ctx context.Context, subscriptionID int64, validityDays int) (*UserSubscription, error) {
 	return withLockedSubscription(s, ctx, subscriptionID, func(txCtx context.Context) (*UserSubscription, error) {
 		return s.setSubscriptionValidityDaysLocked(txCtx, subscriptionID, validityDays)
 	})
 }
 
-// AdminResetQuota 在完整事务和用户锁内重新读取权益状态，避免并发时间链被旧快照覆盖。
+// AdminResetQuota resets the selected usage windows under the persistence lock.
 func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionID int64, resetDaily, resetWeekly, resetMonthly bool) (*UserSubscription, error) {
 	if !resetDaily && !resetWeekly && !resetMonthly {
 		return nil, ErrInvalidInput
@@ -1166,7 +1166,7 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 	})
 }
 
-// withLockedSubscription 将读取、校验、时间链平移与写入保留在同一原子范围。
+// withLockedSubscription rereads and mutates subscriptions in one locked transaction when persistence is available.
 func withLockedSubscription[T any](s *SubscriptionService, ctx context.Context, id int64, fn func(context.Context) (T, error)) (T, error) {
 	if !s.transactions.HasPersistence(ctx) {
 		return fn(ctx)

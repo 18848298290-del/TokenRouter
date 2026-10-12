@@ -1,6 +1,6 @@
 package batchimage_test
 
-// 本场景覆盖 public.go 的提交、pipeline.go 的处理、settlement.go 的结算、download.go 的下载和 cleanup.go 的清理。
+// This scenario covers submission, processing, settlement, download, and cleanup across the batchimage package.
 
 import (
 	"archive/zip"

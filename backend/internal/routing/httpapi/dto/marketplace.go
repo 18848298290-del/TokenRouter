@@ -41,7 +41,7 @@ type ModelMarketplacePricing struct {
 	ImagePrice4K                  *float64                          `json:"image_price_4k,omitempty"`
 }
 
-// ModelMarketplacePricingInterval 是前端模型广场展示用的上下文区间价格。
+// ModelMarketplacePricingInterval contains marketplace prices for a context-length range.
 type ModelMarketplacePricingInterval struct {
 	MinTokens                     int     `json:"min_tokens"`
 	MaxTokens                     *int    `json:"max_tokens,omitempty"`
@@ -61,14 +61,14 @@ type ModelMarketplacePricingInterval struct {
 	FastImageOutputPricePerToken  float64 `json:"fast_image_output_price_per_token,omitempty"`
 }
 
-// ModelMarketplaceTimePricing 是按请求时刻乘到 token 单价上的分时倍率，时段之外按 1x 计费。
+// ModelMarketplaceTimePricing applies token-price multipliers by request time; outside its periods the multiplier is 1.
 type ModelMarketplaceTimePricing struct {
 	Timezone     string                              `json:"timezone"`
 	WeekdaysOnly bool                                `json:"weekdays_only"`
 	Periods      []ModelMarketplaceTimePricingPeriod `json:"periods"`
 }
 
-// ModelMarketplaceTimePricingPeriod 是左闭右开的每日时段，结束时间 00:00 表示当天 24:00。
+// ModelMarketplaceTimePricingPeriod is a daily [start, end) interval. An end of 00:00 means 24:00 that day.
 type ModelMarketplaceTimePricingPeriod struct {
 	StartTime  string  `json:"start_time"`
 	EndTime    string  `json:"end_time"`
@@ -169,7 +169,7 @@ func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) [
 	return out
 }
 
-// modelMarketplaceAvailabilityFromRouting 将主动可用性摘要转换为公开 DTO。
+// modelMarketplaceAvailabilityFromRouting converts probe availability to the public DTO.
 func modelMarketplaceAvailabilityFromRouting(availability *routing.GroupAvailabilitySummary) *ModelMarketplaceAvailability {
 	if availability == nil {
 		return nil
@@ -195,7 +195,7 @@ func modelMarketplaceAvailabilityFromRouting(availability *routing.GroupAvailabi
 	}
 }
 
-// modelMarketplaceCapacityFromRouting 将分组容量快照转换为公开 DTO。
+// modelMarketplaceCapacityFromRouting converts group capacity to the public DTO.
 func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary) *ModelMarketplaceCapacity {
 	if capacity == nil {
 		return nil
@@ -210,7 +210,7 @@ func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary)
 	}
 }
 
-// modelMarketplacePricingFromRouting 将服务层价格快照转换为接口 DTO。
+// modelMarketplacePricingFromRouting converts display prices to the HTTP DTO.
 func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) ModelMarketplacePricing {
 	intervals := make([]ModelMarketplacePricingInterval, 0, len(pricing.ContextIntervals))
 	for _, interval := range pricing.ContextIntervals {
@@ -260,7 +260,7 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 	}
 }
 
-// modelMarketplaceTimePricingFromRouting 将价格配置的分时规则转换为公开 DTO。
+// modelMarketplaceTimePricingFromRouting converts time-based pricing rules to the public DTO.
 func modelMarketplaceTimePricingFromRouting(config *pricing.TimePricingConfig) *ModelMarketplaceTimePricing {
 	if config == nil {
 		return nil
@@ -280,7 +280,7 @@ func modelMarketplaceTimePricingFromRouting(config *pricing.TimePricingConfig) *
 	}
 }
 
-// imagePriceValue 在 HTTP 中保留明确零价，缺失尺寸省略字段。
+// imagePriceValue preserves a declared zero price and omits undeclared sizes.
 func imagePriceValue(price pricing.ModelDisplayPricing, size string, value float64) *float64 {
 	if len(price.ImagePriceSizes) > 0 {
 		if !slices.Contains(price.ImagePriceSizes, size) {

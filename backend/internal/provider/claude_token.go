@@ -30,7 +30,7 @@ type ClaudeTokenOptions struct {
 	Vertex      func(context.Context, *Record) (string, error)
 }
 
-// ClaudeTokenSource 为请求绑定凭据读取接口和共享刷新协调器。
+// ClaudeTokenSource binds request-time token reads to the shared refresh coordinator.
 type ClaudeTokenSource struct {
 	Options ClaudeTokenOptions
 }
@@ -43,7 +43,7 @@ func ClaudeTokenCacheKey(value *Record) string {
 	return "claude:provider:" + strconv.FormatInt(value.ID, 10)
 }
 
-// GetClaudeAccessToken 返回有效的 access_token。
+// GetClaudeAccessToken reads or refreshes a token according to policy; refresh failure may retain the existing token.
 func GetClaudeAccessToken(ctx context.Context, provider *Record, options ClaudeTokenOptions) (string, error) {
 	if provider == nil {
 		return "", errors.New("provider is nil")
@@ -57,7 +57,7 @@ func GetClaudeAccessToken(ctx context.Context, provider *Record, options ClaudeT
 
 	cacheKey := ClaudeTokenCacheKey(provider)
 
-	// 1) Try cache first.
+	// Read cached tokens before checking expiry.
 	if options.Cache != nil {
 		if token, err := options.Cache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
 			options.debug("claude_token_cache_hit", "provider_id", provider.ID)
@@ -69,7 +69,7 @@ func GetClaudeAccessToken(ctx context.Context, provider *Record, options ClaudeT
 
 	options.debug("claude_token_cache_miss", "provider_id", provider.ID)
 
-	// 2) Refresh if needed (pre-expiry skew).
+	// Refresh within the pre-expiry window.
 	expiresAt := provider.GetCredentialAsTime("expires_at")
 	needsRefresh := expiresAt == nil || time.Until(*expiresAt) <= ClaudeTokenRefreshSkew
 	refreshFailed := false
@@ -95,7 +95,7 @@ func GetClaudeAccessToken(ctx context.Context, provider *Record, options ClaudeT
 			expiresAt = provider.GetCredentialAsTime("expires_at")
 		}
 	} else if needsRefresh && options.Cache != nil {
-		// Backward-compatible test path when refreshAPI is not injected.
+		// Acquire the cache lock when no refresh coordinator is injected.
 		locked, lockErr := options.Cache.AcquireRefreshLock(ctx, cacheKey, 30*time.Second)
 		if lockErr == nil && locked {
 			defer func() { _ = options.Cache.ReleaseRefreshLock(ctx, cacheKey) }()
@@ -115,7 +115,7 @@ func GetClaudeAccessToken(ctx context.Context, provider *Record, options ClaudeT
 		return "", errors.New("access_token not found in credentials")
 	}
 
-	// 3) Populate cache with TTL.
+	// Recheck credential version before caching the token.
 	if options.Cache != nil {
 		latestProvider, isStale := CheckTokenVersion(ctx, provider, options.Repository, options.Debug)
 		if isStale && latestProvider != nil {

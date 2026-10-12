@@ -241,7 +241,7 @@ func (p *generationRequestAdapter) completeImages(value *gatewaymedia.Generation
 	h, c, apiKey, provider, requestModel, parsed, body, subscription, subject, groupMapping := p.h, p.c, p.apiKey, p.selection.Provider, p.requestModel, p.parsed, p.body, p.subscription, p.subject, p.groupMapping
 	result := legacyGenerationResult(value)
 	if result != nil {
-		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新。
+		// Spark shadow codex_* usage is updated through QueryUsage (/wham/usage bengalfox).
 		if provider.Record.Type == capability.ProviderTypeOAuth && !provider.View().IsShadow() {
 			h.bindings.Common.Selection.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), provider.Record.ID, result.ResponseHeaders)
 		}
@@ -302,7 +302,7 @@ func (p *generationRequestAdapter) completeGrok(requestCtx context.Context, valu
 	h, c, apiKey, reqLog, provider, requestModel, body, subscription, subject, groupMapping, endpoint, requestID, videoCreateStartedAt := p.h, p.c, p.apiKey, p.reqLog, p.selection.Provider, p.requestModel, p.body, p.subscription, p.subject, p.groupMapping, p.endpoint, p.requestID, p.videoCreated
 	result := legacyGenerationResult(value)
 	if isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
-		// 视频创建阶段暂不扣费，保存模型、时长和分辨率供完成查询定价。
+		// Defer video billing until a completion query; retain the model, duration, and resolution for pricing.
 		pending := gatewaymedia.GrokVideoPendingBilling{
 			Model:                requestModel,
 			BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
@@ -310,7 +310,7 @@ func (p *generationRequestAdapter) completeGrok(requestCtx context.Context, valu
 			VideoResolution:      result.VideoResolution,
 			VideoDurationSeconds: result.VideoDurationSeconds,
 			OriginalModel:        gatewayhttp.ClientRequestedModel(c, requestModel),
-			// 用创建受理到首次发现完成的墙钟时间记录端到端耗时。
+			// Measure elapsed wall time from creation acceptance to the first observed completion.
 			CreatedAt: videoCreateStartedAt,
 		}
 		h.bindings.VideoTasks().TrackCreated(requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, provider.Record.ID, pending, grokVideoObserver{log: reqLog})
@@ -342,7 +342,7 @@ func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenA
 	return &forwardcore.OpenAIResult{RequestID: r.RequestID, ResponseID: r.ResponseID, Model: r.Model, BillingModel: r.BillingModel, UpstreamModel: r.UpstreamModel, Usage: r.Usage, Stream: r.Stream, Duration: r.Duration, FirstTokenMs: r.FirstTokenMs, ImageCount: r.ImageCount, VideoCount: r.VideoCount, VideoState: r.VideoState, VideoDurationSeconds: r.VideoDurationSeconds, ImageSize: r.ImageSize, ImageInputSize: r.ImageInputSize, ImageOutputSize: r.ImageOutputSize, ImageSizeSource: r.ImageSizeSource, VideoResolution: r.VideoResolution, ImageOutputSizes: r.ImageOutputSizes, ImageSizeBreakdown: r.ImageSizeBreakdown, UpstreamHeaders: http.Header(r.Headers).Clone(), ResponseHeaders: http.Header(r.ResponseHeaders).Clone()}
 }
 
-// MediaClassify 媒体最终错误接口只适配父层共同错误分类、风控观察和响应写入。
+// MediaClassify uses the shared no-provider classification for the current media route.
 func (p *generationRequestAdapter) MediaClassify() gatewayhttp.MediaNoProvider {
 	platform := ""
 	routing := p.requestModel
@@ -416,7 +416,8 @@ func (p *generationRequestAdapter) MediaWarnFailure(wrote bool) bool {
 	return gatewayhttp.ShouldLogOpenAIForwardFailureAsWarn(p.c, wrote)
 }
 
-// usesGrok 在切换提供商后重新判断执行器，不把前一次选择变成后续候选限制。
+// usesGrok checks the current selection after each switch so a previous Grok attempt
+// does not restrict later candidates.
 func (p *generationRequestAdapter) usesGrok() bool {
 	if p.selection == nil || p.selection.Provider == nil {
 		return p.grok

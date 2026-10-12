@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestUsageObservationDatabaseIdentity 验证条件语句使用真实 PostgreSQL JSONB/NULL 比较，不将模拟存储当作竞争证据。
+// TestUsageObservationDatabaseIdentity exercises PostgreSQL identity comparisons for usage writes.
+// Clearing a rate limit also requires the observed rate-limit and overload state to match.
 func TestUsageObservationDatabaseIdentity(t *testing.T) {
 	for _, action := range []string{"extra", "limit", "clear"} {
 		t.Run(action, func(t *testing.T) {

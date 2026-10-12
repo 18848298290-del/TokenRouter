@@ -7,7 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ProbeTasks 为提供商测试和模型预览共用原未持久提供商互斥；持久提供商仍由统一协调器认领。
+// ProbeTasks shares an unpersisted-provider mutex across tests and model previews; the coordinator claims
+// persisted providers.
 type ProbeTasks struct {
 	Coordinator *provider.OpenAITaskCoordinator
 	Options     provider.OpenAITaskOptions

@@ -19,15 +19,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// ModelPolicy 包含提供商模型配置和本次请求的路线。
-// Route 独立于 Record，不能进入持久化提供商或调度快照。
+// ModelPolicy contains provider model configuration and the current request route.
+// Route is request-local and must be excluded from persistent records and scheduler snapshots.
 type ModelPolicy struct {
 	Record *provider.Record
 	Route  requeststate.AttemptRoute
 	models *provider.ModelRulesSnapshot
 }
 
-// Prepared 为目录和批量校验捕获一次模型规则。
+// Prepared captures model rules for catalogue queries and batch validation.
 func (p ModelPolicy) Prepared() ModelPolicy {
 	if p.models == nil {
 		p.models = provider.PrepareModelRules(p.Record, provideradapter.ModelDefaults(), provideradapter.ModelRules(p.Record))
@@ -71,7 +71,7 @@ func (p ModelPolicy) protocolTarget() provider.ProtocolTarget {
 	return provider.ProtocolTarget{Record: p.Record, Protocol: p.Route.Protocol()}
 }
 
-// Mapped 读取提供商模型配置并执行一跳映射。
+// Mapped applies one hop of provider model mapping.
 func (p ModelPolicy) Mapped(model string) string {
 	if p.Record == nil {
 		return model
@@ -80,7 +80,7 @@ func (p ModelPolicy) Mapped(model string) string {
 	return mapped
 }
 
-// ResolveMapped 使用目录快照或提供商当前配置执行一跳映射。
+// ResolveMapped applies one hop of mapping using captured rules or the provider's current configuration.
 func (p ModelPolicy) ResolveMapped(model string) (string, bool) {
 	if p.models != nil {
 		if _, planned := p.Route.Candidate(); !planned {
@@ -99,7 +99,7 @@ func (p ModelPolicy) ForwardModel(requested, dispatchMapped string) string {
 	return p.Mapped(model)
 }
 
-// NormalizeOpenAI 清理兼容请求的模型字段，并为 Grok 空字段选用默认型号。
+// NormalizeOpenAI trims the model field and supplies Grok's default when its model is empty.
 func (p ModelPolicy) NormalizeOpenAI(model string) string {
 	if p.Record != nil && p.Record.IsGrok() {
 		return grok.NormalizeModelID(model)
@@ -107,7 +107,7 @@ func (p ModelPolicy) NormalizeOpenAI(model string) string {
 	return strings.TrimSpace(model)
 }
 
-// RawChat 优先使用已解析协议，缺省时按平台判断 Chat 转发方式。
+// RawChat uses the resolved protocol when present, then platform rules, to select Chat forwarding.
 func (p ModelPolicy) RawChat() bool {
 	if p.Record != nil && p.Route.Protocol() != "" {
 		return p.Route.Protocol() == protocol.ProtocolOpenAIChatCompletions
@@ -128,7 +128,7 @@ func (p ModelPolicy) RawChat() bool {
 	return provider.ResolveUpstreamTextProtocol(p.Record.Extra, provider.TextProtocolResponses) == provider.TextProtocolChatCompletions
 }
 
-// OpenAIUpstream 按压缩规则与普通单跳映射解析模型，透传只影响传输方式。
+// OpenAIUpstream resolves compact and ordinary model mappings; passthrough still applies model mapping.
 func (p ModelPolicy) OpenAIUpstream(requested string, compact bool) string {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
@@ -185,7 +185,7 @@ func (p ModelPolicy) Bedrock(model string) (string, bool) {
 	return bedrock.ResolveBedrockModelID(p.bedrockInput(model), model)
 }
 
-// BedrockRoute 复用提供商单步映射和平台区域规则，不改变资格或来源区域。
+// BedrockRoute applies one provider mapping and resolves Bedrock routing for the configured source region.
 func (p ModelPolicy) BedrockRoute(model string) (bedrock.BedrockModelRoute, error) {
 	return bedrock.ResolveBedrockModelRoute(p.bedrockInput(model), model)
 }
@@ -211,7 +211,7 @@ func modelThinking(ctx context.Context) *bool {
 	return nil
 }
 
-// Supports 检查已完成分组映射的模型是否受提供商支持。
+// Supports checks provider support for a model after group mapping.
 func (p ModelPolicy) Supports(ctx context.Context, model string) bool {
 	value := p.Record
 	if value == nil {
@@ -237,7 +237,7 @@ func (p ModelPolicy) Supports(ctx context.Context, model string) bool {
 	return p.supportsConfiguredModel(model)
 }
 
-// UpstreamModel 解析平台最终型号，并登记到本次请求的模型记录。
+// UpstreamModel resolves the final platform model and records it in the request's model trace.
 func (p ModelPolicy) UpstreamModel(ctx context.Context, requested string) string {
 	value := p.Record
 	if value == nil {
@@ -271,7 +271,7 @@ func (p ModelPolicy) UpstreamModel(ctx context.Context, requested string) string
 	return model
 }
 
-// LimitKeys 返回模型别名及图片、Fable、Gemini 共享限流窗口的查询键。
+// LimitKeys returns the mapped model key and applicable shared image, Fable, or Gemini rate-limit keys.
 func (p ModelPolicy) LimitKeys(ctx context.Context, requested string) []string {
 	value := p.Record
 	if value == nil {
@@ -311,7 +311,7 @@ func (p ModelPolicy) AllowsModel(ctx context.Context, model string) bool {
 	return p.Record.ModelRateLimitAllows(p.LimitKeys(ctx, model))
 }
 
-// ListingModels 保留 Antigravity 普通与 thinking 两次独立资格检查及稳定去重。
+// ListingModels checks plain and thinking Antigravity routes separately and deduplicates in encounter order.
 func (p ModelPolicy) ListingModels(ctx context.Context, requested string) []string {
 	models := make([]string, 0, 2)
 	seen := make(map[string]struct{}, 2)
@@ -345,7 +345,7 @@ func (p ModelPolicy) ListingModels(ctx context.Context, requested string) []stri
 	return models
 }
 
-// ForwardMappedModels 保留计费模型与最终上游模型的独立解析和 Compact 优先级。
+// ForwardMappedModels resolves the billing model and upstream model separately, applying compact mapping to the latter.
 func (p ModelPolicy) ForwardMappedModels(requested string, compact bool) (billingModel, upstreamModel string) {
 	requested = strings.TrimSpace(requested)
 	if p.Record != nil {
@@ -361,7 +361,7 @@ func (p ModelPolicy) ForwardMappedModels(requested string, compact bool) (billin
 	return billingModel, upstreamModel
 }
 
-// ErrorSchedulingModel 只使用已经观测的型号，缺失时才回退计费型号。
+// ErrorSchedulingModel prefers the observed upstream model and uses the billing model when it is absent.
 func ErrorSchedulingModel(billingModel, upstreamModel string) string {
 	if upstream := strings.TrimSpace(upstreamModel); upstream != "" {
 		return upstream

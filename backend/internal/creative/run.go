@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	// 创作台（Creative Studio）操作类型。
+	// Creative Studio image operations.
 	CreativeOperationGenerate = "generate"
 	CreativeOperationEdit     = "edit"
 	CreativeOperationInpaint  = "inpaint"
 
-	// 创作台创建 saga 阶段，按顺序持久化推进，便于进程崩溃后继续执行。
+	// Provisioning phases are persisted after each step so recovery can resume or release a partial task.
 	CreativeProvisioningPhaseCreated        = "created"
 	CreativeProvisioningPhaseHoldReserved   = "hold_reserved"
 	CreativeProvisioningPhaseTransientSaved = "transient_saved"
@@ -28,7 +28,7 @@ const (
 	CreativeProvisioningPhaseFailed         = "failed"
 	CreativeProvisioningPhaseComplete       = "complete"
 
-	// 创作台任务状态。
+	// Task states, including provider completion and pending funding recovery.
 	CreativeRunStatusQueued            = "queued"
 	CreativeRunStatusRunning           = "running"
 	CreativeRunStatusProviderSucceeded = "provider_succeeded"
@@ -39,17 +39,17 @@ const (
 	CreativeRunStatusCancelled         = "cancelled"
 	CreativeRunStatusResultLost        = "result_lost"
 
-	// 创作台输出状态。
+	// Per-output delivery states.
 	CreativeRunOutputStatusPending   = "pending"
 	CreativeRunOutputStatusSucceeded = "succeeded"
 	CreativeRunOutputStatusFailed    = "failed"
 	CreativeRunOutputStatusLost      = "lost"
 	CreativeRunOutputStatusAcked     = "acked"
 
-	// CreativeManagedBy 是 api_keys.managed_by 的取值，标记创作台隐藏执行 Key。
+	// CreativeManagedBy marks hidden Creative Studio execution keys in api_keys.managed_by.
 	CreativeManagedBy = "creative_studio"
 
-	// CreativeWorkspaceHeader 是创作台浏览器工作区请求头名称。
+	// CreativeWorkspaceHeader carries the browser workspace UUID.
 	CreativeWorkspaceHeader = "X-Creative-Workspace-ID"
 
 	CreativeRunOutboxProvision CreativeRunOutboxOperation = "provision"
@@ -63,7 +63,7 @@ const (
 )
 
 var (
-	// transient store 的三类错误必须由 worker 分别处理，不能把基础设施故障当作结果丢失。
+	// Workers distinguish missing, unavailable, and corrupt data; storage outages must remain retryable.
 	ErrCreativeTransientNotFound    = errors.New("creative transient data is missing or expired")
 	ErrCreativeTransientUnavailable = errors.New("creative transient store is unavailable")
 	ErrCreativeTransientCorrupt     = errors.New("creative transient data is corrupt")
@@ -99,19 +99,19 @@ var (
 	ErrCreativeSettlementBillingFail = infraerrors.New(infraerrors.CategoryBadGateway, "CREATIVE_SETTLEMENT_BILLING_FAILED", "creative settlement billing failed")
 )
 
-// CreativeRunScope 将用户身份与浏览器工作区绑定，所有用户侧任务访问都必须携带。
+// CreativeRunScope binds a user to a browser workspace and is required for user-facing task access.
 type CreativeRunScope struct {
 	UserID      int64
 	WorkspaceID string
 }
 
-// CreativeRun 是创作台异步任务的元数据。
-// 隐私红线：结构体中禁止出现 prompt 明文、图片字节、mask 或 platform 响应本体。
+// CreativeRun contains persistent asynchronous task metadata.
+// Keep plaintext prompts, image and mask bytes, and raw provider responses out of this persistent type.
 type CreativeRun struct {
 	ID     int64
 	RunID  string
 	UserID int64
-	// WorkspaceID 为空表示迁移前旧任务，用户侧工作区查询会将其隐藏。
+	// WorkspaceID is absent for legacy tasks, which user-facing workspace queries hide.
 	WorkspaceID          *string
 	GroupID              int64
 	APIKeyID             int64
@@ -136,7 +136,7 @@ type CreativeRun struct {
 	ActualCost                  *float64
 	BalanceHoldAmount           float64
 	SubscriptionHoldAllocations []billing.BillingAllocation
-	// AllowanceReserved 与 batch_image_jobs.allowance_reserved 同语义：额度预记标记。
+	// AllowanceReserved records an allowance reservation, as in batch_image_jobs.allowance_reserved.
 	AllowanceReserved          bool
 	BaseUnitPrice              float64
 	SubscriptionRateMultiplier float64
@@ -148,7 +148,7 @@ type CreativeRun struct {
 	ReleaseTargetStatus string
 	AttemptCount        int
 	ProvisioningPhase   string
-	// SettlementAttemptCount 与 ReleaseAttemptCount 分离执行重试和资金补偿重试。
+	// SettlementAttemptCount and ReleaseAttemptCount track funding recovery separately from execution retries.
 	SettlementAttemptCount   int
 	ReleaseAttemptCount      int
 	ProviderResultRecordedAt *time.Time
@@ -164,7 +164,7 @@ type CreativeRun struct {
 	CancelledAt *time.Time
 }
 
-// CreativeRunOutput 是创作台单个输出的元数据；图片本体只存在临时存储中。
+// CreativeRunOutput contains output metadata; image bytes are kept in temporary storage.
 type CreativeRunOutput struct {
 	ID                 int64
 	RunID              string
@@ -180,7 +180,7 @@ type CreativeRunOutput struct {
 	UpdatedAt          time.Time
 }
 
-// CreateCreativeRunParams 创建创作台任务及其输出行。
+// CreateCreativeRunParams supplies metadata for a task and its initial output rows.
 type CreateCreativeRunParams struct {
 	Platform                   string
 	RunID                      string
@@ -206,7 +206,7 @@ type CreateCreativeRunParams struct {
 	PlanGroupRateEnabled       bool
 }
 
-// CreativeRunTransitionOptions 携带状态转换的可选上下文。
+// CreativeRunTransitionOptions supplies optional error details, release target, and transition time.
 type CreativeRunTransitionOptions struct {
 	ErrorCode           *string
 	ErrorMessage        *string
@@ -214,13 +214,13 @@ type CreativeRunTransitionOptions struct {
 	Now                 *time.Time
 }
 
-// CreativeRunOutboxOperation 是创作台可恢复后台动作类型。
+// CreativeRunOutboxOperation identifies a recoverable background action.
 type CreativeRunOutboxOperation string
 
-// CreativeRunOutboxStatus 是 outbox 记录状态。
+// CreativeRunOutboxStatus is the processing state of an outbox record.
 type CreativeRunOutboxStatus string
 
-// CreativeRunOutbox 保存创作台后台补偿动作的持久记录。
+// CreativeRunOutbox is a durable record of background recovery work.
 type CreativeRunOutbox struct {
 	ID           int64
 	RunID        string
@@ -235,7 +235,7 @@ type CreativeRunOutbox struct {
 	UpdatedAt    time.Time
 }
 
-// CreativeRunOutboxRepository 持久化并领取创作台补偿动作。
+// CreativeRunOutboxRepository persists and leases recovery actions.
 type CreativeRunOutboxRepository interface {
 	Ensure(ctx context.Context, runID string, operation CreativeRunOutboxOperation, availableAt time.Time) error
 	Claim(ctx context.Context, workerID string, limit int, lease time.Duration) ([]CreativeRunOutbox, error)
@@ -244,63 +244,67 @@ type CreativeRunOutboxRepository interface {
 	Cancel(ctx context.Context, id int64, leaseToken string) error
 }
 
-// CreativeRunFilter 是用户侧任务列表过滤条件。
+// CreativeRunFilter selects and paginates user-facing task lists.
 type CreativeRunFilter struct {
 	Status string
 	Limit  int
 	Offset int
 }
 
-// CreativeRunOutputBatchReader 可选的批量输出元数据读取接口，避免历史列表产生 N+1 查询。
+// CreativeRunOutputBatchReader optionally fetches output metadata in bulk to avoid one query per task.
 type CreativeRunOutputBatchReader interface {
 	ListCreativeRunOutputsForRuns(ctx context.Context, runIDs []string) (map[string][]*CreativeRunOutput, error)
 }
 
-// CreativeRunAllowanceMarker 持久化余额/额度预占事实，供补偿流程重启后判断是否需要释放。
+// CreativeRunAllowanceMarker persists the allowance reservation marker used during funding recovery.
 type CreativeRunAllowanceMarker interface {
 	SetCreativeRunAllowanceReserved(ctx context.Context, runID string, reserved bool) error
 }
 
-// CreativeRunRepository 持久化创作台任务元数据。
+// CreativeRunRepository persists task metadata and state transitions.
 type CreativeRunRepository interface {
 	CreateCreativeRun(ctx context.Context, params CreateCreativeRunParams) (*CreativeRun, error)
 	GetCreativeRunByRunID(ctx context.Context, runID string) (*CreativeRun, error)
 	GetCreativeRunByRunIDForOwner(ctx context.Context, scope CreativeRunScope, runID string) (*CreativeRun, error)
 	GetCreativeRunByIdempotencyKey(ctx context.Context, scope CreativeRunScope, key string) (*CreativeRun, error)
 	ListCreativeRunsForOwner(ctx context.Context, scope CreativeRunScope, filter CreativeRunFilter) ([]*CreativeRun, error)
-	// TransitionCreativeRunStatus 带 version 乐观锁与 CanTransitionCreativeRun 校验。
+	// TransitionCreativeRunStatus checks CanTransitionCreativeRun and uses optimistic version locking.
 	TransitionCreativeRunStatus(ctx context.Context, runID, toStatus string, opts CreativeRunTransitionOptions) error
-	// MarkCreativeRunRunning 幂等地把任务标记为执行中并回填提供商，重复调用不产生副作用。
+	// MarkCreativeRunRunning enters running or updates the provider of an already running task.
 	MarkCreativeRunRunning(ctx context.Context, runID string, providerID int64, now time.Time) error
-	// SetCreativeRunExecution 在执行结果确定后补写真实上游提供商，避免 worker 先推进状态时丢失提供商信息。
+	// SetCreativeRunExecution records the selected provider and platform before the upstream call.
 	SetCreativeRunExecution(ctx context.Context, runID string, providerID int64, platform string, now time.Time) error
-	// MarkCreativeRunSucceeded 记录实际成本并进入终态，仅在 running 时生效。
+	// MarkCreativeRunSucceeded records cost and completes running, provider_succeeded, or
+	// settlement_pending tasks.
 	MarkCreativeRunSucceeded(ctx context.Context, runID string, actualCost float64, now time.Time) error
-	// UpdateCreativeRunOutput 幂等更新输出行；已 acked 的行不允许被覆盖。
+	// UpdateCreativeRunOutput updates output metadata while leaving acknowledged rows unchanged.
 	UpdateCreativeRunOutput(ctx context.Context, runID string, outputIndex int, status, mimeType string, byteSize int64, transientExpiresAt *time.Time, errorCode, errorMessage string) error
 	GetCreativeRunOutput(ctx context.Context, runID string, outputIndex int) (*CreativeRunOutput, error)
 	ListCreativeRunOutputs(ctx context.Context, runID string) ([]*CreativeRunOutput, error)
-	// MarkCreativeRunOutputAcked 幂等标记客户端已确认接收。
+	// MarkCreativeRunOutputAcked records client receipt; repeated acknowledgment succeeds.
 	MarkCreativeRunOutputAcked(ctx context.Context, runID string, outputIndex int, now time.Time) error
-	// ListCreativeRunsDueForTransientCleanup 返回已进入终态且超过清理时限的任务。
+	// ListCreativeRunsDueForTransientCleanup selects terminal tasks completed at or before cutoff.
 	ListCreativeRunsDueForTransientCleanup(ctx context.Context, cutoff time.Time, limit int) ([]*CreativeRun, error)
-	// IncrementCreativeRunAttempt 原子递增执行尝试次数并返回最新值。
+	// IncrementCreativeRunAttempt atomically increments the execution attempt count, then reads the
+	// current count.
 	IncrementCreativeRunAttempt(ctx context.Context, runID string) (int, error)
-	// IncrementCreativeRunSettlementAttempt 原子递增结算尝试次数并返回最新值。
+	// IncrementCreativeRunSettlementAttempt atomically increments the settlement attempt count, then reads
+	// the current count.
 	IncrementCreativeRunSettlementAttempt(ctx context.Context, runID string) (int, error)
-	// IncrementCreativeRunReleaseAttempt 原子递增释放尝试次数并返回最新值。
+	// IncrementCreativeRunReleaseAttempt atomically increments the release attempt count, then reads the
+	// current count.
 	IncrementCreativeRunReleaseAttempt(ctx context.Context, runID string) (int, error)
-	// SetCreativeRunProvisioningPhase 持久化创建 saga 的最后完成阶段。
+	// SetCreativeRunProvisioningPhase persists the last completed provisioning phase.
 	SetCreativeRunProvisioningPhase(ctx context.Context, runID, phase string) error
-	// MarkCreativeRunProviderSucceeded 记录 platform 已成功且输出已写入临时存储。
+	// MarkCreativeRunProviderSucceeded records provider completion for settlement recovery.
 	MarkCreativeRunProviderSucceeded(ctx context.Context, runID string, providerID int64, now time.Time) error
-	// SetCreativeRunReconcileError 记录最近一次后台补偿错误。
+	// SetCreativeRunReconcileError records the latest recovery error and next retry time.
 	SetCreativeRunReconcileError(ctx context.Context, runID, message string, next time.Time) error
 }
 
-// CreativeRunPayload 是保存在临时 Redis 存储中的任务载荷。
-// 只有这里和 worker 执行期间允许出现 prompt 明文与图片字节。
-// Sources/Mask 是 worker 内存字段（json:"-"），图片字节在 Redis 的 input/mask 键中单独保存。
+// CreativeRunPayload is the execution payload stored temporarily in Redis.
+// Plaintext prompts and media belong in temporary storage and execution memory, never persistent task metadata.
+// Sources and Mask are excluded from JSON; their bytes are stored under separate Redis input and mask keys.
 type CreativeRunPayload struct {
 	RunID              string `json:"run_id"`
 	UserID             int64  `json:"user_id"`
@@ -318,18 +322,18 @@ type CreativeRunPayload struct {
 	HasMask            bool   `json:"has_mask"`
 	RequestFingerprint string `json:"request_fingerprint"`
 
-	// Sources/Mask 由 worker 从临时存储加载后填充，仅存在于进程内。
+	// The worker fills Sources and Mask from temporary storage before execution.
 	Sources []CreativeInputImage `json:"-"`
 	Mask    *CreativeInputImage  `json:"-"`
 }
 
-// CreativeInputImage 是客户端上传的源图/mask 输入。
+// CreativeInputImage contains an uploaded source image or mask and its MIME type.
 type CreativeInputImage struct {
 	Bytes []byte
 	Mime  string
 }
 
-// CreateCreativeRunParamsPublic 是 CreateRun 的入参（由 handler 解析 multipart 后组装）。
+// CreateCreativeRunParamsPublic contains CreateRun input assembled from multipart fields by the handler.
 type CreateCreativeRunParamsPublic struct {
 	GroupID       int64
 	Model         string
@@ -345,7 +349,7 @@ type CreateCreativeRunParamsPublic struct {
 	OutputCount   int
 }
 
-// CreativeRunPublic 是任务对客户端的展示结构。
+// CreativeRunPublic is the client-facing task representation; timestamps are Unix seconds.
 type CreativeRunPublic struct {
 	ID                   string                    `json:"id"`
 	Status               string                    `json:"status"`
@@ -367,11 +371,11 @@ type CreativeRunPublic struct {
 	StartedAt            *int64                    `json:"started_at,omitempty"`
 	CompletedAt          *int64                    `json:"completed_at,omitempty"`
 	CancelledAt          *int64                    `json:"cancelled_at,omitempty"`
-	// IdempotentReplay 为 true 时表示该响应来自幂等键重放。
+	// IdempotentReplay reports whether the response reuses a task for the supplied idempotency key.
 	IdempotentReplay bool `json:"idempotent_replay,omitempty"`
 }
 
-// CreativeRunOutputPublic 是输出元数据对客户端的展示结构。
+// CreativeRunOutputPublic exposes output metadata with timestamps in Unix seconds.
 type CreativeRunOutputPublic struct {
 	Index              int    `json:"output_index"`
 	Status             string `json:"status"`
@@ -383,7 +387,7 @@ type CreativeRunOutputPublic struct {
 	ErrorMessage       string `json:"error_message,omitempty"`
 }
 
-// CreativeModelPublic 是 ListModels 返回的可用模型条目。
+// CreativeModelPublic is an available group/model entry returned by ListModels.
 type CreativeModelPublic struct {
 	GroupID            int64                 `json:"group_id"`
 	GroupName          string                `json:"group_name"`
@@ -404,19 +408,20 @@ type CreativeModelPublic struct {
 	Price4K            float64               `json:"price_4k"`
 }
 
-// CreativeNumericRange 描述创作台数值参数的闭区间和步长。
+// CreativeNumericRange defines inclusive bounds and a step for a numeric parameter.
 type CreativeNumericRange struct {
 	Min  int `json:"min"`
 	Max  int `json:"max"`
 	Step int `json:"step"`
 }
 
-// CreativeModelsResponse 是 ListModels 的响应体。
+// CreativeModelsResponse is the ListModels response body.
 type CreativeModelsResponse struct {
 	Data []CreativeModelPublic `json:"data"`
 }
 
-// CreativeCapabilitiesResponse 返回创作台上传和文本校验的服务端限制。
+// CreativeCapabilitiesResponse describes server upload limits in bytes and prompt limits in Unicode code
+// points.
 type CreativeCapabilitiesResponse struct {
 	MaxPromptChars     int      `json:"max_prompt_chars"`
 	MaxAssetBytes      int64    `json:"max_asset_bytes"`
@@ -425,13 +430,13 @@ type CreativeCapabilitiesResponse struct {
 	AllowedMIMETypes   []string `json:"allowed_mime_types"`
 }
 
-// CreativeListRunsResponse 是任务列表响应体。
+// CreativeListRunsResponse is a page of tasks with an indication of possible further results.
 type CreativeListRunsResponse struct {
 	Data    []*CreativeRunPublic `json:"data"`
 	HasMore bool                 `json:"has_more"`
 }
 
-// NormalizeCreativeWorkspaceID 校验并规范化创作台工作区 UUID。
+// NormalizeCreativeWorkspaceID parses a nonzero workspace UUID and returns its canonical lowercase form.
 func NormalizeCreativeWorkspaceID(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -444,7 +449,7 @@ func NormalizeCreativeWorkspaceID(raw string) (string, error) {
 	return strings.ToLower(parsed.String()), nil
 }
 
-// NormalizeCreativeRunScope 校验用户身份并将工作区 UUID 规范化为小写。
+// NormalizeCreativeRunScope requires a positive user ID and normalizes the workspace UUID.
 func NormalizeCreativeRunScope(scope CreativeRunScope) (CreativeRunScope, error) {
 	if scope.UserID <= 0 {
 		return CreativeRunScope{}, ErrCreativeRunNotFound
@@ -457,7 +462,7 @@ func NormalizeCreativeRunScope(scope CreativeRunScope) (CreativeRunScope, error)
 	return scope, nil
 }
 
-// NewCreativeRunID 生成 'crun_' + 16 字节 hex 的任务 ID。
+// NewCreativeRunID returns crun_ followed by 16 random bytes encoded as hexadecimal.
 func NewCreativeRunID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -466,12 +471,13 @@ func NewCreativeRunID() (string, error) {
 	return "crun_" + hex.EncodeToString(b[:]), nil
 }
 
-// IsValidCreativeRunID 校验任务 ID 格式，防止队列被注入非法 payload。
+// IsValidCreativeRunID checks for a crun_ prefix and nonempty suffix; it does not validate hexadecimal
+// encoding.
 func IsValidCreativeRunID(runID string) bool {
 	return len(runID) > len("crun_") && runID[:len("crun_")] == "crun_"
 }
 
-// IsTerminalCreativeRunStatus 判断任务是否已进入终态。
+// IsTerminalCreativeRunStatus reports whether task execution has ended.
 func IsTerminalCreativeRunStatus(status string) bool {
 	switch status {
 	case CreativeRunStatusSucceeded, CreativeRunStatusFailed, CreativeRunStatusCancelled, CreativeRunStatusResultLost:
@@ -481,21 +487,21 @@ func IsTerminalCreativeRunStatus(status string) bool {
 	}
 }
 
-// IsCreativeRunSettlementPending 判断任务是否仍需后台结算或释放。
+// IsCreativeRunSettlementPending reports whether settlement or release recovery is pending.
 func IsCreativeRunSettlementPending(status string) bool {
 	return status == CreativeRunStatusProviderSucceeded ||
 		status == CreativeRunStatusSettlementPending ||
 		status == CreativeRunStatusReleasePending
 }
 
-// CanTransitionCreativeRun 校验创作台任务状态机；platform 成功与结算/释放阶段均可恢复，
-// 只有 succeeded 在临时输出过期时允许降级为 result_lost，其余终态不可逆。
+// CanTransitionCreativeRun checks allowed status pairs, including provider and funding recovery stages.
+// The sole transition out of a terminal state is succeeded to result_lost.
 func CanTransitionCreativeRun(from, to string) bool {
 	if from == "" || to == "" {
 		return false
 	}
 	if IsTerminalCreativeRunStatus(from) {
-		// 唯一允许的终态转换：成功任务的临时结果过期，降级为 result_lost。
+		// A successful task can lose its temporary result after completion.
 		return from == CreativeRunStatusSucceeded && to == CreativeRunStatusResultLost
 	}
 	if to == CreativeRunStatusFailed {
@@ -503,7 +509,7 @@ func CanTransitionCreativeRun(from, to string) bool {
 	}
 	switch from {
 	case CreativeRunStatusQueued:
-		// result_lost 允许从 queued 直接进入：worker 恢复发现载荷已过期时无需先推进 running。
+		// A queued task can lose its payload before it ever reaches running.
 		return to == CreativeRunStatusRunning || to == CreativeRunStatusCancelled || to == CreativeRunStatusResultLost || to == CreativeRunStatusFailed || to == CreativeRunStatusReleasePending
 	case CreativeRunStatusRunning:
 		switch to {
@@ -523,7 +529,7 @@ func CanTransitionCreativeRun(from, to string) bool {
 	}
 }
 
-// CreativeRunToPublic 把领域对象转换为客户端展示结构。
+// CreativeRunToPublic converts metadata for the client, using estimated cost when no hold amount is recorded.
 func CreativeRunToPublic(run *CreativeRun, outputs []*CreativeRunOutput) *CreativeRunPublic {
 	if run == nil {
 		return nil
@@ -562,7 +568,7 @@ func CreativeRunToPublic(run *CreativeRun, outputs []*CreativeRunOutput) *Creati
 	return out
 }
 
-// CreativeRunOutputToPublic 把输出行转换为客户端展示结构。
+// CreativeRunOutputToPublic converts output metadata and timestamps for the client.
 func CreativeRunOutputToPublic(output *CreativeRunOutput) CreativeRunOutputPublic {
 	if output == nil {
 		return CreativeRunOutputPublic{}

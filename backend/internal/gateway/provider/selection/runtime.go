@@ -16,7 +16,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Generic 包含通用提供商选择所需的读取接口、资格规则和并发资源。
+// Generic holds readers, eligibility rules, and concurrency resources for provider selection.
 type Generic struct {
 	options                 Options
 	providerRepo            Providers
@@ -36,7 +36,7 @@ type Generic struct {
 	setProviderError        func(context.Context, int64, string) error
 }
 
-// Compatible 为调度器提供 OpenAI/Grok 资格规则和共享状态。
+// Compatible supplies platform eligibility rules and shared state for compatible requests.
 type Compatible struct {
 	generic             *Generic
 	gemini              *Gemini
@@ -63,7 +63,7 @@ type Compatible struct {
 	picker              pickerEngine
 }
 
-// Gemini 包含 Gemini 和混合池的无槽选择依赖。
+// Gemini holds dependencies for slot-free Gemini and mixed-pool selection.
 type Gemini struct {
 	options               Options
 	providerRepo          Providers
@@ -75,7 +75,7 @@ type Gemini struct {
 	quotaPrecheck         *provider.GeminiPrecheck
 }
 
-// DiagnosticSource 定义诊断所需的提供商读取方法，scheduler 构造诊断结果。
+// DiagnosticSource supplies records used by the scheduler to build diagnostic results.
 type DiagnosticSource interface {
 	GetProvider(context.Context, int64) (*gatewayadapter.ExecutionProvider, error)
 	GetGroup(context.Context, int64) (*routing.Group, error)
@@ -83,7 +83,7 @@ type DiagnosticSource interface {
 	ListSchedulableProvidersForAdvancedSchedulerScore(context.Context, *int64, string) ([]gatewayadapter.ExecutionProvider, error)
 }
 
-// Diagnostics 与请求选择共用参数、反馈和资格规则，用于只读诊断。
+// Diagnostics shares selection parameters, feedback, and eligibility rules for read-only diagnostics.
 type Diagnostics struct {
 	source              DiagnosticSource
 	concurrencyService  *schedulercore.ConcurrencyService
@@ -93,7 +93,7 @@ type Diagnostics struct {
 	openAIGateway       *Compatible
 }
 
-// NewGeneric 绑定共享调度状态，为每次选择建立执行目标。
+// NewGeneric binds shared scheduling resources and supplies a default window guard when absent.
 // @project-doc docs/architecture/provider_scheduling_and_cache.md#advanced_scheduler_selection
 func NewGeneric(deps GenericDependencies, options Options) *Generic {
 	if deps.Window == nil {

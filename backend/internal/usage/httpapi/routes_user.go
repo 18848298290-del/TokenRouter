@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes 注册所属用户接口，共享鉴权、限流和审计已由 app 安装。
+// RegisterUserRoutes installs usage endpoints after app installs shared authentication, rate limiting, and audit middleware.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UsageHandler, heavy gin.HandlerFunc) {
 	usage := authenticated.Group("/usage")
 	usage.Use(heavy)
@@ -12,7 +12,7 @@ func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UsageHandler, 
 		usage.GET("/errors", endpoint.ListErrors)
 		usage.GET("/errors/:id", endpoint.GetErrorDetail)
 		usage.GET("/stats", endpoint.Stats)
-		// 用户仪表盘接口
+		// User dashboard routes.
 		usage.GET("/dashboard/stats", endpoint.DashboardStats)
 		usage.GET("/dashboard/trend", endpoint.DashboardTrend)
 		usage.GET("/dashboard/models", endpoint.DashboardModels)

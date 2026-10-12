@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPreparedModelRulesParity 核对准备后的索引与逐次读取配置的匹配结果。
+// TestPreparedModelRulesParity compares indexed matching with per-call configuration reads.
 func TestPreparedModelRulesParity(t *testing.T) {
 	rules := ModelPlatformRules{
 		NormalizeQoder:      func(model string) string { return strings.TrimSuffix(strings.ToLower(model), "-alias") },
@@ -36,7 +36,7 @@ func TestPreparedModelRulesParity(t *testing.T) {
 	}
 }
 
-// TestPreparedModelRulesOwnConfiguration 配置替换和调用方修改返回值不会改变已准备的规则。
+// TestPreparedModelRulesOwnConfiguration checks isolation from mutations to inputs and returned copies.
 func TestPreparedModelRulesOwnConfiguration(t *testing.T) {
 	mapping := map[string]any{"alias": "known"}
 	whitelist := []string{"known"}
@@ -54,7 +54,7 @@ func TestPreparedModelRulesOwnConfiguration(t *testing.T) {
 	require.ElementsMatch(t, []string{"known", "alias"}, snapshot.ConfiguredModels())
 }
 
-// TestPreparedModelRulesReadDefaultsOnce 多个型号校验共用一次默认配置读取。
+// TestPreparedModelRulesReadDefaultsOnce checks that model validations share one read of defaults.
 func TestPreparedModelRulesReadDefaultsOnce(t *testing.T) {
 	modelsReads, mappingReads := 0, 0
 	defaults := ModelMappingDefaults{

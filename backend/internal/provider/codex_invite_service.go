@@ -19,13 +19,13 @@ const (
 
 var codexInviteResetEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
-// CodexInviteClient 为本次邀请操作提供平台请求接口。
+// CodexInviteClient supplies platform requests for an invitation operation.
 type CodexInviteClient interface {
 	GetJSON(context.Context, string, map[string]string) (map[string]any, error)
 	PostJSON(context.Context, string, map[string]any) (map[string]any, error)
 }
 
-// CodexInviteResetOptions 注入读取、平台交换和随机标识，保持原读取时点。
+// CodexInviteResetOptions supplies provider reads, platform clients, and random IDs.
 type CodexInviteResetOptions struct {
 	Read   func(context.Context, int64) (*Record, error)
 	Client func(context.Context, *Record) (CodexInviteClient, error)
@@ -40,7 +40,7 @@ type (
 	}
 )
 
-// codexInviteResetInviteState 保存邀请操作结果，重置次数查询单独返回结果。
+// codexInviteResetInviteState contains invitation eligibility independently of reset-credit queries.
 type codexInviteResetInviteState struct {
 	eligibility        map[string]any
 	rules              map[string]any
@@ -49,7 +49,7 @@ type codexInviteResetInviteState struct {
 	unavailableMessage string
 }
 
-// codexInviteResetCreditState 保存 usage 基础数据和尽力获取到的 credit 明细。
+// codexInviteResetCreditState combines usage totals with best-effort credit details.
 type codexInviteResetCreditState struct {
 	availableCount int
 	credits        []CodexInviteResetCredit
@@ -85,7 +85,7 @@ func (s *CodexInviteResetService) postJSON(ctx context.Context, value *codexInvi
 	return value.client.PostJSON(ctx, path, body)
 }
 
-// GetStatus 查询邀请资格和可用重置次数。
+// GetStatus fetches invitation eligibility and available reset credits.
 func (s *CodexInviteResetService) GetStatus(ctx context.Context, providerID int64) (*CodexInviteResetStatus, error) {
 	providerCtx, err := s.prepareProvider(ctx, providerID)
 	if err != nil {
@@ -121,7 +121,7 @@ func (s *CodexInviteResetService) GetStatus(ctx context.Context, providerID int6
 	}, nil
 }
 
-// getInviteState 独立查询邀请资格和规则，任一失败时仅禁用邀请入口。
+// getInviteState fetches eligibility and rules; either failure disables invitations without failing credit queries.
 func (s *CodexInviteResetService) getInviteState(ctx context.Context, providerCtx *codexInviteResetProviderContext) codexInviteResetInviteState {
 	eligibility, eligibilityErr := s.getJSON(ctx, providerCtx, "/referrals/invite/eligibility", map[string]string{
 		"referral_key":                codexInviteResetReferralKey,
@@ -147,7 +147,7 @@ func (s *CodexInviteResetService) getInviteState(ctx context.Context, providerCt
 		rules = nil
 	}
 
-	// 上游资格校验错误转换为管理端使用的状态值。
+	// Convert upstream eligibility errors to admin-facing availability state.
 	return codexInviteResetInviteState{
 		eligibility:        eligibility,
 		rules:              rules,
@@ -157,7 +157,7 @@ func (s *CodexInviteResetService) getInviteState(ctx context.Context, providerCt
 	}
 }
 
-// getCreditState 以 usage 的可用次数为基础，明细接口失败时保留基础结果。
+// getCreditState retains the usage count if credit-detail retrieval fails.
 func (s *CodexInviteResetService) getCreditState(ctx context.Context, providerCtx *codexInviteResetProviderContext) (codexInviteResetCreditState, error) {
 	usage, err := s.getJSON(ctx, providerCtx, "/wham/usage", map[string]string{
 		"supports_rewardless_invites": codexInviteResetSupportsRewardless,
@@ -193,7 +193,7 @@ func (s *CodexInviteResetService) getCreditState(ctx context.Context, providerCt
 	return state, nil
 }
 
-// SendInvite 发送 Codex 邀请邮件。
+// SendInvite sends Codex invitation emails.
 func (s *CodexInviteResetService) SendInvite(ctx context.Context, providerID int64, emails []string) (*CodexInviteResetInviteResult, error) {
 	providerCtx, err := s.prepareProvider(ctx, providerID)
 	if err != nil {
@@ -220,7 +220,7 @@ func (s *CodexInviteResetService) SendInvite(ctx context.Context, providerID int
 	}, nil
 }
 
-// Consume 使用一次可用的 Codex 重置机会。
+// Consume uses one available Codex rate-limit reset credit.
 func (s *CodexInviteResetService) Consume(ctx context.Context, providerID int64, creditID string) (*CodexInviteResetConsumeResult, error) {
 	providerCtx, err := s.prepareProvider(ctx, providerID)
 	if err != nil {
@@ -232,7 +232,7 @@ func (s *CodexInviteResetService) Consume(ctx context.Context, providerID int64,
 	payload := map[string]any{
 		"redeem_request_id": redeemRequestID,
 	}
-	// 有明细选择器时精确消费指定 credit；无明细时由新版上游自动选择可用 credit。
+	// Send a selected credit ID when supplied; otherwise upstream chooses an available credit.
 	if creditID != "" {
 		payload["credit_id"] = creditID
 	}
@@ -321,7 +321,7 @@ func normalizeCodexInviteResetCredits(raw map[string]any) []CodexInviteResetCred
 	return credits
 }
 
-// firstNonEmptyCodexInviteResetMapSlice 兼容不同版本的 credit 明细容器字段。
+// firstNonEmptyCodexInviteResetMapSlice accepts credit containers from multiple response versions.
 func firstNonEmptyCodexInviteResetMapSlice(raw map[string]any, keys ...string) []map[string]any {
 	for _, key := range keys {
 		if items := codexInviteResetMapSliceFromMap(raw, key); len(items) > 0 {
@@ -331,7 +331,7 @@ func firstNonEmptyCodexInviteResetMapSlice(raw map[string]any, keys ...string) [
 	return nil
 }
 
-// countAvailableCodexInviteResetCredits 在 usage 只返回明细时补算可用次数。
+// countAvailableCodexInviteResetCredits derives the available count when usage supplies only credit details.
 func countAvailableCodexInviteResetCredits(credits []CodexInviteResetCredit) int {
 	availableCount := 0
 	for _, credit := range credits {
@@ -366,7 +366,7 @@ func normalizeCodexInviteResetRules(raw map[string]any) []string {
 	return rules
 }
 
-// normalizeCodexInviteResetGrantType 将奖励标记和原始动作归一化为管理端稳定枚举。
+// normalizeCodexInviteResetGrantType maps reward flags and actions to the admin reward enum.
 func normalizeCodexInviteResetGrantType(hasRewards *bool, action string) string {
 	if hasRewards != nil && !*hasRewards {
 		return "none"
@@ -408,7 +408,7 @@ func codexInviteResetFirstStringFromMap(raw map[string]any, keys ...string) stri
 	return ""
 }
 
-// codexInviteResetMapFromMap 安全读取嵌套对象，上游缺失字段时返回 nil。
+// codexInviteResetMapFromMap returns a nested object, or nil for a missing or differently typed field.
 func codexInviteResetMapFromMap(raw map[string]any, key string) map[string]any {
 	if raw == nil {
 		return nil
@@ -436,7 +436,7 @@ func codexInviteResetIntFromMap(raw map[string]any, key string) int {
 	}
 }
 
-// codexInviteResetOptionalIntFromMap 区分字段缺失和上游明确返回 0。
+// codexInviteResetOptionalIntFromMap distinguishes missing values from an explicit zero.
 func codexInviteResetOptionalIntFromMap(raw map[string]any, key string) *int {
 	if raw == nil {
 		return nil
@@ -448,7 +448,7 @@ func codexInviteResetOptionalIntFromMap(raw map[string]any, key string) *int {
 	return &value
 }
 
-// codexInviteResetOptionalBoolFromMap 区分字段缺失和上游明确返回 false。
+// codexInviteResetOptionalBoolFromMap distinguishes missing values from an explicit false.
 func codexInviteResetOptionalBoolFromMap(raw map[string]any, key string) *bool {
 	if raw == nil {
 		return nil

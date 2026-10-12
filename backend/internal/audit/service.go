@@ -19,9 +19,9 @@ const (
 	auditRetentionBatchSize     = 5000
 )
 
-// AuditLogService 管理面操作审计日志服务。
-// 写入端为非阻塞异步批量落库（不拖慢管理请求）；
-// 读取端提供分页查询；清空端点由 handler 层做 TOTP 强校验后调用 ClearAll。
+// AuditLogService records and queries management-operation audit logs.
+// Record enqueues asynchronously and drops entries when the bounded queue is full.
+// Callers authorize ClearAll with TOTP before invoking it.
 type AuditLogService struct {
 	repo      AuditLogRepository
 	retention RetentionReader
@@ -41,7 +41,7 @@ type AuditLogService struct {
 	writtenCount uint64
 }
 
-// RetentionReader 按原时机读取保留天数，零表示永久保留。
+// RetentionReader returns retention days for each cleanup run; zero means indefinite retention.
 type RetentionReader func(context.Context) int
 
 func NewAuditLogService(repo AuditLogRepository, retention RetentionReader) *AuditLogService {
@@ -56,7 +56,7 @@ func NewAuditLogService(repo AuditLogRepository, retention RetentionReader) *Aud
 	}
 }
 
-// Start 启动异步写入与保留期清理协程。
+// Start launches the batch writer and retention worker once.
 func (s *AuditLogService) Start() {
 	if s == nil || s.repo == nil {
 		return
@@ -72,10 +72,10 @@ func (s *AuditLogService) Start() {
 	go s.runRetentionLoop()
 }
 
-// Stop 停止服务并尽量落盘队列中剩余记录。
+// Stop stops the workers and attempts to flush queued records.
 func (s *AuditLogService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 关闭入队屏障后尽力排空；调用超时不会伪报完成。
+// StopContext rejects new enqueues and waits for workers; expiration returns the context error.
 func (s *AuditLogService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -95,7 +95,7 @@ func (s *AuditLogService) StopContext(ctx context.Context) error {
 	}
 }
 
-// Record 非阻塞入队一条审计记录；队列打满时丢弃并计数（管理面流量下几乎不可能发生）。
+// Record enqueues without waiting for capacity and counts entries dropped when the queue is full.
 func (s *AuditLogService) Record(entry *AuditLog) {
 	if s == nil || entry == nil {
 		return
@@ -120,20 +120,20 @@ func (s *AuditLogService) Record(entry *AuditLog) {
 	}
 }
 
-// List 分页查询审计日志。
+// List returns a page of audit logs.
 func (s *AuditLogService) List(ctx context.Context, filter *AuditLogFilter) (*AuditLogList, error) {
 	return s.repo.List(ctx, filter)
 }
 
-// GetByID 查询单条详情。
+// GetByID returns one audit record.
 func (s *AuditLogService) GetByID(ctx context.Context, id int64) (*AuditLog, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
-// ClearAll 全量清空审计日志并写入留痕记录。
-// 调用方（handler）必须先完成 TOTP 验证；本方法负责：
-//  1. 统计并清空全表
-//  2. 同步写入一条 "audit_log.clear" 留痕记录（绕过异步队列，保证落库）
+// ClearAll clears audit logs and persists a trace in the same transaction.
+// The caller must verify TOTP first. The repository operation:
+//  1. Counts and clears the records.
+//  2. Synchronously inserts an "admin.audit_log.clear" trace, bypassing the asynchronous queue.
 //
 // @project-doc docs/operations/observability_and_data_lifecycle.md#data_cleanup
 func (s *AuditLogService) ClearAll(ctx context.Context, trace *AuditLog) (int64, error) {
@@ -174,7 +174,7 @@ func (s *AuditLogService) runWriter() {
 	for {
 		select {
 		case <-s.ctx.Done():
-			// 停机前排空队列。
+			// Attempt to flush all queued entries before the writer exits.
 			for {
 				select {
 				case item := <-s.queue:
@@ -204,8 +204,8 @@ func (s *AuditLogService) runWriter() {
 	}
 }
 
-// runRetentionLoop 按保留期定期删除过期审计日志。
-// 删除操作幂等，多实例并发执行无害，因此无需选主。
+// runRetentionLoop periodically deletes expired audit records.
+// Deletion is idempotent, so instances can run cleanup without leader election.
 func (s *AuditLogService) runRetentionLoop() {
 	defer s.wg.Done()
 
@@ -240,7 +240,7 @@ func (s *AuditLogService) runRetentionOnce() {
 		days = s.retention(ctx)
 	}
 	if days <= 0 {
-		return // 0 或负值表示永久保留，仅支持手动清空
+		return // Nonpositive values retain records indefinitely until manually cleared.
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
 	for {

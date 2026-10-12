@@ -560,8 +560,8 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 			c, _ := gin.CreateTestContext(writer)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-			// Simulate the Claude compat error handling path (same logic as native).
-			// This mirrors the inline switch in handleClaudeCompat.
+			// Exercise the policy-result branches with a local simulation.
+			// This fixture handles CustomSkipped directly; production failover is tested separately.
 			var handleErrorCalled bool
 			var gotFailover bool
 
@@ -575,7 +575,7 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 				policy := svc.Health.CheckErrorPolicy(ctx, gatewayprovider.ExecutionRecord(provider), gatewayprovider.HealthObservationFromContext(ctx, statusCode, nil, respBody, []string{"gemini-2.5-pro"}))
 				switch policy {
 				case providercore.ErrorPolicyCustomSkipped:
-					// Skipped → return error directly (no handleGeminiUpstreamError, no failover)
+					// This simulation returns on CustomSkipped without health handling or failover.
 					gotFailover = false
 					handleErrorCalled = false
 					goto verify
@@ -591,7 +591,7 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 				}
 			}
 
-			// ErrorPolicyNone → original logic
+			// With no policy match, observe health and check the status for failover.
 			svc.Errors.Observe(ctx, gatewayprovider.ExecutionRecord(provider), statusCode, headers, respBody, gatewayprovider.HealthObservationFromContext(ctx, statusCode, headers, respBody, nil))
 			handleErrorCalled = true
 			if googleforward.GeminiFailoverForTest(svc, statusCode) {
@@ -621,9 +621,8 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 		healthObserver: nil,
 	})
 
-	// When healthObserver is nil, error policy is skipped → falls through to
-	// shouldFailoverGeminiUpstreamError (original logic).
-	// Verify this doesn't panic and follows expected behavior.
+	// A missing health policy observer leaves status-based failover available.
+	// The separate error observer must tolerate that missing dependency.
 
 	ctx := context.Background()
 	provider := &gatewayprovider.ExecutionProvider{
@@ -642,16 +641,15 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 		},
 	}
 
-	// The nil check should prevent CheckErrorPolicy from being called
 	if svc.Health != nil {
 		t.Fatal("healthObserver should be nil for this test")
 	}
 
-	// shouldFailoverGeminiUpstreamError still works
+	// Status-based failover remains available.
 	require.True(t, googleforward.GeminiFailoverForTest(svc, 429))
 	require.False(t, googleforward.GeminiFailoverForTest(svc, 400))
 
-	// handleGeminiUpstreamError should not panic with nil healthObserver
+	// Health observation tolerates the missing policy observer.
 	require.NotPanics(t, func() {
 		svc.Errors.Observe(ctx, gatewayprovider.ExecutionRecord(provider), 500, http.Header{}, []byte(`error`), gatewayprovider.HealthObservationFromContext(ctx, 500, http.Header{}, []byte(`error`), nil))
 	})
@@ -736,8 +734,8 @@ func TestHandleGeminiUpstreamError_ThirdPartyAPIKeyIgnoresOfficialQuotaMessage(t
 	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
 }
 
-// TestGeminiPoolMode429BypassesLocalRateLimit 验证池模式不再被当作自定义未命中，
-// 也不会继续执行 Gemini 默认 429 限流写入。
+// TestGeminiPoolMode429BypassesLocalRateLimit checks the dedicated pool bypass result
+// and confirms that default Gemini 429 handling does not persist a cooldown.
 func TestGeminiPoolMode429BypassesLocalRateLimit(t *testing.T) {
 	repo := &geminiErrorPolicyRepo{}
 	healthObserver := newUpstreamHealthForTest(repo, &googleforward.Options{}, nil, providercore.HealthOptions{}, nil)
@@ -854,8 +852,8 @@ func TestHandleGeminiUpstreamError_PoolMode429SkipsProviderLimit(t *testing.T) {
 	}
 }
 
-// TestGeminiCustomNonFailoverStatusStopsScheduling 验证非默认故障转移状态也会执行
-// 管理员配置的策略会写入提供商错误。
+// TestGeminiCustomNonFailoverStatusStopsScheduling checks that custom policy
+// can mark a provider unhealthy for a status outside the default failover set.
 func TestGeminiCustomNonFailoverStatusStopsScheduling(t *testing.T) {
 	repo := &geminiErrorPolicyRepo{}
 	healthObserver := newUpstreamHealthForTest(repo, &googleforward.Options{}, nil, providercore.HealthOptions{}, nil)
@@ -945,7 +943,7 @@ func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
 	assert.True(t, gatewayhttp.IsResponseCommitted(c), "Gemini path must mark response committed")
 }
 
-// TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping 验证 Messages 兼容入口的 OAuth 提供商也执行 C -> U。
+// TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping checks OAuth model mapping in the Messages entry.
 func TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping(t *testing.T) {
 	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]} ,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -1002,7 +1000,7 @@ func TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping(t *
 	require.Equal(t, "oauth-upstream-model", gjson.GetBytes(sentBody, "model").String())
 }
 
-// TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping 验证原生 Gemini 入口的 OAuth 提供商执行 C -> U。
+// TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping checks OAuth model mapping in the native entry.
 func TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping(t *testing.T) {
 	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -1300,8 +1298,8 @@ func TestEstimateGeminiCountTokens(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
-		wantGt0   bool // 期望结果 > 0
-		wantExact *int // 如果非 nil，期望精确匹配
+		wantGt0   bool // Require a positive estimate.
+		wantExact *int // Exact expected count when non-nil.
 	}{
 		{
 			name: "含 systemInstruction 和 contents",
@@ -1373,7 +1371,7 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 		name        string
 		input       string
 		wantNil     bool
-		approxDelta int64 // 预期的 (返回值 - now) 大约是多少秒
+		approxDelta int64 // Approximate reset offset from now, in seconds.
 	}{
 		{
 			name: "正常 quotaResetDelay",
@@ -1382,7 +1380,7 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 
 			wantNil: false,
 
-			approxDelta: 13, // 向上取整 12.345 -> 13
+			approxDelta: 13, // Round 12.345 seconds up to 13.
 
 		},
 
@@ -1393,7 +1391,7 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 
 			wantNil: false,
 
-			approxDelta: -1, // 不检查精确 delta，仅检查非 nil
+			approxDelta: -1, // Check presence and future time rather than an exact offset.
 
 		},
 
@@ -1443,16 +1441,15 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 				t.Fatalf("期望返回非 nil，实际返回 nil")
 			}
 
-			// approxDelta == -1 时断言结果为非 nil，适用于 daily quota 等时间不确定的场景。
+			// An offset of -1 denotes a future reset whose exact time is not fixed by the fixture.
 			if tt.approxDelta == -1 {
-				// 仅验证返回的时间戳在合理范围内（未来的某个时间）
 				if *got < now {
 					t.Errorf("期望返回的时间戳 >= now(%d)，实际 %d", now, *got)
 				}
 				return
 			}
 
-			// 使用 +/-2 秒容差进行范围检查
+			// Allow two seconds of clock tolerance.
 			delta := *got - now
 			if delta < tt.approxDelta-2 || delta > tt.approxDelta+2 {
 				t.Errorf("期望 delta 约为 %d 秒（+/-2），实际 delta = %d 秒（返回值=%d, now=%d）",

@@ -11,9 +11,10 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/grok" // ExecuteGrok 执行 Grok 平台任务：generate 与 edit 分别使用 xAI 图片端点。
+	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// ExecuteGrok dispatches generate and edit operations to the corresponding xAI image endpoints.
 func (e *Target) ExecuteGrok(ctx context.Context, run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) ([]creative.CreativeOutput, error) {
 	if run.Operation != creative.CreativeOperationGenerate && run.Operation != creative.CreativeOperationEdit {
 		return nil, creative.CreativeNonRetryableError("grok platform does not support creative operation %s", run.Operation)
@@ -60,7 +61,7 @@ func (e *Target) ExecuteGrok(ctx context.Context, run creative.CreativeRun, payl
 	if e.Grok.OAuth && (grok.MediaCodec{}).IsGrokCLIProxyTarget(targetURL) {
 		grok.ApplyCLIHeaders(req.Header)
 	}
-	// 提供商级请求头覆写最后应用，配置值优先于内置默认头。
+	// Apply provider header overrides last so configured values take precedence over defaults.
 	e.Grok.ApplyHeaders(req.Header)
 
 	resp, err := e.Grok.Do(req)
@@ -78,7 +79,7 @@ func (e *Target) ExecuteGrok(ctx context.Context, run creative.CreativeRun, payl
 	return ParseCreativeOpenAIImageOutputs(respBody)
 }
 
-// BuildCreativeGrokRequest 构造 xAI images/generations 请求体。
+// BuildCreativeGrokRequest builds the xAI images/generations JSON body.
 func BuildCreativeGrokRequest(run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) map[string]any {
 	request := map[string]any{
 		"model":           upstreamModel,
@@ -96,8 +97,8 @@ func BuildCreativeGrokRequest(run creative.CreativeRun, payload creative.Creativ
 	return request
 }
 
-// BuildCreativeGrokEditRequest 构造 xAI images/edits 所需的 JSON 请求体。
-// xAI 编辑端点不接受 OpenAI SDK 的 multipart 格式，图片必须作为 data URI 引用。
+// BuildCreativeGrokEditRequest builds the xAI images/edits JSON body.
+// The edit request embeds images as data URIs in JSON, as required by the xAI endpoint.
 func BuildCreativeGrokEditRequest(run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) map[string]any {
 	request := map[string]any{
 		"model":           upstreamModel,

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// EmailOAuthProfile 是已经验证的邮箱提供方资料，不包含 HTTP 客户端或配置。
+// EmailOAuthProfile contains verified provider profile data for email-based OAuth.
 type EmailOAuthProfile struct {
 	Subject, Email                   string
 	EmailVerified                    bool
@@ -21,7 +21,7 @@ type GoogleIDTokenVerifier interface {
 	Verify(context.Context, string, string) (*GoogleIDTokenClaims, error)
 }
 
-// OAuthPendingDraft 保存准备写入现有 pending session 的身份意图和前端状态。
+// OAuthPendingDraft contains the identity intent and frontend state for a pending session.
 type OAuthPendingDraft struct {
 	Intent                                       string
 	Identity                                     PendingAuthIdentityKey
@@ -48,7 +48,8 @@ func EmailOAuthIdentityFromProfile(provider string, profile *EmailOAuthProfile) 
 	}
 }
 
-// PrepareEmailRegistrationDraft 保留邮箱提供方必须补充密码/邀请码的选择状态与元数据优先级。
+// PrepareEmailRegistrationDraft builds the password and invitation completion state for an email provider.
+// Explicit profile fields take precedence over entries in profile.Metadata.
 func PrepareEmailRegistrationDraft(provider, frontendCallback, redirectTo, browserSessionKey string, profile *EmailOAuthProfile, affCode, promoCode string, invitationRequired bool) OAuthPendingDraft {
 	email := strings.TrimSpace(strings.ToLower(profile.Email))
 	username := strings.TrimSpace(profile.Username)
@@ -112,7 +113,7 @@ func PrepareEmailRegistrationDraft(provider, frontendCallback, redirectTo, brows
 	}
 }
 
-// GoogleEmailProfile 将已验证的 Google 声明转换为邮箱登录资料。
+// GoogleEmailProfile converts verified Google claims into an email sign-in profile.
 func GoogleEmailProfile(c *GoogleIDTokenClaims) *EmailOAuthProfile {
 	metadata := map[string]any{"email_verified": true}
 	if c.Locale != "" {

@@ -17,12 +17,12 @@ func BuildCountTokensRequestPassthrough(ctx context.Context, body []byte, token 
 	}
 	body = SanitizeCountTokensRequestBody(body)
 
-	// 同 buildUpstreamRequestAnthropicAPIKeyPassthrough：能力维度 sanitize。
+	// Gate body fields against the final beta header, as in Messages passthrough.
 	clientBeta := ""
 	if options.ClientHeaders != nil {
 		clientBeta = GetHeaderRaw(options.ClientHeaders, "anthropic-beta")
 	}
-	// 提供商覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
+	// Provider overrides determine the beta header used for body sanitization.
 	if beta, ok := options.BetaOverride(); ok {
 		clientBeta = beta
 	}
@@ -61,13 +61,13 @@ func BuildCountTokensRequestPassthrough(ctx context.Context, body []byte, token 
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
-	// 提供商级请求头覆写（最终生效，覆盖上面所有来源的同名头）
+	// Provider overrides take precedence over headers assembled above.
 	options.ApplyOverrides(req.Header)
 
 	return req, nil
 }
 
-// BuildCountTokensRequest 构建 count_tokens 上游请求。
+// BuildCountTokensRequest builds the upstream count_tokens request and returns its body.
 func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType, modelID string, mimicClaudeCode bool, options RequestOptions) (*http.Request, []byte, error) {
 	body = StripDeferredToolCacheControl(body)
 	targetURL, err := options.URL()
@@ -75,8 +75,8 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		return nil, nil, err
 	}
 	clientHeaders := options.ClientHeaders
-	// OAuth 提供商：应用统一指纹和重写 userID（受设置开关控制）
-	// 如果启用了会话 ID 伪装，会在重写后替换 session 部分为固定值
+	// OAuth fingerprint settings control header and user ID rewriting.
+	// Session masking can replace the rewritten session component.
 	ctEnableFP, ctEnableMPT := true, false
 	if options.Forwarding != nil {
 		ctEnableFP, ctEnableMPT = options.Forwarding(ctx)
@@ -97,7 +97,7 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		}
 	}
 
-	// 禁用指纹统一不会禁用伪装强制头，计费版本仍要跟随实际出站 UA。
+	// Mimic headers remain forced when fingerprint unification is off; billing must match their UA.
 	var billingFingerprint *Fingerprint
 	if ctEnableFP {
 		billingFingerprint = ctFingerprint
@@ -106,19 +106,17 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		body = SyncBillingHeaderVersion(body, billingUA)
 	}
 
-	// === 计算最终 anthropic-beta header（先于 body sanitize）===
-	// 顺序约束同 buildUpstreamRequest。
+	// Select the final beta header before sanitizing body fields.
 	ctEffectiveDropSet := MergeDropSets(options.FilterSet(ctx))
 	finalBetaHeader, finalBetaShouldSet := ComputeFinalCountTokensAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, ctEffectiveDropSet, options.InjectAPIKeyBeta,
 	)
 
-	// 提供商覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
+	// Provider overrides determine the beta header used for body sanitization.
 	if beta, ok := options.BetaOverride(); ok {
 		finalBetaHeader, finalBetaShouldSet = beta, true
 	}
 
-	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := SanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
 		body = sanitized
 	}
@@ -129,14 +127,14 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		return nil, nil, err
 	}
 
-	// 设置认证头（保持原始大小写）
+	// Keep authentication header wire casing.
 	if tokenType == "oauth" {
 		SetHeaderRaw(req.Header, "authorization", "Bearer "+token)
 	} else {
 		SetAPIKeyAuthHeader(req.Header, options.APIKeyBearer, token)
 	}
 
-	// 白名单透传 headers（恢复真实 wire casing）
+	// Restore wire casing for allowed client headers.
 	for key, values := range clientHeaders {
 		lowerKey := strings.ToLower(key)
 		if AllowedHeaders[lowerKey] {
@@ -147,12 +145,11 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		}
 	}
 
-	// OAuth 提供商：应用指纹到请求头（受设置开关控制）
 	if ctEnableFP && ctFingerprint != nil {
 		options.Fingerprint.ApplyFingerprint(req, ctFingerprint)
 	}
 
-	// 确保必要的 headers 存在（保持原始大小写）
+	// Fill required headers using their wire casing.
 	if GetHeaderRaw(req.Header, "content-type") == "" {
 		SetHeaderRaw(req.Header, "content-type", "application/json")
 	}
@@ -163,18 +160,18 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		ApplyClaudeOAuthHeaderDefaults(req)
 	}
 
-	// OAuth + mimic Claude Code：强制注入 CLI 指纹 header
+	// Mimic headers override the selected OAuth fingerprint.
 	if tokenType == "oauth" && mimicClaudeCode {
 		ApplyClaudeCodeMimicHeaders(req, false)
 	}
 
-	// 写入最终 anthropic-beta header（Del 一次避免白名单透传值残留）
+	// Remove all header forms before writing the final beta value.
 	DeleteHeaderAllForms(req.Header, "anthropic-beta")
 	if finalBetaShouldSet {
 		SetHeaderRaw(req.Header, "anthropic-beta", finalBetaHeader)
 	}
 
-	// 同步 X-Claude-Code-Session-Id 头：取 body 中已处理的 metadata.user_id 的 session_id 覆盖
+	// Match an existing session header to the rewritten metadata session ID.
 	if sessionHeader := GetHeaderRaw(req.Header, "X-Claude-Code-Session-Id"); sessionHeader != "" {
 		if uid := gjson.GetBytes(body, "metadata.user_id").String(); uid != "" {
 			if parsed := ParseMetadataUserID(uid); parsed != nil {
@@ -183,7 +180,7 @@ func BuildCountTokensRequest(ctx context.Context, body []byte, token, tokenType,
 		}
 	}
 
-	// 提供商级请求头覆写（仅 anthropic/openai api_key 提供商启用时生效；OAuth 路径 no-op）
+	// Apply enabled provider header overrides.
 	options.ApplyOverrides(req.Header)
 
 	if options.Capture != nil {
@@ -202,8 +199,8 @@ func SanitizeCountTokensRequestBody(body []byte) []byte {
 		"stream",
 		"stop_sequences",
 		"stop",
-		// Anthropic 的 /v1/messages/count_tokens 只接受请求输入字段。
-		// max_tokens 是生成参数，OAuth mimic 可能为普通 messages 请求注入它，不能发送到该端点。
+		// count_tokens accepts input fields. Remove the generation limit that
+		// OAuth mimic may have supplied for a Messages request.
 		"max_tokens",
 	} {
 		if next, ok := DeleteJSONPathBytes(out, path); ok {

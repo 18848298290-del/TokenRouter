@@ -15,7 +15,7 @@ import (
 
 type mediaReadFailure struct{}
 
-// TestMediaContentResponsePreservesRangeAndCommit 验证 HTTP 下载头按白名单转发，响应体写入前设置提交标记。
+// TestMediaContentResponsePreservesRangeAndCommit checks download header filtering and the commit callback.
 func TestMediaContentResponsePreservesRangeAndCommit(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

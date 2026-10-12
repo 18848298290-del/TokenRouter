@@ -20,8 +20,8 @@ func OptionalTrimmedStringPtr(raw string) *string {
 	return &trimmed
 }
 
-// CoalesceRequestedReasoningEffort 优先保留处理器或传输层已捕获的客户端档位，
-// 再使用尚未改写的请求体推导值；两者都为空时保留 NULL 表示客户端未声明。
+// CoalesceRequestedReasoningEffort prefers client effort captured by the handler or transport,
+// then the unmodified request value. If neither is present, nil records that the client omitted it.
 func CoalesceRequestedReasoningEffort(requested, forwarded *string) *string {
 	if requested != nil {
 		if value := strings.TrimSpace(*requested); value != "" {
@@ -273,7 +273,7 @@ func maxReasoningEffortBillingMultiplier(model, effort string, p *pricing.ModelP
 	return pricing.MaxReasoningEffortBillingMultiplier(model, effort, p)
 }
 
-// cacheOverrideTarget 保留提供商优先及设置查询时机，不提前读取动态设置。
+// cacheOverrideTarget prefers the captured override, then provider settings, reading global policy only when needed.
 func (s *Recorder) cacheOverrideTarget(ctx context.Context, input *Input) string {
 	if input.CacheOverrideTarget != "" {
 		return input.CacheOverrideTarget
@@ -296,7 +296,7 @@ func (s *Recorder) observeEvent(event BillingEvent) {
 	}
 }
 
-// ResolveSubscription 保留当前订阅优先及按需读取，资金模式裁决由调用者在此前完成。
+// ResolveSubscription prefers the supplied subscription and otherwise reads on demand. Callers resolve funding mode first.
 func ResolveSubscription(ctx context.Context, current *billing.UserSubscription, reader SubscriptionReader, userID int64, groupID *int64) *billing.UserSubscription {
 	if current != nil {
 		return current
@@ -311,7 +311,7 @@ func ResolveSubscription(ctx context.Context, current *billing.UserSubscription,
 	return sub
 }
 
-// keyWithBillingSettings 在结算开始时读取共享设置，认证快照不携带价格配置。
+// keyWithBillingSettings copies the key and reads current shared pricing settings at settlement time.
 func (s *Recorder) keyWithBillingSettings(ctx context.Context, key *KeySnapshot) *KeySnapshot {
 	key = SnapshotKey(key)
 	if key == nil || key.Group == nil {
@@ -326,7 +326,7 @@ func (s *Recorder) keyWithBillingSettings(ctx context.Context, key *KeySnapshot)
 	return key
 }
 
-// applyClientModel 将客户端声明的模型名写入用量日志的请求模型字段。
+// applyClientModel writes the captured client model into the usage log requested-model field.
 func applyClientModel(ctx context.Context, log *usage.UsageLog) {
 	if ctx == nil || log == nil {
 		return
@@ -336,7 +336,7 @@ func applyClientModel(ctx context.Context, log *usage.UsageLog) {
 	}
 }
 
-// responseModelMismatch 比较最终出站模型和上游原始响应中的模型声明。
+// responseModelMismatch compares the outbound model with the raw upstream declaration; an absent declaration yields nil.
 func responseModelMismatch(result *Result) *bool {
 	if result == nil || strings.TrimSpace(result.UpstreamResponseModel) == "" {
 		return nil

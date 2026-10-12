@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRestarterPlatformDelayAndClose 检查重启请求只发送一次，关闭时取消尚未触发的延迟回调。
+// TestRestarterPlatformDelayAndClose checks one restart request and cancellation of pending callbacks on close.
 func TestRestarterPlatformDelayAndClose(t *testing.T) {
 	for _, platform := range []string{"linux", "darwin", "windows"} {
 		t.Run(platform, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestRestarterPlatformDelayAndClose(t *testing.T) {
 	time.Sleep(650 * time.Millisecond)
 }
 
-// TestRestarterCloseWaitsForCallback 检查 Close 等待已经开始的回调返回后才完成资源释放。
+// TestRestarterCloseWaitsForCallback checks that Close waits for an active callback before releasing resources.
 func TestRestarterCloseWaitsForCallback(t *testing.T) {
 	entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	r := NewRestarter("linux", func() { close(entered); <-release })

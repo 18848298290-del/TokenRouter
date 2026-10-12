@@ -1,6 +1,6 @@
 package postgres
 
-// 本场景覆盖 payment/statistics.go 与本包 orders.go，检查订单查询和支付统计汇总。
+// These scenarios exercise payment/statistics.go and this package's orders.go to verify order queries and payment aggregates.
 
 import (
 	"context"

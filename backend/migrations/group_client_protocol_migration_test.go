@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupClientProtocolMigrationBackfillMatrix 锁定六个平台及 OpenAI 旧开关的回填语义。
+// TestGroupClientProtocolMigrationBackfillMatrix checks backfills for six platforms and the legacy OpenAI
+// switch.
 func TestGroupClientProtocolMigrationBackfillMatrix(t *testing.T) {
 	content, err := FS.ReadFile("235_add_group_allowed_client_protocols.sql")
 	require.NoError(t, err)

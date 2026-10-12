@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// UsageRecoveryVersion 限定本轮成功查询可恢复的身份及原错误，不代表任意管理员恢复操作。
+// UsageRecoveryVersion captures the credential identity and error a successful usage query may clear.
 type UsageRecoveryVersion struct {
 	CredentialVersion
 	ErrorMessage string `json:"-"`
@@ -15,7 +15,7 @@ type UsageRecoveryWriter interface {
 	ClearUsageErrorIfUnchanged(context.Context, UsageRecoveryVersion) (bool, error)
 }
 
-// RecoverUsageProviderError 在可恢复错误的条件写入成功后更新返回数据。
+// RecoverUsageProviderError updates the record after conditionally clearing a recoverable stored error.
 func RecoverUsageProviderError(ctx context.Context, value *Record, writer UsageRecoveryWriter) (bool, error) {
 	if value == nil || value.Status != StatusError {
 		return false, nil

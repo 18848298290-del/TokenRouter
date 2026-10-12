@@ -7,10 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ProviderSnapshot 包含候选判断需要的身份、资格和运行数据。
-// 模型改写和凭据读取由各自的调用入口执行。
+// ProviderSnapshot holds the identity, eligibility, and runtime data used to select candidates.
+// Callers perform model rewriting and credential lookup separately.
 type ProviderSnapshot struct {
-	// ModelPolicy 仅在实际模型匹配点装配，不随协议预检提前读取动态默认值。
+	// ModelPolicy is populated at model matching time so protocol prechecks do not read dynamic defaults.
 	ModelPolicy      ModelRoutingSnapshot `json:"-"`
 	ID               int64
 	ParentProviderID *int64
@@ -25,7 +25,7 @@ type ProviderSnapshot struct {
 	ExpiresAt        *time.Time
 }
 
-// RoutingSnapshot 返回请求独立副本；协议缺省解析仍由提供商配置规则唯一负责。
+// RoutingSnapshot returns an independent copy with protocols resolved by the provider configuration.
 func (r *Record) RoutingSnapshot() ProviderSnapshot {
 	if r == nil {
 		return ProviderSnapshot{}
@@ -46,7 +46,7 @@ func (r *Record) RoutingSnapshot() ProviderSnapshot {
 	return snapshot
 }
 
-// Protocols 将已解析的协议能力传给能力目录。
+// Protocols returns resolved capabilities with an independent protocol slice.
 func (s ProviderSnapshot) Protocols() capability.ProviderProtocols {
 	return capability.ProviderProtocols{Platform: s.Platform, Type: s.Type, AuthMode: s.AuthMode, Enabled: slices.Clone(s.EnabledProtocols)}
 }

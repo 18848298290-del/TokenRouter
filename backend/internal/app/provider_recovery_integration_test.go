@@ -16,7 +16,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// TestNativeProviderHealthAssembly 检查应用装配的健康状态组件读写 PostgreSQL。
+// TestNativeProviderHealthAssembly checks PostgreSQL reads and writes through assembled health components.
 func TestNativeProviderHealthAssembly(t *testing.T) {
 	f := newDatabaseFixture(t)
 	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})

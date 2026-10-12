@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestQueryCacheSnapshotIsolation 验证已发布查询值在写入、命中和 singleflight 返回边界都必须独立。
+// TestQueryCacheSnapshotIsolation checks independent values on cache writes and hits.
 func TestQueryCacheSnapshotIsolation(t *testing.T) {
 	type payload struct {
 		Items []map[string]*int

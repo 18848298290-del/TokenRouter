@@ -17,10 +17,10 @@ type OAuthClient struct {
 	Config   func() OAuthConfig
 }
 
-// TokenResponse 是 Google OAuth 令牌响应。
+// TokenResponse is a Google OAuth token response.
 type TokenResponse = wire.TokenResponse
 
-// NewOAuthClient 使用调用方提供的配置读取函数创建 OAuth 客户端。
+// NewOAuthClient reads configuration through config on each exchange or refresh.
 func NewOAuthClient(config func() OAuthConfig) *OAuthClient {
 	return &OAuthClient{TokenURL: TokenURL, Config: config}
 }
@@ -31,13 +31,10 @@ func (c *OAuthClient) ExchangeCode(ctx context.Context, oauthType, code, codeVer
 		return nil, fmt.Errorf("create HTTP client: %w", err)
 	}
 
-	// Use different OAuth clients based on oauthType:
-	// - code_assist: always use built-in Gemini CLI OAuth client (public)
-	// - google_one: always use built-in Gemini CLI OAuth client (public)
-	// - ai_studio: requires a user-provided OAuth client
+	// Code Assist and Google One exchanges use the built-in Gemini CLI credentials.
+	// AI Studio uses configured credentials or the defaults from EffectiveOAuthConfig.
 	oauthCfgInput := c.Config()
 	if oauthType == "code_assist" || oauthType == "google_one" {
-		// Force use of built-in Gemini CLI OAuth client
 		oauthCfgInput.ClientID = ""
 		oauthCfgInput.ClientSecret = ""
 	}
@@ -78,7 +75,7 @@ func (c *OAuthClient) RefreshToken(ctx context.Context, oauthType, refreshToken,
 
 	oauthCfgInput := c.Config()
 	if oauthType == "code_assist" || oauthType == "google_one" {
-		// Force use of built-in Gemini CLI OAuth client
+		// Code Assist and Google One refreshes use the built-in Gemini CLI credentials.
 		oauthCfgInput.ClientID = ""
 		oauthCfgInput.ClientSecret = ""
 	}

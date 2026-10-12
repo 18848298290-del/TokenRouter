@@ -36,8 +36,8 @@ func (s *RefundStore) Order(ctx context.Context, id int64) (*payment.Order, erro
 }
 func refundConflict() error { return apperror.Conflict("CONFLICT", "order status changed") }
 
-// refundAudit 在订单行锁内维护必要事实，兼容原 (order_id,action) 唯一索引。
-// 同动作新尝试将旧详情完整归档到 history，不删除或覆盖旧退款事实。
+// refundAudit updates the audit record for (order_id, action); callers hold the order row lock.
+// A repeated action archives the complete previous detail in history before storing the current attempt.
 func refundAudit(ctx context.Context, client *dbent.Client, id int64, action string, detail any) error {
 	data, err := json.Marshal(detail)
 	if err != nil {
@@ -101,8 +101,8 @@ func refundAudit(ctx context.Context, client *dbent.Client, id int64, action str
 	return nil
 }
 
-// lockedRefundOrder 锁内核对时间值，避免测试 SQLite 的时间文本格式参与版本比较。
-// PostgreSQL 查询使用行锁，SQLite 查询供非并发测试使用。
+// lockedRefundOrder reads the order under a row lock for subsequent time-value version checks.
+// SQLite omits the lock for non-concurrent tests, avoiding comparisons against formatted time strings.
 func lockedRefundOrder(ctx context.Context, client *dbent.Client, id int64) (*dbent.PaymentOrder, error) {
 	return client.PaymentOrder.Query().Where(paymentorder.IDEQ(id)).Where(func(q *sql.Selector) {
 		if q.Dialect() != "sqlite3" {
@@ -138,7 +138,7 @@ func (s *RefundStore) PrepareRefund(ctx context.Context, p *payment.RefundPlan, 
 	if err = claimRefund(txctx, tx.Client(), p.Order, payment.OrderStatusRefunding); err != nil {
 		return nil, err
 	}
-	// 原 rollback-failed 资料不能证明当前扣减额，拒绝猜测并要求先核实。
+	// Legacy rollback failures leave the actual deduction unknown and require manual verification.
 	previousFailure, err := tx.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionEQ("REFUND_ROLLBACK_FAILED")).Exist(txctx)
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (s *RefundStore) PrepareRefund(ctx context.Context, p *payment.RefundPlan, 
 	if err != nil {
 		return nil, err
 	}
-	// 数据库时间精度是操作版本的权威来源；避免内存纳秒与 PostgreSQL 微秒不同。
+	// Reload the database timestamp for the version; PostgreSQL stores microseconds, not Go nanoseconds.
 	order, err = tx.PaymentOrder.Get(txctx, order.ID)
 	if err != nil {
 		return nil, err
@@ -403,14 +403,14 @@ func (s *RefundStore) PendingDetail(ctx context.Context, id int64) (payment.Refu
 	if d.DeductBalance && fields["balanceDeducted"] == nil && fields["subDaysDeducted"] == nil {
 		return d, payment.RefundRecoveryRequired("pending deduction missing")
 	}
-	// 新格式必须携带版本和准备关联，不能在损坏后悄悄按旧格式解释。
+	// A versioned record requires a preparation ID and valid deduction; corruption must not invoke legacy decoding.
 	if raw, ok := fields["version"]; ok {
 		var version int
 		if json.Unmarshal(raw, &version) != nil || version != 1 || d.OperationID == "" || !validRefundDeduction(d, false) {
 			return d, payment.RefundRecoveryRequired("pending record version or deduction invalid")
 		}
 	}
-	// 新记录必须能关联原准备事实；旧记录保持原字段与缺省 rollback 兼容。
+	// Match versioned deductions to their preparation; legacy records retain the default successful rollback.
 	if d.OperationID != "" {
 		r, e := readRefundReceipt(ctx, s.client, id)
 		if e != nil || r.OperationID != d.OperationID || r.DeductBalance != d.DeductBalance || r.DeductionType != d.DeductionType || r.BalanceDeducted != d.BalanceDeducted || r.SubDaysDeducted != d.SubDaysDeducted || r.SubscriptionID != d.SubscriptionID {
@@ -420,7 +420,7 @@ func (s *RefundStore) PendingDetail(ctx context.Context, id int64) (payment.Refu
 	return d, nil
 }
 
-// AppendObservation 追加渠道过程审计记录，返回写入错误供调用方处理。
+// AppendObservation writes a provider audit event and returns persistence errors.
 func (s *RefundStore) AppendObservation(ctx context.Context, id int64, action, operator string, detail map[string]any) error {
 	data, err := json.Marshal(detail)
 	if err != nil {
@@ -430,12 +430,12 @@ func (s *RefundStore) AppendObservation(ctx context.Context, id int64, action, o
 	return err
 }
 
-// RequestRefund 将用户已完成的余额订单更新为申请退款，资金退还由后续流程执行。
+// RequestRefund marks a user's completed balance order as refund-requested; later processing returns funds.
 func (s *RefundStore) RequestRefund(ctx context.Context, id, userID int64, amount float64, reason string, now time.Time, by string) (int, error) {
 	return s.client.PaymentOrder.Update().Where(paymentorder.IDEQ(id), paymentorder.UserIDEQ(userID), paymentorder.StatusEQ(payment.OrderStatusCompleted), paymentorder.OrderTypeEQ(payment.OrderTypeBalance)).SetStatus(payment.OrderStatusRefundRequested).SetRefundRequestedAt(now).SetRefundRequestReason(reason).SetRefundRequestedBy(by).SetRefundAmount(amount).Save(ctx)
 }
 
-// matchPendingRefundIdentity 旧记录按渠道退款 ID 核对；新记录同时核对准备操作标识，均不改渠道幂等键。
+// matchPendingRefundIdentity compares the provider refund ID and local operation ID, which is empty for legacy records.
 func matchPendingRefundIdentity(ctx context.Context, client *dbent.Client, id int64, operationID, refundID string) error {
 	row, err := client.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(id, 10)), paymentauditlog.ActionEQ("REFUND_PENDING")).Order(paymentauditlog.ByCreatedAt(sql.OrderDesc()), paymentauditlog.ByID(sql.OrderDesc())).First(ctx)
 	if err != nil {
@@ -451,8 +451,8 @@ func matchPendingRefundIdentity(ctx context.Context, client *dbent.Client, id in
 	return nil
 }
 
-// validRefundDeduction 恢复记录必须表达一致的扣减事实；旧 pending 可省略类型，但不能省略扣减选择。
-// 旧格式声明跳过扣减时优先采用该标记，金额字段可能记录的是请求金额。
+// validRefundDeduction checks consistency; legacy pending records may omit the deduction type.
+// Legacy records may retain the requested amount even when DeductBalance is false.
 func validRefundDeduction(d payment.RefundPendingDetail, legacy bool) bool {
 	if d.SubscriptionID < 0 || !validRefundAmount(d.BalanceDeducted) || d.SubDaysDeducted < 0 {
 		return false

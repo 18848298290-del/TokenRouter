@@ -33,7 +33,7 @@ func (s *UserRepoSuite) TestUpdateForkSpecificFields() {
 	loaded.APIKeyLimit = 7
 	loaded.DisabledPublicGroups = []int64{group.ID}
 
-	// 数量上限与公共分组禁用关系分别由字段掩码控制。
+	// The field mask selects the key count limit and disabled public group relations separately.
 	s.Require().NoError(s.repo.Update(s.ctx, loaded, identitycore.UserUpdateFields{
 		APIKeyLimit:          true,
 		DisabledPublicGroups: true,
@@ -528,7 +528,7 @@ func (s *UserRepoSuite) TestExistsByNormalizedEmail() {
 	s.Require().False(notExists)
 }
 
-// TestCreateWithNormalizedEmailGuardSerializesProviderAliases 验证同一收件箱的别名并发注册时只有一个事务成功。
+// TestCreateWithNormalizedEmailGuardSerializesProviderAliases checks that concurrent mailbox aliases allow one registration.
 func (s *UserRepoSuite) TestCreateWithNormalizedEmailGuardSerializesProviderAliases() {
 	candidates := []*identitycore.User{
 		{

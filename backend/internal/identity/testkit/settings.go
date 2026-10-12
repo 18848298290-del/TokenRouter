@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// SettingsReaders 只组合所属模块的设置解释器，保留同一替身与读取时点。
+// SettingsReaders combines module settings readers over a shared test repository.
 type SettingsReaders struct {
 	*admission.BackendMode
 	*identity.RuntimeSettings

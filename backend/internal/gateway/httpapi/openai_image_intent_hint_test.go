@@ -23,7 +23,7 @@ import (
 
 var openAIImageIntentHintBenchmarkSink bool
 
-// TestResolveOpenAIGroupMappedImageIntent 验证生图能力判断使用分组映射后的模型 C 和请求体。
+// TestResolveOpenAIGroupMappedImageIntent checks image intent against the group-mapped model and body.
 func TestResolveOpenAIGroupMappedImageIntent(t *testing.T) {
 	tests := []struct {
 		name           string

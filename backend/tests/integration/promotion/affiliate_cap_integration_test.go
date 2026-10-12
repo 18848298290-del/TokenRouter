@@ -18,7 +18,8 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// 两个调用在尝试加锁前汇合，锁内读取不得依赖修复前的错误交错。
+// affiliateLockBarrier waits for both calls before locking so each accrual must read the latest total under
+// the lock.
 type affiliateLockBarrier struct {
 	promotion.AffiliateRepository
 	ready chan struct{}

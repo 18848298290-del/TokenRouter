@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// CyberLookup 保存本次查询，指定会话键按需解析。功能关闭或存储缺失时跳过报文读取。
+// CyberLookup carries lookup inputs. ExplicitKey is resolved lazily; disabled or missing stores skip payload parsing.
 type CyberLookup struct {
 	APIKeyID            int64
 	Body                []byte
@@ -13,7 +13,7 @@ type CyberLookup struct {
 	ExplicitKey         func() string
 }
 
-// CyberBlocks 只编排已有会话存储，动态开关在原调用位置读取。
+// CyberBlocks checks runtime settings before reading or writing session blocks.
 type CyberBlocks struct {
 	store    CyberSessionBlockStore
 	settings func(context.Context) (bool, time.Duration)
@@ -89,7 +89,7 @@ func (s *CyberBlocks) Find(ctx context.Context, input CyberLookup) string {
 	}
 	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
 	if transcript.lookupKeysTruncated {
-		// scope 已激活时不能静默丢弃旧候选，否则追加无关条目可绕过前缀匹配。
+		// An active scope must reject overflow: appending unrelated items could otherwise evict a blocked prefix.
 		return cyberSessionTranscriptLookupOverflowBlockKey
 	}
 	keys := transcript.lookupKeys

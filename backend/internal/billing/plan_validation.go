@@ -34,7 +34,7 @@ func ValidatePlanQuotas(daily, weekly, monthly *float64) error {
 	return nil
 }
 
-// NormalizePlanCurrency 校验展示币种拼写，空值返回空字符串。
+// NormalizePlanCurrency trims and uppercases a three-letter ASCII code; an empty value remains empty.
 func NormalizePlanCurrency(raw string) (string, error) {
 	currency := strings.ToUpper(strings.TrimSpace(raw))
 	if currency == "" {

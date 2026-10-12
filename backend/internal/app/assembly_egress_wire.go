@@ -13,7 +13,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// egressAssemblyProviders 汇总 egress 模块的 Wire provider。
+// egressAssemblyProviders groups Wire providers for the egress module.
 var egressAssemblyProviders = wire.NewSet(
 	wire.Bind(new(provideradapter.OpenAITokenProfileResolver), new(*provider.TLSProfiles)),
 	wire.Bind(new(provideradapter.OpenAITokenRouterReader), new(*egress.TLSFingerprintRouterService)),

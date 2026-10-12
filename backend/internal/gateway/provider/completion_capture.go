@@ -19,33 +19,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// MessagesCapture 仅供同步捕获使用；CaptureMessages 返回的快照才可以提交给异步 worker。
+// MessagesCapture supplies synchronous capture inputs. Submit the CaptureMessages snapshot to asynchronous workers.
 type MessagesCapture struct {
 	Result             *forwardcore.MessagesResult
 	APIKey             *apikey.APIKey
 	User               *identity.User
 	Provider           *provider.Record
-	Subscription       *billing.UserSubscription // 可选：订阅信息
-	InboundEndpoint    string                    // 入站端点（客户端请求路径）
-	UpstreamEndpoint   string                    // 上游端点（标准化后的上游路径）
-	UserAgent          string                    // 请求的 User-Agent
-	IPAddress          string                    // 请求的客户端 IP 地址
-	ClientSessionID    string                    // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
-	RequestPayloadHash string                    // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
-	RequestBody        []byte                    // 原始请求体，用于解析客户端请求的计费推理档位
-	ForceCacheBilling  bool                      // 强制缓存计费：将 input_tokens 转为 cache_read 计费（用于粘性会话切换）
-	APIKeyService      QuotaUpdater              // 可选：用于更新API Key配额
+	Subscription       *billing.UserSubscription // Optional subscription.
+	InboundEndpoint    string                    // Client request path.
+	UpstreamEndpoint   string                    // Normalized upstream path.
+	UserAgent          string                    // Request User-Agent.
+	IPAddress          string                    // Client IP address.
+	ClientSessionID    string                    // Explicit client session ID used to correlate usage rows.
+	RequestPayloadHash string                    // Semantic payload hash that detects conflicting reuse of a request ID.
+	RequestBody        []byte                    // Original body used to resolve the requested billing reasoning tier.
+	ForceCacheBilling  bool                      // Bill input tokens as cache reads after a sticky-provider switch.
+	APIKeyService      QuotaUpdater              // Optional API Key quota updater.
 
-	routing.PricingUsageFields // 分组映射信息（由 handler 在 Forward 前解析）
+	routing.PricingUsageFields // Group mappings resolved by the handler before forwarding.
 }
 
-// QuotaUpdater 保留调用方已提供额度更新能力的判定，捕获过程不会调用它。
+// QuotaUpdater indicates whether the caller supplied quota updates; capture does not invoke it.
 type QuotaUpdater interface {
 	UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cost float64) error
 	UpdateRateLimitUsage(ctx context.Context, apiKeyID int64, cost float64) error
 }
 
-// OpenAICapture 包含同步捕获的输入和 HTTP 请求或 WS turn 的计费时刻。
+// OpenAICapture supplies synchronous inputs and the pricing time for an HTTP request or WS turn.
 type OpenAICapture struct {
 	Result             *forwardcore.OpenAIResult
 	APIKey             *apikey.APIKey
@@ -54,21 +54,21 @@ type OpenAICapture struct {
 	Subscription       *billing.UserSubscription
 	InboundEndpoint    string
 	UpstreamEndpoint   string
-	UserAgent          string // 请求的 User-Agent
-	IPAddress          string // 请求的客户端 IP 地址
-	ClientSessionID    string // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
+	UserAgent          string // Request User-Agent.
+	IPAddress          string // Client IP address.
+	ClientSessionID    string // Explicit client session ID used to correlate usage rows.
 	RequestPayloadHash string
-	RequestBody        []byte // 原始请求体，用于解析客户端请求的计费推理档位
-	// PricingAt 是 WS turn 开始时刻；普通 HTTP 调用留空并在记录时取当前时间。
+	RequestBody        []byte // Original body used to resolve the requested billing reasoning tier.
+	// PricingAt is the WS turn start; HTTP callers leave it zero to use recording time.
 	PricingAt     time.Time
 	APIKeyService QuotaUpdater
 	CyberBlocked  bool
-	// NativeCompactionV2 表示请求体运行时被识别为原生远程 compaction v2。
+	// NativeCompactionV2 reports whether runtime inspection identified native remote compaction v2.
 	NativeCompactionV2 bool
 	routing.PricingUsageFields
 }
 
-// CyberCapture 是 forward 错误路径中 cyber_policy 命中的补记用量入参。
+// CyberCapture supplies usage inputs for cyber_policy failures during forwarding.
 type CyberCapture struct {
 	APIKey             *apikey.APIKey
 	Provider           *provider.Record
@@ -86,7 +86,7 @@ type CyberCapture struct {
 	RequestPayloadHash string
 	APIKeyService      QuotaUpdater
 
-	// NativeCompactionV2 保留错误路径中原生 compaction 标记。
+	// NativeCompactionV2 carries the native compaction flag through failure handling.
 	NativeCompactionV2 bool
 	routing.PricingUsageFields
 }
@@ -95,12 +95,12 @@ func CompletionBillingKey(ctx context.Context, upstreamRequestID string) string 
 	return completion.ResolveBillingKey(RequestIdentity(ctx, upstreamRequestID, ""), scheduler.GenerateRequestID)
 }
 
-// StableAudioBillingRequestID 为单次 TTS/STT HTTP 调用生成持久用量去重键，优先沿用上游请求 ID。
+// StableAudioBillingRequestID builds a durable TTS/STT usage key, preferring the upstream request ID.
 func StableAudioBillingRequestID(upstreamRequestID string) string {
 	return completion.StableAudioRequestID(upstreamRequestID, scheduler.GenerateRequestID)
 }
 
-// StableRealtimeBillingRequestID 为单个 Realtime WebSocket 会话生成持久用量去重键。
+// StableRealtimeBillingRequestID builds a durable usage key for one Realtime WebSocket session.
 func StableRealtimeBillingRequestID(sessionID string) string {
 	return completion.StableRealtimeRequestID(sessionID, scheduler.GenerateRequestID)
 }
@@ -109,7 +109,7 @@ func CompletionPayloadFingerprint(ctx context.Context, requestPayloadHash string
 	return completion.PayloadFingerprint(RequestIdentity(ctx, "", requestPayloadHash))
 }
 
-// CaptureMessages 在提交完成记录时保存用量和付款主体快照。
+// CaptureMessages snapshots usage and payer data before completion submission.
 func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input {
 	if in == nil {
 		return nil
@@ -138,7 +138,7 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 	return completion.Snapshot(out)
 }
 
-// CaptureOpenAI 保留 WS turn 固定时刻及独立账单模型链。
+// CaptureOpenAI captures the WS turn time and independent billing-model chain.
 func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 	if in == nil {
 		return nil
@@ -179,7 +179,7 @@ func RequestIdentity(ctx context.Context, upstream, payload string) completion.R
 	return out
 }
 
-// CaptureCyber 在提交请求时复制安全策略事件和身份信息，供异步任务使用。
+// CaptureCyber copies policy-event and identity data for asynchronous recording.
 func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 	if in.APIKey == nil || in.APIKey.User == nil || in.Provider == nil || strings.TrimSpace(in.Model) == "" {
 		return nil
@@ -214,7 +214,7 @@ func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 	})
 }
 
-// captureRequestIdentity 在请求结束前拆分排障标识和计费去重键。
+// captureRequestIdentity separates diagnostic identifiers from billing deduplication keys before the request ends.
 func captureRequestIdentity(ctx context.Context, out *completion.Input, upstreamID string) {
 	out.BillingKey = CompletionBillingKey(ctx, upstreamID)
 	out.BillingKey = out.SettlementKey()

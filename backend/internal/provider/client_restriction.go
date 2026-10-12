@@ -1,29 +1,29 @@
 package provider
 
 const (
-	// CodexClientRestrictionReasonDisabled 表示提供商未开启客户端访问限制。
+	// CodexClientRestrictionReasonDisabled means the provider allows any client.
 	CodexClientRestrictionReasonDisabled = "openai_oauth_client_policy_any"
-	// CodexClientRestrictionReasonMatchedUA 表示请求命中官方客户端 UA 白名单。
+	// CodexClientRestrictionReasonMatchedUA identifies an allowed official client user agent.
 	CodexClientRestrictionReasonMatchedUA = "official_client_user_agent_matched"
-	// CodexClientRestrictionReasonMatchedOriginator 表示请求命中官方客户端 originator 白名单。
+	// CodexClientRestrictionReasonMatchedOriginator identifies an allowed official originator.
 	CodexClientRestrictionReasonMatchedOriginator = "official_client_originator_matched"
-	// CodexClientRestrictionReasonMatchedAllowedClient 表示请求命中提供商级额外放行的命名客户端预设。
+	// CodexClientRestrictionReasonMatchedAllowedClient identifies a provider-level named client exception.
 	CodexClientRestrictionReasonMatchedAllowedClient = "allowed_client_matched"
-	// CodexClientRestrictionReasonMatchedGlobalAllowedClient 表示请求命中全局额外放行的命名客户端预设。
+	// CodexClientRestrictionReasonMatchedGlobalAllowedClient identifies a global named client exception.
 	CodexClientRestrictionReasonMatchedGlobalAllowedClient = "global_allowed_client_matched"
-	// CodexClientRestrictionReasonNotMatchedUA 表示请求未命中官方客户端 UA 白名单。
+	// CodexClientRestrictionReasonNotMatchedUA means no allowed client identity matched.
 	CodexClientRestrictionReasonNotMatchedUA = "official_client_user_agent_not_matched"
-	// CodexClientRestrictionReasonForceCodexCLI 表示通过 ForceCodexCLI 配置放行。
+	// CodexClientRestrictionReasonForceCodexCLI identifies the ForceCodexCLI override.
 	CodexClientRestrictionReasonForceCodexCLI = "force_codex_cli_enabled"
-	// CodexClientRestrictionReasonMatchedTLSRouter 表示请求命中提供商绑定的 TLS 路由器。
+	// CodexClientRestrictionReasonMatchedTLSRouter identifies a match to the provider's TLS router.
 	CodexClientRestrictionReasonMatchedTLSRouter = "tls_router_matched"
-	// CodexClientRestrictionReasonNotMatchedTLSRouter 表示请求未命中提供商绑定的 TLS 路由器。
+	// CodexClientRestrictionReasonNotMatchedTLSRouter means the provider's TLS router did not match.
 	CodexClientRestrictionReasonNotMatchedTLSRouter = "tls_router_not_matched"
-	// CodexClientRestrictionReasonTLSRouterMissing 表示提供商策略要求 TLS 路由器命中，但提供商未绑定路由器。
+	// CodexClientRestrictionReasonTLSRouterMissing means the policy requires a router but none is bound.
 	CodexClientRestrictionReasonTLSRouterMissing = "tls_router_missing"
 )
 
-// CodexClientRestrictionDetectionResult 是 codex_cli_only 统一检测入口结果。
+// CodexClientRestrictionDetectionResult reports the client policy decision and its reason.
 type CodexClientRestrictionDetectionResult struct {
 	Enabled bool
 	Matched bool
@@ -31,7 +31,7 @@ type CodexClientRestrictionDetectionResult struct {
 	Policy  string
 }
 
-// CodexClientOptions 注入平台字符串识别，核心只决定提供商客户端访问策略。
+// CodexClientOptions supplies platform identity checks and the CLI override.
 type CodexClientOptions struct {
 	ForceCLI           bool
 	OfficialUserAgent  func(string) bool
@@ -39,15 +39,15 @@ type CodexClientOptions struct {
 	AllowedClients     func(string, string, []string) bool
 }
 
-// ClientRestrictionDetector 只接收已读取的提供商与传输匹配结果，HTTP 元数据仍按需读取。
+// ClientRestrictionDetector receives provider and router state and reads HTTP client metadata on demand.
 type ClientRestrictionDetector interface {
 	DetectClient(func() (string, string), *Record, []string, bool) CodexClientRestrictionDetectionResult
 }
 
-// CodexClientDetector 绑定平台解析选项，所有策略仍由 DetectCodexClient 唯一执行。
+// CodexClientDetector binds platform options to DetectCodexClient.
 type CodexClientDetector struct{ Options CodexClientOptions }
 
-// DetectCodexClient 只按需读取客户端元数据，后台探针不需要构造 Gin 请求。
+// DetectCodexClient reads client metadata only when the policy needs it, so probes need no HTTP request.
 func DetectCodexClient(options CodexClientOptions, readClient func() (string, string), provider *Record, globalAllowedClients []string, routerMatched bool) CodexClientRestrictionDetectionResult {
 	policy := OpenAIOAuthClientPolicyAny
 	if provider != nil {
@@ -114,7 +114,7 @@ func DetectCodexClient(options CodexClientOptions, readClient func() (string, st
 		}
 	}
 
-	// 官方客户端白名单未命中时，先尝试提供商级额外放行的命名客户端预设（如 Claude Code codex 插件）。
+	// After official-client checks, try provider-level named client exceptions.
 	if allowed := provider.GetCodexCLIOnlyAllowedClients(); len(allowed) > 0 &&
 		options.AllowedClients(userAgent, originator, allowed) {
 		return CodexClientRestrictionDetectionResult{
@@ -125,7 +125,7 @@ func DetectCodexClient(options CodexClientOptions, readClient func() (string, st
 		}
 	}
 
-	// 再尝试由更高作用域（全局设置）注入的额外放行客户端列表。
+	// Then try named client exceptions from global settings.
 	if len(globalAllowedClients) > 0 &&
 		options.AllowedClients(userAgent, originator, globalAllowedClients) {
 		return CodexClientRestrictionDetectionResult{

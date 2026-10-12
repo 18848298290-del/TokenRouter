@@ -149,7 +149,8 @@ func TestAliasOpenAIOAuthReservedToolNames_PromptCompatibilityRunsFirst(t *testi
 	require.Equal(t, "900719925474099312345", gjson.GetBytes(encoded, "sequence").Raw)
 }
 
-// TestLegacyPythonAliasContinuation 验证旧别名历史续写不改变调用 ID，也不误认调用方自定义工具。
+// TestLegacyPythonAliasContinuation checks stable call IDs and distinguishes declared client tools from
+// legacy aliases.
 func TestLegacyPythonAliasContinuation(t *testing.T) {
 	for _, declared := range []bool{false, true} {
 		tools := []any{map[string]any{"type": "function", "name": "python"}}
@@ -175,7 +176,7 @@ func TestLegacyPythonAliasContinuation(t *testing.T) {
 	}
 }
 
-// TestLegacyCodexPromptMarkers 验证旧提示标记仍能抑制重复注入。
+// TestLegacyCodexPromptMarkers checks that legacy markers prevent duplicate instruction injection.
 func TestLegacyCodexPromptMarkers(t *testing.T) {
 	body := map[string]any{"instructions": "<sub2api-codex-image-generation>existing", "tools": []any{map[string]any{"type": "image_generation"}}}
 	require.False(t, openai.ApplyCodexImageGenerationBridgeInstructions(body, false))
@@ -184,7 +185,7 @@ func TestLegacyCodexPromptMarkers(t *testing.T) {
 	require.True(t, gatewayprovider.IsOpenAICompatMessagesBridgeBody([]byte(`{"input":[{"role":"developer","content":"<sub2api-claude-code-todo-guard>existing"}]}`)))
 }
 
-// TestCodexBrandRenamePreservesStableIDs 验证品牌名称变化后，派生身份 ID 保持相同。
+// TestCodexBrandRenamePreservesStableIDs checks fixed session, thread, and call ID derivations.
 func TestCodexBrandRenamePreservesStableIDs(t *testing.T) {
 	require.Equal(t, "d4c42b33-6e2b-4490-bbb7-24d247c0086c", openai.ResolveConvergedSessionID("fixture"))
 	require.Equal(t, "d7459669-7037-4803-8349-a74132ac7fee", openai.ResolveConvergedThreadID("fixture", "client"))
@@ -278,7 +279,8 @@ func TestSanitizeEmptyBase64InputImagesInOpenAIBody(t *testing.T) {
 	}`, string(body))
 }
 
-// TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence 验证分组协议设置优先于提供商设置，分组功能默认值被忽略。
+// TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence checks group protocol overrides,
+// provider settings, and ignored legacy group flags.
 func TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence(t *testing.T) {
 	for _, tt := range []struct {
 		name     string

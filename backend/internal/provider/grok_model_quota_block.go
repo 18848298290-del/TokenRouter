@@ -20,22 +20,22 @@ var globalGrokModelQuotaBlocks = &grokModelQuotaBlockStore{
 	items: make(map[string]grokModelQuotaBlock),
 }
 
-// 此结构保存进程内按提供商和模型划分的 Grok 免费额度软性阻断记录。
-// 当错误明确指出某个模型额度耗尽时，同一提供商的其他模型仍可调度；
-// 多实例部署中，每个进程分别从自身收到的上游错误学习该状态。
+// grokModelQuotaBlock records a process-local cooldown for one provider and model.
+// Model-specific exhaustion leaves the provider's other models eligible.
+// Each instance learns these blocks from the upstream errors it observes.
 type grokModelQuotaBlock struct {
 	Until time.Time
 }
 type grokModelQuotaBlockStore struct {
 	mu    sync.Mutex
-	items map[string]grokModelQuotaBlock // 键格式为 providerID|model。
+	items map[string]grokModelQuotaBlock // Keys use normalized model|providerID.
 }
 
 func GrokModelQuotaBlockKey(providerID int64, model string) string {
 	return strings.TrimSpace(strings.ToLower(model)) + "|" + strconv.FormatInt(providerID, 10)
 }
 
-// MarkGrokModelQuotaBlock 将提供商指定模型软性阻断到给定时间。
+// MarkGrokModelQuotaBlock blocks a provider's model until a deadline bounded by the quota cooldown policy.
 func MarkGrokModelQuotaBlock(providerID int64, model string, until time.Time) {
 	model = strings.TrimSpace(model)
 	if providerID <= 0 || model == "" || until.IsZero() {
@@ -51,8 +51,8 @@ func MarkGrokModelQuotaBlock(providerID int64, model string, until time.Time) {
 	StoreGrokModelQuotaBlock(providerID, model, until, now)
 }
 
-// MarkGrokModelTransientBlock 在短时容量波动时仅软阻断单个模型，
-// 不使用免费额度的 20 分钟下限，也不暂停整个提供商。
+// MarkGrokModelTransientBlock applies a short model-specific capacity cooldown.
+// It uses transient TTL bounds rather than the longer free-quota cooldown policy.
 func MarkGrokModelTransientBlock(providerID int64, model string, until time.Time) {
 	model = strings.TrimSpace(model)
 	if providerID <= 0 || model == "" || until.IsZero() {
@@ -83,7 +83,7 @@ func StoreGrokModelQuotaBlock(providerID int64, model string, until, now time.Ti
 	}
 }
 
-// IsGrokModelQuotaBlocked 判断提供商当前是否无法服务指定模型。
+// IsGrokModelQuotaBlocked reports whether the provider's model has an unexpired local block.
 func IsGrokModelQuotaBlocked(providerID int64, model string, now time.Time) bool {
 	model = strings.TrimSpace(model)
 	if providerID <= 0 || model == "" {
@@ -103,8 +103,8 @@ func IsGrokModelQuotaBlocked(providerID int64, model string, now time.Time) bool
 	return true
 }
 
-// IsGrokModelSpecificFreeUsage 判断免费额度耗尽是否仅针对指定模型，
-// 此时提供商仍可能服务其他模型。
+// IsGrokModelSpecificFreeUsage reports whether a lowercase error message identifies model-specific exhaustion.
+// Other models on that provider may remain eligible.
 func IsGrokModelSpecificFreeUsage(low, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" || low == "" {
@@ -113,7 +113,7 @@ func IsGrokModelSpecificFreeUsage(low, model string) bool {
 	if strings.Contains(low, "for model") || strings.Contains(low, "模型") {
 		return true
 	}
-	// 兼容形如“used all the included free usage for model grok-4.5”的上游错误。
+	// Also accept messages such as "used all the included free usage for model grok-4.5".
 	if strings.Contains(low, "free usage") && strings.Contains(low, model) {
 		return true
 	}

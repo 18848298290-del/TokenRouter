@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// proxyAdminFixture 记录代理管理测试的写入参数和探测调用。
+// proxyAdminFixture records proxy writes and probe calls for admin handler tests.
 type proxyAdminFixture struct {
 	proxies                         []egress.Proxy
 	proxyCounts                     []egress.ProxyWithProviderCount

@@ -15,9 +15,9 @@ type TransferProxy struct {
 	Username        string `json:"username,omitempty"`
 	Password        string `json:"password,omitempty"`
 	Status          string `json:"status"`
-	ExpiresAt       *int64 `json:"expires_at,omitempty"`        // unix 秒，与 DataProvider.ExpiresAt 风格一致
+	ExpiresAt       *int64 `json:"expires_at,omitempty"`        // Unix seconds, matching DataProvider.ExpiresAt
 	FallbackMode    string `json:"fallback_mode,omitempty"`     // none/direct/proxy
-	BackupProxyName string `json:"backup_proxy_name,omitempty"` // 备用代理 name（跨实例按 name 反查）
+	BackupProxyName string `json:"backup_proxy_name,omitempty"` // Backup name resolved on the destination instance
 	ExpiryWarnDays  int    `json:"expiry_warn_days,omitempty"`
 }
 type TransferError struct {
@@ -72,7 +72,7 @@ func NormalizeTransferProxyStatus(status string) string {
 	case "inactive", "disabled":
 		return "inactive"
 	case "expired":
-		// 导入 expired 代理按 inactive 处理，避免导入即触发到期改投逻辑
+		// Import expired proxies as inactive so the expiration worker does not reassign their providers.
 		return "inactive"
 	default:
 		return normalized

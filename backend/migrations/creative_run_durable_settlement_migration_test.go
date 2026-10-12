@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeRunDurableSettlementMigration 校验状态机字段、outbox 与托管 Key 唯一约束均在同一迁移中声明。
+// TestCreativeRunDurableSettlementMigration checks settlement fields, the outbox, and managed-key uniqueness
+// in one migration.
 func TestCreativeRunDurableSettlementMigration(t *testing.T) {
 	content, err := FS.ReadFile("257_creative_run_durable_settlement.sql")
 	require.NoError(t, err)

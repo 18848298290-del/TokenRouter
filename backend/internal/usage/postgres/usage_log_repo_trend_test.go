@@ -39,7 +39,7 @@ func TestProviderFilteredModelStatsKeepUserActualCost(t *testing.T) {
 	end := start.Add(7 * 24 * time.Hour)
 	providerID := int64(3667)
 
-	// 提供商筛选结果分别返回用户实际扣费和提供商成本。
+	// Provider-filtered results return user charges and provider costs separately.
 	actualExpr := regexp.QuoteMeta("COALESCE(SUM(actual_cost), 0) as actual_cost")
 	providerExpr := regexp.QuoteMeta("COALESCE(SUM(COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1)), 0) as provider_cost")
 	mock.ExpectQuery("(?s)"+actualExpr+".*"+providerExpr+".*provider_id = \\$3").
@@ -302,7 +302,7 @@ func TestUsageLogRepositoryGetUserSpendingRanking(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser 验证原始 Top 用户趋势按付款主体合并团队成员用量。
+// TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser groups raw team usage by the paying user.
 func TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}

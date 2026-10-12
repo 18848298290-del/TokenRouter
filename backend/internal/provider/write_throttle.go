@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// WriteThrottle 按提供商限制快照写入间隔。
+// WriteThrottle limits snapshot write attempts per provider.
 type WriteThrottle struct {
 	minInterval time.Duration
 	mu          sync.Mutex
@@ -19,6 +19,8 @@ func NewWriteThrottle(minInterval time.Duration) *WriteThrottle {
 	}
 }
 
+// Allow reserves the current interval when it returns true, even if the caller
+// later fails to write. A nil throttle or nonpositive ID or interval allows every call.
 func (t *WriteThrottle) Allow(id int64, now time.Time) bool {
 	if t == nil || id <= 0 || t.minInterval <= 0 {
 		return true

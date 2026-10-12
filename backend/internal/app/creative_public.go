@@ -29,7 +29,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// 下列函数将查询结果转换为公开模型字段。
+// These adapters convert stored users, providers, groups, and moderation results for creative tasks.
 type creativeUsers struct{ store *identitypostgres.UserStore }
 
 type creativeProviders struct {
@@ -42,7 +42,7 @@ type creativeModeration struct {
 	service *moderation.ContentModerationService
 }
 
-// provideCreativePublic 绑定创作任务、资金及查询接口，共享应用存储实例。
+// provideCreativePublic binds creative tasks to the shared funding and query stores.
 func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeRunRepository, keys *keypostgres.KeyStore, users *identitypostgres.UserStore, providers *providerpostgres.ProviderStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, queue creative.CreativeRunQueue, transient creative.CreativeTransientStore, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, logs usage.UsageLogRepository, pricing *billing.PriceResolver, modelConfigs *routing.PricingConfigService, moderation *moderation.ContentModerationService, auth apikey.APIKeyAuthCacheInvalidator, settings *creative.RuntimeSettings, cfg *config.Config, outbox creative.CreativeRunOutboxRepository, attributes *routing.ModelAttributeService) *creative.Public {
 	ttl := 30 * time.Minute
 	if cfg.Creative.TransientTTLSeconds > 0 {
@@ -216,7 +216,7 @@ func creativeObserve(event string, values ...any) {
 	logging.L().Warn(event, fields...)
 }
 
-// provideCreativeSettingsHTTP 直接读取唯一创作运行时与模型目录。
+// provideCreativeSettingsHTTP binds creative settings reads and worker status.
 func provideCreativeSettingsHTTP(public *creative.Public, worker *creative.CreativeWorkerRuntime) *creativehttp.SettingsHandler {
 	return creativehttp.NewSettingsHandler(public, worker.Status)
 }

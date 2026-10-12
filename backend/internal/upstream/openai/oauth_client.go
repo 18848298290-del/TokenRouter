@@ -23,7 +23,7 @@ type OAuthClient struct {
 	httpUpstream OAuthHTTPUpstream
 }
 
-// OAuthTokenRequestOptions 只描述本次交换的技术身份及 TLS 快照。
+// OAuthTokenRequestOptions holds identity and TLS settings for one token exchange.
 type OAuthTokenRequestOptions struct {
 	UserAgent           string
 	TLSProfile          *tlsfingerprint.Profile
@@ -31,7 +31,7 @@ type OAuthTokenRequestOptions struct {
 	ProviderConcurrency int
 }
 
-// OAuthHTTPUpstream 复用应用唯一 HTTP 池，不读取提供商实体或配置。
+// OAuthHTTPUpstream supplies the shared HTTP pool with caller-resolved provider and TLS settings.
 type OAuthHTTPUpstream interface {
 	DoWithTLS(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 }
@@ -65,7 +65,7 @@ func (s *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL s
 }
 
 func (s *OAuthClient) RefreshTokenWithClientID(ctx context.Context, refreshToken, proxyURL string, clientID string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
-	// 调用方应始终传入正确的 client_id；为兼容旧数据，未指定时默认使用 OpenAI ClientID
+	// Use the supplied client ID; legacy records without one use the OpenAI default.
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
 		clientID = ClientID

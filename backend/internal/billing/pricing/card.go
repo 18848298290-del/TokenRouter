@@ -9,18 +9,18 @@ import (
 )
 
 const (
-	BillingModeToken      BillingMode = "token"       // 按 token 区间计费
-	BillingModePerRequest BillingMode = "per_request" // 按次计费（支持上下文窗口分层）
-	BillingModeImage      BillingMode = "image"       // 图片计费（当前按次，预留 token 计费）
-	BillingModeVideo      BillingMode = "video"       // 视频生成计费（按输出秒数）
+	BillingModeToken      BillingMode = "token"       // Token pricing by context interval.
+	BillingModePerRequest BillingMode = "per_request" // Per-request pricing with optional context tiers.
+	BillingModeImage      BillingMode = "image"       // Per-image pricing.
+	BillingModeVideo      BillingMode = "video"       // Video pricing per output second.
 )
 
-// BillingMode 计费模式。
+// BillingMode selects the units used to charge usage.
 type BillingMode string
 
-// ProviderStatsPricingRule 提供商统计定价规则
-// 每条规则包含匹配条件（分组/提供商）和独立的模型定价。
-// 多条规则按 SortOrder 排序，先命中为准。
+// ProviderStatsPricingRule matches groups and providers to model prices for provider statistics.
+// Each rule has its own model cards.
+// Rules are ordered by SortOrder; the first matching rule applies.
 type ProviderStatsPricingRule struct {
 	ID              int64
 	PricingConfigID int64
@@ -28,29 +28,29 @@ type ProviderStatsPricingRule struct {
 	GroupIDs        []int64
 	ProviderIDs     []int64
 	SortOrder       int
-	Pricing         []ModelPricingEntry // 规则内的模型定价（复用现有定价结构）
+	Pricing         []ModelPricingEntry // Model cards used by this rule.
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 
-// ModelPricingEntry 价卡模型定价条目。
+// ModelPricingEntry defines a model price card.
 type ModelPricingEntry struct {
 	ID                 int64       `json:"id,omitempty"`
 	PricingConfigID    int64       `json:"pricing_config_id,omitempty"`
 	Models             []string    `json:"models"`
 	BillingMode        BillingMode `json:"billing_mode"`
-	PriceMultiplier    *float64    `json:"price_multiplier"`     // 最终定价倍率；nil 表示不调整价格
-	FastModeMultiplier *float64    `json:"fast_mode_multiplier"` // OpenAI Fast 模式收费倍率；nil 表示沿用模型默认 Fast 定价
-	// FastMultiplier 是新的通用 Fast/priority 倍率；为空时兼容旧字段。
+	PriceMultiplier    *float64    `json:"price_multiplier"`     // Price multiplier; nil leaves prices unchanged.
+	FastModeMultiplier *float64    `json:"fast_mode_multiplier"` // Fast multiplier; nil inherits the model's Fast pricing.
+	// FastMultiplier is the Fast/priority multiplier and takes precedence over FastModeMultiplier.
 	FastMultiplier *float64 `json:"fast_multiplier,omitempty"`
-	// FlexMultiplier 是价卡级 Flex 倍率；为空时使用系统默认 0.5。
+	// FlexMultiplier overrides the model's Flex multiplier when supplied.
 	FlexMultiplier *float64 `json:"flex_multiplier,omitempty"`
-	// MaxReasoningEffortMultiplier 仅在最终转发档位为 max 时应用；nil 沿用模型默认倍率。
+	// MaxReasoningEffortMultiplier applies to max effort; nil inherits the model multiplier.
 	MaxReasoningEffortMultiplier *float64 `json:"max_reasoning_effort_multiplier,omitempty"`
 	InputPrice                   *float64 `json:"input_price"`
 	OutputPrice                  *float64 `json:"output_price"`
 	CacheWritePrice              *float64 `json:"cache_write_price"`
-	// CacheWrite1hPrice 是可选的 1 小时缓存写入单价；为空时沿用 CacheWritePrice。
+	// CacheWrite1hPrice overrides the 1h cache-write price; a CacheWritePrice override also covers 1h when this is nil.
 	CacheWrite1hPrice *float64           `json:"cache_write_1h_price"`
 	CacheReadPrice    *float64           `json:"cache_read_price"`
 	ImageInputPrice   *float64           `json:"image_input_price"`
@@ -62,21 +62,21 @@ type ModelPricingEntry struct {
 	UpdatedAt         time.Time          `json:"updated_at,omitempty"`
 }
 
-// TimePricingConfig 价卡模型定价的分时倍率配置。
+// TimePricingConfig defines time-dependent price multipliers.
 type TimePricingConfig struct {
 	Timezone     string              `json:"timezone"`
 	WeekdaysOnly bool                `json:"weekdays_only,omitempty"`
 	Periods      []TimePricingPeriod `json:"periods"`
 }
 
-// TimePricingPeriod 是秒级左闭右开区间，并兼容历史 HH:mm 数据。
+// TimePricingPeriod is a second-resolution [start, end) interval that also accepts HH:mm values.
 type TimePricingPeriod struct {
 	StartTime  string  `json:"start_time"`
 	EndTime    string  `json:"end_time"`
 	Multiplier float64 `json:"multiplier"`
 }
 
-// PricingInterval 定价区间（token 区间 / 按次分层 / 图片分辨率分层）。
+// PricingInterval defines a token context range or a labeled request, image, or video tier.
 type PricingInterval struct {
 	ID              int64    `json:"id,omitempty"`
 	PricingID       int64    `json:"pricing_id,omitempty"`
@@ -86,7 +86,7 @@ type PricingInterval struct {
 	InputPrice      *float64 `json:"input_price"`
 	OutputPrice     *float64 `json:"output_price"`
 	CacheWritePrice *float64 `json:"cache_write_price"`
-	// CacheWrite1hPrice 是该区间的可选 1 小时缓存写入单价。
+	// CacheWrite1hPrice is the optional 1h cache-write price for this interval.
 	CacheWrite1hPrice    *float64  `json:"cache_write_1h_price"`
 	CacheReadPrice       *float64  `json:"cache_read_price"`
 	InputMultiplier      *float64  `json:"input_multiplier,omitempty"`
@@ -99,7 +99,7 @@ type PricingInterval struct {
 	UpdatedAt            time.Time `json:"updated_at,omitempty"`
 }
 
-// IsValid 检查 BillingMode 是否为合法值。
+// IsValid reports whether the billing mode is supported, including an empty default.
 func (m BillingMode) IsValid() bool {
 	switch m {
 	case BillingModeToken, BillingModePerRequest, BillingModeImage, BillingModeVideo, "":
@@ -108,7 +108,7 @@ func (m BillingMode) IsValid() bool {
 	return false
 }
 
-// IsValidUsageFilter 检查 BillingMode 是否可用于使用记录筛选。
+// IsValidUsageFilter reports whether the mode is accepted by usage filters.
 func (m BillingMode) IsValidUsageFilter() bool {
 	switch m {
 	case BillingModeToken, BillingModePerRequest, BillingModeImage, BillingModeVideo, "":
@@ -117,9 +117,9 @@ func (m BillingMode) IsValidUsageFilter() bool {
 	return false
 }
 
-// FindMatchingInterval 在区间列表中查找匹配 totalTokens 的区间。
-// 区间为左开右闭 (min, max]：min 不含，max 包含。
-// 第一个区间 min=0 时，0 token 不匹配任何区间（回退到默认价格）。
+// FindMatchingInterval returns the first interval containing totalTokens.
+// Intervals are (min, max], excluding the lower endpoint and including the upper endpoint.
+// Zero tokens do not match an interval starting at zero; callers use the default price.
 func FindMatchingInterval(intervals []PricingInterval, totalTokens int) *PricingInterval {
 	for i := range intervals {
 		iv := &intervals[i]
@@ -130,7 +130,7 @@ func FindMatchingInterval(intervals []PricingInterval, totalTokens int) *Pricing
 	return nil
 }
 
-// GetTierByLabel 根据标签查找层级（用于 per_request / image 模式）。
+// GetTierByLabel finds a tier by case-insensitive label.
 func (p *ModelPricingEntry) GetTierByLabel(label string) *PricingInterval {
 	labelLower := strings.ToLower(label)
 	for i := range p.Intervals {
@@ -141,8 +141,8 @@ func (p *ModelPricingEntry) GetTierByLabel(label string) *PricingInterval {
 	return nil
 }
 
-// HasEffectivePricing 判断该行是否配置了价格或可继承基础价的倍率。
-// nil 价格指针表示“未配置”；指向 0 的指针表示显式免费价格，因此仍然有效。
+// HasEffectivePricing reports whether the card supplies prices or modifiers that can inherit base prices.
+// A nil price is unspecified; a pointer to zero is an explicit free price.
 func (p *ModelPricingEntry) HasEffectivePricing() bool {
 	if p == nil {
 		return false
@@ -194,10 +194,10 @@ func (p *ModelPricingEntry) HasEffectivePricing() bool {
 	return false
 }
 
-// Clone 返回 ModelPricingEntry 的拷贝；模型、区间和分时配置切片彼此独立。
+// Clone copies the card with independent nested slices, configuration, and amount pointers.
 func (p ModelPricingEntry) Clone() ModelPricingEntry {
 	cp := p
-	// 金额指针也必须独立，复制分组或覆盖倍率时不能修改源价卡。
+	// Independent amount pointers prevent edits to copied cards from changing the source.
 	ClonePricingAmounts(&cp.PriceMultiplier, &cp.FastModeMultiplier, &cp.FastMultiplier, &cp.FlexMultiplier,
 		&cp.MaxReasoningEffortMultiplier, &cp.InputPrice, &cp.OutputPrice, &cp.CacheWritePrice,
 		&cp.CacheWrite1hPrice, &cp.CacheReadPrice, &cp.ImageInputPrice, &cp.ImageOutputPrice, &cp.PerRequestPrice)
@@ -231,7 +231,7 @@ func (p ModelPricingEntry) Clone() ModelPricingEntry {
 	return cp
 }
 
-// ClonePricingAmounts 复制可空金额值，保留 nil 与显式零价的区别。
+// ClonePricingAmounts copies optional amounts, retaining the distinction between nil and explicit zero.
 func ClonePricingAmounts(fields ...**float64) {
 	for _, field := range fields {
 		if *field != nil {
@@ -241,17 +241,17 @@ func ClonePricingAmounts(fields ...**float64) {
 	}
 }
 
-// ValidateIntervals 校验区间列表的合法性。
+// ValidateIntervals validates interval fields and token-range overlap.
 //
-// mode 决定区间语义：
-//   - BillingModeToken（含空值）：区间是上下文 token 数分段 (min, max]，
-//     按 MinTokens 排序后无重叠，无界区间（MaxTokens=nil）必须是最后一个。
-//   - BillingModePerRequest：先匹配非空 tier_label，再按配置顺序匹配无标签的上下文区间。
-//   - BillingModeImage / BillingModeVideo：按 tier_label（尺寸或分辨率）分层。
-//     这三种模式逐条校验字段，token 模式另行检查区间排序和重叠。
+// The billing mode determines how intervals are matched:
+//   - BillingModeToken (including empty): context ranges are (min, max],
+//     cannot overlap, and an unbounded range (MaxTokens=nil) must sort last.
+//   - BillingModePerRequest: nonempty labels take priority, then unlabeled context ranges in configuration order.
+//   - BillingModeImage / BillingModeVideo: labels select sizes or resolutions.
+//     These three non-token modes validate individual fields and allow overlapping ranges.
 //
-// 通用规则：MinTokens >= 0；MaxTokens 若非 nil 则 > 0 且 > MinTokens；
-// 所有价格字段 >= 0。
+// MinTokens must be nonnegative; a supplied MaxTokens must be positive and greater than MinTokens.
+// Prices must be finite and nonnegative; supplied multipliers must be finite and positive.
 func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 	if len(intervals) == 0 {
 		return nil
@@ -268,14 +268,14 @@ func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 		}
 	}
 
-	// 非 token 模式按标签或配置顺序处理，区间重叠检查用于 token 模式。
+	// Non-token modes select by label or configuration order, so overlapping context ranges are allowed.
 	if mode == BillingModePerRequest || mode == BillingModeImage || mode == BillingModeVideo {
 		return nil
 	}
 	return ValidateIntervalOverlap(sorted)
 }
 
-// ValidateSingleInterval 校验单个区间的字段合法性。
+// ValidateSingleInterval checks one interval's endpoints, prices, and multipliers.
 func ValidateSingleInterval(iv *PricingInterval, idx int) error {
 	if iv.MinTokens < 0 {
 		return fmt.Errorf("interval #%d: min_tokens (%d) must be >= 0", idx+1, iv.MinTokens)
@@ -292,7 +292,7 @@ func ValidateSingleInterval(iv *PricingInterval, idx int) error {
 	return ValidateIntervalPrices(iv, idx)
 }
 
-// ValidateIntervalPrices 校验区间内所有价格字段 >= 0。
+// ValidateIntervalPrices requires finite nonnegative prices and finite positive multipliers.
 func ValidateIntervalPrices(iv *PricingInterval, idx int) error {
 	prices := []struct {
 		name string
@@ -327,10 +327,10 @@ func ValidateIntervalPrices(iv *PricingInterval, idx int) error {
 	return nil
 }
 
-// ValidateIntervalOverlap 校验排序后的区间列表无重叠，且无界区间在最后。
+// ValidateIntervalOverlap requires sorted, nonoverlapping ranges with any unbounded range last.
 func ValidateIntervalOverlap(sorted []PricingInterval) error {
 	for i, iv := range sorted {
-		// 无界区间必须是最后一个
+		// An unbounded range overlaps every subsequent range.
 		if iv.MaxTokens == nil && i < len(sorted)-1 {
 			return fmt.Errorf("interval #%d: unbounded interval (max_tokens=null) must be the last one",
 				i+1)
@@ -339,8 +339,8 @@ func ValidateIntervalOverlap(sorted []PricingInterval) error {
 			continue
 		}
 		prev := sorted[i-1]
-		// 检查重叠：前一个区间的上界 > 当前区间的下界则重叠
-		// (min, max] 语义：prev 覆盖 (prev.Min, prev.Max]，cur 覆盖 (cur.Min, cur.Max]
+		// For (min, max] intervals, equal adjacent endpoints are allowed.
+		// A preceding maximum greater than the current minimum means overlap.
 		if prev.MaxTokens == nil || *prev.MaxTokens > iv.MinTokens {
 			return fmt.Errorf("interval #%d and #%d overlap: prev max=%s > cur min=%d",
 				i, i+1, FormatMaxTokensLabel(prev.MaxTokens), iv.MinTokens)
@@ -356,7 +356,7 @@ func FormatMaxTokensLabel(max *int) string {
 	return fmt.Sprintf("%d", *max)
 }
 
-// MatchPriceCard 优先精确匹配模型名，再使用首个匹配的通配规则。
+// MatchPriceCard prefers an exact model match, then the first matching wildcard card.
 func MatchPriceCard(cards []ModelPricingEntry, candidate string) *ModelPricingEntry {
 	candidate = NormalizePriceModelName(candidate)
 	var wildcard *ModelPricingEntry

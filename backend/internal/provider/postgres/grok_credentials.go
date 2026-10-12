@@ -58,8 +58,8 @@ func (r *ProviderStore) SetGrokCredentialErrorIfMatch(
 	return true, nil
 }
 
-// SetGrokOAuthErrorIfCredentialsUnchanged 仅在提供商仍活动且完整 JSONB 凭据与对账观察值一致时，
-// 按 Grok OAuth 凭据及可选的 _token_version 原子比较，匹配时隔离结构无效的提供商。
+// SetGrokOAuthErrorIfCredentialsUnchanged marks an active Grok OAuth provider as invalid when its complete
+// JSONB credentials match the observed value and its refresh token is missing or blank.
 func (r *ProviderStore) SetGrokOAuthErrorIfCredentialsUnchanged(
 	ctx context.Context,
 	id int64,
@@ -115,8 +115,8 @@ func (r *ProviderStore) SetGrokOAuthErrorIfCredentialsUnchanged(
 	return true, nil
 }
 
-// UpdateGrokOAuthCredentialsIfUnchanged 仅在完整凭据和代理仍匹配上游刷新所用快照时持久化新凭据。
-// scheduler outbox 写入与凭据更新位于同一 PostgreSQL 语句，持久化失效失败会一并回滚凭据更新。
+// UpdateGrokOAuthCredentialsIfUnchanged saves credentials when the complete credentials and proxy still match the refresh snapshot.
+// The outbox insert shares the update statement, so an outbox failure rolls back the credential update.
 func (r *ProviderStore) UpdateGrokOAuthCredentialsIfUnchanged(
 	ctx context.Context,
 	id int64,
@@ -173,8 +173,8 @@ func (r *ProviderStore) UpdateGrokOAuthCredentialsIfUnchanged(
 	return true, nil
 }
 
-// SetGrokOAuthRefreshErrorIfCredentialsUnchanged 是后台刷新对应的 CAS 错误更新。
-// 它精确匹配失败上游尝试使用的完整凭据，但不要求 refresh token 缺失。
+// SetGrokOAuthRefreshErrorIfCredentialsUnchanged records a background refresh error for an active provider
+// whose complete credentials and proxy match the failed attempt, regardless of refresh-token presence.
 func (r *ProviderStore) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	ctx context.Context,
 	id int64,
@@ -232,8 +232,8 @@ func (r *ProviderStore) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	return true, nil
 }
 
-// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged 仅在活动提供商凭据仍精确匹配上游尝试时，
-// 应用有界的临时刷新隔离。
+// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged temporarily pauses an active provider
+// when its credentials and proxy match the attempt, extending the pause only when until is later.
 func (r *ProviderStore) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(
 	ctx context.Context,
 	id int64,

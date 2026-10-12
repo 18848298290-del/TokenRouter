@@ -73,12 +73,12 @@ func TestBuildUsageInfo_BasicModels(t *testing.T) {
 
 	info := fetcher.BuildUsageInfo(modelsResp, "g1-pro-tier", "PRO", nil)
 
-	// 基本字段
+	// Check shared display fields.
 	require.NotNil(t, info.UpdatedAt, "UpdatedAt should be set")
 	require.Equal(t, "PRO", info.SubscriptionTier)
 	require.Equal(t, "g1-pro-tier", info.SubscriptionTierRaw)
 
-	// 各模型的额度使用率。
+	// Check per-model used percentages.
 	require.Len(t, info.AntigravityQuota, 2)
 
 	sonnetQuota := info.AntigravityQuota["claude-sonnet-4-20250514"]
@@ -91,7 +91,7 @@ func TestBuildUsageInfo_BasicModels(t *testing.T) {
 	require.Equal(t, 50, geminiQuota.Utilization) // (1 - 0.50) * 100 = 50
 	require.Equal(t, "2026-03-08T15:00:00Z", geminiQuota.ResetTime)
 
-	// 各模型的额度详情。
+	// Check per-model capability details.
 	require.Len(t, info.AntigravityQuotaDetails, 2)
 
 	sonnetDetail := info.AntigravityQuotaDetails["claude-sonnet-4-20250514"]
@@ -178,7 +178,7 @@ func TestBuildUsageInfo_ModelWithNilQuotaInfo(t *testing.T) {
 		Models: map[string]antigravity.ModelInfo{
 			"model-without-quota": {
 				DisplayName: "No Quota Model",
-				// 模型未提供 QuotaInfo。
+				// This model omits QuotaInfo.
 			},
 		},
 	}
@@ -194,7 +194,7 @@ func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
 	// priorityModels = ["claude-sonnet-4-20250514", "claude-sonnet-4", "gemini-2.5-pro"]
-	// 首选模型存在时，FiveHour 使用其额度。
+	// FiveHour uses the first available priority model's quota.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
 			"gemini-2.5-pro": {
@@ -215,7 +215,7 @@ func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 	info := fetcher.BuildUsageInfo(modelsResp, "", "", nil)
 
 	require.NotNil(t, info.FiveHour, "FiveHour should be set when a priority model exists")
-	// claude-sonnet-4-20250514 位于优先列表首位。
+	// claude-sonnet-4-20250514 takes precedence over the other priority models.
 	expectedUtilization := (1.0 - 0.80) * 100 // 20
 	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
 	require.NotNil(t, info.FiveHour.ResetsAt, "ResetsAt should be parsed from ResetTime")
@@ -224,7 +224,7 @@ func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
-	// 额度列表中可用的是第二顺位的 claude-sonnet-4。
+	// Only the second priority model, claude-sonnet-4, is available.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
 			"claude-sonnet-4": {
@@ -251,7 +251,7 @@ func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
 func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
-	// 额度列表中可用的是第三顺位的 gemini-2.5-pro。
+	// Only the third priority model, gemini-2.5-pro, is available.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
 			"gemini-2.5-pro": {
@@ -277,7 +277,7 @@ func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
 func TestBuildUsageInfo_FiveHourNoPriorityModel(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
-	// 额度列表中缺少全部优先模型。
+	// No priority model is present.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
 			"some-other-model": {

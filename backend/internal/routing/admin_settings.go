@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// 路由回退设置的存储键。
+// Persistent keys for model fallback settings.
 const (
 	SettingKeyEnableModelFallback      = "enable_model_fallback"
 	SettingKeyFallbackModelAnthropic   = "fallback_model_anthropic"
@@ -17,7 +17,7 @@ const (
 	SettingKeyFallbackModelOpenAI      = "fallback_model_openai"
 )
 
-// AdminSettings 包含路由回退和市场观测窗口配置。
+// AdminSettings contains model fallback and marketplace observation-window settings.
 type AdminSettings struct {
 	EnableModelFallback                  bool   `json:"enable_model_fallback"`
 	FallbackModelAnthropic               string `json:"fallback_model_anthropic"`
@@ -28,7 +28,7 @@ type AdminSettings struct {
 	MarketplaceAvailabilityWindowDays    int    `json:"marketplace_availability_window_days"`
 }
 
-// PrepareAdminSettings 校验市场观测窗口，并把路由设置转换成存储值。
+// PrepareAdminSettings normalizes the observation window in place and encodes routing settings for storage.
 func PrepareAdminSettings(settings *AdminSettings) map[string]string {
 	updates := map[string]string{}
 	settings.MarketplaceAvailabilityWindowDays, settings.MarketplaceAvailabilityBucketMinutes = NormalizeMarketplaceAvailabilityWindow(
@@ -45,7 +45,7 @@ func PrepareAdminSettings(settings *AdminSettings) map[string]string {
 	return updates
 }
 
-// SettingsParticipant 为路由设置注册字段，并准备传入字段的存储值。
+// SettingsParticipant registers routing fields and prepares values for the supplied settings.
 func SettingsParticipant() settings.Participant {
 	keys := []string{SettingKeyEnableModelFallback, SettingKeyFallbackModelAnthropic, SettingKeyFallbackModelAntigravity, SettingKeyFallbackModelGemini, SettingKeyFallbackModelOpenAI, SettingKeyMarketplaceAvailabilityBucketMinutes, SettingKeyMarketplaceAvailabilityWindowDays}
 	return settings.Participant{Module: "routing", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {

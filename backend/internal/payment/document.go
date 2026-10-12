@@ -8,7 +8,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GetOrderPaymentDocument 返回用户订单对应的 Stripe invoice 或历史 receipt。
+// GetOrderPaymentDocument returns the user order's Stripe invoice or legacy receipt.
 func (s *OrderQueries) GetOrderPaymentDocument(ctx context.Context, orderID, userID int64) (*PaymentDocumentResponse, error) {
 	order, err := s.GetOrder(ctx, orderID, userID)
 	if err != nil {
@@ -17,7 +17,7 @@ func (s *OrderQueries) GetOrderPaymentDocument(ctx context.Context, orderID, use
 	return s.GetOrderPaymentDocumentValue(ctx, order)
 }
 
-// AdminGetOrderPaymentDocument 返回管理员可查看的订单账单或收据。
+// AdminGetOrderPaymentDocument returns an order invoice or receipt for administrator access.
 func (s *OrderQueries) AdminGetOrderPaymentDocument(ctx context.Context, orderID int64) (*PaymentDocumentResponse, error) {
 	order, err := s.GetOrderByID(ctx, orderID)
 	if err != nil {

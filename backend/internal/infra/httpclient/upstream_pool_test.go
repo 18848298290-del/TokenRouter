@@ -28,7 +28,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
-// httpClientSink 保存基准测试结果，防止编译器省略赋值。
+// httpClientSink retains benchmark results so assignments cannot be optimized away.
 var httpClientSink *http.Client
 
 type poolRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -39,7 +39,7 @@ type responseTestBody struct {
 
 type blockingHeaderRoundTripper struct{}
 
-// TestUpstreamPoolActiveLimitAndCloseOnce 通过公开执行验证在途保护及重复关闭后的唯一释放。
+// TestUpstreamPoolActiveLimitAndCloseOnce checks in-flight protection and one release per body.
 func TestUpstreamPoolActiveLimitAndCloseOnce(t *testing.T) {
 	pool := NewUpstreamPool()
 	one := poolTestOptions(1, nil)
@@ -57,7 +57,7 @@ func TestUpstreamPoolActiveLimitAndCloseOnce(t *testing.T) {
 	require.NoError(t, next.Body.Close())
 }
 
-// TestUpstreamPoolFailureReleasesEntry 验证执行失败立即释放，且通知外层的时序早于释放。
+// TestUpstreamPoolFailureReleasesEntry checks that observation precedes release on failure.
 func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 	pool := NewUpstreamPool()
 	opts := poolTestOptions(1, nil)
@@ -71,7 +71,7 @@ func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 		})
 		return &clone
 	}
-	// 通知内的第二次获取同样使用单条目上限。
+	// Probe with the same one-entry limit while the failed request still holds its slot.
 	opts.ObserveResult = func(err error) {
 		require.ErrorIs(t, err, failure)
 		observed = true
@@ -90,7 +90,7 @@ func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestUpstreamPoolIsolationAndConfigurationChange 检查提供商、代理和配置变化是否重新创建客户端。
+// TestUpstreamPoolIsolationAndConfigurationChange checks reuse across provider and proxy settings.
 func TestUpstreamPoolIsolationAndConfigurationChange(t *testing.T) {
 	for _, isolation := range []string{"proxy", "provider", "provider_proxy"} {
 		t.Run(isolation, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestUpstreamPoolIsolationAndConfigurationChange(t *testing.T) {
 	require.NotSame(t, first.Transport, second.Transport)
 }
 
-// TestUpstreamPoolEvictsOldestIdle 用固定时间戳检查最久未使用的空闲客户端被逐出。
+// TestUpstreamPoolEvictsOldestIdle uses fixed timestamps to identify the LRU entry.
 func TestUpstreamPoolEvictsOldestIdle(t *testing.T) {
 	pool := NewUpstreamPool()
 	a, err := pool.acquire(poolTestOptions(1, nil))
@@ -150,7 +150,7 @@ func TestUpstreamPoolEvictsOldestIdle(t *testing.T) {
 	}
 }
 
-// TestUpstreamPoolIdleTTLDoesNotEvictActive 检查过期条目在请求执行期间继续可用。
+// TestUpstreamPoolIdleTTLDoesNotEvictActive checks that active requests survive idle expiration.
 func TestUpstreamPoolIdleTTLDoesNotEvictActive(t *testing.T) {
 	pool := NewUpstreamPool()
 	opts := poolTestOptions(1, nil)
@@ -170,7 +170,7 @@ func TestUpstreamPoolIdleTTLDoesNotEvictActive(t *testing.T) {
 	require.True(t, found)
 }
 
-// TestUpstreamPoolConcurrentRelease 保证并发复用和每个响应的重复关闭不会留下负计数。
+// TestUpstreamPoolConcurrentRelease checks repeated body closes during concurrent reuse.
 func TestUpstreamPoolConcurrentRelease(t *testing.T) {
 	pool := NewUpstreamPool()
 	var group sync.WaitGroup
@@ -317,9 +317,9 @@ func TestDecompressResponseBodyEmptyZstdWarnsAndPreservesBody(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestBuildUpstreamTransportSetsDialTimeout 检查上游传输的拨号函数和 TLS 握手超时。
-// DialContext 缺失时使用 Timeout 为零的 net.Dialer，DNS 解析和 TCP 建连可能持续到内核重传结束。
-// ResponseHeaderTimeout 从连接建立后开始计时。
+// TestBuildUpstreamTransportSetsDialTimeout checks dial and TLS handshake configuration.
+// A nil DialContext would use a zero-value net.Dialer with no dial timeout.
+// ResponseHeaderTimeout starts after the request is written, so it cannot bound connection setup.
 func TestBuildUpstreamTransportSetsDialTimeout(t *testing.T) {
 	settings := upstreamTestSettings()
 
@@ -337,7 +337,7 @@ func TestNewUpstreamDialerHasBoundedTimeout(t *testing.T) {
 	require.Equal(t, defaultUpstreamDialKeepAlive, dialer.KeepAlive)
 }
 
-// TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy 检查 HTTP 代理使用配置的拨号函数。
+// TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy checks the configured dialer is retained.
 func TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:1080")
 	require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy(t *testing.T) {
 	require.NotNil(t, transport.DialContext)
 }
 
-// TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy 检查 SOCKS5 分支配置了拨号函数。
+// TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy checks SOCKS dialer installation.
 func TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy(t *testing.T) {
 	proxyURL, err := url.Parse("socks5h://127.0.0.1:1080")
 	require.NoError(t, err)
@@ -358,8 +358,8 @@ func TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy(t *testing.T) {
 	require.NotNil(t, transport.DialContext)
 }
 
-// TestUpstreamDialerRespectsContextCancellation 检查已取消的 context 会中止拨号。
-// 目标使用已关闭的本地监听地址。
+// TestUpstreamDialerRespectsContextCancellation checks that canceled requests fail to dial.
+// Use a closed local listener address.
 func TestUpstreamDialerRespectsContextCancellation(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -376,8 +376,8 @@ func TestUpstreamDialerRespectsContextCancellation(t *testing.T) {
 	require.Error(t, err, "已取消的 context 必须立即中止拨号")
 }
 
-// TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck 检查空闲连接 PING 的间隔和超时。
-// 主动探测用于发现代理或 NAT 已断开、客户端仍认为可用的连接。
+// TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck checks idle PING timing.
+// PINGs detect connections silently dropped by a proxy or NAT.
 func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
@@ -388,7 +388,6 @@ func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	requireHTTP2Configured(t, tr, "http2 必须已挂到底层 http.Transport 上")
 }
 
-// TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck 检查 openai_h2 传输已配置 HTTP/2。
 func TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, TransportProtocol{CacheVariant: "openai_h2", HTTP2: true})
 	require.NoError(t, err)
@@ -396,7 +395,7 @@ func TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck(t *testing.T) {
 	requireHTTP2Configured(t, tr, "openai_h2 必须显式配置 http2 以启用 ReadIdleTimeout")
 }
 
-// TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured 检查默认传输在构建时使用惰性 HTTP/2 配置。
+// TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured checks lazy default HTTP/2 setup.
 func TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, TransportProtocol{CacheVariant: "default"})
 	require.NoError(t, err)
@@ -404,7 +403,6 @@ func TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured(t *testing.T) {
 	require.Nil(t, tr.TLSNextProto["h2"], "default 模式不应在构建期主动配置 http2 keepalive")
 }
 
-// TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2 检查 openai_h2 传输与本地 TLS 服务协商 HTTP/2。
 func TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -430,7 +428,6 @@ func TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2(t *testing.T) {
 	require.Equal(t, 2, resp.ProtoMajor, "openai_h2 必须协商到 HTTP/2")
 }
 
-// TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive 检查 HTTP 代理传输同时配置代理和 HTTP/2。
 func TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:8080")
 	require.NoError(t, err)
@@ -442,7 +439,7 @@ func TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive(t *testi
 	require.NotNil(t, tr.Proxy, "HTTP 代理仍须通过 Transport.Proxy 生效")
 }
 
-// BenchmarkHTTPUpstreamProxyClient 比较重复创建与复用代理客户端的时间和内存分配。
+// BenchmarkHTTPUpstreamProxyClient measures construction versus cached-client assignment.
 func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 	svc := NewUpstreamPool()
 	settings := UpstreamSettings{
@@ -454,16 +451,15 @@ func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 	}
 
 	proxyURL := "http://127.0.0.1:8080"
-	b.ReportAllocs() // 报告内存分配统计
+	b.ReportAllocs()
 
-	// 子测试：每次新建客户端
 	b.Run("新建", func(b *testing.B) {
 		parsedProxy, err := url.Parse(proxyURL)
 		if err != nil {
 			b.Fatalf("解析代理地址失败: %v", err)
 		}
 		for range b.N {
-			// 每次迭代都创建新客户端，包含 Transport 分配
+			// Each iteration includes allocation of a transport.
 			transport, err := buildUpstreamTransport(settings, parsedProxy, TransportProtocol{CacheVariant: "default"})
 			if err != nil {
 				b.Fatalf("创建 Transport 失败: %v", err)
@@ -474,9 +470,8 @@ func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 		}
 	})
 
-	// 子测试：复用已缓存的客户端
 	b.Run("复用", func(b *testing.B) {
-		// 将客户端写入缓存后开始计时。
+		// Populate the cache before timing repeated assignments.
 		entry, err := svc.acquire(UpstreamRequestOptions{
 			ProxyURL:   proxyURL,
 			ProviderID: 1,
@@ -489,15 +484,15 @@ func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 			b.Fatalf("getOrCreateClient: %v", err)
 		}
 		client := entry.client
-		b.ResetTimer() // 重置计时器，排除预热时间
+		b.ResetTimer() // Exclude cache warmup.
 		for range b.N {
-			// 直接使用缓存的客户端，无内存分配
+			// This measures assignment of a cached pointer, not a pool lookup.
 			httpClientSink = client
 		}
 	})
 }
 
-// TestUpstreamPoolRedirectPolicyIsPerRequest 覆盖缓存命中后的策略切换、清空和失败释放。
+// TestUpstreamPoolRedirectPolicyIsPerRequest checks policy replacement, clearing, and failure release.
 func TestUpstreamPoolRedirectPolicyIsPerRequest(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
@@ -547,7 +542,7 @@ func TestUpstreamPoolRedirectPolicyIsPerRequest(t *testing.T) {
 		})
 	}
 
-	// 重定向失败后释放在途计数，单条目池可以接纳另一个提供商。
+	// A redirect failure must release the slot so a different provider can use the one-entry pool.
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 	require.NoError(t, err)
 	resp, err := pool.Do(req, UpstreamRequestOptions{Isolation: "provider", ProviderID: 2, MaxClients: 1})
@@ -555,7 +550,7 @@ func TestUpstreamPoolRedirectPolicyIsPerRequest(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestUpstreamPoolPrepareClientOverridesRequestPolicy 检查适配器覆盖请求策略后，下一次请求使用自己的策略。
+// TestUpstreamPoolPrepareClientOverridesRequestPolicy checks overrides stay local to one request.
 func TestUpstreamPoolPrepareClientOverridesRequestPolicy(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
@@ -579,7 +574,7 @@ func TestUpstreamPoolPrepareClientOverridesRequestPolicy(t *testing.T) {
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	require.Zero(t, hits.Load())
 
-	// 下一次请求使用默认的重定向策略。
+	// The next request should use the default redirect policy.
 	req, err = http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 	require.NoError(t, err)
 	resp, err = pool.Do(req, UpstreamRequestOptions{})
@@ -589,7 +584,7 @@ func TestUpstreamPoolPrepareClientOverridesRequestPolicy(t *testing.T) {
 	require.Equal(t, int64(1), hits.Load())
 }
 
-// TestUpstreamPoolConcurrentRedirectPolicies 验证共享 transport 下的并发策略互不污染。
+// TestUpstreamPoolConcurrentRedirectPolicies checks policy isolation with a shared transport.
 func TestUpstreamPoolConcurrentRedirectPolicies(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
@@ -676,7 +671,7 @@ func TestResponseHeaderTimeoutRoundTripperTimesOut(t *testing.T) {
 	require.Less(t, time.Since(startedAt), time.Second)
 }
 
-// upstreamTestSettings 提供连接池测试使用的固定超时和连接数配置。
+// upstreamTestSettings supplies fixed connection limits and timeouts for pool tests.
 func upstreamTestSettings() UpstreamSettings {
 	return UpstreamSettings{
 		MaxIdleConns:          240,
@@ -691,7 +686,7 @@ func (f poolRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-// poolTestOptions 通过替身响应测试 Do 的连接获取、结果通知和响应体释放。
+// poolTestOptions supplies a fake response while exercising acquisition, observation, and release.
 func poolTestOptions(id int64, captured **http.Client) UpstreamRequestOptions {
 	return UpstreamRequestOptions{ProviderID: id, Isolation: "provider_proxy", MaxClients: 2, IdleTTL: 15 * time.Minute, Settings: upstreamTestSettings(), PrepareClient: func(client *http.Client) *http.Client {
 		if captured != nil {
@@ -784,8 +779,7 @@ func http2KeepAliveTestPoolSettings() UpstreamSettings {
 	}
 }
 
-// requireHTTP2Configured 检查传输已启用 HTTP/2。
-// http.Protocols 同时允许 HTTP/1.1 回退和 HTTP/2 协商。
+// requireHTTP2Configured checks that both HTTP/1.1 and HTTP/2 are enabled.
 func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 	t.Helper()
 	require.NotNil(t, tr.Protocols, msg)
@@ -793,7 +787,7 @@ func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 	require.True(t, tr.Protocols.HTTP2(), msg)
 }
 
-// redirectTestServer 提供本地重定向服务并统计目标地址的访问次数。
+// redirectTestServer redirects locally and counts requests reaching the target.
 func redirectTestServer(t *testing.T) (string, *atomic.Int64) {
 	t.Helper()
 	hits := new(atomic.Int64)
@@ -810,7 +804,7 @@ func redirectTestServer(t *testing.T) (string, *atomic.Int64) {
 }
 
 func (blockingHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// 模拟上游迟迟不返回响应头，直到请求上下文被取消。
+	// Hold response headers until the request context is canceled.
 	<-req.Context().Done()
 	return nil, req.Context().Err()
 }

@@ -43,35 +43,34 @@ import (
 )
 
 var (
-	// semverPattern 校验由三段数字组成的版本号。
+	// semverPattern accepts three dot-separated numeric version components.
 	semverPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
-	// menuItemIDPattern 校验由字母、数字、连字符和下划线组成的菜单项 ID。
+	// menuItemIDPattern accepts ASCII letters, digits, hyphens, and underscores.
 	menuItemIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-	// markdownMenuSlugPattern 校验自定义 Markdown 页面 slug，需与页面读取接口保持一致。
+	// markdownMenuSlugPattern matches the slug rules used by the Markdown page reader.
 	markdownMenuSlugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-	// settingKeyJSONAliases 记录 JSON 名称与持久化设置键不同的请求字段。
-	// UpdateSettingsRequest 的其他字段均使用对应设置键作为 JSON 名称。
+	// settingKeyJSONAliases maps request JSON names that differ from their stored setting keys.
+	// Other UpdateSettingsRequest fields use their setting keys as JSON names.
 	settingKeyJSONAliases = map[string]string{
 		"smtp_from_email": notification.SettingKeySMTPFrom,
 	}
 
-	// settingKeyByJSONName 将 UpdateSettingsRequest 中非指针顶层 JSON 字段映射到其写入的设置键。
-	// 该映射只根据结构体标签构建一次，使新增字段无需修改此处也能自动纳入处理。
+	// settingKeyByJSONName maps non-pointer top-level request fields to stored setting keys.
+	// It is built once from struct tags so added fields participate automatically.
 	//
-	// 指针字段由 UpdateSettings 合并，省略时保留存储值，因此本表排除这些字段。
-	// 部分字段还依赖每次保存时重新写入，以重新规范化故障关闭的安全状态，参见
-	// TestUpdateSettingsMalformedForwardedClientIPHeadersRemainFailClosedWhenOmitted。
-	// 只有非指针字段无法区分省略与主动清空。
+	// UpdateSettings merges pointer fields with stored values, so they are excluded here.
+	// Some pointer fields are rewritten on every save to normalize invalid security settings;
+	// see TestUpdateSettingsMalformedForwardedClientIPHeadersRemainFailClosedWhenOmitted.
 	settingKeyByJSONName = buildSettingKeyByJSONName()
 )
 
-// UpdateSettingsRequest 更新设置请求。
+// UpdateSettingsRequest contains the combined settings update payload.
 type UpdateSettingsRequest = settingsdto.UpdateSettingsRequest
 
-// generateMenuItemID 为自定义菜单项生成随机十六进制 ID。
+// generateMenuItemID returns a random hexadecimal ID for a custom menu item.
 func generateMenuItemID() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -80,12 +79,12 @@ func generateMenuItemID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// scopesContainOpenID 检查以空白分隔的权限范围中是否有 openid，比较时忽略大小写。
+// scopesContainOpenID checks whitespace-separated scopes for openid, ignoring case.
 func scopesContainOpenID(scopes string) bool {
 	return slices.Contains(strings.Fields(strings.ToLower(strings.TrimSpace(scopes))), "openid")
 }
 
-// firstNonEmpty 返回首个去除首尾空白后非空的字符串。
+// firstNonEmpty returns the first nonempty trimmed value, or an empty string.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -95,9 +94,9 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// ensureActorTotpForStepUp 校验操作者是否具备开启 step-up 验证的条件。
-// 操作者必须通过管理员会话登录且已启用 TOTP；管理 API Key 不满足条件。
-// 校验失败时写入错误响应并返回 false。
+// ensureActorTotpForStepUp checks that the actor can enable step-up verification.
+// The actor needs an admin session with TOTP enabled; admin API keys are rejected.
+// Failure writes an error response and returns false.
 func (h *Handler) ensureActorTotpForStepUp(c *gin.Context) bool {
 	if c.GetString("auth_method") == audit.AuditAuthMethodAdminAPIKey {
 		httpx.ErrorWithDetails(c, http.StatusForbidden,
@@ -150,8 +149,9 @@ func buildSettingKeyByJSONName() map[string]string {
 	return out
 }
 
-// omittedSettingKeys 返回当前载荷未包含的设置键。
-// 设置保存接口采用整份文档 PUT 语义；若不排除这些键，只发送单个字段的客户端会把其余字段重置为零值。
+// omittedSettingKeys returns stored keys for non-pointer request fields absent from the payload.
+// Dropping these keys from the prepared update prevents partial requests from resetting omitted fields to
+// zero values.
 func omittedSettingKeys(sentFields map[string]json.RawMessage) runtimesettings.OmittedKeys {
 	omitted := make(runtimesettings.OmittedKeys, len(settingKeyByJSONName))
 	for jsonName, settingKey := range settingKeyByJSONName {
@@ -176,7 +176,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		httpx.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	// 废弃字段必须明确拒绝，避免旧客户端误以为自动跨型号映射仍会执行。
+	// Reject the removed field so clients cannot assume automatic cross-model mapping is active.
 	if _, exists := sentFields["grok_cross_client_model_map_enabled"]; exists {
 		httpx.BadRequest(c, "grok_cross_client_model_map_enabled has been removed; configure explicit model_mapping instead")
 		return
@@ -203,7 +203,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	defer update.Close()
 	c.Request = c.Request.WithContext(update.Context())
 
-	// 管理端保存能力白名单，执行目录再与组内提供商的实际能力取交集。
+	// The admin allowlist is intersected with provider capabilities when building the execution catalog.
 	if req.CreativeModelSettings != nil {
 		if sanitizer, ok := h.creativeModelReader.(interface {
 			NormalizeCreativeModelSettingsForSave(context.Context, []creative.CreativeModelSetting) ([]creative.CreativeModelSetting, error)
@@ -230,7 +230,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	// 新增开关使用指针字段：省略字段=保持现值，避免旧客户端或脚本全量保存时静默重置。
+	// Pointer fields distinguish omission from false so older clients keep the stored switch values.
 	registrationEmailDomainQuotaEnabled := previousSettings.RegistrationEmailDomainQuotaEnabled
 	if req.RegistrationEmailDomainQuotaEnabled != nil {
 		registrationEmailDomainQuotaEnabled = *req.RegistrationEmailDomainQuotaEnabled
@@ -239,7 +239,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.UserEmailChangeEnabled != nil {
 		userEmailChangeEnabled = *req.UserEmailChangeEnabled
 	}
-	// 这两个安全开关省略时使用存储值。
+	// Omitted security switches retain their stored values.
 	sessionBindingEnabled := previousSettings.SessionBindingEnabled
 	if req.SessionBindingEnabled != nil {
 		sessionBindingEnabled = *req.SessionBindingEnabled
@@ -253,24 +253,23 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		forwardedClientIPHeaders = append([]string(nil), *req.ForwardedClientIPHeaders...)
 	}
 
-	// 开启敏感操作 step-up 门控属自锁风险操作：仅允许本人已启用 TOTP 的管理员会话开启，
-	// 否则开启后操作者立即被挡在所有敏感操作之外。仅在 false→true 的开启瞬间校验，
-	// 保持开启状态的常规设置保存不受影响。
+	// Enabling step-up requires the actor's own TOTP to prevent locking the administrator out
+	// of sensitive operations. Check the precondition on the false-to-true transition;
+	// routine saves with step-up already enabled do not require this check.
 	if stepUpEnabled && !previousSettings.StepUpEnabled {
 		if !h.ensureActorTotpForStepUp(c) {
 			return
 		}
 	}
-	// 关闭 step-up 门控本身就是敏感操作：防止拿到管理员会话的攻击者先关闸再执行导出/备份。
-	// previousSettings 已证实开关处于开启状态，使用无条件门控变体，
-	// 避免门控内部二次读取开关时因存储故障 fail-open（前端捕获 STEP_UP_REQUIRED 弹码重试）。
+	// Disabling step-up requires step-up verification to prevent a stolen session from removing the protection.
+	// The previous snapshot establishes that the switch is enabled. Use the unconditional check
+	// so a second settings read cannot fail open; the frontend handles STEP_UP_REQUIRED and retries.
 	if !stepUpEnabled && previousSettings.StepUpEnabled {
 		if !identityhttp.EnforceStepUp(c, h.totpService, h.userService, nil) {
 			return
 		}
 	}
 
-	// 验证参数
 	if req.DefaultConcurrency < 1 {
 		req.DefaultConcurrency = 1
 	}
@@ -296,14 +295,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.AdminRechargeRebateEnabled != nil {
 		adminRechargeRebateEnabled = *req.AdminRechargeRebateEnabled
 	}
-	// 通用表格配置：兼容旧客户端未传字段时保留当前值。
+	// Keep saved table settings when older clients omit them.
 	if req.TableDefaultPageSize <= 0 {
 		req.TableDefaultPageSize = previousSettings.TableDefaultPageSize
 	}
 	if req.TablePageSizeOptions == nil {
 		req.TablePageSizeOptions = previousSettings.TablePageSizeOptions
 	}
-	// 将请求字段传给 usage，由 usage 处理省略字段、排序和展示规则。
+	// Usage resolves omitted fields and validates ranking and display rules.
 	usageRanking, rankingErr := usage.ResolveRankingSettings(usage.UsageRankingSettings{
 		Enabled: previousSettings.UsageRankingEnabled, SortBy: usage.UsageRankingSortBy(previousSettings.UsageRankingSortBy), ShowTotalTokens: previousSettings.UsageRankingShowTotalTokens, ShowRequests: previousSettings.UsageRankingShowRequests, ShowActualCost: previousSettings.UsageRankingShowActualCost, Limit: previousSettings.UsageRankingLimit,
 	}, usage.RankingSettingsUpdate{Limit: req.UsageRankingLimit, Enabled: req.UsageRankingEnabled, SortBy: req.UsageRankingSortBy, ShowTotalTokens: req.UsageRankingShowTotalTokens, ShowRequests: req.UsageRankingShowRequests, ShowActualCost: req.UsageRankingShowActualCost})
@@ -312,7 +311,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	req.UsageRankingLimit = usageRanking.Limit
-	// 管理文档的 SMTP 保护由通知模块解释。
+	// Notification owns SMTP normalization and the empty-host retention rule.
 	smtp := notification.NormalizeAdminSMTPSettings(notification.AdminSMTPSettings{SMTPHost: previousSettings.SMTPHost, SMTPPort: previousSettings.SMTPPort, SMTPUsername: previousSettings.SMTPUsername, SMTPPassword: previousSettings.SMTPPassword, SMTPFrom: previousSettings.SMTPFrom, SMTPFromName: previousSettings.SMTPFromName, SMTPUseTLS: previousSettings.SMTPUseTLS}, notification.AdminSMTPSettings{SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUsername: req.SMTPUsername, SMTPPassword: req.SMTPPassword, SMTPFrom: req.SMTPFrom, SMTPFromName: req.SMTPFromName, SMTPUseTLS: req.SMTPUseTLS})
 	req.SMTPHost = smtp.SMTPHost
 	req.SMTPPort = smtp.SMTPPort
@@ -365,14 +364,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		httpx.BadRequest(c, "Multiple captcha providers (Cloudflare Turnstile / Tencent Captcha / Aliyun Captcha) cannot be enabled at the same time")
 		return
 	}
-	// 规范化阿里云地域：未发送时保留已存值，非法值一律按中国内地落库。
+	// An omitted Aliyun region uses the saved value; values other than sgp normalize to cn.
 	if _, sent := sentFields["aliyun_captcha_region"]; !sent {
 		req.AliyunCaptchaRegion = previousSettings.AliyunCaptchaRegion
 	}
 	if req.AliyunCaptchaRegion != identity.AliyunCaptchaRegionSGP {
 		req.AliyunCaptchaRegion = identity.AliyunCaptchaRegionCN
 	}
-	// 天御站点 normalize：未发送保留已存值，非法值一律按中国站落库
+	// An omitted Tencent region uses the saved value; values other than intl normalize to cn.
 	if _, sent := sentFields["tencent_captcha_region"]; !sent {
 		req.TencentCaptchaRegion = previousSettings.TencentCaptchaRegion
 	}
@@ -380,14 +379,13 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		req.TencentCaptchaRegion = identity.TencentCaptchaRegionCN
 	}
 
-	// Turnstile 参数验证
+	// Validate enabled Turnstile configuration.
 	if req.TurnstileEnabled {
-		// 检查必填字段
 		if req.TurnstileSiteKey == "" {
 			httpx.BadRequest(c, "Turnstile Site Key is required when enabled")
 			return
 		}
-		// 如果未提供 secret key，使用已保存的值（留空保留当前值）
+		// An empty secret retains the saved value.
 		if req.TurnstileSecretKey == "" {
 			if previousSettings.TurnstileSecretKey == "" {
 				httpx.BadRequest(c, "Turnstile Secret Key is required when enabled")
@@ -396,7 +394,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			req.TurnstileSecretKey = previousSettings.TurnstileSecretKey
 		}
 
-		// 当 site_key 或 secret_key 任一变化时验证（避免配置错误导致无法登录）
+		// Validate changed keys before saving to prevent a bad configuration from blocking login.
 		siteKeyChanged := previousSettings.TurnstileSiteKey != req.TurnstileSiteKey
 		secretKeyChanged := previousSettings.TurnstileSecretKey != req.TurnstileSecretKey
 		if siteKeyChanged || secretKeyChanged {
@@ -439,7 +437,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// 阿里云验证码 2.0 参数验证
+	// Validate enabled Aliyun Captcha 2.0 configuration.
 	if aliyunCaptchaEnabled {
 		if _, sent := sentFields["aliyun_captcha_scene_id"]; !sent {
 			req.AliyunCaptchaSceneID = previousSettings.AliyunCaptchaSceneID
@@ -462,7 +460,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			httpx.BadRequest(c, "Aliyun Captcha AccessKey ID is required when enabled")
 			return
 		}
-		// 如果未提供 AccessKey Secret，使用已保存的值（留空保留当前值）
+		// An empty AccessKey Secret retains the saved value.
 		if req.AliyunCaptchaAccessKeySecret == "" {
 			if previousSettings.AliyunCaptchaAccessKeySecret == "" {
 				httpx.BadRequest(c, "Aliyun Captcha AccessKey Secret is required when enabled")
@@ -471,7 +469,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			req.AliyunCaptchaAccessKeySecret = previousSettings.AliyunCaptchaAccessKeySecret
 		}
 
-		// 凭证任一变化时真实调用一次阿里云校验（避免配置错误导致无法登录）
+		// Validate changed credentials with Aliyun before saving to prevent login lockout.
 		credentialsChanged := previousSettings.AliyunCaptchaAccessKeyID != req.AliyunCaptchaAccessKeyID ||
 			previousSettings.AliyunCaptchaAccessKeySecret != req.AliyunCaptchaAccessKeySecret ||
 			previousSettings.AliyunCaptchaSceneID != req.AliyunCaptchaSceneID ||
@@ -484,10 +482,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// TOTP 双因素认证参数验证
-	// 只有手动配置了加密密钥才允许启用 TOTP 功能
+	// Enabling TOTP requires a configured encryption key so encrypted credentials remain recoverable across restarts.
 	if req.TotpEnabled && !previousSettings.TotpEnabled {
-		// 尝试启用 TOTP，检查加密密钥是否已手动配置
 		if !h.settingService.IsTotpEncryptionKeyConfigured() {
 			httpx.BadRequest(c, "Cannot enable TOTP: TOTP_ENCRYPTION_KEY environment variable must be configured first. Generate a key with 'openssl rand -hex 32' and set it in your environment.")
 			return
@@ -532,7 +528,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	// LinuxDo Connect 参数验证
+	// Validate enabled LinuxDo Connect configuration.
 	if req.LinuxDoConnectEnabled {
 		req.LinuxDoConnectClientID = strings.TrimSpace(req.LinuxDoConnectClientID)
 		req.LinuxDoConnectClientSecret = strings.TrimSpace(req.LinuxDoConnectClientSecret)
@@ -551,7 +547,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 
-		// 如果未提供 client_secret，则保留现有值（如有）。
+		// An empty client_secret retains the saved value.
 		if req.LinuxDoConnectClientSecret == "" {
 			if previousSettings.LinuxDoConnectClientSecret == "" {
 				httpx.BadRequest(c, "LinuxDo Client Secret is required when enabled")
@@ -561,9 +557,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// DingTalk Connect 参数验证
-	// 防御性：任何写入路径上把已废弃的 corp_restriction_policy=whitelist 入参 coerce 为 none，
-	// 避免任何直连 admin API 的客户端把死值写回 DB（前端 UI 已无此选项）。
+	// Coerce the retired corp_restriction_policy=whitelist value to none
+	// so direct API clients cannot write the unsupported policy back to storage.
 	req.DingTalkConnectCorpRestrictionPolicy = identity.SettingsCoerceDingTalkCorpPolicyForWrite(req.DingTalkConnectCorpRestrictionPolicy)
 
 	if req.DingTalkConnectEnabled {
@@ -586,7 +581,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 
-		// 如果未提供 client_secret，则保留现有值（如有）。
+		// An empty client_secret retains the saved value.
 		if req.DingTalkConnectClientSecret == "" {
 			if previousSettings.DingTalkConnectClientSecret == "" {
 				httpx.BadRequest(c, "DingTalk Client Secret is required when enabled")
@@ -595,19 +590,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			req.DingTalkConnectClientSecret = previousSettings.DingTalkConnectClientSecret
 		}
 
-		// Corp 策略校验（V1/V4 fail-closed）
+		// Validate the corporation policy before persisting it.
 		dingTalkCfg := authconfig.DingTalkConnectConfig{
 			Enabled:               true,
-			DingTalkAppKind:       "internal_app", // 硬编码：settings 层仅支持 internal_app
-			AppType:               "internal",     // 对于 internal_only 策略的默认值
+			DingTalkAppKind:       "internal_app", // the settings API supports internal_app
+			AppType:               "internal",     // default for internal_only
 			CorpRestrictionPolicy: req.DingTalkConnectCorpRestrictionPolicy,
 			InternalCorpID:        req.DingTalkConnectInternalCorpID,
 		}
-		// 若未填 corp_restriction_policy，保留已有配置
+		// An empty policy retains the saved configuration.
 		if dingTalkCfg.CorpRestrictionPolicy == "" {
 			dingTalkCfg.CorpRestrictionPolicy = previousSettings.DingTalkConnectCorpRestrictionPolicy
 		}
-		// 对于 internal_only 策略，app_type 必须为 internal（V1 校验）
+		// The internal_only policy requires an internal app type.
 		if dingTalkCfg.CorpRestrictionPolicy == "internal_only" {
 			dingTalkCfg.AppType = "internal"
 		} else {
@@ -618,16 +613,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 
-		// bypass_registration 仅在 internal_only 模式下有意义；其它策略下强制为 false，
-		// 防止 admin 在切换 policy 时把 bypass 残留在 DB 中（前端 UI 也已隐藏该开关）。
+		// Registration bypass applies only to internal_only. Clear it for other policies
+		// so switching policies cannot leave bypass enabled.
 		if dingTalkCfg.CorpRestrictionPolicy != "internal_only" {
 			req.DingTalkConnectBypassRegistration = false
-			// 身份同步三开关同理：仅 internal_only 模式下有意义，其它策略强制 false。
+			// Identity synchronization also requires internal_only.
 			req.DingTalkConnectSyncCorpEmail = false
 			req.DingTalkConnectSyncDisplayName = false
 			req.DingTalkConnectSyncDept = false
 		}
-		// 身份同步目标 attr key：trimSpace + 空值 fallback 到默认值
+		// Trim attribute keys and supply defaults for empty values.
 		req.DingTalkConnectSyncCorpEmailAttrKey = strings.TrimSpace(req.DingTalkConnectSyncCorpEmailAttrKey)
 		if req.DingTalkConnectSyncCorpEmailAttrKey == "" {
 			req.DingTalkConnectSyncCorpEmailAttrKey = "dingtalk_email"
@@ -640,7 +635,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		if req.DingTalkConnectSyncDeptAttrKey == "" {
 			req.DingTalkConnectSyncDeptAttrKey = "dingtalk_department"
 		}
-		// 身份同步目标 attr 显示名称：trim + 空值 fallback 到默认中文名
+		// Trim attribute display names and supply the default Chinese labels when empty.
 		req.DingTalkConnectSyncCorpEmailAttrName = strings.TrimSpace(req.DingTalkConnectSyncCorpEmailAttrName)
 		if req.DingTalkConnectSyncCorpEmailAttrName == "" {
 			req.DingTalkConnectSyncCorpEmailAttrName = "钉钉企业邮箱"
@@ -784,7 +779,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// Generic OIDC 参数验证
+	// Resolve and validate generic OIDC settings.
 	oidcUsePKCE, oidcValidateIDToken, err := h.settingService.OIDCSecurityWriteDefaults(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -998,7 +993,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// “购买订阅”页面配置验证
+	// Merge subscription purchase page settings.
 	purchaseEnabled := previousSettings.PurchaseSubscriptionEnabled
 	if req.PurchaseSubscriptionEnabled != nil {
 		purchaseEnabled = *req.PurchaseSubscriptionEnabled
@@ -1008,8 +1003,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		purchaseURL = strings.TrimSpace(*req.PurchaseSubscriptionURL)
 	}
 
-	// - 启用时要求 URL 合法且非空
-	// - 禁用时允许为空；若提供了 URL 也做基本校验，避免误配置
+	// An enabled purchase page requires a nonempty valid URL.
+	// When disabled, an empty URL is allowed; a supplied URL still needs validation.
 	if purchaseEnabled {
 		if purchaseURL == "" {
 			httpx.BadRequest(c, "Purchase Subscription URL is required when enabled")
@@ -1026,7 +1021,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// Frontend URL 验证
+	// Validate the frontend URL when supplied.
 	req.FrontendURL = strings.TrimSpace(req.FrontendURL)
 	if req.FrontendURL != "" {
 		if err := authconfig.ValidateAbsoluteHTTPURL(req.FrontendURL); err != nil {
@@ -1035,7 +1030,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// 自定义菜单项验证
+	// Validate custom menu items.
 	const (
 		maxCustomMenuItems    = 20
 		maxMenuItemLabelLen   = 50
@@ -1062,7 +1057,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			}
 			urlTrimmed := strings.TrimSpace(item.URL)
 			if slug, ok := strings.CutPrefix(urlTrimmed, "md:"); ok {
-				// Markdown 页面模式使用 md:<slug>，slug 规则与 /api/v1/pages/:slug 保持一致。
+				// Markdown entries use md:<slug> with the same slug rules as /api/v1/pages/:slug.
 				if slug == "" {
 					httpx.BadRequest(c, "Custom menu item markdown slug cannot be empty (use md:slug format)")
 					return
@@ -1085,7 +1080,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 					return
 				}
 			}
-			// 保存规范化后的 URL，避免前后空白导致运行时 md: 页面识别失败。
+			// Store the trimmed URL so leading whitespace cannot prevent md: recognition at runtime.
 			items[i].URL = urlTrimmed
 			if item.Visibility != "user" && item.Visibility != "admin" {
 				httpx.BadRequest(c, "Custom menu item visibility must be 'user' or 'admin'")
@@ -1128,7 +1123,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		customMenuJSON = string(menuBytes)
 	}
 
-	// 自定义端点验证
+	// Validate custom endpoints.
 	const (
 		maxCustomEndpoints        = 10
 		maxEndpointNameLen        = 50
@@ -1177,7 +1172,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		customEndpointsJSON = string(endpointBytes)
 	}
 
-	// 底栏链接分组验证
+	// Validate footer link groups.
 	const (
 		maxFooterGroups      = 6
 		maxFooterLinksPerGrp = 10
@@ -1224,7 +1219,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 					httpx.BadRequest(c, "Footer link URL is too long (max 2048 characters)")
 					return
 				}
-				// 允许绝对 http(s) URL 或站内相对路径（以 / 开头）
+				// Accept absolute HTTP(S) URLs or values starting with /.
 				if !strings.HasPrefix(trimmedURL, "/") {
 					if err := authconfig.ValidateAbsoluteHTTPURL(trimmedURL); err != nil {
 						httpx.BadRequest(c, "Footer link URL must be an absolute http(s) URL or a path starting with /")
@@ -1241,7 +1236,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		footerLinksJSON = string(groupBytes)
 	}
 
-	// 首页展示模型列表验证：限制数量、去空白、去重，保持管理员配置的顺序
+	// Limit, trim, and deduplicate featured models while retaining their configured order.
 	const maxHomeFeaturedModels = 12
 	const maxHomeFeaturedModelIDLen = 200
 
@@ -1288,7 +1283,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		footerText = trimmed
 	}
 
-	// Ops metrics collector interval validation (seconds).
+	// Clamp the metrics collection interval to 60-3600 seconds.
 	if req.OpsMetricsIntervalSeconds != nil {
 		v := min(max(*req.OpsMetricsIntervalSeconds, 60), 3600)
 		req.OpsMetricsIntervalSeconds = &v
@@ -1300,7 +1295,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		})
 	}
 
-	// 验证最低版本号格式（空字符串=禁用，或合法 semver）
+	// An empty minimum version disables the lower bound; otherwise require three numeric components.
 	if req.MinClaudeCodeVersion != "" {
 		if !semverPattern.MatchString(req.MinClaudeCodeVersion) {
 			httpx.Error(c, http.StatusBadRequest, "min_claude_code_version must be empty or a valid semver (e.g. 2.1.63)")
@@ -1308,7 +1303,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// 验证最高版本号格式（空字符串=禁用，或合法 semver）
+	// An empty maximum version disables the upper bound; otherwise require three numeric components.
 	if req.MaxClaudeCodeVersion != "" {
 		if !semverPattern.MatchString(req.MaxClaudeCodeVersion) {
 			httpx.Error(c, http.StatusBadRequest, "max_claude_code_version must be empty or a valid semver (e.g. 3.0.0)")
@@ -1326,14 +1321,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.OpenAICodexUserAgent != nil {
 		normalized := strings.TrimSpace(*req.OpenAICodexUserAgent)
 		req.OpenAICodexUserAgent = &normalized
-		// 检查长度上限，运维可自行设置 codex 版本号格式。
+		// Limit the header length while allowing operators to choose the Codex version format.
 		if len(normalized) > 512 {
 			httpx.Error(c, http.StatusBadRequest, "openai_codex_user_agent must be at most 512 characters")
 			return
 		}
 	}
 
-	// 交叉验证：如果同时设置了最低和最高版本号，最高版本号必须 >= 最低版本号
+	// When both bounds are supplied, the maximum must be at least the minimum.
 	if req.MinClaudeCodeVersion != "" && req.MaxClaudeCodeVersion != "" {
 		if clientmeta.CompareVersions(req.MaxClaudeCodeVersion, req.MinClaudeCodeVersion) < 0 {
 			httpx.Error(c, http.StatusBadRequest, "max_claude_code_version must be greater than or equal to min_claude_code_version")
@@ -1865,7 +1860,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}})
 	}
 
-	// 已提取模块由静态参与者统一准备；保持全部准备成功后才执行唯一批量提交。
+	// Prepare every registered participant before the single batch commit.
 	rawInput, err := json.Marshal(req)
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -1876,13 +1871,13 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		httpx.ErrorFrom(c, err)
 		return
 	}
-	// 非指针字段省略时仍保留原持久值；指针字段沿用已有的合并和安全规范化流程。
+	// Drop omitted non-pointer fields; pointer fields use the merged and normalized values.
 	for name := range settingKeyByJSONName {
 		if _, sent := sentFields[name]; !sent {
 			delete(fields, name)
 		}
 	}
-	// 此指针字段原先每次保存都会写回合并后的当前值，继续保留该行为。
+	// Write the merged rebate switch on every save, including requests that omit it.
 	fields["affiliate_admin_recharge_enabled"], _ = json.Marshal(settings.AdminRechargeRebateEnabled)
 	fields["usage_ranking_enabled"], _ = json.Marshal(settings.UsageRankingEnabled)
 	fields["usage_ranking_sort_by"], _ = json.Marshal(settings.UsageRankingSortBy)
@@ -1890,7 +1885,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	fields["usage_ranking_show_requests"], _ = json.Marshal(settings.UsageRankingShowRequests)
 	fields["usage_ranking_show_actual_cost"], _ = json.Marshal(settings.UsageRankingShowActualCost)
 	fields["allow_user_view_error_requests"], _ = json.Marshal(settings.AllowUserViewErrorRequests)
-	// 身份字段取自完成权限检查和兼容合并后的设置，省略的非指针字段从更新集合中移除。
+	// Use identity values after permission checks and merging; skip omitted non-pointer fields.
 	identityRaw, err := json.Marshal(settings.IdentityAdminSettings())
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -1985,7 +1980,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 
 	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, auditReq)
 
-	// 重新获取设置返回
+	// Read committed values for the response.
 	updatedSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -2028,7 +2023,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	httpx.Success(c, systemSettingsResponseData(payload, updatedAuthSourceDefaults))
 }
 
-// mergeNormalizedSettingsFields 将规范化设置合入更新字段，省略的非指针字段继续使用存储值。
+// mergeNormalizedSettingsFields merges normalized values and skips omitted non-pointer fields.
 func mergeNormalizedSettingsFields(fields runtimesettings.Fields, normalized any, sentFields map[string]json.RawMessage) error {
 	raw, err := json.Marshal(normalized)
 	if err != nil {
@@ -2049,8 +2044,8 @@ func mergeNormalizedSettingsFields(fields runtimesettings.Fields, normalized any
 	return nil
 }
 
-// rejectDeprecatedAdvancedSchedulerRequestFields 阻止旧版 OpenAI 实验调度字段被静默忽略。
-// 高级调度器已改为分组级开关，设置接口只接受 advanced_scheduler_* 的通用参数。
+// rejectDeprecatedAdvancedSchedulerRequestFields rejects obsolete experimental scheduler fields.
+// Groups select the scheduler; this endpoint accepts shared advanced_scheduler_* parameters.
 func rejectDeprecatedAdvancedSchedulerRequestFields(c *gin.Context, sentFields map[string]json.RawMessage) bool {
 	for field := range sentFields {
 		if field == "advanced_scheduler_enabled" || strings.HasPrefix(field, "openai_advanced_scheduler_") {
@@ -2063,7 +2058,7 @@ func rejectDeprecatedAdvancedSchedulerRequestFields(c *gin.Context, sentFields m
 	return false
 }
 
-// mapDingTalkValidateError 将钉钉配置校验错误映射为机器可读的原因码。
+// mapDingTalkValidateError maps DingTalk validation errors to machine-readable reason codes.
 func mapDingTalkValidateError(err error) string {
 	switch {
 	case errors.Is(err, authconfig.ErrDingTalkV1AppTypeMismatch):
@@ -2075,10 +2070,10 @@ func mapDingTalkValidateError(err error) string {
 	}
 }
 
-// ensureDingTalkSyncAttributes 在保存 settings 后，按 admin 配置的 (attr key, attr name)
-// 兜底 upsert 对应 user attribute definition：不存在则创建；存在但 name 不同则更新 name
-// （type/options/required 不变）。仅 internal_only + 对应 sync 开关开启时执行。
-// 失败时记录日志，settings 保存继续执行。
+// ensureDingTalkSyncAttributes creates missing user attributes or updates their display names
+// after settings commit. Existing types, options, and required flags remain unchanged.
+// It applies to enabled synchronization fields under internal_only.
+// Failures are logged and do not undo the committed settings.
 func (h *Handler) ensureDingTalkSyncAttributes(ctx context.Context, settings *composite.Snapshot) {
 	if h.userAttributeService == nil || settings == nil {
 		return
@@ -2128,7 +2123,7 @@ func (h *Handler) ensureUserAttributeDefinition(ctx context.Context, key, name, 
 	slog.Info("dingtalk: created user attribute definition", "key", key, "name", name, "type", attrType)
 }
 
-// rejectRemovedPlatformQuotaFields 拒绝已移除的平台额度字段，并在响应中指出字段名。
+// rejectRemovedPlatformQuotaFields rejects removed platform quota fields and identifies the field in the response.
 func rejectRemovedPlatformQuotaFields(c *gin.Context, fields map[string]json.RawMessage) bool {
 	for name := range fields {
 		if name == "default_platform_quotas" || strings.HasPrefix(name, "auth_source_default_") && strings.HasSuffix(name, "_platform_quotas") {
@@ -2139,7 +2134,7 @@ func rejectRemovedPlatformQuotaFields(c *gin.Context, fields map[string]json.Raw
 	return false
 }
 
-// rejectRemovedUngroupedKeySchedulingField 拒绝未选组调度开关，并提示 API Key 需要绑定分组。
+// rejectRemovedUngroupedKeySchedulingField rejects the removed switch and requires API keys to have a group.
 func rejectRemovedUngroupedKeySchedulingField(c *gin.Context, fields map[string]json.RawMessage) bool {
 	const field = "allow_ungrouped_key_scheduling"
 	if _, present := fields[field]; !present {

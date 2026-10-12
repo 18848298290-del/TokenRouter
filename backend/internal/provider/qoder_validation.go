@@ -35,7 +35,7 @@ func ValidateQoderCredentials(ctx context.Context, provider *Record, deferPATExc
 
 	pat := strings.TrimSpace(provider.GetCredential("pat"))
 	if pat != "" {
-		// 编辑仅切换站点时先保存原凭据，兼容性由连接测试使用新站点协议验证。
+		// Site-only edits retain the credentials; the connection test checks compatibility with the selected site.
 		if deferPATExchange {
 			return nil
 		}

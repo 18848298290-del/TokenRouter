@@ -12,8 +12,8 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// UserDisabledPublicGroup 保存用户级公开分组禁用规则。
-// 仅作用于非专属分组；专属分组仍由 user_allowed_groups 控制授权。
+// UserDisabledPublicGroup stores per-user public group exclusions.
+// Applies to non-exclusive groups; user_allowed_groups grants access to exclusive groups.
 type UserDisabledPublicGroup struct {
 	ent.Schema
 }

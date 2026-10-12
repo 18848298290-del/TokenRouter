@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sessionAttemptCache 记录会话注销数量和资源释放次数。
+// sessionAttemptCache records the provider IDs whose sessions were unregistered.
 type sessionAttemptCache struct {
 	SessionLimitCache
 	unregistered []int64

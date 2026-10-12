@@ -8,17 +8,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// StreamingProcessor 保留平台 SSE 解包与 hook 接入，转换状态只有一份。
+// StreamingProcessor unwraps platform SSE payloads for the shared stream converter.
 type StreamingProcessor struct {
 	*bridge.GeminiToAnthropicStreamProcessor
 }
 
-// NewStreamingProcessor 注入原来的 ID 生成来源。
+// NewStreamingProcessor configures conversion with the platform ID generators.
 func NewStreamingProcessor(model string) *StreamingProcessor {
 	return &StreamingProcessor{bridge.NewGeminiToAnthropicStreamProcessor(model, geminiConversionRuntime())}
 }
 
-// ProcessLine 处理 SSE 行，返回 Claude SSE 事件。
+// ProcessLine converts a data line to Claude SSE events, ignoring invalid input.
 func (p *StreamingProcessor) ProcessLine(line string) []byte {
 	line = strings.TrimSpace(line)
 	if line == "" || !strings.HasPrefix(line, "data:") {
@@ -30,10 +30,9 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 		return nil
 	}
 
-	// 解包 v1internal 响应
 	var v1Resp V1InternalResponse
 	if err := json.Unmarshal([]byte(data), &v1Resp); err != nil {
-		// 尝试直接解析为 GeminiResponse
+		// Try a direct Gemini response when envelope decoding fails.
 		var directResp GeminiResponse
 		if err2 := json.Unmarshal([]byte(data), &directResp); err2 != nil {
 			return nil

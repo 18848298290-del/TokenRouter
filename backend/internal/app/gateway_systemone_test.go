@@ -34,7 +34,8 @@ func (s *systemOneTransportStub) Do(request *http.Request, _ string, _ int64, _ 
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Test": []string{"visible"}, "X-Secret": []string{"hidden"}}, Body: io.NopCloser(strings.NewReader(`{"model":"jev-1.13.0","answers":{"available":{"type":"noul","noul":1}},"usage":{"input_tokens":1,"output_tokens":0}}`))}, nil
 }
 
-// TestProvideSystemOneExecutor 检查独立装配后的决策执行、响应头过滤、地址限制和关闭屏障。
+// TestProvideSystemOneExecutor checks decision execution, header filtering, URL restrictions, and the shutdown
+// barrier.
 func TestProvideSystemOneExecutor(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.UpstreamResponseReadMaxBytes = 1024

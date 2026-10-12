@@ -6,13 +6,14 @@ import (
 	"time"
 )
 
-// ProbeSchedule 按 cron 日历调度传入的探测函数，并提供停止等待。
+// ProbeSchedule runs the supplied probe callback on a cron schedule. Stop returns a context canceled when
+// scheduled work exits.
 type ProbeSchedule interface {
 	Start(func()) error
 	Stop() context.Context
 }
 
-// ProbeExecutionResult 包含探测状态、延迟和错误消息。
+// ProbeExecutionResult contains probe status, latency in milliseconds, timestamps, and an error message.
 type ProbeExecutionResult struct {
 	Status       string
 	LatencyMs    int64
@@ -21,7 +22,8 @@ type ProbeExecutionResult struct {
 	FinishedAt   time.Time
 }
 
-// GroupProbeTarget 保留本次选择的提供商和分组映射后的模型；提供商映射由测试服务执行。
+// GroupProbeTarget contains the selected provider and group-mapped model. The test service applies provider
+// mapping.
 type GroupProbeTarget struct {
 	ProviderID int64
 	ModelID    string
@@ -38,7 +40,8 @@ type GroupProbeOptions struct {
 	Observe    func(string, ...any)
 }
 
-// GroupAvailabilityProbeRunnerService 拥有领取、重试与结果保存；停止先阻止新轮次，再等待在途结束。
+// GroupAvailabilityProbeRunnerService claims groups, retries probes, and saves results. Shutdown blocks new
+// rounds and waits for in-flight work.
 type GroupAvailabilityProbeRunnerService struct {
 	repo          GroupAvailabilityProbeRepository
 	executor      GroupProbeExecutor
@@ -125,7 +128,7 @@ func (s *GroupAvailabilityProbeRunnerService) endRun() {
 }
 func (s *GroupAvailabilityProbeRunnerService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 的预算同时约束 cron 与在途工作，超时不表示已经排空。
+// StopContext bounds waiting for cron and in-flight work by ctx. A timeout does not mean the runner has drained.
 func (s *GroupAvailabilityProbeRunnerService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil

@@ -31,7 +31,7 @@ type qoderRefreshRaceRepoStub struct {
 
 type qoderRefreshLockCacheStub struct{}
 
-// qoderRequestProvidersFixture 为读取测试返回提供商数据或配置的查询错误。
+// qoderRequestProvidersFixture supplies provider records for refresh reads.
 type qoderRequestProvidersFixture struct{ providers []providercore.Record }
 
 func cloneQoderRequestCredentials(src map[string]any) map[string]any {
@@ -375,7 +375,7 @@ func TestQoderGatewayRefreshProviderSessionLockHeldReturnsRefreshInProgressWitho
 	require.Equal(t, "old-token", repo.providers[0].GetCredential("security_oauth_token"))
 }
 
-// UpdateOAuthCredentialsIfUnchanged 模拟条件写入，记录持久化参数和缓存失效操作。
+// UpdateOAuthCredentialsIfUnchanged models a credential write guarded by the observed identity.
 func (r *qoderRefreshProviderRepoStub) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	current, err := r.GetByID(ctx, version.ID)
 	if err != nil {
@@ -397,7 +397,7 @@ func (r qoderRequestProvidersFixture) GetByID(_ context.Context, id int64) (*pro
 	return nil, errors.New("provider not found")
 }
 
-// newQoderRequestCoordinator 为刷新协调器注入时钟和平台策略。
+// newQoderRequestCoordinator supplies the clock and platform policy for refresh tests.
 func newQoderRequestCoordinator(repo providercore.RefreshRepository, cache providercore.AccessTokenCache) *providercore.OAuthRefreshAPI {
 	return providercore.NewOAuthRefreshAPI(repo, cache, providercore.RefreshOptions{Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error, Platform: providercore.ProviderRefreshPlatformPolicy()})
 }

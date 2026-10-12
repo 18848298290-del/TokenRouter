@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// AvailabilityStore 将同一测试仓储的查询结果转换为诊断数据。
+// AvailabilityStore converts execution-store fixtures into provider records for diagnostics.
 type AvailabilityStore struct {
 	Source gatewayadapter.ExecutionProviderStore
 }

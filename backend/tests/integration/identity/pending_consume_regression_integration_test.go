@@ -19,12 +19,12 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
-// TestPendingTransactionConsumesOnce 两个独立 PostgreSQL 事务读到未消费会话后竞争提交。
+// TestPendingTransactionConsumesOnce races two PostgreSQL transactions after both read an unconsumed session.
 func TestPendingTransactionConsumesOnce(t *testing.T) {
 	integrationDB, _ := identityDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	// 独立 Ent 包装隔离测试 hook；底层连接池仍由集成测试总拥有者关闭。
+	// Use a separate Ent wrapper to isolate hooks; the database fixture owns the underlying pool.
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)))
 	session, err := client.PendingAuthSession.Create().SetSessionToken(uuid.NewString()).SetIntent("login").SetProviderType("oidc").SetProviderKey("test-test").SetProviderSubject(uuid.NewString()).SetBrowserSessionKey("test-browser").SetExpiresAt(time.Now().Add(time.Minute)).Save(ctx)
 	require.NoError(t, err)

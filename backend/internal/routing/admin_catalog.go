@@ -14,10 +14,10 @@ const (
 	CatalogGrok        AdminCatalogKind = "grok"
 )
 
-// AdminCatalogKind 标识管理目录的数据来源。
+// AdminCatalogKind identifies the administrative catalog variant.
 type AdminCatalogKind string
 
-// AdminCatalogModel 保留各目录的值，HTTP 按原 wire 变体输出。
+// AdminCatalogModel contains metadata for the platform-specific HTTP catalog response.
 type AdminCatalogModel struct {
 	ID, Object, Type, OwnedBy, DisplayName, CreatedAt string
 	Created                                           int64
@@ -35,7 +35,7 @@ type AdminCatalogOptions struct {
 	Lookup func(AdminCatalogKind, string) AdminCatalogModel
 }
 
-// AdminCatalog 校验提供商声明的具体型号，并查询这些型号的展示信息。
+// AdminCatalog validates configured provider model IDs and looks up their display metadata.
 type AdminCatalog struct{ options AdminCatalogOptions }
 
 func NewAdminCatalog(options AdminCatalogOptions) *AdminCatalog { return &AdminCatalog{options} }

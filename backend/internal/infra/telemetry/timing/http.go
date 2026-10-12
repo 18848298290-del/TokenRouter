@@ -13,7 +13,7 @@ type timingRoundTripper struct {
 	base http.RoundTripper
 }
 
-// WithDependencyModule 覆盖出站请求使用的安全模块名。
+// WithDependencyModule overrides the outbound dependency name after sanitizing it.
 func WithDependencyModule(ctx context.Context, module string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -25,7 +25,7 @@ func WithDependencyModule(ctx context.Context, module string) context.Context {
 	return context.WithValue(ctx, dependencyModuleKey{}, module)
 }
 
-// WrapRoundTripper 为启用采集的请求记录出站响应头延迟。
+// WrapRoundTripper records response-header latency when the request has a collector.
 func WrapRoundTripper(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -36,7 +36,7 @@ func WrapRoundTripper(base http.RoundTripper) http.RoundTripper {
 	return &timingRoundTripper{base: base}
 }
 
-// InstrumentClient 返回装配了耗时采集 Transport 的客户端浅拷贝。
+// InstrumentClient returns a shallow client copy with an instrumented transport.
 func InstrumentClient(client *http.Client) *http.Client {
 	if client == nil {
 		client = &http.Client{}
@@ -46,8 +46,8 @@ func InstrumentClient(client *http.Client) *http.Client {
 	return &copyClient
 }
 
-// Do 在不改变客户端 Transport 类型的前提下记录响应头延迟，适用于调用方需要检查或配置
-// *http.Transport 的客户端。
+// Do records response-header latency around client.Do. It leaves the transport
+// available for callers that need to inspect or configure its concrete type.
 func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient

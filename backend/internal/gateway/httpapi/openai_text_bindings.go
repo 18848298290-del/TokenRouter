@@ -27,7 +27,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// OpenAITextBindings 提供文本入口的资源和用例接口。
+// OpenAITextBindings supplies text-entry resources and execution interfaces.
 type OpenAITextBindings struct {
 	ClientVersions      func(context.Context) (string, string)
 	ClientGroupFallback ClientGroupFallbackResolver
@@ -47,19 +47,20 @@ type OpenAITextBindings struct {
 
 type openAITextHTTPBackend struct{ bindings OpenAITextBindings }
 
-// ResolveOpenAIMessagesProviderLayerModel 将通用分组映射结果规范化后交给提供商模型规则。
+// ResolveOpenAIMessagesProviderLayerModel trims the group-mapped model for subsequent provider rules.
 func ResolveOpenAIMessagesProviderLayerModel(groupMappedModel string) string {
 	return strings.TrimSpace(groupMappedModel)
 }
 
-// ResolveOpenAIMessagesProviderLayerModelForRequest 登记规范化结果，供响应恢复和用量追踪使用。
+// ResolveOpenAIMessagesProviderLayerModelForRequest records the normalized model for response restoration and
+// usage tracking.
 func ResolveOpenAIMessagesProviderLayerModelForRequest(ctx context.Context, groupMappedModel string) string {
 	model := ResolveOpenAIMessagesProviderLayerModel(groupMappedModel)
 	modeltrace.RegisterStage(ctx, model)
 	return model
 }
 
-// NewBoundOpenAITextHandler 将资源、用例接口和执行器绑定到 HTTP 入口。
+// NewBoundOpenAITextHandler binds resources and executors to the HTTP entry.
 func NewBoundOpenAITextHandler(options OpenAITextOptions, bindings OpenAITextBindings, prompt MessagesPrompt, executor execution.Executor) *OpenAITextHandler {
 	return NewOpenAITextHandler(options, openAITextHTTPBackend{bindings}, prompt, executor)
 }
@@ -274,7 +275,7 @@ func (p openAITextHTTPBackend) EnsureFallback(c *gin.Context, started bool) bool
 	return DefaultOpenAIErrorOutput().EnsureFallback(c, started)
 }
 
-// openAITextModerationProtocol 将协议 ID 转换为审核使用的标识。
+// openAITextModerationProtocol maps protocol IDs to moderation identifiers.
 func openAITextModerationProtocol(proto protocol.ProtocolID) string {
 	switch proto {
 	case protocol.ProtocolAnthropicMessages:
@@ -286,12 +287,13 @@ func openAITextModerationProtocol(proto protocol.ProtocolID) string {
 	}
 }
 
-// MarkStreamFailure 标记流失败，供 SLA 统计区分普通流错误。
+// MarkStreamFailure records a stream failure for SLA statistics.
 func (p openAITextHTTPBackend) MarkStreamFailure(c *gin.Context, kind, code, message string, status int) {
 	MarkOpsStreamFailure(c, kind, code, message, status)
 }
 
-// PrepareMessages 在选择提供商前检查客户端资格，混合调度也受 Claude Code 限制。
+// PrepareMessages checks client eligibility before provider selection, including Claude Code restrictions in
+// mixed scheduling.
 func (p openAITextHTTPBackend) PrepareMessages(c *gin.Context, body []byte) error {
 	return PrepareMessageClientContext(c, body, p.bindings.ClientVersions)
 }

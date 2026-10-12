@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestChannelMaxReasoningEffortMultiplierMigration 锁定 max 推理倍率字段及正数约束。
+// TestChannelMaxReasoningEffortMultiplierMigration checks the max reasoning multiplier column and
+// positive-value constraint.
 func TestChannelMaxReasoningEffortMultiplierMigration(t *testing.T) {
 	content, err := FS.ReadFile("268_channel_max_reasoning_effort_multiplier.sql")
 	require.NoError(t, err)

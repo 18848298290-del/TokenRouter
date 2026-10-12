@@ -37,7 +37,7 @@ import (
 
 type providerGroupReferences struct{ store *routingpostgres.GroupStore }
 
-// providePrivacyClientFactory 为隐私请求配置超时、Chrome 指纹和共享连接池。
+// providePrivacyClientFactory uses a 30-second timeout, Chrome fingerprint, and shared connection pool.
 func providePrivacyClientFactory() openai.PrivacyClientFactory {
 	return func(proxyURL string) (*req.Client, error) {
 		return httpclient.GetSharedReqClient(httpclient.ReqClientOptions{
@@ -48,7 +48,7 @@ func providePrivacyClientFactory() openai.PrivacyClientFactory {
 	}
 }
 
-// provideProviderAdmin 绑定共享的提供商管理用例和平台执行接口。
+// provideProviderAdmin binds provider administration to shared storage and platform operations.
 func provideProviderAdmin(store *providerpostgres.ProviderStore, usage *billingpostgres.ProviderUsageStore, blocker provider.RuntimeUnblocker, privacy *provider.PrivacyService, groups *routingpostgres.GroupStore, proxies *egresspostgres.ProxyStore, tasks *lifecycle.Tasks, upstream httpclient.UpstreamTransport, tls *egressadapter.TLSProfiles) *provider.Admin {
 	return provider.NewAdmin(store, provider.AdminOptions{ShadowModels: provideradapter.DefaultSparkShadowModels, Duplicates: store, Quotas: usage, RuntimeBlocker: blocker, Privacy: privacy, Groups: providerGroupReferences{groups}, Proxies: proxies, Creation: provider.CreationOptions{Now: time.Now, LoadLocation: time.LoadLocation, NewSeed: uuid.NewString}, Credentials: provideradapter.CreateCredentialHooks(upstream, tls), Background: tasks.Go, Error: slog.Error})
 }
@@ -77,7 +77,7 @@ func (g providerGroupReferences) ValidateGroups(ctx context.Context, ids []int64
 	return routing.ValidateGroupIDs(ctx, g.store, ids)
 }
 
-// provideProviderManagement 为提供商管理 HTTP 接口绑定管理用例和展示参数。
+// provideProviderManagement binds administration and presentation options to provider HTTP handlers.
 func provideProviderManagement(admin *provider.Admin, presenter *providerhttp.RuntimePresenter, ollama *provider.OllamaCloudUsageService, privacy *provider.PrivacyService, probes *provider.GrokImportProbeScheduler, quota *provider.GrokQuotaService, managed *provider.ManagedRefreshService, tasks *lifecycle.Tasks, recovery *provider.RecoveryService, listing *provider.ManagementList, catalog *routing.AdminCatalog, tier *provider.TierManagement, models *provider.ModelSyncService, usage *usagepostgres.Store, calendar timezone.Calendar) *providerhttp.ManagementHandler {
 	query := func(ctx context.Context, id int64, start, end time.Time) (*usagetypes.ProviderUsageStatsResponse, error) {
 		value, err := usage.GetProviderUsageStats(ctx, id, start, end)
@@ -103,12 +103,12 @@ func provideProviderManagement(admin *provider.Admin, presenter *providerhttp.Ru
 	}})
 }
 
-// provideAdminModelCatalog 在每次查询时读取平台快照。
+// provideAdminModelCatalog reads platform snapshots on each query.
 func provideAdminModelCatalog(catalog *catalogprovider.Service) *routing.AdminCatalog {
 	return routing.NewAdminCatalog(routingprovider.AdminCatalogOptions(catalog))
 }
 
-// provideProviderModelSync 为模型目录同步绑定提供商、凭据和请求函数，并管理共享查询实例的启停。
+// provideProviderModelSync binds credentials and requests for model queries and registers query shutdown.
 func provideProviderModelSync(store *providerpostgres.ProviderStore, transport httpclient.UpstreamTransport, claude *provider.ClaudeTokenSource, gemini *provider.GeminiTokenSource, grok *provider.GrokTokenSource, antigravity *provider.AntigravityTokenSource, profiles *egressadapter.TLSProfiles, tasks *provideradapter.ProbeTasks, settings *gateway.RuntimeSettings, cfg *config.Config, manager *lifecycle.Manager) *provider.ModelSyncService {
 	policy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	limit := resolveModelsListReadLimit(cfg)
@@ -121,24 +121,24 @@ func provideProviderModelSync(store *providerpostgres.ProviderStore, transport h
 	return core
 }
 
-// provideProviderPrivacy 绑定管理操作与后台刷新共用的隐私设置组件和平台客户端。
+// provideProviderPrivacy shares privacy settings and platform clients between admin operations and background refresh.
 func provideProviderPrivacy(store *providerpostgres.ProviderStore, proxies *egresspostgres.ProxyStore, factory openai.PrivacyClientFactory, manager *lifecycle.Manager) *provider.PrivacyService {
 	core := provider.NewPrivacyService(store, proxies, provideradapter.PrivacyOptions(factory, openai.PrivacyEndpoints{}))
 	manager.Register(lifecycle.Hook{Name: "ProviderPrivacy", StopOrder: 26, Stop: core.StopContext})
 	return core
 }
 
-// provideProviderRuntimePresenter 绑定提供商运行状态展示组件。
+// provideProviderRuntimePresenter binds runtime status readers for provider presentation.
 func provideProviderRuntimePresenter(admin *provider.Admin, ollama *provider.OllamaCloudUsageService, concurrency *scheduler.ConcurrencyService, usage *usagepostgres.Store, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings *provider.QuotaSettingsCache) *providerhttp.RuntimePresenter {
 	return providerhttp.NewRuntimePresenter(provider.NewRuntimeStatusReader(provideradapter.RuntimeStatusOptions(concurrency, usage, sessions, rpm, settings)), admin, ollama)
 }
 
-// provideProviderManagementList 复用当前调度反馈和技术读取实例，保持列表批量查询。
+// provideProviderManagementList shares scheduler feedback and runtime readers for batch list queries.
 func provideProviderManagementList(admin *provider.Admin, ollama *provider.OllamaCloudUsageService, concurrency *scheduler.ConcurrencyService, usage *usagepostgres.Store, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings *provider.QuotaSettingsCache, shared *schedulerSharedState, store *settingscore.Store, cfg *config.Config) *provider.ManagementList {
 	return provider.NewManagementList(admin, provider.NewRuntimeStatusReader(provideradapter.RuntimeStatusOptions(concurrency, usage, sessions, rpm, settings)), provider.NewSchedulerScoreView(admin, providerScoreOptions(concurrency, shared, store, cfg)), ollama)
 }
 
-// provideProviderTier 绑定共享的提供商配置用例，停止等待计入后台任务预算。
+// provideProviderTier binds tier management and includes its shutdown wait in the lifecycle budget.
 func provideProviderTier(admin *provider.Admin, source *provider.GeminiAuthorization, manager *lifecycle.Manager) *provider.TierManagement {
 	core := provider.NewTierManagement(admin, provider.ProviderTierManagementOptions(source))
 	manager.Register(lifecycle.Hook{Name: "ProviderTier", StopOrder: 26, Stop: core.StopContext})

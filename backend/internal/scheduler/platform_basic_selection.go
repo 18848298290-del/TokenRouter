@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// selectBasicOnlyRoutes 按基础调度的 LRU、粘性溢出和复核顺序选择提供商。
+// selectBasicOnlyRoutes applies basic stickiness, eligibility rechecks, and LRU selection without acquiring slots.
 func (s *PlatformSelector) selectBasicOnlyRoutes(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyProviderID int64, requiredCapability provider.OpenAIEndpointCapability) (*FlowProvider, error) {
 	platform = strings.TrimSpace(platform)
 	if s.ports.CheckPricing(ctx, groupID, requestedModel) {
@@ -70,13 +70,13 @@ func (s *PlatformSelector) tryBasicSticky(ctx context.Context, groupID *int64, p
 		return nil
 	}
 
-	// 检查提供商是否需要清理粘性会话
+	// Clear bindings that are invalid for this provider or group.
 	if s.ports.ClearSticky(provider, routingModel) || !s.ports.MatchesGroup(provider, groupID) {
 		_ = s.ports.DeleteSticky(ctx, groupID, sessionHash)
 		return nil
 	}
 
-	// 验证提供商是否可用于当前请求
+	// Recheck the bound provider against this request's requirements.
 	if !s.ports.BasicEligible(ctx, provider, platform, routingModel, false, requiredCapability) {
 		return nil
 	}
@@ -102,8 +102,8 @@ func (s *PlatformSelector) tryBasicSticky(ctx context.Context, groupID *int64, p
 		return nil
 	}
 
-	// 刷新会话 TTL 并返回提供商
-	// Refresh session TTL and return provider
+	// Refresh the accepted binding's TTL.
+
 	_ = s.ports.RefreshSticky(ctx, groupID, sessionHash, s.ports.BasicStickyTTL)
 	return provider
 }
@@ -117,8 +117,6 @@ func (s *PlatformSelector) SelectBestBasic(ctx context.Context, groupID *int64, 
 	for i := range providers {
 		acc := &providers[i]
 
-		// 跳过被排除的提供商
-		// 跳过已排除的提供商。
 		if _, excluded := excludedIDs[acc.ID]; excluded {
 			continue
 		}
@@ -156,7 +154,7 @@ func (s *PlatformSelector) SelectBestBasic(ctx context.Context, groupID *int64, 
 }
 
 func (s *PlatformSelector) isBetterBasic(candidate, current *FlowProvider) bool {
-	// 优先级更高（数值更小）
+	// Lower numeric priority wins.
 	if candidate.Priority < current.Priority {
 		return true
 	}
@@ -164,19 +162,19 @@ func (s *PlatformSelector) isBetterBasic(candidate, current *FlowProvider) bool 
 		return false
 	}
 
-	// 同优先级，比较最后使用时间
+	// At equal priority, prefer unused providers, then the least recently used.
 	switch {
 	case candidate.LastUsedAt == nil && current.LastUsedAt != nil:
-		// candidate 从未使用，优先
+
 		return true
 	case candidate.LastUsedAt != nil && current.LastUsedAt == nil:
-		// current 从未使用，保持
+
 		return false
 	case candidate.LastUsedAt == nil && current.LastUsedAt == nil:
-		// 都未使用，保持
+		// Keep input order when neither provider has been used.
 		return false
 	default:
-		// 都使用过，选择最久未使用的
+
 		return candidate.LastUsedAt.Before(*current.LastUsedAt)
 	}
 }
@@ -252,8 +250,8 @@ func (s *PlatformSelector) selectBasicRoutes(ctx context.Context, groupID *int64
 		return excluded
 	}
 
-	// 粘性提供商的有界等待队列已满时，第二层可以为当前请求临时借用其它提供商；
-	// 容量溢出的提供商供本次请求使用，会话持久绑定仍指向此前的提供商。
+	// When the sticky provider's bounded queue is full, this request may use another provider.
+	// The persistent session binding continues to point to the sticky provider.
 	stickySpillover := false
 	if sessionHash != "" {
 		providerID := stickyProviderID
@@ -324,7 +322,7 @@ func (s *PlatformSelector) selectBasicRoutes(ctx context.Context, groupID *int64
 			filterStats.Exclude("excluded")
 			continue
 		}
-		// 调度快照可能暂时过期；在批处理选择前重新检查模型、配额和可调度状态。
+		// Snapshots can be stale; recheck model, quota, and scheduling eligibility before batch selection.
 		if reason := s.ports.BasicFailureReason(ctx, acc, platform, routingModel, false, requiredCapability); reason != "" {
 			filterStats.Exclude(reason)
 			continue
@@ -408,7 +406,7 @@ func (s *PlatformSelector) selectBasicRoutes(ctx context.Context, groupID *int64
 		flowShuffleWithinSortGroups(available)
 		selectionOrder := make([]FlowLoad, 0, len(available))
 		if requireCompact {
-			// 先尝试快照已启用的提供商，再复核可能已由管理员重新启用的旧快照。
+			// Try snapshot-enabled providers first, then recheck stale snapshots that an administrator may have enabled.
 			appendEnabled := func(out []FlowLoad, enabled bool) []FlowLoad {
 				for _, item := range available {
 					if s.ports.CompactAllowed(item.Provider) == enabled {
@@ -543,7 +541,7 @@ func (s *PlatformSelector) prioritizeBasicCompact(providers []*FlowProvider) []*
 	return append(enabled, disabled...)
 }
 
-// SelectBasicOnly 选择并补全提供商，供无需占槽和注册会话的入口调用。
+// SelectBasicOnly selects and hydrates a provider without acquiring slots or registering sessions.
 func (s *PlatformSelector) SelectBasicOnly(ctx context.Context, input PlatformSelectionInput) (*FlowProvider, error) {
 	return s.selectBasicOnlyRoutes(ctx, input.GroupID, input.Platform, input.SessionHash, input.RequestedModel, input.RoutingModel, input.ExcludedIDs, input.RequireCompact, input.StickyProviderID, input.RequiredCapability)
 }

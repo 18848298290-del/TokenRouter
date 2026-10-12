@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OpenAIWSSessionHeaderResolution holds the selected IDs and their input sources.
+// A source of "none" means no nonempty value was found for that ID.
 type OpenAIWSSessionHeaderResolution struct {
 	SessionID          string
 	ConversationID     string
@@ -13,6 +15,9 @@ type OpenAIWSSessionHeaderResolution struct {
 	ConversationSource string
 }
 
+// ResolveOpenAIWSSessionHeaders selects the session ID from session-id,
+// session_id, conversation_id, then promptCacheKey, in that order.
+// The conversation ID comes only from conversation_id.
 func ResolveOpenAIWSSessionHeaders(c *gin.Context, promptCacheKey string) OpenAIWSSessionHeaderResolution {
 	resolution := OpenAIWSSessionHeaderResolution{
 		SessionSource:      "none",

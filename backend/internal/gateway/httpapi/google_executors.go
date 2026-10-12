@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// GeminiExecutor 为每个 HTTP 请求创建同步输出，各协议入口共用 Gemini 请求准备器。
+// GeminiExecutor creates per-request synchronous output for shared Gemini request preparation.
 type GeminiExecutor struct{ Runtime *googleforward.Gemini }
 
-// AntigravityExecutor 提供 Antigravity 协议入口并处理 HTTP 输出和错误。
+// AntigravityExecutor connects Antigravity requests to HTTP output and error handling.
 type AntigravityExecutor struct{ Runtime *googleforward.Antigravity }
 
 func (s *GeminiExecutor) Forward(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte) (*forward.MessagesResult, error) {

@@ -100,7 +100,7 @@ type PublicOptions struct {
 }
 type Public struct {
 	Attributes *routing.ModelAttributeService
-	// ModelOutputModalities 按最终型号查询输出模态，nil 表示未知。
+	// ModelOutputModalities looks up the final model output modalities; nil means unknown.
 	ModelOutputModalities  func(string) *[]string
 	Now                    func() time.Time
 	Repo                   BatchImageRepository
@@ -140,7 +140,7 @@ func mappedCandidateModel(c *Candidate, m string) string {
 	return strings.TrimSpace(value)
 }
 
-// Submit 批量图片作业的提交、预占和后续状态生命周期由对应工程文档维护。
+// Submit validates a batch image job, reserves funds, and submits it to the selected provider.
 // @project-doc docs/domains/batch_image_jobs.md#job_lifecycle
 func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchImageSubmitRequest, idempotencyKey string) (*BatchImagePublicBatch, error) {
 	if !s.Enabled() {
@@ -151,8 +151,8 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	if err != nil {
 		return nil, err
 	}
-	// 与 ListModels 使用同一鉴权谓词（AllowBatchImageGeneration），
-	// 避免两个入口校验口径不一致留下防御纵深缺口。
+	// Apply the same AllowBatchImageGeneration check as ListModels so submission
+	// enforces the group permission advertised by the model catalogue.
 	if err := s.EnsureGroupAllowsBatchImage(ctx, owner.GroupID); err != nil {
 		return nil, err
 	}
@@ -304,9 +304,9 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		})
 	}
 
-	// 上游提交（上传参考图 + 创建批任务）可能长达数分钟且不刷新 updated_at，
-	// 会被 stale 恢复扫描误判为滞留并退款。提交前转入 uploading 刷新时间戳，
-	// 提交期间用心跳持续续期。
+	// Uploading reference images and creating the upstream job can take minutes.
+	// Enter uploading and keep updated_at fresh with a heartbeat so stale recovery
+	// does not fail and refund a submission that is still in progress.
 	if err := s.Repo.TransitionBatchImageJobStatus(ctx, job.BatchID, BatchImageJobStatusUploading, BatchImageTransitionOptions{
 		EventType:    "upload_started",
 		EventPayload: map[string]any{"batch_id": job.BatchID},
@@ -314,7 +314,7 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		if releaseErr := s.ReleaseFailedSubmitHold(ctx, job, requestHash); releaseErr != nil {
 			return nil, releaseErr
 		}
-		// 并发 Cancel 等导致的非法转换：job 已处于终态，不再覆盖其状态。
+		// An invalid transition can follow concurrent cancellation; leave that state intact.
 		if !errors.Is(err, ErrBatchImageInvalidTransition) {
 			_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, "UPLOAD_TRANSITION_FAILED", SanitizeBatchImagePublicMessage(err.Error()), true)
 			s.HidePreUpstreamSubmitFailure(ctx, owner, job)
@@ -357,8 +357,8 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		GCSOutputURI:      BatchImageGCSRef(platform.Name(), providerJob.ProviderOutputRef),
 		EventPayload:      map[string]any{"platform": platform.Name()},
 	}); err != nil {
-		// job 可能已被恢复扫描转 failed 并退款：上游批任务已创建成功，
-		// 必须尽力取消并清理输入，否则上游照常产生成本（孤儿任务）。
+		// Recovery may already have failed and refunded this job. Cancel the newly created
+		// upstream job and clean up its inputs to limit orphaned provider costs.
 		s.AbortOrphanProviderJob(ctx, platform, job, providerJob)
 		return nil, err
 	}
@@ -377,7 +377,7 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	return BatchImageJobToPublic(created), nil
 }
 
-// BatchImageBillingHoldFailureCode 将冻结失败映射为可诊断且稳定的任务错误码。
+// BatchImageBillingHoldFailureCode maps reservation failures to stable diagnostic job codes.
 func BatchImageBillingHoldFailureCode(err error) string {
 	switch {
 	case errors.Is(err, ErrBatchImageInsufficientBalance):
@@ -403,8 +403,8 @@ func (s *Public) ReleaseFailedSubmitHold(ctx context.Context, job *BatchImageJob
 	return nil
 }
 
-// RunSubmitHeartbeat 在 platform.Submit 期间周期性刷新 job 的 updated_at，
-// 使 stale 恢复扫描能区分"仍在慢提交"与"进程死亡后的滞留"。
+// RunSubmitHeartbeat refreshes updated_at during platform.Submit so recovery
+// can distinguish a slow submission from a job abandoned by a stopped process.
 func (s *Public) RunSubmitHeartbeat(ctx context.Context, batchID string, done chan<- struct{}) {
 	defer close(done)
 	interval := s.SubmitHeartbeatInterval()
@@ -434,8 +434,8 @@ func (s *Public) SubmitHeartbeatInterval() time.Duration {
 	return interval
 }
 
-// AbortOrphanProviderJob 在上游任务创建成功但本地状态推进失败时，
-// 尽力取消上游批任务并清理已上传的输入文件，避免孤儿任务持续产生成本。
+// AbortOrphanProviderJob attempts cancellation and input cleanup when the upstream
+// job was created but saving its local state failed, limiting orphaned provider costs.
 func (s *Public) AbortOrphanProviderJob(ctx context.Context, platform ExecutionProvider, job *BatchImageJob, providerJob *BatchProviderJob) {
 	if s == nil || platform == nil || job == nil || providerJob == nil {
 		return
@@ -635,7 +635,7 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 			candidates = append(candidates, source, target)
 		}
 	}
-	// 多个来源可以映射到同一上游型号，每次查询复用它的模态结果。
+	// Several names can map to one upstream model; reuse its modalities within this query.
 	outputs := make(map[string]*[]string)
 	attributeSession := s.Attributes.NewSession()
 	modelsByProvider := make(map[string]map[string]struct{})
@@ -956,7 +956,7 @@ func BatchImageRepeatSuffixWidth(count int) int {
 	return len(strconv.Itoa(count))
 }
 
-// ResolveBatchImageGroupModel 执行批量图片的分组映射和分组模型白名单。
+// ResolveBatchImageGroupModel applies group model mapping and the group allowlist.
 func (s *Public) ResolveBatchImageGroupModel(ctx context.Context, groupID *int64, requestedModel string) (GroupMappingResult, string, error) {
 	mapping := s.WithModelTrace(ctx, GroupMappingResult{MappedModel: requestedModel}, requestedModel)
 	if s == nil || s.PricingConfigService == nil || groupID == nil || *groupID <= 0 {
@@ -978,7 +978,7 @@ func BatchImagePricingModel(mapping GroupMappingResult, requestedModel, groupMap
 	return routing.BillingModelForPrice(mapping, requestedModel, groupMappedModel, upstreamModel)
 }
 
-// SelectProviderAndProvider 按分组映射模型选择提供商，并返回提供商映射后的实际上游模型。
+// SelectProviderAndProvider selects using the group-mapped model and returns the final upstream model.
 func (s *Public) SelectProviderAndProvider(
 	ctx context.Context,
 	owner BatchImageOwner,
@@ -1065,7 +1065,7 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 	if billingMode == billing.APIKeyBillingModeSubscription && (owner.PreferredSubscriptionID == nil || *owner.PreferredSubscriptionID <= 0) {
 		return nil, apikey.ErrPreferredSubscriptionRequired
 	}
-	// 同一次提交复用同一份分组配置，避免并发修改时混用旧倍率与新价格。
+	// Reuse one group snapshot so concurrent edits cannot mix rates from one version with prices from another.
 	var pricingGroup *GroupView
 	unit := -1.0
 	groupMultiplier := 1.0
@@ -1102,7 +1102,7 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 			}
 		}
 		effectiveGroupMultiplier := balanceRateMultiplier
-		// 自动模式沿用套餐优先；指定订阅只读取该订阅，余额模式完全跳过套餐。
+		// Auto prefers subscriptions; subscription mode reads the selected plan, and balance mode skips plans.
 		var subscription *billing.UserSubscription
 		switch billingMode {
 		case billing.APIKeyBillingModeSubscription:
@@ -1147,9 +1147,9 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 		}
 		unit = resolvedUnit
 	}
-	// 定价不变式：hold 比例不得低于 discount 比例，否则成功率足够高时
-	// actualCost > holdAmount，结算永远失败、冻结余额无法解冻。
-	// 管理端已校验新配置，此处兜底钳制存量脏数据。
+	// The hold multiplier must cover the discount multiplier; otherwise enough successful
+	// images can make actualCost exceed holdAmount and prevent settlement.
+	// Clamp invalid stored settings as well as validating new settings in the admin API.
 	if holdMultiplier < discountMultiplier {
 		s.warn("batch_image.hold_multiplier_below_discount_clamped",
 			"hold_multiplier", holdMultiplier,
@@ -1256,7 +1256,7 @@ func HashBatchImageSubmitRequest(req BatchImageSubmitRequest) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// HashCompositeBatchImageSubmitRequest 将复合路由分组纳入幂等指纹，前缀大小写不改变请求身份。
+// HashCompositeBatchImageSubmitRequest includes the routed group in the fingerprint and ignores prefix case.
 func HashCompositeBatchImageSubmitRequest(req BatchImageSubmitRequest, groupID *int64) string {
 	payload := struct {
 		Request BatchImageSubmitRequest `json:"request"`
@@ -1287,7 +1287,7 @@ func BatchImageProviderSelectionOrder(requestedProvider string) []string {
 	return []string{BatchImageProviderGeminiAPI, BatchImageProviderVertex}
 }
 
-// batchImageConfiguredModels 收集管理员声明的具体型号，供未知模态的候选使用。
+// batchImageConfiguredModels collects configured concrete names for candidates with unknown modalities.
 func batchImageConfiguredModels(provider *Candidate, policy *routing.GroupPolicyView) map[string]bool {
 	ids := make(map[string]bool)
 	add := func(id string) {
@@ -1320,7 +1320,7 @@ func batchImageConfiguredModels(provider *Candidate, policy *routing.GroupPolicy
 	return ids
 }
 
-// BatchImageModelsFromProviderMapping 合并提供商及分组配置中的具体型号。
+// BatchImageModelsFromProviderMapping merges concrete names from provider and group configuration.
 func BatchImageModelsFromProviderMapping(provider *Candidate, candidates ...string) []string {
 	if provider == nil {
 		return nil
@@ -1430,7 +1430,7 @@ func ParseBatchImageCursor(cursor string) int {
 	return offset
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now uses the injected clock when configured, otherwise the system clock.
 func (s *Public) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

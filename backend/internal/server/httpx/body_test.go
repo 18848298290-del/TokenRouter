@@ -18,7 +18,7 @@ import (
 
 const samplePayload = `{"model":"gpt-5.5","input":"hi","stream":false}`
 
-// zeroReader 按需生成全零数据，供压缩测试使用。
+// zeroReader generates zero bytes on demand for compression tests.
 type zeroReader struct{}
 
 func TestReadRequestBodyWithPrealloc_PassesThroughIdentity(t *testing.T) {
@@ -137,7 +137,7 @@ func TestReadRequestBodyWithPrealloc_RespectsIdentityEncoding(t *testing.T) {
 	}
 }
 
-// TestCompressedRequestRetainsReadBoundary 检查解压截断后的长度与请求头更新。
+// TestCompressedRequestRetainsReadBoundary checks decoded truncation and header updates.
 func TestCompressedRequestRetainsReadBoundary(t *testing.T) {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
@@ -159,7 +159,7 @@ func TestCompressedRequestRetainsReadBoundary(t *testing.T) {
 	}
 }
 
-// TestRequestBodyPreservesOuterLimit 检查请求体超限时返回路由层设置的大小限制错误。
+// TestRequestBodyPreservesOuterLimit checks that the outer request-size error reaches the caller.
 func TestRequestBodyPreservesOuterLimit(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("oversize"))
 	request.Body = http.MaxBytesReader(httptest.NewRecorder(), request.Body, 3)
@@ -191,8 +191,8 @@ func TestReadRequestBodyWithPrealloc_MaxBytesError(t *testing.T) {
 	require.ErrorAs(t, err, &maxErr)
 }
 
-// TestBindJSONStrictIsLocalAndValidatesStructure 检查 JSON 绑定中的未知字段拒绝、map 字段和结构体校验。
-// 普通 Gin 绑定继续接受未知字段。
+// TestBindJSONStrictIsLocalAndValidatesStructure checks unknown fields, maps, and struct validation.
+// Ordinary Gin binding continues to accept unknown fields.
 func TestBindJSONStrictIsLocalAndValidatesStructure(t *testing.T) {
 	type input struct {
 		Name        string         `json:"name" binding:"required"`

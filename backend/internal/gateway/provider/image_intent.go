@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ImageIntent 只绑定平台纯工具解析，图片权限、规则和账单字段唯一归 media。
+// ImageIntent binds platform tool parsing to media-owned image intent and permission rules.
 func ImageIntent() gatewaymedia.ImageIntentPolicy {
 	return gatewaymedia.NewImageIntentPolicy(gatewaymedia.ImageToolRules{
 		IsImageType:     openai.IsOpenAIImageGenerationType,
@@ -19,7 +19,7 @@ func ImageIntent() gatewaymedia.ImageIntentPolicy {
 	})
 }
 
-// ImageIntentForPlatform 根据平台解析图片意图，Grok 忽略被动工具声明。
+// ImageIntentForPlatform resolves image intent; Grok ignores passive tool declarations.
 func ImageIntentForPlatform(endpoint, model string, body []byte, platform string) bool {
 	return ImageIntent().IsImageGenerationIntentForPlatform(endpoint, model, body, strings.EqualFold(strings.TrimSpace(platform), capability.PlatformGrok))
 }

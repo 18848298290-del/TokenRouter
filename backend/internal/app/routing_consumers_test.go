@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// subscriptionGroupFixture 提供包含业务名称和译文的分组。
+// subscriptionGroupFixture supplies a group with a business name and translated display copy.
 type subscriptionGroupFixture struct {
 	routing.GroupRepository
 	group *routing.Group
@@ -22,7 +22,7 @@ func (r subscriptionGroupFixture) GetByIDLite(context.Context, int64) (*routing.
 	return r.group, nil
 }
 
-// TestSubscriptionGroupLanguage 检查订阅响应中的分组译文、过期回退和历史名称。
+// TestSubscriptionGroupLanguage checks translations, stale-translation fallback, and legacy group names.
 func TestSubscriptionGroupLanguage(t *testing.T) {
 	en := "en"
 	group := &routing.Group{ID: 1, Name: "business-name", Localization: routing.GroupLocalization{

@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 HTTP ws_close_error.go 构造的关闭错误与 WS entry_rules.go 的故障判断。
+// These tests check HTTP close errors against gateway/ws provider-failure classification.
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestShouldReportOpenAIWSProxyProviderFailure 验证本地路由拒绝不会污染提供商健康状态。
+// TestShouldReportOpenAIWSProxyProviderFailure checks that local routing rejections do not penalize provider health.
 func TestShouldReportOpenAIWSProxyProviderFailure(t *testing.T) {
 	t.Run("本地模型路由拒绝不惩罚提供商", func(t *testing.T) {
 		routingErr := errors.New("model is not supported by the selected websocket provider")

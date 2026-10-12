@@ -40,7 +40,7 @@ const (
 	MaxCreativeGeminiInlineBytes = 20 << 20
 )
 
-// ErrCreativeContentBlocked 是内容审核命中后的拒绝错误。
+// ErrCreativeContentBlocked reports a moderation rejection.
 var ErrCreativeContentBlocked = infraerrors.New(infraerrors.CategoryForbidden, "CREATIVE_CONTENT_BLOCKED", "creative content failed moderation")
 
 type (
@@ -53,14 +53,14 @@ type (
 type GroupView struct {
 	ID   int64
 	Name string
-	// ClaudeCodeOnly 分组不能用于创作台，也不在后台隐式切换回退组。
+	// ClaudeCodeOnly excludes the group from Creative Studio; no fallback group is selected.
 	ClaudeCodeOnly                            bool
 	IsExclusive, AllowImageGeneration, Active bool
 	RateMultiplier                            float64
 	Operations                                map[string][]string
 	ProtocolFallbacks                         map[protocol.ProtocolID][]protocol.ProtocolID
 	RoutingPolicy                             routing.GroupRoutingPolicy
-	// ModelsList 保存分组已启用的自定义请求名称。
+	// ModelsList contains the group's enabled custom request names.
 	ModelsList []string
 }
 type GroupReader interface {
@@ -130,7 +130,7 @@ type Public struct {
 	Observe                func(string, ...any)
 }
 
-// CreativeModelCapabilities 描述单个上游模型可稳定暴露给创作台的参数集合。
+// CreativeModelCapabilities contains the model parameters exposed by Creative Studio.
 type CreativeModelCapabilities struct {
 	AspectRatios       []string
 	Qualities          []string
@@ -149,7 +149,7 @@ type creativeModelRoute struct {
 	Operations          []string
 }
 
-// ValidatedCreativeParams 是校验通过的创建参数。
+// ValidatedCreativeParams contains normalized, validated creation parameters.
 type ValidatedCreativeParams struct {
 	Platform      string
 	Group         *GroupView
@@ -169,7 +169,7 @@ type ValidatedCreativeParams struct {
 	Fingerprint   string
 }
 
-// CreativeFingerprintPayload 是请求指纹的 canonical JSON 载体（字段顺序固定）。
+// CreativeFingerprintPayload defines the fixed JSON field order used for request fingerprints.
 type CreativeFingerprintPayload struct {
 	GroupID       int64    `json:"group_id"`
 	Model         string   `json:"model"`
@@ -185,7 +185,7 @@ type CreativeFingerprintPayload struct {
 	OutputCount   int      `json:"output_count"`
 }
 
-// CreativePricingSnapshot 是任务创建时的定价快照。
+// CreativePricingSnapshot records prices and multipliers at task creation.
 type CreativePricingSnapshot struct {
 	BaseUnitPrice              float64
 	SubscriptionRateMultiplier float64
@@ -211,6 +211,7 @@ func (s *Public) MaxPromptChars() int {
 	return 8000
 }
 
+// MaxAssetBytes returns the per-file input limit shared by handlers and model validation.
 func (s *Public) MaxAssetBytes() int64 {
 	if s != nil && s.Options.MaxAssetBytes > 0 {
 		return s.Options.MaxAssetBytes
@@ -218,6 +219,7 @@ func (s *Public) MaxAssetBytes() int64 {
 	return 33554432
 }
 
+// MaxTotalInputBytes returns the total input byte limit for one task.
 func (s *Public) MaxTotalInputBytes() int64 {
 	if s != nil && s.Options.MaxTotalInputBytes > 0 {
 		return s.Options.MaxTotalInputBytes
@@ -243,7 +245,7 @@ func mappedCatalogModel(a CatalogProvider, m string) string {
 	return strings.TrimSpace(value)
 }
 
-// GetCapabilities 返回前端与 multipart 解析共用的输入限制。
+// GetCapabilities returns input limits shared by the frontend and multipart parser.
 func (s *Public) GetCapabilities(ctx context.Context) *CreativeCapabilitiesResponse {
 	return &CreativeCapabilitiesResponse{
 		MaxPromptChars:     s.MaxPromptChars(),
@@ -254,10 +256,10 @@ func (s *Public) GetCapabilities(ctx context.Context) *CreativeCapabilitiesRespo
 	}
 }
 
-// ListModels 返回当前用户可用的分组与图片模型组合。
+// ListModels returns the group and image model combinations available to the user.
 func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsResponse, error) {
 	if !s.Enabled(ctx) {
-		// 开关关闭时返回空列表，前端据此展示“已停用”空态。
+		// An empty list lets the frontend display the disabled state.
 		return &CreativeModelsResponse{Data: make([]CreativeModelPublic, 0)}, nil
 	}
 	user, err := s.UserRepo.GetByID(ctx, userID)
@@ -308,7 +310,7 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 			if !configured || len(operations) == 0 {
 				continue
 			}
-			// 尺寸按“分组+模型”解析：共享价格配置/分组未配置覆盖价时回退平台默认档位。
+			// Resolve sizes from the selected route's model capabilities, independently of prices.
 			finalModel := models[model]
 			if finalModel == "" {
 				finalModel = model
@@ -346,8 +348,8 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 	return out, nil
 }
 
-// ListCreativeModelCandidates 返回管理端配置创作台白名单时可选择的当前模型。
-// 候选不按用户权限过滤，但仍严格复用创作台的分组、提供商和平台模型解析逻辑。
+// ListCreativeModelCandidates returns models administrators can add to the allowlist.
+// It applies group, provider, and platform rules without filtering by user permissions.
 func (s *Public) ListCreativeModelCandidates(ctx context.Context) ([]CreativeModelCandidate, error) {
 	if s == nil || s.GroupRepo == nil {
 		return nil, errors.New("creative group repository is not configured")
@@ -402,7 +404,7 @@ func (s *Public) CreativeModelSettings(ctx context.Context) []CreativeModelSetti
 	return s.Settings.GetCreativeModelSettings(ctx)
 }
 
-// CreativePrice 展示固定单张价，分组倍率与模型广场一致。
+// CreativePrice returns the per-image display price with the group's marketplace multiplier.
 func (s *Public) CreativePrice(ctx context.Context, group *GroupView, model, imageSize string) float64 {
 	unit, ok := s.ImageUnitPrice(ctx, group, model, imageSize)
 	if !ok {
@@ -411,7 +413,7 @@ func (s *Public) CreativePrice(ctx context.Context, group *GroupView, model, ima
 	return unit * group.RateMultiplier
 }
 
-// CreativeOperationsForPlatform 保留各平台已支持的生成、编辑与局部重绘能力。
+// CreativeOperationsForPlatform returns the operations implemented for the platform.
 func CreativeOperationsForPlatform(platform string) []string {
 	switch strings.TrimSpace(platform) {
 	case PlatformOpenAI:
@@ -423,9 +425,9 @@ func CreativeOperationsForPlatform(platform string) []string {
 	}
 }
 
-// CreativeDefaultImageSizesForPlatform 返回平台默认尺寸档位，
-// 与网关按默认价计费的口径一致：OpenAI GPT Image 2 支持 1K/2K/4K 三档，
-// grok 支持 1K/2K，Gemini 先按平台默认开放三档，再由模型能力过滤。
+// CreativeDefaultImageSizesForPlatform returns size tiers to use when model capabilities are unknown.
+// OpenAI and Gemini default to 1K/2K/4K; Grok defaults to 1K/2K.
+// Callers narrow these tiers using known model capabilities.
 func CreativeDefaultImageSizesForPlatform(platform string) []string {
 	switch strings.TrimSpace(platform) {
 	case PlatformOpenAI:
@@ -439,7 +441,7 @@ func CreativeDefaultImageSizesForPlatform(platform string) []string {
 	}
 }
 
-// CreativeCapabilitiesForModel 将统一媒体能力整理为创作台参数。
+// CreativeCapabilitiesForModel converts shared media attributes into Creative Studio parameters.
 func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcatalog.Attributes) CreativeModelCapabilities {
 	result := CreativeModelCapabilities{AspectRatios: []string{}, Qualities: []string{}, OutputFormats: []string{}, BackgroundOptions: []string{}, ThinkingLevels: []string{}, MaxOutputCount: 1, MaxReferenceImages: 1}
 	var media *modelcatalog.MediaCapabilities
@@ -483,8 +485,8 @@ func CreativeGeminiMaxReferenceImages(model string) int {
 	return 1
 }
 
-// CreativeImageSizesForModel 返回实际候选模型支持的尺寸档位。
-// 尺寸由平台与模型能力决定，不依赖是否填写价格。
+// CreativeImageSizesForModel returns model size tiers, using platform defaults for unknown models.
+// Size availability is independent of configured prices.
 func CreativeImageSizesForModel(platform, model string) []string {
 	if media := modelcatalog.MediaForModel(platform, model); media != nil {
 		return append([]string(nil), media.ImageSizes...)
@@ -492,8 +494,8 @@ func CreativeImageSizesForModel(platform, model string) []string {
 	return CreativeDefaultImageSizesForPlatform(platform)
 }
 
-// CreativeFilterImageSizesForModel 按已知模型能力收窄各平台尺寸档位。
-// 未知模型保留平台/分组配置，避免误伤供应商自定义模型；已知固定 1K 模型永远不开放高分辨率。
+// CreativeFilterImageSizesForModel applies known model size limits and adds Gemini's supported 512 tier.
+// Unknown models keep the supplied tiers; known 1K-only models are restricted to 1K.
 func CreativeFilterImageSizesForModel(platform, model string, sizes []string) []string {
 	platform = strings.TrimSpace(platform)
 	if platform == PlatformGrok && upstream.IsGrokImageGenerationModel(model) {
@@ -524,7 +526,7 @@ func CreativeFilterImageSizesForModel(platform, model string, sizes []string) []
 	return filtered
 }
 
-// CreativeFilterImageSizes 保留模型实际支持的计费档位并维持分组配置顺序。
+// CreativeFilterImageSizes keeps allowed tiers in the supplied order.
 func CreativeFilterImageSizes(sizes []string, allowed ...string) []string {
 	filtered := make([]string, 0, len(sizes))
 	for _, size := range sizes {
@@ -535,13 +537,13 @@ func CreativeFilterImageSizes(sizes []string, allowed ...string) []string {
 	return filtered
 }
 
-// IsCreativeGemini512Model 判断支持 512 输出且同时保留高分辨率档位的 Gemini 图片模型。
+// IsCreativeGemini512Model reports whether the model belongs to the Gemini family supporting 512 output.
 func IsCreativeGemini512Model(model string) bool {
 	model = CreativeNormalizedModelID(model)
 	return strings.HasPrefix(model, "gemini-3.1-flash-image") && !strings.HasPrefix(model, "gemini-3.1-flash-lite-image")
 }
 
-// IsCreativeGemini1KOnlyModel 判断官方已知只输出 1K 的 Gemini 图片模型。
+// IsCreativeGemini1KOnlyModel reports whether the model belongs to a known 1K-only family.
 func IsCreativeGemini1KOnlyModel(model string) bool {
 	model = CreativeNormalizedModelID(model)
 	switch {
@@ -584,7 +586,7 @@ func CreativeContainsOption(options []string, value string) bool {
 	return ok
 }
 
-// CreativeDefaultOption 返回参数的产品默认值；首选值不可用时回退到模型能力的第一项。
+// CreativeDefaultOption selects the preferred option, then the first available option, or an empty string.
 func CreativeDefaultOption(options []string, preferred string) string {
 	if CreativeContainsOption(options, preferred) {
 		value, _ := CreativeCanonicalOption(preferred, options)
@@ -596,7 +598,7 @@ func CreativeDefaultOption(options []string, preferred string) string {
 	return ""
 }
 
-// CreativeModelsForGroup 按分组映射、提供商映射和指定阶段白名单解析图片模型。
+// CreativeModelsForGroup resolves image models through group/provider mappings and staged allowlists.
 // @project-doc docs/domains/creative_studio.md#creative_model_policy
 func (s *Public) CreativeModelsForGroup(ctx context.Context, group *GroupView) (map[string]string, error) {
 	routes, err := s.creativeModelRoutes(ctx, group)
@@ -611,7 +613,7 @@ func creativeModelsFromRoutes(routes map[string]creativeModelRoute) map[string]s
 	return models
 }
 
-// groupOperations 按固定顺序汇总候选平台可执行的操作。
+// groupOperations returns candidate platform operations in CreativeOperationOrder.
 func groupOperations(group *GroupView) []string {
 	var operations []string
 	for _, operation := range CreativeOperationOrder {
@@ -625,7 +627,7 @@ func groupOperations(group *GroupView) []string {
 	return operations
 }
 
-// creativeModelRoutes 返回管理员配置和平台执行规则中的图片型号。
+// creativeModelRoutes resolves image models from saved settings and platform execution rules.
 func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map[string]creativeModelRoute, error) {
 	query, err := s.prepareCreativeModels(ctx, group)
 	if err != nil || query == nil {
@@ -635,15 +637,16 @@ func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map
 	return query.resolveModels(ctx, query.candidates(configured))
 }
 
-// IsCreativeGeminiImageModel 按 Gemini 图片模型的命名约定识别显式白名单变体。
-// nano-banana-* 是 Gemini 图片模型的代理别名族，也允许作为创作台请求模型。
+// IsCreativeGeminiImageModel recognizes image model names used in explicit allowlists.
+// The nano-banana-* proxy aliases are accepted as Gemini image request models.
 func IsCreativeGeminiImageModel(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 	return (strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")) ||
 		strings.HasPrefix(model, "nano-banana-")
 }
 
-// CreateRun 创建创作台任务：校验 → 审核 → 幂等 → 估价 → 供应隐藏 Key → 建行 → 预占 → 暂存 → 入队。
+// CreateRun validates and moderates a request, handles replay, then provisions funding, transient input,
+// and queue entry.
 // @project-doc docs/domains/creative_studio.md#creative_task_lifecycle
 func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params CreateCreativeRunParamsPublic, idempotencyKey string) (*CreativeRunPublic, error) {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
@@ -724,14 +727,15 @@ func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params C
 	if err := s.Results.EnsureCreativeOutbox(ctx, run.RunID, CreativeRunOutboxProvision); err != nil {
 		return nil, err
 	}
-	// 以下步骤按相反序回滚：释放预占 → 清理暂存 → 标记失败。
+	// Creation failures schedule release and cleanup through the outbox.
 	if err := s.Results.Funding.Reserve(ctx, run); err != nil {
 		s.FailRunAfterCreateError(ctx, run, "BILLING_HOLD_FAILED", err)
 		return nil, err
 	}
 	if marker, ok := s.Repo.(CreativeRunAllowanceMarker); ok {
 		if err := marker.SetCreativeRunAllowanceReserved(ctx, run.RunID, run.AllowanceReserved); err != nil {
-			// 预占请求本身带幂等键；保留 provisioning outbox，重启后可继续落库事实。
+			// Reserve is idempotent; retain the provisioning outbox so recovery can persist the
+			// reservation marker.
 			return nil, err
 		}
 	}
@@ -768,7 +772,7 @@ func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params C
 	return out, nil
 }
 
-// FailRunAfterCreateError 把创建失败的任务标记为 failed；失败路径允许从 queued 直接转换。
+// FailRunAfterCreateError requests release_pending with failed as the target and schedules recovery.
 func (s *Public) FailRunAfterCreateError(ctx context.Context, run *CreativeRun, code string, cause error) {
 	if run == nil {
 		return
@@ -787,7 +791,7 @@ func (s *Public) FailRunAfterCreateError(ctx context.Context, run *CreativeRun, 
 	_ = s.Results.EnsureCreativeOutbox(ctx, run.RunID, CreativeRunOutboxRelease)
 }
 
-// SaveRunTransient 把任务载荷与输入字节写入临时 Redis 存储。
+// SaveRunTransient writes the payload and input bytes to temporary Redis storage.
 func (s *Public) SaveRunTransient(ctx context.Context, run *CreativeRun, validated *ValidatedCreativeParams) error {
 	if s.TransientStore == nil {
 		return errors.New("creative transient store is not configured")
@@ -825,7 +829,8 @@ func (s *Public) SaveRunTransient(ctx context.Context, run *CreativeRun, validat
 	return nil
 }
 
-// ValidateCreateParams 执行全部服务端校验，返回规范化后的参数与请求指纹。
+// ValidateCreateParams checks access, model capabilities, and inputs, then returns normalized parameters
+// and a fingerprint.
 func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params *CreateCreativeRunParamsPublic) (*ValidatedCreativeParams, error) {
 	if params == nil {
 		return nil, ErrCreativeInvalidParams
@@ -990,7 +995,7 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 		if mask != nil {
 			encodedBytes += base64.StdEncoding.EncodedLen(len(mask.Bytes))
 		}
-		// Gemini inlineData 的上游限制按整个 JSON 请求估算，额外预留字段开销。
+		// Estimate the full Gemini JSON request size, reserving extra bytes for field overhead.
 		if int64(encodedBytes)+int64(len(prompt))+4096 > MaxCreativeGeminiInlineBytes {
 			return nil, ErrCreativeInputTooLarge
 		}
@@ -1056,7 +1061,7 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 	}, nil
 }
 
-// NormalizeCreativeImageInput 校验单个上传文件：非空、大小上限、MIME 归一化。
+// NormalizeCreativeImageInput checks nonempty input, the byte limit, and the declared and detected MIME types.
 func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (CreativeInputImage, error) {
 	if len(input.Bytes) == 0 {
 		return input, ErrCreativeInvalidMime
@@ -1069,7 +1074,7 @@ func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (Crea
 	switch mime {
 	case "image/png", "image/jpeg", "image/jpg", "image/webp":
 	default:
-		// 客户端未传 MIME 时按字节嗅探常见格式。
+		// Sniff bytes when the declared MIME type is missing or unsupported.
 		mime = SniffCreativeImageMime(input.Bytes)
 		if mime == "" {
 			return input, ErrCreativeInvalidMime
@@ -1078,7 +1083,7 @@ func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (Crea
 	if mime == "image/jpg" {
 		mime = "image/jpeg"
 	}
-	// 始终复核文件魔数，避免仅凭 multipart MIME 头把不支持文件送到 platform。
+	// Check file signatures even for accepted MIME headers so mislabeled content is rejected.
 	detectedMIME := SniffCreativeImageMime(input.Bytes)
 	if detectedMIME == "" || detectedMIME != mime {
 		return input, ErrCreativeInvalidMime
@@ -1087,7 +1092,7 @@ func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (Crea
 }
 func SniffCreativeImageMime(data []byte) string { return upstream.SniffImageMIME(data) }
 
-// CreativeImageDimensions 解析图片尺寸；webp 使用 x/image/webp 解码器。
+// CreativeImageDimensions reads image dimensions, using x/image/webp for WebP.
 func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	if mime == "image/webp" {
 		cfg, err := webp.DecodeConfig(bytes.NewReader(data))
@@ -1098,7 +1103,7 @@ func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	}
 	switch mime {
 	case "image/png", "image/jpeg":
-		// image/jpeg 与 image/png 的解码器已通过 side-effect import 注册。
+		// Blank imports register the JPEG and PNG decoders with image.DecodeConfig.
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
 			return 0, 0, err
@@ -1109,7 +1114,7 @@ func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	}
 }
 
-// BuildCreativeRequestFingerprint 计算幂等指纹：canonical JSON 的 sha256。
+// BuildCreativeRequestFingerprint returns the SHA-256 hash of the payload's fixed-order JSON.
 func BuildCreativeRequestFingerprint(payload CreativeFingerprintPayload) string {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -1138,8 +1143,8 @@ func Sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ModerateCreativeRequest 对 prompt 与图片构造 OpenAI Images 协议报文送审。
-// 必须开启 NoMediaRetention：审核系统不得留存媒体快照与正文摘录。
+// ModerateCreativeRequest submits the prompt and images using the OpenAI Images moderation format.
+// NoMediaRetention prevents moderation from retaining media snapshots or body excerpts.
 func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, validated *ValidatedCreativeParams) error {
 	if s.Moderation == nil {
 		return nil
@@ -1184,7 +1189,7 @@ func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, vali
 		NoMediaRetention: true,
 	})
 	if err != nil {
-		// 审核系统自身失败不阻断创作台（审核服务本身 fail-open）。
+		// Moderation service errors fail open; a successful denial below still blocks the request.
 		s.warn("creative.moderation_check_failed",
 			"user_id", userID,
 			"error", err,
@@ -1197,7 +1202,8 @@ func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, vali
 	return nil
 }
 
-// ResolveCreativePricing 计算基础单价与有效倍率（订阅倍率 + 用户倍率），与批量图片同口径。
+// ResolveCreativePricing calculates per-image pricing and subscription/balance multipliers for the funding
+// snapshot.
 func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, validated *ValidatedCreativeParams) (*CreativePricingSnapshot, error) {
 	group := validated.Group
 	groupDefault := group.RateMultiplier
@@ -1236,11 +1242,8 @@ func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, valid
 	}, nil
 }
 
-// MaxAssetBytes 返回 handler 与模型目录共用的单文件上限。
-
-// MaxTotalInputBytes 返回 handler 与参数校验共用的单次任务素材总量上限。
-
-// BillingModel 在需要时才读取分组映射，未关联有效价格配置时使用最终上游模型查价。
+// BillingModel uses the shared pricing configuration's model selection when linked, otherwise the upstream
+// model.
 func (s *Public) BillingModel(ctx context.Context, group *GroupView, requested, upstream string) string {
 	if upstream == "" {
 		upstream = requested

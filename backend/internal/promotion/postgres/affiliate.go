@@ -130,7 +130,7 @@ func (r *affiliateRepository) AccrueQuota(ctx context.Context, inviterID, invite
 
 	var applied bool
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		// freezeHours > 0 时写入冻结额度；否则直接写入可提额度。
+		// Positive freeze hours credit frozen quota; other values credit available quota.
 		var updateSQL string
 		if freezeHours > 0 {
 			updateSQL = "UPDATE user_affiliates SET aff_frozen_quota = aff_frozen_quota + $1, aff_history_quota = aff_history_quota + $1, updated_at = NOW() WHERE user_id = $2"
@@ -199,7 +199,7 @@ func (r *affiliateRepository) ThawFrozenQuota(ctx context.Context, userID int64)
 	return thawed, err
 }
 
-// thawFrozenQuotaTx 在现有事务内把已到期的冻结额度转入可提额度。
+// thawFrozenQuotaTx moves matured frozen quota into available quota within the existing transaction.
 func thawFrozenQuotaTx(txCtx context.Context, txClient *dbent.Client, userID int64) (float64, error) {
 	rows, err := txClient.QueryContext(txCtx, `
 WITH matured AS (
@@ -250,7 +250,7 @@ func (r *affiliateRepository) TransferQuotaToBalance(ctx context.Context, userID
 			return err
 		}
 
-		// 转入余额前先释放已到期的冻结额度。
+		// Release matured frozen quota before transferring the available amount.
 		if _, err := thawFrozenQuotaTx(txCtx, txClient, userID); err != nil {
 			return fmt.Errorf("thaw before transfer: %w", err)
 		}
@@ -503,7 +503,7 @@ WHERE ual.action = 'accrue'
 		"created_at":    "ual.created_at",
 	}, "ual.created_at")
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
-	// 新订单优先使用套餐快照；旧订单回退当前套餐币种，仍为空时沿用旧界面的 USD 口径。
+	// Prefer the plan snapshot currency, then the current plan currency, then USD for older orders.
 	rows, err := client.QueryContext(ctx, `
 SELECT po.id,
        po.out_trade_no,
@@ -993,8 +993,8 @@ func isAffiliateUniqueViolation(err error) bool {
 	return false
 }
 
-// UpdateUserAffCode 改写用户的邀请码（自定义专属邀请码）。
-// 唯一性冲突返回 ErrAffiliateCodeTaken。
+// UpdateUserAffCode assigns a custom invitation code to the user.
+// A uniqueness conflict returns ErrAffiliateCodeTaken.
 func (r *affiliateRepository) UpdateUserAffCode(ctx context.Context, userID int64, newCode string) error {
 	if userID <= 0 {
 		return identity.ErrUserNotFound
@@ -1028,7 +1028,7 @@ WHERE user_id = $2`, code, userID)
 	})
 }
 
-// ResetUserAffCode 把 aff_code 还原为系统随机码，并清除 aff_code_custom 标记。
+// ResetUserAffCode generates an invitation code and clears aff_code_custom.
 func (r *affiliateRepository) ResetUserAffCode(ctx context.Context, userID int64) (string, error) {
 	if userID <= 0 {
 		return "", identity.ErrUserNotFound
@@ -1070,7 +1070,7 @@ WHERE user_id = $2`, candidate, userID)
 	return newCode, nil
 }
 
-// SetUserRebateRate 设置或清除用户专属返利比例。ratePercent==nil 表示清除（沿用全局）。
+// SetUserRebateRate sets a custom rate; nil clears it so the global rate applies.
 func (r *affiliateRepository) SetUserRebateRate(ctx context.Context, userID int64, ratePercent *float64) error {
 	if userID <= 0 {
 		return identity.ErrUserNotFound
@@ -1079,8 +1079,8 @@ func (r *affiliateRepository) SetUserRebateRate(ctx context.Context, userID int6
 		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
 			return err
 		}
-		// nullableArg 让“设置值”和“清空值”共用同一条 UPDATE。
-		// database/sql 会把 nil interface{} 转成 SQL NULL。
+		// nullableArg lets the same UPDATE set or clear the rate.
+		// database/sql converts a nil interface value to SQL NULL.
 		res, err := txClient.ExecContext(txCtx, `
 UPDATE user_affiliates
 SET aff_rebate_rate_percent = $1,
@@ -1097,7 +1097,7 @@ WHERE user_id = $2`, nullableArg(ratePercent), userID)
 	})
 }
 
-// BatchSetUserRebateRate 批量为多个用户设置专属比例（nil 清除）。
+// BatchSetUserRebateRate sets a rate for multiple users; nil clears their overrides.
 func (r *affiliateRepository) BatchSetUserRebateRate(ctx context.Context, userIDs []int64, ratePercent *float64) error {
 	if len(userIDs) == 0 {
 		return nil
@@ -1123,7 +1123,7 @@ WHERE user_id = ANY($2)`, nullableArg(ratePercent), pq.Array(userIDs))
 	})
 }
 
-// nullableArg 把 *float64 转成 SQL 参数：nil 指针对应 SQL NULL，非 nil 对应数值本身。
+// nullableArg converts nil to SQL NULL and a non-nil pointer to its float64 value.
 func nullableArg(v *float64) any {
 	if v == nil {
 		return nil
@@ -1138,11 +1138,11 @@ func nullableInt64Arg(v *int64) any {
 	return *v
 }
 
-// ListUsersWithCustomSettings 列出有专属配置（自定义码或专属比例）的用户。
+// ListUsersWithCustomSettings lists users with a custom code or rebate rate.
 //
-// 单一查询同时处理"无搜索"与"按邮箱/用户名模糊搜索"：
-// 空 search 时拼接出的 LIKE 模式为 "%%"，匹配所有行；非空时按 ILIKE 子串匹配。
-// 这避免了为两种情况维护两份 SQL 模板。
+// One ILIKE query handles empty and nonempty searches:
+// an empty search produces "%%"; other values match email or username substrings.
+// The same SQL template serves both cases.
 func (r *affiliateRepository) ListUsersWithCustomSettings(ctx context.Context, filter promotion.AffiliateAdminFilter) ([]promotion.AffiliateAdminEntry, int64, error) {
 	page := max(filter.Page, 1)
 	pageSize := filter.PageSize
@@ -1202,7 +1202,7 @@ LIMIT $2 OFFSET $3`
 	return entries, total, nil
 }
 
-// scanInt64 执行预期只返回单个 int64 列的查询，例如 COUNT。
+// scanInt64 reads the first row of a single-int64-column query, returning zero when no row exists.
 func scanInt64(ctx context.Context, client affiliateQueryExecer, query string, args ...any) (int64, error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {

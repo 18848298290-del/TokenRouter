@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// AnthropicProviderTest 绑定供应商接口，凭据和健康状态通过提供商接口读写。
+// AnthropicProviderTest probes Anthropic transports using provider credential and health services.
 type AnthropicProviderTest struct {
 	Attributes  func() modelcatalog.View
 	Tokens      *providercore.ClaudeTokenSource
@@ -33,22 +33,21 @@ type AnthropicProviderTest struct {
 	UserAgent string
 }
 
-// Execute 保留 Anthropic、Vertex 与 Bedrock 各自的测试路径。
+// Execute selects the Anthropic, Vertex, or Bedrock probe for the provider type.
 func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string) error {
 	ctx := c.Context
 
-	// 保留缺省模型及原映射时机。
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = claude.DefaultTestModel
 	}
 
-	// API Key 提供商测试连接时也需要应用通配符模型映射。
+	// Apply wildcard mappings to API key probes as well as forwarded requests.
 	if value.Type == "apikey" {
 		testModelID = mappedTestModel(value, testModelID)
 	}
 
-	// Bedrock 使用独立签名和非流式请求。
+	// Bedrock uses a signed, non-streaming invocation.
 	if value.IsBedrock() {
 		return s.ExecuteBedrock(c, ctx, value, testModelID, prompt)
 	}
@@ -56,7 +55,6 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 		return s.executeVertex(c, ctx, value, testModelID, prompt)
 	}
 
-	// 按原凭据类型构造认证与端点。
 	var authToken string
 	var apiURL string
 
@@ -85,10 +83,8 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Unsupported provider type: %s", value.Type))
 	}
 
-	// 保留事件流开始时机。
 	c.Begin(true)
 
-	// 所有类型复用原 Claude Code 测试报文。
 	payload, err := claude.TestPayloadWithPrompt(testModelID, prompt)
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
@@ -96,7 +92,6 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 	s.applyModelAttributes(value, testModelID, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
-	// 报文构造完成后发布开始事件。
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
@@ -104,16 +99,13 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 		return (TestStreamOutput{}).Error(c, "Failed to create request")
 	}
 
-	// 设置共同协议 Header。
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	// 应用原 Claude Code 客户端 Header。
 	for key, value := range claude.DefaultHeaders {
 		req.Header.Set(key, value)
 	}
 
-	// 保留认证 Header 的原顺序。
 	if value.IsOAuth() {
 		req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
 		req.Header.Set("Authorization", "Bearer "+authToken)
@@ -123,10 +115,9 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 	}
 	s.applyUserAgent(req)
 
-	// 测试与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider header overrides after defaults and authentication, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 
-	// 使用提供商配置的代理。
 	proxyURL := ""
 	if value.ProxyID != nil && value.Proxy != nil {
 		proxyURL = value.Proxy.URL()
@@ -142,7 +133,7 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body))
 
-		// 403 表示提供商被上游封禁，标记为 error 状态
+		// A forbidden probe marks the provider as errored.
 		if resp.StatusCode == http.StatusForbidden {
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
@@ -150,7 +141,6 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 		return (TestStreamOutput{}).Error(c, errMsg)
 	}
 
-	// 逐事件解析流。
 	return (TestStreamOutput{}).Anthropic(c, resp.Body)
 }
 
@@ -220,7 +210,7 @@ func (s *AnthropicProviderTest) executeVertex(c *TestRun, ctx context.Context, v
 	return (TestStreamOutput{}).Anthropic(c, resp.Body)
 }
 
-// ExecuteBedrock 以非流式 invoke 验证 SigV4 或 API Key。
+// ExecuteBedrock probes SigV4 or API key credentials with a non-streaming invocation.
 func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, value *providercore.Record, testModelID string, prompt string) error {
 	route, err := bedrock.ResolveBedrockModelRoute(&bedrock.RouteInput{Region: value.GetCredential("aws_region"), ForceGlobal: value.GetCredential("aws_force_global") == "true", Model: mappedTestModel(value, testModelID)}, testModelID)
 	if err != nil {
@@ -229,10 +219,10 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 	region := route.SourceRegion
 	testModelID = route.ModelID
 
-	// 保留事件流开始时机。 (test UI expects SSE)
+	// The test UI consumes SSE even though the upstream invocation is non-streaming.
 	c.Begin(true)
 
-	// 保留无 stream 与 cache_control 的最小 Bedrock 报文。
+	// The Bedrock probe omits stream and cache_control fields.
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {
 		testPrompt = "hi"
@@ -256,7 +246,6 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 	s.applyModelAttributes(value, testModelID, bedrockPayload)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
-	// 上游非流式响应仍按 Claude JSON 处理。
 	apiURL := bedrock.BuildBedrockURL(region, testModelID, false)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -267,7 +256,6 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// 按提供商类型设置 Bearer 或 SigV4 签名。
 	if value.IsBedrockAPIKey() {
 		apiKey := value.GetCredential("api_key")
 		if apiKey == "" {
@@ -302,7 +290,7 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// 从原非流式 Claude JSON 提取第一段文字。
+	// Expose the first content block from the non-streaming Claude response.
 	var result struct {
 		Content []struct {
 			Text string `json:"text"`
@@ -338,7 +326,7 @@ func (s *AnthropicProviderTest) resolveTLSProfile(value *providercore.Record) *t
 	return s.Profiles.ResolveRequestTLS(egress.TLSSelection{Enabled: value.IsTLSFingerprintEnabled(), DirectProfileID: value.GetTLSFingerprintProfileID()})
 }
 
-// mappedTestModel 对提供商测试模型执行一次映射。
+// mappedTestModel applies one provider mapping to a probe model.
 func mappedTestModel(value *providercore.Record, model string) string {
 	mapped, _ := providercore.ResolveMappedModel(providercore.ResolveModelMapping(value, ModelDefaults()), model)
 	return mapped

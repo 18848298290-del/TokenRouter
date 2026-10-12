@@ -34,7 +34,7 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// gatewayTTLSettingRepo 提供用例指定的设置，其他方法由嵌入的 Repository 接口提供。
+// gatewayTTLSettingRepo supplies test settings and embeds the unused repository methods.
 type gatewayTTLSettingRepo struct {
 	settings.Repository
 	data map[string]string
@@ -212,7 +212,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 	tests := []struct {
 		name          string
 		model         string
-		modelMapping  map[string]any // nil = 不配置映射
+		modelMapping  map[string]any // nil means no model mapping.
 		expectedModel string
 		endpoint      string // "messages" or "count_tokens"
 	}{
@@ -364,7 +364,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFie
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
 
-	// 包含复杂字段的请求体：system、thinking、messages
+	// Exercise model rewriting with structured system, thinking, and message fields.
 	body := []byte(`{"model":"claude-sonnet-4-20250514","system":[{"type":"text","text":"You are a helpful assistant."}],"messages":[{"role":"user","content":[{"type":"text","text":"hello world"}]}],"thinking":{"type":"enabled","budget_tokens":5000},"max_tokens":1024}`)
 	parsed := &requeststate.ParsedRequest{
 		Body:  requeststate.NewRequestBodyRef(body),
@@ -462,7 +462,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping(t *tes
 	body := []byte(`{"messages":[{"role":"user","content":"hello"}]}`)
 	parsed := &requeststate.ParsedRequest{
 		Body:  requeststate.NewRequestBodyRef(body),
-		Model: "", // 空模型
+		Model: "",
 	}
 
 	upstreamRespBody := `{"input_tokens":10}`
@@ -498,7 +498,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping(t *tes
 
 	err := svc.ForwardCountTokens(context.Background(), c, provider, parsed)
 	require.NoError(t, err)
-	// 空模型名时，body 应原样透传，不应触发映射
+	// An absent model skips mapping and keeps the body unchanged.
 	require.Equal(t, body, upstream.lastBody, "空模型名时请求体不应被修改")
 }
 
@@ -582,7 +582,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 			err := svc.ForwardCountTokens(context.Background(), c, provider, parsed)
 
 			if tt.wantPassthrough {
-				// 返回 nil（不记录为错误），HTTP 状态码 404 + Anthropic 错误体
+				// An unsupported counting endpoint returns an Anthropic 404 response with no Go error.
 				require.NoError(t, err)
 				require.Equal(t, http.StatusNotFound, rec.Code)
 				var errResp map[string]any
@@ -592,7 +592,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 				require.True(t, ok)
 				require.Equal(t, "not_found_error", errObj["type"])
 			} else if tt.statusCode >= http.StatusInternalServerError {
-				// 首次输出前的上游服务错误交给 handler 切换提供商。
+				// Before output starts, upstream server errors let the handler select another provider.
 				var failoverErr *forwardcore.UpstreamFailoverError
 				require.ErrorAs(t, err, &failoverErr)
 				require.Equal(t, tt.statusCode, failoverErr.StatusCode)
@@ -791,7 +791,7 @@ func TestGatewayService_AnthropicOAuthMimic_RewritesSystemWithBillingBlock(t *te
 			require.Equal(t, claude.ClaudeCodeSystemPromptExpansion, arr[2].Get("text").String())
 			require.Equal(t, "ephemeral", arr[2].Get("cache_control.type").String())
 
-			// 原始 system prompt 应迁移至 messages 中。
+			// The client's system prompt moves into the messages array.
 			messages := gjson.GetBytes(upstream.lastBody, "messages")
 			require.True(t, messages.IsArray())
 			firstMsg := messages.Array()[0]
@@ -967,7 +967,7 @@ func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *tes
 	require.NotContains(t, string(upstream.lastBody), "[System Instructions]")
 }
 
-// newHTTPRuntimeFixture 使用测试参数构造 Runtime 和 HTTP Adapter。
+// newHTTPRuntimeFixture constructs the runtime and HTTP adapter with test options.
 func newHTTPRuntimeFixture(options *messageforward.Options, deps messageforward.Dependencies, filter *egress.CompiledHeaderFilter) *gatewayhttp.MessagesExecutor {
 	value := messageforward.Options{ResponseReadLimit: 128 * 1024 * 1024}
 	if options != nil {
@@ -1007,7 +1007,7 @@ func newRuntimeSettingsFixture(repo settings.Repository) *gateway.RuntimeSetting
 	})
 }
 
-// strconvQuote 为测试请求中的字符串添加 JSON 引号并转义。
+// strconvQuote quotes fixture strings and escapes their backslashes and double quotes.
 func strconvQuote(value string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`) + `"`
 }
@@ -1134,7 +1134,7 @@ func (r *gatewayForwardErrorPolicyRepoStub) SetOverloaded(context.Context, int64
 	return nil
 }
 
-// newForwardPartialUsageServiceForTest 构造部分用量测试所需的转发依赖。
+// newForwardPartialUsageServiceForTest constructs forwarding dependencies for partial-usage tests.
 func newForwardPartialUsageServiceForTest(upstream *anthropicHTTPUpstreamRecorder) *messageforward.Runtime {
 	return newPartialRuntime(upstream, nil)
 }
@@ -1175,7 +1175,7 @@ func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *te
 	parsed, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), capability.PlatformAnthropic)
 	require.NoError(t, err)
 
-	// newapi 类聚合上游可能已在 start/delta 事件中下发 usage，却在 stop 前直接断流。
+	// Simulate an aggregator that reports usage in start/delta events and disconnects before stop.
 	upstreamSSE := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-latest","content":[],"usage":{"input_tokens":11,"cache_read_input_tokens":7}}}`,
@@ -1442,7 +1442,7 @@ func TestMaxReasoningPricing_AnthropicForwardReportsOutboundEffort(t *testing.T)
 	}
 }
 
-// TestAnthropicConversionPreservesResponseModel 验证四条转换路径区分客户端别名、出站模型和响应声明。
+// TestAnthropicConversionPreservesResponseModel distinguishes client aliases, outbound models, and response declarations on all four paths.
 func TestAnthropicConversionPreservesResponseModel(t *testing.T) {
 	const clientModel = "client-alias"
 	const sentModel = "claude-fable-5-1"
@@ -1513,7 +1513,7 @@ func TestAnthropicConversionPreservesResponseModel(t *testing.T) {
 					captured := gatewayprovider.ProjectMessagesCompletionResult(result, &target.Record)
 					require.Equal(t, declaration.want, captured.UpstreamResponseModel)
 
-					// 客户端继续看到自己的别名，原始上游声明仅随完成结果保存。
+					// The client sees its alias; the upstream declaration is saved in the completion result.
 					if !stream {
 						require.Equal(t, clientModel, gjson.Get(recorder.Body.String(), "model").String())
 					} else {

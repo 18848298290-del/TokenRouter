@@ -128,7 +128,7 @@ func TestBuildUsageInfo_SevenDayFable(t *testing.T) {
 	require.True(t, info.SevenDayFable.ResetsAt.Equal(resetAt))
 	require.Greater(t, info.SevenDayFable.RemainingSeconds, 0)
 
-	// 无 Fable 数据时不应创建窗口
+	// Missing Fable data leaves the window absent.
 	var empty ClaudeUsageResponse
 	empty.FiveHour.Utilization = 10
 	info = BuildUsageInfo(&empty, &now, time.Now, log.Printf)

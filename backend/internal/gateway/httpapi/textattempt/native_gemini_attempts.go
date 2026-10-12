@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// nativeGeminiAttemptBridge 不在失败路径新增完成提交，也不输出 Anthropic 心跳。
+// nativeGeminiAttemptBridge adapts Gemini-native requests with Google error output and Gemini wait handling.
 type nativeGeminiAttemptBridge struct {
 	messageAttemptBridge
 	modelName, action                                                          string
@@ -36,11 +36,11 @@ type nativeGeminiAttemptBridge struct {
 	signatureState                                                             requeststate.GeminiSignatureState
 }
 
-// Select 保留 Gemini 原生适配，重试与完成资格由文本核心控制。
+// Select chooses a provider for a Gemini-native attempt.
 func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
-	// 传入原始模型 R，通用调度器负责执行 R -> G。
+	// Pass the requested model; the shared scheduler applies the group mapping.
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini 不使用会话限制
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini does not apply the Anthropic session limit.
 	if err != nil {
 		return textflow.Selection{}, err
 	}
@@ -58,7 +58,7 @@ func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflo
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure 保留 Gemini 原生适配，重试与完成资格由文本核心控制。
+// FirstSelectionFailure writes a Google error for group policy or provider availability failure.
 func (b *nativeGeminiAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	if handleGeminiGroupModelUnsupportedError(b.c, err) {
 		return
@@ -74,9 +74,9 @@ func (b *nativeGeminiAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	gatewayhttp.WriteGoogleError(b.c, cls.Status, message)
 }
 
-// Acquire 保留 Gemini 原生适配，重试与完成资格由文本核心控制。
+// Acquire acquires or adopts the selected provider's concurrency slot.
 func (b *nativeGeminiAttemptBridge) Acquire() bool {
-	// 4) provider concurrency slot
+	// Reuse the selection's slot or follow the Gemini wait plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -127,13 +127,13 @@ func (b *nativeGeminiAttemptBridge) Acquire() bool {
 			b.reqLog.Warn("gemini.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
-	// 提供商槽位/等待计数需要在超时或断开时安全回收
+	// Release the provider slot when the request times out or disconnects.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward 在生成请求通过价格检查后调用选中的提供商。
+// Forward checks generation pricing before invoking the selected provider.
 // @project-doc docs/domains/routing_and_billing.md#missing_model_pricing
 func (b *nativeGeminiAttemptBridge) Forward(state textflow.AttemptState) textflow.Outcome {
 	if b.providerReleaseFunc != nil {
@@ -144,7 +144,7 @@ func (b *nativeGeminiAttemptBridge) Forward(state textflow.AttemptState) textflo
 	if state.SwitchCount > 0 {
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
-	// 计数动作由平台执行器处理，生成动作在每次换号后重新查价。
+	// Token counting is handled by the platform executor; each generation attempt checks pricing again.
 	if b.action == "generateContent" || b.action == "streamGenerateContent" {
 		err := gatewayhttp.CheckTextModelPricing(
 			requestCtx, b.binding().pricing, b.apiKey, b.provider,
@@ -187,21 +187,21 @@ func (b *nativeGeminiAttemptBridge) Forward(state textflow.AttemptState) textflo
 	return out
 }
 
-// OtherFailure 保留 Gemini 原生适配，重试与完成资格由文本核心控制。
+// OtherFailure logs the platform forwarding failure.
 func (b *nativeGeminiAttemptBridge) OtherFailure(err error) {
-	// ForwardNative already wrote the response
+	// The platform forwarder owns the client error response.
 	b.reqLog.Error("gemini.forward_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 }
 
-// Complete 保留 Gemini 原生适配，重试与完成资格由文本核心控制。
+// Complete captures usage and stores digest-based Gemini session affinity.
 func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 	completionActorID := b.subject.UserID
 	completionModel := b.modelName
-	// 捕获请求信息，供异步任务记录。
+	// Capture request metadata while the HTTP context is available.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 
-	// 保存 Gemini 内容摘要会话（用于 Fallback 匹配）
+	// Save the content-digest session for later fallback matching.
 	if b.useDigestFallback && b.geminiDigestChain != "" && b.geminiPrefixHash != "" {
 		if err := b.binding().saveGeminiSession(
 			b.c.Request.Context(),
@@ -216,15 +216,15 @@ func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 		}
 	}
 
-	// 用量记录通过有界 worker 池提交。
+	// Prepare metadata for submission to the configured usage worker pool.
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
 	inboundEndpoint := gatewayhttp.GetInboundEndpoint(b.c)
 	upstreamEndpoint := gatewayhttp.GetUpstreamEndpoint(b.c, b.provider.Record.Platform)
-	// 完成任务捕获 ForceCacheBilling 的布尔值，failover 响应体可随请求释放。
+	// Capture the cache-billing flag by value so completion does not retain the failover body.
 	forceCacheBilling := state.ForceCacheBilling
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -245,7 +245,7 @@ func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 	})
 	completionRuntime := b.binding().recorder
 	b.binding().submitUsageRecordTask(b.c, func(ctx context.Context) {
-		// 长上下文阶梯由价格目录驱动，统一计费路径会根据模型与分组开关处理。
+		// Shared billing applies catalogue long-context tiers and the group's pricing settings.
 		if err := completionRuntime.Record(ctx, completionInput, false); err != nil {
 			logging.L().With(
 				zap.String("component", "handler.gemini_v1beta.models"),

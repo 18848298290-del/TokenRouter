@@ -36,7 +36,7 @@ type AnnouncementRepository interface {
 	GetByID(ctx context.Context, id int64) (*Announcement, error)
 	Update(ctx context.Context, a *Announcement) error
 	Delete(ctx context.Context, id int64) error
-	// ArchiveExpired 将已超过结束时间的展示中公告批量归档。
+	// ArchiveExpired archives active announcements whose end time is at or before now.
 	ArchiveExpired(ctx context.Context, now time.Time) (int64, error)
 
 	List(ctx context.Context, params pagination.PaginationParams, filters AnnouncementListFilters) ([]Announcement, *pagination.PaginationResult, error)
@@ -50,7 +50,7 @@ type AnnouncementReadRepository interface {
 	CountByAnnouncementID(ctx context.Context, announcementID int64) (int64, error)
 }
 
-// UserSnapshot 包含公告展示和访问资格判断所需的用户字段。
+// UserSnapshot contains the user fields needed for announcement display and eligibility checks.
 type UserSnapshot struct {
 	ID       int64
 	Email    string
@@ -62,11 +62,13 @@ type (
 	SubscriptionSnapshot struct{ PlanID int64 }
 )
 
-// UserReader 和 SubscriptionReader 由 app 绑定旧能力，核心不认识旧实体。
+// UserReader supplies user snapshots through an adapter wired by app.
 type UserReader interface {
 	GetByID(context.Context, int64) (*UserSnapshot, error)
 	ListWithFilters(context.Context, pagination.PaginationParams, UserListFilters) ([]UserSnapshot, *pagination.PaginationResult, error)
 }
+
+// SubscriptionReader supplies active subscription snapshots through an adapter wired by app.
 type SubscriptionReader interface {
 	ListActiveByUserID(context.Context, int64) ([]SubscriptionSnapshot, error)
 }

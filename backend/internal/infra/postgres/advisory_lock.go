@@ -14,11 +14,16 @@ func HashAdvisoryLockID(key string) int64 {
 	return int64(h.Sum64())
 }
 
+// TryAcquireDBAdvisoryLock attempts a session lock and treats database errors
+// as failure to acquire. On success, the caller must invoke release.
 func TryAcquireDBAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) (func(), bool) {
 	release, acquired, _ := TryAcquireDBAdvisoryLockWithError(ctx, db, lockID)
 	return release, acquired
 }
 
+// TryAcquireDBAdvisoryLockWithError reserves a connection for a session advisory lock.
+// On success, call release once to attempt unlocking and return the connection.
+// A nil database or a busy lock returns false without an error.
 func TryAcquireDBAdvisoryLockWithError(ctx context.Context, db *sql.DB, lockID int64) (func(), bool, error) {
 	if db == nil {
 		return nil, false, nil

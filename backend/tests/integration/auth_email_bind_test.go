@@ -1217,7 +1217,7 @@ func cloneEmailBindUser(user *identity.User) *identity.User {
 	return &cloned
 }
 
-// ConsumeRefreshToken 在同一互斥内完成存在性判断与删除，保持测试中的一次性轮换。
+// ConsumeRefreshToken checks and removes the token under one mutex to model one-time rotation.
 func (s *emailBindRefreshTokenCacheStub) ConsumeRefreshToken(_ context.Context, key string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

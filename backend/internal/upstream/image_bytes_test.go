@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestImageByteDefaultsRemainCompatible 检查原始 Base64 图片的解码和媒体类型。
+// Unpadded base64 must decode to the original PNG bytes and MIME type.
 func TestImageByteDefaultsRemainCompatible(t *testing.T) {
 	data := []byte("\x89PNG\r\n\x1a\nfixture")
 	decoded, err := DecodeBase64Image(base64.RawStdEncoding.EncodeToString(data))

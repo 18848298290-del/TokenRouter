@@ -87,5 +87,5 @@ func (r *announcementReadRepository) CountByAnnouncementID(ctx context.Context, 
 	return int64(count), nil
 }
 
-// isSQLNoRowsError 判断查询是否没有匹配行。
+// isSQLNoRowsError reports whether err represents a query with no matching row.
 func isSQLNoRowsError(err error) bool { return postgresinfra.IsNoRows(err) }

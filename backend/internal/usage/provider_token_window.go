@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// ProviderTokenWindowReader 保留旧统计入口及可选的批量读取能力。
+// ProviderTokenWindowReader reads one provider's usage since a start time.
 type ProviderTokenWindowReader interface {
 	GetProviderWindowStats(context.Context, int64, time.Time) (*ProviderStats, error)
 }
 
-// ReadProviderTokenWindow 优先批量读取；批量失败不额外执行逐提供商查询。
+// ReadProviderTokenWindow uses batch reads when supported and returns batch errors without retrying providers individually.
 func ReadProviderTokenWindow(ctx context.Context, reader ProviderTokenWindowReader, ids []int64, start time.Time) (map[int64]int64, error) {
 	if reader == nil {
 		return nil, nil

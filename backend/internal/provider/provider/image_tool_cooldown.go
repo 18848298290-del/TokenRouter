@@ -10,7 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ImageToolCooldown 只处理已经确认的图片工具冷却，调用方保留触发资格。
+// ImageToolCooldown records a confirmed image-tool failure. The caller determines whether the failure
+// qualifies.
 type ImageToolCooldown struct {
 	Store interface {
 		SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error

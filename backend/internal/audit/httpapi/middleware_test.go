@@ -29,7 +29,7 @@ type auditCaptureRepository struct {
 	logs []*audit.AuditLog
 }
 
-// clearHTTPRepository 只实现清空端口，避免 HTTP 测试把分步清空误当作闭合操作。
+// clearHTTPRepository implements ClearWithTrace so tests fail if the handler switches to separate clear and insert calls.
 type clearHTTPRepository struct {
 	audit.AuditLogRepository
 	trace *audit.AuditLog
@@ -37,7 +37,7 @@ type clearHTTPRepository struct {
 	order *[]string
 }
 
-// clearTOTPVerifier 记录此次操作是否重新验证 TOTP；不复用其他 step-up 凭据。
+// clearTOTPVerifier records fresh TOTP verification for the clearing operation.
 type clearTOTPVerifier struct {
 	err   error
 	user  int64
@@ -155,8 +155,8 @@ func TestAuditMiddlewareRestoresPartialBodyAfterReadError(t *testing.T) {
 	}
 }
 
-// TestOllamaCloudUsageSessionRouteOmitsAuditBody 验证 Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键
-// "session"，必须走整体不入库路径，防止会话凭证长期留存在 audit_logs。
+// TestOllamaCloudUsageSessionRouteOmitsAuditBody checks that browser cookies in the session body
+// are omitted entirely from audit storage, including credentials under the "session" key.
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Contains(t, auditBodyOmittedRoutes, "PUT /api/v1/admin/providers/:id/ollama-cloud-usage/session")
 
@@ -192,7 +192,7 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 }
 
 func TestPasskeyFinishRoutesOmitAuditBody(t *testing.T) {
-	// WebAuthn finish body 含完整 assertion/attestation，不能作为普通审计 JSON 入库。
+	// WebAuthn finish bodies contain full assertions or attestations and must be omitted from audit storage.
 	for _, route := range []string{
 		"POST /api/v1/auth/passkey/login/finish",
 		"POST /api/v1/user/passkeys/register/finish",

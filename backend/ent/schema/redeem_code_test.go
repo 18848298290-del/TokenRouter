@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRedeemCode_CodeLength 检查写入校验按字符计数，并拒绝空兑换码。
+// TestRedeemCode_CodeLength checks code-point limits and rejects empty codes.
 func TestRedeemCode_CodeLength(t *testing.T) {
 	var codeField *field.Descriptor
 	for _, schemaField := range (RedeemCode{}).Fields() {

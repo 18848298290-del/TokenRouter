@@ -74,7 +74,7 @@ func OpenAIResponsesToolCallIDPrefix(itemType string) string {
 	}
 }
 
-// EnsureCodexInstructionsField 将缺失、null 或非字符串的 instructions 设为空字符串。
+// EnsureCodexInstructionsField replaces missing, null, or non-string instructions with an empty string.
 func EnsureCodexInstructionsField(reqBody map[string]any) {
 	if reqBody == nil {
 		return
@@ -88,7 +88,7 @@ func EnsureCodexInstructionsField(reqBody map[string]any) {
 	}
 }
 
-// ReplaceModelInBody 替换请求体的 model，空输入、同名模型或写入失败时返回输入字节。
+// ReplaceModelInBody updates model, returning the input for an empty body, matching model, or write failure.
 func ReplaceModelInBody(body []byte, newModel string) []byte {
 	if len(body) == 0 {
 		return body

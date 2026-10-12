@@ -15,7 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestDetachedUpstreamReceivesInternalAbort 覆盖图片和流式上游的取消隔离入口。
+// TestDetachedUpstreamReceivesInternalAbort checks that both detachment entry points
+// ignore client cancellation and still receive server aborts.
 func TestDetachedUpstreamReceivesInternalAbort(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		synctest.Test(t, func(t *testing.T) {
@@ -40,7 +41,8 @@ func TestDetachedUpstreamReceivesInternalAbort(t *testing.T) {
 	}
 }
 
-// TestOpenAIRequestContextLifetime 用本机 HTTP 传输检查构造、发送和读取期间的 context。
+// TestOpenAIRequestContextLifetime checks that sending leaves the context alive
+// for body reads and that a later server abort cancels it.
 func TestOpenAIRequestContextLifetime(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("response"))

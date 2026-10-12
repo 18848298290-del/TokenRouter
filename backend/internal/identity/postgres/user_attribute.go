@@ -9,12 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// UserAttributeDefinitionRepository implementation.
+// userAttributeDefinitionRepository persists attribute definitions through Ent.
 type userAttributeDefinitionRepository struct {
 	client *dbent.Client
 }
 
-// UserAttributeValueRepository implementation.
+// userAttributeValueRepository persists user attribute values through Ent.
 type userAttributeValueRepository struct {
 	client *dbent.Client
 }
@@ -218,7 +218,6 @@ func (r *userAttributeValueRepository) UpsertBatch(ctx context.Context, userID i
 	defer func() { _ = tx.Rollback() }()
 
 	for _, input := range inputs {
-		// Use upsert (ON CONFLICT DO UPDATE)
 		err := tx.UserAttributeValue.Create().
 			SetUserID(userID).
 			SetAttributeID(input.AttributeID).
@@ -253,7 +252,7 @@ func (r *userAttributeValueRepository) DeleteByUserID(ctx context.Context, userI
 	return err
 }
 
-// defEntityToService 将用户属性定义的数据库实体转换为领域值。
+// defEntityToService converts an attribute definition entity to a domain value.
 func defEntityToService(e *dbent.UserAttributeDefinition) *identity.UserAttributeDefinition {
 	if e == nil {
 		return nil
@@ -275,7 +274,7 @@ func defEntityToService(e *dbent.UserAttributeDefinition) *identity.UserAttribut
 	}
 }
 
-// toEntOptions 将用户属性选项转换为数据库存储使用的 map 列表。
+// toEntOptions converts options to storage maps and represents nil as an empty list.
 func toEntOptions(opts []identity.UserAttributeOption) []map[string]any {
 	if opts == nil {
 		return []map[string]any{}
@@ -347,7 +346,7 @@ func toServiceValidation(v map[string]any) identity.UserAttributeValidation {
 	return result
 }
 
-// getString 读取 map 中的字符串值，缺失或类型不符时返回空字符串。
+// getString returns an empty string for a missing or non-string map value.
 func getString(m map[string]any, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {

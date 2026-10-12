@@ -16,8 +16,8 @@ const (
 )
 
 // @project-doc docs/architecture/gateway_request_lifecycle.md#apikey_authentication
-// AccessSnapshot 明确区分凭据所有者、付款用户与行为成员；资金来源由 billing 另行解析。
-// key 是本次认证的独立副本，L1/L2 保存各自的快照。
+// AccessSnapshot separates credential ownership, payer, and actor. Billing resolves the funding source.
+// key belongs to this authentication attempt; L1 and L2 keep separate snapshots.
 type AccessSnapshot struct {
 	KeyID          int64
 	OwnerUserID    int64
@@ -28,7 +28,7 @@ type AccessSnapshot struct {
 	fastModePolicy string
 }
 
-// AuthenticationInput 提供 HTTP 层已经解析的地址与消费入口意图，不读取请求体。
+// AuthenticationInput carries the parsed client address and whether to enforce member spending limits.
 type AuthenticationInput struct {
 	ClientIP          string
 	CheckMemberLimits bool
@@ -36,17 +36,17 @@ type AuthenticationInput struct {
 
 type AuthenticationFailureKind string
 
-// AuthenticationFailure 只携带失败阶段，协议状态码和错误 envelope 由 HTTP 适配器决定。
+// AuthenticationFailure records the failure stage; HTTP adapters choose status codes and response bodies.
 type AuthenticationFailure struct {
 	Kind     AuthenticationFailureKind
 	Cause    error
 	ClientIP string
 }
 
-// ipAccessDenied 保留既有公开错误文本；HTTP 适配独立决定响应形状。
+// ipAccessDenied carries the public denial message for HTTP adapters to format.
 type ipAccessDenied string
 
-// KeyView 将认证快照转换为本次网关请求使用的 APIKey。
+// KeyView returns the key view owned by this authentication attempt.
 func (a *AccessSnapshot) KeyView() *APIKey {
 	if a == nil {
 		return nil
@@ -63,9 +63,9 @@ func (e *AuthenticationFailure) Error() string {
 
 func (e *AuthenticationFailure) Unwrap() error { return e.Cause }
 
-// Authenticate 保留 Key/团队/成员限额/IP/付款用户的既有检查顺序。
-// 认证失败时，返回的非空快照用于诊断。调用方根据错误判断认证结果。
-// Key 过期与额度耗尽仍由之后的资金准入处理，非消费入口可以读取已有数据。
+// Authenticate checks the key, team, member limits, IP rules, and payer in that order.
+// A non-nil snapshot on failure is diagnostic data; callers must check the error.
+// Funding admission checks expiration and quota later so non-consuming endpoints can read existing data.
 func (s *APIKeyService) Authenticate(ctx context.Context, credential string, input AuthenticationInput) (*AccessSnapshot, error) {
 	key, err := s.GetByKey(ctx, credential)
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *APIKeyService) Authenticate(ctx context.Context, credential string, inp
 	return s.authenticateKey(key, input)
 }
 
-// authenticateKey 统一校验已加载身份，供普通认证与长连接逐轮复核共用。
+// authenticateKey validates loaded identity data for initial authentication and later connection turns.
 func (s *APIKeyService) authenticateKey(key *APIKey, input AuthenticationInput) (*AccessSnapshot, error) {
 	if key == nil {
 		return nil, &AuthenticationFailure{Kind: AuthenticationLookup, Cause: ErrAPIKeyNotFound}

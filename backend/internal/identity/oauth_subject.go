@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// OAuthLinuxDoMaxSubjectLength 限制合成邮箱本地部分使用的主体长度。
+// OAuthLinuxDoMaxSubjectLength reserves room for the prefix in a synthetic email local part.
 const OAuthLinuxDoMaxSubjectLength = 64 - len("linuxdo-")
 
 func OAuthFirstNonEmpty(values ...string) string {

@@ -13,12 +13,12 @@ type BatchUpdateRedeemCodeFields = billingdto.BatchUpdateRedeemCodeFields
 
 type BatchUpdateRedeemCodesRequest = billingdto.BatchUpdateRedeemCodesRequest
 
-// RedeemCodeFromService 将兑换记录转换为用户响应。
+// RedeemCodeFromService converts a redemption record for user responses.
 func RedeemCodeFromService(rc *billing.RedeemCode) *RedeemCode {
 	return billingdto.RedeemCodeFromService(rc)
 }
 
-// RedeemCodeFromServiceAdmin 将兑换记录转换为管理员响应。
+// RedeemCodeFromServiceAdmin converts a redemption record for administrator responses.
 func RedeemCodeFromServiceAdmin(rc *billing.RedeemCode) *AdminRedeemCode {
 	return billingdto.RedeemCodeFromServiceAdmin(rc)
 }

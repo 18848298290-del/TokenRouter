@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// registryParticipant 为静态所有权测试提供最小、无存取副作用的参与者。
+// registryParticipant supplies an empty preparation function for ownership tests.
 func registryParticipant(module, field, key string) Participant {
 	return Participant{Module: module, Fields: []string{field}, Keys: []string{key}, Prepare: func(context.Context, Fields, map[string]string) (PreparedChange, error) { return PreparedChange{}, nil }}
 }
@@ -57,7 +57,7 @@ func TestRegistryPreparesInOrderWithoutSharingMutableInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 构造参数的后续变化不能改写已经冻结的声明。
+	// Mutating constructor inputs must not change the registered declarations.
 	first.Fields[0] = "secret"
 	first.Keys[0] = "unowned"
 	changes, err := registry.Prepare(context.Background(), input, current)

@@ -16,11 +16,9 @@ import (
 
 // PaymentOrder holds the schema definition for the PaymentOrder entity.
 //
-// 删除策略：硬删除
-// PaymentOrder 使用硬删除：
-//   - 订单通过 status 字段追踪完整生命周期，无需依赖软删除
-//   - 订单审计通过 PaymentAuditLog 表记录，删除前可归档
-//   - 减少查询复杂度，避免软删除过滤开销
+// Orders are hard-deleted.
+// status tracks the order lifecycle.
+// PaymentAuditLog stores order audit events; archive required history before deletion.
 type PaymentOrder struct {
 	ent.Schema
 }
@@ -33,7 +31,7 @@ func (PaymentOrder) Annotations() []schema.Annotation {
 
 func (PaymentOrder) Fields() []ent.Field {
 	return []ent.Field{
-		// 用户信息（冗余存储，避免关联查询）
+		// Snapshot user details to avoid joins when displaying orders.
 		field.Int64("user_id"),
 		field.String("user_email").
 			MaxLen(255),
@@ -44,7 +42,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// 金额信息
+		// Amounts and fees.
 		field.Float("amount").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}),
 		field.Float("pay_amount").
@@ -64,7 +62,7 @@ func (PaymentOrder) Fields() []ent.Field {
 		field.String("recharge_code").
 			MaxLen(64),
 
-		// 支付信息
+		// Payment transaction details.
 		field.String("out_trade_no").
 			MaxLen(64).
 			Default(""),
@@ -84,7 +82,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
-		// Stripe Invoice 账单信息；旧 PaymentIntent 订单这些字段为空，文档接口会回退到 receipt。
+		// Stripe invoice fields are empty on legacy PaymentIntent orders; the document API returns the receipt for those orders.
 		field.String("payment_customer_id").
 			Optional().
 			Nillable().
@@ -109,7 +107,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// 订单类型 & 订阅关联
+		// Order type, subscription plan, and payment provider snapshots.
 		field.String("order_type").
 			MaxLen(20).
 			Default("balance"),
@@ -131,12 +129,11 @@ func (PaymentOrder) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// 状态
 		field.String("status").
 			MaxLen(30).
 			Default("PENDING"),
 
-		// 退款信息
+		// Refund details.
 		field.Float("refund_amount").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}).
 			Default(0),
@@ -163,7 +160,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Nillable().
 			MaxLen(20),
 
-		// 时间节点
+		// Order lifecycle timestamps.
 		field.Time("expires_at").
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 		field.Time("paid_at").
@@ -183,7 +180,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// 来源信息
+		// Request origin.
 		field.String("client_ip").
 			MaxLen(50),
 		field.String("src_host").
@@ -193,7 +190,7 @@ func (PaymentOrder) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// 时间戳
+		// Creation and update timestamps.
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).

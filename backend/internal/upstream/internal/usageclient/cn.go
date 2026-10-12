@@ -33,8 +33,8 @@ func CnParseF64(raw any) (float64, bool) {
 	}
 }
 
-// CnNormalizeResetTime 把上游重置时间（ISO8601 字符串 / 秒级 / 毫秒级数字）归一化为
-// RFC3339 字符串；无法识别或非正时间戳返回空串。
+// CnNormalizeResetTime formats timestamp strings and numeric seconds or milliseconds
+// as UTC RFC3339. Unrecognized values and nonpositive numeric timestamps return empty.
 func CnNormalizeResetTime(raw any) string {
 	switch v := raw.(type) {
 	case string:
@@ -62,7 +62,8 @@ func CnNormalizeResetTime(raw any) string {
 	}
 }
 
-// CnMillisToRFC3339 把秒级（<1e12）或毫秒级时间戳转为 RFC3339 字符串；非正返回空串。
+// CnMillisToRFC3339 formats positive timestamps as UTC RFC3339; values below 1e12 are seconds,
+// others milliseconds.
 func CnMillisToRFC3339(n int64) string {
 	if n <= 0 {
 		return ""
@@ -117,8 +118,8 @@ func ValidateCNUsageStatus(status int) error {
 	}
 }
 
-// CnUsageEndpoint 从已通过策略校验的提供商 Base URL 派生固定路径。主机始终来自提供商配置，
-// 不从响应或任意用户输入推断，也不会把凭据发往其它主机。
+// CnUsageEndpoint appends an adapter-defined path to a policy-validated base URL.
+// The target host comes from provider configuration, so response data cannot redirect credentials.
 func CnUsageEndpoint(base, path string, preserveCodingPrefix bool) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(base))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

@@ -1,7 +1,7 @@
 package bridge
 
-// 本文件覆盖 chatcompletions_anthropic_bridge.go、chatcompletions_responses_bridge.go、
-// responses_to_anthropic.go 和 responses_to_chatcompletions.go 的推理内容、用量和工具流转换。
+// These scenarios cover reasoning, usage, and tool streams across chatcompletions_anthropic_bridge.go,
+// chatcompletions_responses_bridge.go, responses_to_anthropic.go, and responses_to_chatcompletions.go.
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestChatReasoningAliasNonStreaming 验证非流响应的 reasoning 别名进入两种桥接协议。
+// TestChatReasoningAliasNonStreaming checks the reasoning alias in both response bridges.
 func TestChatReasoningAliasNonStreaming(t *testing.T) {
 	var response ChatCompletionsResponse
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -30,7 +30,7 @@ func TestChatReasoningAliasNonStreaming(t *testing.T) {
 	require.Equal(t, "fallback reasoning", responses.Output[0].Summary[0].Text)
 }
 
-// TestChatReasoningAliasStreaming 验证流式别名和正式字段的优先级。
+// TestChatReasoningAliasStreaming checks precedence between the reasoning field and alias.
 func TestChatReasoningAliasStreaming(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -101,14 +101,14 @@ func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 	require.Equal(t, 200, roundTrip.InputTokensDetails.CacheWriteTokens)
 }
 
-// TestStreamingParallelToolUseNoGhostDelta 检查 Chat Completions 经 Responses 转为 Anthropic 的并行工具流。
-// function_call_arguments.done 中的完整参数需要发到已启动的工具块索引，否则 Claude Code 会报告“Content block not found”。
+// TestStreamingParallelToolUseNoGhostDelta covers Chat-to-Responses-to-Anthropic tool streams.
+// Completed arguments must target an opened block or Claude Code reports "Content block not found".
 func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 	ccState := NewChatCompletionsToResponsesStreamState(testRuntime(), "glm-5.2")
 	anthropicState := NewResponsesEventToAnthropicState(testRuntime())
 	anthropicState.Model = "glm-5.2"
 
-	// 第一个 chunk 携带首个 tool_call 的 ID、名称和打包参数。
+	// The first chunk carries the first call's ID, name, and arguments.
 	chatChunk1 := &ChatCompletionsChunk{
 		ID:    "chatcmpl-1",
 		Model: "glm-5.2",
@@ -128,7 +128,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}},
 	}
 
-	// 第二个 chunk 携带第二个 tool_call 的 ID、名称和打包参数。
+	// The second chunk carries the second call's ID, name, and arguments.
 	chatChunk2 := &ChatCompletionsChunk{
 		ID:    "chatcmpl-1",
 		Model: "glm-5.2",
@@ -148,7 +148,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}},
 	}
 
-	// 第三个 chunk 结束工具调用。
+	// The third chunk finishes tool calls.
 	chatChunk3 := &ChatCompletionsChunk{
 		ID:    "chatcmpl-1",
 		Model: "glm-5.2",
@@ -159,7 +159,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}},
 	}
 
-	// 先将 chunk 送入 CC→Responses 桥接，再转换为 Anthropic 事件。
+	// Convert Chat chunks to Responses events, then to Anthropic events.
 	var allAnthropicEvents []AnthropicStreamEvent
 	for _, chunk := range []*ChatCompletionsChunk{chatChunk1, chatChunk2, chatChunk3} {
 		responsesEvents := ChatCompletionsChunkToResponsesEvents(testRuntime(), chunk, ccState)
@@ -168,21 +168,21 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}
 	}
 
-	// 收尾时 closeChatToolItems 为每个工具发出 function_call_arguments.done。
+	// Finalization emits function_call_arguments.done for each tool.
 	finalResponsesEvents := FinalizeChatCompletionsResponsesStream(testRuntime(), ccState)
 	for _, rEvent := range finalResponsesEvents {
 		allAnthropicEvents = append(allAnthropicEvents, ResponsesEventToAnthropicEvents(&rEvent, anthropicState)...)
 	}
 
-	// 收集已收到 content_block_start 的 block 索引。
-	startedBlocks := make(map[int]string) // 索引到 block 类型的映射。
+	// Record blocks announced by content_block_start.
+	startedBlocks := make(map[int]string) // block index to type
 	for _, e := range allAnthropicEvents {
 		if e.Type == "content_block_start" && e.ContentBlock != nil {
 			startedBlocks[*e.Index] = e.ContentBlock.Type
 		}
 	}
 
-	// 每个 content_block_delta 指向已启动的 block。
+	// Every delta must target an opened block.
 	for _, e := range allAnthropicEvents {
 		if e.Type != "content_block_delta" || e.Index == nil {
 			continue
@@ -193,7 +193,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 			"content_block_delta on index %d which was never content_block_start'ed (ghost delta bug #4193)", idx)
 	}
 
-	// 每个 content_block_stop 指向已启动的 block。
+	// Every stop must target an opened block.
 	for _, e := range allAnthropicEvents {
 		if e.Type != "content_block_stop" || e.Index == nil {
 			continue
@@ -204,7 +204,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 			"content_block_stop on index %d which was never content_block_start'ed", idx)
 	}
 
-	// 两个 tool_use block 都应已启动。
+	// Both parallel tool_use blocks must be opened.
 	var toolUseBlocks []int
 	for idx, blockType := range startedBlocks {
 		if blockType == "tool_use" {
@@ -213,7 +213,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 	}
 	assert.Len(t, toolUseBlocks, 2, "both parallel tool_use blocks should be opened")
 
-	// 收尾原因应为 tool_use。
+	// The final stop reason must indicate tool use.
 	var sawMessageDelta bool
 	for _, e := range allAnthropicEvents {
 		if e.Type == "message_delta" {

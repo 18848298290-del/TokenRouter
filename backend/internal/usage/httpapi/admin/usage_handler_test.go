@@ -49,7 +49,7 @@ type adminUsageTimingOpsRepo struct {
 	timings map[string]*ops.OpsRequestTiming
 }
 
-// searchUsersAdminStub 记录查询参数，并返回包含已删除用户的结果。
+// searchUsersAdminStub captures query filters and includes deleted users in its results.
 type searchUsersAdminStub struct {
 	gotFilters ports.UserListFilters
 }
@@ -573,7 +573,7 @@ func TestAdminUsageListUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	require.Equal(t, usage.ModelSourceRequested, repo.listFilters.ModelFilterSource)
 }
 
-// TestAdminUsageListTeamFilter 检查团队筛选参数传入列表仓储。
+// TestAdminUsageListTeamFilter checks that team scope reaches the list repository.
 func TestAdminUsageListTeamFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -620,7 +620,7 @@ func TestAdminUsageListExactTotalTrue(t *testing.T) {
 	require.True(t, repo.listFilters.ExactTotal)
 }
 
-// TestAdminUsageListRequestIDFilter 验证 request_id 会裁剪空白并传入列表仓储。
+// TestAdminUsageListRequestIDFilter checks whitespace trimming and request-ID forwarding.
 func TestAdminUsageListRequestIDFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -671,7 +671,7 @@ func TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	require.Equal(t, usage.ModelSourceRequested, repo.statsFilters.ModelFilterSource)
 }
 
-// TestAdminUsageStatsTeamFilter 检查汇总统计与列表使用同一团队筛选条件。
+// TestAdminUsageStatsTeamFilter checks that summary statistics receive the team filter.
 func TestAdminUsageStatsTeamFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -706,7 +706,7 @@ func TestAdminUsageStatsInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// TestAdminUsageEndpointSource 检查默认返回全部端点图，未知来源返回参数错误。
+// TestAdminUsageEndpointSource checks the all-chart default and rejection of unknown sources.
 func TestAdminUsageEndpointSource(t *testing.T) {
 	for _, source := range []string{"", "all", "inbound", "upstream", "path", "invalid"} {
 		repo := &adminUsageRepoCapture{}

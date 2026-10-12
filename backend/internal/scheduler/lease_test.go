@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLeaseConcurrentReleaseOwnership 检查取消与请求完成竞争时资源归还一次，后取得的提供商资源先于用户资源释放。
+// TestLeaseConcurrentReleaseOwnership checks single cleanup and reverse resource order when cancellation races with completion.
 func TestLeaseConcurrentReleaseOwnership(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var order []string
@@ -25,7 +25,7 @@ func TestLeaseConcurrentReleaseOwnership(t *testing.T) {
 	require.Equal(t, []string{"provider", "user"}, order)
 }
 
-// TestLeaseCompletionIgnoresClientCancellation 检查 Qoder 完成释放模式在客户端取消后持有容量，直到上游结束。
+// TestLeaseCompletionIgnoresClientCancellation checks that completion mode holds capacity until upstream completion after client cancellation.
 func TestLeaseCompletionIgnoresClientCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var count atomic.Int64
@@ -37,7 +37,7 @@ func TestLeaseCompletionIgnoresClientCancellation(t *testing.T) {
 	require.EqualValues(t, 1, count.Load())
 }
 
-// TestLeaseRejectsLateResource 检查请求结束后收到的资源被立即释放。
+// TestLeaseRejectsLateResource checks immediate release of resources received after closure.
 func TestLeaseRejectsLateResource(t *testing.T) {
 	l := NewLease(context.Background(), ReleaseOnCompletion)
 	l.Release()
@@ -46,7 +46,7 @@ func TestLeaseRejectsLateResource(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-// TestAttemptLeaseRetainsCompletionOutcome 验证本次成功会话保留与另一未完成尝试的失败清理互不覆盖。
+// TestAttemptLeaseRetainsCompletionOutcome checks independent outcomes for successful and unfinished attempts.
 func TestAttemptLeaseRetainsCompletionOutcome(t *testing.T) {
 	parent := NewLease(context.Background(), ReleaseOnCompletion)
 	var outcomes []bool
@@ -60,7 +60,7 @@ func TestAttemptLeaseRetainsCompletionOutcome(t *testing.T) {
 	require.Equal(t, 2, released)
 }
 
-// TestWrapReleaseOnDone_NoGoroutineLeak 检查释放后的 goroutine 数量。
+// TestWrapReleaseOnDone_NoGoroutineLeak checks goroutine counts after release.
 func TestWrapReleaseOnDone_NoGoroutineLeak(t *testing.T) {
 	runtime.GC()
 	time.Sleep(100 * time.Millisecond)
@@ -76,18 +76,18 @@ func TestWrapReleaseOnDone_NoGoroutineLeak(t *testing.T) {
 
 	release()
 
-	// 给取消回调中的 goroutine 留出退出时间。
+	// Allow cancellation callbacks to exit.
 	time.Sleep(200 * time.Millisecond)
 
 	if count := atomic.LoadInt32(&releaseCount); count != 1 {
 		t.Errorf("expected release count to be 1, got %d", count)
 	}
 
-	// 强制 GC，清理已退出的 goroutine
+	// Run GC before sampling the final goroutine count.
 	runtime.GC()
 	time.Sleep(100 * time.Millisecond)
 
-	// 验证 goroutine 数量没有增加（允许±2 的误差，考虑到测试框架本身可能创建的 goroutine）
+	// Allow two goroutines of variation from the test harness.
 	finalGoroutines := runtime.NumGoroutine()
 	if finalGoroutines > initialGoroutines+2 {
 		t.Errorf("goroutine leak detected: initial=%d, final=%d, leaked=%d",
@@ -95,7 +95,7 @@ func TestWrapReleaseOnDone_NoGoroutineLeak(t *testing.T) {
 	}
 }
 
-// TestWrapReleaseOnDone_ContextCancellation 检查 context 取消时释放资源。
+// TestWrapReleaseOnDone_ContextCancellation checks release on context cancellation.
 func TestWrapReleaseOnDone_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -104,7 +104,7 @@ func TestWrapReleaseOnDone_ContextCancellation(t *testing.T) {
 		atomic.AddInt32(&releaseCount, 1)
 	})
 
-	// 取消 context，应该触发释放
+	// Cancellation triggers release.
 	cancel()
 
 	time.Sleep(100 * time.Millisecond)
@@ -129,7 +129,7 @@ func TestWrapReleaseOnDone_AlreadyCancelledReleasesExactlyOnce(t *testing.T) {
 	}, time.Second, time.Millisecond)
 }
 
-// TestWrapReleaseOnDone_MultipleCallsOnlyReleaseOnce 验证多次调用 release 只释放一次。
+// TestWrapReleaseOnDone_MultipleCallsOnlyReleaseOnce checks idempotent release.
 func TestWrapReleaseOnDone_MultipleCallsOnlyReleaseOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -150,7 +150,7 @@ func TestWrapReleaseOnDone_MultipleCallsOnlyReleaseOnce(t *testing.T) {
 	}
 }
 
-// TestWrapReleaseOnDone_NilReleaseFunc 检查 nil 释放函数的返回值。
+// TestWrapReleaseOnDone_NilReleaseFunc checks the nil callback result.
 func TestWrapReleaseOnDone_NilReleaseFunc(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -162,7 +162,7 @@ func TestWrapReleaseOnDone_NilReleaseFunc(t *testing.T) {
 	}
 }
 
-// TestWrapReleaseOnDone_ConcurrentCalls 检查并发调用只释放一次。
+// TestWrapReleaseOnDone_ConcurrentCalls checks single cleanup across concurrent callers.
 func TestWrapReleaseOnDone_ConcurrentCalls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -184,7 +184,7 @@ func TestWrapReleaseOnDone_ConcurrentCalls(t *testing.T) {
 	}
 }
 
-// BenchmarkWrapReleaseOnDone 测量租约释放包装函数的开销。
+// BenchmarkWrapReleaseOnDone measures lease wrapper overhead.
 func BenchmarkWrapReleaseOnDone(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

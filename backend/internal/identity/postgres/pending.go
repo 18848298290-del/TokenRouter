@@ -66,6 +66,7 @@ func newAuthPendingIdentityScopedKeyLockRegistry() *authPendingIdentityScopedKey
 	}
 }
 
+// lock acquires keys in sorted order and returns a release function that callers must invoke.
 func (r *authPendingIdentityScopedKeyLockRegistry) lock(keys ...string) func() {
 	normalized := IdentityNormalizeLockKeys(keys...)
 	if len(normalized) == 0 {
@@ -304,6 +305,7 @@ func (s *AuthPendingIdentityService) consumeSession(
 		return nil, err
 	}
 
+	// Recheck consumption and expiry in the write so a stale read cannot consume the session twice.
 	sanitizedLocalFlowState := sanitizePendingAuthLocalFlowState(session.LocalFlowState)
 	now := s.readTime().UTC()
 	update := s.entClient.PendingAuthSession.UpdateOneID(session.ID).

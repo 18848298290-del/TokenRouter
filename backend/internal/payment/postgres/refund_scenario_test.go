@@ -1,6 +1,6 @@
 package postgres_test
 
-// 本场景覆盖 payment/refund_prepare.go、payment/refund_workflow.go、payment/refund_helpers.go、payment/amount_rules.go、payment/provider_bindings.go，以及本包 refund.go、instances.go、management.go 的退款存取。
+// These scenarios cover refund preparation, workflow, helpers, amount rules, and provider bindings, with persistence through refund.go, instances.go, and management.go.
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
-// refundBalanceFixture 为退款测试提供余额扣除和补偿函数，订单与事务由 RefundStore 处理。
+// refundBalanceFixture supplies deduction and compensation callbacks; RefundStore owns orders and transactions.
 type refundBalanceFixture struct {
 	payment.RefundRights
 	user                  *payment.RefundUser
@@ -652,7 +652,7 @@ func newRefundWorkflowFixture(client *dbent.Client, balances *refundBalanceFixtu
 	})
 }
 
-// preparedReceiptForTest 通过 RefundRecovery 读取已提交的退款准备记录。
+// preparedReceiptForTest reads committed preparation through RefundRecovery.
 func preparedReceiptForTest(t *testing.T, ctx context.Context, client *dbent.Client, id int64) *payment.RefundReceipt {
 	t.Helper()
 	store := paymentpostgres.NewRefundStore(client, nil)
@@ -753,7 +753,7 @@ func (p *refundQueryProviderTestDouble) QueryRefund(context.Context, payment.Ref
 	return p.refundResponse, nil
 }
 
-// recordPreparedRefundForTest 提交退款准备记录，供退款完成和补偿测试使用。
+// recordPreparedRefundForTest commits preparation for refund completion and compensation tests.
 func recordPreparedRefundForTest(t *testing.T, ctx context.Context, client *dbent.Client, p *payment.RefundPlan) {
 	t.Helper()
 	_, err := client.PaymentOrder.UpdateOneID(p.OrderID).SetRefundAmount(p.RefundAmount).SetRefundReason(p.Reason).SetForceRefund(p.Force).Save(ctx)

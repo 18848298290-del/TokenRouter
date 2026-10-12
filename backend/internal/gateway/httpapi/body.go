@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ReadLenientJSONRequestBodyWithPrealloc 读取请求体，并在严格 JSON
-// 校验前转义字符串中的原始控制字节。
+// ReadLenientJSONRequestBodyWithPrealloc reads the body and escapes raw control bytes
+// inside JSON strings before strict JSON validation.
 func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedBytes int64) ([]byte, error) {
 	body, err := ReadRequestBodyWithPrealloc(req)
 	if err != nil {
@@ -18,7 +18,7 @@ func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedByte
 	return NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
 }
 
-// NormalizeLenientJSONRequestBody 保留既有 HTTP 错误类型及其 Limit 字段。
+// NormalizeLenientJSONRequestBody converts size-limit failures to http.MaxBytesError with the same limit.
 func NormalizeLenientJSONRequestBody(body []byte, limit int64) ([]byte, error) {
 	result, err := openai.NormalizeLenientJSONRequestBody(body, limit)
 	if exceeded, ok := errors.AsType[*openai.BodyLimitError](err); ok {
@@ -27,7 +27,7 @@ func NormalizeLenientJSONRequestBody(body []byte, limit int64) ([]byte, error) {
 	return result, err
 }
 
-// ReadRequestBodyWithPrealloc 委托 httpx 读取和解压请求体。
+// ReadRequestBodyWithPrealloc delegates body reading and decompression to httpx.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	return httpx.ReadRequestBodyWithPrealloc(req)
 }

@@ -63,8 +63,8 @@ func WSEventShouldParseUsage(eventType string) bool {
 	return strings.HasPrefix(eventType, "response.") && !strings.HasSuffix(eventType, ".delta")
 }
 
-// WSMessageShouldParseUsage 只在事件声明可能携带 usage 且消息确实含有
-// usage 字段时进入 JSON 用量解析，减少高频 delta 事件的热路径开销。
+// WSMessageShouldParseUsage gates JSON parsing on a supported event type and a literal
+// "usage" marker in the message, skipping frequent delta events.
 func WSMessageShouldParseUsage(eventType string, message []byte) bool {
 	if !bytes.Contains(message, []byte(`"usage"`)) {
 		return false
@@ -157,7 +157,7 @@ func WSPayloadBoolFromRaw(payload []byte, key string, defaultValue bool) bool {
 	return value.Bool()
 }
 
-// IsWSTerminalEvent 只判断 response 终态；独立 error 事件由调用方单独处理。
+// IsWSTerminalEvent recognizes response terminal events; callers handle standalone error events separately.
 func IsWSTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":

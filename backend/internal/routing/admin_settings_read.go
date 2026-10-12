@@ -4,7 +4,7 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminReadSettings 包含模型回退和市场可用性展示设置。
+// AdminReadSettings contains model fallback and marketplace availability display settings.
 type AdminReadSettings struct {
 	EnableModelFallback                  bool
 	FallbackModelAnthropic               string
@@ -15,7 +15,7 @@ type AdminReadSettings struct {
 	MarketplaceAvailabilityWindowDays    int
 }
 
-// ReadAdminSettings 从传入的设置值解析模型回退和市场可用性展示设置。
+// ReadAdminSettings parses stored model fallback and marketplace availability values.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 

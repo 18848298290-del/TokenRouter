@@ -36,7 +36,7 @@ type AuthSourceDefaultSettings struct {
 
 type DefaultSubscriptionSetting = billing.DefaultSubscriptionSetting
 
-// AuthOptions 包含启动时的认证参数。
+// AuthOptions contains startup authentication options.
 type AuthOptions struct {
 	Default struct {
 		UserBalance     float64
@@ -57,7 +57,7 @@ type (
 	UserSubscription        = billing.UserSubscription
 )
 
-// AuthIdentity 是提供方持久主体的只读值。
+// AuthIdentity is a stored provider identity exposed as a read-only value.
 type AuthIdentity struct {
 	ID              int64          `json:"id,omitempty"`
 	CreatedAt       time.Time      `json:"created_at,omitempty"`
@@ -71,7 +71,7 @@ type AuthIdentity struct {
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
-// AuthSettings 按动作取得动态策略，不能缓存为启动时副本。
+// AuthSettings reads current policy for each action. Callers must not cache a startup snapshot.
 type AuthSettings interface {
 	GetCaptchaProviderConfig(ctx context.Context) (CaptchaProviderConfig, error)
 	GetDefaultBalance(ctx context.Context) float64
@@ -114,7 +114,7 @@ type AuthAffiliate interface {
 	BindInviterByCode(context.Context, int64, string) error
 }
 
-// AuthDependencies 由 app 一次装配，端口共享原有存储与缓存实例。
+// AuthDependencies contains the shared stores, caches, and services wired by app.
 type AuthDependencies struct {
 	Users                   UserRepository
 	Redeem                  RedeemCodeRepository
@@ -139,7 +139,7 @@ type AuthDependencies struct {
 	AliasOwner              EmailAliasOwnerLookupRepository
 }
 
-// AuthService 拥有注册、登录与绑定规则，闭合 SQL 操作通过 Storage 执行。
+// AuthService implements registration, login, and binding rules; Storage executes database operations.
 // @project-doc docs/domains/identity_and_tenancy.md#authentication_boundaries
 type AuthService struct {
 	*AuthDependencies
@@ -147,14 +147,14 @@ type AuthService struct {
 	Storage AuthStorage
 }
 
-// EmailAliasLookupRepository 是邮箱别名查重的可选仓储能力。
-// 保持 UserRepository 主接口不变，以兼容仅用于其他服务的测试桩。
+// EmailAliasLookupRepository optionally checks mailbox-alias occupancy.
+// Repositories used by other services may omit this capability.
 type EmailAliasLookupRepository interface {
 	ExistsByEmailAlias(ctx context.Context, email string) (bool, error)
 }
 
-// EmailAliasOwnerLookupRepository 能在查重时区分当前用户和其他用户。
-// 该能力由真实数据库仓储提供，避免用户把自己的 alias 变体误判为冲突。
+// EmailAliasOwnerLookupRepository distinguishes aliases owned by the current user from other users.
+// Owner-aware checks permit users to select another alias of their own mailbox.
 type EmailAliasOwnerLookupRepository interface {
 	EmailAliasOwnerID(ctx context.Context, email string, currentUserID int64) (int64, bool, error)
 }

@@ -12,12 +12,12 @@ type APIKey[G any] struct {
 	UserID            int64  `json:"user_id"`
 	TeamID            *int64 `json:"team_id"`
 	Scope             string `json:"scope"`
-	TeamOwnerDisabled bool   `json:"team_owner_disabled"` // 告知成员该团队 Key 只能由 Owner 恢复。
+	TeamOwnerDisabled bool   `json:"team_owner_disabled"` // The owner must clear this lock before a member can reactivate the key.
 	Key               string `json:"key"`
 	Name              string `json:"name"`
 	GroupID           *int64 `json:"group_id"`
 	IsComposite       bool   `json:"is_composite"`
-	// CompositeGroups 按用户设置顺序返回复合 Key 的分组映射。
+	// CompositeGroups returns group mappings in user-configured order.
 	CompositeGroups         []APIKeyCompositeGroup[G] `json:"composite_groups"`
 	Status                  string                    `json:"status"`
 	FastModePolicy          string                    `json:"fast_mode_policy"`
@@ -27,19 +27,19 @@ type APIKey[G any] struct {
 	IPWhitelist             []string                  `json:"ip_whitelist"`
 	IPBlacklist             []string                  `json:"ip_blacklist"`
 	LastUsedAt              *time.Time                `json:"last_used_at"`
-	LastUsedIP              *string                   `json:"last_used_ip"` // 最近一条带 IP 的用量日志。
+	LastUsedIP              *string                   `json:"last_used_ip"` // From the latest usage log that includes an IP address.
 	Quota                   float64                   `json:"quota"`        // Quota limit in USD (0 = unlimited)
 	QuotaUsed               float64                   `json:"quota_used"`   // Used quota amount in USD
 	ExpiresAt               *time.Time                `json:"expires_at"`   // Expiration time (nil = never expires)
 	CreatedAt               time.Time                 `json:"created_at"`
 	UpdatedAt               time.Time                 `json:"updated_at"`
-	// 绑定分组不可用时是否允许使用其明确配置的回退分组。
+	// Permits an unavailable group to use its configured fallback group.
 	FallbackWhenGroupUnavailable bool `json:"fallback_when_group_unavailable"`
-	// CurrentConcurrency 表示当前 API Key 的实时活跃请求数。
+	// CurrentConcurrency is the number of active requests for this key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
 	// Rate limit fields
-	// ConcurrencyLimit 和 RPMLimit 为 0 时不限制请求。
+	// ConcurrencyLimit and RPMLimit use zero for unlimited requests.
 	ConcurrencyLimit int        `json:"concurrency_limit"`
 	RPMLimit         int        `json:"rpm_limit"`
 	RateLimit5h      float64    `json:"rate_limit_5h"`
@@ -55,11 +55,11 @@ type APIKey[G any] struct {
 	Reset1dAt        *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt        *time.Time `json:"reset_7d_at,omitempty"`
 
-	// API Key 响应不能携带用户对象，避免团队 Key 暴露付款 Owner 的资产信息。
+	// Omit user objects from key responses so team keys cannot expose the payer's assets.
 	Group *G `json:"group,omitempty"`
 }
 
-// APIKeyCompositeGroup 是复合 API Key 的公开映射结构。
+// APIKeyCompositeGroup is the public group mapping for a composite key.
 type APIKeyCompositeGroup[G any] struct {
 	GroupID int64  `json:"group_id"`
 	Prefix  string `json:"prefix"`

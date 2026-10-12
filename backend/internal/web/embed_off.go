@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PublicSettingsProvider is an interface to fetch public settings
-// This stub is needed for compilation when frontend is not embedded.
+// PublicSettingsProvider fetches settings for HTML injection in embedded builds.
+// The interface remains available in non-embed builds.
 type PublicSettingsProvider interface {
 	GetPublicSettingsForInjection(ctx context.Context) (any, error)
 }

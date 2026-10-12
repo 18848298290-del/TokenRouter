@@ -9,36 +9,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// UserListFilters 包含用户列表的所有筛选项。
+// UserListFilters contains user search and relation-loading options.
 type UserListFilters struct {
-	Status    string // 用户状态筛选
-	Role      string // 用户角色筛选
-	Search    string // 按邮箱、用户名搜索
-	GroupName string // 按用户授权分组名称模糊筛选
-	// APIKeyGroupID 筛选至少拥有一个未软删除且绑定到该分组的 API Key 的用户。
-	// 0 表示不筛选；该条件直接匹配 api_keys.group_id，不依赖 allowed_groups。
+	Status    string // Account status
+	Role      string // Account role
+	Search    string // Search text for email, username, notes, or API Key
+	GroupName string // Partial match on an authorized group name
+	// APIKeyGroupID selects users with an undeleted API Key bound to this group.
+	// Zero disables the filter. It matches api_keys.group_id independently of allowed_groups.
 	APIKeyGroupID int64
-	Attributes    map[int64]string // 自定义属性筛选：attributeID -> value
+	Attributes    map[int64]string // Custom attribute ID to filter value
 	// IncludeSubscriptions controls whether ListWithFilters should load active subscriptions.
 	// For large datasets this can be expensive; admin list pages should enable it on demand.
 	// nil means not specified (default: load subscriptions for backward compatibility).
 	IncludeSubscriptions *bool
-	// IncludeDeleted 为 true 时绕过软删除过滤，返回含已删除（deleted_at 非空）的用户。
-	// 仅供 /admin/usage 的 SearchUsers 端点使用，其他列表调用方不要设置。
+	// IncludeDeleted includes users whose deleted_at is set.
+	// Use it for the admin usage SearchUsers endpoint; other lists should exclude deleted users.
 	IncludeDeleted bool
 }
 
-// UserUpdateFields 声明 UserRepository.Update 允许写回的列。
+// UserUpdateFields selects the columns and relations UserRepository.Update may write.
 //
-// 未声明的列保持数据库当前值，不会被调用方手里的快照覆盖。用户行上有多条
-// 不经过 Update 的原子写入路径（DeductBalance/UpdateBalance 扣加余额、
-// UpdateConcurrency、BatchUpdateLimits、UpdateUserLastActiveAt 等），
-// status/role 也可能被其他流程并发改写。若 Update 无条件整行回写，
-// 一次"读-改-写"就会静默回滚这些并发结果（lost update），
-// 因此每个调用方必须显式声明它真正要改的列。
+// Callers must select each field they intend to change. Unselected fields retain their
+// database values, protecting concurrent balance, activity, limit, role, and status updates
+// from a stale read-modify-write snapshot.
 //
-// 注意这里没有 balance / total_recharged：余额只能经由 AdjustBalance、
-// SetBalance、UpdateBalance、DeductBalance 等原子接口修改，Update 永远不碰它们。
+// Balance and total_recharged are excluded. Use atomic balance operations such as
+// AdjustBalance, SetBalance, UpdateBalance, or DeductBalance to change funds.
 type UserUpdateFields struct {
 	PreferredLocale bool
 	Email           bool
@@ -49,35 +46,35 @@ type UserUpdateFields struct {
 	Status          bool
 	Concurrency     bool
 	RPMLimit        bool
-	// APIKeyLimit 是 fork 的用户级 API Key 数量上限。
+	// APIKeyLimit selects the per-user API Key count limit.
 	APIKeyLimit  bool
 	SignupSource bool
 	LastLoginAt  bool
 	LastActiveAt bool
-	// BalanceNotifySettings 覆盖 balance_notify_enabled / _threshold_type / _threshold。
+	// BalanceNotifySettings selects the enabled flag, threshold type, and threshold.
 	BalanceNotifySettings bool
-	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
+	// BalanceNotifyExtraEmails is separate so threshold updates cannot overwrite email-list updates.
 	BalanceNotifyExtraEmails bool
-	// AllowedGroups 为 true 时才同步 user_allowed_groups 关联表。
+	// AllowedGroups selects synchronization of user_allowed_groups.
 	AllowedGroups bool
-	// DisabledPublicGroups 为 true 时才同步 fork 的公共分组禁用关联表。
+	// DisabledPublicGroups selects synchronization of disabled public group relations.
 	DisabledPublicGroups bool
 }
 
-// BalanceChange 保留旧资金结果类型名。
+// BalanceChange is the billing result type exposed to identity callers.
 type BalanceChange = billing.BalanceChange
 
 type UserRepository interface {
 	Create(ctx context.Context, user *User) error
 	CreateWithNormalizedEmailGuard(ctx context.Context, user *User, normalizedEmail string) error
 	GetByID(ctx context.Context, id int64) (*User, error)
-	// GetByIDIncludeDeleted 绕过软删除过滤按 ID 取用户（含已删）。仅供管理员审计/usage 点击使用。
+	// GetByIDIncludeDeleted includes soft-deleted users for administrative audit and usage views.
 	GetByIDIncludeDeleted(ctx context.Context, id int64) (*User, error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetFirstAdmin(ctx context.Context) (*User, error)
-	// Update 只写 fields 中显式声明的列，其余列保持库中当前值。
+	// Update writes selected fields and retains database values for all other fields.
 	Update(ctx context.Context, user *User, fields UserUpdateFields) error
-	// UpdateWithNormalizedEmailGuard 在相同字段掩码基础上增加 fork 的注册邮箱归一化互斥保护。
+	// UpdateWithNormalizedEmailGuard applies the field mask while locking the normalized registration email.
 	UpdateWithNormalizedEmailGuard(ctx context.Context, user *User, normalizedEmail string, fields UserUpdateFields) error
 	Delete(ctx context.Context, id int64) error
 	GetUserAvatar(ctx context.Context, userID int64) (*UserAvatar, error)
@@ -93,38 +90,38 @@ type UserRepository interface {
 	AddBalance(ctx context.Context, id int64, amount float64) error
 	UpdateBalance(ctx context.Context, id int64, amount float64) error
 	DeductBalance(ctx context.Context, id int64, amount float64) (float64, error)
-	// AdjustBalance 原子地把 delta 累加到余额上，并返回变更前后的值。结果为负时
-	// 拒绝写入并返回 ErrBalanceNegative。管理员加扣款需要调用本方法。
-	// 先读余额再整行写回会用旧快照覆盖并发扣款。
+	// AdjustBalance atomically adds delta and returns the before and after balances.
+	// A negative result returns ErrBalanceNegative. Use this for administrative adjustments
+	// so concurrent deductions cannot be overwritten by a stale balance snapshot.
 	AdjustBalance(ctx context.Context, id int64, delta float64) (BalanceChange, error)
-	// SetBalance 原子地把余额置为 value（value 必须 >= 0），返回变更前后的值。
+	// SetBalance atomically sets a nonnegative value and returns the before and after balances.
 	SetBalance(ctx context.Context, id int64, value float64) (BalanceChange, error)
 	UpdateConcurrency(ctx context.Context, id int64, amount int) error
-	// BatchSetConcurrency 批量设置用户并发数，负数会按 0 处理。
+	// BatchSetConcurrency sets each user limit, treating a negative value as zero.
 	BatchSetConcurrency(ctx context.Context, userIDs []int64, value int) (int, error)
-	// BatchAddConcurrency 批量增减用户并发数，结果不会低于 0。
+	// BatchAddConcurrency adds delta to each limit, clamping the result to zero.
 	BatchAddConcurrency(ctx context.Context, userIDs []int64, delta int) (int, error)
-	// BatchUpdateLimits 在一次写入中只覆盖非 nil 的用户限制字段。
+	// BatchUpdateLimits writes the non-nil limit fields in one update.
 	BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error)
 	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	ExistsByNormalizedEmail(ctx context.Context, normalizedEmail string) (bool, error)
 	LockRegistrationEmail(ctx context.Context, normalizedEmail string) error
 	RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error)
-	// AddGroupToAllowedGroups 将指定分组增量添加到用户的 allowed_groups（幂等，冲突忽略）
+	// AddGroupToAllowedGroups grants a group idempotently, ignoring duplicate relations.
 	AddGroupToAllowedGroups(ctx context.Context, userID int64, groupID int64) error
-	// RemoveGroupFromUserAllowedGroups 移除单个用户的指定分组权限
+	// RemoveGroupFromUserAllowedGroups removes one user's access to the group.
 	RemoveGroupFromUserAllowedGroups(ctx context.Context, userID int64, groupID int64) error
 	ListUserAuthIdentities(ctx context.Context, userID int64) ([]UserAuthIdentityRecord, error)
 	UnbindUserAuthProvider(ctx context.Context, userID int64, provider string) error
 
-	// TOTP 双因素认证
+	// TOTP two-factor authentication.
 	UpdateTotpSecret(ctx context.Context, userID int64, encryptedSecret *string) error
 	EnableTotp(ctx context.Context, userID int64) error
 	DisableTotp(ctx context.Context, userID int64) error
 }
 
-// RegistrationEmailDomainRepository 为非白名单域名单账户策略提供原子仓储能力。
-// 独立成窄接口，避免注册专用方法扩散到所有 UserRepository 测试桩和消费者。
+// RegistrationEmailDomainRepository provides atomic registration under the domain quota.
+// Registration-specific callers use this interface separately from UserRepository.
 type RegistrationEmailDomainRepository interface {
 	CountUsersByEmailDomain(ctx context.Context, domain string) (int, error)
 	CreateWithRegistrationEmailGuards(ctx context.Context, user *User, normalizedEmail, domain string) error
@@ -177,7 +174,7 @@ type StartUserIdentityBindingResult struct {
 	UseBrowserRedirect bool   `json:"use_browser_redirect"`
 }
 
-// UpdateProfileRequest 更新用户资料请求。
+// UpdateProfileRequest contains optional profile changes.
 type UpdateProfileRequest struct {
 	ClearPreferredLocale   bool     `json:"-"`
 	PreferredLocale        *string  `json:"preferred_locale"`
@@ -207,13 +204,13 @@ type UpsertUserAvatarInput struct {
 	SHA256          string
 }
 
-// ChangePasswordRequest 修改密码请求。
+// ChangePasswordRequest contains the current and replacement passwords.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
 }
 
-// IsEmpty 报告该次 Update 是否不写任何列（此时仓储直接返回，不产生写操作）。
+// IsEmpty reports whether Update can return without writing any fields.
 func (f UserUpdateFields) IsEmpty() bool {
 	return f == UserUpdateFields{}
 }

@@ -19,7 +19,7 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// WebSocket 诊断日志的截断、采样和体积估计上限。
+// Limits for WebSocket diagnostic truncation, sampling, and size estimation.
 const (
 	OpenAIWSLogValueMaxLen              = 160
 	OpenAIWSHeaderValueMaxLen           = 120
@@ -40,7 +40,7 @@ var openAIWSLogValueReplacer = strings.NewReplacer(
 	"failed", "fail",
 )
 
-// WarnReasoningCacheFailure 记录推理缓存失败的诊断字段。
+// WarnReasoningCacheFailure logs the item ID and reasoning-cache error.
 func WarnReasoningCacheFailure(itemID string, err error) {
 	logging.L().Warn("openai responses chat fallback: cache reasoning content failed", zap.Error(err), zap.String("item_id", itemID))
 }
@@ -139,6 +139,8 @@ func SummarizeOpenAIWSPayloadKeySizes(payload map[string]any, topN int) string {
 	return strings.Join(parts, ",")
 }
 
+// estimateOpenAIWSPayloadValueSize approximates value size for diagnostics.
+// It returns -1 when traversal limits are reached or serialization fails.
 func estimateOpenAIWSPayloadValueSize(value any, depth int) int {
 	if depth <= 0 {
 		return -1
@@ -221,6 +223,8 @@ func extractOpenAIWSImageURL(value any) string {
 	return ""
 }
 
+// SummarizeOpenAIWSInput counts input items, text, and image URLs for diagnostics.
+// The text_chars and image_data_url_chars fields count bytes.
 func SummarizeOpenAIWSInput(input any) string {
 	items, ok := input.([]any)
 	if !ok || len(items) == 0 {

@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// SnapshotCodec 编解码快照记录，SnapshotCache 管理 Redis 键、版本、锁和发布顺序。
+// SnapshotCodec encodes provider records; SnapshotCache manages Redis keys, versions, locks, and publication order.
 type SnapshotCodec interface {
 	Encode(scheduler.SnapshotProvider) ([]byte, []byte, error)
 	Decode(any) (scheduler.SnapshotProvider, error)

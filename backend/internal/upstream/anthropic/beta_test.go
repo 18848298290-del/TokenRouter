@@ -115,7 +115,7 @@ func TestMergeAnthropicBetaDropping_Context1M(t *testing.T) {
 func TestMergeAnthropicBetaDropping_DroppedBetas(t *testing.T) {
 	required := []string{"oauth-2025-04-20", "interleaved-thinking-2025-05-14"}
 	incoming := "context-1m-2025-08-07,fast-mode-2026-02-01,foo-beta,oauth-2025-04-20"
-	// DroppedBetas 为空，过滤项由 beta policy 配置。
+	// DroppedBetas is empty; beta policy supplies filtering rules.
 	drop := DroppedBetaSet()
 
 	got := MergeAnthropicBetaDropping(required, incoming, drop)
@@ -134,11 +134,11 @@ func TestMergeAnthropicBetaDropping_PreservesIncomingRedactThinking(t *testing.T
 }
 
 func TestDroppedBetaSet(t *testing.T) {
-	// 默认过滤集合来自空的 DroppedBetas。
+	// The base set reflects DroppedBetas.
 	base := DroppedBetaSet()
 	require.Len(t, base, len(DroppedBetas))
 
-	// 追加调用方指定的过滤项。
+	// Caller-supplied tokens extend the set.
 	extended := DroppedBetaSet(BetaClaudeCode)
 	require.Contains(t, extended, BetaClaudeCode)
 	require.Len(t, extended, len(DroppedBetas)+1)
@@ -198,8 +198,6 @@ func TestFilterBetaTokens(t *testing.T) {
 	assert.Nil(t, FilterBetaTokens(nil, filterSet))
 }
 
-// ComputeFinalAnthropicBeta 按认证类型和客户端 header 计算 beta。
-
 func TestComputeFinalAnthropicBeta_OAuthMimic_NonHaiku_IncludesContextManagement(t *testing.T) {
 	s := false
 	final, ok := ComputeFinalAnthropicBeta("oauth", true, "claude-sonnet-4-6", http.Header{}, []byte(`{}`), nil, s)
@@ -222,7 +220,7 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesFullClaudeCodeBetas(
 }
 
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta(t *testing.T) {
-	// messages mimic 跳过客户端 beta 的白名单透传。
+	// Messages mimic ignores client betas.
 	s := false
 	hdr := http.Header{}
 	hdr.Set("anthropic-beta", "custom-experimental-beta")
@@ -233,7 +231,7 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta(t *testing.T) {
 }
 
 func TestComputeFinalAnthropicBeta_OAuthTransparent_NonHaiku_PreservesClientContextManagement(t *testing.T) {
-	// 真 CC 客户端透传：客户端 header 中的 context-management beta 必须保留
+	// Passthrough retains the client-enabled context-management beta.
 	s := false
 	hdr := http.Header{}
 	hdr.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20,context-management-2025-06-27")
@@ -243,7 +241,7 @@ func TestComputeFinalAnthropicBeta_OAuthTransparent_NonHaiku_PreservesClientCont
 }
 
 func TestComputeFinalAnthropicBeta_OAuthTransparent_Haiku_RealCCPreservesContextManagement(t *testing.T) {
-	// Haiku 请求保留客户端传入的 context-management beta。
+	// Haiku retains the beta supplied by the client.
 	s := false
 	hdr := http.Header{}
 	hdr.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20,context-management-2025-06-27,interleaved-thinking-2025-05-14")
@@ -280,10 +278,8 @@ func TestComputeFinalAnthropicBeta_APIKeyHaiku_StillUsesAPIKeyBetas(t *testing.T
 	require.False(t, AnthropicBetaTokensContains(final, BetaClaudeCode))
 }
 
-// computeFinalCountTokensAnthropicBeta
-
 func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_AlwaysIncludesContextManagement(t *testing.T) {
-	// count_tokens mimic 注入完整 mimicry beta 和 token-counting beta。
+	// Count-token mimic includes the mimic set and token-counting beta.
 	s := false
 	final, ok := ComputeFinalCountTokensAnthropicBeta("oauth", true, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil, s)
 	require.True(t, ok)
@@ -293,7 +289,7 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_AlwaysIncludesContextMa
 		"count_tokens 路径必须含 token-counting beta")
 }
 
-// TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta 检查 count_tokens mimic 合并客户端传入的 beta。
+// TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta checks client beta merging.
 
 func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *testing.T) {
 	s := false
@@ -311,7 +307,7 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *
 		"同时补齐 token-counting beta")
 }
 
-// TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit 检查 Messages mimic 使用内置 beta 集合。
+// TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit checks the built-in Messages mimic set.
 
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testing.T) {
 	s := false
@@ -325,12 +321,12 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testi
 }
 
 func TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_NoClientBetaInjectsDefault(t *testing.T) {
-	// Claude Code 客户端未传 anthropic-beta 时，使用 CountTokensBetaHeader。
+	// A missing client header selects CountTokensBetaHeader.
 	s := false
 	final, ok := ComputeFinalCountTokensAnthropicBeta("oauth", false, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil, s)
 	require.True(t, ok)
 	require.Equal(t, CountTokensBetaHeader, final)
-	// CountTokensBetaHeader 不含 context-management beta
+	// The default count-token header omits context management.
 	require.False(t, AnthropicBetaTokensContains(final, BetaContextManagement))
 }
 

@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// BlockingReadCloser 输出指定片段后等待关闭，用于验证流取消和资源释放。
+// BlockingReadCloser emits the supplied bytes, then waits for Close to test cancellation and cleanup.
 type BlockingReadCloser struct {
 	data      []byte
 	offset    int
@@ -13,7 +13,7 @@ type BlockingReadCloser struct {
 	closeOnce sync.Once
 }
 
-// CloseTrackingReader 记录响应体是否被关闭，供跨协议资源断言共用。
+// CloseTrackingReader records whether the response body was closed.
 type CloseTrackingReader struct {
 	io.Reader
 	Closed bool

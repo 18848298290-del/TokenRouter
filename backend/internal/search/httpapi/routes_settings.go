@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterSettingsRoutes 保留既有综合设置页面使用的管理路径。
+// RegisterSettingsRoutes installs search administration routes under the settings group.
 func RegisterSettingsRoutes(adminSettings *gin.RouterGroup, endpoint *Handler) {
 	adminSettings.GET("/web-search-emulation", endpoint.GetWebSearchEmulationConfig)
 	adminSettings.PUT("/web-search-emulation", endpoint.UpdateWebSearchEmulationConfig)

@@ -8,14 +8,14 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GetDashboardOverview 按统一预聚合设置选择数据源，并在聚合路径失败时回退原始表。
+// GetDashboardOverview selects a data source using pre-aggregation settings and retries raw data on aggregation failure.
 // @project-doc docs/operations/pre_aggregation.md#query_routing_and_fallback
 func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error) {
 	if err := s.validateDashboardQuery(ctx, filter); err != nil {
 		return nil, err
 	}
 
-	// 运维查询只由统一预聚合设置自动选择数据源。
+	// The unified pre-aggregation settings control the dashboard's data source.
 	s.resolveOpsQueryModeWithIgnoredStatusCodes(ctx, filter)
 
 	overview, err := s.opsRepo.GetDashboardOverview(ctx, filter)
@@ -56,7 +56,7 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 }
 
 func (s *OpsService) resolveOpsQueryMode(ctx context.Context, requested OpsQueryMode) OpsQueryMode {
-	// raw 仅供实时监控、告警和自定义忽略状态码等后端内部调用。
+	// Internal callers use raw for realtime monitoring, alerts, and custom ignored status codes.
 	if requested == OpsQueryModeRaw {
 		return OpsQueryModeRaw
 	}
@@ -72,7 +72,7 @@ func (s *OpsService) resolveOpsQueryMode(ctx context.Context, requested OpsQuery
 	return OpsQueryModeAuto
 }
 
-// validateDashboardQuery 按监控开关、存储可用性和时间范围的顺序校验查询。
+// validateDashboardQuery checks monitoring, storage availability, and the time range in that order.
 func (s *OpsService) validateDashboardQuery(ctx context.Context, filter *OpsDashboardFilter) error {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return err

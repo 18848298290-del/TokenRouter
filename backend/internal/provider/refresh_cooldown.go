@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// RefreshCooldownVersion 将成功刷新与交换时的临时停调状态绑定，清理前复核版本。
+// RefreshCooldownVersion captures credentials and the observed cooldown for conditional cleanup after refresh.
 type RefreshCooldownVersion struct {
 	CredentialVersion
 	ParentProviderID *int64

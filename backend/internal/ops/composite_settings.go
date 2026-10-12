@@ -7,14 +7,14 @@ import (
 	"strings"
 )
 
-// CompositeMonitoringSettings 是综合设置中公开的三个 Ops 开关。
+// CompositeMonitoringSettings exposes monitoring toggles and the metrics interval in composite settings.
 type CompositeMonitoringSettings struct {
 	OpsMonitoringEnabled         bool `json:"ops_monitoring_enabled"`
 	OpsRealtimeMonitoringEnabled bool `json:"ops_realtime_monitoring_enabled"`
 	OpsMetricsIntervalSeconds    int  `json:"ops_metrics_interval_seconds"`
 }
 
-// PrepareMonitoringSettings 保留非正采样间隔不写入的原行为。
+// PrepareMonitoringSettings omits nonpositive metrics intervals from the values to persist.
 func PrepareMonitoringSettings(v CompositeMonitoringSettings) map[string]string {
 	values := map[string]string{"ops_monitoring_enabled": strconv.FormatBool(v.OpsMonitoringEnabled), "ops_realtime_monitoring_enabled": strconv.FormatBool(v.OpsRealtimeMonitoringEnabled)}
 	if v.OpsMetricsIntervalSeconds > 0 {
@@ -23,7 +23,7 @@ func PrepareMonitoringSettings(v CompositeMonitoringSettings) map[string]string 
 	return values
 }
 
-// MergeQuotaAutoPauseSettings 是共享 Ops JSON 的唯一合并边界，不覆盖其它高级设置。
+// MergeQuotaAutoPauseSettings replaces quota auto-pause settings and normalizes the combined Ops configuration.
 func MergeQuotaAutoPauseSettings(raw string, quota OpsOpenAIProviderQuotaAutoPauseSettings) (*OpsAdvancedSettings, error) {
 	value := defaultOpsAdvancedSettings()
 	if strings.TrimSpace(raw) != "" {
@@ -36,7 +36,7 @@ func MergeQuotaAutoPauseSettings(raw string, quota OpsOpenAIProviderQuotaAutoPau
 	return value, nil
 }
 
-// ParseQuotaAutoPauseSettings 从 Ops JSON 配置解析提供商额度自动暂停设置。
+// ParseQuotaAutoPauseSettings parses provider quota auto-pause settings, returning zero values on invalid JSON.
 func ParseQuotaAutoPauseSettings(raw string) OpsOpenAIProviderQuotaAutoPauseSettings {
 	cfg := defaultOpsAdvancedSettings()
 	if strings.TrimSpace(raw) != "" {
@@ -48,7 +48,7 @@ func ParseQuotaAutoPauseSettings(raw string) OpsOpenAIProviderQuotaAutoPauseSett
 	return cfg.OpenAIProviderQuotaAutoPause
 }
 
-// ParseRuntimeQuotaAutoPauseSettings 保留运行缓存与管理回显对坏 JSON 的原有差异。
+// ParseRuntimeQuotaAutoPauseSettings starts with defaults and normalizes only successfully decoded JSON.
 func ParseRuntimeQuotaAutoPauseSettings(raw string) OpsOpenAIProviderQuotaAutoPauseSettings {
 	cfg := defaultOpsAdvancedSettings()
 	if strings.TrimSpace(raw) != "" {

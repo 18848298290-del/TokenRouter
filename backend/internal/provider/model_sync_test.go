@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestModelSyncOwnsInflightQueryAndInput 检查模型查询使用独立凭据输入，停止时拒绝新请求并等待在途查询结束。
+// TestModelSyncOwnsInflightQueryAndInput checks input isolation and shutdown of in-flight queries.
 func TestModelSyncOwnsInflightQueryAndInput(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	completed := make(chan error, 1)

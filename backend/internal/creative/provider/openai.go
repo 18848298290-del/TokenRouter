@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ExecuteOpenAI 按操作调用 Images 生成或编辑接口，并读取 Base64 或 URL 图片结果。
+// ExecuteOpenAI calls the Images generation or edit endpoint and reads Base64 or URL results.
 func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) ([]creative.CreativeOutput, error) {
 	if e.OpenAI == nil {
 		return nil, errors.New("creative openai gateway is not configured")
@@ -55,7 +55,7 @@ func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, pa
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	// 提供商级请求头覆写最后应用，配置值优先于内置默认头。
+	// Apply provider header overrides last so configured values take precedence over defaults.
 	e.OpenAI.ApplyHeaders(req.Header)
 
 	resp, err := e.OpenAI.Do(req)
@@ -63,7 +63,7 @@ func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, pa
 		return nil, creative.CreativeHTTPStatusError(0, err.Error())
 	}
 	respBody, err := ReadCreativeUpstreamBody(resp.Body, 64<<20)
-	// 先释放生图连接的在途占用，避免图片下载等待同一提供商的连接槽位。
+	// Release the generation connection before a download needs a slot from the same provider pool.
 	_ = resp.Body.Close()
 	if err != nil {
 		return nil, creative.CreativeHTTPStatusError(0, err.Error())
@@ -74,7 +74,7 @@ func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, pa
 	return e.parseOpenAIImageOutputs(ctx, respBody)
 }
 
-// parseOpenAIImageOutputs 优先使用可解码的 Base64，再下载 URL；结果失败不重放生图请求。
+// parseOpenAIImageOutputs prefers decodable Base64, then tries URLs; result errors prevent generation retries.
 func (e *Target) parseOpenAIImageOutputs(ctx context.Context, body []byte) ([]creative.CreativeOutput, error) {
 	if !gjson.ValidBytes(body) {
 		return nil, creative.CreativeImageResultError("INVALID_IMAGE_RESPONSE", "creative platform returned invalid image response")
@@ -106,7 +106,7 @@ func (e *Target) parseOpenAIImageOutputs(ctx context.Context, body []byte) ([]cr
 				}
 			}
 		}
-		// 下载错误可能包含签名 URL 或内部地址，对外只返回固定消息。
+		// Download errors may expose signed URLs or internal addresses; return a fixed public message.
 		return nil, creative.CreativeImageResultError("IMAGE_DOWNLOAD_FAILED", "creative image download failed")
 	}
 	return nil, creative.CreativeImageResultError("INVALID_IMAGE_RESPONSE", "creative platform returned no decodable image output")
@@ -114,9 +114,9 @@ func (e *Target) parseOpenAIImageOutputs(ctx context.Context, body []byte) ([]cr
 
 func (e *Target) CreativeOpenAIURL(endpoint string) (string, error) { return e.OpenAI.URL(endpoint) }
 
-// BuildCreativeOpenAIRequestBody 构造 OpenAI images 请求体：
-// generate 为 JSON；edit/inpaint 为 multipart（image 多文件、mask、model、prompt）。
-// 输出格式固定为 PNG；其余可选参数已经过模型能力校验，生成与编辑请求保持同一语义。
+// BuildCreativeOpenAIRequestBody builds JSON for generation and multipart for
+// edit/inpaint, including source images and an optional mask.
+// It requests PNG output; callers validate optional parameters against model capabilities.
 func BuildCreativeOpenAIRequestBody(run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) ([]byte, string, error) {
 	if run.Operation == creative.CreativeOperationGenerate {
 		bodyMap := map[string]any{
@@ -198,12 +198,12 @@ func BuildCreativeOpenAIRequestBody(run creative.CreativeRun, payload creative.C
 	return buffer.Bytes(), writer.FormDataContentType(), nil
 }
 
-// CreativeOpenAIUsesResponseFormat 仅对 DALL-E 保留旧版 response_format 参数；GPT Image 请求省略该字段。
+// CreativeOpenAIUsesResponseFormat enables the legacy response_format field for DALL-E model names.
 func CreativeOpenAIUsesResponseFormat(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "dall-e")
 }
 
-// ParseCreativeOpenAIImageOutputs 解析 OpenAI images 响应（grok 同结构）的 data[].b64_json。
+// ParseCreativeOpenAIImageOutputs returns the first decodable data[].b64_json image from OpenAI or Grok.
 func ParseCreativeOpenAIImageOutputs(body []byte) ([]creative.CreativeOutput, error) {
 	data := gjson.GetBytes(body, "data")
 	if !data.IsArray() || len(data.Array()) == 0 {

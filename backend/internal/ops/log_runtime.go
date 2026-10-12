@@ -153,14 +153,14 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 		return nil, err
 	}
 	if err := s.settingRepo.Set(ctx, SettingKeyOpsRuntimeLogConfig, string(encoded)); err != nil {
-		// 存储失败时把内存状态恢复到持久化配置。
+		// Restore the persisted configuration in memory if saving fails.
 		_ = s.applyRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "persist_failed: "+err.Error())
 		return nil, err
 	}
 
 	s.auditRuntimeLogConfigChange(operatorID, oldCfg, &next, "updated")
-	// 保留期同时驱动系统日志清理，保存后立即刷新清理任务的生效配置。
+	// Retention also controls system log cleanup; refresh effective cleanup settings after saving.
 	if s.cleanupReloader != nil {
 		if reloadErr := s.cleanupReloader.Reload(ctx); reloadErr != nil {
 			s.report(
@@ -198,7 +198,7 @@ func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64
 		return nil, err
 	}
 
-	// 清理 runtime 覆盖配置，回退到 env/yaml baseline。
+	// Removing runtime overrides restores the environment/YAML baseline.
 	if err := s.settingRepo.Delete(ctx, SettingKeyOpsRuntimeLogConfig); err != nil && !errors.Is(err, ErrSettingNotFound) {
 		_ = s.applyRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_persist_failed: "+err.Error())
@@ -211,7 +211,7 @@ func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64
 	resetCfg.UpdatedByUserID = operatorID
 
 	s.auditRuntimeLogConfigChange(operatorID, oldCfg, resetCfg, "reset")
-	// 重置保留期后刷新清理任务的系统日志截止时间。
+	// Refresh the cleanup cutoff after resetting retention.
 	if s.cleanupReloader != nil {
 		if reloadErr := s.cleanupReloader.Reload(ctx); reloadErr != nil {
 			s.report(

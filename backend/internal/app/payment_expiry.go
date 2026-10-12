@@ -27,7 +27,7 @@ func providePaymentExpiry(runtime *payment.Runtime, cache provider.CNMonitorLead
 	return runner
 }
 
-// observePaymentExpiryRuntime 按维护步骤记录处理数量和错误。
+// observePaymentExpiryRuntime records counts and errors by maintenance step.
 func observePaymentExpiryRuntime(step string, count int, err error) {
 	if err != nil {
 		switch step {

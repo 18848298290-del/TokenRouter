@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// AdvancedSchedulerScoreDiagnosticRequest 描述管理员希望模拟的分组、模型和粘性提供商。
+// AdvancedSchedulerScoreDiagnosticRequest identifies the group, model, and sticky providers to simulate.
 type AdvancedSchedulerScoreDiagnosticRequest struct {
 	GroupID                    int64  `json:"group_id"`
 	RequestedModel             string `json:"requested_model,omitempty"`
@@ -12,7 +12,7 @@ type AdvancedSchedulerScoreDiagnosticRequest struct {
 	PreviousResponseProviderID int64  `json:"previous_response_provider_id,omitempty"`
 }
 
-// AdvancedSchedulerScoreDiagnosticProvider 是诊断接口返回的安全提供商摘要。
+// AdvancedSchedulerScoreDiagnosticProvider summarizes provider identity and status for diagnostics.
 type AdvancedSchedulerScoreDiagnosticProvider struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -21,13 +21,13 @@ type AdvancedSchedulerScoreDiagnosticProvider struct {
 	Status   string `json:"status"`
 }
 
-// AdvancedSchedulerScoreDiagnosticGroup 是高级调度分组的安全摘要。
+// AdvancedSchedulerScoreDiagnosticGroup identifies an advanced scheduler group.
 type AdvancedSchedulerScoreDiagnosticGroup struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 }
 
-// AdvancedSchedulerScoreDiagnosticGroupSummary 用于首次打开弹窗时的轻量分组 Tab 信息。
+// AdvancedSchedulerScoreDiagnosticGroupSummary supplies initial group tab eligibility and score data.
 type AdvancedSchedulerScoreDiagnosticGroupSummary struct {
 	AdvancedSchedulerScoreDiagnosticGroup
 	Eligible   bool     `json:"eligible"`
@@ -35,7 +35,7 @@ type AdvancedSchedulerScoreDiagnosticGroupSummary struct {
 	Status     string   `json:"status"`
 }
 
-// AdvancedSchedulerScoreDiagnosticResponse 是管理员评分诊断接口的统一响应。
+// AdvancedSchedulerScoreDiagnosticResponse is the admin score diagnostic response.
 type AdvancedSchedulerScoreDiagnosticResponse struct {
 	Provider           AdvancedSchedulerScoreDiagnosticProvider       `json:"provider"`
 	GeneratedAt        time.Time                                      `json:"generated_at"`
@@ -44,7 +44,7 @@ type AdvancedSchedulerScoreDiagnosticResponse struct {
 	Detail             *AdvancedSchedulerScoreDiagnosticDetail        `json:"detail,omitempty"`
 }
 
-// AdvancedSchedulerScoreDiagnosticContext 表示本次评分使用的非敏感场景上下文。
+// AdvancedSchedulerScoreDiagnosticContext contains the model and provider IDs used for scoring.
 type AdvancedSchedulerScoreDiagnosticContext struct {
 	RequestedModel             string `json:"requested_model,omitempty"`
 	StickyProviderID           int64  `json:"sticky_provider_id,omitempty"`
@@ -52,7 +52,7 @@ type AdvancedSchedulerScoreDiagnosticContext struct {
 	Baseline                   bool   `json:"baseline"`
 }
 
-// AdvancedSchedulerScoreDiagnosticDetail 是单个分组的完整评分解释。
+// AdvancedSchedulerScoreDiagnosticDetail explains one group's score.
 type AdvancedSchedulerScoreDiagnosticDetail struct {
 	Group             AdvancedSchedulerScoreDiagnosticGroup          `json:"group"`
 	Context           AdvancedSchedulerScoreDiagnosticContext        `json:"context"`
@@ -65,7 +65,7 @@ type AdvancedSchedulerScoreDiagnosticDetail struct {
 	PolicySignals     []AdvancedSchedulerScoreDiagnosticPolicySignal `json:"policy_signals"`
 }
 
-// AdvancedSchedulerScoreDiagnosticCandidatePool 汇总硬过滤后的候选池及 Top-K 选择数据。
+// AdvancedSchedulerScoreDiagnosticCandidatePool summarizes eligible candidates and Top-K selection data.
 type AdvancedSchedulerScoreDiagnosticCandidatePool struct {
 	TotalCandidates     int                                         `json:"total_candidates"`
 	EligibleCandidates  int                                         `json:"eligible_candidates"`
@@ -78,7 +78,7 @@ type AdvancedSchedulerScoreDiagnosticCandidatePool struct {
 	Candidates          []AdvancedSchedulerScoreDiagnosticCandidate `json:"candidates"`
 }
 
-// AdvancedSchedulerScoreDiagnosticRanges 记录评分使用的候选池归一化范围。
+// AdvancedSchedulerScoreDiagnosticRanges contains the pool ranges used to normalize scores.
 type AdvancedSchedulerScoreDiagnosticRanges struct {
 	PriorityMin     int      `json:"priority_min"`
 	PriorityMax     int      `json:"priority_max"`
@@ -89,7 +89,7 @@ type AdvancedSchedulerScoreDiagnosticRanges struct {
 	ResetMaxSeconds *float64 `json:"reset_max_seconds,omitempty"`
 }
 
-// AdvancedSchedulerScoreDiagnosticCandidate 是安全的候选提供商摘要，供排名展示和场景选择使用。
+// AdvancedSchedulerScoreDiagnosticCandidate summarizes candidate ranking and selection probability.
 type AdvancedSchedulerScoreDiagnosticCandidate struct {
 	ID                   int64    `json:"id"`
 	Name                 string   `json:"name"`
@@ -102,7 +102,7 @@ type AdvancedSchedulerScoreDiagnosticCandidate struct {
 	SelectionProbability *float64 `json:"selection_probability,omitempty"`
 }
 
-// AdvancedSchedulerScoreDiagnosticScore 是目标提供商的最终分数与加权选择解释。
+// AdvancedSchedulerScoreDiagnosticScore explains the target provider's final score and weighted selection.
 type AdvancedSchedulerScoreDiagnosticScore struct {
 	BaseScore            float64  `json:"base_score"`
 	StickyBonus          float64  `json:"sticky_bonus"`
@@ -115,7 +115,7 @@ type AdvancedSchedulerScoreDiagnosticScore struct {
 	Formula              string   `json:"formula"`
 }
 
-// AdvancedSchedulerScoreDiagnosticMetric 逐项描述归一化、权重及贡献。
+// AdvancedSchedulerScoreDiagnosticMetric describes a factor's normalization, weight, and contribution.
 type AdvancedSchedulerScoreDiagnosticMetric struct {
 	Key                  string     `json:"key"`
 	RawValue             string     `json:"raw_value"`
@@ -129,14 +129,14 @@ type AdvancedSchedulerScoreDiagnosticMetric struct {
 	ObservedAt           *time.Time `json:"observed_at,omitempty"`
 }
 
-// AdvancedSchedulerScoreDiagnosticSetting 表示有效配置值及其优先级来源。
+// AdvancedSchedulerScoreDiagnosticSetting contains an effective value and the source that supplied it.
 type AdvancedSchedulerScoreDiagnosticSetting struct {
 	Key    string `json:"key"`
 	Value  string `json:"value"`
 	Source string `json:"source"`
 }
 
-// AdvancedSchedulerScoreDiagnosticPolicySignal 展示未混入普通评分项的策略与硬约束。
+// AdvancedSchedulerScoreDiagnosticPolicySignal describes policy and eligibility checks separately from score factors.
 type AdvancedSchedulerScoreDiagnosticPolicySignal struct {
 	Key    string `json:"key"`
 	State  string `json:"state"`

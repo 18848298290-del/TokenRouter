@@ -21,7 +21,7 @@ func StreamItemHasVisibleOutput(item gjson.Result) bool {
 	return false
 }
 
-// StreamDataStartsVisibleOutput 结构进度可以提交当前 attempt 并解除首输出故障转移，但只有客户端可用内容才开始计算 TTFT。
+// StreamDataStartsVisibleOutput detects client-usable content for TTFT; structural progress alone returns false.
 func StreamDataStartsVisibleOutput(data, eventType string) bool {
 	trimmed := strings.TrimSpace(data)
 	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
@@ -61,7 +61,7 @@ func StreamDataStartsVisibleOutput(data, eventType string) bool {
 	return false
 }
 
-// ResponseBodyHasVisibleOutput 检查 output 项中的文本、推理和工具输出。
+// ResponseBodyHasVisibleOutput checks output items for text, reasoning, or tool content.
 func ResponseBodyHasVisibleOutput(body []byte) bool {
 	return slices.ContainsFunc(gjson.GetBytes(body, "output").Array(), StreamItemHasVisibleOutput)
 }

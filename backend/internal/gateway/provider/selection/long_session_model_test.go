@@ -15,7 +15,7 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis 检查长连接每轮按计费依据校验 R、C 或 U。
+// TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis checks each turn against the configured requested, group-mapped, or upstream billing model.
 func TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis(t *testing.T) {
 	price := 0.01
 	tests := []struct {
@@ -73,7 +73,7 @@ func TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis(t *te
 	}
 }
 
-// TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel 验证后续 turn 不能绕过固定提供商的最终白名单。
+// TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel checks that later turns respect the fixed provider's final-model allowlist.
 func TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{

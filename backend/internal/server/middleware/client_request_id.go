@@ -21,8 +21,8 @@ const (
 	maxPersistentRequestIDBytes = 64
 )
 
-// ClientRequestID 为请求生成内部关联 ID，并把调用方 ID 单独保存为 parent_client_request_id。
-// 外部 ID 用于跨服务排障，结算幂等和身份判断使用内部 ID。
+// ClientRequestID assigns an internal request ID and stores the caller ID as parent_client_request_id.
+// The caller ID correlates services; it cannot choose the internal request ID.
 func ClientRequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request == nil {
@@ -30,14 +30,14 @@ func ClientRequestID() gin.HandlerFunc {
 			return
 		}
 
-		// 入口时间在读取请求体和提供商调度前记录，用于区分上传与应用内耗时。
+		// Record ingress time before body reads and scheduling to distinguish upload and application latency.
 		ctx := c.Request.Context()
 		if _, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); !ok {
 			ctx = context.WithValue(ctx, telemetry.RequestStartedAt, time.Now())
 		}
 		ctx = timing.WithHTTPTrace(ctx)
 
-		// 已存在的 context 值来自受信任的内部调用，优先用作内部 ID。
+		// Reuse a valid context ID supplied by trusted internal callers.
 		internalID, valid := normalizeCorrelationIDFromContext(ctx, telemetry.ClientRequestID)
 		if !valid {
 			internalID = telemetry.NewRequestID()
@@ -53,18 +53,18 @@ func ClientRequestID() gin.HandlerFunc {
 		}
 		ctx = logging.IntoContext(ctx, requestLogger)
 		c.Request = c.Request.WithContext(ctx)
-		// 清除调用方传入的内部关联头，服务生成的内部 ID 写入响应。
+		// Remove caller-supplied internal ID headers before downstream forwarding.
 		c.Request.Header.Del(internalRequestIDHeader)
 		c.Request.Header.Del(legacyInternalRequestIDHeader)
-		// 将关联 ID 写入响应，服务生成的内部 ID 用于响应诊断。
+		// Echo a valid caller ID, or use the internal ID when none was supplied.
 		if parentID != "" {
 			c.Header(clientRequestIDHeader, parentID)
 		} else {
 			c.Header(clientRequestIDHeader, internalID)
 		}
-		// 专用内部头携带下游响应的诊断 ID。
+		// Dedicated response headers expose the internal diagnostic ID.
 		c.Header(internalRequestIDHeader, internalID)
-		// 兼容仍按旧头读取诊断 ID 的客户端，两者不能产生不同身份。
+		// The legacy header carries the same ID for older clients.
 		c.Header(legacyInternalRequestIDHeader, internalID)
 		c.Next()
 	}
@@ -78,13 +78,13 @@ func normalizeCorrelationIDFromContext(ctx context.Context, key telemetry.Contex
 	return normalizeCorrelationID(v)
 }
 
-// normalizeCorrelationID 清洗关联 ID 并检查长度和 ASCII 字符范围。
+// normalizeCorrelationID trims and validates the ID's byte length and ASCII characters.
 func normalizeCorrelationID(value string) (string, bool) {
 	value = strings.TrimSpace(strings.ToValidUTF8(value, ""))
 	if value == "" || len(value) > maxPersistentRequestIDBytes {
 		return "", false
 	}
-	// 关联 ID 可能来自不可信请求头，只允许可安全放入日志和 HTTP Header 的 ASCII 字符。
+	// Restrict untrusted IDs to characters safe for logs and HTTP headers.
 	for _, ch := range []byte(value) {
 		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
 			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == ':' {

@@ -84,7 +84,7 @@ func (q *ErrorLogQueue) Health() ErrorLogQueueHealth {
 	return ErrorLogQueueHealth{q.OpsErrorLogQueueLength(), q.OpsErrorLogQueueBytes(), q.OpsErrorLogQueueBytesCapacity(), q.OpsErrorLogQueueCapacity(), q.OpsErrorLogDroppedTotal(), q.OpsErrorLogEnqueuedTotal(), q.OpsErrorLogProcessedTotal(), q.OpsErrorLogSanitizedTotal()}
 }
 
-// PrepareErrorLogInput 在入队前移除原始敏感字段并限制载荷，供边界适配复用。
+// PrepareErrorLogInput sanitizes sensitive fields and bounds payload size before queueing.
 func PrepareErrorLogInput(entry *OpsInsertErrorLogInput) (bool, error) {
 	entry.UserAgent = normalizeOpsPersistentUserAgent(entry.UserAgent)
 	sanitized := false
@@ -213,7 +213,7 @@ func (q *ErrorLogQueue) OpsErrorLogQueueLength() int64 {
 	return q.opsErrorLogQueueLen.Load()
 }
 
-// Shutdown 关闭入队并等待批次处理完成，等待预算由传入的 context 控制。
+// Shutdown stops enqueueing and waits for batch processing within the caller's context budget.
 func (q *ErrorLogQueue) Shutdown(ctx context.Context) error {
 	q.opsErrorLogStopOnce.Do(func() {
 		q.opsErrorLogShutdownOnce.Do(func() { close(q.opsErrorLogShutdownCh) })
@@ -242,7 +242,7 @@ func (q *ErrorLogQueue) Shutdown(ctx context.Context) error {
 	}
 }
 
-// Stop 保留旧十秒调用约定，实际关闭只执行一次。
+// Stop waits up to ten seconds for the shared shutdown operation.
 func (q *ErrorLogQueue) Stop() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogDrainTimeout)
 	defer cancel()

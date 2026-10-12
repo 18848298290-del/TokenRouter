@@ -28,8 +28,8 @@ type OpenAITokenInfo struct {
 	AccessToken           string `json:"access_token"`
 	RefreshToken          string `json:"refresh_token"`
 	IDToken               string `json:"id_token,omitempty"`
-	ExpiresIn             int64  `json:"expires_in"`
-	ExpiresAt             int64  `json:"expires_at"`
+	ExpiresIn             int64  `json:"expires_in"` // Seconds until expiry.
+	ExpiresAt             int64  `json:"expires_at"` // Unix seconds.
 	ClientID              string `json:"client_id,omitempty"`
 	AuthMode              string `json:"auth_mode,omitempty"`
 	Email                 string `json:"email,omitempty"`
@@ -42,7 +42,7 @@ type OpenAITokenInfo struct {
 	PrivacyMode           string `json:"privacy_mode,omitempty"`
 }
 
-// BuildOpenAIProviderCredentials 根据 token 信息构建提供商凭据。
+// BuildOpenAIProviderCredentials converts token metadata into credential updates.
 func BuildOpenAIProviderCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,
@@ -50,7 +50,7 @@ func BuildOpenAIProviderCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
 	if tokenInfo.ExpiresAt > 0 {
 		creds["expires_at"] = time.Unix(tokenInfo.ExpiresAt, 0).Format(time.RFC3339)
 	}
-	// 仅在刷新响应返回了新的 refresh_token 时才更新，防止用空值覆盖已有令牌
+	// Omit a missing refresh token so merging updates cannot erase the stored token.
 	if strings.TrimSpace(tokenInfo.RefreshToken) != "" {
 		creds["refresh_token"] = tokenInfo.RefreshToken
 	}
@@ -91,7 +91,7 @@ func BuildOpenAIProviderCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
 	return NormalizeOpenAIPersonalAccessTokenCredentials(nil, tokenInfo, creds)
 }
 
-// OpenAIPATTokenInfo 将已验证的供应商元数据转成提供商授权结果。
+// OpenAIPATTokenInfo converts validated PAT metadata into an authorization result.
 func OpenAIPATTokenInfo(accessToken string, whoami *wire.PATWhoamiResponse) *OpenAITokenInfo {
 	return &OpenAITokenInfo{
 		AccessToken:           accessToken,

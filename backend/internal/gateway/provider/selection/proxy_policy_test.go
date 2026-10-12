@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestOpenAIProxyStreamQuarantineBypassContext 检查第二次调度绕过代理隔离后，熔断状态是否仍然存在。
+// TestOpenAIProxyStreamQuarantineBypassContext checks that a request-local bypass leaves circuit state intact.
 func TestOpenAIProxyStreamQuarantineBypassContext(t *testing.T) {
 	proxyID := int64(7)
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, ProxyID: &proxyID}}

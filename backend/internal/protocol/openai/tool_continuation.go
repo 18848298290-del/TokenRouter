@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// ToolContinuationSignals 在一次遍历中收集工具续接所需的 input 信号。
+// ToolContinuationSignals holds input signals collected in one scan for tool continuation checks.
 type ToolContinuationSignals struct {
 	HasFunctionCallOutput              bool
 	HasFunctionCallOutputMissingCallID bool
@@ -18,7 +18,7 @@ type ToolContinuationSignals struct {
 	FunctionCallOutputCallIDs          []string
 }
 
-// FunctionCallOutputValidation 汇总 function_call_output 关联性校验结果。
+// FunctionCallOutputValidation holds preliminary context checks for Codex tool outputs.
 type FunctionCallOutputValidation struct {
 	HasFunctionCallOutput              bool
 	HasToolCallContext                 bool
@@ -26,18 +26,18 @@ type FunctionCallOutputValidation struct {
 	HasItemReferenceForAllCallIDs      bool
 }
 
-// ToolCallOutputContextCoverage 描述 input 中工具输出与可重建上下文的覆盖关系，
-// 用于判断剥离 previous_response_id 后上游能否仅凭 input 重建工具续链。
+// ToolCallOutputContextCoverage describes whether input contains the context needed for each tool output
+// when a caller considers removing previous_response_id.
 type ToolCallOutputContextCoverage struct {
 	HasFunctionCallOutput bool
-	// ContextCoversAllCallIDs 表示每个工具输出的 call_id 都能在 input 内找到
-	// 同 call_id 的工具调用上下文项或同 id 的 item_reference，且不存在缺失 call_id 的输出。
-	// 任一输出无法由 input 自身重建时为 false，此时剥离 previous_response_id 会导致
-	// 上游以 "No tool call found for function call output" 拒绝请求。
+	// ContextCoversAllCallIDs requires at least one tool output and a nonempty call_id on every output.
+	// Each call_id must match a tool call context call_id or an item_reference id in input.
+	// Missing coverage means removing previous_response_id can leave an output unresolved,
+	// causing upstream rejection with "No tool call found for function call output".
 	ContextCoversAllCallIDs bool
 }
 
-// IsCodexToolCallContextItemType 判断 input item 是否是带 call_id 的工具调用上下文。
+// IsCodexToolCallContextItemType recognizes item types that carry tool call context.
 func IsCodexToolCallContextItemType(typ string) bool {
 	switch strings.TrimSpace(typ) {
 	case "tool_call",
@@ -52,7 +52,7 @@ func IsCodexToolCallContextItemType(typ string) bool {
 	}
 }
 
-// IsCodexToolCallOutputItemType 判断 input item 是否是 Codex 工具输出。
+// IsCodexToolCallOutputItemType recognizes Codex tool output item types.
 func IsCodexToolCallOutputItemType(typ string) bool {
 	switch strings.TrimSpace(typ) {
 	case "function_call_output",
@@ -65,9 +65,9 @@ func IsCodexToolCallOutputItemType(typ string) bool {
 	}
 }
 
-// NeedsToolContinuation 判定请求是否需要工具调用续链处理。
-// 满足以下任一信号即视为续链：previous_response_id、input 内包含工具输出/item_reference、
-// 或声明 tools/tool_choice。
+// NeedsToolContinuation reports whether a request contains continuation signals.
+// Signals include previous_response_id, tool calls or outputs, item_reference,
+// and nonempty tools or tool_choice declarations.
 func NeedsToolContinuation(reqBody map[string]any) bool {
 	if reqBody == nil {
 		return false
@@ -98,9 +98,9 @@ func NeedsToolContinuation(reqBody map[string]any) bool {
 	return false
 }
 
-// AnalyzeToolContinuationSignals 单次遍历 input，提取工具输出/工具调用上下文/item_reference 相关信号。
-// FunctionCallOutput 字段覆盖 Codex 的所有工具输出
-// （function_call_output/tool_search_output/custom_tool_call_output/mcp_tool_call_output）。
+// AnalyzeToolContinuationSignals scans input once for tool outputs, call context, and item references.
+// Fields named FunctionCallOutput cover every Codex output type:
+// function_call_output, tool_search_output, custom_tool_call_output, and mcp_tool_call_output.
 func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSignals {
 	signals := ToolContinuationSignals{}
 	if reqBody == nil {
@@ -169,13 +169,13 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 	return signals
 }
 
-// ValidateFunctionCallOutputContextBytes 扫描 raw JSON 校验工具输出续接，供 handler 预校验使用。
+// ValidateFunctionCallOutputContextBytes scans raw JSON for preliminary handler validation.
 func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValidation {
 	result := FunctionCallOutputValidation{}
 	if len(body) == 0 {
 		return result
 	}
-	// handler 同步扫描 input，直接使用请求字节。
+	// The synchronous scan can reference the request bytes directly.
 	input := wirejson.ParseView(body).Get("input")
 	if !input.IsArray() {
 		return result
@@ -230,9 +230,9 @@ func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValid
 	return result
 }
 
-// AnalyzeToolCallOutputContextCoverageBytes 全量扫描 input，按 call_id 精确匹配工具输出
-// 与可重建上下文。不能复用 ValidateFunctionCallOutputContextBytes 的 HasToolCallContext：
-// 该标志只代表"存在某一个上下文项"，部分覆盖的续链仍会被上游拒绝。
+// AnalyzeToolCallOutputContextCoverageBytes matches every output call_id against input context.
+// ValidateFunctionCallOutputContextBytes.HasToolCallContext only establishes that some
+// context exists; partial coverage can still cause upstream rejection.
 func AnalyzeToolCallOutputContextCoverageBytes(body []byte) ToolCallOutputContextCoverage {
 	coverage := ToolCallOutputContextCoverage{}
 	if len(body) == 0 {
@@ -304,11 +304,11 @@ func AnalyzeToolCallOutputContextCoverageBytes(body []byte) ToolCallOutputContex
 	return coverage
 }
 
-// ValidateFunctionCallOutputContext 为 handler 提供低开销校验结果：
-// 1) 无工具输出直接返回
-// 2) 若已存在工具调用上下文则提前返回
-// 3) 仅在无工具上下文时才构建 call_id / item_reference 集合
-// FunctionCallOutput 字段覆盖所有 Codex 工具输出。
+// ValidateFunctionCallOutputContext performs preliminary handler validation.
+// It returns after the first scan when no outputs exist or some call context exists.
+// Only requests with outputs and no call context need call_id and item_reference sets.
+// Use AnalyzeToolCallOutputContextCoverageBytes when every output must be matched.
+// Fields named FunctionCallOutput cover all Codex tool output types.
 func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutputValidation {
 	result := FunctionCallOutputValidation{}
 	if reqBody == nil {
@@ -384,14 +384,14 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 	return result
 }
 
-// HasFunctionCallOutput 判断 input 是否包含任意 Codex 工具输出，用于触发续链校验。
-// 此处同时处理 function_call_output 和其他 Codex 工具输出。
+// HasFunctionCallOutput reports whether input contains a Codex tool output requiring continuation checks.
+// It recognizes function_call_output and the other Codex output types.
 func HasFunctionCallOutput(reqBody map[string]any) bool {
 	return AnalyzeToolContinuationSignals(reqBody).HasFunctionCallOutput
 }
 
-// HasItemReferenceForCallIDs 判断 item_reference.id 是否覆盖所有 call_id。
-// 用于仅依赖引用项完成续链场景的校验。
+// HasItemReferenceForCallIDs reports whether references cover every supplied call ID.
+// It supports continuation checks for requests relying on reference items.
 func HasItemReferenceForCallIDs(reqBody map[string]any, callIDs []string) bool {
 	if reqBody == nil || len(callIDs) == 0 {
 		return false
@@ -428,13 +428,13 @@ func HasItemReferenceForCallIDs(reqBody map[string]any, callIDs []string) bool {
 	return true
 }
 
-// HasNonEmptyString 判断字段是否为非空字符串。
+// HasNonEmptyString reports whether value is a string with non-whitespace content.
 func HasNonEmptyString(value any) bool {
 	stringValue, ok := value.(string)
 	return ok && strings.TrimSpace(stringValue) != ""
 }
 
-// HasToolsSignal 判断 tools 字段是否存在且非空。
+// HasToolsSignal reports whether tools is a nonempty []any.
 func HasToolsSignal(reqBody map[string]any) bool {
 	raw, exists := reqBody["tools"]
 	if !exists || raw == nil {
@@ -446,7 +446,7 @@ func HasToolsSignal(reqBody map[string]any) bool {
 	return false
 }
 
-// HasToolChoiceSignal 判断 tool_choice 字段是否非空且非 nil。
+// HasToolChoiceSignal reports whether tool_choice is a nonempty string or map.
 func HasToolChoiceSignal(reqBody map[string]any) bool {
 	raw, exists := reqBody["tool_choice"]
 	if !exists || raw == nil {

@@ -58,16 +58,13 @@ type CacheControlPath struct {
 	Log  string
 }
 
-// SanitizeSystemText rewrites only the fixed OpenCode identity sentence (if present).
-// We intentionally avoid broad keyword replacement in system prompts to prevent
-// accidentally changing user-provided instructions.
+// SanitizeSystemText replaces the fixed OpenCode identity sentence.
+// Other user instructions remain unchanged.
 func SanitizeSystemText(text string) string {
 	if text == "" {
 		return text
 	}
-	// Some clients include a fixed OpenCode identity sentence. Anthropic may treat
-	// this as a non-Claude-Code fingerprint, so rewrite it to the canonical
-	// Claude Code banner before generic "OpenCode"/"opencode" replacements.
+	// Replace the recognizable client banner with the Claude Code identity.
 	text = strings.ReplaceAll(
 		text,
 		"You are OpenCode, the best coding agent on the planet.",
@@ -232,7 +229,7 @@ func EnsureClaudeOAuthMetadataUserID(body []byte, userID string) ([]byte, bool) 
 	return SetJSONRawBytes(body, "metadata", raw)
 }
 
-// NormalizeClaudeOAuthRequestBody 整理 OAuth 请求的系统提示、工具、缓存和上下文配置。
+// NormalizeClaudeOAuthRequestBody normalizes OAuth prompts, tools, caching, and context settings.
 func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptions) []byte {
 	if len(body) == 0 {
 		return body
@@ -246,7 +243,7 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		modified = true
 	}
 
-	// 确保 tools 字段存在（即使为空数组）
+	// Include an empty tools array when the client omits it.
 	if !gjson.GetBytes(out, "tools").Exists() {
 		if next, ok := SetJSONRawBytes(out, "tools", []byte("[]")); ok {
 			out = next
@@ -261,8 +258,7 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// temperature 使用 Claude Code CLI 的默认值 1，客户端可覆盖。
-	// 策略：客户端传了什么就透传；没传则补默认 1。
+	// Use the CLI temperature default only when the client omits the field.
 	if !gjson.GetBytes(out, "temperature").Exists() {
 		if next, ok := SetJSONValueBytes(out, "temperature", 1); ok {
 			out = next
@@ -270,7 +266,7 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// max_tokens：真实 CLI 的默认值是 128000。缺失时补齐以对齐指纹。
+	// Match the CLI max_tokens default when absent.
 	if !gjson.GetBytes(out, "max_tokens").Exists() {
 		if next, ok := SetJSONValueBytes(out, "max_tokens", 128000); ok {
 			out = next
@@ -278,15 +274,9 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// context_management：thinking.type 为 enabled/adaptive 时，真实 CLI 会自动
-	// 附带 {"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}。
-	// 客户端显式传了就透传；否则按 CLI 行为补齐。
-	//
-	// 注：本函数不按 model 名决定是否保留 context_management。“最终 beta
-	// header 不含 context-management-2025-06-27 时 strip 字段”的能力维度
-	// 对称约束由 sanitizeAnthropicBodyForBetaTokens 在 buildUpstreamRequest /
-	// buildCountTokensRequest 层统一执行，与 Bedrock 路径的
-	// sanitizeBedrockFieldsForBetaTokens 对称。
+	// Enabled or adaptive thinking supplies the CLI context-management default.
+	// SanitizeAnthropicBodyForBetaTokens later removes it if the final header lacks
+	// the required beta, after provider overrides have been applied.
 	if !gjson.GetBytes(out, "context_management").Exists() {
 		thinkingType := gjson.GetBytes(out, "thinking.type").String()
 		if thinkingType == "enabled" || thinkingType == "adaptive" {
@@ -298,11 +288,8 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// tool_choice 按 Parrot 规则处理。
-	// - 客户端传了 {"type":"tool","name":"X"} → 保留结构，name 由
-	//   ApplyToolNameRewriteToBody 同步映射为假名
-	// - 其他形态（auto/any/none）原样透传
-	// 如果 body 里完全没有 tools（空数组），tool_choice 没意义时才删除
+	// Keep tool_choice when tools exist. ApplyToolNameRewriteToBody maps named
+	// choices alongside tool declarations; an empty tools list makes the choice unusable.
 	if !gjson.GetBytes(out, "tools").IsArray() || len(gjson.GetBytes(out, "tools").Array()) == 0 {
 		if gjson.GetBytes(out, "tool_choice").Exists() {
 			if next, ok := DeleteJSONPathBytes(out, "tool_choice"); ok {
@@ -319,14 +306,9 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 	return out
 }
 
-// BuildStableSessionSeed 为伪装路径合成的 metadata.user_id session_id 生成"会话级稳定"种子。
-//
-// 真实 Claude Code 的 session_id 是进程级随机 UUID，在一段会话内跨请求保持不变。无状态代理
-// 无法恢复该值，这里用"会话内不变的锚点"近似：提供商 ID + 客户端区分因子 + 首条 user 消息文本。
-// 对话在尾部追加 messages 时这三者都不变，因此 generateSessionUUID(seed) 跨轮稳定。
-//
-// 注意：粘性路由键 GenerateSessionHash 按设计逐轮变化（见其测试），本函数与之独立、互不影响。
-// providerID 使 seed 非空，相同 seed 生成相同 UUID。
+// BuildStableSessionSeed combines provider ID, client identity, and first user text.
+// These anchors stay stable when turns are appended, allowing a stateless proxy
+// to derive a repeatable metadata session UUID. Sticky routing hashes are separate.
 func BuildStableSessionSeed(providerID int64, clientDiscriminator, firstUserText string) string {
 	var b strings.Builder
 	_, _ = b.WriteString(strconv.FormatInt(providerID, 10))
@@ -337,9 +319,8 @@ func BuildStableSessionSeed(providerID int64, clientDiscriminator, firstUserText
 	return b.String()
 }
 
-// NormalizeSystemParam 将 json.RawMessage 类型的 system 参数转为标准 Go 类型（string / []any / nil），
-// 避免 type switch 中 json.RawMessage（底层 []byte）无法匹配 case string / case []any / case nil 的问题。
-// 这是 Go 的 typed nil 陷阱：(json.RawMessage, nil) ≠ (nil, nil)。
+// NormalizeSystemParam decodes json.RawMessage so callers can switch on string,
+// []any, or nil. Empty or invalid JSON becomes nil.
 func NormalizeSystemParam(system any) any {
 	raw, ok := system.(json.RawMessage)
 	if !ok {
@@ -355,8 +336,8 @@ func NormalizeSystemParam(system any) any {
 	return parsed
 }
 
-// SystemIncludesClaudeCodePrompt 检查 system 中是否已包含 Claude Code 提示词
-// 使用前缀匹配支持多种变体（标准版、Agent SDK 版等）。
+// SystemIncludesClaudeCodePrompt reports whether system contains a recognized
+// Claude Code prefix, including Agent SDK variants.
 func SystemIncludesClaudeCodePrompt(system any) bool {
 	system = NormalizeSystemParam(system)
 	switch v := system.(type) {
@@ -374,7 +355,7 @@ func SystemIncludesClaudeCodePrompt(system any) bool {
 	return false
 }
 
-// HasClaudeCodePrefix 检查文本是否以 Claude Code 提示词的特征前缀开头。
+// HasClaudeCodePrefix reports whether text starts with a recognized Claude Code banner.
 func HasClaudeCodePrefix(text string) bool {
 	for _, prefix := range ClaudeCodePromptPrefixes {
 		if strings.HasPrefix(text, prefix) {
@@ -384,8 +365,7 @@ func HasClaudeCodePrefix(text string) bool {
 	return false
 }
 
-// InjectClaudeCodePrompt 在 system 开头注入 Claude Code 提示词
-// 处理 null、字符串、数组三种格式。
+// InjectClaudeCodePrompt prepends a Claude Code block to null, string, or array system content.
 func InjectClaudeCodePrompt(body []byte, system any) []byte {
 	system = NormalizeSystemParam(system)
 	claudeCodeBlock, err := MarshalAnthropicSystemTextBlock(ClaudeCodeSystemPrompt, true)
@@ -393,9 +373,8 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to build Claude Code prompt block: %v", err)
 		return body
 	}
-	// Opencode plugin applies an extra safeguard: it not only prepends the Claude Code
-	// banner, it also prefixes the next system instruction with the same banner plus
-	// a blank line. This helps when upstream concatenates system instructions.
+	// Keep the identity in its own block and prefix the next instruction too,
+	// so the identity remains visible when upstream concatenates system text.
 	claudeCodePrefix := strings.TrimSpace(ClaudeCodeSystemPrompt)
 
 	var items [][]byte
@@ -408,8 +387,7 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 		if strings.TrimSpace(v) == "" || strings.TrimSpace(v) == strings.TrimSpace(ClaudeCodeSystemPrompt) {
 			items = [][]byte{claudeCodeBlock}
 		} else {
-			// Mirror opencode behavior: keep the banner as a separate system entry,
-			// but also prefix the next system text with the banner.
+			// Prefix the client instruction while retaining the separate identity block.
 			merged := v
 			if !strings.HasPrefix(v, claudeCodePrefix) {
 				merged = claudeCodePrefix + "\n\n" + v
@@ -668,8 +646,8 @@ func ExtractSystemTextAndCacheControl(system any) (string, any) {
 				continue
 			}
 			parts = append(parts, text)
-			// system blocks 会在下方合并为单个 messages 文本块；保留最后一个原始缓存断点，
-			// 这是合并结构下最接近原始边界的表示，同时保留客户端选择的 TTL。
+			// The system text is merged into one message block. Keep the last cache
+			// breakpoint and its TTL as the closest available representation.
 			if cc, exists := m["cache_control"]; exists && cc != nil {
 				cacheControl = cc
 			}
@@ -684,21 +662,10 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 	system = NormalizeSystemParam(system)
 	expansionPrompt = DefaultClaudeOAuthExpansionPrompt(expansionPrompt)
 
-	// 1. 提取原始 system prompt 文本及其缓存断点
 	originalSystemText, originalSystemCacheControl := ExtractSystemTextAndCacheControl(system)
 
-	// 2. 构造 system 数组，对齐真实 Claude Code CLI 的 3-block 形态：
-	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli;）
-	//    [1] "You are Claude Code..." 身份前缀 block（默认不带 cache_control）
-	//    [2] 工具无关的通用提示词扩充 block（带 cache_control 作为稳定缓存断点）
-	//
-	//    真实 CC 的 system 在身份前缀之后还有大段提示词，仅有 2 块会在块数/体量上明显
-	//    区别于真实 CLI。这里注入 ClaudeCodeSystemPromptExpansion（中性段落）把形态做到
-	//    接近真实，同时不注入会污染被代理用户行为的工具专属指令。
-	//
-	//    缺失 billing block 的系统 payload 是 Anthropic 判定第三方的关键信号之一
-	//    （真实 CLI 每个请求都带）。新版 CLI 已取消 cch=... 签名字段，故 block 不再注入
-	//    cch（见 BuildBillingAttributionText）。
+	// Build the configured system blocks. Defaults contain billing attribution,
+	// the Claude Code identity, and a tool-independent expansion with a cache breakpoint.
 	systemBlocks, blockErr := BuildClaudeOAuthSystemPromptBlocksJSON(body, expansionPrompt, blocksConfig)
 	if blockErr != nil {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to build configured Claude OAuth system blocks: %v", blockErr)
@@ -714,8 +681,8 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 		return body
 	}
 
-	// 3. 将原始 system prompt 作为 user/assistant 消息对注入到 messages 开头
-	//    模型仍通过 messages 接收完整指令，保留客户端功能
+	// Move client system instructions into a user/assistant pair so they remain
+	// available after the system field is replaced.
 	ccPromptTrimmed := strings.TrimSpace(ClaudeCodeSystemPrompt)
 	if originalSystemText != "" && originalSystemText != ccPromptTrimmed && !HasClaudeCodePrefix(originalSystemText) {
 		instructionBlock := map[string]any{
@@ -742,7 +709,6 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 			return out
 		}
 
-		// 重建 messages 数组：[instruction, ack, ...originalMessages]
 		items := [][]byte{instrMsg, ackMsg}
 		messagesResult := gjson.GetBytes(out, "messages")
 		if messagesResult.IsArray() {
@@ -824,8 +790,8 @@ func CollectCacheControlPaths(body []byte) (invalidThinking []CacheControlPath, 
 	return invalidThinking, messagePaths, toolPaths, systemPaths
 }
 
-// EnforceCacheControlLimit 强制执行 cache_control 块数量限制（最多 4 个）
-// 超限时优先移除工具断点，再移除 messages 断点，最后才移除 system 断点。
+// EnforceCacheControlLimit removes invalid thinking breakpoints and limits the rest to four.
+// It removes tool breakpoints first, then message breakpoints, then system breakpoints.
 func EnforceCacheControlLimit(body []byte) []byte {
 	if len(body) == 0 {
 		return body
@@ -835,7 +801,7 @@ func EnforceCacheControlLimit(body []byte) []byte {
 	out := body
 	modified := false
 
-	// 先清理 thinking 块中的非法 cache_control（thinking 块不支持该字段）
+	// Thinking blocks do not support cache_control.
 	for _, item := range invalidThinking {
 		if !gjson.GetBytes(out, item.Path).Exists() {
 			continue
@@ -857,7 +823,6 @@ func EnforceCacheControlLimit(body []byte) []byte {
 		return body
 	}
 
-	// 超限：优先从 tools 中移除，再从 messages 中移除，最后才从 system 中移除。
 	remaining := count - MaxCacheControlBlocks
 	for i := len(toolPaths) - 1; i >= 0 && remaining > 0; i-- {
 		path := toolPaths[i]
@@ -909,8 +874,7 @@ func EnforceCacheControlLimit(body []byte) []byte {
 	return body
 }
 
-// InjectAnthropicCacheControlTTL1h 将已有 ephemeral cache_control 块的 ttl 强制写为 1h。
-// 仅修改已经存在的 cache_control，不新增缓存断点。
+// InjectAnthropicCacheControlTTL1h sets existing ephemeral cache breakpoints to one hour.
 func InjectAnthropicCacheControlTTL1h(body []byte) []byte {
 	return ForceEphemeralCacheControlTTL(body, CacheTTLTarget1h)
 }
@@ -983,8 +947,8 @@ func ForceEphemeralCacheControlTTL(body []byte, ttl string) []byte {
 	return out
 }
 
-// SystemHasClaudeCodeBillingAttribution 检查 system 数组中是否保留了 Claude Code 格式的计费归因块。
-// 该信号仅用于识别 User-Agent 被中间网关覆盖的流量，不参与 ClaudeCodeOnly 鉴权。
+// SystemHasClaudeCodeBillingAttribution recognizes a CLI billing marker in system.
+// It detects proxied client traffic; it is not a ClaudeCodeOnly authorization check.
 func SystemHasClaudeCodeBillingAttribution(body []byte) bool {
 	system := gjson.GetBytes(body, "system")
 	if !system.IsArray() {
@@ -1002,7 +966,7 @@ func SystemHasClaudeCodeBillingAttribution(body []byte) bool {
 	return found
 }
 
-// IsProxiedClaudeCodeRequest 同时校验 metadata 格式和计费块，避免任意 user_id 绕过 OAuth mimicry。
+// IsProxiedClaudeCodeRequest requires both valid metadata and a CLI billing marker.
 func IsProxiedClaudeCodeRequest(body []byte, metadataUserID string) bool {
 	return ParseMetadataUserID(metadataUserID) != nil && SystemHasClaudeCodeBillingAttribution(body)
 }

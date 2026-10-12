@@ -53,7 +53,7 @@ func TestUsageLogRepositoryListWithFiltersRequestTypePriority(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogRepositoryListWithFiltersRequestID 验证请求 ID 使用裁剪后的参数做精确查询。
+// TestUsageLogRepositoryListWithFiltersRequestID checks that request-ID lookup receives the trimmed value.
 func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -112,7 +112,7 @@ func TestUsageLogRepositoryListPersonalOnlyExcludesTeamUsage(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageLogScopeSource 验证 Owner 团队范围使用两个去重的索引分支。
+// TestBuildUsageLogScopeSource checks disjoint indexed branches for the owner and team.
 func TestBuildUsageLogScopeSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -147,8 +147,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},
 			sql.NullInt64{},
 			0, 0, 0, 0, 0, 0,
-			0, 0.0, // 图片输出 token 和图片输出成本
-			0, 0.0, // 图片输入 token 和图片输入成本
+			0, 0.0, // Image output tokens and cost
+			0, 0.0, // Image input tokens and cost
 			0.0, 0.0, 0.0, 0.0, 0.8, 0.8,
 			0.0, 0.0, []byte("[]"),
 			1.0,
@@ -186,7 +186,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
 		}})
@@ -224,10 +224,10 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			4,                 // cache_read_tokens
 			5,                 // cache_creation_5m_tokens
 			6,                 // cache_creation_1h_tokens
-			0,                 // 图片输出 token
-			0.0,               // 图片输出成本
-			0,                 // 图片输入 token
-			0.0,               // 图片输入成本
+			0,                 // image_output_tokens
+			0.0,               // image_output_cost
+			0,                 // image_input_tokens
+			0.0,               // image_input_cost
 			0.1,               // input_cost
 			0.2,               // output_cost
 			0.3,               // cache_creation_cost
@@ -249,13 +249,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			0,
 			sql.NullString{},
-			sql.NullString{}, // 图片输入尺寸
-			sql.NullString{}, // 图片输出尺寸
-			sql.NullString{}, // 图片尺寸来源
-			sql.NullString{}, // 图片尺寸明细
-			0,                // 视频数量
-			sql.NullString{}, // 视频分辨率
-			sql.NullInt64{},  // 视频时长
+			sql.NullString{}, // image_input_size
+			sql.NullString{}, // image_output_size
+			sql.NullString{}, // image_size_source
+			sql.NullString{}, // image_size_breakdown
+			0,                // video_count
+			sql.NullString{}, // video_resolution
+			sql.NullInt64{},  // video_duration_seconds
 			sql.NullString{Valid: true, String: "priority"},
 			sql.NullString{},
 			sql.NullString{},
@@ -272,7 +272,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
 		}})
@@ -300,8 +300,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},
 			sql.NullInt64{},
 			1, 2, 3, 4, 5, 6,
-			0, 0.0, // 图片输出 token 和图片输出成本
-			0, 0.0, // 图片输入 token 和图片输入成本
+			0, 0.0, // Image output tokens and cost
+			0, 0.0, // Image input tokens and cost
 			0.1, 0.2, 0.3, 0.4, 1.0, 0.9,
 			0.0, 0.0, []byte("[]"),
 			1.0,
@@ -316,13 +316,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			0,
 			sql.NullString{},
-			sql.NullString{}, // 图片输入尺寸
-			sql.NullString{}, // 图片输出尺寸
-			sql.NullString{}, // 图片尺寸来源
-			sql.NullString{}, // 图片尺寸明细
-			0,                // 视频数量
-			sql.NullString{}, // 视频分辨率
-			sql.NullInt64{},  // 视频时长
+			sql.NullString{}, // image_input_size
+			sql.NullString{}, // image_output_size
+			sql.NullString{}, // image_size_source
+			sql.NullString{}, // image_size_breakdown
+			0,                // video_count
+			sql.NullString{}, // video_resolution
+			sql.NullInt64{},  // video_duration_seconds
 			sql.NullString{Valid: true, String: "flex"},
 			sql.NullString{},
 			sql.NullString{},
@@ -339,7 +339,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
 		}})
@@ -367,8 +367,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},
 			sql.NullInt64{},
 			1, 2, 3, 4, 5, 6,
-			0, 0.0, // 图片输出 token 和图片输出成本
-			0, 0.0, // 图片输入 token 和图片输入成本
+			0, 0.0, // Image output tokens and cost
+			0, 0.0, // Image input tokens and cost
 			0.1, 0.2, 0.3, 0.4, 1.0, 0.9,
 			0.0, 0.0, []byte("[]"),
 			1.0,
@@ -383,13 +383,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			0,
 			sql.NullString{},
-			sql.NullString{}, // 图片输入尺寸
-			sql.NullString{}, // 图片输出尺寸
-			sql.NullString{}, // 图片尺寸来源
-			sql.NullString{}, // 图片尺寸明细
-			0,                // 视频数量
-			sql.NullString{}, // 视频分辨率
-			sql.NullInt64{},  // 视频时长
+			sql.NullString{}, // image_input_size
+			sql.NullString{}, // image_output_size
+			sql.NullString{}, // image_size_source
+			sql.NullString{}, // image_size_breakdown
+			0,                // video_count
+			sql.NullString{}, // video_resolution
+			sql.NullInt64{},  // video_duration_seconds
 			sql.NullString{Valid: true, String: "priority"},
 			sql.NullString{},
 			sql.NullString{},
@@ -406,7 +406,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // requested_reasoning_effort
 			false,            // native_compaction_v2
-			"unknown",        // 平台快照
+			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
 		}})

@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// usageStatsCacheKeyData 包含 /admin/usage/stats 查询缓存的筛选条件，缓存 TTL 为 30 秒。
-
+// usageStatsCacheKeyData identifies the filters for the 30-second admin usage statistics cache.
 type usageStatsCacheKeyData struct {
 	RequestID          string `json:"request_id"`
 	EndpointSource     string `json:"endpoint_source"`
@@ -53,7 +52,7 @@ func usageStatsCacheKey(filters UsageLogFilters) string {
 	})
 }
 
-// GetStatsCached 合并相同筛选的查询，各等待者独立取消。
+// GetStatsCached coalesces queries with identical filters while allowing each waiter to cancel independently.
 // @project-doc docs/operations/observability_and_data_lifecycle.md#usage_query_contracts
 func (h *UsageService) GetStatsCached(ctx context.Context, filters UsageLogFilters) (*UsageStats, bool, error) {
 	key := usageStatsCacheKey(filters)

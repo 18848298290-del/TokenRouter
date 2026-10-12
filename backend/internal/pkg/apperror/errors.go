@@ -12,7 +12,7 @@ const (
 	UnknownMessage = "internal error"
 )
 
-// Status 保留兼容期的错误字段；新增核心通过类别和 reason 判断错误。
+// Status contains the serialized error code, reason, message, and metadata.
 type Status struct {
 	Code     int32             `json:"code"`
 	Reason   string            `json:"reason,omitempty"`
@@ -20,14 +20,14 @@ type Status struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// ApplicationError 唯一拥有应用错误及其 cause；HTTP 映射由适配层完成。
-// Code 字段在兼容期保留旧值，避免改变旧消费者的错误比较和序列化。
+// ApplicationError pairs an application error category and reason with an optional cause.
+// Adapters map it to protocol responses; Code values remain stable for comparisons and serialization.
 type ApplicationError struct {
 	Status
 	cause error
 }
 
-// Newf New(code fmt.Sprintf(format, a...)).
+// Newf creates an application error with a formatted message.
 func Newf(code Category, reason, format string, a ...any) *ApplicationError {
 	return New(code, reason, fmt.Sprintf(format, a...))
 }
@@ -42,12 +42,12 @@ func (e *ApplicationError) Error() string {
 	return fmt.Sprintf("error: code=%d reason=%q message=%q metadata=%v cause=%v", e.Code, e.Reason, e.Message, e.Metadata, e.cause)
 }
 
-// Unwrap provides compatibility for Go 1.13 error chains.
+// Unwrap returns the underlying cause.
 func (e *ApplicationError) Unwrap() error {
 	return e.cause
 }
 
-// Is matches each error in the chain with the target value.
+// Is compares Code and Reason with an ApplicationError found in the target chain.
 func (e *ApplicationError) Is(err error) bool {
 	if se := new(ApplicationError); errors.As(err, &se) {
 		return se.Code == e.Code && se.Reason == e.Reason
@@ -55,14 +55,14 @@ func (e *ApplicationError) Is(err error) bool {
 	return false
 }
 
-// WithCause attaches the underlying cause of the error.
+// WithCause returns a copy with the supplied cause.
 func (e *ApplicationError) WithCause(cause error) *ApplicationError {
 	err := Clone(e)
 	err.cause = cause
 	return err
 }
 
-// WithMetadata deep-copies the given metadata map.
+// WithMetadata returns a copy with an independent metadata map.
 func (e *ApplicationError) WithMetadata(md map[string]string) *ApplicationError {
 	err := Clone(e)
 	if md == nil {
@@ -74,7 +74,7 @@ func (e *ApplicationError) WithMetadata(md map[string]string) *ApplicationError 
 	return err
 }
 
-// New returns an error object for the code, message.
+// New creates an application error with the supplied category, reason, and message.
 func New(code Category, reason, message string) *ApplicationError {
 	return &ApplicationError{
 		Status: Status{
@@ -85,7 +85,8 @@ func New(code Category, reason, message string) *ApplicationError {
 	}
 }
 
-// CategoryOf 返回可被包装的错误类别；nil 保留旧成功标识。
+// CategoryOf returns the category through wrappers, CategoryOK for nil,
+// or CategoryInternalServer for an unrecognized error.
 func CategoryOf(err error) Category {
 	if err == nil {
 		return CategoryOK
@@ -111,7 +112,7 @@ func Message(err error) string {
 	return FromError(err).Message
 }
 
-// Clone deep clone error to a new error.
+// Clone copies the error and metadata map; the cause remains shared.
 func Clone(err *ApplicationError) *ApplicationError {
 	if err == nil {
 		return nil
@@ -132,8 +133,8 @@ func Clone(err *ApplicationError) *ApplicationError {
 	}
 }
 
-// FromError tries to convert an error to *ApplicationError.
-// It supports wrapped errors.
+// FromError returns an ApplicationError found through wrappers, nil for nil,
+// or a generic internal error wrapping an unrecognized error.
 func FromError(err error) *ApplicationError {
 	if err == nil {
 		return nil

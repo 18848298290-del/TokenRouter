@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// userGroupRateRepoStubForGroupRate 记录专属倍率与 RPM 配置操作。
+// userGroupRateRepoStubForGroupRate records rate and RPM configuration operations.
 type userGroupRateRepoStubForGroupRate struct {
 	getByGroupIDData map[int64][]billing.UserGroupRateEntry
 	getByGroupIDErr  error

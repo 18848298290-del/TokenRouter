@@ -53,7 +53,7 @@ func TestNormalizeProviderConcurrencyPreservesExplicitValues(t *testing.T) {
 	require.Equal(t, 2, NormalizeProviderConcurrency(capability.PlatformGrok, capability.ProviderTypeAPIKey, 2))
 }
 
-// cnProviderTestCredentials 模拟前端提交的自定义端点，验证保存时不会改成官方地址。
+// cnProviderTestCredentials supplies custom endpoints to check that saving retains the requested URLs.
 func cnProviderTestCredentials(platform, mode, protocol string) map[string]any {
 	credentials := map[string]any{
 		"api_key":       "sk-test",
@@ -74,7 +74,7 @@ func cnProviderTestCredentials(platform, mode, protocol string) map[string]any {
 	return credentials
 }
 
-// TestCNProviderCredentialValidationRejectsInvalid 检查非法凭据组合返回结构化错误。
+// TestCNProviderCredentialValidationRejectsInvalid checks structured errors for unsupported credential combinations.
 func TestCNProviderCredentialValidationRejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

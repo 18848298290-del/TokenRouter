@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// CodexSparkRateLimitReason 返回 Spark 模型限流的原因。
+// CodexSparkRateLimitReason identifies a Spark model cooldown.
 const CodexSparkRateLimitReason = "openai_codex_spark_rate_limit"
 
-// ApplySparkRateLimit 将 Spark 配额窗口写入模型限流。
-// x-codex-* 使用率和 reset 时间属于 Spark 模型，其他模型继续按各自的额度调度。
+// ApplySparkRateLimit stores Spark quota exhaustion as a model-specific cooldown.
+// Other models continue to use their own quota state.
 func (s *HealthService) ApplySparkRateLimit(ctx context.Context, provider *Record, modelKey string, statusCode int, spark bool, observe func() (OpenAI429Disposition, *time.Time)) bool {
 	if s == nil || provider == nil || s.providerRepo == nil || statusCode != http.StatusTooManyRequests || !provider.IsOpenAIOAuthLike() {
 		return false
@@ -24,8 +24,8 @@ func (s *HealthService) ApplySparkRateLimit(ctx context.Context, provider *Recor
 	}
 	now := s.options.Now()
 	disposition, resetAt := observe()
-	// Spark 只有明确耗尽 5h/7d 窗口时才能使用上游长 reset；普通瞬时 429
-	// Spark 使用短时冷却，即使响应携带全局 reset 头也按短时规则处理。
+	// Use a long upstream reset only for confirmed five-hour or seven-day exhaustion.
+	// Transient 429 responses use the short cooldown even when global reset headers are present.
 	if disposition != OpenAI429Quota5h && disposition != OpenAI429Quota7d {
 		resetAt = nil
 	}

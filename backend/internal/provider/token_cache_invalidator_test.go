@@ -51,8 +51,8 @@ func TestCompositeTokenCacheInvalidator_Gemini(t *testing.T) {
 
 	err := invalidator.InvalidateToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 新行为：同时删除基于 project_id 和 provider_id 的缓存键
-	// 这是为了处理：首次获取 token 时可能没有 project_id，之后自动检测到后会使用新 key
+	// Clear both identities because project discovery can change the cache key
+	// after a token has already been cached by provider ID.
 	require.Equal(t, []string{"gemini:project-x", "gemini:provider:10"}, cache.deletedKeys)
 }
 
@@ -70,7 +70,7 @@ func TestCompositeTokenCacheInvalidator_GeminiWithoutProjectID(t *testing.T) {
 
 	err := invalidator.InvalidateToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 没有 project_id 时，两个 key 相同，去重后只删除一个
+	// Missing project IDs resolve to the provider key, which is deleted once.
 	require.Equal(t, []string{"gemini:provider:10"}, cache.deletedKeys)
 }
 
@@ -88,7 +88,7 @@ func TestCompositeTokenCacheInvalidator_Antigravity(t *testing.T) {
 
 	err := invalidator.InvalidateToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 新行为：同时删除基于 project_id 和 provider_id 的缓存键
+	// Project and provider identities are both invalidated.
 	require.Equal(t, []string{"ag:ag-project", "ag:provider:99"}, cache.deletedKeys)
 }
 
@@ -106,7 +106,7 @@ func TestCompositeTokenCacheInvalidator_AntigravityWithoutProjectID(t *testing.T
 
 	err := invalidator.InvalidateToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 没有 project_id 时，两个 key 相同，去重后只删除一个
+	// Missing project IDs resolve to the provider key, which is deleted once.
 	require.Equal(t, []string{"ag:provider:99"}, cache.deletedKeys)
 }
 
@@ -272,8 +272,8 @@ func TestCompositeTokenCacheInvalidator_DeleteError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 删除失败时记录日志，调用返回成功。
-			// 这是因为缓存失效失败不应影响主业务流程
+			// Invalidation is best effort: a cache deletion failure returns success
+			// so callers can finish their provider update.
 			err := invalidator.InvalidateToken(context.Background(), tt.provider)
 			require.NoError(t, err)
 		})
@@ -281,7 +281,7 @@ func TestCompositeTokenCacheInvalidator_DeleteError(t *testing.T) {
 }
 
 func TestCompositeTokenCacheInvalidator_AllPlatformsIntegration(t *testing.T) {
-	// 测试所有平台的缓存键生成和删除
+	// Exercise the key families for these four OAuth platforms.
 	cache := &geminiTokenCacheStub{}
 	invalidator := NewCompositeTokenCacheInvalidator(cache, nil, nil)
 
@@ -292,7 +292,7 @@ func TestCompositeTokenCacheInvalidator_AllPlatformsIntegration(t *testing.T) {
 		{ID: 4, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeOAuth},
 	}
 
-	// 新行为：Gemini 和 Antigravity 会同时删除基于 project_id 和 provider_id 的键
+	// Gemini and Antigravity invalidate both project and provider keys.
 	expectedKeys := []string{
 		"gemini:gemini-proj",
 		"gemini:provider:1",

@@ -3,7 +3,7 @@ package codeassist
 import "testing"
 
 func TestExtractActivationURL(t *testing.T) {
-	// Test case from the user's error message
+	// The disabled API response supplies the activation URL in both metadata and help links.
 	errorBody := `{
 		"error": {
 			"code": 403,

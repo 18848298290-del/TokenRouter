@@ -12,11 +12,11 @@ import (
 type HTMLCache struct {
 	mu              sync.RWMutex
 	entries         map[string]CachedHTML
-	baseHTMLHash    string // Hash of the original index.html (immutable after build)
-	settingsVersion uint64 // Incremented when settings change
+	baseHTMLHash    string // Hash of the base template supplied by SetBaseHTML.
+	settingsVersion uint64 // Generation advanced by Invalidate.
 }
 
-// CachedHTML represents the cache state.
+// CachedHTML contains rendered HTML and its language-dependent ETag.
 type CachedHTML struct {
 	Content []byte
 	ETag    string
@@ -27,7 +27,7 @@ func NewHTMLCache() *HTMLCache {
 	return &HTMLCache{}
 }
 
-// SetBaseHTML initializes the cache with the base HTML template.
+// SetBaseHTML sets the template hash; call it before publishing entries.
 func (c *HTMLCache) SetBaseHTML(baseHTML []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -45,7 +45,7 @@ func (c *HTMLCache) Invalidate() {
 	c.settingsVersion++
 }
 
-// Snapshot 在同一次锁保护内读取语言快照和失效版本。
+// Snapshot returns an owned copy of a language entry and the current invalidation generation under one lock.
 func (c *HTMLCache) Snapshot(code string) (*CachedHTML, uint64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -56,7 +56,9 @@ func (c *HTMLCache) Snapshot(code string) (*CachedHTML, uint64) {
 	return &CachedHTML{Content: append([]byte(nil), snapshot.Content...), ETag: snapshot.ETag}, c.settingsVersion
 }
 
-// Publish 将语言加入 ETag，跨过失效点的渲染保持为当前请求私有。
+// Publish returns rendered HTML with an ETag incorporating language and settings.
+// It stores a copy only if version still matches the current invalidation generation.
+// The returned Content shares the caller's html slice, even when publication is skipped.
 func (c *HTMLCache) Publish(code string, version uint64, html, settingsJSON []byte) CachedHTML {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -71,7 +73,7 @@ func (c *HTMLCache) Publish(code string, version uint64, html, settingsJSON []by
 	return rendered
 }
 
-// generateETag creates an ETag from base HTML hash + settings hash.
+// generateETag combines the base template hash with the hash of the supplied language and settings bytes.
 func (c *HTMLCache) generateETag(settingsJSON []byte) string {
 	settingsHash := sha256.Sum256(settingsJSON)
 	return `"` + c.baseHTMLHash + "-" + hex.EncodeToString(settingsHash[:8]) + `"`

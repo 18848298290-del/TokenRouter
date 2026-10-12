@@ -71,7 +71,7 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupCaptureControls(t *testin
 	require.True(t, roundTrip.Group.AllowImageGeneration)
 }
 
-// TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip 验证组级 Fast 开关经序列化缓存后仍能恢复到可信分组上下文。
+// TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip checks that serialization retains the group Fast flag.
 func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	groupID := int64(50)
 	apiKey := &apikey.APIKey{
@@ -98,7 +98,7 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	require.Equal(t, apikey.KeyApiKeyAuthSnapshotVersion, cached.Snapshot.Version)
 }
 
-// TestAuthSnapshotGroupOpenAIFastPolicy 验证 Ultra Fast 和关闭策略经序列化后必须恢复为相同的可信分组配置。
+// TestAuthSnapshotGroupOpenAIFastPolicy checks that serialization retains Ultra Fast and disabled policies.
 func TestAuthSnapshotGroupOpenAIFastPolicy(t *testing.T) {
 	for _, policy := range []string{"force_ultrafast", "force_off"} {
 		key := &apikey.APIKey{ID: 1, UserID: 2, Status: billing.StatusActive, User: &identity.User{ID: 2, Status: billing.StatusActive}, Group: &routing.Group{ID: 3, Status: billing.StatusActive, Hydrated: true, OpenAIFastPolicy: policy}}
@@ -371,7 +371,7 @@ func TestAPIKeyServiceRejectsV33AuthSnapshotWithoutGroupOpenAIFast(t *testing.T)
 	}
 }
 
-// TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit 验证旧快照不会缺少超限动作。
+// TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit rejects snapshots predating the over-limit action.
 func TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-reasoning-over-limit", &apikey.APIKeyAuthCacheEntry{
@@ -385,7 +385,7 @@ func TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit(t *t
 	}
 }
 
-// TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast 验证旧快照不会缺少免费 Fast 策略。
+// TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast rejects the obsolete snapshot version.
 func TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-free-openai-fast", &apikey.APIKeyAuthCacheEntry{

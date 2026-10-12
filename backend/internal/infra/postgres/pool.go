@@ -19,7 +19,7 @@ type PoolSettings struct {
 	ConnMaxIdleTime time.Duration
 }
 
-// PoolOptions 包含启动时解析的数据库连接池参数。
+// PoolOptions contains database pool configuration read at startup.
 type PoolOptions struct {
 	MaxOpenConns           int
 	MaxIdleConns           int

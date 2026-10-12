@@ -10,8 +10,8 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// totpVMUserRepoStub 为 TOTP 验证方式测试提供用户仓储方法。
-// 调用嵌入的 nil 接口方法会触发 panic。
+// totpVMUserRepoStub supplies user operations for verification-method tests.
+// Calls to unimplemented methods on the embedded nil interface panic.
 type totpVMUserRepoStub struct {
 	UserRepository
 
@@ -25,7 +25,7 @@ type totpVMSettingRepoStub struct {
 	values map[string]string
 }
 
-// totpVerificationSettings 为验证方式测试读取邮箱验证开关。
+// totpVerificationSettings supplies the email-verification switch for method-selection tests.
 type totpVerificationSettings struct {
 	TotpSettings
 	runtime *RuntimeSettings
@@ -91,15 +91,15 @@ func TestTotpDisableAdminUsesPasswordEvenWithEmailVerifyEnabled(t *testing.T) {
 	require.NoError(t, admin.SetPassword("correct-password"))
 	svc, userRepo := newTotpVMService(t, admin, true)
 
-	// 未设置密码时仍要求提供密码。
+	// An empty password is rejected.
 	err := svc.Disable(context.Background(), admin.ID, "", "")
 	require.ErrorIs(t, err, ErrPasswordRequired)
 
-	// 密码错误时拒绝停用。
+	// An incorrect password cannot disable TOTP.
 	err = svc.Disable(context.Background(), admin.ID, "", "wrong-password")
 	require.ErrorIs(t, err, ErrPasswordIncorrect)
 
-	// 密码正确时停用 TOTP。emailService 为 nil，进入邮箱验证分支会触发 panic。
+	// The correct password disables TOTP; the nil email service would panic if email verification were selected.
 	err = svc.Disable(context.Background(), admin.ID, "", "correct-password")
 	require.NoError(t, err)
 	require.True(t, userRepo.disableCalled)

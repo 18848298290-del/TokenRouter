@@ -30,7 +30,7 @@ type APIKeyRateLimitData struct {
 	Window7dStart *time.Time
 }
 
-// KeyUsageReset 包含 API Key 配额和用量窗口的重置值。
+// KeyUsageReset supplies quota and spending-window reset values.
 type KeyUsageReset struct {
 	ResetQuota, ResetWindows bool
 	QuotaUsed                float64
@@ -61,7 +61,7 @@ func (d *APIKeyRateLimitData) EffectiveUsage7d() float64 {
 	return d.Usage7d
 }
 
-// IsWindowExpired 将空窗口起点或已超过持续时间的窗口视为过期。
+// IsWindowExpired treats a nil start or elapsed duration at least as long as the window as expired.
 func IsWindowExpired(windowStart *time.Time, duration time.Duration) bool {
 	return windowStart == nil || time.Since(*windowStart) >= duration
 }

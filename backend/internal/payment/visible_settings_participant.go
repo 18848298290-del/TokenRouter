@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// VisibleMethodSettings 包含管理入口的支付方式展示设置。
+// VisibleMethodSettings contains admin settings for payment method visibility and sources.
 type VisibleMethodSettings struct {
 	PaymentVisibleMethodAlipaySource  string `json:"payment_visible_method_alipay_source"`
 	PaymentVisibleMethodWxpaySource   string `json:"payment_visible_method_wxpay_source"`
@@ -19,7 +19,7 @@ type VisibleMethodSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 }
 
-// AdminReadSettings 包含支付方式的展示开关和来源。
+// AdminReadSettings contains payment method visibility flags and sources.
 type AdminReadSettings struct {
 	PaymentVisibleMethodAlipayEnabled bool
 	PaymentVisibleMethodAlipaySource  string
@@ -27,7 +27,7 @@ type AdminReadSettings struct {
 	PaymentVisibleMethodWxpaySource   string
 }
 
-// PrepareVisibleMethodSettings 校验支付方式来源并生成待保存的设置值。
+// PrepareVisibleMethodSettings normalizes sources in place and returns settings values for persistence.
 func PrepareVisibleMethodSettings(value *VisibleMethodSettings) (map[string]string, error) {
 	var err error
 	value.PaymentVisibleMethodAlipaySource, err = NormalizeVisibleMethodSettingSource("alipay", value.PaymentVisibleMethodAlipaySource, value.PaymentVisibleMethodAlipayEnabled)
@@ -46,7 +46,7 @@ func PrepareVisibleMethodSettings(value *VisibleMethodSettings) (map[string]stri
 	}, nil
 }
 
-// VisibleSettingsParticipant 保存输入包含的支付方式展示字段。
+// VisibleSettingsParticipant prepares the payment method display fields present in the input.
 func VisibleSettingsParticipant() settings.Participant {
 	keys := []string{SettingPaymentVisibleMethodAlipaySource, SettingPaymentVisibleMethodWxpaySource, SettingPaymentVisibleMethodAlipayEnabled, SettingPaymentVisibleMethodWxpayEnabled}
 	return settings.Participant{Module: "payment-visible-methods", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {
@@ -74,7 +74,7 @@ func VisibleSettingsParticipant() settings.Participant {
 	}}
 }
 
-// ReadAdminSettings 从传入的设置值解析支付方式的展示开关和来源。
+// ReadAdminSettings parses payment method visibility and sources from stored values.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 
@@ -85,7 +85,7 @@ func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	return result
 }
 
-// NormalizeVisibleMethodSettingSource 校验支付方式来源，空值表示自动选择。
+// NormalizeVisibleMethodSettingSource validates the source; an empty value requests automatic selection.
 func NormalizeVisibleMethodSettingSource(method, source string, enabled bool) (string, error) {
 	_ = enabled
 	source = strings.TrimSpace(source)

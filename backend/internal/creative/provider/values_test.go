@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeOpenAIImageSize 校验 OpenAI size 映射。
+// TestCreativeOpenAIImageSize checks OpenAI size mappings.
 func TestCreativeOpenAIImageSize(t *testing.T) {
 	require.Equal(t, "1024x1024", CreativeOpenAIImageSize("1K", "1:1"))
 	require.Equal(t, "1536x1024", CreativeOpenAIImageSize("1K", "16:9"))

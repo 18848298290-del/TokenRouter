@@ -10,7 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// GeminiErrorObserver 保留官方日配额与第三方冷却的区别，只处理本次提供商健康观测。
+// GeminiErrorObserver applies provider health updates using platform-specific reset times or
+// third-party cooldowns.
 type GeminiErrorObserver struct {
 	Other          *UpstreamHealth
 	Precheck       *provider.GeminiPrecheck
@@ -20,7 +21,7 @@ type GeminiErrorObserver struct {
 }
 
 func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Record, statusCode int, headers http.Header, body []byte, observation HealthObservation) *provider.Record {
-	// 遵守自定义错误码策略：未命中则跳过所有限流处理
+	// A custom status-code policy can exclude this response from health updates.
 	if !value.ShouldHandleErrorCode(statusCode) {
 		return nil
 	}
@@ -31,8 +32,7 @@ func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Recor
 	if statusCode != 429 {
 		return nil
 	}
-	// 池模式提供商保留在上游提供商池中，由请求级重试或切号消化 429；
-	// 管理员配置的自定义错误策略优先，命中时按策略更新提供商状态。
+	// Pool-mode 429s use request retries or provider switching unless a custom status policy is enabled.
 	if value.IsPoolMode() && !value.IsCustomErrorCodesEnabled() {
 		return nil
 	}
@@ -43,7 +43,8 @@ func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Recor
 	isCodeAssist := value.IsGeminiCodeAssist()
 
 	if value.IsGeminiThirdPartyProvider() {
-		// 第三方兼容端点不得解析 Google 官方日配额文案，始终使用通用 429 冷却。
+		// Third-party endpoints use a generic cooldown because Google daily-quota messages do not describe
+		// their limits.
 		cooldown := 5 * time.Minute
 		if s.Precheck != nil {
 			cooldown = s.Precheck.GeminiCooldown(ctx, value)
@@ -56,10 +57,9 @@ func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Recor
 
 	resetAt := s.ResetTime(body)
 	if resetAt == nil {
-		// 根据提供商类型使用不同的默认重置时间
 		var ra time.Time
 		if isCodeAssist || oauthType == "google_one" {
-			// Gemini CLI / Google One：按层级回退冷却时间
+			// Code Assist and Google One use tier-based cooldowns when no reset time is available.
 			cooldown := provider.GeminiCooldownForTier(tierID)
 			if s.Precheck != nil {
 				cooldown = s.Precheck.GeminiCooldown(ctx, value)
@@ -71,12 +71,11 @@ func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Recor
 				logging.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Provider %d (Google One OAuth, tier=%s, project=%s) rate limited, cooldown=%v", value.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
 			}
 		} else {
-			// API Key / AI Studio OAuth: PST 午夜
+			// API key and AI Studio OAuth providers use the configured daily reset.
 			if ts := s.DailyReset(); ts != nil {
 				ra = time.Unix(*ts, 0)
 				logging.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Provider %d (API Key/AI Studio, type=%s) rate limited, reset at PST midnight (%v)", value.ID, value.Type, ra)
 			} else {
-				// 缺少重置时间时使用五分钟。
 				ra = time.Now().Add(5 * time.Minute)
 				logging.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Provider %d rate limited, fallback to 5min", value.ID)
 			}
@@ -85,7 +84,6 @@ func (s *GeminiErrorObserver) Observe(ctx context.Context, value *provider.Recor
 		return nil
 	}
 
-	// 使用解析到的重置时间
 	resetTime := time.Unix(*resetAt, 0)
 	_ = s.SetRateLimited(ctx, value.ID, resetTime)
 	logging.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Provider %d rate limited until %v (oauth_type=%s, tier=%s)",

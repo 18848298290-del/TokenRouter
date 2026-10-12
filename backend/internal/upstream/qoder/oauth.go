@@ -18,28 +18,28 @@ import (
 )
 
 const (
-	// OpenAPIBaseURL 是国际站 OpenAPI 地址，保留名称以兼容旧调用。
+	// OpenAPIBaseURL is the global OpenAPI URL.
 	OpenAPIBaseURL = GlobalOpenAPIBaseURL
 
-	// OAuthClientID 是国际站公开 client ID，保留名称以兼容旧调用。
+	// OAuthClientID is the global public OAuth client ID.
 	OAuthClientID = GlobalOAuthClientID
 
-	// DeviceAuthorizationURL 是国际站授权地址，保留名称以兼容旧调用。
+	// DeviceAuthorizationURL is the global browser authorization URL.
 	DeviceAuthorizationURL = GlobalDeviceAuthorizationURL
 
-	// DevicePollPath 是浏览器授权后轮询 device token 的端点。
+	// DevicePollPath polls for a token after browser authorization.
 	DevicePollPath = "/api/v1/deviceToken/poll"
 
-	// UserInfoPath 返回 access token 对应 Qoder 用户身份的端点。
+	// UserInfoPath returns the user identity for an access token.
 	UserInfoPath = "/api/v1/userinfo"
 
-	// OrganizationTagsPathPrefix 返回 Qoder 用户组织元数据的端点前缀。
+	// OrganizationTagsPathPrefix begins the user organization metadata endpoint.
 	OrganizationTagsPathPrefix = "/api/v1/organizations/"
 
-	// JobTokenExchangePath 是国内站现代 QODER_PAT 的交换端点。
+	// JobTokenExchangePath exchanges a CN QODER_PAT for tokens.
 	JobTokenExchangePath = "/api/v1/jobToken/exchange"
 
-	// DeviceTokenRefreshPath 是国内站 QoderCN20 token 刷新端点。
+	// DeviceTokenRefreshPath refreshes CN QoderCN20 tokens.
 	DeviceTokenRefreshPath = "/api/v1/deviceToken/refresh"
 )
 
@@ -52,10 +52,10 @@ type DeviceAuthRequest struct {
 	Profile       Profile
 }
 
-// FlexibleInt64 兼容 Qoder API 中以 JSON 数字或字符串返回的整数。
+// FlexibleInt64 accepts Qoder numeric fields encoded as JSON numbers or strings.
 type FlexibleInt64 int64
 
-// DeviceTokenResponse 兼容国际设备授权和国内 QoderCN20 token 响应。
+// DeviceTokenResponse accepts global device authorization and CN QoderCN20 responses.
 type DeviceTokenResponse struct {
 	ID           string        `json:"id"`
 	Token        string        `json:"token"`
@@ -72,7 +72,7 @@ type DeviceTokenResponse struct {
 	Nonce        string        `json:"nonce"`
 }
 
-// UserInfo 兼容两站 userinfo 的 snake_case 与 camelCase 字段。
+// UserInfo accepts snake_case and camelCase fields from both sites.
 type UserInfo struct {
 	ID               string `json:"id"`
 	UserID           string `json:"user_id"`
@@ -97,14 +97,14 @@ type OAuthClient struct {
 	Doer       RequestDoer
 }
 
-// OpenAPIError 表示 OpenAPI 返回的脱敏 HTTP 错误。
+// OpenAPIError holds an HTTP failure with a message redacted by the response parser.
 type OpenAPIError struct {
 	Operation  string
 	StatusCode int
 	Message    string
 }
 
-// UnmarshalJSON 容错解析 JSON 数字、整数样式浮点数和数字字符串。
+// UnmarshalJSON accepts numeric values and strings, truncating fractional values toward zero.
 func (v *FlexibleInt64) UnmarshalJSON(data []byte) error {
 	parsed, err := parseFlexibleInt64(data)
 	if err != nil {
@@ -114,7 +114,7 @@ func (v *FlexibleInt64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// parseFlexibleInt64 解析 Qoder API 常见的宽松整数表示。
+// parseFlexibleInt64 accepts numeric values or strings; null and empty values become zero.
 func parseFlexibleInt64(data []byte) (FlexibleInt64, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" || trimmed == "null" || trimmed == `""` {
@@ -138,7 +138,7 @@ func parseFlexibleInt64(data []byte) (FlexibleInt64, error) {
 	return FlexibleInt64(parsed), nil
 }
 
-// UnmarshalJSON 单独兼容 expires_at 的日期格式，并允许由有效 expires_in 回退。
+// UnmarshalJSON accepts date-form expires_at and tolerates an invalid value when expires_in is positive.
 func (r *DeviceTokenResponse) UnmarshalJSON(data []byte) error {
 	type responseAlias DeviceTokenResponse
 
@@ -173,7 +173,7 @@ func (r *DeviceTokenResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// parseFlexibleExpiresAt 将数字或常见 ISO 日期统一转换为 Unix 秒。
+// parseFlexibleExpiresAt accepts numeric expiry values or converts ISO date strings to Unix seconds.
 func parseFlexibleExpiresAt(data []byte) (FlexibleInt64, error) {
 	parsed, err := parseFlexibleInt64(data)
 	if err == nil {
@@ -268,7 +268,7 @@ func NewOAuthClient(baseURL string, httpClient *http.Client) *OAuthClient {
 	return NewOAuthClientForProfile(profile, httpClient)
 }
 
-// NewOAuthClientForProfile 使用站点 profile 创建 OpenAPI 客户端。
+// NewOAuthClientForProfile creates an OpenAPI client from the site profile.
 func NewOAuthClientForProfile(profile Profile, httpClient *http.Client) *OAuthClient {
 	normalized, err := NormalizeProfile(profile)
 	if err != nil {
@@ -284,7 +284,7 @@ func NewOAuthClientForProfile(profile Profile, httpClient *http.Client) *OAuthCl
 	}
 }
 
-// NewDeviceAuthRequestForSite 为指定站点生成设备授权参数。
+// NewDeviceAuthRequestForSite generates device authorization parameters for the site.
 func NewDeviceAuthRequestForSite(site Site) (*DeviceAuthRequest, error) {
 	profile, err := ProfileForSite(site)
 	if err != nil {
@@ -293,7 +293,7 @@ func NewDeviceAuthRequestForSite(site Site) (*DeviceAuthRequest, error) {
 	return NewDeviceAuthRequestForProfile(profile)
 }
 
-// NewDeviceAuthRequestForProfile 使用冻结的站点 profile 生成设备授权参数。
+// NewDeviceAuthRequestForProfile generates authorization parameters and stores the normalized profile.
 func NewDeviceAuthRequestForProfile(profile Profile) (*DeviceAuthRequest, error) {
 	normalized, err := NormalizeProfile(profile)
 	if err != nil {
@@ -345,7 +345,7 @@ func GenerateCodeChallenge(verifier string) string {
 	return oauthpkce.Challenge(verifier)
 }
 
-// RandomUUIDLike 生成官方客户端使用的 UUID v4 字符串。
+// RandomUUIDLike generates the UUID v4 format used by Qoder clients.
 func RandomUUIDLike() string {
 	return uuid.NewString()
 }
@@ -460,7 +460,7 @@ func (c *OAuthClient) GetOrganizationTags(ctx context.Context, token, uid string
 	return &tags, nil
 }
 
-// ExchangeQoderCN20PAT 使用国内站现代 QODER_PAT 换取 OpenAPI token。
+// ExchangeQoderCN20PAT exchanges a CN QODER_PAT for OpenAPI tokens.
 func (c *OAuthClient) ExchangeQoderCN20PAT(ctx context.Context, pat string) (*DeviceTokenResponse, error) {
 	pat = strings.TrimSpace(pat)
 	if pat == "" {
@@ -473,7 +473,7 @@ func (c *OAuthClient) ExchangeQoderCN20PAT(ctx context.Context, pat string) (*De
 	return c.postTokenRequest(ctx, JobTokenExchangePath, body, "PAT exchange")
 }
 
-// RefreshQoderCN20Token 使用国内站 refresh token 换取新的 OpenAPI token。
+// RefreshQoderCN20Token exchanges a CN refresh token for new OpenAPI tokens.
 func (c *OAuthClient) RefreshQoderCN20Token(ctx context.Context, refreshToken string) (*DeviceTokenResponse, error) {
 	refreshToken = strings.TrimSpace(refreshToken)
 	if refreshToken == "" {
@@ -486,7 +486,7 @@ func (c *OAuthClient) RefreshQoderCN20Token(ctx context.Context, refreshToken st
 	return c.postTokenRequest(ctx, DeviceTokenRefreshPath, body, "token refresh")
 }
 
-// CompleteQoderCN20Identity 使用本客户端冻结的 profile 与 transport 完成国内 COSY 身份交换。
+// CompleteQoderCN20Identity exchanges the CN COSY identity using this client profile and transport.
 func (c *OAuthClient) CompleteQoderCN20Identity(
 	ctx context.Context,
 	token *DeviceTokenResponse,
@@ -535,7 +535,7 @@ func (c *OAuthClient) postTokenRequest(ctx context.Context, path string, body []
 	return &token, nil
 }
 
-// Error 返回不包含原始凭据的错误文本。
+// Error formats the operation, status, and previously redacted message.
 func (e *OpenAPIError) Error() string {
 	if e == nil {
 		return ""
@@ -547,7 +547,7 @@ func (e *OpenAPIError) Error() string {
 	return fmt.Sprintf("qoder: %s failed with status %d: %s", e.Operation, e.StatusCode, message)
 }
 
-// InvalidCredentials 判断 OpenAPI 错误是否明确表示 PAT 或 refresh token 已失效。
+// InvalidCredentials reports status codes that identify a rejected PAT or refresh token.
 func (e *OpenAPIError) InvalidCredentials() bool {
 	if e == nil {
 		return false
@@ -564,7 +564,7 @@ func (e *OpenAPIError) InvalidCredentials() bool {
 	}
 }
 
-// UpstreamFailure 判断 OpenAPI 错误是否为可重试的服务端故障。
+// UpstreamFailure reports server failures eligible for retry.
 func (e *OpenAPIError) UpstreamFailure() bool {
 	return e != nil && e.StatusCode >= http.StatusInternalServerError
 }
@@ -601,14 +601,14 @@ func (r *DeviceTokenResponse) AccessTokenValue() string {
 	if r == nil {
 		return ""
 	}
-	// 官方 Qoder CN 客户端优先使用 access_token，token 仅用于旧响应兼容回退。
+	// Prefer access_token as the CN client does; token supports older responses.
 	if strings.TrimSpace(r.AccessToken) != "" {
 		return strings.TrimSpace(r.AccessToken)
 	}
 	return strings.TrimSpace(r.Token)
 }
 
-// ExpiryTime 将 token 响应中的绝对或相对有效期规范化为 UTC 时间。
+// ExpiryTime converts absolute or relative token expiry values to UTC.
 func (r *DeviceTokenResponse) ExpiryTime(now time.Time) time.Time {
 	if r == nil {
 		return time.Time{}
@@ -631,7 +631,7 @@ func (r *DeviceTokenResponse) ExpiryTime(now time.Time) time.Time {
 	return now.Add(time.Duration(expiresIn) * time.Second).UTC()
 }
 
-// ValidateQoderCN20 校验国内标准 OAuth/PAT 返回并规范化过期时间。
+// ValidateQoderCN20 requires access and refresh tokens plus a positive expiry value.
 func (r *DeviceTokenResponse) ValidateQoderCN20(now time.Time) (time.Time, error) {
 	if r == nil {
 		return time.Time{}, fmt.Errorf("token response is empty")

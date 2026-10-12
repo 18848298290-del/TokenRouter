@@ -16,7 +16,7 @@ type GrokSessionBackend interface {
 	TryConsume(context.Context, string) (bool, error)
 }
 
-// GrokOAuthSession 保存一次 PKCE OAuth 授权流程状态。
+// GrokOAuthSession holds the state of one PKCE authorization flow.
 type GrokOAuthSession struct {
 	State         string    `json:"state"`
 	CodeVerifier  string    `json:"code_verifier"`
@@ -31,7 +31,7 @@ type GrokOAuthSession struct {
 	consumed bool
 }
 
-// GrokSessionStore 以 Redis 共享 xAI OAuth 会话，并在 Redis 写入失败时使用进程内回退。
+// GrokSessionStore shares OAuth sessions through a remote backend and uses local storage when remote writes fail.
 type GrokSessionStore struct {
 	runtimeMu      sync.Mutex
 	runtimeStarted bool
@@ -56,7 +56,7 @@ type grokSessionDTO struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-// TryConsume 保证进程内回退会话也只能被消费一次。
+// TryConsume claims a local session once, including concurrent attempts.
 func (s *GrokOAuthSession) TryConsume() bool {
 	if s == nil {
 		return false
@@ -193,7 +193,7 @@ func (s *GrokSessionStore) tryConsumeMemory(sessionID string) bool {
 	return ok && session.TryConsume()
 }
 
-// Start 启动当前会话实例的清理循环。
+// Start starts the session cleanup loop once.
 func (s *GrokSessionStore) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -204,7 +204,7 @@ func (s *GrokSessionStore) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanup() })
 }
 
-// Stop 幂等停止并等待清理循环，未启动实例也可安全关闭。
+// Stop stops cleanup and waits for it to finish. It is safe before Start and on repeated calls.
 func (s *GrokSessionStore) Stop() {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {

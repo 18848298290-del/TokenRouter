@@ -71,7 +71,8 @@ func ExtractCloudflareRayID(headers map[string][]string, body []byte) string {
 	return ""
 }
 
-// TruncateBody truncates body text for logging/inspection.
+// TruncateBody trims whitespace and limits body text to max bytes before adding a truncation marker.
+// Nonpositive limits use 512 bytes; truncation can split a UTF-8 sequence.
 func TruncateBody(body []byte, max int) string {
 	if max <= 0 {
 		max = 512

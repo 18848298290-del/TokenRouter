@@ -20,7 +20,7 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// invitationRaceUserRepo 为邀请码注册提供用户仓储替身。
+// invitationRaceUserRepo stores users for concurrent invitation-registration tests.
 type invitationRaceUserRepo struct {
 	identity.UserRepository
 
@@ -29,7 +29,7 @@ type invitationRaceUserRepo struct {
 	byEmail map[string]*identity.User
 }
 
-// invitationRaceRedeemRepo 通过条件更新模拟数据库中的一次性邀请码占用。
+// invitationRaceRedeemRepo models single-use invitations with a conditional update.
 type invitationRaceRedeemRepo struct {
 	billing.RedeemCodeRepository
 
@@ -66,7 +66,7 @@ func TestAuthService_RegisterSnapshotsDefaultUserAPIKeyLimit(t *testing.T) {
 	}
 }
 
-// TestAuthService_DefaultUserAPIKeyLimitDoesNotRetroactivelyChangeUsers 验证修改系统默认值只影响之后注册的用户，已有用户保留注册时的快照。
+// TestAuthService_DefaultUserAPIKeyLimitDoesNotRetroactivelyChangeUsers checks that existing users retain their signup limit snapshot.
 func TestAuthService_DefaultUserAPIKeyLimitDoesNotRetroactivelyChangeUsers(t *testing.T) {
 	settings := map[string]string{
 		identity.SettingKeyRegistrationEnabled:    "true",
@@ -87,7 +87,7 @@ func TestAuthService_DefaultUserAPIKeyLimitDoesNotRetroactivelyChangeUsers(t *te
 	require.Equal(t, 10, repo.created[0].APIKeyLimit)
 }
 
-// TestAuthService_AllOAuthSourcesSnapshotDefaultUserAPIKeyLimit 检查各 OAuth 来源注册时记录当前的默认 API Key 上限。
+// TestAuthService_AllOAuthSourcesSnapshotDefaultUserAPIKeyLimit checks that each provider snapshots the API key limit at signup.
 func TestAuthService_AllOAuthSourcesSnapshotDefaultUserAPIKeyLimit(t *testing.T) {
 	for index, signupSource := range []string{"linuxdo", "wechat", "oidc", "github", "google", "dingtalk"} {
 		t.Run(signupSource, func(t *testing.T) {
@@ -169,7 +169,7 @@ func (r *invitationRaceRedeemRepo) Use(_ context.Context, id, userID int64) erro
 	return nil
 }
 
-// TestAuthService_Register_InvitationCodeSingleUseUnderConcurrency 确认同一邀请码并发注册只成功一次。
+// TestAuthService_Register_InvitationCodeSingleUseUnderConcurrency checks that concurrent registrations consume one invitation once.
 func TestAuthService_Register_InvitationCodeSingleUseUnderConcurrency(t *testing.T) {
 	const (
 		code   = "INV-RACE-001"
@@ -394,7 +394,7 @@ func TestAuthService_Register_Disabled(t *testing.T) {
 }
 
 func TestAuthService_Register_DisabledByDefault(t *testing.T) {
-	// 当 settings 为 nil（设置项不存在）时，注册应该默认关闭
+	// Missing registration settings disable signup.
 	repo := &userRepoStub{}
 	service := newAuthService(repo, nil, nil)
 
@@ -404,20 +404,19 @@ func TestAuthService_Register_DisabledByDefault(t *testing.T) {
 
 func TestAuthService_Register_EmailVerifyEnabledButServiceNotConfigured(t *testing.T) {
 	repo := &userRepoStub{}
-	// 邮件验证开启但 emailCache 为 nil（emailService 未配置）
+	// Email verification is required but the email service is unavailable.
 	service := newAuthService(repo, map[string]string{
 		identity.SettingKeyRegistrationEnabled: "true",
 		identity.SettingKeyEmailVerifyEnabled:  "true",
 	}, nil)
 
-	// 校验失败时返回服务不可用错误。
 	_, _, err := service.RegisterWithVerification(context.Background(), "user@test.com", "password", "any-code", "", "", "")
 	require.ErrorIs(t, err, identity.ErrServiceUnavailable)
 }
 
 func TestAuthService_Register_EmailVerifyRequired(t *testing.T) {
 	repo := &userRepoStub{}
-	cache := &emailCacheStub{} // 配置 emailService
+	cache := &emailCacheStub{} // Configures the email service.
 	service := newAuthService(repo, map[string]string{
 		identity.SettingKeyRegistrationEnabled: "true",
 		identity.SettingKeyEmailVerifyEnabled:  "true",
@@ -586,7 +585,7 @@ func TestAuthService_Register_CreateError(t *testing.T) {
 }
 
 func TestAuthService_Register_CreateEmailExistsRace(t *testing.T) {
-	// 模拟竞态条件：ExistsByEmail 返回 false，但 Create 时因唯一约束失败
+	// The preflight lookup succeeds, but the insert loses a uniqueness race.
 	repo := &userRepoStub{createErr: identity.ErrEmailExists}
 	service := newAuthService(repo, map[string]string{
 		identity.SettingKeyRegistrationEnabled: "true",
@@ -763,8 +762,8 @@ func TestAuthService_LoginOrRegisterOAuthWithTokenPair_ExistingUserDoesNotGrantA
 	require.Empty(t, assigner.calls)
 }
 
-// newAuthServiceWithDingTalkCfg 构建一个含完整 DingTalk config 的 AuthService，
-// 用于测试 canBypassRegistrationDisabledForOAuth。
+// newAuthServiceWithDingTalkCfg configures DingTalk options for tests of
+// AuthCanBypassRegistrationDisabledForOAuth.
 func newAuthServiceWithDingTalkCfg(settings map[string]string, dtCfg config.DingTalkConnectConfig) *identity.AuthService {
 	cfg := &config.Config{
 		JWT:      config.JWTConfig{Secret: "test-secret", ExpireHour: 1},
@@ -775,7 +774,7 @@ func newAuthServiceWithDingTalkCfg(settings map[string]string, dtCfg config.Ding
 	return identitytestkit.Auth(nil, &identity.AuthDependencies{Options: identitytestkit.AuthOptions(cfg), Settings: authSettingsPort(settingService)})
 }
 
-// minDingTalkURLs 返回包含必填字段的 DingTalkConnectConfig。
+// minDingTalkURLs returns the required DingTalk configuration fields.
 func minDingTalkURLs() config.DingTalkConnectConfig {
 	return config.DingTalkConnectConfig{
 		ClientID:            "test-client",

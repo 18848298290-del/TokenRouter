@@ -14,11 +14,11 @@ const (
 	batchImageCaptureRequestPrefix = "batch_image_capture:"
 	batchImageReleaseRequestPrefix = "batch_image_release:"
 
-	// FundingScope 标识批量图片作业的资金用途。
+	// FundingScope identifies funds reserved for batch image jobs.
 	FundingScope billing.TaskScope = "batchimage"
 )
 
-// FundingStore 由唯一 billing.Funds 提供，同一任务的三个动作复用原幂等标识。
+// FundingStore uses billing.Funds for reserve, capture, and release with stable request IDs per job.
 type FundingStore interface {
 	Reserve(context.Context, *billing.TaskFundsCommand) (*billing.TaskFundsResult, error)
 	Capture(context.Context, *billing.TaskFundsCommand) (*billing.TaskFundsResult, error)
@@ -41,7 +41,7 @@ func BatchImageReleaseRequestID(batchID string) string {
 	return batchImageReleaseRequestPrefix + strings.TrimSpace(batchID)
 }
 
-// BillingUserID 返回余额实际归属用户，兼容旧任务未写付款人的情况。
+// BillingUserID returns the payer, using the owner for older jobs without a payer snapshot.
 func BillingUserID(job *BatchImageJob) int64 {
 	if job == nil {
 		return 0
@@ -123,7 +123,7 @@ func (f Funding) Reserve(ctx context.Context, job *BatchImageJob, groupID *int64
 		if errors.Is(err, ErrBatchImageInsufficientBalance) {
 			return ErrBatchImageInsufficientBalance
 		}
-		// 指定订阅是严格资金来源，冻结阶段的状态变化需要原样返回给调用方。
+		// A selected subscription is the required funding source; return reservation eligibility errors unchanged.
 		if errors.Is(err, billing.ErrPreferredSubscriptionInvalid) || errors.Is(err, billing.ErrPreferredSubscriptionGroup) || errors.Is(err, billing.ErrPreferredSubscriptionInsufficient) {
 			return err
 		}
@@ -174,9 +174,9 @@ func (f Funding) Release(ctx context.Context, job *BatchImageJob, payloadHash st
 		return nil
 	}
 	if _, err := f.Store.Release(ctx, cmd); err != nil {
-		// 同一 release request id 出现指纹冲突，说明此前已有一次携带不同
-		// payloadHash 的释放成功提交（资金已归还）。视为幂等成功，
-		// 避免历史指纹不一致的 job 永远卡在释放失败的毒消息循环里。
+		// A fingerprint conflict means this release request ID already committed with a different
+		// payloadHash and returned the funds. Treat it as success so historical fingerprint
+		// mismatches do not leave the job retrying release indefinitely.
 		if errors.Is(err, billing.ErrUsageBillingRequestConflict) {
 			f.warn("batch_image.release_fingerprint_conflict_treated_as_released",
 				"batch_id", job.BatchID,
@@ -225,7 +225,7 @@ func cloneBillingAllocations(values []billing.BillingAllocation) []billing.Billi
 	return out
 }
 
-// FundingReference 返回作业的资金引用和预留请求标识。
+// FundingReference returns the job funding reference and reservation request ID.
 func FundingReference(id string) billing.TaskReference {
 	id = strings.TrimSpace(id)
 	return billing.TaskReference{Scope: FundingScope, ID: id, ReserveRequestID: "batch_image_hold:" + id}

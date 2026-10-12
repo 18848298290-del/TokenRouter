@@ -6,13 +6,13 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ResponseModelObserver 保存单次上游尝试或 WS turn 的原始模型声明，供观测使用。
+// ResponseModelObserver records upstream model declarations for one attempt or WebSocket turn.
 type ResponseModelObserver struct {
 	first    string
 	terminal string
 }
 
-// Observe 记录有效模型；终态声明优先于首次声明。
+// Observe records a nonempty normalized model; terminal declarations take precedence over the first declaration.
 func (o *ResponseModelObserver) Observe(model string, terminal bool) {
 	if o == nil {
 		return
@@ -28,7 +28,7 @@ func (o *ResponseModelObserver) Observe(model string, terminal bool) {
 	}
 }
 
-// NormalizeResponseModel 限制观测字段长度，保留模型版本与供应商前缀。
+// NormalizeResponseModel trims whitespace and limits the model to 200 runes without rewriting its name.
 func NormalizeResponseModel(model string) string {
 	model = strings.TrimSpace(model)
 	runes := []rune(model)
@@ -38,23 +38,23 @@ func NormalizeResponseModel(model string) string {
 	return model
 }
 
-// ObserveOpenAI 仅读取协议元数据；Chat chunk 始终保留首次声明。
+// ObserveOpenAI reads model metadata; Chat choices retain the first declaration.
 func (o *ResponseModelObserver) ObserveOpenAI(payload []byte, event string) {
 	terminal := IsResponseModelTerminalEvent(event) && !gjson.GetBytes(payload, "choices").IsArray()
 	o.Observe(ResponseModelString(payload, "response.model", "model"), terminal)
 }
 
-// ObserveAnthropic 读取完整 Message 或 message_start 的模型声明。
+// ObserveAnthropic reads model declarations from a Message or message_start event.
 func (o *ResponseModelObserver) ObserveAnthropic(payload []byte) {
 	o.Observe(ResponseModelString(payload, "message.model", "model"), false)
 }
 
-// ObserveGemini 保留最后一次原始模型版本，兼容 Google 内部响应封装。
+// ObserveGemini retains the last model version and accepts Google response wrappers.
 func (o *ResponseModelObserver) ObserveGemini(payload []byte) {
 	o.Observe(ResponseModelString(payload, "modelVersion", "response.modelVersion", "response.response.modelVersion"), true)
 }
 
-// Model 返回已观察到的模型；未声明时返回空，不使用请求模型补齐。
+// Model returns the observed model, or an empty string when no model was declared.
 func (o *ResponseModelObserver) Model() string {
 	if o == nil {
 		return ""
@@ -65,7 +65,7 @@ func (o *ResponseModelObserver) Model() string {
 	return o.first
 }
 
-// ResponseModelString 只接受有效 JSON 中指定位置的非空字符串。
+// ResponseModelString returns the first nonempty string at the supplied paths in valid JSON.
 func ResponseModelString(payload []byte, paths ...string) string {
 	for _, path := range paths {
 		value := gjson.GetBytes(payload, path)
@@ -79,7 +79,7 @@ func ResponseModelString(payload []byte, paths ...string) string {
 	return ""
 }
 
-// IsResponseModelTerminalEvent 判断 Responses 的终态模型声明。
+// IsResponseModelTerminalEvent recognizes Responses terminal events for model observation.
 func IsResponseModelTerminalEvent(event string) bool {
 	switch strings.TrimSpace(event) {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":

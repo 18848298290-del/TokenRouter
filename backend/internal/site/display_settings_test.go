@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// displayValues 记录查询次数，固定单键读取与配置回退的原有边界。
+// displayValues records queried keys to check on-demand reads and configuration defaults.
 type displayValues struct {
 	values map[string]string
 	err    error

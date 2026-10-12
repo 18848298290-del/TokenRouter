@@ -72,11 +72,11 @@ func TestAggregateHourlyRowsWeightsTTFTBySampleCount(t *testing.T) {
 	require.Equal(t, int64(101), got.successCount)
 	require.Equal(t, int64(100), got.ttftSampleCount)
 
-	// 请求耗时仍按 success_count 加权。
+	// Request duration is weighted by success_count.
 	require.NotNil(t, got.duration.P50)
 	require.Equal(t, 109, *got.duration.P50)
 
-	// 首 token 延迟按 ttft_sample_count 加权，不能被第一桶的大量非流式成功请求稀释。
+	// Weight first-token latency by ttft_sample_count so non-streaming successes do not dilute it.
 	require.NotNil(t, got.ttft.P50)
 	require.Equal(t, 20, *got.ttft.P50)
 	require.NotNil(t, got.ttft.P90)
@@ -123,7 +123,7 @@ func intValuePtr(v int) *int {
 	return &v
 }
 
-// TestOpsHourlyMetricsCoverageRequiresEveryBucket 检查缺少时间桶时返回覆盖不完整。
+// TestOpsHourlyMetricsCoverageRequiresEveryBucket rejects coverage with missing buckets.
 func TestOpsHourlyMetricsCoverageRequiresEveryBucket(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}

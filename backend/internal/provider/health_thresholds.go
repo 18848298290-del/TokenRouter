@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// ApplyProviderSchedulingThreshold 评估管理员配置的平台用量阈值。
-// 超出阈值时，将提供商临时设为不可调度直到命中的窗口重置；
-// 提供商刚被阻断或已因同一阈值原因暂停时均返回 true。
+// ApplyProviderSchedulingThreshold evaluates configured platform usage thresholds.
+// It pauses a provider until the matching window resets and reports true for a new
+// or identical existing provider pause. Model-scoped Fable pauses are handled separately.
 func (s *HealthService) ApplyProviderSchedulingThreshold(ctx context.Context, provider *Record) bool {
 	if s == nil || s.options.HasThresholdSettings == nil || !s.options.HasThresholdSettings() || s.providerRepo == nil || provider == nil || provider.ID <= 0 {
 		return false

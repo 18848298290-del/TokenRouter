@@ -14,6 +14,6 @@ func TestSSEScannerBuf64KPool_GetPutDoesNotPanic(t *testing.T) {
 	buf[0] = 1
 	PutSSEScannerBuf64K(buf)
 
-	// nil 缓冲区可直接归还。
+	// Returning a nil buffer is safe.
 	PutSSEScannerBuf64K(nil)
 }

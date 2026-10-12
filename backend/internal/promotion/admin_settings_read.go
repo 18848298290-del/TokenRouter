@@ -4,7 +4,7 @@ import (
 	"strconv"
 )
 
-// AdminReadSettings 包含推广开关和返利参数。
+// AdminReadSettings contains promotion switches and rebate parameters.
 type AdminReadSettings struct {
 	AdminRechargeRebateEnabled   bool
 	AffiliateEnabled             bool
@@ -16,7 +16,7 @@ type AdminReadSettings struct {
 	PromoCodeEnabled             bool
 }
 
-// ReadAdminSettings 从传入的设置值解析推广开关和返利参数。
+// ReadAdminSettings parses promotion switches and rebate parameters from stored values.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.PromoCodeEnabled = settings[SettingKeyPromoCodeEnabled] != "false"

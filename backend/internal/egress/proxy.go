@@ -12,7 +12,7 @@ const (
 	FallbackModeProxy  = "proxy"
 	FallbackModeDirect = "direct"
 
-	// StatusActive 和 StatusExpired 是持久化的代理状态值。
+	// StatusActive and StatusExpired are persisted proxy status values.
 	StatusActive  = "active"
 	StatusExpired = "expired"
 )
@@ -60,7 +60,7 @@ type ProxyProviderSummary struct {
 	Notes    *string
 }
 
-// ProxyConnectionIdentity 包含连接代理所需的地址、凭据和状态。
+// ProxyConnectionIdentity contains a proxy's address, credentials, and status.
 type ProxyConnectionIdentity struct {
 	Protocol string
 	Host     string
@@ -74,11 +74,12 @@ func (p *Proxy) IsActive() bool {
 	return p.Status == StatusActive
 }
 
-// IsExpired 报告代理是否已过期（基于 expires_at，与 status 无关）。
+// IsExpired reports whether expires_at has been reached, regardless of stored status.
 func (p *Proxy) IsExpired(now time.Time) bool {
 	return p.ExpiresAt != nil && !p.ExpiresAt.After(now)
 }
 
+// URL includes authentication only when both username and password are present.
 func (p *Proxy) URL() string {
 	u := &url.URL{
 		Scheme: p.Protocol,
@@ -90,7 +91,7 @@ func (p *Proxy) URL() string {
 	return u.String()
 }
 
-// ProxyConnectionIdentityFromProxy 提取代理的连接信息。
+// ProxyConnectionIdentityFromProxy extracts proxy connection settings.
 func ProxyConnectionIdentityFromProxy(proxyIn *Proxy) ProxyConnectionIdentity {
 	return ProxyConnectionIdentity{
 		Protocol: proxyIn.Protocol,

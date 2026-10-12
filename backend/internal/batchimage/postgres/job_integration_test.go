@@ -220,8 +220,8 @@ func TestBatchImageRepository_ReplaceBatchImageItemsForJob(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 非 indexing 状态不允许重建 item 表：防止锁过期后掉队的 worker
-	// 重写已完成/已结算 job 的条目。
+	// Reject item replacement outside indexing so a worker whose lock expired cannot
+	// overwrite completed or settled results.
 	err = repo.ReplaceBatchImageItemsForJob(ctx, batchID, []batchimage.CreateBatchImageItemParams{
 		{CustomID: "old", Status: batchimage.BatchImageItemStatusSuccess, SourceLineNumber: &lineOne, ImageCount: 1},
 	}, batchimage.BatchImageCounts{SuccessCount: 1})
@@ -362,7 +362,7 @@ func TestBatchImageRepository_AppendEvent(t *testing.T) {
 
 func newBatchImageRepositoryWithSQL(t *testing.T, sqlq SQLExecutor) (*Repository, int64) {
 	t.Helper()
-	// 每个事务创建付款用户，满足 billing_user_id 的外键约束。
+	// Create a payer in each transaction to satisfy the billing_user_id foreign key.
 	var userID int64
 	err := sqlq.QueryRowContext(context.Background(), `
 		INSERT INTO users (email, password_hash, role, status)
@@ -408,7 +408,7 @@ func batchImageDerefTest(v *string) string {
 	return *v
 }
 
-// testTx 为任务存储测试开启数据库事务，测试结束时先回滚再关闭连接。
+// testTx opens a transaction and schedules rollback before the test database closes.
 func testTx(t *testing.T) *sql.Tx {
 	t.Helper()
 	db := postgrescontainer.New(t)

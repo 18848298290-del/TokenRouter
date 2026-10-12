@@ -36,8 +36,7 @@ import (
 	openaiupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// sparkShadowUsageTestRepo 是 spark 影子用量测试的最小 provider.OAuthUsageReader stub。
-// GetByID 从 map 返回影子/母提供商，UpdateExtra 记录持久化内容用于断言。
+// GetByID returns stored records; UpdateExtra captures writes for assertions.
 type sparkShadowUsageTestRepo struct {
 	providercore.OAuthUsageReader
 	providers     map[int64]*providercore.Record
@@ -48,7 +47,7 @@ type quotaReadFixture interface {
 	GetProvider(context.Context, int64) (*providercore.Record, error)
 }
 
-// 夹具组合额度用例和平台构造函数，查询、恢复与缓存使用生产实现。
+// quotaFixture binds production quota querying, recovery, and caching to the platform client factory.
 type quotaFixture struct {
 	*providercore.OpenAIQuotaService
 	factory *OpenAIQuotaFactory
@@ -56,7 +55,7 @@ type quotaFixture struct {
 
 type agentIdentityWSInvalidationRecorder struct{ providerIDs []int64 }
 
-// stubQuotaProviderRepo 是多提供商 ProviderRepository stub，实现配额测试需要的读取和 extra 写入。
+// stubQuotaProviderRepo stores multiple providers and records Extra updates for quota tests.
 type stubQuotaProviderRepo struct {
 	providers        map[int64]*providercore.Record
 	extraUpdates     map[int64]map[string]any
@@ -72,7 +71,7 @@ type stubQuotaAdminService struct {
 	repo quotaProviderGetter
 }
 
-// stubQuotaTokenCache 实现 providercore.AccessTokenCache，返回预设静态 token。
+// stubQuotaTokenCache returns configured tokens through the AccessTokenCache interface.
 type stubQuotaTokenCache struct {
 	tokens map[string]string
 }
@@ -89,9 +88,9 @@ type stubQuotaHTTPResponse struct {
 	body   string
 }
 
-// TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows 覆盖:
-// A) spark 影子提供商会持久化自身 codex_5h_used_percent，且上游请求携带母提供商 chatgpt-account-id。
-// B) 同一次调用返回的 UsageInfo 包含从 Extra 重建的 5h 和 7d 窗口。
+// TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows checks that parent credentials
+// authenticate the request while usage is saved on the shadow record and returned as five-hour
+// and seven-day windows in the same call.
 func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -115,10 +114,10 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		},
 	}
 
-	// 同一个 repo 供 OpenAIQuotaService 解析母提供商，也供 ProviderUsageService 持久化 Extra。
+	// Share the repository between parent resolution and shadow usage persistence.
 	updateExtraCh := make(chan map[string]any, 1)
 	repo := &sparkShadowUsageTestRepo{
-		// 数据库替身保存独立快照，请求修改自己的数据副本。
+		// Stored snapshots are independent of request-local mutations.
 		providers: map[int64]*providercore.Record{
 			200: providercore.CloneRecord(shadow),
 			100: providercore.CloneRecord(parent),
@@ -126,25 +125,24 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		updateExtraCh: updateExtraCh,
 	}
 
-	// Token cache 为母提供商 cache key 返回假 token。
 	tokenCache := &stubQuotaTokenCache{tokens: map[string]string{
 		providercore.OpenAITokenCacheKey(parent): "fake-access-token",
 	}}
 	tokenProvider := newOpenAITokenSourceForTest(repo, tokenCache, nil)
 
-	// HTTPUpstream stub 记录 chatgpt-account-id，并返回带 codex_bengalfox 5h+7d 窗口的用量。
+	// The stub captures the account header and returns Spark-specific quota windows.
 	resp := openai.OpenAIQuotaUsage{
 		AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
 			{
 				MeteredFeature: "codex_bengalfox",
 				RateLimit: &openai.OpenAIRateLimit{
-					// 主窗口 -> 5h（18000 秒 = 300 分钟）。
+					// Five-hour primary window (18,000 seconds).
 					PrimaryWindow: &openai.OpenAIRateLimitWindow{
 						UsedPercent:        42.5,
 						ResetAfterSeconds:  3600,
 						LimitWindowSeconds: 18000,
 					},
-					// 次窗口 -> 7d（604800 秒 = 10080 分钟）。
+					// Seven-day secondary window (604,800 seconds).
 					SecondaryWindow: &openai.OpenAIRateLimitWindow{
 						UsedPercent:        10.0,
 						ResetAfterSeconds:  86400,
@@ -180,11 +178,9 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 	usage, err := svc.GetOpenAIUsage(ctx, shadow, true /* force */)
 	require.NoError(t, err)
 
-	// 断言 A-1: 上游收到母提供商的 chatgpt-account-id。
 	require.Equal(t, "org-spark-parent", upstream.capturedProviderID,
 		"QueryUsage must use parent's chatgpt-account-id for spark shadow providers")
 
-	// 断言 A-2: 影子提供商 Extra 持久化了 codex_5h_used_percent。
 	select {
 	case updates := <-updateExtraCh:
 		require.Contains(t, updates, "codex_5h_used_percent",
@@ -195,7 +191,6 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		t.Fatal("UpdateExtra was not called within timeout — spark shadow persist did not happen")
 	}
 
-	// 断言 B：返回的 UsageInfo 包含非空窗口。
 	require.NotNil(t, usage.FiveHour,
 		"returned UsageInfo.FiveHour must be non-nil (rebuild from merged Extra must happen)")
 	require.NotNil(t, usage.SevenDay,
@@ -554,9 +549,7 @@ func TestOpenAIQuotaServiceRejectsUnsupportedProvider(t *testing.T) {
 	require.False(t, strings.Contains(err.Error(), "sk-test"))
 }
 
-// TestResetCreditShadowRejected 验证:
-//   - ResetCredit(ctx, shadowID) 返回 ErrSparkShadowResetNotSupported
-//   - 不触达上游（HTTPUpstream 为 nil，若调用会先触发配置错误）
+// TestResetCreditShadowRejected checks the structured conflict before upstream preparation.
 func TestResetCreditShadowRejected(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -569,13 +562,12 @@ func TestResetCreditShadowRejected(t *testing.T) {
 	repo := &stubQuotaProviderRepo{
 		providers: map[int64]*providercore.Record{200: shadow},
 	}
-	// httpUpstream 故意为 nil：若流程误到上游会先命中配置检查，但这里应先拦截影子重置。
+	// A nil transport would produce a configuration error if the shadow guard were bypassed.
 	svc := newQuotaForTest(stubQuotaAdminService{repo: repo}, nil, nil, nil, nil)
 
 	_, err := svc.ResetCredit(context.Background(), 200)
 	require.ErrorIs(t, err, providercore.ErrSparkShadowResetNotSupported,
 		"shadow ResetCredit should return ErrSparkShadowResetNotSupported, got: %v", err)
-	// 返回结构化 409 响应。
 	require.Equal(t, http.StatusConflict, httpx.ErrorCode(err),
 		"shadow ResetCredit 应映射为 409 Conflict 而非 500")
 }
@@ -639,7 +631,7 @@ func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *test
 	require.Equal(t, []int64{provider.ID}, invalidator.providerIDs)
 }
 
-// TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask 验证并发请求已恢复 task 时，重置请求复用新 task 而不重复注册。
+// TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask reuses a task recovered by another request.
 func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -693,17 +685,15 @@ func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 	require.Equal(t, "task-reset-concurrent", decodeAgentAssertionTask(t, assertions[1]))
 }
 
-// TestPrepareProviderShadowResolve 验证影子提供商（200）QueryUsage 时:
-//   - 不因 chatgpt_account_id 为空而报错
-//   - 准备好的请求上下文使用母提供商（100）的 chatgpt_account_id("org-parent123")
+// TestPrepareProviderShadowResolve checks that a shadow with no account credentials uses its parent's
+// identity.
 //
-// 测试策略: 直接调用包内可见的 prepareProvider，注入 stubTokenCache（命中路径）
-// 和 stubQuotaAdminService（同时持有影子+母提供商），绕开 /wham/usage HTTP 往返。
+// The cached parent token isolates credential resolution from token refresh.
 func TestPrepareProviderShadowResolve(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
 
-	// 影子提供商：无 chatgpt_account_id credentials
+	// The shadow deliberately has no chatgpt_account_id.
 	shadow := &providercore.Record{
 		ID:               200,
 		ParentProviderID: &pid,
@@ -712,7 +702,6 @@ func TestPrepareProviderShadowResolve(t *testing.T) {
 		Status:           billing.StatusActive,
 		QuotaDimension:   providercore.QuotaDimensionSpark,
 	}
-	// 母提供商：有完整 credentials
 	parent := &providercore.Record{
 		ID:       100,
 		Platform: capability.PlatformOpenAI,
@@ -724,7 +713,6 @@ func TestPrepareProviderShadowResolve(t *testing.T) {
 	}
 	repo := &stubQuotaProviderRepo{providers: map[int64]*providercore.Record{200: shadow, 100: parent}}
 
-	// stubTokenCache 为母提供商缓存键返回测试 token，请求命中缓存。
 	tokenCache := &stubQuotaTokenCache{tokens: map[string]string{
 		providercore.OpenAITokenCacheKey(parent): "fake-access-token",
 	}}
@@ -936,13 +924,10 @@ func TestCachePostResetSnapshot(t *testing.T) {
 	require.Equal(t, 0.0, repo.extraUpdates[100]["codex_7d_used_percent"])
 }
 
-// TestResetCreditGetByIDError_FailsClosed 检查读取提供商失败后立即返回该错误。
-// httpUpstream 和 tokenProvider 留 nil，误入上游准备流程会返回“not configured”。
+// TestResetCreditGetByIDError_FailsClosed returns lookup errors before upstream preparation.
+// Nil transport and token dependencies would expose an incorrect transition into preparation.
 func TestResetCreditGetByIDError_FailsClosed(t *testing.T) {
-	// 空 map：GetByID(200) 返回 "provider 200 not found"
 	repo := &stubQuotaProviderRepo{providers: map[int64]*providercore.Record{}}
-	// tokenProvider / httpUpstream 故意为 nil：
-	// 此处检查 provider not found，若继续执行 prepareProvider 则会得到 not configured。
 	svc := newQuotaForTest(stubQuotaAdminService{repo: repo}, nil, nil, nil, nil)
 
 	_, err := svc.ResetCredit(context.Background(), 200)
@@ -951,8 +936,7 @@ func TestResetCreditGetByIDError_FailsClosed(t *testing.T) {
 		"error reached prepareProvider config-check — guard did not fail-closed; got: %v", err)
 }
 
-// TestQueryUsageShadowResolve_EndToEnd 验证影子提供商的 QueryUsage 能成功拿到响应
-// 且 header 由母提供商注入。
+// TestQueryUsageShadowResolve_EndToEnd queries shadow usage with the parent account header.
 func TestQueryUsageShadowResolve_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
@@ -1001,7 +985,7 @@ func (r *sparkShadowUsageTestRepo) UpdateExtra(_ context.Context, _ int64, updat
 	return nil
 }
 
-// UpdateUsageExtraIfUnchanged 核对影子记录的行号和身份后写入用量。
+// UpdateUsageExtraIfUnchanged checks the shadow row identity before capturing usage writes.
 func (r *sparkShadowUsageTestRepo) UpdateUsageExtraIfUnchanged(ctx context.Context, version providercore.UsageObservationVersion, updates map[string]any) (bool, error) {
 	current := r.providers[version.ID]
 	if current == nil || !reflect.DeepEqual(providercore.ObserveUsageVersion(current), version) {
@@ -1151,7 +1135,7 @@ func (s *stubQuotaHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, 
 	}, nil
 }
 
-// newQuotaRedirectingUpstream 将配额请求发到本地测试服务，路径与请求头保持请求值。
+// newQuotaRedirectingUpstream sends requests to a local server while retaining their paths and headers.
 func newQuotaRedirectingUpstream(t *testing.T, srv *httptest.Server) *stubQuotaHTTPUpstream {
 	t.Helper()
 	target, err := url.Parse(srv.URL)

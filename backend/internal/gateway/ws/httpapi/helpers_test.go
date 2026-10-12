@@ -50,7 +50,7 @@ import (
 var handlerStructuredLogCaptureMu sync.Mutex
 
 type auxiliaryHTTPRecorder struct {
-	// checkContext 让传输替身按请求取消状态拒绝发送。
+	// Reject sends when the request context is canceled.
 	checkContext bool
 	lastReq      *http.Request
 	lastBody     []byte
@@ -65,14 +65,14 @@ type auxiliaryHTTPRecorder struct {
 	lastTLSProfile *tlsfingerprint.Profile
 }
 
-// grokModelStateProviderRepo 在测试中记录 Grok 模型级状态。
+// grokModelStateProviderRepo records model-level Grok health writes.
 type grokModelStateProviderRepo struct {
 	gatewayadapter.ExecutionProviderStore
 
 	modelRateLimitCalls []grokModelRateLimitCall
 }
 
-// grokModelRateLimitCall 保存一次模型限流写入的关键字段。
+// grokModelRateLimitCall captures one model rate-limit write.
 type grokModelRateLimitCall struct {
 	providerID int64
 	scope      string
@@ -80,7 +80,7 @@ type grokModelRateLimitCall struct {
 	reason     string
 }
 
-// auxiliaryFixtureInputs 提供辅助请求测试所需的依赖。
+// auxiliaryFixtureInputs supplies dependencies for auxiliary-request tests.
 type auxiliaryFixtureInputs struct {
 	allowHTTP     bool
 	transport     httpclient.UpstreamTransport
@@ -91,7 +91,7 @@ type auxiliaryFixtureInputs struct {
 	authorization *provider.OpenAIAuthorization
 }
 
-// wsFixtureOptions 保存传输测试使用的选项。
+// wsFixtureOptions contains transport-test options.
 type wsFixtureOptions struct {
 	WS      OpenAIWSOptions
 	Pool    openaiws.WSPoolOptions
@@ -99,7 +99,7 @@ type wsFixtureOptions struct {
 	Output  gatewayhttp.OpenAIResponseOptions
 }
 
-// wsFixtureInputs 使用实际拥有者与 I/O 替身，不构造旧网关应用图。
+// wsFixtureInputs supplies execution dependencies and I/O substitutes.
 type wsFixtureInputs struct {
 	options   *wsFixtureOptions
 	providers gatewayadapter.ExecutionProviderStore
@@ -114,7 +114,7 @@ type wsFixtureInputs struct {
 	corrector *openai.CodexToolCorrector
 }
 
-// wsExecutionFixture 组合 HTTP 和 WS 测试使用的执行器，共用连接与会话状态。
+// wsExecutionFixture combines HTTP and WS executors sharing connection and session state.
 type wsExecutionFixture struct {
 	*OpenAIWebSocketExecutor
 	Responses *gatewayhttp.OpenAIResponsesExecutor
@@ -224,7 +224,7 @@ func (u *auxiliaryHTTPRecorder) DoWithTLS(req *http.Request, proxyURL string, pr
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
-// SetModelRateLimit 记录 Grok 模型级状态写入，供规范模型键回归测试断言。
+// SetModelRateLimit records model health writes for canonical-model-key assertions.
 func (r *grokModelStateProviderRepo) SetModelRateLimit(_ context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
 	call := grokModelRateLimitCall{providerID: id, scope: scope, resetAt: resetAt}
 	if len(reason) > 0 {
@@ -234,7 +234,7 @@ func (r *grokModelStateProviderRepo) SetModelRateLimit(_ context.Context, id int
 	return nil
 }
 
-// handleGrokProviderUpstreamError 保留测试中的布尔断言写法；生产代码统一使用完整决策。
+// handleGrokProviderUpstreamError reduces the production decision to a boolean for test assertions.
 func (s *wsExecutionFixture) handleGrokProviderUpstreamError(
 	ctx context.Context,
 	provider *gatewayadapter.ExecutionProvider,
@@ -347,7 +347,7 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	return &wsExecutionFixture{OpenAIWebSocketExecutor: ws, Responses: responses, Text: text, choices: choices, options: v.options}
 }
 
-// newExecutionReadersFixture 测试读取器共享同一设置存储。
+// newExecutionReadersFixture builds readers sharing the supplied settings store.
 func newExecutionReadersFixture(repo settings.Repository, _ *wsFixtureOptions) *gatewayadapter.RuntimeReaders {
 	if repo != nil {
 		repo = settings.New(repo)
@@ -359,14 +359,14 @@ func newUpstreamHealthForTest(store gatewayadapter.ExecutionProviderStore, _ *ws
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{Store: store, Cache: cache, Options: options, Readers: readers})
 }
 
-// setWSFixtureHealth 替换测试使用的健康观察接口，共用连接池和会话。
+// setWSFixtureHealth replaces the health observer used by the fixture's output paths.
 func setWSFixtureHealth(s *wsExecutionFixture, observer *provideradapter.UpstreamHealth) {
 	s.Output.Health.Health = observer
 	s.Output.GrokHealth.Health = observer
 	s.Output.Observer = observer
 }
 
-// newWSFastPolicy 构造策略使用的设置读取器。
+// newWSFastPolicy builds a settings reader containing the supplied Fast policy.
 func newWSFastPolicy(t *testing.T, values *tierpolicy.OpenAIFastPolicySettings) *gatewayadapter.ExecutionFastPolicy {
 	t.Helper()
 	repo := &gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{}}
@@ -382,7 +382,7 @@ func openAIFastFilterPriorityPolicy() *tierpolicy.OpenAIFastPolicySettings {
 	return &tierpolicy.OpenAIFastPolicySettings{Rules: []tierpolicy.OpenAIFastPolicyRule{{ServiceTier: tierpolicy.OpenAIFastTierPriority, Action: anthropic.BetaPolicyActionFilter, Scope: anthropic.BetaPolicyScopeAll, ModelWhitelist: []string{}, FallbackAction: anthropic.BetaPolicyActionPass}}}
 }
 
-// wsFixtureModelBlocked 按提供商健康接口的字段读取模型阻断状态。
+// wsFixtureModelBlocked checks health state using the canonical scheduling model key.
 func wsFixtureModelBlocked(s *wsExecutionFixture, value *gatewayadapter.ExecutionProvider, model string) bool {
 	if value == nil {
 		return false
@@ -398,7 +398,7 @@ func wsFixtureProviderBlocked(s *wsExecutionFixture, value *gatewayadapter.Execu
 	return s.Output.Health.Runtime.Blocked(value.Record.ID, func() string { return provider.RefreshCredentialIdentity(gatewayadapter.ExecutionRecord(value)) })
 }
 
-// ProxyResponsesWebSocketFromClient 在直接调用执行器的测试里准备已保存提供商与入站协议。
+// ProxyResponsesWebSocketFromClient sets up a saved provider and ingress protocol for direct executor tests.
 func (s *wsExecutionFixture) ProxyResponsesWebSocketFromClient(ctx context.Context, c *gin.Context, conn *coderws.Conn, value *gatewayadapter.ExecutionProvider, token string, first []byte, hooks *gatewayws.OpenAIIngressHooks) error {
 	key := gatewayhttp.GetExecutionAPIKey(c)
 	if key == nil {

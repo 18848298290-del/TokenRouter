@@ -29,7 +29,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// newFallbackMessageBridge 调用 Open 和 Begin 建立入口快照，并提供远端授权和缓存替身。
+// newFallbackMessageBridge opens and begins a request snapshot with authorization and cache fixtures.
 func newFallbackMessageBridge(t *testing.T, bindings Bindings) (*messageAttemptBridge, *apikey.APIKey, *httptest.ResponseRecorder) {
 	t.Helper()
 	targetID, groupID := int64(20), int64(10)
@@ -73,7 +73,8 @@ func authorizedMessageFallback(key *apikey.APIKey, id int64) *apikey.APIKey {
 	return resolved
 }
 
-// TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots 验证回退后平台限制继续生效，计费与认证共用目标分组。
+// TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots checks retained platform restrictions and shared
+// target-group funding state.
 func TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots(t *testing.T) {
 	resolveCalls, stickyCalls := 0, 0
 	sub := &billing.UserSubscription{ID: 90}
@@ -132,7 +133,8 @@ func TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots(t *testing.T
 	require.Same(t, bridge.currentAPIKey, authKey)
 }
 
-// TestMessageGroupFallbackStopsBeforeReplay 验证已输出、已回退和自环请求都不能进入第二次授权或上游请求。
+// TestMessageGroupFallbackStopsBeforeReplay checks that output, prior fallback, and invalid targets prevent
+// another authorization.
 func TestMessageGroupFallbackStopsBeforeReplay(t *testing.T) {
 	for _, name := range []string{"cancelled", "written", "stream_started", "already_used", "self_target", "missing_target", "unrelated_error"} {
 		t.Run(name, func(t *testing.T) {
@@ -201,7 +203,8 @@ func TestMessageGroupFallbackRequiresAuthorizedResolverAndTargetProtocol(t *test
 	require.Equal(t, int64(10), *bridge.currentAPIKey.GroupID)
 }
 
-// TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset 验证先前提供商切换触发的缓存计费，在目标分组的首个新尝试中仍然有效。
+// TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset checks that a provider-switch billing flag survives
+// the new group's first attempt.
 func TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset(t *testing.T) {
 	forwards := 0
 	bridge, _, _ := newFallbackMessageBridge(t, Bindings{

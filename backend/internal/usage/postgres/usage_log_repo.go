@@ -20,25 +20,19 @@ import (
 )
 
 const (
+	// rawUsageLogModelColumn selects the stored model value for direct filters.
+	// Historical rows can contain upstream or billing models; current rows contain the internal request model.
+	// Use resolveModelDimensionExpression for requested, upstream, or mapping analytics.
 	rawUsageLogModelColumn            = "model"
 	usageAnalyticsFallbackLogInterval = time.Minute
 
-	// rawUsageLogModelColumn preserves the exact stored usage_logs.model semantics for direct filters.
-	// Historical rows may contain upstream/billing model values, while newer rows store requested_model.
-	// Requested/upstream/mapping analytics must use resolveModelDimensionExpression instead.
-
-	// usageLogSuccessFilterUL 用于把"失败请求 usage log"（tokens=0、cost=0、不计费的占位记录）
-	// 从统计性聚合中排除，避免污染 Dashboard / 用量拆分等指标。
+	// usageLogSuccessFilterUL selects charged rows for queries using the ul alias.
+	// The cost predicate excludes zero-cost failure placeholders and free requests.
 	//
-	// 表结构中没有 success bool 列；新增列要做迁移，风险大；这里用 actual_cost > 0 作为代理：
-	// 任何成功落账的请求都会产生 actual_cost（包括 token 计费、纯图片 token 计费、按次/按图计费），
-	// 反之失败请求占位 usage log 的 actual_cost 为 0。
-	// 早期版本用 4 项 token 和 > 0 判定会把"按次/按图计费"与"image_output_tokens 独立计费"的纯图片
-	// 请求误判为失败，导致这部分请求从用量统计里消失，故改用 actual_cost。
-	// 配合 `FROM usage_logs ul` JOIN 查询使用。
+	// Checking cost also includes per-request and image charges whose text token counts are zero.
 	usageLogSuccessFilterUL = "ul.actual_cost > 0"
 
-	// usageLogEffectivePlatformExpr 统一使用已固化的平台，避免配置变更重写统计归属。
+	// usageLogEffectivePlatformExpr uses the stored platform so configuration changes do not reassign historical usage.
 	usageLogEffectivePlatformExpr = "ul.platform"
 )
 
@@ -48,7 +42,7 @@ var (
 		lastByOperation map[string]time.Time
 	}{lastByOperation: make(map[string]time.Time)}
 
-	// dateFormatWhitelist 将 granularity 参数映射为 PostgreSQL TO_CHAR 格式字符串，防止外部输入直接拼入 SQL。
+	// dateFormatWhitelist maps granularities to fixed PostgreSQL TO_CHAR formats for SQL interpolation.
 	dateFormatWhitelist = map[string]string{
 		"hour":  "YYYY-MM-DD HH24:00",
 		"day":   "YYYY-MM-DD",
@@ -85,7 +79,7 @@ func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB, preAggregation *
 }
 
 func NewUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, calendar timezone.Calendar) *Store {
-	// 使用 scanSingleRow 替代 QueryRowContext，保证 ent.Tx 作为 sqlExecutor 可用。
+	// Queries use scanSingleRow so Ent transactions can implement sqlExecutor.
 	repo := &Store{client: client, sql: sqlq, calendar: calendar}
 	if db, ok := sqlq.(*sql.DB); ok {
 		repo.db = db
@@ -94,7 +88,7 @@ func NewUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, calend
 	return repo
 }
 
-// logUsageAnalyticsFallback 对真实聚合查询错误限频告警，避免透明回退长期掩盖故障。
+// logUsageAnalyticsFallback rate-limits warnings when aggregate queries fail and raw queries take over.
 func (r *Store) logUsageAnalyticsFallback(operation string, err error) {
 	if err == nil || !shouldLogUsageAnalyticsFallback(operation, time.Now()) {
 		return
@@ -102,7 +96,7 @@ func (r *Store) logUsageAnalyticsFallback(operation string, err error) {
 	slog.Warn("预聚合查询失败，已透明回退使用记录原始表", "operation", operation, "error", err)
 }
 
-// shouldLogUsageAnalyticsFallback 按操作限制同类聚合故障每分钟最多告警一次。
+// shouldLogUsageAnalyticsFallback allows one warning per operation per minute.
 func shouldLogUsageAnalyticsFallback(operation string, now time.Time) bool {
 	usageAnalyticsFallbackLogState.Lock()
 	defer usageAnalyticsFallbackLogState.Unlock()
@@ -114,7 +108,7 @@ func shouldLogUsageAnalyticsFallback(operation string, now time.Time) bool {
 	return true
 }
 
-// safeDateFormat 根据白名单获取 dateFormat，未匹配时返回默认值。
+// safeDateFormat returns the allowed format, defaulting to daily buckets.
 func safeDateFormat(granularity string) string {
 	if f, ok := dateFormatWhitelist[granularity]; ok {
 		return f
@@ -122,8 +116,8 @@ func safeDateFormat(granularity string) string {
 	return "YYYY-MM-DD"
 }
 
-// appendRawUsageLogModelWhereCondition 对历史数据兼容使用原始 model 列过滤。
-// requested/upstream 维度分析必须改用 resolveModelDimensionExpression。
+// appendRawUsageLogModelWhereCondition filters the stored model column, including historical values.
+// Use resolveModelDimensionExpression for requested or upstream analytics.
 func appendRawUsageLogModelWhereCondition(conditions []string, args []any, model string) ([]string, []any) {
 	if strings.TrimSpace(model) == "" {
 		return conditions, args
@@ -183,8 +177,8 @@ func appendUsageLogModelWhereCondition(conditions []string, args []any, model st
 	return conditions, args
 }
 
-// appendRawUsageLogModelQueryFilter 对历史数据兼容使用原始 model 列过滤。
-// requested/upstream 维度分析必须改用 resolveModelDimensionExpression。
+// appendRawUsageLogModelQueryFilter filters the stored model column, including historical values.
+// Use resolveModelDimensionExpression for requested or upstream analytics.
 func appendRawUsageLogModelQueryFilter(query string, args []any, model string) (string, []any) {
 	if strings.TrimSpace(model) == "" {
 		return query, args
@@ -241,7 +235,7 @@ func appendRequestTypeOrStreamQueryFilter(query string, args []any, requestType 
 	return query, args
 }
 
-// appendNativeCompactionV2WhereCondition 为原生 compaction 标记追加可选布尔过滤。
+// appendNativeCompactionV2WhereCondition adds a compaction predicate when value is set.
 func appendNativeCompactionV2WhereCondition(conditions []string, args []any, value *bool, alias string) ([]string, []any) {
 	if value == nil {
 		return conditions, args
@@ -255,7 +249,7 @@ func appendNativeCompactionV2WhereCondition(conditions []string, args []any, val
 	return conditions, args
 }
 
-// appendNativeCompactionV2QueryFilter 为带已有条件的查询追加原生 compaction 过滤。
+// appendNativeCompactionV2QueryFilter appends a compaction predicate to an existing WHERE clause.
 func appendNativeCompactionV2QueryFilter(query string, args []any, value *bool, alias string) (string, []any) {
 	conditions, args := appendNativeCompactionV2WhereCondition(nil, args, value, alias)
 	if len(conditions) == 0 {
@@ -264,12 +258,12 @@ func appendNativeCompactionV2QueryFilter(query string, args []any, value *bool, 
 	return query + " AND " + conditions[0], args
 }
 
-// buildRequestTypeFilterCondition 在 request_type 过滤时兼容 legacy 字段，避免历史数据漏查。
+// buildRequestTypeFilterCondition includes legacy stream fields when filtering request types.
 func buildRequestTypeFilterCondition(startArgIndex int, requestType int16) (string, []any) {
 	return buildRequestTypeFilterConditionWithAlias(startArgIndex, requestType, "")
 }
 
-// buildRequestTypeFilterConditionWithAlias 为带表别名的统计查询复用历史请求类型兼容条件。
+// buildRequestTypeFilterConditionWithAlias qualifies the legacy-compatible request type predicate.
 func buildRequestTypeFilterConditionWithAlias(startArgIndex int, requestType int16, alias string) (string, []any) {
 	normalized := usage.RequestTypeFromInt16(requestType)
 	requestTypeArg := int16(normalized)
@@ -289,7 +283,7 @@ func buildRequestTypeFilterConditionWithAlias(startArgIndex int, requestType int
 	}
 }
 
-// GetDashboardPublicStats 只读取首页公开统计所需字段，避免公开接口复用完整仪表盘查询。
+// GetDashboardPublicStats reads the user and token counts exposed on the public homepage.
 func (r *Store) GetDashboardPublicStats(ctx context.Context, start, end time.Time, useAggregates bool) (*usage.DashboardPublicStats, error) {
 	stats := &usage.DashboardPublicStats{}
 	if err := r.fillDashboardPublicUserStats(ctx, stats); err != nil {
@@ -307,7 +301,7 @@ func (r *Store) GetDashboardPublicStats(ctx context.Context, start, end time.Tim
 	return stats, nil
 }
 
-// usageRankingQueryParts 只返回受控的 SQL 片段，避免把设置值直接拼接进查询。
+// usageRankingQueryParts selects fixed SQL fragments for the configured ranking metric.
 func usageRankingQueryParts(sortBy usage.UsageRankingSortBy) (eligibility, orderBy string) {
 	switch usage.NormalizeUsageRankingSortBy(string(sortBy)) {
 	case usage.UsageRankingSortByRequests:
@@ -319,7 +313,7 @@ func usageRankingQueryParts(sortBy usage.UsageRankingSortBy) (eligibility, order
 	}
 }
 
-// GetUsageRanking 返回用户侧按配置指标排序的用量排行。
+// GetUsageRanking returns public usage rankings ordered by the configured metric.
 func (r *Store) GetUsageRanking(ctx context.Context, startTime, endTime time.Time, limit int, sortBy usage.UsageRankingSortBy) (result *UsageRankingResponse, err error) {
 	if limit <= 0 {
 		limit = usage.DefaultUsageRankingLimit
@@ -481,7 +475,7 @@ func (r *Store) fillDashboardPublicUserStats(ctx context.Context, stats *usage.D
 	return scanSingleRow(ctx, r.sql, query, nil, &stats.TotalUsers)
 }
 
-// rankingDisplayName 只返回用户名或脱敏邮箱，避免排行接口泄露完整邮箱。
+// rankingDisplayName returns a username, masked email, or user ID label.
 func rankingDisplayName(username, email string, userID int64) string {
 	if name := strings.TrimSpace(username); name != "" {
 		return name
@@ -492,14 +486,14 @@ func rankingDisplayName(username, email string, userID int64) string {
 	return fmt.Sprintf("User #%d", userID)
 }
 
-// ExpireRuntimeCaches 不再隐式启动无法关闭的 janitor。
+// ExpireRuntimeCaches removes expired deduplication entries; the caller schedules cleanup.
 func (r *Store) ExpireRuntimeCaches() {
 	if r.bestEffortRecent != nil {
 		r.bestEffortRecent.DeleteExpired()
 	}
 }
 
-// StopUsageBatchers 在使用量任务停止提交后封闭并排空两个独立批处理队列。
+// StopUsageBatchers closes both queues and waits for their workers to drain them.
 func (r *Store) StopUsageBatchers() {
 	r.batchLifecycleMu.Lock()
 	if !r.batchStopped {

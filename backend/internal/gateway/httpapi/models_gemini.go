@@ -113,7 +113,7 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	WriteGoogleError(c, http.StatusNotFound, "Model is not available in this group")
 }
 
-// requestableGeminiModels 把组级协议权限、逐候选能力和 Key 别名保持在同一目录路径。
+// requestableGeminiModels combines group protocol permissions, candidate capabilities, and key aliases.
 func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIKey) ([]GeminiModel, bool) {
 	models := make([]GeminiModel, 0)
 	if !key.IsComposite && (key.Group == nil || !key.Group.AllowsClientProtocol(protocol.ProtocolGeminiGenerateContent)) {

@@ -13,15 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityModelLimitResult 模型级限流处理结果。
+// AntigravityModelLimitResult describes whether to retry or switch after a model limit.
 type AntigravityModelLimitResult struct {
-	Handled      bool                                        // 是否已处理
-	ShouldRetry  bool                                        // 是否等待后重试
-	WaitDuration time.Duration                               // 等待时间
-	SwitchError  *antigravity.AntigravityProviderSwitchError // 提供商切换错误
+	Handled      bool                                        // Whether model-limit handling consumed the error.
+	ShouldRetry  bool                                        // Whether the caller should wait and retry.
+	WaitDuration time.Duration                               // Delay before retrying.
+	SwitchError  *antigravity.AntigravityProviderSwitchError // Non-nil when the caller should switch providers.
 }
 
-// AntigravityErrorInput 保存本次错误的模型、粘性会话和报文信息。
+// AntigravityErrorInput contains the failed attempt, model, and sticky-session observation.
 type AntigravityErrorInput struct {
 	Context          context.Context
 	Provider         *provider.Record
@@ -36,7 +36,7 @@ type AntigravityErrorInput struct {
 	ClearSticky      func()
 }
 
-// AntigravityErrorObserver 组合模型窗口和提供商健康状态接口。
+// AntigravityErrorObserver records model limits and provider health from upstream failures.
 type AntigravityErrorObserver struct {
 	Health          *provider.AntigravityHealth
 	LogConfig       func() (bool, int)
@@ -47,11 +47,10 @@ type AntigravityErrorObserver struct {
 	Other           *UpstreamHealth
 }
 
-// handleModelRateLimit 在一般错误处理之前记录模型限流。
-// 仅处理 429/503，解析模型名和 retryDelay
-// - MODEL_CAPACITY_EXHAUSTED: 返回 Handled=true（实际重试由 handleSmartRetry 处理）
-// - RATE_LIMIT_EXCEEDED + retryDelay < 阈值: 返回 ShouldRetry=true，由调用方等待后重试
-// - RATE_LIMIT_EXCEEDED + retryDelay >= 阈值: 设置模型限流 + 清除粘性会话 + 返回 SwitchError。
+// handleModelRateLimit handles model-specific 429 and 503 errors before general health updates.
+// Capacity exhaustion is left to the platform retry loop. For rate limits,
+// the caller waits when retryDelay is below the threshold; longer delays record
+// a model limit, clear the sticky session, and request a provider switch.
 func (s *AntigravityErrorObserver) handleModelRateLimit(p *AntigravityErrorInput) *AntigravityModelLimitResult {
 	if p.Status != 429 && p.Status != 503 {
 		return &AntigravityModelLimitResult{Handled: false}
@@ -62,8 +61,7 @@ func (s *AntigravityErrorObserver) handleModelRateLimit(p *AntigravityErrorInput
 		return &AntigravityModelLimitResult{Handled: false}
 	}
 
-	// MODEL_CAPACITY_EXHAUSTED：模型容量不足，所有提供商共享同一容量池
-	// 切换提供商无意义，不设置模型限流（实际重试由 handleSmartRetry 处理）
+	// Capacity exhaustion uses the platform retry loop because the capacity pool is shared.
 	if info.IsModelCapacityExhausted {
 		log.Printf("%s status=%d model_capacity_exhausted model=%s (not switching provider, retry handled by smart retry)",
 			p.Prefix, p.Status, info.ModelName)
@@ -72,7 +70,6 @@ func (s *AntigravityErrorObserver) handleModelRateLimit(p *AntigravityErrorInput
 		}
 	}
 
-	// RATE_LIMIT_EXCEEDED: < antigravityRateLimitThreshold: 等待后重试
 	if info.RetryDelay < antigravity.AntigravityRateLimitThreshold {
 		logging.LegacyPrintf("service.antigravity_gateway", "%s status=%d model_rate_limit_wait model=%s wait=%v",
 			p.Prefix, p.Status, info.ModelName, info.RetryDelay)
@@ -83,7 +80,6 @@ func (s *AntigravityErrorObserver) handleModelRateLimit(p *AntigravityErrorInput
 		}
 	}
 
-	// RATE_LIMIT_EXCEEDED: >= antigravityRateLimitThreshold: 设置限流 + 清除粘性会话 + 切换提供商
 	s.setModelRateLimitAndClearSession(p, info)
 
 	return &AntigravityModelLimitResult{
@@ -96,7 +92,7 @@ func (s *AntigravityErrorObserver) handleModelRateLimit(p *AntigravityErrorInput
 	}
 }
 
-// setModelRateLimitAndClearSession 设置模型限流并清除粘性会话。
+// setModelRateLimitAndClearSession records the reset time and releases the sticky binding.
 func (s *AntigravityErrorObserver) setModelRateLimitAndClearSession(p *AntigravityErrorInput, info *antigravity.AntigravitySmartRetryInfo) {
 	resetAt := time.Now().Add(info.RetryDelay)
 	logging.LegacyPrintf("service.antigravity_gateway", "%s status=%d model_rate_limited model=%s provider=%d reset_in=%v",
@@ -104,33 +100,30 @@ func (s *AntigravityErrorObserver) setModelRateLimitAndClearSession(p *Antigravi
 
 	s.Health.SetAntigravityModelRateLimits(p.Context, s.Health.Store, p.Provider, info.ModelName, p.Prefix, p.Status, resetAt, false)
 
-	// 清除粘性会话绑定
 	if p.ClearSticky != nil {
 		p.ClearSticky()
 	}
 }
 
-// Observe 解析单次失败并记录提供商状态。
+// Observe classifies one failure and records provider health.
 func (s *AntigravityErrorObserver) Observe(p AntigravityErrorInput) *AntigravityModelLimitResult {
 	ctx, prefix, value := p.Context, p.Prefix, p.Provider
 	statusCode, body, requestedModel := p.Status, p.Body, p.RequestedModel
-	// 遵守自定义错误码策略：未命中则跳过所有限流处理
+	// A custom status-code policy can exclude this response from health updates.
 	if !value.ShouldHandleErrorCode(statusCode) {
 		return nil
 	}
-	// 模型级限流处理（优先）
 	result := s.handleModelRateLimit(&p)
 	if result.Handled {
 		return result
 	}
 
-	// 503 仅处理模型限流（MODEL_CAPACITY_EXHAUSTED），非模型限流不做额外处理
-	// 普通 503 按上游容量错误处理。
+	// A 503 with no recognized model limit leaves provider health unchanged.
 	if statusCode == 503 {
 		return nil
 	}
 
-	// 429 先尝试解析模型限流，解析失败时按提供商限流处理。
+	// When a 429 lacks model-limit metadata, derive a limit key from the requested model.
 	if statusCode == 429 {
 		if logBody, maxBytes := s.LogConfig(); logBody {
 			logging.LegacyPrintf("service.antigravity_gateway", "[Antigravity-Debug] 429 response body: %s", s.TruncateString(string(body), maxBytes))
@@ -139,15 +132,11 @@ func (s *AntigravityErrorObserver) Observe(p AntigravityErrorInput) *Antigravity
 		resetAt := s.ResetTime(body)
 		defaultDur := s.DefaultDuration()
 
-		// 尝试解析模型 key 并设置模型级限流
-		//
-		// 注意：requestedModel 可能是"映射前"的请求模型名（例如 claude-opus-4-6），
-		// 调度与限流判定使用的是 Antigravity 最终模型名（包含映射与 thinking 后缀）。
-		// 此处使用最终模型名记录限流，后续调度按同一名称检查。
+		// The requested name may precede mapping and thinking normalization.
+		// Record the final model name so scheduling checks the same limit key.
 		modelKey := FinalAntigravityModel(value, requestedModel, p.Thinking)
 		if strings.TrimSpace(modelKey) == "" {
-			// 极少数情况下无法映射（理论上不应发生：能转发成功说明映射已通过），
-			// 缺少最终模型名时使用回退模型记录限流。
+			// If final-model resolution fails, normalize the requested name for the limit key.
 			modelKey = antigravity.NormalizeAntigravityModelName(requestedModel)
 		}
 		if modelKey != "" {
@@ -161,7 +150,7 @@ func (s *AntigravityErrorObserver) Observe(p AntigravityErrorInput) *Antigravity
 			return nil
 		}
 
-		// 模型 key 解析失败时记录提供商限流。
+		// Without a model key, record a provider-wide limit.
 		ra := s.resolveResetTime(resetAt, defaultDur)
 		logging.LegacyPrintf("service.antigravity_gateway", "%s status=429 rate_limited provider=%d reset_at=%v reset_in=%v (fallback)",
 			prefix, value.ID, ra.Format("15:04:05"), time.Until(ra).Truncate(time.Second))
@@ -170,7 +159,6 @@ func (s *AntigravityErrorObserver) Observe(p AntigravityErrorInput) *Antigravity
 		}
 		return nil
 	}
-	// 其他错误码继续使用 rateLimitService
 	if s.Other == nil {
 		return nil
 	}
@@ -181,7 +169,7 @@ func (s *AntigravityErrorObserver) Observe(p AntigravityErrorInput) *Antigravity
 	return nil
 }
 
-// resolveResetTime 根据解析的重置时间或默认时长计算重置时间点。
+// resolveResetTime uses the parsed reset timestamp or the configured default duration.
 func (s *AntigravityErrorObserver) resolveResetTime(resetAt *int64, defaultDur time.Duration) time.Time {
 	if resetAt != nil {
 		return time.Unix(*resetAt, 0)
@@ -189,7 +177,8 @@ func (s *AntigravityErrorObserver) resolveResetTime(resetAt *int64, defaultDur t
 	return time.Now().Add(defaultDur)
 }
 
-// AntigravityFallbackDuration 保持配置分钟数及环境秒数覆盖的原优先级。
+// AntigravityFallbackDuration gives a positive environment value in seconds precedence over configured
+// minutes.
 func AntigravityFallbackDuration(minutes int, raw string) time.Duration {
 	duration := antigravity.AntigravityDefaultRateLimitDuration
 	if minutes > 0 {

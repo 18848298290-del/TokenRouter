@@ -15,13 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// redisNamespaceSeq 为共享 Redis 容器的测试分配独立键前缀，测试结束后清理对应数据。
+// redisNamespaceSeq distinguishes test key prefixes within a shared Redis container.
 var redisNamespaceSeq uint64
 
 type prefixHook struct {
 	prefix string
 }
 
+// Namespaced returns a client with a per-test key prefix and registers key and client cleanup.
+// Commands are isolated only when prefixCmd recognizes their key positions.
 func Namespaced(t *testing.T, base *redisclient.Client) *redisclient.Client {
 	t.Helper()
 
@@ -114,7 +116,7 @@ func (h prefixHook) prefixCmd(cmd redisclient.Cmder) {
 	}
 
 	switch strings.ToLower(cmd.Name()) {
-	// GETDEL 与 SET 必须使用相同测试命名空间，才能验证真实的一次性会话消费。
+	// GETDEL and SET need the same namespace to exercise one-time session consumption.
 	case "get", "getdel", "set", "setnx", "setex", "psetex", "incr", "decr", "incrby", "expire", "pexpire", "ttl", "pttl",
 		"hgetall", "hget", "hset", "hdel", "hincrbyfloat", "exists",
 		"zadd", "zcard", "zrange", "zrangebyscore", "zrem", "zremrangebyscore", "zrevrange", "zrevrangebyscore", "zscore":

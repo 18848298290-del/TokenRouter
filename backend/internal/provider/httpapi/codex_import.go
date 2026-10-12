@@ -10,7 +10,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CodexImportHandler 只拥有管理 HTTP 和原幂等响应。
+// CodexImportHandler binds administrator import requests and applies response idempotency.
 type CodexImportHandler struct {
 	idempotencyhttp.Executor
 	core *provider.CodexImporter

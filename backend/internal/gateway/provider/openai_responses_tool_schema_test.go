@@ -38,9 +38,8 @@ func TestOpenAIResponsesToolSchemaCapabilities_PlatformBoundary(t *testing.T) {
 func TestSanitizeOpenAIResponsesToolSchemasForPlatform_ReplayBoundary(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","parameters":{"type":null,"properties":{"query":{"type":"string","pattern":"(?=keep)"}}}}]}`)
 
-	// A malformed tool definition may be replayed after provider failover. Every
-	// compatible provider must repair it, while non-OpenAI providers retain their
-	// supported regex semantics.
+	// A malformed tool definition may be replayed after provider failover.
+	// These compatible platforms repair parameter types and retain supported regex patterns.
 	for _, platform := range []string{capability.PlatformAnthropic, capability.PlatformGrok, capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		t.Run(platform, func(t *testing.T) {
 			for range 2 {

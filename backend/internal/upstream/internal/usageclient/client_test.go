@@ -16,13 +16,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// usageResponseBody 记录响应体关闭次数。
+// usageResponseBody counts response-body closes.
 type usageResponseBody struct {
 	io.Reader
 	closed int
 }
 
-// TestUpstreamUsageEndpointUsesExistingVersionedBaseURLRules 检查用量查询地址的版本路径处理。
+// Usage endpoints share forwarding rules for already-versioned base URLs.
 func TestUpstreamUsageEndpointUsesExistingVersionedBaseURLRules(t *testing.T) {
 	tests := map[string]string{
 		"https://gateway.example/v1":     "https://gateway.example/v1/usage",

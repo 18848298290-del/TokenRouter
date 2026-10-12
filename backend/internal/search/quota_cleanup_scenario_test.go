@@ -1,6 +1,6 @@
 package search
 
-// 本文件覆盖 manager.go 的搜索取消和额度释放，以及 lifecycle.go 的停机等待。
+// These scenarios connect search cancellation and quota release with shutdown waiting.
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// blockedQuotaCleanup 等待清理预算耗尽并记录取消错误。
+// blockedQuotaCleanup waits for the cleanup deadline and records its cancellation error.
 type blockedQuotaCleanup struct {
 	quotaFixture
 	entered chan context.Context

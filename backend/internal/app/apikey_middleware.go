@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// newGatewayAuthorization 为网关认证绑定共享的 Key 和订阅实例。
+// newGatewayAuthorization uses the shared API key and subscription services for gateway authentication.
 func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.SubscriptionService, cfg *config.Config, google bool) gin.HandlerFunc {
 	options := gatewayhttp.APIKeyAuthorizationOptions{
 		Authentication: keyhttp.AuthenticationOptions{
@@ -54,12 +54,13 @@ func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.
 	return gatewayhttp.NewAPIKeyAuthorization(nativeKeys, reader, options)
 }
 
-// provideAPIKeyAuth 构造共享的 Key 认证中间件，并在适配回调中转换数据。
+// provideAPIKeyAuth constructs API key middleware with callbacks that convert request data.
 func provideAPIKeyAuth(keys *apikey.APIKeyService, subscriptions *billing.SubscriptionService, cfg *config.Config) keyhttp.APIKeyAuthMiddleware {
 	return keyhttp.APIKeyAuthMiddleware(newGatewayAuthorization(keys, subscriptions, cfg, false))
 }
 
-// bindLegacyAuthorizationGroup 将有效分组写入请求状态，已有相同有效分组时保持原值。
+// bindLegacyAuthorizationGroup stores a valid group in request state unless the same valid group is already
+// present.
 func bindLegacyAuthorizationGroup(c *gin.Context, group *routing.Group) {
 	if !routing.IsGroupContextValid(group) {
 		return

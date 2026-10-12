@@ -6,13 +6,13 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokStandaloneSearchModel 读取独立搜索当前配置的默认型号。
+// GrokStandaloneSearchModel returns the configured default model for standalone search.
 func GrokStandaloneSearchModel() string {
 	return xai.ResolveDefaultTextModel(xai.RuntimeDefaultTextModel())
 }
 func GrokStandaloneSearchMaxResults(n int) int { return xai.NormalizeGrokWebSearchMaxResults(n) }
 
-// GrokStandaloneSearchBody 保留 X 搜索与网页搜索各自的协议载荷。
+// GrokStandaloneSearchBody builds the protocol-specific body for X search or web search.
 func GrokStandaloneSearchBody(request searchtools.StandaloneRequest, model string, maxResults int, isX bool) ([]byte, error) {
 	if isX {
 		return xai.BuildGrokXSearchResponsesBody(projectNativeStandaloneSearch(request), model)

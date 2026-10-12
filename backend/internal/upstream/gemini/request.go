@@ -19,7 +19,7 @@ const (
 	ServiceAccountCredential CredentialMode = "service_account"
 )
 
-// CredentialMode 描述传输认证形式，不引入业务提供商实体。
+// CredentialMode selects API key, OAuth, or service account authentication.
 type CredentialMode string
 
 type (
@@ -36,7 +36,8 @@ type (
 	}
 )
 
-// BuildRequest 保留取 token 后读取 project 的次序，并区分原生 body 与兼容 REST 净化。
+// BuildRequest authenticates and builds a request, using the project returned with the token.
+// Compatibility payloads outside the Code Assist wrapper receive REST normalization.
 func BuildRequest(ctx context.Context, body []byte, plan RequestPlan) (*http.Request, string, error) {
 	action, stream := plan.Action, plan.UpstreamStream
 	if !plan.Native {

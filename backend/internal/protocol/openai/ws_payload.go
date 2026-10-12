@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// IsWSTokenEvent 判断 WebSocket 事件是否包含 token 增量。
+// IsWSTokenEvent recognizes delta and output event types used for first-token timing.
 func IsWSTokenEvent(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
@@ -27,9 +27,9 @@ func IsWSTokenEvent(eventType string) bool {
 	if strings.HasPrefix(eventType, "response.output") {
 		return true
 	}
-	// 终止事件（response.completed/done/failed/...）由 isOpenAIWSTerminalEvent 单独处理。
-	// 不能把它们当作 token event，否则当上游没有可识别的 delta 时，
-	// firstTokenMs 会被填到终止时刻，等于把"总耗时"误报为"首 token 延迟"。
+	// IsWSTerminalEvent handles response.completed, done, failed, and other terminal types.
+	// Counting them as token events would set firstTokenMs to completion time when
+	// no recognizable delta arrived, misreporting total duration as first-token latency.
 	return false
 }
 
@@ -72,7 +72,7 @@ func PopulateUsageFromResponseJSON(body []byte, usage *ForwardUsage) {
 	}
 }
 
-// RequestPayloadView 解包 Responses WS 事件，返回实际请求对象视图。
+// RequestPayloadView unwraps a nested response.create request object when present.
 func RequestPayloadView(body []byte) gjson.Result {
 	root := gjson.ParseBytes(body)
 	if !root.IsObject() {

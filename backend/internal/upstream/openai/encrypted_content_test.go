@@ -17,7 +17,7 @@ func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 		{"type":"reasoning"},
 		{"type":"message","encrypted_content":"cipher-alien"}
 	]}`))
-	// 剥离端处理不了的类型（message）不收摘要，否则该摘要永远命中却剥不掉。
+	// Unsupported message items must not contribute digests that the sanitizer cannot remove.
 	require.Equal(t, []string{
 		OpenAIEncryptedContentDigest("cipher-a"),
 		OpenAIEncryptedContentDigest("cipher-b"),
@@ -108,7 +108,7 @@ func TestStripOpenAIInvalidEncryptedContentFromReplayItems(t *testing.T) {
 		require.Equal(t, "rs_1", rewritten["id"])
 		_, hasEncrypted := rewritten["encrypted_content"]
 		require.False(t, hasEncrypted)
-		// 未命中项共享正文，命中项用新正文替换。
+		// Unmatched items share their bodies; changed items receive new bodies.
 		require.Same(t, &clean[0], &next[1][0])
 		require.Contains(t, string(original), "stale-cipher")
 	})

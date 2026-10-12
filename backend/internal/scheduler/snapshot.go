@@ -34,7 +34,8 @@ var (
 	ErrSnapshotGroupNotFound    = errors.New("scheduler group not found")
 )
 
-// batchSeenKey 记录单次 pollOutbox 调用内已完成的平台重建与分组生命周期任务。
+// batchSeenKey identifies platform rebuilds and completed group lifecycle work within one pollOutbox
+// call.
 type batchSeenKey struct {
 	groupID   int64
 	platform  string
@@ -51,17 +52,19 @@ type schedulerProviderQueryKey struct {
 	platform string
 }
 
-// schedulerProviderQueryCache 在一次 rebuild batch 内按 groupID+platform 缓存成功的 single/forced 查询。
-// mixed 与历史模式分别查询。每个 task 在 defer 中减少 remaining，最后一个消费者释放结果切片。
+// schedulerProviderQueryCache reuses successful single/forced queries by group and platform within a
+// batch.
+// Other modes query separately. Each task decrements remaining on exit; the last consumer releases
+// cached slices.
 type schedulerProviderQueryCache struct {
 	remaining           map[schedulerProviderQueryKey]int
 	providers           map[schedulerProviderQueryKey][]SnapshotProvider
 	snapshotProviderIDs map[schedulerProviderQueryKey][]int64
 }
 
-// schedulerSnapshotProviderIDWriter 是 SnapshotCache 的可选批次优化能力。
-// 首次完整发布成功后返回已编码的提供商 ID，同一查询结果的后续桶通过这些 ID 发布成员。
-// 未实现该接口的缓存使用 SetSnapshot 发布完整快照。
+// schedulerSnapshotProviderIDWriter lets a batch reuse successfully encoded provider IDs.
+// Later buckets with the same query publish membership from those IDs.
+// Caches without this interface publish complete snapshots through SetSnapshot.
 type schedulerSnapshotProviderIDWriter interface {
 	SetSnapshotAndReturnProviderIDs(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, providers []SnapshotProvider) ([]int64, error)
 	SetSnapshotByProviderIDs(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, providerIDs []int64) error
@@ -178,7 +181,8 @@ func NewSnapshotService(
 	}
 }
 
-// Start 异步启动初始重建并立即处理首轮 outbox，重复调用跳过启动。
+// Start launches the initial rebuild asynchronously and polls outbox immediately; repeated calls have
+// no effect.
 func (s *SnapshotService) Start() {
 	if s == nil || s.cache == nil {
 		return
@@ -197,7 +201,7 @@ func (s *SnapshotService) Start() {
 	s.runtime.Start(tasks...)
 }
 
-// Stop 使用 30 秒预算停止任务，应用可通过 StopContext 传入剩余关闭预算。
+// Stop allows 30 seconds for shutdown. Use StopContext to supply the application's remaining budget.
 func (s *SnapshotService) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -297,7 +301,7 @@ func (s *SnapshotService) GetProvider(ctx context.Context, providerID int64) (Sn
 	return s.providerRepo.GetByID(fallbackCtx, providerID)
 }
 
-// UpdateProviderInCache 立即更新 Redis 中单个提供商的数据（用于模型限流后立即生效）。
+// UpdateProviderInCache publishes a provider immediately, such as after a model rate-limit update.
 func (s *SnapshotService) UpdateProviderInCache(ctx context.Context, provider SnapshotProvider) error {
 	if s.cache == nil || provider == nil {
 		return nil
@@ -339,8 +343,8 @@ func (s *SnapshotService) pollOutbox() {
 		return
 	}
 	if len(events) == 0 {
-		// outbox 查询本身已证明水位之后没有事件。在健康的一秒轮询路径上
-		// 根据本次空批次结果清除降级和重试状态。
+		// An empty query reports no visible events after the watermark, so clear degradation
+		// and retry state based on this poll result.
 		s.clearOutboxDegradedEpisode()
 		return
 	}
@@ -381,8 +385,8 @@ func (s *SnapshotService) pollOutbox() {
 	}
 	s.cleanupConsumedOutbox(lastID)
 
-	// 只有 watermark 成功推进后，当前批次才算已消费。延迟必须按下一条待消费事件计算，
-	// 否则本批次处理越慢，越容易误触发一次更慢的全量重建，形成正反馈。
+	// A batch is consumed after its watermark advances. Measure lag from the next pending event
+	// so slow batch processing does not itself trigger costly full rebuilds.
 	lagCtx, lagCancel := context.WithTimeout(s.runtime.Context(), 5*time.Second)
 	s.checkOutboxLag(lagCtx, lastID)
 	lagCancel()
@@ -541,7 +545,7 @@ func (s *SnapshotService) handleBulkProviderEvent(ctx context.Context, payload m
 		rebuildGroupIDs = append(rebuildGroupIDs, gid)
 	}
 
-	// 提供商缺失时无法确定其平台，重建全部平台以清理旧快照。
+	// A missing provider's platform is unknown; rebuild every platform to clear stale membership.
 	if !allProvidersFound {
 		return s.rebuildByGroupIDs(ctx, rebuildGroupIDs, "provider_bulk_change", seen)
 	}
@@ -569,7 +573,7 @@ func (s *SnapshotService) handleBulkProviderEvent(ctx context.Context, payload m
 		addPlatformGroups(provider.SnapshotMetadata().Platform, providerGroupIDs)
 	}
 
-	// payload 携带更新前的分组，本事件涉及的平台各自重建这些分组。
+	// The payload includes former groups; rebuild them for each platform affected by this event.
 	if len(preloadGroupIDs) > 0 {
 		preloadGroupIDs = s.normalizeGroupIDs(preloadGroupIDs)
 		for platform := range platformGroupSets {
@@ -662,9 +666,10 @@ func (s *SnapshotService) reconcileGroupLifecycle(ctx context.Context, groupID i
 	return nil
 }
 
-// prepareGroupLifecycle 在持有分组租约期间读取数据库中的完整分组状态，再决定退休或重新开放。
-// active 仅 Reopen canonical bucket；missing/inactive 同时 Retire canonical 与已登记历史 bucket；
-// group event 路径只有在权威决策和后续重建全部成功后才会标记 seen。
+// prepareGroupLifecycle reads hydrated group state under a lease before reopening or retiring buckets.
+// Active groups reopen canonical buckets; missing or inactive groups retire canonical and registered
+// buckets.
+// The caller marks a group event as seen after this decision and all required rebuilds succeed.
 func (s *SnapshotService) prepareGroupLifecycle(ctx context.Context, groupID int64, knownHistorical []SchedulerBucket) (plan schedulerGroupLifecyclePlan, retErr error) {
 	if groupID <= 0 {
 		return schedulerGroupLifecyclePlan{}, nil
@@ -739,7 +744,7 @@ func (s *SnapshotService) prepareGroupLifecycle(ctx context.Context, groupID int
 }
 
 func (s *SnapshotService) releaseGroupLifecycleLease(lease SchedulerGroupLifecycleLease) error {
-	// 请求取消后仍需尝试释放自己的租约，因此使用独立且有界的后台上下文。
+	// Use a bounded independent context to release the lease even after request cancellation.
 	releaseCtx, cancel := context.WithTimeout(context.Background(), schedulerGroupLifecycleReleaseTimeout)
 	defer cancel()
 	return s.cache.ReleaseGroupLifecycleLease(releaseCtx, lease)
@@ -766,8 +771,8 @@ func schedulerSnapshotPlatforms() []string {
 	return append([]string{""}, capability.ProviderPlatforms()...)
 }
 
-// schedulerBucketsForGroup 返回业务分组的桶，group0 返回空列表。
-// 全量重建通过 canonical helper 构造 group0 的桶集合。
+// schedulerBucketsForGroup returns canonical buckets for positive group IDs.
+// Full rebuilds use schedulerCanonicalBuckets directly for group zero.
 func schedulerBucketsForGroup(groupID int64) []SchedulerBucket {
 	if groupID <= 0 {
 		return nil
@@ -801,8 +806,8 @@ func (s *SnapshotService) rebuildByGroupIDs(ctx context.Context, groupIDs []int6
 func (s *SnapshotService) bucketsForPlatform(platform string, groupIDs []int64, seen map[batchSeenKey]struct{}) []SchedulerBucket {
 	buckets := make([]SchedulerBucket, 0, len(groupIDs)*3)
 	for _, gid := range groupIDs {
-		// 同一轮轮询中跳过已经重建过的（分组、平台）组合。首次重建会从数据库
-		// 加载该分组的全部提供商，因此同批次后续相同组合的重建没有必要。
+		// Schedule each group/platform pair once per poll batch. Its query loads all providers
+		// for that pair, covering later events for the same pair in the batch.
 		if seen != nil {
 			key := batchSeenKey{groupID: gid, platform: platform}
 			if _, exists := seen[key]; exists {
@@ -940,9 +945,9 @@ func (s *SnapshotService) setRebuildSnapshot(
 		return err
 	}
 	if queries.remaining[key] > 1 {
-		// 必须保存实际成功编码并写入的有序 ID，不能从原提供商切片重新推导；
-		// 否则不可编码提供商会只出现在后续桶中，破坏两个快照的成员一致性。
-		// 返回切片由当前批次独占，可直接保存。
+		// Retain the ordered IDs actually encoded and written. Deriving them from the input
+		// would include unencodable providers in later buckets and produce inconsistent membership.
+		// This batch owns the returned slice.
 		queries.snapshotProviderIDs[key] = providerIDs
 	}
 	return nil
@@ -964,9 +969,9 @@ func (s *SnapshotService) rebuildFullSnapshot(ctx context.Context, reason string
 		return ErrSchedulerCacheNotReady
 	}
 
-	// 桶注册表和活跃分组 ID 必须先读取成功；
-	// 失败时不执行 Capture/Retire/Reopen 或 DB 查询。
-	// 过期候选仍须在租约内重新确认分组状态后才能退休。
+	// Read the bucket registry and active group IDs before mutating buckets or querying providers.
+	// If either read fails, leave buckets untouched.
+	// Recheck apparently stale groups under a lease before retiring them.
 	registered, err := s.cache.ListBuckets(ctx)
 	if err != nil {
 		return err
@@ -1012,8 +1017,8 @@ func (s *SnapshotService) rebuildFullSnapshot(ctx context.Context, reason string
 			return captureErr
 		}
 
-		// 较早的 full_rebuild 事件可能读到为后续 group_changed 事件提交的激活状态。
-		// 按数据库中的最新状态恢复，使前一事件可在后一事件处理前推进 outbox 水位。
+		// An earlier full_rebuild event may observe activation committed for a later group_changed event.
+		// Use the current database state so the earlier event can advance the outbox watermark.
 		knownHistorical := registeredByGroup[groupID]
 		if knownHistorical == nil {
 			knownHistorical = []SchedulerBucket{}
@@ -1058,7 +1063,7 @@ func (s *SnapshotService) listActiveSchedulerGroupIDs(ctx context.Context) ([]in
 		return nil, ErrSchedulerCacheNotReady
 	}
 
-	// 轻量接口一旦实现，其错误直接失败；只有仓储不支持该接口时才回退完整 ListActive。
+	// Use ListActive when the lightweight interface is absent; propagate errors when it is implemented.
 	var groupIDs []int64
 	if lister, ok := s.groupRepo.(schedulerActiveGroupIDLister); ok {
 		ids, err := lister.ListActiveIDs(ctx)
@@ -1100,8 +1105,8 @@ func (s *SnapshotService) prepareAndRebuildFullSnapshot(
 	ordinaryBuckets []SchedulerBucket,
 	reason string,
 ) error {
-	// 首次 DB 查询前取得全部普通 bucket 的写入 token，预备失败时立即返回。
-	// fresh Reopen task 在锁冲突或令牌失效时返回错误，普通 captured task 在这两种情况下跳过。
+	// Capture all ordinary bucket tokens before querying providers; abort if preparation fails.
+	// Reopened tasks fail on busy locks or fenced tokens; captured tasks skip those buckets.
 	preparedBuckets := make(map[SchedulerBucket]struct{}, len(captured)+len(reopened))
 	for _, task := range captured {
 		preparedBuckets[task.bucket] = struct{}{}
@@ -1183,8 +1188,8 @@ func (s *SnapshotService) coalesceFullRebuild(run func() error) error {
 		s.fullRebuildStateMu.Unlock()
 		return err
 	}
-	// 当前轮重建可能早于新 outbox 事件对应事务的提交，不能让后到请求直接复用当前轮。
-	// 每轮开始前记录可覆盖的请求代次，执行期间登记的请求统一合并到下一轮。
+	// A running rebuild may predate a new outbox transaction's commit. Record covered request
+	// generations before each run and coalesce requests arriving during it into the next run.
 	coveredThrough := s.fullRebuildRequested
 	s.fullRebuildStateMu.Unlock()
 
@@ -1236,8 +1241,8 @@ func (s *SnapshotService) checkOutboxLag(ctx context.Context, watermark int64) {
 	}
 	backlogDegraded := backlogKnown && backlogThreshold > 0 && backlog >= int64(backlogThreshold)
 
-	// 重建成功后锁存当前降级阶段，直到确认恢复。重建失败仍可重试，
-	// 重试先等待指数退避冷却期，将重建频率限制在轮询频率以下。
+	// Latch a successful rebuild until recovery is observed. Failed rebuilds retry after
+	// exponential backoff to limit repeated rebuild attempts during degradation.
 	logLagWarning := s.shouldLogOutboxLagWarning(lagWarning)
 	s.lagMu.Lock()
 	fullyRecovered := !lagDegraded && backlogKnown && !backlogDegraded
@@ -1612,7 +1617,7 @@ func (s *SnapshotService) groupNotFound() error {
 	return ErrSnapshotGroupNotFound
 }
 
-// isContextDoneError 判断错误是否由调用方取消或上下文超时触发。
+// isContextDoneError recognizes cancellation errors or a canceled or expired caller context.
 func isContextDoneError(ctx context.Context, err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return true
@@ -1621,11 +1626,11 @@ func isContextDoneError(ctx context.Context, err error) bool {
 		return false
 	}
 	ctxErr := ctx.Err()
-	// 数据库驱动可能返回自有错误文本，此时以 ctx 状态判断是否由取消/超时触发。
+	// Check the context because database drivers may return their own cancellation errors.
 	return errors.Is(ctxErr, context.Canceled) || errors.Is(ctxErr, context.DeadlineExceeded)
 }
 
-// contextDoneError 优先返回 context 的取消或超时错误，否则返回传入的错误。
+// contextDoneError prefers the context error, then err, and returns context.Canceled if both are nil.
 func contextDoneError(ctx context.Context, err error) error {
 	if ctx != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

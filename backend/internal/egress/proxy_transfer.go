@@ -43,7 +43,7 @@ func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]T
 		}
 	}
 
-	// 构建 id→name 映射，用于导出备用代理 name
+	// Resolve backup names within the set of exported proxies.
 	proxyNameByID := make(map[int64]string, len(proxies))
 	for i := range proxies {
 		proxyNameByID[proxies[i].ID] = proxies[i].Name
@@ -82,13 +82,13 @@ func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]T
 	return dataProxies, h.now().UTC().Format(time.RFC3339), nil
 }
 
-// Import 保留代理单独导入的错误明细和复用代理的批次后探测。
+// Import reports per-item failures and schedules probes for reused proxies after the batch.
 func (h *ProxyTransfer) Import(ctx context.Context, items []TransferProxy) (ProxyImportResult, error) {
 	_, result, err := h.importItems(ctx, items, false)
 	return result, err
 }
 
-// ImportForProviderBinding 保留提供商文件导入的再次读取、静默状态同步和原查询顺序。
+// ImportForProviderBinding rereads reused proxies before status updates and suppresses status-update errors.
 func (h *ProxyTransfer) ImportForProviderBinding(ctx context.Context, items []TransferProxy) (map[string]int64, ProxyImportResult, error) {
 	return h.importItems(ctx, items, true)
 }
@@ -106,7 +106,7 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 	}
 
 	proxyByKey := make(map[string]Proxy, len(existingProxies))
-	// proxyNameToID 用于 backup_proxy_name 反查：DB 已有 + 本批次新建均会写入
+	// Resolve backup_proxy_name against existing proxies and earlier creations in this batch.
 	proxyNameToID := make(map[string]int64, len(existingProxies))
 	for i := range existingProxies {
 		p := existingProxies[i]
@@ -150,8 +150,8 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 				}
 			}
 			if canUpdate && normalizedStatus != "" && normalizedStatus != existing.Status {
-				// 已存在代理同步 status 时，同时保留/覆盖导入 item 的完整字段，
-				// 避免 UpdateProxy 零值覆盖有效期/fallback 配置。
+				// Status updates also apply the imported expiration and fallback settings because
+				// UpdateProxy replaces those fields even when their values are zero.
 				var existingExpiresAt *time.Time
 				if item.ExpiresAt != nil {
 					t := time.Unix(*item.ExpiresAt, 0).UTC()
@@ -173,7 +173,7 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 					FallbackMode:   existingFallbackMode,
 					BackupProxyID:  existingBackupProxyID,
 					ExpiryWarnDays: item.ExpiryWarnDays,
-					// 保留已存在代理的网络配置字段
+					// Keep the existing proxy's network settings when applying imported status.
 					Name:     existing.Name,
 					Protocol: existing.Protocol,
 					Host:     existing.Host,
@@ -196,21 +196,21 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 			continue
 		}
 
-		// 解析 expires_at（unix 秒 → *time.Time）
+		// Convert Unix seconds to an expiration time.
 		var expiresAt *time.Time
 		if item.ExpiresAt != nil {
 			t := time.Unix(*item.ExpiresAt, 0).UTC()
 			expiresAt = &t
 		}
 
-		// 解析 backup_proxy_name → backup_proxy_id
+		// Resolve backup names to IDs available at this point in the import.
 		fallbackMode := item.FallbackMode
 		var backupProxyID *int64
 		if item.BackupProxyName != "" {
 			if bid, ok := proxyNameToID[item.BackupProxyName]; ok {
 				backupProxyID = &bid
 			} else {
-				// 查不到备用代理：降级 fallback_mode=none，记录 warning
+				// Disable unresolved proxy fallback and report the missing backup name.
 				fallbackMode = FallbackModeNone
 				result.Errors = append(result.Errors, TransferError{
 					Kind:     "proxy",
@@ -245,13 +245,13 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 		}
 		result.ProxyCreated++
 		proxyByKey[key] = *created
-		// 把新建代理的 name 也加入反查表，供后续批内代理引用
+		// Allow later items in the batch to reference this proxy by name.
 		if created.Name != "" {
 			proxyNameToID[created.Name] = created.ID
 		}
 
 		if normalizedStatus != "" && normalizedStatus != created.Status {
-			// 新建后同步 status 时，传入完整字段，避免零值覆盖刚创建的有效期/fallback 配置。
+			// Pass the created expiration and fallback fields because UpdateProxy replaces zero values too.
 			if _, err := h.adminService.UpdateProxy(ctx, created.ID, &UpdateProxyInput{
 				Status:         normalizedStatus,
 				ExpiresAt:      expiresAt,
@@ -331,7 +331,7 @@ func (h *ProxyTransfer) listProxiesFiltered(ctx context.Context, protocol, statu
 	return out, nil
 }
 
-// GetProxiesByIDs 按传入 ID 的顺序返回供提供商备份使用的代理数据。
+// GetProxiesByIDs retrieves the selected proxies for provider backups in repository order.
 func (h *ProxyTransfer) GetProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
 	return h.getProxiesByIDs(ctx, ids)
 }

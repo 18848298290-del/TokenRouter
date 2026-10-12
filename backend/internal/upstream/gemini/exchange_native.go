@@ -48,7 +48,7 @@ func ExchangeNative(ctx context.Context, options ExchangeOptions) (ExchangeResul
 			return ExchangeResult{}, options.FinalError("Upstream request failed after retries: " + safeErr)
 		}
 
-		// 错误策略优先：匹配则跳过重试直接处理。
+		// A matching error policy takes precedence over status-based retries.
 		matched, rebuilt := options.CheckPolicy(ctx, resp)
 		resp = rebuilt
 		if matched {
@@ -97,7 +97,7 @@ func ExchangeNative(ctx context.Context, options ExchangeOptions) (ExchangeResul
 				estimated := options.EstimateCount()
 				return ExchangeResult{EstimatedTokens: &estimated}, nil
 			}
-			// Final attempt: surface the upstream error body (passed through below) instead of a generic retry error.
+			// Keep the final upstream error body available to the caller for passthrough.
 			resp = &http.Response{
 				StatusCode: resp.StatusCode,
 				Header:     resp.Header.Clone(),

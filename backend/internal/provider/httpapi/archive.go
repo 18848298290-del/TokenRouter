@@ -16,7 +16,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ArchiveHandler 只负责备份 HTTP 输入、幂等和管理员响应；资源查询与导入由提供商用例拥有。
+// ArchiveHandler binds backup requests, applies idempotency, and delegates export and import to provider.Archive.
 type ArchiveHandler struct {
 	idempotencyhttp.Executor
 	archive *provider.Archive
@@ -73,7 +73,7 @@ func (h *ArchiveHandler) ImportData(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	// 废弃提供商字段不参与导入幂等指纹，旧客户端的值或非法类型都与缺省输入等价。
+	// Exclude deprecated fields from the idempotency fingerprint, including malformed values from older clients.
 	for index := range req.Data.Providers {
 		provider.DiscardDeprecatedExtra(req.Data.Providers[index].Extra)
 	}

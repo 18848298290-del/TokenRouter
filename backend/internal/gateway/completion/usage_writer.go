@@ -34,7 +34,7 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		if usageLog.UpstreamRequestID != nil {
 			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: *usageLog.UpstreamRequestID})
 		}
-		// HTTP 请求和 WS 轮次由入口记录起止时间，后台用量写入补充模型与关联标识。
+		// Entrypoints own HTTP and WS-turn timing; background usage adds model and correlation data.
 		if telemetry.UpdateRequestForID(ctx, record.RequestID, func(current *telemetry.RequestRecord) {
 			if record.Model != "" {
 				current.Model = record.Model
@@ -59,11 +59,11 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 	if writer, ok := s.logs.(BestEffortLogWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			s.printf(logKey, "Create usage log failed: %v", err)
-			// 队列超时丢弃的用量转为同步写入，已结算和待对账的请求都需要 usage_log。
-			// 结算失败记录用 ActualCost=0 表示未扣费，用量去重同时识别计费键和历史请求 ID。
+			// Retry failed best-effort writes synchronously so settled and reconcilable requests retain usage logs.
+			// Failed settlements use ActualCost=0; deduplication handles billing keys and historical request IDs.
 			fallbackCtx := usageCtx
 			if usageCtx.Err() != nil {
-				// 入队等待已耗尽 usageCtx，使用新的独立超时窗口同步写入。
+				// Queue waiting exhausted the context; give the synchronous write a fresh timeout.
 				var fallbackCancel context.CancelFunc
 				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
 				defer fallbackCancel()
@@ -80,7 +80,7 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 	}
 }
 
-// applyProviderStatsCost 查询价格并计算提供商基础成本，用户实扣金额单独计算。
+// applyProviderStatsCost resolves provider base costs independently of user charges.
 func (s *Recorder) applyProviderStatsCost(ctx context.Context, row *UsageLog, providerID, groupID int64, upstream, requested, mapped string, tokens UsageTokens) {
 	if upstream == "" {
 		upstream = requested

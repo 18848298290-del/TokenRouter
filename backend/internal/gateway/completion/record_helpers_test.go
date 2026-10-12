@@ -114,7 +114,7 @@ func TestResolveUsageRateMultiplier_GlobalSubscriptionFallsBackToGroupRate(t *te
 	}
 }
 
-// TestResponseModelMismatchUsesOutboundIdentity 检查上游响应模型与出站模型的匹配结果。
+// TestResponseModelMismatchUsesOutboundIdentity checks comparison against the model actually sent upstream.
 func TestResponseModelMismatchUsesOutboundIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, sent, response string

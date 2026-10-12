@@ -12,7 +12,7 @@ import (
 	providerredis "github.com/TokenFlux/TokenRouter/internal/provider/rediscache"
 )
 
-// providerAssemblyProviders 汇总 provider 模块的 Wire provider。
+// providerAssemblyProviders groups Wire providers for the provider module.
 var providerAssemblyProviders = wire.NewSet(
 	providerauth.NewOAuthUsageCache,
 	provideGeminiAuthorization,

@@ -16,7 +16,7 @@ func (r *ProviderStore) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// 使用事务保证提供商与关联分组的删除原子性
+	// Delete the provider and its group memberships in one transaction.
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
@@ -27,7 +27,7 @@ func (r *ProviderStore) Delete(ctx context.Context, id int64) error {
 		defer func() { _ = tx.Rollback() }()
 		txClient = tx.Client()
 	} else {
-		// 已处于外部事务中（ErrTxStarted），复用当前 client
+		// ErrTxStarted means the client already belongs to the caller's transaction.
 		txClient = r.client
 	}
 
@@ -107,7 +107,7 @@ func (r *ProviderStore) BindGroups(ctx context.Context, providerID int64, groupI
 	if err != nil {
 		return err
 	}
-	// 使用事务保证删除旧绑定与创建新绑定的原子性
+	// Replace old and new group memberships atomically.
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
@@ -118,7 +118,7 @@ func (r *ProviderStore) BindGroups(ctx context.Context, providerID int64, groupI
 		defer func() { _ = tx.Rollback() }()
 		txClient = tx.Client()
 	} else {
-		// 已处于外部事务中（ErrTxStarted），复用当前 client
+		// ErrTxStarted means the client already belongs to the caller's transaction.
 		txClient = r.client
 	}
 

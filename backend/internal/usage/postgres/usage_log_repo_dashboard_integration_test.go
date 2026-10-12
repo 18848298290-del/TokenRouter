@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestAPIKeyDashboardAnalyticsParity 包含时区跨日、空耗时、零费用及未来记录。
+// TestAPIKeyDashboardAnalyticsParity covers local date changes, null durations, zero costs, and future records.
 func (s *UsageLogRepoSuite) TestAPIKeyDashboardAnalyticsParity() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "key-analytics@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "key-analytics"})
@@ -47,7 +47,7 @@ func (s *UsageLogRepoSuite) TestAPIKeyDashboardAnalyticsParity() {
 	got, err := s.repo.GetAPIKeyDashboardStats(s.ctx, key.ID)
 	s.Require().NoError(err)
 	s.Require().Equal(want, got)
-	// 删除最早记录后，累计范围应排除此前仍留在聚合表中的历史。
+	// Deleting the oldest records must exclude stale aggregate history from all-time totals.
 	_, err = s.tx.ExecContext(s.ctx, "DELETE FROM usage_logs WHERE api_key_id=$1 AND created_at<$2", key.ID, now.Add(-24*time.Hour))
 	s.Require().NoError(err)
 	got, err = s.repo.GetAPIKeyDashboardStats(s.ctx, key.ID)

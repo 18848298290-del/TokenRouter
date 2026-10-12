@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// failedRestoreReader 模拟归档尾部损坏。
+// failedRestoreReader simulates corruption at the archive tail.
 type failedRestoreReader struct{}
 
-// TestRestoreActivityPrefixChecksWholeInput 确认清理前缀和归档交给同一个单事务 psql。
+// TestRestoreActivityPrefixChecksWholeInput checks that the cleanup prefix and archive share one psql transaction.
 func TestRestoreActivityPrefixChecksWholeInput(t *testing.T) {
 	dir := t.TempDir()
 	inputPath, argsPath := filepath.Join(dir, "input.sql"), filepath.Join(dir, "args")

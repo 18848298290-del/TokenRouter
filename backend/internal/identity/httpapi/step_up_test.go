@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// stepUpEnabled 为二次验证测试启用功能开关。
+// stepUpEnabled enables the feature for step-up tests.
 var stepUpEnabled = stubStepUpSettingReader{enabled: true}
 
 type stubStepUpGrantChecker struct {
@@ -134,7 +134,7 @@ func TestStepUpSessionKeyFallsBackWithoutCredential(t *testing.T) {
 	require.Equal(t, "u42", StepUpSessionKey(c, 42))
 }
 
-// TestEnforceStepUpDisabledSkipsAllChecks 检查功能关闭时放行各种动态口令、授权和凭证状态。
+// TestEnforceStepUpDisabledSkipsAllChecks checks that a disabled switch bypasses credential and grant checks.
 func TestEnforceStepUpDisabledSkipsAllChecks(t *testing.T) {
 	disabled := stubStepUpSettingReader{enabled: false}
 
@@ -159,7 +159,7 @@ func TestEnforceStepUpDisabledSkipsAllChecks(t *testing.T) {
 	})
 }
 
-// TestEnforceStepUpNilSettingsFailsClosed 检查设置为 nil 时仍执行二次验证。
+// TestEnforceStepUpNilSettingsFailsClosed checks that nil settings leave enforcement enabled.
 func TestEnforceStepUpNilSettingsFailsClosed(t *testing.T) {
 	c, rec := newStepUpTestContext(t)
 	c.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: 1})
@@ -171,7 +171,7 @@ func TestEnforceStepUpNilSettingsFailsClosed(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
 }
 
-// TestEnforceStepUpTypedNilSettingServiceFailsClosed 检查设置接口持有 nil *identity.RuntimeSettings 时，未认证请求返回 401。
+// TestEnforceStepUpTypedNilSettingServiceFailsClosed checks that a typed nil settings reader still rejects unauthenticated requests.
 func TestEnforceStepUpTypedNilSettingServiceFailsClosed(t *testing.T) {
 	c, rec := newStepUpTestContext(t)
 
@@ -181,7 +181,7 @@ func TestEnforceStepUpTypedNilSettingServiceFailsClosed(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-// TestStepUpUsesVerifiedPrincipal 检查身份判断使用已验证的主体，管理员密钥请求返回 403。
+// TestStepUpUsesVerifiedPrincipal checks that the verified API key principal causes a 403 response.
 func TestStepUpUsesVerifiedPrincipal(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -195,7 +195,7 @@ func TestStepUpUsesVerifiedPrincipal(t *testing.T) {
 	require.NotEqual(t, "forged-display-session", StepUpSessionKey(c, 1))
 }
 
-// TestStepUpUsesCanonicalJWTSession 检查 JWT 使用已验证的会话 ID。
+// TestStepUpUsesCanonicalJWTSession checks that grants use the verified JWT session ID.
 func TestStepUpUsesCanonicalJWTSession(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Request = httptest.NewRequest(http.MethodPost, "/admin", nil)

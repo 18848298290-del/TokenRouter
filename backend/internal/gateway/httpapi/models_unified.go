@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// WriteUnifiedModelsList 使用模型目录中的名称和厂商，未知别名归属于网关。
+// WriteUnifiedModelsList uses catalogue names and owners with group display attributes.
 func (h *ModelsHandler) WriteUnifiedModelsList(c *gin.Context, ids []string) {
 	if len(ids) == 0 {
 		c.JSON(http.StatusOK, gin.H{"object": "list", "data": []any{}})
@@ -30,7 +30,7 @@ func (h *ModelsHandler) WriteUnifiedModelsList(c *gin.Context, ids []string) {
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 }
 
-// unifiedGrokModel 保留客户端识别推理强度的既有元数据。
+// unifiedGrokModel includes the reasoning-effort metadata consumed by clients.
 func (h *ModelsHandler) unifiedGrokModel(model GrokModel, attributes modelcatalog.Attributes) gin.H {
 	item := gin.H{"id": model.ID, "object": "model", "type": "model", "display_name": model.DisplayName, "owned_by": model.OwnedBy, "created": model.Created}
 	if values := attributes.Efforts(); len(values) > 0 {

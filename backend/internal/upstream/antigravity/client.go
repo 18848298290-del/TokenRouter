@@ -20,24 +20,24 @@ import (
 )
 
 const (
-	// proxyDialTimeout 代理 TCP 连接超时（含代理握手），代理不通时快速失败。
+	// proxyDialTimeout bounds the TCP connection to the proxy.
 	proxyDialTimeout = 5 * time.Second
-	// proxyTLSHandshakeTimeout 代理 TLS 握手超时。
+	// proxyTLSHandshakeTimeout bounds the TLS handshake through the proxy.
 	proxyTLSHandshakeTimeout = 5 * time.Second
-	// clientTimeout 整体请求超时（含连接、发送、等待响应、读取 body）。
+	// clientTimeout covers connection setup through reading the response body.
 	clientTimeout = 10 * time.Second
 
-	// privacyBaseURL 隐私设置 API 仅使用 daily 端点（与 Antigravity 客户端行为一致）。
+	// privacyBaseURL sends privacy API calls to the daily endpoint.
 	privacyBaseURL = antigravityDailyBaseURL
 )
 
-// ForbiddenError 表示上游返回 403 Forbidden。
+// ForbiddenError reports a 403 response from fetchAvailableModels.
 type ForbiddenError struct {
 	StatusCode int
 	Body       string
 }
 
-// Client Antigravity API 客户端。
+// Client calls the Antigravity API.
 type Client struct {
 	httpClient *http.Client
 }
@@ -78,16 +78,16 @@ type TokenResponse = googlewire.AntigravityTokenResponse
 
 type UserInfo = googlewire.AntigravityUserInfo
 
-// ClientOptions 接受已经装配的技术客户端，不改变默认代理或超时策略。
+// ClientOptions allows callers to supply an HTTP client.
 type ClientOptions struct{ HTTPClient *http.Client }
 
 func (e *ForbiddenError) Error() string {
 	return fmt.Sprintf("fetchAvailableModels failed (HTTP %d): %s", e.StatusCode, e.Body)
 }
 
-// NewAPIRequestWithURL 使用指定的 base URL 创建 Antigravity API 请求（v1internal 端点）。
+// NewAPIRequestWithURL builds a v1internal request using the supplied base URL.
 func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken string, body []byte) (*http.Request, error) {
-	// 构建 URL，流式请求添加 ?alt=sse 参数
+	// Streaming uses SSE framing.
 	apiURL := fmt.Sprintf("%s/v1internal:%s", baseURL, action)
 	isStream := action == "streamGenerateContent"
 	if isStream {
@@ -99,7 +99,7 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
 		return nil, err
 	}
 
-	// 基础 Headers（与 Antigravity-Manager 保持一致，只设置这 3 个）
+	// These headers identify and authenticate the Antigravity client.
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
@@ -107,8 +107,7 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
 	return req, nil
 }
 
-// NewAPIRequest 使用默认 URL 创建 Antigravity API 请求（v1internal 端点）
-// 向后兼容：仅使用默认 BaseURL。
+// NewAPIRequest builds a v1internal request using BaseURL.
 func NewAPIRequest(ctx context.Context, action, accessToken string, body []byte) (*http.Request, error) {
 	return NewAPIRequestWithURL(ctx, BaseURL, action, accessToken, body)
 }
@@ -139,30 +138,27 @@ func NewClient(proxyURL string) (*Client, error) {
 	}, nil
 }
 
-// IsConnectionError 判断是否为连接错误（网络超时、DNS 失败、连接拒绝）。
+// IsConnectionError reports network timeouts, network operation errors, and URL errors.
 func IsConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	// 检查超时错误
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 
-	// 检查连接错误（DNS 失败、连接拒绝）
 	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
 
-	// 检查 URL 错误
 	var urlErr *url.Error
 	return errors.As(err, &urlErr)
 }
 
-// shouldFallbackToNextURL 判断是否应切换到下一个 URL
-// 与 Antigravity-Manager 保持一致：连接错误、429、408、404、5xx 触发 URL 降级。
+// shouldFallbackToNextURL reports whether another endpoint should be tried.
+// Connection errors, 429, 408, 404, and statuses at least 500 permit another attempt.
 func shouldFallbackToNextURL(err error, statusCode int) bool {
 	if IsConnectionError(err) {
 		return true
@@ -173,7 +169,7 @@ func shouldFallbackToNextURL(err error, statusCode int) bool {
 		statusCode >= 500
 }
 
-// NewClientWithOptions 接收传输客户端，未提供时创建默认客户端。
+// NewClientWithOptions uses the supplied HTTP client when present.
 func NewClientWithOptions(proxyURL string, options ClientOptions) (*Client, error) {
 	client, err := NewClient(proxyURL)
 	if err != nil {
@@ -185,7 +181,7 @@ func NewClientWithOptions(proxyURL string, options ClientOptions) (*Client, erro
 	return client, nil
 }
 
-// ExchangeCode 用 authorization code 交换 token。
+// ExchangeCode exchanges an authorization code and PKCE verifier for tokens.
 func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*TokenResponse, error) {
 	clientSecret, err := getClientSecret()
 	if err != nil {
@@ -229,7 +225,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*
 	return &tokenResp, nil
 }
 
-// RefreshToken 刷新 access_token。
+// RefreshToken exchanges a refresh token for a new access token.
 func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	clientSecret, err := getClientSecret()
 	if err != nil {
@@ -271,7 +267,7 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenR
 	return &tokenResp, nil
 }
 
-// GetUserInfo 获取用户信息。
+// GetUserInfo fetches the authenticated Google user.
 func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, UserInfoURL, nil)
 	if err != nil {
@@ -302,8 +298,8 @@ func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo
 	return &userInfo, nil
 }
 
-// LoadCodeAssist 获取提供商信息，返回解析后的结构体和原始 JSON
-// 支持 URL fallback：sandbox → daily → prod。
+// LoadCodeAssist returns decoded account details and the raw JSON object.
+// Endpoints are tried in BaseURLs order.
 func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadCodeAssistResponse, map[string]any, error) {
 	reqBody := LoadCodeAssistRequest{}
 	reqBody.Metadata.IDEType = "ANTIGRAVITY"
@@ -315,7 +311,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 		return nil, nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	// 固定顺序：prod -> daily
+	// Use the configured endpoint order.
 	availableURLs := BaseURLs
 
 	var lastErr error
@@ -341,12 +337,11 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 		}
 
 		respBodyBytes, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close() // 立即关闭，避免循环内 defer 导致的资源泄漏
+		_ = resp.Body.Close() // Close before the next attempt so response bodies do not accumulate.
 		if err != nil {
 			return nil, nil, fmt.Errorf("read response: %w", err)
 		}
 
-		// 检查是否需要 URL 降级
 		if shouldFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(availableURLs)-1 {
 			log.Printf("[antigravity] loadCodeAssist URL fallback (HTTP %d): %s -> %s", resp.StatusCode, baseURL, availableURLs[urlIdx+1])
 			continue
@@ -361,11 +356,10 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 			return nil, nil, fmt.Errorf("parse response: %w", err)
 		}
 
-		// 解析原始 JSON 为 map
 		var rawResp map[string]any
 		_ = json.Unmarshal(respBodyBytes, &rawResp)
 
-		// 标记成功的 URL，下次优先使用
+		// Record availability for callers that prioritize successful endpoints.
 		DefaultURLAvailability.MarkSuccess(baseURL)
 		return &loadResp, rawResp, nil
 	}
@@ -373,10 +367,10 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 	return nil, nil, lastErr
 }
 
-// OnboardUser 触发提供商 onboarding，并返回 project_id
-// 说明：
-// 1) 部分提供商 loadCodeAssist 不会立即返回 cloudaicompanionProject；
-// 2) 这时需要调用 onboardUser 完成初始化，之后才能拿到 project_id。
+// OnboardUser initializes the account and returns its project ID.
+//
+// loadCodeAssist may omit cloudaicompanionProject until onboarding completes.
+// Poll the onboarding operation until the project is available or attempts run out.
 func (c *Client) OnboardUser(ctx context.Context, accessToken, tierID string) (string, error) {
 	tierID = strings.TrimSpace(tierID)
 	if tierID == "" {
@@ -450,7 +444,7 @@ func (c *Client) OnboardUser(ctx context.Context, accessToken, tierID string) (s
 				return "", lastErr
 			}
 
-			// done=false 时等待后重试（与 CLIProxyAPI 行为一致）
+			// The operation is still pending; wait before polling again.
 			select {
 			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
@@ -484,8 +478,8 @@ func extractProjectIDFromOnboardResponse(resp map[string]any) string {
 	return ""
 }
 
-// FetchAvailableModels 获取可用模型和配额信息，返回解析后的结构体和原始 JSON
-// 支持 URL fallback：sandbox → daily → prod。
+// FetchAvailableModels returns decoded models and quotas plus the raw JSON object.
+// Endpoints are tried in BaseURLs order; bodyLimit must be positive.
 func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, map[string]any, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, nil, errors.New("antigravity client is not configured")
@@ -500,7 +494,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		return nil, nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	// 固定顺序：prod -> daily
+	// Use the configured endpoint order.
 	availableURLs := BaseURLs
 
 	fetchClient := c.fetchAvailableModelsHTTPClient()
@@ -527,7 +521,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		}
 
 		respBodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
-		_ = resp.Body.Close() // 立即关闭，避免循环内 defer 导致的资源泄漏
+		_ = resp.Body.Close() // Close before the next attempt so response bodies do not accumulate.
 		if err != nil {
 			return nil, nil, fmt.Errorf("read response: %w", err)
 		}
@@ -535,7 +529,6 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 			return nil, nil, fmt.Errorf("response exceeds %d bytes", bodyLimit)
 		}
 
-		// 检查是否需要 URL 降级
 		if shouldFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(availableURLs)-1 {
 			log.Printf("[antigravity] fetchAvailableModels URL fallback (HTTP %d): %s -> %s", resp.StatusCode, baseURL, availableURLs[urlIdx+1])
 			continue
@@ -557,11 +550,10 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 			return nil, nil, fmt.Errorf("parse response: %w", err)
 		}
 
-		// 解析原始 JSON 为 map
 		var rawResp map[string]any
 		_ = json.Unmarshal(respBodyBytes, &rawResp)
 
-		// 标记成功的 URL，下次优先使用
+		// Record availability for callers that prioritize successful endpoints.
 		DefaultURLAvailability.MarkSuccess(baseURL)
 		return &modelsResp, rawResp, nil
 	}
@@ -605,9 +597,9 @@ func isAllowedFetchAvailableModelsRedirectHost(host string) bool {
 	return false
 }
 
-// SetUserSettings 调用 setUserSettings API 设置用户隐私，返回解析后的响应。
+// SetUserSettings clears user settings and returns the decoded response.
 func (c *Client) SetUserSettings(ctx context.Context, accessToken string) (*SetUserSettingsResponse, error) {
-	// 发送空 user_settings 以清除隐私设置
+	// An empty user_settings object clears the privacy settings.
 	payload := SetUserSettingsRequest{UserSettings: map[string]any{}}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -649,7 +641,7 @@ func (c *Client) SetUserSettings(ctx context.Context, accessToken string) (*SetU
 	return &result, nil
 }
 
-// FetchUserInfo 调用 fetchUserInfo API 获取用户隐私设置状态。
+// FetchUserInfo fetches the account privacy settings.
 func (c *Client) FetchUserInfo(ctx context.Context, accessToken, projectID string) (*FetchUserInfoResponse, error) {
 	reqBody := FetchUserInfoRequest{Project: projectID}
 	bodyBytes, err := json.Marshal(reqBody)

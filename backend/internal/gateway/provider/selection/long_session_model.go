@@ -10,8 +10,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ResolveOpenAIWSRoutingModelForProvider 为已选定的 WebSocket 提供商逐轮解析并校验分组映射模型。
-// 长连接不能在后续 turn 重新调度提供商，因此模型不再适配当前提供商时直接拒绝该帧。
+// ResolveOpenAIWSRoutingModelForProvider resolves and validates the group-mapped model for each WebSocket turn.
+// Later turns stay on the selected provider, so an incompatible model rejects the frame.
 func (s *Compatible) ResolveOpenAIWSRoutingModelForProvider(
 	ctx context.Context,
 	groupID *int64,

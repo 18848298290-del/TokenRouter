@@ -92,7 +92,7 @@ func TestQoderContextCapabilityMergesWithThinkingOverride(t *testing.T) {
 	require.Equal(t, 1000000, runtimeOverride["max_input_tokens"])
 }
 
-// assertQoderContextCapabilityForTest 同时校验顶层上限和可选档位的两个运行时字段。
+// assertQoderContextCapabilityForTest checks the input limit and both optional runtime overrides.
 func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, wantTokens int, wantRuntime bool) {
 	t.Helper()
 	modelConfig := requireQoderPayloadMapForTest(t, payload["model_config"], "model_config")
@@ -115,7 +115,7 @@ func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, w
 	require.False(t, hasRuntimeOverride)
 }
 
-// requireQoderPayloadMapForTest 校验 payload 路径为 JSON 对象并返回对应 map。
+// requireQoderPayloadMapForTest returns a JSON object or fails with its payload path.
 func requireQoderPayloadMapForTest(t *testing.T, value any, path string) map[string]any {
 	t.Helper()
 	result, ok := value.(map[string]any)
@@ -583,7 +583,7 @@ func TestQoderResponsesPayloadDropsOrphanFunctionCallOutput(t *testing.T) {
 	require.Equal(t, "hello", request.Messages[0].Text)
 }
 
-// TestQoderChatSystemTextPreservesDeveloperMessages 验证 developer 消息被合并到 system prompt。
+// TestQoderChatSystemTextPreservesDeveloperMessages checks developer text joins the system prompt.
 func TestQoderChatSystemTextPreservesDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -598,7 +598,7 @@ func TestQoderChatSystemTextPreservesDeveloperMessages(t *testing.T) {
 	require.Equal(t, "You are helpful\nBe concise", systemText)
 }
 
-// TestQoderChatSystemTextOnlySystemMessages 验证只有 system 消息时正常工作。
+// TestQoderChatSystemTextOnlySystemMessages checks system text without developer messages.
 func TestQoderChatSystemTextOnlySystemMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -610,7 +610,7 @@ func TestQoderChatSystemTextOnlySystemMessages(t *testing.T) {
 	require.Equal(t, "You are helpful", systemText)
 }
 
-// TestQoderChatSystemTextOnlyDeveloperMessages 验证只有 developer 消息时正常工作。
+// TestQoderChatSystemTextOnlyDeveloperMessages checks developer text without system messages.
 func TestQoderChatSystemTextOnlyDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "developer", Content: []byte(`"Be concise"`)},
@@ -622,7 +622,7 @@ func TestQoderChatSystemTextOnlyDeveloperMessages(t *testing.T) {
 	require.Equal(t, "Be concise", systemText)
 }
 
-// TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper 验证无 system/developer 时返回空。
+// TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper excludes ordinary conversation turns.
 func TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "user", Content: []byte(`"Hello"`)},
@@ -634,7 +634,7 @@ func TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper(t *testing.T) {
 	require.Equal(t, "", systemText)
 }
 
-// TestQoderChatSystemTextMultipleDeveloperMessages 验证多个 developer 消息都被保留。
+// TestQoderChatSystemTextMultipleDeveloperMessages checks that all developer messages contribute.
 func TestQoderChatSystemTextMultipleDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -650,7 +650,7 @@ func TestQoderChatSystemTextMultipleDeveloperMessages(t *testing.T) {
 	require.Contains(t, systemText, "Use examples")
 }
 
-// TestQoderChatCompletionsRespectsMaxCompletionTokens 验证 max_completion_tokens 优先于 max_tokens。
+// TestQoderChatCompletionsRespectsMaxCompletionTokens checks precedence over max_tokens.
 func TestQoderChatCompletionsRespectsMaxCompletionTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -665,7 +665,7 @@ func TestQoderChatCompletionsRespectsMaxCompletionTokens(t *testing.T) {
 	require.Equal(t, 1000, req.MaxTokens, "max_completion_tokens should take precedence")
 }
 
-// TestQoderChatCompletionsFallsBackToMaxTokens 验证无 max_completion_tokens 时使用 max_tokens。
+// TestQoderChatCompletionsFallsBackToMaxTokens checks requests without max_completion_tokens.
 func TestQoderChatCompletionsFallsBackToMaxTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -679,7 +679,7 @@ func TestQoderChatCompletionsFallsBackToMaxTokens(t *testing.T) {
 	require.Equal(t, 2000, req.MaxTokens, "should use max_tokens when max_completion_tokens absent")
 }
 
-// TestQoderChatCompletionsUsesDefaultWhenBothAbsent 验证两者都缺失时使用默认值。
+// TestQoderChatCompletionsUsesDefaultWhenBothAbsent checks the default output limit.
 func TestQoderChatCompletionsUsesDefaultWhenBothAbsent(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -692,7 +692,7 @@ func TestQoderChatCompletionsUsesDefaultWhenBothAbsent(t *testing.T) {
 	require.Equal(t, QoderDefaultMaxTokens, req.MaxTokens, "should use default when both absent")
 }
 
-// TestQoderChatCompletionsIgnoresZeroMaxTokens 验证 max_tokens=0 时使用 max_completion_tokens。
+// TestQoderChatCompletionsIgnoresZeroMaxTokens checks a positive max_completion_tokens with max_tokens=0.
 func TestQoderChatCompletionsIgnoresZeroMaxTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -707,7 +707,7 @@ func TestQoderChatCompletionsIgnoresZeroMaxTokens(t *testing.T) {
 	require.Equal(t, 1000, req.MaxTokens, "should ignore max_tokens when it's 0")
 }
 
-// assertQoderThinkingPayload 校验 Qoder 会读取的所有开关和等级副本保持一致。
+// assertQoderThinkingPayload checks every thinking switch and effort copy consumed by Qoder.
 func assertQoderThinkingPayload(t *testing.T, payload map[string]any, enabled bool, effort string, hasEffort bool) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
@@ -780,7 +780,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "max"}, responses.Thinking)
 
-	// Anthropic 的 effort 字段优先于同时出现的预算。
+	// Anthropic effort takes precedence over a simultaneously supplied budget.
 	messages, err := ParseQoderAnthropicMessagesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
 		"max_tokens":1024,
@@ -791,7 +791,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "low"}, messages.Thinking)
 
-	// Qoder 会忽略未知等级，不能被通用 Anthropic 转换层提前拒绝。
+	// Qoder tolerates unknown efforts; the shared Anthropic conversion must not reject them first.
 	messages, err = ParseQoderAnthropicMessagesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
 		"max_tokens":1024,
@@ -803,7 +803,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 }
 
 func TestBuildQoderAnthropicThinkingPayloadDefaultsToGlobalSite(t *testing.T) {
-	// 不带站点的导出构造函数按国际站应用 Thinking 能力。
+	// The constructor without a site applies global thinking capabilities.
 	body := []byte(`{
 		"model":"deepseek-v4-pro",
 		"max_tokens":1024,

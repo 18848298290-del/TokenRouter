@@ -17,7 +17,7 @@ const (
 	TaskTypePasswordReset = "password_reset"
 )
 
-// EmailTask 邮件发送任务。
+// EmailTask describes an identity email to prepare and send.
 type EmailTask struct {
 	Email    string
 	SiteName string
@@ -26,7 +26,7 @@ type EmailTask struct {
 	Locale   string // Optional Accept-Language locale hint
 }
 
-// EmailQueueService 异步邮件队列服务。
+// EmailQueueService processes identity email tasks through a bounded in-memory queue.
 type EmailQueueService struct {
 	runCtx       context.Context
 	cancel       context.CancelFunc
@@ -43,33 +43,31 @@ type EmailQueueService struct {
 	stopped      bool
 }
 
-// TaskProcessor 在原 worker 时点准备身份邮件，不把令牌提前生成到入队时。
+// TaskProcessor prepares identity credentials when a worker executes the queued task.
 type TaskProcessor interface {
 	SendVerifyCode(context.Context, string, string, ...string) error
 	SendPasswordResetEmailWithCooldown(context.Context, string, string, string, ...string) error
 }
 
-// NewEmailQueueService 创建邮件队列服务。
+// NewEmailQueueService creates a queue. Call Start to launch its workers.
 func NewEmailQueueService(emailService TaskProcessor, workers int) *EmailQueueService {
 	if workers <= 0 {
-		workers = 3 // 默认3个工作协程
+		workers = 3
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &EmailQueueService{
 		runCtx: ctx, cancel: cancel, done: make(chan struct{}),
 		emailService: emailService,
-		taskChan:     make(chan EmailTask, 100), // 缓冲100个任务
+		taskChan:     make(chan EmailTask, 100),
 		stopChan:     make(chan struct{}),
 		workers:      workers,
 	}
 
-	// 启动工作协程
-
 	return service
 }
 
-// Start 启动工作协程。
+// Start launches workers once. A stopped queue cannot restart.
 func (s *EmailQueueService) Start() {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -84,7 +82,6 @@ func (s *EmailQueueService) Start() {
 	logger.LegacyPrintf("service.email_queue", "[EmailQueue] Started %d workers", s.workers)
 }
 
-// worker 工作协程。
 func (s *EmailQueueService) worker(id int) {
 	defer s.wg.Done()
 
@@ -95,7 +92,7 @@ func (s *EmailQueueService) worker(id int) {
 	}
 }
 
-// processTask 处理任务。
+// processTask gives each identity email a 30-second budget, bounded by queue cancellation.
 func (s *EmailQueueService) processTask(workerID int, task EmailTask) {
 	ctx, cancel := context.WithTimeout(s.runCtx, 30*time.Second)
 	defer cancel()
@@ -118,7 +115,7 @@ func (s *EmailQueueService) processTask(workerID int, task EmailTask) {
 	}
 }
 
-// EnqueueVerifyCode 将验证码发送任务加入队列。
+// EnqueueVerifyCode queues verification-code delivery, returning an error when full or stopped.
 func (s *EmailQueueService) EnqueueVerifyCode(email, siteName string, locale ...string) error {
 	s.lifecycleMu.RLock()
 	defer s.lifecycleMu.RUnlock()
@@ -142,7 +139,7 @@ func (s *EmailQueueService) EnqueueVerifyCode(email, siteName string, locale ...
 	}
 }
 
-// EnqueuePasswordReset 将密码重置邮件任务加入队列。
+// EnqueuePasswordReset queues password-reset delivery, returning an error when full or stopped.
 func (s *EmailQueueService) EnqueuePasswordReset(email, siteName, resetURL string, locale ...string) error {
 	s.lifecycleMu.RLock()
 	defer s.lifecycleMu.RUnlock()
@@ -167,11 +164,11 @@ func (s *EmailQueueService) EnqueuePasswordReset(email, siteName, resetURL strin
 	}
 }
 
-// Stop 停止队列服务
-// Stop 先封闭接收，再等待已有邮件任务处理完成。
+// Stop closes admission and waits for accepted tasks to finish, discarding the drain error.
 func (s *EmailQueueService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 封闭接收并等待已有任务；预算耗尽取消 SMTP 并保留未完成报告。
+// StopContext closes admission and waits for accepted tasks. On cancellation, it cancels in-flight delivery
+// and records the unfinished task count.
 func (s *EmailQueueService) StopContext(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	if !s.stopped {

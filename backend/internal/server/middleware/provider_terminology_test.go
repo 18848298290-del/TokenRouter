@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderTerminologyBoundary 验证管理入口拒绝旧字段，同时保留第三方凭据和后续 JSON 绑定。
+// TestProviderTerminologyBoundary covers legacy field rejection, nested credentials, and subsequent JSON binding.
 func TestProviderTerminologyBoundary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {

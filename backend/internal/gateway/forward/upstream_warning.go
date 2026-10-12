@@ -4,22 +4,22 @@ import (
 	"errors"
 )
 
-// ErrCyberPolicyForwarded 表示拒绝响应已经输出，调用方应进入错误收尾。
+// ErrCyberPolicyForwarded signals that the refusal was sent and the caller should perform error cleanup.
 var ErrCyberPolicyForwarded = errors.New("openai cyber_policy forwarded to client")
 
-// UpstreamWarning 保存上游风控警告，完成器决定是否结算，HTTP 层决定响应方式。
+// UpstreamWarning holds a policy warning; completion decides billing and HTTP decides response output.
 type UpstreamWarning struct {
 	StatusCode   int
 	ResponseBody []byte
 	Message      string
 }
 
-// UpstreamWarningCarrier 从错误链提供上游警告。
+// UpstreamWarningCarrier exposes an upstream warning through an error chain.
 type UpstreamWarningCarrier interface {
 	OpenAIUpstreamWarning() *UpstreamWarning
 }
 
-// WarningFromError 从转发错误链中提取上游 cyber 风控警告。
+// WarningFromError extracts and copies an upstream cyber-policy warning from a forwarding error.
 func WarningFromError(err error) (*UpstreamWarning, bool) {
 	if err == nil {
 		return nil, false

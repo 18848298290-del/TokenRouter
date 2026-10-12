@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// refreshAPIProviderRepo 模拟刷新协调器读取和保存凭据。
+// refreshAPIProviderRepo simulates credential reads and writes for the refresh coordinator.
 type refreshAPIProviderRepo struct {
 	provider * // returned by GetByID
 	Record
@@ -33,7 +33,7 @@ type refreshAPIProviderRepo struct {
 	lastExpectedProxyID     *int64
 }
 
-// refreshAPIExecutorStub 模拟刷新执行器。
+// refreshAPIExecutorStub supplies configurable eligibility and exchange results.
 type refreshAPIExecutorStub struct {
 	needsRefresh  bool
 	cannotRefresh bool
@@ -45,7 +45,7 @@ type refreshAPIExecutorStub struct {
 	delay         time.Duration
 }
 
-// refreshAPICacheStub 模拟刷新锁的缓存存储。
+// refreshAPICacheStub records distributed lock and token-cache operations.
 type refreshAPICacheStub struct {
 	lockResult    bool
 	lockErr       error
@@ -56,7 +56,7 @@ type refreshAPICacheStub struct {
 	deleteCtxErr  error
 }
 
-// refreshAPIProviderRepoWithRace 在后续读取时返回另一份记录，模拟其他 worker 已刷新令牌。
+// refreshAPIProviderRepoWithRace returns a replacement record on later reads to simulate another worker refreshing.
 type refreshAPIProviderRepoWithRace struct {
 	refreshAPIProviderRepo
 	raceProvider * // returned on 2nd+ GetByID call
@@ -64,7 +64,7 @@ type refreshAPIProviderRepoWithRace struct {
 	getByIDCalls int
 }
 
-// dynamicRefreshExecutor 通过注入函数实现刷新资格判断和交换。
+// dynamicRefreshExecutor injects eligibility and exchange callbacks.
 type dynamicRefreshExecutor struct {
 	canRefresh       bool
 	cacheKey         string
@@ -72,7 +72,7 @@ type dynamicRefreshExecutor struct {
 	refreshFunc      func(context.Context, *Record) (map[string]any, error)
 }
 
-// 上下文在取锁前已取消，访问数据库或交换器会使测试失败。
+// refreshCoreRepo rejects database access while a cancelled caller is still waiting for the refresh lock.
 type refreshCoreRepo struct{}
 
 type refreshCoreExecutor struct{ refreshCalls int }
@@ -304,7 +304,7 @@ func TestRefreshIfNeeded_NoCacheNoLock(t *testing.T) {
 		credentials:  map[string]any{"access_token": "no-cache-token"},
 	}
 
-	api := newRefreshAPIForTest(repo, nil) // no cache = no lock
+	api := newRefreshAPIForTest(repo, nil) // No distributed lock; the process-local lock still applies.
 	result, err := api.RefreshIfNeeded(context.Background(), provider, executor, 3*time.Minute)
 
 	require.NoError(t, err)
@@ -736,7 +736,7 @@ func (r *refreshAPIProviderRepoWithRace) GetByID(_ context.Context, _ int64) (*R
 }
 
 func TestRefreshIfNeeded_InvalidGrantRaceRecovered(t *testing.T) {
-	// 提供商持有刷新前的令牌。
+	// The selected provider still holds the pre-refresh token.
 	provider := &Record{
 		ID:          10,
 		Platform:    capability.PlatformAnthropic,
@@ -744,7 +744,7 @@ func TestRefreshIfNeeded_InvalidGrantRaceRecovered(t *testing.T) {
 		Status:      billing.StatusActive,
 		Credentials: map[string]any{"refresh_token": "old-rt", "access_token": "old-at"},
 	}
-	// 并发刷新后，数据库持有其他 worker 写入的新令牌。
+	// A concurrent worker has stored rotated tokens in the database.
 	racedProvider := &Record{
 		ID:          10,
 		Platform:    capability.PlatformAnthropic,
@@ -774,7 +774,7 @@ func TestRefreshIfNeeded_InvalidGrantRaceRecovered(t *testing.T) {
 }
 
 func TestRefreshIfNeeded_InvalidGrantGenuine(t *testing.T) {
-	// 刷新令牌已撤销，数据库仍保存该令牌。
+	// The database still contains the revoked refresh token.
 	provider := &Record{
 		ID:          11,
 		Platform:    capability.PlatformAnthropic,
@@ -812,7 +812,7 @@ func TestRefreshIfNeeded_InvalidGrantDBRereadFailsOnRecovery(t *testing.T) {
 	}
 	repo := &refreshAPIProviderRepoWithRace{
 		refreshAPIProviderRepo: refreshAPIProviderRepo{provider: provider},
-		raceProvider:           nil, // GetByID returns nil on recovery attempt
+		raceProvider:           nil, // No replacement record is supplied; recovery rereads the original provider.
 	}
 	cache := &refreshAPICacheStub{lockResult: true}
 	executor := &refreshAPIExecutorStub{
@@ -830,8 +830,8 @@ func TestRefreshIfNeeded_InvalidGrantDBRereadFailsOnRecovery(t *testing.T) {
 }
 
 func TestRefreshIfNeeded_LocalMutexSerializesConcurrent(t *testing.T) {
-	// 同一提供商的两个 goroutine 通过本地锁依次执行。
-	// 首次刷新完成后，后续调用的 NeedsRefresh 返回 false。
+	// Two goroutines refreshing one provider serialize through the local lock.
+	// After the first exchange, NeedsRefresh returns false for the queued call.
 	refreshed := &Record{
 		ID:          20,
 		Platform:    capability.PlatformAnthropic,
@@ -848,7 +848,7 @@ func TestRefreshIfNeeded_LocalMutexSerializesConcurrent(t *testing.T) {
 		Credentials: map[string]any{"refresh_token": "old-rt"},
 	}}
 
-	// 执行器在首次调用后递减 needsRefresh，使后续资格判断返回 false。
+	// The exchange counter makes subsequent eligibility checks return false.
 	var mu sync.Mutex
 	dynamicExecutor := &dynamicRefreshExecutor{
 		canRefresh: true,
@@ -887,7 +887,7 @@ func TestRefreshIfNeeded_LocalMutexSerializesConcurrent(t *testing.T) {
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
 
-	// 刷新执行器应被调用一次。
+	// Both callers complete, but only one executes the exchange.
 	mu.Lock()
 	require.Equal(t, 1, callCount, "only one refresh call should have been made")
 	mu.Unlock()
@@ -988,7 +988,8 @@ func (r *refreshAPIProviderRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.C
 	return err == nil, err
 }
 
-// TestRefreshResultDoesNotShareExecutorValues 检查每次刷新返回独立的嵌套凭据和提供商记录。
+// TestRefreshResultDoesNotShareExecutorValues checks that nested executor credentials are independent of
+// returned values.
 func TestRefreshResultDoesNotShareExecutorValues(t *testing.T) {
 	value := &Record{ID: 1001, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive}
 	repo := &refreshAPIProviderRepo{provider: value}
@@ -1008,7 +1009,7 @@ func TestRefreshResultDoesNotShareExecutorValues(t *testing.T) {
 	require.Equal(t, "initial", returned["cookie"])
 }
 
-// newRefreshAPIForTest 按测试输入构造刷新协调器。
+// newRefreshAPIForTest builds a coordinator with test logging and platform policy.
 func newRefreshAPIForTest(repo RefreshRepository, cache AccessTokenCache, lockTTL ...time.Duration) *OAuthRefreshAPI {
 	options := RefreshOptions{Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error, Platform: ProviderRefreshPlatformPolicy()}
 	if len(lockTTL) > 0 {
@@ -1017,7 +1018,7 @@ func newRefreshAPIForTest(repo RefreshRepository, cache AccessTokenCache, lockTT
 	return NewOAuthRefreshAPI(repo, cache, options)
 }
 
-// TestRefreshPreservesAdministratorCredentials 验证模拟交换使用旧凭据，管理员在返回持久化之前完成重新授权。
+// TestRefreshPreservesAdministratorCredentials simulates reauthorization after exchange begins but before persistence.
 func TestRefreshPreservesAdministratorCredentials(t *testing.T) {
 	for _, platform := range []string{capability.PlatformOpenAI, capability.PlatformAnthropic, capability.PlatformGemini, capability.PlatformAntigravity} {
 		t.Run(platform, func(t *testing.T) {
@@ -1073,7 +1074,7 @@ func (e *refreshCoreExecutor) Refresh(context.Context, *Record) (map[string]any,
 	return nil, nil
 }
 
-// TestRefreshAttemptSnapshotIsolation 检查失败交换的比较快照保存交换前的嵌套凭据。
+// TestRefreshAttemptSnapshotIsolation checks that comparison snapshots retain pre-exchange nested credentials.
 func TestRefreshAttemptSnapshotIsolation(t *testing.T) {
 	credentials := map[string]any{"refresh_token": "initial", "session": map[string]any{"cookie": "initial"}}
 	provider := &Record{ID: 1, Platform: PlatformOpenAI, Type: ProviderTypeOAuth, Credentials: credentials}

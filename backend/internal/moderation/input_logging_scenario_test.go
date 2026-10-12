@@ -1,6 +1,6 @@
 package moderation
 
-// 本文件覆盖 input.go 的图片输入提取和 service.go 的审核日志摘录生成。
+// These scenarios connect image extraction in input.go with moderation log excerpts in service.go.
 
 import (
 	"testing"

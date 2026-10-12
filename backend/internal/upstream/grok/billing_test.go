@@ -121,7 +121,7 @@ func TestBuildBillingSummaryMonthlyOnlyKeepsWeeklyUsageEmpty(t *testing.T) {
 
 func TestBuildBillingSummaryWeeklyDoesNotInheritMonthlyPeriodEnd(t *testing.T) {
 	t.Parallel()
-	// 周度用量缺少 currentPeriod.end 时不得复制月度 billingPeriodEnd。
+	// A missing weekly currentPeriod.end must remain separate from the monthly billingPeriodEnd.
 	payload, err := ParseBillingPayload([]byte(`{
 		"config": {
 			"creditUsagePercent": 95.0,

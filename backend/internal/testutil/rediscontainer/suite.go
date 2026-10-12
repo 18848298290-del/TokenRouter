@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// Suite 每个测试套件只启动一个真实 Redis；每个测试与子用例使用原命名空间隔离。
+// Suite shares one Redis instance and gives each Client call a separate test namespace.
 type Suite struct {
 	suite.Suite
 	Ctx  context.Context

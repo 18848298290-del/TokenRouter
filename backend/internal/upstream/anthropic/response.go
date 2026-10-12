@@ -24,7 +24,6 @@ type ResponseOptions struct {
 }
 
 func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options ResponseOptions, originalModel, mappedModel string) (*upstream.TokenUsage, error) {
-	// 更新 5h 窗口状态
 	if options.UpdateWindow != nil {
 		options.UpdateWindow(ctx, resp.Header)
 	}
@@ -34,7 +33,6 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 		return nil, err
 	}
 
-	// 解析 usage
 	var response struct {
 		Usage upstream.TokenUsage `json:"usage"`
 	}
@@ -48,7 +46,7 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 	if options.Observe != nil {
 		options.Observe(wire.ObserveMessage(string(body)))
 	}
-	// 解析嵌套的 cache_creation 对象中的 5m/1h 明细
+	// Read the nested five-minute and one-hour cache creation counters.
 	cc5m := gjson.GetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens")
 	cc1h := gjson.GetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens")
 	if cc5m.Exists() || cc1h.Exists() {
@@ -56,7 +54,7 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 		response.Usage.CacheCreation1hTokens = int(cc1h.Int())
 	}
 
-	// 兼容 Kimi cached_tokens → cache_read_input_tokens
+	// Accept Kimi cached_tokens when the Anthropic cache-read counter is zero.
 	if response.Usage.CacheReadInputTokens == 0 {
 		cachedTokens := gjson.GetBytes(body, "usage.cached_tokens").Int()
 		if cachedTokens > 0 {
@@ -67,11 +65,11 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 		}
 	}
 
-	// Cache TTL Override: 重写 non-streaming 响应中的 cache_creation 分类。
-	// 提供商级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
+	// Use the resolved cache TTL billing override for both internal usage and
+	// the client response. The OverrideCache callback resolves provider/global precedence.
 	if overrideTarget, ok := options.override(ctx); ok {
 		if ApplyCacheTTLOverride(&response.Usage, overrideTarget) {
-			// 同步更新 body JSON 中的嵌套 cache_creation 对象
+			// Keep client-visible cache categories consistent with billing usage.
 			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens", response.Usage.CacheCreation5mTokens); err == nil {
 				body = newBody
 			}
@@ -81,7 +79,7 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 		}
 	}
 
-	// 如果有模型映射，替换响应中的 model 字段
+	// Restore the requested model name after provider mapping.
 	if originalModel != mappedModel {
 		body = ReplaceModelInResponseBody(body, mappedModel, originalModel)
 	}
@@ -99,7 +97,6 @@ func NonStreamResponse(ctx context.Context, resp *http.Response, c *upstream.Out
 
 	body = RestoreToolNamesInBytes(body, options.ToolNames)
 
-	// 写入响应
 	observation := wire.ObserveMessage(string(body))
 	c.NextEvent(observation.Semantic, true)
 	c.Data(resp.StatusCode, contentType, body)
@@ -154,8 +151,8 @@ func NonStreamResponsePassthrough(
 	return usage, nil
 }
 
-// ReplaceModelInResponseBody 替换响应体中的 model 字段
-// 使用 gjson/sjson 精确替换，避免全量 JSON 反序列化。
+// ReplaceModelInResponseBody replaces model only when it equals fromModel.
+// A JSON path update leaves unrelated response fields unchanged.
 func ReplaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
 	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
 		newBody, err := sjson.SetBytes(body, "model", toModel)
@@ -167,7 +164,8 @@ func ReplaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
 	return body
 }
 
-// ClassifyResponseInputAsCacheRead 将故障转移后的输入 token 归类为缓存读取。
+// ClassifyResponseInputAsCacheRead moves input tokens into the response cache-read count.
+// The supplied usage is read without mutation.
 func ClassifyResponseInputAsCacheRead(body []byte, usage *upstream.TokenUsage) ([]byte, error) {
 	classified, err := sjson.SetBytes(body, "usage.input_tokens", 0)
 	if err != nil {

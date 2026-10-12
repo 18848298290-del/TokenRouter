@@ -4,29 +4,28 @@ import (
 	"context"
 )
 
-// TempUnschedState 临时不可调度状态。
+// TempUnschedState records a temporary scheduling pause and its trigger.
 type TempUnschedState struct {
-	UntilUnix            int64  `json:"until_unix"`                       // 解除时间（Unix 时间戳）
-	TriggeredAtUnix      int64  `json:"triggered_at_unix"`                // 触发时间（Unix 时间戳）
-	StatusCode           int    `json:"status_code"`                      // 触发的错误码
-	MatchedKeyword       string `json:"matched_keyword"`                  // 匹配的关键词
-	RuleIndex            int    `json:"rule_index"`                       // 触发的规则索引
-	ErrorMessage         string `json:"error_message"`                    // 错误消息
-	TriggerCount         int64  `json:"trigger_count,omitempty"`          // 本次触发累计命中次数
-	TriggerThreshold     int    `json:"trigger_threshold,omitempty"`      // 触发阈值
-	TriggerWindowMinutes int    `json:"trigger_window_minutes,omitempty"` // 计数窗口（分钟）
+	UntilUnix            int64  `json:"until_unix"`                       // Pause expiry, in Unix seconds.
+	TriggeredAtUnix      int64  `json:"triggered_at_unix"`                // Trigger time, in Unix seconds.
+	StatusCode           int    `json:"status_code"`                      // Triggering HTTP status; zero for a stream timeout.
+	MatchedKeyword       string `json:"matched_keyword"`                  // Matched keyword or system reason.
+	RuleIndex            int    `json:"rule_index"`                       // Provider rule index; -1 for a system rule.
+	ErrorMessage         string `json:"error_message"`                    // Diagnostic message.
+	TriggerCount         int64  `json:"trigger_count,omitempty"`          // Accumulated count at the trigger.
+	TriggerThreshold     int    `json:"trigger_threshold,omitempty"`      // Count required to trigger the pause.
+	TriggerWindowMinutes int    `json:"trigger_window_minutes,omitempty"` // Counting window in minutes.
 }
 
-// TempUnschedCache 临时不可调度缓存接口。
+// TempUnschedCache stores temporary scheduling pause state by provider ID.
 type TempUnschedCache interface {
 	SetTempUnsched(ctx context.Context, providerID int64, state *TempUnschedState) error
 	GetTempUnsched(ctx context.Context, providerID int64) (*TempUnschedState, error)
 	DeleteTempUnsched(ctx context.Context, providerID int64) error
 }
 
-// OpenAIAPIKeyHealthCache 提供 API Key 滚动失败窗口的读写操作。
-// OpenAIAPIKeyHealthCache is an optional TempUnschedCache extension used to
-// aggregate pool API-key failures across gateway instances.
+// OpenAIAPIKeyHealthCache aggregates pool API-key failures across gateway instances.
+// Its rolling-window counter reports when the failure threshold is reached.
 type OpenAIAPIKeyHealthCache interface {
 	RecordOpenAIAPIKeyHealthFailure(ctx context.Context, providerID int64, windowMinutes, threshold int) (count int64, tripped bool, err error)
 }

@@ -36,14 +36,13 @@ func (s *ProxyRepoSuite) TestListWithFiltersAndProviderCount_SortByExpiry() {
 	soon := now.Add(72 * time.Hour)
 	later := now.Add(100 * 24 * time.Hour)
 
-	// 创建顺序(=ID 升序)刻意打乱,使其不同于任何有效期顺序:
-	// 一旦排序退回按 id(没加 case "expiry"),此测试必然失败。
+	// Creation order differs from both expiry sort orders so sorting by ID fails the assertions.
 	pLater := s.mustCreateProxy(&egress.Proxy{Name: "p-later", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: billing.StatusActive, ExpiresAt: &later})
 	pNever := s.mustCreateProxy(&egress.Proxy{Name: "p-never", Protocol: "http", Host: "127.0.0.1", Port: 8081, Status: billing.StatusActive, ExpiresAt: nil})
 	pExpired := s.mustCreateProxy(&egress.Proxy{Name: "p-expired", Protocol: "http", Host: "127.0.0.1", Port: 8082, Status: billing.StatusActive, ExpiresAt: &past})
 	pSoon := s.mustCreateProxy(&egress.Proxy{Name: "p-soon", Protocol: "http", Host: "127.0.0.1", Port: 8083, Status: billing.StatusActive, ExpiresAt: &soon})
 
-	// 升序:最快到期在前,NULL(永不过期)垫底
+	// Ascending expiry places NULL (no expiry) last.
 	asc, _, err := s.repo.ListWithFiltersAndProviderCount(s.ctx, pagination.PaginationParams{
 		Page: 1, PageSize: 10, SortBy: "expiry", SortOrder: "asc",
 	}, "", "", "")
@@ -55,7 +54,7 @@ func (s *ProxyRepoSuite) TestListWithFiltersAndProviderCount_SortByExpiry() {
 		"asc: 过期→快到期→远期→永不过期(垫底)",
 	)
 
-	// 降序:NULL(永不过期)置顶
+	// Descending expiry places NULL (no expiry) first.
 	desc, _, err := s.repo.ListWithFiltersAndProviderCount(s.ctx, pagination.PaginationParams{
 		Page: 1, PageSize: 10, SortBy: "expiry", SortOrder: "desc",
 	}, "", "", "")

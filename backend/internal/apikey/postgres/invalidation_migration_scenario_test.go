@@ -1,8 +1,8 @@
 package postgres
 
-// 本文件检查 invalidation_outbox.go 使用的迁移结构和失效触发条件，覆盖
-// migrations/212_auth_cache_invalidation_outbox.sql 与
-// migrations/258_extend_api_key_auth_cache_invalidation.sql。
+// These tests check the outbox schema and invalidation triggers used by invalidation_outbox.go:
+// migrations/212_auth_cache_invalidation_outbox.sql and
+// migrations/258_extend_api_key_auth_cache_invalidation.sql.
 
 import (
 	"crypto/sha256"
@@ -41,7 +41,7 @@ func TestAuthCacheInvalidationBillingMigrationCoversSubscriptionBinding(t *testi
 	content, err := migrations.FS.ReadFile("258_extend_api_key_auth_cache_invalidation.sql")
 	require.NoError(t, err)
 	sqlText := string(content)
-	// 结算来源变化会影响鉴权快照，必须由同一触发函数写入失效 outbox。
+	// Funding changes affect authentication snapshots and must enqueue invalidation through the same trigger.
 	require.Contains(t, sqlText, "OLD.billing_mode IS DISTINCT FROM NEW.billing_mode")
 	require.Contains(t, sqlText, "OLD.preferred_subscription_id IS DISTINCT FROM NEW.preferred_subscription_id")
 	require.Contains(t, sqlText, "OLD.key")

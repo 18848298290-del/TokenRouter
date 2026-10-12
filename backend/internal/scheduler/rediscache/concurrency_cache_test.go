@@ -14,12 +14,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// 基准测试用 TTL 配置。
+// benchSlotTTLMinutes sets the benchmark slot lifetime in minutes.
 const benchSlotTTLMinutes = 15
 
 var benchSlotTTL = time.Duration(benchSlotTTLMinutes) * time.Minute
 
-// BenchmarkProviderConcurrency 用于对比 SCAN 与有序集合的计数性能。
+// BenchmarkProviderConcurrency compares SCAN and sorted-set counting at different slot counts.
 func BenchmarkProviderConcurrency(b *testing.B) {
 	rdb := newBenchmarkRedisClient(b)
 	defer func() {

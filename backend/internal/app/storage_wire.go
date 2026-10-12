@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// storageProviders 将通用设置读取接口绑定到共享 Store。
+// storageProviders binds settings readers to the shared Store.
 var storageProviders = wire.NewSet(
 	provideSQLDB,
 	provideSettingsStore,

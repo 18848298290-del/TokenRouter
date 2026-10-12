@@ -21,21 +21,21 @@ func (s *Admin) CreateProvider(ctx context.Context, input *CreateProviderInput) 
 		return nil, err
 	}
 
-	// 绑定分组
+	// Keep requested group bindings for validation and persistence.
 	groupIDs := input.GroupIDs
 
-	// 校验并规范化请求头覆写配置（header 名小写化、格式检查）
+	// Normalize header names to lowercase and validate overrides.
 	if err := egress.NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
-	// OAuth 兑换后不得持久化临时 SSO 或密码。
+	// Temporary SSO and passwords must not be stored after OAuth exchange.
 	input.Credentials = SanitizeStoredCredentials(input.Platform, input.Credentials)
 
 	provider, err := BuildProviderForCreate(input, providerExtra, s.options.Creation)
 	if err != nil {
 		return nil, err
 	}
-	// 创建时生成并保存机器身份，编辑时按兼容规则读取已有身份。
+	// Create machine identity for new Qoder providers; edits read existing identity under compatibility rules.
 	if provider.IsQoderCosy() {
 		s.options.Credentials.Prepare(provider)
 	}
@@ -47,14 +47,14 @@ func (s *Admin) CreateProvider(ctx context.Context, input *CreateProviderInput) 
 		return nil, err
 	}
 
-	// 绑定分组
+	// Bind groups after the provider has been created.
 	if len(groupIDs) > 0 {
 		if err := s.providerRepo.BindGroups(ctx, provider.ID, groupIDs); err != nil {
 			return nil, err
 		}
 	}
 
-	// 后置任务使用自己的提供商值，不与返回给 HTTP 的可变对象共享。
+	// Background work owns a provider copy separate from the value returned to HTTP callers.
 	if provider.Type == ProviderTypeOAuth && (provider.Platform == PlatformOpenAI || provider.Platform == PlatformAntigravity) {
 		value := CloneRecord(provider)
 		s.options.Background("service/admin_provider.go:CreateProvider", func() {

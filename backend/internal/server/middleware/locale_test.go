@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// TestLocaleSelection 检查 HTML Cookie、API 请求权重与管理员查询范围。
+// TestLocaleSelection checks HTML cookies, weighted API language preferences, and admin presentation scope.
 func TestLocaleSelection(t *testing.T) {
 	for _, tc := range []struct {
 		path, accept, language, cookie, want string

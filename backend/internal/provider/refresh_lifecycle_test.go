@@ -57,11 +57,12 @@ func TestRefreshStopTimeoutDoesNotReportDrainOrPersistLateResult(t *testing.T) {
 	close(executor.release)
 	require.ErrorIs(t, <-finished, context.Canceled)
 	require.Zero(t, repo.writes.Load())
-	// 第一次停止已超时，后续即使任务退出也不能改写那次停止的结果。
+	// Retain the first timeout result even after the unfinished task exits.
 	require.Same(t, err, api.StopContext(context.Background()))
 }
 
-// TestRefreshLockRejectsStoppedOwnerBeforeCancellationArrives 验证停止屏障先于逐项取消生效；即使等待者尚未收到取消，也不能取得刷新执行权。
+// TestRefreshLockRejectsStoppedOwnerBeforeCancellationArrives checks that the stop barrier rejects work before
+// cancellation reaches each waiter.
 func TestRefreshLockRejectsStoppedOwnerBeforeCancellationArrives(t *testing.T) {
 	api := NewOAuthRefreshAPI(&lifecycleRefreshRepository{}, nil, RefreshOptions{})
 	ctx, finish, err := api.beginRefresh(context.Background())
@@ -71,7 +72,7 @@ func TestRefreshLockRejectsStoppedOwnerBeforeCancellationArrives(t *testing.T) {
 	defer close(allowCancel)
 	defer finish()
 
-	// 用闸门固定取消传播的间隙。
+	// Hold cancellation propagation open to exercise the stop barrier.
 	api.activity.mu.Lock()
 	for id, cancel := range api.activity.active {
 		api.activity.active[id] = func() {
@@ -99,7 +100,7 @@ func TestRefreshLockRejectsStoppedOwnerBeforeCancellationArrives(t *testing.T) {
 	}
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, held)
-	// 拒绝执行时也必须归还本地锁。
+	// Rejecting the exchange must also release the local lock.
 	lock := api.getLocalLock("lifecycle:provider")
 	require.NoError(t, lock.Lock(stopCtx))
 	lock.Unlock()

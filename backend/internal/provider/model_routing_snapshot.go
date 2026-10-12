@@ -4,13 +4,13 @@ import (
 	"maps"
 )
 
-// ModelRoutingSnapshot 保存本次模型匹配需要的规则。
-// 在模型匹配时创建，并按需读取动态默认模型。
+// ModelRoutingSnapshot owns a copy of the mapping used for model matching.
+// Resolve applies at most one mapping hop.
 type ModelRoutingSnapshot struct {
 	mapping map[string]string
 }
 
-// NewModelRoutingSnapshot 复制模型配置，供本次请求匹配使用。
+// NewModelRoutingSnapshot copies the mapping for subsequent request matching.
 func NewModelRoutingSnapshot(mapping map[string]string) ModelRoutingSnapshot {
 	return ModelRoutingSnapshot{mapping: maps.Clone(mapping)}
 }

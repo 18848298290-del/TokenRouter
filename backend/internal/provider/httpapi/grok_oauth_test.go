@@ -123,7 +123,7 @@ func TestGrokOAuthHandlerQueryQuotaProbesUpstream(t *testing.T) {
 	}
 	require.True(t, responsesProbeSeen)
 	require.True(t, modelsSyncSeen)
-	// 后台同步与断言共享锁，等待请求数不等于已经完成持久化。
+	// Synchronize with persistence through the shared lock; a request count alone does not prove the write completed.
 	repo.mu.Lock()
 	require.NotNil(t, repo.updates[42])
 	repo.mu.Unlock()
@@ -405,7 +405,7 @@ func (c *grokOAuthHandlerClient) ConvertSSOToBuild(context.Context, string, stri
 	return &xai.TokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
 }
 
-// newGrokAuthorizationForTest 为 HTTP 测试组合授权和响应处理，使用应用参数。
+// newGrokAuthorizationForTest builds authorization with the application's option adapter.
 func newGrokAuthorizationForTest(proxies egress.ProxyRepository, client providercore.GrokAuthorizationClient, enabled ...bool) *providercore.GrokAuthorization {
 	return providercore.NewGrokAuthorization(client, provideradapter.GrokAuthorizationOptions(proxies, func() bool {
 		return len(enabled) > 0 && enabled[0]

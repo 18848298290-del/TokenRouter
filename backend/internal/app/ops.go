@@ -114,7 +114,8 @@ func provideOpsOptions(cfg *config.Config) *ops.Options {
 	return o
 }
 
-// provideOpsObservationAccess 返回观测所需的身份数据，失败 Key 用于错误记录。
+// provideOpsObservationAccess reads identity data for observations, including failed-authentication Keys for
+// error records.
 func provideOpsObservationAccess() gatewayhttp.OpsObservationAccess {
 	return gatewayhttp.OpsObservationAccess{
 		APIKey: func(c *gin.Context) *apikey.APIKey {

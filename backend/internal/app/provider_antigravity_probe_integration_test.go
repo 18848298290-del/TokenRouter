@@ -21,7 +21,7 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// 这些构造函数供集成测试组合平台探测和应用任务跟踪器。
+// These constructors combine platform probing with application activity tracking in integration tests.
 var (
 	NewAntigravityRetryForTest = provideAntigravityRetry
 	NewAntigravityProbeForTest = provideAntigravityProbe
@@ -33,7 +33,8 @@ type antigravityProbeBody struct {
 	closed bool
 }
 
-// 供应商响应使用本地流，数据库读取、令牌获取、重试和 SSE 处理使用生产组件。
+// antigravityProbeTransport supplies local response streams; database reads, token lookup, retry, and SSE
+// handling use production components.
 type antigravityProbeTransport struct {
 	requests  []*http.Request
 	bodies    []string

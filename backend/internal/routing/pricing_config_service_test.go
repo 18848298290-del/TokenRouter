@@ -40,7 +40,8 @@ type mockPricingConfigAuthCacheInvalidator struct {
 	invalidatedUserIDs  []int64
 }
 
-// TestPricingConfigPublicationOwnsSnapshot 检查修改输入后缓存中的价格配置和分组关联。
+// TestPricingConfigPublicationOwnsSnapshot checks that later input mutations cannot change cached prices or group
+// associations.
 func TestPricingConfigPublicationOwnsSnapshot(t *testing.T) {
 	pricingConfigs := []PricingConfig{{ID: 1, Status: StatusActive, GroupIDs: []int64{9}}}
 
@@ -192,8 +193,8 @@ func TestValidateNoConflictingModels(t *testing.T) {
 			wantErr:     true,
 			errContains: "conflict",
 		},
-		// 以下三例：冲突检测必须与 normalizePriceModelName 用同一套归一化，
-		// 否则校验放行、写进缓存后键相同，后写的定价会静默覆盖前一条。
+		// Conflict detection uses the cache's model identity rules.
+		// Distinct punctuation remains distinct, while normalization collisions are rejected.
 		{
 			name: "claude_dot_and_hyphen_spelling_conflict",
 			pricingList: []ModelPricingEntry{
@@ -222,7 +223,7 @@ func TestValidateNoConflictingModels(t *testing.T) {
 			errContains: "conflict",
 		},
 		{
-			// 只有 claude-* 前缀才做 "." → "-"，别把其它平台也一起归一化了
+			// GPT model punctuation also remains part of model identity.
 			name: "non_claude_dot_spelling_is_not_normalized",
 			pricingList: []ModelPricingEntry{
 				{Models: []string{"gpt-5.6"}},
@@ -253,7 +254,7 @@ func TestValidateNoConflictingModels(t *testing.T) {
 	})
 }
 
-// TestValidateNoConflictingMappings 验证映射键在统一模型空间内校验，精确项和通配范围不可重叠。
+// TestValidateNoConflictingMappings rejects overlapping exact and wildcard source patterns.
 func TestValidateNoConflictingMappings(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -575,11 +576,11 @@ func TestGetConfigModelPricing_ReturnsCopy(t *testing.T) {
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 
-	// 修改返回值的切片，检查缓存与副本的隔离。
+	// Mutate the returned model slice to test isolation from the cache.
 	result.Models = append(result.Models, "hacked")
 	result.ID = 999
 
-	// 缓存中保存的模型列表应保持为初始值。
+	// A later lookup must return the cached model list unchanged.
 	result2 := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result2)
 	require.Equal(t, 1, len(result2.Models))
@@ -595,7 +596,7 @@ func TestResolveGroupMapping_NoGroupPolicy(t *testing.T) {
 	repo := makeStandardRepo(ch, map[int64]string{10: "anthropic"})
 	svc := newTestPricingConfigService(repo)
 
-	// Group 999 is not in any channel
+	// Group 999 has no associated pricing configuration.
 	result := svc.ResolveGroupMapping(context.Background(), 999, "claude-opus-4")
 	require.Equal(t, "claude-opus-4", result.MappedModel)
 	require.False(t, result.Mapped)
@@ -648,9 +649,8 @@ func TestResolveGroupMapping_WildcardFirstMatch(t *testing.T) {
 
 	result := svc.ResolveGroupMapping(context.Background(), 10, "claude-sonnet-4")
 	require.True(t, result.Mapped)
-	// map iteration order is non-deterministic, so the first-match depends on
-	// insertion order which Go maps don't guarantee; verify that one of the
-	// wildcard targets matched
+	// This assertion checks that an overlapping wildcard resolves to a configured target.
+
 	require.Contains(t, []string{"target1", "target2"}, result.MappedModel)
 }
 
@@ -713,7 +713,7 @@ func TestResolveGroupMapping_DisabledGroupPolicy(t *testing.T) {
 	result := svc.ResolveGroupMapping(context.Background(), 10, "claude-sonnet-4")
 	require.False(t, result.Mapped)
 	require.Equal(t, "claude-sonnet-4", result.MappedModel)
-	require.Equal(t, int64(0), result.PricingConfigID) // no channel
+	require.Equal(t, int64(0), result.PricingConfigID) // No associated pricing configuration.
 }
 
 func TestIsModelRestricted_NoPricingConfig(t *testing.T) {
@@ -727,7 +727,7 @@ func TestIsModelRestricted_NoPricingConfig(t *testing.T) {
 	repo := makePolicyRepo(routingPolicy, ch, map[int64]string{10: "anthropic"})
 	svc := newTestPricingConfigService(repo)
 
-	// Group 999 is not in any channel
+	// Group 999 has no associated group policy.
 	restricted := svc.IsModelRestricted(context.Background(), 999, "claude-opus-4")
 	require.False(t, restricted)
 }
@@ -945,7 +945,7 @@ func TestBuildCache_DBError(t *testing.T) {
 	require.Contains(t, err.Error(), "database down")
 	require.Equal(t, 1, callCount)
 
-	// 失败后的短 TTL 缓存包含空映射，再次查询返回 nil 且错误为空。
+	// The short-lived error snapshot is empty; the next lookup returns nil without another error.
 	result, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err)
 	require.Nil(t, result)
@@ -972,12 +972,12 @@ func TestBuildCacheDoesNotReadRetiredGroupPlatform(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// 价格解析按配置关联分组，测试检查平台查询的调用次数。
+	// Look up prices through the group's configuration association.
 	result, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// 再次读取命中同一份完整缓存。
+	// The next read reuses the same loaded snapshot.
 	result2, err2 := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err2)
 	require.NotNil(t, result2)
@@ -1094,7 +1094,7 @@ func TestInvalidateCache(t *testing.T) {
 	// Invalidate
 	svc.invalidateCache()
 
-	// Next call should rebuild from DB
+	// Invalidation rebuilds immediately; this read reuses the refreshed snapshot.
 	result = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, 2, callCount) // rebuilt
@@ -1152,7 +1152,7 @@ func TestCreate_GroupConflict(t *testing.T) {
 			return false, nil
 		},
 		getGroupsInOtherPricingConfigsFn: func(_ context.Context, _ int64, _ []int64) ([]int64, error) {
-			return []int64{10}, nil // group 10 already in another channel
+			return []int64{10}, nil // Group 10 already belongs to another pricing configuration.
 		},
 	}
 	svc := newTestPricingConfigService(repo)
@@ -1277,7 +1277,7 @@ func TestCreate_InvalidatesCache(t *testing.T) {
 	_, err := svc.Create(context.Background(), &CreatePricingConfigInput{Name: "new"})
 	require.NoError(t, err)
 
-	// Next cache access should rebuild
+	// Create has already rebuilt the cache; the next read reuses it.
 	_ = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.Equal(t, 2, loadCount)
 }
@@ -1338,7 +1338,7 @@ func TestUpdate_NameConflict(t *testing.T) {
 			return existing.Clone(), nil
 		},
 		existsByNameExcludingFn: func(_ context.Context, _ string, _ int64) (bool, error) {
-			return true, nil // name conflicts with another channel
+			return true, nil // Name conflicts with another pricing configuration.
 		},
 	}
 	svc := newTestPricingConfigService(repo)
@@ -1361,7 +1361,7 @@ func TestUpdate_GroupConflict(t *testing.T) {
 			return existing.Clone(), nil
 		},
 		getGroupsInOtherPricingConfigsFn: func(_ context.Context, _ int64, _ []int64) ([]int64, error) {
-			return []int64{20}, nil // group 20 in another channel
+			return []int64{20}, nil // Group 20 belongs to another pricing configuration.
 		},
 	}
 	svc := newTestPricingConfigService(repo)
@@ -1465,7 +1465,7 @@ func TestUpdate_InvalidatesPricingConfigCache(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// PricingConfig cache should be invalidated (next access rebuilds)
+	// Update has already refreshed the pricing snapshot.
 	_, _ = svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Equal(t, 2, loadCount)
 }
@@ -1639,7 +1639,7 @@ func TestUpdate_StatusOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// Verify that the channel passed to repo.Update has the new status
+	// The repository receives the updated configuration status.
 	require.NotNil(t, capturedPricingConfig)
 	require.Equal(t, StatusDisabled, capturedPricingConfig.Status)
 	// Name should remain unchanged
@@ -1662,7 +1662,7 @@ func TestPricingConfigDelete_GetGroupIDsError(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// Delete should still succeed even though GetGroupIDs returned error (degradation path L588-591)
+	// Deletion succeeds even if reading groups for cache invalidation fails.
 	err := svc.Delete(context.Background(), 1)
 	require.NoError(t, err)
 	require.True(t, deleted)
@@ -1723,7 +1723,7 @@ func TestCheckRestrictedUsesUnifiedAllowlist(t *testing.T) {
 }
 
 func TestGetConfigModelPricing_AntigravityOwnPricingWorks(t *testing.T) {
-	// antigravity 平台自己配置的定价应正常生效（覆盖 Claude 和 Gemini 模型）。
+	// A group's prices cover both Claude and Gemini model families.
 	ch := PricingConfig{
 		ID:       1,
 		Status:   StatusActive,
@@ -1736,13 +1736,13 @@ func TestGetConfigModelPricing_AntigravityOwnPricingWorks(t *testing.T) {
 	repo := makeStandardRepo(ch, map[int64]string{10: PlatformAntigravity})
 	svc := newTestPricingConfigService(repo)
 
-	// Claude 模型匹配 antigravity 定价
+	// Claude selects the matching configured price.
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-sonnet-4")
 	require.NotNil(t, result)
 	require.Equal(t, int64(600), result.ID)
 	require.InDelta(t, 15e-6, *result.InputPrice, 1e-12)
 
-	// Gemini 模型匹配 antigravity 定价
+	// Gemini selects the matching configured price.
 	result = svc.GetConfigModelPricing(context.Background(), 10, "gemini-2.5-flash")
 	require.NotNil(t, result)
 	require.Equal(t, int64(601), result.ID)
@@ -2019,7 +2019,7 @@ func TestGroupRoutingPolicyUpdateMappingConflict(t *testing.T) {
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
 }
 
-// TestPricingConfigModelLookupIndependentOfGroupPlatform 检查价格按配置关联关系查找。
+// TestPricingConfigModelLookupIndependentOfGroupPlatform checks lookup through configuration associations.
 func TestPricingConfigModelLookupIndependentOfGroupPlatform(t *testing.T) {
 	config := PricingConfig{ID: 1, Status: StatusActive, GroupIDs: []int64{10, 20}, ModelPricing: []ModelPricingEntry{{Models: []string{"claude-x"}, InputPrice: testPtrFloat64(3)}, {Models: []string{"gpt-*"}, InputPrice: testPtrFloat64(5)}}}
 	repo := &mockPricingConfigRepository{listAllFn: func(context.Context) ([]PricingConfig, error) { return []PricingConfig{config}, nil }, getGroupPlatformsFn: func(context.Context, []int64) (map[int64]string, error) {
@@ -2178,7 +2178,7 @@ func newTestPricingConfigServiceWithAuth(repo *mockPricingConfigRepository, auth
 	return NewPricingConfigService(repo, auth, PricingConfigOptions{LoadLocation: time.LoadLocation, ReadGroup: repo.readGroup})
 }
 
-// makeStandardRepo 为分组 1 设置活跃价格配置，使用传入的模型价格和映射。
+// makeStandardRepo supplies the given configuration and group-platform records.
 func makeStandardRepo(ch PricingConfig, groupPlatforms map[int64]string) *mockPricingConfigRepository {
 	return &mockPricingConfigRepository{
 		listAllFn: func(_ context.Context) ([]PricingConfig, error) {
@@ -2190,7 +2190,7 @@ func makeStandardRepo(ch PricingConfig, groupPlatforms map[int64]string) *mockPr
 	}
 }
 
-// makePolicyRepo 为分组读取函数设置测试所需的路由策略。
+// makePolicyRepo supplies routing policies for test group reads.
 func makePolicyRepo(policy GroupRoutingPolicy, config PricingConfig, platforms map[int64]string) *mockPricingConfigRepository {
 	repo := makeStandardRepo(config, platforms)
 	policy.Enabled = config.IsActive()
@@ -2208,7 +2208,7 @@ func makePolicyRepo(policy GroupRoutingPolicy, config PricingConfig, platforms m
 	return repo
 }
 
-// testPtrFloat64 为测试价卡生成可空金额指针。
+// testPtrFloat64 creates a nullable price for test price cards.
 func testPtrFloat64(value float64) *float64 { return &value }
 
 func testPtrInt(value int) *int { return &value }

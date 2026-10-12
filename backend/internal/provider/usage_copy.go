@@ -2,7 +2,7 @@ package provider
 
 import "slices"
 
-// CloneUpstreamUsageResult 为每个等待方复制结果，保留 nil、空集合及所有金额类型。
+// CloneUpstreamUsageResult creates an independent result for a waiter, preserving nil and empty collections.
 func CloneUpstreamUsageResult(value *UpstreamUsageQueryResult) *UpstreamUsageQueryResult {
 	if value == nil {
 		return nil
@@ -23,7 +23,7 @@ func CloneUpstreamUsageResult(value *UpstreamUsageQueryResult) *UpstreamUsageQue
 		usage.Subscription = cloneUsageSubscription(usage.Subscription)
 		usage.ExpiresAt = clonePointer(usage.ExpiresAt)
 		out.Usage = &usage
-		// 正常查询同时提供平面 HTTP 字段与内部归一化值，保留这一结果内的金额别名。
+		// Keep shared balance and subscription pointers between HTTP fields and internal usage within the copy.
 		if value.Balance == value.Usage.Balance {
 			out.Balance = usage.Balance
 		}

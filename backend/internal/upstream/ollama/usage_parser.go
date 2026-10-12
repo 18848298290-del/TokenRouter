@@ -25,7 +25,7 @@ var (
 	ollamaFiveHourUsageAliases = []string{"session usage", "5 hour usage", "5-hour usage", "5h usage", "5 hour limit", "5-hour limit"}
 	ollamaSevenDayUsageAliases = []string{"weekly usage", "7 day usage", "7-day usage", "7d usage", "weekly limit", "7 day limit"}
 
-	// ErrUnauthorizedHTML 表示用量页面返回了登录表单。
+	// ErrUnauthorizedHTML indicates a sign-in page in place of usage data.
 	ErrUnauthorizedHTML = errors.New("settings HTML is a sign-in page")
 )
 
@@ -184,7 +184,7 @@ func parseOllamaModels(root *html.Node) []usageview.OllamaCloudUsageModel {
 		}
 	})
 
-	// 设置页缺少 segment 标记时，从模型名和请求数属性读取明细。
+	// Pages without segment markers expose model details through data attributes.
 	if len(models) == 0 {
 		walkHTML(root, func(node *html.Node) {
 			if node.Type != html.ElementNode {

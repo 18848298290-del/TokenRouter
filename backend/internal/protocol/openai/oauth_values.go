@@ -54,17 +54,17 @@ type OAuthUserInfo struct {
 	Organizations    []OAuthOrganizationClaim
 }
 
-// ChatGPTAccountInfo 是 chatgpt.com/backend-api/accounts/check 返回的账户信息。
+// ChatGPTAccountInfo holds account data returned by chatgpt.com/backend-api/accounts/check.
 type ChatGPTAccountInfo struct {
 	PlanType string
 	Email    string
-	// ProviderID 优先取 account.account_id，缺失时使用 accounts 的 map key。
-	// accounts/check 可能同时返回个人账户与 workspace，调用方据此区分数据来源。
+	// ProviderID uses account.account_id, or the accounts map key when that field is absent.
+	// Callers use it to distinguish personal accounts from workspaces in the same response.
 	ProviderID            string
 	SubscriptionExpiresAt string // entitlement.expires_at (RFC3339)
 }
 
-// PATWhoamiResponse 保存 PAT 身份查询返回的用户和账户信息。
+// PATWhoamiResponse holds user and account information returned by the PAT identity query.
 type PATWhoamiResponse struct {
 	Email                   string `json:"email"`
 	ChatGPTUserID           string `json:"chatgpt_user_id"`
@@ -86,14 +86,14 @@ func (c *OAuthIDTokenClaims) GetUserInfo() *OAuthUserInfo {
 		info.UserID = c.OpenAIAuth.UserID
 		info.Organizations = c.OpenAIAuth.Organizations
 
-		// Get default organization ID
+		// Prefer the default organization.
 		for _, org := range c.OpenAIAuth.Organizations {
 			if org.IsDefault {
 				info.OrganizationID = org.ID
 				break
 			}
 		}
-		// If no default, use first org
+		// Use the first organization when no default has an ID.
 		if info.OrganizationID == "" && len(c.OpenAIAuth.Organizations) > 0 {
 			info.OrganizationID = c.OpenAIAuth.Organizations[0].ID
 		}

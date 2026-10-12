@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// fakeCleanupReloader 记录运行设置更新触发的清理服务重载。
+// fakeCleanupReloader records cleanup reloads triggered by settings updates.
 type fakeCleanupReloader struct {
 	calls int
 	last  context.Context

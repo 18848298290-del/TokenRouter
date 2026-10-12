@@ -9,7 +9,7 @@ import (
 
 var runProviderTests = func(m *testing.M) int { return m.Run() }
 
-// TestMain 在测试进程启动时统一设置 Gin 模式，保留测试中的并发行为。
+// TestMain sets Gin test mode once before any tests run concurrently.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	os.Exit(runProviderTests(m))

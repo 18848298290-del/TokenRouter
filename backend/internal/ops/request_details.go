@@ -49,8 +49,8 @@ func (s *OpsService) ListRequestDetails(ctx context.Context, filter *OpsRequestD
 	}, nil
 }
 
-// LookupRequestTimings 返回请求对应的 http.access 阶段耗时。
-// Ops 未启用或当前仓储不支持该查询时返回空结果。
+// LookupRequestTimings returns http.access timing metadata for the requested IDs.
+// It trims clientRequestIDs in place and returns an empty result when Ops is disabled or the repository is nil.
 func (s *OpsService) LookupRequestTimings(ctx context.Context, clientRequestIDs []string) (map[string]*OpsRequestTiming, error) {
 	result := make(map[string]*OpsRequestTiming)
 	if s == nil || s.opsRepo == nil || len(clientRequestIDs) == 0 || !s.IsMonitoringEnabled(ctx) {

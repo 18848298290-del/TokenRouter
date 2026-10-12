@@ -1,6 +1,6 @@
 package httpapi
 
-// WS 错误字段场景覆盖 protocol/openai/ws_events.go、upstream/openai/ws_error_rules.go 和 gateway/provider/ws_diagnostics.go，测量字段解析后复用分类与诊断结果的开销。
+// Error-field scenarios measure parsing and reuse by WS error classification and diagnostics.
 
 import (
 	"testing"

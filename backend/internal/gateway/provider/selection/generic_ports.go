@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// genericSelectionScope 用临时关联号保留同 ID 的多份读取快照，选择结束后即释放。
+// projectionScope assigns per-call IDs to retain distinct snapshots of the same provider or group.
 type projectionScope struct {
 	next      uint64
 	providers map[uint64]*gatewayprovider.ExecutionProvider

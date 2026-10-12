@@ -2,7 +2,7 @@
 
 package postgres
 
-// 覆盖 usage_analytics_aggregation_repo.go 和 usage_log_repo_analytics_queries.go。
+// These scenarios cover usage_analytics_aggregation_repo.go and usage_log_repo_analytics_queries.go.
 
 import (
 	"fmt"
@@ -43,7 +43,7 @@ func (s *UsageLogRepoSuite) TestAnalyticsDimensionsAcrossRawAndHourly() {
 				RequestID: fmt.Sprintf("dimensions-%d-%d", caseIndex, position), Model: "fixture", CreatedAt: at,
 			})
 			s.Require().NoError(err)
-			// 构造升级前的空字段和请求类型，核对两个查询源的兼容处理。
+			// Populate legacy empty fields and request types to compare compatibility handling across both sources.
 			_, err = s.tx.ExecContext(s.ctx, `UPDATE usage_logs SET
 				model=$1, requested_model=$2, request_type=$3, openai_ws_mode=$4, stream=$5,
 				video_duration_seconds=$6, image_count=$7, image_size=CASE WHEN $7>0 THEN '1K' ELSE NULL END, billing_mode=$8, platform=$9, inbound_endpoint=$10,

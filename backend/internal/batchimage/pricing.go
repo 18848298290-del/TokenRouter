@@ -7,12 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// ImagePrices 根据价卡和模型返回图片单价。
+// ImagePrices resolves per-image prices from pricing rules and the model.
 type ImagePrices interface {
 	ResolveImageUnitPrice(context.Context, billing.PricingInput, string) (float64, error)
 }
 
-// Pricing 保留任务报价的按需分组读取顺序，价格算法仍由 billing 唯一实现。
+// Pricing resolves batch image prices through the billing price resolver.
 type Pricing struct {
 	Resolver  ImagePrices
 	GroupRepo GroupReader

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestGatewayGroupRateCacheTTL 检查 app 配置的默认 TTL 和自定义 TTL。
+// TestGatewayGroupRateCacheTTL checks the default and configured TTL.
 func TestGatewayGroupRateCacheTTL(t *testing.T) {
 	t.Run("resolve_user_group_rate_cache_ttl", func(t *testing.T) {
 		require.Equal(t, billing.DefaultGroupRateCacheTTL, gatewayGroupRateCacheTTL(nil))

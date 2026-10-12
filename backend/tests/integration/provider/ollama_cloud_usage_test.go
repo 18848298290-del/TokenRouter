@@ -221,11 +221,11 @@ func TestListDueOllamaCloudUsageProvidersFiltersOrdersAndLimits(t *testing.T) {
 		"LIMIT $4",
 		"make_interval(secs => $2::double precision)",
 		"make_interval(secs => $3::double precision)",
-		// 两次成功抓取之间的最小间隔下限。
+		// Minimum interval between successful fetches.
 		"make_interval(secs => $5::double precision)",
-		// PostgreSQL 17 起 jsonpath .datetime() 才接受 ISO-8601 的“Z”标识，
-		// 本服务写入 UTC 时间戳。省略转换会使 14 至 16 版本上的 parsed_* 列
-		// 变成 NULL，到期筛选随后允许这些记录通过。
+		// PostgreSQL 17 introduced jsonpath .datetime() support for the UTC Z suffix.
+		// Rewrite Go UTC timestamps for PostgreSQL 14-16, where a parse failure produces NULL
+		// and lets the row through the fail-open due filter.
 		`regexp_replace( regexp_replace( fetched_at, '(\.[0-9]{6})[0-9]+(Z|[+-][0-9]{2}:[0-9]{2})$', '\1\2' ), 'Z$', '+00:00' )`,
 		"group_last_used_at > parsed_fetched_at::timestamptz",
 		"group_last_used_at > parsed_last_attempt_at::timestamptz",
@@ -297,8 +297,8 @@ func TestDisableOllamaCloudUsageAutoRefreshUsesGroupIdentityCAS(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUpdateCredentialsCleanupBranchRequiresChangedCredentials 检查清理分支以顶层 credentials DISTINCT 判断凭据变化。
-// 凭据相同的 OpenAI 和 Anthropic API Key 更新需要保留探测快照。
+// TestUpdateCredentialsCleanupBranchRequiresChangedCredentials checks the top-level credentials DISTINCT guard.
+// Unchanged credentials must not trigger identity-based Ollama state cleanup.
 func TestUpdateCredentialsCleanupBranchRequiresChangedCredentials(t *testing.T) {
 	client, mock := newOllamaCloudUsageRepositoryTestClient(t)
 	mock.ExpectBegin()
@@ -319,7 +319,7 @@ func TestUpdateCredentialsCleanupBranchRequiresChangedCredentials(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// normalizeJSONMap 将空映射转换为可写入 JSON 的空对象。
+// normalizeJSONMap converts nil maps to JSON objects.
 func normalizeJSONMap(value map[string]any) map[string]any {
 	if value == nil {
 		return map[string]any{}

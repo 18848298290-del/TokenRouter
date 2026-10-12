@@ -17,12 +17,12 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// provideCodexTurnStateHeaders 为 HTTP 响应绑定共享的来源表和粘性会话 TTL。
+// provideCodexTurnStateHeaders binds the shared source registry and sticky-session TTL to HTTP responses.
 func provideCodexTurnStateHeaders(choices *selection.Compatible) *gatewayhttp.CodexTurnStateHeaders {
 	return &gatewayhttp.CodexTurnStateHeaders{Origins: session.NewCodexTurnOrigins(time.Now), TTL: choices.SessionStickyTTL}
 }
 
-// provideWSConnections 共享平台拨号器并保留连接池的按需启动时点。
+// provideWSConnections shares the platform dialer and starts the connection pool on demand.
 func provideWSConnections(cfg *config.Config, manager *lifecycle.Manager, runtime *ws.Runtime) *openaiws.OpenAIWSConnections {
 	connections := openaiws.NewOpenAIWSConnections(openAIWSPoolOptions(cfg), openai.NewDefaultWSClientDialer())
 	runtime.SetApply(func(value ws.Parameters) error { return connections.UpdateOptions(responsesWSPoolOptions(value)) })
@@ -39,7 +39,7 @@ func openAIWSPoolOptions(cfg *config.Config) *openaiws.WSPoolOptions {
 	return &returnPtr
 }
 
-// responsesWSPoolOptions 提取连接池使用的参数。
+// responsesWSPoolOptions extracts connection pool configuration.
 func responsesWSPoolOptions(options ws.Parameters) openaiws.WSPoolOptions {
 	return openaiws.WSPoolOptions{
 		MaxConnsPerProvider:                         options.MaxConnsPerProvider,
@@ -55,7 +55,7 @@ func responsesWSPoolOptions(options ws.Parameters) openaiws.WSPoolOptions {
 	}
 }
 
-// openAIWSExecutionOptions 读取 WS 执行参数，处理 nil 配置并传递配置中的零值。
+// openAIWSExecutionOptions handles nil configuration and passes configured zero values through.
 func openAIWSExecutionOptions(cfg *config.Config) *wshttp.OpenAIWSOptions {
 	if cfg == nil {
 		return nil
@@ -85,7 +85,7 @@ func openAIWSExecutionOptions(cfg *config.Config) *wshttp.OpenAIWSOptions {
 	}
 }
 
-// provideResponsesWSRuntime 装配共享参数快照，并在连接资源关闭前停止刷新。
+// provideResponsesWSRuntime assembles shared option snapshots and stops refreshing before connections close.
 func provideResponsesWSRuntime(cfg *config.Config, store *settings.Store, manager *lifecycle.Manager) *ws.Runtime {
 	defaults := ws.DefaultParameters()
 	if cfg != nil {

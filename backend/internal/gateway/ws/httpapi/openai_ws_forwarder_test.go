@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIWSPolicyRepo 记录 WebSocket 配置策略触发的提供商错误写入。
+// openAIWSPolicyRepo records provider error writes triggered by WebSocket policy.
 type openAIWSPolicyRepo struct {
 	transientCooldownProviderRepo
 	setErrorCalls int
@@ -48,8 +48,8 @@ func TestOpenAIWSTerminalEvent_ResponseFailedRecordsModelTransient(t *testing.T)
 	require.True(t, wsFixtureModelBlocked(svc, provider, "gpt-5.5"))
 }
 
-// TestOpenAIWSTerminalFailureReturnsExplicitPolicyDecision 验证 response.failed
-// 写入提供商状态后，将策略结果返回给客户端事件写入方。
+// TestOpenAIWSTerminalFailureReturnsExplicitPolicyDecision checks that response.failed
+// returns the applied provider policy to the client-event writer.
 func TestOpenAIWSTerminalFailureReturnsExplicitPolicyDecision(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	repo := &openAIWSPolicyRepo{}
@@ -79,7 +79,7 @@ func TestOpenAIWSTerminalFailureReturnsExplicitPolicyDecision(t *testing.T) {
 	require.Equal(t, 1, repo.setErrorCalls)
 }
 
-// TestOpenAIWSTerminalContentPolicyBypassesProviderPolicy 验证内容安全拒绝即使映射为 502，也会跳过提供商自定义错误码策略。
+// TestOpenAIWSTerminalContentPolicyBypassesProviderPolicy checks that content rejections bypass custom policy even when mapped to 502.
 func TestOpenAIWSTerminalContentPolicyBypassesProviderPolicy(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	repo := &openAIWSPolicyRepo{}
@@ -155,7 +155,7 @@ func TestOpenAIWSDial5xxRecordsModelTransient(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-// TestOpenAIWSPoolModeErrorUsesConfiguredRetry 验证 WebSocket 错误使用池模式重试规则，模型的默认瞬态冷却状态保持原样。
+// TestOpenAIWSPoolModeErrorUsesConfiguredRetry checks pool retry rules without adding default transient model cooldowns.
 func TestOpenAIWSPoolModeErrorUsesConfiguredRetry(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	setWSFixtureHealth(svc, newUpstreamHealthForTest(transientCooldownProviderRepo{}, &wsFixtureOptions{}, nil, providercore.HealthOptions{}, nil))
@@ -186,8 +186,8 @@ func (r *openAIWSPolicyRepo) SetError(context.Context, int64, string) error {
 	return nil
 }
 
-// TestOpenAIWSCustomNonFailoverStatusStopsScheduling 验证 WebSocket 派生出的
-// 非默认故障转移状态按管理员配置执行策略，同提供商重试标记为 false。
+// TestOpenAIWSCustomNonFailoverStatusStopsScheduling checks administrator policy for a derived status
+// outside the default failover set and disables same-provider retries.
 func TestOpenAIWSCustomNonFailoverStatusStopsScheduling(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	repo := &openAIWSPolicyRepo{}
@@ -241,7 +241,7 @@ func fastModeTestResolver() *billingcore.PriceResolver {
 	return billingtestkit.PriceResolver(nil, billing)
 }
 
-// TestOpenAIWSFastModePolicyContextRefreshesEachTurn 验证 WebSocket 每个 turn 都应读取最新策略，不能永久复用握手时的策略快照。
+// TestOpenAIWSFastModePolicyContextRefreshesEachTurn checks that each turn reads current policy.
 func TestOpenAIWSFastModePolicyContextRefreshesEachTurn(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	svc.Prices = fastModeTestResolver()

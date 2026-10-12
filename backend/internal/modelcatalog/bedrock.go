@@ -2,8 +2,8 @@ package modelcatalog
 
 import "strings"
 
-// BedrockExecutionRules 登记当前适配器已核实的缓存、工具搜索与 thinking 编码。
-// 型号与日期来自 AWS 模型清单，新增型号时需同步对应的请求夹具。
+// BedrockExecutionRules returns registered cache, tool-search, and thinking encodings for Bedrock models.
+// Model IDs follow the AWS catalog. Add matching request fixtures when registering a model.
 func BedrockExecutionRules(model string) ExecutionRules {
 	model = strings.TrimPrefix(normalize(model), "amazon-bedrock/")
 	for _, prefix := range []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."} {

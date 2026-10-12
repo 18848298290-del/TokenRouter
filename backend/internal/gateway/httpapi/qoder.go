@@ -19,7 +19,7 @@ import (
 
 const InvalidStreamFieldTypeMessage = "invalid stream field type"
 
-// ParsedRequest 是读取 HTTP 正文并校验字段后得到的只读请求数据。
+// ParsedRequest holds the HTTP body and validated request fields for downstream readers.
 type ParsedRequest struct {
 	Body      []byte
 	Model     string
@@ -27,14 +27,14 @@ type ParsedRequest struct {
 	StartedAt time.Time
 }
 
-// HTTPFailure 描述返回客户端的协议错误。
+// HTTPFailure describes a protocol error returned to the client.
 type HTTPFailure struct {
 	Status        int
 	Type, Message string
 	RetryAfter    int
 }
 
-// QoderChatHandler 的装配回调加载认证和路由上下文，gateway 执行请求循环。
+// QoderChatHandler loads authentication and routing through callbacks and delegates the request loop to Executor.
 type QoderChatHandler struct {
 	RequestLifetime
 
@@ -49,7 +49,7 @@ type QoderChatHandler struct {
 	Failure        func(*gin.Context, error) *HTTPFailure
 }
 
-// observedExecutionOutput 同步报告 HTTP 状态。
+// observedExecutionOutput reports HTTP state to the execution observer.
 type observedExecutionOutput struct {
 	ResponseSink
 	gateway.ExecutionObserver
@@ -57,7 +57,7 @@ type observedExecutionOutput struct {
 
 func (e *HTTPFailure) Error() string { return e.Message }
 
-// ChatCompletions 读取 Chat 请求，写出协议错误或 SSE 响应。
+// ChatCompletions reads a Chat request and writes its response or protocol error.
 func (h *QoderChatHandler) ChatCompletions(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -161,7 +161,8 @@ func (h *QoderChatHandler) writeError(c *gin.Context, f *HTTPFailure, stream boo
 	c.JSON(f.Status, gin.H{"error": gin.H{"type": f.Type, "message": f.Message}})
 }
 
-// ParseOpenAICompatibleStream 读取布尔字段，缺省返回 false，包含 null 在内的其他类型返回校验失败。
+// ParseOpenAICompatibleStream returns the stream flag and validity; a missing flag is false, and non-booleans,
+// including null, are invalid.
 func ParseOpenAICompatibleStream(body []byte) (bool, bool) {
 	v := gjson.GetBytes(body, "stream")
 	if v.Exists() && v.Type != gjson.True && v.Type != gjson.False {
@@ -170,7 +171,7 @@ func ParseOpenAICompatibleStream(body []byte) (bool, bool) {
 	return v.Bool(), true
 }
 
-// BodyLimitLabel 和 BodyTooLargeMessage 生成正文大小限制的错误文本。
+// BodyLimitLabel formats a byte limit for request-body error messages.
 func BodyLimitLabel(limit int64) string {
 	if limit >= 1024*1024 {
 		return fmt.Sprintf("%dMB", limit/(1024*1024))

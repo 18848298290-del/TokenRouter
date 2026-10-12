@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// applyCatalogTimePricing 在默认目录价上应用数据声明的时段，不影响显式价卡。
+// applyCatalogTimePricing applies the catalog rate's time-of-day multiplier.
 func (s *Calculator) applyCatalogTimePricing(price *ModelPricing, at time.Time) *ModelPricing {
 	if price == nil || price.TimePricing == nil {
 		return price
@@ -26,7 +26,7 @@ func (s *Calculator) operationPrices() pricing.OperationPrices {
 	return pricing.OperationPrices{}
 }
 
-// operationPrice 保留显式零价优先；缺价沿用零成本记录并报告原因。
+// operationPrice prefers configured prices, including zero, and logs missing catalog prices before returning nil.
 func operationPrice(operation string, configured, catalog *float64) *float64 {
 	if configured != nil {
 		return configured
@@ -37,7 +37,7 @@ func operationPrice(operation string, configured, catalog *float64) *float64 {
 	return catalog
 }
 
-// audioPrices 按当前操作合并管理员价格与同一目录版本的默认值。
+// audioPrices fills an operation's unset administrator rate from catalog defaults.
 func (s *Calculator) audioPrices(mode string, configured *audioPriceConfig) *audioPriceConfig {
 	var result audioPriceConfig
 	if configured != nil {

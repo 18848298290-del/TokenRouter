@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 )
 
-// NativeGeminiResponseToResponses 统一完成 Gemini -> Anthropic -> Responses 的响应转换。
+// NativeGeminiResponseToResponses converts Gemini through Anthropic to Responses and reports whether usage was overridden.
 func NativeGeminiResponseToResponses(runtime Runtime, native NativeGeminiRuntime,
 	geminiResp map[string]any,
 	originalModel string,

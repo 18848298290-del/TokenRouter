@@ -10,7 +10,8 @@ const (
 	GeminiModelFlash GeminiModelClass = "flash"
 )
 
-// GeminiQuota 保留共享池与按模型限额；-1 仍表示原按量付费无限额。
+// GeminiQuota holds shared and per-model request limits per day (RPD) and minute (RPM); -1 denotes an unlimited
+// daily quota.
 type GeminiQuota struct {
 	SharedRPD int64 `json:"shared_rpd,omitempty"`
 	SharedRPM int64 `json:"shared_rpm,omitempty"`

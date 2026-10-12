@@ -60,7 +60,7 @@ func FetchObservedModels(ctx context.Context, o ModelsRequest) ([]string, error)
 func ExtractModelIDs(body []byte) []string {
 	data := gjson.GetBytes(body, "data")
 	if !data.IsArray() {
-		// 兼容部分网关直接返回数组。
+		// Some compatible gateways return the model array at the root.
 		data = gjson.ParseBytes(body)
 	}
 	seen := make(map[string]struct{})

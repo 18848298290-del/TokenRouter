@@ -1,6 +1,6 @@
 package forward
 
-// QoderErrorView 保存单次供应商错误的展示字段。
+// QoderErrorView holds display fields for one upstream error.
 type QoderErrorView struct {
 	Recognized           bool
 	Status, SourceStatus int

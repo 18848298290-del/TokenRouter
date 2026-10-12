@@ -2,7 +2,8 @@ package testkit
 
 import "github.com/TokenFlux/TokenRouter/internal/payment"
 
-// StaticProvider 只声明渠道身份和支付方式；测试未配置的外部调用会直接失败。
+// StaticProvider supplies provider identity and payment types. Unconfigured calls through a nil embedded
+// Provider panic.
 type StaticProvider struct {
 	payment.Provider
 	Key   string

@@ -7,7 +7,7 @@ TokenRouter 创作台（Creative Studio）提供面向个人用户的图片生�
 素材和结果存在哪里：
 
 - 服务端不持久化用户素材：原图、mask、生成图、prompt 明文和 provider 原始响应都不进入 PostgreSQL；prompt 只存 sha256，请求幂等指纹也是 sha256。
-- 生成期间服务端临时接收并转发：在服务端侧素材与 prompt 明文只存在于 Redis 临时键，TTL 默认 30 分钟，到期即不可恢复。
+- 生成期间服务端临时接收并转发：在服务端侧素材与 prompt 明文只存在于 Redis 临时键，TTL 默认 30 分钟；ack 与终态清理可提前删除临时数据，过期或删除后不可恢复。
 - 浏览器可在当前创作台 IndexedDB 中保存画布快照、图片 Blob、当前表单草稿（包括提示词）和每次提交的提示词与参数；这些数据只留在当前浏览器配置文件，提交任务时才会上传提示词与素材。
 - 上游供应商可能有自己的留存策略：素材与 prompt 会按上游 API 要求发送给对应平台，供应商那一侧如何保存这些数据，TokenRouter 无法控制。
 - 断线/过期后结果可能丢失且不算成功：客户端未及时取回输出时任务降级为 `result_lost`，服务端不返回可交付成功状态，也不会从服务端恢复素材；上游已成功但结果丢失的任务仍保持计费。
@@ -186,11 +186,11 @@ creative_settle:{run_id}    写 usage_logs 的结算记录 ID
 | `creative:mask:{run_id}` | mask 字节 | TTL 或 `DeleteRunTransient` |
 | `creative:output:{run_id}:{index}` | 单张生成图字节 | TTL、ack 即删或 `DeleteRunTransient` |
 
-输出保存时同时把 `transient_expires_at` 写入输出元数据，客户端据此知道取回截止时间；ack 立即删除对应输出键。`creative.ResultDelivery` 先在 PostgreSQL 的同一事务记录供应商成功时间、实际提供商、输出元数据和 settle outbox，再保存 Redis 输出；供应商成功不代表结果已经可以交付。保存最多三次、间隔一秒、总预算五秒，停止或租约丢失终止保存。重试用完或确认丢失时，按已经生成成功的图片收一次费用，任务进入 `result_lost`，模型不会被重新调用；Redis 读取故障时任务保持待恢复，等待之后重试读取。只有结果可读取且结算完成时才进入 `succeeded`。
+输出保存时同时把 `transient_expires_at` 写入输出元数据，表示 Redis TTL 的过期上限；ack 和终态清理都可在这个时间之前删除输出。`creative.ResultDelivery` 先在 PostgreSQL 的同一事务记录供应商成功时间、实际提供商、输出元数据和 settle outbox，再保存 Redis 输出；供应商成功不代表结果已经可以交付。保存最多三次、间隔一秒、总预算五秒，停止或租约丢失终止保存。重试用完或确认丢失时，按已经生成成功的图片收一次费用，任务进入 `result_lost`，模型不会被重新调用；Redis 读取故障时任务保持待恢复，等待之后重试读取。只有结果可读取且结算完成时才进入 `succeeded`。
 
 队列协调（`creative:queue:*`）与批量图片同构：ready 列表、delayed 有序集合、active 有序集合、单任务 inflight 键（默认 TTL 7 天）、单任务锁键（默认 TTL 300 秒）；入队与预留用 Lua 脚本原子执行。每次领取生成 lease token，心跳、锁续期、重排、ACK 和 stale recovery 都校验 token；失去租约的 worker 取消执行 context，之后不再写任务、输出、计费或队列状态。
 
-`creative_run_outbox` reconciler 负责 provisioning/settle/release 恢复，transient reconciler 负责终态 Redis 清理。队列、临时存储和元数据实现分别位于 `creative/rediscache`、`creative/postgres`，创建与目录位于 `creative.Public`，单次尝试位于 `creative.Executor`，结果推进、恢复与公开查询位于 `creative.Results`/`Queries`，平台请求由 `creative/provider` 使用绑定的技术能力执行。
+`creative_run_outbox` reconciler 负责 provisioning/settle/release 恢复。transient reconciler 每 5 分钟扫描终态任务，选择 `completed_at` 距今至少 10 分钟的记录并删除临时键，包括尚未 ack 且仍有 TTL 的输出。实际删除时间还受轮询、批次上限和清理失败重试影响。队列、临时存储和元数据实现分别位于 `creative/rediscache`、`creative/postgres`，创建与目录位于 `creative.Public`，单次尝试位于 `creative.Executor`，结果推进、恢复与公开查询位于 `creative.Results`/`Queries`，平台请求由 `creative/provider` 使用绑定的技术能力执行。
 
 app 固定唯一生产实例，提供商目录复用 creative/provider 对原生 Record 的只读适配；公开、结果、worker、提供商选择与平台目标都由 app 直接绑定对应能力。`creative.queue_enabled` 默认开启，应用启动时运行 `creative_worker_count` 个任务 worker（默认 128）、一个 delayed mover、一个 stale active recovery 和两个 reconciler；worker 数量通过管理端功能设置热更新，详见[接口](../interfaces/http_api.md)。
 
@@ -277,8 +277,8 @@ creative:
 - 确认目标分组启用图片生成；未配置图片尺寸价格时按完整型号查询目录价格，提供商模型映射按已保存配置执行，GPT Image 2 缺少 4K 覆盖价时仍使用默认价开放 4K。
 - 确认上游提供商凭据有效（Gemini apikey/Vertex/OAuth、OpenAI、xAI）。
 - 确认价格配置价卡与分组有效倍率，验证估价的 hold/capture/release 行为。
-- 临时输出默认 30 分钟过期：通知用户及时取回，或按需调大 `transient_ttl_seconds`。
-- 排查 `result_lost` 时先检查客户端是否在 TTL 内完成取回与 ack，再检查 worker 日志。
+- 临时输出 TTL 默认 30 分钟，终态清理可在任务完成 10 分钟后提前删除输出。应尽快取回；调大 `transient_ttl_seconds` 延长的是 Redis 过期上限。
+- 排查 `result_lost` 时先检查取回和 ack 时机、Redis TTL 及终态清理，再检查 worker 日志。
 
 ## 安全检查清单
 
@@ -287,6 +287,6 @@ creative:
 - 备份不包含创作台素材本体（素材不在 PostgreSQL 中）；恢复数据库不会恢复 Redis 临时输出。
 - 全部用户任务路由按用户 + 浏览器工作区隔离资源归属；隐藏执行 Key 不暴露存在性。
 - 内部取消与失败路径释放预占并清理临时键；ack 即删输出。
-- 不向客户端泄露上游凭据、代理或 provider 原始响应；错误消息截断到 500 字符并脱敏。
+- 返回客户端的错误消息需要由调用方去除上游凭据、代理信息和 provider 原始响应。`SanitizeCreativeMessage` 先去除首尾空白，再替换部分控制字符、处理无效 UTF-8 并截断到 500 个 Unicode 码点；该函数不执行敏感信息脱敏。
 
 相关 Project Doc：[批量图片作业](batch_image_jobs.md)、[内容审核与风险处置](content_moderation.md)、[路由与结算](routing_and_billing.md)、[HTTP 接口](../interfaces/http_api.md)、[配置](../interfaces/configuration.md)、[系统架构](../architecture/system_architecture.md)、[可观测性与数据生命周期](../operations/observability_and_data_lifecycle.md)和[领域目录](index.md)。

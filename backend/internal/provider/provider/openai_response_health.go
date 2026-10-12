@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIResponseHealth 共用调度运行状态，处理 HTTP 及流内错误引起的提供商状态更新。
+// OpenAIResponseHealth applies HTTP and stream error observations to health state shared with scheduling.
 type OpenAIResponseHealth struct {
 	Health         *UpstreamHealth
 	Runtime        *providercore.RuntimeBlockState
@@ -21,7 +21,7 @@ type OpenAIResponseHealth struct {
 	Deferred       *providercore.DeferredService
 }
 
-// OpenAIResponseHealthInput 固化网关已识别的请求范围及模型观测，提供商层不回读 HTTP context。
+// OpenAIResponseHealthInput contains request classification and model observations supplied by the gateway.
 type OpenAIResponseHealthInput struct {
 	Observation                                               HealthObservation
 	Models                                                    []string
@@ -40,12 +40,11 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if input.RequestScoped && !customStatusMatched {
 		return providercore.UpstreamErrorDecision{Policy: providercore.ErrorPolicyNone}
 	}
-	// 任意非 2xx 上游响应都表示模型请求已实际发送。
+	// Record activity for upstream failures that reach provider health handling.
 	if s != nil {
 		s.recordActivity(provider)
 	}
-	// 容量降载由请求级重试处理，
-	// 提供商保持可调度状态。
+	// Request-level retries handle capacity shedding while the provider stays schedulable.
 	if provider != nil && provider.Platform == capability.PlatformOpenAI && openai.IsOpenAIRequestScopedCapacityShed("", responseBody) {
 		return providercore.UpstreamErrorDecision{Policy: providercore.ErrorPolicyNone}
 	}
@@ -65,9 +64,9 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 		return providercore.UpstreamErrorDecision{StopScheduling: true}
 	}
 
-	// 自构造图片请求始终携带匹配的 image_generation 工具，因此 400 "tool choice not found in 'tools'"
-	// 表示上游撤销了该提供商的图片能力。此处必须受自构造标记保护：透传客户端自行控制
-	// tools/tool_choice，否则可能误伤健康提供商。
+	// Self-built image requests include a matching image_generation tool, so a missing-tool error
+	// can indicate lost image capability. Passthrough clients control tools and tool_choice themselves;
+	// applying this rule to their malformed requests could cool a healthy provider.
 	if input.SelfBuiltImage && openai.IsImageCapabilityLossError(statusCode, responseBody) {
 		if s != nil && s.Health != nil {
 			_ = ObserveOpenAIImageCapabilityLoss(stateCtx, s.Health.Core, providercore.CloneRecord(provider), statusCode, responseBody)
@@ -78,7 +77,7 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if s == nil || provider == nil {
 		return providercore.UpstreamErrorDecision{Policy: providercore.ErrorPolicyNone}
 	}
-	// Team 联动熔断必须先于 model-not-found 与提供商级临时不可调度规则的早退。
+	// Propagate workspace deactivation before model and temporary-rule branches can return early.
 	if s.Health != nil {
 		s.Health.Team.HandleWorkspaceDeactivated(stateCtx, providercore.CloneRecord(provider), statusCode == http.StatusPaymentRequired && ClientRejectionObservation("", responseBody).WorkspaceDeactivated)
 	}
@@ -116,8 +115,8 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 		decision.StopScheduling = true
 		return decision
 	}
-	// 普通提供商先保留模型不存在等精确处理，再应用管理员临时规则。
-	// 已知模型的规则只暂停提供商与模型组合；模型未知时仍同步整号运行时阻断。
+	// Handle precise model errors before administrator-defined temporary rules for ordinary providers.
+	// Known models receive a provider/model block; unknown models also block the whole provider at runtime.
 	if s.Health != nil && statusCode != http.StatusUnauthorized &&
 		!provider.IsPoolMode() && !provider.IsCustomErrorCodesEnabled() &&
 		s.Health.Core.HandleTempUnschedulable(stateCtx, providercore.CloneRecord(provider), statusCode, responseBody, observation.EffectiveModel) {
@@ -153,8 +152,8 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if decision.StopScheduling && !modelTempMatched {
 		s.Runtime.BlockProviderScheduling(provider, time.Time{}, "upstream_disable")
 	}
-	// pool 模式可重试的上游错误已受请求级同提供商重试预算约束；若在此记录通用的
-	// 提供商+模型瞬态冷却，会在预算用完前阻止下一次已获准的重试。
+	// Pool-mode retry budgets already constrain these errors. A generic provider/model cooldown
+	// would prevent the next authorized retry before that budget is exhausted.
 	poolModeRetryable := provider.IsPoolMode() && provider.IsPoolModeRetryableStatus(statusCode)
 	if !decision.StopScheduling && provider.Platform == capability.PlatformOpenAI && provider.Type == capability.ProviderTypeAPIKey &&
 		input.Transient && !poolModeRetryable {
@@ -167,7 +166,7 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	return decision
 }
 
-// recordActivity 仅记录真正到达上游的 Ollama Cloud 请求，继续由 Deferred 合并写入。
+// recordActivity schedules a coalesced last-used update for Ollama Cloud providers.
 func (s *OpenAIResponseHealth) recordActivity(value *providercore.Record) {
 	if s.Deferred != nil && value != nil && providercore.IsOllamaCloudUsageProvider(providercore.CloneRecord(value)) {
 		s.Deferred.ScheduleLastUsedUpdate(value.ID)
@@ -194,7 +193,7 @@ func (s *OpenAIResponseHealth) markOAuth429(ctx context.Context, value *provider
 	s.Runtime.ResetRetry(value.ID)
 }
 
-// RetryOAuth429 在已停调、影子提供商或非瞬时 429 时拒绝重试。
+// RetryOAuth429 requires an active recovery window and rejects disabled, shadow, and non-transient cases.
 func (s *OpenAIResponseHealth) RetryOAuth429(value *providercore.Record, status int, disabled bool, headers http.Header, body []byte) bool {
 	if s == nil || disabled || status != http.StatusTooManyRequests {
 		return false
@@ -209,7 +208,7 @@ func (s *OpenAIResponseHealth) RetryDeadline(value *providercore.Record) time.Ti
 	return s.Runtime.RetryDeadline(value.ID)
 }
 
-// RecordModelFailure 只记录本次固化的模型，仍与生产选择器共用同一个状态表。
+// RecordModelFailure records the supplied model in the transient state shared with scheduling.
 func (s *OpenAIResponseHealth) RecordModelFailure(value *providercore.Record, model string) {
 	if s == nil || value == nil || s.ModelTransient == nil {
 		return

@@ -8,7 +8,7 @@ import (
 	"unicode"
 )
 
-// ModelRulesSnapshot 保存一次查询使用的模型配置和匹配索引。
+// ModelRulesSnapshot holds model configuration and matching indexes for one query.
 type ModelRulesSnapshot struct {
 	record          *Record
 	rules           ModelPlatformRules
@@ -20,7 +20,7 @@ type ModelRulesSnapshot struct {
 	configured      []string
 }
 
-// PrepareModelRules 读取一次映射、白名单和平台型号，后续匹配复用这些值。
+// PrepareModelRules reads mappings, whitelist entries, and platform models once for subsequent matches.
 func PrepareModelRules(record *Record, defaults ModelMappingDefaults, rules ModelPlatformRules) *ModelRulesSnapshot {
 	result := &ModelRulesSnapshot{record: record, rules: rules, exact: map[string]struct{}{}}
 	if record == nil {
@@ -62,13 +62,13 @@ func PrepareModelRules(record *Record, defaults ModelMappingDefaults, rules Mode
 	return result
 }
 
-// Mapping 返回可由调用者持有的映射副本。
+// Mapping returns a caller-owned copy of the mapping.
 func (s *ModelRulesSnapshot) Mapping() map[string]string { return maps.Clone(s.mapping) }
 
-// ConfiguredModels 返回配置及平台执行规则提供的具体名称。
+// ConfiguredModels returns a copy of the concrete names from configuration and platform rules.
 func (s *ModelRulesSnapshot) ConfiguredModels() []string { return slices.Clone(s.configured) }
 
-// ResolveMappedModel 对本次查询捕获的映射执行一跳改写。
+// ResolveMappedModel applies one hop of the mapping captured for this query.
 func (s *ModelRulesSnapshot) ResolveMappedModel(model string) (string, bool) {
 	if mapped, found := s.resolve(model); found {
 		return mapped, true
@@ -96,7 +96,7 @@ func (s *ModelRulesSnapshot) resolve(model string) (string, bool) {
 	return model, false
 }
 
-// ForwardMappedModel 将未命中或空目标还原为请求名称。
+// ForwardMappedModel retains the requested name when no mapping matches or its target is empty.
 func (s *ModelRulesSnapshot) ForwardMappedModel(model string) string {
 	mapped, matched := s.ResolveMappedModel(model)
 	if !matched || strings.TrimSpace(mapped) == "" {
@@ -105,7 +105,7 @@ func (s *ModelRulesSnapshot) ForwardMappedModel(model string) string {
 	return strings.TrimSpace(mapped)
 }
 
-// Supports 检查映射后的白名单和平台资格。
+// Supports checks whitelist membership and platform eligibility after mapping.
 func (s *ModelRulesSnapshot) Supports(model string) bool {
 	if s == nil || s.record == nil {
 		return false
@@ -114,7 +114,7 @@ func (s *ModelRulesSnapshot) Supports(model string) bool {
 	return s.whitelisted(mapped) && s.record.modelPlatformAllows(mapped, s.rules)
 }
 
-// FinalModelWhitelisted 检查已完成平台规范化的最终型号。
+// FinalModelWhitelisted checks a final model after platform normalization.
 func (s *ModelRulesSnapshot) FinalModelWhitelisted(model string) bool {
 	if s == nil || s.record == nil {
 		return false
@@ -150,7 +150,7 @@ func (s *ModelRulesSnapshot) whitelistMember(model string) bool {
 	return false
 }
 
-// modelWhitelistKey 为 EqualFold 的 Unicode 等价字符生成相同的索引键。
+// modelWhitelistKey assigns the same key to Unicode characters equivalent under EqualFold.
 func modelWhitelistKey(value string) string {
 	return strings.Map(func(r rune) rune {
 		if r < unicode.MaxASCII {
@@ -172,7 +172,7 @@ func modelWhitelistKey(value string) string {
 	}, value)
 }
 
-// configuredRequestModels 合并具体白名单、平台型号和映射两端的名称。
+// configuredRequestModels combines concrete whitelist names, platform models, and allowed mapping endpoints.
 func configuredRequestModels(mapping map[string]string, scope map[string]struct{}, platformModels []string, allows func(string) bool) []string {
 	models := make(map[string]struct{})
 	for model := range scope {

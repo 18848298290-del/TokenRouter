@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGrokVideoRequestStateSeparatesStatusFromBilling 任务终态与可计费用量分别解析。
+// TestGrokVideoRequestStateSeparatesStatusFromBilling checks that terminal state alone does not establish billable output.
 func TestGrokVideoRequestStateSeparatesStatusFromBilling(t *testing.T) {
 	for _, test := range []struct {
 		body     string

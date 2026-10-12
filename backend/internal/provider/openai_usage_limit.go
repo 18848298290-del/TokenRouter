@@ -9,13 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAIPlanWriter 按字段更新本次观测的套餐信息，其余字段保持当前值。
+// OpenAIPlanWriter applies partial provider updates for observed plan information.
 type OpenAIPlanWriter interface {
 	BulkUpdate(context.Context, []int64, ProviderBulkUpdate) (int64, error)
 }
 
-// OpenAI429ResetTime 从观测到的窗口选择原提供商恢复时间。
-// 返回 nil 表示无法从响应头中确定重置时间。
+// OpenAI429ResetTime selects a recovery time from observed rate-limit windows.
+// It returns nil when the observation supplies no usable reset time.
 func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() time.Time, info func(string, ...any)) *time.Time {
 	if snapshot == nil {
 		return nil
@@ -28,11 +28,11 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 
 	now := clock()
 
-	// 判断哪个限制被触发（used_percent >= 100）
+	// Treat utilization of at least 100 percent as exhaustion.
 	is7dExhausted := normalized.Used7dPercent != nil && *normalized.Used7dPercent >= 100
 	is5hExhausted := normalized.Used5hPercent != nil && *normalized.Used5hPercent >= 100
 
-	// 优先使用被触发限制的重置时间
+	// Prefer an exhausted window's reset, checking seven days before five hours.
 	if is7dExhausted && normalized.Reset7dSeconds != nil {
 		resetAt := now.Add(time.Duration(*normalized.Reset7dSeconds) * time.Second)
 		info("openai_429_7d_limit_exhausted", "reset_after_seconds", *normalized.Reset7dSeconds, "reset_at", resetAt)
@@ -44,7 +44,7 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 		return &resetAt
 	}
 
-	// 都未达到 100%但收到 429，使用较长的重置时间
+	// If no exhausted window supplies a reset, use the longest positive reset observed.
 	var maxResetSecs int
 	if normalized.Reset7dSeconds != nil && *normalized.Reset7dSeconds > maxResetSecs {
 		maxResetSecs = *normalized.Reset7dSeconds
@@ -61,13 +61,13 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 	return nil
 }
 
-// PersistOpenAIObservedPlan 将 429 错误中观测到的计划类型同步到提供商凭据。
+// PersistOpenAIObservedPlan writes the plan type observed in a 429 response to provider credentials.
 func PersistOpenAIObservedPlan(ctx context.Context, repo OpenAIPlanWriter, provider *Record, planType string, info, warn func(string, ...any)) {
 	if repo == nil || provider == nil || provider.Platform != capability.PlatformOpenAI {
 		return
 	}
-	// Spark 影子的 credentials 不保存凭据或 plan_type。此路径直接批量写入，必须在写入前排除影子。
-	// plan_type 由母提供商在自己的请求中维护。
+	// Credential shadows inherit plan metadata from the parent, so exclude them before the bulk write.
+	// The parent's own requests maintain its plan_type.
 	if provider.IsCredentialShadow() {
 		return
 	}

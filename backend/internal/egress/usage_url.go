@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// UsageURLPolicy 分别处理未装配配置和已关闭白名单的情况，并校验用量查询端点。
+// UsageURLPolicy validates usage endpoints, defaulting to HTTPS and public hosts when unconfigured.
 type UsageURLPolicy struct {
 	Configured        bool
 	Enabled           bool

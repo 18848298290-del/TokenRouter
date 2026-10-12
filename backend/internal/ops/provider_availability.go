@@ -54,7 +54,7 @@ func (s *OpsService) GetProviderAvailabilityStats(ctx context.Context, platformF
 					break
 				}
 			}
-			// 按目标分组再次筛选通用分页查询返回的提供商。
+			// Reapply the target group filter to providers returned by the paginated query.
 			if displayGroup == nil {
 				continue
 			}
@@ -71,7 +71,7 @@ func (s *OpsService) GetProviderAvailabilityStats(ctx context.Context, platformF
 		isOverloaded := acc.OverloadUntil != nil && now.Before(*acc.OverloadUntil)
 		hasError := acc.Status == "error"
 
-		// Normalize exclusive status flags so the UI doesn't show conflicting badges.
+		// An error status takes precedence over rate-limit and overload badges.
 		if hasError {
 			isRateLimited = false
 			isOverloaded = false

@@ -36,7 +36,8 @@ var codexProviderIdentityFields = []struct {
 	{name: "x-client-request-id", kind: "request"},
 }
 
-// ProviderIdentityInput 只携带原 namespace 所需数据，setup token 禁止序列化或展开日志。
+// ProviderIdentityInput supplies credential namespace inputs.
+// Do not serialize or expand SetupToken in logs.
 type ProviderIdentityInput struct {
 	ChatGPTAccountID, ChatGPTUserID, Seed string
 	HasSeed                               bool
@@ -64,9 +65,8 @@ func CodexProviderNamespace(input ProviderIdentityInput) string {
 	return ""
 }
 
-// IsolateOpenAIUpstreamSessionID preserves the existing API-key isolation while
-// adding the selected OAuth credential namespace. A scheduler failover therefore
-// cannot send the same session/conversation identity through two upstream providers.
+// IsolateOpenAIUpstreamSessionID hashes a session with the API-key ID and optional OAuth namespace.
+// Changing credential namespaces during failover produces a different upstream identity.
 func IsolateOpenAIUpstreamSessionID(apiKeyID int64, namespace string, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -86,7 +86,7 @@ func ScopeCodexProviderIdentityValue(namespace string, apiKeyID int64, kind, raw
 	if raw == "" || namespace == "" {
 		return raw
 	}
-	// 身份哈希前缀需要保持稳定，改变前缀会改变同一提供商和用户的身份值。
+	// Keep the hash domain stable so provider and user identities survive upgrades.
 	return DeriveStableUUIDv4(fmt.Sprintf(
 		"sub2api:codex-account-identity:%s:user:%d:account:%s:kind:%s:value:%s",
 		codexProviderIdentityNamespaceVersion,
@@ -248,8 +248,8 @@ func ApplyCodexProviderIdentityHeaders(headers http.Header, namespace string, ap
 	}
 }
 
-// DeriveStableUUIDv4 从种子确定性派生一个 UUIDv4 格式的字符串。
-// 同一种子永远返回同一值。
+// DeriveStableUUIDv4 derives a deterministic UUID-shaped value with version 4 and RFC variant bits.
+// The same seed produces the same value; the result is not randomly generated.
 func DeriveStableUUIDv4(seed string) string {
 	h := sha256.Sum256([]byte(seed))
 	b := h[:16]
@@ -263,7 +263,7 @@ func DeriveStableUUIDv4(seed string) string {
 		b[10:16])
 }
 
-// SetChatGPTAccountHeaders 设置 ChatGPT 账户 ID 和 FedRAMP 请求头。
+// SetChatGPTAccountHeaders sets a nonempty account ID and sets or removes the FedRAMP flag.
 func SetChatGPTAccountHeaders(headers http.Header, id string, fedRAMP bool) {
 	if headers == nil {
 		return

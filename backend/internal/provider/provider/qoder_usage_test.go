@@ -862,7 +862,8 @@ func TestProviderUsageService_QoderUsageDegradedDoesNotClearProviderError(t *tes
 	}
 }
 
-// TestQoderUsageCacheDoesNotCrossCredentialIdentity 检查凭据变化后查询使用新身份，缓存键格式和 TTL 保持不变。
+// TestQoderUsageCacheDoesNotCrossCredentialIdentity checks that credential changes trigger a query with the new
+// identity.
 func TestQoderUsageCacheDoesNotCrossCredentialIdentity(t *testing.T) {
 	repo := &providerUsageCodexProbeRepo{usageRecordFixture: usageRecordFixture{providers: []providercore.Record{{ID: 919, Platform: capability.PlatformQoder, Type: capability.ProviderTypeCosy, Credentials: qoderUsageCredentials("first")}}}}
 	upstream := &qoderUsageHTTPUpstreamStub{bodies: []string{`{"userType":"teams","userQuota":{"total":100,"used":1,"remaining":99}}`, `{"userType":"teams","userQuota":{"total":100,"used":2,"remaining":98}}`}}

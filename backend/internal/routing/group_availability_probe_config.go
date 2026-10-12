@@ -22,8 +22,8 @@ const (
 	InvalidGroupAvailabilityProbeConfigReason = "INVALID_AVAILABILITY_PROBE_CONFIG"
 )
 
-// NormalizeGroupAvailabilityProbeConfig 统一清洗分组主动探测配置。
-// 未启用时只保留 enabled=false，避免无效模型和提示词长期堆积在 JSON 字段里。
+// NormalizeGroupAvailabilityProbeConfig validates and normalizes active probe settings.
+// Disabled probes discard other fields so unused model and prompt values are not persisted.
 func NormalizeGroupAvailabilityProbeConfig(cfg GroupAvailabilityProbeConfig) (GroupAvailabilityProbeConfig, error) {
 	if !cfg.Enabled {
 		return GroupAvailabilityProbeConfig{}, nil
@@ -59,7 +59,7 @@ func NormalizeGroupAvailabilityProbeConfig(cfg GroupAvailabilityProbeConfig) (Gr
 		return GroupAvailabilityProbeConfig{}, errors.New("availability_probe_config.timeout_seconds must be between 5 and 120")
 	}
 
-	// 指针用于区分旧配置缺失字段与管理员显式设置 0 次重试。
+	// A pointer distinguishes a missing legacy field from an explicit zero-retry setting.
 	maxRetries := DefaultGroupAvailabilityProbeMaxRetries
 	if cfg.MaxRetries != nil {
 		maxRetries = *cfg.MaxRetries
@@ -72,7 +72,7 @@ func NormalizeGroupAvailabilityProbeConfig(cfg GroupAvailabilityProbeConfig) (Gr
 	return cfg, nil
 }
 
-// NormalizeGroupAvailabilityProbeConfigForAdminWrite 规范化探测配置，将输入错误转换为 HTTP 400。
+// NormalizeGroupAvailabilityProbeConfigForAdminWrite returns invalid probe settings as a bad-request error.
 func NormalizeGroupAvailabilityProbeConfigForAdminWrite(cfg GroupAvailabilityProbeConfig) (GroupAvailabilityProbeConfig, error) {
 	normalized, err := NormalizeGroupAvailabilityProbeConfig(cfg)
 	if err != nil {
@@ -81,7 +81,7 @@ func NormalizeGroupAvailabilityProbeConfigForAdminWrite(cfg GroupAvailabilityPro
 	return normalized, nil
 }
 
-// HasInvalidHTTPHeaderValueByte 拒绝控制字符，避免保存后在发送 User-Agent header 时失败。
+// HasInvalidHTTPHeaderValueByte detects control bytes that would make a stored User-Agent invalid.
 func HasInvalidHTTPHeaderValueByte(value string) bool {
 	for i := range len(value) {
 		b := value[i]

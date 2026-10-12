@@ -22,7 +22,7 @@ type AdminMutations struct {
 
 func (s *AdminMutations) HasDatabase() bool { return s != nil && s.Client != nil }
 
-// DeleteUserAndKeys 在同一事务中删除用户及其 Key，失败时回滚。
+// DeleteUserAndKeys deletes a user and keys in one transaction when a client is configured.
 func (s *AdminMutations) DeleteUserAndKeys(ctx context.Context, id int64, keys []identitycore.AdminKeySummary) error {
 	opCtx := ctx
 	writer := s.Keys
@@ -67,7 +67,7 @@ func (s *AdminMutations) DeleteUserWithKeys(ctx context.Context, id int64, keys 
 	return nil
 }
 
-func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) { // 事务保证原子性
+func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) { // Group grants and key migration commit together.
 	if s.Client == nil {
 		return 0, fmt.Errorf("entClient is nil, cannot perform group replacement")
 	}
@@ -82,18 +82,18 @@ func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupI
 		writer = s.KeysInTx(tx)
 	}
 
-	// 1. 授予新分组权限
+	// Grant access before moving keys to the new group.
 	if err := s.Users.AddGroupToAllowedGroups(opCtx, userID, newGroupID); err != nil {
 		return 0, fmt.Errorf("add new group to allowed groups: %w", err)
 	}
 
-	// 2. 迁移绑定旧分组的 Key 到新分组
+	// Move keys that reference the old group.
 	migrated, err := writer.UpdateGroupIDByUserAndGroup(opCtx, userID, oldGroupID, newGroupID)
 	if err != nil {
 		return 0, fmt.Errorf("migrate api keys: %w", err)
 	}
 
-	// 3. 移除旧分组权限
+	// Revoke the old grant after moving its keys.
 	if err := s.Users.RemoveGroupFromUserAllowedGroups(opCtx, userID, oldGroupID); err != nil {
 		return 0, fmt.Errorf("remove old group from allowed groups: %w", err)
 	}

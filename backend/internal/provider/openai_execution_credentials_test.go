@@ -41,9 +41,9 @@ func TestOpenAIGatewayServiceGetAccessTokenSetupToken(t *testing.T) {
 	}
 }
 
-// TestGetAccessToken_SparkShadowResolvesToParent 验证对影子提供商调用 GetAccessToken
-// 时能透明地解析到母提供商的凭据，防止 refresh_token 脱钩。
-// 影子提供商不持凭据；断言必须返回母提供商的 access_token。
+// TestGetAccessToken_SparkShadowResolvesToParent checks parent credential resolution for a shadow.
+// The shadow has no credentials of its own.
+// The returned access token must come from the parent record.
 func TestGetAccessToken_SparkShadowResolvesToParent(t *testing.T) {
 	ctx := context.Background()
 
@@ -62,7 +62,7 @@ func TestGetAccessToken_SparkShadowResolvesToParent(t *testing.T) {
 		Platform:         capability.PlatformOpenAI,
 		Type:             capability.ProviderTypeOAuth,
 		ParentProviderID: &parentID,
-		// 影子提供商的凭据来自母提供商。
+		// Credentials are intentionally absent on the shadow.
 	}
 
 	svc := &OpenAIExecutionCredentials{Parent: func(ctx context.Context, id int64) (*Record, error) {
@@ -70,8 +70,8 @@ func TestGetAccessToken_SparkShadowResolvesToParent(t *testing.T) {
 		return &parent, nil
 	}}
 
-	// 解析器从母提供商读取影子所用的凭据。
-	// 返回母提供商的现有 token，不执行额外刷新或查询。
+	// The parent reader supplies the shadow's credentials.
+	// With no token source configured, Resolve returns the stored parent token.
 	token, tokenType, err := svc.Resolve(ctx, &shadow)
 	require.NoError(t, err)
 	require.Equal(t, "parent-access-token", token)

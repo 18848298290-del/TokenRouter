@@ -5,14 +5,14 @@ import (
 	"strings"
 )
 
-// AdminReadSettings 包含风险控制和 Cyber 会话封禁设置。
+// AdminReadSettings contains risk-control and Cyber session-block settings.
 type AdminReadSettings struct {
 	CyberSessionBlockEnabled    bool
 	CyberSessionBlockTTLSeconds int
 	RiskControlEnabled          bool
 }
 
-// ReadAdminSettings 从传入的设置值解析风险控制和 Cyber 会话封禁设置。
+// ReadAdminSettings parses risk-control settings, defaulting the session-block TTL to one hour.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.RiskControlEnabled = settings[SettingKeyRiskControlEnabled] == "true"

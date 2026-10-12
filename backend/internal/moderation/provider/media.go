@@ -33,7 +33,7 @@ func SnapshotMedia(ctx context.Context, media []contract.ContentModerationMedia)
 	if len(out) == 0 {
 		return out
 	}
-	// 整批快照共享同一个截止时间，避免图片数量线性放大网关响应延迟。
+	// Share one deadline across the batch so image count does not multiply the network timeout.
 	snapshotCtx, cancel := context.WithTimeout(ctx, contentModerationSnapshotTotalTimeout)
 	defer cancel()
 	jobs := make(chan int)
@@ -176,7 +176,8 @@ func decodeContentModerationDataImage(reference string) ([]byte, string, error) 
 	}
 	var data []byte
 	if len(parts) > 1 && strings.EqualFold(parts[len(parts)-1], "base64") {
-		// 流式解码并在 20 MB 后停止，不能先为攻击者提供的完整载荷分配目标缓冲区。
+		// Bound streaming decode to 20 MiB plus one detection byte before allocating the full untrusted
+		// payload.
 		decoder := base64.NewDecoder(base64.StdEncoding, strings.NewReader(payload))
 		data, err = io.ReadAll(io.LimitReader(decoder, maxContentModerationSnapshotBytes+1))
 	} else {
@@ -241,7 +242,8 @@ func validateContentModerationImageBytes(data []byte, declaredMIME string) error
 func newContentModerationSnapshotClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		// 快照下载必须直连已校验的公网 IP，避免代理重新解析主机后绕过私网限制。
+		// Dial validated public IPs directly; a proxy could resolve the host again and bypass
+		// private-address checks.
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)

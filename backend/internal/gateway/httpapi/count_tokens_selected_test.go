@@ -18,7 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths 不支持的提供商不会发出生成或计数网络请求。
+// TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths checks local estimates and unsupported providers without
+// network execution.
 func TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths(t *testing.T) {
 	for _, platform := range []string{"grok", "qoder", "antigravity", "kimi"} {
 		t.Run(platform, func(t *testing.T) {
@@ -43,7 +44,8 @@ func TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths(t *testing.T) {
 	}
 }
 
-// TestSelectedGeminiCountUsesNativeCountProtocol 保留模型映射、system/tools，返回 Anthropic 计数形状。
+// TestSelectedGeminiCountUsesNativeCountProtocol checks model mapping, system and tool input, and Anthropic-shaped
+// counts.
 func TestSelectedGeminiCountUsesNativeCountProtocol(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

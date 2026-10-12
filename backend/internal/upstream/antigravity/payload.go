@@ -14,25 +14,25 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// AntigravityGemini31ProAgentModel 是 Gemini 3.1 Pro High 的上游路由键。
+// AntigravityGemini31ProAgentModel is the upstream route for Gemini 3.1 Pro High.
 const AntigravityGemini31ProAgentModel = "gemini-pro-agent"
 
 var (
-	// AntigravityPassthroughErrorMessages 透传给客户端的错误消息白名单（小写）
-	// 匹配时使用 strings.Contains，无需完全匹配。
+	// AntigravityPassthroughErrorMessages lists lowercase messages safe to expose to clients.
+	// Matching uses substring containment.
 	AntigravityPassthroughErrorMessages = []string{
 		"prompt is too long",
 	}
 
 	ErrProjectIDRequired = errors.New("this standard-tier Antigravity provider requires project_id")
 
-	// DefaultAntigravityModelMapping 将公开请求型号转换为平台内部路由键。
+	// DefaultAntigravityModelMapping maps public model names to internal routes.
 	DefaultAntigravityModelMapping = map[string]string{
 		"gemini-3.1-pro-high": AntigravityGemini31ProAgentModel,
 	}
 )
 
-// PromptTooLongError 表示上游明确返回 prompt too long。
+// PromptTooLongError carries an upstream prompt-length rejection.
 type PromptTooLongError struct {
 	StatusCode int
 	RequestID  string
@@ -43,8 +43,8 @@ func (e *PromptTooLongError) Error() string {
 	return fmt.Sprintf("prompt too long: status=%d", e.StatusCode)
 }
 
-// ApplyThinkingModelSuffix 根据 thinking 配置调整模型名
-// 当映射结果是 claude-sonnet-4-5 且请求开启了 thinking 时，改为 claude-sonnet-4-5-thinking。
+// ApplyThinkingModelSuffix selects the thinking variant of Claude Sonnet 4.5 when enabled.
+// Other models retain their mapped name.
 func ApplyThinkingModelSuffix(mappedModel string, thinkingEnabled bool) string {
 	if !thinkingEnabled {
 		return mappedModel
@@ -55,22 +55,20 @@ func ApplyThinkingModelSuffix(mappedModel string, thinkingEnabled bool) string {
 	return mappedModel
 }
 
-// InjectIdentityPatchToGeminiRequest 为 Gemini 格式请求注入身份提示词
-// 如果请求中已包含 "You are Antigravity" 则不重复注入。
+// InjectIdentityPatchToGeminiRequest prepends the default identity instruction.
+// A systemInstruction containing "You are Antigravity" leaves the body unchanged.
 func InjectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("parse Gemini request: %w", err)
 	}
 
-	// 检查现有 systemInstruction 是否已包含身份提示词
 	if sysInst, ok := request["systemInstruction"].(map[string]any); ok {
 		if parts, ok := sysInst["parts"].([]any); ok {
 			for _, part := range parts {
 				if partMap, ok := part.(map[string]any); ok {
 					if text, ok := partMap["text"].(string); ok {
 						if strings.Contains(text, "You are Antigravity") {
-							// 已包含身份提示词，直接返回原始请求
 							return body, nil
 						}
 					}
@@ -79,21 +77,17 @@ func InjectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 		}
 	}
 
-	// 获取默认身份提示词
 	identityPatch := GetDefaultIdentityPatch()
 
-	// 构建新的 systemInstruction
 	newPart := map[string]any{"text": identityPatch}
 
 	if existing, ok := request["systemInstruction"].(map[string]any); ok {
-		// 已有 systemInstruction，在开头插入身份提示词
 		if parts, ok := existing["parts"].([]any); ok {
 			existing["parts"] = append([]any{newPart}, parts...)
 		} else {
 			existing["parts"] = []any{newPart}
 		}
 	} else {
-		// 没有 systemInstruction，创建新的
 		request["systemInstruction"] = map[string]any{
 			"parts": []any{newPart},
 		}
@@ -102,7 +96,7 @@ func InjectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 	return json.Marshal(request)
 }
 
-// WrapV1InternalRequest 包装请求为 v1internal 格式。
+// WrapV1InternalRequest adds routing and identity fields; projectID must be nonempty.
 func WrapV1InternalRequest(projectID, model string, originalBody []byte) ([]byte, error) {
 	var request any
 	if err := json.Unmarshal(originalBody, &request); err != nil {
@@ -116,7 +110,7 @@ func WrapV1InternalRequest(projectID, model string, originalBody []byte) ([]byte
 	wrapped := map[string]any{
 		"project":     projectID,
 		"requestId":   "agent-" + uuid.New().String(),
-		"userAgent":   "antigravity", // 固定值，与官方客户端一致
+		"userAgent":   "antigravity", // fixed protocol identity
 		"requestType": "agent",
 		"model":       model,
 		"request":     request,
@@ -128,16 +122,16 @@ func WrapV1InternalRequest(projectID, model string, originalBody []byte) ([]byte
 func IsSignatureRelatedError(respBody []byte) bool {
 	msg := strings.ToLower(strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody)))
 	if msg == "" {
-		// Fallback: best-effort scan of the raw payload.
+		// Inspect the raw payload when the structured message is absent.
 		msg = strings.ToLower(string(respBody))
 	}
 
-	// Keep this intentionally broad: different upstreams may use "signature" or "thought_signature".
+	// Accept both signature and thought_signature wording.
 	if strings.Contains(msg, "thought_signature") || strings.Contains(msg, "signature") {
 		return true
 	}
 
-	// Also detect thinking block structural errors:
+	// Thinking block shape errors also require signature recovery:
 	// "Expected `thinking` or `redacted_thinking`, but found `text`"
 	if strings.Contains(msg, "expected") && (strings.Contains(msg, "thinking") || strings.Contains(msg, "redacted_thinking")) {
 		return true
@@ -146,7 +140,7 @@ func IsSignatureRelatedError(respBody []byte) bool {
 	return false
 }
 
-// IsPromptTooLongError 检测是否为 prompt too long 错误。
+// IsPromptTooLongError detects length-limit and max_tokens error wording.
 func IsPromptTooLongError(respBody []byte) bool {
 	msg := strings.ToLower(strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody)))
 	if msg == "" {
@@ -158,7 +152,7 @@ func IsPromptTooLongError(respBody []byte) bool {
 		strings.Contains(msg, "max_tokens")
 }
 
-// IsPassthroughErrorMessage 检查错误消息是否在透传白名单中。
+// IsPassthroughErrorMessage reports whether a message contains an allowed pattern.
 func IsPassthroughErrorMessage(msg string) bool {
 	lower := strings.ToLower(msg)
 	for _, pattern := range AntigravityPassthroughErrorMessages {
@@ -169,7 +163,7 @@ func IsPassthroughErrorMessage(msg string) bool {
 	return false
 }
 
-// GetPassthroughOrDefault 若消息在白名单内则返回原始消息，否则返回默认消息。
+// GetPassthroughOrDefault returns an allowed upstream message or the supplied default.
 func GetPassthroughOrDefault(upstreamMsg, defaultMsg string) string {
 	if IsPassthroughErrorMessage(upstreamMsg) {
 		return upstreamMsg
@@ -177,7 +171,7 @@ func GetPassthroughOrDefault(upstreamMsg, defaultMsg string) string {
 	return defaultMsg
 }
 
-// CleanGeminiRequest 清理 Gemini 请求体中的 Schema。
+// CleanGeminiRequest cleans function parameter schemas in a Gemini request.
 func CleanGeminiRequest(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -186,7 +180,6 @@ func CleanGeminiRequest(body []byte) ([]byte, error) {
 
 	modified := false
 
-	// 1. 清理 Tools
 	if tools, ok := payload["tools"].([]any); ok && len(tools) > 0 {
 		for _, t := range tools {
 			toolMap, ok := t.(map[string]any)
@@ -194,7 +187,7 @@ func CleanGeminiRequest(body []byte) ([]byte, error) {
 				continue
 			}
 
-			// function_declarations (snake_case) or functionDeclarations (camelCase)
+			// Accept both JSON naming conventions for function declarations.
 			var funcs []any
 			if f, ok := toolMap["functionDeclarations"].([]any); ok {
 				funcs = f
@@ -274,8 +267,8 @@ func EnableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
 	return json.Marshal(request)
 }
 
-// CleanJSONSchema 将 JSON Schema 转换为 Gemini 支持的格式。
+// CleanJSONSchema converts a schema to the Gemini-supported form.
 func CleanJSONSchema(schema map[string]any) map[string]any { return bridge.CleanJSONSchema(schema) }
 
-// DeepCleanUndefined 递归删除值为 "[undefined]" 的对象字段。
+// DeepCleanUndefined recursively removes object fields whose value is "[undefined]".
 func DeepCleanUndefined(value any) { bridge.DeepCleanUndefined(value) }

@@ -31,8 +31,8 @@ const (
 	defaultSchedulerSnapshotWriteChunkSize = 256
 	schedulerLastUsedUpdateChunkSize       = 256
 
-	// snapshotGraceTTLSeconds 旧快照过期的宽限期（秒）。
-	// 替代立即 DEL，让正在读取旧版本的 reader 有足够时间完成 ZRANGE。
+	// snapshotGraceTTLSeconds is the expiry grace period for superseded snapshots.
+	// Keep the old version briefly so readers that already obtained its ID can finish ZRANGE.
 	snapshotGraceTTLSeconds = 60
 
 	schedulerGroupLifecycleLockPrefix      = "sched:v5:group:lifecycle-lock:"
@@ -59,10 +59,10 @@ end
 return updated
 `)
 
-	// epoch 标识 bucket writer 的代际，retired key 是持久退休标记。
-	// Capture、allocate、activate 都在 Lua 内同时校验两者：-1 表示已退休，-2 表示 epoch 无效或与 token 代际不匹配；
-	// allocate 与 activate 的双重校验可拦截快照写入期间发生的 Retire。
-	// Retire 仅在首次退休时推进 epoch，Reopen 只清除标记并沿用该代际，因此重复调用保持幂等。
+	// Epochs identify bucket writer generations; retired keys persist the retirement state.
+	// Capture, allocation, and activation validate these in Lua: -1 means retired, -2 means an invalid or mismatched epoch.
+	// Checking at both allocation and activation catches retirement during snapshot writes.
+	// Retire advances the epoch once; Reopen clears the marker while keeping that epoch, making repeated calls idempotent.
 	captureBucketWriteTokenScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[2]) == 1 then
     return -1
@@ -155,7 +155,7 @@ redis.call('DEL', KEYS[4], KEYS[5])
 return currentEpoch
 `)
 
-	// 释放租约必须先比较所有者令牌再删除，过期持有者的延迟释放不能误删继任租约。
+	// Compare the owner token before deleting so a delayed release cannot remove a successor's lease.
 	releaseGroupLifecycleLeaseScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
@@ -163,23 +163,23 @@ end
 return 0
 `)
 
-	// activateSnapshotScript 原子 CAS 切换快照版本。
-	// 仅当新版本号 >= 当前激活版本时才切换，防止并发写入导致版本回滚。
-	// 旧快照通过 EXPIRE 设置宽限期，正在读取该版本的请求可继续完成。
+	// activateSnapshotScript conditionally switches the active snapshot version in one Redis operation.
+	// Activation accepts versions at least as new as the current one, preventing version rollback.
+	// The old snapshot receives a grace TTL for readers that already hold its version.
 	//
-	// KEYS[1] = activeKey     (sched:active:{bucket})
-	// KEYS[2] = readyKey      (sched:ready:{bucket})
-	// KEYS[3] = bucketSetKey  (sched:buckets)
-	// KEYS[4] = snapshotKey   (新写入的快照 key)
-	// KEYS[5]：epoch key。
-	// KEYS[6]：退休标记 key。
-	// ARGV[1] = 新版本号字符串
-	// ARGV[2] = bucket 字符串 (用于 SADD)
-	// ARGV[3] = 快照 key 前缀 (用于构造旧快照 key)
-	// ARGV[4] = 宽限期 TTL 秒数
-	// ARGV[5]：writer epoch。
+	// KEYS[1] = active version key.
+	// KEYS[2] = ready marker key.
+	// KEYS[3] = bucket set key.
+	// KEYS[4] = newly written snapshot key.
+	// KEYS[5] = epoch key.
+	// KEYS[6] = retired marker key.
+	// ARGV[1] = new version string.
+	// ARGV[2] = bucket string for SADD.
+	// ARGV[3] = snapshot key prefix for locating the old version.
+	// ARGV[4] = grace TTL in seconds.
+	// ARGV[5] = writer epoch.
 	//
-	// 返回 1 = 已激活, 0 = 版本过旧未激活。
+	// Returns 1 when activated, 0 for an older version, -1 when retired, and -2 for an epoch mismatch.
 	activateSnapshotScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[6]) == 1 then
     redis.call('DEL', KEYS[4])
@@ -223,7 +223,7 @@ type SnapshotCache struct {
 	writeChunkSize int
 }
 
-// SnapshotCacheOptions 配置读写分块大小，零值使用默认参数。
+// SnapshotCacheOptions controls read and write batch sizes; nonpositive values use defaults.
 type SnapshotCacheOptions struct {
 	MGetChunkSize  int
 	WriteChunkSize int
@@ -270,8 +270,8 @@ func (c *SnapshotCache) GetSnapshot(ctx context.Context, bucket scheduler.Schedu
 		return nil, false, err
 	}
 	if len(ids) == 0 {
-		// 空快照视为缓存未命中，触发数据库回退查询
-		// 这解决了新分组创建后立即绑定提供商时的竞态条件问题
+		// Treat an empty snapshot as a cache miss so the caller can query the database.
+		// A newly created group may have gained providers since its empty snapshot was written.
 		return nil, false, nil
 	}
 
@@ -414,13 +414,13 @@ func (c *SnapshotCache) SetSnapshot(ctx context.Context, bucket scheduler.Schedu
 	return err
 }
 
-// SetSnapshotAndReturnProviderIDs 完整发布快照，并返回实际成功编码并写入的有序提供商 ID。
-// 该可选能力只供同一重建批次复用，返回前仍会完成版本激活与 fencing 校验。
+// SetSnapshotAndReturnProviderIDs publishes a snapshot and returns the ordered IDs successfully encoded and written.
+// The IDs can be reused within the same rebuild batch after activation and writer-token checks complete.
 func (c *SnapshotCache) SetSnapshotAndReturnProviderIDs(ctx context.Context, bucket scheduler.SchedulerBucket, token scheduler.SchedulerBucketWriteToken, providers []scheduler.SnapshotProvider) ([]int64, error) {
 	if !token.ValidFor(bucket) {
 		return nil, fmt.Errorf("%w: bucket=%s", scheduler.ErrSchedulerBucketWriteFenced, bucket.String())
 	}
-	// 分配版本和激活指针时分别校验写入令牌，数据通过激活时的校验后发布。
+	// Validate the writer token during version allocation and again before activation.
 	version, err := c.allocateSnapshotVersion(ctx, bucket, token)
 	if err != nil {
 		return nil, err
@@ -435,8 +435,8 @@ func (c *SnapshotCache) SetSnapshotAndReturnProviderIDs(ctx context.Context, buc
 	return providerIDs, nil
 }
 
-// SetSnapshotByProviderIDs 复用同批次首次完整写入后得到的提供商成员。
-// 每个桶仍独立分配版本、写入有序集合并执行激活 fencing，只省略重复的提供商 JSON 与全局键写入。
+// SetSnapshotByProviderIDs reuses IDs from a full write in the same rebuild batch.
+// Each bucket allocates, writes, and activates its own version while reusing the provider JSON and global keys.
 func (c *SnapshotCache) SetSnapshotByProviderIDs(ctx context.Context, bucket scheduler.SchedulerBucket, token scheduler.SchedulerBucketWriteToken, providerIDs []int64) error {
 	if !token.ValidFor(bucket) {
 		return fmt.Errorf("%w: bucket=%s", scheduler.ErrSchedulerBucketWriteFenced, bucket.String())
@@ -486,8 +486,8 @@ func schedulerSnapshotMembers(providerIDs []int64) []redis.Z {
 	if len(providerIDs) == 0 {
 		return nil
 	}
-	// 使用序号作为 score，保持数据库返回的顺序，重复 ID 交由 Redis ZADD
-	// 按最后一个 score 覆盖，与直接从提供商切片构造成员时的行为一致。
+	// Ordinal scores retain database order. Redis ZADD gives duplicate IDs their final score,
+	// matching snapshot members built directly from the provider slice.
 	members := make([]redis.Z, 0, len(providerIDs))
 	for idx, providerID := range providerIDs {
 		members = append(members, redis.Z{
@@ -514,10 +514,10 @@ func (c *SnapshotCache) writeSnapshotMembers(ctx context.Context, bucket schedul
 
 func (c *SnapshotCache) activateSnapshotVersion(ctx context.Context, bucket scheduler.SchedulerBucket, token scheduler.SchedulerBucketWriteToken, version string) error {
 	snapshotKey := schedulerSnapshotKey(bucket, version)
-	// 第二阶段：原子 CAS 切换版本，同时再次校验退休状态与 writer epoch。
-	// Lua 脚本保证：仅当新版本 >= 当前激活版本时才切换 active 指针，
-	// 防止并发写入导致版本回滚。
-	// 旧快照通过 EXPIRE 设置宽限期，正在读取该版本的请求可继续完成。
+	// Activation rechecks retirement and writer epoch while conditionally switching the version.
+	// The Lua script accepts a version at least as new as the active one,
+	// preventing concurrent writers from rolling the version back.
+	// A grace TTL keeps the previous snapshot available to readers that already selected it.
 	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
 	readyKey := schedulerBucketKey(schedulerReadyPrefix, bucket)
 	snapshotKeyPrefix := fmt.Sprintf("%s%d:%s:%s:v", schedulerSnapshotPrefix, bucket.GroupID, bucket.Platform, bucket.Mode)
@@ -770,7 +770,7 @@ func (c *SnapshotCache) writeProviderIDs(ctx context.Context, providers []schedu
 		id := strconv.FormatInt(provider.SnapshotMetadata().ID, 10)
 		pipe.Set(ctx, schedulerProviderKey(id), fullPayload, 0)
 		pipe.Set(ctx, schedulerProviderMetaKey(id), metaPayload, 0)
-		// 保持高频 LastUsedAt 旁路键不变，防止滞后的快照重建覆盖更新的调度时间。
+		// Leave LastUsedAt side keys untouched so a delayed rebuild cannot overwrite newer scheduling times.
 		providerIDs = append(providerIDs, provider.SnapshotMetadata().ID)
 		pending++
 		if pending >= c.writeChunkSize {

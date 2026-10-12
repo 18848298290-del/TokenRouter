@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	// OpenAI OAuth Constants (from CRS project - Codex CLI client)
-	// OAuth Client ID for OpenAI (Codex CLI official).
+	// ClientID identifies the official Codex CLI OAuth client.
 	ClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 	// OAuth endpoints.
@@ -27,7 +26,7 @@ const (
 
 	// Scopes.
 	DefaultScopes = "openid profile email offline_access"
-	// RefreshScopes - scope for token refresh (without offline_access, aligned with CRS project).
+	// RefreshScopes contains the scopes sent on token refresh; offline_access is omitted.
 	RefreshScopes = "openid profile email"
 
 	// OAuthPlatformOpenAI uses OpenAI Codex-compatible OAuth client.
@@ -61,14 +60,12 @@ func GenerateSessionID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// GenerateCodeVerifier generates a PKCE code verifier (64 bytes -> hex for OpenAI)
-// OpenAI uses hex encoding instead of base64url.
+// GenerateCodeVerifier returns 64 random bytes encoded as hex for the OpenAI PKCE flow.
 func GenerateCodeVerifier() (string, error) {
 	return oauthpkce.HexVerifier()
 }
 
-// GenerateCodeChallenge generates a PKCE code challenge using S256 method
-// Uses base64url encoding as per RFC 7636.
+// GenerateCodeChallenge returns the RFC 7636 S256 challenge using raw URL-safe Base64.
 func GenerateCodeChallenge(verifier string) string {
 	return oauthpkce.Challenge(verifier)
 }
@@ -103,8 +100,8 @@ func OAuthClientConfigByPlatform(platform string) (clientID string, codexFlow bo
 	return ClientID, true
 }
 
-// DecodeIDToken decodes the ID Token JWT payload without validating expiration.
-// Use this for best-effort extraction (e.g., during data import) where the token may be expired.
+// DecodeIDToken decodes the JWT payload without checking its signature or expiration.
+// Use it for metadata extraction, including expired tokens during import; it does not authenticate a token.
 func DecodeIDToken(idToken string) (*IDTokenClaims, error) {
 	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
@@ -138,19 +135,17 @@ func DecodeIDToken(idToken string) (*IDTokenClaims, error) {
 	return &claims, nil
 }
 
-// ParseIDToken parses the ID Token JWT and extracts claims.
-// 注意：当前仅解码 payload 并校验 exp，未验证 JWT 签名。
-// 生产环境如需用 ID Token 做授权决策，应通过 OpenAI 的 JWKS 端点验证签名：
-//
-//	https://auth.openai.com/.well-known/jwks.json
+// ParseIDToken decodes claims and checks exp with a two-minute clock tolerance.
+// It does not verify the JWT signature. Authorization decisions require signature
+// verification against https://auth.openai.com/.well-known/jwks.json.
 func ParseIDToken(idToken string) (*IDTokenClaims, error) {
 	claims, err := DecodeIDToken(idToken)
 	if err != nil {
 		return nil, err
 	}
 
-	// 校验 ID Token 是否已过期（允许 2 分钟时钟偏差，防止因服务器时钟略有差异误判刚颁发的令牌）
-	const clockSkewTolerance = 120 // 秒
+	// Allow two minutes of clock skew when checking expiration.
+	const clockSkewTolerance = 120 // seconds
 	now := time.Now().Unix()
 	if claims.Exp > 0 && now > claims.Exp+clockSkewTolerance {
 		return nil, fmt.Errorf("id_token has expired (exp: %d, now: %d, skew_tolerance: %ds)", claims.Exp, now, clockSkewTolerance)

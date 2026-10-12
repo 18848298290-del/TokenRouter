@@ -6,10 +6,8 @@ import (
 	"strings"
 )
 
-// ResponsesToAnthropicRequest converts a Responses API request into an
-// Anthropic Messages request. This is the reverse of AnthropicToResponses and
-// enables Anthropic platform groups to accept OpenAI Responses API requests
-// by converting them to the native /v1/messages format before forwarding upstream.
+// ResponsesToAnthropicRequest converts a Responses request to Anthropic Messages.
+// It adapts tools, repairs historical tool pairing, and supplies required max_tokens.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
 	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input)
 	if err != nil {
@@ -23,7 +21,7 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		TopP:        req.TopP,
 		Stream:      req.Stream,
 	}
-	// OpenAI Priority/Fast 转为 Claude Fast 候选，beta header 由网关统一补齐。
+	// Map Priority/Fast to Claude Fast; the gateway supplies the beta header.
 	switch strings.ToLower(strings.TrimSpace(req.ServiceTier)) {
 	case "priority", "fast":
 		out.Speed = "fast"
@@ -33,21 +31,18 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		out.System = system
 	}
 
-	// max_output_tokens → max_tokens
 	if req.MaxOutputTokens != nil && *req.MaxOutputTokens > 0 {
 		out.MaxTokens = *req.MaxOutputTokens
 	}
 	if out.MaxTokens == 0 {
-		// Anthropic requires max_tokens; default to a sensible value.
+		// Anthropic requires max_tokens even when Responses omits its output limit.
 		out.MaxTokens = 8192
 	}
 
-	// Convert tools
 	if len(req.Tools) > 0 {
 		out.Tools = convertResponsesToAnthropicTools(req.Tools)
 	}
 
-	// Convert tool_choice (reverse of convertAnthropicToolChoiceToResponses)
 	if len(req.ToolChoice) > 0 {
 		tc, err := convertResponsesToAnthropicToolChoice(req.ToolChoice)
 		if err != nil {
@@ -56,14 +51,12 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		out.ToolChoice = tc
 	}
 
-	// reasoning.effort → output_config.effort + thinking
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		if isUltraReasoningEffort(req.Reasoning.Effort) {
 			return nil, fmt.Errorf("reasoning effort %q is not supported", strings.TrimSpace(req.Reasoning.Effort))
 		}
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
 		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
-		// Enable thinking for non-low efforts
 		if effort != "low" {
 			out.Thinking = &AnthropicThinking{
 				Type:         "enabled",
@@ -75,7 +68,7 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	return out, nil
 }
 
-// defaultThinkingBudget returns a sensible thinking budget based on effort level.
+// defaultThinkingBudget returns the token budget assigned to an effort level.
 func defaultThinkingBudget(effort string) int {
 	switch effort {
 	case "low":
@@ -91,7 +84,7 @@ func defaultThinkingBudget(effort string) int {
 	}
 }
 
-// mapResponsesEffortToAnthropic 分别映射 xhigh 和 max，max 会触发独立的计费倍率。
+// mapResponsesEffortToAnthropic keeps xhigh and max distinct for downstream pricing.
 func mapResponsesEffortToAnthropic(effort string) string {
 	switch value := strings.ToLower(strings.TrimSpace(effort)); value {
 	case "low", "medium", "high", "xhigh", "max":
@@ -101,15 +94,14 @@ func mapResponsesEffortToAnthropic(effort string) string {
 	}
 }
 
-// convertResponsesInputToAnthropic 从 Responses API 的 instructions 与 input 数组中
-// 提取系统提示和消息，并以原始 JSON 返回 Anthropic 多态 system 字段。
+// convertResponsesInputToAnthropic extracts system text and messages from instructions
+// and input, returning system as raw JSON for the Anthropic polymorphic field.
 func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []string
 	if strings.TrimSpace(instructions) != "" {
 		systemParts = append(systemParts, strings.TrimSpace(instructions))
 	}
 
-	// Try as plain string input.
 	var inputStr string
 	if err := json.Unmarshal(inputRaw, &inputStr); err == nil {
 		content, _ := json.Marshal(inputStr)
@@ -136,7 +128,6 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			}
 
 		case item.Type == "function_call":
-			// function_call → assistant message with tool_use block
 			input := json.RawMessage("{}")
 			if item.Arguments != "" {
 				input = json.RawMessage(item.Arguments)
@@ -154,7 +145,6 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "function_call_output":
-			// function_call_output → user message with tool_result block
 			contentJSON := responsesFunctionOutputToAnthropicContent(item)
 			block := AnthropicContentBlock{
 				Type:      "tool_result",
@@ -168,18 +158,15 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "reasoning":
-			// Anthropic thinking 重放需要自己签发的 signature，OpenAI reasoning 的 encrypted_content 无法用于重放。
-			// 因此丢弃 reasoning item，包括 summary、encrypted_content 和 content 数组。
-			// 将 reasoning_text 原样放入 Anthropic 请求会返回 400。
+			// Drop OpenAI reasoning: its encrypted_content is not an Anthropic replay signature.
+			// reasoning_text is also unsupported in Anthropic request content.
 
 		case item.Role == "user":
 			content, err := convertResponsesUserToAnthropicContent(item.Content)
 			if err != nil {
 				return nil, nil, err
 			}
-			// 内容里只有网关不认识的分片时，sanitize 会得到空串。Anthropic 拒收
-			// 空内容消息（"all messages must have non-empty content"），整条丢掉
-			// 比发一条必然 400 的消息更可用。
+			// Filtering unknown parts can leave empty content, which Anthropic rejects.
 			if anthropicContentIsEmpty(content) || anthropicContentIsOnlyBlankText(content) {
 				continue
 			}
@@ -193,8 +180,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			if err != nil {
 				return nil, nil, err
 			}
-			// 同上：分片全不认识时会退化成单个空 text 块，而 Anthropic 拒收
-			// 空文本块（"text content blocks must contain non-whitespace text"）。
+			// Unknown parts can leave an empty text block, which Anthropic rejects.
 			if anthropicContentIsEmpty(content) || anthropicContentIsOnlyBlankText(content) {
 				continue
 			}
@@ -204,8 +190,8 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		default:
-			// 未知 role/type 按 user 消息的白名单转换其中的文本和图片。
-			// Responses 专用分片（如 reasoning_text、web_search_call 载荷）会使 Anthropic 返回 400。
+			// For unknown roles and types, retain supported user text and image parts.
+			// Responses-only parts such as reasoning_text are invalid Anthropic input.
 			if item.Content == nil {
 				continue
 			}
@@ -223,9 +209,9 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 		}
 	}
 
-	// 先修复 tool_use/tool_result 配对，再合并连续同角色消息（Anthropic 要求角色交替）。
-	// 第一次合并会把并行调用及其结果聚在一起，便于配对修复统一处理；配对修复可能再次拆分
-	// user 轮次（例如调用和输出之间夹了注入消息），因此最后再合并一次恢复角色交替。
+	// First merge parallel calls and results so pairing repair sees each group together.
+	// Pairing repair can split user turns around inserted messages; merge again afterward
+	// to restore alternating roles.
 	messages = mergeConsecutiveMessages(messages)
 	messages = normalizeAnthropicToolPairing(messages)
 	messages = mergeConsecutiveMessages(messages)
@@ -238,7 +224,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 	return system, messages, nil
 }
 
-// responsesFunctionOutputToAnthropicContent 将工具输出转换为 Anthropic 的文本或多模态内容。
+// responsesFunctionOutputToAnthropicContent converts tool output to Anthropic text or image blocks.
 func responsesFunctionOutputToAnthropicContent(item ResponsesInputItem) json.RawMessage {
 	if len(item.RawOutput()) == 0 {
 		output := item.Output
@@ -278,15 +264,15 @@ func responsesFunctionOutputToAnthropicContent(item ResponsesInputItem) json.Raw
 	return content
 }
 
-// normalizeAnthropicToolPairing 重建消息序列，使 tool_use 和 tool_result 相邻配对，user 与 assistant 交替。
-// 每个 tool_result 对应前一条 assistant 中的 tool_use，每个 tool_use 对应后一条 user 中的 tool_result。
-// Codex 的 store:false 请求会重发完整历史，其中调用与输出之间可能有开发者或审批提示，
-// 也可能有尚未返回输出的并行调用。逐项转换会产生分离的工具消息并触发 Anthropic 400。
-// 此处先按 tool_use ID 索引结果，再按调用顺序把有结果的调用和结果放入相邻消息。
-// 缺少结果的调用、孤立结果和由此产生的空 assistant 消息会被丢弃，非工具内容保持原位。
-// Responses 转 Chat 的 normalizeChatMessages 使用相同的配对规则。
+// normalizeAnthropicToolPairing places answered calls and their results in adjacent messages.
+// Each retained tool_use is followed by a user tool_result with the same ID.
+// Replayed Codex history can separate calls from results with approval messages or contain
+// unanswered parallel calls. Sending those items independently causes pairing errors.
+// Results are indexed by ID, then emitted beside their calls in call order.
+// Unanswered calls, orphan results, and resulting empty tool messages are dropped; other content stays in place.
+// Callers merge consecutive roles after this repair.
 func normalizeAnthropicToolPairing(messages []AnthropicMessage) []AnthropicMessage {
-	// 按 tool_use id 索引所有 tool_result；重复 id 时保留最后一个。
+	// Keep the last result for a duplicate tool_use ID.
 	results := make(map[string]AnthropicContentBlock)
 	for _, m := range messages {
 		if m.Role != "user" {
@@ -323,7 +309,7 @@ func normalizeAnthropicToolPairing(messages []AnthropicMessage) []AnthropicMessa
 				}
 			}
 			if len(kept) == 0 {
-				// 没有已回答调用时，只保留非工具内容；没有非工具内容则整条丢弃。
+				// Retain any non-tool content when all calls are unanswered.
 				if len(others) > 0 {
 					out = append(out, anthropicMessageFromBlocks("assistant", others))
 				}
@@ -354,7 +340,7 @@ func normalizeAnthropicToolPairing(messages []AnthropicMessage) []AnthropicMessa
 				out = append(out, m)
 				continue
 			}
-			// tool_result 会被重新发到对应调用旁边；本轮其他 user 内容保留在原位。
+			// Results move beside their calls; other user content stays at this position.
 			if len(nonResult) > 0 {
 				out = append(out, anthropicMessageFromBlocks("user", nonResult))
 			}
@@ -366,7 +352,7 @@ func normalizeAnthropicToolPairing(messages []AnthropicMessage) []AnthropicMessa
 	return out
 }
 
-// anthropicMessageFromBlocks 用 block 数组构造 AnthropicMessage。
+// anthropicMessageFromBlocks encodes content blocks into an Anthropic message.
 func anthropicMessageFromBlocks(role string, blocks []AnthropicContentBlock) AnthropicMessage {
 	content, _ := json.Marshal(blocks)
 	return AnthropicMessage{Role: role, Content: content}
@@ -395,16 +381,15 @@ func extractTextFromContent(raw json.RawMessage) string {
 	return ""
 }
 
-// anthropicContentIsEmpty 判断转换结果是否为"空内容"。
-// convertResponsesUserToAnthropicContent 在没有任何可识别分片时返回 JSON 空串，
-// 而 Anthropic 拒收空内容消息。
+// anthropicContentIsEmpty detects empty JSON content and blank strings.
+// User conversion returns an empty string when no parts can be mapped.
+// Anthropic rejects such empty messages.
 func anthropicContentIsEmpty(content json.RawMessage) bool {
 	trimmed := strings.TrimSpace(string(content))
 	switch trimmed {
 	case "", "null", `""`, "[]":
 		return true
 	}
-	// 字符串形式的消息也不能只包含空白字符。
 	var text string
 	if err := json.Unmarshal(content, &text); err == nil {
 		return strings.TrimSpace(text) == ""
@@ -412,7 +397,7 @@ func anthropicContentIsEmpty(content json.RawMessage) bool {
 	return false
 }
 
-// anthropicContentIsOnlyBlankText 判断内容是否只由空白 text 块组成。
+// anthropicContentIsOnlyBlankText reports whether every content block is blank text.
 func anthropicContentIsOnlyBlankText(content json.RawMessage) bool {
 	blocks := parseContentBlocks(content)
 	if len(blocks) == 0 {
@@ -426,23 +411,21 @@ func anthropicContentIsOnlyBlankText(content json.RawMessage) bool {
 	return true
 }
 
-// convertResponsesUserToAnthropicContent 把 Responses 用户消息转换为 Anthropic
-// content block JSON，并过滤无法映射或只有空白字符的文本分片。
+// convertResponsesUserToAnthropicContent maps text and inline images to Anthropic content.
+// It drops unsupported and blank array parts; plain strings pass through for caller validation.
 func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return json.Marshal("") // empty string content
+		return json.Marshal("")
 	}
 
-	// Try plain string.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return json.Marshal(s)
 	}
 
-	// Array of content parts → Anthropic content blocks.
 	var parts []ResponsesContentPart
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		// Pass through as-is if we can't parse
+		// Leave unrecognized JSON shapes for downstream validation.
 		return raw, nil
 	}
 
@@ -473,20 +456,18 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 	return json.Marshal(blocks)
 }
 
-// convertResponsesAssistantToAnthropicContent 把 Responses assistant 消息转换为
-// Anthropic content block JSON，并过滤只有空白字符的文本分片。
+// convertResponsesAssistantToAnthropicContent maps assistant text to Anthropic blocks.
+// It drops blank array parts; plain strings are wrapped for caller validation.
 func convertResponsesAssistantToAnthropicContent(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return json.Marshal([]AnthropicContentBlock{{Type: "text", Text: ""}})
 	}
 
-	// Try plain string.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return json.Marshal([]AnthropicContentBlock{{Type: "text", Text: s}})
 	}
 
-	// Array of content parts → Anthropic content blocks.
 	var parts []ResponsesContentPart
 	if err := json.Unmarshal(raw, &parts); err != nil {
 		return raw, nil
@@ -511,16 +492,13 @@ func convertResponsesAssistantToAnthropicContent(raw json.RawMessage) (json.RawM
 	return json.Marshal(blocks)
 }
 
-// fromResponsesCallIDToAnthropic converts an OpenAI function call ID back to
-// Anthropic format. Reverses toResponsesCallID.
+// fromResponsesCallIDToAnthropic unwraps known Anthropic call prefixes or adds toolu_.
 func fromResponsesCallIDToAnthropic(id string) string {
-	// If it has our "fc_" prefix wrapping a known Anthropic prefix, strip it
 	if after, ok := strings.CutPrefix(id, "fc_"); ok {
 		if strings.HasPrefix(after, "toolu_") || strings.HasPrefix(after, "call_") {
 			return after
 		}
 	}
-	// Generate a synthetic Anthropic tool ID
 	if !strings.HasPrefix(id, "toolu_") && !strings.HasPrefix(id, "call_") {
 		return "toolu_" + id
 	}
@@ -551,8 +529,7 @@ func dataURIToAnthropicImageSource(dataURI string) *AnthropicImageSource {
 	}
 }
 
-// mergeConsecutiveMessages merges consecutive messages with the same role
-// because Anthropic requires alternating user/assistant turns.
+// mergeConsecutiveMessages combines adjacent same-role content into alternating turns.
 func mergeConsecutiveMessages(messages []AnthropicMessage) []AnthropicMessage {
 	if len(messages) <= 1 {
 		return messages
@@ -565,7 +542,6 @@ func mergeConsecutiveMessages(messages []AnthropicMessage) []AnthropicMessage {
 			continue
 		}
 
-		// 相邻消息角色相同时合并内容数组。
 		last := &merged[len(merged)-1]
 		lastBlocks := parseContentBlocks(last.Content)
 		newBlocks := parseContentBlocks(msg.Content)
@@ -590,7 +566,6 @@ func parseContentBlocks(raw json.RawMessage) []AnthropicContentBlock {
 }
 
 // convertResponsesToAnthropicTools maps Responses API tools to Anthropic format.
-// Reverse of convertAnthropicToolsToResponses.
 func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 	var out []AnthropicTool
 	for _, t := range tools {
@@ -613,7 +588,7 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		default:
-			// 未知工具类型保留 type，但仍要保证 input_schema 合法。
+			// Keep unknown tool types while supplying an object input schema.
 			out = append(out, AnthropicTool{
 				Type:        t.Type,
 				Name:        t.Name,
@@ -625,7 +600,7 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 	return out
 }
 
-// normalizeAnthropicInputSchema 将 input_schema 规范化为 object schema。
+// normalizeAnthropicInputSchema supplies object type and properties, replacing invalid schemas.
 func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 	const emptyObjectSchema = `{"type":"object","properties":{}}`
 
@@ -661,7 +636,6 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 }
 
 // convertResponsesToAnthropicToolChoice maps Responses tool_choice to Anthropic format.
-// Reverse of convertAnthropicToolChoiceToResponses.
 //
 //	"auto"                                     → {"type":"auto"}
 //	"required"                                 → {"type":"any"}
@@ -669,7 +643,6 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 //	{"type":"function","name":"X"}                 → {"type":"tool","name":"X"}
 //	{"type":"function","function":{"name":"X"}}     → {"type":"tool","name":"X"} // legacy
 func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage, error) {
-	// Try as string first
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		switch s {
@@ -684,7 +657,6 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 		}
 	}
 
-	// Try as object with type=function
 	var tc struct {
 		Type     string `json:"type"`
 		Name     string `json:"name"`
@@ -706,6 +678,5 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 		})
 	}
 
-	// Pass through unknown
 	return raw, nil
 }

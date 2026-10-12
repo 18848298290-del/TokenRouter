@@ -12,25 +12,25 @@ const (
 	OpenAI403CounterWindowMinutesDefault = 180
 )
 
-// OpenAI403CooldownSettings OpenAI OAuth 403 冷却配置。
+// OpenAI403CooldownSettings configures scheduling pauses and error thresholds for HTTP 403 responses.
 type OpenAI403CooldownSettings struct {
-	// Enabled 是否在 ChatGPT 提供商收到 403 时暂停调度
+	// Enabled selects temporary cooldowns for supported providers after a 403 response.
 	Enabled bool `json:"enabled"`
-	// CooldownMinutes 冷却时长（分钟）
+	// CooldownMinutes is the cooldown duration in minutes.
 	CooldownMinutes int `json:"cooldown_minutes"`
-	// ErrorOnThresholdEnabled 是否在统计窗口内达到 403 阈值后标记提供商错误
+	// ErrorOnThresholdEnabled marks the provider as errored when the window reaches the threshold.
 	ErrorOnThresholdEnabled bool `json:"error_on_threshold_enabled"`
-	// ThresholdCount 统计窗口内触发错误状态的 403 次数阈值
+	// ThresholdCount is the number of 403 responses needed to trigger the error state.
 	ThresholdCount int `json:"threshold_count"`
-	// ThresholdWindowMinutes 403 次数统计窗口（分钟）
+	// ThresholdWindowMinutes is the counting window in minutes.
 	ThresholdWindowMinutes int `json:"threshold_window_minutes"`
 }
 
-// OpenAI403CounterCache 追踪 OpenAI 提供商连续 403 失败次数。
+// OpenAI403CounterCache counts provider 403 responses within a window and supports resets on success.
 type OpenAI403CounterCache interface {
-	// IncrementOpenAI403Count 原子递增 403 计数并返回当前值。
+	// IncrementOpenAI403Count atomically increments the count and returns its new value.
 	IncrementOpenAI403Count(ctx context.Context, providerID int64, windowMinutes int) (int64, error)
-	// ResetOpenAI403Count 成功后清零计数器。
+	// ResetOpenAI403Count clears the provider's counter.
 	ResetOpenAI403Count(ctx context.Context, providerID int64) error
 }
 
@@ -139,7 +139,8 @@ func (s *HealthService) ResetForbiddenCounter(ctx context.Context, providerID in
 	}
 }
 
-// DefaultOpenAI403CooldownSettings 返回默认的 OpenAI OAuth 403 冷却配置（启用，10 分钟，3 次/180 分钟转错误）。
+// DefaultOpenAI403CooldownSettings enables a ten-minute cooldown and an error threshold of three responses in
+// 180 minutes.
 func DefaultOpenAI403CooldownSettings() *OpenAI403CooldownSettings {
 	return &OpenAI403CooldownSettings{
 		Enabled:                 true,

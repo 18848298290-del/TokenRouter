@@ -859,7 +859,7 @@ func TestReconcilePaidFulfillmentOrdersRetriesAfterQueryRecoveryFailure(t *testi
 	require.Equal(t, payment.OrderStatusFailed, failed.Status)
 	require.NotNil(t, failed.PaidAt)
 
-	// 为恢复流程重新构造运行依赖，使用同一个持久化订单。
+	// Rebuild runtime dependencies to recover the same persisted order.
 	svc = paymenttestkit.Lifecycle(client, registry, nil, &billing.SubscriptionService{}, nil, true)
 	recovered, err = svc.ReconcilePaidFulfillmentOrdersAt(ctx, time.Now().Add(payment.LifecycleFulfillmentRetryDelay+time.Minute))
 	require.NoError(t, err)

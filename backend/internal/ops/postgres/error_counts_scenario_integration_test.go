@@ -1,6 +1,6 @@
 //go:build integration
 
-// 覆盖 collector_queries.go 和 ops_repo_dashboard.go 的错误计数。
+// Collector and dashboard queries must count the same error categories.
 
 package postgres
 

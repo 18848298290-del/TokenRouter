@@ -2,13 +2,13 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// CreativeSettingsEndpoints 只描述所属设置的 HTTP 操作，规则由对应模块实现。
+// CreativeSettingsEndpoints supplies HTTP operations for creative settings.
 type CreativeSettingsEndpoints interface {
 	ListCreativeModelCandidates(*gin.Context)
 	GetCreativeWorkerStatus(*gin.Context)
 }
 
-// RegisterCreativeSettingsRoutes 在已经鉴权和审计的设置组中注册原路径。
+// RegisterCreativeSettingsRoutes registers endpoints in an authenticated, audited settings group.
 func RegisterCreativeSettingsRoutes(adminSettings *gin.RouterGroup, endpoint CreativeSettingsEndpoints) {
 	adminSettings.GET("/creative-model-candidates", endpoint.ListCreativeModelCandidates)
 	adminSettings.GET("/creative-worker-status", endpoint.GetCreativeWorkerStatus)

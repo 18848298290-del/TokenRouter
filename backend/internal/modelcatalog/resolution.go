@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Target 保存决定模型能力的路线信息，Model 是本次实际发送的完整 ID。
+// Target contains route inputs that determine model capabilities. Model is the complete outbound ID.
 type Target struct {
 	Model            string `json:"model"`
 	Platform         string `json:"platform,omitempty"`
@@ -23,13 +23,13 @@ type Target struct {
 	OllamaOutputCap  *int   `json:"-"`
 }
 
-// RequestState 区分展示时的未知状态与请求明确指定的推理选项。
+// RequestState distinguishes unknown display state from reasoning options supplied by a request.
 type RequestState struct {
 	Effort   *string
 	Thinking *bool
 }
 
-// ExecutionRules 保存供应商报文需要的选择项。字段由平台实现解释。
+// ExecutionRules contains message-encoding choices interpreted by platform adapters.
 type ExecutionRules struct {
 	ThinkingMode           string            `json:"thinking_mode,omitempty"`
 	SignatureMode          string            `json:"signature_mode,omitempty"`
@@ -48,7 +48,7 @@ type ExecutionRules struct {
 	Verbosity              *bool             `json:"verbosity,omitempty"`
 }
 
-// Resolution 是一条路线的模型属性、字段来源和报文规则。
+// Resolution contains a route's model attributes, field sources, and message-encoding rules.
 type Resolution struct {
 	Target     Target            `json:"target"`
 	Attributes Attributes        `json:"attributes"`
@@ -57,10 +57,10 @@ type Resolution struct {
 	Version    string            `json:"version"`
 }
 
-// View 持有一次已发布目录，查询返回值副本，热更新不会改变已取得的 View。
+// View fixes a published catalog version and returns value copies. Catalog updates leave existing views intact.
 type View struct{ catalog *Catalog }
 
-// TargetKey 按值区分所有影响属性的路线字段。
+// TargetKey compares route fields that affect attributes by value.
 type TargetKey struct {
 	target       Target
 	outputCap    int
@@ -76,7 +76,7 @@ func (v View) Version() string {
 	return v.catalog.Version
 }
 
-// Resolve 合并目录、平台差异和管理员覆盖，并应用当前转换器的格式限制。
+// Resolve merges catalog data, platform constraints, and administrator overrides, then applies converter limits.
 func (v View) Resolve(target Target, override Attributes) Resolution {
 	target = target.WithServiceIdentity()
 	result := Resolution{Target: target, Sources: map[string]string{}, Version: v.Version()}
@@ -133,7 +133,7 @@ func (v View) lookup(target Target, model string) Entry {
 	if entry, exists := v.catalog.Lookup([]string{service + "/" + model}); exists && entry.Provider == service {
 		return entry
 	}
-	// 服务没有该型号时，使用明确的公共资料，防止借用中继的服务限制。
+	// Use public metadata when this service lacks the model, so relay-specific limits are not inherited.
 	for _, identity := range []string{model, publicLab(service) + "/" + model} {
 		if entry, found := v.catalog.publicEntries[identity]; found {
 			return entry
@@ -173,7 +173,7 @@ func (r *Resolution) patch(attrs Attributes, source string) {
 	r.Attributes = Merge(r.Attributes, attrs)
 }
 
-// ForRequest 根据本次推理状态计算条件属性，调用不会改变展示值。
+// ForRequest evaluates conditional attributes for the request's reasoning state and leaves display values intact.
 func (r Resolution) ForRequest(state RequestState) Resolution {
 	r.Attributes = r.Attributes.Clone()
 	if state.Thinking == nil {
@@ -296,7 +296,7 @@ func (t Target) ServiceID() string {
 	return ""
 }
 
-// WithServiceIdentity 填入目录服务与已识别的站点，供路线规则和目录查询共用。
+// WithServiceIdentity fills the catalog service and recognized site for route rules and catalog lookup.
 func (t Target) WithServiceIdentity() Target {
 	t.CatalogProvider = t.ServiceID()
 	if t.ClientProtocol == "openai_responses_compact" || t.UpstreamProtocol == "openai_responses_compact" {
@@ -409,7 +409,7 @@ func (key TargetKey) ForAttributes() TargetKey {
 	return key
 }
 
-// Clone 返回可独立修改的路线解析结果。
+// Clone returns an independently mutable route resolution.
 func (r Resolution) Clone() Resolution {
 	r.Target.OllamaOutputCap = clonePointer(r.Target.OllamaOutputCap)
 	r.Attributes = r.Attributes.Clone()

@@ -29,7 +29,7 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// UserRepoSuite 为跨文件的用户存储测试提供数据库和存储对象。
+// UserRepoSuite shares the database and user store across repository tests.
 type UserRepoSuite struct {
 	db *sql.DB
 	suite.Suite
@@ -38,7 +38,7 @@ type UserRepoSuite struct {
 	repo   *postgres.UserStore
 }
 
-// identityDatabase 创建供当前测试提交事务的独立数据库和 Ent 客户端。
+// identityDatabase creates an isolated database and Ent client for tests that commit transactions.
 func identityDatabase(t *testing.T) (*sql.DB, *dbent.Client) {
 	t.Helper()
 	db := databaseSuite.New(t)
@@ -47,7 +47,7 @@ func identityDatabase(t *testing.T) (*sql.DB, *dbent.Client) {
 	return db, client
 }
 
-// newGroupStoreFixture 为分组存储绑定提供商关系、用户授权和调度事件写入。
+// newGroupStoreFixture connects group storage to provider links, user grants, and scheduler events.
 func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *routingpostgres.GroupStore {
 	return routingpostgres.NewGroupStore(client, db, routingpostgres.GroupStoreOptions{
 		Providers: func(exec postgresinfra.Executor) routingpostgres.GroupLinkParticipant {
@@ -62,14 +62,14 @@ func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *rout
 	})
 }
 
-// newKeyStoreFixture 使用传入的 Ent 客户端和 SQL 连接构造 Key 存储及批量用量查询。
+// newKeyStoreFixture binds key storage and batch usage reads to the supplied client and executor.
 func newKeyStoreFixture(client *dbent.Client, exec postgresinfra.Executor) *keypostgres.KeyStore {
 	return keypostgres.NewKeyStoreWithSQL(client, exec, func(ctx context.Context, ids []int64) (map[int64]float64, error) {
 		return usagepostgres.ReadAPIKeyUsageTotals(ctx, exec, nil, ids)
 	})
 }
 
-// mustCreateUser 创建用户及其分组授权，并回填数据库字段。
+// mustCreateUser creates a user and group grants, then fills database-generated fields.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()
@@ -126,7 +126,7 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	return u
 }
 
-// mustCreateApiKey 创建访问密钥并回填数据库字段。
+// mustCreateApiKey creates an API Key and fills database-generated fields.
 func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *apikey.APIKey {
 	t.Helper()
 	ctx := context.Background()
@@ -204,7 +204,7 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *api
 	return k
 }
 
-// mustCreateGroup 创建分组并回填数据库字段。
+// mustCreateGroup creates a group and fills database-generated fields.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -238,12 +238,12 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
-// SetupSuite 为用户存储套件创建独立数据库。
+// SetupSuite creates an isolated database for the user store suite.
 func (s *UserRepoSuite) SetupSuite() {
 	s.db, s.client = identityDatabase(s.T())
 }
 
-// SetupTest 清理用户数据并为当前测试创建存储对象。
+// SetupTest clears user data and creates the store for the current test.
 func (s *UserRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.T().Cleanup(func() {
@@ -252,7 +252,7 @@ func (s *UserRepoSuite) SetupTest() {
 	})
 	s.repo = postgres.NewUserStoreWithSQL(s.client, s.db)
 
-	// 删除身份、订阅和用户记录，使每个测试从空表开始。
+	// Clear identities, subscriptions, grants, and users before each test.
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM auth_identity_channels")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM auth_identities")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
@@ -260,7 +260,7 @@ func (s *UserRepoSuite) SetupTest() {
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM users")
 }
 
-// mustCreateUser 为用户存储测试补齐默认字段并创建用户。
+// mustCreateUser supplies default fields before creating a test user.
 func (s *UserRepoSuite) mustCreateUser(u *identity.User) *identity.User {
 	s.T().Helper()
 
@@ -284,7 +284,7 @@ func (s *UserRepoSuite) mustCreateUser(u *identity.User) *identity.User {
 	return u
 }
 
-// mustCreateGroup 为用户存储测试创建启用的分组。
+// mustCreateGroup creates an enabled test group.
 func (s *UserRepoSuite) mustCreateGroup(name string) *routing.Group {
 	s.T().Helper()
 

@@ -5,8 +5,8 @@ const (
 	ProviderPrivacyModeUnsetFilter       = "__unset__"
 )
 
-// OAuthRefreshPageOptions 描述一次有界且游标稳定的 OAuth 提供商扫描。
-// 候选平台来自 TokenRefreshService 注册表，与已登记的刷新器对应。
+// OAuthRefreshPageOptions defines a bounded OAuth provider scan with an ID cursor.
+// Platforms correspond to refreshers registered with TokenRefreshService.
 type OAuthRefreshPageOptions struct {
 	Platforms            []string
 	AfterID              int64
@@ -17,8 +17,8 @@ type OAuthRefreshPageOptions struct {
 	ExcludeRetryCooldown bool
 }
 
-// OAuthRefreshCandidatePage 保存 SQL 查询页面的 ID 游标元数据。
-// 详情加载时记录被并发删除后，调用方仍通过原始页面的游标继续扫描。
+// OAuthRefreshCandidatePage carries the cursor metadata from the SQL page.
+// The original cursor advances the scan even when records are deleted before detail loading.
 type OAuthRefreshCandidatePage struct {
 	Providers   []Record
 	NextAfterID int64

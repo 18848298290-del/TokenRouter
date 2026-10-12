@@ -1,6 +1,6 @@
 package anthropic
 
-// 速度用量场景覆盖 usage_patch.go 的 SSE 解析和 usage_events.go 的响应体解析。
+// Speed scenarios cover SSE parsing in usage_patch.go and response parsing in usage_events.go.
 
 import (
 	"testing"

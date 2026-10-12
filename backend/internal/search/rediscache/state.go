@@ -13,7 +13,7 @@ const (
 	proxyUnavailableKey = "websearch:proxy_unavailable:%d"
 )
 
-// quotaIncrScript atomically increments the counter and sets TTL on first creation.
+// quotaIncrScript atomically increments usage and sets expiration for a new counter or one missing a TTL.
 var quotaIncrScript = redis.NewScript(`
 local val = redis.call('INCR', KEYS[1])
 if val == 1 then

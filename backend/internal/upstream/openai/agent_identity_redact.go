@@ -2,6 +2,8 @@ package openai
 
 import "strings"
 
+// RedactAgentIdentityBody replaces known credentials and AgentAssertion values in a body copy.
+// The caller supplies credential lookup; the input bytes remain unchanged.
 func RedactAgentIdentityBody(body []byte, credential func(string) string) []byte {
 	redacted := string(body)
 	for _, key := range []string{

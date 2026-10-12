@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// runtimeSettingFixture 记录批量读取失败后逐键读取的完整键序列。
+// runtimeSettingFixture records the per-key read sequence after a batch failure.
 type runtimeSettingFixture struct {
 	RuntimeSettingSource
 	keys  []string
@@ -246,7 +246,8 @@ func (f *runtimeSettingReadFixture) GetValue(ctx context.Context, key string) (s
 	return f.values[key], f.valueErrors[key]
 }
 
-// TestValidationWeightsReadFreshAndPropagateFailure 检查管理写入校验读取当前设置，并返回批量读取错误。
+// TestValidationWeightsReadFreshAndPropagateFailure checks fresh reads and batch error propagation
+// during admin validation.
 func TestValidationWeightsReadFreshAndPropagateFailure(t *testing.T) {
 	source := &runtimeSettingFixture{}
 	defaults := DefaultAdminSettingsDefaults()

@@ -19,7 +19,7 @@ type PassthroughRequestOptions struct {
 	MatchedOriginator      func() string
 }
 
-// BuildPassthroughRequest 不改变报文，身份/会话值通过当前尝试的窄端口提供。
+// BuildPassthroughRequest retains body bytes and resolves attempt-specific identity and session headers.
 func BuildPassthroughRequest(ctx context.Context, body []byte, options PassthroughRequestOptions) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
@@ -40,7 +40,7 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 		}
 	}
 
-	// 故障转移换号后，不能把已知由旧提供商签发的回合状态送往新提供商。
+	// Drop turn state known to belong to a previous provider after failover.
 	options.GuardTurnState(req.Header)
 	req.Header.Del("authorization")
 	req.Header.Del("x-api-key")
@@ -55,11 +55,10 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 		}
 	}
 
-	// OAuth 透传到 ChatGPT internal API 时补齐必要头。
+	// Supply the headers required by the ChatGPT internal API.
 	if options.UsesCodex() {
-		// Current Codex OAuth HTTP no longer negotiates the legacy Responses
-		// experiment. Passthrough may receive it from an older client, so remove
-		// only that token while preserving any independent beta negotiation.
+		// Codex OAuth HTTP omits the legacy Responses experiment. Remove that token
+		// from older clients while retaining independent beta negotiation.
 		StripLegacyResponsesBeta(req.Header)
 		promptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 		req.Host = "chatgpt.com"
@@ -101,18 +100,16 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 			req.Header.Set("conversation_id", options.IsolateSession(apiKeyID, clientConversationID))
 		}
 	} else if options.IsCompact() {
-		// 透传白名单会放行客户端的 Accept: text/event-stream；compact 上游是
-		// unary JSON 协议，API-key 提供商同样强制 Accept，避免上游按 SSE 返回
-		// （#3777 期望行为 4）。
+		// Compact requires unary JSON, even if the client forwarded Accept: text/event-stream.
+		// Set the API-key request Accept header accordingly (issue #3777).
 		req.Header.Set("accept", "application/json")
 	}
 
 	options.ApplyUserAgent(req)
-	// 透传模式与普通路径共享提供商 namespace 和已解析的指纹。
+	// Passthrough shares the credential namespace and precomputed fingerprint with ordinary requests.
 	options.ApplyProviderIdentity(req.Header)
 	options.ApplyFingerprint(req.Header)
-	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
-	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
+	// Apply the same official identity pairing and version correction as ordinary OAuth requests.
 	if options.UsesCodex() {
 		EnforceCodexIdentityHeadersWithUA(req.Header, "")
 	}
@@ -123,8 +120,7 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 
 	options.OverrideHeaders(req.Header)
 	options.OpenCodeSession(req.Header)
-	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在提供商级覆写之后，
-	// 保证不被覆盖丢失）。
+	// Apply session beta features after overrides so required capabilities survive.
 	options.BetaFeatures(req.Header)
 	options.RoutingHint(req.Header, body)
 	options.Diagnostics(req.Header, body)

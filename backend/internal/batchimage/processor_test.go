@@ -133,8 +133,8 @@ func TestBatchImageResultIndexer_WritesCountsAndReplacesItems(t *testing.T) {
 	require.Equal(t, batchimage.BatchImageCounts{SuccessCount: 1, FailCount: 1}, repo.counts[job.BatchID])
 	require.NotContains(t, fmt.Sprintf("%+v", repo.items[job.BatchID]), batchImageTestData)
 
-	// 重新索引时与现有 custom_id 集对账：未知的 "ok2" 被丢弃，
-	// 输出中缺失的 ok/bad 补为 PROVIDER_RESULT_MISSING 失败记录。
+	// Reindex against existing custom IDs: discard unknown "ok2" and record missing
+	// "ok" and "bad" as PROVIDER_RESULT_MISSING failures.
 	platform.result = `{"key":"ok2","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/webp","data":"` + batchImageTestData + `"}}]}}]}}` + "\n"
 	result, err = (&batchimage.ResultIndexer{Repo: repo, Observe: resultObserve}).Index(context.Background(), job, batchimageprovider.BindProvider(platform, providercore.CloneRecord(&providercore.Record{})))
 	require.NoError(t, err)
@@ -154,13 +154,13 @@ func TestBatchImageResultIndexer_ReconcilesMissingAndUnknownCustomIDs(t *testing
 	repo := newFakeBatchImageRepository()
 	outputRef := "files/output"
 	job := &batchimage.BatchImageJob{BatchID: "imgbatch_reconcile", ProviderOutputRef: &outputRef, ItemCount: 3}
-	// 预创建提交时的 pending 条目（提交流程的行为）。
+	// Seed pending items as the submission flow does.
 	require.NoError(t, repo.BulkCreateBatchImageItems(context.Background(), []batchimage.CreateBatchImageItemParams{
 		{JobID: job.BatchID, CustomID: "a", Status: batchimage.BatchImageItemStatusPending},
 		{JobID: job.BatchID, CustomID: "b", Status: batchimage.BatchImageItemStatusPending},
 		{JobID: job.BatchID, CustomID: "c", Status: batchimage.BatchImageItemStatusPending},
 	}))
-	// platform 输出：a 成功，b 失败，c 漏掉，多出未知的 x。
+	// Provider output succeeds for a, fails for b, omits c, and adds unknown x.
 	output := strings.Join([]string{
 		`{"key":"a","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"` + batchImageTestData + `"}}]}}]}}`,
 		`{"key":"b","error":{"code":"SAFETY","message":"blocked"}}`,
@@ -183,7 +183,7 @@ func TestBatchImageResultIndexer_ReconcilesMissingAndUnknownCustomIDs(t *testing
 	require.Equal(t, batchimage.BatchImageItemStatusFailed, byID["b"].Status)
 	require.Equal(t, batchimage.BatchImageItemStatusFailed, byID["c"].Status)
 	require.Equal(t, "PROVIDER_RESULT_MISSING", batchimage.BatchImageDerefString(byID["c"].ErrorCode))
-	// 对账后 success+fail == item_count，结算计数校验可通过。
+	// Reconciliation restores the success+fail == item_count settlement invariant.
 	require.Equal(t, job.ItemCount, result.SuccessCount+result.FailCount)
 }
 

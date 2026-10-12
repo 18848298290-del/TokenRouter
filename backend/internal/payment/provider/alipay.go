@@ -37,7 +37,6 @@ var (
 		return client.TradePagePay(param)
 	}
 
-	// Ensure interface compliance.
 	_ payment.Provider                 = (*Alipay)(nil)
 	_ payment.CancelableProvider       = (*Alipay)(nil)
 	_ payment.MerchantIdentityProvider = (*Alipay)(nil)
@@ -107,15 +106,13 @@ func (a *Alipay) MerchantIdentityMetadata() map[string]string {
 	return map[string]string{"app_id": appID}
 }
 
-// CreatePayment 按下列路由创建支付宝支付：
-//   - 移动端默认：调用 alipay.trade.wap.pay，让浏览器跳转支付宝。
-//   - 移动端开启 AlipayMobilePrecreate：调用 alipay.trade.precreate，返回动态二维码供前端唤起支付宝。
-//   - 桌面端默认模式：优先调用 alipay.trade.precreate（当面付）获取可扫码的二维码内容；
-//     如果商户未开通当面付，则回退到 alipay.trade.page.pay，只返回 pay_url，由前端打开支付宝收银台。
-//   - 桌面端 paymentMode == "redirect"：跳过 precreate，直接调用 alipay.trade.page.pay，
-//     适用于未开通当面付、希望始终在新标签页打开支付宝收银台的商户。
+// CreatePayment routes Alipay checkout by client and configured mode:
+//   - Mobile uses alipay.trade.wap.pay by default.
+//   - Mobile with AlipayMobilePrecreate uses alipay.trade.precreate for an app-launch QR payload.
+//   - Desktop first tries alipay.trade.precreate, then alipay.trade.page.pay if precreate fails.
+//   - Desktop paymentMode "redirect" calls alipay.trade.page.pay directly.
 //
-// 注意：alipay.trade.page.pay 返回的是收银台页面 URL，不是可扫码支付二维码，不能写入 QRCode 字段。
+// page.pay returns a browser checkout URL, which must not be stored as a scannable QRCode.
 func (a *Alipay) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	client, err := a.getClient()
 	if err != nil {
@@ -160,7 +157,7 @@ func (a *Alipay) createWapTrade(client *alipay.Client, req payment.CreatePayment
 }
 
 func (a *Alipay) createDesktopTrade(ctx context.Context, client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
-	// redirect 模式表示商户明确选择始终打开支付宝收银台，因此跳过无效的 precreate 调用。
+	// Redirect mode requests browser checkout directly, so precreate is unnecessary.
 	if strings.EqualFold(strings.TrimSpace(a.config["paymentMode"]), "redirect") {
 		return a.createPagePayTrade(client, req, notifyURL, returnURL)
 	}
@@ -219,7 +216,7 @@ func (a *Alipay) createPagePayTrade(client *alipay.Client, req payment.CreatePay
 	if err != nil {
 		return nil, fmt.Errorf("alipay TradePagePay: %w", err)
 	}
-	// page.pay 返回的是浏览器收银台 URL，不是可扫码支付内容，避免前端把它渲染成不可用二维码。
+	// Keep the browser checkout URL in PayURL; encoding it as QRCode would produce an unusable payment QR.
 	return &payment.CreatePaymentResponse{
 		TradeNo: req.OrderID,
 		PayURL:  payURL.String(),

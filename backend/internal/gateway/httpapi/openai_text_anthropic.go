@@ -10,9 +10,9 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
-// NativeMessages 将 Anthropic Messages 请求零转换
-// 直通到国产供应商的原生 Anthropic 端点。仅做模型名映射与少量 body 清洗
-// （空文本块 / web-search 历史块），协议本身不转换。
+// NativeMessages forwards Anthropic Messages to a Chinese provider native Anthropic endpoint.
+// It applies model mapping and body cleanup for empty text and web-search history blocks
+// while retaining the Anthropic protocol.
 func (s *OpenAITextExecutor) NativeMessages(
 	ctx context.Context,
 	c *gin.Context,
@@ -25,13 +25,13 @@ func (s *OpenAITextExecutor) NativeMessages(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// NativeChat 通过国产供应商的原生 Anthropic
-// 端点承接 OpenAI /v1/chat/completions 客户端请求。
+// NativeChat accepts OpenAI Chat Completions through
+// a Chinese provider native Anthropic endpoint.
 //
-// 转换链：
+// Conversion path:
 //
-//	请求：Chat Completions → Responses → Anthropic（链式转换）
-//	响应：Anthropic 事件 → Responses 事件 → CC 分块（链式状态机）
+//	Request: Chat Completions to Responses to Anthropic.
+//	Response: Anthropic events to Responses events to Chat chunks.
 func (s *OpenAITextExecutor) NativeChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -44,13 +44,13 @@ func (s *OpenAITextExecutor) NativeChat(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// NativeResponses 通过国产供应商的原生 Anthropic 端点
-// 承接 OpenAI /v1/responses 客户端请求。
+// NativeResponses accepts OpenAI Responses through
+// a Chinese provider native Anthropic endpoint.
 //
-// 转换链：
+// Conversion path:
 //
-//	请求：Responses → Anthropic（单次转换）
-//	响应：Anthropic 事件 → Responses 事件（流式状态机）
+//	Request: Responses to Anthropic.
+//	Response: Anthropic events to Responses events.
 func (s *OpenAITextExecutor) NativeResponses(
 	ctx context.Context,
 	c *gin.Context,

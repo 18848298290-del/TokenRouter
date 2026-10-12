@@ -14,7 +14,7 @@ import (
 const (
 	redeemMaxErrorsPerHour = 20
 
-	redeemLockDuration = 10 * time.Second // 锁超时时间，防止死锁
+	redeemLockDuration = 10 * time.Second // Expiry releases abandoned cache locks.
 )
 
 var (
@@ -30,14 +30,14 @@ var (
 	ErrRedeemRateLimited                   = apperror.TooManyRequests("REDEEM_RATE_LIMITED", "too many failed attempts, please try again later")
 	ErrRedeemCodeLocked                    = apperror.Conflict("REDEEM_CODE_LOCKED", "redeem code is being processed, please try again")
 
-	// 以下错误表示仓储缺少原子调整余额或并发额度的能力。
+	// These errors indicate missing atomic balance or concurrency adjustment support.
 	ErrRedeemBalanceUnsupported     = errors.New("user repository does not support atomic redeem balance adjustments")
 	ErrRedeemConcurrencyUnsupported = errors.New("user repository does not support atomic redeem concurrency adjustments")
 )
 
 type ctxKeySkipRedeemAffiliate struct{}
 
-// RedeemTransactions 隐藏兑换权益与 usage/次数提交的数据库事务。
+// RedeemTransactions commits entitlement changes, usage records, and use counts in one transaction.
 type RedeemTransactions interface {
 	Within(context.Context, func(context.Context) error) error
 	ApplyBalance(context.Context, int64, float64) error
@@ -53,14 +53,14 @@ type (
 )
 
 type RedeemRuntime struct {
-	// HasPaidOrder 查询用户成功付款的历史，查询失败时停止发放权益。
+	// HasPaidOrder checks payment history; lookup errors stop entitlement issuance.
 	HasPaidOrder func(context.Context, int64) (bool, error)
 	Now          func() time.Time
 	Observe      Observe
 	Background   func(string, func())
 }
 
-// RedeemService 唯一拥有兑换规则，提交完成后才执行原有失效及尽力返利。
+// RedeemService applies redemption rules and runs cache invalidation and best-effort rebates after commit.
 type RedeemService struct {
 	redeemRepo           RedeemCodeRepository
 	userRepo             BalanceReader
@@ -73,7 +73,7 @@ type RedeemService struct {
 	runtime              RedeemRuntime
 }
 
-// ContextSkipRedeemAffiliate 返回跳过兑换层返利的上下文，支付订单会在订单层做带审计去重的返利。
+// ContextSkipRedeemAffiliate skips redemption rebates when the payment-order workflow handles audited rebate deduplication.
 func ContextSkipRedeemAffiliate(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ctxKeySkipRedeemAffiliate{}, true)
 }
@@ -177,7 +177,7 @@ func (s *RedeemService) BatchUpdate(ctx context.Context, input *RedeemCodeBatchU
 	return &RedeemCodeBatchUpdateResult{Updated: updated}, nil
 }
 
-// checkRedeemRateLimit 检查用户兑换错误次数是否超限。
+// checkRedeemRateLimit rejects users whose failed-attempt count reaches the limit.
 func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) error {
 	if s.cache == nil {
 		return nil
@@ -185,7 +185,7 @@ func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) 
 
 	count, err := s.cache.GetRedeemAttemptCount(ctx, userID)
 	if err != nil {
-		// Redis 出错时不阻止用户操作
+		// Cache errors permit redemption to continue.
 		return nil
 	}
 
@@ -196,7 +196,7 @@ func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) 
 	return nil
 }
 
-// incrementRedeemErrorCount 增加用户兑换错误计数。
+// incrementRedeemErrorCount increments the failed-attempt counter on a best-effort basis.
 func (s *RedeemService) incrementRedeemErrorCount(ctx context.Context, userID int64) {
 	if s.cache == nil {
 		return
@@ -205,22 +205,22 @@ func (s *RedeemService) incrementRedeemErrorCount(ctx context.Context, userID in
 	_ = s.cache.IncrementRedeemAttemptCount(ctx, userID)
 }
 
-// acquireRedeemLock 尝试获取兑换码的分布式锁
-// 返回 true 表示获取成功，false 表示锁已被占用。
+// acquireRedeemLock attempts the code's cache lock.
+// False means a lock is held; cache absence or failure returns true and relies on database checks.
 func (s *RedeemService) acquireRedeemLock(ctx context.Context, code string) bool {
 	if s.cache == nil {
-		return true // 无 Redis 时降级为不加锁
+		return true // Continue with database checks when Redis is unavailable.
 	}
 
 	ok, err := s.cache.AcquireRedeemLock(ctx, code, redeemLockDuration)
 	if err != nil {
-		// Redis 出错时不阻止操作，依赖数据库层面的状态检查
+		// Continue with database locking and state checks when Redis fails.
 		return true
 	}
 	return ok
 }
 
-// releaseRedeemLock 释放兑换码的分布式锁。
+// releaseRedeemLock releases the cache lock on a best-effort basis.
 func (s *RedeemService) releaseRedeemLock(ctx context.Context, code string) {
 	if s.cache == nil {
 		return
@@ -229,7 +229,7 @@ func (s *RedeemService) releaseRedeemLock(ctx context.Context, code string) {
 	_ = s.cache.ReleaseRedeemLock(ctx, code)
 }
 
-// unsupportedRedeemTypeError 将邀请码和未知类型统一转换为客户端可处理的请求错误。
+// unsupportedRedeemTypeError returns a client error for invitation codes and unknown types.
 func unsupportedRedeemTypeError(codeType string) error {
 	if codeType == RedeemTypeInvitation {
 		return apperror.BadRequest("REDEEM_CODE_UNSUPPORTED_TYPE", "invitation codes can only be used during registration")
@@ -237,7 +237,7 @@ func unsupportedRedeemTypeError(codeType string) error {
 	return apperror.BadRequest("REDEEM_CODE_UNSUPPORTED_TYPE", fmt.Sprintf("unsupported redeem type: %s", codeType))
 }
 
-// Redeem 使用兑换码
+// Redeem validates and grants a code's benefits, then invalidates caches after commit.
 // @project-doc docs/domains/payments_and_entitlements.md#redeem_eligibility
 func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
 	code = strings.TrimSpace(code)
@@ -245,12 +245,12 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		return nil, ErrRedeemCodeNotFound
 	}
 
-	// 检查限流
+	// Check failed-attempt limits before acquiring the code lock.
 	if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
 		return nil, err
 	}
 
-	// 获取分布式锁，防止同一兑换码并发使用
+	// The cache lock reduces concurrent attempts; the transaction also locks the code row.
 	if !s.acquireRedeemLock(ctx, code) {
 		return nil, ErrRedeemCodeLocked
 	}
@@ -265,15 +265,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		return nil, err
 	}
 
-	// 事务提交成功后失效缓存
+	// Invalidate caches after a successful commit.
 	s.invalidateRedeemCaches(ctx, userID, redeemCode)
 
-	// 余额类正数兑换码触发邀请返利；支付订单会传入跳过标记，避免双重返利。
+	// Positive balance grants can earn rebates; payment workflows mark the context to prevent a second rebate.
 	if redeemCode.Type == RedeemTypeBalance && redeemCode.Value > 0 {
 		s.tryAccrueAffiliateRebateForRedeem(ctx, userID, redeemCode.Value)
 	}
 
-	// 重新获取更新后的兑换码
+	// Reload the committed usage snapshot for the response.
 	redeemCode, err = s.redeemRepo.GetByID(ctx, redeemCode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("get updated redeem code: %w", err)
@@ -282,7 +282,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	return redeemCode, nil
 }
 
-// redeemInTx 的全部写入使用事务 Adapter 提供的同一个 context；不在此发布副作用。
+// redeemInTx uses txCtx for entitlement and usage writes; post-commit invalidation and rebates run in Redeem.
 func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, code string) (*RedeemCode, error) {
 	redeemCode, err := s.redeemRepo.GetByCodeForUpdate(txCtx, code)
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 		return nil, err
 	}
 
-	// 邀请码只允许在注册流程使用，普通兑换接口仅接受能直接发放权益的类型。
+	// Invitation codes belong to registration; this endpoint accepts direct entitlement grants.
 	switch redeemCode.Type {
 	case RedeemTypeBalance, RedeemTypeConcurrency:
 	case RedeemTypeSubscription:
@@ -309,7 +309,7 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 		return nil, unsupportedRedeemTypeError(redeemCode.Type)
 	}
 
-	// 付款资格在权益和使用记录写入前检查，失败后可在付款成功时重试。
+	// Check payment eligibility before any grant or usage write, allowing retry after payment.
 	if redeemCode.RequiresPayment {
 		if s.runtime.HasPaidOrder == nil {
 			return nil, errors.New("payment history lookup is unavailable")
@@ -328,7 +328,7 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 
-	// 执行兑换逻辑（兑换码已被锁定，此时可安全操作）
+	// The code row remains locked while benefits and usage are written.
 	switch redeemCode.Type {
 	case RedeemTypeBalance:
 		if err := s.transactions.ApplyBalance(txCtx, userID, redeemCode.Value); err != nil {
@@ -349,7 +349,7 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 		_, _, err := s.subscriptionService.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
 			UserID:     userID,
 			PlanID:     *redeemCode.PlanID,
-			AssignedBy: 0, // 系统分配
+			AssignedBy: 0, // System assignment.
 			Notes:      fmt.Sprintf("通过兑换码 %s 兑换", redeemCode.Code),
 		})
 		if err != nil {
@@ -381,7 +381,7 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 	return redeemCode, nil
 }
 
-// invalidateRedeemCaches 失效兑换相关的缓存。
+// invalidateRedeemCaches invalidates authentication and applicable balance caches after redemption.
 func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64, redeemCode *RedeemCode) {
 	switch redeemCode.Type {
 	case RedeemTypeBalance:
@@ -428,7 +428,7 @@ func (s *RedeemService) tryAccrueAffiliateRebateForRedeem(ctx context.Context, u
 	}
 }
 
-// GetByID 根据 ID 获取兑换码。
+// GetByID retrieves a code by database ID.
 func (s *RedeemService) GetByID(ctx context.Context, id int64) (*RedeemCode, error) {
 	code, err := s.redeemRepo.GetByID(ctx, id)
 	if err != nil {
@@ -437,7 +437,7 @@ func (s *RedeemService) GetByID(ctx context.Context, id int64) (*RedeemCode, err
 	return code, nil
 }
 
-// GetByCode 根据 Code 获取兑换码。
+// GetByCode retrieves a code by its credential value.
 func (s *RedeemService) GetByCode(ctx context.Context, code string) (*RedeemCode, error) {
 	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
 	if err != nil {
@@ -446,7 +446,7 @@ func (s *RedeemService) GetByCode(ctx context.Context, code string) (*RedeemCode
 	return redeemCode, nil
 }
 
-// List 获取兑换码列表（管理员功能）。
+// List returns paginated codes for administration.
 func (s *RedeemService) List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	codes, pagination, err := s.redeemRepo.List(ctx, params)
 	if err != nil {
@@ -455,15 +455,15 @@ func (s *RedeemService) List(ctx context.Context, params pagination.PaginationPa
 	return codes, pagination, nil
 }
 
-// Delete 删除兑换码（管理员功能）。
+// Delete removes a code that has no recorded uses.
 func (s *RedeemService) Delete(ctx context.Context, id int64) error {
-	// 检查兑换码是否存在
+	// Read the code to check whether it has been used.
 	code, err := s.redeemRepo.GetByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get redeem code: %w", err)
 	}
 
-	// 仅允许删除从未被兑换过的兑换码
+	// Keep used codes so usage history remains available.
 	if !code.CanDelete() {
 		return apperror.Conflict("REDEEM_CODE_DELETE_USED", "cannot delete redeem code that has usage records")
 	}
@@ -496,7 +496,7 @@ func (s *RedeemService) validateRedeemCodeForUser(ctx context.Context, redeemCod
 	return nil
 }
 
-// GetUserHistory 按使用时间倒序分页获取用户的兑换历史，并返回记录总数。
+// GetUserHistory returns paginated redemption history in descending use-time order with the total count.
 func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, page, pageSize int) ([]RedeemCode, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	codes, result, err := s.redeemRepo.ListByUserPaginated(ctx, userID, params, "")

@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// NormalizeInt64IDList returns sorted, unique positive IDs without modifying ids.
+// Empty input returns nil; nonempty input with no valid IDs returns an empty slice.
 func NormalizeInt64IDList(ids []int64) []int64 {
 	if len(ids) == 0 {
 		return nil

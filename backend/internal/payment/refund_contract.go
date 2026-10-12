@@ -19,7 +19,7 @@ type RefundPlan struct {
 	BalanceToDeduct float64
 	SubDaysToDeduct int
 	SubscriptionID  int64
-	// OperationID 关联本地审计记录，渠道使用自身的幂等编码。
+	// OperationID correlates local audit records; providers use their own idempotency keys.
 	OperationID     string
 	ChannelRefundID string
 }
@@ -41,7 +41,7 @@ type RefundPendingDetail struct {
 	OperationID         string  `json:"operationID,omitempty"`
 }
 
-// RefundReceipt 记录准备事务实际扣减与订单操作版本；不保存渠道密钥。
+// RefundReceipt records the preparation transaction's actual deduction and order version.
 type RefundReceipt struct {
 	Version          int       `json:"version"`
 	OperationID      string    `json:"operationID"`
@@ -55,7 +55,7 @@ type RefundReceipt struct {
 	RefundPendingDetail
 }
 
-// RefundRights 由存储参与工厂绑定到当前事务，不取得或结束事务。
+// RefundRights operates within a transaction supplied and completed by the store.
 type RefundRights interface {
 	DeductBalance(context.Context, int64, float64) (float64, error)
 	CompensateBalance(context.Context, int64, float64) error
@@ -64,7 +64,7 @@ type RefundRights interface {
 }
 type RefundMutation func(context.Context, RefundRights, *RefundPlan) error
 
-// RefundStore 的命名操作明确限定原子范围，不向核心暴露事务客户端。
+// RefundStore provides atomic refund operations and owns their transaction lifetimes.
 type RefundStore interface {
 	RequestRefund(context.Context, int64, int64, float64, string, time.Time, string) (int, error)
 	Order(context.Context, int64) (*Order, error)
@@ -84,7 +84,7 @@ type (
 	}
 )
 
-// RefundRuntime 提供渠道解析、权益查询、审计和时钟函数。
+// RefundRuntime supplies provider resolution, rights queries, auditing, and the clock.
 type RefundRuntime struct {
 	User          func(context.Context, int64) (*RefundUser, error)
 	Subscriptions func(context.Context, int64) ([]RefundSubscription, error)

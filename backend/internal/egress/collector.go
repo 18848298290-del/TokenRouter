@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TLSFingerprintCollectorStatus 表示收集器当前运行状态。
+// TLSFingerprintCollectorStatus describes the collector's current state.
 type TLSFingerprintCollectorStatus struct {
 	Running              bool       `json:"running"`
 	ListenAddress        string     `json:"listen_address"`
@@ -18,7 +18,7 @@ type TLSFingerprintCollectorStatus struct {
 	LastError            string     `json:"last_error,omitempty"`
 }
 
-// TLSFingerprintCollectorSession 表示一次短期采集会话。
+// TLSFingerprintCollectorSession identifies a short-lived capture session.
 type TLSFingerprintCollectorSession struct {
 	Token      string    `json:"token"`
 	ExpiresAt  time.Time `json:"expires_at"`
@@ -26,7 +26,7 @@ type TLSFingerprintCollectorSession struct {
 	CAPEM      string    `json:"ca_pem,omitempty"`
 }
 
-// TLSFingerprintCaptureRecord 表示一次采集结果。
+// TLSFingerprintCaptureRecord contains one captured request and TLS fingerprint.
 type TLSFingerprintCaptureRecord struct {
 	ID                string                 `json:"id"`
 	CapturedAt        time.Time              `json:"captured_at"`
@@ -59,7 +59,7 @@ type CapturedClientHello struct {
 	JA3Hash             string
 }
 
-// Collector 是 HTTP 管理面消费的按需采集能力；监听由技术 Adapter 拥有。
+// Collector exposes on-demand capture to the admin API; its adapter owns the listener.
 type Collector interface {
 	Status() TLSFingerprintCollectorStatus
 	Start(context.Context) (TLSFingerprintCollectorStatus, error)

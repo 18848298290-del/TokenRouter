@@ -18,7 +18,7 @@ const (
 	grokMissingUsageMessage   = "xAI upstream returned a successful chat completion without billable usage"
 )
 
-// NewGrokMissingUsageFailure 构造稳定的缺失用量故障转移错误并写入 Grok Ops 诊断。
+// NewGrokMissingUsageFailure creates the missing-usage failover error and records Grok Ops diagnostics.
 func NewGrokMissingUsageFailure(c *gin.Context, provider *gatewayprovider.ExecutionProvider, upstreamRequestID string) *forwardcore.UpstreamFailoverError {
 	providerID := int64(0)
 	providerName := ""

@@ -28,7 +28,7 @@ func ResponseOptionsForTest(runtime *Runtime, ctx context.Context, output HTTPBo
 	return runtime.responseOptions(ctx, output, &AttemptState{}, target, model, passthrough)
 }
 
-// TestMessagesStreamAbort 验证流式 Messages 的构造后释放、断连和内部终止。
+// TestMessagesStreamAbort checks construction release, client disconnection, and internal abort separately.
 func TestMessagesStreamAbort(t *testing.T) {
 	client, cancelClient := context.WithCancel(context.Background())
 	request, abort := requestcontext.WithAbort(client)

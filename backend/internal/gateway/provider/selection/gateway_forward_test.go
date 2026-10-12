@@ -72,7 +72,7 @@ func TestCheckGroupModelRestriction_EmptyModel(t *testing.T) {
 
 func TestCheckGroupModelRestriction_GroupMapped_Restricted(t *testing.T) {
 	t.Parallel()
-	// 分组映射 claude-sonnet-4-5 → claude-sonnet-4-6，但定价列表只有 claude-opus-4-6
+	// The group maps claude-sonnet-4-5 to claude-sonnet-4-6, but pricing lists only claude-opus-4-6.
 	ch := routingtestkit.Configuration{
 		ID:                 1,
 		Status:             billing.StatusActive,
@@ -94,7 +94,7 @@ func TestCheckGroupModelRestriction_GroupMapped_Restricted(t *testing.T) {
 
 func TestCheckGroupModelRestriction_GroupMapped_Allowed(t *testing.T) {
 	t.Parallel()
-	// 分组映射 claude-sonnet-4-5 → claude-sonnet-4-6，定价列表包含 claude-sonnet-4-6
+	// The group maps claude-sonnet-4-5 to claude-sonnet-4-6, which pricing includes.
 	ch := routingtestkit.Configuration{
 		ID:                 1,
 		Status:             billing.StatusActive,
@@ -139,7 +139,7 @@ func TestCheckGroupModelRestriction_QoderGroupMappedBasisAllowsConfiguredRouteKe
 
 func TestCheckGroupModelRestriction_Requested_Restricted(t *testing.T) {
 	t.Parallel()
-	// billing_model_source=requested，定价列表有 claude-sonnet-4-6 但请求的是 claude-sonnet-4-5
+	// With requested billing, a priced claude-sonnet-4-6 does not admit a claude-sonnet-4-5 request.
 	ch := routingtestkit.Configuration{
 		ID:                 1,
 		Status:             billing.StatusActive,
@@ -180,7 +180,7 @@ func TestCheckGroupModelRestriction_Requested_Allowed(t *testing.T) {
 
 func TestCheckGroupModelRestriction_Upstream_SkipsPreCheck(t *testing.T) {
 	t.Parallel()
-	// upstream 模式：预检查始终跳过（返回 false），需逐提供商检查
+	// Upstream restrictions skip the precheck and are evaluated per provider.
 	ch := routingtestkit.Configuration{
 		ID:                 1,
 		Status:             billing.StatusActive,
@@ -205,7 +205,7 @@ func TestCheckGroupModelRestriction_RestrictModelsDisabled(t *testing.T) {
 		ID:             1,
 		Status:         billing.StatusActive,
 		GroupIDs:       []int64{10},
-		RestrictModels: false, // 未开启模型限制
+		RestrictModels: false, // Model restrictions are disabled.
 		ModelPricing: []routing.ModelPricingEntry{
 			{Models: []string{"claude-opus-4-6"}},
 		},
@@ -220,7 +220,7 @@ func TestCheckGroupModelRestriction_RestrictModelsDisabled(t *testing.T) {
 
 func TestCheckGroupModelRestriction_NoPricingConfig(t *testing.T) {
 	t.Parallel()
-	// 分组没有配置独立模型策略
+	// The group has no independent model policy.
 	repo := &routingtestkit.PricingConfigRepositoryStub{
 		ListAllFn: func(_ context.Context) ([]routingtestkit.Configuration, error) { return nil, nil },
 	}
@@ -247,8 +247,8 @@ func TestIsUpstreamModelRestrictedByGroup_Restricted(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{GroupPolicies: pricingConfigSvc}}, nil)
 
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.
-		// claude-sonnet-4-6 在 DefaultAntigravityModelMapping 中，映射后仍为 claude-sonnet-4-6
-		// 但定价列表只有 claude-opus-4-6
+		// The default Antigravity mapping keeps claude-sonnet-4-6 unchanged,
+		// but pricing lists only claude-opus-4-6.
 		LoadLocation, Platform: capability.PlatformAntigravity}}
 
 	require.True(t, svc.isUpstreamModelRestrictedByGroup(context.Background(), 10, provider, "claude-sonnet-4-6"),

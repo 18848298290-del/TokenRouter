@@ -14,16 +14,16 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// OpenAIWSOptions 保存 WS 执行的静态参数，nil 表示使用默认配置。
+// OpenAIWSOptions contains static execution parameters; a nil Options pointer selects defaults.
 type OpenAIWSOptions = gatewayws.Parameters
 
-// OpenAIWSSelection 只提供已经选中提供商的传输选择与会话预算。
+// OpenAIWSSelection resolves transport and session TTL for an already selected provider.
 type OpenAIWSSelection interface {
 	ResolveTransport(*gatewayadapter.ExecutionProvider) egress.OpenAIWSProtocolDecision
 	SessionStickyTTL() time.Duration
 }
 
-// OpenAIWSDependencies 保存 WS 执行使用的接口。
+// OpenAIWSDependencies supplies WebSocket execution dependencies.
 type OpenAIWSDependencies struct {
 	Options     *OpenAIWSOptions
 	Runtime     *gatewayws.Runtime
@@ -40,20 +40,20 @@ type OpenAIWSDependencies struct {
 	Cache       session.GatewayCache
 }
 
-// OpenAIWebSocketExecutor 适配帧、凭据、健康与 HTTP 桥接，逐轮循环由 gateway/ws 唯一拥有。
+// OpenAIWebSocketExecutor adapts frames, credentials, health, and HTTP bridging for the gateway/ws turn loop.
 type OpenAIWebSocketExecutor struct {
 	OpenAIWSDependencies
 	openaiWSSessionPreemptions openAIWSSessionPreemptRegistry
 }
 
-// NewOpenAIWebSocketExecutor 构造不启动连接或会话任务。
+// NewOpenAIWebSocketExecutor constructs an executor without starting connections or session tasks.
 func NewOpenAIWebSocketExecutor(deps OpenAIWSDependencies) *OpenAIWebSocketExecutor {
 	out := &OpenAIWebSocketExecutor{OpenAIWSDependencies: deps}
 
 	return out
 }
 
-// EnsureSessionIsolation 使用当前请求的认证 Key 检查会话隔离。
+// EnsureSessionIsolation checks session ownership using the request's authenticated Key.
 func (s *OpenAIWebSocketExecutor) EnsureSessionIsolation(ctx context.Context, key *apikey.APIKey, userID int64, source, hash string) error {
 	if key == nil {
 		return nil
@@ -65,7 +65,7 @@ func (s *OpenAIWebSocketExecutor) EnsureSessionIsolation(ctx context.Context, ke
 	return session.EnsureIsolation(ctx, s.Cache, session.IsolationInput{UserID: userID, GroupID: group, Source: source, Hash: hash, TTL: time.Hour, Enabled: key.Group != nil && key.Group.SessionIsolationEnabled})
 }
 
-// forTurn 为当前轮次冻结参数，其他轮次可以读取后续发布的值。
+// forTurn freezes runtime parameters for this turn; later turns can read newer snapshots.
 func (s *OpenAIWebSocketExecutor) forTurn() *OpenAIWebSocketExecutor {
 	if s.Runtime == nil {
 		return s

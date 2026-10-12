@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// GeminiToAnthropicResponseProcessor 非流式响应处理器。
+// GeminiToAnthropicResponseProcessor assembles a non-streaming Claude response from Gemini parts.
 type GeminiToAnthropicResponseProcessor struct {
 	runtime           GeminiConversionRuntime
 	diagnostics       []string
@@ -18,13 +18,13 @@ type GeminiToAnthropicResponseProcessor struct {
 	hasToolCall       bool
 }
 
-// GeminiConversionRuntime 使用平台传入的 ID 生成函数。
+// GeminiConversionRuntime supplies platform-owned ID generators.
 type GeminiConversionRuntime struct {
 	RandomID  func() string
 	MessageID func() string
 }
 
-// NewGeminiToAnthropicResponseProcessor 创建非流式响应处理器。
+// NewGeminiToAnthropicResponseProcessor creates state for one response.
 func NewGeminiToAnthropicResponseProcessor(runtime GeminiConversionRuntime) *GeminiToAnthropicResponseProcessor {
 	return &GeminiToAnthropicResponseProcessor{
 		runtime:       runtime,
@@ -32,15 +32,13 @@ func NewGeminiToAnthropicResponseProcessor(runtime GeminiConversionRuntime) *Gem
 	}
 }
 
-// Process 处理 Gemini 响应。
+// Process converts the first Gemini candidate to a Claude response.
 func (p *GeminiToAnthropicResponseProcessor) Process(geminiResp *GeminiResponse, responseID, originalModel string) *ClaudeResponse {
-	// 获取 parts
 	var parts []GeminiPart
 	if len(geminiResp.Candidates) > 0 && geminiResp.Candidates[0].Content != nil {
 		parts = geminiResp.Candidates[0].Content.Parts
 	}
 
-	// 处理所有 parts
 	for _, part := range parts {
 		p.processPart(&part)
 	}
@@ -51,11 +49,10 @@ func (p *GeminiToAnthropicResponseProcessor) Process(geminiResp *GeminiResponse,
 		}
 	}
 
-	// 刷新剩余内容
 	p.flushThinking()
 	p.flushText()
 
-	// 处理 trailingSignature
+	// Emit an unpaired signature as an empty thinking block.
 	if p.trailingSignature != "" {
 		p.contentBlocks = append(p.contentBlocks, ClaudeContentItem{
 			Type:      "thinking",
@@ -64,20 +61,17 @@ func (p *GeminiToAnthropicResponseProcessor) Process(geminiResp *GeminiResponse,
 		})
 	}
 
-	// 构建响应
 	return p.buildResponse(geminiResp, responseID, originalModel)
 }
 
-// processPart 处理单个 part。
 func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 	signature := part.ThoughtSignature
 
-	// 1. FunctionCall 处理
 	if part.FunctionCall != nil {
 		p.flushThinking()
 		p.flushText()
 
-		// 处理 trailingSignature
+		// Keep a pending signature ahead of the tool call.
 		if p.trailingSignature != "" {
 			p.contentBlocks = append(p.contentBlocks, ClaudeContentItem{
 				Type:      "thinking",
@@ -89,7 +83,6 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 
 		p.hasToolCall = true
 
-		// 生成 tool_use id
 		toolID := part.FunctionCall.ID
 		if toolID == "" {
 			toolID = fmt.Sprintf("%s-%s", part.FunctionCall.Name, p.runtime.RandomID())
@@ -110,13 +103,11 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 		return
 	}
 
-	// 2. Text 处理
 	if part.Text != "" || part.Thought {
 		if part.Thought {
-			// Thinking part
 			p.flushText()
 
-			// 处理 trailingSignature
+			// Keep a pending signature separate from the next thinking block.
 			if p.trailingSignature != "" {
 				p.flushThinking()
 				p.contentBlocks = append(p.contentBlocks, ClaudeContentItem{
@@ -132,9 +123,8 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 				p.thinkingSignature = signature
 			}
 		} else {
-			// 普通 Text
 			if part.Text == "" {
-				// 空 text 带签名 - 暂存
+				// Defer a signature that arrives with empty text.
 				if signature != "" {
 					p.trailingSignature = signature
 				}
@@ -143,7 +133,7 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 
 			p.flushThinking()
 
-			// 处理之前的 trailingSignature
+			// Keep a pending signature ahead of the next text block.
 			if p.trailingSignature != "" {
 				p.flushText()
 				p.contentBlocks = append(p.contentBlocks, ClaudeContentItem{
@@ -154,7 +144,7 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 				p.trailingSignature = ""
 			}
 
-			// 非空 text 带签名 - 特殊处理：先输出 text，再输出空 thinking 块
+			// Represent signed text as text followed by an empty thinking block carrying the signature.
 			if signature != "" {
 				p.contentBlocks = append(p.contentBlocks, ClaudeContentItem{
 					Type: "text",
@@ -166,13 +156,13 @@ func (p *GeminiToAnthropicResponseProcessor) processPart(part *GeminiPart) {
 					Signature: signature,
 				})
 			} else {
-				// 普通 text (无签名) - 累积到 builder
+				// Accumulate unsigned text until a block transition.
 				p.textBuilder += part.Text
 			}
 		}
 	}
 
-	// 3. InlineData (Image) 处理
+	// Render inline images as Markdown data URLs.
 	if part.InlineData != nil && part.InlineData.Data != "" {
 		p.flushThinking()
 		markdownImg := fmt.Sprintf("![image](data:%s;base64,%s)",
@@ -194,7 +184,7 @@ func (p *GeminiToAnthropicResponseProcessor) processGrounding(grounding *GeminiG
 	p.flushText()
 }
 
-// flushText 刷新 text builder。
+// flushText appends buffered text as a content block and clears the buffer.
 func (p *GeminiToAnthropicResponseProcessor) flushText() {
 	if p.textBuilder == "" {
 		return
@@ -207,7 +197,7 @@ func (p *GeminiToAnthropicResponseProcessor) flushText() {
 	p.textBuilder = ""
 }
 
-// flushThinking 刷新 thinking builder。
+// flushThinking appends buffered thinking and its signature, then clears both.
 func (p *GeminiToAnthropicResponseProcessor) flushThinking() {
 	if p.thinkingBuilder == "" && p.thinkingSignature == "" {
 		return
@@ -222,7 +212,7 @@ func (p *GeminiToAnthropicResponseProcessor) flushThinking() {
 	p.thinkingSignature = ""
 }
 
-// buildResponse 构建最终响应。
+// buildResponse attaches usage, a response ID, and the stop reason to the collected blocks.
 func (p *GeminiToAnthropicResponseProcessor) buildResponse(geminiResp *GeminiResponse, responseID, originalModel string) *ClaudeResponse {
 	var finishReason string
 	if len(geminiResp.Candidates) > 0 {
@@ -244,8 +234,7 @@ func (p *GeminiToAnthropicResponseProcessor) buildResponse(geminiResp *GeminiRes
 		stopReason = "max_tokens"
 	}
 
-	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
+	// Gemini promptTokenCount includes cached tokens; Claude input_tokens excludes them.
 	usage := ClaudeUsage{}
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
@@ -255,7 +244,7 @@ func (p *GeminiToAnthropicResponseProcessor) buildResponse(geminiResp *GeminiRes
 		usage.ImageOutputTokens = geminiResp.UsageMetadata.ImageOutputTokens()
 	}
 
-	// 生成响应 ID
+	// Prefer the supplied ID, then the upstream ID, then a generated ID.
 	respID := responseID
 	if respID == "" {
 		respID = geminiResp.ResponseID
@@ -313,7 +302,7 @@ func buildGroundingText(grounding *GeminiGroundingMetadata) string {
 	return builder.String()
 }
 
-// TakeDiagnostics 交回本轮纯转换诊断，由平台适配按原日志格式输出。
+// TakeDiagnostics returns and clears diagnostics for the platform adapter to log.
 func (p *GeminiToAnthropicResponseProcessor) TakeDiagnostics() []string {
 	out := p.diagnostics
 	p.diagnostics = nil

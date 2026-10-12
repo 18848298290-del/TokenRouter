@@ -40,10 +40,10 @@ func (h *ManagementHandler) SetPrivacy(c *gin.Context) {
 		response.BadRequest(c, "Cannot set privacy: missing access_token")
 		return
 	}
-	// 从数据库重新读取最新状态。
+	// Reload the persisted privacy state for the response.
 	updated, err := h.adminService.GetProvider(c.Request.Context(), providerID)
 	if err != nil {
-		// 隐私已设置成功但读取失败，回退到内存更新
+		// Privacy was set successfully; if reloading fails, update the response's in-memory copy.
 		if provider.Extra == nil {
 			provider.Extra = make(map[string]any)
 		}

@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIProbePolicy 固定探针与正常请求共用的身份策略，只按原时机读取动态设置。
+// OpenAIProbePolicy applies request identity policy to probes and reads dynamic settings on demand.
 type OpenAIProbePolicy struct {
 	Available               bool
 	ForceCLI                bool
@@ -30,7 +30,7 @@ type OpenAIProbePolicy struct {
 	Detect         func(func() (string, string), *provider.Record, []string, egress.TLSFingerprintRouterMatchResult) provider.CodexClientRestrictionDetectionResult
 }
 
-// Prepare 在凭据读取前完成自动探针的客户端资格判断。
+// Prepare checks automatic probe client eligibility before execution obtains credentials.
 func (p *OpenAIProbePolicy) Prepare(run *TestRun, value *provider.Record) error {
 	if !run.Automatic {
 		return nil
@@ -102,7 +102,7 @@ func (p *OpenAIProbePolicy) ApplyTestRouting(run *TestRun, value *provider.Recor
 	p.ApplyUserAgent(req.Context(), value, req, false, match)
 }
 
-// ApplyUserAgent 与网关复用同一优先级，不修改共享客户端。
+// ApplyUserAgent uses gateway UA precedence and modifies the request headers.
 func (p *OpenAIProbePolicy) ApplyUserAgent(ctx context.Context, value *provider.Record, req *http.Request, passthrough bool, match egress.TLSFingerprintRouterMatchResult) {
 	if req == nil {
 		return
@@ -129,7 +129,7 @@ func (p *OpenAIProbePolicy) ApplyUserAgent(ctx context.Context, value *provider.
 	}
 }
 
-// applyBrowserUserAgent 为浏览器 UA 填入回退值。
+// applyBrowserUserAgent replaces browser UAs with the configured or default probe UA.
 func (p *OpenAIProbePolicy) applyBrowserUserAgent(ctx context.Context, value *provider.Record, req *http.Request) {
 	if req == nil || value == nil || !value.IsOAuth() || !openai.IsBrowserUserAgent(req.Header.Get("user-agent")) {
 		return

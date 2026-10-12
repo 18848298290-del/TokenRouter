@@ -7,8 +7,8 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// OpenAICompatAnthropicReasoningEffort 按最终属性选择 max 或兼容档位。
-// 缺少属性时保留客户端明确指定的值。
+// OpenAICompatAnthropicReasoningEffort selects max or a compatible effort from the final model attributes.
+// Missing capability information preserves the client's explicit max value.
 func OpenAICompatAnthropicReasoningEffort(req *protocolanthropic.AnthropicRequest, upstreamModel, convertedEffort string, attributes ...modelcatalog.Attributes) string {
 	if req == nil || req.OutputConfig == nil || !strings.EqualFold(strings.TrimSpace(req.OutputConfig.Effort), "max") {
 		return convertedEffort

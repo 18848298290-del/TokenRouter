@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 维护停止必须等待实际观测，迟到返回不能在 Stop 后写配置。
+// tierLifecycleStore counts writes to detect updates after maintenance cancellation.
 type tierLifecycleStore struct {
 	TierManagementStore
 	writes atomic.Int64
 }
 
-// 批量查询最多十并发，分别记录失败。总数排除非法提供商，缺失或空列表时通过存储查询。
+// tierBatchStore records provider selection and checks that writes use credential conditions and field patches.
 type tierBatchStore struct {
 	TierManagementStore
 	values     []Record
@@ -86,7 +86,8 @@ func TestTierMaintenanceBatchKeepsEmptySelectionAndPartialFailure(t *testing.T) 
 	require.Equal(t, []TierRefreshFailure{{ProviderID: 2, Error: "upstream unavailable"}}, result.Errors)
 }
 
-// TestTierMaintenanceStopPreventsQueuedObservations 验证已排队的批量项在停止后直接返回取消，不因十槽等待结束而继续调用供应商。
+// TestTierMaintenanceStopPreventsQueuedObservations checks that queued items cancel after Stop without
+// querying upstream.
 func TestTierMaintenanceStopPreventsQueuedObservations(t *testing.T) {
 	values := make([]Record, 20)
 	for i := range values {

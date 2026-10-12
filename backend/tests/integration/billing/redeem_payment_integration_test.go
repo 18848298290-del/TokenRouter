@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// createEligibilityOrder 创建隔离的付款记录，paid_at 表示渠道付款已经确认。
+// createEligibilityOrder creates a payment fixture; paid_at marks confirmed payment.
 func createEligibilityOrder(t *testing.T, client *ent.Client, user *ent.User, status string, paid bool, amount float64) *ent.PaymentOrder {
 	t.Helper()
 	builder := client.PaymentOrder.Create().
@@ -43,12 +43,12 @@ func createEligibilityOrder(t *testing.T, client *ent.Client, user *ent.User, st
 	}
 	order, err := builder.Save(context.Background())
 	require.NoError(t, err)
-	// 支付订单保存用户快照，测试结束时按订单清理。
+	// Payment orders retain user snapshots and need their own cleanup.
 	t.Cleanup(func() { require.NoError(t, client.PaymentOrder.DeleteOneID(order.ID).Exec(context.Background())) })
 	return order
 }
 
-// TestRedeemRequiresPayment 覆盖拒绝后的数据、付款后重试、重复领取和所有权益类型。
+// TestRedeemRequiresPayment checks rejected grants, retries after payment, duplicate redemption, and each entitlement type.
 func TestRedeemRequiresPayment(t *testing.T) {
 	for _, kind := range []string{billing.RedeemTypeBalance, billing.RedeemTypeConcurrency, billing.RedeemTypeSubscription} {
 		t.Run(kind, func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestRedeemRequiresPayment(t *testing.T) {
 	}
 }
 
-// TestPaymentHistoryEligibility 区分付款确认、未付款、零金额及付款后的履约和退款状态。
+// TestPaymentHistoryEligibility requires a positive confirmed payment regardless of later fulfillment or refund status.
 func TestPaymentHistoryEligibility(t *testing.T) {
 	for _, tc := range []struct {
 		status string
@@ -159,7 +159,7 @@ func TestPaymentHistoryEligibility(t *testing.T) {
 	}
 }
 
-// TestRedeemPaymentAdministration 确认默认关闭、编辑省略及关闭条件、邀请码限制和迁移重放。
+// TestRedeemPaymentAdministration checks the default, omitted updates, disabling, invitation restrictions, and migration replay.
 func TestRedeemPaymentAdministration(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)

@@ -72,7 +72,7 @@ type GeminiExchangeCodeInput struct {
 	State     string
 	Code      string
 	ProxyID   *int64
-	OAuthType string // "code_assist" 或 "ai_studio"
+	OAuthType string // code_assist, google_one, or ai_studio
 	// TierID is a user-selected tier to be used when auto detection is unavailable or fails.
 	// If empty, the service will fall back to the tier stored in the OAuth session (if any).
 	TierID string
@@ -85,7 +85,7 @@ type GeminiTokenInfo struct {
 	TokenType    string         `json:"token_type"`
 	Scope        string         `json:"scope,omitempty"`
 	ProjectID    string         `json:"project_id,omitempty"`
-	OAuthType    string         `json:"oauth_type,omitempty"` // "code_assist" 或 "ai_studio"
+	OAuthType    string         `json:"oauth_type,omitempty"` // code_assist, google_one, or ai_studio
 	TierID       string         `json:"tier_id,omitempty"`    // Canonical tier id (e.g. google_one_free, gcp_standard, aistudio_free)
 	Extra        map[string]any `json:"extra,omitempty"`      // Drive metadata
 }
@@ -146,7 +146,6 @@ func (s *GeminiAuthorization) GenerateAuthURL(ctx context.Context, proxyID *int6
 	// - ai_studio: requires a user-provided OAuth client
 	oauthCfg := s.Options.Config()
 	if oauthType == "code_assist" || oauthType == "google_one" {
-		// Force use of built-in Gemini CLI OAuth client
 		oauthCfg.ClientID = ""
 		oauthCfg.ClientSecret = ""
 	}
@@ -198,33 +197,30 @@ func (s *GeminiAuthorization) GenerateAuthURL(ctx context.Context, proxyID *int6
 	}, nil
 }
 
-// ValidateTierID validates tier_id format and length.
+// ValidateTierID accepts an empty tier or up to 64 ASCII letters, digits, underscores, hyphens, and slashes.
 func ValidateTierID(tierID string) error {
 	if tierID == "" {
-		return nil // Empty is allowed
+		return nil
 	}
 	if len(tierID) > 64 {
 		return fmt.Errorf("tier_id exceeds maximum length of 64 characters")
 	}
-	// Allow alphanumeric, underscore, hyphen, and slash (for tier paths)
 	if !regexp.MustCompile(`^[a-zA-Z0-9_/-]+$`).MatchString(tierID) {
 		return fmt.Errorf("tier_id contains invalid characters")
 	}
 	return nil
 }
 
-// ExtractTierIDFromAllowedTiers extracts tierID from LoadCodeAssist response
-// Prioritizes IsDefault tier, falls back to first non-empty tier.
+// ExtractTierIDFromAllowedTiers prefers a nonempty default tier, then the first nonempty tier.
+// It returns LEGACY when no tier is available.
 func ExtractTierIDFromAllowedTiers(allowedTiers []geminiwire.AllowedTier) string {
 	tierID := "LEGACY"
-	// First pass: look for default tier
 	for _, tier := range allowedTiers {
 		if tier.IsDefault && strings.TrimSpace(tier.ID) != "" {
 			tierID = strings.TrimSpace(tier.ID)
 			break
 		}
 	}
-	// Second pass: if still LEGACY, take first non-empty tier
 	if tierID == "LEGACY" {
 		for _, tier := range allowedTiers {
 			if strings.TrimSpace(tier.ID) != "" {
@@ -236,7 +232,7 @@ func ExtractTierIDFromAllowedTiers(allowedTiers []geminiwire.AllowedTier) string
 	return tierID
 }
 
-// InferGoogleOneTier 根据 Drive 存储上限推断 Google One 套餐。
+// InferGoogleOneTier estimates the Google One tier from the Drive storage limit in bytes.
 func InferGoogleOneTier(storageBytes int64, logf func(string, ...any)) string {
 	logf("[GeminiOAuth] inferGoogleOneTier - input: %d bytes (%.2f TB)", storageBytes, float64(storageBytes)/float64(TB))
 
@@ -262,9 +258,8 @@ func InferGoogleOneTier(storageBytes int64, logf func(string, ...any)) string {
 	return GeminiTierGoogleOneUnknown
 }
 
-// fetchGoogleOneTier 通过 Drive API 查询 Google One 套餐。
-// Google One 使用个人账户，不调用面向 GCP IAM 的 LoadCodeAssist；
-// 个人账户访问 cloudaicompanion.googleapis.com 会返回 403/404，消费级与企业系统相互隔离。
+// fetchGoogleOneTier infers the Google One tier from the personal account's Drive quota.
+// Tier detection uses Drive; project discovery is handled separately by fetchProjectID.
 func (s *GeminiAuthorization) fetchGoogleOneTier(ctx context.Context, accessToken, proxyURL string) (string, *google.DriveStorageInfo, error) {
 	s.Options.Logf("[GeminiOAuth] Starting FetchGoogleOneTier (Google One personal provider)")
 
@@ -273,12 +268,11 @@ func (s *GeminiAuthorization) fetchGoogleOneTier(ctx context.Context, accessToke
 
 	storageInfo, err := s.Drive.GetStorageQuota(ctx, accessToken, proxyURL)
 	if err != nil {
-		// Check if it's a 403 (scope not granted)
+		// Report Drive permission failures separately from other query failures.
 		if strings.Contains(err.Error(), "status 403") {
 			s.Options.Logf("[GeminiOAuth] Drive API scope not available (403): %v", err)
 			return GeminiTierGoogleOneUnknown, nil, err
 		}
-		// Other errors
 		s.Options.Logf("[GeminiOAuth] Failed to fetch Drive storage: %v", err)
 		return GeminiTierGoogleOneUnknown, nil, err
 	}
@@ -361,8 +355,8 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 	sessionProjectID := strings.TrimSpace(session.ProjectID)
 	s.Store.Delete(input.SessionID)
 
-	// 计算过期时间：减去 5 分钟安全时间窗口（考虑网络延迟和时钟偏差）
-	// 同时设置下界保护，防止 expires_in 过小导致过去时间（引发刷新风暴）
+	// Refresh five minutes early to allow for network delay and clock skew.
+	// Keep at least 30 seconds of validity so a short expires_in does not cause a refresh loop.
 	const safetyWindow = 300 // 5 minutes
 	const minTTL = 30        // minimum 30 seconds
 	expiresAt := time.Now().Unix() + tokenResp.ExpiresIn - safetyWindow
@@ -381,9 +375,9 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 	s.Options.Logf("[GeminiOAuth] ========== Provider Type Detection START ==========")
 	s.Options.Logf("[GeminiOAuth] OAuth Type: %s", oauthType)
 
-	// 对于 code_assist 模式，project_id 是必需的，需要调用 Code Assist API
-	// 对于 google_one 模式，使用个人 Google 账号，不需要 project_id，配额由 Google 网关自动识别
-	// 对于 ai_studio 模式，project_id 是可选的（不影响使用 AI Studio API）
+	// Code Assist and Google One require a project ID; discover it when the session omits it.
+	// Google One derives its tier from Drive storage, while Code Assist uses Code Assist metadata.
+	// AI Studio accepts an optional project ID and uses the selected tier.
 	switch oauthType {
 	case "code_assist":
 		s.Options.Logf("[GeminiOAuth] Processing code_assist OAuth type")
@@ -392,7 +386,7 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 			var err error
 			projectID, tierID, err = s.fetchProjectID(ctx, tokenResp.AccessToken, proxyURL)
 			if err != nil {
-				// 记录警告但不阻断流程，允许后续补充 project_id
+				// Log discovery errors here; the missing-project check below rejects an unresolved project.
 				s.Options.Printf("[GeminiOAuth] Warning: Failed to fetch project_id during token exchange: %v\n", err)
 				s.Options.Logf("[GeminiOAuth] WARNING: Failed to fetch project_id: %v", err)
 			} else {
@@ -400,7 +394,7 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 			}
 		} else {
 			s.Options.Logf("[GeminiOAuth] User provided project_id: %s, fetching tier_id...", projectID)
-			// 用户手动填了 project_id，仍需调用 LoadCodeAssist 获取 tierID
+			// A manually supplied project still needs tier discovery.
 			_, fetchedTierID, err := s.fetchProjectID(ctx, tokenResp.AccessToken, proxyURL)
 			if err != nil {
 				s.Options.Printf("[GeminiOAuth] Warning: Failed to fetch tierID: %v\n", err)
@@ -431,7 +425,7 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 		s.Options.Logf("[GeminiOAuth] Processing google_one OAuth type")
 
 		// Google One providers use cloudaicompanion API, which requires a project_id.
-		// For personal providers, Google auto-assigns a project_id via the LoadCodeAssist API.
+		// Try LoadCodeAssist and Resource Manager when a project was not supplied.
 		if projectID == "" {
 			s.Options.Logf("[GeminiOAuth] No project_id provided, attempting to fetch from LoadCodeAssist API...")
 			var err error
@@ -444,7 +438,6 @@ func (s *GeminiAuthorization) ExchangeCode(ctx context.Context, input *GeminiExc
 		}
 
 		s.Options.Logf("[GeminiOAuth] Attempting to fetch Google One tier from Drive API...")
-		// Attempt to fetch Drive storage tier
 		var storageInfo *google.DriveStorageInfo
 		var err error
 		tierID, storageInfo, err = s.fetchGoogleOneTier(ctx, tokenResp.AccessToken, proxyURL)
@@ -536,8 +529,8 @@ func (s *GeminiAuthorization) refreshToken(ctx context.Context, oauthType, refre
 
 		tokenResp, err := s.Client.RefreshToken(ctx, oauthType, refreshToken, proxyURL)
 		if err == nil {
-			// 计算过期时间：减去 5 分钟安全时间窗口（考虑网络延迟和时钟偏差）
-			// 同时设置下界保护，防止 expires_in 过小导致过去时间（引发刷新风暴）
+			// Refresh five minutes early to allow for network delay and clock skew.
+			// Keep at least 30 seconds of validity so a short expires_in does not cause a refresh loop.
 			const safetyWindow = 300 // 5 minutes
 			const minTTL = 30        // minimum 30 seconds
 			expiresAt := time.Now().Unix() + tokenResp.ExpiresIn - safetyWindow
@@ -621,11 +614,8 @@ func (s *GeminiAuthorization) RefreshProviderToken(ctx context.Context, provider
 			err = nil
 		}
 	}
-	// Backward compatibility for google_one:
-	// - New behavior: when a custom OAuth client is configured, google_one will use it.
-	// - Old behavior: google_one always used the built-in Gemini CLI OAuth client.
-	// If an existing provider was authorized with the built-in client, refreshing with the custom client
-	// will fail with "unauthorized_client". Retry with the built-in client (code_assist path forces it).
+	// A google_one refresh may fail when the token was issued to a different OAuth client.
+	// On unauthorized_client, try the built-in client through the code_assist path.
 	if err != nil && oauthType == "google_one" && strings.Contains(err.Error(), "unauthorized_client") && s.GetOAuthConfig().AIStudioOAuthEnabled {
 		if alt, altErr := s.refreshToken(ctx, "code_assist", refreshToken, proxyURL); altErr == nil {
 			tokenInfo = alt
@@ -648,14 +638,14 @@ func (s *GeminiAuthorization) RefreshProviderToken(ctx context.Context, provider
 		tokenInfo.ProjectID = existingProjectID
 	}
 
-	// 尝试从提供商凭证获取 tierID（向后兼容）
+	// Use the stored tier when discovery is unavailable.
 	existingTierID := strings.TrimSpace(provider.GetCredential("tier_id"))
 
 	// For Code Assist, project_id is required. Auto-detect if missing.
 	// For AI Studio OAuth, project_id is optional and should not block refresh.
 	switch oauthType {
 	case "code_assist":
-		// 使用默认值或当前值填充 tier_id。
+		// Use the stored canonical tier, or the standard Code Assist tier when it is missing.
 		if existingTierID != "" {
 			tokenInfo.TierID = CanonicalGeminiTierIDForOAuthType(oauthType, existingTierID)
 		}
@@ -663,7 +653,7 @@ func (s *GeminiAuthorization) RefreshProviderToken(ctx context.Context, provider
 			tokenInfo.TierID = GeminiTierGCPStandard
 		}
 
-		// 尝试自动探测 project_id 和 tier_id
+		// Discover a missing project and use its tier when available.
 		needDetect := strings.TrimSpace(tokenInfo.ProjectID) == "" || tokenInfo.TierID == ""
 		if needDetect {
 			projectID, tierID, err := s.fetchProjectID(ctx, tokenInfo.AccessToken, proxyURL)
@@ -693,7 +683,6 @@ func (s *GeminiAuthorization) RefreshProviderToken(ctx context.Context, provider
 				if updatedAt, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
 					if time.Since(updatedAt) <= 24*time.Hour {
 						needsRefresh = false
-						// Use cached tier
 						tokenInfo.TierID = canonicalExistingTier
 					}
 				}
@@ -750,19 +739,17 @@ func (s *GeminiAuthorization) BuildProviderCredentials(tokenInfo *GeminiTokenInf
 		creds["project_id"] = tokenInfo.ProjectID
 	}
 	if tokenInfo.TierID != "" {
-		// Validate tier_id before storing
 		if err := ValidateTierID(tokenInfo.TierID); err == nil {
 			creds["tier_id"] = tokenInfo.TierID
 			s.Options.Printf("[GeminiOAuth] Storing tier_id: %s\n", tokenInfo.TierID)
 		} else {
 			s.Options.Printf("[GeminiOAuth] Invalid tier_id %s: %v\n", tokenInfo.TierID, err)
 		}
-		// Silently skip invalid tier_id (don't block provider creation)
+		// Omit invalid tier IDs so they do not prevent provider creation.
 	}
 	if tokenInfo.OAuthType != "" {
 		creds["oauth_type"] = tokenInfo.OAuthType
 	}
-	// Store extra metadata (Drive info) if present
 	if len(tokenInfo.Extra) > 0 {
 		maps.Copy(creds, tokenInfo.Extra)
 	}
@@ -776,47 +763,39 @@ func (s *GeminiAuthorization) fetchProjectID(ctx context.Context, accessToken, p
 
 	loadResp, loadErr := s.CodeAssist.LoadCodeAssist(ctx, accessToken, proxyURL, nil)
 
-	// Extract tierID from response (works whether CloudAICompanionProject is set or not)
+	// Resolve the tier even when the response has no project.
 	tierID := "LEGACY"
 	if loadResp != nil {
-		// First try to get tier from currentTier/paidTier fields
 		if tier := loadResp.GetTier(); tier != "" {
 			tierID = tier
 		} else {
-			// Fallback to extracting from allowedTiers
 			tierID = ExtractTierIDFromAllowedTiers(loadResp.AllowedTiers)
 		}
 	}
 
-	// If LoadCodeAssist returned a project, use it
 	if loadErr == nil && loadResp != nil && strings.TrimSpace(loadResp.CloudAICompanionProject) != "" {
 		return strings.TrimSpace(loadResp.CloudAICompanionProject), tierID, nil
 	}
 
-	// 按 Gemini CLI 的方式处理已注册用户。
-	// 当 LoadCodeAssist 返回了 currentTier / paidTier（表示提供商已注册）但没有返回 cloudaicompanionProject 时：
-	// - 不要再调用 onboardUser（通常不会再分配 project_id，且可能触发 INVALID_ARGUMENT）
-	// - 先尝试从 Cloud Resource Manager 获取可用项目；仍失败则提示用户手动填写 project_id
+	// A registered tier with no project skips onboarding, which may return INVALID_ARGUMENT.
+	// Try Resource Manager, then ask the caller to supply a project ID if discovery fails.
 	if loadResp != nil {
 		registeredTierID := strings.TrimSpace(loadResp.GetTier())
 		if registeredTierID != "" {
-			// 已注册但未返回 cloudaicompanionProject，这在 Google One 用户中较常见：需要用户自行提供 project_id。
 			s.Options.Logf("[GeminiOAuth] User has tier (%s) but no cloudaicompanionProject, trying Cloud Resource Manager...", registeredTierID)
 
-			// Try to get project from Cloud Resource Manager
 			fallback, fbErr := s.Options.FetchProject(ctx, accessToken, proxyURL)
 			if fbErr == nil && strings.TrimSpace(fallback) != "" {
 				s.Options.Logf("[GeminiOAuth] Found project from Cloud Resource Manager: %s", fallback)
 				return strings.TrimSpace(fallback), tierID, nil
 			}
 
-			// No project found - user must provide project_id manually
 			s.Options.Logf("[GeminiOAuth] No project found from Cloud Resource Manager, user must provide project_id manually")
 			return "", tierID, fmt.Errorf("user is registered (tier: %s) but no project_id available. Please provide Project ID manually in the authorization form, or create a project at https://console.cloud.google.com", registeredTierID)
 		}
 	}
 
-	// 未检测到 currentTier/paidTier，视为新用户，继续调用 onboardUser
+	// Without currentTier or paidTier, try onboarding as a new user.
 	s.Options.Logf("[GeminiOAuth] No currentTier/paidTier found, proceeding with onboardUser (tierID: %s)", tierID)
 
 	req := &geminiwire.OnboardUserRequest{
@@ -870,7 +849,7 @@ func (s *GeminiAuthorization) fetchProjectID(ctx context.Context, accessToken, p
 	return "", tierID, fmt.Errorf("onboardUser timeout after %d attempts", maxAttempts)
 }
 
-// RefreshToken 单独刷新和 Drive 查询也纳入统一停止等待；嵌套调用复用所属外层操作。
+// RefreshToken registers the refresh for shutdown waiting; nested calls reuse the outer operation.
 func (s *GeminiAuthorization) RefreshToken(ctx context.Context, kind, token, proxy string) (*GeminiTokenInfo, error) {
 	operation, done, err := s.activity.begin(ctx, errors.New("gemini authorization is stopped"))
 	if err != nil {
@@ -889,7 +868,7 @@ func (s *GeminiAuthorization) FetchGoogleOneTier(ctx context.Context, token, pro
 	return s.fetchGoogleOneTier(operation, token, proxy)
 }
 
-// FetchProject 供请求侧自动发现使用，仍由同一授权拥有者停止和等待。
+// FetchProject discovers a project for request-time callers and registers the work for shutdown waiting.
 func (s *GeminiAuthorization) FetchProject(ctx context.Context, token, proxy string) (string, string, error) {
 	operation, done, err := s.activity.begin(ctx, errors.New("gemini authorization is stopped"))
 	if err != nil {

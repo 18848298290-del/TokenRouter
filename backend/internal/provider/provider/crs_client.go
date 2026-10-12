@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// CRSClientOptions 保存 CRS 连接所需的参数。
+// CRSClientOptions configures URL trust checks for CRS connections.
 type CRSClientOptions struct {
 	Configured, AllowlistEnabled, AllowInsecureHTTP, AllowPrivateHosts bool
 	Hosts                                                              []string
@@ -37,7 +37,7 @@ func NewCRSClient(options CRSClientOptions) *CRSClient {
 	return &CRSClient{options: options}
 }
 
-// Fetch 按原顺序校验连接、登录并读取导出；同步与预览共用此技术实现。
+// Fetch validates the URL, logs in, and reads the provider export for synchronization or preview.
 func (s *CRSClient) Fetch(ctx context.Context, baseURL, username, password string) (*transfer.CRSExportResponse, error) {
 	if !s.options.Configured {
 		return nil, errors.New("config is not available")
@@ -78,7 +78,7 @@ func (s *CRSClient) Fetch(ctx context.Context, baseURL, username, password strin
 }
 
 func NormalizeCRSBaseURL(raw string, allowlist []string, allowPrivate bool) (string, error) {
-	// 当 allowlist 为空时，不强制要求白名单（只进行基本的 URL 和 SSRF 验证）
+	// An empty allowlist keeps URL and SSRF validation but permits any otherwise valid host.
 	requireAllowlist := len(allowlist) > 0
 	normalized, err := urlvalidator.ValidateHTTPSURL(raw, urlvalidator.ValidationOptions{
 		AllowedHosts:     allowlist,

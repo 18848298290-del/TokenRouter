@@ -1,6 +1,7 @@
 package middleware
 
-// 本文件覆盖 gateway/httpapi/authorization.go、apikey/httpapi/authenticate.go 与 ingress_reject.go 的认证、订阅准入和拒绝标记。
+// These tests cover authentication, subscription admission, and rejection markers in
+// gateway/httpapi/authorization.go, apikey/httpapi/authenticate.go, and ingress_reject.go.
 
 import (
 	"context"
@@ -76,7 +77,7 @@ type stubUserSubscriptionRepo struct {
 	resetMonthly   func(ctx context.Context, id int64, start time.Time) error
 }
 
-// subscriptionAuthGroups 为未配置分组来源的测试返回空查询结果。
+// subscriptionAuthGroups returns empty group results for authentication fixtures without a group source.
 type subscriptionAuthGroups struct{}
 
 func TestGoogleAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
@@ -676,7 +677,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
 }
 
 func TestApiKeyAuthWithSubscriptionGoogle_BalanceBelowMinimumReserve(t *testing.T) {
-	// MinimumBalanceReserve 用于 billing-cache 预检，余额大于零时可通过鉴权。
+	// MinimumBalanceReserve applies to billing-cache prechecks; authentication accepts a positive balance.
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
 		getByKey: func(ctx context.Context, key string) (*apikey.APIKey, error) {
@@ -1122,7 +1123,6 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 		select {
 		case <-maintenanceCalled:
-			// ok
 		case <-time.After(time.Second):
 			t.Fatalf("expected maintenance to complete before response")
 		}
@@ -1180,11 +1180,11 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 
 	t.Run("旧配置仍检查配额", func(t *testing.T) {
 		t.Setenv("RUN_MODE", "simple")
-		// Key 配额耗尽时，请求在调用上游前被拒绝。
+		// An exhausted key quota rejects the request before upstream execution.
 		originalQuota, originalUsed := apiKey.Quota, apiKey.QuotaUsed
 		apiKey.Quota, apiKey.QuotaUsed = 1, 1
 		defer func() { apiKey.Quota, apiKey.QuotaUsed = originalQuota, originalUsed }()
-		// 当前用例使用余额支付。
+		// Use balance funding for this case.
 		originalBillingMode := apiKey.BillingMode
 		apiKey.BillingMode = apikey.APIKeyBillingModeBalance
 		defer func() { apiKey.BillingMode = originalBillingMode }()
@@ -1203,7 +1203,7 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 	})
 
 	t.Run("接受小写Bearer凭据", func(t *testing.T) {
-		// 当前用例使用余额支付。
+		// Use balance funding for this case.
 		originalBillingMode := apiKey.BillingMode
 		apiKey.BillingMode = apikey.APIKeyBillingModeBalance
 		defer func() { apiKey.BillingMode = originalBillingMode }()
@@ -2069,7 +2069,8 @@ func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	req.Header.Set("x-api-key", apiKey.Key)
 	router.ServeHTTP(w, req)
 
-	// 分组停用时，Ops fallback key 包含用户和分组。平台在选定提供商后记录。
+	// A disabled group's Ops fallback key includes the user and group; platform is recorded after provider
+	// selection.
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "GROUP_DISABLED")
 	require.True(t, fallbackOK, "鉴权早退时也应写入 ops fallback api key")
@@ -2244,7 +2245,7 @@ func TestRequireGroupAssignmentMarksUngroupedKeyBusinessLimited(t *testing.T) {
 	require.Equal(t, gatewayhttp.OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned, businessLimitedReason)
 }
 
-// TestAPIKeyAuthUsesExplicitUnavailableFallback 检查不可用回退使用配置的目标分组。
+// TestAPIKeyAuthUsesExplicitUnavailableFallback checks the configured fallback group for an unavailable group.
 func TestAPIKeyAuthUsesExplicitUnavailableFallback(t *testing.T) {
 	for _, explicit := range []bool{true, false} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
@@ -2834,7 +2835,7 @@ func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	req.Header.Set("x-api-key", apiKey.Key)
 	router.ServeHTTP(w, req)
 
-	// MinimumBalanceReserve 用于 billing-cache 预检，余额大于零时可通过鉴权。
+	// MinimumBalanceReserve applies to billing-cache prechecks; authentication accepts a positive balance.
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -3117,7 +3118,7 @@ func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
 	require.Equal(t, uint64(1), svc.InvalidAuthAbuseHealth().Recorded)
 }
 
-// APIKeyAuthGoogle 为 API Key 认证返回 Google 格式的错误响应。
+// APIKeyAuthGoogle returns Google-format API-key authentication errors.
 func APIKeyAuthGoogle(apiKeyService *apikey.APIKeyService, cfg *config.Config) gin.HandlerFunc {
 	return APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, cfg)
 }
@@ -3711,7 +3712,7 @@ func (r *stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context)
 	return 0, errors.New("not implemented")
 }
 
-// bindAuthTestGroup 为认证、额度和缓存测试绑定启用分组。
+// bindAuthTestGroup attaches an active group for authentication, quota, and cache tests.
 func bindAuthTestGroup(key *apikey.APIKey) *apikey.APIKey {
 	group := &routing.Group{ID: 9001, Name: "explicit-test-group", Status: billingcore.StatusActive, Hydrated: true, RateMultiplier: 1}
 	key.GroupID = &group.ID
@@ -3725,7 +3726,7 @@ func isAPIKeyNonConsumingRequest(method, path string) bool {
 
 func abortTeamAPIKeyError(c *gin.Context, err error) bool { return keyhttp.AbortTeamError(c, err) }
 
-// RequireGroupAssignment 将测试 context 中的 Key 数据传给网关分组门禁。
+// RequireGroupAssignment passes test-context key data to the gateway's group admission check.
 func RequireGroupAssignment(writeError gatewayhttp.GatewayErrorWriter) gin.HandlerFunc {
 	return gatewayhttp.RequireGroupAssignment(gatewayhttp.GroupAssignmentOptions{Access: func(c *gin.Context) gatewayhttp.GroupAssignmentAccess {
 		key, ok := keyhttp.GetAPIKeyFromContext(c)
@@ -3765,7 +3766,7 @@ func (subscriptionAuthGroups) GetByIDLite(context.Context, int64) (*billingcore.
 	return nil, nil
 }
 
-// newSubscriptionAuthFixture 为认证测试构造订阅服务。
+// newSubscriptionAuthFixture constructs the subscription service used by authentication tests.
 func newSubscriptionAuthFixture(repo billingcore.UserSubscriptionRepository) *billingcore.SubscriptionService {
 	return billingcore.NewSubscriptionService(subscriptionAuthGroups{}, repo, billingpostgres.NewSubscriptionMutations(nil))
 }

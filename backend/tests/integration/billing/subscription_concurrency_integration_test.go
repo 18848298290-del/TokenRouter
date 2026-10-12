@@ -14,7 +14,7 @@ import (
 	billingpostgres "github.com/TokenFlux/TokenRouter/internal/billing/postgres"
 )
 
-// 只暂停真实仓储的首次读取，让另一个管理员同时延长同一条时间链。
+// pausedSubscriptionRead pauses the first repository read so another administrator can extend the same renewal chain.
 type pausedSubscriptionRead struct {
 	billing.UserSubscriptionRepository
 	read, release chan struct{}

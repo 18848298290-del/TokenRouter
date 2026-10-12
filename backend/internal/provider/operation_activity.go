@@ -16,7 +16,8 @@ type operationActivity struct {
 	stopErr  error
 }
 
-// begin 将排队与交换纳入同一生命周期，正常运行时仍沿用调用方取消策略。
+// begin tracks an operation through completion and links cancellation to its parent and shutdown.
+// The caller must invoke the returned finish function exactly once.
 func (state *operationActivity) begin(parent context.Context, stoppedError error) (context.Context, func(), error) {
 	if err := parent.Err(); err != nil {
 		return nil, nil, err
@@ -48,7 +49,7 @@ func (state *operationActivity) begin(parent context.Context, stoppedError error
 	}, nil
 }
 
-// stop 停止新认领并取消等待和交换；本次停止结果固定，超时不能报告已排空。
+// stop rejects new operations, cancels active work, and retains the first shutdown result, including timeout.
 func (state *operationActivity) stop(ctx context.Context, label string) error {
 	if state == nil {
 		return nil

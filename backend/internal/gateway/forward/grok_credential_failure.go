@@ -22,7 +22,7 @@ const (
 	GrokCredentialReasonFailoverTimeout    GatewayFailureReason = "grok_oauth_failover_timeout"
 )
 
-// GrokCredentialFailure 是本次凭据获取的分类，不序列化凭据或控制状态。
+// GrokCredentialFailure classifies a credential acquisition failure; its fields are excluded from JSON.
 type GrokCredentialFailure struct {
 	Scope     GatewayFailureScope  `json:"-"`
 	Reason    GatewayFailureReason `json:"-"`
@@ -33,7 +33,7 @@ type GrokCredentialFailure struct {
 	snapshot  *providercore.CredentialMutationSnapshot
 }
 
-// ClassifyGrokCredentialFailure 按原因顺序检查代理是否存在及错误链，返回凭据失败分类。
+// ClassifyGrokCredentialFailure classifies the error chain and proxy context in precedence order.
 func ClassifyGrokCredentialFailure(hasProxy bool, err error) GrokCredentialFailure {
 	stableReason := strings.ToLower(strings.TrimSpace(apperror.Reason(err)))
 	message := ""
@@ -57,8 +57,8 @@ func ClassifyGrokCredentialFailure(hasProxy bool, err error) GrokCredentialFailu
 	case contains("invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_reused", "refresh_token_invalidated", "app_session_terminated"):
 		return GrokCredentialFailure{Scope: GatewayFailureScopeProvider, Reason: GrokCredentialReasonRevoked, Action: NextProviderRetry, Permanent: true, Message: "Grok OAuth credentials require provider action"}
 	case contains("spending limit", "run out of credits", "out of credits", "credits exhausted", "included free usage"):
-		// 账单限额与滚动免费额度耗尽无需更换 OAuth 凭证即可恢复。
-		// 将刷新失败视为临时故障，使提供商之后仍可再次探测额度。
+		// Billing limits and rolling free quotas can recover without replacing credentials.
+		// Mark exhaustion transient so later attempts can probe quota again.
 		return GrokCredentialFailure{Scope: GatewayFailureScopeProvider, Reason: GrokCredentialReasonRefreshTransient, Action: NextProviderRetry, Transient: true, Message: "Grok OAuth billing quota is temporarily exhausted"}
 	case contains("grok_oauth_entitlement_denied", "entitlement_denied", "access_denied", "subscription required", "no active grok subscription"):
 		return GrokCredentialFailure{Scope: GatewayFailureScopeProvider, Reason: GrokCredentialReasonEntitlement, Action: NextProviderRetry, Permanent: true, Message: "Grok OAuth entitlement requires provider action"}
@@ -90,10 +90,10 @@ func ClassifyGrokCredentialFailure(hasProxy bool, err error) GrokCredentialFailu
 	}
 }
 
-// SetSnapshot 绑定本次持久化比较快照，保持私有且不参与 JSON。
+// SetSnapshot retains the comparison snapshot for conditional persistence; it is excluded from JSON.
 func (f *GrokCredentialFailure) SetSnapshot(snapshot *providercore.CredentialMutationSnapshot) {
 	f.snapshot = snapshot
 }
 
-// Snapshot 返回本次状态写入所需的数据。
+// Snapshot returns the retained state-comparison data.
 func (f GrokCredentialFailure) Snapshot() *providercore.CredentialMutationSnapshot { return f.snapshot }

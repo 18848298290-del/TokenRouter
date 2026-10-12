@@ -41,7 +41,8 @@ type fallbackSubscriptionRepository struct {
 	value *billing.UserSubscription
 }
 
-// 测试用存储替身提供数据，目标组授权、订阅覆盖和会话隔离由生产用例执行。
+// Test stores supply data; production operations enforce target-group authorization, subscription coverage, and
+// session isolation.
 type fallbackIsolationCache struct {
 	session.GatewayCache
 	ownerID, userID int64
@@ -179,7 +180,8 @@ func (r *clientFallbackRPM) Check(context.Context, *scheduler.RPMUser, *schedule
 	return nil
 }
 
-// TestClientGroupFallbackAuthorizesWholeChain 检查每一跳的授权和协议校验，最终入口才计 RPM，被拒绝时共享 Key 保持不变。
+// TestClientGroupFallbackAuthorizesWholeChain checks every hop, defers RPM accounting to the final handler, and
+// leaves the shared key unchanged on rejection.
 func TestClientGroupFallbackAuthorizesWholeChain(t *testing.T) {
 	for _, outcome := range []string{"allowed", "exclusive", "protocol", "subscription", "cycle", "composite", "missing_target"} {
 		t.Run(outcome, func(t *testing.T) {

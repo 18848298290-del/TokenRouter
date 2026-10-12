@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestUsageRecoveryDatabaseIdentity 验证用真实数据库检查迟到用量恢复的行身份、错误条件和原尽力 outbox 行为。
+// TestUsageRecoveryDatabaseIdentity checks that late recovery matches the observed identity and error state.
+// A rename remains eligible, and an outbox failure does not undo recovery.
 func TestUsageRecoveryDatabaseIdentity(t *testing.T) {
 	for _, change := range []string{"none", "name", "credentials", "status", "error", "proxy", "cancelled", "outbox_failure"} {
 		t.Run(change, func(t *testing.T) {

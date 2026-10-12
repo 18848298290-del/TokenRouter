@@ -34,7 +34,7 @@ func TestStopCancelsWarmup(t *testing.T) {
 	require.True(t, repo.cancelled.Load())
 }
 
-// TestStopBudget 检查后续 Stop 返回阻塞操作产生的同一个超时错误。
+// TestStopBudget checks that later Stop calls return the same timeout from a blocked operation.
 func TestStopBudget(t *testing.T) {
 	s := runtimeBackup(&runtimeSettings{}, &runtimeArchive{})
 	_, done, err := s.begin(context.Background())
@@ -47,7 +47,7 @@ func TestStopBudget(t *testing.T) {
 	done()
 }
 
-// TestStoredCronFailureDegrades 检查无效 cron 配置下服务仍能完成启动和停止。
+// TestStoredCronFailureDegrades checks that invalid stored cron settings still permit startup and shutdown.
 func TestStoredCronFailureDegrades(t *testing.T) {
 	repo := &runtimeSettings{values: map[string]string{settingKeyBackupSchedule: `{"enabled":true,"cron_expr":"not-a-cron"}`}}
 	s := runtimeBackup(repo, &runtimeArchive{})
@@ -55,7 +55,7 @@ func TestStoredCronFailureDegrades(t *testing.T) {
 	require.NoError(t, s.StopContext(context.Background()))
 }
 
-// TestCleanupUsesShutdownBudget 检查停机时限能够取消已经开始的清理。
+// TestCleanupUsesShutdownBudget checks that shutdown cancels cleanup already in progress.
 func TestCleanupUsesShutdownBudget(t *testing.T) {
 	s := runtimeBackup(&runtimeSettings{}, &runtimeArchive{})
 	cleanup, cancelCleanup := s.cleanupContext(time.Hour)

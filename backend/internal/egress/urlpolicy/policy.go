@@ -19,12 +19,12 @@ type ValidationOptions struct {
 
 // ValidateHTTPURL validates an outbound HTTP/HTTPS URL.
 //
-// It provides a single validation entry point that supports:
-// - scheme 校验（https 或可选允许 http）
-// - 可选 allowlist（支持 *.example.com 通配）
-// - allow_private_hosts 策略（阻断 localhost/私网字面量 IP）
+// Validation covers:
+// - HTTPS, with HTTP allowed when configured.
+// - Optional host allowlists, including *.example.com patterns.
+// - Private-host policy for localhost and IP literals.
 //
-// 注意：DNS Rebinding 防护（解析后 IP 校验）应在实际发起请求时执行，避免 TOCTOU。
+// DNS results require separate connection-time validation; this function does not resolve hosts.
 func ValidateHTTPURL(raw string, allowInsecureHTTP bool, opts ValidationOptions) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -70,7 +70,7 @@ func ValidateHTTPURL(raw string, allowInsecureHTTP bool, opts ValidationOptions)
 }
 
 func ValidateURLFormat(raw string, allowInsecureHTTP bool) (string, error) {
-	// 检查 URL 能否解析及 scheme 是否有效。
+	// Check URL syntax and the permitted scheme.
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", errors.New("url is required")
@@ -105,9 +105,8 @@ func ValidateHTTPSURL(raw string, opts ValidationOptions) (string, error) {
 	return ValidateHTTPURL(raw, false, opts)
 }
 
-// ValidateResolvedIP 验证 DNS 解析后的 IP 地址是否安全
-// 用于防止 DNS Rebinding 攻击：在实际 HTTP 请求时调用此函数验证解析后的 IP
-
+// NormalizeAllowlist trims and lowercases entries and removes ports when SplitHostPort accepts them.
+// Empty entries are omitted.
 func NormalizeAllowlist(values []string) []string {
 	if len(values) == 0 {
 		return nil
@@ -145,8 +144,8 @@ func IsAllowedHost(host string, allowlist []string) bool {
 	return false
 }
 
-// IsBlockedHost 报告 host 是否为 localhost 或内网地址字面量。
-// 域名解析结果由 ValidateResolvedIP 在实际请求前单独校验。
+// IsBlockedHost reports whether host is localhost or a nonpublic IP literal.
+// Callers validate resolved DNS addresses separately when sending requests.
 func IsBlockedHost(host string) bool {
 	return blockedHost(strings.ToLower(strings.TrimSpace(host)))
 }

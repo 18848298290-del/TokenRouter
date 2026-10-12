@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCurrentSnapshotDropsRetiredFields 验证旧快照必须经过版本门禁拒绝；新字段的序列化对照使用明确转换的测试报文。
+// TestCurrentSnapshotDropsRetiredFields rejects old versions and compares explicitly migrated fixtures with current serialization.
 func TestCurrentSnapshotDropsRetiredFields(t *testing.T) {
 	for _, kind := range []string{"full", "empty"} {
 		t.Run(kind, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestCurrentSnapshotDropsRetiredFields(t *testing.T) {
 	}
 }
 
-// migrateSnapshotPricingFields 只转换测试期望，生产代码始终重新加载过期的认证快照。
+// migrateSnapshotPricingFields updates test expectations; production reloads obsolete snapshots.
 func migrateSnapshotPricingFields(value any) {
 	switch node := value.(type) {
 	case map[string]any:

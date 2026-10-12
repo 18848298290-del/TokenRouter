@@ -8,10 +8,10 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-// MaxForwardedClientIPHeaders 是自定义客户端地址 Header 的数量上限。
+// MaxForwardedClientIPHeaders limits custom client-address header names.
 const MaxForwardedClientIPHeaders = 16
 
-// NormalizeForwardedClientIPHeaders 规范并去重请求头名称，检查允许使用的名称。
+// NormalizeForwardedClientIPHeaders validates, canonicalizes, and deduplicates names in order.
 func NormalizeForwardedClientIPHeaders(headers []string) ([]string, error) {
 	normalized := make([]string, 0, len(headers))
 	seen := make(map[string]struct{}, len(headers))

@@ -18,16 +18,16 @@ const (
 
 var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
 
-// SelectionProblemKind 区分持久配置缺失和暂时容量问题，不决定 HTTP 状态码。
+// SelectionProblemKind distinguishes missing model configuration from temporary capacity failures.
 type SelectionProblemKind uint8
 
-// SelectionProblem 保存可返回客户端的错误消息，模型诊断使用客户端可见的模型名。
+// SelectionProblem contains a client-facing message using the model name visible to the client.
 type SelectionProblem struct {
 	Kind    SelectionProblemKind
 	Message string
 }
 
-// DiagnoseSelection 查询分组中的模型配置，模型或分组缺失时直接返回暂不可用。
+// DiagnoseSelection checks model support in a group. Missing group or model input yields temporary unavailability.
 func DiagnoseSelection(ctx context.Context, diag routing.ModelAvailabilityDiagnoser, groupID *int64, routingModel, displayModel, platform string) SelectionProblem {
 	fallback := SelectionProblem{Kind: SelectionUnavailable, Message: "Service temporarily unavailable"}
 	routingModel = strings.TrimSpace(routingModel)
@@ -45,7 +45,7 @@ func DiagnoseSelection(ctx context.Context, diag routing.ModelAvailabilityDiagno
 	return fallback
 }
 
-// RefineSelectionFailure 优先返回模型配置诊断，否则根据调度器的限流计数细化错误。
+// RefineSelectionFailure retains model-configuration errors, otherwise refining failures from scheduler rate-limit counts.
 func RefineSelectionFailure(err error, fallback SelectionProblem) SelectionProblem {
 	if err == nil || fallback.Kind == SelectionModelNotFound {
 		return fallback

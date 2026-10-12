@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// BackupPart describes a gzip archive segment with a one-based index and optional SHA-256 digest.
 type BackupPart struct {
 	Index      int    `json:"index"`
 	StorageKey string `json:"storage_key,omitempty"`
@@ -15,6 +16,7 @@ type BackupPart struct {
 	SHA256     string `json:"sha256,omitempty"`
 }
 
+// OrderedBackupParts returns a sorted copy and rejects gaps, empty storage keys, and nonpositive sizes.
 func OrderedBackupParts(parts []BackupPart) ([]BackupPart, error) {
 	if len(parts) == 0 {
 		return nil, errors.New("backup parts are empty")
@@ -29,7 +31,7 @@ func OrderedBackupParts(parts []BackupPart) ([]BackupPart, error) {
 	return ordered, nil
 }
 
-// BackupPartStorageKey 优先返回 StorageKey，为空时兼容读取 S3Key。
+// BackupPartStorageKey returns StorageKey, falling back to the legacy S3Key when empty.
 func BackupPartStorageKey(part BackupPart) string {
 	if strings.TrimSpace(part.StorageKey) != "" {
 		return strings.TrimSpace(part.StorageKey)

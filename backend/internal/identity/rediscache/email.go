@@ -161,7 +161,7 @@ func (c *emailCache) IncrNotifyCodeUserRate(ctx context.Context, userID int64, w
 	if err != nil {
 		return 0, err
 	}
-	// Always set TTL (idempotent) to avoid orphan keys if process crashes between INCR and EXPIRE.
+	// Refresh the expiry after each increment, including when an earlier call left the key without a TTL.
 	if err := c.rdb.Expire(ctx, key, window).Err(); err != nil {
 		return count, fmt.Errorf("expire notify code rate key: %w", err)
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminSettings 包含推广资格开关和返利比例配置。
+// AdminSettings contains promotion switches and rebate configuration.
 type AdminSettings struct {
 	PromoCodeEnabled             bool    `json:"promo_code_enabled"`
 	InvitationCodeEnabled        bool    `json:"invitation_code_enabled"`
@@ -20,7 +20,7 @@ type AdminSettings struct {
 	AdminRechargeRebateEnabled   bool    `json:"affiliate_admin_recharge_enabled"`
 }
 
-// NormalizeAdminSettings 保留已有上限、下限和返利比例规则。
+// NormalizeAdminSettings clamps rebate rates and applies duration, freeze, and cap limits.
 func NormalizeAdminSettings(value AdminSettings) AdminSettings {
 	value.AffiliateRebateRate = ClampRebateRate(value.AffiliateRebateRate)
 	if value.AffiliateRebateFreezeHours < 0 {
@@ -42,7 +42,7 @@ func NormalizeAdminSettings(value AdminSettings) AdminSettings {
 	return value
 }
 
-// PrepareAdminSettings 使用原八位小数格式生成持久值，不执行推广副作用。
+// PrepareAdminSettings normalizes settings and formats persisted decimal values to eight places.
 func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string) {
 	value = NormalizeAdminSettings(value)
 	return value, map[string]string{
@@ -57,7 +57,7 @@ func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string
 	}
 }
 
-// SettingsParticipant 准备请求中提供的推广字段，省略字段时保留已存值。
+// SettingsParticipant prepares supplied promotion fields and leaves omitted values in storage unchanged.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"promo_code_enabled", "invitation_code_enabled", "affiliate_enabled", "affiliate_rebate_rate", "affiliate_rebate_freeze_hours", "affiliate_rebate_duration_days", "affiliate_rebate_per_invitee_cap", "affiliate_admin_recharge_enabled"}
 	keys := []string{SettingKeyPromoCodeEnabled, SettingKeyInvitationCodeEnabled, SettingKeyAffiliateEnabled, SettingKeyAffiliateRebateRate, SettingKeyAffiliateRebateFreezeHours, SettingKeyAffiliateRebateDurationDays, SettingKeyAffiliateRebatePerInviteeCap, SettingKeyAffiliateAdminRechargeEnabled}

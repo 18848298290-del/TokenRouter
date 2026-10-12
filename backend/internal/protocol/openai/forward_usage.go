@@ -4,7 +4,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ForwardUsage 保存 OpenAI 响应的 token 和缓存用量。
+// ForwardUsage holds token and cache usage from OpenAI responses.
 type ForwardUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
@@ -41,7 +41,7 @@ func AddForwardUsage(dst *ForwardUsage, usage ForwardUsage) {
 	dst.ImageOutputTokens += usage.ImageOutputTokens
 }
 
-// ExtractEmbeddingsUsage 读取 Embeddings 响应中的输入、输出和缓存 token 用量。
+// ExtractEmbeddingsUsage reads input, output, and cache token counts from an Embeddings response.
 func ExtractEmbeddingsUsage(body []byte) ForwardUsage {
 	usage := gjson.GetBytes(body, "usage")
 	if !usage.Exists() || !usage.IsObject() {
@@ -58,7 +58,7 @@ func ExtractEmbeddingsUsage(body []byte) ForwardUsage {
 	)
 	cacheReadTokens := OpenAICacheReadTokensFromUsage(usage)
 	cacheCreationTokens := OpenAICacheCreationTokensFromUsage(usage)
-	// 多模态 embedding 会返回图文 token 拆分，用于图文不同价计费。
+	// Multimodal embeddings can report image tokens separately for image and text pricing.
 	imageInputTokens := FirstPositiveGJSONInt(
 		usage.Get("prompt_tokens_details.image_tokens"),
 		usage.Get("input_tokens_details.image_tokens"),
@@ -72,7 +72,7 @@ func ExtractEmbeddingsUsage(body []byte) ForwardUsage {
 	}
 }
 
-// MergeImageResponseUsage 将图片响应中的非零用量写入汇总。
+// MergeImageResponseUsage updates the aggregate with positive token counts from an image response.
 func MergeImageResponseUsage(dst *ForwardUsage, body []byte) {
 	if dst == nil {
 		return

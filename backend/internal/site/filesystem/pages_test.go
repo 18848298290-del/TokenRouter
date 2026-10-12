@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// TestLocalizedPageFiles 覆盖正文实际语言、图片目录、公共回退及目录外符号链接。
+// TestLocalizedPageFiles covers resolved content language, localized and shared images, and symlinks outside
+// the root.
 func TestLocalizedPageFiles(t *testing.T) {
 	root := t.TempDir()
 	files := New(root)
@@ -48,7 +49,7 @@ func TestLocalizedPageFiles(t *testing.T) {
 	require.ErrorIs(t, err, site.ErrPageNotFound)
 }
 
-// TestMarkdownRootAndSize 检查页面正文的大小上限，以及根目录内外符号链接的读取结果。
+// TestMarkdownRootAndSize checks size limits and symlinks inside and outside the pages root.
 func TestMarkdownRootAndSize(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)

@@ -14,7 +14,7 @@ import (
 
 const
 
-// fail-open 告警限频，避免代理故障期间刷屏。
+// Limit repeated fail-open warnings during a proxy outage.
 openAIProxyStreamFailOpenLogInterval = 5 * time.Second
 
 func openAIProxyStreamCircuitProxyID(provider *gatewayprovider.ExecutionProvider) (int64, bool) {
@@ -25,7 +25,7 @@ func openAIProxyStreamCircuitProxyID(provider *gatewayprovider.ExecutionProvider
 }
 
 func withOpenAIProxyStreamQuarantineBypass(ctx context.Context) context.Context {
-	// 父 context 为 nil 时 panic，派生 attempt 使用独立的执行提示副本。
+	// A nil parent panics; a derived attempt receives its own execution-hints value.
 	if ctx == nil {
 		panic("cannot create context from nil parent")
 	}
@@ -53,7 +53,7 @@ func (s *Compatible) isOpenAIProxyStreamQuarantined(ctx context.Context, provide
 	return circuit != nil && circuit.IsBlocked(proxyID, time.Now())
 }
 
-// logOpenAIProxyStreamQuarantineFailOpen 对重新放行隔离代理的告警做进程内限频。
+// logOpenAIProxyStreamQuarantineFailOpen rate-limits warnings per selector when quarantine is bypassed.
 func (s *Compatible) logOpenAIProxyStreamQuarantineFailOpen(requestedModel string, blockedProxies int) {
 	now := time.Now().UnixNano()
 	last := s.proxyFailOpenLogAt.Load()

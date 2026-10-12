@@ -22,7 +22,7 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
-// adminUserFixture 提供身份管理测试的用户操作和 Key 列表。
+// adminUserFixture supplies user operations and key listings for handler tests.
 type adminUserFixture struct {
 	UserAdministration
 	users                []identity.User
@@ -37,7 +37,7 @@ type adminUserFixture struct {
 	}
 }
 
-// adminUserStub 提供用户列表、查询和写入的测试数据。
+// adminUserStub supplies user lists and records query and update inputs.
 type adminUserStub struct {
 	UserAdministration
 	users         []identity.User
@@ -63,7 +63,7 @@ type getByIDAdminStub struct {
 	UserAdministration
 }
 
-// listUsersFilterStub 记录 ListUsers 收到的筛选条件，其他方法由 adminUserStub 提供。
+// listUsersFilterStub records the filters supplied to ListUsers.
 type listUsersFilterStub struct {
 	UserAdministration
 	captured identity.UserListFilters
@@ -74,7 +74,7 @@ func TestTruncateSearchByRune(t *testing.T) {
 		name     string
 		input    string
 		maxRunes int
-		wantLen  int // 期望的 rune 长度
+		wantLen  int // Expected rune count.
 	}{
 		{
 			name:     "纯中文超长",
@@ -117,7 +117,7 @@ func TestTruncateSearchByRune(t *testing.T) {
 }
 
 func TestTruncateSearchByRune_PreservesMultibyte(t *testing.T) {
-	// 101 个中文字符按 rune 截断到 100 个，结果仍为有效 UTF-8。
+	// Truncating 101 Chinese characters to 100 runes must retain valid UTF-8.
 	input := ""
 	for range 101 {
 		input += "中"
@@ -125,12 +125,12 @@ func TestTruncateSearchByRune_PreservesMultibyte(t *testing.T) {
 	result := captureTruncatedAdminSearch(t, input, 100)
 
 	require.Equal(t, 100, len([]rune(result)))
-	// 每个中文字符占 3 字节。
+	// Each character in this fixture occupies three bytes.
 	require.Equal(t, 300, len(result))
 }
 
 func TestTruncateSearchByRune_MixedASCIIAndMultibyte(t *testing.T) {
-	// 50 个 ASCII + 51 个中文 = 101 个 rune
+	// 50 ASCII characters plus 51 Chinese characters produce 101 runes.
 	input := ""
 	for range 50 {
 		input += "a"
@@ -142,7 +142,7 @@ func TestTruncateSearchByRune_MixedASCIIAndMultibyte(t *testing.T) {
 
 	runes := []rune(result)
 	require.Equal(t, 100, len(runes))
-	// 前 50 个字符为 a，后 50 个字符为中。
+	// The first 50 retained runes are ASCII and the remaining 50 are Chinese.
 	require.Equal(t, 'a', runes[0])
 	require.Equal(t, 'a', runes[49])
 	require.Equal(t, '中', runes[50])
@@ -513,7 +513,7 @@ func TestCreateRegularUserSkipsStepUp(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// captureTruncatedAdminSearch 通过管理路由记录截断后的搜索输入。
+// captureTruncatedAdminSearch records the search value passed through the administrator route.
 func captureTruncatedAdminSearch(t *testing.T, search string, maxRunes int) string {
 	t.Helper()
 	require.Equal(t, 100, maxRunes)
@@ -699,7 +699,7 @@ func (s *adminUserStub) UpdateUser(_ context.Context, id int64, _ *identity.Upda
 	return &identity.User{ID: id, Email: "updated@example.com", Status: identity.StatusActive}, nil
 }
 
-// newAdminUserTestHandler 构造启用 step-up 检查的测试处理器，缺少认证主体时拒绝请求。
+// newAdminUserTestHandler enables step-up checks that reject requests without an authenticated principal.
 func newAdminUserTestHandler(users UserAdministration) *AdminUserHandler[struct{}] {
 	return NewAdminUserHandler[struct{}](users, nil, nil, func(c *gin.Context) bool {
 		return EnforceStepUp(c, nil, nil, nil)
@@ -767,13 +767,13 @@ func (s *listUsersFilterStub) ListUsers(_ context.Context, _, _ int, filters ide
 	return []identity.User{}, 0, nil
 }
 
-// setupRoleStepUpRouter 注册创建和修改用户的测试路由。
-// 路由缺少认证上下文，触发二次验证时返回 401，进入业务处理时返回 200。
+// setupRoleStepUpRouter registers user creation and update routes.
+// Missing authentication context produces 401 during step-up; accepted operations return 200.
 func setupRoleStepUpRouter(t *testing.T) (*gin.Engine, *adminUserStub) {
 	t.Helper()
 	router := gin.New()
 	adminSvc := newAdminUserStub()
-	// 已有管理员用于比较请求指定管理员角色和省略角色时的二次验证行为。
+	// An existing administrator distinguishes an explicit admin role from an omitted role.
 	adminSvc.users = append(adminSvc.users, identity.User{
 		ID:     2,
 		Email:  "admin@example.com",

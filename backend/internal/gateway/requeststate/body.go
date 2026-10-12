@@ -23,8 +23,8 @@ var (
 	sessionUserAgentVersionPattern = regexp.MustCompile(`\bv?\d+(?:\.\d+){1,3}\b`)
 )
 
-// SessionContext 保存区分请求来源的信息。
-// GenerateSessionHash 使用第三级内容哈希回退时混入该信息，使不同用户的相同消息分配到不同哈希。
+// SessionContext identifies the request source for session hashing.
+// GenerateSessionHash mixes it into content-based fallback hashes to separate identical messages from different users.
 type SessionContext struct {
 	ClientIP  string
 	UserAgent string
@@ -32,38 +32,38 @@ type SessionContext struct {
 }
 
 type jsonRange struct {
-	start int        // 原始请求体中的起始偏移（闭区间）
-	end   int        // 原始请求体中的结束偏移（开区间）
-	kind  gjson.Type // JSON 值类型，用于调用方做轻量分支
+	start int        // Inclusive byte offset in the current body.
+	end   int        // Exclusive byte offset in the current body.
+	kind  gjson.Type // JSON value type for callers' type checks.
 }
 
 type RequestBodyRef struct {
 	data []byte
 }
 
-// ParsedRequest 保存网关请求的预解析结果。
-// HTTP 入口调用 ParseGatewayRequest 一次，执行和会话计算共用 model、stream、messages 和 metadata 的解析结果。
+// ParsedRequest holds fields and byte ranges parsed from a gateway request.
+// Execution and session hashing share model, stream, messages, and metadata parsed at entry.
 type ParsedRequest struct {
-	Body            *RequestBodyRef // 原始请求体引用（保留用于转发）；替换内容请走 ReplaceBody
-	Model           string          // 请求的模型名称
-	Stream          bool            // 是否为流式请求
-	MetadataUserID  string          // metadata.user_id（用于会话亲和）
-	HasSystem       bool            // system 字段是否存在，null 也算存在。
-	ThinkingEnabled bool            // 是否开启 thinking（部分平台会影响最终模型名）
-	OutputEffort    string          // output_config.effort（Claude API 的推理强度控制）
-	MaxTokens       int             // max_tokens 值（用于探测请求拦截）
-	SessionContext  *SessionContext // 可选：请求上下文区分因子（nil 时行为不变）
+	Body            *RequestBodyRef // Body reference used for forwarding; update through ReplaceBody.
+	Model           string          // Requested model name.
+	Stream          bool            // Whether the request streams.
+	MetadataUserID  string          // metadata.user_id used for session affinity.
+	HasSystem       bool            // Whether system is present, including null.
+	ThinkingEnabled bool            // Thinking enabled or adaptive; may affect the upstream model.
+	OutputEffort    string          // Claude output_config.effort.
+	MaxTokens       int             // max_tokens used to identify probe requests.
+	SessionContext  *SessionContext // Optional request-source factors for session hashing.
 
-	protocol      string    // 当前 Body 的协议格式，用于 Body 替换后刷新 raw range
-	systemRange   jsonRange // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容
-	messagesRange jsonRange // messages/contents 的 raw JSON 范围，绑定 Body 当前内容
-	inputRange    jsonRange // Responses API input 的 raw JSON 范围，绑定 Body 当前内容
+	protocol      string    // Body protocol used when refreshing byte ranges.
+	systemRange   jsonRange // system or systemInstruction.parts range in the current Body.
+	messagesRange jsonRange // messages or contents range in the current Body.
+	inputRange    jsonRange // Responses input range in the current Body.
 
-	// GroupID 请求所属分组 ID（来自 API Key）
+	// GroupID is the request group selected through the API key.
 	GroupID *int64
 
-	// OnUpstreamAccepted 在上游接受请求后调用，用于提前释放串行锁。
-	// 流式请求收到 2xx 响应头时调用。
+	// OnUpstreamAccepted releases the serial lock after upstream acceptance.
+	// Streaming callers invoke it after receiving 2xx response headers.
 	OnUpstreamAccepted func()
 }
 
@@ -111,7 +111,7 @@ func (r jsonRange) exists() bool {
 	return r.start >= 0 && r.end >= r.start
 }
 
-// clearGatewayRequestDerivedState 清空绑定当前 body 的轻量派生字段，防止 ReplaceBody 后读到旧值。
+// clearGatewayRequestDerivedState clears body-derived fields before reparsing a replacement body.
 func clearGatewayRequestDerivedState(parsed *ParsedRequest) {
 	if parsed == nil {
 		return
@@ -166,8 +166,8 @@ func setGatewayRequestRanges(parsed *ParsedRequest, protocol string, jsonStr str
 	}
 }
 
-// normalizeClaudeCodeLongContextModel Claude Code 将 [1m] 作为客户端上下文选择器，转发前应移除泄漏到模型名末尾的
-// 单个或重复后缀。
+// normalizeClaudeCodeLongContextModel strips trailing Claude Code [1m] context selectors,
+// including repeated suffixes, while retaining a name consisting solely of the selector.
 func normalizeClaudeCodeLongContextModel(model string) string {
 	for len(model) > len(claudeCodeLongContextModelSuffix) &&
 		strings.EqualFold(model[len(model)-len(claudeCodeLongContextModelSuffix):], claudeCodeLongContextModelSuffix) {
@@ -176,7 +176,7 @@ func normalizeClaudeCodeLongContextModel(model string) string {
 	return model
 }
 
-// parseGatewayRequestCurrentBody 解析标量和原始字节区间，system 和 messages 以原始字节保存。
+// parseGatewayRequestCurrentBody parses scalars and records raw system and message byte ranges.
 func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) error {
 	if parsed == nil || parsed.Body == nil {
 		return fmt.Errorf("empty request body")
@@ -187,7 +187,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		return DescribeInvalidJSON(bodyBytes)
 	}
 
-	// 只在当前函数内零拷贝读取 JSON 字段；ReplaceBody 后必须重新进入本函数刷新派生状态。
+	// Read through a zero-copy string view; replacing Body requires reparsing all derived fields.
 	jsonStr := *(*string)(unsafe.Pointer(&bodyBytes))
 	clearGatewayRequestDerivedState(parsed)
 	parsed.protocol = protocol
@@ -245,9 +245,9 @@ func refreshGatewayRequestRanges(parsed *ParsedRequest, protocol string) error {
 	return parseGatewayRequestCurrentBody(parsed, protocol)
 }
 
-// DescribeInvalidJSON 为校验失败的请求体生成诊断错误。它只在失败路径使用
-// encoding/json 复解析并定位首个非法字节，错误仅包含长度、偏移和字符信息，
-// 不包含请求体内容，因此调用方可以安全包装或记录。
+// DescribeInvalidJSON reparses a rejected body with encoding/json for diagnostic details.
+// Syntax errors report length, offset, and the offending character,
+// without embedding the request body in the error.
 func DescribeInvalidJSON(body []byte) error {
 	var raw json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -256,7 +256,7 @@ func DescribeInvalidJSON(body []byte) error {
 		}
 		return fmt.Errorf("invalid json (len=%d): %w", len(body), err)
 	}
-	// gjson 拒绝但 encoding/json 接受的边缘情况只报告长度。
+	// If encoding/json accepts a body rejected by gjson, report its length alone.
 	return fmt.Errorf("invalid json (len=%d)", len(body))
 }
 
@@ -303,9 +303,9 @@ func normalizeSessionUserAgentFallback(raw string) string {
 	return strings.Join(strings.Fields(normalized), " ")
 }
 
-// ParseGatewayRequest 解析网关请求体并返回结构化结果。
-// protocol 指定请求协议格式（capability.PlatformAnthropic / capability.PlatformGemini），
-// 不同协议使用不同的 system/messages 字段名。
+// ParseGatewayRequest parses fields and raw ranges for the selected protocol.
+// Gemini uses systemInstruction.parts and contents; other protocols use system and messages.
+// The responses protocol also records input. Anthropic normalizes trailing [1m] model selectors.
 func ParseGatewayRequest(body *RequestBodyRef, protocol string) (*ParsedRequest, error) {
 	parsed := &ParsedRequest{Body: body}
 	if err := parseGatewayRequestCurrentBody(parsed, protocol); err != nil {
@@ -349,7 +349,7 @@ func (p *ParsedRequest) SystemValue() (any, bool) {
 	return system, true
 }
 
-// CloneForBody 为每次提供商尝试创建独立的 body 视图。
+// CloneForBody creates independent parsed state around the supplied bytes; it does not copy those bytes.
 func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	if p == nil {
 		return nil, fmt.Errorf("parse request: empty request")
@@ -363,7 +363,7 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	return &clone, nil
 }
 
-// ReplaceBody 更新当前 body 和原始字节区间，后续读取使用这份请求体。
+// ReplaceBody updates the body and reparses its fields and ranges; failures clear raw ranges.
 func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	if p == nil {
 		return fmt.Errorf("parse request: empty request")
@@ -380,7 +380,7 @@ func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	return nil
 }
 
-// FirstNonEmpty 返回去除两侧空白后的首个非空字符串。
+// FirstNonEmpty returns the first nonempty value after trimming surrounding whitespace.
 func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {

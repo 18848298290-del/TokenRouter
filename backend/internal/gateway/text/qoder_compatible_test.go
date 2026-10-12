@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// qoderCompatibleFixture 检查不同响应提交状态下的尝试次数和完成资格。
+// qoderCompatibleFixture records attempts and completion under different output states.
 type qoderCompatibleFixture struct {
 	results                                                               []QoderCompatibleOutcome
 	refresh                                                               QoderRefreshResult
@@ -85,7 +85,8 @@ func TestQoderCompatibleAttemptBoundaries(t *testing.T) {
 	})
 }
 
-// TestQoderGatewayRefreshInProgressMarksProviderForFailoverUntilBudgetExhausted 验证原旧 helper 的提供商排除与预算断言现在执行实际兼容入口循环。
+// TestQoderGatewayRefreshInProgressMarksProviderForFailoverUntilBudgetExhausted checks provider exclusion
+// and budget exhaustion while credential refresh remains pending.
 func TestQoderGatewayRefreshInProgressMarksProviderForFailoverUntilBudgetExhausted(t *testing.T) {
 	failure := errors.New("refresh pending")
 	result := QoderCompatibleOutcome{Err: failure, CanRefresh: true}

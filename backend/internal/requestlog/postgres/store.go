@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
-// Store 保存请求快照，较旧的重放无法覆盖已经完成的记录。
+// Store persists request snapshots and rejects updates with older revisions.
 type Store struct{ db *sql.DB }
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
@@ -55,7 +55,7 @@ func (s *Store) Save(ctx context.Context, records []telemetry.RequestRecord) err
 		}
 		if _, err = stmt.ExecContext(ctx, record.RequestID, record.ParentRequestID, record.UserID, record.TeamID,
 			record.StartedAt, record.UpdatedAt, pq.Array(aliases), body, record.UpdatedAt.UnixNano()); err != nil {
-			// SQLSTATE 22 表示字段值无法转换或超出列范围，批写器会逐条定位无效快照。
+			// SQLSTATE class 22 identifies invalid data; the batch writer isolates invalid snapshots with per-record retries.
 			if pgErr, ok := errors.AsType[*pq.Error](err); ok && pgErr.Code.Class() == "22" {
 				return fmt.Errorf("%w: %w", requestlog.ErrInvalidRecord, err)
 			}
@@ -65,9 +65,9 @@ func (s *Store) Save(ctx context.Context, records []telemetry.RequestRecord) err
 	return tx.Commit()
 }
 
-// Find 对每类来源分别检查归属，外部别名可以对应多条请求。
+// Find checks ownership for each source; an external alias may identify multiple requests.
 func (s *Store) Find(ctx context.Context, id string, userID int64, admin bool) ([]requestlog.Detail, error) {
-	// 各来源共用候选 ID 和精确命中标记，精确查询按已确认的请求 ID 筛选。
+	// Reuse candidate IDs and the exact-match flag across sources to keep exact queries within the resolved request set.
 	var ids []string
 	var exact bool
 	if err := s.db.QueryRowContext(ctx, `SELECT ARRAY(SELECT id FROM request_lookup_ids($1)),
@@ -102,7 +102,7 @@ func (s *Store) Find(ctx context.Context, id string, userID int64, admin bool) (
 	if err != nil {
 		return nil, err
 	}
-	// 历史用量与错误按其实际 ID 构造详情，缺失的请求摘要保持 Legacy 标记。
+	// Build historical usage and error details with their actual IDs; missing snapshots remain marked Legacy.
 	index := make(map[string]int, len(result))
 	for i := range result {
 		index[result[i].RequestID] = i
@@ -204,7 +204,7 @@ func ensureDetail(result *[]requestlog.Detail, index map[string]int, record tele
 	return i
 }
 
-// Cleanup 每轮删除一批过期摘要，费用与用量表由各自的留存任务维护。
+// Cleanup deletes expired summaries in batches; billing and usage have separate retention jobs.
 func (s *Store) Cleanup(ctx context.Context, cutoff time.Time) error {
 	for {
 		result, err := s.db.ExecContext(ctx, `DELETE FROM request_records WHERE request_id IN
@@ -222,7 +222,7 @@ func (s *Store) Cleanup(ctx context.Context, cutoff time.Time) error {
 	}
 }
 
-// findTasks 从任务表读取最终状态，失败或取消的任务也能显示结果。
+// findTasks refreshes states from task tables, including failure and cancellation outcomes.
 func (s *Store) findTasks(ctx context.Context, details []requestlog.Detail, userID int64, admin bool) error {
 	creativeIDs, batchIDs := []string{}, []string{}
 	positions := make(map[string][]int)

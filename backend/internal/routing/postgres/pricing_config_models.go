@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// dbExec 是 *sql.DB 和 *sql.Tx 共享的最小 SQL 执行接口。
+// dbExec is the SQL interface shared by *sql.DB and *sql.Tx.
 type dbExec interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -97,7 +97,7 @@ func (r *PricingConfigStore) ReplaceModelPricing(ctx context.Context, pricingCon
 	})
 }
 
-// batchLoadModelPricing 批量加载多个价格配置的模型定价（含区间）。
+// batchLoadModelPricing reads model prices and intervals for multiple configurations.
 func (r *PricingConfigStore) batchLoadModelPricing(ctx context.Context, pricingConfigIDs []int64) (map[int64][]routing.ModelPricingEntry, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, pricing_config_id, models, billing_mode, price_multiplier, fast_mode_multiplier, fast_multiplier, flex_multiplier, max_reasoning_effort_multiplier, input_price, output_price, cache_write_price, cache_write_1h_price, cache_read_price, image_input_price, image_output_price, per_request_price, time_pricing, created_at, updated_at
@@ -114,13 +114,11 @@ func (r *PricingConfigStore) batchLoadModelPricing(ctx context.Context, pricingC
 		return nil, err
 	}
 
-	// 按 pricingConfigID 分组
 	pricingMap := make(map[int64][]routing.ModelPricingEntry, len(pricingConfigIDs))
 	for _, p := range allPricing {
 		pricingMap[p.PricingConfigID] = append(pricingMap[p.PricingConfigID], p)
 	}
 
-	// 批量加载所有区间
 	if len(allPricingIDs) > 0 {
 		intervalMap, err := r.batchLoadIntervals(ctx, allPricingIDs)
 		if err != nil {
@@ -136,7 +134,7 @@ func (r *PricingConfigStore) batchLoadModelPricing(ctx context.Context, pricingC
 	return pricingMap, nil
 }
 
-// batchLoadIntervals 批量加载多个定价条目的区间。
+// batchLoadIntervals reads intervals for multiple price entries.
 func (r *PricingConfigStore) batchLoadIntervals(ctx context.Context, pricingIDs []int64) (map[int64][]routing.PricingInterval, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, pricing_id, min_tokens, max_tokens, tier_label,
@@ -171,7 +169,7 @@ func (r *PricingConfigStore) batchLoadIntervals(ctx context.Context, pricingIDs 
 	return intervalMap, nil
 }
 
-// scanModelPricingRows 扫描 model pricing 行，返回结果列表和 ID 列表。
+// scanModelPricingRows returns decoded price entries and their IDs.
 func scanModelPricingRows(rows *sql.Rows) ([]routing.ModelPricingEntry, []int64, error) {
 	var result []routing.ModelPricingEntry
 	var pricingIDs []int64
@@ -306,7 +304,7 @@ func replaceModelPricingTx(ctx context.Context, exec dbExec, pricingConfigID int
 	return nil
 }
 
-// isUniqueViolation 检查 pq 唯一约束违反错误。
+// isUniqueViolation reports whether err wraps a PostgreSQL unique-constraint violation.
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr != nil {
@@ -315,7 +313,7 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-// escapeLike 转义 LIKE/ILIKE 模式中的特殊字符。
+// escapeLike escapes literal backslashes, percent signs, and underscores for LIKE or ILIKE.
 func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)

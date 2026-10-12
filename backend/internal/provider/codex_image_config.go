@@ -28,7 +28,7 @@ func boolOverrideFromMap(values map[string]any, keys ...string) *bool {
 	return nil
 }
 
-// stringOverrideFromMap 按候选键顺序读取首个字符串覆盖值。
+// stringOverrideFromMap returns the first string value in candidate-key order.
 func stringOverrideFromMap(values map[string]any, keys ...string) (string, bool) {
 	if values == nil {
 		return "", false
@@ -41,7 +41,7 @@ func stringOverrideFromMap(values map[string]any, keys ...string) (string, bool)
 	return "", false
 }
 
-// normalizeCodexImageGenerationExplicitToolPolicy 兼容旧的 remove/drop 写法，未知值按放行处理。
+// normalizeCodexImageGenerationExplicitToolPolicy accepts legacy remove/drop aliases and allows unknown values.
 func normalizeCodexImageGenerationExplicitToolPolicy(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case CodexImagePolicyStrip, "remove", "drop":
@@ -51,8 +51,8 @@ func normalizeCodexImageGenerationExplicitToolPolicy(value string) string {
 	}
 }
 
-// CodexImageGenerationBridgeOverride 返回提供商级 Codex 图片桥接覆盖配置。
-// nil 表示使用全局默认值，分组配置的协议设置优先。
+// CodexImageGenerationBridgeOverride returns the provider's Codex image bridge override.
+// Nil inherits the global default; group protocol settings take precedence.
 func (r *Record) CodexImageGenerationBridgeOverride() *bool {
 	if r == nil || r.Platform != capability.PlatformOpenAI || r.Extra == nil {
 		return nil
@@ -64,8 +64,8 @@ func (r *Record) CodexImageGenerationBridgeOverride() *bool {
 	return boolOverrideFromMap(openaiConfig, CodexImageGenerationBridgeKey, "codex_image_generation_bridge_enabled")
 }
 
-// CodexImageGenerationExplicitToolPolicy 返回提供商级 Codex /responses 图片工具策略。
-// 未设置或未知值默认放行，以保持已有行为。
+// CodexImageGenerationExplicitToolPolicy returns the provider's policy for explicit /responses image tools.
+// Missing and unknown values allow the tool.
 func (r *Record) CodexImageGenerationExplicitToolPolicy() string {
 	if r == nil || r.Platform != capability.PlatformOpenAI || r.Extra == nil {
 		return CodexImagePolicyAllow

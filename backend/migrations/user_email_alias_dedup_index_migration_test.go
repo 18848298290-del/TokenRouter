@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUserEmailAliasDedupIndexMigration 校验别名探针索引保持非事务且只过滤有效用户。
+// TestUserEmailAliasDedupIndexMigration checks concurrent alias indexing restricted to active users.
 func TestUserEmailAliasDedupIndexMigration(t *testing.T) {
 	content, err := FS.ReadFile("252_users_email_alias_dedup_index_notx.sql")
 	require.NoError(t, err)

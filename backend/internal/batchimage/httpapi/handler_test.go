@@ -52,7 +52,7 @@ func (d *contractDownload) OpenItemContent(context.Context, batchimage.BatchImag
 	return &batchimage.BatchImageContentStream{Reader: contractBody{Reader: strings.NewReader("image-data"), closed: &d.closed}, ContentType: "image/png", Filename: "output.png"}, nil
 }
 
-// TestBatchHTTPSubmitProjectionAndParseOrder 检查 HTTP 层传入付款主体、会话和幂等参数的顺序。
+// TestBatchHTTPSubmitProjectionAndParseOrder checks payer, session, and idempotency inputs at the HTTP boundary.
 func TestBatchHTTPSubmitProjectionAndParseOrder(t *testing.T) {
 	usecases := &contractBatchUseCases{}
 	var authCalls atomic.Int64
@@ -79,7 +79,7 @@ func TestBatchHTTPSubmitProjectionAndParseOrder(t *testing.T) {
 	require.Equal(t, "session-1", *usecases.input.SessionID)
 }
 
-// TestBatchHTTPDownloadClosesStream 检查下载响应写完后关闭流并记录下载状态。
+// TestBatchHTTPDownloadClosesStream checks stream closure and download recording after the response.
 func TestBatchHTTPDownloadClosesStream(t *testing.T) {
 	usecases := &contractBatchUseCases{}
 	download := &contractDownload{}

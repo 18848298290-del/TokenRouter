@@ -16,10 +16,11 @@ import (
 	billingtestkit "github.com/TokenFlux/TokenRouter/internal/billing/testkit"
 )
 
-// lockOrderGroupReader 在查询分组时 panic，用来检查获取锁失败后是否提前退出。
+// lockOrderGroupReader panics on group lookup to detect work performed after the user lock fails.
 type lockOrderGroupReader struct{}
 
-// TestAssignOrExtendSubscriptionSerializesWithUserRowLock 验证订阅发放在读取最新时间链前锁定用户行。
+// TestAssignOrExtendSubscriptionSerializesWithUserRowLock checks that grants lock the user before reading the
+// subscription chain.
 func TestAssignOrExtendSubscriptionSerializesWithUserRowLock(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

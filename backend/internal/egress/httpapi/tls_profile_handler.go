@@ -10,13 +10,13 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// TLSFingerprintProfileHandler 处理 TLS 指纹模板的 HTTP 请求。
+// TLSFingerprintProfileHandler handles TLS fingerprint profile requests.
 type TLSFingerprintProfileHandler struct {
 	service   *egress.TLSFingerprintProfileService
 	collector egress.Collector
 }
 
-// CreateTLSFingerprintProfileRequest 创建模板请求。
+// CreateTLSFingerprintProfileRequest contains fields for a new TLS profile.
 type CreateTLSFingerprintProfileRequest struct {
 	Name                string   `json:"name" binding:"required"`
 	Description         *string  `json:"description"`
@@ -32,7 +32,7 @@ type CreateTLSFingerprintProfileRequest struct {
 	Extensions          []uint16 `json:"extensions"`
 }
 
-// UpdateTLSFingerprintProfileRequest 更新模板请求（部分更新）。
+// UpdateTLSFingerprintProfileRequest contains optional fields for a partial profile update.
 type UpdateTLSFingerprintProfileRequest struct {
 	Name                *string  `json:"name"`
 	Description         *string  `json:"description"`
@@ -48,7 +48,7 @@ type UpdateTLSFingerprintProfileRequest struct {
 	Extensions          []uint16 `json:"extensions"`
 }
 
-// NewTLSFingerprintProfileHandler 创建 TLS 指纹模板处理器。
+// NewTLSFingerprintProfileHandler creates a profile handler with an optional collector.
 func NewTLSFingerprintProfileHandler(profileService *egress.TLSFingerprintProfileService, collectors ...egress.Collector) *TLSFingerprintProfileHandler {
 	h := &TLSFingerprintProfileHandler{service: profileService}
 	if len(collectors) > 0 {
@@ -57,7 +57,7 @@ func NewTLSFingerprintProfileHandler(profileService *egress.TLSFingerprintProfil
 	return h
 }
 
-// List 获取所有模板
+// List returns all TLS profiles.
 // GET /api/v1/admin/tls-fingerprint-profiles
 func (h *TLSFingerprintProfileHandler) List(c *gin.Context) {
 	profiles, err := h.service.List(c.Request.Context())
@@ -68,7 +68,7 @@ func (h *TLSFingerprintProfileHandler) List(c *gin.Context) {
 	response.Success(c, profiles)
 }
 
-// GetByID 根据 ID 获取模板
+// GetByID returns a TLS profile by ID.
 // GET /api/v1/admin/tls-fingerprint-profiles/:id
 func (h *TLSFingerprintProfileHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -90,7 +90,7 @@ func (h *TLSFingerprintProfileHandler) GetByID(c *gin.Context) {
 	response.Success(c, profile)
 }
 
-// Create 创建模板
+// Create creates a TLS profile.
 // POST /api/v1/admin/tls-fingerprint-profiles
 func (h *TLSFingerprintProfileHandler) Create(c *gin.Context) {
 	var req CreateTLSFingerprintProfileRequest
@@ -130,7 +130,7 @@ func (h *TLSFingerprintProfileHandler) Create(c *gin.Context) {
 	response.Success(c, created)
 }
 
-// Update 更新模板（支持部分更新）
+// Update applies a partial TLS profile update.
 // PUT /api/v1/admin/tls-fingerprint-profiles/:id
 func (h *TLSFingerprintProfileHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -155,7 +155,7 @@ func (h *TLSFingerprintProfileHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// 部分更新
+	// Start from existing values so omitted fields remain unchanged.
 	profile := &egress.TLSFingerprintProfile{
 		ID:                  id,
 		Name:                existing.Name,
@@ -222,7 +222,7 @@ func (h *TLSFingerprintProfileHandler) Update(c *gin.Context) {
 	response.Success(c, updated)
 }
 
-// Delete 删除模板
+// Delete deletes a TLS profile.
 // DELETE /api/v1/admin/tls-fingerprint-profiles/:id
 func (h *TLSFingerprintProfileHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -239,7 +239,7 @@ func (h *TLSFingerprintProfileHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Profile deleted successfully"})
 }
 
-// CollectorStatus 获取 TLS 指纹收集器状态
+// CollectorStatus returns the TLS collector status.
 // GET /api/v1/admin/tls-fingerprint-profiles/collector/status
 func (h *TLSFingerprintProfileHandler) CollectorStatus(c *gin.Context) {
 	if h.collector == nil {
@@ -249,7 +249,7 @@ func (h *TLSFingerprintProfileHandler) CollectorStatus(c *gin.Context) {
 	response.Success(c, h.collector.Status())
 }
 
-// StartCollector 从页面启动 TLS 指纹收集器
+// StartCollector starts the TLS collector on an administrator's request.
 // POST /api/v1/admin/tls-fingerprint-profiles/collector/start
 func (h *TLSFingerprintProfileHandler) StartCollector(c *gin.Context) {
 	if h.collector == nil {
@@ -264,7 +264,7 @@ func (h *TLSFingerprintProfileHandler) StartCollector(c *gin.Context) {
 	response.Success(c, status)
 }
 
-// StopCollector 从页面停止 TLS 指纹收集器
+// StopCollector stops the TLS collector on an administrator's request.
 // POST /api/v1/admin/tls-fingerprint-profiles/collector/stop
 func (h *TLSFingerprintProfileHandler) StopCollector(c *gin.Context) {
 	if h.collector == nil {
@@ -278,7 +278,7 @@ func (h *TLSFingerprintProfileHandler) StopCollector(c *gin.Context) {
 	response.Success(c, h.collector.Status())
 }
 
-// CreateCollectorSession 创建一次短期采集会话
+// CreateCollectorSession creates a short-lived capture session.
 // POST /api/v1/admin/tls-fingerprint-profiles/collector/sessions
 func (h *TLSFingerprintProfileHandler) CreateCollectorSession(c *gin.Context) {
 	if h.collector == nil {
@@ -293,7 +293,7 @@ func (h *TLSFingerprintProfileHandler) CreateCollectorSession(c *gin.Context) {
 	response.Success(c, session)
 }
 
-// ListCollectorCaptures 获取采集会话结果
+// ListCollectorCaptures returns the captures for a session.
 // GET /api/v1/admin/tls-fingerprint-profiles/collector/sessions/:token/captures
 func (h *TLSFingerprintProfileHandler) ListCollectorCaptures(c *gin.Context) {
 	if h.collector == nil {
@@ -308,7 +308,7 @@ func (h *TLSFingerprintProfileHandler) ListCollectorCaptures(c *gin.Context) {
 	response.Success(c, records)
 }
 
-// DeleteCollectorSession 删除采集会话
+// DeleteCollectorSession deletes a capture session.
 // DELETE /api/v1/admin/tls-fingerprint-profiles/collector/sessions/:token
 func (h *TLSFingerprintProfileHandler) DeleteCollectorSession(c *gin.Context) {
 	if h.collector == nil {

@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
-// APIKeyModelRedirectTrace 保存一次请求中的客户端模型与内部模型阶段。
+// APIKeyModelRedirectTrace tracks client and internal model names for one request.
 type APIKeyModelRedirectTrace struct {
 	ClientModel string
 	SourceModel string
@@ -26,10 +26,10 @@ type APIKeyModelRedirectTrace struct {
 	responseModels map[string]struct{}
 }
 
-// ContextKey 标识 context 中的 Trace，支持参数传递的调用方可直接传入 Trace。
+// ContextKey identifies a trace in context; callers with explicit parameters can pass the trace directly.
 type ContextKey struct{}
 
-// WithGroupRedirect 组合 Key 和分组的模型映射，记录本次请求恢复响应模型时所需的名称。
+// WithGroupRedirect combines API key and group mappings and registers names needed for response restoration.
 func WithGroupRedirect(result routing.GroupMappingResult, ctx context.Context, requestedModel string) routing.GroupMappingResult {
 	trace, ok := FromContext(ctx)
 	if !ok {
@@ -42,14 +42,14 @@ func WithGroupRedirect(result routing.GroupMappingResult, ctx context.Context, r
 	return result
 }
 
-// RegisterStage 登记当前请求已使用的内部模型，供响应元数据恢复。
+// RegisterStage registers an internal model name for response metadata restoration.
 func RegisterStage(ctx context.Context, model string) {
 	if trace, ok := FromContext(ctx); ok {
 		trace.RegisterModel(model)
 	}
 }
 
-// RewriteAPIKeyAdditionalModels 重定向 Responses 工具声明中的附加模型。
+// RewriteAPIKeyAdditionalModels redirects additional models declared in Responses tools.
 func RewriteAPIKeyAdditionalModels(body []byte, mapping map[string]string) ([]byte, error) {
 	if len(body) == 0 || len(mapping) == 0 || !gjson.ValidBytes(body) {
 		return body, nil
@@ -70,7 +70,7 @@ func RewriteAPIKeyAdditionalModels(body []byte, mapping map[string]string) ([]by
 	return rewritten, nil
 }
 
-// NewAPIKeyModelRedirectTrace 创建模型重定向追踪，并登记首个内部目标模型。
+// NewAPIKeyModelRedirectTrace creates a trace and registers the first internal target model.
 func NewAPIKeyModelRedirectTrace(clientModel, sourceModel, targetModel string) *APIKeyModelRedirectTrace {
 	trace := &APIKeyModelRedirectTrace{
 		ClientModel:    strings.TrimSpace(clientModel),
@@ -95,7 +95,7 @@ func (t *APIKeyModelRedirectTrace) RegisterModel(model string) {
 	t.mu.Unlock()
 }
 
-// ResponseModels 返回按字典序排列的模型副本，供并发响应写入使用。
+// ResponseModels returns a sorted copy for concurrent response writers.
 func (t *APIKeyModelRedirectTrace) ResponseModels() []string {
 	if t == nil {
 		return nil
@@ -110,7 +110,7 @@ func (t *APIKeyModelRedirectTrace) ResponseModels() []string {
 	return models
 }
 
-// ReplaceModelMetadata 替换常见协议的模型元数据字段，正文保持原字节。
+// ReplaceModelMetadata replaces known model-field byte patterns, leaving unmatched bytes unchanged.
 func ReplaceModelMetadata(data []byte, fromModel, toModel string) []byte {
 	fromModel = strings.TrimSpace(fromModel)
 	toModel = strings.TrimSpace(toModel)
@@ -140,7 +140,7 @@ func ReplaceModelMetadata(data []byte, fromModel, toModel string) []byte {
 	return rewritten
 }
 
-// RegisterResponsePayload 从完整 JSON 或 SSE data 事件中登记实际上游模型元数据。
+// RegisterResponsePayload registers upstream model metadata from complete JSON or SSE data events.
 func (t *APIKeyModelRedirectTrace) RegisterResponsePayload(data []byte) {
 	if t == nil || len(data) == 0 {
 		return
@@ -150,7 +150,7 @@ func (t *APIKeyModelRedirectTrace) RegisterResponsePayload(data []byte) {
 	}
 }
 
-// responseMetadataModels 从协议模型字段中收集名称。
+// responseMetadataModels collects names from protocol model fields.
 func responseMetadataModels(data []byte) []string {
 	payloads := make([][]byte, 0, 4)
 	trimmed := bytes.TrimSpace(data)
@@ -218,7 +218,7 @@ func FromContext(ctx context.Context) (*APIKeyModelRedirectTrace, bool) {
 	return trace, ok && trace != nil
 }
 
-// Snapshot 在异步交接时复制当前模型链，之后的 attempt/turn 不会污染已提交任务。
+// Snapshot copies the model trace for asynchronous handoff so later turns cannot alter the submitted snapshot.
 func (t *APIKeyModelRedirectTrace) Snapshot() *APIKeyModelRedirectTrace {
 	if t == nil {
 		return nil

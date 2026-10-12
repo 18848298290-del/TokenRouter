@@ -10,14 +10,14 @@ const (
 	GroupAvailabilityProbeStatusFailed  = "failed"
 )
 
-// GroupAvailabilityProbeDueGroup 是等待主动探测的分组快照。
+// GroupAvailabilityProbeDueGroup is a group snapshot claimed for an active probe.
 type GroupAvailabilityProbeDueGroup struct {
 	GroupID int64
 	Name    string
 	Config  GroupAvailabilityProbeConfig
 }
 
-// GroupAvailabilityProbeResult 是单次主动探测结果。
+// GroupAvailabilityProbeResult contains an attempt outcome; the runner persists the final outcome of each round.
 type GroupAvailabilityProbeResult struct {
 	GroupID      int64
 	ProviderID   *int64
@@ -30,7 +30,7 @@ type GroupAvailabilityProbeResult struct {
 	FinishedAt   time.Time
 }
 
-// GroupAvailabilityBucket 是模型广场条形组件的时间桶聚合。
+// GroupAvailabilityBucket aggregates probe results for one marketplace time bucket.
 type GroupAvailabilityBucket struct {
 	Date             string
 	SuccessCount     int64
@@ -38,7 +38,7 @@ type GroupAvailabilityBucket struct {
 	AvailabilityRate *float64
 }
 
-// GroupAvailabilitySummary 是分组主动可用性摘要。
+// GroupAvailabilitySummary summarizes active probe results for a group.
 type GroupAvailabilitySummary struct {
 	WindowDays       int
 	BucketMinutes    int
@@ -50,7 +50,7 @@ type GroupAvailabilitySummary struct {
 	Days             []GroupAvailabilityBucket
 }
 
-// GroupAvailabilityProbeRepository 定义分组主动可用性探测的数据访问接口。
+// GroupAvailabilityProbeRepository stores probe leases, results, and availability aggregates.
 type GroupAvailabilityProbeRepository interface {
 	ClaimDue(ctx context.Context, now time.Time, lockUntil time.Time, lockedBy string, limit int) ([]GroupAvailabilityProbeDueGroup, error)
 	SaveResultAndScheduleNext(ctx context.Context, result *GroupAvailabilityProbeResult, nextRunAt time.Time) error

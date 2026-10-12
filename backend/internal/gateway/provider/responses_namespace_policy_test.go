@@ -44,15 +44,15 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 		{name: "oauth_http_default_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "oauth_http_passthrough_default_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, passthroughEnabled: true, want: false},
 		{name: "oauth_wsv2_default_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, want: false},
-		// compact 端点的 schema 更窄，保持既有摊平行为。
+		// Compact uses a narrower schema and requires flattened tools.
 		{name: "oauth_compact_flattens", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, compactPath: true, want: true},
 		{name: "oauth_compact_wsv2_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, compactPath: true, want: false},
 		{name: "apikey_compact", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, compactPath: true, want: false},
 		{name: "oauth_flatten_enabled_http", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
 		{name: "oauth_flatten_enabled_http_passthrough", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportHTTPSSE, passthroughEnabled: true, want: true},
-		// WSv2 出口原样转发上游事件、不做回程还原，摊平会让客户端收到无法匹配的平名。
+		// WSv2 forwards events without restoring names, so flattening would expose unmatched names to clients.
 		{name: "oauth_flatten_enabled_wsv2", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, want: false},
-		// 透传提供商先于 WSv2 分支经 HTTP 转发返回，开关打开时仍需摊平。
+		// Passthrough selects HTTP before the WSv2 branch, so the flattening setting still applies.
 		{name: "oauth_flatten_enabled_wsv2_passthrough", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, passthroughEnabled: true, want: true},
 		{name: "apikey_flatten_enabled_http", provider: flattenAPIKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "apikey_http", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
@@ -95,8 +95,8 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 		{name: "oauth_flatten_enabled_strips", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "oauth_wsv2_keeps", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, want: true},
 		{name: "oauth_compact_wsv2_strips", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, compactPath: true, want: false},
-		// API Key 默认按标准 Responses API 清理。请求声明 namespace 工具时，
-		// 自定义上游需要原样接收对应的历史调用。
+		// API Key requests normally use the standard schema. Declared namespace tools
+		// require matching namespaces on historical calls for custom upstreams.
 		{name: "apikey_without_namespace_tool_strips", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "apikey_with_namespace_tool_keeps", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_app","tools":[]}]}`), want: true},
 		{name: "apikey_with_mixed_case_namespace_tool_keeps", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":" Namespace ","name":"mcp__codex_app","tools":[]}]}`), want: true},
@@ -191,7 +191,7 @@ func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testin
 	}
 }
 
-// TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces 验证保留模式下只有工具调用项留住 namespace，普通历史项上的残留字段仍会被清理。
+// TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces checks that preservation applies to calls while other history is cleaned.
 func TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces(t *testing.T) {
 	body := []byte(`{
 		"meta":9007199254740993,
@@ -220,13 +220,13 @@ func TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces(t *testing.T
 	require.Equal(t, gjson.GetBytes(body, "meta").Raw, gjson.GetBytes(stripped, "meta").Raw)
 	require.Equal(t, gjson.GetBytes(body, "input.0.large").Raw, gjson.GetBytes(stripped, "input.0.large").Raw)
 
-	// 类型比较不区分大小写与首尾空白。
+	// Type matching ignores case and surrounding whitespace.
 	mixedCase := []byte(`{"input":[{"type":" Function_Call ","namespace":"collaboration","name":"spawn_agent"}]}`)
 	keptMixedCase, err := protocolbridge.StripOpenAIResponsesInputNamespaces(mixedCase, true)
 	require.NoError(t, err)
 	require.Equal(t, mixedCase, keptMixedCase)
 
-	// 全部为调用项时不重建请求，保持字节级不变。
+	// An input containing only calls can pass through byte for byte.
 	callsOnly := []byte(`{"input":[{"type":"function_call","namespace":"collaboration","name":"spawn_agent"}]}`)
 	unchanged, err := protocolbridge.StripOpenAIResponsesInputNamespaces(callsOnly, true)
 	require.NoError(t, err)

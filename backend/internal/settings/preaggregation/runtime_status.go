@@ -2,7 +2,7 @@ package preaggregation
 
 import "time"
 
-// PreAggregationRuntimeStatus 是设置接口返回的任务运行状态。
+// PreAggregationRuntimeStatus contains task status returned by the settings API.
 type PreAggregationRuntimeStatus struct {
 	Phase          string     `json:"phase"`
 	LiveWatermark  *time.Time `json:"live_watermark,omitempty"`

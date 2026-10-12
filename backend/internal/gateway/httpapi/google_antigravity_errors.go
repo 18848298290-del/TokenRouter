@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityOutput 保存当前 HTTP 请求和静态输出配置。
+// AntigravityOutput holds the current HTTP request and fixed output options.
 type AntigravityOutput struct {
 	GoogleOutput
 	Options googleforward.Options
@@ -65,12 +65,11 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 		Detail: upstreamDetail,
 	})
 
-	// 记录上游错误详情便于排障（可选：由配置控制；不回显到客户端）
+	// Log upstream details when enabled; this diagnostic body is not the client response.
 	if logBody {
 		logging.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] upstream_error status=%d body=%s", upstreamStatus, logredact.TruncateLine(body, maxBytes))
 	}
 
-	// 检查错误透传规则
 	if ptStatus, ptErrType, ptErrMsg, matched := ApplyErrorPassthroughRule(
 		c, provider.Record.Platform, upstreamStatus, body,
 		0, "", "",

@@ -28,7 +28,7 @@ type (
 	}
 )
 
-// withCandidatePolicy 固定本次分组和粘性提供商，供窗口费用、RPM 与重检共用。
+// withCandidatePolicy captures the group and sticky provider for window-cost, RPM, and eligibility rechecks.
 func (s *Compatible) withCandidatePolicy(ctx context.Context, groupID *int64, session string) context.Context {
 	state := candidatePolicy{groupID: groupID}
 	if session != "" && s.cache != nil {
@@ -37,7 +37,7 @@ func (s *Compatible) withCandidatePolicy(ctx context.Context, groupID *int64, se
 	return context.WithValue(ctx, candidatePolicyKey{}, state)
 }
 
-// candidateEligibilityReason 在协议和模型过滤后复用各平台已有的提供商硬限制。
+// candidateEligibilityReason applies platform limits after protocol and model eligibility checks.
 func (s *Compatible) candidateEligibilityReason(ctx context.Context, value *gatewayadapter.ExecutionProvider, platform, model string, compact bool, required provider.OpenAIEndpointCapability) string {
 	if reason := gatewayadapter.CompatibleEligibilityReason(ctx, value, platform, model, compact, required); reason != "" {
 		return reason
@@ -78,7 +78,7 @@ func (s *Compatible) candidateEligibilityReason(ctx context.Context, value *gate
 	return ""
 }
 
-// withSelectionRequest 固定模型和分组，补全凭据时可用最新提供商再次核对资格。
+// withSelectionRequest captures the group and model for eligibility checks after credential hydration.
 func withSelectionRequest(ctx context.Context, groupID *int64, model string) context.Context {
 	return context.WithValue(ctx, selectionRequestKey{}, selectionRequest{groupID: groupID, model: model})
 }

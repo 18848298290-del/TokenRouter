@@ -70,13 +70,12 @@ func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxy
 		return "", fmt.Errorf("no organizations found")
 	}
 
-	// 如果只有一个组织，直接使用
 	if len(orgs) == 1 {
 		logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 SUCCESS - Single org found, UUID: %s, Name: %s", orgs[0].UUID, orgs[0].Name)
 		return orgs[0].UUID, nil
 	}
 
-	// 如果有多个组织，优先选择 raven_type 为 "team" 的组织
+	// Prefer a team organization when the session belongs to several organizations.
 	for _, org := range orgs {
 		if org.RavenType != nil && *org.RavenType == "team" {
 			logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 SUCCESS - Selected team org, UUID: %s, Name: %s, RavenType: %s",
@@ -85,7 +84,7 @@ func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxy
 		}
 	}
 
-	// 如果没有 team 类型的组织，使用第一个
+	// Use the first organization when no team is available.
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 SUCCESS - No team org found, using first org, UUID: %s, Name: %s", orgs[0].UUID, orgs[0].Name)
 	return orgs[0].UUID, nil
 }
@@ -258,11 +257,11 @@ func (s *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL s
 }
 
 func createReqClient(proxyURL string) (*req.Client, error) {
-	// 禁用 CookieJar，确保每次授权都是干净的会话
+	// Disable cookie persistence so authorization flows cannot inherit session cookies.
 	client := req.C().
 		SetTimeout(60 * time.Second).
 		ImpersonateChrome().
-		SetCookieJar(nil) // 禁用 CookieJar
+		SetCookieJar(nil)
 
 	trimmed, _, err := proxyurl.Parse(proxyURL)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/enttest"
 )
 
-// newUserEntRepo 创建按测试名称隔离的 SQLite 用户仓储。
+// newUserEntRepo creates a SQLite user repository isolated by test name.
 func newUserEntRepo(t *testing.T) (*UserStore, *dbent.Client) {
 	t.Helper()
 
@@ -34,7 +34,7 @@ func newUserEntRepo(t *testing.T) (*UserStore, *dbent.Client) {
 	return NewUserStoreWithSQL(client, db), client
 }
 
-// newRedeemAdjustmentRepoMock 创建使用 SQL mock 的兑换额度仓储。
+// newRedeemAdjustmentRepoMock creates a repository backed by SQL expectations.
 func newRedeemAdjustmentRepoMock(t *testing.T) (*UserStore, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// ProviderStatsInput 包含查询到的价卡，nil 成本和配置的零价分别处理。
+// ProviderStatsInput supplies loaded rules and usage; an absent cost differs from an explicit zero cost.
 type ProviderStatsInput struct {
 	Rules               []ProviderStatsPricingRule
 	ProviderID, GroupID int64
@@ -32,7 +32,7 @@ func UniqueNonEmptyProviderStatsModels(models []string) []string {
 	return out
 }
 
-// TryCustomRules 遍历自定义规则，按数组顺序先命中为准。
+// TryCustomRules returns the first applicable cost in rule order.
 func TryCustomRules(
 	rules []ProviderStatsPricingRule, providerID, groupID int64,
 	model string, tokens UsageTokens, requestCount int,
@@ -44,9 +44,9 @@ func TryCustomRules(
 		}
 		pricing := FindEffectivePricingForModel(rule.Pricing, modelLower)
 		if pricing == nil {
-			continue // 规则匹配但模型不在规则定价中，继续下一条
+			continue // The rule matches the provider or group, but lacks this model's price.
 		}
-		// 自定义统计价是独立的最终成本基数，不继承用户侧的模型/推理倍率。
+		// Custom statistics prices define an independent cost base and do not inherit user model or effort multipliers.
 		if cost := CalculateStatsCost(pricing, tokens, requestCount); cost != nil {
 			return cost
 		}
@@ -54,9 +54,9 @@ func TryCustomRules(
 	return nil
 }
 
-// MatchProviderStatsRule 检查规则是否匹配指定的 providerID 和 groupID。
-// 匹配条件：providerID ∈ rule.ProviderIDs 或 groupID ∈ rule.GroupIDs。
-// 如果规则的 ProviderIDs 和 GroupIDs 都为空，视为不匹配。
+// MatchProviderStatsRule reports whether either the provider or group matches.
+// A match requires providerID in ProviderIDs or groupID in GroupIDs.
+// A rule with both lists empty does not match.
 func MatchProviderStatsRule(rule *ProviderStatsPricingRule, providerID, groupID int64) bool {
 	if len(rule.ProviderIDs) == 0 && len(rule.GroupIDs) == 0 {
 		return false
@@ -67,20 +67,20 @@ func MatchProviderStatsRule(rule *ProviderStatsPricingRule, providerID, groupID 
 	return slices.Contains(rule.GroupIDs, groupID)
 }
 
-// FindEffectivePricingForModel 用于提供商统计成本规则。
-// 空定价行是配置占位，零值指针表示有效的 0 成本覆盖。
+// FindEffectivePricingForModel selects a priced card for provider cost statistics.
+// Empty rows are placeholders; an explicit zero price is a valid cost override.
 func FindEffectivePricingForModel(pricingList []ModelPricingEntry, modelLower string) *ModelPricingEntry {
 	return FindPricingForModelByPredicate(pricingList, modelLower, func(p *ModelPricingEntry) bool {
 		return p != nil && p.HasEffectivePricing()
 	})
 }
 
-// FindPricingForModelByPredicate 在通过筛选的定价行中先精确匹配，再按配置顺序匹配通配符。
+// FindPricingForModelByPredicate prefers exact matches among included rows, then wildcards in configuration order.
 func FindPricingForModelByPredicate(pricingList []ModelPricingEntry, modelLower string, include func(*ModelPricingEntry) bool) *ModelPricingEntry {
 	if include == nil {
 		include = func(*ModelPricingEntry) bool { return true }
 	}
-	// 精确匹配优先
+	// Exact matches take precedence over every wildcard.
 	for i := range pricingList {
 		p := &pricingList[i]
 		if !include(p) {
@@ -92,7 +92,7 @@ func FindPricingForModelByPredicate(pricingList []ModelPricingEntry, modelLower 
 			}
 		}
 	}
-	// 通配符匹配：按配置顺序，先匹配先使用
+	// The first matching wildcard in configuration order wins.
 	for i := range pricingList {
 		p := &pricingList[i]
 		if !include(p) {
@@ -112,7 +112,7 @@ func FindPricingForModelByPredicate(pricingList []ModelPricingEntry, modelLower 
 	return nil
 }
 
-// CalculateStatsCost 使用给定的定价计算费用，并在最后应用可选的定价倍率。
+// CalculateStatsCost computes the card's cost and then applies its optional price multiplier.
 func CalculateStatsCost(pricing *ModelPricingEntry, tokens UsageTokens, requestCount int) *float64 {
 	if pricing == nil {
 		return nil
@@ -127,7 +127,7 @@ func CalculateStatsCost(pricing *ModelPricingEntry, tokens UsageTokens, requestC
 	if cost == nil {
 		return nil
 	}
-	// 提供商统计规则与实际价卡计费共用同一倍率语义。
+	// Use the same configured price-multiplier handling as request billing.
 	if multiplier, configured := NormalizedPriceMultiplier(pricing); configured {
 		scaled := *cost * multiplier
 		cost = &scaled
@@ -135,7 +135,7 @@ func CalculateStatsCost(pricing *ModelPricingEntry, tokens UsageTokens, requestC
 	return cost
 }
 
-// CalculatePerRequestStatsCost 按次/图片计费。
+// CalculatePerRequestStatsCost charges the flat request/image price, defaulting a nonpositive count to one.
 func CalculatePerRequestStatsCost(pricing *ModelPricingEntry, requestCount int) *float64 {
 	if pricing.PerRequestPrice == nil {
 		return nil
@@ -150,9 +150,9 @@ func CalculatePerRequestStatsCost(pricing *ModelPricingEntry, requestCount int) 
 	return &cost
 }
 
-// CalculateTokenStatsCost Token 计费。
-// If the pricing has intervals, find the matching interval by total token count
-// and use its prices instead of the flat pricing fields.
+// CalculateTokenStatsCost computes provider costs from token usage.
+// Interval selection counts input, output, and cache tokens together.
+// A matching interval replaces flat token prices; omitted interval buckets cost zero.
 func CalculateTokenStatsCost(pricing *ModelPricingEntry, tokens UsageTokens) *float64 {
 	p := pricing
 	if validIntervals := FilterValidTokenIntervals(pricing.Intervals); len(validIntervals) > 0 {
@@ -213,7 +213,7 @@ func HasAnyStatsTokenUsage(tokens UsageTokens) bool {
 		tokens.ImageOutputTokens > 0
 }
 
-// ResolveProviderStatsOverride 返回 handled，区分明确不覆盖与继续查询模型目录。
+// ResolveProviderStatsOverride returns handled=true for a custom cost, including zero; false allows catalog lookup.
 func ResolveProviderStatsOverride(input ProviderStatsInput) (*float64, bool) {
 	for _, model := range input.Models {
 		if cost := TryCustomRules(input.Rules, input.ProviderID, input.GroupID, model, input.Tokens, input.RequestCount); cost != nil {

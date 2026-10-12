@@ -9,10 +9,10 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
-// TimingHook 为启用 Server-Timing 的请求记录 Redis 命令耗时。
+// TimingHook records command durations for requests with an active Server-Timing collector.
 type TimingHook struct{}
 
-// NewClient 按给定选项创建 Redis 客户端，启用计时时添加 TimingHook。
+// NewClient creates a Redis client and optionally installs TimingHook.
 func NewClient(options *redis.Options, enableTiming bool) *redis.Client {
 	client := redis.NewClient(options)
 	if enableTiming {
@@ -21,12 +21,12 @@ func NewClient(options *redis.Options, enableTiming bool) *redis.Client {
 	return client
 }
 
-// DialHook 返回客户端的连接钩子。
+// DialHook passes connection setup through without recording it.
 func (TimingHook) DialHook(next redis.DialHook) redis.DialHook {
 	return next
 }
 
-// ProcessHook 记录单条命令的耗时和数量。
+// ProcessHook records one command and its duration.
 func (TimingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if !servertiming.Active(ctx) {
@@ -39,7 +39,7 @@ func (TimingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	}
 }
 
-// ProcessPipelineHook 记录整个流水线的耗时和命令数量。
+// ProcessPipelineHook records the pipeline duration and number of commands.
 func (TimingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		if !servertiming.Active(ctx) {

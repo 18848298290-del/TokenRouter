@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestGrokRequestableModelsExcludeBuiltinAliases 空配置目录为空，具体映射可以加入自定义别名。
+// TestGrokRequestableModelsExcludeBuiltinAliases checks that aliases require configured mappings.
 func TestGrokRequestableModelsExcludeBuiltinAliases(t *testing.T) {
 	groupID := int64(4510)
 	provider := providercore.Record{ID: 1, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{}}

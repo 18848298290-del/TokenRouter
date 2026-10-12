@@ -83,7 +83,7 @@ func provideProxyHTTP(admin *egress.ProxyAdmin, transfers *egress.ProxyTransfer)
 	return egresshttp.NewProxyHandler(admin, transfers)
 }
 
-// provideProxyExpiry 复用唯一代理仓储，生命周期保持一分钟周期和立即首轮。
+// provideProxyExpiry supplies the shared proxy store to the one-minute expiry worker.
 func provideProxyExpiry(repo egress.ProxyRepository) *egress.ProxyExpiryService {
 	return egress.NewProxyExpiryService(repo, time.Minute)
 }

@@ -35,7 +35,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestGrokWSModelUsesCanonicalID 验证 WebSocket HTTP bridge 使用相同的最终标准化入口。
+// TestGrokWSModelUsesCanonicalID checks the bridge's final model normalization.
 func TestGrokWSModelUsesCanonicalID(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{}}}
 	require.Equal(t, "grok", resolveGrokWSUpstreamModel(provider, []byte(`{"model":"grok"}`), "grok"))
@@ -136,10 +136,8 @@ func TestPrepareOpenAIWSHTTPBridgeBodyPreservesUnknownModelReasoning(t *testing.
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurn_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {
-	// proxyOpenAIWSHTTPBridgeTurn 是 client WS→HTTP bridge，本身不 canonicalize
-	// fast→priority；生产入口的归一化在 openai_ws_forwarder_ingress.go 的 fast
-	// policy. This test covers the local observer while preserving the canonical
-	// outbound priority tier independently.
+	// The request sends priority while the upstream response declares default.
+	// Keep these values separate so billing can resolve the effective tier from both sources.
 	sse := `data: {"type":"response.completed","response":{"id":"resp_tier","model":"gpt-5.5","status":"completed","service_tier":"default","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n" + ``
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1088,8 +1086,8 @@ func TestOpenAIWSHTTPBridgeLaterTurn429CarriesCurrentTurnReplayPayload(t *testin
 	require.Contains(t, string(upstream.bodies[2]), "second")
 }
 
-// TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient 验证 error / response.failed 的容量降载码改写为可重试的 server_error。
-// Codex 对 server_is_overloaded / slow_down 终止会话。提供商策略使用改写前的事件。
+// TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient checks retryable server_error output for capacity shedding.
+// Provider policy still receives the unmodified event.
 func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1104,7 +1102,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing
 			wantErr: true,
 		},
 		{
-			// 后续 turn 将容量错误改写后返回，客户端负责重试。
+			// Later turns return the rewritten capacity error for the client to retry.
 			name: "turn2_bare_response_failed",
 			turn: 2,
 			body: "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_shed\",\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\n\n",
@@ -1539,8 +1537,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultsEmptyModelTo45(t *testing.T) 
 	require.Len(t, events, 2)
 }
 
-// TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultModelErrorUsesCanonicalKey 验证 WS 空模型旁路
-// 在错误策略中复用实际发送给 xAI 的默认模型。
+// TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultModelErrorUsesCanonicalKey checks that error policy
+// uses the default model actually sent to xAI when the client omits model.
 func TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultModelErrorUsesCanonicalKey(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusNotFound,
@@ -1576,8 +1574,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultModelErrorUsesCanonicalKey(t *
 	require.Equal(t, xai.DefaultResponsesModel, repo.modelRateLimitCalls[0].scope)
 }
 
-// TestProxyOpenAIWSHTTPBridgeTurnForGrokFreeFunctionToolsUsesMixedRoute 验证 Grok WS HTTP bridge
-// 与原生 Responses 使用相同的 Free 函数工具缓存路由。
+// TestProxyOpenAIWSHTTPBridgeTurnForGrokFreeFunctionToolsUsesMixedRoute checks the bridge
+// uses the Free function-tool cache route shared with native Responses.
 func TestProxyOpenAIWSHTTPBridgeTurnForGrokFreeFunctionToolsUsesMixedRoute(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -2261,7 +2259,7 @@ func TestOpenAIWSHTTPBridge_IdleTimeoutClosesClientSession(t *testing.T) {
 	require.Len(t, upstream.bodies, 1, "an idle client must not leave a continuation request running")
 }
 
-// HTTP 桥接预热应返回空响应，输入留给下一轮生成。
+// TestHTTPBridgeWarmupDoesNotGenerate checks empty local warmup output before a generating turn.
 func TestHTTPBridgeWarmupDoesNotGenerate(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -2286,7 +2284,7 @@ func TestHTTPBridgeWarmupDoesNotGenerate(t *testing.T) {
 	require.Empty(t, gjson.GetBytes(events[1], "response.output").Array())
 }
 
-// 预热输入在当前连接中保留，业务轮次通过预热 ID 续接时只生成一次。
+// TestHTTPBridgeWarmupContinuation checks retained warmup input and one generation when continuing from its ID.
 func TestHTTPBridgeWarmupContinuation(t *testing.T) {
 	for _, platform := range []string{capability.PlatformOpenAI, capability.PlatformGrok} {
 		t.Run(platform, func(t *testing.T) {
@@ -2367,7 +2365,7 @@ func TestHTTPBridgeWarmupContinuation(t *testing.T) {
 	}
 }
 
-// 下行预热事件发送失败时结束本轮，上游保持未调用状态。
+// TestHTTPBridgeWarmupWriteFailure checks that failed warmup delivery ends the turn before an upstream call.
 func TestHTTPBridgeWarmupWriteFailure(t *testing.T) {
 	for _, failAt := range []int{1, 2} {
 		writes := 0

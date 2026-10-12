@@ -19,14 +19,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAITokenExecution 将提供商选择接入 token 计数操作。
+// openAITokenExecution connects provider selection to token counting.
 type openAITokenExecution struct {
 	*gatewayhttp.OpenAIAuxiliary
 	planner *gatewayprovider.RoutePlanner
 	choices *selection.Compatible
 }
 
-// openAITokenTarget 保存单次计数的凭据，向 HTTP 返回独立的选择结果快照。
+// openAITokenTarget holds credentials for one count and returns a separate selection snapshot to HTTP.
 type openAITokenTarget struct {
 	source *gatewayhttp.OpenAIAuxiliary
 	value  *gatewayprovider.ExecutionProvider
@@ -74,7 +74,7 @@ func (t openAITokenTarget) ForwardInputTokens(ctx context.Context, c *gin.Contex
 	return t.source.ForwardResponsesInputTokens(ctx, c, t.value, body)
 }
 
-// provideOpenAITokensHTTP 为 OpenAI token 计数入口绑定选择和计数组件。
+// provideOpenAITokensHTTP binds provider selection and counting to the OpenAI token endpoint.
 func provideOpenAITokensHTTP(source *gatewayhttp.OpenAIAuxiliary, funding *admission.FundingAdmission, keys *apikey.APIKeyService, concurrency *scheduler.ConcurrencyService, rules *errorpolicy.ErrorPassthroughService, cfg *config.Config, activity *gatewayRequestActivity, prompts *promptpolicy.Service, availability *gatewayModelAvailability, choices *selection.Compatible, planner *gatewayprovider.RoutePlanner) *gatewayhttp.OpenAITokensHandler {
 	options := gatewayhttp.OpenAITokenOptions{MaxSwitches: 3}
 	if cfg != nil {

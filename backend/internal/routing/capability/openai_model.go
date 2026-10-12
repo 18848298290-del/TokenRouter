@@ -6,7 +6,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// LastOpenAIModelSegment 返回能力分类使用的模型路径尾段。
+// LastOpenAIModelSegment returns the final path segment used for capability classification.
 func LastOpenAIModelSegment(model string) string {
 	model = strings.TrimSpace(model)
 	if index := strings.LastIndexByte(model, '/'); index >= 0 {
@@ -15,12 +15,14 @@ func LastOpenAIModelSegment(model string) string {
 	return model
 }
 
-// CanonicalizeOpenAIModelAliasSpelling 规范查询大小写，保留型号拼写及供应商前缀。
+// CanonicalizeOpenAIModelAliasSpelling trims and lowercases an ID while retaining its spelling and provider
+// prefix.
 func CanonicalizeOpenAIModelAliasSpelling(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
-// NormalizeRecordedOpenAIEffortForModel 归一化已经发送的推理档位；能力判断由请求解析器完成。
+// NormalizeRecordedOpenAIEffortForModel normalizes an effort already sent; the request resolver checks
+// capabilities.
 func NormalizeRecordedOpenAIEffortForModel(raw string, _ string) string {
 	return protocolopenai.NormalizeRecordedReasoningEffort(raw)
 }

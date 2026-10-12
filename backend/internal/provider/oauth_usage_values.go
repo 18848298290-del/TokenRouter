@@ -7,11 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
-// WindowStats 窗口期统计
+// WindowStats contains local usage totals for a time window.
 //
-// cost: 提供商费用（COALESCE(provider_stats_cost, total_cost) * provider_rate_multiplier）
-// standard_cost: 标准费用（total_cost，不含倍率）
-// user_cost: 用户或 API Key 的实际扣费（actual_cost，受分组倍率影响）。
+// Cost sums COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1).
+// StandardCost is total_cost before multipliers.
+// UserCost is actual_cost charged to the user or API key, including the group multiplier.
 type WindowStats struct {
 	Requests     int64   `json:"requests"`
 	Tokens       int64   `json:"tokens"`
@@ -20,23 +20,23 @@ type WindowStats struct {
 	UserCost     float64 `json:"user_cost"`
 }
 
-// UsageProgress 使用量进度。
+// UsageProgress describes utilization and reset timing for a quota window.
 type UsageProgress struct {
-	Utilization      float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt         *time.Time   `json:"resets_at"`              // 重置时间
-	RemainingSeconds int          `json:"remaining_seconds"`      // 距重置剩余秒数
-	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
+	Utilization      float64      `json:"utilization"`            // Percent used; 100 means fully used and values may exceed 100.
+	ResetsAt         *time.Time   `json:"resets_at"`              // Quota reset time.
+	RemainingSeconds int          `json:"remaining_seconds"`      // Seconds until reset.
+	WindowStats      *WindowStats `json:"window_stats,omitempty"` // Local usage since the window start.
 	UsedRequests     int64        `json:"used_requests,omitempty"`
 	LimitRequests    int64        `json:"limit_requests,omitempty"`
 }
 
-// AntigravityModelQuota Antigravity 单个模型的配额信息。
+// AntigravityModelQuota contains quota information for one Antigravity model.
 type AntigravityModelQuota struct {
-	Utilization int    `json:"utilization"` // 使用率 0-100
-	ResetTime   string `json:"reset_time"`  // 重置时间 ISO8601
+	Utilization int    `json:"utilization"` // Percent used, from 0 to 100.
+	ResetTime   string `json:"reset_time"`  // ISO 8601 reset time.
 }
 
-// AntigravityModelDetail Antigravity 单个模型的详细能力信息。
+// AntigravityModelDetail contains the capabilities reported for one Antigravity model.
 type AntigravityModelDetail struct {
 	DisplayName        string          `json:"display_name,omitempty"`
 	SupportsImages     *bool           `json:"supports_images,omitempty"`
@@ -48,7 +48,7 @@ type AntigravityModelDetail struct {
 	SupportedMimeTypes map[string]bool `json:"supported_mime_types,omitempty"`
 }
 
-// AICredit 表示 Antigravity 提供商的 AI Credits 余额信息。
+// AICredit contains an Antigravity AI Credits balance.
 type AICredit struct {
 	CreditType     string  `json:"credit_type,omitempty"`
 	Amount         float64 `json:"amount,omitempty"`
@@ -84,28 +84,28 @@ type QoderQuotaInfo struct {
 	SnapshotFromProvider bool                `json:"snapshot_from_provider,omitempty"`
 }
 
-// UsageInfo 提供商使用量信息。
+// UsageInfo contains provider usage and quota display data.
 type UsageInfo struct {
 	Source             string         `json:"source,omitempty"`               // "passive" or "active"
-	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`           // 更新时间
-	FiveHour           *UsageProgress `json:"five_hour"`                      // 5小时窗口
-	SevenDay           *UsageProgress `json:"seven_day,omitempty"`            // 7天窗口
-	SevenDaySonnet     *UsageProgress `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
-	SevenDayFable      *UsageProgress `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
+	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`           // Observation time.
+	FiveHour           *UsageProgress `json:"five_hour"`                      // Five-hour window.
+	SevenDay           *UsageProgress `json:"seven_day,omitempty"`            // Seven-day window.
+	SevenDaySonnet     *UsageProgress `json:"seven_day_sonnet,omitempty"`     // Seven-day Sonnet window.
+	SevenDayFable      *UsageProgress `json:"seven_day_fable,omitempty"`      // Seven-day Fable window from the 7d_oi header.
 	GeminiSharedDaily  *UsageProgress `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
-	GeminiProDaily     *UsageProgress `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
-	GeminiFlashDaily   *UsageProgress `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
+	GeminiProDaily     *UsageProgress `json:"gemini_pro_daily,omitempty"`     // Gemini Pro daily quota.
+	GeminiFlashDaily   *UsageProgress `json:"gemini_flash_daily,omitempty"`   // Gemini Flash daily quota.
 	GeminiSharedMinute *UsageProgress `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
 	GeminiProMinute    *UsageProgress `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
 	GeminiFlashMinute  *UsageProgress `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
-	// QuotaAutoPaused 表示 OpenAI 提供商当前因 5h/7d 配额阈值被自动暂停调度。
+	// QuotaAutoPaused reports whether an OpenAI quota threshold has paused scheduling.
 	QuotaAutoPaused bool `json:"quota_auto_paused"`
 
-	// Antigravity 多模型配额
+	// Antigravity quotas keyed by model.
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
 
-	// Grok / xAI 被动额度快照
+	// Grok / xAI passive quota observations.
 	GrokRequestQuota       *usageview.QuotaWindow `json:"grok_request_quota,omitempty"`
 	GrokTokenQuota         *usageview.QuotaWindow `json:"grok_token_quota,omitempty"`
 	GrokRetryAfterSeconds  *int                   `json:"grok_retry_after_seconds,omitempty"`
@@ -119,41 +119,41 @@ type UsageInfo struct {
 	GrokLocalUsage24h      *WindowStats           `json:"grok_local_usage_24h,omitempty"`
 	GrokLocalUsage7d       *WindowStats           `json:"grok_local_usage_7d,omitempty"`
 	GrokLocalUsageMonthly  *WindowStats           `json:"grok_local_usage_monthly,omitempty"`
-	// ThirtyDay 是官方月度账单窗口，按 used/monthlyLimit 计算百分比。
+	// ThirtyDay is the upstream monthly billing window, with utilization derived from used/monthlyLimit.
 	ThirtyDay   *UsageProgress            `json:"thirty_day,omitempty"`
 	GrokBilling *usageview.BillingSummary `json:"grok_billing,omitempty"`
 
-	// Antigravity 提供商级信息
-	SubscriptionTier    string `json:"subscription_tier,omitempty"`     // 归一化订阅等级: FREE/PRO/ULTRA/UNKNOWN
-	SubscriptionTierRaw string `json:"subscription_tier_raw,omitempty"` // 上游原始订阅等级名称
+	// Antigravity subscription metadata.
+	SubscriptionTier    string `json:"subscription_tier,omitempty"`     // Normalized tier: FREE, PRO, ULTRA, or UNKNOWN.
+	SubscriptionTierRaw string `json:"subscription_tier_raw,omitempty"` // Upstream subscription tier name.
 
-	// Antigravity 模型详细能力信息（与 antigravity_quota 同 key）
+	// Model capabilities keyed identically to AntigravityQuota.
 	AntigravityQuotaDetails map[string]*AntigravityModelDetail `json:"antigravity_quota_details,omitempty"`
 
-	// Antigravity AI Credits 余额
+	// Antigravity AI Credits balances.
 	AICredits []AICredit `json:"ai_credits,omitempty"`
 
-	// Qoder 上游提供商月度 credits
+	// Monthly credits on the upstream Qoder account.
 	QoderQuota *QoderQuotaInfo `json:"qoder_quota,omitempty"`
 
-	// Antigravity 废弃模型转发规则 (old_model_id -> new_model_id)
+	// Antigravity deprecated-model redirects: old_model_id -> new_model_id.
 	ModelForwardingRules map[string]string `json:"model_forwarding_rules,omitempty"`
 
-	// Antigravity 提供商是否被上游禁止 (HTTP 403)
+	// IsForbidden reports an upstream Antigravity HTTP 403.
 	IsForbidden     bool   `json:"is_forbidden,omitempty"`
 	ForbiddenReason string `json:"forbidden_reason,omitempty"`
 	ForbiddenType   string `json:"forbidden_type,omitempty"` // "validation" / "violation" / "forbidden"
-	ValidationURL   string `json:"validation_url,omitempty"` // 验证/申诉链接
+	ValidationURL   string `json:"validation_url,omitempty"` // Verification or appeal URL.
 
-	// 状态标记（从 ForbiddenType / HTTP 错误码推导）
-	NeedsVerify bool `json:"needs_verify,omitempty"` // 需要人工验证（forbidden_type=validation）
-	IsBanned    bool `json:"is_banned,omitempty"`    // 提供商被封（forbidden_type=violation）
-	NeedsReauth bool `json:"needs_reauth,omitempty"` // token 失效需重新授权（401）
+	// Status flags derived from ForbiddenType or the HTTP error code.
+	NeedsVerify bool `json:"needs_verify,omitempty"` // Manual verification required: forbidden_type=validation.
+	IsBanned    bool `json:"is_banned,omitempty"`    // Account banned: forbidden_type=violation.
+	NeedsReauth bool `json:"needs_reauth,omitempty"` // Authorization required after a 401 response.
 
-	// 错误码（机器可读）：forbidden / unauthenticated / rate_limited / network_error
+	// Machine-readable failure code, such as forbidden, unauthenticated, rate_limited, or network_error.
 	ErrorCode string `json:"error_code,omitempty"`
 
-	// 用量查询失败时在展示结果中返回错误信息。
+	// Display error from a failed usage query.
 	Error string `json:"error,omitempty"`
 }
 

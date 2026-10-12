@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// provideResponsesWSHTTP 直接绑定 WS 用例，共享同一尝试支持、生命周期与动态数据读取。
+// provideResponsesWSHTTP binds WS handlers to shared attempt support, lifecycle tracking, and runtime readers.
 func provideResponsesWSHTTP(
 	source *wshttp.OpenAIWebSocketExecutor, credentials *gatewayhttp.RequestCredentialExecutor,
 	funding *admission.FundingAdmission,
@@ -43,7 +43,7 @@ func provideResponsesWSHTTP(
 	return result
 }
 
-// responsesWSOptions 返回入站连接和首帧的静态配置及默认值。
+// responsesWSOptions returns static connection and first-frame options with defaults.
 func responsesWSOptions(cfg *config.Config) wshttp.ResponsesWSOptions {
 	options := wshttp.ResponsesWSOptions{
 		MaxProviderSwitches: 3,
@@ -59,7 +59,7 @@ func responsesWSOptions(cfg *config.Config) wshttp.ResponsesWSOptions {
 	return options
 }
 
-// responsesWSBindings 绑定共享状态和每轮单次执行函数。
+// responsesWSBindings binds shared state and per-turn execution functions.
 func responsesWSBindings(source *wshttp.OpenAIWebSocketExecutor, credentials *gatewayhttp.RequestCredentialExecutor, funding *admission.FundingAdmission, keys *apikey.APIKeyService, common openaiattempt.Bindings, prompt *promptpolicy.Service, blocks *session.CyberBlocks, choices *selection.Compatible, planner *gatewayprovider.RoutePlanner, subscriptions admission.SubscriptionReader) wshttp.Bindings {
 	b := wshttp.Bindings{
 		Common:        common,

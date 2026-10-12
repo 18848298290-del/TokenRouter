@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	// SettingKeyOllamaCloudUsageSettings 保留已发布的配置键。
+	// SettingKeyOllamaCloudUsageSettings identifies persisted Ollama Cloud usage settings.
 	SettingKeyOllamaCloudUsageSettings = "ollama_cloud_usage_settings"
 
-	// 提供商运行设置使用既有键，由提供商模块维护解释权。
+	// The provider module interprets these persisted runtime settings.
 	SettingKeyOpenAI403CooldownSettings                    = "openai_oauth_403_cooldown_settings"
 	SettingKeyOpenAIAPIKeyHealthBreakerSettings            = "openai_apikey_health_breaker_settings"
 	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
@@ -24,21 +24,21 @@ const (
 	SettingKeyRateLimit429CooldownSettings                 = "rate_limit_429_cooldown_settings"
 	SettingKeyStreamTimeoutSettings                        = "stream_timeout_settings"
 
-	// OpenAIImagesOAuthUnavailableDefaultCooldownMinutes 是默认冷却分钟数。
+	// OpenAIImagesOAuthUnavailableDefaultCooldownMinutes is the default image-unavailability cooldown in minutes.
 	OpenAIImagesOAuthUnavailableDefaultCooldownMinutes = 30
 
-	// OpenAIImagesOAuthUnavailableMaxCooldownMinutes 是最大冷却分钟数。
+	// OpenAIImagesOAuthUnavailableMaxCooldownMinutes is the maximum image-unavailability cooldown in minutes.
 	OpenAIImagesOAuthUnavailableMaxCooldownMinutes = 120
 	openAIAPIKeyHealthBreakerSettingsCacheTTL      = 30 * time.Second
 )
 
-// RuntimeSettingsStore 提供提供商配置的键值读写操作。
+// RuntimeSettingsStore reads and writes provider settings by key.
 type RuntimeSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 	Set(context.Context, string, string) error
 }
 
-// RuntimeSettings 独占提供商健康配置及其已有缓存。
+// RuntimeSettings owns provider health settings and their local caches.
 type RuntimeSettings struct {
 	providerSchedulingThresholdsCache atomic.Value
 	providerSchedulingThresholdsSF    singleflight.Group
@@ -47,12 +47,12 @@ type RuntimeSettings struct {
 	openAIAPIKeyHealthBreakerCache    atomic.Value
 }
 
-// OpenAIImagesOAuthUnavailableCooldownSettings 保存 OAuth 图片不可用时的冷却设置。
+// OpenAIImagesOAuthUnavailableCooldownSettings configures the cooldown for unavailable OAuth image generation.
 type OpenAIImagesOAuthUnavailableCooldownSettings struct {
 	CooldownMinutes int `json:"cooldown_minutes"`
 }
 
-// OpenAIAPIKeyHealthBreakerSettings 保存 OpenAI API Key 失败熔断设置。
+// OpenAIAPIKeyHealthBreakerSettings configures failure-triggered OpenAI API Key circuit breaking.
 type OpenAIAPIKeyHealthBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
 	WindowMinutes    int  `json:"window_minutes"`
@@ -65,12 +65,12 @@ type cachedOpenAIAPIKeyHealthBreakerSettings struct {
 	expiresAt time.Time
 }
 
-// NewRuntimeSettings 构造无 I/O 的提供商配置实例。
+// NewRuntimeSettings stores dependencies; it performs no I/O.
 func NewRuntimeSettings(repo RuntimeSettingsStore, notFound error) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo, notFound: notFound}
 }
 
-// GetOllamaCloudUsageSettings 在设置缺失时返回默认关闭的配置。
+// GetOllamaCloudUsageSettings returns disabled defaults when settings are absent.
 func (s *RuntimeSettings) GetOllamaCloudUsageSettings(ctx context.Context) (*OllamaCloudUsageSettings, error) {
 	defaults := DefaultOllamaCloudUsageSettings()
 	if s == nil || s.settingRepo == nil {
@@ -86,7 +86,7 @@ func (s *RuntimeSettings) GetOllamaCloudUsageSettings(ctx context.Context) (*Oll
 	return DecodeOllamaCloudUsageSettings(raw)
 }
 
-// SetOllamaCloudUsageSettings 先完成原校验和编码，再持久化单键配置。
+// SetOllamaCloudUsageSettings validates and encodes usage settings before persisting the settings key.
 func (s *RuntimeSettings) SetOllamaCloudUsageSettings(ctx context.Context, settings *OllamaCloudUsageSettings) error {
 	if s == nil || s.settingRepo == nil {
 		return ErrOllamaCloudUsageUnavailable
@@ -98,7 +98,7 @@ func (s *RuntimeSettings) SetOllamaCloudUsageSettings(ctx context.Context, setti
 	return s.settingRepo.Set(ctx, SettingKeyOllamaCloudUsageSettings, data)
 }
 
-// DefaultStreamTimeoutSettings 返回内置的流超时设置。
+// DefaultStreamTimeoutSettings returns the built-in stream timeout policy.
 func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 	return &StreamTimeoutSettings{
 		Enabled:                false,
@@ -109,7 +109,7 @@ func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 	}
 }
 
-// DefaultOverloadCooldownSettings 返回内置的过载冷却设置。
+// DefaultOverloadCooldownSettings returns the built-in overload cooldown policy.
 func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	return &OverloadCooldownSettings{
 		Enabled:         true,
@@ -117,12 +117,12 @@ func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	}
 }
 
-// DefaultOpenAIImagesOAuthUnavailableCooldownSettings 返回内置的 OAuth 图片冷却设置。
+// DefaultOpenAIImagesOAuthUnavailableCooldownSettings returns the default OAuth image cooldown.
 func DefaultOpenAIImagesOAuthUnavailableCooldownSettings() *OpenAIImagesOAuthUnavailableCooldownSettings {
 	return &OpenAIImagesOAuthUnavailableCooldownSettings{CooldownMinutes: OpenAIImagesOAuthUnavailableDefaultCooldownMinutes}
 }
 
-// DefaultOpenAIAPIKeyHealthBreakerSettings 返回内置的 API Key 熔断设置。
+// DefaultOpenAIAPIKeyHealthBreakerSettings returns the default API Key circuit breaker policy.
 func DefaultOpenAIAPIKeyHealthBreakerSettings() *OpenAIAPIKeyHealthBreakerSettings {
 	return &OpenAIAPIKeyHealthBreakerSettings{
 		Enabled:          false,
@@ -155,7 +155,8 @@ func normalizeOpenAIAPIKeyHealthBreakerSettings(settings *OpenAIAPIKeyHealthBrea
 	return &result
 }
 
-// GetOverloadCooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// GetOverloadCooldownSettings reads the policy, defaults missing or malformed JSON, and clamps cooldown to
+// 1-120 minutes.
 func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*OverloadCooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOverloadCooldownSettings)
 	if err != nil {
@@ -173,7 +174,7 @@ func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*Ove
 		return DefaultOverloadCooldownSettings(), nil
 	}
 
-	// 修正配置值范围
+	// Clamp stored cooldown values into the supported range.
 	if settings.CooldownMinutes < 1 {
 		settings.CooldownMinutes = 1
 	}
@@ -184,18 +185,18 @@ func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*Ove
 	return &settings, nil
 }
 
-// SetOverloadCooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// SetOverloadCooldownSettings validates enabled cooldowns and normalizes invalid disabled values before saving.
 func (s *RuntimeSettings) SetOverloadCooldownSettings(ctx context.Context, settings *OverloadCooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// 禁用时修正为合法值即可，不拒绝请求
+	// Disabled policies accept invalid durations after normalization.
 	if settings.CooldownMinutes < 1 || settings.CooldownMinutes > 120 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_minutes must be between 1-120")
 		}
-		settings.CooldownMinutes = 10 // 禁用状态下归一化为默认值
+		settings.CooldownMinutes = 10 // Use the default duration while disabled.
 	}
 
 	data, err := json.Marshal(settings)
@@ -206,7 +207,7 @@ func (s *RuntimeSettings) SetOverloadCooldownSettings(ctx context.Context, setti
 	return s.settingRepo.Set(ctx, SettingKeyOverloadCooldownSettings, string(data))
 }
 
-// GetRateLimit429CooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// GetRateLimit429CooldownSettings reads the policy and clamps stored cooldowns to 1-7200 seconds.
 func (s *RuntimeSettings) GetRateLimit429CooldownSettings(ctx context.Context) (*RateLimit429CooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRateLimit429CooldownSettings)
 	if err != nil {
@@ -234,7 +235,7 @@ func (s *RuntimeSettings) GetRateLimit429CooldownSettings(ctx context.Context) (
 	return &settings, nil
 }
 
-// SetRateLimit429CooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// SetRateLimit429CooldownSettings validates enabled cooldowns and normalizes invalid disabled values to five seconds.
 func (s *RuntimeSettings) SetRateLimit429CooldownSettings(ctx context.Context, settings *RateLimit429CooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
@@ -255,7 +256,7 @@ func (s *RuntimeSettings) SetRateLimit429CooldownSettings(ctx context.Context, s
 	return s.settingRepo.Set(ctx, SettingKeyRateLimit429CooldownSettings, string(data))
 }
 
-// GetOpenAIImagesOAuthUnavailableCooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// GetOpenAIImagesOAuthUnavailableCooldownSettings returns defaults for missing, malformed, or out-of-range settings.
 func (s *RuntimeSettings) GetOpenAIImagesOAuthUnavailableCooldownSettings(ctx context.Context) (*OpenAIImagesOAuthUnavailableCooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings)
 	if err != nil {
@@ -276,7 +277,7 @@ func (s *RuntimeSettings) GetOpenAIImagesOAuthUnavailableCooldownSettings(ctx co
 	return &settings, nil
 }
 
-// SetOpenAIImagesOAuthUnavailableCooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// SetOpenAIImagesOAuthUnavailableCooldownSettings requires a cooldown from 1 through 120 minutes before saving.
 func (s *RuntimeSettings) SetOpenAIImagesOAuthUnavailableCooldownSettings(ctx context.Context, settings *OpenAIImagesOAuthUnavailableCooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
@@ -291,7 +292,7 @@ func (s *RuntimeSettings) SetOpenAIImagesOAuthUnavailableCooldownSettings(ctx co
 	return s.settingRepo.Set(ctx, SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings, string(data))
 }
 
-// GetStreamTimeoutSettings 保留已有独立端点的校验、默认与写入行为。
+// GetStreamTimeoutSettings reads the policy, applying defaults and normalizing stored ranges and actions.
 func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*StreamTimeoutSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStreamTimeoutSettings)
 	if err != nil {
@@ -309,7 +310,7 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 		return DefaultStreamTimeoutSettings(), nil
 	}
 
-	// 验证并修正配置值
+	// Clamp stored values to the supported ranges.
 	if settings.TempUnschedMinutes < 1 {
 		settings.TempUnschedMinutes = 1
 	}
@@ -329,7 +330,7 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 		settings.ThresholdWindowMinutes = 60
 	}
 
-	// 验证 action
+	// Unknown stored actions use the temporary-block action.
 	switch settings.Action {
 	case StreamTimeoutActionTempUnsched, StreamTimeoutActionError, StreamTimeoutActionNone:
 		// valid
@@ -340,13 +341,13 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 	return &settings, nil
 }
 
-// SetStreamTimeoutSettings 保留已有独立端点的校验、默认与写入行为。
+// SetStreamTimeoutSettings rejects invalid durations, thresholds, and actions before saving.
 func (s *RuntimeSettings) SetStreamTimeoutSettings(ctx context.Context, settings *StreamTimeoutSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// 验证配置值
+	// Validate durations and counts before encoding.
 	if settings.TempUnschedMinutes < 1 || settings.TempUnschedMinutes > 60 {
 		return fmt.Errorf("temp_unsched_minutes must be between 1-60")
 	}
@@ -372,7 +373,7 @@ func (s *RuntimeSettings) SetStreamTimeoutSettings(ctx context.Context, settings
 	return s.settingRepo.Set(ctx, SettingKeyStreamTimeoutSettings, string(data))
 }
 
-// GetOpenAI403CooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// GetOpenAI403CooldownSettings reads over the default policy and normalizes stored durations and thresholds.
 func (s *RuntimeSettings) GetOpenAI403CooldownSettings(ctx context.Context) (*OpenAI403CooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAI403CooldownSettings)
 	if err != nil {
@@ -412,13 +413,13 @@ func (s *RuntimeSettings) GetOpenAI403CooldownSettings(ctx context.Context) (*Op
 	return &settings, nil
 }
 
-// SetOpenAI403CooldownSettings 保留已有独立端点的校验、默认与写入行为。
+// SetOpenAI403CooldownSettings validates active controls and normalizes inactive controls before saving.
 func (s *RuntimeSettings) SetOpenAI403CooldownSettings(ctx context.Context, settings *OpenAI403CooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// 禁用时修正为合法值即可，不拒绝请求
+	// Invalid values are normalized when their corresponding control is disabled.
 	if settings.CooldownMinutes < 1 || settings.CooldownMinutes > 120 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_minutes must be between 1-120")
@@ -446,7 +447,7 @@ func (s *RuntimeSettings) SetOpenAI403CooldownSettings(ctx context.Context, sett
 	return s.settingRepo.Set(ctx, SettingKeyOpenAI403CooldownSettings, string(data))
 }
 
-// GetOpenAIAPIKeyHealthBreakerSettings 保留已有独立端点的校验、默认与写入行为。
+// GetOpenAIAPIKeyHealthBreakerSettings returns a copy of cached settings, reloading and normalizing after expiry.
 func (s *RuntimeSettings) GetOpenAIAPIKeyHealthBreakerSettings(ctx context.Context) (*OpenAIAPIKeyHealthBreakerSettings, error) {
 	if s == nil || s.settingRepo == nil {
 		return DefaultOpenAIAPIKeyHealthBreakerSettings(), nil

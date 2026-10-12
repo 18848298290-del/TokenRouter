@@ -18,10 +18,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// 测试用 TTL 配置（15 分钟，与默认值一致）。
+// testSlotTTLMinutes matches the default fifteen-minute lifetime.
 const testSlotTTLMinutes = 15
 
-// 测试用 TTL Duration，用于 TTL 断言。
+// testSlotTTL is the duration used in TTL assertions.
 var testSlotTTL = time.Duration(testSlotTTLMinutes) * time.Minute
 
 type ConcurrencyCacheSuite struct {
@@ -36,7 +36,7 @@ type apiKeyConcurrencyCacheForTest interface {
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
 }
 
-// waitIncrementFault 为增加操作注入传输错误，查询和释放访问测试 Redis。
+// waitIncrementFault injects admission transport errors while reads and releases use test Redis.
 type waitIncrementFault struct{ scheduler.ConcurrencyCache }
 
 func TestConcurrencyCacheSuite(t *testing.T) {
@@ -405,7 +405,7 @@ func (s *ConcurrencyCacheSuite) TestWaitQueue_DecrementNoNegative() {
 	// Decrement again on 0 - should not go negative
 	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID), "DecrementWaitCount on zero")
 
-	// Verify count is 0, not negative
+	// Check that repeated decrements keep the count nonnegative.
 	val, err = s.rdb.Get(s.ctx, waitKey).Int()
 	if !errors.Is(err, redis.Nil) {
 		require.NoError(s.T(), err, "Get waitKey after double decrement")
@@ -443,7 +443,7 @@ func (s *ConcurrencyCacheSuite) TestProviderWaitQueue_IncrementAndDecrement() {
 }
 
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
-	// 预置迁移 marker，隔离一次性清扫，只验证索引驱动的清理路径。
+	// Preseed the migration marker to exercise index cleanup independently of the legacy sweep.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(901)
 	userID := int64(902)
@@ -496,7 +496,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"keep-2"}, userMembers)
 
-	// API Key 统计槽位的清理由分数裁剪和 key TTL 完成。
+	// API key statistics slots are cleaned by score pruning and key TTL.
 	apiKeyMembers, err := s.rdb.ZRange(s.ctx, apiKeyKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.ElementsMatch(s.T(), []string{"keep-3", "oldproc-3"}, apiKeyMembers)
@@ -718,12 +718,12 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlotKeys_ReapsUserInde
 	expiredScore := float64(now - 10)
 	userKeyWithFresh := fmt.Sprintf("%s%d", userSlotKeyPrefix, 401)
 
-	// 401 的索引 score 已过期，但仍有负载，清理时应刷新 score。
+	// User 401 has an expired index score but still has load, so cleanup must refresh its score.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userKeyWithFresh,
 		redis.Z{Score: float64(now), Member: "fresh"},
 	).Err())
-	// 402 无任何负载：过期索引 member 应被回收。
-	// 非法 member 也应随过期候选一并清除。
+	// User 402 has no load, so cleanup removes its expired index entry.
+	// Malformed members are removed with expired candidates.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userActiveIndexKey,
 		redis.Z{Score: expiredScore, Member: "401"},
 		redis.Z{Score: expiredScore, Member: "402"},
@@ -749,7 +749,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRuns
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedProviderWaitKey, 5, time.Minute).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedUserWaitKey, 3, time.Minute).Err())
 
-	// 首次运行：marker 不存在，一次性清扫删除所有遗留等待计数（含未入索引的）。
+	// Without a marker, the first sweep removes legacy wait keys, including unindexed ones.
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 
 	_, err := s.rdb.Get(s.ctx, unindexedProviderWaitKey).Result()
@@ -761,7 +761,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRuns
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 1, exists, "sweep marker should be set after first run")
 
-	// marker 已存在时跳过清扫，未入索引的等待计数保持原值。
+	// The marker skips later sweeps, leaving unindexed wait counters intact.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedProviderWaitKey, 5, time.Minute).Err())
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 	val, err := s.rdb.Get(s.ctx, unindexedProviderWaitKey).Int()
@@ -770,7 +770,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRuns
 }
 
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredIndexMembers() {
-	// score 已过期的索引成员往往正是崩溃进程留下的残留，启动清理必须覆盖它们。
+	// Startup cleanup includes expired index members to find crash leftovers.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(3901)
 	userID := int64(3902)
@@ -787,7 +787,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 		redis.Z{Score: float64(now), Member: "oldproc-2"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, providerWaitKey, 4, time.Minute).Err())
-	// 索引 score 设为过去时刻，模拟长时间停机后索引已“过期”。
+	// A past score represents an index entry left across a long shutdown.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, providerActiveIndexKey, redis.Z{
 		Score:  float64(now - 100),
 		Member: strconv.FormatInt(providerID, 10),
@@ -817,7 +817,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 }
 
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOldPrefixesAndWaitCounters() {
-	// 预置迁移 marker 后，等待计数由索引清理路径删除。
+	// With the marker present, the index cleanup path removes wait counters.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(901)
 	userID := int64(902)
@@ -892,7 +892,7 @@ func (c waitIncrementFault) IncrementProviderWaitCount(context.Context, int64, i
 	return false, errors.New("增加提供商等待计数未确认")
 }
 
-// TestWaitFailOpenDoesNotReleaseOtherRequest 验证错误放行后立即退出，不能递减 Redis 中另一个请求持有的用户或提供商计数。
+// TestWaitFailOpenDoesNotReleaseOtherRequest checks that admission errors cannot release another request's user or provider wait count.
 func TestWaitFailOpenDoesNotReleaseOtherRequest(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)

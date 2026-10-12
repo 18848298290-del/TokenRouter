@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// auditAssemblyProviders 汇总 audit 模块的 Wire provider。
+// auditAssemblyProviders groups Wire providers for the audit module.
 var auditAssemblyProviders = wire.NewSet(
 	provideAuditSettings,
 	provideAuditRepository,

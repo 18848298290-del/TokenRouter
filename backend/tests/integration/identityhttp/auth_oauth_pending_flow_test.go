@@ -914,11 +914,11 @@ func TestExchangePendingOAuthCompletionRejectsDisabledTargetUser(t *testing.T) {
 }
 
 func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing.T) {
-	// 检查“补邮箱/创建账户”路径中的账号接管攻击。
-	// 攻击者用自己的 OAuth 账号登录后，在 create-account 步骤提交受害者邮箱，
-	// 后端发现邮箱已存在会把 pending session 转入 choice 状态并指向受害者
-	// （TargetUserID=受害者、无密码/验证码证明）。此时带 adoption decision 调
-	// exchange 应拒绝将 OAuth identity 绑定到受害者账号。
+	// Exercise an account-takeover attempt through the create-account step.
+	// The attacker signs in with their OAuth account and submits the victim's email.
+	// The existing email sends the pending session to the choice step with the victim
+	// as TargetUserID. No password or email-code proof has been supplied, so an
+	// exchange request with an adoption decision must not bind the attacker's identity.
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
 
@@ -977,7 +977,7 @@ func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing
 	require.NotContains(t, data, "access_token")
 	require.Equal(t, identityhttp.OauthPendingChoiceStep, data["step"])
 
-	// 检查受害者账号的绑定结果中没有攻击者的 OAuth identity。
+	// Returning the choice step must not create the attacker's identity binding.
 	identityCount, err := client.AuthIdentity.Query().
 		Where(
 			authidentity.ProviderTypeEQ("linuxdo"),
@@ -988,12 +988,12 @@ func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing
 	require.NoError(t, err)
 	require.Zero(t, identityCount)
 
-	// 检查受害者资料保持。
+	// The victim's username remains unchanged.
 	storedVictim, err := client.User.Get(ctx, victim.ID)
 	require.NoError(t, err)
 	require.Equal(t, "victim-user", storedVictim.Username)
 
-	// 检查 session 仍未消费，流程停在身份证明步骤。
+	// The session stays unconsumed while proof of account ownership is required.
 	storedSession, err := client.PendingAuthSession.Get(ctx, session.ID)
 	require.NoError(t, err)
 	require.Nil(t, storedSession.ConsumedAt)

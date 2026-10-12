@@ -25,7 +25,7 @@ type teamBlockRecorder struct {
 	reasons   []string
 }
 
-// ListByPlatform 返回指定平台的 active 提供商。
+// ListByPlatform returns active fixture providers on the requested platform.
 func (r *teamLinkedProviderRepoStub) ListByPlatform(ctx context.Context, platform string) ([]Record, error) {
 	r.listCalls++
 	if r.listErr != nil {
@@ -62,7 +62,8 @@ func newTeamLinkedProvider(id int64, teamID string) Record {
 	}
 }
 
-// newTeamLinkedFixture: #1 触发者(team-A) #2 同队 #3 异队 #4 apikey #5 影子 #6 同队 #7 同队但已 error。
+// newTeamLinkedFixture includes the trigger, two teammates, another team, an API key, a shadow, and an errored
+// teammate.
 func newTeamLinkedFixture() []Record {
 	parentID := int64(1)
 	shadow := Record{
@@ -88,7 +89,7 @@ func newTeamLinkedFixture() []Record {
 }
 
 func TestTeamLinkedError_DirectCallSkipsTriggerProvider(t *testing.T) {
-	// 直调对应 fastpath 调用点：提供商级临时不可调度规则短路时联动仍然生效
+	// Direct propagation excludes the triggering provider, whose own error handling is separate.
 	repo := &teamLinkedProviderRepoStub{teamProviders: newTeamLinkedFixture()}
 	rl, blocker := newTeamLinkedTestService(repo)
 	trigger := newTeamLinkedProvider(1, "team-A")
@@ -122,11 +123,11 @@ func TestTeamLinkedError_SetErrorFailureDoesNotAbortRemaining(t *testing.T) {
 	rl.HandleWorkspaceDeactivated(context.Background(), &trigger, true)
 
 	require.Equal(t, []int64{6}, repo.setErrorIDs)
-	// 进程内熔断先于落库执行，两个提供商都已被熔断
+	// Both providers are blocked in memory before either persistent write is attempted.
 	require.Len(t, blocker.reasons, 2)
 }
 
-// newTeamLinkedTestService 为团队联动组件提供列表和写入替身。
+// newTeamLinkedTestService supplies the fixture store and records runtime blocks.
 func newTeamLinkedTestService(repo *teamLinkedProviderRepoStub) (*TeamLinkedHealth, *teamBlockRecorder) {
 	blocker := &teamBlockRecorder{}
 	return NewTeamLinkedHealth(repo, TeamLinkedOptions{Block: blocker.Block}), blocker

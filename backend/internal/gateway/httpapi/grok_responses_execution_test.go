@@ -78,7 +78,7 @@ func TestApplyGrokUpstreamFailure_SpendingLimitRemainsRecoverable(t *testing.T) 
 
 	require.Equal(t, 1, repo.rateLimitedCalls)
 	require.Zero(t, repo.tempUnschedCalls)
-	// 缺少账期快照时使用可恢复的短期探测冷却。
+	// A missing billing-period snapshot uses a short probe cooldown that can recover.
 	require.WithinDuration(t, time.Now().Add(10*time.Minute), repo.lastRateLimitResetAt, 2*time.Second)
 }
 
@@ -125,7 +125,7 @@ func TestForwardGrokResponses_PropagatesSearchCountFromSSE(t *testing.T) {
 
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9902, "access-token")
 	repo := &grokFixtureProviders{providersByID: map[int64]*gatewayprovider.ExecutionProvider{provider.Record.ID: provider}}
-	// 装配后，同一 call_id 的 item.done 与 response.completed 只能统计一次。
+	// Count the same call_id once across item.done and response.completed.
 	sse := "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"web_search_call\",\"id\":\"ws1\",\"call_id\":\"c1\"}}\n\n" +
 		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_s\",\"status\":\"completed\",\"output\":[{\"type\":\"web_search_call\",\"id\":\"ws1\",\"call_id\":\"c1\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n"
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -350,7 +350,7 @@ func TestForwardGrokResponsesCompactRoundTrip(t *testing.T) {
 	require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(upstream.lastBody, "include.0").String())
 	require.Equal(t, "compact this", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.1.content.0.text").String(), "Primary Request and Intent")
-	// Grok Responses 不支持 OpenAI metadata，兼容层在出站前明确剥离该字段。
+	// Remove OpenAI metadata before forwarding to Grok Responses.
 	require.False(t, gjson.GetBytes(upstream.lastBody, "metadata").Exists())
 	require.Equal(t, "compaction", gjson.Get(recorder.Body.String(), "output.0.type").String())
 	require.Equal(t, "compact-state", gjson.Get(recorder.Body.String(), "output.0.encrypted_content").String())
@@ -787,7 +787,7 @@ func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *test
 	identity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
 	require.NotEmpty(t, identity)
 	require.Equal(t, identity, upstream.lastReq.Header.Get(GrokConversationIDHeader))
-	// 客户端声明工具后，即使清理器移除该工具，也跳过缓存路由工具注入。
+	// Client tool declarations suppress cache-tool injection even when capability filtering removes those tools.
 	require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
 	require.Equal(t, "resp_grok_non_stream", gjson.Get(recorder.Body.String(), "id").String())
@@ -796,7 +796,8 @@ func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *test
 	require.Equal(t, observedResetAt, repo.recoveryObservedReset)
 }
 
-// TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute 验证 Responses Free OAuth 函数工具请求在转发前补齐可缓存的平台工具。
+// TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute checks platform-tool injection for Free OAuth
+// function-tool requests.
 func TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

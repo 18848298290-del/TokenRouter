@@ -29,7 +29,7 @@ func TestAntigravitySharedUsageRejectsDifferentIdentity(t *testing.T) {
 		fresh.Credentials = map[string]any{"access_token": "new"}
 		second := make(chan error, 1)
 		go func() { _, err := core.GetAntigravityUsage(context.Background(), fresh); second <- err }()
-		// 等待两个 goroutine 均阻塞，明确验证第二身份正在等待原 flight。
+		// Wait until both calls block so the second identity has joined the first flight.
 		synctest.Wait()
 		require.Equal(t, int32(1), calls.Load())
 		close(release)

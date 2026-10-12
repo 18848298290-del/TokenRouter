@@ -21,8 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ForwardResponsesInputTokens 转发 OpenAI 原生 POST /responses/input_tokens。
-// 不支持该预检端点的提供商使用本地估算，避免把已知不兼容请求发送到上游。
+// ForwardResponsesInputTokens forwards OpenAI POST /responses/input_tokens.
+// Providers with unsupported counting endpoints use local estimates.
 func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 	ctx context.Context,
 	c *gin.Context,
@@ -34,7 +34,7 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		return fmt.Errorf("responses input_tokens: missing provider")
 	}
 
-	// 该预检使用 OpenAI 兼容计数提供商及其凭据。
+	// This preflight supports OpenAI, Grok, and CN providers.
 	if provider.Record.Platform != "openai" && !provider.View().IsGrok() && !provider.View().IsCNProvider() {
 		writeOpenAIResponsesInputTokensError(c, http.StatusNotFound, "not_found_error", "Responses input token counting is not supported for this provider")
 		return nil

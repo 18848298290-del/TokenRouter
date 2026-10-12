@@ -33,7 +33,7 @@ func TestBatchImageWorkerRuntime_StartupDoesNotCreateRedisBatchImageKeys(t *test
 		RecoveryInterval: time.Minute, StaleActiveAfter: time.Minute,
 		DelayedMoveLimit: 10, RecoverLimit: 10,
 	})
-	// 生产无恢复器时仅运行三条队列循环，构造期间不得创建 Redis 状态。
+	// Exercise the three queue loops used without a recovery service; startup must leave Redis empty.
 	runtime := batchimage.NewRuntime("batch image worker", true, worker.Run, worker.RunDelayedMover, worker.RunStaleActiveRecovery)
 
 	runtime.Start()

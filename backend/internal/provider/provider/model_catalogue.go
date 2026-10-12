@@ -23,8 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ChatGPT Codex 模型清单地址仅供管理员手动同步 OAuth 提供商模型使用；
-// fork 已移除独立的 manifest 网关透传服务，不在此恢复任何代理路由。
+// DefaultCodexModelsURL is the OAuth model catalogue endpoint used by administrative synchronization.
 const DefaultCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
 
 type upstreamModelEntry struct {
@@ -45,7 +44,7 @@ type upstreamModelEntryMetadata struct {
 	Name         string `json:"name"`
 }
 
-// ModelCatalogueOptions 包含模型查询所需的启动参数和请求端点。
+// ModelCatalogueOptions configures URL validation, response limits, and catalogue endpoints.
 type ModelCatalogueOptions struct {
 	ValidateURL       func(string) (string, error)
 	OperatorValidator grok.BaseURLValidator
@@ -53,7 +52,7 @@ type ModelCatalogueOptions struct {
 	CodexModelsURL    string
 }
 
-// ModelCatalogue 执行模型目录请求，不另建缓存或后台任务。
+// ModelCatalogue fetches upstream model lists on demand.
 type ModelCatalogue struct {
 	Options            ModelCatalogueOptions
 	Transport          QoderTransport
@@ -79,7 +78,7 @@ func newUpstreamModelSyncUpstreamError(message string, err error) error {
 	return &providercore.UpstreamModelSyncError{Kind: providercore.UpstreamModelSyncErrorUpstream, Message: message, Err: err}
 }
 
-// FetchUpstreamSupportedModels 根据提供商的上游 API 形态拉取实时支持模型列表。
+// FetchUpstreamSupportedModels fetches the current model list using the provider's platform API.
 func (s *ModelCatalogue) FetchUpstreamSupportedModels(ctx context.Context, value *providercore.Record) ([]string, error) {
 	if s == nil {
 		return nil, newUpstreamModelSyncConfigError("Provider test service is not configured", nil)
@@ -149,7 +148,7 @@ func (s *ModelCatalogue) buildUpstreamModelsRequest(ctx context.Context, value *
 	case value.IsGrok():
 		return s.buildGrokUpstreamModelsRequest(ctx, value)
 	case value.IsOpenAI() || value.IsCNProvider():
-		// 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）复用 OpenAI /v1/models 探测。
+		// CN providers use the OpenAI-compatible models endpoint.
 		return s.buildOpenAIUpstreamModelsRequest(ctx, value)
 	case value.IsGemini():
 		return s.buildGeminiUpstreamModelsRequest(ctx, value)
@@ -162,7 +161,7 @@ func (s *ModelCatalogue) buildUpstreamModelsRequest(ctx context.Context, value *
 	}
 }
 
-// buildJevUpstreamModelsRequest 使用 Jev 地址和 Bearer 凭据构造模型列表请求。
+// buildJevUpstreamModelsRequest builds a model query with the Jev URL and Bearer credentials.
 func (s *ModelCatalogue) buildJevUpstreamModelsRequest(ctx context.Context, value *providercore.Record) (*http.Request, error) {
 	base, err := s.Options.ValidateURL(value.GetJevBaseURL())
 	if err != nil {
@@ -178,7 +177,7 @@ func (s *ModelCatalogue) buildJevUpstreamModelsRequest(ctx context.Context, valu
 	return req, nil
 }
 
-// buildGrokUpstreamModelsRequest 按 Grok 转发地址规则构造模型列表请求。
+// buildGrokUpstreamModelsRequest follows Grok forwarding endpoint rules for model queries.
 func (s *ModelCatalogue) buildGrokUpstreamModelsRequest(ctx context.Context, value *providercore.Record) (*http.Request, error) {
 	if value == nil {
 		return nil, newUpstreamModelSyncConfigError("Provider is required", nil)
@@ -241,8 +240,7 @@ func (s *ModelCatalogue) buildGrokUpstreamModelsRequest(ctx context.Context, val
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	if isOAuth {
-		// 共享 HTTP 传输层会为官方 CLI 代理添加客户端标识和版本；
-		// 提供商身份请求头只能发送到这个可信主机。
+		// Apply CLI headers, but restrict account identity headers to the trusted CLI proxy host.
 		grok.ApplyCLIHeaders(req.Header)
 		if (grok.MediaCodec{}).IsGrokCLIProxyTarget(req.URL.String()) {
 			if userID := strings.TrimSpace(value.GetCredential("sub")); userID != "" {
@@ -321,7 +319,7 @@ func (s *ModelCatalogue) buildAnthropicUpstreamModelsRequest(ctx context.Context
 	} else {
 		claude.SetAPIKeyAuthHeader(req.Header, value.GetAnthropicAPIKeyAuthScheme() == providercore.AnthropicAPIKeyAuthSchemeAuthorizationBearer, apiKeyAuthToken)
 	}
-	// 模型列表查询与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider overrides after defaults and authentication, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 	return req, nil
 }
@@ -340,8 +338,8 @@ func (s *ModelCatalogue) buildOpenAIUpstreamModelsRequest(ctx context.Context, v
 		return nil, newUpstreamModelSyncConfigError("No OpenAI API key is available", nil)
 	}
 
-	// 协议感知：Anthropic 协议提供商的凭证 base_url 指向 /anthropic 端点，模型
-	// 列表同步需使用 OpenAI 格式 base（供应商 × 模式默认）。
+	// An Anthropic base URL can point at a protocol-specific path.
+	// Model synchronization needs the platform and mode's OpenAI-format base URL.
 	baseURL := (providercore.ProtocolTarget{Record: value}).GetOpenAIFormatBaseURL()
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = "https://api.openai.com"
@@ -357,14 +355,13 @@ func (s *ModelCatalogue) buildOpenAIUpstreamModelsRequest(ctx context.Context, v
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	// 模型列表查询与转发按相同顺序应用提供商请求头覆盖。
+	// Apply provider overrides after defaults and authentication, as forwarding does.
 	applyGrokQuotaHeaders(value, req.Header)
 	return req, nil
 }
 
-// buildOpenAIOAuthUpstreamModelsRequest 使用 ChatGPT Codex 模型清单。
-// OAuth 订阅不提供公开的 Platform API /v1/models 端点，按 API Key 提供商处理会导致
-// 管理员同步按钮在本地直接失败。
+// buildOpenAIOAuthUpstreamModelsRequest queries the ChatGPT Codex model catalogue.
+// OAuth subscriptions use this endpoint rather than the public Platform API models endpoint.
 func (s *ModelCatalogue) buildOpenAIOAuthUpstreamModelsRequest(ctx context.Context, value *providercore.Record) (*http.Request, error) {
 	credentialProvider, err := providercore.ResolveCredentialRecord(ctx, s.Read, value)
 	if err != nil {
@@ -623,7 +620,7 @@ func grokUpstreamModelEntryID(entry upstreamModelEntry) string {
 			)
 		}
 	}
-	// Grok 模型目录中的 name 是展示名称，缺少协议模型 ID 时使用该字段。
+	// Use the display name only when the catalogue provides no protocol model ID.
 	candidates = append(candidates, entry.Name)
 	for _, candidate := range candidates {
 		modelID := strings.TrimSpace(candidate)
@@ -652,8 +649,8 @@ func dedupeAndSortModelIDs(models []string) []string {
 	return result
 }
 
-// buildCodexModelsManifestURL 为手动模型同步构造带 client_version 的清单 URL。
-// appendModelsPath 仅保留兼容调用方的参数，当前 OAuth 同步固定使用 false。
+// buildCodexModelsManifestURL adds client_version to the model catalogue URL.
+// appendModelsPath appends the OpenAI models path when requested; OAuth callers pass false.
 func buildCodexModelsManifestURL(endpoint string, appendModelsPath bool, clientVersion string) (*url.URL, error) {
 	requestURL, err := url.Parse(endpoint)
 	if err != nil {
@@ -681,7 +678,7 @@ func (s *ModelCatalogue) agentHeaders(ctx context.Context, value *providercore.R
 	return headers, err
 }
 
-// extractJevModelIDs 读取 TypeSafe 的 name 字段，型号中的路径前缀属于 ID。
+// extractJevModelIDs reads TypeSafe name fields, retaining path prefixes that are part of the model ID.
 func extractJevModelIDs(body []byte) ([]string, error) {
 	var response struct {
 		Models []struct {

@@ -21,7 +21,7 @@ import (
 type balanceUserRepoStub struct {
 	*userRepoStub
 	adjustErr error
-	// changes 记录每次原子余额变更，顺序与调用顺序一致。
+	// changes records atomic balance updates in call order.
 	changes []identity.BalanceChange
 }
 
@@ -42,13 +42,13 @@ type adminRechargeAffiliateAccruerStub struct {
 	err    error
 }
 
-// adminRechargeAffiliateAccrual 记录测试中收到的返利计提参数。
+// adminRechargeAffiliateAccrual records rebate accrual arguments.
 type adminRechargeAffiliateAccrual struct {
 	userID int64
 	amount float64
 }
 
-// rechargeSettingsFixture 使用推广设置读取器查询管理员充值返利开关。
+// rechargeSettingsFixture reads the administrator-recharge rebate flag through promotion settings.
 type rechargeSettingsFixture struct {
 	identity.AdminUserSettings
 	runtime *promotion.RuntimeSettings
@@ -64,13 +64,13 @@ type batchLimitsUserRepoStub struct {
 	err         error
 }
 
-// batchLimitsInvalidator 记录批量操作成功后的认证缓存失效。
+// batchLimitsInvalidator records authentication cache invalidations after batch updates.
 type batchLimitsInvalidator struct{ userIDs []int64 }
 
-// adminCreationSettingsStore 按键读取测试设置，缺键时返回 ErrSettingNotFound。
+// adminCreationSettingsStore returns ErrSettingNotFound for missing setting keys.
 type adminCreationSettingsStore struct{ authSourceDefaultsRepoStub }
 
-// adminCreationSettings 组合认证运行设置和注册赠送设置读取器。
+// adminCreationSettings combines authentication and signup-grant settings.
 type adminCreationSettings struct {
 	*identity.RuntimeSettings
 	*identity.GrantSettings
@@ -96,7 +96,7 @@ type userGroupRateRepoStubForListUsers struct {
 	singleData map[int64]map[int64]float64
 }
 
-// roleGuardUserRepoStub 在 rpmUserRepoStub 上提供管理员计数，检查最后一个管理员的降级限制。
+// roleGuardUserRepoStub adds administrator counts to test the last-administrator check.
 type roleGuardUserRepoStub struct {
 	*rpmUserRepoStub
 	adminTotal int64
@@ -131,7 +131,7 @@ type rpmStatusCacheStub struct {
 	groupUsed map[int64]int
 }
 
-// rpmUserRepoStub 使用 userRepoStub，在 Update 时复制入参以检查修改后的 RPMLimit。
+// rpmUserRepoStub copies Update inputs so tests can inspect RPMLimit changes.
 type rpmUserRepoStub struct {
 	*userRepoStub
 	lastUpdated *identity.User
@@ -197,8 +197,8 @@ func (s *authCacheInvalidatorStub) InvalidateAuthCacheByGroupID(ctx context.Cont
 	s.groupIDs = append(s.groupIDs, groupID)
 }
 
-// TestAdminService_UpdateUserBalance_UsesAtomicPrimitives 检查管理员调账调用原子的 AdjustBalance/SetBalance。
-// 先读余额再整行写回会覆盖并发扣款。夹具的 Update 方法在被调用时 panic。
+// TestAdminService_UpdateUserBalance_UsesAtomicPrimitives checks that adjustments use AdjustBalance or SetBalance.
+// A read followed by a full-row write could overwrite concurrent charges; the fixture panics on Update.
 func TestAdminService_UpdateUserBalance_UsesAtomicPrimitives(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -333,7 +333,7 @@ func TestAdminService_UpdateUserBalance_AffiliateFailureDoesNotRollbackRecharge(
 	require.Len(t, redeemRepo.created, 1)
 }
 
-// CreateUsage 模拟调整记录写入成功。
+// CreateUsage simulates a successful adjustment-history write.
 func (*balanceRedeemRepoStub) CreateUsage(context.Context, *billing.RedeemCodeUsage) error {
 	return nil
 }
@@ -342,7 +342,7 @@ func (s rechargeSettingsFixture) IsAffiliateAdminRechargeEnabled(ctx context.Con
 	return s.runtime.IsAffiliateAdminRechargeEnabled(ctx)
 }
 
-// newBalanceAdminForTest 配置余额写入和调整记录的事务适配。
+// newBalanceAdminForTest configures balance writes and adjustment-history transactions.
 func newBalanceAdminForTest(users *balanceUserRepoStub, records *balanceRedeemRepoStub, invalidator *authCacheInvalidatorStub, settings identity.AdminUserSettings, affiliate *adminRechargeAffiliateAccruerStub) *identity.UserAdmin {
 	d := identity.AdminDependencies{Users: users, Balances: users, Settings: settings, Records: billing.NewRedeemAdmin(records, billingpostgres.NewRedeemAdministrationMutations(nil), time.Now)}
 	if invalidator != nil {

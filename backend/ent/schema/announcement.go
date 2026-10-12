@@ -16,7 +16,7 @@ import (
 
 // Announcement holds the schema definition for the Announcement entity.
 //
-// 删除策略：硬删除（已读记录通过外键级联删除）。
+// Announcements are hard-deleted; foreign-key cascades remove their read receipts.
 type Announcement struct {
 	ent.Schema
 }
@@ -33,41 +33,41 @@ func (Announcement) Fields() []ent.Field {
 		field.String("title").
 			MaxLen(200).
 			NotEmpty().
-			Comment("公告标题"),
+			Comment("Announcement title"),
 		field.String("content").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			NotEmpty().
-			Comment("公告内容（支持 Markdown）"),
+			Comment("Announcement content, with Markdown support"),
 		field.String("status").
 			MaxLen(20).
 			Default(site.AnnouncementStatusDraft).
-			Comment("状态: draft, active, archived"),
+			Comment("Status: draft, active, archived"),
 		field.String("notify_mode").
 			MaxLen(20).
 			Default(site.AnnouncementNotifyModeSilent).
-			Comment("通知模式: silent(仅铃铛), popup(弹窗提醒)"),
+			Comment("Notification mode: silent (bell only) or popup"),
 		field.JSON("targeting", site.AnnouncementTargeting{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("展示条件（JSON 规则）"),
+			Comment("Display conditions as JSON rules"),
 		field.Time("starts_at").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
-			Comment("开始展示时间（为空表示立即生效）"),
+			Comment("Display start time; null takes effect immediately"),
 		field.Time("ends_at").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
-			Comment("结束展示时间（为空表示永久生效）"),
+			Comment("Display end time; null means no end date"),
 		field.Int64("created_by").
 			Optional().
 			Nillable().
-			Comment("创建人用户ID（管理员）"),
+			Comment("User ID of the creating administrator"),
 		field.Int64("updated_by").
 			Optional().
 			Nillable().
-			Comment("更新人用户ID（管理员）"),
+			Comment("User ID of the updating administrator"),
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).

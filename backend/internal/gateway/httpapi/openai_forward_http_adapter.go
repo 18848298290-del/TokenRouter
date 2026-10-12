@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// nativeForwardHTTPOptions 不预热读取器，保留响应到达后才读取运行设置及绑定输出观察。
+// nativeForwardHTTPOptions defers runtime settings reads and output observation setup until a response arrives.
 func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, input forward.HTTPInput, exchange openai.HTTPExchangeOptions, retryEncrypted func([]byte) ([]byte, bool, error), markLineage func([]byte)) forward.HTTPOptions {
 	return forward.HTTPOptions{
 		Exchange: exchange, Sink: ResponseSink{Writer: c.Writer},
@@ -110,7 +110,8 @@ func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, 
 	}
 }
 
-// prepareOpenAIHTTPEncryptedRetry 从解码缓存读取并剥离一次密文，保留 JSON 数字精度并复用缓存。
+// prepareOpenAIHTTPEncryptedRetry strips encrypted reasoning through the supplied decoder.
+// The caller supplies a cache-aware decoder that preserves JSON number precision.
 func prepareOpenAIHTTPEncryptedRetry(body []byte, decode func([]byte) (map[string]any, error)) ([]byte, bool, error) {
 	decoded, err := decode(body)
 	if err != nil {

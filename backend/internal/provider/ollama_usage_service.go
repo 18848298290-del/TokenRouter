@@ -43,7 +43,8 @@ type OllamaUsageOptions struct {
 	Log                     func(string, ...any)
 }
 
-// OllamaCloudUsageService 拥有分组会话、合并查询、手动/周期资格、失败快照和生命周期。
+// OllamaCloudUsageService manages shared sessions, coalesced queries, refresh eligibility, snapshots, and
+// shutdown.
 type OllamaCloudUsageService struct {
 	providerRepo            OllamaProviderReader
 	settingService          OllamaUsageSettingsStore
@@ -86,7 +87,7 @@ func (s *OllamaCloudUsageService) StartContext(ctx context.Context) error {
 	return s.runtime.StartContext(ctx)
 }
 
-// Stop 将手动及周期在途工作纳入调用方总预算，重复调用保留首次结果。
+// Stop cancels and waits for manual and periodic work using a background context.
 func (s *OllamaCloudUsageService) Stop() { _ = s.StopContext(context.Background()) }
 
 func (s *OllamaCloudUsageService) StopContext(ctx context.Context) error {
@@ -126,8 +127,8 @@ func (s *OllamaCloudUsageService) GetState(ctx context.Context, providerID int64
 	return state, nil
 }
 
-// ResolveProviders 将共享身份组管理的状态覆盖到给定提供商对象上。
-// 存储通过一次有结果数量上限的查询解析全部匹配提供商。
+// ResolveProviders replaces managed fields on the supplied records with their shared group's state.
+// The newest configured session supplies settings; matching sessions can supply a newer snapshot.
 func (s *OllamaCloudUsageService) ResolveProviders(ctx context.Context, providers []*Record) error {
 	if s == nil || s.providerRepo == nil || len(providers) == 0 {
 		return nil
@@ -345,7 +346,7 @@ func (s *OllamaCloudUsageService) RunDue(ctx context.Context) error {
 		}
 		seenGroups[fingerprint] = struct{}{}
 		snapshot := DecodeOllamaCloudUsageSnapshot(provider.Extra)
-		// ListDue 已将 api_key 分组的 MAX(last_used_at) 写入 Record.LastUsedAt。
+		// ListDueOllamaCloudUsageProviders places the API-key group's MAX(last_used_at) in LastUsedAt.
 		if !OllamaCloudUsageIsAutoRefreshDue(snapshot, provider.LastUsedAt, now, debounce, maxWait) {
 			continue
 		}
@@ -428,8 +429,8 @@ func (s *OllamaCloudUsageService) refreshProvider(ctx context.Context, providerI
 			if writer, ok := s.providerRepo.(OllamaUsageRepository); ok {
 				siblings, listErr := writer.ListOllamaCloudUsageGroupProviders(ctx, []*Record{provider})
 				if listErr != nil {
-					// 回退到当前提供商自身的 last_used_at。它比分组最大值的活动信号更窄，
-					// 到期检查可能因此跳过刷新，此处记录错误供排查。
+					// Use this provider's activity if the group lookup fails. That narrower signal
+					// may skip a due refresh, so record the lookup error for diagnosis.
 					s.options.Log(
 						"group_last_used_lookup_failed: provider_id=%d err=%v", provider.ID, listErr)
 				} else {
@@ -538,7 +539,7 @@ func (s *OllamaCloudUsageService) persistFailure(
 }
 
 func (s *OllamaCloudUsageService) updateSnapshot(ctx context.Context, provider *Record, snapshot *OllamaCloudUsageSnapshot) error {
-	// 停止或调用方取消后不得把迟到观测写入数据库。
+	// Reject late observations when cancellation has already been observed.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -549,7 +550,7 @@ func (s *OllamaCloudUsageService) updateSnapshot(ctx context.Context, provider *
 	return writer.UpdateOllamaCloudUsageSnapshot(ctx, provider, snapshot)
 }
 
-// EnrichState 将服务持有的运行时配置补充到提供商派生状态中。
+// EnrichState adds the service's encryption-key configuration to the provider state.
 func (s *OllamaCloudUsageService) EnrichState(state *OllamaCloudUsageState) {
 	if state == nil {
 		return

@@ -17,7 +17,7 @@ type PlanRepository interface {
 	GetPlan(context.Context, int64) (*SubscriptionPlan, error)
 }
 
-// PlanOrders 读取阻止套餐删除的订单数量，支付状态由 payment 管理。
+// PlanOrders counts orders that prevent plan deletion; payment owns the qualifying order states.
 type PlanOrders interface {
 	CountInProgressByPlan(context.Context, int64) (int, error)
 }
@@ -78,7 +78,7 @@ func (s *Plans) CreatePlan(ctx context.Context, req CreatePlanRequest) (*Subscri
 }
 
 func (s *Plans) UpdatePlan(ctx context.Context, id int64, req UpdatePlanRequest) (*SubscriptionPlan, error) {
-	// 文案更新携带内容版本，以便同时更新原文并标记过期译文。
+	// Text changes carry a content revision so source text and stale translations update together.
 	if req.Localization == nil && (req.Name != nil || req.Description != nil || req.Features != nil || req.ProductName != nil) {
 		return nil, apperror.BadRequest("LOCALIZATION_REQUIRED", "Use localization to update plan text.")
 	}

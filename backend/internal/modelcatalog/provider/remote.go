@@ -16,8 +16,8 @@ type remoteClient struct {
 	httpClient *http.Client
 }
 
-// remoteClientError 代理初始化失败时的错误占位客户端
-// 所有请求直接返回初始化错误，禁止回退到直连。
+// remoteClientError retains a proxy initialization failure.
+// Every fetch returns that failure, preventing an unintended direct connection.
 type remoteClientError struct {
 	err error
 }
@@ -26,14 +26,14 @@ func (c *remoteClientError) FetchCatalog(_ context.Context, _, _ string) ([]byte
 	return nil, "", false, c.err
 }
 
-// NewRemoteClient 创建统一模型目录的远程客户端
-// proxyURL 为空时直连，支持 http/https/socks5/socks5h 协议
-// 代理配置失败时行为由 allowDirectOnProxyError 控制：
-//   - false（默认）：返回错误占位客户端，禁止回退到直连
-//   - true：回退到直连（仅限管理员显式开启）
+// NewRemoteClient creates a remote catalog client.
+// An empty proxyURL uses a direct connection; supported proxies are HTTP, HTTPS, SOCKS5, and SOCKS5H.
+// When proxy initialization fails, allowDirectOnProxyError controls the result:
+//   - false returns a client that reports the initialization error.
+//   - true permits a direct connection.
 func NewRemoteClient(proxyURL string, allowDirectOnProxyError bool) RemoteClient {
-	// 安全说明：httpclient.GetClient 的错误链（url.Parse / proxyutil）不含明文代理凭据，
-	// 此信息通过 slog 写入服务端日志。
+	// Proxy initialization errors may be written to server logs below.
+	// Keep proxy credentials redacted in errors returned by httpclient.GetClient.
 	sharedClient, err := httpclient.GetClient(httpclient.Options{
 		Timeout:  30 * time.Second,
 		ProxyURL: proxyURL,
@@ -50,7 +50,7 @@ func NewRemoteClient(proxyURL string, allowDirectOnProxyError bool) RemoteClient
 	}
 }
 
-// FetchCatalog 使用 ETag 节省目录下载，304 不发布新快照。
+// FetchCatalog sends an ETag validator and reports an unchanged body on HTTP 304.
 func (c *remoteClient) FetchCatalog(ctx context.Context, url, etag string) ([]byte, string, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

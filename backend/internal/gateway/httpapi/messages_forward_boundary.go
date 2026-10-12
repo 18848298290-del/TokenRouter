@@ -22,13 +22,13 @@ import (
 
 var _ messageforward.HTTPBoundary = (*MessageForwardBoundary)(nil)
 
-// MessageForwardBoundary 独占当前 HTTP 写入和观察，不持有提供商、设置或重试规则。
+// MessageForwardBoundary owns HTTP output and observation for the current request.
 type MessageForwardBoundary struct {
 	context *gin.Context
 	filter  *egress.CompiledHeaderFilter
 }
 
-// WriteAnthropicPassthroughHeaders 使用传入的过滤器，缺省时透传 Content-Type 和 x-request-id。
+// WriteAnthropicPassthroughHeaders applies the filter, or copies Content-Type and x-request-id when it is nil.
 func WriteAnthropicPassthroughHeaders(dst, src http.Header, filter *egress.CompiledHeaderFilter) {
 	if dst == nil || src == nil {
 		return
@@ -72,7 +72,7 @@ func (b *MessageForwardBoundary) SearchOutput() searchtools.Output {
 	return SearchOutput{Context: b.context}
 }
 
-// ConversionOutput 复用现有输出器，工具恢复只读取本次尝试的状态。
+// ConversionOutput restores tool names using the current attempt's state.
 func (b *MessageForwardBoundary) ConversionOutput(responses bool, state *messageforward.AttemptState) forward.Output {
 	return ForwardConversionOutput{
 		Context: b.context, Filter: b.filter, Responses: responses,

@@ -17,7 +17,7 @@ type UserAttributeService struct {
 	valueRepo UserAttributeValueRepository
 }
 
-// NewUserAttributeService creates a new service instance.
+// NewUserAttributeService binds definition and value storage for attribute management.
 func NewUserAttributeService(
 	defRepo UserAttributeDefinitionRepository,
 	valueRepo UserAttributeValueRepository,
@@ -30,12 +30,10 @@ func NewUserAttributeService(
 
 // CreateDefinition creates a new attribute definition.
 func (s *UserAttributeService) CreateDefinition(ctx context.Context, input CreateAttributeDefinitionInput) (*UserAttributeDefinition, error) {
-	// Validate type
 	if !IsValidAttributeType(input.Type) {
 		return nil, ErrInvalidAttributeType
 	}
 
-	// Check if key exists
 	exists, err := s.defRepo.ExistsByKey(ctx, input.Key)
 	if err != nil {
 		return nil, fmt.Errorf("check key exists: %w", err)
@@ -72,7 +70,7 @@ func (s *UserAttributeService) GetDefinitionByKey(ctx context.Context, key strin
 	return s.defRepo.GetByKey(ctx, key)
 }
 
-// ListDefinitions lists all definitions.
+// ListDefinitions lists definitions, optionally restricted to enabled ones.
 func (s *UserAttributeService) ListDefinitions(ctx context.Context, enabledOnly bool) ([]UserAttributeDefinition, error) {
 	return s.defRepo.List(ctx, enabledOnly)
 }
@@ -125,18 +123,15 @@ func (s *UserAttributeService) UpdateDefinition(ctx context.Context, id int64, i
 
 // DeleteDefinition soft-deletes a definition and hard-deletes associated values.
 func (s *UserAttributeService) DeleteDefinition(ctx context.Context, id int64) error {
-	// Check if definition exists
 	_, err := s.defRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// First delete all values (hard delete)
 	if err := s.valueRepo.DeleteByAttributeID(ctx, id); err != nil {
 		return fmt.Errorf("delete values: %w", err)
 	}
 
-	// Then soft-delete the definition
 	if err := s.defRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete definition: %w", err)
 	}
@@ -154,8 +149,8 @@ func (s *UserAttributeService) GetUserAttributes(ctx context.Context, userID int
 	return s.valueRepo.GetByUserID(ctx, userID)
 }
 
-// GetBatchUserAttributes retrieves attribute values for multiple users
-// Returns a map of userID -> map of attributeID -> value.
+// GetBatchUserAttributes returns values indexed by user ID, then attribute ID.
+// Users with no stored values are absent from the result.
 func (s *UserAttributeService) GetBatchUserAttributes(ctx context.Context, userIDs []int64) (map[int64]map[int64]string, error) {
 	values, err := s.valueRepo.GetByUserIDs(ctx, userIDs)
 	if err != nil {
@@ -207,14 +202,13 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 		return nil
 	}
 
-	// Required check
 	if def.Required && value == "" {
 		return ValidationError(fmt.Sprintf("%s is required", def.Name))
 	}
 
 	v := def.Validation
 
-	// String length validation
+	// Length limits count bytes, matching Go string length.
 	if v.MinLength != nil && len(value) < *v.MinLength {
 		return ValidationError(fmt.Sprintf("%s must be at least %d characters", def.Name, *v.MinLength))
 	}
@@ -222,7 +216,6 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 		return ValidationError(fmt.Sprintf("%s must be at most %d characters", def.Name, *v.MaxLength))
 	}
 
-	// Number validation
 	if def.Type == AttributeTypeNumber && value != "" {
 		num, err := strconv.Atoi(value)
 		if err != nil {
@@ -236,7 +229,6 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 		}
 	}
 
-	// Pattern validation
 	if v.Pattern != nil && *v.Pattern != "" && value != "" {
 		re, err := regexp.Compile(*v.Pattern)
 		if err != nil {
@@ -251,7 +243,6 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 		}
 	}
 
-	// Select validation
 	if def.Type == AttributeTypeSelect && value != "" {
 		found := false
 		for _, opt := range def.Options {
@@ -265,11 +256,11 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 		}
 	}
 
-	// Multi-select validation (stored as JSON array)
+	// Accept a JSON string array or comma-separated values for multi-select attributes.
 	if def.Type == AttributeTypeMultiSelect && value != "" {
 		var values []string
 		if err := json.Unmarshal([]byte(value), &values); err != nil {
-			// Try comma-separated fallback
+			// Non-JSON input is interpreted as comma-separated values.
 			values = strings.Split(value, ",")
 		}
 		for _, val := range values {

@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	// 以下表达式必须与 identitycore.NormalizeRegistrationEmailAddress 保持一致，
-	// 同时与 220_users_registration_email_normalized_index_notx.sql 的索引表达式一致。
+	// Keep these expressions consistent with identitycore.NormalizeRegistrationEmailAddress
+	// and the index in 220_users_registration_email_normalized_index_notx.sql.
 	IdentityNormalizedUserEmailValueSQL     = `lower(btrim(email))`
 	IdentityNormalizedUserEmailLocalSQL     = `split_part(` + IdentityNormalizedUserEmailValueSQL + `, '@', 1)`
 	IdentityNormalizedUserEmailDomainSQL    = `rtrim(split_part(` + IdentityNormalizedUserEmailValueSQL + `, '@', 2), '.')`
@@ -50,13 +50,13 @@ const (
 
 	IdentityRegistrationEmailLockNamespace = 148623451
 
-	// IdentityEmailAliasCandidateLimit 限制别名查重一次加载到内存的候选数量。
-	// 命中候选后按邮箱归一化规则再次校验。
+	// IdentityEmailAliasCandidateLimit bounds alias candidates loaded into memory.
+	// Candidates are rechecked using the Go email normalization rules.
 	IdentityEmailAliasCandidateLimit = 50
 )
 
 var (
-	// IdentityEscapeLikeWildcards 防止邮箱本地部分的 %、_ 或反斜杠被解释为 LIKE 通配符。
+	// IdentityLikeWildcardEscaper quotes %, _, and backslashes in email local parts for LIKE.
 	IdentityLikeWildcardEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
 
 	likePatternReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -83,12 +83,12 @@ func (r *UserStore) CreateWithNormalizedEmailGuard(ctx context.Context, userIn *
 	return r.IdentityCreateWithNormalizationGuard(ctx, userIn, normalizedEmail, "")
 }
 
-// CountUsersByEmailDomain 统计指定可注册主域名及其子域名下的未删除用户。
+// CountUsersByEmailDomain counts undeleted users in a registrable domain and its subdomains.
 func (r *UserStore) CountUsersByEmailDomain(ctx context.Context, domain string) (int, error) {
 	return IdentityCountUsersByEmailDomainWithClient(ctx, clientFromContext(ctx, r.client), domain)
 }
 
-// CreateWithRegistrationEmailGuards 在邮箱身份锁和域名额度锁内创建注册用户。
+// CreateWithRegistrationEmailGuards creates a user under email uniqueness and domain quota locks.
 func (r *UserStore) CreateWithRegistrationEmailGuards(ctx context.Context, userIn *identitycore.User, normalizedEmail, domain string) error {
 	return r.IdentityCreateWithNormalizationGuard(ctx, userIn, normalizedEmail, IdentityNormalizeEmailDomain(domain))
 }
@@ -98,9 +98,9 @@ func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, us
 		return nil
 	}
 
-	// 用户、邀请码和允许分组在同一个 Ent 事务中更新。
-	// 通过 *sql.Tx 手动构造 Ent 客户端会导致 ExecQuerier 断言失败。
-	// Client.Tx 会新建事务，因此先读取上下文中的事务，防止邀请码回滚后留下已提交的用户。
+	// User, invitation, and group writes share the Ent transaction from the context.
+	// An Ent client built manually from *sql.Tx fails the ExecQuerier assertion.
+	// Starting a separate transaction could commit the user while the invitation rolls back.
 	var txClient *dbent.Client
 	txCtx := ctx
 	var ownedTx *dbent.Tx
@@ -115,8 +115,8 @@ func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, us
 			txClient = tx.Client()
 			txCtx = dbent.NewTxContext(ctx, tx)
 		case errors.Is(err, dbent.ErrTxStarted):
-			// r.client 本身可能是事务绑定 client（例如集成测试夹具），
-			// 其提交/回滚由持有方负责。
+			// The client may already be bound to a transaction, as in integration fixtures.
+			// Its owner is responsible for committing or rolling back.
 			txClient = r.client
 		default:
 			return err
@@ -288,7 +288,7 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 		return nil
 	}
 
-	// 用户字段和分组关系在同一个 Ent 事务中更新。
+	// Update user fields and group relations in one Ent transaction.
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
@@ -301,7 +301,7 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 		txClient = tx.Client()
 		txCtx = dbent.NewTxContext(ctx, tx)
 	} else {
-		// 已处于外部事务中时复用事务客户端，由外层调用方负责提交或回滚。
+		// Reuse an external transaction; its caller owns commit and rollback.
 		if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
 			txClient = existingTx.Client()
 		} else {
@@ -309,7 +309,7 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 		}
 	}
 
-	// 更新邮箱时获取唯一性锁。
+	// Serialize writes to the destination email address.
 	if fields.Email {
 		releaseEmailLock, err := IdentityLockRepositoryScopedKeys(
 			txCtx,
@@ -360,7 +360,7 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 			return err
 		}
 	}
-	// 使用数据库中的邮箱补齐认证身份，重复执行得到相同结果。
+	// Synchronize the email identity from the stored address; repeated calls are idempotent.
 	if err := IdentityReplaceEmailAuthIdentityWithClient(txCtx, txClient, updated.ID, oldEmail, updated.Email, "user_repo_update"); err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func IdentityNormalizeEmailAuthIdentitySubject(email string) string {
 }
 
 func (r *UserStore) Delete(ctx context.Context, id int64) error {
-	// 复用上下文中已存在的事务，例如后台删除用户时需要把删密钥和删用户放在同一事务里。
+	// Reuse the caller's transaction so administrative key and user deletion commit together.
 	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
 		return r.IdentityDeleteUser(ctx, existingTx.Client(), id)
 	}
@@ -488,7 +488,7 @@ func (r *UserStore) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// IdentityDeleteUser 在指定客户端上删除用户和身份关联记录，事务由调用方管理。
+// IdentityDeleteUser deletes a user and identity references using a caller-managed transaction.
 func (r *UserStore) IdentityDeleteUser(ctx context.Context, exec *dbent.Client, id int64) error {
 	identityIDs, err := exec.AuthIdentity.Query().
 		Where(authidentity.UserIDEQ(id)).
@@ -534,7 +534,7 @@ func (r *UserStore) List(ctx context.Context, params pagination.PaginationParams
 }
 
 func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters identitycore.UserListFilters) ([]identitycore.User, *pagination.PaginationResult, error) {
-	// SkipSoftDelete 用于 User 的 Count/All 查询，订阅和分组使用传入的 ctx，继续过滤软删除记录。
+	// IncludeDeleted affects user queries; subscription and group queries retain soft-delete filtering.
 	userCtx := ctx
 	if filters.IncludeDeleted {
 		userCtx = mixins.SkipSoftDelete(ctx)
@@ -559,15 +559,15 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	}
 
 	if filters.APIKeyGroupID > 0 {
-		// 用户有未软删除的 API Key 绑定到目标分组时命中过滤条件。
-		// HasAPIKeysWith 子查询需要用 DeletedAtIsNil 排除软删除的 Key。
+		// Match users with an undeleted API key in the requested group.
+		// The HasAPIKeysWith subquery needs its own DeletedAtIsNil predicate.
 		q = q.Where(dbuser.HasAPIKeysWith(
 			apikey.GroupIDEQ(filters.APIKeyGroupID),
 			apikey.DeletedAtIsNil(),
 		))
 	}
 
-	// 属性筛选先查出匹配的用户 ID。
+	// Resolve attribute matches to user IDs before counting and paging.
 	var allowedUserIDs []int64
 	if len(filters.Attributes) > 0 {
 		var attrErr error
@@ -576,7 +576,6 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 			return nil, nil, attrErr
 		}
 		if len(allowedUserIDs) == 0 {
-			// 没有用户匹配属性筛选条件。
 			return []identitycore.User{}, pagination.ResultFromTotal(0, params), nil
 		}
 		q = q.Where(dbuser.IDIn(allowedUserIDs...))
@@ -615,7 +614,7 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 
 	shouldLoadSubscriptions := filters.IncludeSubscriptions == nil || *filters.IncludeSubscriptions
 	if shouldLoadSubscriptions {
-		// 批量读取有效订阅及其分组。
+		// Load active subscriptions and their plans in a batch.
 		subs, err := r.client.UserSubscription.Query().
 			Where(
 				usersubscription.UserIDIn(userIDs...),
@@ -657,7 +656,7 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	return outUsers, pagination.ResultFromTotal(int64(total), params), nil
 }
 
-// identityUserSearch 分字段查询候选 ID，各字段可独立使用模糊搜索索引。
+// identityUserSearch queries each field separately so each can use its fuzzy-search index.
 func identityUserSearch(search string) predicate.User {
 	return func(s *entsql.Selector) {
 		builder := entsql.Dialect(s.Dialect())
@@ -741,7 +740,6 @@ func IdentityUserListOrder(params pagination.PaginationParams) []func(*entsql.Se
 }
 
 func (r *UserStore) GetLatestUsedAtByUserIDs(ctx context.Context, userIDs []int64) (map[int64]*time.Time, error) {
-	// 空批次直接返回空列表。
 	if len(userIDs) == 0 {
 		return map[int64]*time.Time{}, nil
 	}
@@ -760,7 +758,7 @@ func IdentityUserLastUsedAtOrder(sortOrder string) []func(*entsql.Selector) {
 	return usagequery.IdentityUserLastUsedAtOrder(sortOrder)
 }
 
-// IdentityFilterUsersByAttributes 返回满足全部属性筛选条件的用户 ID。
+// IdentityFilterUsersByAttributes returns user IDs matching every attribute filter.
 func (r *UserStore) IdentityFilterUsersByAttributes(ctx context.Context, attrs map[int64]string) ([]int64, error) {
 	if len(attrs) == 0 {
 		return nil, nil
@@ -822,7 +820,7 @@ func (r *UserStore) ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, 
 	return r.IdentityBillingBalance(ctx).ApplyRedeemBalanceAdjustment(ctx, id, delta)
 }
 
-// DeductBalance 从正余额中扣款，扣款后最低为 0。已有负余额保持原值。
+// DeductBalance deducts from positive balances down to zero and leaves existing negative balances unchanged.
 func (r *UserStore) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	sqlq := r.IdentitySqlExecutorFromContext(ctx)
 	if sqlq == nil {
@@ -891,7 +889,7 @@ func (r *UserStore) BatchAddConcurrency(ctx context.Context, userIDs []int64, de
 	return int(affected), nil
 }
 
-// BatchUpdateLimits 在单条 SQL 中覆盖指定用户已提供的并发数与 RPM 上限。
+// BatchUpdateLimits sets supplied concurrency and RPM limits for selected users in one SQL statement.
 func (r *UserStore) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
 	if len(userIDs) == 0 || (concurrency == nil && rpmLimit == nil) {
 		return 0, nil
@@ -934,15 +932,15 @@ func (r *UserStore) ExistsByEmail(ctx context.Context, email string) (bool, erro
 	return client.User.Query().Where(IdentityUserEmailLookupPredicate(email)).Exist(ctx)
 }
 
-// ExistsByEmailAlias 判断是否已有用户与 email 指向同一收件箱。
-// 软删除过滤由 User 的 SoftDelete 拦截器统一处理。
+// ExistsByEmailAlias reports whether a user owns the same normalized mailbox.
+// The User soft-delete interceptor filters deleted users.
 func (r *UserStore) ExistsByEmailAlias(ctx context.Context, email string) (bool, error) {
 	_, exists, err := r.EmailAliasOwnerID(ctx, email, 0)
 	return exists, err
 }
 
-// EmailAliasOwnerID 返回别名收件箱的占用者。currentUserID 用于识别当前用户。
-// 存在重复数据时优先返回其他用户，以便调用方检测邮箱冲突。
+// EmailAliasOwnerID returns the mailbox owner, using currentUserID to identify the caller.
+// When duplicate rows exist, another owner takes precedence so callers can detect conflicts.
 func (r *UserStore) EmailAliasOwnerID(ctx context.Context, email string, currentUserID int64) (int64, bool, error) {
 	return IdentityEmailAliasOwnerIDWithClient(ctx, clientFromContext(ctx, r.client), email, currentUserID)
 }
@@ -961,7 +959,7 @@ func IdentityEmailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Clie
 		probeEmail := probe.Local + "@" + probe.Domain
 		preds = append(preds,
 			IdentityDotStrippedEmailEQ(probeEmail),
-			// + 后缀未知，只能按本地部分前缀匹配；元字符已转义。
+			// The plus suffix is unknown, so match the escaped local-part prefix.
 			IdentityDotStrippedEmailLike(IdentityEscapeLikeWildcards(probe.Local)+"+%@"+IdentityEscapeLikeWildcards(probe.Domain)),
 		)
 	}
@@ -993,8 +991,8 @@ func IdentityEmailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Clie
 	return selfID, selfExists, nil
 }
 
-// IdentityDotStrippedEmailExpr 生成用于别名探针的表达式。两侧去除点号可以同时覆盖
-// Gmail 本地部分点号和邮箱域名的 FQDN 根点；最终结果仍由 Go 归一化规则复核。
+// IdentityDotStrippedEmailExpr removes dots for an alias candidate probe, including Gmail
+// local-part dots and a domain root dot. Go normalization rechecks the candidates.
 func IdentityDotStrippedEmailExpr(b *entsql.Builder, s *entsql.Selector) *entsql.Builder {
 	return b.WriteString("REPLACE(LOWER(TRIM(").
 		Ident(s.C(dbuser.FieldEmail)).
@@ -1021,8 +1019,8 @@ func IdentityEscapeLikeWildcards(value string) string {
 	return IdentityLikeWildcardEscaper.Replace(value)
 }
 
-// UpdateEmailWithAliasGuard 在调用方事务内以收件箱身份加锁、复查占用情况并更新
-// 邮箱和密码哈希，关闭服务层查重与写入之间的并发窗口。
+// UpdateEmailWithAliasGuard locks and rechecks mailbox ownership in the caller's transaction
+// before updating the email and password hash, closing the gap after the service precheck.
 func (r *UserStore) UpdateEmailWithAliasGuard(
 	ctx context.Context,
 	userID int64,
@@ -1168,7 +1166,7 @@ func IdentityNormalizedEmailUniquenessLockKey(email string) string {
 	return "users:normalized-email:" + normalized
 }
 
-// IdentityEmailAliasUniquenessLockKey 按收件箱身份加锁，使不同的 alias 变体在换绑时互斥。
+// IdentityEmailAliasUniquenessLockKey serializes changes across aliases of the same mailbox.
 func IdentityEmailAliasUniquenessLockKey(email string) string {
 	identity := identitycore.NormalizeEmailForAliasDedup(email)
 	if identity == "" {
@@ -1234,7 +1232,7 @@ func (r *UserStore) AddGroupToAllowedGroups(ctx context.Context, userID int64, g
 }
 
 func (r *UserStore) RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error) {
-	// 授权记录存储在 user_allowed_groups 表中，users.allowed_groups 列已弃用。
+	// Grants are stored in user_allowed_groups; users.allowed_groups is deprecated.
 	affected, err := r.client.UserAllowedGroup.Delete().
 		Where(userallowedgroup.GroupIDEQ(groupID)).
 		Exec(ctx)
@@ -1244,7 +1242,7 @@ func (r *UserStore) RemoveGroupFromAllowedGroups(ctx context.Context, groupID in
 	return int64(affected), nil
 }
 
-// RemoveGroupFromUserAllowedGroups 移除单个用户的指定分组权限。
+// RemoveGroupFromUserAllowedGroups revokes one user's access to the given group.
 func (r *UserStore) RemoveGroupFromUserAllowedGroups(ctx context.Context, userID int64, groupID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserAllowedGroup.Delete().
@@ -1332,8 +1330,8 @@ func (r *UserStore) IdentityLoadDisabledPublicGroups(ctx context.Context, userID
 	return out, nil
 }
 
-// IdentitySyncUserAllowedGroupsWithClient 在 ent client/事务内同步用户允许分组：
-// 授权记录存储在 user_allowed_groups 表中，users.allowed_groups 列已弃用。
+// IdentitySyncUserAllowedGroupsWithClient synchronizes grants using the supplied Ent client.
+// Grants are stored in user_allowed_groups; users.allowed_groups is deprecated.
 func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context, client *dbent.Client, userID int64, groupIDs []int64) error {
 	if client == nil {
 		return nil
@@ -1392,8 +1390,8 @@ func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context,
 	return nil
 }
 
-// IdentitySyncUserDisabledPublicGroupsWithClient 同步用户禁用的公开分组列表。
-// 写入前检查目标分组是否为公开分组。
+// IdentitySyncUserDisabledPublicGroupsWithClient replaces the user's disabled public groups.
+// Only groups verified as public are inserted.
 func (r *UserStore) IdentitySyncUserDisabledPublicGroupsWithClient(ctx context.Context, client *dbent.Client, userID int64, groupIDs []int64) error {
 	if client == nil {
 		return nil
@@ -1477,7 +1475,7 @@ func (r *UserStore) IdentitySqlExecutorFromContext(ctx context.Context) SQLExecu
 	return r.sql
 }
 
-// IdentityDeductUserBalance 兼容旧调用，资金 SQL 由 billing 单独维护。
+// IdentityDeductUserBalance delegates balance deductions to billing.
 func IdentityDeductUserBalance(ctx context.Context, q sqlQueryer, userID int64, amount float64) (float64, float64, error) {
 	return billingpostgres.DeductAvailableBalance(ctx, q, userID, amount)
 }
@@ -1580,12 +1578,12 @@ func IdentityUserSignupSourceOrDefault(signupSource string) string {
 	}
 }
 
-// IdentityMarshalExtraEmails 将通知邮箱列表编码为用于存储的 JSON。
+// IdentityMarshalExtraEmails encodes notification email entries as storage JSON.
 func IdentityMarshalExtraEmails(entries []identitycore.NotifyEmailEntry) string {
 	return identitycore.MarshalNotifyEmails(entries)
 }
 
-// UpdateTotpSecret 更新用户的 TOTP 加密密钥。
+// UpdateTotpSecret replaces or clears the user's encrypted TOTP secret.
 func (r *UserStore) UpdateTotpSecret(ctx context.Context, userID int64, encryptedSecret *string) error {
 	client := clientFromContext(ctx, r.client)
 	update := client.User.UpdateOneID(userID)
@@ -1601,7 +1599,7 @@ func (r *UserStore) UpdateTotpSecret(ctx context.Context, userID int64, encrypte
 	return nil
 }
 
-// EnableTotp 启用用户的 TOTP 双因素认证。
+// EnableTotp enables TOTP and records the activation time.
 func (r *UserStore) EnableTotp(ctx context.Context, userID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.User.UpdateOneID(userID).
@@ -1614,7 +1612,7 @@ func (r *UserStore) EnableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// DisableTotp 禁用用户的 TOTP 双因素认证。
+// DisableTotp disables TOTP and clears its secret and activation time.
 func (r *UserStore) DisableTotp(ctx context.Context, userID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.User.UpdateOneID(userID).
@@ -1628,7 +1626,7 @@ func (r *UserStore) DisableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// IdentityBillingBalance 复用调用方持有的 Ent 事务执行余额操作。
+// IdentityBillingBalance uses the Ent transaction from ctx for balance operations when available.
 func (r *UserStore) IdentityBillingBalance(ctx context.Context) *billingpostgres.BalanceStore {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return billingpostgres.BalanceInTx(tx)
@@ -1636,7 +1634,7 @@ func (r *UserStore) IdentityBillingBalance(ctx context.Context) *billingpostgres
 	return billingpostgres.NewBalanceStore(r.client)
 }
 
-// clientFromContext 返回上下文中的 Ent 事务客户端，未设置事务时返回默认客户端。
+// clientFromContext returns the Ent transaction client from ctx or the default client.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1644,42 +1642,40 @@ func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.
 	return defaultClient
 }
 
-// translatePersistenceError 将记录缺失和唯一约束冲突转换为调用方提供的业务错误。
-// notFound 或 conflict 为 nil 时跳过对应转换，未匹配的错误按原值返回。
+// translatePersistenceError maps missing records and unique conflicts to supplied application errors.
+// A nil target skips that mapping; unmatched errors are returned unchanged.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
 	}
 
-	// Ent 的 NotFoundError 和标准库的 sql.ErrNoRows 都表示记录缺失。
+	// Both Ent NotFoundError and sql.ErrNoRows indicate a missing record.
 	if notFound != nil && (errors.Is(err, sql.ErrNoRows) || dbent.IsNotFound(err)) {
 		return notFound.WithCause(err)
 	}
 
-	// 处理唯一约束冲突（如邮箱已存在、名称重复等）
 	if conflict != nil && isUniqueConstraintViolation(err) {
 		return conflict.WithCause(err)
 	}
 
-	// 未匹配任何规则，返回原始错误
 	return err
 }
 
-// isUniqueConstraintViolation 按 PostgreSQL 错误码 23505 或错误消息判断唯一约束冲突。
+// isUniqueConstraintViolation recognizes PostgreSQL code 23505 and supported message patterns.
 func isUniqueConstraintViolation(err error) bool {
 	return postgresinfra.IsUniqueConstraintViolation(err)
 }
 
-// isSQLNoRowsError 通过通用 SQL 错误检查判断记录是否缺失。
+// isSQLNoRowsError reports whether the SQL operation found no record.
 func isSQLNoRowsError(err error) bool { return postgresinfra.IsNoRows(err) }
 
-// scanSingleRow 查询一行数据并将列值写入 dest。
+// scanSingleRow queries one row and scans its columns into dest.
 func scanSingleRow(ctx context.Context, q sqlQueryer, query string, args []any, dest ...any) error {
 	return postgresinfra.ScanSingleRow(ctx, q, query, args, dest...)
 }
 
-// escapeLikePattern 转义 LIKE/ILIKE 模式中的反斜杠、百分号和下划线。
-// PostgreSQL 默认使用反斜杠转义模式字符。
+// escapeLikePattern escapes backslashes, percent signs, and underscores in LIKE/ILIKE patterns.
+// PostgreSQL uses backslash as the default pattern escape character.
 func escapeLikePattern(s string) string {
 	return likePatternReplacer.Replace(s)
 }

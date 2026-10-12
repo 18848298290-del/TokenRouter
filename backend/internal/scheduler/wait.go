@@ -11,7 +11,7 @@ const (
 	WaitUncertain
 )
 
-// WaitCounters 读写用户和提供商的等待计数。
+// WaitCounters reads and updates user and provider wait counts.
 type WaitCounters interface {
 	IncrementWaitCount(context.Context, int64, int) (bool, error)
 	DecrementWaitCount(context.Context, int64) error
@@ -19,10 +19,12 @@ type WaitCounters interface {
 	DecrementProviderWaitCount(context.Context, int64) error
 }
 
-// WaitOwnership 区分未写入、确认取得和写入结果不明；只有确认取得才拥有补偿责任。
+// WaitOwnership distinguishes absent, confirmed, and uncertain increments; confirmed increments
+// require release.
 type WaitOwnership uint8
 
-// WaitResult 的副本共用一次释放。故障放行时 Ownership 为 WaitUncertain，释放时跳过计数扣减。
+// WaitResult copies share one release. WaitUncertain allows the request but skips decrementing an
+// unconfirmed count.
 type WaitResult struct {
 	Allowed   bool
 	Ownership WaitOwnership
@@ -31,7 +33,8 @@ type WaitResult struct {
 
 func (r WaitResult) Release() { r.resource.Release() }
 
-// EnterUserWait 登记用户等待计数，缓存故障时放行并标记计数结果不明。
+// EnterUserWait registers a waiting user request and allows it with uncertain ownership on cache
+// failure.
 func EnterUserWait(ctx context.Context, cache WaitCounters, id int64, maxWait int, diagnostics Diagnostics) (WaitResult, error) {
 	if cache == nil {
 		return WaitResult{Allowed: true}, nil
@@ -39,7 +42,8 @@ func EnterUserWait(ctx context.Context, cache WaitCounters, id int64, maxWait in
 	return enterWait(ctx, id, maxWait, "user", cache.IncrementWaitCount, cache.DecrementWaitCount, diagnostics)
 }
 
-// EnterProviderWait 按提供商等待上限登记计数，缓存故障时放行。释放时仅扣减本次确认取得的计数。
+// EnterProviderWait enforces the provider queue limit, allowing cache failures and releasing confirmed
+// increments.
 func EnterProviderWait(ctx context.Context, cache WaitCounters, id int64, maxWait int, diagnostics Diagnostics) (WaitResult, error) {
 	if cache == nil {
 		return WaitResult{Allowed: true}, nil

@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// AdminStore 提供管理用例所需的读取、状态写入和删除操作。
+// AdminStore supplies provider reads, configuration writes, health updates, and deletion for administration.
 type AdminStore interface {
 	UpdateExtra(context.Context, int64, map[string]any) error
 	BulkUpdate(context.Context, []int64, ProviderBulkUpdate) (int64, error)
@@ -56,7 +56,7 @@ type (
 	}
 )
 
-// Admin 拥有提供商管理规则，资金操作和运行时阻断通过消费者侧接口注入。
+// Admin manages providers through injected storage, quota, and runtime-block interfaces.
 type Admin struct {
 	providerRepo AdminStore
 	options      AdminOptions
@@ -75,19 +75,19 @@ type AdminGroups interface {
 }
 
 type CreateCredentialHooks struct {
-	// 平台接口按 Qoder 站点切换和 PAT 校验的顺序执行。
+	// Editing checks the Qoder site before validating its PAT.
 	Site         func(*Record) (string, error)
 	ValidateEdit func(context.Context, *Record, bool) error
 	Prepare      func(*Record)
 	Validate     func(context.Context, *Record) error
 }
 
-// DuplicateStore 拥有原提供商与关联一次提交，不执行平台交换。
+// DuplicateStore commits a copied provider and its group memberships together.
 type DuplicateStore interface {
 	CreateWithProviderGroups(context.Context, *Record, []GroupMembership) error
 }
 
-// ShadowProxyStore 按顺序将母提供商的代理配置同步给影子。
+// ShadowProxyStore supplies reads and writes for propagating a parent's proxy to its shadows.
 type ShadowProxyStore interface {
 	ListShadowsByParent(context.Context, int64) ([]*Record, error)
 	Update(context.Context, *Record) error

@@ -19,8 +19,8 @@ type SSEJSONDocumentScanner struct {
 	current string
 }
 
-// SplitConcatenatedJSONDocuments 仅识别多个完整 Responses 事件黏连在同一传输消息中的形态。
-// 其他畸形载荷保持原样，继续交给既有错误路径处理。
+// SplitConcatenatedJSONDocuments recognizes multiple complete typed events concatenated in one message.
+// Malformed, untyped, and oversized payloads return false for the caller to handle.
 func SplitConcatenatedJSONDocuments(payload []byte) ([][]byte, bool) {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) == 0 || len(payload) > MaxConcatenatedJSONBytes || json.Valid(payload) {

@@ -2,15 +2,15 @@ package text
 
 import "context"
 
-// QoderCompatibleOutcome 记录响应字节是否已提交及部分用量。
+// QoderCompatibleOutcome records output progress and partial-result, cancellation, and retry eligibility.
 type QoderCompatibleOutcome struct {
 	Err                                                       error
 	OutputChanged, Partial, Canceled, CanRefresh, CanFailover bool
 }
 type QoderRefreshResult struct{ Ready, Pending bool }
 
-// QoderCompatiblePorts 提供 Messages 和 Responses 的单步执行操作。Chat 使用独立执行接口，
-// 此入口不追加等待后权益复查，且任意实际输出都关闭当前尝试的重试窗口。
+// QoderCompatiblePorts supplies individual operations for Messages and Responses; Chat uses a separate interface.
+// This loop does not recheck funding after waiting. Failure must stop retries after any actual output.
 type QoderCompatiblePorts interface {
 	Context() context.Context
 	Select(map[int64]struct{}) (Selection, error)
@@ -27,7 +27,7 @@ type QoderCompatiblePorts interface {
 	Switched()
 }
 
-// RunQoderCompatible 执行当前请求的提供商尝试循环。
+// RunQoderCompatible runs provider attempts for the current request.
 func RunQoderCompatible(p QoderCompatiblePorts, maxProviders int) {
 	excluded := make(map[int64]struct{})
 	pending := false
@@ -91,7 +91,7 @@ func RunQoderCompatible(p QoderCompatiblePorts, maxProviders int) {
 				continue
 			}
 		}
-		// 原入口先尝试已知错误展示，只有未分类且尚未输出的错误继续换号。
+		// Failure handles known errors and committed output; unhandled errors may try another provider.
 		if p.Failure(result) {
 			return
 		}

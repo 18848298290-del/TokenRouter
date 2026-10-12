@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestBuildOpenAIResponsesURLForPlatform deepseek 官方端点为 /responses（无 /v1）。
+// TestBuildOpenAIResponsesURLForPlatform checks DeepSeek's /responses path without a /v1 prefix.
 func TestBuildOpenAIResponsesURLForPlatform(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "https://api.deepseek.com/responses", ResponsesEndpoint(capability.PlatformDeepseek, "https://api.deepseek.com"))
@@ -22,8 +22,8 @@ func TestBuildOpenAIResponsesURLForPlatform(t *testing.T) {
 	require.Equal(t, "https://api.kimi.com/coding/v1/responses", ResponsesEndpoint(capability.PlatformKimi, "https://api.kimi.com/coding/v1"))
 }
 
-// TestNormalizeDeepSeekResponsesRequestBody 无状态适配：强制 store=false、
-// 清除 previous_response_id；非原生 CN Responses 协议原样返回。
+// TestNormalizeDeepSeekResponsesRequestBody checks store=false and removal of previous_response_id.
+// Requests outside native CN Responses remain unchanged.
 func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	t.Parallel()
 
@@ -45,7 +45,7 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.False(t, gjson.GetBytes(adaptiveNormalized, "store").Bool())
 	require.False(t, gjson.GetBytes(adaptiveNormalized, "previous_response_id").Exists())
 
-	// 非 responses 协议（deepseek CC 提供商）原样返回
+	// A DeepSeek Chat provider skips native Responses normalization.
 	deepseekCC := &providercore.Record{Platform: capability.PlatformDeepseek, Type: capability.ProviderTypeAPIKey}
 	require.Equal(t, string(body), string(NormalizeCNResponsesBody((providercore.ProtocolTarget{Record: deepseekCC}).UsesNativeCNResponses(), body)))
 
@@ -65,7 +65,7 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.False(t, gjson.GetBytes(kimiCodingNormalized, "store").Bool())
 	require.False(t, gjson.GetBytes(kimiCodingNormalized, "previous_response_id").Exists())
 
-	// openai 提供商原样返回
+	// An OpenAI provider skips CN normalization.
 	openai := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	require.Equal(t, string(body), string(NormalizeCNResponsesBody((providercore.ProtocolTarget{Record: openai}).UsesNativeCNResponses(), body)))
 }

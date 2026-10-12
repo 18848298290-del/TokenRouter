@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// errorExchange 只连接本次响应、健康命令与 HTTP 输出，错误流程由 forward 执行。
+// errorExchange supplies the response, health updates, and HTTP output to forward's error handlers.
 type errorExchange struct {
 	runtime  *Runtime
 	output   HTTPBoundary
@@ -95,7 +95,6 @@ func (e *errorExchange) SetError(status int, message, detail string) {
 }
 
 func (e *errorExchange) Observe(notice forward.Notice) {
-	// 此分支记录提供商、上游请求 ID、状态码和错误详情。
 	e.output.Observe(forward.Notice{
 		Platform: notice.Platform, ProviderID: notice.ProviderID,
 		UpstreamStatusCode: notice.UpstreamStatusCode, UpstreamRequestID: notice.UpstreamRequestID,
@@ -150,7 +149,7 @@ func (r *Runtime) failoverHealth(ctx context.Context, response *http.Response, t
 	return gatewayadapter.ApplyExecutionHealth(ctx, r.dependencies.Health, target, gatewayadapter.HealthObservationFromContext(ctx, response.StatusCode, response.Header, body, models))
 }
 
-// claudeScopeError 检查凭据范围错误是否同时包含两个 Claude Code 专用授权短语。
+// claudeScopeError reports whether both Claude Code authorization phrases occur in the error.
 func claudeScopeError(message string) bool {
 	message = strings.ToLower(strings.TrimSpace(message))
 	return message != "" && strings.Contains(message, "only authorized for use with claude code") &&

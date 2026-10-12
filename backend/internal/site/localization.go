@@ -19,10 +19,11 @@ const (
 
 var siteTextKeys = []string{"site_name", "site_title", "site_subtitle", "contact_info", "doc_url", "home_content", "purchase_subscription_url", "footer_text"}
 
-// LocalizedTexts 按独立字段保存站点文案，译文缺失时各自选择原文。
+// LocalizedTexts stores site text by field so each field can resolve translations independently.
 type LocalizedTexts = locale.TextUpdates
 
-// ParseLocalizedTexts 从已保存内容构建编辑值，缺少的字段取现有原文。
+// ParseLocalizedTexts builds editable content from saved translations and fills
+// missing fields from their existing source text.
 func ParseLocalizedTexts(values map[string]string) LocalizedTexts {
 	result := ConfiguredSiteTexts(values)
 	for _, key := range siteTextKeys {
@@ -37,7 +38,7 @@ func ParseLocalizedTexts(values map[string]string) LocalizedTexts {
 	return result
 }
 
-// PrepareLocalizedTexts 检查字段范围和版本，并保留请求未修改的内容块。
+// PrepareLocalizedTexts validates field names and content revisions while retaining omitted fields.
 func PrepareLocalizedTexts(values map[string]string, input LocalizedTexts) (LocalizedTexts, error) {
 	previous := ParseLocalizedTexts(values)
 	result := ConfiguredSiteTexts(values)
@@ -76,7 +77,7 @@ func PrepareLocalizedTexts(values map[string]string, input LocalizedTexts) (Loca
 	return result, nil
 }
 
-// ResolveSiteTexts 返回独立的设置副本，权限、菜单结构和内容原文保持在持久数据中。
+// ResolveSiteTexts returns a copy of the settings with configured site text resolved for code.
 func ResolveSiteTexts(values map[string]string, code string) map[string]string {
 	result := make(map[string]string, len(values))
 	maps.Copy(result, values)
@@ -86,7 +87,7 @@ func ResolveSiteTexts(values map[string]string, code string) map[string]string {
 	return result
 }
 
-// PrepareLegalDocuments 检查每份协议的译文版本，标题和正文一起保存。
+// PrepareLegalDocuments validates each document revision, treating its title and body as one content block.
 func PrepareLegalDocuments(raw string, input []LoginAgreementDocument) ([]LoginAgreementDocument, error) {
 	current := map[string]LoginAgreementDocument{}
 	for _, doc := range ParseLoginAgreementDocuments(raw) {
@@ -132,7 +133,8 @@ func PrepareLegalDocuments(raw string, input []LoginAgreementDocument) ([]LoginA
 	return result, nil
 }
 
-// ConfiguredSiteTexts 区分未配置的字段与管理员明确保存的空字符串。
+// ConfiguredSiteTexts returns saved content blocks, distinguishing absent fields
+// from fields an administrator saved as empty.
 func ConfiguredSiteTexts(values map[string]string) LocalizedTexts {
 	result := LocalizedTexts{}
 	_ = json.Unmarshal([]byte(values[SettingKeySiteTexts]), &result)

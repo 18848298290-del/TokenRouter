@@ -43,8 +43,8 @@ func WriteOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *openai.OpenAIIm
 	return WriteImageError(c, &ImageErrorResponse{Status: err.ClientStatusCode(), Type: err.ClientErrorType(), Message: err.ClientMessage(), Code: err.Code, Param: err.Param}, func() int { return OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) }, func() { StopOpenAIImagesJSONKeepaliveCommitted(c) })
 }
 
-// TextStreamInterval 返回本组转换路径适用的读间隔上限；
-// gateway.stream_data_interval_timeout <= 0 时视为禁用。
+// TextStreamInterval returns the maximum read interval for these conversion paths.
+// A nonpositive gateway.stream_data_interval_timeout disables the limit.
 func (p *OpenAIResponseOutput) TextStreamInterval() time.Duration {
 	if p.Options.Configured && p.Options.StreamDataIntervalTimeout > 0 {
 		return time.Duration(p.Options.StreamDataIntervalTimeout) * time.Second

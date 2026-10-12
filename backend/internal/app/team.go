@@ -21,7 +21,7 @@ import (
 
 type teamIdentityUsers struct{ Users identity.UserRepository }
 
-// provideTeamRepository 把成员状态、Key 生命周期与资金窗口参与能力装在同一 SQL 连接来源上。
+// provideTeamRepository shares the SQL pool across membership, key lifecycle, and member usage operations.
 func provideTeamRepository(db *sql.DB, calendar timezone.Calendar, reports *usagepostgres.Store) team.TeamRepository {
 	return teampostgres.NewTeamRepositoryWithReports(db, keypostgres.NewTeamKeys(db), billingpostgres.NewMemberUsageStore(db, &calendar), calendar, reports)
 }

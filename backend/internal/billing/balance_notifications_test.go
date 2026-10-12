@@ -11,16 +11,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 额度提醒测试分别覆盖日、周和累计用量。
+// Quota alert cases cover daily, weekly, and total usage.
 const (
 	quotaDimDaily  = "daily"
 	quotaDimWeekly = "weekly"
 	quotaDimTotal  = "total"
 )
 
-// notifySettingsFixture 提供提醒设置，投递替身收到发送请求时触发 panic。
+// notifySettingsFixture supplies alert settings for tests.
 type notifySettingsFixture struct{ data map[string]string }
 
+// unexpectedAlertSender panics when a test unexpectedly dispatches an alert.
 type unexpectedAlertSender struct{}
 
 func TestCheckBalanceAfterDeduction_NilUser(t *testing.T) {
@@ -338,7 +339,7 @@ func TestCheckQuotaDimCrossings_MultipleDims_MixedResults(t *testing.T) {
 }
 
 func TestBuildQuotaDimsFromState_UsesStateValues(t *testing.T) {
-	// 用量取结算结果中的已提交数值。
+	// Use the committed usage returned by settlement.
 	a := &QuotaNotifyProvider{
 		Dimensions: []QuotaNotifyDimension{
 			{Name: "daily", Enabled: true, Threshold: 100, ThresholdType: "fixed", CurrentUsed: 999, Limit: 999},

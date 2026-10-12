@@ -36,19 +36,20 @@ const (
 	chatGPTLiveSidebandBaseURL = "wss://chatgpt.com/backend-api/codex"
 )
 
-// OpenAILiveOptions 保存构造时的会话预算及观察重试间隔。
+// OpenAILiveOptions configures session duration and observer retry intervals.
 type OpenAILiveOptions struct {
 	MaxSessionDuration    time.Duration
 	ObserverRetryInterval time.Duration
 }
 
-// LiveProviderSelection 提供创建会话时的提供商选择和每轮资格复核。
+// LiveProviderSelection selects providers at session creation and revalidates routing models.
 type LiveProviderSelection interface {
 	SelectProviderWithSchedulerForCapability(context.Context, *int64, string, string, string, map[int64]struct{}, egress.OpenAIUpstreamTransport, providercore.OpenAIEndpointCapability, bool, bool, ...string) (*gatewayprovider.SelectionResult, scheduler.PlatformDecision, error)
 	ResolveOpenAIWSRoutingModelForProvider(context.Context, *int64, *gatewayprovider.ExecutionProvider, string, providercore.OpenAIEndpointCapability) (string, error)
 }
 
-// OpenAILiveExecutor 管理 Live 依赖和观察者登记，共用会话、租约与传输。
+// OpenAILiveExecutor binds Live dependencies and observer registration to shared sessions, leases, and
+// transport.
 type OpenAILiveExecutor struct {
 	Options             OpenAILiveOptions
 	Requests            *OpenAIRequests
@@ -82,7 +83,7 @@ func liveOptionalID(value int64) *int64 {
 	return &result
 }
 
-// liveOptionalString 把非空模型追踪字段转换为可选日志值。
+// liveOptionalString returns a trimmed model-trace value or nil when empty.
 func liveOptionalString(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -112,7 +113,7 @@ func (s *OpenAILiveExecutor) liveMaxSessionDuration() time.Duration {
 	return defaultLiveMaxSessionDuration
 }
 
-// Create 将提供商选择和连接接口传给 Live 创建用例。
+// Create runs Live session creation with provider selection and connection adapters.
 func (s *OpenAILiveExecutor) Create(ctx context.Context, request *session.LiveCallRequest, identity session.LiveCallIdentity, userMaxConcurrency int) (*gatewaylive.Created, error) {
 	ports := &liveCreatePorts{service: s}
 	created, err := gatewaylive.NewCreator(s.liveRuntime(), ports, s.liveMaxSessionDuration()).Create(ctx, request, identity, userMaxConcurrency)
@@ -125,7 +126,7 @@ func (s *OpenAILiveExecutor) Create(ctx context.Context, request *session.LiveCa
 func (s *OpenAILiveExecutor) shouldFailoverLiveCreateError(err error) bool {
 	var upstreamErr *forwardcore.UpstreamFailoverError
 	if !errors.As(err, &upstreamErr) {
-		// 凭证读取和网络传输错误都可能只影响当前提供商或代理。
+		// Credential and transport errors can be specific to the current provider or proxy.
 		return true
 	}
 	return gatewayprovider.ShouldFailoverOpenAIResponse(
@@ -214,7 +215,7 @@ func logLiveUpstreamFailure(
 	)
 }
 
-// applyLiveUpstreamRouting 同步应用 fork 的 UA 路由和 TLS 身份配对规则。
+// applyLiveUpstreamRouting applies routed User-Agent, originator, and Live identity headers.
 func (s *OpenAILiveExecutor) applyLiveUpstreamRouting(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -256,7 +257,7 @@ func (s *OpenAILiveExecutor) liveSidebandHeaders(
 	return headers, nil
 }
 
-// liveSidebandProvider 加载并校验创建 Live 会话时绑定的提供商。
+// liveSidebandProvider loads the session-bound provider and checks Live capability.
 func (s *OpenAILiveExecutor) liveSidebandProvider(ctx context.Context, record *session.LiveCallRecord) (*gatewayprovider.ExecutionProvider, error) {
 	if record == nil {
 		return nil, session.ErrLiveCallNotFound
@@ -271,7 +272,7 @@ func (s *OpenAILiveExecutor) liveSidebandProvider(ctx context.Context, record *s
 	return provider, nil
 }
 
-// dialLiveSidebandForProvider 复用已经校验的会话提供商建立控制连接。
+// dialLiveSidebandForProvider opens a control connection using an already-validated session provider.
 func (s *OpenAILiveExecutor) dialLiveSidebandForProvider(ctx context.Context, record *session.LiveCallRecord, provider *gatewayprovider.ExecutionProvider) (openai.LiveFrameConn, error) {
 	tlsRouterMatch := s.matchLiveTLSFingerprintRouter(provider, record.UserAgent)
 	headers, err := s.liveSidebandHeaders(ctx, provider, record, tlsRouterMatch)
@@ -282,7 +283,7 @@ func (s *OpenAILiveExecutor) dialLiveSidebandForProvider(ctx context.Context, re
 	return openai.DialLiveSideband(ctx, s.Dialer, chatGPTLiveSidebandBaseURL, record.CallID, headers, liveProviderProxyURL(provider), tlsProfile)
 }
 
-// matchLiveTLSFingerprintRouter 使用创建 Live 会话时记录的入站 UA 选择 fork 的 TLS 路由模板。
+// matchLiveTLSFingerprintRouter selects TLS routing using the User-Agent recorded at session creation.
 func (s *OpenAILiveExecutor) matchLiveTLSFingerprintRouter(provider *gatewayprovider.ExecutionProvider, userAgent string) egress.TLSFingerprintRouterMatchResult {
 	if s == nil || s.Requests.Routers == nil || provider == nil || provider.View().GetTLSFingerprintRouterID() <= 0 {
 		return egress.TLSFingerprintRouterMatchResult{}
@@ -290,7 +291,7 @@ func (s *OpenAILiveExecutor) matchLiveTLSFingerprintRouter(provider *gatewayprov
 	return s.Requests.Routers.MatchUserAgent(provider.View().GetTLSFingerprintRouterID(), userAgent)
 }
 
-// liveClientPolicyResult 复用 fork 的 OAuth 客户端限制检测，不在 service 层写 HTTP 响应。
+// liveClientPolicyResult checks OAuth client restrictions using the session identity headers.
 func (s *OpenAILiveExecutor) liveClientPolicyResult(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -306,12 +307,12 @@ func (s *OpenAILiveExecutor) liveClientPolicyResult(
 	return s.Requests.DetectClient(&gin.Context{Request: request}, provider, tlsRouterMatch)
 }
 
-// Lookup 委托会话绑定校验，不重复读取或复制身份规则。
+// Lookup delegates session identity validation to the Live runtime.
 func (s *OpenAILiveExecutor) Lookup(ctx context.Context, callID string, identity session.LiveCallIdentity) (*session.LiveCallRecord, error) {
 	return s.liveRuntime().Lookup(ctx, callID, identity)
 }
 
-// rewriteLiveSidebandClientPayload 委托唯一 Live 会话模型改写规则。
+// rewriteLiveSidebandClientPayload applies Live session model rewriting.
 func (s *OpenAILiveExecutor) rewriteLiveSidebandClientPayload(ctx context.Context, record *session.LiveCallRecord, provider *gatewayprovider.ExecutionProvider, payload []byte) ([]byte, string, []string, error) {
 	if provider == nil {
 		return payload, "", nil, nil
@@ -319,12 +320,12 @@ func (s *OpenAILiveExecutor) rewriteLiveSidebandClientPayload(ctx context.Contex
 	return gatewaylive.RewriteClientPayload(ctx, record, liveModelResolver{service: s, provider: provider}, payload)
 }
 
-// liveRuntime 复用原应用拥有的存储、租约和观察任务登记，不构造新的状态。
+// liveRuntime binds the application-owned stores, leases, and observer registry to the Live service.
 func (s *OpenAILiveExecutor) liveRuntime() *gatewaylive.Service {
 	return gatewaylive.New(livePorts{service: s}, s.Options.ObserverRetryInterval, openai.WSMessageReadLimitBytes)
 }
 
-// Proxy 将 HTTP WebSocket 转换为帧接口，交给 gateway/live 执行。
+// Proxy adapts the HTTP WebSocket to the frame interface used by gateway/live.
 func (s *OpenAILiveExecutor) Proxy(ctx context.Context, record *session.LiveCallRecord, downstream *coderws.Conn) error {
 	if downstream == nil {
 		return session.ErrLiveCallNotFound
@@ -336,7 +337,7 @@ func (s *OpenAILiveExecutor) observeLiveCall(record *session.LiveCallRecord) {
 	s.liveRuntime().Observe(record)
 }
 
-// liveObserverState 访问应用共享的观察者登记。
+// liveObserverState returns access to the shared observer registry.
 func (s *OpenAILiveExecutor) liveObserverState() gatewaylive.ObserverState {
 	return gatewaylive.ObserverState{Mutex: &s.liveObserverMu, Stopped: &s.liveObserverStopped, Cancels: &s.liveObserverCancels, Wait: &s.liveObserverWG}
 }
@@ -345,7 +346,7 @@ func (s *OpenAILiveExecutor) beginLiveObserver(owner string) (context.Context, f
 	return s.liveObserverState().Begin(owner)
 }
 
-// StopLiveObservers 复用原应用生命周期入口；停止实现由 gateway/live 拥有。
+// StopLiveObservers cancels registered local observers and waits for them through the Live observer state.
 func (s *OpenAILiveExecutor) StopLiveObservers(ctx context.Context) error {
 	return s.liveObserverState().Stop(ctx)
 }

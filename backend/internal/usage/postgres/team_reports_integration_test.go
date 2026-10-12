@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestTeamReportsAnalyticsParity 对照原始结果检查团队、成员、Key、历史成员及时间桶两端。
+// TestTeamReportsAnalyticsParity compares raw and rollup reports across team, member, key, and partial-bucket filters.
 func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 	owner := mustCreateUser(s.T(), s.client, &identity.User{Email: "report-owner@test.local"})
 	member := mustCreateUser(s.T(), s.client, &identity.User{Email: "report-member@test.local"})
@@ -87,7 +87,7 @@ func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 			}
 		}
 	}
-	// 用量全部清除后，即使聚合表仍有数据，报表也返回空成员列表和零合计。
+	// After deleting all usage, stale rollups contribute no totals; current members remain with zero usage.
 	s.repo.calendar = timezone.NewCalendar(time.UTC)
 	_, err = s.tx.ExecContext(s.ctx, "DELETE FROM usage_logs WHERE team_id=$1", entity.ID)
 	s.Require().NoError(err)

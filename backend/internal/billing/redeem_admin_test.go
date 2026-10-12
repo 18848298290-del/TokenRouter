@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// redeemCreateRecorder 记录管理服务实际提交的兑换码。
+// redeemCreateRecorder captures codes submitted by the administration service.
 type redeemCreateRecorder struct {
 	RedeemCodeRepository
 	created []RedeemCode
@@ -30,7 +30,7 @@ type redeemRepoStubForAdminList struct {
 	listWithFiltersErr    error
 }
 
-// TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength 覆盖中文、混合文本和补充平面字符的长度限制。
+// TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength covers Han, mixed text, and supplementary-plane code points.
 func TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -74,7 +74,7 @@ func TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength(t *testing.T) {
 	}
 }
 
-// Create 保存兑换码副本，供测试检查传入仓储的内容。
+// Create copies the code so tests can inspect the repository input.
 func (r *redeemCreateRecorder) Create(_ context.Context, code *RedeemCode) error {
 	r.created = append(r.created, *code)
 	return nil

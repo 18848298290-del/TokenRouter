@@ -9,11 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokBodyCodec 在构造请求体时生成随机 ID。
+// GrokBodyCodec binds random ID generation for request encoding.
 func GrokBodyCodec() grok.BodyCodec { return grok.BodyCodec{NewID: uuid.NewString} }
 
-// GrokMediaCodec 绑定媒体协议处理所需的价格归一化函数。
-// 输入归一化使用 billing/pricing 的规则。
+// GrokMediaCodec binds media encoding to billing/pricing normalization
+// and the upstream upload-size limit.
 func GrokMediaCodec() grok.MediaCodec {
 	return grok.MediaCodec{Options: grok.MediaNormalization{
 		MaxUploadPartSize:                             upstream.OpenAIImageMaxUploadPartSize,

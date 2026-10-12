@@ -72,7 +72,7 @@ func (s *OpenAIRequests) ResponseOptions(ctx context.Context, c *gin.Context, pr
 	}
 }
 
-// Build 将执行目标和请求选项传给请求构造器。
+// Build passes the execution target and request options to the request builder.
 func (s *OpenAIRequests) Build(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...egress.TLSFingerprintRouterMatchResult) (*http.Request, error) {
 	var err error
 	body, err = s.applyModelAttributes(ctx, provider, body, "openai_responses")

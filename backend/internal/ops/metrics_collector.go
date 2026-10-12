@@ -27,7 +27,7 @@ const (
 	opsMetricsCollectorHeartbeatTimeout = 2 * time.Second
 )
 
-// opsSchedulableProviderLoadRepository 为 Ops 采样提供可调度提供商的并发负载。
+// opsSchedulableProviderLoadRepository supplies concurrency limits for schedulable providers.
 type opsSchedulableProviderLoadRepository interface {
 	ListSchedulableProviderLoads(ctx context.Context) ([]ProviderWithConcurrency, error)
 }
@@ -247,7 +247,7 @@ func (c *OpsMetricsCollector) isMonitoringEnabled(ctx context.Context) bool {
 		if errors.Is(err, ErrSettingNotFound) {
 			return true
 		}
-		// Fail-open: collector should not become a hard dependency.
+		// Continue collecting when the monitoring setting cannot be read.
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -384,7 +384,7 @@ func (c *OpsMetricsCollector) collectConcurrencyQueueDepth(parentCtx context.Con
 		parentCtx = context.Background()
 	}
 
-	// Best-effort: never let concurrency sampling break the metrics collector.
+	// Limit concurrency sampling to two seconds; omit the value when sampling fails.
 	ctx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
 
@@ -421,7 +421,7 @@ func (c *OpsMetricsCollector) collectConcurrencyQueueDepth(parentCtx context.Con
 	return &v
 }
 
-// listSchedulableProviderLoads 优先查询并发负载，仓储未实现该接口时从完整提供商记录提取。
+// listSchedulableProviderLoads uses the load query when available, otherwise extracts limits from provider records.
 func (c *OpsMetricsCollector) listSchedulableProviderLoads(ctx context.Context) ([]ProviderWithConcurrency, error) {
 	if repo, ok := c.providerRepo.(opsSchedulableProviderLoadRepository); ok {
 		return repo.ListSchedulableProviderLoads(ctx)
@@ -454,8 +454,7 @@ func (c *OpsMetricsCollector) tryAcquireLeaderLock(ctx context.Context) (func(),
 
 	ok, err := c.redisClient.Claim(ctx, opsMetricsCollectorLeaderLockKey, c.instanceID, opsMetricsCollectorLeaderLockTTL)
 	if err != nil {
-		// Prefer fail-closed to avoid stampeding the database when Redis is flaky.
-		// Fallback to a DB advisory lock when Redis is present but unavailable.
+		// Require a database advisory lock when Redis fails to prevent concurrent collectors.
 		release, ok := acquireAdvisory(ctx, c.db, opsMetricsCollectorLeaderLockKey)
 		if !ok {
 			c.maybeLogSkip()
@@ -488,25 +487,25 @@ func (c *OpsMetricsCollector) maybeLogSkip() {
 	log.Printf("[OpsMetricsCollector] leader lock held by another instance; skipping")
 }
 
-// float64Ptr 返回指标值的指针。
+// float64Ptr returns a pointer to a copy of v.
 func float64Ptr(v float64) *float64 {
 	out := v
 	return &out
 }
 
-// intPtr 返回计数值的指针。
+// intPtr returns a pointer to a copy of v.
 func intPtr(v int) *int {
 	out := v
 	return &out
 }
 
-// boolPtr 返回健康状态的指针。
+// boolPtr returns a pointer to a copy of v.
 func boolPtr(v bool) *bool {
 	out := v
 	return &out
 }
 
-// RoundTo1DP 将观测指标四舍五入到一位小数。
+// RoundTo1DP rounds a metric to one decimal place.
 func RoundTo1DP(v float64) float64 {
 	return math.Round(v*10) / 10
 }

@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// 兼容错误结构保持同一 HTTP 类型。
+// noProviderErrorClassification aliases the shared HTTP selection error type.
 type noProviderErrorClassification = gatewayhttp.SelectionErrorResponse
 
 func classifySelectionFailureError(err error, fallback noProviderErrorClassification) noProviderErrorClassification {
 	return gatewayhttp.RefineSelectionError(err, fallback)
 }
 
-// classifyNoProviderError 从 Key 取得最终分组，调用诊断和 HTTP 错误映射。
+// classifyNoProviderError uses the final key group for diagnostics and HTTP error mapping.
 func classifyNoProviderError(
 	ctx context.Context,
 	diag routing.ModelAvailabilityDiagnoser,
@@ -33,7 +33,7 @@ func classifyNoProviderError(
 	return gatewayhttp.ClassifySelectionError(ctx, diag, groupID, routingModel, displayModel, platform)
 }
 
-// ClassifyNoProviderErrorFromGin 复用 gin.Context 上的 request context，简化 handler 调用点。
+// ClassifyNoProviderErrorFromGin reads the request context from Gin for selection diagnostics.
 func ClassifyNoProviderErrorFromGin(
 	c *gin.Context,
 	diag routing.ModelAvailabilityDiagnoser,
@@ -53,7 +53,7 @@ func ClassifyNoProviderErrorFromGin(
 	return classification
 }
 
-// ClassifyOpenAICompatibleNoProviderErrorFromGin 按分组候选及可选强制平台诊断兼容请求。
+// ClassifyOpenAICompatibleNoProviderErrorFromGin diagnoses group candidates under an optional forced platform.
 func ClassifyOpenAICompatibleNoProviderErrorFromGin(
 	c *gin.Context,
 	diag routing.ModelAvailabilityDiagnoser,

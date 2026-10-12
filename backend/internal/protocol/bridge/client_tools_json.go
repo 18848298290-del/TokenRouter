@@ -16,6 +16,8 @@ func AdaptResponsesClientToolsJSON(body []byte, upstream string) ([]byte, Respon
 	)
 }
 
+// AdaptResponsesClientToolsJSONWithMapping adapts tools using mappings inherited from prior turns.
+// It returns the input bytes on no change or failure and preserves JSON number precision.
 func AdaptResponsesClientToolsJSONWithMapping(
 	body []byte,
 	upstream string,

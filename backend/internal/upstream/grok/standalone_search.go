@@ -27,7 +27,7 @@ type StandaloneSearchRequest struct {
 	EnableVideoUnderstanding *bool    `json:"enable_video_understanding"`
 }
 
-// StandaloneSearchResult 是上游返回的一条搜索结果。
+// StandaloneSearchResult is one upstream search result.
 type StandaloneSearchResult struct {
 	URL     string `json:"url"`
 	Title   string `json:"title"`
@@ -259,7 +259,7 @@ User query:
 %s`, NormalizeGrokWebSearchMaxResults(maxResults), query)
 }
 
-// BuildGrokWebSearchResponsesBody 构造 web_search 请求，并要求返回引用来源。
+// BuildGrokWebSearchResponsesBody requests web_search results with citation sources.
 func BuildGrokWebSearchResponsesBody(query string, maxResults int, model string) []byte {
 	body, _ := json.Marshal(map[string]any{"model": ResolveDefaultTextModel(model), "input": BuildGrokWebSearchPrompt(query, maxResults), "tools": []map[string]any{{"type": "web_search"}}, "include": []string{"web_search_call.action.sources"}, "store": false, "stream": false})
 	return body

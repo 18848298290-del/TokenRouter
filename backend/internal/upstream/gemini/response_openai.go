@@ -78,7 +78,7 @@ func GeminiResponseToChatCompletions(geminiResp map[string]any, originalModel st
 	return result, LegacyNativeGeminiUsage(usage), nil
 }
 
-// GeminiResponseToResponses 统一完成 Gemini -> Anthropic -> Responses 的响应转换。
+// GeminiResponseToResponses converts Gemini output through Anthropic into OpenAI Responses.
 func GeminiResponseToResponses(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ResponsesResponse, *upstream.TokenUsage, error) {
 	var override *bridge.NativeGeminiUsage
 	if usageOverride != nil {

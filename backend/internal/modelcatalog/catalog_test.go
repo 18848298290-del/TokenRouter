@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 多个中继的模态可以不同；裸名只能借用唯一公共身份的属性。
+// ambiguousImageCatalog gives relays different modalities but a shared public model identity.
 const ambiguousImageCatalog = `{
 	"models":{"openai/gpt-image-2.5-flare":{
 		"name":"GPT Image 2.5 Flare",
@@ -37,7 +37,8 @@ func TestLookupAttributesCanonicalFallback(t *testing.T) {
 			require.Equal(t, []string{"text", "image"}, *attributes.InputModalities)
 			require.Equal(t, []string{"image"}, *attributes.OutputModalities)
 
-			// 属性回退后价格仍有歧义，返回的属性可独立修改。
+			// Public attributes resolve the metadata ambiguity while prices remain provider-specific; returned
+			// attributes are independent.
 			require.True(t, catalog.RequiresExact(model))
 			_, found = catalog.Lookup([]string{model})
 			require.False(t, found)
@@ -52,7 +53,7 @@ func TestLookupAttributesCanonicalFallback(t *testing.T) {
 			price, found := catalog.Lookup([]string{"azure/" + model})
 			require.True(t, found)
 			require.Equal(t, 1.0, *price.Cost.Input)
-			// 精确条目缺失的属性保持未知。
+			// Missing attributes in an exact entry remain unknown.
 			qualified, found = catalog.LookupAttributes("relay/"+model, []string{model})
 			require.True(t, found)
 			require.Nil(t, qualified.InputModalities)
@@ -65,7 +66,7 @@ func TestLookupAttributesCanonicalFallback(t *testing.T) {
 func TestLookupAttributesRejectsUncertainCanonical(t *testing.T) {
 	for _, canonical := range []string{"", "other/model", "openai/missing"} {
 		t.Run(canonical, func(t *testing.T) {
-			// 第一个供应商改为其他归属，另一条记录和公共资料维持现值。
+			// Change one provider's authorship while keeping the other record and public metadata intact.
 			body := strings.Replace(ambiguousImageCatalog,
 				`"canonical_model_id":"openai/gpt-image-2.5-flare"`,
 				`"canonical_model_id":"`+canonical+`"`, 1)
@@ -75,7 +76,7 @@ func TestLookupAttributesRejectsUncertainCanonical(t *testing.T) {
 			require.False(t, found)
 		})
 	}
-	// 所有来源一致但缺少公共资料时，属性保持未知。
+	// Agreed authorship is insufficient when the public metadata is missing.
 	body := strings.ReplaceAll(ambiguousImageCatalog,
 		`"canonical_model_id":"openai/gpt-image-2.5-flare"`,
 		`"canonical_model_id":"openai/missing"`)
@@ -94,7 +95,7 @@ func TestLookupAttributesKeepsOriginalEndpoint(t *testing.T) {
 	require.Equal(t, []string{"text"}, *attributes.InputModalities)
 }
 
-// TestOfflineEmbeddingOrigin 验证实际内嵌目录中缺少 canonical 关联的原厂模型。
+// TestOfflineEmbeddingOrigin checks first-party models whose embedded records omit canonical identities.
 func TestOfflineEmbeddingOrigin(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)

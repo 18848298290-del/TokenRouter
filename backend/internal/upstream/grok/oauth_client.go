@@ -35,10 +35,10 @@ type OAuthClient struct {
 }
 
 func NewOAuthClient() *OAuthClient {
-	// 采用 fail-closed：不能回退到未经校验的 EffectiveTokenURL，防止恶意环境变量窃取授权码或 refresh token。
+	// Validate overrides before sending authorization codes or refresh tokens.
 	tokenURL, err := ValidatedTokenURL()
 	if err != nil || strings.TrimSpace(tokenURL) == "" {
-		// 仅回退到官方白名单端点，不能使用原始环境变量中的 EffectiveTokenURL。
+		// An invalid override uses the trusted default rather than the raw environment URL.
 		tokenURL = DefaultTokenURL
 	}
 	return &OAuthClient{tokenURL: tokenURL}
@@ -110,8 +110,8 @@ func (c *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL, 
 	return &tokenResp, nil
 }
 
-// LoginWithPassword 向 accounts.x.ai 验证密码并返回临时 SSO cookie；
-// 密码和 SSO 信息不得写入提供商凭据或日志。
+// LoginWithPassword authenticates with accounts.x.ai and returns a temporary SSO cookie.
+// Callers must keep passwords and SSO cookies out of provider credentials and logs.
 func (c *OAuthClient) LoginWithPassword(ctx context.Context, email, password, proxyURL string) (*wiregrok.PasswordLoginResult, error) {
 	turnstileToken, err := solveTurnstile(ctx)
 	if err != nil {
@@ -211,8 +211,8 @@ func grokOAuthStatusError(code, message string, resp *req.Response) error {
 
 func grokOAuthHasExplicitEntitlementDenial(body string) bool {
 	lower := strings.ToLower(body)
-	// 账单额度耗尽可恢复；xAI 可能同时返回通用 access_denied 与额度消息，
-	// 因此 refresh token 流程先识别额度消息，再识别 entitlement 拒绝标记。
+	// Quota exhaustion can accompany a generic access_denied marker and is recoverable.
+	// Check quota messages before classifying refresh failures as entitlement denials.
 	for _, phrase := range []string{
 		"spending limit",
 		"run out of credits",

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// 旧标记仍用于识别历史请求，避免重复注入并维持桥接判断。
+	// Recognize the legacy marker to prevent duplicate injection and identify bridged requests.
 	legacyClaudeCodeTodoGuardMarker = "<sub2api-claude-code-todo-guard>"
 
 	OpenAICompatClaudeCodeTodoGuardMarker = "<tokenrouter-claude-code-todo-guard>"

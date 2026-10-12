@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// RawResponseOptions 配置当前端点的响应读取、输出和观测回调。
+// RawResponseOptions configures response IO and observation for Chat passthrough and conversion.
 type RawResponseOptions struct {
 	Runtime              bridge.Runtime
 	ProviderID           int64
@@ -45,7 +45,7 @@ type RawResponseOptions struct {
 	CacheEvents          func([]wire.ResponsesStreamEvent)
 }
 
-// ReadRawChatStreaming 保留当前端点独立的终态、取消与用量顺序。
+// ReadRawChatStreaming forwards Chat SSE, collecting usage and checking for truncation before final delivery.
 func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time, requestBodyLen int) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
@@ -148,14 +148,14 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 		)
 	}
 
-	// 客户端取消/断开后上游读失败与上游截断不可区分（取消会连带取消上游请求），
-	// 此时按已收到的用量收尾计费。
+	// Cancellation can cause the upstream read to fail, so a disconnected client cannot
+	// be distinguished from upstream truncation here. Return the usage already observed.
 	clientAborted := clientDisconnected ||
 		errors.Is(scanErr, context.Canceled) ||
 		errors.Is(scanErr, context.DeadlineExceeded)
 
-	// 上游在任何终止信号之前结束：连接被 reset（scanErr != nil）或干净 EOF。
-	// 这两种情况都按流截断记录失败，内容已写出时返回已收集的用量。
+	// An upstream end without a terminal signal is truncation, whether the read failed
+	// or reached clean EOF. Retain observed usage once content has been delivered.
 	if !clientAborted && terminal.IsTruncated(clientOutputStarted) {
 		cause := scanErr
 		if cause == nil {
@@ -170,11 +170,11 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 			zap.Bool("client_output_started", clientOutputStarted),
 		)
 		if !clientOutputStarted {
-			// 响应头尚未提交：可以透明换号重试，客户端不会看到半截流。
+			// Before first output, return a failover error so another provider can retry.
 			return nil, options.TruncatedFailover(cause)
 		}
-		// 已写出内容时返回带类型的上游错误。handler 会据此
-		// 补发 SSE error 帧并把本次请求计入 SLA 失败。
+		// After output, return a typed error so the handler can emit an SSE error
+		// and record the request as an SLA failure.
 		options.RecordTruncation(cause)
 		return resultWithUsage(), NewUpstreamStreamReadError(cause)
 	}
@@ -205,7 +205,7 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 	return resultWithUsage(), nil
 }
 
-// ReadRawChatBuffered 保留当前端点独立的终态、取消与用量顺序。
+// ReadRawChatBuffered observes usage and tier before transforming and forwarding the body.
 func ReadRawChatBuffered(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -222,8 +222,8 @@ func ReadRawChatBuffered(c *upstream.OutputContext, resp *http.Response, options
 		usage = parsedUsage
 	}
 	if IsEventStreamResponse(resp.Header) || wire.BodyHasSSEFraming(respBody) {
-		// 某些兼容上游在 stream=false 时仍返回 SSE；逐帧观察才能拿到
-		// response.completed 声明的 service_tier。
+		// Some compatible upstreams return SSE for stream=false; inspect each frame
+		// to observe the service tier declared by response.completed.
 		options.ObserveSSE(string(respBody))
 		wire.ForEachOpenAISSEFrame(string(respBody), func(_ string, payload []byte) {
 			if parsed, ok := wire.ExtractOpenAIUsageFromJSONBytes(payload); ok {
@@ -266,7 +266,7 @@ func ReadRawChatBuffered(c *upstream.OutputContext, resp *http.Response, options
 	}, nil
 }
 
-// ReadCCAsResponsesBuffered 保留当前端点独立的终态、取消与用量顺序。
+// ReadCCAsResponsesBuffered converts Chat JSON to Responses JSON and caches its output.
 func ReadCCAsResponsesBuffered(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]bridge.NamespacedToolName) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	ccResp, usage, err := ReadCCJSONResponse(resp, options.CC())
@@ -293,7 +293,7 @@ func ReadCCAsResponsesBuffered(c *upstream.OutputContext, resp *http.Response, o
 	}, nil
 }
 
-// ReadCCAsResponsesStreaming 保留当前端点独立的终态、取消与用量顺序。
+// ReadCCAsResponsesStreaming converts Chat chunks to Responses events, validating tools before finalization.
 func ReadCCAsResponsesStreaming(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]bridge.NamespacedToolName) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
@@ -399,7 +399,7 @@ func ReadCCAsResponsesStreaming(c *upstream.OutputContext, resp *http.Response, 
 	}, nil
 }
 
-// ReadCCAsMessagesBuffered 保留当前端点独立的终态、取消与用量顺序。
+// ReadCCAsMessagesBuffered converts Chat JSON to an Anthropic Messages response.
 func ReadCCAsMessagesBuffered(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	ccResp, usage, err := ReadCCJSONResponse(resp, options.CC())
@@ -425,7 +425,7 @@ func ReadCCAsMessagesBuffered(c *upstream.OutputContext, resp *http.Response, op
 	}, nil
 }
 
-// ReadCCAsMessagesStreaming 保留当前端点独立的终态、取消与用量顺序。
+// ReadCCAsMessagesStreaming converts Chat chunks to Messages events and collects usage.
 func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, options RawResponseOptions, originalModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
@@ -433,14 +433,14 @@ func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, o
 	anthropicState := bridge.NewChatCompletionsToAnthropicStreamState(options.Runtime, originalModel)
 	clientDisconnected := false
 
-	// 与 responses 兄弟不同：客户端断开后仍继续做事件转换（喂 anthropicState），
-	// 仅跳过写出，保证 finalize 阶段的 usage 汇总不受断开影响。
+	// Continue feeding the conversion state after disconnect so final accounting
+	// retains all observed chunks; skip only downstream writes.
 	emitChunk := func(chunk *wire.ChatCompletionsChunk) {
 		hasToolCallDelta := wire.ChatCompletionsChunkHasToolCallDelta(chunk)
-		// 通过单个状态机将 CC chunk 直接转换为 Anthropic events。
+		// One conversion state maps Chat chunks directly to Anthropic events.
 		anthropicEvents := bridge.ChatCompletionsChunkToAnthropicEvents(options.Runtime, chunk, anthropicState)
 		if hasToolCallDelta && len(anthropicEvents) == 0 {
-			// 工具参数聚合期间用标准事件维持下游活动，避免长参数流被误判为空闲。
+			// Ping while tool arguments accumulate so long argument streams do not appear idle.
 			anthropicEvents = append(anthropicEvents, anthropic.AnthropicStreamEvent{Type: "ping"})
 		}
 		if clientDisconnected {
@@ -466,8 +466,8 @@ func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, o
 	usage := scan.Usage
 
 	if scan.Err != nil {
-		// 上游读取中断时跳过收尾，避免合成 message_stop 掩盖截断，并返回
-		// usage incomplete，与 Responses fallback 保持一致。
+		// Skip finalization after read errors: a synthesized message_stop would hide truncation.
+		// Return the observed usage with an incomplete-usage error.
 		return &CompatResponseResult{
 			RequestID:        requestID,
 			UpstreamHeaders:  resp.Header,
@@ -484,7 +484,7 @@ func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, o
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
 
-	// 收尾时关闭未结束的内容块，并发出 message_delta/message_stop。
+	// Close unfinished content blocks and emit message_delta and message_stop.
 	finalEvents := bridge.FinalizeChatCompletionsAnthropicStream(options.Runtime, anthropicState)
 	if !clientDisconnected {
 		for _, aEvt := range finalEvents {

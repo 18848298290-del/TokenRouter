@@ -30,7 +30,7 @@ type openAIRequestPatch struct {
 	value  any
 }
 
-// DecodeOpenAIRequestBody 解码请求体，保留数字精度并为错误添加解析前缀。
+// DecodeOpenAIRequestBody decodes numbers without float conversion and prefixes parse errors.
 func DecodeOpenAIRequestBody(body []byte) (map[string]any, error) {
 	var request map[string]any
 	if err := wirejson.DecodeUseNumber(body, &request); err != nil {
@@ -56,7 +56,7 @@ func NewOpenAIRequestView(body []byte) OpenAIRequestView {
 
 	view := OpenAIRequestView{body: body}
 	var seen uint8
-	// 视图持有 body 并直接引用原始请求体，input 和 contents 使用其中的字节区间。
+	// The view retains the caller's body bytes; callers must keep them unchanged while using the view.
 	wirejson.ParseView(body).ForEach(func(key, value gjson.Result) bool {
 		switch key.Str {
 		case "model":
@@ -96,12 +96,12 @@ func NewOpenAIRequestView(body []byte) OpenAIRequestView {
 	return view
 }
 
-// Decode 在调用方确实需要完整对象时解码视图当前持有的报文。
+// Decode parses the original body into a full object; queued patches are applied separately.
 func (v OpenAIRequestView) Decode() (map[string]any, error) {
 	return DecodeOpenAIRequestBody(v.Bytes())
 }
 
-// OpenAIRequestMetaFromBody 通过字段视图提取模型、流式标记和缓存键。
+// OpenAIRequestMetaFromBody extracts model, stream, and cache key through a field view.
 func OpenAIRequestMetaFromBody(body []byte) (model string, stream bool, promptCacheKey string) {
 	view := NewOpenAIRequestView(body)
 	return view.Model, view.Stream, view.PromptCacheKey
@@ -174,8 +174,8 @@ func (v OpenAIRequestView) ApplyPatches() ([]byte, error) {
 	return body, nil
 }
 
-// Bytes 返回视图持有的原始报文，不复制大 input。
+// Bytes returns the original body slice; callers must treat it as read-only.
 func (v OpenAIRequestView) Bytes() []byte { return v.body }
 
-// PatchesDisabled 区分局部改写与已进入完整解码的路径。
+// PatchesDisabled reports whether the caller must use the full-object rewrite path.
 func (v OpenAIRequestView) PatchesDisabled() bool { return v.patchesDisabled }

@@ -50,7 +50,7 @@ func TestGetWebSearchEmulationMode_OldBoolTrue(t *testing.T) {
 		Type:     capability.ProviderTypeAPIKey,
 		Extra:    map[string]any{FeatureKey: true},
 	}
-	// bool true → tolerant fallback → enabled (not default)
+	// Legacy true explicitly enables emulation.
 	require.Equal(t, ModeEnabled, ProviderMode(a).Mode)
 }
 

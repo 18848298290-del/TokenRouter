@@ -14,20 +14,20 @@ const (
 	UpstreamUsageAdapterDeepseekBalance = "deepseek_balance"
 )
 
-// UpstreamUsageAmount 表示余额或累计限额的三个可选维度。
+// UpstreamUsageAmount holds optional used, total, and remaining amounts.
 type UpstreamUsageAmount struct {
 	Used      *float64 `json:"used,omitempty"`
 	Total     *float64 `json:"total,omitempty"`
 	Remaining *float64 `json:"remaining,omitempty"`
 }
 
-// UpstreamUsageBalanceEntry 表示多币种余额中的一项。
+// UpstreamUsageBalanceEntry is one currency balance.
 type UpstreamUsageBalanceEntry struct {
 	Currency  string  `json:"currency"`
 	Remaining float64 `json:"remaining"`
 }
 
-// UpstreamUsageLimit 表示上游返回的某个周期限额，不使用 OAuth 的窗口命名。
+// UpstreamUsageLimit holds a named upstream quota window independently of OAuth window names.
 type UpstreamUsageLimit struct {
 	Name      string     `json:"name"`
 	Used      *float64   `json:"used,omitempty"`
@@ -36,7 +36,7 @@ type UpstreamUsageLimit struct {
 	ResetAt   *time.Time `json:"reset_at,omitempty"`
 }
 
-// UpstreamUsageSubscription 表示订阅余额和订阅周期限额。
+// UpstreamUsageSubscription holds a subscription balance and periodic limits.
 type UpstreamUsageSubscription struct {
 	PlanName  string               `json:"plan_name"`
 	Unlimited bool                 `json:"unlimited,omitempty"`
@@ -45,12 +45,12 @@ type UpstreamUsageSubscription struct {
 	Limits    []UpstreamUsageLimit `json:"limits,omitempty"`
 }
 
-// UpstreamUsageInfo 是适配器归一化后的上游用量模型。
+// UpstreamUsageInfo is the normalized usage returned by an adapter.
 type UpstreamUsageInfo struct {
 	Provider string `json:"provider"`
 	Mode     string `json:"mode"`
 	Unit     string `json:"unit,omitempty"`
-	// New API/Zivv 的 balance 是用户钱包；Key quota 使用 Limits/Subscription。
+	// New API and Zivv use Balance for the wallet and Limits/Subscription for API key quota.
 	Balance      *UpstreamUsageAmount        `json:"balance,omitempty"`
 	Balances     []UpstreamUsageBalanceEntry `json:"balances,omitempty"`
 	Available    *bool                       `json:"available,omitempty"`
@@ -59,7 +59,7 @@ type UpstreamUsageInfo struct {
 	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
 }
 
-// CNQuotaTier 表示 Coding Plan 的滚动用量窗口。
+// CNQuotaTier is a rolling Coding Plan usage window.
 type CNQuotaTier struct {
 	Window      string  `json:"window"`
 	UsedPercent float64 `json:"used_percent"`

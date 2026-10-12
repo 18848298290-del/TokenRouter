@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// GeminiTokenCacheKey 保留服务账号身份摘要与 OAuth 提供商 ID 两种命名空间。
+// GeminiTokenCacheKey uses service-account identity keys when parsing succeeds, otherwise OAuth provider-ID keys.
 func GeminiTokenCacheKey(value *provider.Record) string {
 	if value != nil && value.Type == provider.ProviderTypeServiceAccount {
 		if key, err := ParseVertexServiceAccountKey(value); err == nil {
@@ -20,7 +20,7 @@ func GeminiTokenCacheKey(value *provider.Record) string {
 	return provider.GeminiOAuthTokenCacheKey(value)
 }
 
-// ParseVertexServiceAccountKey 将提供商保存形状交给唯一平台解析器。
+// ParseVertexServiceAccountKey parses the provider's stored service-account JSON.
 func ParseVertexServiceAccountKey(value *provider.Record) (*google.ServiceAccountKey, error) {
 	raw, err := provider.VertexServiceAccountJSON(value)
 	if err != nil {
@@ -29,7 +29,7 @@ func ParseVertexServiceAccountKey(value *provider.Record) (*google.ServiceAccoun
 	return vertex.ParseVertexServiceAccountJSON(raw)
 }
 
-// vertexServiceAccountProxyURL 按提供商的代理绑定读取代理地址。
+// vertexServiceAccountProxyURL returns the bound proxy URL, or an empty string when unavailable.
 func vertexServiceAccountProxyURL(value *provider.Record) string {
 	if value == nil || value.ProxyID == nil || value.Proxy == nil {
 		return ""
@@ -37,7 +37,7 @@ func vertexServiceAccountProxyURL(value *provider.Record) string {
 	return value.Proxy.URL()
 }
 
-// VertexServiceAccountCacheKey 在提供商或已解析密钥缺失时返回对应的缓存键。
+// VertexServiceAccountCacheKey includes the parsed key identity, with provider-only keys when parsing data is absent.
 func VertexServiceAccountCacheKey(value *provider.Record, key *google.ServiceAccountKey) string {
 	var id int64
 	if value != nil {
@@ -52,7 +52,7 @@ func VertexServiceAccountCacheKey(value *provider.Record, key *google.ServiceAcc
 	return provider.VertexServiceAccountCacheKey(id, key.ClientEmail, key.PrivateKeyID, true)
 }
 
-// VertexServiceAccountAccessToken 组合提供商缓存协调与平台交换，不另建缓存或刷新锁。
+// VertexServiceAccountAccessToken exchanges tokens through the provider's shared cache and refresh coordination.
 func VertexServiceAccountAccessToken(ctx context.Context, cache provider.AccessTokenCache, value *provider.Record) (string, error) {
 	key, err := ParseVertexServiceAccountKey(value)
 	if err != nil {

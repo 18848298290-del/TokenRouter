@@ -6,7 +6,7 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
-// GroupAccessParticipant 在调用方的事务中操作授权记录。
+// GroupAccessParticipant updates grants within the caller's transaction.
 type GroupAccessParticipant struct {
 	tx    *dbent.Tx
 	store *UserStore

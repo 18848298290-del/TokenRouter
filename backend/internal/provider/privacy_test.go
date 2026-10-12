@@ -12,11 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 不响应取消的供应商也不能在超时返回后继续持久化隐私结果。
+// privacyLifecycleStore counts writes to detect persistence after a canceled operation returns late.
 type privacyLifecycleStore struct{ writes atomic.Int32 }
 
-// TestForceOpenAIPrivacy_SkipsShadow 验证影子隐私设置跳过(由母提供商管理),
-// 早返不触碰任何依赖(svc 无 deps,若未守卫会 nil panic)。
+// TestForceOpenAIPrivacy_SkipsShadow checks that shadow privacy is left to the parent.
+// The service has no dependencies configured and returns an empty result.
 func TestForceOpenAIPrivacy_SkipsShadow(t *testing.T) {
 	svc := NewPrivacyService(nil, nil, PrivacyOptions{})
 	pid := int64(1)

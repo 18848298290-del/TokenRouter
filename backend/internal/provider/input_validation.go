@@ -16,9 +16,10 @@ func NormalizeProviderConcurrency(platform, providerType string, concurrency int
 	return concurrency
 }
 
-// NormalizeCNProviderCredentials 校验国产平台提供商组合，并为新提供商补齐历史默认值。
-// 旧记录缺少 mode/protocol 时，读取按 payg + chat_completions 处理。
-// 新建记录保存默认值，前端和监控据此选择适配器。
+// NormalizeCNProviderCredentials validates platform, type, mode, and protocol combinations and fills defaults
+// on creation.
+// Legacy records with missing mode or protocol are read as payg and chat_completions.
+// New records persist those defaults for frontend and monitor adapter selection.
 // @project-doc docs/interfaces/upstream_provider_matrix.md#cn_provider_protocols
 func NormalizeCNProviderCredentials(provider *Record, isCreate bool) error {
 	if provider == nil || !IsCNProvider(provider.Platform) {
@@ -52,7 +53,7 @@ func NormalizeCNProviderCredentials(provider *Record, isCreate bool) error {
 	switch protocol {
 	case APIProtocolAdaptive, APIProtocolChatCompletions, APIProtocolAnthropic:
 	case APIProtocolResponses:
-		// 保存校验与转发共用平台协议能力列表。
+		// Validation shares the platform capability check used by forwarding.
 		if !provider.SupportsNativeCNResponses() {
 			return infraerrors.BadRequest("CN_PROVIDER_PROTOCOL_INVALID", "only DeepSeek and Kimi support Responses protocol")
 		}
@@ -65,8 +66,8 @@ func NormalizeCNProviderCredentials(provider *Record, isCreate bool) error {
 	return nil
 }
 
-// ValidateGrokMediaEligibilityExtra 校验可选的媒体调度覆盖；null 表示删除覆盖，
-// 让提供商恢复为根据上游观测自动判断。
+// ValidateGrokMediaEligibilityExtra accepts a boolean override or null.
+// Null requests removal of the override so eligibility is derived from upstream observations.
 func ValidateGrokMediaEligibilityExtra(platform string, extra map[string]any) error {
 	if platform != PlatformGrok || extra == nil {
 		return nil
@@ -122,7 +123,7 @@ func NormalizeGrokMediaEligibilityUpdateExtra(provider *Record, input *UpdatePro
 	return normalized, nil
 }
 
-// ValidateGeminiThirdPartyBaseURL 阻止第三方来源回退到官方 Gemini 默认端点。
+// ValidateGeminiThirdPartyBaseURL requires a non-Google endpoint for third-party Gemini providers.
 func ValidateGeminiThirdPartyBaseURL(provider *Record) error {
 	if provider == nil || !provider.IsGeminiThirdPartyProvider() || provider.HasGeminiThirdPartyBaseURL() {
 		return nil

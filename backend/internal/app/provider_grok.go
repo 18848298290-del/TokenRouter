@@ -20,7 +20,7 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// provideGrokAuthorization 绑定动态配置读取和 Redis 授权会话存储。
+// provideGrokAuthorization binds dynamic configuration and uses Redis for sessions when available.
 func provideGrokAuthorization(proxies egress.ProxyRepository, client provider.GrokAuthorizationClient, cfg *config.Config, redisClient *redis.Client) *provider.GrokAuthorization {
 	options := provideradapter.GrokAuthorizationOptions(proxies, func() bool {
 		return cfg != nil && cfg.Gateway.Grok.PasswordAuthEnabled
@@ -33,7 +33,7 @@ func provideGrokAuthorization(proxies egress.ProxyRepository, client provider.Gr
 	return authorization
 }
 
-// provideGrokQuota 为额度探测绑定提供商存储和供应商接口。
+// provideGrokQuota binds provider storage and upstream requests for quota probes.
 func provideGrokQuota(store *providerpostgres.ProviderStore, proxies egress.ProxyRepository, token *provider.GrokTokenSource, transport httpclient.UpstreamTransport, cfg *config.Config, usageStore *usagepostgres.Store, settings *gateway.RuntimeSettings) *provider.GrokQuotaService {
 	policy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	requests := &provideradapter.GrokQuotaTransport{Do: transport.Do, Proxy: proxies.GetByID, DefaultBaseURL: gatewayprovider.GrokDefaultBaseURLReader(settings), OperatorValidator: policy.Validate, MapStatus: forward.MapStatus}
@@ -41,7 +41,7 @@ func provideGrokQuota(store *providerpostgres.ProviderStore, proxies egress.Prox
 	return provideradapter.NewGrokQuota(store, token, requests, newProviderLocalUsageStats(usageStore))
 }
 
-// provideGrokTokens 让网关请求与手动查询共用 token 缓存和刷新协调器。
+// provideGrokTokens shares the token cache and refresh coordinator across gateway and manual queries.
 func provideGrokTokens(store *providerpostgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.GrokAuthorization, refresh *provider.OAuthRefreshAPI) *provider.GrokTokenSource {
 	executor := provider.NewGrokTokenRefresher(authorization)
 	return &provider.GrokTokenSource{

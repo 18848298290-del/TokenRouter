@@ -6,13 +6,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequestLifetime 引用应用的请求活动屏障。
+// RequestLifetime references the application's active-request barrier.
 type RequestLifetime struct{ enter func() (func(), error) }
 
-// BindRequestActivity 只在构造图完成、开放 HTTP 之前调用。
+// BindRequestActivity must be called during assembly, before serving HTTP requests.
 func (r *RequestLifetime) BindRequestActivity(enter func() (func(), error)) { r.enter = enter }
 
-// BeginRequest 登记请求活动，应用停止后拒绝请求。
+// BeginRequest enters the activity barrier and returns a release function; a closed barrier rejects the request.
 func (r *RequestLifetime) BeginRequest(c *gin.Context, format string) (func(), bool) {
 	if r.enter == nil {
 		return func() {}, true

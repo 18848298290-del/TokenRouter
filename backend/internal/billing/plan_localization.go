@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// PlanCopy 包含套餐对用户展示的完整文案，权益按行保存在 Features 中。
+// PlanCopy contains user-facing plan text, with one feature per line in Features.
 type PlanCopy struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -15,10 +15,10 @@ type PlanCopy struct {
 	ProductName string `json:"product_name"`
 }
 
-// PlanLocalization 是套餐保存的原文和译文。
+// PlanLocalization holds a plan's source text and translations.
 type PlanLocalization locale.Content[PlanCopy]
 
-// PlanContent 为单文本接口创建的套餐提供可编辑的内容和初始版本。
+// PlanContent returns stored localization, or initializes revision one from the plan's text fields.
 func PlanContent(plan *SubscriptionPlan) locale.Content[PlanCopy] {
 	if plan.Localization.Revision > 0 {
 		return locale.Content[PlanCopy](plan.Localization)
@@ -28,7 +28,7 @@ func PlanContent(plan *SubscriptionPlan) locale.Content[PlanCopy] {
 	return content
 }
 
-// ValidatePlanCopy 对所有语言使用同样的名称和内容长度要求。
+// ValidatePlanCopy checks names in Unicode code points and description/features in bytes, for every language.
 func ValidatePlanCopy(copy PlanCopy) error {
 	if strings.TrimSpace(copy.Name) == "" || len([]rune(copy.Name)) > 100 {
 		return apperror.BadRequest("PLAN_NAME_REQUIRED", "Plan name is required and must not exceed 100 characters.")
@@ -39,7 +39,7 @@ func ValidatePlanCopy(copy PlanCopy) error {
 	return nil
 }
 
-// LocalizePlan 返回展示副本，计费配置和原文不会被调用方的语言选择覆盖。
+// LocalizePlan returns a shallow copy with localized display text, leaving the source plan's fields unchanged.
 func LocalizePlan(plan *SubscriptionPlan, language string) *SubscriptionPlan {
 	if plan == nil {
 		return nil

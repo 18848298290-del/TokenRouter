@@ -50,13 +50,13 @@ func SetModelRateLimitSnapshot(provider *Record, scope string, resetAt time.Time
 	limits[scope] = payload
 }
 
-// ModelRateLimitActive 用提供商记录的时钟判断模型限流是否到期。
+// ModelRateLimitActive checks the model cooldown using the record's clock.
 func (r *Record) ModelRateLimitActive(key string) bool {
 	reset := r.ModelRateLimitResetAt(key)
 	return reset != nil && r.now().Before(*reset)
 }
 
-// ModelRateLimitRemaining 返回模型限流的剩余时间，已到期时返回零。
+// ModelRateLimitRemaining returns zero when the model cooldown is absent or expired.
 func (r *Record) ModelRateLimitRemaining(key string) time.Duration {
 	reset := r.ModelRateLimitResetAt(key)
 	if reset == nil {
@@ -69,7 +69,7 @@ func (r *Record) ModelRateLimitRemaining(key string) time.Duration {
 	return 0
 }
 
-// ModelRateLimitAllows 判断所选模型的限流窗口是否允许请求。
+// ModelRateLimitAllows checks model cooldowns, allowing Antigravity overages while credits remain.
 func (r *Record) ModelRateLimitAllows(keys []string) bool {
 	if r == nil {
 		return false

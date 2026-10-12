@@ -45,7 +45,8 @@ type alphaSearchProviderStateRepo struct {
 
 func (b *alphaResponseBody) Close() error { b.closes++; return b.ReadCloser.Close() }
 
-// TestAlphaSearchFailoverClosesOriginalResponse 验证可重试错误在写出响应前返回 handler，供其切换提供商。
+// TestAlphaSearchFailoverClosesOriginalResponse checks that retryable responses are closed before returning
+// for failover.
 func TestAlphaSearchFailoverClosesOriginalResponse(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -109,7 +110,7 @@ func alphaSearchResponsesSSE(output string) string {
 		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(output) + `}]}]}}` + "\n\n"
 }
 
-// TestForwardAlphaSearchOAuthPreservesWire 验证 OAuth 请求应原样保留 alpha wire，同时应用 fork 的 UA 与 TLS 路由结果。
+// TestForwardAlphaSearchOAuthPreservesWire checks alpha payload passthrough with User-Agent and TLS routing.
 func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	body := []byte(`{
 		"id":"search-session",
@@ -339,7 +340,8 @@ func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.
 	require.Equal(t, providercore.OpenAIAuthModePersonalAccessToken, repo.updatedCredentials["auth_mode"])
 }
 
-// TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError 验证 API-key 提供商应映射模型，并原样返回不可重试的上游错误。
+// TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError checks model mapping and non-retryable error
+// passthrough.
 func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -372,7 +374,7 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	result, err := service.ForwardAlphaSearch(context.Background(), c, provider, body)
 
 	require.NoError(t, err)
-	// 上游错误透传不是一次成功的搜索：不返回 result、不产生按次计费。
+	// A passed-through error returns no result, so per-search billing is skipped.
 	require.Nil(t, result)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.JSONEq(t, upstreamBody, recorder.Body.String())
@@ -382,7 +384,8 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	require.True(t, gjson.GetBytes(upstream.lastBody, "commands.search_query").IsArray())
 }
 
-// TestForwardAlphaSearchReturnsFailoverBeforeWriting 验证可重试错误在响应写入前返回 handler，供其切换提供商。
+// TestForwardAlphaSearchReturnsFailoverBeforeWriting checks that retryable errors return before writing a
+// response.
 func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -578,7 +581,7 @@ func TestForwardAlphaSearchUnauthorizedDoesNotMarkProviderError(t *testing.T) {
 			Type:        capability.ProviderTypeOAuth,
 			Concurrency: 1,
 			Credentials: map[string]any{
-				// 刻意不设置 auth_mode：覆盖历史上把 at- token 当普通 OAuth 导入的提供商。
+				// Omit auth_mode to cover PATs imported as ordinary OAuth credentials.
 				"access_token":       "at-test-token",
 				"chatgpt_account_id": "chatgpt-provider",
 			},
@@ -642,8 +645,9 @@ func TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkProviderEr
 	require.False(t, c.Writer.Written())
 }
 
-// TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver 验证 API Key 上游缺少 /v1/alpha/search 而返回 404/405 时触发换号。
-// 混合分组中的 OAuth 提供商可继续执行搜索。端点缺失时，API Key 提供商的错误状态保持原样。
+// TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver checks failover when an API-key search endpoint
+// returns 404.
+// The provider remains schedulable so a mixed group can try another candidate.
 func TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -686,7 +690,7 @@ func TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
-// TestForwardAlphaSearchOAuthNotFoundPassesThrough 验证 OAuth 的 chatgpt.com 搜索端点返回 404 时透传该错误。
+// TestForwardAlphaSearchOAuthNotFoundPassesThrough checks passthrough of a ChatGPT search endpoint 404.
 func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()

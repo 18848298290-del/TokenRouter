@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// prepareMethodNames 按稳定条目标识校验支付方式译文，上游类型由支付配置校验。
+// prepareMethodNames validates translations by stable entry ID; payment configuration validates upstream types.
 func prepareMethodNames(config, previous map[string]string) error {
 	if config == nil {
 		return nil

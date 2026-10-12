@@ -5,10 +5,10 @@ import (
 	"slices"
 	"strings"
 
-	utls "github.com/refraction-networking/utls" //nolint:revive // 包名是 tls，别名用来和 crypto/tls 区分。
+	utls "github.com/refraction-networking/utls" //nolint:revive // The package is named tls; the alias distinguishes it from crypto/tls.
 )
 
-// SupportsHTTP2 返回模板是否会通过 ALPN 声明 h2。
+// SupportsHTTP2 reports whether the profile includes an ALPN extension advertising h2.
 func SupportsHTTP2(profile *Profile) bool {
 	if !profileHasALPNExtension(profile) {
 		return false
@@ -21,7 +21,8 @@ func SupportsHTTP2(profile *Profile) bool {
 	return false
 }
 
-// HTTP1OnlyProfile 返回移除 h2 ALPN 后的模板副本，用于显式 HTTP/1.1 回退。
+// HTTP1OnlyProfile removes h2 and adds http/1.1 in a shallow profile copy.
+// It returns the original pointer when h2 is not supported; other slices remain shared.
 func HTTP1OnlyProfile(profile *Profile) *Profile {
 	if profile == nil || !SupportsHTTP2(profile) {
 		return profile
@@ -46,7 +47,7 @@ func HTTP1OnlyProfile(profile *Profile) *Profile {
 	return &cloned
 }
 
-// NegotiatedProtocol 从 uTLS 连接中取出实际协商到的 ALPN 协议。
+// NegotiatedProtocol returns the ALPN protocol from a uTLS connection, or an empty string.
 func NegotiatedProtocol(conn net.Conn) string {
 	if conn == nil {
 		return ""

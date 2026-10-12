@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ErrorResponse 是输出意图；状态和 envelope 由 HTTP Adapter 写出。
+// ErrorResponse describes an error for the HTTP adapter to encode and write.
 type ErrorResponse struct {
 	Status        int
 	Type, Message string
@@ -27,7 +27,7 @@ type GrokFailurePorts struct {
 	NewFailover      func(GrokRetry, bool) error
 }
 
-// EmbeddingFailurePorts 按原顺序读取纯分类、应用提供商策略及写出响应。
+// EmbeddingFailurePorts supplies classification, provider-policy, and response operations in execution order.
 type EmbeddingFailurePorts struct {
 	InvalidRequest func() bool
 	ApplyPolicy    func()
@@ -39,7 +39,7 @@ type EmbeddingFailurePorts struct {
 	Write          func(ErrorResponse)
 }
 
-// AlphaFailurePorts 提供搜索端点的故障切换和健康状态处理函数。
+// AlphaFailurePorts supplies search endpoint failover and provider-health operations.
 type AlphaFailurePorts struct {
 	Prepare             func()
 	Failover            func() bool
@@ -48,7 +48,7 @@ type AlphaFailurePorts struct {
 	NewFailover         func(bool) error
 }
 
-// ImageFailurePorts 分别提供授权恢复、失败观测、提供商策略和错误转换函数。
+// ImageFailurePorts supplies authorization recovery, observation, provider policy, and error conversion.
 type ImageFailurePorts struct {
 	Recover     func() (bool, error)
 	Failover    func() bool
@@ -58,7 +58,7 @@ type ImageFailurePorts struct {
 	Handle      func() error
 }
 
-// ImageResponseFailurePorts 只在原生请求不能切换时应用客户端展示策略。
+// ImageResponseFailurePorts supplies error output rules applied after the failover decision.
 type ImageResponseFailurePorts struct {
 	CyberMessage    func() (string, bool)
 	Observe         func(string, string)
@@ -72,8 +72,8 @@ type ImageResponseFailurePorts struct {
 	DefaultResponse func() error
 }
 
-// ResolveGrokFailure 依次检查内容拒绝、提供商策略和切换条件，再改写最终错误。
-// Rewrite 在确定结束提供商切换后应用错误展示规则，健康处理由调用方完成。
+// ResolveGrokFailure checks content refusal, provider policy, and failover before rewriting the final error.
+// Rewrite applies display rules after provider switching ends; the caller handles health updates.
 func ResolveGrokFailure(status int, message string, p GrokFailurePorts) error {
 	if rejected, client := p.ContentRejection(); rejected {
 		p.Observe("http_error", client)

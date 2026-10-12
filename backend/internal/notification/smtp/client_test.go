@@ -22,7 +22,7 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// fakeSMTPServer 提供隐式 TLS、STARTTLS 和纯明文连接，供 SMTP 客户端测试使用。
+// fakeSMTPServer supports implicit TLS, STARTTLS, and plaintext SMTP client tests.
 type fakeSMTPServer struct {
 	listener          net.Listener
 	tlsConfig         *tls.Config
@@ -34,8 +34,9 @@ type fakeSMTPServer struct {
 	wg       sync.WaitGroup
 }
 
-// TestSMTPAcknowledgementCancellationBoundary 检查收到 DATA 成功响应后取消 QUIT 仍返回成功。
-// 缺失 DATA 响应时，发送结果保持不明。
+// TestSMTPAcknowledgementCancellationBoundary verifies success when cancellation occurs during QUIT after a
+// DATA acknowledgement.
+// Without a DATA acknowledgement, delivery remains uncertain.
 func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 	for _, ack := range []bool{true, false} {
 		name := "unknown-without-ack"
@@ -128,7 +129,7 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionImplicitTLS 检查 UseTLS=true 时连接隐式 TLS 服务器。
+// TestSMTPConnectionImplicitTLS checks implicit TLS with UseTLS enabled.
 func TestSMTPConnectionImplicitTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, true, false)
 	svc := &Client{}
@@ -141,8 +142,8 @@ func TestSMTPConnectionImplicitTLS(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionStartTLSFallbackWhenTLSEnabled 检查 UseTLS=true 且服务器发送明文问候时，
-// 客户端在隐式 TLS 失败后通过强制 STARTTLS 建连。
+// TestSMTPConnectionStartTLSFallbackWhenTLSEnabled checks that a plaintext greeting with UseTLS enabled
+// causes a new connection that requires STARTTLS.
 func TestSMTPConnectionStartTLSFallbackWhenTLSEnabled(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -158,8 +159,8 @@ func TestSMTPConnectionStartTLSFallbackWhenTLSEnabled(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionMandatoryStartTLSRefusesPlaintext 检查 UseTLS=true 且服务器缺少 STARTTLS 时，
-// 客户端在认证前返回错误。
+// TestSMTPConnectionMandatoryStartTLSRefusesPlaintext checks that UseTLS rejects a server without STARTTLS
+// before credentials are sent.
 func TestSMTPConnectionMandatoryStartTLSRefusesPlaintext(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, false)
 	svc := &Client{}
@@ -176,7 +177,8 @@ func TestSMTPConnectionMandatoryStartTLSRefusesPlaintext(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled 检查 UseTLS=false 时通过服务器提供的 STARTTLS 升级并认证。
+// TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled checks that advertised STARTTLS is used before
+// authentication.
 func TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -189,7 +191,8 @@ func TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionPlainWhenNoStartTLS 检查 UseTLS=false 且服务器缺少 STARTTLS 时使用明文连接。
+// TestSMTPConnectionPlainWhenNoStartTLS checks plaintext operation when UseTLS is disabled and STARTTLS is
+// unavailable.
 func TestSMTPConnectionPlainWhenNoStartTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, false)
 	svc := &Client{}
@@ -202,7 +205,7 @@ func TestSMTPConnectionPlainWhenNoStartTLS(t *testing.T) {
 	}
 }
 
-// TestSendEmailWithConfigStartTLSFallback 检查 UseTLS=true 时通过 STARTTLS 完成 MAIL、RCPT 和 DATA。
+// TestSendEmailWithConfigStartTLSFallback checks MAIL, RCPT, and DATA over STARTTLS with UseTLS enabled.
 func TestSendEmailWithConfigStartTLSFallback(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -219,7 +222,7 @@ func TestSendEmailWithConfigStartTLSFallback(t *testing.T) {
 	}
 }
 
-// TestSendEmailWithConfigImplicitTLS 检查 UseTLS=true 时通过隐式 TLS 完成邮件发送。
+// TestSendEmailWithConfigImplicitTLS checks delivery over implicit TLS with UseTLS enabled.
 func TestSendEmailWithConfigImplicitTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, true, false)
 	svc := &Client{}
@@ -233,7 +236,7 @@ func TestSendEmailWithConfigImplicitTLS(t *testing.T) {
 	}
 }
 
-// newSMTPTestCert 生成 127.0.0.1/localhost 的自签证书及其信任池。
+// newSMTPTestCert creates a self-signed certificate for 127.0.0.1/localhost and its trust pool.
 func newSMTPTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -399,11 +402,11 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 	}
 }
 
-// serveUpgraded 处理 STARTTLS 升级后的命令会话。
+// serveUpgraded handles commands after a STARTTLS upgrade.
 func (srv *fakeSMTPServer) serveUpgraded(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
-	// net/smtp 在 StartTLS 成功后会重新发送 EHLO，直接进入命令循环即可。
+	// net/smtp sends EHLO again after StartTLS succeeds, so no greeting is needed here.
 	srv.serveCommands(reader, writer)
 }
 

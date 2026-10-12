@@ -30,25 +30,24 @@ type OpenAISessionStore struct {
 	stopCh chan struct{}
 }
 
-// NewOpenAISessionStore creates a new session store.
+// NewOpenAISessionStore creates a session store; Start launches periodic cleanup.
 func NewOpenAISessionStore() *OpenAISessionStore {
 	store := &OpenAISessionStore{
 		sessions: make(map[string]*OpenAIOAuthSession),
 		stopCh:   make(chan struct{}),
 	}
-	// Start cleanup goroutine
 
 	return store
 }
 
-// Set stores a session.
+// Set stores the session pointer; callers must treat the session as immutable afterward.
 func (s *OpenAISessionStore) Set(sessionID string, session *OpenAIOAuthSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[sessionID] = session
 }
 
-// Get retrieves a session.
+// Get returns the stored session pointer when unexpired. Callers must not mutate it.
 func (s *OpenAISessionStore) Get(sessionID string) (*OpenAIOAuthSession, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -56,7 +55,7 @@ func (s *OpenAISessionStore) Get(sessionID string) (*OpenAIOAuthSession, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Check if expired
+	// Enforce expiry even before periodic cleanup removes the entry.
 	if time.Since(session.CreatedAt) > OpenAISessionTTL {
 		return nil, false
 	}
@@ -70,7 +69,7 @@ func (s *OpenAISessionStore) Delete(sessionID string) {
 	delete(s.sessions, sessionID)
 }
 
-// Start 启动当前会话实例的清理循环。
+// Start launches periodic cleanup once, unless the store has stopped.
 func (s *OpenAISessionStore) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -81,7 +80,7 @@ func (s *OpenAISessionStore) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanup() })
 }
 
-// Stop 幂等停止并等待清理循环，未启动实例也可安全关闭。
+// Stop stops and waits for cleanup. Repeated calls and stopping before Start are safe.
 func (s *OpenAISessionStore) Stop() {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {

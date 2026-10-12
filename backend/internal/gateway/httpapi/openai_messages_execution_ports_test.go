@@ -16,7 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestOpenAIMessagesExecutionAdapterPreservesNilFailover 验证指针错误转接口后仍为 nil，确定性 400 据此写出响应。
+// TestOpenAIMessagesExecutionAdapterPreservesNilFailover checks that a nil failure pointer becomes a nil
+// error interface.
 func TestOpenAIMessagesExecutionAdapterPreservesNilFailover(t *testing.T) {
 	writer := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(writer)

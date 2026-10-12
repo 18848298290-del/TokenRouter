@@ -35,7 +35,7 @@ type Executor interface {
 	CloseIdle()
 }
 
-// CloneProviderConfigs 为每个跨实例边界复制所有可变指针。
+// CloneProviderConfigs copies the slice and pointer fields so callers can mutate their own snapshots.
 func CloneProviderConfigs(in []ProviderConfig) []ProviderConfig {
 	if in == nil {
 		return nil

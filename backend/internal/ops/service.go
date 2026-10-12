@@ -19,7 +19,7 @@ import (
 
 const (
 	opsMaxStoredErrorBodyBytes = 20 * 1024
-	// OpsErrorLogQueueBodyMaxBytes 限制攻击者可控响应数据在异步错误日志队列中的大小。
+	// OpsErrorLogQueueBodyMaxBytes bounds untrusted response data held in the asynchronous error queue.
 	OpsErrorLogQueueBodyMaxBytes = 8 * 1024
 
 	opsRuntimeSettingsRefreshInterval = 30 * time.Second
@@ -60,16 +60,16 @@ type OpsService struct {
 	authCacheInvalidationWorker AuthHealthReader
 	apiKeyService               KeyHealthReader
 
-	// cleanupReloader 由 wire 在 OpsCleanupService 构造完成后通过 SetCleanupReloader 注入。
-	// 解耦避免 OpsService -> OpsCleanupService 的硬依赖（cleanup 也读 settings，会循环）。
+	// cleanupReloader is bound through SetCleanupReloader after OpsCleanupService construction.
+	// Late binding breaks the construction cycle because cleanup reads Ops settings.
 	cleanupReloader CleanupReloader
 
-	// quotaAutoPauseSink 由 wire 注入（通常是 SettingService.SetOpenAIQuotaAutoPauseSettings）。
-	// UpdateOpsAdvancedSettings 写入新配置后调用，把最新的配额自动暂停全局默认阈值
-	// 同步到调度热路径读取的内存缓存，后续请求使用新值。
+	// quotaAutoPauseSink publishes quota thresholds to the scheduler's settings cache.
+	// UpdateOpsAdvancedSettings calls it after persistence so subsequent requests
+	// read the updated defaults.
 	quotaAutoPauseSink func(OpsOpenAIProviderQuotaAutoPauseSettings)
 
-	// 已发布快照不可变；网关读取无锁，互斥锁仅用于串行化启动和管理更新。
+	// Published snapshots are immutable; readers use atomic loads and writers serialize updates with the mutex.
 	runtimeSettings   atomic.Pointer[opsRuntimeSettingsSnapshot]
 	runtimeSettingsMu sync.Mutex
 
@@ -82,8 +82,8 @@ type OpsService struct {
 	runtimeRefreshLastFailureLog atomic.Int64
 }
 
-// CleanupReloader 由 OpsCleanupService 实现。
-// UpdateOpsAdvancedSettings 写入新配置后调用 Reload，让 schedule/enabled 改动立刻生效。
+// CleanupReloader reloads cleanup schedules and enabled state.
+// UpdateOpsAdvancedSettings calls it after persisting settings.
 type CleanupReloader interface {
 	Reload(ctx context.Context) error
 }
@@ -105,7 +105,7 @@ func NewOpsService(
 	return svc
 }
 
-// SetPreAggregationSettings 注入统一预聚合配置，运维查询只读取这一运行时开关。
+// SetPreAggregationSettings supplies the shared runtime switch for Ops aggregation queries.
 func (s *OpsService) SetPreAggregationSettings(settings PreAggregationReader) {
 	if s == nil {
 		return
@@ -113,7 +113,7 @@ func (s *OpsService) SetPreAggregationSettings(settings PreAggregationReader) {
 	s.preAggregationSettings = settings
 }
 
-// SetCleanupReloader 由 wire 注入 cleanup hook（构造期循环依赖的解耦点）。
+// SetCleanupReloader binds cleanup after construction to break the dependency cycle.
 func (s *OpsService) SetCleanupReloader(r CleanupReloader) {
 	if s == nil {
 		return
@@ -121,9 +121,8 @@ func (s *OpsService) SetCleanupReloader(r CleanupReloader) {
 	s.cleanupReloader = r
 }
 
-// SetOpenAIQuotaAutoPauseSettingsSink 由 wire 注入，把最新的配额自动暂停全局默认
-// 阈值推送到调度热路径读取的内存缓存。同 SetCleanupReloader 的解耦目的：避免 OpsService
-// 持有 *SettingService 引入循环依赖。
+// SetOpenAIQuotaAutoPauseSettingsSink binds the callback that publishes quota
+// thresholds to the scheduler's cache after settings updates.
 func (s *OpsService) SetOpenAIQuotaAutoPauseSettingsSink(sink func(OpsOpenAIProviderQuotaAutoPauseSettings)) {
 	if s == nil {
 		return
@@ -131,7 +130,7 @@ func (s *OpsService) SetOpenAIQuotaAutoPauseSettingsSink(sink func(OpsOpenAIProv
 	s.quotaAutoPauseSink = sink
 }
 
-// BuildOpsService 装配运维服务及其依赖。
+// BuildOpsService constructs the Ops service with its dependencies.
 func BuildOpsService(
 	opsRepo OpsRepository,
 	settingRepo Settings,
@@ -175,7 +174,7 @@ func (s *OpsService) IsMonitoringEnabled(ctx context.Context) bool {
 	if snapshot := s.runtimeSettings.Load(); snapshot != nil {
 		return snapshot.monitoringEnabled
 	}
-	// 直接组装的测试服务和冷加载失败保持故障开放，且不会让请求退化为查询设置表。
+	// A missing snapshot defaults to enabled; request handling does not query settings synchronously.
 	return true
 }
 
@@ -197,7 +196,7 @@ func (s *OpsService) initRuntimeSettings(ctx context.Context) {
 	_ = s.RefreshRuntimeSettings(ctx)
 }
 
-// RefreshRuntimeSettings 从数据库加载启动或管理操作需要的运行设置快照。
+// RefreshRuntimeSettings loads a database snapshot for startup or settings updates.
 func (s *OpsService) RefreshRuntimeSettings(ctx context.Context) error {
 	if s == nil || s.settingRepo == nil {
 		return nil
@@ -232,7 +231,7 @@ func (s *OpsService) RefreshRuntimeSettings(ctx context.Context) error {
 	return nil
 }
 
-// StartRuntimeSettingsRefresh 通过后台任务在应用实例间同步数据库 Ops 设置。
+// StartRuntimeSettingsRefresh polls database settings so application instances observe updates.
 func (s *OpsService) StartRuntimeSettingsRefresh(ctx context.Context) {
 	s.startRuntimeSettingsRefresh(ctx, opsRuntimeSettingsRefreshInterval, opsRuntimeSettingsRefreshJitter, opsRuntimeSettingsRefreshTimeout)
 }
@@ -329,7 +328,7 @@ func (s *OpsService) logRuntimeSettingsRefreshFailure(err error) {
 	}
 }
 
-// StopRuntimeSettingsRefresh 具备幂等性，并等待进行中的刷新感知取消后再返回。
+// StopRuntimeSettingsRefresh cancels and waits for the refresh loop; repeated calls are safe.
 func (s *OpsService) StopRuntimeSettingsRefresh() {
 	if s == nil {
 		return
@@ -352,7 +351,7 @@ func (s *OpsService) StopRuntimeSettingsRefresh() {
 	s.runtimeRefreshMu.Unlock()
 }
 
-// SetMonitoringEnabled 将已持久化的监控开关写入内存快照。
+// SetMonitoringEnabled publishes an already-persisted monitoring switch in memory.
 func (s *OpsService) SetMonitoringEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -381,12 +380,12 @@ func (s *OpsService) storeAdvancedSettingsSnapshot(cfg *OpsAdvancedSettings) {
 	s.runtimeSettingsMu.Unlock()
 }
 
-// SanitizeOpsErrorBodyForQueue 在错误体占用异步队列容量前移除凭据并截断内容。
+// SanitizeOpsErrorBodyForQueue sanitizes JSON credentials and bounds the body before enqueueing.
 func SanitizeOpsErrorBodyForQueue(raw string) (string, bool) {
 	return sanitizeErrorBodyForStorage(raw, OpsErrorLogQueueBodyMaxBytes)
 }
 
-// SanitizeOpsUpstreamErrorsForQueue 在条目占用异步队列容量前限制并序列化尝试级数据。
+// SanitizeOpsUpstreamErrorsForQueue bounds and serializes attempt data before enqueueing.
 func SanitizeOpsUpstreamErrorsForQueue(entry *OpsInsertErrorLogInput) error {
 	return sanitizeOpsUpstreamErrors(entry)
 }
@@ -402,7 +401,7 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 	}
 
 	if _, err := s.opsRepo.InsertErrorLog(ctx, prepared); err != nil {
-		// Never bubble up to gateway; best-effort logging.
+		// Report the persistence failure to the caller and process log.
 		log.Printf("[Ops] RecordError failed: %v", err)
 		return err
 	}
@@ -475,8 +474,8 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 		entry.ErrorType = "api_error"
 	}
 
-	// 凭据获取错误归入网关提供商认证阶段。
-	// 写入前按凭据获取事件更新顶层认证字段，覆盖调用方传入的早期推理状态和文本。
+	// Credential acquisition failures use the provider_auth phase.
+	// The latest credential event overrides earlier inference status and text before persistence.
 	for _, last := range slices.Backward(entry.UpstreamErrors) {
 		if last == nil {
 			continue
@@ -588,7 +587,7 @@ func sanitizeOpsUpstreamErrors(entry *OpsInsertErrorLogInput) error {
 
 		detail := strings.TrimSpace(out.Detail)
 		if detail != "" {
-			// 事件等待队列处理期间保持上游详情精简。
+			// Bound upstream details while events wait in the queue.
 			sanitizedDetail, _ := sanitizeErrorBodyForStorage(detail, OpsErrorLogQueueBodyMaxBytes)
 			out.Detail = sanitizedDetail
 		} else {
@@ -636,27 +635,27 @@ func (s *OpsService) GetErrorLogs(ctx context.Context, filter *OpsErrorLogFilter
 	return result, nil
 }
 
-// ListUserErrorRequests 返回某个用户自己的错误请求（精简脱敏）。
-// 查询限定当前用户，View=all 包含业务限流和余额类错误，排除 count_tokens 探测。
+// ListUserErrorRequests returns a sanitized list of the user's own error requests.
+// It includes business limits and balance errors, and excludes count_tokens probes.
 func (s *OpsService) ListUserErrorRequests(ctx context.Context, userID int64, filter *OpsErrorLogFilter) (*UserErrorRequestList, error) {
 	if filter == nil {
 		filter = &OpsErrorLogFilter{}
 	}
-	f := *filter // 使用筛选条件的副本，slice 字段在查询中按只读数据使用。
+	f := *filter // Copy scalar filters; query code treats shared slices as read-only.
 	filter = &f
 	uid := userID
 	filter.UserID = &uid
-	// APIKeyID 透传：保留 handler 传入的值。安全由 buildOpsErrorLogsWhere 的
-	// “user_id = 自己 AND api_key_id = X”约束，传入他人 key 时查询返回空集。
+	// Keep APIKeyID supplied by the handler. The repository combines it with UserID,
+	// so a key owned by another user yields no rows.
 	filter.View = "all"
 	filter.ExcludeCountTokens = true
-	filter.ModelFuzzy = true // 用户端模型过滤走 ILIKE 模糊；管理端不设此字段，保持精确
-	// 防御：用户端不接受这些 admin-only / 特殊维度
+	filter.ModelFuzzy = true // User queries use ILIKE; admin filters default to exact matching.
+	// Clear admin-only dimensions before querying.
 	filter.UserQuery = ""
 	filter.Owner = ""
 	filter.Source = ""
-	// 用户查询将 category 转换为 ErrorPhasesAny 和 ErrorTypesAny，并清空 Phase。
-	// 查询要求客户端状态码大于等于 400，最终成功的 recovered upstream 记录对用户隐藏。
+	// User categories use ErrorPhasesAny and ErrorTypesAny; clear the independent Phase condition.
+	// Disable recovered attempts; the repository retains the cyber_policy status exemption.
 	filter.Phase = ""
 	filter.IncludeRecoveredUpstream = false
 
@@ -695,8 +694,8 @@ func (s *OpsService) GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLo
 	return detail, nil
 }
 
-// GetUserErrorRequestDetail 返回某用户自己某条错误请求的脱敏详情(含 error_body)。
-// 记录属于其他用户时返回 NotFound。
+// GetUserErrorRequestDetail returns sanitized details, including error_body, for the owner's request.
+// It returns NotFound for another user's record.
 func (s *OpsService) GetUserErrorRequestDetail(ctx context.Context, userID, id int64) (*UserErrorRequestDetail, error) {
 	if s.opsRepo == nil {
 		return nil, infraerrors.NotFound("OPS_ERROR_NOT_FOUND", "ops error log not found")
@@ -711,7 +710,7 @@ func (s *OpsService) GetUserErrorRequestDetail(ctx context.Context, userID, id i
 		}
 		return nil, infraerrors.InternalServer("OPS_ERROR_LOAD_FAILED", "Failed to load ops error log").WithCause(err)
 	}
-	// 归属只能由通过鉴权时写入的 user_id 确定。
+	// Ownership comes from user_id recorded after authentication.
 	ownedDirectly := detail.UserID != nil && *detail.UserID == userID
 	if !ownedDirectly {
 		return nil, infraerrors.NotFound("OPS_ERROR_NOT_FOUND", "ops error log not found")
@@ -747,7 +746,7 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		// 非 JSON 请求体交给调用方按普通文本处理。
+		// Let the caller handle non-JSON input as plain text.
 		return "", false, bytesLen
 	}
 
@@ -780,7 +779,7 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 	}
 
 	// Last resort: keep JSON shape but drop big fields.
-	// This avoids downstream code that expects certain top-level keys from crashing.
+	// Keep the named top-level keys available to downstream readers.
 	if root, ok := decoded.(map[string]any); ok {
 		placeholder := querycache.ShallowMap(root)
 		placeholder["payload_truncated"] = true
@@ -842,7 +841,7 @@ func isSensitiveKey(key string) bool {
 		return false
 	}
 
-	// Token 计数和预算字段用于排错，按字段白名单保留。
+	// Retain allowlisted token counts and budgets for diagnostics.
 	switch k {
 	case "max_tokens",
 		"max_output_tokens",
@@ -1052,7 +1051,7 @@ func sanitizeErrorBodyForStorage(raw string, maxBytes int) (sanitized string, tr
 	return raw, false
 }
 
-// isContextDoneError 判断错误是否由调用方取消或上下文超时触发。
+// isContextDoneError reports cancellation or deadline expiry from the error or context.
 func isContextDoneError(ctx context.Context, err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return true
@@ -1061,9 +1060,9 @@ func isContextDoneError(ctx context.Context, err error) bool {
 		return false
 	}
 	ctxErr := ctx.Err()
-	// 数据库驱动可能返回自有错误文本，此时以 ctx 状态判断是否由取消/超时触发。
+	// Drivers can return their own error text; check context state for cancellation or expiry.
 	return errors.Is(ctxErr, context.Canceled) || errors.Is(ctxErr, context.DeadlineExceeded)
 }
 
-// truncateString 按 UTF-8 字符截断文本。
+// truncateString truncates to a byte limit at a UTF-8 character boundary.
 func truncateString(s string, max int) string { return logredact.TruncateUTF8(s, max) }

@@ -46,12 +46,12 @@ func TestUserFromServiceAdmin_MapsActivityTimestamps(t *testing.T) {
 	require.WithinDuration(t, lastUsedAt, *out.LastUsedAt, time.Second)
 }
 
-// UserFromServiceShallow 复制用户并转换为 HTTP 响应数据。
+// UserFromServiceShallow copies the user into an HTTP response.
 func UserFromServiceShallow(v *identity.User) *User[json.RawMessage] {
 	return UserFromIdentityShallow[json.RawMessage](identity.CopyUser(v))
 }
 
-// UserFromServiceAdmin 将用户复制为管理后台的展示数据。
+// UserFromServiceAdmin copies the user into an administrator response.
 func UserFromServiceAdmin(v *identity.User) *AdminUser[json.RawMessage] {
 	return AdminUserFromIdentity[json.RawMessage](identity.CopyUser(v), nil)
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// APIKeyInput 保存直通请求的报文引用和字段，平台回写使用同一解析对象。
+// APIKeyInput contains passthrough bytes and the shared parsed request updated by platform rewrites.
 type APIKeyInput struct {
 	Body                        []byte
 	Parsed                      *requeststate.ParsedRequest
@@ -17,7 +17,7 @@ type APIKeyInput struct {
 	StartTime                   time.Time
 }
 
-// PassthroughPorts 提供与单个提供商进行协议交换的操作。
+// PassthroughPorts supplies operations for one selected provider exchange.
 type PassthroughPorts interface {
 	Begin() (func(), error)
 	Credential(context.Context) error

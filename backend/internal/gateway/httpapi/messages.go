@@ -35,7 +35,7 @@ type MessagesPrompt interface {
 	ApplyUserPromptReplacementToBody(context.Context, []byte, string) []byte
 }
 
-// MessagesCall 不携带旧实体或完整配置，单次请求的派生值不会写入共享缓存。
+// MessagesCall holds identity, routing, and execution state for one request.
 type MessagesCall struct {
 	Key                                      *apikey.APIKey
 	Subject                                  authctx.AuthSubject
@@ -51,7 +51,7 @@ type MessagesCall struct {
 	Mapping                                  routing.GroupMappingResult
 }
 
-// MessagesBackend 提供用例的逐步执行接口和同步观测。
+// MessagesBackend supplies admission, routing, and observation operations for Messages requests.
 type MessagesBackend interface {
 	Access(*gin.Context) (*apikey.APIKey, bool)
 	CompatibilityMetrics(*zap.Logger)
@@ -79,7 +79,7 @@ type MessagesBackend interface {
 	FailoverObservation(context.Context, string, map[string]any)
 }
 
-// MessagesHandler 的依赖在 app 一次绑定；每次调用只创建本请求数据。
+// MessagesHandler uses application-bound dependencies and allocates execution state per request.
 type MessagesHandler struct {
 	executor execution.Executor
 	RequestLifetime
@@ -94,8 +94,8 @@ func NewMessagesHandler(options MessagesHTTPOptions, backend MessagesBackend, pr
 	return &MessagesHandler{options: options, backend: backend, prompt: prompt, concurrency: concurrency, executor: executor}
 }
 
-// Messages handles Claude API compatible messages endpoint
-// POST /v1/messages
+// Messages handles the Claude-compatible messages endpoint.
+// POST /v1/messages.
 func (h *MessagesHandler) Messages(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "anthropic")
 	if !accepted {
@@ -103,7 +103,7 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	}
 	defer done()
 
-	// 从 context 获取 apiKey 和 user（ApiKeyAuth 中间件已设置）
+	// Authentication middleware supplies the key and user context.
 	apiKey, ok := h.backend.Access(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
@@ -124,7 +124,6 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	)
 	defer h.backend.CompatibilityMetrics(reqLog)
 
-	// 读取请求体
 	body, err := ReadLenientJSONRequestBodyWithPrealloc(c.Request, h.options.MaxBodyBytes)
 	if err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
@@ -142,7 +141,7 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, "", false)
 
-	// 在解析、内容审计和会话 hash 计算前替换用户提示词，后续步骤共用改写后的请求体。
+	// Rewrite prompts before parsing, moderation, and session hashing so they use the same body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "anthropic_messages")
 
 	bodyRef := requeststate.NewRequestBodyRef(body)
@@ -157,18 +156,17 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	reqStream := parsedReq.Stream
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
-	// 设置 max_tokens=1 + haiku 探测请求标识到 context 中
-	// 在 SetClaudeCodeClientContext 前设置，ClaudeCodeValidator 根据此标识判断是否跳过验证。
+	// Mark max_tokens=1 Haiku probes before client detection.
+	// The Claude Code validator uses this marker to skip probe validation.
 	if clientmeta.IsHaikuProbe(reqModel, parsedReq.MaxTokens) {
 		h.backend.BindProbe(c)
 	}
 
-	// 复用已解析的请求识别 Claude Code 客户端，将结果写入 context。
 	detection := DetectClaudeCodeRequest(c, body, parsedReq, h.backend.Probe(c))
 	h.backend.BindClient(c, detection)
 	isClaudeCodeClient := detection.ClaudeCode
 
-	// 版本检查：仅对 Claude Code 客户端，拒绝低于最低版本的请求
+	// Apply configured version bounds to Claude Code clients.
 	if !h.checkClientVersion(c, detection) {
 		return
 	}
@@ -189,19 +187,17 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		}
 		body = parsedReq.Body.Bytes()
 	}
-	// 解析分组模型映射
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Capture the group and model mapping in this request's route plan.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
 
-	// 在请求上下文中记录 thinking 状态，供 Antigravity 最终模型 key 推导/模型维度限流使用
+	// Antigravity uses thinking state to derive the final model key and model rate limits.
 	h.backend.BindThinking(c, parsedReq.ThinkingEnabled)
 
 	h.backend.ObserveRequest(c, reqModel, reqStream)
 	h.backend.ObserveEndpoint(c, reqStream)
 
-	// 验证 model 必填
 	if reqModel == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -212,29 +208,27 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	// Track if we've started streaming (for error handling)
 	streamStarted := false
 
-	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
+	// Bind error rules for failures that do not trigger provider failover.
 	h.backend.BindErrors(c)
 
-	// 获取订阅信息（可能为 nil）- 提前获取用于后续检查
+	// The subscription may be nil for balance-funded requests.
 	subscription, _ := SubscriptionFromContext(c)
 
-	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrency.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.user_slot_acquire_failed", zap.Error(err))
 		h.concurrencyError(c, err, "user", streamStarted)
 		return
 	}
-	// 请求结束或 Context 取消时释放槽位。
+	// Release on request completion or context cancellation.
 	userReleaseFunc = scheduler.WrapRelease(c.Request.Context(), scheduler.ReleaseOnCancel, userReleaseFunc)
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
 	}
 
-	// 2. 【新增】Wait 后二次检查余额/订阅
+	// Funding eligibility may change while waiting for a user slot.
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := BillingErrorDetails(err)
@@ -245,10 +239,9 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	// 设置请求所属分组 ID（用于分组功能判断，如 WebSearch 模拟）
+	// Group features such as web search emulation read this ID.
 	parsedReq.GroupID = apiKey.GroupID
 
-	// 计算粘性会话 hash
 	parsedReq.SessionContext = &requeststate.SessionContext{
 		ClientIP:  clientip.GetClientIP(c),
 		UserAgent: c.GetHeader("User-Agent"),
@@ -256,13 +249,12 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	}
 	sessionHash := session.GenerateSessionHash(parsedReq, slog.Info)
 
-	// [DEBUG-STICKY] 打印会话 hash 生成结果
 	reqLog.Info("sticky.session_hash_generated",
 		zap.String("session_hash", sessionHash),
 		zap.String("metadata_user_id_raw", parsedReq.MetadataUserID),
 	)
 
-	// 专用入口读取强制平台过滤，普通入口不预设提供商平台
+	// Dedicated endpoints can force a platform; ordinary requests select across platforms.
 	platform := ""
 	if forcePlatform, ok := h.backend.ForcedPlatform(c); ok {
 		platform = forcePlatform
@@ -279,11 +271,9 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		}
 	}
 
-	// 查询粘性会话绑定的提供商 ID
 	var sessionBoundProviderID int64
 	if sessionKey != "" {
 		sessionBoundProviderID, _ = h.backend.CachedSession(c.Request.Context(), apiKey.GroupID, sessionKey)
-		// [DEBUG-STICKY] 打印粘性会话查询结果
 		reqLog.Info("sticky.cache_lookup",
 			zap.String("session_key", sessionKey),
 			zap.Int64("bound_provider_id", sessionBoundProviderID),
@@ -298,7 +288,6 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	} else {
 		reqLog.Info("sticky.no_session_key", zap.String("session_hash", sessionHash))
 	}
-	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个提供商
 	hasBoundSession := sessionKey != "" && sessionBoundProviderID > 0
 
 	call := MessagesCall{Key: apiKey, Subject: subject, Subscription: subscription, Parsed: parsedReq, Body: body, Model: reqModel, Stream: reqStream, ClaudeCode: isClaudeCodeClient, Platform: platform, SessionKey: sessionKey, BoundProviderID: sessionBoundProviderID, HasBoundSession: hasBoundSession, StreamStarted: &streamStarted, Log: reqLog, Route: groupMappingRoutePlan, Mapping: groupMapping}
@@ -367,7 +356,7 @@ func (h *MessagesHandler) checkClientVersion(c *gin.Context, detected ClientDete
 	return false
 }
 
-// SubscriptionFromContext 从 HTTP 请求上下文读取订阅。
+// SubscriptionFromContext reads the subscription stored in the HTTP context.
 func SubscriptionFromContext(c *gin.Context) (*billing.UserSubscription, bool) {
 	value, exists := c.Get("subscription")
 	if !exists {

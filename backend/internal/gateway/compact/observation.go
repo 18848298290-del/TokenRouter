@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// RetryObservation 是单次重试的提供商/响应事实与日志配置快照。
+// RetryObservation snapshots provider, response, and diagnostic settings for one retry.
 type RetryObservation struct {
 	ProviderPresent      bool
 	Platform             string
@@ -18,14 +18,14 @@ type RetryObservation struct {
 	LogBodyMaxBytes      int
 }
 
-// RetryNotice 保留诊断字段及正文长度限制，不执行日志或状态写入。
+// RetryNotice contains diagnostic fields for the caller to log.
 type RetryNotice struct {
 	RetryObservation
 	Message, Detail string
 	Kind, Reason    string
 }
 
-// Notice 将已确定的恢复事件转换为通知，正文按启用设置提供。
+// Notice builds retry diagnostics, including a bounded payload when body logging is enabled.
 func Notice(in RetryObservation, payload []byte, message string, truncate func(string, int) string) *RetryNotice {
 	if !in.ProviderPresent {
 		return nil

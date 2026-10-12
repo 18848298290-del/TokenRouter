@@ -17,7 +17,7 @@ type CRSExportResponse struct {
 	} `json:"data"`
 }
 
-// CRSProxy 复用 egress 的导入值，保持原 JSON 字段。
+// CRSProxy uses the egress import representation and its JSON field names.
 type CRSProxy = egress.CRSProxySpec
 
 type CRSClaudeProvider struct {

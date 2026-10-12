@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
-// searchSource 引用配置运行时拥有的同一个注册表，避免另建全局 Manager 指针。
+// searchSource reads the registry owned by the configuration runtime.
 type searchSource struct{ registry *search.Registry }
 
 type searchGroupPolicy struct{ groupPolicies *routing.PricingConfigService }
@@ -36,7 +36,7 @@ func (p searchGroupPolicy) Enabled(ctx context.Context, groupID int64, platform 
 	return policy.IsWebSearchEmulationEnabled(platform), nil
 }
 
-// NewSearchTools 构造同步搜索工具，绑定分组策略、Manager 和配额读取接口。
+// NewSearchTools binds group policy, search settings, and the manager registry for synchronous search.
 func NewSearchTools(runtime *search.ConfigService, groupPolicies *routing.PricingConfigService) *searchtools.Emulator {
 	var registry *search.Registry
 	var settings searchtools.Settings
@@ -51,7 +51,7 @@ func NewSearchTools(runtime *search.ConfigService, groupPolicies *routing.Pricin
 	return searchtools.NewEmulator(searchSource{registry}, settings, policy, time.Now, func() string { return uuid.New().String() }, observeSearch)
 }
 
-// SearchProviderMode 读取搜索提供商模式并记录配置诊断。
+// SearchProviderMode reads the provider's search mode and logs legacy configuration.
 func SearchProviderMode(value *searchtools.ProviderPolicy) string {
 	selection := searchtools.ProviderMode(value)
 	if selection.LegacyBool != nil {

@@ -12,24 +12,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// BuildInfo 接收进程入口传入的构建信息，各模块取得自己需要的字段。
+// BuildInfo carries build metadata from the process entry point to application modules.
 type BuildInfo struct {
 	Version   string
 	BuildType string
 }
+
+// Application owns the HTTP server and the lifecycle of its dependencies.
 type Application struct {
 	Server    *http.Server
 	lifecycle *lifecycle.Manager
 }
 
-// Initialize 构造应用依赖，后台 worker 由 Run 启动。构造失败时释放已取得的连接和绑定。
+// Initialize constructs application dependencies and releases acquired resources on failure. Run starts the
+// workers.
 // @project-doc docs/architecture/system_architecture.md#dependency_layers
 func Initialize(ctx context.Context, cfg *config.Config, buildInfo BuildInfo, restarter *lifecycle.Restarter) (_ *Application, err error) {
 	manager := lifecycle.New(func(name, event string, err error) {
 		if name == "LogBackend" && event == "stopped" {
 			return
 		}
-		// 日志级别根据启停结果确定，任务名称按普通字段记录。
+		// Use the operation result for severity; task names are log data.
 		if err != nil {
 			logging.S().Errorf("[Lifecycle] %s %s err=%v", event, name, err)
 		} else {
@@ -48,7 +51,7 @@ func Initialize(ctx context.Context, cfg *config.Config, buildInfo BuildInfo, re
 	return initializeApplication(ctx, cfg, buildInfo, manager, restarter, tasks)
 }
 
-// provideApplication 登记 HTTP 请求跟踪和运维 WebSocket 的关闭任务。
+// provideApplication registers shutdown hooks for HTTP requests and Ops WebSockets.
 func provideApplication(
 	server *http.Server,
 	manager *lifecycle.Manager,
@@ -69,7 +72,7 @@ func provideApplication(
 	return &Application{Server: server, lifecycle: manager}
 }
 
-// installBackgroundTasks 登记各模块共用的后台任务跟踪器。
+// installBackgroundTasks registers the task tracker shared by application modules.
 func installBackgroundTasks(manager *lifecycle.Manager) *lifecycle.Tasks {
 	tasks := lifecycle.NewTasks()
 	manager.Register(lifecycle.Hook{
@@ -81,7 +84,7 @@ func installBackgroundTasks(manager *lifecycle.Manager) *lifecycle.Tasks {
 	return tasks
 }
 
-// Run 先启动后台任务，再开放 HTTP，返回前按超时预算清理资源。
+// Run starts background tasks before serving HTTP and bounds resource cleanup before returning.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func (a *Application) Run(ctx context.Context) (err error) {
 	started := false
@@ -108,5 +111,5 @@ func (a *Application) Run(ctx context.Context) (err error) {
 	return lifecycle.Serve(ctx, a.Server)
 }
 
-// Cleanup 供尚未运行的应用和外部测试释放构造资源。
+// Cleanup releases resources for applications that have not run and for external tests.
 func (a *Application) Cleanup(ctx context.Context) error { return a.lifecycle.Stop(ctx) }

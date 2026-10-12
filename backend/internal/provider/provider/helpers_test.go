@@ -47,13 +47,13 @@ type codexInviteResetHTTPUpstreamStub struct {
 	profiles  []*tlsfingerprint.Profile
 }
 
-// tlsProfileTestStore 通过相同读取入口提供固定测试策略。
+// tlsProfileTestStore supplies fixed profiles through the production repository interface.
 type tlsProfileTestStore struct {
 	egress.TLSFingerprintProfileRepository
 	profiles []*egress.TLSFingerprintProfile
 }
 
-// 设置替身提供单键读写，运行配置缓存使用生产实现。
+// cooldownSettingsStore supplies settings values to the production runtime cache.
 type cooldownSettingsStore struct{ data map[string]string }
 
 type grokQuotaProviderRepo struct {
@@ -102,13 +102,13 @@ type grokHybridUpstream struct {
 	billingHeaders       http.Header
 }
 
-// 查询返回独立记录，存储替身记录写入操作供断言使用。
+// grokQuotaReadStore returns independent record copies and counts lookups.
 type grokQuotaReadStore struct {
 	providersByID map[int64]*providercore.Record
 	getByIDCalls  int
 }
 
-// HTTP 记录器保存每次请求和正文，供请求断言读取。
+// grokQuotaHTTPRecorder captures requests and bodies for assertions.
 type grokQuotaHTTPRecorder struct {
 	lastReq      *http.Request
 	lastBody     []byte
@@ -140,7 +140,7 @@ type providerUsageCodexProbeRepo struct {
 	clearErrorCh  chan int64
 }
 
-// 夹具组合用量查询组件和平台接口，查询与状态管理使用生产实现。
+// oauthUsageFixtureOptions injects dependencies into production usage querying and state management.
 type oauthUsageFixtureOptions struct {
 	providerRepo         providercore.OAuthUsageReader
 	cache                *providercore.OAuthUsageCache
@@ -149,14 +149,14 @@ type oauthUsageFixtureOptions struct {
 	qoderSessionProvider *QoderTokenProvider
 }
 
-// 测试存储按 ID 返回独立记录，缺失时返回对应错误。
+// usageRecordFixture returns independent records by ID and errors for missing records.
 type usageRecordFixture struct{ providers []providercore.Record }
 
 type openAIOAuthTokenRouterReaderStub struct {
 	routers map[int64]*egress.TLSFingerprintRouter
 }
 
-// 上游返回前替换管理员凭据，随后条件写入拒绝先前身份的额度结果。
+// qoderObservationIdentityRepo rejects results from credentials replaced while the request was in flight.
 type qoderObservationIdentityRepo struct {
 	providercore.OAuthUsageReader
 	current *providercore.Record
@@ -204,14 +204,14 @@ type tokenRefresherStub struct {
 	calls       int
 }
 
-// refreshRecordFixture 模拟提供商记录读取。
+// refreshRecordFixture supplies provider records for refresh tests.
 type refreshRecordFixture struct {
 	providersByID map[int64]*providercore.Record
 }
 
-// sessionWindowMockRepo 记录窗口写入，非预期健康操作保持失败。
+// sessionWindowMockRepo records window and recovery writes and panics on unexpected error-setting
+// operations.
 type sessionWindowMockRepo struct {
-	// 捕获实际写入。
 	sessionWindowCalls []swCall
 	updateExtraCalls   []ueCall
 	clearRateLimitIDs  []int64
@@ -229,7 +229,8 @@ type ueCall struct {
 	Updates map[string]any
 }
 
-// refreshFailureMatchesFixture 竞争替身比较当前行身份，nil 凭据与原刷新快照一致。
+// refreshFailureMatchesFixture compares the current row with the observed failure version, including
+// nil credentials.
 func refreshFailureMatchesFixture(value *providercore.Record, version providercore.RefreshFailureVersion) bool {
 	return value != nil && reflect.DeepEqual(providercore.FailureVersion(value), version)
 }
@@ -280,7 +281,7 @@ func (s *tlsProfileTestStore) List(context.Context) ([]*egress.TLSFingerprintPro
 	return s.profiles, nil
 }
 
-// newTLSProfileServiceWithCacheForTest 通过构造函数和预热填充 TLS 测试缓存。
+// newTLSProfileServiceWithCacheForTest starts the production service to populate the TLS profile cache.
 func newTLSProfileServiceWithCacheForTest(profiles map[int64]*egress.TLSFingerprintProfile) *egressadapter.TLSProfiles {
 	values := make([]*egress.TLSFingerprintProfile, 0, len(profiles))
 	for _, profile := range profiles {
@@ -453,7 +454,7 @@ func (r *grokQuotaProxyRepo) GetByID(_ context.Context, id int64) (*egress.Proxy
 	return r.proxies[id], nil
 }
 
-// newGrokQuotaFixture 使用生产构造函数，存储和传输通过替身提供。
+// newGrokQuotaFixture uses the production constructor with stub storage and transport.
 func newGrokQuotaFixture(store GrokQuotaStore, proxy *grokQuotaProxyRepo, token *providercore.GrokTokenSource, transport interface {
 	Do(*http.Request, string, int64, int) (*http.Response, error)
 }, validator xai.BaseURLValidator, readers ...providercore.LocalUsageStats,
@@ -529,7 +530,7 @@ func healthyGrokQuotaOAuthProvider(id int64) *providercore.Record {
 	}
 }
 
-// Do 按测试步骤返回响应，供应商客户端执行重试。
+// Do returns the next scripted response; the platform client owns retries.
 func (u *grokQuotaSequenceUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -624,7 +625,8 @@ func (r usageRecordFixture) GetByIDs(_ context.Context, ids []int64) ([]*provide
 	return result, nil
 }
 
-// UpdateUsageExtraIfUnchanged 记录三个写入操作，PostgreSQL 集成测试覆盖条件比较和事务。
+// UpdateUsageExtraIfUnchanged records Extra writes; PostgreSQL integration tests cover comparisons and
+// transactions.
 func (r *providerUsageCodexProbeRepo) UpdateUsageExtraIfUnchanged(ctx context.Context, version providercore.UsageObservationVersion, updates map[string]any) (bool, error) {
 	return true, r.UpdateExtra(ctx, version.ID, updates)
 }
@@ -637,7 +639,7 @@ func (r *providerUsageCodexProbeRepo) ClearUsageRateLimitIfUnchanged(ctx context
 	return true, r.ClearRateLimit(ctx, version.ID)
 }
 
-// newOpenAIAuthorizationForTest 配置授权组件，并在测试结束时释放会话。
+// newOpenAIAuthorizationForTest configures authorization and registers session cleanup.
 func newOpenAIAuthorizationForTest(t *testing.T, proxies egress.ProxyRepository, client OpenAIOAuthClient, dependencies ...*OpenAIAuthorizationDependencies) *providercore.OpenAIAuthorization {
 	t.Helper()
 	deps := &OpenAIAuthorizationDependencies{}
@@ -1029,7 +1031,8 @@ func (m *sessionWindowMockRepo) SetModelRateLimit(context.Context, int64, string
 	panic("unexpected")
 }
 
-// UpdateOAuthCredentialsIfUnchanged 模拟条件写入，记录次数并支持注入失败和提交后取消。
+// UpdateOAuthCredentialsIfUnchanged checks the observed credentials before invoking the configurable
+// write stub.
 func (r *tokenRefreshProviderRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	current := r.providersByID[version.ID]
 	if current == nil {
@@ -1046,7 +1049,7 @@ func (r *tokenRefreshProviderRepo) UpdateOAuthCredentialsIfUnchanged(ctx context
 	return err == nil, err
 }
 
-// ClearRefreshCooldownIfUnchanged 记录清理次数，存在当前行时核对条件写入输入。
+// ClearRefreshCooldownIfUnchanged checks the observed window when a row exists and records the clear call.
 func (r *tokenRefreshProviderRepo) ClearRefreshCooldownIfUnchanged(ctx context.Context, v providercore.RefreshCooldownVersion) (bool, error) {
 	if current := r.providersByID[v.ID]; current != nil && !reflect.DeepEqual(providercore.ObserveRefreshCooldown(current), v) {
 		return false, nil
@@ -1054,7 +1057,8 @@ func (r *tokenRefreshProviderRepo) ClearRefreshCooldownIfUnchanged(ctx context.C
 	return true, r.ClearTempUnschedulable(ctx, v.ID)
 }
 
-// ApplyOAuthRefreshFailure 在未设置读取集时按调用版本记录计数，设置后核对当前行版本。
+// ApplyOAuthRefreshFailure checks the current version when records are supplied, then records the
+// requested health write.
 func (r *tokenRefreshProviderRepo) ApplyOAuthRefreshFailure(ctx context.Context, version providercore.RefreshFailureVersion, failure providercore.RefreshFailure) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -1089,7 +1093,7 @@ func (r *tokenRefreshProviderRepo) ClearAntigravityRefreshRequest(ctx context.Co
 	return err == nil, err
 }
 
-// matches 按当前记录身份比较观测，管理员更新身份后拒绝此前的结果。
+// matches rejects observations whose identity differs from the current record.
 func (r *qoderObservationIdentityRepo) matches(value providercore.UsageObservationVersion) bool {
 	current := r.current
 	return current.ID == value.ID && current.Platform == value.Platform && current.Type == value.Type && current.Status == value.Status && reflect.DeepEqual(current.Credentials, value.Credentials) && reflect.DeepEqual(current.ProxyID, value.ProxyID)

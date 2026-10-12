@@ -66,8 +66,8 @@ func BuildGeminiBatchJSONL(input BatchJSONLInput, inputError func(string, ...any
 			return nil, err
 		}
 
-		// TODO(batch-image)：待 Gemini 批量图片 REST 参数格式稳定后，补充
-		// response_mime_type、aspect_ratio 和 image_size。
+		// TODO(batch-image): Add response_mime_type, aspect_ratio, and image_size once
+		// the Gemini batch image REST parameter format is stable.
 		line := geminiJSONLLine{
 			Key: customID,
 			Request: geminiGenerateRequest{

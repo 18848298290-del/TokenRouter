@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// MessagesExecutor 为每次调用创建独立的 HTTP 输出适配器并传给运行时。
+// MessagesExecutor creates an HTTP output adapter for each runtime call.
 type MessagesExecutor struct {
 	runtime *messageforward.Runtime
 	filter  *egress.CompiledHeaderFilter

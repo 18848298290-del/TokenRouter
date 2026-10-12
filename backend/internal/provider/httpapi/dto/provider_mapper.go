@@ -63,7 +63,7 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		QuotaDimension:          a.QuotaDimension,
 	}
 
-	// 提取 5h 窗口费用控制和会话数量控制配置（仅 Anthropic OAuth/SetupToken 提供商有效）
+	// Expose Anthropic OAuth/Setup Token cost and session controls stored in Extra.
 	if a.IsAnthropicOAuthOrSetupToken() {
 		if limit := runtime.GetWindowCostLimit(); limit > 0 {
 			out.WindowCostLimit = &limit
@@ -84,23 +84,23 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			buffer := runtime.GetRPMStickyBuffer()
 			out.RPMStickyBuffer = &buffer
 		}
-		// 用户消息队列模式
+
 		if mode := runtime.GetUserMsgQueueMode(); mode != "" {
 			out.UserMsgQueueMode = &mode
 		}
-		// 会话 ID 伪装开关
+
 		if a.IsSessionIDMaskingEnabled() {
 			enabled := true
 			out.EnableSessionIDMasking = &enabled
 		}
-		// 缓存 TTL 强制替换
+
 		if a.IsCacheTTLOverrideEnabled() {
 			enabled := true
 			out.CacheTTLOverrideEnabled = &enabled
 			target := a.GetCacheTTLOverrideTarget()
 			out.CacheTTLOverrideTarget = &target
 		}
-		// 自定义 Base URL 中继转发
+
 		if a.IsCustomBaseURLEnabled() {
 			enabled := true
 			out.CustomBaseURLEnabled = &enabled
@@ -110,7 +110,7 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		}
 	}
 
-	// TLS 指纹伪装字段支持 Anthropic OAuth/SetupToken 与 OpenAI OAuth。
+	// TLS fingerprint settings apply to Anthropic OAuth/Setup Token and OpenAI OAuth providers.
 	if a.SupportsTLSFingerprint() {
 		if a.IsTLSFingerprintEnabled() {
 			enabled := true
@@ -129,7 +129,7 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		out.OpenAIOAuthClientPolicy = &policy
 	}
 
-	// 提取提供商配额限制（apikey / bedrock 类型有效）
+	// Expose quota limits for API key and Bedrock providers.
 	if a.IsAPIKeyOrBedrock() {
 		if limit := a.GetQuotaLimit(); limit > 0 {
 			out.QuotaLimit = &limit
@@ -152,7 +152,7 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			}
 			out.QuotaWeeklyUsed = &used
 		}
-		// 固定时间重置配置
+
 		if mode := a.GetQuotaDailyResetMode(); mode == "fixed" {
 			out.QuotaDailyResetMode = &mode
 			hour := a.GetQuotaDailyResetHour()
@@ -178,7 +178,6 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			}
 		}
 
-		// 配额通知配置
 		if enabled := a.GetQuotaNotifyDailyEnabled(); enabled {
 			out.QuotaNotifyDailyEnabled = &enabled
 		}
@@ -214,8 +213,8 @@ func redactProviderManagedExtra(extra map[string]any) map[string]any {
 			provider.OllamaCloudUsageSnapshotExtraKey:
 			continue
 		case provider.UpstreamUsageQueryExtraKey:
-			// Extra 可能来自历史数据库记录；即使旧数据曾把凭据写进
-			// 查询配置，也只能向浏览器返回允许的三项非敏感字段。
+			// Historical Extra values may contain credentials inside the usage query configuration.
+			// Return only the three allowed non-sensitive configuration fields to the browser.
 			redacted[key] = redactUpstreamUsageQuery(value)
 		default:
 			redacted[key] = provider.CloneValues(map[string]any{key: value})[key]
@@ -240,7 +239,7 @@ func redactUpstreamUsageQuery(value any) map[string]any {
 		result["enabled"] = enabled
 	}
 	if adapter, ok := object["adapter"].(string); ok {
-		// 只回显已注册协议名，历史记录中的任意字符串可能包含误写入的凭据。
+		// Restrict adapter names to registered values; arbitrary historical strings may contain credentials.
 		if adapter == provider.UpstreamUsageAdapterSub2API || adapter == provider.UpstreamUsageAdapterNewAPI || adapter == provider.UpstreamUsageAdapterZivv {
 			result["adapter"] = adapter
 		}

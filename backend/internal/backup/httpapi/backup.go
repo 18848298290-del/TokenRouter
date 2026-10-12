@@ -13,7 +13,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// PasswordVerifier 不向备份暴露身份实体。
+// PasswordVerifier checks administrator credentials for restore requests.
 type (
 	PasswordVerifier func(context.Context, int64, string) (bool, error)
 	BackupHandler    struct {
@@ -22,14 +22,11 @@ type (
 	}
 )
 
-// 备份操作
-
 type CreateBackupRequest struct {
-	ExpireDays *int `json:"expire_days"` // nil=使用默认值14，0=永不过期
+	ExpireDays *int `json:"expire_days"` // Nil defaults to 14 days; zero means no expiration.
 }
 
-// 恢复操作（需要重新输入管理员密码）
-
+// Restore requires the administrator's password again.
 type RestoreBackupRequest struct {
 	Password string `json:"password" binding:"required"`
 }
@@ -40,8 +37,6 @@ func NewBackupHandler(backupService *backup.BackupService, userService PasswordV
 		userService:   userService,
 	}
 }
-
-// 存储配置
 
 func (h *BackupHandler) GetStorageConfig(c *gin.Context) {
 	cfg, err := h.backupService.GetStorageConfig(c.Request.Context())
@@ -80,8 +75,6 @@ func (h *BackupHandler) TestStorageConnection(c *gin.Context) {
 	response.Success(c, gin.H{"ok": true, "message": "connection successful"})
 }
 
-// 内容配置
-
 func (h *BackupHandler) GetContentConfig(c *gin.Context) {
 	cfg, err := h.backupService.GetContentConfig(c.Request.Context())
 	if err != nil {
@@ -105,8 +98,7 @@ func (h *BackupHandler) UpdateContentConfig(c *gin.Context) {
 	response.Success(c, cfg)
 }
 
-// S3 配置（兼容旧接口）
-
+// Legacy S3 configuration API.
 func (h *BackupHandler) GetS3Config(c *gin.Context) {
 	cfg, err := h.backupService.GetS3Config(c.Request.Context())
 	if err != nil {
@@ -144,8 +136,6 @@ func (h *BackupHandler) TestS3Connection(c *gin.Context) {
 	response.Success(c, gin.H{"ok": true, "message": "connection successful"})
 }
 
-// 定时备份
-
 func (h *BackupHandler) GetSchedule(c *gin.Context) {
 	cfg, err := h.backupService.GetSchedule(c.Request.Context())
 	if err != nil {
@@ -171,9 +161,9 @@ func (h *BackupHandler) UpdateSchedule(c *gin.Context) {
 
 func (h *BackupHandler) CreateBackup(c *gin.Context) {
 	var req CreateBackupRequest
-	_ = c.ShouldBindJSON(&req) // 允许空 body
+	_ = c.ShouldBindJSON(&req) // An empty body uses the default expiration.
 
-	expireDays := 14 // 默认14天过期
+	expireDays := 14 // Default expiration in days
 	if req.ExpireDays != nil {
 		expireDays = *req.ExpireDays
 	}
@@ -282,14 +272,12 @@ func (h *BackupHandler) RestoreBackup(c *gin.Context) {
 		return
 	}
 
-	// 从上下文获取当前管理员用户 ID
 	sub, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
-	// 获取管理员用户并验证密码
 	valid, err := h.userService(c.Request.Context(), sub.UserID, req.Password)
 	if err != nil {
 		response.ErrorFrom(c, err)

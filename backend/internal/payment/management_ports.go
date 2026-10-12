@@ -36,7 +36,7 @@ type ConfigurationStore interface {
 	IsNotFound(error) bool
 }
 
-// InProgressOrderStatuses 保持原渠道配置保护和套餐删除的在途范围。
+// InProgressOrderStatuses lists states that protect provider configuration and plan deletion.
 func InProgressOrderStatuses() []string {
 	return []string{OrderStatusPending, OrderStatusProcessing, OrderStatusPaid, OrderStatusRecharging}
 }

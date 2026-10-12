@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestSettlementDeletedKey 在真实数据库中验证删除与结算交错及幂等重试。
+// TestSettlementDeletedKey checks deletion interleavings and idempotent settlement retries against PostgreSQL.
 func TestSettlementDeletedKey(t *testing.T) {
 	db := integrationDB
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -205,7 +205,7 @@ func TestSelectAnthropicFableWindowLimit_RejectedStatus(t *testing.T) {
 }
 
 func TestSelectAnthropicFableWindowLimit_UtilizationOnly(t *testing.T) {
-	// 无 status 头时，utilization >= 1.0 也应视为超限
+	// Full utilization indicates exhaustion even without a status header.
 	now := time.Now()
 	reset := now.Add(3 * 24 * time.Hour).Truncate(time.Second)
 
@@ -241,7 +241,7 @@ func TestSelectAnthropicFableWindowLimit_NoHeadersReturnsNil(t *testing.T) {
 }
 
 func TestSelectAnthropicFableWindowLimit_FallsBackToAggregateReset(t *testing.T) {
-	// 7d_oi-reset 缺失时回退聚合 anthropic-ratelimit-unified-reset
+	// A missing 7d_oi reset uses the aggregate reset header.
 	now := time.Now()
 	reset := now.Add(80 * time.Hour).Truncate(time.Second)
 

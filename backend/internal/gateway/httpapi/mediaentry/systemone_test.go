@@ -34,7 +34,7 @@ type systemOneRPM struct {
 	calls int
 }
 
-// TestSystemOneFailoverRules 检查重试耗尽时的平台匹配、监控开关和重试时间。
+// TestSystemOneFailoverRules checks platform matching, monitoring suppression, and Retry-After on exhaustion.
 func TestSystemOneFailoverRules(t *testing.T) {
 	for _, platform := range []string{"jev", "openai", ""} {
 		t.Run(platform, func(t *testing.T) {
@@ -66,7 +66,8 @@ func TestSystemOneFailoverRules(t *testing.T) {
 	}
 }
 
-// TestSystemOneMissingUsageRetainsSuccessfulRequest 检查用量告警的请求关联及成功响应。
+// TestSystemOneMissingUsageRetainsSuccessfulRequest checks warning correlation while retaining the
+// successful response.
 func TestSystemOneMissingUsageRetainsSuccessfulRequest(t *testing.T) {
 	var saved telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{RequestID: "local", State: "completed", Status: 200}, func(record telemetry.RequestRecord) { saved = record })
@@ -95,7 +96,7 @@ func (r *systemOneRPM) IncrementUserRPM(context.Context, int64) (int, error) {
 	return r.calls, nil
 }
 
-// TestSystemOneConsumesOneRPM 检查首次准入后，多次上游尝试共用一次 RPM 计数。
+// TestSystemOneConsumesOneRPM checks that repeated upstream attempts share the initial RPM admission.
 func TestSystemOneConsumesOneRPM(t *testing.T) {
 	cache := &systemOneRPM{}
 	checker := admission.NewFundingAdmission(systemOneFunds{}, scheduler.NewRPMAdmission(cache, nil, scheduler.Diagnostics{}))

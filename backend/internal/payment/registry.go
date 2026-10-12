@@ -84,7 +84,7 @@ func (r *Registry) Clear() {
 	r.providers = make(map[PaymentType]Provider)
 }
 
-// Replace 发布完整候选表，读取者不会看到 Clear 与逐项 Register 之间的空窗。
+// Replace publishes the complete provider map atomically, so readers see no partially rebuilt registry.
 func (r *Registry) Replace(providers []Provider) {
 	next := make(map[PaymentType]Provider)
 	for _, provider := range providers {

@@ -6,8 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// CNResponseIndicatesInsufficientBalance 通过响应体文案识别余额不足
-// （智谱 payg 无独立余额端点，仅能靠响应文案识别）。
+// CNResponseIndicatesInsufficientBalance recognizes balance-error wording in a response.
+// This also supports providers whose balance is reported only through request errors.
 func CNResponseIndicatesInsufficientBalance(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -21,10 +21,10 @@ func CNResponseIndicatesInsufficientBalance(body []byte) bool {
 }
 
 func ExtractErrorMessage(body []byte) string {
-	// Claude 风格：{"type":"error","error":{"type":"...","message":"..."}}
+	// Prefer the nested error.message used by Claude and compatible APIs.
 	if m := gjson.GetBytes(body, "error.message").String(); strings.TrimSpace(m) != "" {
 		inner := strings.TrimSpace(m)
-		// 有些上游会把完整 JSON 作为字符串塞进 message
+		// Some gateways encode another error object inside the message string.
 		if strings.HasPrefix(inner, "{") {
 			if innerMsg := gjson.Get(inner, "error.message").String(); strings.TrimSpace(innerMsg) != "" {
 				return innerMsg
@@ -33,12 +33,12 @@ func ExtractErrorMessage(body []byte) string {
 		return m
 	}
 
-	// ChatGPT 内部 API 风格：{"detail":"..."}
+	// ChatGPT internal API errors can use detail.
 	if d := gjson.GetBytes(body, "detail").String(); strings.TrimSpace(d) != "" {
 		return d
 	}
 
-	// 最后读取顶层 message。
+	// Use a top-level message when the more specific fields are absent.
 	return gjson.GetBytes(body, "message").String()
 }
 
@@ -65,15 +65,14 @@ func ExtractErrorCode(body []byte) string {
 	return ""
 }
 
-// IsGoogleProjectConfigError 判断（已提取的小写）错误消息是否属于 Google 服务端配置类问题。
-// 匹配已知的服务端配置错误，供调用方判断重试条件。
-// 适用于所有走 Google 后端的平台（Antigravity、Gemini）。
+// IsGoogleProjectConfigError recognizes project-configuration wording in a lowercase message.
+// Callers use the classification when deciding whether to retry.
 func IsGoogleProjectConfigError(lowerMsg string) bool {
-	// Google 间歇性 Bug：Project ID 有效但被临时识别失败
+	// The response wording alone does not establish whether the project is actually invalid.
 	return strings.Contains(lowerMsg, "invalid project resource name")
 }
 
-// IsHTMLResponse 按 doctype 或 html 标签前缀识别 HTML 响应。
+// IsHTMLResponse recognizes a doctype or html tag at the start of a response.
 func IsHTMLResponse(body []byte) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(string(body)))
 	return strings.HasPrefix(trimmed, "<!doctype html") ||

@@ -22,14 +22,14 @@ type opsProviderStatsFallbackRepoStub struct {
 	groupIDFilter  int64
 }
 
-// ListOpsProvidersForStats 记录轻量查询参数，验证服务不会退回通用分页查询。
+// ListOpsProvidersForStats records query filters to verify that the service uses the statistics query.
 func (r *opsProviderStatsRepoStub) ListOpsProvidersForStats(_ context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error) {
 	r.platformFilter = platformFilter
 	r.groupIDFilter = groupIDFilter
 	return r.providers, nil
 }
 
-// ListPage 模拟尚未实现轻量查询接口的仓储，锁定兼容回退行为。
+// ListPage simulates a repository that supports only the paginated interface.
 func (r *opsProviderStatsFallbackRepoStub) ListPage(
 	_ context.Context,
 	params pagination.PaginationParams,

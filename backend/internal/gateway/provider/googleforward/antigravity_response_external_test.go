@@ -30,14 +30,14 @@ type antigravityCompatErrorReader struct {
 	err  error
 }
 
-// antigravityFailingWriter 模拟客户端断开连接的 gin.ResponseWriter。
+// antigravityFailingWriter simulates a disconnected client.
 type antigravityFailingWriter struct {
 	gin.ResponseWriter
-	failAfter int // 允许成功写入的次数，之后所有写入返回错误
+	failAfter int // Successful writes allowed before subsequent writes fail.
 	writes    int
 }
 
-// cancelReadCloser 模拟读取层直接返回取消错误。
+// cancelReadCloser returns a cancellation error from Read.
 type cancelReadCloser struct{}
 
 func TestAntigravityCompatEmptyStreamTriggersFailover(t *testing.T) {
@@ -285,10 +285,10 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 第一个 chunk（部分内容）
+		// The first chunk contains partial content.
 		fmt.Fprintln(pw, `data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3}}`)
 		fmt.Fprintln(pw, "")
-		// 最后一个 chunk 携带最终内容和完整 usage。
+		// The last chunk carries final content and complete usage.
 		fmt.Fprintln(pw, `data: {"candidates":[{"content":{"parts":[{"text":" world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":8,"cachedContentTokenCount":2}}`)
 		fmt.Fprintln(pw, "")
 	}()
@@ -307,16 +307,15 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
 	require.NotNil(t, result.FirstTokenMs, "should record first token time")
 
-	// 验证数据被透传到客户端
 	body := rec.Body.String()
 	require.Contains(t, body, "Hello")
 	require.Contains(t, body, "world")
-	// 不应包含错误事件
+
 	require.NotContains(t, body, "event: error")
 }
 
 // TestHandleClaudeStreamingResponse_NormalComplete
-// 验证：正常 Claude 流式转发（Gemini→Claude 转换），数据正确转换并输出。
+// checks Gemini-to-Claude stream conversion and output.
 func TestHandleClaudeStreamingResponse_NormalComplete(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -329,8 +328,8 @@ func TestHandleClaudeStreamingResponse_NormalComplete(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// v1internal 包装格式：Gemini 数据嵌套在 "response" 字段下
-		// ProcessLine 先尝试反序列化为 V1InternalResponse，裸格式会导致 Response.UsageMetadata 为空
+		// v1internal wraps Gemini data in the response field.
+		// The wrapper supplies the usage metadata expected by the stream processor.
 		fmt.Fprintln(pw, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"Hi there"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}}`)
 		fmt.Fprintln(pw, "")
 	}()
@@ -342,21 +341,21 @@ func TestHandleClaudeStreamingResponse_NormalComplete(t *testing.T) {
 	require.NotNil(t, result)
 	require.False(t, result.ClientDisconnect, "normal completion should not set clientDisconnect")
 	require.NotNil(t, result.Usage)
-	// Gemini→Claude 转换的 usage：promptTokenCount=5→InputTokens=5, candidatesTokenCount=3→OutputTokens=3
+	// Gemini prompt and candidate counts become Claude input and output counts.
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.NotNil(t, result.FirstTokenMs, "should record first token time")
 
-	// 验证输出是 Claude SSE 格式（processor 会转换）
+	// The processor emits Claude SSE events.
 	body := rec.Body.String()
 	require.Contains(t, body, "event: message_start", "should contain Claude message_start event")
 	require.Contains(t, body, "event: message_stop", "should contain Claude message_stop event")
-	// 不应包含错误事件
+
 	require.NotContains(t, body, "event: error")
 }
 
 // TestHandleGeminiStreamingResponse_ThoughtsTokenCount
-// 验证：Gemini 流式转发时 thoughtsTokenCount 被计入 OutputTokens。
+// checks that Gemini thoughtsTokenCount contributes to output tokens.
 func TestHandleGeminiStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -389,7 +388,7 @@ func TestHandleGeminiStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 }
 
 // TestHandleClaudeStreamingResponse_ThoughtsTokenCount
-// 验证：Gemini→Claude 流式转换时 thoughtsTokenCount 被计入 OutputTokens。
+// checks that Gemini-to-Claude conversion includes thought tokens in output usage.
 func TestHandleClaudeStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -445,7 +444,7 @@ func TestHandleGeminiStreamingResponse_ClientDisconnect(t *testing.T) {
 }
 
 // TestHandleGeminiStreamingResponse_ContextCanceled
-// 验证：context 取消时不注入错误事件。
+// checks that context cancellation does not inject an error event.
 func TestHandleGeminiStreamingResponse_ContextCanceled(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -466,7 +465,7 @@ func TestHandleGeminiStreamingResponse_ContextCanceled(t *testing.T) {
 }
 
 // TestHandleClaudeStreamingResponse_ClientDisconnect
-// 验证：Claude 流式转发中客户端断开后继续 drain 上游。
+// checks upstream draining after the Claude client disconnects.
 func TestHandleClaudeStreamingResponse_ClientDisconnect(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -480,7 +479,7 @@ func TestHandleClaudeStreamingResponse_ClientDisconnect(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// v1internal 包装格式
+		// v1internal response wrapper.
 		fmt.Fprintln(pw, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":15}}}`)
 		fmt.Fprintln(pw, "")
 	}()
@@ -494,7 +493,7 @@ func TestHandleClaudeStreamingResponse_ClientDisconnect(t *testing.T) {
 }
 
 // TestHandleClaudeStreamingResponse_EmptyStream
-// 上游返回的 SSE 行均无法解析时，返回 UpstreamFailoverError。
+// checks failover when no SSE line can be parsed.
 func TestHandleClaudeStreamingResponse_EmptyStream(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -507,7 +506,7 @@ func TestHandleClaudeStreamingResponse_EmptyStream(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 所有行均为无法 JSON 解析的内容，ProcessLine 全部返回 nil
+		// Every data line contains invalid JSON and produces no parsed event.
 		fmt.Fprintln(pw, "data: not-valid-json")
 		fmt.Fprintln(pw, "")
 		fmt.Fprintln(pw, "data: also-invalid")
@@ -517,13 +516,13 @@ func TestHandleClaudeStreamingResponse_EmptyStream(t *testing.T) {
 	_, err := googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{Output: gatewayhttp.NewGoogleBoundary(c, svc.Options, true)}).HandleClaudeStreamingResponse(upstream.NewOutputContext(gatewayhttp.NewGoogleBoundary(c, svc.Options, true).Sink()), resp, time.Now(), "claude-sonnet-4-5")
 	_ = pr.Close()
 
-	// 返回 UpstreamFailoverError，由上层触发 failover。
+	// The caller receives a retryable failover error.
 	require.Error(t, err)
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.True(t, failoverErr.RetryableOnSameProvider)
 
-	// 客户端不应收到任何 SSE 事件（既无 message_start 也无 message_stop）
+	// An unparseable stream emits no Claude lifecycle events.
 	body := rec.Body.String()
 	require.NotContains(t, body, "event: message_start")
 	require.NotContains(t, body, "event: message_stop")
@@ -531,7 +530,7 @@ func TestHandleClaudeStreamingResponse_EmptyStream(t *testing.T) {
 }
 
 // TestHandleClaudeStreamingResponse_ContextCanceled
-// 验证：context 取消时不注入错误事件。
+// checks that context cancellation does not inject an error event.
 func TestHandleClaudeStreamingResponse_ContextCanceled(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
 
@@ -590,11 +589,11 @@ func TestAntigravityClientWriter(t *testing.T) {
 	})
 }
 
-// TestUnwrapV1InternalResponse 测试 unwrapV1InternalResponse 的各种输入场景。
+// TestUnwrapV1InternalResponse covers wrapped, unwrapped, and malformed input.
 func TestUnwrapV1InternalResponse(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
-	// 构造 >50KB 的大型 JSON
+	// Exercise a JSON payload larger than 50 KiB.
 	largePadding := strings.Repeat("x", 50*1024)
 	largeInput := []byte(fmt.Sprintf(`{"response":{"id":"big","pad":"%s"}}`, largePadding))
 	largeExpected := fmt.Sprintf(`{"id":"big","pad":"%s"}`, largePadding)
@@ -705,7 +704,7 @@ func BenchmarkUnwrapV1Internal_New_Large(b *testing.B) {
 	}
 }
 
-// TestExtractImageSize_ValidSizes 测试有效尺寸解析。
+// TestExtractImageSize_ValidSizes checks supported billing tiers.
 func TestExtractImageSize_ValidSizes(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
@@ -722,7 +721,7 @@ func TestExtractImageSize_ValidSizes(t *testing.T) {
 	require.Equal(t, "4K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 }
 
-// TestExtractImageSize_CaseInsensitive 测试大小写不敏感。
+// TestExtractImageSize_CaseInsensitive checks case-insensitive tier normalization.
 func TestExtractImageSize_CaseInsensitive(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
@@ -733,24 +732,24 @@ func TestExtractImageSize_CaseInsensitive(t *testing.T) {
 	require.Equal(t, "4K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 }
 
-// TestExtractImageSize_Default 测试无 imageConfig 返回默认 2K。
+// TestExtractImageSize_Default checks the 2K default for missing image settings.
 func TestExtractImageSize_Default(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
-	// 无 generationConfig
+	// No generationConfig.
 	body := []byte(`{"contents":[]}`)
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 
-	// 有 generationConfig 但无 imageConfig
+	// generationConfig has no imageConfig.
 	body = []byte(`{"generationConfig":{"temperature":0.7}}`)
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 
-	// 有 imageConfig 但无 imageSize
+	// imageConfig has no imageSize.
 	body = []byte(`{"generationConfig":{"imageConfig":{}}}`)
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 }
 
-// TestExtractImageSize_InvalidJSON 测试非法 JSON 返回默认 2K。
+// TestExtractImageSize_InvalidJSON checks the 2K default for malformed JSON.
 func TestExtractImageSize_InvalidJSON(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
@@ -761,19 +760,19 @@ func TestExtractImageSize_InvalidJSON(t *testing.T) {
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 }
 
-// TestExtractImageSize_EmptySize 测试空 imageSize 返回默认 2K。
+// TestExtractImageSize_EmptySize checks the 2K default for empty imageSize.
 func TestExtractImageSize_EmptySize(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
 	body := []byte(`{"generationConfig":{"imageConfig":{"imageSize":""}}}`)
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 
-	// 空格
+	// Whitespace-only size.
 	body = []byte(`{"generationConfig":{"imageConfig":{"imageSize":"   "}}}`)
 	require.Equal(t, "2K", pricing.NormalizeImageBillingTierOrDefault(googleforward.AntigravityResponseForTest(svc, &googleforward.AttemptForTest{}).ExtractImageInputSize(body)))
 }
 
-// TestExtractImageSize_InvalidSize 测试无效尺寸返回默认 2K。
+// TestExtractImageSize_InvalidSize checks the 2K default for unsupported sizes.
 func TestExtractImageSize_InvalidSize(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 
@@ -806,7 +805,7 @@ func (w *antigravityFailingWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-// unwrapV1InternalResponseOld 旧实现：Unmarshal+Marshal 双重开销（仅用于 benchmark 对照）。
+// unwrapV1InternalResponseOld provides an unmarshal-and-marshal baseline for benchmarks.
 func unwrapV1InternalResponseOld(body []byte) ([]byte, error) {
 	var outer map[string]any
 	if err := json.Unmarshal(body, &outer); err != nil {
@@ -818,14 +817,14 @@ func unwrapV1InternalResponseOld(body []byte) ([]byte, error) {
 	return body, nil
 }
 
-// generateLargeUnwrapJSON 生成指定最小大小的包含 response 包装的 JSON。
+// generateLargeUnwrapJSON builds a response-wrapped payload of approximately minSize bytes or more.
 func generateLargeUnwrapJSON(minSize int) []byte {
 	parts := make([]map[string]string, 0)
 	current := 0
 	for current < minSize {
 		text := fmt.Sprintf("这是第 %d 段内容，用于填充 JSON 到目标大小。", len(parts)+1)
 		parts = append(parts, map[string]string{"text": text})
-		current += len(text) + 20 // 估算 JSON 编码开销
+		current += len(text) + 20 // Approximate JSON encoding overhead.
 	}
 	inner := map[string]any{
 		"candidates": []map[string]any{

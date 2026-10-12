@@ -16,23 +16,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// livePorts 为 Live 请求流程提供依赖和展示值。
+// livePorts supplies dependencies and usage recording for Live requests.
 type livePorts struct{ service *OpenAILiveExecutor }
 
-// liveTarget 管理提供商凭据和平台拨号，向 Live 流程提供帧接口。
+// liveTarget resolves provider credentials and dials a frame connection for Live.
 type liveTarget struct {
 	service  *OpenAILiveExecutor
 	record   *session.LiveCallRecord
 	provider *gatewayprovider.ExecutionProvider
 }
 
-// liveUpstreamFrames 转换帧枚举和正常关闭错误，连接由 Live 流程关闭。
+// liveUpstreamFrames converts frame kinds and normal-close errors. The Live service closes the connection.
 type liveUpstreamFrames struct{ openai.LiveFrameConn }
 
-// liveDownstreamFrames 不接管 HTTP 层的关闭帧和升级责任。
+// liveDownstreamFrames adapts an upgraded WebSocket; the HTTP layer owns upgrade and close-frame handling.
 type liveDownstreamFrames struct{ conn *coderws.Conn }
 
-// liveModelResolver 适配当前提供商能力与路由结果，不实施报文改写。
+// liveModelResolver resolves provider capabilities and routing models for the Live payload rewriter.
 type liveModelResolver struct {
 	service  *OpenAILiveExecutor
 	provider *gatewayprovider.ExecutionProvider
@@ -71,9 +71,9 @@ func (p livePorts) RecordZeroUsage(ctx context.Context, record *session.LiveCall
 	if actorUserID <= 0 {
 		actorUserID = record.UserID
 	}
-	// TODO(billing): Live 当前只记录零费用用量，尚未进入标准计费管道；若后续按时长
-	// 或 token 计费，应在这里接入统一扣费逻辑并补充余额与订阅模式回归测试。
-	// Live finalize 批量写入失败时同步调用 Create 保存结算记录。
+	// TODO(billing): Live records zero-cost usage. Duration or token charging requires integration
+	// with shared settlement and regression coverage for balance and subscription funding.
+	// If best-effort usage insertion fails, WriteUsage retries through synchronous Create.
 	p.service.Usage.WriteUsage(context.Background(), &usage.UsageLog{
 		UserID:            actorUserID,
 		BillingUserID:     record.UserID,

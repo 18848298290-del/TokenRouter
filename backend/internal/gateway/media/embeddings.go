@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// EmbeddingResult 固化本次已选提供商执行的计费观测，不携带旧实体或连接。
+// EmbeddingResult holds billing observations from the selected provider's execution.
 type EmbeddingResult struct {
 	RequestID, Model, BillingModel, UpstreamModel string
 	Headers                                       map[string][]string
@@ -16,7 +16,7 @@ type EmbeddingResult struct {
 	Duration                                      time.Duration
 }
 
-// EmbeddingOutcome 分别保存响应提交状态和可切换错误。
+// EmbeddingOutcome separates committed output from errors eligible for provider failover.
 type EmbeddingOutcome struct {
 	Result        *EmbeddingResult
 	Err           error
@@ -25,7 +25,7 @@ type EmbeddingOutcome struct {
 	StatusCode    int
 }
 
-// EmbeddingEvent 只报告编排时点，日志和 HTTP 输出由入口处理。
+// EmbeddingEvent reports execution stages; the entry adapter handles logs and HTTP output.
 type EmbeddingEvent struct {
 	Kind                            string
 	Provider                        provider.ProviderSnapshot
@@ -34,7 +34,7 @@ type EmbeddingEvent struct {
 	Elapsed                         time.Duration
 }
 
-// EmbeddingsPorts 提供单次请求的操作，等待阶段复用已选中的提供商。
+// EmbeddingsPorts supplies request operations; acquisition waits on the selected provider.
 type EmbeddingsPorts interface {
 	SelectEmbedding(context.Context, map[int64]struct{}) (provider.ProviderSnapshot, bool, error)
 	AcquireEmbedding(context.Context, provider.ProviderSnapshot) (func(), bool)
@@ -46,7 +46,7 @@ type EmbeddingsPorts interface {
 	ClientGone() bool
 }
 
-// EmbeddingFailure 记录失败的输出阶段，由 HTTP 适配器生成协议错误。
+// EmbeddingFailure identifies the failed stage for the HTTP adapter's protocol error response.
 type EmbeddingFailure struct {
 	Stage    string
 	Err      error
@@ -54,8 +54,8 @@ type EmbeddingFailure struct {
 	Excluded int
 }
 
-// RunEmbeddings 执行 Embeddings 提供商尝试循环，等待失败时结束当前请求。
-// 准入已按原顺序完成，返回前先释放提供商槽，成功后仅提交一次完成处理。
+// RunEmbeddings attempts providers and stops when slot acquisition fails.
+// Callers complete admission first. Each attempt releases its slot before feedback and completion.
 func RunEmbeddings(ctx context.Context, body []byte, maxSwitches int, ports EmbeddingsPorts) *EmbeddingFailure {
 	if maxSwitches <= 0 {
 		maxSwitches = 3

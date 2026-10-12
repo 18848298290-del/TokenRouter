@@ -14,7 +14,7 @@ import (
 
 type modelAttributeContextKey struct{}
 
-// ModelAttributeMatch 限定覆盖规则适用的路线；空字段匹配任意值。
+// ModelAttributeMatch restricts overrides to matching routes; empty fields match any value.
 type ModelAttributeMatch struct {
 	Platform         string `json:"platform,omitempty"`
 	ProviderType     string `json:"provider_type,omitempty"`
@@ -30,7 +30,7 @@ type attributeGroupResult struct {
 	resolutions map[modelcatalog.TargetKey]modelcatalog.Resolution
 }
 
-// ModelAttributeSession 固定请求内的目录和分组配置，多个尝试共享读取结果。
+// ModelAttributeSession pins the catalogue and caches group configuration reads across a request's attempts.
 type ModelAttributeSession struct {
 	service *ModelAttributeService
 	view    modelcatalog.View
@@ -102,7 +102,7 @@ func (s *ModelAttributeService) NewSession() *ModelAttributeSession {
 	return &ModelAttributeSession{service: s, view: s.view(), groups: map[int64]attributeGroupResult{}}
 }
 
-// WithModelAttributes 为一次请求安装目录快照。WS 每个 turn 和后台任务各自调用。
+// WithModelAttributes attaches a request catalogue snapshot. Call it separately for each WS turn or background task.
 func WithModelAttributes(ctx context.Context, service *ModelAttributeService) context.Context {
 	return context.WithValue(ctx, modelAttributeContextKey{}, service.NewSession())
 }
@@ -167,14 +167,14 @@ func (s *ModelAttributeService) resolve(view modelcatalog.View, config *ModelAtt
 		override = config.match(target.Model, candidates, target)
 	}
 	result := view.Resolve(target, override)
-	// 轻量调用方可注入单型号读取器，生产装配使用固定目录 View。
+	// Callers may inject single-model lookup; production uses a pinned catalogue View.
 	if s.Catalog.View == nil && s.Catalog.Lookup != nil {
 		result.Attributes = modelcatalog.Merge(s.Catalog.Lookup(target.Model), override)
 	}
 	return result
 }
 
-// Preview 按已保存的分组路线展示配置草稿的效果。
+// Preview applies a draft to the group's saved routes, or loads the saved profile when draft is nil.
 func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, model, clientProtocol string, draft *ModelAttributeConfig) ([]modelcatalog.Resolution, error) {
 	if s.Catalogue == nil {
 		return nil, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model catalogue is unavailable")
@@ -204,7 +204,7 @@ func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, mode
 	return result, nil
 }
 
-// Unavailable 表示本次请求至少有一个分组的属性配置读取失败。
+// Unavailable reports whether any group configuration read failed in this session.
 func (s *ModelAttributeSession) Unavailable() bool {
 	if s == nil {
 		return false

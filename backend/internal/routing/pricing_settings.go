@@ -10,13 +10,13 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// PriceUpdate 区分不修改、清除覆盖与显式零价。
+// PriceUpdate distinguishes an omitted update, a cleared override, and an explicit zero price.
 type PriceUpdate struct {
 	Set   bool
 	Value *float64
 }
 
-// BillingSettingsPatch 仅应用本次请求显式提供的配置项。
+// BillingSettingsPatch applies only fields supplied by the caller.
 type BillingSettingsPatch struct {
 	PeakRateEnabled              *bool
 	PeakStart                    *string
@@ -95,10 +95,10 @@ func (p BillingSettingsPatch) Apply(s *pricing.BillingSettings) error {
 	return nil
 }
 
-// ParseMinutes 把 "HH:MM" 解析为当日分钟数（0..1439），格式非法返回 (0,false)。
+// ParseMinutes parses H:MM or HH:MM into minutes since midnight (0..1439), returning (0, false) on invalid input.
 func ParseMinutes(hhmm string) (int, bool) {
-	// 手工解析避免计费热路径反复走 time.Parse；接受集保持与 time.Parse("15:04", s) 一致：
-	// 小时允许 1-2 位数字（0..23），分钟必须是 2 位数字（00..59）。
+	// Parse directly on the billing path using the hour/minute widths accepted by time.Parse("15:04", s).
+	// Hours have one or two digits (0..23); minutes have two digits (00..59).
 	colon := strings.IndexByte(hhmm, ':')
 	if (colon != 1 && colon != 2) || len(hhmm)-colon-1 != 2 {
 		return 0, false
@@ -122,10 +122,10 @@ func ParseMinutes(hhmm string) (int, bool) {
 	return hour*60 + minute, true
 }
 
-// ValidatePeakRateConfig 是高峰倍率配置的唯一校验来源，供 handler 与 service 层共用。
-// enabled=true 时要求 start/end 合法且 end>start（不支持跨天），multiplier>=0。
-// multiplier=0 是允许的，表示高峰 token 请求按 0 倍计费，可用于折扣/免费策略。
-// enabled=false 时放行。
+// ValidatePeakRateConfig validates peak-pricing windows for handlers and services.
+// When enabled, start and end must be valid same-day times with end > start, and multiplier must be nonnegative.
+// Zero is allowed for free peak-period token requests.
+// Disabled configurations pass validation.
 func ValidatePeakRateConfig(enabled bool, start, end string, multiplier float64) error {
 	if !enabled {
 		return nil
@@ -150,9 +150,9 @@ func ValidatePeakRateConfig(enabled bool, start, end string, multiplier float64)
 	return nil
 }
 
-// NormalizePeakRateConfig 归一化最终落库的高峰倍率配置，供价格配置创建与更新共用。
-// 启用时保持原值并交给 ValidatePeakRateConfig 严格校验；停用时保留合法窗口与非负倍率，
-// 仅清理脏窗口与负倍率，便于管理员临时停用后按原配置重新启用。
+// NormalizePeakRateConfig prepares peak settings for persistence.
+// Enabled values pass through for validation. Disabled values retain valid times and nonnegative multipliers,
+// clearing malformed times and resetting a negative multiplier to 1 for later re-enablement.
 func NormalizePeakRateConfig(enabled bool, start, end string, multiplier float64) (bool, string, string, float64) {
 	if enabled {
 		return enabled, start, end, multiplier

@@ -12,7 +12,7 @@ import (
 	creativeredis "github.com/TokenFlux/TokenRouter/internal/creative/rediscache"
 )
 
-// provideCreativeQueue 根据队列配置构造创作台队列，并设置键名和租约时间。
+// provideCreativeQueue binds queue keys and lease durations from creative configuration.
 func provideCreativeQueue(client *redis.Client, cfg *config.Config) creative.CreativeRunQueue {
 	if cfg == nil {
 		return creativeredis.NewCreativeQueue(client, nil)
@@ -28,7 +28,7 @@ func provideCreativeQueue(client *redis.Client, cfg *config.Config) creative.Cre
 	})
 }
 
-// provideCreativeTransientStore 复用任务模块的唯一暂存实现。
+// provideCreativeTransientStore binds the creative Redis transient store and retention settings.
 func provideCreativeTransientStore(client *redis.Client, cfg *config.Config) creative.CreativeTransientStore {
 	if cfg == nil {
 		return creativeredis.NewCreativeTransientStore(client, nil)
@@ -38,7 +38,7 @@ func provideCreativeTransientStore(client *redis.Client, cfg *config.Config) cre
 	})
 }
 
-// provideBatchQueue 将秒数配置转换为时长，缺省时使用默认队列参数。
+// provideBatchQueue converts configured seconds to durations, using queue defaults when configuration is absent.
 func provideBatchQueue(client *redis.Client, cfg *config.Config) batchimage.BatchImageQueue {
 	if cfg == nil {
 		return batchredis.NewBatchImageQueue(client, nil)
@@ -54,7 +54,7 @@ func provideBatchQueue(client *redis.Client, cfg *config.Config) batchimage.Batc
 	})
 }
 
-// provideBatchDownloadLimiter 为共享下载限制器提供用户并发数和租约时长。
+// provideBatchDownloadLimiter configures per-user concurrency and download lease duration.
 func provideBatchDownloadLimiter(client *redis.Client, cfg *config.Config) batchimage.BatchImageDownloadLimiter {
 	if cfg == nil {
 		return batchredis.NewBatchImageDownloadLimiter(client, nil)

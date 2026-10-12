@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestModerationBodyDecodesDescriptions 检查审核文本与上游读取的 JSON 字符串一致。
+// TestModerationBodyDecodesDescriptions checks moderation uses the same decoded strings as the upstream.
 func TestModerationBodyDecodesDescriptions(t *testing.T) {
 	for _, tc := range []struct {
 		name, state, questions string
@@ -50,7 +50,7 @@ func TestModerationBodyDecodesDescriptions(t *testing.T) {
 	}
 }
 
-// TestCodecPreservesMixedQuestions 检查结构化问题和扩展字段在模型改写后仍可解析。
+// TestCodecPreservesMixedQuestions checks model patching retains structured questions and extension fields.
 func TestCodecPreservesMixedQuestions(t *testing.T) {
 	body := []byte(`{"model":"alias","state":{"message":"hello","number":9007199254740993},"extension":{"keep":true},"questions":{"a":{"type":"noul","instructions":["yes?"]},"b":{"type":"choice","instructions":{"ask":"pick"},"criteria":{"one":null,"two":{"hint":"second"}}},"c":{"type":"score","instructions":"rank","criteria":["low",["high"]]}}}`)
 	r, err := ParseRequest(body)
@@ -68,7 +68,7 @@ func TestCodecPreservesMixedQuestions(t *testing.T) {
 	require.Equal(t, 10, decoded.Usage.InputTokens)
 }
 
-// TestResponseUsageValidity 区分缺失、非法和合法零用量，答案继续有效。
+// TestResponseUsageValidity distinguishes missing, invalid, and valid zero usage while accepting valid answers.
 func TestResponseUsageValidity(t *testing.T) {
 	questions := map[string]Question{"a": {Type: "noul"}}
 	for _, usage := range []string{`null`, `{}`, `{"input_tokens":-1,"output_tokens":0}`, `{"input_tokens":"10","output_tokens":0}`, `{"input_tokens":1.5,"output_tokens":0}`, `{"input_tokens":9223372036854775808,"output_tokens":0}`, `{"input_tokens":0,"output_tokens":0}`} {

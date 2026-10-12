@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ParseCompactSSE 把合成的 SSE 文本拆成 (eventType, dataJSON) 序列。
+// ParseCompactSSE splits synthetic two-line SSE blocks into event type and JSON data pairs.
 func ParseCompactSSE(t *testing.T, body string) [][2]string {
 	t.Helper()
 	var events [][2]string

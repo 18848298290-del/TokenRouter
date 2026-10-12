@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// ObserverState 引用进程中的观察者登记状态，四个字段需要来自同一个管理实例。
+// ObserverState references the observer registry; all four fields belong to the same manager.
 type ObserverState struct {
 	Mutex   *sync.Mutex
 	Stopped *bool
@@ -13,7 +13,7 @@ type ObserverState struct {
 	Wait    *sync.WaitGroup
 }
 
-// Begin 在同一锁内登记观察者和等待计数，停止后返回 false。
+// Begin registers an observer and increments the wait count under one lock; it rejects calls after Stop.
 func (s ObserverState) Begin(owner string) (context.Context, func(), bool) {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
@@ -35,7 +35,7 @@ func (s ObserverState) Begin(owner string) (context.Context, func(), bool) {
 	}, true
 }
 
-// Stop 取消本地观察循环，并在应用剩余预算内等待结束。远端会话按自身生命周期结束。
+// Stop cancels local observers and waits within ctx's budget. Remote sessions retain their own lifetime.
 func (s ObserverState) Stop(ctx context.Context) error {
 	s.Mutex.Lock()
 	*s.Stopped = true

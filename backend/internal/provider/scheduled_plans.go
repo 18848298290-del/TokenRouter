@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ScheduledTestPlan 描述提供商维护计划。
+// ScheduledTestPlan configures a recurring provider test and result retention.
 type ScheduledTestPlan struct {
 	ID             int64      `json:"id"`
 	ProviderID     int64      `json:"provider_id"`
@@ -20,7 +20,7 @@ type ScheduledTestPlan struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// ScheduledTestResult 描述一次测试执行结果。
+// ScheduledTestResult records one test execution and its latency in milliseconds.
 type ScheduledTestResult struct {
 	ID           int64     `json:"id"`
 	PlanID       int64     `json:"plan_id"`
@@ -33,7 +33,7 @@ type ScheduledTestResult struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// ScheduledTestPlanRepository 定义计划存取与运行时间更新。
+// ScheduledTestPlanRepository stores plans and updates their execution times.
 type ScheduledTestPlanRepository interface {
 	Create(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error)
 	GetByID(ctx context.Context, id int64) (*ScheduledTestPlan, error)
@@ -44,7 +44,7 @@ type ScheduledTestPlanRepository interface {
 	UpdateAfterRun(ctx context.Context, id int64, lastRunAt time.Time, nextRunAt time.Time) error
 }
 
-// ScheduledTestResultRepository 定义结果保存、读取和保留数清理。
+// ScheduledTestResultRepository stores test results and prunes excess history.
 type ScheduledTestResultRepository interface {
 	Create(ctx context.Context, result *ScheduledTestResult) (*ScheduledTestResult, error)
 	ListByPlanID(ctx context.Context, planID int64, limit int) ([]*ScheduledTestResult, error)

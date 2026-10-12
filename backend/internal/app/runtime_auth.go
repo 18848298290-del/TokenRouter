@@ -84,7 +84,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	// 凭据构建在生产者停止后取消并等待，先于完成队列与共享连接释放。
+	// Cancel and wait for credential builds after producers stop, before completion queues and shared connections close.
 	manager.Register(lifecycle.Hook{Name: "QoderCredentialSessions", StopOrder: 30, Stop: qoderTokens.StopContext})
 	manager.Register(lifecycle.Hook{Name: "QoderOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
 		if qoderOAuth != nil {

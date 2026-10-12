@@ -114,12 +114,12 @@ func CloneGroupForDuplicate(source *Group, operationID string) *Group {
 	}
 }
 
-// CloneGroupClientProtocols 返回独立且非 nil 的协议集合副本。
+// CloneGroupClientProtocols returns an independent, non-nil protocol slice.
 func CloneGroupClientProtocols(protocols []protocol.ProtocolID) []protocol.ProtocolID {
 	return append([]protocol.ProtocolID{}, protocols...)
 }
 
-// RecoverDuplicateGroup 只读查找同一操作者、源分组和幂等键已提交的副本。
+// RecoverDuplicateGroup looks up a committed copy by actor, source group, and idempotency key.
 func (s *GroupAdmin) RecoverDuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
 	operationID := DuplicateGroupOperationID(id, actorScope, operationKey)
 	if operationID == "" {
@@ -142,8 +142,8 @@ func (s *GroupAdmin) RecoverDuplicateGroup(ctx context.Context, id int64, actorS
 	return hydrated, nil
 }
 
-// DuplicateGroup 创建停用状态的配置副本并保留提供商优先级。
-// 仓储会原子提交分组、绑定和 outbox 事件，绑定失败时不会留下孤立分组。
+// DuplicateGroup creates a disabled configuration copy while retaining provider priorities.
+// The repository commits the group, bindings, and outbox together so a binding failure rolls back the copy.
 func (s *GroupAdmin) DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
 	existing, err := s.RecoverDuplicateGroup(ctx, id, actorScope, operationKey)
 	if err != nil {
@@ -178,8 +178,8 @@ func (s *GroupAdmin) DuplicateGroup(ctx context.Context, id int64, actorScope, o
 			return nil, fmt.Errorf("create duplicate group: %w", err)
 		}
 
-		// 唯一冲突可能来自自动生成的名称，也可能来自 operation ID；先尝试恢复，
-		// 若没有对应操作记录，再继续生成下一个副本名称。
+		// A uniqueness conflict can be a generated name or an operation ID. Try recovering the operation first;
+		// if it is absent, retry with the next copy name.
 		recovered, recoverErr := s.RecoverDuplicateGroup(ctx, id, actorScope, operationKey)
 		if recoverErr != nil {
 			return nil, recoverErr

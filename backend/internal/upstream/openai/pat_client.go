@@ -13,7 +13,7 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ValidatePersonalAccessToken 使用 Codex 官方 PAT whoami 端点校验 at-* token。
+// ValidatePersonalAccessToken validates an at-* token through the Codex PAT whoami endpoint.
 func ValidatePersonalAccessToken(ctx context.Context, accessToken, proxyURL, endpoint string) (*wire.PATWhoamiResponse, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {

@@ -191,7 +191,7 @@ func TestServerTimingConnectorRecordsDriverCallsWithoutRowLifetime(t *testing.T)
 		t.Fatal(err)
 	}
 
-	// 两次读取行之间的应用处理必须继续计入应用耗时。
+	// Processing between row reads counts as application time, not database time.
 	time.Sleep(30 * time.Millisecond)
 	if err := rows.Next(values); err != io.EOF {
 		t.Fatalf("rows.Next() = %v, want EOF", err)

@@ -1,16 +1,16 @@
 package provider
 
 const (
-	// BackgroundSkipAsSkipped 计入 skipped（保持当前默认行为）。
+	// BackgroundSkipAsSkipped counts an unperformed refresh as skipped by default.
 	BackgroundSkipAsSkipped BackgroundSkipAction = iota
-	// BackgroundSkipAsSuccess 将跳过计入 success，调用方可按统计需要选择。
+	// BackgroundSkipAsSuccess counts an unperformed refresh as successful.
 	BackgroundSkipAsSuccess
 )
 
-// BackgroundSkipAction 定义后台刷新服务在“未实际刷新”场景的计数方式。
+// BackgroundSkipAction controls statistics when no refresh exchange occurs.
 type BackgroundSkipAction int
 
-// BackgroundRefreshPolicy 描述后台刷新服务的调用侧策略。
+// BackgroundRefreshPolicy controls how background refresh counts skipped operations.
 type BackgroundRefreshPolicy struct {
 	OnLockHeld       BackgroundSkipAction
 	OnAlreadyRefresh BackgroundSkipAction

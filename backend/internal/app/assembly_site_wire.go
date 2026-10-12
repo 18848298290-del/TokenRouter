@@ -9,7 +9,7 @@ import (
 	sitepostgres "github.com/TokenFlux/TokenRouter/internal/site/postgres"
 )
 
-// siteAssemblyProviders 汇总 site 模块的 Wire provider。
+// siteAssemblyProviders groups Wire providers for the site module.
 var siteAssemblyProviders = wire.NewSet(
 	provideSiteDisplay,
 	provideSitePublicHTTP,

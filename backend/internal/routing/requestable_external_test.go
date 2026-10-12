@@ -13,19 +13,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// countedCataloguePolicies 统计每次目录解析取得计费来源的次数。
+// countedCataloguePolicies counts billing-source reads per resolution.
 type countedCataloguePolicies struct {
 	*routing.PricingConfigService
 	pricingReads int
 }
 
-// countedCatalogueRules 记录有限目录和指定型号查询的资格检查次数。
+// countedCatalogueRules counts eligibility checks for catalogue and selected-model queries.
 type countedCatalogueRules struct {
 	routing.CatalogueRules
 	checks *int
 }
 
-// TestCatalogueIncludesGroupMappingTargets 分组映射中的具体目标参与目录和单型号查询，并接受资格检查。
+// TestCatalogueIncludesGroupMappingTargets checks that concrete group-mapping targets enter candidate validation.
 func TestCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"client-alias", "client-*"} {
 		t.Run(source, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	}
 }
 
-// TestCatalogueReadsGroupOnce 大目录和限制阶段均使用本次查询的分组快照。
+// TestCatalogueReadsGroupOnce checks reuse of one group snapshot across catalogue and restriction stages.
 func TestCatalogueReadsGroupOnce(t *testing.T) {
 	for _, stage := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		t.Run(stage, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCatalogueReadsGroupOnce(t *testing.T) {
 	}
 }
 
-// GetPricingConfigForGroup 记录计费来源的读取次数。
+// GetPricingConfigForGroup counts billing-source reads.
 func (p *countedCataloguePolicies) GetPricingConfigForGroup(context.Context, int64) (*routing.PricingConfig, error) {
 	p.pricingReads++
 	return &routing.PricingConfig{BillingModelSource: routing.BillingModelSourceUpstream}, nil
@@ -105,7 +105,7 @@ func (r countedCatalogueRules) SupportsClientProtocol(model string, source proto
 	return true
 }
 
-// TestSelectedCatalogueChecksOnlyTargets 别名目标与请求名称复用一次策略读取，其他候选不做资格检查。
+// TestSelectedCatalogueChecksOnlyTargets checks one policy read and eligibility checks limited to selected names.
 func TestSelectedCatalogueChecksOnlyTargets(t *testing.T) {
 	groupID := int64(1)
 	reads := 0
@@ -127,7 +127,8 @@ func TestSelectedCatalogueChecksOnlyTargets(t *testing.T) {
 	require.ElementsMatch(t, []string{"alias", "target", "manual"}, routing.RequestableModelIDs(result.Models))
 }
 
-// BenchmarkRequestableConfiguredProviders 测量 65 个提供商和 186 项配置的冷解析，包含规则准备。
+// BenchmarkRequestableConfiguredProviders measures cold resolution, including rule preparation, for 65 providers
+// and 186 entries.
 func BenchmarkRequestableConfiguredProviders(b *testing.B) {
 	whitelist := make([]any, 186)
 	mapping := map[string]any{}

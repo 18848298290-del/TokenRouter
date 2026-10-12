@@ -26,7 +26,7 @@ type (
 	SMTPConfig = contract.SMTPConfig
 )
 
-// contextConn 让取消关闭当前连接；正常关闭会注销回调，避免残留等待任务。
+// contextConn closes the connection on cancellation and unregisters the callback on normal close.
 type contextConn struct {
 	net.Conn
 	stop     func() bool
@@ -37,7 +37,7 @@ func New() *Client { return &Client{} }
 
 func sanitizeEmailHeader(s string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(s) }
 
-// Send 使用指定配置发送邮件。
+// Send sends an email using the supplied configuration.
 func (s *Client) Send(ctx context.Context, config *SMTPConfig, to, subject, body string) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -78,7 +78,7 @@ func (s *Client) Send(ctx context.Context, config *SMTPConfig, to, subject, body
 	if err = w.Close(); err != nil {
 		return fmt.Errorf("close writer: %w", err)
 	}
-	// 数据写入成功即视为发送成功，忽略部分 SMTP 服务的非标准 QUIT 响应。
+	// A successful DATA acknowledgement confirms acceptance; a later QUIT failure must not trigger a resend.
 	_ = client.Quit()
 	return nil
 }
@@ -86,15 +86,15 @@ func (s *Client) Send(ctx context.Context, config *SMTPConfig, to, subject, body
 func smtpTLSConfig(host string) *tls.Config {
 	return &tls.Config{
 		ServerName: host,
-		// 强制 TLS 1.2+，避免协议降级导致的弱加密风险。
+		// Require TLS 1.2 or newer to exclude weaker protocol versions.
 		MinVersion: tls.VersionTLS12,
 		RootCAs:    smtpTestRootCAs,
 	}
 }
 
-// connectSMTPContext 建立发送和测试共用的 SMTP 会话。
-// UseTLS 为 true 时先尝试隐式 TLS；仅当服务端返回明文 SMTP 问候时改走强制
-// STARTTLS。UseTLS 为 false 时保留机会式 STARTTLS 行为。
+// connectSMTPContext establishes the SMTP session shared by sending and connection tests.
+// UseTLS first attempts implicit TLS. A plaintext record triggers a new connection with mandatory
+// STARTTLS. With UseTLS disabled, STARTTLS is used when the server advertises it.
 func (s *Client) connectSMTPContext(ctx context.Context, config *SMTPConfig) (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	dialer := &net.Dialer{Timeout: smtpDialTimeout}
@@ -120,14 +120,14 @@ func (s *Client) connectSMTPContext(ctx context.Context, config *SMTPConfig) (*s
 		if _, ok := errors.AsType[tls.RecordHeaderError](err); !ok {
 			return nil, fmt.Errorf("tls dial: %w", err)
 		}
-		// SMTP 服务先发问候语，明文问候会使 TLS 握手返回 RecordHeaderError。
+		// A plaintext SMTP greeting causes the TLS handshake to return RecordHeaderError.
 		return s.connectSMTPStartTLS(ctx, dialer, addr, config.Host, tlsConfig, true)
 	}
 
 	return s.connectSMTPStartTLS(ctx, dialer, addr, config.Host, tlsConfig, false)
 }
 
-// connectSMTPStartTLS 建立明文连接并按需升级；mandatory 为 true 时禁止明文继续。
+// connectSMTPStartTLS upgrades a plaintext connection when supported; mandatory rejects servers without STARTTLS.
 func (s *Client) connectSMTPStartTLS(ctx context.Context, dialer *net.Dialer, addr, host string, tlsConfig *tls.Config, mandatory bool) (*smtp.Client, error) {
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
@@ -161,7 +161,7 @@ func newSMTPClient(conn net.Conn, host string) (*smtp.Client, error) {
 	return client, nil
 }
 
-// Test 使用发送路径相同的建连与 STARTTLS 逻辑测试配置。
+// Test checks connection and authentication using the same TLS negotiation as Send.
 func (s *Client) Test(ctx context.Context, config *SMTPConfig) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -182,7 +182,7 @@ func (s *Client) Test(ctx context.Context, config *SMTPConfig) (resultErr error)
 		return fmt.Errorf("smtp authentication failed: %w", err)
 	}
 
-	// 认证成功即可证明配置可用于发送，忽略非标准 QUIT 响应。
+	// Connection and authentication succeeded; the test ignores nonstandard QUIT responses.
 	_ = client.Quit()
 	return nil
 }
@@ -204,7 +204,7 @@ func bindCancellation(ctx context.Context, conn net.Conn) net.Conn {
 	return wrapped
 }
 
-// SetDeadline 保留请求与原 SMTP I/O 上限中较早的截止时间。
+// SetDeadline caps the SMTP I/O deadline at the request deadline.
 func (c *contextConn) SetDeadline(deadline time.Time) error {
 	if !c.deadline.IsZero() && (deadline.IsZero() || c.deadline.Before(deadline)) {
 		deadline = c.deadline

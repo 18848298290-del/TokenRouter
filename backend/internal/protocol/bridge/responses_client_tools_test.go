@@ -504,7 +504,7 @@ func TestResponsesClientToolStreamRestorer_RawEventsPreserveUnknownFieldsAndOutp
 	require.Contains(t, string(passthrough[0]), `"upstream_extension":{"keep":true}`)
 
 	restorer.Restore(ResponsesStreamEvent{Type: "response.output_item.added", SequenceNumber: 5, OutputIndex: 9, Item: &ResponsesOutput{Type: "function_call", ID: "item", CallID: "call", Name: "exec"}})
-	// 部分上游会在后续参数分片中省略所有工具身份字段。
+	// Some upstreams omit all tool identity fields from subsequent argument fragments.
 	require.Empty(t, restorer.Restore(ResponsesStreamEvent{Type: "response.function_call_arguments.delta", SequenceNumber: 6, OutputIndex: 9, Delta: `{"input":"pwd"}`}))
 	done := restorer.Restore(ResponsesStreamEvent{Type: "response.function_call_arguments.done", SequenceNumber: 7, OutputIndex: 9})
 	require.Len(t, done, 2)
@@ -560,8 +560,8 @@ func TestRetypedResponsesToolCallItemID(t *testing.T) {
 	}
 }
 
-// TestRestoreResponsesClientToolPayloadRetypesItemIDs 验证 function-only 上游返回 fc_ ID；若还原为 custom_tool_call 仍保留该前缀，
-// 客户端下一次重放历史时会被 Responses API 拒绝。
+// TestRestoreResponsesClientToolPayloadRetypesItemIDs checks that restored custom calls use ctc_.
+// Replaying a custom_tool_call with an fc_ item ID is rejected by Responses.
 func TestRestoreResponsesClientToolPayloadRetypesItemIDs(t *testing.T) {
 	mapping := ResponsesClientToolMapping{
 		CustomTools: map[string]bool{"exec": true}, ToolSearch: true,
@@ -613,7 +613,7 @@ func TestResponsesClientToolStreamRestorerRetypesCustomItemID(t *testing.T) {
 	require.Equal(t, "custom_tool_call", added[0].Item.Type)
 	require.Equal(t, clientID, added[0].Item.ID)
 
-	// 后续事件仍通过上游 ID 匹配，但发给客户端的事件使用重 typed ID。
+	// Match subsequent events by upstream ID and emit the client-facing type prefix.
 	require.Empty(t, restorer.Restore(ResponsesStreamEvent{
 		Type: "response.function_call_arguments.delta", SequenceNumber: 1, ItemID: upstreamID, Delta: `{"input":"di`,
 	}))
@@ -650,7 +650,7 @@ func TestResponsesClientToolStreamRestorerRetypesToolSearchItemID(t *testing.T) 
 	require.Equal(t, "tsc_search1", added[0].Item.ID)
 }
 
-// TestAdaptResponsesClientToolsRecoversRetypedItemID 验证 WS bridge 会把客户端还原后的项目再次发回上游，因此 ctc_/tsc_ 必须恢复为 fc_。
+// TestAdaptResponsesClientToolsRecoversRetypedItemID checks that replayed ctc_/tsc_ IDs return to fc_ for the function upstream.
 func TestAdaptResponsesClientToolsRecoversRetypedItemID(t *testing.T) {
 	req := map[string]any{
 		"tools": []any{
@@ -688,7 +688,7 @@ func requireResponsesClientToolValue[T any](t *testing.T, value any) T {
 	return typed
 }
 
-// responsesClientToolNames 从测试中的工具声明 map 提取名称。
+// responsesClientToolNames extracts names from test tool declarations.
 func responsesClientToolNames(t *testing.T, tools []any) []string {
 	t.Helper()
 	names := make([]string, 0, len(tools))

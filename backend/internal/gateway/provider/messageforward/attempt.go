@@ -26,7 +26,7 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// attempt 保存本次请求的准备状态、凭据和响应句柄，执行顺序由 gateway/forward 决定。
+// attempt holds request preparation, credentials, and response state; gateway/forward controls execution order.
 type attempt struct {
 	s                          *Runtime
 	c                          HTTPBoundary
@@ -141,7 +141,7 @@ func (a *attempt) Metadata(ctx context.Context, p *requeststate.ParsedRequest) s
 	return metadataUserID(p, a.provider, fp)
 }
 
-// NormalizeOAuth 根据本次设置整理 Anthropic OAuth 请求体。
+// NormalizeOAuth applies the current Anthropic OAuth normalization options.
 func (a *attempt) NormalizeOAuth(body []byte, o forwardcore.NormalizeOptions) []byte {
 	return claude.NormalizeClaudeOAuthRequestBody(body, claude.ClaudeOAuthNormalizeOptions{StripSystemCacheControl: o.StripSystemCacheControl, InjectMetadata: o.InjectMetadata, MetadataUserID: o.MetadataUserID})
 }

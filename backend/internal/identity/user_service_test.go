@@ -138,7 +138,7 @@ func TestUpdateProfile_RejectsEmailBeforeEmailIdentityResync(t *testing.T) {
 	require.Equal(t, "profile-before@example.com", repo.user.Email)
 }
 
-// runProfileBackground 异步执行缓存失效，各用例通过同步断言等待完成。
+// runProfileBackground starts cache invalidation asynchronously; tests wait for observed calls.
 func runProfileBackground(_ string, task func()) bool {
 	go task()
 	return true
@@ -487,7 +487,7 @@ func TestUpdateBalance_Success(t *testing.T) {
 	err := svc.UpdateBalance(context.Background(), 42, 100.0)
 	require.NoError(t, err)
 
-	// 等待异步 goroutine 完成
+	// Wait for asynchronous cache invalidation.
 	require.Eventually(t, func() bool {
 		return cache.invalidateCallCount.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond, "应异步调用 InvalidateUserBalance")
@@ -732,7 +732,7 @@ func TestUpdateBalance_CacheFailure_DoesNotAffectReturn(t *testing.T) {
 	err := svc.UpdateBalance(context.Background(), 99, 200.0)
 	require.NoError(t, err, "缓存失效失败不应影响主流程返回值")
 
-	// 等待异步 goroutine 完成（即使失败也应调用）
+	// The failing cache operation must still be attempted asynchronously.
 	require.Eventually(t, func() bool {
 		return cache.invalidateCallCount.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond, "即使失败也应调用 InvalidateUserBalance")
@@ -780,7 +780,7 @@ func TestUpdateBalance_RepoError_ReturnsError(t *testing.T) {
 	require.Error(t, err, "repo 失败时应返回错误")
 	require.Contains(t, err.Error(), "update balance")
 
-	// repo 失败时不应触发缓存失效
+	// A failed database write must not trigger cache invalidation.
 	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, int64(0), cache.invalidateCallCount.Load(),
 		"repo 失败时不应调用 InvalidateUserBalance")
@@ -795,18 +795,18 @@ func TestUpdateBalance_WithAuthCacheInvalidator(t *testing.T) {
 	err := svc.UpdateBalance(context.Background(), 77, 300.0)
 	require.NoError(t, err)
 
-	// 验证 auth cache 同步失效
+	// Authentication cache invalidation completes before UpdateBalance returns.
 	auth.mu.Lock()
 	require.Equal(t, []int64{77}, auth.invalidatedUserIDs)
 	auth.mu.Unlock()
 
-	// 验证 billing cache 异步失效
+	// Billing cache invalidation runs in the background.
 	require.Eventually(t, func() bool {
 		return cache.invalidateCallCount.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
-// TestNewUserServiceSharesActivityTracker 检查用户服务实例共享活动时间节流状态。
+// TestNewUserServiceSharesActivityTracker checks throttling across calls on one service instance.
 func TestNewUserServiceSharesActivityTracker(t *testing.T) {
 	user := &identity.User{ID: 77}
 	repo := &mockUserRepo{getByIDUser: user}
@@ -1068,7 +1068,7 @@ func TestUpdateProfile_OnlyDeclaresRequestedColumns(t *testing.T) {
 	}
 }
 
-// TestUpdateProfile_AvatarOnlySkipsUserRowWrite 检查单独更新头像时跳过用户行更新。
+// TestUpdateProfile_AvatarOnlySkipsUserRowWrite checks that avatar changes select no user columns.
 func TestUpdateProfile_AvatarOnlySkipsUserRowWrite(t *testing.T) {
 	repo := &mockUserRepo{getByIDUser: &identity.User{ID: 7, Balance: 0.30}}
 	svc := identity.NewUserService(repo, nil, nil, nil, runProfileBackground)
@@ -1102,7 +1102,7 @@ func TestUpdateStatus_OnlyDeclaresStatus(t *testing.T) {
 	require.Equal(t, []identity.UserUpdateFields{{Status: true}}, repo.updateFields)
 }
 
-// TestUpdateProfileLanguagePreference 检查偏好规范化、清除以及与其他资料字段的独立更新。
+// TestUpdateProfileLanguagePreference covers normalization, clearing, and independent field updates.
 func TestUpdateProfileLanguagePreference(t *testing.T) {
 	en, zh, invalid := "en", "zh", "unsupported"
 	for _, tc := range []struct {

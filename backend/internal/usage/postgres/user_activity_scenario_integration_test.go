@@ -2,8 +2,8 @@
 
 package postgres
 
-// 本场景对照 usage_log_repo_insert.go 的使用记录写入、usage_log_repo_query.go 的读取
-// 和 migrations/289_usage_user_activity.sql 的活动汇总触发器。
+// These scenarios compare usage writes and reads with the activity-summary triggers
+// in migrations/289_usage_user_activity.sql.
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUserActivityTransactions 对照原始记录检查回退、归属变更、去重和回滚。
+// TestUserActivityTransactions compares summaries with raw logs after deletion, reassignment, deduplication, and rollback.
 func TestUserActivityTransactions(t *testing.T) {
 	client := testEntClient(t)
 	ctx := context.Background()
@@ -57,7 +57,7 @@ func TestUserActivityTransactions(t *testing.T) {
 	_, err = integrationDB.ExecContext(ctx, "UPDATE usage_logs SET user_id=$1,created_at=$2 WHERE user_id=$3", v.ID, latest, u.ID)
 	require.NoError(t, err)
 	assertActivityMatchesLogs(t, integrationDB)
-	// 在已有数据上重复执行迁移，回填结果也需与明细一致。
+	// Repeated migration backfills must still agree with existing detail records.
 	migration, err := migrations.FS.ReadFile("289_usage_user_activity.sql")
 	require.NoError(t, err)
 	for range 2 {
@@ -70,7 +70,7 @@ func TestUserActivityTransactions(t *testing.T) {
 	assertActivityMatchesLogs(t, integrationDB)
 }
 
-// TestUserActivityConcurrentWrites 覆盖不同连接对同用户的批量插入和清理交错。
+// TestUserActivityConcurrentWrites interleaves batch inserts and cleanup for one user across connections.
 func TestUserActivityConcurrentWrites(t *testing.T) {
 	client := testEntClient(t)
 	u := mustCreateUser(t, client, &identity.User{Email: "activity-concurrent@test.local"})
@@ -107,7 +107,7 @@ func TestUserActivityConcurrentWrites(t *testing.T) {
 	assertActivityMatchesLogs(t, integrationDB)
 }
 
-// assertActivityMatchesLogs 比较全部用户，缺行和多余汇总行都会失败。
+// assertActivityMatchesLogs checks all users for missing and extra summary rows.
 func assertActivityMatchesLogs(t *testing.T, db *sql.DB) {
 	t.Helper()
 	var differences int

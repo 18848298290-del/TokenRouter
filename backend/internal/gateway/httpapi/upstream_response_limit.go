@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
-// TooLargeWriter 在原 HTTP 入口写出对应协议的超限错误。
+// TooLargeWriter writes a response-size error in the inbound protocol's format.
 type TooLargeWriter func(*gin.Context)
 
-// ReadUpstreamResponseBody 读取上游响应体，并记录 Ops 和协议错误。
+// ReadUpstreamResponseBody enforces the byte limit and reports size errors through Ops and the supplied writer.
 func ReadUpstreamResponseBody(reader io.Reader, maxBytes int64, c *gin.Context, onTooLarge TooLargeWriter) ([]byte, error) {
 	body, err := httpclient.ReadResponseBodyLimited(reader, maxBytes)
 	if err != nil {

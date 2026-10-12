@@ -16,13 +16,13 @@ type anthropicPromptBinding struct {
 	ExpiresAt      time.Time
 }
 
-// AnthropicPromptCache 独占提供商与 Key 隔离的摘要绑定；没有后台清理或额外存储。
+// AnthropicPromptCache stores digest bindings scoped by provider and API key. Reads remove expired entries.
 type AnthropicPromptCache struct {
 	entries sync.Map
 	clock   func() time.Time
 }
 
-// BuildAnthropicDigestChain 保持 system 与逐条消息的原摘要编码。
+// BuildAnthropicDigestChain joins role-prefixed hashes of system content and each nonempty message.
 func BuildAnthropicDigestChain(req *protocolanthropic.AnthropicRequest) string {
 	if req == nil {
 		return ""
@@ -53,7 +53,7 @@ func anthropicDigestNamespace(providerID int64, cAPIKeyID int64) string {
 	return fmt.Sprintf("%d|%d|", providerID, cAPIKeyID)
 }
 
-// NewAnthropicPromptCache 使用 app 传入的时钟构造提示缓存。
+// NewAnthropicPromptCache uses the supplied clock, or time.Now when nil.
 func NewAnthropicPromptCache(clock func() time.Time) *AnthropicPromptCache {
 	if clock == nil {
 		clock = time.Now
@@ -61,7 +61,7 @@ func NewAnthropicPromptCache(clock func() time.Time) *AnthropicPromptCache {
 	return &AnthropicPromptCache{clock: clock}
 }
 
-// Find 逐级回退到最长有效摘要，保持到期清理时点。
+// Find returns the longest valid digest prefix and removes expired bindings encountered during lookup.
 func (s *AnthropicPromptCache) Find(providerID int64, cAPIKeyID int64, digestChain string) (promptCacheKey string, matchedChain string) {
 	if s == nil || digestChain == "" {
 		return "", ""
@@ -90,7 +90,7 @@ func (s *AnthropicPromptCache) Find(providerID int64, cAPIKeyID int64, digestCha
 	}
 }
 
-// Bind 为当前绑定设置 TTL，替换时先删除旧续接链，其他绑定使用各自的到期时间。
+// Bind stores a binding with its own TTL, then removes a different old continuation chain.
 func (s *AnthropicPromptCache) Bind(providerID int64, cAPIKeyID int64, digestChain, promptCacheKey, oldDigestChain string, ttl time.Duration) {
 	if s == nil || digestChain == "" || strings.TrimSpace(promptCacheKey) == "" {
 		return
@@ -109,7 +109,7 @@ func (s *AnthropicPromptCache) Bind(providerID int64, cAPIKeyID int64, digestCha
 	}
 }
 
-// AnthropicDigestPromptCacheKey 使用既有摘要命名空间。
+// AnthropicDigestPromptCacheKey hashes the chain in the anthropic-digest namespace.
 func AnthropicDigestPromptCacheKey(digestChain string) string {
 	if strings.TrimSpace(digestChain) == "" {
 		return ""
@@ -117,7 +117,7 @@ func AnthropicDigestPromptCacheKey(digestChain string) string {
 	return "anthropic-digest-" + upstream.HashSensitiveValueForLog(digestChain)
 }
 
-// AnthropicMetadataPromptCacheKey 对客户端元数据会话标识计算缓存键。
+// AnthropicMetadataPromptCacheKey hashes the device, account, and session IDs in client metadata.
 func AnthropicMetadataPromptCacheKey(req *protocolanthropic.AnthropicRequest) string {
 	if req == nil || len(req.Metadata) == 0 {
 		return ""
@@ -141,7 +141,8 @@ func AnthropicMetadataPromptCacheKey(req *protocolanthropic.AnthropicRequest) st
 	return "anthropic-metadata-" + upstream.HashSensitiveValueForLog(seed)
 }
 
-// CloneAnthropicDigestRequest 仅复制原摘要计算会改写的请求容器。
+// CloneAnthropicDigestRequest copies the request, system bytes, and message slice.
+// Nested message content remains shared.
 func CloneAnthropicDigestRequest(req *protocolanthropic.AnthropicRequest) *protocolanthropic.AnthropicRequest {
 	if req == nil {
 		return nil

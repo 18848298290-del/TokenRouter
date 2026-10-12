@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// OAuthBindingSigner 保留现有用户 ID 与 HMAC cookie 格式，HTTP 不读取完整配置。
+// OAuthBindingSigner signs user IDs for binding cookies using HMAC.
 type OAuthBindingSigner struct{ secret string }
 
 func NewOAuthBindingSigner(secret string) OAuthBindingSigner {

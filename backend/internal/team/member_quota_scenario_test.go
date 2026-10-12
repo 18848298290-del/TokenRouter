@@ -1,7 +1,7 @@
 package team_test
 
-// 本场景覆盖 team.go、internal/apikey/service.go 和 internal/billing/member_quota.go。
-// 团队成员额度快照经 KeyCheckTeamMemberLimitSnapshot 交给 Billing 校验。
+// This scenario covers team.go, internal/apikey/service.go, and internal/billing/member_quota.go.
+// KeyCheckTeamMemberLimitSnapshot passes team member quota snapshots to billing for validation.
 
 import (
 	"testing"

@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestEmptyCompletionKeepsOneObservationAndFailure 验证两种空终态保留不同的观察消息，失败编码与请求标识兼容旧消费者。
+// TestEmptyCompletionKeepsOneObservationAndFailure checks distinct Chat and Responses messages with stable failure
+// codes and request IDs.
 func TestEmptyCompletionKeepsOneObservationAndFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

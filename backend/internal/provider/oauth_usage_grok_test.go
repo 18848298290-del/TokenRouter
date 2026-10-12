@@ -137,7 +137,7 @@ func TestGrokLocalUsageForBillingOnlyReturnsAvailableWindows(t *testing.T) {
 	})
 }
 
-// TestGrokUsageOwnsProviderAndProbeResults 检查用量查询返回独立的统计和嵌套账单，供应商共享结果保持不变。
+// TestGrokUsageOwnsProviderAndProbeResults checks isolation of returned statistics and nested billing values.
 func TestGrokUsageOwnsProviderAndProbeResults(t *testing.T) {
 	billing := &providerusageview.BillingSummary{Plan: "SuperGrok"}
 	shared := &UsageInfo{SevenDay: &UsageProgress{}, GrokBilling: billing}

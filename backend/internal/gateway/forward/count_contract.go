@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// CountPorts 提供单个提供商的 token 计数操作。
+// CountPorts supplies token-count operations for one selected provider.
 type CountPorts interface {
 	ResolveModel(context.Context, string) string
 	ReplaceModel([]byte, string) []byte

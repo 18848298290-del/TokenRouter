@@ -8,7 +8,7 @@ import (
 )
 
 func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
-	// 普通用户 DTO：严禁包含管理员字段（例如 provider_rate_multiplier、provider、upstream_model）。
+	// Keep provider costs and upstream internals out of user responses; FromUsageAdmin adds those fields.
 	requestType := l.EffectiveRequestType()
 	stream, openAIWSMode := usage.ApplyLegacyRequestFields(requestType, l.Stream, l.OpenAIWSMode)
 	requestedModel := l.RequestedModel
@@ -99,8 +99,7 @@ func cloneBillingAllocationsDTO(allocations []billing.BillingAllocation) []billi
 }
 
 // FromUsage converts a service UsageLog to DTO for regular users.
-// FromUsage 转换普通用户可见的用量日志 DTO。
-// 该 DTO 保留用户计费和请求元数据，但排除管理员专用的提供商/上游内部字段。
+// Provider costs and upstream internals are reserved for FromUsageAdmin.
 func FromUsage(l *usage.UsageLog, language ...string) *UsageLog {
 	if l == nil {
 		return nil
@@ -110,7 +109,7 @@ func FromUsage(l *usage.UsageLog, language ...string) *UsageLog {
 }
 
 // FromUsageAdmin converts a service UsageLog to DTO for admin users.
-// It includes minimal Provider info (ID, Name only) and IP address.
+// It adds provider costs, upstream diagnostics, and provider ID/name, with no provider credentials.
 func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 	if l == nil {
 		return nil
@@ -133,7 +132,7 @@ func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 	}
 }
 
-// TimingFromOps 转换管理员使用记录需要展示的阶段耗时，避免暴露系统日志其它字段。
+// TimingFromOps copies the stage timings needed by administrator usage views.
 func TimingFromOps(timing *ops.OpsRequestTiming) *UsageLogTiming {
 	if timing == nil {
 		return nil

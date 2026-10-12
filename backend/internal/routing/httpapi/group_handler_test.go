@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// groupAdminFixture 提供分组管理 HTTP 测试的数据和调用记录。
+// groupAdminFixture records calls and supplies data for group HTTP tests.
 type groupAdminFixture struct {
 	GroupAdministration
 	groups        []routing.Group
@@ -44,7 +44,7 @@ type duplicateGroupAdminServiceStub struct {
 	created      bool
 }
 
-// failOnceMarkSucceededRepo 在首次保存成功响应时返回错误，供测试检查幂等恢复。
+// failOnceMarkSucceededRepo fails the first success-response write to exercise idempotent recovery.
 type failOnceMarkSucceededRepo struct {
 	*idempotencytest.MemoryStore
 	failNext bool
@@ -189,7 +189,7 @@ func TestGroupHandlerEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestGroupRequestsDecodeOpenAIFast 检查管理请求能区分免费 Fast 的 true、false 和省略状态。
+// TestGroupRequestsDecodeOpenAIFast distinguishes true, false, and omitted Fast policy inputs.
 func TestGroupRequestsDecodeOpenAIFast(t *testing.T) {
 	var createReq CreateGroupRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"fast","force_openai_fast":true}`), &createReq))
@@ -216,7 +216,7 @@ func TestGroupManagementRejectsRetiredFields(t *testing.T) {
 	require.NotNil(t, req.ProtocolFallbacks["anthropic_messages"])
 }
 
-// TestGroupManagementRejectsRetiredMessagesMapping 检查管理接口拒绝协议专用模型映射，接受分组路由策略。
+// TestGroupManagementRejectsRetiredMessagesMapping rejects protocol-specific mappings and accepts group routing policy.
 func TestGroupManagementRejectsRetiredMessagesMapping(t *testing.T) {
 	body := `{"messages_dispatch_model_config":{"exact_model_mappings":{"claude-sonnet-4-6":"target"}}}`
 	require.Error(t, bindGroupPlatformJSON(t, &CreateGroupRequest{}, body))
@@ -261,7 +261,7 @@ func TestUpdateGroupRequestReasoningEffortMappingsTriState(t *testing.T) {
 	})
 }
 
-// TestGroupRequestReasoningEffortOverLimitAction 检查管理请求中的推理强度超限动作。
+// TestGroupRequestReasoningEffortOverLimitAction checks decoding of the action above the effort ceiling.
 func TestGroupRequestReasoningEffortOverLimitAction(t *testing.T) {
 	var req UpdateGroupRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"max_reasoning_effort_over_limit":"deny"}`), &req))
@@ -421,7 +421,7 @@ func (r *failOnceMarkSucceededRepo) MarkSucceeded(ctx context.Context, id int64,
 	return r.MemoryStore.MarkSucceeded(ctx, id, responseStatus, responseBody, expiresAt)
 }
 
-// bindGroupPlatformJSON 按管理请求类型绑定 JSON，未知字段返回错误。
+// bindGroupPlatformJSON binds an admin request and rejects unknown fields.
 func bindGroupPlatformJSON(t *testing.T, target any, body string) error {
 	t.Helper()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

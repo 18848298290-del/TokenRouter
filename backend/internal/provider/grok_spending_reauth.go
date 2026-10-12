@@ -8,12 +8,12 @@ import (
 
 const grokSpendingLimitProbeCooldown = 10 * time.Minute
 
-// GrokReauthWriter 写入 Grok 软性消费上限的重新认证标记。
+// GrokReauthWriter persists reauthorization flags after Grok spending-limit failures.
 type GrokReauthWriter interface {
 	UpdateExtra(context.Context, int64, map[string]any) error
 }
 
-// ClearGrokNeedsReauth 使用独立的五秒预算尝试清除重新认证标记。
+// ClearGrokNeedsReauth attempts to clear reauthorization flags with an independent five-second budget.
 func ClearGrokNeedsReauth(ctx context.Context, writer GrokReauthWriter, id int64) {
 	if writer == nil || id <= 0 {
 		return

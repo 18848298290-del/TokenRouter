@@ -18,7 +18,7 @@ type UserAttributeHandler struct {
 	attrService *identity.UserAttributeService
 }
 
-// CreateAttributeDefinitionRequest represents create attribute definition request.
+// CreateAttributeDefinitionRequest contains a new attribute definition.
 type CreateAttributeDefinitionRequest struct {
 	Key         string                           `json:"key" binding:"required,min=1,max=100"`
 	Name        string                           `json:"name" binding:"required,min=1,max=255"`
@@ -31,7 +31,7 @@ type CreateAttributeDefinitionRequest struct {
 	Enabled     bool                             `json:"enabled"`
 }
 
-// UpdateAttributeDefinitionRequest represents update attribute definition request.
+// UpdateAttributeDefinitionRequest contains optional changes to an attribute definition.
 type UpdateAttributeDefinitionRequest struct {
 	Name        *string                           `json:"name"`
 	Description *string                           `json:"description"`
@@ -43,28 +43,28 @@ type UpdateAttributeDefinitionRequest struct {
 	Enabled     *bool                             `json:"enabled"`
 }
 
-// ReorderRequest represents reorder attribute definitions request.
+// ReorderRequest lists attribute IDs in display order.
 type ReorderRequest struct {
 	IDs []int64 `json:"ids" binding:"required"`
 }
 
-// UpdateUserAttributesRequest represents update user attributes request.
+// UpdateUserAttributesRequest maps attribute IDs to their new values.
 type UpdateUserAttributesRequest struct {
 	Values map[int64]string `json:"values" binding:"required"`
 }
 
-// BatchGetUserAttributesRequest represents batch get user attributes request.
+// BatchGetUserAttributesRequest identifies users whose attributes are requested.
 type BatchGetUserAttributesRequest struct {
 	UserIDs []int64 `json:"user_ids" binding:"required"`
 }
 
-// BatchUserAttributesResponse represents batch user attributes response.
+// BatchUserAttributesResponse groups attribute values by user.
 type BatchUserAttributesResponse struct {
 	// Map of userID -> map of attributeID -> value
 	Attributes map[int64]map[int64]string `json:"attributes"`
 }
 
-// AttributeDefinitionResponse represents attribute definition response.
+// AttributeDefinitionResponse is the API representation of an attribute definition.
 type AttributeDefinitionResponse struct {
 	ID           int64                            `json:"id"`
 	Key          string                           `json:"key"`
@@ -81,7 +81,7 @@ type AttributeDefinitionResponse struct {
 	UpdatedAt    string                           `json:"updated_at"`
 }
 
-// AttributeValueResponse represents attribute value response.
+// AttributeValueResponse is the API representation of a stored attribute value.
 type AttributeValueResponse struct {
 	ID          int64  `json:"id"`
 	UserID      int64  `json:"user_id"`
@@ -125,7 +125,7 @@ func ValueToResponse(val *identity.UserAttributeValue) *AttributeValueResponse {
 	}
 }
 
-// ListDefinitions lists all attribute definitions
+// ListDefinitions lists definitions, optionally restricted to enabled definitions.
 // GET /admin/user-attributes
 func (h *UserAttributeHandler) ListDefinitions(c *gin.Context) {
 	enabledOnly := c.Query("enabled") == "true"
@@ -301,7 +301,6 @@ func (h *UserAttributeHandler) UpdateUserAttributes(c *gin.Context) {
 		return
 	}
 
-	// Return updated values
 	values, err := h.attrService.GetUserAttributes(c.Request.Context(), userID)
 	if err != nil {
 		response.ErrorFrom(c, err)

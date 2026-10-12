@@ -26,15 +26,15 @@ func TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID(t *testing.T) {
 			LoadLocation: time.LoadLocation, ID: 123,
 			Type:  capability.ProviderTypeOAuth,
 			Extra: map[string]any{},
-		}, // 刻意省略提供商与客户端标识
+		}, // Provider and client identity fields are deliberately absent.
 	}
 
-	fp := &anthropic.Fingerprint{ClientID: "deadbeef"} // 旧格式使用此客户端标识
+	fp := &anthropic.Fingerprint{ClientID: "deadbeef"} // Client ID for the legacy metadata format.
 
 	got := metadataUserID(parsed, provider, fp)
 	require.NotEmpty(t, got)
 
-	// 旧格式在提供商标识缺失时保留空字段。
+	// The legacy format leaves the missing account field empty.
 	re := regexp.MustCompile(`^user_[a-zA-Z0-9]+_account__session_[a-f0-9-]{36}$`)
 	require.True(t, re.MatchString(got), "unexpected user_id format: %s", got)
 }
@@ -61,15 +61,13 @@ func TestBuildOAuthMetadataUserID_UsesAccountUUIDWhenPresent(t *testing.T) {
 	got := metadataUserID(parsed, provider, nil)
 	require.NotEmpty(t, got)
 
-	// 提供商标识存在时写入完整身份字段。
+	// The account UUID populates the account identity field.
 	re := regexp.MustCompile(`^user_clientid123_account_acc-uuid_session_[a-f0-9-]{36}$`)
 	require.True(t, re.MatchString(got), "unexpected user_id format: %s", got)
 }
 
-// TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns 验证伪装路径合成的
-// metadata.user_id 在同一会话多轮请求间保持不变（session_id 稳定），贴近真实 Claude Code
-// 进程级稳定的 session。提供商 / 指纹 / UA 版本均相同，唯一可能变化的就是 session_id，
-// 因此直接比较完整 user_id 字符串即可判定 session_id 是否稳定。
+// TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns checks stable metadata as messages accumulate.
+// The provider, fingerprint, and UA stay fixed, so comparing the complete user_id also checks session_id.
 func TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 777, Type: capability.ProviderTypeOAuth, Extra: map[string]any{"account_uuid": "acc-uuid"}}}
 	fp := &anthropic.Fingerprint{ClientID: "clientid777", UserAgent: "claude-cli/2.1.161 (external, cli)"}
@@ -101,7 +99,7 @@ func TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns(t *testing.T) {
 	require.Equal(t, id1, id2, "session_id 应随对话增长保持不变")
 	require.Equal(t, id2, id3, "session_id 应跨所有轮次保持不变")
 
-	// 不同的首条 user 消息应派生出不同的 session_id（不同会话）。
+	// A different opening message represents a different session.
 	other := mustParse(`{"model":"claude-sonnet-4-5","system":"sys","messages":[` +
 		`{"role":"user","content":"a completely different opener"}]}`)
 	idOther := metadataUserID(other, provider, fp)

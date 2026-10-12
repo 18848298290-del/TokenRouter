@@ -19,8 +19,8 @@ type valueCopyState struct {
 	slices map[sliceIdentity][]any
 }
 
-// CloneValues 保留 JSON 值的实际数值类型、nil 与空集合，并隔离可变容器。
-// 对非法循环输入保留其循环形状，后续 JSON 校验仍按原错误路径拒绝。
+// CloneValues copies mutable containers while retaining numeric types and nil/empty distinctions.
+// Cycles retain their shape so later JSON validation can reject them.
 func CloneValues(values map[string]any) map[string]any {
 	return cloneValues(values, &valueCopyState{})
 }
@@ -98,7 +98,7 @@ func clonePointer[T any](value *T) *T {
 	return &out
 }
 
-// CloneRecord 复制提供商的嵌套数据，供模块、缓存和请求分别持有。
+// CloneRecord copies nested provider data for independent ownership by modules, caches, and requests.
 func CloneRecord(record *Record) *Record { return cloneRecord(record, make(map[*Record]*Record)) }
 
 func cloneRecord(record *Record, seen map[*Record]*Record) *Record {
@@ -113,7 +113,7 @@ func cloneRecord(record *Record, seen map[*Record]*Record) *Record {
 	return out
 }
 
-// CopyRecordInto 在现有记录地址内复制嵌套数据，并保持根对象自引用。
+// CopyRecordInto copies nested data into an existing address and preserves references to the root.
 func CopyRecordInto(out, record *Record) {
 	if out == nil {
 		return
@@ -126,7 +126,7 @@ func CopyRecordInto(out, record *Record) {
 }
 
 func copyRecordInto(out, record *Record, seen map[*Record]*Record) {
-	// 先固定源字段，使原地替换与自引用关联也复用同一个复制过程。
+	// Snapshot source fields first so in-place copies and root references use the same copy process.
 	snapshot := *record
 	seen[record] = out
 	record = &snapshot

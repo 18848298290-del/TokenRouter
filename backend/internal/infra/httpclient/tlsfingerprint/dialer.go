@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	utls "github.com/refraction-networking/utls" //nolint:revive // 包名是 tls，别名用来和 crypto/tls 区分。
+	utls "github.com/refraction-networking/utls" //nolint:revive // The package is named tls; the alias distinguishes it from crypto/tls.
 	"golang.org/x/net/proxy"
 )
 
 const (
-	// TLS 指纹传输也必须限制建连与握手阶段，避免绕过 http.Transport 的超时配置。
+	// Custom TLS dialers need their own dial and target-handshake timeouts.
 	defaultTLSFingerprintDialTimeout      = 10 * time.Second
 	defaultTLSFingerprintDialKeepAlive    = 30 * time.Second
 	defaultTLSFingerprintHandshakeTimeout = 10 * time.Second
@@ -221,7 +221,7 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
-// Flow: TCP connect to proxy -> CONNECT tunnel -> TLS handshake with utls.
+// HTTPS proxies add a standard TLS handshake before CONNECT.
 func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if d == nil || d.proxyURL == nil {
 		return nil, errors.New("HTTP proxy dialer missing proxy URL")
@@ -249,7 +249,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
 	if strings.EqualFold(d.proxyURL.Scheme, "https") {
-		// HTTPS 代理需要先和代理本身完成标准 TLS 握手，再在加密通道内发送 CONNECT。
+		// Complete TLS with the HTTPS proxy before sending CONNECT inside that connection.
 		proxyTLSConfig := &stdtls.Config{ServerName: d.proxyURL.Hostname(), MinVersion: stdtls.VersionTLS12}
 		if d.proxyTLSConfig != nil {
 			proxyTLSConfig = d.proxyTLSConfig.Clone()
@@ -301,8 +301,8 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		slog.Debug("tls_fingerprint_http_proxy_read_response_failed", "error", err)
 		return nil, fmt.Errorf("read CONNECT response: %w", err)
 	}
-	// CONNECT response has no body; do not defer resp.Body.Close() as it wraps the
-	// same conn that will be used for the TLS handshake.
+	// A successful CONNECT keeps this connection for the target TLS handshake.
+	// Closing its response body here would close the tunnel.
 
 	if resp.StatusCode != http.StatusOK {
 		_ = conn.Close()
@@ -380,7 +380,7 @@ func isGREASEValue(v uint16) bool {
 }
 
 // buildClientHelloSpecFromProfile constructs ClientHelloSpec from a Profile.
-// This is a standalone function that can be used by both Dialer and HTTPProxyDialer.
+// Direct and proxy dialers share the same profile defaults and extension ordering.
 func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
@@ -477,14 +477,14 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 		case 51: // key_share
 			extensions = append(extensions, &utls.KeyShareExtension{KeyShares: keyShares})
 		case 0xfe0d: // encrypted_client_hello (ECH, 65037)
-			// Send GREASE ECH with random payload — mimics Node.js behavior when no real ECHConfig is available.
+			// Send GREASE ECH with a random payload matching the expected ECH format.
 			// An empty GenericExtension causes "error decoding message" from servers that validate ECH format.
 			extensions = append(extensions, &utls.GREASEEncryptedClientHelloExtension{})
 		case 0xff01: // renegotiation_info
 			extensions = append(extensions, &utls.RenegotiationInfoExtension{})
 		default:
-			// Unknown extension — send as GenericExtension (type ID + empty data).
-			// This covers encrypt_then_mac(22) and any future extensions.
+			// Unknown IDs are sent with empty data; profiles must only use IDs
+			// whose empty payload is accepted by the peer.
 			extensions = append(extensions, &utls.GenericExtension{Id: id})
 		}
 	}

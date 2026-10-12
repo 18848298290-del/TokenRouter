@@ -27,7 +27,7 @@ func (w *serverTimingResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-// ServerTiming 在启用后采集管理端与用户端 Web 页面发出的请求耗时。
+// ServerTiming collects request durations for admin and user UI paths or markers when enabled.
 func ServerTiming(enabled bool) gin.HandlerFunc {
 	if !enabled {
 		return func(c *gin.Context) {
@@ -87,9 +87,9 @@ func (w *serverTimingResponseWriter) finalize() {
 	})
 }
 
-// ServerTimingHeaderValue 仅为已授权的 UI 范围返回耗时信息。
-// 管理员可以接收已采集的管理端或用户端请求耗时；普通认证用户只能接收 allowlist 内的用户 API 耗时。
-// X-User-UI-Request 只标识采集范围，绝不作为授权凭据。
+// ServerTimingHeaderValue returns collected timing data when the caller's role permits it.
+// Administrators can receive all collected timings; other authenticated users need an allowlisted user API path.
+// X-User-UI-Request selects collection scope and does not grant access to timing data.
 func ServerTimingHeaderValue(c *gin.Context) string {
 	if c == nil || c.Request == nil {
 		return ""
@@ -104,7 +104,7 @@ func ServerTimingHeaderValue(c *gin.Context) string {
 	return timing.HeaderValue(c.Request.Context(), time.Now(), responseCacheStatus(c.Writer.Header()))
 }
 
-// ServerTimingResponseHeader 构造 WebSocket 升级所需的额外响应头。
+// ServerTimingResponseHeader builds timing headers for a WebSocket upgrade.
 func ServerTimingResponseHeader(c *gin.Context) http.Header {
 	value := ServerTimingHeaderValue(c)
 	if value == "" {
@@ -138,7 +138,7 @@ func isUserUIRequest(c *gin.Context) bool {
 	return isUserTimingPath(c.Request.URL.Path)
 }
 
-// isUserTimingPath 判断路径是否为可向认证调用方返回 Server-Timing 的用户 Web API。
+// isUserTimingPath reports whether a user API path permits timing data for authenticated callers.
 func isUserTimingPath(path string) bool {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -180,7 +180,7 @@ func isUserTimingPath(path string) bool {
 	case rest == "/channel-monitors", strings.HasPrefix(rest, "/channel-monitors/"):
 		return true
 	case strings.HasPrefix(rest, "/payment/"):
-		// 排除公开支付与 webhook 接口。
+		// Public payment and webhook routes are outside the authenticated user scope.
 		if strings.HasPrefix(rest, "/payment/public") || strings.HasPrefix(rest, "/payment/webhook") {
 			return false
 		}

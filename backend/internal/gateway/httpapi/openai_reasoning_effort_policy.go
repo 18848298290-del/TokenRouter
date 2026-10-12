@@ -12,8 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ReasoningEffortPolicyForRequest 返回请求目标平台对应的分组策略。
-// 鉴权中间件已为复合 Key 选定分组，此处读取该分组。
+// ReasoningEffortPolicyForRequest returns the group policy for the selected platform.
+// Authentication has already selected the group for a composite key.
 func ReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey, platform string) (string, []routing.ReasoningEffortMapping, string, bool) {
 	if apiKey == nil || apiKey.Group == nil || selectedOpsPlatform(c) != platform {
 		return "", nil, "", false
@@ -23,7 +23,7 @@ func ReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey, plat
 	if err != nil {
 		maxEffort = ""
 	}
-	// 平台专属档位只作用于能够表达该档位的实际提供商。
+	// Discard mappings whose effort values cannot be expressed by the selected platform.
 	var mappings []routing.ReasoningEffortMapping
 	for _, mapping := range group.ReasoningEffortMappings {
 		if _, err := routing.NormalizeReasoningEffortMappingValueForPlatform(platform, mapping.From); err != nil {
@@ -37,17 +37,17 @@ func ReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey, plat
 	return maxEffort, mappings, group.MaxReasoningEffortOverLimit, true
 }
 
-// OpenAIReasoningEffortPolicyForRequest 返回 OpenAI 分组策略。
+// OpenAIReasoningEffortPolicyForRequest returns the OpenAI group policy.
 func OpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey) (string, []routing.ReasoningEffortMapping, string, bool) {
 	return ReasoningEffortPolicyForRequest(c, apiKey, capability.PlatformOpenAI)
 }
 
-// AnthropicReasoningEffortPolicyForRequest 返回 Anthropic 分组策略。
+// AnthropicReasoningEffortPolicyForRequest returns the Anthropic group policy.
 func AnthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey) (string, []routing.ReasoningEffortMapping, string, bool) {
 	return ReasoningEffortPolicyForRequest(c, apiKey, capability.PlatformAnthropic)
 }
 
-// ApplyOpenAIReasoningEffortPolicyForRequest 在策略改写前保存客户端档位，并执行分组裁决。
+// ApplyOpenAIReasoningEffortPolicyForRequest records the client effort before applying group policy.
 func ApplyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey, body []byte) ([]byte, bool, error) {
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	BindRequestedReasoningEffort(c, body, model)
@@ -58,8 +58,8 @@ func ApplyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.A
 	return requeststate.ApplyOpenAIReasoningEffortPolicy(body, maxEffort, mappings, overLimit)
 }
 
-// ApplyAnthropicReasoningEffortPolicyForRequest 在 Anthropic Messages/Responses
-// 请求转发前执行分组策略，支持 output_config.effort 和 reasoning.effort。
+// ApplyAnthropicReasoningEffortPolicyForRequest applies group policy before forwarding Messages or Responses.
+// It supports output_config.effort and reasoning.effort.
 func ApplyAnthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apikey.APIKey, body []byte) ([]byte, bool, error) {
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	BindRequestedReasoningEffort(c, body, model)
@@ -70,8 +70,8 @@ func ApplyAnthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *apike
 	return requeststate.ApplyOpenAIReasoningEffortPolicy(body, maxEffort, mappings, overLimit)
 }
 
-// BindOpenAIReasoningEffortPolicyForMessagesRequest 为客户端填写的 output_config.effort 绑定策略。
-// 字段缺省时跳过绑定，桥接器补充的 medium 按默认值处理。
+// BindOpenAIReasoningEffortPolicyForMessagesRequest binds policy for a client-supplied output_config.effort.
+// When the field is absent, the bridge-supplied medium remains a default and no policy is bound.
 func BindOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey *apikey.APIKey, body []byte) {
 	if c == nil || c.Request == nil {
 		return

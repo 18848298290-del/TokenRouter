@@ -15,7 +15,7 @@ func RelayRealtime(ctx context.Context, client, conn upstream.FrameConn) (bool, 
 	errCh := make(chan error, 2)
 	var audioObserved atomic.Bool
 
-	// 上游到客户端。
+	// Relay upstream events to the client.
 	go func() {
 		for {
 			_, msg, readErr := conn.ReadFrame(ctx)
@@ -33,7 +33,7 @@ func RelayRealtime(ctx context.Context, client, conn upstream.FrameConn) (bool, 
 		}
 	}()
 
-	// 客户端到上游，仅接受 JSON 事件。
+	// Forward valid client JSON events to the upstream connection.
 	go func() {
 		for {
 			kind, msg, readErr := client.ReadFrame(ctx)

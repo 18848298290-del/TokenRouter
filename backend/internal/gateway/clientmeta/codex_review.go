@@ -8,7 +8,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Codex 审查线索记录请求声明，权限校验和提供商选择由各自的入口处理。
+// Codex review markers are request claims; entrypoints perform authorization and provider selection.
 const (
 	CodexAutoReviewModel      = "codex-auto-review"
 	OpenAISubagentHeader      = "x-openai-subagent"
@@ -21,7 +21,7 @@ type CodexReviewInput struct {
 	Body                                          []byte
 }
 
-// CodexReviewParent 检查请求模型和各类审查声明，返回匹配且无冲突的父线程标识。
+// CodexReviewParent returns a parent thread ID when model and review claims agree without conflicting IDs.
 func CodexReviewParent(input CodexReviewInput) string {
 	if !IsCodexReviewModel(input.Model) {
 		return ""
@@ -88,7 +88,7 @@ func hasUnambiguousOpenAICodexReviewSubagent(candidates ...string) bool {
 	return subagent == "guardian" || subagent == "review"
 }
 
-// IsCodexReviewModel 判断请求模型是否需要读取 Codex 审查线索。
+// IsCodexReviewModel reports whether the model uses Codex review markers.
 func IsCodexReviewModel(model string) bool {
 	return strings.EqualFold(strings.TrimSpace(model), CodexAutoReviewModel)
 }

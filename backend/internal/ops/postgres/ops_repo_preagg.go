@@ -20,15 +20,14 @@ func (r *Store) UpsertHourlyMetrics(ctx context.Context, startTime, endTime time
 	businessLimitedSQL := opsBusinessLimitedSQL("client_status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", ignoredStatusCodes)
 	slaCountableSQL := opsSLACountableSQL("client_status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", ignoredStatusCodes)
 
-	// NOTE:
-	// - We aggregate usage_logs + ops_error_logs into ops_metrics_hourly.
-	// - We emit three dimension granularities via GROUPING SETS:
+	// Aggregate usage_logs and ops_error_logs into ops_metrics_hourly.
+	// GROUPING SETS emits three granularities:
 	//   1) overall: (bucket_start)
 	//   2) platform: (bucket_start, platform)
 	//   3) group: (bucket_start, platform, group_id)
 	//
-	// IMPORTANT: Postgres UNIQUE treats NULLs as distinct, so the table uses a COALESCE-based
-	// unique index; our ON CONFLICT target must match that expression set.
+	// PostgreSQL UNIQUE treats NULLs as distinct, so the table uses a COALESCE-based
+	// unique index. The ON CONFLICT target must match those expressions.
 	q := `
 WITH usage_base AS (
   SELECT
@@ -230,7 +229,7 @@ ON CONFLICT (bucket_start, COALESCE(platform, ''), COALESCE(group_id, 0)) DO UPD
 	if _, err := r.db.ExecContext(ctx, q, start, end); err != nil {
 		return err
 	}
-	// 即使某小时没有任何请求，也写入全局零值桶，供自动查询可靠判断连续覆盖。
+	// Write a global zero bucket for empty hours so coverage checks can distinguish them from unprocessed hours.
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO ops_metrics_hourly (bucket_start, platform, group_id)
 		SELECT bucket_start, NULL, NULL

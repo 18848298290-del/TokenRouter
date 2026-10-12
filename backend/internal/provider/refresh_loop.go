@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// RefreshLoop 只拥有周期刷新启停，候选和交换规则由同一刷新用例的 cycle 提供。
-// 首次调用 Start 时创建后台任务，停止后再次启动无效。
+// RefreshLoop runs periodic refresh cycles; the supplied cycle selects candidates and exchanges credentials.
+// The first successful StartContext launches the loop. A stopped loop cannot restart.
 type RefreshLoop struct {
 	mu               sync.Mutex
 	started, stopped bool
@@ -59,7 +59,8 @@ func (l *RefreshLoop) StartContext(parent context.Context, interval time.Duratio
 	return true, nil
 }
 
-// StopContext 等待实际轮次退出，错误结果固定，不以超时返回替代轮次完成。
+// StopContext cancels the loop and waits for the active cycle; its first result remains fixed, including
+// timeout errors.
 func (l *RefreshLoop) StopContext(ctx context.Context) error {
 	if l == nil {
 		return nil

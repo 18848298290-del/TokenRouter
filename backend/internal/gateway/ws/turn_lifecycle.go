@@ -2,7 +2,7 @@ package ws
 
 import "sync"
 
-// TurnLifecycle 串行化终态写出和下一轮接受；上行与下行 relay 仍并行。
+// TurnLifecycle serializes terminal writes with next-turn admission while allowing bidirectional relay.
 type TurnLifecycle struct {
 	mu       sync.Mutex
 	inFlight bool
@@ -37,12 +37,15 @@ func (l *TurnLifecycle) CancelResponseCreate() {
 	l.mu.Unlock()
 }
 
+// BeginTerminalWrite locks admission until FinishTerminalWrite is called.
 func (l *TurnLifecycle) BeginTerminalWrite() {
 	if l != nil {
 		l.mu.Lock()
 	}
 }
 
+// FinishTerminalWrite releases the lock taken by BeginTerminalWrite.
+// onSucceeded runs under that lock and must not reenter TurnLifecycle.
 func (l *TurnLifecycle) FinishTerminalWrite(succeeded bool, onSucceeded func()) {
 	if l == nil {
 		return

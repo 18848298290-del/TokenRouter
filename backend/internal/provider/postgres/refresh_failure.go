@@ -8,8 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ApplyOAuthRefreshFailure 在原单条健康写入中比较交换身份，保留提交后尽力 outbox。
-// 分别处理身份已变化与同身份无需延长 cooldown 的情况，后者仍按规则累计次数。
+// ApplyOAuthRefreshFailure compares the credential identity before updating health and attempts an
+// outbox write after commit.
+// It reports an identity match even when an existing cooldown is already long enough, so callers can
+// count that failure.
 func (r *ProviderStore) ApplyOAuthRefreshFailure(ctx context.Context, version provider.RefreshFailureVersion, failure provider.RefreshFailure) (bool, error) {
 	payload, err := json.Marshal(version.Credentials)
 	if err != nil {
@@ -65,7 +67,8 @@ func (r *ProviderStore) ApplyOAuthRefreshFailure(ctx context.Context, version pr
 	return matched, nil
 }
 
-// ClearAntigravityRefreshRequest 在原 Extra/outbox 事务内锁定并复核身份，防止提交后的清理覆盖新授权。
+// ClearAntigravityRefreshRequest locks and rechecks the identity within the Extra/outbox transaction
+// so cleanup cannot overwrite a new authorization.
 func (r *ProviderStore) ClearAntigravityRefreshRequest(ctx context.Context, version provider.CredentialVersion) (bool, error) {
 	if version.Platform != provider.PlatformAntigravity || version.Type != provider.ProviderTypeOAuth {
 		return false, nil

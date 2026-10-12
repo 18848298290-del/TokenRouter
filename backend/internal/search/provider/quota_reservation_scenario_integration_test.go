@@ -2,7 +2,8 @@
 
 package provider
 
-// 本文件覆盖 executor.go、brave.go、search/manager.go、search/lifecycle.go 与 search/rediscache/state.go 的额度预占和释放。
+// These scenarios cover quota reservation and release across HTTP execution, the search Manager,
+// shutdown, and Redis.
 
 import (
 	"context"
@@ -20,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// countingExecutor 记录搜索尝试与代理故障分类次数，搜索通过 HTTP 执行。
+// countingExecutor counts HTTP search attempts and proxy-error classifications.
 type countingExecutor struct {
 	*Executor
 	calls, classifications atomic.Int64

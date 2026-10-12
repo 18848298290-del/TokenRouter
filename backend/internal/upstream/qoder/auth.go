@@ -15,27 +15,27 @@ import (
 )
 
 const (
-	// CenterBaseURL 是国际站 Center 服务地址，保留名称以兼容旧调用。
+	// CenterBaseURL is the global Center endpoint.
 	CenterBaseURL = GlobalCenterBaseURL
 
-	// APIBaseURL 是国际站推理地址，保留名称以兼容旧调用。
+	// APIBaseURL is the global inference endpoint.
 	APIBaseURL = GlobalGatewayBaseURL
 
-	// ClientVersion 是国际站 COSY 客户端版本，保留名称以兼容旧调用。
+	// ClientVersion is the global COSY client version.
 	ClientVersion = GlobalClientVersion
 )
 
-// GenerateRequestID 生成随机请求 ID。
+// GenerateRequestID returns a random 32-character hexadecimal request ID.
 func GenerateRequestID() string {
 	return hex.EncodeToString(mustRandomBytes(16))
 }
 
-// RandomToken 生成指定长度的 URL-safe 随机 token。
+// RandomToken encodes length random bytes as unpadded URL-safe base64.
 func RandomToken(length int) string {
 	return base64URLEncode(mustRandomBytes(length))
 }
 
-// RandomHex 生成指定长度的十六进制随机字符串。
+// RandomHex returns length random hexadecimal characters.
 func RandomHex(length int) string {
 	b := mustRandomBytes((length + 1) / 2)
 	return hex.EncodeToString(b)[:length]
@@ -50,7 +50,7 @@ func mustRandomBytes(length int) []byte {
 }
 
 func base64URLEncode(b []byte) string {
-	// 手动实现不带 padding 的 URL-safe base64 编码。
+	// Encode with the URL-safe alphabet and omit padding.
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 	var result strings.Builder
 	result.Grow((len(b)*8 + 5) / 6)
@@ -79,26 +79,26 @@ func base64URLEncode(b []byte) string {
 	return result.String()
 }
 
-// NewMachine 创建国际站兼容的随机机器身份。
+// NewMachine creates a random identity for the global site.
 func NewMachine() *MachineIdentity {
 	return &MachineIdentity{
-		MachineID:    RandomHex(36), // 保留国际站既有的 36 位机器标识格式。
+		MachineID:    RandomHex(36), // Global machine IDs use 36 hexadecimal characters.
 		MachineToken: RandomToken(50),
 		MachineType:  RandomHex(18),
 	}
 }
 
-// NewMachineForSite 按官方站点协议创建机器身份。
+// NewMachineForSite creates the machine identity required by the selected site.
 func NewMachineForSite(site Site) *MachineIdentity {
 	parsed, err := ParseSite(string(site))
 	if err == nil && parsed == SiteCN {
-		// 国内客户端只持久化 UUID machine_id，其余机器头保持空值。
+		// The CN client uses a UUID machine_id and leaves the other machine headers empty.
 		return &MachineIdentity{MachineID: RandomUUIDLike()}
 	}
 	return NewMachine()
 }
 
-// ExchangePATContext 使用传入的 context 和请求执行器换取 AuthIdentity。
+// ExchangePATContext exchanges a PAT for an AuthIdentity using the supplied context and doer.
 func ExchangePATContext(ctx context.Context, pat string, machine *MachineIdentity, centerURL string, doer RequestDoer) (*AuthIdentity, error) {
 	inner := map[string]any{
 		"personalToken":      pat,
@@ -110,7 +110,7 @@ func ExchangePATContext(ctx context.Context, pat string, machine *MachineIdentit
 	return exchangeJobToken(ctx, inner, machine, centerURL, "PAT exchange", doer)
 }
 
-// RefreshSessionContext 使用传入的 context 和请求执行器刷新 COSY 身份。
+// RefreshSessionContext refreshes a COSY identity using the supplied context and doer.
 func RefreshSessionContext(ctx context.Context, refreshToken, securityOauthToken string, machine *MachineIdentity, centerURL string, doer RequestDoer) (*AuthIdentity, error) {
 	if strings.TrimSpace(securityOauthToken) == "" {
 		return nil, fmt.Errorf("qoder: refresh requires securityOauthToken")
@@ -214,7 +214,7 @@ func newCenterEncodedRequest(method, rawURL string, payload []byte, machine *Mac
 	return req, nil
 }
 
-// pathWithoutAlgo 移除 URL path 中用于签名计算之外的 "/algo" 前缀。
+// pathWithoutAlgo removes the /algo prefix excluded from the signing path.
 func pathWithoutAlgo(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {

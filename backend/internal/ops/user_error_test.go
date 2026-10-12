@@ -144,7 +144,7 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		return
 	}
 
-	// 基础字段正确映射
+	// Check basic field mapping.
 	if out.ID != 999 {
 		t.Errorf("want ID=999, got %d", out.ID)
 	}
@@ -158,7 +158,7 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		t.Errorf("UpstreamStatusCode mismatch")
 	}
 
-	// 用户可以查看自己请求的 client_ip、user_agent、group_name 和 stream，与用量明细字段一致。
+	// Users can view their own client IP, user agent, group, and stream fields, as in usage details.
 	if out.ClientIP != "1.2.3.4" {
 		t.Errorf("want client_ip=1.2.3.4, got %q", out.ClientIP)
 	}
@@ -172,7 +172,7 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		t.Errorf("want stream=true")
 	}
 
-	// 序列化后不含敏感字段
+	// Serialized output excludes internal fields.
 	b, err := json.Marshal(out)
 	if err != nil {
 		t.Fatalf("json.Marshal failed: %v", err)

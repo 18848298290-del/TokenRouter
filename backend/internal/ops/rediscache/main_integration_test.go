@@ -18,7 +18,7 @@ var (
 	redisNamespaceSeq uint64
 )
 
-// TestMain 初始化 Redis 测试实例并运行测试。
+// TestMain starts the Redis fixture and runs integration tests.
 func TestMain(m *testing.M) { os.Exit(runRedisTests(m)) }
 
 func runRedisTests(m *testing.M) int {

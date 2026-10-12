@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ProviderRouteEndpoints 只汇总提供商模块已经构造的 HTTP 实例。
+// ProviderRouteEndpoints holds constructed provider HTTP handlers.
 type ProviderRouteEndpoints struct {
 	ProviderArchive     *ArchiveHandler
 	ProviderCRS         *CRSHandler
@@ -19,7 +19,7 @@ type ProviderRouteEndpoints struct {
 	UpstreamUsage       *UpstreamUsageHandler
 }
 
-// RegisterAntigravityOAuthRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterAntigravityOAuthRoutes registers Antigravity endpoints on an authenticated, rate-limited, audited administrator group.
 func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *AntigravityOAuthHandler) {
 	antigravity := admin.Group("/antigravity")
 	{
@@ -29,7 +29,7 @@ func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *Antigravit
 	}
 }
 
-// RegisterGeminiOAuthRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterGeminiOAuthRoutes registers Gemini endpoints on an authenticated, rate-limited, audited administrator group.
 func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHandler) {
 	gemini := admin.Group("/gemini")
 	{
@@ -39,7 +39,7 @@ func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHand
 	}
 }
 
-// RegisterGrokOAuthRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterGrokOAuthRoutes registers Grok endpoints on an authenticated, rate-limited, audited administrator group.
 func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler) {
 	grok := admin.Group("/grok")
 	{
@@ -59,7 +59,7 @@ func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler)
 	}
 }
 
-// RegisterOpenAIOAuthRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterOpenAIOAuthRoutes registers OpenAI endpoints on an authenticated, rate-limited, audited administrator group.
 func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHandler) {
 	openai := admin.Group("/openai")
 	{
@@ -75,7 +75,7 @@ func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHand
 	}
 }
 
-// RegisterQoderOAuthRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterQoderOAuthRoutes registers Qoder endpoints on an authenticated, rate-limited, audited administrator group.
 func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandler) {
 	qoder := admin.Group("/qoder")
 	{
@@ -85,7 +85,7 @@ func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandle
 	}
 }
 
-// RegisterScheduledTestRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterScheduledTestRoutes registers test schedules on an authenticated, rate-limited, audited administrator group.
 func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTestHandler) {
 	plans := admin.Group("/scheduled-test-plans")
 	{
@@ -98,7 +98,7 @@ func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTest
 	admin.GET("/providers/:id/scheduled-test-plans", endpoint.ListByProvider)
 }
 
-// RegisterProviderRoutes 注册提供商管理路由，诊断路由由 scheduler 注入。
+// RegisterProviderRoutes registers provider management routes and invokes the supplied scheduler diagnostics registration.
 func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpoints, stepUp gin.HandlerFunc, registerDiagnostics func(*gin.RouterGroup)) {
 	providers := admin.Group("/providers")
 	{
@@ -143,7 +143,7 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 		providers.GET("/:id/models", endpoints.ProviderManagement.GetAvailableModels)
 		providers.POST("/:id/models/sync-upstream", endpoints.ProviderManagement.SyncUpstreamModels)
 		providers.POST("/batch", endpoints.ProviderManagement.BatchCreate)
-		// 提供商导出包含上游凭据原文，需要通过 step-up 二次验证。
+		// Exports contain raw upstream credentials and require step-up authentication.
 		providers.GET("/data", stepUp, endpoints.ProviderArchive.ExportData)
 		providers.POST("/data", endpoints.ProviderArchive.ImportData)
 		providers.POST("/batch-update-credentials", endpoints.ProviderManagement.BatchUpdateCredentials)
@@ -156,10 +156,10 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 		providers.POST("/:id/codex/invite-reset/invite", endpoints.CodexInviteReset.SendInvite)
 		providers.POST("/:id/codex/invite-reset/consume", endpoints.CodexInviteReset.Consume)
 
-		// Antigravity 默认模型映射
+		// Antigravity default model mapping.
 		providers.GET("/antigravity/default-model-mapping", endpoints.ProviderManagement.GetAntigravityDefaultModelMapping)
 
-		// Spark 影子提供商
+		// Spark shadow providers.
 		providers.POST("/:id/shadow", endpoints.OpenAIOAuth.CreateShadow)
 
 		// Claude OAuth routes

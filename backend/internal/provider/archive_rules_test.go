@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// TestArchiveIdentityHintsDoNotReplaceExplicitValues 检查 ID Token 补齐导入提示时保持平台、类型和已有非空值。
+// TestArchiveIdentityHintsDoNotReplaceExplicitValues protects the platform, type, and nonempty credentials during hint filling.
 func TestArchiveIdentityHintsDoNotReplaceExplicitValues(t *testing.T) {
 	item := transfer.DataProvider{Platform: " OpenAI ", Type: " OAUTH ", Credentials: map[string]any{"id_token": " fixture-token ", "email": "admin@example.test", "plan_type": nil}}
 	require.Equal(t, " fixture-token ", ArchiveIDToken(&item))

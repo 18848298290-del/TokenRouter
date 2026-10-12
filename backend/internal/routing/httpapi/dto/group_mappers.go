@@ -40,7 +40,7 @@ func GroupFromRoutingBase(g *routing.Group) Group {
 	}
 }
 
-// AdminGroupFromRouting 将分组转换为管理员 DTO，包含 model_routing 和 provider_count 等内部字段。
+// AdminGroupFromRouting includes administrator-only routing settings and provider counts.
 func AdminGroupFromRouting[A any](g *routing.Group) *AdminGroup[A] {
 	if g == nil {
 		return nil
@@ -69,7 +69,7 @@ func AdminGroupFromRouting[A any](g *routing.Group) *AdminGroup[A] {
 	return out
 }
 
-// GroupFromRouting 将分组转换为用户或管理员的 DTO 字段。
+// GroupFromRouting maps shared group fields and optionally resolves localized display text.
 func GroupFromRouting(g *routing.Group, language ...string) *Group {
 	if g == nil {
 		return nil
@@ -85,7 +85,7 @@ func GroupFromRouting(g *routing.Group, language ...string) *Group {
 	return &out
 }
 
-// GroupCapacityFromSummary 将容量摘要转换为响应字段，nil 返回 nil，零值保持为零。
+// GroupCapacityFromSummary maps capacity values, preserving nil and zero values.
 func GroupCapacityFromSummary(v *routing.GroupCapacitySummary) *GroupCapacity {
 	if v == nil {
 		return nil

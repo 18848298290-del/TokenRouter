@@ -7,19 +7,19 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 )
 
-// ClientSocket 把 HTTP WebSocket 限定为同步帧和关闭操作。
+// ClientSocket exposes synchronous frame reads, writes, and close operations.
 type ClientSocket interface {
 	ClientConn
 	Write(context.Context, int, []byte) error
 }
 
-// PolicyBlocked 保存返回客户端的错误信息和上游错误链。
+// PolicyBlocked contains the client-facing message and underlying policy error.
 type PolicyBlocked struct {
 	Message string
 	Cause   error
 }
 
-// DialResult 保存单次拨号的观测结果。
+// DialResult contains the outcome of one upstream dial.
 type DialResult struct {
 	PreparationError bool
 	Conn             FrameConn
@@ -35,7 +35,7 @@ type PassthroughHooks struct {
 	OnUpstreamError      func(int, string, int, []byte, string)
 }
 
-// PassthroughPort 的每个方法执行一次平台操作，透传流程管理重试和 turn 顺序。
+// PassthroughPort supplies platform operations; the session controls retries and turn order.
 type PassthroughPort interface {
 	ModelAttributes(context.Context, int, string, []byte) ([]byte, error)
 	UsageDecoder
@@ -77,7 +77,7 @@ type PassthroughPort interface {
 	ClosedError() error
 }
 
-// PassthroughOptions 只包含既有提供商资格和本次会话的技术预算。
+// PassthroughOptions contains provider identity and session I/O budgets.
 type PassthroughOptions struct {
 	ProviderID           int64
 	OAuth                bool
@@ -86,7 +86,7 @@ type PassthroughOptions struct {
 	InterTurnIdleTimeout time.Duration
 }
 
-// PassthroughSession 拥有入站过滤、逐轮快照、relay 观察和错误收尾。
+// PassthroughSession owns inbound filtering, turn snapshots, relay observation, and failure cleanup.
 type PassthroughSession struct {
 	Parameters func() Parameters
 	Options    PassthroughOptions

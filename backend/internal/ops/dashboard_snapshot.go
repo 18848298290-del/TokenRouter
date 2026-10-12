@@ -25,7 +25,8 @@ type opsDashboardSnapshotV2CacheKey struct {
 	BucketSecond int    `json:"bucket_second"`
 }
 
-// CachedDashboardSnapshot 并行执行三项查询，将结果缓存三十秒。
+// CachedDashboardSnapshot runs three queries concurrently and caches their combined result for thirty seconds.
+// The boolean reports a cache hit. Treat the returned snapshot as read-only because it is shared with the cache.
 func (s *OpsService) CachedDashboardSnapshot(ctx context.Context, filter *OpsDashboardFilter, bucketSeconds int) (*DashboardSnapshot, bool, error) {
 	s.snapshotOnce.Do(func() { s.snapshotCache = querycache.NewCache(30 * time.Second) })
 	keyRaw, _ := json.Marshal(opsDashboardSnapshotV2CacheKey{

@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// Options 包含 app 传入的启动配置，动态修复开关在请求处理中读取。
+// Options holds startup configuration; request processing reads dynamic repair switches.
 type Options struct {
 	Configured           bool
 	LogErrorBody         bool
@@ -38,7 +38,7 @@ type Options struct {
 	AllowPrivateHosts    bool
 }
 
-// Output 定义同步 HTTP 交换与错误观测操作。
+// Output supplies synchronous HTTP output and error observation.
 type Output interface {
 	RequestContext() context.Context
 	GetHeader(string) string
@@ -67,7 +67,7 @@ type Output interface {
 	MappedClaudeError(*gatewayadapter.ExecutionProvider, int, string, []byte) error
 }
 
-// Gemini 包含凭据、传输和错误观测依赖。
+// Gemini holds credential, transport, and error-observation dependencies.
 type Gemini struct {
 	Attributes   *routing.ModelAttributeService
 	Options      Options
@@ -79,7 +79,7 @@ type Gemini struct {
 	Enter        func() (func(), error)
 }
 
-// Antigravity 使用应用已有的健康与重试实例，每次调用独立构造平台输入。
+// Antigravity shares application health and retry services and builds platform inputs per call.
 type Antigravity struct {
 	Attributes *routing.ModelAttributeService
 	Options    Options
@@ -94,14 +94,14 @@ type Antigravity struct {
 	Enter      func() (func(), error)
 }
 
-// attempt 的图片计数与工具映射只属于一次平台调用，切换提供商时重新创建。
+// attempt owns image counts and tool mappings for one platform call; provider switches create a new instance.
 type attempt struct {
 	Output
 	ToolNames *anthropic.ToolNameRewrite
 	Images    int
 }
 
-// LogConfig 保留错误日志的缺省截断长度。
+// LogConfig returns error-body logging settings with a default byte limit.
 func (o Options) LogConfig() (bool, int) {
 	n := 2048
 	if o.LogErrorBodyMaxBytes > 0 {

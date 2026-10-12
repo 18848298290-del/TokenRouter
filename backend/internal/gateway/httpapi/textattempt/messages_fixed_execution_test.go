@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState 验证请求会话使用构造时绑定的依赖和传入状态。
+// TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState checks fixed dependencies and independent request state.
 func TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState(t *testing.T) {
 	dependencies := &messageExecutionDependencies{}
 	runtime := &Runtime{dependencies: dependencies}
@@ -44,7 +44,7 @@ func TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState(t *testing.T) {
 	}
 }
 
-// TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata 验证失败与已观测结果可同时返回，返回值不共享后续完成处理会修改的集合。
+// TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata checks partial failure usage and copied mutable metadata.
 func TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata(t *testing.T) {
 	first := 12
 	result := &forwardcore.MessagesResult{Model: "model", Usage: upstream.TokenUsage{OutputTokens: 2}, UpstreamHeaders: http.Header{"X-Request-Id": []string{"upstream"}}, FirstTokenMs: &first, ImageOutputSizes: []string{"1K"}}

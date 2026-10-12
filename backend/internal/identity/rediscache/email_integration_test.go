@@ -57,20 +57,17 @@ func (s *EmailCacheSuite) TestDeleteVerificationCode() {
 
 	require.NoError(s.T(), s.cache.SetVerificationCode(s.Ctx, email, data, 2*time.Minute), "SetVerificationCode")
 
-	// 删除前可以读取验证码。
 	_, err := s.cache.GetVerificationCode(s.Ctx, email)
 	require.NoError(s.T(), err, "GetVerificationCode before delete")
 
-	// 删除缓存中的验证码。
 	require.NoError(s.T(), s.cache.DeleteVerificationCode(s.Ctx, email), "DeleteVerificationCode")
 
-	// 删除后返回键缺失错误。
 	_, err = s.cache.GetVerificationCode(s.Ctx, email)
 	require.True(s.T(), errors.Is(err, redis.Nil), "expected redis.Nil after delete")
 }
 
 func (s *EmailCacheSuite) TestDeleteVerificationCode_NonExistent() {
-	// 删除不存在的键返回成功。
+	// Deleting a missing key is idempotent.
 	require.NoError(s.T(), s.cache.DeleteVerificationCode(s.Ctx, "nonexistent@example.com"), "DeleteVerificationCode non-existent")
 }
 

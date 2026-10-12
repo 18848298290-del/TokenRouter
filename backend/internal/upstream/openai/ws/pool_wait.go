@@ -7,21 +7,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// wsPoolWaiter 记录一次等待，preferred 非空时租约固定到该连接。
+// wsPoolWaiter tracks one wait; a non-nil preferred fixes the lease to that connection.
 type wsPoolWaiter struct {
 	compatibility wsConnCompatibility
 	preferred     *WSConn
 	startedAt     time.Time
 }
 
-// addWaiterLocked 检查提供商和指定连接的排队上限，调用方持有 ap.mu。
+// addWaiterLocked checks provider and preferred-connection queue limits. The caller holds ap.mu.
 func (p *WSConnPool) addWaiterLocked(ap *openAIWSProviderPool, ctx context.Context, compatibility wsConnCompatibility, preferred *WSConn, maxConns int) (*wsPoolWaiter, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	_, waiters := providerPoolLoadLocked(ap)
 	limit := p.queueLimitPerConn()
-	// 除法比较避免连接上限和排队上限相乘时溢出。
+	// Division avoids overflowing the product of connection and queue limits.
 	if waiters/limit >= maxConns || preferred != nil && int(preferred.waiters.Load()) >= limit {
 		return nil, openai.ErrOpenAIWSConnQueueFull
 	}
@@ -37,7 +37,7 @@ func (p *WSConnPool) addWaiterLocked(ap *openAIWSProviderPool, ctx context.Conte
 	return waiter, nil
 }
 
-// removeWaiterLocked 归还排队名额，调用方持有 ap.mu。
+// removeWaiterLocked returns a queue slot and elapsed wait time. The caller holds ap.mu.
 func removeWaiterLocked(ap *openAIWSProviderPool, waiter *wsPoolWaiter) time.Duration {
 	if waiter.preferred != nil {
 		waiter.preferred.waiters.Add(-1)
@@ -51,7 +51,7 @@ func removeWaiterLocked(ap *openAIWSProviderPool, waiter *wsPoolWaiter) time.Dur
 	return time.Since(waiter.startedAt)
 }
 
-// hasCompatibleWaiterLocked 让已归还的连接等待兼容请求领取，调用方持有 ap.mu。
+// hasCompatibleWaiterLocked reports whether a general waiter can use conn. The caller holds ap.mu.
 func hasCompatibleWaiterLocked(ap *openAIWSProviderPool, conn *WSConn) bool {
 	return ap.waiters[conn.compatibility] > 0
 }

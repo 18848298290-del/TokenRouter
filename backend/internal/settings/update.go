@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// PreparedChange 包含校验后的设置值和提交后执行的函数。
+// PreparedChange contains validated values, expected stored values, and a post-commit callback.
 type PreparedChange struct {
 	Module   string
 	Values   map[string]string
@@ -19,7 +19,7 @@ type PreparedChange struct {
 	Apply    func(context.Context) error
 }
 
-// Updates 统一同实例综合更新的读取、准备、提交和运行发布。
+// Updates serializes reads, preparation, persistence, and runtime application within this instance.
 // @project-doc docs/interfaces/configuration.md#runtime_settings
 type Updates struct {
 	repo   Repository
@@ -32,8 +32,8 @@ type Updates struct {
 	cancel context.CancelFunc
 }
 
-// UpdateSession 的保护从读取旧值前开始，一直覆盖提交后的应用。
-// 调用者必须 Close；它不会把已提交的数据回滚。
+// UpdateSession holds update coordination from before reading current values through post-commit application.
+// Callers must Close the session. Closing does not roll back committed data.
 type UpdateSession struct {
 	owner     *Updates
 	ctx       context.Context
@@ -76,7 +76,8 @@ func (u *Updates) Begin(ctx context.Context) (*UpdateSession, error) {
 
 func (s *UpdateSession) Context() context.Context { return s.ctx }
 
-// Commit 合并已准备的键，只写入一次；应用失败保留数据库事实并返回明确标识。
+// Commit merges prepared keys and writes one batch. Application failures return SETTINGS_APPLY_FAILED with
+// persisted=true; committed values remain stored.
 func (s *UpdateSession) Commit(changes ...PreparedChange) error {
 	if s.committed {
 		return errors.New("settings update already committed")
@@ -146,7 +147,7 @@ func (u *Updates) finish() {
 	}
 }
 
-// Seal 在 HTTP 等待前拒绝新更新，并取消现有准备和应用。
+// Seal rejects new updates and cancels active preparation and application contexts before HTTP shutdown waits.
 func (u *Updates) Seal() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -160,7 +161,8 @@ func (u *Updates) Seal() {
 	}
 }
 
-// Stop 的预算只限制等待，未完成的更新仍持有依赖且不会报告成功。
+// Stop seals updates and waits for sessions to close. Its deadline limits the wait; unfinished sessions still
+// hold their dependencies.
 func (u *Updates) Stop(ctx context.Context) error {
 	u.Seal()
 	select {

@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// quotaWindowLocation 解析配置中的 JSON 时区，billing 负责日期计算和重置规则。
+// quotaWindowLocation resolves the configured time zone; billing computes reset dates and windows.
 func quotaWindowLocation(extra map[string]any, load func(string) (*time.Location, error)) *time.Location {
 	name, _ := extra["quota_reset_timezone"].(string)
 	if name == "" {

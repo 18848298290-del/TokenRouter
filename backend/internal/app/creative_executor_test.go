@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// creativeExecutionGroupProbe 提供分组读取函数，记录装配期间的读取次数。
+// creativeExecutionGroupProbe counts group reads to detect eager reads during assembly.
 type creativeExecutionGroupProbe struct{ reads int }
 
 type creativePolicyGroups struct{ group *routing.Group }
@@ -28,7 +28,7 @@ type creativePolicyProviders struct {
 	value *gatewayprovider.ExecutionProvider
 }
 
-// 价格存储为空，验证分组策略不依赖价格配置关联。
+// creativeNoPrices leaves pricing storage empty to check that group policy works without pricing configuration.
 type creativeNoPrices struct {
 	routing.PricingConfigRepository
 }
@@ -101,7 +101,7 @@ func TestCreativeExecutorForwardsModelAllowedByGroupScheduler(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(body, "model").String())
 
-	// 模型目录和执行数据各自持有策略的深拷贝，修改副本后持久化分组的数据保持不变。
+	// Catalog and execution views own separate policy copies; mutating them must leave the stored group unchanged.
 	view := creativeGroupView(group, "en")
 	executionGroup, err := executor.Group(ctx, group.ID)
 	require.NoError(t, err)
@@ -111,7 +111,8 @@ func TestCreativeExecutorForwardsModelAllowedByGroupScheduler(t *testing.T) {
 	require.Equal(t, []string{"gpt-image-2"}, group.RoutingPolicy.AllowedModels)
 }
 
-// TestCreativeExecutorKeepsPersistedGroupWhenClientRestricted 检查已保存的任务遇到客户端限制时仍使用原分组。
+// TestCreativeExecutorKeepsPersistedGroupWhenClientRestricted checks that client restrictions do not reroute a
+// saved task.
 func TestCreativeExecutorKeepsPersistedGroupWhenClientRestricted(t *testing.T) {
 	fallback := int64(99)
 	group := &routing.Group{

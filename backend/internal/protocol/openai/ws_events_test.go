@@ -13,7 +13,7 @@ var (
 	benchmarkWSParseStringSink string
 	benchmarkWSParseMapSink    map[string]any
 
-	// 基准保留响应 ID 和响应对象的存在状态。
+	// Benchmark sinks retain the response ID and response-object presence.
 	benchmarkOpenAIWSStringSink string
 	benchmarkOpenAIWSBoolSink   bool
 )

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// shutdownBody 确认停止入口不会读取报文或调用尚未进入的业务依赖。
+// shutdownBody fails the test if a rejected request reads its body.
 type shutdownBody struct{ t *testing.T }
 
 func (b shutdownBody) Read([]byte) (int, error) {

@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// genericChatAttemptBridge 保存 Chat Completions 单次请求的转发状态。
+// genericChatAttemptBridge holds forwarding state for one Chat Completions request.
 type genericChatAttemptBridge struct {
 	messageAttemptBridge
 	requestCtx                          context.Context
@@ -28,7 +28,7 @@ type genericChatAttemptBridge struct {
 	groupMapping                        routing.GroupMappingResult
 }
 
-// Select 选择本次 Chat Completions 请求使用的提供商。
+// Select chooses a provider for the current Chat Completions attempt.
 func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
 	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.selectionSessionHash, b.reqModel, excluded, "", int64(0))
@@ -40,7 +40,7 @@ func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure 处理首次选择提供商失败的响应。
+// FirstSelectionFailure writes the error from the initial provider selection.
 func (b *genericChatAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().chatCompletionsErrorResponse(b.c, status, errType, message)
@@ -59,10 +59,10 @@ func (b *genericChatAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	b.binding().chatCompletionsErrorResponse(b.c, cls.Status, cls.ErrType, message)
 }
 
-// Acquire 申请用户和提供商的并发名额。
+// Acquire acquires or adopts the selected provider's concurrency slot.
 func (b *genericChatAttemptBridge) Acquire() bool {
 	var err error
-	// 4. Acquire provider concurrency slot
+	// Reuse an acquired slot or follow the selection's wait plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -89,7 +89,7 @@ func (b *genericChatAttemptBridge) Acquire() bool {
 	return true
 }
 
-// Forward 按提供商平台转发 Chat Completions 请求。
+// Forward dispatches Chat Completions to the selected provider's platform.
 func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Outcome {
 	var err error
 
@@ -100,7 +100,7 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 
 		return textflow.Outcome{Skip: true}
 	}
-	// 5. Forward request
+	// Capture writer size before forwarding so later errors can detect prior output.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	b.forwardBody = b.body
 	if b.groupMapping.Mapped {
@@ -149,7 +149,7 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 	return out
 }
 
-// OtherFailure 处理尝试转发时的普通错误。
+// OtherFailure reports forwarding errors that were not communicated to the client.
 func (b *genericChatAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
@@ -164,9 +164,9 @@ func (b *genericChatAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Complete 记录已完成请求的用量和调度结果。
+// Complete captures usage and records the completed attempt.
 func (b *genericChatAttemptBridge) Complete(_ textflow.AttemptState) {
-	// 6. Record usage
+	// Capture request metadata before submitting completion work.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
@@ -175,7 +175,7 @@ func (b *genericChatAttemptBridge) Complete(_ textflow.AttemptState) {
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -235,7 +235,7 @@ func (b *genericChatAttemptBridge) PolicyFailure(err error) {
 	}
 }
 
-// shouldUseAntigravityCompat 判断提供商是否需要走 Antigravity 兼容转换。
+// shouldUseAntigravityCompat reports whether this is an Antigravity OAuth provider.
 func shouldUseAntigravityCompat(provider *gatewaycapture.ExecutionProvider) bool {
 	return provider != nil &&
 		provider.Record.Platform == capability.PlatformAntigravity &&

@@ -82,7 +82,7 @@ func (r *SubscriptionStore) GetByID(ctx context.Context, id int64) (*billing.Use
 	return SubscriptionFromEntity(m), nil
 }
 
-// GetByIDIncludeDeleted 绕过软删除过滤查询订阅，供恢复撤销订阅时读取原始记录。
+// GetByIDIncludeDeleted bypasses soft-delete filtering and retains stored status for restoring revoked subscriptions.
 func (r *SubscriptionStore) GetByIDIncludeDeleted(ctx context.Context, id int64) (*billing.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	queryCtx := mixins.SkipSoftDelete(ctx)
@@ -157,7 +157,7 @@ func (r *SubscriptionStore) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// Restore 清除订阅软删除标记，并按当前时间窗口写回恢复后的状态。
+// Restore clears the soft-delete marker and writes the status computed by the caller.
 func (r *SubscriptionStore) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*billing.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	queryCtx := mixins.SkipSoftDelete(ctx)
@@ -313,7 +313,7 @@ func (r *SubscriptionStore) List(ctx context.Context, params pagination.Paginati
 	client := clientFromContext(ctx, r.client)
 	queryCtx := ctx
 	if status == "" || status == billing.SubscriptionStatusRevoked {
-		// 管理端列表需要看到软删除订阅，以便撤销后仍能展示历史记录。
+		// Administrator listings include soft-deleted subscriptions for revocation history.
 		queryCtx = mixins.SkipSoftDelete(ctx)
 	}
 	q := client.UserSubscription.Query()
@@ -525,8 +525,8 @@ func (r *SubscriptionStore) translateConditionalWindowReset(ctx context.Context,
 		return nil
 	}
 
-	// 旧快照触发的重置是预期的空操作，说明另一请求已推进窗口；但目标记录
-	// 不存在时返回 ErrSubscriptionNotFound。
+	// A stale window snapshot can make the reset a no-op after another request advances it.
+	// A missing subscription still returns ErrSubscriptionNotFound.
 	exists, err := client.UserSubscription.Query().Where(usersubscription.IDEQ(id)).Exist(ctx)
 	if err != nil {
 		return translatePersistenceError(err, billing.ErrSubscriptionNotFound, nil)
@@ -642,7 +642,8 @@ func SubscriptionFromEntity(m *dbent.UserSubscription) *billing.UserSubscription
 	return userSubscriptionEntityToServiceWithStatusMapping(m, true)
 }
 
-// SubscriptionFromEntityPreserveStatus 保留软删除记录的持久化状态，避免恢复逻辑误把 revoked 写回数据库。
+// SubscriptionFromEntityPreserveStatus keeps stored status for deleted rows so restoration does not write a
+// display-only revoked status back.
 func SubscriptionFromEntityPreserveStatus(m *dbent.UserSubscription) *billing.UserSubscription {
 	return userSubscriptionEntityToServiceWithStatusMapping(m, false)
 }

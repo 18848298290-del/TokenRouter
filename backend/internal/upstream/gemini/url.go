@@ -8,20 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// geminiAIStudioActions 是允许出现在上游 URL 里的 action 集合，与 ForwardNative
-// 的入站校验保持一致，同时避免 compat 侧把可变字符串直接拼进 path。
+// geminiAIStudioActions restricts the operations embedded in model URLs.
+// It covers generation and token counting for native and compatibility requests.
 var geminiAIStudioActions = map[string]struct{}{
 	"generateContent":       {},
 	"streamGenerateContent": {},
 	"countTokens":           {},
 }
 
-// BuildGeminiAIStudioModelActionURL 组装 AI Studio 的
-// /v1beta/models/{model}:{action} 上游 URL。
+// BuildGeminiAIStudioModelActionURL builds an AI Studio
+// /v1beta/models/{model}:{action} URL.
 //
-// model 是客户端可控的（native 路由取自 URL 片段，compat 路由取自请求体的 model
-// 字段，之后可能再经分组映射），因此必须先过路径片段护栏才能拼进 path，
-// 见 upstream_path_guard.go。新增 AI Studio 端点请一律走本函数。
+// Model names can originate in client paths or bodies and pass through group mapping.
+// Validate them with upstream.ValidateUpstreamPathSegment before constructing the URL.
+// Use this builder for AI Studio model-action endpoints.
 func BuildGeminiAIStudioModelActionURL(baseURL, model, action string, stream bool) (string, error) {
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if trimmedBase == "" {
@@ -46,8 +46,8 @@ func BuildGeminiAIStudioModelActionURL(baseURL, model, action string, stream boo
 	return fullURL, nil
 }
 
-// IsSafeGeminiModelPathSegment 供 handler 层在解析出 URL 里的模型名后立刻校验，
-// 模型名非法时在 handler 返回 400。
+// IsSafeGeminiModelPathSegment reports whether a parsed model name is safe for a URL path.
+// Handlers can reject unsafe names before forwarding.
 func IsSafeGeminiModelPathSegment(model string) bool {
 	return upstream.IsSafeUpstreamPathSegment(strings.TrimSpace(model))
 }

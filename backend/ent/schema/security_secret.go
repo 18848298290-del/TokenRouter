@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// SecuritySecret 存储系统级安全密钥（如 JWT 签名密钥、TOTP 加密密钥）。
+// SecuritySecret stores system secrets such as JWT signing and TOTP encryption keys.
 type SecuritySecret struct {
 	ent.Schema
 }

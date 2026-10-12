@@ -62,42 +62,42 @@ func TestClaudeTokenRefresher_NeedsRefresh(t *testing.T) {
 		{
 			name: "expires_at as string - expired",
 			credentials: map[string]any{
-				"expires_at": "1000", // 1970-01-01 00:16:40 UTC, 已过期
+				"expires_at": "1000", // 1970-01-01 00:16:40 UTC; expired.
 			},
 			wantRefresh: true,
 		},
 		{
 			name: "expires_at as float64 - expired",
 			credentials: map[string]any{
-				"expires_at": float64(1000), // 数字类型，已过期
+				"expires_at": float64(1000), // Numeric timestamp; expired.
 			},
 			wantRefresh: true,
 		},
 		{
 			name: "expires_at as RFC3339 - expired",
 			credentials: map[string]any{
-				"expires_at": "1970-01-01T00:00:00Z", // RFC3339 格式，已过期
+				"expires_at": "1970-01-01T00:00:00Z", // RFC3339 timestamp; expired.
 			},
 			wantRefresh: true,
 		},
 		{
 			name: "expires_at as string - far future",
 			credentials: map[string]any{
-				"expires_at": "9999999999", // 远未来
+				"expires_at": "9999999999", // Far-future timestamp.
 			},
 			wantRefresh: false,
 		},
 		{
 			name: "expires_at as float64 - far future",
 			credentials: map[string]any{
-				"expires_at": float64(9999999999), // 远未来，数字类型
+				"expires_at": float64(9999999999), // Numeric far-future timestamp.
 			},
 			wantRefresh: false,
 		},
 		{
 			name: "expires_at as RFC3339 - far future",
 			credentials: map[string]any{
-				"expires_at": "2099-12-31T23:59:59Z", // RFC3339 格式，远未来
+				"expires_at": "2099-12-31T23:59:59Z", // RFC3339 far-future timestamp.
 			},
 			wantRefresh: false,
 		},
@@ -145,7 +145,7 @@ func TestClaudeTokenRefresher_NeedsRefresh_WithinWindow(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 	refreshWindow := 30 * time.Minute
 
-	// 设置一个在刷新窗口内的时间（当前时间 + 15 分钟）
+	// Expire in 15 minutes, within the refresh window.
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	tests := []struct {
@@ -184,7 +184,7 @@ func TestClaudeTokenRefresher_NeedsRefresh_OutsideWindow(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 	refreshWindow := 30 * time.Minute
 
-	// 设置一个在刷新窗口外的时间（当前时间 + 1 小时）
+	// Expire in one hour, outside the refresh window.
 	expiresAt := time.Now().Add(1 * time.Hour).Unix()
 
 	tests := []struct {

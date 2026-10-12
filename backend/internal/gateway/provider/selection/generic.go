@@ -36,12 +36,12 @@ type selectionFailureDiagnosis struct {
 	Detail   string
 }
 
-// SelectProviderForModel 选择支持指定模型的提供商（粘性会话+优先级+模型映射）。
+// SelectProviderForModel selects a model-compatible provider using session stickiness and priority.
 func (s *Generic) SelectProviderForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*gatewayprovider.ExecutionProvider, error) {
 	return s.SelectProviderForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, nil)
 }
 
-// SelectProviderForModelWithExclusions 选择支持请求模型且不在排除集合中的提供商。
+// SelectProviderForModelWithExclusions selects a compatible provider outside the exclusion set.
 func (s *Generic) SelectProviderForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.ExecutionProvider, error) {
 	ctx = withSelectionRequest(ctx, groupID, requestedModel)
 	core, scope := s.genericSelector()
@@ -49,9 +49,9 @@ func (s *Generic) SelectProviderForModelWithExclusions(ctx context.Context, grou
 	return scope.oldProvider(selected), err
 }
 
-// SelectProviderWithLoadAwareness selects provider with load-awareness and wait plan.
-// metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
-// tokenRouterUserID: 系统用户 ID，用于二维亲和调度
+// SelectProviderWithLoadAwareness selects by load and may return a wait plan.
+// metadataUserID and tokenRouterUserID are accepted for caller compatibility;
+// this selection path does not use them.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#account_selection_and_failover
 func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, tokenRouterUserID int64) (*gatewayprovider.SelectionResult, error) {
 	ctx = withSelectionRequest(ctx, groupID, requestedModel)
@@ -61,8 +61,8 @@ func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *
 	return scope.restore(result), err
 }
 
-// ReportAdvancedProviderScheduleResult 将通用网关转发结果写入高级调度运行时反馈。
-// 高级调度器选出的请求更新统计。
+// ReportAdvancedProviderScheduleResult records feedback for advanced selections.
+// It uses the selection's captured feedback settings when present.
 func (s *Generic) ReportAdvancedProviderScheduleResult(selection *gatewayprovider.SelectionResult, providerID int64, success bool, result *forwardcore.MessagesResult) {
 	if s == nil || selection == nil || !selection.AdvancedScheduler || providerID <= 0 {
 		return
@@ -78,7 +78,7 @@ func (s *Generic) ReportAdvancedProviderScheduleResult(selection *gatewayprovide
 	s.advancedSchedulerStats().Report(providerID, success, firstTokenMs)
 }
 
-// RecordAdvancedProviderSwitch 记录高级调度请求的一次提供商切换事件。
+// RecordAdvancedProviderSwitch records a switch for an advanced selection.
 func (s *Generic) RecordAdvancedProviderSwitch(selection *gatewayprovider.SelectionResult) {
 	if s == nil || selection == nil || !selection.AdvancedScheduler {
 		return
@@ -86,7 +86,7 @@ func (s *Generic) RecordAdvancedProviderSwitch(selection *gatewayprovider.Select
 	s.advancedSchedulerStats().ReportSwitch()
 }
 
-// advancedSchedulerStats 返回网关级运行时反馈；测试或旧构造路径未初始化时惰性补齐。
+// advancedSchedulerStats returns shared runtime feedback, initializing it when absent.
 func (s *Generic) advancedSchedulerStats() *schedulercore.RuntimeStats {
 	if s == nil {
 		return nil
@@ -97,7 +97,7 @@ func (s *Generic) advancedSchedulerStats() *schedulercore.RuntimeStats {
 	return s.advancedProviderStats
 }
 
-// advancedSchedulerEffectiveSettingsForRequest 将最终分组覆盖应用到网关通用设置之上。
+// advancedSchedulerEffectiveSettingsForRequest applies final-group overrides to global scheduler settings.
 func (s *Generic) advancedSchedulerEffectiveSettingsForRequest(ctx context.Context, id *int64) policy.EffectiveSettings {
 	if ctx == nil {
 		ctx = context.Background()
@@ -167,7 +167,7 @@ func (s *Generic) resolveGatewayGroup(ctx context.Context, groupID *int64) (*rou
 	return group, groupID, nil
 }
 
-// checkClaudeCodeRestriction 检查当前组的客户端限制，选择器不自行切换分组。
+// checkClaudeCodeRestriction validates client restrictions on the admitted group.
 func (s *Generic) checkClaudeCodeRestriction(ctx context.Context, groupID *int64) (*routing.Group, *int64, error) {
 	if groupID == nil {
 		return nil, groupID, nil
@@ -209,9 +209,9 @@ func (s *Generic) listSchedulableProviders(ctx context.Context, groupID *int64, 
 	return providers, false, nil
 }
 
-// IsSingleAntigravityProviderGroup 检查指定分组是否只有一个 antigravity 平台的可调度提供商。
-// 用于 Handler 层在首次请求时提前设置 SingleProviderRetry context，
-// 避免单提供商分组收到 503 时错误地设置模型限流标记导致后续请求连续快速失败。
+// IsSingleAntigravityProviderGroup reports whether exactly one schedulable Antigravity provider belongs to the group.
+// Handlers use this to set SingleProviderRetry before the first attempt,
+// so a 503 does not leave the sole provider model-limited for later requests.
 func (s *Generic) IsSingleAntigravityProviderGroup(ctx context.Context, groupID *int64) bool {
 	providers, _, err := s.listSchedulableProviders(ctx, groupID, capability.PlatformAntigravity, true)
 	if err != nil {
@@ -239,13 +239,13 @@ func (s *Generic) isProviderSchedulableForModelSelection(ctx context.Context, pr
 	return gatewayprovider.ExecutionModelPolicy(provider).Schedulable(ctx, routingModel)
 }
 
-// shouldClearStickySessionForProviderLayer 使用分组映射后的模型检查粘性提供商模型限流。
+// shouldClearStickySessionForProviderLayer checks stickiness using the group-mapped model.
 func (s *Generic) shouldClearStickySessionForProviderLayer(ctx context.Context, provider *gatewayprovider.ExecutionProvider, requestedModel string) bool {
 	routingModel := s.groupMappedModelForProviderLayer(ctx, requestedModel)
 	return shouldClearStickySession(provider, routingModel)
 }
 
-// isProviderEligibleExceptModelSupport 判断提供商除模型白名单/映射外是否具备本次请求资格。
+// isProviderEligibleExceptModelSupport checks request eligibility before provider model-support rules.
 func (s *Generic) isProviderEligibleExceptModelSupport(ctx context.Context, provider *gatewayprovider.ExecutionProvider, requestedModel string, platform string, excludedIDs map[int64]struct{}, useMixed bool, groupID *int64, schedGroup *routing.Group) bool {
 	if !gatewayprovider.ExecutionModelPolicy(provider).AllowsProtocol(ctx) {
 		return false
@@ -274,7 +274,7 @@ func (s *Generic) isProviderEligibleExceptModelSupport(ctx context.Context, prov
 	return true
 }
 
-// shouldUseGroupModelUnsupportedError 判断提供商选择失败是否明确由分组模型限制导致。
+// shouldUseGroupModelUnsupportedError reports whether otherwise eligible providers all reject the requested model.
 func (s *Generic) shouldUseGroupModelUnsupportedError(ctx context.Context, providers []gatewayprovider.ExecutionProvider, requestedModel string, platform string, excludedIDs map[int64]struct{}, useMixed bool, groupID *int64, schedGroup *routing.Group) bool {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || len(providers) == 0 {
@@ -294,7 +294,7 @@ func (s *Generic) shouldUseGroupModelUnsupportedError(ctx context.Context, provi
 	return hasRelevantProvider
 }
 
-// groupModelUnsupportedErrorIfApplicable 在确认是分组模型限制时返回 typed error。
+// groupModelUnsupportedErrorIfApplicable returns a typed group-model rejection when applicable.
 func (s *Generic) groupModelUnsupportedErrorIfApplicable(ctx context.Context, providers []gatewayprovider.ExecutionProvider, requestedModel string, platform string, excludedIDs map[int64]struct{}, useMixed bool, groupID *int64, schedGroup *routing.Group) error {
 	if s.shouldUseGroupModelUnsupportedError(ctx, providers, requestedModel, platform, excludedIDs, useMixed, groupID, schedGroup) {
 		if err := routing.NewGroupModelRejection(platform, requestedModel, modelRejectionSources(providers)); err != nil {
@@ -305,7 +305,7 @@ func (s *Generic) groupModelUnsupportedErrorIfApplicable(ctx context.Context, pr
 }
 
 // isProviderInGroup checks if the provider belongs to the specified group.
-// When groupID is nil, returns true only for ungrouped providers (no group assignments).
+// A nil or nonpositive group ID is rejected.
 func (s *Generic) isProviderInGroup(provider *gatewayprovider.ExecutionProvider, groupID *int64) bool {
 	return openAIStickyProviderMatchesGroup(provider, groupID)
 }
@@ -331,8 +331,8 @@ func (s *Generic) withWindowCostPrefetch(ctx context.Context, providers []gatewa
 	return s.windowCostGuard().Prefetch(ctx, values)
 }
 
-// isProviderSchedulableForQuota 检查提供商是否在配额限制内
-// 适用于配置了 quota_limit 的 apikey 和 bedrock 类型提供商。
+// isProviderSchedulableForQuota checks configured quota limits for API Key and Bedrock providers.
+// Other provider types pass this check.
 func (s *Generic) isProviderSchedulableForQuota(provider *gatewayprovider.ExecutionProvider) bool {
 	if !provider.View().IsAPIKeyOrBedrock() {
 		return true
@@ -340,14 +340,13 @@ func (s *Generic) isProviderSchedulableForQuota(provider *gatewayprovider.Execut
 	return !provider.View().IsQuotaExceeded()
 }
 
-// isProviderSchedulableForWindowCost 检查提供商是否可根据窗口费用进行调度
-// 仅适用于 Anthropic OAuth/SetupToken 提供商
-// 返回 true 表示可调度，false 表示不可调度。
+// isProviderSchedulableForWindowCost checks the Anthropic OAuth/SetupToken window-cost limit.
+// Sticky requests can use the configured reserve.
 func (s *Generic) isProviderSchedulableForWindowCost(ctx context.Context, provider *gatewayprovider.ExecutionProvider, sticky bool) bool {
 	return s.windowCostGuard().Allow(ctx, costWindowInput(provider), sticky)
 }
 
-// withRPMPrefetch 批量预取所有候选提供商的 RPM 计数。
+// withRPMPrefetch prefetches RPM counts for Anthropic OAuth/SetupToken candidates with a positive base RPM.
 func (s *Generic) withRPMPrefetch(ctx context.Context, providers []gatewayprovider.ExecutionProvider) context.Context {
 	if s.rpmCache == nil {
 		return ctx
@@ -362,8 +361,8 @@ func (s *Generic) withRPMPrefetch(ctx context.Context, providers []gatewayprovid
 	return schedulercore.PrefetchRPM(ctx, s.rpmCache, ids)
 }
 
-// isProviderSchedulableForRPM 检查提供商是否可根据 RPM 进行调度
-// 仅适用于 Anthropic OAuth/SetupToken 提供商。
+// isProviderSchedulableForRPM checks the RPM limit and sticky allowance.
+// The check applies to Anthropic OAuth/SetupToken providers.
 func (s *Generic) isProviderSchedulableForRPM(ctx context.Context, provider *gatewayprovider.ExecutionProvider, sticky bool) bool {
 	if !provider.View().IsAnthropicOAuthOrSetupToken() {
 		return true
@@ -372,17 +371,17 @@ func (s *Generic) isProviderSchedulableForRPM(ctx context.Context, provider *gat
 }
 
 // IncrementProviderRPM increments the RPM counter for the given provider.
-// 已知 TOCTOU 竞态：调度时读取 RPM 计数与此处递增之间存在时间窗口，
-// 高并发下可能短暂超出 RPM 限制。这是与 WindowCost 一致的 soft-limit
-// 并发检查允许少量超额，以减少加锁延迟。
+// Selection reads the count before this increment, so concurrent requests
+// can temporarily exceed the RPM limit. This is a soft limit, like window cost;
+// the check and increment do not hold a shared lock.
 func (s *Generic) IncrementProviderRPM(ctx context.Context, id int64) error {
 	return schedulercore.IncrementProviderRPM(ctx, s.rpmCache, id)
 }
 
-// checkAndRegisterSession 检查并注册会话，用于会话数量限制
-// 仅适用于 Anthropic OAuth/SetupToken 提供商
-// sessionID: 会话标识符（使用粘性会话的 hash）
-// 返回 true 表示允许（在限制内或会话已存在），false 表示拒绝（超出限制且是新会话）。
+// checkAndRegisterSession checks and registers an Anthropic OAuth/SetupToken session.
+// The session argument is the sticky-session hash.
+// It permits existing sessions and new sessions within the configured limit.
+// Select-only requests skip registration.
 func (s *Generic) checkAndRegisterSession(ctx context.Context, provider *gatewayprovider.ExecutionProvider, session string) bool {
 	if schedulercore.IsSelectOnly(ctx) {
 		return true
@@ -390,11 +389,11 @@ func (s *Generic) checkAndRegisterSession(ctx context.Context, provider *gateway
 	return schedulercore.RegisterSession(ctx, s.sessionLimitCache, schedulerSessionBinding(provider, session))
 }
 
-// ReleaseProviderSession 立即释放会话槽（不等待空闲超时）
-// 供 handler 在请求最终失败（选号成功但转发失败/客户端中断）时调用：
-// 上游从未真正服务该会话，若继续占槽，max_sessions 受限的提供商会被失败请求的
-// session hash 卡满整个空闲窗口，后续新会话全部被拒。
-// 适用条件与 checkAndRegisterSession 对齐；不适用提供商为 no-op，幂等可安全重复调用。
+// ReleaseProviderSession releases a registered session before its idle timeout.
+// Handlers call it when an attempt fails or the client disconnects,
+// so unsuccessful attempts do not occupy max_sessions capacity
+// throughout the idle window.
+// It uses the registration eligibility rules and tolerates repeated release calls.
 func (s *Generic) ReleaseProviderSession(ctx context.Context, provider *gatewayprovider.ExecutionProvider, session string) {
 	if s == nil {
 		return
@@ -663,13 +662,13 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 	)
 }
 
-// isModelSupportedByProviderWithContext 根据分组映射后的模型检查提供商支持能力。
+// isModelSupportedByProviderWithContext checks provider support after group mapping.
 func (s *Generic) isModelSupportedByProviderWithContext(ctx context.Context, provider *gatewayprovider.ExecutionProvider, requestedModel string) bool {
 	routingModel := s.groupMappedModelForProviderLayer(ctx, requestedModel)
 	return s.isRoutingModelSupportedByProviderWithContext(ctx, provider, routingModel)
 }
 
-// isRoutingModelSupportedByProviderWithContext 检查已经过分组映射的模型，避免重复执行分组映射。
+// isRoutingModelSupportedByProviderWithContext checks an already group-mapped model without applying group mapping again.
 func (s *Generic) isRoutingModelSupportedByProviderWithContext(ctx context.Context, provider *gatewayprovider.ExecutionProvider, routingModel string) bool {
 	return gatewayprovider.ExecutionModelPolicy(provider).Supports(ctx, routingModel)
 }
@@ -686,7 +685,7 @@ func (s *Generic) groupMappedModelForProviderLayer(ctx context.Context, requeste
 	return s.groupMappedModelForGroup(ctx, &groupID, requestedModel)
 }
 
-// NewSessionAttempts 为一次请求提供唯一会话完成集合，不保存全局副本。
+// NewSessionAttempts creates a request-owned set of session attempts to finish.
 func (s *Generic) NewSessionAttempts() *schedulercore.SessionAttempts {
 	return schedulercore.NewSessionAttempts(s.sessionLimitCache, schedulercore.Diagnostics{
 		Logf: logging.LegacyPrintf,
@@ -696,12 +695,12 @@ func (s *Generic) NewSessionAttempts() *schedulercore.SessionAttempts {
 	)
 }
 
-// TrackSessionAttempt 根据提供商和会话参数登记本次尝试。
+// TrackSessionAttempt records a provider and session in the request's attempt set.
 func (s *Generic) TrackSessionAttempt(attempts *schedulercore.SessionAttempts, provider *gatewayprovider.ExecutionProvider, session string) {
 	attempts.Track(schedulerSessionBinding(provider, session))
 }
 
-// costWindowInput 将提供商的会话窗口和额度上限转换为计费检查输入。
+// costWindowInput converts provider window bounds and limits to billing inputs.
 func costWindowInput(a *gatewayprovider.ExecutionProvider) billing.CostWindowInput {
 	if a == nil {
 		return billing.CostWindowInput{}
@@ -709,7 +708,7 @@ func costWindowInput(a *gatewayprovider.ExecutionProvider) billing.CostWindowInp
 	return billing.CostWindowInput{ID: a.Record.ID, Enabled: a.View().IsAnthropicOAuthOrSetupToken(), Limit: gatewayprovider.ExecutionRuntimeConfig(a).GetWindowCostLimit(), Reserve: gatewayprovider.ExecutionRuntimeConfig(a).GetWindowCostStickyReserve(), Start: a.Record.SessionWindowStart, End: a.Record.SessionWindowEnd}
 }
 
-// readSchedulingGroup 从通用选择器的分组仓库读取调度配置。
+// readSchedulingGroup reads full scheduling settings from the group repository.
 func (s *Generic) readSchedulingGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	if s.groupRepo == nil {
 		return nil, nil

@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// BillingDefaultsKey 是本地文件的保留节点，不属于模型身份空间。
+// BillingDefaultsKey is reserved for operation prices in local files, outside the model namespace.
 const BillingDefaultsKey = "_billing_defaults"
 
-// CatalogRules 保存目录之外经核实的价格维度；空指针表示没有额外商业规则。
+// CatalogRules holds verified pricing rules supplementing the catalog; nil pointers mean no additional rule.
 type CatalogRules struct {
 	ImagePrices                  MediaPrices        `json:"image_prices,omitempty"`
 	VideoPrices                  MediaPrices        `json:"video_prices,omitempty"`
@@ -26,7 +26,7 @@ type CatalogRules struct {
 	VerifiedAt                   string             `json:"verified_at,omitempty"`
 }
 
-// OperationPrices 保存按操作计量的单价；缺失值不能解释为免费。
+// OperationPrices holds operation-based unit prices; missing prices are not free prices.
 type OperationPrices struct {
 	WebSearchPricePerCall        *float64          `json:"web_search_price_per_call,omitempty"`
 	SearchPricePer1k             *float64          `json:"search_price_per_1k,omitempty"`
@@ -37,7 +37,7 @@ type OperationPrices struct {
 	VerifiedAt                   string            `json:"verified_at,omitempty"`
 }
 
-// MediaPrices 区分明确的零单价与无效的空尺寸价格。
+// MediaPrices distinguishes explicit zero prices from invalid null entries.
 type MediaPrices map[string]float64
 
 func copyOptional[T any](value *T) *T {
@@ -48,7 +48,7 @@ func copyOptional[T any](value *T) *T {
 	return &copy
 }
 
-// Clone 隔离目录规则中的集合与可空字段，供只读快照和单次计算使用。
+// Clone copies collections and optional fields for independent snapshots and calculations.
 func (r CatalogRules) Clone() CatalogRules {
 	r.ImagePrices = maps.Clone(r.ImagePrices)
 	r.VideoPrices = maps.Clone(r.VideoPrices)
@@ -64,7 +64,7 @@ func (r CatalogRules) Clone() CatalogRules {
 	return r
 }
 
-// Validate 拒绝非法规则，避免部分字段发布后才出现计费失败。
+// Validate rejects invalid media prices, multipliers, and time rules before publication.
 func (r CatalogRules) Validate() error {
 	for name, values := range map[string]map[string]float64{"image_prices": r.ImagePrices, "video_prices": r.VideoPrices} {
 		for key, price := range values {
@@ -98,7 +98,7 @@ func validAmount(value float64) bool {
 	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-// Clone 返回操作价的独立副本。
+// Clone returns an independent copy of operation prices.
 func (p OperationPrices) Clone() OperationPrices {
 	p.WebSearchPricePerCall = copyOptional(p.WebSearchPricePerCall)
 	p.SearchPricePer1k = copyOptional(p.SearchPricePer1k)
@@ -109,7 +109,7 @@ func (p OperationPrices) Clone() OperationPrices {
 	return p
 }
 
-// Validate 检查操作单价，包括仅含覆盖字段的补丁。
+// Validate checks supplied operation prices, including partial overrides.
 func (p OperationPrices) Validate() error {
 	for name, value := range map[string]*float64{"web_search_price_per_call": p.WebSearchPricePerCall, "search_price_per_1k": p.SearchPricePer1k, "audio_realtime_price_per_min": p.AudioRealtimePricePerMin, "audio_tts_price_per_million_chars": p.AudioTTSPricePerMillionChars, "audio_stt_price_per_hour": p.AudioSTTPricePerHour} {
 		if value != nil && !validAmount(*value) {
@@ -119,7 +119,7 @@ func (p OperationPrices) Validate() error {
 	return nil
 }
 
-// deriveCatalogCachePrices 将明确缓存规则应用于每个上下文档，保留显式价和零价。
+// deriveCatalogCachePrices applies cache rules to each context tier while retaining explicit prices, including zero.
 func deriveCatalogCachePrices(price *CatalogModelPricing) error {
 	if price == nil {
 		return nil
@@ -165,7 +165,7 @@ func deriveCatalogCachePrices(price *CatalogModelPricing) error {
 	return nil
 }
 
-// UnmarshalJSON 拒绝尺寸值 null，避免 JSON 解码将未知单价变成免费。
+// UnmarshalJSON rejects null size prices so unknown prices cannot decode as free.
 func (p *MediaPrices) UnmarshalJSON(body []byte) error {
 	var values map[string]*float64
 	if err := json.Unmarshal(body, &values); err != nil {

@@ -41,7 +41,7 @@ type testProcess struct {
 	stdin  io.WriteCloser
 }
 
-// Write 通过具名 Buffer 字段写入，io.Copy 调用此方法时会先获取输出锁。
+// Write locks the named buffer so io.Copy cannot bypass synchronization through a promoted method.
 func (o *processOutput) Write(p []byte) (int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -58,7 +58,7 @@ func startTestProcess(t *testing.T, binary, dir string, env []string, args ...st
 	t.Helper()
 	p := &testProcess{cmd: exec.Command(binary, args...), done: make(chan struct{}), output: &processOutput{}}
 	p.cmd.Dir = dir
-	// 子进程使用测试配置，数据库和供应商凭据由测试提供。
+	// The child receives test configuration and credentials instead of inheriting the parent environment.
 	p.cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + os.TempDir(), "TZ=UTC", "DATA_DIR=" + dir}, env...)
 	p.cmd.Stdout = p.output
 	p.cmd.Stderr = p.output
@@ -147,7 +147,7 @@ func TestProcessModes(t *testing.T) {
 	backendRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	binary := filepath.Join(t.TempDir(), "server")
-	// 构建继承调用方的工具链设置，版本声明由 go.mod 维护。
+	// The build inherits toolchain settings; go.mod specifies the Go version.
 	build := exec.Command("go", "build", "-ldflags=-X main.Version=test-contract -X main.Commit=test-head -X main.Date=test-date -X main.BuildType=test", "-o", binary, "./cmd/server")
 	build.Dir = backendRoot
 	buildOutput, err := build.CombinedOutput()
@@ -189,7 +189,7 @@ func TestProcessModes(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), data, 0o600))
 		return dir, []string{"PGAPPNAME=test-" + mode}
 	}
-	// 兼容旧运行模式键时，启动后管理员并发值保持不变。
+	// Legacy run-mode settings must leave administrator concurrency unchanged at startup.
 	for _, mode := range []string{"standard", "simple"} {
 		t.Run(mode+"-sigterm", func(t *testing.T) {
 			administrators := make(map[int64]int)
@@ -211,7 +211,7 @@ func TestProcessModes(t *testing.T) {
 			require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
 			require.NoError(t, p.wait(t, 40*time.Second), p.output.text())
 			logs := p.output.text()
-			// 定价只使用一个运行实例，初始化先于调度，信号退出等待其停止。
+			// The shared model catalog starts once and stops before storage closes.
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started ModelCatalogInitialization"))
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started ModelCatalogService"))
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped ModelCatalogService"))
@@ -220,7 +220,7 @@ func TestProcessModes(t *testing.T) {
 			for _, name := range []string{"HTTPRequests", "DeferredService", "TimingWheelService", "UsageLogBatchers", "Redis", "Ent"} {
 				require.Contains(t, logs, "[Lifecycle] stopped "+name)
 			}
-			// 任务入口先等待完整提交/下载，再停止 worker、恢复与清理，最后才关闭存储。
+			// Task submissions and downloads finish before workers, recovery, cleanup, and storage stop.
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped TaskRequestsAndDownloads"))
 			require.Less(t, strings.Index(logs, "stopped HTTPRequests"), strings.Index(logs, "stopped TaskRequestsAndDownloads"))
 			for _, name := range []string{"CreativeWorkerRuntime", "BatchImageWorkerRuntime", "BatchImageCleanupService"} {
@@ -229,13 +229,13 @@ func TestProcessModes(t *testing.T) {
 				require.Less(t, strings.Index(logs, "stopped TaskRequestsAndDownloads"), strings.Index(logs, "stopped "+name), name)
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Redis"), name)
 			}
-			// 资金运行组件各启动一次，所有资金队列完成后才关闭 Redis。
+			// Billing components start once and drain before Redis closes.
 			for _, name := range []string{"BillingCacheService", "SubscriptionExpiryService"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name))
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name))
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Redis"))
 			}
-			// 认证资源在请求结束后退出，持久化的延迟 outbox 留待下次启动处理。
+			// Authentication resources stop after requests; delayed persistent outbox entries remain for the next startup.
 			for _, name := range []string{"APIKeyService", "AuthCacheInvalidationWorker"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name))
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name))
@@ -245,7 +245,7 @@ func TestProcessModes(t *testing.T) {
 			require.Less(t, strings.Index(logs, "stopped AuthCacheInvalidationWorker"), strings.Index(logs, "stopped APIKeyService"))
 			require.Less(t, strings.Index(logs, "stopped TimingWheelService"), strings.Index(logs, "stopped Redis"))
 			require.Less(t, strings.Index(logs, "stopped Redis"), strings.Index(logs, "stopped Ent"))
-			// 周期维护只启动一次；生产者停止后才结束共享刷新、查询与技术依赖。
+			// Periodic maintenance starts once; its producers stop before shared refresh and query dependencies.
 			for _, name := range []string{"TokenRefreshService", "ProviderExpiryService", "ProxyExpiryService", "ScheduledTestRunnerService", "GroupAvailabilityProbeRunnerService", "CNProviderBalanceCheckService", "OllamaCloudUsageService", "DeferredService", "TLSFingerprintProfileService", "TLSFingerprintRouterService"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name), name)
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
@@ -259,7 +259,7 @@ func TestProcessModes(t *testing.T) {
 			require.Less(t, strings.Index(logs, "stopped TokenRefreshService"), strings.Index(logs, "stopped ProviderRefreshCoordinator"))
 			require.Less(t, strings.Index(logs, "stopped DeferredService"), strings.Index(logs, "stopped TimingWheelService"))
 
-			// 快照、并发和串行队列各启动一次；实际请求结束后才停止，随后关闭存储。
+			// Snapshot, concurrency, and serial-queue services stop after requests and before storage.
 			for _, name := range []string{"SchedulerSnapshotService", "ConcurrencyService", "UserMessageQueueService"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name), name)
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
@@ -267,7 +267,7 @@ func TestProcessModes(t *testing.T) {
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Redis"), name)
 			}
 
-			// 观测生产者、聚合和写入队列都在实际请求结束后停止，并先于共享存储关闭。
+			// Observation producers, aggregation, and write queues stop after requests and before storage.
 			for _, name := range []string{"OpsMetricsCollector", "OpsAggregationService", "OpsAlertEvaluatorService", "OpsCleanupService", "OpsScheduledReportService", "OpsService", "OpsIngressRejectAggregator", "DashboardAggregationService", "UsageCleanupService", "AuditLogService", "OpsSystemLogSink"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name), name)
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
@@ -282,7 +282,7 @@ func TestProcessModes(t *testing.T) {
 			require.Less(t, strings.Index(logs, "stopped UsageCleanupService"), strings.Index(logs, "stopped DashboardAggregationService"))
 			require.Less(t, strings.Index(logs, "stopped OpsErrorLogWorkers"), strings.Index(logs, "stopped OpsSystemLogSink"))
 
-			// 先取消维护，再等待 HTTP 与任务，最后关闭存储。
+			// Cancel maintenance admission before waiting for HTTP and tasks, then close storage.
 			for _, name := range []string{"BackupAdmission", "SystemMaintenanceAdmission"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped HTTPRequests"), name)
@@ -293,7 +293,7 @@ func TestProcessModes(t *testing.T) {
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Ent"), name)
 			}
 
-			// 搜索、审核与通知队列由唯一实例管理，在请求结束后且存储关闭前退出。
+			// Shared search, moderation, and notification services stop after requests and before storage.
 			for _, name := range []string{"WebSearchRuntime", "ContentModerationService", "EmailQueueService"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started "+name), name)
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
@@ -303,7 +303,7 @@ func TestProcessModes(t *testing.T) {
 			}
 			require.Less(t, strings.Index(logs, "stopped ContentModerationService"), strings.Index(logs, "stopped EmailQueueService"))
 
-			// 支付生产者先退出，再等待通知任务，最后关闭共享存储。
+			// Payment producers stop before notification tasks drain and shared storage closes.
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] started PaymentOrderExpiryService"))
 			require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped PaymentOrderExpiryService"))
 			require.Contains(t, logs, "[Lifecycle] stopped ApplicationBackgroundTasks")
@@ -311,7 +311,7 @@ func TestProcessModes(t *testing.T) {
 				require.Less(t, strings.Index(logs, "stopped "+pair[0]), strings.Index(logs, "stopped "+pair[1]), pair)
 			}
 
-			// 请求和单次执行共用入口关闭检查，授权和额度资源先于 Redis、SQL 停止。
+			// Requests and attempts share admission shutdown; credentials and quota resources stop before storage.
 			for _, name := range []string{"GatewayRequestsAndAttempts", "QoderRequestsAndAttempts", "QoderCredentialSessions", "OpenAIQuotaActions", "OpenAIQuotaService"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Redis"), name)
@@ -323,7 +323,8 @@ func TestProcessModes(t *testing.T) {
 				require.Less(t, strings.Index(logs, "stopped GatewayRequestsAndAttempts"), strings.Index(logs, "stopped "+name), name)
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped Redis"), name)
 			}
-			// 请求等待和操作取消在同一阶段执行，操作取消后 HTTP handler 才能结束。
+			// Request draining and operation cancellation share a phase because handlers can depend on cancellation to
+			// return.
 			for _, name := range []string{"HTTPRequests", "GatewayRequestsAndAttempts", "QoderRequestsAndAttempts"} {
 				require.Equal(t, 1, strings.Count(logs, "[Lifecycle] stopped "+name), name)
 				require.Less(t, strings.Index(logs, "stopped "+name), strings.Index(logs, "stopped UsageRecordWorkerPool"), name)
@@ -342,7 +343,7 @@ func TestProcessModes(t *testing.T) {
 		})
 	}
 
-	// JWT 维护命令初始化用户读取和签发组件，输出的 token 可通过签名验证。
+	// The JWT tool initializes identity lookup and signing; its output must pass signature validation.
 	t.Run("jwtgen-minimal", func(t *testing.T) {
 		tool := filepath.Join(t.TempDir(), "jwtgen")
 		build := exec.Command("go", "build", "-o", tool, "./cmd/jwtgen")
@@ -462,7 +463,7 @@ func TestProcessModes(t *testing.T) {
 		require.NoError(t, err)
 		dir := t.TempDir()
 		p := startTestProcess(t, binary, dir, nil, "-setup")
-		// 按提示逐行输入，使普通 stdin 的密码读取不受其它 reader 预读影响。
+		// Send each line after its prompt so other readers cannot buffer password input ahead of time.
 		for _, step := range [][2]string{
 			{"PostgreSQL Host", fixture.host},
 			{"PostgreSQL Port", strconv.Itoa(fixture.port)},

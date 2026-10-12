@@ -51,7 +51,7 @@ func (s ManagedKeys) Ensure(ctx context.Context, userID, groupID int64) (*APIKey
 		FallbackWhenGroupUnavailable: false,
 	}
 	if err := s.Store.CreateManagedKey(ctx, key); err != nil {
-		// 并发创建冲突：重查一次即可拿到已存在的 Key（创建幂等）。
+		// A concurrent creator may have won; reload the managed key before returning the creation error.
 		if existing, retryErr := s.Store.GetManagedKeyByUserAndGroup(ctx, userID, groupID, s.ManagedBy); retryErr == nil && existing != nil {
 			return existing, nil
 		}

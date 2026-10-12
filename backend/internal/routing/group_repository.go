@@ -27,27 +27,27 @@ type GroupRepository interface {
 	ExistsByName(ctx context.Context, name string) (bool, error)
 	GetProviderCount(ctx context.Context, groupID int64) (total int64, active int64, err error)
 	DeleteProviderGroupsByGroupID(ctx context.Context, groupID int64) (int64, error)
-	// GetProviderIDsByGroupIDs 获取多个分组的所有提供商 ID（去重）
+	// GetProviderIDsByGroupIDs returns distinct provider IDs across the supplied groups.
 	GetProviderIDsByGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error)
-	// BindProvidersToGroup 将多个提供商绑定到指定分组
+	// BindProvidersToGroup associates providers with the given group.
 	BindProvidersToGroup(ctx context.Context, groupID int64, providerIDs []int64) error
-	// UpdateSortOrders 批量更新分组排序
+	// UpdateSortOrders updates group display positions in a batch.
 	UpdateSortOrders(ctx context.Context, updates []GroupSortOrderUpdate) error
 }
 
 type GroupDuplicateRepository interface {
-	// FindByDuplicateOperationID 在幂等存储结果不明确时执行只读恢复查询。
+	// FindByDuplicateOperationID looks up a committed copy when an idempotent write has an uncertain outcome.
 	FindByDuplicateOperationID(ctx context.Context, operationID string) (*Group, error)
-	// CreateFromSource 原子保存分组、源分组提供商优先级和调度 outbox 事件。
+	// CreateFromSource atomically saves the group, source provider bindings, and scheduling outbox events.
 	CreateFromSource(ctx context.Context, group *Group, sourceGroupID int64) error
 }
 
-// GroupSortOrderRepository 串行化新建分组的末尾排序位置分配。
+// GroupSortOrderRepository serializes allocation of the next group display position.
 type GroupSortOrderRepository interface {
 	LockGroupSortOrder(ctx context.Context) error
 }
 
-// GroupSortOrderUpdate 分组排序更新。
+// GroupSortOrderUpdate assigns a display position to a group.
 type GroupSortOrderUpdate struct {
 	ID        int64 `json:"id"`
 	SortOrder int   `json:"sort_order"`

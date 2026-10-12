@@ -7,7 +7,8 @@ import (
 	coderws "github.com/coder/websocket"
 )
 
-// IsResponsesWSUpgrade 根据 Upgrade 和 Connection 头判断升级请求。
+// IsResponsesWSUpgrade reports whether Upgrade is websocket and Connection
+// contains "upgrade", using case-insensitive comparisons.
 func IsResponsesWSUpgrade(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -18,7 +19,8 @@ func IsResponsesWSUpgrade(r *http.Request) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(r.Header.Get("Connection"))), "upgrade")
 }
 
-// CloseResponsesWS 截断关闭文本，发送关闭帧后关闭连接。
+// CloseResponsesWS trims reason to 120 bytes, attempts a close handshake,
+// and closes the connection even if the handshake fails.
 func CloseResponsesWS(conn *coderws.Conn, status coderws.StatusCode, reason string) {
 	if conn == nil {
 		return

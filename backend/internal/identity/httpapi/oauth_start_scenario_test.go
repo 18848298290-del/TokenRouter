@@ -1,7 +1,6 @@
 package httpapi
 
-// 本文件覆盖 email_oauth.go、linuxdo_oauth.go、oidc_oauth.go、wechat_oauth.go 和 dingtalk_oauth.go 的登录启动检查。
-
+// These tests cover login-start checks for email OAuth, LinuxDo, OIDC, WeChat, and DingTalk.
 import (
 	"net/http"
 	"net/http/httptest"

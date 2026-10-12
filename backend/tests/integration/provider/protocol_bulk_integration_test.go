@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestUnifiedProtocolBulkUpdate 验证真实 JSONB 合并验证逐提供商协议补丁与凭据轮换在同一 SQL 中提交。
+// TestUnifiedProtocolBulkUpdate checks that JSONB merging applies per-provider protocol patches
+// alongside credential updates and removes obsolete routing fields.
 func (s *ProviderRepoSuite) TestUnifiedProtocolBulkUpdate() {
 	first := &provider.Record{Name: "protocol-one", Platform: capability.PlatformKimi, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Credentials: map[string]any{"api_key": "before", "upstream_protocols": []string{"anthropic_messages"}}, Extra: map[string]any{"keep": true}}
 	second := &provider.Record{Name: "protocol-two", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Credentials: map[string]any{"api_key": "before", "upstream_protocols": []string{"openai_responses"}}, Extra: map[string]any{"keep": true}}

@@ -16,12 +16,12 @@ const (
 	StatusAPIKeyQuotaExhausted = "quota_exhausted"
 	StatusAPIKeyExpired        = "expired"
 
-	// API Key Fast 模式策略常量。
+	// API Key Fast policies.
 	APIKeyFastModePolicyFollowRequest = "follow_request"
 	APIKeyFastModePolicyForceOn       = "force_on"
 	APIKeyFastModePolicyForceOff      = "force_off"
 
-	// API Key 结算模式常量。auto 保持存量 Key 的订阅优先、余额补足行为。
+	// Billing modes. Auto uses subscriptions first and covers the remainder from the balance.
 	APIKeyBillingModeAuto         = "auto"
 	APIKeyBillingModeSubscription = "subscription"
 	APIKeyBillingModeBalance      = "balance"
@@ -36,48 +36,48 @@ type APIKey struct {
 	ID     int64
 	UserID int64
 	TeamID *int64
-	// TeamOwnerDisabled 表示团队 Owner 已锁定该 Key，Member 无权解除。
+	// TeamOwnerDisabled is the owner lock that ordinary team members cannot clear.
 	TeamOwnerDisabled bool
 	Key               string
 	Name              string
 	GroupID           *int64
-	// IsComposite 表示该 Key 通过模型前缀选择多个分组。
+	// IsComposite selects among multiple groups using a model prefix.
 	IsComposite bool
-	// CompositeGroups 按用户配置顺序保存复合 Key 的分组映射。
+	// CompositeGroups stores group mappings in user-configured order.
 	CompositeGroups []APIKeyCompositeGroup
 	Status          string
-	// FastModePolicy 控制该 Key 的请求级 Fast 模式，系统策略仍拥有更高优先级。
+	// FastModePolicy controls request acceleration subject to higher-priority system policy.
 	FastModePolicy string
-	// BillingMode 控制该 Key 的资金来源；subscription 模式必须携带 PreferredSubscriptionID。
+	// BillingMode selects the funding source; subscription requires PreferredSubscriptionID.
 	BillingMode             string
 	PreferredSubscriptionID *int64
-	// ModelMapping 在分组和提供商映射前把客户端模型重定向到内部目标模型。
+	// ModelMapping redirects client model names before group and provider mapping.
 	ModelMapping map[string]string
 	IPWhitelist  []string
 	IPBlacklist  []string
-	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
+	// Compiled IP rules avoid parsing addresses and CIDRs on each authentication.
 	CompiledIPWhitelist *ipmatch.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ipmatch.CompiledIPRules `json:"-"`
 	LastUsedAt          *time.Time
-	LastUsedIP          *string // 来自该 Key 最新一条带 IP 的用量日志。
+	LastUsedIP          *string // From the latest usage log for this key that includes an IP address.
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	// User 表示实际承担权限和费用的用户；团队 Key 中为当前 Owner。
+	// User supplies permissions and funding; team keys use the current team owner.
 	User *User
-	// ActorUser 表示创建并实际使用该 Key 的成员；个人 Key 与 User 相同。
+	// ActorUser is the member who created the key; personal keys use User.
 	ActorUser      *User
 	Team           *Team
 	TeamMembership *TeamMembership
 	Group          *routing.Group
-	// FallbackWhenGroupUnavailable 控制绑定分组停用时是否允许回退到管理员明确配置的目标。
+	// FallbackWhenGroupUnavailable permits fallback to the administrator-configured target.
 	FallbackWhenGroupUnavailable bool
-	// ConcurrencyLimit 和 RPMLimit 为 Key 的请求上限，0 表示不限制。
+	// ConcurrencyLimit and RPMLimit are request limits; zero means unlimited.
 	ConcurrencyLimit int
 	RPMLimit         int
-	// CurrentConcurrency 表示当前 API Key 的实时活跃请求数。
+	// CurrentConcurrency is the number of active requests for this key.
 	CurrentConcurrency int
-	// ManagedBy 标记服务端托管的隐藏 Key（如创作台执行 Key 'creative_studio'），
-	// 普通用户接口不得暴露或操作此类 Key；nil 表示普通用户 Key。
+	// ManagedBy identifies hidden server-managed keys, such as creative_studio execution keys.
+	// User APIs must not expose or mutate these keys. Nil identifies an ordinary user key.
 	ManagedBy *string
 
 	// Quota fields
@@ -97,7 +97,7 @@ type APIKey struct {
 	Window7dStart *time.Time // Start of current 7d window
 }
 
-// APIKeyCompositeGroup 表示复合 API Key 的一个分组前缀映射。
+// APIKeyCompositeGroup maps one model prefix to a group.
 type APIKeyCompositeGroup struct {
 	ID               int64
 	APIKeyID         int64
@@ -105,7 +105,7 @@ type APIKeyCompositeGroup struct {
 	Prefix           string
 	NormalizedPrefix string
 	SortOrder        int
-	// UserGroupRPMOverride 是认证快照中的请求期配置，不写入映射表。
+	// UserGroupRPMOverride is request configuration in the auth snapshot, not a persisted mapping field.
 	UserGroupRPMOverride *int
 	Group                *routing.Group
 }
@@ -114,12 +114,12 @@ type APIKeyCompositeGroup struct {
 type APIKeyListFilters struct {
 	Search  string
 	Status  string
-	GroupID *int64 // nil=不筛选, 0=无分组, >0=指定分组
-	Scope   string // personal 或 team；空值兼容历史调用并返回全部
+	GroupID *int64 // nil: all groups; 0: unbound keys; positive: the specified group
+	Scope   string // personal or team; empty returns both for compatibility
 }
 
-// NormalizeAPIKeyFastModePolicy 校验并规范化 API Key Fast 模式策略。
-// 空值用于兼容旧客户端，按跟随下游请求处理。
+// NormalizeAPIKeyFastModePolicy validates and normalizes the key's Fast policy.
+// An empty value follows the client request for compatibility with older clients.
 func NormalizeAPIKeyFastModePolicy(value string) (string, bool) {
 	switch value {
 	case "", APIKeyFastModePolicyFollowRequest:
@@ -131,13 +131,13 @@ func NormalizeAPIKeyFastModePolicy(value string) (string, bool) {
 	}
 }
 
-// NormalizeAPIKeyBillingMode 委托唯一资金来源规则。
+// NormalizeAPIKeyBillingMode delegates validation to billing's funding rules.
 func NormalizeAPIKeyBillingMode(value string) (string, bool) {
 	return billing.NormalizeAPIKeyBillingMode(value)
 }
 
-// APIKeyEffectiveBillingMode 返回 Key 实际生效的结算模式。
-// 历史记录在缺少该字段时按 auto 处理，避免滚动升级期间错误拒绝请求。
+// APIKeyEffectiveBillingMode returns the effective funding mode.
+// Nil keys and missing or invalid modes default to auto.
 func APIKeyEffectiveBillingMode(key *APIKey) string {
 	if key == nil {
 		return APIKeyBillingModeAuto
@@ -149,8 +149,8 @@ func APIKeyEffectiveBillingMode(key *APIKey) string {
 	return mode
 }
 
-// IsWindowExpired returns true if the window starting at windowStart has exceeded the given duration.
-// A nil windowStart is treated as expired — no initialized window means any accumulated usage is stale.
+// IsWindowExpired reports whether the window starting at start has expired.
+// A nil start counts as expired because usage without an initialized window is stale.
 func IsWindowExpired(start *time.Time, window time.Duration) bool {
 	return billing.IsWindowExpired(start, window)
 }
@@ -228,12 +228,12 @@ func (k *APIKey) EffectiveUsage7d() float64 {
 	return k.Usage7d
 }
 
-// IsExpiredAt 允许用例使用已经注入的时钟，旧无参入口继续保持默认行为。
+// IsExpiredAt checks expiration against a caller-supplied time.
 func (k *APIKey) IsExpiredAt(now time.Time) bool {
 	return k.ExpiresAt != nil && now.After(*k.ExpiresAt)
 }
 
-// CopyAPIKey 复制 Key 及关联的用户和分组数据。认证缓存使用自身快照的复制规则。
+// CopyAPIKey copies the key and its user and group views. Other reference fields remain shared.
 func CopyAPIKey(value *APIKey) *APIKey {
 	if value == nil {
 		return nil
@@ -246,7 +246,7 @@ func CopyAPIKey(value *APIKey) *APIKey {
 	return &out
 }
 
-// CopyCompositeGroup 保留绑定顺序和请求级覆盖，分组策略不与输入共享。
+// CopyCompositeGroup clones group policy while retaining binding order and request overrides.
 func CopyCompositeGroup(value APIKeyCompositeGroup) APIKeyCompositeGroup {
 	value.Group = routing.CloneGroup(value.Group)
 	return value
@@ -263,12 +263,12 @@ func CopyCompositeGroups(values []APIKeyCompositeGroup) []APIKeyCompositeGroup {
 	return out
 }
 
-// GroupFromRouting 复制分组，供认证与管理调用方各自使用。
+// GroupFromRouting clones a group for authentication or management callers.
 func GroupFromRouting(group *routing.Group) *routing.Group {
 	return routing.CloneGroup(group)
 }
 
-// RoutingGroup 返回请求独立副本，调用方不能修改认证缓存。
+// RoutingGroup returns a group copy that callers can mutate independently.
 func RoutingGroup(group *routing.Group) *routing.Group {
 	return routing.CloneGroup(group)
 }

@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// DummyThoughtSignature 用于跳过 Gemini 3 thought_signature 验证
-// 参考: https://ai.google.dev/gemini-api/docs/thought-signatures
-// 导出供跨包使用（如 gemini_native_signature_cleaner 跨提供商修复）。
+// DummyThoughtSignature is Gemini 3's signature-validation bypass marker.
+// See https://ai.google.dev/gemini-api/docs/thought-signatures.
+// Cross-provider signature repair also uses this marker.
 const DummyThoughtSignature = "skip_thought_signature_validator"
 
-// BuildContents 构建 contents。
+// BuildContents converts Claude messages to Gemini content and separate system parts, reporting downgraded thinking.
 func BuildContents(messages []ClaudeMessage, toolIDToName map[string]string, isThinkingEnabled, allowDummyThought bool) ([]GeminiContent, []GeminiPart, bool, error) {
 	var contents []GeminiContent
 	var systemParts []GeminiPart
@@ -31,15 +31,15 @@ func BuildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 			strippedThinking = true
 		}
 
-		// Claude Code 可能把 system prompt 放进 messages，需并入 Gemini systemInstruction。
+		// Move system messages embedded by Claude Code into Gemini systemInstruction.
 		if role == "system" {
 			systemParts = append(systemParts, parts...)
 			continue
 		}
 
-		// 只有 Gemini 模型支持 dummy thinking block workaround
-		// 只对最后一条 assistant 消息添加（Pre-fill 场景）
-		// 历史 assistant 消息不能添加没有 signature 的 dummy thinking block
+		// The dummy-thought workaround applies to Gemini assistant prefill only.
+		// Restrict insertion to the final assistant message; historical assistant
+		// messages must retain their own signatures.
 		if allowDummyThought && role == "model" && isThinkingEnabled && i == len(messages)-1 {
 			hasThoughtPart := false
 			for _, p := range parts {
@@ -49,7 +49,7 @@ func BuildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 				}
 			}
 			if !hasThoughtPart && len(parts) > 0 {
-				// 在开头添加 dummy thinking block
+				// Prepend the dummy thought before prefill content.
 				parts = append([]GeminiPart{{
 					Text:             "Thinking...",
 					Thought:          true,
@@ -71,13 +71,13 @@ func BuildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 	return contents, systemParts, strippedThinking, nil
 }
 
-// BuildParts 构建消息的 parts
-// allowDummyThought: 只有 Gemini 模型支持 dummy thought signature。
+// BuildParts converts content and updates toolIDToName, which callers must initialize for tool calls.
+// It reports downgraded thinking; enable allowDummyThought only for models accepting Gemini's marker.
 func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDummyThought bool) ([]GeminiPart, bool, error) {
 	var parts []GeminiPart
 	strippedThinking := false
 
-	// 尝试解析为字符串
+	// Accept plain-string content as well as block arrays.
 	var textContent string
 	if err := json.Unmarshal(content, &textContent); err == nil {
 		if textContent != "(no content)" && strings.TrimSpace(textContent) != "" {
@@ -86,7 +86,7 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 		return parts, false, nil
 	}
 
-	// 解析为内容块数组
+	// Decode the array form after the string form fails.
 	var blocks []ContentBlock
 	if err := json.Unmarshal(content, &blocks); err != nil {
 		return nil, false, fmt.Errorf("parse content blocks: %w", err)
@@ -104,20 +104,20 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 				Text:    block.Thinking,
 				Thought: true,
 			}
-			// signature 处理：
-			// - Claude 模型（allowDummyThought=false）使用上游返回的 signature，dummy 按缺失处理。
-			// - Gemini 模型（allowDummyThought=true）优先使用上游 signature，缺失时使用 dummy signature。
+			// Signature handling:
+			//   - Claude uses the upstream signature and treats the dummy marker as missing.
+			//   - Gemini uses the upstream signature when present, otherwise the dummy marker.
 			if block.Signature != "" && (allowDummyThought || block.Signature != DummyThoughtSignature) {
 				part.ThoughtSignature = block.Signature
 			} else if !allowDummyThought {
-				// Claude 模型需要有效 signature；在缺失时降级为普通文本，并在上层禁用 thinking mode。
+				// Downgrade unsigned Claude thinking to text and signal the caller to disable thinking.
 				if strings.TrimSpace(block.Thinking) != "" {
 					parts = append(parts, GeminiPart{Text: block.Thinking})
 				}
 				strippedThinking = true
 				continue
 			} else {
-				// Gemini 模型使用 dummy signature
+				// Gemini accepts the dummy marker when the signature is missing.
 				part.ThoughtSignature = DummyThoughtSignature
 			}
 			parts = append(parts, part)
@@ -133,7 +133,7 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 			}
 
 		case "tool_use":
-			// 存储 id -> name 映射
+			// Record the call name for later tool results that provide only an ID.
 			if block.ID != "" && block.Name != "" {
 				toolIDToName[block.ID] = block.Name
 			}
@@ -145,9 +145,9 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 					ID:   block.ID,
 				},
 			}
-			// tool_use 的 signature 处理：
-			// - Claude 模型（allowDummyThought=false）使用上游返回的 signature，dummy 按缺失处理。
-			// - Gemini 模型（allowDummyThought=true）优先使用上游 signature，缺失时使用 dummy signature。
+			// Tool-call signature handling:
+			//   - Claude retains upstream signatures and treats the dummy marker as missing.
+			//   - Gemini fills missing signatures with the dummy marker.
 			if block.Signature != "" && (allowDummyThought || block.Signature != DummyThoughtSignature) {
 				part.ThoughtSignature = block.Signature
 			} else if allowDummyThought {
@@ -156,7 +156,7 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 			parts = append(parts, part)
 
 		case "tool_result":
-			// 获取函数名
+			// Resolve the result name from the block, prior call, or call ID.
 			funcName := block.Name
 			if funcName == "" {
 				if name, ok := toolIDToName[block.ToolUseID]; ok {
@@ -166,7 +166,7 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 				}
 			}
 
-			// 解析 content
+			// Normalize the result content to text.
 			resultContent := ParseToolResultContent(block.Content, block.IsError)
 
 			parts = append(parts, GeminiPart{
@@ -184,7 +184,7 @@ func BuildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 	return parts, strippedThinking, nil
 }
 
-// ParseToolResultContent 解析 tool_result 的 content。
+// ParseToolResultContent extracts tool-result text, with success/error placeholders for empty output.
 func ParseToolResultContent(content json.RawMessage, isError bool) string {
 	if len(content) == 0 {
 		if isError {
@@ -193,7 +193,7 @@ func ParseToolResultContent(content json.RawMessage, isError bool) string {
 		return "Command executed successfully."
 	}
 
-	// 尝试解析为字符串
+	// Accept string results before trying arrays of text objects.
 	var str string
 	if err := json.Unmarshal(content, &str); err == nil {
 		if strings.TrimSpace(str) == "" {
@@ -205,7 +205,7 @@ func ParseToolResultContent(content json.RawMessage, isError bool) string {
 		return str
 	}
 
-	// 尝试解析为数组
+	// Join text fields from array results.
 	var arr []map[string]any
 	if err := json.Unmarshal(content, &arr); err == nil {
 		var texts []string
@@ -224,6 +224,6 @@ func ParseToolResultContent(content json.RawMessage, isError bool) string {
 		return result
 	}
 
-	// 返回原始 JSON
+	// Keep other JSON shapes as serialized text.
 	return string(content)
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// RealtimeOptions 保存 Grok 实时连接的认证、请求头和拨号函数。
+// RealtimeOptions holds Grok realtime credentials, header writers, and the dial function.
 type RealtimeOptions struct {
 	BaseURL, Model           string
 	Token                    string `json:"-"`
@@ -23,7 +23,7 @@ func (o RealtimeOptions) native() grok.RealtimeDialOptions {
 	return grok.RealtimeDialOptions{BaseURL: o.BaseURL, Model: o.Model, Token: o.Token, CLIHeaders: o.CLIHeaders, ApplyHeaders: o.ApplyHeaders, Dial: o.Dial, Enter: o.Enter}
 }
 
-// DialRealtime 使用调用方的资源选项建立 Grok 实时连接。
+// DialRealtime opens a Grok realtime connection with the caller's resource options.
 func DialRealtime(ctx context.Context, options RealtimeOptions) (*grok.RealtimeSession, error) {
 	return grok.DialRealtime(ctx, options.native())
 }

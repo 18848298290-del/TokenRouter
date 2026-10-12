@@ -14,7 +14,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// TestScheduledPlanStorageContract 在隔离 PostgreSQL 中检查计划限制、结果保留数和级联删除。
+// TestScheduledPlanStorageContract checks due-time selection, result retention, and cascading deletion in PostgreSQL.
 func TestScheduledPlanStorageContract(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -29,7 +29,7 @@ func TestScheduledPlanStorageContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 50, plan.MaxResults)
 	require.NotNil(t, plan.NextRunAt)
-	// PostgreSQL timestamp 以微秒表示边界，不能用会被舍入的纳秒差值构造夹具。
+	// Use a microsecond offset because PostgreSQL rounds finer timestamp differences.
 	before, err := plans.ListDue(ctx, plan.NextRunAt.Add(-time.Microsecond))
 	require.NoError(t, err)
 	for _, p := range before {

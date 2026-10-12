@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// Clone 返回独立属性副本，调用方可以修改嵌套的条件、媒体选项和译文。
+// Clone returns an independent copy, including nested conditions, media options, and translations.
 func (a Attributes) Clone() Attributes {
 	a.DisplayName = clonePointer(a.DisplayName)
 	a.Context = clonePointer(a.Context)

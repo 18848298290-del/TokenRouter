@@ -172,7 +172,7 @@ func TestResponsesToChatCompletions_ReasoningTokens(t *testing.T) {
 }
 
 func TestResponsesToChatCompletions_AllTokenDetailsPassThrough(t *testing.T) {
-	// 检查 OpenAI CompletionUsage 的音频、预测输出等明细字段。
+	// Check audio and prediction token details as well as reasoning counts.
 	resp := &ResponsesResponse{
 		ID:     "resp_full_details",
 		Status: "completed",
@@ -220,7 +220,7 @@ func TestResponsesToChatCompletions_AllTokenDetailsPassThrough(t *testing.T) {
 }
 
 func TestResponsesToChatCompletions_NoReasoningTokensWhenZero(t *testing.T) {
-	// 非推理模型缺少 reasoning_tokens 时，输出省略 completion_tokens_details。
+	// Omit completion_tokens_details when all supported counts are zero.
 	resp := &ResponsesResponse{
 		ID:     "resp_no_reasoning",
 		Status: "completed",
@@ -305,7 +305,7 @@ func TestResponsesEventToChatChunks_ToolCallDelta(t *testing.T) {
 	state.Model = "gpt-4o"
 	state.SentRole = true
 
-	// function_call 的 output_item.added 使用 output_index=1，索引 0 可留给 message。
+	// Place the function at output_index 1; index 0 may belong to a message.
 	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
 		Type:        "response.output_item.added",
 		OutputIndex: 1,
@@ -323,7 +323,7 @@ func TestResponsesEventToChatChunks_ToolCallDelta(t *testing.T) {
 	require.NotNil(t, tc.Index)
 	assert.Equal(t, 0, *tc.Index)
 
-	// function_call_arguments.delta 根据 output_index 查找工具调用。
+	// Resolve argument deltas using the Responses output_index.
 	chunks = ResponsesEventToChatChunks(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.delta",
 		OutputIndex: 1, // matches the output_index from output_item.added above
@@ -607,7 +607,6 @@ func TestFinalizeResponsesChatStream_AfterCompleted(t *testing.T) {
 	}, state)
 	require.NotEmpty(t, chunks) // finish + usage chunks
 
-	// 流已结束，再次 FinalizeResponsesChatStream 返回 nil。
 	assert.Nil(t, FinalizeResponsesChatStream(state))
 }
 
@@ -635,8 +634,7 @@ func TestChatChunkToSSE(t *testing.T) {
 }
 
 func TestChatCompletionsStreamRoundTrip(t *testing.T) {
-	// Simulate: client sends chat completions request, upstream returns Responses SSE events.
-	// Verify that the streaming state machine produces correct chat completions chunks.
+	// Exercise conversion of a complete Responses SSE sequence into Chat chunks.
 
 	state := NewResponsesEventToChatState(testRuntime())
 	state.Model = "gpt-4o"
@@ -854,7 +852,6 @@ func TestBufferedResponseAccumulator_NoSupplementWhenOutputExists(t *testing.T) 
 func TestBufferedResponseAccumulator_EmptyDeltas(t *testing.T) {
 	acc := NewBufferedResponseAccumulator()
 
-	// 空 delta 应保持累计内容为空。
 	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: ""})
 	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.created"})
 
@@ -878,8 +875,8 @@ func TestBufferedResponseAccumulator_IgnoresNonFunctionCallItems(t *testing.T) {
 	assert.False(t, acc.HasContent())
 }
 
-// TestResponsesEventToChatChunks_CustomToolCallInputDelta 验证 custom_tool_call（custom/freeform 工具，如新版 apply_patch）应像 function_call 一样
-// 注册为工具调用，其 *_input.delta 增量映射到正确的工具索引。
+// TestResponsesEventToChatChunks_CustomToolCallInputDelta checks that custom input deltas
+// use the tool index established by output_item.added.
 func TestResponsesEventToChatChunks_CustomToolCallInputDelta(t *testing.T) {
 	state := NewResponsesEventToChatState(testRuntime())
 	state.Model = "gpt-5-codex"
@@ -912,8 +909,7 @@ func TestResponsesEventToChatChunks_CustomToolCallInputDelta(t *testing.T) {
 	assert.Equal(t, "*** Begin Patch", tc.Function.Arguments)
 }
 
-// TestResponsesEventToChatChunks_ReasoningTextDelta 验证原始推理文本增量 reasoning_text.delta 应像 reasoning_summary_text.delta 一样
-// 映射为 reasoning_content。
+// TestResponsesEventToChatChunks_ReasoningTextDelta maps raw reasoning text to reasoning_content.
 func TestResponsesEventToChatChunks_ReasoningTextDelta(t *testing.T) {
 	state := NewResponsesEventToChatState(testRuntime())
 	state.Model = "gpt-5-codex"
@@ -928,7 +924,6 @@ func TestResponsesEventToChatChunks_ReasoningTextDelta(t *testing.T) {
 	assert.Equal(t, "thinking step", *chunks[0].Choices[0].Delta.ReasoningContent)
 }
 
-// TestBufferedResponseAccumulator_CodexEvents 检查累加器读取工具输入和推理文本增量。
 func TestBufferedResponseAccumulator_CodexEvents(t *testing.T) {
 	acc := NewBufferedResponseAccumulator()
 	acc.ProcessEvent(&ResponsesStreamEvent{
@@ -948,8 +943,8 @@ func TestBufferedResponseAccumulator_CodexEvents(t *testing.T) {
 	require.True(t, acc.HasContent())
 }
 
-// TestResponsesEventToChatChunks_ArgumentsDeltaOmitsEmptyName 检查仅含参数的增量省略工具名。
-// OpenAI 兼容客户端从首个增量读取工具名，后续空名称会覆盖该名称并导致调用失败。
+// TestResponsesEventToChatChunks_ArgumentsDeltaOmitsEmptyName protects clients that read
+// the name from the first delta and would overwrite it on a later empty name.
 func TestResponsesEventToChatChunks_ArgumentsDeltaOmitsEmptyName(t *testing.T) {
 	state := NewResponsesEventToChatState(testRuntime())
 
@@ -1002,7 +997,6 @@ func TestResponsesToChatCompletions_PreservesUpstreamServiceTier(t *testing.T) {
 	chat := ResponsesToChatCompletions(testRuntime(), resp, "gpt-5.5")
 	require.Equal(t, "priority", chat.ServiceTier)
 
-	// 序列化后字段仍在（omitempty 不丢非空值）。
 	raw, err := json.Marshal(chat)
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"service_tier":"priority"`)
@@ -1030,13 +1024,13 @@ func TestResponsesEventToChatChunks_PreservesUpstreamServiceTier(t *testing.T) {
 		require.Equal(t, "priority", chunk.ServiceTier)
 	}
 
-	// 后续 delta chunk 继续携带 service_tier。
+	// Subsequent deltas retain the observed service tier.
 	delta := &ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "hi"}
 	chunks = ResponsesEventToChatChunks(delta, state)
 	require.NotEmpty(t, chunks)
 	require.Equal(t, "priority", chunks[0].ServiceTier)
 
-	// 终止事件同样携带。
+	// Completion and usage chunks retain it too.
 	completed := &ResponsesStreamEvent{Type: "response.completed", Response: &ResponsesResponse{
 		ID: "resp", Model: "gpt-5.5", Status: "completed",
 		Usage: &ResponsesUsage{InputTokens: 1, OutputTokens: 1},
@@ -1084,7 +1078,7 @@ func TestResponsesToChatCompletionsStreaming_ContentFilter(t *testing.T) {
 	state.Model = "gpt-5.5"
 	state.SentRole = true
 
-	// content_filter 在 Responses 流中使用 response.incomplete 作为终止事件。
+	// Content filtering terminates Responses streams with response.incomplete.
 	events := ResponsesEventToChatChunks(&ResponsesStreamEvent{
 		Type: "response.incomplete",
 		Response: &ResponsesResponse{

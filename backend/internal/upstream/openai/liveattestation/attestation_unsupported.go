@@ -6,7 +6,7 @@ import "context"
 
 type unsupportedProvider struct{}
 
-// NewProvider 在非 macOS 平台返回显式不支持的证明提供器。
+// NewProvider returns an unsupported attestation provider on non-macOS systems.
 func NewProvider() Provider {
 	return unsupportedProvider{}
 }

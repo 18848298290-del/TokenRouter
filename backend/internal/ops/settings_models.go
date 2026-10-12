@@ -2,7 +2,7 @@ package ops
 
 import providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 
-// OpsEmailNotificationConfig 以 JSON 存入 settings 表，控制运维邮件通知。
+// OpsEmailNotificationConfig controls Ops email notifications and is stored as JSON in settings.
 
 type OpsEmailNotificationConfig struct {
 	Alert  OpsEmailAlertConfig  `json:"alert"`
@@ -64,10 +64,10 @@ type OpsAlertSilencingSettings struct {
 }
 
 type OpsMetricThresholds struct {
-	SLAPercentMin               *float64 `json:"sla_percent_min,omitempty"`                 // SLA低于此值变红
-	TTFTp99MsMax                *float64 `json:"ttft_p99_ms_max,omitempty"`                 // TTFT P99高于此值变红
-	RequestErrorRatePercentMax  *float64 `json:"request_error_rate_percent_max,omitempty"`  // 请求错误率高于此值变红
-	UpstreamErrorRatePercentMax *float64 `json:"upstream_error_rate_percent_max,omitempty"` // 上游错误率高于此值变红
+	SLAPercentMin               *float64 `json:"sla_percent_min,omitempty"`                 // SLA percentages below this value are shown in red.
+	TTFTp99MsMax                *float64 `json:"ttft_p99_ms_max,omitempty"`                 // TTFT p99 milliseconds above this value are shown in red.
+	RequestErrorRatePercentMax  *float64 `json:"request_error_rate_percent_max,omitempty"`  // Request error percentages above this value are shown in red.
+	UpstreamErrorRatePercentMax *float64 `json:"upstream_error_rate_percent_max,omitempty"` // Upstream error percentages above this value are shown in red.
 }
 
 type OpsRuntimeLogConfig struct {
@@ -89,17 +89,17 @@ type OpsAlertRuntimeSettings struct {
 
 	DistributedLock OpsDistributedLockSettings `json:"distributed_lock"`
 	Silencing       OpsAlertSilencingSettings  `json:"silencing"`
-	Thresholds      OpsMetricThresholds        `json:"thresholds"` // 指标阈值配置
+	Thresholds      OpsMetricThresholds        `json:"thresholds"` // Metric display thresholds.
 }
 
-// OpsAdvancedSettings 存储运维模块自身的高级配置；预聚合由统一设置单独管理。
+// OpsAdvancedSettings holds Ops settings; aggregation uses the shared settings service.
 type OpsAdvancedSettings struct {
 	DataRetention                OpsDataRetentionSettings                `json:"data_retention"`
 	OpenAIProviderQuotaAutoPause OpsOpenAIProviderQuotaAutoPauseSettings `json:"openai_provider_quota_auto_pause"`
 	IgnoreCountTokensErrors      bool                                    `json:"ignore_count_tokens_errors"`
 	IgnoreContextCanceled        bool                                    `json:"ignore_context_canceled"`
 	IgnoreNoAvailableProviders   bool                                    `json:"ignore_no_available_providers"`
-	// 兼容旧客户端的字段，服务端将其规范为 true。
+	// Legacy client field normalized to true by the server.
 	IgnoreInvalidApiKeyErrors       bool  `json:"ignore_invalid_api_key_errors"`
 	IgnoreInsufficientBalanceErrors bool  `json:"ignore_insufficient_balance_errors"`
 	IgnoredStatusCodes              []int `json:"ignored_status_codes"`
@@ -109,7 +109,7 @@ type OpsAdvancedSettings struct {
 	AutoRefreshIntervalSec          int   `json:"auto_refresh_interval_seconds"`
 }
 
-// OpsOpenAIProviderQuotaAutoPauseSettings 保存提供商健康检查的自动暂停阈值。
+// OpsOpenAIProviderQuotaAutoPauseSettings holds provider quota auto-pause thresholds.
 type OpsOpenAIProviderQuotaAutoPauseSettings = providercore.QuotaAutoPauseSettings
 
 type OpsDataRetentionSettings struct {

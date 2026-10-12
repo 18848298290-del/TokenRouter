@@ -32,7 +32,7 @@ type ProxyAdmin struct {
 	now               func() time.Time
 }
 
-// ProxyAdministrator 提供代理管理、连通性测试和质量检查。
+// ProxyAdministrator provides proxy management, connectivity tests, and quality checks.
 type ProxyAdministrator interface {
 	ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string, sortBy, sortOrder string) ([]Proxy, int64, error)
 	ListProxiesWithProviderCount(ctx context.Context, page, pageSize int, protocol, status, search string, sortBy, sortOrder string) ([]ProxyWithProviderCount, int64, error)
@@ -58,7 +58,7 @@ func NewProxyAdmin(repo ProxyRepository, prober ProxyExitInfoProber, cache Proxy
 	return &ProxyAdmin{proxyRepo: repo, proxyProber: prober, proxyLatencyCache: cache, qualityProbe: quality, tasks: options.Tasks, diagnostics: options.Diagnostics, now: now}
 }
 
-// ListProxies 按筛选条件分页查询代理，并返回总数。
+// ListProxies returns a filtered page of proxies and the total matching count.
 func (s *ProxyAdmin) ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string, sortBy, sortOrder string) ([]Proxy, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	proxies, result, err := s.proxyRepo.ListWithFilters(ctx, params, protocol, status, search)
@@ -100,12 +100,12 @@ func (s *ProxyAdmin) GetProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy,
 }
 
 func (s *ProxyAdmin) CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error) {
-	// 规范化 fallback_mode
+	// An omitted fallback mode defaults to none.
 	mode := input.FallbackMode
 	if mode == "" {
 		mode = FallbackModeNone
 	}
-	// 校验：mode=proxy 必须有 backup
+	// Proxy fallback requires a backup ID.
 	if mode == FallbackModeProxy && input.BackupProxyID == nil {
 		return nil, infraerrors.BadRequest("PROXY_BACKUP_REQUIRED", "backup proxy required when fallback_mode=proxy")
 	}
@@ -136,16 +136,16 @@ func (s *ProxyAdmin) CreateProxy(ctx context.Context, input *CreateProxyInput) (
 }
 
 func (s *ProxyAdmin) UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*Proxy, error) {
-	// 校验：backup_proxy_id 不能是自身
+	// Reject a proxy configured as its own backup.
 	if input.BackupProxyID != nil && *input.BackupProxyID == id {
 		return nil, infraerrors.BadRequest("PROXY_BACKUP_SELF", "backup proxy cannot be itself")
 	}
-	// 规范化 fallback_mode
+	// An omitted fallback mode defaults to none.
 	mode := input.FallbackMode
 	if mode == "" {
 		mode = FallbackModeNone
 	}
-	// 校验：mode=proxy 必须有 backup
+	// Proxy fallback requires a backup ID.
 	if mode == FallbackModeProxy && input.BackupProxyID == nil {
 		return nil, infraerrors.BadRequest("PROXY_BACKUP_REQUIRED", "backup proxy required when fallback_mode=proxy")
 	}
@@ -179,7 +179,7 @@ func (s *ProxyAdmin) UpdateProxy(ctx context.Context, id int64, input *UpdatePro
 	if input.Status != "" {
 		proxy.Status = input.Status
 	}
-	// 透传有效期与回退字段
+	// Expiration and fallback fields replace existing values, including zero values.
 	proxy.ExpiresAt = input.ExpiresAt
 	proxy.FallbackMode = mode
 	proxy.BackupProxyID = input.BackupProxyID
@@ -553,6 +553,7 @@ func (s *ProxyAdmin) saveProxyLatency(ctx context.Context, proxyID int64, info *
 		return
 	}
 
+	// A latency-only probe keeps the most recent quality-check result.
 	merged := *info
 	if latencies, err := s.proxyLatencyCache.GetProxyLatencies(ctx, []int64{proxyID}); err == nil {
 		if existing := latencies[proxyID]; existing != nil {

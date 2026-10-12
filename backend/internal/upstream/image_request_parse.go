@@ -20,7 +20,7 @@ import (
 const (
 	OpenAIImagesGenerationsEndpoint = "/v1/images/generations"
 	OpenAIImagesEditsEndpoint       = "/v1/images/edits"
-	OpenAIImageMaxUploadPartSize    = 20 << 20 // 20MB per multipart upload part
+	OpenAIImageMaxUploadPartSize    = 20 << 20 // 20 MiB per multipart upload part
 )
 
 type ImageRequest struct {
@@ -431,5 +431,5 @@ func ParseImageRequest(path, contentType string, body []byte) (*ImageRequest, er
 	return req, nil
 }
 
-// String 不将上传字节、提示词或签名 URL 输出到普通日志。
+// String returns a fixed diagnostic label to keep upload bytes, prompts, and signed URLs out of logs.
 func (*ImageRequest) String() string { return "image wire request" }

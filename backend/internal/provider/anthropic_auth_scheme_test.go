@@ -64,8 +64,8 @@ func TestProvider_GetAnthropicAPIKeyAuthScheme(t *testing.T) {
 	}
 }
 
-// TestGetAnthropicAPIKeyAuthScheme_CNProvider CN 提供商可经 extra 覆写鉴权方案，
-// 默认保持 x-api-key。
+// TestGetAnthropicAPIKeyAuthScheme_CNProvider checks CN overrides in Extra
+// and the default x-api-key scheme.
 func TestGetAnthropicAPIKeyAuthScheme_CNProvider(t *testing.T) {
 	t.Parallel()
 

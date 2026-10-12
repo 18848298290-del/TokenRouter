@@ -50,13 +50,12 @@ func TestProviderRepoSparkShadowRoundTrip(t *testing.T) {
 }
 
 func TestListShadowsByParent(t *testing.T) {
-	// uq_providers_spark_shadow_per_parent 限制每个父提供商最多有一个 Spark 影子。
-	// 创建两个父提供商及各自的影子，再加入一个普通提供商，检查列表同时按父 ID 和 spark 额度维度筛选。
+	// uq_providers_spark_shadow_per_parent permits one Spark shadow per parent.
+	// Use two parents and a regular provider to check that the query returns the requested parent's shadow.
 	ctx := context.Background()
 	tx := testEntTx(t)
 	repo := newProviderStoreContract(tx.Client(), tx, nil)
 
-	// 创建第一个父提供商及其 Spark 影子。
 	parent1 := &provider.Record{
 		Name:     "list-parent1",
 		Platform: capability.PlatformOpenAI,
@@ -80,7 +79,7 @@ func TestListShadowsByParent(t *testing.T) {
 		t.Fatalf("create shadow1: %v", err)
 	}
 
-	// 第二个父提供商及其影子用于检查父 ID 筛选。
+	// The other parent's shadow must be excluded.
 	parent2 := &provider.Record{
 		Name:     "list-parent2",
 		Platform: capability.PlatformOpenAI,
@@ -104,7 +103,6 @@ func TestListShadowsByParent(t *testing.T) {
 		t.Fatalf("create shadow2: %v", err)
 	}
 
-	// 创建使用 global 额度维度的普通提供商。
 	unrelated := &provider.Record{
 		Name:     "unrelated",
 		Platform: capability.PlatformOpenAI,
@@ -115,7 +113,6 @@ func TestListShadowsByParent(t *testing.T) {
 		t.Fatalf("create unrelated: %v", err)
 	}
 
-	// 第一个父提供商的列表应恰好包含自己的一个影子。
 	got, err := repo.ListShadowsByParent(ctx, pid1)
 	if err != nil {
 		t.Fatalf("ListShadowsByParent: %v", err)

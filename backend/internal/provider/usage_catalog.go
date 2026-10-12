@@ -25,18 +25,18 @@ var usageAdapterCatalog = []UsageAdapterSpec{
 	{Name: UpstreamUsageAdapterDeepseekBalance, Label: "DeepSeek Balance", Automatic: true},
 }
 
-// UsageAdapterSpec 声明用量适配器的目录属性。
+// UsageAdapterSpec describes an adapter in the usage catalog.
 type UsageAdapterSpec struct {
 	Name, Label string
 	Automatic   bool
 }
 
-// UpstreamUsageAdapterCatalog 返回独立列表，调用方不能改变配置校验目录。
+// UpstreamUsageAdapterCatalog returns a copy callers may modify independently.
 func UpstreamUsageAdapterCatalog() []UsageAdapterSpec {
 	return append([]UsageAdapterSpec(nil), usageAdapterCatalog...)
 }
 
-// UpstreamUsageAdapterOptions 返回稳定排序的内置适配器列表。
+// UpstreamUsageAdapterOptions returns manually selectable adapters in catalog order.
 func UpstreamUsageAdapterOptions() []UpstreamUsageAdapterOption {
 	options := make([]UpstreamUsageAdapterOption, 0, len(usageAdapterCatalog))
 	for _, registration := range usageAdapterCatalog {

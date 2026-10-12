@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// IsolateSessionID 将 apiKeyID 混入 session 标识符，
-// 确保不同 API Key 的用户即使使用相同的原始 session_id/conversation_id，
-// 到达上游的标识符也不同，防止跨用户会话碰撞。
+// IsolateSessionID hashes the API key ID with the trimmed session identifier.
+// This scopes reused client session_id or conversation_id values to an API key.
+// Empty identifiers remain empty.
 func IsolateSessionID(apiKeyID int64, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -36,7 +36,7 @@ func HashSensitiveValueForLog(raw string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// GenerateSessionUUID 保持跨客户端会话的既有确定性 UUID 格式。
+// GenerateSessionUUID derives a UUID-shaped value from a nonempty seed, or generates a random UUID for an empty seed.
 func GenerateSessionUUID(seed string) string {
 	if seed == "" {
 		return uuid.NewString()
@@ -49,9 +49,9 @@ func GenerateSessionUUID(seed string) string {
 		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
 }
 
-// ShortHash 保持各平台旧摘要使用的相同编码。
-// shortHash 使用 XXHash64 + Base36 生成短 hash（16 字符）
-// XXHash64 比 SHA256 快约 10 倍，Base36 比 Hex 短约 20%。
+// ShortHash returns an unpadded base-36 encoding of the XXHash64 digest.
+// The encoding has at most 13 characters.
+// Callers use this compact digest for non-cryptographic identifiers.
 func ShortHash(data []byte) string {
 	h := xxhash.Sum64(data)
 	return strconv.FormatUint(h, 36)
@@ -63,13 +63,13 @@ func RandomHex(nBytes int) string {
 	return hex.EncodeToString(b)
 }
 
-// GenerateAnthropicMsgID 生成 Anthropic 官方格式的消息 ID：msg_01 + 22 位 Base62。
+// GenerateAnthropicMsgID returns msg_01 followed by 22 base-62 characters.
 func GenerateAnthropicMsgID() string {
 	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	const idLen = 22
 	randomBytes := make([]byte, idLen)
 	if _, err := rand.Read(randomBytes); err != nil {
-		// 极端情况下熵源不可用，仍保持客户端依赖的固定格式。
+		// Keep the fixed-width ID format if random bytes cannot be obtained.
 		return fmt.Sprintf("msg_01%022x", uint64(time.Now().UnixNano()))
 	}
 	b := make([]byte, idLen)

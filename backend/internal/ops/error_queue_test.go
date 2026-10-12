@@ -57,7 +57,7 @@ func TestEstimateOpsErrorLogJobBytesIncludesVariablePayloads(t *testing.T) {
 func TestEnqueueOpsErrorLog_QueueFullDrop(t *testing.T) {
 	resetOpsErrorLoggerStateForTest(t)
 
-	// 禁止 enqueueOpsErrorLog 触发 workers，使用测试队列验证满队列降级。
+	// Prevent lazy worker startup so the test queue stays full during enqueue.
 	testErrorQueue.opsErrorLogOnce.Do(func() {})
 
 	testErrorQueue.opsErrorLogMu.Lock()
@@ -81,17 +81,14 @@ func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
 	ops := newLegacyShapeOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	entry := &OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
 
-	// nil 入参分支
 	testErrorQueue.Enqueue(nil, entry)
 	testErrorQueue.Enqueue(ops, nil)
 	require.Equal(t, int64(0), testErrorQueue.OpsErrorLogEnqueuedTotal())
 
-	// shutdown 分支
 	testErrorQueue.opsErrorLogShutdownOnce.Do(func() { close(testErrorQueue.opsErrorLogShutdownCh) })
 	testErrorQueue.Enqueue(ops, entry)
 	require.Equal(t, int64(0), testErrorQueue.OpsErrorLogEnqueuedTotal())
 
-	// stopping 分支
 	resetOpsErrorLoggerStateForTest(t)
 	testErrorQueue.opsErrorLogMu.Lock()
 	testErrorQueue.opsErrorLogStopping = true
@@ -99,7 +96,7 @@ func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
 	testErrorQueue.Enqueue(ops, entry)
 	require.Equal(t, int64(0), testErrorQueue.OpsErrorLogEnqueuedTotal())
 
-	// queue nil 分支（防止启动 worker 干扰）
+	// Suppress worker startup to exercise the nil queue branch.
 	resetOpsErrorLoggerStateForTest(t)
 	testErrorQueue.opsErrorLogOnce.Do(func() {})
 	testErrorQueue.opsErrorLogMu.Lock()
@@ -134,7 +131,7 @@ func TestNormalizeOpsPersistentUserAgentBoundsAndPreservesUTF8(t *testing.T) {
 	require.NotContains(t, got, "b")
 }
 
-// TestOpsErrorLogShutdownDrainsCapturedQueue 验证关闭清空全局队列引用后，worker 仍须继续消费自己已经取得的队列。
+// TestOpsErrorLogShutdownDrainsCapturedQueue checks that workers drain their captured queue after the shared reference is cleared.
 func TestOpsErrorLogShutdownDrainsCapturedQueue(t *testing.T) {
 	resetOpsErrorLoggerStateForTest(t)
 	t.Cleanup(func() { resetOpsErrorLoggerStateForTest(t) })
@@ -167,7 +164,7 @@ func setupOpsErrorLogTestQueue(t *testing.T, size int) {
 	testErrorQueue.opsErrorLogQueue = make(chan opsErrorLogJob, size)
 }
 
-// TestErrorQueueConstructAndStopDoNotStartWorkers 验证构造与停止不启动懒队列，停止后的提交也不能重新开启 worker。
+// TestErrorQueueConstructAndStopDoNotStartWorkers checks lazy startup and rejects submissions after shutdown.
 func TestErrorQueueConstructAndStopDoNotStartWorkers(t *testing.T) {
 	starts := 0
 	q := NewErrorLogQueue(ErrorLogQueueOptions{Processors: func() int { starts++; return 2 }})

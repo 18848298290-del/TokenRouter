@@ -63,14 +63,14 @@ type UserSubscription struct {
 	AssignedByUser *UserSummary
 }
 
-// SubscriptionWindowActivation 表示本次维护允许首次激活的订阅额度窗口。
+// SubscriptionWindowActivation identifies quota windows eligible for first activation.
 type SubscriptionWindowActivation struct {
 	Daily   bool
 	Weekly  bool
 	Monthly bool
 }
 
-// SubscriptionRemainingForDisplay 返回展示用剩余额度，无上限时返回 -1。
+// SubscriptionRemainingForDisplay returns available quota, or -1 when every window is unlimited.
 func SubscriptionRemainingForDisplay(sub *UserSubscription) float64 {
 	if sub == nil {
 		return 0
@@ -164,7 +164,7 @@ func (s *UserSubscription) NeedsWindowActivationAt(now time.Time) bool {
 	return s.WindowActivationAt(now).Any()
 }
 
-// WindowActivationAt 返回当前可首次激活的额度窗口；有限外层额度允许低层窗口在到期尾段激活。
+// WindowActivationAt reports windows that can start; a positive outer limit permits shorter windows near expiry.
 func (s *UserSubscription) WindowActivationAt(now time.Time) SubscriptionWindowActivation {
 	var activation SubscriptionWindowActivation
 	if s == nil || !s.HasQuotaLimit() || now.Before(s.StartsAt) || !now.Before(s.ExpiresAt) {
@@ -194,7 +194,7 @@ func (s *UserSubscription) NeedsDailyResetAt(now time.Time, calendar timezone.Ca
 	return ok
 }
 
-// AutomaticDailyWindowStartWithCalendar 使用显式日历，保留一次性日额度与尾段保护。
+// AutomaticDailyWindowStartWithCalendar selects a new calendar-day start subject to one-time and expiry-tail rules.
 func (s *UserSubscription) AutomaticDailyWindowStartWithCalendar(now time.Time, calendar timezone.Calendar) (time.Time, bool) {
 	if s == nil || s.DailyWindowStart == nil || s.ExpiresAt.IsZero() || !now.Before(s.ExpiresAt) {
 		return time.Time{}, false
@@ -240,7 +240,7 @@ func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 	return s.CanStartQuotaWindow(startOfDay(now), SubscriptionMonthlyWindow)
 }
 
-// CanStartFullQuotaWindow 判断从指定起点开始是否还能覆盖一个完整额度窗口。
+// CanStartFullQuotaWindow reports whether a complete window fits before subscription expiry.
 func (s *UserSubscription) CanStartFullQuotaWindow(windowStart time.Time, duration time.Duration) bool {
 	if s == nil || s.ExpiresAt.IsZero() || duration <= 0 || !windowStart.Before(s.ExpiresAt) {
 		return false
@@ -248,7 +248,7 @@ func (s *UserSubscription) CanStartFullQuotaWindow(windowStart time.Time, durati
 	return !windowStart.Add(duration).After(s.ExpiresAt)
 }
 
-// CanStartQuotaWindow 判断窗口能否开始；更高层有限额度存在时，它负责约束低层尾段的总消耗。
+// CanStartQuotaWindow permits a full window or a shorter expiry-tail window protected by a positive outer limit.
 // @project-doc docs/domains/payments_and_entitlements.md#subscription_quota_windows
 func (s *UserSubscription) CanStartQuotaWindow(windowStart time.Time, duration time.Duration) bool {
 	if s == nil || s.ExpiresAt.IsZero() || !windowStart.Before(s.ExpiresAt) {
@@ -257,7 +257,7 @@ func (s *UserSubscription) CanStartQuotaWindow(windowStart time.Time, duration t
 	return s.CanStartFullQuotaWindow(windowStart, duration) || s.HasFiniteOuterQuotaLimit(duration)
 }
 
-// HasFiniteOuterQuotaLimit 按“日 < 周 < 月”层级判断是否存在正数外层额度；无限额度不能充当尾段保护层。
+// HasFiniteOuterQuotaLimit checks positive outer limits in daily, weekly, monthly order; absent or nonpositive limits provide no protection.
 func (s *UserSubscription) HasFiniteOuterQuotaLimit(duration time.Duration) bool {
 	if s == nil {
 		return false
@@ -280,7 +280,7 @@ func (s *UserSubscription) DailyResetTime(calendar timezone.Calendar) *time.Time
 		t := s.ExpiresAt
 		return &t
 	}
-	// 日额度按日历日刷新，旧的非零点锚点也应展示其所在日的下一个零点。
+	// Daily resets align with midnight, including windows whose stored start was not at midnight.
 	t := calendar.StartOfDay(*s.DailyWindowStart).AddDate(0, 0, 1)
 	if !s.CanStartQuotaWindow(t, SubscriptionDailyWindow) {
 		t = s.ExpiresAt
@@ -330,8 +330,8 @@ func (s *UserSubscription) AvailableQuotaUSD() float64 {
 	)
 }
 
-// HighestQuotaExhausted 判断最高层有限额度是否已耗尽。
-// 月、周、日按优先级选择第一个正数额度；低层窗口耗尽但高层仍有额度时不能撤销套餐。
+// HighestQuotaExhausted reports whether the highest configured finite quota has been consumed.
+// Monthly takes precedence over weekly, then daily; a remaining outer quota blocks self-revocation.
 // @project-doc docs/domains/payments_and_entitlements.md#subscription_self_revoke
 func (s *UserSubscription) HighestQuotaExhausted() bool {
 	if s == nil {
@@ -399,7 +399,7 @@ func PositiveSubscriptionLimit(limit *float64) bool {
 	return limit != nil && *limit > 0
 }
 
-// startOfDay 保留传入时间自身的时区；订阅与平台窗口不能混用日界。
+// startOfDay uses t's own timezone; callers must supply the timezone belonging to their window.
 func startOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
@@ -414,8 +414,8 @@ func subscriptionPlanIncludesGroup(plan *SubscriptionPlan, groupID int64) bool {
 	return slices.Contains(plan.GroupIDs, groupID)
 }
 
-// SubscriptionAllowsGroup 返回订阅套餐是否覆盖目标分组。
-// 未配置套餐分组代表套餐不限制分组；缺失套餐或未知分组不应被指定订阅模式放行。
+// SubscriptionAllowsGroup reports whether the subscription's plan covers the group.
+// An empty plan group list is unrestricted; missing plans and nonpositive group IDs are rejected.
 func SubscriptionAllowsGroup(subscription *UserSubscription, groupID int64) bool {
 	if subscription == nil || subscription.Plan == nil || groupID <= 0 {
 		return false

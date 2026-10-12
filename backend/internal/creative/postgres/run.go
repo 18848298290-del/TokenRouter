@@ -15,13 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// creativeRunRepository 基于 Ent 实现创作台任务元数据仓储。
-// 状态转换统一走 version 乐观锁：WHERE run_id = ? AND version = ?，冲突即视为并发推进。
+// creativeRunRepository stores creative run metadata through Ent.
+// State transitions using version checks reject updates when another writer advances the run.
 type creativeRunRepository struct {
 	client *dbent.Client
 }
 
-// translatePersistenceError 将数据库的缺失和冲突错误转换为任务错误。
+// translatePersistenceError maps missing records and conflicts to run errors.
 func translatePersistenceError(err error, notFound, conflict *apperror.ApplicationError) error {
 	if err == nil {
 		return nil
@@ -35,7 +35,7 @@ func translatePersistenceError(err error, notFound, conflict *apperror.Applicati
 	return err
 }
 
-// NewCreativeRunRepository 创建创作台任务仓储。
+// NewCreativeRunRepository creates a creative run repository.
 func NewCreativeRunRepository(client *dbent.Client) creative.CreativeRunRepository {
 	return &creativeRunRepository{client: client}
 }
@@ -87,7 +87,7 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 	if err != nil {
 		return nil, translatePersistenceError(err, nil, creative.ErrCreativeRunExists)
 	}
-	// 同事务创建全部 pending 输出行，保证任务与输出元数据原子出现。
+	// Create pending outputs in the run transaction so their metadata appears atomically.
 	outputBuilders := make([]*dbent.CreativeRunOutputCreate, 0, params.RequestedOutputCount)
 	for index := range params.RequestedOutputCount {
 		outputBuilders = append(outputBuilders, tx.CreativeRunOutput.Create().
@@ -100,7 +100,7 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 			return nil, translatePersistenceError(err, nil, creative.ErrCreativeOutputExists)
 		}
 	}
-	// 创建任务与 provisioning outbox 在同一事务提交，queued 任务同时具有待入队记录。
+	// Commit the provisioning outbox entry with the queued run so enqueue can be recovered.
 	if _, err := tx.CreativeRunOutbox.Create().
 		SetRunID(params.RunID).
 		SetOperation(string(creative.CreativeRunOutboxProvision)).
@@ -193,7 +193,7 @@ func (r *creativeRunRepository) ListCreativeRunsForOwner(ctx context.Context, sc
 	return out, nil
 }
 
-// TransitionCreativeRunStatus 先读后改：CanTransition 校验 + version 乐观锁。
+// TransitionCreativeRunStatus validates the transition and updates with an optimistic version check.
 func (r *creativeRunRepository) TransitionCreativeRunStatus(ctx context.Context, runID, toStatus string, opts creative.CreativeRunTransitionOptions) error {
 	now := time.Now()
 	if opts.Now != nil {
@@ -259,13 +259,13 @@ func (r *creativeRunRepository) TransitionCreativeRunStatus(ctx context.Context,
 		return err
 	}
 	if affected == 0 {
-		// version 冲突：任务已被并发推进，按非法转换处理（调用方通常重读状态）。
+		// A version conflict means another writer advanced the run; the caller can reread its state.
 		return creative.ErrCreativeInvalidTransition
 	}
 	return nil
 }
 
-// MarkCreativeRunRunning 幂等推进 queued -> running 并回填执行提供商。
+// MarkCreativeRunRunning advances queued to running idempotently and records the provider.
 func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runID string, providerID int64, now time.Time) error {
 	current, err := r.client.CreativeRun.Query().
 		Where(creativerun.RunIDEQ(runID)).
@@ -274,7 +274,7 @@ func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runI
 		return translatePersistenceError(err, creative.ErrCreativeRunNotFound, nil)
 	}
 	if current.Status == creative.CreativeRunStatusRunning {
-		// 重复执行（worker 重试）视为成功，并回填提供商。
+		// A retry of a running job succeeds and updates the provider when needed.
 		if providerID > 0 && (current.ProviderID == nil || *current.ProviderID != providerID) {
 			_, err := r.client.CreativeRun.Update().
 				Where(creativerun.RunIDEQ(runID)).
@@ -310,7 +310,7 @@ func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runI
 	return nil
 }
 
-// SetCreativeRunExecution 持久化执行器最终选中的上游提供商。
+// SetCreativeRunExecution saves the selected provider and platform.
 func (r *creativeRunRepository) SetCreativeRunExecution(ctx context.Context, runID string, providerID int64, platform string, now time.Time) error {
 	if providerID <= 0 {
 		return nil
@@ -330,7 +330,7 @@ func (r *creativeRunRepository) SetCreativeRunExecution(ctx context.Context, run
 	return nil
 }
 
-// MarkCreativeRunSucceeded 记录实际成本并进入 succeeded，仅在 running 时生效。
+// MarkCreativeRunSucceeded records cost and succeeds a running, provider_succeeded, or settlement_pending run.
 func (r *creativeRunRepository) MarkCreativeRunSucceeded(ctx context.Context, runID string, actualCost float64, now time.Time) error {
 	affected, err := r.client.CreativeRun.Update().
 		Where(
@@ -365,8 +365,8 @@ func (r *creativeRunRepository) MarkCreativeRunSucceeded(ctx context.Context, ru
 	return nil
 }
 
-// MarkCreativeRunProviderSucceeded 在输出已经写入 Redis 后记录 platform 成功，
-// 随后由 settlement worker 重试计费与落库，平台执行结果继续复用。
+// MarkCreativeRunProviderSucceeded records provider success for settlement recovery.
+// Callers retain the generated output so settlement retries do not repeat generation.
 func (r *creativeRunRepository) MarkCreativeRunProviderSucceeded(ctx context.Context, runID string, providerID int64, now time.Time) error {
 	current, err := r.client.CreativeRun.Query().Where(creativerun.RunIDEQ(runID)).Only(ctx)
 	if err != nil {
@@ -392,13 +392,13 @@ func (r *creativeRunRepository) MarkCreativeRunProviderSucceeded(ctx context.Con
 	return nil
 }
 
-// UpdateCreativeRunOutput 幂等更新输出行：已 acked 的行不允许被覆盖。
+// UpdateCreativeRunOutput updates output metadata while leaving acknowledged rows unchanged.
 func (r *creativeRunRepository) UpdateCreativeRunOutput(ctx context.Context, runID string, outputIndex int, status, mimeType string, byteSize int64, transientExpiresAt *time.Time, errorCode, errorMessage string) error {
 	builder := r.client.CreativeRunOutput.Update().
 		Where(
 			creativerunoutput.RunIDEQ(runID),
 			creativerunoutput.OutputIndexEQ(outputIndex),
-			// acked 表示客户端已确认接收，更新操作在此结束。
+			// Acknowledged output has already been received by the client and must not be overwritten.
 			creativerunoutput.StatusNEQ(creative.CreativeRunOutputStatusAcked),
 		).
 		SetStatus(status).
@@ -423,7 +423,7 @@ func (r *creativeRunRepository) UpdateCreativeRunOutput(ctx context.Context, run
 		return err
 	}
 	if affected == 0 {
-		// 行不存在或已 acked：已 acked 视为幂等成功，不存在才报错。
+		// An acknowledged row is an idempotent success; a missing row is an error.
 		exists, existsErr := r.client.CreativeRunOutput.Query().
 			Where(
 				creativerunoutput.RunIDEQ(runID),
@@ -468,7 +468,7 @@ func (r *creativeRunRepository) ListCreativeRunOutputs(ctx context.Context, runI
 	return out, nil
 }
 
-// ListCreativeRunOutputsForRuns 一次读取多个 run 的输出元数据，供历史/活动列表使用。
+// ListCreativeRunOutputsForRuns fetches output metadata for multiple history or active-list runs.
 func (r *creativeRunRepository) ListCreativeRunOutputsForRuns(ctx context.Context, runIDs []string) (map[string][]*creative.CreativeRunOutput, error) {
 	result := make(map[string][]*creative.CreativeRunOutput, len(runIDs))
 	if len(runIDs) == 0 {
@@ -487,7 +487,7 @@ func (r *creativeRunRepository) ListCreativeRunOutputsForRuns(ctx context.Contex
 	return result, nil
 }
 
-// MarkCreativeRunOutputAcked 将 succeeded 输出标记为 acked，重复确认时返回成功。
+// MarkCreativeRunOutputAcked acknowledges a succeeded output; repeated acknowledgments succeed.
 func (r *creativeRunRepository) MarkCreativeRunOutputAcked(ctx context.Context, runID string, outputIndex int, now time.Time) error {
 	affected, err := r.client.CreativeRunOutput.Update().
 		Where(
@@ -520,7 +520,7 @@ func (r *creativeRunRepository) MarkCreativeRunOutputAcked(ctx context.Context, 
 	return nil
 }
 
-// ListCreativeRunsDueForTransientCleanup 返回终态且完成时间早于 cutoff 的任务，供第二阶段清理暂存。
+// ListCreativeRunsDueForTransientCleanup lists terminal runs completed at or before cutoff for transient cleanup.
 func (r *creativeRunRepository) ListCreativeRunsDueForTransientCleanup(ctx context.Context, cutoff time.Time, limit int) ([]*creative.CreativeRun, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -548,7 +548,7 @@ func (r *creativeRunRepository) ListCreativeRunsDueForTransientCleanup(ctx conte
 	return out, nil
 }
 
-// IncrementCreativeRunAttempt 原子递增 attempt_count 并返回最新值。
+// IncrementCreativeRunAttempt atomically increments attempt_count and returns the new value.
 func (r *creativeRunRepository) IncrementCreativeRunAttempt(ctx context.Context, runID string) (int, error) {
 	affected, err := r.client.CreativeRun.Update().
 		Where(creativerun.RunIDEQ(runID)).
@@ -622,7 +622,7 @@ func (r *creativeRunRepository) SetCreativeRunProvisioningPhase(ctx context.Cont
 	return nil
 }
 
-// SetCreativeRunAllowanceReserved 持久化预占事实，释放成功后复位。
+// SetCreativeRunAllowanceReserved persists the allowance reservation flag, cleared after release.
 func (r *creativeRunRepository) SetCreativeRunAllowanceReserved(ctx context.Context, runID string, reserved bool) error {
 	affected, err := r.client.CreativeRun.Update().
 		Where(creativerun.RunIDEQ(runID)).

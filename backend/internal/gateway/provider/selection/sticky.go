@@ -8,7 +8,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// resolveOpenAIGuardianParentProviderID 根据请求状态中的父会话散列查询缓存。
+// resolveOpenAIGuardianParentProviderID looks up the parent-session hashes stored in request state.
 func (s *Compatible) resolveOpenAIGuardianParentProviderID(ctx context.Context, groupID *int64) int64 {
 	if s == nil || s.cache == nil {
 		return 0

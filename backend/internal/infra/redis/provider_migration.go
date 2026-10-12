@@ -11,7 +11,7 @@ import (
 
 const providerMigrationState = "migration:provider-names:v1"
 
-// 原子改名保留任意 Redis 类型及其到期时间；目标已存在时绝不覆盖。
+// renameProviderKey atomically renames a key with its type and TTL, rejecting target collisions.
 var renameProviderKey = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('EXISTS', KEYS[2]) ~= 0 then return -1 end
@@ -19,8 +19,9 @@ redis.call('RENAME', KEYS[1], KEYS[2])
 return 1
 `)
 
-// MigrateProviderNames 在旧实例全部停止后迁移运行状态；扫描游标按批保存，失败后可重试。
-// 粘性绑定和 RPM 键本身不含 account，值为 ID，无需改写；快照由版本隔离后重建。
+// MigrateProviderNames renames runtime keys after all old instances have stopped.
+// Saved scan cursors allow retries. Sticky and RPM keys use IDs and need no rename;
+// versioned snapshots are rebuilt separately.
 // @project-doc docs/operations/upgrade_notes.md#provider_name_migration
 func MigrateProviderNames(ctx context.Context, client *redis.Client) error {
 	done, err := client.HGet(ctx, providerMigrationState, "done").Result()

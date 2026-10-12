@@ -2,7 +2,7 @@ package routing
 
 import "context"
 
-// RequestableCatalogue 从当前提供商配置解析分组目录和单个型号。
+// RequestableCatalogue resolves group catalogues and selected models from current provider configuration.
 type RequestableCatalogue struct {
 	Read     func(context.Context, *int64) ([]CatalogueProvider, error)
 	Resolver RequestableResolver
@@ -17,7 +17,8 @@ func (c *RequestableCatalogue) Prefetch(ctx context.Context) ([]CatalogueProvide
 	return values, err == nil, err
 }
 
-// ResolveRequestableModels 合并目录与配置，并用当前提供商复核候选。
+// ResolveRequestableModels loads current providers and validates configured candidates; read failures produce a
+// restricted empty result.
 func (c *RequestableCatalogue) ResolveRequestableModels(ctx context.Context, groupID *int64, platform string) RequestableModelsResult {
 	if c == nil || c.Read == nil {
 		return RequestableModelsResult{}
@@ -36,7 +37,7 @@ func (c *RequestableCatalogue) ResolveRequestableModels(ctx context.Context, gro
 	return c.Resolver.ResolveWithProviders(ctx, groupID, platform, nil, providers)
 }
 
-// ResolveSelectedModels 在同一份规则中校验目标型号及其可能的 Key 别名目标。
+// ResolveSelectedModels validates selected names and alias targets against one prepared set of rules.
 func (c *RequestableCatalogue) ResolveSelectedModels(ctx context.Context, groupID *int64, platform string, models []string) RequestableModelsResult {
 	if c == nil || c.Read == nil {
 		return RequestableModelsResult{}

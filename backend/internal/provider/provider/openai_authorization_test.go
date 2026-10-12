@@ -187,7 +187,8 @@ func TestOpenAIOAuthService_RefreshTokenWithClientIDAndRouter_UsesCodexUAFallbac
 	require.Equal(t, "built-in", client.lastOptions[0].TLSProfile.Name)
 }
 
-// TestOpenAIPrivacyUsesNativeAccountSettingsEndpoint 捕获生产 Options 发出的请求，检查隐私设置默认端点。
+// TestOpenAIPrivacyUsesNativeAccountSettingsEndpoint captures requests built by the production
+// authorization options.
 func TestOpenAIPrivacyUsesNativeAccountSettingsEndpoint(t *testing.T) {
 	client := req.C()
 	var requests []*http.Request
@@ -208,7 +209,8 @@ func TestOpenAIPrivacyUsesNativeAccountSettingsEndpoint(t *testing.T) {
 	require.Equal(t, "false", requests[0].URL.Query().Get("value"))
 }
 
-// TestOpenAIPATUsesNativeAccountEndpoint 使用独立代理地址隔离共享客户端缓存，检查 PAT 路径和身份字段。
+// TestOpenAIPATUsesNativeAccountEndpoint uses a unique proxy address to isolate the shared client
+// cache while checking PAT requests.
 func TestOpenAIPATUsesNativeAccountEndpoint(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("unexpected network request")
@@ -778,7 +780,7 @@ func (s *openaiOAuthClientStateStub) RefreshTokenWithClientID(ctx context.Contex
 	return s.RefreshToken(ctx, refreshToken, proxyURL)
 }
 
-// configureChatGPTBackendTestServer 在本地接管提供商、订阅和隐私设置端点。
+// configureChatGPTBackendTestServer serves local account, subscription, and privacy endpoints.
 func configureChatGPTBackendTestServer(t *testing.T, config chatGPTBackendTestConfig) upstreamopenai.PrivacyEndpoints {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

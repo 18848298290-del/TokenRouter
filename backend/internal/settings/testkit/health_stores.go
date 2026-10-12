@@ -8,7 +8,7 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Memory 在互斥保护下提供原设置替身的读写与计数。
+// Memory provides mutex-protected settings access and a GetValue call counter.
 type Memory struct {
 	Mu            sync.Mutex
 	Data          map[string]string

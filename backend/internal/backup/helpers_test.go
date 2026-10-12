@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// runtimeSettings 用 entered 通知测试配置读取已开始，并等待上下文取消。
+// runtimeSettings signals when a settings read starts, then waits for context cancellation.
 type runtimeSettings struct {
 	mu        sync.Mutex
 	values    map[string]string

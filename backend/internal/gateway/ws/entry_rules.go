@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// ErrEntryLocalRoutingRejected 标记本地提供商资格检查拒绝，上游健康状态保持原值。
+// ErrEntryLocalRoutingRejected marks a local eligibility rejection that does not penalize upstream health.
 var ErrEntryLocalRoutingRejected = errors.New("local websocket routing rejected")
 
-// EntryFallbackSeed 为缺少指定会话标识的请求生成隔离键。
+// EntryFallbackSeed derives an isolation key when the request has no explicit session ID.
 func EntryFallbackSeed(userID, keyID int64, groupID *int64) string {
 	var group int64
 	if groupID != nil {
@@ -28,7 +28,7 @@ func entrySeedHash(seed string) string {
 	return value
 }
 
-// EntryNextAttemptMessage 在当前 turn 可完整重放时返回供下一个提供商使用的消息。
+// EntryNextAttemptMessage returns an owned payload for the next provider, rejecting a current turn with no replay payload.
 func EntryNextAttemptMessage(current, retry []byte, currentTurn bool) ([]byte, bool) {
 	if !currentTurn {
 		return append([]byte(nil), current...), true
@@ -39,7 +39,7 @@ func EntryNextAttemptMessage(current, retry []byte, currentTurn bool) ([]byte, b
 	return append([]byte(nil), retry...), true
 }
 
-// EntryBillingModel 优先使用共享价卡指定的计费模型。
+// EntryBillingModel applies the group mapping's billing-model source to the result, upstream, or requested model.
 func EntryBillingModel(result *ForwardResult, mapping routing.GroupMappingResult, requested, upstream string) string {
 	model := ""
 	if result != nil {
@@ -76,7 +76,7 @@ func EntryLocalRoutingReason(model string) string {
 	return fmt.Sprintf("model %s is not available for this websocket group or provider", strings.TrimSpace(model))
 }
 
-// EntryLocalRoutingErrorReason 为缺价拒绝提供可操作的提示。
+// EntryLocalRoutingErrorReason returns the missing-price message or a model eligibility rejection.
 func EntryLocalRoutingErrorReason(model string, err error) string {
 	if errors.Is(err, pricing.ErrModelPricingUnavailable) {
 		return admission.ModelPricingUnavailableMessage

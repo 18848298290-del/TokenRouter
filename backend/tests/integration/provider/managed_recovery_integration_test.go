@@ -15,7 +15,7 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// 在每个提交步骤前插入管理员修改，使用 PostgreSQL 检查提交条件。
+// managedRecoveryInterleaveStore injects administrator changes before each recovery write to test PostgreSQL guards.
 type managedRecoveryInterleaveStore struct {
 	*providerpostgres.ProviderStore
 	before  func(provider.ManagedRecoveryStep) error
@@ -105,7 +105,7 @@ func TestManagedRecoveryIndependentCommitsAndIdentity(t *testing.T) {
 					expectedEvents = 5
 				}
 				require.Len(t, writer.applied, expectedEvents)
-				// 原 outbox 对同提供商合并待处理事件，五次独立发布仍只留一条待消费记录。
+				// The outbox coalesces pending events per provider, so five publications leave one pending row.
 				if expectedEvents > 0 {
 					expectedEvents = 1
 				}
@@ -128,7 +128,7 @@ func TestManagedRecoveryIndependentCommitsAndIdentity(t *testing.T) {
 				} else if scenario == "error" {
 					require.Equal(t, "administrator error", current.ErrorMessage)
 				} else if scenario == "write_failure" || scenario == "cancel" {
-					// 失败前已提交的独立写入仍保留，不随后续操作回滚。
+					// Earlier independently committed steps survive failure in a later step.
 					if step > provider.ManagedRecoveryError {
 						require.Equal(t, provider.StatusActive, current.Status)
 					} else {

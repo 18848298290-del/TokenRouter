@@ -108,7 +108,7 @@ func TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoni
 	require.Equal(t, "stop", gjson.GetBytes(rec.Body.Bytes(), "choices.0.finish_reason").String())
 }
 
-// TestHandleCCBufferedFromAnthropic_CompactSSEFormat 验证缓冲路径解析冒号后无空格的 Anthropic SSE。
+// TestHandleCCBufferedFromAnthropic_CompactSSEFormat checks SSE fields with no space after the colon.
 func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 	t.Parallel()
 
@@ -245,7 +245,7 @@ func TestHandleCCBufferedFromAnthropic_WritesToolCall(t *testing.T) {
 	require.JSONEq(t, `{"q":"hi"}`, gjson.GetBytes(rec.Body.Bytes(), "choices.0.message.tool_calls.0.function.arguments").String())
 }
 
-// conversionResponseFixture 为响应转换测试提供扫描缓冲和 HTTP Adapter。
+// conversionResponseFixture supplies a scanner, runtime, and close callback for response conversion tests.
 func conversionResponseFixture(resp *http.Response) forward.Response {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 500*1024*1024)
@@ -424,7 +424,7 @@ func TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat(t *testing.T)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
-	// 模拟冒号后没有空格的紧凑 SSE 格式。
+	// Compact SSE omits the space after each field colon.
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_compact"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
@@ -454,7 +454,7 @@ func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
-	// 流式与缓冲路径共用紧凑 SSE 解析规则。
+	// Streaming and buffered conversion accept the same compact SSE layout.
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_compact_stream"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
@@ -481,7 +481,7 @@ func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `response.completed`)
 }
 
-// TestMessagesConversionSSEFormats 将同一批文本和工具事件以不同 SSE 排版送入 HTTP 转换器。
+// TestMessagesConversionSSEFormats sends the same text and tool events with different SSE layouts.
 func TestMessagesConversionSSEFormats(t *testing.T) {
 	textStream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"upstream-model\",\"content\":[],\"usage\":{\"input_tokens\":0}}}\n\n" +
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
@@ -552,7 +552,7 @@ func TestMessagesConversionSSEFormats(t *testing.T) {
 	}
 }
 
-// conversionSSEFormat 保持事件内容相同，改变传输排版以覆盖上游的 data-only 输出。
+// conversionSSEFormat varies SSE layout, including data-only frames and event-only type fields.
 func conversionSSEFormat(t *testing.T, body, format string) string {
 	t.Helper()
 	var result strings.Builder
@@ -582,7 +582,7 @@ func conversionSSEFormat(t *testing.T, body, format string) string {
 
 func (conversionReadFailure) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
-// TestMessagesConversionSSEFailures 检查尾部用量交付、截断 JSON 和累计帧超限的 HTTP 输出。
+// TestMessagesConversionSSEFailures checks trailing usage, truncated JSON, and accumulated frame limits.
 func TestMessagesConversionSSEFailures(t *testing.T) {
 	const start = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_failure\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":10}}}\n\n"
 	const usage = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":25}}\n"
@@ -666,7 +666,7 @@ func TestMessagesConversionSSEFailures(t *testing.T) {
 					require.NotContains(t, rec.Body.String(), "response.completed")
 					require.NotContains(t, rec.Body.String(), "[DONE]")
 				}
-				// 模拟外层 OtherFailure 的补发判定，已经交付的终态和 JSON 应保持原样。
+				// Repeat the outer OtherFailure check; a delivered terminal event or JSON response stays unchanged.
 				responseBody := rec.Body.String()
 				if !OpenAIForwardErrorAlreadyCommunicated(c, before, err) {
 					require.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, false, err))
@@ -679,7 +679,8 @@ func TestMessagesConversionSSEFailures(t *testing.T) {
 
 func (conversionFailingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
-// TestConversionTerminalCommit 检查部分输出和写失败时仍允许外层处理错误。
+// TestConversionTerminalCommit checks that partial output and write failures leave error handling to the
+// caller.
 func TestConversionTerminalCommit(t *testing.T) {
 	for _, failWrite := range []bool{false, true} {
 		rec := httptest.NewRecorder()

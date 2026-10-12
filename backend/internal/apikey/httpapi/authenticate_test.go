@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// TestRecordAccessOwnershipDoesNotAuthenticate 诊断归属不能使失败凭据获得认证主体。
+// TestRecordAccessOwnershipDoesNotAuthenticate checks that diagnostic ownership does not create an authenticated principal.
 func TestRecordAccessOwnershipDoesNotAuthenticate(t *testing.T) {
 	var latest telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{RequestID: "request", StartedAt: time.Now(), State: "running"}, func(record telemetry.RequestRecord) { latest = record })

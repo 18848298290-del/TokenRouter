@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-// RuntimeSettingsStore 只读取创作模块的运行设置。
+// RuntimeSettingsStore reads persisted Creative Studio settings by key.
 type RuntimeSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 }
 
-// RuntimeSettings 在调用时读取创作台设置并处理缺省值。
+// RuntimeSettings reads settings on demand and applies defaults for missing or invalid values.
 type RuntimeSettings struct {
 	settingRepo RuntimeSettingsStore
 	notFound    error
@@ -66,7 +66,7 @@ func (s *RuntimeSettings) GetCreativeModelSettings(ctx context.Context) []Creati
 	return ParseCreativeModelSettings(raw)
 }
 
-// ParseCreativeWorkerCount 复用现有缺省和上下限。
+// ParseCreativeWorkerCount returns a positive integer or DefaultCreativeWorkerCount for invalid input.
 func ParseCreativeWorkerCount(value string) int {
 	count, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || count <= 0 {

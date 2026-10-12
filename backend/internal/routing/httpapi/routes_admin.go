@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterPricingRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterPricingRoutes registers pricing routes. The caller installs authentication, rate limits, and auditing on
+// admin.
 func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
 	admin.GET("/pricing/defaults", endpoint.ListDefaultPricing)
 	admin.GET("/pricing/defaults/model", endpoint.GetModelDefaultPricing)
@@ -19,7 +20,7 @@ func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
 	}
 }
 
-// RegisterGroupRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterGroupRoutes registers group routes. The caller installs authentication, rate limits, and auditing on admin.
 func RegisterGroupRoutes(admin *gin.RouterGroup, endpoint *GroupHandler) {
 	groups := admin.Group("/groups")
 	{

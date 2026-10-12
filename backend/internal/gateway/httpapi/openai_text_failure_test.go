@@ -52,7 +52,8 @@ func (s *textFailureStore) SetModelRateLimit(_ context.Context, id int64, key st
 	return nil
 }
 
-// textFailureFixture 组合实际提供商健康、阻断与协议分类器，存储替身只记录写入。
+// textFailureFixture combines provider health, blocking, and protocol classification with a write-recording
+// store stub.
 func textFailureFixture(store gatewayprovider.ExecutionProviderStore, observe bool) *OpenAITextExecutor {
 	blocks := providercore.NewRuntimeBlockState(time.Now)
 	models := providercore.NewModelTransientState(0)
@@ -66,8 +67,8 @@ func textFailureFixture(store gatewayprovider.ExecutionProviderStore, observe bo
 	return &OpenAITextExecutor{Output: &OpenAIResponseOutput{Health: &provideradapter.OpenAIResponseHealth{Health: health, Runtime: blocks, ModelTransient: models}}, Grok: &GrokExecutor{Health: grokHealth}}
 }
 
-// TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover 验证
-// Chat Completions 共用错误管线和 WS HTTP Bridge 不会把提供商代理 413 当成请求级拒绝。
+// TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover checks that
+// Chat error handling and the WS HTTP bridge treat provider proxy 413 responses as provider failures.
 func TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -204,10 +205,11 @@ func TestFailoverOpenAIUpstreamHTTPErrorUsesOnlyGrokRateLimitPolicy(t *testing.T
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
-// TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel 验证自 #4547（issue 4527 第 4 点）起，临时不可调度规则命中已知模型时按模型隔离：
-// 已知模型按 (提供商, 模型) 冷却，未知模型按提供商冷却。
-// （见 TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock）。
-// 池模式规则仍然生效（issue 4470）：停止同提供商重试并对命中模型设临时封锁。
+// TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel checks model-scoped temporary
+// blocking (#4547).
+// Known models cool down by provider and model; unknown models cool down the provider.
+// See TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock.
+// Pool rules stop same-provider retries and temporarily block the matching model (issue 4470).
 func TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	gateway := textFailureFixture(repo, true)

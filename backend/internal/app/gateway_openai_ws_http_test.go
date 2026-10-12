@@ -88,14 +88,14 @@ type openAIWSPassthroughHandlerHarness struct {
 	groups         *wsTurnGroups
 }
 
-// wsTurnKeys 保存当前认证记录，连接另持有认证时取得的快照。
+// wsTurnKeys holds the current authentication record; the connection retains its authentication snapshot.
 type wsTurnKeys struct {
 	apikey.APIKeyRepository
 	mu  sync.Mutex
 	key *apikey.APIKey
 }
 
-// wsTurnGroups 按快照返回分组许可，供长连接测试在轮次之间撤销协议。
+// wsTurnGroups returns group permission snapshots so tests can revoke protocols between turns.
 type wsTurnGroups struct {
 	routing.GroupRepository
 	mu    sync.Mutex
@@ -1309,8 +1309,6 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 
 		nil,
 		nil, responseHeaderFilterForTest(cfg), nil, nil, nil,
-
-		// 用户平台配额仓库
 	)
 	gatewaySvc.Recorder = newHTTPCompletionFixture(cfg, usageRepo, completionInput14, billingCacheSvc, completionInput15, pricingConfigSvc, nil, true)
 
@@ -1601,7 +1599,7 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 
 	require.Eventually(t, func() bool {
 		warnings := harness.moderationRepo.cyberWarningSnapshot()
-		// 上游 warning 回调按网关错误记录为 502，WS 事件自身的格式没有 HTTP 状态字段。
+		// Upstream warnings are recorded as gateway 502 errors; WS events have no HTTP status field.
 		return len(warnings) == 1 && warnings[0].WarningText == "blocked by upstream policy" &&
 			warnings[0].UpstreamStatus == http.StatusBadGateway
 	}, 3*time.Second, 10*time.Millisecond, "handler AfterTurn must call recordCyberPolicyIfMarked and write the risk-control event")
@@ -1628,7 +1626,7 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	var closeErr coderws.CloseError
 	require.ErrorAs(t, err, &closeErr)
 	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-	// 会话屏蔽使用固定英文关闭原因。
+	// Session blocks use a fixed English close reason.
 	require.Equal(t, "This session is blocked by the security policy. Start a new session.", closeErr.Reason)
 	select {
 	case <-harness.handlerDone:
@@ -1740,12 +1738,14 @@ func TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup(t *test
 	}
 }
 
-// TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup 验证删除后新一轮不会到达上游。
+// TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup checks that a deleted Key cannot send another upstream
+// turn.
 func TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup(t *testing.T) {
 	testOpenAIWSRevokedAccessRejectsFollowup(t, func(h *openAIWSPassthroughHandlerHarness) { h.keys.remove() })
 }
 
-// 分组协议撤销通过实际重新认证流程关闭下一轮，上游收不到后续请求。
+// TestOpenAIResponsesWebSocketDisabledGroupRejectsFollowup checks that reauthentication rejects revoked group
+// protocol access.
 func TestOpenAIResponsesWebSocketDisabledGroupRejectsFollowup(t *testing.T) {
 	testOpenAIWSRevokedAccessRejectsFollowup(t, func(h *openAIWSPassthroughHandlerHarness) { h.groups.revokeWS() })
 }
@@ -1799,7 +1799,8 @@ func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIW
 	}
 }
 
-// TestOpenAIWSAssemblyUpgradeAndStopBoundaries 检查 WS 入口在升级和依赖检查前保持报文未读，并在关闭后拒绝新连接。
+// TestOpenAIWSAssemblyUpgradeAndStopBoundaries checks that upgrade and dependency checks leave the body unread
+// and shutdown rejects new connections.
 func TestOpenAIWSAssemblyUpgradeAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("ws-entry-contract")}
 	common := provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)

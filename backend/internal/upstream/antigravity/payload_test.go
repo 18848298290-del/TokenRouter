@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestDefaultMappingOnlyRewritesRouteKeys 检查默认映射中的模型路由键。
+// TestDefaultMappingOnlyRewritesRouteKeys checks the public-to-internal route mapping.
 func TestDefaultMappingOnlyRewritesRouteKeys(t *testing.T) {
 	if len(DefaultAntigravityModelMapping) != 1 || DefaultAntigravityModelMapping["gemini-3.1-pro-high"] != AntigravityGemini31ProAgentModel {
 		t.Fatal("unexpected execution mapping")
@@ -18,7 +18,6 @@ func TestApplyThinkingModelSuffix(t *testing.T) {
 		thinkingEnabled bool
 		expected        string
 	}{
-		// Thinking 未开启：保持原样
 		{
 			name:            "thinking disabled - claude-sonnet-4-5 unchanged",
 			mappedModel:     "claude-sonnet-4-5",
@@ -32,7 +31,6 @@ func TestApplyThinkingModelSuffix(t *testing.T) {
 			expected:        "claude-opus-4-6-thinking",
 		},
 
-		// Thinking 开启 + claude-sonnet-4-5：自动添加后缀
 		{
 			name:            "thinking enabled - claude-sonnet-4-5 becomes thinking version",
 			mappedModel:     "claude-sonnet-4-5",
@@ -40,7 +38,6 @@ func TestApplyThinkingModelSuffix(t *testing.T) {
 			expected:        "claude-sonnet-4-5-thinking",
 		},
 
-		// Thinking 开启 + 其他模型：保持原样
 		{
 			name:            "thinking enabled - claude-sonnet-4-5-thinking unchanged",
 			mappedModel:     "claude-sonnet-4-5-thinking",

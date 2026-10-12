@@ -8,19 +8,19 @@ import (
 	"strings"
 )
 
-// responsesToolCallItemIDPrefixes 列出与 Responses 工具调用类型绑定的 ID 前缀。
+// responsesToolCallItemIDPrefixes lists known prefixes tied to Responses tool call types.
 var responsesToolCallItemIDPrefixes = []string{"fc_", "ctc_", "tsc_"}
 
-// ResponsesClientToolMapping 记录原生 Responses 请求发送到仅理解 function 工具的
-// 上游前所做的可逆降级映射。
+// ResponsesClientToolMapping records reversible adaptations for upstreams that accept
+// function tools in place of Responses client tools.
 type ResponsesClientToolMapping struct {
 	CustomTools    map[string]bool
 	ToolSearch     bool
 	NamespaceTools map[string]ResponsesNamespaceName
 }
 
-// ResponsesClientToolStreamRestorer 还原客户端工具的流式生命周期。
-// 它故意保持状态，因为 custom 工具需要缓冲 function 参数，直到上游标记调用完成。
+// ResponsesClientToolStreamRestorer restores client tool lifecycle events.
+// It buffers wrapped function arguments until the upstream marks them complete.
 type ResponsesClientToolStreamRestorer struct {
 	adapter  ResponsesClientToolMapping
 	nextSeq  int
@@ -32,7 +32,7 @@ type ResponsesClientToolStreamRestorer struct {
 type responsesClientToolStreamCall struct {
 	kind string
 	name string
-	// callID/itemID 保留上游原值用于匹配后续事件；clientItemID 仅用于发给客户端。
+	// Upstream IDs match subsequent events; clientItemID identifies emitted client items.
 	callID       string
 	itemID       string
 	clientItemID string
@@ -40,8 +40,8 @@ type responsesClientToolStreamCall struct {
 	arguments    strings.Builder
 }
 
-// AdaptResponsesClientTools 将 req 中 Codex 客户端专用工具降级为普通 function 工具。
-// 该函数会修改 req，并返回用于还原上游响应的映射。
+// AdaptResponsesClientTools rewrites Codex client tools in req as function tools.
+// It mutates req and returns the mapping needed to restore upstream responses.
 func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, bool, error) {
 	if req == nil {
 		return ResponsesClientToolMapping{}, false, nil
@@ -89,7 +89,7 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 		return ResponsesClientToolMapping{}, false, fmt.Errorf("built-in tool_search conflicts with a declared tool named %q; this upstream cannot disambiguate them, rename the tool", toolSearchProxyName)
 	}
 
-	// 摊平 namespace 时同步改写带 namespace 的历史调用和工具选择。
+	// Flatten declarations, historical calls, and tool choice together.
 	names, flattened, err := FlattenResponsesNamespaces(req)
 	if err != nil {
 		return ResponsesClientToolMapping{}, false, err
@@ -167,7 +167,7 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	return adapter, changed, nil
 }
 
-// stripResponsesDeferredToolFlags 在最终声明列表缺少 tool_search 时移除 defer_loading 标志。
+// stripResponsesDeferredToolFlags removes defer_loading when tool_search is absent.
 func stripResponsesDeferredToolFlags(tools []any) bool {
 	if hasResponsesToolSearchDeclaration(tools) {
 		return false
@@ -186,8 +186,8 @@ func stripResponsesDeferredToolFlags(tools []any) bool {
 	return changed
 }
 
-// AdaptResponsesClientToolsWithInheritedMapping 处理省略 tools 声明的后续请求。
-// tools 字段存在时（包括空数组或无效值），用本次声明替换继承映射后执行普通适配。
+// AdaptResponsesClientToolsWithInheritedMapping adapts follow-up requests that omit tools.
+// A present tools field, including an empty or invalid value, replaces the inherited mapping.
 func AdaptResponsesClientToolsWithInheritedMapping(
 	req map[string]any,
 	inherited ResponsesClientToolMapping,
@@ -214,7 +214,7 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 	if len(inherited.NamespaceTools) > 0 {
 		before := changed
 		rewriteNamespaceQualifiedCalls(req["input"], inherited.NamespaceTools)
-		// namespace 重写函数没有返回 changed；存在 input 时保守地认为请求已被改写。
+		// The namespace rewrite has no change result; conservatively mark present input as changed.
 		if _, inputPresent := req["input"]; inputPresent && !before {
 			changed = true
 		}
@@ -293,9 +293,9 @@ func rewriteClientToolHistory(value any, adapter *ResponsesClientToolMapping) (b
 	return changed, nil
 }
 
-// normalizeLoweredFunctionItemID 将降级后的 item ID 调整为 function 协议可接受的形式。
-// ctc_/tsc_ 是由上游 fc_ ID 重 typed 得到的，降级时应恢复 fc_；输出项前缀没有对应物，
-// 仍然删除。call_id 始终作为独立的调用配对键保留。
+// normalizeLoweredFunctionItemID restores ctc_ and tsc_ prefixes to fc_ for function tools.
+// It removes other incompatible item IDs, including output IDs with no corresponding prefix.
+// call_id remains the independent key for pairing calls and results.
 func normalizeLoweredFunctionItemID(item map[string]any) {
 	id := strings.TrimSpace(stringValue(item["id"]))
 	if id == "" || strings.HasPrefix(id, "fc_") {
@@ -321,8 +321,8 @@ func responsesToolCallItemIDPrefix(itemType string) string {
 	}
 }
 
-// retypedResponsesToolCallItemID 在工具调用类型变化时保留 ID 后缀并替换已知前缀。
-// 未知前缀的供应商 ID 原样保留。
+// retypedResponsesToolCallItemID replaces known type prefixes while retaining the ID suffix.
+// Vendor IDs with unknown prefixes pass through.
 func retypedResponsesToolCallItemID(id, itemType string) string {
 	want := responsesToolCallItemIDPrefix(itemType)
 	if want == "" || id == "" || strings.HasPrefix(id, want) {
@@ -366,8 +366,8 @@ func normalizeClientToolOutput(item map[string]any) {
 	item["output"] = string(encoded)
 }
 
-// isResponsesToolOutputContent 判断 custom 工具输出是否为 Responses 原生内容块数组。
-// 仅保留完整且类型受支持的数组，其他值继续序列化为 function_call_output 字符串。
+// isResponsesToolOutputContent reports whether every element has a supported content-block type.
+// Other values are serialized as function_call_output strings.
 func isResponsesToolOutputContent(output any) bool {
 	parts, ok := output.([]any)
 	if !ok || len(parts) == 0 {
@@ -435,7 +435,7 @@ func rawObjectString(value any) string {
 	return string(encoded)
 }
 
-// RestoreResponsesClientToolPayload 还原非流式原生 Responses JSON 载荷中的客户端工具调用。
+// RestoreResponsesClientToolPayload restores client tool calls in a Responses JSON payload.
 func RestoreResponsesClientToolPayload(payload []byte, mapping ResponsesClientToolMapping) ([]byte, bool, error) {
 	if len(payload) == 0 {
 		return payload, false, nil
@@ -506,8 +506,8 @@ func NewResponsesClientToolStreamRestorer(mapping ResponsesClientToolMapping) *R
 	return &ResponsesClientToolStreamRestorer{adapter: mapping, calls: make(map[string]*responsesClientToolStreamCall), byOutput: make(map[int]*responsesClientToolStreamCall)}
 }
 
-// Restore 将一个上游 SSE 事件转换为零个或多个客户端事件。
-// 即使 function 参数事件被抑制，或 custom 完成事件展开为两个事件，返回序号仍保持连续。
+// Restore converts one upstream SSE event into zero or more client events.
+// Sequence numbers stay consecutive when argument events are suppressed or expanded.
 func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) []ResponsesStreamEvent {
 	if r == nil {
 		return []ResponsesStreamEvent{event}
@@ -589,7 +589,7 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 		}
 		emit(r.restoreNamespaceEvent(event))
 	default:
-		// response.completed 携带非流式表示。
+		// Terminal response objects carry the non-streaming representation.
 		if event.Response != nil {
 			restoreResponsesOutputClientTools(event.Response.Output, &r.adapter)
 		}
@@ -598,8 +598,8 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 	return out
 }
 
-// RestoreEvent 还原一个 Responses SSE JSON data 载荷。custom 工具完成事件可能展开为
-// 多个载荷，代理参数增量也可能被主动丢弃，因此返回切片。
+// RestoreEvent restores a Responses SSE JSON payload, returning multiple payloads when
+// custom completion expands and none when proxy argument deltas are suppressed.
 func (r *ResponsesClientToolStreamRestorer) RestoreEvent(payload []byte) ([][]byte, bool, error) {
 	if len(payload) == 0 {
 		return nil, false, nil
@@ -696,7 +696,7 @@ func clientToolLifecycleEvent(typ string) bool {
 	}
 }
 
-// resequenceRaw 仅重排序号，故意保持不透明的上游事件字段不变。
+// resequenceRaw adjusts sequence_number while retaining unknown upstream fields.
 func (r *ResponsesClientToolStreamRestorer) resequenceRaw(payload []byte, sequence int, changed bool) ([][]byte, bool, error) {
 	if !r.seenSeq {
 		r.nextSeq, r.seenSeq = sequence, true
@@ -718,7 +718,7 @@ func (r *ResponsesClientToolStreamRestorer) resequenceRaw(payload []byte, sequen
 	return [][]byte{encoded}, true, nil
 }
 
-// responsesClientToolItemType 返回流恢复后客户端看到的工具调用类型。
+// responsesClientToolItemType returns the restored client-facing call type.
 func responsesClientToolItemType(kind string) string {
 	if kind == "custom" {
 		return "custom_tool_call"

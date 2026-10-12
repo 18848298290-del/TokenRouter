@@ -21,7 +21,7 @@ type AggregationStore struct {
 	calendar     timezone.Calendar
 }
 
-// NewDashboardAggregationRepository 创建仪表盘预聚合仓储。
+// NewDashboardAggregationRepository creates a rollup store, returning nil for unsupported database drivers.
 func NewDashboardAggregationRepository(sqlDB *sql.DB, calendar timezone.Calendar, archive func(context.Context, time.Time) error) *AggregationStore {
 	if sqlDB == nil {
 		return nil
@@ -88,7 +88,7 @@ func (r *AggregationStore) AggregateRange(ctx context.Context, start, end time.T
 }
 
 func (r *AggregationStore) aggregateRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd time.Time) error {
-	// 以桶边界聚合，允许覆盖 end 所在桶的剩余区间。
+	// Aggregate complete buckets, including the portion of the final bucket after end.
 	if err := r.insertHourlyActiveUsers(ctx, hourStart, hourEnd); err != nil {
 		return err
 	}
@@ -113,13 +113,13 @@ func (r *AggregationStore) RecomputeRange(ctx context.Context, start, end time.T
 	}
 
 	hourStart := startLocal.Truncate(time.Hour)
-	// 清理过滤器的结束时间包含端点，整点记录属于以该整点开始的新桶。
+	// Cleanup includes its end instant, so an exact-hour endpoint also affects the bucket starting there.
 	hourEnd := endLocal.Truncate(time.Hour).Add(time.Hour)
 
 	dayStart := truncateToDay(startLocal, r.calendar)
 	dayEnd := truncateToDay(endLocal, r.calendar).AddDate(0, 0, 1)
 
-	// 尽量使用事务保证范围内的一致性（允许在非 *sql.DB 的情况下退化为非事务执行）。
+	// Start a transaction for *sql.DB; other executors retain their caller-provided transaction behavior.
 	if db, ok := r.sql.(*sql.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -136,7 +136,7 @@ func (r *AggregationStore) RecomputeRange(ctx context.Context, start, end time.T
 }
 
 func (r *AggregationStore) recomputeRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd time.Time) error {
-	// 先清空范围内桶，再重建（避免仅增量插入导致活跃用户等指标无法回退）。
+	// Clear affected buckets before rebuilding so deleted records can reduce active-user counts.
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (r *AggregationStore) recomputeRangeInTx(ctx context.Context, hourStart, ho
 	if err := r.insertHourlyActiveUsers(ctx, hourStart, hourEnd); err != nil {
 		return err
 	}
-	// 日活跃用户明细已按整日清空，必须从受影响的完整日期恢复，避免丢失范围外小时。
+	// Daily active-user rows were cleared for whole days; rebuild those full days to retain unaffected hours.
 	if err := r.insertDailyActiveUsers(ctx, dayStart, dayEnd); err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func (r *AggregationStore) CleanupUsageLogs(ctx context.Context, cutoff time.Tim
 	}
 }
 
-// CleanupUsageBillingDedup 只调用 app 注入的资金归档能力。
+// CleanupUsageBillingDedup invokes the billing archive function supplied by app.
 func (r *AggregationStore) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
 	if r.archiveDedup == nil {
 		return fmt.Errorf("billing dedup archive is not bound")
@@ -493,7 +493,7 @@ func (r *AggregationStore) dropUsageLogsPartitions(ctx context.Context, cutoff t
 		return err
 	}
 	for _, name := range obsolete {
-		// 先释放结果集，事务执行器才能在同一连接上删除分区并重建活动汇总。
+		// Close the rows first so a transaction can reuse its connection to drop partitions and rebuild activity.
 		if _, err := r.sql.ExecContext(ctx, "SELECT usage_drop_partition_with_activity($1)", pq.QuoteIdentifier(name)); err != nil {
 			return err
 		}

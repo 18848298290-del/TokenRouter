@@ -66,7 +66,7 @@ func TestNormalizeText_U02B9Apostrophe(t *testing.T) {
 }
 
 func TestNormalizeText_MixedSeparatorsNoMatch(t *testing.T) {
-	// 分隔符正则拆分保证两个日期分隔符必须一致。
+	// Mixed date separators must not match.
 	in := "Today's date is 2026-07/01."
 	out, hits := NormalizeText(in)
 	if out != in {
@@ -181,8 +181,7 @@ func TestNormalizeDateline_MessagesContentBlocksInSystemReminder(t *testing.T) {
 }
 
 func TestNormalizeDateline_LeavesOutOfScopeUntouched(t *testing.T) {
-	// <system-reminder> 外的用户文本即便提到 today's date 也不能改写；
-	// tool_use.input / tool_result.content 永远不扫描。
+	// User text outside system reminders and tool input/results remain unchanged.
 	body := []byte(`{"messages":[` +
 		`{"role":"user","content":"Today’s date is 2026/07/01. Please help."},` +
 		`{"role":"assistant","content":[{"type":"tool_use","id":"x","name":"y","input":{"note":"Today’s date is 2026/07/01."}}]},` +
@@ -226,7 +225,7 @@ func TestNormalizeDateline_NoDateline(t *testing.T) {
 		t.Fatalf("expected no changes; changed=%v hits=%v", changed, hits)
 	}
 	if &out[0] != &body[0] {
-		// 保持同一底层切片只是额外优化，至少要确保内容完全一致。
+		// Byte equality is required even if the implementation allocates a new slice.
 		if !bytes.Equal(out, body) {
 			t.Fatalf("output must byte-match input when no changes needed")
 		}

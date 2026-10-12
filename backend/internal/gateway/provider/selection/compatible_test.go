@@ -28,7 +28,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// noSlotSchedulerTestConcurrencyCache 在辅助选择操作并发槽时使测试失败。
+// noSlotSchedulerTestConcurrencyCache fails the test if auxiliary selection acquires a slot.
 type noSlotSchedulerTestConcurrencyCache struct {
 	schedulerTestConcurrencyCache
 	acquireCalls int
@@ -38,15 +38,15 @@ type groupAwareStubOpenAIProviderRepo struct {
 	selectionProviderFixture
 }
 
-// Codex 配额读取测试通过写入哨兵检查意外的持久化操作。
+// openAICodexExtraListRepo detects unexpected writes during quota-read tests.
 type openAICodexExtraListRepo struct {
 	selectionProviderFixture
 	rateLimitCh chan time.Time
 }
 
-// TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate 检查 OpenAI 兼容选择入口是否执行 Grok 免费层门禁。
+// TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate checks the Free OAuth soft gate on compatible selection.
 func TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
-	// 基础调度的 OpenAI 兼容粘性路径也执行 Grok 免费层门禁。
+	// Exercise the basic selector's sticky lookup path.
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
 	cfg.Gateway.Grok.FreeQuotaTokenLimit = 500_000
@@ -1287,12 +1287,12 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UsesGlobalDef
 	require.Equal(t, int64(35402), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault 检查提供商禁用自动暂停时，是否覆盖全局阈值。
-// 否则“阈值留空”会静默回退到全局默认值，管理员无法单独白名单某个提供商。
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault checks that a provider's disable flag overrides the global threshold.
+// An unset provider threshold alone would inherit the global value.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
-	// 提供商用量很高且没有提供商级阈值（通常会回退到全局默认并被暂停），
-	// 此提供商配置了禁用自动暂停标记。
+	// High usage and an unset threshold would normally trigger the global pause rule.
+	// The provider disables automatic pausing.
 	primary := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 35701,
@@ -1320,7 +1320,7 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDi
 	require.Equal(t, int64(35701), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped 验证禁用标记按窗口生效：只禁用 5h 时，7d 自动暂停仍应触发。
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped checks that disabling the 5h pause leaves the 7d pause active.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1354,8 +1354,8 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisa
 
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageWindowResetSkipsPause(t *testing.T) {
 	ctx := context.Background()
-	// 窗口重置时间已过，缓存用量百分比已过期。
-	// 过期数据若继续暂停提供商，后续请求就无法刷新这个窗口。
+	// The reset time has passed, so cached usage is stale.
+	// Allowing traffic lets response headers refresh the window.
 	primary := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 35501,
@@ -1386,7 +1386,7 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageWin
 
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshUsageWindowStillPauses(t *testing.T) {
 	ctx := context.Background()
-	// 与上面相同，但窗口尚未重置，因此提供商仍应保持暂停。
+	// The exhausted window has not reset, so the provider remains paused.
 	primary := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 35601,
@@ -1415,8 +1415,8 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshUsageWin
 	require.Equal(t, int64(35602), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994 检查过期用量快照是否允许探测请求。
-// 提供商停调后缺少流量刷新快照，允许请求可用响应头更新用量。快照有效期按观测时间判断。
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994 checks that stale usage permits a probe request.
+// Snapshot age uses observation time; allowing traffic refreshes usage from response headers.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1431,9 +1431,9 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSna
 			Extra: map[string]any{
 				"codex_5h_used_percent":   99.0,
 				"auto_pause_5h_threshold": 0.95,
-				// 窗口尚未重置，因此 reset 保护不会生效。
+				// The future reset time isolates the stale-snapshot rule.
 				"codex_5h_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339),
-				// 快照已经陈旧：早于 openAICodexAutoPauseStaleAfter（2h）。
+				// This three-hour-old snapshot exceeds the two-hour auto-pause validity period.
 				"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
 			},
 		},
@@ -1450,8 +1450,8 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSna
 	require.Equal(t, int64(35701), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994 检查快照刚刷新且配额耗尽时是否自动暂停提供商。
-// 快照仍在有效期内且已用 99% 时继续执行暂停。
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994 checks that fresh exhausted quota still pauses the provider.
+// A fresh snapshot at 99% usage remains eligible for automatic pause.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1467,7 +1467,7 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhauste
 				"codex_5h_used_percent":   99.0,
 				"auto_pause_5h_threshold": 0.95,
 				"codex_5h_reset_at":       time.Now().Add(time.Hour).Format(time.RFC3339),
-				// 快照 1 分钟前刚刷新：未陈旧，因此提供商保持暂停。
+				// The one-minute-old snapshot is fresh, so the provider stays paused.
 				"codex_usage_updated_at": time.Now().Add(-time.Minute).Format(time.RFC3339),
 			},
 		},

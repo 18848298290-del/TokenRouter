@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestApplyCacheTTLOverrideContract 检查各 TTL 分桶的值，补齐明细时返回值仍为 false。
+// TestApplyCacheTTLOverrideContract checks TTL buckets and excludes aggregate-to-detail filling from the changed flag.
 func TestApplyCacheTTLOverrideContract(t *testing.T) {
 	tests := []struct {
 		name, target          string
@@ -41,7 +41,7 @@ func TestApplyCacheTTLOverrideContract(t *testing.T) {
 	}
 }
 
-// TestIncludeIndependentReasoningTokens 检查独立推理用量的输出计数。
+// TestIncludeIndependentReasoningTokens checks output totals with separately reported reasoning tokens.
 func TestIncludeIndependentReasoningTokens(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -10,9 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// SelectedProviderSlot 不携带凭据或可变提供商实体。
+// SelectedProviderSlot carries the selected provider's slot ownership and wait plan.
 type SelectedProviderSlot struct {
-	// CompleteBeforeRelease 用于流式请求在客户端断开后仍需收集原生用量的提供商。
+	// CompleteBeforeRelease lets the caller release after collecting tail usage,
+	// even when the client disconnects.
 	CompleteBeforeRelease bool
 	ProviderID            int64
 	Acquired              bool
@@ -27,7 +28,7 @@ type ProviderSlotHooks struct {
 	CapacityLimited func(*gin.Context)
 }
 
-// AcquireSelectedProviderSlot 将取得的槽位交给请求释放。
+// AcquireSelectedProviderSlot acquires or adopts a slot and returns the request's release function.
 func AcquireSelectedProviderSlot(c *gin.Context, groupID *int64, sessionHash string, selection *SelectedProviderSlot, reqStream bool, streamStarted *bool, reqLog *zap.Logger, writeError func(int, string, string, string), concurrency *ConcurrencyHelper, sticky SlotStickyBinder, hooks ProviderSlotHooks) (func(), bool) {
 	if selection == nil {
 		hooks.CapacityLimited(c)
@@ -107,7 +108,7 @@ func AcquireSelectedProviderSlot(c *gin.Context, groupID *int64, sessionHash str
 		return nil, false
 	}
 
-	// Slot acquired: no longer waiting in queue.
+	// Stop counting this request as waiting once its slot is acquired.
 	releaseWait()
 	hooks.Acquired(c)
 	if err := sticky.BindStickySession(ctx, groupID, sessionHash, providerID); err != nil {

@@ -24,7 +24,7 @@ const (
 	ServiceAccountCacheSkew = 5 * time.Minute
 )
 
-// NewServiceAccountHTTPClient 创建用于服务账号换 token 的 HTTP 客户端。
+// NewServiceAccountHTTPClient builds an instrumented token-exchange client with an optional proxy.
 func NewServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
@@ -47,7 +47,8 @@ func NewServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	return timing.InstrumentClient(&http.Client{Timeout: 15 * time.Second, Transport: transport}), nil
 }
 
-// ExchangeServiceAccountToken 使用服务账号私钥向 Google token 端点换取访问令牌。
+// ExchangeServiceAccountToken signs an assertion and returns a token and cache TTL.
+// A missing lifetime defaults to one hour; lifetimes above the cache skew are shortened by that skew.
 func ExchangeServiceAccountToken(ctx context.Context, key *google.ServiceAccountKey, proxyURL string) (string, time.Duration, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{

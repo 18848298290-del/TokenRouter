@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson" // sanitizeGrokResponsesModelInput converts replay items from OpenAI and Chat
+	"github.com/tidwall/sjson"
 
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -18,6 +18,7 @@ type GrokToolOutputImage struct {
 	url    string
 }
 
+// SanitizeGrokResponsesModelInput normalizes replay messages and tool calls for xAI.
 func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() || input.Type == gjson.String {
@@ -166,8 +167,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 	return updated, nil
 }
 
-// NormalizeGrokToolOutput 提取工具输出中的图片，并将其余内容转成字符串。
-// Grok 1.0.5 的 read_file 将媒体放在结构化输出分片中，xAI 则要求 function_call_output.output 为字符串。
+// NormalizeGrokToolOutput separates images and serializes the remaining tool output.
+// Grok read_file can return structured media parts; xAI requires function_call_output.output to be a string.
 func (m BodyCodec) NormalizeGrokToolOutput(value any, callID string) (string, []GrokToolOutputImage) {
 	stripped, images, keep := m.StripGrokToolOutputImages(value, callID)
 	if len(images) == 0 {
@@ -261,8 +262,8 @@ func (m BodyCodec) GrokStructuredToolOutputString(value any, fallback string) st
 	return strings.Join(texts, "\n")
 }
 
-// ExtractGrokToolOutputImages 提取 Grok Shell 放在 function_call_output.images 中的本地图片。
-// xAI ModelInput 的工具输出只接受字符串；调用方保持工具回复连续，并将图片放入随后的一条用户 input_image 消息。
+// ExtractGrokToolOutputImages extracts images from Grok Shell function_call_output.images.
+// Callers keep tool replies contiguous and append images in a subsequent user input_image message.
 func (m BodyCodec) ExtractGrokToolOutputImages(item map[string]any, callID string) []GrokToolOutputImage {
 	rawImages, ok := item["images"].([]any)
 	if !ok || len(rawImages) == 0 {

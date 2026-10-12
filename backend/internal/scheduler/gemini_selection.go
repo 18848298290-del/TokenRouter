@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// GeminiSelectionPorts 提供候选读取、资格检查和结果转换函数。GeminiSelector 决定查询顺序、选择和粘性提交。
+// GeminiSelectionPorts supplies candidate reads, eligibility checks, and result conversion. GeminiSelector owns their order and sticky binding updates.
 type GeminiSelectionPorts struct {
 	Resolve     func(context.Context, *int64) (string, bool, bool, *FlowGroup, error)
 	WithGroup   func(context.Context, *FlowGroup) context.Context
@@ -23,7 +23,7 @@ type GeminiSelectionPorts struct {
 	Hydrate     func(context.Context, *FlowProvider) (*FlowProvider, error)
 }
 
-// GeminiSelector 在已准入组内按强制平台筛选并选择提供商。调用方负责取得请求槽。
+// GeminiSelector selects within the admitted group and forced platform. The caller acquires request slots.
 type GeminiSelector struct {
 	ports GeminiSelectionPorts
 	cache StickyCache
@@ -79,7 +79,7 @@ func (s *GeminiSelector) SelectOnly(ctx context.Context, input SelectionInput) (
 	return s.ports.Hydrate(ctx, selected)
 }
 
-// BestGeminiCandidate 按输入顺序比较候选，依次按优先级、未使用状态、OAuth 偏好和 LRU 决胜。
+// BestGeminiCandidate compares candidates in input order by priority, unused status, OAuth preference among unused candidates, then LRU.
 func BestGeminiCandidate(values []*FlowProvider) *FlowProvider {
 	var selected *FlowProvider
 	for _, value := range values {

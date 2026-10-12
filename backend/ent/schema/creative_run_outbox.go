@@ -11,7 +11,7 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// CreativeRunOutbox 保存创作台创建、结算和释放动作，图片本体不进入该表。
+// CreativeRunOutbox stores creation, settlement, and release actions. Image bytes belong in temporary storage.
 type CreativeRunOutbox struct {
 	ent.Schema
 }

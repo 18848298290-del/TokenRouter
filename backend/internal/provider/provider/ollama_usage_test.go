@@ -63,13 +63,13 @@ type ollamaUsageHTTPStub struct {
 	mu             sync.Mutex
 }
 
-// 夹具保存测试需要的提供商行，查询返回独立副本。
+// ollamaUsageRows holds provider records and returns independent copies.
 type ollamaUsageRows struct {
 	mu        sync.Mutex
 	providers map[int64]*providercore.Record
 }
 
-// 设置替身提供读取器使用的两个键值操作。
+// ollamaUsageSettings implements the key/value operations used by the settings reader.
 type ollamaUsageSettings struct {
 	settingscore.Repository
 	mu     sync.Mutex
@@ -80,20 +80,22 @@ type ollamaUsageTransport interface {
 	Do(*http.Request, string, int64, int) (*http.Response, error)
 }
 
-// 夹具注入可调时钟和锁替身，查询、缓存和启停使用生产实现。
+// ollamaUsageContract injects a clock and lock fixture into production querying, caching, and
+// lifecycle handling.
 type ollamaUsageContract struct {
 	*providercore.OllamaCloudUsageService
 	now       func() time.Time
 	lockCache providercore.CNMonitorLeader
 }
 
-// 内存 leader 模拟同一键的持有者比较，Redis 行为由集成测试覆盖。
+// ollamaUsageLeader compares lock owners in memory; integration tests cover Redis behavior.
 type ollamaUsageLeader struct {
 	mu     sync.Mutex
 	owners map[string]string
 }
 
-// TestOllamaUsageStopOwnsManualRefresh 检查停止服务时取消并等待手动查询，随后到达的响应无法写入快照。
+// TestOllamaUsageStopOwnsManualRefresh checks that shutdown cancels and waits for manual probes and
+// rejects late snapshots.
 func TestOllamaUsageStopOwnsManualRefresh(t *testing.T) {
 	value := ollamaUsageProvider(901)
 	value.Extra[providercore.OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=fixture"
@@ -302,11 +304,13 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	errs := make(chan error, 2)
 	go func() { _, err := svc.Refresh(context.Background(), first.ID); errs <- err }()
 	<-started
-	// 首个调用方已完成构造分组键和 singleflight 内部的两次提供商读取，此时阻塞在上游 stub。
+	// The first caller has reached the upstream stub after constructing its group key and reading
+	// provider state.
 	loadsBeforeSecond := repo.getByIDCalls.Load()
 	go func() { _, err := svc.Refresh(context.Background(), second.ID); errs <- err }()
-	// 后一个调用方完成提供商读取并加入 singleflight 后，释放首个请求。
-	// 否则它可能在首个请求完成后另起执行，并被刚写入的 30 秒手动刷新限流拒绝。
+	// Wait for the second caller to begin its provider lookup before releasing the first request.
+	// Releasing too early could let the second call start a separate refresh and hit the thirty-second
+	// manual-refresh limit.
 	require.Eventually(t, func() bool {
 		return repo.getByIDCalls.Load() > loadsBeforeSecond
 	}, 5*time.Second, time.Millisecond, "第二个调用方必须在释放首个请求前到达 singleflight")
@@ -375,7 +379,7 @@ func TestOllamaCloudUsageManualRefreshUsesShortIndependentInterval(t *testing.T)
 	require.ErrorIs(t, err, providercore.ErrOllamaCloudUsageRefreshRateLimited)
 	require.Equal(t, int64(1), upstream.calls.Load())
 
-	// 保存修复后的会话时清除快照，管理员随后可立即查询用量。
+	// Saving a repaired session clears the snapshot so an administrator can query usage immediately.
 	_, err = svc.SaveSession(context.Background(), 12, "wos-session=repaired")
 	require.NoError(t, err)
 	_, err = svc.Refresh(context.Background(), 12)
@@ -554,7 +558,7 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 	settingsRepo := &ollamaUsageSettings{values: map[string]string{}}
 	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
 
-	// 全局自动刷新默认安全关闭。
+	// Automatic refresh is disabled by default.
 	require.NoError(t, svc.RunDue(context.Background()))
 	require.Zero(t, upstream.calls.Load())
 
@@ -572,7 +576,7 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 	singleflight.Wait()
 	require.Equal(t, int64(1), upstream.calls.Load())
 
-	// 清除快照使所有提供商到期，再验证共享的四槽并发上限。
+	// Clear snapshots to make every provider due and exercise the shared four-request concurrency limit.
 	for _, provider := range providers {
 		delete(provider.Extra, providercore.OllamaCloudUsageSnapshotExtraKey)
 	}
@@ -599,7 +603,7 @@ func (ollamaUsageTestEncryptor) Decrypt(value string) (string, error) {
 	return strings.TrimPrefix(value, "cipher:"), nil
 }
 
-// GetByID 记录加载次数，让并发测试等待调用方到达 singleflight 前的确定位置。
+// GetByID counts lookups so concurrency tests can coordinate callers before singleflight.
 func (r *ollamaUsageTestRepo) GetByID(ctx context.Context, id int64) (*providercore.Record, error) {
 	r.getByIDCalls.Add(1)
 	return r.ollamaUsageRows.GetByID(ctx, id)
@@ -626,8 +630,8 @@ func (r *ollamaUsageTestRepo) ListOllamaCloudUsageGroupProviders(_ context.Conte
 	return result, nil
 }
 
-// cloneOllamaUsageTestProvider 深拷贝共享 map，模拟每次数据库查询返回独立记录：
-// 组写在 r.mu 下改成员 map，浅拷贝会让 RunDue 过滤循环无锁读到同一 map 而竞争。
+// cloneOllamaUsageTestProvider copies mutable maps to model independent database results.
+// Shared maps would race when group writes hold r.mu but RunDue reads a returned record without that lock.
 func cloneOllamaUsageTestProvider(provider providercore.Record) providercore.Record {
 	provider.Credentials = providercore.CRSMergeMap(nil, provider.Credentials)
 	provider.Extra = providercore.CRSMergeMap(nil, provider.Extra)

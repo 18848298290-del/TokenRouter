@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Messages 依次准备单个提供商的请求、执行上游调用并处理错误和部分用量。
+// Messages prepares one provider exchange and handles errors and observed partial usage.
 func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requeststate.ParsedRequest) (*Result, error) {
 	startTime := time.Now()
 	if parsed == nil {
@@ -69,7 +69,7 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 		p.DebugOriginal(body, reqModel, reqStream)
 	}
 
-	// 先应用提供商模型映射，再执行平台模型规范化，调度、限额检查和转发共用此顺序。
+	// Apply provider mapping before platform normalization, matching scheduling and quota checks.
 	providerMappedModel := p.ProviderMappedModel(reqModel)
 	if providerMappedModel != reqModel {
 		if err := replaceBody(p.ReplaceModel(body, providerMappedModel)); err != nil {
@@ -80,12 +80,11 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 		p.Log(fmt.Sprintf("Model mapping applied: %s -> %s (provider: %s, source=provider)", originalModel, providerMappedModel, in.ProviderName))
 	}
 
-	// Claude Code 客户端判定：UA 匹配 claude-cli/* 且携带 metadata.user_id。
-	// 真正的 Claude Code 客户端自带完整的 system prompt、cache_control 断点和 header，
-	// 不需要代理做任何 body 级别的 mimicry；强行替换反而会破坏客户端的缓存策略
-	// （长 system prompt 被替换为 ~45 tokens 的短 prompt，低于 Anthropic 1024 token
-	// 最低缓存门槛，导致系统级缓存失效）。
-	// 对于非 Claude Code 的第三方客户端（opencode 等），仍然走完整 mimicry。
+	// Recognized Claude Code clients supply their own system prompts, cache breakpoints, and identity headers.
+	// Skip OAuth mimicry for those clients so replacing a long system prompt does not
+	// shorten its cacheable prefix or discard its cache strategy.
+	// Other OAuth clients receive the configured system and metadata rewrites below.
+
 	isClaudeCode := p.IsClaudeCode(ctx, body, parsed.MetadataUserID)
 
 	shouldMimicClaudeCode := in.OAuth && !isClaudeCode
@@ -100,8 +99,8 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 			systemRewritten = true
 		}
 
-		// system 改写后保留 CC prompt 的 cache_control: ephemeral；注入关闭时剥离客户端 cache_control。
-		// enforceCacheControlLimit 随后检查两种情况下的数量上限。
+		// Keep injected system cache markers after a rewrite; otherwise strip client system markers.
+		// CacheLimit later enforces the total marker limit in either case.
 		normalizeOpts := NormalizeOptions{StripSystemCacheControl: !systemRewritten}
 		if metadata := p.Metadata(ctx, parsed); metadata != "" {
 			normalizeOpts.InjectMetadata = true

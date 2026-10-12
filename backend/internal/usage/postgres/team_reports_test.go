@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// TestTeamReportAggregationFailureUsesRaw 聚合状态故障时完整读取原始范围。
+// TestTeamReportAggregationFailureUsesRaw checks a full raw-range query after aggregation state fails.
 func TestTeamReportAggregationFailureUsesRaw(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}

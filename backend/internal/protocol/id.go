@@ -32,10 +32,10 @@ const (
 	ProtocolVertexBatch           ProtocolID = "vertex_batch_prediction"
 )
 
-// ProtocolID 标识提供商支持的协议和客户端协议，值用于持久化。
+// ProtocolID identifies a client or provider protocol; its string value is persisted.
 type ProtocolID string
 
-// CloneFallbacks 隔离每个入口的目标列表，并保留省略、空列表和有序列表的区别。
+// CloneFallbacks copies target lists while retaining nil, empty, and ordered list distinctions.
 func CloneFallbacks(source map[ProtocolID][]ProtocolID) map[ProtocolID][]ProtocolID {
 	if source == nil {
 		return nil

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// ScheduledTestExecutor 返回后台测试结果。
+// ScheduledTestExecutor runs a background test and returns its result.
 type ScheduledTestExecutor interface {
 	RunTestBackground(context.Context, int64, string) (*ScheduledTestResult, error)
 }
@@ -29,7 +29,8 @@ type ScheduledRunnerOptions struct {
 	Recover  func(context.Context, int64) (*SuccessfulTestRecovery, error)
 }
 
-// ScheduledTestRunnerService 跟踪每轮执行，停止同时约束偏移等待、槽位等待和在途测试。
+// ScheduledTestRunnerService tracks active rounds and cancels offset waits, slot waits, and in-flight tests
+// when stopped.
 type ScheduledTestRunnerService struct {
 	planRepo        ScheduledTestPlanRepository
 	scheduledSvc    *ScheduledTestService
@@ -95,7 +96,7 @@ func (s *ScheduledTestRunnerService) StartContext(ctx context.Context) error {
 }
 func (s *ScheduledTestRunnerService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 共享首次结果；超时后仍保留未完成状态，不能谎报任务已经结束。
+// StopContext retains the first stop result, including timeouts that leave work unfinished.
 func (s *ScheduledTestRunnerService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -172,7 +173,7 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 		}
 		s.mu.Unlock()
 	}()
-	// 每分钟约第十秒执行，等待期间响应停止信号。
+	// Wait for the configured tick offset, allowing stop to cancel the wait.
 	delay := time.NewTimer(s.options.Offset)
 	defer delay.Stop()
 	select {
@@ -233,7 +234,7 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 		s.observe("[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
 	}
 
-	// 仅测试成功且计划启用自动恢复时执行原恢复入口。
+	// Run recovery after a successful test when the plan enables it.
 	if result.Status == "success" && plan.AutoRecover {
 		s.tryRecoverProvider(ctx, plan.ProviderID, plan.ID)
 	}
@@ -249,7 +250,7 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 	}
 }
 
-// tryRecoverProvider 检查可恢复状态，执行恢复并记录结果。
+// tryRecoverProvider invokes the recovery callback and records which states were cleared.
 func (s *ScheduledTestRunnerService) tryRecoverProvider(ctx context.Context, providerID int64, planID int64) {
 	if s.options.Recover == nil {
 		return

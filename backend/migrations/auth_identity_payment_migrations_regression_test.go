@@ -256,7 +256,7 @@ func TestMigration175AddsSparkShadowColumnsAndConstraintsWithoutHotIndexes(t *te
 	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS parent_account_id BIGINT")
 	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS quota_dimension VARCHAR(20) NOT NULL DEFAULT 'global'")
 	require.Contains(t, sql, "chk_accounts_parent_dimension")
-	// 约束已放开为「影子 ⇒ 非 global 维度」（spark 不再写死进 parent 约束）
+	// Shadow providers require a non-global dimension; the constraint accepts dimensions other than spark.
 	require.Contains(t, sql, "parent_account_id IS NOT NULL AND quota_dimension <> 'global'")
 	require.NotContains(t, sql, "parent_account_id IS NOT NULL AND quota_dimension = 'spark'")
 	require.Contains(t, sql, "chk_accounts_parent_not_self")

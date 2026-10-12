@@ -15,7 +15,7 @@ import (
 func newTempUnschedCacheTest(t *testing.T) (provider.TempUnschedCache, *redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 
-	// 每个测试使用独立 Redis 实例，提供商键和 TTL 各自隔离。
+	// Each test gets an isolated Redis instance so provider keys and TTLs cannot interfere.
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() {
@@ -74,7 +74,7 @@ func TestTempUnschedCacheLongerStateExtendsExpiry(t *testing.T) {
 	require.NoError(t, cache.SetTempUnsched(ctx, 102, shorter))
 	require.NoError(t, cache.SetTempUnsched(ctx, 102, longer))
 
-	// 越过旧状态的有效期，确认新状态同时延长 Redis 过期时间。
+	// Advance beyond the old deadline to check that the longer state also extends Redis expiry.
 	server.FastForward(150 * time.Second)
 
 	got, err := cache.GetTempUnsched(ctx, 102)

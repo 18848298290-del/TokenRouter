@@ -21,12 +21,12 @@ func TestGetIntervalForContext(t *testing.T) {
 		wantNil   bool
 	}{
 		{"first interval", 50000, new(float64(1e-6)), false},
-		// 区间为 (min, max]，128000 匹配首个区间的结束值。
+		// The (min, max] range includes 128000 in the first interval.
 		{"boundary: max of first (inclusive)", 128000, new(float64(1e-6)), false},
-		// 128001 匹配从 128000 开始的后一区间。
+		// 128001 belongs to the interval whose lower endpoint is 128000.
 		{"boundary: just above first max", 128001, new(float64(2e-6)), false},
 		{"unbounded interval", 500000, new(float64(2e-6)), false},
-		// 区间为 (0, max]，0 位于区间之外。
+		// Zero is outside the (0, max] range.
 		{"zero tokens: no match", 0, nil, true},
 	}
 
@@ -49,10 +49,10 @@ func TestGetIntervalForContext_NoMatch(t *testing.T) {
 			{MinTokens: 10000, MaxTokens: new(int(50000))},
 		},
 	}
-	require.Nil(t, FindMatchingInterval(p.Intervals, 5000))     // 5000 小于起点。
-	require.Nil(t, FindMatchingInterval(p.Intervals, 10000))    // 左开区间排除起点。
-	require.NotNil(t, FindMatchingInterval(p.Intervals, 50000)) // 右闭区间包含终点。
-	require.Nil(t, FindMatchingInterval(p.Intervals, 50001))    // 50001 超过终点。
+	require.Nil(t, FindMatchingInterval(p.Intervals, 5000))     // Below the lower endpoint.
+	require.Nil(t, FindMatchingInterval(p.Intervals, 10000))    // The lower endpoint is excluded.
+	require.NotNil(t, FindMatchingInterval(p.Intervals, 50000)) // The upper endpoint is included.
+	require.Nil(t, FindMatchingInterval(p.Intervals, 50001))    // Above the upper endpoint.
 }
 
 func TestGetIntervalForContext_Empty(t *testing.T) {
@@ -117,7 +117,7 @@ func TestModelPricingEntryClone(t *testing.T) {
 
 	cloned := original.Clone()
 
-	// 修改副本后检查输入价卡的切片和分时配置。
+	// Mutating the copy must leave the source slices and time configuration unchanged.
 	cloned.Models[0] = "hacked"
 	require.Equal(t, "a", original.Models[0])
 
@@ -301,7 +301,7 @@ func TestValidateIntervals_UnboundedNotLast(t *testing.T) {
 }
 
 func TestValidateIntervals_ImageModeAllowsMultipleUnboundedTiers(t *testing.T) {
-	// image / per_request 按 tier_label 匹配，多条 min=0/max=nil 是合法形态。
+	// Labeled image/request tiers may each have min=0 and max=nil.
 	intervals := []PricingInterval{
 		{MinTokens: 0, MaxTokens: nil, TierLabel: "1K", PerRequestPrice: new(float64(0.04))},
 		{MinTokens: 0, MaxTokens: nil, TierLabel: "2K", PerRequestPrice: new(float64(0.06))},
@@ -312,7 +312,7 @@ func TestValidateIntervals_ImageModeAllowsMultipleUnboundedTiers(t *testing.T) {
 }
 
 func TestValidateIntervals_ImageModeStillRejectsNegativePrice(t *testing.T) {
-	// image 模式要求每条价格非负。
+	// Image tiers still require nonnegative prices.
 	intervals := []PricingInterval{
 		{MinTokens: 0, MaxTokens: nil, TierLabel: "1K", PerRequestPrice: new(float64(-1))},
 	}
@@ -322,7 +322,7 @@ func TestValidateIntervals_ImageModeStillRejectsNegativePrice(t *testing.T) {
 }
 
 func TestValidateIntervals_ImageModeStillRejectsBadMaxTokens(t *testing.T) {
-	// image 模式要求 max_tokens 大于 min_tokens。
+	// Image tiers still require max_tokens greater than min_tokens.
 	intervals := []PricingInterval{
 		{MinTokens: 100, MaxTokens: new(int(50)), TierLabel: "1K", PerRequestPrice: new(float64(0.04))},
 	}

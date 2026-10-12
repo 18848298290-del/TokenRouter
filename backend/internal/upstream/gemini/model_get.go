@@ -28,7 +28,7 @@ type HTTPResult struct {
 	Body       []byte
 }
 
-// Model 保存模型名称及支持的生成方法。
+// Model describes a model and its supported generation methods.
 type Model struct {
 	Name                       string   `json:"name"`
 	DisplayName                string   `json:"displayName,omitempty"`
@@ -36,7 +36,7 @@ type Model struct {
 	SupportedGenerationMethods []string `json:"supportedGenerationMethods,omitempty"`
 }
 
-// ModelsListResponse 是模型列表接口的响应体。
+// ModelsListResponse is the model list response body.
 type ModelsListResponse struct {
 	Models []Model `json:"models"`
 }
@@ -49,8 +49,8 @@ func ReadAIStudioModel(ctx context.Context, path string, options ModelGetOptions
 		}
 		defer done()
 	}
-	// path 会被直接拼到上游 base URL 后面，因此按路径护栏逐片段校验，
-	// 见 upstream/path_segment.go。
+	// Validate each path segment before appending the path to the upstream base URL.
+	// See upstream.SanitizedUpstreamPathSuffix.
 	sanitizedPath, ok := upstream.SanitizedUpstreamPathSuffix(path)
 	if !ok || sanitizedPath == "" {
 		return nil, errors.New("invalid path")

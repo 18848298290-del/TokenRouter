@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestMain 输出 E2E 运行配置并执行测试。
+// TestMain prints the E2E configuration and runs the tests.
 func TestMain(m *testing.M) {
 	mode := "混合模式"
 	if endpointPrefix != "" {

@@ -12,76 +12,76 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// TLSFingerprintRouter 定义 TLS 指纹路由器 schema。
+// TLSFingerprintRouter selects TLS profiles using inbound User-Agent rules.
 //
-// TLS 路由器按入站 User-Agent 选择 TLS 指纹模板，提供商可在固定模板之上绑定一个
-// 路由器，实现不同客户端运行时使用不同 TLS ClientHello。
+// Providers can bind a router alongside a fixed profile
+// to use different ClientHello settings for different client runtimes.
 type TLSFingerprintRouter struct {
 	ent.Schema
 }
 
-// Annotations 返回 schema 的注解配置。
+// Annotations sets the database table name.
 func (TLSFingerprintRouter) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "tls_fingerprint_routers"},
 	}
 }
 
-// Mixin 返回该 schema 使用的混入组件。
+// Mixin supplies creation and update timestamps.
 func (TLSFingerprintRouter) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
 	}
 }
 
-// Fields 定义 TLS 路由器实体的所有字段。
+// Fields defines User-Agent routing and request-specific TLS settings.
 func (TLSFingerprintRouter) Fields() []ent.Field {
 	return []ent.Field{
-		// name: 路由器名称，唯一标识。
+		// Unique router name.
 		field.String("name").
 			MaxLen(100).
 			NotEmpty().
 			Unique(),
 
-		// description: 路由器描述。
+		// Router description.
 		field.Text("description").
 			Optional().
 			Nillable(),
 
-		// enabled: 是否启用该路由器。
+		// Whether the router is enabled.
 		field.Bool("enabled").
 			Default(true),
 
-		// chatgpt_oauth_token_user_agent: ChatGPT OAuth token 请求使用的 UA，空值使用系统兜底。
+		// User-Agent for ChatGPT OAuth token requests; empty uses the system default.
 		field.String("chatgpt_oauth_token_user_agent").
 			MaxLen(512).
 			Default(""),
 
-		// chatgpt_oauth_token_tls_fingerprint_profile_id: ChatGPT OAuth token 请求使用的 TLS 模板。
-		// nil 表示不启用 token 专用 TLS 模板；0 表示内置默认模板；-1 表示随机模板；正数表示指定模板。
+		// TLS profile for ChatGPT OAuth token requests.
+		// nil disables the token-specific profile; 0 selects the built-in default, -1 a random profile, and positive values a stored profile.
 		field.Int64("chatgpt_oauth_token_tls_fingerprint_profile_id").
 			Optional().
 			Nillable(),
 
-		// codex_invite_reset_user_agent: Codex 邀请重置请求使用的 UA，空值使用 Desktop 兜底。
+		// User-Agent for Codex invitation resets; empty uses the Desktop default.
 		field.String("codex_invite_reset_user_agent").
 			MaxLen(512).
 			Default(""),
 
-		// codex_invite_reset_tls_fingerprint_profile_id: Codex 邀请重置请求使用的 TLS 模板。
-		// nil 表示沿用提供商 TLS 模板；0 表示内置默认模板；-1 表示随机模板；正数表示指定模板。
+		// TLS profile for Codex invitation reset requests.
+		// nil inherits the provider profile; 0 selects the built-in default, -1 a random profile, and positive values a stored profile.
 		field.Int64("codex_invite_reset_tls_fingerprint_profile_id").
 			Optional().
 			Nillable(),
 
-		// rules: 按顺序匹配的 UA 规则列表，命中第一条后返回对应 TLS 模板。
+		// User-Agent rules are checked in order; the first match selects the TLS profile.
 		field.JSON("rules", []egress.TLSFingerprintRouterRule{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 	}
 }
 
-// Indexes 定义数据库索引，优化查询性能。
+// Indexes supports enabled-router lookup.
 func (TLSFingerprintRouter) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("enabled"),

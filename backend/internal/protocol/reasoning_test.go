@@ -36,5 +36,5 @@ func TestNormalizeClaudeOutputEffort(t *testing.T) {
 	}
 }
 
-// thinkingStringPointer 返回档位字符串的指针。
+// thinkingStringPointer returns a pointer to an effort string.
 func thinkingStringPointer(value string) *string { return &value }

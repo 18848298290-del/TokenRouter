@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// SessionStore 测试
-
-// GenerateRandomBytes 测试
-
 func TestGenerateRandomBytes(t *testing.T) {
 	tests := []int{0, 1, 16, 32, 64}
 	for _, n := range tests {
@@ -25,15 +21,13 @@ func TestGenerateRandomBytes(t *testing.T) {
 }
 
 func TestGenerateRandomBytes_Uniqueness(t *testing.T) {
-	// 两次调用应该返回不同的结果（极小概率相同，32 字节足够）
+	// A collision between independent 32-byte samples is negligibly likely.
 	a, _ := GenerateRandomBytes(32)
 	b, _ := GenerateRandomBytes(32)
 	if string(a) == string(b) {
 		t.Error("两次 GenerateRandomBytes(32) 返回了相同结果，随机性可能有问题")
 	}
 }
-
-// GenerateState 测试
 
 func TestGenerateState(t *testing.T) {
 	state, err := GenerateState()
@@ -43,28 +37,23 @@ func TestGenerateState(t *testing.T) {
 	if state == "" {
 		t.Error("GenerateState() 返回空字符串")
 	}
-	// base64url 编码不应包含 padding '='
 	if strings.Contains(state, "=") {
 		t.Errorf("GenerateState() 结果包含 '=' padding: %s", state)
 	}
-	// base64url 不应包含 '+' 或 '/'
 	if strings.ContainsAny(state, "+/") {
 		t.Errorf("GenerateState() 结果包含非 base64url 字符: %s", state)
 	}
 }
-
-// GenerateSessionID 测试
 
 func TestGenerateSessionID(t *testing.T) {
 	sid, err := GenerateSessionID()
 	if err != nil {
 		t.Fatalf("GenerateSessionID() 出错: %v", err)
 	}
-	// 16 字节 -> 32 个 hex 字符
+	// Sixteen random bytes produce 32 hexadecimal characters.
 	if len(sid) != 32 {
 		t.Errorf("GenerateSessionID() 长度=%d，期望=32", len(sid))
 	}
-	// 必须是合法的 hex 字符串
 	if _, err := hex.DecodeString(sid); err != nil {
 		t.Errorf("GenerateSessionID() 不是合法的 hex 字符串: %s, err=%v", sid, err)
 	}
@@ -78,8 +67,6 @@ func TestGenerateSessionID_Uniqueness(t *testing.T) {
 	}
 }
 
-// GenerateCodeVerifier 测试
-
 func TestGenerateCodeVerifier(t *testing.T) {
 	verifier, err := GenerateCodeVerifier()
 	if err != nil {
@@ -88,11 +75,10 @@ func TestGenerateCodeVerifier(t *testing.T) {
 	if verifier == "" {
 		t.Error("GenerateCodeVerifier() 返回空字符串")
 	}
-	// RFC 7636 要求 code_verifier 至少 43 个字符
+	// RFC 7636 requires a verifier of at least 43 characters.
 	if len(verifier) < 43 {
 		t.Errorf("GenerateCodeVerifier() 长度=%d，RFC 7636 要求至少 43 字符", len(verifier))
 	}
-	// base64url 编码不应包含 padding 和非 URL 安全字符
 	if strings.Contains(verifier, "=") {
 		t.Errorf("GenerateCodeVerifier() 包含 '=' padding: %s", verifier)
 	}
@@ -101,12 +87,8 @@ func TestGenerateCodeVerifier(t *testing.T) {
 	}
 }
 
-// GenerateCodeChallenge 测试
-
 func TestGenerateCodeChallenge(t *testing.T) {
-	// 使用已知输入验证输出
-	// RFC 7636 附录 B 示例: verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-	// 预期 challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	// Use the verifier and challenge from RFC 7636 Appendix B.
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	expected := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
@@ -123,8 +105,6 @@ func TestGenerateCodeChallenge_NoPadding(t *testing.T) {
 	}
 }
 
-// base64URLEncode 测试
-
 func TestBase64URLEncode(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -138,11 +118,9 @@ func TestBase64URLEncode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := base64URLEncode(tt.input)
-			// 不应包含 '=' padding
 			if strings.Contains(result, "=") {
 				t.Errorf("base64URLEncode(%v) 包含 '=' padding: %s", tt.input, result)
 			}
-			// 不应包含标准 base64 的 '+' 或 '/'
 			if strings.ContainsAny(result, "+/") {
 				t.Errorf("base64URLEncode(%v) 包含非 URL 安全字符: %s", tt.input, result)
 			}
@@ -150,25 +128,23 @@ func TestBase64URLEncode(t *testing.T) {
 	}
 }
 
-// hasRestrictedScope 测试
-
 func TestHasRestrictedScope(t *testing.T) {
 	tests := []struct {
 		scope    string
 		expected bool
 	}{
-		// 受限 scope
+		// Restricted scope prefixes.
 		{"https://www.googleapis.com/auth/generative-language", true},
 		{"https://www.googleapis.com/auth/generative-language.retriever", true},
 		{"https://www.googleapis.com/auth/generative-language.tuning", true},
 		{"https://www.googleapis.com/auth/drive", true},
 		{"https://www.googleapis.com/auth/drive.readonly", true},
 		{"https://www.googleapis.com/auth/drive.file", true},
-		// 非受限 scope
+		// Scopes supported by the built-in client.
 		{"https://www.googleapis.com/auth/cloud-platform", false},
 		{"https://www.googleapis.com/auth/userinfo.email", false},
 		{"https://www.googleapis.com/auth/userinfo.profile", false},
-		// 边界情况
+		// Empty and unrelated values are unrestricted.
 		{"", false},
 		{"random-scope", false},
 	}
@@ -181,8 +157,6 @@ func TestHasRestrictedScope(t *testing.T) {
 		})
 	}
 }
-
-// BuildAuthorizationURL 测试
 
 func TestBuildAuthorizationURL(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-secret")
@@ -199,7 +173,6 @@ func TestBuildAuthorizationURL(t *testing.T) {
 		t.Fatalf("BuildAuthorizationURL() 出错: %v", err)
 	}
 
-	// 检查返回的 URL 包含期望的参数
 	checks := []string{
 		"response_type=code",
 		"client_id=" + GeminiCLIOAuthClientID,
@@ -217,12 +190,11 @@ func TestBuildAuthorizationURL(t *testing.T) {
 		}
 	}
 
-	// 不应包含 project_id（因为传的是空字符串）
+	// An empty project ID omits the optional project_id parameter.
 	if strings.Contains(authURL, "project_id=") {
 		t.Errorf("BuildAuthorizationURL() 空 projectID 时不应包含 project_id 参数")
 	}
 
-	// URL 应该以正确的授权端点开头
 	if !strings.HasPrefix(authURL, AuthorizeURL+"?") {
 		t.Errorf("BuildAuthorizationURL() URL 应以 %s? 开头，实际: %s", AuthorizeURL, authURL)
 	}
@@ -235,7 +207,7 @@ func TestBuildAuthorizationURL_EmptyRedirectURI(t *testing.T) {
 		OAuthConfig{},
 		"test-state",
 		"test-challenge",
-		"", // 空 redirectURI
+		"", // Empty redirect URI.
 		"",
 		"code_assist",
 	)
@@ -285,11 +257,7 @@ func TestBuildAuthorizationURL_UsesBuiltinSecretFallback(t *testing.T) {
 	}
 }
 
-// EffectiveOAuthConfig 测试
-
 func TestEffectiveOAuthConfig_GoogleOne(t *testing.T) {
-	// 内置的 Gemini CLI client secret 不嵌入在此仓库中。
-	// 测试通过环境变量设置一个假的 secret 来模拟运维配置。
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
 	tests := []struct {
@@ -372,7 +340,6 @@ func TestEffectiveOAuthConfig_GoogleOne(t *testing.T) {
 func TestEffectiveOAuthConfig_ScopeFiltering(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// 测试 Google One + 内置客户端过滤受限 scopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		Scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/generative-language.retriever https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.profile",
 	}, "google_one")
@@ -380,8 +347,8 @@ func TestEffectiveOAuthConfig_ScopeFiltering(t *testing.T) {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
 	}
 
-	// 应仅包含 cloud-platform、userinfo.email 和 userinfo.profile
-	// 不应包含 generative-language 或 drive scopes
+	// The built-in client retains cloud-platform and userinfo scopes.
+	// Generative Language and Drive scopes are filtered.
 	if strings.Contains(cfg.Scopes, "generative-language") {
 		t.Errorf("使用内置客户端时 Scopes 不应包含 generative-language，实际: %v", cfg.Scopes)
 	}
@@ -399,10 +366,7 @@ func TestEffectiveOAuthConfig_ScopeFiltering(t *testing.T) {
 	}
 }
 
-// EffectiveOAuthConfig 测试 - 新增分支覆盖
-
 func TestEffectiveOAuthConfig_OnlyClientID_NoSecret(t *testing.T) {
-	// 只提供 clientID 不提供 secret 应报错
 	_, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID: "some-client-id",
 	}, "code_assist")
@@ -415,7 +379,6 @@ func TestEffectiveOAuthConfig_OnlyClientID_NoSecret(t *testing.T) {
 }
 
 func TestEffectiveOAuthConfig_OnlyClientSecret_NoID(t *testing.T) {
-	// 只提供 secret 不提供 clientID 应报错
 	_, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientSecret: "some-client-secret",
 	}, "code_assist")
@@ -430,7 +393,7 @@ func TestEffectiveOAuthConfig_OnlyClientSecret_NoID(t *testing.T) {
 func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_BuiltinClient(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// ai_studio 类型，使用内置客户端，scopes 为空 -> 应使用 DefaultCodeAssistScopes（因为内置客户端不能请求 generative-language scope）
+	// The built-in client uses Code Assist scopes because its AI Studio scopes are restricted.
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{}, "ai_studio")
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
@@ -441,7 +404,6 @@ func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_BuiltinClient(t *testing.T)
 }
 
 func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_CustomClient(t *testing.T) {
-	// ai_studio 类型，使用自定义客户端，scopes 为空 -> 应使用 DefaultAIStudioScopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -455,7 +417,6 @@ func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_CustomClient(t *testing.T) 
 }
 
 func TestEffectiveOAuthConfig_AIStudio_ScopeNormalization(t *testing.T) {
-	// ai_studio 类型，旧的 generative-language scope 应被归一化为 generative-language.retriever
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -465,7 +426,7 @@ func TestEffectiveOAuthConfig_AIStudio_ScopeNormalization(t *testing.T) {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
 	}
 	if strings.Contains(cfg.Scopes, "auth/generative-language ") || strings.HasSuffix(cfg.Scopes, "auth/generative-language") {
-		// 返回的 scope 包含归一化后的 generative-language.retriever。
+		// Check complete scope tokens so the retriever suffix is not mistaken for the legacy scope.
 		parts := strings.FieldsSeq(cfg.Scopes)
 		for p := range parts {
 			if p == "https://www.googleapis.com/auth/generative-language" {
@@ -481,7 +442,6 @@ func TestEffectiveOAuthConfig_AIStudio_ScopeNormalization(t *testing.T) {
 func TestEffectiveOAuthConfig_CommaSeparatedScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// 逗号分隔的 scopes 应被归一化为空格分隔
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -490,7 +450,6 @@ func TestEffectiveOAuthConfig_CommaSeparatedScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
 	}
-	// scope 使用空格分隔。
 	if strings.Contains(cfg.Scopes, ",") {
 		t.Errorf("逗号分隔的 scopes 应被归一化为空格分隔，实际: %q", cfg.Scopes)
 	}
@@ -503,7 +462,6 @@ func TestEffectiveOAuthConfig_CommaSeparatedScopes(t *testing.T) {
 }
 
 func TestEffectiveOAuthConfig_MixedCommaAndSpaceScopes(t *testing.T) {
-	// 混合逗号和空格分隔的 scopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -519,7 +477,6 @@ func TestEffectiveOAuthConfig_MixedCommaAndSpaceScopes(t *testing.T) {
 }
 
 func TestEffectiveOAuthConfig_WhitespaceTriming(t *testing.T) {
-	// 输入中的前后空白应被清理
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "  custom-id  ",
 		ClientSecret: "  custom-secret  ",
@@ -557,14 +514,12 @@ func TestEffectiveOAuthConfig_NoEnvSecret(t *testing.T) {
 func TestEffectiveOAuthConfig_AIStudio_BuiltinClient_CustomScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// ai_studio + 内置客户端 + 自定义 scopes -> 应过滤受限 scopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		Scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever",
 	}, "ai_studio")
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
 	}
-	// 内置客户端应过滤 generative-language.retriever
 	if strings.Contains(cfg.Scopes, "generative-language") {
 		t.Errorf("ai_studio + 内置客户端应过滤受限 scopes，实际: %q", cfg.Scopes)
 	}
@@ -576,7 +531,6 @@ func TestEffectiveOAuthConfig_AIStudio_BuiltinClient_CustomScopes(t *testing.T) 
 func TestEffectiveOAuthConfig_UnknownOAuthType_DefaultScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// 未知的 oauthType 应回退到默认的 code_assist scopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{}, "unknown_type")
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
@@ -589,7 +543,6 @@ func TestEffectiveOAuthConfig_UnknownOAuthType_DefaultScopes(t *testing.T) {
 func TestEffectiveOAuthConfig_EmptyOAuthType_DefaultScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// 空的 oauthType 应走 default 分支，使用 DefaultCodeAssistScopes
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{}, "")
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
@@ -600,7 +553,7 @@ func TestEffectiveOAuthConfig_EmptyOAuthType_DefaultScopes(t *testing.T) {
 }
 
 func TestEffectiveOAuthConfig_CustomClient_NoScopeFiltering(t *testing.T) {
-	// 自定义客户端 + google_one + 包含受限 scopes -> 不应被过滤（因为不是内置客户端）
+	// Custom clients retain scopes that are restricted for the built-in client.
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -609,7 +562,6 @@ func TestEffectiveOAuthConfig_CustomClient_NoScopeFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
 	}
-	// 自定义客户端不应过滤任何 scope
 	if !strings.Contains(cfg.Scopes, "generative-language.retriever") {
 		t.Errorf("自定义客户端不应过滤 generative-language.retriever，实际: %q", cfg.Scopes)
 	}

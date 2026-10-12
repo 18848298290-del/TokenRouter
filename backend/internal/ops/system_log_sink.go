@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	// maxSystemLogHostLength 与数据库 host 列长度保持一致，避免异常环境值回滚整批写入。
+	// maxSystemLogHostLength matches the database column to prevent an oversized hostname from failing a batch.
 	maxSystemLogHostLength = 255
 
-	// 首次写入失败后暂停落库的时长，之后逐次翻倍到上限。
+	// Pause after the first write failure, then double the delay up to the cap.
 	defaultOpsSystemLogFlushBackoff = 2 * time.Second
-	// 退避上限。日志是尽力而为的观测数据，不值得为它无限期占用连接池。
+	// Cap retry delay so logging can resume while limiting pressure on the connection pool.
 	defaultOpsSystemLogFlushBackoffMax = 60 * time.Second
 )
 
@@ -37,7 +37,7 @@ type OpsSystemLogSinkHealth struct {
 
 type OpsSystemLogSink struct {
 	opsRepo SystemLogWriter
-	// host 记录当前进程写入系统日志时的主机标识。
+	// host identifies the process host in stored system logs.
 	host string
 
 	queue            chan *logevent.LogEvent
@@ -50,7 +50,7 @@ type OpsSystemLogSink struct {
 	batchSize     int
 	flushInterval time.Duration
 
-	// 连续写入失败后的退避参数。构造后只读，测试可在 Start 前覆盖。
+	// Backoff settings are read-only after construction; tests may override them before Start.
 	flushBackoff    time.Duration
 	flushBackoffMax time.Duration
 
@@ -66,12 +66,12 @@ type OpsSystemLogSink struct {
 	lastError atomic.Value
 }
 
-// SystemLogWriter 是队列唯一需要的存储能力。
+// SystemLogWriter stores batches consumed by the log queue.
 type SystemLogWriter interface {
 	BatchInsertSystemLogs(context.Context, []*OpsInsertSystemLogInput) (int64, error)
 }
 
-// SystemLogSinkOptions 的主机信息与失败输出由 app 的技术 Adapter 提供。
+// SystemLogSinkOptions supplies host metadata and the failure callback from app adapters.
 type SystemLogSinkOptions struct {
 	Host           string
 	HostError      error
@@ -100,7 +100,7 @@ func NewOpsSystemLogSink(opsRepo SystemLogWriter, options ...SystemLogSinkOption
 	return s
 }
 
-// flushBackoffFor 返回第 failures 次连续失败后的退避时长（指数退避，封顶）。
+// flushBackoffFor returns capped exponential backoff after consecutive failures.
 func (s *OpsSystemLogSink) flushBackoffFor(failures int) time.Duration {
 	base := s.flushBackoff
 	if base <= 0 {
@@ -123,7 +123,7 @@ func (s *OpsSystemLogSink) flushBackoffFor(failures int) time.Duration {
 	return backoff
 }
 
-// normalizeSystemLogHost 清理并限制主机名，读取失败时使用稳定的兜底值。
+// normalizeSystemLogHost trims and bounds the hostname, using unknown on error or empty input.
 func normalizeSystemLogHost(host string, err error) string {
 	host = strings.TrimSpace(host)
 	if err != nil || host == "" {
@@ -152,7 +152,7 @@ func (s *OpsSystemLogSink) Start() {
 
 func (s *OpsSystemLogSink) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 封闭入队并等待唯一 writer；超时保留未完成状态。
+// StopContext closes admission and waits for the writer; a timeout leaves shutdown in progress.
 func (s *OpsSystemLogSink) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -209,7 +209,7 @@ func (s *OpsSystemLogSink) shouldIndex(event *logevent.LogEvent) bool {
 	}
 
 	component := strings.ToLower(strings.TrimSpace(event.Component))
-	// zap 的 LoggerName 往往为空或不等于业务组件名；业务组件名通常以字段 component 透传。
+	// The component field can carry the business component when the logger name is empty or different.
 	if event.Fields != nil {
 		if fc := strings.ToLower(strings.TrimSpace(AsString(event.Fields["component"]))); fc != "" {
 			component = fc
@@ -231,7 +231,7 @@ func (s *OpsSystemLogSink) run() {
 	defer ticker.Stop()
 
 	batch := make([]*logevent.LogEvent, 0, s.batchSize)
-	// 该状态由本 goroutine 独占读写。
+	// The writer goroutine owns this retry state.
 	failures := 0
 	var suppressedUntil time.Time
 	flush := func(baseCtx context.Context) {
@@ -240,8 +240,8 @@ func (s *OpsSystemLogSink) run() {
 		}
 		now := time.Now()
 		if now.Before(suppressedUntil) {
-			// 退避窗口内直接丢弃本批：日志是尽力而为的观测数据，继续攒批只会把
-			// 压力转移到内存，而每次重试都会再占用并取消一条池内连接。
+			// Drop batches during backoff to bound memory and avoid repeated database
+			// attempts consuming pool connections during an outage.
 			atomic.AddUint64(&s.droppedCount, uint64(len(batch)))
 			batch = batch[:0]
 			return
@@ -255,7 +255,7 @@ func (s *OpsSystemLogSink) run() {
 			suppressedUntil = time.Now().Add(backoff)
 			atomic.AddUint64(&s.writeFailed, uint64(len(batch)))
 			s.lastError.Store(err.Error())
-			// 每个退避窗口至多一条，避免数据库故障期间刷屏。
+			// Report at most once per backoff window to limit outage log volume.
 			if s.onWriteFailure != nil {
 				s.onWriteFailure(err, len(batch), failures, backoff)
 			}
@@ -333,7 +333,7 @@ func (s *OpsSystemLogSink) flushBatch(baseCtx context.Context, batch []*logevent
 		apiKeyID := AsInt64Ptr(fields["api_key_id"])
 		providerID := AsInt64Ptr(fields["provider_id"])
 
-		// 统一脱敏后写入索引。
+		// Redact the message and fields before indexing.
 		message := logredact.RedactText(strings.TrimSpace(event.Message))
 		redactedExtra := logredact.RedactMap(fields)
 		extraJSONBytes, _ := json.Marshal(redactedExtra)

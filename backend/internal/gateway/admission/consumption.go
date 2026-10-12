@@ -17,13 +17,13 @@ const (
 	InsufficientBalance       ConsumptionFailureKind = "balance"
 )
 
-// KeyLimits 检查当前 Key 的有效期和额度。
+// KeyLimits reports API key expiry and quota exhaustion.
 type KeyLimits interface {
 	IsExpired() bool
 	IsQuotaExhausted() bool
 }
 
-// SubscriptionValidator 使用同一权益实例维护窗口，保持原查询时点。
+// SubscriptionValidator validates subscription limits and refreshes expired usage windows.
 type SubscriptionValidator interface {
 	ValidateAndCheckLimits(*billing.UserSubscription) (bool, error)
 	EnsureWindowMaintenance(context.Context, *billing.UserSubscription) (*billing.UserSubscription, error)
@@ -31,7 +31,7 @@ type SubscriptionValidator interface {
 
 type ConsumptionFailureKind string
 
-// ConsumptionFailure 只返回失败阶段；通用与 Google 的文本、状态码仍由 HTTP 决定。
+// ConsumptionFailure identifies the rejected check. HTTP handlers choose protocol-specific messages and status codes.
 type ConsumptionFailure struct {
 	Kind  ConsumptionFailureKind
 	Cause error
@@ -52,7 +52,7 @@ func (e *ConsumptionFailure) Error() string {
 }
 func (e *ConsumptionFailure) Unwrap() error { return e.Cause }
 
-// CheckConsumption 在资金来源解析之后检查 Key 与权益；不读取请求体或累计 RPM。
+// CheckConsumption validates key limits and funding after funding-source resolution. RPM accounting is separate.
 func CheckConsumption(ctx context.Context, input ConsumptionInput, subscriptions SubscriptionValidator) (*billing.UserSubscription, *ConsumptionFailure) {
 	switch input.Status {
 	case apikey.StatusAPIKeyQuotaExhausted:

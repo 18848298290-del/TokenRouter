@@ -13,7 +13,7 @@ func firstLine(s string) string {
 	return s
 }
 
-// TestCodexBaseInstructionsForModel 检查各模型对应的 Codex base prompt。
+// TestCodexBaseInstructionsForModel checks model-specific prompt selection.
 func TestCodexBaseInstructionsForModel(t *testing.T) {
 	cases := []struct {
 		model    string
@@ -28,11 +28,11 @@ func TestCodexBaseInstructionsForModel(t *testing.T) {
 		{" GPT-5.5 ", "You are Codex, a coding agent based on GPT-5"},
 		{"gpt-5.2", "You are GPT-5.2 running in the Codex CLI"},
 		{"gpt-5.1", "You are GPT-5.1 running in the Codex CLI"},
-		{"gpt-5", "You are Codex, a coding agent based on GPT-5"},   // 回退到最新（GPT-5.5）
-		{"gpt-5.4", "You are Codex, a coding agent based on GPT-5"}, // 未单独维护的模型使用最新提示词。
-		{"gpt-5.3", "You are Codex, a coding agent based on GPT-5"}, // 未单独维护的模型使用最新提示词。
+		{"gpt-5", "You are Codex, a coding agent based on GPT-5"},   // Use the latest embedded prompt (GPT-5.5).
+		{"gpt-5.4", "You are Codex, a coding agent based on GPT-5"}, // No dedicated prompt.
+		{"gpt-5.3", "You are Codex, a coding agent based on GPT-5"}, // No dedicated prompt.
 		{"some-unknown-model", "You are Codex, a coding agent based on GPT-5"},
-		{"", "You are Codex, a coding agent based on GPT-5"}, // 回退到最新
+		{"", "You are Codex, a coding agent based on GPT-5"}, // Unknown models use the latest embedded prompt.
 	}
 	for _, c := range cases {
 		got := strings.TrimSpace(CodexBaseInstructionsForModel(c.model))

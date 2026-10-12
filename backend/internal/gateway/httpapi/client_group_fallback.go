@@ -16,15 +16,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// ClientGroupFallbackResolver 只返回完成授权、协议和资金校验后的最终分组。
+// ClientGroupFallbackResolver returns a group after authorization, protocol, and funding checks.
 type ClientGroupFallbackResolver = func(context.Context, *apikey.APIKey, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
 
 type clientGroupFallbackBackend interface {
 	ResolveClientGroup(context.Context, *apikey.APIKey, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
 }
 
-// resolveClientGroupForRequest 在客户端检测后、组策略和路由规划前调用。
-// 分组校验成功后发布最终分组及其资金、权限快照。
+// resolveClientGroupForRequest runs after client detection and before group policies and route planning.
+// After validation, it publishes the final group and its funding and permission snapshots.
 func resolveClientGroupForRequest(c *gin.Context, backend any, key *apikey.APIKey, source protocol.ProtocolID) (*apikey.APIKey, error) {
 	if key == nil || key.Group == nil || !key.Group.ClaudeCodeOnly || (source == protocol.ProtocolAnthropicMessages && requeststate.IsClaudeCodeClient(c.Request.Context())) {
 		return key, nil
@@ -56,7 +56,7 @@ func resolveClientGroupForRequest(c *gin.Context, backend any, key *apikey.APIKe
 	return resolved, nil
 }
 
-// writeClientGroupFallbackError 在初始回退失败时，按入口协议写出错误响应。
+// writeClientGroupFallbackError writes an initial group resolution failure in the entry protocol.
 func writeClientGroupFallbackError(c *gin.Context, err error, write func(*gin.Context, int, string, string)) {
 	MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
 	status, code, message, retryAfter := BillingErrorDetails(err)

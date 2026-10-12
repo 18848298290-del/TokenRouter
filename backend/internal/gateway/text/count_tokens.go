@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 )
 
-// CountPorts 提供无槽选择、单次 token 计数和失败清理。
+// CountPorts supplies slot-free selection, one token-count attempt, and failure cleanup.
 type CountPorts interface {
 	Context() context.Context
 	Select(map[int64]struct{}) (Selection, error)
@@ -20,7 +20,7 @@ type CountPorts interface {
 	failover.TempUnscheduler[*AttemptFailure]
 }
 
-// RunCountTokens 保留辅助计数的单一重试循环；每次尝试重新构造报文，不取得请求槽。
+// RunCountTokens retries auxiliary counting with a rebuilt payload per attempt and no request slot.
 func RunCountTokens(p CountPorts, maxSwitches int, observe failover.Observe) {
 	state := failover.NewFailoverState[*AttemptFailure](maxSwitches, false, observe)
 	for {

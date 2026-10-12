@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// runtimeAssemblyProviders 汇总应用生命周期的 Wire provider。
+// runtimeAssemblyProviders groups application lifecycle Wire providers.
 var runtimeAssemblyProviders = wire.NewSet(
 	provideModelCatalogRuntime,
 	provideSettingsRuntime,

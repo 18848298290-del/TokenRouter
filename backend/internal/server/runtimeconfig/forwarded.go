@@ -13,20 +13,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// 客户端地址配置保持原存储键和版本标记。
+// Storage keys for client IP settings and their compatibility migration marker.
 const (
 	SettingKeyForwardedClientIPModeV2   = "forwarded_client_ip_mode_v2_migrated"
 	SettingKeyAPIKeyACLTrustForwardedIP = "api_key_acl_trust_forwarded_ip"
 	SettingKeyForwardedClientIPHeaders  = "forwarded_client_ip_headers"
 )
 
-// ForwardedSettingsRepository 只提供客户端地址设置的批量读取与兼容写入。
+// ForwardedSettingsRepository reads client IP settings and persists migration updates.
 type ForwardedSettingsRepository interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 	SetMultiple(context.Context, map[string]string) error
 }
 
-// ForwardedSettingsOptions 包含 app 提供的客户端 IP 初始设置和运行时发布函数。
+// ForwardedSettingsOptions contains initial client IP settings and runtime publication callbacks.
 type ForwardedSettingsOptions struct {
 	InitialTrust             bool
 	TrustedProxiesConfigured bool
@@ -34,24 +34,24 @@ type ForwardedSettingsOptions struct {
 	Publish                  func(bool, []string)
 }
 
-// ForwardedSettings 负责旧版本兼容与技术发布，不接收完整 config。
+// ForwardedSettings migrates persisted client IP settings and publishes them to the runtime.
 type ForwardedSettings struct {
 	settingRepo ForwardedSettingsRepository
 	options     ForwardedSettingsOptions
 }
 
-// ForwardedInput 只保存客户端地址管理字段。
+// ForwardedInput contains the editable client IP settings.
 type ForwardedInput struct {
 	APIKeyACLTrustForwardedIP bool     `json:"api_key_acl_trust_forwarded_ip"`
 	ForwardedClientIPHeaders  []string `json:"forwarded_client_ip_headers"`
 }
 
-// NewForwardedSettings 构造不回源，启动时由 app 显式加载。
+// NewForwardedSettings creates a settings loader; app calls LoadForwardedClientIPSettings during startup.
 func NewForwardedSettings(repo ForwardedSettingsRepository, options ForwardedSettingsOptions) *ForwardedSettings {
 	return &ForwardedSettings{settingRepo: repo, options: options}
 }
 
-// PrepareForwardedSettings 使用同一名称校验和 JSON 编码，不发布运行状态。
+// PrepareForwardedSettings validates header names and encodes values for persistence.
 func PrepareForwardedSettings(value ForwardedInput) (ForwardedInput, map[string]string, error) {
 	headers, err := policy.NormalizeForwardedClientIPHeaders(value.ForwardedClientIPHeaders)
 	if err != nil {
@@ -65,12 +65,12 @@ func PrepareForwardedSettings(value ForwardedInput) (ForwardedInput, map[string]
 	return value, map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: strconv.FormatBool(value.APIKeyACLTrustForwardedIP), SettingKeyForwardedClientIPHeaders: string(raw)}, nil
 }
 
-// Apply 只发布已经确定的值，保持与其余缓存和通知的原装配顺序。
+// Apply publishes the supplied settings to the runtime.
 func (s *ForwardedSettings) Apply(value ForwardedInput) {
 	s.options.Publish(value.APIKeyACLTrustForwardedIP, value.ForwardedClientIPHeaders)
 }
 
-// SettingsParticipant 将客户端地址设置纳入唯一原子写入，不自行增加广播。
+// SettingsParticipant prepares client IP values for the shared settings write.
 func SettingsParticipant() settings.Participant {
 	return settings.Participant{Module: "server", Fields: []string{"api_key_acl_trust_forwarded_ip", "forwarded_client_ip_headers"}, Keys: []string{SettingKeyAPIKeyACLTrustForwardedIP, SettingKeyForwardedClientIPHeaders}, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {
 		if len(input) == 0 {
@@ -97,7 +97,7 @@ func SettingsParticipant() settings.Participant {
 	}}
 }
 
-// ParseForwardedHeaders 保留非法 JSON、null 和非法名称时的明确失败。
+// ParseForwardedHeaders rejects malformed JSON, null, and invalid header names.
 func ParseForwardedHeaders(value string) ([]string, error) {
 	var headers []string
 	if err := json.Unmarshal([]byte(value), &headers); err != nil {
@@ -113,7 +113,7 @@ func ParseForwardedHeaders(value string) ([]string, error) {
 	return normalized, nil
 }
 
-// LoadForwardedClientIPSettings 保留原迁移标记、可信代理兼容与失败关闭。
+// LoadForwardedClientIPSettings loads and migrates settings, disabling forwarded trust on read or header parse errors.
 func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) error {
 	if s == nil || s.settingRepo == nil {
 		return nil
@@ -158,7 +158,7 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	}
 	if values[SettingKeyForwardedClientIPModeV2] != "true" {
 		updates[SettingKeyForwardedClientIPModeV2] = "true"
-		// 本迁移之前的新安装会默认持久化 false；仅在未配置可信代理策略时恢复兼容模式。
+		// Older installations stored false by default; restore compatibility only when no trusted proxy policy was configured.
 		if headersErr == nil && hasStoredValue && !enabled && !s.options.TrustedProxiesConfigured {
 			enabled = true
 			updates[SettingKeyAPIKeyACLTrustForwardedIP] = "true"
@@ -175,7 +175,7 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	return headersErr
 }
 
-// ReadForwardedSettings 用持久化设置覆盖当前值，Header 解析失败时关闭转发 IP 信任。
+// ReadForwardedSettings overlays persisted values and disables forwarded trust if header parsing fails.
 func ReadForwardedSettings(settings map[string]string, prior ForwardedInput) ForwardedInput {
 	apiKeyACLTrustForwardedIP := prior.APIKeyACLTrustForwardedIP
 	forwardedClientIPHeaders := prior.ForwardedClientIPHeaders

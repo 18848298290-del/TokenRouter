@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// OpenAIImageOutputCounter tracks completed images across response events. It deduplicates
+// output items by ID or content hash and retains the largest Images API data-array count.
 type OpenAIImageOutputCounter struct {
 	seen         map[string]struct{}
 	seenSizes    map[string]string

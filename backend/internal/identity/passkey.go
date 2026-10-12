@@ -33,8 +33,8 @@ var (
 	_ webauthn.User = (*passkeyUser)(nil)
 )
 
-// PasskeyCredentialRecord 是 WebAuthn 服务使用的凭据持久化结构。
-// Credential 保存完整记录，以便后续库版本继续校验并更新签名计数等状态。
+// PasskeyCredentialRecord stores a WebAuthn credential and its owner.
+// Credential retains the full library record, including signature counters and validation state.
 type PasskeyCredentialRecord struct {
 	ID         int64
 	UserID     int64
@@ -46,7 +46,7 @@ type PasskeyCredentialRecord struct {
 	UpdatedAt  time.Time
 }
 
-// PasskeyRepository 定义用户 handle 与凭据的持久化边界。
+// PasskeyRepository persists user handles and WebAuthn credentials.
 type PasskeyRepository interface {
 	EnsureUserHandle(ctx context.Context, userID int64, candidate []byte) ([]byte, error)
 	GetUserHandle(ctx context.Context, userID int64) ([]byte, error)
@@ -58,20 +58,20 @@ type PasskeyRepository interface {
 	Delete(ctx context.Context, userID, credentialID int64) error
 }
 
-// PasskeySession 保存一次注册或登录流程所需的服务端 challenge 状态。
+// PasskeySession stores the server challenge for one registration or login.
 type PasskeySession struct {
 	Kind     string               `json:"kind"`
 	UserID   int64                `json:"user_id,omitempty"`
 	WebAuthn webauthn.SessionData `json:"webauthn"`
 }
 
-// PasskeySessionStore 提供带过期时间的一次性 WebAuthn 会话。
+// PasskeySessionStore stores expiring WebAuthn sessions for one-time consumption.
 type PasskeySessionStore interface {
 	Store(ctx context.Context, session *PasskeySession, ttl time.Duration) (string, error)
 	Consume(ctx context.Context, token string) (*PasskeySession, error)
 }
 
-// PasskeyCredentialSummary 是返回给用户端的非敏感凭据摘要。
+// PasskeyCredentialSummary contains credential metadata safe to return to the user.
 type PasskeyCredentialSummary struct {
 	ID         int64      `json:"id"`
 	Name       string     `json:"name"`
@@ -86,7 +86,7 @@ type passkeyUser struct {
 	credentials []webauthn.Credential
 }
 
-// PasskeyService 负责 Passkey 注册、登录与用户凭据管理。
+// PasskeyService handles passkey registration, login, and credential management.
 type PasskeyService struct {
 	operationClock
 	enabled  bool
@@ -96,7 +96,7 @@ type PasskeyService struct {
 	userRepo SessionUserReader
 }
 
-// PasskeyVerifier 把 ceremony 验证与 HTTP 请求类型隔离；解析发生在会话消费之后。
+// PasskeyVerifier parses and verifies ceremony input after the caller consumes the session.
 type PasskeyVerifier interface {
 	BeginRegistration(webauthn.User, ...webauthn.RegistrationOption) (*protocol.CredentialCreation, *webauthn.SessionData, error)
 	BeginDiscoverableLogin(...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error)
@@ -123,7 +123,7 @@ func (u *passkeyUser) WebAuthnCredentials() []webauthn.Credential {
 	return u.credentials
 }
 
-// NewPasskeyService 只接收已装配的验证器，关闭功能时不构造外部运行资源。
+// NewPasskeyService accepts an assembled verifier and stores its dependencies.
 func NewPasskeyService(enabled bool, verifier PasskeyVerifier, repo PasskeyRepository, sessions PasskeySessionStore, users SessionUserReader, clocks ...func() time.Time) *PasskeyService {
 	return &PasskeyService{operationClock: clockFromOptional(clocks), enabled: enabled, webAuthn: verifier, repo: repo, sessions: sessions, userRepo: users}
 }

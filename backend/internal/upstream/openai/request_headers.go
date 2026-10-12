@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ResponsesRequestOptions 配置 Responses 请求的地址和回调，身份信息在构造请求时读取。
+// ResponsesRequestOptions supplies the URL and callbacks; identity is resolved during request construction.
 type ResponsesRequestOptions struct {
 	URL                                                                                     string
 	ForwardHeaders                                                                          func() http.Header
@@ -28,7 +28,7 @@ type ResponsesRequestOptions struct {
 	RoutingHint, Diagnostics                                                                func(http.Header, []byte)
 }
 
-// BuildResponsesRequest 根据请求选项构造 Responses HTTP 请求。
+// BuildResponsesRequest builds a Responses HTTP request from the supplied options.
 func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey string, options ResponsesRequestOptions) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
@@ -36,7 +36,7 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 	}
 	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
 
-	// Agent Identity 为当前请求生成 assertion，其它认证模式使用 Bearer token。
+	// Authenticate resolves a request-specific Agent assertion or bearer credentials.
 	authHeaders, err := options.Authenticate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("build openai authentication headers: %w", err)
@@ -65,11 +65,11 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 			}
 		}
 	}
-	// 故障转移换号后，不能把已知由旧提供商签发的回合状态继续送往新提供商。
+	// Drop turn state known to belong to a previous provider after failover.
 	options.GuardTurnState(req.Header)
 	if options.UsesCodex() {
 		compatMessagesBridge := options.MessagesBridge(body)
-		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
+		// Rebuild session headers with isolated values to prevent cross-user collisions.
 		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
 		req.Header.Del("conversation_id")
 		req.Header.Del("session_id")
@@ -99,29 +99,27 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 			}
 		}
 	} else if options.IsCompact() {
-		// compact 上游是 unary JSON 协议：API-key 提供商也显式声明 Accept，
-		// 避免 OpenAI 兼容网关按 SSE 返回（#3777 期望行为 4）。
+		// Compact returns unary JSON. Set Accept for API-key providers too, so compatible gateways avoid SSE (issue #3777).
 		req.Header.Set("accept", "application/json")
 	}
 
-	// 根据 TLS 路由规则、提供商配置与全局兜底决定最终上游 User-Agent。
+	// Resolve the UA from TLS routing, provider settings and global defaults.
 	options.ApplyUserAgent(req)
 
-	// 若开启 ForceCodexCLI，则强制将上游 User-Agent 伪装为规范 Codex 身份。
-	// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
+	// ForceCodexCLI supplies the canonical identity when forwarding or overrides would omit it.
 	if options.ForceCodexCLI() {
 		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 	}
 
-	// 提供商 namespace 不改变客户端身份基数，但确保 scheduler failover 后不会把
-	// 同一组 Codex IDs 发送给另一份 OAuth 凭据。可选指纹收敛随后仍可覆盖这些值。
+	// Scope IDs to the OAuth credential so failover changes their namespace.
+	// The optional fingerprint policy can override them afterward.
 	options.ApplyProviderIdentity(req.Header)
 
-	// 指纹收敛：使用 Forward() 中预计算的收敛 ID 改写出站头，与请求体使用同一份 IDs。
+	// Apply the precomputed IDs shared with the request body.
 	options.ApplyFingerprint(req.Header)
 
-	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。
-	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
+	// Pair official OAuth UA and originator values and correct old version headers.
+	// Unrecognized UAs, including browsers, use the canonical identity.
 	if options.UsesCodex() {
 		EnforceCodexIdentityHeadersWithUA(req.Header, "")
 	}
@@ -131,13 +129,11 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 		req.Header.Set("content-type", "application/json")
 	}
 
-	// 提供商级请求头覆写（仅 openai api_key 提供商启用时生效；OAuth 路径 no-op）
+	// The callback applies enabled API-key provider overrides; OAuth supplies a no-op.
 	options.OverrideHeaders(req.Header)
-	// 原生 V2 必须携带协商能力；OAuth 的普通 Responses 请求也对齐 Codex 的
-	// 会话级 beta 头行为。
+	// Apply caller-supplied OpenCode session handling after provider overrides.
 	options.OpenCodeSession(req.Header)
-	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在提供商级覆写之后，
-	// 保证不被覆盖丢失）。
+	// Apply session beta features after overrides so required capabilities survive.
 	options.BetaFeatures(req.Header)
 	options.RoutingHint(req.Header, body)
 	options.Diagnostics(req.Header, body)
@@ -145,12 +141,12 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 	return req, nil
 }
 
-// String 避免调试输出展开客户端透传 Header。
+// String returns a label that omits forwarded client headers.
 func (ResponsesRequestOptions) String() string { return "openai responses request options" }
 
 func (o ResponsesRequestOptions) GoString() string { return o.String() }
 
-// EnsureRemoteCompactionV2Header 向协商头补充 V2 能力，并合并客户端声明的其他能力。
+// EnsureRemoteCompactionV2Header adds remote_compaction_v2 while retaining other declared capabilities.
 func EnsureRemoteCompactionV2Header(h http.Header) {
 	if h == nil {
 		return
@@ -172,10 +168,10 @@ func EnsureRemoteCompactionV2Header(h http.Header) {
 	h.Set("x-codex-beta-features", strings.Join(tokens, ","))
 }
 
-// AppendResponsesPathSuffix 校验路径后缀并追加到 Responses 地址。
+// AppendResponsesPathSuffix appends a validated suffix, returning the trimmed base for invalid input.
 func AppendResponsesPathSuffix(baseURL, suffix string) string {
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	// 路径后缀通过校验后才能拼入上游 URL。
+	// Validate before concatenating any suffix into the upstream URL.
 	trimmedSuffix, ok := upstream.SanitizedUpstreamPathSuffix(suffix)
 	if !ok || trimmedBase == "" || trimmedSuffix == "" {
 		return trimmedBase

@@ -10,16 +10,16 @@ import (
 )
 
 var (
-	// manifestJSON 是前后端共用的语言目录。
+	// manifestJSON is the language catalog shared with the frontend.
 	//
 	//go:embed manifest.json
 	manifestJSON []byte
 
-	// catalog 是解析后的语言目录。
+	// catalog is the parsed language catalog.
 	catalog = loadCatalog()
 )
 
-// Definition 包含界面名称、文字方向和兼容语言代码。
+// Definition describes a language, its aliases, text direction, and fallback languages.
 type Definition struct {
 	Code      string   `json:"code"`
 	Name      string   `json:"name"`
@@ -29,7 +29,7 @@ type Definition struct {
 	Catalog   string   `json:"catalog"`
 }
 
-// Catalog 是随产品发布的语言目录。
+// Catalog is the language catalog shipped with the application.
 type Catalog struct {
 	Default string       `json:"default"`
 	Locales []Definition `json:"locales"`
@@ -39,7 +39,7 @@ type contextKey struct{}
 
 type presentationKey struct{}
 
-// loadCatalog 解析内嵌的语言目录，文件格式错误时 panic。
+// loadCatalog parses the embedded catalog and panics on invalid JSON.
 func loadCatalog() Catalog {
 	var result Catalog
 	if err := json.Unmarshal(manifestJSON, &result); err != nil {
@@ -48,17 +48,17 @@ func loadCatalog() Catalog {
 	return result
 }
 
-// Default 返回站点未配置语言时使用的语言。
+// Default returns the catalog's default language.
 func Default() string { return catalog.Default }
 
-// Definitions 返回目录副本，调用方修改切片不会影响后续请求。
+// Definitions returns a fresh copy of the embedded locale definitions, including nested slices.
 func Definitions() []Definition {
 	var result Catalog
 	_ = json.Unmarshal(manifestJSON, &result)
 	return result.Locales
 }
 
-// Normalize 将已支持的别名转换为规范代码，未知语言返回空字符串。
+// Normalize maps supported language aliases to canonical codes, returning empty for unknown input.
 func Normalize(raw string) string {
 	raw = strings.ReplaceAll(strings.TrimSpace(raw), "_", "-")
 	if len(raw) > 35 || strings.ContainsAny(raw, ",; \t\r\n") {
@@ -88,7 +88,7 @@ func Normalize(raw string) string {
 	return ""
 }
 
-// Negotiate 按请求权重选择支持的语言；不支持的语言使用站点默认值。
+// Negotiate selects a supported language by request weight, then fallback, then the catalog default.
 func Negotiate(header, fallback string) string {
 	if direct := Normalize(header); direct != "" {
 		return direct
@@ -107,7 +107,7 @@ func Negotiate(header, fallback string) string {
 	return Default()
 }
 
-// Candidates 返回内容匹配顺序，原文由内容解析器最后选择。
+// Candidates returns the requested locale followed by its configured fallback languages.
 func Candidates(code string) []string {
 	code = Normalize(code)
 	for _, item := range catalog.Locales {
@@ -118,12 +118,12 @@ func Candidates(code string) []string {
 	return nil
 }
 
-// WithLanguage 将已解析的语言附在请求上下文中。
+// WithLanguage attaches a negotiated language to context.
 func WithLanguage(ctx context.Context, code string) context.Context {
 	return context.WithValue(ctx, contextKey{}, Negotiate(code, Default()))
 }
 
-// FromContext 返回请求语言，后台任务未指定时使用默认值。
+// FromContext returns the stored language, or the catalog default when the key is absent.
 func FromContext(ctx context.Context) string {
 	if ctx == nil {
 		return Default()
@@ -134,7 +134,7 @@ func FromContext(ctx context.Context) string {
 	return Default()
 }
 
-// Direction 返回语言的文字方向。
+// Direction returns the catalog's text direction, defaulting to ltr for unknown languages.
 func Direction(code string) string {
 	for _, item := range catalog.Locales {
 		if item.Code == Normalize(code) {
@@ -144,23 +144,23 @@ func Direction(code string) string {
 	return "ltr"
 }
 
-// Explicit 返回调用方是否已指定语言，供正文引用的图片选择使用。
+// Explicit returns the stored language and whether it is nonempty, for localized image selection.
 func Explicit(ctx context.Context) (string, bool) {
 	value, ok := ctx.Value(contextKey{}).(string)
 	return value, ok && value != ""
 }
 
-// WithoutLanguage 让原文的图片使用公共目录。
+// WithoutLanguage stores an empty language so source-content images use the shared directory.
 func WithoutLanguage(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contextKey{}, "")
 }
 
-// WithUserPresentation 标记普通用户展示查询，内部管理查询继续读取业务名称。
+// WithUserPresentation marks queries that should resolve user-facing localized names.
 func WithUserPresentation(ctx context.Context, enabled bool) context.Context {
 	return context.WithValue(ctx, presentationKey{}, enabled)
 }
 
-// UserPresentation 返回当前查询是否面向普通用户。
+// UserPresentation reports whether the query is for user-facing presentation.
 func UserPresentation(ctx context.Context) bool {
 	if ctx == nil {
 		return false

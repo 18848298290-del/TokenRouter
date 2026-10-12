@@ -1,9 +1,9 @@
 package requeststate
 
-// benchmarkIntSink 保存请求解析和字段视图基准的计数结果。
+// benchmarkIntSink retains counts from parsing and field-view benchmarks.
 var benchmarkIntSink int
 
-// benchmarkBodySizes 指定请求解析和字段读取基准的目标输入大小。
+// benchmarkBodySizes defines target input sizes for parsing and field-reading benchmarks.
 func benchmarkBodySizes() []struct {
 	name  string
 	bytes int

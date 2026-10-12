@@ -34,7 +34,7 @@ const testCreativeWorkspaceID = "11111111-1111-4111-8111-111111111111"
 
 type creativeManagedKeys struct{ source creativeFixtureKeys }
 
-// creativeFixtureUsers 提供测试用户读取接口。
+// creativeFixtureUsers supplies test user records.
 type creativeFixtureUsers interface {
 	GetByID(context.Context, int64) (*identity.User, error)
 }
@@ -59,7 +59,7 @@ type creativeGroupReader struct{ source creativeFixtureGroups }
 
 type creativeProviderReader struct{ source creativeFixtureProviders }
 
-// creativeMediaCatalog 为目录和任务测试登记完整型号的按张报价，未知型号保持缺价。
+// creativeMediaCatalog registers per-image prices for exact models; unknown models remain unpriced.
 type creativeMediaCatalog struct{}
 
 type creativeModerationFixture struct {
@@ -120,7 +120,7 @@ type creativeFakeQueue struct {
 	lastLock     *creativeFakeJobLock
 }
 
-// creativeFakeJobLock 记录锁的释放。
+// creativeFakeJobLock records lock release.
 type creativeFakeJobLock struct {
 	released bool
 }
@@ -133,26 +133,26 @@ type creativeFakeTransient struct {
 	saveOutputErr error
 }
 
-// creativeFakeSettingReader 是 CreativeSettingReader 的测试替身。
+// creativeFakeSettingReader is a CreativeSettingReader test double.
 type creativeFakeSettingReader struct {
 	enabled bool
 	models  []creative.CreativeModelSetting
 }
 
-// creativeFixtureTarget 将函数适配为执行目标。
+// creativeFixtureTarget adapts a function to an execution target.
 type creativeFixtureTarget func(context.Context, creative.CreativeRun, creative.CreativeRunPayload) (*creative.CreativeExecuteResult, error)
 
-// creativeFakeExecutor 是 CreativeRunExecutor 的测试替身。
+// creativeFakeExecutor is a CreativeRunExecutor test double.
 type creativeFakeExecutor struct {
 	result         *creative.CreativeExecuteResult
 	err            error
 	execPrepareErr error
-	// onExecute 可在执行期间修改仓储状态（模拟状态竞争）。
+	// onExecute can change repository state during execution to simulate a race.
 	onExecute func(runID string)
 	calls     int
 }
 
-// creativeWorkerFixture 组装 worker 测试夹具。
+// creativeWorkerFixture holds worker test dependencies.
 type creativeWorkerFixture struct {
 	worker  *creative.CreativeRunWorker
 	service *creative.Public
@@ -163,7 +163,7 @@ type creativeWorkerFixture struct {
 	exec    *creativeFakeExecutor
 }
 
-// creativeUserCacheFixture 提供 worker 的用户并发槽位替身。
+// creativeUserCacheFixture supplies a test user concurrency-slot allocator.
 type creativeUserCacheFixture struct {
 	scheduler.ConcurrencyCache
 	acquireResult bool
@@ -178,7 +178,7 @@ func creativeLegacyObserve(event string, values ...any) {
 	logging.L().Warn(event, fields...)
 }
 
-// creativeFundingProjection 为创作台资金操作绑定测试存储和日志函数。
+// creativeFundingProjection binds funding operations to the test store and observer.
 func creativeFundingProjection(store creative.FundingStore) creative.Funding {
 	return creative.Funding{Store: store, Observe: creativeLegacyObserve}
 }
@@ -266,12 +266,12 @@ func (creativeMediaCatalog) GetStatus() map[string]any { return nil }
 
 func (creativeMediaCatalog) ForceUpdate() error { return errors.New("测试目录不支持更新") }
 
-// newCreativeMediaCalculator 使用目录中登记的图片报价。
+// newCreativeMediaCalculator uses registered catalogue image prices.
 func newCreativeMediaCalculator() *billing.Calculator {
 	return billing.NewCalculator(creativeMediaCatalog{}, billing.CalculatorOptions{})
 }
 
-// creativePriceFixture 将目录和解析器接入测试，使用 billing 计算价格并处理缺价回退。
+// creativePriceFixture connects the test catalogue and resolver to billing price calculation.
 func creativePriceFixture(calculator *billing.Calculator, resolver *billing.PriceResolver) func(context.Context, *creative.GroupView, string, string) (float64, bool) {
 	return func(ctx context.Context, group *creative.GroupView, model, size string) (float64, bool) {
 		if group == nil {
@@ -310,7 +310,7 @@ func (m creativeModerationFixture) Check(ctx context.Context, v creative.Moderat
 	return &creative.ModerationDecision{Allowed: result.Allowed}, err
 }
 
-// newCreativePublicFixture 组装共享仓储和资金存储的 Public 与 Results。
+// newCreativePublicFixture constructs Public and Results with shared repositories and funding.
 func newCreativePublicFixture(repo creative.CreativeRunRepository, keys creativeFixtureKeys, users creativeFixtureUsers, providers creativeFixtureProviders, groups creativeFixtureGroups, rates creative.UserRateReader, queue creative.CreativeRunQueue, outbox creative.CreativeRunOutboxRepository, transient creative.CreativeTransientStore, funds creative.FundingStore, logs usage.UsageLogRepository, calculator *billing.Calculator, resolver *billing.PriceResolver, pricingConfigs *routing.PricingConfigService, moderator *moderation.ContentModerationService, auth apikey.APIKeyAuthCacheInvalidator, settings creative.SettingReader, cfg *config.Config) *creative.Public {
 	ttl := 30 * time.Minute
 	prefix := ""
@@ -367,7 +367,7 @@ func newCreativePublicFixture(repo creative.CreativeRunRepository, keys creative
 	return core
 }
 
-// setCreativeConfigPricing 为指定分组装配共享价表，保留其它分组的报价来源。
+// setCreativeConfigPricing configures a group price table while retaining pricing sources for other groups.
 func setCreativeConfigPricing(svc *creative.Public, groupID int64, cards []routing.ModelPricingEntry) {
 	previous := svc.ImageUnitPrice
 	config := routing.PricingConfig{ID: groupID, Status: routing.StatusActive, GroupIDs: []int64{groupID}, ModelPricing: cards}
@@ -603,7 +603,7 @@ func (r *creativeFakeRunRepo) ListCreativeRunsDueForTransientCleanup(ctx context
 	return nil, nil
 }
 
-// IncrementCreativeRunAttempt 模拟原子递增并返回最新值。
+// IncrementCreativeRunAttempt simulates atomic increment and returns the updated count.
 func (r *creativeFakeRunRepo) IncrementCreativeRunAttempt(ctx context.Context, runID string) (int, error) {
 	run, ok := r.runs[runID]
 	if !ok {
@@ -953,7 +953,7 @@ func (f *creativeFakeSettingReader) GetCreativeModelSettings(ctx context.Context
 	return append([]creative.CreativeModelSetting(nil), f.models...)
 }
 
-// RecordProviderOutcome 在测试存储中记录提供商输出元数据。
+// RecordProviderOutcome records provider output metadata in the test store.
 func (r *creativeFakeRunRepo) RecordProviderOutcome(ctx context.Context, id string, providerID int64, outputs []creative.CreativeRunOutput, now time.Time) error {
 	run, err := r.GetCreativeRunByRunID(ctx, id)
 	if err != nil {
@@ -981,7 +981,7 @@ func (r *creativeFakeRunRepo) CompleteProviderOutcome(ctx context.Context, id st
 	return nil
 }
 
-// newCreativeWorkerFixtureForSources 使用传入的队列、执行器和用户并发限制组装 worker。
+// newCreativeWorkerFixtureForSources wires the supplied queue, executor, and user concurrency limit.
 func newCreativeWorkerFixtureForSources(queue creative.CreativeRunQueue, repo creative.CreativeRunRepository, store creative.CreativeTransientStore, executor creative.CreativeRunExecutor, public *creative.Public, options creative.CreativeWorkerOptions, limits ...*scheduler.ConcurrencyService) *creative.CreativeRunWorker {
 	ports := creative.WorkerPorts{Observe: creativeLegacyObserve}
 	var results *creative.Results
@@ -1080,7 +1080,7 @@ func newCreativeWorkerFixture() *creativeWorkerFixture {
 	}
 }
 
-// seedCreativeRun 种入一个 queued 任务及其暂存载荷。
+// seedCreativeRun creates a queued run and its transient payload.
 func seedCreativeRun(f *creativeWorkerFixture, runID string, withPayload bool) {
 	hold := 0.02
 	f.repo.runs[runID] = &creative.CreativeRun{

@@ -35,7 +35,7 @@ type ClaudeExchangeCodeRequest struct {
 
 // ClaudeCookieAuthRequest represents the request for cookie-based authentication.
 type ClaudeCookieAuthRequest struct {
-	SessionKey string `json:"code" binding:"required"` // Using 'code' field as sessionKey (frontend sends it this way)
+	SessionKey string `json:"code" binding:"required"` // The frontend sends the session key in the "code" field.
 	ProxyID    *int64 `json:"proxy_id"`
 }
 
@@ -51,7 +51,7 @@ func NewClaudeOAuthHandler(oauthService ClaudeAuthorizationUseCase) *ClaudeOAuth
 func (h *ClaudeOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req ClaudeGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// Allow empty body
+		// Binding failures use the default request, including an empty body.
 		req = ClaudeGenerateAuthURLRequest{}
 	}
 
@@ -69,7 +69,7 @@ func (h *ClaudeOAuthHandler) GenerateAuthURL(c *gin.Context) {
 func (h *ClaudeOAuthHandler) GenerateSetupTokenURL(c *gin.Context) {
 	var req ClaudeGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// Allow empty body
+		// Binding failures use the default request, including an empty body.
 		req = ClaudeGenerateAuthURLRequest{}
 	}
 

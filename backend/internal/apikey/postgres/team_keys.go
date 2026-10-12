@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// TeamKeys 拥有团队 Key 的 SQL 操作；成员事务必须显式传入同一连接。
+// TeamKeys performs team-key SQL operations. Member mutations use the caller's transaction.
 type TeamKeys struct{ db *sql.DB }
 
 func NewTeamKeys(db *sql.DB) *TeamKeys { return &TeamKeys{db: db} }
@@ -22,7 +22,7 @@ func (r *TeamKeys) ListTeamKeyStrings(ctx context.Context, teamID int64) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Close the result set after scanning; rows.Err reports iteration failures.
 	defer func() { _ = rows.Close() }()
 	keys := make([]string, 0)
 	for rows.Next() {
@@ -49,7 +49,7 @@ func (r *TeamKeys) ListTeamKeys(ctx context.Context, teamID int64, actorUserID *
 	if err != nil {
 		return nil, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Close the result set after scanning; rows.Err reports iteration failures.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamAPIKeyItem, 0)
 	for rows.Next() {
@@ -142,13 +142,13 @@ func batchImageNullTimePtr(v sql.NullTime) *time.Time {
 	return &v.Time
 }
 
-// DisableMemberInTx 参与成员移除，不取得或结束事务。
+// DisableMemberInTx disables keys during member removal; the caller owns the transaction.
 func (r *TeamKeys) DisableMemberInTx(ctx context.Context, tx *sql.Tx, teamID, userID int64, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `UPDATE api_keys SET status = 'disabled', updated_at = $3 WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL`, teamID, userID, now)
 	return err
 }
 
-// DisableHistoricalMemberInTx 禁用成员重新加入前创建的团队 Key。
+// DisableHistoricalMemberInTx disables team keys created before the member rejoined at now.
 func (r *TeamKeys) DisableHistoricalMemberInTx(ctx context.Context, tx *sql.Tx, teamID, userID int64, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `UPDATE api_keys SET status = 'disabled', updated_at = $3 WHERE team_id = $1 AND user_id = $2 AND created_at < $3 AND deleted_at IS NULL`, teamID, userID, now)
 	return err

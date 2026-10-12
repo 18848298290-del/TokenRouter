@@ -63,14 +63,14 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, true, credentialsStatus["has_access_token"])
 
-	// ETag 必须代表同一份压缩响应，刷新请求应返回 304。
+	// A matching ETag for the lite response yields 304 on a repeated request.
 	rec304 := httptest.NewRecorder()
 	req304 := httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers?page=1&page_size=20&lite=1", nil)
 	req304.Header.Set("If-None-Match", rec.Header().Get("ETag"))
 	router.ServeHTTP(rec304, req304)
 	require.Equal(t, http.StatusNotModified, rec304.Code)
 
-	// 省略 lite 时仍保留完整响应结构。
+	// Omitting lite returns the full response structure.
 	recFull := httptest.NewRecorder()
 	reqFull := httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers?page=1&page_size=20", nil)
 	router.ServeHTTP(recFull, reqFull)
@@ -517,7 +517,7 @@ func setupProviderListRouter() (*gin.Engine, *managementListFixture) {
 	return router, adminSvc
 }
 
-// newManagementListFixtureHandler 组合列表、评分和展示组件，并分别配置静态缺省值。
+// newManagementListFixtureHandler connects listing, scoring, and presentation with test defaults.
 func newManagementListFixtureHandler(source *managementListFixture) *ManagementHandler {
 	runtime := provider.NewRuntimeStatusReader(provider.RuntimeStatusOptions{})
 	scores := provider.NewSchedulerScoreView(source, provideradapter.SchedulerScoreOptions(nil, nil, func(_ context.Context, group *accessview.GroupConfig) policy.EffectiveSettings {

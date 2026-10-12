@@ -27,7 +27,7 @@ func (s *OpsService) GetTokenStats(ctx context.Context, filter *OpsTokenStatsFil
 		return nil, infraerrors.BadRequest("OPS_GROUP_ID_INVALID", "group_id must be > 0")
 	}
 
-	// top_n 与 page/page_size 互斥，每次查询使用一种截断方式。
+	// top_n and page/page_size are mutually exclusive result limits.
 	if filter.TopN > 0 && (filter.Page > 0 || filter.PageSize > 0) {
 		return nil, infraerrors.BadRequest("OPS_PAGINATION_CONFLICT", "top_n cannot be used with page/page_size")
 	}

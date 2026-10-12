@@ -15,7 +15,7 @@ type creativeFakeManagedKeyRepo struct {
 	createN int
 }
 
-// TestEnsureCreativeManagedKey 校验隐藏执行 Key 的幂等供应。
+// TestEnsureCreativeManagedKey checks idempotent provisioning of hidden execution keys.
 func TestEnsureCreativeManagedKey(t *testing.T) {
 	repo := &creativeFakeManagedKeyRepo{}
 	manager := ManagedKeys{Store: repo, Prefix: "sk-", ManagedBy: creative.CreativeManagedBy, NamePrefix: "creative-studio"}
@@ -29,7 +29,7 @@ func TestEnsureCreativeManagedKey(t *testing.T) {
 	require.Equal(t, int64(12), *key.GroupID)
 	require.Equal(t, "creative-studio:12", key.Name)
 
-	// 第二次供应直接复用已创建的 Key。
+	// A repeated provision returns the existing key.
 	reused, err := manager.Ensure(ctx, 7, 12)
 	require.NoError(t, err)
 	require.Equal(t, key.ID, reused.ID)

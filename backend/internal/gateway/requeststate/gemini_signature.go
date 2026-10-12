@@ -2,7 +2,7 @@ package requeststate
 
 import "bytes"
 
-// GeminiSignatureState 记录当前请求的签名清理状态，提供商切换或绑定未知时清理一次。
+// GeminiSignatureState requests cleanup on provider changes or once when signature ownership is unknown.
 type GeminiSignatureState struct {
 	BoundProviderID int64
 	cleanedUnknown  bool

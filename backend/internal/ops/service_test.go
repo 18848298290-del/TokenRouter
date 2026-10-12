@@ -29,7 +29,7 @@ type opsRuntimeRefreshRepo struct {
 	calls  atomic.Int64
 }
 
-// OpsRuntimeSettingsRefreshHealth 汇总测试所需的配置刷新状态。
+// OpsRuntimeSettingsRefreshHealth exposes refresh state for tests.
 type OpsRuntimeSettingsRefreshHealth struct {
 	Running      bool   `json:"running"`
 	SuccessTotal uint64 `json:"success_total"`
@@ -37,10 +37,10 @@ type OpsRuntimeSettingsRefreshHealth struct {
 }
 
 type stubOpsRepoForUserErr struct {
-	OpsRepository // 嵌入接口，未实现的方法 panic，仅覆盖 ListErrorLogs
+	OpsRepository // Unimplemented methods on the embedded nil interface panic.
 	gotFilter     *OpsErrorLogFilter
 
-	// GetErrorLogByID 控制字段
+	// Results returned by GetErrorLogByID.
 	detailToReturn    *OpsErrorLogDetail
 	detailErrToReturn error
 }
@@ -195,7 +195,7 @@ func TestOpsRuntimeSettingsBackgroundRefreshConverges(t *testing.T) {
 	})
 }
 
-// TestOpsRuntimeSettingsRefreshFailuresKeepLastKnownGoodSnapshot 检查连续刷新失败后的缓存值。
+// TestOpsRuntimeSettingsRefreshFailuresKeepLastKnownGoodSnapshot checks cached values after repeated failures.
 func TestOpsRuntimeSettingsRefreshFailuresKeepLastKnownGoodSnapshot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repo := &opsRuntimeRefreshRepo{values: map[string]string{
@@ -208,7 +208,7 @@ func TestOpsRuntimeSettingsRefreshFailuresKeepLastKnownGoodSnapshot(t *testing.T
 		svc.startRuntimeSettingsRefresh(context.Background(), 5*time.Millisecond, 0, 50*time.Millisecond)
 		defer svc.StopRuntimeSettingsRefresh()
 
-		// 虚拟时钟逐次触发刷新，Wait 等待每次刷新完成。
+		// Advance the virtual clock and wait for each refresh to finish.
 		synctest.Wait()
 		for range 3 {
 			time.Sleep(5 * time.Millisecond)
@@ -244,7 +244,7 @@ func TestOpsRuntimeSettingsRefreshStopEndsLifecycle(t *testing.T) {
 	if svc.RuntimeSettingsRefreshHealth().Running {
 		t.Fatal("refresh health still reports running after Stop")
 	}
-	// 重复停止刷新任务应当成功。
+	// Stopping an already stopped refresh loop is safe.
 	svc.StopRuntimeSettingsRefresh()
 }
 
@@ -430,7 +430,7 @@ func strPtr(v string) *string {
 	return &v
 }
 
-// RuntimeSettingsRefreshHealth 读取配置刷新任务的运行与成功失败计数。
+// RuntimeSettingsRefreshHealth reads refresh state and success/failure counters.
 func (s *OpsService) RuntimeSettingsRefreshHealth() OpsRuntimeSettingsRefreshHealth {
 	if s == nil {
 		return OpsRuntimeSettingsRefreshHealth{}
@@ -564,31 +564,31 @@ func TestListUserErrorRequests_ForcesScopeAndRedacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 强制按用户
+	// Queries are scoped to the authenticated user.
 	if stub.gotFilter.UserID == nil || *stub.gotFilter.UserID != uid {
 		t.Fatalf("UserID not forced: %+v", stub.gotFilter.UserID)
 	}
-	// 强制 View=all（含业务限流/余额）
+	// Include business-limit and balance errors.
 	if stub.gotFilter.View != "all" {
 		t.Fatalf("View not forced to all: %q", stub.gotFilter.View)
 	}
-	// 强制排除 count_tokens
+	// Exclude count_tokens probes.
 	if !stub.gotFilter.ExcludeCountTokens {
 		t.Fatal("ExcludeCountTokens not forced")
 	}
-	// 强制清空 Phase（防止 "upstream" 绕过 status>=400 子句 + 与 ErrorPhasesAny 双重约束）
+	// Clear Phase so it cannot bypass status filtering or conflict with category phases.
 	if stub.gotFilter.Phase != "" {
 		t.Fatalf("Phase not cleared: %q", stub.gotFilter.Phase)
 	}
-	// APIKeyID 透传保留（用户可按自己 key 过滤；越权由 user_id AND api_key_id 双重防护）
+	// Retain APIKeyID; the repository combines it with UserID for ownership checks.
 	if stub.gotFilter.APIKeyID == nil || *stub.gotFilter.APIKeyID != kid {
 		t.Fatalf("APIKeyID should be preserved, got %v", stub.gotFilter.APIKeyID)
 	}
-	// 调用方传入的 filter 不应被原地篡改（验证 shallow copy 隔离生效）
+	// The shallow copy must keep the caller's scalar filters unchanged.
 	if in.View != "errors" || in.UserID != nil || in.Phase != "upstream" {
 		t.Fatalf("caller filter was mutated: View=%q UserID=%v Phase=%q", in.View, in.UserID, in.Phase)
 	}
-	// 脱敏：返回条目含 message 字段
+	// Check the sanitized category and requested model.
 	if len(out.Items) != 1 || out.Items[0].Category != "rate_limit" || out.Items[0].Model != "rm" {
 		t.Fatalf("bad item: %+v", out.Items)
 	}
@@ -619,7 +619,7 @@ func TestGetUserErrorRequestDetail_OwnershipEnforced(t *testing.T) {
 	stub := &stubOpsRepoForUserErr{detailToReturn: detail}
 	svc := &OpsService{opsRepo: stub}
 
-	// 越权调用（callerUID=1,但记录属于 ownerUID=999）→ 应返回 NotFound,detail 为 nil
+	// A different user receives NotFound and no details.
 	got, err := svc.GetUserErrorRequestDetail(context.Background(), callerUID, 42)
 	if err == nil {
 		t.Fatal("expected error for unauthorized access, got nil")
@@ -627,12 +627,12 @@ func TestGetUserErrorRequestDetail_OwnershipEnforced(t *testing.T) {
 	if got != nil {
 		t.Fatalf("expected nil detail for unauthorized access, got %+v", got)
 	}
-	// 其他用户的错误记录返回 NotFound。
+	// Other users' records are reported as missing.
 	if !apperror.IsNotFound(err) {
 		t.Fatalf("expected NotFound error, got: %v", err)
 	}
 
-	// 合法调用（callerUID=999 = ownerUID）→ 应返回 non-nil detail
+	// The owner receives the request details.
 	got2, err2 := svc.GetUserErrorRequestDetail(context.Background(), ownerUID, 42)
 	if err2 != nil {
 		t.Fatalf("expected no error for legitimate access, got %v", err2)

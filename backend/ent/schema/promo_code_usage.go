@@ -14,7 +14,7 @@ import (
 
 // PromoCodeUsage holds the schema definition for the PromoCodeUsage entity.
 //
-// 优惠码使用记录：记录每个用户使用优惠码的情况。
+// Records each user's use of a promotion code.
 type PromoCodeUsage struct {
 	ent.Schema
 }
@@ -28,16 +28,16 @@ func (PromoCodeUsage) Annotations() []schema.Annotation {
 func (PromoCodeUsage) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("promo_code_id").
-			Comment("优惠码ID"),
+			Comment("Promotion code ID"),
 		field.Int64("user_id").
-			Comment("使用用户ID"),
+			Comment("User ID that used the code"),
 		field.Float("bonus_amount").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
-			Comment("实际赠送金额"),
+			Comment("Actual balance credit amount"),
 		field.Time("used_at").
 			Default(time.Now).
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
-			Comment("使用时间"),
+			Comment("Time the code was used"),
 	}
 }
 
@@ -60,7 +60,7 @@ func (PromoCodeUsage) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("promo_code_id"),
 		index.Fields("user_id"),
-		// 每个用户每个优惠码只能使用一次
+		// Each user can use a given promotion code once.
 		index.Fields("promo_code_id", "user_id").Unique(),
 	}
 }

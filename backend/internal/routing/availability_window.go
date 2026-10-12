@@ -21,7 +21,7 @@ func NormalizeMarketplaceAvailabilityWindow(windowDays int, bucketMinutes int) (
 	bucketMinutes = ClampInt(bucketMinutes, MinMarketplaceAvailabilityBucketMinutes, MaxMarketplaceAvailabilityBucketMinutes)
 
 	totalMinutes := windowDays * 24 * 60
-	// 限制公开接口返回的桶数量，避免配置过细导致模型广场响应和渲染成本失控。
+	// Cap public response size and rendering cost when the configured bucket interval is too small.
 	if bucketCount := (totalMinutes + bucketMinutes - 1) / bucketMinutes; bucketCount > MaxMarketplaceAvailabilityBuckets {
 		bucketMinutes = (totalMinutes + MaxMarketplaceAvailabilityBuckets - 1) / MaxMarketplaceAvailabilityBuckets
 	}

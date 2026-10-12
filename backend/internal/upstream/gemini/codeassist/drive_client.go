@@ -15,7 +15,7 @@ import (
 
 type DriveStorageInfo = google.DriveStorageInfo
 
-// DriveClient interface for Google Drive API operations.
+// DriveClient reads Google Drive storage quotas.
 type DriveClient interface {
 	GetStorageQuota(ctx context.Context, accessToken, proxyURL string) (*DriveStorageInfo, error)
 }
@@ -38,7 +38,6 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	// Get HTTP client with proxy support
 	client, err := httpclient.GetClient(httpclient.Options{
 		ProxyURL: proxyURL,
 		Timeout:  10 * time.Second,
@@ -58,7 +57,7 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 		}
 	}
 
-	// Retry logic with exponential backoff (+ jitter) for rate limits and transient failures
+	// Retry transient failures up to three total attempts with exponential backoff and jitter.
 	var resp *http.Response
 	maxRetries := 3
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -69,7 +68,6 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 
 		resp, err = client.Do(req)
 		if err != nil {
-			// Network error retry
 			if attempt < maxRetries-1 {
 				backoff := time.Duration(1<<uint(attempt)) * time.Second
 				jitter := time.Duration(rng.Intn(1000)) * time.Millisecond
@@ -81,12 +79,10 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 			return nil, fmt.Errorf("network error after %d attempts: %w", maxRetries, err)
 		}
 
-		// Success
 		if resp.StatusCode == http.StatusOK {
 			break
 		}
 
-		// Retry 429, 500, 502, 503 with exponential backoff + jitter
 		if (resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusInternalServerError ||
 			resp.StatusCode == http.StatusBadGateway ||
@@ -116,16 +112,15 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 			statusText = resp.Status
 		}
 		fmt.Printf("[DriveClient] Drive API error: status=%d, msg=%s\n", resp.StatusCode, statusText)
-		// 只返回通用错误
+		// Keep upstream response bodies out of returned errors.
 		return nil, fmt.Errorf("drive API error: status %d", resp.StatusCode)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
-	// Parse response
 	var result struct {
 		StorageQuota struct {
-			Limit string `json:"limit"` // Can be string or number
+			Limit string `json:"limit"` // Decimal byte count encoded as a JSON string.
 			Usage string `json:"usage"`
 		} `json:"storageQuota"`
 	}
@@ -134,7 +129,7 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Parse limit and usage (handle both string and number formats)
+	// Missing or invalid decimal counts remain zero.
 	var limit, usage int64
 	if result.StorageQuota.Limit != "" {
 		if val, err := strconv.ParseInt(result.StorageQuota.Limit, 10, 64); err == nil {

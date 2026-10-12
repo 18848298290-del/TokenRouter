@@ -7,9 +7,9 @@ import (
 )
 
 // AnthropicToResponses converts an Anthropic Messages request directly into
-// a Responses API request. This preserves fields that would be lost in a
-// Chat Completions intermediary round-trip (e.g. thinking, cache_control,
-// structured system prompts).
+// a Responses API request, mapping system content, tool calls, and signed
+// thinking blocks to Responses input items.
+// Unsupported content blocks are omitted.
 func AnthropicToResponses(req *AnthropicRequest, options RequestOptions) (*ResponsesRequest, error) {
 	input, err := convertAnthropicToResponsesInput(req.System, req.Messages)
 	if err != nil {
@@ -27,7 +27,7 @@ func AnthropicToResponses(req *AnthropicRequest, options RequestOptions) (*Respo
 		Stream:  req.Stream,
 		Include: []string{"reasoning.encrypted_content"},
 	}
-	// Claude Fast 转为 OpenAI 请求级 Priority；系统策略会在上游发送前最终裁决。
+	// Map Claude Fast to request-level priority; system policy makes the final outbound choice.
 	if strings.EqualFold(strings.TrimSpace(req.Speed), "fast") {
 		out.ServiceTier = "priority"
 	}
@@ -54,8 +54,8 @@ func AnthropicToResponses(req *AnthropicRequest, options RequestOptions) (*Respo
 		out.Tools = convertAnthropicToolsToResponses(req.Tools)
 	}
 
-	// 推理等级使用 output_config.effort。
-	// 默认值跟随 Codex CLI / airgate 的 Anthropic bridge 形态：未设置时使用 medium。
+	// Read reasoning effort from output_config.effort.
+	// Use medium when the client leaves it unset.
 	effort := "medium"
 	if req.OutputConfig != nil && req.OutputConfig.Effort != "" {
 		effort = req.OutputConfig.Effort
@@ -146,9 +146,9 @@ func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMe
 	return out, nil
 }
 
-// parseAnthropicSystemContentParts handles the Anthropic system field which can
-// be a plain string or an array of text blocks. Claude Code may include an
-// x-anthropic-billing-header block; airgate drops it before sending to Codex.
+// parseAnthropicSystemContentParts accepts a string or an array of text blocks.
+// It omits empty text and Claude Code billing-header blocks before forwarding
+// the remaining system content to Codex.
 func parseAnthropicSystemContentParts(raw json.RawMessage) ([]ResponsesContentPart, error) {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
@@ -254,11 +254,11 @@ func anthropicUserToResponses(raw json.RawMessage) ([]ResponsesInputItem, error)
 	return out, nil
 }
 
-// anthropicAssistantToResponses 处理 Anthropic 助手消息。
-// 文本内容转换为带 output_text 分段的助手消息，tool_use 块转换为 function_call 项。
-// 带签名的 thinking 块转换为 reasoning 项（encrypted_content），使 Grok/Codex
-// 多轮提示缓存可以复用之前的推理前缀；无签名的 thinking 仍会被忽略，因为它不能
-// 作为纯文本输入发送。
+// anthropicAssistantToResponses converts assistant text to output_text parts
+// and tool_use blocks to function_call items. Signed thinking becomes reasoning
+// with encrypted_content so subsequent turns can replay the reasoning prefix.
+// Unsigned thinking and GPT/Codex signatures beginning with gAAAA are omitted.
+// Thinking text is not emitted as ordinary input text.
 func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, error) {
 	// Try plain string.
 	var s string
@@ -278,15 +278,15 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 
 	var items []ResponsesInputItem
 
-	// 保持轮次顺序：推理、助手文本、工具调用。xAI/Codex 的多轮缓存和工具续接要求
-	// 推理位于其后生成的助手消息之前。
+	// Emit reasoning before assistant text and tool calls so xAI/Codex can replay
+	// the reasoning prefix during cached multi-turn tool continuations.
 	for _, b := range blocks {
 		if b.Type != "thinking" {
 			continue
 		}
 		sig := strings.TrimSpace(b.Signature)
-		// 只回放提供方生成的密文。跳过 GPT/Codex 风格的 gAAAA 密文和空占位符，
-		// 因为 xAI 解密外部签名时会返回 400。
+		// Skip empty placeholders and GPT/Codex gAAAA ciphertext;
+		// xAI rejects foreign encrypted signatures with a decryption error.
 		if sig == "" || strings.HasPrefix(sig, "gAAAA") {
 			continue
 		}
@@ -338,7 +338,7 @@ func toResponsesCallID(id string) string {
 // fromResponsesCallID reverses old prefixed IDs while preserving current IDs.
 func fromResponsesCallID(id string) string {
 	if after, ok := strings.CutPrefix(id, "fc_"); ok {
-		// Only strip if the remainder doesn't look like it was already "fc_" prefixed.
+		// Strip the legacy wrapper only for recognized toolu_ or call_ IDs.
 		// E.g. "fc_toolu_xxx" → "toolu_xxx", "fc_call_xxx" → "call_xxx"
 		if strings.HasPrefix(after, "toolu_") || strings.HasPrefix(after, "call_") {
 			return after
@@ -378,7 +378,7 @@ func convertToolResultOutput(b AnthropicContentBlock) (string, []ResponsesConten
 		return s, nil
 	}
 
-	// 内容块数组可包含文本和图片。
+	// Content arrays can contain both text and images.
 	var inner []AnthropicContentBlock
 	if err := json.Unmarshal(b.Content, &inner); err != nil {
 		return "(empty)", nil
@@ -491,7 +491,7 @@ func normalizeToolParameters(schema json.RawMessage) json.RawMessage {
 	return out
 }
 
-// isUltraReasoningEffort 识别 Codex 客户端专用的 Ultra 模式。
+// isUltraReasoningEffort reports whether effort names the Codex Ultra mode.
 func isUltraReasoningEffort(effort string) bool {
 	return strings.EqualFold(strings.TrimSpace(effort), "ultra")
 }

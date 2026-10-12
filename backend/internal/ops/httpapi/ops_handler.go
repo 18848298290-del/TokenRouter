@@ -77,13 +77,13 @@ func parseOpsViewParam(c *gin.Context) string {
 	}
 }
 
-// applyOpsErrorSortParams 将 sort_by 和 sort_order 查询参数写入过滤器。
-// 列白名单与排序方向归一化由仓储层负责，未知值按用量列表语义回退为 created_at DESC。
+// applyOpsErrorSortParams copies sort_by and sort_order into the filter.
+// The repository validates columns and direction, defaulting unknown values to created_at DESC.
 func applyOpsErrorSortParams(c *gin.Context, filter *ops.OpsErrorLogFilter) {
 	filter.SetSort(c.Query("sort_by"), c.Query("sort_order"))
 }
 
-// GetErrorLogs 查询运维错误日志。
+// GetErrorLogs queries operational error logs.
 // GET /api/v1/admin/ops/errors
 func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -122,15 +122,15 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
-	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
-	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
+	// Admin model filters use exact matching with ModelFuzzy left false.
+	// The repository compares against COALESCE(requested_model, model).
 	filter.Model = strings.TrimSpace(c.Query("model"))
 
-	// 默认筛选客户端可见状态码大于等于 400 的请求，phase=upstream 另按普通条件过滤。
-	// 查看已恢复的上游错误需要开启 IncludeRecoveredUpstream。
+	// By default, select client-visible statuses >=400; upstream-phase queries use their own filters.
+	// IncludeRecoveredUpstream includes recovered upstream failures.
 
-	// 分类(用户侧粗分类码)→ phase/type ANY 条件,与用户端 /usage/errors 同一映射;
-	// 未知分类返回空切片 = 不过滤。与 phase 参数可同时设置(AND 语义)。
+	// Categories use the same phase/type alternatives as /usage/errors.
+	// Unknown categories add no constraint; category and phase filters combine with AND.
 	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
 		phases, types := ops.CategoryToFilter(cat)
 		filter.ErrorPhasesAny = phases
@@ -250,15 +250,15 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
-	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
-	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
+	// Admin model filters use exact matching with ModelFuzzy left false.
+	// The repository compares against COALESCE(requested_model, model).
 	filter.Model = strings.TrimSpace(c.Query("model"))
 
-	// 默认筛选客户端可见状态码大于等于 400 的请求，phase=upstream 另按普通条件过滤。
-	// 查看已恢复的上游错误需要开启 IncludeRecoveredUpstream。
+	// By default, select client-visible statuses >=400; upstream-phase queries use their own filters.
+	// IncludeRecoveredUpstream includes recovered upstream failures.
 
-	// 分类(用户侧粗分类码)→ phase/type ANY 条件,与用户端 /usage/errors 同一映射;
-	// 未知分类返回空切片 = 不过滤。与 phase 参数可同时设置(AND 语义)。
+	// Categories use the same phase/type alternatives as /usage/errors.
+	// Unknown categories add no constraint; category and phase filters combine with AND.
 	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
 		phases, types := ops.CategoryToFilter(cat)
 		filter.ErrorPhasesAny = phases
@@ -389,7 +389,7 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 	}
 	filter.View = "all"
 	filter.ErrorPhasesAny = []string{"upstream", "provider_auth"}
-	// 提供方健康列表同时包含已恢复的推理错误和凭据错误记录。
+	// Provider health includes recovered inference failures and credential errors.
 	filter.IncludeRecoveredUpstream = true
 	filter.Owner = "provider"
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
@@ -474,7 +474,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 
 	filter.View = parseOpsViewParam(c)
 	filter.ErrorPhasesAny = []string{"upstream", "provider_auth"}
-	// 提供方健康列表同时包含已恢复的推理错误和凭据错误记录。
+	// Provider health includes recovered inference failures and credential errors.
 	filter.IncludeRecoveredUpstream = true
 	filter.Owner = "provider"
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
@@ -647,7 +647,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 
 	out, err := h.opsService.ListRequestDetails(c.Request.Context(), filter)
 	if err != nil {
-		// Invalid sort/kind/platform etc should be a bad request; keep it simple.
+		// Invalid sort, kind, or platform filters are client errors.
 		if strings.Contains(strings.ToLower(err.Error()), "invalid") {
 			response.BadRequest(c, err.Error())
 			return
@@ -738,7 +738,7 @@ func parseOpsTimeRange(c *gin.Context, defaultRange string) (time.Time, time.Tim
 		return start, end, nil
 	}
 
-	// 按 ID 查询时，省略时间参数表示查询当前仍保留的全部明细。
+	// An ID query with no time parameters searches all retained details.
 	if strings.TrimSpace(c.Query("request_id")) != "" && c.Query("time_range") == "" {
 		return time.Unix(0, 0).UTC(), time.Now().UTC(), nil
 	}

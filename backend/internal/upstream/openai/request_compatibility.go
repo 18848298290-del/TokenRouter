@@ -13,9 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// SanitizeOpenAICrossModeFailoverReasoning 从 canonical 请求体派生跨模式重试请求，
-// 完整删除带 provider 私有 encrypted_content 的 reasoning 项及其关联的 id/summary。
-// 使用 UseNumber 保留请求中大整数的精确 JSON 表示，且不会修改传入的字节切片。
+// SanitizeOpenAICrossModeFailoverReasoning derives a retry body by removing whole encrypted reasoning items.
+// UseNumber retains large JSON integers, and the input bytes are unchanged.
 func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, changed bool, err error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -38,8 +37,8 @@ func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, ch
 	return out, true, nil
 }
 
-// DropOpenAIEncryptedReasoningInputItems 删除带 encrypted_content 的 reasoning 项，
-// 并返回请求体是否发生变化。没有加密字段的普通 reasoning 必须原样保留。
+// DropOpenAIEncryptedReasoningInputItems removes reasoning items carrying encrypted_content
+// and reports whether the request changed. Unencrypted reasoning is retained.
 func DropOpenAIEncryptedReasoningInputItems(reqBody map[string]any) bool {
 	if len(reqBody) == 0 {
 		return false
@@ -170,7 +169,7 @@ func NormalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite boo
 	return normalized, true, nil
 }
 
-// OpenAIRequestBodyHasTools 同时识别顶层 tools 和 input[].additional_tools。
+// OpenAIRequestBodyHasTools recognizes top-level tools and input additional_tools declarations.
 func OpenAIRequestBodyHasTools(body []byte) bool {
 	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
 		return true
@@ -186,12 +185,10 @@ func OpenAIRequestBodyHasTools(body []byte) bool {
 	return false
 }
 
-// NormalizeOpenAIResponsesReasoningContentReplay 在历史记录发送到真实 OpenAI Responses
-// 端点前移除不可移植的 reasoning.content 数组。兼容供应商可能返回可见推理块，
-// 而 OpenAI 在回放该项时只接受空数组。
-//
-// 保留 reasoning 项及其可移植字段（summary、encrypted_content、id 和不透明扩展字段）。
-// 调用方仅对 OpenAI 目标启用此归一化，兼容供应商仍可消费自身的 content。
+// NormalizeOpenAIResponsesReasoningContentReplay removes nonempty reasoning.content arrays
+// before replay to OpenAI, which rejects visible reasoning returned by compatible providers.
+// Other fields, including summary, encrypted_content and id, are retained. Enable this
+// for OpenAI targets; compatible providers may accept their own content arrays.
 func NormalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
@@ -415,9 +412,9 @@ func NormalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error)
 	return normalized, true, nil
 }
 
-// NormalizeOpenAIPassthroughOAuthBody 将透传 OAuth 请求体收敛为旧链路关键行为：
-// 1) 删除 ChatGPT internal API 不支持的顶层 Responses 参数
-// 2) store=false 3) 非 compact 保持 stream=true；compact 强制 stream=false。
+// NormalizeOpenAIPassthroughOAuthBody normalizes compatibility fields, reasoning and schemas
+// and removes unsupported parameters. Compact omits store and stream; ordinary
+// Responses requests force store=false and stream=true.
 func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -452,7 +449,7 @@ func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
-	// ChatGPT internal API 要求 input 必须是条目数组。
+	// ChatGPT requires input to be an item array.
 	if inputResult := gjson.GetBytes(normalized, "input"); inputResult.Exists() {
 		switch {
 		case inputResult.Type == gjson.String:
@@ -538,7 +535,7 @@ func DetectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 	return ""
 }
 
-// IsOpenAICodexModel 判断请求模型是否属于需要 Codex 指令语义的模型族。
+// IsOpenAICodexModel recognizes models that require Codex instructions.
 func IsOpenAICodexModel(model string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "codex")
 }
@@ -567,7 +564,7 @@ func OpenAIRequestBodyMayContainInputImageToken(body []byte) bool {
 	if bytes.Contains(body, []byte("input_image")) {
 		return true
 	}
-	// JSON 字符串任意字符都可能被 unicode escape，遇到 \u 时交给 gjson 解码后的结构扫描兜底。
+	// Unicode escapes can hide any JSON string character; defer to decoded gjson traversal when present.
 	return bytes.Contains(body, []byte("\\u"))
 }
 

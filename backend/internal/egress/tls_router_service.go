@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// TLSFingerprintRouterRepository 定义 TLS 路由器的数据访问接口。
+// TLSFingerprintRouterRepository persists TLS routers.
 type TLSFingerprintRouterRepository interface {
 	List(ctx context.Context) ([]*TLSFingerprintRouter, error)
 	GetByID(ctx context.Context, id int64) (*TLSFingerprintRouter, error)
@@ -17,7 +17,7 @@ type TLSFingerprintRouterRepository interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// TLSFingerprintRouterCache 定义 TLS 路由器缓存接口。
+// TLSFingerprintRouterCache caches routers and distributes refresh notifications.
 type TLSFingerprintRouterCache interface {
 	Get(ctx context.Context) ([]*TLSFingerprintRouter, bool)
 	Set(ctx context.Context, routers []*TLSFingerprintRouter) error
@@ -26,7 +26,7 @@ type TLSFingerprintRouterCache interface {
 	SubscribeUpdates(ctx context.Context, handler func())
 }
 
-// TLSFingerprintRouterMatchResult 表示一次 UA 路由匹配结果。
+// TLSFingerprintRouterMatchResult contains the first matching User-Agent rule's settings.
 type TLSFingerprintRouterMatchResult struct {
 	Matched                 bool
 	RouterID                int64
@@ -48,7 +48,7 @@ type cachedTLSFingerprintRouterRule struct {
 	regex   *regexp.Regexp
 }
 
-// TLSFingerprintRouterService 管理 UA 到 TLS 指纹模板的路由规则。
+// TLSFingerprintRouterService manages User-Agent rules that select TLS profiles.
 type TLSFingerprintRouterService struct {
 	diagnostics Diagnostics
 	repo        TLSFingerprintRouterRepository
@@ -59,7 +59,7 @@ type TLSFingerprintRouterService struct {
 	startOnce  sync.Once
 }
 
-// NewTLSFingerprintRouterService 创建 TLS 路由器服务。
+// NewTLSFingerprintRouterService creates an idle TLS router service.
 func NewTLSFingerprintRouterService(
 	repo TLSFingerprintRouterRepository,
 	cache TLSFingerprintRouterCache,
@@ -75,7 +75,7 @@ func NewTLSFingerprintRouterService(
 	return svc
 }
 
-// Stop 停止缓存订阅，确保 Redis 关闭前订阅协程已经退出。
+// Stop stops the cache subscriber when supported; call it before closing Redis.
 func (s *TLSFingerprintRouterService) Stop() {
 	if s == nil || s.cache == nil {
 		return
@@ -85,17 +85,17 @@ func (s *TLSFingerprintRouterService) Stop() {
 	}
 }
 
-// List 获取所有 TLS 路由器。
+// List returns all stored TLS routers.
 func (s *TLSFingerprintRouterService) List(ctx context.Context) ([]*TLSFingerprintRouter, error) {
 	return s.repo.List(ctx)
 }
 
-// GetByID 根据 ID 获取 TLS 路由器。
+// GetByID retrieves a TLS router from the repository.
 func (s *TLSFingerprintRouterService) GetByID(ctx context.Context, id int64) (*TLSFingerprintRouter, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
-// Create 创建 TLS 路由器。
+// Create normalizes and validates a router, persists it, and refreshes caches.
 func (s *TLSFingerprintRouterService) Create(ctx context.Context, router *TLSFingerprintRouter) (*TLSFingerprintRouter, error) {
 	normalizeTLSFingerprintRouter(router)
 	if err := router.Validate(); err != nil {
@@ -114,7 +114,7 @@ func (s *TLSFingerprintRouterService) Create(ctx context.Context, router *TLSFin
 	return created, nil
 }
 
-// Update 更新 TLS 路由器。
+// Update normalizes and validates a router, replaces it, and refreshes caches.
 func (s *TLSFingerprintRouterService) Update(ctx context.Context, router *TLSFingerprintRouter) (*TLSFingerprintRouter, error) {
 	normalizeTLSFingerprintRouter(router)
 	if err := router.Validate(); err != nil {
@@ -133,7 +133,7 @@ func (s *TLSFingerprintRouterService) Update(ctx context.Context, router *TLSFin
 	return updated, nil
 }
 
-// Delete 删除 TLS 路由器。
+// Delete deletes a router and refreshes caches.
 func (s *TLSFingerprintRouterService) Delete(ctx context.Context, id int64) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
@@ -146,7 +146,7 @@ func (s *TLSFingerprintRouterService) Delete(ctx context.Context, id int64) erro
 	return nil
 }
 
-// MatchUserAgent 按路由器 ID 匹配入站 User-Agent，命中第一条可用规则。
+// MatchUserAgent selects the first enabled matching rule in the specified enabled router.
 // @project-doc docs/operations/upstream_transport_security.md#upstream_tls_routing
 func (s *TLSFingerprintRouterService) MatchUserAgent(routerID int64, userAgent string) TLSFingerprintRouterMatchResult {
 	if s == nil || routerID <= 0 {
@@ -179,7 +179,7 @@ func (s *TLSFingerprintRouterService) MatchUserAgent(routerID int64, userAgent s
 	return TLSFingerprintRouterMatchResult{RouterID: router.ID, RouterName: router.Name}
 }
 
-// GetRuntimeRouter 从本地缓存读取路由器运行时配置，供后台 token 刷新等非请求路径使用。
+// GetRuntimeRouter returns an independent cached router copy, refreshing on a cache miss.
 func (s *TLSFingerprintRouterService) GetRuntimeRouter(routerID int64) *TLSFingerprintRouter {
 	if s == nil || routerID <= 0 {
 		return nil
@@ -327,7 +327,7 @@ func tlsRouterRuleMatches(rule cachedTLSFingerprintRouterRule, userAgent string)
 	}
 }
 
-// Start 在预热与装配完成后安装缓存订阅。
+// Start warms the cache and installs its update subscription once.
 func (s *TLSFingerprintRouterService) Start() {
 	s.startOnce.Do(func() {
 		ctx := context.Background()

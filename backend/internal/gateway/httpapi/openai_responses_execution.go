@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIResponsesExecutor 绑定 Responses 请求构造、协议执行和响应输出。
+// OpenAIResponsesExecutor binds Responses request construction, execution, and output.
 type OpenAIResponsesExecutor struct {
 	Requests    *OpenAIRequests
 	Output      *OpenAIResponseOutput
@@ -27,7 +27,7 @@ type OpenAIResponsesExecutor struct {
 	ImageBridge *gatewayprovider.ResponseImagePolicy
 }
 
-// Forward 保持单次 Responses 的准备、协议分派和执行顺序。
+// Forward prepares, dispatches, and executes one Responses attempt.
 func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte) (out *forwardcore.OpenAIResult, failure error) {
 	defer func() { captureResponseModel(c, out) }()
 	var routeErr error
@@ -72,7 +72,7 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	imageIntent := transformed.ImageIntent
 	fingerprintIDs := transformed.Fingerprint
 	reqBody := transformed.Decoded
-	// 后续 WS 或密文恢复按需读取同一份准备结果，不重新运行模型映射和策略。
+	// WS and ciphertext recovery reuse the prepared request to avoid repeating model mapping and policy.
 	ensureReqBody := func() (map[string]any, error) {
 		if requestView.HasPatches() {
 			patched, err := requestView.ApplyPatches()
@@ -93,10 +93,10 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 		reqBody = decoded
 		return reqBody, nil
 	}
-	// 剥离本会话已被上游判定失效的加密项（invalid_encrypted_content lineage），
-	// 阻断同一失效密文随客户端历史在每一轮重复触发"被拒→剥离→重试/重连"。
-	// lineage 会话键统一按进场形态的 body 派生：后续重试可能改写 body，
-	// 延迟计算会与下一请求的进场键漂移。
+	// Strip encrypted items already rejected by upstream for this session.
+	// This prevents client history from repeatedly triggering rejection, stripping, and retry or reconnect.
+	// Derive the lineage session key from the incoming body before retries can rewrite it;
+	// a key computed afterward could differ from the next incoming request.
 	lineageGroupID := OpenAIResponseGroupID(c)
 	lineageEntryBody := body
 	lineageSessionHash := ""
@@ -140,7 +140,7 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	SetOpsUpstreamModel(c, upstreamModel)
 
 	reasoningEffort := requeststate.ExtractOpenAIReasoningEffortFromBody(body)
-	// 国产模型默认 effort 补充：此处 reqModel 已被 mapping 重写为 billingModel。
+	// Add default effort for Chinese provider models after reqModel has been mapped to billingModel.
 	reasoningEffort = gatewayprovider.ApplyThinkingEnabledFallback(reasoningEffort, body, reqModel)
 	reasoningEffortValue := ""
 	if reasoningEffort != nil {

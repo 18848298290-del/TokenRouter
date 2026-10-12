@@ -22,7 +22,7 @@ func NewRuntime(name string, enabled bool, loops ...func(context.Context)) *Runt
 	return &Runtime{name: name, enabled: enabled, loops: loops}
 }
 
-// NewWorkerRuntime 配置队列消费、延迟搬运、失活恢复与资金恢复循环，由 Start 启动。
+// NewWorkerRuntime prepares queue, delayed-job, stale-job, and funding recovery loops for Start.
 func NewWorkerRuntime(worker *BatchImageWorker, recovery *BillingRecovery, enabled bool) *Runtime {
 	var loops []func(context.Context)
 	if worker != nil {
@@ -76,7 +76,7 @@ func (r *Runtime) Running() bool {
 }
 func (r *Runtime) Stop() { _ = r.StopContext(context.Background()) }
 
-// StopContext 共享首次停止结果，忽略取消的任务必须报告未完成。
+// StopContext cancels work and shares the first stop result; a deadline reports unfinished loops.
 func (r *Runtime) StopContext(ctx context.Context) error {
 	if r == nil {
 		return nil

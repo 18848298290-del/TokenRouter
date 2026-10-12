@@ -10,7 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// Attributes 描述模型属性和可配置能力。指针区分未知、false 和空集合。
+// Attributes describes model properties and configurable capabilities. Pointers distinguish unknown, false,
+// and empty values.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_attributes
 type Attributes struct {
 	DisplayNameLocalization *locale.Update[string] `json:"display_name_localization,omitempty"`
@@ -32,7 +33,7 @@ type Attributes struct {
 	Media                   *MediaCapabilities     `json:"media,omitempty"`
 }
 
-// Presentation 是模型信息的展示值，不表达网关准入决策。
+// Presentation contains model metadata for display; it does not authorize gateway requests.
 type Presentation struct {
 	SearchTerms            []string           `json:"search_terms,omitempty"`
 	LocalizationResolution *locale.Resolution `json:"localization_resolution,omitempty"`
@@ -40,7 +41,7 @@ type Presentation struct {
 	RouteDifferences bool `json:"route_differences,omitempty"`
 }
 
-// fields 通过值编码复制所有可选字段，避免展示消费者改写目录快照。
+// fields copies optional values through JSON so display consumers cannot mutate the catalog snapshot.
 func (a Attributes) fields() map[string]json.RawMessage {
 	body, _ := json.Marshal(a)
 	var fields map[string]json.RawMessage
@@ -48,7 +49,7 @@ func (a Attributes) fields() map[string]json.RawMessage {
 	return fields
 }
 
-// Merge 按字段覆盖，未填写的字段继续继承，数组整体替换。
+// Merge applies populated patch fields and inherits missing fields. Lists are replaced as a whole.
 func Merge(base, patch Attributes) Attributes {
 	if patch.DisplayNameLocalization != nil {
 		base.DisplayNameLocalization = patch.DisplayNameLocalization
@@ -102,8 +103,8 @@ func Merge(base, patch Attributes) Attributes {
 	return base.Clone()
 }
 
-// ApplyAttributeSupplement 从模型补充条目的 attributes 中填入缺失字段。
-// 目录中的 false 和空数组优先，同名中继继续使用各自的属性。
+// ApplyAttributeSupplement fills missing attributes from a model supplement.
+// Catalog false values and empty lists take precedence. Relay entries retain their own attributes.
 func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) error {
 	var supplement struct {
 		Provider   string      `json:"provider"`
@@ -149,7 +150,7 @@ func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
 	return entry
 }
 
-// Validate 校验管理员编辑值；目录中的零长度由解析器转换为未知。
+// Validate checks administrator input. The catalog parser converts zero limits to unknown values.
 func (a Attributes) Validate() error {
 	if err := validateCapabilities(a); err != nil {
 		return err
@@ -174,7 +175,8 @@ func (a Attributes) Validate() error {
 	return nil
 }
 
-// Common 取多条可请求路线的共同能力和已知最小上限，只供展示和导出。
+// Common returns shared capabilities and the smallest known limits across requestable routes for display and
+// export.
 func Common(values []Attributes) (Attributes, bool) {
 	if len(values) == 0 {
 		return Attributes{}, false

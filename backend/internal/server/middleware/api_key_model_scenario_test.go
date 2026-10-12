@@ -1,6 +1,7 @@
 package middleware
 
-// 本文件覆盖 gateway/httpapi/api_key_composite.go 与 gateway/httpapi/api_key_model_mapping.go 的模型选择、请求重写和响应恢复。
+// These tests cover model selection, request rewriting, and response restoration in
+// gateway/httpapi/api_key_composite.go and gateway/httpapi/api_key_model_mapping.go.
 
 import (
 	"bytes"
@@ -37,7 +38,7 @@ func TestResolveCompositeAPIKeyRequestJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, selected.GroupID)
 	require.Equal(t, int64(7), *selected.GroupID)
-	// 后续路由门禁读取复合 Key 最终选中分组的协议策略。
+	// Subsequent admission checks use the selected composite-key group's protocol policy.
 	require.NotNil(t, selected.Group)
 	require.True(t, selected.Group.AllowsClientProtocol(protocol.ProtocolOpenAIResponses))
 	require.False(t, selected.Group.AllowsClientProtocol(protocol.ProtocolAnthropicMessages))
@@ -72,7 +73,7 @@ func TestResolveCompositeAPIKeyRequestMultipart(t *testing.T) {
 	fileHeader := c.Request.MultipartForm.File["image"][0]
 	opened, err := fileHeader.Open()
 	require.NoError(t, err)
-	// 测试结束前关闭 multipart 文件句柄，并检查关闭错误。
+	// Close the multipart file before the test ends and check the close error.
 	defer func() {
 		require.NoError(t, opened.Close())
 	}()
@@ -173,7 +174,7 @@ func TestResolveCompositeAPIKeyRequestSpecialEndpoints(t *testing.T) {
 func TestReplaceCompositeResponseModel(t *testing.T) {
 	response := []byte("data: {\"id\":\"gpt-5\",\"model\":\"gpt-5\",\"modelVersion\":\"gpt-5\",\"model_version\":\"gpt-5\",\"name\":\"models/gpt-5\",\"text\":\"gpt-5\"}\n\n")
 
-	// 模型恢复范围是协议字段，正文中的同名文本保持不变。
+	// Restore protocol model fields while leaving identical text in response content unchanged.
 	rewritten := replaceCompositeResponseModel(response, "gpt-5", "GPT/gpt-5")
 	require.Contains(t, string(rewritten), `"id":"GPT/gpt-5"`)
 	require.Contains(t, string(rewritten), `"model":"GPT/gpt-5"`)
@@ -182,7 +183,7 @@ func TestReplaceCompositeResponseModel(t *testing.T) {
 	require.Contains(t, string(rewritten), `"name":"models/GPT/gpt-5"`)
 	require.Contains(t, string(rewritten), `"text":"gpt-5"`)
 
-	// 模型名中的特殊字符使用 JSON 转义。
+	// JSON-escape special characters in model aliases.
 	escaped := replaceCompositeResponseModel([]byte(`{"model":"safe-target","text":"safe-target"}`), "safe-target", `review"alias`)
 	require.JSONEq(t, `{"model":"review\"alias","text":"safe-target"}`, string(escaped))
 }
@@ -318,7 +319,7 @@ func TestApplyAPIKeyModelRedirectComposesWithCompositeResponseRestore(t *testing
 	require.JSONEq(t, `{"model":"GPT/review"}`, recorder.Body.String())
 }
 
-// resolveCompositeAPIKeyRequest 通过网关解析复合 Key 的模型和分组。
+// resolveCompositeAPIKeyRequest resolves a composite key's model and group through the gateway.
 func resolveCompositeAPIKeyRequest(c *gin.Context, keys *apikey.APIKeyService, key *apikey.APIKey) (*apikey.APIKey, error) {
 	if key == nil || !key.IsComposite {
 		return key, nil
@@ -355,7 +356,7 @@ func compositeMiddlewareTestKey() *apikey.APIKey {
 	}
 }
 
-// compositeMiddlewareMultiGroupTestKey 构造可验证单请求跨分组模型拒绝行为的复合 Key。
+// compositeMiddlewareMultiGroupTestKey supplies two groups to test rejection of cross-group models in one request.
 func compositeMiddlewareMultiGroupTestKey() *apikey.APIKey {
 	key := compositeMiddlewareTestKey()
 	group := &routing.Group{ID: 8, Name: "Claude", Status: billing.StatusActive, IsExclusive: true}

@@ -14,14 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// EmailOAuthProviderConfig 保存 GitHub/Google 这类邮箱 OAuth 登录的配置。
+// Aliases for the identity module's email OAuth configuration and profile types.
 type (
 	EmailOAuthOptions       = identity.EmailOAuthOptions
 	EmailOAuthTokenResponse = identity.EmailOAuthTokenResponse
 	EmailOAuthProfile       = identity.EmailOAuthProfile
 )
 
-// EmailOAuthClientAdapter 复用现有客户端，身份 HTTP 不依赖具体网络实现。
+// EmailOAuthClientAdapter implements code exchange and profile retrieval over HTTP.
 type EmailOAuthClientAdapter struct{}
 
 func ExchangeEmailOAuthCode(ctx context.Context, cfg EmailOAuthOptions, code string) (*EmailOAuthTokenResponse, error) {

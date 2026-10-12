@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// TestEntryRequestRecordsTracksRetryAndRejectedTurns 覆盖同轮重试、后续轮次和准入早退。
+// TestEntryRequestRecordsTracksRetryAndRejectedTurns covers same-turn retry, later turns, and early admission failure.
 func TestEntryRequestRecordsTracksRetryAndRejectedTurns(t *testing.T) {
 	var snapshots []telemetry.RequestRecord
 	root := telemetry.WithRequestCapture(context.WithValue(context.Background(), telemetry.RequestID, "connection"), telemetry.RequestRecord{RequestID: "connection", UserID: 7, APIKeyID: 8, StartedAt: time.Now(), State: "running"}, func(record telemetry.RequestRecord) { snapshots = append(snapshots, record) })

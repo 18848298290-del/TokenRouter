@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// MaxAPIKeyModelMappingRules 限制鉴权快照与请求热路径中的规则数量。
+	// MaxAPIKeyModelMappingRules bounds snapshot size and request-time matching work.
 	MaxAPIKeyModelMappingRules = 100
-	// MaxAPIKeyModelNameRunes 与 usage_logs 的模型字段长度保持一致。
+	// MaxAPIKeyModelNameRunes matches the usage_logs model field length.
 	MaxAPIKeyModelNameRunes = 100
 )
 
@@ -23,7 +23,7 @@ var ErrInvalidAPIKeyModelMapping = infraerrors.BadRequest(
 	"invalid API key model mapping",
 )
 
-// NormalizeAPIKeyModelMapping 校验规则并返回去除首尾空格后的独立副本。
+// NormalizeAPIKeyModelMapping validates rules and returns an independent map with trimmed names.
 func NormalizeAPIKeyModelMapping(mapping map[string]string) (map[string]string, error) {
 	if len(mapping) > MaxAPIKeyModelMappingRules {
 		return nil, fmt.Errorf("%w: at most %d rules are allowed", ErrInvalidAPIKeyModelMapping, MaxAPIKeyModelMappingRules)
@@ -56,7 +56,7 @@ func NormalizeAPIKeyModelMapping(mapping map[string]string) (map[string]string, 
 	return normalized, nil
 }
 
-// ResolveModelMapping 执行一次精确匹配或最长尾通配匹配，返回命中的目标模型。
+// ResolveModelMapping applies one exact or longest-prefix wildcard match.
 func ResolveModelMapping(mapping map[string]string, requestedModel string) (string, bool) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || len(mapping) == 0 {
@@ -65,7 +65,7 @@ func ResolveModelMapping(mapping map[string]string, requestedModel string) (stri
 	return modelmap.Resolve(mapping, requestedModel)
 }
 
-// ResolveModelMapping 返回当前 API Key 的一次重定向结果。
+// ResolveModelMapping returns a single redirect result for this key.
 func (k *APIKey) ResolveModelMapping(requestedModel string) (string, bool) {
 	if k == nil {
 		return strings.TrimSpace(requestedModel), false
@@ -73,14 +73,14 @@ func (k *APIKey) ResolveModelMapping(requestedModel string) (string, bool) {
 	return ResolveModelMapping(k.ModelMapping, requestedModel)
 }
 
-// CloneModelMapping 返回可安全写入缓存或响应的独立副本。
+// CloneModelMapping returns an independent map for caching or responses.
 func CloneModelMapping(mapping map[string]string) map[string]string {
 	cloned := make(map[string]string, len(mapping))
 	maps.Copy(cloned, mapping)
 	return cloned
 }
 
-// AppendAPIKeyModelAliases 按输入顺序列出模型，再按名称排序追加目标当前可请求的精确别名。
+// AppendAPIKeyModelAliases keeps model order and appends sorted exact aliases whose targets are available.
 func AppendAPIKeyModelAliases(models []string, mapping map[string]string) []string {
 	seen := make(map[string]struct{}, len(models)+len(mapping))
 	result := make([]string, 0, len(models)+len(mapping))
@@ -99,7 +99,7 @@ func AppendAPIKeyModelAliases(models []string, mapping map[string]string) []stri
 	return result
 }
 
-// AvailableAPIKeyModelAliases 返回目标位于当前可请求集合且尚未存在的精确别名。
+// AvailableAPIKeyModelAliases returns sorted exact aliases with available targets, excluding existing model names.
 func AvailableAPIKeyModelAliases(models []string, mapping map[string]string) []string {
 	availableTargets := make(map[string]struct{}, len(models))
 	seen := make(map[string]struct{}, len(models)+len(mapping))

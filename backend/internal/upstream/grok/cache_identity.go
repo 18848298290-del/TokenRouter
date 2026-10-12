@@ -16,18 +16,18 @@ type CacheIdentityInput struct {
 	StablePrefixSeed, AnchoredSeed, PreviousResponseSeed             func([]byte) string
 }
 
-// ResolveCacheIdentity 为 xAI 服务端提示缓存派生稳定且租户隔离的路由身份。
-// 返回值不包含客户端原始会话标识，可安全发送到上游。
+// ResolveCacheIdentity derives a tenant-scoped routing identity for xAI prompt caching.
+// The returned UUID hashes the client session identifier before sending it upstream.
 //
-// 必须存在有效的下游 API Key。内部探测或请求上下文不完整时主动关闭缓存，避免生成
-// 可能被无关租户共享的缓存身份。
+// A positive downstream API key ID is required. Probes and incomplete request contexts
+// disable caching to avoid sharing an identity between unrelated tenants.
 func ResolveCacheIdentity(input CacheIdentityInput, body []byte) string {
 	apiKeyID := input.APIKeyID
 	if apiKeyID <= 0 {
 		return ""
 	}
-	// /responses/compact 不接受 tool_choice，且不代表正常会话轮次；该路径不得添加
-	// 缓存身份或免费层路由增强字段。
+	// Compact requests are summary operations and do not receive cache identities
+	// or free-tier routing fields.
 	if input.Compact {
 		return ""
 	}
@@ -41,8 +41,8 @@ func ResolveCacheIdentity(input CacheIdentityInput, body []byte) string {
 	if seed == "" {
 		seed = input.StablePrefixSeed(body)
 		if seed == "" {
-			// 仅使用模型会让缓存路由范围过大；没有可复用前缀时回退到首个用户输入派生身份，
-			// 避免无关提示共享同一个租户级缓存键。
+			// Anchor requests without a reusable prefix to the first user input so unrelated
+			// prompts do not share a cache key merely because they use the same model.
 			seed = input.AnchoredSeed(body)
 		}
 	}
@@ -50,15 +50,15 @@ func ResolveCacheIdentity(input CacheIdentityInput, body []byte) string {
 		return ""
 	}
 
-	// upstream.GenerateSessionUUID 会先哈希完整种子再格式化为 UUID；加入带版本的命名空间，
-	// 避免该身份与 TokenRouter 派生的其它上游会话标识冲突。
+	// GenerateSessionUUID hashes the complete seed. The versioned namespace separates
+	// prompt-cache identities from other upstream session identifiers.
 	isolatedSeed := fmt.Sprintf("grok-prompt-cache:v1:%d:%s:%s", apiKeyID, model, seed)
 	return upstream.GenerateSessionUUID(isolatedSeed)
 }
 
 func ExplicitCacheSeed(input CacheIdentityInput, body []byte) string {
-	// Claude Code 会话是 /v1/messages 到 Grok 桥接中最稳定的多轮身份，
-	// 优先于通用会话头，以便提示缓存路由与 CPA 行为一致。
+	// Prefer the Claude Code session for multi-turn Messages bridges so their cache
+	// routing follows the same session identity as CPA.
 	seed := strings.TrimSpace(input.ClaudeSession)
 	if seed == "" {
 		seed = ExtractClaudeCodeSessionIDFromPayload(body)
@@ -66,15 +66,10 @@ func ExplicitCacheSeed(input CacheIdentityInput, body []byte) string {
 	if seed == "" {
 		seed = input.HeaderSession
 	}
-	// Client-declared prompt_cache_key outranks X-Grok-Conv-Id. The
-	// grok-build CLI sets this field on recap-style side-calls
-	// (turn-summary/title-refresh) to the *parent* session id so the
-	// side-call shares the main turn's server-side cache prefix. Its
-	// X-Grok-Conv-Id header, in contrast, carries a fresh per-call label
-	// ("turn-summary-<uuid>"); preferring the header there fragments the
-	// cache identity per side-call and forces a full-price replay of the
-	// entire conversation (~300K+ tokens each time). The body field is the
-	// official xAI cache-routing signal — respect it when present.
+	// Prefer prompt_cache_key to the per-call X-Grok-Conv-Id. Grok Build recap
+	// requests can use the parent session as prompt_cache_key while assigning
+	// a distinct conversation header to each summary or title request.
+	// Keeping the parent identity lets these requests reuse its cache prefix.
 	if seed == "" && len(body) > 0 {
 		seed = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	}
@@ -84,8 +79,8 @@ func ExplicitCacheSeed(input CacheIdentityInput, body []byte) string {
 	if seed == "" {
 		seed = strings.TrimSpace(input.ExplicitKey)
 	}
-	// previous_response_id 是最后的回退方案：没有显式会话的多轮 Responses 仍共享缓存身份，
-	// 模型已包含在隔离种子中；消息 ID 会被种子辅助函数拒绝。
+	// Use the previous response as the last available session seed. The isolation
+	// seed already includes the model; PreviousResponseSeed rejects message IDs.
 	if seed == "" && len(body) > 0 {
 		seed = input.PreviousResponseSeed(body)
 	}

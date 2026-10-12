@@ -12,7 +12,7 @@ import (
 )
 
 type OAuthStartCaptchaRequest struct {
-	// TurnstileToken 承载阿里云验证码的 captchaVerifyParam（复用既有请求字段名）
+	// TurnstileToken carries Aliyun captchaVerifyParam using the shared request field.
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
@@ -23,7 +23,7 @@ type OAuthStartResponse struct {
 }
 
 func (h *SessionHandler) RequireActionCaptchaForOAuthLoginStart(c *gin.Context) bool {
-	// 当前用户绑定已有独立认证态，不重复消费匿名登录验证码票据。
+	// Binding routes authenticate the current user separately and do not consume anonymous-login CAPTCHA proofs.
 	if strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/bind/start") {
 		return true
 	}

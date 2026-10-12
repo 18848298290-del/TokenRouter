@@ -22,7 +22,7 @@ const (
 	maxTotpAttempts = 5
 	totpIssuer      = "TokenRouter"
 
-	// StepUpGrantTTL 敏感操作 step-up 验证的有效窗口（sudo 模式）。
+	// StepUpGrantTTL is the validity window for sensitive-operation TOTP grants.
 	StepUpGrantTTL = 15 * time.Minute
 )
 
@@ -54,7 +54,7 @@ type TotpCache interface {
 	GetVerifyAttempts(ctx context.Context, userID int64) (int, error)
 	ClearVerifyAttempts(ctx context.Context, userID int64) error
 
-	// 敏感操作二次验证授权窗口
+	// Session-bound grants for sensitive operations.
 	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, ttl time.Duration) error
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
 }
@@ -111,12 +111,12 @@ type TotpService struct {
 	emailQueueService VerificationQueue
 }
 
-// VerificationMethod 表示 TOTP 操作要求的身份校验方式。
+// VerificationMethod identifies the proof required for a TOTP settings change.
 type VerificationMethod struct {
-	Method string `json:"method"` // email 或 password
+	Method string `json:"method"` // email or password
 }
 
-// TotpUserStore 只暴露强认证需要的身份查询和安全字段修改。
+// TotpUserStore reads users and updates their TOTP security fields.
 type TotpUserStore interface {
 	SessionUserReader
 	UpdateTotpSecret(context.Context, int64, *string) error
@@ -172,15 +172,14 @@ func (s *TotpService) GetStatus(ctx context.Context, userID int64) (*TotpStatus,
 	}, nil
 }
 
-// usesEmailVerification 判断 TOTP 启用/停用时的身份校验方式。
-// 管理员一律使用密码校验：管理员账号的邮箱常为占位地址收不到验证码，
-// 且管理员凭证失守时攻击者往往同时控制通知邮箱，邮箱验证码不构成有效防线。
-// 普通用户维持原有行为：开启邮箱验证时用邮箱验证码，否则用密码。
+// usesEmailVerification selects the proof required to enable or disable TOTP.
+// Administrators use passwords, including accounts with placeholder email addresses.
+// Other users use email codes when email verification is enabled, and passwords otherwise.
 func (s *TotpService) usesEmailVerification(ctx context.Context, user *User) bool {
 	return user != nil && user.Role != RoleAdmin && s.settingService.IsEmailVerifyEnabled(ctx)
 }
 
-// verifyIdentity 按 usesEmailVerification 的结果校验邮箱验证码或密码。
+// verifyIdentity checks the email code or password selected by usesEmailVerification.
 func (s *TotpService) verifyIdentity(ctx context.Context, user *User, emailCode, password string) error {
 	if user == nil {
 		return ErrUserNotFound
@@ -201,14 +200,13 @@ func (s *TotpService) verifyIdentity(ctx context.Context, user *User, emailCode,
 }
 
 // InitiateSetup starts the TOTP setup process
-// If email verification is enabled, emailCode is required; otherwise password is required.
+// Administrators require a password. Other users require emailCode when email
+// verification is enabled, and a password otherwise.
 func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode, password string) (*TotpSetupResponse, error) {
-	// Check if TOTP feature is enabled globally
 	if !s.settingService.IsTotpEnabled(ctx) {
 		return nil, ErrTotpNotEnabled
 	}
 
-	// Get user and check if TOTP is already enabled
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
@@ -222,7 +220,6 @@ func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode
 		return nil, err
 	}
 
-	// Generate a new TOTP key
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      totpIssuer,
 		AccountName: user.Email,
@@ -231,13 +228,11 @@ func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode
 		return nil, fmt.Errorf("generate totp key: %w", err)
 	}
 
-	// Generate a random setup token
 	setupToken, err := GenerateRandomToken(32)
 	if err != nil {
 		return nil, fmt.Errorf("generate setup token: %w", err)
 	}
 
-	// Store the setup session in cache
 	session := &TotpSetupSession{
 		Secret:     key.Secret(),
 		SetupToken: setupToken,
@@ -258,12 +253,10 @@ func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode
 
 // CompleteSetup completes the TOTP setup by verifying the code.
 func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode, setupToken string) error {
-	// Check if TOTP feature is enabled globally
 	if !s.settingService.IsTotpEnabled(ctx) {
 		return ErrTotpNotEnabled
 	}
 
-	// Get the setup session
 	session, err := s.cache.GetSetupSession(ctx, userID)
 	if err != nil {
 		return ErrTotpSetupExpired
@@ -278,7 +271,6 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 		return ErrTotpSetupExpired
 	}
 
-	// Verify the TOTP code
 	if !s.validateCode(totpCode, session.Secret) {
 		return ErrTotpInvalidCode
 	}
@@ -292,7 +284,6 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 		"secret_len", len(session.Secret),
 		"secret_prefix", setupSecretPrefix)
 
-	// Encrypt the secret
 	encryptedSecret, err := s.encryptor.Encrypt(session.Secret)
 	if err != nil {
 		return fmt.Errorf("encrypt totp secret: %w", err)
@@ -321,26 +312,23 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 			"decrypted_prefix", decryptedPrefix)
 	}
 
-	// Update user with encrypted TOTP secret
 	if err := s.userRepo.UpdateTotpSecret(ctx, userID, &encryptedSecret); err != nil {
 		return fmt.Errorf("update totp secret: %w", err)
 	}
 
-	// Enable TOTP for the user
 	if err := s.userRepo.EnableTotp(ctx, userID); err != nil {
 		return fmt.Errorf("enable totp: %w", err)
 	}
 
-	// Clean up the setup session
 	_ = s.cache.DeleteSetupSession(ctx, userID)
 
 	return nil
 }
 
 // Disable disables TOTP for a user
-// If email verification is enabled, emailCode is required; otherwise password is required.
+// Administrators require a password. Other users require emailCode when email
+// verification is enabled, and a password otherwise.
 func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, password string) error {
-	// Get user
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
@@ -354,7 +342,6 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		return err
 	}
 
-	// Disable TOTP
 	if err := s.userRepo.DisableTotp(ctx, userID); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
@@ -374,7 +361,6 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		return ErrTotpTooManyAttempts
 	}
 
-	// Get user
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		slog.Debug("totp_verify_get_user_failed",
@@ -395,7 +381,6 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		"user_id", userID,
 		"encrypted_len", len(*user.TotpSecretEncrypted))
 
-	// Decrypt the secret
 	secret, err := s.encryptor.Decrypt(*user.TotpSecretEncrypted)
 	if err != nil {
 		slog.Debug("totp_verify_decrypt_failed",
@@ -413,7 +398,6 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		"secret_len", len(secret),
 		"secret_prefix", secretPrefix)
 
-	// Verify the code
 	valid := s.validateCode(code, secret)
 	slog.Debug("totp_verify_result",
 		"user_id", userID,
@@ -423,19 +407,17 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		"server_time", s.now().UTC().Format(time.RFC3339))
 
 	if !valid {
-		// Increment failed attempts
 		_, _ = s.cache.IncrementVerifyAttempts(ctx, userID)
 		return ErrTotpInvalidCode
 	}
 
-	// Clear attempt counter on success
 	_ = s.cache.ClearVerifyAttempts(ctx, userID)
 
 	return nil
 }
 
-// VerifyStepUp 校验 TOTP 码并授予当前会话一段时间的 step-up 权限。
-// 返回授权有效期，供前端展示/设置提醒。
+// VerifyStepUp validates a TOTP code and grants temporary access to sensitive operations for the session.
+// It returns the grant lifetime for client display or reminders.
 func (s *TotpService) VerifyStepUp(ctx context.Context, userID int64, sessionKey, code string) (time.Duration, error) {
 	if err := s.VerifyCode(ctx, userID, code); err != nil {
 		return 0, err
@@ -446,7 +428,7 @@ func (s *TotpService) VerifyStepUp(ctx context.Context, userID int64, sessionKey
 	return StepUpGrantTTL, nil
 }
 
-// HasStepUpGrant 检查当前会话是否在 step-up 有效期内。
+// HasStepUpGrant reports whether the session has an unexpired step-up grant.
 func (s *TotpService) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
 	return s.cache.HasStepUpGrant(ctx, userID, sessionKey)
 }
@@ -477,7 +459,6 @@ func (s *TotpService) createLoginSession(
 	email string,
 	pendingOAuthBind *PendingOAuthBindLoginSession,
 ) (string, error) {
-	// Generate a random temp token
 	tempToken, err := GenerateRandomToken(32)
 	if err != nil {
 		return "", fmt.Errorf("generate temp token: %w", err)
@@ -544,8 +525,8 @@ func GenerateRandomToken(byteLength int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// GetVerificationMethod 返回当前用户执行 TOTP 操作时所需的身份校验方式。
-// 与 verifyIdentity 保持同一判定：管理员一律返回 password。
+// GetVerificationMethod returns the proof required for the user's TOTP settings changes.
+// It uses the same rule as verifyIdentity; administrators receive password.
 func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64) (*VerificationMethod, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -567,20 +548,17 @@ func (s *TotpService) SendVerifyCode(ctx context.Context, userID int64, locale .
 		return infraerrors.BadRequest("EMAIL_VERIFY_NOT_ENABLED", "email verification is not enabled")
 	}
 
-	// Get user email
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
 	}
 
-	// Get site name for email
 	siteName := s.settingService.GetSiteName(ctx)
 
-	// Send verification code via queue
 	return s.emailQueueService.EnqueueVerifyCode(user.Email, siteName, locale...)
 }
 
-// validateCode 沿用 pquerna/otp.Validate 的 30 秒、前后一步、6 位及 SHA1 参数。
+// validateCode uses 30-second periods, one step of skew, six digits, and SHA-1.
 func (s *TotpService) validateCode(code, secret string) bool {
 	valid, _ := totp.ValidateCustom(code, secret, s.now().UTC(), totp.ValidateOpts{Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1})
 	return valid

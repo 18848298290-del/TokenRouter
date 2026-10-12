@@ -12,7 +12,7 @@ import (
 
 // Claude OAuth Constants.
 const (
-	// OAuth Client ID for Claude.
+	// ClientID identifies the Claude OAuth client.
 	ClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 	// OAuth endpoints.
@@ -20,11 +20,11 @@ const (
 	TokenURL     = "https://platform.claude.com/v1/oauth/token"
 	RedirectURI  = "https://platform.claude.com/oauth/code/callback"
 
-	// Scopes - Browser URL (includes org:create_api_key for user authorization).
+	// ScopeOAuth includes API key creation for browser authorization.
 	ScopeOAuth = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
-	// Scopes - Internal API call (org:create_api_key not supported in API).
+	// ScopeAPI omits API key creation, which the internal API does not support.
 	ScopeAPI = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
-	// Scopes - Setup token (inference only).
+	// ScopeInference limits setup tokens to inference.
 	ScopeInference = "user:inference"
 )
 
@@ -33,8 +33,6 @@ type (
 	OrgInfo       = wire.OAuthOrgInfo
 	ProviderInfo  = wire.OAuthProviderInfo
 )
-
-// OAuthSession stores OAuth flow state
 
 // GenerateRandomBytes generates cryptographically secure random bytes.
 func GenerateRandomBytes(n int) ([]byte, error) {
@@ -50,7 +48,7 @@ func GenerateState() (string, error) {
 	return base64URLEncode(bytes), nil
 }
 
-// GenerateSessionID generates a unique session ID.
+// GenerateSessionID returns a random 128-bit session ID encoded as hex.
 func GenerateSessionID() (string, error) {
 	bytes, err := GenerateRandomBytes(16)
 	if err != nil {
@@ -60,7 +58,7 @@ func GenerateSessionID() (string, error) {
 }
 
 // GenerateCodeVerifier generates a PKCE code verifier (RFC 7636).
-// Uses 32 random bytes → base64url-no-pad, producing a 43-char verifier.
+// It encodes 32 random bytes as 43 unpadded base64url characters.
 func GenerateCodeVerifier() (string, error) {
 	return oauthpkce.Verifier()
 }
@@ -75,7 +73,7 @@ func base64URLEncode(data []byte) string {
 	return oauthpkce.Base64URL(data)
 }
 
-// BuildAuthorizationURL builds the OAuth authorization URL with correct parameter order.
+// BuildAuthorizationURL builds a Claude OAuth URL with a fixed parameter order.
 func BuildAuthorizationURL(state, codeChallenge, scope string) string {
 	encodedRedirectURI := url.QueryEscape(RedirectURI)
 	encodedScope := strings.ReplaceAll(url.QueryEscape(scope), "%20", "+")

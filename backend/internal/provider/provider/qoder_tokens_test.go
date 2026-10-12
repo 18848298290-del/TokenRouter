@@ -33,17 +33,16 @@ type qoderCenterHTTPUpstreamStub struct {
 	requests            []*http.Request
 }
 
-// qoderInvalidationCache 记录测试调用的删除操作。
+// qoderInvalidationCache records cache deletions for assertions.
 type qoderInvalidationCache struct {
 	providercore.AccessTokenCache
 	deletedKeys []string
 }
 
-// TestQoderTokenProviderConcurrent 验证 token provider 在并发访问下的缓存行为。
+// TestQoderTokenProviderConcurrent exercises caching during concurrent reads and invalidations.
 func TestQoderTokenProviderConcurrent(t *testing.T) {
 	tokenSource := &QoderTokenProvider{Core: &qoderSessionState{Sessions: make(map[int64]qoderSessionCacheEntry)}}
 
-	// 创建测试 provider
 	provider := &providercore.Record{
 		ID:       12345,
 		Platform: capability.PlatformQoder,
@@ -64,14 +63,13 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 	ctx := context.Background()
 	successCount := sync.Map{}
 
-	// 并发请求 session
 	for i := range numGoroutines {
 		go func(workerID int) {
 			defer wg.Done()
 			for j := range numRequestsPerGoroutine {
 				session, err := tokenSource.GetSession(ctx, provider)
 				if err != nil {
-					// Invalidate 或凭据更新后，先前代次的构建结果被丢弃。
+					// Invalidation or credential updates discard builds from an earlier generation.
 					if errors.Is(err, errQoderSessionBuildInvalidated) {
 						successCount.Store(workerID*1000+j, true)
 						continue
@@ -85,7 +83,7 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 				}
 				successCount.Store(workerID*1000+j, true)
 
-				// 模拟 invalidate 场景
+				// Invalidate while other workers are reading sessions.
 				if workerID%3 == 0 && j%5 == 0 {
 					tokenSource.Invalidate(provider.ID)
 				}
@@ -95,7 +93,6 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 
 	wg.Wait()
 
-	// 统计成功率
 	count := 0
 	successCount.Range(func(key, value any) bool {
 		count++
@@ -111,7 +108,7 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 	}
 }
 
-// TestQoderTokenProviderInvalidateRace 验证 GetSession 和 Invalidate 的竞态安全。
+// TestQoderTokenProviderInvalidateRace exercises concurrent GetSession and Invalidate calls.
 func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 	tokenSource := &QoderTokenProvider{Core: &qoderSessionState{Sessions: make(map[int64]qoderSessionCacheEntry)}}
 
@@ -129,7 +126,7 @@ func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 	ctx := context.Background()
 	const numIterations = 1000
 
-	// 启动两个 goroutine：一个不断 GetSession，一个不断 Invalidate
+	// Run repeated session reads concurrently with invalidations.
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -149,7 +146,7 @@ func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 
 	wg.Wait()
 
-	// 不应该 panic 或死锁
+	// Completion checks that neither goroutine panics or deadlocks.
 	t.Log("GetSession/Invalidate race test completed without panic")
 }
 
@@ -445,7 +442,7 @@ func TestQoderTokenProviderRebuildsExpiredCNPATSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expiresAt, tokenSource.qoderState().Sessions[provider.ID].ExpiresAt)
 
-	// 模拟已缓存的 OpenAPI token 到期，下一次读取必须重新执行 PAT exchange。
+	// Expire the cached OpenAPI token so the next read must exchange the PAT again.
 	entry := tokenSource.qoderState().Sessions[provider.ID]
 	entry.ExpiresAt = time.Now().Add(-time.Second)
 	tokenSource.qoderState().Sessions[provider.ID] = entry
@@ -518,7 +515,7 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 	ready.Wait()
 	close(start)
 	<-rebuildStarted
-	// 第一个交换保持阻塞，让其余调用进入相同 singleflight。
+	// Hold the first exchange so other callers can join its singleflight.
 	time.Sleep(20 * time.Millisecond)
 	require.Equal(t, int32(2), exchangeCalls.Load())
 	close(releaseRebuild)
@@ -965,7 +962,7 @@ func TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild(t *test
 		session, getErr := tokenSource.GetSession(context.Background(), staleProvider)
 		staleResult <- sessionResult{session: session, err: getErr}
 	}()
-	// 旧凭据版本的调用需要等待新版本已发起的交换。独立交换会立即返回。
+	// The old-credential caller must wait for the new version's exchange; a separate exchange would return immediately.
 	select {
 	case result := <-staleResult:
 		close(releaseNewBuild)

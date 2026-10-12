@@ -241,8 +241,8 @@ func (s *GrokAuthorization) refreshToken(ctx context.Context, refreshToken, prox
 	return tokenInfo, nil
 }
 
-// validateSSOToken 将 Web SSO Cookie 转换为 Build OAuth 令牌。
-// 原始 sso_token 绝不写入 GrokTokenInfo 或提供商凭证。
+// validateSSOToken exchanges a web SSO cookie for Build OAuth tokens.
+// The raw SSO token is temporary input and is excluded from returned credentials.
 func (s *GrokAuthorization) validateSSOToken(ctx context.Context, ssoToken string, proxyID *int64) (*GrokTokenInfo, error) {
 	ssoToken = strings.TrimSpace(ssoToken)
 	if ssoToken == "" {
@@ -265,13 +265,13 @@ func (s *GrokAuthorization) validateSSOToken(ctx context.Context, ssoToken strin
 	return s.tokenInfoFromResponse(tokenResp, s.Options.DefaultClientID, nil), nil
 }
 
-// convertFromSSO 为批量导入调用 SSO 验证和 token 交换。
+// convertFromSSO exchanges SSO credentials for batch imports.
 func (s *GrokAuthorization) convertFromSSO(ctx context.Context, ssoToken string, proxyID *int64) (*GrokTokenInfo, error) {
 	return s.validateSSOToken(ctx, ssoToken, proxyID)
 }
 
-// authorizePassword 使用邮箱和密码登录，将所得 SSO Cookie 转换为 Build OAuth，
-// 并且只返回 OAuth 令牌；密码与原始 SSO 数据绝不持久化。
+// authorizePassword logs in with email and password, then exchanges the SSO cookie for Build OAuth tokens.
+// Password and raw SSO data are temporary inputs and are excluded from returned credentials.
 func (s *GrokAuthorization) authorizePassword(ctx context.Context, email, password string, proxyID *int64) (*GrokTokenInfo, error) {
 	if !s.Options.PasswordAuthEnabled() {
 		return nil, infraerrors.New(infraerrors.CategoryForbidden, "GROK_OAUTH_PASSWORD_AUTH_DISABLED", "Grok password authorization is disabled")
@@ -336,8 +336,8 @@ func (s *GrokAuthorization) refreshProviderToken(ctx context.Context, provider *
 	if err != nil {
 		return nil, err
 	}
-	// 新访问令牌 JWT 是权威来源；刷新后的令牌没有档位声明（不透明令牌或字段缺失）时，
-	// 才保留已存储值。
+	// The refreshed access token's tier takes precedence over stored metadata.
+	// Retain the stored tier when the token has no tier claim or is opaque.
 	if strings.TrimSpace(tokenInfo.SubscriptionTier) == "" {
 		tokenInfo.SubscriptionTier = provider.GetCredential("subscription_tier")
 	}

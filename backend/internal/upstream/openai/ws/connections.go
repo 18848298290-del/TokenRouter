@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIWSConnections 持有唯一按需连接池与共享拨号器，关闭后不能重新建池。
+// OpenAIWSConnections owns an on-demand pool and shared dialer; Close prevents pool creation.
 type OpenAIWSConnections struct {
 	Options    *WSPoolOptions
 	dialer     openai.WSClientDialer
@@ -15,12 +15,12 @@ type OpenAIWSConnections struct {
 	pool       *WSConnPool
 	poolOnce   sync.Once
 	poolMu     sync.Mutex
-	// updateMu 串行执行参数更新和关闭，poolMu 保护连接池的创建与引用。
+	// updateMu serializes updates and shutdown; poolMu protects pool creation and access.
 	updateMu sync.Mutex
 	closed   bool
 }
 
-// NewOpenAIWSConnections 保存配置和拨号器，连接池在首次使用时启动。
+// NewOpenAIWSConnections stores the options and dialer; Pool creates and starts a pool on first use.
 func NewOpenAIWSConnections(options *WSPoolOptions, dialer openai.WSClientDialer, pools ...*WSConnPool) *OpenAIWSConnections {
 	value := &OpenAIWSConnections{Options: options, dialer: dialer}
 	if len(pools) > 0 {
@@ -65,7 +65,7 @@ func (s *OpenAIWSConnections) InvalidateProvider(providerID int64) {
 	}
 }
 
-// Close 关闭连接池并标记停止，后续 Pool 调用返回已关闭的池。
+// Close stops the existing pool and prevents creation. Later Pool calls return that pool or nil.
 func (s *OpenAIWSConnections) Close() {
 	if s == nil {
 		return
@@ -81,7 +81,7 @@ func (s *OpenAIWSConnections) Close() {
 	}
 }
 
-// UpdateOptions 串行发布参数，回收连接时其他请求仍可取得池引用。
+// UpdateOptions serializes option changes while allowing pool access during connection cleanup.
 func (s *OpenAIWSConnections) UpdateOptions(options WSPoolOptions) error {
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()

@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestUpdatesAtomicCommitAndApplyFailure 验证各设置模块准备好后只有一次写入；失败不会执行任何应用。
+// TestUpdatesAtomicCommitAndApplyFailure checks batch persistence and distinguishes write failure from
+// post-commit application failure.
 func TestUpdatesAtomicCommitAndApplyFailure(t *testing.T) {
 	for _, failWrite := range []bool{false, true} {
 		t.Run(map[bool]string{false: "apply_failure", true: "write_failure"}[failWrite], func(t *testing.T) {
@@ -49,7 +50,8 @@ func TestUpdatesRejectDuplicateOwnershipBeforeWriting(t *testing.T) {
 	require.Empty(t, repo.values)
 }
 
-// TestUpdatesStopCancelsOwnersAndWaiters 验证停止同时取消拥有者与排队者，但等待未结束的任务时必须报告超时。
+// TestUpdatesStopCancelsOwnersAndWaiters checks cancellation of active and queued updates and a timeout while
+// an active session remains open.
 func TestUpdatesStopCancelsOwnersAndWaiters(t *testing.T) {
 	updates := New(&writeStoreStub{}).Updates()
 	first, err := updates.Begin(context.Background())

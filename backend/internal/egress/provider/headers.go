@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// ApplyRequestHeaders 覆写策略允许的请求头，并使用调用方指定的名称大小写。
+// ApplyRequestHeaders applies policy overrides using the caller's wire casing function.
 func ApplyRequestHeaders(headers http.Header, policy egress.EgressPolicy, wireCasing func(string) string) {
 	if headers == nil {
 		return
@@ -22,7 +22,7 @@ func ApplyRequestHeaders(headers http.Header, policy egress.EgressPolicy, wireCa
 	}
 }
 
-// FilterHeaders 复制筛选规则允许的响应头。
+// FilterHeaders copies response headers allowed by the filter.
 func FilterHeaders(src http.Header, filter *egress.CompiledHeaderFilter) http.Header {
 	filtered := make(http.Header, len(src))
 	for key, values := range src {
@@ -36,7 +36,7 @@ func FilterHeaders(src http.Header, filter *egress.CompiledHeaderFilter) http.He
 	return filtered
 }
 
-// WriteFilteredHeaders 将筛选规则允许的响应头追加到目标。
+// WriteFilteredHeaders appends allowed response headers to dst.
 func WriteFilteredHeaders(dst http.Header, src http.Header, filter *egress.CompiledHeaderFilter) {
 	filtered := FilterHeaders(src, filter)
 	for key, values := range filtered {

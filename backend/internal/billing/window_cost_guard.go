@@ -9,25 +9,24 @@ import (
 
 var sharedWindowCostMetrics WindowCostMetrics
 
+// WindowCostCache stores standard costs for provider five-hour windows.
+// Cache keys use window_cost:provider:{providerID}.
 type WindowCostCache interface {
-	// 缓存提供商当前 5 小时窗口的标准费用，减少数据库聚合查询。
-	// Key 格式为 window_cost:provider:{providerID}。
-
-	// GetWindowCost 获取缓存的窗口费用
-	// 返回 (cost, true, nil) 如果缓存命中
-	// 返回 (0, false, nil) 如果缓存未命中
-	// 返回 (0, false, err) 如果发生错误
+	// GetWindowCost returns the cached cost and whether the key was found.
+	// A hit returns (cost, true, nil).
+	// A miss returns (0, false, nil).
+	// A cache error returns (0, false, err).
 	GetWindowCost(ctx context.Context, providerID int64) (cost float64, hit bool, err error)
 
-	// SetWindowCost 设置窗口费用缓存
+	// SetWindowCost caches the provider's window cost.
 	SetWindowCost(ctx context.Context, providerID int64, cost float64) error
 
-	// GetWindowCostBatch 批量获取窗口费用缓存
-	// 返回 map[providerID]cost，缓存未命中的提供商不在 map 中
+	// GetWindowCostBatch returns cached costs indexed by provider ID.
+	// Providers missing from the cache are omitted.
 	GetWindowCostBatch(ctx context.Context, providerIDs []int64) (map[int64]float64, error)
 }
 
-// CostWindowInput 包含调度所需的费用窗口、额度和预留金额。
+// CostWindowInput contains a provider's cost window, limit, and sticky-session reserve.
 type CostWindowInput struct {
 	ID             int64
 	Enabled        bool
@@ -55,7 +54,7 @@ type WindowCostGuardOptions struct {
 	Stats *WindowCostMetrics
 }
 
-// WindowCostGuard 通过注入的 Redis 缓存和查询接口读取窗口标准费用。
+// WindowCostGuard reads standard window costs through its cache and query interfaces.
 type WindowCostGuard struct {
 	cache  WindowCostCache
 	source WindowCostSource
@@ -170,7 +169,7 @@ func (s *WindowCostGuard) Prefetch(ctx context.Context, providers []CostWindowIn
 			s.log("window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
 		}
 
-		// 回退路径：缺少批量仓储能力或批量查询失败时，按提供商单查（失败开放）。
+		// Query providers individually when batch reads are unavailable or fail; leave failed reads uncached.
 		s.stats.Fallback.Add(int64(len(ids)))
 		for _, providerID := range ids {
 			stats, err := s.source.GetWindow(ctx, providerID, startTime)
@@ -188,17 +187,17 @@ func (s *WindowCostGuard) Prefetch(ctx context.Context, providers []CostWindowIn
 }
 
 func (s *WindowCostGuard) Allow(ctx context.Context, provider CostWindowInput, isSticky bool) bool {
-	// 只检查 Anthropic OAuth/SetupToken 提供商
+	// The caller determines whether this provider is subject to the cost limit.
 	if !provider.Enabled {
 		return true
 	}
 
 	limit := provider.Limit
 	if limit <= 0 {
-		return true // 未启用窗口费用限制
+		return true // Nonpositive limits are disabled.
 	}
 
-	// 尝试从缓存获取窗口费用
+	// Prefer prefetched costs, then the shared cache.
 	var currentCost float64
 	if cost, ok := PrefetchedWindowCost(ctx, provider.ID); ok {
 		currentCost = cost
@@ -211,21 +210,21 @@ func (s *WindowCostGuard) Allow(ctx context.Context, provider CostWindowInput, i
 		}
 	}
 
-	// 缓存未命中，从数据库查询
+	// Read storage when neither cache supplies a cost.
 	{
-		// 使用统一的窗口开始时间计算逻辑（考虑窗口过期情况）
+		// Expired windows begin at the current local hour.
 		startTime := CurrentCostWindowStart(provider.Start, provider.End, s.now())
 
 		stats, err := s.source.GetWindow(ctx, provider.ID, startTime)
 		if err != nil {
-			// 失败开放：查询失败时允许调度
+			// Allow scheduling when the cost query fails.
 			return true
 		}
 
-		// 使用标准费用（不含提供商倍率）
+		// Standard cost excludes the provider multiplier.
 		currentCost = stats.StandardCost
 
-		// 设置缓存（忽略错误）
+		// Cache write failures do not affect admission.
 		if s.cache != nil {
 			_ = s.cache.SetWindowCost(ctx, provider.ID, currentCost)
 		}

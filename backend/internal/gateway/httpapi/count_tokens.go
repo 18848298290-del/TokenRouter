@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// CountTokensBackend 组合固定依赖，每次仅建立无槽尝试状态。
+// CountTokensBackend provides admission, observation, and count execution without generation concurrency slots.
 type CountTokensBackend interface {
 	Access(*gin.Context) (*apikey.APIKey, bool)
 	CompatibilityMetrics(*zap.Logger)
@@ -56,9 +56,9 @@ func countMaxBytesError(err error) (*http.MaxBytesError, bool) {
 	return exceeded, ok
 }
 
-// CountTokens handles token counting endpoint
-// POST /v1/messages/count_tokens
-// 特点：校验订阅/余额，但不计算并发、不记录使用量。
+// CountTokens handles POST /v1/messages/count_tokens.
+
+// It checks subscription and balance eligibility without acquiring generation slots or recording usage.
 func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "anthropic")
 	if !accepted {
@@ -66,7 +66,6 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	}
 	defer done()
 
-	// 从 context 获取 apiKey 和 user（ApiKeyAuth 中间件已设置）
 	apiKey, ok := h.backend.Access(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
@@ -86,7 +85,6 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	)
 	defer h.backend.CompatibilityMetrics(reqLog)
 
-	// 读取请求体
 	body, err := ReadLenientJSONRequestBodyWithPrealloc(c.Request, h.maxBodyBytes)
 	if err != nil {
 		if maxErr, ok := countMaxBytesError(err); ok {
@@ -104,7 +102,7 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, "", false)
 
-	// count_tokens 也要先执行用户提示词替换，保证解析、会话 hash 和上游请求体一致。
+	// Apply prompt replacement before parsing so the session hash and upstream request use the same body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "anthropic_messages")
 
 	bodyRef := requeststate.NewRequestBodyRef(body)
@@ -115,7 +113,7 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 		return
 	}
 	body = parsedReq.Body.Bytes()
-	// count_tokens 使用 messages 严格校验时，复用已解析的请求。
+	// Reuse the parsed Messages body for strict Claude Code detection.
 	h.backend.BindClient(c, DetectClaudeCodeRequest(c, body, parsedReq, false))
 	apiKey, err = resolveClientGroupForRequest(c, h.backend, apiKey, protocol.ProtocolAnthropicMessages)
 	if err != nil {
@@ -124,10 +122,9 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	}
 
 	reqLog = reqLog.With(zap.String("model", parsedReq.Model), zap.Bool("stream", parsedReq.Stream))
-	// 在请求上下文中记录 thinking 状态，供 Antigravity 最终模型 key 推导/模型维度限流使用
+	// Save thinking state for Antigravity model resolution and model-level rate limits.
 	h.backend.BindThinking(c, parsedReq.ThinkingEnabled)
 
-	// 验证 model 必填
 	if parsedReq.Model == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -136,11 +133,8 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	h.backend.ObserveRequest(c, parsedReq.Model, parsedReq.Stream)
 	h.backend.ObserveEndpoint(c, parsedReq.Stream)
 
-	// 获取订阅信息（可能为 nil）
 	subscription, _ := SubscriptionFromContext(c)
 
-	// 校验 billing eligibility（订阅/余额）
-	// 【注意】不计算并发，但需要校验订阅/余额
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		status, code, message, retryAfter := BillingErrorDetails(err)
 		if retryAfter > 0 {
@@ -150,7 +144,6 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
-	// 计算粘性会话 hash
 	parsedReq.SessionContext = &requeststate.SessionContext{
 		ClientIP:  clientip.GetClientIP(c),
 		UserAgent: c.GetHeader("User-Agent"),

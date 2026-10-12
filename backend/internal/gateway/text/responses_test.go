@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// responseFixture 记录尝试、同提供商等待和最终完成的次数。
+// responseFixture counts attempts, same-provider waits, and completion calls.
 type responseFixture struct {
 	outcomes                                                             []ResponseOutcome
 	skipFirst                                                            bool

@@ -14,13 +14,13 @@ import (
 
 var providerTodayStatsBatchCache = response.NewSnapshotCache(30 * time.Second)
 
-// OAuthUsageHandler 提供主动和被动用量查询、批量查询、统计及 ETag 响应。
+// OAuthUsageHandler serves active and passive usage queries, batch queries, statistics, and ETag responses.
 type OAuthUsageHandler struct {
 	core  *provider.OAuthUsageService
 	stats *provider.LocalUsageStatistics
 }
 
-// BatchTodayStatsRequest 批量今日统计请求体。
+// BatchTodayStatsRequest identifies providers for today's statistics.
 type BatchTodayStatsRequest struct {
 	ProviderIDs []int64 `json:"provider_ids" binding:"required"`
 }
@@ -33,7 +33,7 @@ func NewOAuthUsageHandler(core *provider.OAuthUsageService, stats *provider.Loca
 	return &OAuthUsageHandler{core, stats}
 }
 
-// GetUsage 处理提供商用量查询。
+// GetUsage queries a provider's usage.
 // GET /api/v1/admin/providers/:id/usage?source=passive|active&force=true
 func (h *OAuthUsageHandler) GetUsage(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -77,7 +77,7 @@ func (h *OAuthUsageHandler) GetTodayStats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// GetBatchTodayStats 批量获取多个提供商的今日统计。
+// GetBatchTodayStats returns today's statistics for multiple providers.
 // POST /api/v1/admin/providers/today-stats/batch
 func (h *OAuthUsageHandler) GetBatchTodayStats(c *gin.Context) {
 	var req BatchTodayStatsRequest
@@ -123,8 +123,8 @@ func (h *OAuthUsageHandler) GetBatchTodayStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchUsage 批量获取多个提供商的 current usage。
-// POST /api/v1/admin/providers/usage/batch 批量查询提供商用量。
+// GetBatchUsage returns current usage for multiple providers.
+// POST /api/v1/admin/providers/usage/batch
 func (h *OAuthUsageHandler) GetBatchUsage(c *gin.Context) {
 	var req BatchUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

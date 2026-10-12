@@ -8,15 +8,15 @@ import (
 )
 
 const (
-	// OpenAIUpstreamHTTP2StreamErrorCode 表示请求开始后上游 HTTP/2 响应流被重置。
+	// OpenAIUpstreamHTTP2StreamErrorCode identifies an upstream HTTP/2 stream failure after the request starts.
 	OpenAIUpstreamHTTP2StreamErrorCode = "upstream_http2_stream_error"
 	OpenAIUpstreamStreamReadErrorCode  = "upstream_stream_read_error"
-	// OpenAIUpstreamStreamTruncatedCode 表示上游 SSE 流在任何终止信号前干净关闭。
-	// 干净 EOF 不携带传输错误；没有此分类时，截断生成会被误认为成功。
+	// OpenAIUpstreamStreamTruncatedCode identifies clean EOF before any SSE terminal signal.
+	// A clean EOF carries no transport error, so it needs a separate failure classification.
 	OpenAIUpstreamStreamTruncatedCode = "upstream_stream_truncated"
 )
 
-// ErrOpenAIUpstreamStreamTruncated 表示上游 SSE 流在任何终止信号前以 EOF 结束，且没有读取错误。
+// ErrOpenAIUpstreamStreamTruncated marks EOF before an SSE terminal signal with no read error.
 var ErrOpenAIUpstreamStreamTruncated = errors.New("upstream stream ended before any terminal chunk")
 
 type UpstreamStreamReadError struct {
@@ -40,8 +40,8 @@ func NewUpstreamStreamReadError(err error) error {
 	}
 }
 
-// ShouldClassifyUpstreamStreamReadError 判断读取错误是否来自上游传输。
-// 客户端取消、请求超时和本地响应体超限时返回 false。
+// ShouldClassifyUpstreamStreamReadError reports whether to classify a read failure as upstream transport failure.
+// It excludes cancellation, deadlines, local body limits, and errors after any supplied context ends.
 func ShouldClassifyUpstreamStreamReadError(err error, localBodyLimit error, contexts ...context.Context) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, localBodyLimit) {
 		return false
@@ -54,7 +54,7 @@ func ShouldClassifyUpstreamStreamReadError(err error, localBodyLimit error, cont
 	return true
 }
 
-// OpenAIUpstreamStreamReadErrorDetails 返回上游流读取失败对应的稳定、安全对客分类。
+// OpenAIUpstreamStreamReadErrorDetails returns the stored client-facing code and message, if present.
 func OpenAIUpstreamStreamReadErrorDetails(err error) (code, message string, ok bool) {
 	var streamErr *UpstreamStreamReadError
 	if !errors.As(err, &streamErr) || streamErr == nil {
@@ -69,8 +69,8 @@ func ClassifyUpstreamStreamReadError(err error) (code, message string) {
 			return OpenAIUpstreamStreamTruncatedCode, "Upstream response stream ended before completion"
 		}
 		lower := strings.ToLower(err.Error())
-		// net/http 的 HTTP/2 流错误类型未导出，按错误文本中的传输特征匹配。
-		// 客户端收到固定错误消息，原始错误留在内部。
+		// net/http's HTTP/2 stream error type is unexported, so match its transport error text.
+		// Return a fixed client message while retaining the original error internally.
 		if strings.Contains(lower, "stream error: stream id ") ||
 			(strings.Contains(lower, "http2:") && strings.Contains(lower, "stream")) {
 			return OpenAIUpstreamHTTP2StreamErrorCode, "Upstream HTTP/2 stream failed"

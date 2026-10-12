@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// announcementUsers 将身份查询结果转换为公告资格判断需要的用户数据。
+// announcementUsers converts identity records into users for announcement eligibility.
 type announcementUsers struct{ Repository identity.UserRepository }
 
-// billingIdentityUsers 从身份存储读取资金用例需要的用户数据。
+// billingIdentityUsers reads identity records for funding operations.
 type billingIdentityUsers struct{ Repository identity.UserRepository }
 
 func provideAnnouncementUsers(users *identitypostgres.UserStore) site.UserReader {
@@ -45,7 +45,7 @@ func (b billingIdentityUsers) GetByID(ctx context.Context, id int64) (*billing.U
 	return billingIdentitySummary(u), e
 }
 
-// billingIdentitySummary 将身份用户转换为权益用例所需的只读数据。
+// billingIdentitySummary converts identity users into read-only entitlement data.
 func billingIdentitySummary(u *identity.User) *billing.UserSummary {
 	if u == nil {
 		return nil

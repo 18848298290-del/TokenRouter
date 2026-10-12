@@ -4,7 +4,8 @@ import (
 	"context"
 )
 
-// AuthStorage 保护已存在的事务和 savepoint 范围；参与实现不发布成功副作用。
+// AuthStorage executes authentication writes within transaction and savepoint scopes.
+// Storage participants leave post-commit side effects to their callers.
 type AuthStorage interface {
 	HasDatabase() bool
 	ApplyProviderDefaultSettingsOnFirstBind(

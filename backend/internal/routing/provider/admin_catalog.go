@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// AdminCatalogOptions 为已选定的型号查询展示元数据。
+// AdminCatalogOptions looks up display metadata for already selected model IDs.
 func AdminCatalogOptions(catalog modelcatalog.Reader) routing.AdminCatalogOptions {
 	return routing.AdminCatalogOptions{Lookup: func(kind routing.AdminCatalogKind, id string) routing.AdminCatalogModel {
 		entry := modelcatalog.Entry{Model: id}

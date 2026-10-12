@@ -64,7 +64,7 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 	s.DispatchBalanceLowEmail(ctx, user, newBalance, effectiveThreshold, rechargeURL)
 }
 
-// CanNotifyBalance 检查服务依赖和用户的余额通知开关。
+// CanNotifyBalance reports whether the required services exist and the user enables balance alerts.
 func (s *BalanceNotifyService) CanNotifyBalance(user *UserSummary) bool {
 	if user == nil || s.emailService == nil || s.settingRepo == nil {
 		return false
@@ -72,7 +72,7 @@ func (s *BalanceNotifyService) CanNotifyBalance(user *UserSummary) bool {
 	return user.BalanceNotifyEnabled
 }
 
-// ResolveUserEffectiveThreshold 委托 billing 的唯一阈值规则。
+// ResolveUserEffectiveThreshold combines global and user balance alert settings.
 func (s *BalanceNotifyService) ResolveUserEffectiveThreshold(ctx context.Context, user *UserSummary) (effectiveThreshold float64, rechargeURL string, ok bool) {
 	globalEnabled, globalThreshold, rechargeURL := s.GetBalanceNotifyConfig(ctx)
 	effective, ok := EffectiveBalanceThreshold(globalEnabled, globalThreshold, user.BalanceNotifyThreshold, user.BalanceNotifyThresholdType, user.TotalRecharged)
@@ -82,7 +82,7 @@ func (s *BalanceNotifyService) ResolveUserEffectiveThreshold(ctx context.Context
 	return effective, rechargeURL, true
 }
 
-// DispatchBalanceLowEmail 收集收件人，并在 goroutine 中发送余额告警。
+// DispatchBalanceLowEmail collects recipients and sends the alert through the injected background runner.
 func (s *BalanceNotifyService) DispatchBalanceLowEmail(ctx context.Context, user *UserSummary, newBalance, threshold float64, rechargeURL string) {
 	siteName := s.GetSiteName(ctx)
 	recipients := s.CollectBalanceNotifyRecipients(user)
@@ -125,7 +125,7 @@ func (s *BalanceNotifyService) CheckProviderQuotaAfterIncrement(ctx context.Cont
 	s.CheckQuotaDimCrossings(provider, dims, cost, adminEmails, siteName)
 }
 
-// FetchFreshProvider 读取数据库中的最新提供商，失败时回退到传入的快照。
+// FetchFreshProvider reads current provider data, returning the supplied snapshot if the reader is absent or fails.
 func (s *BalanceNotifyService) FetchFreshProvider(ctx context.Context, snapshot *QuotaNotifyProvider) *QuotaNotifyProvider {
 	if s.providerRepo == nil {
 		return snapshot
@@ -139,7 +139,7 @@ func (s *BalanceNotifyService) FetchFreshProvider(ctx context.Context, snapshot 
 	return fresh
 }
 
-// CheckQuotaDimCrossings 委托 billing 的唯一阈值规则。
+// CheckQuotaDimCrossings sends an alert for each quota dimension that crosses its threshold.
 func (s *BalanceNotifyService) CheckQuotaDimCrossings(provider *QuotaNotifyProvider, dims []QuotaNotifyDimension, cost float64, adminEmails []string, siteName string) {
 	for _, dim := range dims {
 		if threshold, ok := dim.Crossing(cost); ok {
@@ -148,7 +148,7 @@ func (s *BalanceNotifyService) CheckQuotaDimCrossings(provider *QuotaNotifyProvi
 	}
 }
 
-// AsyncSendQuotaAlert 在 goroutine 中发送配额告警，并恢复发送过程中的 panic。
+// AsyncSendQuotaAlert sends through the injected background runner and recovers sender panics.
 func (s *BalanceNotifyService) AsyncSendQuotaAlert(adminEmails []string, providerID int64, providerName, platform string, dim QuotaNotifyDimension, newUsed, effectiveThreshold float64, siteName string) {
 	s.background("service/balance_notify_service.go:asyncSendQuotaAlert", func() {
 		defer func() {
@@ -160,7 +160,7 @@ func (s *BalanceNotifyService) AsyncSendQuotaAlert(adminEmails []string, provide
 	})
 }
 
-// GetBalanceNotifyConfig 读取全局余额通知设置。
+// GetBalanceNotifyConfig reads global balance alert settings; read failures disable alerts.
 func (s *BalanceNotifyService) GetBalanceNotifyConfig(ctx context.Context) (enabled bool, threshold float64, rechargeURL string) {
 	keys := []string{SettingKeyBalanceLowNotifyEnabled, SettingKeyBalanceLowNotifyThreshold, SettingKeyBalanceLowNotifyRechargeURL}
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -177,7 +177,7 @@ func (s *BalanceNotifyService) GetBalanceNotifyConfig(ctx context.Context) (enab
 	return
 }
 
-// IsProviderQuotaNotifyEnabled 检查全局提供商配额通知开关。
+// IsProviderQuotaNotifyEnabled reports whether global provider quota alerts are enabled.
 func (s *BalanceNotifyService) IsProviderQuotaNotifyEnabled(ctx context.Context) bool {
 	val, err := s.settingRepo.GetValue(ctx, SettingKeyProviderQuotaNotifyEnabled)
 	if err != nil {
@@ -186,7 +186,7 @@ func (s *BalanceNotifyService) IsProviderQuotaNotifyEnabled(ctx context.Context)
 	return val == "true"
 }
 
-// GetProviderQuotaNotifyEmails 读取管理员通知邮箱，过滤已禁用或未验证的条目。
+// GetProviderQuotaNotifyEmails returns verified, enabled administrator alert addresses.
 func (s *BalanceNotifyService) GetProviderQuotaNotifyEmails(ctx context.Context) []string {
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyProviderQuotaNotifyEmails)
 	if err != nil || strings.TrimSpace(raw) == "" || raw == "[]" {
@@ -201,7 +201,7 @@ func (s *BalanceNotifyService) GetProviderQuotaNotifyEmails(ctx context.Context)
 	return FilterVerifiedEmails(entries)
 }
 
-// GetSiteName 读取站点名称，缺失时使用默认值。
+// GetSiteName returns the configured site name, or the default if the setting is missing or unreadable.
 func (s *BalanceNotifyService) GetSiteName(ctx context.Context) string {
 	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || name == "" {
@@ -210,7 +210,7 @@ func (s *BalanceNotifyService) GetSiteName(ctx context.Context) string {
 	return name
 }
 
-// FilterVerifiedEmails 返回已验证且未禁用的邮箱，并去除重复项。
+// FilterVerifiedEmails trims verified, enabled addresses and deduplicates them case-insensitively.
 func FilterVerifiedEmails(entries []NotifyEmailSummary) []string {
 	var recipients []string
 	seen := make(map[string]bool)
@@ -232,7 +232,7 @@ func FilterVerifiedEmails(entries []NotifyEmailSummary) []string {
 	return recipients
 }
 
-// CollectBalanceNotifyRecipients 收集 verified=true 且 disabled=false 的通知邮箱。
+// CollectBalanceNotifyRecipients returns verified, enabled extra alert addresses for the user.
 func (s *BalanceNotifyService) CollectBalanceNotifyRecipients(user *UserSummary) []string {
 	return FilterVerifiedEmails(user.BalanceNotifyExtraEmails)
 }

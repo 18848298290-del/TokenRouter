@@ -22,7 +22,7 @@ const (
 	creativeRepoWorkspaceB = "22222222-2222-4222-8222-222222222222"
 )
 
-// openCreativeRunRepositoryForTest 创建带完整 Ent schema 的内存仓储。
+// openCreativeRunRepositoryForTest creates an in-memory database with the full Ent schema.
 func openCreativeRunRepositoryForTest(t *testing.T) (creative.CreativeRunRepository, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite", fmt.Sprintf("file:creative_run_scope_%s?mode=memory&cache=shared&_fk=1", t.Name()))
@@ -36,7 +36,7 @@ func openCreativeRunRepositoryForTest(t *testing.T) (creative.CreativeRunReposit
 	}
 }
 
-// creativeRepoWorkspaceRunParams 构造仓储测试所需的最小任务参数。
+// creativeRepoWorkspaceRunParams builds minimal run parameters for repository tests.
 func creativeRepoWorkspaceRunParams(runID, workspaceID string, key *string) creative.CreateCreativeRunParams {
 	return creative.CreateCreativeRunParams{
 		RunID:                runID,
@@ -56,7 +56,7 @@ func creativeRepoWorkspaceRunParams(runID, workspaceID string, key *string) crea
 	}
 }
 
-// TestCreativeRunRepositoryWorkspaceScope 检查 Ent 查询按用户和工作区隔离任务。
+// TestCreativeRunRepositoryWorkspaceScope checks isolation by user and workspace.
 func TestCreativeRunRepositoryWorkspaceScope(t *testing.T) {
 	repo, cleanup := openCreativeRunRepositoryForTest(t)
 	t.Cleanup(cleanup)

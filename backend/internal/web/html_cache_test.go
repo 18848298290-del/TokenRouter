@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHTMLCache 检查按语言发布、失效和设置变化后的 ETag。
+// TestHTMLCache checks language entry publication, invalidation, and ETag changes after settings updates.
 func TestHTMLCache(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		cache := NewHTMLCache()
@@ -46,7 +46,7 @@ func TestHTMLCache(t *testing.T) {
 	})
 }
 
-// TestHTMLLanguageIsolation 检查不同语言的内容、ETag 和失效代次彼此独立。
+// TestHTMLLanguageIsolation checks distinct language entries and ETags, copied snapshots, and shared invalidation.
 func TestHTMLLanguageIsolation(t *testing.T) {
 	cache := NewHTMLCache()
 	cache.SetBaseHTML([]byte("<html></html>"))

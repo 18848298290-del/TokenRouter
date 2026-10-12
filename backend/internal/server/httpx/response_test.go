@@ -13,9 +13,7 @@ import (
 	errors2 "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// 辅助函数
-
-// parseResponseBody 从 httptest.ResponseRecorder 中解析 JSON 响应体。
+// parseResponseBody decodes the recorder's JSON response.
 func parseResponseBody(t *testing.T, w *httptest.ResponseRecorder) Response {
 	t.Helper()
 	var got Response
@@ -23,10 +21,10 @@ func parseResponseBody(t *testing.T, w *httptest.ResponseRecorder) Response {
 	return got
 }
 
-// parsePaginatedBody 从响应体中解析分页数据（Data 字段是 PaginatedData）。
+// parsePaginatedBody decodes the envelope and its PaginatedData payload.
 func parsePaginatedBody(t *testing.T, w *httptest.ResponseRecorder) (Response, PaginatedData) {
 	t.Helper()
-	// 先用 raw json 解析，因为 Data 是 any 类型
+	// Decode data separately because Response.Data has type any.
 	var raw struct {
 		Code    int             `json:"code"`
 		Message string          `json:"message"`
@@ -41,7 +39,7 @@ func parsePaginatedBody(t *testing.T, w *httptest.ResponseRecorder) (Response, P
 	return Response{Code: raw.Code, Message: raw.Message, Reason: raw.Reason}, pd
 }
 
-// newContextWithQuery 创建一个带有 URL query 参数的 gin.Context 用于测试 ParsePagination。
+// newContextWithQuery builds a Gin context with query parameters for pagination tests.
 func newContextWithQuery(query string) (*httptest.ResponseRecorder, *gin.Context) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -237,7 +235,7 @@ func TestSuccess(t *testing.T) {
 
 			require.Equal(t, tt.wantCode, w.Code)
 
-			// 只验证 code 和 message，data 字段类型在 JSON 反序列化时会变成 map/slice
+			// Compare code and message here; decoding any converts data into maps and slices.
 			got := parseResponseBody(t, w)
 			require.Equal(t, 0, got.Code)
 			require.Equal(t, "success", got.Message)

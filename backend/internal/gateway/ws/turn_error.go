@@ -9,7 +9,7 @@ import (
 
 const IngressStagePreviousResponseNotFound = "previous_response_not_found"
 
-// FallbackError 表示可安全回退到 HTTP 的 WS 错误（尚未写下游）。
+// FallbackError marks a WS failure eligible for HTTP fallback before downstream output.
 type FallbackError struct {
 	Reason string
 	Err    error
@@ -21,7 +21,7 @@ type IngressTurnError struct {
 	wroteDownstream bool
 }
 
-// CurrentTurnFailoverError 携带可在替换提供商上重放的当前回合请求。
+// CurrentTurnFailoverError carries the current request for replay on a replacement provider.
 type CurrentTurnFailoverError struct {
 	cause        error
 	retryPayload []byte
@@ -69,7 +69,7 @@ func NewCurrentTurnFailoverError(cause error, retryPayload []byte) error {
 	}
 }
 
-// CurrentTurnRetryPayload 返回替换提供商可安全重放的当前回合请求副本。
+// CurrentTurnRetryPayload returns an owned copy of the current turn's provider-failover payload.
 func CurrentTurnRetryPayload(err error) ([]byte, bool) {
 	var retryErr *CurrentTurnFailoverError
 	if !errors.As(err, &retryErr) || retryErr == nil {

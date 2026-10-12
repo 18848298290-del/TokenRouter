@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// AlphaResult 只携带成功搜索的按次计量与实际端点。
+// AlphaResult holds successful search call counts and the endpoint used.
 type AlphaResult struct {
 	RequestID, Model, UpstreamModel, UpstreamEndpoint string
 	Headers, ResponseHeaders                          map[string][]string
@@ -50,7 +50,7 @@ type AlphaFailure struct {
 	Excluded int
 }
 
-// RunAlphaSearch 保留同提供商恢复、提供商切换与输出窗口的独立预算，不重复发起外层 failover。
+// RunAlphaSearch manages separate same-provider retry and provider-switch budgets; output closes the retry window.
 func RunAlphaSearch(ctx context.Context, body []byte, maxSwitches int, ports AlphaPorts) *AlphaFailure {
 	if maxSwitches <= 0 {
 		maxSwitches = 3

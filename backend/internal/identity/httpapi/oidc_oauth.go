@@ -40,7 +40,7 @@ type OIDCHandler struct {
 
 type CompleteOIDCOAuthRequest struct {
 	InvitationCode   string `json:"invitation_code" binding:"required"`
-	AffCode          string `json:"aff_code,omitempty"` // 邀请返利码，仅注册新用户时绑定邀请关系。
+	AffCode          string `json:"aff_code,omitempty"` // Affiliate code used when creating a new account.
 	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
 	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
 }
@@ -49,7 +49,7 @@ func NewOIDCHandler(p *PendingHandler, b *OAuthBindHandler, client identity.OIDC
 	return &OIDCHandler{p, b, client, load}
 }
 
-// OIDCOAuthStart 启动通用 OIDC OAuth 登录流程。
+// OIDCOAuthStart starts the OIDC login flow.
 // GET /api/v1/auth/oauth/oidc/start?redirect=/dashboard
 func (h *OIDCHandler) OIDCOAuthStart(c *gin.Context) {
 	if !h.RequireActionCaptchaForOAuthLoginStart(c) {
@@ -133,7 +133,7 @@ func (h *OIDCHandler) OIDCOAuthStart(c *gin.Context) {
 	RespondOAuthStart(c, authURL)
 }
 
-// OIDCOAuthCallback 处理 OIDC 回调：校验 id_token、创建/登录用户并重定向到前端。
+// OIDCOAuthCallback validates provider tokens as configured and resolves pending login or registration.
 // GET /api/v1/auth/oauth/oidc/callback?code=...&state=...
 func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 	cfg, cfgErr := h.loadConfig(c.Request.Context())
@@ -396,8 +396,8 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 		}
 	}
 
-	// 快捷路径：当上游返回已验证邮箱、部署不要求额外确认且本地没有同邮箱账号时，
-	// 直接信任上游身份完成注册/登录，避免展示 choice 页。
+	// Try direct signup for a verified provider email with no matching local account.
+	// The fast-path helper checks whether local policy requires additional confirmation.
 	if compatEmailUser == nil &&
 		strings.TrimSpace(compatEmail) != "" &&
 		emailVerified != nil && *emailVerified {
@@ -601,8 +601,8 @@ func OIDCClearCookie(c *gin.Context, name string, secure bool) {
 	})
 }
 
-// TryOIDCVerifiedEmailFastPath 在 OIDC 上游已返回已验证邮箱时尝试跳过 choice/pending 页。
-// 返回 true 表示已经写出重定向响应；返回 false 表示调用方应继续回退到常规 choice 流程。
+// TryOIDCVerifiedEmailFastPath attempts direct login or signup for a provider-verified email.
+// It returns true after writing a redirect; false asks the caller to continue the account-choice flow.
 func (h *OIDCHandler) TryOIDCVerifiedEmailFastPath(
 	c *gin.Context,
 	frontendCallback string,

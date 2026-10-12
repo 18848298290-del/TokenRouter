@@ -2,7 +2,7 @@ package app
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 
-// runtimeReady 让 Wire 在返回应用前登记所有运行资源。
+// runtimeReady makes Wire register runtime resources before returning the application.
 type runtimeReady struct{}
 
 func provideRuntime(

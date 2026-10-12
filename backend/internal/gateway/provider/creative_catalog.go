@@ -18,7 +18,7 @@ func (a creativeCatalogProvider) AttributeTarget(model string) modelcatalog.Targ
 	return a.policy.Record.ModelAttributeTarget(model, "")
 }
 
-// CreativeCatalogProvider 按执行时的透传、平台归一化和一跳映射规则解析目录模型。
+// CreativeCatalogProvider resolves catalog models using execution passthrough, platform normalization, and one-hop mapping rules.
 func CreativeCatalogProvider(value *provider.Record) creative.CatalogProvider {
 	if value == nil {
 		return nil

@@ -15,11 +15,11 @@ var legacyMetadataUserIDRegex = regexp.MustCompile(`^user_([a-fA-F0-9]{64})_acco
 type ParsedMetadataUserID struct {
 	DeviceID    string // 64-char hex (or arbitrary client id)
 	AccountUUID string // may be empty
-	SessionID   string // UUID
+	SessionID   string // session identifier; JSON input is not UUID-validated
 	IsNewFormat bool   // true if the original was JSON format
 }
 
-// MetadataUserID is the JSON structure for the new metadata.user_id format.
+// MetadataUserID is the JSON form of metadata.user_id.
 type MetadataUserID struct {
 	DeviceID    string `json:"device_id"`
 	AccountUUID string `json:"account_uuid"`
@@ -27,7 +27,7 @@ type MetadataUserID struct {
 }
 
 // ParseMetadataUserID parses a metadata.user_id string in either format.
-// Returns nil if the input cannot be parsed.
+// It returns nil on malformed input or missing device/session IDs.
 func ParseMetadataUserID(raw string) *ParsedMetadataUserID {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

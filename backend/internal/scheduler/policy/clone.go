@@ -1,6 +1,6 @@
 package policy
 
-// CloneGroupAdvancedSchedulerOverrides 返回覆盖对象及其指针字段的独立副本。
+// CloneGroupAdvancedSchedulerOverrides returns a copy with independently allocated pointer fields.
 func CloneGroupAdvancedSchedulerOverrides(overrides GroupAdvancedSchedulerOverrides) GroupAdvancedSchedulerOverrides {
 	cloneBool := func(value *bool) *bool {
 		if value == nil {

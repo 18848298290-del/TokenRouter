@@ -41,7 +41,7 @@ type grokFreeQuotaUsageRepoStub struct {
 	start   time.Time
 }
 
-// mockProviderRepoForPlatform 单平台测试用的 mock。
+// mockProviderRepoForPlatform supplies records for platform selection tests.
 type mockProviderRepoForPlatform struct {
 	providers        []gatewayprovider.ExecutionProvider
 	providersByID    map[int64]*gatewayprovider.ExecutionProvider
@@ -49,7 +49,7 @@ type mockProviderRepoForPlatform struct {
 	getByIDCalls     int
 }
 
-// mockGatewayCacheForPlatform 单平台测试用的 cache mock。
+// mockGatewayCacheForPlatform stores platform test session bindings and deletions.
 type mockGatewayCacheForPlatform struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
@@ -71,7 +71,7 @@ type mockConcurrencyCache struct {
 	skipDefaultLoad      bool
 }
 
-// mockGroupRepoForGemini Gemini 测试用的 group repo mock。
+// mockGroupRepoForGemini supplies groups and counts full and lightweight reads.
 type mockGroupRepoForGemini struct {
 	groups           map[int64]*routing.Group
 	getByIDCalls     int
@@ -96,10 +96,7 @@ type schedulerTestOpenAIProviderRepo struct {
 	gatewayprovider.ExecutionProviderStore
 
 	providers []gatewayprovider.
-
-		// withAdvancedSchedulerTestGroup 为高级调度测试明确注入最终目标分组。
-		// 分组的调度类型决定是否启用高级调度。
-		ExecutionProvider
+			ExecutionProvider
 }
 
 type schedulerGroupAwareOpenAIProviderRepo struct {
@@ -132,7 +129,7 @@ type thresholdSelectionProviderRepoStub struct {
 	providers []gatewayprovider.ExecutionProvider
 }
 
-// 以下替身仅实现选择合同实际使用的读取；意外访问其他能力直接暴露测试缺口。
+// selectionProviderFixture implements the reads used by selection tests; unexpected embedded-interface calls fail.
 type selectionProviderFixture struct {
 	Providers
 	providers []gatewayprovider.ExecutionProvider
@@ -152,20 +149,20 @@ type selectionConcurrencyFixture struct {
 	skipDefaultLoad bool
 }
 
-// hydrationProviderSource 将回源读取错误交给提供商补全流程。
+// hydrationProviderSource passes source read errors to provider hydration.
 type hydrationProviderSource struct {
 	schedulercore.SnapshotProviderSource
 	source Providers
 }
 
-// snapshotHydrationCache 为 SnapshotService 提供轻量和完整提供商快照。
+// snapshotHydrationCache supplies lightweight and full records to SnapshotService.
 type snapshotHydrationCache struct {
 	schedulercore.SnapshotCache
 	snapshot  []*gatewayprovider.ExecutionProvider
 	providers map[int64]*gatewayprovider.ExecutionProvider
 }
 
-// stickyCacheFixture 实现测试使用的粘性缓存方法和未命中错误。
+// stickyCacheFixture implements sticky lookups, writes, and cache misses for tests.
 type stickyCacheFixture struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
@@ -200,7 +197,7 @@ func (m *mockProviderRepoForPlatform) availabilityRecords(_ context.Context, gro
 	return result, nil
 }
 
-// isProviderRequestCompatible 将兼容性判断结果转换为测试断言使用的布尔值。
+// isProviderRequestCompatible reduces the compatibility result to a boolean for assertions.
 func (s *compatiblePicker) isProviderRequestCompatible(ctx context.Context, provider *gatewayprovider.ExecutionProvider, req schedulercore.PlatformSelectionInput) bool {
 	compatible, _ := s.isProviderRequestCompatibleReason(ctx, provider, req)
 	return compatible
@@ -271,7 +268,7 @@ func healthyGrokOAuthGatewayTestProvider(id int64, token string) *gatewayprovide
 	}
 }
 
-// freeQuotaFactoryForTest 保留各池独立缓存，测试结束等待已接受的刷新。
+// freeQuotaFactoryForTest creates independent gate caches and waits for accepted refresh tasks during cleanup.
 func freeQuotaFactoryForTest(t *testing.T, cfg *config.Config, source usage.UsageLogRepository) func() *providercore.FreeQuotaGate {
 	var tasks sync.WaitGroup
 	t.Cleanup(tasks.Wait)
@@ -282,7 +279,7 @@ func freeQuotaFactoryForTest(t *testing.T, cfg *config.Config, source usage.Usag
 	return func() *providercore.FreeQuotaGate { return newGrokFreeQuotaTestGate(cfg, source, background) }
 }
 
-// testConfig 返回一个用于测试的默认配置。
+// testConfig returns a zero-valued process configuration for tests.
 func testConfig() *config.Config {
 	return &config.Config{}
 }
@@ -537,7 +534,7 @@ func (m *mockGroupRepoForGemini) GetByIDLite(ctx context.Context, id int64) (*ro
 	return nil, errors.New("group not found")
 }
 
-// newGenericSelectionForTest 构造通用选择器，使用各测试传入的配置值。
+// newGenericSelectionForTest creates a generic selector with fixture dependencies and configuration.
 func newGenericSelectionForTest(deps GenericDependencies, cfg *config.Config) *Generic {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
@@ -568,7 +565,7 @@ func selectionOptionsForTest(cfg *config.Config) Options {
 	return options
 }
 
-// newGeminiSelectionForTest 构造测试使用的 Gemini 选择器。
+// newGeminiSelectionForTest creates a Gemini selector with fixture dependencies.
 func newGeminiSelectionForTest(deps GeminiDependencies, cfg *config.Config) *Gemini {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
@@ -579,12 +576,12 @@ func newGeminiSelectionForTest(deps GeminiDependencies, cfg *config.Config) *Gem
 	return NewGemini(deps, selectionOptionsForTest(cfg))
 }
 
-// newCompatibleSelectionForTest 为兼容选择器注入测试参数。
+// newCompatibleSelectionForTest supplies fixture parameters for compatible selection.
 func newCompatibleSelectionForTest(deps CompatibleDependencies, cfg *config.Config) *Compatible {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
 	}
-	// 执行夹具惰性提供同一响应归属存储，并通过测试装配注入。
+	// Create one response-ownership store for this selector when none is supplied.
 	if deps.Responses == nil {
 		cache, _ := deps.Cache.(session.GatewayCache)
 		deps.Responses = session.NewOpenAIWSStateStore(cache, gatewayprovider.LogOpenAIWSModeInfo)
@@ -595,7 +592,7 @@ func newCompatibleSelectionForTest(deps CompatibleDependencies, cfg *config.Conf
 	return NewCompatible(deps, selectionOptionsForTest(cfg))
 }
 
-// selectionFixtureGroupID 返回调度算法测试使用的分组 ID。
+// selectionFixtureGroupID returns the request's group ID or the selection fixture's default.
 func selectionFixtureGroupID(ctx context.Context) *int64 {
 	if group, ok := requeststate.GroupFromContext(ctx); ok && group != nil {
 		return &group.ID
@@ -610,7 +607,7 @@ func selectionFixtureGroupID(ctx context.Context) *int64 {
 	return &id
 }
 
-// prepareSelectionFixtureProvider 为调度算法测试配置模型范围。
+// prepareSelectionFixtureProvider fills provider defaults, group membership, and model scope for selection tests.
 func prepareSelectionFixtureProvider(ctx context.Context, value *gatewayprovider.ExecutionProvider, groupID *int64) {
 	if value == nil {
 		return
@@ -717,7 +714,7 @@ func (r schedulerTestOpenAIProviderRepo) ListSchedulableUngroupedByPlatform(ctx 
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
-// ListModelAvailabilityCandidates 模拟只按持久配置筛选模型诊断候选提供商。
+// ListModelAvailabilityCandidates filters diagnosis candidates by stored configuration.
 func (r schedulerTestOpenAIProviderRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]struct{}, len(platforms))
 	for _, platform := range platforms {
@@ -1001,7 +998,7 @@ func (r *thresholdSelectionProviderRepoStub) ListSchedulableUngroupedByPlatform(
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
-// responseSelectionOptions 配置 WSv2 测试开关，并将等待参数设为零。
+// responseSelectionOptions sets session and response TTLs while leaving scheduling waits at zero.
 func responseSelectionOptions() Options {
 	return Options{
 		StickyTTL:   time.Hour,

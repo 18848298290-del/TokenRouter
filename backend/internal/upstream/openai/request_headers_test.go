@@ -37,9 +37,9 @@ func TestEnsureOpenAIRemoteCompactionV2BetaFeature(t *testing.T) {
 	})
 }
 
-// TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix 验证 Responses 请求路径拒绝不安全的后缀。
+// TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix checks unsafe suffix rejection.
 func TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix(t *testing.T) {
-	// 拼接函数校验路径后缀。
+	// Unsafe suffixes leave the base URL unchanged.
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", AppendResponsesPathSuffix("https://chatgpt.com/backend-api/codex/responses", "/../../x"))
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", AppendResponsesPathSuffix("https://chatgpt.com/backend-api/codex/responses", "/?a=b"))
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses"+"/compact", AppendResponsesPathSuffix("https://chatgpt.com/backend-api/codex/responses", "/compact"))

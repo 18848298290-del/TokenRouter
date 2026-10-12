@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ImagesTarget 是已准备的单次技术目标，不能序列化请求中的凭据。
+// ImagesOptions holds a prepared image attempt; Request contains credentials and is excluded from JSON.
 type ImagesOptions struct {
 	ProviderID                          int64
 	OAuth                               bool
@@ -29,7 +29,7 @@ type ImagesOptions struct {
 
 type Images struct{ Options ImagesOptions }
 
-// String 防止技术参数中的令牌或请求被默认日志展开。
+// String formats the provider ID while keeping request credentials out of formatted output.
 func (o ImagesOptions) String() string   { return fmt.Sprintf("media Images provider=%d", o.ProviderID) }
 func (o ImagesOptions) GoString() string { return o.String() }
 

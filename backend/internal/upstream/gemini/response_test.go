@@ -55,10 +55,9 @@ func TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages(t *test
 	require.Equal(t, map[string]any{"type": "text", "text": "after"}, contentWithoutInlineData[2])
 }
 
-// TestUnwrapGeminiResponse 测试 unwrapGeminiResponse 的各种输入场景
-// 关键区别：只有 response 为 JSON 对象/数组时才解包。
+// TestUnwrapGeminiResponse checks that scalar response fields leave the body intact.
 func TestUnwrapGeminiResponse(t *testing.T) {
-	// 构造 >50KB 的大型 JSON 对象
+	// Exercise a response object larger than 50 KiB.
 	largePadding := strings.Repeat("x", 50*1024)
 	largeInput := []byte(fmt.Sprintf(`{"response":{"id":"big","pad":"%s"}}`, largePadding))
 	largeExpected := fmt.Sprintf(`{"id":"big","pad":"%s"}`, largePadding)
@@ -207,8 +206,8 @@ func TestExtractGeminiUsage(t *testing.T) {
 		},
 
 		{
-			// gjson 对 null 返回 Exists()=true，因此函数不会返回 nil，
-			// 而是返回全零的 ClaudeUsage。
+			// gjson treats an explicit null as an existing field, so usage is a zero-valued
+			// TokenUsage rather than nil.
 
 			name: "null usageMetadata — gjson Exists 为 true",
 

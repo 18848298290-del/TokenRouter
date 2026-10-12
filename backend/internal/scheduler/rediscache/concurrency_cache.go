@@ -12,54 +12,54 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// 并发槽位使用 Redis 有序集合，每个提供商或用户对应一个键，成员为 requestID，分数为时间戳。
-// ZCARD 以 O(1) 复杂度计数，ZREMRANGEBYSCORE 清理过期槽位。
-// 计数在单次 Redis 调用中完成，逐请求建键后使用 SCAN 会增加网络往返和遍历开销。
+// Concurrency slots use one Redis sorted set per provider or user, with request IDs as members and timestamps as scores.
+// ZCARD counts members in O(1); ZREMRANGEBYSCORE removes expired slots.
+// Counting a set needs one Redis call and avoids scanning separate per-request keys.
 const (
-	// 并发槽位键前缀（有序集合）
-	// 格式: concurrency:provider:{providerID}。
+	// Sorted-set key prefixes.
+	// Format: concurrency:provider:{providerID}.
 	providerSlotKeyPrefix = "concurrency:provider:"
-	// 格式: concurrency:user:{userID}。
+	// Format: concurrency:user:{userID}.
 	userSlotKeyPrefix = "concurrency:user:"
-	// 格式: concurrency:api_key:{apiKeyID}。
+	// Format: concurrency:api_key:{apiKeyID}.
 	apiKeySlotKeyPrefix       = "concurrency:api_key:"
 	liveProviderSlotKeyPrefix = "concurrency:live:provider:"
 	liveUserSlotKeyPrefix     = "concurrency:live:user:"
 	liveAPIKeySlotKeyPrefix   = "concurrency:live:api_key:"
-	// API Key 维度的客户端 WebSocket 入站租约使用较短 TTL，空闲连接不占用轮次槽位。
+	// Short-lived API key ingress leases count client WebSocket connections separately from request turns.
 	openAIWSIngressLeaseKeyPrefix  = "concurrency:openai_ws_ingress:api_key:"
 	openAIWSIngressLeaseTTLSeconds = 60
 	liveLeaseTTLSeconds            = 60
-	// 等待队列计数器格式: concurrency:wait:{userID}。
+	// User wait counters use concurrency:wait:{userID}.
 	waitQueueKeyPrefix = "concurrency:wait:"
-	// 提供商级等待队列计数器格式: wait:provider:{providerID}。
+	// Provider wait counters use wait:provider:{providerID}.
 	providerWaitKeyPrefix = "wait:provider:"
 
-	// 默认槽位过期时间（分钟），可通过配置覆盖。
+	// Default slot lifetime in minutes; configuration may override it.
 	defaultSlotTTLMinutes = 15
 
-	// 活跃索引用来替代后台任务全量 SCAN 槽位键。
-	// member 是提供商/用户 ID，score 是“预计仍需关注到”的 Redis Unix 秒时间戳。
-	providerActiveIndexKey = "concurrency:provider:active_index" // ZSET：member 为提供商 ID，score 为预计过期的 Unix 秒
-	userActiveIndexKey     = "concurrency:user:active_index"     // ZSET：member 为用户 ID，score 为预计过期的 Unix 秒
+	// Active indexes let background cleanup locate candidates without scanning all slot keys.
+	// Members are provider or user IDs; scores are expected expiry times in Redis Unix seconds.
+	providerActiveIndexKey = "concurrency:provider:active_index" // ZSET of provider IDs scored by expected expiry in Unix seconds.
+	userActiveIndexKey     = "concurrency:user:active_index"     // ZSET of user IDs scored by expected expiry in Unix seconds.
 
-	// 后台清理按批处理索引候选，限制每次 Redis 操作的处理量。
+	// Batch sizes bound the work submitted in each cleanup operation.
 	activeIndexCleanupBatchSize  = 1000
 	activeIndexPipelineChunkSize = 500
 
-	// 一次性迁移 marker：活跃索引机制上线前遗留的等待计数键无法被索引发现，
-	// 且有流量时 TTL 会被不断刷新，必须清扫一次。marker 存在即代表已完成。
+	// Legacy wait keys are absent from the active index and can keep refreshing their TTL under traffic.
+	// This marker records completion of their startup sweep.
 	legacyWaitSweepMarkerKey = "concurrency:startup:legacy_wait_sweep:v1"
 )
 
 var (
-	// acquireScript 使用有序集合计数并在未达上限时添加槽位
-	// Redis TIME 提供各实例共用的服务器时间。问题
-	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键
+	// acquireScript adds a slot when ordinary and Live slot counts are below the limit.
+	// Redis TIME supplies the shared clock for all instances.
+	// KEYS[1] = ordinary slot key; KEYS[2] = corresponding Live slot key.
 	// ARGV[1] = maxConcurrency
-	// ARGV[2] = TTL（秒）
+	// ARGV[2] = TTL in seconds.
 	// ARGV[3] = requestID
-	// 返回 {是否成功, Redis 当前秒}，Go 侧复用同一时间源写活跃索引，省去额外 TIME 往返。
+	// Returns {acquired, Redis Unix seconds} so the active index uses the same time without another TIME call.
 	acquireScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
 		-- 5.0 及以上默认按效果复制；保留调用不改变行为。
@@ -98,10 +98,10 @@ var (
 		return {0, now}
 	`)
 
-	// getCountScript 统计有序集合中的槽位数量并清理过期条目
-	// 使用 Redis TIME 命令获取服务器时间
-	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键
-	// ARGV[1] = TTL（秒）。
+	// getCountScript removes expired members and counts ordinary and Live slots.
+	// Redis TIME supplies the expiry cutoff.
+	// KEYS[1] = ordinary slot key; KEYS[2] = corresponding Live slot key.
+	// ARGV[1] = TTL in seconds.
 	getCountScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
 		-- 5.0 及以上默认按效果复制；保留调用不改变行为。
@@ -172,9 +172,9 @@ var (
 		return 1
 	`)
 
-	// trackSlotScript 登记用于统计的槽位。
-	// KEYS[1] = 有序集合键
-	// ARGV[1] = TTL（秒）
+	// trackSlotScript records a slot for concurrency statistics.
+	// KEYS[1] = sorted-set key.
+	// ARGV[1] = TTL in seconds.
 	// ARGV[2] = requestID.
 	trackSlotScript = redis.NewScript(`
 		-- 兼容 Redis 3.2-4.x：启用按效果复制，确保 TIME 调用正确同步。
@@ -194,7 +194,7 @@ var (
 		return 1
 	`)
 
-	// acquireOpenAIWSIngressLeaseScript 使用 Redis TIME 原子清理崩溃成员，并获取或刷新租约。
+	// acquireOpenAIWSIngressLeaseScript removes expired members and acquires or refreshes a lease in one Redis operation.
 	acquireOpenAIWSIngressLeaseScript = redis.NewScript(`
 		redis.replicate_commands()
 		local key = KEYS[1]
@@ -217,8 +217,8 @@ var (
 		return 0
 	`)
 
-	// refreshOpenAIWSIngressLeaseScript 在租约成员存在时续期。成员缺失时，进程需要终止本地连接，
-	// 该连接已失去分布式并发名额。
+	// refreshOpenAIWSIngressLeaseScript renews an existing member. A missing member means the connection
+	// has lost its distributed slot and the caller needs to terminate it.
 	refreshOpenAIWSIngressLeaseScript = redis.NewScript(`
 		redis.replicate_commands()
 		local key = KEYS[1]
@@ -235,11 +235,11 @@ var (
 		return 1
 	`)
 
-	// incrementWaitScript - refreshes TTL on each increment to keep queue depth accurate
+	// incrementWaitScript increments below maxWait and refreshes the counter TTL on admission.
 	// KEYS[1] = wait queue key
 	// ARGV[1] = maxWait
 	// ARGV[2] = TTL in seconds
-	// 返回 {是否成功, Redis 当前秒}，供 Go 侧免额外 TIME 往返写活跃索引。
+	// Returns {admitted, Redis Unix seconds} for updating the active index without another TIME call.
 	incrementWaitScript = redis.NewScript(`
 		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
 		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
@@ -264,8 +264,8 @@ var (
 		return {1, now}
 	`)
 
-	// incrementProviderWaitScript - provider-level wait queue count (refresh TTL on each increment)
-	// 返回值同 incrementWaitScript：{是否成功, Redis 当前秒}。
+	// incrementProviderWaitScript increments the provider wait count and refreshes its TTL on admission.
+	// Returns {admitted, Redis Unix seconds}, like incrementWaitScript.
 	incrementProviderWaitScript = redis.NewScript(`
 		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
 		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
@@ -290,7 +290,7 @@ var (
 		return {1, now}
 	`)
 
-	// decrementWaitScript - same as before.
+	// decrementWaitScript decrements an existing positive count without creating a negative counter.
 	decrementWaitScript = redis.NewScript(`
 			local current = redis.call('GET', KEYS[1])
 			if current ~= false and tonumber(current) > 0 then
@@ -299,9 +299,9 @@ var (
 			return 1
 		`)
 
-	// cleanupExpiredSlotsScript 清理单个提供商/用户有序集合中过期槽位
-	// KEYS[1] = 有序集合键
-	// ARGV[1] = TTL（秒）。
+	// cleanupExpiredSlotsScript removes expired members from one provider or user slot set.
+	// KEYS[1] = sorted-set key.
+	// ARGV[1] = TTL in seconds.
 	cleanupExpiredSlotsScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
 		-- 5.0 及以上默认按效果复制；保留调用不改变行为。
@@ -320,9 +320,9 @@ var (
 		return 1
 	`)
 
-	// startupCleanupSlotScript 清理单个槽位 key 中非当前进程前缀的成员，单键操作兼容 Redis Cluster。
-	// KEYS[1] 是有序集合键，ARGV[1] 是当前进程前缀，ARGV[2] 是槽位 TTL。
-	// 返回 {清除数量, 剩余成员数}，Go 侧据剩余数决定索引 member 去留，无需再回读槽位。
+	// startupCleanupSlotScript removes members outside the current process prefix from one slot key.
+	// KEYS[1] = sorted-set key; ARGV[1] = current process prefix; ARGV[2] = slot TTL in seconds.
+	// Returns {removed, remaining} so Go can update the index without rereading the slot set.
 	startupCleanupSlotScript = redis.NewScript(`
 		local key = KEYS[1]
 		local activePrefix = ARGV[1]
@@ -349,12 +349,12 @@ var (
 
 type concurrencyCache struct {
 	rdb                 *redis.Client
-	slotTTLSeconds      int // 槽位过期时间（秒）
-	waitQueueTTLSeconds int // 等待队列过期时间（秒）
+	slotTTLSeconds      int // Slot lifetime in seconds.
+	waitQueueTTLSeconds int // Wait counter lifetime in seconds.
 }
 
-// slotIndexSpec 描述一个活跃索引及其对应的槽位/等待键构造方式。
-// slotKey 和 waitKey 的函数签名相同，通过字段名区分用途。
+// slotIndexSpec pairs an active index with its slot and wait-counter key builders.
+// The two builders share a signature; their field names identify the key type.
 type slotIndexSpec struct {
 	indexKey string
 	slotKey  func(int64) string
@@ -368,9 +368,9 @@ type activeIndexLoad struct {
 	waitCount int
 }
 
-// NewConcurrencyCache 创建并发控制缓存
-// slotTTLMinutes: 槽位过期时间（分钟），0 或负数使用默认值 15 分钟
-// waitQueueTTLSeconds: 等待队列过期时间（秒），0 或负数使用 slot TTL。
+// NewConcurrencyCache creates Redis concurrency storage.
+// Nonpositive slotTTLMinutes uses 15 minutes.
+// Nonpositive waitQueueTTLSeconds uses the slot lifetime in seconds.
 func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeconds int) scheduler.ConcurrencyCache {
 	if slotTTLMinutes <= 0 {
 		slotTTLMinutes = defaultSlotTTLMinutes
@@ -385,7 +385,7 @@ func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeco
 	}
 }
 
-// providerSlotKey 生成提供商并发槽位的 Redis 键。
+// providerSlotKey returns the Redis key for a provider's ordinary slots.
 func providerSlotKey(providerID int64) string {
 	return fmt.Sprintf("%s%d", providerSlotKeyPrefix, providerID)
 }
@@ -422,7 +422,7 @@ func providerWaitKey(providerID int64) string {
 	return fmt.Sprintf("%s%d", providerWaitKeyPrefix, providerID)
 }
 
-// redisUnixSeconds 返回 Redis 服务器时间，各实例据此计算索引到期时间。
+// redisUnixSeconds returns the Redis clock used to calculate index expiry across instances.
 func (c *concurrencyCache) redisUnixSeconds(ctx context.Context) (int64, error) {
 	now, err := c.rdb.Time(ctx).Result()
 	if err != nil {
@@ -431,9 +431,9 @@ func (c *concurrencyCache) redisUnixSeconds(ctx context.Context) (int64, error) 
 	return now.Unix(), nil
 }
 
-// touchActiveIndexAt 是写路径上的轻量标记：主操作已成功时，尽力把 ID 放入活跃索引，
-// score 为给定的绝对过期时间（Redis Unix 秒）。索引失败不影响并发槽位/等待队列本身，
-// 后续释放或清理会再次校正，因此只记日志不上抛。
+// touchActiveIndexAt adds an ID to the active index after a successful primary write.
+// The score is an absolute expiry in Redis Unix seconds. Index failures are logged;
+// subsequent release and cleanup operations can reconcile the index.
 func (c *concurrencyCache) touchActiveIndexAt(ctx context.Context, indexKey string, id int64, expireAt int64) {
 	if c == nil || c.rdb == nil || id <= 0 || expireAt <= 0 {
 		return
@@ -454,9 +454,9 @@ func (c *concurrencyCache) refreshUserActiveIndex(ctx context.Context, userID in
 	c.refreshActiveIndex(ctx, userActiveIndexKey, userID, userSlotKey(userID), waitQueueKey(userID))
 }
 
-// refreshActiveIndex 根据 Redis 中的槽位和等待计数重建索引状态。
-// 释放槽位、等待计数减少、清理过期成员后都会调用它，防止索引残留。
-// 索引维护失败时记录日志，调用方继续执行。
+// refreshActiveIndex reconciles an index entry with Redis slot and wait counts.
+// Slot release, wait-count reduction, and expired-slot cleanup call it to remove idle entries.
+// Index maintenance failures are logged so the primary operation can continue.
 func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey string, id int64, slotKey, waitKey string) {
 	if c == nil || c.rdb == nil || id <= 0 {
 		return
@@ -487,8 +487,8 @@ func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey stri
 	c.touchActiveIndexAt(ctx, indexKey, id, now+int64(ttlSeconds))
 }
 
-// activeIndexTTL 取槽位 TTL 与等待队列 TTL 中仍然需要关注的较大值。
-// 只要并发槽位或等待计数还有负载，就保留索引；两者都为 0 时调用方会删除索引。
+// activeIndexTTL returns the longer lifetime among slot and wait counters that still have load.
+// The caller removes the index entry when both counts are zero.
 func (c *concurrencyCache) activeIndexTTL(slotCount int, waitCount int) int {
 	ttlSeconds := 0
 	if slotCount > 0 {
@@ -500,7 +500,7 @@ func (c *concurrencyCache) activeIndexTTL(slotCount int, waitCount int) int {
 	return ttlSeconds
 }
 
-// readActiveLoadForKey 读取单个 ID 的当前负载，并顺手清理该槽位集合中的过期成员。
+// readActiveLoadForKey removes expired slot members and reads the ID's remaining slot and wait counts.
 func (c *concurrencyCache) readActiveLoadForKey(ctx context.Context, id int64, slotKey, waitKey string, now int64) (activeIndexLoad, error) {
 	cutoffTime := now - int64(c.slotTTLSeconds)
 	pipe := c.rdb.Pipeline()
@@ -523,8 +523,8 @@ func (c *concurrencyCache) readActiveLoadForKey(ctx context.Context, id int64, s
 	}, nil
 }
 
-// readIndexLoads 批量读取提供商或用户索引候选的负载。
-// Pipeline 按块发送，在合并 Redis 往返的同时限制每次发送的命令数。
+// readIndexLoads reads loads for provider or user index candidates in batches.
+// Chunked pipelines reduce round trips while bounding commands per batch.
 func (c *concurrencyCache) readIndexLoads(ctx context.Context, spec slotIndexSpec, members []string, now int64) ([]activeIndexLoad, []string, error) {
 	loads := make([]activeIndexLoad, 0, len(members))
 	staleMembers := make([]string, 0)
@@ -580,7 +580,7 @@ func (c *concurrencyCache) readIndexLoads(ctx context.Context, spec slotIndexSpe
 	return loads, staleMembers, nil
 }
 
-// removeActiveIndexMembers 清理无效 member；这是辅助索引的维护动作，调用方无需因为失败中断主流程。
+// removeActiveIndexMembers removes stale index members and logs maintenance failures.
 func (c *concurrencyCache) removeActiveIndexMembers(ctx context.Context, indexKey string, members []string) {
 	if len(members) == 0 {
 		return
@@ -594,7 +594,7 @@ func (c *concurrencyCache) removeActiveIndexMembers(ctx context.Context, indexKe
 	}
 }
 
-// runScriptInt64Pair 执行返回两元素整数数组的 Lua 脚本并解析（如 {result, now}、{removed, remaining}）。
+// runScriptInt64Pair runs a Lua script returning two integers, such as {result, now} or {removed, remaining}.
 func runScriptInt64Pair(ctx context.Context, rdb *redis.Client, script *redis.Script, keys []string, args ...any) (int64, int64, error) {
 	raw, err := script.Run(ctx, rdb, keys, args...).Result()
 	if err != nil {
@@ -615,13 +615,13 @@ func runScriptInt64Pair(ctx context.Context, rdb *redis.Client, script *redis.Sc
 
 func (c *concurrencyCache) AcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := providerSlotKey(providerID)
-	// Lua 脚本从 Redis TIME 取得时间戳，各实例共用该时间源。
+	// Use the script's Redis time for the index expiry.
 	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveProviderSlotKey(providerID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
-		// 成功占槽后标记活跃提供商，后台清理即可从索引定位候选提供商。
+		// Index successful acquisitions so background cleanup can discover the provider.
 		c.touchActiveIndexAt(ctx, providerActiveIndexKey, providerID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
@@ -632,14 +632,14 @@ func (c *concurrencyCache) ReleaseProviderSlot(ctx context.Context, providerID i
 	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
 		return err
 	}
-	// 释放后根据槽位和等待计数刷新索引，两项都为空时移除 member。
+	// Remove the index entry when both remaining slot and wait counts are empty.
 	c.refreshProviderActiveIndex(ctx, providerID)
 	return nil
 }
 
 func (c *concurrencyCache) GetProviderConcurrency(ctx context.Context, providerID int64) (int, error) {
 	key := providerSlotKey(providerID)
-	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
+	// The script uses Redis TIME for expiry checks.
 	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveProviderSlotKey(providerID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
@@ -692,13 +692,13 @@ func (c *concurrencyCache) GetProviderConcurrencyBatch(ctx context.Context, prov
 
 func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := userSlotKey(userID)
-	// Lua 脚本从 Redis TIME 取得时间戳，各实例共用该时间源。
+	// Use the script's Redis time for the index expiry.
 	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveUserSlotKey(userID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
-		// 成功占槽后将用户加入活跃索引，启动清理从该索引读取候选。
+		// Index successful acquisitions so startup cleanup can discover the user.
 		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
@@ -709,14 +709,14 @@ func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, re
 	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
 		return err
 	}
-	// 释放后按 Redis 中剩余负载修正索引状态。
+	// Reconcile the index with the remaining Redis load.
 	c.refreshUserActiveIndex(ctx, userID)
 	return nil
 }
 
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
 	key := userSlotKey(userID)
-	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
+	// The script uses Redis TIME for expiry checks.
 	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveUserSlotKey(userID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
@@ -724,14 +724,14 @@ func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64)
 	return result, nil
 }
 
-// TrackAPIKeySlot 记录 API Key 的统计槽位。
+// TrackAPIKeySlot records a slot for API key concurrency statistics.
 func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
 	key := apiKeySlotKey(apiKeyID)
 	_, err := trackSlotScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds, requestID).Result()
 	return err
 }
 
-// ReleaseAPIKeySlot 释放 API Key 的统计槽位。
+// ReleaseAPIKeySlot removes an API key statistics slot.
 func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
 	key := apiKeySlotKey(apiKeyID)
 	return c.rdb.ZRem(ctx, key, requestID).Err()
@@ -830,7 +830,7 @@ func (c *concurrencyCache) ReleaseLiveLease(ctx context.Context, providerID, use
 	return err
 }
 
-// GetAPIKeyConcurrencyBatch 批量读取 API Key 的实时槽位数。
+// GetAPIKeyConcurrencyBatch returns current API key slot counts in a batch.
 func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error) {
 	if len(apiKeyIDs) == 0 {
 		return map[int64]int{}, nil
@@ -881,7 +881,7 @@ func (c *concurrencyCache) IncrementWaitCount(ctx context.Context, userID int64,
 		return false, err
 	}
 	if result == 1 {
-		// 等待队列也会让用户保持“活跃”，否则槽位为 0 时后台任务可能漏看等待计数。
+		// Waiters keep an ID active even when no slots remain, so cleanup can discover its wait counter.
 		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.waitQueueTTLSeconds))
 	}
 	return result == 1, nil
@@ -891,7 +891,7 @@ func (c *concurrencyCache) DecrementWaitCount(ctx context.Context, userID int64)
 	key := waitQueueKey(userID)
 	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{key}).Result()
 	if err == nil {
-		// 等待数减少后重新判断是否还需要保留索引。
+		// Recheck whether the remaining load still needs an index entry.
 		c.refreshUserActiveIndex(ctx, userID)
 	}
 	return err
@@ -906,7 +906,7 @@ func (c *concurrencyCache) IncrementProviderWaitCount(ctx context.Context, provi
 		return false, err
 	}
 	if result == 1 {
-		// 提供商级等待队列同样写入提供商活跃索引，供负载查询和清理任务使用。
+		// Index provider waiters for load queries and cleanup.
 		c.touchActiveIndexAt(ctx, providerActiveIndexKey, providerID, now+int64(c.waitQueueTTLSeconds))
 	}
 	return result == 1, nil
@@ -916,7 +916,7 @@ func (c *concurrencyCache) DecrementProviderWaitCount(ctx context.Context, provi
 	key := providerWaitKey(providerID)
 	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{key}).Result()
 	if err == nil {
-		// 等待计数归零后删除索引项，后台任务据此跳过已空闲的提供商。
+		// Remove the index entry once both wait and slot counts are empty.
 		c.refreshProviderActiveIndex(ctx, providerID)
 	}
 	return err
@@ -939,8 +939,8 @@ func (c *concurrencyCache) GetProvidersLoadBatch(ctx context.Context, providers 
 		return map[int64]*scheduler.ProviderLoadInfo{}, nil
 	}
 
-	// 使用 Pipeline 替代 Lua 脚本，兼容 Redis Cluster（Lua 内动态拼 key 会 CROSSSLOT）。
-	// 每个提供商执行 3 个命令：ZREMRANGEBYSCORE（清理过期）、ZCARD（并发数）、GET（等待数）。
+	// Pipeline individual key operations to avoid cross-slot Lua access when reading multiple providers.
+	// Read ordinary and Live slot counts plus wait counts after pruning expired slot members.
 	now, err := c.rdb.Time(ctx).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redis TIME: %w", err)
@@ -1004,7 +1004,7 @@ func (c *concurrencyCache) GetUsersLoadBatch(ctx context.Context, users []schedu
 		return map[int64]*scheduler.UserLoadInfo{}, nil
 	}
 
-	// 使用 Pipeline 替代 Lua 脚本，兼容 Redis Cluster。
+	// Pipeline individual key operations when reading multiple users.
 	now, err := c.rdb.Time(ctx).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redis TIME: %w", err)
@@ -1067,13 +1067,13 @@ func (c *concurrencyCache) CleanupExpiredProviderSlots(ctx context.Context, prov
 	key := providerSlotKey(providerID)
 	_, err := cleanupExpiredSlotsScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds).Result()
 	if err == nil {
-		// 单提供商清理后同步索引，保持后台批量清理的候选集准确。
+		// Reconcile the active index after cleaning one provider's slots.
 		c.refreshProviderActiveIndex(ctx, providerID)
 	}
 	return err
 }
 
-// CleanupExpiredProviderSlotKeys 处理提供商和用户两个活跃索引中已到期的候选。
+// CleanupExpiredProviderSlotKeys reconciles expired candidates in both provider and user active indexes.
 func (c *concurrencyCache) CleanupExpiredProviderSlotKeys(ctx context.Context) error {
 	if err := c.reconcileExpiredIndexCandidates(ctx, providerSlotIndex); err != nil {
 		return err
@@ -1081,8 +1081,8 @@ func (c *concurrencyCache) CleanupExpiredProviderSlotKeys(ctx context.Context) e
 	return c.reconcileExpiredIndexCandidates(ctx, userSlotIndex)
 }
 
-// reconcileExpiredIndexCandidates 处理单个活跃索引中 score 已到期的候选：
-// 负载为空时移除 member，仍有负载时按当前计数批量刷新 score。
+// reconcileExpiredIndexCandidates processes index members whose scores have expired.
+// It removes idle members and refreshes scores for members with remaining load.
 func (c *concurrencyCache) reconcileExpiredIndexCandidates(ctx context.Context, spec slotIndexSpec) error {
 	now, err := c.redisUnixSeconds(ctx)
 	if err != nil {
@@ -1104,7 +1104,7 @@ func (c *concurrencyCache) reconcileExpiredIndexCandidates(ctx context.Context, 
 	refreshed := make([]redis.Z, 0, len(loads))
 	for _, load := range loads {
 		if load.slotCount == 0 && load.waitCount <= 0 {
-			// 槽位和等待计数均为空，可删除该索引成员。
+			// No slots or waiters remain, so this index entry can be removed.
 			staleMembers = append(staleMembers, load.member)
 			continue
 		}
@@ -1122,11 +1122,11 @@ func (c *concurrencyCache) reconcileExpiredIndexCandidates(ctx context.Context, 
 	return nil
 }
 
-// CleanupStaleProcessSlots 启动时清理非当前进程前缀的槽位。
-// 清理从活跃索引取得候选，包含 score 已过期的成员和崩溃进程留下的槽位。
-// 索引上线前遗留的等待计数由一次性迁移清扫处理。
-// API Key 槽位仅用于统计：每次写入或读取都会按分数裁剪过期成员，key 自带 TTL，
-// 可在一个槽位 TTL 内自愈，因此不参与启动清理。
+// CleanupStaleProcessSlots removes slots outside the current process prefix at startup.
+// It reads all indexed candidates, including expired scores and crash leftovers.
+// A separate startup sweep handles legacy wait counters absent from the index.
+// API key statistics slots expire through score pruning and key TTL,
+// so they are excluded from startup cleanup.
 func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {
 	if activeRequestPrefix == "" {
 		return nil
@@ -1154,10 +1154,10 @@ func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeR
 	return c.cleanupStaleProcessSlotsForIndex(ctx, userSlotIndex, userMembers, activeRequestPrefix, now)
 }
 
-// sweepLegacyWaitKeysOnce 一次性清扫活跃索引机制上线前遗留的等待计数键。
-// 等待计数在有流量时会不断刷新 TTL、无法自然过期，而索引不认识旧键，
-// 因此这里例外地做一次 SCAN，用 marker 键保证整个 Redis 数据生命周期内只执行一次。
-// 先清扫后写 marker：清扫失败时下次启动会重试；并发实例重复清扫是幂等的。
+// sweepLegacyWaitKeysOnce removes wait keys created before active indexing.
+// Traffic can keep refreshing these keys, and the active index cannot discover them.
+// A SCAN sweep handles them; a marker suppresses later sweeps while it exists.
+// Write the marker after success so a failed sweep can retry on the next startup.
 func (c *concurrencyCache) sweepLegacyWaitKeysOnce(ctx context.Context) error {
 	exists, err := c.rdb.Exists(ctx, legacyWaitSweepMarkerKey).Result()
 	if err != nil {
@@ -1190,8 +1190,8 @@ func (c *concurrencyCache) sweepLegacyWaitKeysOnce(ctx context.Context) error {
 	return nil
 }
 
-// allIndexMembers 返回索引中全部 member（含 score 已过期的）。
-// 启动清理必须覆盖过期成员：长时间停机后 score 过期的候选恰恰最可能持有死进程残留。
+// allIndexMembers returns every index member, including expired scores.
+// Startup cleanup needs expired entries to find leftovers after a long shutdown.
 func (c *concurrencyCache) allIndexMembers(ctx context.Context, indexKey string) ([]string, error) {
 	members, err := c.rdb.ZRange(ctx, indexKey, 0, -1).Result()
 	if err != nil {
@@ -1200,9 +1200,9 @@ func (c *concurrencyCache) allIndexMembers(ctx context.Context, indexKey string)
 	return members, nil
 }
 
-// cleanupStaleProcessSlotsForIndex 逐个处理索引中的提供商/用户。
-// Lua 脚本一次只碰一个槽位 key，兼容 Redis Cluster，随后删除重启后已失效的等待计数；
-// 索引 member 的去留由脚本返回的剩余槽位数决定，最后批量写回。
+// cleanupStaleProcessSlotsForIndex reconciles each provider or user in the index.
+// Each script touches one slot key; Go then deletes its wait counter.
+// The script's remaining slot count determines whether the index entry is kept.
 func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(
 	ctx context.Context,
 	spec slotIndexSpec,
@@ -1223,7 +1223,7 @@ func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(
 		if err != nil {
 			return fmt.Errorf("cleanup stale process slots %s: %w", spec.slotKey(id), err)
 		}
-		// 等待计数属于已死进程，直接删除；剩余槽位（当前进程前缀）决定索引 member 去留。
+		// Reset the wait counter during startup; remaining current-prefix slots determine whether the index entry stays.
 		if err := c.rdb.Del(ctx, spec.waitKey(id)).Err(); err != nil {
 			return fmt.Errorf("delete stale wait key %s: %w", spec.waitKey(id), err)
 		}

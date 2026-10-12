@@ -25,7 +25,7 @@ func TestSanitizeStreamError_StripsNetworkAddresses(t *testing.T) {
 		Err:    syscall.ECONNRESET,
 	}
 
-	// 原始 Error() 包含地址字段，用于检查清理后的输出。
+	// Confirm the fixture contains the addresses that the sanitized output must omit.
 	require.Contains(t, raw.Error(), "10.0.0.1")
 	require.Contains(t, raw.Error(), "52.1.2.3")
 

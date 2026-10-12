@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// VideoContentOptions 保存视频状态查询、内容下载和响应处理函数。
+// VideoContentOptions supplies video status reads, content downloads, and response handling.
 type VideoContentOptions struct {
 	StatusURL, RequestID, Range string
 	Token                       string `json:"-"`
@@ -30,7 +30,7 @@ func (o VideoContentOptions) native() grok.VideoContentOptions {
 	return grok.VideoContentOptions{StatusURL: o.StatusURL, RequestID: o.RequestID, Range: o.Range, Token: o.Token, Context: o.Context, ContentURL: o.ContentURL, ApplyHeaders: o.ApplyHeaders, Do: o.Do, ReadStatus: o.ReadStatus, Latency: o.Latency, TransportError: o.TransportError, HTTPError: o.HTTPError, Enter: o.Enter}
 }
 
-// OpenVideoContent 使用调用方的资源选项打开 Grok 视频内容流。
+// OpenVideoContent opens a Grok video content stream with the caller's resource options.
 func OpenVideoContent(ctx context.Context, options VideoContentOptions) (*grok.VideoContent, error) {
 	return grok.OpenVideoContent(ctx, options.native())
 }

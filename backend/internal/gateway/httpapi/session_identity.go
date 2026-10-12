@@ -40,7 +40,7 @@ var (
 	clientSessionIDHeaders = append(append([]string(nil), explicitOpenAIHeaderSessionNames...), ClaudeCodeSessionHeader)
 )
 
-// WithOpenAIGuardianParentAffinity 从 HTTP 头和报文提取父会话，再通过 scheduler 生成亲和性散列。
+// WithOpenAIGuardianParentAffinity extracts a review parent from headers and body and hashes it for scheduling affinity.
 func WithOpenAIGuardianParentAffinity(ctx context.Context, c *gin.Context, body []byte, model string) context.Context {
 	if ctx == nil || c == nil || !clientmeta.IsCodexReviewModel(model) {
 		return ctx
@@ -56,8 +56,8 @@ func WithOpenAIGuardianParentAffinity(ctx context.Context, c *gin.Context, body 
 	return requeststate.WithGuardianParentAffinity(ctx, requeststate.GuardianParentAffinity{CurrentSessionHash: current, LegacySessionHash: legacy})
 }
 
-// ExplicitOpenAIHeaderSessionID 提取 OpenAI 兼容客户端发送的稳定会话标识。
-// 这里只接收会话级字段；每轮变化的请求或消息 ID 会破坏粘性路由和上游提示缓存。
+// ExplicitOpenAIHeaderSessionID returns a stable session ID from supported client headers.
+// Per-turn request and message IDs would disrupt sticky routing and upstream prompt caching.
 func ExplicitOpenAIHeaderSessionID(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -78,13 +78,13 @@ func ExplicitOpenAISessionID(c *gin.Context, body []byte) string {
 
 	sessionID := ExplicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
-		// WS response.create 将会话字段包在 response 内，先解包再读取统一信号。
+		// WS response.create nests session fields under response; unwrap it before reading the cache key.
 		sessionID = strings.TrimSpace(protocolopenai.RequestPayloadView(body).Get("prompt_cache_key").String())
 	}
 	return sessionID
 }
 
-// ExplicitOpenAIRequestSessionID 从客户端会话字段读取身份，选定提供商后应用平台约束。
+// ExplicitOpenAIRequestSessionID reads client session fields, including Grok-specific signals when applicable.
 func ExplicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
@@ -103,7 +103,7 @@ func ExplicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	return sessionID
 }
 
-// GenerateExplicitOpenAISessionHash 根据客户端会话字段生成 hash，字段缺失时返回空值。
+// GenerateExplicitOpenAISessionHash hashes explicit client session fields, returning empty when they are absent.
 func GenerateExplicitOpenAISessionHash(c *gin.Context, body []byte) string {
 	sessionID := ExplicitOpenAIRequestSessionID(c, body)
 	if sessionID == "" {
@@ -115,9 +115,9 @@ func GenerateExplicitOpenAISessionHash(c *gin.Context, body []byte) string {
 	return currentHash
 }
 
-// GenerateOpenAISessionHash 为 OpenAI 请求生成粘性会话哈希。
-// 优先级依次为：session-id/session_id、conversation_id、OpenCode 会话头、
-// CodeBuddy 会话头、Grok 原生会话头、prompt_cache_key，最后才使用内容回退。
+// GenerateOpenAISessionHash creates a sticky-session hash using the explicit session
+// signals resolved by ExplicitOpenAIRequestSessionID, then the request's content seed.
+// Grok requests additionally qualify the seed through GrokStickyAffinitySeed.
 func GenerateOpenAISessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
@@ -140,9 +140,9 @@ func GenerateOpenAISessionHash(c *gin.Context, body []byte) string {
 	return currentHash
 }
 
-// GenerateOpenAISessionHashWithFallback 先按常规信号生成会话哈希；
-// 当未携带 session_id/conversation_id/prompt_cache_key 时，使用 fallbackSeed 生成稳定哈希。
-// 该方法为 WS ingress 补充会话标识，使后续请求继续使用绑定的提供商。
+// GenerateOpenAISessionHashWithFallback uses normal session and content signals first.
+// When those yield no hash, it hashes a nonempty fallbackSeed.
+// WS ingress uses this seed to retain provider affinity across requests.
 func GenerateOpenAISessionHashWithFallback(c *gin.Context, body []byte, fallbackSeed string) string {
 	sessionHash := GenerateOpenAISessionHash(c, body)
 	if sessionHash != "" {
@@ -159,8 +159,8 @@ func GenerateOpenAISessionHashWithFallback(c *gin.Context, body []byte, fallback
 	return currentHash
 }
 
-// ClaudeCodeSessionIDFromHeader 解析 Claude Code 会话头，用于 Messages 粘性路由。
-// ExtractClientSessionID 用于用量日志。
+// ClaudeCodeSessionIDFromHeader sanitizes the Claude Code session header for Messages sticky routing.
+// Usage logging reads its session ID through ExtractClientSessionID.
 func ClaudeCodeSessionIDFromHeader(c *gin.Context) string {
 	if c == nil || c.Request == nil {
 		return ""
@@ -175,7 +175,7 @@ func ExtractClientSessionID(c *gin.Context) string {
 	return gatewaysession.ExtractClientSessionID(c.GetHeader, clientSessionIDHeaders, IsGrokRequestContext(c))
 }
 
-// IsGrokRequestContext 根据已选提供商、强制路由或 Grok 会话头判断请求平台。
+// IsGrokRequestContext checks the selected provider, then a forced platform, then the Grok session header.
 func IsGrokRequestContext(c *gin.Context) bool {
 	if c == nil {
 		return false

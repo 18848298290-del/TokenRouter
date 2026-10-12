@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// DisplaySettings 按需读取站点名称、前端地址和自定义菜单。
+// DisplaySettings reads the site name, frontend URL, and custom menus on demand.
 type DisplaySettings struct {
 	store interface {
 		GetValue(context.Context, string) (string, error)
@@ -30,7 +30,7 @@ func (s *DisplaySettings) GetFrontendURL(ctx context.Context) string {
 	return ReadFrontendURL(ctx, s.store, s.frontend)
 }
 
-// GetCustomMenuItemsRaw 返回保存的菜单内容，读取失败时返回空列表。
+// GetCustomMenuItemsRaw returns stored menu JSON, or "[]" when the read fails.
 func (s *DisplaySettings) GetCustomMenuItemsRaw(ctx context.Context) string {
 	value, err := s.store.GetValue(ctx, SettingKeyCustomMenuItems)
 	if err != nil {
@@ -39,7 +39,7 @@ func (s *DisplaySettings) GetCustomMenuItemsRaw(ctx context.Context) string {
 	return value
 }
 
-// ReadFrontendURL 优先读取数据库中的前端地址，缺失或读取失败时调用 fallback。
+// ReadFrontendURL returns the trimmed stored URL, calling fallback when the value is blank or the read fails.
 func ReadFrontendURL(ctx context.Context, store interface {
 	GetValue(context.Context, string) (string, error)
 }, fallback func() string,

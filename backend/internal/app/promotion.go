@@ -18,7 +18,7 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// identityPromotion 将推广档案操作结果转换为身份用例需要的成功或失败结果。
+// identityPromotion adapts affiliate profile operations to the error-only results identity needs.
 type identityPromotion struct{ Service *promotion.AffiliateService }
 
 func providePromotionAffiliateStore(client *dbent.Client) promotion.AffiliateRepository {
@@ -49,7 +49,7 @@ func providePromotionPromo(client *dbent.Client, repo promotion.PromoCodeReposit
 	return promotion.NewPromoService(repo, mutations, auth, balances, promotion.Runtime{Now: time.Now, Background: func(name string, fn func()) { tasks.Go(name, fn) }})
 }
 
-// identityPromotionPreview 将优惠码验证结果转换为公开预览数据。
+// identityPromotionPreview converts promo-code validation into public preview data.
 func identityPromotionPreview(s *promotion.PromoService) func(context.Context, string) identityhttp.PromotionPreview {
 	return func(ctx context.Context, code string) identityhttp.PromotionPreview {
 		v := s.PreviewRegistrationPromotion(ctx, code)

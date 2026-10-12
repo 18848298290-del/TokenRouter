@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
 )
 
-// TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen 检查 HTTP 请求和嵌套上游调用共用任务跟踪器，任一未结束时完成队列和共享存储保持打开。
+// TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen checks that unfinished requests or attempts
+// keep completion queues and storage open.
 func TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen(t *testing.T) {
 	manager := lifecycle.New()
 	activity := provideGatewayRequestActivity(manager)
@@ -28,7 +29,7 @@ func TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen(t *testing.T
 	defer cancel()
 	err = manager.Stop(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	// Manager 报告未完成阶段；拥有者自己的停止结果保留具体活动数量。
+	// Manager reports the unfinished phase; the activity tracker retains the unfinished operation count.
 	require.ErrorContains(t, err, "GatewayRequestsAndAttempts")
 	detailCtx, detailCancel := context.WithTimeout(context.Background(), time.Second)
 	defer detailCancel()

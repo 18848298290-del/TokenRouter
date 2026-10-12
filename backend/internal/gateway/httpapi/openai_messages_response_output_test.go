@@ -22,7 +22,7 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// messagesBufferedReadErrorFixture 返回读取失败信号并记录关闭结果。
+// messagesBufferedReadErrorFixture returns a configured read error.
 type messagesBufferedReadErrorFixture struct{ err error }
 
 func TestAnthropicBufferedResponsesReadErrorKeepsExistingBehavior(t *testing.T) {

@@ -22,7 +22,7 @@ type googleCloudProjectsResponse struct {
 	Projects []googleCloudProject `json:"projects"`
 }
 
-// ResourceManagerOptions 配置端点和客户端，默认客户端校验公网地址。
+// ResourceManagerOptions configures the endpoint and client factory. The default factory validates resolved IPs.
 type ResourceManagerOptions struct {
 	Endpoint string
 	Client   func(httpclient.Options) (*http.Client, error)

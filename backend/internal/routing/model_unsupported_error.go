@@ -7,7 +7,7 @@ import (
 
 const groupModelUnsupportedAvailableModelsLimit = 20
 
-// GroupModelUnsupportedError 表示当前分组没有支持本次请求模型的可调度提供商。
+// GroupModelUnsupportedError reports that the group has no schedulable provider supporting the requested model.
 type GroupModelUnsupportedError struct {
 	Platform        string
 	RequestedModel  string
@@ -21,7 +21,7 @@ func (e *GroupModelUnsupportedError) Error() string {
 	return buildGroupModelUnsupportedMessage(e.RequestedModel, truncateModelListForError(e.AvailableModels))
 }
 
-// buildGroupModelUnsupportedMessage 生成对外返回的英文错误文案。
+// buildGroupModelUnsupportedMessage formats the public English error message.
 func buildGroupModelUnsupportedMessage(requestedModel string, availableModels []string) string {
 	requestedModel = strings.TrimSpace(requestedModel)
 	message := fmt.Sprintf("The current group does not support the requested model %q", requestedModel)
@@ -31,7 +31,7 @@ func buildGroupModelUnsupportedMessage(requestedModel string, availableModels []
 	return fmt.Sprintf("%s. Available models: %s", message, strings.Join(availableModels, ", "))
 }
 
-// truncateModelListForError 限制错误文案中的模型数量，避免响应体过长。
+// truncateModelListForError bounds model suggestions and appends the omitted count.
 func truncateModelListForError(models []string) []string {
 	if len(models) <= groupModelUnsupportedAvailableModelsLimit {
 		return append([]string(nil), models...)

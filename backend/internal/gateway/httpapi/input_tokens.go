@@ -24,7 +24,7 @@ type InputTokensCall struct {
 	Log                                        *zap.Logger
 }
 
-// ResponsesInputTokens 处理 Codex 的 Responses 输入 token 预检，使用无并发槽、免用量记录的计数流程。
+// ResponsesInputTokens handles Codex input-token preflight without generation concurrency slots or usage recording.
 func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -90,7 +90,7 @@ func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	}
 	h.backend.AuthLatency(c, time.Since(requestStart).Milliseconds())
 
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// The route plan captures the effective group and model mapping.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)

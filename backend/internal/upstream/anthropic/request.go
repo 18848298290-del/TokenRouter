@@ -51,26 +51,24 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		return nil, nil, err
 	}
 
-	// OAuth 提供商：应用统一指纹和 metadata 重写（受设置开关控制）
+	// Forwarding settings independently control fingerprint headers and metadata rewriting.
 	var fingerprint *Fingerprint
 	enableFP, enableMPT := true, false
 	if options.Forwarding != nil {
 		enableFP, enableMPT = options.Forwarding(ctx)
 	}
 	if options.OAuth && options.Fingerprint != nil {
-		// 1. 获取或创建指纹（包含随机生成的 ClientID）
 		fp, err := options.Fingerprint.GetOrCreateFingerprint(ctx, options.ProviderID, clientHeaders)
 		if err != nil {
 			logger.LegacyPrintf("service.gateway", "Warning: failed to get fingerprint for provider %d: %v", options.ProviderID, err)
-			// 失败时降级为透传原始 headers
+			// Keep the client headers when fingerprint lookup fails.
 		} else {
 			if enableFP {
 				fingerprint = fp
 			}
 
-			// 2. 重写 metadata.user_id（需要指纹中的 ClientID 和提供商的 account_uuid）
-			// 如果启用了会话 ID 伪装，会在重写后替换 session 部分为固定值
-			// 当 metadata 透传开启时跳过重写
+			// Rewrite identity components unless metadata passthrough is enabled.
+			// Optional masking replaces the session component after ordinary rewriting.
 			if !enableMPT {
 				providerUUID := options.AccountUUID
 				if providerUUID != "" && fp.ClientID != "" {
@@ -82,27 +80,21 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		}
 	}
 
-	// 后续伪装会覆盖缓存 UA；即使没有提供商指纹，也按最终出站 UA 同步计费标记。
+	// Billing markers must match the final UA, including a later mimic override.
 	if billingUA := EffectiveBillingUserAgent(tokenType, mimicClaudeCode, fingerprint); billingUA != "" {
 		body = SyncBillingHeaderVersion(body, billingUA)
 	}
 
-	// === 计算最终 anthropic-beta header（先于 body sanitize）===
-	//
-	// 顺序约束：
-	//   1) 计算 finalBeta，mimicry 路径使用伪装 beta 集合
-	//   2) 按 finalBeta 做能力维度 body sanitize（如 context-management beta 缺失 →
-	//      strip body.context_management，与 Bedrock 路径对称）
-	//   3) NewRequest（body 至此最终敲定；新版 CLI 已取消 cch 签名字段）
-	//   4) 透传白名单 / fingerprint / mimic header / 写入 finalBeta
+	// Finalize betas before sanitizing the body and constructing the HTTP request.
+	// Header forwarding and fingerprint injection below must use this same beta value.
 	policyFilterSet := options.FilterSet(ctx)
 	effectiveDropSet := MergeDropSets(policyFilterSet)
 	finalBetaHeader, finalBetaShouldSet := ComputeFinalAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet, options.InjectAPIKeyBeta,
 	)
 
-	// 提供商覆写了 anthropic-beta 时，覆写值即最终上游值（由下方 ApplyHeaderOverrides 写入）：
-	// body 能力净化必须以覆写值为准，否则 header/body 不对称会被上游 400。
+	// Sanitize against the provider override because it becomes the outbound beta
+	// header; using another value can leave fields the upstream schema rejects.
 	if beta, ok := options.BetaOverride(); ok {
 		finalBetaHeader, finalBetaShouldSet = beta, true
 	}
@@ -112,7 +104,6 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		}
 	}
 
-	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := SanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
 		body = sanitized
 	}
@@ -122,18 +113,15 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		return nil, nil, err
 	}
 
-	// 设置认证头（保持原始大小写）
+	// Preserve authentication header wire casing.
 	if tokenType == "oauth" {
 		SetHeaderRaw(req.Header, "authorization", "Bearer "+token)
 	} else {
 		SetAPIKeyAuthHeader(req.Header, options.APIKeyBearer, token)
 	}
 
-	// 白名单透传 headers
-	// OAuth mimicry 路径：跳过客户端 header 透传，与 Parrot 对齐。
-	// Parrot 的 build_upstream_headers 只发 9 个精确 header，不透传任何客户端 header。
-	// 透传客户端 header 会引入不一致的 x-stainless-* / anthropic-beta / user-agent /
-	// x-claude-code-session-id 等值，和我们注入的伪装 header 冲突，被 Anthropic 判 third-party。
+	// Mimic requests use a consistent CLI fingerprint. Forwarding client SDK, UA,
+	// and session headers here could conflict with the injected identity.
 	if tokenType != "oauth" || !mimicClaudeCode {
 		for key, values := range clientHeaders {
 			lowerKey := strings.ToLower(key)
@@ -146,12 +134,12 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		}
 	}
 
-	// OAuth 提供商：应用缓存的指纹到请求头（覆盖白名单透传的头）
+	// Cached fingerprint headers override forwarded client values.
 	if fingerprint != nil {
 		options.Fingerprint.ApplyFingerprint(req, fingerprint)
 	}
 
-	// 确保必要的 headers 存在（保持原始大小写）
+	// Fill required headers with their wire casing.
 	if GetHeaderRaw(req.Header, "content-type") == "" {
 		SetHeaderRaw(req.Header, "content-type", "application/json")
 	}
@@ -162,21 +150,18 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		ApplyClaudeOAuthHeaderDefaults(req)
 	}
 
-	// OAuth + mimic Claude Code：强制注入 CLI 指纹相关 header
-	// （user-agent/x-stainless-*/x-app/Accept/x-stainless-helper-method/x-client-request-id）
+	// Mimic headers take precedence over the cached OAuth fingerprint.
 	if tokenType == "oauth" && mimicClaudeCode {
 		ApplyClaudeCodeMimicHeaders(req, reqStream)
 	}
 
-	// 写入最终 anthropic-beta header
-	// 注：透传分支白名单可能写入了客户端 anthropic-beta，无条件 Del 一次再按 finalBeta
-	// 决定是否 set，确保 dropSet 过滤后的结果一定覆盖客户端原始值。
+	// Remove forwarded beta values before applying the final filtered header.
 	DeleteHeaderAllForms(req.Header, "anthropic-beta")
 	if finalBetaShouldSet {
 		SetHeaderRaw(req.Header, "anthropic-beta", finalBetaHeader)
 	}
 
-	// 同步 X-Claude-Code-Session-Id 头：取 body 中已处理的 metadata.user_id 的 session_id 覆盖
+	// Match an existing session header to the rewritten metadata session ID.
 	if sessionHeader := GetHeaderRaw(req.Header, "X-Claude-Code-Session-Id"); sessionHeader != "" {
 		if uid := gjson.GetBytes(body, "metadata.user_id").String(); uid != "" {
 			if parsed := ParseMetadataUserID(uid); parsed != nil {
@@ -185,8 +170,7 @@ func BuildRequest(ctx context.Context, body []byte, token, tokenType, modelID st
 		}
 	}
 
-	// 提供商级请求头覆写（仅 anthropic/openai api_key 提供商启用时生效；OAuth 路径 no-op）。
-	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。
+	// Apply provider overrides last so configured values take precedence.
 	options.ApplyOverrides(req.Header)
 
 	if options.Debug != nil {

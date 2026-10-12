@@ -39,7 +39,7 @@ var (
 	)
 )
 
-// UpstreamUsageQueryConfig 是提供商 Extra 中公开给管理员的非敏感查询配置。
+// UpstreamUsageQueryConfig is the non-sensitive query configuration exposed to administrators in provider extra.
 type UpstreamUsageQueryConfig struct {
 	Enabled bool   `json:"enabled"`
 	Adapter string `json:"adapter"`
@@ -56,7 +56,7 @@ type UpstreamUsageSubscription = usageview.UpstreamUsageSubscription
 
 type UpstreamUsageInfo = usageview.UpstreamUsageInfo
 
-// UpstreamUsageQueryResult 是管理员查询接口的成功响应。
+// UpstreamUsageQueryResult is a successful admin usage-query response.
 type UpstreamUsageQueryResult struct {
 	ProviderID   int64                       `json:"provider_id"`
 	Adapter      string                      `json:"adapter"`
@@ -70,17 +70,17 @@ type UpstreamUsageQueryResult struct {
 	Limits       []UpstreamUsageLimit        `json:"limits,omitempty"`
 	Subscription *UpstreamUsageSubscription  `json:"subscription,omitempty"`
 	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
-	// Usage 保存服务内部使用的归一化结果。
-	// 管理员响应使用外层的展示字段。
+	// Usage holds the normalized result for internal consumers.
+	// The admin response serializes the outer display fields.
 	Usage *UpstreamUsageInfo `json:"-"`
 }
 
-// UpstreamUsageMetrics 按适配器和错误类别记录进程内的查询次数。
+// UpstreamUsageMetrics counts process-local queries by adapter and outcome.
 type UpstreamUsageMetrics struct {
 	Counts map[string]int64 `json:"counts"`
 }
 
-// UpstreamUsageAdapterOption 用于前端或诊断页面展示可用适配器。
+// UpstreamUsageAdapterOption describes an adapter for selection and diagnostics.
 type UpstreamUsageAdapterOption struct {
 	Name  string `json:"name"`
 	Label string `json:"label"`

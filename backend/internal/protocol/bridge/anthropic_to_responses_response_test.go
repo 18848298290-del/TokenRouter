@@ -27,7 +27,7 @@ func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *test
 
 	out := AnthropicToResponsesResponse(testRuntime(), resp)
 	require.NotNil(t, out.Usage)
-	// 3318（非缓存）+ 50688（cache read）+ 200（cache creation）= 54206
+	// 3318 uncached + 50688 cache read + 200 cache creation = 54206.
 	assert.Equal(t, 54206, out.Usage.InputTokens)
 	assert.Equal(t, 123, out.Usage.OutputTokens)
 	assert.Equal(t, 54329, out.Usage.TotalTokens)
@@ -60,7 +60,7 @@ func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
 func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 
-	// message_start 会在初始 Usage 对象里携带缓存字段。
+	// message_start supplies the initial cache counters.
 	AnthropicEventToResponsesEvents(testRuntime(), &AnthropicStreamEvent{
 		Type: "message_start",
 		Message: &AnthropicResponse{
@@ -83,7 +83,7 @@ func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testi
 
 	events := AnthropicEventToResponsesEvents(testRuntime(), &AnthropicStreamEvent{Type: "message_stop"}, state)
 
-	// 终止 response.completed 事件包含按 OpenAI 规则计算的 usage。
+	// response.completed includes usage normalized to OpenAI totals.
 	var completed *ResponsesStreamEvent
 	for i := range events {
 		if events[i].Type == "response.completed" {
@@ -93,7 +93,7 @@ func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testi
 	require.NotNil(t, completed, "response.completed event must be emitted")
 	require.NotNil(t, completed.Response)
 	require.NotNil(t, completed.Response.Usage)
-	// 12（非缓存）+ 9（cache read）+ 3（cache creation）= 24
+	// 12 uncached + 9 cache read + 3 cache creation = 24.
 	assert.Equal(t, 24, completed.Response.Usage.InputTokens)
 	assert.Equal(t, 7, completed.Response.Usage.OutputTokens)
 	assert.Equal(t, 31, completed.Response.Usage.TotalTokens)
@@ -113,7 +113,7 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 		},
 	}, state)
 
-	// 部分上游只在最终 message_delta 上输出缓存字段。
+	// Some upstreams report cache counters only in the final message_delta.
 	AnthropicEventToResponsesEvents(testRuntime(), &AnthropicStreamEvent{
 		Type: "message_delta",
 		Usage: &AnthropicUsage{
@@ -133,15 +133,15 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	}
 	require.NotNil(t, completed)
 	require.NotNil(t, completed.Response.Usage)
-	// 20（非缓存）+ 11（cache read）+ 4（cache creation）= 35
+	// 20 uncached + 11 cache read + 4 cache creation = 35.
 	assert.Equal(t, 35, completed.Response.Usage.InputTokens)
 	assert.Equal(t, 8, completed.Response.Usage.OutputTokens)
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 11, completed.Response.Usage.InputTokensDetails.CachedTokens)
 }
 
-// TestAnthropicEventToResponses_TextEmitsContentPart 检查每个文本分片先发送 content_part.added，再发送 output_text.delta。
-// SDK 在收到增量前需要先创建对应的内容项。
+// TestAnthropicEventToResponses_TextEmitsContentPart checks that content_part.added precedes text deltas.
+// The SDK needs the part to exist before appending its text.
 func TestAnthropicEventToResponses_TextEmitsContentPart(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -187,7 +187,7 @@ func TestAnthropicEventToResponses_TextEmitsContentPart(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_DoneEventsCarryFullText 验证完成事件携带完整文本。
+// TestAnthropicEventToResponses_DoneEventsCarryFullText checks full text in completion events.
 func TestAnthropicEventToResponses_DoneEventsCarryFullText(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -225,7 +225,7 @@ func TestAnthropicEventToResponses_DoneEventsCarryFullText(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_CompletedCarriesOutput 检查终止事件携带完整输出，供 SDK 和追踪组件重建响应。
+// TestAnthropicEventToResponses_CompletedCarriesOutput checks that the SDK can reconstruct output from the terminal event.
 func TestAnthropicEventToResponses_CompletedCarriesOutput(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -263,8 +263,8 @@ func TestAnthropicEventToResponses_CompletedCarriesOutput(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments 验证累积后的
-// 函数参数会进入 output_item.done 与 response.completed。
+// TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments checks accumulated
+// arguments in output_item.done and response.completed.
 func TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -309,10 +309,10 @@ func TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments(t *testing.
 	}
 }
 
-// TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput 检查 text 后到达的 thinking 块先关闭 message item。
-// text 块结束后 message 仍可接收后续文本，thinking 到来时需要将累计文本写入 Outputs 和 output_item.done。
-// 直接替换 CurrentItemType/CurrentItemID 会使 completed 丢失助手文本。
-// 网关透传的 interleaved-thinking-2025-05-14 支持这种先 text 后 thinking 的顺序。
+// TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput covers interleaved thinking after text.
+// The text block leaves its message open; starting thinking must save that message
+// to Outputs and emit output_item.done before replacing its identity.
+// Otherwise response.completed loses the assistant text.
 func TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -355,7 +355,7 @@ func TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput(t *testin
 		t.Errorf("output[1].type = %q, want reasoning", outputs[1].Type)
 	}
 
-	// message 与 reasoning 使用不同的 output_index。
+	// Message and reasoning items need distinct output indexes.
 	var addedIndexes []int
 	for _, evt := range events {
 		if evt.Type == "response.output_item.added" {
@@ -367,8 +367,8 @@ func TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput(t *testin
 	}
 }
 
-// TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex 检查同一消息的各文本块使用不同的 content_index。
-// OpenAI SDK 按 content_index 累积文本，重复索引会覆盖前一个块。
+// TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex checks distinct indexes within a message.
+// Reusing an index would overwrite the preceding block in the SDK.
 func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -401,7 +401,7 @@ func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *test
 		t.Errorf("content_part.added indexes = %v, want [0 1]", partAdded)
 	}
 
-	// delta/done 使用所属分片的索引，SDK 按此索引追加文本。
+	// Delta and done events identify the part whose text the SDK is accumulating.
 	byIndex := map[int]string{}
 	for _, evt := range events {
 		if evt.Type == "response.output_text.delta" {
@@ -413,7 +413,7 @@ func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *test
 	}
 }
 
-// TestAnthropicEventToResponses_ItemLifecycleIsBalanced 检查 output_item.added 与 output_item.done 成对出现，终止事件包含所有已发布的输出项。
+// TestAnthropicEventToResponses_ItemLifecycleIsBalanced checks paired item events and complete terminal output.
 func TestAnthropicEventToResponses_ItemLifecycleIsBalanced(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -496,8 +496,8 @@ func TestAnthropicEventToResponses_ItemLifecycleIsBalanced(t *testing.T) {
 	}
 }
 
-// TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields 验证序列化层（MarshalJSON → responsesItemWire）单独走白名单重组，事件结构体上的字段
-// 齐全不代表落到 SSE 线上的 JSON 齐全，必须在 wire 层再断言一次。
+// TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields checks the JSON produced
+// by responsesItemWire, whose field allowlist can omit fields present in the Go struct.
 func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
 	evt := ResponsesStreamEvent{
 		Type:        "response.output_item.done",
@@ -521,8 +521,8 @@ func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
 	assert.Contains(t, sse, `"type":"custom_tool_call"`)
 }
 
-// TestStream_SSEWireComplete 让完整流经过 SSE 编码，确认 function_call 事件在
-// wire 上携带完整字段。
+// TestStream_SSEWireComplete checks function-call fields after SSE serialization
+// of a complete stream.
 func TestStream_SSEWireComplete(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"plan"}}]}`,
@@ -539,7 +539,7 @@ func TestStream_SSEWireComplete(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, addedLine)
-	// function_call 的 added 事件编码后带有 arguments:""。
+	// The serialized added event must include an empty arguments field.
 	require.True(t, strings.Contains(addedLine, `"arguments":""`), "added line missing arguments: %s", addedLine)
 	require.Contains(t, addedLine, `"call_id":"call_a"`)
 }

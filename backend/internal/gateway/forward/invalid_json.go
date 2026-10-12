@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// InvalidJSONInput 记录上游 2xx 响应和 JSON 解析失败，健康策略使用 502 状态。
+// InvalidJSONInput contains a failed JSON decode of an upstream 2xx response; health policy treats it as 502.
 type InvalidJSONInput struct {
 	ProviderID              int64
 	ProviderName, RequestID string
@@ -21,7 +21,7 @@ type InvalidJSONPorts interface {
 	Failover(int, map[string][]string, []byte, bool) error
 }
 
-// InvalidJSON 解释原生解码失败的恢复结果，不创建额外请求或改变提供商策略。
+// InvalidJSON applies health policy and returns a generic parse error or a failover signal.
 func InvalidJSON(ctx context.Context, p InvalidJSONPorts, in InvalidJSONInput) error {
 	const status = 502
 	p.Log(fmt.Sprintf("Provider %d(%s): upstream returned non-JSON 2xx response, attempting failover: status=%d request_id=%s error=%v", in.ProviderID, in.ProviderName, in.UpstreamStatus, in.RequestID, in.ParseError))

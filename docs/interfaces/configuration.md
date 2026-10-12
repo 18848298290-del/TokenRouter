@@ -202,7 +202,7 @@ SMTP 的测试连接和实际发送共用同一条建连路径和超时：
 
 `search.ConfigService` 持有唯一的配置缓存、singleflight 和当前的 Manager 注册表。供应商的选择、额度和停机见[搜索编排](../domains/search_orchestration.md)。保存成功时，推进本进程的发布代次，之前开始的回源和 Manager 构建无法覆盖新保存的结果。这个代次不写入数据库或 Redis。保存、读取、展示和 provider 配置都会复制所有可变的指针和 slice，读取方修改副本不会影响运行中的快照。
 
-缺键时、错误缓存的 TTL、空 API Key 保留原值、管理字段和专门的脱敏处理，都按既有规则执行；管理测试不占额度。代理无法解析时，跳过这个供应商，请求不会改走直连；提供商代理优先于供应商代理。搜索配置的变化只影响 Brave 和 Tavily，Grok 和 AlphaSearch 的原生搜索策略不受影响。
+空 API Key 可保留已存密钥。搜索配置的专用管理 GET/PUT 接口返回包含 `api_key` 的配置和用量；`SanitizeWebSearchConfig` 提供清空密钥的副本，需要脱敏的调用方自行选择。管理测试不占额度。代理无法解析时，跳过这个供应商，请求不会改走直连；提供商代理优先于供应商代理。搜索配置的变化只影响 Brave 和 Tavily，Grok 和 AlphaSearch 的原生搜索策略不受影响。
 
 ### 首页、创作台和用量排行
 
@@ -248,7 +248,7 @@ base URL 模式只在提供商没有保存手动端点时生效，可以选 CLI 
 
 `gateway.grok` 属于启动时的进程配置。`password_auth_enabled` 默认关闭，控制从邮箱密码到 SSO 或 OAuth 的敏感入口；Free OAuth 的本地软门禁由 `free_quota_soft_gate_enabled`、`free_quota_token_limit`、`free_quota_soft_gate_percent`、`free_quota_window_hours` 和 `free_quota_stats_cache_seconds` 控制。所有数值在启动时校验，修改后需要重启。统计缓存未命中或查询故障时按 fail-open 处理，OAuth state 的一次性消费、凭据持久化和 URL 信任检查照常执行。
 
-`provider_scheduling_thresholds` 是整体替换的 JSON map，只允许 OpenAI、Anthropic 和 Grok 的 1 到 100 的整数，100 表示关闭这个平台的自动停调；提供商可以在自己的凭据里覆盖。管理设置的部分更新省略这个字段时，保留数据库里的值和进程缓存，前端的初始默认值不会被当成一次更新。
+`provider_scheduling_thresholds` 是整体替换的 JSON map，允许 OpenAI、Anthropic、Grok、Kimi 和 Zhipu 的 1 到 100 的整数，100 表示关闭这个平台的自动停调；提供商可以在自己的凭据里覆盖。管理设置的部分更新省略这个字段时，保留数据库里的值和进程缓存，前端的初始默认值不会被当成一次更新。
 
 ## 领域配置
 

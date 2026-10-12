@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminSMTPSettings 包含管理员可配置的 SMTP 参数。
+// AdminSMTPSettings contains SMTP parameters editable by administrators.
 type AdminSMTPSettings struct {
 	SMTPHost     string `json:"smtp_host"`
 	SMTPPort     int    `json:"smtp_port"`
@@ -20,7 +20,8 @@ type AdminSMTPSettings struct {
 	SMTPUseTLS   bool   `json:"smtp_use_tls"`
 }
 
-// NormalizeAdminSMTPSettings 保留空主机保护和原管理端规范化；不访问存储或发送邮件。
+// NormalizeAdminSMTPSettings trims input and defaults the port. An empty host retains current connection and
+// sender settings.
 func NormalizeAdminSMTPSettings(current, next AdminSMTPSettings) AdminSMTPSettings {
 	next.SMTPHost = strings.TrimSpace(next.SMTPHost)
 	next.SMTPUsername = strings.TrimSpace(next.SMTPUsername)
@@ -41,7 +42,7 @@ func NormalizeAdminSMTPSettings(current, next AdminSMTPSettings) AdminSMTPSettin
 	return next
 }
 
-// PrepareSMTPSettings 生成 SMTP 待保存值，密码非空时才写入密码字段。
+// PrepareSMTPSettings builds stored SMTP values and includes the password only when nonempty.
 func PrepareSMTPSettings(value AdminSMTPSettings) map[string]string {
 	result := map[string]string{
 		SettingKeySMTPHost: value.SMTPHost, SettingKeySMTPPort: strconv.Itoa(value.SMTPPort),
@@ -54,7 +55,7 @@ func PrepareSMTPSettings(value AdminSMTPSettings) map[string]string {
 	return result
 }
 
-// SMTPSettingsParticipant 为请求中提供的 SMTP 字段生成待保存值。
+// SMTPSettingsParticipant prepares values for the SMTP fields present in the request.
 func SMTPSettingsParticipant() settings.Participant {
 	fields := []string{"smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_from_email", "smtp_from_name", "smtp_use_tls"}
 	keys := []string{SettingKeySMTPHost, SettingKeySMTPPort, SettingKeySMTPUsername, SettingKeySMTPPassword, SettingKeySMTPFrom, SettingKeySMTPFromName, SettingKeySMTPUseTLS}

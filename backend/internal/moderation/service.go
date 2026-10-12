@@ -141,7 +141,7 @@ type ContentModerationConfig struct {
 	Mode    string `json:"mode"`
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
-	// ProxyID 指定审计请求使用的代理，nil 表示直连。
+	// ProxyID selects the audit proxy; nil uses a direct connection.
 	ProxyID                 *int64                            `json:"proxy_id,omitempty"`
 	APIKey                  string                            `json:"api_key,omitempty"`
 	APIKeys                 []string                          `json:"api_keys,omitempty"`
@@ -219,14 +219,15 @@ type ContentModerationConfigView struct {
 	AuditToolOutputMaxChars int                             `json:"audit_tool_output_max_chars"`
 }
 
-// ContentModerationAPIKeyMetadata 保存审核 Key 的调度权重和管理员备注，不重复保存明文 Key。
+// ContentModerationAPIKeyMetadata stores scheduling weight and administrator notes under a key hash.
 type ContentModerationAPIKeyMetadata struct {
 	KeyHash  string `json:"key_hash"`
 	Priority int    `json:"priority"`
 	Note     string `json:"note"`
 }
 
-// ContentModerationAPIKeyEntryInput 用于新增或替换带调度属性的审核 Key。
+// ContentModerationAPIKeyEntryInput supplies a moderation key and scheduling attributes for addition or
+// replacement.
 type ContentModerationAPIKeyEntryInput struct {
 	APIKey   string `json:"api_key"`
 	Priority int    `json:"priority"`
@@ -272,7 +273,8 @@ type TestContentModerationAPIKeysInput struct {
 	BaseURL   string   `json:"base_url"`
 	Model     string   `json:"model"`
 	TimeoutMS int      `json:"timeout_ms"`
-	// ProxyID 为 nil 时沿用已保存配置，非正数强制直连，正数指定代理。
+	// ProxyID uses the saved proxy when nil, connects directly when nonpositive, and selects a proxy when
+	// positive.
 	ProxyID *int64   `json:"proxy_id"`
 	Prompt  string   `json:"prompt"`
 	Images  []string `json:"images"`
@@ -298,7 +300,8 @@ type UpdateContentModerationConfigInput struct {
 	Mode    *string `json:"mode"`
 	BaseURL *string `json:"base_url"`
 	Model   *string `json:"model"`
-	// ProxyID 为 nil 时不修改，非正数清除代理，正数指定代理。
+	// ProxyID leaves the proxy unchanged when nil, clears it when nonpositive, and selects a proxy when
+	// positive.
 	ProxyID                 *int64                               `json:"proxy_id"`
 	APIKey                  *string                              `json:"api_key"`
 	APIKeys                 *[]string                            `json:"api_keys"`
@@ -343,7 +346,8 @@ type ContentModerationModelFilter struct {
 	Models []string `json:"models"`
 }
 
-// ContentModerationCheckInput 中 UserID 表示实际处置对象，BillingUserID 和 TeamID 仅表示归属。
+// ContentModerationCheckInput identifies UserID as the risk-action target and BillingUserID and TeamID as
+// accounting ownership.
 type ContentModerationCheckInput struct {
 	RequestID     string
 	UserID        int64
@@ -359,12 +363,13 @@ type ContentModerationCheckInput struct {
 	Model         string
 	Protocol      string
 	Body          []byte
-	// NoMediaRetention 为 true 时进入“无媒体留存”模式（创作台等敏感场景）：
-	// 日志保存输入 hash、分类、分数和决策等元数据，正文摘录、输入项与媒体快照留空。
+	// NoMediaRetention limits logs to metadata such as input hashes, categories, scores, and decisions.
+	// Text excerpts, input items, and media snapshots are omitted for sensitive callers such as Creative
+	// Studio.
 	NoMediaRetention bool
 }
 
-// ContentModerationInputItem 是管理员复审时展示的完整当前轮内容单元。
+// ContentModerationInputItem contains a current-turn content unit for administrator review.
 type ContentModerationInputItem struct {
 	Index    int    `json:"index"`
 	Source   string `json:"source"`
@@ -373,7 +378,7 @@ type ContentModerationInputItem struct {
 	ImageRef string `json:"image_ref,omitempty"`
 }
 
-// ContentModerationImage 保留图片引用与其在结构化输入中的来源位置。
+// ContentModerationImage tracks an image reference and its position in structured input.
 type ContentModerationImage struct {
 	SourceIndex int    `json:"source_index"`
 	Source      string `json:"source"`
@@ -401,7 +406,7 @@ type ContentModerationDecision struct {
 	Action          string             `json:"action"`
 }
 
-// ContentModerationFailedUnit 记录未完成审核的单元及错误原因。
+// ContentModerationFailedUnit identifies an incomplete audit unit and its error.
 type ContentModerationFailedUnit struct {
 	Type        string `json:"type"`
 	Index       int    `json:"index"`
@@ -409,7 +414,7 @@ type ContentModerationFailedUnit struct {
 	Error       string `json:"error"`
 }
 
-// ContentModerationLog 保留实际处置对象、付款用户和团队三层审计身份。
+// ContentModerationLog records the risk-action target, paying user, and team separately.
 type ContentModerationLog struct {
 	ID                int64                         `json:"id"`
 	RequestID         string                        `json:"request_id"`
@@ -452,7 +457,7 @@ type ContentModerationLog struct {
 	CreatedAt         time.Time                     `json:"created_at"`
 }
 
-// ContentModerationCyberWarning 表示一次 OpenAI 上游 cyber 风控拒绝事件。
+// ContentModerationCyberWarning records an OpenAI upstream Cyber policy rejection.
 type ContentModerationCyberWarning struct {
 	ID              int64                         `json:"id"`
 	RequestID       string                        `json:"request_id"`
@@ -487,14 +492,15 @@ type ContentModerationCyberWarning struct {
 	CreatedAt       time.Time                     `json:"created_at"`
 }
 
-// ContentModerationCyberWarningPolicy 描述 cyber 警告落库后的窗口计数和封禁策略。
+// ContentModerationCyberWarningPolicy defines the counting window and ban threshold applied when a
+// warning is stored.
 type ContentModerationCyberWarningPolicy struct {
 	AutoBanEnabled bool
 	BanThreshold   int
 	WindowHours    int
 }
 
-// ContentModerationCyberWarningInput 是网关记录 cyber 警告时传入的上下文。
+// ContentModerationCyberWarningInput carries gateway context for recording a Cyber warning.
 type ContentModerationCyberWarningInput struct {
 	RequestID      string
 	UserID         int64
@@ -527,7 +533,7 @@ type ContentModerationLogFilter struct {
 	To         *time.Time
 }
 
-// ContentModerationCyberWarningFilter 描述 cyber 警告列表和统计的筛选条件。
+// ContentModerationCyberWarningFilter selects warnings for lists and statistics.
 type ContentModerationCyberWarningFilter struct {
 	RequestID  string
 	Pagination pagination.PaginationParams
@@ -538,7 +544,7 @@ type ContentModerationCyberWarningFilter struct {
 	To         *time.Time
 }
 
-// ContentModerationCyberSummary 是 cyber 警告统计总览。
+// ContentModerationCyberSummary summarizes Cyber warnings across users and providers.
 type ContentModerationCyberSummary struct {
 	Events     int64                                   `json:"events"`
 	Requests   int64                                   `json:"requests"`
@@ -548,7 +554,7 @@ type ContentModerationCyberSummary struct {
 	ByProvider []ContentModerationCyberProviderSummary `json:"by_provider"`
 }
 
-// ContentModerationCyberUserSummary 是按用户聚合的 cyber 警告统计。
+// ContentModerationCyberUserSummary aggregates Cyber warnings by user.
 type ContentModerationCyberUserSummary struct {
 	Count     int64  `json:"count"`
 	UserID    *int64 `json:"user_id,omitempty"`
@@ -557,7 +563,7 @@ type ContentModerationCyberUserSummary struct {
 	LastSeen  string `json:"last_seen"`
 }
 
-// ContentModerationCyberProviderSummary 是按上游提供商聚合的 cyber 警告统计。
+// ContentModerationCyberProviderSummary aggregates Cyber warnings by upstream provider.
 type ContentModerationCyberProviderSummary struct {
 	Count        int64  `json:"count"`
 	ProviderID   *int64 `json:"provider_id,omitempty"`
@@ -632,7 +638,7 @@ type ContentModerationRepository interface {
 	CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*ContentModerationCleanupResult, error)
 }
 
-// ContentModerationReviewRepository 提供只用于管理员详情页的完整复审材料读取能力。
+// ContentModerationReviewRepository reads full review material for administrator detail pages.
 type ContentModerationReviewRepository interface {
 	GetLog(ctx context.Context, id int64) (*ContentModerationLog, error)
 	GetCyberWarning(ctx context.Context, id int64) (*ContentModerationCyberWarning, error)
@@ -692,7 +698,7 @@ type ContentModerationService struct {
 	keySchedule              map[string]int64
 }
 
-// contentModerationRuntimeSnapshot 将请求热路径所需的开关、配置和关键词索引作为不可变快照发布。
+// contentModerationRuntimeSnapshot publishes immutable settings and a keyword index for request processing.
 type contentModerationRuntimeSnapshot struct {
 	riskControlEnabled bool
 	config             *ContentModerationConfig
@@ -754,7 +760,7 @@ type contentModerationAPIError struct {
 	Message    string
 }
 
-// moderationProxyURLCacheEntry 缓存代理 ID 到 URL 的解析，避免审核热路径逐请求查库。
+// moderationProxyURLCacheEntry caches a proxy ID resolution to avoid a database lookup on every audit.
 type moderationProxyURLCacheEntry struct {
 	proxyID   int64
 	url       string
@@ -814,7 +820,7 @@ func (in *ContentModerationInput) Normalize() {
 	if in == nil {
 		return
 	}
-	// 完整原文用于分块审核和管理员复审，不能在这里截断或折叠空白。
+	// Keep full text and internal whitespace for chunked auditing and administrator review.
 	in.Images = normalizeModerationImages(in.Images)
 	if len(in.Items) == 0 {
 		if strings.TrimSpace(in.Text) != "" {
@@ -918,7 +924,8 @@ func NewContentModerationService(
 	return svc
 }
 
-// SetProxyRepository 注入内容审计代理仓储；不启用代理的旧构造路径可保持为空。
+// SetProxyRepository supplies proxy resolution and clears its cache; direct connections do not require a
+// repository.
 func (s *ContentModerationService) SetProxyRepository(proxyRepo ProxyRepository) {
 	if s != nil {
 		s.proxyRepo = proxyRepo
@@ -1091,7 +1098,8 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 				return nil, err
 			}
 		}
-		// 输入区显式填写的属性优先于旧 Key 草稿，便于用同一 Key 更新其权重和备注。
+		// Supplied entry attributes override saved key metadata so an existing key can receive a new
+		// weight or note.
 		applyContentModerationAPIKeyEntryMetadata(cfg, entries)
 	}
 	if err := s.validateConfig(ctx, cfg); err != nil {
@@ -1106,7 +1114,7 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 		return nil, fmt.Errorf("save content moderation config: %w", err)
 	}
 	s.replaceRuntimeConfig(cfg, raw)
-	// 代理选择可能已变化，下次审计调用必须重新解析。
+	// Resolve the proxy again on the next audit because the selection may have changed.
 	s.moderationProxyCache.Store(nil)
 	return s.configView(cfg), nil
 }
@@ -1399,7 +1407,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"sample_rate", cfg.SampleRate)
 		return allow, nil
 	}
-	// 当前范围没有任何需要发往上游的内容时直接放行，避免空任务占用 Key 或异步队列。
+	// Skip empty audit scopes before reserving a key or occupying the asynchronous queue.
 	if contentModerationAuditInput(content, cfg).IsEmpty() {
 		slog.Info("content_moderation.skip_empty_audit_scope",
 			"user_id", input.UserID,
@@ -1456,7 +1464,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		defer s.preBlockActive.Add(-1)
 	}
 	start := time.Now()
-	// 单次审核共享总期限，避免超长输入按批次串行累加上游超时。
+	// Share one deadline across all batches so long inputs do not multiply upstream timeouts.
 	auditCtx, cancel := context.WithTimeout(ctx, contentModerationAuditTotalTimeout)
 	result := s.auditContentModerationInput(auditCtx, cfg, auditInput, trackPreBlock)
 	cancel()
@@ -1479,7 +1487,8 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		if queueDelay != nil {
 			s.asyncErrors.Add(1)
 		}
-		// 审核失败采用 fail-open，但必须无条件保存不完整记录供管理员排查。
+		// Allow the request after a failed audit, but attempt to store the incomplete result for
+		// investigation.
 		log := s.buildStructuredLog(input, cfg, ContentModerationActionError, false, "", 0, nil, content, &latency, queueDelay, result.ErrorText(), result)
 		s.persistContentModerationLog(ctx, cfg, log, hashText, false, false)
 		return allow
@@ -1514,7 +1523,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 	if flagged || cfg.RecordNonHits || !result.AuditComplete {
 		log := s.buildStructuredLog(input, cfg, action, flagged, highestCategory, highestScore, result.CategoryScores, content, &latency, queueDelay, result.ErrorText(), result)
 		if !input.NoMediaRetention {
-			// 无媒体留存模式禁止对命中媒体做快照（快照会把媒体内容持久化）。
+			// Attach hit media only when retention is allowed, because snapshotting persists image content.
 			log.Media = contentModerationHitMedia(auditInput, result.FlaggedImageIndexes)
 		}
 		if queueDelay == nil && cfg.Mode == ContentModerationModePreBlock {
@@ -1567,7 +1576,7 @@ func (e *contentModerationAPIError) Error() string {
 	return fmt.Sprintf("moderation api status %d: %s", e.StatusCode, e.Message)
 }
 
-// auditContentModerationInput 汇总全部文本分块和图片单元，任一单元命中即可命中整个请求。
+// auditContentModerationInput aggregates text and image scores; a hit in any unit can flag the request.
 func (s *ContentModerationService) auditContentModerationInput(ctx context.Context, cfg *ContentModerationConfig, content ContentModerationInput, trackKeyLoad bool) *contentModerationAuditResult {
 	result := &contentModerationAuditResult{
 		CategoryScores: make(map[string]float64),
@@ -1647,7 +1656,8 @@ func (s *ContentModerationService) auditTextBatch(ctx context.Context, cfg *Cont
 		}
 		return out
 	}
-	// 仅在上游明确拒绝批量形态时逐条重试，避免服务故障期间放大请求量。
+	// Retry individually for unsupported batches or mismatched result counts; other errors fail the batch
+	// to limit load during outages.
 	out := make([]contentModerationUnitResult, 0, len(chunks))
 	for index, chunk := range chunks {
 		item, singleErr := s.callModeration(ctx, cfg, chunk, trackKeyLoad)
@@ -1694,7 +1704,8 @@ func mergeContentModerationUnitResult(target *contentModerationAuditResult, unit
 	}
 }
 
-// publicContentModerationError 不把审核供应商响应体写入审计记录，避免回显输入或凭据。
+// publicContentModerationError returns a generic message so provider bodies cannot expose input or
+// credentials in audit records.
 func publicContentModerationError(err error) string {
 	if apiErr, ok := errors.AsType[*contentModerationAPIError](err); ok {
 		switch {
@@ -1735,7 +1746,8 @@ func countContentModerationTextChunks(text string, chunkSize int, overlap int) i
 	return 1 + (runeCount-chunkSize+step-1)/step
 }
 
-// forEachContentModerationTextBatch 仅保留当前批次和重叠窗口，避免超长输入整体展开为 []rune。
+// forEachContentModerationTextBatch retains the current batch and overlap, avoiding a rune slice for the
+// entire input.
 func forEachContentModerationTextBatch(text string, chunkSize int, overlap int, batchSize int, visit func(startIndex int, chunks []string)) {
 	if strings.TrimSpace(text) == "" || visit == nil {
 		return
@@ -1990,7 +2002,8 @@ func (s *ContentModerationService) worker(id int) {
 	}
 }
 
-// compactContentModerationInputForQueue 从队列副本移除可由结构化条目恢复的聚合文本，减少重复常驻内存。
+// compactContentModerationInputForQueue removes aggregate text recoverable from items to reduce queued
+// memory.
 func compactContentModerationInputForQueue(content ContentModerationInput) ContentModerationInput {
 	hasTextItem := false
 	for _, item := range content.Items {
@@ -2032,7 +2045,7 @@ func estimateContentModerationTaskBytes(task contentModerationTask) int64 {
 		textBytes += int64(len(item.Text))
 		size += int64(len(item.Text) + len(item.ImageRef) + 64)
 	}
-	// 执行阶段会从条目恢复一次聚合文本，预算同时覆盖这份短期副本。
+	// Account for the temporary aggregate text reconstructed from items during execution.
 	return size + textBytes
 }
 
@@ -2162,7 +2175,7 @@ func (s *ContentModerationService) RecordCyberWarning(ctx context.Context, input
 	return warning, nil
 }
 
-// CyberWarningInScope 判断 OpenAI Cyber 相关副作用是否落在风控检测范围内。
+// CyberWarningInScope reports whether OpenAI Cyber side effects fall within the enabled risk-control scope.
 func (s *ContentModerationService) CyberWarningInScope(ctx context.Context, input ContentModerationCyberWarningInput) (bool, error) {
 	if s == nil || s.settingRepo == nil {
 		return false, nil
@@ -2177,7 +2190,8 @@ func (s *ContentModerationService) CyberWarningInScope(ctx context.Context, inpu
 	return cfg.cyberInputInScope(input, "content_moderation.cyber_policy"), nil
 }
 
-// CyberSessionBlockGroupInScope 判断当前分组是否已纳入启用中的风控范围，供会话屏蔽热路径使用。
+// CyberSessionBlockGroupInScope checks whether risk control is enabled for a group on the
+// session-blocking path.
 func (s *ContentModerationService) CyberSessionBlockGroupInScope(ctx context.Context, groupID *int64) (bool, error) {
 	if s == nil || s.settingRepo == nil {
 		return false, nil
@@ -2199,7 +2213,7 @@ func (cfg *ContentModerationConfig) cyberInputInScope(input ContentModerationCyb
 	if logPrefix == "" {
 		logPrefix = "content_moderation.cyber_scope"
 	}
-	// Cyber 告警和 cyber_policy 副作用沿用普通风控检测范围，避免范围外分组或模型进入告警、封禁和 OPS 统计。
+	// Apply the configured group and model scope to Cyber alerts, bans, and Ops statistics.
 	if !cfg.includesGroup(input.GroupID) {
 		slog.Info(logPrefix+"_skip_group_out_of_scope",
 			"user_id", input.UserID,
@@ -2466,7 +2480,7 @@ func (s *ContentModerationService) loadConfig(ctx context.Context) (*ContentMode
 	return parseContentModerationConfig(raw)
 }
 
-// parseContentModerationConfig 统一处理数据库中的空配置和配置归一化，供直接读取与快照刷新复用。
+// parseContentModerationConfig applies defaults and normalization to stored JSON, including empty settings.
 func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) {
 	cfg := defaultContentModerationConfig()
 	if strings.TrimSpace(raw) == "" {
@@ -2480,7 +2494,8 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 	return cfg, nil
 }
 
-// loadRuntimeSnapshot 首次同步加载配置；快照过期后仍立即返回旧值，并触发后台刷新。
+// loadRuntimeSnapshot loads synchronously on first use, then returns expired snapshots while refreshing
+// in the background.
 func (s *ContentModerationService) loadRuntimeSnapshot(ctx context.Context) (*contentModerationRuntimeSnapshot, error) {
 	if s == nil || s.settingRepo == nil {
 		return nil, errors.New("content moderation setting repository unavailable")
@@ -2509,7 +2524,7 @@ func (s *ContentModerationService) runtimeSnapshotTTL() time.Duration {
 	return contentModerationRuntimeCacheTTL
 }
 
-// triggerRuntimeSnapshotRefresh 只允许一个后台刷新任务运行，并在失败后按缓存周期退避。
+// triggerRuntimeSnapshotRefresh permits one background refresh and backs off for a cache TTL after failure.
 func (s *ContentModerationService) triggerRuntimeSnapshotRefresh() {
 	if s == nil || s.runtimeRefreshDeferred() || !s.runtimeRefreshMu.TryLock() {
 		return
@@ -2536,7 +2551,8 @@ func (s *ContentModerationService) runtimeRefreshDeferred() bool {
 	return time.Now().UnixNano() < s.runtimeRefreshRetryAt.Load()
 }
 
-// refreshRuntimeSnapshot 一次读取开关与配置；配置未变时复用已构建的关键词索引。
+// refreshRuntimeSnapshot reads settings together and reuses the keyword index when the configuration
+// digest is unchanged.
 func (s *ContentModerationService) refreshRuntimeSnapshot(ctx context.Context) (*contentModerationRuntimeSnapshot, error) {
 	values, err := s.settingRepo.GetMultiple(ctx, []string{
 		SettingKeyRiskControlEnabled,
@@ -2575,7 +2591,7 @@ func (s *ContentModerationService) refreshRuntimeSnapshot(ctx context.Context) (
 	return snapshot, nil
 }
 
-// replaceRuntimeConfig 在配置写入成功后立即替换已有快照，避免等待缓存自然过期。
+// replaceRuntimeConfig updates an existing snapshot after a successful configuration write.
 func (s *ContentModerationService) replaceRuntimeConfig(cfg *ContentModerationConfig, raw []byte) {
 	if s == nil || cfg == nil {
 		return
@@ -2605,7 +2621,7 @@ func (s *ContentModerationService) replaceRuntimeConfig(cfg *ContentModerationCo
 	})
 }
 
-// matchBlockedKeyword 优先使用预构建索引，并保留旧实现作为空索引时的兼容路径。
+// matchBlockedKeyword uses the prebuilt index when present and otherwise scans the configured keywords.
 func (s *contentModerationRuntimeSnapshot) matchBlockedKeyword(text string) (string, bool) {
 	if s == nil || s.config == nil {
 		return "", false
@@ -2779,7 +2795,7 @@ func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context
 	}
 	proxyURL := proxy.URL
 	if previous == nil || previous.proxyID != proxyID || previous.url != proxyURL {
-		// 日志记录代理的无凭据地址。
+		// Log the proxy address without URL credentials.
 		slog.Info("content_moderation.proxy_enabled",
 			"proxy_id", proxyID,
 			"proxy_name", proxy.Name,
@@ -2836,7 +2852,7 @@ func (s *ContentModerationService) buildStructuredLog(input ContentModerationChe
 		Error:             errText,
 	}
 	if input.NoMediaRetention {
-		// 无媒体留存模式：不落任何正文与媒体内容，只保留 hash、分类、分数、决策等元数据。
+		// Retain audit metadata while clearing content and media from the log.
 		log.InputExcerpt = ""
 		log.InputItems = nil
 		log.ContentComplete = false
@@ -2901,7 +2917,7 @@ func (s *ContentModerationService) applyFlaggedProviderSideEffects(ctx context.C
 		}
 		if user.Role == "admin" {
 			slog.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
-			// TODO: 这里接入 API Key 写能力后，应改为禁用触发本次审计命中的 API Key。
+			// TODO: Disable the triggering API key here once API key writes are available.
 			return false
 		}
 		if user.Status != StatusDisabled {
@@ -2990,7 +3006,8 @@ func (s *ContentModerationService) buildCyberWarning(input ContentModerationCybe
 		Endpoint:       strings.TrimSpace(input.Endpoint),
 		Model:          strings.TrimSpace(input.Model),
 		UpstreamStatus: input.UpstreamStatus,
-		// Cyber 警告用于管理员复盘上游误杀/命中原因，需要保留原始文本；这里只做长度裁剪，避免 UI 和存储被超长内容撑爆。
+		// Keep raw warning text and a length-limited prompt excerpt for administrator review of upstream
+		// rejections.
 		WarningText:     trimRawContentModerationText(warningText, 1000),
 		PromptExcerpt:   trimRawContentModerationText(promptExcerpt, maxCyberWarningPromptExcerptRunes),
 		Source:          content.Source,
@@ -3280,7 +3297,8 @@ func (s *ContentModerationService) nextUsableAPIKey(cfg *ContentModerationConfig
 	if s.keySchedule == nil {
 		s.keySchedule = make(map[string]int64)
 	}
-	// 平滑加权轮询避免高优先级 Key 集中突发，同时自动排除仍在冻结期内的 Key。
+	// Smooth weighted round-robin spreads high-priority key usage and skips keys whose freeze period is
+	// still active.
 	var selected *contentModerationAPIKeyRuntimeEntry
 	var selectedWeight int64
 	var totalWeight int64
@@ -3917,7 +3935,8 @@ func normalizeContentModerationAPIKeyPriority(priority int) int {
 	return priority
 }
 
-// normalizeContentModerationAPIKeyMetadata 按当前 Key 顺序补齐元数据，并移除已删除 Key 的残留属性。
+// normalizeContentModerationAPIKeyMetadata fills metadata in current key order and drops entries for
+// deleted keys.
 func normalizeContentModerationAPIKeyMetadata(keys []string, items []ContentModerationAPIKeyMetadata) []ContentModerationAPIKeyMetadata {
 	keys = normalizeModerationAPIKeys(keys)
 	byHash := make(map[string]ContentModerationAPIKeyMetadata, len(items))
@@ -4124,7 +4143,7 @@ func cloneInt64Ptr(in *int64) *int64 {
 }
 
 func sanitizeContentModerationExcerpt(text string, max int) string {
-	// 管理端只需要可读摘要，这里统一脱敏并截断，避免把密钥或超长提示词写入记录。
+	// Redact secrets and cap the excerpt length for administrator summaries.
 	return trimRunes(redactContentModerationSecrets(text), max)
 }
 
@@ -4154,7 +4173,7 @@ func maskSecretTail(secret string) string {
 	return strings.Repeat("*", 8) + secret[len(secret)-4:]
 }
 
-// Start 在所有依赖与运行参数绑定后启动后台审核。
+// Start launches background moderation after the caller has bound dependencies and runtime parameters.
 func (s *ContentModerationService) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -4169,7 +4188,7 @@ func (s *ContentModerationService) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanupWorker() })
 }
 
-// Stop 返回未排空任务的数量，不能把读取配置失败造成的剩余任务当作成功。
+// Stop waits for workers and returns an error containing the count of tasks left in the queue.
 func (s *ContentModerationService) Stop() error {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {
@@ -4189,7 +4208,8 @@ func (s *ContentModerationService) Stop() error {
 	return nil
 }
 
-// StopContext 共用一次停止等待；预算超时报告未完成，不关闭仍在使用的依赖。
+// StopContext shares one stop operation across callers and reports unfinished work when the caller's
+// deadline expires.
 func (s *ContentModerationService) StopContext(ctx context.Context) error {
 	s.stopWaitOnce.Do(func() {
 		s.stopWaitDone = make(chan struct{})

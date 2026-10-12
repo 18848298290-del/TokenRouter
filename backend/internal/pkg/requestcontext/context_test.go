@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDetachSeparatesCancellation 验证请求值、父取消、截止时间和内部终止分别传递。
+// TestDetachSeparatesCancellation checks values, parent deadlines, and server abort independently.
 func TestDetachSeparatesCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		type valueKey struct{}
@@ -39,13 +39,13 @@ func TestDetachSeparatesCancellation(t *testing.T) {
 	})
 }
 
-// TestDetachWithoutAbort 普通 context 继续按调用方断连隔离处理。
+// TestDetachWithoutAbort checks detached contexts ignore parent cancellation.
 func TestDetachWithoutAbort(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	detached := Detach(ctx)
 	require.Nil(t, detached.Done())
 	cancel()
 	require.NoError(t, detached.Err())
-	require.NoError(t, Detach(nil).Err()) //nolint:staticcheck // 覆盖 Detach 对 nil 输入的兼容处理。
+	require.NoError(t, Detach(nil).Err()) //nolint:staticcheck // Exercise the supported nil input.
 	require.True(t, AfterAbort(ctx, func() { t.Fatal("unexpected abort") })())
 }

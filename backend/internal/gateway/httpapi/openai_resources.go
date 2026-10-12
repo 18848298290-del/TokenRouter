@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// OpenAIImageAdmissionOptions 只包含静态技术参数，nil 保留未配置时的旁路。
+// OpenAIImageAdmissionOptions holds static image admission settings; nil options bypass admission.
 type OpenAIImageAdmissionOptions struct {
 	Enabled    bool
 	Limit      int
@@ -19,7 +19,7 @@ type OpenAIImageAdmissionOptions struct {
 	MaxWaiting int
 }
 
-// OpenAIHTTPResources 只引用 app 持有的唯一并发服务与本地图片限制器。
+// OpenAIHTTPResources references the app-owned concurrency service and local image limiter.
 type OpenAIHTTPResources struct {
 	Concurrency  *ConcurrencyHelper
 	Images       *scheduler.ImageConcurrencyLimiter

@@ -25,8 +25,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// ForwardAsResponses 使用 Gemini 提供商承接 OpenAI Responses 请求。
-// 请求、重试和错误策略与 Chat Completions 共用同一套 Gemini 上游执行器。
+// ForwardAsResponses serves OpenAI Responses requests through Gemini.
+// It shares Gemini execution, retry, and error policy with Chat Completions.
 func (s *Gemini) ForwardAsResponses(
 	ctx context.Context,
 	output Output,
@@ -75,8 +75,8 @@ func (s *Gemini) ForwardAsResponses(
 	)
 }
 
-// ForwardAsChatCompletions 使用 Gemini 提供商承接 OpenAI Chat Completions 请求。
-// 客户端侧保持 Chat Completions 响应格式，上游请求走 Gemini 原生端点。
+// ForwardAsChatCompletions serves OpenAI Chat Completions through Gemini.
+// The upstream uses Gemini endpoints and the client receives Chat Completions output.
 func (s *Gemini) ForwardAsChatCompletions(
 	ctx context.Context,
 	output Output,
@@ -154,7 +154,7 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", "model is required")
 	}
 
-	// 两种 OpenAI 兼容入口都遵循 C -> U，OAuth 提供商不能绕过提供商映射。
+	// Both compatibility entries apply provider mappings, including OAuth providers.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
 	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
@@ -233,7 +233,7 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 			} else {
 				reasoningEffort = protocolforward.ExtractEffort(originalBody, true, capability.NormalizeRecordedOpenAIEffortForModel, mappedModel)
 			}
-			// 国产模型没有显式 effort 档位时，thinking 启用后补默认展示值。
+			// Supply a display effort when a CN model enables thinking without an explicit effort.
 			reasoningEffort = gatewayprovider.ApplyThinkingEnabledFallback(reasoningEffort, originalBody, mappedModel)
 
 			if resp.StatusCode >= 400 {

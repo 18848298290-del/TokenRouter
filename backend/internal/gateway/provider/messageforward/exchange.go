@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// exchangeOptions 组合既有平台单提供商交换，不拥有第二套重试或切号循环。
+// exchangeOptions configures Anthropic's request exchange and retries for one provider.
 func (r *Runtime) exchangeOptions(output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, token, tokenType, model string, stream, mimic bool, proxy string, profile *tlsfingerprint.Profile, replace func([]byte) error) anthropic.ExchangeOptions {
 	options := anthropic.ExchangeOptions{
 		ProviderID: target.Record.ID, ProviderName: target.Record.Name, Platform: target.Record.Platform,
@@ -92,7 +92,7 @@ func (r *Runtime) passthroughExchange(output HTTPBoundary, state *AttemptState, 
 	return options
 }
 
-// shouldRectify 签名匹配和开关读取保持原先的两阶段差异，已经进入重试后不再次裁决开关。
+// shouldRectify checks the initial signature error and feature flags; later retries use signaturePattern.
 func (r *Runtime) shouldRectify(ctx context.Context, target *gatewayadapter.ExecutionProvider, body []byte, model string) bool {
 	if !modelidentity.ShouldRectifyThinkingSignatureError(model) {
 		return false

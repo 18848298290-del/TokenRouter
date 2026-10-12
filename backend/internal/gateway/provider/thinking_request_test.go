@@ -149,7 +149,7 @@ func TestFilterThinkingBlocks(t *testing.T) {
 			result := FilterThinkingBlocks([]byte(tt.input))
 
 			if tt.expectError {
-				// 无效 JSON 返回输入。
+				// Invalid JSON passes through unchanged.
 				require.Equal(t, tt.input, string(result))
 				return
 			}
@@ -157,11 +157,11 @@ func TestFilterThinkingBlocks(t *testing.T) {
 			if tt.shouldFilter {
 				require.False(t, containsThinkingBlock(result))
 			} else {
-				// 无需过滤时返回输入。
+				// Unneeded filtering leaves the input unchanged.
 				require.Equal(t, tt.input, string(result))
 			}
 
-			// 有效输入经过处理后仍是有效 JSON。
+			// Filtered output remains valid JSON.
 			var parsed map[string]any
 			err := json.Unmarshal(result, &parsed)
 			require.NoError(t, err)
@@ -255,10 +255,10 @@ func TestFilterThinkingBlocksForRetry_RemovesRedactedThinkingAndKeepsValidConten
 }
 
 func TestFilterThinkingBlocksForRetry_DropsThinkingBlockWithEmptyContent(t *testing.T) {
-	// 跨模型场景：其他模型回过的 assistant 历史里携带了 type=thinking 但 thinking 字段为空，
-	// 喂给开启 extended thinking 的 claude 时上游会报：
+	// History from another model may contain a thinking block with empty thinking text.
+	// Claude extended thinking rejects it with:
 	//   "messages.1.content.0.thinking: each thinking block must contain thinking"
-	// 重试应当把空 thinking 块丢弃，并保留其它有效内容。
+	// Retry cleanup drops the empty block and retains valid content.
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
 		"messages":[
@@ -311,7 +311,7 @@ func TestFilterThinkingBlocksForRetry_EmptyContentGetsPlaceholder(t *testing.T) 
 }
 
 func TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks(t *testing.T) {
-	// 空文本块会触发上游 400：text content blocks must be non-empty。
+	// Empty text blocks cause upstream 400 errors: text content blocks must be non-empty.
 	input := []byte(`{
 		"messages":[
 			{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":""}]},
@@ -326,13 +326,13 @@ func TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks(t *testing.T) {
 	msgs, ok := req["messages"].([]any)
 	require.True(t, ok)
 
-	// 第一条消息删除空文本块，保留 hello。
+	// The first message retains hello after removing its empty text block.
 	msg0 := testassert.MustType[map[string]any](msgs[0])
 	content0 := testassert.MustType[[]any](msg0["content"])
 	require.Len(t, content0, 1)
 	require.Equal(t, "hello", testassert.MustType[map[string]any](content0[0])["text"])
 
-	// 第二条消息的内容全为空，填入占位文本。
+	// The otherwise empty second message receives placeholder text.
 	msg1 := testassert.MustType[map[string]any](msgs[1])
 	content1 := testassert.MustType[[]any](msg1["content"])
 	require.Len(t, content1, 1)
@@ -342,7 +342,7 @@ func TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks(t *testing.T) {
 }
 
 func TestFilterThinkingBlocksForRetry_StripsNestedEmptyTextInToolResult(t *testing.T) {
-	// tool_result 内容中的空文本块也会删除。
+	// Empty text blocks inside tool_result are removed too.
 	input := []byte(`{
 		"messages":[
 			{"role":"user","content":[
@@ -370,7 +370,7 @@ func TestFilterThinkingBlocksForRetry_StripsNestedEmptyTextInToolResult(t *testi
 }
 
 func TestFilterThinkingBlocksForRetry_NestedAllEmptyGetsEmptySlice(t *testing.T) {
-	// tool_result 内容全为空文本时，content 成为空切片。
+	// A tool_result containing only empty text blocks receives an empty content slice.
 	input := []byte(`{
 		"messages":[
 			{"role":"user","content":[
@@ -396,7 +396,7 @@ func TestFilterThinkingBlocksForRetry_NestedAllEmptyGetsEmptySlice(t *testing.T)
 }
 
 func TestFilterThinkingBlocksForRetry_PreservesNonEmptyTextBlocks(t *testing.T) {
-	// 非空文本块按输入内容输出。
+	// Nonempty text blocks pass through unchanged.
 	input := []byte(`{
 		"messages":[
 			{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}
@@ -405,7 +405,7 @@ func TestFilterThinkingBlocksForRetry_PreservesNonEmptyTextBlocks(t *testing.T) 
 
 	out := FilterThinkingBlocksForRetry(input)
 
-	// 缺少思考内容、空内容和空文本块时返回输入。
+	// With no thinking or empty text blocks, the input remains unchanged.
 	require.Equal(t, input, out)
 }
 
@@ -445,8 +445,8 @@ func TestFilterSignatureSensitiveBlocksForRetry_DowngradesTools(t *testing.T) {
 }
 
 func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_FastPath(t *testing.T) {
-	// 快速路径：messages 中无 thinking 块，仅有顶层 thinking 字段
-	// 这条路径曾因提前 return 跳过 removeThinkingDependentContextStrategies 而存在 bug
+	// The fast path has top-level thinking but no thinking blocks in messages.
+	// It must still remove thinking-dependent context strategies before returning.
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
 		"context_management":{"edits":[{"type":"clear_thinking_20251015"}]},
@@ -469,7 +469,7 @@ func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_FastPath(t *t
 }
 
 func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_WithThinkingBlocks(t *testing.T) {
-	// 完整路径：messages 中有 thinking 块（非 fast path）
+	// The full path includes thinking blocks in message history.
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
 		"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"keep_this"}]},
@@ -499,7 +499,7 @@ func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_WithThinkingB
 }
 
 func TestFilterThinkingBlocksForRetry_NoContextManagement_Unaffected(t *testing.T) {
-	// 无 context_management 时不应报错，且 thinking 正常被移除
+	// Missing context_management is accepted while thinking is removed.
 	input := []byte(`{
 		"thinking":{"type":"enabled"},
 		"messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]}]
@@ -573,7 +573,7 @@ func TestFilterSignatureSensitiveBlocksForRetry_PreservesNonThinkingStrategies(t
 }
 
 func TestFilterSignatureSensitiveBlocksForRetry_NoThinkingField_ContextManagementUntouched(t *testing.T) {
-	// 没有顶层 thinking 字段时，context_management 不应被修改
+	// Without top-level thinking, context_management remains unchanged.
 	input := []byte(`{
 		"context_management":{"edits":[{"type":"clear_thinking_20251015"}]},
 		"messages":[
@@ -813,5 +813,5 @@ func TestNormalizeGLMOpenAIReasoningEffort(t *testing.T) {
 	}
 }
 
-// thinkingStringPointer 原平台默认档位断言的独立值。
+// thinkingStringPointer returns an independent effort value for assertions.
 func thinkingStringPointer(value string) *string { return &value }

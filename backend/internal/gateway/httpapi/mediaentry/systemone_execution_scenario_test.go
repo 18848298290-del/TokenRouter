@@ -1,6 +1,7 @@
 package mediaentry
 
-// 本文件覆盖 systemone.go、httpapi/systemone_forward.go 和 gateway/systemone/execute.go 的池重试。
+// These tests cover pool retries across systemone.go, httpapi/systemone_forward.go, and
+// gateway/systemone/execute.go.
 
 import (
 	"context"
@@ -37,7 +38,7 @@ type systemOnePoolRun struct {
 	completed, released int
 }
 
-// Do 模拟池内首个账号失败、下一次请求成功。
+// Do fails the first request with 503 and succeeds on the next attempt.
 func (p *systemOnePoolTransport) Do(*http.Request, string, int64, int) (*http.Response, error) {
 	p.calls++
 	status := http.StatusOK
@@ -61,7 +62,8 @@ func (p *systemOnePoolRun) Report(context.Context, systemone.Outcome) {}
 
 func (p *systemOnePoolRun) Complete(context.Context, upstream.AttemptResult) { p.completed++ }
 
-// TestSystemOnePoolRetryExecution 覆盖 HTTP 错误分类、适配器预算和编排之间的连接。
+// TestSystemOnePoolRetryExecution checks HTTP classification, the adapter retry budget, and orchestration
+// together.
 func TestSystemOnePoolRetryExecution(t *testing.T) {
 	transport := &systemOnePoolTransport{}
 	prices := testkit.ResolverWithCards(t, testkit.Calculator(nil, map[string]*pricing.ModelPricing{"jev-latest": {InputPricePerToken: 4.2e-8}}), nil)

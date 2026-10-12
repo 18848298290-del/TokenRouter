@@ -8,7 +8,7 @@ import (
 
 const geminiPrecheckCacheTTL = time.Minute
 
-// GeminiQuotaUsageReader 读取提供商配额预检所需的本地模型用量，SQL 查询由 usage 存储适配器执行。
+// GeminiQuotaUsageReader reads local model usage for quota checks through the usage storage adapter.
 type GeminiQuotaUsageReader interface {
 	GetModelUsage(context.Context, int64, time.Time, time.Time) ([]GeminiModelUsage, error)
 }
@@ -18,7 +18,7 @@ type GeminiPrecheckOptions struct {
 	Info     func(string, ...any)
 }
 
-// GeminiPrecheck 保留独立的日统计短缓存；预检不写提供商限流或用户资金。
+// GeminiPrecheck caches daily usage briefly and checks admission without persisting provider limits or charges.
 type GeminiPrecheck struct {
 	usageRepo          GeminiQuotaUsageReader
 	geminiQuotaService *GeminiQuotaService
@@ -50,8 +50,8 @@ func NewGeminiPrecheck(policy *GeminiQuotaService, usage GeminiQuotaUsageReader,
 	return &GeminiPrecheck{geminiQuotaService: policy, usageRepo: usage, options: options, usageCache: make(map[int64]*geminiUsageCacheEntry)}
 }
 
-// PreCheckUsage 在派发前执行原本地配额预检。
-// 返回 false 表示当前提供商应被跳过。
+// PreCheckUsage checks local quota before dispatch.
+// A false result means the caller should skip this provider.
 func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, requestedModel string) (bool, error) {
 	if provider == nil || provider.Platform != PlatformGemini {
 		return true, nil
@@ -68,7 +68,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 	now := s.options.Now()
 	modelClass := GeminiModelClassFromName(requestedModel)
 
-	// 日配额按洛杉矶当地日界检查。
+	// Daily usage starts at midnight in the configured quota timezone.
 	{
 		limit := geminiDailyLimit(quota, modelClass)
 		if limit > 0 {
@@ -86,16 +86,15 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 			used := geminiUsedRequests(quota, modelClass, totals, true)
 			if used >= limit {
 				resetAt := GeminiDailyResetTime(now, s.options.Location)
-				// 日额度预检使用本地统计，
-				// 本地预检只减少上游 429。
-				// rate_limit_reset_at 记录上游返回 429 时的重置时间。
+				// Local usage predicts quota exhaustion to reduce upstream 429 responses.
+				// Persisted rate_limit_reset_at values come from upstream rate-limit observations.
 				s.options.Info("gemini_precheck_daily_quota_reached", "provider_id", provider.ID, "used", used, "limit", limit, "reset_at", resetAt)
 				return false, nil
 			}
 		}
 	}
 
-	// 分钟配额使用当前固定分钟窗口。
+	// Minute quotas use the current fixed minute window.
 	{
 		limit := geminiMinuteLimit(quota, modelClass)
 		if limit > 0 {
@@ -109,7 +108,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 			used := geminiUsedRequests(quota, modelClass, totals, false)
 			if used >= limit {
 				resetAt := start.Add(time.Minute)
-				// 本地分钟预检同样不持久化提供商限流状态。
+				// The local minute check leaves persisted rate-limit state to upstream observations.
 				s.options.Info("gemini_precheck_minute_quota_reached", "provider_id", provider.ID, "used", used, "limit", limit, "reset_at", resetAt)
 				return false, nil
 			}
@@ -119,8 +118,8 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 	return true, nil
 }
 
-// PreCheckUsageBatch 保留单次请求的批量提供商预检。
-// 返回表中的 false 表示跳过该提供商。
+// PreCheckUsageBatch checks quota for a batch of providers in one request.
+// A false map value means the caller should skip that provider.
 func (s *GeminiPrecheck) PreCheckUsageBatch(ctx context.Context, providers []*Record, requestedModel string) (map[int64]bool, error) {
 	result := make(map[int64]bool, len(providers))
 	for _, provider := range providers {
@@ -164,7 +163,7 @@ func (s *GeminiPrecheck) PreCheckUsageBatch(ctx context.Context, providers []*Re
 		return result, nil
 	}
 
-	// 日配额优先短缓存，未命中时批量回源。
+	// Reuse recent daily usage and batch-load cache misses.
 	dailyTotalsByID := make(map[int64]GeminiUsageTotals, len(quotaProviders))
 	dailyMissIDs := make([]int64, 0, len(quotaProviders))
 	for _, item := range quotaProviders {
@@ -204,7 +203,7 @@ func (s *GeminiPrecheck) PreCheckUsageBatch(ctx context.Context, providers []*Re
 		}
 	}
 
-	// 2) Minute precheck (batch DB)
+	// Query minute usage for providers still eligible after the daily check.
 	minuteIDs := make([]int64, 0, len(quotaProviders))
 	for _, item := range quotaProviders {
 		providerID := item.provider.ID
@@ -365,7 +364,7 @@ func (s *GeminiPrecheck) setGeminiUsageTotals(providerID int64, windowStart, now
 	}
 }
 
-// GeminiCooldown 根据等级保留 Gemini 429 的原回退冷却。
+// GeminiCooldown returns the tier's 429 cooldown, or five minutes when the provider or policy is unavailable.
 func (s *GeminiPrecheck) GeminiCooldown(ctx context.Context, provider *Record) time.Duration {
 	if provider == nil {
 		return 5 * time.Minute

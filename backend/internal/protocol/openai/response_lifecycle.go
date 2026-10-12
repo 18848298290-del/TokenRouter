@@ -8,15 +8,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ResponseLifecycleNormalizer 修复单次 HTTP Responses 流的生命周期事件，保留响应中的未知字段。
-// 重复成功终态只标记为不应下发，调用方仍须读取其中的用量和观测信息。
+// ResponseLifecycleNormalizer repairs lifecycle events in one HTTP Responses stream while retaining unknown fields.
+// It flags duplicate successful terminal events; callers still need their usage and observation data.
 // @project-doc docs/interfaces/openai_upstream.md#openai_protocol_dispatch
 type ResponseLifecycleNormalizer struct {
 	nextSequence int64
 	completedID  string
 }
 
-// IsResponseLifecycleEvent 识别携带完整 Response 对象的生命周期事件。
+// IsResponseLifecycleEvent recognizes event types carrying a complete Response object.
 func IsResponseLifecycleEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "response.created", "response.in_progress", "response.completed", "response.done",
@@ -27,8 +27,8 @@ func IsResponseLifecycleEvent(eventType string) bool {
 	}
 }
 
-// Normalize 补齐裸 Response 的事件包装，并将旧 done 事件按实际状态转为标准终态。
-// 返回值依次为载荷、事件类型和重复成功终态标记；畸形 JSON 与未知事件保持原样。
+// Normalize wraps bare Response objects and converts legacy done events according to response status.
+// It returns the payload, event type, and duplicate-success flag. Invalid JSON and unknown events pass through.
 func (n *ResponseLifecycleNormalizer) Normalize(data []byte, eventType string) ([]byte, string, bool) {
 	eventType = EffectiveOpenAISSEEventType(data, eventType)
 	sequence := n.nextSequence
@@ -43,7 +43,7 @@ func (n *ResponseLifecycleNormalizer) Normalize(data []byte, eventType string) (
 	response := gjson.GetBytes(data, "response")
 	changed := false
 	if !response.IsObject() {
-		// 裸对象带有 Response 身份字段时才补上成功响应包装。
+		// Wrap bare objects only when their fields identify a Response.
 		if gjson.GetBytes(data, "object").String() != "response" || gjson.GetBytes(data, "id").String() == "" {
 			return data, eventType, false
 		}
@@ -61,7 +61,7 @@ func (n *ResponseLifecycleNormalizer) Normalize(data []byte, eventType string) (
 	if eventType == "response.done" {
 		status := response.Get("status").String()
 		if status == "" {
-			// 缺少状态时只根据明确的失败信息补齐，不能把空状态当成成功。
+			// Infer a missing status from failure evidence; missing status alone does not imply success.
 			switch {
 			case response.Get("error").Exists() && response.Get("error").Type != gjson.Null:
 				status = "failed"
@@ -83,7 +83,7 @@ func (n *ResponseLifecycleNormalizer) Normalize(data []byte, eventType string) (
 		case "cancelled", "canceled":
 			eventType = "response." + status
 		default:
-			// 未知或进行中的状态不能推断为成功。
+			// Unknown and ongoing statuses do not imply successful completion.
 			return data, eventType, false
 		}
 	}

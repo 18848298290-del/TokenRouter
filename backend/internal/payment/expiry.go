@@ -20,7 +20,7 @@ type OrderReconciler interface {
 	ExpireTimedOutOrders(context.Context) (int, error)
 }
 
-// ExpiryRuntime 提供订单过期任务的锁获取函数和日志记录函数。
+// ExpiryRuntime supplies lock acquisition and observation callbacks for order expiry.
 type ExpiryRuntime struct {
 	Acquire func(context.Context) (func(), bool)
 	Observe func(string, int, error)

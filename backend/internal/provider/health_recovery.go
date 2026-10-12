@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// RecoveryStore 提供健康恢复的各项独立写入操作。
+// RecoveryStore supplies independent writes for clearing provider health state.
 type RecoveryStore interface {
 	GetByID(context.Context, int64) (*Record, error)
 	ClearError(context.Context, int64) error
@@ -16,7 +16,7 @@ type RecoveryStore interface {
 	ClearTempUnschedulable(context.Context, int64) error
 }
 
-// RecoveryOptions 提供缓存、token 和调度反馈函数，恢复成功后依次调用。
+// RecoveryOptions supplies token invalidation, counter reset, and scheduling-block cleanup callbacks.
 type RecoveryOptions struct {
 	Now                  func() time.Time
 	Warn                 func(string, ...any)
@@ -25,14 +25,14 @@ type RecoveryOptions struct {
 	ClearSchedulingBlock func(int64)
 }
 
-// RecoveryService 统一手动恢复、成功测试及窗口恢复的规则。
+// RecoveryService applies recovery rules for manual resets, successful tests, and quota windows.
 type RecoveryService struct {
 	providerRepo     RecoveryStore
 	tempUnschedCache TempUnschedCache
 	options          RecoveryOptions
 }
 
-// ProviderRecoveryOptions 控制提供商恢复时的附加行为。
+// ProviderRecoveryOptions controls optional token invalidation during recovery.
 type ProviderRecoveryOptions struct {
 	InvalidateToken bool
 }
@@ -59,7 +59,7 @@ func (s *RecoveryService) clearSchedulingBlock(id int64) {
 	}
 }
 
-// ClearRateLimit 清除提供商的限流状态。
+// ClearRateLimit clears provider, quota-scope, and model limits, then temporary pauses and cached blocks.
 func (s *RecoveryService) ClearRateLimit(ctx context.Context, providerID int64) error {
 	if err := s.providerRepo.ClearRateLimit(ctx, providerID); err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *RecoveryService) ClearRateLimit(ctx context.Context, providerID int64) 
 	if err := s.providerRepo.ClearModelRateLimits(ctx, providerID); err != nil {
 		return err
 	}
-	// 清除限流时一并清除临时停调，周限或窗口重置后提供商可恢复调度。
+	// Clear temporary pauses too so a quota reset can restore scheduling.
 	if err := s.providerRepo.ClearTempUnschedulable(ctx, providerID); err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (s *RecoveryService) ClearRateLimit(ctx context.Context, providerID int64) 
 	return nil
 }
 
-// RecoverProviderState 按需恢复提供商的可恢复运行时状态。
+// RecoverProviderState clears an error and recoverable runtime limits found on the provider.
 func (s *RecoveryService) RecoverProviderState(ctx context.Context, providerID int64, options ProviderRecoveryOptions) (*SuccessfulTestRecovery, error) {
 	provider, err := s.providerRepo.GetByID(ctx, providerID)
 	if err != nil {
@@ -120,8 +120,8 @@ func (s *RecoveryService) RecoverProviderState(ctx context.Context, providerID i
 	return result, nil
 }
 
-// RecoverProviderAfterSuccessfulTest 将一次成功测试视为正常请求，
-// 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
+// RecoverProviderAfterSuccessfulTest clears recoverable error, rate-limit, overload,
+// temporary-pause, and model-limit state after a successful probe.
 func (s *RecoveryService) RecoverProviderAfterSuccessfulTest(ctx context.Context, providerID int64) (*SuccessfulTestRecovery, error) {
 	return s.RecoverProviderState(ctx, providerID, ProviderRecoveryOptions{})
 }
@@ -135,7 +135,6 @@ func (s *RecoveryService) ClearTempUnschedulable(ctx context.Context, providerID
 			s.options.Warn("temp_unsched_cache_delete_failed", "provider_id", providerID, "error", err)
 		}
 	}
-	// 同时清除模型级别限流
 	if err := s.providerRepo.ClearModelRateLimits(ctx, providerID); err != nil {
 		s.options.Warn("clear_model_rate_limits_on_temp_unsched_reset_failed", "provider_id", providerID, "error", err)
 	}

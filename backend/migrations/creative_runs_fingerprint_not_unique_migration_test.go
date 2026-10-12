@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeRunsFingerprintNotUniqueMigration 校验创作台指纹唯一约束移除：
-// 幂等只在 Idempotency-Key 级别保证，相同内容的再次提交不得永久冲突。
+// TestCreativeRunsFingerprintNotUniqueMigration checks removal of fingerprint uniqueness.
+// Idempotency keys govern retries; submitting identical content again must remain possible.
 func TestCreativeRunsFingerprintNotUniqueMigration(t *testing.T) {
 	content, err := FS.ReadFile("255_creative_runs_fingerprint_not_unique.sql")
 	require.NoError(t, err)

@@ -9,12 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
-// HealthStoreBase 提供缺失提供商和空写入的测试结果，其余方法由测试按需配置。
+// HealthStoreBase reports missing providers and accepts health writes; tests supply other methods as needed.
 type HealthStoreBase struct {
 	gatewayadapter.ExecutionProviderStore
 }
 
-// ErrorPolicyStore 记录错误策略触发的存储写入。
+// ErrorPolicyStore records writes triggered by error policy.
 type ErrorPolicyStore struct {
 	HealthStoreBase
 	TempCalls           int
@@ -23,7 +23,7 @@ type ErrorPolicyStore struct {
 	ModelRateLimitCalls []ModelLimitCall
 }
 
-// HealthStoreRecorder 记录健康字段写入次数和最新参数，支持注入写入错误。
+// HealthStoreRecorder counts health writes, captures their latest inputs, and supports injected write errors.
 type HealthStoreRecorder struct {
 	HealthStoreBase
 	SetErrorCalls          int
@@ -40,14 +40,14 @@ type HealthStoreRecorder struct {
 	TempErr                error
 }
 
-// ForbiddenCounter 返回预设计数序列并记录重置操作。
+// ForbiddenCounter returns preset counts and records resets.
 type ForbiddenCounter struct {
 	Counts     []int64
 	ResetCalls []int64
 	Err        error
 }
 
-// RuntimeBlockRecorder 记录运行时阻断和清理操作。
+// RuntimeBlockRecorder captures scheduling blocks and removals.
 type RuntimeBlockRecorder struct {
 	Providers  []*gatewayadapter.ExecutionProvider
 	Until      []time.Time
@@ -55,7 +55,7 @@ type RuntimeBlockRecorder struct {
 	ClearedIDs []int64
 }
 
-// ModelLimitCall 记录模型窗口写入参数。
+// ModelLimitCall captures a model rate-limit window write.
 type ModelLimitCall struct {
 	ProviderID int64
 	Scope      string

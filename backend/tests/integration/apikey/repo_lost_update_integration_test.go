@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestRotateCredentialPreservesConcurrentChanges 同时验证原地替换、旧凭据撤销和事务内失效事件。
+// TestRotateCredentialPreservesConcurrentChanges checks in-place rotation, revocation, and invalidation outbox writes.
 func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 	user := s.mustCreateUser("apikey-rotation@example.com")
 	group := s.mustCreateGroup("rotation-group")
@@ -62,7 +62,7 @@ func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 		s.Require().Positive(count, "新旧凭据都必须有持久失效事件")
 	}
 
-	// 同一旧凭据的再次写入应返回冲突，已返回的新凭据继续有效。
+	// A second rotation using the stale credential must conflict.
 	stale.Key = "sk-losing-rotation"
 	s.Require().ErrorIs(s.repo.RotateCredential(s.ctx, stale, oldCredential), apikey.ErrAPIKeyRotationConflict)
 }
@@ -85,9 +85,9 @@ func (s *APIKeyRepoSuite) TestRotateCredentialRejectsDeletedAndManagedKeys() {
 	s.Require().Equal(oldCredential, got.Key)
 }
 
-// api_keys 上的用量列由计费热路径原子递增（IncrementQuotaUsed /
-// IncrementRateLimitUsage）。编辑 Key 时若整行回写，
-// 并发累计的配额与限流计数就会被旧快照覆盖。
+// IncrementQuotaUsed and IncrementRateLimitUsage atomically add billing usage.
+// A whole-row edit from a stale snapshot would overwrite those increments.
+// These tests keep usage counters outside the edit mask.
 
 func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentQuotaUsage() {
 	user := s.mustCreateUser("apikey-lost-update-quota@example.com")
@@ -150,7 +150,7 @@ func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentRateLimitUsage() {
 	s.Require().InDelta(42, got.Usage7d, 1e-9, "usage_7d must not be reverted by a stale key edit")
 }
 
-// TestUpdate_StillResetsUsageWhenDeclared 检查更新掩码要求的用量重置。
+// TestUpdate_StillResetsUsageWhenDeclared checks usage resets selected by the update mask.
 func (s *APIKeyRepoSuite) TestUpdate_StillResetsUsageWhenDeclared() {
 	user := s.mustCreateUser("apikey-reset-usage@example.com")
 	key := &apikey.APIKey{

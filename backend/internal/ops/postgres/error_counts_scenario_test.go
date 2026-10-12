@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestErrorCountsReadFailure 覆盖 collector_queries.go 和 ops_repo_dashboard.go 的查询错误。
+// TestErrorCountsReadFailure checks query failures in collector and dashboard counts.
 func TestErrorCountsReadFailure(t *testing.T) {
 	for _, source := range []string{"collector", "dashboard"} {
 		t.Run(source, func(t *testing.T) {

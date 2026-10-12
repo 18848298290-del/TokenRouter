@@ -21,7 +21,7 @@ const (
 	billingCacheJitter        = 30 * time.Second
 	rateLimitCacheTTL         = 7 * 24 * time.Hour // 7 days matches the longest window
 
-	// Rate limit window durations — must match billing.RateLimitWindow* constants.
+	// Rate limit window durations must match billing.RateLimitWindow* constants.
 	rateLimitWindow5h = 5 * time.Hour
 	rateLimitWindow1d = 24 * time.Hour
 	rateLimitWindow7d = 7 * 24 * time.Hour
@@ -47,9 +47,9 @@ var (
 	`)
 
 	// updateRateLimitUsageScript atomically increments all three rate limit usage counters
-	// with window expiration checking. If a window has expired, its usage is reset to cost
-	// (instead of accumulated) and the window timestamp is updated, matching the DB-side
-	// IncrementRateLimitUsage semantics.
+	// with window expiration checks. An expired window starts at the supplied time,
+	// with usage equal to the current cost, matching database
+	// IncrementRateLimitUsage behavior.
 	//
 	// ARGV: [1]=cost, [2]=ttl_seconds, [3]=now_unix, [4]=window_5h_seconds, [5]=window_1d_seconds, [6]=window_7d_seconds.
 	updateRateLimitUsageScript = redis.NewScript(`
@@ -89,9 +89,9 @@ type Cache struct {
 	rdb *redis.Client
 }
 
-// jitteredTTL 返回带随机抖动的 TTL，防止缓存雪崩。
+// jitteredTTL spreads balance-cache expirations within the configured jitter range.
 func jitteredTTL() time.Duration {
-	// 只做“减法抖动”，确保实际 TTL 不会超过 billingCacheTTL（避免上界预期被打破）。
+	// Subtract jitter so the TTL cannot exceed billingCacheTTL.
 	if billingCacheJitter <= 0 {
 		return billingCacheTTL
 	}

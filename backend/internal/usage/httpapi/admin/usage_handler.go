@@ -67,7 +67,7 @@ func NewUsageHandler(
 	}
 }
 
-// List handles listing all usage records with filters
+// List returns a filtered page of usage records.
 // GET /api/v1/admin/usage
 func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
@@ -81,7 +81,6 @@ func (h *UsageHandler) List(c *gin.Context) {
 		exactTotal = parsed
 	}
 
-	// Parse filters
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
@@ -170,9 +169,8 @@ func (h *UsageHandler) List(c *gin.Context) {
 		billingType = &bt
 	}
 
-	// Parse date range
 	var startTime, endTime *time.Time
-	userTZ := c.Query("timezone") // Get user's timezone from request
+	userTZ := c.Query("timezone")
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		t, _, err := h.calendar.ParseDateTimeInUserLocation(startDateStr, userTZ)
 		if err != nil {
@@ -189,7 +187,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 			return
 		}
 		if dateOnly {
-			// 日期输入按整天筛选，结束边界使用次日 00:00。
+			// Use the next calendar midnight as the exclusive end for a date-only input.
 			t = t.AddDate(0, 0, 1)
 		}
 		endTime = &t
@@ -234,8 +232,8 @@ func (h *UsageHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// enrichDetailedTimings 将已落库的 usage log 与同一内部请求 ID 的 http.access 日志批量关联。
-// 观测数据缺失或查询失败时返回未补充阶段耗时的使用记录列表。
+// enrichDetailedTimings joins persisted usage records with http.access timings by request ID.
+// Missing observations or lookup failures leave the DTOs without added stage timings.
 func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usage.UsageLog, out []dto.AdminUsageLog) {
 	if h == nil || h.opsService == nil || len(records) == 0 || len(records) != len(out) {
 		return
@@ -269,10 +267,9 @@ func usageLogClientRequestID(requestID string) string {
 	return strings.TrimSpace(strings.TrimPrefix(id, "client:"))
 }
 
-// Stats handles getting usage statistics with filters
+// Stats returns filtered usage statistics.
 // GET /api/v1/admin/usage/stats
 func (h *UsageHandler) Stats(c *gin.Context) {
-	// Parse filters - same as List endpoint
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
@@ -360,7 +357,6 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		billingType = &bt
 	}
 
-	// Parse date range
 	userTZ := c.Query("timezone")
 	now := h.calendar.NowInUserLocation(userTZ)
 	var startTime, endTime time.Time
@@ -382,7 +378,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 			return
 		}
 		if dateOnly {
-			// 与 SQL 条件 created_at < end 对齐，日期输入使用次日 00:00 作为上边界。
+			// Match created_at < end by advancing date-only inputs to the next calendar midnight.
 			endTime = endTime.AddDate(0, 0, 1)
 		}
 	} else {
@@ -400,7 +396,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		endTime = now
 	}
 
-	// 空值兼容返回全部端点图，页面可按当前图表选择查询。
+	// An empty source returns all endpoint charts; callers can request one chart explicitly.
 	endpointSource := c.Query("endpoint_source")
 	switch endpointSource {
 	case "all":
@@ -435,7 +431,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	}
 
 	var stats *usage.UsageStats
-	// nocache 直接查询数据库，最新结果返回当前请求，已有缓存保持到期时间。
+	// nocache queries storage for this response and leaves existing cache entries unchanged.
 	if parseBoolQueryWithDefault(c.Query("nocache"), false) {
 		s, err := h.usageService.GetStatsWithFilters(c.Request.Context(), filters)
 		if err != nil {
@@ -457,7 +453,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// SearchUsers handles searching users by email keyword
+// SearchUsers searches users for the usage filter dropdown.
 // GET /api/v1/admin/usage/search-users
 func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	keyword := c.Query("q")
@@ -466,14 +462,14 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 		return
 	}
 
-	// 搜索下拉最多返回 30 个用户。
+	// Limit dropdown suggestions to 30 users, including deleted users with historical usage.
 	users, _, err := h.adminService.ListUsers(c.Request.Context(), 1, 30, ports.UserListFilters{Search: keyword, IncludeDeleted: true}, "email", "asc")
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// 仅返回筛选下拉需要的用户信息和删除状态。
+	// Expose the identity and deletion status needed by the filter dropdown.
 	type SimpleUser struct {
 		ID      int64  `json:"id"`
 		Email   string `json:"email"`
@@ -492,7 +488,7 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// SearchAPIKeys handles searching API keys by user
+// SearchAPIKeys searches API keys by user and keyword.
 // GET /api/v1/admin/usage/search-api-keys
 func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 	userIDStr := c.Query("user_id")
@@ -514,7 +510,7 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// 仅返回筛选下拉需要的 API Key 基本信息。
+	// Expose the key identity needed by the filter dropdown.
 	type SimpleAPIKey struct {
 		ID     int64  `json:"id"`
 		Name   string `json:"name"`
@@ -533,7 +529,7 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ListCleanupTasks handles listing usage cleanup tasks
+// ListCleanupTasks returns a page of cleanup tasks.
 // GET /api/v1/admin/usage/cleanup-tasks
 func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	if h.cleanupService == nil {
@@ -561,7 +557,7 @@ func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// CreateCleanupTask handles creating a usage cleanup task
+// CreateCleanupTask creates a usage cleanup task.
 // POST /api/v1/admin/usage/cleanup-tasks
 func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	if h.cleanupService == nil {
@@ -691,7 +687,7 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	})
 }
 
-// CancelCleanupTask handles canceling a usage cleanup task
+// CancelCleanupTask cancels a pending or running cleanup task.
 // POST /api/v1/admin/usage/cleanup-tasks/:id/cancel
 func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	if h.cleanupService == nil {
@@ -719,7 +715,7 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	response.Success(c, gin.H{"id": taskID, "status": usage.UsageCleanupStatusCanceled})
 }
 
-// getStatsCached 查询用量统计并返回缓存命中状态。
+// getStatsCached returns usage statistics and cache-hit status.
 func (h *UsageHandler) getStatsCached(ctx context.Context, f usage.UsageLogFilters) (*usage.UsageStats, bool, error) {
 	return h.usageService.GetStatsCached(ctx, f)
 }

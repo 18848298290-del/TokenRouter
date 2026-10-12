@@ -19,13 +19,13 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// groupAwareMockProviderRepo 嵌入 mockProviderRepoForPlatform，覆写分组隔离相关方法。
-// allProviders 保存所有提供商，分组查询按 ProviderGroups 字段过滤。
+// groupAwareMockProviderRepo adds group filtering to mockProviderRepoForPlatform.
+// allProviders holds the source records; group queries filter ProviderGroups.
 type groupAwareMockProviderRepo struct {
 	*mockProviderRepoForPlatform
 	allProviders []gatewayprovider.
 
-		// ListSchedulableUngroupedByPlatform 仅返回未分组提供商（ProviderGroups 为空）
+		// ListSchedulableUngroupedByPlatform returns providers with no ProviderGroups for one platform.
 		ExecutionProvider
 }
 
@@ -66,7 +66,7 @@ func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatform(ctx cont
 	return result, nil
 }
 
-// ListSchedulableUngroupedByPlatforms 仅返回未分组提供商（多平台版本）。
+// ListSchedulableUngroupedByPlatforms returns ungrouped providers across the requested platforms.
 func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]bool, len(platforms))
 	for _, p := range platforms {
@@ -81,7 +81,7 @@ func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatforms(ctx con
 	return result, nil
 }
 
-// ListSchedulableByGroupIDAndPlatform 返回属于指定分组的提供商。
+// ListSchedulableByGroupIDAndPlatform returns members of the specified group on one platform.
 func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range m.allProviders {
@@ -92,7 +92,7 @@ func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx con
 	return result, nil
 }
 
-// ListSchedulableByGroupIDAndPlatforms 返回属于指定分组的提供商（多平台版本）。
+// ListSchedulableByGroupIDAndPlatforms returns members of the specified group across platforms.
 func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]bool, len(platforms))
 	for _, p := range platforms {
@@ -107,7 +107,7 @@ func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx co
 	return result, nil
 }
 
-// providerBelongsToGroup 检查提供商是否属于指定分组。
+// providerBelongsToGroup checks fixture group membership.
 func providerBelongsToGroup(acc gatewayprovider.ExecutionProvider, groupID int64) bool {
 	for _, ag := range acc.Record.ProviderGroups {
 		if ag.GroupID == groupID {
@@ -117,7 +117,7 @@ func providerBelongsToGroup(acc gatewayprovider.ExecutionProvider, groupID int64
 	return false
 }
 
-// newGroupAwareMockRepo 创建分组感知的 mock repo。
+// newGroupAwareMockRepo creates a repository fixture with group-aware queries.
 func newGroupAwareMockRepo(providers []gatewayprovider.ExecutionProvider) *groupAwareMockProviderRepo {
 	byID := make(map[int64]*gatewayprovider.ExecutionProvider, len(providers))
 	for i := range providers {
@@ -133,7 +133,7 @@ func newGroupAwareMockRepo(providers []gatewayprovider.ExecutionProvider) *group
 }
 
 func TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedProviders(t *testing.T) {
-	// 场景：无分组 API Key（groupID=nil），池中只有已分组提供商 → 应返回错误
+	// A nil group ID must fail even when the pool contains grouped providers.
 	ctx := context.Background()
 
 	providers := []gatewayprovider.ExecutionProvider{
@@ -157,7 +157,7 @@ func TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedProviders(t *testin
 }
 
 func TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedProviders(t *testing.T) {
-	// 场景：有分组 API Key（groupID=100），池中只有未分组提供商 → 应返回错误
+	// Group 100 cannot select from a pool containing only ungrouped providers.
 	ctx := context.Background()
 	groupID := int64(100)
 
@@ -182,22 +182,22 @@ func TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedProviders(t *testin
 }
 
 func TestGroupIsolation_UngroupedKey_RejectsUngroupedProviders(t *testing.T) {
-	// 请求未指定分组时，池内存在提供商也返回错误。
+	// An unspecified group is rejected even when providers exist.
 	ctx := context.Background()
 
 	providers := []gatewayprovider.ExecutionProvider{
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 1, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: []providercore.GroupMembership{{GroupID: 100}},
-		}}, // 已分组，不应被选中
+		}}, // Grouped provider; ineligible without a request group.
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformOpenAI, Priority: 2, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: nil,
-		}}, // 未分组提供商同样无法服务未指定分组的请求。
+		}}, // Ungrouped providers cannot serve a request lacking a group either.
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformOpenAI, Priority: 3, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: []providercore.GroupMembership{{GroupID: 200}},
-		}}, // 已分组，不应被选中
+		}}, // Grouped provider; ineligible without a request group.
 	}
 	repo := newGroupAwareMockRepo(providers)
 	cache := &mockGatewayCacheForPlatform{}
@@ -210,7 +210,7 @@ func TestGroupIsolation_UngroupedKey_RejectsUngroupedProviders(t *testing.T) {
 }
 
 func TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders(t *testing.T) {
-	// 场景：有分组 API Key（groupID=100），池中有未分组和多个分组提供商 → 应只选中分组 100 内的
+	// A mixed pool must select a member of the requested group 100.
 	ctx := context.Background()
 	groupID := int64(100)
 
@@ -218,15 +218,15 @@ func TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders(t *t
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 1, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: nil,
-		}}, // 未分组，不应被选中
+		}}, // Ungrouped; excluded.
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformOpenAI, Priority: 2, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: []providercore.GroupMembership{{GroupID: 200}},
-		}}, // 属于分组 200，不应被选中
+		}}, // Member of group 200; excluded.
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformOpenAI, Priority: 3, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: []providercore.GroupMembership{{GroupID: 100}},
-		}}, // 属于分组 100，应被选中
+		}}, // Member of group 100; eligible.
 	}
 	repo := newGroupAwareMockRepo(providers)
 	cache := &mockGatewayCacheForPlatform{}
@@ -240,23 +240,23 @@ func TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders(t *t
 }
 
 func TestGroupIsolation_RequiresExplicitGroup(t *testing.T) {
-	// 缺少明确分组时，不允许读取全局提供商池。
-	// platform=openai 使用平台固定的选择路径。
+	// An explicit group is required before querying a provider pool.
+	// The openai platform exercises selection with a forced platform.
 	ctx := context.Background()
 
-	// 混合未分组和已分组提供商，调用仍须指定分组。
+	// Both grouped and ungrouped records still require an explicit request group.
 	providers := []gatewayprovider.ExecutionProvider{
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 2, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: []providercore.GroupMembership{{GroupID: 100}},
-		}}, // 已分组
+		}}, // Grouped.
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformOpenAI, Priority: 1, Status: billing.StatusActive, Schedulable: true,
 			ProviderGroups: nil,
-		}}, // 未分组
+		}}, // Ungrouped.
 	}
 
-	// 使用基础 mock（ListSchedulableByPlatform 返回所有匹配平台的提供商，不做分组过滤）
+	// The basic mock returns all platform matches without group filtering.
 	byID := make(map[int64]*gatewayprovider.ExecutionProvider, len(providers))
 	for i := range providers {
 		byID[providers[i].Record.ID] = &providers[i]
@@ -269,17 +269,17 @@ func TestGroupIsolation_RequiresExplicitGroup(t *testing.T) {
 
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache}}, &config.Config{})
 
-	// groupID=nil 时直接拒绝，不读取任何提供商池。
+	// Reject nil groupID before reading a provider pool.
 	acc, err := svc.selectProviderForModelWithPlatform(ctx, nil, "", "", nil, capability.PlatformOpenAI)
 	require.Error(t, err, "请求必须明确绑定分组")
 	require.Nil(t, acc)
 }
 
 func TestGroupIsolation_RejectsImplicitGroupedProvider(t *testing.T) {
-	// groupID=nil 时，即使有已分组提供商也不允许调度。
+	// Grouped providers do not make a nil groupID request eligible.
 	ctx := context.Background()
 
-	// 调用方需要指定目标分组，提供商的分组关系用于筛选候选。
+	// The caller supplies the target group; provider memberships filter candidates.
 	providers := []gatewayprovider.ExecutionProvider{
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 1, Status: billing.StatusActive, Schedulable: true,
@@ -308,7 +308,7 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Anthropic 测试 anthropic 单平台选择。
+// TestGatewayService_SelectProviderForModelWithPlatform_Anthropic checks selection with the Anthropic platform forced.
 func TestGatewayService_SelectProviderForModelWithPlatform_Anthropic(t *testing.T) {
 	ctx := context.Background()
 
@@ -316,7 +316,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Anthropic(t *testing.
 		providers: []gatewayprovider.ExecutionProvider{
 			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAnthropic, Priority: 1, Status: billing.StatusActive, Schedulable: true}},
 			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAnthropic, Priority: 2, Status: billing.StatusActive, Schedulable: true}},
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // 应被隔离
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 3, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Excluded by platform.
 		},
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
 	}
@@ -335,13 +335,13 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Anthropic(t *testing.
 	require.Equal(t, capability.PlatformAnthropic, acc.Record.Platform, "应只返回 anthropic 平台提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Antigravity 测试 antigravity 单平台选择。
+// TestGatewayService_SelectProviderForModelWithPlatform_Antigravity checks selection with the Antigravity platform forced.
 func TestGatewayService_SelectProviderForModelWithPlatform_Antigravity(t *testing.T) {
 	ctx := context.Background()
 
 	repo := &mockProviderRepoForPlatform{
 		providers: []gatewayprovider.ExecutionProvider{
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAnthropic, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // 应被隔离
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAnthropic, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Excluded by platform.
 			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}},
 		},
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
@@ -361,7 +361,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Antigravity(t *testin
 	require.Equal(t, capability.PlatformAntigravity, acc.Record.Platform, "应只返回 antigravity 平台提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed 测试优先级和最后使用时间。
+// TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed checks priority and least-recently-used ordering.
 func TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -411,7 +411,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_GeminiOAuthPreference
 	require.Equal(t, int64(2), acc.Record.ID, "同优先级且未使用时应优先选择OAuth提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders 测试无可用提供商。
+// TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders checks an empty candidate pool.
 func TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders(t *testing.T) {
 	ctx := context.Background()
 
@@ -430,7 +430,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders(
 	require.ErrorIs(t, err, schedulercore.ErrNoAvailableProviders)
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded 测试所有提供商被排除。
+// TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded checks selection when all providers are excluded.
 func TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded(t *testing.T) {
 	ctx := context.Background()
 
@@ -455,7 +455,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded(t *testin
 	require.Nil(t, acc)
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Schedulability 测试提供商可调度性检查。
+// TestGatewayService_SelectProviderForModelWithPlatform_Schedulability checks provider schedulability filtering.
 func TestGatewayService_SelectProviderForModelWithPlatform_Schedulability(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -529,7 +529,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Schedulability(t *tes
 	}
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_StickySession 测试粘性会话。
+// TestGatewayService_SelectProviderForModelWithPlatform_StickySession checks sticky selection under a forced platform.
 func TestGatewayService_SelectProviderForModelWithPlatform_StickySession(t *testing.T) {
 	ctx := context.Background()
 
@@ -560,7 +560,7 @@ func TestGatewayService_SelectProviderForModelWithPlatform_StickySession(t *test
 	t.Run("粘性会话不匹配平台-降级选择", func(t *testing.T) {
 		repo := &mockProviderRepoForPlatform{
 			providers: []gatewayprovider.ExecutionProvider{
-				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAntigravity, Priority: 2, Status: billing.StatusActive, Schedulable: true}}, // 粘性会话绑定但平台不匹配
+				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformAntigravity, Priority: 2, Status: billing.StatusActive, Schedulable: true}}, // The bound provider belongs to a different platform.
 				{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAnthropic, Priority: 1, Status: billing.StatusActive, Schedulable: true}},
 			},
 			providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
@@ -570,12 +570,12 @@ func TestGatewayService_SelectProviderForModelWithPlatform_StickySession(t *test
 		}
 
 		cache := &mockGatewayCacheForPlatform{
-			sessionBindings: map[string]int64{"session-123": 1}, // 绑定 antigravity 提供商
+			sessionBindings: map[string]int64{"session-123": 1}, // Bind an Antigravity provider.
 		}
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache}}, testConfig())
 
-		// 请求 anthropic 平台，但粘性会话绑定的是 antigravity 提供商
+		// An Anthropic request cannot reuse the Antigravity binding under a forced platform.
 		acc, err := svc.selectProviderForModelWithPlatform(ctx, selectionFixtureGroupID(ctx), "session-123", "claude-3-5-sonnet-20241022", nil, capability.PlatformAnthropic)
 		require.NoError(t, err)
 		require.NotNil(t, acc)
@@ -1156,22 +1156,22 @@ func TestLegacySchedulers_FilterUpstreamRestrictedProvidersInEveryShortcut(t *te
 	}
 }
 
-// selectProviderForModelWithPlatform 通过通用调度器选择指定平台的提供商。
+// selectProviderForModelWithPlatform selects through the generic scheduler with a forced platform.
 func (s *Generic) selectProviderForModelWithPlatform(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, platform string) (*gatewayprovider.ExecutionProvider, error) {
 	core, scope := s.genericSelector()
 	selected, err := core.SelectPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 	return scope.oldProvider(selected), err
 }
 
-// selectProviderWithMixedScheduling 选择提供商（支持混合调度）
-// 空平台参数让调度器从分组内的全部平台选择提供商。
+// selectProviderWithMixedScheduling selects across the group's platforms.
+// An empty platform argument permits all group members.
 func (s *Generic) selectProviderWithMixedScheduling(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, nativePlatform string) (*gatewayprovider.ExecutionProvider, error) {
 	core, scope := s.genericSelector()
 	selected, err := core.SelectPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, "")
 	return scope.oldProvider(selected), err
 }
 
-// loads 为调度测试构造候选负载，选择器执行评分和槽位获取。
+// loads builds fixture loads; the selector performs scoring and slot acquisition.
 func (g *projectionScope) loads(values []providerWithLoad) []schedulercore.FlowLoad {
 	if values == nil {
 		return nil

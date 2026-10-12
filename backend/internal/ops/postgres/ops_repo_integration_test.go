@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestOpsRequestIDConditionUsesIndexes 检查两类日志的别名查询和本地 ID 冲突。
+// TestOpsRequestIDConditionUsesIndexes checks alias lookups and local ID collisions for both log tables.
 func TestOpsRequestIDConditionUsesIndexes(t *testing.T) {
 	ctx := t.Context()
 	tx, err := integrationDB.BeginTx(ctx, nil)

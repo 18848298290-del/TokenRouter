@@ -22,19 +22,19 @@ const (
 	openAIOAuth429MaxRetryDelay                  = 8 * time.Second
 )
 
-// OpenAIFailoverPolicy 计算当前提供商的恢复资格与截止时间。
+// OpenAIFailoverPolicy determines provider recovery eligibility and retry deadlines.
 type OpenAIFailoverPolicy struct {
 	Health *provideradapter.OpenAIResponseHealth
 }
 
-// ClassifyOpenAIAPIKeyHealthFailure 区分请求取消、平台故障和提供商故障。
+// ClassifyOpenAIAPIKeyHealthFailure returns status, body, and whether the failure counts against provider health.
 func ClassifyOpenAIAPIKeyHealthFailure(err error) (int, []byte, bool) {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return 0, nil, false
 	}
 
 	if failoverErr, ok := errors.AsType[*forwardcore.UpstreamFailoverError](err); ok {
-		// 已有独立恢复、同提供商重试或非提供商归因的错误，不进入健康计数。
+		// Dedicated recovery, same-provider retries, and request/shared failures bypass provider health accounting.
 		if failoverErr.IsCredentialFailure() ||
 			failoverErr.RequestScopedTransient ||
 			failoverErr.RetryableOnSameProvider ||
@@ -56,12 +56,12 @@ func ClassifyOpenAIAPIKeyHealthFailure(err error) (int, []byte, bool) {
 	return 0, nil, false
 }
 
-// IsOpenAIRequestBodyTooLarge 判断当前失败是否仍可通过更换提供商发送相同报文。
+// IsOpenAIRequestBodyTooLarge reports whether the failure carries the oversized-request reason.
 func IsOpenAIRequestBodyTooLarge(e *forwardcore.UpstreamFailoverError) bool {
 	return e != nil && e.Reason == "openai_request_body_too_large"
 }
 
-// IsOpenAICapacityShed 保留请求级瞬态标记与平台报文识别的共同条件。
+// IsOpenAICapacityShed requires both the request-scoped transient flag and a recognized capacity error.
 func IsOpenAICapacityShed(e *forwardcore.UpstreamFailoverError) bool {
 	return e != nil && e.RequestScopedTransient && openai.IsOpenAIRequestScopedCapacityShed("", e.ResponseBody)
 }
@@ -94,7 +94,7 @@ func ShouldFailoverUpstreamStatus(statusCode int) bool {
 }
 
 func ShouldFailoverOpenAIResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	// cyber_policy 即使被中间层包成 5xx，仍属于请求拒绝，不触发提供商切换。
+	// A cyber_policy rejection stays a request rejection even when an intermediary wraps it in a 5xx status.
 	if IsOpenAICyberWarningPayload(upstreamBody, upstreamMsg) {
 		return false
 	}
@@ -151,7 +151,7 @@ func NewOpenAIUpstreamFailure(
 		failoverErr.ClientStatusCode = http.StatusBadGateway
 		failoverErr.ClientMessage = openAIUpstreamAccessUnavailableClientMessage
 	} else if requestScopedCapacity {
-		// 重试耗尽后保留供应商的过载说明，并按可重试服务端错误返回。
+		// After retry exhaustion, return the upstream overload explanation with a retryable server status.
 		failoverErr.ClientStatusCode = http.StatusServiceUnavailable
 		failoverErr.ClientMessage = OpenAICapacityShedClientMessage(upstreamMsg, responseBody)
 	}
@@ -218,7 +218,7 @@ func OpenAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	return "Upstream service is temporarily overloaded, please retry later"
 }
 
-// OpenAISemantic429Headers 为 Spark OAuth 请求的流内限流处理提供响应头。
+// OpenAISemantic429Headers supplies response headers for in-stream Spark OAuth rate limits.
 func OpenAISemantic429Headers(target *ExecutionProvider, model string, headers http.Header) http.Header {
 	if IsCodexSparkModel(model) && target != nil && target.View().IsOpenAIOAuthLike() {
 		return headers
@@ -226,13 +226,13 @@ func OpenAISemantic429Headers(target *ExecutionProvider, model string, headers h
 	return nil
 }
 
-// OpenAIStreamFailureRetryable 保留容量降载与提供商池模式的同提供商重试资格。
+// OpenAIStreamFailureRetryable checks capacity shedding and pool-mode eligibility for same-provider retries.
 func OpenAIStreamFailureRetryable(provider *ExecutionProvider, payload []byte, message string) bool {
 	if provider == nil {
 		return false
 	}
-	// 容量降载由客户端身份或模型容量触发，与当前提供商健康无关；非池提供商也应先
-	// 在同一提供商上按重试预算恢复请求。
+	// Capacity shedding concerns client identity or model capacity rather than provider health.
+	// Permit budgeted retries on the same provider even outside pool mode.
 	if openai.IsOpenAIUpstreamCapacityShedEvent(payload) {
 		return true
 	}

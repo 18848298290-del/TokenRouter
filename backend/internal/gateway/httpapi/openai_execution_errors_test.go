@@ -14,7 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// TestWriteOpenAIFastPolicyBlockedResponse_AfterKeepaliveCommit 验证心跳提交后的 Fast 策略拒绝写为 response.failed。
+// TestWriteOpenAIFastPolicyBlockedResponse_AfterKeepaliveCommit checks response.failed for a Fast denial
+// after heartbeat commit.
 func TestWriteOpenAIFastPolicyBlockedResponse_AfterKeepaliveCommit(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
@@ -30,7 +31,8 @@ func TestWriteOpenAIFastPolicyBlockedResponse_AfterKeepaliveCommit(t *testing.T)
 	require.Contains(t, gjson.Get(events[0][1], "response.error.message").String(), "tier blocked")
 }
 
-// TestWriteOpenAIFastPolicyBlockedResponse_BeforeKeepaliveCommit 验证心跳提交前 Fast 策略拒绝返回 403 JSON。
+// TestWriteOpenAIFastPolicyBlockedResponse_BeforeKeepaliveCommit checks a 403 JSON Fast denial before
+// heartbeat commit.
 func TestWriteOpenAIFastPolicyBlockedResponse_BeforeKeepaliveCommit(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)

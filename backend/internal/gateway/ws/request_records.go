@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// entryRequestRecords 在提供商切换期间持有尚未完成的逻辑请求。
+// entryRequestRecords retains unfinished logical requests across provider switches.
 type entryRequestRecords struct {
 	mu      sync.Mutex
 	root    context.Context
@@ -64,7 +64,7 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 	return telemetry.CopyRequestCapture(base, ctx)
 }
 
-// finish 保留重试中的 ID，终态之后释放内存里的上下文。
+// finish retains request identity during retries and releases the saved context after terminal completion.
 func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, providerID int64, platform string, retry bool) context.Context {
 	ctx := a.context(base, capture.Turn)
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
@@ -110,7 +110,7 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 	return ctx
 }
 
-// close 记录在鉴权、解析或连接退出时提前结束的轮次。
+// close records turns interrupted by authentication, parsing, or connection exit.
 func (r *entryRequestRecords) close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

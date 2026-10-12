@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// RuntimeStatusOptions 绑定共享的并发、会话、RPM 和用量读取函数。
+// RuntimeStatusOptions supplies shared concurrency, session, RPM, and usage readers.
 type RuntimeStatusOptions struct {
 	RPMBatch      func(context.Context, []int64) (map[int64]int, error)
 	Now           func() time.Time
@@ -24,7 +24,7 @@ type RuntimeStatus struct {
 	ActiveSessions, CurrentRPM *int
 }
 
-// RuntimeStatusReader 按原时机读取单提供商展示状态，不修改输入提供商。
+// RuntimeStatusReader builds display state for one provider using a cloned record.
 type RuntimeStatusReader struct{ options RuntimeStatusOptions }
 
 func NewRuntimeStatusReader(options RuntimeStatusOptions) *RuntimeStatusReader {
@@ -70,7 +70,7 @@ func (s *RuntimeStatusReader) Read(ctx context.Context, value *Record) RuntimeSt
 	return out
 }
 
-// applyQuotaAutoPauseState 按每条原展示时机读取动态设置。
+// applyQuotaAutoPauseState reads dynamic settings when building each OpenAI provider's display state.
 func (s *RuntimeStatusReader) applyQuotaAutoPauseState(ctx context.Context, v *Record) {
 	if v.Platform == PlatformOpenAI {
 		var settings QuotaAutoPauseSettings

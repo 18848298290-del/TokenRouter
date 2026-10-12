@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// CreativeTargets 固定任务所需的技术依赖，每次选号后只创建该提供商的受控目标。
+// CreativeTargets holds task dependencies and binds an execution target after each provider selection.
 type CreativeTargets struct {
 	Requests interface {
 		ImagesURL(*ExecutionProvider, string) (string, error)
@@ -35,7 +35,7 @@ type CreativeTargets struct {
 	Enter        func() (func(), error)
 }
 
-// ForProvider 绑定所选提供商的执行函数，调用这些函数时读取凭据并发送请求。
+// ForProvider binds execution functions that read credentials and send requests when called.
 func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprovider.Target {
 	target := &creativeprovider.Target{}
 	if s == nil {
@@ -45,7 +45,7 @@ func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprov
 		value, _, err := s.Credentials.Resolve(ctx, ExecutionRecord(provider))
 		return value, err
 	}
-	// 创作台必须取得图片字节，URL 下载不受普通 API 的可选回填开关控制。
+	// Creative requires image bytes, so URL downloads are independent of optional API image backfill.
 	imageDownload := openai.ImageBackfillOptions{
 		ValidateURL: func(raw string) (string, error) {
 			return s.Requests.ValidateBaseURL(raw)
@@ -120,7 +120,7 @@ func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprov
 	return target
 }
 
-// validateGeminiBaseURL 校验目标地址，校验失败或地址为空时返回错误。
+// validateGeminiBaseURL rejects invalid or empty target addresses.
 func (s *CreativeTargets) validateGeminiBaseURL(raw string) (string, error) {
 	validated, err := s.Requests.ValidateBaseURL(raw)
 	if err != nil {

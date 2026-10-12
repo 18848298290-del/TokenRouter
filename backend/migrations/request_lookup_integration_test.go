@@ -18,7 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestApplyMigrationsRequestLookupUpgrade 检查旧函数升级、索引中断恢复和提前建索引后的重放。
+// TestApplyMigrationsRequestLookupUpgrade checks function upgrades, invalid-index recovery, and reuse of an
+// existing index.
 func TestApplyMigrationsRequestLookupUpgrade(t *testing.T) {
 	ctx := t.Context()
 	image := strings.TrimSpace(os.Getenv("TOKENROUTER_TEST_POSTGRES_IMAGE"))
@@ -50,7 +51,8 @@ DROP INDEX idx_audit_logs_request_id_created_at;
 INSERT INTO audit_logs(request_id,status_code)
 SELECT 'audit-'||(g % 10000),200 FROM generate_series(1,50000) g;`)
 	require.NoError(t, err)
-	// 并发唯一索引遇到重复值会留下无效索引，用它模拟建索引中断后的重试入口。
+	// Duplicate values leave an invalid concurrent unique index, simulating an interrupted index build for
+	// retry.
 	_, err = db.ExecContext(ctx, `CREATE UNIQUE INDEX CONCURRENTLY idx_audit_logs_request_id_created_at ON audit_logs(request_id)`)
 	var duplicate *pq.Error
 	require.ErrorAs(t, err, &duplicate)
@@ -74,7 +76,7 @@ SELECT 'audit-'||(g % 10000),200 FROM generate_series(1,50000) g;`)
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT 'idx_usage_logs_billing_key_api_key'::regclass::oid`).Scan(&currentBillingIndex))
 	require.Equal(t, billingIndex, currentBillingIndex)
 
-	// 有效索引提前建好时，启动迁移复用它并登记迁移记录。
+	// Startup reuses a valid prebuilt index and records the migration.
 	var auditIndex uint32
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT 'idx_audit_logs_request_id_created_at'::regclass::oid`).Scan(&auditIndex))
 	_, err = db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE filename='296_audit_request_id_index_notx.sql'`)

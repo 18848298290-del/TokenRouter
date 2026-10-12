@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	// reserveRequestScript 使用 Redis 时间检查最近 60 秒的请求和两分钟的并发租约。
-	// 两项检查都通过后再写入，超限请求不会消耗另一项额度。
+	// reserveRequestScript uses Redis time for the 60-second RPM window and two-minute concurrency leases.
+	// It writes only after both checks pass, so rejection does not consume the other limit.
 	reserveRequestScript = redis.NewScript(`
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
@@ -44,7 +44,7 @@ end
 return {0, 0}
 `)
 
-	// refreshRequestScript 仅续租仍有效的请求，过期租约要求请求停止。
+	// refreshRequestScript renews unexpired leases; an expired lease requires the request to stop.
 	refreshRequestScript = redis.NewScript(`
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
@@ -56,13 +56,13 @@ return 1
 `)
 )
 
-// requestLimitKeys 用同一个 Key ID 聚合所有分组和实例的请求。
+// requestLimitKeys aggregates all groups and instances by key ID.
 func requestLimitKeys(id int64) []string {
 	prefix := fmt.Sprintf("apikey:requests:{%d}:", id)
 	return []string{prefix + "active", prefix + "rpm"}
 }
 
-// ReserveRequest 原子检查并发和 RPM，返回超限后的重试间隔。
+// ReserveRequest atomically checks concurrency and RPM and returns a retry delay on rejection.
 func (c *ApiKeyCache) ReserveRequest(ctx context.Context, id int64, request string, concurrency, rpm int) (time.Duration, error) {
 	result, err := reserveRequestScript.Run(ctx, c.rdb, requestLimitKeys(id), request, concurrency, rpm).Int64Slice()
 	if err != nil || len(result) != 2 {
@@ -79,7 +79,7 @@ func (c *ApiKeyCache) ReserveRequest(ctx context.Context, id int64, request stri
 	}
 }
 
-// RefreshRequest 将活跃请求的租约延长两分钟。
+// RefreshRequest extends an active request lease by two minutes.
 func (c *ApiKeyCache) RefreshRequest(ctx context.Context, id int64, request string) error {
 	result, err := refreshRequestScript.Run(ctx, c.rdb, requestLimitKeys(id)[:1], request).Int()
 	if err != nil || result != 1 {
@@ -88,7 +88,7 @@ func (c *ApiKeyCache) RefreshRequest(ctx context.Context, id int64, request stri
 	return nil
 }
 
-// ReleaseRequest 归还并发槽，RPM 记录在一分钟后过期。
+// ReleaseRequest returns the concurrency slot. RPM records remain in the 60-second window.
 func (c *ApiKeyCache) ReleaseRequest(ctx context.Context, id int64, request string) error {
 	return c.rdb.ZRem(ctx, requestLimitKeys(id)[0], request).Err()
 }

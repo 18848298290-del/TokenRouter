@@ -21,23 +21,23 @@ const (
 	dashboardAggregationBackfillMaxHours       = 24
 
 	dashboardAggregationLeaderLockKey = "dashboard:aggregation:leader"
-	// 锁 TTL 需长于单轮定时聚合的最坏运行时间，避免任务未结束时锁过期。
+	// Keep the lease longer than the scheduled aggregation timeout so it covers the full round.
 	dashboardAggregationLeaderLockTTL = 5 * time.Minute
 )
 
 var (
-	// ErrDashboardBackfillDisabled 当配置禁用回填时返回。
+	// ErrDashboardBackfillDisabled indicates that deployment configuration disables backfill.
 	ErrDashboardBackfillDisabled = errors.New("仪表盘聚合回填已禁用")
-	// ErrDashboardBackfillTooLarge 当回填跨度超过限制时返回。
+	// ErrDashboardBackfillTooLarge indicates that the requested range exceeds the configured limit.
 	ErrDashboardBackfillTooLarge   = errors.New("回填时间跨度过大")
 	errDashboardAggregationRunning = errors.New("聚合作业正在运行")
 )
 
-// DashboardAggregationRepository 定义仪表盘预聚合仓储接口。
+// DashboardAggregationRepository persists dashboard rollups and manages retention.
 type DashboardAggregationRepository interface {
 	AggregateRange(ctx context.Context, start, end time.Time) error
-	// RecomputeRange 重新计算指定时间范围内的聚合数据（包含活跃用户等派生表）。
-	// 设计目的：当 usage_logs 被批量删除/回滚后，确保聚合表可恢复一致性。
+	// RecomputeRange rebuilds aggregates, including derived active-user data, for the given range.
+	// Use it after deleting usage_logs to repair stale aggregates.
 	RecomputeRange(ctx context.Context, start, end time.Time) error
 	GetAggregationWatermark(ctx context.Context) (time.Time, error)
 	UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error
@@ -47,7 +47,7 @@ type DashboardAggregationRepository interface {
 	EnsureUsageLogsPartitions(ctx context.Context, now time.Time) error
 }
 
-// DashboardAggregationService 负责定时聚合与回填。
+// DashboardAggregationService schedules aggregation, historical backfill, and range repair.
 type DashboardAggregationService struct {
 	reporter             func(string, string, ...any)
 	runtimeMu            sync.Mutex
@@ -69,11 +69,11 @@ type DashboardAggregationService struct {
 	lastRetentionCleanup atomic.Value // time.Time
 	locker               SingletonLocker
 	instanceID           string
-	// backfillBudget 仅供测试缩短单轮预算；生产为零时使用固定的 10 秒预算。
+	// backfillBudget overrides the per-round budget in tests; zero uses the production ten-second budget.
 	backfillBudget time.Duration
 }
 
-// NewDashboardAggregationService 创建聚合服务。
+// NewDashboardAggregationService creates an aggregation service with its own runtime context.
 func NewDashboardAggregationService(repo DashboardAggregationRepository, timingWheel TimingWheel, cfg *Options) *DashboardAggregationService {
 	var aggCfg DashboardAggregationConfig
 	if cfg != nil {
@@ -89,7 +89,7 @@ func NewDashboardAggregationService(repo DashboardAggregationRepository, timingW
 	}
 }
 
-// SetPreAggregationSettings 注入统一运行时配置，并在开启或修改周期时立即唤醒任务。
+// SetPreAggregationSettings binds runtime settings and wakes work when enabled or its interval changes.
 func (s *DashboardAggregationService) SetPreAggregationSettings(settings AggregationSettings) {
 	if s == nil {
 		return
@@ -108,10 +108,10 @@ func (s *DashboardAggregationService) SetPreAggregationSettings(settings Aggrega
 	}
 }
 
-// SetSingletonLocker 设置聚合作业使用的单实例锁。
+// SetSingletonLocker supplies the distributed lock used by scheduled aggregation.
 func (s *DashboardAggregationService) SetSingletonLocker(locker SingletonLocker) { s.locker = locker }
 
-// Start 启动定时聚合作业；实际启停和周期由统一运行时配置决定。
+// Start registers scheduled work; runtime settings control whether and how often it executes.
 func (s *DashboardAggregationService) Start() {
 	s.runtimeMu.Lock()
 	if s.runtimeStarted || s.runtimeStopped {
@@ -143,7 +143,7 @@ func (s *DashboardAggregationService) Start() {
 	}
 }
 
-// TriggerBackfill 触发回填（异步）。
+// TriggerBackfill persists a manual range and wakes asynchronous processing.
 func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) error {
 	if s == nil || s.repo == nil {
 		return errors.New("聚合服务未初始化")
@@ -179,17 +179,17 @@ func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) erro
 	if err := s.updateAnalyticsState(ctx, state, AnalyticsManualRequest); err != nil {
 		return err
 	}
-	// 手动操作复用定时任务的分布式锁和资源预算。
+	// Manual backfill shares the scheduled job's distributed lock and work budget.
 	s.lastBackfillAt.Store(0)
 	s.TriggerNow()
 	return nil
 }
 
-// TriggerRecomputeRange 触发指定范围的重新计算（异步）。
-// 与 TriggerBackfill 不同：
-// - 不依赖 backfill_enabled（这是内部一致性修复）
-// - 不受运行时开关影响，避免关闭期间删除原始记录后留下陈旧聚合
-// - 不更新 watermark（避免影响正常增量聚合游标）。
+// TriggerRecomputeRange starts asynchronous repair of a specified range.
+// Repair has these scheduling rules:
+//   - It runs independently of backfill_enabled because it repairs existing aggregates.
+//   - It runs while runtime aggregation is disabled so deletions can repair stale data.
+//   - It leaves the incremental aggregation watermark unchanged.
 func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time) error {
 	if s == nil || s.repo == nil {
 		return errors.New("聚合服务未初始化")
@@ -269,7 +269,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 		return
 	}
 	defer atomic.StoreInt32(&s.running, 0)
-	// 取得运行权后再消费调度信号，避免立即触发与在途任务冲突时丢失唤醒。
+	// Acquire execution before consuming the wakeup, so a running job cannot discard an immediate-run request.
 	if !s.scheduledRunDue(time.Now()) {
 		return
 	}
@@ -278,7 +278,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 	ctx, cancel := context.WithTimeout(s.operationContext(), defaultDashboardAggregationTimeout)
 	defer cancel()
 
-	// 多实例保护：仅主实例执行本轮聚合，避免重复聚合查询与水位竞争。
+	// The lock holder executes this round to avoid duplicate queries and competing watermark writes.
 	release, ok := s.acquireSingleton(ctx)
 	if !ok {
 		return
@@ -297,7 +297,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 	epoch := time.Unix(0, 0).UTC()
 	start := last.Add(-lookback)
 	if !last.After(epoch) {
-		// 新实例只实时聚合当前窗口，历史数据交给受预算约束的反向回填，避免启动时长时间扫描。
+		// Start with the live lookback window; budgeted reverse backfill handles older history.
 		start = now.Add(-lookback)
 	} else if start.After(now) {
 		start = now.Add(-lookback)
@@ -380,7 +380,7 @@ func (s *DashboardAggregationService) aggregateRange(ctx context.Context, start,
 	return nil
 }
 
-// aggregateHourlyRange 只写入实时或自动回填所需的小时聚合表。
+// aggregateHourlyRange updates dashboard aggregates and the analytics hourly table for live work or backfill.
 func (s *DashboardAggregationService) aggregateHourlyRange(ctx context.Context, start, end time.Time) error {
 	if !end.After(start) {
 		return nil
@@ -397,12 +397,12 @@ func (s *DashboardAggregationService) aggregateHourlyRange(ctx context.Context, 
 	return nil
 }
 
-// aggregateLiveRange 每轮刷新小时表，并同步重建本轮实际触及的已闭合 UTC 日期。
+// aggregateLiveRange refreshes hourly data and rebuilds closed UTC days touched by this round.
 func (s *DashboardAggregationService) aggregateLiveRange(ctx context.Context, start, end time.Time) error {
 	if err := s.aggregateHourlyRange(ctx, start, end); err != nil || s.analyticsRepo == nil {
 		return err
 	}
-	// 回看窗口跨午夜时可能持续吸收前一日迟到记录，必须在窗口离开该日期前持续刷新日表。
+	// A cross-midnight lookback can keep receiving late records for yesterday; refresh its daily bucket while still in range.
 	dayStart := truncateToDayUTC(start)
 	closedDayEnd := truncateToDayUTC(end)
 	if !closedDayEnd.After(dayStart) {
@@ -411,7 +411,7 @@ func (s *DashboardAggregationService) aggregateLiveRange(ctx context.Context, st
 	return s.analyticsRepo.RebuildUsageAnalyticsDailyRange(ctx, dayStart, closedDayEnd)
 }
 
-// aggregateAutomaticBackfillHour 在日期完成后生成日桶，日桶成功前不会推进调用方游标。
+// aggregateAutomaticBackfillHour rebuilds a completed day before allowing the caller to advance its cursor.
 func (s *DashboardAggregationService) aggregateAutomaticBackfillHour(ctx context.Context, start, end, oldestHour time.Time) error {
 	if err := s.aggregateHourlyRange(ctx, start, end); err != nil || s.analyticsRepo == nil {
 		return err
@@ -460,7 +460,7 @@ func (s *DashboardAggregationService) maybeCleanupRetention(ctx context.Context,
 	}
 }
 
-// TriggerNow 立即尝试执行一轮聚合，供运行时开关开启后使用。
+// TriggerNow requests an immediate aggregation attempt, such as after enabling runtime settings.
 func (s *DashboardAggregationService) TriggerNow() {
 	if s == nil {
 		return
@@ -469,7 +469,7 @@ func (s *DashboardAggregationService) TriggerNow() {
 	s.runBackground(s.runScheduledAggregation)
 }
 
-// RuntimeStatus 返回设置页面所需的多维聚合状态。
+// RuntimeStatus returns multidimensional aggregation progress for the settings page.
 func (s *DashboardAggregationService) RuntimeStatus(ctx context.Context) PreAggregationRuntimeStatus {
 	status := PreAggregationRuntimeStatus{Phase: "unavailable"}
 	if s == nil || s.analyticsRepo == nil {
@@ -672,7 +672,7 @@ func (s *DashboardAggregationService) runHistoricalBackfill(ctx context.Context,
 	}
 }
 
-// runManualHistoricalBackfill 仅重算管理员指定的最近时间范围，并保存独立游标以支持重启续跑。
+// runManualHistoricalBackfill recomputes the requested range and persists a separate cursor for restart recovery.
 func (s *DashboardAggregationService) runManualHistoricalBackfill(ctx context.Context, state *UsageAnalyticsAggregationState) {
 	if state == nil || state.ManualBackfillStart == nil || state.ManualBackfillCursor == nil {
 		return
@@ -746,7 +746,7 @@ func (s *DashboardAggregationService) runManualHistoricalBackfill(ctx context.Co
 	}
 }
 
-// resolveBackfillBudget 返回单轮数据库工作预算，测试可注入更短时长。
+// resolveBackfillBudget returns the per-round database budget, allowing shorter test overrides.
 func (s *DashboardAggregationService) resolveBackfillBudget() time.Duration {
 	if s != nil && s.backfillBudget > 0 {
 		return s.backfillBudget
@@ -754,7 +754,7 @@ func (s *DashboardAggregationService) resolveBackfillBudget() time.Duration {
 	return dashboardAggregationBackfillBudget
 }
 
-// shouldStartBackfillChunk 用上一轮完整耗时判断剩余预算是否足以启动下一小时。
+// shouldStartBackfillChunk uses the previous iteration's duration to estimate whether another hour fits.
 func shouldStartBackfillChunk(processed int, remaining, previousIterationDuration time.Duration) bool {
 	if remaining <= 0 {
 		return false
@@ -765,7 +765,7 @@ func shouldStartBackfillChunk(processed int, remaining, previousIterationDuratio
 	return remaining > previousIterationDuration
 }
 
-// pauseHistoricalBackfill 保存已完成游标，预算正常耗尽不记录为任务错误。
+// pauseHistoricalBackfill saves completed progress without treating normal budget exhaustion as an error.
 func (s *DashboardAggregationService) pauseHistoricalBackfill(ctx context.Context, state *UsageAnalyticsAggregationState, started time.Time) {
 	if s == nil || s.analyticsRepo == nil || state == nil {
 		return
@@ -777,7 +777,7 @@ func (s *DashboardAggregationService) pauseHistoricalBackfill(ctx context.Contex
 	_ = s.updateAnalyticsState(ctx, state, progressKind(state))
 }
 
-// extendUsageAnalyticsCoverage 只在手动块与现有连续覆盖相接时推进公共覆盖游标。
+// extendUsageAnalyticsCoverage extends shared coverage when a manual chunk touches its current start.
 func extendUsageAnalyticsCoverage(state *UsageAnalyticsAggregationState, chunkStart, chunkEnd time.Time) {
 	if state == nil || state.CoverageStart == nil {
 		return
@@ -809,7 +809,7 @@ func truncateToDayUTC(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// runBackground 将启动和设置更新触发的工作纳入同一停止屏障。
+// runBackground registers startup and settings-triggered work for shutdown waiting.
 func (s *DashboardAggregationService) runBackground(fn func()) {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -819,10 +819,10 @@ func (s *DashboardAggregationService) runBackground(fn func()) {
 	s.runtimeWG.Go(func() { ; fn() })
 }
 
-// Stop 先停止产生新聚合工作，再等待时间轮回调与已唤醒的任务。
+// Stop prevents new work and waits for timing-wheel callbacks and dispatched tasks.
 func (s *DashboardAggregationService) Stop() { _ = s.StopContext(context.Background()) }
 
-// StopContext 停止新工作并取消在途聚合；超时不代表资源已排空。
+// StopContext cancels aggregation and prevents new work; context expiration reports incomplete shutdown.
 func (s *DashboardAggregationService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -853,7 +853,7 @@ func (s *DashboardAggregationService) StopContext(ctx context.Context) error {
 	}
 }
 
-// operationContext 兼容未启动的同步验证；生产构造始终持有运行 context。
+// operationContext returns the runtime context or Background for directly constructed test instances.
 func (s *DashboardAggregationService) operationContext() context.Context {
 	if s != nil && s.runCtx != nil {
 		return s.runCtx

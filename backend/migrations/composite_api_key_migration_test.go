@@ -12,22 +12,23 @@ func TestCompositeAPIKeyMigrationConstraints(t *testing.T) {
 	require.NoError(t, err)
 	sql := strings.ToLower(string(content))
 
-	// 普通 Key 不需要回填，新增列必须具有关闭复合模式的稳定默认值。
+	// A false default keeps existing keys in ordinary mode without a backfill.
 	require.Contains(t, sql, "is_composite boolean not null default false")
 
-	// 删除 Key 或分组时映射必须自动清理，避免残留不可达的鉴权配置。
+	// Cascading deletes prevent orphaned authentication mappings when a key or group is removed.
 	require.Contains(t, sql, "api_key_id bigint not null references api_keys(id) on delete cascade")
 	require.Contains(t, sql, "group_id bigint not null references groups(id) on delete cascade")
 
-	// 同一 Key 的分组与规范化前缀都必须唯一，数据库负责兜底并发写入。
+	// Unique group and normalized-prefix indexes reject conflicting concurrent writes for a key.
 	require.Contains(t, sql, "on api_key_composite_groups(api_key_id, group_id)")
 	require.Contains(t, sql, "on api_key_composite_groups(api_key_id, normalized_prefix)")
 	require.Contains(t, sql, "on api_key_composite_groups(group_id)")
 
-	// 复合 Key 不允许同时保留普通 Key 的单分组绑定。
+	// Composite keys cannot also use the ordinary single-group binding.
 	require.Contains(t, sql, "check (not is_composite or group_id is null)")
 
-	// 异步批量图片必须持久化实际分组与客户端模型，供查询、日志和幂等判断恢复复合身份。
+	// Persist the effective group and client model so queries, logs, and idempotency checks can recover
+	// composite identity.
 	require.Contains(t, sql, "add column if not exists group_id bigint")
 	require.Contains(t, sql, "add column if not exists requested_model varchar(512)")
 	require.Contains(t, sql, "alter column requested_model set default ''")

@@ -7,7 +7,8 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// GroupProbeSchedule 保持五字段 cron、指定时区和每分钟边界；构造不启动任务。
+// GroupProbeSchedule builds a five-field cron schedule with a timezone and minute precision; construction starts
+// no job.
 type GroupProbeSchedule struct{ cron *cron.Cron }
 
 func NewGroupProbeSchedule(location *time.Location) *GroupProbeSchedule {

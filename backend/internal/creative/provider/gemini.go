@@ -7,11 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	geminiwire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
-	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini" // ExecuteGemini 执行 Gemini 平台任务（含 vertex 服务账号与 AI Studio apikey/OAuth）。
+	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
 type CreativeGeminiGenerateRequest = geminiwire.ImageGenerateRequest
 
+// ExecuteGemini executes with Gemini options configured for Vertex, API key, or OAuth access.
 func (e *Target) ExecuteGemini(ctx context.Context, run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) ([]creative.CreativeOutput, error) {
 	if run.Operation == creative.CreativeOperationInpaint {
 		return nil, creative.CreativeNonRetryableError("gemini platform does not support creative operation %s", run.Operation)

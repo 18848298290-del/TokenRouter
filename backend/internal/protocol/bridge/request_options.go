@@ -1,6 +1,6 @@
 package bridge
 
-// RequestOptions 是调用方选择的目标行为；转换器不从模型名推断平台策略。
+// RequestOptions contains caller-selected target behavior, independent of the model name.
 type RequestOptions struct {
 	DropSampling      bool
 	DropTemperature   bool

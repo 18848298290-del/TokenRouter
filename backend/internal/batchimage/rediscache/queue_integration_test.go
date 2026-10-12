@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestBatchImageLostOwner 使用 Redis 检查失去锁的持有者无法续期或确认接管者的任务。
+// TestBatchImageLostOwner checks that a stale Redis lock holder cannot renew or acknowledge a successor job.
 func TestBatchImageLostOwner(t *testing.T) {
 	t.Run("renewal_reports_loss", func(t *testing.T) {
 		ctx := context.Background()

@@ -151,7 +151,7 @@ func TestAuthServiceVerifyCaptchaDispatchesAliyun(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(&identity.AuthOptions{}, aliyunEnabledSettings(), spy)
 
-	// 阿里云 captchaVerifyParam 复用 turnstile_token 请求字段
+	// Aliyun captchaVerifyParam uses the turnstile_token request field.
 	err := authService.VerifyCaptcha(context.Background(), identity.CaptchaProof{TurnstileToken: "captcha-verify-param"}, "127.0.0.1")
 
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestAuthServiceVerifyCaptchaRequiredModeWithAliyun(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(cfg, aliyunEnabledSettings(), spy)
 
-	// required 模式 + 阿里云启用且凭证齐全：不误报 NOT_CONFIGURED，正常走阿里云校验
+	// Required CAPTCHA mode accepts complete Aliyun credentials and dispatches verification.
 	err := authService.VerifyCaptcha(context.Background(), identity.CaptchaProof{TurnstileToken: "captcha-verify-param"}, "127.0.0.1")
 
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestAuthServiceVerifyActionCaptchaIfEnabledSkipsWhenOnlyTurnstile(t *testin
 		identity.SettingKeyTurnstileSecretKey: "secret",
 	}, spy)
 
-	// Turnstile 不扩大既有覆盖：扩展入口不拦截
+	// Turnstile does not guard the extended action endpoints.
 	err := authService.VerifyActionCaptchaIfEnabled(context.Background(), identity.CaptchaProof{}, "127.0.0.1")
 
 	require.NoError(t, err)

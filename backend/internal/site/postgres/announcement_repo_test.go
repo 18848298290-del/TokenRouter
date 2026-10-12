@@ -16,7 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// TestAnnouncementRepositoryArchiveExpired 检查批量归档按展示状态和结束时间筛选公告。
+// TestAnnouncementRepositoryArchiveExpired checks the status and end-time
+// predicates used by the bulk archive query.
 func TestAnnouncementRepositoryArchiveExpired(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

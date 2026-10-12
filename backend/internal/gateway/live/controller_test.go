@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// cancelClaimStore 在取得控制权时取消请求，检查流程随后结束。
+// cancelClaimStore cancels the request after ownership is claimed to test subsequent cleanup.
 type cancelClaimStore struct {
 	session.LiveCallStore
 	cancel   context.CancelFunc
@@ -28,7 +28,7 @@ type controllerPorts struct {
 
 type idleFrames struct{}
 
-// 关闭认领成功一次只产生一条零费用事实，并释放原租约。
+// finalizeStore allows one close claim, guarding zero-cost recording and lease release.
 type finalizeStore struct {
 	session.LiveCallStore
 	closed atomic.Bool

@@ -27,16 +27,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// qoderHTTPObservation 同步记录请求观测数据，数据在请求内使用。
+// qoderHTTPObservation records observations synchronously within the request.
 type qoderHTTPObservation struct {
 	c               *gin.Context
 	stream, started bool
 }
 
-// qoderRequestActivity 统一跟踪 Chat、兼容入口和平台执行的结束状态。
+// qoderRequestActivity tracks completion of Chat requests, compatibility requests, and platform attempts.
 type qoderRequestActivity struct{ *lifecycle.Operations }
 
-// provideQoderChat 在 app 中为 Qoder Chat 入口绑定业务回调。
+// provideQoderChat binds application callbacks to the Qoder Chat handler.
 func provideQoderChat(planner *gatewayprovider.RoutePlanner, q *gatewayprovider.QoderRuntime, refresh *provideradapter.QoderRequestRefresh, c *scheduler.ConcurrencyService, b *admission.FundingAdmission, k *apikey.APIKeyService, r *errorpolicy.ErrorPassthroughService, pool *completion.UsageRecordWorkerPool, recorders GatewayCompletionRecorders, activity *qoderRequestActivity, requests *gatewayRequestActivity, choices *selection.Generic) *gatewayhttp.QoderChatHandler {
 	runtime := &qoderRuntime{Routes: planner, Choices: choices, Qoder: q, Refresh: refresh, Billing: b, Keys: k, Completions: pool, Recorder: recorders.Forward}
 	useCase := gateway.NewQoderExecutor(3, 30*time.Second, c, runtime)
@@ -85,7 +85,7 @@ func provideQoderChat(planner *gatewayprovider.RoutePlanner, q *gatewayprovider.
 	return result
 }
 
-// qoderPreflight 保持读取请求体前的鉴权错误顺序。
+// qoderPreflight checks the API key before the user context, before reading the request body.
 func qoderPreflight(c *gin.Context) error {
 	if _, ok := keyhttp.GetAPIKeyFromContext(c); !ok {
 		return &gatewayhttp.HTTPFailure{Status: 401, Type: "authentication_error", Message: "Invalid API key"}

@@ -11,7 +11,7 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// BatchImageEvent 记录批量图片任务中只追加不修改的操作事件。
+// BatchImageEvent records append-only events for batch image jobs.
 type BatchImageEvent struct {
 	ent.Schema
 }

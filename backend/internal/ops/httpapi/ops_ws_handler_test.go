@@ -24,7 +24,7 @@ func TestOpsWSHelpers(t *testing.T) {
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("192.168.0.1"), prefixes))
 }
 
-// TestOpsWSBrandNegotiation 检查前端握手使用的响应协议为 sub2api-admin 或 tokenrouter-admin。
+// TestOpsWSBrandNegotiation checks selection of sub2api-admin or tokenrouter-admin during the handshake.
 func TestOpsWSBrandNegotiation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

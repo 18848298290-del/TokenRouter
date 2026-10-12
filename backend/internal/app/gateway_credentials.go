@@ -12,12 +12,12 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// grokCredentialStateWriter 为存储条件更新补齐待比较的原因值。
+// grokCredentialStateWriter supplies the proxy-invalid reason for conditional credential state updates.
 type grokCredentialStateWriter struct {
 	store *providerpostgres.ProviderStore
 }
 
-// provideGrokCredentialRecovery 绑定共享的提供商存储、运行阻断状态和 token 源。
+// provideGrokCredentialRecovery binds the shared provider store, runtime blocks, and token source.
 func provideGrokCredentialRecovery(store *providerpostgres.ProviderStore, tokens *provider.GrokTokenSource, blocks *provider.RuntimeBlockState) *provider.GrokCredentialRecovery {
 	return &provider.GrokCredentialRecovery{
 		Read:       store.GetByID,

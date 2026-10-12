@@ -29,7 +29,7 @@ const (
 var (
 	opsScheduledReportCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-	// notificationEmailOpsSummaryPlaceholders 列出报告摘要模板变量。
+	// notificationEmailOpsSummaryPlaceholders lists report summary template variables.
 	notificationEmailOpsSummaryPlaceholders = contract.SummaryPlaceholders()
 )
 
@@ -69,7 +69,7 @@ type opsScheduledReport struct {
 	NextRunAt time.Time
 }
 
-// opsScheduledReportContent 同时保留兼容旧模板的 HTML 和结构化摘要指标。
+// opsScheduledReportContent carries HTML for legacy templates and structured summary metrics.
 type opsScheduledReportContent struct {
 	html     string
 	overview *OpsDashboardOverview
@@ -424,7 +424,7 @@ func opsScheduledReportEmailVariables(report *opsScheduledReport, now time.Time)
 	}
 }
 
-// opsScheduledReportLocalizedEmailVariables 构造非摘要报表的本地化模板变量。
+// opsScheduledReportLocalizedEmailVariables builds localized variables for detailed reports.
 func opsScheduledReportLocalizedEmailVariables(report *opsScheduledReport, now time.Time, locale string) map[string]string {
 	variables := opsScheduledReportEmailVariables(report, now)
 	variables["report_html"] = ""
@@ -439,7 +439,7 @@ func opsScheduledReportLocalizedEmailVariables(report *opsScheduledReport, now t
 	return variables
 }
 
-// opsScheduledReportLocalizedName 返回报表类型对应的中英文名称。
+// opsScheduledReportLocalizedName returns a report name in English or Chinese.
 func opsScheduledReportLocalizedName(report *opsScheduledReport, locale string) string {
 	if report == nil {
 		return "Ops report"
@@ -471,7 +471,7 @@ func opsScheduledReportLocalizedName(report *opsScheduledReport, locale string) 
 	}
 }
 
-// isOpsSummaryReport 判断报表是否使用结构化日报或周报摘要。
+// isOpsSummaryReport reports whether the report uses a structured daily or weekly summary.
 func isOpsSummaryReport(report *opsScheduledReport) bool {
 	if report == nil {
 		return false
@@ -484,7 +484,7 @@ func isOpsSummaryReport(report *opsScheduledReport) bool {
 	}
 }
 
-// opsSummaryReportEmailVariables 将 dashboard overview 格式化为可编辑的邮件占位符。
+// opsSummaryReportEmailVariables formats dashboard metrics for editable email placeholders.
 func opsSummaryReportEmailVariables(report *opsScheduledReport, now time.Time, overview *OpsDashboardOverview, locale string) map[string]string {
 	variables := opsScheduledReportLocalizedEmailVariables(report, now, locale)
 	variables["report_detail_display"] = "none"
@@ -524,7 +524,7 @@ func opsSummaryReportEmailVariables(report *opsScheduledReport, now time.Time, o
 	return variables
 }
 
-// formatOpsReportInteger 使用英文逗号为整数添加千分位分隔。
+// formatOpsReportInteger adds comma thousands separators.
 func formatOpsReportInteger(value int64) string {
 	raw := strconv.FormatInt(value, 10)
 	start := 0
@@ -548,7 +548,7 @@ func formatOpsReportInteger(value int64) string {
 	return builder.String()
 }
 
-// formatOpsReportMilliseconds 格式化毫秒指标，缺失值显示为短横线。
+// formatOpsReportMilliseconds formats milliseconds, displaying a dash for missing values.
 func formatOpsReportMilliseconds(value *int) string {
 	if value == nil {
 		return "-"
@@ -556,7 +556,7 @@ func formatOpsReportMilliseconds(value *int) string {
 	return fmt.Sprintf("%s ms", formatOpsReportInteger(int64(*value)))
 }
 
-// generateReportContent 生成兼容 HTML，并在摘要报表中附带同次查询得到的 overview。
+// generateReportContent builds HTML and attaches the same queried overview for summary reports.
 func (s *OpsScheduledReportService) generateReportContent(ctx context.Context, report *opsScheduledReport, now time.Time) (opsScheduledReportContent, error) {
 	if s == nil || s.opsService == nil || report == nil {
 		return opsScheduledReportContent{}, fmt.Errorf("service not initialized")
@@ -615,12 +615,12 @@ func (s *OpsScheduledReportService) generateReportContent(ctx context.Context, r
 		}
 		return opsScheduledReportContent{html: buildOpsErrorDigestEmailHTML(report.Name, start, end, out)}, nil
 	case "provider_health":
-		// Best-effort: use provider availability (not error rate yet).
+		// Provider health reports use current availability.
 		avail, err := s.opsService.GetProviderAvailability(ctx, "", nil)
 		if err != nil {
 			return opsScheduledReportContent{}, err
 		}
-		_ = report.ProviderHealthErrorRateThreshold // reserved for future per-provider error rate report
+		_ = report.ProviderHealthErrorRateThreshold // The error-rate threshold is not applied to availability reports.
 		return opsScheduledReportContent{html: buildOpsProviderHealthEmailHTML(report.Name, start, end, avail)}, nil
 	default:
 		return opsScheduledReportContent{}, fmt.Errorf("unknown report type: %s", report.ReportType)

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSleepWithContext 检查等待时长和取消后的返回值。
+// TestSleepWithContext checks elapsed time and cancellation results.
 func TestSleepWithContext(t *testing.T) {
 	t.Run("零时长立即返回true", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {

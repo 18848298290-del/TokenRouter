@@ -28,7 +28,7 @@ type ClaudeAuthorizationSessions struct {
 	stopCh chan struct{}
 }
 
-// NewClaudeAuthorizationSessions creates a new session store.
+// NewClaudeAuthorizationSessions creates a session store; Start begins expiry cleanup.
 func NewClaudeAuthorizationSessions() *ClaudeAuthorizationSessions {
 	store := &ClaudeAuthorizationSessions{
 		sessions: make(map[string]*ClaudeAuthorizationSession),
@@ -38,7 +38,7 @@ func NewClaudeAuthorizationSessions() *ClaudeAuthorizationSessions {
 	return store
 }
 
-// Start 启动当前会话实例的清理循环。
+// Start starts the cleanup loop once; a stopped store cannot restart.
 func (s *ClaudeAuthorizationSessions) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -49,7 +49,7 @@ func (s *ClaudeAuthorizationSessions) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanup() })
 }
 
-// Stop 幂等停止并等待清理循环，未启动实例也可安全关闭。
+// Stop stops and joins the cleanup loop. It is safe before Start and on repeated calls.
 func (s *ClaudeAuthorizationSessions) Stop() {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {
@@ -66,7 +66,7 @@ func (s *ClaudeAuthorizationSessions) Set(sessionID string, session *ClaudeAutho
 	s.sessions[sessionID] = session
 }
 
-// Get retrieves a session.
+// Get returns the stored session pointer if it exists and has not expired.
 func (s *ClaudeAuthorizationSessions) Get(sessionID string) (*ClaudeAuthorizationSession, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

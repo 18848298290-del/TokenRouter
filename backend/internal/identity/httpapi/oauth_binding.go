@@ -19,7 +19,7 @@ const (
 	oauthBindAccessTokenCookieTTL  = 10 * 60
 )
 
-// OAuthBindHandler 负责临时绑定 cookie 的 HTTP 传递，安全身份仍来自会话验证。
+// OAuthBindHandler transports temporary binding cookies; session validation establishes the user identity.
 type OAuthBindHandler struct {
 	*SessionHandler
 	Signer identity.OAuthBindingSigner
@@ -125,7 +125,7 @@ func SetOAuthBindAccessTokenCookie(c *gin.Context, token string, secure bool) {
 	})
 }
 
-// ReadTargetUser 保留读取可用性、cookie 校验与用户查询的原顺序和错误文本。
+// ReadTargetUser checks database availability, verifies the binding cookie, and loads its target user.
 func (h *OAuthBindHandler) ReadTargetUser(c *gin.Context, name string, db identity.PendingDatabase) (*identity.User, error) {
 	if db == nil || !db.HasDatabase() {
 		return nil, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")

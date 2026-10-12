@@ -231,7 +231,7 @@ func StreamResponsePassthrough(
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if elapsed := time.Since(lastRead); elapsed < streamInterval {
-				// 定时器先于最近读取时间创建时，首次触发可能略早，需要补齐剩余等待。
+				// The timer can fire before a full idle interval has elapsed since the latest read.
 				intervalTimer.Reset(streamInterval - elapsed)
 				continue
 			}

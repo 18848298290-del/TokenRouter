@@ -4,22 +4,22 @@ import (
 	"strings"
 )
 
-// GmailFamilyDomains 列出 Gmail 及其历史别名域名。两者投递到同一收件箱。
+// GmailFamilyDomains lists the Gmail domains treated as aliases of the same mailbox.
 var GmailFamilyDomains = map[string]struct{}{
 	"gmail.com":      {},
 	"googlemail.com": {},
 }
 
-// EmailAliasProbe 描述 SQL 别名探针的本地部分和域名部分。
-// 探针会去除点号以覆盖 Gmail 点号及域名根点；查询命中后仍须重新执行完整归一化。
+// EmailAliasProbe contains local and domain parts for SQL candidate lookup.
+// Dots are stripped for matching; candidates still require full normalization before comparison.
 type EmailAliasProbe struct {
 	Local  string
 	Domain string
 }
 
-// NormalizeEmailForAliasDedup 将邮箱折叠为收件箱身份，只用于别名查重，
-// 不改变数据库中保存的地址，也不改变登录和发信地址。
-// 所有域名去掉本地部分的 + 后缀；Gmail 家族另外忽略本地部分点号并统一域名。
+// NormalizeEmailForAliasDedup returns a mailbox identity for alias checks.
+// Use the stored address for login and delivery.
+// All domains lose plus suffixes; Gmail domains also ignore local-part dots and share one domain.
 func NormalizeEmailForAliasDedup(email string) string {
 	local, domain, ok := SplitEmailForAliasDedup(email)
 	if !ok {
@@ -33,8 +33,8 @@ func NormalizeEmailForAliasDedup(email string) string {
 	return local + "@" + domain
 }
 
-// EmailAliasDedupProbes 返回可能与 email 指向同一收件箱的 SQL 探针。
-// 输入格式无效或本地部分去点后为空时返回 nil。
+// EmailAliasDedupProbes returns SQL probes for potential aliases of the supplied mailbox.
+// Invalid input or an empty dot-stripped local part returns nil.
 func EmailAliasDedupProbes(email string) []EmailAliasProbe {
 	local, domain, ok := SplitEmailForAliasDedup(email)
 	if !ok {
@@ -71,7 +71,7 @@ func SplitEmailForAliasDedup(email string) (local string, domain string, ok bool
 }
 
 func StripEmailPlusSuffix(local string) string {
-	// 本地部分以 + 开头时不能折叠为空，否则会把 +alice 与 +bob 误判为同一地址。
+	// Keep a leading plus so +alice and +bob do not collapse to the same empty local part.
 	if idx := strings.IndexByte(local, '+'); idx > 0 {
 		return local[:idx]
 	}

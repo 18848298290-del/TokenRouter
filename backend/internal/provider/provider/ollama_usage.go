@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// OllamaUsageFetcher 将 Cookie 和请求参数交给 Ollama 客户端，共用 HTTP 连接池。
+// OllamaUsageFetcher binds cookies and request parameters to the shared transport and disables redirects.
 func OllamaUsageFetcher(do func(*http.Request, string, int64, int) (*http.Response, error)) func(context.Context, provider.OllamaUsageFetchInput) (*provider.OllamaUsageObservation, error) {
 	return func(ctx context.Context, input provider.OllamaUsageFetchInput) (*provider.OllamaUsageObservation, error) {
 		if do == nil {

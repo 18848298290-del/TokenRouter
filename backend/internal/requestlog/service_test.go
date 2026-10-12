@@ -46,7 +46,7 @@ func (r *testRepository) records() []telemetry.RequestRecord {
 	return append([]telemetry.RequestRecord(nil), r.saved...)
 }
 
-// TestFlushRetriesDatabaseFailure 检查失败快照留在内存，数据库恢复后可以继续写入。
+// TestFlushRetriesDatabaseFailure checks that failed snapshots remain buffered until the database recovers.
 func TestFlushRetriesDatabaseFailure(t *testing.T) {
 	unavailable := errors.New("database unavailable")
 	repo := &testRepository{save: func(context.Context, []telemetry.RequestRecord) error { return unavailable }}
@@ -64,7 +64,7 @@ func TestFlushRetriesDatabaseFailure(t *testing.T) {
 	require.Len(t, repo.records(), 1)
 }
 
-// TestFlushFallsBackPerRecord 保留失败项，逐条写入成功的快照从缓冲移除。
+// TestFlushFallsBackPerRecord retains failures and removes successful per-record retries from the buffer.
 func TestFlushFallsBackPerRecord(t *testing.T) {
 	failure := errors.New("write failed")
 	repo := &testRepository{save: func(_ context.Context, records []telemetry.RequestRecord) error {
@@ -88,7 +88,7 @@ func TestFlushFallsBackPerRecord(t *testing.T) {
 	require.Len(t, repo.records(), 2)
 }
 
-// TestFlushDiscardsInvalidRecords 覆盖单条和批量中的永久错误，其他快照可以继续写入。
+// TestFlushDiscardsInvalidRecords checks permanent errors in single and mixed batches while valid snapshots proceed.
 func TestFlushDiscardsInvalidRecords(t *testing.T) {
 	for _, withValid := range []bool{false, true} {
 		t.Run(fmt.Sprint(withValid), func(t *testing.T) {
@@ -128,7 +128,7 @@ func TestFlushDiscardsInvalidRecords(t *testing.T) {
 	}
 }
 
-// TestDiscardInvalidPreservesNewVersion 无效版本写入期间收到的修正快照需要继续保存。
+// TestDiscardInvalidPreservesNewVersion checks that discarding an invalid version retains a concurrently corrected snapshot.
 func TestDiscardInvalidPreservesNewVersion(t *testing.T) {
 	repo := &testRepository{}
 	service := NewService(repo, 30, nil)
@@ -147,7 +147,7 @@ func TestDiscardInvalidPreservesNewVersion(t *testing.T) {
 	require.Equal(t, "completed", repo.records()[0].State)
 }
 
-// TestObserveCoalescesSnapshots 检查快照的版本、终态和别名合并，以及调用方数据的独立性。
+// TestObserveCoalescesSnapshots checks version, terminal-state, and alias merging plus independence from caller mutations.
 func TestObserveCoalescesSnapshots(t *testing.T) {
 	repo := &testRepository{}
 	service := NewService(repo, 30, nil)
@@ -165,7 +165,7 @@ func TestObserveCoalescesSnapshots(t *testing.T) {
 	require.ElementsMatch(t, []telemetry.RequestAlias{{Kind: "caller", Value: "client"}, {Kind: "upstream", Value: "supplier"}}, records[0].Aliases)
 }
 
-// TestFlushPreservesConcurrentUpdate 写库期间的新版本需要在下一批继续保存。
+// TestFlushPreservesConcurrentUpdate checks that an update received during a write remains pending for the next batch.
 func TestFlushPreservesConcurrentUpdate(t *testing.T) {
 	repo := &testRepository{}
 	service := NewService(repo, 30, nil)
@@ -184,7 +184,7 @@ func TestFlushPreservesConcurrentUpdate(t *testing.T) {
 	require.Equal(t, "completed", repo.records()[1].State)
 }
 
-// TestObserveOverflowWritesSynchronously 检查缓冲上限以及同步写入失败的可见计数。
+// TestObserveOverflowWritesSynchronously checks the buffer limit and visible failure counts for overflow writes.
 func TestObserveOverflowWritesSynchronously(t *testing.T) {
 	repo := &testRepository{}
 	service := NewService(repo, 30, nil)
@@ -202,7 +202,7 @@ func TestObserveOverflowWritesSynchronously(t *testing.T) {
 	require.Equal(t, uint64(1), health.Failures)
 }
 
-// TestStartFlushesInBackground 使用虚拟时钟检查后台批写和重复启停。
+// TestStartFlushesInBackground uses a virtual clock to check batching and repeated lifecycle calls.
 func TestStartFlushesInBackground(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repo := &testRepository{}
@@ -220,7 +220,7 @@ func TestStartFlushesInBackground(t *testing.T) {
 	})
 }
 
-// TestStartSlowsFailedWrites 持续失败时每秒重试，数据库恢复后保存内存快照。
+// TestStartSlowsFailedWrites checks the one-second retry delay before saving a buffered snapshot after recovery.
 func TestStartSlowsFailedWrites(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var attempts atomic.Int64
@@ -248,7 +248,7 @@ func TestStartSlowsFailedWrites(t *testing.T) {
 	})
 }
 
-// TestStopDrainsAllBatches 即使后台尚未启动，关闭也会保存全部待写快照。
+// TestStopDrainsAllBatches checks that shutdown saves all pending snapshots even before Start.
 func TestStopDrainsAllBatches(t *testing.T) {
 	repo := &testRepository{}
 	service := NewService(repo, 30, nil)
@@ -264,7 +264,7 @@ func TestStopDrainsAllBatches(t *testing.T) {
 	require.Zero(t, health.Pending)
 }
 
-// TestStopWaitsForSynchronousWrite 关闭会等待入队关闭前已开始的同步写入。
+// TestStopWaitsForSynchronousWrite checks that shutdown waits for overflow writes started before admission closes.
 func TestStopWaitsForSynchronousWrite(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		entered, release := make(chan struct{}), make(chan struct{})
@@ -295,7 +295,7 @@ func TestStopWaitsForSynchronousWrite(t *testing.T) {
 	})
 }
 
-// TestStopTimeoutReportsPending 写库超时会保留待写计数，关闭返回失败。
+// TestStopTimeoutReportsPending checks that write timeout retains pending counts and makes shutdown fail.
 func TestStopTimeoutReportsPending(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repo := &testRepository{save: func(ctx context.Context, _ []telemetry.RequestRecord) error {
@@ -316,7 +316,7 @@ func TestStopTimeoutReportsPending(t *testing.T) {
 	})
 }
 
-// TestFindPendingChecksOwnership 查询内存快照时检查用户归属，响应脱敏不会修改后续查询。
+// TestFindPendingChecksOwnership checks ownership and response isolation for in-memory snapshots.
 func TestFindPendingChecksOwnership(t *testing.T) {
 	repo := &testRepository{findErr: errors.New("database unavailable")}
 	service := NewService(repo, 30, nil)

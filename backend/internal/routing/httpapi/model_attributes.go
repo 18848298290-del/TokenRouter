@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ModelAttributeHandler 提供属性档案和默认目录查询，不绑定生成请求入口。
+// ModelAttributeHandler manages attribute profiles and default catalogue queries.
 type ModelAttributeHandler struct {
 	service *routing.ModelAttributeService
 }
@@ -215,7 +215,7 @@ func (h *ModelAttributeHandler) Update(c *gin.Context) {
 	httpx.Success(c, gin.H{"updated": true})
 }
 
-// attributePageStart 避免异常大页码乘法溢出导致切片越界。
+// attributePageStart bounds the offset before multiplication to prevent overflow and invalid slicing.
 func attributePageStart(page, size, total int) int {
 	if page-1 > total/size {
 		return total

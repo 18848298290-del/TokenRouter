@@ -15,13 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// GroupFallbackPorts 在分组切换前重新授权、解析资金并校验客户端会话。
+// GroupFallbackPorts reauthorizes, resolves funding, and validates sessions before switching groups.
 type GroupFallbackPorts struct {
 	Resolve func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
 	Plan    func(context.Context, *apikey.APIKey, string) routing.RoutePlan
 }
 
-// TryGroupFallback 只接受尚未输出的既有无效请求触发，每个请求最多切换一次分组。
+// TryGroupFallback permits one group switch for PromptTooLongError before output or cancellation.
 func (b *responsesAttemptBridge) TryGroupFallback(cause error) (handled, retry bool) {
 	var tooLong *antigravity.PromptTooLongError
 	if !errors.As(cause, &tooLong) || b.groupFallbackUsed || b.apiKey == nil || b.apiKey.Group == nil || !b.CanAttempt() || b.c.Writer.Written() || (b.streamStarted != nil && *b.streamStarted) {
@@ -51,7 +51,7 @@ func (b *responsesAttemptBridge) TryGroupFallback(cause error) (handled, retry b
 	}
 	ctx := requeststate.WithGroup(b.Context(), key.Group)
 	ctx = apikey.WithRuntimeAPIKey(ctx, key)
-	// 切换分组后重新查询目标分组的粘性提供商。
+	// Look up the target group sticky provider after switching groups.
 	ctx = requeststate.WithPrefetchedStickySession(ctx, 0, 0)
 	b.hasBoundSession = false
 	if b.binding().sessions.StickyProviderID != nil {

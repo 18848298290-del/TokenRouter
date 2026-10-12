@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	// SettingKeyPanelRateLimitSettings 保留已有存储键。
+	// SettingKeyPanelRateLimitSettings stores the panel rate limit JSON.
 	SettingKeyPanelRateLimitSettings = "panel_rate_limit_settings"
 
-	// 面板限流 RPM 的取值上限，防止配置异常大的值失去意义。
+	// panelRateLimitRPMMax bounds accepted requests-per-minute settings.
 	panelRateLimitRPMMax = 100000
 
 	panelRateLimitCacheTTL  = 60 * time.Second
@@ -27,48 +27,47 @@ const (
 	panelRateLimitDBTimeout = 5 * time.Second
 )
 
-// PanelSettingsRepository 只提供面板限流配置需要的存取能力。
+// PanelSettingsRepository reads and writes panel rate limit settings.
 type PanelSettingsRepository interface {
 	GetValue(context.Context, string) (string, error)
 	Set(context.Context, string, string) error
 }
 
-// PanelSettings 独占面板限流配置缓存，所有 HTTP 消费者共享此实例。
+// PanelSettings owns the panel rate limit cache shared by HTTP consumers.
 type PanelSettings struct {
 	settingRepo         PanelSettingsRepository
 	panelRateLimitCache atomic.Value
 	panelRateLimitSF    singleflight.Group
 }
 
-// PanelRateLimitSettings 面板 API 限流配置。
-// 认证后的面板接口按「用户 ID」维度限流（与客户端 IP 无关，反向代理/共享出口
-// 不会被误伤）；无需认证的公开接口按安全客户端 IP 维度限流（内网/回环地址跳过）。
+// PanelRateLimitSettings configures panel API rate limits.
+// Authenticated endpoints use user ID buckets so users behind a proxy remain independent.
+// Public endpoints use security client IP buckets, skipping private and loopback addresses.
 type PanelRateLimitSettings struct {
-	// Enabled 总开关
+	// Enabled switches all panel rate limits on or off.
 	Enabled bool `json:"enabled"`
-	// UserRPM 每用户每分钟请求数上限（认证面板接口全量计数；0 = 不限制）
+	// UserRPM limits authenticated requests per user per minute; zero disables this limit.
 	UserRPM int `json:"user_rpm"`
-	// HeavyRPM 每用户每分钟重查询上限（usage/dashboard 等聚合统计接口；0 = 不限制）
+	// HeavyRPM limits aggregate queries per user per minute; zero disables this limit.
 	HeavyRPM int `json:"heavy_rpm"`
-	// ExemptAdmin 管理员账号是否豁免按用户限流
+	// ExemptAdmin exempts administrators from user-scoped limits.
 	ExemptAdmin bool `json:"exempt_admin"`
-	// PublicIPRPM 无需认证的公开接口每 IP 每分钟上限（0 = 不限制）
+	// PublicIPRPM limits unauthenticated requests per IP per minute; zero disables this limit.
 	PublicIPRPM int `json:"public_ip_rpm"`
 }
 
-// cachedPanelRateLimitSettings 进程内缓存条目（60s TTL）。
+// cachedPanelRateLimitSettings stores settings and their expiration time.
 type cachedPanelRateLimitSettings struct {
 	settings  PanelRateLimitSettings
-	expiresAt int64 // unix nano
+	expiresAt int64 // Unix nanoseconds
 }
 
-// NewPanelSettings 构造配置读取器，不执行回源或启动后台任务。
+// NewPanelSettings creates an empty cache; settings are fetched on demand.
 func NewPanelSettings(repo PanelSettingsRepository) *PanelSettings {
 	return &PanelSettings{settingRepo: repo}
 }
 
-// DefaultPanelRateLimitSettings 返回默认面板限流配置。
-// 默认启用但阈值宽松：正常前端交互远达不到，仅拦截脚本高频刷接口打爆数据库的行为。
+// DefaultPanelRateLimitSettings returns enabled panel limits with administrator exemptions.
 func DefaultPanelRateLimitSettings() *PanelRateLimitSettings {
 	return &PanelRateLimitSettings{
 		Enabled:     true,
@@ -79,7 +78,7 @@ func DefaultPanelRateLimitSettings() *PanelRateLimitSettings {
 	}
 }
 
-// normalizePanelRateLimitSettings 修正非法取值（负数归零、超上限截断）。
+// normalizePanelRateLimitSettings clamps RPM values to the supported range.
 func normalizePanelRateLimitSettings(s *PanelRateLimitSettings) {
 	if s == nil {
 		return
@@ -104,8 +103,8 @@ func normalizePanelRateLimitSettings(s *PanelRateLimitSettings) {
 	}
 }
 
-// GetPanelRateLimitSettings 获取面板 API 限流配置（直读 DB，供管理端读写路径使用）。
-// 缺失/空/解析失败 → 返回默认配置。
+// GetPanelRateLimitSettings reads panel limits directly from storage.
+// Missing, blank, or malformed values use defaults; other storage errors are returned.
 func (s *PanelSettings) GetPanelRateLimitSettings(ctx context.Context) (*PanelRateLimitSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPanelRateLimitSettings)
 	if err != nil {
@@ -128,8 +127,8 @@ func (s *PanelSettings) GetPanelRateLimitSettings(ctx context.Context) (*PanelRa
 	return settings, nil
 }
 
-// SetPanelRateLimitSettings 保存面板 API 限流配置，并立即刷新进程内缓存，
-// 使当前节点的下一个请求即生效（多节点部署最迟 60s 内生效）。
+// SetPanelRateLimitSettings saves limits and refreshes this process's cache.
+// Other instances read the change after their cached entry expires.
 func (s *PanelSettings) SetPanelRateLimitSettings(ctx context.Context, settings *PanelRateLimitSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
@@ -153,9 +152,9 @@ func (s *PanelSettings) SetPanelRateLimitSettings(ctx context.Context, settings 
 	return nil
 }
 
-// GetPanelRateLimitSettingsCached 返回面板限流配置（进程内缓存，60s TTL）。
-// 面板每个认证请求的热路径都会调用，绝不能每次访问 DB；
-// DB 错误时返回最近一次已知值（无缓存则返回默认值），并以短 TTL 快速重试。
+// GetPanelRateLimitSettingsCached returns limits cached for 60 seconds.
+// On storage errors it returns the last cached value, or defaults if none exists,
+// and retries after a five-second cache lifetime.
 func (s *PanelSettings) GetPanelRateLimitSettingsCached(ctx context.Context) PanelRateLimitSettings {
 	if s == nil || s.settingRepo == nil {
 		return *DefaultPanelRateLimitSettings()
@@ -167,7 +166,7 @@ func (s *PanelSettings) GetPanelRateLimitSettingsCached(ctx context.Context) Pan
 	}
 
 	result, _, _ := s.panelRateLimitSF.Do("panel_rate_limit_settings", func() (any, error) {
-		// 二次检查，避免排队的 goroutine 重复查询
+		// A preceding refresh may have populated the cache before this call entered singleflight.
 		if cached, ok := s.panelRateLimitCache.Load().(*cachedPanelRateLimitSettings); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return cached.settings, nil
@@ -176,14 +175,14 @@ func (s *PanelSettings) GetPanelRateLimitSettingsCached(ctx context.Context) Pan
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		// 独立 context：断开请求取消链，避免客户端断连污染缓存
+		// Detach cancellation so a disconnected request cannot cancel the shared cache refresh.
 		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), panelRateLimitDBTimeout)
 		defer cancel()
 
 		settings, err := s.GetPanelRateLimitSettings(dbCtx)
 		if err != nil {
 			slog.Warn("failed to get panel rate limit settings", "error", err)
-			// 保留最近一次已知值，短 TTL 快速重试
+			// Keep the last known settings and retry after the shorter error TTL.
 			fallback := *DefaultPanelRateLimitSettings()
 			if prior, ok := s.panelRateLimitCache.Load().(*cachedPanelRateLimitSettings); ok && prior != nil {
 				fallback = prior.settings

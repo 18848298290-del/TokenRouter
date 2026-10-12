@@ -21,15 +21,15 @@ type CreateUserInput struct {
 	Password      string
 	Username      string
 	Notes         string
-	Role          string // 空字符串表示使用默认角色(user);合法值 admin/user
+	Role          string // Empty defaults to user; valid values are admin and user.
 	Balance       *float64
 	Concurrency   int
 	RPMLimit      int
-	APIKeyLimit   *int // nil 表示继承系统默认值，0 表示不限制。
+	APIKeyLimit   *int // nil inherits the system default; zero means unlimited.
 	AllowedGroups []int64
-	// DisabledPublicGroups 记录管理员禁止该用户使用的公开分组 ID。
+	// DisabledPublicGroups lists public group IDs denied to this user.
 	DisabledPublicGroups []int64
-	// ActorAdminID 执行本次操作的管理员 ID(来自 JWT)，仅用于权限敏感操作的审计日志。
+	// ActorAdminID identifies the acting administrator for privilege-change audit logs.
 	ActorAdminID int64
 }
 
@@ -38,19 +38,19 @@ type UpdateUserInput struct {
 	Password      string
 	Username      *string
 	Notes         *string
-	Role          string   // 空字符串表示"未提供"(不修改);合法值 admin/user
-	Balance       *float64 // 使用指针区分"未提供"和"设置为0"
-	Concurrency   *int     // 使用指针区分"未提供"和"设置为0"
-	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
-	APIKeyLimit   *int     // 使用指针区分"未提供"和"设置为0"
+	Role          string   // Empty leaves the role unchanged; valid values are admin and user.
+	Balance       *float64 // nil leaves the value unchanged; zero sets it to zero.
+	Concurrency   *int     // nil leaves the value unchanged; zero sets it to zero.
+	RPMLimit      *int     // nil leaves the value unchanged; zero sets it to zero.
+	APIKeyLimit   *int     // nil leaves the value unchanged; zero means unlimited.
 	Status        string
-	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
-	// DisabledPublicGroups 使用指针区分"未提供"和"清空公开分组禁用列表"
+	AllowedGroups *[]int64 // nil leaves the list unchanged; an empty slice clears it.
+	// DisabledPublicGroups is nil to leave the list unchanged or empty to clear it.
 	DisabledPublicGroups *[]int64
-	// GroupRates 用户专属分组倍率配置
-	// map[groupID]*rate，nil 表示删除该分组的专属倍率
+	// GroupRates maps group IDs to user-specific rate multipliers.
+	// A nil rate removes the override for that group.
 	GroupRates map[int64]*float64
-	// ActorAdminID 执行本次操作的管理员 ID(来自 JWT)，仅用于权限敏感操作的审计日志。
+	// ActorAdminID identifies the acting administrator for privilege-change audit logs.
 	ActorAdminID int64
 }
 
@@ -92,19 +92,19 @@ type AdminBoundAuthIdentityChannel struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
-// ReplaceUserGroupResult 分组替换操作的结果。
+// ReplaceUserGroupResult reports the number of keys moved between groups.
 type ReplaceUserGroupResult struct {
-	MigratedKeys int64 // 迁移的 Key 数量
+	MigratedKeys int64 // Number of migrated keys.
 }
 
-// UserRPMStatus describes a user's current per-minute RPM usage.
+// UserRPMStatus reports the user's request count and limit for the current minute.
 type UserRPMStatus struct {
 	UserRPMUsed  int                  `json:"user_rpm_used"`
 	UserRPMLimit int                  `json:"user_rpm_limit"`
 	PerGroup     []UserGroupRPMStatus `json:"per_group"`
 }
 
-// UserGroupRPMStatus describes current per-minute RPM usage for one user/group pair.
+// UserGroupRPMStatus reports the current-minute request count and limit for a user/group pair.
 type UserGroupRPMStatus struct {
 	GroupID   int64  `json:"group_id"`
 	GroupName string `json:"group_name"`
@@ -113,7 +113,7 @@ type UserGroupRPMStatus struct {
 	Source    string `json:"source"` // "group" | "override"
 }
 
-// UserAdmin 通过 AdminDependencies 访问用户存储、分组和 Key 查询。
+// UserAdmin manages users through the stores and services in AdminDependencies.
 type (
 	UserAdmin         struct{ AdminDependencies }
 	AdminDependencies struct {

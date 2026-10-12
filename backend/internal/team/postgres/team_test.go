@@ -76,7 +76,7 @@ func TestTransferTeamOwnershipUsesTwoOrderedUpdates(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
-		// 测试结束时单独登记关闭预期，事务顺序断言在此前完成。
+		// Register Close after checking the transaction expectations so it does not affect their order.
 		mock.ExpectClose()
 		require.NoError(t, db.Close())
 	}()

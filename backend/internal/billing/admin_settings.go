@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// 继续使用原配置键，与用户资金字段的存储权限分开。
+// These keys store display and default-entitlement settings separately from user funds.
 const (
 	SettingKeyBalanceIconSVG                  = "balance_icon_svg"
 	SettingKeyBalanceUnitName                 = "balance_unit_name"
@@ -19,7 +19,7 @@ const (
 	SettingKeyUSDExchangeRate                 = "usd_exchange_rate"
 )
 
-// AdminSettings 包含资金展示和默认权益配置。
+// AdminSettings contains balance display, default entitlement, and notification settings.
 type AdminSettings struct {
 	BalanceIconSVG                  string                       `json:"balance_icon_svg"`
 	BalanceLowNotifyEnabled         bool                         `json:"balance_low_notify_enabled"`
@@ -34,7 +34,8 @@ type AdminSettings struct {
 	USDExchangeRate                 float64                      `json:"usd_exchange_rate"`
 }
 
-// PrepareAdminSettings 只规范化展示与默认值，保持原金额格式；套餐引用由协调入口在原时点校验。
+// PrepareAdminSettings normalizes settings in place and encodes amounts with eight decimal places. The caller
+// validates plan references.
 func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	updates := map[string]string{}
 	settings.BalanceUnitName = strings.TrimSpace(settings.BalanceUnitName)

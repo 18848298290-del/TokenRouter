@@ -9,21 +9,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// 本模块继续使用现有设置键。
+// Persistent setting keys owned by Creative Studio.
 const (
 	SettingKeyCreativeEnabled       = "creative_enabled"
 	SettingKeyCreativeWorkerCount   = "creative_worker_count"
 	SettingKeyCreativeModelSettings = "creative_model_settings"
 )
 
-// AdminSettings 只包含本模块的管理开关与运行参数。
+// AdminSettings contains the enable flag, worker count, and model allowlist.
 type AdminSettings struct {
 	CreativeEnabled       bool                   `json:"creative_enabled"`
 	CreativeWorkerCount   int                    `json:"creative_worker_count"`
 	CreativeModelSettings []CreativeModelSetting `json:"creative_model_settings"`
 }
 
-// PrepareAdminSettings 保留既有编码和合法范围，不启动任务或发布成功通知。
+// PrepareAdminSettings normalizes model settings and worker count, then encodes values for storage.
 func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string, error) {
 	values := map[string]string{}
 	values[SettingKeyCreativeEnabled] = strconv.FormatBool(value.CreativeEnabled)
@@ -41,7 +41,7 @@ func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string
 	return value, values, nil
 }
 
-// SettingsParticipant 声明创作台开关、模型和 worker 数量的存储键，并准备请求中提供的设置。
+// SettingsParticipant declares owned keys and prepares updates for fields present in the request.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"creative_enabled", "creative_worker_count", "creative_model_settings"}
 	keys := []string{SettingKeyCreativeEnabled, SettingKeyCreativeWorkerCount, SettingKeyCreativeModelSettings}

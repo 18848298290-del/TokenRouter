@@ -21,8 +21,8 @@ const (
 	defaultCreativeInflightTTL    = 7 * 24 * time.Hour
 	defaultCreativeJobLockTTL     = 5 * time.Minute
 
-	// creativeReservePollInterval 是原子 Reserve 脚本空轮询的间隔。
-	// 用轮询替代 BRPop 是为了保证 "弹出 + 写 active" 的原子性。
+	// creativeReservePollInterval spaces retries when the atomic reserve script finds no work.
+	// Polling lets the script pop a task and mark it active in one atomic operation.
 	creativeReservePollInterval = time.Second
 )
 
@@ -92,9 +92,9 @@ end
 return 0
 `)
 
-	// creativeReserveScript 原子地从 ready 弹出并写入 active zset。
-	// BRPop + ZAdd 两步方案在两步之间进程崩溃时 job 会脱离所有队列结构，
-	// 且 inflight 去重键（默认 7 天）会挡住所有重新入队。
+	// creativeReserveScript atomically moves a ready task into the active set and assigns a lease.
+	// Separate BRPop and ZAdd calls could lose a task if the process exits between them,
+	// while the inflight key blocks re-enqueueing for its TTL (seven days by default).
 	creativeReserveScript = redis.NewScript(`
 local job = redis.call("RPOP", KEYS[1])
 if not job then
@@ -105,9 +105,9 @@ redis.call("SET", KEYS[3] .. job, ARGV[2], "PX", ARGV[3])
 return job
 `)
 
-	// creativeEnqueueScript 原子地设置 inflight 去重键并推入 ready。
-	// SetNX + LPush 两步方案在两步之间进程崩溃时，inflight 键（默认 7 天）
-	// 会挡住所有后续入队，而 job 从未进入 ready。
+	// creativeEnqueueScript atomically creates the inflight key and pushes the task onto ready.
+	// Separate SetNX and LPush calls could leave only the inflight key after a crash,
+	// blocking later enqueue attempts for its TTL (seven days by default).
 	creativeEnqueueScript = redis.NewScript(`
 if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
   redis.call("LPUSH", KEYS[2], ARGV[1])
@@ -147,7 +147,7 @@ type QueueOptions struct {
 	QueueReadyKey      string
 }
 
-// NewCreativeQueue 创建创作台 Redis 队列，键前缀全部来自 cfg.Creative。
+// NewCreativeQueue creates a Redis queue with defaults overridden by nonempty keys and positive TTLs.
 func NewCreativeQueue(rdb *redis.Client, cfg *QueueOptions) creative.CreativeRunQueue {
 	queue := &creativeQueue{
 		rdb:            rdb,
@@ -241,8 +241,8 @@ func (q *creativeQueue) reserveOnce(ctx context.Context) (string, string, error)
 	}
 	runID, ok := raw.(string)
 	if !ok || !creative.IsValidCreativeRunID(runID) {
-		// 非法 payload 已被脚本写入 active，必须移除，否则 stale 恢复会把它
-		// 无限重投回 ready。
+		// The script has already marked this invalid payload active. Remove it so stale
+		// recovery cannot repeatedly return it to ready.
 		if ok && runID != "" {
 			_ = q.rdb.ZRem(ctx, q.activeKey, runID).Err()
 			_ = q.rdb.Del(ctx, q.inflightKey(runID)).Err()
@@ -296,8 +296,8 @@ func (q *creativeQueue) Heartbeat(ctx context.Context, runID, leaseToken string)
 	if leaseToken == "" {
 		return false, creative.ErrCreativeLeaseLost
 	}
-	// XX：只刷新已存在的 active 成员。无条件 ZAdd 会在 Ack/Requeue 之后的
-	// 竞态心跳里把幽灵成员塞回 active zset。
+	// Check active membership and lease ownership before updating the timestamp.
+	// An unconditional ZAdd could resurrect an entry after Ack or Requeue wins the race.
 	result, err := creativeHeartbeatScript.Run(ctx, q.rdb,
 		[]string{q.activeKey, q.inflightPrefix}, runID, leaseToken, time.Now().UnixMilli()).Int()
 	if err != nil {
@@ -361,7 +361,7 @@ func (l *creativeRedisJobLock) Release(ctx context.Context) error {
 	return creativeReleaseLockScript.Run(ctx, l.rdb, []string{l.key}, l.token).Err()
 }
 
-// Refresh 在仍持有锁（token 匹配）时续期 TTL，供长处理任务的心跳调用。
+// Refresh renews the TTL when the token still owns the lock and reports whether renewal succeeded.
 func (l *creativeRedisJobLock) Refresh(ctx context.Context, ttl time.Duration) (bool, error) {
 	if l == nil || l.rdb == nil || l.key == "" || l.token == "" {
 		return false, nil

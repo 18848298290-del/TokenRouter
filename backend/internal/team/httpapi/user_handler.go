@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// UserHandler 处理当前用户所在团队的生命周期和成员管理请求。
+// UserHandler handles team lifecycle and member management for the current user.
 type UserHandler struct {
 	service  *team.TeamService
 	calendar timezone.Calendar
@@ -84,7 +84,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	response.Success(c, teamCtx)
 }
 
-// UpdateDefaultMemberLimits 保存后续新成员继承的团队级默认限额。
+// UpdateDefaultMemberLimits saves the limits inherited by future members.
 func (h *UserHandler) UpdateDefaultMemberLimits(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {
@@ -184,7 +184,7 @@ func parseTeamUsageQuery(c *gin.Context, calendar timezone.Calendar) (team.TeamU
 	return query, nil
 }
 
-// GetUsageSummary 返回团队作用域的汇总和趋势。
+// GetUsageSummary returns totals and trends within the caller's team scope.
 func (h *UserHandler) GetUsageSummary(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {
@@ -203,7 +203,7 @@ func (h *UserHandler) GetUsageSummary(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ListMemberUsageSeries 返回当前和历史成员的一次性趋势汇总。
+// ListMemberUsageSeries returns trends for current and historical members in one response.
 func (h *UserHandler) ListMemberUsageSeries(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {
@@ -222,7 +222,7 @@ func (h *UserHandler) ListMemberUsageSeries(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ListUsageLogs 返回团队作用域的分页用量明细。
+// ListUsageLogs returns paginated usage records within the caller's team scope.
 func (h *UserHandler) ListUsageLogs(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {
@@ -241,7 +241,7 @@ func (h *UserHandler) ListUsageLogs(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ListTeamKeys 返回当前成员可见的团队 Key 元数据。
+// ListTeamKeys returns team key metadata visible to the current member.
 func (h *UserHandler) ListTeamKeys(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {
@@ -374,7 +374,7 @@ func (h *UserHandler) RevokeInvitation(c *gin.Context) {
 	response.Success(c, gin.H{"revoked": true})
 }
 
-// PreviewInvitation 返回当前登录用户有权确认的邀请摘要。
+// PreviewInvitation returns the invitation summary the current user is allowed to confirm.
 func (h *UserHandler) PreviewInvitation(c *gin.Context) {
 	subject, ok := teamSubject(c)
 	if !ok {

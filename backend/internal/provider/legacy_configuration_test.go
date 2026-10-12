@@ -6,7 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLegacyOpenAIConfigurationInputBoundary 检查保存时删除旧探测值，其余配置保持不变。
+// TestLegacyOpenAIConfigurationInputBoundary checks obsolete-field removal and compaction normalization without
+// mutating the input.
 func TestLegacyOpenAIConfigurationInputBoundary(t *testing.T) {
 	for _, value := range []any{nil, false, true, "unsupported", []any{1}, map[string]any{"invalid": true}} {
 		extra := map[string]any{}

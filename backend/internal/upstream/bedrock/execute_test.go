@@ -39,15 +39,12 @@ func (s *executionSink) Emit(event upstream.OutputEvent) error {
 
 func (b *executionBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 func executionFrame(eventType string, payload []byte) []byte {
-	// Build headers
 	var headersBuf bytes.Buffer
-	// :event-type header
 	_ = headersBuf.WriteByte(byte(len(":event-type")))
 	_, _ = headersBuf.WriteString(":event-type")
 	_ = headersBuf.WriteByte(7) // string type
 	_ = binary.Write(&headersBuf, binary.BigEndian, uint16(len(eventType)))
 	_, _ = headersBuf.WriteString(eventType)
-	// :message-type header
 	_ = headersBuf.WriteByte(byte(len(":message-type")))
 	_, _ = headersBuf.WriteString(":message-type")
 	_ = headersBuf.WriteByte(7)
@@ -98,7 +95,7 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 			}))
 			defer server.Close()
 			target := &Target{ProviderID: 7, ReadBody: io.ReadAll, Enter: func() (func(), error) { return func() { released.Add(1) }, nil }, Request: RequestOptions{ModelID: "anthropic.fixture", Region: "us-east-1", APIKeyMode: true, APIKey: "fixture-key", Stream: stream, Do: func(r *http.Request) (*http.Response, error) {
-				// 本地服务器只替换目的地，保留原生构造的路径、载荷和认证头。
+				// Redirect to the local server while retaining the constructed path, body, and auth headers.
 				local, _ := http.NewRequestWithContext(r.Context(), r.Method, server.URL+r.URL.RequestURI(), r.Body)
 				local.Header = r.Header.Clone()
 				res, err := server.Client().Do(local)

@@ -12,7 +12,7 @@ import (
 
 func TestNextFixedDailyReset_BeforeResetHour(t *testing.T) {
 	tz := time.UTC
-	// 当前时间为 2026-03-14 06:00 UTC，重置时刻为 9:00。
+	// At 06:00 UTC, the daily 09:00 reset is still ahead.
 	after := time.Date(2026, 3, 14, 6, 0, 0, 0, tz)
 	got := billing.NextFixedDailyReset(9, tz, after)
 	want := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
@@ -21,7 +21,7 @@ func TestNextFixedDailyReset_BeforeResetHour(t *testing.T) {
 
 func TestNextFixedDailyReset_AtResetHour(t *testing.T) {
 	tz := time.UTC
-	// 当前时刻等于重置时刻，返回明天的重置时间。
+	// At the reset instant, choose tomorrow's reset.
 	after := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
 	got := billing.NextFixedDailyReset(9, tz, after)
 	want := time.Date(2026, 3, 15, 9, 0, 0, 0, tz)
@@ -30,7 +30,7 @@ func TestNextFixedDailyReset_AtResetHour(t *testing.T) {
 
 func TestNextFixedDailyReset_AfterResetHour(t *testing.T) {
 	tz := time.UTC
-	// 已过重置时刻，返回明天的重置时间。
+	// After the reset instant, choose tomorrow's reset.
 	after := time.Date(2026, 3, 14, 15, 30, 0, 0, tz)
 	got := billing.NextFixedDailyReset(9, tz, after)
 	want := time.Date(2026, 3, 15, 9, 0, 0, 0, tz)
@@ -39,7 +39,7 @@ func TestNextFixedDailyReset_AfterResetHour(t *testing.T) {
 
 func TestNextFixedDailyReset_MidnightReset(t *testing.T) {
 	tz := time.UTC
-	// 每日午夜重置，当前时间为 23:59。
+	// At 23:59, the next midnight reset is tomorrow.
 	after := time.Date(2026, 3, 14, 23, 59, 0, 0, tz)
 	got := billing.NextFixedDailyReset(0, tz, after)
 	want := time.Date(2026, 3, 15, 0, 0, 0, 0, tz)
@@ -50,70 +50,70 @@ func TestNextFixedDailyReset_NonUTCTimezone(t *testing.T) {
 	tz, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 
-	// 2026-03-14 07:00 UTC 对应上海时间 15:00，重置时刻为当地 9:00。
+	// 07:00 UTC is 15:00 in Shanghai, after the local 09:00 reset.
 	after := time.Date(2026, 3, 14, 7, 0, 0, 0, time.UTC)
 	got := billing.NextFixedDailyReset(9, tz, after)
-	// 已过上海时间 9:00，下次重置为 2026-03-15 01:00 UTC。
+	// The next local reset is 2026-03-15 01:00 UTC.
 	want := time.Date(2026, 3, 15, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_TargetDayAhead(t *testing.T) {
 	tz := time.UTC
-	// 当前日期为 2026-03-14 星期六，每周一 9:00 重置。
+	// From Saturday, choose the next Monday at 09:00.
 	after := time.Date(2026, 3, 14, 10, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(1, 9, tz, after)
-	// 下周一为 2026-03-16。
+	// The next Monday is 2026-03-16.
 	want := time.Date(2026, 3, 16, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_TargetDayToday_BeforeHour(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-16 星期一，时间早于重置时刻 9:00。
+	// On Monday before 09:00, use today's reset.
 	after := time.Date(2026, 3, 16, 6, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(1, 9, tz, after)
-	// 重置时间为今日 9:00。
+	// Today's reset is at 09:00.
 	want := time.Date(2026, 3, 16, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_TargetDayToday_AtHour(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-16 星期一 9:00，恰好等于重置时刻。
+	// At Monday's reset instant, advance one week.
 	after := time.Date(2026, 3, 16, 9, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(1, 9, tz, after)
-	// 下次重置时间为下周一 9:00。
+	// The next reset is next Monday at 09:00.
 	want := time.Date(2026, 3, 23, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_TargetDayToday_AfterHour(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-16 星期一，时间晚于重置时刻 9:00。
+	// After Monday's reset, advance one week.
 	after := time.Date(2026, 3, 16, 15, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(1, 9, tz, after)
-	// 下次重置时间为下周一 9:00。
+	// The next reset is next Monday at 09:00.
 	want := time.Date(2026, 3, 23, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_TargetDayPast(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-18 星期三，每周一重置。
+	// From Wednesday, choose the following Monday.
 	after := time.Date(2026, 3, 18, 10, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(1, 9, tz, after)
-	// 下周一为 2026-03-23。
+	// The next Monday is 2026-03-23.
 	want := time.Date(2026, 3, 23, 9, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
 
 func TestNextFixedWeeklyReset_Sunday(t *testing.T) {
 	tz := time.UTC
-	// 当前为 2026-03-14 星期六，每周日重置。
+	// From Saturday, choose the next Sunday reset.
 	after := time.Date(2026, 3, 14, 10, 0, 0, 0, tz)
 	got := billing.NextFixedWeeklyReset(0, 0, tz, after)
-	// 下周日为 2026-03-15。
+	// The next Sunday is 2026-03-15.
 	want := time.Date(2026, 3, 15, 0, 0, 0, 0, tz)
 	assert.Equal(t, want, got)
 }
@@ -197,9 +197,9 @@ func TestComputeQuotaResetAt_FixedDaily_SetsResetAt(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// 重置时间应晚于当前时刻。
+	// The reset is in the future.
 	assert.True(t, resetAt.After(time.Now()), "reset_at should be in the future")
-	// 重置时刻应为 UTC 9:00。
+	// The reset hour is 09:00 UTC.
 	assert.Equal(t, 9, resetAt.UTC().Hour())
 }
 
@@ -216,9 +216,9 @@ func TestComputeQuotaResetAt_FixedWeekly_SetsResetAt(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// 重置时间应晚于当前时刻。
+	// The reset is in the future.
 	assert.True(t, resetAt.After(time.Now()), "reset_at should be in the future")
-	// 重置日期应为周一。
+	// The reset falls on Monday.
 	assert.Equal(t, time.Monday, resetAt.UTC().Weekday())
 }
 
@@ -237,7 +237,7 @@ func TestComputeQuotaResetAt_FixedDaily_WithTimezone(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// 重置时刻应为上海时间 9:00。
+	// The reset hour is 09:00 in Shanghai.
 	assert.Equal(t, 9, resetAt.In(tz).Hour())
 }
 
@@ -252,7 +252,7 @@ func TestComputeQuotaResetAt_DefaultTimezone(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// 默认时区为 UTC。
+	// The default time zone is UTC.
 	assert.Equal(t, 12, resetAt.UTC().Hour())
 }
 
@@ -268,6 +268,6 @@ func TestComputeQuotaResetAt_InvalidHour_ClampedToZero(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// 无效小时归零。
+	// Invalid hours are clamped to midnight.
 	assert.Equal(t, 0, resetAt.UTC().Hour())
 }

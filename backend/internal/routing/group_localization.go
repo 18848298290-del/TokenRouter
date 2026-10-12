@@ -13,7 +13,7 @@ type (
 	GroupLocalization = accessview.GroupLocalization
 )
 
-// ValidateGroupCopy 对用户展示名称执行独立校验。
+// ValidateGroupCopy validates the user-facing display name and description.
 func ValidateGroupCopy(copy GroupCopy) error {
 	if strings.TrimSpace(copy.DisplayName) == "" || len([]rune(copy.DisplayName)) > 100 {
 		return apperror.BadRequest("GROUP_DISPLAY_NAME_REQUIRED", "Group display name is required and must not exceed 100 characters.")
@@ -24,7 +24,7 @@ func ValidateGroupCopy(copy GroupCopy) error {
 	return nil
 }
 
-// GroupContent 为尚未保存文案的分组提供可编辑的名称、描述和初始版本。
+// GroupContent returns editable copy, using the group name and description at revision 1 when no copy is saved.
 func GroupContent(group *Group) locale.Content[GroupCopy] {
 	if group.Localization.Revision > 0 {
 		return locale.Content[GroupCopy](group.Localization)
@@ -34,12 +34,12 @@ func GroupContent(group *Group) locale.Content[GroupCopy] {
 	return content
 }
 
-// GroupDisplay 返回用户文案，原文缺失时使用历史名称和描述。
+// GroupDisplay resolves localized copy, using the group name and description when no copy is saved.
 func GroupDisplay(group *Group, language string) (GroupCopy, locale.Resolution) {
 	return GroupContent(group).Resolve(language)
 }
 
-// GroupSearchTexts 返回用户可见名称和描述的有效语言版本。
+// GroupSearchTexts returns searchable language variants of saved user-facing names and descriptions.
 func GroupSearchTexts(group *Group) []string {
 	if group.Localization.Revision == 0 {
 		return nil

@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestPlatformIndependentGroupsMigration 用真实 PostgreSQL 验证旧数据快照、重放和失败回滚。
+// TestPlatformIndependentGroupsMigration checks historical snapshots, replay, and rollback in PostgreSQL.
 func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("groups_migration"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -29,7 +29,7 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-	// 用完整历史迁移建立升级前 schema，不手工模拟已删除的列和约束。
+	// Build the pre-upgrade schema from historical migrations, including its original columns and constraints.
 	before := fstest.MapFS{}
 	entries, err := fs.ReadDir(migrations.FS, ".")
 	require.NoError(t, err)
@@ -69,7 +69,8 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	migration, err := migrations.FS.ReadFile("277_platform_independent_groups.sql")
 	require.NoError(t, err)
 
-	// 后置故障必须回滚 schema、回填和归档，恢复后可直接重试。
+	// A failure after migration SQL must roll back schema, backfills, and archives so the upgrade can be
+	// retried.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migration)+"\nSELECT 1/0;")
@@ -136,7 +137,8 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT platform FROM usage_logs WHERE request_id='legacy-platform'`).Scan(&platform))
 	require.Equal(t, "anthropic", platform)
-	// 升级后清空白名单表示默认目录，旧透传开关不能在重放时再次扩大范围。
+	// An empty post-upgrade whitelist selects the default catalogue; replay must not widen it using the legacy
+	// passthrough flag.
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT credentials->'model_whitelist' FROM accounts WHERE id=7002`).Scan(&whitelist))
 	require.JSONEq(t, `[]`, whitelist)
 }

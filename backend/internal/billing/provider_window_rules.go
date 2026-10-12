@@ -9,7 +9,7 @@ const (
 	ProviderWeeklyWindow
 )
 
-// ProviderWindowPeriod 区分提供商的日历日窗口和日历周窗口。
+// ProviderWindowPeriod selects a provider's calendar-day or calendar-week window.
 type ProviderWindowPeriod uint8
 
 type FixedProviderWindow struct {
@@ -19,7 +19,7 @@ type FixedProviderWindow struct {
 	Hour, Day int
 }
 
-// NextFixedDailyReset 计算在 after 之后的下一个每日固定重置时间点。
+// NextFixedDailyReset returns the first daily reset strictly after after.
 func NextFixedDailyReset(hour int, tz *time.Location, after time.Time) time.Time {
 	t := after.In(tz)
 	today := time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, tz)
@@ -29,7 +29,7 @@ func NextFixedDailyReset(hour int, tz *time.Location, after time.Time) time.Time
 	return today
 }
 
-// LastFixedDailyReset 计算 now 之前最近一次的每日固定重置时间点。
+// LastFixedDailyReset returns the latest daily reset at or before now.
 func LastFixedDailyReset(hour int, tz *time.Location, now time.Time) time.Time {
 	t := now.In(tz)
 	today := time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, tz)
@@ -39,8 +39,8 @@ func LastFixedDailyReset(hour int, tz *time.Location, now time.Time) time.Time {
 	return today
 }
 
-// NextFixedWeeklyReset 计算在 after 之后的下一个每周固定重置时间点
-// day：0 为周日，1 为周一，依次到 6 为周六。
+// NextFixedWeeklyReset returns the first weekly reset strictly after after.
+// day ranges from 0 (Sunday) through 6 (Saturday).
 func NextFixedWeeklyReset(day, hour int, tz *time.Location, after time.Time) time.Time {
 	t := after.In(tz)
 	todayReset := time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, tz)
@@ -53,7 +53,7 @@ func NextFixedWeeklyReset(day, hour int, tz *time.Location, after time.Time) tim
 	return todayReset.AddDate(0, 0, daysForward)
 }
 
-// LastFixedWeeklyReset 计算 now 之前最近一次的每周固定重置时间点。
+// LastFixedWeeklyReset returns the latest weekly reset at or before now.
 func LastFixedWeeklyReset(day, hour int, tz *time.Location, now time.Time) time.Time {
 	t := now.In(tz)
 	todayReset := time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, tz)
@@ -76,7 +76,7 @@ func (w FixedProviderWindow) normalized() FixedProviderWindow {
 	return w
 }
 
-// NextProviderFixedReset 计算固定窗口的下一次重置时间，其他模式返回零值和 false。
+// NextProviderFixedReset returns the next fixed reset, or a zero time and false for other modes.
 func NextProviderFixedReset(window FixedProviderWindow, tz *time.Location, now time.Time) (time.Time, bool) {
 	if window.Mode != "fixed" {
 		return time.Time{}, false
@@ -88,7 +88,7 @@ func NextProviderFixedReset(window FixedProviderWindow, tz *time.Location, now t
 	return NextFixedDailyReset(window.Hour, tz, now), true
 }
 
-// ReconcileProviderFixedWindow 判断提供商窗口是否到期并返回重置时间，由调用方交给存储写入。
+// ReconcileProviderFixedWindow returns the current fixed window's start and whether the caller should persist a reset.
 func ReconcileProviderFixedWindow(window FixedProviderWindow, start time.Time, tz *time.Location, now time.Time) (time.Time, bool) {
 	if window.Mode != "fixed" || !(window.Limit > 0) {
 		return time.Time{}, false

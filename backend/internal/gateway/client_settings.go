@@ -22,7 +22,7 @@ const (
 	openAIAllowCodexPluginDBTimeout      = 5 * time.Second
 )
 
-// ClientSettingsOptions 提供平台参数校验和动态默认值读取函数。
+// ClientSettingsOptions supplies platform normalization and dynamic defaults.
 type ClientSettingsOptions struct {
 	NormalizeUserAgentVersion func(string) string
 	DefaultUserAgentVersion   func() string
@@ -30,17 +30,17 @@ type ClientSettingsOptions struct {
 
 type cachedAntigravityUserAgentVersion struct {
 	version   string
-	expiresAt int64 // unix nano
+	expiresAt int64 // Unix nanoseconds
 }
 
 type cachedOpenAICodexUserAgent struct {
 	value     string
-	expiresAt int64 // unix nano
+	expiresAt int64 // Unix nanoseconds
 }
 
 type cachedOpenAIAllowCodexPlugin struct {
 	value     bool
-	expiresAt int64 // unix nano
+	expiresAt int64 // Unix nanoseconds
 }
 
 func (s *RuntimeSettings) GetAntigravityUserAgentVersion(ctx context.Context) string {
@@ -154,7 +154,7 @@ func (s *RuntimeSettings) IsOpenAIAllowClaudeCodeCodexPluginEnabled(ctx context.
 		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAIAllowClaudeCodeCodexPlugin)
 		if err != nil {
 			if errors.Is(err, s.notFound) {
-				// 设置不存在 → 默认关闭，正常 TTL 缓存
+				// A missing setting defaults to disabled for the normal cache TTL.
 				s.openAIAllowCodexPluginCache.Store(&cachedOpenAIAllowCodexPlugin{
 					value:     false,
 					expiresAt: time.Now().Add(openAIAllowCodexPluginCacheTTL).UnixNano(),
@@ -162,7 +162,7 @@ func (s *RuntimeSettings) IsOpenAIAllowClaudeCodeCodexPluginEnabled(ctx context.
 				return false, nil
 			}
 			slog.Warn("failed to get openai_allow_claude_code_codex_plugin setting", "error", err)
-			// DB 错误 → 安全默认关闭，短 TTL 快速重试
+			// Read failures default to disabled with a short TTL for retry.
 			s.openAIAllowCodexPluginCache.Store(&cachedOpenAIAllowCodexPlugin{
 				value:     false,
 				expiresAt: time.Now().Add(openAIAllowCodexPluginErrorTTL).UnixNano(),
@@ -182,7 +182,7 @@ func (s *RuntimeSettings) IsOpenAIAllowClaudeCodeCodexPluginEnabled(ctx context.
 	return false
 }
 
-// PublishClientUserAgents 按设置发布顺序更新客户端 UA 缓存和有效期。
+// PublishClientUserAgents updates normalized client user agents and their cache expiry.
 func (s *RuntimeSettings) PublishClientUserAgents(version, codex string) {
 	s.antigravityUAVersionSF.Forget("antigravity_user_agent_version")
 	antigravityUserAgentVersion := s.clientOptions.NormalizeUserAgentVersion(version)
@@ -204,7 +204,7 @@ func (s *RuntimeSettings) PublishClientUserAgents(version, codex string) {
 	})
 }
 
-// PublishCodexPlugin 在持久化后发布已合并开关。
+// PublishCodexPlugin publishes the merged setting after persistence succeeds.
 func (s *RuntimeSettings) PublishCodexPlugin(enabled bool) {
 	s.openAIAllowCodexPluginSF.Forget("openai_allow_codex_plugin_enabled")
 	s.openAIAllowCodexPluginCache.Store(&cachedOpenAIAllowCodexPlugin{
@@ -213,7 +213,7 @@ func (s *RuntimeSettings) PublishCodexPlugin(enabled bool) {
 	})
 }
 
-// MigrateGrokDefaultTextModel 将数据库中的 grok-4.5 默认模型升级为 grok-4.6。
+// MigrateGrokDefaultTextModel upgrades the persisted grok-4.5 default to grok-4.6.
 func (s *RuntimeSettings) MigrateGrokDefaultTextModel(ctx context.Context) error {
 	if s == nil || s.settingRepo == nil {
 		return nil

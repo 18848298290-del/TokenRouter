@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// 模拟最新身份读取后、执行健康写入前管理员替换凭据。
+// cnDecisionRepo simulates credential replacement after identity reread and before a health write.
 type cnDecisionRepo struct {
 	*cnUsageMonitorRepo
 	changed bool
@@ -57,7 +57,7 @@ type cnUsageMonitorLeaderLock struct {
 	calls    int
 }
 
-// cnQueryFixtureOptions 提供查询目标许可和监控预算。
+// cnQueryFixtureOptions supplies query URL policy and monitoring limits.
 type cnQueryFixtureOptions struct {
 	Policy  egress.UsageURLPolicy
 	Monitor acctcore.CNMonitorOptions
@@ -208,7 +208,7 @@ func TestCNUsageMonitorDefaultOffAndStopCancelsProbe(t *testing.T) {
 	repo := &cnUsageMonitorRepo{providers: map[int64]*acctcore.Record{}, byPlatform: map[string][]int64{}, casResult: true}
 	service := newCNUsageMonitorForTest(repo, &cnUsageMonitorHTTP{}, newCNQueryFixtureOptions())
 	require.NoError(t, service.StartContext(context.Background()))
-	// 默认关闭监控时，启动服务后写入记录为空。
+	// Monitoring is disabled by default, so startup writes nothing.
 	require.Empty(t, repo.writes)
 
 	provider := newCNUsageMonitorProvider(5, capability.PlatformKimi, acctcore.ProviderModePayG)
@@ -480,7 +480,8 @@ func TestNewAPIUsageEndpointMissingIsUnsupported(t *testing.T) {
 	require.ErrorIs(t, err, acctcore.ErrUpstreamUsageUnsupported)
 }
 
-// TestDeepSeekBalanceAdapterRejectsMalformedPayloads 检查结构缺失或非法数值返回协议错误，合法的零余额返回成功。
+// TestDeepSeekBalanceAdapterRejectsMalformedPayloads rejects missing fields and invalid numbers while accepting
+// zero balance.
 func TestDeepSeekBalanceAdapterRejectsMalformedPayloads(t *testing.T) {
 	cases := []struct {
 		name string
@@ -781,7 +782,7 @@ func TestUpstreamUsageServiceSingleflightWaitersCancelIndependently(t *testing.T
 	}
 	cancelFirst()
 	require.ErrorIs(t, <-firstErr, context.Canceled)
-	// 等待方完成预读后给它一次调度机会进入 singleflight。
+	// Give the waiting caller time to join singleflight after its preliminary read.
 	time.Sleep(10 * time.Millisecond)
 	close(upstream.release)
 	require.NoError(t, <-secondErr)
@@ -847,7 +848,7 @@ func TestUpstreamUsageServiceTreatsDeletionDuringQueryAsIdentityChange(t *testin
 	require.ErrorIs(t, <-resultErr, acctcore.ErrUpstreamUsageIdentityChanged)
 }
 
-// TestUpstreamUsageSingleflightResultIsolation 验证合并网络操作不能使两个管理请求共享可修改的用量结果。
+// TestUpstreamUsageSingleflightResultIsolation checks that coalesced queries return independently mutable results.
 func TestUpstreamUsageSingleflightResultIsolation(t *testing.T) {
 	value := &acctcore.Record{ID: 5, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Status: acctcore.StatusActive, Credentials: map[string]any{"api_key": "fixture", "base_url": "https://usage.example/v1"}}
 	repo := &upstreamUsageProviderRepoStub{provider: value, getEvent: make(chan struct{}, 16)}
@@ -873,7 +874,7 @@ func TestUpstreamUsageSingleflightResultIsolation(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("等待方未读取身份")
 	}
-	// 预读完成后让等待方进入 singleflight，检查各调用方的独立取消。
+	// Let both callers join singleflight before releasing the shared request.
 	time.Sleep(20 * time.Millisecond)
 	close(upstream.release)
 	first, second := <-results, <-results
@@ -1153,7 +1154,7 @@ func mustJSONMarshal(t *testing.T, value any) []byte {
 	return data
 }
 
-// newUsageContractService 为 HTTP 测试构造用量查询实例，传输替身记录请求和取消。
+// newUsageContractService builds a usage service with a transport that records requests and cancellation.
 func newUsageContractService(reader acctcore.UpstreamUsageReader, transport interface {
 	DoWithTLS(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 }, policy egress.UsageURLPolicy,

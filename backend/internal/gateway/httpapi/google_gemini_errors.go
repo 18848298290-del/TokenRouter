@@ -18,13 +18,13 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// GeminiOutput 保存当前 HTTP 请求和静态输出配置。
+// GeminiOutput holds the current HTTP request and fixed output options.
 type GeminiOutput struct {
 	GoogleOutput
 	Options googleforward.Options
 }
 
-// GeminiCustomCodeSkippedError 对自定义错误码未命中的请求隐藏上游细节并返回 500。
+// GeminiCustomCodeSkippedError records upstream details and invokes the caller's generic error writer.
 func (s *GeminiOutput) GeminiCustomCodeSkippedError(provider *gatewayprovider.ExecutionProvider, upstreamStatus int, upstreamRequestID string, body []byte, write func()) error {
 	c := s.Context
 
@@ -55,7 +55,7 @@ func (s *GeminiOutput) GeminiCustomCodeSkippedError(provider *gatewayprovider.Ex
 	return fmt.Errorf("gemini upstream error: %d (not in custom error codes) message=%s", upstreamStatus, upstreamMsg)
 }
 
-// GeminiNativeUpstreamError 按原始状态码和响应体透传不可切换的 Gemini 错误。
+// GeminiNativeUpstreamError writes a non-failover Gemini error using its upstream status and unwrapped body.
 func (s *GeminiOutput) GeminiNativeUpstreamError(provider *gatewayprovider.ExecutionProvider, resp *http.Response, respBody []byte, requestID string, isOAuth bool) error {
 	c := s.Context
 
@@ -389,15 +389,15 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 	if upstreamMsg != "" && errMsg == "Upstream request failed" {
 		errMsg = upstreamMsg
 	}
-	// 池模式的 4xx 不会切换提供商，客户端需要看到上游给出的具体校验原因；
-	// 普通提供商仍保留兼容层的通用错误文案。
+	// For pool providers, expose a nonempty upstream message for statuses at or above 400.
+	// Otherwise retain the message selected by the mapping above.
 	if provider != nil && provider.View().IsPoolMode() && upstreamStatus >= http.StatusBadRequest && upstreamMsg != "" {
 		errMsg = upstreamMsg
 	}
 	return s.GeminiOpenAICompatError(protocol, statusCode, errType, errMsg)
 }
 
-// GeminiOpenAICompatError 按客户端入口输出对应的 OpenAI 错误格式。
+// GeminiOpenAICompatError writes the error format selected by the client entry protocol.
 func (s *GeminiOutput) GeminiOpenAICompatError(
 	protocol gemininative.OpenAICompatProtocol,
 	status int,

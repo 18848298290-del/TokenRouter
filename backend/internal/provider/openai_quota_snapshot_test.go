@@ -108,12 +108,13 @@ func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	}
 }
 
-// TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994 检查 5h 已用比例直接保存上游数值。
-// 上游 secondary_used_percent 约为 1% 时，codex_5h_used_percent 也为约 1%（issue #2994、PR #2918）。
+// TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994 checks that used percentages
+// stay used percentages.
+// A one-percent secondary observation becomes one-percent five-hour usage (issue #2994, PR #2918).
 func TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994(t *testing.T) {
-	secondaryUsed := 1.0 // 5h 窗口：几乎未使用
+	secondaryUsed := 1.0 // Five-hour window with little usage.
 	secondaryWindow := 300
-	primaryUsed := 2.0 // 7d 窗口：几乎未使用
+	primaryUsed := 2.0 // Seven-day window with little usage.
 	primaryWindow := 10080
 
 	snapshot := &openai.OpenAICodexUsageSnapshot{

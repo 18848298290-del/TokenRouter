@@ -1,6 +1,6 @@
 package httpapi
 
-// 提供商失败场景覆盖 gateway/provider/openai_failure_policy.go、gateway/provider/ws_diagnostics.go 和 upstream/openai/ws_payload.go，检查错误分类、重连条件和提供商重试期限。
+// Provider failure scenarios cover error classification, reconnect conditions, and provider retry deadlines.
 
 import (
 	"errors"

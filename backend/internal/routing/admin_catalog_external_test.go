@@ -14,7 +14,7 @@ import (
 	routingprovider "github.com/TokenFlux/TokenRouter/internal/routing/provider"
 )
 
-// catalogueMetadataFixture 记录元数据访问，目录遍历会使测试失败。
+// catalogueMetadataFixture records metadata lookups and fails if a caller enumerates the catalog.
 type catalogueMetadataFixture struct {
 	entries map[string]modelcatalog.Entry
 	lookups int
@@ -47,7 +47,8 @@ func configuredAdminCatalogue(metadataCount int) (*routing.AdminCatalog, *provid
 	return routing.NewAdminCatalog(routingprovider.AdminCatalogOptions(metadata)), record, metadata
 }
 
-// TestAdminCatalogueIndependentOfMetadataSize 全局元数据扩大十倍时，资格检查和属性读取次数保持不变。
+// TestAdminCatalogueIndependentOfMetadataSize checks constant eligibility and lookup counts when metadata
+// grows tenfold.
 func TestAdminCatalogueIndependentOfMetadataSize(t *testing.T) {
 	for _, size := range []int{11270, 112700} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
@@ -66,7 +67,7 @@ func TestAdminCatalogueIndependentOfMetadataSize(t *testing.T) {
 	}
 }
 
-// BenchmarkAdminConfiguredCatalogue 测量单提供商的测试目录，包含模型规则准备。
+// BenchmarkAdminConfiguredCatalogue measures a provider test catalog, including model-rule preparation.
 func BenchmarkAdminConfiguredCatalogue(b *testing.B) {
 	catalogue, record, _ := configuredAdminCatalogue(11270)
 	b.ReportAllocs()

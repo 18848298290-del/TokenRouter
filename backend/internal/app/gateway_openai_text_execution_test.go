@@ -19,7 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestAnthropicReasoningPolicy_AllEntrypointsDeny 验证三种客户端协议在实际提供商确定后、请求上游前执行该提供商平台的拒绝策略。
+// TestAnthropicReasoningPolicy_AllEntrypointsDeny checks provider policy after selection and before upstream
+// calls for all three client protocols.
 func TestAnthropicReasoningPolicy_AllEntrypointsDeny(t *testing.T) {
 	executor := &gatewayhttp.UnifiedTextExecutor{}
 	target := gatewayadapter.NewExecutionProvider(&provider.Record{ID: 1, Platform: "anthropic", Type: "apikey"})

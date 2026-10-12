@@ -10,23 +10,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic 会话 Fallback 相关常量。
+// Digest-based session cache constants.
 const (
-	// AnthropicSessionTTLSeconds Anthropic 会话缓存 TTL（5 分钟）。
+	// AnthropicSessionTTLSeconds is the five-minute session cache TTL.
 	AnthropicSessionTTLSeconds = 300
 
-	// AnthropicDigestSessionKeyPrefix Anthropic 摘要 fallback 会话 key 前缀。
+	// AnthropicDigestSessionKeyPrefix identifies digest-derived session keys.
 	AnthropicDigestSessionKeyPrefix = "anthropic:digest:"
 )
 
-// AnthropicSessionTTL 返回 Anthropic 会话缓存 TTL。
+// AnthropicSessionTTL returns the session cache TTL.
 func AnthropicSessionTTL() time.Duration {
 	return AnthropicSessionTTLSeconds * time.Second
 }
 
-// BuildAnthropicDigestChain 根据 Anthropic 请求生成摘要链
-// 格式: s:<hash>-u:<hash>-a:<hash>-u:<hash>-...
-// s = system, u = user, a = assistant.
+// BuildAnthropicDigestChain hashes system and message content in order.
+// Entries use s:<hash>, u:<hash>, or a:<hash>, joined with hyphens.
+// Appending messages extends the chain while retaining the existing prefix.
 func BuildAnthropicDigestChain(systemRaw, messages []byte) string {
 	var parts []string
 
@@ -46,7 +46,8 @@ func BuildAnthropicDigestChain(systemRaw, messages []byte) string {
 	return strings.Join(parts, "-")
 }
 
-// CanonicalAnthropicDigestJSON 保持 digest 对 JSON key 顺序和空白不敏感。
+// CanonicalAnthropicDigestJSON removes JSON key-order and whitespace differences.
+// Invalid JSON is returned unchanged.
 func CanonicalAnthropicDigestJSON(raw []byte) []byte {
 	if len(raw) == 0 {
 		return raw
@@ -62,7 +63,7 @@ func CanonicalAnthropicDigestJSON(raw []byte) []byte {
 	return canonical
 }
 
-// RolePrefix 将 Anthropic 的 role 映射为单字符前缀。
+// RolePrefix maps assistant to "a" and all other roles to "u".
 func RolePrefix(role string) string {
 	switch role {
 	case "assistant":
@@ -72,8 +73,8 @@ func RolePrefix(role string) string {
 	}
 }
 
-// GenerateAnthropicDigestSessionKey 生成 Anthropic 摘要 fallback 的 sessionKey
-// 组合 prefixHash 前 8 位 + uuid 前 8 位，确保不同会话产生不同的 sessionKey。
+// GenerateAnthropicDigestSessionKey combines up to eight bytes each from the
+// prefix hash and UUID with the digest session-key prefix.
 func GenerateAnthropicDigestSessionKey(prefixHash, uuid string) string {
 	prefix := prefixHash
 	if len(prefixHash) >= 8 {

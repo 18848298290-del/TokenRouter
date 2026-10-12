@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 同时接纳的周期扫描和管理对账由同一拥有者取消，不提前关闭其共享依赖。
+// backgroundRefreshBlockingPager lets tests verify shared cancellation before dependencies are released.
 type backgroundRefreshBlockingPager struct {
 	entered  chan struct{}
 	released atomic.Int32
@@ -77,7 +77,7 @@ func (p *refreshStartPager) ListOAuthRefreshCandidatePage(ctx context.Context, _
 	return nil, ctx.Err()
 }
 
-// TestTokenRefreshStartIsIdempotent 验证重复 Start 不能并发开启两轮立即扫描，即使两个循环共享同一个取消 context。
+// TestTokenRefreshStartIsIdempotent checks that repeated Start calls cannot launch concurrent initial scans.
 func TestTokenRefreshStartIsIdempotent(t *testing.T) {
 	p := &refreshStartPager{entered: make(chan struct{}, 2)}
 	s := NewBackgroundRefreshService(BackgroundRefreshOptions{Tuning: &RefreshTuning{Enabled: true}, Pager: p, Registrations: []RefreshRegistration{{Platform: PlatformOpenAI, Refresher: &tokenRefreshTestRefresher{}}}})

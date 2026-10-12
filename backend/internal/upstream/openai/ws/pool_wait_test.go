@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestWSPoolWaiterLimitsAndCancellation 检查普通、指定和不兼容连接的排队名额。
+// TestWSPoolWaiterLimitsAndCancellation checks queue slots for ordinary, required, and incompatible requests.
 func TestWSPoolWaiterLimitsAndCancellation(t *testing.T) {
 	for _, mode := range []string{"ordinary", "required", "incompatible"} {
 		t.Run(mode, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestWSPoolWaiterLimitsAndCancellation(t *testing.T) {
 	}
 }
 
-// TestWSPoolWakeupsKeepOriginalDeadline 检查配置唤醒后的超时和排队计数。
+// TestWSPoolWakeupsKeepOriginalDeadline checks that option wakeups retain the acquisition deadline and queue count.
 func TestWSPoolWakeupsKeepOriginalDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -87,7 +87,7 @@ func TestWSPoolWakeupsKeepOriginalDeadline(t *testing.T) {
 	})
 }
 
-// TestWSPoolRequiredWaiterIgnoresOtherConnection 检查续接请求在另一条连接释放后的选择。
+// TestWSPoolRequiredWaiterIgnoresOtherConnection checks that continuation waits for its required connection.
 func TestWSPoolRequiredWaiterIgnoresOtherConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -126,7 +126,7 @@ func TestWSPoolRequiredWaiterIgnoresOtherConnection(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledDeliveryReturnsCapacity 检查取消与租约归还同时发生时的连接容量。
+// TestWSPoolCanceledDeliveryReturnsCapacity races cancellation with release and checks lease and waiter cleanup.
 func TestWSPoolCanceledDeliveryReturnsCapacity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -156,7 +156,7 @@ func TestWSPoolCanceledDeliveryReturnsCapacity(t *testing.T) {
 	})
 }
 
-// TestWSPoolCloseWakesEveryWaiter 检查停止期间各类等待者是否退出。
+// TestWSPoolCloseWakesEveryWaiter checks that all waiter kinds exit on shutdown.
 func TestWSPoolCloseWakesEveryWaiter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)

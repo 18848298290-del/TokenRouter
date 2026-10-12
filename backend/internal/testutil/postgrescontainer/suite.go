@@ -22,8 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// Suite 在测试进程内复用容器，每次 New 都从迁移模板创建独立数据库。
-// 调用方在 TestMain 中调用 Run，使容器在所有测试清理完成后退出。
+// Suite shares a container within the test process and clones a migrated database for each New call.
+// Call Run from TestMain to terminate the container after test cleanup finishes.
 type Suite struct {
 	mu        sync.Mutex
 	container *tcpostgres.PostgresContainer
@@ -33,7 +33,7 @@ type Suite struct {
 	closed    bool
 }
 
-// Run 执行测试并回收容器，回收失败使整个测试进程失败。
+// Run executes tests and terminates the container, returning a failing exit code if cleanup fails.
 func (s *Suite) Run(m *testing.M) int {
 	code := m.Run()
 	if err := s.Close(); err != nil {
@@ -43,7 +43,7 @@ func (s *Suite) Run(m *testing.M) int {
 	return code
 }
 
-// initialize 在首次使用时启动容器，普通标签和空测试集合无需 Docker。
+// initialize starts the container on first use, so an empty test run needs no Docker instance.
 func (s *Suite) initialize(ctx context.Context, migrationFS fs.FS) error {
 	if s.closed {
 		return errors.New("测试数据库已关闭")
@@ -70,7 +70,7 @@ func (s *Suite) initialize(ctx context.Context, migrationFS fs.FS) error {
 	if err != nil {
 		return err
 	}
-	// 初始化失败后由 Close 回收已创建的资源，后续测试不复用残缺模板。
+	// Keep resources reachable by Close if initialization fails; New then marks the suite closed.
 	s.admin = admin
 	if _, err = admin.ExecContext(ctx, "CREATE DATABASE verification_template TEMPLATE template0"); err != nil {
 		return err
@@ -87,7 +87,7 @@ func (s *Suite) initialize(ctx context.Context, migrationFS fs.FS) error {
 	return err
 }
 
-// databaseDSN 保持容器连接选项，为每个测试选择独立数据库。
+// databaseDSN selects a test database while retaining the container connection options.
 func (s *Suite) databaseDSN(name string) string {
 	u, err := url.Parse(s.dsn)
 	if err != nil {
@@ -97,7 +97,7 @@ func (s *Suite) databaseDSN(name string) string {
 	return u.String()
 }
 
-// New 创建独立数据库；调用方后注册的应用清理先于数据库清理执行。
+// New creates an isolated database. Application cleanup registered afterward runs before database cleanup.
 func (s *Suite) New(t *testing.T) *sql.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -136,13 +136,13 @@ func (s *Suite) New(t *testing.T) *sql.DB {
 	return db
 }
 
-// drop 强制删除测试数据库，服务端仍在断开的连接由 FORCE 终止。
+// drop uses FORCE to terminate remaining connections before deleting the test database.
 func (s *Suite) drop(ctx context.Context, name string) error {
 	_, err := s.admin.ExecContext(ctx, "DROP DATABASE "+pq.QuoteIdentifier(name)+" WITH (FORCE)")
 	return err
 }
 
-// Close 回收整个进程的容器，多次调用返回成功。
+// Close releases the shared container and connections. Subsequent calls return nil.
 func (s *Suite) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -40,7 +40,7 @@ type tavilyResult struct {
 }
 
 // NewTavilyProvider creates a Tavily Search provider.
-// The caller is responsible for configuring the http.Client with proxy/timeouts.
+// The caller configures proxy and timeouts; a nil client uses http.DefaultClient.
 func NewTavilyProvider(apiKey string, httpClient *http.Client) *TavilyProvider {
 	if httpClient == nil {
 		httpClient = http.DefaultClient

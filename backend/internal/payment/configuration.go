@@ -24,8 +24,8 @@ const (
 	SettingLoadBalanceStrategy = "LOAD_BALANCE_STRATEGY"
 	SettingBalancePayDisabled  = "BALANCE_PAYMENT_DISABLED"
 	SettingBalanceRechargeMult = "BALANCE_RECHARGE_MULTIPLIER"
-	// SettingSubscriptionUSDToCNYRate 是订阅 CNY 换算汇率（1 USD = X CNY）。
-	// 0/未配置 = 关闭换算（订阅按 price 数值直付），显式配置后 CNY 通道订阅按 price × rate 收款。
+	// SettingSubscriptionUSDToCNYRate stores the CNY amount per USD for subscriptions.
+	// Zero or an unset value charges the plan price directly; a positive rate converts CNY charges.
 	SettingSubscriptionUSDToCNYRate      = "SUBSCRIPTION_USD_TO_CNY_RATE"
 	SettingRechargeFeeRate               = "RECHARGE_FEE_RATE"
 	SettingPaymentMethodFees             = "PAYMENT_METHOD_FEES"
@@ -57,7 +57,7 @@ type PaymentConfig struct {
 	EnabledTypes              []string `json:"enabled_payment_types"`
 	BalanceDisabled           bool     `json:"balance_disabled"`
 	BalanceRechargeMultiplier float64  `json:"balance_recharge_multiplier"`
-	// SubscriptionUSDToCNYRate 为 0 时订阅换算关闭（兼容存量行为）。
+	// SubscriptionUSDToCNYRate disables subscription conversion when zero.
 	SubscriptionUSDToCNYRate float64           `json:"subscription_usd_to_cny_rate"`
 	RechargeFeeRate          float64           `json:"recharge_fee_rate"`
 	MethodFees               MethodFeeSettings `json:"method_fees"`
@@ -75,9 +75,9 @@ type PaymentConfig struct {
 	CancelRateLimitUnit    string `json:"cancel_rate_limit_unit"`
 	CancelRateLimitMode    string `json:"cancel_rate_limit_window_mode"`
 
-	// 支付宝移动端强制使用二维码支付，不再跳转手机网站支付。
+	// Force QR code payment on mobile Alipay clients.
 	AlipayForceQRCode bool `json:"alipay_force_qrcode"`
-	// 移动端使用支付宝当面付预下单，并通过深链接唤起支付宝客户端。
+	// Use mobile Alipay precreate and launch the Alipay app through a deep link.
 	AlipayMobilePrecreateDeepLink bool `json:"alipay_mobile_precreate_deep_link"`
 }
 
@@ -108,9 +108,9 @@ type UpdatePaymentConfigRequest struct {
 	CancelRateLimitUnit    *string `json:"cancel_rate_limit_unit"`
 	CancelRateLimitMode    *string `json:"cancel_rate_limit_window_mode"`
 
-	// 支付宝移动端强制使用二维码支付，不再跳转手机网站支付。
+	// Force QR code payment on mobile Alipay clients.
 	AlipayForceQRCode *bool `json:"alipay_force_qrcode"`
-	// 移动端使用支付宝当面付预下单，并通过深链接唤起支付宝客户端。
+	// Use mobile Alipay precreate and launch the Alipay app through a deep link.
 	AlipayMobilePrecreateDeepLink *bool `json:"alipay_mobile_precreate_deep_link"`
 
 	VisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -131,14 +131,14 @@ type MethodLimits struct {
 	SingleMax   float64 `json:"single_max"`
 }
 
-// MethodFeeConfig 表示单个可见支付渠道的手续费覆盖配置。
+// MethodFeeConfig overrides fees for one visible payment method.
 type MethodFeeConfig struct {
 	Enabled  bool    `json:"enabled"`
 	FixedFee float64 `json:"fixed_fee"`
 	FeeRate  float64 `json:"fee_rate"`
 }
 
-// MethodFeeSettings 按可见支付渠道保存手续费覆盖配置。
+// MethodFeeSettings maps visible payment methods to fee overrides.
 type MethodFeeSettings map[string]MethodFeeConfig
 
 // MethodLimitsResponse is the full response for the user-facing /limits API.
@@ -174,15 +174,15 @@ type UpdateProviderInstanceRequest struct {
 	AllowUserRefund *bool             `json:"allow_user_refund"`
 }
 
-// TestProviderDraftRequest 表示管理员尚未保存的支付渠道配置草稿。
-// 编辑既有实例时携带 InstanceID，以便服务端补回未回传的敏感字段。
+// TestProviderDraftRequest contains an unsaved provider configuration for connectivity testing.
+// InstanceID lets the server restore omitted secrets when testing an existing instance.
 type TestProviderDraftRequest struct {
 	ProviderKey string            `json:"provider_key"`
 	InstanceID  *int64            `json:"instance_id,omitempty"`
 	Config      map[string]string `json:"config"`
 }
 
-// ProviderDraftTestResult 包含支付渠道的连通性测试结果。
+// ProviderDraftTestResult reports whether the provider connectivity probe succeeded.
 type ProviderDraftTestResult struct {
 	Reachable bool `json:"reachable"`
 }
@@ -365,7 +365,7 @@ func ConfigValidateMethodFeeSettings(settings MethodFeeSettings) error {
 }
 
 func ConfigIsSupportedMethodFeeMethod(method string) bool {
-	// 手续费配置只开放给用户可见的支付渠道，避免 easypay 等内部来源被误配。
+	// Fees belong to visible methods; internal sources such as EasyPay are not configurable here.
 	switch NormalizeVisibleMethod(method) {
 	case TypeStripe, TypeAlipay, TypeWxpay:
 		return true
@@ -389,7 +389,7 @@ func ConfigPcRound2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
-// EffectiveMethodFee 返回指定可见渠道最终生效的手续费配置。
+// EffectiveMethodFee returns the fee settings applied to the visible method.
 func (cfg *PaymentConfig) EffectiveMethodFee(method string) FeeConfig {
 	method = NormalizeVisibleMethod(method)
 	if cfg == nil {
@@ -403,8 +403,7 @@ func (cfg *PaymentConfig) EffectiveMethodFee(method string) FeeConfig {
 	return FeeConfig{FeeRate: cfg.RechargeFeeRate}
 }
 
-// UpdatePaymentConfig 按 PATCH 语义更新支付配置。
-// 每个字段都要独立判空后再序列化，因此函数天然较长；拆分只会掩盖字段与设置键的对应关系。
+// UpdatePaymentConfig updates supplied payment settings using PATCH semantics.
 func (s *ConfigService) UpdatePaymentConfig(ctx context.Context, req UpdatePaymentConfigRequest) error {
 	values, err := PreparePaymentConfig(req)
 	if err != nil {
@@ -413,7 +412,7 @@ func (s *ConfigService) UpdatePaymentConfig(ctx context.Context, req UpdatePayme
 	return s.settingRepo.SetMultiple(ctx, values)
 }
 
-// PreparePaymentConfig 校验支付设置并生成待保存值，供独立入口和综合更新调用。
+// PreparePaymentConfig validates settings and builds values for standalone or combined updates.
 func PreparePaymentConfig(req UpdatePaymentConfigRequest) (map[string]string, error) {
 	if req.BalanceRechargeMultiplier != nil {
 		if math.IsNaN(*req.BalanceRechargeMultiplier) || math.IsInf(*req.BalanceRechargeMultiplier, 0) || *req.BalanceRechargeMultiplier <= 0 {
@@ -431,7 +430,7 @@ func PreparePaymentConfig(req UpdatePaymentConfigRequest) (map[string]string, er
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
 			return nil, infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate must be between 0 and 100")
 		}
-		// 充值手续费率最多保留两位小数。
+		// Recharge fee percentages allow at most two decimal places.
 		if math.Round(v*100) != v*100 {
 			return nil, infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
 		}
@@ -543,10 +542,10 @@ func ConfigFormatPositiveFloat(v *float64) string {
 	return strconv.FormatFloat(*v, 'f', 2, 64)
 }
 
-// ConfigFormatPositiveFloatExact 保留完整精度，用于汇率等对小数位敏感的配置。
+// ConfigFormatPositiveFloatExact retains precision for settings such as exchange rates.
 func ConfigFormatPositiveFloatExact(v *float64) string {
 	if v == nil || *v <= 0 {
-		return "" // empty → ConfigParsePaymentConfig 视为未配置（换算关闭）
+		return "" // An empty value disables conversion in ConfigParsePaymentConfig.
 	}
 	return strconv.FormatFloat(*v, 'f', -1, 64)
 }
@@ -574,7 +573,7 @@ func ConfigDerefStr(v *string) string {
 
 func ConfigSplitTypes(s string) []string {
 	if strings.TrimSpace(s) == "" {
-		// 返回空切片，避免管理端 JSON 把 nil 切片编码成 null。
+		// Return an empty slice so the admin API encodes [] rather than null.
 		return []string{}
 	}
 	parts := strings.Split(s, ",")

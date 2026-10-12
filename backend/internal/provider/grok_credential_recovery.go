@@ -17,7 +17,7 @@ const (
 
 var ErrGrokCredentialStateUpdateFailed = errors.New("grok oauth provider state update failed")
 
-// GrokCredentialMutation 描述本次已分类的凭据状态操作，不包含 HTTP 重试或响应字段。
+// GrokCredentialMutation describes a classified credential-state update and the snapshot it applies to.
 type GrokCredentialMutation struct {
 	Permanent     bool
 	Transient     bool
@@ -27,14 +27,14 @@ type GrokCredentialMutation struct {
 	Snapshot      *CredentialMutationSnapshot `json:"-"`
 }
 
-// GrokCredentialStateWriter 只执行同一凭据快照下的条件写入。
+// GrokCredentialStateWriter conditionally writes state when the credential snapshot still matches.
 type GrokCredentialStateWriter interface {
 	SetGrokCredentialErrorIfMatch(context.Context, int64, CredentialMutationSnapshot, string) (bool, error)
 	SetGrokCredentialTempUnschedulableIfMatch(context.Context, int64, CredentialMutationSnapshot, time.Time, string) (bool, error)
 }
 
-// GrokCredentialRecovery 由 app 唯一持有，所有请求路径复用其按提供商互斥及运行时状态。
-// 持久写入、回读确认和缓存失效分别使用各自的时间预算。
+// GrokCredentialRecovery shares provider locks and runtime blocks across request paths.
+// Persistent writes, commit verification, and cache invalidation have separate time budgets.
 type GrokCredentialRecovery struct {
 	Read       func(context.Context, int64) (*Record, error)
 	State      GrokCredentialStateWriter
@@ -118,7 +118,7 @@ func (s *GrokCredentialRecovery) Apply(ctx context.Context, value *Record, class
 			runtimeRollbackDone = true
 			return s.resolveCASMiss(ctx, value.ID, snapshot)
 		}
-		// 持久隔离已提交后，保留本次运行时阻断。
+		// Keep the runtime block after the persistent error state has committed.
 		keepRuntimeBlock = true
 		if s.Invalidate == nil {
 			if ctx.Err() != nil {
@@ -194,7 +194,7 @@ func (s *GrokCredentialRecovery) Apply(ctx context.Context, value *Record, class
 			runtimeRollbackDone = true
 			return s.resolveCASMiss(ctx, value.ID, snapshot)
 		}
-		// SetTempUnschedulable 成功后，临时隔离已持久化。
+		// Keep the runtime block after the temporary scheduling pause has committed.
 		keepRuntimeBlock = true
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -238,8 +238,8 @@ func (s *GrokCredentialRecovery) validateCurrent(
 		return "", ErrRefreshProviderStateChanged
 	}
 
-	// 已配置代理不属于提供商行的 CAS 身份；重新检查加载后的代理对象，
-	// 让同 ID 的代理恢复结果优先于过期的代理无效失败。
+	// The loaded proxy object is outside the provider-row CAS comparison.
+	// Recheck it so recovery of the same proxy ID takes precedence over a stale missing-proxy failure.
 	if class.VerifyProxy {
 		if latest.ProxyID == nil || latest.Proxy != nil {
 			return "", ErrRefreshProviderStateChanged

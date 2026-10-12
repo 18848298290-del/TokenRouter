@@ -15,14 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// RawChatEndpoint 保持三个兼容入口一致的上游端点记录。
+// RawChatEndpoint identifies the upstream endpoint in results from all three compatible entry points.
 const RawChatEndpoint = "/v1/chat/completions"
 
 func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p RawChatPorts) (*Result, error) {
 	profile := p.Profile()
 	startTime := time.Now()
 
-	// 1. 读取路由及计费所需字段。
 	originalModel := gjson.GetBytes(body, "model").String()
 	if originalModel == "" {
 		p.Error(http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -30,16 +29,15 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
-	// 2. 按原 Chat 入口规则解析模型。
+	// Resolve billing and upstream models using the Chat entry point's rules.
 	billingModel := p.BillingModel(originalModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
 	p.ObserveModel(upstreamModel)
 	grokCacheIdentity := ""
 	if profile.Grok {
-		// 在图片桥接或其它请求体改写前解析，使回退身份始终基于客户端稳定的会话前缀。
+		// Derive identity before image bridging or body rewriting so it uses the stable client session prefix.
 		grokCacheIdentity = p.GrokCacheIdentity(body, "", upstreamModel)
 	}
-	// 3. 将模型改写为上游型号。
 	upstreamBody := body
 	if upstreamModel != originalModel {
 		upstreamBody = p.ReplaceModel(body, upstreamModel)
@@ -49,13 +47,12 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		return nil, err
 	}
 
-	// 4. 对 Chat 报文应用 Fast 策略。
 	updatedBody, policyErr := p.FastRaw(ctx, upstreamModel, upstreamBody)
 	if policyErr != nil {
 		return nil, policyErr
 	}
 	upstreamBody = updatedBody
-	// 分别记录最终请求档位和响应观测档位，计费时按凭据类型选择。
+	// Keep outgoing and observed tiers separate; billing selects between them by credential type.
 	serviceTier := p.ServiceTier(upstreamBody)
 	if profile.Grok {
 		strippedBody, stripErr := p.StripViewImage(upstreamBody)
@@ -65,7 +62,7 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		upstreamBody = strippedBody
 	}
 
-	// Grok Composer 不直接接受 image_url；仅在该场景通过 Grok Build 生成图片描述后转发纯文本。
+	// The image bridge uses these credentials to obtain Grok Build descriptions for Composer image input.
 	token, tokenKind, err := p.RawCredential(ctx)
 	if err != nil {
 		return nil, err
@@ -105,7 +102,7 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	}
 	upstreamBody = p.OllamaBody(upstreamBody)
 
-	// 用量记录读取平台参数转换后的档位。
+	// Record effort after applying platform parameter conversions.
 	reasoningEffort := p.EffectiveEffort(upstreamBody, body, upstreamModel, billingModel, originalModel)
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, upstreamBody, billingModel)
 
@@ -117,7 +114,7 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		zap.Bool("stream", clientStream),
 	)
 
-	// 5. 通过共享 CC 管线构造并发送上游请求。
+	// Use the shared Chat transport for upstream request construction and sending.
 	targetURL, err := p.RawTarget()
 	if err != nil {
 		return nil, err
@@ -133,7 +130,6 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 7. 分类上游错误并判断是否换提供商。
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := p.ReadUpstreamError(resp)
 		if profile.Grok {
@@ -160,8 +156,6 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	if profile.Grok {
 		p.UpdateGrokUsage(ctx, upstreamModel, resp.Header, resp.StatusCode)
 	}
-
-	// 8. 转发响应
 
 	output := upstream.NewDeferredOutputContext(p.Sink())
 	options := p.RawOptions(resp, billingModel, upstreamModel, serviceTier)

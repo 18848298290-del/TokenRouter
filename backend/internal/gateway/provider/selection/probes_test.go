@@ -13,12 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// probePricingStore 为探针测试提供分组策略读取方法。
+// probePricingStore supplies group policy reads for probe tests.
 type probePricingStore struct {
 	routing.PricingConfigRepository
 }
 
-// TestProbeSelectPreservesGroupMappedModel 复现公开别名与提供商白名单不同的分组配置。
+// TestProbeSelectPreservesGroupMappedModel covers a public alias that differs from the provider allowlist.
 func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 	for _, selector := range []string{"compatible", "generic"} {
 		for _, mapped := range []bool{false, true} {
@@ -29,7 +29,7 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 				if mapped {
 					groupModel = "gemini-3.8-flash-tiered"
 					mapping[requested] = groupModel
-					// 第二条规则不能导致同一阶段重复改写。
+					// The second rule must not apply another mapping in the same stage.
 					mapping[groupModel] = "wrong-second-hop"
 				}
 				group := &routing.Group{ID: 59, RoutingPolicy: routing.GroupRoutingPolicy{
@@ -59,7 +59,7 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 				}
 				target, err := probe.Select(context.Background(), routing.GroupAvailabilityProbeDueGroup{GroupID: group.ID}, requested)
 				require.NoError(t, err)
-				// 提供商映射留给测试服务，不能在分组选择阶段提前应用。
+				// The testing service applies provider mapping after group selection.
 				require.Equal(t, routing.GroupProbeTarget{ProviderID: 3678, ModelID: groupModel}, target)
 				if mapped {
 					_, err = probe.Select(context.Background(), routing.GroupAvailabilityProbeDueGroup{GroupID: group.ID}, groupModel)

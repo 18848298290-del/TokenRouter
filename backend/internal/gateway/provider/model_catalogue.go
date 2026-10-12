@@ -24,8 +24,8 @@ func (v catalogueRules) AttributeTarget(requested, model string, source, target 
 	return value
 }
 
-// SupportsClientProtocol 不把专用 Embeddings、Images 模型展示为普通对话候选。
-// 提供商模型别名先按同一规则展开，再判断已有适配器支持的调用形状。
+// SupportsClientProtocol filters models by the invocation shapes supported by the adapters.
+// Provider aliases are expanded before checking embedding, image, and conversational protocols.
 func (v catalogueRules) SupportsClientProtocol(model string, source capability.ProtocolID) bool {
 	model = v.policy.Mapped(model)
 	embedding := strings.HasPrefix(strings.ToLower(model), "text-embedding-")
@@ -61,12 +61,12 @@ func (v catalogueRules) UpstreamModels(ctx context.Context, model string) []stri
 	return v.policy.ListingModels(ctx, model)
 }
 
-// CatalogueRules 为目录调用方准备可复用的模型规则。
+// CatalogueRules captures reusable model rules for catalogue queries.
 func (p ModelPolicy) CatalogueRules() routing.CatalogueRules {
 	return catalogueRules{policy: p.Prepared()}
 }
 
-// CatalogueProvider 准备提供商元数据和一次目录查询的模型规则。
+// CatalogueProvider prepares provider metadata and model rules for one catalogue query.
 func CatalogueProvider(value *provider.Record, route requeststate.AttemptRoute) routing.CatalogueProvider {
 	policy := (ModelPolicy{Record: value, Route: route}).Prepared()
 	snapshot := policy.CandidateSnapshot()

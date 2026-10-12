@@ -19,6 +19,8 @@ type HistoricalIngressStore interface {
 	DeleteCandidates(context.Context, []int64, time.Time) (int64, error)
 }
 
+// CleanupHistoricalIngress classifies historical candidates and deletes matches when execute is true.
+// It returns counts by reason, rows scanned, rows matched, and rows deleted; execute=false is a dry run.
 func CleanupHistoricalIngress(ctx context.Context, store HistoricalIngressStore, before time.Time, batchSize int, execute bool) (map[string]int64, int64, int64, int64, error) {
 	counts := make(map[string]int64)
 	var cursor, scanned, matched, deleted int64

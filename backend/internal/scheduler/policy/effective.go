@@ -9,13 +9,13 @@ const (
 	defaultAdvancedSchedulerErrorRateAlpha = 0.2
 	defaultAdvancedSchedulerTTFTAlpha      = 0.2
 
-	// 消息串行和节流模式使用配置中的字符串值。
+	// Message queue mode values match persisted configuration strings.
 	MessageQueueSerialize = "serialize"
 	MessageQueueThrottle  = "throttle"
 )
 
-// EffectiveSettings 是完成全局与分组覆盖合并后的请求级配置。
-// 分组字段优先级最高；缺失字段继续继承设置仓库和静态配置的结果。
+// EffectiveSettings contains request settings after global and group overrides are merged.
+// Group fields take precedence; missing fields inherit runtime settings and process defaults.
 type EffectiveSettings struct {
 	StickyWeightedEnabled       bool
 	SubscriptionPriorityEnabled bool
@@ -31,9 +31,9 @@ type ScoreWeights struct {
 	Queue     float64
 	ErrorRate float64
 	TTFT      float64
-	// Reset 为会话窗口更早重置的提供商加分，默认为 0，表示关闭。
+	// Reset rewards earlier session window resets; zero disables the factor by default.
 	Reset float64
-	// QuotaHeadroom 倾向 Codex 7d 剩余额度更健康的提供商；0 表示关闭（默认）。
+	// QuotaHeadroom rewards greater Codex 7d quota headroom; zero disables it by default.
 	QuotaHeadroom float64
 	Previous      float64
 	SessionSticky float64
@@ -63,15 +63,15 @@ type StickyEscapeConfig struct {
 	ErrorRate float64
 }
 
-// FeedbackConfig 保存一次请求回写运行时反馈时使用的 EWMA 系数。
-// 统计仍按提供商共享，但系数由请求最终命中的分组决定。
+// FeedbackConfig contains the EWMA coefficients used when a request records feedback.
+// Statistics are shared per provider; the final request group determines these coefficients.
 type FeedbackConfig struct {
 	ErrorRateAlpha float64
 	TtftAlpha      float64
 }
 
-// ValidateGroupOverrides 校验分组覆盖字段的取值范围。
-// 基础权重允许全部设为零，此时 Top-K 使用稳定并列规则并等权抽样。
+// ValidateGroupOverrides checks the ranges of supplied group settings.
+// All base weights may be zero; sticky bonuses can still influence selection.
 func ValidateGroupOverrides(overrides GroupAdvancedSchedulerOverrides) error {
 	if overrides.LBTopK != nil && *overrides.LBTopK <= 0 {
 		return fmt.Errorf("lb_top_k must be a positive integer")
@@ -122,8 +122,8 @@ func ValidateGroupOverrides(overrides GroupAdvancedSchedulerOverrides) error {
 	return nil
 }
 
-// ValidateEffectiveWeights 校验合并后的完整权重。
-// 基础权重总和可以为零，基础权重和全部权重的总和都需要是有限值。
+// ValidateEffectiveWeights checks the merged weights.
+// The base sum may be zero; both the base and total sums must be finite.
 func ValidateEffectiveWeights(weights ScoreWeights) error {
 	values := []struct {
 		name  string
@@ -155,7 +155,7 @@ func ValidateEffectiveWeights(weights ScoreWeights) error {
 	return nil
 }
 
-// HasWeightOverrides 判断是否需要读取全局权重完成合并校验。
+// HasWeightOverrides reports whether any group weight needs merging with global weights for validation.
 func HasWeightOverrides(overrides GroupAdvancedSchedulerOverrides) bool {
 	return overrides.WeightPriority != nil ||
 		overrides.WeightLoad != nil ||
@@ -168,7 +168,7 @@ func HasWeightOverrides(overrides GroupAdvancedSchedulerOverrides) bool {
 		overrides.WeightSessionSticky != nil
 }
 
-// ApplyGroupWeightOverrides 替换分组提供的权重字段。
+// ApplyGroupWeightOverrides replaces each weight supplied by the group.
 func ApplyGroupWeightOverrides(
 	weights ScoreWeights,
 	overrides GroupAdvancedSchedulerOverrides,
@@ -203,8 +203,8 @@ func ApplyGroupWeightOverrides(
 	return weights
 }
 
-// ResolveEffective 以全局生效配置为基线合并分组覆盖。
-// 分组设置的零值也参与覆盖，基础权重全部为零时仍使用分组权重。
+// ResolveEffective merges group overrides into the effective global settings.
+// Supplied zero values override inherited values, including an all-zero set of base weights.
 func ResolveEffective(
 	baseTopK int,
 	baseWeights ScoreWeights,
@@ -259,17 +259,17 @@ func ResolveEffective(
 	effective.StickyEscape = NormalizeStickyEscape(effective.StickyEscape)
 	effective.Weights = ApplyGroupWeightOverrides(effective.Weights, overrides)
 	if validateErr := ValidateEffectiveWeights(effective.Weights); validateErr != nil {
-		// 权重异常时回退到默认权重，分组的其他有效覆盖继续生效。
+		// Invalid merged weights revert to global weights; other valid group overrides still apply.
 		effective.Weights = globalWeights
 	}
 	return effective
 }
 
-// NormalizeStickyEscape 将健康逃逸配置限制在允许的取值范围内。
+// NormalizeStickyEscape supplies defaults for out-of-range escape thresholds.
 func NormalizeStickyEscape(value StickyEscapeConfig) StickyEscapeConfig {
 	thresholdsUnset := value.TtftMs == 0 && value.ErrorRate == 0
 	if !value.Enabled && value.TtftMs == 0 && value.ErrorRate == 0 {
-		// 未注册配置结构体时使用零值，默认开启健康逃逸。
+		// The zero configuration enables health-based escape by default.
 		value.Enabled = true
 	}
 	if value.TtftMs <= 0 || math.IsNaN(value.TtftMs) || math.IsInf(value.TtftMs, 0) {
@@ -323,7 +323,7 @@ func NormalizeFeedback(value FeedbackConfig) FeedbackConfig {
 	return value
 }
 
-// BaseWeightSum 按配置字段顺序累加基础权重，浮点加法的顺序会影响结果。
+// BaseWeightSum adds base weights in field order because floating-point addition order affects the result.
 func (w ScoreWeights) BaseWeightSum() float64 {
 	return w.Priority + w.Load + w.Queue + w.ErrorRate + w.TTFT + w.Reset + w.QuotaHeadroom
 }
@@ -332,7 +332,7 @@ func (w ScoreWeights) TotalWeightSum() float64 {
 	return w.BaseWeightSum() + w.Previous + w.SessionSticky
 }
 
-// ValidGlobal 检查全局基础权重之和为正，分组权重另行校验并允许总和为零。
+// ValidGlobal requires valid weights and a positive base sum; group weights may have a zero base sum.
 func (w ScoreWeights) ValidGlobal() bool {
 	return ValidateEffectiveWeights(w) == nil && w.BaseWeightSum() > 0
 }

@@ -54,7 +54,8 @@ func TestReadUpstreamResponseBody(t *testing.T) {
 	})
 }
 
-// TestUpstreamResponseLimitPreservesProtocolEnvelope 验证超限仍沿原协议返回 502；不能把已识别的大小错误改写成普通读取失败。
+// TestUpstreamResponseLimitPreservesProtocolEnvelope checks that size-limit errors retain their protocol-specific
+// 502 response.
 func TestUpstreamResponseLimitPreservesProtocolEnvelope(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

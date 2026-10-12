@@ -5,14 +5,14 @@ import (
 	"time"
 )
 
-// SubmissionEvent 描述提交降级或 panic，通过 app 提供的日志回调记录。
+// SubmissionEvent describes synchronous fallback or a panic for the app logging callback.
 type SubmissionEvent struct {
 	Mandatory bool
 	Panic     any
 }
 
-// SubmissionOptions 配置工作池停止、请求取消和 panic 时的处理方式。
-// 异步任务交给传入的 WorkerPool 执行。
+// SubmissionOptions controls stopped-pool fallback, source values, and panic recovery.
+// The supplied worker pool executes asynchronous tasks.
 type SubmissionOptions struct {
 	FallbackWhenStopped  bool
 	PreserveSourceValues bool
@@ -20,8 +20,8 @@ type SubmissionOptions struct {
 	Observe              func(SubmissionEvent)
 }
 
-// SubmitTask 复制本次请求的关联数据后提交异步任务。
-// mandatory 指定的任务可转为同步执行，普通 drop/sample 任务继续按配置丢弃。
+// SubmitTask snapshots request correlation data and submits the task.
+// Mandatory dropped tasks run synchronously; ordinary overflow follows the configured drop or sample policy.
 func SubmitTask(pool *UsageRecordWorkerPool, source context.Context, task UsageRecordTask, mandatory bool, options SubmissionOptions) {
 	if task == nil {
 		return

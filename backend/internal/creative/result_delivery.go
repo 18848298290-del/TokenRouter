@@ -11,7 +11,7 @@ const (
 	OutputDeliveryLost    = "DELIVERY_LOST"
 )
 
-// ProviderOutput 是本次调用已确认的图片，字节只在当前 worker 与临时存储之间流转。
+// ProviderOutput contains a provider result; image bytes pass through worker memory and temporary storage.
 type ProviderOutput struct {
 	Index        int
 	Success      bool
@@ -21,13 +21,13 @@ type ProviderOutput struct {
 	ErrorMessage string
 }
 
-// ProviderOutcomeStore 把成功事实、输出元数据和恢复动作放在同一存储事务中。
+// ProviderOutcomeStore records provider success, output metadata, and recovery work in one transaction.
 type ProviderOutcomeStore interface {
 	RecordProviderOutcome(context.Context, string, int64, []CreativeRunOutput, time.Time) error
 	CompleteProviderOutcome(context.Context, string, float64, bool, time.Time) error
 }
 
-// ResultDelivery 保存成功记录并交付生成结果。
+// ResultDelivery records provider outcomes and saves generated images for client retrieval.
 type ResultDelivery struct {
 	Now      func() time.Time
 	Repo     CreativeRunRepository
@@ -36,7 +36,7 @@ type ResultDelivery struct {
 	TTL      time.Duration
 }
 
-// Record 先确认成功事实，再有界保存输出；暂存失败不会丢弃已发生的服务事实。
+// Record persists the outcome before bounded output-save retries; exhausted saves are marked as delivery loss.
 func (d ResultDelivery) Record(ctx context.Context, id string, providerID int64, outputs []ProviderOutput) error {
 	if d.Outcomes == nil {
 		return errors.New("creative platform outcome store is not configured")
@@ -100,7 +100,7 @@ func (d ResultDelivery) Record(ctx context.Context, id string, providerID int64,
 	return nil
 }
 
-// Lost 查询真实可交付性；Redis 故障返回错误，明确缺失才按结果丢失处理。
+// Lost reports marked or confirmed missing output; storage read failures remain errors for retry.
 func (d ResultDelivery) Lost(ctx context.Context, id string, outputs []*CreativeRunOutput) (bool, error) {
 	lost := false
 	for _, output := range outputs {
@@ -126,7 +126,7 @@ func (d ResultDelivery) Lost(ctx context.Context, id string, outputs []*Creative
 	return lost, nil
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now returns the injected clock's time or the system time when no clock is configured.
 func (d ResultDelivery) now() time.Time {
 	if d.Now != nil {
 		return d.Now()

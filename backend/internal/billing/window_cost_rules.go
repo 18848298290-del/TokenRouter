@@ -8,7 +8,7 @@ const (
 	WindowCostNotSchedulable
 )
 
-// WindowCostSchedulability 表示可调度、仅粘性可用和不可调度三种费用窗口状态。
+// WindowCostSchedulability distinguishes unrestricted, sticky-only, and blocked scheduling.
 type WindowCostSchedulability int
 
 func CheckWindowCost(current, limit, reserve float64) WindowCostSchedulability {
@@ -21,7 +21,7 @@ func CheckWindowCost(current, limit, reserve float64) WindowCostSchedulability {
 	return WindowCostNotSchedulable
 }
 
-// CurrentCostWindowStart 返回活动窗口的起点，窗口过期后返回当前时区的整点。
+// CurrentCostWindowStart returns the active start, or the current local hour when the window is expired or incomplete.
 func CurrentCostWindowStart(start, end *time.Time, now time.Time) time.Time {
 	if start != nil && end != nil && now.Before(*end) {
 		return *start

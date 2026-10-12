@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// redeemAuthInvalidatorStub 记录权益变更后认证缓存失效的用户。
+// redeemAuthInvalidatorStub records users whose authentication cache is invalidated after an entitlement change.
 type redeemAuthInvalidatorStub struct{ userIDs []int64 }
 
 func TestRedeemService_InvalidateRedeemCaches_AuthCache(t *testing.T) {

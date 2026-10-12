@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// 解析器接受分钟、小时、日、月和星期字段。
+// scheduledTestParser accepts minute, hour, day, month, and weekday fields.
 var scheduledTestParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-// ScheduledCron 只在 Start 注册和启动原分钟 cron；Stop 永久禁止再次启动。
+// ScheduledCron registers a per-minute job on Start; Stop permanently prevents another start.
 type ScheduledCron struct {
 	mu               sync.Mutex
 	cron             *cron.Cron

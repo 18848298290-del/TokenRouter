@@ -71,7 +71,7 @@ func TestConfigureTransportProxy_SOCKS5H(t *testing.T) {
 func TestConfigureTransportProxy_CaseInsensitive(t *testing.T) {
 	testCases := []struct {
 		scheme   string
-		useProxy bool // true 使用 Transport.Proxy，false 使用 DialContext。
+		useProxy bool // True selects Transport.Proxy; false selects DialContext.
 	}{
 		{"HTTP://proxy.example.com:8080", true},
 		{"Http://proxy.example.com:8080", true},
@@ -134,7 +134,7 @@ func TestConfigureTransportProxy_WithAuth(t *testing.T) {
 
 func TestConfigureTransportProxy_EmptyScheme(t *testing.T) {
 	transport := &http.Transport{}
-	// 空 scheme 的 URL
+	// A manually constructed URL can have a host with no scheme.
 	proxyURL := &url.URL{Host: "proxy.example.com:8080"}
 
 	err := ConfigureTransportProxy(transport, proxyURL)
@@ -144,7 +144,7 @@ func TestConfigureTransportProxy_EmptyScheme(t *testing.T) {
 }
 
 func TestConfigureTransportProxy_PreservesExistingConfig(t *testing.T) {
-	// 配置代理后检查 Transport 的其他配置仍生效。
+	// Proxy setup must retain unrelated transport pool settings.
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
@@ -186,13 +186,13 @@ func TestConfigureTransportProxy_SpecialCharsInPassword(t *testing.T) {
 		name     string
 		proxyURL string
 	}{
-		// 密码包含 @ 符号（URL 编码为 %40）
+		// An encoded @ remains part of the password.
 		{"password with @", "socks5://user:p%40ssword@proxy.example.com:1080"},
-		// 密码包含 : 符号（URL 编码为 %3A）
+		// An encoded colon remains part of the password.
 		{"password with :", "socks5://user:pass%3Aword@proxy.example.com:1080"},
-		// 密码包含 / 符号（URL 编码为 %2F）
+		// An encoded slash remains part of the password.
 		{"password with /", "socks5://user:pass%2Fword@proxy.example.com:1080"},
-		// 复杂密码
+		// Cover several encoded reserved characters together.
 		{"complex password", "socks5h://admin:P%40ss%3Aw0rd%2F123@proxy.example.com:1080"},
 	}
 
@@ -209,8 +209,8 @@ func TestConfigureTransportProxy_SpecialCharsInPassword(t *testing.T) {
 	}
 }
 
-// TestSOCKS5ForwardDialerHasBoundedTimeout 检查 SOCKS5 拨号器携带建连超时。
-// SOCKS5 分支替换 Transport.DialContext，底层零值 net.Dialer 会等待内核 TCP 重传结束。
+// TestSOCKS5ForwardDialerHasBoundedTimeout checks the SOCKS TCP connection timeout.
+// SOCKS replaces Transport.DialContext, so its forward dialer needs its own timeout.
 func TestSOCKS5ForwardDialerHasBoundedTimeout(t *testing.T) {
 	require.Greater(t, socks5ForwardDialer.Timeout, time.Duration(0))
 	require.Equal(t, socks5DialTimeout, socks5ForwardDialer.Timeout)
@@ -231,7 +231,7 @@ func TestConfigureTransportProxySOCKS5SetsDialContext(t *testing.T) {
 	}
 }
 
-// TestConfigureTransportProxyHTTPPreservesDialContext 检查 HTTP 代理配置后仍调用传入的 DialContext。
+// TestConfigureTransportProxyHTTPPreservesDialContext checks that HTTP proxy setup retains the caller's dialer.
 func TestConfigureTransportProxyHTTPPreservesDialContext(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:8080")
 	require.NoError(t, err)

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// CredentialInput 保存构建 session 所需的凭据，公开响应需要排除这些字段。
+// CredentialInput holds session credentials. Callers must exclude these fields from public responses.
 type CredentialInput struct {
 	Name               string
 	Pat                string
@@ -37,7 +37,7 @@ type (
 	OrganizationTagsGetter func(context.Context, string, string) (*OrganizationTags, error)
 )
 
-// SessionBuilder 通过凭据交换构建会话，Doer 使用本次提供商的传输配置。
+// SessionBuilder exchanges credentials for sessions using the provider transport in Doer.
 type SessionBuilder struct {
 	ExchangePAT   PATExchanger
 	ExchangeCNPAT CNPATExchanger
@@ -135,11 +135,11 @@ func (p *SessionBuilder) BuildSession(ctx context.Context, provider *CredentialI
 			identity, err = exchangePAT(ctx, pat, machine)
 		}
 		if err != nil {
-			// PAT exchange 失败通常是永久错误（无效凭据），不跳过缓存
+			// Return the exchange failure to the caller for credential and cache handling.
 			return nil, time.Time{}, fmt.Errorf("qoder pat exchange: %w", err)
 		}
 		ApplyIdentityMetadata(identity, provider)
-		// populateOrganizationFromAPI 在 session 创建前调用，避免缓存后并发修改 identity
+		// Populate metadata before publishing the session to avoid mutating a cached identity.
 		if site == SiteGlobal {
 			p.populateOrganizationFromAPI(ctx, provider, identity)
 		}
@@ -272,7 +272,7 @@ func ApplyIdentityMetadata(identity *AuthIdentity, provider *CredentialInput) {
 	}
 }
 
-// MachineForCredentials 读取持久化机器身份，并对旧提供商使用兼容回退值。
+// MachineForCredentials reads the saved machine identity and fills missing legacy values.
 func MachineForCredentials(provider *CredentialInput) *MachineIdentity {
 	if provider == nil {
 		return NewMachine()
@@ -286,7 +286,7 @@ func MachineForCredentials(provider *CredentialInput) *MachineIdentity {
 		machineID = NewMachineForSite(site).MachineID
 	}
 	if site == SiteCN {
-		// 忽略旧版本曾保存的随机 token/type，保持官方国内客户端的空值语义。
+		// The CN protocol uses empty token and type values, including for older saved identities.
 		return &MachineIdentity{MachineID: machineID}
 	}
 	return &MachineIdentity{

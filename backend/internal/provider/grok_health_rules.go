@@ -44,7 +44,7 @@ func GrokRateLimitResetAt(snapshot *usageview.QuotaSnapshot, now time.Time) (tim
 		return time.Time{}, false
 	}
 
-	// Retry-After 加上观测时间得到固定的重试时刻，多次读取共用这个时刻。
+	// Anchor Retry-After to the observation time so repeated reads use the same deadline.
 	retryAfterExpired := false
 	var resetAt time.Time
 	if snapshot.RetryAfterSeconds != nil && *snapshot.RetryAfterSeconds > 0 {
@@ -79,8 +79,8 @@ func GrokRateLimitResetAt(snapshot *usageview.QuotaSnapshot, now time.Time) (tim
 	if !resetAt.IsZero() {
 		return resetAt, true
 	}
-	// Retry-After 加上快照时间得到固定的重试时刻。
-	// 该时刻已过期时，仍可使用更晚的窗口重置时间。
+	// A later window reset was already considered above. An expired Retry-After must not
+	// create another cooldown merely because this snapshot still reports exhaustion.
 	if retryAfterExpired {
 		return time.Time{}, false
 	}
@@ -140,9 +140,8 @@ func IsSuccessfulGrokRateLimitRecovery(provider *Record, snapshot *usageview.Quo
 		snapshot.StatusCode < 300
 }
 
-// BuildGrokSchedulerExtraUpdates 派生 EvaluateProviderSchedulingThreshold 使用的
-// grok_sched_* 调度快照，包括利用率百分比与重置时间。
-// 利用率取请求数与令牌数窗口中约束最强的一项。
+// BuildGrokSchedulerExtraUpdates derives grok_sched_* fields for scheduling thresholds.
+// It records the highest request or token utilization percentage and that window's reset time.
 func BuildGrokSchedulerExtraUpdates(snapshot *usageview.QuotaSnapshot) map[string]any {
 	if snapshot == nil {
 		return nil
@@ -156,10 +155,9 @@ func BuildGrokSchedulerExtraUpdates(snapshot *usageview.QuotaSnapshot) map[strin
 		"grok_sched_usage_updated_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	if reset != nil {
-		// 防御：调度阈值暂停时长由 grok_sched_reset_at 决定。若上游返回脏的
-		// reset 头（例如把相对毫秒 "6000" 误当相对秒解析出 ~33h 的未来时刻），
-		// 不设上限会把耗尽提供商长时间锁死。xAI 配额窗口不会超过一天，因此对
-		// 未来时刻做 grokMaxSchedulingResetHorizon 钳制；过去/无效值直接不写。
+		// grok_sched_reset_at controls the scheduling pause. Cap distant reset times so malformed
+		// upstream headers cannot keep an exhausted provider blocked indefinitely.
+		// Past reset times are omitted; future times are capped at grokMaxSchedulingResetHorizon.
 		now := time.Now()
 		if reset.After(now) {
 			capped := *reset
@@ -172,8 +170,8 @@ func BuildGrokSchedulerExtraUpdates(snapshot *usageview.QuotaSnapshot) map[strin
 	return updates
 }
 
-// GrokSnapshotUtilization 返回请求数与令牌数额度窗口中的最高利用率（0 到 100），
-// 以及该窗口的重置时间。
+// GrokSnapshotUtilization returns the highest request or token utilization, from 0 to 100,
+// and that window's reset time when ResetUnix is available.
 func GrokSnapshotUtilization(snapshot *usageview.QuotaSnapshot) (float64, *time.Time, bool) {
 	if snapshot == nil {
 		return 0, nil, false

@@ -32,14 +32,14 @@ type qoderErrorPassthroughRepoStub struct {
 	rules []*errorpolicy.ErrorPassthroughRule
 }
 
-// fixtureClient 模拟供应商网络，测试使用平台转换、网关循环和 Lease 的生产实现。
+// fixtureClient replaces upstream networking while tests use production conversion, gateway retries, and leases.
 type fixtureClient struct {
 	body    string
 	failure error
 	calls   *atomic.Int32
 }
 
-// blockingSink 模拟同步背压，当前帧写入结束后才能写下一帧。
+// blockingSink holds the first semantic frame to exercise synchronous backpressure.
 type blockingSink struct {
 	entered, proceed chan struct{}
 	once             atomic.Bool
@@ -281,7 +281,7 @@ func TestQoderNativeGatewayNonstreamCancellation(t *testing.T) {
 func TestQoderNativeGatewayLeadingUsageFailureClosesRetryWithoutSemanticOutput(t *testing.T) {
 	var calls, completed atomic.Int32
 	body := `{"model":"auto","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`
-	// 收到前导和 usage 后报错时，HTTP 保持已提交状态，本次调用尚未产生可结算的服务。
+	// Leading frames and usage commit HTTP output, but failure before semantic output produces no billable service.
 	_, tail, _ := strings.Cut(successfulQoderStream, "\n\n")
 	frames := strings.Replace(tail, "data: {\"body\":\"[DONE]\"}\n\n", qoderFailureFrame, 1)
 	target := &qoder.Target{Site: qoder.SiteGlobal, Session: func(context.Context) (*qoder.SessionContext, error) { return &qoder.SessionContext{}, nil }, Client: func() (qoder.StreamClient, error) { return fixtureClient{body: frames, calls: &calls}, nil }}

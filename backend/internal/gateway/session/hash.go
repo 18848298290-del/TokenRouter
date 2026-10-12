@@ -14,8 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// GrokPreviousResponseSeed 根据 Responses 的 previous_response_id 返回稳定的粘性种子。
-// resp_* 响应 ID 可生成种子，消息 ID 和未知格式返回空字符串。
+// GrokPreviousResponseSeed derives a sticky seed from previous_response_id.
+// It accepts resp_* response IDs and returns empty for message IDs or unknown formats.
 func GrokPreviousResponseSeed(body []byte) string {
 	id := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
 	if id == "" {
@@ -24,11 +24,11 @@ func GrokPreviousResponseSeed(body []byte) string {
 	if protocolopenai.ClassifyOpenAIPreviousResponseIDKind(id) != protocolopenai.OpenAIPreviousResponseIDKindResponseID {
 		return ""
 	}
-	// 为内容种子添加前缀，与响应 ID 区分。
+	// Namespace the seed separately from raw response IDs.
 	return "grok-prev-resp:" + id
 }
 
-// GrokStickyAffinitySeed 用模型和会话 ID 构造粘性路由种子。
+// GrokStickyAffinitySeed combines the model and session ID for sticky routing.
 func GrokStickyAffinitySeed(sessionID string, body []byte) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -44,7 +44,7 @@ func GrokStickyAffinitySeed(sessionID string, body []byte) string {
 	return "grok-affinity:v1:" + model + ":" + sessionID
 }
 
-// GenerateSessionHash 从预解析请求计算粘性会话 hash。
+// GenerateSessionHash derives a sticky session ID from a parsed request.
 func GenerateSessionHash(parsed *requeststate.ParsedRequest, observe func(string, ...any)) string {
 	if observe == nil {
 		observe = func(string, ...any) {}
@@ -53,7 +53,7 @@ func GenerateSessionHash(parsed *requeststate.ParsedRequest, observe func(string
 		return ""
 	}
 
-	// 1. 最高优先级：从 metadata.user_id 提取 session_xxx
+	// A session ID in metadata.user_id takes precedence over content-derived identity.
 	if parsed.MetadataUserID != "" {
 		uid := anthropic.ParseMetadataUserID(parsed.MetadataUserID)
 		if uid != nil && uid.SessionID != "" {
@@ -71,7 +71,7 @@ func GenerateSessionHash(parsed *requeststate.ParsedRequest, observe func(string
 		)
 	}
 
-	// 2. 提取带 cache_control: {type: "ephemeral"} 的内容
+	// Prefer content marked with ephemeral cache_control over the full transcript.
 	cacheableContent := ExtractCacheableContent(parsed)
 	if cacheableContent != "" {
 		hash := HashContent(cacheableContent)
@@ -82,9 +82,9 @@ func GenerateSessionHash(parsed *requeststate.ParsedRequest, observe func(string
 		return hash
 	}
 
-	// 3. 最后 fallback: 使用 session 上下文 + system + 所有消息的完整摘要串
+	// Otherwise hash the source, system text, and message text or Responses input anchor.
 	var combined strings.Builder
-	// 哈希中加入请求来源，使不同用户的相同消息生成不同哈希。
+	// Include the request source to isolate identical content from different callers.
 	if parsed.SessionContext != nil {
 		_, _ = combined.WriteString(parsed.SessionContext.ClientIP)
 		_, _ = combined.WriteString(":")
@@ -306,11 +306,11 @@ func HashContent(content string) string {
 	return strconv.FormatUint(h, 36)
 }
 
-// MessagesMetadataSession 从 Claude 会话 ID、已有散列或 metadata.user_id 选择粘性会话标识。
+// MessagesMetadataSession selects a sticky ID from the Claude session, existing hash, or metadata.user_id.
 func MessagesMetadataSession(claudeSessionID, sessionHash, promptCacheKey, reqModel string, body []byte) (string, string) {
-	// Anthropic metadata.user_id 和 X-Claude-Code-Session-Id 用于本地提供商粘性，后者比内容摘要更稳定。
-	// 上游 GPT/Codex 的 prompt_cache_key 和 session_id 由 ForwardAsAnthropic 根据 cache_control 或完整消息摘要派生，
-	// 使后续 turn 的缓存键随内容滚动。
+	// Anthropic metadata.user_id and X-Claude-Code-Session-Id provide local provider affinity.
+	// ForwardAsAnthropic derives upstream GPT/Codex prompt_cache_key and session_id from cache_control or message digests,
+	// allowing upstream cache keys to advance with conversation content.
 	if promptCacheKey == "" {
 		if claudeSessionID != "" {
 			return currentSessionHash(claudeSessionID), promptCacheKey
@@ -326,7 +326,7 @@ func MessagesMetadataSession(claudeSessionID, sessionHash, promptCacheKey, reqMo
 	return sessionHash, promptCacheKey
 }
 
-// currentSessionHash 按调度会话的格式计算哈希。
+// currentSessionHash derives the scheduler's current session hash.
 func currentSessionHash(seed string) string {
 	current, _ := scheduler.DeriveSessionHashes(seed)
 	return current

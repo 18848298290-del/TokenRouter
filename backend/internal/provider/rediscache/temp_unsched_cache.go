@@ -69,7 +69,7 @@ func NewTempUnschedCache(rdb *redis.Client) provider.TempUnschedCache {
 	return &tempUnschedCache{rdb: rdb}
 }
 
-// SetTempUnsched 设置临时不可调度状态（只延长不缩短）。
+// SetTempUnsched stores a suspension if it extends the cached deadline.
 func (c *tempUnschedCache) SetTempUnsched(ctx context.Context, providerID int64, state *provider.TempUnschedState) error {
 	key := fmt.Sprintf("%s%d", tempUnschedPrefix, providerID)
 
@@ -80,7 +80,7 @@ func (c *tempUnschedCache) SetTempUnsched(ctx context.Context, providerID int64,
 
 	ttl := time.Until(time.Unix(state.UntilUnix, 0))
 	if ttl <= 0 {
-		return nil // 已过期，不设置
+		return nil // Expired suspensions are ignored.
 	}
 
 	ttlSeconds := max(int(ttl.Seconds()), 1)
@@ -89,7 +89,7 @@ func (c *tempUnschedCache) SetTempUnsched(ctx context.Context, providerID int64,
 	return err
 }
 
-// GetTempUnsched 获取临时不可调度状态。
+// GetTempUnsched returns the cached suspension, or nil when absent.
 func (c *tempUnschedCache) GetTempUnsched(ctx context.Context, providerID int64) (*provider.TempUnschedState, error) {
 	key := fmt.Sprintf("%s%d", tempUnschedPrefix, providerID)
 
@@ -109,14 +109,14 @@ func (c *tempUnschedCache) GetTempUnsched(ctx context.Context, providerID int64)
 	return &state, nil
 }
 
-// DeleteTempUnsched 删除临时不可调度状态。
+// DeleteTempUnsched removes the cached suspension.
 func (c *tempUnschedCache) DeleteTempUnsched(ctx context.Context, providerID int64) error {
 	key := fmt.Sprintf("%s%d", tempUnschedPrefix, providerID)
 	return c.rdb.Del(ctx, key).Err()
 }
 
 func (c *tempUnschedCache) openAIAPIKeyHealthKey(providerID int64) string {
-	// 原 hash tag 让滚动窗口与动态 sequence 键保持同一 Redis Cluster 槽。
+	// The hash tag places the rolling-window and derived sequence keys in the same Redis Cluster slot.
 	return fmt.Sprintf("%s{%d}:failures", openAIAPIKeyHealthFailurePrefix, providerID)
 }
 

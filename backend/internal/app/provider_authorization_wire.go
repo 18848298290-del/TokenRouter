@@ -9,7 +9,7 @@ import (
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 )
 
-// providerAuthorizationHTTPProviders 汇总各平台授权 HTTP 构造函数。
+// providerAuthorizationHTTPProviders groups platform authorization HTTP constructors.
 var providerAuthorizationHTTPProviders = wire.NewSet(
 	provideClaudeAuthorizationHTTP,
 	provideQoderAuthorizationHTTP,

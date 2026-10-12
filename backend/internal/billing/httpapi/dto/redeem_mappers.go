@@ -13,7 +13,7 @@ func RedeemCodeFromService(rc *billing.RedeemCode) *RedeemCode {
 }
 
 // RedeemCodeFromServiceAdmin converts a service RedeemCode to DTO for admin users.
-// It includes notes - user-facing endpoints must not use this.
+// It exposes all internal notes; user-facing endpoints use RedeemCodeFromService.
 func RedeemCodeFromServiceAdmin(rc *billing.RedeemCode) *AdminRedeemCode {
 	if rc == nil {
 		return nil

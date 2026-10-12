@@ -62,7 +62,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	response.Success(c, systemSettingsResponseData(payload, authSourceDefaults))
 }
 
-// openaiFastPolicySettingsToDTO converts service -> dto for OpenAI fast policy.
+// openaiFastPolicySettingsToDTO converts the OpenAI Fast policy to its HTTP representation.
 func openaiFastPolicySettingsToDTO(s *tierpolicy.OpenAIFastPolicySettings) *gatewaydto.OpenAIFastPolicySettings {
 	if s == nil {
 		return nil
@@ -74,12 +74,12 @@ func openaiFastPolicySettingsToDTO(s *tierpolicy.OpenAIFastPolicySettings) *gate
 	return &gatewaydto.OpenAIFastPolicySettings{Rules: rules}
 }
 
-// OpenaiFastPolicySettingsFromDTO converts dto -> service for OpenAI fast policy.
+// OpenaiFastPolicySettingsFromDTO converts the HTTP policy to service settings.
 //
-// 规范化 ServiceTier：在 DTO 进入 service 层之前统一把空字符串归一为
-// tierpolicy.OpenAIFastTierAny ("all")，避免管理员保存时空串与 "all" 同时
-// 表达"匹配任意 tier"造成数据库取值的二义性。其它非空值原样透传，由
-// tierpolicy.Prepare 负责合法值校验。
+// ServiceTier is trimmed and lowercased. Empty values become
+// tierpolicy.OpenAIFastTierAny ("all") before preparation, so stored rules
+// use one representation for matching any tier. Nonempty values are
+// validated by tierpolicy.Prepare.
 func OpenaiFastPolicySettingsFromDTO(s *gatewaydto.OpenAIFastPolicySettings) *tierpolicy.OpenAIFastPolicySettings {
 	if s == nil {
 		return nil

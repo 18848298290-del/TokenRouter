@@ -67,7 +67,7 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 	})
 
 	t.Run("non-string service_tier rejected", func(t *testing.T) {
-		// service_tier 必须为字符串；数字/布尔/对象/数组等类型同样按非法值拒绝。
+		// Numbers, booleans, objects, and arrays are invalid service_tier values.
 		for _, raw := range []string{
 			`{"model":"gpt-5.5","service_tier":123}`,
 			`{"model":"gpt-5.5","service_tier":true}`,
@@ -122,7 +122,7 @@ func TestNormalizeOpenAIServiceTier(t *testing.T) {
 	})
 
 	t.Run("openai official tiers preserved", func(t *testing.T) {
-		// 合法 service_tier 值原样保留，Codex 可发送 priority、flex 和 ultrafast。
+		// Supported tiers include the priority, flex, and ultrafast values sent by Codex.
 		for _, tier := range []string{"priority", "flex", "auto", "default", "scale", "ultrafast"} {
 			got := NormalizeServiceTier(tier)
 			require.NotNil(t, got, "tier %q should not be normalized to nil", tier)

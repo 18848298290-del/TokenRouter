@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 )
 
-// ResponsesWSFailure 保存连接升级后的客户端错误展示信息。
+// ResponsesWSFailure holds the error details shown to the client after a WebSocket upgrade.
 type ResponsesWSFailure struct {
 	Reason            string
 	StatusCode        int
@@ -116,6 +116,8 @@ func WriteResponsesWSCyberBlocked(ctx context.Context, conn *coderws.Conn, messa
 	_ = conn.Write(writeCtx, coderws.MessageText, payload)
 }
 
+// WriteResponsesWSIsolation attempts to send an isolation error event. It reports
+// whether err is non-nil, including when conn is nil or writing the event fails.
 func WriteResponsesWSIsolation(ctx context.Context, conn *coderws.Conn, err error) bool {
 	if err == nil {
 		return false
@@ -174,7 +176,8 @@ func ResponsesWSIsolationCloseReason(err error) string {
 	return "session isolation check failed"
 }
 
-// ResponsesWSEndedByClient 判断连接是否因正常关闭或客户端取消而结束。
+// ResponsesWSEndedByClient reports whether err is nil, signals a normal close,
+// or wraps context.Canceled. A normal status in info also counts as a client end.
 func ResponsesWSEndedByClient(err error, info gatewayws.EntryClose) bool {
 	if err == nil {
 		return true

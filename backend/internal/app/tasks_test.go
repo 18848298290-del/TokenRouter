@@ -31,7 +31,7 @@ func (s *taskActivityUseCases) Get(context.Context, batchimage.BatchImageOwner, 
 	return &batchimage.BatchImagePublicBatch{}, nil
 }
 
-// TestTaskHTTPActivityTimeoutRetainsStorage 检查 HTTP 调用超时仍未结束时，共享存储保持打开。
+// TestTaskHTTPActivityTimeoutRetainsStorage checks that a shutdown timeout leaves dependencies open while an HTTP call remains active.
 func TestTaskHTTPActivityTimeoutRetainsStorage(t *testing.T) {
 	manager := lifecycle.New()
 	activity := provideTaskActivity(manager)

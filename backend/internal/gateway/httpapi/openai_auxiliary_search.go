@@ -35,7 +35,7 @@ const (
 	openAIPlatformAlphaSearchURL = "https://api.openai.com/v1/alpha/search"
 )
 
-// OpenAIAuxiliary 绑定搜索、嵌入和计数请求的出站能力。
+// OpenAIAuxiliary binds outbound search, embedding, and token-counting operations.
 type OpenAIAuxiliary struct {
 	Requests      *OpenAIRequests
 	Output        *OpenAIResponseOutput
@@ -44,10 +44,10 @@ type OpenAIAuxiliary struct {
 	Enter         func() (func(), error)
 }
 
-// ForwardAlphaSearch 透传 Codex 独立网页搜索，不绑定仍在演进的 alpha 请求和响应结构。
+// ForwardAlphaSearch forwards Codex standalone web searches or uses hosted search for PAT providers.
 //
-// 仅当上游返回 2xx 时返回带 WebSearchCalls=1 的结果供按次计费；上游错误原样透传时
-// 返回 nil 结果，不产生费用。
+// Successful searches return one WebSearchCalls unit for per-call billing.
+// Passed-through upstream errors return a nil result and incur no search charge.
 func (s *OpenAIAuxiliary) ForwardAlphaSearch(
 	ctx context.Context,
 	c *gin.Context,
@@ -91,8 +91,9 @@ func (s *OpenAIAuxiliary) ForwardAlphaSearch(
 	}
 	SetOpsUpstreamModel(c, upstreamModel)
 
-	// Codex Personal Access Token（at-...）可访问 ChatGPT Codex /responses，standalone /alpha/search 会返回 no_matching_rule。
-	// PAT 提供商通过 Responses 的 hosted web_search 执行搜索。
+	// Codex PATs (at-...) use ChatGPT Codex /responses; standalone /alpha/search rejects them with
+	// no_matching_rule.
+	// Route PAT searches through the Responses hosted web_search tool.
 	if provider.View().IsOpenAIPersonalAccessToken() {
 		return s.forwardAlphaSearchViaResponsesWebSearch(ctx, c, provider, body, token, proxyURL, requestedModel, upstreamModel, tlsRouterMatch...)
 	}
@@ -327,7 +328,7 @@ func isOpenAIAlphaSearchEndpointUnsupported(provider *gatewayprovider.ExecutionP
 	return gatewaymedia.AlphaEndpointUnsupported(provider != nil && provider.Record.Type == capability.ProviderTypeAPIKey, statusCode)
 }
 
-// openAIAlphaSearchURL 按提供商类型选择 ChatGPT Codex 或 API-key 搜索端点。
+// openAIAlphaSearchURL selects the ChatGPT Codex or API-key search endpoint by provider type.
 func (s *OpenAIAuxiliary) openAIAlphaSearchURL(provider *gatewayprovider.ExecutionProvider) (string, error) {
 	if provider == nil {
 		return "", fmt.Errorf("provider is required")

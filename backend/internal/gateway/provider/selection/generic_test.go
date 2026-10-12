@@ -59,7 +59,7 @@ type stickyGatewayCacheHotpathStub struct {
 	getCalls atomic.Int64
 }
 
-// sessionLimitReleaseCacheStub 记录 UnregisterSession 调用，用于验证释放逻辑。
+// sessionLimitReleaseCacheStub records unregister calls to verify session release.
 type sessionLimitReleaseCacheStub struct {
 	schedulercore.SessionLimitCache
 
@@ -219,8 +219,8 @@ func TestDiagnoseSelectionFailure_ModelRateLimitedDetail(t *testing.T) {
 }
 
 func TestGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
-	// 缓存预热后，粘性或非列表路径不得返回超过门禁的免费 OAuth 提供商。
-	// 首次粘性命中失败开放并安排异步刷新，后续命中使用缓存。
+	// After cache warmup, sticky and direct lookups must reject Free OAuth providers over the soft limit.
+	// The first lookup fails open and schedules refresh; subsequent lookups use the cached result.
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
 	cfg.Gateway.Grok.FreeQuotaTokenLimit = 500_000
@@ -239,7 +239,7 @@ func TestGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
 	usageRepo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usage.ProviderStats{
 		provider.Record.ID: {Tokens: 480_000}, // above 95% of 500k
 	}}
-	// 清理共享网关免费层门禁缓存，保证测试结果稳定。
+	// Reset the shared free-quota cache to isolate the test.
 	var tasks sync.WaitGroup
 	t.Cleanup(tasks.Wait)
 	gate := newGrokFreeQuotaTestGate(cfg, usageRepo, func(_ string, work func()) bool {
@@ -489,7 +489,7 @@ func TestIsProviderInGroup(t *testing.T) {
 		groupID  *int64
 		expected bool
 	}{
-		// groupID == nil（无分组 API Key）
+		// A request with no group ID.
 		{
 			"nil_groupID_ungrouped_provider_nil_groups",
 			&gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, ProviderGroups: nil}},
@@ -510,7 +510,7 @@ func TestIsProviderInGroup(t *testing.T) {
 			&gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 4, ProviderGroups: []providercore.GroupMembership{{GroupID: 100}, {GroupID: 200}}}},
 			nil, false,
 		},
-		// groupID != nil（有分组 API Key）
+		// A request with a group ID.
 		{
 			"with_groupID_provider_in_group",
 			&gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 5, ProviderGroups: []providercore.GroupMembership{{GroupID: 100}}}},
@@ -536,7 +536,7 @@ func TestIsProviderInGroup(t *testing.T) {
 			&gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 9, ProviderGroups: []providercore.GroupMembership{{GroupID: 300}, {GroupID: 400}}}},
 			&groupID100, false,
 		},
-		// 提供商或分组 ID 为 nil 的场景。
+		// Nil provider or group ID cases.
 		{
 			"nil_provider_nil_groupID",
 			nil,
@@ -611,7 +611,7 @@ func TestSelectProviderForModelWithExclusions_UsesAdmittedFallbackGroupForGroupR
 		Shared: Shared{GroupPolicies: pricingConfigSvc},
 	}, testConfig())
 
-	// 入口已完成回退授权，选择器只使用最终分组及其模型限制。
+	// Entry admission has authorized the fallback; selection uses its final group and model rules.
 	ctx := requeststate.WithGroup(context.Background(), groupRepo.groups[fallbackID])
 	ctx = requeststate.WithRoutePlan(ctx, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &fallbackID, "", "claude-sonnet-4-6", nil)
@@ -674,7 +674,7 @@ func TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestri
 		Shared: Shared{GroupPolicies: pricingConfigSvc},
 	}, testConfig())
 
-	// 入口已完成回退授权，选择器只使用最终分组及其模型限制。
+	// Entry admission has authorized the fallback; selection uses its final group and model rules.
 	ctx := requeststate.WithGroup(context.Background(), groupRepo.groups[fallbackID])
 	ctx = requeststate.WithRoutePlan(ctx, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
 	result, err := svc.SelectProviderWithLoadAwareness(ctx, &fallbackID, "", "claude-sonnet-4-6", nil, "", 0)
@@ -863,7 +863,7 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 		WindowPrefetchAvailable: true,
 	}, nil)
 
-	// 预取结果中缺少提供商时，重新读取提供商。
+	// Read the provider again when it is missing from prefetched results.
 
 	outCtx := svc.withWindowCostPrefetch(context.Background(), providers)
 	require.NotNil(t, outCtx)
@@ -1082,7 +1082,7 @@ func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 	})
 }
 
-// windowMetricsForTest 读取资金窗口的调用统计。
+// windowMetricsForTest returns window-cost call metrics.
 func windowMetricsForTest() (int64, int64, int64, int64, int64) {
 	m := billing.SharedWindowCostMetrics()
 	return m.Hit.Load(), m.Miss.Load(), m.BatchSQL.Load(), m.Fallback.Load(), m.Errors.Load()
@@ -1217,7 +1217,7 @@ func TestGatewayService_isModelSupportedByProvider(t *testing.T) {
 	}
 }
 
-// TestGenericGroupIncludesAntigravityWithoutMixedFlag 测试混合调度。
+// TestGenericGroupIncludesAntigravityWithoutMixedFlag checks mixed-platform group selection.
 func TestGenericGroupIncludesAntigravityWithoutMixedFlag(t *testing.T) {
 	groupID := int64(1)
 	values := []gatewayprovider.ExecutionProvider{
@@ -1339,7 +1339,7 @@ func TestSelectProviderWithLoadAwareness_FiltersUpstreamRestrictedProviders(t *t
 	}
 }
 
-// TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce 验证调度入口只把客户端模型 R 映射为一次 C。
+// TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce checks that client model R is mapped to C exactly once.
 func TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce(t *testing.T) {
 	groupID := int64(4212)
 	pricingConfig := routingtestkit.Configuration{
@@ -1466,7 +1466,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			Shared: Shared{Cache: cache, Concurrency: nil},
 		}, cfg)
 
-		// legacy path
+		// Non-batch selection path.
 
 		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-b", nil, "", int64(0))
 		require.NoError(t, err)
@@ -2651,13 +2651,13 @@ func TestGatewayService_GroupResolution_RejectsImplicitFallback(t *testing.T) {
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.ErrorIs(t, err, routing.ErrClaudeCodeOnly)
 	require.Nil(t, provider)
-	// 回退目标还未准入，不读取它的策略或提供商池。
+	// An unadmitted fallback group must not trigger policy or provider-pool reads.
 	require.Zero(t, groupRepo.getByIDCalls)
 	require.Zero(t, groupRepo.getByIDLiteCalls)
 }
 
 func TestGatewayService_isModelSupportedByProvider_AntigravityModelMapping(t *testing.T) {
-	// 使用 model_mapping 作为白名单（通配符匹配）
+	// Wildcard mappings resolve to models on the provider allowlist.
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity,
@@ -2671,28 +2671,28 @@ func TestGatewayService_isModelSupportedByProvider_AntigravityModelMapping(t *te
 		},
 	}
 
-	// claude-* 通配符匹配
+	// claude-* maps to an allowed model.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-sonnet-4-5"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-haiku-4-5"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-opus-4-6"))
 
-	// gemini-3-* 通配符匹配
+	// gemini-3-* maps to an allowed model.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-3-flash"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-3-pro-high"))
 
-	// gemini-2.5-* 不匹配（不在 model_mapping 中）
+	// gemini-2.5-* has no mapping to an allowed model.
 	require.False(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-2.5-flash"))
 	require.False(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-2.5-pro"))
 
-	// 其他平台模型不支持
+	// The unrelated platform model is excluded.
 	require.False(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gpt-4"))
 
-	// 空模型允许
+	// An empty model skips filtering.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), ""))
 }
 
 func TestGatewayService_isModelSupportedByProvider_AntigravityNoMapping(t *testing.T) {
-	// 未配置白名单时，默认映射中的模型和未命中映射的模型均可通过。
+	// Without an allowlist, both default-mapped and unmapped models pass.
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity,
@@ -2700,22 +2700,22 @@ func TestGatewayService_isModelSupportedByProvider_AntigravityNoMapping(t *testi
 		},
 	}
 
-	// 默认映射中的模型应该被支持
+	// Default-mapped models are accepted.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-sonnet-4-5"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-3-flash"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gemini-2.5-pro"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-haiku-4-5"))
 
-	// 未命中默认映射的模型按请求名称通过。
+	// Unmapped models pass with their requested names.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-3-5-sonnet-20241022"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-unknown-model"))
 
-	// 空白名单也允许其他平台风格的模型名。
+	// An empty allowlist also admits names associated with other platforms.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gpt-4"))
 }
 
-// TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode 测试 thinking 模式下的模型支持检查
-// 验证调度时使用映射后的最终模型名（包括 thinking 后缀）来检查 model_mapping 支持。
+// TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode checks thinking-aware model support.
+// The allowlist is checked against the final model, including any applicable thinking suffix.
 func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{}},
 
@@ -2728,8 +2728,8 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 		thinkingEnabled bool
 		expected        bool
 	}{
-		// 场景 1: 只配置 claude-sonnet-4-5-thinking，请求 claude-sonnet-4-5 + thinking=true
-		// 白名单按规范化后的最终模型判断。
+		// A thinking-enabled Sonnet request with only the thinking variant configured.
+		// The allowlist uses the normalized final model.
 		{
 			name: "thinking_enabled_matches_final_whitelist",
 			modelMapping: map[string]any{
@@ -2739,8 +2739,8 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			thinkingEnabled: true,
 			expected:        true,
 		},
-		// 场景 2: 只配置 claude-sonnet-4-5-thinking，请求 claude-sonnet-4-5 + thinking=false
-		// 白名单按规范化后的最终模型判断。
+		// A thinking-disabled Sonnet request with only the thinking variant configured.
+		// The base model is absent from the final-model allowlist.
 		{
 			name: "thinking_disabled_no_base_mapping_returns_false",
 			modelMapping: map[string]any{
@@ -2750,8 +2750,8 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			thinkingEnabled: false,
 			expected:        false,
 		},
-		// 场景 3: 配置 claude-sonnet-4-5（非 thinking），请求 claude-sonnet-4-5 + thinking=true
-		// 最终模型名 = claude-sonnet-4-5-thinking，不在 mapping 中，应该不匹配
+		// A thinking-enabled Sonnet request with only the base model configured.
+		// The final thinking variant is absent from the allowlist.
 		{
 			name: "thinking_enabled_no_match_non_thinking_mapping",
 			modelMapping: map[string]any{
@@ -2761,7 +2761,7 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			thinkingEnabled: true,
 			expected:        false,
 		},
-		// 场景 4: 配置两种模型，请求 claude-sonnet-4-5 + thinking=true，应该匹配 thinking 版本
+		// With both models configured, enabled thinking selects the thinking variant.
 		{
 			name: "both_models_thinking_enabled_matches_thinking",
 			modelMapping: map[string]any{
@@ -2772,7 +2772,7 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			thinkingEnabled: true,
 			expected:        true,
 		},
-		// 场景 5: 配置两种模型，请求 claude-sonnet-4-5 + thinking=false，应该匹配非 thinking 版本
+		// With both models configured, disabled thinking selects the base model.
 		{
 			name: "both_models_thinking_disabled_matches_non_thinking",
 			modelMapping: map[string]any{
@@ -2783,7 +2783,7 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			thinkingEnabled: false,
 			expected:        true,
 		},
-		// 场景 6: 通配符 claude-* 应该同时匹配 thinking 和非 thinking
+		// The claude-* wildcard admits both base and thinking variants.
 		{
 			name: "wildcard_matches_thinking",
 			modelMapping: map[string]any{
@@ -2791,10 +2791,10 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 			},
 			requestedModel:  "claude-sonnet-4-5",
 			thinkingEnabled: true,
-			expected:        true, // claude-sonnet-4-5-thinking 匹配 claude-*
+			expected:        true, // The thinking variant matches claude-*.
 		},
-		// 场景 7: 只配置 thinking 变体但没有基础模型映射 → 返回 false
-		// Opus 4.6 不自动追加 thinking 后缀，基础名称仍须在白名单内。
+		// A thinking-only Opus allowlist does not admit the base model.
+		// Opus 4.6 does not gain a thinking suffix automatically.
 		{
 			name: "opus_without_suffix_rewrite_does_not_match_thinking_only_scope",
 			modelMapping: map[string]any{
@@ -2840,10 +2840,10 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 	}
 }
 
-// TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault 测试自定义模型映射中
-// 不在 DefaultAntigravityModelMapping 中的模型能通过调度。
+// TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault checks custom models
+// outside DefaultAntigravityModelMapping.
 func TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault(t *testing.T) {
-	// 自定义映射中包含不在默认映射中的模型
+	// The custom mapping includes models absent from the defaults.
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity,
@@ -2858,28 +2858,28 @@ func TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault(t *
 		},
 	}
 
-	// 自定义模型应该通过（不在 DefaultAntigravityModelMapping 中也可以）
+	// Models outside the default mapping are accepted.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "my-custom-model"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gpt-4o"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "llama-3-70b"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "claude-sonnet-4-5"))
 
-	// 未命中自定义映射的模型按请求名称通过。
+	// Unmapped names pass through when no allowlist is configured.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gpt-3.5-turbo"))
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "unknown-model"))
 
-	// 空模型允许
+	// An empty model skips filtering.
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), ""))
 }
 
 // TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThinking
-// 测试自定义映射 + thinking 模式的交互。
+// checks custom mappings combined with thinking mode.
 func TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThinking(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{}},
 
 		nil)
 
-	// 自定义映射同时配置基础模型和 thinking 变体
+	// Configure both base and thinking variants.
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity,
@@ -2901,7 +2901,7 @@ func TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThink
 	ctx = requeststate.WithThinkingEnabled(context.Background(), false)
 	require.True(t, svc.isModelSupportedByProviderWithContext(ctx, provider, "claude-sonnet-4-5"))
 
-	// 自定义模型（非 claude）不受 thinking 后缀影响，mapped 成功即通过
+	// The custom non-Claude model receives no thinking suffix.
 	ctx = requeststate.WithThinkingEnabled(context.Background(), true)
 	require.True(t, svc.isModelSupportedByProviderWithContext(ctx, provider, "my-custom-model"))
 }
@@ -2953,7 +2953,7 @@ func TestGatewayServiceIsModelSupportedByProvider_BedrockCustomMappingStillActsA
 	}
 }
 
-// selectionWindowForTest 根据测试依赖构造资金窗口守卫。
+// selectionWindowForTest builds a window-cost guard from fixture dependencies.
 func selectionWindowForTest(cache billing.WindowCostCache, source usage.UsageLogRepository) *billing.WindowCostGuard {
 	return billing.NewWindowCostGuard(cache, gatewaytestkit.WindowCosts(source), billing.WindowCostGuardOptions{Now: time.Now, Stats: billing.SharedWindowCostMetrics(), Log: func(string, ...any) {}, Debug: func(string, ...any) {}})
 }
@@ -3180,7 +3180,7 @@ func TestGatewaySelectProviderWithLoadAwareness_SkipsAntigravityGeminiFamilyRate
 	}
 }
 
-// TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails 检查取得槽位后读取完整提供商失败时归还槽位。
+// TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails checks slot release when full provider hydration fails.
 func TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails(t *testing.T) {
 	cache := &snapshotHydrationCache{providers: map[int64]*gatewayprovider.ExecutionProvider{}}
 	snapshot := newHydrationSnapshotForTest(cache, selectionProviderFixture{})
@@ -3224,9 +3224,9 @@ func newSessionLimitTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// TestReleaseProviderSession_ReleasesRegisteredSlot 验证：
-// 对启用会话限制的 Anthropic OAuth 提供商，ReleaseProviderSession 必须立即移除
-// 该提供商上注册的会话（不等待空闲超时）。
+// TestReleaseProviderSession_ReleasesRegisteredSlot checks immediate unregistering
+// for an Anthropic OAuth provider with session limits enabled,
+// before the session's idle timeout expires.
 func TestReleaseProviderSession_ReleasesRegisteredSlot(t *testing.T) {
 	cache := newSessionLimitReleaseCacheStub()
 	svc := newGenericSelectionForTest(GenericDependencies{
@@ -3241,11 +3241,10 @@ func TestReleaseProviderSession_ReleasesRegisteredSlot(t *testing.T) {
 		"应立即移除注册的会话槽")
 }
 
-// TestReleaseProviderSession_NoOpForInapplicableProviders 验证：
-// - 非 Anthropic OAuth/SetupToken 提供商
-// - 未启用 max_sessions 的提供商
-// - 空 sessionID
-// 这些输入的会话注销调用次数为零。
+// TestReleaseProviderSession_NoOpForInapplicableProviders checks zero unregister calls for:
+//   - Providers outside Anthropic OAuth/SetupToken.
+//   - Providers with max_sessions disabled.
+//   - Empty session IDs.
 func TestReleaseProviderSession_NoOpForInapplicableProviders(t *testing.T) {
 	apiKeyAcc := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -3288,17 +3287,17 @@ func TestReleaseProviderSession_NoOpForInapplicableProviders(t *testing.T) {
 	}
 }
 
-// TestReleaseProviderSession_NilCacheAndErrorTolerance 验证：
-// sessionLimitCache 不可用时 no-op；UnregisterSession 返回错误时不 panic（仅记录日志）。
+// TestReleaseProviderSession_NilCacheAndErrorTolerance checks that a missing cache is a no-op
+// and unregister errors are logged without panicking.
 func TestReleaseProviderSession_NilCacheAndErrorTolerance(t *testing.T) {
-	// nil cache：no-op
+	// A nil cache is a no-op.
 	svc := newGenericSelectionForTest(GenericDependencies{
 		Reads: Reads{}, Shared: Shared{},
 	}, nil)
 
 	svc.ReleaseProviderSession(context.Background(), newSessionLimitTestProvider(), "session-hash")
 
-	// 底层错误：不 panic
+	// A cache error does not panic.
 	cache := &sessionLimitReleaseCacheStub{err: errors.New("redis down")}
 	svc = newGenericSelectionForTest(GenericDependencies{
 		Reads: Reads{}, Shared: Shared{}, Sessions: cache,
@@ -3307,8 +3306,8 @@ func TestReleaseProviderSession_NilCacheAndErrorTolerance(t *testing.T) {
 	svc.ReleaseProviderSession(context.Background(), newSessionLimitTestProvider(), "session-hash")
 }
 
-// TestReleaseProviderSession_Idempotent 验证释放操作幂等，可安全重复调用
-// （failover 的逐次释放和 defer 都可能释放同一提供商）。
+// TestReleaseProviderSession_Idempotent checks repeated release calls,
+// as failover cleanup and a deferred cleanup may release the same provider.
 func TestReleaseProviderSession_Idempotent(t *testing.T) {
 	cache := newSessionLimitReleaseCacheStub()
 	svc := newGenericSelectionForTest(GenericDependencies{
@@ -3320,6 +3319,6 @@ func TestReleaseProviderSession_Idempotent(t *testing.T) {
 	svc.ReleaseProviderSession(context.Background(), acc, "session-hash")
 	svc.ReleaseProviderSession(context.Background(), acc, "session-hash")
 
-	// 两次调用都透传到缓存层（Redis ZREM 本身幂等，重复移除无副作用）
+	// Both calls reach the cache, whose Redis ZREM operation tolerates repeated removal.
 	require.Len(t, cache.unregistered[42], 2)
 }

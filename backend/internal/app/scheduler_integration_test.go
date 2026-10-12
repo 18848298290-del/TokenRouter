@@ -20,13 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// 快照回放测试使用生产装配和 outbox 发布器。
+// Snapshot replay uses production assembly and the provider outbox publisher.
 var (
 	NewSnapshotForTest       = provideSchedulerSnapshot
 	NewProviderEventsForTest = newProviderEvents
 )
 
-// TestSchedulerSnapshotOutboxReplay 使用生产组件检查 outbox 回放。
+// TestSchedulerSnapshotOutboxReplay checks that outbox replay updates the cached last-used timestamp.
 func TestSchedulerSnapshotOutboxReplay(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()

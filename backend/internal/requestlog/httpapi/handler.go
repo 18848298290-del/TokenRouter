@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Handler 提供管理员请求诊断查询。
+// Handler exposes request diagnostics to administrators.
 type Handler struct {
 	service *requestlog.Service
 }
@@ -19,7 +19,7 @@ func NewHandler(service *requestlog.Service) *Handler {
 	return &Handler{service: service}
 }
 
-// Find 按请求 ID 返回管理员可见的诊断记录。
+// Find returns administrator-visible diagnostics for a request ID.
 // @project-doc docs/operations/request_lookup.md#request_query
 func (h *Handler) Find(c *gin.Context) {
 	subject, ok := requireAdmin(c)
@@ -47,7 +47,7 @@ func (h *Handler) Find(c *gin.Context) {
 	httpx.Success(c, gin.H{"items": items, "has_more": more})
 }
 
-// Health 返回请求记录写入状态。
+// Health returns pending-write and failure counts.
 func (h *Handler) Health(c *gin.Context) {
 	if _, ok := requireAdmin(c); !ok {
 		return
@@ -60,7 +60,7 @@ func (h *Handler) Health(c *gin.Context) {
 	httpx.Success(c, health)
 }
 
-// requireAdmin 从认证上下文检查身份，查询参数无法改变访问权限。
+// requireAdmin checks authenticated identity and role; query parameters cannot grant access.
 func requireAdmin(c *gin.Context) (authctx.AuthSubject, bool) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {

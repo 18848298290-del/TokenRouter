@@ -14,7 +14,7 @@ func TestDiagnosticPolicySignalsOnlyReturnsContextualOrEnabledStrategies(t *test
 	group := &DiagnosticGroup{ID: 601, Advanced: true}
 	effective := policy.EffectiveSettings{}
 
-	// 基准诊断明确标出请求未提供、因而无法评估的能力门禁。
+	// Baseline diagnostics mark capability checks as unevaluated when their request inputs are missing.
 	baselineSignals := diagnosticPolicySignals(group, AdvancedSchedulerScoreDiagnosticRequest{}, effective, diagnosticPolicyOutcome{})
 	require.Len(t, baselineSignals, 1)
 	require.Equal(t, "request_capabilities", baselineSignals[0].Key)
@@ -49,7 +49,7 @@ func TestDiagnosticWeightedPreviousResponseIsIgnoredOutsideOpenAI(t *testing.T) 
 	require.Equal(t, "weighted", outcome.sessionStickyState)
 }
 
-// TestDiagnosticDisabledProviderReason 验证关闭调度的原因码与管理端提供商诊断翻译保持一致。
+// TestDiagnosticDisabledProviderReason checks the reason code used by the admin diagnostic translation.
 func TestDiagnosticDisabledProviderReason(t *testing.T) {
 	value := &DiagnosticProvider{ID: 7, Status: "active", Schedulable: false, GroupIDs: []int64{1}}
 	require.Equal(t, "provider_disabled", diagnosticBaseHardFilterReason(value, &DiagnosticGroup{ID: 1}, time.Now()))

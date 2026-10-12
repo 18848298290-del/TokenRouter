@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mutatingUsageWriter 在首次写入时修改输入并失败，测试检查同步重试仍取得原始数据。
+// mutatingUsageWriter mutates and rejects the first write to check that retries receive the original data.
 type mutatingUsageWriter struct {
 	bestCalls int
 	syncCalls int

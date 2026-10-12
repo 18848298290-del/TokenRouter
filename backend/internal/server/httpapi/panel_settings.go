@@ -10,16 +10,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
-// PanelSettingsStore 读取和保存面板限流设置。
+// PanelSettingsStore reads and saves panel rate limits.
 type PanelSettingsStore interface {
 	GetPanelRateLimitSettings(context.Context) (*runtimeconfig.PanelRateLimitSettings, error)
 	SetPanelRateLimitSettings(context.Context, *runtimeconfig.PanelRateLimitSettings) error
 }
 
-// PanelSettingsHandler 处理面板限流设置的管理请求。
+// PanelSettingsHandler handles admin requests for panel rate limits.
 type PanelSettingsHandler struct{ settingService PanelSettingsStore }
 
-// UpdatePanelRateLimitSettingsRequest 更新面板 API 限流配置请求。
+// UpdatePanelRateLimitSettingsRequest carries panel API rate-limit settings.
 type UpdatePanelRateLimitSettingsRequest struct {
 	Enabled     bool `json:"enabled"`
 	UserRPM     int  `json:"user_rpm"`
@@ -28,12 +28,12 @@ type UpdatePanelRateLimitSettingsRequest struct {
 	PublicIPRPM int  `json:"public_ip_rpm"`
 }
 
-// NewPanelSettingsHandler 注入同一个面板配置实例。
+// NewPanelSettingsHandler uses the supplied shared panel settings instance.
 func NewPanelSettingsHandler(service *runtimeconfig.PanelSettings) *PanelSettingsHandler {
 	return &PanelSettingsHandler{settingService: service}
 }
 
-// GetPanelRateLimitSettings 获取面板 API 限流配置
+// GetPanelRateLimitSettings returns panel API rate limits.
 // GET /api/v1/admin/settings/panel-rate-limit
 func (h *PanelSettingsHandler) GetPanelRateLimitSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPanelRateLimitSettings(c.Request.Context())
@@ -51,7 +51,7 @@ func (h *PanelSettingsHandler) GetPanelRateLimitSettings(c *gin.Context) {
 	})
 }
 
-// UpdatePanelRateLimitSettings 更新面板 API 限流配置
+// UpdatePanelRateLimitSettings saves panel API rate limits and returns the stored values.
 // PUT /api/v1/admin/settings/panel-rate-limit
 func (h *PanelSettingsHandler) UpdatePanelRateLimitSettings(c *gin.Context) {
 	var req UpdatePanelRateLimitSettingsRequest

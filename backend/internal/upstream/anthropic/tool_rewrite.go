@@ -8,18 +8,17 @@ import (
 	"strings"
 
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson" // StaticToolNameRewrites 是"静态前缀映射"，与 Parrot src/transform/cc_mimicry.py
+	"github.com/tidwall/sjson"
 )
 
-// DynamicToolMapThreshold 与 Parrot 一致：tools 数量超过 5 才启用动态映射。
-// 少量工具不需要混淆（一般是 Claude Code 自己的核心工具 bash/edit/read 等）。
+// DynamicToolMapThreshold is the maximum tool count that uses static rewrites only.
 const DynamicToolMapThreshold = 5
 
 var (
+	// StaticToolNameRewrites maps session-related tool prefixes to CLI aliases.
 	StaticToolNameRewrites = map[string]string{"sessions_": "cc_sess_", "session_": "cc_ses_"}
 
-	// FakeToolNamePrefixes 是"动态映射"的前缀池，与 Parrot _FAKE_PREFIXES 一致。
-	// 当 tools 数量 > DynamicToolMapThreshold 时随机选用其中前缀生成可读假名。
+	// FakeToolNamePrefixes supplies the shuffled prefixes for dynamic tool aliases.
 	FakeToolNamePrefixes = []string{
 		"analyze_", "compute_", "fetch_", "generate_", "lookup_", "modify_",
 		"process_", "query_", "render_", "resolve_", "sync_", "update_",
@@ -28,29 +27,18 @@ var (
 	}
 )
 
-// ToolNameRewrite 是单次请求内的工具名混淆映射。
-//   - Forward: real → fake，请求阶段在 body 上应用。
-//   - Reverse: fake → real，响应阶段对每个 chunk 做 bytes.Replace 还原。
-//
-// ReverseOrdered 是按假名长度倒序的 (fake, real) 列表，用于防止短假名是长假名的
-// 子串时 bytes.Replace 先被吃掉（对齐 Parrot _restore_tool_names_in_chunk 的
-// `sorted(..., key=lambda x: len(x[1]), reverse=True)`）。
+// ToolNameRewrite maps tool names within one request. Forward maps client names
+// to aliases; Reverse maps aliases back. ReverseOrdered stores (alias, original)
+// pairs longest-first so replacing a short alias cannot corrupt a longer one.
 type ToolNameRewrite struct {
 	Forward        map[string]string
 	Reverse        map[string]string
 	ReverseOrdered [][2]string
 }
 
-// BuildDynamicToolMap 构造 tools 的动态假名映射。
-//
-// 与 Parrot _build_dynamic_tool_map 语义等价：
-//   - tools 数量 ≤ DynamicToolMapThreshold 时返回 nil（不做动态映射，走静态 fallback）
-//   - 同一组 tool_names 在同进程内映射稳定（保证 cache 命中）
-//
-// Parrot 用 `random.Random(hash(tuple(tool_names)))` 作 seed + shuffle 前缀池；
-// Go 无法字节级复刻 Python hash，但"稳定性"和"前缀池打散"两个不变量都保留：
-// 用 fnv64a(strings.Join(names, "\x00")) 作 seed 喂 math/rand.New。
-// 字节级不同不影响上游判定（Anthropic 不会验证我们的随机种子算法）。
+// BuildDynamicToolMap returns aliases when toolNames exceeds the threshold.
+// It hashes the ordered names with FNV-1a to seed a prefix shuffle, so the same
+// ordered list produces stable names for prompt caching. Smaller lists return nil.
 func BuildDynamicToolMap(toolNames []string) map[string]string {
 	if len(toolNames) <= DynamicToolMapThreshold {
 		return nil
@@ -78,8 +66,8 @@ func BuildDynamicToolMap(toolNames []string) map[string]string {
 	return mapping
 }
 
-// SanitizeToolName 把真名转成假名。
-// 与 Parrot _sanitize_tool_name 语义一致：动态映射优先，再走静态前缀映射。
+// SanitizeToolName uses a dynamic alias when present, then a static prefix
+// rewrite, otherwise the supplied name.
 func SanitizeToolName(name string, dynamic map[string]string) string {
 	if dynamic != nil {
 		if fake, ok := dynamic[name]; ok {
@@ -94,9 +82,8 @@ func SanitizeToolName(name string, dynamic map[string]string) string {
 	return name
 }
 
-// ShouldMimicToolName 指示某个 tool 是否需要重命名。
-// server tool（type != "" 且不是 "function" / "custom"）是 Anthropic 协议语义的一部分，
-// 比如 "web_search_20250305" / "computer_20250124"；误改会导致上游拒绝。
+// ShouldMimicToolName permits unnamed, function, and custom tool types.
+// Server tool types such as web_search_20250305 retain protocol-defined names.
 func ShouldMimicToolName(toolType string) bool {
 	if toolType == "" || toolType == "function" || toolType == "custom" {
 		return true
@@ -104,10 +91,8 @@ func ShouldMimicToolName(toolType string) bool {
 	return false
 }
 
-// BuildToolNameRewriteFromBody 扫描 body 的 tools[*].name，构造 ToolNameRewrite
-// 并返回它。若不需要混淆（tools 数量不足 + 没有匹配静态前缀的工具）返回 nil。
-//
-// 注意：只扫描，不改 body。真正的 body 改写在 ApplyToolNameRewriteToBody。
+// BuildToolNameRewriteFromBody reads eligible tool names and builds both mappings.
+// It returns nil when no names change. ApplyToolNameRewriteToBody performs the edits.
 func BuildToolNameRewriteFromBody(body []byte) *ToolNameRewrite {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.IsArray() {
@@ -156,14 +141,10 @@ func BuildToolNameRewriteFromBody(body []byte) *ToolNameRewrite {
 	return rw
 }
 
-// ApplyToolNameRewriteToBody 把已构造的 ToolNameRewrite 应用到 body 上：
-//
-//   - 改写 $.tools[*].name（仅对 ShouldMimicToolName 通过的 tool）
-//   - 改写 $.tool_choice.name（仅当 $.tool_choice.type == "tool"）
-//   - 改写 $.messages[*].content[*].name（仅当 type == "tool_use"）
-//   - 在 $.tools[last].cache_control 上打 ephemeral 缓存断点
-//
-// 响应侧 bytes.Replace 会连带还原假名 → 真名。
+// ApplyToolNameRewriteToBody updates eligible tool declarations, named tool_choice,
+// and historical tool_use names. It also applies the last eligible tool cache
+// breakpoint, including when rw is nil. RestoreToolNamesInBytes reverses aliases
+// in response data.
 func ApplyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
 	if rw == nil || len(rw.Forward) == 0 {
 		body = ApplyToolsLastCacheBreakpoint(body)
@@ -202,8 +183,7 @@ func ApplyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
 		}
 	}
 
-	// 历史消息里的 tool_use.name 也要同步改写，否则 tools[] 已声明假名，
-	// 但 messages 仍引用原名时，Anthropic 会因为工具名不一致拒绝请求。
+	// History must reference the same aliases as tools[] or upstream tool validation fails.
 	messages := gjson.GetBytes(body, "messages")
 	if messages.IsArray() {
 		messages.ForEach(func(msgKey, msg gjson.Result) bool {
@@ -237,15 +217,9 @@ func ApplyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
 	return body
 }
 
-// ApplyToolsLastCacheBreakpoint 在最后一个非延迟加载工具上注入 cache_control
-// 断点。Anthropic 不允许 defer_loading=true 的工具携带 cache_control，
-// 因此先清理延迟加载工具上的客户端断点；其余行为对齐 Parrot
-// `tools[-1]["cache_control"] = {"type":"ephemeral","ttl":"1h"}`，
-// 但 ttl 按本仓规则：
-//   - 客户端已为该 tool 显式设置 cache_control.ttl → 完全透传不覆盖
-//   - 否则注入 {"type":"ephemeral","ttl": DefaultCacheControlTTL}
-//
-// 纯副作用函数，tools 不存在或为空数组时 no-op。
+// ApplyToolsLastCacheBreakpoint removes cache markers from deferred tools and
+// adds a breakpoint to the last non-deferred tool. A nonempty client TTL is
+// retained; missing TTLs use DefaultCacheControlTTL. It returns the updated body.
 func ApplyToolsLastCacheBreakpoint(body []byte) []byte {
 	body = StripDeferredToolCacheControl(body)
 	tools := gjson.GetBytes(body, "tools")
@@ -291,8 +265,8 @@ func IsDeferredLoadingTool(tool gjson.Result) bool {
 		tool.Get("custom.defer_loading").Type == gjson.True
 }
 
-// StripDeferredToolCacheControl 删除 Anthropic 不接受的延迟工具缓存标记；
-// 只有 JSON 布尔值 true 才视为延迟加载，避免误伤其它客户端字段。
+// StripDeferredToolCacheControl removes cache markers rejected on deferred tools.
+// Only JSON true in defer_loading or custom.defer_loading marks a deferred tool.
 func StripDeferredToolCacheControl(body []byte) []byte {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.IsArray() {
@@ -309,12 +283,9 @@ func StripDeferredToolCacheControl(body []byte) []byte {
 	return body
 }
 
-// RestoreToolNamesInBytes 对 bytes chunk 做逆向还原：假名 → 真名。
-// 按 ReverseOrdered 的假名长度倒序逐个 bytes.Replace，防止子串冲突
-// （与 Parrot _restore_tool_names_in_chunk 的 sorted(..., reverse=True) 等价）。
-// 再做静态前缀还原（cc_sess_ → sessions_ / cc_ses_ → session_）。
-//
-// rw 可为 nil；nil 时仍会做静态前缀还原。
+// RestoreToolNamesInBytes replaces aliases longest-first, then reverses static
+// prefix mappings. Replacements affect all matching bytes, including text values.
+// A nil rw still applies static prefix restoration.
 func RestoreToolNamesInBytes(data []byte, rw *ToolNameRewrite) []byte {
 	if rw != nil {
 		for _, pair := range rw.ReverseOrdered {
@@ -331,7 +302,7 @@ func RestoreToolNamesInBytes(data []byte, rw *ToolNameRewrite) []byte {
 	return data
 }
 
-// ReplaceAllBytes 是 bytes.ReplaceAll 的便捷封装，避免每个调用点各自做 []byte 转换。
+// ReplaceAllBytes replaces every occurrence and reuses data when no replacement is needed.
 func ReplaceAllBytes(data []byte, from, to string) []byte {
 	if len(data) == 0 || from == to || !strings.Contains(string(data), from) {
 		return data

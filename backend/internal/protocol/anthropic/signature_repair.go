@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 )
 
-// StripThinkingFromClaudeRequest 将思考内容转成文本，删除无法转成文本的 redacted_thinking 块，并禁用顶层 thinking。
-// 该报文供思考签名校验失败后的重试使用。
+// StripThinkingFromClaudeRequest converts thinking to text, drops redacted thinking,
+// and disables top-level thinking for retries after signature validation fails.
 func StripThinkingFromClaudeRequest(req *ClaudeRequest) (bool, error) {
 	if req == nil {
 		return false, nil
@@ -90,8 +90,8 @@ func StripThinkingFromClaudeRequest(req *ClaudeRequest) (bool, error) {
 	return changed, nil
 }
 
-// StripSignatureSensitiveBlocksFromClaudeRequest 将思考块和工具块转成普通文本。
-// 仅在只降级思考块的重试仍出现签名错误时使用。
+// StripSignatureSensitiveBlocksFromClaudeRequest converts thinking and tool blocks to text.
+// Use it when a retry that downgrades only thinking still fails signature validation.
 func StripSignatureSensitiveBlocksFromClaudeRequest(req *ClaudeRequest) (bool, error) {
 	if req == nil {
 		return false, nil
@@ -141,7 +141,7 @@ func StripSignatureSensitiveBlocksFromClaudeRequest(req *ClaudeRequest) (bool, e
 				modifiedAny = true
 			case "tool_use":
 				// Convert tool_use to text to avoid upstream signature/thought_signature validation errors.
-				// This is a retry-only degradation path, so we prioritise request validity over tool semantics.
+				// Use this retry path when losing structured tool calls is acceptable.
 				name, _ := block["name"].(string)
 				id, _ := block["id"].(string)
 				input := block["input"]

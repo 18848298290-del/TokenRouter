@@ -18,8 +18,8 @@ func RedactedBaseURLValidator(validator BaseURLValidator) BaseURLValidator {
 }
 
 func BuildBillingEndpointURL(baseURL string, weekly bool, validator BaseURLValidator) (string, error) {
-	// 官方公共或区域 API 主机不提供 Grok Build 账单接口。
-	// 自定义中继可能同时代理推理与 CLI 账单路径，因此继续使用其配置主机。
+	// Public and regional API hosts do not expose Grok Build billing endpoints.
+	// Custom relays may proxy both inference and billing, so retain their configured host.
 	if IsOfficialBaseURL(baseURL) && !(MediaCodec{}).IsGrokCLIProxyTarget(baseURL) {
 		baseURL = DefaultCLIBaseURL
 	}
@@ -74,8 +74,8 @@ func BuildVoiceEndpointURL(base string, endpoint string, validator BaseURLValida
 	return strings.TrimRight(validated, "/") + "/" + strings.Join(encoded, "/"), nil
 }
 
-// ResolveProviderBaseURL 归一化 OAuth 官方地址，并使用配置的中继地址。
-// 调用方在构造请求时按出站策略校验目标。
+// ResolveProviderBaseURL normalizes official OAuth URLs and retains configured relay URLs.
+// The caller validates the target against outbound policy when building a request.
 func ResolveProviderBaseURL(oauth bool, configured, fallback string) string {
 	fallback = strings.TrimRight(strings.TrimSpace(fallback), "/")
 	if fallback == "" {

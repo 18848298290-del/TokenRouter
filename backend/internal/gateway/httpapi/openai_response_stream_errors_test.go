@@ -33,12 +33,12 @@ type openAIAuthPolicy403Counter struct {
 
 type capacityShedProviderRepoStub struct {
 	gatewayprovider.ExecutionProviderStore
-	// 嵌入接口，未实现的方法会 panic（不应被调用）
+	// Embedding the interface makes unexpected calls to unimplemented methods panic.
 
 	tempUnschedCalls int
 }
 
-// 转换读取数据后，冷却操作使用同一存储替身。
+// Cooldown uses the same store stub after conversion reads the fixture.
 type capacityRetryStore struct{ *capacityShedProviderRepoStub }
 
 type oauth429RateLimitRepo struct {
@@ -79,7 +79,7 @@ func TestOpenAIHandleErrorResponsePassthrough_InvalidRequest400PassesThrough(t *
 	require.Contains(t, rec.Body.String(), "input[35].arguments")
 }
 
-// wsFixtureModelBlocked 按提供商健康接口的字段读取模型阻断状态。
+// wsFixtureModelBlocked reads model blocking through the provider health interface.
 func wsFixtureModelBlocked(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider, model string) bool {
 	if value == nil {
 		return false
@@ -368,7 +368,8 @@ func (r *capacityShedProviderRepoStub) GetByID(_ context.Context, id int64) (*ga
 	return &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: id, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}, nil
 }
 
-// TestStreamFailedEventCapacityShedRetriesOnSameProvider 验证非池模式提供商同样要先在同提供商重试：换号不改变降载因素。
+// TestStreamFailedEventCapacityShedRetriesOnSameProvider checks bounded local retries for non-pool providers
+// because switching does not resolve capacity shedding.
 func TestStreamFailedEventCapacityShedRetriesOnSameProvider(t *testing.T) {
 	nonPool := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 
@@ -378,7 +379,7 @@ func TestStreamFailedEventCapacityShedRetriesOnSameProvider(t *testing.T) {
 		require.True(t, gatewayprovider.OpenAIStreamFailureRetryable(nonPool, payload, "overloaded"), code)
 	}
 
-	// 非池模式下，非降载 failed 事件的同提供商重试标记为 false。
+	// Non-capacity failed events do not request same-provider retries outside pool mode.
 	other := []byte(`{"type":"response.failed","response":{"error":{"code":"server_error"}}}`)
 	require.False(t, openai.IsOpenAIUpstreamCapacityShedEvent(other))
 	require.False(t, gatewayprovider.OpenAIStreamFailureRetryable(nonPool, other, "boom"))
@@ -409,8 +410,9 @@ func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthProviders(t *testing.T) {
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
-// TestOpenAIStreamErrorFrameDoesNotStartClientOutput 验证降载的 error 帧暂存到 response.failed 到达后再处理。
-// 提前 Flush error 会设置 clientOutputStarted，使后续 failed 无法进入 pre-output failover。
+// TestOpenAIStreamErrorFrameDoesNotStartClientOutput checks buffering of capacity error frames until
+// response.failed.
+// Flushing error early sets clientOutputStarted and prevents pre-output failover.
 func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 	cases := []struct {
 		data      string
@@ -420,7 +422,7 @@ func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 		{`{"type":"error","error":{"code":"server_is_overloaded","message":"overloaded"}}`, "error", false},
 		{`{"type":"error","error":{"code":"slow_down","message":"slow down"}}`, "error", false},
 		{`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"limited"}}`, "error", false},
-		// 不可重试类错误帧维持原样转发（不进 failover），保留上游错误细节。
+		// Non-retryable frames retain upstream error details and pass through.
 		{`{"type":"error","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"blocked"}}`, "error", true},
 		{`{"type":"response.failed","response":{"error":{"code":"server_is_overloaded"}}}`, "response.failed", false},
 		{`{"type":"response.created","response":{"id":"resp_1"}}`, "response.created", false},
@@ -438,8 +440,9 @@ func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 	}
 }
 
-// TestSanitizeOpenAICapacityShedErrorCodeForClient 验证降载码改写，其他错误码原样返回。
-// 客户端使用 rate_limit_exceeded 等错误码解析重试延时。
+// TestSanitizeOpenAICapacityShedErrorCodeForClient checks capacity-code rewriting and preservation of other
+// codes.
+// Clients use codes such as rate_limit_exceeded to interpret retry delays.
 func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {
 	cases := []struct {
 		name        string

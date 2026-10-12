@@ -25,7 +25,7 @@ type WSHeaderOptions struct {
 func (WSHeaderOptions) String() string     { return "openai websocket header options" }
 func (v WSHeaderOptions) GoString() string { return v.String() }
 
-// BuildWSHeaders 根据 WSHeaderOptions 构造握手请求头。
+// BuildWSHeaders builds the upstream WebSocket handshake headers.
 func BuildWSHeaders(ctx context.Context, options WSHeaderOptions) (http.Header, error) {
 	headers := make(http.Header)
 	if !options.AgentIdentity {
@@ -37,13 +37,12 @@ func BuildWSHeaders(ctx context.Context, options WSHeaderOptions) (http.Header, 
 		if v := strings.TrimSpace(options.InboundHeaders().Get("accept-language")); v != "" {
 			headers.Set("accept-language", v)
 		}
-		// Codex beta feature 会参与上游 WS 握手，也用于连接池兼容性隔离。
+		// Beta features participate in the handshake and the pool's connection compatibility checks.
 		for _, value := range options.InboundHeaders().Values("x-codex-beta-features") {
 			if value = strings.TrimSpace(value); value != "" {
 				headers.Add("x-codex-beta-features", value)
 			}
 		}
-		// 按下方清单透传 Codex 的窗口与安装身份请求头。
 		for _, name := range [...]string{
 			"x-codex-window-id",
 			"x-codex-installation-id",
@@ -56,7 +55,7 @@ func BuildWSHeaders(ctx context.Context, options WSHeaderOptions) (http.Header, 
 			}
 		}
 	}
-	// OAuth 提供商：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
+	// Codex sessions include the API key ID to prevent collisions across users.
 	if options.UsesCodex() {
 		apiKeyID := options.APIKeyID()
 		if sessionID != "" {
@@ -96,17 +95,17 @@ func BuildWSHeaders(ctx context.Context, options WSHeaderOptions) (http.Header, 
 	}
 	options.ApplyWSUserAgent(headers)
 
-	// originator 与最终 user-agent 首段使用配套的官方身份，非官方 UA 使用默认 Codex TUI 身份。
-	// 两个字段错配会导致上游 404，详见 issue #3901。
+	// Pair originator with the final User-Agent identity, using Codex TUI for unrecognized clients.
+	// Mismatched identities can cause upstream 404 responses; see issue #3901.
 	if options.UsesCodex() {
 		openai.EnforceCodexIdentityHeadersWithUA(headers, "")
 	}
 
-	// 提供商级请求头覆写（仅 openai api_key 提供商启用时生效；OAuth 路径 no-op）。
-	// 覆盖所有 WS 模式（ctx_pool/dedicated/passthrough）的握手头。
+	// The configured override callback applies API key provider headers in every WS mode.
+	// OAuth callers supply a no-op callback.
 	options.OverrideHeaders(headers)
-	// HTTP 与 WebSocket 共用同一份 Codex 会话级能力协商，连接池也会据此
-	// 隔离不兼容握手。
+	// HTTP and WebSocket share Codex session capability negotiation; the pool uses
+	// these headers to separate incompatible connections.
 	options.BetaFeatures(headers)
 	options.RoutingHint(headers, nil)
 	options.Diagnostics(headers, nil)

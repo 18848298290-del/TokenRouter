@@ -33,8 +33,8 @@ func OrderErrorMessage(err error) string {
 	return err.Error()
 }
 
-// OrderPurchasedReasoningPoints 返回订单用于邀请返利的推理积分基数。
-// 余额订单使用到账积分；30 天订阅套餐按月、周、日的优先级取第一个有效额度。
+// OrderPurchasedReasoningPoints returns the reasoning point base for affiliate rebates.
+// Balance orders use credited points; subscriptions use the first valid monthly, weekly, or daily limit.
 func OrderPurchasedReasoningPoints(order *Order) (float64, bool) {
 	if order == nil {
 		return 0, false

@@ -5,7 +5,8 @@ import (
 	"sync"
 )
 
-// keyCoordinator 只协调本进程内的同键操作；等待者也持有引用，避免回收后产生两把锁。
+// keyCoordinator serializes operations for a key within this instance. Waiters hold references so cleanup
+// cannot create a second lock for an active key.
 type keyCoordinator struct {
 	mu      sync.Mutex
 	entries map[string]*keyEntry

@@ -74,9 +74,9 @@ func IsSharedProviderRefreshError(err error) bool {
 	return false
 }
 
-// IsNonRetryableRefreshError 判断是否为不可重试的刷新错误
-// 这些错误通常表示凭证已失效或配置确实缺失，需要用户重新授权
-// 注意：missing_project_id 错误只在真正缺失（从未获取过）时返回，临时获取失败不会返回此错误。
+// IsNonRetryableRefreshError reports credential and configuration failures that retries cannot resolve.
+// These failures require reauthorization or configuration repair.
+// missing_project_id denotes a missing project, rather than a transient project lookup failure.
 func IsNonRetryableRefreshError(err error) bool {
 	if err == nil {
 		return false
@@ -87,17 +87,17 @@ func IsNonRetryableRefreshError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	nonRetryable := []string{
-		"invalid_grant",                       // refresh_token 已失效
-		"invalid_refresh_token",               // refresh_token 无效，team 提供商工作区被删除时会出现
-		"token_expired",                       // OpenAI refresh_token 已过期，需要重新授权
-		"app_session_terminated",              // OpenAI app session 被终止，需要重新授权
-		"invalid_client",                      // 客户端配置错误
-		"unauthorized_client",                 // 客户端未授权
-		"access_denied",                       // 访问被拒绝
-		"refresh_token_reused",                // OpenAI refresh_token 已被消费，需要重新授权
-		"refresh_token_invalidated",           // OpenAI session 结束导致 refresh_token 被废止
-		"refresh token has already been used", // 兼容错误体未透出 code 的情况
-		"missing_project_id",                  // 缺少 project_id
+		"invalid_grant",                       // refresh token rejected
+		"invalid_refresh_token",               // invalid token, including deleted team workspaces
+		"token_expired",                       // expired OpenAI refresh token
+		"app_session_terminated",              // terminated OpenAI app session
+		"invalid_client",                      // invalid client configuration
+		"unauthorized_client",                 // unauthorized client
+		"access_denied",                       // access refused
+		"refresh_token_reused",                // consumed OpenAI refresh token
+		"refresh_token_invalidated",           // refresh token revoked after the OpenAI session ended
+		"refresh token has already been used", // accept the message when the error body omits a code
+		"missing_project_id",                  // missing project_id
 		"no refresh token available",
 		"grok_oauth_entitlement_denied",
 		"entitlement_denied",

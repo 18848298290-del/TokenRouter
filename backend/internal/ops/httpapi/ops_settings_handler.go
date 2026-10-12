@@ -43,7 +43,7 @@ func (h *OpsHandler) UpdateEmailNotificationConfig(c *gin.Context) {
 	}
 
 	var req ops.OpsEmailNotificationConfigUpdateRequest
-	// 报告的旧 account_health 字段必须报错，不能被解码器忽略。
+	// Reject retired account_health fields instead of silently discarding them during decoding.
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request body")
 		return

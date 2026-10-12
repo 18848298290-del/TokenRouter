@@ -39,7 +39,7 @@ func (s *cnLifecycleStore) ListByPlatform(ctx context.Context, _ string) ([]Reco
 	return nil, nil
 }
 
-// TestCNMonitorStopPreventsLaterStart 验证原构造无后台上下文及停止后不能重启的断言跟随生命周期所有者迁入本包。
+// TestCNMonitorStopPreventsLaterStart checks that construction starts no work and stopped monitors cannot restart.
 func TestCNMonitorStopPreventsLaterStart(t *testing.T) {
 	store := &cnLifecycleStore{}
 	disabled := NewCNUsageMonitor(store, cnNoQueries{}, CNMonitorOptions{})

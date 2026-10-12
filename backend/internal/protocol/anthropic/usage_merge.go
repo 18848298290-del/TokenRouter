@@ -11,9 +11,9 @@ func MergeAnthropicUsage(dst *protocol.TokenUsage, src AnthropicUsage) {
 		return
 	}
 
-	// 部分 Anthropic 兼容提供商同时返回 OpenAI 风格的 prompt/cache 字段。
-	// 优先使用总输入或缓存命中、未命中分桶，input_tokens 在 Kimi 的不同事件中含义不同。
-	// 此处同时处理 Kimi 的流式差异和 GLM/DeepSeek 的缓存别名。
+	// Anthropic-compatible providers may also return OpenAI prompt/cache fields.
+	// Prefer totals or hit/miss buckets because Kimi's input_tokens meaning varies
+	// by event; also accept GLM and DeepSeek cache aliases.
 	if src.PromptTokens > 0 || src.PromptCacheHitTokens != nil || src.PromptCacheMissTokens != nil {
 		cacheReadTokens := src.CacheReadInputTokens
 		if cacheReadTokens == 0 && src.CachedTokens > 0 {

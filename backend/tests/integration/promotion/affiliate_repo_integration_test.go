@@ -105,15 +105,16 @@ LIMIT 1`, u.ID)
 	require.InDelta(t, 12.34, historyAfter, 1e-9)
 }
 
-// TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction 检查 AccrueQuota 使用 dbent.NewTxContext 传入的事务。
-// 外层事务回滚后返利记录一同回滚，支付履约的资金和返利写入保持同一次提交。
+// TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction checks reuse of the transaction passed through
+// dbent.NewTxContext.
+// Rolling it back removes the affiliate profiles created in the transaction and their accrual.
 func TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 
 	integrationEntClient, _ := testStore(t)
 	outerTx, err := integrationEntClient.Tx(ctx)
 	require.NoError(t, err, "begin outer tx")
-	// 断言提前结束测试时也回滚事务，重复回滚返回的错误可忽略。
+	// Roll back even if an assertion stops the test early; a second rollback error is harmless.
 	t.Cleanup(func() { _ = outerTx.Rollback() })
 	client := outerTx.Client()
 	txCtx := dbent.NewTxContext(ctx, outerTx)
@@ -152,7 +153,7 @@ func TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction(t *testing.T) {
 		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID)
 	require.InDelta(t, 3.5, innerQuota, 1e-9)
 
-	// 外层事务回滚后，通过事务外客户端检查返利记录也已撤销。
+	// Check through the outer client that rollback removed the affiliate profiles.
 	require.NoError(t, outerTx.Rollback())
 
 	rows, err := integrationEntClient.QueryContext(ctx,
@@ -200,9 +201,9 @@ VALUES ($1, $2, 0, 0, NOW(), NOW())`, u.ID, affCode)
 	require.InDelta(t, 3.21, persistedBalance, 1e-9)
 }
 
-// TestAffiliateRepository_AdminCustomCode 检查自定义邀请码的写入、查询与重置。
-// 重置后恢复系统格式并清除自定义标记，被替换的邀请码退出查询。
-// 重复邀请码的冲突由独立测试检查，因为唯一约束失败会终止当前 PostgreSQL 事务。
+// TestAffiliateRepository_AdminCustomCode checks custom code writes, lookup, and reset.
+// Reset restores the generated format and clears the custom flag; replaced codes stop matching.
+// Uniqueness conflicts have a separate test because a violation aborts the PostgreSQL transaction.
 func TestAffiliateRepository_AdminCustomCode(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -223,7 +224,7 @@ func TestAffiliateRepository_AdminCustomCode(t *testing.T) {
 	require.False(t, original.AffCodeCustom, "system-generated codes start as non-custom")
 	originalCode := original.AffCode
 
-	// Rewrite to a custom code
+	// Assign a custom code.
 	customCode := fmt.Sprintf("VIP%09d", time.Now().UnixNano()%1_000_000_000)
 	require.NoError(t, repo.UpdateUserAffCode(txCtx, u.ID, customCode))
 
@@ -232,16 +233,16 @@ func TestAffiliateRepository_AdminCustomCode(t *testing.T) {
 	require.Equal(t, customCode, updated.AffCode)
 	require.True(t, updated.AffCodeCustom)
 
-	// Lookup by new custom code finds the user
+	// The custom code resolves to the user.
 	byCode, err := repo.GetAffiliateByCode(txCtx, customCode)
 	require.NoError(t, err)
 	require.Equal(t, u.ID, byCode.UserID)
 
-	// Old system code should no longer match
+	// The replaced system code stops matching.
 	_, err = repo.GetAffiliateByCode(txCtx, originalCode)
 	require.ErrorIs(t, err, promotion.ErrAffiliateProfileNotFound)
 
-	// Reset back to a fresh system code, clears custom flag
+	// Reset generates a code and clears the custom flag.
 	newSysCode, err := repo.ResetUserAffCode(txCtx, u.ID)
 	require.NoError(t, err)
 	require.NotEqual(t, customCode, newSysCode)
@@ -251,13 +252,13 @@ func TestAffiliateRepository_AdminCustomCode(t *testing.T) {
 	require.Equal(t, newSysCode, reset.AffCode)
 	require.False(t, reset.AffCodeCustom)
 
-	// The old custom code is now free again
+	// The replaced custom code stops matching.
 	_, err = repo.GetAffiliateByCode(txCtx, customCode)
 	require.ErrorIs(t, err, promotion.ErrAffiliateProfileNotFound)
 }
 
-// TestAffiliateRepository_AdminCustomCode_Conflict 检查重复邀请码触发唯一约束。
-// PostgreSQL 会终止发生冲突的事务，此用例单独创建事务。
+// TestAffiliateRepository_AdminCustomCode_Conflict checks the duplicate-code uniqueness constraint.
+// This case uses its own transaction because PostgreSQL aborts it on the conflict.
 func TestAffiliateRepository_AdminCustomCode_Conflict(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -280,12 +281,13 @@ func TestAffiliateRepository_AdminCustomCode_Conflict(t *testing.T) {
 	takenCode := fmt.Sprintf("HOT%09d", time.Now().UnixNano()%1_000_000_000)
 	require.NoError(t, repo.UpdateUserAffCode(txCtx, taker.ID, takenCode))
 
-	// Now requester tries to grab the same code → conflict.
+	// Assigning another user's code returns a conflict.
 	err := repo.UpdateUserAffCode(txCtx, requester.ID, takenCode)
 	require.ErrorIs(t, err, promotion.ErrAffiliateCodeTaken)
 }
 
-// TestAffiliateRepository_AdminRebateRate 检查专属返利率的单个和批量设置，以及用 NULL 清除配置。
+// TestAffiliateRepository_AdminRebateRate checks individual and batch overrides, including clearing them
+// with NULL.
 func TestAffiliateRepository_AdminRebateRate(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -307,7 +309,7 @@ func TestAffiliateRepository_AdminRebateRate(t *testing.T) {
 		Status:       billing.StatusActive,
 	})
 
-	// Set exclusive rate for u1
+	// Set a rate override for u1.
 	rate := 42.5
 	require.NoError(t, repo.SetUserRebateRate(txCtx, u1.ID, &rate))
 
@@ -316,13 +318,13 @@ func TestAffiliateRepository_AdminRebateRate(t *testing.T) {
 	require.NotNil(t, got.AffRebateRatePercent)
 	require.InDelta(t, 42.5, *got.AffRebateRatePercent, 1e-9)
 
-	// Clear exclusive rate
+	// Clear the override.
 	require.NoError(t, repo.SetUserRebateRate(txCtx, u1.ID, nil))
 	cleared, err := repo.EnsureUserAffiliate(txCtx, u1.ID)
 	require.NoError(t, err)
 	require.Nil(t, cleared.AffRebateRatePercent)
 
-	// Batch set both users
+	// Set both users' rates in a batch.
 	batchRate := 15.0
 	require.NoError(t, repo.BatchSetUserRebateRate(txCtx, []int64{u1.ID, u2.ID}, &batchRate))
 
@@ -333,7 +335,7 @@ func TestAffiliateRepository_AdminRebateRate(t *testing.T) {
 		require.InDelta(t, 15.0, *v.AffRebateRatePercent, 1e-9)
 	}
 
-	// Batch clear
+	// Clear both overrides in a batch.
 	require.NoError(t, repo.BatchSetUserRebateRate(txCtx, []int64{u1.ID, u2.ID}, nil))
 	for _, uid := range []int64{u1.ID, u2.ID} {
 		v, err := repo.EnsureUserAffiliate(txCtx, uid)
@@ -342,7 +344,8 @@ func TestAffiliateRepository_AdminRebateRate(t *testing.T) {
 	}
 }
 
-// TestAffiliateRepository_ListUsersWithCustomSettings 检查管理列表包含设置了自定义邀请码或专属返利率的用户。
+// TestAffiliateRepository_ListUsersWithCustomSettings checks inclusion of users with custom codes or rate
+// overrides.
 func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -351,7 +354,7 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 
 	repo := promotionpostgres.NewAffiliateRepository(client, func(tx *dbent.Tx) promotionpostgres.TransferBalance { return billingpostgres.BalanceInTx(tx) })
 
-	// 未设置自定义配置的用户不在列表中。
+	// Users with neither override are excluded.
 	plainEmail := fmt.Sprintf("affiliate-plain-%d@example.com", time.Now().UnixNano())
 	uPlain := mustCreateUser(t, client, &identity.User{
 		Email: plainEmail, PasswordHash: "hash",
@@ -360,7 +363,7 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	_, err := repo.EnsureUserAffiliate(txCtx, uPlain.ID)
 	require.NoError(t, err)
 
-	// 设置自定义邀请码的用户在列表中。
+	// A custom invitation code qualifies the user for the list.
 	uCode := mustCreateUser(t, client, &identity.User{
 		Email:        fmt.Sprintf("affiliate-codeonly-%d@example.com", time.Now().UnixNano()),
 		PasswordHash: "hash",
@@ -368,7 +371,7 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	})
 	require.NoError(t, repo.UpdateUserAffCode(txCtx, uCode.ID, fmt.Sprintf("VIP%09d", time.Now().UnixNano()%1_000_000_000)))
 
-	// 设置专属返利率的用户在列表中。
+	// A custom rebate rate also qualifies the user for the list.
 	uRate := mustCreateUser(t, client, &identity.User{
 		Email:        fmt.Sprintf("affiliate-rateonly-%d@example.com", time.Now().UnixNano()),
 		PasswordHash: "hash",
@@ -382,7 +385,7 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 按用户 ID 索引结果，检查本用例创建的三个用户。
+	// Index results by user ID to check the three fixtures created by this test.
 	byUserID := make(map[int64]promotion.AffiliateAdminEntry, len(entries))
 	for _, e := range entries {
 		byUserID[e.UserID] = e
@@ -404,7 +407,7 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	require.GreaterOrEqual(t, total, int64(2), "total must include at least our 2 custom rows")
 }
 
-// testEntTx 为测试创建 Ent 事务，测试结束时回滚。
+// testEntTx starts an Ent transaction and rolls it back during cleanup.
 func testEntTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 	client := testEntClient(t)
@@ -414,7 +417,7 @@ func testEntTx(t *testing.T) *dbent.Tx {
 	return tx
 }
 
-// mustCreateUser 将用户夹具写入数据库。
+// mustCreateUser persists a user fixture and fills its generated identity and timestamps.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()

@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// Normalize 逐轮保持客户端模型、提供商身份、图片与 Fast 策略的原执行顺序。
+// Normalize validates a turn and applies model, identity, image, and Fast policies in forwarding order.
 func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUserPromptReplacement bool, turn int) (ClientPayload, error) {
 	p, o := s.Port, s.Options
 	trimmed := bytes.TrimSpace(raw)
@@ -23,7 +23,7 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 		return ClientPayload{}, p.CloseError(1008, "invalid websocket request payload", errors.New("invalid json"))
 	}
 	if applyUserPromptReplacement {
-		// 后续 response.create 帧先执行用户提示词替换，再进入模型归一化、图片桥接和 OpenAI Fast Policy。
+		// Replace prompts before model normalization, image bridging, and Fast policy.
 		trimmed = p.PromptReplace(ctx, trimmed)
 	}
 
@@ -79,8 +79,8 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 	originalModel := strings.TrimSpace(values[1].String())
 	modelMissing := originalModel == ""
 	if originalModel == "" {
-		// 客户端可能仅在首轮 response.create 指定 model，后续省略时复用上一轮已校验的客户端模型。
-		// 随后把映射结果写入上游 payload，模型映射、Fast 策略和图片权限使用同一模型。
+		// When later frames omit model, reuse the validated client model from session state.
+		// Resolve its mappings before applying model-dependent policies and writing the upstream payload.
 		originalModel = s.State.OriginalModel
 		if originalModel == "" {
 			return ClientPayload{}, p.CloseError(
@@ -90,7 +90,7 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 			)
 		}
 	}
-	// 每轮先解析分组映射，再解析提供商映射，originalModel 保存客户端请求的模型。
+	// Resolve group mapping before provider mapping; retain the client model in originalModel.
 	routingModel, upstreamModel, resolveModelErr := p.Models(turn, originalModel, normalized)
 	if resolveModelErr != nil {
 		return ClientPayload{}, resolveModelErr
@@ -168,7 +168,7 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 		normalized = stripped
 		p.Log(fmt.Sprintf("ingress_ws_codex_spark_image_tool_stripped provider_id=%d", o.ProviderID))
 	}
-	// 生图能力必须按分组映射模型 G 判断；提供商最终模型 U 只用于真正的上游请求。
+	// Check image eligibility against group model G; use final model U for the upstream request.
 	imageIntentBody, imageIntent, explicitImageIntent := p.ImageIntent(routingModel, upstreamModel, normalized)
 	if explicitImageIntent && !imageGenerationAllowed {
 		p.FeatureDenied()
@@ -188,8 +188,8 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 		imageInputSize = imageCfg.InputSize
 	}
 
-	// 所有 WebSocket turn 在此应用与 HTTP 相同的 Fast 评估、规范化和适用范围规则。
-	// 首轮需要 model，后续省略时使用 s.State.OriginalModel。策略评估前写入上游模型，供白名单和 filter 使用。
+	// Apply the HTTP Fast policy rules to each WebSocket turn.
+	// The resolved upstream model drives whitelist matching, including when the frame omits model.
 	policyCtx := ctx
 	policyApplied, blocked, policyErr := p.FastPolicy(policyCtx, turn, upstreamModel, normalized, true)
 	if policyErr != nil {
@@ -197,15 +197,9 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 	}
 	if blocked != nil {
 		p.PolicyDenied()
-		// Send a Realtime-style error event to the client first, then
-		// signal the handler to close the connection with PolicyViolation.
-		// We intentionally do NOT forward this frame upstream.
-		//
-		// coder/websocket@v1.8.14 Conn.Write is synchronous and flushes
-		// the underlying bufio writer before returning (write.go:42 →
-		// 307-311), and the subsequent close handshake re-acquires the
-		// same writeFrameMu, so the error event is guaranteed to reach
-		// the kernel send buffer before any close frame is queued.
+		// Attempt the policy error event before returning the close instruction.
+		// A successful synchronous write orders the event before the close frame.
+		// The blocked request is not forwarded upstream.
 		eventBytes := p.BlockedEvent(blocked)
 		if eventBytes != nil {
 			p.WriteBlocked(ctx, eventBytes)
@@ -235,8 +229,8 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 	}, nil
 }
 
-// ApplyReasoningEffortPolicy 将同一套分组策略应用到 WS 请求帧。
-// requestModel 由调用方提供客户端模型，支持后续省略 model 的多轮帧。
+// ApplyReasoningEffortPolicy applies group reasoning rules to a WebSocket request frame.
+// The caller supplies the client requestModel for later frames that omit model.
 func ApplyReasoningEffortPolicy(payload []byte, hooks *OpenAIIngressHooks, requestModel string) ([]byte, error) {
 	if hooks == nil || (hooks.MaxReasoningEffort == "" && len(hooks.ReasoningEffortMappings) == 0) {
 		return payload, nil

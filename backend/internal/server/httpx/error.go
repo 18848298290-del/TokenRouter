@@ -34,12 +34,12 @@ func ToHTTP(err error) (statusCode int, body apperror.Status) {
 	return int(appErr.Code), body
 }
 
-// ErrorCode 在 HTTP 适配层解释应用类别，保留 nil 和自定义旧状态码。
+// ErrorCode returns the HTTP code for an application error, including nil and custom legacy codes.
 func ErrorCode(err error) int {
 	return int(apperror.CategoryOf(err))
 }
 
-// HTTPStatusToGoogleStatus 将 HTTP 状态码转换为 Google 错误状态。
+// HTTPStatusToGoogleStatus maps an HTTP status to Google's error status name.
 func HTTPStatusToGoogleStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:

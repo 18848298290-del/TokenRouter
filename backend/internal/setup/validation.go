@@ -11,7 +11,7 @@ var (
 	usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 )
 
-// validateHostname 校验主机名或 IP 的字符和字节长度，冒号用于 IPv6。
+// validateHostname checks allowed characters and byte length; colons permit IPv6 input.
 func validateHostname(host string) bool {
 	return hostnamePattern.MatchString(host) && len(host) <= 253
 }
@@ -24,7 +24,7 @@ func validateUsername(name string) bool {
 	return usernamePattern.MatchString(name) && len(name) <= 63
 }
 
-// validateEmail 接受 ParseAddress 支持的邮箱写法，包括带显示名的地址，长度按字节计算。
+// validateEmail accepts mail.ParseAddress syntax, including display names, up to 254 bytes.
 func validateEmail(email string) bool {
 	_, err := mail.ParseAddress(email)
 	return err == nil && len(email) <= 254

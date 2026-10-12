@@ -5,35 +5,32 @@ import (
 	"strings"
 )
 
-// Entry 保留权益展示中的通知邮箱值，不提供身份管理操作。
+// Entry contains a notification email address and its delivery and verification flags.
 type Entry struct {
 	Email    string `json:"email"`
 	Disabled bool   `json:"disabled"`
 	Verified bool   `json:"verified"`
 }
 
-// ParseNotifyEmails 将通知邮箱 JSON 解析为 Entry 列表。
-// 旧字符串数组中的邮箱视为已验证且未禁用，新对象数组保留 disabled 和 verified 字段。
-// 输入为空或无效时返回 nil。
+// ParseNotifyEmails parses notification email JSON into entries.
+// Legacy string arrays produce enabled, unverified entries; object arrays retain their flags.
+// Empty or invalid input returns nil.
 func ParseNotifyEmails(raw string) []Entry {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
 		return nil
 	}
 
-	// Try parsing as new format first (array of objects)
+	// Try the object-array representation first.
 	var entries []Entry
 	if err := json.Unmarshal([]byte(raw), &entries); err == nil && len(entries) > 0 {
-		// Verify it's actually the new format by checking the first element
-		// json.Unmarshal into []Entry succeeds even for ["string"]
-		// because it tries to fit "string" into Entry and gets zero values.
-		// We need to detect old format explicitly.
+		// Check the representation before accepting object entries.
 		if !isOldStringArrayFormat(raw) {
 			return entries
 		}
 	}
 
-	// Try parsing as old format (array of strings)
+	// Accept legacy string arrays.
 	var emails []string
 	if err := json.Unmarshal([]byte(raw), &emails); err == nil {
 		result := make([]Entry, 0, len(emails))
@@ -59,12 +56,12 @@ func isOldStringArrayFormat(raw string) bool {
 	if err := json.Unmarshal([]byte(raw), &arr); err != nil || len(arr) == 0 {
 		return false
 	}
-	// Check if first element starts with a quote (string) vs { (object)
+
 	first := strings.TrimSpace(string(arr[0]))
 	return first != "" && first[0] == '"'
 }
 
-// MarshalNotifyEmails 将通知邮箱 Entry 列表序列化为 JSON。
+// MarshalNotifyEmails encodes notification entries as JSON.
 func MarshalNotifyEmails(entries []Entry) string {
 	if len(entries) == 0 {
 		return "[]"

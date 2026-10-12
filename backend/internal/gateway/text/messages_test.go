@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// messageFixture 只控制单次执行结果，验证编排是否额外尝试、重复完成或扩大部分失败资格。
+// messageFixture supplies attempt outcomes and records retries, completion, and partial-result handling.
 type messageFixture struct {
 	outcomes                                          []Outcome
 	prepares, selected, forwards, completed, switches int

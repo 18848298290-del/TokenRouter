@@ -22,7 +22,7 @@ type (
 	}
 )
 
-// Operations 拥有已接受维护操作的锁、取消和关闭等待。
+// Operations owns locks, cancellation, and shutdown waiting for accepted maintenance work.
 type Operations struct {
 	update    UpdateAPI
 	lock      *SystemOperationLockService
@@ -158,7 +158,7 @@ func (s *Operations) Rollback(ctx context.Context, operationID, targetVersion st
 		return nil, err
 	}
 	if targetVersion != "" {
-		// 指定版本回退同样要下载完整二进制，与更新一样和请求生命周期解耦。
+		// Versioned rollback downloads a full binary, so it uses an operation context independent of the HTTP request.
 		rollbackCtx, cancel := s.workContext(lock.Context())
 		defer cancel()
 		err = s.update.RollbackToVersion(rollbackCtx, targetVersion)

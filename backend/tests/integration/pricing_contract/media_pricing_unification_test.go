@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestMediaPricingCardsHaveSameGroupAndPricingConfigSemantics 检查媒体价卡在分组和共享价格配置中得到相同金额。
+// TestMediaPricingCardsHaveSameGroupAndPricingConfigSemantics checks configured media prices across billing modes and zero-price cases.
 func TestMediaPricingCardsHaveSameGroupAndPricingConfigSemantics(t *testing.T) {
 	for _, media := range []string{"image", "video"} {
 		for _, perRequest := range []bool{false, true} {
@@ -66,7 +66,7 @@ func TestMediaPricingCardsHaveSameGroupAndPricingConfigSemantics(t *testing.T) {
 	}
 }
 
-// TestAsyncImageUnitPricingUsesCardsAndPerImageFallback 检查异步图片任务按模型价卡和尺寸读取每张费用。
+// TestAsyncImageUnitPricingUsesCardsAndPerImageFallback checks per-image prices by card and size.
 func TestAsyncImageUnitPricingUsesCardsAndPerImageFallback(t *testing.T) {
 	ctx := context.Background()
 	model := "gemini-3.1-flash-image"
@@ -112,7 +112,7 @@ func creativeGroupProjection(value *routing.Group) *creative.GroupView {
 	return &creative.GroupView{ID: value.ID, Name: value.Name, IsExclusive: value.IsExclusive, AllowImageGeneration: value.AllowImageGeneration, Active: value.IsActive(), RateMultiplier: value.RateMultiplier, Operations: creative.OperationsForGroup(value.ResponsesImagePolicy != "" || value.ProtocolFallbacks != nil, value.AllowsClientProtocol)}
 }
 
-// creativePriceFixture 将目录和解析器接入测试，使用 billing 计算价格并处理缺价回退。
+// creativePriceFixture resolves image prices with the supplied resolver or a catalog-backed resolver.
 func creativePriceFixture(calculator *billingcore.Calculator, resolver *billingcore.PriceResolver) func(context.Context, *creative.GroupView, string, string) (float64, bool) {
 	return func(ctx context.Context, group *creative.GroupView, model, size string) (float64, bool) {
 		if group == nil {

@@ -12,11 +12,11 @@ const (
 	qoderRefreshLockPoll = 100 * time.Millisecond
 )
 
-// ErrQoderRefreshInProgress 表示锁持有者尚未发布新凭据，不能重用失败凭据。
+// ErrQoderRefreshInProgress indicates that polling has not observed replacement credentials.
 var ErrQoderRefreshInProgress = errors.New("qoder refresh in progress")
 
-// WaitForQoderRefresh 先立即读取，再按间隔等待锁持有者发布 token。
-// readChanged 在原存储中读取最新身份，返回已轮换与读取错误。
+// WaitForQoderRefresh reads immediately, then polls until credentials change or the wait budget expires.
+// readChanged reports whether stored credentials have changed, plus any read error.
 func WaitForQoderRefresh(ctx context.Context, readChanged func(context.Context) (bool, error)) error {
 	waitCtx, cancel := context.WithTimeout(ctx, qoderRefreshLockWait)
 	defer cancel()

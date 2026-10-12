@@ -12,14 +12,14 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// TestConnectionResult 测试连接结果。
+// TestConnectionResult contains probe text and the model used.
 type TestConnectionResult struct {
-	Text        string // 响应文本
-	MappedModel string // 实际使用的模型
+	Text        string // response text
+	MappedModel string // model used by the probe
 }
 
-// BuildGeminiTestRequest 构建 Gemini 格式测试请求
-// 使用最小 token 消耗：使用调用方提示词并限制 maxOutputTokens 为 1。
+// BuildGeminiTestRequest builds a one-output-token Gemini probe.
+// The first prompt is used when nonblank; an omitted or blank first prompt becomes ".".
 func BuildGeminiTestRequest(projectID, model string, prompts ...string) ([]byte, error) {
 	prompt := "."
 	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
@@ -34,7 +34,7 @@ func BuildGeminiTestRequest(projectID, model string, prompts ...string) ([]byte,
 				},
 			},
 		},
-		// Antigravity 上游要求必须包含身份提示词
+		// Include the identity instruction required by the Antigravity request format.
 		"systemInstruction": map[string]any{
 			"parts": []map[string]any{
 				{"text": GetDefaultIdentityPatch()},
@@ -48,8 +48,8 @@ func BuildGeminiTestRequest(projectID, model string, prompts ...string) ([]byte,
 	return WrapV1InternalRequest(projectID, model, payloadBytes)
 }
 
-// BuildClaudeTestRequest 构建 Claude 格式测试请求并转换为 Gemini 格式
-// 使用最小 token 消耗：使用调用方提示词并限制 MaxTokens 为 1。
+// BuildClaudeTestRequest converts a one-token Claude probe to Gemini format.
+// The first prompt is used when nonblank; otherwise it defaults to ".".
 func BuildClaudeTestRequest(projectID, mappedModel string, prompts ...string) ([]byte, error) {
 	prompt := "."
 	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
@@ -70,7 +70,7 @@ func BuildClaudeTestRequest(projectID, mappedModel string, prompts ...string) ([
 	return TransformClaudeToGemini(claudeReq, projectID, mappedModel)
 }
 
-// ExtractTextFromSSEResponse 从 SSE 流式响应中提取文本。
+// ExtractTextFromSSEResponse concatenates text from the first candidate in each JSON line.
 func ExtractTextFromSSEResponse(respBody []byte) string {
 	var texts []string
 	lines := bytes.SplitSeq(respBody, []byte("\n"))
@@ -81,27 +81,23 @@ func ExtractTextFromSSEResponse(respBody []byte) string {
 			continue
 		}
 
-		// 跳过 SSE 前缀
 		if after, ok := bytes.CutPrefix(line, []byte("data:")); ok {
 			line = after
 			line = bytes.TrimSpace(line)
 		}
 
-		// 跳过非 JSON 行
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
 
-		// 解析 JSON
 		var data map[string]any
 		if err := json.Unmarshal(line, &data); err != nil {
 			continue
 		}
 
-		// 尝试从 response.candidates[0].content.parts[].text 提取
+		// Accept both v1internal envelopes and direct Gemini payloads.
 		response, ok := data["response"].(map[string]any)
 		if !ok {
-			// 尝试直接从 candidates 提取（某些响应格式）
 			response = data
 		}
 
@@ -137,7 +133,7 @@ func ExtractTextFromSSEResponse(respBody []byte) string {
 	return strings.Join(texts, "")
 }
 
-// Probe 复用平台提供商内重试；不取得调度槽或注册计费会话。
+// Probe runs provider-local retries and extracts a bounded response for connection testing.
 func Probe(ctx context.Context, input RetryInput, options RetryOptions, model string, limit func() int64, enter func() (func(), error)) (*TestConnectionResult, error) {
 	if enter != nil {
 		done, err := enter()

@@ -10,13 +10,13 @@ import (
 )
 
 func TestBuildDynamicToolMap_BelowThreshold(t *testing.T) {
-	// Parrot 行为：tools 数量 ≤ 5 时不做动态映射。
+	// At most five names use static rewriting only.
 	names := []string{"bash", "edit", "read", "write", "search"}
 	require.Nil(t, BuildDynamicToolMap(names))
 }
 
 func TestBuildDynamicToolMap_AboveThresholdIsStable(t *testing.T) {
-	// Parrot 不变量：同一组 tool_names 在同进程内映射稳定（保证 cache 命中）。
+	// An identical ordered name list must produce identical aliases for caching.
 	names := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}
 	a := BuildDynamicToolMap(names)
 	b := BuildDynamicToolMap(names)
@@ -42,12 +42,12 @@ func TestSanitizeToolName_DynamicTakesPrecedence(t *testing.T) {
 }
 
 func TestRestoreToolNamesInBytes_LongestFirst(t *testing.T) {
-	// 假名 “abc_12” 是另一个假名的子串，替换时需要先匹配较长的名称。
+	// Replace the longer alias first when one alias contains another.
 	rw := &ToolNameRewrite{
 		Forward: map[string]string{"foo": "abc_12", "bar": "abc_12_ext"},
 		Reverse: map[string]string{"abc_12": "foo", "abc_12_ext": "bar"},
 	}
-	// 手工构造 ReverseOrdered：长的在前
+	// Construct the longest-first replacement order.
 	rw.ReverseOrdered = [][2]string{
 		{"abc_12_ext", "bar"},
 		{"abc_12", "foo"},
@@ -69,25 +69,25 @@ func TestApplyToolNameRewriteToBody_RenamesToolsAndToolChoice(t *testing.T) {
 	require.NotNil(t, rw)
 	require.Contains(t, rw.Forward, "sessions_list")
 	require.Contains(t, rw.Forward, "session_get")
-	// web_search 是 server tool，不参与改写。
+	// Server tool names remain unchanged.
 	require.NotContains(t, rw.Forward, "web_search")
 
 	out := ApplyToolNameRewriteToBody(body, rw)
 
-	// tools[0].name 和 tools[1].name 会改写，tools[2].name 保持不变。
+	// Rewrite the two eligible names while retaining the server tool name.
 	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tools.0.name").String())
 	require.Equal(t, "cc_ses_get", gjson.GetBytes(out, "tools.1.name").String())
 	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.2.name").String())
 
-	// tool_choice.name 同步改写。
+	// The named tool choice follows the declaration alias.
 	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tool_choice.name").String())
 	require.Equal(t, "tool", gjson.GetBytes(out, "tool_choice.type").String())
 }
 
 func TestApplyToolNameRewriteToBody_RenamesToolUseInMessages(t *testing.T) {
-	// sessions_list 通过静态前缀映射改成 cc_sess_list。
-	// web_search 是 server tool（type != ""），不参与改写。
-	// 历史消息里的 tool_use.name 必须同步改写，才能和 tools[] 保持一致。
+	// sessions_list uses the static cc_sess_ prefix.
+	// web_search is a server tool and retains its name.
+	// Historical tool calls must match the rewritten declarations.
 	body := []byte(`{"tools":[{"name":"sessions_list","input_schema":{}},{"name":"web_search","type":"web_search_20250305"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":[{"type":"tool_use","id":"tu_01","name":"sessions_list","input":{}},{"type":"text","text":"thinking"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_01","content":"ok"}]}]}`)
 	rw := BuildToolNameRewriteFromBody(body)
 	require.NotNil(t, rw)
@@ -95,15 +95,15 @@ func TestApplyToolNameRewriteToBody_RenamesToolUseInMessages(t *testing.T) {
 
 	out := ApplyToolNameRewriteToBody(body, rw)
 
-	// tools[0].name 已改写。
+	// The eligible declaration receives an alias.
 	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tools.0.name").String())
-	// tools[1].name 是 server tool，保持不变。
+	// The server tool keeps its name.
 	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.1.name").String())
-	// messages[1].content[0].name（tool_use）也要改写成 tools[] 中的假名。
+	// The historical tool_use receives the declaration alias.
 	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "messages.1.content.0.name").String())
-	// messages[1].content[1] 是 text，保持不变。
+	// Text blocks remain unchanged.
 	require.Equal(t, "thinking", gjson.GetBytes(out, "messages.1.content.1.text").String())
-	// messages[2].content[0] 是 tool_result，不应额外写入 name 字段。
+	// Tool results must not gain a name field.
 	require.Equal(t, "ok", gjson.GetBytes(out, "messages.2.content.0.content").String())
 }
 
@@ -140,7 +140,7 @@ func TestApplyToolsLastCacheBreakpointOnlyLiteralTrueIsDeferred(t *testing.T) {
 }
 
 func TestBuildToolNameRewriteFromBody_ReverseOrderedByLengthDesc(t *testing.T) {
-	// 超过阈值触发动态映射，验证 ReverseOrdered 按假名长度倒序排列
+	// Above the threshold, dynamic aliases are restored longest-first.
 	body := []byte(`{"tools":[
         {"name":"t1","input_schema":{}},
         {"name":"t2","input_schema":{}},

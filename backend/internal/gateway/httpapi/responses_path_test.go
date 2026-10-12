@@ -35,9 +35,9 @@ func TestOpenAIResponsesRequestPathSuffix(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesRequestPathSuffixRejectsNonConformingSubpaths 锁定不变式：
-// /responses/*subpath 的子路径不得改变上游请求的路径结构；不合规时既不参与拼接，
-// 也不会被误判成 compact 请求。
+// TestOpenAIResponsesRequestPathSuffixRejectsNonConformingSubpaths checks that
+// malformed suffixes cannot alter the upstream path or be classified as compact requests.
+// Validation applies before a suffix is appended to the upstream endpoint.
 func TestOpenAIResponsesRequestPathSuffixRejectsNonConformingSubpaths(t *testing.T) {
 	nonConformingPaths := []string{
 		"/v1/responses/../../x/y",
@@ -64,7 +64,7 @@ func TestOpenAIResponsesRequestPathSuffixRejectsNonConformingSubpaths(t *testing
 		})
 	}
 
-	// 合法子路径原样转发。
+	// Valid subpaths retain their normalized suffix.
 	for path, want := range map[string]string{
 		"/v1/responses":                        "",
 		"/v1/responses/input_tokens":           "/input_tokens",

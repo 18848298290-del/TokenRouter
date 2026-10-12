@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMessageCredentialsPreserveStoredTypes 按矩阵检查 Messages 与 OpenAI 入口支持的提供商类型及错误。
+// TestMessageCredentialsPreserveStoredTypes checks credential values and errors for Messages provider types.
 func TestMessageCredentialsPreserveStoredTypes(t *testing.T) {
 	tests := []struct {
 		name, platform, kind, token, auth, errorText string

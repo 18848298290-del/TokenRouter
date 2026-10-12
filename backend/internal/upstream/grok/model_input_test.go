@@ -9,7 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestSanitizeGrokResponsesModelInputNormalizesReplayHistory 验证 Grok Responses 回放历史的规范化。
+// Replay normalization retains complete messages and removes incomplete replay metadata.
 func TestSanitizeGrokResponsesModelInputNormalizesReplayHistory(t *testing.T) {
 	body := []byte(`{
 		"input":[

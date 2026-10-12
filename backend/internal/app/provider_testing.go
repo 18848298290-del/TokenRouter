@@ -27,17 +27,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// provideAgentTaskCoordinator 让所有持久提供商任务入口共享同一进程内按提供商锁。
+// provideAgentTaskCoordinator shares a process-local lock per persisted provider across task entry points.
 func provideAgentTaskCoordinator() *provider.OpenAITaskCoordinator {
 	return &provider.OpenAITaskCoordinator{}
 }
 
-// provideProviderExpiry 为每分钟执行的过期检查注入提供商存储，并登记维护任务的启停。
+// provideProviderExpiry binds provider storage to an expiry check that runs every minute.
 func provideProviderExpiry(store *providerpostgres.ProviderStore) *provider.ExpiryService {
 	return provider.NewExpiryService(store, provider.ExpiryOptions{Interval: time.Minute, Now: time.Now, Observe: log.Printf})
 }
 
-// provideProviderProbeTasks 为探测绑定任务协调器和凭据条件写入函数。
+// provideProviderProbeTasks binds task coordination and conditional credential writes.
 func provideProviderProbeTasks(store *providerpostgres.ProviderStore, connections *openaiws.OpenAIWSConnections, coordinator *provider.OpenAITaskCoordinator) *provideradapter.ProbeTasks {
 	return &provideradapter.ProbeTasks{Coordinator: coordinator, Options: provider.OpenAITaskOptions{
 		Read: store.GetByID,
@@ -52,7 +52,7 @@ func provideProviderProbeTasks(store *providerpostgres.ProviderStore, connection
 	}}
 }
 
-// provideScheduledTests 构造提供商定时测试用例，定时任务由生命周期管理器启动。
+// provideScheduledTests creates scheduled test operations; the lifecycle manager starts the runner.
 func provideScheduledTests(plans provider.ScheduledTestPlanRepository, results provider.ScheduledTestResultRepository) *provider.ScheduledTestService {
 	return provider.NewScheduledTestService(plans, results, provider.ScheduledTestOptions{Now: time.Now, NextRun: provideradapter.NextScheduledTestRun})
 }
@@ -67,7 +67,7 @@ func provideScheduledTestRunner(plans provider.ScheduledTestPlanRepository, sche
 	}, Recover: recovery.RecoverProviderAfterSuccessfulTest})
 }
 
-// provideProviderTests 绑定提供商存储和平台测试目标，供后台任务与 HTTP 共用。
+// provideProviderTests shares provider storage and platform test targets between background tasks and HTTP.
 func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *provider.GeminiTokenSource, claudeToken *provider.ClaudeTokenSource, grokToken *provider.GrokTokenSource, ag *provideradapter.AntigravityProbe, transport httpclient.UpstreamTransport, cfg *config.Config, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, settings *gateway.RuntimeSettings, tasks *provideradapter.ProbeTasks, manager *lifecycle.Manager, catalog *catalogprovider.Service) *provider.TestService {
 	urlPolicy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	probePolicy := &provideradapter.OpenAIProbePolicy{Available: true, ForceCLI: cfg.Gateway.ForceCodexCLI, Read: store.GetByID, AllowClaudeCode: settings.IsOpenAIAllowClaudeCodeCodexPluginEnabled, BrowserUserAgent: settings.GetOpenAICodexUserAgent, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Routers: routers, Profiles: profiles, ManualProfiles: profiles}
@@ -78,7 +78,7 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 		attributes = catalog.CapabilityView
 	}
 	anthropicTest := &provideradapter.AnthropicProviderTest{Attributes: attributes, Tokens: claudeToken, Transport: transport, Profiles: profiles, Store: store, ValidateURL: urlPolicy.Validate}
-	// 管理测试使用独立的会话缓存，并登记关闭操作。
+	// Admin tests use a separate Qoder session cache with registered shutdown.
 	qoderSessions := provideradapter.NewQoderTokenProvider(qoder.SessionBuilder{})
 	qoderSessions.SetHTTPUpstream(transport, profiles)
 	manager.Register(lifecycle.Hook{Name: "ProviderTestQoderSessions", StopOrder: 26, Stop: qoderSessions.StopContext})
@@ -96,7 +96,7 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 	return core
 }
 
-// provideProviderTestHTTP 与后台任务共用测试用例，测试成功后调用健康恢复函数。
+// provideProviderTestHTTP shares background test operations and runs health recovery after a successful test.
 func provideProviderTestHTTP(core *provider.TestService, recovery *provider.RecoveryService) *providerhttp.TestHandler {
 	return providerhttp.NewTestHandler(core, func(ctx context.Context, id int64) error {
 		_, err := recovery.RecoverProviderAfterSuccessfulTest(ctx, id)

@@ -33,7 +33,7 @@ var (
 
 type ingressRejectQueryError struct{ message string }
 
-// ListIngressRejects 返回有界安全聚合结果，绝不包含原始凭据或请求体。
+// ListIngressRejects returns bounded aggregate counts without raw credentials or request bodies.
 func (h *OpsHandler) ListIngressRejects(c *gin.Context) {
 	if h.opsService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")

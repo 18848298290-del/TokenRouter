@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// countExecution 连接提供商选择和 token 计数操作。
+// countExecution connects provider selection to token-counting executors.
 type countExecution struct {
 	planner   *gatewayprovider.RoutePlanner
 	choices   *selection.Generic
@@ -31,7 +31,7 @@ type countExecution struct {
 	cooldown  func(context.Context, int64, *forwardcore.UpstreamFailoverError)
 }
 
-// countTarget 保存单次计数使用的提供商，凭据在执行时传给上游。
+// countTarget holds the provider selected for one token count; execution resolves its credentials.
 type countTarget struct {
 	choices   *selection.Generic
 	gateway   *gatewayhttp.MessagesExecutor
@@ -64,7 +64,7 @@ func (t countTarget) ReleaseSession(ctx context.Context, hash string) {
 	t.choices.ReleaseProviderSession(ctx, t.provider, hash)
 }
 
-// provideCountTokensHTTP 为 token 计数 HTTP 入口绑定依赖。
+// provideCountTokensHTTP binds token-counting HTTP dependencies.
 func provideCountTokensHTTP(planner *gatewayprovider.RoutePlanner, messages *gatewayhttp.MessagesExecutor, shared *schedulerSharedState, funding *admission.FundingAdmission, rules *errorpolicy.ErrorPassthroughService, cfg *config.Config, activity *gatewayRequestActivity, prompts *promptpolicy.Service, availability *gatewayModelAvailability, choices *selection.Generic, cooldown *provider.RetryCooldown, auxiliary *gatewayhttp.OpenAIAuxiliary, gemini *gatewayhttp.GeminiExecutor, clients *messageHTTPBindings) *gatewayhttp.CountTokensHandler {
 	limit := int64(0)
 	switches := 10

@@ -10,7 +10,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ScheduledTestHandler 处理管理员计划测试接口。
+// ScheduledTestHandler handles administrator requests for scheduled provider tests.
 type ScheduledTestHandler struct {
 	scheduledTestSvc *provider.ScheduledTestService
 }
@@ -32,12 +32,12 @@ type updateScheduledTestPlanRequest struct {
 	AutoRecover    *bool  `json:"auto_recover"`
 }
 
-// NewScheduledTestHandler 只绑定所属提供商用例。
+// NewScheduledTestHandler binds the scheduled test service.
 func NewScheduledTestHandler(scheduledTestSvc *provider.ScheduledTestService) *ScheduledTestHandler {
 	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc}
 }
 
-// ListByProvider GET /admin/providers/:id/scheduled-test-plans.
+// ListByProvider returns the provider's scheduled test plans.
 func (h *ScheduledTestHandler) ListByProvider(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -53,7 +53,7 @@ func (h *ScheduledTestHandler) ListByProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, plans)
 }
 
-// Create POST /admin/scheduled-test-plans.
+// Create creates a scheduled test plan.
 func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	var req createScheduledTestPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -83,7 +83,7 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusOK, created)
 }
 
-// Update PUT /admin/scheduled-test-plans/:id.
+// Update edits an existing scheduled test plan.
 func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -127,7 +127,7 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// Delete DELETE /admin/scheduled-test-plans/:id.
+// Delete removes a scheduled test plan.
 func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -142,7 +142,7 @@ func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
-// ListResults GET /admin/scheduled-test-plans/:id/results.
+// ListResults returns recent results for a scheduled test plan.
 func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

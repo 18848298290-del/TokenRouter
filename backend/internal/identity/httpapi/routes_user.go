@@ -2,7 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes 注册所属用户接口，共享鉴权、限流和审计已由 app 安装。
+// RegisterUserRoutes adds profile and authentication-factor endpoints to an authenticated group.
+// The caller installs shared authentication, rate limits, and auditing.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UserHandler, totpEndpoint *TotpHandler, passkeyEndpoint *PasskeyHandler) {
 	user := authenticated.Group("/user")
 	{
@@ -14,7 +15,7 @@ func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UserHandler, t
 		user.DELETE("/account-bindings/:provider", endpoint.UnbindIdentity)
 		user.POST("/auth-identities/bind/start", endpoint.StartIdentityBinding)
 
-		// 通知邮箱管理
+		// Notification email management.
 		notifyEmail := user.Group("/notify-email")
 		{
 			notifyEmail.POST("/send-code", endpoint.SendNotifyEmailCode)
@@ -23,7 +24,7 @@ func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UserHandler, t
 			notifyEmail.DELETE("", endpoint.RemoveNotifyEmail)
 		}
 
-		// TOTP 双因素认证
+		// TOTP two-factor authentication.
 		totp := user.Group("/totp")
 		{
 			totp.GET("/status", totpEndpoint.GetStatus)
@@ -32,7 +33,7 @@ func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UserHandler, t
 			totp.POST("/setup", totpEndpoint.InitiateSetup)
 			totp.POST("/enable", totpEndpoint.Enable)
 			totp.POST("/disable", totpEndpoint.Disable)
-			// 敏感操作二次验证：授予当前会话一段时间的 step-up 权限
+			// Grant the current session temporary permission for sensitive operations.
 			totp.POST("/step-up", totpEndpoint.StepUp)
 		}
 

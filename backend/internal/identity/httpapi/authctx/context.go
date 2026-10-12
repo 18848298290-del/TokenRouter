@@ -16,14 +16,14 @@ const (
 	MaxPersistentUserAgentBytes = 512
 )
 
-// AuthSubject 保存 Gin context 使用的用户 ID 和并发数，认证身份使用 Principal。
+// AuthSubject contains the user ID and concurrency used by Gin callers; Principal contains the authenticated identity.
 type AuthSubject struct {
 	UserID      int64
 	Concurrency int
 }
 
-// authenticationRecord 是请求认证的唯一来源，兼容字段供直接读取请求上下文的调用方使用。
-// authenticationRecord 分别保存 API Key 的调用身份和付款用户资料，角色取自调用身份。
+// authenticationRecord stores authentication data independently of the compatibility context fields.
+// API key callers and paying users can differ; subject and role are copied from the gateway context.
 type authenticationRecord struct {
 	Principal  identity.Principal
 	Subject    AuthSubject
@@ -82,7 +82,7 @@ func GetUserRoleFromContext(c *gin.Context) (string, bool) {
 	return role, ok
 }
 
-// SetAuthenticatedPrincipal 保存调用身份，并复制网关已解析的付款用户和并发资料。
+// SetAuthenticatedPrincipal stores the caller identity and copies user and role data already resolved by the gateway.
 func SetAuthenticatedPrincipal(c *gin.Context, p identity.Principal) {
 	if c.Request != nil {
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) { record.UserID = p.UserID })

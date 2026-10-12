@@ -115,14 +115,14 @@ const (
 )
 
 var (
-	// 类型断言检查测试后台任务接口与生产接口一致。
+	// Check that the fixture implements the production background task interface.
 	_ moderationflow.Tasks = fixtureCyberTasks{}
 
 	handlerStructuredLogCaptureMu sync.Mutex
 	handlerRefresherStarted       sync.Map
 )
 
-// 夹具保存各模块的依赖，规则和状态由模块管理。
+// messageExecutionFixture holds module dependencies; modules own their rules and state.
 type messageExecutionFixture struct {
 	Routes   *gatewayprovider.RoutePlanner
 	Cache    session.GatewayCache
@@ -135,7 +135,7 @@ type fixtureRetryStore struct {
 	gatewayprovider.ExecutionProviderStore
 }
 
-// gatewayHTTPFixtureInput 保存测试传入的依赖和预算参数。
+// gatewayHTTPFixtureInput holds test dependencies and budget options.
 type gatewayHTTPFixtureInput struct {
 	Credentials  *gatewayhttp.RequestCredentialExecutor
 	Availability *gatewayModelAvailability
@@ -158,7 +158,8 @@ type gatewayHTTPFixtureInput struct {
 	Recorder     *completion.Recorder
 }
 
-// gatewayHTTPEndpointsFixture 保存处理函数，执行、输出、计费和资源状态使用生产组件。
+// gatewayHTTPEndpointsFixture holds handlers backed by production execution, output, billing, and resource
+// components.
 type gatewayHTTPEndpointsFixture struct {
 	Input                              *gatewayHTTPFixtureInput
 	Responses                          gin.HandlerFunc
@@ -181,7 +182,7 @@ type fixtureCyberOps struct {
 	queue   gatewayhttp.OpsErrorLogQueue
 }
 
-// httpFixtureBalances 为协议和重试测试提供可消费余额，资金准入使用生产实现。
+// httpFixtureBalances supplies spendable balances for protocol and retry tests using production funding admission.
 type httpFixtureBalances struct{}
 
 type gatewayExecutionPricingConfigRows struct {
@@ -191,7 +192,7 @@ type gatewayExecutionPricingConfigRows struct {
 	groupPlatforms map[int64]string
 }
 
-// messageEndpointsFixture 保存消息处理函数和请求准备函数。
+// messageEndpointsFixture holds message handlers and request preparation.
 type messageEndpointsFixture struct {
 	Messages                     gin.HandlerFunc
 	Responses                    gin.HandlerFunc
@@ -209,7 +210,8 @@ type fakeGroupRepo struct {
 
 type fakeConcurrencyCache struct{}
 
-// HTTP 故障切换夹具转换存储返回的 token 数据，刷新由凭据组件处理。
+// grokCredentialTokenReader adapts stored tokens for HTTP failover tests; the credential component handles
+// refreshes.
 type grokCredentialTokenReader struct{ source *grokCredentialHandlerRepo }
 
 type handlerInMemoryLogSink struct {
@@ -284,18 +286,18 @@ type opsErrorLogJob struct {
 	entry *opscore.OpsInsertErrorLogInput
 }
 
-// captureOpsErrorQueue 是各测试独立使用的同步观测替身。
+// captureOpsErrorQueue provides synchronous observation isolated to each test.
 type captureOpsErrorQueue struct {
 	health opscore.ErrorLogQueueHealth
 	jobs   chan opsErrorLogJob
 }
 
-// modelCatalogueEmptyPrices 让仅测试提供商目录的夹具提供合法的空价格仓储。
+// modelCatalogueEmptyPrices supplies an empty price repository for provider catalogue tests.
 type modelCatalogueEmptyPrices struct {
 	routing.PricingConfigRepository
 }
 
-// gatewayExecutionFixture 保存测试构造的执行组件和输入。
+// gatewayExecutionFixture holds execution components and their test inputs.
 type gatewayExecutionFixture struct {
 	Text       *gatewayhttp.OpenAITextExecutor
 	Requests   *gatewayhttp.OpenAIRequests
@@ -310,13 +312,13 @@ type gatewayExecutionFixture struct {
 	Background func(string, func()) bool
 }
 
-// mixedHTTPProviders 提供持久化提供商查询，生产选择器负责资格检查和排序。
+// mixedHTTPProviders supplies stored providers; production selection checks eligibility and ordering.
 type mixedHTTPProviders struct {
 	gatewayprovider.ExecutionProviderStore
 	values []gatewayprovider.ExecutionProvider
 }
 
-// 路由夹具提供测试所需的构造参数。
+// routeTestAdminHandlers holds handlers for route registration tests.
 type routeTestAdminHandlers struct {
 	APIKey                *keyhttp.AdminAPIKeyHandler[routingdto.Group]
 	ProviderArchive       *routeprovider.ArchiveHandler
@@ -409,18 +411,19 @@ type protocolGateTrackingReader struct {
 	read bool
 }
 
-// 空路由夹具的上游计数器缺失时，返回依赖错误。
+// routeCountUnavailable reports a dependency error when the route fixture has no upstream token counter.
 type routeCountUnavailable struct{}
 
-// selectionGroupFixture 为单平台存储替身提供批量平台查询和分组关系，选号使用生产策略。
-// 源记录已有分组时原样保留，防止掩盖组外提供商拒绝测试。
+// selectionGroupFixture adds batch platform queries and group membership to single-platform stubs used by
+// production selection.
+// Existing memberships remain intact so out-of-group rejection tests can detect invalid candidates.
 type selectionGroupFixture struct {
 	gatewayprovider.ExecutionProviderStore
 	mu     sync.Mutex
 	groups map[int64][]int64
 }
 
-// readerStoreProbe 记录动态设置查询次数，首次读取和缓存命中分别检查。
+// readerStoreProbe counts dynamic settings reads to distinguish initial loads from cache hits.
 type readerStoreProbe struct {
 	settingscore.Repository
 	reads int
@@ -431,7 +434,8 @@ type settingHandlerRepoStub struct {
 	lastUpdates map[string]string
 }
 
-// newGenericExecutionAndSelectionFixture 组合执行入口与选择器，窗口和调度规则使用生产实现。
+// newGenericExecutionAndSelectionFixture combines execution and selection with production window and
+// scheduling rules.
 func newGenericExecutionAndSelectionFixture(
 	providerRepo gatewayprovider.ExecutionProviderStore,
 	groupRepo routing.GroupRepository,
@@ -522,7 +526,7 @@ func newOpenAIImageChatRejectionHandlerWithPricingConfig(t *testing.T, pricingCo
 	)
 }
 
-// newOpenAIImageChatRejectionHandlerWithService 复用最小依赖构造 Chat 端点测试处理器。
+// newOpenAIImageChatRejectionHandlerWithService builds a Chat handler with minimal dependencies.
 func newOpenAIImageChatRejectionHandlerWithService(t *testing.T, cache *httptestkit.ConcurrencyHooks, gatewayService *gatewayExecutionFixture, availability *gatewayModelAvailability, choices *selection.Compatible) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 
@@ -538,7 +542,7 @@ func newOpenAIImageChatRejectionHandlerWithService(t *testing.T, cache *httptest
 	})
 }
 
-// newHTTPCompletionFixture 为 HTTP 测试绑定完成记录依赖。
+// newHTTPCompletionFixture binds completion recording dependencies for HTTP tests.
 func newHTTPCompletionFixture(cfg *config.Config, logs usage.UsageLogRepository, calculator *billing.Calculator, eligibility *billing.Eligibility, activity completion.ProviderActivity, modelConfigs *routing.PricingConfigService, health completion.HealthObserver, openAI bool) *completion.Recorder {
 	f := gatewaytestkit.NewRecording(logs, &gatewaytestkit.SettlementStore{}, nil, false)
 	f.Dependencies.Calculator = calculator
@@ -565,9 +569,9 @@ func (w fixtureCyberOps) Enqueue(value *opscore.OpsInsertErrorLogInput) {
 	w.queue.Enqueue(w.service, value)
 }
 
-// newGatewayHTTPEndpoints 在调用前转换可变测试输入，通过 app 函数绑定共享资源。
+// newGatewayHTTPEndpoints converts mutable fixture inputs and binds shared resources through app constructors.
 func newGatewayHTTPEndpoints(input gatewayHTTPFixtureInput) *gatewayHTTPEndpointsFixture {
-	// 准入拒绝测试使用空 Source，对应执行接口留空。
+	// Admission rejection tests leave Source nil, so their execution interfaces remain unset.
 	if input.Source != nil && input.Source.Text == nil {
 		input.Source.Text = &gatewayhttp.OpenAITextExecutor{Requests: &gatewayhttp.OpenAIRequests{}, CodexUsage: &provideradapter.CodexUsageObserver{}}
 		input.Source.Requests = input.Source.Text.Requests
@@ -663,7 +667,7 @@ func newGatewayHTTPEndpoints(input gatewayHTTPFixtureInput) *gatewayHTTPEndpoint
 	return f
 }
 
-// newGatewayHTTPEndpointsFromDeps 接收测试参数，通过 app provider 构造共享资源。
+// newGatewayHTTPEndpointsFromDeps constructs shared resources through app providers.
 func newGatewayHTTPEndpointsFromDeps(source *gatewayExecutionFixture, credentials *gatewayhttp.RequestCredentialExecutor, concurrency *scheduler.ConcurrencyService, funding *admission.FundingAdmission, keys *apikey.APIKeyService, worker *completion.UsageRecordWorkerPool, rules *errorpolicy.ErrorPassthroughService, moderator *moderation.ContentModerationService, opsService *opscore.OpsService, cfg *config.Config, prompts *promptpolicy.Service, availability *gatewayModelAvailability, choices *selection.Compatible, provided ...*gatewayhttp.OpenAIHTTPResources) *gatewayHTTPEndpointsFixture {
 	var resources *gatewayhttp.OpenAIHTTPResources
 	if len(provided) > 0 {
@@ -675,7 +679,7 @@ func newGatewayHTTPEndpointsFromDeps(source *gatewayExecutionFixture, credential
 	return newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{Source: source, Credentials: credentials, Availability: availability, Choices: choices, Funding: funding, Keys: keys, Worker: worker, Rules: rules, Moderator: moderator, Ops: opsService, Config: cfg, Prompts: prompts, Concurrency: resources.Concurrency, Images: resources.Images, MaxSwitches: openAITextOptions(cfg).MaxSwitches})
 }
 
-// newFundingAdmissionFixture 复用夹具创建的资金缓存，RPM 后端保持未配置。
+// newFundingAdmissionFixture reuses the fixture's funding cache with no RPM backend.
 func newFundingAdmissionFixture(funds *billing.Eligibility, cfg *config.Config) *admission.FundingAdmission {
 	return admission.NewFundingAdmission(funds, nil)
 }
@@ -684,7 +688,7 @@ func billingEligibilityFixtureOptions(c *config.Config) billing.EligibilityOptio
 	return billing.EligibilityOptions{Billing: billing.BillingOptions{MinimumBalanceReserve: c.Billing.MinimumBalanceReserve, CircuitBreaker: billing.CircuitBreakerOptions{Enabled: c.Billing.CircuitBreaker.Enabled, FailureThreshold: c.Billing.CircuitBreaker.FailureThreshold, ResetTimeoutSeconds: c.Billing.CircuitBreaker.ResetTimeoutSeconds, HalfOpenRequests: c.Billing.CircuitBreaker.HalfOpenRequests}}}
 }
 
-// newBillingEligibilityFixture 构造资金缓存，绑定配置读取和异步回填函数。
+// newBillingEligibilityFixture binds configuration reads and asynchronous cache fills.
 func newBillingEligibilityFixture(cfg *config.Config) *billing.Eligibility {
 	return billing.NewEligibility(nil, httpFixtureBalances{}, nil, func() billing.EligibilityOptions { return billingEligibilityFixtureOptions(cfg) }, nil, func(_ string, fn func()) { go fn() })
 }
@@ -728,7 +732,7 @@ func newGatewayExecutionPricingConfigServiceForTest(groupID int64, platform stri
 	)
 }
 
-// newMessageEndpointsFixture 将单次执行组件接入消息处理器，观测使用无状态替身。
+// newMessageEndpointsFixture binds attempt execution to message handlers with stateless observation stubs.
 func newMessageEndpointsFixture(source *messageExecutionFixture, messages *gatewayhttp.MessagesExecutor, funding *admission.FundingAdmission, concurrency *gatewayhttp.ConcurrencyHelper, options gatewayhttp.MessagesHTTPOptions, availability *gatewayModelAvailability, choices *selection.Generic) *messageEndpointsFixture {
 	plan := func(ctx context.Context, key *apikey.APIKey, model string) routing.RoutePlan {
 		var group *routing.Group
@@ -973,7 +977,7 @@ func (f *fakeConcurrencyCache) CleanupExpiredProviderSlotKeys(context.Context) e
 
 func (f *fakeConcurrencyCache) CleanupStaleProcessSlots(context.Context, string) error { return nil }
 
-// AcquireBucketLease 夹具提供锁持有者句柄，并控制获取失败与等待结果。
+// AcquireBucketLease returns a release handle when the fixture grants the bucket lock.
 func (f *fakeSchedulerCache) AcquireBucketLease(ctx context.Context, bucket scheduler.SchedulerBucket, ttl time.Duration) (*scheduler.BucketLease, bool, error) {
 	ok, err := f.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -987,7 +991,7 @@ func (r grokCredentialTokenReader) GetByID(ctx context.Context, id int64) (*prov
 	return gatewayprovider.ExecutionRecord(v), err
 }
 
-// newHTTPModeration 组合审核用例与本地协议客户端，测试结束前等待后台任务完成。
+// newHTTPModeration combines moderation with a local protocol client and waits for background work during cleanup.
 func newHTTPModeration(t *testing.T, settings moderation.SettingRepository, repo moderation.ContentModerationRepository) *moderation.ContentModerationService {
 	t.Helper()
 	var background sync.WaitGroup
@@ -1010,7 +1014,7 @@ func newHTTPModeration(t *testing.T, settings moderation.SettingRepository, repo
 	return core
 }
 
-// newOpenAIExecutionCredentialsForTest 使用夹具传入的存储和 token 源。
+// newOpenAIExecutionCredentialsForTest uses the supplied store and token source.
 func newOpenAIExecutionCredentialsForTest(repo gatewayprovider.ExecutionProviderStore, grok *providercore.GrokTokenSource) *providercore.OpenAIExecutionCredentials {
 	out := &providercore.OpenAIExecutionCredentials{}
 	if repo != nil {
@@ -1507,7 +1511,7 @@ func newGrokCredentialFailoverHandler(t *testing.T, mode string) (*gatewayHTTPEn
 	if mode == "all_revoked" {
 		providers[1].Record.Credentials["expires_at"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	}
-	// 凭据恢复夹具在模型配置中开放请求别名。
+	// Credential recovery fixtures allow request aliases through the model allowlist.
 	for i := range providers {
 		providers[i].Record.Credentials["model_whitelist"] = []string{"*"}
 		providers[i].Record.GroupIDs = []int64{groupID}
@@ -1860,7 +1864,7 @@ func responseHeaderFilterForTest(cfg *config.Config) *egress.CompiledHeaderFilte
 	return egress.CompileHeaderFilter(egress.ResponseHeaderOptions{Enabled: cfg.Security.ResponseHeaders.Enabled, AdditionalAllowed: cfg.Security.ResponseHeaders.AdditionalAllowed, ForceRemove: cfg.Security.ResponseHeaders.ForceRemove})
 }
 
-// newExecutionAvailabilityForTest 为模型诊断绑定测试存储和分组策略。
+// newExecutionAvailabilityForTest binds test storage and group policies to model diagnostics.
 func newExecutionAvailabilityForTest(store gatewayprovider.ExecutionProviderStore, modelConfigs *routing.PricingConfigService, cfg *config.Config) *gatewayModelAvailability {
 	var source gatewayprovider.AvailabilityProviders
 	if store != nil {
@@ -1880,7 +1884,7 @@ func (modelCatalogueEmptyPrices) ListAll(context.Context) ([]routing.PricingConf
 	return nil, nil
 }
 
-// newOpenAIExecutionAndSelectionFixture 组合执行组件和选择器，两者共享可变状态。
+// newOpenAIExecutionAndSelectionFixture builds execution and selection components with shared mutable state.
 func newOpenAIExecutionAndSelectionFixture(
 	providerRepo gatewayprovider.ExecutionProviderStore,
 	cache session.GatewayCache,
@@ -1969,7 +1973,7 @@ func newOpenAIExecutionAndSelectionFixture(
 	return source, choices, &gatewayhttp.RequestCredentialExecutor{Runtime: credentials}
 }
 
-// newEmptyCompatibleSelectionFixture 构造提供商来源为空的兼容执行入口。
+// newEmptyCompatibleSelectionFixture constructs compatible selection with no provider source.
 func newEmptyCompatibleSelectionFixture() *selection.Compatible {
 	return selection.NewCompatible(selection.CompatibleDependencies{}, selection.DefaultOptions())
 }
@@ -2022,12 +2026,12 @@ func (s *mixedHTTPProviders) BatchUpdateLastUsed(context.Context, map[int64]time
 	return nil
 }
 
-// newOAuthSettingsFixture 构造 OAuth 设置夹具，静态配置由 app 提供，动态设置由身份模块读取。
+// newOAuthSettingsFixture uses app startup configuration and identity runtime settings readers.
 func newOAuthSettingsFixture(repo settingscore.Repository, cfg *config.Config) *identity.OAuthSettings {
 	return provideOAuthSettings(settingscore.New(repo), cfg)
 }
 
-// testEndpoints 组合各 HTTP 适配器提供的协议列表。
+// testEndpoints collects protocol endpoints from the HTTP adapter.
 func testEndpoints() map[protocolcore.ProtocolID]string {
 	out := map[protocolcore.ProtocolID]string{}
 	for _, e := range gatewayhttp.ProtocolEndpoints() {
@@ -2036,7 +2040,7 @@ func testEndpoints() map[protocolcore.ProtocolID]string {
 	return out
 }
 
-// newAppHealthObserverFixture 组合健康状态组件和当前测试的替身。
+// newAppHealthObserverFixture combines provider health components with test stubs.
 func newAppHealthObserverFixture(store gatewayprovider.ExecutionProviderStore, cfg *config.Config) *provideradapter.UpstreamHealth {
 	options := providercore.HealthOptions{}
 	if cfg != nil {
@@ -2075,14 +2079,14 @@ func newGatewayRoutesTestRouter(platform ...string) *gin.Engine {
 	return newGatewayRoutesTestRouterWithOptions(&config.Config{}, platform...)
 }
 
-// newGatewayRoutesTestRouterWithOptions 通过 HTTP 入口检查配置和平台路由。
+// newGatewayRoutesTestRouterWithOptions exposes configuration and platform routing through HTTP.
 func newGatewayRoutesTestRouterWithOptions(cfg *config.Config, platform ...string) *gin.Engine {
 	groupPlatform := capability.PlatformOpenAI
 	if len(platform) > 0 && platform[0] != "" {
 		groupPlatform = platform[0]
 	}
 	groupID := int64(1)
-	// 普通路由测试模拟已开启全部受支持协议；空集合由专门的门禁测试覆盖。
+	// General route fixtures enable the listed protocols; dedicated admission tests cover empty sets.
 	protocols := []protocolcore.ProtocolID{
 		protocolcore.ProtocolAnthropicMessages,
 		protocolcore.ProtocolOpenAIResponses,
@@ -2097,7 +2101,7 @@ func newGatewayRoutesTestRouterWithOptions(cfg *config.Config, platform ...strin
 	})
 }
 
-// newGatewayRoutesTestRouterWithGroup 允许测试分别传入 nil 和空协议集合。
+// newGatewayRoutesTestRouterWithGroup accepts distinct nil and empty protocol sets.
 func newGatewayRoutesTestRouterWithGroup(cfg *config.Config, group *routing.Group, models ...*gatewayhttp.ModelsHandler) *gin.Engine {
 	router := gin.New()
 
@@ -2137,7 +2141,7 @@ func (r *protocolGateTrackingReader) Read(_ []byte) (int, error) {
 	return 0, io.EOF
 }
 
-// routeInventoryValue 构造 handler 接收者和用于收集路由的中间件。
+// routeInventoryValue constructs handler receivers and middleware for route inventory collection.
 func routeInventoryValue(kind reflect.Type, depth int) reflect.Value {
 	if kind.Kind() == reflect.Pointer {
 		value := reflect.New(kind.Elem())
@@ -2183,7 +2187,7 @@ func routeInventoryMount[T any](t *testing.T, factory any) T {
 	return result
 }
 
-// RegisterAdminRoutes 注册管理员路由。
+// RegisterAdminRoutes registers administrator routes for the fixture.
 func RegisterAdminRoutes(
 	v1 *gin.RouterGroup,
 	h *routeTestHandlers,
@@ -2195,104 +2199,74 @@ func RegisterAdminRoutes(
 ) {
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
-	// 面板全局按用户限流（默认管理员豁免，可在系统设置中关闭豁免）
+	// Panel limits are per user; administrators are exempt by default unless settings disable the exemption.
 	admin.Use(panelRateLimiter.Global())
-	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
+	// Audit runs after authentication and records administrative mutations and sensitive reads.
 	admin.Use(gin.HandlerFunc(auditLog))
 	{
-		// 只读能力目录：提供商与分组表单共用后端定义。
+		// Provider and group forms share this read-only capability catalogue.
 		admin.GET("/protocol-capabilities", protocolCatalog)
-		// 仪表盘
+
 		registerDashboardRoutes(admin, h)
 
-		// 用户管理
 		registerUserManagementRoutes(admin, h)
 
-		// 分组管理
 		registerGroupRoutes(admin, h)
 
-		// 提供商管理
 		registerProviderRoutes(admin, h, stepUpAuth)
 
-		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
-		// OpenAI OAuth 管理
 		registerOpenAIOAuthRoutes(admin, h)
 
-		// Gemini OAuth 管理
 		registerGeminiOAuthRoutes(admin, h)
 
-		// Antigravity OAuth 管理
 		registerAntigravityOAuthRoutes(admin, h)
 
-		// Qoder OAuth 管理
 		registerQoderOAuthRoutes(admin, h)
 
-		// Grok OAuth 管理
 		registerGrokOAuthRoutes(admin, h)
 
-		// 代理管理
 		registerProxyRoutes(admin, h, stepUpAuth)
 
-		// 卡密管理
 		registerRedeemCodeRoutes(admin, h)
 
-		// 优惠码管理
 		registerPromoCodeRoutes(admin, h)
 
-		// 系统设置
 		registerSettingsRoutes(admin, h)
 
-		// 数据管理
 		registerDataManagementRoutes(admin, h, stepUpAuth)
 
-		// 数据库备份恢复
 		registerBackupRoutes(admin, h, stepUpAuth)
 
-		// 运维监控（Ops）
 		registerOpsRoutes(admin, h)
 
-		// 系统管理
 		registerSystemRoutes(admin, h)
 
-		// 订阅管理
 		registerSubscriptionRoutes(admin, h)
 
-		// 使用记录管理
 		registerUsageRoutes(admin, h)
 
-		// 用户属性管理
 		registerUserAttributeRoutes(admin, h)
 
-		// 错误透传规则管理
 		registerErrorPassthroughRoutes(admin, h)
 
-		// TLS 指纹模板管理
 		registerTLSFingerprintProfileRoutes(admin, h)
 
-		// TLS 路由器管理
 		registerTLSFingerprintRouterRoutes(admin, h)
 
-		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
-		// 定时测试计划
 		registerScheduledTestRoutes(admin, h)
 
-		// 价格管理
 		registerPricingConfigRoutes(admin, h)
 
-		// 风控中心
 		registerContentModerationRoutes(admin, h)
 
-		// 邀请返利
 		registerAffiliateRoutes(admin, h)
 
-		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 
-		// 团队运维管理。
 		teams := admin.Group("/teams")
 		{
 			teams.GET("", h.Admin.Team.List)
@@ -2311,12 +2285,12 @@ func registerAuditLogRoutes(admin *gin.RouterGroup, h *routeTestHandlers, _ rout
 	routeaudit.RegisterAuditLogRoutes(admin, h.Admin.AuditLog)
 }
 
-// registerAffiliateRoutes 注册上游邀请返利管理接口。
+// registerAffiliateRoutes registers referral rebate administration.
 func registerAffiliateRoutes(admin *gin.RouterGroup, h *routeTestHandlers) {
 	routepromotion.RegisterAffiliateRoutes(admin, h.Admin.Affiliate)
 }
 
-// registerContentModerationRoutes 注册内容审计和风控审核接口。
+// registerContentModerationRoutes registers content audit and moderation administration.
 func registerContentModerationRoutes(admin *gin.RouterGroup, h *routeTestHandlers) {
 	routemoderation.RegisterContentModerationRoutes(admin, h.Admin.ContentModeration)
 }
@@ -2439,7 +2413,7 @@ func registerPricingConfigRoutes(admin *gin.RouterGroup, h *routeTestHandlers) {
 	routerouting.RegisterPricingRoutes(admin, h.Admin.PricingConfig)
 }
 
-// registerSettingsRoutes 用 HTTP 端点登记设置路由，供路由清单测试检查。
+// registerSettingsRoutes registers settings endpoints for route inventory assertions.
 func registerSettingsRoutes(admin *gin.RouterGroup, h *routeTestHandlers) {
 	group := admin.Group("/settings")
 	routesettings.RegisterSettingsSettingsRoutes(group, &routesettings.Handler{}, &routesettings.PreAggregationHandler{})
@@ -2452,8 +2426,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *routeTestHandlers) {
 	routesearch.RegisterSettingsRoutes(group, h.Search)
 }
 
-// RegisterAuthRoutes 注册认证路由。
-// 身份、会话和权限检查的说明见下方文档。
+// RegisterAuthRoutes registers authentication routes.
+// See the identity documentation for authentication, sessions, and permission checks.
 // @project-doc docs/domains/identity_and_tenancy.md#authentication_boundaries
 func RegisterAuthRoutes(
 	v1 *gin.RouterGroup,
@@ -2476,7 +2450,7 @@ func RegisterAuthRoutes(
 	routeidentity.RegisterSessionRoutes(v1, h.Auth, guards)
 }
 
-// legacyBackendModeReader 将 nil 指针转换为 nil 接口。
+// legacyBackendModeReader converts a nil pointer to a nil interface.
 func legacyBackendModeReader(s *admission.BackendMode) routeidentity.BackendModeReader {
 	if s == nil {
 		return nil
@@ -2484,7 +2458,7 @@ func legacyBackendModeReader(s *admission.BackendMode) routeidentity.BackendMode
 	return s
 }
 
-// legacyRouteMiddleware 在夹具构造时将 Key 服务绑定到路由中间件。
+// legacyRouteMiddleware binds the Key service when constructing route fixtures.
 func legacyRouteMiddleware(auth keyhttp.APIKeyAuthMiddleware, keys *apikey.APIKeyService, subscriptions *billing.SubscriptionService, ops *opscore.OpsService, settings *routing.RuntimeSettings, cfg *config.Config) gatewayhttp.RouteMiddleware {
 	var native *apikey.APIKeyService
 	if keys != nil {
@@ -2519,7 +2493,7 @@ func RegisterGatewayRoutes(
 	settingService *routing.RuntimeSettings,
 	cfg *config.Config,
 ) {
-	// 路由测试使用 HTTP 处理器和已绑定的执行组件。
+	// Route tests use HTTP handlers with bound execution components.
 	var shared *messageHTTPBindings
 	var runtime *textattempt.Runtime
 	var activity *gatewayRequestActivity

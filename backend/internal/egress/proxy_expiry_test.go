@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// 重复启动或已经停止后启动都不能额外写入数据库。
+// expiryRepository counts sweeps to detect duplicate starts and starts after stopping.
 type expiryRepository struct {
 	ProxyRepository
 	calls chan struct{}

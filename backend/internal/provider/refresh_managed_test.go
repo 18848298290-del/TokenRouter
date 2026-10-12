@@ -15,7 +15,8 @@ type managedRefreshReader struct {
 	current *Record
 }
 
-// TestManagedRefreshSharesLockAndStopWithBackground 检查手动与后台刷新共用协调器，停止时取消已接纳的工作和锁等待。
+// TestManagedRefreshSharesLockAndStopWithBackground checks that manual and background refresh share locks and
+// stop cancellation.
 func TestManagedRefreshSharesLockAndStopWithBackground(t *testing.T) {
 	repo := &lifecycleRefreshRepository{}
 	api := NewOAuthRefreshAPI(repo, nil, RefreshOptions{})

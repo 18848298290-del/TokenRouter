@@ -91,8 +91,8 @@ func TestVertexGCSStreamCancellation(t *testing.T) {
 		_ = http.NewResponseController(w).Flush()
 		<-r.Context().Done()
 		close(exited)
-		// 等待读取断言结束后再返回，使客户端观察到取消错误。
-		// 提前结束响应会让正常 EOF 与客户端取消竞争。
+		// Wait for the read assertion so the client observes cancellation.
+		// Ending the response early would let a normal EOF race with cancellation.
 		<-finishResponse
 	}))
 	defer server.Close()

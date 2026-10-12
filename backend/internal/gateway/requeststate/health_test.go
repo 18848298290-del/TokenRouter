@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHealthHintsPreserveAttemptAndExplicitInputs 检查派生尝试保留模型和 false 值，父请求数据保持原值。
+// TestHealthHintsPreserveAttemptAndExplicitInputs checks derived hints, explicit false, and parent isolation.
 func TestHealthHintsPreserveAttemptAndExplicitInputs(t *testing.T) {
-	// 使用 nil context 检查缺省输入。
+	// Check missing-input behavior with a nil context.
 	cases := []struct{ ctx context.Context }{{ctx: nil}}
 	for _, item := range cases {
 		require.Nil(t, WithHealthModel(item.ctx, nil))

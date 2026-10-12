@@ -21,7 +21,7 @@ type InputTokensOptions struct {
 	WriteError     func(int, string, string)
 }
 
-// NativeInputTokensOptions 配置原生 token 查询的请求、响应读取和错误处理。
+// NativeInputTokensOptions configures token-query transport, body reading and errors.
 type NativeInputTokensOptions struct {
 	Enter          func() (func(), error)
 	Do             func(*http.Request) (*http.Response, error)
@@ -31,7 +31,7 @@ type NativeInputTokensOptions struct {
 	WriteError     func(int, string, string)
 }
 
-// CountInputTokens 查询输入 token 数并输出响应，查询结束时关闭响应体。
+// CountInputTokens queries input tokens, writes the count and closes the upstream body.
 func CountInputTokens(request *http.Request, options InputTokensOptions, sink upstream.OutputSink) error {
 	if options.Enter != nil {
 		done, err := options.Enter()
@@ -62,7 +62,7 @@ func CountInputTokens(request *http.Request, options InputTokensOptions, sink up
 	return nil
 }
 
-// BuildInputTokensRequest 保持独立查询的精简 Header 白名单和认证顺序。
+// BuildInputTokensRequest forwards UA and language headers after authentication, then applies overrides.
 func BuildInputTokensRequest(ctx context.Context, body []byte, options ResponsesRequestOptions, customUserAgent func() string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
@@ -96,13 +96,13 @@ func BuildInputTokensRequest(ctx context.Context, body []byte, options Responses
 		req.Header.Set("user-agent", customUA)
 	}
 
-	// 提供商级请求头覆写（仅 openai api_key 提供商启用时生效；OAuth 路径 no-op）
+	// The callback applies enabled API-key provider overrides; OAuth supplies a no-op.
 	options.OverrideHeaders(req.Header)
 
 	return req, nil
 }
 
-// CountNativeInputTokens 保持数值类型验证，并原样输出供应商完整 JSON。
+// CountNativeInputTokens requires a numeric count and writes the complete upstream JSON.
 func CountNativeInputTokens(request *http.Request, options NativeInputTokensOptions, sink upstream.OutputSink) error {
 	if options.Enter != nil {
 		done, err := options.Enter()

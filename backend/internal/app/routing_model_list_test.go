@@ -12,8 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestRequestableNativeProtocolsRequireEveryProvider 检查原生协议的判定。
-// 单个提供商承接的模型按它的原生协议标记。多个提供商共同承接时，协议要在每个提供商上都不经过转换才算原生。
+// TestRequestableNativeProtocolsRequireEveryProvider checks native protocol classification.
+// A model protocol is native only when every provider serving that model supports it without conversion.
 func TestRequestableNativeProtocolsRequireEveryProvider(t *testing.T) {
 	groupID := int64(7)
 	textProtocols := []capability.ProtocolID{capability.ProtocolAnthropicMessages, capability.ProtocolOpenAIResponses, capability.ProtocolOpenAIChatCompletions}

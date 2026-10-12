@@ -8,20 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// 本模块继续使用现有设置键。
+// Storage keys for Cyber session blocking.
 const (
 	SettingKeyCyberSessionBlockEnabled    = "cyber_session_block_enabled"
 	SettingKeyCyberSessionBlockTTLSeconds = "cyber_session_block_ttl_seconds"
 )
 
-// AdminSettings 只包含本模块的管理开关与运行参数。
+// AdminSettings contains moderation management switches and runtime parameters.
 type AdminSettings struct {
 	RiskControlEnabled          bool `json:"risk_control_enabled"`
 	CyberSessionBlockEnabled    bool `json:"cyber_session_block_enabled"`
 	CyberSessionBlockTTLSeconds int  `json:"cyber_session_block_ttl_seconds"`
 }
 
-// PrepareAdminSettings 保留既有编码和合法范围，不启动任务或发布成功通知。
+// PrepareAdminSettings encodes switches and includes the session-block TTL only when positive.
 func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string, error) {
 	values := map[string]string{}
 	values[SettingKeyRiskControlEnabled] = strconv.FormatBool(value.RiskControlEnabled)
@@ -33,7 +33,7 @@ func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string
 	return value, values, nil
 }
 
-// SettingsParticipant 声明风险控制和 Cyber 会话封禁的存储键，并准备请求中提供的设置。
+// SettingsParticipant prepares the risk-control settings supplied in a management request.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"risk_control_enabled", "cyber_session_block_enabled", "cyber_session_block_ttl_seconds"}
 	keys := []string{SettingKeyRiskControlEnabled, SettingKeyCyberSessionBlockEnabled, SettingKeyCyberSessionBlockTTLSeconds}

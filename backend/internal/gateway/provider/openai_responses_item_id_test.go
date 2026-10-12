@@ -33,8 +33,7 @@ func TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts(t *testing.
 		{itemType: "web_search_call", id: "item_123", strip: true},
 		{itemType: "custom_tool_call_output", id: "fc_123", strip: false},
 		{itemType: "custom_tool_call_output", id: "ctco_123", strip: true},
-		// Do not impose an inferred contract on output types for which there is
-		// no observed upstream prefix rejection.
+		// Keep IDs on output types with no observed upstream prefix rejection.
 		{itemType: "function_call_output", id: "fco_123", strip: false},
 		{itemType: "tool_search_output", id: "tso_123", strip: false},
 		{itemType: "mcp_tool_call_output", id: "mcpo_123", strip: false},

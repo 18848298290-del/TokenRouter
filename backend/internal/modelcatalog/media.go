@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// MediaForModel 返回现有媒体适配器支持的参数集合；模型的输入输出模态由目录提供。
+// MediaForModel returns parameters supported by the media adapters. Input and output modalities come from the
+// catalog.
 func MediaForModel(platform, model string) *MediaCapabilities {
 	model = strings.TrimPrefix(normalize(model), "models/")
 	result := &MediaCapabilities{}

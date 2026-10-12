@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestManagedCredentialsDatabaseCAS 检查手动刷新时的管理校验和配置事务，并在锁内核对凭据交换身份。
+// TestManagedCredentialsDatabaseCAS checks credential identity under the configuration lock and rejects
+// conflicting admin refreshes.
 func TestManagedCredentialsDatabaseCAS(t *testing.T) {
 	for _, change := range []string{"none", "name", "credentials", "status", "proxy", "outbox_failure", "cancelled"} {
 		t.Run(change, func(t *testing.T) {
@@ -78,7 +79,7 @@ func TestManagedCredentialsDatabaseCAS(t *testing.T) {
 				require.Equal(t, before.Credentials, after.Credentials)
 				require.Equal(t, eventsBefore, eventsAfter)
 			}
-			// 同一 Admin 入口仍执行原凭据校验；明确冲突不会进入校验或写入。
+			// The admin entry point rejects a known identity conflict before validation or persistence.
 			if change == "credentials" {
 				validations := 0
 				admin := provider.NewAdmin(store, provider.AdminOptions{Creation: provider.CreationOptions{Now: time.Now}, Credentials: provider.CreateCredentialHooks{Site: func(*provider.Record) (string, error) { validations++; return "", nil }}})

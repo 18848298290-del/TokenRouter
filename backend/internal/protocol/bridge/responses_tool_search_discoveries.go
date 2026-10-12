@@ -20,9 +20,9 @@ type responsesNamespaceToolCandidate struct {
 	identity responsesDiscoveredToolIdentity
 }
 
-// promoteResponsesToolSearchDiscoveries 将已成功发现的客户端工具提升为
-// 仅支持 function 的上游可调用声明。原始 tool_search_output 仍保留在请求历史中，
-// 由独立逻辑规范化；新声明追加在静态工具之后，保持客户端声明顺序稳定。
+// promoteResponsesToolSearchDiscoveries appends discovered tools to the declarations
+// for adaptation to a function-only upstream. It retains tool_search_output in history
+// for separate normalization and keeps static declarations before discoveries.
 func promoteResponsesToolSearchDiscoveries(req map[string]any) (bool, error) {
 	tools, ok := req["tools"].([]any)
 	if !ok || len(tools) == 0 || !hasResponsesToolSearchDeclaration(tools) {
@@ -203,9 +203,9 @@ func responsesDirectToolDiscovery(tool map[string]any, typ string) (map[string]a
 	return copy, responsesDiscoveredToolIdentity{typ: typ, name: name, encoded: string(encoded)}, true
 }
 
-// restoreInheritedResponsesClientToolDeclarations 仅还原映射中记录的声明身份。
-// WS 后续回合省略 tools 时，HTTP function 上游仍需在每次请求中收到有效的会话声明，
-// 因此在重新适配前恢复这些声明。
+// restoreInheritedResponsesClientToolDeclarations restores declaration identities recorded in mapping.
+// When a later WebSocket turn omits tools, an HTTP function upstream still needs the
+// effective declarations on each request, so restore them before adapting again.
 func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping ResponsesClientToolMapping) []any {
 	restored := make([]any, 0, len(lowered))
 	for _, raw := range lowered {

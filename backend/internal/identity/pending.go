@@ -65,7 +65,7 @@ type PendingIdentityAdoptionDecisionInput struct {
 	AdoptAvatar          bool
 }
 
-// PendingAuthSession 保存待完成认证会话的持久状态。
+// PendingAuthSession stores the persistent state of an unfinished authentication flow.
 type PendingAuthSession struct {
 	ID                       int64          `json:"id,omitempty"`
 	CreatedAt                time.Time      `json:"created_at,omitempty"`
@@ -91,7 +91,7 @@ type PendingAuthSession struct {
 	ConsumedAt               *time.Time     `json:"consumed_at,omitempty"`
 }
 
-// IdentityAdoptionDecision 保存用户采纳身份资料的决定。
+// IdentityAdoptionDecision records the user's choice to adopt provider profile fields.
 type IdentityAdoptionDecision struct {
 	ID                   int64     `json:"id,omitempty"`
 	CreatedAt            time.Time `json:"created_at,omitempty"`
@@ -103,7 +103,7 @@ type IdentityAdoptionDecision struct {
 	DecidedAt            time.Time `json:"decided_at,omitempty"`
 }
 
-// PendingStore 以闭合存储操作保护完成码与浏览器会话的一次性消费。
+// PendingStore consumes completion codes and browser sessions through atomic storage operations.
 type PendingStore interface {
 	CreatePendingSession(ctx context.Context, input CreatePendingAuthSessionInput) (*PendingAuthSession, error)
 	IssueCompletionCode(ctx context.Context, input IssuePendingAuthCompletionCodeInput) (*IssuePendingAuthCompletionCodeResult, error)

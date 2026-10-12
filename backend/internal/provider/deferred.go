@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// DeferredRepository 只批量写活动时间；提供商配置与资金字段不属于该队列。
+// DeferredRepository batch-writes provider activity timestamps.
 type DeferredRepository interface {
 	BatchUpdateLastUsed(context.Context, map[int64]time.Time) error
 }
 
-// DeferredSchedule 提供周期任务的登记与取消接口。
+// DeferredSchedule registers and cancels recurring work.
 type DeferredSchedule interface {
 	ScheduleRecurring(string, time.Duration, func())
 	Cancel(string)
@@ -22,7 +22,7 @@ type DeferredOptions struct {
 	Observe  func(string, ...any)
 }
 
-// DeferredService 持有唯一活动时间队列；停止后拒绝入队并有界等待最终写回。
+// DeferredService owns the activity queue, rejects enqueueing after stop, and bounds the final flush.
 type DeferredService struct {
 	providerRepo     DeferredRepository
 	timingWheel      DeferredSchedule
@@ -70,7 +70,7 @@ func (s *DeferredService) ScheduleLastUsedUpdate(id int64) {
 	}
 }
 
-// StopContext 取消尚在等待的周期 flush，保留已执行写入的原超时，再执行最终批次。
+// StopContext cancels waiting periodic flushes, waits for an active write's budget, and performs a final batch.
 func (s *DeferredService) StopContext(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	if s.stopped {
@@ -109,7 +109,7 @@ func (s *DeferredService) StopContext(ctx context.Context) error {
 func (s *DeferredService) flushLastUsed()          { _ = s.flushLastUsedErr() }
 func (s *DeferredService) flushLastUsedErr() error { return s.flush(s.waitCtx, false) }
 
-// flush 与入队共用锁取出批次，写入失败时补回仍为空的条目。
+// flush removes a batch under the enqueue lock; failed writes restore entries only if no newer value exists.
 func (s *DeferredService) flush(ctx context.Context, final bool) error {
 	if err := s.flushMu.Lock(ctx); err != nil {
 		return err
@@ -138,7 +138,7 @@ func (s *DeferredService) flush(ctx context.Context, final bool) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	// 周期写入预算为十秒，最终写回同时受应用剩余退出预算限制。
+	// Periodic writes have a ten-second budget; the final write also respects the remaining shutdown budget.
 	parent := context.Background()
 	if final {
 		parent = ctx

@@ -148,7 +148,7 @@ func waitForOpenAIImagesJSONKeepalive(t *testing.T, c *gin.Context) {
 	}, time.Second, time.Millisecond)
 }
 
-// writeKeepaliveImageError 根据心跳状态写出图片错误，供应商错误转换由执行测试覆盖。
+// writeKeepaliveImageError writes errors using heartbeat state; execution tests cover provider error conversion.
 func writeKeepaliveImageError(c *gin.Context, in *ImageErrorResponse) bool {
 	return WriteImageError(c, in, func() int { return OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) }, func() { StopOpenAIImagesJSONKeepaliveCommitted(c) })
 }

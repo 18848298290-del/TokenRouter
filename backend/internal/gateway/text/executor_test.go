@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// 同一运行时为每次执行创建独立状态；调用者只提供值和输出。
+// fixedMessageRuntimeTest creates independent state for each execution.
 type fixedMessageRuntimeTest struct {
 	inputs   []execution.Request
 	sessions []*messageFixture

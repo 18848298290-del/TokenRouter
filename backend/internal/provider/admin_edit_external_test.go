@@ -55,7 +55,7 @@ type providerRepoStubForBulkUpdate struct {
 	}
 }
 
-// bulkGroupsFixture 保留批量绑定验证所需的分组存在性读取。
+// bulkGroupsFixture provides group-existence checks for bulk binding tests.
 type bulkGroupsFixture struct {
 	routing.GroupRepository
 	group *routing.Group
@@ -311,7 +311,7 @@ func (s *providerRepoStubForBulkUpdate) ListWithFilters(_ context.Context, param
 	return s.listData, &pagination.PaginationResult{Total: int64(len(s.listData))}, nil
 }
 
-// TestAdminService_BulkUpdateProviders_AllSuccessIDs 验证批量更新成功时返回 success_ids/failed_ids。
+// TestAdminService_BulkUpdateProviders_AllSuccessIDs checks the success and failure ID lists.
 func TestAdminService_BulkUpdateProviders_AllSuccessIDs(t *testing.T) {
 	repo := &providerRepoStubForBulkUpdate{}
 	svc := newProviderEditorForTest(repo)
@@ -331,7 +331,7 @@ func TestAdminService_BulkUpdateProviders_AllSuccessIDs(t *testing.T) {
 	require.Len(t, result.Results, 3)
 }
 
-// TestAdminService_BulkUpdateProviders_PartialFailureIDs 验证部分失败时 success_ids/failed_ids 正确。
+// TestAdminService_BulkUpdateProviders_PartialFailureIDs checks ID lists after a partial failure.
 func TestAdminService_BulkUpdateProviders_PartialFailureIDs(t *testing.T) {
 	repo := &providerRepoStubForBulkUpdate{
 		bindGroupErrByID: map[int64]error{
@@ -400,13 +400,13 @@ func TestAdminServiceBulkUpdateProvidersRejectsGeminiThirdPartyWithoutCustomBase
 	require.Empty(t, repo.bulkUpdateIDs)
 }
 
-// TestAdminServiceBulkUpdateAllowsMixedProviderPlatforms 检查批量更新允许关联已有其他平台提供商的分组。
+// TestAdminServiceBulkUpdateAllowsMixedProviderPlatforms checks membership in a group containing another platform.
 func TestAdminServiceBulkUpdateAllowsMixedProviderPlatforms(t *testing.T) {
 	repo := &providerRepoStubForBulkUpdate{
 		getByIDsProviders: []*providercore.Record{
 			{ID: 1, Platform: capability.PlatformAntigravity},
 		},
-		// 分组 10 已有 Anthropic 提供商。
+		// Group 10 already contains an Anthropic provider.
 		listByGroupData: map[int64][]providercore.Record{
 			10: {{ID: 99, Platform: capability.PlatformAnthropic}},
 		},
@@ -473,7 +473,7 @@ func (s *bulkGroupsFixture) GetByID(context.Context, int64) (*routing.Group, err
 	return routing.CloneGroup(s.group), nil
 }
 
-// 批量连接方式更新在任何提供商写入前验证统一字段。
+// Validate the shared connection-mode field before any provider write.
 func TestBulkResponsesWSConnectionModeValidation(t *testing.T) {
 	for _, value := range []any{"typo", "", nil, false, 1} {
 		repo := &providerRepoStubForBulkUpdate{}
@@ -498,7 +498,7 @@ func TestBulkResponsesWSConnectionModeValidation(t *testing.T) {
 	}
 }
 
-// TestCNProviderBulkProtocolValidationBeforeWrite 混合平台批量修改须在任何写入前拒绝非法组合。
+// TestCNProviderBulkProtocolValidationBeforeWrite rejects invalid platform/protocol combinations before writing.
 func TestCNProviderBulkProtocolValidationBeforeWrite(t *testing.T) {
 	t.Parallel()
 	repo := &providerServiceTestRepo{providers: map[int64]*providercore.Record{
@@ -545,7 +545,7 @@ func TestUpdateProvider_PreservesSensitiveCredsWhenIncomingOmits(t *testing.T) {
 	}
 	svc := newProviderEditorForTest(repo)
 
-	// 前端修改 base_url 时，脱敏结果中的 token 字段缺失。
+	// Changing base_url through the UI omits redacted token fields.
 	updated, err := svc.UpdateProvider(context.Background(), providerID, &providercore.UpdateProviderInput{
 		Credentials: map[string]any{
 			"base_url": "https://new.example.com",
@@ -556,11 +556,11 @@ func TestUpdateProvider_PreservesSensitiveCredsWhenIncomingOmits(t *testing.T) {
 	require.NotNil(t, updated)
 	require.Equal(t, 1, repo.updateCalls)
 
-	// 敏感键应保留
+	// Omitted secrets retain their stored values.
 	require.Equal(t, "rt-existing", repo.provider.Credentials["refresh_token"])
 	require.Equal(t, "at-existing", repo.provider.Credentials["access_token"])
 	require.Equal(t, "id-existing", repo.provider.Credentials["id_token"])
-	// 非敏感键被替换
+	// Supplied non-secret fields replace their stored values.
 	require.Equal(t, "https://new.example.com", repo.provider.Credentials["base_url"])
 }
 
@@ -583,7 +583,7 @@ func TestUpdateProvider_ExplicitNewTokenOverwrites(t *testing.T) {
 	updated, err := svc.UpdateProvider(context.Background(), providerID, &providercore.UpdateProviderInput{
 		Credentials: map[string]any{
 			"refresh_token": "rt-new",
-			// api_key 没传 → 应保留旧值
+			// An omitted api_key retains its stored value.
 		},
 	})
 	require.NoError(t, err)
@@ -609,7 +609,7 @@ func TestUpdateProvider_EmptyCredentialsSkipsUpdate(t *testing.T) {
 	svc := newProviderEditorForTest(repo)
 
 	_, err := svc.UpdateProvider(context.Background(), providerID, &providercore.UpdateProviderInput{
-		Credentials: map[string]any{}, // len == 0 → 闸门跳过
+		Credentials: map[string]any{}, // An empty map skips credential validation.
 		Name:        "renamed",
 	})
 	require.NoError(t, err)
@@ -919,7 +919,7 @@ func TestUpdateProviderLegacyPatchOverridesEchoedNewShape(t *testing.T) {
 	require.NotContains(t, updated.Extra, "openai_responses_supported")
 }
 
-// TestUpdateProviderDeprecatedProbeOnlyPreservesConfiguration 验证只有废弃键的单提供商更新不得覆盖管理员保存的路由和两个压缩开关。
+// TestUpdateProviderDeprecatedProbeOnlyPreservesConfiguration protects saved routing and both compaction settings from deprecated-only updates.
 func TestUpdateProviderDeprecatedProbeOnlyPreservesConfiguration(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1001,13 +1001,13 @@ func TestUpdateProvider_DisableOveragesClearsAICreditsKey(t *testing.T) {
 	require.Equal(t, 1, repo.updateCalls)
 	require.False(t, updated.IsOveragesEnabled())
 
-	// 关闭 overages 后，AICredits key 应被清除
+	// Disabling overages removes the AI Credits rate limit.
 	rawLimits, ok := repo.provider.Extra["model_rate_limits"].(map[string]any)
 	if ok {
 		_, exists := rawLimits[providercore.CreditsExhaustedKey]
 		require.False(t, exists, "关闭 overages 时应清除 AICredits 限流 key")
 	}
-	// 普通模型限流应保留
+	// Ordinary model rate limits remain.
 	require.True(t, ok)
 	_, exists := rawLimits["claude-sonnet-4-5"]
 	require.True(t, exists, "普通模型限流应保留")
@@ -1068,7 +1068,7 @@ func TestUpdateProvider_EmptyExtraPayloadCanClearQuotaLimits(t *testing.T) {
 
 	svc := newProviderEditorForTest(repo)
 	updated, err := svc.UpdateProvider(context.Background(), providerID, &providercore.UpdateProviderInput{
-		// 空对象表示清空 Extra 中的可配置键，例如关闭配额限制。
+		// An empty object clears configurable Extra keys, such as quota limits.
 		Extra: map[string]any{},
 	})
 
@@ -1166,8 +1166,8 @@ func TestUpdateProvider_ShadowAllowsModelMappingAndGroupUpdate(t *testing.T) {
 	require.Empty(t, updated.GetOpenAIAccessToken(), "影子提供商不可持有母提供商 access_token")
 }
 
-// TestBulkUpdateProviders_RejectsProxyChangeOnShadow 验证批量更新携带 proxy 且
-// 目标含影子必须被拒(与单提供商 UpdateProvider 守卫对齐,堵住 bulk 绕过"proxy 恒继承母提供商")。
+// TestBulkUpdateProviders_RejectsProxyChangeOnShadow checks that a batch containing a shadow
+// cannot bypass the parent's ownership of its proxy.
 func TestBulkUpdateProviders_RejectsProxyChangeOnShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1193,7 +1193,7 @@ func TestBulkUpdateProviders_RejectsProxyChangeOnShadow(t *testing.T) {
 	require.Equal(t, parentProxy, *repo.providers[shadow.ID].ProxyID, "影子 proxy 必须保持继承母提供商")
 }
 
-// TestUpdateProvider_RejectsTypeChangeOnShadow 验证影子 type 不可被普通更新改坏。
+// TestUpdateProvider_RejectsTypeChangeOnShadow protects the shadow's OAuth type.
 func TestUpdateProvider_RejectsTypeChangeOnShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1215,8 +1215,8 @@ func TestUpdateProvider_RejectsTypeChangeOnShadow(t *testing.T) {
 	require.NoError(t, err, "传入相同 type 应允许")
 }
 
-// TestBulkUpdateProviders_RejectsCredentialWriteToShadow 验证批量更新携带凭据时
-// 目标含影子必须被拒(与单提供商 UpdateProvider 守卫对齐,堵住 bulk 绕过)。
+// TestBulkUpdateProviders_RejectsCredentialWriteToShadow checks that a batch containing a shadow
+// cannot bypass credential ownership checks on the single-provider update path.
 func TestBulkUpdateProviders_RejectsCredentialWriteToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1239,7 +1239,7 @@ func TestBulkUpdateProviders_RejectsCredentialWriteToShadow(t *testing.T) {
 	require.Empty(t, repo.providers[shadow.ID].GetOpenAIAccessToken(), "影子 access_token 必须保持为空 —— 批量写入未生效")
 }
 
-// TestUpdateProvider_PropagatesProxyToShadow 检查母提供商更新代理时同步 Spark 影子。
+// TestUpdateProvider_PropagatesProxyToShadow checks that parent proxy changes reach Spark shadows.
 func TestUpdateProvider_PropagatesProxyToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1270,10 +1270,10 @@ func TestUpdateProvider_PropagatesProxyToShadow(t *testing.T) {
 	require.Equal(t, newProxy, *storedShadow.ProxyID)
 }
 
-// TestUpdateProvider_RejectsCredentialWriteToShadow 检查影子提供商拒绝写入鉴权凭据。
-// 在通用更新路径(UpdateProvider,被 edit/re-auth/refresh/batch 共用)上也被守住:
-// 对影子写入 access_token/refresh_token 必须被拒绝,且影子的 access_token/refresh_token
-// 保持为空(Credentials 本身允许持有 CreateShadow 写入的 model_mapping,故不能断言整体为空)。
+// TestUpdateProvider_RejectsCredentialWriteToShadow checks that shadows reject authentication credentials.
+// The shared update path rejects access_token and refresh_token writes to shadows.
+// Those token fields must remain empty, but Credentials may still contain
+// model_mapping created by CreateShadow, so the entire map need not be empty.
 func TestUpdateProvider_RejectsCredentialWriteToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1310,7 +1310,7 @@ func TestUpdateProvider_RejectsCredentialWriteToShadow(t *testing.T) {
 	require.NoError(t, err, "影子的非凭据字段更新应正常")
 }
 
-// TestBulkUpdateProviders_PropagatesProxyToShadow 检查批量更新代理时同步每个提供商的 Spark 影子。
+// TestBulkUpdateProviders_PropagatesProxyToShadow checks propagation to each parent's Spark shadows.
 func TestBulkUpdateProviders_PropagatesProxyToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1344,8 +1344,8 @@ func TestBulkUpdateProviders_PropagatesProxyToShadow(t *testing.T) {
 	require.Equal(t, newProxy, *storedShadow.ProxyID)
 }
 
-// TestUpdateProvider_RejectsParentTypeChangeWithShadow 验证母提供商有 spark 影子时,
-// 不能把 type 改出 OpenAI OAuth(否则影子被调度后透传凭据解析必失败)。
+// TestUpdateProvider_RejectsParentTypeChangeWithShadow protects the OpenAI OAuth parent type
+// required to resolve a scheduled shadow's shared credentials.
 func TestUpdateProvider_RejectsParentTypeChangeWithShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -1367,8 +1367,8 @@ func TestUpdateProvider_RejectsParentTypeChangeWithShadow(t *testing.T) {
 	require.NoError(t, err, "传入相同 type(no-op)应允许")
 }
 
-// TestUpdateProvider_IgnoresProxyChangeOnShadow 验证影子 proxy 恒继承母提供商,
-// 普通更新不得独立改动。
+// TestUpdateProvider_IgnoresProxyChangeOnShadow checks that ordinary edits
+// leave the shadow's inherited proxy unchanged.
 func TestUpdateProvider_IgnoresProxyChangeOnShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()

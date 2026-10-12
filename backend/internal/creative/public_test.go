@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// patternCreativeSettings 提供历史配置中的通配型号。
+// patternCreativeSettings supplies wildcard model names from saved settings.
 type patternCreativeSettings struct {
 	*targetQueryFixture
 	model string
@@ -17,7 +17,7 @@ func (s patternCreativeSettings) GetCreativeModelSettings(context.Context) []Cre
 	return []CreativeModelSetting{{GroupID: 1, Model: s.model, Operations: []string{CreativeOperationGenerate}}}
 }
 
-// TestCreativeRejectsPatternModels 通配模式在用户列表和提交入口都按无效型号处理。
+// TestCreativeRejectsPatternModels checks that listing and submission reject wildcard model names.
 func TestCreativeRejectsPatternModels(t *testing.T) {
 	for _, model := range []string{"gpt-image-2*", "gpt-image-2?"} {
 		t.Run(model, func(t *testing.T) {
@@ -35,7 +35,8 @@ func TestCreativeRejectsPatternModels(t *testing.T) {
 	}
 }
 
-// TestCreativeTargetValidationDoesNotEnumerate 已选定型号的提交校验不读取其他候选。
+// TestCreativeTargetValidationDoesNotEnumerate checks that validating a selected model skips candidate
+// enumeration.
 func TestCreativeTargetValidationDoesNotEnumerate(t *testing.T) {
 	fixture := &targetQueryFixture{}
 	service := newTargetQueryPublic(fixture)
@@ -47,7 +48,7 @@ func TestCreativeTargetValidationDoesNotEnumerate(t *testing.T) {
 	require.Equal(t, 1, fixture.providerReads)
 }
 
-// TestCreativePublicListChecksConfiguredSettings 用户目录只校验管理员开放的型号。
+// TestCreativePublicListChecksConfiguredSettings checks that listing validates the configured model directly.
 func TestCreativePublicListChecksConfiguredSettings(t *testing.T) {
 	fixture := &targetQueryFixture{}
 	result, err := newTargetQueryPublic(fixture).ListModels(context.Background(), 1)

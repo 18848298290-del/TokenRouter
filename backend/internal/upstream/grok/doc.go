@@ -1,18 +1,18 @@
-// Package grok 适配 xAI 的认证、请求格式、流式响应和媒体接口。
+// Package grok adapts xAI authentication, requests, streaming responses, and media APIs.
 //
-// 阅读入口：
-//   - request_patch.go：调整 Responses 请求中的模型、工具和历史消息。
-//   - responses_execute.go：执行 Responses 请求并汇总用量和完成状态。
-//   - oauth.go：定义 OAuth 参数并构造授权与 API 地址。
+// Start with:
+//   - request_patch.go: Responses model, tool, and history normalization.
+//   - responses_execute.go: Responses execution, usage, and completion state.
+//   - oauth.go: OAuth settings and authorization and API URLs.
 //
-// 文件分组：
-//   - oauth*.go、sso_device.go：授权、令牌交换和设备登录。
-//   - request_patch.go、model_input.go、compact.go：请求字段、工具调用历史和上下文压缩。
-//   - cache*.go、chat*.go、composer_images.go：缓存身份、聊天转换和图片描述。
-//   - responses*.go、sse_filter.go：Responses 请求、重试和流式帧过滤。
-//   - media*.go、video_content.go、voice*.go、realtime*.go：图片、视频、语音和实时连接。
-//   - billing*.go、quota*.go、subscription_tier.go、audio_usage.go：账单、额度、订阅等级和音频用量。
-//   - models.go、observed_models.go、standalone_search.go、search_count.go：模型识别、独立搜索和搜索次数统计。
-//   - cli_identity.go、endpoint_policy.go、transport_fallback.go：客户端身份、目标地址和传输回退。
-//   - errors.go、failure_classifier.go：错误识别、冷却和故障转移条件。
+// File groups:
+//   - oauth*.go and sso_device.go: authorization, token exchange, and device login.
+//   - request_patch.go, model_input.go, and compact.go: request fields, tool history, and compaction.
+//   - cache*.go, chat*.go, and composer_images.go: cache identities, chat conversion, and image descriptions.
+//   - responses*.go and sse_filter.go: Responses requests, retries, and stream filtering.
+//   - media*.go, video_content.go, voice*.go, and realtime*.go: images, video, audio, and realtime connections.
+//   - billing*.go, quota*.go, subscription_tier.go, and audio_usage.go: billing, quotas, tiers, and audio usage.
+//   - models.go, observed_models.go, standalone_search.go, and search_count.go: models and search usage.
+//   - cli_identity.go, endpoint_policy.go, and transport_fallback.go: client identity, targets, and transport retries.
+//   - errors.go and failure_classifier.go: error recognition, cooldowns, and failover conditions.
 package grok

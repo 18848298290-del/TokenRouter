@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// 推理档位是 wire 值，管理员映射和排序策略由 routing 拥有。
+// Reasoning constants are wire values; routing owns administrator mappings and ordering policy.
 const (
 	ReasoningNone    = "none"
 	ReasoningMinimal = "minimal"
@@ -15,8 +15,8 @@ const (
 	ReasoningMax     = "max"
 )
 
-// NormalizeClaudeOutputEffort 规范化 Claude 的 output_config.effort 值。
-// 空值和无法识别的值返回 nil。
+// NormalizeClaudeOutputEffort normalizes Claude output_config.effort.
+// Empty and unrecognized values return nil.
 func NormalizeClaudeOutputEffort(raw string) *string {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	if value == "" {
@@ -30,17 +30,17 @@ func NormalizeClaudeOutputEffort(raw string) *string {
 	}
 }
 
-// OpenAIReasoningEfforts 返回可比较档位的独立副本。
+// OpenAIReasoningEfforts returns an independent slice of comparable effort levels in ascending order.
 func OpenAIReasoningEfforts() []string {
 	return []string{ReasoningMinimal, ReasoningLow, ReasoningMedium, ReasoningHigh, ReasoningXHigh, ReasoningMax}
 }
 
-// AnthropicReasoningEfforts 列出 Anthropic 支持的推理档位。
+// AnthropicReasoningEfforts returns the recognized Anthropic effort levels.
 func AnthropicReasoningEfforts() []string {
 	return []string{ReasoningLow, ReasoningMedium, ReasoningHigh, ReasoningXHigh, ReasoningMax}
 }
 
-// OpenAIReasoningMappingValues 包含关闭推理的 none，其余值按推理上限排序。
+// OpenAIReasoningMappingValues prepends none to the ordered effort levels for mapping configuration.
 func OpenAIReasoningMappingValues() []string {
 	return append([]string{ReasoningNone}, OpenAIReasoningEfforts()...)
 }

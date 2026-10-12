@@ -20,7 +20,7 @@ import (
 
 const proxyProviderOutboxChunkSize = 500
 
-// ProxyProviderParticipant 不拥有事务；操作必须落到给定连接。
+// ProxyProviderParticipant performs provider changes on the supplied connection; its caller owns the transaction.
 type ProxyProviderParticipant interface {
 	InvalidateSnapshots(context.Context, int64) ([]int64, error)
 	Reassign(context.Context, int64, *int64) ([]int64, error)
@@ -30,8 +30,8 @@ type ProxyStoreOptions struct {
 	Enqueue   func(context.Context, postgresinfra.Executor, any) error
 }
 
-// sqlQuerier 已替换为 postgresinfra.Executor（定义在 group_repo.go），
-// ProxyStore 使用同一接口以支持 ExecContext。
+// ProxyStore persists proxies and coordinates provider changes through the same
+// SQL executor used for transactional writes.
 type ProxyStore struct {
 	changes ProxyStoreOptions
 	client  *dbent.Client
@@ -375,8 +375,8 @@ func proxyListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 	case "created_at":
 		field = proxy.FieldCreatedAt
 	case "expiry":
-		// expires_at 为 NULL 表示永不过期。dbent.Asc/Desc 使用 PostgreSQL 默认的 NULL 排序，
-		// 升序时 NULL 在最后，降序时在最前。
+		// A NULL expires_at means no expiration. PostgreSQL's default NULL ordering
+		// places these values last in ascending order and first in descending order.
 		field = proxy.FieldExpiresAt
 	default:
 		field = proxy.FieldID
@@ -510,13 +510,11 @@ func (r *ProxyStore) ListActiveWithProviderCount(ctx context.Context) ([]egress.
 		return nil, err
 	}
 
-	// Get provider counts
 	counts, err := r.GetProviderCountsForProxies(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build result with provider counts
 	result := make([]egress.ProxyWithProviderCount, 0, len(proxies))
 	for i := range proxies {
 		proxyOut := ProxyEntity(proxies[i])
@@ -568,7 +566,7 @@ func applyProxyEntityToService(dst *egress.Proxy, src *dbent.Proxy) {
 	dst.UpdatedAt = src.UpdatedAt
 }
 
-// ListAllForFallback 返回所有代理（含过期/非活跃），供改投逻辑使用。
+// ListAllForFallback returns active, expired, and inactive proxies for fallback resolution.
 func (r *ProxyStore) ListAllForFallback(ctx context.Context) ([]egress.Proxy, error) {
 	proxies, err := r.client.Proxy.Query().All(ctx)
 	if err != nil {
@@ -581,12 +579,12 @@ func (r *ProxyStore) ListAllForFallback(ctx context.Context) ([]egress.Proxy, er
 	return out, nil
 }
 
-// SweepExpiredProxies 将到期的 active 代理标记为 expired，并按 fallback 策略更新提供商 proxy_id，返回受影响的提供商数。
-// 每个代理的标记和提供商更新由 sweepOneExpiredProxy 在单独的事务中提交。
-// 全部处理后通过 r.sql 发布一次 provider_bulk_changed 事件，使调度缓存失效。
-// 事件在这些事务之外发布，失败时记录日志，缓存由调度器周期性全量重建更新。
+// SweepExpiredProxies marks expired active proxies and reassigns providers according to fallback policy.
+// Each proxy's status and provider changes are committed in a separate transaction.
+// After processing, a bulk provider change event invalidates reassigned providers' caches.
+// That event is outside the transactions; enqueue failures are logged for later cache refresh.
 func (r *ProxyStore) SweepExpiredProxies(ctx context.Context, now time.Time) (int64, error) {
-	// 快照读（事务前）：允许脏读不影响正确性，事务内已加锁写。
+	// Read fallback candidates before opening each proxy's write transaction.
 	all, err := r.ListAllForFallback(ctx)
 	if err != nil {
 		return 0, err
@@ -606,7 +604,7 @@ func (r *ProxyStore) SweepExpiredProxies(ctx context.Context, now time.Time) (in
 
 		target, change := egress.ResolveProxyFallbackTarget(p, byID, now)
 		if !change && p.FallbackMode == egress.FallbackModeProxy {
-			// 配置了 proxy 回退但链路无解（成环或全部已过期），记录告警日志
+			// Warn when a configured proxy fallback chain cannot resolve a usable target.
 			logger.LegacyPrintf("repository.proxy", "[ProxyExpiry] proxy %d expired but fallback chain unresolved (cycle/all-expired); providers kept", p.ID)
 		}
 
@@ -620,8 +618,8 @@ func (r *ProxyStore) SweepExpiredProxies(ctx context.Context, now time.Time) (in
 
 	changedProviderIDs := SortedUniqueProviderIDs(allChangedProviderIDs)
 	if len(changedProviderIDs) > 0 {
-		// 各代理的改投事务已经提交；这里仅汇总真实被 UPDATE 命中的提供商，
-		// 避免代理到期时用全量重建刷新所有调度分桶。
+		// The reassignment transactions have committed; publish the provider IDs they changed
+		// so the scheduler can refresh affected buckets.
 		payload := map[string]any{"provider_ids": changedProviderIDs}
 		if err := r.changes.Enqueue(ctx, r.sql, payload); err != nil {
 			logger.LegacyPrintf("repository.proxy", "[SchedulerOutbox] enqueue proxy expiry provider changes failed: err=%v", err)
@@ -646,20 +644,20 @@ func SortedUniqueProviderIDs(providerIDs []int64) []int64 {
 	return providerIDs[:write]
 }
 
-// sweepOneExpiredProxy 在单事务内原子执行：标记代理 expired + 改投绑定提供商。
-// 若 r.client 已绑定事务（测试注入场景），直接在 r.sql 上执行，由外层事务保证原子性。
+// sweepOneExpiredProxy commits expiration and provider reassignment in one transaction.
+// When the client already has a transaction, the caller must supply its executor in r.sql.
 func (r *ProxyStore) sweepOneExpiredProxy(ctx context.Context, proxyID int64, target *int64, change bool) ([]int64, error) {
-	// 尝试开启子事务；若 r.client 已是事务 client，则返回 ErrTxStarted，退回使用 r.sql。
+	// A transaction-bound client returns ErrTxStarted; use its supplied executor in that case.
 	tx, txErr := r.client.Tx(ctx)
 	if txErr != nil {
 		if txErr != dbent.ErrTxStarted {
 			return nil, txErr
 		}
-		// 已在外层事务中（集成测试场景），直接用 r.sql 执行
+		// The outer transaction owns commit and rollback.
 		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, proxyID, target, change)
 	}
 
-	// 使用新事务执行
+	// Commit both writes together.
 	var providerIDs []int64
 	var err error
 	providerIDs, err = r.sweepOneExpiredProxyOnExec(ctx, tx, proxyID, target, change)
@@ -673,7 +671,7 @@ func (r *ProxyStore) sweepOneExpiredProxy(ctx context.Context, proxyID int64, ta
 	return providerIDs, nil
 }
 
-// sweepOneExpiredProxyOnExec 在给定的 postgresinfra.Executor 上执行：标记 expired + 改投提供商。
+// sweepOneExpiredProxyOnExec marks the proxy expired and updates providers through exec.
 func (r *ProxyStore) sweepOneExpiredProxyOnExec(ctx context.Context, exec postgresinfra.Executor, proxyID int64, target *int64, change bool) ([]int64, error) {
 	if _, err := exec.ExecContext(ctx,
 		`UPDATE proxies SET status=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
@@ -693,14 +691,14 @@ func (r *ProxyStore) sweepOneExpiredProxyOnExec(ctx context.Context, exec postgr
 	return r.changes.Providers(exec).Reassign(ctx, proxyID, target)
 }
 
-// CountExpired 返回已过期（status=expired）的代理数量。
+// CountExpired counts proxies whose stored status is expired.
 func (r *ProxyStore) CountExpired(ctx context.Context) (int64, error) {
 	var c int64
 	err := postgresinfra.ScanSingleRow(ctx, r.sql, `SELECT COUNT(*) FROM proxies WHERE status=$1 AND deleted_at IS NULL`, []any{egress.StatusExpired}, &c)
 	return c, err
 }
 
-// CountExpiringSoon 返回即将到期（在 expiry_warn_days 天内）的活跃代理数量。
+// CountExpiringSoon counts active proxies expiring within their configured warning period.
 func (r *ProxyStore) CountExpiringSoon(ctx context.Context, now time.Time) (int64, error) {
 	var c int64
 	err := postgresinfra.ScanSingleRow(ctx, r.sql, `

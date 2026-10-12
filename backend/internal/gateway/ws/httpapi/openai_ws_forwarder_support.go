@@ -21,8 +21,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIWSTerminalPolicyDecision 保存终止事件类型和提供商策略结果。
-// 调用方在写给客户端前检查通用错误和故障转移。
+// openAIWSTerminalPolicyDecision contains the terminal event and provider-policy result.
+// Callers check generic-error and failover decisions before writing to the client.
 type openAIWSTerminalPolicyDecision struct {
 	TerminalEvent string
 	StatusCode    int
@@ -89,8 +89,8 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 	}
 }
 
-// openAIWSErrorPolicyStatus 解析 WS 错误事件用于提供商策略的状态码。
-// 事件携带状态码时按该值匹配自定义规则，缺失时按 WS 错误类型映射。
+// openAIWSErrorPolicyStatus resolves the status used by provider error policies.
+// It prefers a valid status in the event, then maps the WebSocket error type.
 func openAIWSErrorPolicyStatus(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
@@ -147,8 +147,8 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSErrorEventTransientFailure(ctx c
 	return s.applyOpenAIWSEventErrorPolicy(ctx, provider, canonicalModel, status, headers, payload)
 }
 
-// markOpenAIWSClientVisibleFailure 记录已经写给客户端的 WS 错误事件，避免把
-// 已经完成故障转移的内部错误重复计入 Ops。
+// markOpenAIWSClientVisibleFailure records delivered error events for Ops,
+// excluding internal failures recovered by failover.
 func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte) {
 	eventType = strings.TrimSpace(eventType)
 	if eventType != "error" && eventType != "response.failed" {
@@ -189,8 +189,8 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	gatewayhttp.MarkOpsStreamFailure(c, errType, code, message, status)
 }
 
-// handleOpenAIWSFailureProviderSideEffects 将 WS 错误事件映射到提供商健康策略，
-// 返回值用于成对的 error/response.failed 事件去重。
+// handleOpenAIWSFailureProviderSideEffects applies provider health updates for an error event.
+// Its result lets the caller deduplicate paired error and response.failed events.
 func (s *OpenAIWebSocketExecutor) handleOpenAIWSFailureProviderSideEffects(ctx context.Context, provider *gatewayprovider.ExecutionProvider, canonicalModel string, headers http.Header, payload []byte) bool {
 	message := upstreamopenai.ExtractOpenAISSEErrorMessage(payload)
 	status := upstreamopenai.OpenAIStreamFailureStatus(payload, message)
@@ -221,8 +221,8 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSDialTransientFailure(ctx context
 	return s.applyOpenAIWSEventErrorPolicy(ctx, provider, canonicalModel, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
 }
 
-// applyOpenAIWSEventErrorPolicy 将握手和事件错误接入统一提供商策略。
-// 请求级错误保持原样，响应尚未输出时由调用方依据返回决策决定是否故障转移。
+// applyOpenAIWSEventErrorPolicy applies shared provider policy to handshake and event failures.
+// Request-scoped failures receive no policy; callers can fail over before client output starts.
 func (s *OpenAIWebSocketExecutor) applyOpenAIWSEventErrorPolicy(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -240,7 +240,7 @@ func (s *OpenAIWebSocketExecutor) applyOpenAIWSEventErrorPolicy(
 	return gatewayprovider.ApplyOpenAIResponseHealth(ctx, s.Output.Health, provider, statusCode, headers, payload, false, canonicalModel)
 }
 
-// shouldFailoverOpenAIWSError 使用对应平台的 HTTP 错误分类作为 WS 握手和事件错误的默认切号规则。
+// shouldFailoverOpenAIWSError uses platform HTTP error classification for WS handshake and event failures.
 func (s *OpenAIWebSocketExecutor) shouldFailoverOpenAIWSError(provider *gatewayprovider.ExecutionProvider, statusCode int, payload []byte) bool {
 	if statusCode == 0 {
 		return false
@@ -252,7 +252,7 @@ func (s *OpenAIWebSocketExecutor) shouldFailoverOpenAIWSError(provider *gatewayp
 	return gatewayprovider.ShouldFailoverOpenAIResponse(statusCode, upstreamMsg, payload)
 }
 
-// openAIWSGenericPolicyCloseError 在 WS 入站尚未输出时用统一文案终止连接。
+// openAIWSGenericPolicyCloseError closes an ingress connection with the generic message before client output.
 func openAIWSGenericPolicyCloseError(statusCode int) error {
 	return gatewayhttp.NewOpenAIWSClientCloseError(
 		coderws.StatusInternalError,

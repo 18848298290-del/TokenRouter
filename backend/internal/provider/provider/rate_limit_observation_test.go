@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// updateExtraSpyRepo 记录 UpdateExtra 是否被调用,用于验证影子 codex_* 快照守卫。
+// updateExtraSpyRepo records snapshot writes to check the shadow-provider guard.
 type updateExtraSpyRepo struct {
 	*openAI429SnapshotRepo
 	updateExtraCalled bool
@@ -29,7 +29,7 @@ type openAI429SnapshotRepo struct {
 	bulkUpdatedPayload providercore.ProviderBulkUpdate
 }
 
-// 观测替身记录本次字段写入，健康规则和平台解析使用生产实现。
+// openAI429Store supplies writes for tests that use production health rules and parsers.
 type openAI429Store interface {
 	providercore.HealthStore
 	providercore.SessionWindowStore
@@ -43,8 +43,8 @@ type rateLimit429ProviderRepoStub struct {
 	lastRateLimitReset time.Time
 }
 
-// TestPersistOpenAI429PlanType_SkipsShadow 检查影子提供商跳过 429 响应中的 plan_type 写入。
-// 普通提供商通过 BulkUpdate 写入 credentials。
+// TestPersistOpenAI429PlanType_SkipsShadow checks that 429 plan_type observations skip shadows.
+// Ordinary providers persist the observed plan in credentials.
 func TestPersistOpenAI429PlanType_SkipsShadow(t *testing.T) {
 	ctx := context.Background()
 	body := []byte(`{"error":{"type":"usage_limit_reached","plan_type":"pro"}}`)
@@ -65,8 +65,8 @@ func TestPersistOpenAI429PlanType_SkipsShadow(t *testing.T) {
 	})
 }
 
-// TestPersistOpenAICodexSnapshot_SkipsShadow 检查影子提供商跳过 429 响应中的全局额度头。
-// 影子 codex_* 快照由 QueryUsage 的 /wham/usage bengalfox 查询更新。
+// TestPersistOpenAICodexSnapshot_SkipsShadow checks that global quota headers skip shadows.
+// QueryUsage updates shadow codex_* snapshots from /wham/usage bengalfox data.
 func TestPersistOpenAICodexSnapshot_SkipsShadow(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "50")
@@ -137,9 +137,9 @@ func TestHandle429_OpenAISyncsObservedPlanType(t *testing.T) {
 	require.Equal(t, provider.ID, repo.rateLimitedID)
 }
 
-// TestHandle429_SkipsSparkShadow spark 影子的限流状态只由 QueryUsage(/wham/usage
-// codex_bengalfox)维护;/responses 429 携带的 global x-codex-* 不得对影子做任何 DB 限流写入,
-// 否则会把 spark 误耦合到 global codex 窗口、冷却到 global reset。
+// TestHandle429_SkipsSparkShadow keeps /responses global x-codex-* observations
+// from writing a shadow's rate limit. Spark quotas come from codex_bengalfox in /wham/usage,
+// so a global reset must not determine the shadow's cooldown.
 func TestHandle429_SkipsSparkShadow(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "100")
@@ -165,7 +165,7 @@ func TestHandle429_SkipsSparkShadow(t *testing.T) {
 	require.Zero(t, shadowRepo.rateLimitedID, "spark shadow must not be SetRateLimited from /responses global 429")
 	require.Empty(t, shadowRepo.updatedExtra, "spark shadow must not get a codex snapshot from /responses 429")
 
-	// 反向对照:普通 OpenAI OAuth 提供商仍按 global 429 限流。
+	// Ordinary OpenAI OAuth providers still use the global 429 window.
 	normalRepo := &openAI429SnapshotRepo{}
 	normalSvc := newOpenAI429Observer(normalRepo)
 	normal := &providercore.Record{ID: 902, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
@@ -211,7 +211,8 @@ func TestHandle429_FallbackDisabledSkipsLocalMark(t *testing.T) {
 	require.Zero(t, providerRepo.rateLimitCalls)
 }
 
-// TestHandle429_AnthropicNoResetTimeUsesFallbackCooldown 检查 Anthropic 的 429 缺少 reset 头时采用默认短冷却。
+// TestHandle429_AnthropicNoResetTimeUsesFallbackCooldown checks the configured cooldown when reset headers are
+// absent.
 func TestHandle429_AnthropicNoResetTimeUsesFallbackCooldown(t *testing.T) {
 	providerRepo := &rateLimit429ProviderRepoStub{}
 	settingRepo := newCooldownSettingsStore()
@@ -232,7 +233,8 @@ func TestHandle429_AnthropicNoResetTimeUsesFallbackCooldown(t *testing.T) {
 	require.True(t, !providerRepo.lastRateLimitReset.Before(before.Add(12*time.Second)) && !providerRepo.lastRateLimitReset.After(after.Add(12*time.Second)))
 }
 
-// TestHandle429_AnthropicNoResetTimeFallbackDisabledSkipsMark 检查默认冷却关闭后，缺少 reset 头的 429 保持提供商状态不变。
+// TestHandle429_AnthropicNoResetTimeFallbackDisabledSkipsMark checks that disabling the cooldown leaves health
+// unchanged.
 func TestHandle429_AnthropicNoResetTimeFallbackDisabledSkipsMark(t *testing.T) {
 	providerRepo := &rateLimit429ProviderRepoStub{}
 	settingRepo := newCooldownSettingsStore()

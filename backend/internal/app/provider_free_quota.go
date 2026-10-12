@@ -11,14 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// selectionFreeQuotaGates 保存两种普通选择流程和高级选择器各自的免费额度缓存。
+// selectionFreeQuotaGates holds separate free-quota caches for generic and compatible selection,
+// and a cache factory for advanced selectors.
 type selectionFreeQuotaGates struct {
 	Generic    *provider.FreeQuotaGate
 	Compatible *provider.FreeQuotaGate
 	Advanced   func() *provider.FreeQuotaGate
 }
 
-// provideSelectionFreeQuota 绑定免费额度配置和用量来源，缓存及后台任务由额度组件管理。
+// provideSelectionFreeQuota binds quota configuration and usage reads to gates that own their caches and refresh tasks.
 func provideSelectionFreeQuota(cfg *config.Config, reader usage.UsageLogRepository, tasks *lifecycle.Tasks) *selectionFreeQuotaGates {
 	metrics := &provider.FreeQuotaMetrics{}
 	options := func() provider.FreeQuotaOptions {
@@ -46,6 +47,6 @@ func provideSelectionFreeQuota(cfg *config.Config, reader usage.UsageLogReposito
 			}
 		}, metrics)
 	}
-	// 两种普通选择流程各自使用一份缓存，高级调度器的每个实例也有独立缓存。
+	// Each advanced selector receives its own cache, as do the generic and compatible selectors.
 	return &selectionFreeQuotaGates{Generic: factory(), Compatible: factory(), Advanced: factory}
 }

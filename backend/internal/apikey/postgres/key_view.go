@@ -47,7 +47,7 @@ func userEntityToKeyView(u *dbent.User) *keycore.User {
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
 	}
-	// Parse extra emails JSON (supports both old []string and new []NotifyEmailEntry format)
+	// Accept both string-array and NotifyEmailEntry-array notification JSON.
 	if u.BalanceNotifyExtraEmails != "" && u.BalanceNotifyExtraEmails != "[]" {
 		out.BalanceNotifyExtraEmails = contact.ParseNotifyEmails(u.BalanceNotifyExtraEmails)
 	}

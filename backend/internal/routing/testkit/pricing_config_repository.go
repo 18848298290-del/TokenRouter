@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// PricingConfigRepositoryStub 由用例明确注入各个存储结果。
+// PricingConfigRepositoryStub lets each test supply repository results.
 type PricingConfigRepositoryStub struct {
 	ListAllFn                        func(ctx context.Context) ([]Configuration, error)
 	GetGroupPlatformsFn              func(ctx context.Context, groupIDs []int64) (map[int64]string, error)
@@ -158,12 +158,12 @@ func (m *PricingConfigRepositoryStub) ReplaceModelPricing(ctx context.Context, p
 	return nil
 }
 
-// NewConfigServiceFixture 使用原时钟和时区规则构造真实模型配置服务。
+// NewConfigServiceFixture constructs the production service with a clock and timezone loader.
 func NewConfigServiceFixture(repo *PricingConfigRepositoryStub) *routing.PricingConfigService {
 	return NewPricingConfigService(repo, nil, routing.PricingConfigOptions{Warn: slog.Warn, Now: time.Now, LoadLocation: pricingprovider.LoadPricingLocation})
 }
 
-// StandardPricingConfigRepository 提供一个配置及指定分组平台的测试记录。
+// StandardPricingConfigRepository supplies one configuration and group-platform records.
 func StandardPricingConfigRepository(ch Configuration, groupPlatforms map[int64]string) *PricingConfigRepositoryStub {
 	return &PricingConfigRepositoryStub{
 		ListAllFn: func(_ context.Context) ([]Configuration, error) {

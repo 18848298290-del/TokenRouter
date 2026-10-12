@@ -6,13 +6,14 @@ import (
 	"strings"
 
 	"entgo.io/ent/dialect"
-	// 其它方言使用逐项占位符，便于 SQLite 回归测试覆盖真实 SQL。
-	// 每个 Key 只做一次有序索引探测，避免为整段历史记录计算窗口排名。
 	"github.com/lib/pq"
 
-	infra "github.com/TokenFlux/TokenRouter/internal/infra/postgres" // KeyLatestUsageLogIPsQuery 按数据库方言生成批量查询：PostgreSQL 使用数组，
+	infra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// KeyLatestUsageLogIPsQuery builds a dialect-specific latest-IP query.
+// PostgreSQL uses one ordered index probe per key with an array parameter;
+// other dialects use individual placeholders and rank matching records.
 func KeyLatestUsageLogIPsQuery(apiKeyIDs []int64, dialectName string) (string, []any) {
 	if dialectName == dialect.Postgres {
 		return `
@@ -48,7 +49,7 @@ func KeyLatestUsageLogIPsQuery(apiKeyIDs []int64, dialectName string) (string, [
 		WHERE rn = 1`, strings.Join(placeholders, ", ")), args
 }
 
-// KeyLatestUsageLogIPs 从 usage_logs 查询每个 API Key 最新的非空 IP。
+// KeyLatestUsageLogIPs returns each API key's latest nonempty IP from usage_logs.
 func KeyLatestUsageLogIPs(ctx context.Context, db infra.Executor, dialectName string, apiKeyIDs []int64) (result map[int64]string, err error) {
 	if len(apiKeyIDs) == 0 || db == nil {
 		return map[int64]string{}, nil

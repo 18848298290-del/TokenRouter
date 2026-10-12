@@ -7,34 +7,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MessagesResult 保存通用 Messages 执行的原始用量与完成元数据，不携带旧业务实体。
+// MessagesResult contains raw Messages usage and completion metadata.
 type MessagesResult struct {
-	// UpstreamResponseModel 是协议转换前的上游模型声明；空值表示未声明。
+	// UpstreamResponseModel is the declaration before protocol conversion; empty means absent.
 	UpstreamResponseModel string
 	RequestID             string
-	// UpstreamHeaders 是直接上游的响应头，用于按提供商配置解析上游请求标识。
+	// UpstreamHeaders contains direct upstream headers for provider-specific request-ID extraction.
 	UpstreamHeaders map[string][]string
 	Usage           upstream.TokenUsage
 	Model           string
 	// UpstreamModel is the actual upstream model after mapping.
-	// Prefer empty when it is identical to Model; persistence normalizes equal values away as no-op mappings.
+	// It may equal Model when no mapping was applied.
 	UpstreamModel    string
 	Stream           bool
 	Duration         time.Duration
-	FirstTokenMs     *int // 首字时间（流式请求）
-	ClientDisconnect bool // 客户端是否在流式传输过程中断开
+	FirstTokenMs     *int // Time to first token, in milliseconds.
+	ClientDisconnect bool // Whether the client disconnected during streaming.
 	ReasoningEffort  *string
-	// RequestedReasoningEffort 保存客户端在兼容层映射前提交的推理档位。
+	// RequestedReasoningEffort captures client effort before compatibility mapping.
 	RequestedReasoningEffort *string
-	// UpstreamResponseServiceTier 是上游响应声明的实际服务档位；空值表示未声明或无法确认。
+	// UpstreamResponseServiceTier is the observed tier; empty means absent or unconfirmed.
 	UpstreamResponseServiceTier string
-	// ServiceTier 是请求侧声明的服务档位；计费时只允许按上游实际档位降档。
+	// ServiceTier is the requested tier; billing may lower it based on upstream observations.
 	ServiceTier *string
-	// 图片生成计费字段（图片生成模型使用）
-	ImageCount         int    // 生成的图片数量
-	ImageSize          string // 最终计费尺寸 "1K", "2K", "4K"
-	ImageInputSize     string // 请求中的原始图片尺寸
-	ImageOutputSize    string // 上游响应中的图片尺寸
+	// Image-generation billing metadata.
+	ImageCount         int    // Number of generated images.
+	ImageSize          string // Billing tier: "1K", "2K", or "4K".
+	ImageInputSize     string // Requested image dimensions.
+	ImageOutputSize    string // Dimensions reported by upstream.
 	ImageOutputSizes   []string
 	ImageSizeSource    string
 	ImageSizeBreakdown map[string]int
@@ -42,7 +42,7 @@ type MessagesResult struct {
 	AudioUsage         *protocol.AudioUsage
 }
 
-// MessagesFromAttempt 将本次尝试的基础观测转换为 Messages 结果，Header 和媒体数据由调用方补充。
+// MessagesFromAttempt copies basic attempt observations; callers add headers and media metadata.
 func MessagesFromAttempt(result upstream.AttemptResult) *MessagesResult {
 	return &MessagesResult{
 		RequestID:             result.RequestID,

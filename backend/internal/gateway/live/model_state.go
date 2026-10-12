@@ -23,7 +23,7 @@ func firstModel(first, fallback string) string {
 	return fallback
 }
 
-// newLiveSidebandModelState 使用创建会话时的模型链初始化双向恢复状态。
+// newLiveSidebandModelState initializes model restoration from the session's creation-time model chain.
 func newLiveSidebandModelState(record *session.LiveCallRecord) *liveSidebandModelState {
 	state := &liveSidebandModelState{internalModels: make(map[string]struct{})}
 	if record == nil {
@@ -67,7 +67,7 @@ func (s *liveSidebandModelState) snapshot() (string, []string) {
 	return clientModel, models
 }
 
-// RestoreServerPayload 只恢复 Live 响应中的协议模型字段。
+// RestoreServerPayload restores client model names in Live protocol metadata fields.
 func RestoreServerPayload(payload []byte, clientModel string, internalModels []string) []byte {
 	clientModel = strings.TrimSpace(clientModel)
 	if clientModel == "" || len(internalModels) == 0 || !gjson.ValidBytes(payload) {

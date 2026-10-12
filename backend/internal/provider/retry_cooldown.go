@@ -2,7 +2,7 @@ package provider
 
 import "context"
 
-// RetryCooldownStore 读取最新池模式，只写明确的临时停调字段。
+// RetryCooldownStore reads current pool-mode settings and writes temporary scheduling failures.
 type RetryCooldownStore interface {
 	TemporaryFailureStore
 	GetByID(context.Context, int64) (*Record, error)
@@ -20,7 +20,7 @@ type RetryCooldownOptions struct {
 	LookupError func(int64, error)
 }
 
-// RetryCooldown 在重试耗尽后应用兼容冷却规则。
+// RetryCooldown applies status-specific cooldowns after retry exhaustion.
 type RetryCooldown struct {
 	store   RetryCooldownStore
 	options RetryCooldownOptions

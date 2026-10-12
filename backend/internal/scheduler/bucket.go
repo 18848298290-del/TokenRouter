@@ -20,14 +20,14 @@ var (
 	ErrSchedulerGroupLifecycleLeaseLost    = errors.New("scheduler group lifecycle lease lost")
 )
 
-// SchedulerBucketWriteToken 将快照 writer 限定在指定桶的一个 epoch 内。
-// 必须在数据库加载或重建任务排队前取得 token。
+// SchedulerBucketWriteToken fences a snapshot writer to one bucket epoch.
+// Acquire the token before loading from the database or queuing a rebuild.
 type SchedulerBucketWriteToken struct {
 	Bucket SchedulerBucket
 	Epoch  int64
 }
 
-// SchedulerGroupLifecycleLease 标识分组短期退休/重开临界区的持有者。
+// SchedulerGroupLifecycleLease identifies the owner of a group's retire/reopen critical section.
 type SchedulerGroupLifecycleLease struct {
 	GroupID    int64
 	OwnerToken string

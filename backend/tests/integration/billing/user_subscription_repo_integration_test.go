@@ -373,7 +373,7 @@ func (s *UserSubscriptionRepoSuite) TestResetDailyUsage_StaleResetDoesNotClearNe
 	newWindowStart := oldWindowStart.Add(24 * time.Hour)
 	s.Require().NoError(s.repo.ResetDailyUsage(s.ctx, sub.ID, &oldWindowStart, newWindowStart))
 	s.Require().NoError(s.repo.IncrementUsage(s.ctx, sub.ID, 3))
-	// 模拟第二个请求携带旧窗口快照，确保不会清空新窗口中的用量。
+	// A second request with the stale window start must leave the new window's usage intact.
 	s.Require().NoError(s.repo.ResetDailyUsage(s.ctx, sub.ID, &oldWindowStart, newWindowStart))
 
 	got, err := s.repo.GetByID(s.ctx, sub.ID)

@@ -273,7 +273,7 @@ func (h *DataManagementHandler) GetBackupJob(c *gin.Context) {
 	h.respondAgentUnavailable(c)
 }
 
-// respondAgentUnavailable 写出数据管理服务缺失或功能下线的错误响应。
+// respondAgentUnavailable reports an unavailable or retired data-management service.
 func (h *DataManagementHandler) respondAgentUnavailable(c *gin.Context) {
 	if h.dataManagementService == nil {
 		err := infraerrors.ServiceUnavailable(

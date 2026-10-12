@@ -30,7 +30,7 @@ func TestAntigravityTokenProvider_GetAccessToken_Guards(t *testing.T) {
 		require.Empty(t, token)
 	})
 
-	// 静态密钥即使存在，也不能作为 OAuth token 使用。
+	// Static keys are not accepted as OAuth access tokens.
 	for _, kind := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeUpstream} {
 		t.Run(kind, func(t *testing.T) {
 			provider := &Record{

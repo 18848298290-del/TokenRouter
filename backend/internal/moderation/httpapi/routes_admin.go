@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterContentModerationRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterContentModerationRoutes installs risk-control routes on a group already configured with
+// authentication, rate limiting, and audit middleware.
 func RegisterContentModerationRoutes(admin *gin.RouterGroup, endpoint *ContentModerationHandler) {
 	risk := admin.Group("/risk-control")
 	{

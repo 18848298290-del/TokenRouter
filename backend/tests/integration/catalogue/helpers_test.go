@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// catalogueRows 提供全量和按分组的可调度提供商查询。
+// catalogueRows lists schedulable providers globally or within a group.
 type catalogueRows interface {
 	ListSchedulable(context.Context) ([]provider.Record, error)
 	ListSchedulableByGroupID(context.Context, int64) ([]provider.Record, error)
@@ -64,7 +64,8 @@ func (s *modelsListProviderRepoStub) ListSchedulable(context.Context) ([]provide
 	return out, nil
 }
 
-// newCatalogueFixture 使用提供商查询、分组策略和价格解析器构造可请求模型目录。
+// newCatalogueFixture connects provider queries and group policies and retains the resolver for
+// marketplace pricing.
 func newCatalogueFixture(rows catalogueRows, pricingConfigs *routing.PricingConfigService, prices *billing.PriceResolver) *catalogueFixture {
 	var read func(context.Context, *int64) ([]routing.CatalogueProvider, error)
 	if rows != nil {
@@ -79,7 +80,7 @@ func newCatalogueFixture(rows catalogueRows, pricingConfigs *routing.PricingConf
 			if err != nil {
 				return nil, err
 			}
-			// 按平台为缺少认证类型的测试提供商补齐默认类型。
+			// Supply platform-appropriate types for fixtures that omit authentication type.
 			for index := range values {
 				if values[index].Type == "" {
 					switch values[index].Platform {

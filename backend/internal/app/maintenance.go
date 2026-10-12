@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// provideBackup 绑定唯一运行实例，维护取消早于 HTTP 等待。
+// provideBackup creates the shared backup service and cancels maintenance before waiting for HTTP handlers.
 func provideBackup(settings *settings.Store, cfg *config.Config, cipher identity.SecretEncryptor, db *sql.DB, manager *lifecycle.Manager) *backup.BackupService {
 	d := cfg.Database
 	path := bp.DefaultBackupLocalPath()

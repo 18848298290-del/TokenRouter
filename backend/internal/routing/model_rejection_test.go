@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rejectionRulesProbe 记录规则读取时点，避免提取后提前读取不合资格提供商的配置。
+// rejectionRulesProbe records reads to check that ineligible providers' rules remain unread.
 type rejectionRulesProbe struct {
 	eligible, mixed bool
 	configured      []string

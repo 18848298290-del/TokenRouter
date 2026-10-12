@@ -28,7 +28,7 @@ type BatchImageHandler struct {
 	access   AccessPorts
 }
 
-// AccessPorts 读取已认证请求的唯一快照；任务 handler 不再次解析或验证凭据。
+// AccessPorts reads the authenticated request snapshot supplied by gateway middleware.
 type AccessPorts struct {
 	Key                   func(*gin.Context) (*apikey.APIKey, bool)
 	PreferredSubscription func(*gin.Context) (*billing.UserSubscription, bool)
@@ -197,7 +197,7 @@ func (h *BatchImageHandler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
-// AppendBatchImageAPIKeyModelAliases 按目标模型的提供方克隆批量图片模型别名。
+// AppendBatchImageAPIKeyModelAliases adds aliases using each target model provider as a template.
 func AppendBatchImageAPIKeyModelAliases(models []batchimage.BatchImagePublicModel, mapping map[string]string) []batchimage.BatchImagePublicModel {
 	modelIDs := make([]string, 0, len(models))
 	templates := make(map[string][]batchimage.BatchImagePublicModel)
@@ -311,8 +311,8 @@ func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 	h.markDownloadedBestEffort(c, owner)
 }
 
-// markDownloadedBestEffort 在响应体已写出后标记下载状态；
-// 此时无法再向客户端返回错误，失败只能记日志（不能静默丢弃）。
+// markDownloadedBestEffort records download completion after writing the response body.
+// The response is already committed, so failures are logged.
 func (h *BatchImageHandler) markDownloadedBestEffort(c *gin.Context, owner batchimage.BatchImageOwner) {
 	if err := h.service.MarkDownloaded(c.Request.Context(), owner, c.Param("id")); err != nil {
 		logging.L().Warn("batch_image.mark_downloaded_failed",
@@ -461,5 +461,5 @@ func (h *BatchImageHandler) preferred(c *gin.Context, k *apikey.APIKey) (*billin
 	return value, true
 }
 
-// BindActivity 在构造阶段绑定任务入口关闭屏障，释放覆盖完整 HTTP 流式输出。
+// BindActivity installs the shutdown admission check before serving requests; activity includes streamed output.
 func (h *BatchImageHandler) BindActivity(enter func() (func(), error)) { h.enter = enter }

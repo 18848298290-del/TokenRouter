@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 billing.go 与 http_modules_wire.go 装配的订阅计划 JSON 输出。
+// These tests cover subscription plan JSON exposed through billing and HTTP assembly.
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func (f billingPlanHTTPFixture) ListPlans(context.Context) ([]*billing.Subscript
 	return f.plans, nil
 }
 
-// TestBillingPlanHTTPPreservesEntJSON 检查套餐字段和未填写文案时的初始编辑内容。
+// TestBillingPlanHTTPPreservesEntJSON checks plan fields and initial editor content when copy is absent.
 func TestBillingPlanHTTPPreservesEntJSON(t *testing.T) {
 	zero, original := 0.0, 25.0
 	now := time.Date(2026, 9, 12, 10, 15, 0, 0, time.FixedZone("test", 8*60*60))

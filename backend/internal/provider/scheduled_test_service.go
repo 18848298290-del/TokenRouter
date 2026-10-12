@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ScheduledTestService 拥有提供商计划测试的管理与结果保留规则。
+// ScheduledTestService manages recurring provider tests and result retention.
 type ScheduledTestService struct {
 	options    ScheduledTestOptions
 	planRepo   ScheduledTestPlanRepository
@@ -18,7 +18,7 @@ type ScheduledTestOptions struct {
 	NextRun func(string, time.Time) (time.Time, error)
 }
 
-// NewScheduledTestService 仅保存依赖，不启动后台任务。
+// NewScheduledTestService stores dependencies without starting background work.
 func NewScheduledTestService(
 	planRepo ScheduledTestPlanRepository,
 	resultRepo ScheduledTestResultRepository,
@@ -31,7 +31,7 @@ func NewScheduledTestService(
 	}
 }
 
-// CreatePlan 先校验 cron 并计算下次时间，再持久化计划。
+// CreatePlan validates the cron schedule, computes the next run, and persists the plan.
 func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
 	nextRun, err := s.options.NextRun(plan.CronExpression, s.options.Now())
 	if err != nil {
@@ -46,17 +46,17 @@ func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTe
 	return s.planRepo.Create(ctx, plan)
 }
 
-// GetPlan 按 ID 读取计划。
+// GetPlan reads a plan by ID.
 func (s *ScheduledTestService) GetPlan(ctx context.Context, id int64) (*ScheduledTestPlan, error) {
 	return s.planRepo.GetByID(ctx, id)
 }
 
-// ListPlansByProvider 返回指定提供商的全部计划。
+// ListPlansByProvider returns all plans for the provider.
 func (s *ScheduledTestService) ListPlansByProvider(ctx context.Context, providerID int64) ([]*ScheduledTestPlan, error) {
 	return s.planRepo.ListByProviderID(ctx, providerID)
 }
 
-// UpdatePlan 校验 cron 后更新计划与下次执行时间。
+// UpdatePlan validates the cron schedule and updates the next execution time.
 func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
 	nextRun, err := s.options.NextRun(plan.CronExpression, s.options.Now())
 	if err != nil {
@@ -67,12 +67,12 @@ func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTe
 	return s.planRepo.Update(ctx, plan)
 }
 
-// DeletePlan 删除计划，结果由原数据库约束级联删除。
+// DeletePlan deletes the plan; the database cascades deletion to its test results.
 func (s *ScheduledTestService) DeletePlan(ctx context.Context, id int64) error {
 	return s.planRepo.Delete(ctx, id)
 }
 
-// ListResults 返回计划最近的测试结果。
+// ListResults returns recent test results, defaulting to 50 when limit is nonpositive.
 func (s *ScheduledTestService) ListResults(ctx context.Context, planID int64, limit int) ([]*ScheduledTestResult, error) {
 	if limit <= 0 {
 		limit = 50
@@ -80,7 +80,7 @@ func (s *ScheduledTestService) ListResults(ctx context.Context, planID int64, li
 	return s.resultRepo.ListByPlanID(ctx, planID, limit)
 }
 
-// SaveResult 保存结果后清理超出保留数的记录，各步骤独立返回错误。
+// SaveResult stores a result, then prunes excess history; a prune failure leaves the saved result in place.
 func (s *ScheduledTestService) SaveResult(ctx context.Context, planID int64, maxResults int, result *ScheduledTestResult) error {
 	result.PlanID = planID
 	if _, err := s.resultRepo.Create(ctx, result); err != nil {

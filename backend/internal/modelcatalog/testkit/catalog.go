@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// OfflineView 提供内嵌目录和补充资料组成的固定测试快照。
+// OfflineView returns a fixed test snapshot built from the embedded catalog and supplements.
 var OfflineView = sync.OnceValue(func() modelcatalog.View {
 	body, err := modelcatalog.Offline()
 	if err != nil {
@@ -37,13 +37,13 @@ var OfflineView = sync.OnceValue(func() modelcatalog.View {
 	return catalog.View()
 })
 
-// Catalog 为目录使用方的测试提供可替换版本和明确条目。
+// Catalog supplies test entries and a replaceable version for catalog consumers.
 type Catalog struct {
 	Entries map[string]modelcatalog.Entry
 	Version string
 }
 
-// New 构造只含测试指定型号的目录，默认展示名称等于 ID。
+// New constructs a catalog containing the supplied IDs, using each ID as its display name.
 func New(ids ...string) *Catalog {
 	c := &Catalog{Entries: map[string]modelcatalog.Entry{}, Version: "test"}
 	for _, id := range ids {
@@ -53,7 +53,7 @@ func New(ids ...string) *Catalog {
 	return c
 }
 
-// ModelIDs 返回夹具中按 ID 排序的候选。
+// ModelIDs returns fixture candidates sorted by ID.
 func (c *Catalog) ModelIDs() []string {
 	ids := []string{}
 	for id := range c.Entries {
@@ -63,8 +63,8 @@ func (c *Catalog) ModelIDs() []string {
 	return ids
 }
 
-// ModelEntry 返回测试声明的元数据。
+// ModelEntry returns the metadata declared by the test.
 func (c *Catalog) ModelEntry(id string) modelcatalog.Entry { return c.Entries[id] }
 
-// ModelVersion 返回测试控制的目录版本。
+// ModelVersion returns the version controlled by the test.
 func (c *Catalog) ModelVersion() string { return c.Version }

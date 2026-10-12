@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// usageAnalyticsRawDimensionsSQL 按聚合表列序归一原始日志，调用方将原始表命名为 ul。
+	// usageAnalyticsRawDimensionsSQL normalizes raw columns in rollup order; callers alias usage_logs as ul.
 	usageAnalyticsRawDimensionsSQL = `
 			ul.user_id,
 			COALESCE(ul.billing_user_id, ul.user_id),
@@ -37,17 +37,17 @@ const (
 			COALESCE(ul.inbound_endpoint, ''),`
 )
 
-// AggregateUsageAnalyticsRange 完整重建范围涉及的 UTC 小时桶与日桶，末桶只扫描到结束水位。
+// AggregateUsageAnalyticsRange rebuilds affected UTC hour and day buckets, scanning the final hour up to end.
 func (r *AggregationStore) AggregateUsageAnalyticsRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, false, true)
 }
 
-// AggregateUsageAnalyticsHourlyRange 只重建实时范围涉及的 UTC 小时桶。
+// AggregateUsageAnalyticsHourlyRange rebuilds affected UTC hour buckets without rebuilding daily data.
 func (r *AggregationStore) AggregateUsageAnalyticsHourlyRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, false, false)
 }
 
-// RecomputeUsageAnalyticsRange 为删除后的包含结束时间范围重建完整 UTC 小时桶与日桶。
+// RecomputeUsageAnalyticsRange rebuilds complete UTC hour and day buckets for an inclusive cleanup range.
 func (r *AggregationStore) RecomputeUsageAnalyticsRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, true, true)
 }
@@ -68,7 +68,7 @@ func (r *AggregationStore) aggregateUsageAnalyticsRange(ctx context.Context, sta
 
 	scanEnd := endUTC
 	if includeEndBucket {
-		// 删除任务的结束时间为包含端点；完整重扫末桶可保留范围外未删除的记录。
+		// Cleanup includes end; rescan the entire last bucket to retain records outside the deleted range.
 		scanEnd = hourEnd
 	}
 	if scanEnd.After(hourEnd) {
@@ -97,7 +97,7 @@ func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context,
 		return err
 	}
 
-	// 将历史请求类型和计费模式在写入聚合表时归一，查询层无需反复兼容旧字段。
+	// Normalize legacy request types and billing modes when writing rollups so readers use consistent dimensions.
 	if _, err := r.sql.ExecContext(ctx, `
 		INSERT INTO usage_analytics_hourly (
 			bucket_start, user_id, billing_user_id, team_id, api_key_id, group_id,
@@ -138,7 +138,7 @@ func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context,
 	return r.rebuildUsageAnalyticsDailyRangeInTx(ctx, dayStart, dayEnd)
 }
 
-// RebuildUsageAnalyticsDailyRange 从小时表重建覆盖范围涉及的完整 UTC 日桶。
+// RebuildUsageAnalyticsDailyRange rebuilds complete affected UTC days from hourly data.
 func (r *AggregationStore) RebuildUsageAnalyticsDailyRange(ctx context.Context, start, end time.Time) error {
 	if r == nil || r.sql == nil || !end.After(start) {
 		return nil
@@ -201,7 +201,7 @@ func truncateUsageAnalyticsDay(value time.Time) time.Time {
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// GetUsageAnalyticsAggregationState 读取单行聚合状态。
+// GetUsageAnalyticsAggregationState reads the singleton progress row.
 func (r *AggregationStore) GetUsageAnalyticsAggregationState(ctx context.Context) (*usage.UsageAnalyticsAggregationState, error) {
 	state := &usage.UsageAnalyticsAggregationState{}
 	var coverageStart, backfillCursor, sourceOldest, manualStart, manualCursor sql.NullTime
@@ -229,7 +229,7 @@ func (r *AggregationStore) GetUsageAnalyticsAggregationState(ctx context.Context
 	return state, nil
 }
 
-// SaveUsageAnalyticsAggregationState 完整保存单行聚合状态。
+// SaveUsageAnalyticsAggregationState replaces all fields of the singleton progress row.
 func (r *AggregationStore) SaveUsageAnalyticsAggregationState(ctx context.Context, state *usage.UsageAnalyticsAggregationState) error {
 	if state == nil {
 		return nil
@@ -260,7 +260,7 @@ func (r *AggregationStore) SaveUsageAnalyticsAggregationState(ctx context.Contex
 	return err
 }
 
-// GetOldestUsageLogTime 通过 created_at 索引读取当前原始数据最早时间。
+// GetOldestUsageLogTime reads the oldest raw timestamp using created_at ordering.
 func (r *AggregationStore) GetOldestUsageLogTime(ctx context.Context) (*time.Time, error) {
 	var oldest sql.NullTime
 	if err := scanSingleRow(ctx, r.sql, `
@@ -276,7 +276,7 @@ func (r *AggregationStore) GetOldestUsageLogTime(ctx context.Context) (*time.Tim
 	return nullableTimePointer(oldest), nil
 }
 
-// CleanupUsageAnalytics 清理超过部署保留期的多维聚合桶。
+// CleanupUsageAnalytics deletes multidimensional buckets older than the supplied retention cutoffs.
 func (r *AggregationStore) CleanupUsageAnalytics(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
 	if _, err := r.sql.ExecContext(ctx, `DELETE FROM usage_analytics_hourly WHERE bucket_start < $1`, hourlyCutoff.UTC()); err != nil {
 		return err
@@ -293,7 +293,7 @@ func nullableTimePointer(value sql.NullTime) *time.Time {
 	return &result
 }
 
-// ApplyUsageAnalyticsState 用短事务串行化状态行；聚合 SQL 不在此事务中执行。
+// ApplyUsageAnalyticsState locks the progress row in a short transaction; aggregation queries execute separately.
 func (r *AggregationStore) ApplyUsageAnalyticsState(ctx context.Context, change usage.AnalyticsStateChange) (*usage.UsageAnalyticsAggregationState, error) {
 	if db, ok := r.sql.(*sql.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)

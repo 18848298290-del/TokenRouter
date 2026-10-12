@@ -13,8 +13,8 @@ const (
 	auditRedactMaxDepth      = 24
 )
 
-// auditBodySensitiveSubstrings 请求体脱敏的包含匹配子串（对归一化后的键名比对）。
-// 命中任一子串即整体擦除该键的值（例如 new_password / secret_access_key / temp_token）。
+// auditBodySensitiveSubstrings matches normalized request-body keys.
+// Any match redacts the entire value, including new_password, secret_access_key, and temp_token.
 var auditBodySensitiveSubstrings = []string{
 	"password", "passwd", "secret", "token",
 	"apikey", "accesskey", "privatekey",
@@ -22,17 +22,14 @@ var auditBodySensitiveSubstrings = []string{
 	"sessionkey", "serviceprovider",
 }
 
-// auditBodySensitiveExactKeys 请求体脱敏的精确匹配键（归一化后）。
-// 除内置清单外，程序化并入两份权威敏感表以防清单漂移：
-//   - SensitiveCredentialKeys：提供商 credentials 的敏感子键（session_key / service_account_json 等）
-//   - providerSensitiveConfigFields：支付渠道密钥字段（pkey / privatekey / apiv3key 等）
-//
-// Redactor 保存敏感键集合，构造后按只读方式共享。
+// Redactor holds normalized sensitive keys and is shared read-only after construction.
+// NewRedactor combines built-in keys with module-owned provider and payment key
+// lists supplied by the caller, keeping redaction consistent with credential fields.
 type Redactor struct{ exact map[string]struct{} }
 
-// auditNormalizeBodyKey 归一化键名：小写并去除分隔符，
-// 使 private_key / privateKey / privatekey / api-v3-key 等写法共享同一判定，
-// 避免子串清单假设 snake_case 而漏掉支付渠道等无分隔符风格的密钥字段。
+// auditNormalizeBodyKey lowercases keys and removes separators.
+// This gives private_key, privateKey, and privatekey the same representation,
+// so matching also covers credentials whose names omit separators.
 func auditNormalizeBodyKey(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))
@@ -69,21 +66,21 @@ func (r *Redactor) IsSensitiveKey(key string) bool {
 	return false
 }
 
-// RedactBody 对请求体做审计入库前的脱敏：
-//   - JSON：递归擦除敏感键的值（保留结构，base_url 等非敏感字段可见以便追责）
-//   - 非 JSON：返回占位说明
-//   - 超长：截断并附截断标记
+// RedactBody prepares request bodies for audit storage:
+//   - JSON values under sensitive keys are redacted recursively; other fields remain visible.
+//   - Invalid JSON, non-JSON, and bodies above the capture limit are replaced with placeholders.
+//   - Encoded output above the storage limit is truncated and marked.
 func (r *Redactor) RedactBody(raw []byte, contentType string) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	if len(raw) > AuditRequestBodyCaptureLimit {
-		// raw 可能已被中间件截断，提示使用捕获上限作为请求体大小的下界。
+		// The middleware may have truncated raw; report the capture limit as a lower bound on body size.
 		return "<body omitted: exceeds " + strconv.Itoa(AuditRequestBodyCaptureLimit) + " bytes>"
 	}
 	ct := strings.ToLower(contentType)
 	if !strings.Contains(ct, "json") || !json.Valid(raw) {
-		// 表单等非 JSON 内容走文本兜底脱敏后仍可能含敏感信息，直接不入库。
+		// Text redaction can miss secrets in forms and other non-JSON bodies, so omit them entirely.
 		return "<non-json body omitted: " + strconv.Itoa(len(raw)) + " bytes, content-type=" + strings.TrimSpace(contentType) + ">"
 	}
 
@@ -131,7 +128,7 @@ func (r *Redactor) redactValue(value any, depth int) any {
 
 func MaskAuditCredential(credential string) string { return logredact.MaskCredential(credential) }
 
-// RedactAuditQuery 对 URL query 做轻量脱敏后返回。
+// RedactAuditQuery masks credential fields in the raw URL query.
 func RedactAuditQuery(rawQuery string) string {
 	rawQuery = strings.TrimSpace(rawQuery)
 	if rawQuery == "" {

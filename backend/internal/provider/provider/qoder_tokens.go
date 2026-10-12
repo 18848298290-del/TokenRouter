@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// errQoderSessionBuildInvalidated 表示在途构建已失效，或已有更新的凭据。
+// errQoderSessionBuildInvalidated signals an invalidated build or newer credentials.
 var errQoderSessionBuildInvalidated = providercore.ErrQoderSessionBuildInvalidated
 
 type (
@@ -22,7 +22,7 @@ type (
 
 type qoderSessionCacheEntry = providercore.QoderSessionCacheEntry[*qoder.SessionContext]
 
-// QoderTokenProvider 为 Qoder 提供商构建并缓存 COSY session 上下文。
+// QoderTokenProvider builds and caches COSY sessions for Qoder providers.
 type QoderTokenProvider struct {
 	Core                *qoderSessionState
 	coreOnce            sync.Once
@@ -77,7 +77,7 @@ func (p *QoderTokenProvider) InvalidateProvider(provider *providercore.Record) {
 	}
 }
 
-// qoderState 仅惰性装配提供商状态；所有缓存与锁均归该唯一实例。
+// qoderState lazily initializes the shared session state that owns the cache and locks.
 func (p *QoderTokenProvider) qoderState() *qoderSessionState {
 	p.coreOnce.Do(func() {
 		if p.Core == nil {
@@ -94,7 +94,7 @@ func (p *QoderTokenProvider) StopContext(ctx context.Context) error {
 	return p.qoderState().StopContext(ctx)
 }
 
-// QoderCredentialInput 返回供应商交换需要的凭据字段，provider 管理缓存快照。
+// QoderCredentialInput selects credentials for upstream exchange; the provider core owns cached snapshots.
 func QoderCredentialInput(value *providercore.Record) *qoder.CredentialInput {
 	if value == nil {
 		return nil

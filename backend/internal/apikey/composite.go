@@ -8,20 +8,20 @@ import (
 )
 
 const (
-	// MaxCompositeAPIKeyGroups 限制认证缓存和模型列表聚合的最大规模。
+	// MaxCompositeAPIKeyGroups bounds authentication snapshots and aggregated model lists.
 	MaxCompositeAPIKeyGroups = 20
 	MaxCompositeKeyPrefixLen = 32
 )
 
 var KeyCompositeKeyPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// APIKeyCompositeGroupInput 是创建和更新复合映射时的公共输入。
+// APIKeyCompositeGroupInput configures a mapping during key creation or update.
 type APIKeyCompositeGroupInput struct {
 	GroupID int64  `json:"group_id"`
 	Prefix  string `json:"prefix"`
 }
 
-// AllowsRuntimeGroup 限制复合 Key 的运行时回退只能使用已绑定分组，普通 Key 继续检查用户权限。
+// AllowsRuntimeGroup restricts composite keys to bound groups. Callers separately check user permissions.
 func (k *APIKey) AllowsRuntimeGroup(groupID int64) bool {
 	if k == nil || groupID <= 0 {
 		return false
@@ -37,7 +37,7 @@ func (k *APIKey) AllowsRuntimeGroup(groupID int64) bool {
 	return false
 }
 
-// NormalizeCompositeKeyPrefix 规范化并校验用户输入的分组前缀。
+// NormalizeCompositeKeyPrefix validates a trimmed prefix and returns its case-folded lookup form.
 func NormalizeCompositeKeyPrefix(prefix string) (display string, normalized string, ok bool) {
 	display = strings.TrimSpace(prefix)
 	if display == "" || len(display) > MaxCompositeKeyPrefixLen || !KeyCompositeKeyPrefixPattern.MatchString(display) {
@@ -46,7 +46,7 @@ func NormalizeCompositeKeyPrefix(prefix string) (display string, normalized stri
 	return display, strings.ToLower(display), true
 }
 
-// SplitCompositeModel 按第一个斜杠拆分复合模型，后面的模型 ID 可以包含斜杠。
+// SplitCompositeModel splits at the first slash so model IDs can contain further slashes.
 func SplitCompositeModel(model string) (prefix string, modelID string, ok bool) {
 	model = strings.TrimSpace(model)
 	parts := strings.SplitN(model, "/", 2)
@@ -61,7 +61,7 @@ func SplitCompositeModel(model string) (prefix string, modelID string, ok bool) 
 	return prefix, modelID, true
 }
 
-// ResolveCompositeModel 根据大小写不敏感的前缀选择分组，返回去掉前缀后的模型 ID。
+// ResolveCompositeModel selects a group by case-insensitive prefix and returns the unprefixed model ID.
 func (k *APIKey) ResolveCompositeModel(model string) (*APIKeyCompositeGroup, string, error) {
 	if k == nil || !k.IsComposite {
 		return nil, model, nil
@@ -83,7 +83,7 @@ func (k *APIKey) ResolveCompositeModel(model string) (*APIKeyCompositeGroup, str
 	return nil, "", ErrCompositeKeyPrefixNotFound
 }
 
-// KeyValidateCompositeGroupInputs 只处理与数据库无关的结构校验并保留用户顺序。
+// KeyValidateCompositeGroupInputs validates mapping structure and retains input order.
 func KeyValidateCompositeGroupInputs(inputs []APIKeyCompositeGroupInput) ([]APIKeyCompositeGroup, error) {
 	if len(inputs) == 0 {
 		return nil, ErrCompositeKeyGroupsRequired
@@ -120,7 +120,7 @@ func KeyValidateCompositeGroupInputs(inputs []APIKeyCompositeGroupInput) ([]APIK
 	return groups, nil
 }
 
-// KeyPrepareCompositeGroups 校验复合 Key 的分组权限并补齐分组快照。
+// KeyPrepareCompositeGroups checks group permissions and loads group snapshots.
 func (s *APIKeyService) KeyPrepareCompositeGroups(
 	ctx context.Context,
 	user *User,
@@ -145,7 +145,7 @@ func (s *APIKeyService) KeyPrepareCompositeGroups(
 	return bindings, nil
 }
 
-// KeyCloneCompositeBindings 避免认证请求对缓存快照中的切片原地修改。
+// KeyCloneCompositeBindings copies the binding slice; referenced group data remains shared.
 func KeyCloneCompositeBindings(bindings []APIKeyCompositeGroup) []APIKeyCompositeGroup {
 	if len(bindings) == 0 {
 		return nil

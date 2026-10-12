@@ -12,7 +12,7 @@ const responseFailureEffectsKey = "gateway_response_failure_effects"
 
 var responseFailureEffectsInit sync.Mutex
 
-// responseFailureEffects 返回当前请求登记的状态，未登记时返回空值。
+// responseFailureEffects returns request state, creating it when create is true; nil contexts return nil.
 func responseFailureEffects(c *gin.Context, create bool) *requeststate.ResponseFailureEffects {
 	if c == nil {
 		return nil

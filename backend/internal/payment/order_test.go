@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGenerateOutTradeNo 检查支付渠道接收的订单号格式和日期。
+// TestGenerateOutTradeNo checks the merchant order number format and date.
 func TestGenerateOutTradeNo(t *testing.T) {
 	t.Parallel()
 

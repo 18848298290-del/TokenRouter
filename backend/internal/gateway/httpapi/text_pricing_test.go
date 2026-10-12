@@ -25,7 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestTextModelPricingSources 区分目录、手动零价和缺少基础价的倍率条目。
+// TestTextModelPricingSources distinguishes catalogue prices, manual zero prices, and multiplier-only entries
+// without base prices.
 func TestTextModelPricingSources(t *testing.T) {
 	zero, input, multiplier := 0.0, 2e-7, 2.0
 	for _, tc := range []struct {
@@ -58,7 +59,7 @@ func TestTextModelPricingSources(t *testing.T) {
 	}
 }
 
-// TestTextPricingUsesBillingModel 覆盖 Key、分组和提供商映射及三种计费来源。
+// TestTextPricingUsesBillingModel covers key, group, and provider mappings across all billing model sources.
 func TestTextPricingUsesBillingModel(t *testing.T) {
 	prices := textPricingFixture(t)
 	key := &apikey.APIKey{GroupID: testkit.GroupID()}
@@ -100,7 +101,7 @@ func TestTextPricingUsesBillingModel(t *testing.T) {
 	}
 }
 
-// TestTextPricingRejectsBeforeForward 缺价请求在流式和非流式入口都不会调用上游。
+// TestTextPricingRejectsBeforeForward checks that missing prices prevent streaming and non-streaming upstream calls.
 func TestTextPricingRejectsBeforeForward(t *testing.T) {
 	executor := &UnifiedTextExecutor{Pricing: textPricingFixture(t)}
 	target := gatewayprovider.NewExecutionProvider(&provider.Record{ID: 1, Platform: "openai", Type: "apikey"})
@@ -134,7 +135,7 @@ func TestTextPricingRejectsBeforeForward(t *testing.T) {
 	}
 }
 
-// TestAutoReviewConfiguredPriceForwardsAndBills 使用 issue 中的费率和用量核对准入与计费。
+// TestAutoReviewConfiguredPriceForwardsAndBills checks admission and billing with configured review-model rates and usage.
 func TestAutoReviewConfiguredPriceForwardsAndBills(t *testing.T) {
 	input, output, cache := 2e-7, 1.2e-6, 2e-8
 	prices := textPricingFixture(t, routing.ModelPricingEntry{Models: []string{"codex-auto-review"}, InputPrice: &input, OutputPrice: &output, CacheReadPrice: &cache})

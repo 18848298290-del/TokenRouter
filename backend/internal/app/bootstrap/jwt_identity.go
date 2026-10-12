@@ -10,13 +10,13 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
-// JWTIdentity 提供维护命令需要的用户读取和访问令牌签发功能。
+// JWTIdentity provides user lookup and access-token signing for maintenance commands.
 type JWTIdentity struct {
 	Users  *identitypostgres.UserStore
 	Tokens *identity.SessionService
 }
 
-// NewJWTIdentity 使用已完成引导的数据库连接，命令返回前负责关闭连接。
+// NewJWTIdentity uses a bootstrapped database. The calling command closes the connection before returning.
 func NewJWTIdentity(client *dbent.Client, db *sql.DB, cfg *config.Config) JWTIdentity {
 	users := identitypostgres.NewUserStore(client, db)
 	options := identity.SessionOptions{Now: time.Now, Secret: cfg.JWT.Secret, ExpireHour: cfg.JWT.ExpireHour, AccessTokenExpireMinutes: cfg.JWT.AccessTokenExpireMinutes, RefreshTokenExpireDays: cfg.JWT.RefreshTokenExpireDays}

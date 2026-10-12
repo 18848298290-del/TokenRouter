@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// provideBatchPublic 装配批量图片提交用例，共享任务、提供商、资金和模型配置读取实例。
+// provideBatchPublic binds batch image submission to shared task, provider, funding, and model settings services.
 func provideBatchPublic(attributes *routing.ModelAttributeService, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService, groups routing.GroupRepository, rates billing.UserGroupRateRepository, queue batchimage.BatchImageQueue, pricing *batchimage.Pricing, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Public {
 	core := &batchimage.Public{
 		Attributes: attributes,

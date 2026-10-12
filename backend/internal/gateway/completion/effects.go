@@ -12,7 +12,7 @@ type (
 	AuthInvalidator  interface{ InvalidateAuthCacheByKey(context.Context, string) }
 )
 
-// CommitEffects 按 billing 规定的顺序更新已提交资金的缓存并发送通知。
+// CommitEffects updates caches and sends notifications in the order defined by billing after settlement commits.
 type CommitEffects struct {
 	Funds         billing.SettlementEffects
 	Activity      ProviderActivity
@@ -50,7 +50,7 @@ func (e *CommitEffects) recoverNotification(name string) {
 	}
 }
 
-// NotifyBalance 在结算提交后发送余额阈值通知。
+// NotifyBalance checks balance thresholds after a committed deduction.
 func (e *CommitEffects) NotifyBalance(p SettlementInput, result *billing.UsageBillingApplyResult) {
 	defer e.recoverNotification("notifyBalanceLow")
 	if result == nil || result.BalanceAmountUSD <= 0 || p.User == nil || e.Notifications == nil {
@@ -59,7 +59,7 @@ func (e *CommitEffects) NotifyBalance(p SettlementInput, result *billing.UsageBi
 	e.Notifications.CheckBalanceAfterDeduction(context.Background(), p.User.Notification, billing.BalanceBeforeSettlement(p.User.Balance, result), result.BalanceAmountUSD)
 }
 
-// NotifyProvider 按提供商成本发送通知，优先使用事务返回的额度状态。
+// NotifyProvider checks provider quota using the committed quota state when available.
 func (e *CommitEffects) NotifyProvider(p SettlementInput, result *billing.UsageBillingApplyResult) {
 	defer e.recoverNotification("notifyProviderQuota")
 	if p.Cost.TotalCost <= 0 || p.Provider == nil || !p.Provider.QuotaEligible || e.Notifications == nil {

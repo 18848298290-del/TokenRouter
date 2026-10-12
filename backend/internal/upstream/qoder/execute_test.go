@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// contextTestClient 在进入推理后检查传给供应商的取消信号。
+// contextTestClient inspects cancellation after inference starts.
 type contextTestClient struct{ check func(context.Context) error }
 
 type modelTestClient struct{}
@@ -28,7 +28,7 @@ func (c contextTestClient) StreamRequestContext(ctx context.Context, _ *SessionC
 	return nil, c.check(ctx)
 }
 
-// TestStreamExecutionInternalAbort 验证三种协议都保留内部终止并隔离客户端断连。
+// TestStreamExecutionInternalAbort checks internal abort propagation after client disconnect for all three protocols.
 func TestStreamExecutionInternalAbort(t *testing.T) {
 	for _, wire := range []protocol.ProtocolID{protocol.ProtocolOpenAIChatCompletions, protocol.ProtocolOpenAIResponses, protocol.ProtocolAnthropicMessages} {
 		t.Run(string(wire), func(t *testing.T) {
@@ -73,7 +73,7 @@ func (*modelTestSink) Begin(upstream.OutputHead) error { return nil }
 
 func (s *modelTestSink) Emit(e upstream.OutputEvent) error { _, err := s.Write(e.Data); return err }
 
-// TestQoderDoesNotReportSynthesizedModel 验证三种客户端协议生成的别名不会冒充上游声明。
+// TestQoderDoesNotReportSynthesizedModel keeps client response aliases separate from upstream model declarations.
 func TestQoderDoesNotReportSynthesizedModel(t *testing.T) {
 	for _, wire := range []protocol.ProtocolID{protocol.ProtocolOpenAIResponses, protocol.ProtocolOpenAIChatCompletions, protocol.ProtocolAnthropicMessages} {
 		for _, stream := range []bool{false, true} {

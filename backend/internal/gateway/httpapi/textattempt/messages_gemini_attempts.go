@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// geminiMessageAttemptBridge 不注册 Anthropic 空闲会话，不扩大部分失败完成资格。
+// geminiMessageAttemptBridge adapts Gemini-backed Messages attempts to the shared text loop.
 type geminiMessageAttemptBridge struct {
 	messageAttemptBridge
 	forwardModel string
@@ -29,10 +29,10 @@ type geminiMessageAttemptBridge struct {
 	groupMapping routing.GroupMappingResult
 }
 
-// Select 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// Select chooses a provider using the request's model and session hash.
 func (b *geminiMessageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini 不使用会话限制
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini does not apply the Anthropic session limit.
 	if err != nil {
 		return textflow.Selection{}, err
 	}
@@ -41,7 +41,7 @@ func (b *geminiMessageAttemptBridge) Select(excluded map[int64]struct{}) (textfl
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// FirstSelectionFailure reports group policy errors or diagnoses initial provider unavailability.
 func (b *geminiMessageAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().handleStreamingAwareError(b.c, status, errType, message, responseStarted)
@@ -66,9 +66,9 @@ func (b *geminiMessageAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	b.binding().handleStreamingAwareError(b.c, cls.Status, cls.ErrType, message, *b.streamStarted)
 }
 
-// Acquire 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// Acquire acquires a provider slot and binds the sticky session after waiting.
 func (b *geminiMessageAttemptBridge) Acquire() bool {
-	// 3. 获取提供商并发槽位
+	// Reuse the selection's slot or wait according to its plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -118,28 +118,28 @@ func (b *geminiMessageAttemptBridge) Acquire() bool {
 			b.binding().handleConcurrencyError(b.c, err, "provider", *b.streamStarted)
 			return false
 		}
-		// Slot acquired: no longer waiting in queue.
+		// Stop counting this request as waiting once its slot is acquired.
 		releaseWait()
 		if err := b.binding().bindSticky(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.provider.Record.ID); err != nil {
 			b.reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
-	// 提供商槽位/等待计数需要在超时或断开时安全回收
+	// Release the provider slot when the request times out or disconnects.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// Forward dispatches Gemini-backed Messages to Gemini or Antigravity.
 func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textflow.Outcome {
 	var err error
-	// 转发请求 - 根据提供商平台分流
+	// Carry the attempt's provider-switch state into forwarding.
 
 	requestCtx := b.c.Request.Context()
 	if state.SwitchCount > 0 {
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
-	// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
+	// Compare writer size after forwarding to prevent failover once output has been sent.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	if b.provider.Record.Platform == capability.PlatformAntigravity {
 		b.result, err = b.binding().forwardAntigravityGemini(
@@ -169,11 +169,11 @@ func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textfl
 	return out
 }
 
-// Success 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// Success increments the RPM counter for eligible Anthropic OAuth or setup-token providers.
 func (b *geminiMessageAttemptBridge) Success() {
-	// RPM 计数递增（Forward 成功后）
-	// 注意：TOCTOU 竞态是已知且可接受的设计权衡，与 WindowCost 一致的 soft-limit 模式。
-	// 在高并发下可能短暂超出 RPM 限制，但不会导致请求失败。
+	// Count successful forwarding toward the provider's soft RPM limit.
+	// Selection and increment are separate, so concurrent requests can temporarily exceed the limit.
+	// A counter-write failure is logged after the response has succeeded.
 	if b.provider.View().IsAnthropicOAuthOrSetupToken() && gatewaycapture.ExecutionRuntimeConfig(b.provider).GetBaseRPM() > 0 {
 		if err := b.binding().incrementRPM(b.c.Request.Context(), b.provider.Record.ID); err != nil {
 			b.reqLog.Warn("gateway.rpm_increment_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
@@ -181,9 +181,9 @@ func (b *geminiMessageAttemptBridge) Success() {
 	}
 }
 
-// Complete 保留 Gemini Messages 的既有差异，循环复用 gateway/text。
+// Complete captures the Gemini-backed Messages result for usage recording.
 func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
-	// 捕获请求信息，供异步任务记录。
+	// Capture request metadata while the HTTP context is available.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
@@ -201,13 +201,13 @@ func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
 		b.result.ReasoningEffort = gatewaycapture.DefaultEffortForThinkingEnabled(protocolModel)
 	}
 
-	// 用量记录通过有界 worker 池提交。
-	// 完成任务捕获 ForceCacheBilling 的布尔值，failover 响应体可随请求释放。
+	// Submit usage recording through the configured worker pool.
+	// Capture the cache-billing flag by value so completion does not retain the failover body.
 	forceCacheBilling := state.ForceCacheBilling
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 

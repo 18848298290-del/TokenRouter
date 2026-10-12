@@ -23,19 +23,19 @@ type tlsFingerprintRouterCache struct {
 	localCache []*egress.TLSFingerprintRouter
 	localMu    sync.RWMutex
 
-	// 订阅协程由缓存自身持有取消句柄，关闭时必须在 Redis 之前完成退出。
+	// The cache owns subscriber cancellation; stop the subscriber before closing Redis.
 	subscriptionMu      sync.Mutex
 	subscriptionCancel  context.CancelFunc
 	subscriptionWG      sync.WaitGroup
 	subscriptionStopped bool
 }
 
-// NewTLSFingerprintRouterCache 创建 TLS 路由器缓存。
+// NewTLSFingerprintRouterCache creates a TLS router cache.
 func NewTLSFingerprintRouterCache(rdb *redis.Client) egress.TLSFingerprintRouterCache {
 	return &tlsFingerprintRouterCache{rdb: rdb}
 }
 
-// Get 从缓存获取 TLS 路由器列表。
+// Get returns independent router copies from local cache or Redis and reports a cache hit.
 func (c *tlsFingerprintRouterCache) Get(ctx context.Context) ([]*egress.TLSFingerprintRouter, bool) {
 	c.localMu.RLock()
 	if c.localCache != nil {
@@ -65,7 +65,7 @@ func (c *tlsFingerprintRouterCache) Get(ctx context.Context) ([]*egress.TLSFinge
 	return routers, true
 }
 
-// Set 设置 TLS 路由器缓存。
+// Set writes routers to Redis and stores an independent local copy.
 func (c *tlsFingerprintRouterCache) Set(ctx context.Context, routers []*egress.TLSFingerprintRouter) error {
 	data, err := json.Marshal(routers)
 	if err != nil {
@@ -80,7 +80,7 @@ func (c *tlsFingerprintRouterCache) Set(ctx context.Context, routers []*egress.T
 	return nil
 }
 
-// Invalidate 使 TLS 路由器缓存失效。
+// Invalidate clears the local and Redis router caches.
 func (c *tlsFingerprintRouterCache) Invalidate(ctx context.Context) error {
 	c.localMu.Lock()
 	c.localCache = nil
@@ -88,12 +88,12 @@ func (c *tlsFingerprintRouterCache) Invalidate(ctx context.Context) error {
 	return c.rdb.Del(ctx, tlsFPRouterCacheKey).Err()
 }
 
-// NotifyUpdate 通知其他实例刷新 TLS 路由器缓存。
+// NotifyUpdate publishes a router refresh notification to subscribed instances.
 func (c *tlsFingerprintRouterCache) NotifyUpdate(ctx context.Context) error {
 	return c.rdb.Publish(ctx, tlsFPRouterPubSubKey, "refresh").Err()
 }
 
-// SubscribeUpdates 订阅 TLS 路由器缓存更新通知。
+// SubscribeUpdates starts one subscriber that clears local routers before calling handler.
 func (c *tlsFingerprintRouterCache) SubscribeUpdates(ctx context.Context, handler func()) {
 	subscriberCtx, cancel := context.WithCancel(ctx)
 	c.subscriptionMu.Lock()
@@ -134,7 +134,7 @@ func (c *tlsFingerprintRouterCache) SubscribeUpdates(ctx context.Context, handle
 	}()
 }
 
-// StopSubscription 取消并等待缓存订阅协程退出。
+// StopSubscription prevents new subscriptions, cancels the subscriber, and waits for its exit.
 func (c *tlsFingerprintRouterCache) StopSubscription() {
 	c.subscriptionMu.Lock()
 	cancel := c.subscriptionCancel

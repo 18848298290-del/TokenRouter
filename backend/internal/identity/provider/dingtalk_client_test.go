@@ -96,7 +96,7 @@ func TestDingTalkClient_GetUserIdByUnionId_60011(t *testing.T) {
 	require.Equal(t, "60011", apiErr.Code)
 }
 
-// TestDingTalkClient_GetDeptInfo_Success 验证 GetDeptInfo 正常情况返回部门信息。
+// TestDingTalkClient_GetDeptInfo_Success checks department fields from a successful response.
 func TestDingTalkClient_GetDeptInfo_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -106,7 +106,7 @@ func TestDingTalkClient_GetDeptInfo_Success(t *testing.T) {
 
 	cli := &DingTalkClient{
 		cfg: DingTalkClientConfig{
-			UserInfoURL: server.URL + "/stub", // 不含 /contact/users/me，走 test stub 路径
+			UserInfoURL: server.URL + "/stub", // Omit /contact/users/me to route requests directly to the test endpoint.
 		},
 		httpClient: server.Client(),
 	}
@@ -120,7 +120,7 @@ func TestDingTalkClient_GetDeptInfo_Success(t *testing.T) {
 	require.Equal(t, int64(1), info.ParentID)
 }
 
-// TestDingTalkClient_GetDeptInfo_ErrCode60003 验证 errcode=60003（部门不存在）时返回错误。
+// TestDingTalkClient_GetDeptInfo_ErrCode60003 checks the department-not-found error.
 func TestDingTalkClient_GetDeptInfo_ErrCode60003(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

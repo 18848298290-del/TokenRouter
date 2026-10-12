@@ -61,23 +61,20 @@ func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 
 			body := w.Body.String()
 
-			// 验证 SSE 格式：event: error\ndata: {JSON}\n\n
+			// Check SSE framing: event: error\ndata: {JSON}\n\n.
 			assert.True(t, strings.HasPrefix(body, "event: error\n"), "应以 'event: error\\n' 开头")
 			assert.True(t, strings.HasSuffix(body, "\n\n"), "应以 '\\n\\n' 结尾")
 
-			// 提取 data 部分
 			lines := strings.Split(strings.TrimSuffix(body, "\n\n"), "\n")
 			require.Len(t, lines, 2, "应有 event 行和 data 行")
 			dataLine := lines[1]
 			require.True(t, strings.HasPrefix(dataLine, "data: "), "第二行应以 'data: ' 开头")
 			jsonStr := strings.TrimPrefix(dataLine, "data: ")
 
-			// 验证 JSON 合法性
 			var parsed map[string]any
 			err := json.Unmarshal([]byte(jsonStr), &parsed)
 			require.NoError(t, err, "JSON 应能被成功解析，原始 JSON: %s", jsonStr)
 
-			// 验证结构
 			errorObj, ok := parsed["error"].(map[string]any)
 			require.True(t, ok, "应包含 error 对象")
 			assert.Equal(t, tt.errType, errorObj["type"])
@@ -120,7 +117,6 @@ func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
 
 	DefaultOpenAIErrorOutput().StreamError(c, http.StatusBadGateway, "upstream_error", "test error", false)
 
-	// 非流式应返回 JSON 响应
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 
 	var parsed map[string]any
@@ -151,8 +147,8 @@ func TestOpenAIEnsureForwardErrorResponse_WritesFallbackWhenNotWritten(t *testin
 	assert.Equal(t, "Upstream request failed", errorObj["message"])
 }
 
-// TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten 验证 Writer 写入后追加 SSE 错误，并将 streamStarted 设为 true。
-// 缺少终止事件会使 Codex CLI 报 stream closed before response.completed。
+// TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten checks SSE error delivery after response output.
+// An already-written response requires in-stream error handling.
 func TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -162,19 +158,20 @@ func TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten(t *testing.T) {
 	wrote := DefaultOpenAIErrorOutput().EnsureFallback(c, false)
 
 	require.True(t, wrote, "must attempt to communicate the failure to the client via SSE")
-	// 状态码改不了（headers 已 flush），但 body 应该追加 SSE 错误事件。
+	// The committed HTTP status stays fixed while the SSE error is appended.
 	require.Equal(t, http.StatusTeapot, w.Code)
 	assert.Contains(t, w.Body.String(), "already written")
-	// 非 /responses 路径走 legacy event: error 分支。
+	// Non-Responses routes use event: error.
 	assert.Contains(t, w.Body.String(), "event: error\n")
 }
 
-// TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed 验证 /responses 心跳 Flush 后，ensureForwardErrorResponse 写出 response.failed。
+// TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed checks response.failed
+// after a heartbeat.
 func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
-	// 模拟 ping 已 flush 的状态：Writer 已写过 1 个字节
+	// Simulate heartbeat bytes already written to the response.
 	_, _ = c.Writer.WriteString(":\n\n")
 
 	wrote := DefaultOpenAIErrorOutput().EnsureFallback(c, false)
@@ -199,7 +196,7 @@ func TestOpenAIEnsureForwardErrorResponse_CompactKeepaliveOnlyWritesResponseFail
 	before := OpenAICompactKeepaliveAdjustedWrittenSize(c)
 	require.Eventually(t, c.Writer.Written, time.Second, time.Millisecond)
 	require.Equal(t, before, OpenAICompactKeepaliveAdjustedWrittenSize(c))
-	// 模拟设置 committed 标记后尚未写出协议事件的错误路径。
+	// Simulate a commit marker set before any protocol event was delivered.
 	MarkResponseCommitted(c)
 
 	require.True(t, DefaultOpenAIErrorOutput().EnsureFallback(c, false))
@@ -208,7 +205,8 @@ func TestOpenAIEnsureForwardErrorResponse_CompactKeepaliveOnlyWritesResponseFail
 	require.NotContains(t, w.Body.String(), "event: error\n")
 }
 
-// TestOpenAIEnsureForwardErrorResponse_AfterDeltaAppendsSingleValidResponseFailed 确认流中只追加一个合法失败终态。
+// TestOpenAIEnsureForwardErrorResponse_AfterDeltaAppendsSingleValidResponseFailed checks one valid failure
+// terminal event.
 func TestOpenAIEnsureForwardErrorResponse_AfterDeltaAppendsSingleValidResponseFailed(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

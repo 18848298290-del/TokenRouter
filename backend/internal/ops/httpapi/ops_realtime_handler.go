@@ -69,7 +69,7 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetUserConcurrencyStats returns real-time concurrency usage for all active users.
+// GetUserConcurrencyStats returns active users with running or waiting requests.
 // GET /api/v1/admin/ops/user-concurrency
 func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 	if h.opsService == nil {
@@ -168,7 +168,7 @@ func (h *OpsHandler) GetProviderAvailability(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// isOpsRealtimeRequestCanceled 判断查询失败是否仅由客户端取消实时请求引起。
+// isOpsRealtimeRequestCanceled reports whether cancellation of the HTTP request caused the query failure.
 func isOpsRealtimeRequestCanceled(c *gin.Context, err error) bool {
 	if err == nil {
 		return false

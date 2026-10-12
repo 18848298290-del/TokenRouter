@@ -43,7 +43,7 @@ func TestSessionStore_GetExpired(t *testing.T) {
 	store.Start()
 	defer store.Stop()
 
-	// 创建一个已过期的 session（CreatedAt 设置为 GeminiAuthorizationSessionTTL+1 分钟之前）
+	// Place the session one minute beyond its TTL.
 	session := &GeminiOAuthSession{
 		State:     "expired-state",
 		OAuthType: "code_assist",
@@ -69,7 +69,6 @@ func TestSessionStore_Delete(t *testing.T) {
 	}
 	store.Set("del-sid", session)
 
-	// 先确认存在
 	if _, ok := store.Get("del-sid"); !ok {
 		t.Fatal("删除前 session 应该存在")
 	}
@@ -85,7 +84,7 @@ func TestSessionStore_Stop_Idempotent(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
 
-	// 多次调用 Stop 不应 panic
+	// Repeated Stop calls must not panic.
 	store.Stop()
 	store.Stop()
 	store.Stop()
@@ -100,7 +99,7 @@ func TestSessionStore_ConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines * 3)
 
-	// 并发写入
+	// Race writes with reads and deletions of the same session IDs.
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
@@ -113,16 +112,14 @@ func TestSessionStore_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 
-	// 并发读取
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
 			sid := "concurrent-" + string(rune('A'+idx%26))
-			store.Get(sid) // 可能找到也可能没找到，关键是不 panic
+			store.Get(sid) // Either lookup result is valid while writers and deleters race.
 		}(i)
 	}
 
-	// 并发删除
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()

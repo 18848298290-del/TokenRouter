@@ -21,12 +21,12 @@ type AdminHandler struct {
 	calendar       timezone.Calendar
 }
 
-// ForceExpireOrderRequest 是管理员强制过期订单的审计原因。
+// ForceExpireOrderRequest contains the audit reason for an administrator-forced expiration.
 type ForceExpireOrderRequest struct {
 	Reason string `json:"reason"`
 }
 
-// AdminPaymentOrderResult 是后台订单响应 DTO，显式排除 provider_snapshot。
+// AdminPaymentOrderResult is the admin order response, excluding the internal provider snapshot.
 type AdminPaymentOrderResult struct {
 	ID                   int64                            `json:"id"`
 	UserID               int64                            `json:"user_id"`
@@ -86,7 +86,7 @@ type AdminProcessRefundRequest struct {
 	DeductBalance bool    `json:"deduct_balance"`
 }
 
-// NewAdminHandler creates a new admin AdminHandler.
+// NewAdminHandler creates an admin payment handler.
 func NewAdminHandler(paymentService *payment.Runtime, configService *payment.ConfigService, plans *billing.Plans, calendar timezone.Calendar) *AdminHandler {
 	return &AdminHandler{
 		paymentService: paymentService,
@@ -95,8 +95,6 @@ func NewAdminHandler(paymentService *payment.Runtime, configService *payment.Con
 		calendar:       calendar,
 	}
 }
-
-// --- Dashboard ---
 
 // GetDashboard returns payment dashboard statistics.
 // GET /api/v1/admin/payment/dashboard
@@ -147,7 +145,7 @@ func parsePaymentDashboardRange(c *gin.Context, calendar timezone.Calendar) (tim
 		response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 		return time.Time{}, time.Time{}, false
 	}
-	// 日期型结束时间按闭区间处理，让 2026-05-09 能包含当天全部订单。
+	// Advance a date-only end to the next midnight so the selected day is included.
 	if dateOnly {
 		endTime = endTime.AddDate(0, 0, 1)
 	}
@@ -157,8 +155,6 @@ func parsePaymentDashboardRange(c *gin.Context, calendar timezone.Calendar) (tim
 	}
 	return startTime, endTime, true
 }
-
-// --- Orders ---
 
 // ListOrders returns a paginated list of all payment orders.
 // GET /api/v1/admin/payment/orders
@@ -201,7 +197,7 @@ func (h *AdminHandler) GetOrderDetail(c *gin.Context) {
 	response.Success(c, gin.H{"order": AdminSanitizeAdminPaymentOrderForResponse(order), "auditLogs": auditLogs})
 }
 
-// GetOrderInvoice 返回管理员查看订单时使用的 invoice 或 receipt 链接。
+// GetOrderInvoice returns the invoice or receipt link for administrator access.
 // GET /api/v1/admin/payment/orders/:id/invoice
 func (h *AdminHandler) GetOrderInvoice(c *gin.Context) {
 	orderID, ok := AdminParseIDParam(c, "id")
@@ -231,7 +227,7 @@ func (h *AdminHandler) CancelOrder(c *gin.Context) {
 	response.Success(c, gin.H{"message": msg})
 }
 
-// ForceExpireOrder 在上游状态无法确认时由管理员显式终结待支付订单。
+// ForceExpireOrder expires a pending order on an administrator request without querying upstream.
 // POST /api/v1/admin/payment/orders/:id/force-expire
 func (h *AdminHandler) ForceExpireOrder(c *gin.Context) {
 	orderID, ok := AdminParseIDParam(c, "id")
@@ -362,7 +358,7 @@ func (h *AdminHandler) ProcessRefund(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// QueryAndFinalizeRefund 查询渠道侧退款状态，并在结果变为终态时完成 REFUND_PENDING 订单。
+// QueryAndFinalizeRefund checks the provider refund status and settles recoverable refunds.
 // POST /api/v1/admin/payment/orders/:id/refund/query
 func (h *AdminHandler) QueryAndFinalizeRefund(c *gin.Context) {
 	orderID, ok := AdminParseIDParam(c, "id")
@@ -376,8 +372,6 @@ func (h *AdminHandler) QueryAndFinalizeRefund(c *gin.Context) {
 	}
 	response.Success(c, result)
 }
-
-// --- Subscription Plans ---
 
 func (h *AdminHandler) ListPlans(c *gin.Context) {
 	billinghttpapi.NewPlanHandler(h.plans).ListPlans(c)
@@ -394,8 +388,6 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 func (h *AdminHandler) DeletePlan(c *gin.Context) {
 	billinghttpapi.NewPlanHandler(h.plans).DeletePlan(c)
 }
-
-// --- Provider Instances ---
 
 // ListProviders returns all payment provider instances.
 // GET /api/v1/admin/payment/providers
@@ -425,7 +417,7 @@ func (h *AdminHandler) CreateProvider(c *gin.Context) {
 	response.Created(c, inst)
 }
 
-// TestProvider 使用未保存的 EasyPay 配置草稿执行只读连通性测试。
+// TestProvider performs a read-only connectivity probe with an unsaved EasyPay configuration.
 // POST /api/v1/admin/payment/providers/test
 func (h *AdminHandler) TestProvider(c *gin.Context) {
 	var req payment.TestProviderDraftRequest
@@ -487,8 +479,6 @@ func AdminParseIDParam(c *gin.Context, paramName string) (int64, bool) {
 	}
 	return id, true
 }
-
-// --- Config ---
 
 // GetConfig returns the payment configuration (admin view).
 // GET /api/v1/admin/payment/config

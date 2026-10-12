@@ -18,7 +18,7 @@ type agentIdentityWSConnectionInvalidator interface {
 	InvalidateAgentIdentityWSConnections(providerID int64)
 }
 
-// ExecutionAgentIdentity 协调执行请求的身份注册和连接失效。
+// ExecutionAgentIdentity coordinates request identity registration and connection invalidation.
 type ExecutionAgentIdentity struct {
 	store       ExecutionProviderStore
 	coordinator *acctcore.OpenAITaskCoordinator
@@ -27,7 +27,7 @@ type ExecutionAgentIdentity struct {
 	taskMu      sync.Mutex
 }
 
-// ensureAgentIdentityTaskForProvider 兼容入口只转换记录和写回时机；锁、复查与登记规则由唯一提供商协调器执行。
+// ensureAgentIdentityTaskForProvider adapts records and writeback; the provider coordinator owns locking, rechecks, and registration.
 func ensureAgentIdentityTaskForProvider(ctx context.Context, coordinator *acctcore.OpenAITaskCoordinator, register func(context.Context, *acctcore.Record) (string, error), repo ExecutionProviderStore, wsInvalidator agentIdentityWSConnectionInvalidator, taskMu *sync.Mutex, value *ExecutionProvider, expectedTaskID string) error {
 	input := ExecutionRecord(value)
 	originals := map[*acctcore.Record]*ExecutionProvider{input: value}
@@ -107,7 +107,7 @@ func buildAgentIdentityAuthenticationHeaders(ctx context.Context, coordinator *a
 	return headers, err
 }
 
-// buildAgentIdentityAuthenticationHeadersWithTask 同时返回本次签名使用的 task，供失败恢复执行 CAS。
+// buildAgentIdentityAuthenticationHeadersWithTask also returns the signing task ID for compare-and-swap recovery.
 func buildAgentIdentityAuthenticationHeadersWithTask(ctx context.Context, coordinator *acctcore.OpenAITaskCoordinator, register func(context.Context, *acctcore.Record) (string, error), repo ExecutionProviderStore, wsInvalidator agentIdentityWSConnectionInvalidator, taskMu *sync.Mutex, provider *ExecutionProvider) (http.Header, string, error) {
 	if provider == nil || !provider.View().IsOpenAIAgentIdentity() {
 		return nil, "", errors.New("agent identity provider is required")
@@ -179,8 +179,8 @@ func (s *ExecutionAgentIdentity) UsesAgentIdentity(ctx context.Context, provider
 	return credProvider != nil && credProvider.View().IsOpenAIAgentIdentity()
 }
 
-// RedactExecutionAgentBody 在上游错误进入日志、Ops 或响应前移除凭据值。
-// 正常响应不应回显这些字段，此处仍做纵深防护以阻止异常上游泄漏。
+// RedactExecutionAgentBody removes credential values before upstream errors reach logs, Ops, or clients.
+// Redaction also protects against unexpected credential echoes from upstream.
 func RedactExecutionAgentBody(ctx context.Context, repo ExecutionProviderStore, provider *ExecutionProvider, body []byte) []byte {
 	if provider == nil || len(body) == 0 {
 		return body

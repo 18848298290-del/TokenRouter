@@ -8,9 +8,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// selectRoutes 为基础单平台和混合平台选择提供候选，按粘性、优先级和最近使用时间选择。
+// selectRoutes selects basic single-platform or mixed-platform candidates using stickiness, priority, and last-used time.
 func (s *GenericSelector) selectRoutes(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*FlowProvider, error) {
-	// 优先检查 context 中的强制平台（/antigravity 路由）
+	// A forced platform from the context takes precedence, as on /antigravity routes.
 	var platform string
 	var resolvedGroup *FlowGroup
 	forcePlatform, hasForcePlatform := s.ports.ForcePlatform(ctx)
@@ -34,11 +34,11 @@ func (s *GenericSelector) selectRoutes(ctx context.Context, groupID *int64, sess
 		resolvedGroup = group
 		platform = ""
 	} else {
-		// 无分组不能产生候选提供商，后续查询返回空池。
+		// Requests without a group have no candidate pool.
 		platform = ""
 	}
 
-	// count_tokens 与可用性探测使用无槽选择。高级分组与主请求共用最终分组、硬过滤和评分规则。
+	// count_tokens and availability probes use slot-free selection with the same advanced group, eligibility checks, and scoring.
 	if resolvedGroup != nil && resolvedGroup.UsesAdvancedScheduler() {
 		selection, err := s.Select(WithSelectOnly(ctx), SelectionInput{GroupID: groupID, SessionHash: sessionHash, RequestedModel: requestedModel, ExcludedIDs: excludedIDs})
 		if err != nil {
@@ -53,7 +53,7 @@ func (s *GenericSelector) selectRoutes(ctx context.Context, groupID *int64, sess
 		return selection.Provider, nil
 	}
 
-	// 入口已经完成回退准入，模型检查使用当前授权分组。
+	// The entry point has admitted any fallback group; check the currently authorized group.
 	if s.ports.CheckGroupModelRestriction(ctx, groupID, requestedModel) {
 		s.diagnostics.event("warn", "group model restriction blocked request",
 			"group_id", derefGroupID(groupID),
@@ -76,7 +76,7 @@ func (s *GenericSelector) SelectPlatform(ctx context.Context, groupID *int64, se
 	if groupID != nil && s.ports.ReadGroup != nil {
 		schedGroup, _ = s.ports.ReadGroup(ctx, *groupID)
 	}
-	// 路由、粘性和普通候选分支都使用 upstream 模型依据。
+	// Routed, sticky, and ordinary candidates all use the upstream model restriction.
 	needsUpstreamCheck := s.ports.NeedsUpstreamGroupRestrictionCheck(ctx, groupID)
 	isUpstreamAllowed := func(provider *FlowProvider) bool {
 		return !needsUpstreamCheck || !s.ports.IsUpstreamModelRestrictedByGroup(ctx, *groupID, provider, requestedModel)

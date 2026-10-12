@@ -83,7 +83,7 @@ func ValidateUsageAmount(amount *UpstreamUsageAmount) error {
 	if amount.Remaining != nil && !ValidFiniteNumber(*amount.Remaining) {
 		return errors.New("invalid usage remaining")
 	}
-	// 钱包余额允许为负；New API Token 额度在适配器层已经校验为非负。
+	// Wallet remaining balances may be negative; adapters validate limited New API token quotas separately.
 	return nil
 }
 

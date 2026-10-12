@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// Locale 将浏览器或 API 指定的语言传入业务上下文。
+// Locale puts the browser or API language preference into the request context.
 func Locale(defaultLanguage func() string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fallback := locale.Default()
@@ -16,7 +16,7 @@ func Locale(defaultLanguage func() string) gin.HandlerFunc {
 			fallback = defaultLanguage()
 		}
 		requested := c.GetHeader("Accept-Language")
-		// 浏览器导航无法携带应用设置的 Header，首屏使用已保存的 Cookie。
+		// Browser navigation cannot set application headers, so HTML requests prefer the saved locale cookie.
 		if !strings.HasPrefix(c.Request.URL.Path, "/api/") && strings.Contains(c.GetHeader("Accept"), "text/html") {
 			if cookie, err := c.Cookie("tokenrouter_locale"); err == nil && locale.Normalize(cookie) != "" {
 				requested = cookie

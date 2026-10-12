@@ -2,20 +2,20 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// SettingsSettingsEndpoints 只描述所属设置的 HTTP 操作，规则由对应模块实现。
+// SettingsSettingsEndpoints provides the combined settings HTTP operations.
 type SettingsSettingsEndpoints interface {
 	GetSettings(*gin.Context)
 	UpdateSettings(*gin.Context)
 }
 
-// PreAggregationEndpoints 描述独立预聚合端点。
+// PreAggregationEndpoints provides the dedicated pre-aggregation operations.
 type PreAggregationEndpoints interface {
 	GetPreAggregationSettings(*gin.Context)
 	UpdatePreAggregationSettings(*gin.Context)
 	BackfillPreAggregation(*gin.Context)
 }
 
-// RegisterSettingsSettingsRoutes 在已经鉴权和审计的设置组中注册原路径。
+// RegisterSettingsSettingsRoutes registers routes on an authenticated, audited admin settings group.
 func RegisterSettingsSettingsRoutes(adminSettings *gin.RouterGroup, endpoint SettingsSettingsEndpoints, pre PreAggregationEndpoints) {
 	adminSettings.GET("", endpoint.GetSettings)
 	adminSettings.PUT("", endpoint.UpdateSettings)

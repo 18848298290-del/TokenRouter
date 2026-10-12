@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// currentSelectionGroup 只核对入口已授权的当前分组，回退链必须在入口重新准入后生效。
+// currentSelectionGroup validates the admitted group. The entry handler must authorize a fallback group before selection.
 func currentSelectionGroup(ctx context.Context, id *int64, read func(context.Context, int64) (*routing.Group, error)) (*routing.Group, error) {
 	if id == nil || *id <= 0 {
 		return nil, nil
@@ -37,7 +37,7 @@ func currentSelectionGroup(ctx context.Context, id *int64, read func(context.Con
 	return validateCurrentSelectionGroup(ctx, group, *id)
 }
 
-// validateCurrentSelectionGroup 对缓存与回源结果执行相同的组身份和客户端检查。
+// validateCurrentSelectionGroup applies the same group identity and client checks to cached and fetched groups.
 func validateCurrentSelectionGroup(ctx context.Context, group *routing.Group, id int64) (*routing.Group, error) {
 	if group != nil {
 		if group.ID != id {

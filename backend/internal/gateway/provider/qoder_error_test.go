@@ -63,7 +63,7 @@ func TestQoderGatewayErrorDetailsMapsAgentLimitToRateLimit(t *testing.T) {
 	require.Equal(t, "Qoder agent limit reached; resets at 2026-07-12 15:28:09 Asia/Shanghai", message)
 }
 
-// qoderErrorDetailsForContract 展开 Qoder 错误的状态码、类型、消息和识别结果。
+// qoderErrorDetailsForContract returns the status, kind, message, and recognition flag for assertions.
 func qoderErrorDetailsForContract(err error) (int, string, string, bool) {
 	value := DescribeQoderError(err)
 	return value.Status, value.Kind, value.Message, value.Recognized

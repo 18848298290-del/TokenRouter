@@ -68,7 +68,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *test
 	require.False(t, seedExists)
 	_, streamMarkerExists := c.Get(openAICompactClientStreamKey)
 	require.False(t, streamMarkerExists)
-	// V2 请求保留路径和协商标记，出站请求据此补齐 beta feature。
+	// V2 keeps its path and negotiation marker so outbound headers include the beta feature.
 	require.True(t, c.GetBool("openai_native_compaction_v2"))
 }
 
@@ -233,8 +233,8 @@ func TestNormalizeOpenAIResponsesCompactRequest_SubpathNotPromoted(t *testing.T)
 	require.Equal(t, body, normalized)
 }
 
-// TestNormalizeOpenAIResponsesCompactRequest_PathBasedStreamTrueNotMarked 验证 path-based compact（Codex v1 unary 协议）即使 body 带 stream:true 也不标记，
-// 保持 JSON 写回行为不变。
+// TestNormalizeOpenAIResponsesCompactRequest_PathBasedStreamTrueNotMarked checks that unary path-based compact
+// keeps JSON output even when the body contains stream:true.
 func TestNormalizeOpenAIResponsesCompactRequest_PathBasedStreamTrueNotMarked(t *testing.T) {
 	h := &OpenAITextHandler{}
 	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"message","role":"user","content":"hello"}]}`)
@@ -325,11 +325,11 @@ func TestLogOpenAIRemoteCompactOutcome_NonCompactSkips(t *testing.T) {
 	require.False(t, logSink.ContainsMessageAtLevel("codex.remote_compact.failed", "warn"))
 }
 
-// TestSupplementCompactionItemFromSSE_Gating 验证补全逻辑的门控：非 compact 请求原样返回；终态已含 compaction 不重复补入。
+// TestSupplementCompactionItemFromSSE_Gating checks compact-only supplementation and avoids duplicate compaction items.
 func TestSupplementCompactionItemFromSSE_Gating(t *testing.T) {
 	bodyText := `data: {"type":"response.output_item.done","item":{"id":"cmp_g","type":"compaction","encrypted_content":"g"}}` + "\n"
 
-	// 非 compact 路径：不补入。
+	// Non-compact paths bypass supplementation.
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -337,12 +337,12 @@ func TestSupplementCompactionItemFromSSE_Gating(t *testing.T) {
 	finalResponse := []byte(`{"id":"r1","output":[{"type":"message"}]}`)
 	require.Equal(t, string(finalResponse), string(protocolopenai.SupplementCompactionItemFromSSE(IsOpenAIResponsesCompactPath(c), finalResponse, bodyText)))
 
-	// compact 路径 + 终态已含 compaction：不重复补入。
+	// An existing terminal compaction item is not duplicated.
 	c2, _ := newCompactBridgeTestContext(t, false)
 	already := []byte(`{"id":"r2","output":[{"type":"compaction","encrypted_content":"x"}]}`)
 	require.Equal(t, string(already), string(protocolopenai.SupplementCompactionItemFromSSE(IsOpenAIResponsesCompactPath(c2), already, bodyText)))
 
-	// compact 路径 + 终态非空缺 compaction：补入到末尾。
+	// Append the missing compaction item to a nonempty terminal output.
 	missing := []byte(`{"id":"r3","output":[{"type":"message"}]}`)
 	patched := protocolopenai.SupplementCompactionItemFromSSE(IsOpenAIResponsesCompactPath(c2), missing, bodyText)
 	items := gjson.GetBytes(patched, "output").Array()

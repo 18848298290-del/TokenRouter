@@ -64,7 +64,7 @@ func ApplyLegacyProtocolPatch(provider *Record, credentials, extra map[string]an
 	if _, unified := provider.Credentials[UpstreamProtocolsKey]; !unified {
 		return
 	}
-	// 旧输入只覆盖原来的文本/工作负载维度，独立媒体原生集合保持不变。
+	// Legacy input replaces text and optional embeddings selections while retaining independent media protocols.
 	selected := provider.UpstreamProtocols()
 	legacy := *provider
 	legacy.Credentials = maps.Clone(provider.Credentials)
@@ -108,9 +108,9 @@ func PreserveProtocolCredentials(existing, incoming map[string]any) map[string]a
 	return out
 }
 
-// MigrateLegacyProtocolCredentials 在统一集合保存后保留旧端点并移除旧配置字段。
+// MigrateLegacyProtocolCredentials copies legacy endpoints and removes old fields after saving the unified set.
 func MigrateLegacyProtocolCredentials(provider *Record) {
-	// 将 CN 固定协议的 base_url 复制到对应协议地址，供协议集合配置使用。
+	// Copy a CN fixed-protocol base_url into its protocol-specific address slot when that slot is absent.
 	if provider.IsCNProvider() {
 		legacy := provider.GetCredential("api_protocol")
 		if legacy != "" && legacy != APIProtocolAdaptive {

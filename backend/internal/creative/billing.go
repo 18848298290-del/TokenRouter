@@ -10,22 +10,22 @@ import (
 )
 
 const (
-	// 创作台计费请求 ID 前缀：全部经由 usage_billing_dedup 幂等表去重，
-	// 同一 runID 的同一操作（hold/capture/release）重试不会产生重复资金动作。
+	// Billing uses these request ID prefixes with usage_billing_dedup so retries of
+	// the same hold, capture, or release for a run do not repeat the funds operation.
 	creativeHoldRequestPrefix       = "creative_hold:"
 	creativeCaptureRequestPrefix    = "creative_capture:"
 	creativeReleaseRequestPrefix    = "creative_release:"
 	creativeSettlementRequestPrefix = "creative_settle:"
 
-	// creativePricingSnapshotVersion 标识按基础金额分配的计费快照版本。
-	// 创作台没有批量折扣与提供商倍率：scale 固定为 1，hold 与结算同价。
+	// creativePricingSnapshotVersion identifies snapshots allocated by base amount.
+	// Creative uses scale 1 with the same reservation and settlement price, without batch discounts.
 	creativePricingSnapshotVersion = 2
 
-	// FundingScope 标识创作台任务的资金操作范围。
+	// FundingScope identifies funds reserved for creative runs.
 	FundingScope billing.TaskScope = "creative"
 )
 
-// FundingStore 提供任务资金的预占、捕获和释放操作。
+// FundingStore reserves, captures, and releases run funds.
 type FundingStore interface {
 	Reserve(context.Context, *billing.TaskFundsCommand) (*billing.TaskFundsResult, error)
 	Capture(context.Context, *billing.TaskFundsCommand) (*billing.TaskFundsResult, error)
@@ -53,8 +53,8 @@ func CreativeSettlementRequestID(runID string) string {
 	return creativeSettlementRequestPrefix + strings.TrimSpace(runID)
 }
 
-// BuildHoldCommand 把任务元数据转换为计费预占命令。
-// 资金命令使用 billing.TaskFundsCommand，BatchID 填 runID。
+// BuildHoldCommand converts run metadata into a billing.TaskFundsCommand.
+// The Task field identifies the creative run and its reservation request.
 func BuildHoldCommand(run *CreativeRun, requestID string, actualBaseAmount float64) (*billing.TaskFundsCommand, error) {
 	if run == nil {
 		return nil, ErrCreativeBillingHoldFailed
@@ -101,13 +101,13 @@ func BuildHoldCommand(run *CreativeRun, requestID string, actualBaseAmount float
 	return cmd, nil
 }
 
-// Reserve 冻结任务预计费用；返回后 run 上回填混合预占快照。
+// Reserve reserves the estimated cost and updates the run funding snapshot on success.
 func (funding Funding) Reserve(ctx context.Context, run *CreativeRun) error {
 	if funding.Store == nil {
 		return ErrCreativeBillingHoldFailed.WithCause(errors.New("creative billing repository is not configured"))
 	}
 	if run.EstimatedCost <= 0 {
-		// 免费分组无需冻结，直接视为已预占（无资金动作）。
+		// Zero-cost runs need no reservation.
 		run.BalanceHoldAmount = 0
 		run.SubscriptionHoldAllocations = nil
 		return nil
@@ -116,8 +116,8 @@ func (funding Funding) Reserve(ctx context.Context, run *CreativeRun) error {
 	if err != nil {
 		return err
 	}
-	// 预占阶段统计 API Key 和成员额度，并在任务行上记录预记标记。
-	// 捕获/释放阶段则使用任务行上持久化的 run.AllowanceReserved。
+	// Reservation counts toward key and member quotas and persists that fact on the run.
+	// Capture and release use the persisted run.AllowanceReserved flag.
 	cmd.AllowanceReserved = true
 	result, err := funding.Store.Reserve(ctx, cmd)
 	if err != nil {
@@ -138,12 +138,12 @@ func (funding Funding) Reserve(ctx context.Context, run *CreativeRun) error {
 		run.HoldAmount = &holdAmount
 		run.EstimatedCost = result.EstimatedAmountUSD
 	}
-	// 预占成功后更新内存快照，创建失败回滚使用此时的 allowance 状态。
+	// Update the in-memory flag so creation rollback uses the reserved allowance state.
 	run.AllowanceReserved = true
 	return nil
 }
 
-// Capture 按成功输出数捕获实际费用（幂等，request_id 去重）。
+// Capture charges successful outputs, deduplicated by request ID.
 func (funding Funding) Capture(ctx context.Context, run *CreativeRun, successCount int) (*billing.TaskFundsResult, error) {
 	if funding.Store == nil {
 		return nil, ErrCreativeSettlementBillingFail.WithCause(errors.New("creative billing repository is not configured"))
@@ -163,8 +163,8 @@ func (funding Funding) Capture(ctx context.Context, run *CreativeRun, successCou
 	return result, nil
 }
 
-// Release 释放未消耗的冻结（失败/取消/结果丢失路径，幂等）。
-// 同 request id 的指纹冲突视为已释放，结束该消息的重试。
+// Release returns unused reserved funds for failed, cancelled, or lost-result runs.
+// A request ID fingerprint conflict is treated as an already completed release.
 func (funding Funding) Release(ctx context.Context, run *CreativeRun) error {
 	if funding.Store == nil || run == nil {
 		return nil
@@ -213,7 +213,7 @@ func batchImageSubscriptionAllocations(values []billing.BillingAllocation) []bil
 	return out
 }
 
-// FundingReference 返回任务资金引用和预占请求 ID。
+// FundingReference returns the run funding reference and reservation request ID.
 func FundingReference(id string) billing.TaskReference {
 	id = strings.TrimSpace(id)
 	return billing.TaskReference{Scope: FundingScope, ID: id, ReserveRequestID: CreativeHoldRequestID(id)}

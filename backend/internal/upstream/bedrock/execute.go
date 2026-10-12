@@ -25,7 +25,7 @@ type Target struct {
 	HTTPError  func(context.Context, *http.Response) (upstream.AttemptResult, error)
 }
 
-// Executor 执行 Bedrock 请求，请求体由调用方按本次 beta 选项准备。
+// Executor sends Bedrock requests whose bodies have already been prepared with beta options.
 type Executor struct{}
 
 func (t *Target) TargetID() int64 {
@@ -39,7 +39,7 @@ func (t *Target) String() string   { return fmt.Sprintf("bedrock target provider
 func (t *Target) GoString() string { return t.String() }
 
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	// 失败路径也返回取消与耗时分类；未发生服务时不生成用量或成功结果。
+	// Return cancellation and duration information on failure, including before a response exists.
 	enteredAt := time.Now()
 	defer func() {
 		if failure != nil {
@@ -145,7 +145,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	if id := resp.Header.Get("x-amzn-requestid"); id != "" {
 		head.Set("x-request-id", id)
 	}
-	// 与原 Gin Data 一致，输出失败不撤销已完成的供应商响应。
+	// A downstream write failure records disconnect while retaining the completed upstream result.
 	if err := sink.Begin(upstream.OutputHead{Status: resp.StatusCode, Header: head}); err != nil {
 		result.ClientDisconnect = true
 	} else if err := sink.Emit(upstream.OutputEvent{Data: body, Semantic: observation.Semantic, CommitForRetry: true, Terminal: true}); err != nil {

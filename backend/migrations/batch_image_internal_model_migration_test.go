@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBatchImageInternalModelMigration 验证异步任务具备独立的内部模型快照列。
+// TestBatchImageInternalModelMigration checks the independent internal-model snapshot column.
 func TestBatchImageInternalModelMigration(t *testing.T) {
 	content, err := FS.ReadFile("233_add_batch_image_internal_model.sql")
 	require.NoError(t, err)

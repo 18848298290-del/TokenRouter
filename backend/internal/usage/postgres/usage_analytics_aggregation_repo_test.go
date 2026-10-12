@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// expectUsageAnalyticsRangeRebuild 声明多维小时和日聚合重建的 SQL 预期。
+// expectUsageAnalyticsRangeRebuild declares SQL expectations for hourly and daily rollup rebuilding.
 func expectUsageAnalyticsRangeRebuild(mock sqlmock.Sqlmock, hourStart, hourEnd, scanEnd time.Time) {
 	dayStart := time.Date(hourStart.Year(), hourStart.Month(), hourStart.Day(), 0, 0, 0, 0, time.UTC)
 	lastHour := hourEnd.Add(-time.Nanosecond)
@@ -35,7 +35,7 @@ func expectUsageAnalyticsRangeRebuild(mock sqlmock.Sqlmock, hourStart, hourEnd, 
 	mock.ExpectCommit()
 }
 
-// TestAggregateUsageAnalyticsRangeStopsAtLiveWatermark 验证实时聚合不会读取水位之后的原始记录。
+// TestAggregateUsageAnalyticsRangeStopsAtLiveWatermark checks that live scans stop at the supplied watermark.
 func TestAggregateUsageAnalyticsRangeStopsAtLiveWatermark(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -48,7 +48,7 @@ func TestAggregateUsageAnalyticsRangeStopsAtLiveWatermark(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestAggregateUsageAnalyticsHourlyRangeSkipsDailyRebuild 验证定时小时刷新不会重复改写日表。
+// TestAggregateUsageAnalyticsHourlyRangeSkipsDailyRebuild checks that hourly refresh leaves daily data untouched.
 func TestAggregateUsageAnalyticsHourlyRangeSkipsDailyRebuild(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -71,7 +71,7 @@ func TestAggregateUsageAnalyticsHourlyRangeSkipsDailyRebuild(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestRebuildUsageAnalyticsDailyRangeUsesUTCDateBounds 验证日表接口按 UTC 日期边界独立重建。
+// TestRebuildUsageAnalyticsDailyRangeUsesUTCDateBounds checks independent rebuilding at UTC day boundaries.
 func TestRebuildUsageAnalyticsDailyRangeUsesUTCDateBounds(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -93,7 +93,7 @@ func TestRebuildUsageAnalyticsDailyRangeUsesUTCDateBounds(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestRecomputeUsageAnalyticsRangeRebuildsPartialEndBucket 验证删除范围落在小时中间时会保留末桶范围外记录。
+// TestRecomputeUsageAnalyticsRangeRebuildsPartialEndBucket checks a full final bucket for a mid-hour cleanup end.
 func TestRecomputeUsageAnalyticsRangeRebuildsPartialEndBucket(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -107,7 +107,7 @@ func TestRecomputeUsageAnalyticsRangeRebuildsPartialEndBucket(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestRecomputeUsageAnalyticsRangeIncludesExactEndBucket 验证包含式删除命中整点时会重建以该整点开始的桶。
+// TestRecomputeUsageAnalyticsRangeIncludesExactEndBucket checks rebuilding of the bucket starting at an inclusive end.
 func TestRecomputeUsageAnalyticsRangeIncludesExactEndBucket(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -121,7 +121,7 @@ func TestRecomputeUsageAnalyticsRangeIncludesExactEndBucket(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageAnalyticsAggregationStatePersistsManualCursor 验证手动范围字段可随任务状态完整读写。
+// TestUsageAnalyticsAggregationStatePersistsManualCursor checks round-trip storage of manual ranges and task progress.
 func TestUsageAnalyticsAggregationStatePersistsManualCursor(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -159,7 +159,7 @@ func TestUsageAnalyticsAggregationStatePersistsManualCursor(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// expectDashboardAggregateStatements 声明仪表盘聚合写入的 SQL 预期。
+// expectDashboardAggregateStatements declares SQL expectations for dashboard aggregate writes.
 func expectDashboardAggregateStatements(
 	mock sqlmock.Sqlmock,
 	hourStart, hourEnd time.Time,
@@ -182,7 +182,7 @@ func expectDashboardAggregateStatements(
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
-// TestDashboardAggregateRangeKeepsExactEndExclusive 验证实时聚合的整点结束值仍是半开区间。
+// TestDashboardAggregateRangeKeepsExactEndExclusive checks half-open live ranges ending on an exact hour.
 func TestDashboardAggregateRangeKeepsExactEndExclusive(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
@@ -201,7 +201,7 @@ func TestDashboardAggregateRangeKeepsExactEndExclusive(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestDashboardRecomputeRangeIncludesExactEndBuckets 验证删除重算同时包含整点和零点开始的新桶。
+// TestDashboardRecomputeRangeIncludesExactEndBuckets checks that cleanup repair includes buckets starting at midnight.
 func TestDashboardRecomputeRangeIncludesExactEndBuckets(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)

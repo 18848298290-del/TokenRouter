@@ -33,8 +33,7 @@ func TestCrossedDownward_BothAbove(t *testing.T) {
 }
 
 func TestCrossedDownward_ZeroThreshold(t *testing.T) {
-	// threshold == 0 → oldV >= 0 is always true, but newV < 0 only for negatives
-	// Typical case: positive balances should not fire when threshold is 0.
+	// A zero threshold requires a transition from a nonnegative to a negative balance.
 	require.False(t, CrossedDownward(10, 5, 0))
 	require.False(t, CrossedDownward(0, 0, 0))
 }
@@ -75,7 +74,7 @@ func TestResolveBalanceThreshold_Percentage(t *testing.T) {
 
 func TestResolveBalanceThreshold_PercentageZeroRecharged(t *testing.T) {
 	// When totalRecharged is 0, percentage falls through to raw threshold
-	// (treated as fixed). This is the defensive behavior.
+	// and is treated as a fixed amount.
 	require.Equal(t, 10.0, BalanceThreshold(10, thresholdTypePercentage, 0))
 }
 
@@ -97,7 +96,7 @@ func TestResolvedThreshold_FixedThresholdExceedsLimit(t *testing.T) {
 }
 
 func TestResolvedThreshold_FixedThresholdEqualsLimit(t *testing.T) {
-	// threshold=1000, limit=1000 → returns 0 (alert fires at 0 usage)
+	// The computed threshold is zero; Crossing suppresses nonpositive usage thresholds.
 	d := QuotaNotifyDimension{Threshold: 1000, ThresholdType: thresholdTypeFixed, Limit: 1000}
 	require.Equal(t, 0.0, d.UsageThreshold())
 }
@@ -109,13 +108,13 @@ func TestResolvedThreshold_PercentageNormal(t *testing.T) {
 }
 
 func TestResolvedThreshold_PercentageZeroPercent(t *testing.T) {
-	// threshold=0%, limit=1000 → fires when remaining drops to 0 (usage=1000)
+	// The computed usage threshold is the limit; Crossing separately rejects a zero configured threshold.
 	d := QuotaNotifyDimension{Threshold: 0, ThresholdType: thresholdTypePercentage, Limit: 1000}
 	require.InDelta(t, 1000.0, d.UsageThreshold(), 0.001)
 }
 
 func TestResolvedThreshold_PercentageHundredPercent(t *testing.T) {
-	// threshold=100%, limit=1000 → fires immediately (remaining drops to 100% i.e. nothing used yet)
+	// A 100% remaining threshold computes to zero usage; Crossing suppresses it.
 	d := QuotaNotifyDimension{Threshold: 100, ThresholdType: thresholdTypePercentage, Limit: 1000}
 	require.InDelta(t, 0.0, d.UsageThreshold(), 0.001)
 }
@@ -127,7 +126,7 @@ func TestResolvedThreshold_PercentageOverHundred(t *testing.T) {
 }
 
 func TestResolvedThreshold_ZeroLimit(t *testing.T) {
-	// limit=0 → returns 0 to avoid division and false alerts on unlimited quotas
+	// Unlimited quotas have no usage threshold.
 	d := QuotaNotifyDimension{Threshold: 100, ThresholdType: thresholdTypeFixed, Limit: 0}
 	require.Equal(t, 0.0, d.UsageThreshold())
 }

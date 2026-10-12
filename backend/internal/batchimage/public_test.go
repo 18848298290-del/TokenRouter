@@ -29,20 +29,20 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// batchCataloguePolicyReads 统计批量模型列表读取策略和计费来源的次数。
+// batchCataloguePolicyReads counts policy and pricing-source reads during catalogue queries.
 type batchCataloguePolicyReads struct {
 	*routing.PricingConfigService
 	policyReads, pricingReads int
 	modelsList                []string
 }
 
-// changingMediaPricingGroupRepo 模拟两次读取之间管理员修改分组倍率，两份配置计算出的最终价格相同。
+// changingMediaPricingGroupRepo simulates a group-rate edit between reads with equal final prices.
 type changingMediaPricingGroupRepo struct {
 	calls              int
 	oldGroup, newGroup *batchimage.GroupView
 }
 
-// publicPricingConfigFixture 提供模型配置和价卡数据，编译和报价由生产模块执行。
+// publicPricingConfigFixture supplies model and price-card data to production pricing code.
 type publicPricingConfigFixture struct {
 	routing.PricingConfigRepository
 	pricingConfig routing.PricingConfig
@@ -56,7 +56,7 @@ type fakeBatchImageAuthCacheInvalidator struct {
 	groupIDs []int64
 }
 
-// TestBatchImageCatalogueIncludesGroupMappingTargets 分组映射目标通过图片价格和权限检查后进入目录。
+// TestBatchImageCatalogueIncludesGroupMappingTargets checks mapped targets with valid image prices and permissions.
 func TestBatchImageCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"draw-alias", "draw-*"} {
 		t.Run(source, func(t *testing.T) {
@@ -100,7 +100,7 @@ func TestBatchImageCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	}
 }
 
-// TestBatchImageUnboundKeyCannotUseGlobalProviders 检查未绑定分组的 Key 提交任务时返回分组禁用错误。
+// TestBatchImageUnboundKeyCannotUseGlobalProviders checks that submission requires a bound group.
 func TestBatchImageUnboundKeyCannotUseGlobalProviders(t *testing.T) {
 	svc, repo, _, platform, _, _ := newTestBatchImagePublicService(true)
 	owner := testBatchImageOwner()
@@ -111,7 +111,7 @@ func TestBatchImageUnboundKeyCannotUseGlobalProviders(t *testing.T) {
 	require.Empty(t, platform.submits)
 }
 
-// TestBatchImageCatalogueResolvesBeforeModalities 覆盖通配来源、分组改写和最终输出模态。
+// TestBatchImageCatalogueResolvesBeforeModalities covers wildcard sources, group mapping, and final-model modalities.
 func TestBatchImageCatalogueResolvesBeforeModalities(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -168,7 +168,7 @@ func TestBatchImageCatalogueResolvesBeforeModalities(t *testing.T) {
 	}
 }
 
-// TestBatchImageCatalogueUsesOnePolicySnapshot 不同白名单阶段均复用一次策略和计费来源读取。
+// TestBatchImageCatalogueUsesOnePolicySnapshot checks one policy and pricing-source read across restriction stages.
 func TestBatchImageCatalogueUsesOnePolicySnapshot(t *testing.T) {
 	for _, stage := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		t.Run(stage, func(t *testing.T) {
@@ -204,7 +204,7 @@ func TestBatchImageCatalogueUsesOnePolicySnapshot(t *testing.T) {
 	}
 }
 
-// TestBatchImageCatalogueRejectsMissingPrice 模态合格的映射仍需有效图片报价。
+// TestBatchImageCatalogueRejectsMissingPrice checks that image-capable mappings still require an image price.
 func TestBatchImageCatalogueRejectsMissingPrice(t *testing.T) {
 	svc, _, _, _, _, _ := newTestBatchImagePublicService(true)
 	value := testBatchImageMappedProvider(303, "apikey", map[string]any{"gpt-*": "catalog-image"})
@@ -217,7 +217,7 @@ func TestBatchImageCatalogueRejectsMissingPrice(t *testing.T) {
 	require.Empty(t, result.Data)
 }
 
-// TestBatchImageAutomaticCandidates 未配置的目录型号不参与候选，映射到文本的型号被过滤。
+// TestBatchImageAutomaticCandidates excludes unconfigured catalogue names and models mapped to text.
 func TestBatchImageAutomaticCandidates(t *testing.T) {
 	svc, _, _, _, _, _ := newTestBatchImagePublicService(true)
 	value := testBatchImageMappedProvider(303, "apikey", map[string]any{"source-image": "final-text"})
@@ -442,8 +442,8 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		require.InDelta(t, 0.5, job.GroupRateMultiplier, 1e-12)
 		require.InDelta(t, 1.25, job.ProviderRateMultiplier, 1e-12)
 		require.InDelta(t, 0.8, job.BatchDiscountMultiplier, 1e-12)
-		// 配置的 hold(0.6) < discount(0.8) 属于会导致结算死锁的脏数据，
-		// 快照时被钳制为 discount，保证 holdAmount >= 实际成本上限。
+		// A hold multiplier of 0.6 below the 0.8 discount cannot cover full success.
+		// Snapshot creation clamps it to the discount so the hold covers the maximum cost.
 		require.InDelta(t, 0.8, job.HoldMultiplier, 1e-12)
 		require.InDelta(t, 0.125, job.BillableUnitPrice, 1e-12)
 		require.InDelta(t, 0.125, job.HoldUnitPrice, 1e-12)
@@ -1141,13 +1141,13 @@ func TestBatchImagePublicService_StatusItemsAndCancel(t *testing.T) {
 	})
 }
 
-// TestBatchImageServiceAccountErrorCode 验证 Google Service Account 是第三方凭据类型，公开错误码保持原协议名称。
+// TestBatchImageServiceAccountErrorCode checks the public protocol error code for Google service-account credentials.
 func TestBatchImageServiceAccountErrorCode(t *testing.T) {
 	err := batchimage.BatchImageProviderSubmitPublicError(batchimage.ErrBatchImageProviderMissingServiceAccount)
 	require.Equal(t, "BATCH_IMAGE_PROVIDER_MISSING_SERVICE_ACCOUNT", apperror.Reason(err))
 }
 
-// TestBatchImageConfiguredAlias 保留有价格的自定义图片型号，并检查提供商白名单。
+// TestBatchImageConfiguredAlias checks pricing and provider allowlists for custom image names.
 func TestBatchImageConfiguredAlias(t *testing.T) {
 	for _, allowed := range []bool{true, false} {
 		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
@@ -1176,7 +1176,7 @@ func TestBatchImageConfiguredAlias(t *testing.T) {
 	}
 }
 
-// GetGroupPolicy 统计策略读取次数。
+// GetGroupPolicy counts policy reads.
 func (p *batchCataloguePolicyReads) GetGroupPolicy(ctx context.Context, id int64) (*routing.GroupPolicyView, error) {
 	p.policyReads++
 	policy, err := p.PricingConfigService.GetGroupPolicy(ctx, id)
@@ -1186,7 +1186,7 @@ func (p *batchCataloguePolicyReads) GetGroupPolicy(ctx context.Context, id int64
 	return policy, err
 }
 
-// GetPricingConfigForGroup 统计计费来源读取次数。
+// GetPricingConfigForGroup counts pricing-source reads.
 func (p *batchCataloguePolicyReads) GetPricingConfigForGroup(ctx context.Context, id int64) (*routing.PricingConfig, error) {
 	p.pricingReads++
 	return p.PricingConfigService.GetPricingConfigForGroup(ctx, id)
@@ -1280,7 +1280,7 @@ func testBatchImageMappedProvider(id int64, providerType string, mapping map[str
 	return provider
 }
 
-// BenchmarkBatchImageConfiguredCatalogue 测量 65 个提供商的有限目录，包含规则准备及模态检查。
+// BenchmarkBatchImageConfiguredCatalogue measures rule preparation and modality checks for 65 providers.
 func BenchmarkBatchImageConfiguredCatalogue(b *testing.B) {
 	service, _, _, _, _, _ := newTestBatchImagePublicService(true)
 	rows := &publicBatchImageProviderRepo{}
@@ -1322,7 +1322,7 @@ func BenchmarkBatchImageConfiguredCatalogue(b *testing.B) {
 	}
 }
 
-// TestBatchImageCustomListDeclaresUnknownModality 自定义列表中的具体型号可在有价格时作为未知模态候选。
+// TestBatchImageCustomListDeclaresUnknownModality accepts priced concrete names with unknown modalities.
 func TestBatchImageCustomListDeclaresUnknownModality(t *testing.T) {
 	service, _, _, _, _, _ := newTestBatchImagePublicService(true)
 	owner := testBatchImageOwner()

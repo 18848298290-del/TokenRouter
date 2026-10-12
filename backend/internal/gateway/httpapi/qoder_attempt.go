@@ -14,8 +14,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// ForwardQoderAttempt 执行一次请求并同步输出响应，外层循环负责切换提供商。
-// 保留旧入口的部分结果资格和结果字段，不额外填充首次输出或估算用量。
+// ForwardQoderAttempt executes and writes one request; the caller owns provider failover.
+// An error returns partial results only when the executor reports both Served and HasUsage.
+// First-output timing and usage are not synthesized here.
 func ForwardQoderAttempt(ctx context.Context, c *gin.Context, runtime *gatewayadapter.QoderRuntime, value *provider.Record, body []byte, wire protocol.ProtocolID, responseModels ...string) (*forward.MessagesResult, error) {
 	responseModel := qoder.FirstNonEmptyQoder(responseModels...)
 	if responseModel == "" {
@@ -32,7 +33,7 @@ func ForwardQoderAttempt(ctx context.Context, c *gin.Context, runtime *gatewayad
 	return &forward.MessagesResult{RequestID: result.RequestID, Model: result.Model, UpstreamModel: result.UpstreamModel, Usage: result.Usage, Stream: result.Stream, Duration: result.Duration, ClientDisconnect: result.ClientDisconnect}, err
 }
 
-// QoderRequestMetadata 为一次平台执行复制请求头并传递现有客户端标记。
+// QoderRequestMetadata clones request headers and includes the client identity for one platform attempt.
 func QoderRequestMetadata(c *gin.Context) qoder.RequestMetadata {
 	result := qoder.RequestMetadata{APIKeyID: APIKeyIDFromContext(c)}
 	if c != nil && c.Request != nil {

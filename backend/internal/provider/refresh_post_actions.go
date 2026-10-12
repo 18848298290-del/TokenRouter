@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// RefreshPostActions 依次执行刷新成功后的清理、缓存失效、同步和隐私设置。
+// RefreshPostActions orders successful refresh cleanup, token invalidation, scheduler sync, and privacy updates.
 type RefreshPostActions struct {
 	Now                       func() time.Time
 	Info, Warn, Debug         func(string, ...any)
@@ -21,13 +21,13 @@ type RefreshPostActions struct {
 	ClearReauth               func(context.Context, *Record)
 }
 
-// Run 刷新成功后的后续动作（清除错误状态、缓存失效、调度器同步等）。
+// Run performs post-refresh health cleanup, cache invalidation, and follow-up updates.
 func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 	syncActions := *s
 	changed := false
 	s.ClearRefreshRequest(ctx, provider, "success")
 
-	// Antigravity 提供商：如果之前是因为缺少 project_id 而标记为 error，现在成功获取到了，清除错误状态
+	// After a successful Antigravity refresh, conditionally clear an earlier missing-project error.
 	if provider.Platform == PlatformAntigravity &&
 		provider.Status == StatusError &&
 		strings.Contains(provider.ErrorMessage, "missing_project_id:") {
@@ -45,7 +45,7 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 			changed = true
 		}
 	}
-	// 刷新成功后清除临时不可调度状态（处理 OAuth 401 恢复场景）
+	// Clear a matching temporary block after refresh, including OAuth 401 recovery.
 	if provider.TempUnschedulableUntil != nil && s.Now().Before(*provider.TempUnschedulableUntil) {
 		applied, clearErr := s.ClearCooldown(ctx, provider)
 		if clearErr != nil {
@@ -58,14 +58,15 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 		} else {
 			changed = true
 		}
-		// 原存储失败仍尽力清缓存；明确的身份/窗口冲突不能清掉新状态的缓存。
+		// A storage error still permits best-effort cache deletion; an identity or cooldown mismatch protects the
+		// newer cache state.
 		if (applied || clearErr != nil) && s.DeleteCooldown != nil {
 			if err := s.DeleteCooldown(ctx, provider.ID); err != nil {
 				s.Warn("token_refresh.clear_temp_unsched_cache_failed", "provider_id", provider.ID, "error", err)
 			}
 		}
 	}
-	// 身份或健康窗口冲突后清理已交换的 token 缓存，随后结束本次后置处理。
+	// On an identity or health-window mismatch, invalidate exchanged tokens but skip scheduler sync and later actions.
 	if changed {
 		syncActions.SyncProvider = nil
 	}
@@ -73,11 +74,11 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 	if changed {
 		return
 	}
-	// OpenAI OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则尝试关闭训练数据共享
+	// Apply OpenAI privacy settings after refresh when training sharing has not been disabled.
 	s.Privacy.RefreshOpenAIPrivacy(ctx, provider)
-	// Antigravity OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则调用 setUserSettings
+	// Apply Antigravity privacy settings after refresh when needed.
 	s.Privacy.RefreshAntigravityPrivacy(ctx, provider)
-	// Grok 凭证刷新成功后清除软性重新认证标记。
+	// Clear the Grok reauthentication hint after a successful refresh.
 	if provider != nil && provider.Platform == PlatformGrok && s.NeedsReauth(provider) {
 		s.ClearReauth(ctx, provider)
 	}
@@ -94,7 +95,7 @@ func (s *RefreshPostActions) SyncWithCleanup(parent context.Context, provider *R
 }
 
 func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
-	// 对所有 OAuth 提供商调用缓存失效（InvalidateToken 内部根据平台判断是否需要处理）
+	// Invalidate OAuth and Qoder COSY tokens through the platform-aware callback.
 	if s.Invalidate != nil && (provider.Type == ProviderTypeOAuth || provider.IsQoderCosy()) {
 		if err := s.Invalidate(ctx, provider); err != nil {
 			s.Warn("token_refresh.invalidate_token_cache_failed",
@@ -105,7 +106,7 @@ func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
 			s.Debug("token_refresh.token_cache_invalidated", "provider_id", provider.ID)
 		}
 	}
-	// 同步更新调度缓存中的提供商凭据。
+	// Publish refreshed provider credentials to the scheduler cache.
 	if s.SyncProvider != nil {
 		if err := s.SyncProvider(ctx, provider); err != nil {
 			s.Warn("token_refresh.sync_scheduler_cache_failed",
@@ -118,7 +119,7 @@ func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
 	}
 }
 
-// ClearRefreshRequest 在刷新完成或确定不可恢复后清除一次性强制刷新标记。
+// ClearRefreshRequest conditionally clears the one-time refresh flag after success or permanent failure.
 func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *Record, outcome string) {
 	if s == nil || provider == nil || !NeedsAntigravityRefreshRequest(provider) {
 		return

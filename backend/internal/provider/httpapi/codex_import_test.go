@@ -448,7 +448,7 @@ func newCodexImportMemoryAdminService(providers []provider.Record) *codexImportM
 	}
 }
 
-// newCodexImportFixture 组合提供商导入和备份查询组件。
+// newCodexImportFixture connects the importer to the in-memory archive and provider store.
 func newCodexImportFixture(svc *codexImportMemoryAdminService) *provider.CodexImporter {
 	archive := provider.NewArchive(svc, nil, provider.ArchiveOptions{Now: time.Now})
 	return provider.NewCodexImporter(svc, archive, codexImportFixtureOptions())
@@ -567,12 +567,12 @@ func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
 
-// codexImportFixtureOptions 使用供应商密钥解析函数，并注入测试时钟和 OAuth client。
+// codexImportFixtureOptions supplies the key parser, clock, and OAuth client ID.
 func codexImportFixtureOptions() provider.CodexImportOptions {
 	return provider.CodexImportOptions{Now: time.Now, OAuthClientID: openai.ClientID, ValidatePrivateKey: func(value string) error { _, err := openai.ParseAgentIdentityPrivateKey(value); return err }}
 }
 
-// ListProviders 为导入索引提供分页记录。
+// ListProviders returns paginated records for the import index.
 func (s *codexImportMemoryAdminService) ListProviders(ctx context.Context, page, size int, platform, kind, status, search string, gid int64, privacy, sortBy, order string) ([]provider.Record, int64, error) {
 	source := managementListFixture{providers: s.providers}
 	return source.ListProviders(ctx, page, size, platform, kind, status, search, gid, privacy, sortBy, order)

@@ -8,6 +8,8 @@ import (
 
 const openAICompatAnthropicReplayMaxTailMessages = 12
 
+// ApplyAnthropicCompatFullReplayGuard trims old messages in place and reports a change.
+// The retained tail can exceed 12 messages to keep tool calls and results together.
 func ApplyAnthropicCompatFullReplayGuard(req *protocolanthropic.AnthropicRequest) bool {
 	if req == nil || len(req.Messages) <= openAICompatAnthropicReplayMaxTailMessages {
 		return false

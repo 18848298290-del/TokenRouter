@@ -54,7 +54,8 @@ func TestOpenAIRecoverResponsesPanic_NoPanicNoWrite(t *testing.T) {
 	assert.Equal(t, "", w.Body.String())
 }
 
-// TestOpenAIRecoverResponsesPanic_AppendsResponseFailedAfterWritten 验证 /v1/responses 流 Flush 后发生 panic 时追加 response.failed，保留已提交状态码。
+// TestOpenAIRecoverResponsesPanic_AppendsResponseFailedAfterWritten checks that a panic after Flush appends
+// response.failed with the committed status.
 func TestOpenAIRecoverResponsesPanic_AppendsResponseFailedAfterWritten(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

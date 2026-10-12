@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Team 定义由唯一所有者承担费用的单层团队。
+// Team defines a single-level team whose owner pays for usage.
 type Team struct {
 	ent.Schema
 }
@@ -28,7 +28,7 @@ func (Team) Mixin() []ent.Mixin {
 }
 
 func (Team) Fields() []ent.Field {
-	// 新成员加入时复制团队默认限额，已有成员使用各自保存的限额。
+	// New members copy team default limits; existing members retain their stored limits.
 	validateDefaultLimit := func(value float64) error {
 		if value < 0 {
 			return fmt.Errorf("团队成员默认限额不能为负数")

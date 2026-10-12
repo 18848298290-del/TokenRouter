@@ -35,8 +35,6 @@ func TestProxyRepoSuite(t *testing.T) {
 	suite.Run(t, new(ProxyRepoSuite))
 }
 
-// --- Create / GetByID / Update / Delete ---
-
 func (s *ProxyRepoSuite) TestCreate() {
 	proxy := &egress.Proxy{
 		Name:     "test-create",
@@ -96,8 +94,6 @@ func (s *ProxyRepoSuite) TestDelete() {
 	s.Require().Error(err, "expected error after delete")
 }
 
-// --- List / ListWithFilters ---
-
 func (s *ProxyRepoSuite) TestList() {
 	s.mustCreateProxy(&egress.Proxy{Name: "p1", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: billing.StatusActive})
 	s.mustCreateProxy(&egress.Proxy{Name: "p2", Protocol: "http", Host: "127.0.0.1", Port: 8081, Status: billing.StatusActive})
@@ -138,8 +134,6 @@ func (s *ProxyRepoSuite) TestListWithFilters_Search() {
 	s.Require().Contains(proxies[0].Name, "production")
 }
 
-// --- ListActive ---
-
 func (s *ProxyRepoSuite) TestListActive() {
 	s.mustCreateProxy(&egress.Proxy{Name: "active1", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: billing.StatusActive})
 	s.mustCreateProxy(&egress.Proxy{Name: "inactive1", Protocol: "http", Host: "127.0.0.1", Port: 8081, Status: billing.StatusDisabled})
@@ -149,8 +143,6 @@ func (s *ProxyRepoSuite) TestListActive() {
 	s.Require().Len(proxies, 1)
 	s.Require().Equal("active1", proxies[0].Name)
 }
-
-// --- ExistsByHostPortAuth ---
 
 func (s *ProxyRepoSuite) TestExistsByHostPortAuth() {
 	s.mustCreateProxy(&egress.Proxy{
@@ -188,13 +180,11 @@ func (s *ProxyRepoSuite) TestExistsByHostPortAuth_NoAuth() {
 	s.Require().True(exists)
 }
 
-// --- CountProvidersByProxyID ---
-
 func (s *ProxyRepoSuite) TestCountProvidersByProxyID() {
 	proxy := s.mustCreateProxy(&egress.Proxy{Name: "p-count", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: billing.StatusActive})
 	s.mustInsertProvider("a1", &proxy.ID)
 	s.mustInsertProvider("a2", &proxy.ID)
-	s.mustInsertProvider("a3", nil) // no proxy
+	s.mustInsertProvider("a3", nil)
 
 	count, err := s.repo.CountProvidersByProxyID(s.ctx, proxy.ID)
 	s.Require().NoError(err, "CountProvidersByProxyID")
@@ -208,8 +198,6 @@ func (s *ProxyRepoSuite) TestCountProvidersByProxyID_Zero() {
 	s.Require().NoError(err)
 	s.Require().Zero(count)
 }
-
-// --- GetProviderCountsForProxies ---
 
 func (s *ProxyRepoSuite) TestGetProviderCountsForProxies() {
 	p1 := s.mustCreateProxy(&egress.Proxy{Name: "p1", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: billing.StatusActive})
@@ -231,8 +219,6 @@ func (s *ProxyRepoSuite) TestGetProviderCountsForProxies_Empty() {
 	s.Require().Empty(counts)
 }
 
-// --- ListActiveWithProviderCount ---
-
 func (s *ProxyRepoSuite) TestListActiveWithProviderCount() {
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -248,14 +234,12 @@ func (s *ProxyRepoSuite) TestListActiveWithProviderCount() {
 	s.Require().NoError(err, "ListActiveWithProviderCount")
 	s.Require().Len(withCounts, 2, "expected 2 active proxies")
 
-	// Sorted by created_at DESC, so p2 first
+	// Newest proxies come first (created_at DESC).
 	s.Require().Equal(p2.ID, withCounts[0].ID)
 	s.Require().Equal(int64(1), withCounts[0].ProviderCount)
 	s.Require().Equal(p1.ID, withCounts[1].ID)
 	s.Require().Equal(int64(2), withCounts[1].ProviderCount)
 }
-
-// --- Combined original test ---
 
 func (s *ProxyRepoSuite) TestExistsByHostPortAuth_And_ProviderCountAggregates() {
 	p1 := s.mustCreateProxy(&egress.Proxy{Name: "p1", Protocol: "http", Host: "1.2.3.4", Port: 8080, Username: "u", Password: "p", Status: billing.StatusActive})
@@ -302,7 +286,7 @@ func (s *ProxyRepoSuite) mustCreateProxy(p *egress.Proxy) *egress.Proxy {
 func (s *ProxyRepoSuite) mustCreateProxyWithTimes(name, status string, createdAt time.Time) *egress.Proxy {
 	s.T().Helper()
 
-	// Use the repository create for standard fields, then update timestamps via raw SQL to keep deterministic ordering.
+	// Set timestamps directly so ordering is deterministic across test runs.
 	p := s.mustCreateProxy(&egress.Proxy{
 		Name:     name,
 		Protocol: "http",

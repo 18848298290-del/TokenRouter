@@ -7,11 +7,8 @@ import (
 
 // computeDashboardHealthScore computes a 0-100 health score from the metrics returned by the dashboard overview.
 //
-// Design goals:
-// - Backend-owned scoring (UI only displays).
-// - Layered scoring: Business Health (70%) + Infrastructure Health (30%)
-// - Avoids double-counting (e.g., DB failure affects both infra and business metrics)
-// - Conservative + stable: penalize clear degradations; avoid overreacting to missing/idle data.
+// The score combines business health (70%) and infrastructure health (30%).
+// Missing component measurements keep their default healthy score.
 func computeDashboardHealthScore(now time.Time, overview *OpsDashboardOverview) int {
 	if overview == nil {
 		return 0
@@ -49,7 +46,7 @@ func computeBusinessHealth(overview *OpsDashboardOverview) float64 {
 	}
 
 	// TTFT score: 1s → 100, 3s → 0 (linear)
-	// 首字耗时按 1 秒至 3 秒的区间换算健康分。
+
 	ttftScore := 100.0
 	if overview.TTFT.P99 != nil {
 		p99 := float64(*overview.TTFT.P99)
@@ -79,7 +76,7 @@ func computeInfraHealth(now time.Time, overview *OpsDashboardOverview) float64 {
 		}
 	}
 
-	// 计算资源健康分：CPU + 内存 + 磁盘。
+	// Compute health averages CPU, memory, and disk scores.
 	computeScore := 100.0
 	if overview.SystemMetrics != nil {
 		cpuScore := 100.0

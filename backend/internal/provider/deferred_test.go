@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/timingwheel"
 )
 
-// 通过阻塞实际仓储调用，验证最终 flush 与周期 flush 串行且不会丢失待写项。
+// deferredDrainRepository blocks writes to test serialization of periodic and final flushes without losing queued activity.
 type deferredDrainRepository struct {
 	DeferredRepository
 	mu               sync.Mutex
@@ -21,7 +21,7 @@ type deferredDrainRepository struct {
 	err              error
 }
 
-// 不响应取消的写入模拟底层连接阻塞；停止必须有界返回并保留未排空的队列。
+// deferredBlockedRepository ignores cancellation to test bounded shutdown while a write remains blocked.
 type deferredBlockedRepository struct{ entered, release chan struct{} }
 
 func (r *deferredDrainRepository) BatchUpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
@@ -83,7 +83,7 @@ func TestDeferredFinalFlushReportsFailure(t *testing.T) {
 	require.True(t, retained)
 }
 
-// NewTimingWheelService 为测试构造时间轮，由测试调用 Start 启动。
+// NewTimingWheelService constructs a timing wheel; tests start it explicitly.
 func NewTimingWheelService() (*timingwheel.Wheel, error) { return timingwheel.New(), nil }
 
 func (r *deferredBlockedRepository) BatchUpdateLastUsed(context.Context, map[int64]time.Time) error {
@@ -116,7 +116,7 @@ func TestDeferredStopBudgetKeepsUnfinishedBatch(t *testing.T) {
 	require.ErrorIs(t, svc.StopContext(context.Background()), context.DeadlineExceeded)
 }
 
-// TestDeferredFailureKeepsNewerPendingActivity 检查旧批次写回失败后，待写入队列中较新的活动时间保持不变。
+// TestDeferredFailureKeepsNewerPendingActivity protects newer queued activity when an older batch fails.
 func TestDeferredFailureKeepsNewerPendingActivity(t *testing.T) {
 	repo := &deferredDrainRepository{entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("forced write failure")}
 	wheel, err := NewTimingWheelService()

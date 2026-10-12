@@ -41,9 +41,9 @@ type SubscriptionPlan struct {
 	MonthlyLimitUsd *float64 `json:"monthly_limit_usd,omitempty"`
 	// ValidityUnit holds the value of the "validity_unit" field.
 	ValidityUnit string `json:"validity_unit,omitempty"`
-	// 套餐包含的分组 ID 列表；空列表表示对全部分组可用
+	// Group IDs covered by the plan; an empty list covers all groups
 	GroupIds []int64 `json:"group_ids,omitempty"`
-	// 套餐内各分组使用订阅额度时的专属计费倍率；key 为 group_id
+	// Subscription billing multipliers by group_id for this plan
 	GroupRateMultipliers map[int64]float64 `json:"group_rate_multipliers,omitempty"`
 	// Features holds the value of the "features" field.
 	Features string `json:"features,omitempty"`

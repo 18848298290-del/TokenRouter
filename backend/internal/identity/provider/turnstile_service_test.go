@@ -29,7 +29,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (s *TurnstileServiceSuite) TestVerifyToken_SendsFormAndDecodesJSON() {
 	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 保存表单，供测试主 goroutine 检查。
+		// Pass captured form fields to the main test goroutine for assertions.
 		body, _ := io.ReadAll(r.Body)
 		values, _ := url.ParseQuery(string(body))
 		s.received <- values
@@ -43,7 +43,7 @@ func (s *TurnstileServiceSuite) TestVerifyToken_SendsFormAndDecodesJSON() {
 	require.NotNil(s.T(), resp)
 	require.True(s.T(), resp.Success, "expected success response")
 
-	// 在测试主 goroutine 中检查表单字段。
+	// Run assertions on the main test goroutine.
 	select {
 	case values := <-s.received:
 		require.Equal(s.T(), "sk", values.Get("secret"))
@@ -147,8 +147,8 @@ func (s *TurnstileServiceSuite) setupTransport(handler http.HandlerFunc) {
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// newInProcessTransport 将 HTTP 处理函数适配成在进程内执行的 RoundTripper。
-// 读取请求体并交给 capture 后，重新设置请求体供处理函数使用。
+// newInProcessTransport runs an HTTP handler through a RoundTripper in process.
+// It restores the request body after passing its bytes to capture.
 func newInProcessTransport(handler http.HandlerFunc, capture func(r *http.Request, body []byte)) http.RoundTripper {
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body []byte

@@ -9,6 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// SubscriptionRepositoryNoop panics on every method so tests detect unexpected repository calls.
 type SubscriptionRepositoryNoop struct{}
 
 type SubscriptionRepository struct {

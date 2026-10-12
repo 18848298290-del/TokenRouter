@@ -8,7 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 )
 
-// 本地预热标记经过双向结果转换后仍阻止上游成功反馈。
+// TestWSLocalWarmupResultRoundTrip checks that converted local warmups remain
+// excluded from upstream scheduling success feedback.
 func TestWSLocalWarmupResultRoundTrip(t *testing.T) {
 	original := &forward.OpenAIResult{LocalWarmup: true, RequestID: "resp_warmup", OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed"}
 	result := ForwardResultFromWS(ProjectWSResult(original))

@@ -11,14 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// AdminDefaults 保存调度的启动参数。
+// AdminDefaults holds process-level scheduling defaults.
 type AdminDefaults struct {
 	TopK    int
 	Weights policy.ConfigScoreWeights
 	Process policy.RuntimeSettings
 }
 
-// AdminSettings 是调度管理覆盖值，区分空字符串、布尔零值和未设置。
+// AdminSettings contains administrative overrides; the sticky-escape Set flag distinguishes false from unset.
 type AdminSettings struct {
 	AdvancedSchedulerEWMAErrorRateAlpha          string `json:"advanced_scheduler_ewma_error_rate_alpha"`
 	AdvancedSchedulerEWMATTFTAlpha               string `json:"advanced_scheduler_ewma_ttft_alpha"`
@@ -40,7 +40,7 @@ type AdminSettings struct {
 	AdvancedSchedulerWeightTTFT                  string `json:"advanced_scheduler_weight_ttft"`
 }
 
-// DefaultAdminSettingsDefaults 返回未提供配置时的管理默认值。
+// DefaultAdminSettingsDefaults returns management defaults when process configuration is absent.
 func DefaultAdminSettingsDefaults() AdminDefaults {
 	return AdminDefaults{TopK: 7, Weights: policy.ConfigScoreWeights{Priority: 1, Load: 1, Queue: 0.7, ErrorRate: 0.8, TTFT: 0.5, Reset: 0, QuotaHeadroom: 0, PreviousResponse: 5, SessionSticky: 3}, Process: policy.RuntimeSettings{EwmaErrorRateAlpha: DefaultErrorRateAlpha, EwmaTTFTAlpha: DefaultTTFTAlpha, StickyEscape: policy.NormalizeStickyEscape(policy.StickyEscapeConfig{Enabled: true, TtftMs: 15000, ErrorRate: 0.5})}}
 }
@@ -59,7 +59,7 @@ func EffectiveAdminTopK(defaults AdminDefaults) string {
 	return "7"
 }
 
-// NormalizeAdminSettings 保留每项范围、有效权重和错误 reason。
+// NormalizeAdminSettings normalizes overrides and validates ranges and the resolved weights.
 func NormalizeAdminSettings(settings *AdminSettings, defaults AdminDefaults) error {
 	lbTopK, err := NormalizeOptionalPositiveIntString(settings.AdvancedSchedulerLBTopK)
 	if err != nil {
@@ -109,9 +109,9 @@ func NormalizeAdminSettings(settings *AdminSettings, defaults AdminDefaults) err
 		*target = normalized
 	}
 
-	// 与 config.Validate 的 "scheduler_score_weights must not all be zero" 保持一致：
-	// 覆盖值（空则回退到生效的配置值）叠加后的基础权重和不允许为 0，
-	// 否则调度会静默退化为 TopK 内均匀随机。
+	// Resolve empty overrides from process defaults before validating the combined weights.
+	// Both base and total sums must be finite and nonzero for global settings.
+
 	effective := EffectiveAdminWeights(defaults)
 	resolved := policy.ConfigScoreWeights{
 		Priority:         ResolveAdvancedSchedulerWeight(settings.AdvancedSchedulerWeightPriority, effective.Priority),
@@ -189,7 +189,7 @@ func NormalizeOptionalRateString(raw string) (string, error) {
 	return strconv.FormatFloat(value, 'f', -1, 64), nil
 }
 
-// PrepareAdminSettings 将管理设置转换为待持久化的键值。
+// PrepareAdminSettings validates overrides and converts them to persistent key/value settings.
 func PrepareAdminSettings(settings *AdminSettings, defaults AdminDefaults) (map[string]string, error) {
 	if err := NormalizeAdminSettings(settings, defaults); err != nil {
 		return nil, err
@@ -202,7 +202,7 @@ func PrepareAdminSettings(settings *AdminSettings, defaults AdminDefaults) (map[
 	if settings.AdvancedSchedulerStickyEscapeEnabledSet {
 		updates[SettingKeyAdvancedSchedulerStickyEscapeEnabled] = strconv.FormatBool(settings.AdvancedSchedulerStickyEscapeEnabled)
 	} else {
-		// 开关缺省时保留空值，让进程配置继续提供默认值。
+		// An empty setting lets the process default supply the escape switch.
 		updates[SettingKeyAdvancedSchedulerStickyEscapeEnabled] = ""
 	}
 	updates[SettingKeyAdvancedSchedulerStickyEscapeTTFTMs] = settings.AdvancedSchedulerStickyEscapeTTFTMs
@@ -220,7 +220,7 @@ func PrepareAdminSettings(settings *AdminSettings, defaults AdminDefaults) (map[
 	return updates, nil
 }
 
-// ParticipantFields 在逃逸开关已设置时输出其布尔值，未设置时省略该字段。
+// ParticipantFields omits the sticky-escape switch when its Set flag is false.
 func (value AdminSettings) ParticipantFields() (map[string]json.RawMessage, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {

@@ -13,7 +13,7 @@ const (
 	WeChatOAuthLegacyProviderKey = "wechat"
 )
 
-// WeChatOAuthOptions 包含一次微信授权所需的配置，模式和地址由 HTTP 层解析。
+// WeChatOAuthOptions contains authorization settings with mode and URLs resolved by HTTP handlers.
 type WeChatOAuthOptions struct {
 	Mode, AppID, AppSecret, AuthorizeURL, Scope, RedirectURI, FrontendCallback, APIBaseURL string
 	OpenEnabled, MPEnabled                                                                 bool
@@ -58,7 +58,7 @@ func WeChatFallbackUsername(subject string) string {
 	if subject == "" {
 		return "wechat_user"
 	}
-	// 按 UTF-8 字符截断到 512 字节以内。
+	// Limit the subject to 512 bytes at a UTF-8 character boundary; the prefix is added afterward.
 	return "wechat_" + logredact.TruncateUTF8Value(subject, 512)
 }
 

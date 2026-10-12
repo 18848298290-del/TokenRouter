@@ -20,7 +20,7 @@ var (
 	openAIMissingUsageTotal           atomic.Uint64
 )
 
-// openAIMissingUsageLogSampler 对缺失 usage 的诊断日志做低频采样，同时保留累计计数。
+// openAIMissingUsageLogSampler rate-limits missing-usage diagnostics while counting all observations.
 type openAIMissingUsageLogSampler struct {
 	mu         sync.Mutex
 	lastLogged time.Time
@@ -46,7 +46,7 @@ func (s *openAIMissingUsageLogSampler) sample(now time.Time) (logNow bool, total
 	return false, s.total, 0
 }
 
-// SuccessMissingUsage 按低频采样记录成功响应缺少 usage 的诊断信息。
+// SuccessMissingUsage samples successful terminal responses with no positive token usage.
 func SuccessMissingUsage(ctx context.Context, providerID int64, status int, usage *openai.ForwardUsage, terminalEvent string, clientDisconnected bool) {
 	if status < 200 || status >= 300 || usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.ImageOutputTokens > 0) {
 		return

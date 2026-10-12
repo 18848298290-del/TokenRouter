@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// RecipientName 使用邮箱中的可读部分称呼收件人。
+// RecipientName uses the local part of an email address to address its recipient.
 func (s *Mailer) RecipientName(email string) string { return EmailRecipientName(email) }
 
-// SendTeamInvitation 按收件人的语言发送团队邀请。
+// SendTeamInvitation sends a team invitation in the recipient's language.
 func (s *Mailer) SendTeamInvitation(ctx context.Context, email, recipientName string, recipientUserID int64, teamName, link string, expiresAt time.Time) error {
 	return s.SendUserNotification(ctx, SendRequest{
 		Event:          NotificationEmailEventTeamInvitation,
@@ -17,7 +17,7 @@ func (s *Mailer) SendTeamInvitation(ctx context.Context, email, recipientName st
 	})
 }
 
-// SendOwnershipTransfer 按收件人的偏好发送所有权转让请求。
+// SendOwnershipTransfer sends an ownership-transfer request in the recipient's preferred language.
 func (s *Mailer) SendOwnershipTransfer(ctx context.Context, email, teamName, link string) error {
 	return s.SendUserNotification(ctx, SendRequest{
 		Event:          NotificationEmailEventTeamOwnershipTransfer,

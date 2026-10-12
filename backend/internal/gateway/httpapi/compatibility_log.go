@@ -8,13 +8,13 @@ import (
 
 var compatibilityLogCounter atomic.Uint64
 
-// CompatibilityLogSnapshot 接收兼容性统计计数。
+// CompatibilityLogSnapshot contains session compatibility counters and the read hit rate.
 type CompatibilityLogSnapshot struct {
 	ReadTotal, ReadHit, DualWrite, MetadataTotal int64
 	ReadHitRate                                  float64
 }
 
-// LogCompatibilityFallback 保留全部文本和计数入口共享的每 1024 次采样节奏。
+// LogCompatibilityFallback samples once every 1024 calls across text and token-count endpoints.
 func LogCompatibilityFallback(log *zap.Logger, read func() CompatibilityLogSnapshot) {
 	if log == nil {
 		return

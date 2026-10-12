@@ -22,7 +22,7 @@ var (
 	)
 )
 
-// DefaultSubscriptionSetting 是默认权益配置的纯值，原 JSON 形状保持不变。
+// DefaultSubscriptionSetting identifies a plan granted by the default entitlement settings.
 type DefaultSubscriptionSetting struct {
 	PlanID int64 `json:"plan_id"`
 }
@@ -66,7 +66,7 @@ func ValidateDefaultSubscriptionPlans(ctx context.Context, items []DefaultSubscr
 	return nil
 }
 
-// ParseDefaultSubscriptions 保持无效载荷与无效套餐 ID 的原过滤语义。
+// ParseDefaultSubscriptions returns nil for invalid JSON and removes nonpositive plan IDs.
 func ParseDefaultSubscriptions(raw string) []DefaultSubscriptionSetting {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

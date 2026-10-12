@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// NormalizeNativeProtocols 校验候选提供商的协议并按目录排序，空集合保持为空。
+// NormalizeNativeProtocols validates and orders enabled protocols. An empty selection stays empty.
 func NormalizeNativeProtocols(provider ProviderProtocols) ([]ProtocolID, error) {
 	options := NativeProtocolOptions(provider.Platform, provider.Type, provider.AuthMode)
 	seen := make(map[ProtocolID]bool)
@@ -24,7 +24,7 @@ func NormalizeNativeProtocols(provider ProviderProtocols) ([]ProtocolID, error) 
 	return normalized, nil
 }
 
-// ValidateProtocolFallbacks 检查每个回退是否存在对应的单步转换。
+// ValidateProtocolFallbacks checks that each target is a supported single-step conversion.
 func ValidateProtocolFallbacks(_ string, fallbacks map[ProtocolID][]ProtocolID) error {
 	for source, targets := range fallbacks {
 		if !slices.Contains(canonicalGroupClientProtocols, source) {
@@ -41,7 +41,7 @@ func ValidateProtocolFallbacks(_ string, fallbacks map[ProtocolID][]ProtocolID) 
 	return nil
 }
 
-// NormalizeResponsesImagePolicy 保留缺省继承和四种显式状态。
+// NormalizeResponsesImagePolicy defaults to inherit and validates the four named policies.
 func NormalizeResponsesImagePolicy(policy string) (string, error) {
 	switch policy {
 	case "":

@@ -23,24 +23,24 @@ const (
 	SettingKeyPreAggregationSettings = "pre_aggregation_settings"
 )
 
-// PreAggregationUsageSettings 定义使用记录预聚合运行参数。
+// PreAggregationUsageSettings contains usage aggregation controls.
 type PreAggregationUsageSettings struct {
 	Enabled         bool `json:"enabled"`
 	IntervalSeconds int  `json:"interval_seconds"`
 }
 
-// PreAggregationOpsSettings 定义运维预聚合运行参数。
+// PreAggregationOpsSettings contains operations aggregation controls.
 type PreAggregationOpsSettings struct {
 	Enabled bool `json:"enabled"`
 }
 
-// PreAggregationSettings 是预聚合唯一的数据库运行时配置。
+// PreAggregationSettings contains runtime pre-aggregation configuration stored under one key.
 type PreAggregationSettings struct {
 	Usage PreAggregationUsageSettings `json:"usage"`
 	Ops   PreAggregationOpsSettings   `json:"ops"`
 }
 
-// PreAggregationAvailability 描述部署层是否允许启用对应任务。
+// PreAggregationAvailability describes tasks and backfills permitted by deployment configuration.
 type PreAggregationAvailability struct {
 	UsageAvailable          bool
 	UsageDisabledReason     string
@@ -65,7 +65,8 @@ type persistedPreAggregationSettings struct {
 	} `json:"ops"`
 }
 
-// PreAggregationSettingsService 提供带短缓存的统一配置读取和热更新通知。
+// PreAggregationSettingsService reads configuration through a short-lived cache and notifies local listeners
+// on updates.
 type PreAggregationSettingsService struct {
 	settingRepo Repository
 	cfg         *Options
@@ -78,19 +79,19 @@ type PreAggregationSettingsService struct {
 	listeners   []func(PreAggregationSettings, PreAggregationSettings)
 }
 
-// Repository 是设置控制器实际需要的读写端口。
+// Repository provides the controller's setting reads and writes.
 type Repository interface {
 	GetValue(context.Context, string) (string, error)
 	Set(context.Context, string, string) error
 }
 
-// Options 包含部署时的用量和 Ops 聚合开关。
+// Options contains deployment-level usage and operations aggregation switches.
 type Options struct {
 	Usage                             UsageOptions
 	OpsEnabled, OpsAggregationEnabled bool
 }
 
-// UsageOptions 配置用量聚合开关、周期和回填能力。
+// UsageOptions controls usage aggregation, its interval, and manual backfills.
 type UsageOptions struct {
 	Enabled         bool
 	IntervalSeconds int
@@ -98,12 +99,12 @@ type UsageOptions struct {
 	BackfillMaxDays int
 }
 
-// NewPreAggregationSettingsService 创建统一预聚合配置服务。
+// NewPreAggregationSettingsService creates a pre-aggregation settings controller.
 func NewPreAggregationSettingsService(settingRepo Repository, cfg *Options) *PreAggregationSettingsService {
 	return &PreAggregationSettingsService{settingRepo: settingRepo, cfg: cfg}
 }
 
-// Availability 返回部署硬开关和手动回填限制。
+// Availability returns deployment restrictions and manual backfill limits.
 func (s *PreAggregationSettingsService) Availability() PreAggregationAvailability {
 	availability := PreAggregationAvailability{
 		UsageAvailable:          true,
@@ -131,7 +132,7 @@ func (s *PreAggregationSettingsService) Availability() PreAggregationAvailabilit
 	return availability
 }
 
-// Get 返回规范化后的运行时配置；设置不存在时直接使用部署层默认值。
+// Get returns normalized runtime settings, using deployment defaults when the setting is missing.
 func (s *PreAggregationSettingsService) Get(ctx context.Context) (PreAggregationSettings, error) {
 	defaults := s.defaults()
 	if s == nil || s.settingRepo == nil {
@@ -168,7 +169,7 @@ func (s *PreAggregationSettingsService) Get(ctx context.Context) (PreAggregation
 	return settings, nil
 }
 
-// Resolve 供查询热路径使用；数据库暂时不可用时沿用缓存或部署默认值。
+// Resolve returns settings for query paths, using cached values or deployment defaults on read failure.
 func (s *PreAggregationSettingsService) Resolve(ctx context.Context) PreAggregationSettings {
 	settings, err := s.Get(ctx)
 	if err == nil {
@@ -181,7 +182,8 @@ func (s *PreAggregationSettingsService) Resolve(ctx context.Context) PreAggregat
 	return s.defaults()
 }
 
-// Update 持久化完整配置并立即通知本实例中的聚合任务。
+// Update persists the normalized full configuration, refreshes the cache, and synchronously notifies local
+// listeners.
 func (s *PreAggregationSettingsService) Update(ctx context.Context, next PreAggregationSettings) (PreAggregationSettings, error) {
 	if s == nil || s.settingRepo == nil {
 		return PreAggregationSettings{}, errors.New("预聚合配置服务不可用")
@@ -203,7 +205,7 @@ func (s *PreAggregationSettingsService) Update(ctx context.Context, next PreAggr
 	return next, nil
 }
 
-// RegisterListener 注册同进程热更新回调。
+// RegisterListener registers a callback for updates within this process.
 func (s *PreAggregationSettingsService) RegisterListener(listener func(PreAggregationSettings, PreAggregationSettings)) {
 	if s == nil || listener == nil {
 		return
@@ -213,13 +215,13 @@ func (s *PreAggregationSettingsService) RegisterListener(listener func(PreAggreg
 	s.listenersMu.Unlock()
 }
 
-// UsageEnabled 返回部署层和数据库运行时开关的合并结果。
+// UsageEnabled reports whether both deployment and runtime settings allow usage aggregation.
 func (s *PreAggregationSettingsService) UsageEnabled(ctx context.Context) bool {
 	availability := s.Availability()
 	return availability.UsageAvailable && s.Resolve(ctx).Usage.Enabled
 }
 
-// OpsEnabled 返回部署层和数据库运行时开关的合并结果。
+// OpsEnabled reports whether both deployment and runtime settings allow operations aggregation.
 func (s *PreAggregationSettingsService) OpsEnabled(ctx context.Context) bool {
 	availability := s.Availability()
 	return availability.OpsAvailable && s.Resolve(ctx).Ops.Enabled

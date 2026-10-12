@@ -2,8 +2,8 @@
 
 package postgres
 
-// 本场景覆盖 usage_cleanup_repo.go、dashboard_aggregation_repo.go
-// 和 usage_analytics_aggregation_repo.go，并检查审计清理的事务回滚。
+// These scenarios cover usage_cleanup_repo.go, dashboard_aggregation_repo.go,
+// and usage_analytics_aggregation_repo.go, including rollback when audit clearing fails.
 
 import (
 	"context"
@@ -62,7 +62,7 @@ func TestAuditClearTraceFailureRollsBack(t *testing.T) {
 	require.Equal(t, int64(1), count)
 	_, err = integrationDB.ExecContext(ctx, "DROP TRIGGER test_reject_clear_trace ON audit_logs")
 	require.NoError(t, err)
-	// 清理成功后保存一条审计记录，删除数量取自同一事务。
+	// Successful clearing persists one trace with a deletion count from the same transaction.
 	deleted, err := s.ClearAll(ctx, &audit.AuditLog{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), deleted)
@@ -71,7 +71,7 @@ func TestAuditClearTraceFailureRollsBack(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT action,(extra->>'deleted_rows')::bigint FROM audit_logs").Scan(&action, &deletedRows))
 	require.Equal(t, audit.AuditActionAuditLogClear, action)
 	require.Equal(t, int64(1), deletedRows)
-	// 重新创建触发器，供测试结束时的清理函数删除。
+	// Recreate the trigger so the registered test cleanup can remove it.
 	_, err = integrationDB.ExecContext(ctx, `CREATE TRIGGER test_reject_clear_trace BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION test_reject_clear_trace()`)
 	require.NoError(t, err)
 }
@@ -104,14 +104,14 @@ func TestManualBackfillPreservesConcurrentState(t *testing.T) {
 	newTarget, newCursor := old.Add(-4*time.Hour), next
 	_, err = base.ApplyUsageAnalyticsState(ctx, usage.AnalyticsStateChange{Kind: usage.AnalyticsManualRequest, State: usage.UsageAnalyticsAggregationState{ManualBackfillStart: &newTarget, ManualBackfillCursor: &newCursor}})
 	require.NoError(t, err)
-	// 已过期工作器不能清除刚提交的新手工目标。
+	// A superseded worker must not clear a newly submitted manual target.
 	_, err = base.ApplyUsageAnalyticsState(ctx, usage.AnalyticsStateChange{Kind: usage.AnalyticsManualProgress, State: usage.UsageAnalyticsAggregationState{Phase: "idle"}, ExpectedManualStart: oldTarget, ExpectedManualCursor: oldCursor})
 	require.ErrorIs(t, err, usage.ErrAnalyticsRequestSuperseded)
 	got, err = base.GetUsageAnalyticsAggregationState(ctx)
 	require.NoError(t, err)
 	require.True(t, got.ManualBackfillStart.Equal(newTarget))
 	require.True(t, got.LiveWatermark.Equal(next))
-	// 逆序写入时，实时快照更新实时字段，手工请求保持当前值。
+	// A later live update changes live fields while retaining the current manual request.
 	_, err = base.ApplyUsageAnalyticsState(ctx, usage.AnalyticsStateChange{Kind: usage.AnalyticsLiveSuccess, State: usage.UsageAnalyticsAggregationState{LiveWatermark: next.Add(time.Hour), Phase: "idle"}})
 	require.NoError(t, err)
 	got, err = base.GetUsageAnalyticsAggregationState(ctx)

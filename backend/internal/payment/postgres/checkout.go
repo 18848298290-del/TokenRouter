@@ -112,7 +112,7 @@ func allocateCheckoutTradeNumber(ctx context.Context, tx *dbent.Tx) (string, err
 	return "", fmt.Errorf("generate unique out_trade_no: exhausted %d attempts", maxAttempts)
 }
 
-// PersistCheckoutResponse 将渠道实际返回的支付详情和有效期同步到本地订单。
+// PersistCheckoutResponse saves provider payment details and expiration on the local order.
 func (s *OrderStore) PersistCheckoutResponse(ctx context.Context, orderID int64, sel *payment.InstanceSelection, pr *payment.CreatePaymentResponse) (*payment.Order, error) {
 	if pr == nil {
 		return nil, fmt.Errorf("payment provider returned an empty create response")

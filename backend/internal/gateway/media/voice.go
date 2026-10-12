@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// VoiceRequest 保存已通过鉴权和审核的语音请求数据。
+// VoiceRequest holds an authenticated and moderated voice request.
 type VoiceRequest struct {
 	Endpoint, ContentType string
 	Body                  []byte
@@ -31,7 +31,7 @@ type VoicePorts interface {
 	CompleteVoice(context.Context, provider.ProviderSnapshot, VoiceRequest, *VoiceResult)
 }
 
-// VoiceFailure 只在候选耗尽时交给 HTTP 输出；其它错误仍由原生响应 Adapter 输出。
+// VoiceFailure lets HTTP report exhausted candidates; the upstream response adapter handles other errors.
 type VoiceFailure struct {
 	NoProviders bool
 	Last        error

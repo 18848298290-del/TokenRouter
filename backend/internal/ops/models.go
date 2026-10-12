@@ -23,8 +23,8 @@ type OpsSystemLog struct {
 	Extra           map[string]any `json:"extra,omitempty"`
 }
 
-// OpsRequestTiming 是从 http.access 系统日志提取的单请求阶段耗时。
-// 所有数值均为相对于 TokenRouter 入口的毫秒数；缺失阶段保持 nil。
+// OpsRequestTiming contains request timing and connection metadata from http.access logs.
+// Timing fields are milliseconds since ingress; absent numeric fields remain nil.
 type OpsRequestTiming struct {
 	RequestContentLength           *int64 `json:"request_content_length,omitempty"`
 	ProviderSlotAcquiredMs         *int64 `json:"provider_slot_acquired_ms,omitempty"`
@@ -48,7 +48,7 @@ type OpsErrorLog struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Standardized classification
-	// - 阶段：request|auth|provider_auth|routing|upstream|network|internal
+	// - phase: request|auth|provider_auth|routing|upstream|network|internal
 	// - owner: client|provider|platform
 	// - source: client_request|upstream_http|gateway
 	Phase string `json:"phase"`
@@ -92,7 +92,7 @@ type OpsErrorLog struct {
 	RequestType      *int16 `json:"request_type"`
 	UserAgent        string `json:"user_agent"`
 
-	// 关联 api_key 名称（LEFT JOIN api_keys 取得；软删只覆盖 key 列，name 保留，故已删 key 仍有原名）。
+	// APIKeyName is joined from api_keys; soft deletion retains the name after replacing the key.
 	APIKeyName    string `json:"api_key_name,omitempty"`
 	APIKeyDeleted bool   `json:"api_key_deleted,omitempty"`
 }
@@ -115,10 +115,10 @@ type OpsErrorLogDetail struct {
 	ResponseLatencyMs  *int64 `json:"response_latency_ms"`
 	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms"`
 
-	// 运维指标。
+	// Whether a business limit caused the error.
 	IsBusinessLimited bool `json:"is_business_limited"`
 
-	// 绑定且未删除的 Key 前缀，在错误发生时保存快照。
+	// Snapshot of the bound, undeleted API key prefix when the error occurred.
 	APIKeyPrefix string `json:"api_key_prefix,omitempty"`
 }
 
@@ -150,35 +150,35 @@ type OpsErrorLogFilter struct {
 
 	// Model matches against requested_model first, then model.
 	Model string
-	// ModelFuzzy 为 true 时 Model 使用 ILIKE 模糊匹配，供用户端查询使用。
-	// 默认值 false 使用精确匹配，管理端使用默认值。
+	// ModelFuzzy enables ILIKE matching for user queries.
+	// The default false value gives admin queries exact matching.
 	ModelFuzzy bool
 
 	// ExcludeCountTokens drops count_tokens probe errors (is_count_tokens=true).
 	ExcludeCountTokens bool
 
-	// IncludeRecoveredUpstream 允许提供方健康视图绕过 status>=400 守卫，
-	// 从而展示 upstream/provider_auth 阶段中 status<400 的恢复记录。
-	// 普通请求错误接口使用默认值 false，按客户端最终状态筛选。
+	// IncludeRecoveredUpstream lets provider health queries include recovered
+	// upstream/provider_auth rows with a client status below 400.
+	// The default false value filters by the final client status.
 	IncludeRecoveredUpstream bool
 
-	// ErrorPhasesAny 和 ErrorTypesAny 添加 ANY() 条件，与单值 Phase 条件分别应用。
-	// 开启 IncludeRecoveredUpstream 且阶段列表仅含 upstream/provider_auth 时也会绕过守卫；
-	// 其它 ANY 条件不会自行放宽 status>=400。字段用于映射前端的粗粒度错误分类。
+	// ErrorPhasesAny and ErrorTypesAny add ANY conditions independently of Phase.
+	// With IncludeRecoveredUpstream, a phase list containing only upstream/provider_auth also bypasses the status guard.
+	// Other ANY conditions retain the status guard. These lists represent UI error categories.
 	ErrorPhasesAny []string
 	ErrorTypesAny  []string
 
-	// View 控制列表端点的错误分类：errors 展示可处理错误，excluded 仅展示排除项，all 展示全部。
+	// View selects actionable errors (errors), excluded errors (excluded), or all errors (all).
 	View string
 
-	// IgnoredStatusCodes 是客户端侧状态码忽略列表；nil 表示使用系统默认值，空切片表示不按状态码忽略。
+	// IgnoredStatusCodes lists ignored client statuses; nil uses defaults, and an empty slice ignores none.
 	IgnoredStatusCodes []int
 
 	Page     int
 	PageSize int
 
-	// SortBy 和 SortOrder 用于与用量列表一致的服务端排序。
-	// 仓储层只允许 created_at、model 和 status_code，其他列回退到 created_at；默认降序。
+	// SortBy and SortOrder select server-side sorting, as on the usage list.
+	// Allowed columns are created_at, model, and status_code; unknown columns use created_at. Order defaults to descending.
 	SortBy    string
 	SortOrder string
 }
@@ -190,7 +190,7 @@ type OpsErrorLogList struct {
 	PageSize int            `json:"page_size"`
 }
 
-// OpsRequestTimingFromExtra 从系统日志的 Extra 中提取请求阶段耗时。
+// OpsRequestTimingFromExtra extracts timing and connection metadata from system log fields.
 func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	if len(extra) == 0 {
 		return nil
@@ -226,7 +226,7 @@ func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	return timing
 }
 
-// timingInt64Ptr 解析 JSON 数字并保留零值；零毫秒是有效的“立即发生”阶段。
+// timingInt64Ptr parses numeric JSON values, retaining zero as a valid measurement.
 func timingInt64Ptr(value any) *int64 {
 	var parsed int64
 	switch v := value.(type) {
@@ -257,7 +257,7 @@ func timingInt64Ptr(value any) *int64 {
 	return &parsed
 }
 
-// SetSort 将原始排序参数归一化后写入过滤器，供管理端和用户端错误列表共用。
+// SetSort normalizes sort parameters for admin and user error lists.
 func (f *OpsErrorLogFilter) SetSort(sortBy, sortOrder string) {
 	f.SortBy = strings.TrimSpace(sortBy)
 	f.SortOrder = strings.TrimSpace(sortOrder)

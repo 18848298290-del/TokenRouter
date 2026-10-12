@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 )
 
-// TextSettingKey 返回独立于语言数量的译文存储键。
+// TextSettingKey returns the key containing a text setting's localized content.
 func TextSettingKey(key string) string { return key + "_localized" }
 
-// ResolveSettingText 从同一次查询的设置中选择译文，未配置时使用现有原文。
+// ResolveSettingText resolves localized content, then the plain setting, then fallback.
+// A valid localized block may intentionally resolve to an empty string.
 func ResolveSettingText(values map[string]string, key, fallback, language string) string {
 	if raw := values[TextSettingKey(key)]; raw != "" {
 		var content Content[string]
@@ -23,7 +24,7 @@ func ResolveSettingText(values map[string]string, key, fallback, language string
 	return fallback
 }
 
-// ReadSettingText 为按键读取的后台通知选择对应语言。
+// ReadSettingText reads a text setting in the context language; read failures use fallback values.
 func ReadSettingText(ctx context.Context, store interface {
 	GetValue(context.Context, string) (string, error)
 }, key, fallback string,
@@ -33,7 +34,7 @@ func ReadSettingText(ctx context.Context, store interface {
 	return ResolveSettingText(map[string]string{key: original, TextSettingKey(key): translated}, key, fallback, FromContext(ctx))
 }
 
-// ReadGroupedText 从一组独立文案中读取后台通知所需的站点名称。
+// ReadGroupedText resolves a field in a localized group, then its plain setting, then fallback.
 func ReadGroupedText(ctx context.Context, store interface {
 	GetValue(context.Context, string) (string, error)
 }, group, key, fallback string,

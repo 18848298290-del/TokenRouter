@@ -51,8 +51,8 @@ func UserSubscriptionFromService(sub *billing.UserSubscription) *UserSubscriptio
 	return &out
 }
 
-// UserSubscriptionFromServiceAdmin 将 billing.UserSubscription 转换为管理员 DTO。
-// 管理员接口会额外返回分配人、分配时间和备注。
+// UserSubscriptionFromServiceAdmin converts a subscription to its administrator DTO.
+// The response includes the assigner, assignment time, and notes.
 func UserSubscriptionFromServiceAdmin(sub *billing.UserSubscription) *AdminUserSubscription {
 	if sub == nil {
 		return nil
@@ -152,7 +152,7 @@ func UserSummaryFromBilling(u *billing.UserSummary) *UserSummaryResponse {
 	}
 }
 
-// CloneNotifyEmailEntries 保留 nil 与显式空数组的 HTTP 形状。
+// CloneNotifyEmailEntries preserves nil versus empty arrays in JSON responses.
 func CloneNotifyEmailEntries(v []billing.NotifyEmailSummary) []billing.NotifyEmailSummary {
 	if v == nil {
 		return nil

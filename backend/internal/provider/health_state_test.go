@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTempUnschedState 测试临时限流状态结构。
 func TestTempUnschedState(t *testing.T) {
 	now := time.Now()
 	until := now.Add(5 * time.Minute)
@@ -25,7 +24,6 @@ func TestTempUnschedState(t *testing.T) {
 	require.Equal(t, "overloaded", state.MatchedKeyword)
 	require.Equal(t, 0, state.RuleIndex)
 
-	// 验证时间戳
 	require.Equal(t, until.Unix(), state.UntilUnix)
 	require.Equal(t, now.Unix(), state.TriggeredAtUnix)
 }

@@ -95,7 +95,7 @@ func DefaultIdempotencyConfig() IdempotencyConfig {
 		ProcessingTimeout:    30 * time.Second,
 		FailedRetryBackoff:   5 * time.Second,
 		MaxStoredResponseLen: 64 * 1024,
-		ObserveOnly:          true, // 默认先观察再强制，避免老客户端立刻中断
+		ObserveOnly:          true, // Accept missing keys by default for clients that do not yet send them.
 	}
 }
 
@@ -111,7 +111,8 @@ func NewIdempotencyCoordinator(repo IdempotencyRepository, cfg IdempotencyConfig
 	}
 }
 
-// DefaultWriteIdempotencyTTL 保留未装配或非正配置时的默认值。
+// DefaultWriteIdempotencyTTL returns the configured TTL, or the default for a nil receiver or nonpositive
+// value.
 func (c *IdempotencyCoordinator) DefaultWriteIdempotencyTTL() time.Duration {
 	if c != nil && c.cfg.DefaultTTL > 0 {
 		return c.cfg.DefaultTTL
@@ -119,7 +120,8 @@ func (c *IdempotencyCoordinator) DefaultWriteIdempotencyTTL() time.Duration {
 	return DefaultIdempotencyConfig().DefaultTTL
 }
 
-// DefaultSystemOperationIdempotencyTTL 保留维护操作的独立默认期限。
+// DefaultSystemOperationIdempotencyTTL returns the maintenance TTL, or its default for a nil receiver or
+// nonpositive value.
 func (c *IdempotencyCoordinator) DefaultSystemOperationIdempotencyTTL() time.Duration {
 	if c != nil && c.cfg.SystemOperationTTL > 0 {
 		return c.cfg.SystemOperationTTL
@@ -449,7 +451,7 @@ func (c *IdempotencyCoordinator) marshalStoredResponse(data any) (string, error)
 	return redacted, nil
 }
 
-// truncateUTF8 按字节上限截断字符串，并回退到合法 UTF-8 边界。
+// truncateUTF8 truncates to a valid UTF-8 prefix within maxBytes; a nonpositive limit leaves s unchanged.
 func truncateUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 || len(s) <= maxBytes {
 		return s

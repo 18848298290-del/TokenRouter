@@ -4,7 +4,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 )
 
-// GatewayAdminSettings 从综合快照提取网关设置。
+// GatewayAdminSettings extracts gateway settings from the snapshot.
 func (s *Snapshot) GatewayAdminSettings() gateway.AdminSettings {
 	return gateway.AdminSettings{
 		AntigravityUserAgentVersion:            s.AntigravityUserAgentVersion,
@@ -31,7 +31,7 @@ func (s *Snapshot) GatewayAdminSettings() gateway.AdminSettings {
 	}
 }
 
-// ApplyGatewayAdminReadSettings 将网关请求处理和模型默认设置写入快照。
+// ApplyGatewayAdminReadSettings copies gateway request processing and model defaults into the snapshot.
 func (s *Snapshot) ApplyGatewayAdminReadSettings(value *gateway.AdminReadSettings) {
 	s.AntigravityUserAgentVersion = value.AntigravityUserAgentVersion
 	s.BackendModeEnabled = value.BackendModeEnabled

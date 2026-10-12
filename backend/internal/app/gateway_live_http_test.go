@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestLiveAssemblyKeepsPermissionAndStopBeforeRead 检查 Live 入口在读取请求体前执行平台准入和关闭检查。
+// TestLiveAssemblyKeepsPermissionAndStopBeforeRead checks platform admission and shutdown before reading the body.
 func TestLiveAssemblyKeepsPermissionAndStopBeforeRead(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("live-contract")}
 	first := provideLiveHTTP(nil, nil, nil, nil, activity)

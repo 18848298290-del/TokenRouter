@@ -13,7 +13,8 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// TestCNMonitorDecisionCAS 验证真实 PostgreSQL 校验版本条件、同身份恢复、旧观测拒绝以及原尽力通知边界。
+// TestCNMonitorDecisionCAS checks PostgreSQL version guards, identity-matched recovery, stale observations, and
+// best-effort notification.
 func TestCNMonitorDecisionCAS(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -52,7 +53,7 @@ func TestCNMonitorDecisionCAS(t *testing.T) {
 	wrote, err = store.SetCNUsageDecisionCAS(ctx, row.ID, current.UpdatedAt, time.Time{}, "other-monitor", true)
 	require.NoError(t, err)
 	require.False(t, wrote)
-	// 相同时间版本仍必须检查原因，不能清除其它监控的停调。
+	// A matching timestamp still requires a matching reason to protect another monitor's suspension.
 	_, err = integrationDB.ExecContext(ctx, "UPDATE providers SET temp_unschedulable_reason='manual-cooldown' WHERE id=$1", row.ID)
 	require.NoError(t, err)
 	wrote, err = store.SetCNUsageDecisionCAS(ctx, row.ID, current.UpdatedAt, time.Time{}, reason, true)
@@ -60,7 +61,7 @@ func TestCNMonitorDecisionCAS(t *testing.T) {
 	require.False(t, wrote)
 	_, err = integrationDB.ExecContext(ctx, "UPDATE providers SET temp_unschedulable_reason=$2 WHERE id=$1", row.ID, reason)
 	require.NoError(t, err)
-	// outbox 失败继续保留原先已提交的健康写入，不升级成回滚条件。
+	// An outbox failure leaves the independently committed health write intact.
 	store.SetEvents(failConfigurationOutbox{})
 	wrote, err = store.SetCNUsageDecisionCAS(ctx, row.ID, current.UpdatedAt, time.Time{}, reason, true)
 	require.NoError(t, err)

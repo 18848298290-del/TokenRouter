@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ClaudeTokenRefresher 为统一刷新协调器提供 Claude 凭据资格检查和合并操作。
+// ClaudeTokenRefresher supplies credential eligibility and merging for the shared refresh coordinator.
 type ClaudeTokenRefresher struct {
 	Authorization *ClaudeAuthorization
 }
@@ -27,18 +27,14 @@ func (r *ClaudeTokenRefresher) Refresh(ctx context.Context, value *Record) (map[
 	return RefreshClaudeCredentials(ctx, value, r.Authorization.RefreshProviderToken)
 }
 
-// CanRefreshClaude 检查是否能处理此提供商
-// 处理 anthropic 平台的 oauth 与 setup-token 类型提供商。
-// 两者的 access_token 均为短期令牌（expires_in=28800，即 8h），到期都需刷新；
-// setup-token 之前被排除会导致其 access_token 过期后请求 401。
-// 此处与手动刷新入口（provider.IsOAuth()）保持一致，实际是否刷新由 NeedsRefresh
-// 按 expires_at 判断刷新资格，在分布式锁内执行交换。
+// CanRefreshClaude accepts Anthropic OAuth and setup-token providers.
+// NeedsRefreshClaude checks expiry separately; exchange still requires a usable refresh token.
 func CanRefreshClaude(provider *Record) bool {
 	return provider.Platform == PlatformAnthropic && provider.IsOAuth()
 }
 
-// NeedsRefreshClaude 检查 token 是否需要刷新
-// 基于 expires_at 字段判断是否在刷新窗口内。
+// NeedsRefreshClaude reports whether expires_at is within the refresh window.
+// Missing or unparseable expiry does not qualify for background refresh.
 func NeedsRefreshClaude(provider *Record, refreshWindow time.Duration) bool {
 	expiresAt := provider.GetCredentialAsTime("expires_at")
 	if expiresAt == nil {
@@ -47,8 +43,8 @@ func NeedsRefreshClaude(provider *Record, refreshWindow time.Duration) bool {
 	return time.Until(*expiresAt) < refreshWindow
 }
 
-// RefreshClaudeCredentials Refresh 执行 token 刷新
-// 将 token 字段合并进 credentials，其余字段保持当前值。
+// RefreshClaudeCredentials exchanges tokens and merges the result into stored credentials.
+// Fields omitted by the exchange retain their stored values.
 func RefreshClaudeCredentials(ctx context.Context, provider *Record, exchange func(context.Context, *Record) (*ClaudeTokenInfo, error)) (map[string]any, error) {
 	tokenInfo, err := exchange(ctx, provider)
 	if err != nil {
@@ -61,8 +57,8 @@ func RefreshClaudeCredentials(ctx context.Context, provider *Record, exchange fu
 	return newCredentials, nil
 }
 
-// BuildClaudeProviderCredentials 为 Claude 平台构建 OAuth credentials map
-// 消除 Claude 平台没有 BuildProviderCredentials 方法的问题。
+// BuildClaudeProviderCredentials converts Claude token information to credential fields.
+// Refresh token and scope are included when supplied.
 func BuildClaudeProviderCredentials(tokenInfo *ClaudeTokenInfo) map[string]any {
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,

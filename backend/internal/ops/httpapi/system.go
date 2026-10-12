@@ -19,7 +19,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SystemHandler 处理系统版本查询、更新、回退和重启请求。
+// SystemHandler handles version queries, updates, rollbacks, and restart requests.
 type SystemHandler struct {
 	idemhttp.Executor
 	updateSvc  systemUpdateService
@@ -34,7 +34,7 @@ type systemUpdateService interface {
 	RollbackToVersion(ctx context.Context, version string) error
 }
 
-// NewSystemRuntimeHandler 使用 app 已登记生命周期的唯一维护实例。
+// NewSystemRuntimeHandler uses the maintenance instance registered with the application lifecycle.
 func NewSystemRuntimeHandler(update systemUpdateService, operations *maintenance.Operations) *SystemHandler {
 	return &SystemHandler{updateSvc: update, operations: operations}
 }
@@ -70,7 +70,7 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 	})
 }
 
-// GetRollbackVersions 返回允许回退的历史版本列表。
+// GetRollbackVersions returns versions eligible for rollback.
 // GET /api/v1/admin/system/rollback-versions
 func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
 	versions, err := h.updateSvc.ListRollbackVersions(c.Request.Context())
@@ -83,9 +83,9 @@ func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
 	})
 }
 
-// Rollback 恢复历史版本。
-// 无请求体或 version 为空时恢复上次原地更新留下的 .backup；传入
-// {"version":"x.y.z"} 时下载并安装允许列表中的指定 release。
+// Rollback restores a previous version.
+// An empty body or version restores the .backup left by an in-place update.
+// A version such as {"version":"x.y.z"} downloads and installs that allowed release.
 // POST /api/v1/admin/system/rollback
 func (h *SystemHandler) Rollback(c *gin.Context) {
 	var req struct {
@@ -110,7 +110,7 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 	})
 }
 
-// RestartService restarts the systemd service
+// RestartService requests an application restart.
 // POST /api/v1/admin/system/restart
 func (h *SystemHandler) RestartService(c *gin.Context) {
 	operationID := buildSystemOperationID(c, "restart")

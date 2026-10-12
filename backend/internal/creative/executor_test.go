@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestCreativeExecutorGroupPolicyUsesFinalModel 通过两跳陷阱检查出站模型的分组和提供商映射次数。
+// TestCreativeExecutorGroupPolicyUsesFinalModel uses chained mappings to detect repeated model rewriting.
 func TestCreativeExecutorGroupPolicyUsesFinalModel(t *testing.T) {
 	for _, platform := range []string{PlatformOpenAI, PlatformGemini, PlatformGrok} {
 		t.Run(platform, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestCreativeExecutorGroupPolicyUsesFinalModel(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, final, prepared.UpstreamModel)
 			require.Equal(t, platform, prepared.Platform)
-			// 准备阶段固定执行模型，后续执行使用该模型。
+			// Execution uses the model fixed during preparation.
 			mapping["provider-alias"] = "changed-after-prepare"
 			_, err = prepared.Target.Execute(context.Background(), run, CreativeRunPayload{})
 			require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestCreativeExecutorGroupPolicyUsesFinalModel(t *testing.T) {
 	}
 }
 
-// TestCreativeExecutorGroupPolicyRestrictionStages 检查排队后策略变更的白名单校验和槽位释放。
+// TestCreativeExecutorGroupPolicyRestrictionStages checks policy changes after enqueue and slot release.
 func TestCreativeExecutorGroupPolicyRestrictionStages(t *testing.T) {
 	for _, tc := range []struct {
 		name, source string

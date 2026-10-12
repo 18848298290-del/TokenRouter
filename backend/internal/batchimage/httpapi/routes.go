@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterGatewayRoutes 复用网关已安装的 Key 与协议门禁，拥有批量图片子路径。
+// RegisterGatewayRoutes registers batch image paths behind the gateway key and protocol checks.
 func RegisterGatewayRoutes(gateway *gin.RouterGroup, endpoint *BatchImageHandler) {
 	gateway.POST("/images/batches", endpoint.Submit)
 	gateway.GET("/images/batches", endpoint.List)

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// Advisory 复用原 SQL 连接上的技术锁，降级策略由任务决定。
+// Advisory uses the SQL pool for advisory locks; callers choose the fallback policy.
 type Advisory struct{ db *sql.DB }
 
 func NewAdvisory(db *sql.DB) ops.AdvisoryLocker {

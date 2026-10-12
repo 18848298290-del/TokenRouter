@@ -13,8 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// stubChatGPTHeadersRepo 是最小化 ProviderRepository stub，仅实现 GetByID，
-// 供 TestResolveAndSetOpenAIChatGPTAccountHeaders 使用。
+// stubChatGPTHeadersRepo implements GetByID for credential-header tests.
+// Other storage methods are unused.
 type stubChatGPTHeadersRepo struct {
 	ExecutionProviderStore
 
@@ -79,20 +79,20 @@ func TestResolveCredentialProvider(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
 
-	// 普通提供商（非影子）→ 返回自身
+	// An ordinary provider resolves to itself.
 	parent := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 100, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive}}
 	repo := newStubCredRepo(parent)
 	got, err := CredentialProvider(ctx, repo, parent)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), got.Record.ID)
 
-	// 影子提供商 + 合法 OpenAI OAuth 母提供商 → 返回母提供商
+	// A shadow resolves to its OpenAI OAuth parent.
 	shadow := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 200, ParentProviderID: &pid, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	got, err = CredentialProvider(ctx, repo, shadow)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), got.Record.ID)
 
-	// 影子提供商 + 母提供商非 OpenAI OAuth（API Key 类型）→ 返回 error
+	// An API Key parent is invalid for an OAuth shadow.
 	badRepo := newStubCredRepo(&ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 100, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}})
 	_, err = CredentialProvider(ctx, badRepo, shadow)
 	require.Error(t, err)

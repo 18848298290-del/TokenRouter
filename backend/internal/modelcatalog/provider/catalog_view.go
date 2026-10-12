@@ -12,7 +12,8 @@ import (
 
 type PriceModel struct{ Model, Provider, Mode, BillingMode string }
 
-// PricingView 固定一次发布的价格与型号索引。单型号返回副本，枚举只传递字符串。
+// PricingView fixes prices and the model index from one publication. Model lookups return copies; enumeration
+// returns strings.
 type PricingView struct {
 	snapshot *Service
 	models   []PriceModel

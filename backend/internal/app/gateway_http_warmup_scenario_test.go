@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 gateway_messages_http.go 与 gateway_count_tokens.go 的预热请求拦截。
+// These tests cover warmup interception in Messages and token-counting handlers.
 
 import (
 	"bytes"
@@ -36,13 +36,13 @@ func newTestGatewayHandler(t *testing.T, group *routing.Group, providers []*gate
 	schedulerSnapshot := scheduler.NewSnapshotService(schedulerCache, nil, nil, nil, nil, scheduler.SnapshotBindings{})
 
 	gwSvc, gwSvcChoices, messages := newGenericExecutionAndSelectionFixture(
-		nil, // providerRepo：调度快照命中，不读取仓库。
+		nil, // providerRepo: the scheduler snapshot supplies candidates.
 		&fakeGroupRepo{group: group},
 		nil, // usageLogRepo
-		nil, // cache：关闭粘性会话。
+		nil, // cache: sticky sessions are disabled.
 		nil, // cfg
 		schedulerSnapshot,
-		nil, // concurrencyService：关闭负载感知，获取并发槽位总是成功。
+		nil, // concurrencyService: disable load-aware selection and let slot acquisition succeed.
 		nil, // healthObserver
 		nil, // identityService
 		nil, // httpUpstream
@@ -58,7 +58,7 @@ func newTestGatewayHandler(t *testing.T, group *routing.Group, providers []*gate
 		nil, // resolver
 		responseHeaderFilterForTest(nil),
 	)
-	// 预热用例直接绑定完成器。
+	// Bind a completion recorder directly for the warmup scenario.
 	gwSvc.Recorder = newHTTPCompletionFixture(nil, nil, nil, nil, nil, nil, nil, false)
 
 	cfg := &config.Config{}
@@ -90,8 +90,7 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedul
 	group := &routing.Group{
 		ID:       groupID,
 		Hydrated: true,
-		// /v1/messages（Claude 兼容）入口
-		Status: billing.StatusActive,
+		Status:   billing.StatusActive,
 	}
 
 	provider := &gatewayprovider.ExecutionProvider{
@@ -105,7 +104,7 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedul
 				"intercept_warmup_requests": true,
 			},
 			Extra: map[string]any{
-				"mixed_scheduling": true, // 关键：允许被 anthropic 分组混合调度选中
+				"mixed_scheduling": true, // Allow selection by an Anthropic group through mixed scheduling.
 			},
 			Concurrency:    1,
 			Priority:       1,
@@ -151,7 +150,7 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedul
 
 	require.Equal(t, 200, rec.Code)
 
-	// 检查 Handler 选中的提供商为 antigravity。
+	// The handler must select the Antigravity provider.
 	selected, ok := c.Get(gatewayhttp.OpsProviderIDKey)
 	require.True(t, ok)
 	require.Equal(t, providerID, selected)
@@ -211,9 +210,9 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_ForcePlatfor
 	req := httptest.NewRequest(http.MethodPost, "/antigravity/v1/messages", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// 模拟 routes/gateway.go 里的 ForcePlatform 中间件效果：
-	// - 写入 request.Context（Service 读取）
-	// - 写入 gin.Context（Handler 快速读取）
+	// Reproduce the ForcePlatform middleware bindings:
+	// request.Context supplies the execution service.
+	// gin.Context supplies the HTTP handler.
 	ctx := requeststate.WithGroup(req.Context(), group)
 	ctx = apikey.WithForcePlatform(ctx, capability.PlatformAntigravity)
 	req = req.WithContext(ctx)

@@ -5,21 +5,21 @@ import (
 	"strings"
 )
 
-// ModelRejectionRules 提供候选调度资格、已配置模型和模型支持判断。
+// ModelRejectionRules supplies scheduling eligibility, configured models, and model-support checks.
 type ModelRejectionRules interface {
 	IsSchedulable() bool
 	GetConfiguredRequestModels() []string
 	IsModelSupported(string) bool
 }
 
-// ModelRejectionSource 保留逐提供商懒读取，默认目录由平台适配器提供。
+// ModelRejectionSource reads each provider's rules lazily; the adapter supplies platform defaults.
 type ModelRejectionSource struct {
 	Platform string
 	Rules    ModelRejectionRules
 	Defaults func(string) ([]string, error)
 }
 
-// AvailableModelsForRejection 返回用于拒绝消息的可用模型目录。
+// AvailableModelsForRejection returns sorted model suggestions for a rejection message.
 func AvailableModelsForRejection(providers []ModelRejectionSource, platform string) []string {
 	modelSet := make(map[string]struct{})
 	hasConfiguredModels := false
@@ -66,7 +66,7 @@ func matchesRejectionPlatform(value *ModelRejectionSource, platform string) bool
 	return platform == "" || value.Platform == platform
 }
 
-// NewGroupModelRejection 生成分组模型拒绝错误，空请求或空候选时返回 nil。
+// NewGroupModelRejection returns nil for an empty request or provider pool, otherwise a group-model error.
 func NewGroupModelRejection(platform, requested string, providers []ModelRejectionSource) error {
 	requested = strings.TrimSpace(requested)
 	if requested == "" || len(providers) == 0 {

@@ -18,7 +18,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// AuthState 通过 Ent 持久化认证状态，业务校验调用注入的 AuthService。
+// AuthState persists authentication state through Ent and delegates business validation to Rules.
 type AuthState struct {
 	*identitycore.AuthDependencies
 	entClient *dbent.Client
@@ -125,7 +125,7 @@ func (s *AuthState) AuthCreateRegisteredUser(ctx context.Context, user *identity
 	if user == nil {
 		return nil
 	}
-	// 注册时固化当前默认值，之后修改系统默认值不会追溯已有用户。
+	// Snapshot the current default at registration; later setting changes do not update existing users.
 	user.APIKeyLimit = identitycore.DefaultUserAPIKeyLimit
 	if s.Settings != nil {
 		user.APIKeyLimit = s.Settings.GetDefaultUserAPIKeyLimit(ctx)
@@ -168,7 +168,7 @@ func (s *AuthState) AuthCreateRegisteredUser(ctx context.Context, user *identity
 			quotaRepo := s.DomainRegistration
 			ok := quotaRepo != nil
 			if !ok {
-				// 生产装配缺失原子仓储能力时必须拒绝，避免并发绕过额度。
+				// Reject missing atomic repository support in production so concurrent registrations cannot bypass quotas.
 				if s.entClient != nil {
 					return identitycore.ErrServiceUnavailable
 				}
@@ -439,8 +439,8 @@ func (s *AuthState) AuthRunFailOpenDBStep(ctx context.Context, savepointName str
 	}
 
 	client := tx.Client()
-	// 非关键注册初始化运行在主事务内时必须用 savepoint 隔离；
-	// PostgreSQL 任意一条语句失败都会把整个事务标记为 aborted。
+	// Isolate optional registration writes with a savepoint inside the parent transaction.
+	// A failed PostgreSQL statement otherwise leaves the transaction aborted.
 	if _, err := client.ExecContext(ctx, "SAVEPOINT "+savepointName); err != nil {
 		return fmt.Errorf("create savepoint %s: %w", savepointName, err)
 	}
@@ -543,12 +543,12 @@ func (s *AuthState) AuthUpdateBoundEmailIdentityWithClient(
 
 	oldEmail := currentUser.Email
 	if guard := s.EmailAliasGuard; guard != nil {
-		// guard 在同一事务内锁定别名身份并复查，关闭前置查重与写入之间的窗口。
+		// Lock and recheck alias ownership in this transaction to close the gap after the service precheck.
 		if err := guard.UpdateEmailWithAliasGuard(ctx, currentUser.ID, email, hashedPassword); err != nil {
 			return err
 		}
 	} else {
-		// 兼容尚未实现别名 guard 的测试桩，保留 fork 原有的归一化唯一性保护。
+		// Test repositories lacking the alias guard still enforce normalized-email uniqueness.
 		updatedUser := *currentUser
 		updatedUser.Email = email
 		updatedUser.PasswordHash = hashedPassword
@@ -731,7 +731,7 @@ func AuthEnsureBoundEmailAuthIdentityWithClient(
 	return nil
 }
 
-// registrationInvitationsForContext 优先使用 context 中的 Ent 事务创建注册邀请存储。
+// registrationInvitationsForContext uses the Ent transaction from ctx when available.
 func registrationInvitationsForContext(ctx context.Context, client *dbent.Client) *billingpostgres.RegistrationInvitations {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return billingpostgres.RegistrationInvitationsInTx(tx)

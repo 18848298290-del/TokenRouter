@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// delayedCloseConn 用阻塞关闭握手检查配置更新期间的连接池访问。
+// delayedCloseConn blocks the close handshake to test pool access during option updates.
 type delayedCloseConn struct {
 	openAIWSFakeConn
 	entered chan struct{}
 	release chan struct{}
 }
 
-// wsAcquireTestResult 将后台获取结果送回测试协程。
+// wsAcquireTestResult carries a background acquisition's lease or error to the test.
 type wsAcquireTestResult struct {
 	lease *WSConnLease
 	err   error
@@ -41,7 +41,7 @@ func (c *delayedCloseConn) Close() error {
 	return nil
 }
 
-// ProviderPoolLoad 返回指定提供商连接池的并发与排队快照。
+// ProviderPoolLoad snapshots a provider's leases, waiters, and connections.
 func (p *WSConnPool) ProviderPoolLoad(providerID int64) (inflight int, waiters int, conns int) {
 	if p == nil || providerID <= 0 {
 		return 0, 0, 0
@@ -56,7 +56,7 @@ func (p *WSConnPool) ProviderPoolLoad(providerID int64) (inflight int, waiters i
 	return inflight, waiters, len(ap.conns)
 }
 
-// newWSReuseTestPool 使用本地替身拨号器，并让预热目标等于当前租约数量。
+// newWSReuseTestPool uses a fake dialer and full target utilization to limit spare connections.
 func newWSReuseTestPool(capacity, idle int) (*WSConnPool, WSAcquireRequest) {
 	pool := NewWSConnPool(&WSPoolOptions{
 		MaxConnsPerProvider:   capacity,
@@ -71,7 +71,7 @@ func newWSReuseTestPool(capacity, idle int) (*WSConnPool, WSAcquireRequest) {
 	}
 }
 
-// acquireWSInBackground 启动一次有取消预算的连接获取。
+// acquireWSInBackground acquires a lease asynchronously using the supplied context.
 func acquireWSInBackground(pool *WSConnPool, ctx context.Context, req WSAcquireRequest) <-chan wsAcquireTestResult {
 	result := make(chan wsAcquireTestResult, 1)
 	go func() {

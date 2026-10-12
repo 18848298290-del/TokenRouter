@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// openAITokenCacheStub 记录令牌缓存和刷新锁的调用。
+// openAITokenCacheStub records token-cache and refresh-lock calls.
 type openAITokenCacheStub struct {
 	mu               sync.Mutex
 	tokens           map[string]string
@@ -33,7 +33,7 @@ type openAITokenCacheStub struct {
 	simulateLockRace bool
 }
 
-// openAIProviderRepoStub 模拟 OpenAI 令牌来源所需的存储操作。
+// openAIProviderRepoStub models persistence needed by the OpenAI token source.
 type openAIProviderRepoStub struct {
 	provider     *Record
 	getErr       error
@@ -42,7 +42,7 @@ type openAIProviderRepoStub struct {
 	updateCalled int32
 }
 
-// openAIOAuthServiceStub 返回测试设置的 OpenAI 令牌交换结果。
+// openAIOAuthServiceStub returns a configured token-exchange result or error.
 type openAIOAuthServiceStub struct {
 	tokenInfo     *OpenAITokenInfo
 	refreshErr    error
@@ -170,7 +170,7 @@ func TestOpenAITokenProvider_TokenRefresh(t *testing.T) {
 		},
 	}
 
-	// 令牌处于刷新提前量内。
+	// The token expires within the refresh lead time.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       102,
@@ -185,7 +185,6 @@ func TestOpenAITokenProvider_TokenRefresh(t *testing.T) {
 	}
 	providerRepo.provider = provider
 
-	// 创建提供商夹具并绑定测试交换器。
 	customProvider := newOpenAIRefreshSourceFixture(providerRepo, cache, oauthService)
 
 	token, err := customProvider.GetAccessToken(context.Background(), provider)
@@ -199,7 +198,7 @@ func TestOpenAITokenProvider_LockRaceCondition(t *testing.T) {
 	cache.simulateLockRace = true
 	providerRepo := &openAIProviderRepoStub{}
 
-	// 令牌即将到期。
+	// The token is still usable and has no refresh token.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       103,
@@ -213,7 +212,7 @@ func TestOpenAITokenProvider_LockRaceCondition(t *testing.T) {
 	}
 	providerRepo.provider = provider
 
-	// 模拟其他 worker 已完成刷新并写入缓存。
+	// Model a concurrent cache fill by another worker.
 	cacheKey := OpenAITokenCacheKey(provider)
 	go func() {
 		time.Sleep(5 * time.Millisecond)
@@ -226,7 +225,6 @@ func TestOpenAITokenProvider_LockRaceCondition(t *testing.T) {
 
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 返回其他 worker 写入的令牌或已有令牌。
 	require.NotEmpty(t, token)
 }
 
@@ -237,7 +235,7 @@ func TestOpenAITokenProvider_RefreshError(t *testing.T) {
 		refreshErr: errors.New("oauth refresh failed"),
 	}
 
-	// 令牌即将到期。
+	// The token expires within the refresh lead time.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       110,
@@ -254,17 +252,17 @@ func TestOpenAITokenProvider_RefreshError(t *testing.T) {
 
 	tokenSource := newOpenAIRefreshSourceFixture(providerRepo, cache, oauthService)
 
-	// 刷新失败时返回已有令牌。
+	// The configured policy returns the stored token after refresh failure.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	require.Equal(t, "old-token", token) // Fallback to existing token
+	require.Equal(t, "old-token", token)
 }
 
 func TestOpenAITokenProvider_OAuthServiceNotConfigured(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
 	providerRepo := &openAIProviderRepoStub{}
 
-	// 令牌即将到期。
+	// The token remains valid despite having no refresh token.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       111,
@@ -280,10 +278,10 @@ func TestOpenAITokenProvider_OAuthServiceNotConfigured(t *testing.T) {
 
 	tokenSource := newOpenAIRefreshSourceFixture(providerRepo, cache, nil)
 
-	// 未配置 OAuth 服务时返回已有令牌。
+	// With no OAuth service configured, use stored credentials.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	require.Equal(t, "old-token", token) // Fallback to existing token
+	require.Equal(t, "old-token", token)
 }
 
 func TestOpenAITokenProvider_DoubleCheckAfterLock(t *testing.T) {
@@ -298,7 +296,7 @@ func TestOpenAITokenProvider_DoubleCheckAfterLock(t *testing.T) {
 		},
 	}
 
-	// 令牌即将到期。
+	// The fixture has a near-expiry access token but no refresh token.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       112,
@@ -313,13 +311,13 @@ func TestOpenAITokenProvider_DoubleCheckAfterLock(t *testing.T) {
 	providerRepo.provider = provider
 	cacheKey := OpenAITokenCacheKey(provider)
 
-	// 首次读取缓存为空，取得锁后缓存中已有令牌。
+	// The cache begins empty and a concurrent worker may fill it during the call.
 
-	cache.tokens[cacheKey] = "" // Empty initially
+	cache.tokens[cacheKey] = ""
 
 	tokenSource := newOpenAIRefreshSourceFixture(providerRepo, cache, oauthService)
 
-	// 在 goroutine 中延迟写入令牌缓存，模拟竞争。
+	// Fill the cache asynchronously to exercise concurrent access.
 	go func() {
 		time.Sleep(5 * time.Millisecond)
 		cache.mu.Lock()
@@ -329,7 +327,6 @@ func TestOpenAITokenProvider_DoubleCheckAfterLock(t *testing.T) {
 
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 返回刷新结果或缓存中的令牌。
 	require.NotEmpty(t, token)
 }
 
@@ -357,7 +354,7 @@ func TestOpenAITokenProvider_CacheHit(t *testing.T) {
 
 func TestOpenAITokenProvider_CacheMiss_FromCredentials(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	// 令牌距离到期时间较远，读取时跳过刷新。
+	// The expiry is beyond the refresh lead time.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       101,
@@ -375,7 +372,7 @@ func TestOpenAITokenProvider_CacheMiss_FromCredentials(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "credential-token", token)
 
-	// 令牌应已写入缓存。
+	// A cache miss populates the cache from credentials.
 	cacheKey := OpenAITokenCacheKey(provider)
 	require.Equal(t, "credential-token", cache.tokens[cacheKey])
 }
@@ -418,7 +415,7 @@ func TestOpenAITokenProvider_WrongProviderType(t *testing.T) {
 }
 
 func TestOpenAITokenProvider_NilCache(t *testing.T) {
-	// 令牌处于有效期内。
+	// The stored token is unexpired.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       106,
@@ -441,7 +438,7 @@ func TestOpenAITokenProvider_CacheGetError(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
 	cache.getErr = errors.New("redis connection failed")
 
-	// 令牌处于有效期内。
+	// The stored token is unexpired.
 	expiresAt := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	provider := &Record{
 		ID:       107,
@@ -456,7 +453,7 @@ func TestOpenAITokenProvider_CacheGetError(t *testing.T) {
 
 	tokenSource := newOpenAITokenSourceContract(cache)
 
-	// 缓存读取失败时，从凭据返回令牌。
+	// A cache-read error still permits stored credentials.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "fallback-token", token)
@@ -479,7 +476,7 @@ func TestOpenAITokenProvider_CacheSetError(t *testing.T) {
 
 	tokenSource := newOpenAITokenSourceContract(cache)
 
-	// 缓存写入失败时仍返回令牌。
+	// A cache-write error does not prevent returning the token.
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
 	require.Equal(t, "still-works-token", token)
@@ -494,7 +491,7 @@ func TestOpenAITokenProvider_MissingAccessToken(t *testing.T) {
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
 			"expires_at": expiresAt,
-			// 缺少 access_token。
+			// Deliberately omit access_token.
 		},
 	}
 
@@ -544,19 +541,18 @@ func TestOpenAITokenProvider_TTLCalculation(t *testing.T) {
 			_, err := tokenSource.GetAccessToken(context.Background(), provider)
 			require.NoError(t, err)
 
-			// 检查缓存中的令牌。
 			cacheKey := OpenAITokenCacheKey(provider)
 			require.Equal(t, "test-token", cache.tokens[cacheKey])
 		})
 	}
 }
 
-// TestOpenAITokenProvider_Real_LockFailedWait 检查 token 源获取锁失败后的等待行为。
+// TestOpenAITokenProvider_Real_LockFailedWait exercises waiting for a competing refresh.
 func TestOpenAITokenProvider_Real_LockFailedWait(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	cache.lockAcquired = false // Lock acquisition fails
+	cache.lockAcquired = false
 
-	// 令牌处于刷新提前量内，触发取锁。
+	// The token has a refresh token and expires within the lead time, triggering lock acquisition.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       200,
@@ -569,7 +565,7 @@ func TestOpenAITokenProvider_Real_LockFailedWait(t *testing.T) {
 		},
 	}
 
-	// 等待刷新锁期间，模拟其他 worker 写入令牌缓存。
+	// Model another worker filling the cache while this call waits.
 	cacheKey := OpenAITokenCacheKey(provider)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -581,15 +577,14 @@ func TestOpenAITokenProvider_Real_LockFailedWait(t *testing.T) {
 	tokenSource := newOpenAITokenSourceContract(cache)
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	// 返回已有令牌或刷新结果。
 	require.NotEmpty(t, token)
 }
 
 func TestOpenAITokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	cache.lockAcquired = false // Lock acquisition fails
+	cache.lockAcquired = false
 
-	// 令牌即将到期。
+	// This fixture has a near-expiry access token but no refresh token.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       201,
@@ -602,7 +597,7 @@ func TestOpenAITokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 	}
 
 	cacheKey := OpenAITokenCacheKey(provider)
-	// 开始等待后立即写入令牌缓存。
+	// Fill the cache asynchronously; this fixture does not force lock waiting.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cache.mu.Lock()
@@ -618,9 +613,9 @@ func TestOpenAITokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 
 func TestOpenAITokenProvider_Real_ExpiredWithoutRefreshToken(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	cache.lockAcquired = false // Prevent entering refresh logic
+	cache.lockAcquired = false // Model an unavailable refresh lock.
 
-	// 未设置 expires_at 时使用已存储凭据。
+	// Missing expiry and refresh-token metadata allow stored credentials to be used.
 	provider := &Record{
 		ID:       202,
 		Platform: capability.PlatformOpenAI,
@@ -632,7 +627,7 @@ func TestOpenAITokenProvider_Real_ExpiredWithoutRefreshToken(t *testing.T) {
 
 	tokenSource := newOpenAITokenSourceContract(cache)
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
-	// 缺少 OAuth 服务导致刷新失败时，返回已存储凭据中的令牌。
+	// No refresh is attempted because the refresh token is absent.
 	require.NoError(t, err)
 	require.Equal(t, "no-expiry-token", token)
 }
@@ -656,14 +651,14 @@ func TestOpenAITokenProvider_Real_WhitespaceToken(t *testing.T) {
 	tokenSource := newOpenAITokenSourceContract(cache)
 	token, err := tokenSource.GetAccessToken(context.Background(), provider)
 	require.NoError(t, err)
-	require.Equal(t, "real-token", token) // Should fall back to credentials
+	require.Equal(t, "real-token", token)
 }
 
 func TestOpenAITokenProvider_Real_LockError(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
 	cache.lockErr = errors.New("redis lock failed")
 
-	// 令牌处于刷新提前量内。
+	// The token is near expiry, but its missing refresh token skips lock acquisition.
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
 		ID:       204,
@@ -690,7 +685,7 @@ func TestOpenAITokenProvider_Real_WhitespaceCredentialToken(t *testing.T) {
 		Platform: capability.PlatformOpenAI,
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
-			"access_token": "   ", // Whitespace only
+			"access_token": "   ",
 			"expires_at":   expiresAt,
 		},
 	}
@@ -712,7 +707,7 @@ func TestOpenAITokenProvider_Real_NilCredentials(t *testing.T) {
 		Type:     capability.ProviderTypeOAuth,
 		Credentials: map[string]any{
 			"expires_at": expiresAt,
-			// 凭据中缺少 access_token。
+			// Deliberately omit access_token.
 		},
 	}
 
@@ -725,7 +720,7 @@ func TestOpenAITokenProvider_Real_NilCredentials(t *testing.T) {
 
 func TestOpenAITokenProvider_Real_LockRace_PollingHitsCache(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	cache.lockAcquired = false // 模拟锁被其他 worker 持有
+	cache.lockAcquired = false // Model another worker holding the lock.
 
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
@@ -755,7 +750,7 @@ func TestOpenAITokenProvider_Real_LockRace_PollingHitsCache(t *testing.T) {
 
 func TestOpenAITokenProvider_Real_LockRace_ContextCanceled(t *testing.T) {
 	cache := newOpenAITokenCacheStub()
-	cache.lockAcquired = false // 模拟锁被其他 worker 持有
+	cache.lockAcquired = false // Model another worker holding the lock.
 
 	expiresAt := time.Now().Add(1 * time.Minute).Format(time.RFC3339)
 	provider := &Record{
@@ -878,7 +873,7 @@ func TestOpenAITokenProvider_NoRefreshTokenExpired_DisablesProvider(t *testing.T
 	require.Equal(t, "missing_refresh_token", blocker.reasons[0])
 }
 
-// newOpenAITokenSourceContract 构造 token 源，缓存、刷新和等待使用生产实现。
+// newOpenAITokenSourceContract builds the production token source with test cache and logging dependencies.
 func newOpenAITokenSourceContract(cache AccessTokenCache) *OpenAITokenSource {
 	return &OpenAITokenSource{
 		Cache: cache, Metrics: &OpenAITokenMetricsStore{}, Policy: OpenAIProviderRefreshPolicy(),
@@ -897,7 +892,7 @@ func (r *openAITokenBlockRecorder) record(value *Record, _ time.Time, reason str
 	r.reasons = append(r.reasons, reason)
 }
 
-// newOpenAIRefreshSourceFixture 组合令牌来源、刷新协调器和测试交换器。
+// newOpenAIRefreshSourceFixture combines the token source, refresh coordinator, and exchange stub.
 func newOpenAIRefreshSourceFixture(repo *openAIProviderRepoStub, cache *openAITokenCacheStub, authorization *openAIOAuthServiceStub) *OpenAITokenSource {
 	source := &OpenAITokenSource{Repository: repo, Cache: cache, Metrics: &OpenAITokenMetricsStore{}, Policy: OpenAIProviderRefreshPolicy(), Debug: slog.Debug, Warn: slog.Warn}
 	if authorization != nil {
@@ -910,7 +905,7 @@ func newOpenAIRefreshSourceFixture(repo *openAIProviderRepoStub, cache *openAITo
 	return source
 }
 
-// UpdateOAuthCredentialsIfUnchanged 模拟条件写入，并支持注入写入失败。
+// UpdateOAuthCredentialsIfUnchanged models conditional credential writes and injected persistence failures.
 func (r *openAIProviderRepoStub) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version CredentialVersion, credentials map[string]any) (bool, error) {
 	if r.provider == nil || !reflect.DeepEqual(FailureVersion(r.provider).CredentialVersion, version) {
 		return false, nil

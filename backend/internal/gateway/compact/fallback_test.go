@@ -7,7 +7,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// recoveryPorts 记录恢复步骤调用，检查全局模型按需读取和旧响应释放顺序。
+// recoveryPorts records lazy global-model reads and response-release order.
 type recoveryPorts struct {
 	calls         []string
 	providerModel string

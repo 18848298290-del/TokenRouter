@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityRetryRequest 只包含当前尝试、同步观测与提交给平台的技术参数。
+// AntigravityRetryRequest contains one attempt and its synchronous observation and health callbacks.
 type AntigravityRetryRequest struct {
 	ModelStore                                            provider.AntigravityHealthStore
 	Do                                                    func(*http.Request) (*http.Response, error)
@@ -33,7 +33,7 @@ type AntigravityRetryRequest struct {
 	Changed                                               func(*provider.Record)
 }
 
-// AntigravityRetry 组合平台重试循环和提供商状态接口。
+// AntigravityRetry binds the platform retry loop to provider health services.
 type AntigravityRetry struct {
 	Health         *provider.AntigravityHealth
 	Policy         *provider.HealthService
@@ -45,7 +45,7 @@ type AntigravityRetry struct {
 	SafeURL        func(string) string
 }
 
-// Bind 在当前尝试内绑定观察与状态写入；平台重试算法仍只有 upstream 一份。
+// Bind creates attempt-local callbacks for the upstream retry loop.
 func (s *AntigravityRetry) Bind(p AntigravityRetryRequest) (*antigravity.RetryAdapter, antigravity.RetryInput) {
 	value := p.Provider
 	changed := func() {
@@ -221,7 +221,7 @@ func antigravityRequestLimitKeys(value *provider.Record, model string, thinking 
 	return AntigravityModelLimitKeys(FinalAntigravityModel(value, model, thinking))
 }
 
-// AntigravityModelLimitKeys 保留 Gemini 家族共享窗口，其他模型使用原精确 key。
+// AntigravityModelLimitKeys returns the exact model key plus the shared Gemini window key for Gemini models.
 func AntigravityModelLimitKeys(model string) []string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -234,7 +234,7 @@ func AntigravityModelLimitKeys(model string) []string {
 	return keys
 }
 
-// AntigravityPaidTier 保留 pro/ultra 才使用付费转发端点的原条件。
+// AntigravityPaidTier reports whether the provider has a pro or ultra plan.
 func AntigravityPaidTier(value *provider.Record) bool {
 	if value == nil || value.Credentials == nil {
 		return false
@@ -251,7 +251,8 @@ func AntigravityPaidTier(value *provider.Record) bool {
 	}
 }
 
-// AntigravityCreditsModelKey 保留上游模型优先、当前请求映射及名称归一化的顺序。
+// AntigravityCreditsModelKey prefers the upstream name, then the mapped request name, then a
+// normalized request name.
 func AntigravityCreditsModelKey(value *provider.Record, upstreamModel, requestedModel string, thinking *bool) string {
 	if key := strings.TrimSpace(upstreamModel); key != "" {
 		return key

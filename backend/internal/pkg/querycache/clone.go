@@ -5,15 +5,17 @@ import (
 	"reflect"
 )
 
-// ShallowMap 复制顶层映射条目，嵌套值与输入共享。
-// nil 输入返回已分配的空映射。
+// ShallowMap copies top-level entries while sharing nested values.
+// A nil input returns an allocated empty map.
 func ShallowMap(values map[string]any) map[string]any {
 	out := make(map[string]any, len(values))
 	maps.Copy(out, values)
 	return out
 }
 
-// Clone 复制值中的 map、slice 和指针。不可变值的未导出字段保持原值。
+// Clone recursively copies pointers, maps, slices, and exported struct fields.
+// Inputs must be acyclic. Map keys, unexported fields, and other kinds remain shared
+// or copied by value, so callers must treat references in those positions as immutable.
 func Clone[T any](value T) T {
 	v := reflect.ValueOf(value)
 	if !v.IsValid() {
@@ -26,7 +28,7 @@ func Clone[T any](value T) T {
 	return result
 }
 
-// cloneValue 递归复制可变值及结构体的导出字段。
+// cloneValue recursively copies supported reference types and exported struct fields.
 func cloneValue(v reflect.Value) reflect.Value {
 	switch v.Kind() {
 	case reflect.Pointer:

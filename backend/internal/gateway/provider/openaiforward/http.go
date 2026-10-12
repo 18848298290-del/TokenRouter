@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// HTTPInput 包含完成分组和提供商处理后的请求快照。
+// HTTPInput contains the request snapshot after group and provider processing.
 type HTTPInput struct {
 	Body, LineageEntryBody                                     []byte
 	ProviderID                                                 int64
@@ -32,7 +32,7 @@ type HTTPInput struct {
 }
 
 type Result struct {
-	// UpstreamResponseModel 是协议转换前的上游模型声明；空值表示未声明。
+	// UpstreamResponseModel is the upstream's model declaration before conversion; empty means none was observed.
 	UpstreamResponseModel                string
 	UpstreamEndpoint                     string
 	RequestedReasoningEffort             *string
@@ -62,13 +62,13 @@ type Result struct {
 	ImageOutputSizes                                                []string
 }
 
-// CompactFailure 保存流读取器返回的压缩恢复信号。
+// CompactFailure holds a compaction recovery signal from a response reader.
 type CompactFailure struct {
 	Message string
 	Payload []byte
 }
 
-// HTTPOptions 包含 HTTP 交换和响应处理函数，RunHTTP 决定恢复次数和重试顺序。
+// HTTPOptions supplies exchange and response operations; RunHTTP owns retry order and recovery budgets.
 type HTTPOptions struct {
 	Exchange              openai.HTTPExchangeOptions
 	Sink                  upstream.OutputSink
@@ -102,7 +102,7 @@ type HTTPOptions struct {
 	Log                   func(string, ...any)
 }
 
-// RunHTTP 保留 agent task、失效密文、被拒字段和 compact 的独立恢复预算。
+// RunHTTP maintains separate recovery budgets for agent tasks, invalid ciphertext, rejected fields, and compaction.
 func RunHTTP(ctx context.Context, input HTTPInput, o HTTPOptions) (*Result, error) {
 	body := input.Body
 	upstreamModel := input.UpstreamModel
@@ -160,14 +160,14 @@ func RunHTTP(ctx context.Context, input HTTPInput, o HTTPOptions) (*Result, erro
 				continue
 			}
 			if o.ShouldFailover(resp.StatusCode, message, payload) {
-				// 健康处理返回 nil 时，将本次响应转换为通用错误。
+				// If health handling declines failover, format the current response as an error below.
 				if err := o.HTTPFailover(resp, payload, message, upstreamModel); err != nil {
 					return nil, err
 				}
 			}
 			return nil, o.ErrorResponse(resp, body, input.BillingModel)
 		}
-		// 每次 compact 尝试的响应分别由闭包捕获，在函数返回时关闭。
+		// Each iteration captures its own response for cleanup when RunHTTP returns.
 		defer func() { _ = resp.Body.Close() }()
 		o.WrapResponseBody(resp)
 		tier := o.ExtractServiceTier(body)

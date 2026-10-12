@@ -72,7 +72,7 @@ type dashboardRepoStub struct {
 	recomputeCalls atomic.Int64
 }
 
-// 手动创建任务会立即派发执行，Stop 等待该任务响应取消并返回。
+// Manual creation dispatches immediately; Stop waits for that work to observe cancellation and return.
 type blockingCleanupClaimRepo struct {
 	UsageCleanupRepository
 	entered, canceled, release chan struct{}

@@ -23,13 +23,13 @@ const (
 	TextOpenAIMessages
 )
 
-// Executor 固定依赖在构造时绑定；调用只传业务状态和同步输出。
+// Executor binds shared dependencies at construction and receives request state and synchronous output per call.
 type Executor interface {
 	Execute(context.Context, Request, upstream.OutputSink) (ExecutionResult, error)
 }
 type TextKind uint8
 
-// TextState 保存前置步骤确定的文本请求数据。
+// TextState contains text-request data prepared before execution.
 type TextState struct {
 	AlternateBudget                                                      bool
 	SelectionContext                                                     context.Context
@@ -85,7 +85,7 @@ type FundingState struct {
 	Subscription *billing.UserSubscription
 }
 type ExecutionResult struct {
-	// PlanProvided 表示执行适配器已取得本次候选的计划。
+	// PlanProvided reports whether the execution adapter obtained this candidate plan.
 	PlanProvided bool
 
 	Attempt  upstream.AttemptResult

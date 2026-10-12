@@ -74,7 +74,7 @@ func EmailRecipientName(email string) string {
 	return trimmed
 }
 
-// GetSMTPConfig 从数据库获取 SMTP 配置。
+// GetSMTPConfig reads SMTP settings and returns ErrEmailNotConfigured when the host is empty.
 func (s *Mailer) GetSMTPConfig(ctx context.Context) (*SMTPConfig, error) {
 	keys := []string{
 		SettingKeySMTPHost,
@@ -97,7 +97,7 @@ func (s *Mailer) GetSMTPConfig(ctx context.Context) (*SMTPConfig, error) {
 		return nil, ErrEmailNotConfigured
 	}
 
-	port := 587 // 默认端口
+	port := 587 // default submission port
 	if portStr := settings[SettingKeySMTPPort]; portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil {
 			port = p
@@ -117,10 +117,10 @@ func (s *Mailer) GetSMTPConfig(ctx context.Context) (*SMTPConfig, error) {
 	}, nil
 }
 
-// SanitizeEmailHeader 防止模板参数注入额外邮件头。
+// SanitizeEmailHeader removes CR and LF to prevent additional header injection.
 func SanitizeEmailHeader(s string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(s) }
 
-// CheckTransport 检查邮件传输参数，建连和发送由后续调用执行。
+// CheckTransport checks stored SMTP configuration; connection and delivery happen in later calls.
 func (s *NotificationEmailService) CheckTransport(ctx context.Context) error {
 	if s == nil || s.emailService == nil {
 		return ErrEmailNotConfigured
@@ -135,7 +135,7 @@ func (s *NotificationEmailService) CheckTransport(ctx context.Context) error {
 	return err
 }
 
-// SendUserNotification 让用户邮件及内置模板回退共用语言选择和发送状态。
+// SendUserNotification sends through the notification service's locale and template selection.
 func (s *Mailer) SendUserNotification(ctx context.Context, input SendRequest) error {
 	sender := s.notificationEmailService
 	if sender == nil {

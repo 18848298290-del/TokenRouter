@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIOAuthClient 是授权组件调用供应商交换凭据的接口。
+// OpenAIOAuthClient exchanges and refreshes credentials for the authorization service.
 type OpenAIOAuthClient interface {
 	ExchangeCode(context.Context, string, string, string, string, string, ...openai.OAuthTokenRequestOptions) (*wire.OAuthTokenResponse, error)
 	RefreshToken(context.Context, string, string, ...openai.OAuthTokenRequestOptions) (*wire.OAuthTokenResponse, error)
@@ -27,7 +27,7 @@ type OpenAITokenProfileResolver interface {
 	ResolveTokenTLSProfileByID(int64) (*tlsfingerprint.Profile, bool)
 }
 
-// OpenAIAuthorizationDependencies 接收 app 提供的基础设施依赖。
+// OpenAIAuthorizationDependencies contains application-provided authorization infrastructure.
 type OpenAIAuthorizationDependencies struct {
 	Proxies          egress.ProxyRepository
 	Client           OpenAIOAuthClient
@@ -39,7 +39,8 @@ type OpenAIAuthorizationDependencies struct {
 	Profiles         OpenAITokenProfileResolver
 }
 
-// OpenAIAuthorizationOptions 保持设置、代理、TLS 和隐私读取的原调用时点。
+// OpenAIAuthorizationOptions binds settings, proxy, TLS, and privacy lookups as callbacks for
+// authorization operations.
 func OpenAIAuthorizationOptions(deps *OpenAIAuthorizationDependencies) provider.OpenAIAuthOptions {
 	privacy := func() openai.PrivacyClient {
 		endpoints := deps.PrivacyEndpoints
@@ -106,7 +107,8 @@ func OpenAIAuthorizationOptions(deps *OpenAIAuthorizationDependencies) provider.
 	}
 }
 
-// tokenRequestOptions 提取已选 TLS Router 的 token 请求配置，配置为空时使用空选项。
+// tokenRequestOptions resolves the selected enabled TLS router, returning nil when it has no
+// applicable options.
 func (deps *OpenAIAuthorizationDependencies) tokenRequestOptions(ctx context.Context, routerID int64, value *provider.Record) []openai.OAuthTokenRequestOptions {
 	if routerID <= 0 || deps.Routers == nil {
 		return nil

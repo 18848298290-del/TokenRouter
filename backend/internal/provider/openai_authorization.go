@@ -45,9 +45,9 @@ func openAIInt64Value(value *int64) int64 {
 	return *value
 }
 
-// generateAuthURL 生成授权 URL，保持随机值与会话登记顺序。
+// generateAuthURL creates an authorization URL and stores its PKCE session.
 func (s *OpenAIAuthorization) generateAuthURL(ctx context.Context, proxyID *int64, redirectURI, platform string) (*OpenAIAuthURLResult, error) {
-	// 按原顺序生成 PKCE 值。
+	// Generate state and PKCE values before registering the session.
 	state, err := s.Options.GenerateState()
 	if err != nil {
 		return nil, infraerrors.Newf(500, "OPENAI_OAUTH_STATE_FAILED", "failed to generate state: %v", err)
@@ -60,13 +60,11 @@ func (s *OpenAIAuthorization) generateAuthURL(ctx context.Context, proxyID *int6
 
 	codeChallenge := s.Options.GenerateCodeChallenge(codeVerifier)
 
-	// 生成本次授权会话 ID。
 	sessionID, err := s.Options.GenerateSessionID()
 	if err != nil {
 		return nil, infraerrors.Newf(500, "OPENAI_OAUTH_SESSION_FAILED", "failed to generate session ID: %v", err)
 	}
 
-	// 使用调用方指定的代理。
 	var proxyURL string
 	if proxyID != nil {
 		resolvedProxyURL, proxyFound, err := s.Options.ProxyURL(ctx, *proxyID)
@@ -78,14 +76,14 @@ func (s *OpenAIAuthorization) generateAuthURL(ctx context.Context, proxyID *int6
 		}
 	}
 
-	// 未指定时沿用默认回调地址。
+	// An empty redirect uses the configured default.
 	if redirectURI == "" {
 		redirectURI = s.Options.DefaultRedirectURI
 	}
 	normalizedPlatform := NormalizeOpenAIOAuthPlatform(platform)
 	clientID, _ := s.Options.OAuthClientConfigByPlatform(normalizedPlatform)
 
-	// 记录原会话值。
+	// Store the exchange parameters with the session.
 	session := &OpenAIOAuthSession{
 		State:        state,
 		CodeVerifier: codeVerifier,
@@ -96,7 +94,6 @@ func (s *OpenAIAuthorization) generateAuthURL(ctx context.Context, proxyID *int6
 	}
 	s.Sessions.Set(sessionID, session)
 
-	// 构造供应商授权地址。
 	authURL := s.Options.BuildAuthorizationURLForPlatform(state, codeChallenge, redirectURI, normalizedPlatform)
 
 	return &OpenAIAuthURLResult{
@@ -105,9 +102,9 @@ func (s *OpenAIAuthorization) generateAuthURL(ctx context.Context, proxyID *int6
 	}, nil
 }
 
-// exchangeCode 交换授权码并在成功后消费原会话。
+// exchangeCode validates state, exchanges the code, and deletes the session after a successful exchange.
 func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
-	// 读取原授权会话。
+	// Expired sessions cannot be exchanged.
 	session, ok := s.Sessions.Get(input.SessionID)
 	if !ok {
 		return nil, infraerrors.New(400, "OPENAI_OAUTH_SESSION_NOT_FOUND", "session not found or expired")
@@ -119,7 +116,7 @@ func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExc
 		return nil, infraerrors.New(400, "OPENAI_OAUTH_INVALID_STATE", "invalid oauth state")
 	}
 
-	// 输入代理优先，未指定时沿用会话代理。
+	// A resolved input proxy overrides the session proxy.
 	proxyURL := session.ProxyURL
 	if input.ProxyID != nil {
 		resolvedProxyURL, proxyFound, err := s.Options.ProxyURL(ctx, *input.ProxyID)
@@ -131,7 +128,7 @@ func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExc
 		}
 	}
 
-	// 输入回调地址覆盖会话回调地址。
+	// A nonempty input redirect overrides the session redirect.
 	redirectURI := session.RedirectURI
 	if input.RedirectURI != "" {
 		redirectURI = input.RedirectURI
@@ -141,13 +138,12 @@ func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExc
 		clientID = s.Options.ClientID
 	}
 
-	// 执行单次授权码交换。
 	tokenResp, err := s.Options.Exchange(ctx, input.Code, session.CodeVerifier, redirectURI, proxyURL, clientID, openAIInt64Value(input.TLSFingerprintRouterID))
 	if err != nil {
 		return nil, err
 	}
 
-	// 解码 ID token 的现有提供商元数据。
+	// Parse account metadata from the returned ID token when available.
 	var userInfo *wire.OAuthUserInfo
 	if tokenResp.IDToken != "" {
 		claims, parseErr := s.Options.ParseIDToken(tokenResp.IDToken)
@@ -158,7 +154,7 @@ func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExc
 		}
 	}
 
-	// 交换成功后删除会话。
+	// Consume the session only after the exchange succeeds.
 	s.Sessions.Delete(input.SessionID)
 
 	tokenInfo := &OpenAITokenInfo{
@@ -183,7 +179,7 @@ func (s *OpenAIAuthorization) exchangeCode(ctx context.Context, input *OpenAIExc
 	return tokenInfo, nil
 }
 
-// refreshTokenWithClientIDAndRouter 使用指定 TLS 路由器配置刷新导入态 ChatGPT OAuth token。
+// refreshTokenWithClientIDAndRouter refreshes imported OAuth credentials using the selected TLS router.
 func (s *OpenAIAuthorization) refreshTokenWithClientIDAndRouter(ctx context.Context, refreshToken string, proxyURL string, clientID string, routerID *int64) (*OpenAITokenInfo, error) {
 	return s.refreshTokenWithParameters(ctx, refreshToken, proxyURL, clientID, openAIInt64Value(routerID), nil)
 }
@@ -197,7 +193,7 @@ func (s *OpenAIAuthorization) refreshTokenWithParameters(ctx context.Context, re
 		return nil, err
 	}
 
-	// 解码 ID token 的现有提供商元数据。
+	// Parse account metadata from the returned ID token when available.
 	var userInfo *wire.OAuthUserInfo
 	if tokenResp.IDToken != "" {
 		claims, parseErr := s.Options.ParseIDToken(tokenResp.IDToken)
@@ -232,34 +228,34 @@ func (s *OpenAIAuthorization) refreshTokenWithParameters(ctx context.Context, re
 	return tokenInfo, nil
 }
 
-// enrichTokenInfo 通过 ChatGPT backend-api 补全 tokenInfo 并设置隐私（best-effort）。
-// 从 accounts/check 获取最新 plan_type、subscription_expires_at、email，
-// 然后尝试关闭训练数据共享。适用于所有获取/刷新 token 的路径。
+// enrichTokenInfo supplements token metadata and requests disabled training on a best-effort basis.
+// Account lookup fills missing plan and email values; subscription lookup supplies expiry when needed.
+// Missing access tokens or unavailable privacy support skip enrichment.
 func (s *OpenAIAuthorization) enrichTokenInfo(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
 	if tokenInfo.AccessToken == "" || !s.Options.PrivacyAvailable() {
 		return
 	}
 
-	// 从 access_token JWT 中提取 orgID（poid），用于匹配正确的提供商
+	// Use the access token's poid when the token metadata has no organization ID.
 	orgID := tokenInfo.OrganizationID
 	if orgID == "" {
 		if atClaims, err := s.Options.DecodeIDToken(tokenInfo.AccessToken); err == nil && atClaims.OpenAIAuth != nil {
 			orgID = atClaims.OpenAIAuth.POID
 		}
 	}
-	// accounts/check 命中的记录不属于个人账户时，必须改用个人订阅端点拿到期时间，
-	// 否则会把 workspace 权益的 expires_at 当成个人订阅到期日展示。
+	// A workspace expiry cannot describe a personal subscription.
+	// Query the personal subscription endpoint when accounts/check returns a different account.
 	forcePersonalSubscriptionLookup := false
 	if info := s.Options.FetchProviderInfo(ctx, tokenInfo.AccessToken, proxyURL, orgID); info != nil {
-		// ID token 里的 chatgpt_plan_type 是个人订阅的权威值。
-		// accounts/check 是多账户/工作区接口，已失效的团队或商业工作区可能会用内部计费计划名
-		// 覆盖 Pro/Free，例如 self_serve_business_usage_based。
+		// Keep the personal plan from the ID token when present.
+		// accounts/check can select a workspace with an internal billing plan name,
+		// such as self_serve_business_usage_based, instead of the personal plan.
 		appliedProviderInfoPlanType := ShouldApplyChatGPTAccountInfoPlanType(tokenInfo.PlanType, info.PlanType)
 		if appliedProviderInfoPlanType {
 			tokenInfo.PlanType = info.PlanType
 		}
-		// 套餐与到期时间必须描述同一份订阅。套餐保留 JWT 个人值时，只有
-		// accounts/check 命中的记录属于该个人账户，才采用其 entitlement.expires_at。
+		// Plan and expiry must describe the same subscription. If the personal plan is retained,
+		// accept account expiry only when the account identity matches or cannot be distinguished.
 		if info.SubscriptionExpiresAt != "" {
 			if appliedProviderInfoPlanType || ChatGPTAccountInfoBelongsToTokenProvider(tokenInfo, info) {
 				tokenInfo.SubscriptionExpiresAt = info.SubscriptionExpiresAt
@@ -277,7 +273,7 @@ func (s *OpenAIAuthorization) enrichTokenInfo(ctx context.Context, tokenInfo *Op
 		}
 	}
 
-	// 尝试设置隐私（关闭训练数据共享），best-effort
+	// Record the result of the best-effort request to disable training.
 	tokenInfo.PrivacyMode = s.Options.DisableTraining(ctx, tokenInfo.AccessToken, proxyURL)
 }
 
@@ -285,8 +281,8 @@ func ShouldApplyChatGPTAccountInfoPlanType(current, candidate string) bool {
 	return strings.TrimSpace(candidate) != "" && strings.TrimSpace(current) == ""
 }
 
-// ChatGPTAccountInfoBelongsToTokenProvider 判断 accounts/check 命中的记录是否属于
-// token 的个人 ChatGPT 账户。任一侧缺少 ID 时无法区分，沿用既有行为。
+// ChatGPTAccountInfoBelongsToTokenProvider compares the account ID from accounts/check with token metadata.
+// A missing ID on either side is treated as a match for compatibility.
 func ChatGPTAccountInfoBelongsToTokenProvider(tokenInfo *OpenAITokenInfo, info *wire.ChatGPTAccountInfo) bool {
 	personalID := strings.TrimSpace(tokenInfo.ChatGPTAccountID)
 	sourceID := strings.TrimSpace(info.ProviderID)
@@ -309,7 +305,7 @@ func ResolveChatGPTSubscriptionProviderID(tokenInfo *OpenAITokenInfo, orgID stri
 	return ""
 }
 
-// refreshProviderToken 根据提供商当前认证方式取得刷新结果。
+// refreshProviderToken refreshes OAuth credentials, validates PATs, or enriches an existing access token.
 func (s *OpenAIAuthorization) refreshProviderToken(ctx context.Context, provider *Record) (*OpenAITokenInfo, error) {
 	if provider.Platform != PlatformOpenAI {
 		return nil, infraerrors.New(400, "OPENAI_OAUTH_INVALID_PROVIDER", "provider is not an OpenAI provider")
@@ -367,7 +363,7 @@ func NormalizeOpenAIOAuthPlatform(platform string) string {
 	return PlatformOpenAI
 }
 
-// Start 启动授权会话的清理循环。
+// Start starts authorization-session cleanup unless this service has stopped.
 func (s *OpenAIAuthorization) Start() {
 	if s == nil || s.Sessions == nil {
 		return
@@ -380,7 +376,7 @@ func (s *OpenAIAuthorization) Start() {
 	s.Sessions.Start()
 }
 
-// StopContext 取消并等待本实例在途授权，然后关闭其会话清理。
+// StopContext cancels and waits for authorization operations, then stops session cleanup.
 func (s *OpenAIAuthorization) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -394,7 +390,7 @@ func (s *OpenAIAuthorization) StopContext(ctx context.Context) error {
 	return nil
 }
 
-// GenerateAuthURL 将当前操作登记到唯一授权实例的生命周期。
+// GenerateAuthURL creates a tracked authorization session and URL.
 func (s *OpenAIAuthorization) GenerateAuthURL(ctx context.Context, proxyID *int64, redirectURI, platform string) (*OpenAIAuthURLResult, error) {
 	ctx, finish, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -404,7 +400,7 @@ func (s *OpenAIAuthorization) GenerateAuthURL(ctx context.Context, proxyID *int6
 	return s.generateAuthURL(ctx, proxyID, redirectURI, platform)
 }
 
-// ExchangeCode 将当前操作登记到唯一授权实例的生命周期。
+// ExchangeCode exchanges an authorization code under the service's shutdown tracking.
 func (s *OpenAIAuthorization) ExchangeCode(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
 	ctx, finish, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -414,7 +410,7 @@ func (s *OpenAIAuthorization) ExchangeCode(ctx context.Context, input *OpenAIExc
 	return s.exchangeCode(ctx, input)
 }
 
-// RefreshTokenWithClientIDAndRouter 将当前操作登记到唯一授权实例的生命周期。
+// RefreshTokenWithClientIDAndRouter refreshes OAuth credentials under the service's shutdown tracking.
 func (s *OpenAIAuthorization) RefreshTokenWithClientIDAndRouter(ctx context.Context, refreshToken string, proxyURL string, clientID string, routerID *int64) (*OpenAITokenInfo, error) {
 	ctx, finish, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -424,7 +420,7 @@ func (s *OpenAIAuthorization) RefreshTokenWithClientIDAndRouter(ctx context.Cont
 	return s.refreshTokenWithClientIDAndRouter(ctx, refreshToken, proxyURL, clientID, routerID)
 }
 
-// RefreshProviderToken 将当前操作登记到唯一授权实例的生命周期。
+// RefreshProviderToken obtains refreshed token metadata for the provider's authentication mode.
 func (s *OpenAIAuthorization) RefreshProviderToken(ctx context.Context, provider *Record) (*OpenAITokenInfo, error) {
 	ctx, finish, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -434,7 +430,7 @@ func (s *OpenAIAuthorization) RefreshProviderToken(ctx context.Context, provider
 	return s.refreshProviderToken(ctx, provider)
 }
 
-// EnrichTokenInfo 将当前操作登记到唯一授权实例的生命周期。
+// EnrichTokenInfo supplements metadata in place, skipping the operation if the service has stopped.
 func (s *OpenAIAuthorization) EnrichTokenInfo(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
 	ctx, finish, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {
@@ -444,7 +440,7 @@ func (s *OpenAIAuthorization) EnrichTokenInfo(ctx context.Context, tokenInfo *Op
 	s.enrichTokenInfo(ctx, tokenInfo, proxyURL)
 }
 
-// ValidatePersonalAccessToken 调用验证接口，并将本次操作登记到授权活动跟踪器。
+// ValidatePersonalAccessToken validates a PAT under the authorization service's shutdown tracking.
 func (s *OpenAIAuthorization) ValidatePersonalAccessToken(ctx context.Context, token, proxyURL string) (*OpenAITokenInfo, error) {
 	ctx, done, err := s.activity.begin(ctx, ErrProbeStopped)
 	if err != nil {

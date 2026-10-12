@@ -17,7 +17,7 @@ const (
 	openAIRemoteCompactionV2Feature = "remote_compaction_v2"
 )
 
-// CompactFallbackErrorResponse 将压缩恢复信号转换为 HTTP 错误。
+// CompactFallbackErrorResponse converts a compact recovery signal to an HTTP error.
 func CompactFallbackErrorResponse(resp *http.Response, signal *compact.Failure) (*http.Response, []byte) {
 	headers := make(http.Header)
 	if resp != nil {
@@ -34,14 +34,14 @@ func CompactFallbackErrorResponse(resp *http.Response, signal *compact.Failure) 
 	}, payload
 }
 
-// MarkOpenAINativeCompactionV2 标记当前请求为原生 V2 压缩协议。
+// MarkOpenAINativeCompactionV2 marks the request as native compaction v2.
 func MarkOpenAINativeCompactionV2(c *gin.Context) {
 	if c != nil {
 		c.Set(openAINativeCompactionV2Key, true)
 	}
 }
 
-// IsOpenAINativeCompactionV2 返回当前请求是否被识别为原生远程 compaction v2。
+// IsOpenAINativeCompactionV2 reports whether the request was identified as native remote compaction v2.
 func IsOpenAINativeCompactionV2(c *gin.Context) bool {
 	return c != nil && c.GetBool(openAINativeCompactionV2Key)
 }
@@ -58,9 +58,9 @@ func hasOpenAICodexBetaFeaturesHeader(h http.Header) bool {
 	return false
 }
 
-// ApplyOpenAICodexBetaFeatures 对齐 Codex 的会话级协商行为：原生 V2 压缩请求
-// 总会带 remote_compaction_v2；其它 OAuth Responses 请求仅在客户端未声明时补
-// 默认能力。非 OAuth 上游不接收额外会话级能力头。
+// ApplyOpenAICodexBetaFeatures adds remote_compaction_v2 for native v2 requests.
+// For other OAuth requests it supplies a default only when the client omitted the header.
+// Other non-OAuth requests receive no additional session beta header.
 func ApplyOpenAICodexBetaFeatures(c *gin.Context, oauthLike bool, h http.Header) {
 	if h == nil {
 		return

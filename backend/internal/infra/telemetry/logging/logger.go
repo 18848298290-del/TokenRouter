@@ -27,7 +27,7 @@ const (
 	LevelError = zapcore.ErrorLevel
 	LevelFatal = zapcore.FatalLevel
 
-	// OpsSystemLogSkipField 让事件保留在标准日志中，同时阻止 Ops 数据库日志接收器索引该事件。
+	// OpsSystemLogSkipField marks events that the Ops database sink should skip indexing.
 	OpsSystemLogSkipField = logevent.OpsSystemLogSkipField
 
 	loggerContextKey contextKey = "ctx_logger"
@@ -322,7 +322,7 @@ func (s *sinkCore) With(fields []zapcore.Field) zapcore.Core {
 }
 
 func (s *sinkCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	// 内部 core 按各自等级决定是否写入，再登记日志接收器转发。
+	// Register sink forwarding after the underlying cores accept the entry.
 	ce = s.core.Check(entry, ce)
 	if ce != nil {
 		ce = ce.AddCore(entry, s)
@@ -331,7 +331,7 @@ func (s *sinkCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore
 }
 
 func (s *sinkCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	// 此处将事件转发给日志接收器，内部 core 通过 Check 登记各自的 Write 方法。
+	// Forward to the sink; underlying cores register their own writes in Check.
 	sink := loadSink()
 	if sink == nil {
 		return nil
@@ -423,7 +423,7 @@ func inferStdLogLevel(msg string) Level {
 	return LevelInfo
 }
 
-// LegacyPrintf 将 printf 风格日志转交给共享的结构化 logger。
+// LegacyPrintf routes printf-style messages through the shared structured logger.
 func LegacyPrintf(component, format string, args ...any) {
 	msg := normalizeStdLogMessage(fmt.Sprintf(format, args...))
 	if msg == "" {
@@ -432,7 +432,7 @@ func LegacyPrintf(component, format string, args ...any) {
 
 	initialized := global.Load() != nil
 	if !initialized {
-		// 日志系统未初始化时，由标准库 log 写出日志。
+		// Use the standard logger until the structured logger is initialized.
 		log.Print(msg)
 		return
 	}
@@ -475,8 +475,8 @@ func FromContext(ctx context.Context) *zap.Logger {
 	return L()
 }
 
-// Event 将交替键值形式的字段写入日志，忽略非字符串键和末尾孤立值。
-// error 和 warn 使用对应等级，其余等级使用 debug。
+// Event writes alternating string keys and values, ignoring non-string keys
+// and an unmatched final item. Levels "error" and "warn" map directly; others use debug.
 func Event(level, event string, fields ...any) {
 	values := make([]zap.Field, 0, len(fields)/2)
 	for i := 0; i+1 < len(fields); i += 2 {

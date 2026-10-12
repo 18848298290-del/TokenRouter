@@ -18,10 +18,10 @@ const (
 	BillingModelSourceGroupMapped = "group_mapped"
 )
 
-// BillingMode 使用统一价卡的计费模式。
+// BillingMode is the shared price card's billing mode.
 type BillingMode = pricing.BillingMode
 
-// PricingConfig 价格配置实体。
+// PricingConfig contains shared prices and billing settings for associated groups.
 type PricingConfig struct {
 	pricing.BillingSettings
 	ID                 int64
@@ -33,46 +33,46 @@ type PricingConfig struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	// 关联的分组 ID 列表
+	// Associated groups share this configuration's prices.
 	GroupIDs []int64
-	// 共享模型定价列表
+
 	ModelPricing []ModelPricingEntry
 
-	// 提供商统计定价
-	ProviderStatsPricingRules []ProviderStatsPricingRule // 自定义提供商统计定价规则（按 SortOrder 排序，先命中为准）
+	// Provider-cost rules are ordered by SortOrder; the first matching rule applies.
+	ProviderStatsPricingRules []ProviderStatsPricingRule
 }
 
-// ProviderStatsPricingRule 定义提供商成本统计的定价规则。
+// ProviderStatsPricingRule defines prices used to calculate provider costs.
 type ProviderStatsPricingRule = pricing.ProviderStatsPricingRule
 
-// ModelPricingEntry 定义共享价格配置的模型价卡。
+// ModelPricingEntry is a model price card in a shared configuration.
 type ModelPricingEntry = pricing.ModelPricingEntry
 
-// TimePricingConfig 定义每日分时倍率。
+// TimePricingConfig defines daily time-based multipliers.
 type TimePricingConfig = pricing.TimePricingConfig
 
-// TimePricingPeriod 定义单个分时时段。
+// TimePricingPeriod defines one daily pricing period.
 type TimePricingPeriod = pricing.TimePricingPeriod
 
-// PricingInterval 定义上下文或媒体规格的价格区间。
+// PricingInterval defines prices for a context range or media specification.
 type PricingInterval = pricing.PricingInterval
 
-// PricingUsageFields 价格配置相关的使用记录字段（嵌入到各平台的 RecordUsageInput 中）。
+// PricingUsageFields carries routing and pricing metadata into platform usage records.
 type PricingUsageFields struct {
-	PricingConfigID    int64  // 价格配置 ID（0 = 无价格配置）
-	OriginalModel      string // Key 重定向后的请求模型（分组映射前）
-	GroupMappedModel   string // 分组映射后的模型名（无映射时等于 OriginalModel）
-	BillingModelSource string // 计费模型来源："requested" / "upstream" / "group_mapped"
-	ModelMappingChain  string // 映射链描述，如 "a→b→c"
+	PricingConfigID    int64  // Zero means no associated pricing configuration.
+	OriginalModel      string // Request model after key redirection and before group mapping.
+	GroupMappedModel   string // Group-mapped model; equals OriginalModel when no mapping applies.
+	BillingModelSource string // Price source: requested, upstream, or group_mapped.
+	ModelMappingChain  string // Display chain, such as "a→b→c".
 }
 
-// IsActive 判断价格配置是否启用。
+// IsActive reports whether the configuration is enabled.
 func (c *PricingConfig) IsActive() bool {
 	return c.Status == StatusActive
 }
 
-// GetModelPricing 根据模型名查找价格配置定价，未找到返回 nil。
-// 精确匹配，大小写不敏感。返回值拷贝，不污染缓存。
+// GetModelPricing returns a cloned exact match, or nil when none exists.
+// Matching is case-insensitive; wildcard rules are not evaluated here.
 func (c *PricingConfig) GetModelPricing(model string) *ModelPricingEntry {
 	modelLower := strings.ToLower(model)
 
@@ -88,7 +88,7 @@ func (c *PricingConfig) GetModelPricing(model string) *ModelPricingEntry {
 	return nil
 }
 
-// Clone 返回 PricingConfig 的深拷贝。
+// Clone returns a deep copy, or nil for a nil receiver.
 func (c *PricingConfig) Clone() *PricingConfig {
 	if c == nil {
 		return nil
@@ -129,7 +129,7 @@ func (c *PricingConfig) Clone() *PricingConfig {
 	return &cp
 }
 
-// ValidateIntervals 委托唯一纯定价实现，保留旧调用签名。
+// ValidateIntervals delegates interval validation to the shared pricing package.
 func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 	return pricing.ValidateIntervals(intervals, mode)
 }

@@ -36,7 +36,7 @@ type CyberObservation struct {
 	UpstreamOutTok int
 }
 
-// StreamOptions 配置本次流读取的超时、输出和观测回调。
+// StreamOptions configures timeouts, output and observation for one stream read.
 type StreamOptions struct {
 	ProviderID                                                           int64
 	NativeOpenAI, StageFirstOutput, CodexFailureTerminal, GrokIdlePolicy bool
@@ -79,9 +79,9 @@ type StreamOptions struct {
 	OpenAIStreamEventIsTerminalWithType                                  func(string, string) bool
 }
 
-// StreamingResult streaming response result.
+// StreamingResult records delivered output, observed usage and stream timing.
 type StreamingResult struct {
-	// 分别记录内容输出、用量是否存在、HTTP 提交和重试窗口关闭状态。
+	// Track semantic delivery, usage, HTTP commitment and retry commitment independently.
 	Served, HasUsage, HttpCommitted, RetryCommitted, ClientDisconnected, ObservedOnly bool
 	FirstSemanticOutput                                                               *time.Duration
 	Usage                                                                             *wire.ForwardUsage
@@ -119,7 +119,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			}
 		}
 		options.StagedHeadersCommitted(attemptResponseHeaders)
-		// 这些 header 描述网关自己的 SSE 流，跨提供商尝试保持稳定，优先级高于上游值。
+		// Gateway SSE headers remain stable across provider attempts and override upstream values.
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
@@ -158,7 +158,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
-		// 缓冲区有数据时，刷新才算向下游写出响应。
+		// Mark a downstream data flush only when the buffer contained bytes.
 		hadPendingBytes := pendingBytes() > 0
 		if firstOutputStage != nil && !firstOutputStage.Closed() {
 			if err := firstOutputStage.CommitTo(w); err != nil {
@@ -192,7 +192,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	documentScanner := wire.NewSSEJSONDocumentScanner(scanner)
 
 	streamInterval := options.StreamInterval
-	// 按上游数据到达间隔监控超时，下游写入耗时单独处理
+	// Track upstream arrival gaps independently of downstream write time.
 	var intervalTicker *time.Ticker
 	if streamInterval > 0 {
 		intervalTicker = time.NewTicker(streamInterval)
@@ -204,7 +204,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	}
 
 	keepaliveInterval := options.KeepaliveInterval
-	// 下游 keepalive 仅用于防止代理空闲断开
+	// Downstream keepalive prevents proxy idle disconnects.
 	var keepaliveTicker *time.Ticker
 	if keepaliveInterval > 0 {
 		keepaliveTicker = time.NewTicker(keepaliveInterval)
@@ -244,11 +244,10 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	// based on downstream idle time.
 	lastDownstreamWriteAt := time.Now()
 
-	// 仅发送一次错误事件，避免多次写入导致协议混乱。
-	// 注意：OpenAI `/v1/responses` streaming 事件必须符合 OpenAI Responses schema；
-	// 否则下游 SDK（例如 OpenCode）会因为类型校验失败而报错。
+	// Emit at most one error event using the Responses schema; custom event shapes
+	// can fail validation in downstream SDKs.
 	errorEventSent := false
-	clientDisconnected := false // 客户端断开后继续 drain 上游以收集 usage
+	clientDisconnected := false // Continue draining after disconnect to collect usage.
 	sawTerminalEvent := false
 	sawFailedEvent := false
 	sawBareError := false
@@ -353,8 +352,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	searchCounter := 0
-	// 对 SSE 事件中的搜索工具调用去重，例如 item.done 与 response.completed
-	// 可能包含同一 call_id，重复统计会使附加费接近翻倍。
+	// Deduplicate search call IDs repeated in item.done and response.completed
+	// so the same call cannot incur two search surcharges.
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *StreamingResult {
 		return &StreamingResult{
@@ -378,7 +377,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			SearchCount: searchCounter,
 		}
 	}
-	// 读取失败时返回已收集的用量，并标记 ObservedOnly。
+	// If a failure has no result, return observed usage marked ObservedOnly.
 	defer func() {
 		if observed == nil && failure != nil {
 			observed = resultWithUsage()
@@ -419,7 +418,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	}
 	finalizeStream := func() (*StreamingResult, error) {
 		if stageFirstOutput && eventInProgress {
-			// 即使没有结尾空行，EOF 也会派发最后一个 SSE 事件。
+			// Dispatch the final staged event at EOF even without a trailing blank line.
 			completeGuardedEvent(true)
 		}
 		synthesizeBareErrorFailure()
@@ -474,8 +473,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			result, err := finalizeStream()
 			return result, err, true
 		}
-		// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
-		// /v1/responses 的 SSE 事件必须符合 OpenAI 协议；这里不注入自定义 error event，避免下游 SDK 解析失败。
+		// Cancellation often interrupts the upstream read. Return incomplete usage
+		// without injecting an error event that violates the Responses schema.
 		if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
 			if eventShouldFlush {
 				flushPending("Client disconnected during canceled stream flush, returning collected usage")
@@ -494,7 +493,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			}
 			return resultWithUsage(), options.Failover(upstreamRequestID, nil, msg), true
 		}
-		// 客户端已断开时，上游出错仅影响体验，不影响计费；返回已收集 usage
+		// After disconnect, return collected usage with the upstream read error.
 		if clientDisconnected {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", scanErr), true
 		}
@@ -513,7 +512,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			eventType = strings.TrimSpace(eventType)
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
 			if wire.IsResponseLifecycleEvent(eventType) {
-				// 等 data 到达后再写事件头，确保 done 改名和重复终态过滤覆盖整个事件。
+				// Delay lifecycle headers until data arrives so renaming and duplicate filtering cover the whole event.
 				pendingLifecycleHeader = line
 				return
 			}
@@ -533,7 +532,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			eventType = normalizedType
 			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
 				eventType == "response.completed" {
-				// 只有规范化后确认成功的终态才能覆盖此前暂存的独立错误。
+				// Only a normalized successful terminal can replace a pending bare error.
 				sawBareError = false
 				sawFailedEvent = false
 				terminalFailurePending = false
@@ -542,9 +541,9 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				bareErrorProviderSideEffectsPending = false
 				failedMessage = ""
 			}
-			// 失败终态需要清除旧事件头的抑制状态，避免误丢收尾事件。
+			// Clear stale header suppression for failed terminals so the failure is delivered.
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
-			// 使用规范化后的类型判定终态，兼容 data 中缺少 type 的生命周期事件。
+			// Use the normalized type for lifecycle events whose data omitted type.
 			if options.OpenAIStreamEventIsTerminalWithType(data, eventType) {
 				sawTerminalEvent = true
 			}
@@ -572,9 +571,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				if failedMessage == "" {
 					failedMessage = "Upstream response failed"
 				}
-				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
-				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
-				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
+				// Parse terminal usage before marking cyber_policy so the observation includes
+				// consumed tokens instead of stale zero counts.
 				hasObservedUsage = wire.ParseSSEUsageBytesWithType(dataBytes, eventType, usage) || hasObservedUsage
 				if hit, code, msg := DetectOpenAICyberPolicy(dataBytes); hit {
 					cyberHit = true
@@ -627,8 +625,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := options.ErrorRule(dataBytes, failedMessage); matched {
 							sawFailedEvent = true
-							// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
-							// antigravity 先例），否则透传命中的 failed 在监控中不可见。
+							// Record upstream errors even when a passthrough rule handles the client response.
 							options.RecordError(upstreamRequestID, "http_error", dataBytes, failedMessage)
 							options.MarkCommitted()
 							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -750,11 +747,11 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				pendingLifecycleHeader = ""
 			}
 			suppressCurrentEvent = suppressCurrentEvent || duplicateTerminal
-			// 写入客户端（客户端断开后继续 drain 上游）
+			// Skip downstream writes after disconnect while continuing to drain upstream.
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
 				if firstTokenMs == nil && startsTTFTOutput {
-					// 保证首个 token 事件尽快出站，避免影响 TTFT。
+					// Flush the first token promptly to avoid adding buffering latency to TTFT.
 					shouldFlush = true
 				}
 				eventShouldFlush = eventShouldFlush || shouldFlush
@@ -858,7 +855,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		}
 	}
 
-	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
+	// Use synchronous scanning when no timeout or keepalive requires concurrent work.
 	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 {
 		defer httpclient.PutSSEScannerBuf64K(scanBuf)
 		for documentScanner.Scan() {
@@ -878,9 +875,9 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		err       error
 		processed chan struct{}
 	}
-	// 独立 goroutine 读取上游，避免读取阻塞影响 keepalive/超时处理
-	// 保护模式允许一个排队 token 和一个正在处理的 token；配合 scanner 上限，
-	// scanner/channel 保留量约束在 16 MiB 附近。禁用超时时队列深度为 16。
+	// Read asynchronously so blocked reads do not stall timers. The first-output timeout
+	// selects a one-entry queue; otherwise the queue holds 16 entries. While staging is
+	// active, each token waits for processing before the reader advances, bounding read-ahead.
 	events := make(chan scanEvent, OpenAIFirstOutputEventQueueSize(guardFirstOutput))
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -929,8 +926,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		case ev, ok := <-events:
 			if !ok {
 				if stageFirstOutput && eventInProgress {
-					// 即使没有结尾空行，EOF 也会派发最后一个 SSE 事件；
-					// 不在下游线路上合成额外字节。
+					// Dispatch the last staged event at EOF without adding a synthetic blank line.
 					completeGuardedEvent(true)
 				}
 				return finalizeStream()
@@ -961,10 +957,10 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 			}
 			options.Logf("Stream data interval timeout: provider=%d model=%s interval=%s", options.ProviderID, originalModel, streamInterval)
-			// 处理流超时，可能标记提供商为临时不可调度或错误状态
+			// Let the caller apply provider policy for the stream timeout.
 			options.StreamTimeout(originalModel)
-			// Grok 在尚未向客户端提交可见字节时执行短期冷却与提供商故障转移。
-			// 输出开始后按 stream_timeout 处理，已发送的 SSE 保持原样。
+			// Grok idle policy applies a short cooldown; failover is available before output.
+			// After output, report stream_timeout while retaining the delivered SSE.
 			if options.GrokIdlePolicy {
 				options.IdleCooldown()
 				if !options.ClientOutputStarted(clientOutputStarted) && !eventShouldFlush {
@@ -1011,8 +1007,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				continue
 			}
 			if stageFirstOutput {
-				// 绕过当前尝试的本地缓冲帧；稳定 SSE 注释可以提交，
-				// 但提供商相关 header 在出现语义输出前仍保持私有。
+				// Write stable SSE comments outside the attempt buffer while retaining provider
+				// headers until semantic output starts.
 				n, err := w.Write([]byte(":\n\n"))
 				options.KeepaliveBytes(n)
 				if err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// newCodexDetectorTestContext 为识别器提供按需读取的 HTTP Header 字符串。
+// newCodexDetectorTestContext supplies a lazy HTTP client-header reader.
 func newCodexDetectorTestContext(ua string, originator string) func() (string, string) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	if ua != "" {

@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// upstreamClientProviders 绑定平台客户端与唯一传输适配器。
+// upstreamClientProviders binds platform clients and the shared transport adapter.
 var upstreamClientProviders = wire.NewSet(
 	anthropic.NewRequestFingerprint,
 	provideClaudeUsageFetcher,

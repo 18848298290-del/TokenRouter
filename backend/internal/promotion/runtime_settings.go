@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// 推广设置键沿用既有数据库格式，由推广模块拥有解释权。
+// Promotion settings keys identify the stored values interpreted by this package.
 const (
 	SettingKeyAffiliateAdminRechargeEnabled = "affiliate_admin_recharge_enabled"
 	SettingKeyAffiliateEnabled              = "affiliate_enabled"
@@ -19,38 +19,38 @@ const (
 	SettingKeyPromoCodeEnabled              = "promo_code_enabled"
 )
 
-// RuntimeSettingsStore 按键读取推广设置。
+// RuntimeSettingsStore reads promotion settings by key.
 type RuntimeSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 }
 
-// RuntimeSettings 在每次调用时读取推广设置。
+// RuntimeSettings reads stored promotion settings on each call.
 type RuntimeSettings struct{ settingRepo RuntimeSettingsStore }
 
-// NewRuntimeSettings 构造无副作用的推广设置读取器。
+// NewRuntimeSettings builds a settings reader without fetching values.
 func NewRuntimeSettings(repo RuntimeSettingsStore) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo}
 }
 
-// IsPromoCodeEnabled 读取优惠码开关，读取失败时默认启用。
+// IsPromoCodeEnabled reads the promotion switch and defaults to enabled on read errors.
 func (s *RuntimeSettings) IsPromoCodeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPromoCodeEnabled)
 	if err != nil {
-		return true // 默认启用
+		return true // Enabled on read errors
 	}
 	return value != "false"
 }
 
-// IsInvitationCodeEnabled 读取邀请码开关，读取失败时默认关闭。
+// IsInvitationCodeEnabled reads the invitation switch and defaults to disabled on read errors.
 func (s *RuntimeSettings) IsInvitationCodeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyInvitationCodeEnabled)
 	if err != nil {
-		return false // 默认关闭
+		return false // Disabled on read errors
 	}
 	return value == "true"
 }
 
-// IsAffiliateEnabled 读取推广开关，读取失败时返回默认值。
+// IsAffiliateEnabled reads the affiliate switch and returns the default on read errors.
 func (s *RuntimeSettings) IsAffiliateEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateEnabled)
 	if err != nil {
@@ -59,7 +59,7 @@ func (s *RuntimeSettings) IsAffiliateEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// IsAffiliateAdminRechargeEnabled 读取管理员充值返利开关，读取失败时返回默认值。
+// IsAffiliateAdminRechargeEnabled reads the admin recharge rebate switch and defaults on read errors.
 func (s *RuntimeSettings) IsAffiliateAdminRechargeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateAdminRechargeEnabled)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *RuntimeSettings) IsAffiliateAdminRechargeEnabled(ctx context.Context) b
 	return value == "true"
 }
 
-// GetAffiliateRebateRatePercent 读取返利比例，读取或解析失败时返回默认值。
+// GetAffiliateRebateRatePercent reads and clamps the rate, using the default for read errors or invalid values.
 func (s *RuntimeSettings) GetAffiliateRebateRatePercent(ctx context.Context) float64 {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateRebateRate)
 	if err != nil {
@@ -81,7 +81,8 @@ func (s *RuntimeSettings) GetAffiliateRebateRatePercent(ctx context.Context) flo
 	return ClampRebateRate(rate)
 }
 
-// GetAffiliateRebateFreezeHours 读取返利冻结小时数，读取失败或值非法时返回默认值。
+// GetAffiliateRebateFreezeHours reads and caps freeze hours, using the default for read errors or invalid
+// values.
 func (s *RuntimeSettings) GetAffiliateRebateFreezeHours(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateRebateFreezeHours)
 	if err != nil {
@@ -97,7 +98,8 @@ func (s *RuntimeSettings) GetAffiliateRebateFreezeHours(ctx context.Context) int
 	return hours
 }
 
-// GetAffiliateRebateDurationDays 读取返利有效天数，读取失败或值非法时返回默认值。
+// GetAffiliateRebateDurationDays reads and caps the duration, using the default for read errors or invalid
+// values.
 func (s *RuntimeSettings) GetAffiliateRebateDurationDays(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateRebateDurationDays)
 	if err != nil {
@@ -113,7 +115,7 @@ func (s *RuntimeSettings) GetAffiliateRebateDurationDays(ctx context.Context) in
 	return days
 }
 
-// GetAffiliateRebatePerInviteeCap 读取每位受邀人的返利上限，读取失败或值非法时返回默认值。
+// GetAffiliateRebatePerInviteeCap reads the cap and defaults on read errors or invalid values.
 func (s *RuntimeSettings) GetAffiliateRebatePerInviteeCap(ctx context.Context) float64 {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateRebatePerInviteeCap)
 	if err != nil {

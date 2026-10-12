@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	// integrationDB 连接测试容器，测试进程退出前关闭连接和容器。
+	// integrationDB connects to the test container; runPostgresTests closes it before terminating the container.
 	integrationDB *sql.DB
 
 	integrationEntClient *dbent.Client

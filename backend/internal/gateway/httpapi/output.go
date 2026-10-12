@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MessagesOutput 提供同步 HTTP 输出与请求观测字段。
-// 执行器通过 execution.Request 读取身份、路由、报文和资金状态。
+// MessagesOutput supplies synchronous HTTP output and request observations.
+// Executors read identity, routing, body, and funding state through execution.Request.
 type MessagesOutput struct {
 	Concurrency *ConcurrencyHelper
 	ResponseSink
@@ -19,7 +19,7 @@ type MessagesOutput struct {
 	StreamStarted *bool
 }
 
-// ResponseSink 接收上游同步事件，负责下游写入和 Flush。
+// ResponseSink writes synchronous upstream events to the client and flushes when requested.
 type ResponseSink struct{ Writer http.ResponseWriter }
 
 func (s ResponseSink) Begin(head upstream.OutputHead) error {
@@ -44,16 +44,16 @@ func (s ResponseSink) Emit(event upstream.OutputEvent) error {
 	return nil
 }
 
-// InitialOutput 只快照现有响应状态，保留等待心跳和先前中间件设置的 Header。
+// InitialOutput snapshots response state and headers, including values set by heartbeats or middleware.
 func (s ResponseSink) InitialOutput() upstream.OutputHead {
-	// 先读取 Header 再读取状态，因为 Header 可能暂停等待心跳。
+	// Read Header before state because acquiring headers can pause the waiting heartbeat.
 	headers := s.Writer.Header().Clone()
 	h := s.OutputState()
 	h.Header = headers
 	return h
 }
 
-// OutputState 直接读取提交状态，等待中的 keepalive 继续运行。
+// OutputState reads commitment state while allowing waiting keepalives to continue.
 func (s ResponseSink) OutputState() upstream.OutputHead {
 	h := upstream.OutputHead{}
 	if w, ok := s.Writer.(interface{ Written() bool }); ok {

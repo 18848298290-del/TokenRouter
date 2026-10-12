@@ -17,10 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ResponsesBuffered 保留当前转换链的事件推进、用量与退出顺序。
+// ResponsesBuffered collects Anthropic events into a JSON Responses reply and returns observed usage, including on read failure.
 func ResponsesBuffered(in Response, out Output, originalModel, mappedModel string, reasoningEffort *string, startTime time.Time, clientToolMapping bridge.ResponsesClientToolMapping) (*Result, error) {
 	requestID := in.RequestID
-	// 每次转换单独记录上游模型声明，响应别名改写使用另一份数据。
+	// Capture the raw upstream declaration separately from client model alias restoration.
 	var modelObserver protocol.ResponseModelObserver
 
 	scanner := newConversionSSEScanner(in)
@@ -113,11 +113,11 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 	}
 
 	responsesResp := bridge.AnthropicToResponsesResponse(in.Runtime, finalResp)
-	responsesResp.Model = originalModel // Use original model name
+	responsesResp.Model = originalModel // Restore the client model.
 
 	out.CopyHeaders(in.Headers)
-	// 非流式响应设置 Content-Type 为 application/json。上游强制流式响应的 text/event-stream 可能已被复制，
-	// Gin 的 c.Data/c.JSON 仅在响应头缺失时设置类型，此处直接 Set 覆盖，new-api 等下游据此按 JSON 处理。
+	// Override copied text/event-stream headers with application/json. HTTP JSON helpers may
+	// leave an existing Content-Type unchanged, causing downstream clients to parse the wrong format.
 	out.BeginJSON()
 	if respBytes, err := json.Marshal(responsesResp); err == nil {
 		respBytes = out.ReverseTools(respBytes)
@@ -133,10 +133,10 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 	return resultWithUsage(), scanner.Err()
 }
 
-// ResponsesStreaming 保留当前转换链的事件推进、用量与退出顺序。
+// ResponsesStreaming converts Anthropic events to Responses SSE and returns observed usage on completion or interruption.
 func ResponsesStreaming(in Response, out Output, originalModel, mappedModel string, reasoningEffort *string, startTime time.Time, clientToolMapping bridge.ResponsesClientToolMapping) (*Result, error) {
 	requestID := in.RequestID
-	// 每次转换单独记录上游模型声明，响应别名改写使用另一份数据。
+	// Capture the raw upstream declaration separately from client model alias restoration.
 	var modelObserver protocol.ResponseModelObserver
 
 	out.CopyHeaders(in.Headers)
@@ -166,7 +166,7 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 		}
 	}
 
-	// writeEvent 统一完成名称反转、客户端工具还原与 SSE 写出，尾部事件也复用此路径。
+	// writeEvent restores tool names and client tool payloads for both regular and final SSE events.
 	writeEvent := func(evt protocolopenai.ResponsesStreamEvent) bool {
 		payload, err := json.Marshal(evt)
 		if err != nil {
@@ -258,10 +258,10 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 	return result, errors.Join(err, scanner.Err())
 }
 
-// ChatBuffered 保留当前转换链的事件推进、用量与退出顺序。
+// ChatBuffered collects Anthropic events into a JSON Chat reply and returns observed usage, including on read failure.
 func ChatBuffered(in Response, out Output, originalModel, mappedModel string, reasoningEffort *string, startTime time.Time) (*Result, error) {
 	requestID := in.RequestID
-	// 每次转换单独记录上游模型声明，响应别名改写使用另一份数据。
+	// Capture the raw upstream declaration separately from client model alias restoration.
 	var modelObserver protocol.ResponseModelObserver
 
 	scanner := newConversionSSEScanner(in)
@@ -355,8 +355,8 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 	ccResp := bridge.ResponsesToChatCompletions(in.Runtime, responsesResp, originalModel)
 
 	out.CopyHeaders(in.Headers)
-	// 非流式响应设置 Content-Type 为 application/json。上游强制流式响应的 text/event-stream 可能已被复制，
-	// Gin 的 c.Data/c.JSON 仅在响应头缺失时设置类型，此处直接 Set 覆盖，new-api 等下游据此按 JSON 处理。
+	// Override copied text/event-stream headers with application/json. HTTP JSON helpers may
+	// leave an existing Content-Type unchanged, causing downstream clients to parse the wrong format.
 	out.BeginJSON()
 	if respBytes, err := json.Marshal(ccResp); err == nil {
 		respBytes = out.ReverseTools(respBytes)
@@ -368,10 +368,10 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 	return resultWithUsage(), scanner.Err()
 }
 
-// ChatStreaming 保留当前转换链的事件推进、用量与退出顺序。
+// ChatStreaming converts Anthropic events to Chat SSE and returns observed usage on completion or interruption.
 func ChatStreaming(in Response, out Output, originalModel, mappedModel string, reasoningEffort *string, startTime time.Time, includeUsage bool) (*Result, error) {
 	requestID := in.RequestID
-	// 每次转换单独记录上游模型声明，响应别名改写使用另一份数据。
+	// Capture the raw upstream declaration separately from client model alias restoration.
 	var modelObserver protocol.ResponseModelObserver
 
 	out.CopyHeaders(in.Headers)
@@ -410,7 +410,7 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 			return false
 		}
 		payload = out.ReverseTools(payload)
-		// HTTP Adapter 持有请求侧工具名称映射；无映射时仅做静态前缀还原。
+		// The HTTP adapter owns request tool mappings and restores static prefixes when no mapping exists.
 		if _, err := out.Event("", payload); err != nil {
 			return true // client disconnected
 		}
@@ -486,13 +486,13 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 		writeChunk(chunk)
 	}
 
-	out.Event("", []byte("[DONE]")) //nolint:errcheck // 流已经结束，[DONE] 写失败时没有后续处理。
+	out.Event("", []byte("[DONE]")) //nolint:errcheck // The stream is complete; failure to write [DONE] has no further recovery.
 	out.Flush()
 
 	return resultWithUsage(), scanner.Err()
 }
 
-// writeConversionStreamError 用客户端协议报告读取失败，已写出的流以错误事件结束。
+// writeConversionStreamError emits a read-failure event in the client protocol.
 func writeConversionStreamError(out Output, responses bool, state *bridge.AnthropicEventToResponsesState) {
 	streamError := &protocolopenai.ResponsesError{Code: "upstream_stream_error", Message: "Upstream stream could not be read completely"}
 	var value any = map[string]any{"error": streamError}

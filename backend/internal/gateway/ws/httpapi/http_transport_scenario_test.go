@@ -1,6 +1,6 @@
 package httpapi
 
-// HTTP 传输场景覆盖 gateway/httpapi/openai_responses_execution.go 和 openai_ws_executor.go，检查启用 WebSocket 配置时的 HTTP 转发、重试与认证失败。
+// HTTP transport scenarios cover forwarding with WS configured, retries, and authentication failures.
 
 import (
 	"bytes"
@@ -292,7 +292,7 @@ func TestOpenAIGatewayService_Forward_APIKeyHTTPPreservesPreviousResponseIDWhenW
 	require.Equal(t, "resp_123", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
 }
 
-// TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover 验证池模式认证错误先按提供商配置同号重试。
+// TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover checks configured same-provider retries before failover.
 func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -15,7 +15,7 @@ import (
 const DefaultStreamIdleTimeout = 180 * time.Second
 
 type ResponsesTarget struct {
-	// 已有桥接读取器直接解释原流，不增加另一层帧过滤。
+	// PassRawStream lets bridge readers interpret the stream before any ping filtering.
 	PassRawStream  bool
 	ProviderID     int64
 	Model          string
@@ -101,8 +101,8 @@ func (ResponsesExecutor) Execute(ctx context.Context, input upstream.AttemptInpu
 	return result, err
 }
 
-// ResolveStreamIdleTimeout 使用正数全局设置作为读取空闲超时，其他值使用 Grok 默认值。
-// 挂起的 SSE 达到此时限后可触发提供商切换。
+// ResolveStreamIdleTimeout uses a positive setting in seconds or the Grok default.
+// Callers can fail over when an SSE stream remains idle for this interval.
 func ResolveStreamIdleTimeout(cfgStreamIntervalSec int) time.Duration {
 	if cfgStreamIntervalSec > 0 {
 		return time.Duration(cfgStreamIntervalSec) * time.Second

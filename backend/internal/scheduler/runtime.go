@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// ErrRuntimeStopped 表示不能在已停止的实例中重新认领资源。
+// ErrRuntimeStopped rejects new operations on a stopped runtime.
 var ErrRuntimeStopped = errors.New("scheduler runtime stopped")
 
-// RuntimeTask 声明初始任务或周期任务，Run 由 Start 调用。
+// RuntimeTask describes one-shot or periodic work launched by Start.
 type RuntimeTask struct {
 	Name      string
 	Interval  time.Duration
@@ -21,7 +21,7 @@ type RuntimeTask struct {
 	Run       func(context.Context)
 }
 
-// WorkerRuntime 拥有调度后台任务的启动屏障、取消和等待；零值可用。
+// WorkerRuntime coordinates worker startup, cancellation, and shutdown waiting. Its zero value is ready to use.
 type WorkerRuntime struct {
 	mu       sync.Mutex
 	ctx      context.Context
@@ -41,7 +41,7 @@ func (r *WorkerRuntime) initializeLocked() {
 	}
 }
 
-// Context 在首次运行前也可供同步维护使用，停止后始终返回已取消的同一个上下文。
+// Context returns the shared runtime context, even before Start. Stop cancels it permanently.
 func (r *WorkerRuntime) Context() context.Context {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -49,7 +49,7 @@ func (r *WorkerRuntime) Context() context.Context {
 	return r.ctx
 }
 
-// Start 只启动一次；所有 WaitGroup 登记在停止屏障之前完成。
+// Start launches tasks once and registers them before shutdown can begin waiting.
 func (r *WorkerRuntime) Start(tasks ...RuntimeTask) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -79,7 +79,7 @@ func (r *WorkerRuntime) run(task RuntimeTask) {
 	if ctx.Err() != nil {
 		return
 	}
-	// 先建立周期计时器再执行立即首轮，首轮耗时超过周期时下一次 tick 已可读取。
+	// Start the ticker before the immediate run so an elapsed tick is ready after a slow first run.
 	var ticks <-chan time.Time
 	if task.Interval > 0 {
 		ticker := time.NewTicker(task.Interval)
@@ -105,7 +105,7 @@ func (r *WorkerRuntime) run(task RuntimeTask) {
 	}
 }
 
-// StopContext 保存首次停止结果，超时时报告尚未完成的任务。
+// StopContext cancels work and saves its first result, reporting unfinished task names if the caller's context ends.
 func (r *WorkerRuntime) StopContext(ctx context.Context) error {
 	r.stopOnce.Do(func() {
 		r.mu.Lock()
@@ -135,7 +135,7 @@ func (r *WorkerRuntime) StopContext(ctx context.Context) error {
 	return r.stopErr
 }
 
-// Enter 将按需操作登记到同一停止屏障。取消只终止等待/I/O，已取得资源仍由租约完成释放。
+// Enter registers an operation for shutdown waiting. The caller calls done after releasing any acquired resources.
 func (r *WorkerRuntime) Enter(parent context.Context, name string) (context.Context, func(), error) {
 	r.mu.Lock()
 	r.initializeLocked()

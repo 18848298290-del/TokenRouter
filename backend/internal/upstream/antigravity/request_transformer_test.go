@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// TestBuildParts_ThinkingBlockWithoutSignature 测试 thinking block 无 signature 时的处理。
+// TestBuildParts_ThinkingBlockWithoutSignature checks model-specific handling of unsigned thinking.
 func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -27,7 +27,7 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 				{"type": "text", "text": "World"}
 			]`,
 			allowDummyThought: false,
-			expectedParts:     3, // thinking 内容降级为普通 text part
+			expectedParts:     3, // thinking becomes an ordinary text part
 			description:       "Claude模型缺少signature时应将thinking降级为text，并在上层禁用thinking mode",
 		},
 		{
@@ -49,7 +49,7 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 				{"type": "text", "text": "World"}
 			]`,
 			allowDummyThought: true,
-			expectedParts:     3, // 三个block都保留，thinking使用dummy signature
+			expectedParts:     3, // all blocks remain; thinking receives a dummy signature
 			description:       "Gemini模型应该为无signature的thinking block使用dummy signature",
 		},
 	}
@@ -144,14 +144,13 @@ func TestBuildParts_ToolUseSignatureHandling(t *testing.T) {
 		if len(parts) != 1 || parts[0].FunctionCall == nil {
 			t.Fatalf("expected 1 functionCall part, got %+v", parts)
 		}
-		// Claude 模型应透传有效的 signature（Vertex/Google 需要完整签名链路）
+		// Claude requires the valid tool signature to survive conversion through Google.
 		if parts[0].ThoughtSignature != "sig_tool_abc" {
 			t.Fatalf("expected preserved tool signature %q, got %q", "sig_tool_abc", parts[0].ThoughtSignature)
 		}
 	})
 }
 
-// TestBuildTools_CustomTypeTools 测试 custom 类型工具转换。
 func TestBuildTools_CustomTypeTools(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -213,7 +212,7 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 					},
 				},
 			},
-			expectedLen: 1, // 返回一个GeminiToolDeclaration，包含2个function declarations
+			expectedLen: 1, // one Gemini tool entry contains two function declarations
 			description: "混合标准和custom工具应该都能正确转换",
 		},
 		{
@@ -222,10 +221,10 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 				{
 					Type: "custom",
 					Name: "invalid_custom",
-					// Custom 为 nil
+					// Custom is intentionally nil.
 				},
 			},
-			expectedLen: 0, // 应该被跳过
+			expectedLen: 0, // invalid declaration is skipped
 			description: "Custom字段为nil的custom工具应该被跳过",
 		},
 		{
@@ -236,11 +235,11 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 					Name: "invalid_custom",
 					Custom: &ClaudeCustomToolSpec{
 						Description: "Invalid",
-						// InputSchema 为 nil
+						// InputSchema is intentionally nil.
 					},
 				},
 			},
-			expectedLen: 0, // 应该被跳过
+			expectedLen: 0, // invalid declaration is skipped
 			description: "InputSchema为nil的custom工具应该被跳过",
 		},
 	}
@@ -253,7 +252,6 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 				t.Errorf("%s: got %d tool declarations, want %d", tt.description, len(result), tt.expectedLen)
 			}
 
-			// 验证 function declarations 存在
 			if len(result) > 0 && result[0].FunctionDeclarations != nil {
 				if len(result[0].FunctionDeclarations) != len(tt.tools) {
 					t.Errorf("%s: got %d function declarations, want %d",
@@ -667,7 +665,7 @@ func TestTransformClaudeToGeminiWithOptions_GeminiReasoningKeepsToolConfigWithTo
 	require.Len(t, req.Request.Tools, 1)
 }
 
-// TestWebSearchPreservesSelectedModel 验证搜索工具不会把请求静默切换为固定型号。
+// TestWebSearchPreservesSelectedModel checks that enabling search retains the selected model.
 func TestWebSearchPreservesSelectedModel(t *testing.T) {
 	for _, model := range []string{"claude-sonnet-4-5", "gemini-3.6-flash"} {
 		request := &ClaudeRequest{
@@ -683,7 +681,7 @@ func TestWebSearchPreservesSelectedModel(t *testing.T) {
 	}
 }
 
-// TestIdentityPatchOmitsModelDeclaration 通用补丁继续发送，型号身份声明已移除。
+// TestIdentityPatchOmitsModelDeclaration checks the shared identity text without model-specific claims.
 func TestIdentityPatchOmitsModelDeclaration(t *testing.T) {
 	var request ClaudeRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"model":"claude-sonnet-4-6","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`), &request))
@@ -694,7 +692,7 @@ func TestIdentityPatchOmitsModelDeclaration(t *testing.T) {
 	require.NotContains(t, string(body), "ModelId is")
 }
 
-// TestReasoningRequestRules 覆盖需要特殊参数处理的完整型号。
+// TestReasoningRequestRules checks exact model IDs requiring an empty tool-config omission.
 func TestReasoningRequestRules(t *testing.T) {
 	for _, id := range []string{"gemini-2.5-flash-thinking", "gemini-3-pro-high", "gemini-3.1-pro-high", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
 		if !IsGeminiReasoningModel(id) {

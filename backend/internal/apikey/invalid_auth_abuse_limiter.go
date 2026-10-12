@@ -26,6 +26,8 @@ type KeyInvalidAuthOverflow struct {
 	blockedUntil time.Time
 }
 
+// KeyInvalidAuthAbuseLimiter bounds per-client tracking and shares an overflow bucket
+// among untracked clients once capacity is reached. Tracked clients retain their own limits.
 type KeyInvalidAuthAbuseLimiter struct {
 	threshold int
 	window    time.Duration
@@ -192,6 +194,8 @@ func (l *KeyInvalidAuthAbuseLimiter) KeyReserveEntry() bool {
 	}
 }
 
+// KeyMaybeCleanupAtCapacity scans one shard at most every 100 milliseconds to reclaim
+// expired entries without scanning the entire cache on each rejected admission.
 func (l *KeyInvalidAuthAbuseLimiter) KeyMaybeCleanupAtCapacity(now time.Time) {
 	if l.tracked.Load() < l.capacity {
 		return

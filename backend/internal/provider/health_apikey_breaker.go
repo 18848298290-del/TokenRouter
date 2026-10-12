@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAIAPIKeyHealthBreakerReason 保留缓存中的原状态来源。
+// OpenAIAPIKeyHealthBreakerReason identifies circuit-breaker pauses in stored and cached state.
 const OpenAIAPIKeyHealthBreakerReason = "openai_apikey_health_breaker"
 
 func isOpenAIAPIKeyHealthBreakerProvider(provider *Record) bool {
@@ -90,5 +90,5 @@ func (s *HealthService) ApplyAPIKeyHealthFailure(ctx context.Context, provider *
 }
 
 func (s *HealthService) ObserveAPIKeyHealthSuccess(context.Context, *Record) {
-	// 健康失败累计在原滚动窗口中；成功不重置窗口，也不增加 Redis 往返。
+	// Failures accumulate in their rolling window; success leaves the count intact and needs no cache access.
 }

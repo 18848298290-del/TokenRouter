@@ -13,41 +13,41 @@ const (
 	toolOutputMediaMarker      = "[Tool output media moved to the following user message]"
 	toolOutputMediaAttribution = "[Tool output media for call %s]"
 
-	// customToolInputSchema 是 custom/freeform 工具降级为 function 工具时的参数 schema。
-	// chat 协议无法表达 custom 工具的自由文本输入（及其 grammar 约束），退化为单一
-	// input 字符串参数；回程时再从 arguments 的 input 字段还原（见
-	// extractCustomToolCallInput）。
+	// customToolInputSchema wraps a custom/freeform tool as a function tool.
+	// Chat cannot express freeform input or its grammar constraint, so the schema
+	// uses one input string. extractCustomToolCallInput unwraps that field
+	// when converting the upstream call back to the client protocol.
 	customToolInputSchema = `{"type":"object","properties":{"input":{"type":"string","description":"The raw input for this tool, passed through verbatim."}},"required":["input"]}`
 
-	// toolSearchProxyName 是 tool_search 服务端工具降级后的 function 工具名。模型对
-	// 它的调用以同名 function_call 原样回传，由 codex 端路由。
+	// toolSearchProxyName is the function name used for tool_search adaptation.
+	// Return calls as tool_search_call items so Codex dispatches them correctly.
 	toolSearchProxyName = "tool_search"
 
 	toolSearchProxySchema = `{"type":"object","properties":{"query":{"type":"string","description":"Search query for tools or connectors to load."},"limit":{"type":"integer","description":"Maximum number of tool groups to return."}},"required":["query"]}`
 
-	// chatToolNameMaxLen 是 Chat Completions function 工具名的通用长度上限。
+	// chatToolNameMaxLen limits flattened Chat function names in bytes.
 	chatToolNameMaxLen = 64
 )
 
 type toolOutputMediaByCallID map[string][]ChatContentPart
 
-// ResponsesToChatOptions 提供 Responses 转 Chat 时的 reasoning 历史查询函数。
-// 字段均可为空，nil 或空选项使用默认转换。
+// ResponsesToChatOptions supplies an optional reasoning-history lookup.
+// Nil options or fields use the default conversion.
 type ResponsesToChatOptions struct {
-	// ReasoningContentByID 按 reasoning item id 返回缓存的明文推理内容。
-	// 客户端回放 encrypted-only item 时可借此恢复 DeepSeek thinking 所需的
-	// reasoning_content；缓存未命中应返回空字符串，桥接继续 fail-open。
+	// ReasoningContentByID returns cached plaintext for a reasoning item ID.
+	// This restores reasoning_content for DeepSeek when a client replays encrypted-only items.
+	// Return an empty string on a miss; conversion continues without cached reasoning.
 	ReasoningContentByID func(itemID string) string
 }
 
-// NamespacedToolName 记录 namespace 子工具的原始归属（命名空间 + 裸子工具名）。
+// NamespacedToolName identifies a child tool by namespace and unqualified name.
 type NamespacedToolName struct {
 	Namespace string
 	Name      string
 }
 
-// ChatCompletionsToResponsesStreamState 记录 Chat Completions SSE chunk 转换为
-// Responses SSE 事件时的中间状态。
+// ChatCompletionsToResponsesStreamState tracks conversion of Chat SSE chunks
+// into Responses SSE events.
 type ChatCompletionsToResponsesStreamState struct {
 	ResponseID     string
 	Model          string
@@ -57,19 +57,19 @@ type ChatCompletionsToResponsesStreamState struct {
 	CreatedSent    bool
 	CompletedSent  bool
 
-	// nextOutputIndex 按 item 打开顺序分配 output_index，保证流式索引与最终
-	// response.output 数组顺序一致。
+	// nextOutputIndex allocates stream indexes in item-opening order.
+	// Each item's delta and completion events reuse its allocated index.
 	nextOutputIndex int
 
-	// reasoning item 生命周期。DeepSeek 类上游会先流出 reasoning_content，再
-	// 流出正文，因此 reasoning 必须作为独立 output item，在 delta 前打开，并在
-	// message/tool item 打开前关闭。
+	// DeepSeek-style streams send reasoning before text. Open a separate reasoning
+	// item and summary part before its first delta, then close them before
+	// opening a message or tool item.
 	ReasoningItemID string
 	ReasoningIndex  int
 	ReasoningOpen   bool
 	ReasoningDone   bool
 
-	// message item 与 output_text content part 生命周期。
+	// Message-item and output_text-part lifecycle.
 	MessageItemID string
 	MessageIndex  int
 	TextPartOpen  bool
@@ -77,48 +77,48 @@ type ChatCompletionsToResponsesStreamState struct {
 	Text      strings.Builder
 	Reasoning strings.Builder
 
-	// 工具调用生命周期，按上游 tool_call index 归档。
+	// Tool-call lifecycle keyed by upstream tool_call index.
 	ToolCalls       map[int]*ChatToolCall
 	ToolItemIDs     map[int]string
 	ToolOutputIndex map[int]int
 
-	// CustomTools 是客户端请求中 custom/freeform 工具的名字集合（见
-	// CustomToolNames）。命中的调用按 custom_tool_call 生命周期下发，codex 才能
-	// 路由回它注册的 custom 工具。
+	// CustomTools contains client custom/freeform tool names from CustomToolNames.
+	// Matching calls use custom_tool_call events so Codex dispatches them to
+	// the registered custom tool.
 	CustomTools map[string]bool
 
-	// FunctionTools 保存请求声明的顶层 function 工具集合。
+	// FunctionTools contains declared top-level function names.
 	FunctionTools map[string]bool
 
-	// ToolSearchDeclared 表示客户端请求声明了 tool_search 工具（见
-	// HasToolSearchTool）。命中的代理调用按 tool_search_call 项还原，codex 只按
-	// 该项类型（且 execution=client）执行 tool search。
+	// ToolSearchDeclared records a tool_search declaration from HasToolSearchTool.
+	// Matching proxy calls become tool_search_call items; Codex executes that type
+	// with execution=client.
 	ToolSearchDeclared bool
 
-	// NamespaceTools 是 namespace 子工具的摊平名 → 原始归属映射（见
-	// NamespaceToolNames）。命中的调用还原为带 namespace 字段的 function_call 项，
-	// codex 按 namespace+name 路由。
+	// NamespaceTools maps flattened child names to their original identities.
+	// NamespaceToolNames supplies the map; restored calls carry separate namespace
+	// and name fields for Codex dispatch.
 	NamespaceTools map[string]NamespacedToolName
 
-	// toolIsCustom 记录每个工具调用宣告时的类型判定，保证 added/done 事件的
-	// 项类型一致。
+	// toolIsCustom freezes the classification at announcement so added/done items
+	// use the same type.
 	toolIsCustom map[int]bool
 
-	// toolIsToolSearch 记录工具调用是否判定为 tool_search 代理调用。
+	// toolIsToolSearch records classification as a tool_search proxy call.
 	toolIsToolSearch map[int]bool
 
-	// toolNamespace 记录工具调用宣告时命中的 namespace 归属（见 NamespaceTools）。
+	// toolNamespace records the namespace resolved when the call is announced.
 	toolNamespace map[int]NamespacedToolName
 
-	// toolAnnounced 记录 output_item.added 是否已发出。存在 custom 工具且名字
-	// 尚未到达时延迟宣告，待名字可判定类型后再补发（见 announceChatToolItem）。
+	// toolAnnounced records whether output_item.added was emitted. Declarations
+	// requiring name-based classification delay announcement until the name arrives.
 	toolAnnounced map[int]bool
 
 	FinishReason string
 	Usage        *ResponsesUsage
 }
 
-// ResponsesToChatCompletionsRequestWithOptions 在默认转换上增加可选的 reasoning 回查。
+// ResponsesToChatCompletionsRequestWithOptions converts a request with optional reasoning lookup.
 func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *ResponsesToChatOptions) (*ChatCompletionsRequest, error) {
 	if req == nil {
 		return nil, fmt.Errorf("responses request is nil")
@@ -153,8 +153,8 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 		}
 		out.Tools = tools
 	}
-	// tools 全部丢弃时同时移除 tool_choice，上游会拒绝仅有 tool_choice 的请求。
-	// 指向已丢弃工具的选择项也会被移除，见 responsesToolChoiceToChatToolChoice。
+	// Omit tool_choice when no tools survive; upstreams reject a choice with no tools.
+	// The choice converter also drops selections of omitted tools.
 	if len(out.Tools) > 0 && len(req.ToolChoice) > 0 {
 		declared := make(map[string]bool, len(out.Tools))
 		for _, tool := range out.Tools {
@@ -176,9 +176,9 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 	return out, nil
 }
 
-// EffectiveResponsesTools 汇总 Responses 请求声明的所有客户端可执行工具。
-// 新版 Codex 会把运行时工具放在 input 内的 additional_tools 项中，
-// 只支持 Chat Completions 的上游必须同时收到顶层和 input 内的工具。
+// EffectiveResponsesTools combines top-level tools, input additional_tools,
+// and completed client tool-search discoveries. Chat upstreams need those
+// runtime declarations in the outgoing tool list.
 func EffectiveResponsesTools(req *ResponsesRequest) ([]ResponsesTool, error) {
 	if req == nil {
 		return nil, nil
@@ -217,9 +217,9 @@ func EffectiveResponsesTools(req *ResponsesRequest) ([]ResponsesTool, error) {
 		tools = append(tools, item.Tools...)
 	}
 
-	// 已完成的客户端工具搜索可能为本轮后续请求引入工具；降级到 Chat
-	// Completions 前先提升这些声明，并复用原生适配器的去重、冲突、命名空间
-	// 和 custom 工具规则。
+	// Promote discoveries from completed client searches before converting to Chat.
+	// Reuse the shared adapter's duplicate, conflict, namespace, and custom-tool
+	// rules when importing those declarations.
 	toolsRaw, err := json.Marshal(tools)
 	if err != nil {
 		return nil, fmt.Errorf("encode responses tools for discovery promotion: %w", err)
@@ -249,8 +249,8 @@ func EffectiveResponsesTools(req *ResponsesRequest) ([]ResponsesTool, error) {
 	return tools, nil
 }
 
-// CustomToolNames 收集 Responses 请求中 custom/freeform 工具的名字。Chat 桥回程时
-// 需要据此把模型对这些工具的调用还原为 custom_tool_call 项，Codex 只按该类型路由。
+// CustomToolNames collects custom/freeform tool names for restoring calls as
+// custom_tool_call items, which Codex requires for custom-tool dispatch.
 func CustomToolNames(tools []ResponsesTool) map[string]bool {
 	var out map[string]bool
 	for _, tool := range tools {
@@ -264,7 +264,7 @@ func CustomToolNames(tools []ResponsesTool) map[string]bool {
 	return out
 }
 
-// FunctionToolNames 收集 Responses 请求声明的顶层 function 工具。
+// FunctionToolNames collects declared top-level function names.
 func FunctionToolNames(tools []ResponsesTool) map[string]bool {
 	var out map[string]bool
 	for _, tool := range tools {
@@ -278,10 +278,10 @@ func FunctionToolNames(tools []ResponsesTool) map[string]bool {
 	return out
 }
 
-// NamespaceToolNames 收集 namespace 子工具摊平名到原始归属的映射。Chat 桥回程时
-// 需要恢复 namespace 与裸工具名；超长摊平名包含截断哈希，不能靠字符串切分还原。
-// 摊平后名称冲突的请求在转换阶段被拒绝（见 namespaceChildrenToChatTools），
-// 此处映射不存在歧义。
+// NamespaceToolNames maps flattened names back to namespace and child names.
+// Long names include a truncated hash and cannot be recovered by splitting.
+// Callers must first validate declarations through namespaceChildrenToChatTools
+// so conflicting flattened names have already been rejected.
 func NamespaceToolNames(tools []ResponsesTool) map[string]NamespacedToolName {
 	var out map[string]NamespacedToolName
 	for _, tool := range tools {
@@ -308,9 +308,9 @@ func NamespaceToolNames(tools []ResponsesTool) map[string]NamespacedToolName {
 	return out
 }
 
-// customToolCallName 同时识别降级 custom 工具的原名和模型根据相邻 namespace
-// 工具推断出的带命名空间别名（例如 functions__wait 旁的 functions__exec）。
-// 已声明的 namespace 子工具始终拥有其摊平名，存在歧义时按普通 function 调用处理。
+// customToolCallName recognizes custom names and namespace aliases inferred
+// from neighboring tools, such as functions__exec beside functions__wait.
+// Declared function/namespace names and ambiguous aliases keep function-call handling.
 func customToolCallName(name string, customTools, functionTools map[string]bool, namespaceTools map[string]NamespacedToolName) (string, bool) {
 	if functionTools[name] {
 		return "", false
@@ -343,9 +343,9 @@ func customNameForStreamTool(state *ChatCompletionsToResponsesStreamState, name 
 	return name
 }
 
-// HasToolSearchTool 判断 Responses 请求是否声明了 tool_search 服务端工具。Chat 桥
-// 回程时需据此把代理调用还原为 tool_search_call；Codex 只会执行 execution=client
-// 的该类条目，同名 function_call 会因载荷不匹配而中止当前回合。
+// HasToolSearchTool reports whether tools declares tool_search. Response conversion
+// uses it to restore tool_search_call with execution=client; Codex rejects the
+// same call under function_call because its payload has the wrong type.
 func HasToolSearchTool(tools []ResponsesTool) bool {
 	for _, tool := range tools {
 		if tool.Type == "tool_search" {
@@ -367,7 +367,7 @@ func responsesInputToChatMessagesWithOptions(instructions string, inputRaw json.
 		return messages, nil
 	}
 
-	// 裸字符串输入表示一个普通用户回合。
+	// String input represents a single user turn.
 	var inputText string
 	if err := json.Unmarshal(inputRaw, &inputText); err == nil {
 		content, _ := json.Marshal(inputText)
@@ -387,15 +387,15 @@ func responsesInputToChatMessagesWithOptions(instructions string, inputRaw json.
 	return normalizeChatMessagesWithToolOutputMedia(built, mediaByCallID), nil
 }
 
-// buildChatMessagesFromItems 遍历 Responses input items，并追加对应的 Chat message。
+// buildChatMessagesFromItems appends Chat messages for Responses input items.
 func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessage, opts *ResponsesToChatOptions) ([]ChatMessage, toolOutputMediaByCallID, error) {
-	// pendingReasoning 暂存 reasoning item 的文本，直到写出它归属的 assistant
-	// message。DeepSeek thinking 模式要求产生工具调用的 reasoning_content 随同
-	// assistant tool_calls 回传；丢失后上游会返回 400。它只允许跨过同回合的
-	// assistant message，其它角色会结束当前 thinking 片段。
+	// pendingReasoning holds plaintext for the next assistant message or tool call.
+	// DeepSeek thinking mode requires reasoning_content alongside assistant tool_calls
+	// or returns 400. Consuming a message/call or crossing a non-assistant item
+	// clears this pending value; lastTurnReasoning handles later calls in the turn.
 	var pendingReasoning string
-	// lastTurnReasoning 记录本轮最近一次 reasoning，跨越 tool output 保留，
-	// 供链式工具调用在没有重复 reasoning item 时回放；用户输入开启新一轮。
+	// lastTurnReasoning survives tool output for chained calls that omit a repeated
+	// reasoning item. New user input starts a fresh turn and clears it.
 	var lastTurnReasoning string
 	invalidFunctionCallIDs := make(map[string]struct{})
 	invalidEmptyFunctionCallOutputs := 0
@@ -433,8 +433,8 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			if txt := extractResponsesReasoningText(item); txt != "" {
 				pendingReasoning = txt
 			} else if opts != nil && opts.ReasoningContentByID != nil {
-				// 远程压缩后可能只剩 opaque encrypted_content；按 item id 回查
-				// 网关缓存，命中时恢复后续工具调用所需的 reasoning_content。
+				// Compaction may retain only opaque encrypted_content; recover plaintext by
+				// item ID from the gateway cache for subsequent tool calls.
 				if id := rawString(item["id"]); id != "" {
 					if cached := opts.ReasoningContentByID(id); cached != "" {
 						pendingReasoning = cached
@@ -452,9 +452,9 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			}
 			callID := rawString(item["call_id"])
 			if !json.Valid([]byte(arguments)) {
-				// 上一轮流式请求可能在 Codex 历史中留下截断的 function_call；
-				// 不要把它发送给会拒绝整段请求的 Chat Completions 上游，同时跳过
-				// 对应输出，让下一轮用户输入可以自愈而不会反复重放坏历史。
+				// Interrupted streams can leave truncated calls in client history. Drop both
+				// the invalid call and its output so Chat upstreams do not repeatedly reject
+				// the replayed history on later turns.
 				if callID != "" {
 					invalidFunctionCallIDs[callID] = struct{}{}
 				} else {
@@ -464,8 +464,8 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 				continue
 			}
 			name := rawString(item["name"])
-			// namespace 子工具的历史调用带 namespace 字段，需与请求方向的摊平
-			// 命名（namespaceChildrenToChatTools）保持一致。
+			// Flatten historical namespace calls with the same naming rule used for
+			// declarations in namespaceChildrenToChatTools.
 			if ns := rawString(item["namespace"]); ns != "" {
 				name = flattenNamespaceToolName(ns, name)
 			}
@@ -481,8 +481,8 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			pendingReasoning = ""
 			continue
 		case "tool_search_call":
-			// tool_search 调用的 arguments 是 JSON 对象（如 {"query": ...}），
-			// 原文即为降级 function 调用的 arguments 字符串。
+			// tool_search arguments are a JSON object; its serialized form becomes the
+			// adapted function call's arguments string.
 			arguments := strings.TrimSpace(string(bytesTrimSpace(item["arguments"])))
 			if s := rawString(item["arguments"]); s != "" {
 				arguments = s
@@ -502,9 +502,9 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			pendingReasoning = ""
 			continue
 		case "custom_tool_call":
-			// custom/freeform 工具的历史调用：input 自由文本包进降级 function 工具
-			// 的 {"input": ...} 参数，与请求方向的工具降级（customToolInputSchema）
-			// 保持一致，模型才能把历史与当前工具定义对上。
+			// Wrap historical freeform input in {"input": ...}, matching customToolInputSchema.
+			// Using the same shape for history and declarations lets the model relate
+			// past calls to the currently available function tool.
 			arguments, _ := json.Marshal(map[string]string{"input": rawString(item["input"])})
 			toolCall := ChatToolCall{
 				ID:   rawString(item["call_id"]),
@@ -520,7 +520,7 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 		case "function_call_output", "custom_tool_call_output", "tool_search_output":
 			outputRaw := bytesTrimSpace(item["output"])
 			if itemType == "tool_search_output" && (len(outputRaw) == 0 || string(outputRaw) == "null") {
-				// 客户端将发现结果放在 tools[] 时，从该字段生成 Chat 工具历史。
+				// Use tools[] as history when the client stores discoveries there.
 				outputRaw = bytesTrimSpace(item["tools"])
 			}
 			callID := rawString(item["call_id"])
@@ -543,7 +543,7 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			} else {
 				outputText = rawString(outputRaw)
 				if outputText == "" && len(outputRaw) > 0 && string(outputRaw) != "null" && string(outputRaw) != `""` {
-					// 对象/数组形式的输出（如 tool_search 的结果列表）整体字符串化。
+					// Serialize object/array outputs, including tool-search result lists, as text.
 					outputText = string(outputRaw)
 				}
 			}
@@ -572,10 +572,10 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			continue
 		}
 
-		// 只有真正的 message item 会转成 chat message。Codex 还会发出没有
-		// Chat 等价物的 Responses item（web_search_call、local_shell_call、
-		// file_search_call 等）。如果走泛化路径，它们会插到
-		// assistant tool_calls 和 tool reply 中间，导致 DeepSeek 拒绝请求。
+		// Convert remaining items only when they are messages. Unsupported Responses
+		// items such as web_search_call, local_shell_call, and file_search_call have
+		// no Chat message equivalent and would break the adjacency of assistant
+		// tool_calls and replies, causing upstream rejection.
 		if itemType != "" && itemType != "message" {
 			pendingReasoning = ""
 			continue
@@ -605,8 +605,8 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 	return messages, mediaByCallID, nil
 }
 
-// extractToolOutputMedia 只改写可识别的图片节点。无媒体输出返回 rewritten=false，
-// 让调用方保留原始字节与提示缓存前缀。
+// extractToolOutputMedia replaces recognized images with markers and returns their parts.
+// It reports false when no media is rewritten so callers can retain the input bytes and cache prefix.
 func extractToolOutputMedia(outputRaw json.RawMessage) (string, []ChatContentPart, bool) {
 	outputRaw = bytesTrimSpace(outputRaw)
 	if len(outputRaw) == 0 || string(outputRaw) == "null" {
@@ -738,8 +738,8 @@ func toolOutputImagePart(imageURL string) ChatContentPart {
 	}
 }
 
-// appendAssistantToolCall 把工具调用合并进 Chat 消息列表。连续的工具调用必须
-// 共用一条 assistant 消息，随后再紧跟对应的工具回复。
+// appendAssistantToolCall merges a call into the trailing assistant message,
+// or creates one. Adjacent calls share that message before their tool replies.
 func appendAssistantToolCall(messages []ChatMessage, toolCall ChatToolCall, pendingReasoning string) []ChatMessage {
 	if n := len(messages); n > 0 && messages[n-1].Role == "assistant" {
 		messages[n-1].ToolCalls = append(messages[n-1].ToolCalls, toolCall)
@@ -755,23 +755,23 @@ func appendAssistantToolCall(messages []ChatMessage, toolCall ChatToolCall, pend
 	})
 }
 
-// normalizeChatMessages 集中保证 DeepSeek / OpenAI Chat Completions schema
-// 对工具调用的要求：带 tool_calls 的 assistant message 后面必须按顺序紧跟
-// 每个 tool_call_id 对应的一条 tool message，中间不能夹其它消息。
+// normalizeChatMessages places each retained assistant tool_calls message
+// immediately before its matching tool replies, in call order, as required
+// by DeepSeek and OpenAI Chat upstreams.
 //
-// Codex 历史里常见的破坏方式包括：
-//   - 非 tool 消息落在 assistant tool_calls 和 tool replies 中间；
-//   - 并行工具调用的部分输出缺失，或重连后留下未回答的 tool_call；
-//   - tool reply 没有对应的 assistant tool_call。
+// It repairs these history shapes:
+//   - Other messages between a tool-call message and its replies.
+//   - Missing replies for some parallel calls or interrupted calls.
+//   - Replies whose call is absent.
 //
-// 这里会重建消息序列，让每个已回答的 tool_call 后面直接跟着对应回复；
-// 未回答的 tool_call 会被丢弃，只剩空内容的 assistant 也会被丢弃。
+// Unanswered calls and emptied assistant messages are dropped. Tool messages
+// with no call ID remain in place for passthrough compatibility.
 func normalizeChatMessages(messages []ChatMessage) []ChatMessage {
 	return normalizeChatMessagesWithToolOutputMedia(messages, nil)
 }
 
 func normalizeChatMessagesWithToolOutputMedia(messages []ChatMessage, mediaByCallID toolOutputMediaByCallID) []ChatMessage {
-	// 按 tool_call_id 索引所有工具回复，重复 id 时保留最后一条。
+	// Index replies by call ID, keeping the last reply for duplicates.
 	replies := make(map[string]ChatMessage)
 	for _, m := range messages {
 		if m.Role == "tool" && m.ToolCallID != "" {
@@ -783,9 +783,9 @@ func normalizeChatMessagesWithToolOutputMedia(messages []ChatMessage, mediaByCal
 	for _, m := range messages {
 		switch {
 		case m.Role == "tool":
-			// 没有 tool_call_id 的裸 tool message 属于 Chat Completions 直通，
-			// 保留原位；有 assistant 声明的工具回复会在 assistant 后统一输出，
-			// 其它孤儿回复直接丢弃。
+			// Keep ID-less passthrough tool messages in place. Matching replies are emitted
+			// beside their assistant call message; replies with an ID but no matching
+			// call are discarded.
 			if m.ToolCallID == "" {
 				out = append(out, m)
 			}
@@ -801,7 +801,7 @@ func normalizeChatMessagesWithToolOutputMedia(messages []ChatMessage, mediaByCal
 				}
 			}
 			if len(kept) == 0 {
-				// 没有已回答的 tool_call 时，如果有内容就降级成普通消息，否则丢弃。
+				// Without answered calls, retain text as an ordinary message or drop empty content.
 				if isBlankChatContent(m.Content) {
 					continue
 				}
@@ -838,7 +838,7 @@ func normalizeChatMessagesWithToolOutputMedia(messages []ChatMessage, mediaByCal
 	return out
 }
 
-// isBlankChatContent 判断 chat message content 是否没有可用文本。
+// isBlankChatContent reports whether content contains no extractable text.
 func isBlankChatContent(raw json.RawMessage) bool {
 	raw = bytesTrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == `""` {
@@ -847,9 +847,9 @@ func isBlankChatContent(raw json.RawMessage) bool {
 	return chatMessageContentText(raw) == ""
 }
 
-// extractResponsesReasoningText 从 Responses reasoning item 中提取 reasoning
-// 文本。Chat→Responses 桥会把上游 reasoning_content 写进 summary_text，因此
-// 这里优先读取 summary[].text，再回退到 content。
+// extractResponsesReasoningText reads summary text first, then content.
+// The Chat-to-Responses converter stores reasoning_content in summary_text,
+// so this order recovers the plaintext it emitted.
 func extractResponsesReasoningText(item map[string]json.RawMessage) string {
 	var parts []string
 	collect := func(raw json.RawMessage) {
@@ -877,9 +877,9 @@ func extractResponsesReasoningText(item map[string]json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// ExtractResponsesReasoningItem 解析原始 Responses input item，并返回 reasoning
-// item 的 id 与可提取明文。它供网关缓存层刷新带明文的历史推理；非 reasoning
-// item 或格式无效时返回 ok=false。
+// ExtractResponsesReasoningItem returns a reasoning item's ID and available
+// plaintext for the gateway history cache. Invalid or non-reasoning items
+// return ok=false; a valid item can have empty ID or text.
 func ExtractResponsesReasoningItem(raw json.RawMessage) (id string, text string, ok bool) {
 	raw = bytesTrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -995,8 +995,8 @@ func chatContentFromSingleResponsesPart(partType string, part map[string]json.Ra
 }
 
 func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
-	// 收集顶层 function/custom 工具名，检查 namespace 子工具摊平后是否重名。
-	// Responses 可按 namespace 和 name 区分这些工具，Chat 仅按名称区分，重名时返回错误。
+	// Reject name collisions after flattening namespace children.
+	// Responses distinguishes namespace and name; Chat dispatches by name alone.
 	topLevel := make(map[string]bool)
 	for _, tool := range tools {
 		if (tool.Type == "function" || tool.Type == "custom") && tool.Name != "" {
@@ -1022,7 +1022,7 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 				},
 			})
 		case "custom":
-			// Codex 0.14x 的 exec 为 custom 类型，转成 function 后模型才能继续执行命令。
+			// Adapt custom tools such as Codex exec to a function the Chat model can call.
 			out = append(out, ChatTool{
 				Type: "function",
 				Function: &ChatFunction{
@@ -1032,8 +1032,8 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 				},
 			})
 		case "tool_search":
-			// Codex 按 tool_search 名称调用代理，客户端声明同名普通工具时返回错误，
-			// 否则回程会将普通工具调用还原为 tool_search_call。重复的 type=tool_search 声明按名称去重。
+			// Reject a normal tool named tool_search, which would be misclassified on return.
+			// Repeated tool_search declarations share one proxy.
 			if topLevel[toolSearchProxyName] {
 				return nil, fmt.Errorf("built-in tool_search conflicts with a declared tool named %q; this upstream cannot disambiguate them, rename the tool", toolSearchProxyName)
 			}
@@ -1059,8 +1059,8 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 				EnableVideoUnderstanding: tool.EnableVideoUnderstanding,
 			})
 		}
-		// 其余类型（web_search、image_generation 等服务端工具）在 chat 上游没有
-		// 对应能力，维持丢弃。
+		// Omit other types such as web_search and image_generation, for which this
+		// Chat conversion has no tool representation.
 	}
 	return out, nil
 }
@@ -1076,8 +1076,8 @@ func toolSearchProxyChatTool() ChatTool {
 	}
 }
 
-// namespaceChildrenToChatTools 将 namespace 的子 function 摊平到顶层，并加上 <namespace>__ 名称前缀。
-// 摊平后与顶层或其他 namespace 工具重名时返回错误，同一 namespace 内的重复子工具声明去重。
+// namespaceChildrenToChatTools flattens child functions with a namespace__ prefix.
+// It rejects conflicting owners and deduplicates repeated namespace/name pairs.
 func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, flatOwner map[string]NamespacedToolName) ([]ChatTool, error) {
 	if tool.Name == "" {
 		return nil, nil
@@ -1116,8 +1116,8 @@ func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, 
 	return out, nil
 }
 
-// flattenNamespaceToolName 生成 namespace 子工具的摊平名；超长时截断并追加
-// sha256 短哈希保证唯一性。
+// flattenNamespaceToolName joins namespace and name; oversized names are shortened
+// and suffixed with a SHA-256 prefix. Declaration validation checks collisions.
 func flattenNamespaceToolName(namespace, name string) string {
 	full := namespace + "__" + name
 	if len(full) <= chatToolNameMaxLen {
@@ -1136,14 +1136,14 @@ func flattenNamespaceToolName(namespace, name string) string {
 	return prefix.String() + suffix
 }
 
-// responsesToolChoiceToChatToolChoice 将 Responses 的 tool_choice 转为 Chat 格式。
-// declared 是转换后的工具名集合，具名选择项的目标仍在该集合中时才转发。
-// 服务端工具及其选择项一起丢弃，指向未声明工具的 tool_choice 会触发上游 400。
-// 返回 nil 表示丢弃 tool_choice。
+// responsesToolChoiceToChatToolChoice converts a Responses choice to Chat format.
+// Named choices are forwarded when their target remains in declared.
+// Selections of dropped tools are removed to prevent unknown-tool upstream errors.
+// A nil result means the caller should omit tool_choice.
 func responsesToolChoiceToChatToolChoice(raw json.RawMessage, declared map[string]bool) json.RawMessage {
 	var choice map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &choice); err != nil {
-		// "auto"/"none"/"required" 等字符串形式原样转发。
+		// Pass through string choices such as auto, none, and required.
 		return raw
 	}
 	var name string
@@ -1158,12 +1158,12 @@ func responsesToolChoiceToChatToolChoice(raw json.RawMessage, declared map[strin
 		}
 		return out
 	case "tool_search":
-		// tool_search 未被丢弃而是降级为同名 function 代理（见
-		// responsesToolsToChatTools），强制选择它同样降级为 function 选择，
-		// 静默丢弃会把强制搜索退化为自动选择。
+		// responsesToolsToChatTools adapts tool_search to a function proxy with the
+		// same name. Adapt the forced choice too so a required search does not
+		// become optional model selection.
 		name = toolSearchProxyName
 	case "function", "custom":
-		// custom 工具已降级为 function 工具，指向它的 tool_choice 同样按 function 转换。
+		// Custom tools use function definitions here, so their choices must use that type too.
 		name = rawString(choice["name"])
 		if name == "" {
 			name = rawNestedString(choice["function"], "name")
@@ -1189,9 +1189,9 @@ func responsesToolChoiceToChatToolChoice(raw json.RawMessage, declared map[strin
 	return out
 }
 
-// extractCustomToolCallInput 从降级 function 调用的 arguments 中还原 custom 工具的
-// 自由文本输入：优先取 {"input": "..."} 的 input 字段；模型未按 schema 输出时原样
-// 回传，交由客户端校验、模型重试。
+// extractCustomToolCallInput unwraps the input string from adapted arguments.
+// Empty input or an empty object returns an empty string. Other malformed
+// shapes return trimmed arguments for client validation and model retry.
 func extractCustomToolCallInput(arguments string) string {
 	trimmed := strings.TrimSpace(arguments)
 	if trimmed == "" {
@@ -1214,11 +1214,11 @@ func extractCustomToolCallInput(arguments string) string {
 	return trimmed
 }
 
-// ChatCompletionsResponseToResponses 将非流式 Chat Completions 响应转换为
-// Responses API 响应。customTools 是客户端请求中 custom 工具的名字集合，
-// functionTools 是请求声明的顶层 function 工具集合，命中的 custom 调用会还原为
-// custom_tool_call。toolSearch 表示客户端声明了 tool_search，namespaceTools 用于
-// 恢复子工具的原始 namespace 与裸名称。
+// ChatCompletionsResponseToResponses converts the first non-streaming Chat choice.
+// customTools and functionTools identify declared top-level tools for restoring
+// custom_tool_call items. toolSearch enables tool_search_call restoration;
+// namespaceTools restores child tools' namespace and unqualified name.
+// The supplied model takes precedence over the upstream model.
 func ChatCompletionsResponseToResponses(runtime Runtime, resp *ChatCompletionsResponse, model string, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName) *ResponsesResponse {
 	id := ""
 	if resp != nil {
@@ -1228,7 +1228,7 @@ func ChatCompletionsResponseToResponses(runtime Runtime, resp *ChatCompletionsRe
 		id = generateResponsesID(runtime)
 	}
 
-	// 上游提供创建时间时原样保留，否则像生成响应 ID 一样使用当前时间。
+	// Retain a positive upstream creation time; otherwise use the current time.
 	createdAt := int64(0)
 	if resp != nil {
 		createdAt = resp.Created
@@ -1334,8 +1334,8 @@ func chatMessageToResponsesOutput(runtime Runtime, message ChatMessage, customTo
 			})
 			continue
 		}
-		// 普通 Responses function_call 的 arguments 必须是有效 JSON；截断的非流式
-		// Chat 工具调用不能标记为 completed，否则会像流式分支一样污染下一轮历史。
+		// Skip function calls with invalid JSON arguments so truncated non-streaming
+		// calls do not enter the next turn's history as completed calls.
 		if !json.Valid([]byte(arguments)) {
 			continue
 		}
@@ -1396,8 +1396,8 @@ func chatMessageContentText(raw json.RawMessage) string {
 	return ""
 }
 
-// ChatUsageToResponsesUsage 将 Chat Completions token 用量转换为 Responses
-// usage 结构。
+// ChatUsageToResponsesUsage converts Chat token counts and cache details to Responses usage.
+// It returns nil for nil input and derives the total when the upstream total is zero.
 func ChatUsageToResponsesUsage(usage *ChatUsage) *ResponsesUsage {
 	if usage == nil {
 		return nil
@@ -1426,7 +1426,7 @@ func ChatUsageToResponsesUsage(usage *ChatUsage) *ResponsesUsage {
 	return out
 }
 
-// NewChatCompletionsToResponsesStreamState 返回初始化后的流式转换状态。
+// NewChatCompletionsToResponsesStreamState initializes the stream converter.
 func NewChatCompletionsToResponsesStreamState(runtime Runtime, model string) *ChatCompletionsToResponsesStreamState {
 	return &ChatCompletionsToResponsesStreamState{
 		ResponseID:       generateResponsesID(runtime),
@@ -1442,8 +1442,8 @@ func NewChatCompletionsToResponsesStreamState(runtime Runtime, model string) *Ch
 	}
 }
 
-// ValidateToolCallArguments 在流结束前校验累积的 function-call 参数。
-// 截断或缺失参数时返回错误，调用方据此阻止工具项以 completed 状态写入历史。
+// ValidateToolCallArguments rejects nonempty invalid JSON for ordinary function calls.
+// Empty arguments and custom/tool-search calls are accepted; callers validate before finalizing history.
 func (state *ChatCompletionsToResponsesStreamState) ValidateToolCallArguments() error {
 	if state == nil {
 		return nil
@@ -1472,8 +1472,8 @@ func (state *ChatCompletionsToResponsesStreamState) allocOutputIndex() int {
 	return idx
 }
 
-// ChatCompletionsChunkToResponsesEvents 将单个 Chat Completions 流式 chunk
-// 转换为零个或多个 Responses 流式事件。
+// ChatCompletionsChunkToResponsesEvents converts one Chat chunk into zero or
+// more Responses events and updates the accumulated state.
 func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 	chunk *ChatCompletionsChunk,
 	state *ChatCompletionsToResponsesStreamState,
@@ -1498,8 +1498,8 @@ func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 	events = append(events, ensureChatToResponsesCreated(state)...)
 
 	for _, choice := range chunk.Choices {
-		// reasoning 作为独立 output item 发出，首个 delta 前必须先打开
-		// output_item 与 summary part；同时过滤上游常见的空字符串起始 delta。
+		// Open the reasoning item and summary part before its first delta.
+		// Ignore empty initial deltas commonly emitted by upstreams.
 		reasoning := choice.Delta.ReasoningText()
 		if reasoning != nil && *reasoning != "" {
 			events = append(events, ensureChatReasoningItem(runtime, state)...)
@@ -1512,8 +1512,8 @@ func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 			}))
 		}
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-			// 首个正文 delta 会先关闭 reasoning item，再打开 message item 和
-			// output_text content part。
+			// Close reasoning before opening the message and output_text part
+			// for the first text delta.
 			events = append(events, closeChatReasoningItem(state)...)
 			events = append(events, ensureChatToResponsesMessageItem(runtime, state)...)
 			events = append(events, ensureChatToResponsesTextPart(state)...)
@@ -1532,15 +1532,15 @@ func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 			}
 			stored, ok := state.ToolCalls[idx]
 			if !ok {
-				// 工具调用开始前需要先关闭仍打开的 reasoning item。
+				// Close any open reasoning item before starting a tool call.
 				events = append(events, closeChatReasoningItem(state)...)
 				copyCall := toolCall
 				if copyCall.ID == "" {
 					copyCall.ID = generateItemID(runtime)
 				}
 				copyCall.Type = "function"
-				// 首帧与后续分片的 arguments 由下方代码一起累加。
-				// GLM/Zhipu 的首帧可同时包含 id、name 和 arguments。
+				// Accumulate first-chunk arguments through the same path as later fragments.
+				// GLM/Zhipu may include ID, name, and arguments in the first chunk.
 				copyCall.Function.Arguments = ""
 				state.ToolCalls[idx] = &copyCall
 				stored = &copyCall
@@ -1557,10 +1557,10 @@ func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 			events = append(events, announceChatToolItem(state, idx, stored, false)...)
 			if toolCall.Function.Arguments != "" {
 				stored.Function.Arguments += toolCall.Function.Arguments
-				// 未宣告（名字未到）时仅累积，宣告时统一补发；custom 调用的
-				// arguments 是包裹 input 的 JSON 片段，无法增量还原为自由文本
-				// 输入，缓冲整份 arguments 收尾时一次性下发（见 closeChatToolItems）；
-				// tool_search 调用同样收尾时随 output_item.done 全量下发。
+				// Buffer until announcement when the name has not arrived. Custom-call JSON
+				// wraps freeform input, so decode the complete arguments at finalization in
+				// closeChatToolItems. Tool-search arguments are also delivered whole with
+				// output_item.done.
 				if state.toolAnnounced[idx] && !state.toolIsCustom[idx] && !state.toolIsToolSearch[idx] {
 					events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 						OutputIndex: state.ToolOutputIndex[idx],
@@ -1580,7 +1580,7 @@ func ChatCompletionsChunkToResponsesEvents(runtime Runtime,
 	return events
 }
 
-// FinalizeChatCompletionsResponsesStream 生成 Responses 流的终止事件。
+// FinalizeChatCompletionsResponsesStream closes open items and emits the terminal response once.
 func FinalizeChatCompletionsResponsesStream(runtime Runtime, state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
 	if state == nil || state.CompletedSent {
 		return nil
@@ -1588,7 +1588,7 @@ func FinalizeChatCompletionsResponsesStream(runtime Runtime, state *ChatCompleti
 	var events []ResponsesStreamEvent
 	events = append(events, ensureChatToResponsesCreated(state)...)
 
-	// 关闭没有进入正文阶段的 reasoning item（仅 reasoning 或空 completion）。
+	// Close reasoning even when no text followed it.
 	events = append(events, closeChatReasoningItem(state)...)
 	events = append(events, synthesizeChatReasoningFallbackMessage(runtime, state)...)
 
@@ -1619,8 +1619,8 @@ func FinalizeChatCompletionsResponsesStream(runtime Runtime, state *ChatCompleti
 		}))
 	}
 
-	// 关闭流里打开过的所有 function_call item。Codex 只有收到
-	// function_call_arguments.done 与 output_item.done 后才会认为工具调用完成。
+	// Complete function calls with both function_call_arguments.done and
+	// output_item.done so Codex can execute them.
 	events = append(events, closeChatToolItems(state)...)
 
 	status := "completed"
@@ -1665,8 +1665,8 @@ func ensureChatToResponsesCreated(state *ChatCompletionsToResponsesStreamState) 
 	})}
 }
 
-// ensureChatReasoningItem 在首个 reasoning delta 前打开 reasoning output item
-// 与 summary part；Codex 依赖这段生命周期展示流式思考内容。
+// ensureChatReasoningItem opens the reasoning item and summary part before
+// the first delta, providing the lifecycle Codex needs to display thinking.
 func ensureChatReasoningItem(runtime Runtime, state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
 	if state.ReasoningOpen || state.ReasoningDone {
 		return nil
@@ -1688,8 +1688,8 @@ func ensureChatReasoningItem(runtime Runtime, state *ChatCompletionsToResponsesS
 	}
 }
 
-// closeChatReasoningItem 发出 reasoning item 的终止事件：
-// reasoning_summary_text.done、reasoning_summary_part.done 与 output_item.done。
+// closeChatReasoningItem emits reasoning_summary_text.done,
+// reasoning_summary_part.done, and output_item.done for the open reasoning item.
 func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
 	if !state.ReasoningOpen {
 		return nil
@@ -1780,9 +1780,9 @@ func ensureChatToResponsesTextPart(state *ChatCompletionsToResponsesStreamState)
 	})}
 }
 
-// announceChatToolItem 在工具类型确定后输出 output_item.added。
-// 请求含 custom 工具时等名称到达后再判定类型，使 added 与 done 的类型一致。
-// force 用于流收尾，名称仍缺失时使用 function_call。
+// announceChatToolItem emits output_item.added once the call can be classified.
+// With name-dependent declarations, delay until the name arrives so added/done types agree.
+// force permits finalization of unnamed calls as function_call items.
 func announceChatToolItem(
 	state *ChatCompletionsToResponsesStreamState,
 	idx int,
@@ -1807,8 +1807,8 @@ func announceChatToolItem(
 	if isToolSearch {
 		itemType = "tool_search_call"
 	}
-	// namespace 子工具的调用仍按 function_call 生命周期下发，但 added/done 项要
-	// 还原为裸子工具名 + namespace 字段（codex 按 namespace+name 路由）。
+	// Namespace children use the function-call lifecycle but need their unqualified
+	// name and namespace on added/done items for Codex dispatch.
 	itemName, itemNamespace := stored.Function.Name, ""
 	if isCustom {
 		itemName = customName
@@ -1828,7 +1828,7 @@ func announceChatToolItem(
 			Status:    "in_progress",
 		},
 	})}
-	// 迟到宣告时补发已累积的参数增量（custom/tool_search 的输入收尾统一下发，不补发）。
+	// Replay buffered function arguments after late announcement; custom/search inputs wait until finalization.
 	if !isCustom && !isToolSearch && stored.Function.Arguments != "" {
 		events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.ToolOutputIndex[idx],
@@ -1841,8 +1841,8 @@ func announceChatToolItem(
 	return events
 }
 
-// closeChatToolItems 为流里打开过的每个工具调用发出对应的参数完成事件与
-// output_item.done，并带上完整 call_id、name 和 arguments，保证 Codex 能执行调用。
+// closeChatToolItems emits completion events with the full call identity and input.
+// Call indexes are expected to be contiguous from zero, as in Chat streams.
 func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
 	if len(state.ToolCalls) == 0 {
 		return nil
@@ -1857,7 +1857,7 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 		if !opened {
 			continue
 		}
-		// 收尾前为尚未宣告的调用发出 added 事件，名称缺失时使用 function_call。
+		// Announce any pending call before closing it; unnamed calls use function_call.
 		events = append(events, announceChatToolItem(state, i, toolCall, true)...)
 		arguments := toolCall.Function.Arguments
 		if strings.TrimSpace(arguments) == "" {
@@ -1865,8 +1865,8 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 		}
 		outputIndex := state.ToolOutputIndex[i]
 		if state.toolIsCustom[i] {
-			// custom 调用按 custom_tool_call 生命周期收尾：input 在此处一次性下发
-			// （流中不产出增量，见 ChatCompletionsChunkToResponsesEvents）。
+			// Decode and emit the complete custom input here, after all argument fragments
+			// have arrived in ChatCompletionsChunkToResponsesEvents.
 			input := extractCustomToolCallInput(arguments)
 			if input != "" {
 				events = append(events, chatToResponsesEvent(state, "response.custom_tool_call_input.delta", &ResponsesStreamEvent{
@@ -1898,8 +1898,8 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 			continue
 		}
 		if state.toolIsToolSearch[i] {
-			// tool_search 调用按 tool_search_call 项收尾：codex 从 output_item.done
-			// 物化该调用（无参数增量事件），arguments 全量随项下发。
+			// Codex constructs tool_search calls from output_item.done, with complete
+			// arguments on the item and no argument-delta events.
 			events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 				OutputIndex: outputIndex,
 				Item: &ResponsesOutput{
@@ -1912,7 +1912,7 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 			}))
 			continue
 		}
-		// namespace 子工具调用在宣告时已记录归属，收尾项同样带还原名与 namespace。
+		// Use the namespace identity recorded at announcement for the completed item too.
 		name, namespace := toolCall.Function.Name, ""
 		if ns, ok := state.toolNamespace[i]; ok {
 			name, namespace = ns.Name, ns.Namespace

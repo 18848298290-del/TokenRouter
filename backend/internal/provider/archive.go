@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// ArchiveProviders 提供文件导入和导出所需的管理操作。
+// ArchiveProviders supplies provider management operations for file import and export.
 type ArchiveProviders interface {
 	ListProviders(context.Context, int, int, string, string, string, string, int64, string, string, string) ([]Record, int64, error)
 	GetProvidersByIDs(context.Context, []int64) ([]*Record, error)
@@ -22,7 +22,7 @@ type ArchiveExportQuery struct {
 	IDs                                                            []int64
 	Platform, Type, Status, Search, PrivacyMode, SortBy, SortOrder string
 	GroupID                                                        int64
-	// 保留读提供商/排除影子后才验证 include_proxies 的历史顺序。
+	// Validate include_proxies after reading providers and excluding shadows.
 	IncludeProxies func() (bool, error)
 }
 type ArchiveInputError struct{ Err error }
@@ -36,7 +36,7 @@ type ArchiveOptions struct {
 	Info, Error, Debug func(string, ...any)
 }
 
-// Archive 执行备份查询、逐项创建和导入后操作，通过接口访问供应商。
+// Archive exports provider backups, imports entries, and runs post-import actions through injected services.
 type Archive struct {
 	providers ArchiveProviders
 	proxies   ArchiveProxies
@@ -68,9 +68,9 @@ func (h *Archive) Export(ctx context.Context, query ArchiveExportQuery) (transfe
 		return transfer.DataPayload{}, err
 	}
 
-	// 导出格式无法表达影子的父子链接，导入又要求凭据非空，因此排除 Spark 影子。
-	// 影子的独立优先级、并发、分组和状态也不在备份中；恢复后需重建影子并重新配置。
-	// 前端通过 skipped_shadows 提示跳过的数量。
+	// The export format cannot represent parent links and import requires credentials, so exclude Spark shadows.
+	// Their priority, concurrency, groups, and status must be configured again after recreating the shadows.
+	// The UI displays the excluded count from skipped_shadows.
 	skippedShadows := 0
 	exportable := make([]Record, 0, len(providers))
 	for i := range providers {
@@ -103,7 +103,7 @@ func (h *Archive) Export(ctx context.Context, query ArchiveExportQuery) (transfe
 		proxies = []egress.Proxy{}
 	}
 
-	// 构建 id→name 映射，用于导出备用代理 name
+	// Resolve backup proxy names from their IDs for export.
 	proxyNameByID := make(map[int64]string, len(proxies))
 	for i := range proxies {
 		proxyNameByID[proxies[i].ID] = proxies[i].Name
@@ -196,7 +196,7 @@ func (h *Archive) Import(ctx context.Context, req transfer.DataImportRequest) (t
 		return result, err
 	}
 
-	// 收集需要异步设置隐私的 Antigravity OAuth 提供商
+	// Collect Antigravity OAuth providers for asynchronous privacy setup.
 	var privacyProviders []*Record
 
 	for i := range dataPayload.Providers {
@@ -255,7 +255,7 @@ func (h *Archive) Import(ctx context.Context, req transfer.DataImportRequest) (t
 			})
 			continue
 		}
-		// 收集 Antigravity OAuth 提供商，稍后异步设置隐私
+		// Defer privacy setup until all entries have been imported.
 		if created.Platform == PlatformAntigravity && created.Type == ProviderTypeOAuth {
 			privacyProviders = append(privacyProviders, CloneRecord(created))
 		}
@@ -265,7 +265,7 @@ func (h *Archive) Import(ctx context.Context, req transfer.DataImportRequest) (t
 		result.ProviderCreated++
 	}
 
-	// Antigravity 隐私设置异步执行，批量导入请求先返回。
+	// Schedule privacy setup asynchronously so the import response does not wait for it.
 	if len(privacyProviders) > 0 && h.options.Background != nil && h.options.ForcePrivacy != nil {
 		h.options.Background("handler/admin/provider_data.go:importData", func() {
 			defer func() {
@@ -382,7 +382,7 @@ func archiveIntValue(value *int) int {
 	return *value
 }
 
-// ListProvidersForImport 保留 Codex 文件匹配的全量分页，后续导入入口复用同一提供商读取逻辑。
+// ListProvidersForImport reads every matching page for file-import matching.
 func (h *Archive) ListProvidersForImport(ctx context.Context, platform, kind, status, search string, groupID int64, privacy, sortBy, sortOrder string) ([]Record, error) {
 	return h.listProvidersFiltered(ctx, platform, kind, status, search, groupID, privacy, sortBy, sortOrder)
 }

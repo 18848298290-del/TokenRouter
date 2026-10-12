@@ -13,27 +13,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Snapshot 保留综合读取、部分写入合并和旧消费者需要的字段形状。
+// Snapshot combines module settings for admin reads and partial update merging.
 type Snapshot struct {
 	ResponsesWS          json.RawMessage
 	ResponsesWSEffective ws.Parameters
-	// StoredValues 保存本次读取的数据库值，供内容版本检查和部分更新使用。
+	// StoredValues holds the database values from this read for revision checks and partial updates.
 	StoredValues map[string]string `json:"-"`
 
 	RegistrationEnabled                 bool
 	EmailVerifyEnabled                  bool
 	RegistrationEmailSuffixWhitelist    []string
 	RegistrationEmailNormalization      bool
-	RegistrationEmailDomainQuotaEnabled bool // 非白名单域名按主域名限量注册，默认关闭
-	UserEmailChangeEnabled              bool // 已有邮箱身份的用户是否可以换绑主邮箱，默认关闭
+	RegistrationEmailDomainQuotaEnabled bool // per-registrable-domain quotas outside the allowlist; disabled by default
+	UserEmailChangeEnabled              bool // allow users with an email identity to replace their primary email; disabled by default
 	PromoCodeEnabled                    bool
 	PasswordResetEnabled                bool
 	FrontendURL                         string
 	InvitationCodeEnabled               bool
-	TotpEnabled                         bool // TOTP 双因素认证
-	SessionBindingEnabled               bool // 会话 IP/UA 绑定（变更即失效）
-	StepUpEnabled                       bool // 敏感操作 step-up 2FA 门控
-	AuditLogRetentionDays               int  // 审计日志保留天数（<=0 永久保留）
+	TotpEnabled                         bool // TOTP two-factor authentication
+	SessionBindingEnabled               bool // bind sessions to IP and User-Agent; changes invalidate the session
+	StepUpEnabled                       bool // step-up 2FA for sensitive operations
+	AuditLogRetentionDays               int  // retention in days; <=0 keeps audit logs indefinitely
 	LoginAgreementEnabled               bool
 	LoginAgreementMode                  string
 	LoginAgreementUpdatedAt             string
@@ -71,14 +71,14 @@ type Snapshot struct {
 	APIKeyACLTrustForwardedIP              bool
 	ForwardedClientIPHeaders               []string
 
-	// LinuxDo Connect OAuth 登录
+	// LinuxDo Connect OAuth login.
 	LinuxDoConnectEnabled                bool
 	LinuxDoConnectClientID               string
 	LinuxDoConnectClientSecret           string
 	LinuxDoConnectClientSecretConfigured bool
 	LinuxDoConnectRedirectURL            string
 
-	// DingTalk Connect OAuth 登录
+	// DingTalk Connect OAuth login.
 	DingTalkConnectEnabled                 bool
 	DingTalkConnectClientID                string
 	DingTalkConnectClientSecret            string
@@ -97,7 +97,7 @@ type Snapshot struct {
 	DingTalkConnectSyncDisplayNameAttrName string
 	DingTalkConnectSyncDeptAttrName        string
 
-	// WeChat Connect OAuth 登录
+	// WeChat Connect OAuth login.
 	WeChatConnectEnabled                   bool
 	WeChatConnectAppID                     string
 	WeChatConnectAppSecret                 string
@@ -119,7 +119,7 @@ type Snapshot struct {
 	WeChatConnectRedirectURL               string
 	WeChatConnectFrontendRedirectURL       string
 
-	// Generic OIDC OAuth 登录
+	// Generic OIDC login.
 	OIDCConnectEnabled                bool
 	OIDCConnectProviderName           string
 	OIDCConnectClientID               string
@@ -144,7 +144,7 @@ type Snapshot struct {
 	OIDCConnectUserInfoIDPath         string
 	OIDCConnectUserInfoUsernamePath   string
 
-	// GitHub / Google 邮箱快捷登录
+	// GitHub and Google email login.
 	GitHubOAuthEnabled                bool
 	GitHubOAuthClientID               string
 	GitHubOAuthClientSecret           string
@@ -185,18 +185,19 @@ type Snapshot struct {
 	FooterLinks                 string // JSON array of footer link groups
 	FooterText                  string // Extra footer text (ICP number etc.)
 	HomeFeaturedModels          string // JSON array of model IDs featured on the home page
-	// CreativeModelSettings 是创作台允许使用的全局分组+模型+能力白名单 JSON。
+	// CreativeModelSettings lists the globally allowed Creative Studio group, model, and capability combinations.
 	CreativeModelSettings []creative.CreativeModelSetting
-	// CreativeWorkerCount 是创作台任务 worker 数量，缺失时回退默认值。
+	// CreativeWorkerCount is the task worker count, resolved to the default when missing.
 	CreativeWorkerCount int
 
 	DefaultConcurrency int
 	DefaultBalance     float64
-	// TeamEnabled 控制团队功能页面的入口与访问。
+	// TeamEnabled controls access to team pages.
 	TeamEnabled bool
-	// CreativeEnabled 控制创作台页面入口与 API 访问（进程配置 creative.enabled 仍为前置条件）。
+	// CreativeEnabled controls Creative Studio page and API access; process configuration creative.enabled is
+	// also required.
 	CreativeEnabled bool
-	// RiskControlEnabled 控制风控中心入口和网关内容审计总开关。
+	// RiskControlEnabled controls the risk center and gateway content auditing.
 	RiskControlEnabled                   bool
 	CyberSessionBlockEnabled             bool
 	CyberSessionBlockTTLSeconds          int
@@ -228,11 +229,11 @@ type Snapshot struct {
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
 	IdentityPatchPrompt string `json:"identity_patch_prompt"`
 
-	// Grok 模型映射策略；提供商映射为空时使用这里的默认值。
+	// Grok defaults used when the provider has no model mapping.
 	GrokDefaultTextModel   string `json:"grok_default_text_model"`
 	GrokDefaultBaseURLMode string `json:"grok_default_base_url_mode"`
 
-	// Ops monitoring (vNext)
+	// Operations monitoring.
 	OpsMonitoringEnabled         bool
 	OpsRealtimeMonitoringEnabled bool
 	OpsMetricsIntervalSeconds    int
@@ -241,29 +242,27 @@ type Snapshot struct {
 	MinClaudeCodeVersion string
 	MaxClaudeCodeVersion string
 
-	// 分组隔离：允许未分组 Key 调度（默认 false → 403）
-
-	// Backend 模式：禁用用户注册和自助服务，仅管理员可登录
+	// Backend mode disables registration and self-service and restricts login to administrators.
 	BackendModeEnabled bool
 
 	// Gateway forwarding behavior
-	OpenAITTFTMode                         string // Responses first_token_ms 统计口径（默认 semantic）
-	EnableFingerprintUnification           bool   // 是否统一 OAuth 提供商的指纹头（默认 true）
-	EnableMetadataPassthrough              bool   // 是否透传客户端原始 metadata（默认 false）
-	EnableCCHSigning                       bool   // 已废弃 no-op：新版 CLI 取消 cch 签名后网关不再注入/签名 cch，开关无效果
-	EnableClaudeOAuthSystemPromptInjection bool   // 是否对 Claude OAuth mimic 路径注入 Claude Code system blocks（默认 true）
-	ClaudeOAuthSystemPrompt                string // Claude OAuth mimic 路径注入的通用扩展 system prompt；空值使用内置默认
-	ClaudeOAuthSystemPromptBlocks          string // Claude OAuth mimic 路径注入的 system blocks JSON 配置；空值使用内置默认
-	EnableAnthropicCacheTTL1hInjection     bool   // 是否对 Anthropic OAuth/SetupToken 请求体注入 1h cache_control ttl（默认 false）
-	EnableClientDatelineNormalization      bool   // 是否对 Anthropic OAuth/SetupToken 请求体做客户端 dateline 归一化（默认 true）
-	RewriteMessageCacheControl             bool   // 是否改写 messages[*].content[*].cache_control（默认 false）
-	AntigravityUserAgentVersion            string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
-	OpenAICodexUserAgent                   string // OpenAI Codex 上游完整 User-Agent；空值使用内置 TUI 默认
-	OpenAIAllowClaudeCodeCodexPlugin       bool   // 全局开关：是否额外放行 Claude Code 的 Codex 插件（默认 false）
+	OpenAITTFTMode                         string // Responses first_token_ms measurement mode; defaults to semantic
+	EnableFingerprintUnification           bool   // unify OAuth provider fingerprint headers; defaults to true
+	EnableMetadataPassthrough              bool   // forward client metadata; defaults to false
+	EnableCCHSigning                       bool   // deprecated no-op; the gateway does not inject or sign cch
+	EnableClaudeOAuthSystemPromptInjection bool   // inject Claude Code system blocks on the Claude OAuth mimic path; defaults to true
+	ClaudeOAuthSystemPrompt                string // Claude OAuth mimic extension prompt; empty uses the built-in default
+	ClaudeOAuthSystemPromptBlocks          string // Claude OAuth mimic system blocks JSON; empty uses built-in defaults
+	EnableAnthropicCacheTTL1hInjection     bool   // inject 1h cache_control TTL for Anthropic OAuth/SetupToken; defaults to false
+	EnableClientDatelineNormalization      bool   // normalize client datelines for Anthropic OAuth/SetupToken; defaults to true
+	RewriteMessageCacheControl             bool   // rewrite messages[*].content[*].cache_control; defaults to false
+	AntigravityUserAgentVersion            string // upstream Antigravity User-Agent version; empty uses configuration defaults
+	OpenAICodexUserAgent                   string // full upstream Codex User-Agent; empty uses the built-in TUI default
+	OpenAIAllowClaudeCodeCodexPlugin       bool   // allow the Claude Code Codex plugin globally; defaults to false
 	UserPromptReplacementConfig            *promptpolicy.UserPromptReplacementConfig
 
 	// Web Search Emulation
-	WebSearchEmulationEnabled bool // 是否启用 web search 模拟
+	WebSearchEmulationEnabled bool
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  string
@@ -271,13 +270,13 @@ type Snapshot struct {
 	PaymentVisibleMethodAlipayEnabled bool
 	PaymentVisibleMethodWxpayEnabled  bool
 
-	// 通用高级调度器参数；是否启用由分组 scheduler_type 决定。
+	// Shared advanced scheduler parameters; each group's scheduler_type selects whether to use them.
 	AdvancedSchedulerStickyWeightedEnabled       bool
 	AdvancedSchedulerSubscriptionPriorityEnabled bool
 	AdvancedSchedulerEWMAErrorRateAlpha          string
 	AdvancedSchedulerEWMATTFTAlpha               string
 	AdvancedSchedulerStickyEscapeEnabled         bool
-	// AdvancedSchedulerStickyEscapeEnabledSet 标记开关是否由数据库显式设置，用于诊断继承来源。
+	// AdvancedSchedulerStickyEscapeEnabledSet records whether the database overrides the inherited switch.
 	AdvancedSchedulerStickyEscapeEnabledSet          bool
 	AdvancedSchedulerStickyEscapeTTFTMs              string
 	AdvancedSchedulerStickyEscapeErrorRate           string
@@ -306,26 +305,26 @@ type Snapshot struct {
 	AdvancedSchedulerEffectiveStickyEscapeEnabled    bool
 	AdvancedSchedulerEffectiveStickyEscapeTTFTMs     string
 	AdvancedSchedulerEffectiveStickyEscapeErrorRate  string
-	// OpenAIQuotaAutoPauseSettings 是 OpenAI 提供商配额自动暂停的全局默认阈值，存储在 ops_advanced_settings 中。
+	// OpenAIQuotaAutoPauseSettings contains global OpenAI quota thresholds stored in ops_advanced_settings.
 	OpenAIQuotaAutoPauseSettings provider.QuotaAutoPauseSettings
-	// OpenAIQuotaAutoPauseSettingsSet 标记本次系统设置更新是否显式带了配额自动暂停配置，避免旧客户端误覆盖。
+	// OpenAIQuotaAutoPauseSettingsSet records request presence so omitted values do not overwrite saved thresholds.
 	OpenAIQuotaAutoPauseSettingsSet bool
 
-	// 余额不足提醒
+	// Low-balance notifications.
 	BalanceLowNotifyEnabled     bool
 	BalanceLowNotifyThreshold   float64
 	BalanceLowNotifyRechargeURL string
 
-	// 订阅到期提醒
+	// Subscription expiry notifications.
 	SubscriptionExpiryNotifyEnabled bool
 
-	// 提供商限额通知
+	// Provider quota notifications.
 	ProviderQuotaNotifyEnabled bool
 	ProviderQuotaNotifyEmails  []contact.Entry
 
-	// 系统全局提供商自动停调阈值（key = platform，100 = disabled）
+	// Global provider auto-pause thresholds by platform; 100 disables pausing.
 	ProviderSchedulingThresholds map[string]int `json:"provider_scheduling_thresholds"`
 
-	// 允许终端用户在用量页查看自己的失败请求
+	// Allow users to view their own failed requests on the usage page.
 	AllowUserViewErrorRequests bool
 }

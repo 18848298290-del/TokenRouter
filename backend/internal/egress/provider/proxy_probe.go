@@ -19,8 +19,8 @@ const (
 	defaultProxyProbeResponseMaxBytes = int64(1024 * 1024)
 )
 
-// probeURLs 按优先级排列的内置探测 URL 列表。
-// 某些 AI API 专用代理只允许访问特定域名，因此需要多个备选。
+// probeURLs lists built-in probe targets in priority order.
+// Multiple targets support proxies that restrict which domains they can reach.
 var probeURLs = []struct {
 	url    string
 	parser string
@@ -203,7 +203,7 @@ func (s *proxyProbeService) parseIPify(body []byte, latencyMs int64) (*egress.Pr
 	}, latencyMs, nil
 }
 
-// parseChatGPTTrace 解析 Cloudflare trace 端点的纯文本响应。
+// parseChatGPTTrace parses the Cloudflare trace endpoint's plain-text response.
 func (s *proxyProbeService) parseChatGPTTrace(body []byte, latencyMs int64) (*egress.ProxyExitInfo, int64, error) {
 	var ip, loc string
 	for line := range strings.SplitSeq(string(body), "\n") {

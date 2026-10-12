@@ -36,6 +36,7 @@ func (f *PendingFlow) EmailShouldCreatePendingRegistration(ctx context.Context, 
 	return false, nil
 }
 
+// LegacyRegistrationStatus returns the session and whether the frontend must complete a pending step.
 func (f *PendingFlow) LegacyRegistrationStatus(
 	ctx context.Context,
 	session *PendingAuthSession, emailVerificationRequired, forceEmailOnSignup bool,

@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// CreativeRunOutput 保存创作台任务单个输出的元数据。
+// CreativeRunOutput stores metadata for one Creative Studio output.
 //
-// 隐私红线：输出图片本体只保存在临时 Redis 存储（TTL 到期即失效），
-// 这张表只记录状态、MIME、字节数与临时过期时间等描述信息。
+// Output image bytes live in temporary Redis storage until their TTL expires.
+// This table records status, MIME type, byte size, and expiration time.
 type CreativeRunOutput struct {
 	ent.Schema
 }
@@ -38,7 +38,7 @@ func (CreativeRunOutput) Fields() []ent.Field {
 		field.String("status").MaxLen(20).Default("pending"),
 		field.String("mime_type").Optional().Nillable().MaxLen(128),
 		field.Int64("byte_size").Optional().Nillable(),
-		// transient_expires_at 记录临时输出的过期时间；过期后不得再提供给客户端。
+		// transient_expires_at is the deadline after which the output must not be served to clients.
 		field.Time("transient_expires_at").Optional().Nillable().SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 		field.Time("acked_at").Optional().Nillable().SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 		field.String("error_code").Optional().Nillable().MaxLen(128),

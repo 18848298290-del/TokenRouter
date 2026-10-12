@@ -19,7 +19,7 @@ func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilt
 	if filter.StartTime.IsZero() || filter.EndTime.IsZero() {
 		return nil, fmt.Errorf("start_time/end_time required")
 	}
-	// 允许 start_time == end_time（结果为空），与 service 层校验口径保持一致。
+	// An empty time range is valid, matching service validation.
 	if filter.StartTime.After(filter.EndTime) {
 		return nil, fmt.Errorf("start_time must be <= end_time")
 	}
@@ -83,7 +83,7 @@ ORDER BY request_count DESC, model ASC`
 		args = append(args, filter.PageSize, offset)
 	}
 
-	// 聚合结果只计算一次；LEFT JOIN 保证空页仍能回传模型总数。
+	// Compute aggregates once; LEFT JOIN retains the model total even for an empty page.
 	querySQL += `
 )
 SELECT

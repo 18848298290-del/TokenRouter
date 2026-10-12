@@ -1,6 +1,6 @@
 package provider
 
-// 本文件检查 gateway/client_settings.go 与 upstream/openai/codex_identity.go 的 Codex 版本一致性，使用 clientmeta.CompareVersions 比较版本。
+// This file compares gateway and upstream Codex versions with clientmeta.CompareVersions.
 
 import (
 	"strings"

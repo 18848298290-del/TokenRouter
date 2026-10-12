@@ -16,20 +16,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// sparkShadowGroupRepoStub 嵌入 groupRepoStub(其余方法 panic),仅覆写
-// ListActiveByPlatform 以供 F4 默认绑组测试。
+// sparkShadowGroupRepoStub supplies active groups for shadow group-selection tests.
+// Unexpected methods on the embedded nil repository panic.
 type sparkShadowGroupRepoStub struct {
 	routing.GroupRepository
 	groups []routing.Group
 }
 
-// bindFailRepoStub 让 BindGroups 失败,用于验证绑组失败时补偿删除刚建的影子。
+// bindFailRepoStub fails group binding to check compensating deletion of the new shadow.
 type bindFailRepoStub struct {
 	*sparkShadowRepoStub
 }
 
-// raceCreateRepoStub 模拟并发竞态:对影子的 Create 撞一母一影唯一索引(返回错误),
-// 且复查时另一并发请求的影子已存在 → CreateShadow 应映射为结构化 409。
+// raceCreateRepoStub simulates a competing shadow creation that wins the unique index.
+// The subsequent reread finds that shadow, allowing CreateShadow to return a structured 409.
 type raceCreateRepoStub struct {
 	*sparkShadowRepoStub
 }
@@ -38,7 +38,7 @@ func (s *sparkShadowGroupRepoStub) ListActive(_ context.Context) ([]routing.Grou
 	return s.groups, nil
 }
 
-// TestCreateShadowDoesNotBindDefaultGroup 验证新影子可以继承母提供商的明确关联，但不会自动寻找默认组。
+// TestCreateShadowDoesNotBindDefaultGroup checks that an ungrouped parent produces an ungrouped shadow.
 func TestCreateShadowDoesNotBindDefaultGroup(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -61,8 +61,8 @@ func TestCreateShadowDoesNotBindDefaultGroup(t *testing.T) {
 	require.Empty(t, repo.groupsOf[shadow.ID], "未指定分组且母提供商无分组时保留未分组状态")
 }
 
-// TestCreateShadow_InheritsParentGroups 验证未指定 group_ids 时
-// 影子继承母提供商当前分组，因此也可在母提供商的自定义组中路由。
+// TestCreateShadow_InheritsParentGroups checks that omitted group_ids inherit
+// the parent's existing groups, including custom routing groups.
 func TestCreateShadow_InheritsParentGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -86,8 +86,8 @@ func (s *bindFailRepoStub) BindGroups(_ context.Context, _ int64, _ []int64) err
 	return errors.New("simulated bind failure")
 }
 
-// TestCreateShadow_InvalidGroupRejectedNoOrphan 检查无效分组在
-// 创建前被拒,不留孤儿影子。
+// TestCreateShadow_InvalidGroupRejectedNoOrphan checks that invalid groups are rejected
+// before a shadow is created.
 func TestCreateShadow_InvalidGroupRejectedNoOrphan(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -107,8 +107,8 @@ func TestCreateShadow_InvalidGroupRejectedNoOrphan(t *testing.T) {
 	require.Empty(t, shadows, "无效分组应在创建前被拒,不应建出影子")
 }
 
-// TestCreateShadow_BindFailureRollsBackShadow 验证绑组失败时补偿删除
-// 刚建的影子,不留孤儿(否则一母一影唯一索引会挡住重试)。
+// TestCreateShadow_BindFailureRollsBackShadow checks that failed binding deletes
+// the newly created shadow, releasing the one-shadow-per-parent constraint for a retry.
 func TestCreateShadow_BindFailureRollsBackShadow(t *testing.T) {
 	ctx := context.Background()
 	base := newSparkShadowRepoStub()
@@ -129,10 +129,10 @@ func TestCreateShadow_BindFailureRollsBackShadow(t *testing.T) {
 	require.Empty(t, shadows, "绑组失败后应补偿删除影子,不留孤儿")
 }
 
-// TestCreateShadow はメインのシナリオを検証する。
+// TestCreateShadow checks parent identity, Spark quota dimension, and proxy inheritance.
 //
-// 检查影子的 ParentProviderID、QuotaDimension、默认 spark model_mapping、凭据为空及继承 ProxyID。
-// 同一母提供商再次创建影子时返回错误。
+// The shadow receives default model mappings and holds no authentication tokens.
+// Creating another shadow for the same parent returns an error.
 func TestCreateShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -168,8 +168,8 @@ func TestCreateShadow(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreateShadow_BindGroups は BindGroups の後置呼び出しを検証する。
-// 影子提供商が指定グループに属し、ListSchedulableByGroupID で取得可能であること。
+// TestCreateShadow_BindGroups checks that supplied groups are bound after creation.
+// The shadow must then be returned by ListSchedulableByGroupID.
 func TestCreateShadow_BindGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -201,8 +201,8 @@ func TestCreateShadow_BindGroups(t *testing.T) {
 	require.Equal(t, shadow.ID, providers[0].ID)
 }
 
-// TestCreateShadow_InheritsParentConcurrency 验证未指定并发时
-// 影子继承母提供商的并发数，限流器将 Concurrency=0 解释为无限并发。
+// TestCreateShadow_InheritsParentConcurrency checks that omitted concurrency inherits
+// the parent limit; zero would mean unlimited concurrency to the limiter.
 func TestCreateShadow_InheritsParentConcurrency(t *testing.T) {
 	ctx := context.Background()
 
@@ -238,8 +238,8 @@ func TestCreateShadow_InheritsParentConcurrency(t *testing.T) {
 	})
 }
 
-// TestCreateShadow_InheritsParentPriorityWhenOmitted 检查请求省略优先级时继承母提供商的值。
-// SetPriority 会覆盖 Ent 默认值 50，数值越小调度越优先，前端仅传 name 时使用继承值。
+// TestCreateShadow_InheritsParentPriorityWhenOmitted checks priority inheritance for omitted values.
+// Lower priorities schedule first; a name-only request uses the parent value instead of zero.
 func TestCreateShadow_InheritsParentPriorityWhenOmitted(t *testing.T) {
 	ctx := context.Background()
 
@@ -275,7 +275,7 @@ func TestCreateShadow_InheritsParentPriorityWhenOmitted(t *testing.T) {
 	})
 }
 
-// TestResolveCredentialProvider_RejectsParentShadow 检查母提供商也是影子时拒绝凭据解析。
+// TestResolveCredentialProvider_RejectsParentShadow checks that credential resolution rejects a shadow parent.
 func TestResolveCredentialProvider_RejectsParentShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -301,7 +301,7 @@ func TestResolveCredentialProvider_RejectsParentShadow(t *testing.T) {
 	require.Error(t, err, "父提供商本身是影子时凭据解析应拒绝(fail-closed)")
 }
 
-// TestCreateShadow_RejectsShadowAsParent 验证不允许把影子当母创建二级影子。
+// TestCreateShadow_RejectsShadowAsParent checks that shadows cannot become parents of further shadows.
 func TestCreateShadow_RejectsShadowAsParent(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -320,7 +320,7 @@ func TestCreateShadow_RejectsShadowAsParent(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpx.ErrorCode(err), "影子当母应返回 400")
 }
 
-// TestCreateShadow_StructuredErrors 检查业务错误返回结构化 4xx 响应。
+// TestCreateShadow_StructuredErrors checks structured 4xx responses for invalid parents and duplicates.
 func TestCreateShadow_StructuredErrors(t *testing.T) {
 	ctx := context.Background()
 
@@ -358,8 +358,8 @@ func (s *raceCreateRepoStub) Create(ctx context.Context, provider *providercore.
 	return s.sparkShadowRepoStub.Create(ctx, provider)
 }
 
-// TestCreateShadow_DefaultsNameFromParent 验证空 name 不应 500,
-// 而是默认 "<母提供商名> (Spark)"。
+// TestCreateShadow_DefaultsNameFromParent checks that a blank name succeeds
+// with the default "<parent name> (Spark)".
 func TestCreateShadow_DefaultsNameFromParent(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -375,8 +375,8 @@ func TestCreateShadow_DefaultsNameFromParent(t *testing.T) {
 	require.Equal(t, "mum (Spark)", shadow.Name)
 }
 
-// TestCreateShadow_ConcurrentCreateReturns409 验证并发竞态下预查放行后
-// Create 遇到唯一索引冲突时返回结构化 409 响应。
+// TestCreateShadow_ConcurrentCreateReturns409 checks a race after the precheck:
+// a unique-index conflict with an existing shadow returns a structured 409.
 func TestCreateShadow_ConcurrentCreateReturns409(t *testing.T) {
 	ctx := context.Background()
 	base := newSparkShadowRepoStub()

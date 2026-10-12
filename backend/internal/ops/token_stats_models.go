@@ -10,11 +10,11 @@ type OpsTokenStatsFilter struct {
 	Platform string
 	GroupID  *int64
 
-	// 分页模式（默认）：page/page_size。
+	// Pagination mode (default): page/page_size.
 	Page     int
 	PageSize int
 
-	// TopN 模式：top_n。
+	// TopN mode: top_n.
 	TopN int
 }
 
@@ -38,14 +38,14 @@ type OpsTokenStatsResponse struct {
 
 	Items []*OpsTokenStatsItem `json:"items"`
 
-	// 分页或 TopN 截断前的模型总数。
+	// Total models before pagination or TopN limiting.
 	Total int64 `json:"total"`
 
-	// 分页模式元数据。
+	// Pagination metadata.
 	Page     int `json:"page,omitempty"`
 	PageSize int `json:"page_size,omitempty"`
 
-	// TopN 模式元数据。
+	// TopN metadata.
 	TopN *int `json:"top_n,omitempty"`
 }
 

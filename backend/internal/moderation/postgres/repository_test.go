@@ -20,7 +20,7 @@ func TestBuildContentModerationLogWhere_BlockFiltersStandardBlocksOnly(t *testin
 
 	require.Empty(t, args)
 	sql := strings.Join(where, " AND ")
-	// 普通拦截不能混入关键词或哈希拦截，否则前端无法按处置方式准确复查。
+	// Keep standard blocks separate from keyword and hash blocks for review by action.
 	require.Contains(t, sql, "l.action = 'block'")
 	require.NotContains(t, sql, "keyword_block")
 	require.NotContains(t, sql, "hash_block")
@@ -30,7 +30,7 @@ func TestBuildContentModerationLogWhere_LegacyBlockedIncludesAllBlockActions(t *
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "blocked"})
 
 	require.Empty(t, args)
-	// 旧版管理端仍会传 blocked，保留原聚合行为以兼容前后端滚动升级。
+	// Older clients send blocked during rolling upgrades and expect all blocking actions.
 	require.Contains(t, strings.Join(where, " AND "), "l.action IN ('block', 'keyword_block', 'hash_block')")
 }
 
@@ -53,7 +53,7 @@ func TestBuildContentModerationLogWhere_HitExcludesAllBlockActions(t *testing.T)
 
 	require.Empty(t, args)
 	sql := strings.Join(where, " AND ")
-	// 命中条件必须同时排除 blocked 使用的三种动作，才能保证两个筛选集合互斥。
+	// Exclude all three blocking actions so hit and blocked results are disjoint.
 	require.Contains(t, sql, "l.flagged = TRUE")
 	require.Contains(t, sql, "l.action NOT IN ('block', 'keyword_block', 'hash_block')")
 }
@@ -117,8 +117,8 @@ func TestContentModerationRepositoryCreateLog_PersistsMatchedKeyword(t *testing.
 			log.Flagged,
 			log.HighestCategory,
 			log.HighestScore,
-			sqlmock.AnyArg(), // 分类分数快照
-			sqlmock.AnyArg(), // 阈值快照
+			sqlmock.AnyArg(), // Category-score snapshot.
+			sqlmock.AnyArg(), // Threshold snapshot.
 			log.InputExcerpt,
 			latencyMS,
 			log.Error,
@@ -128,13 +128,13 @@ func TestContentModerationRepositoryCreateLog_PersistsMatchedKeyword(t *testing.
 			queueDelayMS,
 			log.MatchedKeyword,
 			log.Source,
-			sqlmock.AnyArg(), // 完整输入单元
+			sqlmock.AnyArg(), // Full input units.
 			log.ContentComplete,
 			log.AuditComplete,
 			log.TextUnitCount,
 			log.ImageUnitCount,
 			log.FailedUnitCount,
-			sqlmock.AnyArg(), // 失败单元
+			sqlmock.AnyArg(), // Failed audit units.
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 	mock.ExpectCommit()
@@ -522,7 +522,7 @@ func TestContentModerationRepositoryMarkCyberWarningEmailSent(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// newSQLMock 创建 SQL 替身并在测试结束时关闭连接。
+// newSQLMock creates a SQL mock and closes its connection at test cleanup.
 func newSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, m, e := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
@@ -531,7 +531,7 @@ func newSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	return db, m
 }
 
-// newTestModerationRepository 将用户状态事务操作接入审核仓库。
+// newTestModerationRepository connects user-status transaction operations to the moderation store.
 func newTestModerationRepository(db *sql.DB) *Store {
 	return NewContentModerationRepository(db, func(tx *sql.Tx) UserStatusTx { return identitypg.NewRiskStatusParticipant(tx) })
 }

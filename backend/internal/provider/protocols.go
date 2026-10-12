@@ -20,7 +20,7 @@ func ProtocolAuthMode(provider *Record) string {
 	return ""
 }
 
-// NativeProtocolOptions 复用认证模式判定，目录接口不接收任何实际凭据。
+// NativeProtocolOptions lists available protocols for the provider's platform, type, and authentication mode.
 func (r *Record) NativeProtocolOptions() []capability.ProtocolID {
 	if r == nil {
 		return []capability.ProtocolID{}
@@ -51,12 +51,13 @@ func ParseProtocolSet(raw any) ([]capability.ProtocolID, error) {
 	return out, nil
 }
 
-// UpstreamProtocols 读取协议集合，历史记录缺少该字段时推导默认值。
+// UpstreamProtocols reads the configured set, deriving defaults when the field is absent.
 func (r *Record) UpstreamProtocols() []capability.ProtocolID {
 	return r.UpstreamProtocolsForLegacy(r.ConfiguredAPIProtocol())
 }
 
-// UpstreamProtocolsForLegacy 读取配置的协议集合，缺失时按传入的协议变体推导默认值。
+// UpstreamProtocolsForLegacy uses the supplied legacy variant when the protocol set is absent; malformed sets
+// yield empty.
 func (r *Record) UpstreamProtocolsForLegacy(legacyMode string) []capability.ProtocolID {
 	if r == nil {
 		return []capability.ProtocolID{}
@@ -71,7 +72,7 @@ func (r *Record) UpstreamProtocolsForLegacy(legacyMode string) []capability.Prot
 	return r.LegacyUpstreamProtocols(legacyMode)
 }
 
-// NormalizeProviderProtocols 是创建、编辑和导入的统一保存校验；空数组明确关闭新调用。
+// NormalizeProviderProtocols validates protocols for saving; an explicit empty set disables new calls.
 // @project-doc docs/interfaces/protocol_capabilities.md#account_native_protocols
 func NormalizeProviderProtocols(provider *Record) error {
 	if provider == nil || provider.IsCredentialShadow() {

@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ManagementListReader 提供分页查询和服务端排序。
+// ManagementListReader supplies paginated provider queries with server-side sorting.
 type ManagementListReader interface {
 	ListProviders(context.Context, int, int, string, string, string, string, int64, string, string, string) ([]Record, int64, error)
 }
@@ -24,7 +24,7 @@ type ManagementListResult struct {
 	Total int64
 }
 
-// ManagementList 拥有提供商列表的查询与运行展示编排，不生成 HTTP 响应。
+// ManagementList combines provider records with runtime status and optional scheduling scores.
 type ManagementList struct {
 	admin   ManagementListReader
 	runtime *RuntimeStatusReader
@@ -56,7 +56,6 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 		}
 	}
 
-	// Get current concurrency counts for all providers
 	providerIDs := make([]int64, len(providers))
 	for i, acc := range providers {
 		providerIDs[i] = acc.ID
@@ -66,25 +65,25 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 	var windowCosts map[int64]float64
 	var activeSessions map[int64]int
 	var rpmCounts map[int64]int
-	// 用户请求该列时才计算高级调度候选评分。
+	// Calculate advanced scheduling scores when the caller requests that column.
 	var schedulerScores map[int64]*ProviderSchedulerScore
 	var schedulerGroupScores map[int64][]ProviderSchedulerGroupScore
 	if includeSchedulerScore && len(providers) > 0 {
 		schedulerScores, schedulerGroupScores = s.scores.Build(ctx, providers, platform, providerType, status, search, groupID, privacyMode)
 	}
 
-	// 始终获取并发数（Redis ZCARD，极低开销）
+	// Read concurrency for the entire page when the counter is configured.
 	if s.runtime.options.Concurrency != nil {
 		if cc, ccErr := s.runtime.options.Concurrency(ctx, providerIDs); ccErr == nil && cc != nil {
 			concurrencyCounts = cc
 		}
 	}
 
-	// 识别需要查询窗口费用、会话数和 RPM 的提供商（Anthropic OAuth/SetupToken 且启用了相应功能）
+	// Query cost, session, and RPM data for Anthropic OAuth/setup-token providers with those features enabled.
 	windowCostProviderIDs := make([]int64, 0)
 	sessionLimitProviderIDs := make([]int64, 0)
 	rpmProviderIDs := make([]int64, 0)
-	sessionIdleTimeouts := make(map[int64]time.Duration) // 各提供商的会话空闲超时配置
+	sessionIdleTimeouts := make(map[int64]time.Duration) // Per-provider session idle timeouts.
 	for i := range providers {
 		acc := &providers[i]
 		if acc.IsAnthropicOAuthOrSetupToken() {
@@ -101,7 +100,7 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 		}
 	}
 
-	// 始终获取 RPM 计数（Redis GET，极低开销）
+	// Batch-read RPM counts for providers with a configured base RPM.
 	if len(rpmProviderIDs) > 0 && s.runtime.options.RPMBatch != nil {
 		rpmCounts, _ = s.runtime.options.RPMBatch(ctx, rpmProviderIDs)
 		if rpmCounts == nil {
@@ -109,7 +108,7 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 		}
 	}
 
-	// 始终获取活跃会话数（Redis ZCARD，低开销）
+	// Batch-read active sessions for providers with session limits.
 	if len(sessionLimitProviderIDs) > 0 && s.runtime.options.Sessions != nil {
 		activeSessions, _ = s.runtime.options.Sessions(ctx, sessionLimitProviderIDs, sessionIdleTimeouts)
 		if activeSessions == nil {
@@ -117,35 +116,34 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 		}
 	}
 
-	// 始终获取窗口费用（PostgreSQL 聚合查询）
+	// Load costs independently so one failed query does not hide the rest of the page.
 	if len(windowCostProviderIDs) > 0 {
 		windowCosts = make(map[int64]float64)
 		var mu sync.Mutex
 		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(10) // 限制并发数
+		g.SetLimit(10)
 
 		for i := range providers {
 			acc := &providers[i]
 			if !acc.IsAnthropicOAuthOrSetupToken() || runtimeConfig(acc).GetWindowCostLimit() <= 0 {
 				continue
 			}
-			accCopy := acc // 闭包捕获
+			accCopy := acc
 			g.Go(func() error {
-				// 使用统一的窗口开始时间计算逻辑（考虑窗口过期情况）
+				// Resolve the active window start, including expiry handling.
 				startTime := runtimeConfig(accCopy).GetCurrentWindowStartTime(s.runtime.options.Now())
 				stats, err := s.runtime.options.WindowCost(gctx, accCopy.ID, startTime)
 				if err == nil && stats != nil {
 					mu.Lock()
-					windowCosts[accCopy.ID] = *stats // 使用标准费用
+					windowCosts[accCopy.ID] = *stats
 					mu.Unlock()
 				}
-				return nil // 不返回错误，允许部分失败
+				return nil // Allow partial results when a provider's cost query fails.
 			})
 		}
 		_ = g.Wait()
 	}
 
-	// Build response with concurrency info
 	result := make([]RuntimeStatus, len(providers))
 	for i := range providers {
 		acc := &providers[i]
@@ -157,21 +155,18 @@ func (s *ManagementList) List(ctx context.Context, input ManagementListInput) (*
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
 
-		// 添加窗口费用（仅当启用时）
 		if windowCosts != nil {
 			if cost, ok := windowCosts[acc.ID]; ok {
 				item.CurrentWindowCost = &cost
 			}
 		}
 
-		// 添加活跃会话数（仅当启用时）
 		if activeSessions != nil {
 			if count, ok := activeSessions[acc.ID]; ok {
 				item.ActiveSessions = &count
 			}
 		}
 
-		// 添加 RPM 计数（仅当启用时）
 		if rpmCounts != nil {
 			if rpm, ok := rpmCounts[acc.ID]; ok {
 				item.CurrentRPM = &rpm

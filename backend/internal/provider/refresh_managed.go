@@ -7,7 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// WithManagedRefresh 使用共享刷新锁执行管理员流程，锁内重读记录，各写入步骤分别提交。
+// WithManagedRefresh rereads state under shared refresh locking and runs the administrator callback; each
+// write commits separately.
 func (api *OAuthRefreshAPI) WithManagedRefresh(ctx context.Context, observed *Record, key string, apply func(context.Context, *Record) (*Record, string, error)) (*Record, string, error) {
 	if err := ValidateManagedRefreshTarget(observed); err != nil {
 		return nil, "", err
@@ -49,7 +50,8 @@ func (api *OAuthRefreshAPI) WithManagedRefresh(ctx context.Context, observed *Re
 	return apply(ctx, CloneRecord(current))
 }
 
-// ValidateManagedRefreshTarget 保持管理刷新在交换前拒绝非 OAuth 和凭据影子的原错误。
+// ValidateManagedRefreshTarget accepts OAuth, Setup Token, and Qoder COSY providers, rejecting credential
+// shadows before exchange.
 func ValidateManagedRefreshTarget(value *Record) error {
 	if value == nil {
 		return ErrProviderNotFound

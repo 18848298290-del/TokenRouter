@@ -23,7 +23,7 @@ func ExchangePassthrough(ctx context.Context, body []byte, options ExchangeOptio
 		}
 		lastWireBody = wireBody
 		if options.SynchronizeBody && !bytes.Equal(wireBody, body) {
-			// build 阶段会按 beta 能力清理 body，发送前同步到 ParsedRequest 当前视图。
+			// Publish beta-sanitized bytes to the parsed request before sending them.
 			if err := options.ReplaceBody(wireBody); err != nil {
 				return nil, lastWireBody, err
 			}
@@ -38,7 +38,7 @@ func ExchangePassthrough(ctx context.Context, body []byte, options ExchangeOptio
 			return nil, lastWireBody, options.TransportError(ctx, err, upstreamReq.URL.String())
 		}
 
-		// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）
+		// Passthrough excludes 400 recovery because that recovery rewrites the request body.
 		if resp.StatusCode >= 400 && resp.StatusCode != http.StatusBadRequest && options.ShouldRetry(resp.StatusCode) {
 			if attempt < options.MaxAttempts {
 				elapsed := time.Since(retryStart)

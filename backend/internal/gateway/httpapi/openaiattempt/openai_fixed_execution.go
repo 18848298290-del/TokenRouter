@@ -33,7 +33,7 @@ func (r *Runtime) Open(ctx context.Context, in execution.Request, sink upstream.
 	case execution.TextOpenAIChat:
 		return &openAIChatAttemptBridge{responsesAttemptBridge: base, promptCacheKey: in.Text.PromptCacheKey}, nil
 	case execution.TextOpenAIMessages:
-		// 该请求私有缓存只在首次调用时改写，原前置创建阶段没有 I/O 或诊断。
+		// Populate the request-local cache on first use so constructing the attempt performs no I/O or diagnostics.
 		mapped := requeststate.NewModelMappedBodyCache(in.Body, r.dependencies.replaceModelInBody)
 		return &openAIMessageAttemptBridge{
 			responsesAttemptBridge: base,

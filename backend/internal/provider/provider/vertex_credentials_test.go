@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// 控制锁返回时刻，在缓存返回之前确定地取消调用。
+// vertexCancelCache cancels the call during lock acquisition, before the cache operation returns.
 type vertexCancelCache struct {
 	providercore.AccessTokenCache
 	cancel context.CancelFunc

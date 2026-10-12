@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// QoderExplicitSessionSeed 按列表顺序读取 Header 的首值，均为空时再读取请求体中的会话标识。
+// QoderExplicitSessionSeed checks each header's first value in order, then session fields in the body.
 func QoderExplicitSessionSeed(headers map[string][]string, body []byte) string {
 	for _, name := range []string{"session_id", "conversation_id", "x-session-id", "x-conversation-id", "X-Claude-Code-Session-Id"} {
 		values := headers[textproto.CanonicalMIMEHeaderKey(name)]
@@ -28,7 +28,7 @@ func QoderExplicitSessionSeed(headers map[string][]string, body []byte) string {
 	return ""
 }
 
-// QoderHashFromSeed 为种子加 qoder: 前缀后计算调度会话哈希。
+// QoderHashFromSeed prefixes the seed with qoder: before deriving the scheduler hash.
 func QoderHashFromSeed(seed string) string {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
@@ -38,7 +38,7 @@ func QoderHashFromSeed(seed string) string {
 	return hash
 }
 
-// QoderRequestHash 优先使用请求指定的会话种子，缺失时根据消息摘要和来源计算哈希。
+// QoderRequestHash prefers an explicit session seed, then derives identity from message content and source.
 func QoderRequestHash(headers map[string][]string, body []byte, wire string, identity *requeststate.SessionContext, observe func(string, ...any)) string {
 	if seed := QoderExplicitSessionSeed(headers, body); seed != "" {
 		return QoderHashFromSeed(seed)

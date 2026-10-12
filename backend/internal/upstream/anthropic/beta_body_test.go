@@ -29,12 +29,10 @@ func TestAnthropicBetaTokensContains_ToleratesWhitespace(t *testing.T) {
 }
 
 func TestAnthropicBetaTokensContains_SubstringNotMatched(t *testing.T) {
-	// token 按完整字符串匹配。
+	// Match complete tokens, including their version suffix.
 	require.False(t, AnthropicBetaTokensContains("context-management-2025-06-27-rev2", "context-management-2025-06-27"),
 		"必须按 token 边界匹配，不允许 prefix 子串误命中")
 }
-
-// sanitizeAnthropicBodyForBetaTokens
 
 func TestSanitizeAnthropicBodyForBetaTokens_NoFieldNoChange(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","messages":[]}`)
@@ -78,11 +76,11 @@ func TestSanitizeAnthropicBodyForBetaTokens_EmptyBody(t *testing.T) {
 	require.Empty(t, out)
 }
 
-// TestSanitizeAnthropicBodyForBetaTokens_HaikuRealCCClientPreservesField 检查 Haiku 请求在 header 含 context-management beta 时保留该字段。
+// TestSanitizeAnthropicBodyForBetaTokens_HaikuRealCCClientPreservesField covers client-enabled context management.
 
 func TestSanitizeAnthropicBodyForBetaTokens_HaikuRealCCClientPreservesField(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"messages":[]}`)
-	// 真 Claude Code CLI 2.1.87+ 客户端 header 含 context-management beta
+	// A Claude Code client supplies the context-management beta.
 	clientBeta := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27"
 	out, changed := SanitizeAnthropicBodyForBetaTokens(body, clientBeta)
 	require.False(t, changed,
@@ -107,14 +105,14 @@ func TestSanitizeAnthropicBodyForBetaTokens_FallbacksKeptWhenBetaPresent(t *test
 }
 
 func TestSanitizeAnthropicBodyForBetaTokens_FallbacksStrippedWhenBetaMissing(t *testing.T) {
-	// 客户端透传的两种形态：字符串 "default" 与模型数组
+	// Clients can supply either "default" or a model list.
 	for name, fallbacks := range map[string]string{
 		"string_default": `"fallbacks":"default"`,
 		"model_array":    `"fallbacks":["claude-opus-4-6","claude-sonnet-4-6"]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := []byte(`{"model":"claude-haiku-4-5",` + fallbacks + `,"messages":[]}`)
-			// OAuth mimic 和默认 API-key beta 使用 oauth/interleaved。
+			// Neither of these headers enables server-side fallback.
 			out, changed := SanitizeAnthropicBodyForBetaTokens(body,
 				"oauth-2025-04-20,interleaved-thinking-2025-05-14")
 			require.True(t, changed)
@@ -142,7 +140,7 @@ func TestSanitizeAnthropicBodyForBetaTokens_FallbackCreditTokenStrippedWhenCredi
 
 func TestSanitizeAnthropicBodyForBetaTokens_FallbackCreditTokenKeptWithAnyAcceptedBeta(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","fallback_credit_token":"tok_123","messages":[]}`)
-	// 三个 beta token 任意一个在 header 中都必须保留字段
+	// Any one of the three accepted betas keeps the credit field.
 	for _, beta := range []string{
 		BetaServerSideFallback,
 		BetaFallbackCredit,
@@ -155,7 +153,7 @@ func TestSanitizeAnthropicBodyForBetaTokens_FallbackCreditTokenKeptWithAnyAccept
 	}
 }
 
-// TestSanitizeAnthropicBodyForBetaTokens_StripsFallbacksKeepsContextManagement 检查 context-management beta 对应字段的保留和 fallbacks 的删除。
+// TestSanitizeAnthropicBodyForBetaTokens_StripsFallbacksKeepsContextManagement checks independent field gating.
 
 func TestSanitizeAnthropicBodyForBetaTokens_StripsFallbacksKeepsContextManagement(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"fallbacks":"default","messages":[]}`)

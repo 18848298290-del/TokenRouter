@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestErrorRulesStorageAndSubscription 使用迁移后的数据库和 Redis 检查规则发布、兼容键及写入失败的处理。
+// TestErrorRulesStorageAndSubscription checks rule publication, compatibility keys, and write failures using
+// migrated PostgreSQL and Redis.
 func TestErrorRulesStorageAndSubscription(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := context.Background()

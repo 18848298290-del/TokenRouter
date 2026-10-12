@@ -27,7 +27,7 @@ import (
 const (
 	tlsFingerprintCollectorDefaultTTL        = 30 * time.Minute
 	tlsFingerprintCollectorDefaultMaxRecords = 20
-	// TLS 记录长度字段最大为 65535，Peek 时还需要包含 5 字节记录头。
+	// The TLS record length field allows 65535 bytes; Peek also needs the five-byte header.
 	tlsFingerprintCollectorClientHelloBufferSize = 64*1024 + 5
 )
 
@@ -37,7 +37,7 @@ type (
 	TLSFingerprintCaptureRecord    = egress.TLSFingerprintCaptureRecord
 )
 
-// CollectorOptions 包含 app 提供的 TLS 采集器配置。
+// CollectorOptions contains app-supplied TLS collector settings.
 type CollectorOptions struct {
 	Host                 string
 	Port                 int
@@ -50,7 +50,7 @@ type CollectorOptions struct {
 	Diagnostics          egress.Diagnostics
 }
 
-// TLSFingerprintCollectorService 管理运行时 TLS 指纹收集器。
+// TLSFingerprintCollectorService owns the TLS collector listener and capture sessions.
 type TLSFingerprintCollectorService struct {
 	closed    bool
 	serveDone chan struct{}
@@ -107,14 +107,14 @@ func NewTLSFingerprintCollectorService(options CollectorOptions) *TLSFingerprint
 
 func (s *TLSFingerprintCollectorService) collectorConfigLocked() CollectorOptions { return s.options }
 
-// Status 返回收集器状态。
+// Status returns the collector's current state.
 func (s *TLSFingerprintCollectorService) Status() TLSFingerprintCollectorStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.statusLocked()
 }
 
-// Start 启动独立 HTTPS 收集器监听。
+// Start opens a dedicated HTTPS capture listener unless it is already running.
 func (s *TLSFingerprintCollectorService) Start(ctx context.Context) (TLSFingerprintCollectorStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,7 +161,7 @@ func (s *TLSFingerprintCollectorService) Start(ctx context.Context) (TLSFingerpr
 			return ctx
 		},
 		TLSConfig: &tls.Config{
-			// 收集器只需要采集客户端声明的 ALPN，实际响应固定走 HTTP/1.1，避免 h2 请求解析复杂度。
+			// Capture the offered ALPN values while serving HTTP/1.1 to keep request parsing on that protocol.
 			MinVersion: tls.VersionTLS12,
 			NextProtos: []string{"http/1.1"},
 		},
@@ -191,7 +191,7 @@ func (s *TLSFingerprintCollectorService) Start(ctx context.Context) (TLSFingerpr
 	return s.statusLocked(), nil
 }
 
-// Stop 停止收集器并清空短期会话。
+// Stop shuts down the listener and clears short-lived sessions.
 func (s *TLSFingerprintCollectorService) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	server := s.server
@@ -227,7 +227,7 @@ func (s *TLSFingerprintCollectorService) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown 封闭按需启动入口，再停止当前监听；管理员普通 Stop 仍可再次启动。
+// Shutdown prevents future starts and stops the listener; an ordinary Stop permits restart.
 func (s *TLSFingerprintCollectorService) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
@@ -614,12 +614,12 @@ func captureTokenFromRequest(r *http.Request) string {
 	if token := strings.TrimSpace(r.Header.Get("X-TLS-Fingerprint-Token")); token != "" {
 		return token
 	}
-	// 客户端把采集地址配置为 base URL 后会继续追加自身 API 路径，因此从 /capture/{token}/... 中提取 token。
+	// Clients append API paths to the configured base URL; extract the token before that suffix.
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) >= 2 && parts[0] == "capture" {
 		return strings.TrimSpace(parts[1])
 	}
-	// Claude Code 通过 ANTHROPIC_AUTH_TOKEN 发送鉴权信息，采集器复用该值作为会话 token。
+	// Reuse the Authorization value sent through ANTHROPIC_AUTH_TOKEN as the capture session token.
 	if token := bearerTokenFromAuthorization(r.Header.Get("Authorization")); token != "" {
 		return token
 	}

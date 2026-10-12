@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// GroupProviderCapacityRow 包含容量汇总需要的提供商字段。
+// GroupProviderCapacityRow contains provider fields used to aggregate group capacity.
 type GroupProviderCapacityRow struct {
 	GroupID             int64
 	ProviderID          int64
@@ -16,7 +16,7 @@ type GroupProviderCapacityRow struct {
 	SessionWindowStatus string
 }
 
-// CapacitySnapshot 不包含凭据或原始 Extra，供路由聚合独立消费。
+// CapacitySnapshot contains capacity and scheduling data without credentials or raw Extra values.
 type CapacitySnapshot struct {
 	ID                        int64
 	Concurrency               int
@@ -35,7 +35,7 @@ func ProjectCapacity(id int64, config RuntimeConfig, quotaAutoPaused bool) Capac
 	return CapacitySnapshot{ID: id, Concurrency: config.Concurrency, MaxSessions: config.GetMaxSessions(), SessionIdleTimeoutMinutes: config.GetSessionIdleTimeoutMinutes(), BaseRPM: config.GetBaseRPM(), QuotaAutoPaused: quotaAutoPaused}
 }
 
-// ProjectObservedCapacity 汇总运行参数和阈值判断结果，调用方逐行传入观测时间。
+// ProjectObservedCapacity combines runtime configuration with quota thresholds at the supplied observation time.
 func ProjectObservedCapacity(row GroupProviderCapacityRow, settings QuotaAutoPauseSettings, now time.Time) CapacitySnapshot {
 	paused, _ := EvaluateQuotaAutoPause(row.Platform, row.Extra, settings, now)
 	return ProjectCapacity(row.ProviderID, RuntimeConfig{Extra: row.Extra, Concurrency: row.Concurrency, SessionWindowStart: row.SessionWindowStart, SessionWindowEnd: row.SessionWindowEnd}, paused)

@@ -22,7 +22,7 @@ type SettlementSubscription struct {
 	PlanGroupRateMultipliers map[int64]float64
 }
 
-// SubscriptionAllocationPlan 按锁定后的稳定顺序给出更新和资金分配，不执行 I/O。
+// SubscriptionAllocationPlan contains updates and funding allocations in the supplied locked-row order.
 type SubscriptionAllocationPlan struct {
 	Remaining, SubscriptionAmount float64
 	Allocations                   []BillingAllocation
@@ -53,7 +53,7 @@ func SettlementSubscriptionRateMultiplier(row SettlementSubscription, groupID *i
 	return NonNegativeRate(rate)
 }
 
-// NormalizeSettlementSubscription 统一解析倍率与事务扣费看到的额度窗口状态。
+// NormalizeSettlementSubscription normalizes quota windows before allocation and transactional charging.
 // @project-doc docs/domains/payments_and_entitlements.md#subscription_quota_windows
 func NormalizeSettlementSubscription(row SettlementSubscription, now time.Time) SettlementSubscription {
 	windowStart := startOfDay(now)
@@ -99,7 +99,7 @@ func NormalizeSettlementWindow(
 		return &start, used
 	}
 
-	// 1 日卡是一次性日额度：首次扣费要记录窗口，但跨过 24 小时边界后不能清零。
+	// A one-day subscription activates its daily quota once and retains usage across later day boundaries.
 	if duration == 24*time.Hour && !expiresAt.After(startsAt.AddDate(0, 0, 1)) {
 		if windowStart == nil || windowStart.IsZero() {
 			start := resetStart
@@ -109,7 +109,7 @@ func NormalizeSettlementWindow(
 		return &start, used
 	}
 
-	// 没有有限外层额度保护时，尾段仍须容纳完整窗口，避免最高层额度重复发放。
+	// Without a positive outer limit, a full window must fit before expiry to prevent granting the top-level quota again.
 	if !CanStartSettlementWindow(resetStart, duration, expiresAt, hasFiniteOuterLimit) {
 		if windowStart == nil || windowStart.IsZero() {
 			return nil, used
@@ -148,13 +148,13 @@ func SubscriptionAvailableAmount(unlimitedAmount float64, values ...*float64) fl
 		}
 	}
 	if !found {
-		// nil 表示该窗口无限额；所有窗口都无限时，本次剩余费用都由订阅覆盖。
+		// Nil means unlimited; when every window is unlimited, the subscription covers the remaining amount.
 		return unlimitedAmount
 	}
 	return min
 }
 
-// SubscriptionAllocationRequest 保持原校验顺序，允许 Adapter 跳过不需要的订阅查询。
+// SubscriptionAllocationRequest validates the funding request and reports whether subscription lookup is needed.
 func SubscriptionAllocationRequest(cmd *UsageBillingCommand) (amountUSD float64, query bool, err error) {
 	if cmd == nil {
 		return 0, false, nil
@@ -185,7 +185,7 @@ func AllocateSubscriptions(cmd *UsageBillingCommand, subscriptions []SettlementS
 		return SubscriptionAllocationPlan{Remaining: amountUSD}, nil
 	}
 	updates := make([]SettlementSubscription, 0, len(subscriptions))
-	// 指定订阅不存在、失效或不覆盖最终分组时不能把整笔请求伪装成余额回退。
+	// A missing eligible preferred subscription must fail rather than redirect the whole request to balance.
 	if cmd.APIKeyBillingMode == APIKeyBillingModeSubscription && len(subscriptions) == 0 {
 		return SubscriptionAllocationPlan{}, ErrPreferredSubscriptionInsufficient
 	}

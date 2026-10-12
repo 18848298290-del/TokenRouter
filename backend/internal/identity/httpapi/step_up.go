@@ -11,9 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// StepUpSessionKey 计算 step-up 授权的会话键：
-// 优先绑定当前会话（refresh token family）；旧 token 没有会话 ID 时绑定其凭证摘要，
-// 避免同一用户的多个旧会话共享敏感操作授权。
+// StepUpSessionKey uses the refresh-family ID when available.
+// Legacy requests use a credential digest to separate sessions belonging to the same user.
+// Without either value, the key falls back to the user ID.
 func StepUpSessionKey(c *gin.Context, userID int64) string {
 	sid := c.GetString(authctx.ContextKeySessionID)
 	if principal, ok := authctx.GetPrincipal(c); ok {
@@ -45,15 +45,15 @@ func StepUpAuth(grantChecker StepUpGrantChecker, userReader UserReader, settings
 }
 
 func EnforceStepUp(c *gin.Context, grantChecker StepUpGrantChecker, userReader UserReader, settings StepUpSettingReader) bool {
-	// 功能开关关闭时直接放行（含 admin API key），恢复门控引入前的行为。
-	// settings 为 nil 时保持门控（fail-closed）：正常装配不会出现 nil。
+	// A disabled switch bypasses step-up for every credential kind.
+	// Missing settings leave enforcement enabled.
 	if settings != nil && !settings.IsStepUpEnabled(c.Request.Context()) {
 		return true
 	}
 
 	adminAPIKey := c.GetString("auth_method") == "admin_api_key"
 	if principal, ok := authctx.GetPrincipal(c); ok {
-		// 已验证的 Principal 优先；没有 Principal 时使用 auth_method 上下文字段。
+		// Prefer the verified Principal; use auth_method when it is absent.
 		adminAPIKey = principal.CredentialKind == "admin_api_key"
 	}
 	if adminAPIKey {
@@ -82,7 +82,7 @@ func EnforceStepUp(c *gin.Context, grantChecker StepUpGrantChecker, userReader U
 	sessionKey := StepUpSessionKey(c, subject.UserID)
 	granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey)
 	if err != nil {
-		// 安全门控故障时选择 fail-closed。
+		// Reject the request when the grant check is unavailable.
 		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
 		return false
 	}

@@ -1,88 +1,76 @@
 package apperror
 
 const (
-	// CategoryOK 保留对应错误类别的稳定标识。
-	CategoryOK Category = 200
-	// CategoryBadRequest 保留对应错误类别的稳定标识。
-	CategoryBadRequest Category = 400
-	// CategoryUnauthorized 保留对应错误类别的稳定标识。
-	CategoryUnauthorized Category = 401
-	// CategoryForbidden 保留对应错误类别的稳定标识。
-	CategoryForbidden Category = 403
-	// CategoryNotFound 保留对应错误类别的稳定标识。
-	CategoryNotFound Category = 404
-	// CategoryConflict 保留对应错误类别的稳定标识。
-	CategoryConflict Category = 409
-	// CategoryTooManyRequests 保留对应错误类别的稳定标识。
+	// CategoryOK identifies successful completion.
+	CategoryOK              Category = 200
+	CategoryBadRequest      Category = 400
+	CategoryUnauthorized    Category = 401
+	CategoryForbidden       Category = 403
+	CategoryNotFound        Category = 404
+	CategoryConflict        Category = 409
 	CategoryTooManyRequests Category = 429
-	// CategoryClientClosed 保留对应错误类别的稳定标识。
-	CategoryClientClosed Category = 499
-	// CategoryInternalServer 保留对应错误类别的稳定标识。
-	CategoryInternalServer Category = 500
-	// CategoryBadGateway 保留对应错误类别的稳定标识。
-	CategoryBadGateway Category = 502
-	// CategoryServiceUnavailable 保留对应错误类别的稳定标识。
+	// CategoryClientClosed identifies a request canceled by the client.
+	CategoryClientClosed       Category = 499
+	CategoryInternalServer     Category = 500
+	CategoryBadGateway         Category = 502
 	CategoryServiceUnavailable Category = 503
-	// CategoryGatewayTimeout 保留对应错误类别的稳定标识。
-	CategoryGatewayTimeout Category = 504
+	CategoryGatewayTimeout     Category = 504
 )
 
-// Category 为应用错误类别；数值在兼容期保留旧错误身份，不依赖 HTTP 包。
+// Category identifies an application error using stable numeric codes.
 type Category int32
 
-// BadRequest new BadRequest error that is mapped to a 400 response.
+// BadRequest creates an invalid-request error.
 func BadRequest(reason, message string) *ApplicationError {
 	return New(CategoryBadRequest, reason, message)
 }
 
-// IsBadRequest determines if err is an error which indicates a BadRequest error.
-// It supports wrapped errors.
+// IsBadRequest reports whether err has CategoryBadRequest, including through wrappers.
 func IsBadRequest(err error) bool {
 	return CategoryOf(err) == CategoryBadRequest
 }
 
-// TooManyRequests new TooManyRequests error that is mapped to a 429 response.
+// TooManyRequests creates a rate-limit error.
 func TooManyRequests(reason, message string) *ApplicationError {
 	return New(CategoryTooManyRequests, reason, message)
 }
 
-// Unauthorized new Unauthorized error that is mapped to a 401 response.
+// Unauthorized creates an authentication error.
 func Unauthorized(reason, message string) *ApplicationError {
 	return New(CategoryUnauthorized, reason, message)
 }
 
-// Forbidden new Forbidden error that is mapped to a 403 response.
+// Forbidden creates an access-denied error.
 func Forbidden(reason, message string) *ApplicationError {
 	return New(CategoryForbidden, reason, message)
 }
 
-// NotFound new NotFound error that is mapped to a 404 response.
+// NotFound creates a missing-resource error.
 func NotFound(reason, message string) *ApplicationError {
 	return New(CategoryNotFound, reason, message)
 }
 
-// IsNotFound determines if err is an error which indicates an NotFound error.
-// It supports wrapped errors.
+// IsNotFound reports whether err has CategoryNotFound, including through wrappers.
 func IsNotFound(err error) bool {
 	return CategoryOf(err) == CategoryNotFound
 }
 
-// Conflict new Conflict error that is mapped to a 409 response.
+// Conflict creates a conflicting-state error.
 func Conflict(reason, message string) *ApplicationError {
 	return New(CategoryConflict, reason, message)
 }
 
-// InternalServer new InternalServer error that is mapped to a 500 response.
+// InternalServer creates an internal failure error.
 func InternalServer(reason, message string) *ApplicationError {
 	return New(CategoryInternalServer, reason, message)
 }
 
-// ServiceUnavailable new ServiceUnavailable error that is mapped to an HTTP 503 response.
+// ServiceUnavailable creates a temporary service-unavailability error.
 func ServiceUnavailable(reason, message string) *ApplicationError {
 	return New(CategoryServiceUnavailable, reason, message)
 }
 
-// GatewayTimeout new GatewayTimeout error that is mapped to an HTTP 504 response.
+// GatewayTimeout creates an upstream timeout error.
 func GatewayTimeout(reason, message string) *ApplicationError {
 	return New(CategoryGatewayTimeout, reason, message)
 }

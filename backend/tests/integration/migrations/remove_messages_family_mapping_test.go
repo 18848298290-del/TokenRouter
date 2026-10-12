@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration279RemovesOnlyMessagesFamilyMapping 验证迁移只删除系列字段，精确覆盖、分组 ID 和其它策略保持原值，重复执行不改变结果。
+// TestMigration279RemovesOnlyMessagesFamilyMapping checks replay and retention of exact mappings, group
+// identity, and other policies.
 func TestMigration279RemovesOnlyMessagesFamilyMapping(t *testing.T) {
 	tx := historicalTx(t, "279_")
 	ctx := context.Background()

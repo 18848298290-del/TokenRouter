@@ -8,7 +8,7 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ListSchedulableProviderLoads 只加载 Ops 队列深度采样所需的提供商 ID 与并发字段。
+// ListSchedulableProviderLoads loads IDs, concurrency, and load factors for Ops queue-depth sampling.
 func (r *ProviderStore) ListSchedulableProviderLoads(ctx context.Context) ([]providercore.LoadObservation, error) {
 	providers, err := r.SchedulableProvidersQuery(time.Now()).
 		Select(

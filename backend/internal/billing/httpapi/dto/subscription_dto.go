@@ -64,8 +64,8 @@ type UserSubscription struct {
 	Plan *SubscriptionPlan    `json:"plan,omitempty"`
 }
 
-// AdminUserSubscription 是管理员接口使用的订阅 DTO（包含分配信息/备注等字段）。
-// 注意：普通用户接口不得返回 assigned_by/assigned_at/notes/assigned_by_user 等管理员字段。
+// AdminUserSubscription includes assignment metadata and notes for administrators.
+// User endpoints use UserSubscription to exclude assigned_by, assigned_at, notes, and assigned_by_user.
 type AdminUserSubscription struct {
 	UserSubscription
 
@@ -96,22 +96,22 @@ type UserSummaryResponse struct {
 	Concurrency   int     `json:"concurrency"`
 	Status        string  `json:"status"`
 	AllowedGroups []int64 `json:"allowed_groups"`
-	// DisabledPublicGroups 为管理员显式禁止该用户使用的公开分组 ID。
+	// DisabledPublicGroups lists public group IDs denied to the user by an administrator.
 	DisabledPublicGroups []int64    `json:"disabled_public_groups"`
 	LastActiveAt         *time.Time `json:"last_active_at,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 	DeletedAt            *time.Time `json:"deleted_at,omitempty"`
 
-	// 余额不足通知
+	// Low-balance alert settings.
 	BalanceNotifyEnabled       bool                         `json:"balance_notify_enabled"`
 	BalanceNotifyThresholdType string                       `json:"balance_notify_threshold_type"`
 	BalanceNotifyThreshold     *float64                     `json:"balance_notify_threshold"`
 	BalanceNotifyExtraEmails   []billing.NotifyEmailSummary `json:"balance_notify_extra_emails"`
 	TotalRecharged             float64                      `json:"total_recharged"`
 
-	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
+	// RPMLimit is the user request-per-minute limit when the group has no rpm_limit; zero is unlimited.
 	RPMLimit int `json:"rpm_limit"`
-	// APIKeyLimit 用户可创建的 API Key 数量上限，0 表示不限制。
+	// APIKeyLimit caps the number of API Keys the user may create; zero is unlimited.
 	APIKeyLimit int `json:"api_key_limit"`
 }

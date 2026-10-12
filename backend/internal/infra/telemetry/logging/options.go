@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// DefaultContainerLogPath 为容器内默认日志文件路径。
+	// DefaultContainerLogPath is the default log file path inside the container.
 	DefaultContainerLogPath = "/app/data/logs/tokenrouter.log"
 	defaultLogFilename      = "tokenrouter.log"
 )

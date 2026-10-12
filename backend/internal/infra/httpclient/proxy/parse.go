@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// allowedSchemes 列出支持的代理协议。
+// allowedSchemes lists supported proxy protocols.
 var allowedSchemes = map[string]bool{
 	"http":    true,
 	"https":   true,
@@ -15,9 +15,9 @@ var allowedSchemes = map[string]bool{
 	"socks5h": true,
 }
 
-// Parse 解析代理 URL，支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。
-// 去除首尾空白后为空时返回直连结果，解析失败、缺少主机或协议不受支持时返回错误。
-// SOCKS5 地址转换为 SOCKS5H，有效地址返回去除空白的字符串和解析结果。
+// Parse accepts HTTP, HTTPS, SOCKS5, and SOCKS5H proxy URLs.
+// Blank input returns a nil URL for direct access; malformed URLs, missing hosts, and unsupported schemes fail.
+// SOCKS5 is normalized to SOCKS5H; the returned string is trimmed and includes that normalization.
 func Parse(raw string) (trimmed string, parsed *url.URL, err error) {
 	trimmed = strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -26,7 +26,7 @@ func Parse(raw string) (trimmed string, parsed *url.URL, err error) {
 
 	parsed, err = url.Parse(trimmed)
 	if err != nil {
-		// 将 URL 解析错误写入返回的错误消息。
+		// Include the URL parser's error in the returned diagnostic.
 		return "", nil, fmt.Errorf("invalid proxy URL: %v", err)
 	}
 
@@ -39,7 +39,7 @@ func Parse(raw string) (trimmed string, parsed *url.URL, err error) {
 		return "", nil, fmt.Errorf("unsupported proxy scheme %q (allowed: http, https, socks5, socks5h)", scheme)
 	}
 
-	// 将 SOCKS5 地址规范为 SOCKS5H。
+	// Normalize the SOCKS5 alias to SOCKS5H.
 	if scheme == "socks5" {
 		parsed.Scheme = "socks5h"
 		trimmed = parsed.String()
@@ -48,7 +48,7 @@ func Parse(raw string) (trimmed string, parsed *url.URL, err error) {
 	return trimmed, parsed, nil
 }
 
-// NormalizePoolKey 返回代理连接池使用的规范 URL 键和解析结果。
+// NormalizePoolKey returns a normalized proxy pool key and parsed URL, or "direct" for blank input.
 func NormalizePoolKey(raw string) (string, *url.URL, error) {
 	_, parsed, err := Parse(raw)
 	if err != nil {
@@ -57,7 +57,7 @@ func NormalizePoolKey(raw string) (string, *url.URL, error) {
 	if parsed == nil {
 		return "direct", nil, nil
 	}
-	// 规范化：小写 scheme/host，去除路径和查询参数
+	// Pool identity uses lowercase scheme and host, excluding paths, queries, and fragments.
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
 	parsed.Path = ""

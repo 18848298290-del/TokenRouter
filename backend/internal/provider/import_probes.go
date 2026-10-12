@@ -16,7 +16,7 @@ const (
 
 var ErrImportProbeStopped = errors.New("provider import probes are stopped")
 
-// GrokImportProbeResult 保存导入记录需要的脱敏观测摘要。
+// GrokImportProbeResult holds an observation summary suitable for import logs.
 type GrokImportProbeResult struct {
 	Model           string
 	StatusCode      int
@@ -171,7 +171,7 @@ func (s *GrokImportProbeScheduler) run(parent context.Context, prober GrokImport
 		}
 	}()
 
-	// 任务出队后开始计算探测预算，额度查询的准备、等待和请求共用该预算。
+	// The probe budget starts after dequeue and covers preparation, waiting, and the upstream request.
 	ctx, cancel := context.WithTimeout(parent, s.timeout)
 	defer cancel()
 	result, err := prober.QueryQuota(ctx, providerID)
@@ -213,7 +213,7 @@ func panicType(value any) string {
 	}
 }
 
-// StopContext 取消未领取的尽力探测，取消并等待在途 worker；不把取消队列报告为已探测成功。
+// StopContext discards queued probes, cancels in-flight workers, and waits within the caller's budget.
 func (s *GrokImportProbeScheduler) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil

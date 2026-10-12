@@ -90,6 +90,6 @@ func EstimateTokensForText(s string) int {
 		// Roughly 4 chars per token for English-like text.
 		return (len(runes) + 3) / 4
 	}
-	// For CJK-heavy text, approximate 1 rune per token.
+	// Use one rune per token when more than 20% of the text is non-ASCII.
 	return len(runes)
 }

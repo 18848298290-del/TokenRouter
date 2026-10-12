@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// JWTAuth JWT 认证中间件实现。
+// JWTAuth validates a bearer JWT against current user state and session binding.
 func JWTAuth(
 	authService SessionAuth,
 	userService UserReader,
@@ -19,14 +19,12 @@ func JWTAuth(
 	auditService AuthObserver,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从 Authorization header 中提取 token
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			AbortWithError(c, 401, "UNAUTHORIZED", "Authorization header is required")
 			return
 		}
 
-		// 验证 Bearer scheme
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			AbortWithError(c, 401, "INVALID_AUTH_HEADER", "Authorization header format must be 'Bearer {token}'")
@@ -39,7 +37,6 @@ func JWTAuth(
 			return
 		}
 
-		// 验证 token
 		claims, err := authService.ValidateToken(tokenString)
 		if err != nil {
 			if errors.Is(err, identity.ErrTokenExpired) {
@@ -50,27 +47,25 @@ func JWTAuth(
 			return
 		}
 
-		// 从数据库获取最新的用户信息
+		// Read current state so disabling a user takes effect before token expiry.
 		user, err := userService.GetByID(c.Request.Context(), claims.UserID)
 		if err != nil {
 			AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
 			return
 		}
 
-		// 检查用户状态
 		if !user.IsActive() {
 			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
 			return
 		}
 
-		// Security: Validate TokenVersion to ensure token hasn't been invalidated
-		// This check ensures tokens issued before a password change are rejected
+		// Reject tokens whose password-derived version is stale.
 		if claims.TokenVersion != user.TokenVersion {
 			AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
 			return
 		}
 
-		// 会话绑定校验：IP/UA 任一变化即撤销会话（功能可在系统设置中关闭）
+		// Apply the configured IP and User-Agent binding check.
 		if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
 			return
 		}

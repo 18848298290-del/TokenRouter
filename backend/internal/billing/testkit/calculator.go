@@ -14,18 +14,18 @@ import (
 )
 
 var (
-	// historicalPriceData 仅冻结清理前的测试输入，不参与应用装配或运行时查价。
+	// historicalPriceData supplies fixed catalog inputs for regression tests.
 	//
 	//go:embed testdata/historical_prices.json
 	historicalPriceData []byte
 
-	// mediaPriceData 是媒体计算测试的固定输入，不属于运行时补充。
+	// mediaPriceData supplies fixed catalog inputs for media pricing tests.
 	//
 	//go:embed testdata/media_prices.json
 	mediaPriceData []byte
 )
 
-// HistoricalPrices 给回归测试提供显式目录夹具，调用方可以独立修改。
+// HistoricalPrices returns a fresh catalog fixture that callers can modify independently.
 func HistoricalPrices() map[string]*pricing.ModelPricing {
 	var prices map[string]*pricing.ModelPricing
 	if err := json.Unmarshal(historicalPriceData, &prices); err != nil {
@@ -34,7 +34,7 @@ func HistoricalPrices() map[string]*pricing.ModelPricing {
 	return prices
 }
 
-// Calculator 为跨模块计费测试准备模型目录，并构造 billing.Calculator。
+// Calculator constructs a billing calculator from the test catalog and prices.
 func Calculator(catalog *catalogprovider.Service, prices map[string]*pricing.ModelPricing) *billing.Calculator {
 	useBaseline := prices == nil && catalog == nil
 	if useBaseline {

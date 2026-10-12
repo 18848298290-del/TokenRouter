@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolveDingTalkDeptPath_SingleLevel 验证单层部门（parent_id=1）返回部门名。
+// TestResolveDingTalkDeptPath_SingleLevel checks that the root organization name is omitted.
 func TestResolveDingTalkDeptPath_SingleLevel(t *testing.T) {
 	callCount := 0
 	responses := map[string]string{
@@ -47,16 +47,16 @@ func TestResolveDingTalkDeptPath_SingleLevel(t *testing.T) {
 	require.Equal(t, 2, callCount)
 }
 
-// TestResolveDingTalkDeptPath_MultiLevel 验证多层部门路径拼接。
+// TestResolveDingTalkDeptPath_MultiLevel checks slash-separated nested department names.
 func TestResolveDingTalkDeptPath_MultiLevel(t *testing.T) {
-	// 模拟：42(AI 研发) → parent=10(研发部) → parent=1(根)
+	// Department 42 belongs to department 10, whose parent is root department 1.
 	responses := map[string]string{
 		"42": `{"errcode":0,"result":{"dept_id":42,"name":"AI研发","parent_id":10}}`,
 		"10": `{"errcode":0,"result":{"dept_id":10,"name":"研发部","parent_id":1}}`,
 		"1":  `{"errcode":0,"result":{"dept_id":1,"name":"公司","parent_id":0}}`,
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 解析请求 body 拿到 dept_id
+		// Use the requested department ID to select its fixture response.
 		var req struct {
 			DeptID int64 `json:"dept_id"`
 		}

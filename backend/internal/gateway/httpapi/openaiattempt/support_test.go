@@ -143,7 +143,7 @@ func TestOpenAIRequestAllowsFailoverReplayStopsCanceledClient(t *testing.T) {
 	require.False(t, OpenAIRequestAllowsFailoverReplay(c))
 }
 
-// TestAppendOpenAIProviderProxyLogFields 验证代理定位字段完整且不会泄露凭据。
+// TestAppendOpenAIProviderProxyLogFields checks complete proxy diagnostics without credential exposure.
 func TestAppendOpenAIProviderProxyLogFields(t *testing.T) {
 	proxyID := int64(17)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -176,7 +176,8 @@ func TestAppendOpenAIProviderProxyLogFields(t *testing.T) {
 	require.NotContains(t, fields, "proxy_url")
 }
 
-// TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID 验证代理未预加载时仍保留可查询的 ID。
+// TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID checks lookup by ID when the proxy is not
+// preloaded.
 func TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID(t *testing.T) {
 	proxyID := int64(23)
 	core, logs := observer.New(zap.WarnLevel)

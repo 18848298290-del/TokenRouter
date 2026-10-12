@@ -56,8 +56,7 @@ func TestResolveCLIVersion(t *testing.T) {
 	}
 }
 
-// TestDefaultHeadersUserAgentMatchesCLIVersion 验证伪装身份的自洽性：User-Agent 头里的版本号必须与 CLIVersion() 一致。
-// 两者由不同代码路径写入同一个请求，不一致会被上游判为非正版客户端。
+// TestDefaultHeadersUserAgentMatchesCLIVersion checks that headers and billing use the same version.
 func TestDefaultHeadersUserAgentMatchesCLIVersion(t *testing.T) {
 	want := "claude-cli/" + CLIVersion() + " (external, cli)"
 	if got := DefaultHeaders["User-Agent"]; got != want {
@@ -65,14 +64,14 @@ func TestDefaultHeadersUserAgentMatchesCLIVersion(t *testing.T) {
 	}
 }
 
-// TestCLIVersionDefaultsToBuiltinPin 检查未配置覆盖时 CLIVersion() 返回内置版本。
+// TestCLIVersionDefaultsToBuiltinPin checks the default when no override is configured.
 func TestCLIVersionDefaultsToBuiltinPin(t *testing.T) {
 	if got := CLIVersion(); got != CLICurrentVersion {
 		t.Fatalf("CLIVersion() = %q, want built-in pin %q (测试进程未设置 %s)", got, CLICurrentVersion, CLIVersionEnv)
 	}
 }
 
-// TestCLIVersionEnvironmentCompatibility 验证新旧运维变量的优先级。
+// TestCLIVersionEnvironmentCompatibility checks precedence of deployment variables.
 func TestCLIVersionEnvironmentCompatibility(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
 	t.Setenv("SUB2API_CLAUDE_CLI_VERSION", "2.2.0")

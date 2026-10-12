@@ -7,8 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Snapshot 在队列提交之前复制所有完成处理会读取的可变字段。
-// 订阅只保留身份和套餐倍率，事务内资格仍由 billing 重新读取并复核。
+// Snapshot copies mutable completion data before queue submission.
+// The subscription copy retains its ID and plan group rates; billing reloads eligibility inside the transaction.
 func Snapshot(in *Input) *Input {
 	if in == nil {
 		return nil
@@ -33,7 +33,7 @@ func Snapshot(in *Input) *Input {
 	return &out
 }
 
-// SnapshotResult 不保留 HTTP 或供应商对象引用。
+// SnapshotResult copies mutable usage metadata for asynchronous processing.
 func SnapshotResult(in *Result) *Result {
 	if in == nil {
 		return nil

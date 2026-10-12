@@ -31,7 +31,7 @@ func TestSanitizeStoredCredentials_StripsEphemeralSSOSecrets(t *testing.T) {
 }
 
 func TestSanitizeStoredCredentials_AlwaysStripsCookie(t *testing.T) {
-	// 批量路径可能传入空平台，但 Cookie 绝不能与令牌一起持久化。
+	// Bulk updates may omit the platform, but cookies must still be removed before storage.
 	for _, platform := range []string{PlatformOpenAI, PlatformGrok, ""} {
 		creds := map[string]any{
 			"cookie":   "session",
@@ -79,7 +79,7 @@ func TestMergePreservingSensitiveCreds_OverwritesWhenIncomingProvidesSensitive(t
 	}
 	incoming := map[string]any{
 		"refresh_token": "rt-new",
-		// 未传入 api_key 时保持当前值。
+		// Omitting api_key retains its stored value.
 	}
 	out := MergePreservingSensitiveCreds(existing, incoming)
 	require.Equal(t, "rt-new", out["refresh_token"], "incoming 显式传入应覆盖")
@@ -115,7 +115,7 @@ func TestMergePreservingSensitiveCreds_NonSensitiveDeletionAllowed(t *testing.T)
 	}
 	incoming := map[string]any{
 		"base_url": "https://new",
-		// 未传入 project_id 时删除该字段，非敏感字段以 incoming 为准。
+		// Omitting project_id removes it because non-secret fields come from incoming.
 	}
 	out := MergePreservingSensitiveCreds(existing, incoming)
 	require.Equal(t, "rt", out["refresh_token"], "敏感键保留")

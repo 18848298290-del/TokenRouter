@@ -8,14 +8,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/idempotency"
 )
 
-// MemoryStore 为 HTTP 幂等测试保存内存记录，数据库事务由集成测试检查。
+// MemoryStore stores records for HTTP idempotency tests; PostgreSQL transaction behavior needs
+// integration tests.
 type MemoryStore struct {
 	mu     sync.Mutex
 	nextID int64
 	data   map[string]*idempotency.IdempotencyRecord
 }
 
-// NewMemoryStore 创建每个测试独立使用的幂等记录集合。
+// NewMemoryStore creates an independent in-memory record set for a test.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		nextID: 1,

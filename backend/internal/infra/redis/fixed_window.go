@@ -23,22 +23,22 @@ end
 return {current, repaired}
 `)
 
-// FixedWindowLimiter 使用外层提供的键前缀，保持 Lua 计数的原子边界。
+// FixedWindowLimiter atomically counts requests in Redis under a caller-supplied prefix.
 type FixedWindowLimiter struct {
 	redis  *redis.Client
 	prefix string
 }
 
 type allowResult struct {
-	// Allowed 是否放行
+	// Allowed reports whether the count is within the limit.
 	Allowed bool
-	// Count 当前窗口内累计请求数（含本次）
+	// Count includes this request.
 	Count int64
-	// RetryAfter 超限时距窗口重置的剩余时间（尽力而为；PTTL 不可用时回退为完整窗口）
+	// RetryAfter is the remaining window when blocked; unavailable PTTL uses the full window.
 	RetryAfter time.Duration
 }
 
-// NewFixedWindowLimiter 构造固定窗口计数器；客户端生命周期仍由应用负责。
+// NewFixedWindowLimiter creates a counter; the caller owns the Redis client.
 func NewFixedWindowLimiter(client *redis.Client, prefix string) *FixedWindowLimiter {
 	return &FixedWindowLimiter{redis: client, prefix: prefix}
 }
@@ -62,9 +62,9 @@ func runFixedWindowScript(ctx context.Context, client *redis.Client, key string,
 	return count, repaired == 1, nil
 }
 
-// Allow 对给定 key（不含 "rate_limit:" 前缀）执行一次固定窗口计数判定。
-// 供需要自定义限流维度（如按用户 ID）的调用方使用；Redis 错误由调用方决定 fail-open/close。
-// Allow 执行一次原子计数，返回放行、计数和剩余窗口；失败策略由调用方决定。
+// Allow increments the prefixed key and returns admission, count, and retry delay.
+// Pass key without the configured prefix. Callers decide whether Redis errors
+// should allow or reject requests.
 // @project-doc docs/operations/edge_security.md#fixed_window_rate_limits
 func (r *FixedWindowLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, int64, time.Duration, error) {
 	redisKey := r.prefix + key

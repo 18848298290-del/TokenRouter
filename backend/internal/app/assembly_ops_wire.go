@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// opsAssemblyProviders 汇总 ops 模块的 Wire provider。
+// opsAssemblyProviders groups Wire providers for the ops module.
 var opsAssemblyProviders = wire.NewSet(
 	provideSystemLock,
 	provideSystemOperations,

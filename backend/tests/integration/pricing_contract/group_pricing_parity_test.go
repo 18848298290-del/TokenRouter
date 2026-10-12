@@ -80,7 +80,7 @@ func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 			cmd := requireOpenAIRecordUsageBillingRepoStub(t, svc).LastCmd
 			require.InDelta(t, wantBase, cmd.BaseAmountUSD, 1e-12)
 			require.InDelta(t, wantBase*0.5, cmd.BillableAmountUSD, 1e-12)
-			// 免费 Fast 的展示使用 Standard 价格，随后结算的提供商成本使用 Fast 价格。
+			// Free Fast displays Standard prices while provider settlement retains Fast prices.
 			market := newPricingMarketplaceFixture(nil, nil, svc.Dependencies.Prices, svc.Dependencies.Calculator, nil, nil, nil)
 			display := market.PublicModelPricing(context.Background(), group, "gpt-5.6-sol")
 			require.Len(t, display.ContextIntervals, 2)
@@ -95,7 +95,7 @@ func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 	}
 }
 
-// TestConfigPricingFreeFastDisplayRespectsModelSupport 检查市场按模型支持的服务档位展示价格。
+// TestConfigPricingFreeFastDisplayRespectsModelSupport checks display prices for the model's supported service tiers.
 func TestConfigPricingFreeFastDisplayRespectsModelSupport(t *testing.T) {
 	bs := billingtestkit.ResolverCalculator()
 	settings := pricing.DefaultBillingSettings()
@@ -161,7 +161,7 @@ func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 	}
 }
 
-// TestFreeFastIntervalOnlyDisplayMatchesStandard 检查自定义模型使用区间价格时，免费 Fast 的展示价格与 Standard 一致。
+// TestFreeFastIntervalOnlyDisplayMatchesStandard checks that Free Fast displays Standard interval prices for custom models.
 func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, tierCount := range []int{1, 2} {
@@ -206,7 +206,7 @@ func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 							require.InDelta(t, interval.CacheReadPricePerToken*ratio, interval.FastCacheReadPricePerToken, 1e-12)
 						}
 					}
-					// 展示计算后的结算继续使用 Fast 成本。
+					// Quoting display prices must leave the Fast settlement cost intact.
 					cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
 						Ctx: context.Background(), Model: "custom-priced", GroupID: &group.ID,
 						Tokens: pricing.UsageTokens{InputTokens: 50}, RateMultiplier: group.RateMultiplier, ServiceTier: "priority", Resolver: r,
@@ -219,7 +219,7 @@ func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 	}
 }
 
-// TestTimeOnlyPricingGroupPricingConfigParity 检查仅配置分时倍率的价卡在分组和共享价格配置中都生效。
+// TestTimeOnlyPricingGroupPricingConfigParity checks a shared card that supplies only time-based multipliers.
 func TestTimeOnlyPricingGroupPricingConfigParity(t *testing.T) {
 	card := routing.ModelPricingEntry{
 		Models: []string{"claude-sonnet-4"}, BillingMode: routing.BillingModeToken,
@@ -246,7 +246,7 @@ func TestTimeOnlyPricingGroupPricingConfigParity(t *testing.T) {
 	require.InDelta(t, 0.0006, costs[0], 1e-12)
 }
 
-// TestTierOnlyPricingPreservesImagePricesEqually 检查 Fast 倍率生效后图片输入和输出价格仍存在。
+// TestTierOnlyPricingPreservesImagePricesEqually checks that Fast multipliers retain image input and output prices.
 func TestTierOnlyPricingPreservesImagePricesEqually(t *testing.T) {
 	card := routing.ModelPricingEntry{Models: []string{"claude-sonnet-4"}, BillingMode: routing.BillingModeToken, FastMultiplier: testPtrFloat64(2)}
 	var costs []float64
@@ -294,7 +294,7 @@ func TestQoderGroupPricingConfigBlankPricesParity(t *testing.T) {
 	require.InDelta(t, 0.0025, costs[0], 1e-12)
 }
 
-// TestModifierCardsPreserveBuiltinPricingPolicy 检查纯倍率价卡使用目录价格和已配置的分时倍率。
+// TestModifierCardsPreserveBuiltinPricingPolicy checks catalog prices with the card's time-based multipliers.
 func TestModifierCardsPreserveBuiltinPricingPolicy(t *testing.T) {
 	model := "deepseek-v4-flash"
 	card := routing.ModelPricingEntry{
@@ -320,7 +320,7 @@ func TestModifierCardsPreserveBuiltinPricingPolicy(t *testing.T) {
 				expected := 100 * 2.2e-7 * 3
 
 				if hour >= 1 && hour < 4 {
-					expected *= 2 // 分时倍率来自价卡配置。
+					expected *= 2 // Time multiplier from the configured card.
 				}
 				require.InDelta(t, expected, cost.TotalCost, 1e-12)
 			}
@@ -328,7 +328,7 @@ func TestModifierCardsPreserveBuiltinPricingPolicy(t *testing.T) {
 	}
 }
 
-// TestQoderPricingMatchesOtherPlatforms 检查 Qoder 的服务层级、分时、零价及图片默认价使用统一结算和展示入口。
+// TestQoderPricingMatchesOtherPlatforms compares tier, time-based, zero, and default image prices through shared billing and display entry points.
 func TestQoderPricingMatchesOtherPlatforms(t *testing.T) {
 	for _, model := range []string{"claude-opus-4-6", "gpt-image-1", "custom-image", "qmodel"} {
 		for _, kind := range []string{"default", "modifiers", "free"} {
@@ -380,7 +380,7 @@ func requireOpenAIRecordUsageBillingRepoStub(t *testing.T, svc *testkit.Recordin
 	return billingRepo
 }
 
-// configureBillingGroup 为记录夹具配置分组计费设置和共享价卡。
+// configureBillingGroup supplies billing settings and shared price cards to the recording fixture.
 func configureBillingGroup(svc *testkit.Recording, group *routing.Group, settings pricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Group {
 	source := configuredPrices{base: svc.Dependencies.Prices, groupID: group.ID, settings: settings, cards: cards}
 	svc.Dependencies.Prices = billing.NewPriceResolver(source, svc.Dependencies.Calculator, nil, nil)
@@ -406,5 +406,5 @@ func (s configuredPrices) GetEffectiveConfigModelPricing(ctx context.Context, id
 	return nil
 }
 
-// testPtrString 返回字符串指针。
+// testPtrString returns a pointer to v.
 func testPtrString(v string) *string { return &v }

@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// 编译期接口断言。
+// Compile-time interface check.
 var _ gatewayprovider.ExecutionProviderStore = (*stubAntigravityProviderRepo)(nil)
 
 type rateLimitCall struct {
@@ -36,7 +36,7 @@ type rateLimitCall struct {
 
 type modelRateLimitCall struct {
 	providerID int64
-	modelKey   string // 存储的 key（应该是官方模型 ID，如 "claude-sonnet-4-5"）
+	modelKey   string // Stored key uses the canonical model ID, such as claude-sonnet-4-5.
 	resetAt    time.Time
 }
 
@@ -53,10 +53,10 @@ type stubAntigravityProviderRepo struct {
 	extraUpdateCalls    []extraUpdateCall
 }
 
-// stubSmartRetryCache 用于 handleSmartRetry 测试的 GatewayCache mock
-// 仅关注 DeleteSessionProviderID 的调用记录。
+// stubSmartRetryCache records sticky-binding deletion during retry tests.
+// Only DeleteSessionProviderID is implemented.
 type stubSmartRetryCache struct {
-	session.GatewayCache // 嵌入接口，未实现的方法 panic（确保只调用预期方法）
+	session.GatewayCache // Unexpected calls to embedded methods panic.
 	deleteCalls          []deleteSessionCall
 }
 
@@ -312,7 +312,7 @@ func TestAntigravityGatewayService_ForwardGemini_MissingProjectReturnsLocalError
 }
 
 // TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover
-// 验证：ForwardGemini 方法同样能正确将 AntigravityProviderSwitchError 转换为 UpstreamFailoverError。
+// checks conversion of provider-switch signals into UpstreamFailoverError.
 func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(t *testing.T) {
 	writer := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(writer)
@@ -327,14 +327,14 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
 	c.Request = req
 
-	// 不需要真正调用上游，因为预检查会直接返回切换信号
+	// The rate-limit precheck requests a switch before upstream transport.
 	svc := newAntigravityFixture(antigravityDependencies{
 		tokenProvider: newAntigravityTokenSourceForTest(nil),
 
 		httpUpstream: &httpUpstreamStub{resp: nil, err: nil},
 	})
 
-	// 设置模型限流：剩余时间 30 秒（> antigravityRateLimitThreshold 7s）
+	// A 30-second cooldown exceeds the seven-second retry threshold.
 	futureResetAt := time.Now().Add(30 * time.Second).Format(time.RFC3339)
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -370,11 +370,10 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 
-	// 检查错误类型是否为 UpstreamFailoverError。
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr, "error should be UpstreamFailoverError to trigger provider switch")
 	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
-	// 非粘性会话请求，ForceCacheBilling 应为 false
+	// A non-sticky switch does not force cache billing.
 	require.False(t, failoverErr.ForceCacheBilling, "ForceCacheBilling should be false for non-sticky session")
 }
 
@@ -400,7 +399,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 		httpUpstream: &httpUpstreamStub{resp: nil, err: nil},
 	})
 
-	// 设置模型限流：剩余时间 30 秒（> antigravityRateLimitThreshold 7s）
+	// A 30-second cooldown exceeds the seven-second retry threshold.
 	futureResetAt := time.Now().Add(30 * time.Second).Format(time.RFC3339)
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -432,12 +431,12 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 		},
 	}
 
-	// 传入 isStickySession = true
+	// Mark this request as sticky.
 	result, err := svc.ForwardGemini(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, true), provider, "gemini-2.5-flash", "generateContent", false, body, true)
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 
-	// 核心验证：粘性会话切换时，ForceCacheBilling 应为 true
+	// A sticky-provider switch forces cache billing.
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr, "error should be UpstreamFailoverError to trigger provider switch")
 	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
@@ -532,7 +531,7 @@ func TestAntigravityGatewayService_ForwardGemini_ClearsStickySessionOnGeminiRate
 }
 
 // TestAntigravityGatewayService_ForwardGemini_BillsWithMappedModel
-// 验证：Antigravity Gemini 转发返回的计费模型使用映射后的模型。
+// checks that Gemini forwarding returns the mapped billing model.
 func TestAntigravityGatewayService_ForwardGemini_BillsWithMappedModel(t *testing.T) {
 	writer := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(writer)

@@ -29,7 +29,7 @@ func ErrorRules(message string, args ...any) {
 	logger.LegacyPrintf("service.error_passthrough", message, args...)
 }
 
-// Failover 按给定级别记录提供商切换，附带请求关联和事件字段。
+// Failover logs provider switches at warning level with request correlation and event fields.
 func Failover(ctx context.Context, event string, values map[string]any) {
 	fields := make([]zap.Field, 0, len(values))
 	for k, v := range values {

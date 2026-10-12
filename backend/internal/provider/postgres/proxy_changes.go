@@ -7,7 +7,7 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// ProxyChanges 在调用方连接中更新代理关联，调用方负责提交、事件发布和缓存失效。
+// ProxyChanges updates proxy associations on the caller's connection; the caller owns commit, event publication, and cache invalidation.
 type ProxyChanges struct{ exec postgresinfra.Executor }
 
 func ProxyChangesInTx(exec postgresinfra.Executor) ProxyChanges { return ProxyChanges{exec: exec} }
@@ -74,7 +74,7 @@ func (p ProxyChanges) Reassign(ctx context.Context, proxyID int64, target *int64
 		return nil, err
 	}
 
-	// 必须在提交子事务前读完并关闭 RETURNING 结果集，否则连接仍可能处于 busy 状态。
+	// Read and close RETURNING rows before committing the transaction so the connection is no longer busy.
 	providerIDs := make([]int64, 0)
 	for rows.Next() {
 		var providerID int64

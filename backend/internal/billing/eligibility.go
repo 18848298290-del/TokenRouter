@@ -20,28 +20,26 @@ const (
 	cacheWriteDeductBalance
 	cacheWriteUpdateRateLimitUsage
 
-	// 异步缓存写入工作池配置
+	// The fixed worker pool bounds concurrent cache writes.
 	//
-	// 固定大小的工作池限制并发写入：
-	// 1. 预创建 10 个 worker goroutine，避免频繁创建销毁
-	// 2. 使用带缓冲的 Go 通道（1000）作为任务队列，平滑写入峰值
-	// 3. 非阻塞写入，队列满时关键任务同步回退，非关键任务丢弃并告警
-	// 4. 统一超时控制，避免慢操作阻塞工作池。
-	cacheWriteWorkerCount     = 10              // 工作协程数量
-	cacheWriteBufferSize      = 1000            // 任务队列缓冲大小
-	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
-	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
+	// Balance deductions and usage increments run synchronously when the queue is full.
+	// Cache population tasks may be dropped, with throttled logging.
+	// A per-write context timeout bounds cooperative cache operations.
+	cacheWriteWorkerCount     = 10
+	cacheWriteBufferSize      = 1000
+	cacheWriteTimeout         = 2 * time.Second // Timeout per cache operation.
+	cacheWriteDropLogInterval = 5 * time.Second // Minimum interval between drop summaries.
 	balanceLoadTimeout        = 3 * time.Second
 )
 
-//nolint:decorder // iota 按块内序号计数，每个枚举需要独立的 const 块。
+//nolint:decorder // Separate const blocks keep each iota sequence starting at zero.
 const (
 	cacheWriteEnqueued cacheWriteEnqueueResult = iota
 	cacheWriteQueueFull
 	cacheWriteQueueClosed
 )
 
-//nolint:decorder // iota 按块内序号计数，每个枚举需要独立的 const 块。
+//nolint:decorder // Separate const blocks keep each iota sequence starting at zero.
 const (
 	billingCircuitClosed billingCircuitBreakerState = iota
 	billingCircuitOpen
@@ -49,9 +47,6 @@ const (
 )
 
 var (
-	// 错误定义
-	// 注：ErrInsufficientBalance 在 redeem_service.go 中定义
-	// 注：ErrDailyLimitExceeded/ErrWeeklyLimitExceeded/ErrMonthlyLimitExceeded 在 subscription_service.go 中定义。
 	ErrBillingServiceUnavailable = apperror.ServiceUnavailable("BILLING_SERVICE_ERROR", "Billing service temporarily unavailable. Please retry later.")
 
 	ErrAPIKeyNotFound                    = apperror.NotFound("API_KEY_NOT_FOUND", "api key not found")
@@ -67,12 +62,12 @@ var (
 	ErrPreferredSubscriptionGroup        = apperror.Forbidden("PREFERRED_SUBSCRIPTION_GROUP_NOT_ALLOWED", "preferred subscription does not allow this group")
 )
 
-// 缓存写入任务类型。
+// cacheWriteKind identifies the cache operation to execute.
 type cacheWriteKind int
 
 type cacheWriteEnqueueResult int
 
-// cacheWriteTask 缓存写入任务。
+// cacheWriteTask carries a balance or usage cache update.
 type cacheWriteTask struct {
 	kind     cacheWriteKind
 	userID   int64
@@ -81,8 +76,8 @@ type cacheWriteTask struct {
 	amount   float64
 }
 
-// Eligibility 计费缓存服务
-// 负责余额与 API Key 限速缓存管理，提供高性能的计费资格检查。
+// Eligibility checks funds and API Key spending limits using cached balances and usage.
+// It also owns the cache-write worker lifecycle.
 type Eligibility struct {
 	background            func(string, func())
 	cache                 BillingCache
@@ -99,7 +94,7 @@ type Eligibility struct {
 	cacheWriteMu        sync.RWMutex
 	stopped             atomic.Bool
 	balanceLoadSF       singleflight.Group
-	// 丢弃日志节流计数器（减少高负载下日志噪音）
+	// Drop counts and timestamps throttle summaries independently for full and closed queues.
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
@@ -132,7 +127,7 @@ func NewEligibility(cache BillingCache, users BalanceReader, keys APIKeyRateLimi
 	return s
 }
 
-// Start 在应用完成绑定后启动缓存写入 worker。
+// Start launches cache workers once after application dependencies have been bound. A stopped pool cannot restart.
 func (s *Eligibility) Start() {
 	s.cacheWriteStartOnce.Do(func() {
 		s.cacheWriteMu.Lock()
@@ -143,7 +138,7 @@ func (s *Eligibility) Start() {
 	})
 }
 
-// Stop 关闭缓存写入工作池。
+// Stop closes the queue and waits for workers to drain accepted tasks. Repeated calls are safe.
 func (s *Eligibility) Stop() {
 	s.cacheWriteStopOnce.Do(func() {
 		s.stopped.Store(true)
@@ -193,12 +188,12 @@ func (s *Eligibility) tryEnqueueCacheWrite(task cacheWriteTask) cacheWriteEnqueu
 	case s.cacheWriteChan <- task:
 		return cacheWriteEnqueued
 	default:
-		// 队列满时不阻塞主流程，交由调用方决定是否同步回退。
+		// Let the caller decide whether a full queue requires a synchronous write.
 		return cacheWriteQueueFull
 	}
 }
 
-// enqueueCacheWrite 尝试将任务入队，队列满时返回 false（并记录实际丢弃告警）。
+// enqueueCacheWrite returns false and logs a drop when the queue is full or closed.
 func (s *Eligibility) enqueueCacheWrite(task cacheWriteTask) (enqueued bool) {
 	switch s.tryEnqueueCacheWrite(task) {
 	case cacheWriteEnqueued:
@@ -235,7 +230,7 @@ func (s *Eligibility) cacheWriteWorker(ch <-chan cacheWriteTask) {
 	}
 }
 
-// cacheWriteKindName 用于日志中的任务类型标识，便于排查丢弃原因。
+// cacheWriteKindName returns the operation label used in drop logs.
 func cacheWriteKindName(kind cacheWriteKind) string {
 	switch kind {
 	case cacheWriteSetBalance:
@@ -249,7 +244,7 @@ func cacheWriteKindName(kind cacheWriteKind) string {
 	}
 }
 
-// logCacheWriteDrop 使用节流方式记录丢弃情况，并汇总丢弃数量。
+// logCacheWriteDrop emits throttled summaries with the number of dropped tasks.
 func (s *Eligibility) logCacheWriteDrop(task cacheWriteTask, reason string) {
 	var (
 		countPtr *uint64
@@ -288,20 +283,18 @@ func (s *Eligibility) logCacheWriteDrop(task cacheWriteTask, reason string) {
 	)
 }
 
-// GetUserBalance 获取用户余额（优先从缓存读取）。
+// GetUserBalance reads the cache first and coalesces database reads after cache errors.
 func (s *Eligibility) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
 	if s == nil || s.cache == nil {
-		// Redis 不可用，直接查询数据库
 		return s.getUserBalanceFromDB(ctx, userID)
 	}
 
-	// 尝试从缓存读取
 	balance, err := s.cache.GetUserBalance(ctx, userID)
 	if err == nil {
 		return balance, nil
 	}
 
-	// 缓存未命中：singleflight 合并同一 userID 的并发回源请求。
+	// Coalesce concurrent database reads for the same user with an independent timeout.
 	value, err, _ := s.balanceLoadSF.Do(strconv.FormatInt(userID, 10), func() (any, error) {
 		loadCtx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
 		defer cancel()
@@ -311,7 +304,6 @@ func (s *Eligibility) GetUserBalance(ctx context.Context, userID int64) (float64
 			return nil, err
 		}
 
-		// 异步建立缓存
 		_ = s.enqueueCacheWrite(cacheWriteTask{
 			kind:    cacheWriteSetBalance,
 			userID:  userID,
@@ -329,7 +321,7 @@ func (s *Eligibility) GetUserBalance(ctx context.Context, userID int64) (float64
 	return balance, nil
 }
 
-// getUserBalanceFromDB 从数据库获取用户余额。
+// getUserBalanceFromDB reads the user's persisted balance.
 func (s *Eligibility) getUserBalanceFromDB(ctx context.Context, userID int64) (float64, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -338,7 +330,7 @@ func (s *Eligibility) getUserBalanceFromDB(ctx context.Context, userID int64) (f
 	return user.Balance, nil
 }
 
-// setBalanceCache 设置余额缓存。
+// setBalanceCache populates the balance cache and logs write failures.
 func (s *Eligibility) setBalanceCache(ctx context.Context, userID int64, balance float64) {
 	if s == nil || s.cache == nil {
 		return
@@ -348,7 +340,7 @@ func (s *Eligibility) setBalanceCache(ctx context.Context, userID int64, balance
 	}
 }
 
-// DeductBalanceCache 扣减余额缓存（同步调用）。
+// DeductBalanceCache synchronously deducts a cached balance; an absent cache is a no-op.
 func (s *Eligibility) DeductBalanceCache(ctx context.Context, userID int64, amount float64) error {
 	if s == nil || s.cache == nil {
 		return nil
@@ -356,7 +348,7 @@ func (s *Eligibility) DeductBalanceCache(ctx context.Context, userID int64, amou
 	return s.cache.DeductUserBalance(ctx, userID, amount)
 }
 
-// QueueDeductBalance 异步扣减余额缓存。
+// QueueDeductBalance queues a deduction, writes synchronously if full, and drops it if the pool is closed.
 func (s *Eligibility) QueueDeductBalance(userID int64, amount float64) {
 	if s == nil || s.cache == nil {
 		return
@@ -373,7 +365,7 @@ func (s *Eligibility) QueueDeductBalance(userID int64, amount float64) {
 		s.logCacheWriteDrop(task, "closed")
 		return
 	}
-	// 队列满时同步回退，避免关键扣减被静默丢弃。
+	// A full queue must not silently discard balance deductions.
 	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 	defer cancel()
 	if err := s.DeductBalanceCache(ctx, userID, amount); err != nil {
@@ -381,7 +373,7 @@ func (s *Eligibility) QueueDeductBalance(userID int64, amount float64) {
 	}
 }
 
-// InvalidateUserBalance 失效用户余额缓存。
+// InvalidateUserBalance removes the cached balance; an absent cache is a no-op.
 func (s *Eligibility) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	if s == nil || s.cache == nil {
 		return nil
@@ -493,7 +485,7 @@ func (s *Eligibility) evaluateRateLimits(ctx context.Context, apiKey *KeySnapsho
 			resetCtx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 			defer cancel()
 			if s.apiKeyRateLimitLoader != nil {
-				// Use the repo directly - reset then reload cache
+				// Reset through the repository when supported, then invalidate the cache.
 				if loader, ok := s.apiKeyRateLimitLoader.(interface {
 					ResetRateLimitWindows(ctx context.Context, id int64) error
 				}); ok {
@@ -524,7 +516,8 @@ func (s *Eligibility) evaluateRateLimits(ctx context.Context, apiKey *KeySnapsho
 	return nil
 }
 
-// QueueUpdateAPIKeyRateLimitUsage asynchronously updates rate limit usage in the cache.
+// QueueUpdateAPIKeyRateLimitUsage queues a usage increment, writes synchronously
+// if the queue is full, and drops it if the pool is closed.
 func (s *Eligibility) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, cost float64) {
 	if s == nil || s.cache == nil {
 		return
@@ -541,7 +534,7 @@ func (s *Eligibility) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, cost float
 		s.logCacheWriteDrop(task, "closed")
 		return
 	}
-	// 队列满时同步回退，避免限速使用量统计被静默丢弃。
+	// A full queue must not silently discard usage increments.
 	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 	defer cancel()
 	if err := s.cache.UpdateAPIKeyRateLimitUsage(ctx, apiKeyID, cost); err != nil {
@@ -549,8 +542,9 @@ func (s *Eligibility) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, cost float
 	}
 }
 
-// CheckBillingEligibility 检查用户是否有资格发起请求。
-// auto 模式保留订阅额度耗尽后回退余额的历史行为；指定订阅和仅余额模式严格遵循 Key 配置。
+// CheckBillingEligibility checks funds and API Key spending limits.
+// Auto mode can use balance after subscription quota exhaustion; subscription and balance modes honor the Key's
+// selected source.
 func (s *Eligibility) CheckBillingEligibility(ctx context.Context, user *UserSummary, apiKey *KeySnapshot, group *GroupSnapshot, subscription *UserSubscription, platform string) error {
 	if s.circuitBreaker != nil && !s.circuitBreaker.Allow() {
 		return ErrBillingServiceUnavailable
@@ -558,7 +552,7 @@ func (s *Eligibility) CheckBillingEligibility(ctx context.Context, user *UserSum
 
 	billingMode := effectiveKeyBillingMode(apiKey)
 	if billingMode == APIKeyBillingModeSubscription {
-		// 请求期二次校验防止分组回退、套餐变更或异步路径绕过指定套餐的范围。
+		// Recheck plan scope after group changes and for asynchronous request paths.
 		if subscription == nil {
 			return ErrPreferredSubscriptionInvalid
 		}
@@ -573,7 +567,7 @@ func (s *Eligibility) CheckBillingEligibility(ctx context.Context, user *UserSum
 		}
 	}
 	if billingMode == APIKeyBillingModeBalance {
-		// 即使上游误传了订阅快照，余额模式也不能因此使用套餐额度。
+		// Balance-only mode ignores any supplied subscription snapshot.
 		subscription = nil
 	}
 
@@ -592,7 +586,7 @@ func (s *Eligibility) CheckBillingEligibility(ctx context.Context, user *UserSum
 		}
 	}
 
-	// Check API Key rate limits (applies to both billing modes)
+	// API Key spending limits apply to every funding mode.
 	if apiKey != nil && apiKey.HasRateLimits() {
 		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
 			return err
@@ -652,7 +646,7 @@ func (s *Eligibility) BalanceBelowEligibilityThreshold(balance float64) bool {
 	return minimumReserve > 0 && balance < minimumReserve
 }
 
-// checkBalanceEligibility 检查余额模式资格。
+// checkBalanceEligibility checks the minimum available balance and updates the circuit breaker on read outcomes.
 func (s *Eligibility) checkBalanceEligibility(ctx context.Context, userID int64) error {
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
@@ -764,7 +758,7 @@ func (b *billingCircuitBreaker) OnSuccess() {
 	b.failures = 0
 	b.halfOpenRemaining = 0
 
-	// 只有状态真正发生变化时才记录日志
+	// Log state transitions and failure-count resets, not every success.
 	if previousState != billingCircuitClosed {
 		b.observer.Printf("service.billing_cache", "ALERT: billing circuit breaker closed (was %s)", circuitStateString(previousState))
 	} else if previousFailures > 0 {
@@ -785,12 +779,12 @@ func circuitStateString(state billingCircuitBreakerState) string {
 	}
 }
 
-// Check 只执行资金准入；RPM 仍由旧请求编排在资金检查后决定。
+// Check validates funding and spending limits. The request coordinator checks RPM afterward.
 func (s *Eligibility) Check(ctx context.Context, input CheckInput) error {
 	return s.CheckBillingEligibility(ctx, input.Payer, input.Key, input.Group, input.Subscription, input.Platform)
 }
 
-// runBackground 通过装配注入的任务拥有者执行；独立测试构造时同步完成。
+// runBackground uses the injected task runner, or runs synchronously when none is supplied.
 func (s *Eligibility) runBackground(name string, fn func()) {
 	if s.background == nil {
 		fn()

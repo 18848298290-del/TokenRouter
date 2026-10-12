@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// DescribeQoderError 解析 Qoder 错误，区分权限、速率和 agent limit。
+// DescribeQoderError classifies Qoder authorization, rate-limit, and agent-limit failures.
 func DescribeQoderError(err error) forward.QoderErrorView {
 	var apiErr *qoder.APIError
 	if !errors.As(err, &apiErr) {

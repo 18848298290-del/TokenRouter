@@ -129,7 +129,7 @@ func (s *OpsService) SetAuthObservers(worker AuthHealthReader, key KeyHealthRead
 	s.apiKeyService = key
 }
 
-// report 沿用注入的进程日志后端。
+// report writes through the injected process logger.
 func (s *OpsService) report(format string, args ...any) {
 	if s != nil && s.cfg != nil && s.cfg.Logf != nil {
 		s.cfg.Logf(format, args...)

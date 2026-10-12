@@ -17,7 +17,7 @@ func TestUsageBillingModelCandidates_BareGPT56ExcludesSol(t *testing.T) {
 	)
 }
 
-// TestUsageCandidatesPreserveModelID 检查带前缀、日期和档位的计费模型身份。
+// TestUsageCandidatesPreserveModelID checks billing identities with prefixes, dates, and effort suffixes.
 func TestUsageCandidatesPreserveModelID(t *testing.T) {
 	models := []string{
 		"gpt-6-astra",

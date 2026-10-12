@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// dingTalkStaffClient 记录员工资料查询并返回预设的结果或错误。
+// dingTalkStaffClient records staff lookups and returns configured results or errors.
 type dingTalkStaffClient struct {
 	identity.DingTalkOAuthClient
 	userErr, staffErr error
@@ -18,7 +18,7 @@ type dingTalkStaffClient struct {
 	profile           *identity.DingTalkProfileSnapshot
 }
 
-// TestDingTalkStaffLookupPolicy 检查员工资料查询顺序、返回结果和失败处理。
+// TestDingTalkStaffLookupPolicy checks lookup order, results, and policy-specific failures.
 func TestDingTalkStaffLookupPolicy(t *testing.T) {
 	for _, policy := range []string{"none", "", "internal_only", "unknown"} {
 		for _, failure := range []string{"", "get_user_id", "get_staff_info"} {

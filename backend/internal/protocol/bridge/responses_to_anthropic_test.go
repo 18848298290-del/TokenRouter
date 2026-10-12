@@ -233,7 +233,7 @@ func TestResponsesToAnthropic_StreamEmitsThinkingSignature(t *testing.T) {
 		Delta:        "thinking...",
 		SummaryIndex: 0,
 	}, state))
-	// encrypted_content 到达前，summary.done 不得关闭 thinking 块。
+	// Keep thinking open at summary.done until encrypted_content arrives.
 	appendAll(ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:         "response.reasoning_summary_text.done",
 		OutputIndex:  0,
@@ -648,7 +648,7 @@ func TestStreamingReasoning(t *testing.T) {
 	assert.Equal(t, "thinking_delta", events[0].Delta.Type)
 	assert.Equal(t, "Let me think...", events[0].Delta.Thinking)
 
-	// summary.done 保持 thinking 块开启，直到携带签名的 output_item.done 到达。
+	// summary.done leaves thinking open for the signed output_item.done event.
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type: "response.reasoning_summary_text.done",
 	}, state)
@@ -891,7 +891,7 @@ func TestMessageStartSSE_StopReasonIsJSONNull(t *testing.T) {
 
 	sse, err := ResponsesAnthropicEventToSSE(events[0])
 	require.NoError(t, err)
-	// Anthropic 官方线路格式应为 "stop_reason":null。
+	// Anthropic message_start serializes stop_reason as null.
 	require.Contains(t, sse, `"stop_reason":null`)
 	require.NotContains(t, sse, `"stop_reason":""`)
 }
@@ -965,58 +965,54 @@ func TestResponsesEventToAnthropicEvents_StreamingCacheCreation(t *testing.T) {
 	assert.Equal(t, 4, deltaEvt.Usage.CacheReadInputTokens)
 }
 
-// TestStreamingParallelToolUseSecondToolPackedArgsDone 检查首个工具块关闭后，后续工具在 .done 中携带的参数仍发到对应块索引。
+// TestStreamingParallelToolUseSecondToolPackedArgsDone checks argument routing after the first tool closes.
 func TestStreamingParallelToolUseSecondToolPackedArgsDone(t *testing.T) {
 	state := NewResponsesEventToAnthropicState(testRuntime())
 
-	// 先建立 response.created 状态。
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:     "response.created",
 		Response: &ResponsesResponse{ID: "resp_par", Model: "glm-5.2"},
 	}, state)
 
-	// 工具 1 在索引 0 发出 output_item.added。
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.output_item.added",
 		OutputIndex: 0,
 		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_a", Name: "tool_a"},
 	}, state)
 
-	// 工具 1 通过 delta 流式输出参数，因此 CurrentToolHadDelta 为 true。
+	// The first tool streams its arguments, setting CurrentToolHadDelta.
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.delta",
 		OutputIndex: 0,
 		Delta:       `{"x":1}`,
 	}, state)
 
-	// 工具 1 的 arguments.done 关闭当前 block，ContentBlockIndex 从 0 递增到 1。
+	// Closing the first tool advances ContentBlockIndex to 1.
 	eventsTool1Done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.done",
 		OutputIndex: 0,
 		Arguments:   `{"x":1}`,
 	}, state)
-	// 参数 delta 已输出，此处只应产生 content_block_stop。
+	// The done event must not repeat already streamed arguments.
 	for _, e := range eventsTool1Done {
 		assert.NotEqual(t, "content_block_delta", e.Type,
 			"tool 1 .done should not re-emit delta (args already streamed)")
 	}
 
-	// 工具 2 在索引 1 发出 output_item.added，并打开 ContentBlockIndex=1 的 block。
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.output_item.added",
 		OutputIndex: 1,
 		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_b", Name: "tool_b"},
 	}, state)
 
-	// 工具 2 没有 delta，参数只打包在 .done 中，这正是触发幽灵 delta 的场景。
+	// The second tool delivers arguments only in done; its delta must target its own block.
 	eventsTool2Done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.done",
 		OutputIndex: 1,
 		Arguments:   `{"y":2}`,
 	}, state)
 
-	// 工具 2 的 delta 应指向它的 block 索引 1。
-	// 检查 delta 位于索引 1，随后同一索引收到 content_block_stop。
+	// Both the argument delta and block stop must use index 1.
 	var sawDelta, sawStop bool
 	var deltaIndex, stopIndex int
 	for _, e := range eventsTool2Done {
@@ -1037,7 +1033,7 @@ func TestStreamingParallelToolUseSecondToolPackedArgsDone(t *testing.T) {
 	assert.Equal(t, deltaIndex, stopIndex, "delta and stop must be on the same block")
 }
 
-// TestStreamingThreeParallelToolsAllPackedDone 检查三个并行工具的完整参数分别发到对应块索引。
+// TestStreamingThreeParallelToolsAllPackedDone checks that any emitted arguments target a started block with the matching index.
 func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 	state := NewResponsesEventToAnthropicState(testRuntime())
 
@@ -1046,7 +1042,7 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 		Response: &ResponsesResponse{ID: "resp_3par", Model: "glm-5.2"},
 	}, state)
 
-	// 在索引 0、1、2 上打开三个工具 block。
+	// Open each tool in turn, advancing through indexes 0, 1, and 2.
 	for i, name := range []string{"tool_a", "tool_b", "tool_c"} {
 		ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 			Type:        "response.output_item.added",
@@ -1055,10 +1051,9 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 		}, state)
 	}
 
-	// 记录已启动的 block。
 	started := map[int]bool{0: true, 1: true, 2: true}
 
-	// 三个 .done 都携带打包参数，之前均没有 delta。
+	// Each done event carries complete arguments with no preceding argument delta.
 	for i, args := range []string{`{"a":1}`, `{"b":2}`, `{"c":3}`} {
 		events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 			Type:        "response.function_call_arguments.done",

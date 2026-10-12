@@ -1,6 +1,6 @@
 package provider_test
 
-// 本文件检查 create.go 与 admin_edit.go 的协议创建、更新和批量校验。
+// These scenarios cover protocol validation during provider creation, editing, and bulk updates.
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// cnProviderProtocolCases 明确列出对外承诺的组合，不从待测校验函数推导期望值。
+// cnProviderProtocolCases lists supported combinations independently of the validator under test.
 var cnProviderProtocolCases = []struct {
 	platform  string
 	mode      string
@@ -28,7 +28,7 @@ var cnProviderProtocolCases = []struct {
 	{capability.PlatformZhipu, provider.ProviderModeCoding, []string{provider.APIProtocolAdaptive, provider.APIProtocolChatCompletions, provider.APIProtocolAnthropic}},
 }
 
-// TestCNProviderProviderProtocolPersistence 覆盖创建、编辑及批量凭据更新入口。
+// TestCNProviderProviderProtocolPersistence covers create, edit, and bulk credential-update entrypoints.
 func TestCNProviderProviderProtocolPersistence(t *testing.T) {
 	t.Parallel()
 	for _, tc := range cnProviderProtocolCases {
@@ -66,13 +66,13 @@ func TestCNProviderProviderProtocolPersistence(t *testing.T) {
 				require.Equal(t, wantProtocols, created.UpstreamProtocols())
 				require.Equal(t, wantCredentials, repo.providers[created.ID].Credentials)
 
-				// 普通字段编辑也会重新校验提供商，必须允许已有自适应提供商正常保存。
+				// Editing an ordinary field revalidates the provider, including an existing adaptive protocol selection.
 				updated, err := svc.UpdateProvider(ctx, created.ID, &provider.UpdateProviderInput{Name: "已编辑"})
 				require.NoError(t, err)
 				require.Equal(t, "已编辑", repo.providers[created.ID].Name)
 				require.Equal(t, wantCredentials, updated.Credentials)
 
-				// 从传统 Chat 提供商切换到目标协议，覆盖编辑与批量更新的凭据合并。
+				// Switch from legacy Chat configuration to exercise credential merging in edit and bulk-update paths.
 				repo.providers[created.ID].Credentials = cnProviderTestCredentials(tc.platform, tc.mode, provider.APIProtocolChatCompletions)
 				updated, err = svc.UpdateProvider(ctx, created.ID, &provider.UpdateProviderInput{Credentials: credentials})
 				require.NoError(t, err)
@@ -90,7 +90,8 @@ func TestCNProviderProviderProtocolPersistence(t *testing.T) {
 	}
 }
 
-// TestCNProviderLegacyCredentialDefaults 保留历史读取默认值，普通编辑不补写缺失字段。
+// TestCNProviderLegacyCredentialDefaults checks read defaults and ordinary edits that leave missing legacy
+// fields absent.
 func TestCNProviderLegacyCredentialDefaults(t *testing.T) {
 	t.Parallel()
 	for _, platform := range []string{capability.PlatformDeepseek, capability.PlatformKimi, capability.PlatformZhipu} {

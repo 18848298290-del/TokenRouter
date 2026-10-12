@@ -394,11 +394,11 @@ func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 			HourlyMetricsRetentionDays: 30,
 		},
 		OpenAIProviderQuotaAutoPause:    OpsOpenAIProviderQuotaAutoPauseSettings{},
-		IgnoreCountTokensErrors:         true,  // count_tokens 404 是预期行为，默认忽略
+		IgnoreCountTokensErrors:         true,  // count_tokens 404 responses are expected and ignored by default.
 		IgnoreContextCanceled:           true,  // Default to true - client disconnects are not errors
 		IgnoreNoAvailableProviders:      false, // Default to false - this is a real routing issue
 		IgnoreInvalidApiKeyErrors:       true,  // Legacy compatibility field; admission rejects are always excluded.
-		IgnoreInsufficientBalanceErrors: false, // 默认不忽略，余额不足可能需要关注
+		IgnoreInsufficientBalanceErrors: false, // Insufficient balance remains visible by default.
 		IgnoredStatusCodes:              DefaultOpsIgnoredStatusCodes(),
 		DisplayOpenAITokenStats:         false,
 		DisplayAlertEvents:              true,
@@ -411,7 +411,7 @@ func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
 	if cfg == nil {
 		return
 	}
-	// 入口拒绝通过专用聚合查询展示，ExcludeAdmissionRejected 固定为 true。
+	// Ingress rejections have dedicated aggregates; normalize the legacy flag to true.
 	cfg.IgnoreInvalidApiKeyErrors = true
 	cfg.OpenAIProviderQuotaAutoPause.DefaultThreshold5h = clampOpsQuotaAutoPauseThreshold(cfg.OpenAIProviderQuotaAutoPause.DefaultThreshold5h)
 	cfg.OpenAIProviderQuotaAutoPause.DefaultThreshold7d = clampOpsQuotaAutoPauseThreshold(cfg.OpenAIProviderQuotaAutoPause.DefaultThreshold7d)
@@ -425,8 +425,8 @@ func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
 	if cfg.DataRetention.CleanupPauseMS <= 0 {
 		cfg.DataRetention.CleanupPauseMS = int(opsCleanupDefaultBatchPause / time.Millisecond)
 	}
-	// 保留天数：0 表示每次定时清理全部（清空所有），> 0 表示按天数保留；
-	// 负数回填默认值，0 表示清空全部记录。
+	// Zero retention clears all records on each run; positive values retain that many days.
+	// Negative retention values use defaults.
 	if cfg.DataRetention.ErrorLogRetentionDays < 0 {
 		cfg.DataRetention.ErrorLogRetentionDays = 30
 	}
@@ -457,7 +457,7 @@ func validateOpsAdvancedSettings(cfg *OpsAdvancedSettings) error {
 	if cfg == nil {
 		return errors.New("invalid config")
 	}
-	// 保留天数：0 表示每次清理全部，1-365 表示按天数保留。
+	// Zero clears all records; values from 1 through 365 specify retained days.
 	if cfg.DataRetention.ErrorLogRetentionDays < 0 || cfg.DataRetention.ErrorLogRetentionDays > 365 {
 		return errors.New("error_log_retention_days must be between 0 and 365")
 	}
@@ -522,7 +522,7 @@ func (s *OpsService) GetOpsAdvancedSettings(ctx context.Context) (*OpsAdvancedSe
 	return &cfg, nil
 }
 
-// OpsAdvancedSettingsSnapshot 返回运行设置快照的值副本，供请求处理读取。
+// OpsAdvancedSettingsSnapshot returns a value copy; callers must treat shared slices as read-only.
 func (s *OpsService) OpsAdvancedSettingsSnapshot() OpsAdvancedSettings {
 	if s != nil {
 		if snapshot := s.runtimeSettings.Load(); snapshot != nil {
@@ -556,7 +556,7 @@ func (s *OpsService) UpdateOpsAdvancedSettings(ctx context.Context, cfg *OpsAdva
 		return nil, err
 	}
 	s.storeAdvancedSettingsSnapshot(cfg)
-	// 将配额自动暂停设置写入 OpenAI 调度读取的内存缓存，后续请求使用新值。
+	// Publish quota thresholds to the OpenAI scheduler's cache for subsequent requests.
 	if s.quotaAutoPauseSink != nil {
 		s.quotaAutoPauseSink(cfg.OpenAIProviderQuotaAutoPause)
 	}

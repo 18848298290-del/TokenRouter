@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Passthrough 调用目标执行器准备当前提供商的请求并处理恢复。
+// Passthrough prepares the current provider request and handles upstream recovery.
 func (s *OpenAITextExecutor) Passthrough(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body, canonicalImageIntentBody []byte, reqModel string, attemptImageIntentInvalidated bool, reasoningEffort *string, reqStream bool, startTime time.Time, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	input := openaiexecution.PassthroughInput{Body: body, CanonicalImageIntentBody: canonicalImageIntentBody, Model: reqModel, ImageIntentInvalidated: attemptImageIntentInvalidated, ReasoningEffort: reasoningEffort, Stream: reqStream, StartedAt: startTime}
 	p := &openAIPassthroughExecutionAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}}
@@ -61,7 +61,8 @@ func logOpenAIPassthroughInstructionsRejected(
 	logging.FromContext(ctx).With(fields...).Warn("OpenAI passthrough 本地拦截：Codex 请求缺少有效 instructions")
 }
 
-// shouldFailoverOpenAIPassthroughResponse 根据提供商类别和平台错误分类判断是否换号。
+// shouldFailoverOpenAIPassthroughResponse decides whether to switch providers using provider type and platform
+// error classification.
 func shouldFailoverOpenAIPassthroughResponse(provider *gatewayprovider.ExecutionProvider, status int, body []byte) bool {
 	return openaiexecution.ShouldFailoverPassthrough(status, body, openaiexecution.PassthroughFailureOptions{
 		APIKey:        provider != nil && provider.Record.Type == capability.ProviderTypeAPIKey,

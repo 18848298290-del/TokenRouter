@@ -31,7 +31,7 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// openAILadderCatalogJSON 提供带 above_272k 绝对价格的测试目录，解析层将其转换为计费阈值和倍率。
+// openAILadderCatalogJSON supplies absolute above_272k prices that the parser converts into thresholds and multipliers.
 const openAILadderCatalogJSON = `{
 	"gpt-5.4": {"provider": "openai", "mode": "chat", "fast_multiplier": 2, "flex_multiplier": 0.5,
 		"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05,
@@ -45,7 +45,7 @@ const openAILadderCatalogJSON = `{
 		"output_cost_per_token_above_272k_tokens": 2.7e-04}
 }`
 
-// modelCatalogFixture 构造尚未启动的模型目录，供测试使用。
+// modelCatalogFixture constructs an unstarted catalog for tests.
 type modelCatalogFixture struct {
 	pricingData map[string]*pricing.CatalogModelPricing
 }
@@ -351,7 +351,7 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageBasisDoesNotUseGlobalFal
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 2, usageRepo.LastLog.ImageCount)
-	// 缺少所选型号的按张价时生成零费用用量记录。
+	// Missing per-image pricing produces a zero-cost usage record.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -395,7 +395,7 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageDoesNotUseGlobalFallback
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 1, usageRepo.LastLog.ImageCount)
-	// 缺少所选型号的按张价时生成零费用用量记录。
+	// Missing per-image pricing produces a zero-cost usage record.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -496,7 +496,7 @@ func TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback(t
 	require.Equal(t, 1, usageRepo.LastLog.ImageCount)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
-	// 缺少所选型号的按张价时生成零费用用量记录。
+	// Missing per-image pricing produces a zero-cost usage record.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -537,7 +537,7 @@ func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *
 			require.Equal(t, 1, usageRepo.Calls)
 			require.NotNil(t, usageRepo.LastLog)
 			require.Equal(t, alias, usageRepo.LastLog.Model)
-			// 有内置价的别名正常扣费；未知路由保持未定价记录。
+			// Priced aliases are billed; unknown routes retain unpriced records.
 			if _, pricingErr := svc.Dependencies.Calculator.GetModelPricing(alias); pricingErr == nil {
 				require.Positive(t, usageRepo.LastLog.TotalCost)
 			} else {
@@ -1050,7 +1050,7 @@ func TestGatewayServiceRecordUsage_QoderProviderMappedImageDoesNotUseGlobalFallb
 	require.NotNil(t, usageRepo.LastLog)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
-	// 缺少所选型号的按张价时生成零费用用量记录。
+	// Missing per-image pricing produces a zero-cost usage record.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -1353,7 +1353,7 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &completiontestkit.SubscriptionStore{})
-	// 测试时间固定在峰值窗口内，23:59 是窗口的右开端点。
+	// Fix time inside the peak window; 23:59 is its exclusive end.
 	svc.Options.Now = func() time.Time {
 		return time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
 	}
@@ -1568,7 +1568,7 @@ func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *te
 }
 
 func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testing.T) {
-	// 计费成功后，队列超时导致的写入丢弃转为同步写入，补齐 usage_log 对账记录（issue #3656）。
+	// After settlement, queue timeout triggers a synchronous log write for reconciliation (issue #3656).
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{
 		BestEffortErr: usagecore.MarkUsageLogCreateDropped(errors.New("usage log best-effort queue full")),
 	}
@@ -1593,7 +1593,7 @@ func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testi
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.BestEffortCalls)
 	require.Equal(t, 1, usageRepo.CreateCalls)
-	// 同步重试使用新的有效 context。
+	// The synchronous retry receives a fresh live context.
 	require.NoError(t, usageRepo.LastCtxErr)
 }
 
@@ -1911,7 +1911,7 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	userRepo := &completiontestkit.UserStore{}
 	subRepo := &completiontestkit.SubscriptionStore{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
-	// 测试时间固定在峰值窗口内，23:59 是窗口的右开端点。
+	// Fix time inside the peak window; 23:59 is its exclusive end.
 	svc.Options.Now = func() time.Time {
 		return time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
 	}
@@ -2627,7 +2627,7 @@ func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProvider
 			billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 			require.Equal(t, 1, billingRepo.Calls)
 			require.InDelta(t, usageRepo.LastLog.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-10)
-			// 影子结算读取母提供商解析凭据，长上下文开关由分组配置决定。
+			// Shadow billing resolves parent credentials; the group setting controls long-context pricing.
 			wantProviderRepoCalls := 0
 			if tt.provider.IsShadow() {
 				wantProviderRepoCalls = 1
@@ -2638,7 +2638,7 @@ func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProvider
 }
 
 func TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling(t *testing.T) {
-	// 长上下文策略由分组开关决定。
+	// The group setting controls the long-context policy.
 	tests := []struct {
 		name        string
 		groupEnable bool
@@ -2703,7 +2703,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling(t *test
 	}
 }
 
-// TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle 检查分组开关控制 Grok 长上下文阶梯计价。
+// TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle checks group control of Grok tiered long-context prices.
 func TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle(t *testing.T) {
 	baseInput := 250000 * 2e-6
 	baseOutput := 1000 * 6e-6
@@ -2882,7 +2882,7 @@ func TestOpenAIGatewayServiceRecordUsage_UsesRequestedModelAndUpstreamModelMetad
 	require.InDelta(t, usageRepo.LastLog.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort 检查请求档位与实际档位分别写入数据库。
+// TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort checks separate storage of requested and forwarded effort.
 func TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2987,7 +2987,7 @@ func TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel(
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := openai.ForwardUsage{InputTokens: 20, OutputTokens: 10}
 
-	// 按用户请求的 gpt-5.4 模型计费。
+	// Bill the requested gpt-5.4 model.
 	expectedCost, err := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{
 		InputTokens:  20,
 		OutputTokens: 10,
@@ -3025,7 +3025,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedDoesNotOverrideBillingModelW
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := openai.ForwardUsage{InputTokens: 20, OutputTokens: 10}
 
-	// 分组未映射模型时，使用 result.BillingModel 中记录的上游计费模型。
+	// Without a group remap, use the upstream billing model captured in result.BillingModel.
 	expectedCost, err := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{
 		InputTokens:  20,
 		OutputTokens: 10,
@@ -3047,7 +3047,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedDoesNotOverrideBillingModelW
 		PricingUsageFields: routing.PricingUsageFields{
 			PricingConfigID:    1,
 			OriginalModel:      "glm",
-			GroupMappedModel:   "glm", // 分组未映射模型。
+			GroupMappedModel:   "glm", // No group remap.
 			BillingModelSource: routing.BillingModelSourceGroupMapped,
 		},
 	})
@@ -3065,7 +3065,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedOverridesBillingModelWhenMap
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := openai.ForwardUsage{InputTokens: 20, OutputTokens: 10}
 
-	// GroupMappedModel 与 OriginalModel 不同时，按分组映射后的模型计费。
+	// A changed GroupMappedModel determines the billing model.
 	expectedCost, err := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{
 		InputTokens:  20,
 		OutputTokens: 10,
@@ -3087,7 +3087,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedOverridesBillingModelWhenMap
 		PricingUsageFields: routing.PricingUsageFields{
 			PricingConfigID:    1,
 			OriginalModel:      "glm",
-			GroupMappedModel:   "gpt-5.4", // 分组将 glm 映射为 gpt-5.4。
+			GroupMappedModel:   "gpt-5.4", // The group maps glm to gpt-5.4.
 			BillingModelSource: routing.BillingModelSourceGroupMapped,
 		},
 	})
@@ -3772,7 +3772,7 @@ func TestOpenAIGatewayServiceRecordUsage_GrokVideoUsesDefaultRateCard(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.LastLog)
 	require.Nil(t, usageRepo.LastLog.ImageSize)
-	// 结果未携带 duration 时按上游默认 8 秒计费：0.14 USD/s × 8s。
+	// Missing duration uses the default eight seconds: USD 0.14/s * 8s.
 	require.InDelta(t, 0.14*8, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.14*8, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 0, usageRepo.LastLog.ImageCount)
@@ -3873,9 +3873,9 @@ func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigIm
 	require.Equal(t, string(routing.BillingModeVideo), *usageRepo.LastLog.BillingMode)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata 验证视频请求命中共享价格配置 token 计费时走 token 路径；此时行是 billing_mode='token'、image_count=1、
-// image_size=NULL，必须携带 video_count>0 才能通过 usage_logs 的 image_size check 约束
-// （迁移 194），否则整个计费事务会因约束违反而丢失。
+// TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata checks token-priced video records.
+// VideoCount remains positive even when billing_mode is token and image_size is NULL.
+// This keeps the video identity available to usage-log validation and reporting.
 func TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata(t *testing.T) {
 	groupID := int64(132)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -4078,7 +4078,7 @@ func TestOpenAIGatewayServiceRecordUsage_ShadowUsesParentCredentialTierContract(
 	require.InDelta(t, fastCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard 检查免费 Fast 按标准价扣费，日志记录 priority 基础成本。
+// TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard checks standard user charges with priority base cost in logs.
 func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(
@@ -4143,7 +4143,7 @@ func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testin
 
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.NotNil(t, billingRepo.LastCmd)
-	// 订阅和余额按 Standard 基础价分配。
+	// Allocate subscription and balance charges from the standard base price.
 	require.InDelta(t, standardTotal, billingRepo.LastCmd.BaseAmountUSD, 1e-10)
 	require.InDelta(t, standardTotal*0.5, billingRepo.LastCmd.BillableAmountUSD, 1e-10)
 }
@@ -4192,7 +4192,7 @@ func lookupQoderAliasKeyForTest(alias string) string {
 	return alias
 }
 
-// newGatewayRecordUsageServiceWithResolverForTest 按生产配置构造带解析器的 token 计费服务，测试据此覆盖服务档位计费。
+// newGatewayRecordUsageServiceWithResolverForTest supplies a production-style price resolver for service-tier billing tests.
 func newGatewayRecordUsageServiceWithResolverForTest(usageRepo usagecore.UsageLogRepository) (*completiontestkit.Recording, *apikey.APIKey) {
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
 	svc.Dependencies.Prices = billingtestkit.PriceResolver(nil, svc.Dependencies.Calculator)
@@ -4200,7 +4200,7 @@ func newGatewayRecordUsageServiceWithResolverForTest(usageRepo usagecore.UsageLo
 	return svc, &apikey.APIKey{ID: 1, GroupID: &groupID, Group: &routing.Group{ID: groupID, RateMultiplier: 1.0}}
 }
 
-// newGatewayRecordUsageServiceForTest 为用量记录测试构造完成器。
+// newGatewayRecordUsageServiceForTest builds the usage-recording fixture.
 func newGatewayRecordUsageServiceForTest(logs usagecore.UsageLogRepository, _ identity.UserRepository, _ billing.UserSubscriptionRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, &completiontestkit.SettlementStore{}, nil, true)
 }
@@ -4230,7 +4230,7 @@ func expectedOpenAICost(t *testing.T, svc *completiontestkit.Recording, model st
 	return cost
 }
 
-// swapInOpenAILadderCatalog 换入带 above_272k 阶梯字段的测试目录，OpenAI 长上下文规则从目录读取。
+// swapInOpenAILadderCatalog supplies above_272k prices for catalog-driven long-context rules.
 func swapInOpenAILadderCatalog(t *testing.T, svc *completiontestkit.Recording) {
 	t.Helper()
 	svc.Dependencies.Calculator = NewBillingService(newStubCatalogFromJSON(t, openAILadderCatalogJSON))
@@ -4256,7 +4256,7 @@ func newOpenAITokenImageConfigPricingResolverForTest(t *testing.T, groupID int64
 	return billingtestkit.PriceResolver(cs, NewBillingService(nil))
 }
 
-// newOpenAIRecordUsageServiceForTest 用测试存储和缓存构造 completion.Recorder。
+// newOpenAIRecordUsageServiceForTest builds a recorder with test stores and rates.
 func newOpenAIRecordUsageServiceForTest(logs usagecore.UsageLogRepository, _ identity.UserRepository, _ billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, &completiontestkit.SettlementStore{}, rates, true)
 }
@@ -4265,7 +4265,7 @@ func newOpenAIRecordUsageServiceWithBillingRepoForTest(logs usagecore.UsageLogRe
 	return completiontestkit.NewRecording(logs, funds, rates, false)
 }
 
-// testImageModelPricing 通过模型价卡提供测试所需的媒体价格。
+// testImageModelPricing supplies media prices through model price cards.
 func testImageModelPricing(prices map[string]*float64) []routing.ModelPricingEntry {
 	return testMediaModelPricing(routing.BillingModeImage, prices)
 }
@@ -4288,7 +4288,7 @@ func newModelCatalogFixture(fixture modelCatalogFixture) *provider.Service {
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// newStubCatalogFromJSON 通过与生产相同的解析路径创建价格目录 stub。
+// newStubCatalogFromJSON uses the production catalog parser for test pricing.
 func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	t.Helper()
 	raw, err := pricing.DecodeCatalogEntries([]byte(body))
@@ -4300,7 +4300,7 @@ func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	return service
 }
 
-// configureBillingGroup 配置请求分组及共享价卡，并创建价格解析器。
+// configureBillingGroup installs the group settings and shared price cards in a resolver.
 func configureBillingGroup(svc *completiontestkit.Recording, group *routing.Group, settings pricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Group {
 	source := configuredPrices{base: svc.Dependencies.Prices, groupID: group.ID, settings: settings, cards: cards}
 	svc.Dependencies.Prices = billing.NewPriceResolver(source, svc.Dependencies.Calculator, nil, nil)

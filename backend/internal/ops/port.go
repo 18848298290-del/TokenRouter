@@ -19,9 +19,9 @@ type OpsRepository interface {
 
 	UpdateErrorResolution(ctx context.Context, errorID int64, resolved bool, resolvedByUserID *int64, resolvedAt *time.Time) error
 
-	// 轻量窗口统计，用于实时 WS 与快速采样。
+	// Window statistics for realtime WebSocket updates and short sampling intervals.
 	GetWindowStats(ctx context.Context, filter *OpsDashboardFilter) (*OpsWindowStats, error)
-	// 轻量实时流量摘要，用于 Ops 仪表盘顶部卡片。
+	// Realtime traffic totals for dashboard summary cards.
 	GetRealtimeTrafficSummary(ctx context.Context, filter *OpsDashboardFilter) (*OpsRealtimeTrafficSummary, error)
 
 	GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error)
@@ -37,7 +37,7 @@ type OpsRepository interface {
 	UpsertJobHeartbeat(ctx context.Context, input *OpsUpsertJobHeartbeatInput) error
 	ListJobHeartbeats(ctx context.Context) ([]*OpsJobHeartbeat, error)
 
-	// 告警规则与告警事件。
+	// Alert rules and events.
 	ListAlertRules(ctx context.Context) ([]*OpsAlertRule, error)
 	CreateAlertRule(ctx context.Context, input *OpsAlertRule) (*OpsAlertRule, error)
 	UpdateAlertRule(ctx context.Context, input *OpsAlertRule) (*OpsAlertRule, error)
@@ -51,11 +51,11 @@ type OpsRepository interface {
 	UpdateAlertEventStatus(ctx context.Context, eventID int64, status string, resolvedAt *time.Time) error
 	UpdateAlertEventEmailSent(ctx context.Context, eventID int64, emailSent bool) error
 
-	// 告警静默。
+	// Alert silences.
 	CreateAlertSilence(ctx context.Context, input *OpsAlertSilence) (*OpsAlertSilence, error)
 	IsAlertSilenced(ctx context.Context, ruleID int64, platform string, groupID *int64, region *string, now time.Time) (bool, error)
 
-	// 小时/天级预聚合，用于提升长窗口仪表盘查询性能。
+	// Hourly and daily aggregates for long dashboard query windows.
 	UpsertHourlyMetrics(ctx context.Context, startTime, endTime time.Time, ignoredStatusCodes []int) error
 	UpsertDailyMetrics(ctx context.Context, startTime, endTime time.Time) error
 	GetLatestHourlyBucketStart(ctx context.Context) (time.Time, bool, error)
@@ -76,16 +76,16 @@ type OpsInsertErrorLogInput struct {
 	Model       string
 	RequestPath string
 	Stream      bool
-	// InboundEndpoint 是归一化后的客户端入口路径，例如 /v1/chat/completions。
+	// InboundEndpoint is the normalized client path, such as /v1/chat/completions.
 	InboundEndpoint string
-	// UpstreamEndpoint 是归一化后的上游路径，例如 /v1/responses。
+	// UpstreamEndpoint is the normalized upstream path, such as /v1/responses.
 	UpstreamEndpoint string
-	// RequestedModel 是客户端请求中、映射前的模型名。
+	// RequestedModel is the client model name before mapping.
 	RequestedModel string
-	// UpstreamModel 是映射后实际发给上游的模型名；空值表示未映射。
+	// UpstreamModel is the model sent upstream after mapping; empty means no mapping.
 	UpstreamModel string
-	// RequestType 是细分请求类型：0=unknown，1=sync，2=stream，3=ws_v2，4=cyber，5=live。
-	// 枚举值与 usage.RequestType 一致。
+	// RequestType identifies the request mode: 0=unknown, 1=sync, 2=stream, 3=ws_v2, 4=cyber, 5=live.
+	// Values match usage.RequestType.
 	RequestType *int16
 	UserAgent   string
 
@@ -94,7 +94,7 @@ type OpsInsertErrorLogInput struct {
 	Severity          string
 	StatusCode        int
 	IsBusinessLimited bool
-	IsCountTokens     bool // 是否为 count_tokens 请求
+	IsCountTokens     bool // Whether this is a count_tokens request.
 
 	ErrorMessage string
 	ErrorBody    string
@@ -105,11 +105,11 @@ type OpsInsertErrorLogInput struct {
 	UpstreamStatusCode   *int
 	UpstreamErrorMessage *string
 	UpstreamErrorDetail  *string
-	// UpstreamErrors 记录本次请求处理过程中观察到的所有上游错误尝试。
-	// 请求处理中写入 gin context，由 OpsService 清洗并序列化。
+	// UpstreamErrors contains failed upstream attempts observed during this request.
+	// Request handlers populate the Gin context; OpsService sanitizes and serializes the events.
 	UpstreamErrors []*OpsUpstreamErrorEvent
-	// UpstreamErrorsJSON 是落入 ops_error_logs.upstream_errors 的清洗后 JSON 字符串。
-	// OpsService.RecordError 会在持久化前填充该字段。
+	// UpstreamErrorsJSON is sanitized JSON stored in ops_error_logs.upstream_errors.
+	// OpsService.RecordError fills it before persistence.
 	UpstreamErrorsJSON *string
 
 	AuthLatencyMs      *int64
@@ -120,8 +120,8 @@ type OpsInsertErrorLogInput struct {
 
 	CreatedAt time.Time
 
-	// 有效(未删除)key 报错时快照的 key 脱敏前缀(前 8 位)。
-	// 前缀随错误快照落库。Key 删除、被 tombstone 覆盖后，快照仍保存当时的前缀。
+	// Snapshot of the first eight characters of a valid, undeleted API key.
+	// The stored prefix survives key deletion and credential tombstoning.
 	APIKeyPrefix string
 }
 
@@ -185,7 +185,7 @@ type OpsInsertSystemMetricsInput struct {
 
 type OpsInsertSystemLogInput struct {
 	CreatedAt time.Time
-	// Host 是产生日志的进程主机名；历史记录或未知主机可为空。
+	// Host is the logging process hostname; empty means historical or unknown.
 	Host            string
 	Level           string
 	Component       string
@@ -269,7 +269,7 @@ type OpsSystemMetricsSnapshot struct {
 	DBOK    *bool `json:"db_ok"`
 	RedisOK *bool `json:"redis_ok"`
 
-	// 连接池上限来自当前配置，用于展示当前连接数与上限。
+	// Pool limits come from current configuration for comparison with connection counts.
 	DBMaxOpenConns *int `json:"db_max_open_conns"`
 	RedisPoolSize  *int `json:"redis_pool_size"`
 

@@ -93,5 +93,5 @@ func ValidateCheckoutDaily(orders []*Order, amount, limit float64) error {
 	return nil
 }
 
-// RefundStringValue 读取可空字符串，nil 返回空字符串。
+// RefundStringValue dereferences v, returning an empty string for nil.
 func RefundStringValue(v *string) string { return refundStringValue(v) }

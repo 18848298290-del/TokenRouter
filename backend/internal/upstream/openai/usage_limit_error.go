@@ -13,8 +13,8 @@ var (
 	openCodeGoUsageLimitDurationPartPattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)\b`)
 )
 
-// ParseUsageLimitResetTime 解析 OpenAI 兼容格式的 429 响应，返回重置时间的 Unix 时间戳
-// OpenAI 的 usage_limit_reached 错误格式：
+// ParseUsageLimitResetTime returns a usage-limit reset time in Unix seconds, or nil if unavailable.
+// The OpenAI usage_limit_reached error has this shape:
 //
 //	{
 //	  "error": {
@@ -35,13 +35,12 @@ func ParseUsageLimitResetTime(body []byte, now func() time.Time) *int64 {
 		return nil
 	}
 
-	// 检查是否为已知的提供商用量限制类型。
 	errType, _ := errObj["type"].(string)
 	if errType != "usage_limit_reached" && errType != "rate_limit_exceeded" && errType != "GoUsageLimitError" {
 		return nil
 	}
 
-	// 优先使用 resets_at（Unix 时间戳）
+	// Prefer the absolute reset timestamp when it can be parsed.
 	if resetsAt, ok := errObj["resets_at"].(float64); ok {
 		ts := int64(resetsAt)
 		return &ts
@@ -52,7 +51,7 @@ func ParseUsageLimitResetTime(body []byte, now func() time.Time) *int64 {
 		}
 	}
 
-	// 如果没有 resets_at，尝试使用 resets_in_seconds
+	// Use the relative duration when the absolute timestamp is absent or invalid.
 	if resetsInSeconds, ok := errObj["resets_in_seconds"].(float64); ok {
 		ts := now().Unix() + int64(resetsInSeconds)
 		return &ts
@@ -64,8 +63,8 @@ func ParseUsageLimitResetTime(body []byte, now func() time.Time) *int64 {
 		}
 	}
 
-	// OpenCode Go 订阅只在可读错误消息中提供重置时间，例如
-	// "Weekly usage limit reached. Resets in 2 days."。
+	// OpenCode Go can supply the reset duration in the readable message:
+	// "Weekly usage limit reached. Resets in 2 days."
 	if errType == "GoUsageLimitError" {
 		message, _ := errObj["message"].(string)
 		if resetAfter := parseOpenCodeGoUsageLimitResetDuration(message); resetAfter > 0 {
@@ -77,7 +76,7 @@ func ParseUsageLimitResetTime(body []byte, now func() time.Time) *int64 {
 	return nil
 }
 
-// parseOpenCodeGoUsageLimitResetDuration 解析 OpenCode Go 消息中的单段或复合重置时长。
+// parseOpenCodeGoUsageLimitResetDuration parses one or more duration components after "resets in".
 func parseOpenCodeGoUsageLimitResetDuration(message string) time.Duration {
 	resetPrefix := openCodeGoUsageLimitResetPattern.FindStringIndex(message)
 	if resetPrefix == nil {

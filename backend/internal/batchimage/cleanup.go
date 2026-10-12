@@ -57,7 +57,7 @@ func (s *Cleanup) Run(ctx context.Context) {
 	}
 }
 
-// AppendCleanupEvent 追加清理审计事件；事件写入失败不阻断清理流程，但必须留痕。
+// AppendCleanupEvent records a cleanup audit event and reports write failures through Observe.
 func (s *Cleanup) AppendCleanupEvent(ctx context.Context, batchID, eventType string, payload any) {
 	if err := s.Repo.AppendBatchImageEvent(ctx, batchID, eventType, payload); err != nil {
 		s.warn("batch_image.cleanup_event_failed",
@@ -270,7 +270,7 @@ func CleanupFailureCode(err error) string {
 	return "BATCH_IMAGE_PROVIDER_CLEANUP_FAILED"
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now uses the injected clock when configured, otherwise the system clock.
 func (s *Cleanup) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

@@ -22,7 +22,7 @@ type slotCleanupCache struct {
 	calls atomic.Int64
 }
 
-// stubConcurrencyCacheForTest 用于并发服务单元测试的缓存桩。
+// stubConcurrencyCacheForTest records cache calls and supplies concurrency test results.
 type stubConcurrencyCacheForTest struct {
 	acquireResult        bool
 	acquireErr           error
@@ -43,7 +43,7 @@ type stubConcurrencyCacheForTest struct {
 	apiKeyConcurrency    map[int64]int
 	apiKeyConcurrencyErr error
 
-	// 记录调用
+	// Recorded calls.
 	releasedProviderIDs      []int64
 	releasedRequestIDs       []string
 	loadBatchCalls           atomic.Int64
@@ -155,7 +155,7 @@ func TestAcquireProviderSlot_ReleaseDecrements(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
 
-	// 调用 ReleaseFunc 应释放槽位
+	// Releasing the result returns the acquired slot.
 	result.ReleaseFunc()
 
 	require.Len(t, cache.releasedProviderIDs, 1)
@@ -168,7 +168,7 @@ func TestAcquireUserSlot_IndependentFromProvider(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{acquireResult: true}
 	svc := NewConcurrencyService(cache)
 
-	// 用户槽位获取应独立于提供商槽位
+	// User slots are acquired independently of provider slots.
 	result, err := svc.AcquireUserSlot(context.Background(), 100, 3)
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
@@ -247,7 +247,7 @@ func TestAcquireOpenAIWSIngressLease(t *testing.T) {
 
 	t.Run("disabled", func(t *testing.T) {
 		cache := &ingressLeaseCacheForTest{}
-		// 未提供 context 且关闭限流时，请求直接放行。
+		// With limiting disabled, a nil context still permits the request.
 		var requestContext context.Context
 		lease, acquired, err := NewConcurrencyService(cache).AcquireOpenAIWSIngressLease(requestContext, 1, 0)
 		require.NoError(t, err)
@@ -273,7 +273,7 @@ func TestAcquireOpenAIWSIngressLease(t *testing.T) {
 
 	t.Run("release returns capacity", func(t *testing.T) {
 		cache := &ingressLeaseCacheForTest{acquireIngressResult: true, refreshIngressResult: true}
-		// 未提供 context 时仍须创建可重复释放的租约。
+		// A nil context still produces a lease that tolerates repeated release.
 		var requestContext context.Context
 		lease, acquired, err := NewConcurrencyService(cache).AcquireOpenAIWSIngressLease(requestContext, 1, 1)
 		require.NoError(t, err)
@@ -455,7 +455,7 @@ func TestIncrementWaitCount_QueueFull(t *testing.T) {
 }
 
 func TestIncrementWaitCount_FailOpen(t *testing.T) {
-	// Redis 错误时应 fail-open（允许请求通过）
+	// Redis errors allow the request through.
 	cache := &stubConcurrencyCacheForTest{waitErr: errors.New("redis timeout")}
 	svc := NewConcurrencyService(cache)
 
@@ -535,7 +535,7 @@ func TestIncrementProviderWaitCount_NilCache(t *testing.T) {
 	require.True(t, allowed.Allowed)
 }
 
-// TestDecrementWaitCount_NilCache 检查缓存缺失时的释放调用。
+// TestDecrementWaitCount_NilCache exercises release with no cache.
 func TestDecrementWaitCount_NilCache(t *testing.T) {
 	svc := &ConcurrencyService{cache: nil}
 
@@ -544,17 +544,17 @@ func TestDecrementWaitCount_NilCache(t *testing.T) {
 	wait.Release()
 }
 
-// TestDecrementWaitCount_CacheError 检查释放时的缓存错误处理。
+// TestDecrementWaitCount_CacheError exercises release after admission.
 func TestDecrementWaitCount_CacheError(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{waitAllowed: true}
 	svc := NewConcurrencyService(cache)
-	// 等待结果的 Release 使用独立清理 context，释放错误写入日志。
+	// Release performs cleanup with its own context.
 	wait, err := svc.EnterUserWait(context.Background(), 1, 25)
 	require.NoError(t, err)
 	wait.Release()
 }
 
-// TestDecrementProviderWaitCount_NilCache 检查提供商缓存缺失时的释放调用。
+// TestDecrementProviderWaitCount_NilCache exercises provider release with no cache.
 func TestDecrementProviderWaitCount_NilCache(t *testing.T) {
 	svc := &ConcurrencyService{cache: nil}
 	wait, err := svc.EnterProviderWait(context.Background(), 1, 25)
@@ -562,7 +562,7 @@ func TestDecrementProviderWaitCount_NilCache(t *testing.T) {
 	wait.Release()
 }
 
-// TestDecrementProviderWaitCount_CacheError 检查释放提供商等待计数时的缓存错误处理。
+// TestDecrementProviderWaitCount_CacheError exercises provider release after admission.
 func TestDecrementProviderWaitCount_CacheError(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{waitAllowed: true}
 	svc := NewConcurrencyService(cache)
@@ -571,7 +571,7 @@ func TestDecrementProviderWaitCount_CacheError(t *testing.T) {
 	wait.Release()
 }
 
-// TestWaitingQueueFlow_IncrementThenDecrement 检查用户等待计数的登记和释放。
+// TestWaitingQueueFlow_IncrementThenDecrement exercises user wait admission and release.
 func TestWaitingQueueFlow_IncrementThenDecrement(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{waitAllowed: true}
 	svc := NewConcurrencyService(cache)
@@ -583,7 +583,7 @@ func TestWaitingQueueFlow_IncrementThenDecrement(t *testing.T) {
 	allowed.Release()
 }
 
-// TestWaitingQueueFlow_ProviderLevel 测试提供商级等待队列流程。
+// TestWaitingQueueFlow_ProviderLevel exercises provider wait admission and release.
 func TestWaitingQueueFlow_ProviderLevel(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{waitAllowed: true}
 	svc := NewConcurrencyService(cache)
@@ -595,40 +595,40 @@ func TestWaitingQueueFlow_ProviderLevel(t *testing.T) {
 	allowed.Release()
 }
 
-// TestWaitingQueueFull_Returns429Signal 测试等待队列满时返回 false。
+// TestWaitingQueueFull_Returns429Signal checks that a full queue denies admission.
 func TestWaitingQueueFull_Returns429Signal(t *testing.T) {
-	// waitAllowed=false 模拟队列已满
+	// A false waitAllowed result represents a full queue.
 	cache := &stubConcurrencyCacheForTest{waitAllowed: false}
 	svc := NewConcurrencyService(cache)
 
-	// 用户级等待队列满
+	// The user queue denies admission.
 	allowed, err := svc.EnterUserWait(context.Background(), 1, 25)
 	require.NoError(t, err)
 	require.False(t, allowed.Allowed, "等待队列满时应返回 false（调用方根据此返回 429）")
 
-	// 提供商级等待队列满
+	// The provider queue denies admission.
 	allowed, err = svc.EnterProviderWait(context.Background(), 1, 10)
 	require.NoError(t, err)
 	require.False(t, allowed.Allowed, "提供商等待队列满时应返回 false")
 }
 
-// TestWaitingQueue_FailOpen_OnCacheError 测试 Redis 故障时 fail-open。
+// TestWaitingQueue_FailOpen_OnCacheError checks admission during Redis failures.
 func TestWaitingQueue_FailOpen_OnCacheError(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{waitErr: errors.New("redis connection refused")}
 	svc := NewConcurrencyService(cache)
 
-	// 用户级：Redis 错误时允许通过
+	// User admission proceeds after a Redis error.
 	allowed, err := svc.EnterUserWait(context.Background(), 1, 25)
 	require.NoError(t, err, "Redis 错误不应向调用方传播")
 	require.True(t, allowed.Allowed, "Redis 故障时应 fail-open 放行")
 
-	// 提供商级：同样 fail-open
+	// Provider admission also proceeds after a Redis error.
 	allowed, err = svc.EnterProviderWait(context.Background(), 1, 10)
 	require.NoError(t, err, "Redis 错误不应向调用方传播")
 	require.True(t, allowed.Allowed, "Redis 故障时应 fail-open 放行")
 }
 
-// TestCalculateMaxWait_Scenarios 测试最大等待队列大小计算。
+// TestCalculateMaxWait_Scenarios checks the queue size for each concurrency limit.
 func TestCalculateMaxWait_Scenarios(t *testing.T) {
 	tests := []struct {
 		concurrency int
@@ -694,7 +694,7 @@ func TestRequestLeaseStopTimeoutRetainsFailure(t *testing.T) {
 	require.Equal(t, stopErr, core.StopContext(context.Background()))
 }
 
-// TestUnlimitedSlotPreservesCallerCancellation 检查无上限槽位立即放行，取消处理使用调用方的 ReleaseMode。
+// TestUnlimitedSlotPreservesCallerCancellation checks immediate admission with a canceled context when limits are disabled.
 func TestUnlimitedSlotPreservesCallerCancellation(t *testing.T) {
 	for _, user := range []bool{false, true} {
 		core := NewConcurrencyService(nil)

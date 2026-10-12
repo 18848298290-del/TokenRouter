@@ -14,12 +14,12 @@ const (
 
 var defaultOpsLatencyBucketBoundariesMS = []int64{100, 200, 500, 1000, 2000}
 
-// DefaultOpsLatencyBucketBoundariesMS 返回默认耗时分桶阈值的副本。
+// DefaultOpsLatencyBucketBoundariesMS returns a copy of the default duration thresholds in milliseconds.
 func DefaultOpsLatencyBucketBoundariesMS() []int64 {
 	return append([]int64(nil), defaultOpsLatencyBucketBoundariesMS...)
 }
 
-// NormalizeOpsLatencyBucketBoundariesMS 校验并复制时长分桶阈值，空值使用默认阈值。
+// NormalizeOpsLatencyBucketBoundariesMS validates and copies duration thresholds, using defaults for empty input.
 func NormalizeOpsLatencyBucketBoundariesMS(boundaries []int64) ([]int64, error) {
 	if len(boundaries) == 0 {
 		return DefaultOpsLatencyBucketBoundariesMS(), nil

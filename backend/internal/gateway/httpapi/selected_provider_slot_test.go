@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// TestSelectedProviderSlotOwnsOnlyAcquiredResource 验证已取得槽位直接复用，粘性绑定保持原样，重复清理释放一次。
+// TestSelectedProviderSlotOwnsOnlyAcquiredResource checks slot reuse, unchanged sticky binding, and idempotent release.
 func TestSelectedProviderSlotOwnsOnlyAcquiredResource(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

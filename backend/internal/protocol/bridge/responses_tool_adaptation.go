@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// AdaptOpenAIResponsesClientTools 将 Codex 专用工具降级为上游可接受的 function 工具。
+// AdaptOpenAIResponsesClientTools converts Codex client tools to upstream function tools.
 func AdaptOpenAIResponsesClientTools(body []byte) ([]byte, ResponsesClientToolMapping, error) {
 	if !NeedsOpenAIResponsesClientToolAdaptation(body) {
 		return body, ResponsesClientToolMapping{}, nil
@@ -21,8 +21,8 @@ func AdaptOpenAIResponsesClientTools(body []byte) ([]byte, ResponsesClientToolMa
 	return AdaptOpenAIResponsesClientToolsWithMapping(body, ResponsesClientToolMapping{})
 }
 
-// AdaptOpenAIResponsesClientToolsWithMapping 支持在 bridge 多轮请求中继承工具映射。
-// body 在请求入口已解析，此处仍检查尾随 JSON，存在额外内容时返回错误。
+// AdaptOpenAIResponsesClientToolsWithMapping carries tool mappings across bridge turns.
+// It rejects trailing JSON values or garbage even when the request was parsed at ingress.
 func AdaptOpenAIResponsesClientToolsWithMapping(
 	body []byte,
 	inherited ResponsesClientToolMapping,

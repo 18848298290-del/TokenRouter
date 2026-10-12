@@ -133,7 +133,7 @@ func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 	_, err = groupRepo.DeleteCascade(ctx, targetGroup.ID)
 	require.NoError(t, err)
 
-	// 默认查询应隐藏已删除分组，保持软删除语义。
+	// Default queries hide soft-deleted groups.
 	_, err = groupRepo.GetByID(ctx, targetGroup.ID)
 	require.ErrorIs(t, err, routing.ErrGroupNotFound)
 
@@ -143,13 +143,13 @@ func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 		require.NotEqual(t, targetGroup.ID, g.ID)
 	}
 
-	// 用户可用分组中不应再包含已删除分组。
+	// Deleted groups must be absent from the user's available groups.
 	uAfter, err := userRepo.GetByID(ctx, u.ID)
 	require.NoError(t, err)
 	require.NotContains(t, uAfter.AllowedGroups, targetGroup.ID)
 	require.Contains(t, uAfter.AllowedGroups, otherGroup.ID)
 
-	// API Key 保留 group_id，认证层才能拒绝绑定到已删除分组的 Key。
+	// Keep group_id so authentication can reject keys bound to deleted groups.
 	keyAfter, err := apiKeyRepo.GetByID(ctx, key.ID)
 	require.NoError(t, err)
 	require.NotNil(t, keyAfter.GroupID)

@@ -43,7 +43,7 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 	require.Equal(t, 7, usage.Usage.InputTokens)
 	require.Equal(t, 9, usage.Usage.OutputTokens)
 	require.Equal(t, 1, usage.Usage.CacheReadInputTokens)
-	// Header 可能由上游 Content-Type 透传；关键是 body 已转换为最终 JSON 响应。
+	// Content-Type may come from upstream; the assertion protects conversion of the body to final JSON.
 	require.NotContains(t, rec.Body.String(), "event:")
 	require.Contains(t, rec.Body.String(), `"id":"resp_2"`)
 	require.NotContains(t, rec.Body.String(), "data:")
@@ -117,7 +117,8 @@ func TestHandleSSEToJSON_ResponseFailedReturnsFailoverBeforeWrite(t *testing.T) 
 	require.False(t, c.Writer.Written())
 }
 
-// TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver 验证非流式 SSE 的容量错误触发故障转移。
+// TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver checks failover for non-streaming SSE capacity
+// failures.
 func TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()
@@ -129,25 +130,25 @@ func TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	require.Nil(t, result)
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	// invalid_request_error 按 400 分类，换号判断与流式路径一致。
+	// invalid_request_error maps to 400 and uses the streaming failover decision.
 	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
-	// 容量降载按请求处理，先在同一提供商上有限次重试，与流式路径共用策略。
+	// Capacity shedding gets bounded retries on the same provider through the shared streaming policy.
 	require.True(t, failoverErr.RetryableOnSameProvider)
 	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
-	// 换号的前提：一个字节都没写出去。
+	// Failover requires that no response bytes have been written.
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
 }
 
-// TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver 验证行为翻转点：未被分类为不可重试的泛化 response.failed，此前回 502，现在换号。
-// 该结果与流式路径一致。
+// TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver checks retryable generic response.failed events.
+// Non-streaming and streaming paths must agree on failover.
 func TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()
 	payload := []byte(`{"type":"response.failed","error":{"message":"upstream rejected request"}}`)
 	body := sseTerminalBody("response.failed", string(payload))
 
-	// 前提：流式分类器对同一帧的裁决就是「换号」。翻转不是新政策，是补齐。
+	// The same frame must be classified as retryable by the streaming classifier.
 	require.True(t, openai.OpenAIStreamFailedEventShouldFailover(payload, "upstream rejected request"))
 
 	result, err := openai.ReadSSEAsJSON(context.Background(), newNonStreamingSSEResponse(), upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.NonStreamOptions(context.Background(), c, newNonStreamingFailoverProvider()), body, "model", "model")
@@ -159,7 +160,8 @@ func TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver(t *testing.T) {
 	require.Empty(t, rec.Body.String())
 }
 
-// TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError 验证不可重试的 response.failed 返回 502 协议错误。
+// TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError checks a 502 protocol error for
+// non-retryable response.failed events.
 func TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -201,15 +203,16 @@ func TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError(t
 	}
 }
 
-// TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier 验证裸 error 帧只有被识别为瞬时错误时才换号。
-// error 与 response.failed 使用各自的分类器。
+// TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier checks that bare error frames require a
+// recognized transient signal for failover.
+// error and response.failed use separate classifiers.
 func TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier(t *testing.T) {
 	t.Run("non_transient_stays_protocol_error", func(t *testing.T) {
 		c, rec := newNonStreamingFailoverContext(t)
 		svc := newNonStreamingFailoverService()
 		data := `{"type":"error","error":{"message":"upstream rejected request"}}`
 
-		// 同一文案在 failed 分类中触发换号，在 error 分类中结束请求。
+		// The same message can trigger failover in response.failed and terminate a bare error event.
 		require.True(t, openai.OpenAIStreamFailedEventShouldFailover([]byte(data), "upstream rejected request"))
 		require.False(t, openai.OpenAIStreamErrorEventShouldFailover([]byte(data), "upstream rejected request"))
 
@@ -236,7 +239,8 @@ func TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier(t *testi
 	})
 }
 
-// TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict 逐项对照非流式与流式错误分类结果。
+// TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict compares non-streaming and streaming
+// classifications.
 func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 	payloads := []string{
 		`{"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`,
@@ -262,8 +266,9 @@ func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 	}
 }
 
-// TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError 验证已提交响应后返回协议错误。
-// handler 的 openAIForwardMayFailover 按扣除心跳后的写出量决定是否换号（#3887）。
+// TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError checks protocol errors after response
+// commitment.
+// The handler subtracts heartbeat bytes when deciding whether output permits failover (#3887).
 func TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()

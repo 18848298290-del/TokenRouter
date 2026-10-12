@@ -22,7 +22,7 @@ func TestCheckIPRestrictionWithCompiledRules(t *testing.T) {
 }
 
 func TestCheckIPRestrictionWithCompiledRules_InvalidWhitelistStillDenies(t *testing.T) {
-	// 与旧实现保持一致：白名单有配置但全无效时，最终应拒绝访问。
+	// A configured allowlist with no valid patterns must deny access.
 	invalidWhitelist := ipmatch.CompileIPRules([]string{"not-a-valid-pattern"})
 	allowed, reason := CheckIPRestrictionWithCompiledRules("8.8.8.8", invalidWhitelist, nil)
 	require.False(t, allowed)

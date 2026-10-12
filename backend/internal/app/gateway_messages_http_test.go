@@ -38,14 +38,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil"
 )
 
-// gatewayExecutionProviderRows 按分组提供转发测试需要的提供商数据。
+// gatewayExecutionProviderRows supplies execution providers by group for forwarding tests.
 type gatewayExecutionProviderRows struct {
 	gatewayprovider.ExecutionProviderStore
 
 	byGroup map[int64][]gatewayprovider.ExecutionProvider
 }
 
-// 记录 handler 对会话缓存的操作，释放判断由调度和请求完成处理执行。
+// gatewaySessionLimitCacheStub records cache operations; scheduling and completion decide when to release
+// sessions.
 type gatewaySessionLimitCacheStub struct {
 	testutil.StubSessionLimitCache
 	registered   map[int64][]string
@@ -123,7 +124,8 @@ func TestPrepareGatewayAttemptRequestUsesCurrentAPIKeyGroupMapping(t *testing.T)
 	require.Equal(t, "client-alias", gjson.GetBytes(parsed.Body.Bytes(), "model").String())
 }
 
-// TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping 验证 Gemini 分组的 Messages 请求体也写入分组映射模型 G。
+// TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping checks that Messages bodies use the Gemini group's
+// mapped model.
 func TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping(t *testing.T) {
 	groupID := int64(6103)
 	pricingConfigService := routingtestkit.NewPricingConfigService(&gatewayExecutionPricingConfigRows{
@@ -185,7 +187,8 @@ func gatewaySessionResponse(status int, stream bool) *http.Response {
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(body))}
 }
 
-// newGatewaySessionLimitFixture 使用调度、Forward 和 handler 的完成处理，外部上游、Redis 和账单依赖使用替身。
+// newGatewaySessionLimitFixture exercises scheduling, forwarding, and handler completion with upstream, Redis,
+// and billing stubs.
 func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover bool, upstream *gatewaySessionUpstreamStub) (*messageEndpointsFixture, *apikey.APIKey, *gatewaySessionLimitCacheStub) {
 	t.Helper()
 	groupID := int64(11)

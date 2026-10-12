@@ -32,11 +32,11 @@ func TestCyberSessionExplicitBlockKey(t *testing.T) {
 	k1 := CyberSessionExplicitBlockKey(101, c1, b1)
 	require.NotEmpty(t, k1)
 
-	// Same session, different apiKey → different key (isolation).
+	// The same session under different API keys has separate block keys.
 	c2, b2 := newCyberBlockTestCtx(map[string]string{"session_id": "sess-abc"}, `{}`)
 	require.NotEqual(t, k1, CyberSessionExplicitBlockKey(202, c2, b2))
 
-	// Same session + same apiKey → stable key.
+	// The same session and API key produce a stable block key.
 	c3, b3 := newCyberBlockTestCtx(map[string]string{"session_id": "sess-abc"}, `{}`)
 	require.Equal(t, k1, CyberSessionExplicitBlockKey(101, c3, b3))
 
@@ -44,7 +44,7 @@ func TestCyberSessionExplicitBlockKey(t *testing.T) {
 	c4, b4 := newCyberBlockTestCtx(nil, `{"prompt_cache_key":"pck-1"}`)
 	require.NotEmpty(t, CyberSessionExplicitBlockKey(101, c4, b4))
 
-	// No explicit signal → empty key → caller must skip blocking entirely.
+	// Without an explicit session identity this lookup returns no block key.
 	c5, b5 := newCyberBlockTestCtx(nil, `{"input":"hello world"}`)
 	require.Empty(t, CyberSessionExplicitBlockKey(101, c5, b5))
 
@@ -99,8 +99,8 @@ func TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder(t *testing.T) {
 	require.Equal(t, fullKey, keys[len(keys)-1])
 }
 
-// TestFindCyberSessionBlocked_EmptyAndNilService covers the fail-open paths:
-// empty key, nil service, store missing → always false / no panic.
+// TestFindCyberSessionBlocked_EmptyAndNilService checks that missing lookup dependencies fail open.
+// Nil services and missing stores return no block key and tolerate an empty mark request.
 func TestFindCyberSessionBlocked_EmptyAndNilService(t *testing.T) {
 	var nilSvc *session.CyberBlocks
 	require.Empty(t, FindCyberSessionForRequest(context.Background(), nilSvc, 1, nil, nil, "", ""))
@@ -110,11 +110,11 @@ func TestFindCyberSessionBlocked_EmptyAndNilService(t *testing.T) {
 	require.Empty(t, FindCyberSessionForRequest(context.Background(), svc, 1, nil, nil, "", ""))
 }
 
-// TestCyberSessionBlock_RoundTrip exercises the type-assertion success path:
-// mark a session blocked via a combo cache+store, then confirm IsCyberSessionBlocked
-// returns true, and an unrelated key returns false.
+// TestCyberSessionBlock_RoundTrip records a block through the cache/store adapter
+// and checks lookup of the blocked session and an unrelated session.
+
 func TestCyberSessionBlock_RoundTrip(t *testing.T) {
-	// GetCyberSessionBlockRuntime 通过 settingRepo 读取设置，夹具提供该依赖。
+	// The fixture supplies settings read by GetCyberSessionBlockRuntime.
 	settingSvc := moderation.NewRuntimeSettings(&fakeSettingRepo{
 		vals: map[string]string{
 			moderation.SettingKeyCyberSessionBlockEnabled:    "true",

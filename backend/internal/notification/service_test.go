@@ -72,7 +72,8 @@ func TestBuildPasswordResetEmailBody_EscapesHTMLValues(t *testing.T) {
 	})
 }
 
-// TestConcurrentNotificationDelivery 检查同一投递请求并发到达时发送一封邮件，并回收协调锁。
+// TestConcurrentNotificationDelivery verifies that concurrent requests for one delivery send once and release
+// the coordination entry.
 func TestConcurrentNotificationDelivery(t *testing.T) {
 	repo := mailtest.NewMemorySettings()
 	server := mailtest.StartSMTPServer(t)
@@ -115,7 +116,7 @@ func TestConcurrentFirstUnsubscribeSecret(t *testing.T) {
 	require.Empty(t, n.locks.entries)
 }
 
-// TestUserNotificationLocales 覆盖用户事件、非法自定义模板回退和事件语言优先级。
+// TestUserNotificationLocales covers user events, invalid template overrides, and event locale precedence.
 func TestUserNotificationLocales(t *testing.T) {
 	events := []string{NotificationEmailEventAuthVerifyCode, NotificationEmailEventAuthPasswordReset, NotificationEmailEventNotificationEmailVerifyCode, NotificationEmailEventTeamInvitation, NotificationEmailEventTeamOwnershipTransfer, NotificationEmailEventSubscriptionPurchaseSuccess, NotificationEmailEventSubscriptionExpiryReminder, NotificationEmailEventBalanceLow, NotificationEmailEventBalanceRechargeSuccess, NotificationEmailEventContentModerationViolation, NotificationEmailEventContentModerationDisabled}
 	for _, event := range events {
@@ -139,7 +140,7 @@ func TestUserNotificationLocales(t *testing.T) {
 	}
 }
 
-// TestRecipientLocalePriority 检查账户、邮箱和站点默认语言的次序。
+// TestRecipientLocalePriority checks account, remembered recipient, and site locale precedence.
 func TestRecipientLocalePriority(t *testing.T) {
 	ctx := context.Background()
 	repo := mailtest.NewMemorySettings()
@@ -661,7 +662,8 @@ func TestEmailQueueTasksPreserveLocaleHints(t *testing.T) {
 	require.Equal(t, "en-US", resetTask.Locale)
 }
 
-// TestNotificationAccountPreference 验证交易请求记忆不会覆盖账户的主动语言选择。
+// TestNotificationAccountPreference checks that an account's chosen language takes precedence over a
+// remembered request locale.
 func TestNotificationAccountPreference(t *testing.T) {
 	ctx := context.Background()
 	repo := mailtest.NewMemorySettings()
@@ -671,7 +673,7 @@ func TestNotificationAccountPreference(t *testing.T) {
 	require.Equal(t, "en", svc.ResolveRecipientLocale(ctx, 42, "user@example.com"))
 }
 
-// renderIdentityBody 使用实际发送的内置模板检查变量转义。
+// renderIdentityBody renders a built-in delivery template for escaping assertions.
 func renderIdentityBody(t *testing.T, event, value, siteName string) string {
 	t.Helper()
 	template := notificationEmailOfficialTemplates[event][notificationEmailLocaleChinese]

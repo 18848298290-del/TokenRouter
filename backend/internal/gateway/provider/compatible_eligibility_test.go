@@ -56,7 +56,8 @@ func TestEvaluateOpenAIQuotaAutoPause_PerProviderDisableOverridesGlobalDefault(t
 	require.False(t, paused)
 }
 
-// TestCompatibleQuotaSnapshotPreservesParentAttemptState 验证请求与派生 attempt 使用独立阈值，更新选择快照不能覆盖健康观察型号或父请求。
+// TestCompatibleQuotaSnapshotPreservesParentAttemptState checks that derived attempts isolate thresholds and retain
+// health-observation models.
 func TestCompatibleQuotaSnapshotPreservesParentAttemptState(t *testing.T) {
 	parent := requeststate.WithExecutionHints(context.Background(), requeststate.ExecutionHints{HealthModel: "observed-model"})
 	parent = WithQuotaAutoPauseSettings(parent, providercore.QuotaAutoPauseSettings{DefaultThreshold5h: 0.99})
@@ -70,7 +71,7 @@ func TestCompatibleQuotaSnapshotPreservesParentAttemptState(t *testing.T) {
 	require.Equal(t, "observed-model", requeststate.ExecutionHintsFromContext(child).HealthModel)
 }
 
-// TestGrokMediaCapabilityFiltersOnlyGeneration 验证 Grok 媒体能力只限制生成请求。
+// TestGrokMediaCapabilityFiltersOnlyGeneration checks that media eligibility restricts generation requests.
 func TestGrokMediaCapabilityFiltersOnlyGeneration(t *testing.T) {
 	provider := &ExecutionProvider{
 		Record: providercore.Record{

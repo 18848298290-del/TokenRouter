@@ -15,12 +15,12 @@ import (
 
 var _ creative.CreativeRunOutboxRepository = (*creativeRunOutboxRepository)(nil)
 
-// creativeRunOutboxRepository 使用 PostgreSQL 原生 SQL 实现可恢复的创作台后台动作。
+// creativeRunOutboxRepository stores recoverable creative actions using PostgreSQL SQL.
 type creativeRunOutboxRepository struct {
 	db *sql.DB
 }
 
-// NewCreativeRunOutboxRepository 创建创作台 outbox 仓储。
+// NewCreativeRunOutboxRepository creates a creative outbox repository.
 func NewCreativeRunOutboxRepository(db *sql.DB) creative.CreativeRunOutboxRepository {
 	return &creativeRunOutboxRepository{db: db}
 }

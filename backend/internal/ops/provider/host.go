@@ -19,7 +19,7 @@ import (
 
 const bytesPerMB = 1024 * 1024
 
-// HostObserver 是唯一主机/连接池采样状态，技术层不认识业务数据表。
+// HostObserver samples host and connection-pool metrics and retains the previous CPU sample.
 type HostObserver struct {
 	db                      *sql.DB
 	redisClient             *redis.Client
@@ -241,11 +241,10 @@ func (c *HostObserver) TryCgroupCPUPercent(now time.Time) *float64 {
 	return &v
 }
 
-// resolveMemoryStats 从 cgroup（容器）或宿主机指标中选择一组自洽的
-// used、total、percent，绝不混用两种来源。
-// cgroup 同时报告当前用量和数值上限时（memory.max 为数字，即
-// cgroupTotal > 0）时才优先；否则三个值全部回退到宿主机，避免把容器 used 除以宿主机
-// total 而严重低估内存占用。
+// resolveMemoryStats returns used memory, total memory, and usage from one source.
+// Memory amounts are MiB. Use cgroup data when usage and a positive limit are available;
+// otherwise use host data for all three values. Mixing container usage with host
+// capacity would understate utilization.
 func resolveMemoryStats(cgroupUsed, cgroupTotal uint64, cgroupOK bool, host *mem.VirtualMemoryStat) (usedMB *int64, totalMB *int64, usagePercent *float64) {
 	if cgroupOK && cgroupTotal > 0 {
 		u := int64(cgroupUsed / bytesPerMB)
@@ -266,7 +265,7 @@ func resolveMemoryStats(cgroupUsed, cgroupTotal uint64, cgroupOK bool, host *mem
 		p := ops.RoundTo1DP(float64(host.Used) / float64(host.Total) * 100)
 		usagePercent = &p
 	} else {
-		// 异常情况：宿主机没有报告总量时，保留 gopsutil 自身的百分比。
+		// When host capacity is missing, retain the percentage reported by gopsutil.
 		p := ops.RoundTo1DP(host.UsedPercent)
 		usagePercent = &p
 	}
@@ -281,7 +280,7 @@ func (c *HostObserver) CollectSystemStats(ctx context.Context) (*ops.CollectedSy
 
 	sampleAt := time.Now().UTC()
 
-	// CPU：优先使用 cgroup（容器）指标；cgroup CPU 记账不可用时回退到宿主机指标。
+	// Prefer cgroup CPU samples; use host metrics when cgroup sampling is unavailable.
 	if cpuPct := c.TryCgroupCPUPercent(sampleAt); cpuPct != nil {
 		out.CpuUsagePercent = cpuPct
 	}
@@ -292,9 +291,8 @@ func (c *HostObserver) CollectSystemStats(ctx context.Context) (*ops.CollectedSy
 		}
 	}
 
-	// 内存：仅当 cgroup 同时提供当前使用量和明确上限（memory.max != "max"）时优先使用；
-	// 缺少上限或数据不完整时，used/total/percent 全部回退到宿主机指标。
-	// 不能把容器 used 与宿主机 total 混用，否则会得到明显偏低的百分比（例如 60MB / 23GB）。
+	// Read host memory when cgroup usage or a positive limit is unavailable.
+	// resolveMemoryStats keeps all returned measurements on the same basis.
 	cgroupUsed, cgroupTotal, cgroupOK := readCgroupMemoryBytes()
 	var host *mem.VirtualMemoryStat
 	if !cgroupOK || cgroupTotal == 0 {
@@ -304,7 +302,7 @@ func (c *HostObserver) CollectSystemStats(ctx context.Context) (*ops.CollectedSy
 	}
 	out.MemoryUsedMB, out.MemoryTotalMB, out.MemoryUsagePercent = resolveMemoryStats(cgroupUsed, cgroupTotal, cgroupOK, host)
 
-	// 采集根分区磁盘使用量；容器部署时这里通常对应业务数据所在文件系统。
+	// Measure the filesystem mounted at the process root.
 	if usage, err := disk.UsageWithContext(ctx, "/"); err == nil && usage != nil {
 		usedMB := int64(usage.Used / bytesPerMB)
 		totalMB := int64(usage.Total / bytesPerMB)

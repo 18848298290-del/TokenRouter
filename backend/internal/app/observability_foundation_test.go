@@ -27,13 +27,13 @@ func TestRedactAuditBody_JSONRedactsSecrets(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
 	}
 
-	// 敏感字段被擦除。
+	// Sensitive values must be removed.
 	for _, secret := range []string{"sk-secret-123", "google-id-token-canary", "hunter2", "123456", "tok_abc"} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("redacted body still contains secret %q: %s", secret, out)
 		}
 	}
-	// 非敏感字段（base_url、name）保留以便追责。
+	// Keep base_url and name for audit attribution.
 	if !strings.Contains(out, "evil.example.com") {
 		t.Fatalf("base_url should be preserved for providerability: %s", out)
 	}
@@ -42,8 +42,8 @@ func TestRedactAuditBody_JSONRedactsSecrets(t *testing.T) {
 	}
 }
 
-// TestRedactAuditBody_BareSessionKeyRedacted 检查 session 字段中的 Ollama Cloud 浏览器 Cookie 被整段脱敏。
-// session_id 等运行状态标识保留在审计记录中，供追溯使用。
+// TestRedactAuditBody_BareSessionKeyRedacted checks removal of the entire browser cookie stored in session.
+// Operational identifiers such as session_id remain available for audit tracing.
 func TestRedactAuditBody_BareSessionKeyRedacted(t *testing.T) {
 	redactor := provideAuditRedactor()
 	raw := []byte(`{"session": "wos-session=cookie-canary", "session_id": "sid-visible"}`)
@@ -57,9 +57,9 @@ func TestRedactAuditBody_BareSessionKeyRedacted(t *testing.T) {
 	}
 }
 
-// TestRedactAuditBody_AuthoritativeTablesSynced 检查以下凭据字段的脱敏：
-// 提供商 credentials 敏感子键、支付渠道无分隔符密钥、字符串值内嵌凭证的 proxy_key / custom_key，
-// 以及 camelCase 等命名变体（归一化比对）。
+// TestRedactAuditBody_AuthoritativeTablesSynced checks sensitive provider credential fields,
+// payment keys without separators, credentials embedded in proxy_key and custom_key strings,
+// and normalized name variants such as camelCase.
 func TestRedactAuditBody_AuthoritativeTablesSynced(t *testing.T) {
 	redactor := provideAuditRedactor()
 	raw := []byte(`{
@@ -92,7 +92,7 @@ func TestRedactAuditBody_AuthoritativeTablesSynced(t *testing.T) {
 			t.Fatalf("redacted body still contains secret %q: %s", secret, out)
 		}
 	}
-	// provider_key 是渠道标识，保留在审计记录中供追溯使用。
+	// provider_key identifies the payment channel and remains available for audit tracing.
 	if !strings.Contains(out, `"provider_key":"stripe"`) {
 		t.Fatalf("provider_key should be preserved for providerability: %s", out)
 	}
@@ -101,7 +101,8 @@ func TestRedactAuditBody_AuthoritativeTablesSynced(t *testing.T) {
 	}
 }
 
-// TestAuditSensitiveKeys_CoverCredentialTable 检查 SensitiveCredentialKeys 中的每个键都在审计脱敏范围内。
+// TestAuditSensitiveKeys_CoverCredentialTable checks every declared provider and payment secret field against
+// audit redaction.
 func TestAuditSensitiveKeys_CoverCredentialTable(t *testing.T) {
 	redactor := provideAuditRedactor()
 	for _, k := range providercore.SensitiveCredentialKeys {

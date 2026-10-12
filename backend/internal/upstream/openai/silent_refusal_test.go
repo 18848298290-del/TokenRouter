@@ -9,7 +9,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// TestOpenAIChatReasoningAliasForkConsumers 检查静默拒绝检测识别 reasoning 别名字段。
+// TestOpenAIChatReasoningAliasForkConsumers verifies that reasoning aliases prevent silent-refusal detection.
 func TestOpenAIChatReasoningAliasForkConsumers(t *testing.T) {
 	payload := `{"id":"chatcmpl-alias","model":"reasoning-model","choices":[{"index":0,"delta":{"reasoning":"fork reasoning"},"finish_reason":"stop"}]}`
 	var chunk protocolopenai.ChatCompletionsChunk

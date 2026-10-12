@@ -11,7 +11,7 @@ import (
 
 type providerLocalStats struct{ source usage.UsageLogRepository }
 
-// providerLocalStatsPairSource 描述用量仓储的双窗口查询能力。
+// providerLocalStatsPairSource queries provider usage for two windows together.
 type providerLocalStatsPairSource interface {
 	GetProviderWindowStatsPair(context.Context, int64, time.Time, time.Time) (*usage.ProviderStats, *usage.ProviderStats, error)
 }
@@ -24,7 +24,7 @@ type providerLocalStatsBatch struct {
 	batch providerLocalStatsBatchSource
 }
 
-// GetProviderWindowStatsPair 绑定合并查询；不可用时由提供商用例选择逐窗口回退。
+// GetProviderWindowStatsPair returns an error when combined queries are unavailable, allowing the caller to query each window.
 func (r providerLocalStats) GetProviderWindowStatsPair(ctx context.Context, id int64, first, second time.Time) (*provider.WindowStats, *provider.WindowStats, error) {
 	reader, ok := r.source.(providerLocalStatsPairSource)
 	if !ok {
@@ -63,7 +63,7 @@ func (r providerLocalStatsBatch) GetProviderWindowStatsBatch(ctx context.Context
 	return out, err
 }
 
-// newProviderLocalUsageStats 绑定 usage 查询，批量查询失败后的处理由 provider 决定。
+// newProviderLocalUsageStats exposes supported usage queries; the provider module handles batch failures.
 func newProviderLocalUsageStats(source usage.UsageLogRepository) provider.LocalUsageStats {
 	reader := providerLocalStats{source}
 	if batch, ok := source.(providerLocalStatsBatchSource); ok {

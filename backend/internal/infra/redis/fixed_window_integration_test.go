@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFixedWindowConcurrentCounts 检查并发计数的唯一性、获准请求数和窗口 TTL。
+// TestFixedWindowConcurrentCounts checks unique counts, admission totals, and window TTL.
 func TestFixedWindowConcurrentCounts(t *testing.T) {
 	client := startRedis(t, t.Context())
 	limiter := NewFixedWindowLimiter(client, "rate_limit:")

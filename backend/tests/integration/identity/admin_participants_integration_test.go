@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// adminFailure 在参与写入已经执行后返回错误，检测独立提交与漏回滚。
+// adminFailure returns an error after a participant writes, exposing premature commits or missed rollbacks.
 type adminFailure struct {
 	identity.AdminKeyParticipant
 	failure error
@@ -141,7 +141,7 @@ func TestAdminKeyGrantRollsBackIdentityParticipant(t *testing.T) {
 	require.Contains(t, reloaded.AllowedGroups, group.ID)
 }
 
-// outboxCount 只观察当前测试凭据的事件，保留已有触发器入队机制。
+// outboxCount counts trigger-enqueued events for the current test credential.
 func outboxCount(t *testing.T, integrationDB *sql.DB, ctx context.Context, key string) int {
 	t.Helper()
 	var n int

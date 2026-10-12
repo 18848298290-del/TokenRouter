@@ -17,13 +17,13 @@ import (
 	routingprovider "github.com/TokenFlux/TokenRouter/internal/routing/provider"
 )
 
-// adminModelRules 为管理目录测试提供候选和资格判断。
+// adminModelRules supplies candidates and eligibility checks for administrator catalog tests.
 type adminModelRules struct {
 	routing.CatalogueRules
 	models *providercore.ModelRulesSnapshot
 }
 
-// TestAdminCatalogResponseWireVariants 检查各 JSON 变体的零值字段和 Grok 省略字段。
+// TestAdminCatalogResponseWireVariants checks zero-value fields and Grok field omission.
 func TestAdminCatalogResponseWireVariants(t *testing.T) {
 	for _, tc := range []struct {
 		kind routing.AdminCatalogKind
@@ -55,7 +55,7 @@ func TestAdminCatalogResponseWireVariants(t *testing.T) {
 	}
 }
 
-// TestAvailableModelsUsesUnifiedCatalog 提供商配置决定候选，统一目录提供显示信息。
+// TestAvailableModelsUsesUnifiedCatalog checks that provider configuration selects candidates and the catalog supplies display data.
 func TestAvailableModelsUsesUnifiedCatalog(t *testing.T) {
 	parent := int64(1)
 	for _, tc := range []struct {

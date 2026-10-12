@@ -1,7 +1,7 @@
 package transport
 
-// Options 包含 app 传入的传输参数。
-// 参数解析区分 nil 和零值。
+// Options contains application-supplied transport settings.
+// A nil Options pointer selects defaults; some zero fields disable limits.
 type Options struct {
 	ValidateResolvedIP          bool
 	ConnectionPoolIsolation     string
@@ -17,7 +17,8 @@ type Options struct {
 	OpenAIHTTP2                 HTTP2Options
 }
 
-// HTTP2Options 保留开关、阈值及秒级时间配置，回退状态由 egress 持有。
+// HTTP2Options configures HTTP/2 and proxy fallback thresholds.
+// Egress owns the resulting fallback state.
 type HTTP2Options struct {
 	Enabled                   bool
 	AllowProxyFallbackToHTTP1 bool

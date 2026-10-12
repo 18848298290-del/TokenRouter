@@ -1,6 +1,6 @@
 package postgres
 
-// 本场景覆盖 payment/checkout.go、payment/checkout_draft.go 和本包 checkout.go，检查订单快照的生成与保存。
+// These scenarios cover order snapshot construction and persistence in payment/checkout.go, payment/checkout_draft.go, and this package's checkout.go.
 
 import (
 	"context"
@@ -113,7 +113,7 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	require.NotContains(t, order.ProviderSnapshot, "instance_name")
 }
 
-// TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot 验证套餐标价币种随订单固化。
+// TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot checks that the order retains the plan price currency.
 func TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)

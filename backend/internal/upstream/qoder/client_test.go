@@ -329,7 +329,7 @@ func TestHeadersNoHardcodedIP(t *testing.T) {
 	}
 }
 
-// TestQoderGatewayShouldFailoverRetryableUpstreamErrors 检查兼容请求可重试的上游错误，普通错误和 401 返回 false。
+// TestQoderGatewayShouldFailoverRetryableUpstreamErrors rejects ordinary errors and HTTP 401 for compatible requests.
 func TestQoderGatewayShouldFailoverRetryableUpstreamErrors(t *testing.T) {
 	require.True(t, MaySwitchCompatibleAttempt(&APIError{StatusCode: http.StatusTooManyRequests}))
 	require.True(t, MaySwitchCompatibleAttempt(&APIError{StatusCode: http.StatusBadGateway, Code: "115"}))

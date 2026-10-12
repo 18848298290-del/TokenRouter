@@ -1,6 +1,6 @@
 package postgres_test
 
-// 本场景覆盖 payment/provider_bindings.go、payment/visible_methods.go、payment/visible_selection.go、payment/resume.go、payment/checkout.go，以及本包 instances.go、management.go 的渠道查询。
+// These scenarios cover provider bindings, visible methods and selection, resume, and checkout, using instance queries in instances.go and management.go.
 
 import (
 	"context"

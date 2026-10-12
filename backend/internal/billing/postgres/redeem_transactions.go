@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// RedeemUserWriter 提供兑换所需的原子权益增量操作。
+// RedeemUserWriter applies atomic balance and concurrency increments for redemption.
 type RedeemUserWriter interface {
 	UpdateBalance(context.Context, int64, float64) error
 	UpdateConcurrency(context.Context, int64, int) error

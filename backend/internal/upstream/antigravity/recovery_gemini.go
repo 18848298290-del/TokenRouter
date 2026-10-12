@@ -53,7 +53,7 @@ func RecoverGemini(ctx context.Context, input GeminiRecoveryInput, resp *http.Re
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 	projectID, mappedModel, injectedBody, upstreamAction, accessToken := input.ProjectID, input.Model, input.Body, input.Action, input.AccessToken
-	// 模型兜底：模型不存在且开启 fallback 时，自动用 fallback 模型重试一次
+	// Retry a missing model once with the configured alternate model.
 	if options.FallbackEnabled(ctx) &&
 		options.IsModelNotFound(resp.StatusCode, respBody) {
 		fallbackModel := options.FallbackModel(ctx)
@@ -84,8 +84,8 @@ func RecoverGemini(ctx context.Context, input GeminiRecoveryInput, resp *http.Re
 		}
 	}
 
-	// Gemini 原生请求中的 thoughtSignature 可能来自旧上下文/旧提供商，触发上游严格校验后返回
-	// "Corrupted thought signature."。检测到此类 400 时，将 thoughtSignature 清理为 dummy 值后重试一次。
+	// Historical thought signatures can fail validation when their context or provider changes.
+	// For a signature-related 400, clean the signatures and retry once.
 	signatureCheckBody := respBody
 	if unwrapped, unwrapErr := (&ResponseAdapter{}).UnwrapV1InternalResponse(respBody); unwrapErr == nil && len(unwrapped) > 0 {
 		signatureCheckBody = unwrapped

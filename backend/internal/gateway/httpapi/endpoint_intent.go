@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// IsBatchImageManagementRequest 标识不会创建新生成任务的批任务管理请求。
+// IsBatchImageManagementRequest identifies batch queries, deletion, and cancellation rather than new generation.
 func IsBatchImageManagementRequest(method, path string) bool {
 	path = strings.TrimRight(path, "/")
 	const root = "/v1/images/batches"
@@ -18,14 +18,14 @@ func IsBatchImageManagementRequest(method, path string) bool {
 	return method == http.MethodPost && strings.HasPrefix(path, root+"/") && strings.HasSuffix(path, "/cancel")
 }
 
-// IsBatchImageBillingBypassRequest 排除模型列表，仅让既有批任务的查询和管理绕过计费。
+// IsBatchImageBillingBypassRequest identifies existing-batch management; model lists still undergo billing checks.
 func IsBatchImageBillingBypassRequest(method, path string) bool {
 	path = strings.TrimRight(path, "/")
 	return path != "/v1/images/batches/models" && IsBatchImageManagementRequest(method, path)
 }
 
-// IsAPIKeyNonConsumingRequest 标识只读取已有状态或释放资源的网关请求。
-// 未知路径按消费请求检查团队限额。
+// IsAPIKeyNonConsumingRequest identifies queries, counting, and resource cleanup exempt from consumption limits.
+// Unknown paths undergo consuming-request team-limit checks.
 func IsAPIKeyNonConsumingRequest(method, path string) bool {
 	path = strings.TrimRight(path, "/")
 	if IsAPIKeyUsageRequest(method, path) {
@@ -45,8 +45,8 @@ func IsAPIKeyNonConsumingRequest(method, path string) bool {
 	return false
 }
 
-// IsAPIKeyUsageRequest 识别两套 Claude 风格的 Key 用量查询入口。
-// 查询读取 Key 自身状态，订阅或 Key 配额耗尽时仍可查询。
+// IsAPIKeyUsageRequest identifies the two Claude-style key usage endpoints.
+// They expose key state even when subscription or key quotas are exhausted.
 func IsAPIKeyUsageRequest(method, path string) bool {
 	if method != http.MethodGet {
 		return false

@@ -28,13 +28,13 @@ import (
 
 const apiKeyLimitUpperBound = apikey.KeyApiKeyLimitUpperBound
 
-// billingModeSubscriptionRepoStub 只实现 API Key 结算配置读取需要的订阅查询。
+// billingModeSubscriptionRepoStub supplies subscription lookups for key funding configuration.
 type billingModeSubscriptionRepoStub struct {
 	billing.UserSubscriptionRepository
 	subscriptions map[int64]*billing.UserSubscription
 }
 
-// billingModeUserRepoStub 按 ID 返回成员或 Owner，便于验证团队 Key 的付款主体隔离。
+// billingModeUserRepoStub returns members or owners by ID to check payer selection for team keys.
 type billingModeUserRepoStub struct {
 	identity.UserRepository
 
@@ -52,19 +52,13 @@ type authUserGroupRateRepoStub struct {
 	calls     []int64
 }
 
-// apiKeyRepoStub 是 APIKeyRepository 接口的测试桩实现。
-// APIKeyService.Delete 的测试通过它设置仓储返回值并记录删除操作。
-//
-// 设计说明：
-//   - apiKey/getByIDErr: 模拟 GetKeyAndOwnerID 返回的记录与错误
-//   - deleteErr: 模拟 Delete 返回的错误
-//   - deletedIDs: 记录被调用删除的 API Key ID，用于断言验证
+// apiKeyRepoStub supplies lookup results and records key writes for service tests.
 type apiKeyRepoStub struct {
-	apiKey              *apikey.APIKey // 轻量查询返回的记录
-	getByIDErr          error          // 轻量查询的错误返回值
-	deleteErr           error          // 删除操作的错误返回值
-	updateErr           error          // 更新操作的错误返回值
-	deletedIDs          []int64        // 记录已删除的密钥编号列表
+	apiKey              *apikey.APIKey // Record returned by key lookups
+	getByIDErr          error          // Lookup error
+	deleteErr           error          // Deletion error
+	updateErr           error          // Update error
+	deletedIDs          []int64        // IDs passed to deletion methods
 	updatedKeys         []apikey.APIKey
 	allowListByUserID   bool
 	listByUserIDKeys    []apikey.APIKey
@@ -77,14 +71,10 @@ type apiKeyRepoStub struct {
 	touchedUsedAts      []time.Time
 }
 
-// apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。
-// 用于验证删除操作时缓存清理逻辑是否被正确调用。
-//
-// 设计说明：
-//   - invalidated: 记录被清除缓存的用户 ID 列表
+// apiKeyCacheStub records creation-counter and authentication-cache invalidation.
 type apiKeyCacheStub struct {
-	invalidated    []int64  // 记录调用 DeleteCreateAttemptCount 时传入的用户 ID
-	deleteAuthKeys []string // 记录调用 DeleteAuthCache 时传入的缓存 key
+	invalidated    []int64  // User IDs passed to DeleteCreateAttemptCount
+	deleteAuthKeys []string // Cache keys passed to DeleteAuthCache
 }
 
 type apiKeyNameSanitizeRepoStub struct {
@@ -114,7 +104,7 @@ type updateFieldsAPIKeyRepoStub struct {
 	updateFields []apikey.APIKeyUpdateFields
 }
 
-// userRepoStub 为 Key 用例提供用户读取，未配置的方法调用会失败。
+// userRepoStub supplies user reads; calls to unconfigured methods fail.
 type userRepoStub struct {
 	identity.UserRepository
 	user *identity.User
@@ -125,7 +115,7 @@ type fakeTeamRepository struct {
 	teamContext *team.TeamContext
 }
 
-// stubConcurrencyCacheForTest 为 scheduler 并发读取器提供测试缓存数据。
+// stubConcurrencyCacheForTest supplies cached key request counts to the scheduler reader.
 type stubConcurrencyCacheForTest struct {
 	scheduler.ConcurrencyCache
 	apiKeyConcurrency map[int64]int
@@ -356,9 +346,7 @@ func TestAPIKeyService_UpdateInactiveTeamKeyBillingModeUsesTeamOwner(t *testing.
 	require.Equal(t, preferredID, *updated.PreferredSubscriptionID)
 }
 
-// TestAPIKeyServiceManagedKeyHidden 校验创作台隐藏执行 Key 不暴露存在性：
-// GetByID/Update/Delete 命中 managed_by='creative_studio' 的 Key 一律按不存在处理，
-// 且普通 Key 的对照组行为保持不变。
+// TestAPIKeyServiceManagedKeyHidden checks that user reads, updates, and deletes treat managed keys as missing.
 func TestAPIKeyServiceManagedKeyHidden(t *testing.T) {
 	ctx := context.Background()
 	managedBy := creative.CreativeManagedBy
@@ -374,19 +362,19 @@ func TestAPIKeyServiceManagedKeyHidden(t *testing.T) {
 	svc := testkit.NewService(repo, nil, nil, nil, nil, nil, nil)
 	svc.Start()
 
-	// 托管密钥的详情查询返回 ErrAPIKeyNotFound 和空结果。
+	// Reading a managed key returns no key and ErrAPIKeyNotFound.
 	got, err := svc.GetByID(ctx, 42)
 	require.Nil(t, got)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, apikey.ErrAPIKeyNotFound), "managed key GetByID 必须返回 ErrAPIKeyNotFound")
 
-	// 更新：拒绝操作且不暴露存在性。
+	// Updating a managed key must also hide its existence.
 	hackedName := "hacked"
 	updated, err := svc.Update(ctx, 42, 7, apikey.UpdateAPIKeyRequest{Name: &hackedName})
 	require.Nil(t, updated)
 	require.True(t, errors.Is(err, apikey.ErrAPIKeyNotFound), "managed key Update 必须返回 ErrAPIKeyNotFound")
 
-	// 删除：拒绝操作，DeleteWithAudit 不得被调用。
+	// Reject deletion before calling DeleteWithAudit.
 	err = svc.Delete(ctx, 42, 7)
 	require.True(t, errors.Is(err, apikey.ErrAPIKeyNotFound), "managed key Delete 必须返回 ErrAPIKeyNotFound")
 	require.Empty(t, repo.deletedIDs, "managed key 不得进入删除流程")
@@ -965,7 +953,7 @@ func TestAPIKeyService_GetByKey_SingleflightCollapses(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls))
 }
 
-// TestAPIKeyServiceZeroValueLookup 保持旧零值入口在 WS 快照复查时返回未找到。
+// TestAPIKeyServiceZeroValueLookup checks that an unconfigured service returns a missing-key error.
 func TestAPIKeyServiceZeroValueLookup(t *testing.T) {
 	var svc apikey.APIKeyService
 	key, err := svc.GetByKey(context.Background(), "sk-zero-value")
@@ -974,13 +962,7 @@ func TestAPIKeyServiceZeroValueLookup(t *testing.T) {
 	require.Equal(t, "get api key: "+apikey.ErrAPIKeyNotFound.Error(), err.Error())
 }
 
-// TestApiKeyService_Delete_OwnerMismatch 测试非所有者尝试删除时返回权限错误。
-// 预期行为：
-//   - GetKeyAndOwnerID 返回所有者 ID 为 1
-//   - 调用者 userID 为 2（不匹配）
-//   - 返回 ErrInsufficientPerms 错误
-//   - Delete 方法不被调用
-//   - 缓存不被清除
+// TestApiKeyService_Delete_OwnerMismatch rejects a different user before deletion or cache invalidation.
 func TestApiKeyService_Delete_OwnerMismatch(t *testing.T) {
 	repo := &apiKeyRepoStub{
 		apiKey: &apikey.APIKey{ID: 10, UserID: 1, Key: "k"},
@@ -988,19 +970,14 @@ func TestApiKeyService_Delete_OwnerMismatch(t *testing.T) {
 	cache := &apiKeyCacheStub{}
 	svc := newAPIKeyTestService(apiKeyTestDependencies{apiKeyRepo: repo, cache: cache})
 
-	err := svc.Delete(context.Background(), 10, 2) // API Key ID=10, 调用者 userID=2
+	err := svc.Delete(context.Background(), 10, 2) // Key 10 belongs to user 1; user 2 attempts deletion.
 	require.ErrorIs(t, err, identity.ErrInsufficientPerms)
-	require.Empty(t, repo.deletedIDs)   // 验证删除操作未被调用
-	require.Empty(t, cache.invalidated) // 验证缓存未被清除
+	require.Empty(t, repo.deletedIDs)   // No deletion attempted
+	require.Empty(t, cache.invalidated) // No creation-counter invalidation
 	require.Empty(t, cache.deleteAuthKeys)
 }
 
-// TestApiKeyService_Delete_NotFound 测试删除不存在的 API Key 时返回正确的错误。
-// 预期行为：
-//   - GetKeyAndOwnerID 返回 ErrAPIKeyNotFound 错误
-//   - 返回 ErrAPIKeyNotFound 错误（被 fmt.Errorf 包装）
-//   - Delete 方法不被调用
-//   - 缓存不被清除
+// TestApiKeyService_Delete_NotFound propagates the lookup error before deletion or cache invalidation.
 func TestApiKeyService_Delete_NotFound(t *testing.T) {
 	repo := &apiKeyRepoStub{getByIDErr: apikey.ErrAPIKeyNotFound}
 	cache := &apiKeyCacheStub{}
@@ -1047,13 +1024,7 @@ func TestAPIKeyService_GetByID_FillsCurrentConcurrency(t *testing.T) {
 	require.Equal(t, 4, key.CurrentConcurrency)
 }
 
-// TestApiKeyService_Delete_DeleteFails 测试删除操作失败时的错误处理。
-// 预期行为：
-//   - GetKeyAndOwnerID 返回正确的所有者 ID
-//   - 所有权验证通过
-//   - DeleteWithAudit 被调用但返回错误
-//   - 删除失败时缓存不被清除（缓存清理在删除成功后执行，消除竞态）
-//   - 返回包含 "delete api key" 的错误信息
+// TestApiKeyService_Delete_DeleteFails reports the persistence failure and leaves caches intact.
 func TestApiKeyService_Delete_DeleteFails(t *testing.T) {
 	repo := &apiKeyRepoStub{
 		apiKey:    &apikey.APIKey{ID: 42, UserID: 3, Key: "k"},
@@ -1062,12 +1033,12 @@ func TestApiKeyService_Delete_DeleteFails(t *testing.T) {
 	cache := &apiKeyCacheStub{}
 	svc := newAPIKeyTestService(apiKeyTestDependencies{apiKeyRepo: repo, cache: cache})
 
-	err := svc.Delete(context.Background(), 3, 3) // API Key ID=3, 调用者 userID=3
+	err := svc.Delete(context.Background(), 3, 3) // The fixture supplies user 3 as owner.
 	require.Error(t, err)
 	require.ErrorContains(t, err, "delete api key")
-	require.Equal(t, []int64{3}, repo.deletedIDs) // 验证 DeleteWithAudit 被调用
-	require.Empty(t, cache.invalidated)           // 验证删除失败时缓存未被清除（新顺序：先删后清）
-	require.Empty(t, cache.deleteAuthKeys)        // 验证删除失败时 auth 缓存未被清除
+	require.Equal(t, []int64{3}, repo.deletedIDs) // DeleteWithAudit was attempted
+	require.Empty(t, cache.invalidated)           // Creation-counter cache remains intact
+	require.Empty(t, cache.deleteAuthKeys)        // Authentication cache remains intact
 }
 
 func TestAPIKeyService_Create_EscapesNameBeforePersist(t *testing.T) {
@@ -1171,7 +1142,7 @@ func TestAPIKeyService_UpdatePersistsFastModePolicy(t *testing.T) {
 	require.Equal(t, apikey.APIKeyFastModePolicyForceOff, repo.updated[0].FastModePolicy)
 }
 
-// TestAPIKeyService_UpdatePreservesOmittedIPRestrictions 检查部分更新省略 IP 限制字段时使用数据库中的配置。
+// TestAPIKeyService_UpdatePreservesOmittedIPRestrictions checks that omitted rule fields retain their values.
 func TestAPIKeyService_UpdatePreservesOmittedIPRestrictions(t *testing.T) {
 	repo := &apiKeyNameSanitizeRepoStub{
 		apiKey: &apikey.APIKey{
@@ -1192,7 +1163,7 @@ func TestAPIKeyService_UpdatePreservesOmittedIPRestrictions(t *testing.T) {
 	require.Equal(t, []string{"198.51.100.0/24"}, updated.IPBlacklist)
 }
 
-// TestAPIKeyService_UpdateClearsExplicitEmptyIPRestriction 检查空数组清空对应的 IP 限制，省略的另一字段使用数据库中的配置。
+// TestAPIKeyService_UpdateClearsExplicitEmptyIPRestriction clears an empty rule set while retaining the omitted set.
 func TestAPIKeyService_UpdateClearsExplicitEmptyIPRestriction(t *testing.T) {
 	repo := &apiKeyNameSanitizeRepoStub{
 		apiKey: &apikey.APIKey{
@@ -1214,7 +1185,7 @@ func TestAPIKeyService_UpdateClearsExplicitEmptyIPRestriction(t *testing.T) {
 	require.Equal(t, []string{"198.51.100.0/24"}, updated.IPBlacklist)
 }
 
-// TestAPIKeyService_UpdateRejectsInvalidIPRestriction 检查 IP 限制更新会校验模式格式。
+// TestAPIKeyService_UpdateRejectsInvalidIPRestriction checks pattern validation during updates.
 func TestAPIKeyService_UpdateRejectsInvalidIPRestriction(t *testing.T) {
 	repo := &apiKeyNameSanitizeRepoStub{
 		apiKey: &apikey.APIKey{ID: 11, UserID: 7, Key: "sk_existing_ip_key_03", Status: billing.StatusActive},
@@ -1369,7 +1340,7 @@ func TestAPIKeyUpdateClearsModelMappingWithEmptyObject(t *testing.T) {
 	require.Equal(t, []apikey.APIKeyUpdateFields{{ModelMapping: true}}, repo.updateFields)
 }
 
-// TestAPIKeyUpdate_DeclaresUsageColumnsOnExplicitReset 检查重置用量时将对应列加入更新列表。
+// TestAPIKeyUpdate_DeclaresUsageColumnsOnExplicitReset checks that resets select the corresponding usage columns.
 func TestAPIKeyUpdate_DeclaresUsageColumnsOnExplicitReset(t *testing.T) {
 	reset := true
 	svc, repo := newUpdateFieldsAPIKeyService(&apikey.APIKey{
@@ -1384,7 +1355,7 @@ func TestAPIKeyUpdate_DeclaresUsageColumnsOnExplicitReset(t *testing.T) {
 	require.Equal(t, []apikey.APIKeyUpdateFields{{QuotaUsed: true, RateLimitUsage: true}}, repo.updateFields)
 }
 
-// TestAPIKeyUpdate_DeclaresStatusWhenReactivated 验证配额扩容会顺带把 quota_exhausted 复活为 active，此时必须声明 status。
+// TestAPIKeyUpdate_DeclaresStatusWhenReactivated checks that increasing quota selects the reactivated status for persistence.
 func TestAPIKeyUpdate_DeclaresStatusWhenReactivated(t *testing.T) {
 	quota := 500.0
 	svc, repo := newUpdateFieldsAPIKeyService(&apikey.APIKey{
@@ -1396,8 +1367,8 @@ func TestAPIKeyUpdate_DeclaresStatusWhenReactivated(t *testing.T) {
 	require.Equal(t, []apikey.APIKeyUpdateFields{{Quota: true, Status: true}}, repo.updateFields)
 }
 
-// TestUpdateQuotaUsed_ExhaustedMarkOnlyDeclaresStatus 验证计费热路径把 Key 标记为配额耗尽时只写 status，
-// 否则会把刚原子递增的 quota_used 按快照覆盖掉。
+// TestUpdateQuotaUsed_ExhaustedMarkOnlyDeclaresStatus checks that exhaustion writes status alone.
+// A full snapshot write would overwrite the atomic quota increment.
 func TestUpdateQuotaUsed_ExhaustedMarkOnlyDeclaresStatus(t *testing.T) {
 	repo := &updateFieldsAPIKeyRepoStub{key: &apikey.APIKey{
 		ID: 1, UserID: 7, Key: "sk-test", Status: billing.StatusActive, Quota: 10, QuotaUsed: 10,
@@ -1479,7 +1450,7 @@ func TestAPIKeyServiceRejectsInvalidLimitsBeforeRepositoryAccess(t *testing.T) {
 	t.Parallel()
 
 	service := newAPIKeyTestService(apiKeyTestDependencies{})
-	// 故意不提供 context，确保数值校验先于任何仓储访问。
+	// A nil context makes accidental repository access fail before input validation.
 	var requestContext context.Context
 	_, createErr := service.Create(requestContext, 1, apikey.CreateAPIKeyRequest{GroupID: sanitizeFixtureGroupID(), Quota: -1})
 	require.ErrorIs(t, createErr, apikey.ErrAPIKeyLimitInvalid)
@@ -1521,7 +1492,7 @@ func TestValidateTeamKeyLifecycle(t *testing.T) {
 	}
 }
 
-// TestAPIKeyCreateRequiresExplicitPositiveGroup 验证未绑定分组的普通 Key 在创建时拒绝，不尝试读取或创建默认分组。
+// TestAPIKeyCreateRequiresExplicitPositiveGroup rejects ordinary keys without a valid group before repository access.
 func TestAPIKeyCreateRequiresExplicitPositiveGroup(t *testing.T) {
 	zero, negative := int64(0), int64(-1)
 	for _, groupID := range []*int64{nil, &zero, &negative} {
@@ -1532,7 +1503,7 @@ func TestAPIKeyCreateRequiresExplicitPositiveGroup(t *testing.T) {
 	}
 }
 
-// TestAPIKeyLoadingPreservesUnboundLegacyKey 验证历史无组 Key 的字符串保持可管理，加载时不偷偷绑定其它分组。
+// TestAPIKeyLoadingPreservesUnboundLegacyKey checks that loading a legacy unbound key does not assign a group.
 func TestAPIKeyLoadingPreservesUnboundLegacyKey(t *testing.T) {
 	repo := &authRepoStub{getByKeyForAuth: func(_ context.Context, key string) (*apikey.APIKey, error) {
 		return &apikey.APIKey{ID: 19, UserID: 7, Key: key, Status: billing.StatusActive, User: &identity.User{ID: 7, Status: billing.StatusActive, Role: identity.RoleUser}}, nil
@@ -1754,14 +1725,13 @@ func (s *apiKeyRepoStub) Update(ctx context.Context, key *apikey.APIKey, _ apike
 	return s.updateErr
 }
 
-// Delete 记录被删除的 API Key ID 并返回预设的错误。
-// 通过 deletedIDs 可以验证删除操作是否被正确调用。
+// Delete records the requested key ID and returns the configured error.
 func (s *apiKeyRepoStub) Delete(ctx context.Context, id int64) error {
 	s.deletedIDs = append(s.deletedIDs, id)
 	return s.deleteErr
 }
 
-// DeleteWithAudit 与 Delete 一样记录被删除的 ID,供 service 测试断言。
+// DeleteWithAudit records the requested key ID for service assertions.
 func (s *apiKeyRepoStub) DeleteWithAudit(ctx context.Context, id int64) error {
 	s.deletedIDs = append(s.deletedIDs, id)
 	return s.deleteErr
@@ -1851,29 +1821,28 @@ func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*apike
 	panic("unexpected GetRateLimitData call")
 }
 
-// GetCreateAttemptCount 返回 0，表示用户未超过创建次数限制。
+// GetCreateAttemptCount returns zero so these tests are not creation-rate-limited.
 func (s *apiKeyCacheStub) GetCreateAttemptCount(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }
 
-// IncrementCreateAttemptCount 空实现，本测试不验证此行为。
+// IncrementCreateAttemptCount is a no-op in this fixture.
 func (s *apiKeyCacheStub) IncrementCreateAttemptCount(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// DeleteCreateAttemptCount 记录被清除缓存的用户 ID。
-// 删除 API Key 时会调用此方法清除用户的创建尝试计数缓存。
+// DeleteCreateAttemptCount records the user whose creation counter was cleared.
 func (s *apiKeyCacheStub) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
 	s.invalidated = append(s.invalidated, userID)
 	return nil
 }
 
-// IncrementDailyUsage 空实现，本测试不验证此行为。
+// IncrementDailyUsage is a no-op in this fixture.
 func (s *apiKeyCacheStub) IncrementDailyUsage(ctx context.Context, apiKey string) error {
 	return nil
 }
 
-// SetDailyUsageExpiry 空实现，本测试不验证此行为。
+// SetDailyUsageExpiry is a no-op in this fixture.
 func (s *apiKeyCacheStub) SetDailyUsageExpiry(ctx context.Context, apiKey string, ttl time.Duration) error {
 	return nil
 }
@@ -2012,7 +1981,7 @@ func (s *apiKeyNameSanitizeRepoStub) GetRateLimitData(ctx context.Context, id in
 	panic("unexpected GetRateLimitData call")
 }
 
-// sanitizeFixtureGroupID 名称与配置测试使用明确的普通分组。
+// sanitizeFixtureGroupID selects an ordinary group for name and configuration tests.
 func sanitizeFixtureGroupID() *int64 { id := int64(1); return &id }
 
 func (s *quotaStateRepoStub) IncrementQuotaUsedAndGetState(ctx context.Context, id int64, amount float64) (*apikey.APIKeyQuotaUsageState, error) {
@@ -2169,7 +2138,7 @@ func (s *quotaBaseAPIKeyRepoStub) GetRateLimitData(context.Context, int64) (*api
 	panic("unexpected GetRateLimitData call")
 }
 
-// IncrementQuotaUsed 模拟计费热路径上的原子递增：只动 quota_used。
+// IncrementQuotaUsed simulates the billing increment by changing quota_used alone.
 func (s *updateFieldsAPIKeyRepoStub) IncrementQuotaUsed(_ context.Context, _ int64, amount float64) (float64, error) {
 	s.key.QuotaUsed += amount
 	return s.key.QuotaUsed, nil

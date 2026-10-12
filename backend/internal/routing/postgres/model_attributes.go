@@ -18,7 +18,7 @@ const attributeSelect = `SELECT c.id,c.name,c.description,c.status,c.rules,c.cre
  COALESCE((SELECT array_agg(g.group_id ORDER BY g.group_id) FROM model_attribute_config_groups g WHERE g.config_id=c.id),'{}'::bigint[])
  FROM model_attribute_configs c `
 
-// ModelAttributeStore 独立保存属性档案，所有写操作在事务内替换分组关联。
+// ModelAttributeStore saves profiles and replaces their group associations in a transaction.
 type ModelAttributeStore struct{ db *sql.DB }
 
 func NewModelAttributeStore(db *sql.DB) *ModelAttributeStore { return &ModelAttributeStore{db: db} }
@@ -71,7 +71,7 @@ func (s *ModelAttributeStore) ForGroup(ctx context.Context, id int64) (*routing.
 	return value, err
 }
 
-// ForGroups 一次读取指定分组关联的启用档案，同一档案的规则解码一次。
+// ForGroups reads active profiles for the requested groups, decoding each shared profile once.
 func (s *ModelAttributeStore) ForGroups(ctx context.Context, ids []int64) (map[int64]*routing.ModelAttributeConfig, error) {
 	result := make(map[int64]*routing.ModelAttributeConfig, len(ids))
 	if len(ids) == 0 {
@@ -160,7 +160,7 @@ func (s *ModelAttributeStore) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// optionalAttributeTimestamp 对创建和内部无版本调用使用空条件。
+// optionalAttributeTimestamp returns nil for an unset optimistic-lock version.
 func optionalAttributeTimestamp(value time.Time) any {
 	if value.IsZero() {
 		return nil

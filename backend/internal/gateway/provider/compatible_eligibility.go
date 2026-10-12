@@ -12,22 +12,22 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// AllowsCompatibleCompact 保留 Grok 与 OpenAI 的 Compact 资格差异。
+// AllowsCompatibleCompact applies the Grok and OpenAI Compact eligibility rules.
 func AllowsCompatibleCompact(provider *ExecutionProvider) bool {
 	return provider != nil && (provider.View().IsGrok() || provider.View().AllowsOpenAICompact())
 }
 
-// CompatibleProviderEligible 判断 OpenAI 兼容提供商是否满足本次请求的调度条件。
-// 检查内容包括：平台匹配、提供商可用性、quota 自动暂停、spark 路由限制、模型支持及端点能力。
+// CompatibleProviderEligible reports whether a provider can serve this request.
+// It checks platform, availability, quota pause, Spark restrictions, models, and endpoints.
 //
-// 注意：对 spark 影子提供商，调用方还须额外调用 parentHealthyForShadow(provider, lookup)
-// 检查母提供商凭据可用性；该检查未内置于本函数，以避免注入 DB 依赖。
+// Callers must also check parent credential health for Spark shadow providers.
+// That lookup remains outside this function to avoid a database dependency.
 func CompatibleProviderEligible(ctx context.Context, provider *ExecutionProvider, platform string, requestedModel string, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) bool {
 	return CompatibleEligibilityReason(ctx, provider, platform, requestedModel, requireCompact, requiredCapability) == ""
 }
 
-// CompatibleEligibilityReason 返回兼容性判断结果和首个拦截原因。
-// 负载批处理根据拒绝原因生成服务端的无可用提供商诊断。
+// CompatibleEligibilityReason returns eligibility and the first rejection reason.
+// Load batching uses the reason to diagnose unavailable providers.
 // @project-doc docs/architecture/provider_scheduling_and_cache.md#advanced_scheduler_selection
 func CompatibleEligibilityReason(ctx context.Context, provider *ExecutionProvider, platform string, requestedModel string, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) string {
 	platform = strings.TrimSpace(platform)
@@ -90,12 +90,12 @@ func CompatibleEligibilityReason(ctx context.Context, provider *ExecutionProvide
 	return ""
 }
 
-// OpenAIQuotaPause 使用当前时刻和本次请求阈值读取提供商派生状态。
+// OpenAIQuotaPause evaluates quota state using the current time and request thresholds.
 func OpenAIQuotaPause(ctx context.Context, provider *ExecutionProvider) (bool, providercore.QuotaAutoPauseDecision) {
 	return evaluateOpenAIQuotaPause(ctx, provider, time.Now())
 }
 
-// evaluateOpenAIQuotaPause 将提供商记录和请求阈值交给提供商模块判断自动暂停。
+// evaluateOpenAIQuotaPause delegates quota pause evaluation to the provider module.
 func evaluateOpenAIQuotaPause(ctx context.Context, v *ExecutionProvider, now time.Time) (bool, providercore.QuotaAutoPauseDecision) {
 	if v == nil {
 		return false, providercore.QuotaAutoPauseDecision{}
@@ -103,8 +103,8 @@ func evaluateOpenAIQuotaPause(ctx context.Context, v *ExecutionProvider, now tim
 	return providercore.EvaluateQuotaAutoPause(v.Record.Platform, v.Record.Extra, QuotaAutoPauseSettings(ctx), now)
 }
 
-// WithQuotaAutoPauseSettings 把 OpenAI 配额自动暂停全局设置放进 context，
-// 让调度、展示和容量统计复用完全一致的阈值解析逻辑。
+// WithQuotaAutoPauseSettings stores global OpenAI quota thresholds in the request snapshot.
+// Selection, display, and capacity calculations share these thresholds.
 func WithQuotaAutoPauseSettings(ctx context.Context, settings providercore.QuotaAutoPauseSettings) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -115,18 +115,18 @@ func WithQuotaAutoPauseSettings(ctx context.Context, settings providercore.Quota
 	return requeststate.WithExecutionHints(ctx, hints)
 }
 
-// QuotaAutoPauseSettings 读取选择和固定提供商复核共享的请求快照。
+// QuotaAutoPauseSettings reads the snapshot shared by selection and pinned-provider checks.
 func QuotaAutoPauseSettings(ctx context.Context) providercore.QuotaAutoPauseSettings {
 	hints := requeststate.ExecutionHintsFromContext(ctx)
 	return providercore.QuotaAutoPauseSettings{DefaultThreshold5h: hints.QuotaAutoPauseThreshold5h, DefaultThreshold7d: hints.QuotaAutoPauseThreshold7d}
 }
 
-// GrokQuotaPause 调用 provider 的 Grok 配额窗口规则。
+// GrokQuotaPause evaluates the provider module's Grok quota-window rules.
 func GrokQuotaPause(value *ExecutionProvider) (bool, providercore.QuotaAutoPauseDecision) {
 	return providercore.EvaluateGrokQuotaAutoPause(ExecutionRecord(value), time.Now)
 }
 
-// SupportsRequestCapability 依次检查 WS、Compact 和普通 HTTP 的协议资格。
+// SupportsRequestCapability checks WS, Compact, then ordinary HTTP eligibility.
 func SupportsRequestCapability(ctx context.Context, provider *ExecutionProvider, capability providercore.OpenAIEndpointCapability) bool {
 	if provider == nil {
 		return false

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// statsCancellationRepo 将查询停在读取阶段，便于交错两个 HTTP 请求的取消。
+// statsCancellationRepo blocks reads so the test can interleave cancellation of two requests.
 type statsCancellationRepo struct {
 	UsageLogRepository
 	started chan struct{}
@@ -18,7 +18,7 @@ type statsCancellationRepo struct {
 	calls   atomic.Int32
 }
 
-// joinedStatsContext 在等待者进入取消选择时通知测试。
+// joinedStatsContext signals when a waiter checks its cancellation channel.
 type joinedStatsContext struct {
 	context.Context
 	joined chan struct{}
@@ -43,11 +43,11 @@ func TestUsageStatsCacheKey_StableAndDistinct(t *testing.T) {
 	withUser.UserID = 7
 	require.NotEqual(t, k1, usageStatsCacheKey(withUser), "different user must change key")
 
-	// 团队维度必须参与缓存键，防止切换团队后复用旧汇总。
+	// Team IDs keep one team's cached summary from being reused for another.
 	withTeam := base
 	withTeam.TeamID = 11
 	require.NotEqual(t, k1, usageStatsCacheKey(withTeam), "different team must change key")
-	// 同一范围的不同端点图分别缓存。
+	// Each endpoint dimension has a distinct cache entry for the same range.
 	keys := map[string]bool{k1: true}
 	for _, source := range []string{"inbound", "upstream", "path"} {
 		filtered := base
@@ -58,7 +58,7 @@ func TestUsageStatsCacheKey_StableAndDistinct(t *testing.T) {
 	}
 }
 
-// GetStatsWithFilters 等待测试释放查询或底层上下文取消。
+// GetStatsWithFilters waits for release or cancellation of the shared query context.
 func (r *statsCancellationRepo) GetStatsWithFilters(ctx context.Context, _ UsageLogFilters) (*UsageStats, error) {
 	if r.calls.Add(1) == 1 {
 		close(r.started)
@@ -71,13 +71,13 @@ func (r *statsCancellationRepo) GetStatsWithFilters(ctx context.Context, _ Usage
 	}
 }
 
-// Done 在等待登记完成后通知主测试协程。
+// Done signals the test when the waiter checks for cancellation.
 func (c *joinedStatsContext) Done() <-chan struct{} {
 	c.once.Do(func() { close(c.joined) })
 	return c.Context.Done()
 }
 
-// TestStatsCanceledLeaderKeepsLiveWaiter 复现首请求退出时同筛选的另一个请求仍在等待。
+// TestStatsCanceledLeaderKeepsLiveWaiter checks that canceling the first request leaves another waiter active.
 func TestStatsCanceledLeaderKeepsLiveWaiter(t *testing.T) {
 	repo := &statsCancellationRepo{started: make(chan struct{}), release: make(chan struct{})}
 	service := NewUsageService(repo)

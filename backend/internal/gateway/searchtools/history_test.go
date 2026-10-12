@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	// emulatedWebSearchBody 模拟后续 /v1/messages 请求，其历史包含网关生成的
-	// server_tool_use、web_search_tool_result 和文本摘要。
+	// emulatedWebSearchBody represents a later /v1/messages request with gateway-generated
+	// server_tool_use, web_search_tool_result, and summary text in its history.
 	emulatedWebSearchBody = `{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[` +
 		`{"role":"user","content":[{"type":"text","text":"search the weather"}]},` +
 		`{"role":"assistant","content":[` +
@@ -18,7 +18,7 @@ const (
 		`{"type":"text","text":"Here are the search results for \"weather\":"}]},` +
 		`{"role":"user","content":[{"type":"text","text":"thanks, continue"}]}]}`
 
-	// genuineWebSearchBody 保存 Anthropic 上游 web search 块，其 ID 使用上游格式。
+	// genuineWebSearchBody contains Anthropic search blocks with upstream-issued IDs.
 	genuineWebSearchBody = `{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[` +
 		`{"role":"user","content":[{"type":"text","text":"search"}]},` +
 		`{"role":"assistant","content":[` +
@@ -42,7 +42,7 @@ func TestFilterWebSearchHistoryBlocks_StripsEmulatedBlocksForAnthropicStrict(t *
 	out := FilterWebSearchHistoryBlocks([]byte(emulatedWebSearchBody), false)
 
 	require.Equal(t, []string{"text", "text", "text"}, collectContentTypes(t, out))
-	// 模拟响应中的文本摘要保存搜索上下文。
+	// The synthetic summary retains search context.
 	require.Contains(t, string(out), "Here are the search results")
 	require.NotContains(t, string(out), "srvtoolu_ws_")
 	require.True(t, gjson.ValidBytes(out))
@@ -56,7 +56,7 @@ func TestFilterWebSearchHistoryBlocks_KeepsGenuineBlocksForAnthropicStrict(t *te
 }
 
 func TestFilterWebSearchHistoryBlocks_StripsAllBlocksForPassbackRequired(t *testing.T) {
-	// GLM 拒绝 server_tool_use，转换时也剥离上游 web search 块。
+	// GLM rejects server_tool_use, so conversion also strips upstream-issued search blocks.
 	out := FilterWebSearchHistoryBlocks([]byte(genuineWebSearchBody), true)
 
 	require.Equal(t, []string{"text", "text"}, collectContentTypes(t, out))
@@ -106,7 +106,7 @@ func TestFilterWebSearchHistoryBlocks_EmptiedMessageGetsPlaceholder(t *testing.T
 }
 
 func TestFilterWebSearchHistoryBlocks_StringContentUntouched(t *testing.T) {
-	// 文本字符串中提及块类型不能触发重写。
+	// Mentioning a block type in text must not rewrite the message.
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[` +
 		`{"role":"user","content":"please explain \"server_tool_use\" blocks"}]}`)
 

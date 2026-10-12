@@ -27,7 +27,7 @@ type ModelsBackend interface {
 	SafeModelSegment(string) bool
 }
 
-// GeminiModelReader 读取已选执行目标的模型资源。
+// GeminiModelReader reads model resources from a selected execution target.
 type GeminiModelReader interface {
 	Read(context.Context, string) (*ModelHTTPResponse, error)
 }
@@ -78,7 +78,7 @@ func NewModelsHandler(backend ModelsBackend, catalog ModelsCatalog, attributes .
 	return result
 }
 
-// customListEnabled 从 routing 的分组规则读取自定义列表配置。
+// customListEnabled reads the group's custom model list setting.
 func customListEnabled(g *routing.Group) bool {
 	if g == nil {
 		return false
@@ -109,12 +109,12 @@ func (h *ModelsHandler) Models(c *gin.Context) {
 		platform = forcedPlatform
 	}
 
-	// 按分组映射、提供商映射和分组白名单解析可请求模型。
+	// Resolve requestable models through group and provider mappings and the group allowlist.
 	resolution := h.backend.Resolve(c.Request.Context(), groupID, platform)
 	h.captureModelAttributes(c, groupID, resolution.Models, "")
 	availableModels := routing.RequestableModelIDs(resolution.Models)
 	if apiKey != nil && apiKey.Group != nil && customListEnabled(apiKey.Group) {
-		// 自定义列表取已通过分组策略和提供商校验的模型交集。
+		// Custom lists intersect models that passed group policy and provider checks.
 		availableModels = FilterModelsByCustomList(availableModels, nil, apiKey.Group.ModelsListConfig.Models)
 		availableModels = apikey.AppendAPIKeyModelAliases(availableModels, apiKey.ModelMapping)
 		h.WriteCustomModelsList(c, platform, availableModels)
@@ -124,7 +124,7 @@ func (h *ModelsHandler) Models(c *gin.Context) {
 		availableModels = apikey.AppendAPIKeyModelAliases(availableModels, apiKey.ModelMapping)
 	}
 
-	// 普通模型目录统一使用 OpenAI 列表外形；品牌是逐模型元数据。
+	// The cross-platform catalogue uses an OpenAI list envelope with per-model ownership metadata.
 	if platform == "" {
 		h.WriteUnifiedModelsList(c, availableModels)
 		return

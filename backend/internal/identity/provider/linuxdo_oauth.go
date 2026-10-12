@@ -20,10 +20,10 @@ type (
 	LinuxDoTokenExchangeError = identity.LinuxDoTokenExchangeError
 )
 
-// LinuxDoClient 交换 LinuxDo 授权码并读取用户资料。
+// LinuxDoClient exchanges authorization codes and retrieves LinuxDo profiles.
 type LinuxDoClient struct{}
 
-// LinuxDoOptions 是 identity.LinuxDoOAuthOptions 的类型别名。
+// LinuxDoOptions aliases the identity module's LinuxDo configuration.
 type LinuxDoOptions = identity.LinuxDoOAuthOptions
 
 func (LinuxDoClient) ExchangeCode(ctx context.Context, o LinuxDoOptions, code, redirect, verifier string) (*LinuxDoTokenResponse, error) {
@@ -172,7 +172,7 @@ func LinuxDoParseUserInfo(body string, cfg LinuxDoOptions) (email string, userna
 
 	email = strings.TrimSpace(email)
 	if email == "" {
-		// LinuxDo Connect 的 userinfo 可能不提供 email。为兼容现有用户模型（email 必填且唯一），使用稳定的合成邮箱。
+		// LinuxDo may omit email; a stable synthetic address satisfies the required unique user email.
 		email = identity.OAuthLinuxDoSyntheticEmail(subject)
 	}
 

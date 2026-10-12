@@ -11,7 +11,8 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestOpenAIManualCapabilityMigrations 验证隔离旧表验证两轮迁移的回填、幂等以及无关配置保留。
+// TestOpenAIManualCapabilityMigrations checks backfill, replay, and retention of unrelated settings in
+// isolated legacy tables.
 func TestOpenAIManualCapabilityMigrations(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()

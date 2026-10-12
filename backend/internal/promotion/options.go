@@ -11,13 +11,13 @@ const (
 	AffiliateRebateRateDefault          = 20.0
 	AffiliateRebateRateMin              = 0.0
 	AffiliateRebateRateMax              = 100.0
-	AffiliateEnabledDefault             = false // 邀请返利总开关默认关闭
-	AffiliateRebateFreezeHoursDefault   = 0     // 0 表示不冻结
-	AffiliateRebateFreezeHoursMax       = 720   // 最大 30 天
-	AffiliateRebateDurationDaysDefault  = 0     // 0 表示永久有效
-	AffiliateRebateDurationDaysMax      = 3650  // 约 10 年
-	AffiliateRebatePerInviteeCapDefault = 0.0   // 推理积分上限，0 表示无上限
-	AdminRechargeRebateEnabledDefault   = false // 管理员充值默认不产生返利
+	AffiliateEnabledDefault             = false // Invite rebates default to disabled
+	AffiliateRebateFreezeHoursDefault   = 0     // Zero disables freezing
+	AffiliateRebateFreezeHoursMax       = 720   // 30 days in hours
+	AffiliateRebateDurationDaysDefault  = 0     // Zero means no expiration
+	AffiliateRebateDurationDaysMax      = 3650  // Approximately 10 years
+	AffiliateRebatePerInviteeCapDefault = 0.0   // Reasoning point cap; zero means unlimited
+	AdminRechargeRebateEnabledDefault   = false // Admin recharges default to producing no rebate
 )
 
 type SettingsReader interface {

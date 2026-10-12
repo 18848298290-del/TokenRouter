@@ -56,7 +56,7 @@ func TestCORS_DisallowedOrigin_NoAllowHeaders(t *testing.T) {
 
 			middleware(c)
 
-			// 不应设置 Allow-Headers、Allow-Methods 和 Max-Age
+			// A disallowed origin receives no permission headers or cache duration.
 			assert.Empty(t, w.Header().Get("Access-Control-Allow-Headers"),
 				"不允许的 origin 不应收到 Allow-Headers")
 			assert.Empty(t, w.Header().Get("Access-Control-Allow-Methods"),
@@ -97,7 +97,7 @@ func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 
 			middleware(c)
 
-			// 应设置 Allow-Headers、Allow-Methods 和 Max-Age
+			// An allowed origin receives method, header, and cache-duration permissions.
 			assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Headers"),
 				"允许的 origin 应收到 Allow-Headers")
 			assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-Admin-UI-Request")
@@ -219,7 +219,7 @@ func TestCORS_WildcardWithCredentials_DisablesCredentials(t *testing.T) {
 
 	middleware(c)
 
-	// 通配符 + credentials 不兼容，credentials 应被禁用
+	// Wildcard origins disable credentials because browsers reject that combination.
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"),
 		"通配符 origin 应禁用 Allow-Credentials")
 }

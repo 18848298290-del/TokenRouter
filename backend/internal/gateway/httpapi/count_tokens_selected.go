@@ -18,7 +18,7 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// messagesCountGoogleOutput 只转换计数响应，复用原生 Gemini 的认证、网络和错误策略。
+// messagesCountGoogleOutput converts count responses while GoogleBoundary handles Gemini execution and errors.
 type messagesCountGoogleOutput struct {
 	GoogleBoundary
 	context  *gin.Context
@@ -30,7 +30,8 @@ type messagesCountSink struct {
 	status int
 }
 
-// ForwardSelectedCountTokens 在提供商选择后分派，不取得生成槽、不发送生成请求或提交用量。
+// ForwardSelectedCountTokens dispatches to the selected provider's count path without generation slots or usage
+// submission.
 func ForwardSelectedCountTokens(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest, messages *MessagesExecutor, auxiliary *OpenAIAuxiliary, gemini *GeminiExecutor) error {
 	if target == nil || parsed == nil {
 		return errors.New("count_tokens target is unavailable")
@@ -64,7 +65,7 @@ func ForwardSelectedCountTokens(ctx context.Context, c *gin.Context, target *gat
 	return errors.New("count_tokens executor is unavailable")
 }
 
-// forwardGeminiMessagesCount 保留系统提示词和工具定义，使用 Gemini 原生计数及其 OAuth scope 回退。
+// forwardGeminiMessagesCount converts system prompts and tools for native Gemini counting and its OAuth scope retry.
 func forwardGeminiMessagesCount(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest, executor *GeminiExecutor) error {
 	body, err := bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{}, parsed.Body.Bytes())
 	if err != nil {

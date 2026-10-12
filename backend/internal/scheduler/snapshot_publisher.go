@@ -2,13 +2,14 @@ package scheduler
 
 import "context"
 
-// SnapshotPublicationCache 在事务提交后同步提供商快照，变更事件由写入方在事务中记录到 outbox。
+// SnapshotPublicationCache publishes provider state after commit; writers record outbox events in the
+// transaction.
 type SnapshotPublicationCache interface {
 	SetProvider(context.Context, SnapshotProvider) error
 	DeleteProvider(context.Context, int64) error
 }
 
-// SnapshotPublisher 将批量提供商 ID 去重后逐项发布。
+// SnapshotPublisher publishes provider state, deduplicating IDs for batch reads.
 type SnapshotPublisher struct {
 	Read        func(context.Context, int64) (SnapshotProvider, error)
 	ReadMany    func(context.Context, []int64) ([]SnapshotProvider, error)
@@ -67,7 +68,7 @@ func (p SnapshotPublisher) PublishMany(ctx context.Context, providerIDs []int64)
 	}
 }
 
-// Drop 在提供商删除后主动清理调度器缓存中的单提供商快照。
+// Drop removes the cached provider snapshot after deletion.
 func (p SnapshotPublisher) Drop(ctx context.Context, providerID int64) {
 	if p.Cache == nil || providerID <= 0 {
 		return

@@ -805,7 +805,7 @@ func TestApplyMigrationsFS_TransactionalMigration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	// 咨询锁与迁移操作共用同一会话，连接池上限为一时迁移也能完成。
+	// The lock and migration share one session, so a one-connection pool must suffice.
 	db.SetMaxOpenConns(1)
 
 	prepareMigrationsBootstrapExpectations(mock)
@@ -834,7 +834,7 @@ func TestApplyMigrationsFS_TransactionalMigration(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// applyEmbeddedMigrations 为存储测试应用完整的发布迁移集合。
+// applyEmbeddedMigrations applies the embedded release migrations in storage tests.
 func applyEmbeddedMigrations(ctx context.Context, db *sql.DB) error {
 	return ApplyMigrations(ctx, db, migrations.FS)
 }

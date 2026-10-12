@@ -12,12 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
-// Fulfillment 用数据库存储、权益服务和审计记录器构造支付履约服务。
+// Fulfillment builds payment fulfillment with database storage, entitlements, and audit logging.
 func Fulfillment(client *dbent.Client, redeem payment.FulfillmentRedeemer, subscriptions payment.FulfillmentSubscriptions, rebates *promotion.AffiliateService) *payment.Fulfillment {
 	return fulfillment(client, redeem, subscriptions, rebates, nil, false)
 }
 
-// Lifecycle 用履约服务和续付服务构造订单生命周期服务。
+// Lifecycle builds order lifecycle handling with fulfillment and payment resume services.
 func Lifecycle(client *dbent.Client, registry *payment.Registry, redeem payment.FulfillmentRedeemer, subscriptions payment.FulfillmentSubscriptions, resume *payment.PaymentResumeService, loaded bool) *payment.OrderLifecycle {
 	if resume == nil {
 		resume = Resume(nil)
@@ -46,7 +46,7 @@ func fulfillment(client *dbent.Client, redeem payment.FulfillmentRedeemer, subsc
 	return payment.NewFulfillment(store, bindings, registry, redeem, subscriptions, runtime)
 }
 
-// Resume 从环境变量选择签名密钥，并使用给定的历史密钥校验已有令牌。
+// Resume selects the signing key from the environment and accepts tokens signed with the supplied legacy key.
 func Resume(legacyKey []byte) *payment.PaymentResumeService {
 	key, fallbacks := payment.ResolvePaymentResumeSigningKeys(os.Getenv("PAYMENT_RESUME_SIGNING_KEY"), legacyKey)
 	return payment.NewPaymentResumeService(key, fallbacks...)

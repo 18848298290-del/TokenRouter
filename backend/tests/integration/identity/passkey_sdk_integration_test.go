@@ -24,8 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestPasskeySDKCeremony 使用真实 SDK、签名、PostgreSQL 与 Redis，验证消费先于解析及凭据更新。
-// 本地软件认证器用于检查服务端的 Passkey 协议处理。
+// TestPasskeySDKCeremony checks session consumption before parsing and credential updates using the SDK, PostgreSQL, and Redis.
+// A local software authenticator signs responses to exercise the server protocol.
 func TestPasskeySDKCeremony(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx := context.Background()

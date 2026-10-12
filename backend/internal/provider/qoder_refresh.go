@@ -23,8 +23,8 @@ func NeedsRefreshQoder(provider *Record, _ time.Duration) bool {
 	if expiresAt := provider.GetCredentialAsTime("expires_at"); expiresAt != nil {
 		return time.Until(*expiresAt) < 15*time.Minute
 	}
-	// Qoder 的 RateLimitResetAt 也承载 upstream 月度 quota / agent-limit 调度信号，
-	// 不能像 OpenAI 一样把通用限流状态当成后台 token refresh 触发器。
+	// Qoder RateLimitResetAt also represents monthly quota and agent limits.
+	// Those scheduling signals do not establish that a token needs refreshing.
 	return false
 }
 
@@ -40,7 +40,7 @@ func MergeQoderRefreshCredentials(oldCredentials, newCredentials map[string]any,
 	newCredentials["site"] = site
 	newCredentials["refresh_mode"] = refreshMode
 	if site == "cn" {
-		// 合并凭据后再次清理历史随机机器字段，使国内提供商使用对应站点的身份字段。
+		// Remove legacy machine-token fields after merging to use the CN site's identity fields.
 		delete(newCredentials, "machine_token")
 		delete(newCredentials, "machine_type")
 	}
@@ -53,9 +53,9 @@ func MergeQoderRefreshCredentials(oldCredentials, newCredentials map[string]any,
 			newCredentials["refresh_token"] = refreshToken
 		}
 	}
-	// 目前观测到的 Qoder refresh 响应没有可靠的新过期时间。
-	// 不保留导入时的旧 expires_at，否则 NeedsRefresh 会立刻把刚刷新的提供商
-	// 判定为即将过期，并可能形成刷新循环。
+	// When the exchange supplies no expiry, discard the stored expiry.
+	// Retaining an old expires_at would make NeedsRefreshQoder treat freshly refreshed credentials
+	// as near expiry and could trigger repeated refreshes.
 	if expiresAt.IsZero() {
 		delete(newCredentials, "expires_at")
 	}
@@ -75,8 +75,8 @@ func qoderOldRefreshToken(v map[string]any) string {
 	return stringFromCredentialValue(v["refresh_token"])
 }
 
-// NeedsRefreshQoderAfterFailure 使用失败时的凭据身份判断请求期刷新。
-// 已轮换凭据不重复消费刷新令牌；同一失败身份不受临近过期窗口限制。
+// NeedsRefreshQoderAfterFailure compares the current credentials with those used by a failed request.
+// Matching failed credentials can refresh regardless of expiry; rotated credentials skip another refresh.
 func NeedsRefreshQoderAfterFailure(value *Record, failedCredentials string, ttl time.Duration) bool {
 	if !CanRefreshQoder(value) {
 		return false
@@ -90,7 +90,7 @@ func NeedsRefreshQoderAfterFailure(value *Record, failedCredentials string, ttl 
 	return NeedsRefreshQoder(value, ttl)
 }
 
-// QoderRefreshCredentialsHash 计算刷新身份字段的哈希，供凭据竞争检查使用。
+// QoderRefreshCredentialsHash hashes identity fields used to detect competing credential updates.
 func QoderRefreshCredentialsHash(credentials map[string]any) string {
 	if len(credentials) == 0 {
 		return QoderCredentialsHash(nil)

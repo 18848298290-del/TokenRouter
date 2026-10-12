@@ -16,7 +16,7 @@ const (
 	grokConversationIDHeader        = "X-Grok-Conv-Id"
 )
 
-// Claude Code 的 metadata.user_id 通常以 _session_<uuid> 结尾。
+// claudeCodeSessionSuffixPattern matches the _session_<uuid> suffix in Claude Code metadata.user_id.
 var claudeCodeSessionSuffixPattern = regexp.MustCompile(`_session_([a-f0-9-]+)$`)
 
 func ExtractClaudeCodeSessionIDFromPayload(body []byte) string {
@@ -30,7 +30,7 @@ func ExtractClaudeCodeSessionIDFromPayload(body []byte) string {
 	if matches := claudeCodeSessionSuffixPattern.FindStringSubmatch(userID); len(matches) >= 2 {
 		return matches[1]
 	}
-	// Claude Code 也可能嵌入 JSON：{"session_id":"..."}。
+	// Some Claude Code clients encode user_id as JSON with a session_id field.
 	if userID != "" && userID[0] == '{' {
 		if sid := strings.TrimSpace(gjson.Get(userID, "session_id").String()); sid != "" {
 			return sid
@@ -39,13 +39,13 @@ func ExtractClaudeCodeSessionIDFromPayload(body []byte) string {
 	return ""
 }
 
-// ApplyGrokResponsesCacheIdentity 将缓存路由身份写入 xAI Responses 请求。
-// 客户端已有值会被租户隔离值替换，防止共享 OAuth 提供商上的缓存冲突。
+// ApplyGrokResponsesCacheIdentity replaces the xAI Responses cache key with the supplied identity.
+// Callers supply a tenant-scoped identity to isolate caches on shared OAuth providers.
 //
-// xAI 会把未携带原生搜索工具的免费 OAuth 请求路由到不可缓存的 build-free 模型。
-// 对原本无工具的请求添加原生工具并设置 tool_choice=none，可选择支持缓存的层级而不
-// 实际执行搜索；客户端明确提供的函数工具由下方混合工具策略处理，该策略覆盖
-// Messages 桥接、原生 Responses 和 WS HTTP bridge。
+// Free OAuth requests need native search tools to select a cache-capable route.
+// For tool-free requests, inject native tools with tool_choice=none so search stays disabled.
+// Function-tool requests use ApplyGrokFreeToolCacheRoute for Messages, native Responses,
+// and the WebSocket HTTP bridge.
 func ApplyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity string, injectFreeTierTools bool) ([]byte, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
@@ -61,8 +61,8 @@ func ApplyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity str
 	if !injectFreeTierTools {
 		return out, nil
 	}
-	// 必须检查清理前的原始请求。patchGrokResponsesBody 可能移除不受支持的客户端工具
-	// 及其 tool_choice，但不能因此把明确的客户端工具意图误判为可注入原生工具。
+	// Inspect the request before cleanup: patchGrokResponsesBody can remove unsupported tools
+	// and tool_choice, which would otherwise make explicit tool intent appear tool-free.
 	if HasGrokResponsesToolIntent(intentSourceBody) {
 		return out, nil
 	}
@@ -103,7 +103,7 @@ func ApplyGrokFreeToolCacheRoute(body, intentSourceBody []byte, knownFree bool, 
 		return body, nil
 	}
 	if intentToolChoice.Type == gjson.String && strings.TrimSpace(intentToolChoice.String()) == grokFreeCacheDisabledToolChoice {
-		// 客户端明确禁用全部工具执行时，加入原生缓存路由工具不会改变行为。
+		// tool_choice=none keeps injected native tools disabled.
 		return AppendGrokFreeCacheNativeToolsWithPolicy(body, true, false)
 	}
 	return AppendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, allowFunctionSearch)
@@ -126,7 +126,7 @@ func IsGrokFreeCacheFunctionToolIntent(tools, toolChoice gjson.Result) bool {
 			return false
 		}
 		if toolType == "function" {
-			// Responses 函数声明的 name 位于顶层；拒绝 Chat Completions 嵌套结构和不完整声明。
+			// Responses function names are top-level; nested Chat Completions declarations are rejected.
 			if strings.TrimSpace(tool.Get("name").String()) == "" || tool.Get("function").Exists() {
 				return false
 			}
@@ -181,8 +181,8 @@ func AppendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools,
 			if !tool.IsObject() || name == "" || tool.Get("function").Exists() {
 				return body, nil
 			}
-			// Grok Build 可能把搜索声明成函数工具；转换为原生工具后既能让 Free OAuth
-			// 保持可缓存路由，也能避免同名工具重复。
+			// Convert Grok Build search functions to native tools when permitted, enabling the
+			// cache-capable Free OAuth route and deduplicating search tool names.
 			if (name == "web_search" || name == "x_search") && allowFunctionSearch {
 				if present[name] {
 					continue
@@ -199,13 +199,13 @@ func AppendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools,
 				continue
 			}
 			if name == "web_search" || name == "x_search" {
-				// 未明确允许转换时保留客户端函数，并避免加入同名原生工具。
+				// Reserve the client function name so a same-named native tool is not added.
 				present[name] = true
 			}
 			hasCompanionTool = true
 			merged = append(merged, json.RawMessage(tool.Raw))
 		case "web_search", "x_search":
-			// 重试该辅助函数时跳过已经存在的原生工具，保证转换操作幂等。
+			// Deduplicate native search tools so repeated calls do not accumulate copies.
 			if present[toolType] {
 				continue
 			}
@@ -222,8 +222,8 @@ func AppendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools,
 	if !hasCompanionTool {
 		return body, nil
 	}
-	// 未允许纯客户端工具时，只有请求已含原生或函数形式搜索工具才补齐缺失项，
-	// 避免 view_image 等工具意外改变模型的自动工具选择（#4486）。
+	// Unless pure client tools are allowed, require existing search intent before adding search tools.
+	// This prevents tools such as view_image from changing automatic tool selection (#4486).
 	if !allowPureClientTools && !present["web_search"] && !present["x_search"] {
 		return body, nil
 	}
@@ -244,8 +244,8 @@ func AppendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools,
 	return sjson.SetRawBytes(body, "tools", encoded)
 }
 
-// ApplyGrokCacheHeaders 写入 Chat Completions 约定的会话路由头。请求使用全新 header
-// 映射构建，因此客户端提供的 x-grok header 无法覆盖服务端派生值。
+// ApplyGrokCacheHeaders replaces the Chat Completions session routing header with identity.
+// An empty identity removes the header.
 func ApplyGrokCacheHeaders(headers http.Header, identity string) {
 	if headers == nil {
 		return
@@ -258,8 +258,8 @@ func ApplyGrokCacheHeaders(headers http.Header, identity string) {
 	headers.Set(grokConversationIDHeader, identity)
 }
 
-// StripGrokChatPromptCacheKey 在身份种子使用完毕后移除 Responses 专用字段；
-// Chat Completions 通过 header 路由缓存。
+// StripGrokChatPromptCacheKey removes the Responses field after callers derive the identity.
+// Chat Completions routes its cache through the session header.
 func StripGrokChatPromptCacheKey(body []byte) ([]byte, error) {
 	if !gjson.GetBytes(body, "prompt_cache_key").Exists() {
 		return body, nil

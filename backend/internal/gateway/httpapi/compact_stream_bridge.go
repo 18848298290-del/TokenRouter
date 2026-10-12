@@ -15,15 +15,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// openAICompactClientStreamKey 标记 body-signal Compact 原始正文中的 stream:true（Codex remote compact v2，#3777）。
-// 规范化删除 stream 后，上游使用 unary /responses/compact JSON。客户端需要 SSE 中恰好一个 compaction 类型的 output_item.done 和 response.completed。
-// 缺少事件时 Codex 报 stream closed before response.completed 并重连（#3875）。
+// openAICompactClientStreamKey records client stream intent before a body-triggered compact request becomes unary.
+// The bridge converts the upstream JSON to compaction output_item.done and response.completed events.
+// Codex needs terminal events to avoid stream-closed retries (#3875).
 const openAICompactClientStreamKey = "openai_compact_client_stream"
 
-// CompactStreamErrorObserver 保留客户端流错误的原观测时点和分类。
+// CompactStreamErrorObserver records the type, message, and status of a client stream error.
 type CompactStreamErrorObserver func(*gin.Context, string, string, int)
 
-// 明确的终止帧字段保留 created_at、空 output 及原 JSON 键顺序。
+// compactFailedEvent includes created_at and an empty output array required by Responses clients.
 type compactFailedEvent struct {
 	Response compactFailedResponse `json:"response"`
 	Type     string                `json:"type"`
@@ -41,8 +41,8 @@ type compactFailedError struct {
 	Message string `json:"message"`
 }
 
-// MarkOpenAICompactClientStream 由 handler 在 body-signal 提升时调用，记录
-// 客户端的原始 stream 意图，供响应写回阶段决定是否合成 SSE。
+// MarkOpenAICompactClientStream saves the client's streaming intent during compact promotion
+// so the response path can synthesize SSE from the upstream JSON.
 func MarkOpenAICompactClientStream(c *gin.Context) {
 	if c == nil {
 		return
@@ -62,15 +62,15 @@ func OpenAICompactClientWantsStream(c *gin.Context) bool {
 	return wants
 }
 
-// WriteOpenAICompactSSEBridge 将 Compact JSON 转换为 Codex remote compact v2 的 Responses SSE。
-// 客户端标记流式、状态码为 2xx 且正文为 JSON 对象时写出事件，其他情况返回 false，调用方自行写回。
-// 心跳已提交 200 时，此函数接管响应，非 2xx 或转换失败通过 response.failed 返回。
+// WriteOpenAICompactSSEBridge converts Compact JSON into Responses SSE for streaming clients.
+// Before heartbeat commitment it handles marked requests with a 2xx JSON object; false leaves output to the caller.
+// After a heartbeat commits HTTP 200 it takes over the response and reports failures through response.failed.
 func WriteOpenAICompactSSEBridge(c *gin.Context, statusCode int, finalResponse []byte, observe CompactStreamErrorObserver) bool {
 	if c == nil || !OpenAICompactClientWantsStream(c) {
 		return false
 	}
-	// 先停心跳再写回，避免注释行与最终事件交错；停止后经互斥锁与心跳
-	// goroutine 建立 happens-before，可安全接管 ResponseWriter。
+	// Stop and wait for heartbeat writes under the mutex before taking over the writer,
+	// so comment lines cannot interleave with terminal events.
 	committed := StopOpenAICompactSSEKeepaliveCommitted(c)
 	if statusCode < 200 || statusCode >= 300 {
 		if committed {
@@ -100,9 +100,9 @@ func WriteOpenAICompactSSEBridge(c *gin.Context, statusCode int, finalResponse [
 	return true
 }
 
-// WriteOpenAICompactSSEFailure 从上游错误 body 提取错误消息后，以
-// response.failed 终止事件回传。仅用于心跳已提交 200、无法再按 HTTP 状态码
-// 回传错误的场景。
+// WriteOpenAICompactSSEFailure extracts an upstream error message and writes response.failed.
+// Use it after a heartbeat has committed HTTP 200, when the HTTP status can no longer
+// represent the failure.
 func WriteOpenAICompactSSEFailure(c *gin.Context, statusCode int, errorBody []byte, observe CompactStreamErrorObserver) {
 	message := ""
 	if len(errorBody) > 0 {
@@ -114,10 +114,10 @@ func WriteOpenAICompactSSEFailure(c *gin.Context, statusCode int, errorBody []by
 	WriteOpenAICompactSSEFailureMessage(c, statusCode, "upstream_error", message, observe)
 }
 
-// WriteOpenAICompactSSEFailureMessage 写出 response.failed 终止事件。Codex 对
-// 流式 Responses 请求把 response.failed 作为合法终止事件处理（普通 error 帧
-// 不被识别，会退化为 "stream closed before response.completed" 盲重连）。
-// 同时标记流内错误，保证挂在 200 流上的失败仍进入 ops 错误看板。
+// WriteOpenAICompactSSEFailureMessage writes a response.failed terminal event.
+// Codex recognizes this as a terminal Responses event; a plain error event can lead to
+// "stream closed before response.completed" retries.
+// The observer records the failure even though the HTTP response status is 200.
 func WriteOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType, message string, observe CompactStreamErrorObserver) {
 	if c == nil {
 		return
@@ -150,7 +150,7 @@ func newCompactResponseID() string {
 	return "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
-// BuildOpenAICompactSSEPayload 向协议转换函数传入响应 ID 生成器。
+// BuildOpenAICompactSSEPayload supplies response ID generation to compact protocol conversion.
 func BuildOpenAICompactSSEPayload(body []byte) ([]byte, bool) {
 	return compact.StreamPayload(body, newCompactResponseID)
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCacheOverrideProjection 检查缓存创建明细写回后，图片输入等其他计量值保持原值。
+// TestCacheOverrideProjection checks that cache bucket updates leave other usage counts intact.
 func TestCacheOverrideProjection(t *testing.T) {
 	value := TokenUsage{InputTokens: 2, ImageInputTokens: 8, CacheCreationInputTokens: 12}
 	require.False(t, applyCacheOverride(&value, "5m"))
@@ -22,7 +22,7 @@ func TestCacheOverrideProjection(t *testing.T) {
 	require.Equal(t, 2, value.InputTokens)
 }
 
-// TestNormalizeResultUsesDecodedImageDimensions 验证实际输出尺寸覆盖请求尺寸，并进入生产完成处理使用的计费元数据。
+// TestNormalizeResultUsesDecodedImageDimensions checks that decoded output dimensions determine billing metadata.
 func TestNormalizeResultUsesDecodedImageDimensions(t *testing.T) {
 	result := &Result{ImageCount: 1, ImageInputSize: "3840x2160", ImageOutputSizes: []string{"1672x941"}}
 	(&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")

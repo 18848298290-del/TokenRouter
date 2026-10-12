@@ -17,16 +17,16 @@ type PromoHandler struct {
 	promoService *promotion.PromoService
 }
 
-// CreatePromoCodeRequest represents create promo code request.
+// CreatePromoCodeRequest contains the fields for a registration promotion code.
 type CreatePromoCodeRequest struct {
-	Code        string  `json:"code"`                                  // 可选，为空则自动生成
-	BonusAmount float64 `json:"bonus_amount" binding:"required,min=0"` // 赠送余额
-	MaxUses     int     `json:"max_uses" binding:"min=0"`              // 最大使用次数，0=无限
-	ExpiresAt   *int64  `json:"expires_at"`                            // 过期时间戳（秒）
-	Notes       string  `json:"notes"`                                 // 备注
+	Code        string  `json:"code"`                                  // Empty generates a random code
+	BonusAmount float64 `json:"bonus_amount" binding:"required,min=0"` // Balance credited on use
+	MaxUses     int     `json:"max_uses" binding:"min=0"`              // Maximum uses; zero means unlimited
+	ExpiresAt   *int64  `json:"expires_at"`                            // Expiration as Unix seconds
+	Notes       string  `json:"notes"`                                 // Admin notes
 }
 
-// UpdatePromoCodeRequest represents update promo code request.
+// UpdatePromoCodeRequest contains optional edits to a promotion code.
 type UpdatePromoCodeRequest struct {
 	Code        *string  `json:"code"`
 	BonusAmount *float64 `json:"bonus_amount" binding:"omitempty,min=0"`
@@ -43,7 +43,7 @@ func NewPromoHandler(promoService *promotion.PromoService) *PromoHandler {
 	}
 }
 
-// List handles listing all promo codes with pagination
+// List returns a filtered page of promotion codes.
 // GET /api/v1/admin/promo-codes
 func (h *PromoHandler) List(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -73,7 +73,7 @@ func (h *PromoHandler) List(c *gin.Context) {
 	httpx.Paginated(c, out, paginationResult.Total, page, pageSize)
 }
 
-// GetByID handles getting a promo code by ID
+// GetByID returns a promotion code by ID.
 // GET /api/v1/admin/promo-codes/:id
 func (h *PromoHandler) GetByID(c *gin.Context) {
 	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -91,7 +91,7 @@ func (h *PromoHandler) GetByID(c *gin.Context) {
 	httpx.Success(c, PromoCodeFromService(code))
 }
 
-// Create handles creating a new promo code
+// Create creates a promotion code.
 // POST /api/v1/admin/promo-codes
 func (h *PromoHandler) Create(c *gin.Context) {
 	var req CreatePromoCodeRequest
@@ -121,7 +121,7 @@ func (h *PromoHandler) Create(c *gin.Context) {
 	httpx.Success(c, PromoCodeFromService(code))
 }
 
-// Update handles updating a promo code
+// Update edits a promotion code.
 // PUT /api/v1/admin/promo-codes/:id
 func (h *PromoHandler) Update(c *gin.Context) {
 	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -146,7 +146,7 @@ func (h *PromoHandler) Update(c *gin.Context) {
 
 	if req.ExpiresAt != nil {
 		if *req.ExpiresAt == 0 {
-			// 0 表示清除过期时间
+			// Zero clears the expiration time.
 			input.ExpiresAt = &time.Time{}
 		} else {
 			t := time.Unix(*req.ExpiresAt, 0)
@@ -163,7 +163,7 @@ func (h *PromoHandler) Update(c *gin.Context) {
 	httpx.Success(c, PromoCodeFromService(code))
 }
 
-// Delete handles deleting a promo code
+// Delete deletes a promotion code.
 // DELETE /api/v1/admin/promo-codes/:id
 func (h *PromoHandler) Delete(c *gin.Context) {
 	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -181,7 +181,7 @@ func (h *PromoHandler) Delete(c *gin.Context) {
 	httpx.Success(c, gin.H{"message": "Promo code deleted successfully"})
 }
 
-// GetUsages handles getting usage records for a promo code
+// GetUsages returns a page of usage records for a promotion code.
 // GET /api/v1/admin/promo-codes/:id/usages
 func (h *PromoHandler) GetUsages(c *gin.Context) {
 	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)

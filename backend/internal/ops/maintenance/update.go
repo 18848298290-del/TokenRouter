@@ -27,7 +27,7 @@ type Installer interface {
 	Rollback() error
 }
 
-// UpdateService 只编排版本资格，文件与网络能力通过端口注入。
+// UpdateService checks release eligibility and delegates installation to the injected installer.
 type UpdateService struct {
 	ReleaseQueries
 	installer Installer
@@ -50,9 +50,7 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	return s.installer.Apply(ctx, info.ReleaseInfo.Assets)
 }
 
-// applyReleaseAssets 下载当前平台的 release 包，校验 checksum，并原子替换运行中的二进制。
-// PerformUpdate（最新版）和 RollbackToVersion（指定旧版）共用该流程。
-
+// RollbackToVersion installs a release from the allowed rollback candidates.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
 	target, ok := normalizeRollbackVersion(version)
 	if !ok {

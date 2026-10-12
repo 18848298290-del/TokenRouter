@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 传输替身记录原隔离参数；响应拥有者必须在成功和错误分支都关闭同一响应体。
+// searchTransportFunc checks isolation parameters; response fixtures track closure after success and upstream HTTP errors.
 type searchTransportFunc func(*http.Request, string, int64, int) (*http.Response, error)
 
 type searchReadCloser struct {

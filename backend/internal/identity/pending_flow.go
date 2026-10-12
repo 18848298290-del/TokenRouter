@@ -8,7 +8,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// PendingDatabase 只暴露命名闭合操作，事务句柄只存在于 PostgreSQL Adapter。
+// PendingDatabase exposes complete storage operations; the PostgreSQL adapter owns transactions.
 type PendingDatabase interface {
 	FindLinuxDoCompatEmailUser(context.Context, string) (*User, error)
 	FindOIDCCompatEmailUser(context.Context, string) (*User, error)
@@ -37,7 +37,7 @@ type PendingBinding struct {
 	ForceBind, ApplyFirstBindDefaults bool
 }
 type PendingAccountFinalization struct {
-	// PrepareDecision 仅为原邮箱注册流程保留 Begin 后、绑定前的独立接纳写入时机。
+	// PrepareDecision writes the email registration adoption choice after Begin and before binding.
 	PrepareDecision func(context.Context) (*IdentityAdoptionDecision, error)
 
 	Session                       *PendingAuthSession
@@ -47,7 +47,7 @@ type PendingAccountFinalization struct {
 	BeforeCommit                  func(context.Context, *PendingAuthSession) error
 }
 
-// PendingWriteError 保留不同失败点的响应与 cookie 清理差异，不能把事务退出当作成功。
+// PendingWriteError identifies the failed phase for response and cookie cleanup handling.
 type PendingWriteError struct {
 	Phase string
 	Cause error
@@ -55,7 +55,7 @@ type PendingWriteError struct {
 
 type OAuthAdoptionChoice struct{ AdoptDisplayName, AdoptAvatar *bool }
 
-// PendingFlow 拥有接纳选择及创建失败补偿，数据库和会话能力由 app 注入。
+// PendingFlow manages adoption choices and compensates for account creation failures.
 type PendingFlow struct {
 	Store    PendingStore
 	Database PendingDatabase
@@ -63,7 +63,7 @@ type PendingFlow struct {
 	Profiles *UserService
 }
 
-// WeChatIdentityChannel 仅表达已有身份通道复合键。
+// WeChatIdentityChannel identifies a channel by mode and application ID.
 type WeChatIdentityChannel struct{ Mode, AppID string }
 
 func (e *PendingWriteError) Error() string { return e.Cause.Error() }
@@ -109,7 +109,7 @@ func (f *PendingFlow) AdoptionDecision(ctx context.Context, sessionID int64, cho
 	return out, nil
 }
 
-// FinalizeCreatedAccount 在注册提交后执行绑定事务，绑定失败时补偿已创建的用户。
+// FinalizeCreatedAccount binds an identity after registration commits and compensates on failure.
 func (f *PendingFlow) FinalizeCreatedAccount(ctx context.Context, p PendingAccountFinalization) error {
 	if err := f.Database.FinalizeCreatedAccount(ctx, p); err != nil {
 		return f.compensateCreatedAccount(ctx, p, err)
@@ -117,7 +117,7 @@ func (f *PendingFlow) FinalizeCreatedAccount(ctx context.Context, p PendingAccou
 	return nil
 }
 
-// CompleteSecondFactorBinding 先提交身份绑定，再消费浏览器会话。
+// CompleteSecondFactorBinding commits the identity binding before consuming the browser session.
 func (f *PendingFlow) CompleteSecondFactorBinding(ctx context.Context, b *PendingOAuthBindLoginSession, userID int64) error {
 	if !f.Available() {
 		return infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
@@ -137,7 +137,7 @@ func (f *PendingFlow) CompleteSecondFactorBinding(ctx context.Context, b *Pendin
 	return e
 }
 
-// FinalizeCreatedAccountWithChoice 先保存接纳选择，再进入原绑定事务；失败补偿仍由身份用例拥有。
+// FinalizeCreatedAccountWithChoice saves the adoption choice before binding and compensates on failure.
 func (f *PendingFlow) FinalizeCreatedAccountWithChoice(ctx context.Context, p PendingAccountFinalization, choice OAuthAdoptionChoice) error {
 	decision, err := f.AdoptionDecision(ctx, p.Session.ID, choice, true)
 	if err != nil {
@@ -156,7 +156,7 @@ func (f *PendingFlow) compensateCreatedAccount(ctx context.Context, p PendingAcc
 	return original
 }
 
-// FinalizeVerifiedAccount 保留邮箱注册的两段事务和独立接纳写入；Begin 失败也须补偿已经创建的用户。
+// FinalizeVerifiedAccount binds a created email account and compensates even when the binding transaction cannot begin.
 func (f *PendingFlow) FinalizeVerifiedAccount(ctx context.Context, p PendingAccountFinalization) error {
 	if !f.Available() {
 		return &PendingWriteError{Phase: "not_ready", Cause: infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")}
@@ -171,7 +171,7 @@ func (f *PendingFlow) FinalizeVerifiedAccount(ctx context.Context, p PendingAcco
 		return f.AdoptionDecision(ctx, session.ID, OAuthAdoptionChoice{}, true)
 	}
 	if err := f.Database.FinalizeCreatedAccount(ctx, p); err != nil {
-		// 沿用邮箱流程已有的尽力补偿，不改变原失败响应；新增覆盖无法开启第二段事务的情况。
+		// Attempt account cleanup while returning the binding failure, even if cleanup also fails.
 		_ = f.Auth.RollbackOAuthEmailAccountCreation(ctx, p.User.ID, strings.TrimSpace(p.InvitationCode))
 		return err
 	}

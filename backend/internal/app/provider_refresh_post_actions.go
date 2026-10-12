@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// provideRefreshPostActions 绑定存储和记录接口，刷新后的操作由 provider 执行。
+// provideRefreshPostActions binds storage and logging for actions owned by the provider module.
 func provideRefreshPostActions(store *postgres.ProviderStore, privacy *provider.PrivacyService, invalidator provider.TokenCacheInvalidator, cache scheduler.SnapshotCache, cooldown provider.TempUnschedCache, blocker provider.RuntimeUnblocker) *provider.RefreshPostActions {
 	post := &provider.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug,

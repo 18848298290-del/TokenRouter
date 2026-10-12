@@ -22,17 +22,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// integrationDB 和 integrationEntClient 连接已应用仓库迁移的隔离 PostgreSQL。
-// 测试结束时关闭连接并删除容器。
+// integrationDB and integrationEntClient connect to an isolated, migrated PostgreSQL instance.
+// The runner closes the connections and removes the container after testing.
 var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 )
 
-// init 为集成测试选择 PostgreSQL 初始化入口。
+// init selects PostgreSQL setup when the integration build tag is enabled.
 func init() { runProviderTests = runPostgresTests }
 
-// runPostgresTests 启动 PostgreSQL、应用迁移并运行测试。
+// runPostgresTests starts PostgreSQL, applies migrations, and runs the tests.
 func runPostgresTests(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

@@ -8,7 +8,7 @@ import (
 
 const cyberSessionTranscriptLookupOverflowBlockKey = "transcript_lookup_limit_exceeded"
 
-// legacyCyberSessionBlockStore 适配单键缓存接口，使使用该接口的部署继续支持会话屏蔽。
+// legacyCyberSessionBlockStore is the single-key cache interface supported by the compatibility adapter.
 type legacyCyberSessionBlockStore interface {
 	SetCyberSessionBlocked(ctx context.Context, key string, ttl time.Duration) error
 	IsCyberSessionBlocked(ctx context.Context, key string) (bool, error)
@@ -51,7 +51,7 @@ func (a legacyCyberSessionBlockStoreAdapter) FindCyberSessionBlocked(ctx context
 	return "", nil
 }
 
-// AdaptCyberSessionBlockStore 优先使用批量屏蔽接口，缺少该接口时适配单键缓存。
+// AdaptCyberSessionBlockStore prefers batch lookups and otherwise adapts the single-key cache interface.
 func AdaptCyberSessionBlockStore(cache GatewayCache) CyberSessionBlockStore {
 	if cache == nil {
 		return nil

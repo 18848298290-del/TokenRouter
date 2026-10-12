@@ -1,6 +1,6 @@
 package accessview
 
-// GroupCapacitySummary 保存单个分组的聚合容量。
+// GroupCapacitySummary contains aggregate capacity for one group.
 type GroupCapacitySummary struct {
 	GroupID         int64 `json:"group_id"`
 	ConcurrencyUsed int   `json:"concurrency_used"`

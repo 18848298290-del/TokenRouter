@@ -13,8 +13,8 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// openAIWSImageIntentForRoutingModel 按分组映射模型 G 构造生图判定请求体。
-// 宽泛意图用于图片状态和计费，客户端声明的意图用于权限门禁。
+// openAIWSImageIntentForRoutingModel builds the intent-check payload using group-mapped model G.
+// Broad intent controls image state and billing; explicit client intent controls permission checks.
 func openAIWSImageIntentForRoutingModel(routingModel, upstreamModel string, body []byte, platform string) ([]byte, bool, bool) {
 	imageIntentBody := body
 	if routingModel != upstreamModel {
@@ -25,7 +25,7 @@ func openAIWSImageIntentForRoutingModel(routingModel, upstreamModel string, body
 	return imageIntentBody, imageIntent, explicitImageIntent
 }
 
-// openAIWSIngressInterTurnIdleTimeout 返回已完成轮次之间允许的客户端空闲时间。
+// openAIWSIngressInterTurnIdleTimeout returns the allowed client idle time between completed turns.
 func (s *OpenAIWebSocketExecutor) openAIWSIngressInterTurnIdleTimeout() time.Duration {
 	if s != nil && s.Runtime != nil {
 		return time.Duration(s.Runtime.Snapshot().IngressInterTurnIdleTimeoutSeconds) * time.Second
@@ -36,8 +36,8 @@ func (s *OpenAIWebSocketExecutor) openAIWSIngressInterTurnIdleTimeout() time.Dur
 	return time.Duration(s.Options.IngressInterTurnIdleTimeoutSeconds) * time.Second
 }
 
-// newOpenAIWSDownstreamWriteContext 让下行写直接绑定客户端生命周期，
-// 排除独立的 ingress 租约取消信号，使租约丢失时当前帧可先完成，再发送重试关闭帧。
+// newOpenAIWSDownstreamWriteContext uses the client lifecycle when available, so ingress lease loss
+// lets the current frame finish before a retry close frame is sent. Otherwise it uses controlCtx.
 func newOpenAIWSDownstreamWriteContext(controlCtx context.Context, hooks *gatewayws.OpenAIIngressHooks, timeout time.Duration) (context.Context, context.CancelFunc) {
 	writeParent := controlCtx
 	if hooks != nil && hooks.ClientLifecycleContext != nil {
@@ -49,7 +49,7 @@ func newOpenAIWSDownstreamWriteContext(controlCtx context.Context, hooks *gatewa
 	return context.WithTimeout(writeParent, timeout)
 }
 
-// ProxyResponsesWebSocketFromClient 保留现有平台适配入口，逐轮编排由 gateway/ws 持有。
+// ProxyResponsesWebSocketFromClient adapts platform execution to the gateway/ws turn loop.
 func (s *OpenAIWebSocketExecutor) ProxyResponsesWebSocketFromClient(ctx context.Context, c *gin.Context, clientConn *coderws.Conn, provider *gatewayprovider.ExecutionProvider, token string, firstClientMessage []byte, hooks *gatewayws.OpenAIIngressHooks) error {
 	return s.executeWSIngressAdapter(ctx, c, clientConn, provider, token, firstClientMessage, hooks)
 }

@@ -34,7 +34,7 @@ func FetchBilling(ctx context.Context, options BillingFetchOptions) (*BillingSum
 			return nil, 0, infraerrors.Newf(infraerrors.Category(http.StatusInternalServerError), "GROK_QUOTA_PROBE_REQUEST_BUILD_FAILED", "failed to build billing request: %v", err)
 		}
 		ApplyCLIBillingHeaders(req, token)
-		// billing 探测与真实转发保持同一套提供商级请求头覆写。
+		// Apply the provider header overrides used by forwarding requests.
 		options.ApplyHeaders(req.Header)
 		resp, requestErr := options.Do(req)
 
@@ -87,6 +87,6 @@ func IsRetryableBillingStatus(statusCode int) bool {
 	}
 }
 
-// String 结构化日志中不展开用于交换的凭据。
+// String omits credentials when formatting billing options for logs.
 func (BillingFetchOptions) String() string     { return "grok billing options" }
 func (o BillingFetchOptions) GoString() string { return o.String() }

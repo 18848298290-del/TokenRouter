@@ -22,7 +22,8 @@ type leaseLossLock struct {
 
 type leaseLossProcessor struct{ cause error }
 
-// TestWorkerLostLeaseCancelsProcessingWithoutQueueMutation 验证取消必须传到实际 processor；即便其迟到返回终态，也不能 ACK 或重排接管者任务。
+// TestWorkerLostLeaseCancelsProcessingWithoutQueueMutation checks processor cancellation
+// and protects successor queue state when the old processor returns a terminal result.
 func TestWorkerLostLeaseCancelsProcessingWithoutQueueMutation(t *testing.T) {
 	for _, test := range []struct {
 		name               string

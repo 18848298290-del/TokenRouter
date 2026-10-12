@@ -1,6 +1,6 @@
 package provider
 
-// 本文件检查父包 ../execution_values.go 的输出归一化和 ../execution_error.go 的重试错误分类。
+// These scenarios cover output normalization in ../execution_values.go and retry classification in ../execution_error.go.
 
 import (
 	"errors"
@@ -11,9 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestNormalizeCreativeOutputs 校验大小上限、去重并固定只保留一张。
+// TestNormalizeCreativeOutputs checks size limits, duplicate bytes, and the single-image result.
 func TestNormalizeCreativeOutputs(t *testing.T) {
-	// sha256 去重：相同字节只保留一张。
+	// Equal SHA-256 hashes identify duplicate image bytes.
 	outputs, err := creative.NormalizeCreativeOutputs([]creative.CreativeOutput{
 		{Index: 0, Bytes: []byte("same"), Mime: "image/png"},
 		{Index: 1, Bytes: []byte("same"), Mime: "image/png"},
@@ -23,7 +23,7 @@ func TestNormalizeCreativeOutputs(t *testing.T) {
 	require.Len(t, outputs, 1)
 	require.Equal(t, []byte("same"), outputs[0].Bytes)
 
-	// 上游返回多张时固定截断为一张并重排行号。
+	// Multiple upstream images are reduced to one with index zero.
 	outputs, err = creative.NormalizeCreativeOutputs([]creative.CreativeOutput{
 		{Index: 0, Bytes: []byte("a"), Mime: "image/png"},
 		{Index: 1, Bytes: []byte("b"), Mime: "image/png"},
@@ -33,18 +33,18 @@ func TestNormalizeCreativeOutputs(t *testing.T) {
 	require.Len(t, outputs, 1)
 	require.Equal(t, 0, outputs[0].Index)
 
-	// 单张超限（>32MiB）视为失败。
+	// An image larger than 32 MiB fails normalization.
 	big := make([]byte, creative.CreativeMaxOutputBytes+1)
 	_, err = creative.NormalizeCreativeOutputs([]creative.CreativeOutput{{Index: 0, Bytes: big, Mime: "image/png"}})
 	require.Error(t, err)
 	require.False(t, creative.IsRetryableCreativeError(err))
 
-	// 空输出视为失败。
+	// Empty output fails normalization.
 	_, err = creative.NormalizeCreativeOutputs(nil)
 	require.Error(t, err)
 }
 
-// TestCreativeErrorRetryableMatrix 校验状态码到可重试性的映射。
+// TestCreativeErrorRetryableMatrix checks HTTP status retry classification.
 func TestCreativeErrorRetryableMatrix(t *testing.T) {
 	retryable := []int{0, 429, 500, 502, 503}
 	for _, status := range retryable {

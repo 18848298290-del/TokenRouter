@@ -36,7 +36,7 @@ func TestStageCodexFingerprintIDs_NilOverwritesPreviousProvider(t *testing.T) {
 	idsA := provideradapter.CodexFingerprintIDs(providerA, "sess-x", providercore.CodexFingerprintSession)
 	require.NotNil(t, idsA)
 	StageCodexFingerprintIDs(c, idsA)
-	StageCodexFingerprintIDs( // failover 切到 off 模式提供商：无条件覆写为 nil，上一提供商 IDs 不得残留
+	StageCodexFingerprintIDs( // Failover to an off-mode provider clears IDs from the previous provider.
 		c, nil)
 
 	h := http.Header{}

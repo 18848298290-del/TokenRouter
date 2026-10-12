@@ -106,7 +106,7 @@ func (r *settingRepository) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-// CompareAndSetMultiple 在同一事务里锁定内容版本、比较旧值并提交全部设置。
+// CompareAndSetMultiple locks and compares expected values, then commits all settings in one transaction.
 func (r *settingRepository) CompareAndSetMultiple(ctx context.Context, values map[string]string, expected map[string]*string) error {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {

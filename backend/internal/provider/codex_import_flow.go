@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// Import processes entries independently and returns per-entry failures in the result.
+// A failure to load the existing-provider index aborts the import with an error.
 func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportRequest, entries []CodexImportEntry) (CodexSessionImportResult, error) {
 	result := CodexSessionImportResult{
 		Total: len(entries),

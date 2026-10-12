@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// injectTTL 请求 TTL 注入与响应计费覆盖保持各自的资格和优先级。
+// injectTTL reports whether OAuth or Setup Token requests qualify for configured one-hour cache TTL injection.
 func (r *Runtime) injectTTL(ctx context.Context, target *gatewayadapter.ExecutionProvider) bool {
 	return target != nil && target.View().IsAnthropicOAuthOrSetupToken() && r.dependencies.Settings != nil && r.dependencies.Settings.IsAnthropicCacheTTL1hInjectionEnabled(ctx)
 }

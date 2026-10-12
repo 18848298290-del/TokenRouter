@@ -35,7 +35,7 @@ const (
 var (
 	_ openaiwsv2.FrameConn = (*coderOpenAIWSClientConn)(nil)
 
-	// ErrWSConnClosed 与连接池共用同一错误身份。
+	// ErrWSConnClosed is the closed-connection sentinel shared with the pool.
 	ErrWSConnClosed = errors.New("openai ws connection closed")
 )
 
@@ -45,7 +45,7 @@ type WSTransportMetricsSnapshot struct {
 	TransportReuseRatio    float64 `json:"transport_reuse_ratio"`
 }
 
-// WSClientConn 抽象 WS 客户端连接，便于替换底层实现。
+// WSClientConn provides the operations used by the upstream connection pool.
 type WSClientConn interface {
 	WriteJSON(ctx context.Context, value any) error
 	ReadMessage(ctx context.Context) ([]byte, error)
@@ -53,12 +53,12 @@ type WSClientConn interface {
 	Close() error
 }
 
-// WSIdlePingCapable 与 WSClientConn 分离，显式标记实现能否在无人读取时探测空闲连接。
+// WSIdlePingCapable optionally reports whether an implementation can ping without an active reader.
 type WSIdlePingCapable interface {
 	SupportsIdlePingWithoutReader() bool
 }
 
-// WSClientDialer 抽象 WS 建连器。
+// WSClientDialer creates upstream WebSocket connections.
 type WSClientDialer interface {
 	Dial(ctx context.Context, wsURL string, headers http.Header, proxyURL string, profile *tlsfingerprint.Profile) (WSClientConn, int, http.Header, error)
 }
@@ -74,7 +74,7 @@ type CoderWSClientDialer struct {
 	proxyMisses  atomic.Int64
 }
 
-// WSHandshakeError 保留有界且不写日志的握手错误体，用于区分 task 失效与其它 401。
+// WSHandshakeError retains a bounded error body for task-expiration checks; Error omits the body.
 type WSHandshakeError struct {
 	Body []byte
 	Err  error
@@ -148,8 +148,8 @@ func (d *CoderWSClientDialer) Dial(
 		}
 		return nil, status, respHeaders, &WSHandshakeError{Body: body, Err: err}
 	}
-	// coder/websocket 默认单消息读取上限为 32KB，Codex WS 事件（如 rate_limits/大 delta）
-	// 可能超过该阈值，需显式提高上限，避免本地 read_fail(message too big)。
+	// Raise coder/websocket's 32 KiB default limit for large Codex events such as
+	// rate_limits and deltas, which would otherwise fail locally with message-too-big errors.
 	conn.SetReadLimit(WSMessageReadLimitBytes)
 	respHeaders := http.Header(nil)
 	if resp != nil {
@@ -169,7 +169,7 @@ func (d *CoderWSClientDialer) ProxyHTTPClient(proxy string, profile *tlsfingerpr
 	if normalizedProxy == "" && profile == nil {
 		return nil, errors.New("proxy url is empty")
 	}
-	// WebSocket 使用 HTTP/1.1 Upgrade，TLS ALPN 不能声明 h2，避免 TLS 协商和后续请求协议不一致。
+	// The handshake uses HTTP/1.1 Upgrade, so ALPN must not negotiate HTTP/2.
 	profile = tlsfingerprint.HTTP1OnlyProfile(profile)
 	profileKey := tlsfingerprint.CacheKey(profile)
 	cacheKey := normalizedProxy + "|tls:" + profileKey
@@ -204,7 +204,7 @@ func buildOpenAIWSHTTPTransport(normalizedProxy string, parsedProxyURL *url.URL,
 		IdleConnTimeout:     openAIWSProxyTransportIdleConnTimeout,
 		TLSHandshakeTimeout: 10 * time.Second,
 		ForceAttemptHTTP2:   false,
-		// WebSocket 建连固定是 HTTP/1.1 Upgrade，显式关闭自动 HTTP/2 协商。
+		// Disable automatic HTTP/2 negotiation for the HTTP/1.1 Upgrade handshake.
 		TLSNextProto: make(map[string]func(string, *tls.Conn) http.RoundTripper),
 	}
 	profile = tlsfingerprint.HTTP1OnlyProfile(profile)
@@ -215,7 +215,7 @@ func buildOpenAIWSHTTPTransport(normalizedProxy string, parsedProxyURL *url.URL,
 		return transport, nil
 	}
 
-	// 使用自定义 DialTLSContext，让 coder/websocket 的 wss 握手复用 TLS 指纹伪装。
+	// Use the TLS fingerprint dialer for the wss handshake, including proxy connections.
 	switch {
 	case parsedProxyURL == nil:
 		dialer := tlsfingerprint.NewDialer(profile, nil)
@@ -378,8 +378,8 @@ func (c *coderOpenAIWSClientConn) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx)
 }
 
-// SupportsIdlePingWithoutReader 反映 coder/websocket 的实际契约：Conn.Ping 会等待 pong，
-// 而控制帧只能由 Read 消费。连接池不会读取空闲连接，因此 Ping 会让健康连接必然超时。
+// SupportsIdlePingWithoutReader returns false because coder/websocket Ping waits for a pong
+// consumed by Read. The pool has no idle reader, so an idle ping would time out.
 func (*coderOpenAIWSClientConn) SupportsIdlePingWithoutReader() bool {
 	return false
 }
@@ -388,7 +388,7 @@ func (c *coderOpenAIWSClientConn) Close() error {
 	if c == nil || c.conn == nil {
 		return nil
 	}
-	// Close 为幂等，忽略重复关闭错误。
+	// Treat repeated Close calls as successful.
 	_ = c.conn.Close(coderws.StatusNormalClosure, "")
 	_ = c.conn.CloseNow()
 	return nil

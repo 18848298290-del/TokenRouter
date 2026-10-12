@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// foundationAssemblyProviders 汇总基础设施和存储的 Wire provider。
+// foundationAssemblyProviders groups infrastructure and storage Wire providers.
 var foundationAssemblyProviders = wire.NewSet(
 	provideCalendar,
 	cacheProviders,

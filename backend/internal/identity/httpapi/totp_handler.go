@@ -16,7 +16,7 @@ type TotpHandler struct {
 // TotpStatusResponse represents the TOTP status response.
 type TotpStatusResponse struct {
 	Enabled        bool   `json:"enabled"`
-	EnabledAt      *int64 `json:"enabled_at,omitempty"` // Unix timestamp
+	EnabledAt      *int64 `json:"enabled_at,omitempty"` // Unix seconds.
 	FeatureEnabled bool   `json:"feature_enabled"`
 }
 
@@ -46,15 +46,15 @@ type TotpDisableRequest struct {
 	Password  string `json:"password"`
 }
 
-// TotpStepUpRequest 表示敏感操作二次验证请求。
+// TotpStepUpRequest supplies a TOTP code for a sensitive-operation grant.
 type TotpStepUpRequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
-// TotpStepUpResponse 表示敏感操作二次验证响应。
+// TotpStepUpResponse reports verification and the grant lifetime.
 type TotpStepUpResponse struct {
 	Verified  bool  `json:"verified"`
-	ExpiresIn int64 `json:"expires_in"` // 授权剩余有效期（秒）
+	ExpiresIn int64 `json:"expires_in"` // Remaining grant lifetime in seconds.
 }
 
 // NewTotpHandler creates a new TotpHandler.
@@ -167,7 +167,7 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
-// GetVerificationMethod 返回当前用户执行 TOTP 操作时所需的身份校验方式。
+// GetVerificationMethod returns the identity check required for the user's TOTP operations.
 // GET /api/v1/user/totp/verification-method
 func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -201,7 +201,7 @@ func (h *TotpHandler) SendVerifyCode(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
-// StepUp 敏感操作二次验证：校验 TOTP 码并为当前会话授予一段时间的 step-up 权限。
+// StepUp verifies a TOTP code and grants the current session temporary access to sensitive operations.
 // POST /api/v1/user/totp/step-up
 func (h *TotpHandler) StepUp(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

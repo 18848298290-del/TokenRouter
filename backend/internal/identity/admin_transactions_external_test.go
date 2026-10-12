@@ -11,7 +11,7 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
-// deleteUserKeysStub 记录删除用户时读取的 Key 列表和删除操作。
+// deleteUserKeysStub records key listing and deletion during user deletion.
 type deleteUserKeysStub struct {
 	identity.AdminKeyReader
 	identity.AdminKeyParticipant
@@ -20,7 +20,7 @@ type deleteUserKeysStub struct {
 	deletedIDs        []int64
 }
 
-// deleteUserInvalidator 记录成功删除后身份与各 Key 的失效。
+// deleteUserInvalidator records user and key cache invalidations.
 type deleteUserInvalidator struct {
 	userIDs []int64
 	keys    []string
@@ -98,7 +98,7 @@ func TestAdminService_DeleteUser_DeleteError(t *testing.T) {
 	require.Equal(t, []int64{9}, repo.deletedIDs)
 }
 
-// newDeleteUserAdminForTest 使用同一个替身读写 Key，并配置无连接事务。
+// newDeleteUserAdminForTest shares one key stub between reads and writes and uses transactions without a database connection.
 func newDeleteUserAdminForTest(users identity.UserRepository, keys *deleteUserKeysStub, invalidator identity.AdminInvalidator) *identity.UserAdmin {
 	d := identity.AdminDependencies{Users: users, Invalidator: invalidator, Transactions: &identitypostgres.AdminMutations{Users: users, Keys: keys}}
 	if keys != nil {

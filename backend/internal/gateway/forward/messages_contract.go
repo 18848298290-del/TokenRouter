@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MessageInput 固化提供商资格与静态选项，不携带凭据或完整提供商。
+// MessageInput captures provider eligibility and static forwarding options.
 type MessageInput struct {
 	ProviderPresent, HTTPPresent, OAuth, Passthrough, Bedrock bool
 	ProviderID                                                int64
@@ -60,7 +60,7 @@ type MessageExecution struct {
 	Hooks                MessageHooks
 }
 
-// MessagePorts 提供提供商、设置和网络的单步操作，Messages 流程决定准备顺序和错误处理。
+// MessagePorts supplies settings, provider operations, and transport steps used by Messages.
 type MessagePorts interface {
 	ShouldEmulate(context.Context, *int64, []byte) bool
 	Emulate(context.Context, *requeststate.ParsedRequest) (*Result, error)
@@ -112,10 +112,10 @@ type MessagePorts interface {
 	ServiceTier() string
 }
 
-// ShouldRetry 保留 OAuth/Setup Token 仅重试 403 的既有资格。
+// ShouldRetry permits HTTP 403 retries for OAuth or Setup Token requests.
 func ShouldRetry(oauth bool, status int) bool { return oauth && status == 403 }
 
-// ShouldFailover 判断响应状态是否允许切换提供商，实际切换由请求流程决定。
+// ShouldFailover identifies eligible response statuses; the request loop decides whether to switch.
 func ShouldFailover(status int) bool {
 	switch status {
 	case 401, 403, 429, 529:
@@ -125,7 +125,7 @@ func ShouldFailover(status int) bool {
 	}
 }
 
-// RetryDelay 根据重试次数计算指数退避间隔。
+// RetryDelay computes a 300 ms exponential delay capped at three seconds.
 func RetryDelay(attempt int) time.Duration {
 	if attempt <= 0 {
 		return 300 * time.Millisecond
@@ -137,7 +137,7 @@ func RetryDelay(attempt int) time.Duration {
 	return delay
 }
 
-// PartialUsage 包装已观测的用量，可切换失败返回空结果。
+// PartialUsage returns observed stream usage when failover is not requested. A result requires a nonnil response.
 func PartialUsage(resp *ExchangeResponse, stream *StreamOutcome, model, upstreamModel string, start time.Time, speed string, failover bool) *Result {
 	if stream == nil || !stream.Usage.HasObservedTokens() || failover {
 		return nil

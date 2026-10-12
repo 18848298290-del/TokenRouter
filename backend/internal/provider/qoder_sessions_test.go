@@ -97,7 +97,7 @@ func TestQoderSessionsStopReportsUnfinishedAndRejectsLateCache(t *testing.T) {
 	require.ErrorIs(t, <-caller, ErrQoderSessionsStopped)
 	close(proceed)
 	<-completed
-	// 等待共享构建登记释放后，检查迟到结果的写回处理。
+	// Wait for the shared build to unregister before checking that its late result was discarded.
 	require.Eventually(t, func() bool {
 		sessions.activity.mu.Lock()
 		defer sessions.activity.mu.Unlock()

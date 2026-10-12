@@ -18,14 +18,13 @@ const (
 	AttributeTypeMultiSelect UserAttributeType = "multi_select"
 )
 
-// Error definitions for user attribute operations.
 var (
 	ErrAttributeDefinitionNotFound = infraerrors.NotFound("ATTRIBUTE_DEFINITION_NOT_FOUND", "attribute definition not found")
 	ErrAttributeKeyExists          = infraerrors.Conflict("ATTRIBUTE_KEY_EXISTS", "attribute key already exists")
 	ErrInvalidAttributeType        = infraerrors.BadRequest("INVALID_ATTRIBUTE_TYPE", "invalid attribute type")
 )
 
-// UserAttributeType represents supported attribute types.
+// UserAttributeType identifies how an attribute value is entered and validated.
 type UserAttributeType string
 
 // UserAttributeOption represents a select option for select/multi_select types.
@@ -71,7 +70,7 @@ type UserAttributeValue struct {
 	UpdatedAt   time.Time
 }
 
-// CreateAttributeDefinitionInput for creating new definition.
+// CreateAttributeDefinitionInput contains the fields for a new attribute definition.
 type CreateAttributeDefinitionInput struct {
 	Key         string
 	Name        string
@@ -84,7 +83,7 @@ type CreateAttributeDefinitionInput struct {
 	Enabled     bool
 }
 
-// UpdateAttributeDefinitionInput for updating definition.
+// UpdateAttributeDefinitionInput selects changes with non-nil fields.
 type UpdateAttributeDefinitionInput struct {
 	Name        *string
 	Description *string
@@ -96,13 +95,13 @@ type UpdateAttributeDefinitionInput struct {
 	Enabled     *bool
 }
 
-// UpdateUserAttributeInput for updating a single attribute value.
+// UpdateUserAttributeInput supplies one attribute value for a user.
 type UpdateUserAttributeInput struct {
 	AttributeID int64
 	Value       string
 }
 
-// UserAttributeDefinitionRepository interface for attribute definition persistence.
+// UserAttributeDefinitionRepository stores custom attribute definitions.
 type UserAttributeDefinitionRepository interface {
 	Create(ctx context.Context, def *UserAttributeDefinition) error
 	GetByID(ctx context.Context, id int64) (*UserAttributeDefinition, error)
@@ -114,7 +113,7 @@ type UserAttributeDefinitionRepository interface {
 	ExistsByKey(ctx context.Context, key string) (bool, error)
 }
 
-// UserAttributeValueRepository interface for user attribute value persistence.
+// UserAttributeValueRepository stores user values by attribute ID.
 type UserAttributeValueRepository interface {
 	GetByUserID(ctx context.Context, userID int64) ([]UserAttributeValue, error)
 	GetByUserIDs(ctx context.Context, userIDs []int64) ([]UserAttributeValue, error)

@@ -16,7 +16,8 @@ type qoderCredentialValidator struct {
 	validateCNPAT func(context.Context, *provider.Record, string, *qoder.MachineIdentity, qoder.RequestDoer) (*qoder.AuthIdentity, error)
 }
 
-// CreateCredentialHooks 在创建和编辑流程中处理机器身份、兼容凭据与 PAT 校验。
+// CreateCredentialHooks handles machine identity, credential compatibility, and PAT validation during creation
+// and edits.
 func CreateCredentialHooks(transport QoderTransport, profiles *egressprovider.TLSProfiles) provider.CreateCredentialHooks {
 	return (&qoderCredentialValidator{transport: transport, profiles: profiles}).hooks()
 }

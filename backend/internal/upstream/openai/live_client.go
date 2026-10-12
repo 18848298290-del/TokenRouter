@@ -144,11 +144,11 @@ func ApplyLiveUpstreamIdentityHeaders(headers http.Header) {
 	if strings.TrimSpace(headers.Get("thread-id")) == "" {
 		headers.Set("thread-id", uuid.NewString())
 	}
-	// Realtime/Live 不使用 Responses 的实验头。
+	// Realtime and Live omit the Responses experimental header.
 	headers.Del("OpenAI-Beta")
 }
 
-// DialLiveSideband 使用已校验的技术参数，无法提供原始帧时立即关闭连接。
+// DialLiveSideband dials with validated transport options and closes connections that cannot expose raw frames.
 func DialLiveSideband(ctx context.Context, dialer WSClientDialer, baseURL, callID string, headers http.Header, proxyURL string, profile *tlsfingerprint.Profile) (LiveFrameConn, error) {
 	target := strings.TrimRight(baseURL, "/") + "/" + url.PathEscape(callID)
 	conn, status, _, err := dialer.Dial(ctx, target, headers, proxyURL, profile)

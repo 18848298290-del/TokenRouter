@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai/liveattestation"
 )
 
-// provideLiveExecution 为 Live 绑定与 HTTP、WS 共享的凭据、拨号器和后台任务跟踪器。
+// provideLiveExecution shares credentials, WebSocket dialing, and background task tracking with other execution
+// paths.
 func provideLiveExecution(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxiliary, cache session.GatewayCache, concurrency *scheduler.ConcurrencyService, choices *selection.Compatible, routes *gatewayadapter.RoutePlanner, recorders GatewayCompletionRecorders, tasks *lifecycle.Tasks, manager *lifecycle.Manager, grok *gatewayhttp.GrokExecutor) *gatewayhttp.OpenAILiveExecutor {
 	out := &gatewayhttp.OpenAILiveExecutor{
 		Options:  gatewayhttp.OpenAILiveOptions{MaxSessionDuration: time.Hour, ObserverRetryInterval: time.Second},
@@ -40,7 +41,7 @@ func provideLiveExecution(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxil
 	return out
 }
 
-// provideLiveHTTP 构造 Live Handler，共享资金、并发和审核实例。
+// provideLiveHTTP shares funding, concurrency, and moderation services.
 func provideLiveHTTP(source *gatewayhttp.OpenAILiveExecutor, funding *admission.FundingAdmission, concurrency *scheduler.ConcurrencyService, moderator *moderation.ContentModerationService, activity *gatewayRequestActivity) *gatewayhttp.LiveHandler {
 	ports := gatewayhttp.LivePorts{Slots: concurrency}
 	if source != nil {

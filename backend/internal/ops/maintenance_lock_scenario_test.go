@@ -1,6 +1,6 @@
 package ops
 
-// 本场景覆盖 cleanup_service.go 和 scheduled_report_service.go 的维护任务锁竞争。
+// These scenarios cover leader-lock contention in cleanup and scheduled reports.
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// leaderCacheFixture 保留锁拥有者，模拟两个实例竞争同一维护任务。
+// leaderCacheFixture tracks ownership while two instances compete for the same maintenance job.
 type leaderCacheFixture struct {
 	owners map[string]string
 	err    error
@@ -38,7 +38,7 @@ func (c *leaderCacheFixture) Release(_ context.Context, key, owner string) error
 func (*leaderCacheFixture) Get(context.Context, string) (string, error)              { return "", nil }
 func (*leaderCacheFixture) Put(context.Context, string, string, time.Duration) error { return nil }
 
-// TestMaintenanceLeaderLockCompetition 验证后台任务必须抢锁后执行，失败实例不能释放其它实例的锁。
+// TestMaintenanceLeaderLockCompetition checks that a losing contender cannot release another instance's lock.
 func TestMaintenanceLeaderLockCompetition(t *testing.T) {
 	for _, task := range []string{"cleanup", "report"} {
 		t.Run(task, func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestMaintenanceLeaderLockCompetition(t *testing.T) {
 			require.NotNil(t, release)
 			release()
 			require.Empty(t, cache.owners)
-			// Redis 故障且没有数据库锁时，两个任务都不能获得执行资格。
+			// With Redis unavailable and no database lock, neither job can run.
 			cache.err = errors.New("cache unavailable")
 			release, ok = first(t.Context())
 			require.False(t, ok)

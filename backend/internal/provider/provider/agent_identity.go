@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// AgentIdentityKey 在执行时校验凭据字段并解析私钥。
+// AgentIdentityKey validates the runtime ID and parses the private key from provider credentials.
 func AgentIdentityKey(value *provider.Record) (openai.AgentIdentityKey, error) {
 	if value == nil {
 		return openai.AgentIdentityKey{}, errors.New("agent identity provider is nil")
@@ -27,7 +27,8 @@ func AgentIdentityKey(value *provider.Record) (openai.AgentIdentityKey, error) {
 	return openai.AgentIdentityKey{RuntimeID: runtimeID, PrivateKey: privateKey, TaskID: strings.TrimSpace(value.GetCredential("task_id"))}, nil
 }
 
-// RegisterAgentIdentityTask 复用供应商交换，提供商协调器拥有认领、复查和持久化。
+// RegisterAgentIdentityTask registers a task upstream; the provider coordinator owns claiming,
+// rechecking, and persisting the result.
 func RegisterAgentIdentityTask(ctx context.Context, value *provider.Record, baseURL string) (string, error) {
 	key, err := AgentIdentityKey(value)
 	if err != nil {
@@ -41,7 +42,8 @@ func RegisterAgentIdentityTask(ctx context.Context, value *provider.Record, base
 	return openai.RegisterAgentIdentityTask(ctx, key, proxyURL, baseURL, now)
 }
 
-// AgentIdentityHeaders 同时返回本次签名 task，恢复只能针对该身份执行。
+// AgentIdentityHeaders returns signed headers and the task ID used to sign them. Recovery must target
+// that task.
 func AgentIdentityHeaders(ctx context.Context, value *provider.Record, ensure func(context.Context, *provider.Record, string) error) (http.Header, string, error) {
 	if value == nil || !value.IsOpenAIAgentIdentity() {
 		return nil, "", errors.New("agent identity provider is required")
@@ -62,7 +64,8 @@ func AgentIdentityHeaders(ctx context.Context, value *provider.Record, ensure fu
 	return headers, key.TaskID, nil
 }
 
-// RedactAgentIdentityBody 在原位置读取影子母提供商，并把凭据值交给平台脱敏器。
+// RedactAgentIdentityBody resolves shadow credentials before passing credential values to the platform
+// redactor.
 func RedactAgentIdentityBody(ctx context.Context, read func(context.Context, int64) (*provider.Record, error), value *provider.Record, body []byte) []byte {
 	if value == nil || len(body) == 0 {
 		return body

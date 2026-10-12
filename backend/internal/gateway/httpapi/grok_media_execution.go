@@ -42,13 +42,12 @@ type grokMediaUsageMetadata struct {
 	VideoState           string
 }
 
-// xAI 异步视频状态的官方成功结构如下（docs.x.ai Video Generation）：
+// ExtractGrokVideoBillingFromStatusBody extracts billable usage from a completed video response.
 //
-//	示例：{"status":"done","model":"grok-imagine-video-1.5","video":{"url":"...","duration":8,"respect_moderation":true}}
+//	{"status":"done","model":"grok-imagine-video-1.5","video":{"url":"...","duration":8,"respect_moderation":true}}
 //
-// 请求可以包含分辨率（"480p"、"720p" 或 "1080p"），完成状态不会返回该字段，
-// 因此计费分辨率取自创建任务时保存的请求快照。
-
+// Billing resolution comes from the saved creation request (480p, 720p, or 1080p),
+// because the completed response has no resolution field.
 func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *gatewaymedia.GrokVideoPendingBilling, requestID string) *forwardcore.OpenAIResult {
 	value := gatewaymedia.ExtractGrokVideoBillingFromStatusBody(statusBody, pending, requestID, extractGrokMediaVideoRequestID(statusBody))
 	if value == nil {
@@ -205,7 +204,7 @@ func (s *GrokExecutor) ForwardGrokMedia(
 	resultModel := requestInfo.Model
 	resultBillingModel := billingModel
 	if endpoint == grok.GrokMediaEndpointVideoStatus {
-		// 状态请求不含请求体模型，满足计费条件时使用上游状态字段。
+		// Status queries have no request-body model; billable status data supplies the result models.
 		if m := strings.TrimSpace(usage.Model); m != "" {
 			resultModel = m
 		}
@@ -321,8 +320,8 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	if err := WriteGrokMediaContentResponse(c, contentResp, func() { MarkResponseCommitted(c) }); err != nil {
 		return nil, err
 	}
-	// 内容下载也是完成观测入口：状态体满足官方 done 和 video.url 条件时附加计费单位，
-	// 使处理器能够按与状态轮询相同的路径领取一次计费；待计费快照由处理器合并。
+	// Content download also observes completion: done with video.url yields billing units.
+	// The handler merges pending billing data and claims settlement as it does for status polling.
 	result := &forwardcore.OpenAIResult{
 		RequestID:  contentRequestID,
 		VideoState: gatewaymedia.GrokVideoRequestState(statusBody),
@@ -371,13 +370,13 @@ func grokMediaUsageFromResponse(endpoint grok.GrokMediaEndpoint, requestInfo gro
 		meta.ImageInputSize = requestInfo.Size
 		meta.ImageOutputSizes = openai.CollectOpenAIResponseImageOutputSizesFromJSONBytes(responseBody)
 	case grok.GrokMediaEndpointVideosGenerations, grok.GrokMediaEndpointVideosEdits, grok.GrokMediaEndpointVideosExtensions:
-		// 异步视频创建阶段只保留任务 ID 和计价参数，完成轮询时再设置可计费数量。
+		// Creation saves the task ID and pricing parameters; completion polling supplies the billable count.
 		meta.ResponseID = extractGrokMediaVideoRequestID(responseBody)
 		meta.VideoResolution = requestInfo.Resolution
 		meta.VideoDurationSeconds = requestInfo.DurationSeconds
 	case grok.GrokMediaEndpointVideoStatus:
 		meta.VideoState = gatewaymedia.GrokVideoRequestState(responseBody)
-		// 只有官方完成状态且返回视频地址时，才生成待结算的视频用量。
+		// Generate video usage only for done responses with a video URL.
 		if billed := ExtractGrokVideoBillingFromStatusBody(responseBody, nil, ""); billed != nil {
 			meta.ResponseID = billed.ResponseID
 			meta.Model = billed.Model
@@ -403,7 +402,7 @@ func (s *GrokExecutor) handleGrokMediaErrorResponse(
 	requestedModel string,
 ) (*forwardcore.OpenAIResult, error) {
 	body := s.Output.ReadErrorBody(resp)
-	// 透传返回前应用提供商策略，池模式默认记录上游观测，冷却时间保持原样。
+	// Apply provider health policy before passthrough output, including pool-mode observation and cooldown rules.
 	decision := gatewayprovider.ApplyGrokExecutionHealth(ctx, s.Health, provider, resp.StatusCode, resp.Header, body, "", requestedModel)
 	upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(body)))
 	if upstreamMsg == "" {

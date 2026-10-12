@@ -106,7 +106,7 @@ func TestDashboardHandler_GetUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, int32(1), repo.trendCalls.Load())
 }
 
-// TestDashboardHandler_GetUsageTrend_SeparatesTeams 检查不同团队分别查询并缓存趋势数据。
+// TestDashboardHandler_GetUsageTrend_SeparatesTeams checks separate queries and cache entries for different teams.
 func TestDashboardHandler_GetUsageTrend_SeparatesTeams(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
@@ -359,8 +359,8 @@ func TestGetUserBreakdown_GroupIDFilter(t *testing.T) {
 	require.Equal(t, int64(42), repo.capturedDim.GroupID)
 	require.Empty(t, repo.capturedDim.Model)
 	require.Empty(t, repo.capturedDim.Endpoint)
-	require.Equal(t, 50, repo.capturedLimit)  // 默认限制数量
-	require.Empty(t, repo.capturedDim.SortBy) // 未传 sort_by 时由仓储层回退到默认排序
+	require.Equal(t, 50, repo.capturedLimit)  // Default result limit.
+	require.Empty(t, repo.capturedDim.SortBy) // The repository selects the default sort when sort_by is absent.
 }
 
 func TestGetUserBreakdown_SortBy(t *testing.T) {
@@ -599,7 +599,7 @@ func TestParseTimeRange(t *testing.T) {
 	require.False(t, end.IsZero())
 }
 
-// TestParseTimeRangeInjectedCalendar 检查注入的服务端时区、用户时区覆盖和日历日结束时间。
+// TestParseTimeRangeInjectedCalendar checks server defaults, user overrides, and calendar-day end expansion.
 func TestParseTimeRangeInjectedCalendar(t *testing.T) {
 	newYork, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

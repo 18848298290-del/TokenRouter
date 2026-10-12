@@ -17,7 +17,7 @@ type (
 	UserSubscription = billinghttp.UserSubscription
 )
 
-// UsageLog 是普通用户接口使用的 usage log DTO（不包含管理员字段）。
+// UsageLog is the user-visible usage DTO; FromUsageAdmin populates its upstream endpoint.
 type UsageLog struct {
 	ID         int64  `json:"id"`
 	UserID     int64  `json:"user_id"`
@@ -27,11 +27,11 @@ type UsageLog struct {
 	Platform   string `json:"platform"`
 	RequestID  string `json:"request_id"`
 	Model      string `json:"model"`
-	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
+	// ServiceTier records the billing service tier, such as "priority" or "flex"; Claude Fast also uses "priority".
 	ServiceTier *string `json:"service_tier,omitempty"`
-	// ReasoningEffort 是最终转发给上游的推理档位。
+	// ReasoningEffort is the effort level forwarded upstream.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
-	// RequestedReasoningEffort 是策略与模型映射前客户端请求的推理档位。
+	// RequestedReasoningEffort is the client's effort level before policy and model mapping.
 	RequestedReasoningEffort *string `json:"requested_reasoning_effort,omitempty"`
 	// InboundEndpoint is the client-facing API endpoint path, e.g. /v1/chat/completions.
 	InboundEndpoint *string `json:"inbound_endpoint,omitempty"`
@@ -59,19 +59,19 @@ type UsageLog struct {
 	BalanceAmountUSD      float64                     `json:"balance_amount_usd"`
 	BillingAllocations    []billing.BillingAllocation `json:"billing_allocations,omitempty"`
 	RateMultiplier        float64                     `json:"rate_multiplier"`
-	// LongContextBillingApplied 表示该请求是否实际应用长上下文加价。
+	// LongContextBillingApplied reports whether long-context pricing increased the cost.
 	LongContextBillingApplied bool `json:"long_context_billing_applied"`
 
 	BillingType  int8   `json:"billing_type"`
 	RequestType  string `json:"request_type"`
 	Stream       bool   `json:"stream"`
 	OpenAIWSMode bool   `json:"openai_ws_mode"`
-	// NativeCompactionV2 表示 OpenAI 原生远程 compaction v2 请求。
+	// NativeCompactionV2 marks OpenAI remote compaction v2 requests.
 	NativeCompactionV2 bool `json:"native_compaction_v2"`
 	DurationMs         *int `json:"duration_ms"`
 	FirstTokenMs       *int `json:"first_token_ms"`
 
-	// 图片生成字段
+	// Image generation and image-token billing metadata.
 	ImageCount         int            `json:"image_count"`
 	ImageSize          *string        `json:"image_size"`
 	ImageInputSize     *string        `json:"image_input_size"`
@@ -86,16 +86,16 @@ type UsageLog struct {
 
 	// User-Agent
 	UserAgent *string `json:"user_agent"`
-	// IPAddress 对用量记录所有者可见。
+	// IPAddress is visible to the usage record's owner.
 	IPAddress *string `json:"ip_address,omitempty"`
-	// SessionID 是客户端显式提供的请求关联标识，例如 session_id 或
-	// X-Session-Id 请求头；缺失时不返回该字段。
+	// SessionID is a client-supplied correlation identifier from session_id or
+	// X-Session-Id; absent values are omitted.
 	SessionID *string `json:"session_id,omitempty"`
 
-	// Cache TTL Override 标记
+	// CacheTTLOverridden marks an administrator override of cache-TTL billing.
 	CacheTTLOverridden bool `json:"cache_ttl_overridden"`
 
-	// BillingMode 计费模式：token/image
+	// BillingMode identifies the pricing mode, such as token, image, or video.
 	BillingMode *string `json:"billing_mode,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -106,41 +106,41 @@ type UsageLog struct {
 	Subscription *UserSubscription `json:"subscription,omitempty"`
 }
 
-// AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
+// AdminUsageLog adds administrator-only diagnostics and provider costs.
 type AdminUsageLog struct {
 	UsageLog
 
-	// DetailedTiming 是从 http.access 系统日志关联出的单请求阶段耗时，仅管理员使用记录可见。
+	// DetailedTiming contains request timings joined from http.access logs for administrators.
 	DetailedTiming *UsageLogTiming `json:"detailed_timing,omitempty"`
 
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`
-	// 上游模型观测仅向管理员公开。
+	// Upstream response-model observations are administrator-only.
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
 	UpstreamModelMismatch *bool   `json:"upstream_model_mismatch,omitempty"`
-	// PricingConfigID 共享价格配置 ID
+	// PricingConfigID identifies the shared pricing configuration.
 	PricingConfigID *int64 `json:"pricing_config_id,omitempty"`
-	// ModelMappingChain 模型映射链，如 "a→b→c"
+	// ModelMappingChain records model mappings, for example "a→b→c".
 	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
-	// UpstreamRequestID 是直接上游声明的请求标识，仅管理端可见。
+	// UpstreamRequestID is the immediate upstream's declared request ID, visible to administrators.
 	UpstreamRequestID *string `json:"upstream_request_id,omitempty"`
-	// BillingTier 计费层级标签（per_request/image 模式）
+	// BillingTier labels the selected per-request or image price tier.
 	BillingTier *string `json:"billing_tier,omitempty"`
 
-	// ProviderRateMultiplier 提供商计费倍率快照（nil 表示按 1.0 处理）
+	// ProviderRateMultiplier snapshots the provider multiplier; nil means 1.0.
 	ProviderRateMultiplier *float64 `json:"provider_rate_multiplier"`
-	// ProviderStatsCost 自定义定价规则计算的提供商统计费用（nil 表示使用默认公式）
+	// ProviderStatsCost is the provider-cost base before its multiplier; nil uses total_cost.
 	ProviderStatsCost *float64 `json:"provider_stats_cost,omitempty"`
 
-	// IPAddress 用户请求 IP
+	// IPAddress is the client's request IP.
 	IPAddress *string `json:"ip_address,omitempty"`
 
-	// Provider 最小提供商信息（避免泄露敏感字段）
+	// Provider exposes the provider ID and name for display.
 	Provider *ProviderSummary `json:"provider,omitempty"`
 }
 
-// UsageLogTiming 展示请求进入网关后各阶段相对于入口的毫秒数。
+// UsageLogTiming contains stage offsets in milliseconds from gateway ingress, counts, and connection metadata.
 type UsageLogTiming struct {
 	RequestContentLength           *int64 `json:"request_content_length,omitempty"`
 	ProviderSlotAcquiredMs         *int64 `json:"provider_slot_acquired_ms,omitempty"`
@@ -185,8 +185,8 @@ type UsageCleanupTask struct {
 	UpdatedAt    time.Time           `json:"updated_at"`
 }
 
-// ProviderSummary is a minimal provider info for usage log display.
-// It intentionally excludes sensitive fields like Credentials, Proxy, etc.
+// ProviderSummary contains the provider ID and name for usage display.
+// Credentials and proxy configuration are excluded from this response.
 type ProviderSummary struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`

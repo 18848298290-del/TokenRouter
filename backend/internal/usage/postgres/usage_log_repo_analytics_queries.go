@@ -18,9 +18,9 @@ type usageAnalyticsQuery struct {
 	args  []any
 }
 
-// buildUsageAnalyticsQuery 生成“日表主体、小时边界、原始首尾”的无重叠查询源。
+// buildUsageAnalyticsQuery combines daily buckets, hourly edges, and raw records in disjoint ranges.
 func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFilters, start, end time.Time, useDaily bool) (usageAnalyticsQuery, bool, error) {
-	// 聚合表尚未保存原生 compaction 维度，带该过滤时必须回退原始表。
+	// Provider, request ID, and compaction filters require dimensions absent from the aggregate tables.
 	if filters.ProviderID > 0 || strings.TrimSpace(filters.RequestID) != "" || filters.NativeCompactionV2 != nil {
 		return usageAnalyticsQuery{}, false, nil
 	}
@@ -38,7 +38,7 @@ func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFi
 		window.rawTailStart,
 	}
 	if useDaily {
-		// 小时边界与日期边界必须使用不同参数，防止日期类型污染小时范围比较。
+		// Separate timestamp and date parameters keep PostgreSQL from coercing hourly bounds to dates.
 		args = append(args, window.dailySplit().args()...)
 	}
 	rawUsageSource := "usage_logs ul"
@@ -145,7 +145,7 @@ func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFi
 	}, true, nil
 }
 
-// getUsageStatsFromAnalytics 从组合聚合源计算摘要。
+// getUsageStatsFromAnalytics summarizes the combined aggregate and raw source.
 func (r *Store) getUsageStatsFromAnalytics(ctx context.Context, filters UsageLogFilters) (*UsageStats, bool, error) {
 	if filters.StartTime == nil || filters.EndTime == nil || !filters.EndTime.After(*filters.StartTime) {
 		return nil, false, nil
@@ -211,7 +211,7 @@ func (r *Store) getUsageTrendFromAnalytics(ctx context.Context, start, end time.
 
 func (r *Store) getModelStatsFromAnalytics(ctx context.Context, start, end time.Time, filters UsageLogFilters) ([]ModelStat, bool, error) {
 	if usage.NormalizeModelSource(filters.ModelFilterSource) != usage.ModelSourceRequested {
-		// 聚合表按请求模型统计，上游模型和映射模型的筛选回退到原始用量记录查询。
+		// Aggregates store the request model; upstream and mapping filters require raw records.
 		return nil, false, nil
 	}
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, filters, start, end, true)
@@ -300,7 +300,7 @@ func (r *Store) getInboundEndpointStatsFromAnalytics(ctx context.Context, start,
 	return results, true, nil
 }
 
-// getAPIKeyUsageTrendFromAnalytics 从组合聚合源计算最活跃 API Key 趋势。
+// getAPIKeyUsageTrendFromAnalytics returns trends for the most active API keys from the combined source.
 func (r *Store) getAPIKeyUsageTrendFromAnalytics(ctx context.Context, start, end time.Time, granularity string, limit int) ([]APIKeyUsageTrendPoint, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, false)
 	if err != nil || !ok {
@@ -349,7 +349,7 @@ func (r *Store) getAPIKeyUsageTrendFromAnalytics(ctx context.Context, start, end
 	return results, true, nil
 }
 
-// getUserUsageTrendFromAnalytics 从组合聚合源计算最活跃用户趋势。
+// getUserUsageTrendFromAnalytics returns trends for the most active billing users from the combined source.
 func (r *Store) getUserUsageTrendFromAnalytics(ctx context.Context, start, end time.Time, granularity string, limit int) ([]UserUsageTrendPoint, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, false)
 	if err != nil || !ok {
@@ -402,7 +402,7 @@ func (r *Store) getUserUsageTrendFromAnalytics(ctx context.Context, start, end t
 	return results, true, nil
 }
 
-// getUserSpendingRankingFromAnalytics 从组合聚合源计算用户消费排行。
+// getUserSpendingRankingFromAnalytics ranks billing users by spending from the combined source.
 func (r *Store) getUserSpendingRankingFromAnalytics(ctx context.Context, start, end time.Time, limit int) (*UserSpendingRankingResponse, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, true)
 	if err != nil || !ok {
@@ -454,7 +454,7 @@ func (r *Store) getUserSpendingRankingFromAnalytics(ctx context.Context, start, 
 	return result, true, nil
 }
 
-// usageRankingAnalyticsEligibility 按排行指标生成聚合值大于零的 SQL 条件。
+// usageRankingAnalyticsEligibility selects a positive-value predicate for the ranking metric.
 func usageRankingAnalyticsEligibility(sortBy usage.UsageRankingSortBy) string {
 	switch usage.NormalizeUsageRankingSortBy(string(sortBy)) {
 	case usage.UsageRankingSortByRequests:
@@ -466,7 +466,7 @@ func usageRankingAnalyticsEligibility(sortBy usage.UsageRankingSortBy) string {
 	}
 }
 
-// getUsageRankingFromAnalytics 从组合聚合源计算公开用量排行。
+// getUsageRankingFromAnalytics builds public usage rankings from the combined source.
 func (r *Store) getUsageRankingFromAnalytics(ctx context.Context, start, end time.Time, limit int, sortBy usage.UsageRankingSortBy) (*UsageRankingResponse, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, true)
 	if err != nil || !ok {
@@ -536,7 +536,7 @@ func (r *Store) getUsageRankingFromAnalytics(ctx context.Context, start, end tim
 	return result, true, nil
 }
 
-// getUserBreakdownStatsFromAnalytics 从组合聚合源计算可支持维度下的用户明细。
+// getUserBreakdownStatsFromAnalytics returns user rankings for dimensions supported by aggregates.
 func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, end time.Time, dim usage.UserBreakdownDimension, limit int) ([]usage.UserBreakdownItem, bool, error) {
 	modelSource := usage.NormalizeModelSource(dim.ModelType)
 	if dim.ProviderID > 0 || dim.NativeCompactionV2 != nil || (dim.Model != "" && modelSource != usage.ModelSourceRequested) {
@@ -559,7 +559,7 @@ func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, e
 		query.where = appendUsageAnalyticsCondition(query.where, fmt.Sprintf("inbound_endpoint = $%d", len(query.args)))
 	}
 
-	// 排序字段从固定列表中选择。
+	// Select the sort column from a fixed list.
 	orderBy := "actual_cost"
 	switch dim.SortBy {
 	case "total_tokens", "input_tokens", "output_tokens", "cache_tokens", "requests", "cost", "actual_cost":
@@ -607,7 +607,7 @@ func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, e
 	return results, true, nil
 }
 
-// getAllGroupUsageSummaryFromAnalytics 使用通用预聚合计算累计、今日和昨日分组用量。
+// getAllGroupUsageSummaryFromAnalytics computes all-time, today, and yesterday group usage.
 func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayStart time.Time) ([]usage.GroupUsageSummary, bool, error) {
 	var sourceOldest sql.NullTime
 	if err := scanSingleRow(ctx, r.sql, `

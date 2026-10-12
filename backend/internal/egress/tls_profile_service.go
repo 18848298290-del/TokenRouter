@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TLSFingerprintProfileRepository 定义 TLS 指纹模板的数据访问接口。
+// TLSFingerprintProfileRepository persists TLS fingerprint profiles.
 type TLSFingerprintProfileRepository interface {
 	List(ctx context.Context) ([]*TLSFingerprintProfile, error)
 	GetByID(ctx context.Context, id int64) (*TLSFingerprintProfile, error)
@@ -16,7 +16,7 @@ type TLSFingerprintProfileRepository interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// TLSFingerprintProfileCache 定义 TLS 指纹模板的缓存接口。
+// TLSFingerprintProfileCache caches profiles and distributes refresh notifications.
 type TLSFingerprintProfileCache interface {
 	Get(ctx context.Context) ([]*TLSFingerprintProfile, bool)
 	Set(ctx context.Context, profiles []*TLSFingerprintProfile) error
@@ -25,19 +25,19 @@ type TLSFingerprintProfileCache interface {
 	SubscribeUpdates(ctx context.Context, handler func())
 }
 
-// TLSFingerprintProfileService TLS 指纹模板管理服务。
+// TLSFingerprintProfileService manages TLS profiles and cached runtime selection.
 type TLSFingerprintProfileService struct {
 	diagnostics Diagnostics
 	repo        TLSFingerprintProfileRepository
 	cache       TLSFingerprintProfileCache
 
-	// 本地 ID→Profile 映射缓存，用于 DoWithTLS 热路径快速查找
+	// Local ID-to-profile lookup for outbound request selection.
 	localCache map[int64]*TLSFingerprintProfile
 	localMu    sync.RWMutex
 	startOnce  sync.Once
 }
 
-// NewTLSFingerprintProfileService 创建 TLS 指纹模板服务。
+// NewTLSFingerprintProfileService creates an idle TLS profile service.
 func NewTLSFingerprintProfileService(
 	repo TLSFingerprintProfileRepository,
 	cache TLSFingerprintProfileCache,
@@ -53,7 +53,7 @@ func NewTLSFingerprintProfileService(
 	return svc
 }
 
-// Stop 停止缓存订阅，确保 Redis 关闭前订阅协程已经退出。
+// Stop stops the cache subscriber when supported; call it before closing Redis.
 func (s *TLSFingerprintProfileService) Stop() {
 	if s == nil || s.cache == nil {
 		return
@@ -63,17 +63,17 @@ func (s *TLSFingerprintProfileService) Stop() {
 	}
 }
 
-// List 获取所有模板。
+// List returns all stored TLS profiles.
 func (s *TLSFingerprintProfileService) List(ctx context.Context) ([]*TLSFingerprintProfile, error) {
 	return s.repo.List(ctx)
 }
 
-// GetByID 根据 ID 获取模板。
+// GetByID retrieves a TLS profile from the repository.
 func (s *TLSFingerprintProfileService) GetByID(ctx context.Context, id int64) (*TLSFingerprintProfile, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
-// Create 创建模板。
+// Create validates and persists a profile, then refreshes caches.
 func (s *TLSFingerprintProfileService) Create(ctx context.Context, profile *TLSFingerprintProfile) (*TLSFingerprintProfile, error) {
 	if err := profile.Validate(); err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func (s *TLSFingerprintProfileService) Create(ctx context.Context, profile *TLSF
 	return created, nil
 }
 
-// Update 更新模板。
+// Update validates and replaces a profile, then refreshes caches.
 func (s *TLSFingerprintProfileService) Update(ctx context.Context, profile *TLSFingerprintProfile) (*TLSFingerprintProfile, error) {
 	if err := profile.Validate(); err != nil {
 		return nil, err
@@ -109,7 +109,7 @@ func (s *TLSFingerprintProfileService) Update(ctx context.Context, profile *TLSF
 	return updated, nil
 }
 
-// Delete 删除模板。
+// Delete deletes a profile and refreshes caches.
 func (s *TLSFingerprintProfileService) Delete(ctx context.Context, id int64) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
@@ -122,8 +122,8 @@ func (s *TLSFingerprintProfileService) Delete(ctx context.Context, id int64) err
 	return nil
 }
 
-// GetProfileByID 根据 ID 从本地缓存获取 Profile（用于 DoWithTLS 热路径）
-// 返回 nil 表示未找到，调用方应 fallback 到内置默认 Profile。
+// GetProfileByID returns an independent copy from the local cache.
+// A nil result indicates a missing profile; callers choose the fallback.
 func (s *TLSFingerprintProfileService) GetProfileByID(id int64) *TLSFingerprintProfile {
 	if s == nil {
 		return nil
@@ -138,7 +138,7 @@ func (s *TLSFingerprintProfileService) GetProfileByID(id int64) *TLSFingerprintP
 	return nil
 }
 
-// getRandomProfile 从本地缓存中随机选择一个 Profile。
+// getRandomProfile returns an independent copy of a randomly selected cached profile.
 func (s *TLSFingerprintProfileService) getRandomProfile() *TLSFingerprintProfile {
 	if s == nil {
 		return nil
@@ -150,7 +150,7 @@ func (s *TLSFingerprintProfileService) getRandomProfile() *TLSFingerprintProfile
 		return nil
 	}
 
-	// 收集所有 profile
+	// Exclude nil entries from random selection.
 	profiles := make([]*TLSFingerprintProfile, 0, len(s.localCache))
 	for _, p := range s.localCache {
 		if p != nil {
@@ -164,8 +164,8 @@ func (s *TLSFingerprintProfileService) getRandomProfile() *TLSFingerprintProfile
 	return CloneTLSFingerprintProfile(profiles[rand.IntN(len(profiles))])
 }
 
-// ResolveTLSProfileByID 根据指定 profile ID 解析运行时 TLS Profile。
-// 调用方仍需传入提供商，用于校验 TLS 指纹能力和启用开关。
+// ResolveTLSProfileByID selects a cached profile, or the built-in default when unavailable.
+// The caller supplies enabled after checking provider eligibility and its TLS switch.
 func (s *TLSFingerprintProfileService) ResolveTLSProfileByID(enabled bool, id int64) *TLSFingerprintProfile {
 	if !enabled {
 		return nil
@@ -176,17 +176,17 @@ func (s *TLSFingerprintProfileService) ResolveTLSProfileByID(enabled bool, id in
 		}
 	}
 	if id == -1 {
-		// 随机选择一个 profile
+		// The -1 sentinel requests a random cached profile.
 		if p := s.getRandomProfile(); p != nil {
 			return CloneTLSFingerprintProfile(p)
 		}
 	}
-	// TLS 启用但无绑定 profile → 空 Profile → dialer 使用内置默认值
+	// Empty TLS settings let the dialer supply its built-in defaults.
 	return &TLSFingerprintProfile{Name: "Built-in Default (Node.js 24.x)"}
 }
 
-// ResolveRoutableTLSProfileByID 解析 TLS 路由器规则指向的 Profile。
-// 与提供商固定模板不同，正数 ID 不存在时返回 ok=false，让调用方回退提供商固定模板。
+// ResolveRoutableTLSProfileByID resolves a router rule's profile selection.
+// A missing positive ID returns false so the caller can try the provider's bound profile.
 func (s *TLSFingerprintProfileService) ResolveRoutableTLSProfileByID(enabled bool, id int64) (*TLSFingerprintProfile, bool) {
 	if !enabled {
 		return nil, false
@@ -203,12 +203,12 @@ func (s *TLSFingerprintProfileService) ResolveRoutableTLSProfileByID(enabled boo
 		}
 		return nil, false
 	}
-	// 规则显式选择 0 时使用内置默认指纹，仍属于一次有效路由命中。
+	// Zero selects the built-in fingerprint and counts as a successful route.
 	return &TLSFingerprintProfile{Name: "Built-in Default (Node.js 24.x)"}, true
 }
 
-// ResolveTokenTLSProfileByID 解析 ChatGPT OAuth token 请求专用的 TLS 模板。
-// 该路径可能发生在提供商创建前，因此不依赖提供商上的 TLS 开关。
+// ResolveTokenTLSProfileByID resolves TLS settings for ChatGPT OAuth token requests.
+// Token requests can precede provider creation, so this path does not require a provider TLS switch.
 func (s *TLSFingerprintProfileService) ResolveTokenTLSProfileByID(id int64) (*TLSFingerprintProfile, bool) {
 	if s == nil {
 		return nil, false
@@ -225,7 +225,7 @@ func (s *TLSFingerprintProfileService) ResolveTokenTLSProfileByID(id int64) (*TL
 		}
 		return nil, false
 	}
-	// 0 表示使用内置默认指纹模板。
+	// Zero selects the built-in fingerprint.
 	return &TLSFingerprintProfile{Name: "Built-in Default (Node.js 24.x)"}, true
 }
 
@@ -293,7 +293,7 @@ func (s *TLSFingerprintProfileService) invalidateAndNotify(ctx context.Context) 
 	}
 }
 
-// Start 在预热与装配完成后安装缓存订阅。
+// Start warms the cache and installs its update subscription once.
 func (s *TLSFingerprintProfileService) Start() {
 	s.startOnce.Do(func() {
 		ctx := context.Background()

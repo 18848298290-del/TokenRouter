@@ -1,6 +1,6 @@
 //go:build integration
 
-// 覆盖 internal/billing/postgres/key_usage.go 和 settlement.go 的窗口递增。
+// These tests cover quota-window increments through the key usage store and settlement store.
 
 package billing_test
 

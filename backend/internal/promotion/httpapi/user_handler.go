@@ -14,7 +14,7 @@ func NewUserHandler(s *promotion.AffiliateService) *UserHandler {
 	return &UserHandler{affiliateService: s}
 }
 
-// GetAffiliate 获取当前用户的邀请返利详情。
+// GetAffiliate returns the current user's affiliate details.
 // GET /api/v1/user/aff
 func (h *UserHandler) GetAffiliate(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -32,7 +32,7 @@ func (h *UserHandler) GetAffiliate(c *gin.Context) {
 	httpx.Success(c, detail)
 }
 
-// TransferAffiliateQuota 将当前用户可提现的邀请返利额度转入余额。
+// TransferAffiliateQuota moves the current user's available affiliate quota into balance.
 // POST /api/v1/user/aff/transfer
 func (h *UserHandler) TransferAffiliateQuota(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

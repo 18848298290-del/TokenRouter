@@ -12,8 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// ListRequestTimings 批量读取 http.access 的阶段字段，按 client_request_id 返回最新一条记录。
-// 使用独立查询避免管理员使用记录列表产生逐行查询；没有匹配日志的请求不会出现在结果中。
+// ListRequestTimings returns the latest http.access timing per client request ID, falling back to request ID.
+// The batch query avoids per-row queries on the usage list; unmatched requests are omitted.
 func (r *Store) ListRequestTimings(ctx context.Context, clientRequestIDs []string) (map[string]*ops.OpsRequestTiming, error) {
 	result := make(map[string]*ops.OpsRequestTiming)
 	if r == nil || r.db == nil || len(clientRequestIDs) == 0 {

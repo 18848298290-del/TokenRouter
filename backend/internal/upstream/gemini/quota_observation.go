@@ -11,9 +11,9 @@ import (
 
 var retryInRegex = regexp.MustCompile(`Please retry in ([0-9.]+)s`)
 
-// ParseGeminiRateLimitResetTime 解析 Gemini 格式的 429 响应，返回重置时间的 Unix 时间戳。
+// ParseGeminiRateLimitResetTime returns reset time in Unix seconds, or nil when no delay can be resolved.
 func ParseGeminiRateLimitResetTime(body []byte, nextDaily func() *int64) *int64 {
-	// 第一阶段：gjson 结构化提取
+	// Daily quota errors use the caller-supplied reset time when available.
 	errMsg := gjson.GetBytes(body, "error.message").String()
 	if LooksLikeGeminiDailyQuota(errMsg) && nextDaily != nil {
 		if ts := nextDaily(); ts != nil {
@@ -21,7 +21,6 @@ func ParseGeminiRateLimitResetTime(body []byte, nextDaily func() *int64) *int64 
 		}
 	}
 
-	// 遍历 error.details 查找 quotaResetDelay
 	var found *int64
 	gjson.GetBytes(body, "error.details").ForEach(func(_, detail gjson.Result) bool {
 		v := detail.Get("metadata.quotaResetDelay").String()
@@ -41,7 +40,7 @@ func ParseGeminiRateLimitResetTime(body []byte, nextDaily func() *int64) *int64 
 		return found
 	}
 
-	// 第二阶段：regex 回退匹配 "Please retry in Xs"
+	// Some errors expose the delay only as "Please retry in Xs" text.
 	matches := retryInRegex.FindStringSubmatch(string(body))
 	if len(matches) == 2 {
 		if dur, err := time.ParseDuration(matches[1] + "s"); err == nil {

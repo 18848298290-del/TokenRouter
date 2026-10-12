@@ -7,16 +7,16 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// SupplementCompactionItemFromSSE 为 compact 终态补上事件流中的 compaction item。
-// 终态 output 非空但缺少 compaction 时，从 output_item.done 或 added 取 raw JSON 补入。
-// Codex remote compact v2 从 output_item.done 收集且要求恰好一个 compaction item，
-// SSE 转 JSON 与流式透传需要提供相同结果。非 compact 请求原样返回。
+// SupplementCompactionItemFromSSE appends a missing compaction item to a nonempty compact response output.
+// It copies raw JSON from output_item.done, or output_item.added when no done item exists.
+// Codex remote compact v2 expects one compaction item from output_item.done;
+// SSE-to-JSON conversion needs the same item. Non-compact responses pass through.
 func SupplementCompactionItemFromSSE(compact bool, finalResponse []byte, bodyText string) []byte {
 	if !compact {
 		return finalResponse
 	}
 	if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-		// 空 output 由 reconstructResponseOutputFromSSE 重建。
+		// The response output reconstruction path handles empty output arrays.
 		return finalResponse
 	}
 	if ResponsesOutputHasCompactionItem(finalResponse) {
@@ -44,7 +44,7 @@ func OpenAIStreamEventIsTerminal(data string) bool {
 	return OpenAIStreamEventTypeIsTerminal(gjson.Get(trimmed, "type").String())
 }
 
-// OpenAIStreamEventIsTerminalWithType 使用调用方已提取的 type 判断终态。
+// OpenAIStreamEventIsTerminalWithType checks the supplied event type, including the [DONE] sentinel.
 func OpenAIStreamEventIsTerminalWithType(data, eventType string) bool {
 	trimmed := strings.TrimSpace(data)
 	if trimmed == "" {
@@ -56,7 +56,7 @@ func OpenAIStreamEventIsTerminalWithType(data, eventType string) bool {
 	return OpenAIStreamEventTypeIsTerminal(eventType)
 }
 
-// GenericFailedEventPayload 返回客户端可识别的通用失败事件。
+// GenericFailedEventPayload returns a generic response.failed event for clients.
 func GenericFailedEventPayload(_ ...[]byte) []byte {
 	return []byte(`{"type":"response.failed","response":{"error":{"message":"Upstream gateway error"}}}`)
 }

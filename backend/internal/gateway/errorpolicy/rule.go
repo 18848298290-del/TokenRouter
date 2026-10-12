@@ -7,39 +7,37 @@ import (
 )
 
 const (
-	// MatchModeAny 表示任一条件匹配即可。
+	// MatchModeAny accepts a match in any configured condition category.
 	MatchModeAny = "any"
 
-	// MatchModeAll 表示所有条件都必须匹配。
+	// MatchModeAll requires a match in every configured condition category.
 	MatchModeAll = "all"
 )
 
-// ErrorPassthroughRule 全局错误透传规则
-// 用于控制上游错误如何返回给客户端。
+// ErrorPassthroughRule controls how upstream errors are returned to clients.
+// Platform filters apply independently of the error-code and keyword match mode.
 type ErrorPassthroughRule struct {
 	ID              int64     `json:"id"`
-	Name            string    `json:"name"`             // 规则名称
-	Enabled         bool      `json:"enabled"`          // 是否启用
-	Priority        int       `json:"priority"`         // 优先级（数字越小优先级越高）
-	ErrorCodes      []int     `json:"error_codes"`      // 匹配的错误码列表（OR关系）
-	Keywords        []string  `json:"keywords"`         // 匹配的关键词列表（OR关系）
-	MatchMode       string    `json:"match_mode"`       // "any"(任一条件) 或 "all"(所有条件)
-	Platforms       []string  `json:"platforms"`        // 适用平台列表
-	PassthroughCode bool      `json:"passthrough_code"` // 是否透传原始状态码
-	ResponseCode    *int      `json:"response_code"`    // 自定义状态码（passthrough_code=false 时使用）
-	PassthroughBody bool      `json:"passthrough_body"` // 是否透传原始错误信息
-	CustomMessage   *string   `json:"custom_message"`   // 自定义错误信息（passthrough_body=false 时使用）
-	SkipMonitoring  bool      `json:"skip_monitoring"`  // 是否跳过运维监控记录
-	Description     *string   `json:"description"`      // 规则描述
+	Name            string    `json:"name"`
+	Enabled         bool      `json:"enabled"`
+	Priority        int       `json:"priority"`         // Lower values match first.
+	ErrorCodes      []int     `json:"error_codes"`      // Any listed status code may match.
+	Keywords        []string  `json:"keywords"`         // Any listed keyword may match.
+	MatchMode       string    `json:"match_mode"`       // Combines configured code and keyword categories: "any" or "all".
+	Platforms       []string  `json:"platforms"`        // Empty matches all platforms.
+	PassthroughCode bool      `json:"passthrough_code"` // Use the upstream status code.
+	ResponseCode    *int      `json:"response_code"`    // Used when PassthroughCode is false.
+	PassthroughBody bool      `json:"passthrough_body"` // Use the extracted upstream error message.
+	CustomMessage   *string   `json:"custom_message"`   // Used when PassthroughBody is false.
+	SkipMonitoring  bool      `json:"skip_monitoring"`  // Skip ordinary Ops error monitoring.
+	Description     *string   `json:"description"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type ValidationError = egress.ValidationError
 
-// 支持的平台常量
-
-// Validate 验证规则配置的有效性。
+// Validate checks required match conditions and response actions.
 func (r *ErrorPassthroughRule) Validate() error {
 	if r.Name == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}
@@ -47,7 +45,7 @@ func (r *ErrorPassthroughRule) Validate() error {
 	if r.MatchMode != MatchModeAny && r.MatchMode != MatchModeAll {
 		return &ValidationError{Field: "match_mode", Message: "match_mode must be 'any' or 'all'"}
 	}
-	// 至少需要配置一个匹配条件（错误码或关键词）
+
 	if len(r.ErrorCodes) == 0 && len(r.Keywords) == 0 {
 		return &ValidationError{Field: "conditions", Message: "at least one error_code or keyword is required"}
 	}

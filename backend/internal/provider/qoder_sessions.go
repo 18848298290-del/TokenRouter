@@ -34,7 +34,7 @@ type QoderSessionCacheEntry[T comparable] struct {
 	ExpiresAt       time.Time
 }
 
-// QoderSessionProviderState 保存单个提供商已观察到的最新凭据顺序与异步构建快照。
+// QoderSessionProviderState tracks the newest observed credentials and the snapshot used for session builds.
 type QoderSessionProviderState struct {
 	CredentialsHash   string
 	CredentialVersion int64
@@ -42,12 +42,12 @@ type QoderSessionProviderState struct {
 	Generation        uint64
 }
 
-// qoderSessionBuildResult[T] 保存 singleflight 共享的 session 构建结果。
+// qoderSessionBuildResult holds a session shared by singleflight callers.
 type qoderSessionBuildResult[T comparable] struct {
 	Session T
 }
 
-// StopContext 取消共享构建并等待已进入工作，停止后禁止新构建及迟到回填。
+// StopContext cancels shared builds and waits for active work. Stopping rejects new builds and late cache writes.
 func (p *QoderSessions[T]) StopContext(ctx context.Context) error {
 	if p == nil {
 		return nil
@@ -83,10 +83,10 @@ func (p *QoderSessions[T]) GetSession(ctx context.Context, provider *Record, bui
 		return zero, err
 	}
 
-	// 凭据哈希与失效世代共同组成 key：相同请求只回源一次，失效或改密后不会等待旧交换。
+	// Key flights by credentials and generation so invalidation or credential changes bypass older exchanges.
 	flightKey := fmt.Sprintf("%d:%s:%d", providerSnapshot.ID, hash, generation)
 	resultCh := p.SessionBuildGroup.DoChan(flightKey, func() (any, error) {
-		// 共享构建不能绑定首个等待者；每个调用者在下方独立响应自己的取消信号。
+		// Shared builds outlive individual waiters; each caller handles its own cancellation below.
 		buildTimeout := p.SessionBuildTimeout
 		if buildTimeout <= 0 {
 			buildTimeout = DefaultQoderSessionBuildTimeout
@@ -126,7 +126,7 @@ func (p *QoderSessions[T]) GetSession(ctx context.Context, provider *Record, bui
 		return zero, ctx.Err()
 	case flightResult := <-resultCh:
 		if flightResult.Err != nil {
-			// 被失效或改密打断的旧调用不能返回已经失效的 session，由后续业务调用按新凭据重建。
+			// Return invalidation errors so a later request can rebuild with current credentials.
 			return zero, flightResult.Err
 		}
 		value = flightResult.Val
@@ -138,7 +138,7 @@ func (p *QoderSessions[T]) GetSession(ctx context.Context, provider *Record, bui
 	return result.Session, nil
 }
 
-// QoderCredentialSnapshotOlder 比较凭据快照顺序：明确的 token_version 优先，无法判序时才参考更新时间。
+// QoderCredentialSnapshotOlder compares token versions first, using update times when versions cannot establish order.
 func QoderCredentialSnapshotOlder(incoming, current *Record) bool {
 	if incoming == nil || current == nil {
 		return false
@@ -157,7 +157,7 @@ func QoderCredentialSnapshotOlder(incoming, current *Record) bool {
 	return !incoming.UpdatedAt.IsZero() && !current.UpdatedAt.IsZero() && incoming.UpdatedAt.Before(current.UpdatedAt)
 }
 
-// prepareQoderSessionBuild 返回当前凭据，调度快照版本较低时使用已观察到的新凭据。
+// prepareQoderSessionBuild replaces older scheduler credentials with the newest observed snapshot.
 func (p *QoderSessions[T]) prepareQoderSessionBuild(provider *Record, hash string) (uint64, string, *Record, T) {
 	var zero T
 	p.Mu.Lock()
@@ -179,7 +179,8 @@ func (p *QoderSessions[T]) prepareQoderSessionBuild(provider *Record, hash strin
 	} else if state.CredentialsHash != hash {
 		current := state.ProviderSnapshot
 		if QoderCredentialSnapshotOlder(provider, current) {
-			// 刷新后的 token_version 单调递增；旧 scheduler 快照改用已观察到的新凭据构建或加入 flight。
+			// Refresh versions increase monotonically; older scheduler snapshots join or build with the observed
+			// credentials.
 			hash = state.CredentialsHash
 			provider = current
 		} else {
@@ -190,7 +191,7 @@ func (p *QoderSessions[T]) prepareQoderSessionBuild(provider *Record, hash strin
 			delete(p.Sessions, providerID)
 		}
 	} else {
-		// 相同凭据下保留最新的代理、TLS 等非哈希运行时配置，供后续过期重建使用。
+		// With matching credentials, retain the supplied proxy and TLS settings for later rebuilds.
 		state.ProviderSnapshot = provider
 	}
 	p.ProviderStates[providerID] = state
@@ -201,7 +202,7 @@ func (p *QoderSessions[T]) prepareQoderSessionBuild(provider *Record, hash strin
 	return state.Generation, hash, provider, zero
 }
 
-// cachedQoderSessionForBuild 在 singleflight 回调中复查缓存和代次，排队期间已有结果时直接使用。
+// cachedQoderSessionForBuild rechecks the generation and cache after entering the singleflight callback.
 func (p *QoderSessions[T]) cachedQoderSessionForBuild(providerID int64, hash string, generation uint64) (T, bool) {
 	var zero T
 	p.Mu.Lock()
@@ -218,7 +219,7 @@ func (p *QoderSessions[T]) cachedQoderSessionForBuild(providerID int64, hash str
 	return entry.Session, true
 }
 
-// storeQoderSessionBuild 只允许当前凭据世代写入，防止慢速旧交换覆盖新 session。
+// storeQoderSessionBuild accepts the current credential generation, preventing older exchanges from overwriting it.
 func (p *QoderSessions[T]) storeQoderSessionBuild(providerID int64, hash string, generation uint64, session T, expiresAt time.Time) bool {
 	p.activity.mu.Lock()
 	defer p.activity.mu.Unlock()
@@ -235,7 +236,7 @@ func (p *QoderSessions[T]) storeQoderSessionBuild(providerID int64, hash string,
 	return true
 }
 
-// qoderSessionCacheEntryExpired 判断带明确有效期的国内 PAT session 是否已经过期。
+// qoderSessionCacheEntryExpired reports whether an explicitly dated session has expired.
 func qoderSessionCacheEntryExpired[T comparable](entry QoderSessionCacheEntry[T], now time.Time) bool {
 	return !entry.ExpiresAt.IsZero() && !now.Before(entry.ExpiresAt)
 }
@@ -255,7 +256,7 @@ func (p *QoderSessions[T]) Invalidate(providerID int64) {
 	p.Mu.Unlock()
 }
 
-// InvalidateProvider 根据数据库或刷新结果中的提供商快照使 session 失效，后续请求使用该快照的 token。
+// InvalidateProvider invalidates the session and records credentials from a database or refresh snapshot.
 func (p *QoderSessions[T]) InvalidateProvider(provider *Record) {
 	if p == nil || provider == nil {
 		return
@@ -274,7 +275,7 @@ func (p *QoderSessions[T]) InvalidateProvider(provider *Record) {
 	incomingVersion := snapshot.GetCredentialAsInt64("_token_version")
 	if current := state.ProviderSnapshot; current != nil {
 		if QoderCredentialSnapshotOlder(snapshot, current) {
-			// 迟到的刷新/DB 快照不能删除已经缓存的更新 session，也不能提升失效世代。
+			// Ignore older snapshots so they cannot evict a newer session or advance its generation.
 			p.Mu.Unlock()
 			return
 		}

@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestParseCreativeCreateRunMultipartStopsAtTotalLimit 检查解析阶段拒绝累计大小超限的文件。
+// TestParseCreativeCreateRunMultipartStopsAtTotalLimit checks cumulative upload limits during parsing.
 func TestParseCreativeCreateRunMultipartStopsAtTotalLimit(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -38,7 +38,7 @@ func TestParseCreativeCreateRunMultipartStopsAtTotalLimit(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrCreativeInputTooLarge)
 }
 
-// TestCreativeRunScopeFromRequest 校验工作区 header 的缺失、非法值和大小写规范化。
+// TestCreativeRunScopeFromRequest checks missing and invalid workspace headers and case normalization.
 func TestCreativeRunScopeFromRequest(t *testing.T) {
 	t.Run("缺失 header", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())

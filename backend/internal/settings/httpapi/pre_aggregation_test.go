@@ -17,12 +17,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// preAggregationHandlerRepoStub 保存预聚合接口测试使用的设置数据。
+// preAggregationHandlerRepoStub stores settings for HTTP tests.
 type preAggregationHandlerRepoStub struct {
 	values map[string]string
 }
 
-// TestSettingHandlerGetPreAggregationSettings 检查存在旧运维配置时仍返回预聚合默认值。
+// TestSettingHandlerGetPreAggregationSettings checks that obsolete ops settings do not replace
+// pre-aggregation defaults.
 func TestSettingHandlerGetPreAggregationSettings(t *testing.T) {
 	repo := &preAggregationHandlerRepoStub{values: map[string]string{
 		ops.SettingKeyOpsAdvancedSettings: `{"aggregation":{"aggregation_enabled":false}}`,
@@ -45,7 +46,7 @@ func TestSettingHandlerGetPreAggregationSettings(t *testing.T) {
 	require.True(t, envelope.Data.Settings.Ops.Enabled)
 }
 
-// TestSettingHandlerUpdatePreAggregationSettingsRejectsInvalidInterval 检查接口拒绝超出范围的刷新周期。
+// TestSettingHandlerUpdatePreAggregationSettingsRejectsInvalidInterval checks rejection of out-of-range intervals.
 func TestSettingHandlerUpdatePreAggregationSettingsRejectsInvalidInterval(t *testing.T) {
 	repo := &preAggregationHandlerRepoStub{values: map[string]string{}}
 	handler := newPreAggregationHandler(repo)
@@ -63,7 +64,7 @@ func TestSettingHandlerUpdatePreAggregationSettingsRejectsInvalidInterval(t *tes
 	require.False(t, persisted)
 }
 
-// TestSettingHandlerUpdatePreAggregationSettingsPersistsUnifiedValue 检查接口将全部预聚合选项保存到统一配置键。
+// TestSettingHandlerUpdatePreAggregationSettingsPersistsUnifiedValue checks that all options use one settings key.
 func TestSettingHandlerUpdatePreAggregationSettingsPersistsUnifiedValue(t *testing.T) {
 	repo := &preAggregationHandlerRepoStub{values: map[string]string{}}
 	handler := newPreAggregationHandler(repo)

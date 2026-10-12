@@ -44,8 +44,8 @@ type StreamOptions struct {
 
 type StreamReadFailure struct{ Body []byte }
 
-// StreamErrorEventError 表示上游 SSE 流体内出现 event:error 帧。
-// RawData 保留该事件 data: 行的原始内容，供上层写入 failover body 和 Ops 日志。
+// StreamErrorEventError represents an SSE event:error frame.
+// RawData retains its data payload for failover handling and diagnostic logs.
 type StreamErrorEventError struct {
 	RawData string
 }
@@ -66,7 +66,6 @@ func (o StreamOptions) failover(body []byte) error {
 
 func (e *StreamReadFailure) Error() string { return "upstream error: 502 (failover)" }
 func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options StreamOptions, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*StreamResult, error) {
-	// 更新 5h 窗口状态
 	if options.UpdateWindow != nil {
 		options.UpdateWindow(ctx, resp.Header)
 	}
@@ -75,13 +74,11 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 		options.WriteHeaders(c.Writer.Header(), resp.Header)
 	}
 
-	// 设置 SSE 响应头
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	// 透传其他响应头
 	if v := resp.Header.Get("x-request-id"); v != "" {
 		c.Header("x-request-id", v)
 	}
@@ -95,7 +92,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 	usage := &upstream.TokenUsage{}
 	var firstTokenMs *int
 	scanner := bufio.NewScanner(resp.Body)
-	// 设置更大的 buffer 以处理长行
+	// Allow configured large SSE lines while reusing the pooled initial buffer.
 	maxLineSize := options.MaxLineSize
 	if maxLineSize <= 0 {
 		maxLineSize = upstream.DefaultSSELineLimit
@@ -107,7 +104,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 		line string
 		err  error
 	}
-	// 独立 goroutine 读取上游，避免读取阻塞导致超时/keepalive 无法处理
+	// Read upstream separately so blocked reads do not prevent timeout or keepalive handling.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -136,7 +133,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 	defer close(done)
 
 	streamInterval := options.Interval
-	// 仅监控上游数据间隔超时，避免下游写入阻塞导致误判
+	// Measure idle time from upstream reads, independent of downstream write timing.
 	var intervalTicker *time.Ticker
 	if streamInterval > 0 {
 		intervalTicker = time.NewTicker(streamInterval)
@@ -147,7 +144,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 		intervalCh = intervalTicker.C
 	}
 
-	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
+	// Send downstream keepalives to prevent idle proxy connections from closing.
 	keepaliveInterval := options.Keepalive
 	var keepaliveTimer *time.Timer
 	if keepaliveInterval > 0 {
@@ -172,10 +169,8 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 		keepaliveTimer.Reset(keepaliveInterval)
 	}
 
-	// 仅发送一次错误事件，避免多次写入导致协议混乱（写失败时尽力通知客户端）。
-	// 事件格式遵循 Anthropic SSE 标准：{"type":"error","error":{"type":<reason>,"message":<message>}}
-	// 这样 Anthropic SDK / Claude Code 等客户端能按标准 error 类型解析，UI 能显示具体错误文案，
-	// 服务端 ExtractUpstreamErrorMessage 也能从透传的 body 中提取 message。
+	// Attempt one Anthropic error event, even if writing it fails. The envelope
+	// lets clients and error extraction read the same type and message fields.
 	errorEventSent := false
 	sendErrorEvent := func(reason, message string) {
 		if errorEventSent {
@@ -193,7 +188,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 			},
 		})
 		if err != nil {
-			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
+			// The current payload contains only strings; retain a defensive encoding path.
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
 		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
@@ -201,7 +196,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 	}
 
 	needModelReplace := originalModel != mappedModel
-	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
+	clientDisconnected := false // Keep draining usage after a downstream write fails.
 	sawTerminalEvent := false
 	useNoopDeltaKeepalive := ShouldUseClaudeCodeNoopDeltaKeepalive(options.UserAgent)
 	noopDeltaKeepaliveBlockIndex := -1
@@ -250,7 +245,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 
 		var event map[string]any
 		if err := json.Unmarshal([]byte(dataLine), &event); err != nil {
-			// JSON 解析失败，直接透传原始数据
+			// Preserve the data payload when it cannot be decoded.
 			block := ""
 			if eventName != "" {
 				block = "event: " + eventName + "\n"
@@ -300,7 +295,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 			}
 		}
 
-		// 兼容 Kimi cached_tokens → cache_read_input_tokens
+		// Normalize Kimi cache usage into the Anthropic cache-read field.
 		if eventType == "message_start" {
 			if msg, ok := event["message"].(map[string]any); ok {
 				if u, ok := msg["usage"].(map[string]any); ok {
@@ -314,8 +309,8 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 			}
 		}
 
-		// Cache TTL Override: 重写 SSE 事件中的 cache_creation 分类。
-		// 提供商级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
+		// Apply the resolved cache billing category to each usage event.
+		// The OverrideCache callback resolves provider/global precedence.
 		if overrideTarget, ok := options.override(ctx); ok {
 			if eventType == "message_start" {
 				if msg, ok := event["message"].(map[string]any); ok {
@@ -355,7 +350,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 
 		newData, err := json.Marshal(event)
 		if err != nil {
-			// 序列化失败，直接透传原始数据
+			// Preserve the data payload if re-encoding fails.
 			block := ""
 			if eventName != "" {
 				block = "event: " + eventName + "\n"
@@ -376,7 +371,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 上游完成，返回结果
+				// EOF is successful only after a terminal event.
 				if !sawTerminalEvent {
 					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
@@ -386,26 +381,23 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				if sawTerminalEvent {
 					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
 				}
-				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
+				// Cancellation may interrupt upstream reads before terminal usage arrives.
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
-				// 客户端已通过写入失败检测到断开，上游也出错了，返回已收集的 usage
+				// Return partial usage if upstream also fails after a client disconnect.
 				if clientDisconnected {
 					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
-				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "SSE line too long: provider=%d max_size=%d error=%v", options.ProviderID, maxLineSize, ev.err)
 					sendErrorEvent("response_too_large", fmt.Sprintf("upstream SSE line exceeded %d bytes", maxLineSize))
 					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, ev.err
 				}
-				// 上游中途读错误（unexpected EOF / connection reset 等，常见于 HTTP/2 GOAWAY）：
-				// 若尚未向客户端写过任何字节，包成 UpstreamFailoverError 让 handler 层走 failover/重试。
-				// 已经开始写流时 SSE 协议无 resume，只能透传错误事件给客户端。
-				// 注意:面向客户端的 disconnectMsg 必须用 upstream.SanitizeStreamError 剥离地址,
-				// 默认 *net.OpError 的 Error() 会泄露内部 IP/端口和上游地址。完整 ev.err
-				// 仅在下方 LegacyPrintf 内部日志中保留供运维诊断。
+				// Before any client write, return a failover error so the caller can retry.
+				// After output starts, report an SSE error because the stream cannot resume.
+				// Sanitize client-visible text: network errors can expose internal addresses.
+				// Keep the complete error in internal logs for diagnosis.
 				disconnectMsg := "upstream stream disconnected: " + upstream.SanitizeStreamError(ev.err)
 				if !c.Writer.Written() {
 					logger.LegacyPrintf("service.gateway", "Upstream stream read error before any client output (provider=%d), failing over: %v", options.ProviderID, ev.err)
@@ -445,9 +437,8 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
 							clientDisconnected = true
 							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
-							// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
-							// clientDisconnected 守卫跳过。
+							// Keep processing this event and later usage after the write fails.
+							// Skipping this event could omit tokens already consumed upstream.
 						} else {
 							flusher.Flush()
 							lastDataAt = time.Now()
@@ -481,7 +472,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "Stream data interval timeout: provider=%d model=%s interval=%s", options.ProviderID, originalModel, streamInterval)
-			// 处理流超时，可能标记提供商为临时不可调度或错误状态
+			// Let the caller update provider state for the timeout.
 			if options.OnTimeout != nil {
 				options.OnTimeout(ctx, originalModel)
 			}
@@ -514,7 +505,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 	}
 }
 
-// StreamEventIsTerminal 根据 SSE 事件名和数据判断响应是否结束。
+// StreamEventIsTerminal recognizes message_stop or the [DONE] sentinel.
 func StreamEventIsTerminal(eventName, data string) bool {
 	if strings.EqualFold(strings.TrimSpace(eventName), "message_stop") {
 		return true

@@ -12,7 +12,7 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// HealthyGrokOAuthProvider 创建凭据有效且可调度的 Grok OAuth 提供商。
+// HealthyGrokOAuthProvider creates a schedulable Grok OAuth fixture with unexpired credentials.
 func HealthyGrokOAuthProvider(id int64, token string) *gatewayadapter.ExecutionProvider {
 	return &gatewayadapter.ExecutionProvider{
 		Record: provider.Record{
@@ -33,7 +33,7 @@ func HealthyGrokOAuthProvider(id int64, token string) *gatewayadapter.ExecutionP
 	}
 }
 
-// RequestCredentials 组合测试提供的凭据读取和刷新接口。
+// RequestCredentials wires credential reads and recovery to test dependencies.
 func RequestCredentials(store gatewayadapter.ExecutionProviderStore, source *provider.OpenAIExecutionCredentials, tokens *provider.GrokTokenSource, blocks *provider.RuntimeBlockState) *gatewayadapter.RequestCredentials {
 	if blocks == nil {
 		blocks = provider.NewRuntimeBlockState(time.Now)

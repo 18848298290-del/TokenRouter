@@ -1,6 +1,6 @@
 package httpapi
 
-// 连接路由场景覆盖 gateway/httpapi/openai_request_session_headers.go、gateway/httpapi/openai_requests.go、upstream/openai/ws/connections.go 和 upstream/openai/ws/pool.go，检查请求头、连接复用和关闭。
+// Connection-routing scenarios cover session headers, HTTP request construction, WS connection reuse, and pool shutdown.
 
 import (
 	"bytes"
@@ -335,7 +335,7 @@ func (d *openAIWSCountingDialer) LastTLSProfile() *tlsfingerprint.Profile {
 	return d.lastTLSProfile
 }
 
-// TestOpenAIWSConnPoolShutdownSealsLazyCreation 验证应用关闭后按需建池和连接获取均失败。
+// TestOpenAIWSConnPoolShutdownSealsLazyCreation verifies that shutdown prevents lazy pool creation and acquisition.
 func TestOpenAIWSConnPoolShutdownSealsLazyCreation(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	svc.Connections.Close()

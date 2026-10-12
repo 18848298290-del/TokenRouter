@@ -6,7 +6,7 @@ import (
 )
 
 // @project-doc docs/domains/gateway_policy_controls.md#group_routing_policy
-// GroupRoutingPolicy 保存分组独立的路由与功能策略；价格配置不参与这些规则。
+// GroupRoutingPolicy contains group routing and feature rules, independently of pricing configuration.
 type GroupRoutingPolicy struct {
 	Enabled                bool              `json:"enabled"`
 	ModelMapping           map[string]string `json:"model_mapping"`
@@ -17,7 +17,7 @@ type GroupRoutingPolicy struct {
 	FeaturesConfig         map[string]any    `json:"features_config"`
 }
 
-// Clone 为认证快照和管理请求隔离嵌套配置。
+// Clone isolates nested configuration for authentication snapshots and administrative requests.
 func (p GroupRoutingPolicy) Clone() GroupRoutingPolicy {
 	out := p
 	out.ModelMapping = maps.Clone(p.ModelMapping)
@@ -26,7 +26,7 @@ func (p GroupRoutingPolicy) Clone() GroupRoutingPolicy {
 	return out
 }
 
-// DeepCopyFeaturesConfig 隔离配置中的嵌套 JSON 值，保持原数值类型。
+// DeepCopyFeaturesConfig copies nested JSON values while retaining their numeric types.
 func DeepCopyFeaturesConfig(src map[string]any) map[string]any {
 	if src == nil {
 		return nil

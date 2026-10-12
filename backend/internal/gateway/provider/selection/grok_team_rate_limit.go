@@ -12,7 +12,8 @@ func isGrokTeamModelRateLimited(provider *gatewayprovider.ExecutionProvider, mod
 	return providercore.IsGrokTeamModelRateLimited(gatewayprovider.ExecutionRecord(provider), model, now)
 }
 
-// filterGrokTeamModelRateLimitedProviders 移除团队处于模型级冷却的候选；没有 team_id 的提供商直接通过。
+// filterGrokTeamModelRateLimitedProviders removes candidates whose team is cooling down for the mapped model.
+// Providers without a team ID pass. Filtering reuses the input slice backing array.
 func filterGrokTeamModelRateLimitedProviders(providers []gatewayprovider.ExecutionProvider, model string, now time.Time) []gatewayprovider.ExecutionProvider {
 	if len(providers) == 0 || strings.TrimSpace(model) == "" {
 		return providers

@@ -14,13 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/backup"
 )
 
-// PgDumper implements backup.DBDumper using pg_dump/psql
-// DatabaseOptions 是装配传入的数据库连接快照。
+// DatabaseOptions is the database connection configuration supplied at construction.
 type DatabaseOptions struct {
 	Host                            string
 	Port                            int
 	User, Password, DBName, SSLMode string
 }
+
+// PgDumper implements database export and restore through pg_dump and psql.
 type PgDumper struct {
 	cfg *DatabaseOptions
 }
@@ -51,7 +52,7 @@ func (d *PgDumper) Dump(ctx context.Context, opts backup.BackupDumpOptions) (io.
 		"--if-exists",
 	}
 	for _, tablePattern := range opts.ExcludeTableData {
-		// 只跳过表数据，保留结构、约束和索引，避免恢复后缺表。
+		// Exclude data while retaining table definitions, constraints, and indexes for restore.
 		args = append(args, "--exclude-table-data="+tablePattern)
 	}
 
@@ -72,14 +73,13 @@ func (d *PgDumper) Dump(ctx context.Context, opts backup.BackupDumpOptions) (io.
 		return nil, fmt.Errorf("start pg_dump: %w", err)
 	}
 
-	// 返回一个 ReadCloser：读 stdout，关闭时等待进程退出
 	return &cmdReadCloser{ReadCloser: stdout, cmd: cmd}, nil
 }
 
-// Restore 在一个 psql 事务中清理派生表并恢复归档，输入损坏时取消事务。
+// Restore drops derived tables and restores the archive in one psql transaction, canceling on input failure.
 // @project-doc docs/operations/deployment_and_migrations.md#maintenance_execution
 func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
-	// 空归档在执行派生表清理之前失败。
+	// Reject empty archives before dropping derived tables.
 	archive := bufio.NewReader(data)
 	if _, err := archive.Peek(1); err != nil {
 		return fmt.Errorf("读取备份归档: %w", err)
@@ -103,7 +103,7 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		cmd.Env = append(cmd.Environ(), "PGSSLMODE="+d.cfg.SSLMode)
 	}
 
-	// 输入只有完整读取后才关闭管道，损坏归档先取消 psql，避免 EOF 触发提交。
+	// Cancel psql before closing stdin on input failure, because EOF can commit an incomplete archive.
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -115,8 +115,8 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		_ = stdin.Close()
 		return err
 	}
-	// 旧备份没有活动汇总的 DROP，先解除它对用户主键的依赖。
-	// 此前缀与归档 SQL 同属 psql 的单事务，失败时一起回滚。
+	// Older archives omit this table's DROP; remove its foreign-key dependency on users before restoring.
+	// The prefix and archive SQL share one transaction and roll back together.
 	input := io.MultiReader(strings.NewReader("DROP TABLE IF EXISTS public.usage_user_activity;\n"), archive)
 	_, copyErr := io.Copy(stdin, input)
 	if copyErr != nil {

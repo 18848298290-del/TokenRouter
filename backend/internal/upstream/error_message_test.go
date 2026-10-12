@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCNProviderResponseIndicatesInsufficientBalance 覆盖中英文余额不足文案与否定用例。
+// TestCNProviderResponseIndicatesInsufficientBalance covers Chinese and English error wording.
 func TestCNProviderResponseIndicatesInsufficientBalance(t *testing.T) {
 	t.Parallel()
 	positive := []string{
@@ -29,7 +29,6 @@ func TestCNProviderResponseIndicatesInsufficientBalance(t *testing.T) {
 	}
 }
 
-// TestIsHTMLResponse 检查 HTML 前缀识别及其他文本格式的拒绝。
 func TestIsHTMLResponse(t *testing.T) {
 	cases := []struct {
 		name string

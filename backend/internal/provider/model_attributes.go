@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// ModelAttributeTarget 从提供商配置提取能力查询所需的路线字段。
+// ModelAttributeTarget extracts provider routing fields for model capability lookup.
 func (r *Record) ModelAttributeTarget(model, upstreamProtocol string) modelcatalog.Target {
 	target := modelcatalog.Target{Model: model, UpstreamProtocol: upstreamProtocol}
 	if r == nil {

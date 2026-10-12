@@ -23,7 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// APIKeyRepoSuite 为多个文件中的 API Key 存储测试提供数据库与仓储。
+// APIKeyRepoSuite shares database and repository fixtures across API key storage tests.
 type APIKeyRepoSuite struct {
 	root *dbent.Client
 	suite.Suite
@@ -32,7 +32,7 @@ type APIKeyRepoSuite struct {
 	repo   *apikeypostgres.KeyStore
 }
 
-// SetupSuite 每套件共用一个隔离数据库，每条断言仍使用独立回滚事务。
+// SetupSuite creates one isolated database for the suite; SetupTest wraps each test in a rolled-back transaction.
 func (s *APIKeyRepoSuite) SetupSuite() {
 	_, s.root = keyDatabase(s.T())
 }
@@ -84,7 +84,7 @@ func (s *APIKeyRepoSuite) mustCreateApiKey(userID int64, key, name string, group
 	return k
 }
 
-// keyDatabase 为并发创建测试提供可提交事务的隔离数据库。
+// keyDatabase creates an isolated database that supports committed transactions for concurrency tests.
 func keyDatabase(t *testing.T) (*sql.DB, *dbent.Client) {
 	t.Helper()
 	db := postgrescontainer.New(t)

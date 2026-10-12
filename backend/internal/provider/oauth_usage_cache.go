@@ -28,7 +28,7 @@ type OAuthQoderUsageCache struct {
 	Timestamp time.Time
 }
 
-// OAuthUsageCache 按平台保存用量缓存和共享查询，读写时复制展示值。
+// OAuthUsageCache stores platform usage and shared queries, copying cached display values on reads and writes.
 type OAuthUsageCache struct {
 	api, windows, antigravity, qoder, openAIProbe, grokProbe sync.Map
 	apiFlight, antigravityFlight, qoderFlight                singleflight.Group

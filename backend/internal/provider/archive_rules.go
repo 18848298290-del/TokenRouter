@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// ArchiveIdentityHints 保存供应商解码出的导入提示，身份认证使用单独的验证流程。
+// ArchiveIdentityHints contains decoded import hints; authentication uses a separate verification flow.
 type ArchiveIdentityHints struct{ Email, PlanType, ChatGPTAccountID, ChatGPTUserID, OrganizationID string }
 
 func ValidateArchiveProvider(item transfer.DataProvider) error {
@@ -49,7 +49,7 @@ func ValidateArchiveProvider(item transfer.DataProvider) error {
 	return nil
 }
 
-// ArchiveIDToken 提取 OpenAI OAuth 导入的可选身份提示。
+// ArchiveIDToken returns the optional ID token used for OpenAI OAuth import hints.
 func ArchiveIDToken(item *transfer.DataProvider) string {
 	if item == nil || item.Credentials == nil || strings.ToLower(strings.TrimSpace(item.Platform)) != PlatformOpenAI || strings.ToLower(strings.TrimSpace(item.Type)) != ProviderTypeOAuth {
 		return ""
@@ -61,7 +61,7 @@ func ArchiveIDToken(item *transfer.DataProvider) string {
 	return token
 }
 
-// FillArchiveIdentity 补齐缺失的字符串字段，已有非空值保持不变。
+// FillArchiveIdentity fills missing string fields while retaining nonempty values.
 func FillArchiveIdentity(item *transfer.DataProvider, hints *ArchiveIdentityHints) {
 	if item == nil || hints == nil || item.Credentials == nil {
 		return

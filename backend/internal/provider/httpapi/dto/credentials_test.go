@@ -22,7 +22,7 @@ func TestRedactCredentials_StripsSensitiveKeysAndReportsStatus(t *testing.T) {
 		"service_account_json":      map[string]any{"private_key": "..."},
 		"private_key":               "raw-key",
 		"agent_private_key":         "agent-key-secret",
-		// 非敏感
+		// Non-sensitive values remain visible.
 		"base_url":      "https://api.example.com",
 		"model_mapping": map[string]any{"foo": "bar"},
 		"project_id":    "proj-1",
@@ -54,7 +54,7 @@ func TestRedactCredentials_StripsSensitiveKeysAndReportsStatus(t *testing.T) {
 	require.True(t, status["has_private_key"])
 	require.True(t, status["has_agent_private_key"])
 
-	// 状态 map 不应携带非敏感键的 has_*
+	// Presence flags are reserved for sensitive keys.
 	require.NotContains(t, status, "has_base_url")
 	require.NotContains(t, status, "has_project_id")
 }

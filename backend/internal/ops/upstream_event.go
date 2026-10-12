@@ -5,8 +5,8 @@ package ops
 type OpsUpstreamErrorEvent struct {
 	AtUnixMs int64 `json:"at_unix_ms,omitempty"`
 
-	// Passthrough 表示本次请求是否命中“原样透传（仅替换认证）”分支。
-	// 该字段用于排障与灰度评估；存入 JSON，不涉及 DB schema 变更。
+	// Passthrough records whether the request used the branch that forwards the payload with replacement authentication.
+	// It is persisted in event JSON for diagnosis and rollout evaluation.
 	Passthrough bool `json:"passthrough,omitempty"`
 
 	// Context
@@ -27,7 +27,7 @@ type OpsUpstreamErrorEvent struct {
 
 	// Kind: http_error | request_error | retry_exhausted | failover
 	Kind string `json:"kind,omitempty"`
-	// Stage/Scope/Reason 用于区分凭据获取和推理失败，避免用虚构 HTTP 状态污染 upstream_status_code。
+	// Stage, Scope, and Reason distinguish credential acquisition from inference failures when no HTTP status exists.
 	Stage  string `json:"stage,omitempty"`
 	Scope  string `json:"scope,omitempty"`
 	Reason string `json:"reason,omitempty"`

@@ -17,7 +17,7 @@ func (s creativeCatalogRows) ListSchedulableByGroupIDAndPlatform(context.Context
 	return s.values, nil
 }
 
-// TestCreativeCatalogUsesExecutionModelPolicy 检查透传开启时，目录和执行是否仍应用模型映射。
+// TestCreativeCatalogUsesExecutionModelPolicy checks that catalog and execution both apply mappings with passthrough enabled.
 func TestCreativeCatalogUsesExecutionModelPolicy(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		value := &provider.Record{

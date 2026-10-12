@@ -22,17 +22,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// GatewayCompletionRecorders 包含两种完成记录器，各自使用独立的倍率缓存。
+// GatewayCompletionRecorders holds the Forward and OpenAI recorders, each with its own rate cache.
 type GatewayCompletionRecorders struct{ Forward, OpenAI *completion.Recorder }
 
-// completionProviders 在统计影子提供商用量时读取母提供商，并返回完成记录需要的统计字段。
+// completionProviders resolves a shadow provider to its credential parent for completion statistics.
 type completionProviders struct {
 	store *providerpostgres.ProviderStore
 }
 
 type completionHealth struct{ core *provider.HealthService }
 
-// ProvideGatewayCompletionRecorders 为完成记录器组合价格、资金、统计和提交后操作。
+// ProvideGatewayCompletionRecorders binds pricing, settlement, statistics, and post-commit effects to both
+// recorders.
 func ProvideGatewayCompletionRecorders(
 	requests *requestlog.Service,
 	rates *gatewayBillingRates,
@@ -108,7 +109,8 @@ func (p completionHealth) ResetOpenAI403Counter(ctx context.Context, id int64) {
 	p.core.ResetForbiddenCounter(ctx, id)
 }
 
-// gatewayCommitEffects 为两种完成流程分别创建提交后操作对象，后台任务由 app 统一跟踪。
+// gatewayCommitEffects creates post-commit handlers whose background work uses the shared application task
+// tracker.
 func gatewayCommitEffects(deferred *provider.DeferredService, eligibility *billing.Eligibility, notifications *billing.BalanceNotifyService, keys *apikey.APIKeyService, tasks *lifecycle.Tasks, cfg *config.Config) *completion.CommitEffects {
 	value := &completion.CommitEffects{
 		Activity: deferred,

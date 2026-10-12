@@ -24,7 +24,7 @@ type failedRedeemUsage struct{ billing.RedeemCodeRepository }
 
 type redeemAuthObservation struct{ count atomic.Int32 }
 
-// TestSubscriptionParticipantReadsUncommittedAndRollsBack 验证外层新建的用户和套餐尚未提交，读得到它们即证明初始读取和锁都在同一连接。
+// TestSubscriptionParticipantReadsUncommittedAndRollsBack checks that entitlement reads and writes share the caller's uncommitted transaction.
 func TestSubscriptionParticipantReadsUncommittedAndRollsBack(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestSubscriptionParticipantReadsUncommittedAndRollsBack(t *testing.T) {
 			subs := billing.NewSubscriptionService(subscriptionContractEmptyGroups{}, billingpostgres.NewUserSubscriptionRepository(client), billingpostgres.NewSubscriptionMutations(client))
 			if explicit {
 				subs = billingpostgres.SubscriptionsInTx(tx, nil, billing.DateRuntime{Now: time.Now})
-				callCtx = ctx // 参与入口接收外层事务上下文。
+				callCtx = ctx // The adapter already holds the outer transaction.
 			}
 			result, err := subs.AssignSubscription(callCtx, &billing.AssignSubscriptionInput{UserID: user.ID, PlanID: plan.ID})
 			require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestSubscriptionParticipantReadsUncommittedAndRollsBack(t *testing.T) {
 	}
 }
 
-// TestValidityChangeParticipatesInOuterTransaction 验证订阅有效期修改参与外层事务，并随外层事务失败回滚。
+// TestValidityChangeParticipatesInOuterTransaction checks that expiry changes roll back with the caller's transaction.
 func TestValidityChangeParticipatesInOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -97,7 +97,7 @@ func (r failedRedeemUsage) CreateUsage(ctx context.Context, usage *billing.Redee
 
 func (o *redeemAuthObservation) InvalidateAuthCacheByUserID(context.Context, int64) { o.count.Add(1) }
 
-// TestRedeemEffectsWaitForCommit 在权益写入后模拟 usage 失败，检查余额、订阅、并发数和使用次数随事务回滚。
+// TestRedeemEffectsWaitForCommit fails the usage write after granting entitlements and checks that all grants and redemption counts roll back.
 func TestRedeemEffectsWaitForCommit(t *testing.T) {
 	for _, kind := range []string{billing.RedeemTypeBalance, billing.RedeemTypeConcurrency, billing.RedeemTypeSubscription} {
 		t.Run(kind, func(t *testing.T) {

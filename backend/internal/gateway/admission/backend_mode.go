@@ -14,7 +14,7 @@ import (
 
 const BackendModeKey = "backend_mode_enabled"
 
-// BackendModeReader 读取网关后端模式开关。
+// BackendModeReader reads the gateway backend-mode setting.
 type BackendModeReader interface {
 	GetValue(context.Context, string) (string, error)
 }
@@ -24,7 +24,7 @@ type backendModeSnapshot struct {
 	expires time.Time
 }
 
-// BackendMode 缓存开关快照，管理写入和回源发布共用版本检查。
+// BackendMode caches the setting and uses a generation check to coordinate refreshes with publication.
 type BackendMode struct {
 	reader     BackendModeReader
 	warn       func(string, ...any)
@@ -38,7 +38,7 @@ func NewBackendMode(reader BackendModeReader, warn func(string, ...any)) *Backen
 	return &BackendMode{reader: reader, warn: warn}
 }
 
-// Publish 只在数据库写入成功后调用，阻止更早的回源覆盖当前值。
+// Publish replaces the cached value and invalidates older refreshes. Call it after persistence succeeds.
 func (m *BackendMode) Publish(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -47,7 +47,7 @@ func (m *BackendMode) Publish(enabled bool) {
 	m.flight.Forget(BackendModeKey)
 }
 
-// Enabled 保留独立五秒回源预算、六十秒正常缓存及五秒故障缓存。
+// Enabled uses a separate five-second read budget and caches successful reads for one minute, failures for five seconds.
 func (m *BackendMode) Enabled(ctx context.Context) bool {
 	if cached := m.cached.Load(); cached != nil && time.Now().Before(cached.expires) {
 		return cached.enabled
@@ -78,7 +78,7 @@ func (m *BackendMode) Enabled(ctx context.Context) bool {
 		}
 		return m.cached.Load(), nil
 	})
-	// 等待 singleflight 的调用者也优先使用已经完成的管理发布。
+	// Prefer a completed administrative publication even for callers waiting on singleflight.
 	if cached := m.cached.Load(); cached != nil {
 		return cached.enabled
 	}
@@ -86,5 +86,5 @@ func (m *BackendMode) Enabled(ctx context.Context) bool {
 	return cached != nil && cached.enabled
 }
 
-// IsBackendModeEnabled 为身份 HTTP 入口读取缓存中的后端模式开关。
+// IsBackendModeEnabled reads the cached setting for identity HTTP handlers.
 func (m *BackendMode) IsBackendModeEnabled(ctx context.Context) bool { return m.Enabled(ctx) }

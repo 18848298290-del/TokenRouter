@@ -87,7 +87,7 @@ ORDER BY 1 ASC`
 	}, nil
 }
 
-// latencyHistogramBucketIndexCaseExpr 用参数占位符生成直方图桶索引的 CASE 表达式。
+// latencyHistogramBucketIndexCaseExpr builds a bucket-index CASE expression with parameter placeholders.
 func latencyHistogramBucketIndexCaseExpr(column string, firstPlaceholder, boundaryCount int) string {
 	var sb strings.Builder
 	_, _ = sb.WriteString("CASE\n")
@@ -101,7 +101,7 @@ func latencyHistogramBucketIndexCaseExpr(column string, firstPlaceholder, bounda
 	return sb.String()
 }
 
-// latencyHistogramBucketLabels 按桶的起止时间生成有序的展示标签。
+// latencyHistogramBucketLabels returns ordered labels for bucket ranges.
 func latencyHistogramBucketLabels(boundaries []int64) []string {
 	labels := make([]string, 0, len(boundaries)+1)
 	lower := int64(0)

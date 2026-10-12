@@ -9,10 +9,10 @@ type OpsDashboardFilter struct {
 	Platform string
 	GroupID  *int64
 
-	// QueryMode 仅供后端内部在自动路由和强制原始查询之间切换。
+	// QueryMode lets internal callers choose automatic routing or force raw queries.
 	QueryMode OpsQueryMode
 
-	// IgnoredStatusCodes 是客户端侧状态码忽略列表；nil 表示使用系统默认值，空切片表示不按状态码忽略。
+	// IgnoredStatusCodes filters client-facing status codes; nil uses system defaults and an empty slice ignores no codes.
 	IgnoredStatusCodes []int
 }
 
@@ -76,7 +76,7 @@ type OpsLatencyHistogramBucket struct {
 	Count int64  `json:"count"`
 }
 
-// OpsLatencyHistogramResponse 是成功请求的时长分布，用于快速识别长尾延迟。
+// OpsLatencyHistogramResponse describes successful-request duration buckets for inspecting tail latency.
 type OpsLatencyHistogramResponse struct {
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time"`

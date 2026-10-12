@@ -158,7 +158,7 @@ func TestResolveBedrockModelID(t *testing.T) {
 	})
 }
 
-// TestResolveBedrockModelRoute_RegionMatrix 验证同一来源区域的不同型号必须遵守各自的精确推理 ID，不能用统一前缀猜测。
+// TestResolveBedrockModelRoute_RegionMatrix checks model-specific inference IDs for each source region.
 func TestResolveBedrockModelRoute_RegionMatrix(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -228,7 +228,7 @@ func TestResolveBedrockModelRoute_RegionMatrix(t *testing.T) {
 	}
 }
 
-// TestResolveBedrockModelRoute_OpaqueIDsAndProviderMapping 检查资源 ID 和提供商映射结果是否原样透传。
+// TestResolveBedrockModelRoute_OpaqueIDsAndProviderMapping checks passthrough of opaque resources and mapped IDs.
 func TestResolveBedrockModelRoute_OpaqueIDsAndProviderMapping(t *testing.T) {
 	t.Parallel()
 	for _, modelID := range []string{
@@ -267,8 +267,8 @@ func TestResolveBedrockModelRoute_OpaqueIDsAndProviderMapping(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestResolveBedrockModelID_OfficialVersionlessModels 验证无版本号的官方模型名解析为 Bedrock 模型 ID。
-// 默认别名必须生成官方请求地址，且无版本后缀的模型仍保留新版缓存能力。
+// TestResolveBedrockModelID_OfficialVersionlessModels checks Bedrock IDs for models without version suffixes.
+// Default aliases must form valid request URLs and retain the models' cache capabilities.
 func TestResolveBedrockModelID_OfficialVersionlessModels(t *testing.T) {
 	t.Parallel()
 	for _, model := range []string{"claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5"} {
@@ -626,7 +626,7 @@ func TestResolveOpenAIErrorSchedulingModelPrefersActualUpstreamModel(t *testing.
 	}
 }
 
-// TestOpenAIUpstreamPreservesModelID 检查最终请求使用完整模型名称。
+// TestOpenAIUpstreamPreservesModelID checks that the complete model ID reaches the final request.
 func TestOpenAIUpstreamPreservesModelID(t *testing.T) {
 	cases := map[string]string{
 		"gpt-5.3-codex-spark":       "gpt-5.3-codex-spark",
@@ -731,7 +731,7 @@ func TestNormalizeOpenAIModelForUpstream(t *testing.T) {
 	}
 }
 
-// TestPreparedModelPolicyParity 目录快照与执行入口共用各平台的最终型号规则。
+// TestPreparedModelPolicyParity checks that captured catalogue rules and live execution resolve the same platform models.
 func TestPreparedModelPolicyParity(t *testing.T) {
 	parent := int64(10)
 	records := []*providercore.Record{

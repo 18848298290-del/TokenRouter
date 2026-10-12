@@ -4,11 +4,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// RedactCredentials 复制一份 in，剥离 provider.SensitiveCredentialKeys 列出的所有敏感子键，
-// 并产出一个 has_<key> 状态 map 表示哪些敏感键存在且非零值。
+// RedactCredentials copies in and removes keys classified as sensitive by provider.IsSensitiveCredentialKey.
+// The status map records has_<key> for sensitive values considered present by isCredentialValuePresent.
 //
-// 输入 nil 时返回 nil, nil，响应省略对应对象。
-// 不修改入参；调用方拿到的 out 可安全序列化进 JSON 返回前端。
+// A nil input returns nil, nil so the response can omit both objects.
+// Non-sensitive values are cloned for serialization; the input is unchanged.
 func RedactCredentials(in map[string]any) (out map[string]any, status map[string]bool) {
 	if in == nil {
 		return nil, nil
@@ -29,8 +29,8 @@ func RedactCredentials(in map[string]any) (out map[string]any, status map[string
 	return out, status
 }
 
-// isCredentialValuePresent 判断值是否"存在且非零"。空字符串、nil、false 均视为未配置；
-// 其余非零类型（数字、对象、字符串等）视为已配置。
+// isCredentialValuePresent treats nil, empty strings, and false as unconfigured.
+// All other values count as present, including numeric zero and empty containers.
 func isCredentialValuePresent(v any) bool {
 	switch x := v.(type) {
 	case nil:

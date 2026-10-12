@@ -11,14 +11,14 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// OpenAIRequestOptions 只保存启动时的目标和透传配置。
+// OpenAIRequestOptions holds startup target and passthrough settings.
 type OpenAIRequestOptions struct {
 	ForceCLI            bool
 	AllowTimeoutHeaders bool
 	URLPolicy           egress.OperatorURLPolicy
 }
 
-// OpenAIRequests 统一构造协议请求及传输参数，不选择提供商或提交完成任务。
+// OpenAIRequests builds protocol requests and transport parameters for an already selected provider.
 type OpenAIRequests struct {
 	Options      OpenAIRequestOptions
 	Providers    gatewayadapter.ExecutionProviderStore
@@ -35,7 +35,7 @@ type OpenAIRequests struct {
 	GrokRoutes   gatewayadapter.GrokRoutes
 }
 
-// ValidateBaseURL 保持原错误前缀，URL 规则由 egress 唯一执行。
+// ValidateBaseURL validates the URL through egress and prefixes errors with invalid base_url.
 func (s *OpenAIRequests) ValidateBaseURL(raw string) (string, error) {
 	normalized, err := s.ValidateURL(raw)
 	if err != nil {
@@ -46,7 +46,7 @@ func (s *OpenAIRequests) ValidateBaseURL(raw string) (string, error) {
 
 func (s *OpenAIRequests) AllowTimeoutHeaders() bool { return s != nil && s.Options.AllowTimeoutHeaders }
 
-// ValidateURL 保留未配置时的 HTTPS 格式约束。
+// ValidateURL requires HTTPS when the request service is nil.
 func (s *OpenAIRequests) ValidateURL(raw string) (string, error) {
 	if s == nil {
 		return egress.ValidateURLFormat(raw, false)

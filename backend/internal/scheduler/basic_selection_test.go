@@ -32,7 +32,7 @@ func TestShuffleWithinSortGroups_DifferentGroups_OrderPreserved(t *testing.T) {
 		{Provider: &BasicProvider{ID: 3, Priority: 2, LastUsedAt: &earlier}, Load: &ProviderLoadInfo{LoadRate: 10}},
 	}
 
-	// 每个元素都属于不同组（Priority 或 LoadRate 或 LastUsedAt 不同），顺序不变
+	// Every candidate differs in priority, load, or last-used time, so none may move across groups.
 	for range 20 {
 		cpy := make([]BasicCandidate, len(providers))
 		copy(cpy, providers)
@@ -45,9 +45,9 @@ func TestShuffleWithinSortGroups_DifferentGroups_OrderPreserved(t *testing.T) {
 
 func TestShuffleWithinSortGroups_SameGroup_Shuffled(t *testing.T) {
 	now := time.Now()
-	// 同一秒的时间戳视为同一组
+	// Timestamps in the same second form one shuffle group.
 	sameSecond := time.Unix(now.Unix(), 0)
-	sameSecond2 := time.Unix(now.Unix(), 500_000_000) // 同一秒但不同纳秒
+	sameSecond2 := time.Unix(now.Unix(), 500_000_000) // Same second, different nanoseconds.
 
 	providers := []BasicCandidate{
 		{Provider: &BasicProvider{ID: 1, Priority: 1, LastUsedAt: &sameSecond}, Load: &ProviderLoadInfo{LoadRate: 10}},
@@ -55,21 +55,21 @@ func TestShuffleWithinSortGroups_SameGroup_Shuffled(t *testing.T) {
 		{Provider: &BasicProvider{ID: 3, Priority: 1, LastUsedAt: &sameSecond}, Load: &ProviderLoadInfo{LoadRate: 10}},
 	}
 
-	// 重复抽样检查首位候选会变化。
+	// Repeat sampling to check that the first candidate varies.
 	seen := map[int64]bool{}
 	for range 100 {
 		cpy := make([]BasicCandidate, len(providers))
 		copy(cpy, providers)
 		ShuffleWithinSortGroups(cpy)
 		seen[cpy[0].Provider.ID] = true
-		// 无论怎么打乱，所有 ID 都应在候选中
+		// Shuffling must retain every candidate ID.
 		ids := map[int64]bool{}
 		for _, a := range cpy {
 			ids[a.Provider.ID] = true
 		}
 		require.True(t, ids[1] && ids[2] && ids[3])
 	}
-	// 至少 2 个不同的 ID 出现在首位（随机性验证）
+	// At least two IDs should appear first across the samples.
 	require.GreaterOrEqual(t, len(seen), 2, "shuffle should produce different orderings")
 }
 
@@ -95,9 +95,9 @@ func TestShuffleWithinSortGroups_MixedGroups(t *testing.T) {
 	earlier := now.Add(-1 * time.Hour)
 	sameAsNow := time.Unix(now.Unix(), 0)
 
-	// 组 1: Priority=1, LoadRate=10, LastUsedAt=earlier (ID 1)，单元素组
-	// 组 2: Priority=1, LoadRate=20, LastUsedAt=now (ID 2, 3)，双元素组
-	// 组 3: Priority=2, LoadRate=10, LastUsedAt=earlier (ID 4)，单元素组
+	// Group 1: priority 1, load 10, earlier use; ID 1 stands alone.
+	// Group 2: priority 1, load 20, current use; IDs 2 and 3 may swap.
+	// Group 3: priority 2, load 10, earlier use; ID 4 stands alone.
 	providers := []BasicCandidate{
 		{Provider: &BasicProvider{ID: 1, Priority: 1, LastUsedAt: &earlier}, Load: &ProviderLoadInfo{LoadRate: 10}},
 		{Provider: &BasicProvider{ID: 2, Priority: 1, LastUsedAt: &now}, Load: &ProviderLoadInfo{LoadRate: 20}},
@@ -110,11 +110,11 @@ func TestShuffleWithinSortGroups_MixedGroups(t *testing.T) {
 		copy(cpy, providers)
 		ShuffleWithinSortGroups(cpy)
 
-		// 组间顺序不变
+		// The order between groups remains fixed.
 		require.Equal(t, int64(1), cpy[0].Provider.ID, "group 1 position fixed")
 		require.Equal(t, int64(4), cpy[3].Provider.ID, "group 3 position fixed")
 
-		// 组 2 内部可以打乱，但仍在位置 1 和 2
+		// Group 2 may shuffle within positions 1 and 2.
 		mid := map[int64]bool{cpy[1].Provider.ID: true, cpy[2].Provider.ID: true}
 		require.True(t, mid[2] && mid[3], "group 2 elements should stay in positions 1-2")
 	}
@@ -347,8 +347,8 @@ func TestSortProvidersByPriorityAndLastUsed_StableSort(t *testing.T) {
 		{ID: 3, Priority: 1, LastUsedAt: nil, Type: capability.ProviderTypeAPIKey},
 	}
 
-	// sortProvidersByPriorityAndLastUsed 随机打散同一 Priority 和 LastUsedAt 的候选。
-	// 多次运行后元素集合应相同，并出现不同顺序。
+	// SortProvidersByPriorityAndLastUsed shuffles candidates tied on priority and last-used second.
+	// Repeated runs retain the same elements while varying their order.
 	seenFirst := map[int64]bool{}
 	for range 100 {
 		cpy := make([]*BasicProvider, len(providers))
@@ -374,10 +374,10 @@ func TestSortProvidersByPriorityAndLastUsed_MixedPriorityAndTime(t *testing.T) {
 		{ID: 4, Priority: 2, LastUsedAt: testTimePtr(now.Add(-2 * time.Hour))},
 	}
 	SortProvidersByPriorityAndLastUsed(providers, false)
-	// 优先级 1 排前：nil < earlier
+	// Priority 1 comes first; nil precedes earlier.
 	require.Equal(t, int64(3), providers[0].ID, "优先级1 + 更早")
 	require.Equal(t, int64(2), providers[1].ID, "优先级1 + 现在")
-	// 优先级 2 排后：nil < time
+	// Priority 2 follows; nil precedes a timestamp.
 	require.Equal(t, int64(1), providers[2].ID, "优先级2 + nil")
 	require.Equal(t, int64(4), providers[3].ID, "优先级2 + 有时间")
 }
@@ -456,7 +456,7 @@ func TestSelectByLRU_EarliestTimeWins(t *testing.T) {
 
 func TestSelectByLRU_TiePreferOAuth(t *testing.T) {
 	now := time.Now()
-	// 提供商 1/2 LastUsedAt 相同，且同为最小值。
+	// Providers 1 and 2 share the earliest last-used time.
 	providers := []BasicCandidate{
 		makeAccWithLoad(1, 1, 10, testTimePtr(now), capability.ProviderTypeAPIKey),
 		makeAccWithLoad(2, 1, 10, testTimePtr(now), capability.ProviderTypeOAuth),
@@ -607,7 +607,7 @@ func TestSelectByLRU(t *testing.T) {
 			{Provider: &BasicProvider{ID: 2, LastUsedAt: nil, Type: "session"}, Load: &ProviderLoadInfo{}},
 			{Provider: &BasicProvider{ID: 3, LastUsedAt: nil, Type: "session"}, Load: &ProviderLoadInfo{}},
 		}
-		// 重复抽样检查随机结果属于候选集合。
+		// Repeated samples must stay within the eligible candidates.
 		validIDs := map[int64]bool{1: true, 2: true, 3: true}
 		for range 10 {
 			result := SelectByLRU(providers, false)
@@ -622,7 +622,7 @@ func TestSelectByLRU(t *testing.T) {
 			{Provider: &BasicProvider{ID: 1, LastUsedAt: &sameTime}, Load: &ProviderLoadInfo{}},
 			{Provider: &BasicProvider{ID: 2, LastUsedAt: &sameTime}, Load: &ProviderLoadInfo{}},
 		}
-		// 重复抽样检查首位候选会变化。
+		// Repeat sampling to check that the first candidate varies.
 		validIDs := map[int64]bool{1: true, 2: true}
 		for range 10 {
 			result := SelectByLRU(providers, false)
@@ -637,7 +637,7 @@ func TestSelectByLRU(t *testing.T) {
 			{Provider: &BasicProvider{ID: 2, LastUsedAt: nil, Type: capability.ProviderTypeOAuth}, Load: &ProviderLoadInfo{}},
 			{Provider: &BasicProvider{ID: 3, LastUsedAt: nil, Type: capability.ProviderTypeOAuth}, Load: &ProviderLoadInfo{}},
 		}
-		// preferOAuth 时，应该从 OAuth 类型中选择
+		// OAuth preference restricts the tie to OAuth candidates.
 		oauthIDs := map[int64]bool{2: true, 3: true}
 		for range 10 {
 			result := SelectByLRU(providers, true)
@@ -651,7 +651,7 @@ func TestSelectByLRU(t *testing.T) {
 			{Provider: &BasicProvider{ID: 1, LastUsedAt: nil, Type: "session"}, Load: &ProviderLoadInfo{}},
 			{Provider: &BasicProvider{ID: 2, LastUsedAt: nil, Type: "session"}, Load: &ProviderLoadInfo{}},
 		}
-		// 没有 OAuth 时，从所有候选中选择
+		// With no OAuth candidate, the full tied set remains eligible.
 		validIDs := map[int64]bool{1: true, 2: true}
 		for range 10 {
 			result := SelectByLRU(providers, true)
@@ -667,7 +667,7 @@ func TestSelectByLRU(t *testing.T) {
 		}
 		result := SelectByLRU(providers, true)
 		require.NotNil(t, result)
-		// LastUsedAt 不同时，选择时间最早的提供商。
+		// Different last-used times select the least recently used provider.
 		require.Equal(t, int64(1), result.Provider.ID)
 	})
 }
@@ -678,27 +678,27 @@ func TestLayeredFilterIntegration(t *testing.T) {
 	muchEarlier := now.Add(-2 * time.Hour)
 
 	t.Run("full layered selection", func(t *testing.T) {
-		// 候选提供商具有不同的优先级、负载率和最后使用时间。
+		// Candidates differ in priority, load, and last-used time.
 		providers := []BasicCandidate{
-			// 优先级 1，负载 50%
+			// Priority 1, 50% load.
 			{Provider: &BasicProvider{ID: 1, Priority: 1, LastUsedAt: &now}, Load: &ProviderLoadInfo{LoadRate: 50}},
-			// 优先级 1，负载 20%（最低）
+			// Priority 1, 20% load (lowest).
 			{Provider: &BasicProvider{ID: 2, Priority: 1, LastUsedAt: &earlier}, Load: &ProviderLoadInfo{LoadRate: 20}},
-			// 优先级 1，负载 20%（最低），更早使用
+			// Priority 1, 20% load (lowest), used earlier.
 			{Provider: &BasicProvider{ID: 3, Priority: 1, LastUsedAt: &muchEarlier}, Load: &ProviderLoadInfo{LoadRate: 20}},
-			// 优先级 2（较低优先）
+			// Priority 2 (lower preference).
 			{Provider: &BasicProvider{ID: 4, Priority: 2, LastUsedAt: &muchEarlier}, Load: &ProviderLoadInfo{LoadRate: 0}},
 		}
 
-		// 优先级最小的候选为 ID 1、2、3。
+		// IDs 1, 2, and 3 share the best priority.
 		step1 := FilterByMinPriority(providers)
 		require.Len(t, step1, 3)
 
-		// 负载率最低的候选为 ID 2、3。
+		// IDs 2 and 3 share the lowest load.
 		step2 := FilterByMinLoadRate(step1)
 		require.Len(t, step2, 2)
 
-		// ID 3 的最后使用时间 muchEarlier 最早。
+		// ID 3 has the earliest last-used time, muchEarlier.
 		selected := SelectByLRU(step2, false)
 		require.NotNil(t, selected)
 		require.Equal(t, int64(3), selected.Provider.ID)
@@ -742,9 +742,9 @@ func TestFilterBySoonestReset_IgnoresNilAndExpiredWindows(t *testing.T) {
 	expired := now.Add(-1 * time.Hour)
 	active := now.Add(2 * time.Hour)
 	providers := []BasicCandidate{
-		accWithWindowEnd(1, nil),                  // 无活跃窗口
-		accWithWindowEnd(2, testTimePtr(expired)), // 已过期，视为无活跃窗口
-		accWithWindowEnd(3, testTimePtr(active)),  // 唯一活跃窗口
+		accWithWindowEnd(1, nil),                  // No active window.
+		accWithWindowEnd(2, testTimePtr(expired)), // Expired windows are inactive.
+		accWithWindowEnd(3, testTimePtr(active)),  // The only active window.
 	}
 	got := FilterBySoonestReset(providers, time.Now)
 	require.Len(t, got, 1)

@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	// ErrorPhaseProviderAuth 保留供应商提供商认证失败的观测阶段值。
+	// ErrorPhaseProviderAuth identifies upstream provider credential failures.
 	ErrorPhaseProviderAuth = "provider_auth"
 
 	opsErrNoAvailableProviders   = "no available providers"
@@ -26,7 +26,7 @@ const (
 	opsCodeGroupDisabled         = "GROUP_DISABLED"
 )
 
-// ErrorClassificationInput 仅固化 HTTP 层观测到的事实；分类核心不读取 Gin 或可变请求状态。
+// ErrorClassificationInput captures HTTP observations for classification independently of mutable request state.
 type ErrorClassificationInput struct {
 	Type, Message, Code                                                    string
 	Status                                                                 int
@@ -59,10 +59,10 @@ func isKnownOpsErrorType(t string) bool {
 	return false
 }
 
-// NormalizeErrorType 保留已知类别和原错误码回退顺序。
+// NormalizeErrorType handles local policy limits, then known types, then codes, defaulting to api_error.
 func NormalizeErrorType(errType string, code string, message ...string) string {
-	// 本地模型能力与会话隔离限制虽然由权限层返回，但对 Ops 来说属于
-	// 客户端请求错误，沿用历史 api_error 分类；其它权限拒绝保持原类型。
+	// Model capability and session-isolation restrictions are client request errors for Ops,
+	// even when reported by authorization code. Other permission failures retain their type.
 	msg := ""
 	if len(message) > 0 {
 		msg = strings.ToLower(strings.TrimSpace(message[0]))
@@ -87,7 +87,7 @@ func NormalizeErrorType(errType string, code string, message ...string) string {
 
 func classifyOpsPhase(errType, message, code string) string {
 	msg := strings.ToLower(message)
-	// 标准阶段：request|auth|provider_auth|routing|upstream|network|internal。
+	// Standard phases: request|auth|provider_auth|routing|upstream|network|internal.
 	// Map billing/concurrency/response => request; scheduling => routing.
 	if isOpsClientAuthError(code, msg) {
 		return "auth"
@@ -120,7 +120,7 @@ func classifyOpsPhase(errType, message, code string) string {
 	}
 }
 
-// ClassifySeverity 按原错误类别和状态码返回告警严重性。
+// ClassifySeverity returns alert severity from the error type and status code.
 func ClassifySeverity(errType string, status int) string {
 	switch errType {
 	case "invalid_request_error", "authentication_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found", "billing_error", "subscription_error":
@@ -138,7 +138,7 @@ func ClassifySeverity(errType string, status int) string {
 	return "P3"
 }
 
-// ClassifyRequestError 按原优先级组合本地与上游观测，生成唯一的统计分类。
+// ClassifyRequestError combines local and upstream observations into one reporting classification.
 func ClassifyRequestError(input ErrorClassificationInput) (phase string, isBusinessLimited bool, errorOwner string, errorSource string) {
 	errType, message, code, status := input.Type, input.Message, input.Code, input.Status
 	phase = classifyOpsPhase(errType, message, code)
@@ -182,7 +182,7 @@ func classifyOpsIsBusinessLimited(errType, phase, code string, status int, messa
 		return true
 	}
 	if phase == "billing" || phase == "concurrency" {
-		// SLA/错误率排除“用户级业务限制”
+		// User-level business limits are excluded from SLA and error-rate calculations.
 		return true
 	}
 	// Avoid treating upstream rate limits as business-limited.
@@ -254,7 +254,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		(strings.Contains(msg, "model ") && strings.Contains(msg, " not in whitelist")) ||
 		(strings.Contains(msg, "beta feature ") && strings.Contains(msg, " is not allowed")) ||
 		(strings.Contains(msg, "openai service_tier=") && strings.Contains(msg, " is not allowed for model")) ||
-		// 本地客户端策略与会话隔离拒绝属于用户配置限制，不计入 SLA。
+		// Local client-policy and session-isolation rejections are user configuration limits excluded from SLA.
 		strings.Contains(msg, "this provider only allows codex official clients") ||
 		strings.Contains(msg, "this provider only allows clients matched by the configured tls router") ||
 		strings.Contains(msg, "this provider only allows configured openai oauth clients") ||
@@ -263,7 +263,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "openai codex passthrough requires a non-empty instructions field")
 }
 
-// IsNoAvailableProviderMessage 识别原路由容量提示，供 HTTP 观测标记复用。
+// IsNoAvailableProviderMessage recognizes routing-capacity messages for HTTP error observation.
 func IsNoAvailableProviderMessage(message string) bool {
 	msg := strings.ToLower(message)
 	return strings.Contains(msg, opsErrNoAvailableProviders) ||

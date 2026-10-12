@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CountTokens 准备计数请求并调用上游，支持一次签名修复重试。
+// CountTokens prepares and sends a count request, allowing one thinking-signature repair retry.
 func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *requeststate.ParsedRequest) error {
 	if parsed == nil {
 		p.CountError(400, "invalid_request_error", "Request body is empty")
@@ -33,14 +33,14 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 		return CountPassthrough(ctx, p, in, passthroughBody, mappedModel)
 	}
 
-	// Bedrock 不支持 count_tokens 端点
+	// This Bedrock path does not support count_tokens.
 	if in.ProviderPresent && in.Bedrock {
 		p.CountError(404, "not_found_error", "count_tokens endpoint is not supported for Bedrock")
 		return nil
 	}
 
-	// Antigravity 和 Qoder 的 count_tokens 返回 404，客户端据此使用本地估算。
-	// 函数返回 nil，handler 按正常返回处理。
+	// Return 404 for Antigravity and Qoder so clients can estimate tokens locally.
+	// The response is complete, so return nil to the handler.
 	if in.Platform == "antigravity" || in.Platform == "qoder" {
 		p.CountError(404, "not_found_error", "count_tokens endpoint is not supported for this platform")
 		return nil
@@ -56,7 +56,7 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 	}
 	reqModel := parsed.Model
 
-	// count_tokens 与 messages 共用提供商映射和平台规范化顺序，发送模型与调度结果相同。
+	// Use the same provider mapping and platform normalization order as Messages and scheduling.
 	if reqModel != "" {
 		upstreamModel := p.ResolveModel(ctx, reqModel)
 		if upstreamModel != "" && upstreamModel != reqModel {
@@ -96,31 +96,26 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 		}
 	}
 
-	// 获取凭证
 	err := p.Credential(ctx)
 	if err != nil {
 		p.CountError(502, "upstream_error", "Failed to get access token")
 		return err
 	}
 
-	// 构建上游请求
 	wireBody, err := p.BuildCount(ctx, body, reqModel, shouldMimicClaudeCode, false)
 	if err != nil {
 		p.CountError(500, "api_error", "Failed to build request")
 		return err
 	}
-	// 先记录首发 wire body；如果后面进入 400 retry，retry 会基于未签名的逻辑 body 重新构建。
+	// Retain the first wire body; a signature retry is rebuilt from the unsigned logical body.
 	acceptedWireBody := wireBody
 
-	// 获取代理 URL（自定义 base URL 模式下，proxy 通过 buildCustomRelayURL 作为查询参数传递）
 	resp, err := p.SendCount(ctx, false)
 	if err != nil {
 		p.SetError(0, p.Sanitize(err.Error()), "")
 		p.CountError(502, "upstream_error", "Request failed")
 		return fmt.Errorf("upstream request failed: %w", err)
 	}
-
-	// 读取响应体
 
 	respBody, err := p.ReadCount()
 	if err != nil {
@@ -130,7 +125,7 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 		return err
 	}
 
-	// 检测 thinking block 签名错误（400）并重试一次（过滤 thinking blocks）
+	// A recognized HTTP 400 signature failure permits one retry with filtered thinking blocks.
 	if resp.StatusCode == 400 && p.RectifyCount(ctx, respBody, reqModel) {
 		p.Log(fmt.Sprintf("Provider %d: detected thinking block signature error on count_tokens, retrying with filtered thinking blocks", in.ProviderID))
 
@@ -140,7 +135,7 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 			retryResp, retryErr := p.SendCount(ctx, false)
 			if retryErr == nil {
 				if retryResp.StatusCode < 400 {
-					// count_tokens thinking 签名重试成功后记录最终 wire body，错误响应仍保留原 body 便于后续处理。
+					// Adopt the retry wire body only after a successful response.
 					acceptedWireBody = retryWireBody
 				}
 				resp = retryResp
@@ -156,13 +151,12 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 	}
 
 	if resp.StatusCode < 400 && !bytes.Equal(acceptedWireBody, body) {
-		// count_tokens 成功后保存最终报文，后续步骤使用重试后的 body。
+		// Publish the accepted wire body for later request processing.
 		if err := replaceBody(acceptedWireBody); err != nil {
 			return err
 		}
 	}
 
-	// 处理错误响应
 	if resp.StatusCode >= 400 {
 		upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(respBody))
 		upstreamMsg = p.Sanitize(upstreamMsg)
@@ -188,7 +182,7 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 		}
 		p.SetError(resp.StatusCode, upstreamMsg, upstreamDetail)
 
-		// 记录上游错误摘要便于排障（不回显请求内容）
+		// Optional error-body diagnostics stay in logs.
 		if in.LogErrorBody {
 			p.Log(fmt.Sprintf(
 				"count_tokens upstream error %d (provider=%d platform=%s type=%s): %s",
@@ -200,7 +194,7 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 			))
 		}
 
-		// 返回简化的错误响应
+		// Use a safe summary for the client error response.
 		errMsg := "Upstream request failed"
 		switch resp.StatusCode {
 		case 429:
@@ -215,12 +209,11 @@ func CountTokens(ctx context.Context, p CountPorts, in MessageInput, parsed *req
 		return fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 透传成功响应
 	p.CountSuccess(resp.StatusCode, resp.Headers, respBody, false)
 	return nil
 }
 
-// CountPassthrough 透传计数请求并处理响应，支持一次签名修复重试。
+// CountPassthrough sends an API-key count request and handles its response.
 func CountPassthrough(ctx context.Context, p CountPorts, in MessageInput, body []byte, mappedModel string) error {
 	err := p.Credential(ctx)
 	if err != nil {
@@ -267,8 +260,8 @@ func CountPassthrough(ctx context.Context, p CountPorts, in MessageInput, body [
 		upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(respBody))
 		upstreamMsg = p.Sanitize(upstreamMsg)
 
-		// 错误消息确认 count_tokens 端点不存在时返回 404，客户端据此本地估算，函数返回 nil。
-		// 错误 base_url 等其他 404 继续按上游错误处理。
+		// A confirmed unsupported count endpoint returns 404 and nil so clients can estimate locally.
+		// Other 404 failures, such as an incorrect base URL, follow upstream error policy.
 		if p.UnsupportedCount(resp.StatusCode, respBody) {
 			p.Log(fmt.Sprintf(
 				"[count_tokens] Upstream does not support count_tokens (404), returning 404: provider=%d name=%s msg=%s",

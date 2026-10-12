@@ -11,12 +11,12 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// TLSFingerprintRouterHandler 处理 TLS 路由器的 HTTP 请求。
+// TLSFingerprintRouterHandler handles TLS router requests.
 type TLSFingerprintRouterHandler struct {
 	service *egress.TLSFingerprintRouterService
 }
 
-// CreateTLSFingerprintRouterRequest 创建 TLS 路由器请求。
+// CreateTLSFingerprintRouterRequest contains fields for a new TLS router.
 type CreateTLSFingerprintRouterRequest struct {
 	Name                                     string                            `json:"name" binding:"required"`
 	Description                              *string                           `json:"description"`
@@ -28,7 +28,7 @@ type CreateTLSFingerprintRouterRequest struct {
 	Rules                                    []egress.TLSFingerprintRouterRule `json:"rules"`
 }
 
-// UpdateTLSFingerprintRouterRequest 更新 TLS 路由器请求。
+// UpdateTLSFingerprintRouterRequest contains optional fields for a router update.
 type UpdateTLSFingerprintRouterRequest struct {
 	Name                                     *string                           `json:"name"`
 	Description                              *string                           `json:"description"`
@@ -40,13 +40,13 @@ type UpdateTLSFingerprintRouterRequest struct {
 	Rules                                    []egress.TLSFingerprintRouterRule `json:"rules"`
 }
 
-// nullableInt64Patch 区分 JSON 字段缺失与显式 null，便于局部更新保留旧配置。
+// nullableInt64Patch distinguishes an omitted JSON field from null, which clears its value.
 type nullableInt64Patch struct {
 	Set   bool
 	Value *int64
 }
 
-// NewTLSFingerprintRouterHandler 创建 TLS 路由器处理器。
+// NewTLSFingerprintRouterHandler creates a TLS router handler.
 func NewTLSFingerprintRouterHandler(service *egress.TLSFingerprintRouterService) *TLSFingerprintRouterHandler {
 	return &TLSFingerprintRouterHandler{service: service}
 }
@@ -65,7 +65,7 @@ func (p *nullableInt64Patch) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// List 获取所有 TLS 路由器。
+// List returns all TLS routers.
 // GET /api/v1/admin/tls-fingerprint-routers
 func (h *TLSFingerprintRouterHandler) List(c *gin.Context) {
 	routers, err := h.service.List(c.Request.Context())
@@ -76,7 +76,7 @@ func (h *TLSFingerprintRouterHandler) List(c *gin.Context) {
 	response.Success(c, routers)
 }
 
-// GetByID 根据 ID 获取 TLS 路由器。
+// GetByID returns a TLS router by ID.
 // GET /api/v1/admin/tls-fingerprint-routers/:id
 func (h *TLSFingerprintRouterHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -96,7 +96,7 @@ func (h *TLSFingerprintRouterHandler) GetByID(c *gin.Context) {
 	response.Success(c, router)
 }
 
-// Create 创建 TLS 路由器。
+// Create creates a TLS router.
 // POST /api/v1/admin/tls-fingerprint-routers
 func (h *TLSFingerprintRouterHandler) Create(c *gin.Context) {
 	var req CreateTLSFingerprintRouterRequest
@@ -132,7 +132,7 @@ func (h *TLSFingerprintRouterHandler) Create(c *gin.Context) {
 	response.Success(c, created)
 }
 
-// Update 更新 TLS 路由器。
+// Update applies a partial TLS router update.
 // PUT /api/v1/admin/tls-fingerprint-routers/:id
 func (h *TLSFingerprintRouterHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -204,7 +204,7 @@ func (h *TLSFingerprintRouterHandler) Update(c *gin.Context) {
 	response.Success(c, updated)
 }
 
-// Delete 删除 TLS 路由器。
+// Delete deletes a TLS router.
 // DELETE /api/v1/admin/tls-fingerprint-routers/:id
 func (h *TLSFingerprintRouterHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

@@ -6,7 +6,7 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminReadSettings 包含站点展示和登录协议设置。
+// AdminReadSettings contains site display and login agreement settings.
 type AdminReadSettings struct {
 	APIBaseURL                  string
 	ContactInfo                 string
@@ -34,7 +34,7 @@ type AdminReadSettings struct {
 	TablePageSizeOptions        []int
 }
 
-// ReadAdminSettings 从传入的设置值解析站点展示和登录协议设置。
+// ReadAdminSettings parses site display and login agreement settings from stored values.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	loginAgreementDocuments := ParseLoginAgreementDocuments(settings[SettingKeyLoginAgreementDocuments])
 	loginAgreementUpdatedAt := strings.TrimSpace(settings[SettingKeyLoginAgreementUpdatedAt])

@@ -27,7 +27,7 @@ type qoderProviderTestOAuthClient interface {
 	GetUserInfo(ctx context.Context, token string) (*qoder.UserInfo, error)
 }
 
-// QoderProviderTest 只拥有本次提供商测试的供应商交换，会话缓存由外部唯一实例提供。
+// QoderProviderTest runs upstream probes using the injected shared session provider.
 type QoderProviderTest struct {
 	Sessions     qoderProviderTestSessionProvider
 	Client       qoder.StreamClient
@@ -206,7 +206,7 @@ func qoderTestProfile(value *providercore.Record) (qoder.Profile, error) {
 	return qoder.ProfileForSite(site)
 }
 
-// qoderTestClient 优先使用注入的客户端，缺省时按提供商站点构造客户端。
+// qoderTestClient uses injected test clients and rebuilds production clients for the provider's site.
 func qoderTestClient(configured qoder.StreamClient, value *providercore.Record) (qoder.StreamClient, error) {
 	if configured != nil {
 		if _, production := configured.(*qoder.Client); !production {

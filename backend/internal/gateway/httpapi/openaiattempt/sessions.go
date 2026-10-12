@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// SessionPorts 复用提供商所属的会话计数器，统一文本循环只拥有本次尝试的生命周期。
+// SessionPorts shares provider session counters; the text loop owns the current attempt lifecycle.
 type SessionPorts struct {
 	New              func() *scheduler.SessionAttempts
 	StickyProviderID func(context.Context, *int64, string) int64
@@ -20,7 +20,8 @@ type SessionPorts struct {
 	IncrementRPM     func(context.Context, int64) error
 }
 
-// PrepareRetry 在原粘性会话切号或上游要求时保留强制缓存计费，完成器只对原生用量应用。
+// PrepareRetry requests cache billing on sticky-provider switches or upstream instruction; completion applies
+// it to native usage.
 func (b *responsesAttemptBridge) PrepareRetry(failure *text.AttemptFailure, sameProvider bool) {
 	if failure == nil {
 		return
@@ -47,7 +48,7 @@ func (b *responsesAttemptBridge) Begin() {
 	}
 }
 
-// Finish 保留成功及可结算部分结果的空闲会话，其余尝试立即注销。
+// Finish retains idle sessions for served results and unregisters other attempts.
 func (b *responsesAttemptBridge) Finish(served bool) {
 	if b.sessionAttempts != nil {
 		b.sessionAttempts.Finish(scheduler.AttemptOutcome{Served: served})

@@ -14,52 +14,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// AdvancedSchedulerScoreCalculationVersion 标识诊断公式的兼容版本。
+// AdvancedSchedulerScoreCalculationVersion identifies the diagnostic formula version.
 const AdvancedSchedulerScoreCalculationVersion = "v1"
 
-// AdvancedSchedulerScoreDiagnosticRequest 是评分诊断的请求参数。
+// AdvancedSchedulerScoreDiagnosticRequest contains score diagnostic inputs.
 type AdvancedSchedulerScoreDiagnosticRequest = policy.AdvancedSchedulerScoreDiagnosticRequest
 
-// AdvancedSchedulerScoreDiagnosticProvider 是诊断返回的提供商摘要。
+// AdvancedSchedulerScoreDiagnosticProvider summarizes the provider being diagnosed.
 type AdvancedSchedulerScoreDiagnosticProvider = policy.AdvancedSchedulerScoreDiagnosticProvider
 
-// AdvancedSchedulerScoreDiagnosticGroup 是诊断返回的分组摘要。
+// AdvancedSchedulerScoreDiagnosticGroup summarizes a diagnostic group.
 type AdvancedSchedulerScoreDiagnosticGroup = policy.AdvancedSchedulerScoreDiagnosticGroup
 
-// AdvancedSchedulerScoreDiagnosticGroupSummary 是分组 Tab 展示的资格和分数。
+// AdvancedSchedulerScoreDiagnosticGroupSummary contains eligibility and scores for a group tab.
 type AdvancedSchedulerScoreDiagnosticGroupSummary = policy.AdvancedSchedulerScoreDiagnosticGroupSummary
 
-// AdvancedSchedulerScoreDiagnosticResponse 是评分诊断的响应。
+// AdvancedSchedulerScoreDiagnosticResponse contains score diagnostic results.
 type AdvancedSchedulerScoreDiagnosticResponse = policy.AdvancedSchedulerScoreDiagnosticResponse
 
-// AdvancedSchedulerScoreDiagnosticContext 是本次评分的模型和粘性场景。
+// AdvancedSchedulerScoreDiagnosticContext describes the model and stickiness used for scoring.
 type AdvancedSchedulerScoreDiagnosticContext = policy.AdvancedSchedulerScoreDiagnosticContext
 
-// AdvancedSchedulerScoreDiagnosticDetail 是单个分组的评分详情。
+// AdvancedSchedulerScoreDiagnosticDetail contains one group's score explanation.
 type AdvancedSchedulerScoreDiagnosticDetail = policy.AdvancedSchedulerScoreDiagnosticDetail
 
-// AdvancedSchedulerScoreDiagnosticCandidatePool 汇总过滤后的候选和 Top-K 数据。
+// AdvancedSchedulerScoreDiagnosticCandidatePool summarizes filtered candidates and Top-K results.
 type AdvancedSchedulerScoreDiagnosticCandidatePool = policy.AdvancedSchedulerScoreDiagnosticCandidatePool
 
-// AdvancedSchedulerScoreDiagnosticRanges 记录候选池的归一化范围。
+// AdvancedSchedulerScoreDiagnosticRanges contains normalization ranges for the candidate pool.
 type AdvancedSchedulerScoreDiagnosticRanges = policy.AdvancedSchedulerScoreDiagnosticRanges
 
-// AdvancedSchedulerScoreDiagnosticCandidate 是用于展示排名的候选摘要。
+// AdvancedSchedulerScoreDiagnosticCandidate summarizes a candidate for ranking display.
 type AdvancedSchedulerScoreDiagnosticCandidate = policy.AdvancedSchedulerScoreDiagnosticCandidate
 
-// AdvancedSchedulerScoreDiagnosticScore 记录目标提供商的分数和选择概率。
+// AdvancedSchedulerScoreDiagnosticScore contains the target provider's score and selection probability.
 type AdvancedSchedulerScoreDiagnosticScore = policy.AdvancedSchedulerScoreDiagnosticScore
 
-// AdvancedSchedulerScoreDiagnosticMetric 记录单项指标的数值、权重和贡献。
+// AdvancedSchedulerScoreDiagnosticMetric contains a metric's value, weight, and contribution.
 type AdvancedSchedulerScoreDiagnosticMetric = policy.AdvancedSchedulerScoreDiagnosticMetric
 
-// AdvancedSchedulerScoreDiagnosticSetting 记录生效配置值及来源。
+// AdvancedSchedulerScoreDiagnosticSetting contains an effective setting and its source.
 type AdvancedSchedulerScoreDiagnosticSetting = policy.AdvancedSchedulerScoreDiagnosticSetting
 
-// AdvancedSchedulerScoreDiagnosticPolicySignal 记录策略和硬约束的状态。
+// AdvancedSchedulerScoreDiagnosticPolicySignal describes a policy or eligibility check's status.
 type AdvancedSchedulerScoreDiagnosticPolicySignal = policy.AdvancedSchedulerScoreDiagnosticPolicySignal
 
-// DiagnosticProvider 保存评分与展示字段，ProjectionID 是本次读取的临时关联号。
+// DiagnosticProvider contains scoring and display data; ProjectionID correlates records within this read.
 type DiagnosticProvider struct {
 	ProjectionID                                                                         uint64
 	ID                                                                                   int64
@@ -90,7 +90,7 @@ type DiagnosticSource interface {
 	ListSchedulableProvidersForAdvancedSchedulerScore(context.Context, *int64, string) ([]DiagnosticProvider, error)
 }
 
-// DiagnosticPorts 提供平台资格、预取观测和共享反馈的读取函数。
+// DiagnosticPorts supplies platform eligibility, prefetched observations, and shared feedback.
 type DiagnosticPorts struct {
 	Effective func(context.Context, *DiagnosticGroup) (policy.EffectiveSettings, policy.RuntimeSettings)
 	Prepare   func(context.Context, *DiagnosticGroup, []DiagnosticProvider) context.Context
@@ -182,7 +182,7 @@ func (s *DiagnosticService) scoreCandidates(providers []*DiagnosticProvider, loa
 	return ScoreCandidatesWithRanges(projected, loads, stats, weights, input, now)
 }
 
-// GetOverview 返回提供商所属高级分组的轻量摘要。
+// GetOverview summarizes the provider's advanced scheduler groups.
 func (s *DiagnosticService) GetOverview(ctx context.Context, providerID int64) (*AdvancedSchedulerScoreDiagnosticResponse, error) {
 	provider, groups, err := s.loadProviderAndAdvancedGroups(ctx, providerID)
 	if err != nil {
@@ -199,7 +199,7 @@ func (s *DiagnosticService) GetOverview(ctx context.Context, providerID int64) (
 	return response, nil
 }
 
-// GetDetail 返回指定高级分组在给定安全场景下的完整解释。
+// GetDetail explains scoring in the requested advanced group for the supplied model and provider IDs.
 func (s *DiagnosticService) GetDetail(ctx context.Context, providerID int64, request AdvancedSchedulerScoreDiagnosticRequest) (*AdvancedSchedulerScoreDiagnosticResponse, error) {
 	provider, groups, err := s.loadProviderAndAdvancedGroups(ctx, providerID)
 	if err != nil {
@@ -344,8 +344,8 @@ func summaryFromDiagnosticDetail(detail *AdvancedSchedulerScoreDiagnosticDetail)
 	return summary
 }
 
-// buildGroupSummary 计算分组 Tab 所需的资格和最终分数。
-// 提供商清单、指标和策略解释在请求详情时读取，减少首次打开诊断弹窗的读取量。
+// buildGroupSummary computes eligibility and final scores for the group tab.
+// Candidate lists, metrics, and policy explanations are deferred until detail is requested.
 func (s *DiagnosticService) buildGroupSummary(
 	ctx context.Context,
 	target *DiagnosticProvider,
@@ -425,7 +425,7 @@ func (s *DiagnosticService) buildDetail(
 		stats = s.ports.Stats()
 	}
 	eligibilityRequest := request
-	// 硬粘性逃逸后，诊断与生产调度都按普通候选检查费用和 RPM。
+	// After escaping hard stickiness, both diagnostics and selection apply ordinary cost and RPM checks.
 	if !effective.StickyWeightedEnabled && request.StickyProviderID > 0 {
 		if _, _, _, escaped := ShouldEscapeSticky(stats, request.StickyProviderID, effective.StickyEscape); escaped {
 			eligibilityRequest.StickyProviderID = 0
@@ -1172,7 +1172,7 @@ func diagnosticPolicySignals(
 	return signals
 }
 
-// diagnosticPreviousResponseSupported 只把 OpenAI 提供商的上一响应视为可复用状态。
+// diagnosticPreviousResponseSupported reports whether the ID belongs to an OpenAI provider.
 func diagnosticPreviousResponseSupported(providers []*DiagnosticProvider, id int64) bool {
 	for _, provider := range providers {
 		if provider != nil && provider.ID == id {

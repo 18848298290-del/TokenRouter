@@ -13,7 +13,7 @@ type BatchRefreshTierRequest struct {
 	ProviderIDs []int64 `json:"provider_ids"`
 }
 
-// RefreshTier 校验提供商 ID，缺失时返回 404，成功时返回档位数据。
+// RefreshTier returns tier data after provider lookup; lookup failures return 404.
 func (h *ManagementHandler) RefreshTier(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -34,7 +34,7 @@ func (h *ManagementHandler) RefreshTier(c *gin.Context) {
 	response.Success(c, gin.H{"tier_id": result.TierID, "storage_info": extra, "drive_storage_limit": extra["drive_storage_limit"], "drive_storage_usage": extra["drive_storage_usage"], "updated_at": extra["drive_tier_updated_at"]})
 }
 
-// BatchRefreshTier 保留损坏/空输入回落全量 Google One 提供商的历史行为。
+// BatchRefreshTier treats malformed or empty input as a request for all Google One providers.
 func (h *ManagementHandler) BatchRefreshTier(c *gin.Context) {
 	var req BatchRefreshTierRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {

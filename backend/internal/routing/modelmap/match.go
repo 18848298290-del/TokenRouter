@@ -16,7 +16,6 @@ func Resolve(mapping map[string]string, requestedModel string) (mappedModel stri
 }
 
 func MatchWildcard(mapping map[string]string, requestedModel string) (string, bool) {
-	// 收集所有匹配的 pattern，按长度降序排序（最长优先）
 	type patternMatch struct {
 		pattern string
 		target  string
@@ -30,10 +29,10 @@ func MatchWildcard(mapping map[string]string, requestedModel string) (string, bo
 	}
 
 	if len(matches) == 0 {
-		return requestedModel, false // 无匹配，返回原始模型名
+		return requestedModel, false
 	}
 
-	// 按 pattern 长度降序排序
+	// Choose the most specific matching pattern, with lexical order breaking equal-length ties.
 	sort.Slice(matches, func(i, j int) bool {
 		if len(matches[i].pattern) != len(matches[j].pattern) {
 			return len(matches[i].pattern) > len(matches[j].pattern)
@@ -44,8 +43,7 @@ func MatchWildcard(mapping map[string]string, requestedModel string) (string, bo
 	return matches[0].target, true
 }
 
-// Matches 通用通配符匹配（仅支持末尾 *）
-// 复用 Antigravity 的通配符逻辑，供其他平台使用。
+// Matches accepts an exact name or a pattern ending in *.
 func Matches(pattern, str string) bool {
 	if strings.HasSuffix(pattern, "*") {
 		prefix := pattern[:len(pattern)-1]

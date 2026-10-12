@@ -55,7 +55,8 @@ func (v *VideoContent) Close() error {
 func (*VideoContent) String() string     { return "grok video content stream" }
 func (v *VideoContent) GoString() string { return v.String() }
 
-// OpenVideoContent 先确认状态，再选择官方签名 URL 或认证 relay；仅在 Close 时释放下载活动。
+// OpenVideoContent checks status and opens a signed URL or authenticated relay. Close releases
+// download activity.
 func OpenVideoContent(ctx context.Context, options VideoContentOptions) (content *VideoContent, failure error) {
 	var done func()
 	if options.Enter != nil {

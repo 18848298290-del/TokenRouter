@@ -25,7 +25,7 @@ import (
 
 type failingProjection struct{ billingpg.TaskProjection }
 
-// TestProviderOutcomeRollbackAndDeliveryLost 验证 PostgreSQL 验证成功记录和 outbox 原子性；该测试不保存图片、prompt 或供应商原文。
+// TestProviderOutcomeRollbackAndDeliveryLost checks atomic outcome and outbox writes using output metadata.
 func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -83,7 +83,7 @@ func (p failingProjection) SaveReservation(ctx context.Context, balance float64,
 	return errors.New("test projection failure")
 }
 
-// TestTaskFundingProjectionRollback 检查任务记录写入失败时，余额、任务快照和去重认领一起回滚。
+// TestTaskFundingProjectionRollback checks that a failed task write rolls back balances, the task snapshot, and the deduplication claim.
 func TestTaskFundingProjectionRollback(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -120,7 +120,7 @@ func TestTaskFundingProjectionRollback(t *testing.T) {
 	require.True(t, result.Applied, fmt.Sprint(result))
 }
 
-// TestNativeCreativeFundingReplay 验证任务直接重放资金动作，验证既有资金引用的幂等性。
+// TestNativeCreativeFundingReplay checks that replaying capture for the same task charges it once.
 func TestNativeCreativeFundingReplay(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)

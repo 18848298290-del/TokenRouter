@@ -19,7 +19,7 @@ func TestMigration239AddsGroupAdvancedSchedulerOverrides(t *testing.T) {
 	require.NoError(t, err)
 	tx := historicalTx(t, "239_")
 
-	// 该迁移可能在已有实例的启动阶段被重复探测，必须保持幂等。
+	// Replaying the SQL checks idempotency against an already migrated schema.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migrationSQL))

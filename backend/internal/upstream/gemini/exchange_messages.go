@@ -80,8 +80,8 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 			return ExchangeResult{}, options.FinalError("Upstream request failed after retries: " + safeErr)
 		}
 
-		// Special-case: signature/thought_signature validation errors are not transient, but may be fixed by
-		// downgrading Claude thinking/tool history to plain text (conservative two-stage retry).
+		// Signature validation errors may be resolved by converting thinking history to text,
+		// then converting tool history to text if the first retry still fails.
 		if resp.StatusCode == http.StatusBadRequest && signatureRetryStage < 2 {
 			respBody := options.ReadError(resp)
 			_ = resp.Body.Close()
@@ -109,12 +109,12 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 				stageName := ""
 				switch signatureRetryStage {
 				case 0:
-					// Stage 1: disable thinking + thinking->text
+					// First retry: disable thinking and convert thinking blocks to text.
 					strippedClaudeBody = options.FilterThinking()
 					stageName = "thinking-only"
 					signatureRetryStage = 1
 				default:
-					// Stage 2: additionally downgrade tool_use/tool_result blocks to text
+					// Second retry: also convert tool_use and tool_result blocks to text.
 					strippedClaudeBody = options.FilterTools()
 					stageName = "thinking+tools"
 					signatureRetryStage = 2
@@ -144,7 +144,7 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 			break
 		}
 
-		// 错误策略优先：匹配则跳过重试直接处理。
+		// A matching error policy takes precedence over status-based retries.
 		matched, rebuilt := options.CheckPolicy(ctx, resp)
 		resp = rebuilt
 		if matched {
@@ -190,7 +190,7 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 				SleepGeminiBackoff(attempt)
 				continue
 			}
-			// Final attempt: surface the upstream error body (mapped below) instead of a generic retry error.
+			// Keep the final upstream error body available to the caller for protocol error mapping.
 			resp = &http.Response{
 				StatusCode: resp.StatusCode,
 				Header:     resp.Header.Clone(),

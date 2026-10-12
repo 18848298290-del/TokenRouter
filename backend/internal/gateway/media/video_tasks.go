@@ -19,18 +19,18 @@ const (
 	grokMediaVideoRequestOwnerSource = "grok_video_request"
 )
 
-// VideoOptions 设置视频任务绑定的有效期。
+// VideoOptions controls video task binding lifetime.
 type VideoOptions struct{ StickyTTL time.Duration }
 
-// VideoTasks 通过传入的 session 存储读写视频任务。
+// VideoTasks reads and writes task ownership and billing state through session caches.
 type VideoTasks struct {
 	owners  session.GatewayCache
 	billing session.GrokVideoBillingCache
 	options VideoOptions
 }
 
-// GrokVideoPendingBilling 是创建任务时保存的快照，用于状态轮询首次发现已完成视频地址时计费。
-// 状态响应可能省略模型或时长，此时先回退到该快照，再回退到默认值。
+// GrokVideoPendingBilling is the creation snapshot used when polling first discovers completed video output.
+// It fills missing status model or duration before billing defaults are applied.
 type GrokVideoPendingBilling struct {
 	Model                string `json:"model"`
 	BillingModel         string `json:"billing_model,omitempty"`
@@ -38,12 +38,12 @@ type GrokVideoPendingBilling struct {
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
-	// CreatedAt 是网关接受异步创建请求的 UTC 时间，格式为 RFC3339Nano。
-	// duration_ms 从该时刻计至首次观测到 done 和 video.url，观测可来自状态轮询或内容下载。
+	// CreatedAt is the UTC acceptance time in RFC3339Nano format.
+	// duration_ms ends when polling or content download first observes done with video.url.
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
-// VideoBinding 保存认证快照中的分组关系。
+// VideoBinding holds a group binding from the authentication snapshot.
 type VideoBinding struct {
 	GroupID int64
 	Present bool
@@ -99,8 +99,8 @@ func (s *VideoTasks) BindGrokMediaVideoRequestProvider(
 	if cacheKey == "" || providerID <= 0 {
 		return fmt.Errorf("grok video request binding is invalid")
 	}
-	// 视频任务可能超过 WebSocket 粘性 TTL（默认一小时）才完成，绑定有效期至少覆盖待计费快照。
-	// 后续状态和内容轮询通过该绑定解析提供商。
+	// Video tasks can outlive WebSocket stickiness, so bindings last at least as long as pending billing.
+	// Status and content polls use this binding to find the provider.
 	ttl := VideoPendingTTL
 	if s.options.StickyTTL > 0 {
 		if sticky := s.options.StickyTTL; sticky > ttl {
@@ -130,7 +130,7 @@ func (s *VideoTasks) BindGrokMediaVideoRequestProvider(
 	return nil
 }
 
-// ResolveGrokMediaVideoRequestGroup 返回创建视频任务时保存的分组归属。
+// ResolveGrokMediaVideoRequestGroup returns the group saved when the video task was created.
 func (s *VideoTasks) ResolveGrokMediaVideoRequestGroup(
 	ctx context.Context,
 	requestID string,
@@ -162,13 +162,13 @@ func (s *VideoTasks) ResolveGrokMediaVideoRequestProvider(
 	return s.owners.GetSessionProviderID(ctx, derefGroupID(groupID), cacheKey)
 }
 
-// GrokVideoPendingCreatedAtNow 为待计费记录生成任务受理时间戳。
+// GrokVideoPendingCreatedAtNow returns a UTC acceptance timestamp for pending billing.
 func GrokVideoPendingCreatedAtNow() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
-// GrokVideoE2EDuration 返回从任务受理到发现完成的实际经过时间。
-// CreatedAt 缺失或无法解析时返回零，由调用方保留仅轮询耗时。
+// GrokVideoE2EDuration returns elapsed time from task acceptance to observed completion.
+// Missing or invalid CreatedAt returns zero so the caller can retain its polling duration.
 func GrokVideoE2EDuration(createdAt string, discoveredAt time.Time) time.Duration {
 	createdAt = strings.TrimSpace(createdAt)
 	if createdAt == "" {
@@ -202,7 +202,7 @@ func VideoPendingKey(requestID string, userID, apiKeyID int64) string {
 	return fmt.Sprintf("%d:%d:%s", userID, apiKeyID, requestID)
 }
 
-// StoreGrokVideoPendingBilling 持久化创建时计费参数，供状态轮询延迟计费。
+// StoreGrokVideoPendingBilling saves creation parameters for billing after completion is observed.
 func (s *VideoTasks) StoreGrokVideoPendingBilling(
 	ctx context.Context,
 	requestID string,
@@ -226,7 +226,7 @@ func (s *VideoTasks) StoreGrokVideoPendingBilling(
 	if pending.VideoDurationSeconds > 0 {
 		pending.VideoDurationSeconds = pricing.NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
 	}
-	// 任务受理时间缺失时补写，延迟计费据此计算从受理到完成的耗时。
+	// Supply a missing acceptance time for end-to-end duration calculation during delayed billing.
 	if strings.TrimSpace(pending.CreatedAt) == "" {
 		pending.CreatedAt = GrokVideoPendingCreatedAtNow()
 	} else {
@@ -243,7 +243,7 @@ func (s *VideoTasks) StoreGrokVideoPendingBilling(
 	return cache.SetGrokVideoPendingBilling(ctx, key, payload, VideoPendingTTL)
 }
 
-// LoadGrokVideoPendingBilling 返回创建时快照，未命中时可能为 nil。
+// LoadGrokVideoPendingBilling returns the creation snapshot, or nil on a cache miss.
 func (s *VideoTasks) LoadGrokVideoPendingBilling(
 	ctx context.Context,
 	requestID string,
@@ -271,7 +271,7 @@ func (s *VideoTasks) LoadGrokVideoPendingBilling(
 	return &pending, nil
 }
 
-// ClaimGrokVideoBilling 对完成的视频请求返回一次 true，后续轮询按已计费处理。领取失败时也按已计费处理。
+// ClaimGrokVideoBilling claims billing for the cache TTL; callers skip billing on a false result or error.
 func (s *VideoTasks) ClaimGrokVideoBilling(
 	ctx context.Context,
 	requestID string,
@@ -291,8 +291,8 @@ func (s *VideoTasks) ClaimGrokVideoBilling(
 	return cache.ClaimGrokVideoBilled(ctx, key, VideoClaimTTL)
 }
 
-// ReleaseGrokVideoBilling 在持久化 RecordUsage 失败后释放领取记录，
-// 使后续状态或内容轮询能够重试计费。
+// ReleaseGrokVideoBilling releases the claim after RecordUsage persistence fails,
+// allowing a later status or content poll to retry billing.
 func (s *VideoTasks) ReleaseGrokVideoBilling(
 	ctx context.Context,
 	requestID string,
@@ -312,8 +312,8 @@ func (s *VideoTasks) ReleaseGrokVideoBilling(
 	return cache.ReleaseGrokVideoBilled(ctx, key)
 }
 
-// StableGrokVideoBillingRequestID 为单个异步视频任务生成持久化 usage_logs 去重键，
-// 该键并非每次轮询各自的网关请求 ID。
+// StableGrokVideoBillingRequestID returns a task-stable usage_logs deduplication ID.
+// Use it across polls instead of each poll's gateway request ID.
 func StableGrokVideoBillingRequestID(taskRequestID string) string {
 	taskRequestID = strings.TrimSpace(taskRequestID)
 	if taskRequestID == "" {
@@ -325,7 +325,7 @@ func StableGrokVideoBillingRequestID(taskRequestID string) string {
 	return "grok-video:" + taskRequestID
 }
 
-// TrackCreated 保留创建后的尽力绑定与一次快照重试；失败不能把已提交响应改成失败。
+// TrackCreated binds ownership best-effort and retries snapshot storage once, reporting failures through the observer.
 func (s *VideoTasks) TrackCreated(ctx context.Context, groupID *int64, taskID string, userID, keyID, providerID int64, pending GrokVideoPendingBilling, observer VideoObserver) {
 	billingKey := StableGrokVideoBillingRequestID(taskID)
 	createdAt, _ := time.Parse(time.RFC3339Nano, pending.CreatedAt)
@@ -342,7 +342,7 @@ func (s *VideoTasks) TrackCreated(ctx context.Context, groupID *int64, taskID st
 	}
 }
 
-// ResolveCompositeVideo 先读取创建时归属，再兼容历史任务的当前映射扫描顺序。
+// ResolveCompositeVideo tries saved ownership first, then scans current bindings for legacy tasks.
 func (s *VideoTasks) ResolveCompositeVideo(ctx context.Context, taskID string, userID, keyID int64, bindings []VideoBinding) (VideoOwner, error) {
 	var lookupErr error
 	ownerID, err := s.ResolveGrokMediaVideoRequestGroup(ctx, taskID, userID, keyID)

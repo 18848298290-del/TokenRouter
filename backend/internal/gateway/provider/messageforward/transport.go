@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// requestTLS 在原发送位置读取配置 ID，TLS 策略与缓存由 egress 唯一拥有。
+// requestTLS resolves the provider's configured TLS profile through the egress cache.
 func (r *Runtime) requestTLS(target *gatewayadapter.ExecutionProvider) *tlsfingerprint.Profile {
 	selection := egress.TLSSelection{}
 	if target != nil {
@@ -34,7 +34,7 @@ func (r *Runtime) scheduleActivity(target *gatewayadapter.ExecutionProvider) {
 	}
 }
 
-// transportError 保留取消不切号、不停调，以及持久故障先观察再记录停调的顺序。
+// transportError observes failures before handling them. Cancellation stops here; persistent failures also unschedule the provider.
 func (r *Runtime) transportError(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, err error, notice forward.Notice) error {
 	safe := logredact.SanitizeUpstreamQueries(err.Error())
 	output.SetError(0, safe, "")

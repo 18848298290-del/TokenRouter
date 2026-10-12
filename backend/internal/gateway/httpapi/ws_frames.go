@@ -10,7 +10,7 @@ import (
 
 var _ gatewayws.ClientSocket = WSClientFrames{}
 
-// WSClientFrames 转换网络库的帧和关闭枚举。
+// WSClientFrames adapts coder/websocket frame and close enums to gateway integers.
 type WSClientFrames struct{ Conn *coderws.Conn }
 
 func (c WSClientFrames) Read(ctx context.Context) (int, []byte, error) {
@@ -18,7 +18,8 @@ func (c WSClientFrames) Read(ctx context.Context) (int, []byte, error) {
 	return int(typ), body, err
 }
 
-// Write 同步返回网络写入结果，入站执行器据此处理关闭和取消。
+// Write returns the network write result synchronously so the ingress executor
+// can handle connection closure and cancellation.
 func (c WSClientFrames) Write(ctx context.Context, typ int, body []byte) error {
 	return c.Conn.Write(ctx, coderws.MessageType(typ), body)
 }

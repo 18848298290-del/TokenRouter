@@ -33,11 +33,11 @@ func TestParseSSEUsage_MessageDelta(t *testing.T) {
 func TestParseSSEUsage_DeltaDoesNotOverwriteStartValues(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
-	// 先处理 message_start
+	// Seed the counters from message_start.
 	ParseSSEUsage(`{"type":"message_start","message":{"usage":{"input_tokens":100}}}`, usage)
 	require.Equal(t, 100, usage.InputTokens)
 
-	// 再处理 message_delta（output_tokens > 0, input_tokens = 0）
+	// The delta supplies output_tokens and omits input_tokens.
 	ParseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":50}}`, usage)
 	require.Equal(t, 100, usage.InputTokens, "delta 中 input_tokens=0 不应覆盖 start 中的值")
 	require.Equal(t, 50, usage.OutputTokens)
@@ -46,7 +46,7 @@ func TestParseSSEUsage_DeltaDoesNotOverwriteStartValues(t *testing.T) {
 func TestParseSSEUsage_DeltaOverwritesWithNonZero(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
-	// GLM 等 API 会在 delta 中包含所有 usage 信息
+	// GLM-style deltas may carry all usage counters.
 	ParseSSEUsage(`{"type":"message_delta","usage":{"input_tokens":200,"output_tokens":100,"cache_creation_input_tokens":30,"cache_read_input_tokens":60}}`, usage)
 	require.Equal(t, 200, usage.InputTokens)
 	require.Equal(t, 100, usage.OutputTokens)
@@ -71,7 +71,7 @@ func TestParseSSEUsage_DeltaAuthoritativelyUpdatesCacheCreationBreakdown(t *test
 func TestParseSSEUsage_InvalidJSON(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
-	// 无效 JSON 不应 panic
+	// Malformed JSON must not panic.
 	ParseSSEUsage("not json", usage)
 	require.Equal(t, 0, usage.InputTokens)
 	require.Equal(t, 0, usage.OutputTokens)
@@ -80,7 +80,7 @@ func TestParseSSEUsage_InvalidJSON(t *testing.T) {
 func TestParseSSEUsage_UnknownType(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
-	// 不是 message_start 或 message_delta 的类型
+	// Unrelated event types leave usage unchanged.
 	ParseSSEUsage(`{"type":"content_block_delta","delta":{"text":"hello"}}`, usage)
 	require.Equal(t, 0, usage.InputTokens)
 	require.Equal(t, 0, usage.OutputTokens)
@@ -96,7 +96,7 @@ func TestParseSSEUsage_EmptyString(t *testing.T) {
 func TestParseSSEUsage_DoneEvent(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
-	// [DONE] 事件不应影响 usage
+	// [DONE] leaves the accumulated usage unchanged.
 	ParseSSEUsage("[DONE]", usage)
 	require.Equal(t, 0, usage.InputTokens)
 }

@@ -29,12 +29,12 @@ type marketplaceFixturePrices struct {
 	resolver   *billing.PriceResolver
 }
 
-// catalogFixture 保存测试提供的模型价格目录。
+// catalogFixture holds model prices supplied by a test.
 type catalogFixture struct {
 	pricingData map[string]*pricing.CatalogModelPricing
 }
 
-// newCalculator 使用测试目录构造计价器。
+// newCalculator constructs a calculator from the test catalog.
 func newCalculator(catalog *provider.Service) *billing.Calculator {
 	return newCalculatorWithPrices(catalog, nil)
 }
@@ -43,10 +43,10 @@ func newCalculatorWithPrices(catalog *provider.Service, prices map[string]*prici
 	return testkit.Calculator(catalog, prices)
 }
 
-// contractProviderStatsCost 计算独立提供商成本，先匹配自定义规则，再查询模型默认价。
-// 无可用成本价时返回 nil，由日志层计算回退成本。
-// Qoder 自定义规则依次按请求模型、分组映射模型和最终上游模型匹配。
-// totalCost 是测试调用参数，提供商成本由独立成本价计算。
+// contractProviderStatsCost resolves custom provider rules before catalog prices.
+// An unavailable cost returns nil so the log layer can choose its fallback.
+// Qoder rules prefer the requested model; contractProviderStatsWithMapping also accepts the group-mapped model.
+// totalCost is retained in the fixture signature but does not contribute to provider cost.
 func contractProviderStatsCost(
 	ctx context.Context,
 	pricingConfigService *routing.PricingConfigService,
@@ -65,7 +65,7 @@ func contractProviderStatsCost(
 	return contractProviderStatsWithMapping(ctx, pricingConfigService, billingService, actualPlatform, providerID, groupID, upstreamModel, requestedModel, "", tokens, requestCount, totalCost, serviceTier, reasoningEfforts...)
 }
 
-// contractProviderStatsWithMapping 通过 billing 定价解析器计算提供商成本。
+// contractProviderStatsWithMapping resolves provider costs through billing.
 func contractProviderStatsWithMapping(
 	ctx context.Context,
 	pricingConfigService *routing.PricingConfigService,
@@ -98,7 +98,7 @@ func contractProviderStatsWithMapping(
 	return resolver.ResolveProviderStats(ctx, billing.ProviderStatsCostInput{PreferRequestedModel: actualPlatform == "qoder", ProviderID: providerID, GroupID: groupID, UpstreamModel: upstreamModel, RequestedModel: requestedModel, MappedModel: groupMappedModel, Tokens: tokens, RequestCount: requestCount, ServiceTier: serviceTier, ReasoningEffort: effort})
 }
 
-// newTestPricingConfigServiceForStats 为指定分组装配单个共享价格配置。
+// newTestPricingConfigServiceForStats wires one shared pricing configuration to the given group.
 func newTestPricingConfigServiceForStats(t *testing.T, pricingConfig *routingtestkit.Configuration, groupID int64, platform string) *routing.PricingConfigService {
 	t.Helper()
 	cache := routingtestkit.NewModelConfigData()
@@ -110,7 +110,7 @@ func newTestPricingConfigServiceForStats(t *testing.T, pricingConfig *routingtes
 	return cs
 }
 
-// newPricingMarketplaceFixture 使用网关目录和 billing 报价接口构造市场服务。
+// newPricingMarketplaceFixture wires the requestable catalog and billing quotes into the marketplace.
 func newPricingMarketplaceFixture(groupRepo routing.GroupRepository, settingRepo settings.Repository, resolver *billing.PriceResolver, billingService *billing.Calculator, capacityService *routing.CapacityService, availabilityRepo routing.GroupAvailabilityProbeRepository, cfg *config.Config) *routing.Marketplace {
 	projection := routing.RequestableResolver{Warn: slog.Warn}
 	source := &routing.RequestableCatalogue{Resolver: projection, Warn: slog.Warn}
@@ -165,7 +165,7 @@ func newCatalogFixture(fixture catalogFixture) *provider.Service {
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// newOpenAIRecordUsageServiceForTest 使用测试存储构造 completion.Recorder 的记录夹具。
+// newOpenAIRecordUsageServiceForTest constructs a completion recording fixture with the test stores.
 func newOpenAIRecordUsageServiceForTest(logs usagecore.UsageLogRepository, _ identity.UserRepository, _ billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, &completiontestkit.SettlementStore{}, rates, true)
 }
@@ -178,8 +178,8 @@ func newGatewayRecordUsageServiceWithBillingRepoForTest(logs usagecore.UsageLogR
 	return completiontestkit.NewRecording(logs, funds, nil, false)
 }
 
-// testPtrFloat64 返回浮点数指针。
+// testPtrFloat64 returns a pointer to v.
 func testPtrFloat64(v float64) *float64 { return &v }
 
-// testPtrInt 返回整数指针。
+// testPtrInt returns a pointer to v.
 func testPtrInt(v int) *int { return &v }

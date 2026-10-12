@@ -16,7 +16,7 @@ const (
 	thresholdTypePercentage = "percentage"
 
 	// balanceLowEmailTemplate is the HTML template for balance low notifications.
-	// Format args: siteName, userName, userName, balance, threshold, threshold.
+	// Format args: siteName, userName, userName, balance, threshold, threshold, rechargeBlock.
 	// The recharge button is appended dynamically when rechargeURL is set.
 	balanceLowEmailTemplate = `<!DOCTYPE html>
 <html>
@@ -55,7 +55,8 @@ const (
 </html>`
 
 	// quotaAlertEmailTemplate is the HTML template for provider quota alert notifications.
-	// Format args: siteName, providerID, providerName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay.
+	// Format args: siteName, providerID, providerName, platform, dimLabel, used, limitStr, remaining,
+	// thresholdDisplay.
 	quotaAlertEmailTemplate = `<!DOCTYPE html>
 <html>
 <head>
@@ -121,7 +122,7 @@ func (s *AlertDelivery) SetNotificationEmailService(n *NotificationEmailService)
 	s.notificationEmailService = n
 }
 
-// sendEmails sends an email to all recipients with shared timeout and error logging.
+// sendEmails sends to each recipient with a separate timeout and logs delivery errors.
 func (s *AlertDelivery) sendEmails(recipients []string, subject, body string, logAttrs ...any) {
 	if len(recipients) == 0 {
 		slog.Warn("sendEmails: no recipients", "subject", subject)
@@ -139,7 +140,7 @@ func (s *AlertDelivery) sendEmails(recipients []string, subject, body string, lo
 	}
 }
 
-// SendBalanceLowEmails 向所有收件人发送余额不足通知。
+// SendBalanceLowEmails sends low-balance notifications to all recipients.
 func (s *AlertDelivery) SendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) {
 	displayName := userName
 	if displayName == "" {
@@ -161,7 +162,7 @@ func (s *AlertDelivery) SendBalanceLowEmails(recipients []string, userID int64, 
 		}); ok {
 			err = mailer.SendUserNotification(ctx, input)
 		} else {
-			// 独立发送器使用英文内置模板，带账户偏好的部署通过通知服务发送。
+			// Standalone senders use the built-in English template; the notification service resolves account preferences.
 			official := notificationEmailOfficialTemplates[input.Event][notificationEmailDefaultLocale]
 			input.Variables["site_name"] = siteName
 			input.Variables["recipient_name"] = displayName
@@ -179,7 +180,7 @@ func (s *AlertDelivery) SendBalanceLowEmails(recipients []string, userID int64, 
 	}
 }
 
-// SendQuotaAlertEmails 向管理员邮箱发送提供商配额告警。
+// SendQuotaAlertEmails sends provider quota alerts to administrator addresses.
 func (s *AlertDelivery) SendQuotaAlertEmails(adminEmails []string, providerID int64, providerName, platform string, dim contract.QuotaDimension, used float64, siteName string) {
 	dimLabel := quotaDimLabels[dim.Name]
 	if dimLabel == "" {
@@ -239,7 +240,7 @@ func (s *AlertDelivery) SendQuotaAlertEmails(adminEmails []string, providerID in
 	s.sendEmails(adminEmails, subject, body, "provider", providerName, "dimension", dim.Name)
 }
 
-// BuildBalanceLowEmailBody 构建余额不足通知的 HTML 正文。
+// BuildBalanceLowEmailBody builds the low-balance HTML body. Callers escape userName and siteName.
 func (s *AlertDelivery) BuildBalanceLowEmailBody(userName string, balance, threshold float64, siteName, rechargeURL string) string {
 	rechargeBlock := ""
 	if rechargeURL != "" {
@@ -248,7 +249,7 @@ func (s *AlertDelivery) BuildBalanceLowEmailBody(userName string, balance, thres
 	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, balance, threshold, threshold, rechargeBlock)
 }
 
-// BuildQuotaAlertEmailBody 构建提供商配额告警的 HTML 正文。
+// BuildQuotaAlertEmailBody builds the quota alert HTML body. Callers escape string arguments.
 func (s *AlertDelivery) BuildQuotaAlertEmailBody(providerID int64, providerName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay, siteName string) string {
 	limitStr := fmt.Sprintf("$%.2f", limit)
 	if limit <= 0 {

@@ -11,14 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// DescribeImage 保留单张辅助请求、错误资格和描述用量，不绑定主会话缓存身份。
+// DescribeImage sends one auxiliary image request and returns its description and usage.
 func DescribeImage(ctx context.Context, p Ports, o Options, in Input, imageURL string, index int) (string, protocolopenai.ForwardUsage, error) {
 	body, err := o.Codec.BuildGrokComposerImageDescriptionBody(imageURL, index)
 	if err != nil {
 		return "", protocolopenai.ForwardUsage{}, err
 	}
 	upstreamCtx, releaseUpstreamCtx := p.Detach(ctx)
-	// 图片描述探测使用独立的 Grok 提示缓存身份。
+	// Use a separate prompt-cache identity from the main session.
 	upstreamReq, err := p.Build(upstreamCtx, body, "", false)
 	releaseUpstreamCtx()
 	if err != nil {

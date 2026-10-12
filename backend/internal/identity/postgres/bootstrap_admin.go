@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// CreateInitialAdmin 检查用户和管理员数量，符合初始化条件时创建管理员。
+// CreateInitialAdmin checks user and admin counts before creating the bootstrap administrator.
 func CreateInitialAdmin(ctx context.Context, db *sql.DB, input identity.InitialAdminInput, password func() (string, error)) (bool, string, error) {
 	var total, admins int64
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&total); err != nil {

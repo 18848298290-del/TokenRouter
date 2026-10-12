@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// WriteGroupSelectionBusinessError 输出分组选择错误，并按 Key 配置筛选可展示型号。
+// WriteGroupSelectionBusinessError writes selection errors and filters displayed models through key configuration.
 func WriteGroupSelectionBusinessError(c *gin.Context, err error, streamStarted bool, readAccess func(*gin.Context) (*apikey.APIKey, bool), catalogue modeldisplay.Catalog, writeError func(int, string, string, bool)) bool {
 	if errors.Is(err, routing.ErrClaudeCodeOnly) {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)

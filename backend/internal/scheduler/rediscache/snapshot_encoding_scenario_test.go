@@ -1,6 +1,6 @@
 package rediscache
 
-// 本场景检查 snapshot_codec.go 的编解码接口与 codec/provider.go、codec/snapshot.go 的提供商报文及元数据。
+// These scenarios check the snapshot codec interface and the provider payload and metadata codecs.
 
 import (
 	"testing"
@@ -282,7 +282,7 @@ func TestBuildSchedulerMetadataProvider_KeepsSparkShadowRoutingIdentity(t *testi
 	require.Nil(t, got.Credentials["access_token"])
 }
 
-// TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough 检查调度快照保存传输开关和模型范围，透传请求仍受白名单限制。
+// TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough checks that passthrough snapshots retain model restrictions.
 func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t *testing.T) {
 	for _, key := range []string{"openai_passthrough", "openai_oauth_passthrough"} {
 		t.Run(key, func(t *testing.T) {
@@ -291,7 +291,7 @@ func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t 
 				Platform: capability.PlatformOpenAI,
 				Type:     capability.ProviderTypeOAuth,
 				Credentials: map[string]any{
-					// 提供商从白名单模式切到透传后常见的残留映射，未列出请求的模型。
+					// A passthrough provider can still have a model whitelist and mapping that omit the requested model.
 					"model_whitelist": []string{"gpt-5.5"},
 					"model_mapping":   map[string]any{"gpt-5.5": "gpt-5.5"},
 					"access_token":    "drop-me",
@@ -303,7 +303,7 @@ func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t 
 
 			meta := buildSchedulerMetadataProvider(provider)
 
-			// 写入 sched:meta 后由 decodeCachedProvider 读回，检查序列化后的模型范围。
+			// Round-trip the metadata payload to check that serialization retains model restrictions.
 			payload, err := codec.MarshalProviderRecord(&meta)
 			require.NoError(t, err)
 			restored, err := codec.UnmarshalProviderRecord(payload)
@@ -313,13 +313,13 @@ func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t 
 			require.True(t, restored.IsOpenAIPassthroughEnabled())
 			require.False(t, restored.IsModelSupported("gpt-5.6-sol", provideradapter.ModelDefaults(), provideradapter.ModelRules(restored)),
 				"缓存恢复不能放宽提供商模型范围")
-			// 非透传提供商按白名单限制模型访问。
+			// The cached record also retains the configured mapping.
 			require.Equal(t, map[string]any{"gpt-5.5": "gpt-5.5"}, restored.Credentials["model_mapping"])
 		})
 	}
 }
 
-// TestSchedulerProtocolProjection 检查轻量和完整提供商快照都保存支持的协议集合及认证方式。
+// TestSchedulerProtocolProjection checks protocol and authentication metadata while excluding execution credentials.
 func TestSchedulerProtocolProjection(t *testing.T) {
 	provider := providercore.Record{ID: 72, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"upstream_protocols": []string{"openai_responses_websocket"}, "auth_mode": "personalAccessToken", "access_token": "hidden"}}
 	metadata := buildSchedulerMetadataProvider(provider)

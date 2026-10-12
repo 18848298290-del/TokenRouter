@@ -55,8 +55,8 @@ func TestAdvancedSchedulerCoreTreatsMissingErrorRateAsZero(t *testing.T) {
 		Reset:     1,
 	}
 
-	// 提供商 21 缺失负载，提供商 22 的已知负载恰好处于中性位置。两者均没有
-	// 错误反馈、TTFT 或窗口信息，因此错误率都按 0% 处理且最终分数一致。
+	// Provider 21 has unknown load; provider 22 has load at the neutral value. Neither has
+	// error, TTFT, or window feedback, so both receive a 0% error rate and equal scores.
 	candidates, skew := ScoreCandidates(
 		providers,
 		map[int64]*ProviderLoadInfo{22: {ProviderID: 22, LoadRate: 50}},
@@ -98,7 +98,7 @@ func TestAdvancedSchedulerCoreTopKUsesStableOrderForMixedKnownAndUnknownLoads(t 
 	require.True(t, base[2].LoadKnown)
 	require.False(t, base[3].LoadKnown)
 
-	// 全零权重时，已知和未知负载的候选在每种排列下应得到相同的 Top-K。
+	// Zero weights should produce the same Top-K for every ordering of known and unknown loads.
 	permutation := []int{0, 1, 2, 3}
 	var verifyPermutations func(int)
 	verifyPermutations = func(position int) {
@@ -350,7 +350,7 @@ func advancedSchedulerTestWeights() policy.ScoreWeights {
 	}
 }
 
-// scoreGroupIDForTest 为种子测试构造分组 ID 指针。
+// scoreGroupIDForTest returns a group ID pointer for selection seed tests.
 func scoreGroupIDForTest(value int64) *int64 { return &value }
 
 func buildOpenAISchedulerBenchmarkCandidates(size int) []CandidateScore {
@@ -484,7 +484,7 @@ func TestClamp01_AllBranches(t *testing.T) {
 
 func TestCalcLoadSkewByMoments_Branches(t *testing.T) {
 	require.Equal(t, 0.0, LoadSkewByMoments(1, 1, 1))
-	// variance < 0 分支：sumSquares/count - mean^2 为负值时应钳制为 0。
+	// A negative sumSquares/count - mean^2 is clamped to zero before taking the square root.
 	require.Equal(t, 0.0, LoadSkewByMoments(1, 0, 2))
 	require.GreaterOrEqual(t, LoadSkewByMoments(6, 20, 3), 0.0)
 }

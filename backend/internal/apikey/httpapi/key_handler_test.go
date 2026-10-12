@@ -30,7 +30,7 @@ type apiKeyHandlerSecurityRepoStub struct {
 	keys map[int64]*apikey.APIKey
 }
 
-// availableGroupsUsers 为分组接口提供普通用户。
+// availableGroupsUsers supplies an ordinary user for group endpoint tests.
 type availableGroupsUsers struct{}
 
 type availableGroupsRepository struct{ apikey.GroupRepository }
@@ -86,7 +86,7 @@ func TestValidateAPIKeyUpdateRequest(t *testing.T) {
 	}
 }
 
-// TestRotateCredentialRoute 检查凭据轮换路由的归属校验和新凭据响应。
+// TestRotateCredentialRoute checks ownership validation and the replacement credential response.
 func TestRotateCredentialRoute(t *testing.T) {
 	managed := "creative_studio"
 	for _, test := range []struct {
@@ -150,7 +150,7 @@ func TestRotateCredentialRoute(t *testing.T) {
 	}
 }
 
-// TestKeyWritesRejectRetiredDefaultGroupFallback 检查身份认证后、读取 Key 服务前拒绝旧回退字段，包括 false 和 null。
+// TestKeyWritesRejectRetiredDefaultGroupFallback rejects the retired field, including false and null, before invoking the key service.
 func TestKeyWritesRejectRetiredDefaultGroupFallback(t *testing.T) {
 	handler := NewAPIKeyHandler[struct{}](nil, nil)
 	router := gin.New()
@@ -186,7 +186,7 @@ func TestAPIKeyHandler_GetByID_HidesUnauthorizedKeyExistence(t *testing.T) {
 
 			require.Equal(t, http.StatusNotFound, rec.Code)
 
-			// 无权访问和不存在的 API Key 返回相同响应。
+			// Unauthorized access and a missing key return the same response.
 			var got response.Response
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 			require.Equal(t, http.StatusNotFound, got.Code)
@@ -241,7 +241,7 @@ func (availableGroupsRepository) ListActive(context.Context) ([]routing.Group, e
 	return []routing.Group{{ID: 1, Status: "active"}, {ID: 2, Status: "active", IsExclusive: true}}, nil
 }
 
-// TestAvailableGroupsOptionalModels 轻量查询跳过目录计算，同时保留分组权限过滤。
+// TestAvailableGroupsOptionalModels checks that lightweight queries skip catalogue work and retain group access filtering.
 func TestAvailableGroupsOptionalModels(t *testing.T) {
 	for _, query := range []string{"", "?include_models=true", "?include_models=false", "?include_models=invalid"} {
 		t.Run(query, func(t *testing.T) {

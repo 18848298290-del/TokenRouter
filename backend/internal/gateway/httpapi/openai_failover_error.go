@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
 )
 
-// OpenAIFailoverError 保存错误展示数据，规则匹配使用原始响应，公开 JSON 使用展示字段。
+// OpenAIFailoverError holds error presentation data. Rules match the original response; client output uses
+// display fields.
 type OpenAIFailoverError struct {
 	Status, ClientStatus, CredentialStatus                                                          int
 	ClientMessage, CredentialMessage, TooLargeMessage, SilentMessage, CyberMessage, UpstreamMessage string
@@ -27,7 +28,8 @@ type FailoverErrorHooks struct {
 	SkipMonitoring func(*gin.Context)
 }
 
-// WriteOpenAIFailoverExhausted 按原顺序解释已分类错误，再匹配展示规则与默认映射。
+// WriteOpenAIFailoverExhausted handles classified failures before applying presentation rules and default
+// mappings.
 func WriteOpenAIFailoverExhausted(c *gin.Context, failure *OpenAIFailoverError, started bool, rules ErrorRuleMatcher, hooks FailoverErrorHooks, write func(*gin.Context, int, string, string, bool)) {
 	if failure == nil {
 		status, kind, message := MapOpenAIUpstreamError(http.StatusBadGateway)

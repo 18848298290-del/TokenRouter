@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// SettingsParticipant 独占 ops_advanced_settings；提供商阈值仅作为明确的子配置输入。
+// SettingsParticipant owns Ops settings and accepts provider quota thresholds as a nested update.
 func SettingsParticipant() settings.Participant {
 	keys := []string{"ops_monitoring_enabled", "ops_realtime_monitoring_enabled", "ops_metrics_interval_seconds", "ops_advanced_settings"}
 	fields := []string{"ops_monitoring_enabled", "ops_realtime_monitoring_enabled", "ops_metrics_interval_seconds", "openai_provider_quota_auto_pause"}

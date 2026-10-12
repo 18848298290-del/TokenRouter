@@ -70,7 +70,7 @@ func (r *ProviderStore) BatchUpdateLastUsed(ctx context.Context, updates map[int
 }
 
 func (r *ProviderStore) SetError(ctx context.Context, id int64, errorMsg string) error {
-	// 标记错误时同时关闭调度开关，快照刷新后该提供商退出候选池。
+	// Disable scheduling with error status so snapshot refresh removes the provider from candidates.
 	_, err := r.client.Provider.Update().
 		Where(dbprovider.IDEQ(id)).
 		SetStatus(acctcore.StatusError).
@@ -120,8 +120,8 @@ func (r *ProviderStore) SetRateLimited(ctx context.Context, id int64, resetAt ti
 	return nil
 }
 
-// SetRateLimitedIfLater 以原子方式延长提供商级限流。Grok 请求可能并发结束，较旧响应
-// 使用较早重置时间的响应到达时，已保存的较晚时间保持不变。
+// SetRateLimitedIfLater atomically extends the provider's rate-limit window.
+// Concurrent Grok responses with earlier reset times leave a stored later reset time intact.
 func (r *ProviderStore) SetRateLimitedIfLater(ctx context.Context, id int64, resetAt time.Time) error {
 	now := r.options.Now()
 	updated, err := r.client.Provider.Update().
@@ -139,8 +139,8 @@ func (r *ProviderStore) SetRateLimitedIfLater(ctx context.Context, id int64, res
 		return err
 	}
 	if updated == 0 {
-		// 当前实例可能尚未观测到其它实例写入的更晚值；即使无需发送 outbox 事件，
-		// 仍需刷新本地调度快照。
+		// Another instance may have written a later reset time; refresh the local snapshot
+		// even when this call has no update to publish through the outbox.
 		r.afterChange(ctx, id)
 		return nil
 	}
@@ -151,8 +151,8 @@ func (r *ProviderStore) SetRateLimitedIfLater(ctx context.Context, id int64, res
 	return nil
 }
 
-// ClearRateLimitIfObserved 只清除成功请求观察到的 Grok 限流代次。
-// 同时匹配设置时间与重置时间，仅清除本次观察到的限流记录。
+// ClearRateLimitIfObserved clears the Grok OAuth rate-limit window observed by a successful request.
+// Both the set time and reset time must still match the observation.
 func (r *ProviderStore) ClearRateLimitIfObserved(ctx context.Context, id int64, observedLimitedAt, observedResetAt time.Time) (bool, error) {
 	updated, err := r.client.Provider.Update().
 		Where(
@@ -373,7 +373,7 @@ func (r *ProviderStore) UpdateSessionWindow(ctx context.Context, id int64, start
 	if err != nil {
 		return err
 	}
-	// 触发调度器缓存更新（仅当窗口时间有变化时）
+	// Publish a scheduler update when either window timestamp is supplied.
 	if start != nil || end != nil {
 		if err := r.enqueue(ctx, r.sql, ProviderChanged, &id, nil, nil); err != nil {
 			r.observe("[SchedulerOutbox] enqueue session window update failed: provider=%d err=%v", id, err)
@@ -445,7 +445,7 @@ func (r *ProviderStore) AutoPauseExpiredProviders(ctx context.Context, now time.
 	}
 
 	if len(providerIDs) > 0 {
-		// 刷新本次暂停的提供商及其所属分组对应的调度桶。
+		// Refresh scheduling buckets for the paused providers and their groups.
 		payload := map[string]any{"provider_ids": providerIDs}
 		if err := r.enqueue(ctx, r.sql, ProviderBulkChanged, nil, nil, payload); err != nil {
 			r.observe("[SchedulerOutbox] enqueue auto pause provider changes failed: err=%v", err)
@@ -454,9 +454,9 @@ func (r *ProviderStore) AutoPauseExpiredProviders(ctx context.Context, now time.
 	return int64(len(providerIDs)), nil
 }
 
-// RevertProxyFallback 将提供商的 proxy_id 切回 proxy_fallback_origin_id，并清空 origin 字段。
-// 仅当 proxy_fallback_origin_id IS NOT NULL 时执行更新；
-// 若影响行数为 0，则返回 ErrProviderNotInFallback（提供商存在但不在 fallback 状态）。
+// RevertProxyFallback restores proxy_id from proxy_fallback_origin_id and clears the origin field.
+// The update requires a non-null origin on a non-deleted provider.
+// Zero affected rows return ErrProviderNotInFallback, including missing providers.
 func (r *ProviderStore) RevertProxyFallback(ctx context.Context, providerID int64) error {
 	res, err := r.sql.ExecContext(ctx, `
 		UPDATE providers SET proxy_id=proxy_fallback_origin_id, proxy_fallback_origin_id=NULL, updated_at=NOW()

@@ -21,14 +21,14 @@ import (
 	upstreamkimi "github.com/TokenFlux/TokenRouter/internal/upstream/kimi"
 )
 
-// 替身记录健康字段写入。
+// errorPolicyRepoStub records provider health writes.
 type errorPolicyRepoStub struct {
 	providercore.HealthStore
 	tempCalls, setErrCalls int
 	modelRateLimitCalls    []int64
 }
 
-// jevRateLimitRepoStub 记录决策上游的冷却时间。
+// jevRateLimitRepoStub records cooldown deadlines from the decision upstream.
 type jevRateLimitRepoStub struct {
 	providercore.HealthStore
 	calls int
@@ -89,7 +89,7 @@ func (r *jevRateLimitRepoStub) SetRateLimited(_ context.Context, _ int64, reset 
 	return nil
 }
 
-// TestJevHealthUsesRetryAfter 检查通用健康入口处理决策限流，池模式仍由上游管理冷却。
+// TestJevHealthUsesRetryAfter checks decision rate limits while leaving pool cooldowns to the upstream.
 func TestJevHealthUsesRetryAfter(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, 529} {
 		for _, pool := range []bool{false, true} {
@@ -109,7 +109,7 @@ func TestJevHealthUsesRetryAfter(t *testing.T) {
 	}
 }
 
-// TestJevOverloadHonorsTemporaryRule 检查缺少 Retry-After 时的管理员过载暂停规则。
+// TestJevOverloadHonorsTemporaryRule checks configured overload suspension when Retry-After is absent.
 func TestJevOverloadHonorsTemporaryRule(t *testing.T) {
 	repo := &errorPolicyRepoStub{}
 	observer := newErrorPolicyObserver(repo)
@@ -164,7 +164,7 @@ func TestCheckErrorPolicy(t *testing.T) {
 				ID:       1,
 				Type:     capability.ProviderTypeOAuth,
 				Platform: capability.PlatformAntigravity,
-				// no custom error codes, no temp rules
+				// no custom error codes or temporary rules
 			},
 			statusCode: 500,
 			body:       []byte(`"error"`),
@@ -299,8 +299,8 @@ func TestCheckErrorPolicy(t *testing.T) {
 			expected:   providercore.ErrorPolicyTempUnscheduled,
 		},
 		{
-			// Antigravity 401 不走升级逻辑（由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制），
-			// second hit 仍然返回 TempUnscheduled。
+			// Antigravity 401 handling uses temp_unschedulable_rules without escalation,
+			// so the second hit also returns TempUnscheduled.
 			name: "temp_unschedulable_401_second_hit_antigravity_stays_temp",
 			provider: &providercore.Record{
 				ID:                      15,
@@ -574,8 +574,8 @@ func TestHandleUpstreamError_PoolModePolicies(t *testing.T) {
 	})
 }
 
-// TestHandleUpstreamError_CustomCodesAlwaysStopScheduling 验证自定义错误码不会再被
-// 400、429、529 的内置分支覆盖。
+// TestHandleUpstreamError_CustomCodesAlwaysStopScheduling checks that custom-code decisions
+// survive the built-in handling for 400, 429, and 529.
 func TestHandleUpstreamError_CustomCodesAlwaysStopScheduling(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -611,8 +611,8 @@ func TestHandleUpstreamError_CustomCodesAlwaysStopScheduling(t *testing.T) {
 	}
 }
 
-// TestUpstreamErrorDecision_PoolRetryStatusPromotesFailover 验证管理员配置的池模式
-// 重试状态码可以提升非默认故障转移错误，同时不会写入本地状态。
+// TestUpstreamErrorDecision_PoolRetryStatusPromotesFailover checks that configured pool retry codes
+// can trigger failover for otherwise non-retryable errors without writing local health state.
 func TestUpstreamErrorDecision_PoolRetryStatusPromotesFailover(t *testing.T) {
 	repo := &errorPolicyRepoStub{}
 	svc := newErrorPolicyObserver(repo)
@@ -636,8 +636,8 @@ func TestUpstreamErrorDecision_PoolRetryStatusPromotesFailover(t *testing.T) {
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
-// TestUpstreamErrorDecision_UsesSeparateEntryDefaults 检查普通提供商使用各入口的默认处理规则，
-// 池模式使用平台错误分类，配置的错误策略优先。
+// TestUpstreamErrorDecision_UsesSeparateEntryDefaults checks entry-specific defaults for ordinary providers
+// and platform classification for pools, with configured policy taking precedence.
 func TestUpstreamErrorDecision_UsesSeparateEntryDefaults(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          20423,
@@ -668,8 +668,8 @@ func TestRateLimitService_HandleUpstreamError_ModelNotFoundUsesModelRateLimit(t 
 	require.WithinDuration(t, time.Now().Add(providercore.ModelNotFoundCooldown), call.resetAt, 5*time.Second)
 }
 
-// TestRateLimitService_PoolModeModelNotFoundSkipsDefaultModelPause 验证池模式不会根据
-// 聚合上游的一次 404 暂停本地提供商与模型组合。
+// TestRateLimitService_PoolModeModelNotFoundSkipsDefaultModelPause checks that one aggregate-upstream 404
+// does not pause the local provider/model pair in pool mode.
 func TestRateLimitService_PoolModeModelNotFoundSkipsDefaultModelPause(t *testing.T) {
 	repo := &modelNotFoundProviderRepoStub{}
 	svc := newModelHealthObserver(repo)
@@ -832,7 +832,7 @@ func TestRateLimitService_HandleUpstreamError_CodexPlanGatedModelUsesFinalUpstre
 	repo := &modelNotFoundProviderRepoStub{}
 	svc := newModelHealthObserver(repo)
 	provider := openAICodexPlanGatedOAuthProvider()
-	// 状态入口接收实际发送的最终上游 ID，即使该 ID 也是映射键也不得再次映射。
+	// Health observes the final upstream model ID; a matching mapping key must not cause another rewrite.
 	provider.Credentials["model_mapping"] = map[string]any{
 		"gpt-5.6-sol":       "external-model-v1",
 		"external-model-v1": "unexpected-remap",
@@ -995,7 +995,7 @@ func TestHandle529_NilSettingService_FallsBackToConfig(t *testing.T) {
 	providerRepo := &overloadProviderRepoStub{}
 	minutes := 20
 	svc := newOverloadObserver(providerRepo, providercore.HealthOptions{OverloadMinutes: minutes})
-	// 设置读取器留空。
+	// The settings reader is deliberately absent.
 
 	provider := &providercore.Record{ID: 77, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeOAuth}
 	before := time.Now()
@@ -1093,8 +1093,8 @@ func TestHandleUpstreamError_529CustomCodeDisablesInsteadOfOverloadCooldown(t *t
 }
 
 func TestUpdateSessionWindow_UsesResetHeader(t *testing.T) {
-	// The reset header provides the real window end as a Unix timestamp.
-	// UpdateSessionWindow should use it instead of the hour-truncated prediction.
+	// The reset header gives the window end as a Unix timestamp.
+	// That value takes precedence over the hour-truncated estimate.
 	resetUnix := time.Now().Add(3 * time.Hour).Unix()
 	wantEnd := time.Unix(resetUnix, 0)
 	wantStart := wantEnd.Add(-5 * time.Hour)
@@ -1102,7 +1102,7 @@ func TestUpdateSessionWindow_UsesResetHeader(t *testing.T) {
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
-	provider := &providercore.Record{ID: 42} // no existing window → needInitWindow=true
+	provider := &providercore.Record{ID: 42} // missing window requires initialization
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed")
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
@@ -1129,16 +1129,16 @@ func TestUpdateSessionWindow_UsesResetHeader(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_FallbackPredictionWhenNoResetHeader(t *testing.T) {
-	// When the reset header is absent, should fall back to hour-truncated prediction.
+	// A missing reset header uses an hour-truncated estimate.
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
 	provider := &providercore.Record{ID: 10} // no existing window
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed_warning")
-	// No anthropic-ratelimit-unified-5h-reset header
+	// Omit anthropic-ratelimit-unified-5h-reset.
 
-	// Capture now before the call to avoid hour-boundary races
+	// Calculate the expected window before invoking the service.
 	now := time.Now()
 	expectedStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
 	expectedEnd := expectedStart.Add(5 * time.Hour)
@@ -1153,7 +1153,7 @@ func TestUpdateSessionWindow_FallbackPredictionWhenNoResetHeader(t *testing.T) {
 	if call.End == nil {
 		t.Fatal("expected window end to be set (fallback prediction)")
 	}
-	// Fallback: start = current hour truncated, end = start + 5h
+	// The estimated window starts at the current hour and lasts five hours.
 
 	if !call.End.Equal(expectedEnd) {
 		t.Errorf("expected fallback end %v, got %v", expectedEnd, *call.End)
@@ -1164,10 +1164,10 @@ func TestUpdateSessionWindow_FallbackPredictionWhenNoResetHeader(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_CorrectsStalePrediction(t *testing.T) {
-	// When the stored SessionWindowEnd is wrong (from a previous prediction),
-	// and the reset header provides the real time, it should update the window.
-	staleEnd := time.Now().Add(2 * time.Hour)             // existing prediction: 2h from now
-	realResetUnix := time.Now().Add(4 * time.Hour).Unix() // real reset: 4h from now
+	// A reset header can correct an existing estimated SessionWindowEnd.
+	// Use different predicted and observed deadlines to exercise that update.
+	staleEnd := time.Now().Add(2 * time.Hour)             // predicted deadline
+	realResetUnix := time.Now().Add(4 * time.Hour).Unix() // observed reset deadline
 	wantEnd := time.Unix(realResetUnix, 0)
 
 	repo := &sessionWindowMockRepo{}
@@ -1194,7 +1194,7 @@ func TestUpdateSessionWindow_CorrectsStalePrediction(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_NoUpdateWhenHeaderMatchesStored(t *testing.T) {
-	// If the reset header matches the stored SessionWindowEnd, no window update needed.
+	// Matching stored and observed reset times require no window timestamp update.
 	futureUnix := time.Now().Add(3 * time.Hour).Unix()
 	existingEnd := time.Unix(futureUnix, 0)
 
@@ -1216,24 +1216,24 @@ func TestUpdateSessionWindow_NoUpdateWhenHeaderMatchesStored(t *testing.T) {
 	}
 
 	call := repo.sessionWindowCalls[0]
-	// windowStart and windowEnd should be nil (no update needed)
+	// Nil timestamps mean the stored window stays unchanged.
 	if call.Start != nil || call.End != nil {
 		t.Errorf("expected nil start/end (no window change needed), got start=%v end=%v", call.Start, call.End)
 	}
-	// Status is still updated
+	// The status still updates.
 	if call.Status != "allowed" {
 		t.Errorf("expected status 'allowed', got %q", call.Status)
 	}
 }
 
 func TestUpdateSessionWindow_ClearsUtilizationOnWindowReset(t *testing.T) {
-	// When needInitWindow=true and window is set, utilization should be cleared.
+	// Initializing a window clears previous utilization before storing the observation.
 	resetUnix := time.Now().Add(3 * time.Hour).Unix()
 
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
-	provider := &providercore.Record{ID: 33} // no existing window → needInitWindow=true
+	provider := &providercore.Record{ID: 33} // missing window requires initialization
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed")
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
@@ -1241,18 +1241,18 @@ func TestUpdateSessionWindow_ClearsUtilizationOnWindowReset(t *testing.T) {
 
 	svc.UpdateSessionWindow(context.Background(), provider, SessionWindowObservation(headers))
 
-	// Should have 2 UpdateExtra calls: one to clear utilization, one to store new utilization
+	// Expect one write to clear utilization followed by one to store the observation.
 	if len(repo.updateExtraCalls) != 2 {
 		t.Fatalf("expected 2 UpdateExtra calls, got %d", len(repo.updateExtraCalls))
 	}
 
-	// First call: clear utilization (nil value)
+	// Clear utilization with a nil value.
 	clearCall := repo.updateExtraCalls[0]
 	if clearCall.Updates["session_window_utilization"] != nil {
 		t.Errorf("expected utilization cleared to nil, got %v", clearCall.Updates["session_window_utilization"])
 	}
 
-	// Second call: store new utilization
+	// Store the observed utilization.
 	storeCall := repo.updateExtraCalls[1]
 	if val, ok := storeCall.Updates["session_window_utilization"].(float64); !ok || val != 0.15 {
 		t.Errorf("expected utilization stored as 0.15, got %v", storeCall.Updates["session_window_utilization"])
@@ -1260,7 +1260,7 @@ func TestUpdateSessionWindow_ClearsUtilizationOnWindowReset(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_NoClearUtilizationOnCorrection(t *testing.T) {
-	// When correcting a stale prediction (needInitWindow=false), utilization should NOT be cleared.
+	// Correcting an estimate within the same window keeps utilization until the new observation is stored.
 	staleEnd := time.Now().Add(2 * time.Hour)
 	realResetUnix := time.Now().Add(4 * time.Hour).Unix()
 
@@ -1278,7 +1278,7 @@ func TestUpdateSessionWindow_NoClearUtilizationOnCorrection(t *testing.T) {
 
 	svc.UpdateSessionWindow(context.Background(), provider, SessionWindowObservation(headers))
 
-	// Only 1 UpdateExtra call (store utilization), no clear call
+	// A single write stores utilization; no clearing write is needed.
 	if len(repo.updateExtraCalls) != 1 {
 		t.Fatalf("expected 1 UpdateExtra call (no clear), got %d", len(repo.updateExtraCalls))
 	}
@@ -1289,14 +1289,14 @@ func TestUpdateSessionWindow_NoClearUtilizationOnCorrection(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_SamplesFable7dOiHeaders(t *testing.T) {
-	// 被动采样应收集 7d_oi（Fable 专属 7d 窗口）的 utilization 和 reset。
+	// Passive sampling includes utilization and reset time for the Fable-only 7d_oi window.
 	existingEnd := time.Now().Add(3 * time.Hour)
 	resetOIUnix := time.Now().Add(80 * time.Hour).Unix()
 
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
-	provider := &providercore.Record{ID: 90, SessionWindowEnd: &existingEnd} // 复用现有窗口，不触发初始化
+	provider := &providercore.Record{ID: 90, SessionWindowEnd: &existingEnd} // reuse the window without initialization
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed")
 	headers.Set("anthropic-ratelimit-unified-7d_oi-utilization", "0.87")
@@ -1317,13 +1317,13 @@ func TestUpdateSessionWindow_SamplesFable7dOiHeaders(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_ClearsFable7dOiOnWindowReset(t *testing.T) {
-	// 5h 窗口重置时应连同清除 7d_oi 被动采样数据，与 7d 行为一致。
+	// A 5h window reset clears passive 7d_oi observations along with 7d data.
 	resetUnix := time.Now().Add(3 * time.Hour).Unix()
 
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
-	provider := &providercore.Record{ID: 91} // 无现有窗口，需要执行初始化
+	provider := &providercore.Record{ID: 91} // initialize a missing window
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed")
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
@@ -1342,7 +1342,7 @@ func TestUpdateSessionWindow_ClearsFable7dOiOnWindowReset(t *testing.T) {
 }
 
 func TestUpdateSessionWindow_NoStatusHeader(t *testing.T) {
-	// Should return immediately if no status header.
+	// Missing status headers leave the stored window unchanged.
 	repo := &sessionWindowMockRepo{}
 	svc := newSessionWindowService(repo)
 
@@ -1417,8 +1417,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 	})
 }
 
-// TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent 检查影子的 401 按母提供商处理。
-// 母提供商临时停调并清除 token 缓存，影子保持启用，等待母提供商凭据恢复。
+// TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent applies shadow 401s to the parent.
+// The parent pauses and loses its cached token; the shadow stays enabled pending credential recovery.
 func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t *testing.T) {
 	repo := &unauthorizedHealthStore{}
 	repo.providersByID = map[int64]*providercore.Record{}
@@ -1441,7 +1441,7 @@ func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t 
 		Type:             capability.ProviderTypeOAuth,
 		ParentProviderID: &shadowParent,
 		QuotaDimension:   providercore.QuotaDimensionSpark,
-		// 影子不持凭据:GetCredential("refresh_token") == ""
+		// The shadow has no refresh_token of its own.
 	}
 
 	shouldDisable := service.ApplyUpstreamError(context.Background(), shadow, HealthObservation{Status: 401, Body: []byte("unauthorized")}).StopScheduling
@@ -1454,8 +1454,9 @@ func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t 
 	require.Equal(t, parentID, invalidator.providers[0].ID, "token cache invalidation must target the parent")
 }
 
-// TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError 检查 token 缓存失效失败时仍临时停调。
-// 401 处理保持数据库中的凭据不变，updateCredentialsCalls 为零。
+// TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError checks suspension even when cache
+// invalidation fails.
+// 401 handling leaves stored credentials unchanged.
 func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testing.T) {
 	repo := &unauthorizedHealthStore{}
 	invalidator := &unauthorizedTokenRecorder{err: errors.New("boom")}
@@ -1495,8 +1496,9 @@ func TestRateLimitService_HandleUpstreamError_NonOAuth401(t *testing.T) {
 	require.Empty(t, invalidator.providers)
 }
 
-// TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredentials 检查 401 处理保持并发刷新的凭据。
-// 请求持有的凭据快照早于数据库中的 refresh_token，更新健康状态时仍保留数据库当前值。
+// TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredentials protects concurrently refreshed
+// credentials.
+// The request's snapshot predates the database refresh_token; health writes must retain the stored value.
 func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredentials(t *testing.T) {
 	repo := &unauthorizedHealthStore{}
 	service := newUnauthorizedObserver(repo, nil)
@@ -1519,7 +1521,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredential
 	require.Nil(t, repo.lastCredentials, "no credentials should have been persisted")
 }
 
-// TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError 验证缺失 refresh_token 的 OAuth 提供商 401 后无法靠冷却窗口自愈，应直接标记 error。
+// TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError marks OAuth providers that cannot
+// refresh after a 401.
 func TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError(t *testing.T) {
 	t.Run("openai_no_refresh_token", func(t *testing.T) {
 		repo := &unauthorizedHealthStore{}
@@ -1655,14 +1658,14 @@ func openAICodexPlanGatedOAuthProvider() *providercore.Record {
 	}
 }
 
-// newModelHealthObserver 为生产观测入口绑定测试依赖和请求输入。
+// newModelHealthObserver binds test storage to production model health observation.
 func newModelHealthObserver(repo *modelNotFoundProviderRepoStub) *UpstreamHealth {
 	core := providercore.NewHealthService(repo, nil, providercore.HealthOptions{})
 	models := &ModelHealth{Health: core, IsImageModel: media.IsGPTImageGenerationModel}
 	return &UpstreamHealth{Core: core, Models: models, Limits: &RateLimitObserver{Health: core}}
 }
 
-// healthTestObservation 将测试请求的模型意图转换为观测字段。
+// healthTestObservation extracts the test request's model and endpoint fields.
 func healthTestObservation(ctx context.Context, status int, headers http.Header, body []byte, models ...string) HealthObservation {
 	input := HealthObservation{Status: status, Headers: headers, Body: body, ModelProvided: len(models) > 0, ImagesEndpoint: requeststate.OpenAIImagesEndpointFromContext(ctx)}
 	if len(models) > 0 {
@@ -1687,20 +1690,20 @@ func (r *overloadProviderRepoStub) SetOverloaded(_ context.Context, id int64, un
 	return nil
 }
 
-// newOverloadObserver 为过载测试绑定健康状态组件。
+// newOverloadObserver binds health components for overload tests.
 func newOverloadObserver(repo providercore.HealthStore, options providercore.HealthOptions) *UpstreamHealth {
 	return &UpstreamHealth{Core: providercore.NewHealthService(repo, nil, options)}
 }
 
 func (s *errSettingRepo) GetValue(context.Context, string) (string, error) { return "", s.readErr }
 
-// newSessionWindowService 为会话窗口测试装配存储和限流恢复组件。
+// newSessionWindowService binds storage and rate-limit recovery for window tests.
 func newSessionWindowService(repo *sessionWindowMockRepo) *providercore.HealthService {
 	recovery := providercore.NewRecoveryService(repo, nil, providercore.RecoveryOptions{})
 	return providercore.NewHealthService(repo, nil, providercore.HealthOptions{SessionWindows: repo, ClearWindowRateLimit: recovery.ClearRateLimit})
 }
 
-// newUnauthorizedObserver 为 401 观测入口绑定健康状态接口。
+// newUnauthorizedObserver binds health storage and token invalidation for 401 tests.
 func newUnauthorizedObserver(repo *unauthorizedHealthStore, invalidator *unauthorizedTokenRecorder) *UpstreamHealth {
 	options := providercore.HealthOptions{SessionWindows: repo}
 	if invalidator != nil {

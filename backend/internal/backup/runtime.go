@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Options 包含备份所需的启动参数和日志函数。
+// Options supplies backup startup configuration and logging.
 type Options struct {
 	Log func(string, string, ...any)
 
@@ -29,13 +29,13 @@ type SecretEncryptor interface {
 }
 type MaintenanceLock func(context.Context) (func(), bool, error)
 
-// ArchiveExecutor 拥有归档的全部流、子进程与临时文件。
+// ArchiveExecutor owns archive streams, subprocesses, and temporary files for each operation.
 type ArchiveExecutor interface {
 	Write(context.Context, *BackupRecord, BackupObjectStore, *BackupS3Config, BackupDumpOptions, func(context.Context, *BackupRecord) error, func(time.Duration) (context.Context, context.CancelFunc)) (int64, error)
 	Restore(context.Context, *BackupRecord, BackupObjectStore) error
 }
 
-// New 构造不启动资源；应用随后显式调用 StartContext。
+// New constructs the service; the application calls StartContext to start background work.
 // @project-doc docs/architecture/system_architecture.md#backup_and_maintenance
 func New(repo SettingRepository, options Options, encryptor SecretEncryptor, factory BackupObjectStoreFactory, local BackupObjectStore, archive ArchiveExecutor, maintenance MaintenanceLock) *BackupService {
 	if options.Log == nil {
@@ -80,7 +80,7 @@ func (s *BackupService) begin(ctx context.Context) (context.Context, func(), err
 	return combined, func() { once.Do(func() { stop(); cancel(); s.wg.Done() }) }, nil
 }
 
-// StartContext 同步预热共享一次执行；停止期间不能创建新的 cron。
+// StartContext shares one startup operation among callers and skips cron creation after shutdown begins.
 func (s *BackupService) StartContext(ctx context.Context) error {
 	s.operationLifecycleMu.Lock()
 	if s.shuttingDown.Load() {
@@ -116,7 +116,7 @@ func (s *BackupService) StartContext(ctx context.Context) error {
 	if err != nil {
 		s.log("service.backup", "[Backup] 加载定时备份配置失败: %v", err)
 		return nil
-	} // 保留启动配置读取失败时的降级。
+	} // A schedule read failure leaves the service available without scheduled backups.
 	if schedule.Enabled && schedule.CronExpr != "" {
 		if err := s.applyCronSchedule(schedule); err != nil {
 			s.log("service.backup", "[Backup] 应用定时备份配置失败: %v", err)
@@ -125,7 +125,7 @@ func (s *BackupService) StartContext(ctx context.Context) error {
 	return nil
 }
 
-// BeginStopContext 保存应用剩余预算后再取消工作。
+// BeginStopContext records the remaining shutdown budget before canceling work.
 func (s *BackupService) BeginStopContext(ctx context.Context) {
 	s.operationLifecycleMu.Lock()
 	if s.shutdownContext == nil || s.shutdownContext.Done() == nil {
@@ -145,7 +145,7 @@ func (s *BackupService) Stop() {
 	_ = s.StopContext(ctx)
 }
 
-// StopContext 共用一次停止结果；超时保留未完成事实。
+// StopContext shares one stop result among callers and reports incomplete shutdown on timeout.
 func (s *BackupService) StopContext(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		s.BeginStopContext(ctx)
@@ -192,7 +192,7 @@ func (s *BackupService) saveFinal(record *BackupRecord) error {
 	return err
 }
 
-// CreateBackup 与定时任务共用算法，但独立登记同步调用的资源。
+// CreateBackup tracks the synchronous operation's resources while using the scheduled backup implementation.
 func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, expireDays int) (*BackupRecord, error) {
 	ctx, done, err := s.begin(ctx)
 	if err != nil {
@@ -211,10 +211,10 @@ func (s *BackupService) RestoreBackup(ctx context.Context, id string) error {
 	return s.restoreBackup(ctx, id)
 }
 
-// SetMaintenanceLock 仅供兼容装配在启动前绑定数据库重维护能力。
+// SetMaintenanceLock binds the maintenance lock before startup for compatibility with existing assembly code.
 func (s *BackupService) SetMaintenanceLock(lock MaintenanceLock) { s.maintenance = lock }
 
-// cleanupContext 保留独立清理，同时受应用剩余关闭预算约束。
+// cleanupContext gives cleanup its own timeout, bounded by the application's remaining shutdown budget.
 func (s *BackupService) cleanupContext(limit time.Duration) (context.Context, context.CancelFunc) {
 	s.operationLifecycleMu.Lock()
 	cleanup, cancel := context.WithTimeout(context.Background(), limit)

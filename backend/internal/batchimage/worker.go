@@ -131,8 +131,8 @@ func (w *BatchImageWorker) RunOnce(ctx context.Context) error {
 		return err
 	}
 	if !ok {
-		// 锁被其他实例持有：按冲突延迟重新入队。直接丢弃会让 job 滞留在
-		// active zset，最早要等 StaleActiveAfter 才被恢复，造成分钟级停摆。
+		// On lock contention, request a requeue after the conflict delay. Dropping the job
+		// would leave it active until StaleActiveAfter recovery, delaying work for minutes.
 		return w.queue.RequeueAfter(ctx, reserved.BatchID, w.opts.LockConflictDelay)
 	}
 	defer func() {
@@ -141,8 +141,8 @@ func (w *BatchImageWorker) RunOnce(ctx context.Context) error {
 		_ = lock.Release(cleanup)
 	}()
 
-	// 处理期间持续心跳：刷新 active zset 时间戳防止 stale 恢复把在处理的
-	// job 重投给其他 worker，并对支持续期的锁实现延长锁 TTL。
+	// Keep active timestamps fresh during processing so stale recovery does not
+	// redeliver the job, and extend the lock TTL when the lock supports renewal.
 	hbStop := make(chan struct{})
 	hbDone := make(chan struct{})
 	processCtx, cancelProcess := context.WithCancelCause(ctx)
@@ -271,7 +271,7 @@ func SleepOrDone(ctx context.Context, d time.Duration) {
 	}
 }
 
-// Options 返回不可变运行参数副本，供同一实例的恢复循环读取周期。
+// Options returns a copy of runtime parameters, including intervals used by recovery loops.
 func (w *BatchImageWorker) Options() BatchImageWorkerOptions { return w.opts }
 
 func (w *BatchImageWorker) warn(event string, fields ...any) {

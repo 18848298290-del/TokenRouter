@@ -287,7 +287,7 @@ func (s *ProviderRepoSuite) TestListOAuthRefreshCandidatePage_GrokCursorAndExclu
 			"expires_at":    now.Add(30 * time.Minute).Format(time.RFC3339),
 		},
 	})
-	// 永久关闭调度的 OAuth 提供商即使带 refresh token，也不能占用刷新分页容量。
+	// A manually unschedulable OAuth provider must not consume refresh page capacity, even with a refresh token.
 	unschedulable := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-oauth-unschedulable-excluded",
 		Platform:    capability.PlatformGrok,
@@ -567,7 +567,7 @@ func (s *ProviderRepoSuite) TestListWithFilters() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// 每个 case 重新获取隔离资源
+			// Each case gets an isolated transaction so its fixtures cannot affect other filters.
 			tx := testEntTx(s.T())
 			client := tx.Client()
 			repo := newProviderStoreContract(client, tx, nil)
@@ -578,8 +578,7 @@ func (s *ProviderRepoSuite) TestListWithFilters() {
 			providers, page, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode)
 			s.Require().NoError(err)
 			s.Require().Len(providers, tt.wantCount)
-			// 单页能容纳全部结果时，total 应与 items 数量一致。
-			// 如果不一致，说明 Count 查询和列表查询使用了不同谓词。
+			// All matches fit on one page, so the count and list queries must agree.
 			s.Require().NotNil(page)
 			s.Require().Equal(int64(tt.wantCount), page.Total, "total must match items on single page")
 			if tt.validate != nil {
@@ -599,7 +598,7 @@ func (s *ProviderRepoSuite) TestListByGroup() {
 	providers, err := s.repo.ListByGroup(s.ctx, group.ID)
 	s.Require().NoError(err, "ListByGroup")
 	s.Require().Len(providers, 2)
-	// 分组列表使用提供商自身的全局优先级排序。
+	// Group lists use each provider's global priority.
 	s.Require().Equal(acc2.ID, providers[0].ID, "expected acc2 first (provider priority=1)")
 }
 
@@ -898,7 +897,7 @@ func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Genera
 	s.Require().NoError(err)
 	s.Require().True(cleared)
 
-	// 首个代次清除后，新代次可以设置更早的结束时间。旧请求完成后，新代次仍应存在。
+	// After clearing one rate-limit generation, a new generation may end sooner. A stale clear must leave it intact.
 	s.Require().NoError(s.repo.SetRateLimitedIfLater(s.ctx, provider.ID, rearmedReset))
 	cleared, err = s.repo.ClearRateLimitIfObserved(s.ctx, provider.ID, *staleGeneration.RateLimitedAt, *staleGeneration.RateLimitResetAt)
 	s.Require().NoError(err)
@@ -910,8 +909,8 @@ func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Genera
 	s.Require().NotNil(got.RateLimitResetAt)
 	s.Require().WithinDuration(rearmedReset, *got.RateLimitResetAt, time.Second)
 
-	// OAuth 成功请求仍在执行时，管理员可能已修改提供商类型。
-	// 时间戳仍匹配时，也需要根据提供商类型保留当前 API Key 状态。
+	// An administrator may switch the provider to API key while an OAuth request is in flight.
+	// Matching timestamps alone must not let that request clear the API key provider's rate limit.
 	_, err = s.client.Provider.UpdateOneID(provider.ID).
 		SetType(capability.ProviderTypeAPIKey).
 		Save(s.ctx)
@@ -1604,8 +1603,8 @@ func (s *ProviderRepoSuite) TestGetByCRSAccountID_EmptyString() {
 	s.Require().Nil(got)
 }
 
-// TestGetByCRSAccountID_ExcludesSparkShadow 检查 CRS 查询过滤 Extra 中误写了 crs_account_id 的 Spark 影子。
-// 将影子当作普通提供商更新会覆盖 type、credentials 和 proxy。
+// TestGetByCRSAccountID_ExcludesSparkShadow checks that an accidental crs_account_id cannot expose a shadow to CRS updates.
+// Treating the shadow as a regular provider would overwrite its type, credentials, and proxy.
 func (s *ProviderRepoSuite) TestGetByCRSAccountID_ExcludesSparkShadow() {
 	crsID := "crs-shadow-only-99"
 	parent := mustCreateProvider(s.T(), s.client, &providercore.Record{
@@ -1623,8 +1622,8 @@ func (s *ProviderRepoSuite) TestGetByCRSAccountID_ExcludesSparkShadow() {
 	s.Require().Nil(got, "spark 影子即便带 crs_account_id 也不应被 CRS 命中")
 }
 
-// TestListCRSAccountIDs_ExcludesSparkShadow 检查 CRS 同步映射过滤 Spark 影子的 crs_account_id。
-// 将影子加入映射会使 CRS 同步把它当作普通提供商更新。
+// TestListCRSAccountIDs_ExcludesSparkShadow keeps shadow IDs out of the CRS synchronization map.
+// Including them would let CRS synchronization update shadows as regular providers.
 func (s *ProviderRepoSuite) TestListCRSAccountIDs_ExcludesSparkShadow() {
 	parent := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name: "crs-list-mother", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth,
@@ -1714,7 +1713,7 @@ func idsOfProviders(providers []providercore.Record) []int64 {
 	return out
 }
 
-// newProviderUsageContract 为用量存储绑定提供商事件写入和调度快照发布。
+// newProviderUsageContract wires usage storage to provider outbox writes and scheduler snapshot publication.
 func newProviderUsageContract(exec postgres.Executor, store *providerpostgres.ProviderStore, cache scheduler.SnapshotPublicationCache) *billingpostgres.ProviderUsageStore {
 	events := providerPublicationEvents(store, cache)
 	return billingpostgres.NewProviderUsageStore(exec, billingpostgres.ProviderUsageOptions{

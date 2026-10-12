@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// 网关综合设置使用以下持久化键。
+// Persistent keys for gateway administration settings.
 const (
 	SettingKeyAntigravityUserAgentVersion      = "antigravity_user_agent_version"
 	SettingKeyBackendModeEnabled               = "backend_mode_enabled"
@@ -24,7 +24,7 @@ const (
 	SettingKeyUserPromptReplacementConfig      = promptpolicy.SettingKeyUserPromptReplacementConfig
 )
 
-// AdminSettings 仅包含入站与转发配置；Fast 使用已有的独立策略准备器。
+// AdminSettings contains ingress and forwarding settings. Fast policy uses a separate preparer.
 type AdminSettings struct {
 	AntigravityUserAgentVersion            string                                    `json:"antigravity_user_agent_version"`
 	BackendModeEnabled                     bool                                      `json:"backend_mode_enabled"`
@@ -49,14 +49,14 @@ type AdminSettings struct {
 	UserPromptReplacementConfig            *promptpolicy.UserPromptReplacementConfig `json:"user_prompt_replacement_config"`
 }
 
-// AdminSettingsRules 接收 app 提供的平台设置校验函数。
+// AdminSettingsRules supplies platform defaults and validators from app.
 type AdminSettingsRules struct {
 	GrokDefaultTextModel       string
 	NormalizeUserAgentVersion  func(string) string
 	ValidateClaudePromptBlocks func(string) error
 }
 
-// PrepareAdminSettings 规范化管理配置并编码为待写入的键值。
+// PrepareAdminSettings normalizes administration settings and encodes values for persistence.
 func PrepareAdminSettings(settings *AdminSettings, rules AdminSettingsRules) (map[string]string, error) {
 	updates := map[string]string{}
 	if model := strings.TrimSpace(settings.GrokDefaultTextModel); model != "" {
@@ -98,7 +98,7 @@ func PrepareAdminSettings(settings *AdminSettings, rules AdminSettingsRules) (ma
 	return updates, nil
 }
 
-// NormalizeGrokDefaultBaseURLMode 规范化五种 Grok Base URL 模式，缺省时使用 CLI。
+// NormalizeGrokDefaultBaseURLMode accepts five Grok base URL modes and defaults to CLI.
 func NormalizeGrokDefaultBaseURLMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "api":
@@ -116,7 +116,7 @@ func NormalizeGrokDefaultBaseURLMode(mode string) string {
 	}
 }
 
-// AdminSettingsParticipant 用给定规则准备管理设置的键值更新。
+// AdminSettingsParticipant prepares setting updates using the supplied validation rules.
 func AdminSettingsParticipant(rules AdminSettingsRules) settings.Participant {
 	keys := []string{SettingKeyAntigravityUserAgentVersion, SettingKeyBackendModeEnabled, SettingKeyClaudeOAuthSystemPrompt, SettingKeyClaudeOAuthSystemPromptBlocks, SettingKeyEnableAnthropicCacheTTL1hInjection, SettingKeyEnableCCHSigning, SettingKeyEnableClaudeOAuthSystemPromptInjection, SettingKeyEnableClientDatelineNormalization, SettingKeyEnableFingerprintUnification, SettingKeyEnableIdentityPatch, SettingKeyEnableMetadataPassthrough, SettingKeyGrokDefaultBaseURLMode, SettingKeyGrokDefaultTextModel, SettingKeyIdentityPatchPrompt, SettingKeyMaxClaudeCodeVersion, SettingKeyMinClaudeCodeVersion, SettingKeyOpenAIAllowClaudeCodeCodexPlugin, SettingKeyOpenAICodexUserAgent, SettingKeyOpenAITTFTMode, SettingKeyRewriteMessageCacheControl, SettingKeyUserPromptReplacementConfig}
 	return settings.Participant{Module: "gateway-forwarding", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {

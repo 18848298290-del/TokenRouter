@@ -15,7 +15,7 @@ func TestAuthService_ValidateToken_ExpiredReturnsClaimsWithError(t *testing.T) {
 	repo := &userRepoStub{}
 	service := newAuthService(repo, nil, nil)
 
-	// 创建用户并生成 token
+	// Create a user and issue an access token.
 	user := &identity.User{
 		ID:           1,
 		Email:        "test@test.com",
@@ -26,21 +26,21 @@ func TestAuthService_ValidateToken_ExpiredReturnsClaimsWithError(t *testing.T) {
 	token, err := service.GenerateToken(context.Background(), user)
 	require.NoError(t, err)
 
-	// 验证有效 token
+	// Validate the unexpired token.
 	claims, err := service.ValidateToken(token)
 	require.NoError(t, err)
 	require.NotNil(t, claims)
 	require.Equal(t, int64(1), claims.UserID)
 
-	// 模拟过期 token（通过创建一个过期很久的 token）
-	service.Options.JWT.ExpireHour = -1 // 设置为负数使 token 立即过期
+	// Issue an already-expired token to exercise the expiration path.
+	service.Options.JWT.ExpireHour = -1 // A negative lifetime places expiration in the past.
 	rebuildSessionForTest(service)
 	expiredToken, err := service.GenerateToken(context.Background(), user)
 	require.NoError(t, err)
-	service.Options.JWT.ExpireHour = 1 // 恢复
+	service.Options.JWT.ExpireHour = 1 // Restore the normal token lifetime.
 	rebuildSessionForTest(service)
 
-	// 验证过期 token 应返回 claims 和 ErrTokenExpired
+	// An expired token returns its claims alongside ErrTokenExpired.
 	claims, err = service.ValidateToken(expiredToken)
 	require.ErrorIs(t, err, identity.ErrTokenExpired)
 	require.NotNil(t, claims, "claims should not be nil when token is expired")
@@ -59,7 +59,7 @@ func TestAuthService_RefreshToken_ExpiredTokenNoPanic(t *testing.T) {
 	repo := &userRepoStub{user: user}
 	service := newAuthService(repo, nil, nil)
 
-	// 创建过期 token
+	// Issue an expired access token.
 	service.Options.JWT.ExpireHour = -1
 	rebuildSessionForTest(service)
 	expiredToken, err := service.GenerateToken(context.Background(), user)
@@ -67,7 +67,7 @@ func TestAuthService_RefreshToken_ExpiredTokenNoPanic(t *testing.T) {
 	service.Options.JWT.ExpireHour = 1
 	rebuildSessionForTest(service)
 
-	// RefreshToken 使用过期 token 不应 panic
+	// Renewal must handle expired-token claims without panicking.
 	require.NotPanics(t, func() {
 		newToken, err := service.RefreshToken(context.Background(), expiredToken)
 		require.NoError(t, err)

@@ -41,7 +41,7 @@ var (
 	}
 )
 
-// QoderThinkingDirective 表示下游思考参数归一化后的开关和等级。
+// QoderThinkingDirective holds the normalized thinking switch and effort.
 type QoderThinkingDirective struct {
 	Enabled bool
 	Effort  string
@@ -61,16 +61,16 @@ type QoderPayloadRequest struct {
 	PromptCacheKey  string
 	MetadataUserID  string
 	ResponseID      string
-	// AutoResponseSession 表示 ExplicitSession 由本次响应 ID 合成。
-	// 选择会话键时，prompt_cache_key 和请求头中的稳定标识优先。
+	// AutoResponseSession reports that ExplicitSession was generated from this response ID.
+	// Stable prompt_cache_key and header identifiers take priority during session selection.
 	AutoResponseSession bool
-	// previousResponseID 标记 OpenAI Responses 续写请求。不同于
-	// session_id/conversation_id，previous_response_id 通常只携带新的 input item，
-	// 对话规划器将新的 input item 追加到已有状态。
+	// PreviousResponseID identifies a Responses continuation.
+	// Such requests may contain only new input items;
+	// the conversation planner appends them to saved state.
 	PreviousResponseID string
 }
 
-// BuildQoderPayloadFromChatCompletionsForSite 按提供商站点解析默认模型 alias。
+// BuildQoderPayloadFromChatCompletionsForSite builds the payload using site-specific model aliases.
 func BuildQoderPayloadFromChatCompletionsForSite(body []byte, userType string, site Site) (map[string]any, string, error) {
 	request, err := ParseQoderChatCompletionsPayload(body)
 	if err != nil {
@@ -99,7 +99,7 @@ func ParseQoderChatCompletionsPayload(body []byte) (QoderPayloadRequest, error) 
 
 	rawReq := QoderRequestMap(body)
 	maxTokens := QoderDefaultMaxTokens
-	// max_completion_tokens 优先于 max_tokens
+	// A positive max_completion_tokens takes precedence over max_tokens.
 	if req.MaxCompletionTokens != nil && *req.MaxCompletionTokens > 0 {
 		maxTokens = *req.MaxCompletionTokens
 	} else if req.MaxTokens != nil && *req.MaxTokens > 0 {
@@ -142,12 +142,12 @@ func ParseQoderResponsesPayload(body []byte) (QoderPayloadRequest, error) {
 	}
 	messages = EnrichQoderToolResultMessages(messages)
 
-	// 从 instructions 和 input 中的 developer/system 项收集 system prompt
+	// Instructions and developer/system input items share the Qoder system prompt.
 	systemParts := make([]string, 0)
 	if req.Instructions != "" {
 		systemParts = append(systemParts, strings.TrimSpace(req.Instructions))
 	}
-	// 从 input 中提取 developer/system 消息
+	// Include control-role input alongside top-level instructions.
 	if len(req.Input) > 0 {
 		var items []protocolopenai.ResponsesInputItem
 		if err := json.Unmarshal(req.Input, &items); err == nil {
@@ -209,7 +209,7 @@ func ParseQoderAnthropicMessagesPayload(body []byte) (QoderPayloadRequest, error
 	toolReq := req
 	toolReq.System = nil
 	toolReq.Messages = nil
-	// 这里只借用兼容层转换工具定义；思考字段由 Qoder 自行容错和映射。
+	// Convert tool definitions here; Qoder parses and maps thinking controls separately.
 	toolReq.Thinking = nil
 	toolReq.OutputConfig = nil
 	responsesReq, err := bridge.AnthropicToResponses(&toolReq, bridge.RequestOptions{})
@@ -240,8 +240,8 @@ func ParseQoderAnthropicMessagesPayload(body []byte) (QoderPayloadRequest, error
 	}, nil
 }
 
-// QoderThinkingDirectiveFromBody 将不同下游协议的思考字段归一为 Qoder 开关和通用等级。
-// 明确关闭的优先级最高；非法等级不会阻断请求，仍可由预算或显式开关启用。
+// QoderThinkingDirectiveFromBody normalizes client thinking controls into a switch and effort.
+// Explicit disable takes priority. Unknown efforts may still enable thinking through a budget or switch.
 func QoderThinkingDirectiveFromBody(body []byte, effortPaths ...string) QoderThinkingDirective {
 	thinkingType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()))
 	if thinkingType == "disabled" || thinkingType == "none" || thinkingType == "off" {
@@ -275,7 +275,7 @@ func QoderThinkingDirectiveFromBody(body []byte, effortPaths ...string) QoderThi
 	return QoderThinkingDirective{}
 }
 
-// NormalizeQoderThinkingEffort 将常见下游等级归一化，最终档位由所选模型能力决定。
+// NormalizeQoderThinkingEffort normalizes client effort labels before mapping to model capabilities.
 func NormalizeQoderThinkingEffort(raw string) (effort string, disabled bool) {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
@@ -422,8 +422,8 @@ func BuildQoderPayloadWithOptions(request QoderPayloadRequest, sessionID string,
 	return payload, modelInfo.Key
 }
 
-// ApplyQoderContextCapability 按站点和最终 route 选择官方最高上下文档位。
-// 只有官方声明 contextConfig 的 route 才写入运行时覆盖，避免为固定上限或未知 route 伪造档位。
+// ApplyQoderContextCapability writes the site input limit, using a supplied resolution when present.
+// Runtime overrides are written only when the resolved route supports context selection.
 func ApplyQoderContextCapability(payload map[string]any, site Site, modelKey string, resolutions ...*modelcatalog.Resolution) {
 	capability := ContextCapabilityForSite(site, modelKey)
 	if len(resolutions) > 0 && resolutions[0] != nil {
@@ -451,8 +451,8 @@ func ApplyQoderContextCapability(payload map[string]any, site Site, modelKey str
 	runtimeOverride["max_input_tokens"] = capability.MaxInputTokens
 }
 
-// ApplyQoderThinkingDirective 同步 Qoder 请求中重复出现的模型配置。
-// reasoning_effort=none 是官方客户端用于关闭可调 Thinking 的运行时覆盖值。
+// ApplyQoderThinkingDirective synchronizes thinking controls across the Qoder model configuration copies.
+// reasoning_effort=none disables adjustable thinking at runtime.
 func ApplyQoderThinkingDirective(payload map[string]any, site Site, modelKey string, directive QoderThinkingDirective, resolutions ...*modelcatalog.Resolution) {
 	capability := ThinkingCapabilityForSite(site, modelKey)
 	if len(resolutions) > 0 && resolutions[0] != nil {
@@ -470,7 +470,7 @@ func ApplyQoderThinkingDirective(payload map[string]any, site Site, modelKey str
 	modelConfig["is_reasoning"] = directive.Enabled
 	extraModelConfig["is_reasoning"] = directive.Enabled
 
-	// 仅开关型模型开启时不能携带 High/Max；关闭仍使用 none 明确覆盖上游默认值。
+	// Toggle-only models omit effort when enabled; none overrides upstream defaults when disabled.
 	if capability == ThinkingToggleOnly && directive.Enabled {
 		return
 	}
@@ -490,7 +490,7 @@ func ApplyQoderThinkingDirective(payload map[string]any, site Site, modelKey str
 	runtimeOverride["reasoning_effort"] = effort
 }
 
-// QoderThinkingEffortForCapability 把请求的思考等级转换为模型支持的档位。
+// QoderThinkingEffortForCapability maps the requested effort to a model-supported level.
 func QoderThinkingEffortForCapability(capability ThinkingCapability, requested string) string {
 	switch capability {
 	case ThinkingHighMax:
@@ -600,7 +600,7 @@ func QoderRequestMap(body []byte) map[string]any {
 func QoderChatSystemText(messages []protocolopenai.ChatMessage) string {
 	parts := make([]string, 0)
 	for _, message := range messages {
-		// system 和 developer 消息都应该合并到 system prompt
+		// Both control roles contribute to the Qoder system prompt.
 		if message.Role != "system" && message.Role != "developer" {
 			continue
 		}
@@ -733,7 +733,7 @@ func QoderLegacyChatFunctionCall(functionCall *protocolopenai.ChatFunctionCall) 
 	if name == "" {
 		return nil
 	}
-	// 旧版 function 消息没有 call id，使用函数名作为稳定 id，保证后续 role=function 的结果能关联回来。
+	// Legacy function messages lack a call ID, so use the function name to pair later results.
 	return []any{QoderToolCallMap(name, name, functionCall.Arguments)}
 }
 
@@ -856,8 +856,8 @@ func QoderMessageFromResponsesInputItem(item protocolopenai.ResponsesInputItem) 
 }
 
 func NormalizeQoderResponsesToolPairing(messages []QoderMessage) []QoderMessage {
-	// Responses 历史可能包含未返回 output 的 function_call，或重连后遗留的孤儿 output。
-	// Qoder 走 Chat 形状上游，同样要求 assistant tool_calls 后面有对应 tool 消息。
+	// Responses history can contain calls without outputs or orphaned outputs after reconnect.
+	// Qoder requires Chat-style pairing of assistant tool calls and tool results.
 	replies := make(map[string]QoderMessage)
 	for _, message := range messages {
 		if message.Role != "tool" {
@@ -1029,9 +1029,9 @@ func QoderMessagesFromAnthropicMessage(message protocolanthropic.AnthropicMessag
 				})
 			}
 		case "tool_use":
-			// Qoder payload.py 展开消息文本时会忽略 tool_use。
+			// Tool calls are represented separately from flattened message text.
 		case "thinking", "redacted_thinking":
-			// Qoder 历史消息不接受 Anthropic thinking signature。
+			// Qoder history does not accept Anthropic thinking signatures.
 		default:
 			return nil, fmt.Errorf("unsupported content block type: %v", block.Type)
 		}
@@ -1067,7 +1067,7 @@ func QoderAnthropicMessageTextAndRaw(message protocolanthropic.AnthropicMessage)
 				"input": QoderRawMessageOrDefault(block.Input, map[string]any{}),
 			})
 		case "thinking", "redacted_thinking":
-			// 不把 thinking 写入 Qoder content/tool 历史。
+			// Omit thinking blocks from Qoder content and tool history.
 		default:
 			return "", nil, fmt.Errorf("unsupported content block type: %v", block.Type)
 		}
@@ -1141,8 +1141,8 @@ func QoderAnthropicToolResultText(raw json.RawMessage) string {
 func QoderResponsesRole(role string) string {
 	switch strings.TrimSpace(role) {
 	case "developer", "system":
-		// Responses 的控制角色 input item 已由 ParseQoderResponsesPayload 合并到
-		// Qoder system prompt，不能再作为 chat 历史轮次发送。
+		// ParseQoderResponsesPayload already folds these control-role items into
+		// the system prompt, so omit them from chat history.
 		return ""
 	case "assistant":
 		return "assistant"
@@ -1215,7 +1215,7 @@ func QoderApplyChatToolChoice(tools []any, toolChoice json.RawMessage, functionC
 			filtered = append(filtered, tool)
 		}
 	}
-	// 如果客户端传了不存在的工具名，保持原始 tools，让上游按正常协议报错或自行处理。
+	// Keep the declared tools when the requested name is unknown so upstream can handle the request.
 	if len(filtered) == 0 {
 		return tools
 	}
@@ -1551,7 +1551,7 @@ func AnthropicToolUseBlocksToQoderToolCalls(raw any) []any {
 	return toolCalls
 }
 
-// qoderPayloadFingerprint 保留会话身份的空值及 SHA-256 十六进制格式，不调用资金领域。
+// qoderPayloadFingerprint returns lowercase SHA-256 hex, or empty for an empty payload.
 func qoderPayloadFingerprint(payload []byte) string {
 	if len(payload) == 0 {
 		return ""

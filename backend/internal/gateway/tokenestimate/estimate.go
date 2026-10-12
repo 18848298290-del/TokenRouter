@@ -28,8 +28,8 @@ type Request struct {
 	ToolChoice   json.RawMessage                `json:"tool_choice,omitempty"`
 }
 
-// Anthropic 走 Anthropic→Responses→tiktoken 链本地估算
-// count_tokens，不发任何上游请求（上游无兼容端点的平台使用）。
+// Anthropic estimates input tokens locally by converting an Anthropic request to Responses
+// and counting with tiktoken. It supports platforms without an upstream count_tokens endpoint.
 func Anthropic(body []byte) (int, error) {
 	var anthropicReq protocolanthropic.AnthropicRequest
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {

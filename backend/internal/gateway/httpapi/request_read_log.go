@@ -15,7 +15,7 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// LogRequestBodyReadFailure 记录请求体读取错误的类别、长度和编码。
+// LogRequestBodyReadFailure records the error category, declared length, and content encoding.
 func LogRequestBodyReadFailure(reqLog *zap.Logger, req *http.Request, err error) {
 	if reqLog == nil || err == nil {
 		return
@@ -76,7 +76,7 @@ func requestBodyReadErrorKind(err error) string {
 	return "io_read"
 }
 
-// RequestLogger 按请求上下文和组件名构造日志记录器。
+// RequestLogger derives a logger from the request context and component name.
 func RequestLogger(c *gin.Context, component string, fields ...zap.Field) *zap.Logger {
 	base := logger.L()
 	if c != nil && c.Request != nil {

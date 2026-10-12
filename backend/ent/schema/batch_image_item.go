@@ -11,7 +11,7 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// BatchImageItem 保存批量图片任务中可索引的输出记录。
+// BatchImageItem stores searchable output records for batch image jobs.
 type BatchImageItem struct {
 	ent.Schema
 }

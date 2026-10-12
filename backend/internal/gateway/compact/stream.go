@@ -10,8 +10,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// StreamPayload 将 unary 压缩结果转换为顺序 SSE 事件，保留未知字段。
-// 仅缺失合法响应 ID 时才调用外层生成器，保持原生成时点。
+// StreamPayload converts a unary compact response to ordered SSE events while retaining unknown fields.
+// It generates an ID only when the response lacks a nonempty string ID.
 func StreamPayload(finalResponse []byte, newID func() string) ([]byte, bool) {
 	if len(finalResponse) == 0 || !gjson.ValidBytes(finalResponse) {
 		return nil, false
@@ -19,8 +19,8 @@ func StreamPayload(finalResponse []byte, newID func() string) ([]byte, bool) {
 	if !gjson.ParseBytes(finalResponse).IsObject() {
 		return nil, false
 	}
-	// SSE 的 data 行不允许出现裸换行：上游 JSON 可能是 pretty-printed 形态，
-	// 嵌入前必须压缩为单行。
+	// SSE data lines cannot contain raw newlines. Compact pretty-printed JSON
+	// to one line before embedding it.
 	var compacted bytes.Buffer
 	if err := json.Compact(&compacted, finalResponse); err != nil {
 		return nil, false
@@ -85,8 +85,8 @@ func UsageParsableByCodex(usage gjson.Result) bool {
 		if value.Type != gjson.Number {
 			return false
 		}
-		// Codex 使用无符号整数解析 token 数；小数、负数和指数形式都会让
-		// response.completed 整体反序列化失败，因此按 JSON 原始字面量校验。
+		// Codex parses token counts as unsigned integers. Fractions, negatives, and exponent
+		// notation invalidate response.completed, so validate the raw JSON number literal.
 		if _, err := strconv.ParseUint(value.Raw, 10, 64); err != nil {
 			return false
 		}

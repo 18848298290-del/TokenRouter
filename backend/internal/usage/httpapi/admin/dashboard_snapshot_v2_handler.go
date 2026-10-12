@@ -119,6 +119,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	})
 	cacheKey := string(keyRaw)
 
+	// Shared loaders can outlive one HTTP waiter; capture parsed values and keep Gin access outside the loader.
 	cached, hit, err := dashboardSnapshotV2Cache.GetOrLoadContext(c.Request.Context(), cacheKey, func(shared context.Context) (any, error) {
 		return h.buildSnapshotV2Response(
 			shared,

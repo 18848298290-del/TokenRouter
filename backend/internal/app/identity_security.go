@@ -14,17 +14,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 )
 
-// provideSecretEncryptor 使用启动配置创建 AES 加密器。
+// provideSecretEncryptor creates the AES encryptor from startup configuration.
 func provideSecretEncryptor(cfg *config.Config) (identity.SecretEncryptor, error) {
 	return bootstrap.NewAESEncryptor(cfg)
 }
 
-// provideTotp 绑定身份存储、通知接口和设置接口。
+// provideTotp binds identity storage, notification delivery, and settings.
 func provideTotp(users *identitypostgres.UserStore, encryptor identity.SecretEncryptor, cache identity.TotpCache, settings *identityAuthSettings, email *identity.EmailChallenges, queue *notification.EmailQueueService) *identity.TotpService {
 	return identity.NewTotpService(users, encryptor, cache, settings, email, queue, time.Now)
 }
 
-// providePasskey 创建 SDK 验证器，HTTP 适配器负责解析请求和转换用户数据。
+// providePasskey creates the SDK verifier; the HTTP adapter parses requests and converts user data.
 func providePasskey(cfg *config.Config, repo identity.PasskeyRepository, sessions identity.PasskeySessionStore, users *identitypostgres.UserStore) (*identity.PasskeyService, error) {
 	options := identityadapter.PasskeyOptions{Enabled: cfg.WebAuthn.Enabled, RPID: cfg.WebAuthn.RPID, RPDisplayName: cfg.WebAuthn.RPDisplayName, RPOrigins: cfg.WebAuthn.RPOrigins}
 	verifier, e := identityadapter.NewPasskeyVerifier(options)

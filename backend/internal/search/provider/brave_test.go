@@ -34,7 +34,7 @@ func TestBraveProvider_Search_Success(t *testing.T) {
 	defer srv.Close()
 
 	p := NewBraveProvider("test-key", srv.Client())
-	// Override the endpoint for testing
+	// Temporarily replace the shared endpoint; this test must not run in parallel with other Brave tests.
 	origURL := *braveSearchURL
 	u, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
 	*braveSearchURL = *u.URL

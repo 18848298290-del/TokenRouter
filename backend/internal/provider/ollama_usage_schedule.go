@@ -55,11 +55,12 @@ func OllamaCloudUsageDurations(settings *OllamaCloudUsageSettings) (debounce, ma
 		time.Duration(normalized.IntervalMinutes) * time.Minute
 }
 
-// OllamaCloudUsageIsAutoRefreshDue 判断已启用自动刷新的分组是否到期。
-// groupLastUsedAt 取同一 api_key 分组内全部平台提供商的 MAX(last_used_at)。
-// 成功后按 fetched_at 之后的请求活动计算 min(lastUsed+debounce, fetchedAt+maxWait)。
-// 失败后按 last_attempt_at 之后的活动计算相同的最小值，再与 next_refresh_at 取较晚时间。
-// Retry-After 和指数退避因此生效，快照缺失或无效时按首次刷新处理。
+// OllamaCloudUsageIsAutoRefreshDue checks activity-based timing; the caller checks whether refresh is enabled.
+// groupLastUsedAt is MAX(last_used_at) across providers sharing the API key.
+// After success, new activity uses min(lastUsed+debounce, fetchedAt+maxWait), subject to the minimum fetch
+// interval.
+// After failure, activity since last_attempt_at uses that minimum, then waits until next_refresh_at if later.
+// Missing or invalid snapshots are immediately due; failure timing respects Retry-After and backoff.
 func OllamaCloudUsageIsAutoRefreshDue(
 	snapshot *OllamaCloudUsageSnapshot,
 	groupLastUsedAt *time.Time,
@@ -98,8 +99,8 @@ func OllamaCloudUsageAutoRefreshDueAt(
 		}
 		lastUsed := groupLastUsedAt.UTC()
 		dueAt := ollamaEarlierTime(lastUsed.Add(debounce), fetchedAt.Add(maxWait))
-		// 两次成功抓取的间隔至少为 OllamaCloudUsageMinIntervalMinutes，
-		// 防抖期较短时，抓取频率仍受这个下限约束。
+		// Successful fetches are separated by at least OllamaCloudUsageMinFetchInterval,
+		// even when the configured debounce is shorter.
 		if floor := fetchedAt.Add(OllamaCloudUsageMinFetchInterval); dueAt.Before(floor) {
 			return floor, true
 		}
@@ -123,7 +124,7 @@ func OllamaCloudUsageAutoRefreshDueAt(
 	}
 }
 
-// MaxOllamaCloudUsageGroupLastUsed 返回分组成员中最新的 last_used_at。
+// MaxOllamaCloudUsageGroupLastUsed returns the latest nonzero activity time among group members.
 func MaxOllamaCloudUsageGroupLastUsed(providers []Record) *time.Time {
 	var latest *time.Time
 	for i := range providers {
@@ -172,7 +173,7 @@ func ollamaEarlierTime(a, b time.Time) time.Time {
 	return b
 }
 
-// DecodeOllamaCloudUsageSettings 从 JSON 解析设置并补齐默认值。
+// DecodeOllamaCloudUsageSettings parses JSON, applies defaults, and clamps supported ranges.
 func DecodeOllamaCloudUsageSettings(raw string) (*OllamaCloudUsageSettings, error) {
 	defaults := DefaultOllamaCloudUsageSettings()
 	if strings.TrimSpace(raw) == "" {
@@ -192,13 +193,13 @@ func DecodeOllamaCloudUsageSettings(raw string) (*OllamaCloudUsageSettings, erro
 	return &settings, nil
 }
 
-// EncodeOllamaCloudUsageSettings 保留验证、默认值和 JSON 编码的原顺序。
+// EncodeOllamaCloudUsageSettings applies defaults in place, validates timing, and returns JSON.
 func EncodeOllamaCloudUsageSettings(settings *OllamaCloudUsageSettings) (string, error) {
 	if settings == nil {
 		return "", infraerrors.BadRequest("INVALID_OLLAMA_CLOUD_USAGE_SETTINGS", "settings cannot be nil")
 	}
 	if settings.DebounceMinutes == 0 {
-		// 请求省略 debounce_minutes 时使用默认值。
+		// Zero debounce uses the default for omitted request values.
 		settings.DebounceMinutes = OllamaCloudUsageDefaultDebounceMinutes
 	}
 	if settings.IntervalMinutes < OllamaCloudUsageMinIntervalMinutes || settings.IntervalMinutes > OllamaCloudUsageMaxIntervalMinutes {
@@ -213,8 +214,8 @@ func EncodeOllamaCloudUsageSettings(settings *OllamaCloudUsageSettings) (string,
 			fmt.Sprintf("debounce_minutes must be between %d and %d", OllamaCloudUsageMinDebounceMinutes, OllamaCloudUsageMaxDebounceMinutes),
 		)
 	}
-	// 到期时间为 min(lastUsed+debounce, fetchedAt+maxWait)。当 debounce 达到 maxWait 时，
-	// 防抖项永远无法生效，配置会被静默忽略，因此拒绝该组合。
+	// Due time is min(lastUsed+debounce, fetchedAt+maxWait). If debounce reaches maxWait,
+	// the debounce term cannot win for new activity, so reject that ineffective setting.
 	if settings.DebounceMinutes >= settings.IntervalMinutes {
 		return "", infraerrors.BadRequest(
 			"INVALID_OLLAMA_CLOUD_USAGE_DEBOUNCE",

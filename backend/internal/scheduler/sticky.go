@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// StickyCache 保存调度粘性绑定和会话所属分组。
+// StickyCache stores session-to-provider bindings scoped by group.
 type StickyCache interface {
 	GetSessionProviderID(context.Context, int64, string) (int64, error)
 	SetSessionProviderID(context.Context, int64, string, int64, time.Duration) error
@@ -22,7 +22,7 @@ type StickyCache interface {
 	DeleteSessionProviderID(context.Context, int64, string) error
 }
 
-// StickyStats 保存进程内各次兼容入口共用的粘性观测。
+// StickyStats holds process-local sticky observations shared by compatible entry points.
 type StickyStats struct {
 	readFallbackTotal atomic.Int64
 	readFallbackHit   atomic.Int64
@@ -36,7 +36,7 @@ type StickyOptions struct {
 	DefaultTTL      time.Duration
 }
 
-// StickySession 使用平台入口传入的粘性配置。
+// StickySession applies sticky options supplied by the platform entry point.
 type StickySession struct {
 	cache   StickyCache
 	options StickyOptions
@@ -194,7 +194,7 @@ func (s *StickySession) Delete(ctx context.Context, groupID int64, sessionHash, 
 	return err
 }
 
-// ShouldEscapeSticky 使用本次请求的策略和共享反馈，先检查 TTFT。
+// ShouldEscapeSticky checks shared feedback against request policy, testing TTFT before error rate.
 func ShouldEscapeSticky(stats *RuntimeStats, providerID int64, cfg policy.StickyEscapeConfig) (reason string, errorRate float64, ttft float64, shouldEscape bool) {
 	if !cfg.Enabled || stats == nil || providerID <= 0 {
 		return "", 0, 0, false

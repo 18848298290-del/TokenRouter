@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// parameterSourceStub 提供参数测试中的逐键和批量读取。
+// parameterSourceStub supplies individual and batch reads for parameter tests.
 type parameterSourceStub struct{ values map[string]string }
 
 func TestParameters_DBOverridesConfig(t *testing.T) {

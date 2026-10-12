@@ -19,7 +19,7 @@ func TestReadLenientJSONRequestBodyWithPreallocUsesGatewayLimit(t *testing.T) {
 	_, err := ReadLenientJSONRequestBodyWithPrealloc(req, limit)
 	var maxErr *http.MaxBytesError
 	require.True(t, errors.As(err, &maxErr))
-	// 归一化后的正文大小受网关配置的上限约束。
+	// The gateway limit applies to the normalized body size.
 	require.Equal(t, limit, maxErr.Limit)
 }
 
@@ -56,7 +56,7 @@ func TestNormalizeLenientJSONRequestBodyAcceptsClientControlCharsInStrings(t *te
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 测试数据会触发严格 JSON 解析错误。
+			// The fixture is invalid under strict JSON parsing.
 			require.False(t, gjson.ValidBytes(tt.body))
 
 			got, err := NormalizeLenientJSONRequestBody(tt.body, 1024)
@@ -89,7 +89,7 @@ func TestNormalizeLenientJSONRequestBodyKeepsInvalidStructureInvalid(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NormalizeLenientJSONRequestBody(tt.body, 1024)
 			require.NoError(t, err)
-			// 规范化处理字符串内容，JSON 结构非法时返回解析错误。
+			// Normalization repairs string contents; malformed JSON structure remains invalid.
 			require.False(t, gjson.ValidBytes(got))
 		})
 	}

@@ -98,8 +98,8 @@ func CreateRecord(ctx context.Context, client *dbent.Client, record *provider.Re
 	return nil
 }
 
-// CreateWithProviderGroups 在同一事务中持久化提供商、分组绑定，
-// 以及用于发布新路由快照的调度 outbox 事件。
+// CreateWithProviderGroups persists the provider, group memberships, and scheduler outbox event
+// in one transaction so routing snapshots can include the new provider and its groups together.
 func (r *ProviderStore) CreateWithProviderGroups(ctx context.Context, record *provider.Record, groups []provider.GroupMembership) error {
 	if record == nil {
 		return provider.ErrProviderNilInput
@@ -114,7 +114,7 @@ func (r *ProviderStore) CreateWithProviderGroups(ctx context.Context, record *pr
 		defer func() { _ = tx.Rollback() }()
 		txClient = tx.Client()
 	} else {
-		// 仓储已处于事务中时，复用调用方持有的事务。
+		// Reuse the caller's transaction when the store's client is already transactional.
 		txClient = r.client
 	}
 
@@ -458,15 +458,15 @@ func RecordFromEntity(m *dbent.Provider) *provider.Record {
 	}
 }
 
-// translatePersistenceError 将未找到和唯一约束错误映射为调用方提供的领域错误。
-// 对应的目标错误为 nil 或类型未匹配时返回输入错误，映射结果保留数据库错误原因。
+// translatePersistenceError maps not-found and unique-constraint failures to the supplied application errors, retaining the database cause.
+// A nil target or an unmatched error type leaves the input error unchanged.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
 	}
 
-	// 兼容 Ent ORM 和标准 database/sql 的 NotFound 行为。
-	// Ent 使用自定义的 NotFoundError，而标准库使用 sql.ErrNoRows。
+	// Accept both Ent's NotFoundError and database/sql's ErrNoRows.
+
 	if notFound != nil && (errors.Is(err, sql.ErrNoRows) || dbent.IsNotFound(err)) {
 		return notFound.WithCause(err)
 	}

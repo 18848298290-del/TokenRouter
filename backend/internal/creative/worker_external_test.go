@@ -37,20 +37,21 @@ func TestCreativeWorkerSuccessPath(t *testing.T) {
 	require.Equal(t, int64(55), *run.ProviderID)
 	require.Equal(t, 1, f.repo.setProviderN)
 	require.NotNil(t, run.ActualCost)
-	// 输出行进入 succeeded，临时输出已保存。
+	// A succeeded output has both metadata and readable temporary bytes.
 	output := f.repo.outputs[runID][0]
 	require.Equal(t, creative.CreativeRunOutputStatusSucceeded, output.Status)
 	require.NotNil(t, output.TransientExpiresAt)
 	data, err := f.store.LoadOutput(context.Background(), runID, 0)
 	require.NoError(t, err)
 	require.Equal(t, []byte("img"), data)
-	// 计费：预占发生在创建阶段（worker 测试直接种入任务，故为 0），worker 只做捕获。
+	// The fixture seeds the task directly, bypassing creation-time reservation; the worker captures funds.
 	require.Equal(t, 0, f.billing.reserveN)
 	require.Equal(t, 1, f.billing.captureN)
 	require.Equal(t, 0, f.billing.releaseN)
 }
 
-// TestCreativeWorkerRecoversPersistedProviderOutput 验证输出元数据已落库但状态写入失败时不重复调用 platform。
+// TestCreativeWorkerRecoversPersistedProviderOutput checks settlement recovery from saved outputs without
+// another provider call.
 func TestCreativeWorkerRecoversPersistedProviderOutput(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	runID := "crun_workerrecover01"
@@ -70,7 +71,8 @@ func TestCreativeWorkerRecoversPersistedProviderOutput(t *testing.T) {
 	require.Equal(t, 1, f.billing.captureN)
 }
 
-// TestCreativeWorkerUserConcurrencyPending 验证用户槽位未获取时任务保持 queued 并释放 worker。
+// TestCreativeWorkerUserConcurrencyPending checks that unavailable user capacity leaves the task queued for
+// a short retry.
 func TestCreativeWorkerUserConcurrencyPending(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	seedCreativeRun(f, "crun_worker_user_pending", true)
@@ -91,7 +93,8 @@ func TestCreativeWorkerUserConcurrencyPending(t *testing.T) {
 	require.Equal(t, 0, f.exec.calls)
 }
 
-// TestCreativeWorkerProviderConcurrencyPending 验证执行器报告提供商槽位不足时不推进任务状态。
+// TestCreativeWorkerProviderConcurrencyPending checks that unavailable provider capacity leaves task status
+// unchanged.
 func TestCreativeWorkerProviderConcurrencyPending(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	seedCreativeRun(f, "crun_worker_provider_pending", true)
@@ -104,7 +107,8 @@ func TestCreativeWorkerProviderConcurrencyPending(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusQueued, f.repo.runs["crun_worker_provider_pending"].Status)
 }
 
-// TestCreativeWorkerRetriesTransientOutputFailure 检查保存失败重试时的输出元数据、费用和供应商调用次数。
+// TestCreativeWorkerRetriesTransientOutputFailure checks billable delivery loss after save retries and a
+// single provider call.
 func TestCreativeWorkerRetriesTransientOutputFailure(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	id := "crun_workeroutputretry1"
@@ -132,7 +136,7 @@ func TestCreativeWorkerRetryableError(t *testing.T) {
 	seedCreativeRun(f, runID, true)
 	f.exec.err = creative.CreativeHTTPStatusError(503, "upstream busy")
 
-	// 第一次与第二次处理：attempt 递增并重排。
+	// The first two retryable failures increment the attempt count and request requeueing.
 	for attempt := 1; attempt <= 2; attempt++ {
 		result, err := f.worker.Process(context.Background(), runID)
 		require.NoError(t, err)
@@ -142,7 +146,7 @@ func TestCreativeWorkerRetryableError(t *testing.T) {
 	}
 	require.Equal(t, 2, f.exec.calls)
 
-	// 第三次：attempt 达到上限后，FailRun 出队并释放预占。
+	// The third failure exhausts attempts and releases the hold before terminal acknowledgment.
 	result, err := f.worker.Process(context.Background(), runID)
 	require.NoError(t, err)
 	require.True(t, result.Terminal)
@@ -153,7 +157,8 @@ func TestCreativeWorkerRetryableError(t *testing.T) {
 	require.Equal(t, 1, f.billing.releaseN)
 }
 
-// TestCreativeWorkerImageResultFailure 检查结果读取失败后的任务终态和上游调用次数。
+// TestCreativeWorkerImageResultFailure checks that image download/decoding failures terminate after one
+// provider call.
 func TestCreativeWorkerImageResultFailure(t *testing.T) {
 	for _, code := range []string{"IMAGE_DOWNLOAD_FAILED", "INVALID_IMAGE_RESPONSE"} {
 		t.Run(code, func(t *testing.T) {
@@ -187,14 +192,14 @@ func TestCreativeWorkerNonRetryableError(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Terminal)
 	require.Equal(t, 1, f.exec.calls)
-	// 不可重试错误不消耗 attempt，直接失败并释放。
+	// Nonretryable failures release funds without incrementing the retry counter.
 	run := f.repo.runs[runID]
 	require.Equal(t, creative.CreativeRunStatusFailed, run.Status)
 	require.Equal(t, 0, run.AttemptCount)
 	require.Equal(t, 1, f.billing.releaseN)
 }
 
-// TestCreativeWorkerCancelRace 校验执行期间进入 cancelled：仍捕获计费，但保留该终态。
+// TestCreativeWorkerCancelRace checks that completed generation is billed while task status remains cancelled.
 func TestCreativeWorkerCancelRace(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	runID := "crun_workercancel001"
@@ -203,7 +208,7 @@ func TestCreativeWorkerCancelRace(t *testing.T) {
 		Outputs:    []creative.CreativeOutput{{Index: 0, Bytes: []byte("img"), Mime: "image/png"}},
 		ProviderID: 55,
 	}
-	// 模拟执行期间进入 cancelled：execute 返回前把任务置为 cancelled。
+	// Simulate cancellation while the upstream request is running.
 	f.exec.onExecute = func(runID string) {
 		run := f.repo.runs[runID]
 		run.Status = creative.CreativeRunStatusCancelled
@@ -215,7 +220,7 @@ func TestCreativeWorkerCancelRace(t *testing.T) {
 
 	run := f.repo.runs[runID]
 	require.Equal(t, creative.CreativeRunStatusCancelled, run.Status)
-	// platform 已确认成功：完成捕获与用量记录，任务状态保持 cancelled。
+	// The confirmed provider result is captured even though the task remains cancelled.
 	require.Equal(t, 1, f.billing.captureN)
 	require.Equal(t, 0, f.billing.releaseN)
 	require.NotNil(t, run.ActualCost)
@@ -223,7 +228,7 @@ func TestCreativeWorkerCancelRace(t *testing.T) {
 	require.Equal(t, creative.CreativeRunOutputStatusSucceeded, output.Status)
 }
 
-// TestCreativeWorkerPayloadLost 校验载荷过期：result_lost 且未执行的预占被释放。
+// TestCreativeWorkerPayloadLost checks result_lost and hold release when payload bytes are absent.
 func TestCreativeWorkerPayloadLost(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	runID := "crun_workerlost00001"
@@ -236,12 +241,13 @@ func TestCreativeWorkerPayloadLost(t *testing.T) {
 
 	run := f.repo.runs[runID]
 	require.Equal(t, creative.CreativeRunStatusResultLost, run.Status)
-	// platform 未执行：释放预占。
+	// No provider call occurred, so the hold is released.
 	require.Equal(t, 1, f.billing.releaseN)
 	require.Equal(t, 0, f.billing.captureN)
 }
 
-// TestCreativeWorkerCancelBeforeExecute 校验执行前发现已 cancelled：不调用上游，直接清理出队。
+// TestCreativeWorkerCancelBeforeExecute checks that a cancelled task is acknowledged without calling the
+// provider.
 func TestCreativeWorkerCancelBeforeExecute(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	runID := "crun_workerprecancel1"
@@ -252,11 +258,11 @@ func TestCreativeWorkerCancelBeforeExecute(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Terminal)
 	require.Equal(t, 0, f.exec.calls)
-	// 任务在入队前已释放预占，worker 执行幂等清理。
+	// An already terminal task does not trigger another release.
 	require.Equal(t, 0, f.billing.releaseN)
 }
 
-// TestCreativeWorkerRunOnceAck 检查 RunOnce 预留任务、加锁、处理和确认的流程。
+// TestCreativeWorkerRunOnceAck covers reservation, locking, processing, acknowledgment, and lock release.
 func TestCreativeWorkerRunOnceAck(t *testing.T) {
 	f := newCreativeWorkerFixture()
 	runID := "crun_workerrunonce001"

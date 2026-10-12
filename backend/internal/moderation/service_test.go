@@ -35,7 +35,7 @@ const (
 	RoleUser  = "user"
 )
 
-// contentModerationTestProxyRepo 记录审核服务查询代理的次数。
+// contentModerationTestProxyRepo counts proxy lookups made by the moderation service.
 type contentModerationTestProxyRepo struct {
 	proxies    map[int64]*Proxy
 	getByIDErr error
@@ -521,13 +521,13 @@ func TestContentModerationAllFailuresFailOpenAndAlwaysRecord(t *testing.T) {
 	require.Equal(t, 1, logs[0].FailedUnitCount)
 }
 
-// TestContentModerationCallRoutesThroughProxy 检查审核请求通过配置的代理发送（#2646）。
-// 通过一个本地 HTTP 正向代理验证：BaseURL 指向不可直连的假域名，
-// 请求只有走代理才能得到响应。
+// TestContentModerationCallRoutesThroughProxy verifies use of the configured proxy (#2646).
+// The upstream hostname is deliberately unresolvable, so a response requires
+// the local forward proxy to handle the request.
 func TestContentModerationCallRoutesThroughProxy(t *testing.T) {
 	var proxied atomic.Int64
 	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// HTTP 目标经正向代理时，代理收到的是绝对 URI 请求。
+		// A forward proxy receives an absolute URI for an HTTP target.
 		if !strings.HasPrefix(r.RequestURI, "http://moderation-proxy-test.invalid") {
 			t.Errorf("expected absolute-URI proxy request, got %q", r.RequestURI)
 		}
@@ -568,7 +568,8 @@ func TestContentModerationCallRoutesThroughProxy(t *testing.T) {
 	}
 }
 
-// TestContentModerationProxyResolveFailureDoesNotFallBackToDirect 检查代理解析失败时返回错误并终止请求。
+// TestContentModerationProxyResolveFailureDoesNotFallBackToDirect checks that failed proxy lookup stops
+// the request.
 func TestContentModerationProxyResolveFailureDoesNotFallBackToDirect(t *testing.T) {
 	var direct atomic.Int64
 	directSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -598,7 +599,7 @@ func TestContentModerationProxyResolveFailureDoesNotFallBackToDirect(t *testing.
 	}
 }
 
-// TestContentModerationProxyURLResolutionCached 检查 TTL 内的代理查询复用缓存。
+// TestContentModerationProxyURLResolutionCached checks reuse of proxy lookups within the TTL.
 func TestContentModerationProxyURLResolutionCached(t *testing.T) {
 	proxyRepo := &contentModerationTestProxyRepo{proxies: map[int64]*Proxy{
 		3: {ID: 3, Name: "p", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: StatusActive},
@@ -617,8 +618,8 @@ func TestContentModerationProxyURLResolutionCached(t *testing.T) {
 	}
 }
 
-// TestContentModerationUpdateConfigProxyIDSemantics 检查 proxy_id 在更新配置和读取配置时的取值。
-// 正数设置代理，nil 保持已有代理，非正数清除代理。
+// TestContentModerationUpdateConfigProxyIDSemantics checks proxy selection during configuration updates.
+// Positive IDs select a proxy, nil leaves it unchanged, and nonpositive IDs clear it.
 func TestContentModerationUpdateConfigProxyIDSemantics(t *testing.T) {
 	settingRepo := &contentModerationTestSettingRepo{values: map[string]string{}}
 	proxyRepo := &contentModerationTestProxyRepo{proxies: map[int64]*Proxy{
@@ -637,7 +638,7 @@ func TestContentModerationUpdateConfigProxyIDSemantics(t *testing.T) {
 		t.Fatalf("expected proxy_id=5 in view, got %v", view.ProxyID)
 	}
 
-	// nil 表示不修改，代理保持不变。
+	// Omitting ProxyID leaves the selected proxy unchanged.
 	enabled := true
 	view, err = svc.UpdateConfig(ctx, UpdateContentModerationConfigInput{Enabled: &enabled})
 	if err != nil {
@@ -647,7 +648,7 @@ func TestContentModerationUpdateConfigProxyIDSemantics(t *testing.T) {
 		t.Fatalf("expected proxy_id to stay 5 when omitted, got %v", view.ProxyID)
 	}
 
-	// 0 表示清除，恢复直连。
+	// Zero clears the proxy and restores direct connections.
 	view, err = svc.UpdateConfig(ctx, UpdateContentModerationConfigInput{ProxyID: moderationProxyIDPtr(0)})
 	if err != nil {
 		t.Fatalf("clear proxy_id: %v", err)
@@ -656,14 +657,14 @@ func TestContentModerationUpdateConfigProxyIDSemantics(t *testing.T) {
 		t.Fatalf("expected proxy_id cleared, got %v", *view.ProxyID)
 	}
 
-	// 不存在的代理 ID 返回校验错误。
+	// A nonexistent proxy ID fails validation.
 	if _, err := svc.UpdateConfig(ctx, UpdateContentModerationConfigInput{ProxyID: moderationProxyIDPtr(404)}); err == nil {
 		t.Fatal("expected validation error for nonexistent proxy")
 	}
 }
 
-// TestContentModerationTestAPIKeysProxySemantics 检查 API Key 测试采用的代理。
-// nil 使用已保存的代理，0 直连，正数指定代理。
+// TestContentModerationTestAPIKeysProxySemantics checks proxy selection for key tests.
+// Nil uses the saved proxy, zero connects directly, and a positive ID selects a proxy.
 func TestContentModerationTestAPIKeysProxySemantics(t *testing.T) {
 	var proxied atomic.Int64
 	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -695,7 +696,7 @@ func TestContentModerationTestAPIKeysProxySemantics(t *testing.T) {
 	svc.Start()
 	svc.SetProxyRepository(proxyRepo)
 
-	// nil 使用已保存的代理，测试请求通过代理完成。
+	// An omitted ProxyID sends the key test through the saved proxy.
 	result, err := svc.TestAPIKeys(context.Background(), TestContentModerationAPIKeysInput{APIKeys: []string{"sk-input"}})
 	if err != nil {
 		t.Fatalf("test with saved proxy: %v", err)
@@ -707,7 +708,7 @@ func TestContentModerationTestAPIKeysProxySemantics(t *testing.T) {
 		t.Fatal("expected test request to route through the saved proxy")
 	}
 
-	// 0 使用直连，BaseURL 指向本地 HTTP 服务器。
+	// Zero selects a direct connection to the local upstream server.
 	var direct atomic.Int64
 	directSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		direct.Add(1)
@@ -2634,8 +2635,8 @@ func TestContentModerationRecordCyberWarning_CountsExistingWindowWarnings(t *tes
 	require.Equal(t, []int64{userID}, invalidator.userIDs)
 }
 
-// TestContentModerationNoMediaRetention 检查 NoMediaRetention=true 时的日志留存。
-// 日志保存元数据和输入 hash，媒体快照与正文摘录留空。
+// TestContentModerationNoMediaRetention checks logs when NoMediaRetention is true.
+// Audit metadata and hashes remain available while image snapshots and text excerpts are omitted.
 func TestContentModerationNoMediaRetention(t *testing.T) {
 	svc, repo, hashCache, imageDataURL := newCreativeNoMediaRetentionModerationService(t)
 
@@ -2657,18 +2658,18 @@ func TestContentModerationNoMediaRetention(t *testing.T) {
 	log := logs[0]
 	require.True(t, log.Flagged)
 	require.Equal(t, "sexual", log.HighestCategory)
-	// 无媒体留存模式下，正文和媒体字段为空，媒体快照错误记录也为空。
+	// Content and media fields stay empty, including media snapshot error records.
 	require.Empty(t, log.InputExcerpt)
 	require.Empty(t, log.InputItems)
 	require.Empty(t, log.Media, "无媒体留存模式不得保存媒体快照")
-	// 输入 hash 用于去重，分类、分数和决策用于记录审核结果。
+	// Hashes support deduplication while categories, scores, and actions describe the audit result.
 	require.NotEmpty(t, hashCache.snapshotRecorded())
 	require.NotEmpty(t, log.CategoryScores)
 	require.NotEmpty(t, log.Action)
 }
 
-// TestContentModerationMediaRetentionControl 检查 NoMediaRetention=false 时的日志留存。
-// 媒体快照以 ready 状态落库，日志保存正文摘录。
+// TestContentModerationMediaRetentionControl checks logs when NoMediaRetention is false.
+// The log retains an excerpt and a ready image snapshot.
 func TestContentModerationMediaRetentionControl(t *testing.T) {
 	svc, repo, _, imageDataURL := newCreativeNoMediaRetentionModerationService(t)
 
@@ -3200,16 +3201,16 @@ func contentModerationIntPtr(v int) *int {
 	return &v
 }
 
-// newCreativeNoMediaRetentionModerationService 构造带 httptest 审核上游的测试服务。
-// 上游对文本返回未命中分数，对图片返回命中分数。
-// 图片使用 data URL，快照通过内联解码获取，测试无需放开 SSRF 回环限制。
+// newCreativeNoMediaRetentionModerationService creates a service with an httptest audit upstream.
+// The upstream returns safe text scores and flagged image scores.
+// Data URLs allow inline image snapshots while keeping SSRF loopback restrictions enabled.
 func newCreativeNoMediaRetentionModerationService(t *testing.T) (*ContentModerationService, *contentModerationTestRepo, *contentModerationTestHashCache, string) {
 	t.Helper()
 	pngBytes := makeTestPNG(t, 2, 2)
 	imageDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 文本单元与图片单元是独立的审核调用：按请求体中是否包含 image_url 区分返回。
+		// Text and image units are separate calls; image_url identifies image requests.
 		var request struct {
 			Input any `json:"input"`
 		}
@@ -3280,7 +3281,7 @@ func makeTestPNG(t *testing.T, width, height int) []byte {
 	return buf.Bytes()
 }
 
-// splitContentModerationText 收集分批审核生成的文本片段。
+// splitContentModerationText collects the chunks produced for batch auditing.
 func splitContentModerationText(text string, chunkSize int, overlap int) []string {
 	chunks := make([]string, 0, countContentModerationTextChunks(text, chunkSize, overlap))
 	forEachContentModerationTextBatch(text, chunkSize, overlap, contentModerationTextBatchSize, func(_ int, batch []string) {

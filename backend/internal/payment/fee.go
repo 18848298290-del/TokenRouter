@@ -4,13 +4,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// FeeConfig 表示某个支付渠道实际生效的手续费配置。
+// FeeConfig contains the fees applied to a payment method.
 type FeeConfig struct {
 	FixedFee float64 `json:"fixed_fee"`
 	FeeRate  float64 `json:"fee_rate"`
 }
 
-// FeeBreakdown 表示一次下单的手续费拆分结果。
+// FeeBreakdown contains the base amount, fees, and total charge for an order.
 type FeeBreakdown struct {
 	BaseAmount    float64 `json:"base_amount"`
 	FixedFee      float64 `json:"fee_fixed"`
@@ -20,12 +20,13 @@ type FeeBreakdown struct {
 	PayAmount     float64 `json:"pay_amount"`
 }
 
-// CalculatePayAmountForCurrency 按币种精度计算比例手续费后的应付金额。
+// CalculatePayAmountForCurrency returns the charge including the percentage fee at currency precision.
 func CalculatePayAmountForCurrency(rechargeAmount float64, feeRate float64, currency string) string {
 	return CalculatePayAmountWithFeeForCurrency(rechargeAmount, FeeConfig{FeeRate: feeRate}, currency).PayAmountStringForCurrency(currency)
 }
 
-// CalculatePayAmountWithFeeForCurrency 按币种精度计算固定手续费和比例手续费拆分后的实付金额。
+// CalculatePayAmountWithFeeForCurrency computes fixed and percentage fees at currency precision.
+// Percentage fees round up; the base amount and fixed fee round to the nearest minor unit.
 func CalculatePayAmountWithFeeForCurrency(baseAmount float64, cfg FeeConfig, currency string) FeeBreakdown {
 	fractionDigits := int32(CurrencyMaxFractionDigits(currency))
 	amount := decimal.NewFromFloat(baseAmount).Round(fractionDigits)
@@ -52,7 +53,7 @@ func CalculatePayAmountWithFeeForCurrency(baseAmount float64, cfg FeeConfig, cur
 	}
 }
 
-// PayAmountStringForCurrency 按币种精度返回支付网关需要的字符串金额。
+// PayAmountStringForCurrency formats the gateway charge at currency precision.
 func (b FeeBreakdown) PayAmountStringForCurrency(currency string) string {
 	return decimal.NewFromFloat(b.PayAmount).StringFixed(int32(CurrencyMaxFractionDigits(currency)))
 }

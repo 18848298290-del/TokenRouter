@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// provideOpenAIHTTPResources 构造供文本、媒体、WS 和兼容入口共享的 HTTP 资源。
+// provideOpenAIHTTPResources creates HTTP resources shared by text, media, WS, and compatibility endpoints.
 func provideOpenAIHTTPResources(concurrency *scheduler.ConcurrencyService, cfg *config.Config) *gatewayhttp.OpenAIHTTPResources {
 	ping := time.Duration(0)
 	imageOptions := openAIImageAdmissionOptions(cfg)
@@ -32,7 +32,7 @@ func provideOpenAIHTTPResources(concurrency *scheduler.ConcurrencyService, cfg *
 	return &gatewayhttp.OpenAIHTTPResources{Concurrency: gatewayhttp.NewConcurrencyHelper(concurrency, gatewayhttp.SSEPingFormatComment, ping), Images: &scheduler.ImageConcurrencyLimiter{}, ImageOptions: imageOptions}
 }
 
-// openAIImageAdmissionOptions 返回图片准入所需的配置参数。
+// openAIImageAdmissionOptions extracts image admission configuration.
 func openAIImageAdmissionOptions(cfg *config.Config) *gatewayhttp.OpenAIImageAdmissionOptions {
 	if cfg == nil {
 		return nil
@@ -41,7 +41,7 @@ func openAIImageAdmissionOptions(cfg *config.Config) *gatewayhttp.OpenAIImageAdm
 	return &gatewayhttp.OpenAIImageAdmissionOptions{Enabled: value.Enabled, Limit: value.MaxConcurrentRequests, Wait: strings.TrimSpace(value.OverflowMode) == config.ImageConcurrencyOverflowModeWait, Timeout: time.Duration(value.WaitTimeoutSeconds) * time.Second, MaxWaiting: value.MaxWaitingRequests}
 }
 
-// provideOpenAITextHTTP 为 OpenAI 文本 HTTP 入口绑定单次执行组件。
+// provideOpenAITextHTTP binds attempt execution to the OpenAI text HTTP handler.
 func provideOpenAITextHTTP(
 	source *gatewayhttp.OpenAIResponsesExecutor,
 	funding *admission.FundingAdmission,
@@ -68,7 +68,7 @@ func provideOpenAITextHTTP(
 	return result
 }
 
-// openAITextOptions 返回静态 HTTP 参数和提供商切换预算。
+// openAITextOptions returns static HTTP options and the provider switch budget.
 func openAITextOptions(cfg *config.Config) gatewayhttp.OpenAITextOptions {
 	options := gatewayhttp.OpenAITextOptions{MaxSwitches: 3}
 	if cfg != nil {
@@ -84,7 +84,7 @@ func openAITextOptions(cfg *config.Config) gatewayhttp.OpenAITextOptions {
 	return options
 }
 
-// openAITextBindings 在装配时绑定依赖，请求期间创建本次调用的数据。
+// openAITextBindings binds shared dependencies used to create per-request execution state.
 func openAITextBindings(source *gatewayhttp.OpenAIResponsesExecutor, funding *admission.FundingAdmission, keys *apikey.APIKeyService, resources *gatewayhttp.OpenAIHTTPResources, cyber *gatewayhttp.CyberHandler, rules *errorpolicy.ErrorPassthroughService, moderator *moderation.ContentModerationService, planner *gatewayadapter.RoutePlanner, cache session.GatewayCache, subscriptions *billing.SubscriptionService) gatewayhttp.OpenAITextBindings {
 	var moderationPort gatewayhttp.ModerationPort
 	if moderator != nil {

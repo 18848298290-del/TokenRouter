@@ -2,8 +2,8 @@
 
 package redis
 
-// Redis 会话消费场景覆盖 session/store.go 的 JSON 存取与单次消费，
-// 并使用 helpers_integration_test.go 创建容器和客户端连接。
+// Session scenarios exercise JSON storage and single consumption against the
+// Redis container created by helpers_integration_test.go.
 
 import (
 	"sync"
@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/redis/session"
 )
 
-// TestRedisSessionConcurrentConsumption 检查两个客户端共享 JSON 和键格式，并发消费时恰好一个请求成功。
+// TestRedisSessionConcurrentConsumption checks shared key formatting and one successful claimant.
 func TestRedisSessionConcurrentConsumption(t *testing.T) {
 	client := startRedis(t, t.Context())
 	first := session.New(client, "test:session", time.Minute)

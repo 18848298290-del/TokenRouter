@@ -21,7 +21,7 @@ type executionCredentialFields struct {
 	updater providerCredentialsUpdater
 }
 
-// ExecutionTokenSource 定义执行请求读取提供商凭据的接口。
+// ExecutionTokenSource reads provider access tokens for execution.
 type ExecutionTokenSource interface {
 	GetAccessToken(context.Context, *provider.Record) (string, error)
 }
@@ -36,7 +36,7 @@ func (s executionCredentialFields) UpdateCredentials(ctx context.Context, id int
 	return s.updater.UpdateCredentials(ctx, id, credentials)
 }
 
-// PersistExecutionCredentials 将执行目标的凭据字段交给 provider 写入。
+// PersistExecutionCredentials delegates credential persistence to the provider module.
 func PersistExecutionCredentials(ctx context.Context, repo ExecutionProviderStore, value *ExecutionProvider, credentials map[string]any) error {
 	if repo == nil || value == nil {
 		return nil
@@ -53,7 +53,7 @@ func PersistExecutionCredentials(ctx context.Context, repo ExecutionProviderStor
 	return err
 }
 
-// ExecutionToken 读取令牌后，将 Gemini/Antigravity 回填的 project 凭据写入执行目标。
+// ExecutionToken reads a token and copies Gemini or Antigravity project backfills into the execution target.
 func ExecutionToken(ctx context.Context, source ExecutionTokenSource, value *ExecutionProvider) (string, error) {
 	record := ExecutionRecord(value)
 	token, err := source.GetAccessToken(ctx, record)

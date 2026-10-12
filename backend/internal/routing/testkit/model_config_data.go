@@ -11,50 +11,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ModelKey 模型配置测试输入复合键（显式包含 Platform 防止跨平台同名模型冲突）。
+// ModelKey identifies a test model by group, platform, and name to distinguish same-named platform inputs.
 type ModelKey struct {
 	GroupID  int64
-	Platform string // 平台标识
+	Platform string // Platform identifier.
 	Model    string // lowercase
 }
 
-// GroupPlatform 通配符定价输入键。
+// GroupPlatform keys wildcard test inputs by group and platform.
 type GroupPlatform struct {
 	GroupID  int64
 	Platform string
 }
 
-// PricePattern 通配符定价条目。
+// PricePattern is a wildcard pricing fixture.
 type PricePattern struct {
 	Prefix  string
 	Pricing *routing.ModelPricingEntry
 }
 
-// ModelPattern 通配符映射条目。
+// ModelPattern is a wildcard mapping fixture.
 type ModelPattern struct {
 	Prefix string
 	Target string
 }
 
-// ModelConfigData 包含模型配置测试的分组策略和价格配置。
+// ModelConfigData contains group-policy and pricing inputs for tests.
 type ModelConfigData struct {
 	GroupPolicies  map[int64]routing.GroupRoutingPolicy
 	Configurations []Configuration
 	UseRows        bool
-	// 测试指定的价格和模型输入
-	Prices        map[ModelKey]*routing.ModelPricingEntry // (GroupID, Platform, Model) → 定价
-	PricePatterns map[GroupPlatform][]*PricePattern       // (GroupID, Platform) → 通配符定价（按配置顺序，先匹配先使用）
-	Models        map[ModelKey]string                     // (GroupID, Platform, Model) → 映射目标
-	ModelPatterns map[GroupPlatform][]*ModelPattern       // (GroupID, Platform) → 通配符映射（按配置顺序，先匹配先使用）
-	ByGroup       map[int64]*Configuration                // GroupID → 组合配置
-	Platforms     map[int64]string                        // GroupID → Platform
+	// Prices and model mappings supplied by the test.
+	Prices        map[ModelKey]*routing.ModelPricingEntry // Exact prices by group, platform, and model.
+	PricePatterns map[GroupPlatform][]*PricePattern       // Wildcard prices in first-match configuration order.
+	Models        map[ModelKey]string                     // Exact mapping targets by group, platform, and model.
+	ModelPatterns map[GroupPlatform][]*ModelPattern       // Wildcard mapping inputs by group and platform.
+	ByGroup       map[int64]*Configuration                // Combined fixture configuration by group.
+	Platforms     map[int64]string                        // Platform by group.
 
-	// 测试记录的目录元数据
+	// Catalogue metadata supplied by the test.
 	ByID     map[int64]*Configuration
 	LoadedAt time.Time
 }
 
-// NewModelConfigData 创建空的组合配置输入（所有 map 已初始化）。
+// NewModelConfigData initializes every test input map.
 func NewModelConfigData() *ModelConfigData {
 	return &ModelConfigData{
 		Prices:        make(map[ModelKey]*routing.ModelPricingEntry),
@@ -67,7 +67,7 @@ func NewModelConfigData() *ModelConfigData {
 	}
 }
 
-// ModelConfigDataFromRows 转换测试输入，由 routing 的生产入口编译配置。
+// ModelConfigDataFromRows converts fixtures for compilation by the production routing service.
 func ModelConfigDataFromRows(pricingConfigs []Configuration, platforms map[int64]string) *ModelConfigData {
 	fixture := NewModelConfigData()
 	fixture.Configurations = pricingConfigs
@@ -76,7 +76,7 @@ func ModelConfigDataFromRows(pricingConfigs []Configuration, platforms map[int64
 	return fixture
 }
 
-// ModelConfigFromData 将夹具数据装配到唯一的生产模型配置实现。
+// ModelConfigFromData builds the production model configuration service from fixtures.
 func ModelConfigFromData(fixture *ModelConfigData) *routing.PricingConfigService {
 	if fixture.GroupPolicies == nil {
 		fixture.GroupPolicies = make(map[int64]routing.GroupRoutingPolicy)
@@ -93,7 +93,7 @@ func ModelConfigFromData(fixture *ModelConfigData) *routing.PricingConfigService
 		for _, gid := range ids {
 			ch := fixture.ByGroup[gid].Clone()
 			ch.GroupIDs = []int64{gid}
-			// 将展平的测试价格按分组还原为价卡数据。
+			// Reconstruct group price cards from flattened test prices.
 			keys := make([]ModelKey, 0, len(fixture.Prices))
 			for key := range fixture.Prices {
 				if key.GroupID == gid {

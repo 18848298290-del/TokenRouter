@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// diagnosticProjectionScope 保存本次诊断数据与执行目标的对应关系，同 ID 的不同快照分别登记。
+// diagnosticScope maps diagnostic inputs to execution targets, registering same-ID snapshots separately.
 type diagnosticScope struct {
 	source         DiagnosticSource
 	next           uint64

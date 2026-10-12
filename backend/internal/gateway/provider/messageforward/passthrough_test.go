@@ -33,7 +33,7 @@ type anthropicHTTPUpstreamRecorder struct {
 	err      error
 }
 
-// deferredActivityRepository 记录最后使用时间的批量写入，供测试核对。
+// deferredActivityRepository records batched last-used updates for assertions.
 type deferredActivityRepository struct {
 	updates sync.Map
 }
@@ -113,7 +113,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, failoverErr.ShouldRetryNextProvider())
-	// 传输层错误交给 handler 执行故障转移。
+	// The handler owns failover after transport errors, so this attempt leaves the response unwritten.
 	require.False(t, c.Writer.Written())
 }
 
@@ -206,7 +206,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ContextCanceledSkipsOllamaAct
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_Non2xxRecordsOllamaActivity(t *testing.T) {
 	deferred, activity := newDeferredActivityRecorder(t)
-	// 默认 API Key 提供商不会重试或故障转移 400，因此该响应会进入 handleErrorResponse。
+	// The default API key policy sends a 400 to error handling instead of retrying or failing over.
 	upstream := &anthropicHTTPUpstreamRecorder{
 		resp: &http.Response{
 			StatusCode: http.StatusBadRequest,
@@ -249,7 +249,7 @@ func newPrivateHealthFixture() *provideradapter.UpstreamHealth {
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{})
 }
 
-// passthroughFixture 构造透传输入，并调用待测实现执行凭据校验和请求交换。
+// passthroughFixture builds the input and runs credential validation and the upstream exchange.
 func passthroughFixture(runtime *Runtime, ctx context.Context, output HTTPBoundary, target *gatewayprovider.ExecutionProvider, body []byte, model, original string, stream bool, started time.Time) (*forwardcore.Result, error) {
 	return runtime.passthrough(ctx, output, target, forwardcore.APIKeyInput{Body: body, RequestModel: model, OriginalModel: original, RequestStream: stream, StartTime: started})
 }

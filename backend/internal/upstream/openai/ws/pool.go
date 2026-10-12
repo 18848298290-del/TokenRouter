@@ -21,8 +21,8 @@ import (
 
 const (
 	openAIWSConnHealthCheckIdle = 90 * time.Second
-	// coder/websocket 没有 reader 时无法消费 pong 帧；在上游 keepalive 窗口到期前
-	// 主动回收不支持无 reader 探活的空闲连接。
+	// coder/websocket consumes pong frames through its reader. Recycle idle connections
+	// that cannot ping without a reader before the upstream keepalive window expires.
 	openAIWSConnIdleRecycleAfter   = 90 * time.Second
 	openAIWSConnHealthCheckTO      = 2 * time.Second
 	openAIWSConnPrewarmExtraDelay  = 2 * time.Second
@@ -46,15 +46,15 @@ type WSAcquireRequest struct {
 	Provider *WSPoolProvider
 	WSURL    string
 	Headers  http.Header
-	// HeadersFactory 在每次拨号前生成认证头和本次使用的 Agent Assertion。
+	// HeadersFactory creates authentication headers and an Agent Assertion before each dial.
 	HeadersFactory  func(context.Context, http.Header) (http.Header, error)
 	ProxyURL        string
 	TLSProfile      *tlsfingerprint.Profile
 	TLSProfileKey   string
 	PreferredConnID string
-	// ForceNewConn: 强制本次获取新连接（避免复用导致连接内续链状态互相污染）。
+	// ForceNewConn avoids sharing connection-local continuation state with an earlier request.
 	ForceNewConn bool
-	// ForcePreferredConn 要求本次获取 PreferredConnID 指定的连接。
+	// ForcePreferredConn requires the connection identified by PreferredConnID.
 	ForcePreferredConn bool
 }
 type openAIWSHandshakeCompatibilityKey struct {
@@ -76,7 +76,7 @@ type WSConnLease struct {
 	released   atomic.Bool
 }
 
-// WSConn 保存一条上游连接及其独占租约。
+// WSConn holds an upstream connection and its exclusive lease state.
 type WSConn struct {
 	id string
 	ws openai.WSClientConn
@@ -98,7 +98,7 @@ type WSConn struct {
 	prewarmed     atomic.Bool
 }
 
-// openAIWSProviderPool 管理一个提供商的连接、排队名额和预热任务。
+// openAIWSProviderPool tracks a provider's connections, queue slots, and prewarming.
 type openAIWSProviderPool struct {
 	mu            sync.Mutex
 	conns         map[string]*WSConn
@@ -146,7 +146,7 @@ type WSConnPool struct {
 	prewarmCtx    context.Context
 	prewarmCancel context.CancelFunc
 	cfg           atomic.Pointer[WSPoolOptions]
-	// 通过接口解耦底层 WS 客户端实现，默认使用 coder/websocket。
+	// The default dialer uses coder/websocket; tests can supply another implementation.
 	clientDialer openai.WSClientDialer
 
 	providers sync.Map // key: int64(providerID), value: *openAIWSProviderPool
@@ -167,10 +167,10 @@ type openAIWSIdlePingCandidate struct {
 
 type codexFingerprintMode = string
 
-// WSPoolProviderState 记录提供商的连接、租约和固定连接数量。
+// WSPoolProviderState counts a provider's connections, active leases, and pinned connections.
 type WSPoolProviderState struct{ Connections, LeasedConnections, PinnedConnections int }
 
-// wsConnCompatibility 保存建立连接时的目标、代理和握手参数。
+// wsConnCompatibility captures the destination, proxy, TLS profile, and handshake identity.
 type wsConnCompatibility struct {
 	wsURL         string
 	proxyURL      string
@@ -336,7 +336,7 @@ func (l *WSConnLease) Release() {
 	}
 }
 
-// NewWSConn 创建可领取租约的连接，拨号完成后由池填入出站配置。
+// NewWSConn creates an available connection; the pool fills in its outbound configuration after dialing.
 func NewWSConn(id string, _ int64, ws openai.WSClientConn, handshakeHeaders http.Header, profile *tlsfingerprint.Profile, profileKey string) *WSConn {
 	now := time.Now()
 	conn := &WSConn{
@@ -517,7 +517,7 @@ func (c *WSConn) supportsIdlePingWithoutReader() bool {
 		return false
 	}
 	capable, ok := c.ws.(openai.WSIdlePingCapable)
-	// 未实现 openai.WSIdlePingCapable 的连接默认支持无人读取时 Ping。
+	// Implementations without WSIdlePingCapable are assumed to support idle pings without a reader.
 	return !ok || capable.SupportsIdlePingWithoutReader()
 }
 
@@ -611,7 +611,7 @@ func openAIWSTLSProfileKey(profile *tlsfingerprint.Profile, profileKey string) s
 	return tlsfingerprint.CacheKey(profile)
 }
 
-// changeChannelLocked 返回连接池状态变化时会关闭的通知通道，调用方必须持锁。
+// changeChannelLocked returns a channel closed on the next pool change. The caller holds ap.mu.
 func (ap *openAIWSProviderPool) changeChannelLocked() chan struct{} {
 	if ap.changedCh == nil {
 		ap.changedCh = make(chan struct{})
@@ -619,7 +619,7 @@ func (ap *openAIWSProviderPool) changeChannelLocked() chan struct{} {
 	return ap.changedCh
 }
 
-// signalChangedLocked 唤醒等待不兼容连接释放的请求，调用方必须持锁。
+// signalChangedLocked wakes pool-change waiters. The caller holds ap.mu.
 func (ap *openAIWSProviderPool) signalChangedLocked() {
 	if ap == nil {
 		return
@@ -686,7 +686,7 @@ func (p *WSConnPool) SetClientDialerForTest(dialer openai.WSClientDialer) {
 	p.clientDialer = dialer
 }
 
-// Close 停止后台 worker 并关闭所有空闲连接，应在优雅关闭时调用。
+// Close stops background workers and acquisitions and closes idle connections. Active leases close on release.
 func (p *WSConnPool) Close() {
 	if p == nil {
 		return
@@ -723,7 +723,7 @@ func (p *WSConnPool) Close() {
 			})
 			closeOpenAIWSConns(idle)
 		}
-		// 在途租约返回时关闭连接，空闲和迟到连接在这里回收。
+		// Active leases close on release; sweep again after workers and dials finish to collect late connections.
 		closeConnections()
 		p.workerWg.Wait()
 		p.acquireWG.Wait()
@@ -863,7 +863,7 @@ func (p *WSConnPool) runBackgroundCleanupSweep(now time.Time) {
 	}
 }
 
-// Acquire 获取独占租约，ctx 限制选择、排队和拨号的总时间。
+// Acquire returns an exclusive lease. The caller releases it when finished; ctx bounds selection, queuing, and dialing.
 func (p *WSConnPool) Acquire(ctx context.Context, req WSAcquireRequest) (*WSConnLease, error) {
 	if p != nil {
 		p.runtimeMu.Lock()
@@ -881,7 +881,7 @@ func (p *WSConnPool) Acquire(ctx context.Context, req WSAcquireRequest) (*WSConn
 	return p.acquire(ctx, CloneWSAcquireRequest(req))
 }
 
-// acquire 在同一取消预算内选择连接、拨号或等待提供商池发生变化。
+// acquire selects, dials, or waits for pool changes within the same context budget.
 func (p *WSConnPool) acquire(ctx context.Context, req WSAcquireRequest) (lease *WSConnLease, err error) {
 	if p == nil || req.Provider == nil || req.Provider.ID <= 0 {
 		return nil, errors.New("invalid ws acquire request")
@@ -914,7 +914,7 @@ func (p *WSConnPool) acquire(ctx context.Context, req WSAcquireRequest) (lease *
 		removed := finishWaitingLocked()
 		ap.mu.Unlock()
 		if removed {
-			// 后台任务回收等待者取消后剩余的空闲连接。
+			// Reclaim idle connections left behind when a waiter cancels in the background.
 			p.requestCleanup()
 		}
 		if queued {
@@ -962,7 +962,7 @@ func (p *WSConnPool) acquire(ctx context.Context, req WSAcquireRequest) (lease *
 		}
 		if selected != nil {
 			if finishWaitingLocked() {
-				// 多余空闲连接由后台回收，已取得的租约继续交付。
+				// Continue handing off the lease while background cleanup reclaims surplus idle connections.
 				p.requestCleanup()
 			}
 			connPick := time.Since(pickStarted)
@@ -1026,7 +1026,7 @@ func (p *WSConnPool) acquire(ctx context.Context, req WSAcquireRequest) (lease *
 				conn.close()
 				return nil, openai.ErrOpenAIWSConnQueueFull
 			}
-			// 发起拨号的请求先领取租约，再把连接交给池内的等待者查看。
+			// Reserve the new connection for its dialing request before making it visible to other waiters.
 			if !conn.tryAcquire() {
 				ap.mu.Unlock()
 				conn.close()
@@ -1068,7 +1068,7 @@ func (p *WSConnPool) acquire(ctx context.Context, req WSAcquireRequest) (lease *
 	}
 }
 
-// deliverLease 在交付前检查取消和关闭，并记录成功获取的连接。
+// deliverLease checks cancellation and shutdown before recording a successful acquisition.
 func (p *WSConnPool) deliverLease(ctx context.Context, req WSAcquireRequest, generation uint64, conn *WSConn, reused bool, pick time.Duration) (*WSConnLease, error) {
 	lease := &WSConnLease{pool: p, ProviderID: req.Provider.ID, Conn: conn, connPick: pick, reused: reused}
 	p.runtimeMu.Lock()
@@ -1120,7 +1120,7 @@ func (p *WSConnPool) recordLastSuccessfulAcquire(providerID int64, generation ui
 	ap.mu.Unlock()
 }
 
-// pickOldestIdleConnLocked 返回可回收连接中最久未使用的一条。
+// pickOldestIdleConnLocked selects the least recently used reclaimable connection. The caller holds ap.mu.
 func (p *WSConnPool) pickOldestIdleConnLocked(ap *openAIWSProviderPool) *WSConn {
 	if ap == nil || len(ap.conns) == 0 {
 		return nil
@@ -1137,7 +1137,7 @@ func (p *WSConnPool) pickOldestIdleConnLocked(ap *openAIWSProviderPool) *WSConn 
 	return oldest
 }
 
-// pickOldestIncompatibleIdleConnLocked 为新出站配置选择可回收的空闲连接。
+// pickOldestIncompatibleIdleConnLocked selects a reclaimable connection with different outbound settings. The caller holds ap.mu.
 func (p *WSConnPool) pickOldestIncompatibleIdleConnLocked(ap *openAIWSProviderPool, compatibility wsConnCompatibility) *WSConn {
 	var oldest *WSConn
 	for _, conn := range ap.conns {
@@ -1185,7 +1185,7 @@ func (p *WSConnPool) getProviderPool(providerID int64) (*openAIWSProviderPool, b
 	return ap, typed && ap != nil
 }
 
-// notifyProviderPoolChanged 唤醒等待该提供商连接池出现兼容空闲连接的请求。
+// notifyProviderPoolChanged wakes requests waiting for a compatible connection in this provider's pool.
 func (p *WSConnPool) notifyProviderPoolChanged(providerID int64) {
 	ap, ok := p.getProviderPool(providerID)
 	if !ok || ap == nil {
@@ -1203,7 +1203,7 @@ func (p *WSConnPool) isConnPinnedLocked(ap *openAIWSProviderPool, connID string)
 	return ap.pinnedConns[connID] > 0
 }
 
-// cleanupProviderLocked 按过期时间、空闲上限和总容量回收连接，调用方持有 ap.mu。
+// cleanupProviderLocked reclaims connections by age, idle limit, and capacity. The caller holds ap.mu.
 func (p *WSConnPool) cleanupProviderLocked(ap *openAIWSProviderPool, now time.Time, maxConns int) []*WSConn {
 	if ap == nil {
 		return nil
@@ -1227,7 +1227,7 @@ func (p *WSConnPool) cleanupProviderLocked(ap *openAIWSProviderPool, now time.Ti
 				}
 				continue
 			}
-			// 等待者领取兼容连接后，归还租约时再检查空闲上限。
+			// Let compatible waiters take these connections; check the idle limit again when their leases return.
 			if conn.isLeased() || conn.waiters.Load() > 0 || p.isConnPinnedLocked(ap, conn.id) || hasCompatibleWaiterLocked(ap, conn) {
 				continue
 			}
@@ -1256,7 +1256,7 @@ func (p *WSConnPool) cleanupProviderLocked(ap *openAIWSProviderPool, now time.Ti
 	return evicted
 }
 
-// pickAvailableConnLocked 优先领取指定连接和路由提示相同的连接，调用方持有 ap.mu。
+// pickAvailableConnLocked prefers the requested connection, then routing affinity. The caller holds ap.mu.
 func (p *WSConnPool) pickAvailableConnLocked(ap *openAIWSProviderPool, preferredID string, compatibility wsConnCompatibility, routingAffinity string, allowAny bool) *WSConn {
 	now := time.Now()
 	available := func(conn *WSConn) bool {
@@ -1288,7 +1288,7 @@ func (p *WSConnPool) pickAvailableConnLocked(ap *openAIWSProviderPool, preferred
 	return nil
 }
 
-// providerPoolLoadLocked 汇总租约和两类等待者，调用方持有 ap.mu。
+// providerPoolLoadLocked counts leases and both kinds of waiter. The caller holds ap.mu.
 func providerPoolLoadLocked(ap *openAIWSProviderPool) (inflight int, waiters int) {
 	if ap == nil {
 		return 0, 0
@@ -1403,7 +1403,7 @@ func (p *WSConnPool) targetConnCountLocked(ap *openAIWSProviderPool, maxConns in
 	return target
 }
 
-// prewarmNeededLocked 检查当前需求、总容量和空闲上限，调用方持有提供商池锁。
+// prewarmNeededLocked checks demand, capacity, and idle limits. The caller holds ap.mu.
 func (p *WSConnPool) prewarmNeededLocked(ap *openAIWSProviderPool) bool {
 	if ap.lastAcquire == nil {
 		return false
@@ -1431,14 +1431,14 @@ func (p *WSConnPool) prewarmConns(providerID int64, req WSAcquireRequest, total 
 	defer func() {
 		if ap, ok := p.getProviderPool(providerID); ok && ap != nil {
 			ap.mu.Lock()
-			// 提前停止时归还本批尚未拨号的预留名额，后续请求可以按新容量建连。
+			// Return unused dial reservations so subsequent requests can use the updated capacity.
 			ap.creating = max(0, ap.creating-remaining)
 			ap.prewarmActive = false
 			ap.signalChangedLocked()
 			ap.mu.Unlock()
 		}
 		if staleTarget {
-			// 按最近一次请求的凭据和握手参数重新计算预热需求。
+			// Recompute demand using the latest request's credentials and handshake settings.
 			p.ensureTargetIdleAsync(providerID)
 		}
 	}()
@@ -1498,7 +1498,7 @@ func (p *WSConnPool) prewarmConns(providerID int64, req WSAcquireRequest, total 
 			conn.close()
 			return
 		}
-		// 拨号期间需求和配置均可变化，迟到结果入池前再次检查。
+		// Demand and settings can change during dialing; recheck before inserting a late connection.
 		if parent.Err() != nil || !p.prewarmNeededLocked(ap) {
 			ap.signalChangedLocked()
 			ap.mu.Unlock()
@@ -1513,7 +1513,7 @@ func (p *WSConnPool) prewarmConns(providerID int64, req WSAcquireRequest, total 
 	}
 }
 
-// ClearProvider 关闭提供商的全部池化连接并丢弃延迟预热状态；代次检查阻止恢复前启动的预热连接重新入池。
+// ClearProvider closes pooled connections and clears prewarm state. Generation checks reject dials started before the reset.
 func (p *WSConnPool) ClearProvider(providerID int64) {
 	if p == nil || providerID <= 0 {
 		return
@@ -1725,13 +1725,13 @@ func CloneWSAcquireRequestPtr(req *WSAcquireRequest) *WSAcquireRequest {
 	return &copied
 }
 
-// sameOpenAIWSPrewarmTarget 判断预热拨号的硬兼容目标是否仍然有效。
-// routing hint 仅用于软亲和，变化时无需丢弃已经建立的兼容连接。
+// sameOpenAIWSPrewarmTarget reports whether the dial target remains compatible.
+// Routing hints express a preference, so changing one does not invalidate a compatible connection.
 func sameOpenAIWSPrewarmTarget(a, b WSAcquireRequest) bool {
 	return wsCompatibilityForRequest(a) == wsCompatibilityForRequest(b)
 }
 
-// normalizeOpenAIWSBetaFeatures 将握手 beta feature 去重排序，生成稳定的连接兼容键。
+// normalizeOpenAIWSBetaFeatures deduplicates and sorts handshake features for a stable compatibility key.
 func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 	features := make(map[string]struct{})
 	for name, values := range headers {
@@ -1827,7 +1827,7 @@ func stringsTrim(value string) string {
 	return strings.TrimSpace(value)
 }
 
-// Start 启动连接池后台任务，启动和关闭状态决定本次调用是否生效。
+// Start starts background workers once; calls after Close have no effect.
 func (p *WSConnPool) Start() {
 	if p == nil {
 		return
@@ -1871,10 +1871,10 @@ func (p *WSConnPool) SnapshotProviderState(id int64) (WSPoolProviderState, bool)
 	return state, true
 }
 
-// EvictConnection 淘汰指定连接，调用方决定重连和重试。
+// EvictConnection closes the selected connection. The caller decides whether to reconnect or retry.
 func (p *WSConnPool) EvictConnection(id int64, connectionID string) { p.evictConn(id, connectionID) }
 
-// UpdateOptions 发布不可变参数，并回收超过新容量的空闲连接。
+// UpdateOptions publishes an immutable configuration snapshot and reclaims idle connections above its limits.
 func (p *WSConnPool) UpdateOptions(options WSPoolOptions) error {
 	p.runtimeMu.Lock()
 	if p.closed {
@@ -1911,7 +1911,7 @@ func (p *WSConnPool) reconcileProvider(id int64) {
 	closeOpenAIWSConns(evicted)
 }
 
-// wsCompatibilityForRequest 为拨号、复用和预热生成相同的连接标识。
+// wsCompatibilityForRequest builds the compatibility key shared by dialing, reuse, and prewarming.
 func wsCompatibilityForRequest(req WSAcquireRequest) wsConnCompatibility {
 	return wsConnCompatibility{
 		wsURL:         stringsTrim(req.WSURL),
@@ -1921,7 +1921,7 @@ func wsCompatibilityForRequest(req WSAcquireRequest) wsConnCompatibility {
 	}
 }
 
-// matchesCompatibility 判断连接是否使用本次请求的出站配置。
+// matchesCompatibility reports whether the connection uses the requested outbound configuration.
 func (c *WSConn) matchesCompatibility(compatibility wsConnCompatibility) bool {
 	return c != nil && c.compatibility == compatibility
 }

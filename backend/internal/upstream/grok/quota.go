@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// GrokFreeRolling24hTokenLimit 是运维软门禁使用的 Free 提供商滚动 24 小时名义额度；
-// 上游请求头仍可能返回历史版本的 100 万或 200 万额度快照。
+// GrokFreeRolling24hTokenLimit is the nominal Free rolling-day quota used by the soft gate.
+// Upstream headers can still report the older one-million or two-million limits.
 const GrokFreeRolling24hTokenLimit int64 = 500_000
 
 var (
@@ -18,9 +18,9 @@ var (
 		GrokFreeRolling24hTokenLimit: {},
 
 		1_000_000: {},
-		// 上游观测到的 Free 限额变体。
+		// Observed Free quota variant.
 		2_000_000: {},
-		// 2026 年 7 月前观测到的旧版 Free 限额。
+		// Legacy Free quota observed before July 2026.
 	}
 
 	quotaHeaderAllowlist = []string{
@@ -54,7 +54,7 @@ var (
 	}
 )
 
-// QuotaWindow 复用提供商展示叶子值；供应商解析仍由本包拥有。
+// QuotaWindow shares the provider display value; this package parses vendor headers.
 type QuotaWindow = usageview.QuotaWindow
 
 type QuotaSnapshot = usageview.QuotaSnapshot
@@ -170,13 +170,13 @@ func parseResetHeader(raw string) *int64 {
 		return nil
 	}
 	if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		// xAI 兼容上游可能使用毫秒时间戳、秒时间戳或相对秒数表达重置时间，
-		// 因此按数量级区分，避免把相对值 60 误解为 1970 年的时间戳。
+		// Compatible upstreams report milliseconds, Unix seconds, or relative seconds.
+		// Use magnitude to keep a relative value such as 60 from becoming a 1970 timestamp.
 		switch {
 		case value >= 1_000_000_000_000: // milliseconds epoch → seconds
 			value /= 1000
 		case value >= 1_000_000_000: // already a plausible unix-seconds epoch (>= 2001-09)
-			// 已是合理的 Unix 秒时间戳，保持原值。
+			// Keep an absolute Unix timestamp in seconds.
 		default: // relative seconds from now
 			value = time.Now().Unix() + value
 		}
@@ -232,7 +232,7 @@ func firstHeader(headers http.Header, names ...string) string {
 	return ""
 }
 
-// ParseQuotaObservation 解析额度响应头，缺少额度头的 429 响应记录状态码和观测时间。
+// ParseQuotaObservation parses quota headers or records a headerless 429 observation.
 func ParseQuotaObservation(headers http.Header, status int, now time.Time) *QuotaSnapshot {
 	snapshot := ParseQuotaHeaders(headers, status)
 	if snapshot == nil && status == http.StatusTooManyRequests {

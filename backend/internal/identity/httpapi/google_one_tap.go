@@ -62,9 +62,9 @@ func (h *GoogleOneTapHandler) verifyGoogleOneTapCredential(ctx context.Context, 
 	return h.Verifier.Verify(ctx, credential, audience)
 }
 
-// GoogleOneTap 使用浏览器取得的 Google ID Token 建立现有面板会话。
+// GoogleOneTap uses a browser-supplied Google ID token to sign in or start pending registration.
 func (h *GoogleOneTapHandler) GoogleOneTap(c *gin.Context) {
-	// 在 JSON 解码前限制整个匿名请求，避免超长 credential 或未知字段造成大额内存分配。
+	// Bound the whole anonymous request before decoding to limit allocation from oversized or unknown fields.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, GoogleOneTapRequestMaxBytes)
 	var req GoogleOneTapRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -92,7 +92,7 @@ func (h *GoogleOneTapHandler) GoogleOneTap(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// One Tap 没有动作验证码交互；启用腾讯或阿里云验证码时必须拒绝该入口。
+	// One Tap supplies no CAPTCHA proof, so enabled Tencent or Aliyun verification rejects it.
 	if err := h.authService.VerifyActionCaptchaIfEnabled(c.Request.Context(), identity.CaptchaProof{}, clientip.GetClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return

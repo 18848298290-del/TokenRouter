@@ -14,10 +14,10 @@ import (
 
 var _ session.GatewayCache = StubGatewayCache{}
 
-// StubGatewayCache 是返回空会话和可领取状态的网关缓存替身。
+// StubGatewayCache returns empty session data and accepts ownership and billing claims.
 type StubGatewayCache struct{}
 
-// NewRedisGatewayCache 使用 miniredis 创建网关缓存，并注册连接清理。
+// NewRedisGatewayCache creates a miniredis-backed cache and registers connection cleanup.
 func NewRedisGatewayCache(t *testing.T) session.GatewayCache {
 	t.Helper()
 
@@ -28,57 +28,57 @@ func NewRedisGatewayCache(t *testing.T) session.GatewayCache {
 	return gatewayredis.NewGatewayCache(redisClient)
 }
 
-// GetSessionProviderID 返回空的会话提供商 ID。
+// GetSessionProviderID returns zero to indicate a missing session provider.
 func (c StubGatewayCache) GetSessionProviderID(_ context.Context, _ int64, _ string) (int64, error) {
 	return 0, nil
 }
 
-// SetSessionProviderID 模拟成功写入会话提供商 ID。
+// SetSessionProviderID reports success without storing the provider ID.
 func (c StubGatewayCache) SetSessionProviderID(_ context.Context, _ int64, _ string, _ int64, _ time.Duration) error {
 	return nil
 }
 
-// RefreshSessionTTL 模拟成功续期会话。
+// RefreshSessionTTL reports success without storing session state.
 func (c StubGatewayCache) RefreshSessionTTL(_ context.Context, _ int64, _ string, _ time.Duration) error {
 	return nil
 }
 
-// DeleteSessionProviderID 模拟成功删除会话提供商 ID。
+// DeleteSessionProviderID reports success without storing session state.
 func (c StubGatewayCache) DeleteSessionProviderID(_ context.Context, _ int64, _ string) error {
 	return nil
 }
 
-// SetSessionOwnerGroupID 模拟成功写入会话所属分组。
+// SetSessionOwnerGroupID accepts the owner group without storing it.
 func (c StubGatewayCache) SetSessionOwnerGroupID(_ context.Context, _ int64, _, _ string, _ int64, _ time.Duration) (bool, error) {
 	return true, nil
 }
 
-// GetSessionOwnerGroupID 返回空的会话所属分组 ID。
+// GetSessionOwnerGroupID returns zero to indicate a missing owner group.
 func (c StubGatewayCache) GetSessionOwnerGroupID(_ context.Context, _ int64, _, _ string) (int64, error) {
 	return 0, nil
 }
 
-// RefreshSessionOwnerTTL 模拟成功续期会话所属分组。
+// RefreshSessionOwnerTTL reports success without storing owner state.
 func (c StubGatewayCache) RefreshSessionOwnerTTL(_ context.Context, _ int64, _, _ string, _ time.Duration) error {
 	return nil
 }
 
-// SetGrokVideoPendingBilling 模拟成功写入视频待计费数据。
+// SetGrokVideoPendingBilling reports success without storing billing data.
 func (c StubGatewayCache) SetGrokVideoPendingBilling(_ context.Context, _ string, _ []byte, _ time.Duration) error {
 	return nil
 }
 
-// GetGrokVideoPendingBilling 返回空的视频待计费数据。
+// GetGrokVideoPendingBilling returns nil to indicate missing billing data.
 func (c StubGatewayCache) GetGrokVideoPendingBilling(_ context.Context, _ string) ([]byte, error) {
 	return nil, nil
 }
 
-// ClaimGrokVideoBilled 模拟成功领取视频计费标记。
+// ClaimGrokVideoBilled accepts the billing claim without storing it.
 func (c StubGatewayCache) ClaimGrokVideoBilled(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
 
-// ReleaseGrokVideoBilled 模拟成功释放视频计费标记。
+// ReleaseGrokVideoBilled reports success without storing billing claims.
 func (c StubGatewayCache) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
 	return nil
 }

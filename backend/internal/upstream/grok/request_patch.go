@@ -50,7 +50,7 @@ var (
 	}
 )
 
-// BodyCodec 调整 Grok 请求体，并通过 NewID 为工具调用生成标识符。
+// BodyCodec normalizes Grok request bodies and uses NewID for generated tool-call IDs.
 type BodyCodec struct {
 	NewID      func() string
 	Attributes func(string) modelcatalog.Attributes
@@ -70,9 +70,9 @@ func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []
 		return false
 	}
 
-	// xAI 同时使用过扁平和嵌套两种错误封装：
-	// 扁平形式：{"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content."}
-	// 嵌套形式：{"error":{"message":"Could not decrypt the provided encrypted_content."}}
+	// xAI errors can use flat or nested envelopes:
+	// Flat: {"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content."}
+	// Nested: {"error":{"message":"Could not decrypt the provided encrypted_content."}}
 	code := strings.TrimSpace(gjson.GetBytes(body, "code").String())
 	errNode := gjson.GetBytes(body, "error")
 	if code == "" && errNode.IsObject() {
@@ -82,7 +82,7 @@ func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []
 	if strings.EqualFold(code, "invalid_encrypted_content") || strings.EqualFold(code, "invalid_compaction") || strings.EqualFold(code, "compaction_decode_error") {
 		return true
 	}
-	// 保留 xAI 官方扁平错误码校验，避免重试无关的 400 响应。
+	// A known unrelated error code must not trigger decryption recovery.
 	if !strings.EqualFold(code, "invalid-argument") && code != "" {
 		return false
 	}
@@ -184,8 +184,8 @@ func (m BodyCodec) DropEmptyGrokReplayReasoning(requestBody map[string]any) bool
 	return changed
 }
 
-// RequestHasGrokEncryptedReasoning 判断出站 Responses 请求体是否仍包含可在重试前
-// 剥离的 reasoning.encrypted_content。
+// RequestHasGrokEncryptedReasoning reports whether a Responses body contains
+// reasoning.encrypted_content that can be removed before retrying.
 func (m BodyCodec) RequestHasGrokEncryptedReasoning(body []byte) bool {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() {
@@ -279,8 +279,8 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("invalid json request body")
 	}
-	// sjson 可能复用输入底层数组，因此保留调用方请求字节不变，
-	// 同一请求体还可能被计费或重试路径读取。
+	// sjson can reuse the backing array. Copy bytes because billing and retry paths
+	// may still need the caller-owned request body.
 	out, err := sjson.SetBytes(append([]byte(nil), body...), "model", upstreamModel)
 	if err != nil {
 		return nil, err
@@ -352,7 +352,7 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 	return out, nil
 }
 
-// GrokModelRejectsLogprobs 识别不接受 OpenAI logprobs 字段的 Grok 4.20 模型族。
+// GrokModelRejectsLogprobs recognizes the Grok 4.20 family that rejects logprobs.
 func (m BodyCodec) GrokModelRejectsLogprobs(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if slash := strings.LastIndex(model, "/"); slash >= 0 {
@@ -361,7 +361,7 @@ func (m BodyCodec) GrokModelRejectsLogprobs(model string) bool {
 	return strings.HasPrefix(model, "grok-4.20")
 }
 
-// SanitizeGrokResponsesModelCapabilities 移除目标模型明确不支持的 Responses 参数。
+// SanitizeGrokResponsesModelCapabilities removes reasoning fields for models that reject them.
 func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamModel string) ([]byte, error) {
 	if !m.GrokModelRejectsReasoningEffort(upstreamModel) {
 		return body, nil
@@ -381,7 +381,7 @@ func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamM
 	return out, nil
 }
 
-// GrokModelRejectsReasoningEffort 判断 Composer 别名是否拒绝 reasoning 参数。
+// GrokModelRejectsReasoningEffort reports whether a Composer alias rejects reasoning parameters.
 func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "xai/")
 	switch model {
@@ -480,8 +480,8 @@ func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string,
 	return value, supported == nil || *supported
 }
 
-// GrokSupportsXHighReasoningEffort 判断模型是否声明并透传 xhigh 推理档位。
-// 当前仅 Grok 4.6 及其无日期别名支持。
+// GrokSupportsXHighReasoningEffort reports whether model attributes enable xhigh.
+
 func (m BodyCodec) GrokSupportsXHighReasoningEffort(model string) bool {
 	supported := m.modelAttributes(model).EffortSupport("xhigh")
 	return supported != nil && *supported
@@ -535,9 +535,9 @@ func (m BodyCodec) DeleteJSONFields(value any, fields map[string]struct{}) bool 
 	}
 }
 
-// SanitizeGrokResponsesInput 移除 Codex/Responses Lite 私有的 additional_tools 载体，
-// 同时按载体顺序把其中受支持的工具提升到顶层并保留原顶层顺序；最终由
-// sanitizeGrokResponsesTools 过滤 xAI 不支持的类型。
+// SanitizeGrokResponsesInput promotes tools from Codex/Responses Lite additional_tools
+// into the top-level list, retaining existing tool order before carrier order.
+// SanitizeGrokResponsesTools subsequently removes unsupported xAI tool types.
 func (m BodyCodec) SanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 	if !bytes.Contains(body, []byte(`"additional_tools"`)) {
 		return body, nil
@@ -601,8 +601,8 @@ func (m BodyCodec) SanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 	return sjson.SetRawBytes(body, "tools", encodedTools)
 }
 
-// StripRedundantGrokViewImageTool 当前轮的内联 input_image 已由 Grok 直接读取；同时保留本地 view_image
-// 可能让 Grok 只宣告工具调用而不继续作答，因此只移除该冗余自动工具。
+// StripRedundantGrokViewImageTool removes automatic view_image when the current
+// user input already contains an image, so Grok can answer from the inline image.
 func (m BodyCodec) StripRedundantGrokViewImageTool(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
@@ -679,8 +679,8 @@ func (m BodyCodec) GrokResponsesToolDedupKey(tool gjson.Result) string {
 	return "json:" + protocolopenai.NormalizeCompatSeedJSON(json.RawMessage(tool.Raw))
 }
 
-// SanitizeGrokReasoningNullContent 清理 Responses input 中显式的 JSON null；
-// xAI 的 untagged ModelInput 反序列化器会拒收这些字段，compaction 项保持原样。
+// SanitizeGrokReasoningNullContent removes null input fields rejected by the xAI
+// untagged ModelInput decoder. Compaction items pass through unchanged.
 func (m BodyCodec) SanitizeGrokReasoningNullContent(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() || (!input.IsArray() && !input.IsObject()) {
@@ -1061,7 +1061,7 @@ func (m BodyCodec) GrokResponsesOutputText(resp *protocolopenai.ResponsesRespons
 	return strings.Join(parts, "\n\n")
 }
 
-// RewriteGrokComposerImagesAsText 按图片出现顺序替换消息内容，同时保留原文本块。
+// RewriteGrokComposerImagesAsText replaces images in encounter order while retaining text parts.
 func (m BodyCodec) RewriteGrokComposerImagesAsText(reqBody map[string]any, descriptions []string) bool {
 	messages, ok := reqBody["messages"].([]any)
 	if !ok {

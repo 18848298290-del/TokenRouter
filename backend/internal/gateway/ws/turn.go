@@ -49,7 +49,7 @@ func (q *TurnPayloadQueue) Push(item TurnPayload) {
 	q.items = append(q.items, item)
 }
 
-// Len 返回尚未收到终态事件的 turn 数量。
+// Len returns the number of queued turns awaiting terminal completion.
 func (q *TurnPayloadQueue) Len() int {
 	if q == nil {
 		return 0
@@ -59,7 +59,7 @@ func (q *TurnPayloadQueue) Len() int {
 	return len(q.items)
 }
 
-// Peek 返回当前 turn 的请求上下文但不出队，用于上游错误事件先于 turn 完成时复用同一模型。
+// Peek returns the current turn without dequeuing it, keeping model context available for preceding error events.
 func (q *TurnPayloadQueue) Peek() TurnPayload {
 	if q == nil {
 		return TurnPayload{Source: "passthrough_missing"}

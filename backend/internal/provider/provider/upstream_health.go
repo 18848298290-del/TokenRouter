@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/kimi"
 )
 
-// HealthObservation 固化本次错误的模型与端点意图，不从隐式业务 Context 回读。
+// HealthObservation carries the failed request's model and endpoint information for health decisions.
 type HealthObservation struct {
 	Status         int
 	Headers        http.Header
@@ -33,7 +33,7 @@ type HealthObservation struct {
 	ImagesEndpoint bool
 }
 
-// UpstreamHealth 组合供应商观测和提供商健康状态处理。
+// UpstreamHealth parses upstream observations and applies provider health rules.
 type UpstreamHealth struct {
 	Core   *providercore.HealthService
 	Team   *providercore.TeamLinkedHealth
@@ -41,7 +41,7 @@ type UpstreamHealth struct {
 	Models *ModelHealth
 }
 
-// QuotaWindowObservation 保存供应商解析出的配额窗口，provider 执行健康状态规则。
+// QuotaWindowObservation converts a parsed upstream window for provider health rules.
 func QuotaWindowObservation(value *anthropicupstream.WindowLimit) *providercore.QuotaWindowObservation {
 	if value == nil {
 		return nil
@@ -49,18 +49,18 @@ func QuotaWindowObservation(value *anthropicupstream.WindowLimit) *providercore.
 	return &providercore.QuotaWindowObservation{Window: value.Window, ResetAt: value.ResetAt, FiveHourReset: value.FiveHourReset, Reason: value.Reason}
 }
 
-// SessionWindowObservation 将会话响应头转换为观测字段。
+// SessionWindowObservation extracts session status, reset time, and passive usage from headers.
 func SessionWindowObservation(headers http.Header) providercore.SessionWindowObservation {
 	return providercore.SessionWindowObservation{Status: headers.Get("anthropic-ratelimit-unified-5h-status"), Reset: headers.Get("anthropic-ratelimit-unified-5h-reset"), Passive: anthropicupstream.PassiveUsageFields(headers)}
 }
 
-// ClientRejectionObservation 按关键词和 detail.code 分类客户端拒绝错误。
+// ClientRejectionObservation classifies rejection messages and detail.code values.
 func ClientRejectionObservation(message string, body []byte) providercore.ClientRejectionObservation {
 	lower := strings.ToLower(message)
 	return providercore.ClientRejectionObservation{Message: message, OrganizationDisabled: strings.Contains(lower, "organization has been disabled"), CreditBalanceExhausted: strings.Contains(lower, "credit balance"), IdentityVerificationRequired: strings.Contains(lower, "identity verification is required"), WorkspaceDeactivated: gjson.GetBytes(body, "detail.code").String() == "deactivated_workspace"}
 }
 
-// ForbiddenObservation 解析拒绝原因、验证链接和并发限制消息。
+// ForbiddenObservation extracts rejection type, verification URL, and concurrency-limit evidence.
 func ForbiddenObservation(value *providercore.Record, message string, body []byte) providercore.ForbiddenObservation {
 	kind := antigravity.ClassifyForbiddenType(string(body))
 	url := ""
@@ -70,12 +70,12 @@ func ForbiddenObservation(value *providercore.Record, message string, body []byt
 	return providercore.ForbiddenObservation{Message: message, Body: body, HTML: upstream.IsHTMLResponse(body), Kind: kind, ValidationURL: url, ConcurrentRequestLimited: CNConcurrencyLimit403(value, message), ConcurrencyReason: "cn_concurrency_limit: " + kimi.ConcurrentRequestLimitMessage}
 }
 
-// CNConcurrencyLimit403 检查 Kimi 提供商是否返回并发限制消息。
+// CNConcurrencyLimit403 reports whether a Kimi response describes a concurrency limit.
 func CNConcurrencyLimit403(value *providercore.Record, message string) bool {
 	return value != nil && value.Platform == providercore.PlatformKimi && kimi.IsConcurrencyLimitMessage(message)
 }
 
-// LogAPIKeyHealthWarning 将 API Key 健康事件写入应用日志。
+// LogAPIKeyHealthWarning writes an API key health event to the application log.
 func LogAPIKeyHealthWarning(message string, fields ...any) {
 	attrs := make([]zap.Field, 0, len(fields)/2)
 	for i := 0; i+1 < len(fields); i += 2 {
@@ -87,7 +87,7 @@ func LogAPIKeyHealthWarning(message string, fields ...any) {
 	logging.L().Warn(message, attrs...)
 }
 
-// UnauthorizedObservation 提取供应商认证失败和令牌撤销信息。
+// UnauthorizedObservation extracts authentication failure and token revocation evidence.
 func UnauthorizedObservation(body []byte, message string) providercore.UnauthorizedObservation {
 	code := upstream.ExtractErrorCode(body)
 	return providercore.UnauthorizedObservation{Message: message, TokenRevoked: code == "token_invalidated" || code == "token_revoked", PermanentlyUnauthorized: gjson.GetBytes(body, "detail").String() == "Unauthorized"}
@@ -101,8 +101,8 @@ func (s *UpstreamHealth) CheckErrorPolicy(ctx context.Context, provider *provide
 	return s.Core.CheckErrorPolicy(ctx, provider, statusCode, responseBody, observation.EffectiveModel, provider == nil || provider.Platform != capability.PlatformAntigravity)
 }
 
-// ApplyExplicitErrorPolicy 检查并应用管理员配置的错误策略。
-// 自定义错误码命中后写入提供商错误，后续跳过内置状态码分支。
+// ApplyExplicitErrorPolicy checks and applies administrator-defined error policy.
+// A custom-code match writes the provider error and tells callers to skip built-in status handling.
 func (s *UpstreamHealth) ApplyExplicitErrorPolicy(ctx context.Context, provider *providercore.Record, observation HealthObservation) providercore.ErrorPolicyResult {
 	statusCode, responseBody := observation.Status, observation.Body
 	result := s.CheckErrorPolicy(ctx, provider, observation)
@@ -117,14 +117,14 @@ func (s *UpstreamHealth) ApplyExplicitErrorPolicy(ctx context.Context, provider 
 	return result
 }
 
-// ApplyUpstreamError 先执行配置的错误策略，非池模式下再执行平台默认处理。
+// ApplyUpstreamError applies configured policy before default handling for non-pool providers.
 func (s *UpstreamHealth) ApplyUpstreamError(ctx context.Context, provider *providercore.Record, observation HealthObservation) providercore.UpstreamErrorDecision {
 	statusCode, responseBody := observation.Status, observation.Body
-	// Team 联动熔断先于池模式、自定义错误码和临时不可调度检查。
-	// HandleWorkspaceDeactivated 会去掉 fastpath 入口的重复调用。
+	// Team workspace suspension precedes pool, custom-code, and temporary suspension checks.
+	// HandleWorkspaceDeactivated deduplicates calls from the fast path.
 	s.Team.HandleWorkspaceDeactivated(ctx, provider, statusCode == http.StatusPaymentRequired && ClientRejectionObservation("", responseBody).WorkspaceDeactivated)
 	policy := providercore.ErrorPolicyNone
-	// 池模式和自定义错误码先执行配置策略，其余提供商进入平台默认处理。
+	// Pool and custom-code providers evaluate policy before platform defaults.
 	if provider != nil && (provider.IsPoolMode() || provider.IsCustomErrorCodesEnabled()) {
 		policy = s.ApplyExplicitErrorPolicy(ctx, provider, observation)
 	}
@@ -140,19 +140,19 @@ func (s *UpstreamHealth) ApplyUpstreamError(ctx context.Context, provider *provi
 	return decision
 }
 
-// HandleDefault 在非池模式且配置策略未命中时，更新平台默认的提供商状态。
+// HandleDefault applies platform health rules after callers resolve pool and custom-code policy.
 func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providercore.Record, observation HealthObservation) (shouldDisable bool) {
 	statusCode, headers, responseBody := observation.Status, observation.Headers, observation.Body
 	if provider == nil {
 		return false
 	}
-	// Jev 的限流和过载响应按 Retry-After 设置提供商冷却。
+	// Jev rate-limit and overload responses use Retry-After for cooldown.
 	if provider.Platform == capability.PlatformJev && (statusCode == http.StatusTooManyRequests || statusCode == 529) {
 		if reset := jev.RetryAfterResetTime(headers, time.Now()); reset != nil {
 			s.Core.ApplyObservedRateLimit(ctx, provider, *reset)
 			return false
 		}
-		// 没有重试时间的 529 先检查管理员配置的临时暂停规则。
+		// A 529 without Retry-After can match an administrator's temporary suspension rule.
 		if statusCode == 529 && s.Core.TryTempUnschedulable(ctx, provider, statusCode, responseBody, true, observation.EffectiveModel) {
 			return true
 		}
@@ -167,10 +167,10 @@ func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providerco
 		return true
 	}
 
-	// Anthropic 官方 5h/7d 窗口耗尽先于本地临时不可调度规则处理。
-	// 否则宽泛的 429 关键字规则可能把多小时/多天冷却误缩短成本地暂停时间。
+	// Apply exhausted Anthropic 5h/7d windows before local temporary suspension rules.
+	// A broad 429 keyword rule could otherwise shorten an hours- or days-long cooldown.
 	if statusCode == http.StatusTooManyRequests && provider.Platform == capability.PlatformAnthropic {
-		// 7d_oi 是 Fable 模型专属的 7d 窗口：只标记模型级限流，提供商对其他模型仍可调度。
+		// The Fable-only 7d_oi window pauses its models while other models remain schedulable.
 		fableLimited := s.observeFableWindow(ctx, provider, headers)
 		if s.observeExhaustedWindow(ctx, provider, headers) {
 			return false
@@ -180,12 +180,12 @@ func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providerco
 		}
 	}
 
-	// 529 表示全局上游过载，先记录全局过载冷却。
+	// A 529 denotes upstream-wide overload and records the global cooldown.
 	if statusCode == 529 {
 		s.Core.ApplyOverload(ctx, provider)
 		return false
 	}
-	// 非池提供商优先处理具体状态，401 进入认证刷新和默认冷却流程。
+	// Let 401 reach authentication recovery and its default cooldown before temporary rules.
 	if statusCode != http.StatusUnauthorized && s.Core.TryTempUnschedulable(ctx, provider, statusCode, responseBody, provider.Platform != capability.PlatformAntigravity, observation.EffectiveModel) {
 		return true
 	}
@@ -227,7 +227,7 @@ func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providerco
 		shouldDisable = false
 	default:
 		if statusCode >= 500 {
-			// 未启用自定义错误码时：仅记录 5xx 错误
+			// Unhandled 5xx responses are logged without disabling the provider.
 			slog.Warn("provider_upstream_error", "provider_id", provider.ID, "status_code", statusCode)
 			shouldDisable = false
 		}

@@ -18,7 +18,7 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestExtractImagesUpstreamError_IncompleteIsRetryable 验证 response.incomplete（生成超时/截断）应被识别为可重试的 502 上游错误，触发 failover。
+// TestExtractImagesUpstreamError_IncompleteIsRetryable checks that truncated generation yields a retryable 502.
 func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
 		"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
@@ -41,7 +41,7 @@ func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	}
 }
 
-// TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable 验证 incomplete 因 content_filter → 400，重试无意义，不应触发 failover。
+// TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable checks that content filtering yields a terminal 400.
 func TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable(t *testing.T) {
 	body := "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n"
 	got := upstreamopenai.ExtractOpenAIImagesUpstreamError([]byte(body))
@@ -57,7 +57,7 @@ func TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable(t *testi
 	}
 }
 
-// TestExtractImagesUpstreamError_ErrorAndFailedUnchanged 验证旧行为不变：error / response.failed 仍按原逻辑识别。
+// TestExtractImagesUpstreamError_ErrorAndFailedUnchanged checks that a moderation error yields 400.
 func TestExtractImagesUpstreamError_ErrorAndFailedUnchanged(t *testing.T) {
 	errBody := "data: {\"type\":\"error\",\"error\":{\"type\":\"image_generation_user_error\",\"code\":\"moderation_blocked\",\"message\":\"rejected\"}}\n\n"
 	if got := upstreamopenai.ExtractOpenAIImagesUpstreamError([]byte(errBody)); got == nil || got.StatusCode != http.StatusBadRequest {
@@ -65,7 +65,7 @@ func TestExtractImagesUpstreamError_ErrorAndFailedUnchanged(t *testing.T) {
 	}
 }
 
-// TestSummarizeNoOutputBody_ExtractsDiagnostics 验证上游既无图、又无任何可识别事件时，摘要函数应提取诊断信息。
+// TestSummarizeNoOutputBody_ExtractsDiagnostics checks diagnostics for a stream that ends before producing an image.
 func TestSummarizeNoOutputBody_ExtractsDiagnostics(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n" +
 		"data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\"}}\n\n"
@@ -81,7 +81,7 @@ func TestSummarizeNoOutputBody_ExtractsDiagnostics(t *testing.T) {
 	}
 }
 
-// TestSummarizeNoOutputBody_IncompleteReasonAndTruncation 验证摘要应能抓到 incomplete_reason 并对超长 body 截断。
+// TestSummarizeNoOutputBody_IncompleteReasonAndTruncation checks the incomplete reason and oversized-body marker.
 func TestSummarizeNoOutputBody_IncompleteReasonAndTruncation(t *testing.T) {
 	long := strings.Repeat("x", 2000)
 	body := "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"junk\":\"" + long + "\"}}\n\n"
@@ -94,10 +94,11 @@ func TestSummarizeNoOutputBody_IncompleteReasonAndTruncation(t *testing.T) {
 	}
 }
 
-// TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry 验证上游 completed 却未产图时返回 UpstreamFailoverError，优先重试同一提供商。
-// 偶发路由到 mini 模型可能产生这种响应。
+// TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry checks that empty completion permits a
+// same-provider retry.
+// The fixture reports a mini model and no generated images.
 func TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry(t *testing.T) {
-	// 上游 SSE 返回 response.completed，output 为空。
+	// The completed event has an empty output array.
 	upstreamSSE := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_x\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini-2026-03-17\",\"output\":[]}}\n\n" +
 		"event: response.completed\n" +
@@ -131,7 +132,7 @@ func TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry(t *te
 	}
 }
 
-// TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry 验证模型输出内容拒绝时返回 400 content_policy，并结束重试。
+// TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry checks that a content refusal ends retries with 400.
 func TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry(t *testing.T) {
 	upstreamSSE := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini\",\"output\":[]}}\n\n" +
@@ -251,7 +252,7 @@ func TestImagesOAuthStreaming_SplitSafetyRefusalReturns400(t *testing.T) {
 	}
 }
 
-// TestExtractModelRefusal_EmptyWhenNoText 验证 extractOpenAIImagesModelRefusal：真空响应（无文字）返回空串。
+// TestExtractModelRefusal_EmptyWhenNoText checks that a response with no text has no refusal message.
 func TestExtractModelRefusal_EmptyWhenNoText(t *testing.T) {
 	body := "data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"tool_usage\":{\"image_gen\":{\"output_tokens\":0}}}}\n\n"
 	if refusal := upstreamopenai.ExtractOpenAIImagesModelRefusal([]byte(body)); refusal != "" {

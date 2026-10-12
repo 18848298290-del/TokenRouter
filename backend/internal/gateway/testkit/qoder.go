@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderClient 记录原始请求和响应夹具，生产执行仍由 upstream.Executor 完成。
+// QoderClient captures requests and supplies response fixtures to the production executor.
 type QoderClient struct {
 	Request  *http.Request
 	Requests []*http.Request
@@ -22,7 +22,7 @@ type QoderClient struct {
 	Headers  map[string]string
 }
 
-// QoderFixture 保存测试依赖，阻塞流测试在执行前替换客户端。
+// QoderFixture holds runtime dependencies; blocking-stream tests can replace Client before execution.
 type QoderFixture struct {
 	Runtime *gatewayprovider.QoderRuntime
 	Tokens  *provideradapter.QoderTokenProvider
@@ -79,7 +79,7 @@ func (c qoderFixtureClient) StreamRequestContext(ctx context.Context, session *q
 	return c.fixture.Client.StreamRequestContext(ctx, session, path, body, headers)
 }
 
-// NewQoderFixture 为测试构造 Qoder 运行时。
+// NewQoderFixture builds a Qoder runtime using the supplied test dependencies.
 func NewQoderFixture(tokens *provideradapter.QoderTokenProvider, client qoder.StreamClient, conversations *qoder.QoderConversationStore) *QoderFixture {
 	f := &QoderFixture{Tokens: tokens, Client: client}
 	f.Runtime = gatewayprovider.NewQoderRuntime(gatewayprovider.QoderRuntimeOptions{Tokens: tokens, Client: qoderFixtureClient{fixture: f}, Conversations: conversations})

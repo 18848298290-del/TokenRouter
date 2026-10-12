@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResponseToolsSessionUpdateKeepsActiveTurn 验证会话下一轮的名称发布与当前 turn 输出并行，当前映射和调用方输入保持独立。
+// TestResponseToolsSessionUpdateKeepsActiveTurn checks concurrent session publication and independent active/caller mappings.
 func TestResponseToolsSessionUpdateKeepsActiveTurn(t *testing.T) {
 	state := &ResponseTools{}
 	input := map[string]string{"alias": "active"}

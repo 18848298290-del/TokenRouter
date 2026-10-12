@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCompletionCaptureKeepsTurnTimeAndIndependentInputs 检查提交时捕获的输入是否独立于后续请求对象、档位和价卡的修改。
+// TestCompletionCaptureKeepsTurnTimeAndIndependentInputs checks isolation from later request, tier, and price-card changes.
 func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 	multiplier := 1.5
 	groupID := int64(17)
@@ -35,7 +35,7 @@ func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 		APIKey: key, User: user, Provider: target, Result: result, PricingAt: turnAt,
 		RequestBody: []byte(`{"reasoning":{"effort":"high"}}`), Subscription: &billing.UserSubscription{ID: 5},
 	}
-	// 捕获之前的合法输入变化应生效，不能在构造输入时提前拍快照。
+	// Changes made before capture must be included in the snapshot.
 	user.Balance = 10
 	out := CaptureOpenAI(ctx, in)
 	user.Balance = 90
@@ -57,7 +57,8 @@ func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 	require.Equal(t, "high", *out.RequestedReasoningEffort)
 }
 
-// TestCompletionCapturePreservesQuotaCapabilityPresence 验证接口包含带类型的 nil 时仍表示已提供能力，不能按底层指针是否为空判断。
+// TestCompletionCapturePreservesQuotaCapabilityPresence checks that an interface containing a typed nil still denotes
+// a supplied capability.
 func TestCompletionCapturePreservesQuotaCapabilityPresence(t *testing.T) {
 	var absent QuotaUpdater
 	var typedNil *apikey.APIKeyService
@@ -73,7 +74,7 @@ func TestCompletionCapturePreservesQuotaCapabilityPresence(t *testing.T) {
 	}
 }
 
-// TestCompletionCyberInputFreezesLegacyProjection 检查提交快照与用户、提供商、Key 和订阅对象之间的隔离。
+// TestCompletionCyberInputFreezesLegacyProjection checks snapshot isolation from user, provider, Key, and subscription inputs.
 func TestCompletionCyberInputFreezesLegacyProjection(t *testing.T) {
 	group := int64(7)
 	rate := 1.25

@@ -16,10 +16,10 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// providerRefreshRegistrations 按平台登记刷新执行器，每个平台登记一次。
+// providerRefreshRegistrations contains one refresh executor registration per platform.
 type providerRefreshRegistrations []provider.RefreshRegistration
 
-// provideManagedRefresh 为提供商凭据刷新绑定业务用例和共享协调器。
+// provideManagedRefresh binds manual credential exchange to the shared refresh coordinator.
 func provideManagedRefresh(admin *provider.Admin, privacy *provider.PrivacyService, coordinator *provider.OAuthRefreshAPI, transport httpclient.UpstreamTransport, profiles *egressprovider.TLSProfiles, claude *provider.ClaudeAuthorization, openai *provider.OpenAIAuthorization, gemini *provider.GeminiAuthorization, ag *provider.AntigravityAuthorization, grok provider.GrokRefreshTokenService, invalidator provider.TokenCacheInvalidator) *provider.ManagedRefreshService {
 	qoder := provideradapter.NewQoderTokenRefresher(provideradapter.QoderRefreshOptions{Transport: transport, Profiles: profiles})
 	source := &provider.ManualCredentialExchange{Claude: claude, OpenAI: openai, Gemini: gemini, Antigravity: ag, Grok: grok, Qoder: qoder.Refresh}
@@ -36,7 +36,7 @@ func provideManagedRefresh(admin *provider.Admin, privacy *provider.PrivacyServi
 	return provider.NewManagedRefreshService(provider.ManagedRefreshOptions{Store: admin, Privacy: privacy, Coordinate: coordinator.WithManagedRefresh, CacheKey: provideradapter.ManagedRefreshCacheKey, Exchange: exchange, Invalidate: invalidate, Log: log.Printf, Warn: slog.Warn, Error: slog.Error})
 }
 
-// provideProviderRefresh 为各平台绑定共享的刷新协调器和提供商条件写入实现。
+// provideProviderRefresh binds conditional provider writes to the shared refresh coordinator.
 func provideProviderRefresh(store *providerpostgres.ProviderStore, cache provider.AccessTokenCache, manager *lifecycle.Manager) *provider.OAuthRefreshAPI {
 	coordinator := provider.NewOAuthRefreshAPI(store, cache, provider.RefreshOptions{
 		Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error,
@@ -70,7 +70,7 @@ func provideRefreshPlatforms(claude *provider.ClaudeAuthorization, openai *provi
 	}
 }
 
-// provideBackgroundRefresh 构造共享的刷新实例，维护任务由生命周期管理器启动。
+// provideBackgroundRefresh creates the shared refresh service; lifecycle startup runs its maintenance tasks.
 func provideBackgroundRefresh(store *providerpostgres.ProviderStore, refresh *provider.OAuthRefreshAPI, cfg *config.Config, registrations providerRefreshRegistrations, post *provider.RefreshPostActions, observer provider.RefreshFailureObserver) *provider.BackgroundRefreshService {
 	v := cfg.TokenRefresh
 	tuning := &provider.RefreshTuning{

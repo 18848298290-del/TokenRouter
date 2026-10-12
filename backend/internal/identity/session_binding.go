@@ -9,11 +9,11 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ErrSessionBindingMismatch 会话绑定的 IP/UA 发生变化，会话已失效。
+// ErrSessionBindingMismatch rejects a request whose fingerprint differs from its session binding.
 var ErrSessionBindingMismatch = infraerrors.Unauthorized("SESSION_BINDING_MISMATCH", "session network fingerprint changed, please login again")
 
-// SessionBinding 会话指纹：登录时的客户端 IP 与 User-Agent。
-// 会话绑定开启时，两者任一变化即导致会话失效（防止凭证被盗后异地重放）。
+// SessionBinding contains the client IP and User-Agent captured by HTTP middleware.
+// Authentication compares its hash when session binding is enabled and a binding is present.
 type SessionBinding struct {
 	IP        string
 	UserAgent string
@@ -21,7 +21,7 @@ type SessionBinding struct {
 
 type SessionBindingCtxKey struct{}
 
-// Hash 计算绑定指纹哈希（IP 与 UA 合并，任一变化哈希即变化）。
+// Hash returns a truncated SHA-256 digest of the trimmed IP and User-Agent, or empty for an absent binding.
 func (b *SessionBinding) Hash() string {
 	if b == nil {
 		return ""
@@ -35,7 +35,7 @@ func (b *SessionBinding) Hash() string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// WithSessionBinding 将会话指纹注入 context（由 HTTP 入口中间件调用）。
+// WithSessionBinding adds the HTTP client fingerprint to ctx when binding is non-nil.
 func WithSessionBinding(ctx context.Context, binding *SessionBinding) context.Context {
 	if binding == nil {
 		return ctx
@@ -43,7 +43,7 @@ func WithSessionBinding(ctx context.Context, binding *SessionBinding) context.Co
 	return context.WithValue(ctx, SessionBindingCtxKey{}, binding)
 }
 
-// SessionBindingFromContext 从 context 提取会话指纹；不存在时返回 nil。
+// SessionBindingFromContext returns the client fingerprint or nil when absent.
 func SessionBindingFromContext(ctx context.Context) *SessionBinding {
 	if ctx == nil {
 		return nil
@@ -52,7 +52,7 @@ func SessionBindingFromContext(ctx context.Context) *SessionBinding {
 	return binding
 }
 
-// SessionBindingHashFromContext 提取指纹哈希，缺失时返回空串。
+// SessionBindingHashFromContext returns the fingerprint hash or an empty string when absent.
 func SessionBindingHashFromContext(ctx context.Context) string {
 	return SessionBindingFromContext(ctx).Hash()
 }

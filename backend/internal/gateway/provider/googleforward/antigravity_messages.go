@@ -23,17 +23,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Forward 转发 Claude 协议请求（Claude → Gemini 转换）
+// Forward converts Claude requests to Gemini and executes them through Antigravity.
 //
-// 限流处理流程:
-//
-//	请求 → antigravityRetryLoop → 预检查(remaining>0? → 切换提供商) → 发送上游
-//	  ├─ 成功 → 正常返回
-//	  └─ 429/503 → handleSmartRetry
-//	      ├─ retryDelay >= 7s → 设置模型限流 + 清除粘性绑定 → 切换提供商
-//	      └─ retryDelay <  7s → 等待后重试 1 次
-//	          ├─ 成功 → 正常返回
-//	          └─ 失败 → 设置模型限流 + 清除粘性绑定 → 切换提供商
+// The shared retry adapter handles provider cooldowns and bounded retries.
+// Provider-switch signals become UpstreamFailoverError for the caller.
 //
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_native_execution
 func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, body []byte, isStickySession bool) (*forwardcore.MessagesResult, error) {
@@ -44,7 +37,6 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	sessionID := c.GetHeader("session_id")
 	prefix := logPrefix(sessionID, provider.Record.Name)
 
-	// 解析 Claude 请求
 	var claudeReq protocolanthropic.ClaudeRequest
 	if err := json.Unmarshal(body, &claudeReq); err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", "Invalid request body")
@@ -54,7 +46,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	}
 
 	originalModel := claudeReq.Model
-	// thinking 状态必须参与最终模型解析，确保调度限制与真正转发的模型一致。
+	// Include thinking in final-model resolution so eligibility and execution use the same model.
 	thinkingEnabled := claudeReq.Thinking != nil && (claudeReq.Thinking.Type == "enabled" || claudeReq.Thinking.Type == "adaptive")
 	modelCtx := requeststate.WithThinkingEnabled(ctx, thinkingEnabled)
 	mappedModel := gatewayprovider.ExecutionModelPolicy(provider).FinalAntigravityModel(modelCtx, claudeReq.Model)
@@ -64,7 +56,6 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	}
 	billingModel := mappedModel
 
-	// 获取 access_token
 	if s.Tokens == nil {
 		return nil, c.ClaudeError(http.StatusBadGateway, "api_error", "Antigravity token provider not configured")
 	}
@@ -83,14 +74,12 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		return nil, err
 	}
 
-	// 代理 URL
 	proxyURL := ""
 	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
 		proxyURL = provider.Record.Proxy.URL()
 	}
 
-	// 获取转换选项
-	// Antigravity 上游要求必须包含身份提示词，否则会返回 429
+	// Antigravity requests include the configured identity prompt.
 	transformOpts := s.getClaudeTransformOptions(ctx)
 	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
 	if attributesErr != nil {
@@ -102,19 +91,17 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
 	transformOpts.ThinkingResolved = true
-	transformOpts.EnableIdentityPatch = true // 强制启用，Antigravity 上游必需
+	transformOpts.EnableIdentityPatch = true // Required by the Antigravity request format.
 
-	// 转换 Claude 请求为 Gemini 格式
 	geminiBody, err := antigravity.TransformClaudeToGeminiWithOptions(&claudeReq, projectID, mappedModel, transformOpts)
 	if err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", "Invalid request")
 	}
 
-	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
-	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后转换返回
+	// Use the upstream streaming endpoint for both client response modes.
+	// Non-streaming clients receive the collected and converted stream.
 	action := "streamGenerateContent"
 
-	// 执行带重试的请求
 	retry, params := s.antigravityRetryAdapter(antigravityRetryLoopParams{
 		ctx: ctx,
 
@@ -140,11 +127,11 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 
 		requestedModel: originalModel,
 
-		isStickySession: isStickySession, // Forward 由上层判断粘性会话
+		isStickySession: isStickySession, // The caller determines whether this request is sticky.
 
-		groupID: 0, // Forward 方法没有 groupID，由上层处理粘性会话清除
+		groupID: 0, // The caller clears sticky state because this entry has no group ID.
 
-		sessionHash: "", // Forward 方法没有 sessionHash，由上层处理粘性会话清除
+		sessionHash: "", // The caller owns the session binding.
 
 	})
 	target := &antigravity.Target{
@@ -158,7 +145,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	target.Exchange = func(context.Context) (*http.Response, error) {
 		result, err := retry.AntigravityRetryLoop(params)
 		if err != nil {
-			// 检查是否是提供商切换信号，转换为 UpstreamFailoverError 让 Handler 切换提供商
+			// Convert the switch signal so the handler can select another provider.
 			if switchErr, ok := antigravity.IsAntigravityProviderSwitchError(err); ok {
 				return nil, &forwardcore.UpstreamFailoverError{
 					StatusCode: http.StatusServiceUnavailable,
@@ -166,7 +153,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 					ForceCacheBilling: switchErr.IsStickySession,
 				}
 			}
-			// 区分客户端取消和真正的上游失败，返回更准确的错误消息
+			// Report client cancellation separately from upstream failure.
 			if c.RequestContext().Err() != nil {
 				return nil, c.ClaudeError(http.StatusBadGateway, "client_disconnected", "Client disconnected before upstream response")
 			}
@@ -212,7 +199,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		}
 		respBody := s.readUpstreamErrorBody(resp)
 		if resp.StatusCode >= 400 {
-			// 检测 prompt too long 错误，返回特殊错误类型供上层 fallback
+			// Return a typed prompt-length error for the caller's fallback path.
 			if resp.StatusCode == http.StatusBadRequest && antigravity.IsPromptTooLongError(respBody) {
 				upstreamMsg := strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody))
 				upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
@@ -249,7 +236,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 
 			s.handleUpstreamError(ctx, prefix, provider, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", isStickySession)
 
-			// 精确匹配服务端配置类 400 错误，触发同提供商重试 + failover
+			// Recognized project configuration errors allow same-provider retry and failover.
 			if resp.StatusCode == http.StatusBadRequest {
 				msg := strings.ToLower(strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody)))
 				if upstream.IsGoogleProjectConfigError(msg) {

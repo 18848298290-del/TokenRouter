@@ -2,14 +2,14 @@ package identity
 
 import "strings"
 
-// PublicAuthSettings 包含可向浏览器公开的登录开关和认证参数。
+// PublicAuthSettings contains login switches and authentication parameters safe for browsers.
 type PublicAuthSettings struct {
 	LinuxDo, DingTalk, OIDC, WeChat, WeChatOpen, WeChatMP, WeChatMobile, GitHub, Google, GoogleOneTap bool
 	OIDCName, GoogleClientID, TencentRegion, AliyunRegion                                             string
 	RegistrationSuffixes                                                                              []string
 }
 
-// PublicSettingsFromValues 使用已批量取得的设置，不额外查询或执行 provider 发现。
+// PublicSettingsFromValues derives public settings from a supplied batch of values without I/O.
 func (s *OAuthSettings) PublicSettingsFromValues(settings map[string]string) PublicAuthSettings {
 	linuxDoEnabled := false
 	if raw, ok := settings[SettingKeyLinuxDoConnectEnabled]; ok {

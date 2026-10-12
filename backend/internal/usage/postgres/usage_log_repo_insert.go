@@ -32,7 +32,7 @@ const (
 	usageLogBestEffortBatchQueueCap = 32768
 	usageLogBestEffortRecentTTL     = 30 * time.Second
 
-	// usageLogInsertColumns 与参数和类型列表按位置对应。
+	// usageLogInsertColumns matches the positional argument and type lists.
 	usageLogInsertColumns = `
 			user_id,
 			billing_user_id,
@@ -118,13 +118,14 @@ const (
 	`
 )
 
-// usageLogInsertArgTypes 必须与以下位置保持相同顺序：
+// usageLogInsertArgTypes follows the same order as:
 //  1. prepareUsageLogInsert().args
 //  2. usageLogInsertColumns
-//  3. usageLogInsertSQL 占位符位置
-//  4. scanUsageLog 通过 usageLogSelectColumns 读取的列顺序
+//  3. usageLogInsertSQL placeholders
 //
-// 新增 usage_logs 列时必须同步更新以上所有调用点。
+// The SELECT columns and scanUsageLog must also agree on the fields they read.
+//
+// Update these lists together when adding usage_logs columns.
 var usageLogInsertArgTypes = [...]string{
 	"bigint",      // user_id
 	"bigint",      // billing_user_id
@@ -145,8 +146,8 @@ var usageLogInsertArgTypes = [...]string{
 	"integer",     // cache_creation_1h_tokens
 	"integer",     // image_output_tokens
 	"numeric",     // image_output_cost
-	"integer",     // 图片输入 token
-	"numeric",     // 图片输入成本
+	"integer",     // image_input_tokens
+	"numeric",     // image_input_cost
 	"numeric",     // input_cost
 	"numeric",     // output_cost
 	"numeric",     // cache_creation_cost
@@ -168,13 +169,13 @@ var usageLogInsertArgTypes = [...]string{
 	"text",        // ip_address
 	"integer",     // image_count
 	"text",        // image_size
-	"text",        // 图片输入尺寸
-	"text",        // 图片输出尺寸
-	"text",        // 图片尺寸来源
-	"jsonb",       // 图片尺寸明细
-	"integer",     // 视频数量
-	"text",        // 视频分辨率
-	"integer",     // 视频时长（秒）
+	"text",        // image_input_size
+	"text",        // image_output_size
+	"text",        // image_size_source
+	"jsonb",       // image_size_breakdown
+	"integer",     // video_count
+	"text",        // video_resolution
+	"integer",     // video_duration_seconds
 	"text",        // service_tier
 	"text",        // reasoning_effort
 	"text",        // inbound_endpoint
@@ -191,7 +192,7 @@ var usageLogInsertArgTypes = [...]string{
 	"timestamptz", // created_at
 	"text",        // requested_reasoning_effort
 	"boolean",     // native_compaction_v2
-	"text",        // 实际执行平台快照
+	"text",        // execution platform snapshot
 	"text",        // upstream_response_model
 	"boolean",     // upstream_model_mismatch
 	"text",        // billing_key
@@ -293,9 +294,8 @@ func (r *Store) CreateBestEffort(ctx context.Context, log *usage.UsageLog) error
 		}
 	}
 
-	// 队列满时等待批处理器腾出空间后入队。
-	// 立即丢弃会造成“已扣费但无 usage_log”的永久数据缺口（issue #3656）；
-	// 阻塞上限由调用方 ctx 期限约束，超时后由上层同步兜底。
+	// Wait for queue space so a burst does not leave charged requests without usage logs (issue #3656).
+	// The caller's context bounds the wait; a dropped result lets the caller attempt a synchronous write.
 	select {
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
@@ -362,8 +362,8 @@ func (r *Store) createBatched(ctx context.Context, log *usage.UsageLog) (bool, e
 		resultCh: make(chan usageLogCreateResult, 1),
 	}
 
-	// 同步补写在队列满时等待可用空间，
-	// 立即失败会让日志永久丢失；阻塞上限由调用方 ctx 期限约束。
+	// Wait for queue space so a full queue does not permanently lose the log.
+	// The caller's context bounds the wait.
 	select {
 	case r.createBatchCh <- req:
 	case <-ctx.Done():
@@ -392,7 +392,7 @@ func (r *Store) ensureCreateBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// nil 检查必须在 Once 内部：在外层做无同步快路径读会与 Once 内的写构成数据竞争。
+	// Keep the nil check inside Once; an unsynchronized outer read would race with channel initialization.
 	r.createBatchOnce.Do(func() {
 		if r.createBatchCh == nil {
 			r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
@@ -405,7 +405,7 @@ func (r *Store) ensureBestEffortBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// 同 ensureCreateBatcher：nil 检查放在 Once 内部以避免数据竞争。
+	// Keep the nil check inside Once to synchronize it with channel initialization.
 	r.bestEffortBatchOnce.Do(func() {
 		if r.bestEffortBatchCh == nil {
 			r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
@@ -1032,7 +1032,7 @@ func (r *Store) bestEffortRecentKey(requestID string, apiKeyID int64) (string, b
 	return usageLogBatchKey(requestID, apiKeyID), true
 }
 
-// usagePlatformSnapshot 不从可变的提供商或分组关系反查历史归属。
+// usagePlatformSnapshot trims the recorded platform and uses unknown when it is absent.
 func usagePlatformSnapshot(platform string) string {
 	if value := strings.TrimSpace(platform); value != "" {
 		return value
@@ -1040,7 +1040,7 @@ func usagePlatformSnapshot(platform string) string {
 	return "unknown"
 }
 
-// nullStringValue 把缺失的计费键写为 SQL NULL，供历史去重表达式回退。
+// nullStringValue writes missing billing keys as SQL NULL so deduplication can use the historical request ID.
 func nullStringValue(value string) any {
 	if strings.TrimSpace(value) == "" {
 		return nil

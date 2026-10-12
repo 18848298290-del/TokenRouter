@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// NormalizeResponsesLiteForProvider 根据提供商凭据类型规范化 Lite 请求。
+// NormalizeResponsesLiteForProvider normalizes a Lite request for the provider's credential type.
 func NormalizeResponsesLiteForProvider(value *providercore.Record, body []byte) ([]byte, bool, error) {
 	if value == nil || value.Platform != capability.PlatformOpenAI {
 		return body, false, nil
@@ -146,8 +146,8 @@ func NormalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, provider *p
 			changed = true
 		}
 	}
-	// 前面的兼容处理可能过滤或重建 input。
-	// Remote compaction v2 的触发项在这些处理结束后放到 input 末尾。
+	// Compatibility processing may filter or rebuild input.
+	// Append the remote compaction v2 trigger after that processing.
 	if triggerBody, triggerChanged, err := openaiprotocol.NormalizeCompactionTriggerInputOrder(normalized); err != nil {
 		return body, false, fmt.Errorf("normalize websocket compaction trigger order: %w", err)
 	} else if triggerChanged {

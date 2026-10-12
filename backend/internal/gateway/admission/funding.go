@@ -13,7 +13,7 @@ const (
 	FundingSourceBalance      = "balance"
 )
 
-// FundingInput 保存付款主体、Key 和分组的计费信息。
+// FundingInput contains the payer, key billing mode, and selected group.
 type FundingInput struct {
 	Mode                    string
 	HasPayer                bool
@@ -22,15 +22,15 @@ type FundingInput struct {
 	IsComposite             bool
 }
 
-// SubscriptionReader 提供订阅查询和校验，可选服务缺失时按默认规则处理。
+// SubscriptionReader loads subscriptions and checks their usage limits.
 type SubscriptionReader interface {
 	GetUsableSubscription(context.Context, int64, ...int64) (*billing.UserSubscription, bool, error)
 	GetSubscriptionForAPIKey(context.Context, int64, int64) (*billing.UserSubscription, error)
 	ValidateAndCheckLimits(*billing.UserSubscription) (bool, error)
 }
 
-// ResolveFunding 统一解析 API Key 的结算来源。
-// auto 优先选择可用订阅，subscription 和 balance 分别使用指定的资金来源。
+// ResolveFunding resolves the API key funding source.
+// Auto mode prefers an available subscription; subscription and balance modes use the specified source.
 func ResolveFunding(ctx context.Context, input FundingInput, subscriptionService SubscriptionReader, enforce bool) (*billing.APIKeyBillingContext, error) {
 	mode := input.Mode
 	result := &billing.APIKeyBillingContext{Mode: mode, Source: FundingSourceBalance, Available: true}
@@ -76,8 +76,8 @@ func ResolveFunding(ctx context.Context, input FundingInput, subscriptionService
 			return result, nil
 		}
 		result.Subscription = subscription
-		// 受限套餐的普通 Key 必须已经解析出最终分组；复合 Key 的模型列表没有单一分组，
-		// 由 handler 逐条过滤映射。实际消费请求会在复合选组后携带 GroupID 并走同一校验。
+		// Restricted plans require the final group for ordinary keys. Composite model listings have no single group,
+		// so the handler filters each mapping. Consumption requests supply GroupID after composite selection.
 		requiresGroupCoverage := subscription.Plan != nil && len(subscription.Plan.GroupIDs) > 0 && (!input.IsComposite || groupID > 0)
 		if requiresGroupCoverage && !billing.SubscriptionAllowsGroup(subscription, groupID) {
 			if enforce {
@@ -95,7 +95,7 @@ func ResolveFunding(ctx context.Context, input FundingInput, subscriptionService
 	}
 }
 
-// ResolveFundingFromKey 从已认证的请求 Key 提取付款和权益信息。
+// ResolveFundingFromKey extracts payer and subscription information from the authenticated key.
 func ResolveFundingFromKey(ctx context.Context, key *apikey.APIKey, reader SubscriptionReader, enforce bool) (*billing.APIKeyBillingContext, error) {
 	input := FundingInput{Mode: apikey.APIKeyEffectiveBillingMode(key)}
 	if key != nil {

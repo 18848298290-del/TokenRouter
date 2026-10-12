@@ -14,7 +14,7 @@ const (
 	ThinkingHighMax
 	ThinkingLowHighMax
 
-	// FallbackMaxInputTokens 是未知或尚未纳入能力快照的 Qoder route 使用的保守输入上限。
+	// FallbackMaxInputTokens is the input limit for routes absent from the capability snapshot.
 	FallbackMaxInputTokens = modelcatalog.QoderFallbackInputLimit
 )
 
@@ -27,17 +27,17 @@ var (
 	cnContextCapabilities      = qoderContextCapabilities("cn")
 )
 
-// ThinkingCapability 描述 Qoder 模型可由客户端调整的思考能力。
-// 能力快照来自 Qoder 国际版和国内版 1.24.2；更新模型列表时必须同步核对对应站点能力表。
+// ThinkingCapability describes the thinking controls available to clients.
+// The snapshot follows Qoder Global and CN 1.24.2; model updates require checking both site tables.
 type ThinkingCapability uint8
 
-// ContextCapability 描述 Qoder route 的最高输入上限以及是否支持运行时上下文档位。
+// ContextCapability holds a route input limit and whether runtime context selection is supported.
 type ContextCapability struct {
 	MaxInputTokens    int
 	RuntimeSelectable bool
 }
 
-// AuthInfo 保存从本地 Qoder 认证存储解密出的用户信息。
+// AuthInfo holds user data decrypted from local Qoder authentication storage.
 type AuthInfo struct {
 	UID                    string `json:"uid"`
 	Name                   string `json:"name"`
@@ -57,7 +57,7 @@ type AuthInfo struct {
 	OrganizationName       string `json:"organization_name"`
 }
 
-// NormalizeModelForWhitelist 将已知别名转换成模型白名单使用的路由键。
+// NormalizeModelForWhitelist resolves known aliases to route keys for whitelist checks.
 func NormalizeModelForWhitelist(model string) string {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
@@ -69,7 +69,7 @@ func NormalizeModelForWhitelist(model string) string {
 	return trimmed
 }
 
-// AliasesForSite 返回指定站点公开 alias 到内部 route key 的副本。
+// AliasesForSite returns a copy of the site public-alias-to-route map.
 func AliasesForSite(site Site) map[string]string {
 	aliases := globalAliases
 	if site == SiteCN {
@@ -80,7 +80,7 @@ func AliasesForSite(site Site) map[string]string {
 	return out
 }
 
-// AliasForSite 解析指定站点的公开 alias。
+// AliasForSite resolves a public alias for the site.
 func AliasForSite(site Site, model string) (string, bool) {
 	aliases := globalAliases
 	if site == SiteCN {
@@ -90,9 +90,9 @@ func AliasForSite(site Site, model string) (string, bool) {
 	return route, ok
 }
 
-// ThinkingCapabilityForSite 按站点和最终路由查询可调思考能力。
-// 公开 alias 会先解析为 route key；未知路由以及不可调模型均不主动透传。
-// 空站点按国际站能力查询。
+// ThinkingCapabilityForSite resolves aliases and returns the route thinking controls.
+// Unknown routes and models without adjustable thinking return ThinkingUnsupported.
+// An empty site selects the global table.
 func ThinkingCapabilityForSite(site Site, model string) ThinkingCapability {
 	var capabilities map[string]ThinkingCapability
 	switch site {
@@ -110,8 +110,8 @@ func ThinkingCapabilityForSite(site Site, model string) ThinkingCapability {
 	return capabilities[model]
 }
 
-// ContextCapabilityForSite 按站点和最终路由返回最高上下文能力。
-// 公开 alias 会先解析为 route key；空站点按国际站处理，未知 route 回退 200K 且不选择运行时档位。
+// ContextCapabilityForSite returns the highest input capability after resolving aliases.
+// An empty site means global. Unknown routes use the 200K limit with no runtime selection.
 func ContextCapabilityForSite(site Site, model string) ContextCapability {
 	var capabilities map[string]ContextCapability
 	switch site {
@@ -133,8 +133,8 @@ func ContextCapabilityForSite(site Site, model string) ContextCapability {
 	return ContextCapability{MaxInputTokens: FallbackMaxInputTokens}
 }
 
-// ModelCompatibleWithSite 判断已知 alias 或 route key 是否能由指定站点处理。
-// 未知 raw key 保持透传，因此返回 true。
+// ModelCompatibleWithSite reports whether the site accepts a known alias or route key.
+// Unknown raw keys return true for passthrough.
 func ModelCompatibleWithSite(site Site, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if _, ok := AliasForSite(site, model); ok {
@@ -171,7 +171,7 @@ func isKnownRouteKey(model string) bool {
 	return false
 }
 
-// DefaultRequestModelIDsForSite 从站点路由规则中枚举公开别名。
+// DefaultRequestModelIDsForSite returns the sorted public aliases for the site.
 func DefaultRequestModelIDsForSite(site Site) []string {
 	ids := []string{}
 	for alias := range AliasesForSite(site) {
@@ -181,14 +181,14 @@ func DefaultRequestModelIDsForSite(site Site) []string {
 	return ids
 }
 
-// DefaultRequestModelIDs 返回两个站点的路由别名并集。
+// DefaultRequestModelIDs returns the sorted union of both sites public aliases.
 func DefaultRequestModelIDs() []string {
 	ids := append(DefaultRequestModelIDsForSite(SiteGlobal), DefaultRequestModelIDsForSite(SiteCN)...)
 	slices.Sort(ids)
 	return slices.Compact(ids)
 }
 
-// ToAuthIdentity 将本地认证信息转换为用于构建 session 的 AuthIdentity。
+// ToAuthIdentity converts local authentication data into a session identity.
 func (info *AuthInfo) ToAuthIdentity() *AuthIdentity {
 	token := info.SecurityOauthToken
 	if token == "" {

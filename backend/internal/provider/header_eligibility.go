@@ -6,9 +6,9 @@ import (
 
 const credKeyHeaderOverrideEnabled = "header_override_enabled"
 
-// IsHeaderOverrideEligible 报告提供商类型是否支持请求头覆写。
-// Anthropic、OpenAI、国产供应商和 Jev 向 API Key 提供商开放 Header 覆盖，Grok 还支持 OAuth 提供商。
-// 订阅流量改发自定义转发地址时，通常需要补充中间层要求的准入头。
+// IsHeaderOverrideEligible reports whether this provider type supports request header overrides.
+// Anthropic, OpenAI, Kimi, Zhipu, DeepSeek, and Jev support API keys; Grok also supports OAuth.
+// Overrides can supply relay access headers when subscription traffic uses a custom endpoint.
 func (r *Record) IsHeaderOverrideEligible() bool {
 	if r == nil {
 		return false
@@ -23,7 +23,7 @@ func (r *Record) IsHeaderOverrideEligible() bool {
 	}
 }
 
-// IsHeaderOverrideEnabled 报告提供商是否启用了请求头覆写。
+// IsHeaderOverrideEnabled reports whether an eligible provider has enabled header overrides.
 func (r *Record) IsHeaderOverrideEnabled() bool {
 	if !r.IsHeaderOverrideEligible() || r.Credentials == nil {
 		return false
@@ -32,8 +32,8 @@ func (r *Record) IsHeaderOverrideEnabled() bool {
 	return ok && enabled
 }
 
-// HeaderOverrides 由提供商决定适用性，名称/值安全规则由 egress 唯一执行。
-// 返回的 map 是 credentials 中 Header 配置的独立副本。
+// HeaderOverrides returns an independent map of eligible overrides validated by egress.
+// It returns nil when overrides are disabled or unsupported.
 func (r *Record) HeaderOverrides() map[string]string {
 	if !r.IsHeaderOverrideEnabled() {
 		return nil

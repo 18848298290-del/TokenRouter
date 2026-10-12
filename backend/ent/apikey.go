@@ -39,17 +39,17 @@ type APIKey struct {
 	Name string `json:"name,omitempty"`
 	// GroupID holds the value of the "group_id" field.
 	GroupID *int64 `json:"group_id,omitempty"`
-	// 是否通过模型前缀在多个分组之间路由
+	// Routes across groups using model prefixes
 	IsComposite bool `json:"is_composite,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
-	// API Key 的 Fast 模式策略：follow_request、force_on 或 force_off
+	// API key Fast mode policy: follow_request, force_on, or force_off
 	FastModePolicy string `json:"fast_mode_policy,omitempty"`
-	// API Key 结算模式：auto、subscription 或 balance
+	// API key billing mode: auto, subscription, or balance
 	BillingMode string `json:"billing_mode,omitempty"`
-	// billing_mode 为 subscription 时锁定使用的用户订阅 ID
+	// User subscription ID selected when billing_mode is subscription
 	PreferredSubscriptionID *int64 `json:"preferred_subscription_id,omitempty"`
-	// API Key 自定义模型重定向规则
+	// Custom model redirect rules for this API key
 	ModelMapping map[string]string `json:"model_mapping,omitempty"`
 	// Last usage time of this API key
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -85,9 +85,9 @@ type APIKey struct {
 	Window1dStart *time.Time `json:"window_1d_start,omitempty"`
 	// Start time of the current 7d rate limit window
 	Window7dStart *time.Time `json:"window_7d_start,omitempty"`
-	// 绑定分组不可用时自动回退到同平台默认分组
+	// Falls back to the same platform's default group when the bound group is unavailable
 	FallbackWhenGroupUnavailable bool `json:"fallback_when_group_unavailable,omitempty"`
-	// 托管来源标识：creative_studio 表示创作台隐藏执行 Key，NULL 表示普通用户 Key
+	// Managing source: creative_studio for hidden execution keys; NULL for ordinary user keys
 	ManagedBy *string `json:"managed_by,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the APIKeyQuery when eager-loading is set.

@@ -38,7 +38,8 @@ func (f quotaActionsRecovery) RecoverProviderState(ctx context.Context, _ int64,
 	return f(ctx)
 }
 
-// TestOpenAIQuotaActionsOwnPostConsumptionLifecycle 验证客户端断开不取消已消费后的恢复；应用停止仍能取消并等待整个工作流。
+// TestOpenAIQuotaActionsOwnPostConsumptionLifecycle checks that recovery survives caller cancellation but
+// stops on shutdown.
 func TestOpenAIQuotaActionsOwnPostConsumptionLifecycle(t *testing.T) {
 	recoveryEntered := make(chan context.Context, 1)
 	var consumed atomic.Int32
@@ -73,7 +74,7 @@ func TestOpenAIQuotaActionsOwnPostConsumptionLifecycle(t *testing.T) {
 	require.EqualValues(t, 1, consumed.Load())
 }
 
-// TestOpenAIQuotaActionsStopCancelsRefresh 检查关闭刷新服务时会取消支持 context 的查询。
+// TestOpenAIQuotaActionsStopCancelsRefresh checks that shutdown cancels an active quota query.
 func TestOpenAIQuotaActionsStopCancelsRefresh(t *testing.T) {
 	entered := make(chan struct{})
 	source := quotaActionsSource{query: func(ctx context.Context) (*openai.OpenAIQuotaUsage, error) {

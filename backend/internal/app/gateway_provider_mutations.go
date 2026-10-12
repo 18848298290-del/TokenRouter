@@ -8,7 +8,7 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// UpdateConfiguration 将配置更新交给提供商存储，由存储处理事务、锁和资金字段保护。
+// UpdateConfiguration delegates transactions, locking, and protection of funding fields to the provider store.
 func (r *executionProviderStore) UpdateConfiguration(ctx context.Context, value *gatewayprovider.ExecutionProvider, change providercore.ConfigurationChange) error {
 	v := gatewayprovider.ExecutionRecord(value)
 	err := r.data.UpdateConfiguration(ctx, v, change)
@@ -16,12 +16,13 @@ func (r *executionProviderStore) UpdateConfiguration(ctx context.Context, value 
 	return err
 }
 
-// ApplyManagedRecoveryStep 委托提供商存储执行恢复步骤。
+// ApplyManagedRecoveryStep delegates the recovery step to the provider store.
 func (r *executionProviderStore) ApplyManagedRecoveryStep(ctx context.Context, step providercore.ManagedRecoveryStep, v providercore.ManagedRecoveryVersion) (bool, error) {
 	return r.data.ApplyManagedRecoveryStep(ctx, step, v)
 }
 
-// UpdateOAuthCredentialsIfUnchanged 委托提供商存储比较凭据身份，并在同一事务中写入凭据和 outbox。
+// UpdateOAuthCredentialsIfUnchanged delegates credential identity checks and transactional credential/outbox
+// writes to the provider store.
 func (r *executionProviderStore) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	return r.data.UpdateOAuthCredentialsIfUnchanged(ctx, version, credentials)
 }
@@ -125,9 +126,9 @@ func (r *executionProviderStore) UpdateCNUsageMonitorSnapshotCAS(
 	return r.data.UpdateCNUsageMonitorSnapshotCAS(ctx, providerID, expectedUpdatedAt, snapshot, clearExtraKey)
 }
 
-// IncrementQuotaUsed 原子递增提供商的配额用量（总/日/周三个维度）
-// 日/周额度在周期过期时自动重置为 0 再递增。
-// 支持滚动窗口（rolling）和固定时间（fixed）两种重置模式。
+// IncrementQuotaUsed delegates atomic total, daily, and weekly usage increments to the billing store.
+// Expired daily and weekly periods reset before incrementing.
+// The store supports rolling and fixed reset schedules.
 func (r *executionProviderStore) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) error {
 	return r.usage.IncrementQuotaUsed(ctx, id, amount)
 }
@@ -136,7 +137,7 @@ func (r *executionProviderStore) BulkUpdate(ctx context.Context, ids []int64, up
 	return r.data.BulkUpdate(ctx, ids, updates)
 }
 
-// UpdateUsageExtraIfUnchanged 在提供商身份匹配时，将用量观察结果写入存储。
+// UpdateUsageExtraIfUnchanged stores usage observations when provider identity still matches.
 func (r *executionProviderStore) UpdateUsageExtraIfUnchanged(ctx context.Context, v providercore.UsageObservationVersion, updates map[string]any) (bool, error) {
 	return r.data.UpdateUsageExtraIfUnchanged(ctx, v, updates)
 }
@@ -149,12 +150,12 @@ func (r *executionProviderStore) ClearUsageRateLimitIfUnchanged(ctx context.Cont
 	return r.data.ClearUsageRateLimitIfUnchanged(ctx, v)
 }
 
-// ClearUsageErrorIfUnchanged 委托提供商存储检查身份并清除用量错误。
+// ClearUsageErrorIfUnchanged delegates identity checks and usage error clearing to the provider store.
 func (r *executionProviderStore) ClearUsageErrorIfUnchanged(ctx context.Context, v providercore.UsageRecoveryVersion) (bool, error) {
 	return r.data.ClearUsageErrorIfUnchanged(ctx, v)
 }
 
-// UpdateUsageSessionWindowEndIfUnchanged 将窗口条件更新委托给提供商存储。
+// UpdateUsageSessionWindowEndIfUnchanged delegates the conditional window update to the provider store.
 func (r *executionProviderStore) UpdateUsageSessionWindowEndIfUnchanged(ctx context.Context, v providercore.UsageObservationVersion, observed *time.Time, end time.Time) (bool, error) {
 	return r.data.UpdateUsageSessionWindowEndIfUnchanged(ctx, v, observed, end)
 }

@@ -35,7 +35,7 @@ type ManagementDeleteResult struct {
 	Errors                 []ManagementBatchFailure
 }
 
-// ManagementBatch 拥有原批量部分成功、缺失提供商与受限并发规则，不启动持久后台任务。
+// ManagementBatch runs bounded administrative batches and reports per-provider failures alongside successes.
 type ManagementBatch struct {
 	creation ManagementCreationOptions
 	store    ManagementBatchStore
@@ -50,7 +50,8 @@ func NewManagementBatch(store ManagementBatchStore, managed *ManagedRefreshServi
 	return &ManagementBatch{store: store, managed: managed, creation: options}
 }
 
-// DeleteNormalized 接收 HTTP 已归一化的正数 ID，保留父子删除依赖及原五并发。
+// DeleteNormalized accepts normalized positive IDs and deletes selected parent trees with up to five concurrent
+// operations.
 func (s *ManagementBatch) DeleteNormalized(ctx context.Context, providerIDs []int64) (*ManagementDeleteResult, error) {
 	providers, err := s.store.GetProvidersByIDs(ctx, providerIDs)
 	if err != nil {
@@ -119,7 +120,7 @@ func (s *ManagementBatch) DeleteNormalized(ctx context.Context, providerIDs []in
 	var mu sync.Mutex
 	successIDs := make([]int64, 0, len(providerIDs))
 
-	// 单个提供商失败不取消其它删除任务，失败信息在结果中逐项返回。
+	// Record each deletion failure and return nil to let the remaining tasks finish.
 	for _, id := range rootIDs {
 		providerID := id
 		g.Go(func() error {
@@ -162,7 +163,7 @@ func (s *ManagementBatch) Refresh(ctx context.Context, providerIDs []int64) (*Ma
 		return nil, err
 	}
 
-	// 建立已获取提供商的 ID 集合，检测缺失的 ID
+	// Track loaded IDs so missing providers receive individual failures.
 	foundIDs := make(map[int64]bool, len(providers))
 	for _, acc := range providers {
 		if acc != nil {
@@ -179,7 +180,6 @@ func (s *ManagementBatch) Refresh(ctx context.Context, providerIDs []int64) (*Ma
 	var errors []ManagementBatchFailure
 	var warnings []ManagementBatchWarning
 
-	// 将不存在的提供商 ID 标记为失败
 	for _, id := range providerIDs {
 		if !foundIDs[id] {
 			failedCount++
@@ -190,9 +190,9 @@ func (s *ManagementBatch) Refresh(ctx context.Context, providerIDs []int64) (*Ma
 		}
 	}
 
-	// 各 goroutine 将错误写入结果集后返回 nil，使其他任务继续执行。
+	// Record failures in the result and return nil so one refresh cannot cancel the rest.
 	for _, provider := range providers {
-		acc := provider // 闭包捕获
+		acc := provider
 		if acc == nil {
 			continue
 		}
@@ -235,9 +235,9 @@ func (s *ManagementBatch) ClearError(ctx context.Context, providerIDs []int64) (
 	var successCount, failedCount int
 	var errors []ManagementBatchFailure
 
-	// 各 goroutine 将错误写入结果集后返回 nil，使其他任务继续执行。
+	// Record failures in the result and return nil so one reset cannot cancel the rest.
 	for _, id := range providerIDs {
-		providerID := id // 闭包捕获
+		providerID := id
 		g.Go(func() error {
 			_, err := s.managed.ClearError(gctx, providerID)
 			if err != nil {

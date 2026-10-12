@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AnthropicForwardErrorOutput 写出 Messages 错误，调用方管理响应提交和流状态。
+// AnthropicForwardErrorOutput writes Messages errors. Callers manage commit and stream state.
 type AnthropicForwardErrorOutput struct{ Context *gin.Context }
 
-// MessagesErrorOutput 使用共享规则实例生成 Messages 错误响应。
+// MessagesErrorOutput writes protocol errors using shared passthrough rules.
 type MessagesErrorOutput struct {
 	Rules *errorpolicy.ErrorPassthroughService
 }
@@ -29,13 +29,13 @@ func (o AnthropicForwardErrorOutput) Raw(status int, body []byte) {
 	o.Context.Data(status, "application/json", body)
 }
 
-// ConcurrencyError 统一处理并发槽位获取失败。
+// ConcurrencyError writes a slot acquisition failure in the appropriate response format.
 func (h MessagesErrorOutput) ConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	status, errType, code, message := ConcurrencyErrorResponse(err, slotType)
 	h.StreamErrorWithCode(c, status, errType, code, message, streamStarted)
 }
 
-// ExhaustedStatus 简化版本，用于没有响应体的情况。
+// ExhaustedStatus maps an upstream status when no error body is available.
 func (h MessagesErrorOutput) ExhaustedStatus(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := AnthropicUpstreamError(statusCode)
 	SetOpsUpstreamError(c, statusCode, errMsg, "")
@@ -47,16 +47,15 @@ func (h MessagesErrorOutput) StreamError(c *gin.Context, status int, errType, me
 	h.StreamErrorWithCode(c, status, errType, "", message, streamStarted)
 }
 
-// StreamErrorWithCode 旧文本输出委托 gateway/httpapi 的唯一实现。
+// StreamErrorWithCode writes an Anthropic error, accounting for stream state and unavailable model attributes.
 func (h MessagesErrorOutput) StreamErrorWithCode(c *gin.Context, status int, errType, code, message string, streamStarted bool) {
 	status, message = modelAttributeError(c, status, message)
 	WriteAnthropicStreamError(c, status, errType, code, message, streamStarted, MarkOpsStreamError)
 }
 
-// EnsureResponse 在 Forward 返回错误但尚未写响应时补写统一错误响应。
-// Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
-// 让 StreamError 通过 SSE 发协议合规的终止事件，
-// 否则下游收到的就是 silent EOF。
+// EnsureResponse writes a generic error when no final response has been committed.
+// If headers were flushed by a heartbeat, it writes an SSE terminal error
+// so the client receives a failure event instead of a silent EOF.
 func (h MessagesErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil {
 		return false
@@ -71,8 +70,8 @@ func (h MessagesErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool) 
 	return true
 }
 
-// ForwardErrorAlreadyCommunicated 判断 Forward 返回错误前是否已写出完整错误响应。
-// 非 SSE 的 JSON 错误正文写出后视为已告知客户端。流式保活 ping 或部分数据仍需要追加协议终止错误。
+// ForwardErrorAlreadyCommunicated reports whether an error accompanied new non-SSE response bytes.
+// SSE heartbeats and partial data still require a terminal error event.
 func ForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForward int, err error) bool {
 	if err == nil || c == nil || c.Writer == nil {
 		return false
@@ -88,17 +87,17 @@ func ForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForward int
 	return !strings.Contains(contentType, "text/event-stream")
 }
 
-// Error 返回 Claude API 格式的错误响应。
+// Error writes a Claude-compatible error response.
 func (h MessagesErrorOutput) Error(c *gin.Context, status int, errType, message string) {
 	h.ErrorWithCode(c, status, errType, "", message)
 }
 
-// ErrorWithCode 旧文本输出委托 gateway/httpapi 的唯一实现。
+// ErrorWithCode writes an Anthropic JSON error with an optional code.
 func (h MessagesErrorOutput) ErrorWithCode(c *gin.Context, status int, errType, code, message string) {
 	WriteAnthropicError(c, status, errType, code, message)
 }
 
-// Exhausted 将已分类的失败交给错误展示规则处理。
+// Exhausted applies error presentation rules to a classified failover failure.
 func (h MessagesErrorOutput) Exhausted(c *gin.Context, failure *forwardcore.UpstreamFailoverError, platform string, started bool) {
 	var rules ErrorRuleMatcher
 	if h.Rules != nil {
@@ -155,7 +154,7 @@ func (h MessagesErrorOutput) ChatError(c *gin.Context, status int, errType, mess
 	WriteCompatibleChatError(c, status, errType, message)
 }
 
-// ChatExhausted writes a failover-exhausted error in CC format.
+// ChatExhausted writes a failover-exhausted error in Chat Completions format.
 func (h MessagesErrorOutput) ChatExhausted(c *gin.Context, lastErr *forwardcore.UpstreamFailoverError, streamStarted bool) {
 	if streamStarted {
 		return
@@ -197,16 +196,14 @@ func (h MessagesErrorOutput) GeminiExhausted(c *gin.Context, failoverErr *forwar
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 
-	// 先检查透传规则
+	// Configured passthrough rules take precedence over default mappings.
 	if h.Rules != nil && len(responseBody) > 0 {
 		if rule := h.Rules.MatchRule(capability.PlatformGemini, statusCode, responseBody); rule != nil {
-			// 确定响应状态码
 			respCode := statusCode
 			if !rule.PassthroughCode && rule.ResponseCode != nil {
 				respCode = *rule.ResponseCode
 			}
 
-			// 确定响应消息
 			msg := upstream.ExtractErrorMessage(responseBody)
 			if !rule.PassthroughBody && rule.CustomMessage != nil {
 				msg = *rule.CustomMessage
@@ -221,11 +218,10 @@ func (h MessagesErrorOutput) GeminiExhausted(c *gin.Context, failoverErr *forwar
 		}
 	}
 
-	// 记录上游状态码，供 Ops 错误日志使用。
+	// Record the upstream status and message for Ops error logs.
 	upstreamMsg := upstream.ExtractErrorMessage(responseBody)
 	SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射
 	status, message := GeminiUpstreamError(statusCode)
 	WriteGoogleError(c, status, message)
 }

@@ -81,7 +81,7 @@ func TestRequestLoggerBoundsIncomingRequestID(t *testing.T) {
 	}
 }
 
-// TestRequestLoggerPreservesIDAcrossStreaming 覆盖上游响应头覆盖、流式提交和请求拒绝。
+// TestRequestLoggerPreservesIDAcrossStreaming covers header overwrites and streamed success and error responses.
 func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
 	for _, status := range []int{200, 401, 403, 429, 500} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -118,7 +118,7 @@ func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
 	}
 }
 
-// TestRequestLoggerUnknownPathCanBeStored 覆盖 URL 解码后含空字符的未知路由。
+// TestRequestLoggerUnknownPathCanBeStored covers an unknown route containing a URL-decoded NUL.
 func TestRequestLoggerUnknownPathCanBeStored(t *testing.T) {
 	var records []telemetry.RequestRecord
 	router := gin.New()

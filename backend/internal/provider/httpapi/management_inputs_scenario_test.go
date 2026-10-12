@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 management_write.go、management_bulk.go、management_create.go、archive.go、codex_import.go、openai_oauth.go 和 grok_oauth.go 的请求字段处理。
+// These scenarios cover request fields in management_write.go, management_bulk.go, management_create.go, archive.go, codex_import.go, openai_oauth.go, and grok_oauth.go.
 
 import (
 	"bytes"
@@ -95,7 +95,7 @@ func TestProviderAdminBoundariesDiscardDeprecatedLongContextBillingExtra(t *test
 	}
 }
 
-// TestProviderManagementRejectsRetiredGroupInputs 检查下线路由返回 404，废弃确认和默认组字段在写入前被拒绝。
+// TestProviderManagementRejectsRetiredGroupInputs checks retired routes and rejects retired confirmation and default-group fields before writes.
 func TestProviderManagementRejectsRetiredGroupInputs(t *testing.T) {
 	for _, endpoint := range []struct{ method, path, body string }{
 		{http.MethodPost, "/api/v1/admin/providers", `{"name":"mixed","platform":"openai","type":"apikey","credentials":{"api_key":"test"}}`},
@@ -126,7 +126,7 @@ func TestProviderManagementRejectsRetiredGroupInputs(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 }
 
-// TestProviderImportsRejectRetiredGroupInputs 检查 OAuth 和导入入口在创建提供商或交换凭据前拒绝废弃字段。
+// TestProviderImportsRejectRetiredGroupInputs checks that OAuth and import handlers reject retired fields before creation or token exchange.
 func TestProviderImportsRejectRetiredGroupInputs(t *testing.T) {
 	router := gin.New()
 	router.POST("/batch", (&ManagementHandler{}).BatchCreate)

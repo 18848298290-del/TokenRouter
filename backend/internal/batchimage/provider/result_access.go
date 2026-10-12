@@ -8,18 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ResultProviders 读取任务已绑定的执行提供商。
+// ResultProviders reads the execution provider bound to a job.
 type ResultProviders interface {
 	GetByID(context.Context, int64) (*provider.Record, error)
 }
 
-// ResultAccess 保留下载与清理各自的资格检查及错误顺序。
+// ResultAccess resolves providers and applies download, cleanup, or processing eligibility checks.
 type ResultAccess struct {
 	Registry  *batchimage.Registry[BatchImageProvider]
 	Providers ResultProviders
 }
 
-// boundProvider 只交付当前任务的供应商操作，凭据不进入公开结果。
+// boundProvider binds operations to a job provider and keeps credentials out of public results.
 type boundProvider struct {
 	platform BatchImageProvider
 	provider *provider.Record
@@ -81,7 +81,7 @@ func (b boundProvider) Cancel(ctx context.Context, job *batchimage.BatchImageJob
 	return b.platform.Cancel(ctx, job, provider.CloneRecord(b.provider))
 }
 
-// Process 检查执行阶段的提供商资格，读取失败时返回查询错误。
+// Process checks execution eligibility and propagates provider lookup errors.
 func (a ResultAccess) Process(ctx context.Context, job *batchimage.BatchImageJob) (batchimage.BoundProvider, error) {
 	selected, ok := a.Registry.Get(job.Platform)
 	if !ok || selected == nil {
@@ -100,7 +100,7 @@ func (a ResultAccess) Process(ctx context.Context, job *batchimage.BatchImageJob
 	return BindProvider(selected, value), nil
 }
 
-// BindProvider 固化本次任务提供商读取结果，每次供应商调用再取得独立副本。
+// BindProvider binds this provider snapshot; each operation receives an independent copy.
 func BindProvider(selected BatchImageProvider, value *provider.Record) batchimage.ExecutionProvider {
 	return boundProvider{selected, value}
 }

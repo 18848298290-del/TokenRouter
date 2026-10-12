@@ -22,19 +22,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
-// standaloneSearchExecution 将单次选择和执行结果传给独立搜索入口。
+// standaloneSearchExecution passes provider selection and execution results to standalone search.
 type standaloneSearchExecution struct {
 	selector *selection.Compatible
 	executor *gatewayprovider.GrokSearchExecutor
 }
 
-// 选中的实例保存在请求内，完成记录入队时复制一份快照。
+// standaloneSearchTarget holds the request's selected provider; completion recording receives a snapshot.
 type standaloneSearchTarget struct {
 	source   *gatewayprovider.GrokSearchExecutor
 	provider *provider.Record
 }
 
-// ProvideGatewaySearchTools 为网关请求构造共享的搜索工具编排器。
+// ProvideGatewaySearchTools constructs the shared search tool orchestrator.
 func ProvideGatewaySearchTools(settings *search.ConfigService, modelConfigs *routing.PricingConfigService) *searchtools.Emulator {
 	runtime := gatewayprovider.NewSearchTools(settings, modelConfigs)
 	return runtime
@@ -60,7 +60,7 @@ func (t standaloneSearchTarget) Execute(ctx context.Context, body []byte) ([]byt
 	return t.source.Execute(ctx, t.provider, body)
 }
 
-// ProvideGatewaySearchHTTP 构造搜索入口，共享选择、资金、审核和完成记录实例。
+// ProvideGatewaySearchHTTP shares selection, funding, moderation, and completion with the search endpoint.
 func ProvideGatewaySearchHTTP(executor *gatewayprovider.GrokSearchExecutor, selector *selection.Compatible, funding *admission.FundingAdmission, concurrency *scheduler.ConcurrencyService, keys *apikey.APIKeyService, moderator *moderation.ContentModerationService, workers *completion.UsageRecordWorkerPool, cfg *config.Config, _ *searchtools.Emulator, activity *gatewayRequestActivity, recorders GatewayCompletionRecorders) *gatewayhttp.SearchHandler {
 	interval := time.Duration(0)
 	if cfg != nil {
@@ -80,7 +80,7 @@ func ProvideGatewaySearchHTTP(executor *gatewayprovider.GrokSearchExecutor, sele
 	return result
 }
 
-// provideGrokSearchExecutor 共享传输实例，每次请求读取动态地址。
+// provideGrokSearchExecutor shares transport and reads the endpoint on each request.
 func provideGrokSearchExecutor(client *transport.Client, readers *gatewayprovider.RuntimeReaders) *gatewayprovider.GrokSearchExecutor {
 	out := &gatewayprovider.GrokSearchExecutor{Transport: client}
 	if readers != nil {

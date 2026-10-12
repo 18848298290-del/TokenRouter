@@ -105,12 +105,12 @@ func TestBuildGrokResponsesRequestAppliesHeaderOverridesLast(t *testing.T) {
 	req, err := (&GrokExecutor{Routes: gatewayprovider.GrokRoutes{Validate: xai.ValidateBaseURL}}).BuildResponsesRequest(context.Background(), nil, provider, []byte(`{"model":"grok-4.3"}`), "access-token", "conv-1", false)
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/v1/responses", req.URL.String())
-	// 覆写值优先于内置 CLI 身份头。wire casing 映射外的覆写头按小写键写入，测试检查写入后的形式。
+	// Overrides replace default CLI identity headers. Headers outside the wire-casing map use lowercase keys.
 	require.Equal(t, "relay-client/2.0", req.Header.Get("User-Agent"))
 	require.Equal(t, []string{"9.9.9"}, map[string][]string(req.Header)["x-grok-client-version"])
 	require.Empty(t, req.Header.Get("X-Grok-Client-Version"))
 	require.Equal(t, []string{"relay-secret"}, map[string][]string(req.Header)["x-relay-token"])
-	// 会话路由头与认证头不受覆写影响。
+	// Session-routing and authorization headers are protected from overrides.
 	require.Equal(t, "conv-1", req.Header.Get(GrokConversationIDHeader))
 	require.Equal(t, "Bearer access-token", req.Header.Get("Authorization"))
 }
@@ -206,7 +206,7 @@ func TestApplyGrokTLSProfileHeadersAlwaysUsesCLIUserAgent(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("User-Agent", "grok-native/1.0")
 
-	// 当前 Profile 保存 TLS 信息。Originator 和 UserAgent 由 HTTP 请求头提供。
+	// The profile supplies TLS settings; HTTP headers supply Originator and User-Agent.
 	xai.ApplyDefaultGrokUpstreamHeaders(req)
 
 	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), req.Header.Get("User-Agent"))

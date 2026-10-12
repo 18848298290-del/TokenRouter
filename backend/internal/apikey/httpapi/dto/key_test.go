@@ -52,7 +52,7 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedIP)
 }
 
-// APIKeyFromService 复制 API Key 并生成省略分组详情的 DTO。
+// APIKeyFromService copies a key into a DTO with group details omitted.
 func APIKeyFromService(v *apikey.APIKey) *APIKey[json.RawMessage] {
 	return APIKeyFromKey(apikey.CopyAPIKey(v), func(*routing.Group) *json.RawMessage { return nil })
 }

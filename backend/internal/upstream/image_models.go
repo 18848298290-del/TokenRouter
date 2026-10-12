@@ -2,14 +2,13 @@ package upstream
 
 import "strings"
 
-// IsGeminiImageGenerationModel 判断模型是否为图片生成模型
-// 支持的模型：gemini-3.1-flash-image, gemini-3-pro-image, gemini-2.5-flash-image 等。
+// IsGeminiImageGenerationModel recognizes the Gemini 3.1 Flash, 3 Pro, and 2.5 Flash
+// image families, including suffixed variants and the optional models/ prefix.
 func IsGeminiImageGenerationModel(model string) bool {
 	modelLower := strings.ToLower(model)
-	// 移除 models/ 前缀
+
 	modelLower = strings.TrimPrefix(modelLower, "models/")
 
-	// 精确匹配或前缀匹配
 	return modelLower == "gemini-3.1-flash-image" ||
 		modelLower == "gemini-3.1-flash-image-preview" ||
 		strings.HasPrefix(modelLower, "gemini-3.1-flash-image-") ||
@@ -21,7 +20,7 @@ func IsGeminiImageGenerationModel(model string) bool {
 		strings.HasPrefix(modelLower, "gemini-2.5-flash-image-")
 }
 
-// IsGPTImageGenerationModel 判断模型是否属于 GPT 原生生图模型族。
+// IsGPTImageGenerationModel reports whether the model belongs to the gpt-image- family.
 func IsGPTImageGenerationModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	return strings.HasPrefix(model, "gpt-image-")

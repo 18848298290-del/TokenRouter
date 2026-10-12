@@ -23,7 +23,7 @@ type sqlQueryRower interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// UserStatusTx 在调用方的 SQL 事务中锁定和禁用用户，提交由调用方负责。
+// UserStatusTx locks and disables users in the caller's SQL transaction; the caller commits it.
 type UserStatusTx interface {
 	LockUser(context.Context, int64) (string, bool, error)
 	SetDisabled(context.Context, int64) (bool, error)
@@ -247,7 +247,7 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	return items, paginationResultFromTotal(total, params), nil
 }
 
-// GetLog 只在管理员详情接口读取完整正文和失败单元，列表查询不携带这些大字段。
+// GetLog loads full input and failed units for administrator review; list queries omit these large fields.
 func (r *Store) GetLog(ctx context.Context, id int64) (*moderation.ContentModerationLog, error) {
 	var item moderation.ContentModerationLog
 	var userID, billingUserID, teamID, apiKeyID, groupID, latency, queueDelay sql.NullInt64
@@ -620,7 +620,7 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	return items, paginationResultFromTotal(total, params), nil
 }
 
-// GetCyberWarning 返回 Cyber 命中时保存的完整当前轮快照和媒体元数据。
+// GetCyberWarning returns the stored current-turn content and media metadata for a Cyber warning.
 func (r *Store) GetCyberWarning(ctx context.Context, id int64) (*moderation.ContentModerationCyberWarning, error) {
 	var item moderation.ContentModerationCyberWarning
 	var userID, billingUserID, teamID, apiKeyID, groupID, providerID sql.NullInt64
@@ -734,7 +734,7 @@ ORDER BY source_index ASC, id ASC
 	return items, nil
 }
 
-// GetMediaContent 仅供鉴权后的管理员媒体接口读取二进制快照。
+// GetMediaContent loads the binary snapshot. The caller must authenticate and authorize the administrator.
 func (r *Store) GetMediaContent(ctx context.Context, id int64) (*moderation.ContentModerationMedia, error) {
 	var item moderation.ContentModerationMedia
 	err := r.db.QueryRowContext(ctx, `
@@ -890,7 +890,7 @@ WHERE flagged = FALSE AND created_at < $1
 	}
 	result.DeletedNonHit, _ = nonHitExec.RowsAffected()
 
-	// Cyber 命中与普通命中使用同一保留期，关联媒体通过外键级联删除。
+	// Cyber warnings share the hit retention period; foreign keys cascade deletion to their media.
 	cyberExec, err := r.db.ExecContext(ctx, `
 DELETE FROM content_moderation_cyber_warnings
 WHERE created_at < $1
@@ -920,10 +920,10 @@ func buildContentModerationLogWhere(filter moderation.ContentModerationLogFilter
 	}
 	switch strings.ToLower(strings.TrimSpace(filter.Result)) {
 	case "hit", "flagged":
-		// 命中表示观察模式下发现风险但未拒绝请求，必须与各类已执行拦截的记录互斥。
+		// Hits are flagged requests that were allowed, so exclude every blocking action.
 		where = append(where, "l.flagged = TRUE AND l.action NOT IN ('block', 'keyword_block', 'hash_block')")
 	case "blocked":
-		// 兼容旧管理端和 API 调用方：历史 blocked 值仍表示所有已执行的拦截。
+		// The legacy blocked filter includes every blocking action for older API clients.
 		where = append(where, "l.action IN ('block', 'keyword_block', 'hash_block')")
 	case "block":
 		where = append(where, "l.action = 'block'")
@@ -991,7 +991,7 @@ func buildContentModerationCyberWhere(filter moderation.ContentModerationCyberWa
 	return where, args
 }
 
-// paginationResultFromTotal 根据总数和分页参数生成查询分页结果。
+// paginationResultFromTotal builds pagination metadata from the total and requested page.
 func paginationResultFromTotal(total int64, params pagination.PaginationParams) *pagination.PaginationResult {
 	return pagination.ResultFromTotal(total, params)
 }

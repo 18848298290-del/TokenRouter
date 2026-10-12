@@ -6,16 +6,16 @@ import (
 	"strings"
 )
 
-// CompiledIPRules 表示预编译的 IP 匹配规则。
-// PatternCount 记录输入规则数量，用于区分空规则与全部无效的规则。
+// CompiledIPRules stores parsed IP and CIDR rules. PatternCount distinguishes
+// an empty rule set from one whose input patterns were all invalid.
 type CompiledIPRules struct {
 	CIDRs        []*net.IPNet
 	IPs          []net.IP
 	PatternCount int
 }
 
-// CompileIPRules 将 IP/CIDR 字符串规则预编译为可复用结构。
-// 非法规则会被忽略，但 PatternCount 会保留原始规则条数。
+// CompileIPRules trims and parses patterns, skipping invalid entries
+// while retaining the original input count.
 func CompileIPRules(patterns []string) *CompiledIPRules {
 	compiled := &CompiledIPRules{
 		CIDRs:        make([]*net.IPNet, 0, len(patterns)),
@@ -56,17 +56,14 @@ func MatchesCompiledRules(parsedIP net.IP, rules *CompiledIPRules) bool {
 	return slices.ContainsFunc(rules.IPs, parsedIP.Equal)
 }
 
-// MatchesPattern 检查 IP 是否匹配指定的模式（支持单个 IP 或 CIDR）。
-// pattern 可以是：
-// - 单个 IP: "192.168.1.100"
-// - CIDR 范围: "192.168.1.0/24"。
+// MatchesPattern matches clientIP against an exact IP or CIDR pattern.
+// Inputs are parsed as supplied; surrounding whitespace is not trimmed.
 func MatchesPattern(clientIP, pattern string) bool {
 	ip := net.ParseIP(clientIP)
 	if ip == nil {
 		return false
 	}
 
-	// 尝试解析为 CIDR
 	if strings.Contains(pattern, "/") {
 		_, cidr, err := net.ParseCIDR(pattern)
 		if err != nil {
@@ -75,7 +72,6 @@ func MatchesPattern(clientIP, pattern string) bool {
 		return cidr.Contains(ip)
 	}
 
-	// 作为单个 IP 处理
 	patternIP := net.ParseIP(pattern)
 	if patternIP == nil {
 		return false
@@ -83,7 +79,7 @@ func MatchesPattern(clientIP, pattern string) bool {
 	return ip.Equal(patternIP)
 }
 
-// ValidateIPPattern 验证 IP 或 CIDR 格式是否有效。
+// ValidateIPPattern reports whether pattern is an IP address or CIDR.
 func ValidateIPPattern(pattern string) bool {
 	if strings.Contains(pattern, "/") {
 		_, _, err := net.ParseCIDR(pattern)
@@ -92,8 +88,7 @@ func ValidateIPPattern(pattern string) bool {
 	return net.ParseIP(pattern) != nil
 }
 
-// ValidateIPPatterns 验证多个 IP 或 CIDR 格式。
-// 返回无效的模式列表。
+// ValidateIPPatterns returns invalid patterns in input order.
 func ValidateIPPatterns(patterns []string) []string {
 	var invalid []string
 	for _, p := range patterns {
@@ -104,17 +99,17 @@ func ValidateIPPatterns(patterns []string) []string {
 	return invalid
 }
 
-// NormalizeIP 保留旧地址规范化行为，移除空白和可解析的端口。
+// NormalizeIP trims whitespace and removes a port when net.SplitHostPort succeeds.
 func NormalizeIP(ip string) string {
 	ip = strings.TrimSpace(ip)
-	// 移除端口号（如 "192.168.1.1:8080" -> "192.168.1.1"）
 	if host, _, err := net.SplitHostPort(ip); err == nil {
 		return host
 	}
 	return ip
 }
 
-// IsNonPublic 保留出站地址检查使用的本地/私网分类，不改变入站旧转发头的网段集合。
+// IsNonPublic reports loopback, private, link-local, and unspecified addresses.
+// It does not classify every reserved or non-routable address range.
 func IsNonPublic(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }

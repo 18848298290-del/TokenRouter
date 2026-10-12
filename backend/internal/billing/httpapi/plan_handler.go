@@ -12,7 +12,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// PlanHandler 处理套餐展示与管理；订单和支付渠道 HTTP 由 payment/httpapi 提供。
+// PlanHandler displays and manages plans. Order and payment channel handlers live in payment/httpapi.
 type PlanHandler struct{ plans *billing.Plans }
 
 func NewPlanHandler(plans *billing.Plans) *PlanHandler { return &PlanHandler{plans: plans} }
@@ -136,7 +136,7 @@ func (h *PlanHandler) DeletePlan(c *gin.Context) {
 	response.Success(c, gin.H{"message": "deleted"})
 }
 
-// parsePlanID 保留套餐路径参数的整数校验。
+// parsePlanID parses an integer path parameter.
 // Returns the parsed ID and true on success; on failure it writes a BadRequest response and returns false.
 func parsePlanID(c *gin.Context, paramName string) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param(paramName), 10, 64)
@@ -147,7 +147,7 @@ func parsePlanID(c *gin.Context, paramName string) (int64, bool) {
 	return id, true
 }
 
-// ParsePlanFeatures 将逐行填写的功能说明转换为公开列表。
+// ParsePlanFeatures splits newline-separated features into trimmed, nonempty entries.
 func ParsePlanFeatures(raw string) []string {
 	if raw == "" {
 		return []string{}

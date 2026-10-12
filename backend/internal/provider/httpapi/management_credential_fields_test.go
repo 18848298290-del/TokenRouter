@@ -19,26 +19,26 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// 在预读后轮换 token 并修改普通配置，检查批量字段更新保持这些并发修改。
+// credentialFieldRaceAdmin rotates tokens and configuration after the initial read to test concurrent updates.
 type credentialFieldRaceAdmin struct {
 	ProviderManagement
 	current provider.Record
 }
 
-// failingAdminService 嵌入 managementCredentialFixture，可配置 UpdateProvider 在指定 ID 时失败。
+// failingAdminService fails UpdateProvider for the configured provider ID.
 type failingAdminService struct {
 	*managementCredentialFixture
 	failOnProviderID int64
 	updateCallCount  atomic.Int64
 }
 
-// getProviderFailingService 模拟 GetProvider 在特定 ID 时返回 not found。
+// getProviderFailingService returns not found for the configured provider ID.
 type getProviderFailingService struct {
 	*managementCredentialFixture
 	failOnProviderID int64
 }
 
-// 凭据批量测试提供预读和更新响应，通过用例接口注入错误。
+// managementCredentialFixture supplies reads and updates for batch credential tests.
 type managementCredentialFixture struct{ ProviderManagement }
 
 func TestBatchCredentialFieldDoesNotRestoreOldSnapshot(t *testing.T) {
@@ -76,7 +76,7 @@ func TestBatchUpdateCredentials_AllSuccess(t *testing.T) {
 }
 
 func TestBatchUpdateCredentials_PartialFailure(t *testing.T) {
-	// 让第 2 个提供商（ID=2）更新时失败
+	// Fail the second provider's update so later updates still run.
 	svc := &failingAdminService{
 		managementCredentialFixture: &managementCredentialFixture{},
 		failOnProviderID:            2,
@@ -94,7 +94,7 @@ func TestBatchUpdateCredentials_PartialFailure(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
-	// 部分成功时返回 HTTP 200 和每项操作的结果。
+	// Partial success returns HTTP 200 with per-item results.
 	require.Equal(t, http.StatusOK, w.Code, "批量更新返回 200 + 成功/失败明细")
 
 	var resp map[string]any
@@ -103,13 +103,13 @@ func TestBatchUpdateCredentials_PartialFailure(t *testing.T) {
 	require.Equal(t, float64(2), data["success"], "应有 2 个成功")
 	require.Equal(t, float64(1), data["failed"], "应有 1 个失败")
 
-	// 三个提供商逐一执行更新。
+	// Every provider is attempted, including those after a failure.
 	require.Equal(t, int64(3), svc.updateCallCount.Load(),
 		"应调用 3 次 UpdateProvider（逐个尝试，失败后继续）")
 }
 
 func TestBatchUpdateCredentials_FirstProviderNotFound(t *testing.T) {
-	// GetProvider 在 managementCredentialFixture 中总是成功的，需要创建一个 GetProvider 会失败的 stub
+	// Override the fixture's successful reads to exercise a missing provider during prevalidation.
 	svc := &getProviderFailingService{
 		managementCredentialFixture: &managementCredentialFixture{},
 		failOnProviderID:            1,
@@ -134,7 +134,7 @@ func TestBatchUpdateCredentials_InterceptWarmupRequests_NonBool(t *testing.T) {
 	svc := &failingAdminService{managementCredentialFixture: &managementCredentialFixture{}}
 	router, _ := setupProviderHandlerWithService(svc)
 
-	// intercept_warmup_requests 传入非 bool 类型（string），应返回 400
+	// A string value for the boolean intercept_warmup_requests field is rejected with 400.
 	body, _ := json.Marshal(map[string]any{
 		"provider_ids": []int64{1},
 		"field":        "intercept_warmup_requests",
@@ -173,7 +173,7 @@ func TestBatchUpdateCredentials_AccountUUID_NonString(t *testing.T) {
 	svc := &failingAdminService{managementCredentialFixture: &managementCredentialFixture{}}
 	router, _ := setupProviderHandlerWithService(svc)
 
-	// account_uuid 传入非 string 类型（number），应返回 400
+	// A numeric account_uuid is rejected with 400.
 	body, _ := json.Marshal(map[string]any{
 		"provider_ids": []int64{1},
 		"field":        "account_uuid",
@@ -193,7 +193,7 @@ func TestBatchUpdateCredentials_AccountUUID_NullValue(t *testing.T) {
 	svc := &failingAdminService{managementCredentialFixture: &managementCredentialFixture{}}
 	router, _ := setupProviderHandlerWithService(svc)
 
-	// account_uuid 传入 null（设置为空），应正常通过
+	// A null account_uuid clears the field and is accepted.
 	body, _ := json.Marshal(map[string]any{
 		"provider_ids": []int64{1},
 		"field":        "account_uuid",

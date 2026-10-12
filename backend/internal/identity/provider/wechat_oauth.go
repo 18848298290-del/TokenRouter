@@ -18,7 +18,7 @@ const (
 	DefaultWeChatUserInfoURL = "https://api.weixin.qq.com/sns/userinfo"
 )
 
-// WeChatOptions 只包含客户端所需凭据与请求目标。
+// WeChatOptions contains client credentials and request endpoints.
 type WeChatOptions struct{ AppID, AppSecret, TokenURL, UserInfoURL string }
 
 type (
@@ -26,7 +26,7 @@ type (
 	WechatOAuthUserInfoResponse = identity.WeChatOAuthUserInfoResponse
 )
 
-// WeChatClient 复用原授权/资料 HTTP，实现身份端口；地址可由本地测试显式注入。
+// WeChatClient exchanges authorization codes and retrieves profiles; tests can override its endpoints.
 type WeChatClient struct{ TokenURL, UserInfoURL string }
 
 func FetchWeChatOAuthIdentity(ctx context.Context, cfg WeChatOptions, code string) (*WechatOAuthTokenResponse, *WechatOAuthUserInfoResponse, error) {

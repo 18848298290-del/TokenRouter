@@ -17,7 +17,7 @@ const (
 	timeoutCounterPrefix         = "timeout_count:provider:"
 )
 
-// healthCounterIncrScript 在首次计数时设置固定窗口，后续递增保持到期时间。
+// healthCounterIncrScript starts a fixed window on the first count; later increments keep its expiry.
 var healthCounterIncrScript = redis.NewScript(`
 	local key = KEYS[1]
 	local ttl = tonumber(ARGV[1])
@@ -42,12 +42,12 @@ type timeoutCounterCache struct {
 	rdb *redis.Client
 }
 
-// NewInternal500CounterCache 创建 INTERNAL 500 连续失败计数器缓存实例。
+// NewInternal500CounterCache creates a cache for consecutive INTERNAL 500 failures.
 func NewInternal500CounterCache(rdb *redis.Client) provider.Internal500CounterCache {
 	return &internal500CounterCache{rdb: rdb}
 }
 
-// IncrementInternal500Count 原子递增计数并返回当前值。
+// IncrementInternal500Count atomically increments and returns the count.
 func (c *internal500CounterCache) IncrementInternal500Count(ctx context.Context, providerID int64) (int64, error) {
 	key := fmt.Sprintf("%s%d", internal500CounterPrefix, providerID)
 
@@ -59,7 +59,7 @@ func (c *internal500CounterCache) IncrementInternal500Count(ctx context.Context,
 	return result, nil
 }
 
-// ResetInternal500Count 清零计数器（成功响应时调用）。
+// ResetInternal500Count deletes the failure counter after recovery.
 func (c *internal500CounterCache) ResetInternal500Count(ctx context.Context, providerID int64) error {
 	key := fmt.Sprintf("%s%d", internal500CounterPrefix, providerID)
 	return c.rdb.Del(ctx, key).Err()
@@ -86,18 +86,18 @@ func (c *openAI403CounterCache) ResetOpenAI403Count(ctx context.Context, provide
 	return c.rdb.Del(ctx, key).Err()
 }
 
-// NewTimeoutCounterCache 创建超时计数器缓存实例。
+// NewTimeoutCounterCache creates a provider timeout counter cache.
 func NewTimeoutCounterCache(rdb *redis.Client) provider.TimeoutCounterCache {
 	return &timeoutCounterCache{rdb: rdb}
 }
 
-// IncrementTimeoutCount 增加提供商的超时计数，返回当前计数值
-// windowMinutes 是计数窗口时间（分钟），超过此时间计数器会自动重置。
+// IncrementTimeoutCount increments and returns the provider's timeout count.
+// windowMinutes sets the fixed window on the first increment, with a one-minute minimum.
 func (c *timeoutCounterCache) IncrementTimeoutCount(ctx context.Context, providerID int64, windowMinutes int) (int64, error) {
 	key := fmt.Sprintf("%s%d", timeoutCounterPrefix, providerID)
 
 	ttlSeconds := max(windowMinutes*60,
-		// 最小1分钟
+		// one-minute minimum
 		60)
 
 	result, err := healthCounterIncrScript.Run(ctx, c.rdb, []string{key}, ttlSeconds).Int64()
@@ -108,7 +108,7 @@ func (c *timeoutCounterCache) IncrementTimeoutCount(ctx context.Context, provide
 	return result, nil
 }
 
-// GetTimeoutCount 获取提供商当前的超时计数。
+// GetTimeoutCount returns the provider's timeout count, or zero when absent.
 func (c *timeoutCounterCache) GetTimeoutCount(ctx context.Context, providerID int64) (int64, error) {
 	key := fmt.Sprintf("%s%d", timeoutCounterPrefix, providerID)
 
@@ -123,13 +123,13 @@ func (c *timeoutCounterCache) GetTimeoutCount(ctx context.Context, providerID in
 	return val, nil
 }
 
-// ResetTimeoutCount 重置提供商的超时计数。
+// ResetTimeoutCount deletes the provider's timeout counter.
 func (c *timeoutCounterCache) ResetTimeoutCount(ctx context.Context, providerID int64) error {
 	key := fmt.Sprintf("%s%d", timeoutCounterPrefix, providerID)
 	return c.rdb.Del(ctx, key).Err()
 }
 
-// GetTimeoutCountTTL 获取计数器剩余过期时间。
+// GetTimeoutCountTTL returns Redis's remaining lifetime for the counter.
 func (c *timeoutCounterCache) GetTimeoutCountTTL(ctx context.Context, providerID int64) (time.Duration, error) {
 	key := fmt.Sprintf("%s%d", timeoutCounterPrefix, providerID)
 	return c.rdb.TTL(ctx, key).Result()

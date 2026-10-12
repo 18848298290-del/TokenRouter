@@ -199,7 +199,7 @@ func ResumeVisibleMethodSourceSettingKey(method string) string {
 	}
 }
 
-// CanonicalizeReturnURL 校验支付结果页地址，并清除用户提供的查询参数和片段。
+// CanonicalizeReturnURL validates the payment result URL and removes caller-supplied query and fragment values.
 // @project-doc docs/domains/payments_and_entitlements.md#callback_security
 func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, error) {
 	raw = strings.TrimSpace(raw)
@@ -216,7 +216,7 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if parsed.User != nil {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must not contain user information")
 	}
-	// URL 解析器允许主机名包含参数分隔符，支付签名会直接拼接这些字符。
+	// The URL parser permits parameter delimiters in hosts, but payment signatures concatenate those characters.
 	if strings.ContainsAny(parsed.Host, "&=") {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url host contains invalid characters")
 	}
@@ -226,7 +226,7 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if !ResumeAllowedReturnURLHost(parsed.Host, srcHost, srcURL) {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use the same host as the current site or browser origin")
 	}
-	// 从校验后的地址组成部分重建结果页，查询参数由服务端随后生成。
+	// Rebuild from validated components; the server adds result query parameters afterward.
 	canonical := url.URL{
 		Scheme: parsed.Scheme,
 		Host:   parsed.Host,
@@ -453,7 +453,7 @@ func ResumeSignPaymentResumePayload(payload string, key []byte) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// ResolvePaymentResumeSigningKeys 选择恢复令牌的签名密钥，并返回可用于验签的历史密钥。
+// ResolvePaymentResumeSigningKeys chooses a signing key and returns legacy keys accepted for verification.
 func ResolvePaymentResumeSigningKeys(raw string, legacyKey []byte) ([]byte, [][]byte) {
 	signingKey := ParsePaymentResumeSigningKey(raw)
 	if len(signingKey) == 0 {
@@ -468,7 +468,7 @@ func ResolvePaymentResumeSigningKeys(raw string, legacyKey []byte) ([]byte, [][]
 	return signingKey, [][]byte{legacyKey}
 }
 
-// ParsePaymentResumeSigningKey 解码十六进制密钥，其他非空输入按文本字节读取。
+// ParsePaymentResumeSigningKey decodes valid even-length hex of at least 64 characters; other nonempty input is used as text bytes.
 func ParsePaymentResumeSigningKey(raw string) []byte {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

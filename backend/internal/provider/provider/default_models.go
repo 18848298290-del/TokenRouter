@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// DefaultProviderModels 枚举执行路由中的别名，Spark 返回其独立配额对应的型号。
+// DefaultProviderModels lists platform model candidates, with a separate set for Spark quota shadows.
 func DefaultProviderModels(value *provider.Record) []string {
 	if value == nil {
 		return nil
@@ -34,12 +34,12 @@ func DefaultProviderModels(value *provider.Record) []string {
 	return nil
 }
 
-// sparkModelVariants 返回 Spark 影子提供商支持的型号。
+// sparkModelVariants returns the models supported by Spark shadows.
 func sparkModelVariants() []string {
 	return []string{"gpt-5.3-codex-spark"}
 }
 
-// DefaultSparkShadowModels 返回用于限制 Spark 型号的独立白名单映射。
+// DefaultSparkShadowModels returns a fresh identity mapping for the Spark model set.
 func DefaultSparkShadowModels() map[string]any {
 	variants := sparkModelVariants()
 	mapping := make(map[string]any, len(variants))

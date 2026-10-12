@@ -13,19 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// Logger 请求日志中间件。
+// Logger records completed requests and samples expected ingress rejections.
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 开始时间
 		startTime := time.Now()
 
-		// 请求路径
 		path := c.Request.URL.Path
 
-		// 处理请求
 		c.Next()
 
-		// 跳过健康检查等高频探针路径的日志
+		// Omit high-frequency health and setup probes from access logs.
 		if path == "/health" || path == "/setup/status" {
 			return
 		}
@@ -102,8 +99,8 @@ func Logger() gin.HandlerFunc {
 	}
 }
 
-// appendRequestStageFields 将请求入口、提供商槽位和出站 HTTP 阶段写入访问日志。
-// 这些字段记录各阶段耗时与计数。
+// appendRequestStageFields adds ingress-relative stage timestamps and outbound HTTP trace fields.
+// Counts capture repeated connection and request attempts.
 func appendRequestStageFields(fields []zap.Field, c *gin.Context) []zap.Field {
 	if c == nil || c.Request == nil {
 		return fields

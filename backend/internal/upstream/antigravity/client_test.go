@@ -17,19 +17,15 @@ import (
 
 const defaultFetchAvailableModelsBodyLimit int64 = 8 << 20
 
-// timeoutError 实现 net.Error 接口用于测试。
+// timeoutError supplies a timeout through the net.Error interface.
 type timeoutError struct{}
 
-// 测试调用 Client 方法，通过 RoundTripper 拦截 HTTP 请求
-
-// redirectRoundTripper 将请求中特定前缀的 URL 重定向到 httptest server。
+// redirectRoundTripper rewrites matching URL prefixes to a test server.
 type redirectRoundTripper struct {
-	// 原始 URL 前缀 -> 替换目标 URL 的映射
+	// original URL prefix to test server URL
 	redirects map[string]string
 	transport http.RoundTripper
 }
-
-// NewAPIRequestWithURL
 
 func TestNewAPIRequestWithURL_普通请求(t *testing.T) {
 	ctx := context.Background()
@@ -43,18 +39,16 @@ func TestNewAPIRequestWithURL_普通请求(t *testing.T) {
 		t.Fatalf("创建请求失败: %v", err)
 	}
 
-	// 验证 URL 不含 ?alt=sse
+	// Non-streaming actions omit the SSE query parameter.
 	expectedURL := "https://example.com/v1internal:generateContent"
 	if req.URL.String() != expectedURL {
 		t.Errorf("URL 不匹配: got %s, want %s", req.URL.String(), expectedURL)
 	}
 
-	// 验证请求方法
 	if req.Method != http.MethodPost {
 		t.Errorf("请求方法不匹配: got %s, want POST", req.Method)
 	}
 
-	// 验证 Headers
 	if ct := req.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type 不匹配: got %s", ct)
 	}
@@ -95,8 +89,6 @@ func TestNewAPIRequestWithURL_空Body(t *testing.T) {
 	}
 }
 
-// NewAPIRequest
-
 func TestNewAPIRequest_使用默认URL(t *testing.T) {
 	ctx := context.Background()
 	req, err := NewAPIRequest(ctx, "generateContent", "tok", []byte(`{}`))
@@ -109,8 +101,6 @@ func TestNewAPIRequest_使用默认URL(t *testing.T) {
 		t.Errorf("URL 不匹配: got %s, want %s", req.URL.String(), expected)
 	}
 }
-
-// TierInfo.UnmarshalJSON
 
 func TestTierInfo_UnmarshalJSON_字符串格式(t *testing.T) {
 	data := []byte(`"free-tier"`)
@@ -177,7 +167,7 @@ func TestTierInfo_UnmarshalJSON_空格包裹null(t *testing.T) {
 }
 
 func TestTierInfo_UnmarshalJSON_通过JSON嵌套结构(t *testing.T) {
-	// 模拟 LoadCodeAssistResponse 中的嵌套反序列化
+	// Tier fields accept both string and object forms in the same response.
 	jsonData := `{"currentTier":"free-tier","paidTier":{"id":"g1-ultra-tier","name":"Ultra"}}`
 	var resp LoadCodeAssistResponse
 	if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
@@ -190,8 +180,6 @@ func TestTierInfo_UnmarshalJSON_通过JSON嵌套结构(t *testing.T) {
 		t.Errorf("PaidTier 不匹配: got %+v", resp.PaidTier)
 	}
 }
-
-// LoadCodeAssistResponse.GetTier
 
 func TestGetTier_PaidTier优先(t *testing.T) {
 	resp := &LoadCodeAssistResponse{
@@ -217,7 +205,6 @@ func TestGetTier_PaidTier为空ID(t *testing.T) {
 		CurrentTier: &TierInfo{ID: "free-tier"},
 		PaidTier:    &PaidTierInfo{ID: ""},
 	}
-	// paidTier.ID 为空时应回退到 currentTier
 	if got := resp.GetTier(); got != "free-tier" {
 		t.Errorf("paidTier.ID 为空时应回退到 currentTier: got %s", got)
 	}
@@ -277,8 +264,6 @@ func TestTierIDToPlanType(t *testing.T) {
 	}
 }
 
-// NewClient
-
 func mustNewClient(t *testing.T, proxyURL string) *Client {
 	t.Helper()
 	client, err := NewClient(proxyURL)
@@ -302,7 +287,7 @@ func TestNewClient_无代理(t *testing.T) {
 	if client.httpClient.Timeout != clientTimeout {
 		t.Errorf("Timeout 不匹配: got %v, want %v", client.httpClient.Timeout, clientTimeout)
 	}
-	// 无代理时 Transport 应为 nil（使用默认）
+	// A nil Transport uses http.DefaultTransport.
 	if client.httpClient.Transport != nil {
 		t.Error("无代理时 Transport 应为 nil")
 	}
@@ -329,14 +314,12 @@ func TestNewClient_空格代理(t *testing.T) {
 	if client == nil {
 		t.Fatal("NewClient 返回 nil")
 	}
-	// 空格代理应等同于无代理
 	if client.httpClient.Transport != nil {
 		t.Error("空格代理 Transport 应为 nil")
 	}
 }
 
 func TestNewClient_无效代理URL(t *testing.T) {
-	// 无效 URL 应返回 error
 	_, err := NewClient("://invalid")
 	if err == nil {
 		t.Fatal("无效代理 URL 应返回错误")
@@ -346,8 +329,6 @@ func TestNewClient_无效代理URL(t *testing.T) {
 	}
 }
 
-// IsConnectionError
-
 func TestIsConnectionError_nil(t *testing.T) {
 	if IsConnectionError(nil) {
 		t.Error("nil 错误不应判定为连接错误")
@@ -355,7 +336,7 @@ func TestIsConnectionError_nil(t *testing.T) {
 }
 
 func TestIsConnectionError_超时错误(t *testing.T) {
-	// 使用 net.OpError 包装超时
+	// Classify the timeout through its enclosing network operation error.
 	err := &net.OpError{
 		Op:  "dial",
 		Net: "tcp",
@@ -411,8 +392,6 @@ func TestIsConnectionError_包装的netOpError(t *testing.T) {
 	}
 }
 
-// shouldFallbackToNextURL
-
 func TestShouldFallbackToNextURL_连接错误(t *testing.T) {
 	err := &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("refused")}
 	if !shouldFallbackToNextURL(err, 0) {
@@ -455,23 +434,18 @@ func TestShouldFallbackToNextURL_无错误且200(t *testing.T) {
 	}
 }
 
-// Client.ExchangeCode (使用 httptest)
-
 func TestClient_ExchangeCode_成功(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
 	t.Cleanup(func() { defaultClientSecret = old })
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 验证请求方法
 		if r.Method != http.MethodPost {
 			t.Errorf("请求方法不匹配: got %s", r.Method)
 		}
-		// 验证 Content-Type
 		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
 			t.Errorf("Content-Type 不匹配: got %s", ct)
 		}
-		// 验证请求体参数
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("解析表单失败: %v", err)
 		}
@@ -502,19 +476,14 @@ func TestClient_ExchangeCode_成功(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 临时替换 TokenURL（该函数直接使用常量，需要我们通过构建自定义 client 来绕过）
-	// 由于 ExchangeCode 硬编码了 TokenURL，我们需要直接测试 HTTP client 的行为
-	// 这里通过构造一个直接调用 mock server 的测试
+	// This fixture exercises the token response using a manually constructed request.
+	// The RealCall cases below exercise ExchangeCode through a redirecting transport.
 	client := &Client{httpClient: server.Client()}
 
-	// 由于 ExchangeCode 使用硬编码的 TokenURL，我们无法直接注入 mock server URL
-	// 需要使用 httptest 的 Transport 重定向
 	originalTokenURL := TokenURL
-	// 我们改为直接构造请求来测试逻辑
 	_ = originalTokenURL
 	_ = client
 
-	// 改用直接构造请求测试 mock server 响应
 	ctx := context.Background()
 	params := url.Values{}
 	params.Set("client_id", ClientID)
@@ -578,7 +547,7 @@ func TestClient_ExchangeCode_服务器返回错误(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 直接测试 mock server 的错误响应
+	// Exercise the error response fixture directly.
 	resp, err := server.Client().Get(server.URL)
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)
@@ -589,8 +558,6 @@ func TestClient_ExchangeCode_服务器返回错误(t *testing.T) {
 		t.Errorf("状态码不匹配: got %d, want 400", resp.StatusCode)
 	}
 }
-
-// Client.RefreshToken (使用 httptest)
 
 func TestClient_RefreshToken_MockServer(t *testing.T) {
 	old := defaultClientSecret
@@ -665,8 +632,6 @@ func TestClient_RefreshToken_无ClientSecret(t *testing.T) {
 	}
 }
 
-// Client.GetUserInfo (使用 httptest)
-
 func TestClient_GetUserInfo_成功(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -689,7 +654,7 @@ func TestClient_GetUserInfo_成功(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 直接通过 mock server 测试 GetUserInfo 的行为逻辑
+	// Exercise the user-info response fixture with a manually constructed request.
 	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	if err != nil {
@@ -737,8 +702,6 @@ func TestClient_GetUserInfo_服务器返回错误(t *testing.T) {
 	}
 }
 
-// TokenResponse / UserInfo JSON 序列化
-
 func TestTokenResponse_JSON序列化(t *testing.T) {
 	jsonData := `{"access_token":"at","expires_in":3600,"token_type":"Bearer","scope":"openid","refresh_token":"rt"}`
 	var resp TokenResponse
@@ -769,8 +732,6 @@ func TestUserInfo_JSON序列化(t *testing.T) {
 		t.Errorf("Name 不匹配: got %s", info.Name)
 	}
 }
-
-// LoadCodeAssistResponse JSON 序列化
 
 func TestLoadCodeAssistResponse_完整JSON(t *testing.T) {
 	jsonData := `{
@@ -816,7 +777,7 @@ func (rt *redirectRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return rt.transport.RoundTrip(req)
 }
 
-// newTestClientWithRedirect 创建一个 Client，将指定 URL 前缀的请求重定向到 mock server。
+// newTestClientWithRedirect routes matching URL prefixes to a test server.
 func newTestClientWithRedirect(redirects map[string]string) *Client {
 	return &Client{
 		httpClient: &http.Client{
@@ -827,8 +788,6 @@ func newTestClientWithRedirect(redirects map[string]string) *Client {
 		},
 	}
 }
-
-// Client.ExchangeCode 测试
 
 func TestClient_ExchangeCode_Success_RealCall(t *testing.T) {
 	old := defaultClientSecret
@@ -959,7 +918,7 @@ func TestClient_ExchangeCode_ContextCanceled_RealCall(t *testing.T) {
 	t.Cleanup(func() { defaultClientSecret = old })
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second) // 模拟慢响应
+		time.Sleep(5 * time.Second) // Keep the response pending while cancellation is checked.
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -969,15 +928,13 @@ func TestClient_ExchangeCode_ContextCanceled_RealCall(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 立即取消
+	cancel()
 
 	_, err := client.ExchangeCode(ctx, "code", "verifier")
 	if err == nil {
 		t.Fatal("context 取消时应返回错误")
 	}
 }
-
-// Client.RefreshToken 测试
 
 func TestClient_RefreshToken_Success_RealCall(t *testing.T) {
 	old := defaultClientSecret
@@ -1103,8 +1060,6 @@ func TestClient_RefreshToken_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
-// Client.GetUserInfo 测试
-
 func TestClient_GetUserInfo_Success_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1216,9 +1171,7 @@ func TestClient_GetUserInfo_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
-// Client.LoadCodeAssist 测试
-
-// withMockBaseURLs 临时替换 BaseURLs，测试结束后恢复。
+// withMockBaseURLs replaces the endpoints until test cleanup.
 func withMockBaseURLs(t *testing.T, urls []string) {
 	t.Helper()
 	origBaseURLs := BaseURLs
@@ -1252,7 +1205,6 @@ func TestClient_LoadCodeAssist_Success_RealCall(t *testing.T) {
 			t.Errorf("User-Agent 不匹配: got %s", ua)
 		}
 
-		// 验证请求体
 		var reqBody LoadCodeAssistRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			t.Fatalf("解析请求体失败: %v", err)
@@ -1296,7 +1248,6 @@ func TestClient_LoadCodeAssist_Success_RealCall(t *testing.T) {
 	if resp.PaidTier == nil || resp.PaidTier.ID != "g1-pro-tier" {
 		t.Errorf("PaidTier 不匹配: got %+v", resp.PaidTier)
 	}
-	// 验证原始 JSON map
 	if rawResp == nil {
 		t.Fatal("rawResp 不应为 nil")
 	}
@@ -1348,7 +1299,7 @@ func TestClient_LoadCodeAssist_InvalidJSON_RealCall(t *testing.T) {
 }
 
 func TestClient_LoadCodeAssist_URLFallback_RealCall(t *testing.T) {
-	// 第一个 server 返回 500，第二个 server 返回成功
+	// A server error on the first endpoint allows the second endpoint to succeed.
 	callCount := 0
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -1424,8 +1375,6 @@ func TestClient_LoadCodeAssist_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
-// Client.FetchAvailableModels 测试
-
 func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1445,7 +1394,6 @@ func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 			t.Errorf("User-Agent 不匹配: got %s", ua)
 		}
 
-		// 验证请求体
 		var reqBody FetchAvailableModelsRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			t.Fatalf("解析请求体失败: %v", err)
@@ -1513,7 +1461,6 @@ func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 		t.Errorf("RemainingFraction 不匹配: got %f, want 0.5", proModel.QuotaInfo.RemainingFraction)
 	}
 
-	// 验证原始 JSON map
 	if rawResp == nil {
 		t.Fatal("rawResp 不应为 nil")
 	}
@@ -1591,7 +1538,7 @@ func TestClient_FetchAvailableModels_InvalidJSON_RealCall(t *testing.T) {
 
 func TestClient_FetchAvailableModels_URLFallback_RealCall(t *testing.T) {
 	callCount := 0
-	// 第一个 server 返回 429，第二个 server 返回成功
+	// A rate-limited endpoint allows the second endpoint to succeed.
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -1689,7 +1636,7 @@ func TestClient_FetchAvailableModels_EmptyModels_RealCall(t *testing.T) {
 	}
 }
 
-// LoadCodeAssist 和 FetchAvailableModels 的 408 fallback 测试
+// Both account and model queries retry another endpoint after HTTP 408.
 
 func TestClient_LoadCodeAssist_408Fallback_RealCall(t *testing.T) {
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

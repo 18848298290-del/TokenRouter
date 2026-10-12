@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// NewGrokQuotaView 为提供商展示绑定供应商档位解析函数。
+// NewGrokQuotaView binds platform tier parsing for provider quota display.
 func NewGrokQuotaView() *provider.GrokQuotaView {
 	return &provider.GrokQuotaView{
 		FreeTokenLimit:      grok.GrokFreeRolling24hTokenLimit,

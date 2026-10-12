@@ -8,7 +8,7 @@ import (
 
 var ErrBucketLeaseLost = errors.New("scheduler bucket lease lost")
 
-// BucketLease 仅归还自己取得的 bucket 锁，共用第一次释放结果。
+// BucketLease runs its lock-release callback once and shares that result across callers.
 type BucketLease struct {
 	release func(context.Context) error
 	once    sync.Once

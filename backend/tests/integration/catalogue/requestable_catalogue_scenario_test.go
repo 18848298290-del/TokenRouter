@@ -12,10 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// requestableListFixture 将完整解析结果转换为这些场景使用的 ID 列表。
+// requestableListFixture exposes resolved model IDs for catalogue scenarios.
 type requestableListFixture struct{ *routing.RequestableCatalogue }
 
-// TestRequestableCatalogueReadsCurrentProviders 每次查询读取一次提供商，并立即反映已保存配置。
+// TestRequestableCatalogueReadsCurrentProviders checks one provider read per call and immediate
+// visibility of saved changes.
 func TestRequestableCatalogueReadsCurrentProviders(t *testing.T) {
 	groupID := int64(9)
 	record := provider.Record{ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"model_whitelist": []string{"first"}}}
@@ -68,7 +69,8 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	require.Equal(t, int64(1), okRepo.listAllCalls.Load())
 }
 
-// TestGetAvailableModelsPassthroughPreservesExplicitScope 验证透传只改变传输，显式白名单及映射在目录聚合时仍生效。
+// TestGetAvailableModelsPassthroughPreservesExplicitScope checks catalogue whitelist and mapping rules
+// for passthrough providers.
 func TestGetAvailableModelsPassthroughPreservesExplicitScope(t *testing.T) {
 	groupID := int64(10)
 	first := provider.Record{ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{

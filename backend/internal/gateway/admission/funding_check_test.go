@@ -23,7 +23,7 @@ func (f rpmCheckFixture) Check(ctx context.Context, user *scheduler.RPMUser, gro
 	return f(ctx, user, group)
 }
 
-// TestFundingAdmissionPreservesOrderAndWaitBoundary 检查资金准入通过后累计一次 RPM，等待后的复查仅检查资金。
+// TestFundingAdmissionPreservesOrderAndWaitBoundary checks that RPM is counted once and post-wait checks revalidate funds alone.
 func TestFundingAdmissionPreservesOrderAndWaitBoundary(t *testing.T) {
 	for _, mode := range []string{"rejected", "accepted", "after_wait"} {
 		t.Run(mode, func(t *testing.T) {

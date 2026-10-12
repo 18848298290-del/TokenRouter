@@ -8,19 +8,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// FingerprintSalt 是计算 cc_version 后缀指纹的盐值。
-// 其值与 Parrot src/transform/cc_mimicry.py 的 FINGERPRINT_SALT 一致，
-// 修改后会使指纹偏离 Claude Code CLI，并触发上游的第三方客户端检测。
+// FingerprintSalt is the salt for the cc_version suffix. It matches
+// FINGERPRINT_SALT in Parrot src/transform/cc_mimicry.py.
 const FingerprintSalt = "59cf53e54c78"
 
-// ComputeClaudeCodeFingerprint 复刻 Claude Code CLI 的 cc_version 指纹算法：
-//
-//  1. 取 messages 中第一条 role=user 的首块纯文本。
-//  2. 取该文本索引为 4、7、20 的字节，不足时用 '0' 补齐。
-//  3. 计算 SHA256(SALT + chars + cc_version)，取十六进制结果的前 3 位。
-//
-// 算法来自 Parrot src/transform/cc_mimicry.py:compute_fingerprint，与官方 CLI 字节对齐。
-// 任何偏差都会导致 cc_version=X.Y.Z.{fp} 在上游侧与真实 CLI 不一致。
+// ComputeClaudeCodeFingerprint derives the three-digit cc_version suffix.
+// It takes bytes 4, 7, and 20 from the first user text, substitutes ASCII zero
+// for missing bytes, and hashes the salt, those bytes, and the CLI version.
+// The algorithm follows Parrot src/transform/cc_mimicry.py:compute_fingerprint.
 func ComputeClaudeCodeFingerprint(body []byte, version string) string {
 	firstText := ExtractFirstUserText(body)
 	indices := []int{4, 7, 20}
@@ -36,8 +31,8 @@ func ComputeClaudeCodeFingerprint(body []byte, version string) string {
 	return hex.EncodeToString(sum[:])[:3]
 }
 
-// ExtractFirstUserText 提取 messages 中第一条 user 消息的首段 text 内容。
-// 兼容 string 和 []block 两种 content 格式。
+// ExtractFirstUserText returns the first text in the first user message.
+// It accepts string content and block arrays, returning empty when text is absent.
 func ExtractFirstUserText(body []byte) string {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -68,16 +63,9 @@ func ExtractFirstUserText(body []byte) string {
 	return first
 }
 
-// BuildBillingAttributionText 构造 system 数组的 billing attribution 文本。
-//
-// 形态对齐真实 Claude Code CLI：
-//
-//	x-anthropic-billing-header: cc_version=2.1.220.{fp}; cc_entrypoint=cli;
-//
-// Claude Code CLI 使用 cc_version 和 cc_entrypoint=cli，客户端识别
-// （claude_code_validator）与 Anthropic 第一方判定依赖这两个字段。
-// cch=... 已从 CLI 请求中移除（issue #3358），构造时按当前 CLI 格式输出。
-// 缓存断点放在后续的 Claude Code prompt block 上。
+// BuildBillingAttributionText builds the system billing marker with cc_version
+// and cc_entrypoint=cli. The version includes the message-derived fingerprint.
+// Cache breakpoints belong on a subsequent system prompt block.
 func BuildBillingAttributionText(body []byte, cliVersion string) (string, error) {
 	if cliVersion == "" {
 		return "", fmt.Errorf("cliVersion required")

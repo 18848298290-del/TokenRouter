@@ -141,7 +141,7 @@ const (
 )
 
 // C 是第二个枚举。
-` + iotaNolint + `
+//nolint:decorder // Separate const blocks keep each iota sequence starting at zero.
 const (
 	C = iota
 	D

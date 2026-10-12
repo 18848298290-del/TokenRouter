@@ -9,6 +9,8 @@ import (
 
 const usageBillingDedupCleanupBatchSize = 10000
 
+// ArchiveUsageDedup moves records older than cutoff into the archive in bounded batches.
+// Each batch inserts and deletes in one statement so billing keys remain available for duplicate detection.
 func ArchiveUsageDedup(ctx context.Context, exec infra.Executor, cutoff time.Time) error {
 	for {
 		res, err := exec.ExecContext(ctx, `

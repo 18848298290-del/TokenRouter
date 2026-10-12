@@ -45,7 +45,7 @@ func ParseGrokBillingSnapshot(extra map[string]any) (*usageview.BillingSummary, 
 	}
 }
 
-// MergeUsageExtra 复制请求快照的顶层和 JSON 容器，再按补丁顺序覆盖字段。
+// MergeUsageExtra clones JSON containers and applies updates; with no updates it returns extra unchanged.
 func MergeUsageExtra(extra, updates map[string]any) map[string]any {
 	if len(updates) == 0 {
 		return extra

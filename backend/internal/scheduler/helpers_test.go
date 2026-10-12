@@ -16,7 +16,7 @@ const (
 	PlatformGrok        = capability.PlatformGrok
 )
 
-// runtimeSlotCache 用通道控制槽位释放，检查停止成功前已完成租约释放。
+// runtimeSlotCache blocks slot release so tests can check that stopping waits for cleanup.
 type runtimeSlotCache struct {
 	ConcurrencyCache
 	acquired        bool

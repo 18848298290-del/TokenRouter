@@ -32,7 +32,7 @@ type SettlementStore struct {
 	taskProjections TaskProjectionFactories
 }
 
-// ProviderQuotaOutbox 在提供商额度跨阈值时参与同一 SQL 事务，写入调度事件。
+// ProviderQuotaOutbox writes a scheduling event in the billing transaction when provider usage crosses a quota limit.
 type ProviderQuotaOutbox func(context.Context, *sql.Tx, int64) error
 
 type taskAllowanceOperation int
@@ -55,7 +55,7 @@ type usageBillingSubscriptionRow struct {
 	PlanGroupRateMultipliersRaw []byte
 }
 
-// TaskProjection 在计费事务中写入任务的资金分配和额度预占状态。
+// TaskProjection persists task funding allocations and allowance reservation state in the billing transaction.
 //
 // @project-doc docs/domains/routing_and_billing.md#usage_settlement
 type TaskProjection interface {
@@ -67,7 +67,7 @@ type (
 	TaskProjectionFactories map[billing.TaskScope]TaskProjectionFactory
 )
 
-// NewSettlementStore 构造唯一闭合资金存储，不启动后台任务。
+// NewSettlementStore constructs the funding store and copies the registered task factories.
 func NewSettlementStore(sqlDB *sql.DB, calendar timezone.Calendar, outbox ProviderQuotaOutbox, factories ...TaskProjectionFactories) *SettlementStore {
 	projections := make(TaskProjectionFactories)
 	for _, set := range factories {
@@ -94,7 +94,8 @@ func (r *SettlementStore) Apply(ctx context.Context, cmd *billing.UsageBillingCo
 	})
 }
 
-// applyOnce 执行一次完整计费事务；死锁后必须由外层重开事务，不能复用已中止的事务。
+// applyOnce runs one billing transaction. Deadlock retries need a new transaction because PostgreSQL aborts the
+// failed one.
 func (r *SettlementStore) applyOnce(ctx context.Context, cmd *billing.UsageBillingCommand) (_ *billing.UsageBillingApplyResult, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -129,9 +130,10 @@ func (r *SettlementStore) applyOnce(ctx context.Context, cmd *billing.UsageBilli
 	return result, nil
 }
 
-// lockUsageBillingUser 先串行化付款用户写入，再访问订阅；NO KEY UPDATE 与日志外键的 KEY SHARE 兼容。
+// lockUsageBillingUser serializes payer writes before subscription locks. NO KEY UPDATE permits the KEY SHARE
+// locks used by log foreign keys.
 func lockUsageBillingUser(ctx context.Context, tx *sql.Tx, userID int64) error {
-	// 提供商额度维护测试和内部任务可仅传 ProviderID，没有付款用户时跳过用户锁。
+	// Provider-only maintenance operations may omit the payer and therefore skip this lock.
 	if userID <= 0 {
 		return nil
 	}
@@ -152,7 +154,8 @@ func (r *SettlementStore) ResolveUsableSubscriptionForGroup(ctx context.Context,
 	return r.resolveUsableSubscriptionForGroup(ctx, userID, groupID, nil)
 }
 
-// ResolvePreferredSubscriptionForGroup 为批量任务定价读取指定订阅，避免把 API Key 锁定的套餐重新扩展为自动选择。
+// ResolvePreferredSubscriptionForGroup reads the pinned subscription for task pricing, keeping the Key's selected
+// funding source.
 func (r *SettlementStore) ResolvePreferredSubscriptionForGroup(ctx context.Context, userID, subscriptionID, groupID int64) (*billing.UserSubscription, error) {
 	if subscriptionID <= 0 {
 		return nil, billing.ErrSubscriptionNotFound
@@ -252,7 +255,7 @@ func (r *SettlementStore) resolveUsableSubscriptionForGroup(ctx context.Context,
 			return nil, err
 		}
 
-		// 订阅倍率解析必须与最终扣费使用相同的窗口状态，不能按数据库中的旧累计值提前过滤。
+		// Normalize windows before checking remaining quota so rate selection and settlement use the same effective usage.
 		row = normalizeUsageBillingSubscriptionRow(row, now)
 		available := usageBillingSubscriptionAvailable(
 			1,
@@ -367,7 +370,7 @@ func (r *SettlementStore) applyTaskBalanceHold(
 	return result, err
 }
 
-// applyTaskBalanceHoldOnce 执行一次完整任务计费事务。
+// applyTaskBalanceHoldOnce runs one complete task funding transaction.
 func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	ctx context.Context,
 	cmd *billing.TaskFundsCommand,
@@ -422,7 +425,7 @@ func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	return result, nil
 }
 
-// cloneTaskBalanceHoldCommand 隔离失败尝试中的命令变更，保证重试从相同输入开始。
+// cloneTaskBalanceHoldCommand isolates per-attempt mutations so retries start with the same input.
 func cloneTaskBalanceHoldCommand(cmd *billing.TaskFundsCommand) billing.TaskFundsCommand {
 	if cmd == nil {
 		return billing.TaskFundsCommand{}
@@ -432,7 +435,7 @@ func cloneTaskBalanceHoldCommand(cmd *billing.TaskFundsCommand) billing.TaskFund
 	return cloned
 }
 
-// taskAllowanceOperationName 返回稳定的重试日志操作名。
+// taskAllowanceOperationName returns the operation label used in retry logs.
 func taskAllowanceOperationName(operation taskAllowanceOperation) string {
 	switch operation {
 	case taskAllowanceReserve:
@@ -477,7 +480,7 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 				}
 			}
 		} else if cmd.ActualAmount > 0 {
-			// 滚动升级期间的旧任务没有预记标记，结算时按实际金额补记。
+			// Tasks created before allowance reservation was recorded need their actual usage charged at capture.
 			if err := chargeLegacyTaskAPIKey(ctx, tx, cmd.APIKeyID, cmd.ActualAmount); err != nil {
 				return err
 			}
@@ -505,8 +508,9 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 	}
 }
 
-// rollbackTaskAllowanceBestEffort 用保存点隔离额度回退故障。
-// 回退失败时保留偏保守计数，但不能连带撤销已经完成的余额结算。
+// rollbackTaskAllowanceBestEffort isolates allowance-release failures with a savepoint.
+// A failed release retains conservative usage counts; savepoint recovery keeps completed balance settlement
+// committable.
 func rollbackTaskAllowanceBestEffort(ctx context.Context, tx *sql.Tx, batchID string, rollback func() error) error {
 	const savepoint = "batch_image_allowance_rollback"
 	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+savepoint); err != nil {
@@ -526,7 +530,7 @@ func rollbackTaskAllowanceBestEffort(ctx context.Context, tx *sql.Tx, batchID st
 	return err
 }
 
-// taskHoldClaimRequestID 只读取所属模块提供的历史预占动作 ID。
+// taskHoldClaimRequestID returns the reservation action ID supplied by the task owner.
 func taskHoldClaimRequestID(cmd *billing.TaskFundsCommand) string {
 	if cmd == nil {
 		return ""
@@ -536,7 +540,8 @@ func taskHoldClaimRequestID(cmd *billing.TaskFundsCommand) string {
 
 func reserveTaskAPIKeyAllowance(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64, reservedAt time.Time) error {
 	var id int64
-	// 预记和回退必须使用同一时间点，否则数据库 NOW() 晚于任务创建时间时会误判为跨窗口。
+	// Reservation and release use the same timestamp; a later database NOW() could incorrectly place them in
+	// different windows.
 	err := tx.QueryRowContext(ctx, `
 		UPDATE api_keys SET
 			quota_used = quota_used + $1,
@@ -730,7 +735,8 @@ func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.
 	result.BillingAllocations = allocations
 	result.SubscriptionAmountUSD = subscriptionAmount
 
-	// 普通请求到这里已经完成上游调用；指定订阅只扣到额度上限，已放行请求的溢出部分记为余额欠费。
+	// Upstream work has completed. Cap the pinned subscription at its quota and charge the remaining admitted usage
+	// to balance, allowing debt.
 	balanceAmount := remainingAmount
 	if usageBillingUsesBaseAmount(cmd) {
 		balanceAmount = remainingAmount * usageBillingNonNegativeRate(cmd.BalanceRateMultiplier)
@@ -793,7 +799,7 @@ func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.
 	return nil
 }
 
-// incrementUsageBillingTeamMember 在同一扣费事务中累计成员自然周期用量。
+// incrementUsageBillingTeamMember accumulates calendar-window usage in the charging transaction.
 func (r *SettlementStore) incrementUsageBillingTeamMember(ctx context.Context, tx *sql.Tx, teamID, actorUserID int64, amount float64, now time.Time) error {
 	if amount <= 0 {
 		return nil
@@ -815,7 +821,8 @@ func (r *SettlementStore) incrementUsageBillingTeamMember(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	// 请求在途期间成员可能退出或成为 Owner；付款快照仍需完成，只跳过已失效的成员限额计数。
+	// A member may leave or become owner in flight. Complete funding even when no active member row remains to count
+	// usage.
 	return nil
 }
 
@@ -954,7 +961,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 `
 		args = append(args, *cmd.GroupID)
 	} else if cmd.APIKeyBillingMode == billing.APIKeyBillingModeSubscription {
-		// 指定订阅没有最终分组时，只允许套餐本身不限制分组；受限套餐不能由无分组路径扣费。
+		// Without a final group, a pinned subscription can be charged only if its plan has no group restrictions.
 		query += `
 			AND NOT EXISTS (
 				SELECT 1
@@ -1019,15 +1026,15 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 	return plan.Remaining, plan.SubscriptionAmount, plan.Allocations, nil
 }
 
-// usageBillingUsesBaseAmount 调用 billing 判断结算是否使用基础金额。
+// usageBillingUsesBaseAmount reports whether allocation uses the unmultiplied base amount.
 func usageBillingUsesBaseAmount(cmd *billing.UsageBillingCommand) bool {
 	return billing.UsesBaseAmount(cmd)
 }
 
-// usageBillingNonNegativeRate 调用 billing 规范化非负倍率。
+// usageBillingNonNegativeRate normalizes the allocation multiplier through billing rules.
 func usageBillingNonNegativeRate(rate float64) float64 { return billing.NonNegativeRate(rate) }
 
-// normalizeUsageBillingSubscriptionRow 按 billing 的窗口规则规范化订阅行。
+// normalizeUsageBillingSubscriptionRow applies billing's effective quota-window rules to a database row.
 func normalizeUsageBillingSubscriptionRow(row usageBillingSubscriptionRow, now time.Time) usageBillingSubscriptionRow {
 	normalized := billing.NormalizeSettlementSubscription(settlementSubscriptionSnapshot(row), now)
 	row.DailyWindowStart = nullTimePtr(normalized.DailyWindowStart)
@@ -1039,12 +1046,12 @@ func normalizeUsageBillingSubscriptionRow(row usageBillingSubscriptionRow, now t
 	return row
 }
 
-// windowRemaining 将可空额度转换为指针，交给 billing 计算窗口剩余额度。
+// windowRemaining converts nullable SQL limits to billing's remaining-window amount.
 func windowRemaining(limit sql.NullFloat64, used float64) *float64 {
 	return billing.RemainingWindowAmount(usageBillingNullableFloat64Ptr(limit), used)
 }
 
-// usageBillingSubscriptionAvailable 调用 billing 计算订阅可用额度。
+// usageBillingSubscriptionAvailable computes available quota across the supplied windows.
 func usageBillingSubscriptionAvailable(unlimitedAmount float64, values ...*float64) float64 {
 	return billing.SubscriptionAvailableAmount(unlimitedAmount, values...)
 }
@@ -1093,10 +1100,12 @@ func nullTimePtr(value *time.Time) sql.NullTime {
 	return sql.NullTime{Time: *value, Valid: true}
 }
 
-// deductUsageBillingBalance usage billing 必须完整记录本次请求成本，余额不足时扣成负数作为欠费。
-// 此处不能升级为 FOR UPDATE，否则取得订阅锁后会再次与 usage_logs 的用户外键锁形成锁环。
+// deductUsageBillingBalance charges the full completed request cost, allowing a negative balance as debt.
+// Keep NO KEY UPDATE: upgrading after subscription locks can create a lock cycle with usage_logs user foreign-key
+// checks.
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, float64, error) {
-	// 余额列是 NUMERIC(20,8)，必须在执行减法前固定刻度，避免与配额加法向相反方向舍入。
+	// Quantize before subtracting from NUMERIC(20,8) so balance subtraction and quota addition cannot round in
+	// opposite directions.
 	amount = billing.QuantizeUsageBillingAmount(amount)
 	const query = `
 		WITH locked_user AS (
@@ -1130,7 +1139,7 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 	return newBalance, deductedAmount, nil
 }
 
-// reserveUsageBillingTaskBilling 先预占订阅额度，再冻结未覆盖的按量余额。
+// reserveUsageBillingTaskBilling reserves subscription quota first, then freezes balance for uncovered usage.
 func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection TaskProjection, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	result := &billing.TaskFundsResult{}
 	if cmd == nil || (cmd.HoldAmount <= 0 && cmd.BaseAmountUSD <= 0) {
@@ -1197,7 +1206,8 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 		}
 		result.EstimatedAmountUSD = plan.ActualAmountUSD
 	}
-	// 第二版指纹不依赖最终预占金额，可以在 claim 后把额度口径改为真实混合预占金额。
+	// Version-two fingerprints exclude the final hold amount, allowing allowance reservation to use the computed
+	// mixed-source hold after claiming.
 	cmd.HoldAmount = result.HoldAmountUSD
 	if err := projection.SaveReservation(ctx, balanceAmount, allocations, result.HoldAmountUSD, result.EstimatedAmountUSD); err != nil {
 		return nil, err
@@ -1205,9 +1215,10 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 	return result, nil
 }
 
-// captureUsageBillingTaskBilling 保留实际费用，并释放未使用的订阅与余额预占。
+// captureUsageBillingTaskBilling records actual costs and releases unused subscription and balance reservations.
 func captureUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
-	// 新任务必须证明预占已提交；升级前已冻结但没有 dedup 记录的旧任务仍允许安全消费冻结额。
+	// Tasks with reservation metadata require a committed hold claim. Legacy frozen-balance tasks without that
+	// metadata bypass this check.
 	if cmd != nil && cmd.HoldAmount > 0 && (cmd.AllowanceReserved || cmd.BalanceHoldAmount > 0 || len(cmd.SubscriptionHoldAllocations) > 0) {
 		held, err := taskHoldClaimExists(ctx, tx, taskHoldClaimRequestID(cmd), cmd.APIKeyID)
 		if err != nil {
@@ -1245,7 +1256,7 @@ func captureUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 	return balanceResult, nil
 }
 
-// releaseUsageBillingTaskBilling 释放失败或取消任务的全部订阅与余额预占。
+// releaseUsageBillingTaskBilling releases a failed or canceled task's reservations when its hold claim exists.
 func releaseUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	if cmd == nil {
 		return &billing.TaskFundsResult{}, nil
@@ -1265,7 +1276,7 @@ func releaseUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 	return releaseUsageBillingTaskFrozenBalance(ctx, tx, cmd.UserID, balanceAmount)
 }
 
-// releaseTaskSubscriptionAllocations 仅回退仍处于原预占窗口内的订阅用量。
+// releaseTaskSubscriptionAllocations refunds subscription usage only within the window that contained the reservation.
 func releaseTaskSubscriptionAllocations(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, allocations []billing.BillingAllocation) error {
 	if cmd == nil {
 		return nil
@@ -1440,13 +1451,14 @@ func releaseUsageBillingTaskFrozenBalance(ctx context.Context, tx *sql.Tx, userI
 	return nil, errors.New("batch image frozen balance is insufficient")
 }
 
-// normalizeTaskBalanceAmount 对齐 users.balance 的 DECIMAL(20,8) 精度，避免浮点尾差导致冻结额比较失败。
+// normalizeTaskBalanceAmount matches users.balance DECIMAL(20,8) precision so floating-point tails do not break
+// frozen-balance comparisons.
 func normalizeTaskBalanceAmount(amount float64) float64 {
 	return math.Round(amount*1e8) / 1e8
 }
 
-// taskHoldClaimExists 检查 hold request id 是否已在 dedup（或归档）表中被 claim，
-// 即该 batch 的冻结操作确实成功提交过。
+// taskHoldClaimExists checks the deduplication and archive tables for the reservation's billing key and API Key.
+// A matching claim proves that the task's reservation transaction committed.
 func taskHoldClaimExists(ctx context.Context, tx *sql.Tx, holdRequestID string, apiKeyID int64) (bool, error) {
 	var exists int
 	err := tx.QueryRowContext(ctx, `
@@ -1491,8 +1503,8 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 }
 
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
-	// 已放行请求的费用累计到对应 Key，软删除后的 Key 拒绝后续请求。
-	// 配额列与余额列共享 8 位金额刻度，派生金额也必须在 SQL 前量化。
+	// Charge admitted usage to its Key even if the Key was soft-deleted while the request was in flight.
+	// Quota and balance columns share eight-decimal precision; quantize derived amounts before SQL arithmetic.
 	amount = billing.QuantizeUsageBillingAmount(amount)
 	var exhausted bool
 	err := tx.QueryRowContext(ctx, `
@@ -1519,7 +1531,8 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 	return exhausted, nil
 }
 
-// incrementUsageBillingAPIKeyRateLimit 保留软删除 Key 的在途用量，避免整笔资金事务回滚。
+// incrementUsageBillingAPIKeyRateLimit records in-flight usage for soft-deleted Keys so deletion does not roll
+// back settlement.
 func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, cost float64) error {
 	cost = billing.QuantizeUsageBillingAmount(cost)
 	res, err := tx.ExecContext(ctx, `
@@ -1611,17 +1624,17 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 		_ = rows.Close()
 		return nil, err
 	}
-	// 必须在执行下一条 SQL 前显式关闭 rows：pq 驱动在同一连接上
-	// 不允许前一条查询的结果集未耗尽时启动新查询，否则会返回
-	// "unexpected Parse response" 错误。
+	// Close rows before issuing more SQL on this connection. The pq driver cannot
+	// start another query while this result set remains unread and may report
+	// "unexpected Parse response".
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	// 任意维度额度在本次递增中从"未超"跨越到"已超"时，必须刷新调度快照，
-	// 否则 Redis 中缓存的 Provider 仍显示旧的 used 值，后续请求会继续选中本提供商，
-	// 最终观察到 daily_used / weekly_used 大幅超过配置的 limit。
-	// 对于日/周额度，即使本次触发了周期重置（pre=0、post=amount），
-	// 判定式 (post-amount) < limit 同样成立，逻辑与总额度保持一致。
+	// Refresh scheduling snapshots when any quota limit is crossed. Otherwise cached
+	// usage can keep the provider eligible for subsequent requests despite exhaustion.
+	// For a daily or weekly reset, post-usage equals amount, so
+	// (post-amount) < limit still detects a crossing from zero usage.
+
 	crossedTotal := state.TotalLimit > 0 && state.TotalUsed >= state.TotalLimit && (state.TotalUsed-amount) < state.TotalLimit
 	crossedDaily := state.DailyLimit > 0 && state.DailyUsed >= state.DailyLimit && (state.DailyUsed-amount) < state.DailyLimit
 	crossedWeekly := state.WeeklyLimit > 0 && state.WeeklyUsed >= state.WeeklyLimit && (state.WeeklyUsed-amount) < state.WeeklyLimit
@@ -1637,7 +1650,7 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 	return &state, nil
 }
 
-// settlementSubscriptionSnapshot 将 SQL 空值和 JSON 转成结算用的订阅快照。
+// settlementSubscriptionSnapshot converts nullable SQL fields and JSON rates into a billing subscription snapshot.
 func settlementSubscriptionSnapshot(row usageBillingSubscriptionRow) billing.SettlementSubscription {
 	return billing.SettlementSubscription{ID: row.ID, PlanID: row.PlanID, StartsAt: row.StartsAt, ExpiresAt: row.ExpiresAt, DailyWindowStart: usageBillingNullableTimePtr(row.DailyWindowStart), WeeklyWindowStart: usageBillingNullableTimePtr(row.WeeklyWindowStart), MonthlyWindowStart: usageBillingNullableTimePtr(row.MonthlyWindowStart), DailyLimitUSD: usageBillingNullableFloat64Ptr(row.DailyLimitUSD), WeeklyLimitUSD: usageBillingNullableFloat64Ptr(row.WeeklyLimitUSD), MonthlyLimitUSD: usageBillingNullableFloat64Ptr(row.MonthlyLimitUSD), DailyUsageUSD: row.DailyUsageUSD, WeeklyUsageUSD: row.WeeklyUsageUSD, MonthlyUsageUSD: row.MonthlyUsageUSD, PlanGroupRateMultipliers: parseInt64Float64JSONMap(row.PlanGroupRateMultipliersRaw)}
 }

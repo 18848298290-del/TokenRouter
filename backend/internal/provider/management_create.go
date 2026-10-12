@@ -25,7 +25,8 @@ type ManagementCreationResult struct {
 	Results         []ManagementCreationItem
 }
 
-// Create 逐项创建并返回部分成功结果，异步执行两组隐私设置，HTTP 适配器处理幂等重放。
+// Create creates providers sequentially, reports partial success, and schedules OpenAI and Antigravity privacy
+// updates.
 func (s *ManagementBatch) Create(ctx context.Context, inputs []CreateProviderInput) (*ManagementCreationResult, error) {
 	result := &ManagementCreationResult{Results: make([]ManagementCreationItem, 0, len(inputs))}
 	var antigravity, openai []*Record
@@ -66,7 +67,8 @@ func (s *ManagementBatch) Create(ctx context.Context, inputs []CreateProviderInp
 	return result, nil
 }
 
-// scheduleCreationPrivacy 排队仍复用 app 的完成屏障；隐私实际请求另由同一个 PrivacyService 接管取消与等待。
+// scheduleCreationPrivacy registers background work with the application; the privacy service owns cancellation
+// and waiting for its requests.
 func (s *ManagementBatch) scheduleCreationPrivacy(values []*Record, platform string) {
 	if len(values) == 0 || s.creation.Background == nil {
 		return

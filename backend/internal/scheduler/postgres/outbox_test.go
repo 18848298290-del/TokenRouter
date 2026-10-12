@@ -145,20 +145,20 @@ func TestSchedulerOutboxRepositoryTryAcquireCleanupLockUnavailable(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestEnqueueSchedulerOutbox_UngroupedProviderDedupesWithLiteralNilPayload 检查空分组返回 untyped nil，
-// 使分组事件与传入 nil payload 的事件生成相同 dedup_key。typed nil 会被编码为 null 并进入哈希计算。
+// TestEnqueueSchedulerOutbox_UngroupedProviderDedupesWithLiteralNilPayload checks untyped nil for empty groups.
+// This matches literal-nil event hashes; typed nil would encode as null and change the deduplication key.
 func TestEnqueueSchedulerOutbox_UngroupedProviderDedupesWithLiteralNilPayload(t *testing.T) {
 	providerID := int64(42)
 
-	// 路径 A 传入 nil payload，对应 SetError、SetStatus 的调用方式。
+	// Status and error updates pass a literal nil payload.
 	keyLiteralNil := schedulerOutboxDedupKey("provider_changed", &providerID, nil, nil)
 
-	// Path B: scheduler.GroupPayload(provider.GroupIDs) 当提供商没有任何分组
+	// An ungrouped provider produces the same nil payload through GroupPayload.
 	emptyGroupsPayload := scheduler.GroupPayload(nil)
 	require.Nil(t, emptyGroupsPayload,
 		"scheduler.GroupPayload(empty) must return untyped-nil any to avoid typed-nil marshal")
 
-	// 模拟 enqueueSchedulerOutbox 内部的判空逻辑
+	// Reproduce enqueueSchedulerOutbox's nil check before hashing.
 	var payloadJSON []byte
 	if emptyGroupsPayload != nil {
 		t.Fatalf("typed-nil regression: scheduler.GroupPayload(empty) interface should be nil")

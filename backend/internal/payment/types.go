@@ -73,25 +73,25 @@ const (
 // PaymentType represents a supported payment method.
 type PaymentType = string
 
-// CreatePaymentRequest 保存创建支付单时传给支付渠道的参数。
+// CreatePaymentRequest contains the parameters sent to a payment provider.
 type CreatePaymentRequest struct {
-	OrderID               string    // 本地订单号
-	Amount                string    // 按服务商实例配置币种解释的实付金额
-	PaymentType           string    // 支付方式，例如 "alipay"、"wxpay"、"stripe"、"airwallex"
-	Subject               string    // 商品或订单描述
-	NotifyURL             string    // 支付渠道回调地址
-	ReturnURL             string    // 浏览器支付完成后的返回地址
-	OpenID                string    // 微信 JSAPI 支付使用的付款人 OpenID
-	ClientIP              string    // 付款人 IP
-	IsMobile              bool      // 请求是否来自移动端
-	AlipayMobilePrecreate bool      // 移动端支付宝是否改用当面付预下单
-	InstanceSubMethods    string    // 支付实例 supported_types 中配置的子支付方式
-	ExpiresAt             time.Time // 本地订单过期时间，用于同步渠道账单到期时间
-	UserEmail             string    // 从本地用户资料复制的付款人邮箱
+	OrderID               string    // Merchant order number
+	Amount                string    // Amount paid in the provider instance's configured currency
+	PaymentType           string    // Payment method, such as "alipay", "wxpay", "stripe", or "airwallex"
+	Subject               string    // Product or order description
+	NotifyURL             string    // Provider notification URL
+	ReturnURL             string    // Browser return URL after payment
+	OpenID                string    // Payer OpenID for WeChat JSAPI
+	ClientIP              string    // Payer IP address
+	IsMobile              bool      // Whether the request comes from a mobile device
+	AlipayMobilePrecreate bool      // Use Alipay face-to-face precreate for mobile checkout
+	InstanceSubMethods    string    // Sub-methods from the instance's supported_types
+	ExpiresAt             time.Time // Local order expiration used to set the provider invoice expiration
+	UserEmail             string    // Payer email copied from the local user profile
 	BillingInfo           *BillingInfo
 }
 
-// BillingAddress 保存付款人填写的可选账单地址。
+// BillingAddress contains the optional billing address supplied by the payer.
 type BillingAddress struct {
 	Country    string `json:"country,omitempty"`
 	Line1      string `json:"line1,omitempty"`
@@ -101,7 +101,7 @@ type BillingAddress struct {
 	PostalCode string `json:"postal_code,omitempty"`
 }
 
-// BillingInfo 是传给支付渠道的开票抬头和联系方式快照。
+// BillingInfo contains the invoice identity and contact details sent to the provider.
 type BillingInfo struct {
 	Name      string          `json:"name,omitempty"`
 	Email     string          `json:"email,omitempty"`
@@ -139,17 +139,17 @@ type CreatePaymentResponse struct {
 	PayURL        string                  // H5 payment URL (alipay/wxpay)
 	QRCode        string                  // QR code content for scanning
 	ClientSecret  string                  // Stripe PaymentIntent client secret
-	CustomerID    string                  // 账单型支付渠道的客户 ID
-	InvoiceID     string                  // 支付渠道账单 ID
-	InvoiceURL    string                  // 托管账单页面 URL
-	InvoicePDF    string                  // 账单 PDF URL
-	InvoiceStatus string                  // 支付渠道账单状态
-	IntentID      string                  // 前端 SDK 需要的服务商支付意图 ID
-	Currency      string                  // 服务商支付币种
-	CountryCode   string                  // 服务商收银台国家/地区代码
-	PaymentEnv    string                  // 服务商前端环境标识
-	ExpiresAt     time.Time               // 支付渠道实际返回的订单过期时间
-	ResultType    CreatePaymentResultType // Typed result contract for frontend flows
+	CustomerID    string                  // Customer ID at an invoice-based provider
+	InvoiceID     string                  // Provider invoice ID
+	InvoiceURL    string                  // Hosted invoice page URL
+	InvoicePDF    string                  // Invoice PDF URL
+	InvoiceStatus string                  // Provider invoice status
+	IntentID      string                  // Provider payment intent ID required by the frontend SDK
+	Currency      string                  // Provider payment currency
+	CountryCode   string                  // Country or region code for the provider checkout
+	PaymentEnv    string                  // Provider frontend environment identifier
+	ExpiresAt     time.Time               // Order expiration returned by the provider
+	ResultType    CreatePaymentResultType // Result variant for the frontend payment flow
 	OAuth         *WechatOAuthInfo        // WeChat OAuth bootstrap payload when required
 	JSAPI         *WechatJSAPIPayload     // WeChat JSAPI invocation payload when ready
 }
@@ -158,7 +158,7 @@ type CreatePaymentResponse struct {
 type QueryOrderResponse struct {
 	TradeNo  string
 	Status   string  // "pending", "processing", "paid", "failed", "refunded"
-	Amount   float64 // 按服务商返回币种解释的金额
+	Amount   float64 // Amount in the currency returned by the provider
 	PaidAt   string  // RFC3339 timestamp or empty
 	Metadata map[string]string
 }
@@ -168,12 +168,12 @@ type PaymentNotification struct {
 	TradeNo  string
 	OrderID  string
 	Amount   float64
-	Status   string // "success"、"paid"、"processing" 或 "failed"
+	Status   string // "success", "paid", "processing", or "failed"
 	RawData  string // Raw notification body for audit
 	Metadata map[string]string
 }
 
-// PaymentDocumentResponse 描述用户可打开的账单或收据链接。
+// PaymentDocumentResponse contains invoice or receipt links that the user can open.
 type PaymentDocumentResponse struct {
 	Type             string `json:"type"`
 	URL              string `json:"url,omitempty"`
@@ -192,7 +192,7 @@ type RefundRequest struct {
 	Reason  string
 }
 
-// RefundQueryRequest 保存查询历史退款状态所需的渠道侧标识。
+// RefundQueryRequest contains provider identifiers for querying an existing refund.
 type RefundQueryRequest struct {
 	TradeNo  string
 	OrderID  string
@@ -234,7 +234,7 @@ type Provider interface {
 	Refund(ctx context.Context, req RefundRequest) (*RefundResponse, error)
 }
 
-// RefundQueryProvider 表示支持主动查询退款状态的支付渠道。
+// RefundQueryProvider supports querying refund status.
 type RefundQueryProvider interface {
 	Provider
 	QueryRefund(ctx context.Context, req RefundQueryRequest) (*RefundResponse, error)
@@ -247,10 +247,10 @@ type CancelableProvider interface {
 	CancelPayment(ctx context.Context, tradeNo string) error
 }
 
-// DocumentProvider 暴露已完成或历史订单的账单/收据链接。
+// DocumentProvider exposes invoice and receipt links for completed or historical orders.
 type DocumentProvider interface {
 	Provider
-	// GetPaymentDocument 优先返回 invoice，不存在时返回渠道收据。
+	// GetPaymentDocument prefers an invoice and falls back to a provider receipt.
 	GetPaymentDocument(ctx context.Context, invoiceID string, tradeNo string) (*PaymentDocumentResponse, error)
 }
 
@@ -260,7 +260,7 @@ type MerchantIdentityProvider interface {
 	MerchantIdentityMetadata() map[string]string
 }
 
-// EncryptionKey 只区分装配参数；配置解码与验证由 app 拥有。
+// EncryptionKey distinguishes the wiring parameter; app decodes and validates its configuration.
 type EncryptionKey []byte
 
 // GetBasePaymentType extracts the base payment method from a composite key.

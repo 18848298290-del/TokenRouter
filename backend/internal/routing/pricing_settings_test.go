@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// settingsRepository 为设置测试保存价格配置和分组关联。
+// settingsRepository stores pricing configurations and group associations for settings tests.
 type settingsRepository struct {
 	PricingConfigRepository
 	value *PricingConfig
@@ -26,7 +26,7 @@ func TestSharedBillingSettingsCRUDAndCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, pricing.DefaultBillingSettings(), created.BillingSettings)
 	require.ElementsMatch(t, []int64{7, 8}, invalidator.groups)
-	// 没有模型条目时，配置级开关和零价仍生效。
+	// Configuration-level switches and zero prices apply even when there are no model entries.
 	zero, enabled, disabled := 0.0, true, false
 	_, err = svc.Update(ctx, created.ID, &UpdatePricingConfigInput{BillingSettingsPatch: BillingSettingsPatch{
 		FreeOpenAIFast: &enabled, LongContextPricingEnabled: &disabled, WebSearchPricePerCall: PriceUpdate{Set: true, Value: &zero},

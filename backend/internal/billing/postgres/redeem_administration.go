@@ -13,6 +13,7 @@ func NewRedeemAdministrationMutations(client *dbent.Client) *RedeemAdministratio
 	return &RedeemAdministrationMutations{client: client}
 }
 
+// Mutation reuses a transaction in context, or owns a new transaction when a client is configured.
 func (m *RedeemAdministrationMutations) Mutation(ctx context.Context, fn func(context.Context) error) error {
 	if dbent.TxFromContext(ctx) != nil || m.client == nil {
 		return fn(ctx)
@@ -31,6 +32,7 @@ func (m *RedeemAdministrationMutations) Mutation(ctx context.Context, fn func(co
 	return nil
 }
 
+// Adjustment starts and owns a separate transaction when a client is configured.
 func (m *RedeemAdministrationMutations) Adjustment(ctx context.Context, fn func(context.Context) error) error {
 	if m.client == nil {
 		return fn(ctx)

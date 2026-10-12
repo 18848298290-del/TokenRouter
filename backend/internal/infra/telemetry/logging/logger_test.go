@@ -11,7 +11,7 @@ import (
 )
 
 func TestInit_DualOutput(t *testing.T) {
-	// lumberjack 在 Windows 上持有文件句柄，使用 MkdirTemp 创建目录并由测试清理。
+	// Use best-effort directory cleanup because lumberjack may retain an open handle on Windows.
 	tmpDir, err := os.MkdirTemp("", "logger-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
@@ -66,8 +66,7 @@ func TestInit_DualOutput(t *testing.T) {
 	L().Info("dual-output-info")
 	L().Warn("dual-output-warn")
 
-	// Windows 对管道执行 Sync 会阻塞在 FlushFileBuffers，关闭写端后直接读取日志。
-	// 日志已经写入管道缓冲区，关闭写端后即可读取。
+	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -176,7 +175,7 @@ func TestInit_CallerShouldPointToCallsite(t *testing.T) {
 	}
 
 	L().Info("caller-check")
-	// Windows 对管道执行 Sync 会阻塞在 FlushFileBuffers，关闭写端后直接读取日志。
+	// Close the pipe writer before reading; Sync can block in Windows FlushFileBuffers.
 	os.Stdout = origStdout
 	os.Stderr = origStderr
 	_ = stdoutW.Close()
@@ -203,7 +202,7 @@ func TestInit_CallerShouldPointToCallsite(t *testing.T) {
 	}
 }
 
-// TestLegacyPrintfCaller 检查日志记录的调用者文件名。
+// TestLegacyPrintfCaller checks that caller metadata identifies the logging call site.
 func TestLegacyPrintfCaller(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "caller.json")
 	err := Init(InitOptions{
@@ -295,7 +294,7 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 	log.Printf("service started")
 	log.Printf("Warning: queue full")
 	log.Printf("Forward request failed: timeout")
-	// Windows 对管道执行 Sync 会阻塞在 FlushFileBuffers，关闭写端后直接读取日志。
+	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -357,7 +356,7 @@ func TestLegacyPrintfRoutesLevels(t *testing.T) {
 	LegacyPrintf("service.test", "request started")
 	LegacyPrintf("service.test", "Warning: queue full")
 	LegacyPrintf("service.test", "forward failed: timeout")
-	// Windows 对管道执行 Sync 会阻塞在 FlushFileBuffers，关闭写端后直接读取日志。
+	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()

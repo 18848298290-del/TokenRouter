@@ -25,7 +25,7 @@ type ClaudeUsageServiceSuite struct {
 	fetcher *UsageClient
 }
 
-// usageRequestCapture 保存用量查询的认证头，供主 goroutine 断言。
+// usageRequestCapture holds authorization headers for assertions in the test goroutine.
 type usageRequestCapture struct {
 	authorization string
 	anthropicBeta string
@@ -64,7 +64,6 @@ func (s *ClaudeUsageServiceSuite) TestFetchUsage_Success() {
 	require.Equal(s.T(), 34.0, resp.SevenDay.Utilization, "SevenDay utilization mismatch")
 	require.Equal(s.T(), 56.0, resp.SevenDaySonnet.Utilization, "SevenDaySonnet utilization mismatch")
 
-	// 检查捕获的请求头。
 	require.Equal(s.T(), "Bearer at", captured.authorization, "Authorization header mismatch")
 	require.Equal(s.T(), "oauth-2025-04-20", captured.anthropicBeta, "anthropic-beta header mismatch")
 }
@@ -104,7 +103,7 @@ func (s *ClaudeUsageServiceSuite) TestFetchUsage_BadJSON() {
 
 func (s *ClaudeUsageServiceSuite) TestFetchUsage_ContextCancel() {
 	s.srv = newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 等待请求取消，模拟慢响应。
+		// Wait for cancellation to simulate a slow upstream response.
 		<-r.Context().Done()
 	}))
 

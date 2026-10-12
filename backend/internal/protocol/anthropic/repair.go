@@ -27,9 +27,9 @@ var (
 	patternEmptyTextSp2         = []byte(`"text" :""`)
 )
 
-// SliceRawFromBody 返回 Result.Raw 对应的原始字节切片。
-// 优先通过 Result.Index 引用 body 中的切片，大字段可直接复用输入字节。
-// Index 不可用时复制字段内容。
+// SliceRawFromBody returns the bytes corresponding to Result.Raw.
+// It borrows a slice of body when Result.Index is usable; otherwise it copies Raw.
+// Callers must keep body unchanged while using a borrowed result.
 func SliceRawFromBody(body []byte, r gjson.Result) []byte {
 	if r.Index > 0 {
 		end := r.Index + len(r.Raw)
@@ -37,7 +37,7 @@ func SliceRawFromBody(body []byte, r gjson.Result) []byte {
 			return body[r.Index:end]
 		}
 	}
-	// 缺少索引时复制字段内容。
+	// Copy Raw when its location in body is unavailable.
 	return []byte(r.Raw)
 }
 
@@ -151,22 +151,22 @@ func StripEmptyTextBlocks(body []byte) []byte {
 	return out
 }
 
-// FilterThinkingBlocksForRetry 在 retry 场景中移除或降级 thinking 相关结构。
+// FilterThinkingBlocksForRetry removes or downgrades thinking structures for a retry.
 //
-// 原因：
-//   - 上游可能因为历史 `thinking`/`redacted_thinking` 缺失或非法 signature 而拒收。
-//   - Anthropic extended thinking 有结构约束：顶层 `thinking` 开启且最后一条 assistant
-//     是 prefill 时，assistant content 必须以 thinking block 开头。
-//   - 如果只移除 thinking block 却保留顶层 `thinking`，可能触发
-//     "Expected `thinking` or `redacted_thinking`, but found `text`"。
+// Upstream constraints:
+//   - Missing or invalid signatures can cause historical thinking blocks to be rejected.
+//   - With extended thinking enabled, an assistant prefill must start with
+//     a thinking block.
+//   - Removing blocks while leaving top-level thinking enabled can yield
+//     "Expected `thinking` or `redacted_thinking`, but found `text`".
 //
-// 过滤时执行以下操作：
-//   - 禁用顶层 `thinking` 字段。
-//   - 将 `thinking` block 转成 `text` block，保留 thinking 文本。
-//   - 删除无法转成明文的 `redacted_thinking` block。
-//   - content 为空时补入占位文本。
+// The filter performs these repairs:
+//   - Remove top-level thinking.
+//   - Convert thinking blocks to text, retaining their text.
+//   - Drop encrypted redacted_thinking blocks.
+//   - Add placeholder text when content is empty.
 //
-// 调用方根据模型的思考重放规则决定是否调用本函数；要求原样回传或规则未知的上游使用原 body。
+// Callers must check model replay rules; use the original body for unknown rules or exact-replay requirements.
 func FilterThinkingBlocksForRetry(body []byte) []byte {
 	hasThinkingContent := bytes.Contains(body, patternTypeThinking) ||
 		bytes.Contains(body, patternTypeThinkingSpaced) ||
@@ -194,16 +194,16 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 		return body
 	}
 
-	// 逐字段处理 body，减少整段解码产生的 map 和接口分配。
-	// 这里先用 gjson 把 messages 子树摘出来，后续只对 messages 做 Unmarshal/Marshal。
+	// Decode and encode the messages subtree to limit map and interface allocations.
+	// Other fields are patched directly in the JSON body.
 	jsonStr := *(*string)(unsafe.Pointer(&body))
 	msgsRes := gjson.Get(jsonStr, "messages")
 	if !msgsRes.Exists() || !msgsRes.IsArray() {
 		return body
 	}
 
-	// 快速路径删除顶层 thinking，messages 原样保留。
-	// patternThinkingField 可能命中 tool_use.input.thinking 等嵌套字段，此处用 gjson 检查顶层字段是否存在。
+	// Delete top-level thinking directly when message blocks need no repair.
+	// The byte pattern also matches nested input.thinking; check the top-level field before deletion.
 	containsThinkingBlocks := bytes.Contains(body, patternTypeThinking) ||
 		bytes.Contains(body, patternTypeThinkingSpaced) ||
 		bytes.Contains(body, patternTypeRedactedThinking) ||
@@ -243,7 +243,7 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 			continue
 		}
 
-		// 延迟分配：只有检测到需要修改的块，才构建新 slice。
+		// Allocate a replacement slice only after finding a block that needs repair.
 		var newContent []any
 		modifiedThisMsg := false
 
@@ -393,10 +393,10 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 	return out
 }
 
-// RemoveThinkingDependentContextStrategies 从 context_management.edits 中移除
-// 需要 thinking 启用的策略（如 clear_thinking_20251015）。
-// 当顶层 "thinking" 字段被禁用时必须调用，否则上游会返回
-// "strategy requires thinking to be enabled or adaptive"。
+// RemoveThinkingDependentContextStrategies removes clear_thinking_20251015
+// from context_management.edits. Call it after disabling top-level thinking
+// to prevent the upstream error:
+// "strategy requires thinking to be enabled or adaptive".
 func RemoveThinkingDependentContextStrategies(body []byte) []byte {
 	jsonStr := *(*string)(unsafe.Pointer(&body))
 	editsRes := gjson.Get(jsonStr, "context_management.edits")
@@ -436,16 +436,16 @@ func RemoveThinkingDependentContextStrategies(body []byte) []byte {
 	return body
 }
 
-// FilterSignatureSensitiveBlocksForRetry 是更强的 retry 过滤器，用于上游错误明确指向
-// tool block 的 signature/thought_signature 校验问题。
+// FilterSignatureSensitiveBlocksForRetry downgrades thinking and tool blocks
+// when an upstream error identifies tool signature/thought_signature validation.
 //
-// 它包含 FilterThinkingBlocksForRetry 的处理，并额外执行：
-//   - 将 `tool_use` block 转成 text，停止发送结构化工具调用。
-//   - 将 tool_result 块的结果内容转成 text。
+// It disables top-level thinking and converts readable thinking to text, then:
+//   - Converts tool_use blocks to text, removing structured calls.
+//   - Converts tool_result content to text.
 //
-// 只能在确有必要时使用：把工具块转成纯文本会改变模型行为，也可能增加提示注入风险。
+// Use only when needed: text conversion changes tool behavior and can increase prompt-injection risk.
 //
-// 调用方根据模型的思考重放规则决定是否调用本函数；要求原样回传或规则未知的上游使用原 body。
+// Callers must check model replay rules; use the original body for unknown rules or exact-replay requirements.
 func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 	// Fast path: only run when we see likely relevant constructs.
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
@@ -625,10 +625,10 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 	return newBody
 }
 
-// FilterThinkingBlocksInternal removes invalid thinking blocks from request
-// 策略：
-//   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
-//   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块
+// FilterThinkingBlocksInternal removes thinking blocks rejected by the replay rules.
+// It retains a thinking or redacted_thinking block only when thinking is enabled
+// or adaptive, the message is from the assistant, and the signature is nonempty
+// and differs from rejectedSignature. Untyped thinking blocks are removed.
 func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
@@ -684,8 +684,8 @@ func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte 
 			blockType, _ := blockMap["type"].(string)
 
 			if blockType == "thinking" || blockType == "redacted_thinking" {
-				// When thinking is enabled and this is an assistant message,
-				// only keep thinking blocks with valid signatures
+				// Retain signed assistant thinking when enabled or adaptive.
+				// This checks presence and the rejected value, not cryptographic validity.
 				if thinkingEnabled && role == "assistant" {
 					signature, _ := blockMap["signature"].(string)
 					if signature != "" && signature != rejectedSignature {

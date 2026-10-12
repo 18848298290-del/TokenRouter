@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// contentModerationKeywordMatcher 使用紧凑的 Aho-Corasick 自动机复用关键词公共前缀。
+// contentModerationKeywordMatcher shares keyword prefixes in a compact Aho-Corasick automaton.
 type contentModerationKeywordMatcher struct {
 	nodes           []contentModerationKeywordNode
 	edges           []contentModerationKeywordEdge
@@ -30,7 +30,8 @@ type contentModerationKeywordBuildEdge struct {
 	label       byte
 }
 
-// newContentModerationKeywordMatcher 构建只读索引，并保留原始关键词顺序用于兼容旧命中结果。
+// newContentModerationKeywordMatcher builds a read-only index with matches ranked by configured keyword
+// order.
 func newContentModerationKeywordMatcher(keywords []string) *contentModerationKeywordMatcher {
 	if len(keywords) == 0 {
 		return nil
@@ -68,7 +69,7 @@ func newContentModerationKeywordMatcher(keywords []string) *contentModerationKey
 		return nil
 	}
 
-	// 按广度优先顺序计算失败指针，并向子节点传播配置顺序最靠前的命中项。
+	// Build failure links breadth first and propagate the earliest configured match to each child.
 	queue := make([]int32, 0, len(buildNodes)-1)
 	var rootTransitions [256]int32
 	for edgeIndex := contentModerationKeywordBuildFirstEdge(buildNodes[0]); edgeIndex >= 0; edgeIndex = buildEdges[edgeIndex].nextSibling {
@@ -98,7 +99,7 @@ func newContentModerationKeywordMatcher(keywords []string) *contentModerationKey
 		}
 	}
 
-	// 将构建期链表压缩为有序连续边，查询时即可通过二分查找完成状态跳转。
+	// Pack each node's linked edges into a sorted range for binary-search transitions.
 	edges := make([]contentModerationKeywordEdge, 0, len(buildEdges))
 	var outgoing [256]contentModerationKeywordEdge
 	for nodeIndex := range buildNodes {
@@ -168,7 +169,8 @@ func minKeywordIndex(left, right int32) int32 {
 	return right
 }
 
-// Match 扫描文本并返回配置顺序最靠前的关键词，保持与逐项 strings.Contains 一致。
+// Match returns the first configured keyword found in a case-insensitive scan, matching sequential
+// strings.Contains checks.
 func (m *contentModerationKeywordMatcher) Match(text string) (string, bool) {
 	if m == nil || text == "" || len(m.nodes) == 0 || len(m.keywords) == 0 {
 		return "", false

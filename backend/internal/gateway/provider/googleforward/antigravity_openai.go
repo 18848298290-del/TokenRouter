@@ -59,7 +59,7 @@ type antigravityCompatUpstreamCall struct {
 	geminiBody   []byte
 }
 
-// ForwardAsChatCompletions 使用 Antigravity 原生 OAuth 提供商转发 Chat Completions 请求。
+// ForwardAsChatCompletions forwards Chat Completions through an Antigravity OAuth provider.
 func (s *Antigravity) ForwardAsChatCompletions(
 	ctx context.Context,
 	output Output,
@@ -117,7 +117,7 @@ func (s *Antigravity) ForwardAsChatCompletions(
 	})
 }
 
-// ForwardAsResponses 使用 Antigravity 原生 OAuth 提供商转发 Responses 请求。
+// ForwardAsResponses forwards Responses through an Antigravity OAuth provider.
 func (s *Antigravity) ForwardAsResponses(
 	ctx context.Context,
 	output Output,
@@ -185,11 +185,11 @@ func (s *Antigravity) validateAntigravityCompatProvider(c *attempt, provider *ga
 	)
 }
 
-// prepareAntigravityCompatTools 处理工具名混淆和缓存断点，并更新响应的工具名映射。
+// prepareAntigravityCompatTools rewrites tool names and records the response mapping.
 func prepareAntigravityCompatTools(c *attempt, body []byte) []byte {
 	rewrite := anthropic.BuildToolNameRewriteFromBody(body)
 	if c != nil {
-		// 每次尝试覆盖自己的工具映射，本次不改名时也不能保留先前映射。
+		// Replace the mapping on every attempt, including attempts with no renamed tools.
 		c.ToolNames = rewrite
 	}
 	return anthropic.ApplyToolNameRewriteToBody(body, rewrite)

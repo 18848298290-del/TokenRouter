@@ -8,18 +8,18 @@ import (
 )
 
 const (
-	// 审计日志相关常量。
-	// AuditAuthMethodJWT / AuditAuthMethodAdminAPIKey 与 auth 中间件写入的 auth_method 对齐。
+	// Authentication labels stored in audit records.
+	// AuditAuthMethodJWT and AuditAuthMethodAdminAPIKey match the middleware's auth_method values.
 	AuditAuthMethodJWT         = "jwt"
 	AuditAuthMethodAdminAPIKey = "admin_api_key"
 
-	// auditRequestBodyMaxBytes 请求体脱敏后入库的最大长度（字节），超出截断。
+	// auditRequestBodyMaxBytes limits encoded body bytes before the truncation marker is appended.
 	auditRequestBodyMaxBytes = 16 * 1024
-	// AuditRequestBodyCaptureLimit 请求体参与脱敏解析的原始大小上限（字节）。
-	// 审计中间件按此上限截断读取，超出的请求体仅记录占位符不解析。
+	// AuditRequestBodyCaptureLimit is the maximum raw body size accepted for redaction, in bytes.
+	// The middleware reads one extra byte to detect oversized bodies, which become placeholders.
 	AuditRequestBodyCaptureLimit = 256 * 1024
 
-	// 内置审计动作名（认证/安全事件与特殊操作使用固定值，普通请求由路由自动推导）。
+	// Fixed action names cover authentication and sensitive operations; other names derive from routes.
 	AuditActionLogin                  = "auth.login"
 	AuditActionLogin2FA               = "auth.login.2fa"
 	AuditActionRegister               = "auth.register"
@@ -30,10 +30,10 @@ const (
 	AuditActionUserSubscriptionRevoke = "user.subscriptions.revoke"
 )
 
-// ErrAuditLogNotFound 审计日志不存在。
+// ErrAuditLogNotFound indicates that the requested audit record does not exist.
 var ErrAuditLogNotFound = infraerrors.NotFound("AUDIT_LOG_NOT_FOUND", "audit log not found")
 
-// AuditLog 一条管理面操作审计记录。
+// AuditLog records a management operation.
 type AuditLog struct {
 	ID               int64          `json:"id"`
 	CreatedAt        time.Time      `json:"created_at"`
@@ -54,7 +54,7 @@ type AuditLog struct {
 	Extra            map[string]any `json:"extra,omitempty"`
 }
 
-// AuditLogFilter 审计日志列表查询条件。
+// AuditLogFilter selects and paginates audit records.
 type AuditLogFilter struct {
 	RequestID string
 	Page      int
@@ -68,13 +68,13 @@ type AuditLogFilter struct {
 	Action      string
 	Method      string
 	ClientIP    string
-	// Success: nil 全部；true 仅 2xx/3xx；false 仅 >=400。
+	// Success selects all statuses when nil, statuses below 400 when true, and statuses at least 400 when false.
 	Success *bool
-	// Query 对 path / action / actor_email 做模糊匹配。
+	// Query matches substrings of path, action, or actor_email.
 	Query string
 }
 
-// AuditLogList 分页结果。
+// AuditLogList is a page of audit records and its pagination metadata.
 type AuditLogList struct {
 	Logs     []*AuditLog
 	Total    int
@@ -82,18 +82,18 @@ type AuditLogList struct {
 	PageSize int
 }
 
-// AuditLogRepository 提供审计日志的追加、查询和全量清空操作。
+// AuditLogRepository appends, queries, and clears audit records.
 type AuditLogRepository interface {
 	BatchInsert(ctx context.Context, logs []*AuditLog) (int64, error)
-	// Insert 同步写入单条（用于清空留痕等必须落库的记录）。
+	// Insert synchronously persists one record.
 	Insert(ctx context.Context, log *AuditLog) error
 	List(ctx context.Context, filter *AuditLogFilter) (*AuditLogList, error)
 	GetByID(ctx context.Context, id int64) (*AuditLog, error)
 	Count(ctx context.Context) (int64, error)
-	// ClearWithTrace 同事务清空并写入必须持久的留痕。
+	// ClearWithTrace clears records and persists the clearing trace in one transaction.
 	ClearWithTrace(context.Context, *AuditLog) (int64, error)
-	// TruncateAll 只保留旧仓储兼容，生产清空使用闭合操作。
+	// TruncateAll supports repository compatibility; production clearing uses ClearWithTrace.
 	TruncateAll(ctx context.Context) error
-	// DeleteBefore 按保留期批量删除，返回本批删除行数（幂等，可多实例并发）。
+	// DeleteBefore deletes an expired batch and returns its row count; repeated or concurrent calls are safe.
 	DeleteBefore(ctx context.Context, cutoff time.Time, batchSize int) (int64, error)
 }

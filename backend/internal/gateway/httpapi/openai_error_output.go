@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// OpenAIErrorOutput 不保存请求和 Handler，回调只负责同步的 HTTP 观测与心跳接管。
+// OpenAIErrorOutput writes protocol errors with synchronous observation and heartbeat callbacks.
 type OpenAIErrorOutput struct {
 	stopCompact func(*gin.Context) bool
 	markStream  func(*gin.Context, string, string, int)
@@ -24,7 +24,7 @@ func (h OpenAIErrorOutput) WriteAnthropicStreamingError(c *gin.Context, status i
 	}
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		payload, _ := json.Marshal(gin.H{"type": "error", "error": gin.H{"type": kind, "message": message}})
-		// 保留此兼容入口的写失败处置；不得附带通用 Messages 的额外观测或终态改写。
+		// This compatibility writer ignores write errors and leaves observation and terminal state to its caller.
 		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
 		flusher.Flush()
 	}
@@ -40,8 +40,8 @@ func (h OpenAIErrorOutput) WriteStreamingErrorWithCode(
 	countTowardsSLA bool,
 ) {
 	status, message = modelAttributeError(c, status, message)
-	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
-	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
+	// A Compact heartbeat may already have committed HTTP 200. Stop it and wait for its writer
+	// before taking over the ResponseWriter and emitting an in-stream error.
 	if h.stopCompact(c) {
 		streamStarted = true
 	}
@@ -51,14 +51,15 @@ func (h OpenAIErrorOutput) WriteStreamingErrorWithCode(
 		} else {
 			h.markStream(c, errType, message, status)
 		}
-		// Codex CLI 接受 response.completed、failed、incomplete 或 cancelled 终止事件。
-		// 通用 event:error 会触发 stream closed before response.completed。
+		// Codex CLI expects a response.completed, response.failed, response.incomplete, or response.cancelled
+		// terminal event.
+		// A generic event:error can leave it reporting "stream closed before response.completed".
 		if InboundIsResponses(c) {
 			if WriteResponsesFailedSSE(c, errType, code, message, ErrorRequestID(c), ErrorRequestModel(c)) {
 				return
 			}
 		}
-		// 流已开始，发送原协议错误事件后结束。
+		// Other streaming routes receive their protocol error event.
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
 			errorObject := gin.H{"type": errType, "message": message}
@@ -78,7 +79,6 @@ func (h OpenAIErrorOutput) WriteStreamingErrorWithCode(
 		return
 	}
 
-	// 普通响应保持原 JSON 形状和状态码。
 	if code == "" {
 		h.WriteError(c, status, errType, message)
 		return
@@ -88,7 +88,7 @@ func (h OpenAIErrorOutput) WriteStreamingErrorWithCode(
 	}})
 }
 
-// DefaultOpenAIErrorOutput 为 HTTP、WS 和媒体适配提供错误输出与观测。
+// DefaultOpenAIErrorOutput provides error writing and observation for HTTP, WS, and media adapters.
 func DefaultOpenAIErrorOutput() OpenAIErrorOutput {
 	return OpenAIErrorOutput{stopCompact: StopOpenAICompactSSEKeepaliveCommitted, markStream: MarkOpsStreamError, markFailure: MarkOpsStreamFailure, metadata: func(c *gin.Context) (string, string) { return ErrorRequestID(c), ErrorRequestModel(c) }}
 }
@@ -102,7 +102,7 @@ func (h OpenAIErrorOutput) StreamError(c *gin.Context, status int, kind, message
 	h.WriteStreamingErrorWithCode(c, status, kind, "", message, started, false)
 }
 
-// EnsureFallback 在缺少上游错误对象时补充错误响应。
+// EnsureFallback supplies an error response when no upstream error object is available.
 func (h OpenAIErrorOutput) EnsureFallback(c *gin.Context, started bool) bool {
 	return h.EnsureResponse(c, started, nil)
 }

@@ -8,7 +8,7 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// ProjectWSResult 整理本次 WS turn 的观测结果和恢复输入。
+// ProjectWSResult converts a forwarding result into WebSocket turn observations and replay inputs.
 func ProjectWSResult(r *forwardcore.OpenAIResult) *gatewayws.ForwardResult {
 	if r == nil {
 		return nil
@@ -58,7 +58,7 @@ func ProjectWSResult(r *forwardcore.OpenAIResult) *gatewayws.ForwardResult {
 	return out
 }
 
-// ForwardResultFromWS 将 WS 结果转换为完成记录和健康观测使用的 HTTP 结果格式。
+// ForwardResultFromWS converts a WebSocket result for completion records and health observations.
 func ForwardResultFromWS(r *gatewayws.ForwardResult) *forwardcore.OpenAIResult {
 	if r == nil {
 		return nil

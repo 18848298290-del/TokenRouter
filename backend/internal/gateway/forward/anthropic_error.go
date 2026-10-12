@@ -8,18 +8,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AnthropicError 依次应用提供商策略、检查提交状态、匹配错误规则并输出安全消息。
+// AnthropicError records diagnostics, applies provider health policy, and writes an error when failover is not selected.
 func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, error) {
-	// 上游返回非成功 HTTP 状态，仍应计入 Ollama Cloud 活动。
+	// Failed HTTP responses still count as provider activity.
 	p.ScheduleActivity()
 	body, readErr := p.ReadBody()
 	if readErr != nil {
-		// 读取失败时 body 可能已截断，记录读取错误以辅助检查基于部分报文的错误分类。
+		// A failed read may leave a partial body; log the read error alongside classification diagnostics.
 		p.Log(fmt.Sprintf("[Forward] Failed to fully read upstream error body: Provider=%d(%s) Status=%d err=%v",
 			in.ProviderID, in.ProviderName, in.Status, readErr))
 	}
 
-	// 调试日志：打印上游错误响应
 	p.Log(fmt.Sprintf("[Forward] Upstream error (non-retryable): Provider=%d(%s) Status=%d RequestID=%s Body=%s",
 		in.ProviderID, in.ProviderName, in.Status, in.RequestID, p.Truncate(string(body), 1000)))
 
@@ -47,7 +46,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		Detail:             upstreamDetail,
 	})
 
-	// 按已配置策略、自定义规则未命中和池模式的默认处理方式分类上游错误。
+	// Provider health policy chooses generic output or failover before display rules run.
 	decision := p.Health(ctx, in.Status, in.RequestedModels)
 	if decision.Generic {
 		p.Commit()
@@ -60,7 +59,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 
 	p.Commit()
 
-	// 记录上游错误响应体摘要便于排障（可选：由配置控制；不回显到客户端）
+	// Optional body diagnostics stay in logs rather than the client error message.
 	if in.LogBody {
 		p.Log(fmt.Sprintf(
 			"Upstream error %d (provider=%d platform=%s type=%s): %s",
@@ -72,7 +71,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		))
 	}
 
-	// 非 failover 错误也支持错误透传规则匹配。
+	// Display rules also apply when the error cannot fail over.
 	if status, errType, errMsg, matched := applyAnthropicDisplayRule(
 		p,
 		in.Platform,
@@ -94,7 +93,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", in.Status, summary)
 	}
 
-	// 根据状态码返回适当的自定义错误响应（不透传上游详细信息）
+	// Pass through HTTP 400 bodies; use safe built-in messages for other unmatched errors.
 	var errType, errMsg string
 	var statusCode int
 
@@ -135,7 +134,6 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		errMsg = "Upstream request failed"
 	}
 
-	// 返回自定义错误响应
 	p.Message(statusCode, errType, errMsg)
 
 	if upstreamMsg == "" {
@@ -144,7 +142,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 	return nil, fmt.Errorf("upstream error: %d message=%s", in.Status, upstreamMsg)
 }
 
-// AnthropicRetryError 按提供商策略、提交状态和错误规则处理重试失败。
+// AnthropicRetryError applies health and display policy after upstream retries fail.
 func AnthropicRetryError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, error) {
 	respBody, _ := p.ReadBody()
 	p.ResetBody(respBody)
@@ -214,7 +212,6 @@ func AnthropicRetryError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Res
 		return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched) message=%s", in.Status, summary)
 	}
 
-	// 返回统一的重试耗尽错误响应
 	p.Message(502, "upstream_error", "Upstream request failed after retries")
 
 	if upstreamMsg == "" {

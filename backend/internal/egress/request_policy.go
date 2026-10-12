@@ -1,6 +1,6 @@
 package egress
 
-// EgressPolicy 包含本次请求使用的代理、TLS 配置、Header 和目标校验选项。
+// EgressPolicy contains the proxy, TLS profile, headers, and destination checks for one request.
 type EgressPolicy struct {
 	ProxyURL           string                 `json:"-"`
 	TLSProfile         *TLSFingerprintProfile `json:"-"`
@@ -11,8 +11,8 @@ type EgressPolicy struct {
 	DisableRedirects   bool
 }
 
-// RequestPolicyInput 包含调用方已解析的出站参数。
-// Header 在构造请求时应用，TLS 和重定向参数在获取客户端前确定。
+// RequestPolicyInput contains outbound settings resolved by the caller.
+// Apply headers while building the request; choose TLS and redirects before acquiring a client.
 type RequestPolicyInput struct {
 	ProxyURL                                              string
 	TLSProfile                                            *TLSFingerprintProfile
@@ -20,16 +20,16 @@ type RequestPolicyInput struct {
 	ValidateResolvedIP, PublicHostsOnly, DisableRedirects bool
 }
 
-// RequestPolicy 复制 TLS 配置，并按安全规则过滤 Header。
+// RequestPolicy copies TLS settings and filters header overrides through safety rules.
 func RequestPolicy(input RequestPolicyInput) EgressPolicy {
 	return EgressPolicy{ProxyURL: input.ProxyURL, TLSProfile: CloneTLSFingerprintProfile(input.TLSProfile), Headers: ResolveHeaderOverrides(input.Headers), ValidateResolvedIP: input.ValidateResolvedIP, PublicHostsOnly: input.PublicHostsOnly, DisableRedirects: input.DisableRedirects}
 }
 
-// RequiresHostValidation 在全局 IP 校验或请求级公网限制启用时返回 true。
+// RequiresHostValidation reports whether global IP validation or per-request public-host checks apply.
 func (p EgressPolicy) RequiresHostValidation() bool { return p.ValidateResolvedIP || p.PublicHostsOnly }
 
-// String 返回包含传输模式的诊断文本。
+// String returns diagnostic text containing the transport mode, excluding credentials.
 func (p EgressPolicy) String() string { return "egress policy (" + p.TransportMode + ")" }
 
-// GoString 返回 Go 语法格式化时使用的诊断文本。
+// GoString uses the same credential-free diagnostic text for Go-syntax formatting.
 func (p EgressPolicy) GoString() string { return p.String() }

@@ -69,13 +69,13 @@ func marshalSchedulerCacheProvider(value providercore.Record) ([]byte, []byte, e
 	return (codec.ProviderCodec{}).Encode(codec.WrapRecord(&value))
 }
 
-// historicalSchedulerPayload 是固定的历史快照报文，供编码器输出比较使用。
+// historicalSchedulerPayload loads a fixed historical snapshot for comparison with encoder output.
 func historicalSchedulerPayload(t *testing.T, kind string) []byte {
 	t.Helper()
 	name := strings.ReplaceAll(t.Name(), "/", "_") + "-" + kind + ".json"
 	value, err := os.ReadFile(filepath.Join("testdata", name))
 	require.NoError(t, err)
-	// 压缩夹具中的排版空白，字节断言仍检查字段顺序、转义及 nil 和空集合。
+	// Compact fixture whitespace while retaining field order, escaping, and nil-versus-empty distinctions.
 	var compact bytes.Buffer
 	require.NoError(t, json.Compact(&compact, value))
 	return compact.Bytes()

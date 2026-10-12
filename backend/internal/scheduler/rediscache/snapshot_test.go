@@ -525,7 +525,7 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.True(t, token.ValidFor(bucket))
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []providercore.Record{provider}))
 
-	// token 同时绑定完整桶标识和 epoch。
+	// A write token binds both the complete bucket identity and its epoch.
 	err = cache.SetSnapshot(ctx, otherBucket, token, []providercore.Record{provider})
 	require.ErrorIs(t, err, scheduler.ErrSchedulerBucketWriteFenced)
 	_, err = cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, otherBucket)).Result()
@@ -543,13 +543,13 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, retiredEpoch, token.Epoch)
 
-	// 重复退休保持当前 epoch。
+	// Repeated retirement keeps the same epoch.
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 	retiredEpochAgain, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Int64()
 	require.NoError(t, err)
 	require.Equal(t, retiredEpoch, retiredEpochAgain)
 
-	// ready/active 被原子删除后，新读请求会未命中；退休前已取得 activeVersion 的读请求仍可完成。
+	// Deleting ready and active markers makes new reads miss; readers with the prior version have a grace period to finish.
 	_, hit, err := cache.GetSnapshot(ctx, bucket)
 	require.NoError(t, err)
 	require.False(t, hit)
@@ -625,7 +625,7 @@ func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
 	_, err = cache.writeSnapshotVersionAndReturnProviderIDs(ctx, bucket, version, []providercore.Record{provider})
 	require.NoError(t, err)
 
-	// 在 INCR 和写入之后、旧 writer 激活之前执行退休和重开。
+	// Retire and reopen after allocation and writing, but before the old writer activates.
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 	_, err = cache.ReopenBucket(ctx, bucket)
 	require.NoError(t, err)
@@ -911,7 +911,7 @@ func BenchmarkSchedulerCacheProviderPayloadReuse(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				// 后续桶复用提供商 JSON 与全局提供商键，按提供商 ID 构造成员。
+				// Later buckets reuse provider JSON and global keys, constructing members from the shared IDs.
 				total += len(schedulerSnapshotMembers(ids))
 				schedulerCachePayloadBenchmarkSink = total
 			}
@@ -1012,7 +1012,7 @@ func (c *schedulerCache) SetSnapshotAndReturnProviderIDs(ctx context.Context, bu
 	return c.SnapshotCache.SetSnapshotAndReturnProviderIDs(ctx, bucket, token, snapshotRecords(values))
 }
 
-// newSchedulerCacheWithChunkSizes 按测试指定的分块大小构造快照缓存，提供商报文由 codec 编解码。
+// newSchedulerCacheWithChunkSizes creates a test cache with supplied batch sizes and the provider codec.
 func newSchedulerCacheWithChunkSizes(rdb *redis.Client, read, write int) *schedulerCache {
 	return &schedulerCache{NewSnapshotCache(rdb, codec.ProviderCodec{}, SnapshotCacheOptions{MGetChunkSize: read, WriteChunkSize: write})}
 }

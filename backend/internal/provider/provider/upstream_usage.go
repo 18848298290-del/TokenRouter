@@ -19,8 +19,8 @@ type UpstreamUsageExecutionOptions struct {
 	Request   func(*provider.Record, provider.UpstreamUsageQueryConfig) (*usagecontract.Request, error)
 }
 
-// UpstreamUsageExecution 持有供应商适配器注册表并装配技术请求。
-// 查询缓存、身份复核及生命周期由提供商核心负责。
+// UpstreamUsageExecution holds usage adapters and builds their requests.
+// The provider core owns query caching, identity checks, and lifecycle.
 // @project-doc docs/interfaces/upstream_usage.md#native_usage_adapters
 type UpstreamUsageExecution struct {
 	Options  UpstreamUsageExecutionOptions

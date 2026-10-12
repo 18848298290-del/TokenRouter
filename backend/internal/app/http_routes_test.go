@@ -38,7 +38,7 @@ const (
 var (
 	routeProtocol = gatewayhttp.RouteProtocol
 
-	// 测试中的协议检查使用无状态适配函数，每次读取当前请求数据。
+	// Protocol checks use stateless adapters that read the current request.
 	testRouteGuards                      = gatewayhttp.NewRouteGuards(legacyRouteMiddleware(nil, nil, nil, nil, nil, &config.Config{}))
 	requireGroupClientProtocol           = testRouteGuards.RequireGroupClientProtocol
 	extendedRouteProtocol                = gatewayhttp.ExtendedRouteProtocol
@@ -83,7 +83,7 @@ func TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesIgnoreRequestLanguage 检查网关和裸路径别名的英文错误响应。
+// TestGatewayRoutesIgnoreRequestLanguage checks English errors on gateway routes and bare aliases.
 func TestGatewayRoutesIgnoreRequestLanguage(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithGroup(&config.Config{}, &routing.Group{ID: 1, AllowedProtocols: []protocolcore.ProtocolID{}})
 	for _, path := range []string{"/v1/responses", "/responses", "/backend-api/codex/responses", "/v1/chat/completions"} {
@@ -156,7 +156,8 @@ func TestGatewayRoutesClientProtocolGateRejectsAliasesBeforeReadingBody(t *testi
 	}
 }
 
-// TestGatewayRoutesCountTokensHonorsProtocolGate 验证计数入口先执行分组协议门禁，提供商选中后才决定实际计数能力。
+// TestGatewayRoutesCountTokensHonorsProtocolGate checks group admission before provider selection determines
+// counting support.
 func TestGatewayRoutesCountTokensHonorsProtocolGate(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -356,7 +357,7 @@ func TestGatewayRoutesNonNativeResponsesWebSocketIsRejected(t *testing.T) {
 	require.Contains(t, w.Body.String(), "protocol_not_allowed")
 }
 
-// TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered 检查 Alpha Search 的三种公开路径都使用 OpenAI 专用 handler。
+// TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered checks all three public Alpha Search paths.
 func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	registered := make(map[string]bool)
@@ -375,7 +376,8 @@ func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup 验证未启用 Alpha Search 协议的分组在读取请求体前拒绝。
+// TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup checks rejection before body reads when Alpha Search is
+// disabled for the group.
 func TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformGrok)
 	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
@@ -406,7 +408,7 @@ func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesAsyncImagesPathsAreRemoved 检查自研异步图片路径返回 404。
+// TestGatewayRoutesAsyncImagesPathsAreRemoved checks 404 responses for retired asynchronous image endpoints.
 func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	registered := make(map[string]bool)
@@ -436,7 +438,7 @@ func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, w.Code, "method=%s path=%s", route.method, route.requestPath)
 	}
 
-	// Gemini 批量图片作业使用独立路由。
+	// Gemini batch image jobs have separate routes.
 	for _, route := range []string{
 		"POST /v1/images/batches",
 		"GET /v1/images/batches",
@@ -453,7 +455,8 @@ func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesBillingIntrospectionIsRemoved 检查已下线的公开账单自省路径返回 404。
+// TestGatewayRoutesBillingIntrospectionIsRemoved checks a 404 for the retired public billing introspection
+// endpoint.
 func TestGatewayRoutesBillingIntrospectionIsRemoved(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	for _, route := range router.Routes() {
@@ -616,9 +619,9 @@ func TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths 检查 Responses 子路径准入。
-// /responses/*subpath 会转发到上游同名端点，非法子路径在入口返回错误，
-// 调度与转发在路径校验通过后执行。
+// TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths checks Responses path admission.
+// Responses subpaths forward to matching upstream endpoints, so invalid paths must be rejected
+// before scheduling and forwarding.
 func TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 
@@ -662,7 +665,7 @@ func TestGatewayRoutesOpenAICompatibleCountTokensPathIsRegistered(t *testing.T) 
 	}
 }
 
-// RegisterUserRoutes 注册需要认证的用户路由。
+// RegisterUserRoutes registers authenticated user routes for the fixture.
 func RegisterUserRoutes(
 	v1 *gin.RouterGroup,
 	h *routeTestHandlers,
@@ -675,9 +678,9 @@ func RegisterUserRoutes(
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(identityhttp.BackendModeUserGuard(legacyBackendModeReader(settingService)))
-	// 面板全局按用户限流：防止单个提供商高频刷接口打爆数据库
+	// Per-user panel limits bound database load from frequent requests.
 	authenticated.Use(panelRateLimiter.Global())
-	// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
+	// Audit user mutations, including TOTP changes, step-up verification, and password changes.
 	authenticated.Use(gin.HandlerFunc(auditLog))
 	identityhttp.RegisterUserRoutes(authenticated, h.User, h.Totp, h.Passkey)
 	promotionhttp.RegisterUserRoutes(authenticated, h.PromotionUser)
@@ -689,7 +692,8 @@ func RegisterUserRoutes(
 	billinghttp.RegisterUserRoutes(authenticated, h.Redeem, h.Subscription)
 }
 
-// TestProtocolAllPublicRoutesDeniedBeforeUpstream 检查各路由及其别名共用协议准入，协议禁用时在调用 handler 前拒绝请求。
+// TestProtocolAllPublicRoutesDeniedBeforeUpstream checks shared admission across routes and aliases before
+// handlers run.
 func TestProtocolAllPublicRoutesDeniedBeforeUpstream(t *testing.T) {
 	paths := []struct{ platform, method, path string }{
 		{"openai", "POST", "/v1/messages"},
@@ -747,7 +751,7 @@ func TestProtocolAllPublicRoutesDeniedBeforeUpstream(t *testing.T) {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			router := newGatewayRoutesTestRouterWithGroup(&config.Config{}, &routing.Group{ID: 1, AllowedProtocols: []protocolcore.ProtocolID{}})
 			if strings.HasPrefix(tc.path, "/v1beta/") {
-				// Gemini 鉴权使用单独中间件；此处在鉴权后注入分组，独立验证动作分派。
+				// Inject the group after Gemini authentication to test action dispatch independently.
 				router = gin.New()
 				router.Use(func(c *gin.Context) {
 					c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{Group: &routing.Group{AllowedProtocols: []protocolcore.ProtocolID{}}})
@@ -772,7 +776,7 @@ func TestProtocolAuxiliaryAndExistingJobs(t *testing.T) {
 	require.Equal(t, protocolcore.ProtocolCustomVoices, extendedRouteProtocol(http.MethodDelete, "/v1/custom-voices/id"))
 }
 
-// TestProtocolRouteAliases 检查别名使用相同协议，并拒绝相似前缀和错误方法。
+// TestProtocolRouteAliases checks equivalent protocols and rejects similar prefixes and wrong methods.
 func TestProtocolRouteAliases(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
@@ -808,14 +812,14 @@ func TestProtocolRouteAliases(t *testing.T) {
 		require.Empty(t, routeProtocol(http.MethodGet, path), path)
 	}
 	require.Empty(t, routeProtocol(http.MethodGet, "/v1/embeddings"))
-	// Compact 通过 Responses 准入检查前先校验完整路径。
+	// Compact validates its complete path before Responses admission.
 	require.Empty(t, extendedRouteProtocol(http.MethodPost, "/v1/responses/compact"))
 }
 
-// TestRemovedFeatureRoutesReturnNotFound 检查下线功能的用户端和管理端路径返回 404。
+// TestRemovedFeatureRoutesReturnNotFound checks 404 responses for retired user and administrator endpoints.
 func TestRemovedFeatureRoutesReturnNotFound(t *testing.T) {
 	router := gin.New()
-	// 身份处理器已通过模块嵌入组合，夹具需提供外层接收者后才能登记方法值。
+	// Embedded identity handlers need an outer receiver before method values can be registered.
 	allHandlers := &routeTestHandlers{User: &identityhttp.UserHandler{}, Admin: &routeTestAdminHandlers{}}
 	RegisterUserRoutes(
 		router.Group("/api/v1"),

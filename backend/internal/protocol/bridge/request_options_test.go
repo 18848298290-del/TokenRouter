@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRequestOptionsAreIndependentOfModelName 检查相同模型名在不同转换选项下的结果。
 func TestRequestOptionsAreIndependentOfModelName(t *testing.T) {
 	temperature := 0.4
 	request := &AnthropicRequest{

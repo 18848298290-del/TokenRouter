@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// PasskeyOptions 是启动时固定的 RP 配置。
+// PasskeyOptions contains relying-party settings fixed at startup.
 type PasskeyOptions struct {
 	Enabled       bool
 	RPDisplayName string
@@ -18,7 +18,7 @@ type PasskeyOptions struct {
 	RPOrigins     []string
 }
 
-// WebAuthnVerifier 复用已有 SDK 算法，避免核心持有 HTTP 请求。
+// WebAuthnVerifier parses ceremony responses and delegates verification to the WebAuthn SDK.
 type WebAuthnVerifier struct{ *webauthn.WebAuthn }
 
 func NewPasskeyVerifier(options PasskeyOptions) (identity.PasskeyVerifier, error) {

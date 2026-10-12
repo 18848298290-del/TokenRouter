@@ -99,6 +99,7 @@ func (r *RedeemStore) GetByID(ctx context.Context, id int64) (*billing.RedeemCod
 	return RedeemFromEntity(model), nil
 }
 
+// GetByIDForUpdate locks the code row. The caller supplies a transaction so the lock survives this read.
 func (r *RedeemStore) GetByIDForUpdate(ctx context.Context, id int64) (*billing.RedeemCode, error) {
 	client := clientFromContext(ctx, r.client)
 	model, err := client.RedeemCode.Query().
@@ -130,6 +131,7 @@ func (r *RedeemStore) GetByCode(ctx context.Context, code string) (*billing.Rede
 	return RedeemFromEntity(model), nil
 }
 
+// GetByCodeForUpdate locks the code row. The caller supplies a transaction so the lock survives this read.
 func (r *RedeemStore) GetByCodeForUpdate(ctx context.Context, code string) (*billing.RedeemCode, error) {
 	client := clientFromContext(ctx, r.client)
 	model, err := client.RedeemCode.Query().
@@ -654,6 +656,8 @@ func redeemCodeUsageEntitiesToService(models []*dbent.RedeemCodeUsage) []billing
 	return out
 }
 
+// redeemCodeHistoryFromUsageEntities uses each usage record
+// for the redeemer and time, rather than the code's most recent redemption.
 func redeemCodeHistoryFromUsageEntities(models []*dbent.RedeemCodeUsage) []billing.RedeemCode {
 	out := make([]billing.RedeemCode, 0, len(models))
 	for i := range models {

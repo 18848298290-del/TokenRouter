@@ -18,7 +18,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// OpenAITextExecutor 绑定文本协议执行、请求构造和会话状态。
+// OpenAITextExecutor binds text protocol execution, request construction, and session state.
 type OpenAITextExecutor struct {
 	Compact        *CompactExecutor
 	Requests       *OpenAIRequests
@@ -33,8 +33,8 @@ type OpenAITextExecutor struct {
 	ResponseTTL    func() time.Duration
 }
 
-// Chat 接收 Chat Completions 请求，按客户端首选协议、提供商协议配置和 Responses 探测结果选择上游协议。
-// Responses 路径转换请求与响应，Chat 路径调用 Chat Completions 端点。OAuth 的 ChatGPT 内部 API 使用 Responses，DeepSeek、Kimi、GLM 等兼容上游可使用 Chat。
+// Chat executes a Chat Completions request using the selected provider's protocol route.
+// The execution adapter handles protocol conversion and response recovery.
 func (s *OpenAITextExecutor) Chat(
 	ctx context.Context,
 	c *gin.Context,
@@ -47,7 +47,7 @@ func (s *OpenAITextExecutor) Chat(
 	return s.ChatWithCacheIsolation(ctx, c, provider, body, promptCacheKey, defaultMappedModel, false, tlsRouterMatch...)
 }
 
-// ChatWithCacheIsolation 将固定依赖和本次参数传给目标执行器，执行 Chat 转换与恢复。
+// ChatWithCacheIsolation executes Chat conversion and recovery with the supplied cache-isolation flag.
 func (s *OpenAITextExecutor) ChatWithCacheIsolation(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, promptCacheKey, defaultMappedModel string, compatPromptCacheTenantIsolated bool, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	p := &openAIChatExecutionAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}}
 	result, err := openaiexecution.RunChat(ctx, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated, p)
@@ -83,8 +83,8 @@ func normalizeResponsesBodyServiceTier(body []byte) ([]byte, string, error) {
 	return trimmed, normalizedServiceTier, err
 }
 
-// chatError reads an upstream error and returns it in
-// OpenAI Chat Completions error format.
+// chatError reads an upstream error and writes an
+// OpenAI Chat Completions error response.
 func (s *OpenAITextExecutor) chatError(
 	resp *http.Response,
 	c *gin.Context,

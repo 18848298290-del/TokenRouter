@@ -24,7 +24,7 @@ var qoderRoutes = []qoderRoute{
 	{Site: "cn", Model: "minimax-m2.7", Key: "mmodel", Identity: "minimax/minimax-m2.7", Input: 200000, Selectable: true},
 }
 
-// qoderRoute 保存当前 1.24.2 接入的公开型号、服务路由和参数能力。
+// qoderRoute describes public IDs, service routes, and parameter support in the Qoder 1.24.2 integration.
 type qoderRoute struct {
 	Site, Model, Key, Identity string
 	Input                      int

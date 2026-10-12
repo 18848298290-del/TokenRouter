@@ -14,7 +14,8 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot 验证真实 settings 表验证 TTL、生效顺序与损坏 JSON 回退，不修改生产设置。
+// TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot checks settings precedence, TTL, and malformed-JSON
+// recovery using a dedicated database key.
 func TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	repo := settings.New(settingspostgres.NewSettingRepository(testEntClient(t)))

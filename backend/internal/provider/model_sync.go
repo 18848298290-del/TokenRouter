@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// ModelSyncService 管理请求触发的模型查询，通过接口解析供应商响应。
+// ModelSyncService tracks request-triggered model queries through an injected fetch function.
 type ModelSyncService struct {
 	fetch    func(context.Context, *Record) ([]string, error)
 	activity operationActivity

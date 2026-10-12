@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAnthropicPromptCacheScopePrefixAndExpiry 检查提供商和 Key 隔离、最长前缀匹配、旧链替换和到期清理。
+// TestAnthropicPromptCacheScopePrefixAndExpiry checks isolation, longest-prefix matching, replacement, and expiry.
 func TestAnthropicPromptCacheScopePrefixAndExpiry(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	store := NewAnthropicPromptCache(func() time.Time { return now })
@@ -33,7 +33,7 @@ func TestAnthropicPromptCacheScopePrefixAndExpiry(t *testing.T) {
 	require.Empty(t, chain)
 }
 
-// TestAnthropicPromptCacheConcurrentBindings 验证并发消费者使用同一原生实例，不能串入其它提供商的相同摘要。
+// TestAnthropicPromptCacheConcurrentBindings checks provider isolation for concurrent writes of the same digest.
 func TestAnthropicPromptCacheConcurrentBindings(t *testing.T) {
 	store := NewAnthropicPromptCache(time.Now)
 	var pending sync.WaitGroup

@@ -43,7 +43,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// 把取消固定在已经取得控制权、尚未查询提供商的交接点。
+// cancelingLiveStore cancels after controller acquisition and before provider lookup.
 type cancelingLiveStore struct {
 	liveTestStore
 	cancel context.CancelFunc
@@ -55,7 +55,7 @@ type countingLiveProviders struct {
 	reads atomic.Int32
 }
 
-// liveFixtureInputs 提供 Live 测试使用的存储、帧连接和身份接口。
+// liveFixtureInputs supplies stores, frame connections, and identity dependencies for Live tests.
 type liveFixtureInputs struct {
 	transport   httpclient.UpstreamTransport
 	providers   gatewayprovider.ExecutionProviderStore
@@ -70,7 +70,7 @@ type liveFixtureInputs struct {
 	duration    time.Duration
 }
 
-// TLS 替身仅提供预热读取，实际模板及规则匹配由原生实现执行。
+// liveProfileStore supplies profiles for preloading; production code matches templates and routing rules.
 type liveProfileStore struct {
 	egress.TLSFingerprintProfileRepository
 	values []*egress.TLSFingerprintProfile
@@ -111,7 +111,7 @@ type liveTestStore struct {
 	gatewaysession.GatewayCache
 	mu     sync.Mutex
 	record *gatewaysession.LiveCallRecord
-	// 这些错误用于区分 Redis 抖动与记录确实不存在。
+	// Injected errors distinguish store outages from missing records.
 	claimErr         error
 	getCallErr       error
 	getControllerErr error
@@ -626,8 +626,8 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 	require.ErrorIs(t, <-proxyResult, gatewaysession.ErrLiveCallNotFound)
 }
 
-// TestLiveSessionEndedTreatsLeaseLossAsTerminal 验证 ErrLiveUnavailable 续租错误结束会话。
-// RefreshLiveLease 的 Lua 在 leaseID 被 GC 后保留缺失状态，继续重连会使会话在到期前脱离并发限制。
+// TestLiveSessionEndedTreatsLeaseLossAsTerminal checks that ErrLiveUnavailable ends the session.
+// Retrying after lease loss would allow the session to continue outside concurrency accounting.
 func TestLiveSessionEndedTreatsLeaseLossAsTerminal(t *testing.T) {
 	cases := []struct {
 		name string
@@ -649,9 +649,9 @@ func TestLiveSessionEndedTreatsLeaseLossAsTerminal(t *testing.T) {
 	}
 }
 
-// TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize 锁定：已过期但控制权仍在
-// observer 手上时返回 true，让调用方回到 observeLiveCall 循环顶部的过期分支去
-// finalize（写 usage log + 释放租约）。在此处直接返回 false 会让会话静默结束、不留记录。
+// TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize checks that an expired, observer-owned call
+// returns to the observation loop for usage recording and lease release.
+// Stopping at the retry helper would skip finalization.
 func TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize(t *testing.T) {
 	record := &gatewaysession.LiveCallRecord{
 		CallID:     "call_expired",
@@ -666,7 +666,7 @@ func TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize(t *testing.T) {
 	require.True(t, svc.liveRuntime().WaitForObserverRetry(context.Background(), record),
 		"过期判定必须留给循环顶部，否则不会写 usage log")
 
-	// 控制权被接管后停止重试，同一个 call 交给新控制者处理。
+	// After takeover, the new controller owns the call and observer retries stop.
 	require.NoError(t, store.SaveLiveCall(context.Background(), &gatewaysession.LiveCallRecord{
 		CallID:     record.CallID,
 		CallHash:   record.CallHash,
@@ -676,7 +676,8 @@ func TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize(t *testing.T) {
 	require.False(t, svc.liveRuntime().WaitForObserverRetry(context.Background(), record))
 }
 
-// TestWaitForLiveObserverRetryTreatsStoreErrorAsRetryable 验证 store 抖动不表示 observer 已失去控制权，只有记录不存在时才停止重试。
+// TestWaitForLiveObserverRetryTreatsStoreErrorAsRetryable distinguishes temporary store errors from missing
+// calls.
 func TestWaitForLiveObserverRetryTreatsStoreErrorAsRetryable(t *testing.T) {
 	record := &gatewaysession.LiveCallRecord{
 		CallID:     "call_flaky_store",
@@ -694,7 +695,8 @@ func TestWaitForLiveObserverRetryTreatsStoreErrorAsRetryable(t *testing.T) {
 		"记录不存在时应停止重试")
 }
 
-// TestObserveLiveCallStoreOutageFallsBackToExpiryFinalize 验证 observer 持续读不到 store 时，使用创建快照在到期后释放租约并写 usage log。
+// TestObserveLiveCallStoreOutageFallsBackToExpiryFinalize checks expiry settlement from the creation
+// snapshot during store outages.
 func TestObserveLiveCallStoreOutageFallsBackToExpiryFinalize(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -753,7 +755,8 @@ func (r *liveTestBestEffortUsageRepo) CreateBestEffort(_ context.Context, _ *usa
 	return r.bestEffortErr
 }
 
-// TestFinalizeLiveCallUsageLogFallsBackToSyncCreate 验证 Live finalize 异步队列写入失败后同步落库。
+// TestFinalizeLiveCallUsageLogFallsBackToSyncCreate checks synchronous insertion after best-effort
+// insertion fails.
 func TestFinalizeLiveCallUsageLogFallsBackToSyncCreate(t *testing.T) {
 	record := &gatewaysession.LiveCallRecord{
 		CallID:     "call_usage_fallback",
@@ -786,7 +789,7 @@ func TestFinalizeLiveCallUsageLogFallsBackToSyncCreate(t *testing.T) {
 	require.Len(t, usageRepo.logs[0].RequestID, 36)
 }
 
-// TestStopLiveObserversPreservesRemoteCall 验证停止本地观察后，远端会话和租约继续有效，结算等待远端结束。
+// TestStopLiveObserversPreservesRemoteCall checks that stopping local observation leaves the stored call open.
 func TestStopLiveObserversPreservesRemoteCall(t *testing.T) {
 	record := &gatewaysession.LiveCallRecord{CallHash: "test-shutdown", Controller: gatewaysession.LiveControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
 	store := &liveTestStore{record: record, claimErr: errors.New("temporary store failure")}
@@ -812,7 +815,7 @@ func TestStopLiveObserversPreservesRemoteCall(t *testing.T) {
 	svc.liveObserverMu.Unlock()
 }
 
-// newLiveTLSRoutingServices 构造同时覆盖 TLS 模板和身份头的 Live 路由规则。
+// newLiveTLSRoutingServices supplies routing rules for TLS profiles and identity headers.
 func newLiveTLSRoutingServices() (*egressadapter.TLSProfiles, *egress.TLSFingerprintRouterService) {
 	profileService := egressadapter.NewTLSProfiles(egress.NewTLSFingerprintProfileService(&liveProfileStore{values: []*egress.TLSFingerprintProfile{{ID: 20, Name: "live-routed"}}}, nil))
 	profileService.Start()

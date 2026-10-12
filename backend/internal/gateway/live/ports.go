@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// TextFrame 保留文本帧类型；HTTP Adapter 负责与具体 WebSocket 库转换。
+// TextFrame identifies text frames; the HTTP adapter maps it to the WebSocket library's type.
 const TextFrame = 1
 
-// FrameConn 提供控制连接的同步帧读写。
+// FrameConn provides synchronous frame reads and writes for the control connection.
 type FrameConn interface {
 	ReadFrame(context.Context) (int, []byte, error)
 	WriteFrame(context.Context, int, []byte) error
@@ -19,14 +19,14 @@ type FrameConn interface {
 	Close() error
 }
 
-// Target 为已校验的提供商提供连接操作和路由数据。
-// 提供商凭据始终留在适配层，不进入会话记录或公共输出。
+// Target connects to a validated provider and rewrites routed model data.
+// Provider credentials remain in the adapter, outside session records and public output.
 type Target interface {
 	Dial(context.Context) (FrameConn, error)
 	Rewrite(context.Context, []byte) ([]byte, string, []string, error)
 }
 
-// Ports 提供会话、调度租约和生命周期操作。
+// Ports supplies session storage, scheduling leases, and lifecycle operations.
 type Ports interface {
 	Store() (session.LiveCallStore, error)
 	Leases() (scheduler.LiveConcurrencyCache, error)
@@ -35,15 +35,15 @@ type Ports interface {
 	RecordZeroUsage(context.Context, *session.LiveCallRecord, int)
 }
 
-// Service 拥有 Live 控制权、续租、到期及 observer 编排。
-// 可变会话和运行登记由同一应用实例提供，构造本身不启动任务。
+// Service manages Live control ownership, lease renewal, expiry, and observers.
+// The application supplies shared session and observer state; construction starts no tasks.
 type Service struct {
 	ports         Ports
 	retryInterval time.Duration
 	readLimit     int64
 }
 
-// New 使用原来的观察重试和消息大小配置，不创建另一份缓存。
+// New configures the service's observer retry interval and frame size limit.
 func New(ports Ports, retryInterval time.Duration, readLimit int64) *Service {
 	return &Service{ports: ports, retryInterval: retryInterval, readLimit: readLimit}
 }

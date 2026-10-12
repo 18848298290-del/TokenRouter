@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// DefaultGroupRateCacheTTL 保留网关隔离缓存的原有效期。
+// DefaultGroupRateCacheTTL is the default lifetime of cached user group multipliers.
 const (
 	defaultUserGroupRateCacheTTL = 30 * time.Second
 	DefaultGroupRateCacheTTL     = defaultUserGroupRateCacheTTL
@@ -27,7 +27,8 @@ type GroupRateResolver struct {
 	observe      func(string, string, ...any)
 }
 
-// GroupRateMetrics 共用一份统计状态；各网关的缓存和 singleflight 保持隔离。
+// GroupRateMetrics counts activity across resolvers; each resolver owns its cache and singleflight group unless
+// supplied by the caller.
 type GroupRateMetrics struct{ Hit, Miss, Load, Shared, Fallback atomic.Int64 }
 
 func NewGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache, cacheTTL time.Duration, sf *singleflight.Group, logComponent string, observe func(string, string, ...any)) *GroupRateResolver {

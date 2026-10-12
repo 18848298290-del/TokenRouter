@@ -10,7 +10,7 @@ import (
 
 const (
 	groupAvailabilityProbeDefaultMaxWorkers = 5
-	// 最长运行时间覆盖合法配置下的全部尝试，并为提供商选择和结果保存预留一分钟。
+	// Covers every attempt allowed by configuration, plus one minute for overhead and result storage.
 	groupAvailabilityProbeMaxRunDuration     = time.Duration(MaxGroupAvailabilityProbeMaxRetries+1)*time.Duration(MaxGroupAvailabilityProbeTimeoutSeconds)*time.Second + time.Minute
 	groupAvailabilityProbeMaintenanceTimeout = time.Minute
 	groupAvailabilityProbeClaimTimeout       = time.Minute
@@ -21,7 +21,7 @@ const (
 
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#group_availability_probe
 func (s *GroupAvailabilityProbeRunnerService) runDue() {
-	// cron 每分钟触发一次；上一轮尚未结束时跳过本轮，避免突破实例级 worker 上限。
+	// Skip overlapping cron ticks so concurrent rounds cannot exceed the instance worker limit.
 	if !s.runMu.TryLock() {
 		return
 	}
@@ -32,7 +32,7 @@ func (s *GroupAvailabilityProbeRunnerService) runDue() {
 	}
 	defer s.endRun()
 
-	// 清理与领取使用独立短上下文，不能消耗分组探测本身的重试预算。
+	// Maintenance and claiming have separate deadlines so they do not consume each group's retry budget.
 	maintenanceCtx, maintenanceCancel := context.WithTimeout(parent, groupAvailabilityProbeMaintenanceTimeout)
 	s.cleanupIfNeeded(maintenanceCtx, s.now())
 	maintenanceCancel()
@@ -40,7 +40,7 @@ func (s *GroupAvailabilityProbeRunnerService) runDue() {
 		return
 	}
 
-	// 只领取能够立即交给 worker 的分组，确保领取租约不会在排队期间过期。
+	// Claim at most the available worker count so leases do not expire while groups wait in a local queue.
 	claimCtx, claimCancel := context.WithTimeout(parent, groupAvailabilityProbeClaimTimeout)
 	claimNow := s.now()
 	dueGroups, err := s.repo.ClaimDue(claimCtx, claimNow, claimNow.Add(groupAvailabilityProbeLockDuration), s.instanceID, groupAvailabilityProbeDefaultMaxWorkers)
@@ -65,7 +65,7 @@ func (s *GroupAvailabilityProbeRunnerService) runDue() {
 		}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			// 每个分组独立计时，数据库维护和其它分组不会挤占它的合法重试窗口。
+			// Start each group's budget here, after maintenance and claiming.
 			probeCtx, probeCancel := context.WithTimeout(parent, groupAvailabilityProbeMaxRunDuration)
 			defer probeCancel()
 			s.runOne(probeCtx, group)
@@ -114,8 +114,9 @@ func (s *GroupAvailabilityProbeRunnerService) runOne(ctx context.Context, due Gr
 	s.saveResult(ctx, due, probeConfig, probeResult)
 }
 
-// runGroupAvailabilityProbeAttempts 执行首次探测及后续重试，任一尝试成功即结束。
-// 每次尝试使用独立超时，避免前一次超时后的已取消上下文阻断后续重试。
+// runGroupAvailabilityProbeAttempts makes the initial attempt and retries until success, exhaustion, or
+// cancellation.
+// Each positive timeout creates a fresh child context so one expired attempt does not cancel the next.
 func runGroupAvailabilityProbeAttempts(
 	ctx context.Context,
 	maxRetries int,
@@ -149,7 +150,7 @@ func runGroupAvailabilityProbeAttempts(
 	return lastResult
 }
 
-// runProbeAttempt 完成一次提供商选择和真实请求，并转换为统一的分组探测结果。
+// runProbeAttempt selects a provider, executes a probe, and records the configured request model in its result.
 func (s *GroupAvailabilityProbeRunnerService) runProbeAttempt(ctx context.Context, due GroupAvailabilityProbeDueGroup, probeConfig GroupAvailabilityProbeConfig) *GroupAvailabilityProbeResult {
 	startedAt := s.now()
 	target, err := s.executor.Select(ctx, due, probeConfig.ModelID)

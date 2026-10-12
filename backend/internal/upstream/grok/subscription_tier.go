@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// GrokQuotaSignalMaxAge 限制 grok-4.5 Responses 额度窗口影响 SuperGrok/Heavy 推断的最长时间。
+	// GrokQuotaSignalMaxAge bounds the age of Grok 4.5 quota evidence used to infer a plan.
 	GrokQuotaSignalMaxAge = 24 * time.Hour
 
 	grok45ResponsesModel             = "grok-4.5"
@@ -16,8 +16,8 @@ const (
 	grokHeavyQuotaTokenLimit   int64 = 53_000_000
 )
 
-// MapJWTSubscriptionTier 将 prod_auth.SubscriptionTier 的数字 JWT 声明映射为
-// Grok Build 和 Mixpanel 使用的稳定 snake_case 标识。
+// MapJWTSubscriptionTier maps numeric prod_auth.SubscriptionTier claims to
+// the snake_case identifiers used by Grok Build and Mixpanel.
 func MapJWTSubscriptionTier(tier uint64) string {
 	switch tier {
 	case 0:
@@ -41,7 +41,7 @@ func MapJWTSubscriptionTier(tier uint64) string {
 	}
 }
 
-// NormalizeSubscriptionTier 将展示名称、/user 字符串和 JWT 标识统一为 snake_case。
+// NormalizeSubscriptionTier canonicalizes display names, /user values, and JWT tier IDs.
 func NormalizeSubscriptionTier(raw string) string {
 	t := strings.ToLower(strings.TrimSpace(raw))
 	t = strings.ReplaceAll(t, "-", "_")
@@ -70,7 +70,7 @@ func NormalizeSubscriptionTier(raw string) string {
 	}
 }
 
-// SubscriptionTierFromJWT 解码访问令牌载荷（不校验签名），并映射数字或字符串 tier 声明。
+// SubscriptionTierFromJWT reads numeric or string tier claims without verifying the signature.
 func SubscriptionTierFromJWT(jwt string) string {
 	claims := DecodeJWTClaims(jwt)
 	if claims == nil {
@@ -106,9 +106,9 @@ func SubscriptionTierFromJWT(jwt string) string {
 	}
 }
 
-// CanonicalGrokPlan 在供应商返回含糊的 SuperGrokPro 时区分 SuperGrok 与 Heavy。
-// 调用方应先应用 JWT 数字档位；存在每月 $150/$1500 限额时仍以限额为准；
-// 只有来自 grok-4.5 Responses 的限流窗口才参与推断。
+// CanonicalGrokPlan resolves ambiguous SuperGrokPro tiers using billing and quota evidence.
+// Callers apply JWT tiers first. Recognized monthly limits take precedence;
+// quota-based inference uses Grok 4.5 Responses observations.
 func CanonicalGrokPlan(monthlyLimitCents *float64, subscriptionTier string, quota *QuotaSnapshot) string {
 	if plan := resolvePlan(monthlyLimitCents); plan != "" {
 		return NormalizeSubscriptionTier(plan)
@@ -144,14 +144,14 @@ func isAmbiguousGrokPaidPlan(normalized string) bool {
 	}
 }
 
-// IsGrok45ResponsesQuotaModel 判断模型是否为 grok-4.5 Responses 标识或其日期快照变体。
+// IsGrok45ResponsesQuotaModel accepts grok-4.5 and IDs beginning with grok-4.5-.
 func IsGrok45ResponsesQuotaModel(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
 	return m == grok45ResponsesModel || strings.HasPrefix(m, grok45ResponsesModel+"-")
 }
 
-// Grok45ResponsesPlanHint 根据 grok-4.5 Responses 窗口推断 SuperGrok 或 Heavy，
-// 其他模型的额度不会参与判断。
+// Grok45ResponsesPlanHint infers SuperGrok or Heavy from fresh Grok 4.5 evidence.
+// A carried plan hint retains its own observation timestamp.
 func Grok45ResponsesPlanHint(quota *QuotaSnapshot, now time.Time) string {
 	if quota == nil {
 		return ""
@@ -170,8 +170,8 @@ func Grok45ResponsesPlanHint(quota *QuotaSnapshot, now time.Time) string {
 	return ""
 }
 
-// ApplyGrok45ResponsesPlanSignal 记录 grok-4.5 的 Heavy/SuperGrok 提示；
-// 当前观察来自其他模型时，延续此前的 4.5 提示。
+// ApplyGrok45ResponsesPlanSignal records a Grok 4.5 Heavy or SuperGrok hint.
+// Observations without a Grok 4.5 limit window carry the previous hint forward.
 func ApplyGrok45ResponsesPlanSignal(s, prev *QuotaSnapshot) {
 	if s == nil {
 		return
@@ -193,8 +193,8 @@ func ApplyGrok45ResponsesPlanSignal(s, prev *QuotaSnapshot) {
 	}
 }
 
-// QuotaSnapshotObservedAt 优先使用 LastHeadersSeenAt，避免后续重写快照时
-// 用 UpdatedAt 错误刷新已经过期的 Heavy 窗口。
+// QuotaSnapshotObservedAt prefers LastHeadersSeenAt so later snapshot writes
+// do not refresh expired Heavy evidence through UpdatedAt.
 func QuotaSnapshotObservedAt(snapshot *QuotaSnapshot) (time.Time, bool) {
 	if snapshot == nil {
 		return time.Time{}, false
@@ -202,7 +202,7 @@ func QuotaSnapshotObservedAt(snapshot *QuotaSnapshot) (time.Time, bool) {
 	return parseQuotaTimestamp(firstNonEmptyQuotaTime(snapshot.LastHeadersSeenAt, snapshot.UpdatedAt))
 }
 
-// IsQuotaSnapshotFresh 判断额度信号是否足够新，可用于区分 SuperGrok 与 Heavy。
+// IsQuotaSnapshotFresh reports whether the quota observation can still inform plan inference.
 func IsQuotaSnapshotFresh(snapshot *QuotaSnapshot, now time.Time) bool {
 	observedAt, ok := QuotaSnapshotObservedAt(snapshot)
 	if !ok {

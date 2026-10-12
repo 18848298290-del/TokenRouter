@@ -1,6 +1,7 @@
 package middleware
 
-// 本文件覆盖 gateway/httpapi/authorization.go、gateway/httpapi/openai_responses_execution.go 与 gateway/provider/execution_fast_policy.go 的用户策略转发。
+// These tests cover user Fast policy forwarding in gateway/httpapi/authorization.go,
+// gateway/httpapi/openai_responses_execution.go, and gateway/provider/execution_fast_policy.go.
 
 import (
 	"bytes"
@@ -93,7 +94,7 @@ func TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream(t *testing.T) {
 		value: string(settingsJSON),
 	})
 
-	// 提供商选择与转发共享响应、阻断和传输状态。本场景通过 HTTP 请求上游。
+	// Selection and forwarding share response, block, and transport state; this scenario uses HTTP upstream.
 	responses := session.NewOpenAIWSStateStore(nil, gatewayprovider.LogOpenAIWSModeInfo)
 	transient := providercore.NewModelTransientState(0)
 	circuit := egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings())
@@ -210,7 +211,7 @@ func (r *openAIFastPolicyForwardingSettingRepo) GetValue(context.Context, string
 }
 
 func (u *openAIFastPolicyForwardingHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
-	// #nosec G704 -- 目标地址来自本地 httptest.Server。
+	// #nosec G704 -- The target is a local httptest.Server.
 	return u.client.Do(req)
 }
 

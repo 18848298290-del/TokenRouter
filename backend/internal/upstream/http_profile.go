@@ -8,7 +8,7 @@ const (
 	HTTPUpstreamProfileGrok    HTTPUpstreamProfile = "grok"
 )
 
-// HTTPUpstreamProfile 标记需要 provider 专用传输策略的 HTTP 上游请求。
+// HTTPUpstreamProfile selects provider-specific HTTP transport policy.
 type HTTPUpstreamProfile string
 
 type (
@@ -17,7 +17,7 @@ type (
 	httpUpstreamPublicHostsOnlyContextKey  struct{}
 )
 
-// WithHTTPUpstreamProfile 将上游传输 profile 写入 context。
+// WithHTTPUpstreamProfile stores the transport profile, using Background for a nil context.
 func WithHTTPUpstreamProfile(ctx context.Context, profile HTTPUpstreamProfile) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -28,7 +28,7 @@ func WithHTTPUpstreamProfile(ctx context.Context, profile HTTPUpstreamProfile) c
 	return context.WithValue(ctx, httpUpstreamProfileContextKey{}, profile)
 }
 
-// HTTPUpstreamProfileFromContext 从 context 解析上游传输 profile。
+// HTTPUpstreamProfileFromContext returns a recognized profile or the default.
 func HTTPUpstreamProfileFromContext(ctx context.Context) HTTPUpstreamProfile {
 	if ctx == nil {
 		return HTTPUpstreamProfileDefault
@@ -45,7 +45,7 @@ func HTTPUpstreamProfileFromContext(ctx context.Context) HTTPUpstreamProfile {
 	}
 }
 
-// WithHTTPUpstreamRedirectsDisabled 禁止携带凭据的探测请求通过共享上游客户端跟随重定向。
+// WithHTTPUpstreamRedirectsDisabled marks credential-bearing probes to forbid shared-client redirects.
 func WithHTTPUpstreamRedirectsDisabled(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -57,8 +57,8 @@ func HTTPUpstreamRedirectsDisabled(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(httpUpstreamDisableRedirectsContextKey{}) == true
 }
 
-// WithHTTPUpstreamPublicHostsOnly 标记来自不可信响应 URL 的下载请求。
-// 共享上游客户端会对初始地址和每个重定向目标执行公网地址校验。
+// WithHTTPUpstreamPublicHostsOnly marks downloads from untrusted response URLs.
+// The shared client validates the initial target and every redirect as public addresses.
 func WithHTTPUpstreamPublicHostsOnly(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()

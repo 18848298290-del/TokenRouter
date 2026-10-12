@@ -17,14 +17,14 @@ import (
 const (
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
-	// openAIUpstreamClientErrorFallbackType 是上游缺少 error.type 时使用的类型。
+	// openAIUpstreamClientErrorFallbackType is used when the upstream omits error.type.
 	openAIUpstreamClientErrorFallbackType = "invalid_request_error"
 
-	// openAIUpstreamClientErrorFallbackMessage 是上游缺少可用消息时使用的文案。
+	// openAIUpstreamClientErrorFallbackMessage is used when the upstream message is empty.
 	openAIUpstreamClientErrorFallbackMessage = "Upstream rejected the request"
 )
 
-// codex_cli_only 拒绝时，诊断日志记录以下白名单中的请求头。
+// codexCLIOnlyDebugHeaderWhitelist limits headers recorded when codex_cli_only rejects a request.
 var codexCLIOnlyDebugHeaderWhitelist = []string{
 	"User-Agent",
 	"Content-Type",
@@ -88,15 +88,15 @@ func SnapshotCodexRejectedHeaders(header http.Header) map[string]string {
 	return result
 }
 
-// IsOpenAIDeterministicClientError 判断错误是否为不可通过换号或重试恢复的客户端请求错误。
-// 普通提供商与池模式使用不同故障转移规则，判断时同时检查分类结果。
+// IsOpenAIDeterministicClientError reports whether a 400 has been classified as non-retryable.
+// The supplied classification accounts for different normal-provider and pool-mode retry rules.
 func IsOpenAIDeterministicClientError(statusCode int, shouldFailover bool) bool {
 	return statusCode == http.StatusBadRequest && !shouldFailover
 }
 
-// WriteOpenAIUpstreamClientError 以 OpenAI 错误信封回写确定性客户端错误。
-// message 已由调用方完成身份脱敏和敏感查询参数清洗；这里只保留诊断必需字段，
-// 不直接透传上游完整正文，避免把扩展字段或内部调试信息暴露给客户端。
+// WriteOpenAIUpstreamClientError writes a deterministic client error in an OpenAI envelope.
+// The caller must redact identities and sensitive query parameters from upstreamMsg.
+// Copy diagnostic fields only, so upstream extensions and internal debug data stay private.
 func WriteOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte, upstreamMsg string) {
 	errorPayload := gin.H{"type": openAIUpstreamClientErrorFallbackType}
 	if errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String()); errType != "" {

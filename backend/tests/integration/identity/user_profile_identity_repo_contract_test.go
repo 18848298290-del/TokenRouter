@@ -36,7 +36,7 @@ func TestUserProfileIdentityRepoSuite(t *testing.T) {
 	suite.Run(t, new(UserProfileIdentityRepoSuite))
 }
 
-// SetupSuite 套件共用隔离数据库，提交型断言保持逐项清理边界。
+// SetupSuite shares an isolated database; SetupTest cleans committed rows after each test.
 func (s *UserProfileIdentityRepoSuite) SetupSuite() {
 	s.db, s.client = identityDatabase(s.T())
 }
@@ -499,7 +499,7 @@ func (s *UserProfileIdentityRepoSuite) TestWithUserProfileIdentityTx_AllowsAvata
 		if err != nil {
 			return err
 		}
-		// 只改头像时用户行没有任何列需要写，掩码为空——与 UserService.updateProfile 一致。
+		// An avatar-only update selects no user columns, matching UserService.ProfileUpdateProfile.
 		return s.repo.Update(txCtx, model, identitycore.UserUpdateFields{})
 	})
 	s.Require().NoError(err)

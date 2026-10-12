@@ -15,10 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// GoogleOutput 接收平台准备器的同步写入并输出 HTTP 响应。
+// GoogleOutput writes synchronous platform output to the HTTP response.
 type GoogleOutput struct{ Context *gin.Context }
 
-// GoogleBoundary 保留两个平台的错误形状，平台选择对应方法，不共享可变业务状态。
+// GoogleBoundary selects Gemini or Antigravity output methods and their respective error formats.
 type GoogleBoundary struct {
 	*GeminiOutput
 	Antigravity    *AntigravityOutput
@@ -34,12 +34,12 @@ func (o GoogleOutput) GetHeader(key string) string {
 }
 func (o GoogleOutput) Header(key, value string) { o.Context.Header(key, value) }
 
-// WriteHeaders 使用响应头过滤器写入 HTTP Header。
+// WriteHeaders copies response headers through the configured filter.
 func (o GoogleOutput) WriteHeaders(dst, src http.Header, filter *egress.CompiledHeaderFilter) {
 	egressprovider.WriteFilteredHeaders(dst, src, filter)
 }
 
-// Raw 保留静态 upstream 透传错误的状态、Content-Type 和写入顺序。
+// Sink exposes the HTTP writer for synchronous upstream output.
 func (o GoogleOutput) Raw(status int, content string, body []byte) {
 	o.Context.Header("Content-Type", content)
 	o.Context.Status(status)

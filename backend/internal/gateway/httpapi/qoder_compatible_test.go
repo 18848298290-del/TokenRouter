@@ -50,13 +50,13 @@ type qoderStickyBindCacheStub struct {
 	sawDeadline        bool
 }
 
-// qoderStickyExecutionStub 记录粘性会话接口调用。
+// qoderStickyExecutionStub records sticky-session calls.
 type qoderStickyExecutionStub struct {
 	QoderCompatibleExecution
 	cache session.GatewayCache
 }
 
-// 本文件为并发存储测试记录调用次数。
+// helperConcurrencyCacheStub records concurrency-store calls and returns scripted slot results.
 type helperConcurrencyCacheStub struct {
 	mu sync.Mutex
 
@@ -77,7 +77,8 @@ type helperConcurrencyCacheStub struct {
 	apiKeyTrackIDs       []int64
 }
 
-// TestQoderCompatibleNativeHTTPCompletionBoundary 验证两种兼容协议保持一次执行、已观测部分结果一次完成以及成功专属粘性绑定。
+// TestQoderCompatibleNativeHTTPCompletionBoundary checks one execution, one completion for partial results, and
+// sticky binding on success.
 func TestQoderCompatibleNativeHTTPCompletionBoundary(t *testing.T) {
 	for _, endpoint := range []QoderEndpoint{QoderMessages, QoderResponses} {
 		for _, partial := range []bool{false, true} {

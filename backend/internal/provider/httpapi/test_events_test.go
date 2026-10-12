@@ -19,7 +19,7 @@ type failTestEventWriter struct {
 	err error
 }
 
-// TestProviderTestPropagatesEventWriteFailure 验证流事件无法写出时，测试不能把已经丢失的输出报告为执行成功。
+// TestProviderTestPropagatesEventWriteFailure checks that lost stream output is reported as a test failure.
 func TestProviderTestPropagatesEventWriteFailure(t *testing.T) {
 	failed := errors.New("forced test event write failure")
 	writer := failTestEventWriter{TestStreamWriter: httptest.NewRecorder(), err: failed}
@@ -30,7 +30,7 @@ func TestProviderTestPropagatesEventWriteFailure(t *testing.T) {
 	require.ErrorIs(t, err, failed)
 }
 
-// TestTestEventSinkPreservesPreludeAndFrames 检查准备与提交阶段分别设置自适应及完整的 SSE Header。
+// TestTestEventSinkPreservesPreludeAndFrames checks deferred flushing during preparation and full SSE headers on commit.
 func TestTestEventSinkPreservesPreludeAndFrames(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	sink := NewTestEventSink(recorder)

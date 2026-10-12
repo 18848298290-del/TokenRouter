@@ -69,7 +69,7 @@ func BuildETagFromAny(payload any) string {
 	return "\"" + hex.EncodeToString(sum[:]) + "\""
 }
 
-// GetOrLoadContext 在等待者独立取消的共享查询结果上生成快照和 ETag。
+// GetOrLoadContext builds a snapshot and ETag from a shared load whose waiters cancel independently.
 func (c *SnapshotCache) GetOrLoadContext(ctx context.Context, key string, load func(context.Context) (any, error)) (SnapshotCacheEntry, bool, error) {
 	if load == nil {
 		return SnapshotCacheEntry{}, false, nil
@@ -100,7 +100,7 @@ func ParseBoolQueryWithDefault(raw string, def bool) bool {
 	}
 }
 
-// IfNoneMatchMatched 检查 ETag 是否匹配逗号分隔的条件列表，支持通配符和弱标签。
+// IfNoneMatchMatched matches a comma-separated condition list, including wildcard and weak tags.
 func IfNoneMatchMatched(ifNoneMatch, etag string) bool {
 	if etag == "" || ifNoneMatch == "" {
 		return false

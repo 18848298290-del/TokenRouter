@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	// issue #5334 中的无效 Responses 子路径会在到达 OpenAI API 前收到 HTML 403。
+	// An invalid Responses subpath can return HTML 403 before reaching the OpenAI API (#5334).
 	openAI403HTMLBody = "<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head>" +
 		"<body><h1>403 Forbidden</h1></body></html>"
 
@@ -43,14 +43,14 @@ const (
 	grokSpendingLimitProbeCooldown   = 10 * time.Minute
 )
 
-// dbFallbackRepoStub 在缓存未命中时，通过 GetByID 返回配置的数据库记录。
+// dbFallbackRepoStub returns a configured database record from GetByID on a cache miss.
 type dbFallbackRepoStub struct {
 	gatewaytestkit.ErrorPolicyStore
 
-	dbProvider *gatewayprovider.ExecutionProvider // 非空时由 GetByID 返回。
+	dbProvider *gatewayprovider.ExecutionProvider // Returned by GetByID when non-nil.
 }
 
-// countingOpenAI403CounterCache 记录连续 403 计数器是否被调用。
+// countingOpenAI403CounterCache records consecutive-403 counter updates.
 type countingOpenAI403CounterCache struct {
 	gatewaytestkit.ForbiddenCounter
 
@@ -118,7 +118,7 @@ type grokQuotaProviderRepo struct {
 	recoveryClearResult   bool
 }
 
-// grokPoolPolicyProviderRepo 记录 Grok 池模式错误策略产生的提供商状态写入。
+// grokPoolPolicyProviderRepo records provider-state writes from Grok pool error policy.
 type grokPoolPolicyProviderRepo struct {
 	*grokQuotaProviderRepo
 	setErrorCalls            int
@@ -188,7 +188,7 @@ func TestHandle403_KimiConcurrencyLimitRepositoryFailureKeepsRuntimeBlock(t *tes
 	require.Equal(t, 0, repo.SetErrorCalls, "persistence failure must not fall back to permanent provider error")
 	require.Equal(t, []int64{providercore.OpenAI403DisableThresholdDefault}, counter.Counts, "persistence failure must not enter the permanent-error counter path")
 	require.Len(t, blocker.Providers, 1, "the in-memory runtime block must survive repository failure")
-	// 原实体没有时钟依赖；保留全部业务字段和路线比较，函数本身不属于运行阻断数据。
+	// Compare business fields and routes after excluding clock functions from the assertion.
 	expectedProvider, observedProvider := *provider, *blocker.Providers[0]
 	expectedProvider.Record.Now, observedProvider.Record.Now = nil, nil
 	expectedProvider.Record.LoadLocation, observedProvider.Record.LoadLocation = nil, nil
@@ -219,9 +219,9 @@ func (r *dbFallbackRepoStub) GetByID(ctx context.Context, id int64) (*gatewaypro
 }
 
 func TestCheckErrorPolicy_401_DBFallback_Escalates(t *testing.T) {
-	// 缓存中缺少临时调度原因，数据库记录包含先前的 401。
-	// 非 Antigravity 提供商的第二次 401 会升级为永久错误。
-	// Antigravity 的 401 由 applyErrorPolicy 规则处理。
+	// The cached record lacks the temporary reason, but the database records an earlier 401.
+	// A second 401 escalates the non-Antigravity provider to a permanent error.
+	// Antigravity follows its own error policy.
 	t.Run("gemini_escalates", func(t *testing.T) {
 		repo := &dbFallbackRepoStub{
 			dbProvider: &gatewayprovider.ExecutionProvider{
@@ -292,7 +292,7 @@ func TestCheckErrorPolicy_401_DBFallback_Escalates(t *testing.T) {
 }
 
 func TestCheckErrorPolicy_401_DBFallback_NoDBRecord_FirstHit(t *testing.T) {
-	// 缓存与数据库都缺少先前的 401 记录，首次命中会临时暂停调度。
+	// With no earlier 401 in either source, the first hit temporarily pauses scheduling.
 	repo := &dbFallbackRepoStub{
 		dbProvider: &gatewayprovider.ExecutionProvider{
 			Record: providercore.Record{
@@ -327,7 +327,7 @@ func TestCheckErrorPolicy_401_DBFallback_NoDBRecord_FirstHit(t *testing.T) {
 }
 
 func TestCheckErrorPolicy_401_DBFallback_DBError_FirstHit(t *testing.T) {
-	// 缓存缺少临时调度原因且数据库未找到记录，按首次命中临时暂停调度。
+	// A missing cached reason and absent database record are treated as the first hit.
 	repo := &dbFallbackRepoStub{
 		dbProvider: nil, // GetByID returns nil, nil
 	}
@@ -492,7 +492,7 @@ func (h *openAI403TestHarness) requireNoProviderPenalty(t *testing.T) {
 	require.Equal(t, 0, h.counter.increments, "端点级 403 不得递增连续 403 计数")
 }
 
-// TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider 验证常见 HTML 外形均不处罚提供商。
+// TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider covers common HTML response forms.
 func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider(t *testing.T) {
 	cases := []struct {
 		name string
@@ -544,7 +544,7 @@ func TestHandleUpstreamErrorCNProviderStructured403UsesCumulativeCooldown(t *tes
 	}
 }
 
-// TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates 验证重复错误不会积累到永久禁用阈值。
+// TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates checks that repeated HTML errors do not advance the disable counter.
 func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h := newOpenAI403TestHarness(t, 502, 1, 2, 3, 4, 5)
 
@@ -555,7 +555,7 @@ func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h.requireNoProviderPenalty(t)
 }
 
-// TestHandleUpstreamError_OpenAIStructured403StillPenalizes 检查提供商级结构化 403 是否触发处罚。
+// TestHandleUpstreamError_OpenAIStructured403StillPenalizes checks penalties for structured provider failures.
 func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 	t.Run("first_hit_temp_unschedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 503, 1)
@@ -584,7 +584,7 @@ func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 	})
 }
 
-// TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged 验证豁免不扩散到其它平台。
+// TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged checks that the HTML exemption is OpenAI-specific.
 func TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged(t *testing.T) {
 	for _, platform := range []string{capability.PlatformAnthropic, capability.PlatformGemini} {
 		t.Run(platform, func(t *testing.T) {
@@ -723,8 +723,8 @@ func TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule(t *test
 	require.Equal(t, "rejected", repo.lastWindowStatus)
 }
 
-// fable429Headers 构造 7d_oi（Fable 专属 7d 窗口）触发 429 的完整响应头，
-// 数值取自抓包（5h/7d 均 allowed，7d_oi 为 rejected）。
+// fable429Headers builds a 429 fixture with the Fable-specific 7d_oi window rejected
+// while the five-hour and seven-day provider windows remain allowed.
 func fable429Headers(reset5h, resetOI time.Time) http.Header {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-reset", strconv.FormatInt(reset5h.Unix(), 10))
@@ -783,7 +783,7 @@ func TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit(t *testing.T) 
 	require.Equal(t, providercore.AnthropicFableRateLimitKey, repo.lastModelRateLimitScope)
 	require.Equal(t, resetOI, repo.lastModelRateLimitReset)
 
-	// 429 响应头参与被动采样，限流期间的 7d F 进度也会更新。
+	// Passive sampling still updates Fable usage while the response reports a rate limit.
 	require.NotNil(t, repo.lastExtraUpdates)
 	require.Equal(t, 1.0, repo.lastExtraUpdates["passive_usage_7d_oi_utilization"])
 	require.Equal(t, resetOI.Unix(), repo.lastExtraUpdates["passive_usage_7d_oi_reset"])
@@ -791,7 +791,7 @@ func TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit(t *testing.T) 
 }
 
 func TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi(t *testing.T) {
-	// 5h 窗口 rejected 时必须仍按提供商级限流处理（用 5h reset），同时记录 Fable 模型限流。
+	// A rejected five-hour window sets the provider cooldown using its reset and also records the Fable model limit.
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
 	resetOI := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -813,7 +813,7 @@ func TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi(t *testing.T) {
 }
 
 func TestHandleUpstreamError_AnthropicProviderWindowStillWinsOver7dOi(t *testing.T) {
-	// 7d 窗口真超限时必须仍按提供商级限流处理，同时记录 Fable 模型限流。
+	// A rejected seven-day provider window sets provider and Fable model cooldowns.
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
 	resetOI := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -835,7 +835,7 @@ func TestHandleUpstreamError_AnthropicProviderWindowStillWinsOver7dOi(t *testing
 }
 
 func TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior(t *testing.T) {
-	// 无 7d_oi 头、5h/7d 均未超限的 429，按较早的 reset 标记提供商限流。
+	// Without 7d_oi or a rejected provider window, a 429 uses the earlier reset for the provider cooldown.
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
 	reset7d := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -861,7 +861,7 @@ func TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior(t *testi
 	require.Equal(t, 1, repo.sessionWindowCalls)
 }
 
-// newUpstreamHealthForTest 根据测试配置构造上游健康观测器。
+// newUpstreamHealthForTest constructs the observer from test configuration.
 func newUpstreamHealthForTest(store gatewayprovider.ExecutionProviderStore, cfg *config.Config, cache providercore.TempUnschedCache, options providercore.HealthOptions, readers *gatewayprovider.RuntimeReaders) *provideradapter.UpstreamHealth {
 	if cfg != nil {
 		options.UnauthorizedCooldownMinutes = cfg.RateLimit.OAuth401CooldownMinutes
@@ -871,7 +871,7 @@ func newUpstreamHealthForTest(store gatewayprovider.ExecutionProviderStore, cfg 
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{Store: store, Cache: cache, Options: options, Readers: readers})
 }
 
-// newExecutionReadersFixture 保持设置替身的原缓存包裹与读取时点。
+// newExecutionReadersFixture wraps the settings stub in the settings cache before binding readers.
 func newExecutionReadersFixture(repo settings.Repository, _ *config.Config) *gatewayprovider.RuntimeReaders {
 	if repo != nil {
 		repo = settings.New(repo)
@@ -887,7 +887,7 @@ func TestRateLimitService_TempUnschedulableContextPreservesModelForPoolDependenc
 	provider.Record.Credentials["pool_mode"] = true
 	ctx := requeststate.WithHealthModel(context.Background(), []string{"gpt-5.4"})
 
-	// 池模式的健康观测未传入模型时，使用上下文中的规范模型确定冷却范围。
+	// With no model argument, pool health observation uses the contextual canonical model for cooldown scope.
 	observation := gatewayprovider.HealthObservationFromContext(ctx, http.StatusNotFound, http.Header{},
 		[]byte(`{"error":{"message":"endpoint not found"}}`), nil)
 	handled := gatewayprovider.ApplyExecutionHealth(ctx, svc, provider, observation).StopScheduling
@@ -927,7 +927,7 @@ func TestRateLimitService_ModelTempUnschedulableIsolatesSchedulerByModel(t *test
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Schedulable(context.Background(), "gpt-5.6-sol"))
 }
 
-// ListByPlatform 返回指定平台的 active 提供商。
+// ListByPlatform returns active providers on the requested platform.
 func (r *teamLinkedProviderRepoStub) ListByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	r.listCalls++
 	if r.listErr != nil {
@@ -966,7 +966,7 @@ func newTeamLinkedProvider(id int64, teamID string) gatewayprovider.ExecutionPro
 	}
 }
 
-// newTeamLinkedFixture: #1 触发者(team-A) #2 同队 #3 异队 #4 apikey #5 影子 #6 同队 #7 同队但已 error。
+// newTeamLinkedFixture includes trigger 1, teammates 2 and 6, another team 3, API Key 4, shadow 5, and already-failed teammate 7.
 func newTeamLinkedFixture() []gatewayprovider.ExecutionProvider {
 	parentID := int64(1)
 	shadow := gatewayprovider.ExecutionProvider{
@@ -1012,13 +1012,13 @@ func TestTeamLinkedError_FanoutMarksSameTeamProviders(t *testing.T) {
 	shouldDisable := gatewayprovider.ApplyExecutionHealth(context.Background(), rl, &trigger, gatewayprovider.HealthObservationFromContext(context.Background(), http.StatusPaymentRequired, http.Header{}, []byte(teamLinkedDeactivatedBody), nil)).StopScheduling
 
 	require.True(t, shouldDisable)
-	// fan-out 先标记同队兄弟（#2、#6），触发提供商 #1 随后由常规 case 402 标记
+	// Fan-out marks teammates 2 and 6 first; ordinary 402 handling then marks trigger 1.
 	require.Equal(t, []int64{2, 6, 1}, repo.setErrorIDs)
 	require.Contains(t, repo.setErrorMsgs[2], "team-linked error triggered by provider #1")
 	require.Contains(t, repo.setErrorMsgs[6], "team-linked error triggered by provider #1")
 	require.Contains(t, repo.setErrorMsgs[1], "Workspace deactivated (402)")
 	require.NotContains(t, repo.setErrorMsgs[1], "team-linked")
-	// 熔断顺序：兄弟提供商先于落库全部进程内熔断，触发提供商走 auth_error
+	// Teammates are blocked in memory before persistence; the trigger uses auth_error.
 	require.Equal(t, []string{providercore.OpenAITeamLinkedErrorBlockReason, providercore.OpenAITeamLinkedErrorBlockReason, "auth_error"}, blocker.Reasons)
 	require.Equal(t, int64(2), blocker.Providers[0].Record.ID)
 	require.Equal(t, int64(6), blocker.Providers[1].Record.ID)
@@ -1046,7 +1046,7 @@ func TestTeamLinkedError_DedupWithinTTL(t *testing.T) {
 	gatewayprovider.ApplyExecutionHealth(context.Background(), rl, &first, gatewayprovider.HealthObservationFromContext(context.Background(), http.StatusPaymentRequired, http.Header{}, []byte(teamLinkedDeactivatedBody), nil))
 	gatewayprovider.ApplyExecutionHealth(context.Background(), rl, &second, gatewayprovider.HealthObservationFromContext(context.Background(), http.StatusPaymentRequired, http.Header{}, []byte(teamLinkedDeactivatedBody), nil))
 
-	// 第二次触发被去重：只有 #2 自身经 case 402 标记，未再次 fan-out
+	// Deduplication suppresses repeated fan-out; ordinary 402 handling still marks trigger 2.
 	require.Equal(t, []int64{2, 6, 1, 2}, repo.setErrorIDs)
 	require.Equal(t, 1, repo.listCalls)
 }
@@ -1337,7 +1337,7 @@ func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int6
 	return nil
 }
 
-// newGrokPoolProvider 返回开启池模式的 Grok API Key 提供商。
+// newGrokPoolProvider returns a Grok API Key provider with pool mode enabled.
 func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1351,7 +1351,7 @@ func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// newGrokHealthForTest 测试直接组合生产健康组件；传输、凭据和完整网关不参与这些状态断言。
+// newGrokHealthForTest binds production health components for provider-state assertions.
 func newGrokHealthForTest(store provideradapter.GrokHealthStore, throttle *providercore.WriteThrottle) *provideradapter.GrokHealth {
 	return &provideradapter.GrokHealth{Store: store, Throttle: throttle, Runtime: providercore.NewRuntimeBlockState(time.Now), ModelTransient: providercore.NewModelTransientState(0), NormalizeModel: func(value *providercore.Record, model string) string {
 		return (gatewayprovider.ModelPolicy{Record: value}).NormalizeOpenAI(model)
@@ -1937,7 +1937,7 @@ func TestUpdateGrokUsageSnapshotExhaustedSuccessBypassesThrottleAndSetsRateLimit
 	svc := newGrokHealthForTest(repo, providercore.NewWriteThrottle(time.Hour))
 	now := time.Now()
 
-	// 先消耗普通快照的写入额度。
+	// Consume the ordinary snapshot write allowance first.
 	svc.StoreSnapshot(context.Background(), provider.View(), &grok.QuotaSnapshot{
 		StatusCode: http.StatusOK,
 		Requests: &grok.QuotaWindow{
@@ -2169,8 +2169,8 @@ func TestHandleGrokProviderUpstreamError_FreeUsageBodyCoolsProvider(t *testing.T
 
 	require.Equal(t, 1, repo.tempUnschedCalls)
 	require.Equal(t, "grok free usage exhausted", repo.lastTempUnschedReason)
-	// 滚动窗口耗尽且缺少上游绝对重置时间时必须使用短期探测冷却，
-	// 不得在此启动 24 小时锁定。
+	// Without an absolute upstream reset, exhausted rolling quota uses a short probe cooldown.
+	// It must not impose a 24-hour lockout.
 	require.Greater(t, repo.lastTempUnschedUntil, before.Add(grok.GrokFreeUsageProbeCooldown-time.Second))
 	require.Less(t, repo.lastTempUnschedUntil, before.Add(grok.GrokFreeUsageProbeCooldown+time.Second))
 }

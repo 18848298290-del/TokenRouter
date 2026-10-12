@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestMediaExplicitFreeCardWins 检查完整型号配置的零价优先于目录价。
+// TestMediaExplicitFreeCardWins checks that an explicit zero image price is accepted without a catalog rate.
 func TestMediaExplicitFreeCardWins(t *testing.T) {
 	zero := 0.0
 	groupID := int64(1)

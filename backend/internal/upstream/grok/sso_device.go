@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// SSO 转换固定使用 Grok Build 客户端的设备授权范围和 xAI 官方端点。
+	// SSO conversion uses the Grok Build device scopes and official xAI endpoints.
 	SSOBuildScope        = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
 	SSOAccountsURL       = "https://accounts.x.ai/"
 	SSODeviceURL         = OAuthIssuer + "/oauth2/device/code"
@@ -98,7 +98,7 @@ func ConvertSSOToBuild(ctx context.Context, ssoToken string, opts *SSODeviceOpti
 	return flow.convert(ctx)
 }
 
-// convert 依次校验 Web 会话、批准设备授权，再轮询 Build OAuth 凭据。
+// convert validates the web session, approves device authorization, and polls for Build tokens.
 func (f *ssoDeviceFlow) convert(ctx context.Context) (*TokenResponse, error) {
 	status, finalURL, _, err := f.do(ctx, http.MethodGet, SSOAccountsURL, nil)
 	if err != nil {
@@ -257,7 +257,7 @@ func (f *ssoDeviceFlow) do(ctx context.Context, method, endpoint string, form ur
 	currentURL := endpoint
 	currentMethod := method
 	currentForm := form
-	// 手动跟随重定向，确保每一跳都经过受信任域名校验且共享本次流程的 Cookie。
+	// Follow redirects manually to validate every host while retaining this flow's cookies.
 	for range 9 {
 		var body io.Reader
 		if currentForm != nil {

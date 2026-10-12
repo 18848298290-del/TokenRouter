@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// promptSettingsFixture 提供测试中的转发设置。
+// promptSettingsFixture supplies forwarding settings to tests.
 type promptSettingsFixture struct {
 	RuntimeSettingsStore
 	data map[string]string
 }
 
-// identityPatchStore 提供身份修补开关测试中的单键读取。
+// identityPatchStore records single-key reads and can inject a read error.
 type identityPatchStore struct {
 	RuntimeSettingsStore
 	values map[string]string

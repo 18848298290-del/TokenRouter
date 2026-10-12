@@ -49,7 +49,7 @@ type paymentFulfillmentSettingRepoStub struct {
 	values map[string]string
 }
 
-// redeemCodeRepoStub 记录兑换调用，供测试检查已使用兑换码和已完成订单的处理。
+// redeemCodeRepoStub records redemption calls to check recovery of used codes and completed orders.
 type redeemCodeRepoStub struct {
 	codesByCode map[string]*billing.RedeemCode
 	useCalls    []string
@@ -532,7 +532,8 @@ func TestExecuteSubscriptionFulfillmentRecoversCommittedAssignmentWithoutExtendi
 	require.NoError(t, err)
 	require.Equal(t, 1, assignmentAuditCount)
 
-	// 再次恢复已完成的过期租约，检查持久化审计阻止订阅权益重复发放。
+	// Recover another stale lease after completion to check that the saved audit prevents duplicate
+	// subscription grants.
 	_, err = client.PaymentOrder.UpdateOneID(order.ID).
 		SetStatus(payment.OrderStatusRecharging).
 		SetUpdatedAt(staleAt).
@@ -656,7 +657,8 @@ func TestExecuteSubscriptionFulfillmentAppliesAffiliateRebateFromPurchasedPoints
 	require.Contains(t, applied.Detail, `"rebateAmount":200`)
 }
 
-// TestAccrueInviteRebateCapsPurchasedPoints 验证单人上限与返利都使用推理积分单位。
+// TestAccrueInviteRebateCapsPurchasedPoints checks that rebates and per-invitee caps share reasoning point
+// units.
 func TestAccrueInviteRebateCapsPurchasedPoints(t *testing.T) {
 	ctx := context.Background()
 	inviterID := int64(9001)
@@ -771,7 +773,8 @@ func TestExecuteSubscriptionFulfillmentDoesNotDuplicateWorkAfterLegacySuccessAud
 	require.Zero(t, subRepo.CreateCalls)
 }
 
-// WithLockedInviter 在替身中同步执行回调，行锁由 PostgreSQL 集成测试检查。
+// WithLockedInviter runs the callback synchronously in this stub; PostgreSQL integration tests cover row
+// locking.
 func (r *paymentFulfillmentAffiliateRepoStub) WithLockedInviter(ctx context.Context, _ int64, fn func(context.Context) error) error {
 	return fn(ctx)
 }

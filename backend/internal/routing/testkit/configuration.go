@@ -11,8 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Configuration 是迁移前的组合输入。测试装配时将它投影为独立的价格和分组策略，
-// 使已有协议用例继续验证同一请求行为；生产实体不包含这些策略字段。
+// Configuration combines pricing and group-policy inputs for test fixtures.
+// Test assembly separates them into the production service's pricing and policy sources.
 type Configuration struct {
 	BillingSettings           *pricing.BillingSettings
 	ID                        int64
@@ -31,7 +31,7 @@ type Configuration struct {
 	ProviderStatsPricingRules []routing.ProviderStatsPricingRule
 }
 
-// configurationRows 将迁移夹具拆成生产服务的两个数据来源。
+// configurationRows separates combined fixtures into pricing and group-policy reads.
 type configurationRows struct {
 	routing.PricingConfigRepository
 	source interface {
@@ -119,7 +119,7 @@ func (r configurationRows) ReadGroup(ctx context.Context, id int64) (*routing.Gr
 	return &routing.Group{ID: id}, nil
 }
 
-// NewPricingConfigService 仅在测试中把旧组合输入拆为两个独立读取端口。
+// NewPricingConfigService adapts combined test inputs to independent pricing and policy readers.
 func NewPricingConfigService(repo any, invalidator routing.GroupAuthInvalidator, options ...routing.PricingConfigOptions) *routing.PricingConfigService {
 	if repo == nil {
 		return routing.NewPricingConfigService(nil, invalidator, options...)

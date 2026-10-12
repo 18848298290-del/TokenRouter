@@ -12,7 +12,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ProviderManagement 提供 HTTP 管理入口需要的业务操作。
+// ProviderManagement defines the operations used by administrator HTTP handlers.
 type ProviderManagement interface {
 	BulkUpdateProviders(context.Context, *providercore.BulkUpdateProvidersInput) (*providercore.BulkUpdateProvidersResult, error)
 	SetProviderSchedulable(context.Context, int64, bool) (*providercore.Record, error)
@@ -31,7 +31,7 @@ type ProviderRuntimePresenter interface {
 }
 type ProviderRuntimePresenterFunc func(context.Context, *providercore.Record) ProviderWithConcurrency
 
-// ManagementHandler 处理管理员请求，通过绑定的接口读取运行状态和 Ollama 用量。
+// ManagementHandler handles administrator requests and reads runtime status and Ollama usage through its dependencies.
 type ManagementHandler struct {
 	idempotencyhttp.Executor
 
@@ -83,7 +83,7 @@ func NewManagementHandler(admin ProviderManagement, options ManagementOptions) *
 	return &ManagementHandler{models: options.Models, reports: options.Reports, tier: options.Tier, catalog: options.Catalog, modelDefaults: options.ModelDefaults, modelRules: options.ModelRules, listing: options.List, runtimePresenter: options.RuntimePresenter, recovery: options.Recovery, batch: options.Batch, managed: options.Managed, adminService: admin, presenter: options.Presenter, ollamaCloudUsage: options.Ollama, privacy: options.Privacy, afterCreate: options.AfterCreate}
 }
 
-// GetByID 按原状态码与展示流程查询提供商。
+// GetByID returns a provider with its runtime presentation fields.
 // GET /api/v1/admin/providers/:id
 func (h *ManagementHandler) GetByID(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -107,7 +107,7 @@ func (h *ManagementHandler) GetByID(c *gin.Context) {
 	response.Success(c, h.presenter.Present(c.Request.Context(), provider))
 }
 
-// Delete 删除提供商并返回确认响应。
+// Delete deletes a provider and returns a confirmation response.
 // DELETE /api/v1/admin/providers/:id
 func (h *ManagementHandler) Delete(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)

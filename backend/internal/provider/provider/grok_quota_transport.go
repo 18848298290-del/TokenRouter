@@ -18,7 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// GrokQuotaTransport 只执行供应商查询；认领、快照、健康写回和后台任务归提供商用例。
+// GrokQuotaTransport performs upstream queries; the provider service owns claims, snapshots, health
+// writes, and background tasks.
 type GrokQuotaTransport struct {
 	Do                func(*http.Request, string, int64, int) (*http.Response, error)
 	Proxy             func(context.Context, int64) (*egress.Proxy, error)
@@ -27,7 +28,7 @@ type GrokQuotaTransport struct {
 	MapStatus         func(int) int
 }
 
-// GrokBaseURLValidator 区分官方 OAuth 地址与受运营方策略约束的自定义地址。
+// GrokBaseURLValidator trusts official OAuth endpoints and applies operator policy to custom endpoints.
 func GrokBaseURLValidator(value *provider.Record, operator grok.BaseURLValidator) (grok.BaseURLValidator, error) {
 	if value == nil || !value.IsGrok() {
 		return nil, fmt.Errorf("grok provider is required")
@@ -62,7 +63,8 @@ func applyGrokQuotaHeaders(value *provider.Record, headers http.Header) {
 	ApplyProviderHeaderOverrides(value, headers)
 }
 
-// ResolveProxy 优先使用已加载的关联代理，缺失时查询存储，并返回查询结果。
+// ResolveProxy uses a loaded proxy first, then reads and attaches it to the record. Lookup failures
+// return an empty URL.
 func (s *GrokQuotaTransport) ResolveProxy(ctx context.Context, value *provider.Record) string {
 	if value == nil || value.ProxyID == nil {
 		return ""
@@ -97,7 +99,7 @@ func (s *GrokQuotaTransport) FetchBilling(ctx context.Context, value *provider.R
 	})
 }
 
-// GrokQuotaProbeBody 维持缺省模型、载荷与序列化错误行为。
+// GrokQuotaProbeBody builds a streaming probe, using the default Responses model when model is blank.
 func GrokQuotaProbeBody(model string) ([]byte, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -114,7 +116,7 @@ func (s *GrokQuotaTransport) ActiveQuota(ctx context.Context, value *provider.Re
 	validator, err := GrokBaseURLValidator(value, s.OperatorValidator)
 	var target string
 	if err == nil {
-		// 原 Responses 构造在此以 Background 读取动态设置，保留读取时点和取消策略。
+		// Read dynamic endpoint settings at request construction, independently of request cancellation.
 		target, err = grok.BuildResponsesURLWithValidator(s.baseURL(context.Background(), value, true), validator)
 	}
 	if err != nil {

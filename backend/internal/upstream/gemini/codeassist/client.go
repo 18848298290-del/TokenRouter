@@ -11,13 +11,13 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
-// DefaultTestModel 是提供商测试流程预选的模型。
+// DefaultTestModel is the preselected model for provider tests.
 const DefaultTestModel = "gemini-2.0-flash"
 
 type Client struct{ BaseURL string }
 
 type (
-	// LoadCodeAssistRequest 是 Code Assist 账户加载请求。
+	// LoadCodeAssistRequest is a request to load the Code Assist account.
 	LoadCodeAssistRequest  = wire.LoadCodeAssistRequest
 	LoadCodeAssistMetadata = wire.LoadCodeAssistMetadata
 	TierInfo               = wire.TierInfo
@@ -25,7 +25,7 @@ type (
 )
 
 type (
-	// OnboardUserRequest 是 Code Assist 用户开通请求。
+	// OnboardUserRequest is a request to enroll a Code Assist user.
 	OnboardUserRequest  = wire.OnboardUserRequest
 	OnboardUserResponse = wire.OnboardUserResponse
 )
@@ -59,7 +59,6 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken, proxyURL strin
 		sanitizedBody := SanitizeBodyForLogs(body)
 		fmt.Printf("[CodeAssist] LoadCodeAssist failed: status %d, body: %s\n", resp.StatusCode, sanitizedBody)
 
-		// Check if this is a SERVICE_DISABLED error and extract activation URL
 		if IsServiceDisabledError(body) {
 			activationURL := ExtractActivationURL(body)
 			if activationURL != "" {
@@ -103,7 +102,6 @@ func (c *Client) OnboardUser(ctx context.Context, accessToken, proxyURL string, 
 		sanitizedBody := SanitizeBodyForLogs(body)
 		fmt.Printf("[CodeAssist] OnboardUser failed: status %d, body: %s\n", resp.StatusCode, sanitizedBody)
 
-		// Check if this is a SERVICE_DISABLED error and extract activation URL
 		if IsServiceDisabledError(body) {
 			activationURL := ExtractActivationURL(body)
 			if activationURL != "" {

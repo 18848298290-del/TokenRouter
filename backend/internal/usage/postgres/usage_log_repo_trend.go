@@ -67,8 +67,8 @@ func (r *Store) GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			results = nil
@@ -90,7 +90,7 @@ func (r *Store) GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time
 	return results, nil
 }
 
-// GetUserUsageTrend 返回按付款主体和日期聚合的最活跃用户趋势。
+// GetUserUsageTrend returns the most active billing users grouped by date.
 func (r *Store) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []UserUsageTrendPoint, err error) {
 	if aggregated, ok, aggregateErr := r.getUserUsageTrendFromAnalytics(ctx, startTime, endTime, granularity, limit); aggregateErr == nil && ok {
 		return aggregated, nil
@@ -131,8 +131,8 @@ func (r *Store) GetUserUsageTrend(ctx context.Context, startTime, endTime time.T
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			results = nil
@@ -154,7 +154,7 @@ func (r *Store) GetUserUsageTrend(ctx context.Context, startTime, endTime time.T
 	return results, nil
 }
 
-// GetUserSpendingRanking 返回按付款主体聚合的消费排行；团队成员用团队 Key 的用量归到 Owner。
+// GetUserSpendingRanking ranks billing users; team-key usage is charged to the team owner.
 func (r *Store) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (result *UserSpendingRankingResponse, err error) {
 	if limit <= 0 {
 		limit = 12
@@ -243,12 +243,12 @@ func (r *Store) GetUserSpendingRanking(ctx context.Context, startTime, endTime t
 	}, nil
 }
 
-// GetUserUsageTrendByUserID 获取指定用户的使用趋势。
+// GetUserUsageTrendByUserID returns usage trends for the selected user.
 func (r *Store) GetUserUsageTrendByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) (results []TrendDataPoint, err error) {
 	return r.getUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, 0, 0, 0, 0, "", "", nil, nil, nil, "", false, true, nil)
 }
 
-// GetUserModelStats 获取指定用户的模型统计。
+// GetUserModelStats returns model usage for the selected user.
 func (r *Store) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) (results []ModelStat, err error) {
 	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, 0, 0, 0, 0, "", nil, nil, nil, usage.ModelSourceRequested, "", false, true, nil)
 }
@@ -352,8 +352,8 @@ func (r *Store) getUsageTrendWithFilters(ctx context.Context, startTime, endTime
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			results = nil
@@ -482,7 +482,7 @@ func (r *Store) getModelStatsWithFiltersBySource(ctx context.Context, startTime,
 	} else if aggregateErr != nil {
 		r.logUsageAnalyticsFallback("model_stats", aggregateErr)
 	}
-	// “实际”始终表示用户实际扣费，提供商成本由独立的 provider_cost 字段承载。
+	// Actual cost is the user charge; provider_cost carries provider costs separately.
 	providerCostExpr := "COALESCE(SUM(COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1)), 0) as provider_cost"
 	modelExpr := resolveModelDimensionExpression(source)
 	args := []any{startTime, endTime}
@@ -552,8 +552,8 @@ func (r *Store) getModelStatsWithFiltersBySource(ctx context.Context, startTime,
 		return nil, err
 	}
 	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
+		// Keep the query error if one exists; otherwise return the close error.
+		// Clear the result on close failure so callers cannot use a partial result.
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
 			results = nil
@@ -692,7 +692,7 @@ func (r *Store) getGroupStatsWithFilters(ctx context.Context, startTime, endTime
 	return results, nil
 }
 
-// GetUserBreakdownStats 返回按付款主体聚合的管理员用量排行明细。
+// GetUserBreakdownStats returns administrator ranking details grouped by billing user.
 func (r *Store) GetUserBreakdownStats(ctx context.Context, startTime, endTime time.Time, dim usage.UserBreakdownDimension, limit int) (results []usage.UserBreakdownItem, err error) {
 	if aggregated, ok, aggregateErr := r.getUserBreakdownStatsFromAnalytics(ctx, startTime, endTime, dim, limit); aggregateErr == nil && ok {
 		return aggregated, nil
@@ -757,13 +757,13 @@ func (r *Store) GetUserBreakdownStats(ctx context.Context, startTime, endTime ti
 		args = append(args, *dim.BillingType)
 	}
 
-	// ORDER BY 列来自固定 allowlist(非用户原样字符串),避免 SQL 注入。
+	// Choose ORDER BY columns from a fixed allowlist to prevent SQL injection.
 	orderBy := "actual_cost"
 	switch dim.SortBy {
 	case "total_tokens", "input_tokens", "output_tokens", "cache_tokens", "requests", "cost", "actual_cost":
 		orderBy = dim.SortBy
 	}
-	// 排行按付款主体归属，团队成员使用团队 Key 时计入团队 Owner。
+	// Rank by billing user so team-key usage belongs to the team owner.
 	query += " GROUP BY COALESCE(ul.billing_user_id, ul.user_id, 0), u.email ORDER BY " + orderBy + " DESC"
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
@@ -805,7 +805,8 @@ func (r *Store) GetUserBreakdownStats(ctx context.Context, startTime, endTime ti
 	return results, nil
 }
 
-// GetAllGroupUsageSummary 返回每个分组在服务端时区内的今日、昨日和累计实际扣费。
+// GetAllGroupUsageSummary returns all-time, today, and yesterday user charges.
+// The caller supplies local midnight as todayStart.
 func (r *Store) GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usage.GroupUsageSummary, error) {
 	if aggregated, ok, aggregateErr := r.getAllGroupUsageSummaryFromAnalytics(ctx, todayStart); aggregateErr == nil && ok {
 		return aggregated, nil
@@ -855,8 +856,8 @@ func resolveModelDimensionExpressionWithAlias(modelType, alias string) string {
 		}
 		return alias + "." + name
 	}
-	// 模型分布使用内部请求模型，避免复合 Key 的展示前缀把同一模型拆成多项；
-	// requested_model 仍保留在明细中，用于展示客户端实际提交的模型名。
+	// Use the internal request model so composite-key display prefixes do not split the same model.
+	// The detail record keeps the client's submitted name in requested_model.
 	requestedExpr := fmt.Sprintf(
 		"COALESCE(NULLIF(TRIM(%s), ''), NULLIF(TRIM(%s), ''), '')",
 		column("model"),

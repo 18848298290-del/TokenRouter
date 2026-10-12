@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestPlatformVerifierFormats 检查各平台 verifier 的编码格式。
+// TestPlatformVerifierFormats checks base64url and hexadecimal verifier lengths and encoding.
 func TestPlatformVerifierFormats(t *testing.T) {
 	verifier, err := Verifier()
 	if err != nil {
@@ -26,7 +26,7 @@ func TestPlatformVerifierFormats(t *testing.T) {
 	}
 }
 
-// TestS256RFCVector 用协议固定向量验证摘要与无填充编码。
+// TestS256RFCVector checks the digest and unpadded encoding against the RFC test vector.
 func TestS256RFCVector(t *testing.T) {
 	if got := Challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"); got != "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" {
 		t.Fatalf("unexpected challenge: %s", got)

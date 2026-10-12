@@ -25,18 +25,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// StandaloneSearchTarget 仅保留本次已选提供商的受控执行与完成快照能力。
+// StandaloneSearchTarget executes a selected provider request and supplies its completion record.
 type StandaloneSearchTarget interface {
 	CompletionRecord() *providercore.Record
 	Execute(context.Context, []byte) ([]byte, error)
 }
 
-// StandaloneSearchSelector 不向 HTTP 暴露旧提供商实体或完整网关服务。
+// StandaloneSearchSelector selects a target and its scheduling metadata for an HTTP search.
 type StandaloneSearchSelector interface {
 	Select(context.Context, int64, string, map[int64]struct{}) (StandaloneSearchTarget, searchtools.Selection, bool, error)
 }
 
-// SearchPorts 接收应用绑定的依赖，Run 保存本次搜索选择的提供商。
+// SearchPorts holds application dependencies; each run retains its selected provider.
 type SearchPorts struct {
 	Selector    StandaloneSearchSelector
 	Funding     *admission.FundingAdmission
@@ -47,7 +47,7 @@ type SearchPorts struct {
 	Workers     *completion.UsageRecordWorkerPool
 }
 
-// 当前 HTTP Adapter 使用所选提供商执行请求，并同步捕获完成快照。
+// gatewayStandaloneSearchRun executes through the selected provider and captures completion data synchronously.
 type gatewayStandaloneSearchRun struct {
 	ports   SearchPorts
 	c       *gin.Context
@@ -170,7 +170,7 @@ func (r *gatewayStandaloneSearchRun) Complete(c *gin.Context, req searchtools.St
 	upstreamEndpoint := GetUpstreamEndpoint(c, provider.Platform)
 	requestPayloadHash := billing.HashUsageRequestPayload([]byte(req.Query))
 
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(CompletionContext(c), &gatewaycapture.MessagesCapture{
 		Result: &forwardcore.MessagesResult{
 			Model:       "grok-" + strings.ReplaceAll(searchLabel, "_", "-"),

@@ -50,7 +50,7 @@ type ImageRequest struct {
 	BodyHash           string `json:"-"`
 }
 
-// ParseImageRequest 解析图片请求，validateModel 决定是否同时校验模型。
+// ParseImageRequest parses an image request and optionally validates its model.
 func ParseImageRequest(endpoint, contentType string, body []byte, validateModel bool) (*ImageRequest, error) {
 	value, err := upstreamcore.ParseImageRequest(endpoint, contentType, body)
 	if err != nil {
@@ -68,7 +68,7 @@ func ParseImageRequest(endpoint, contentType string, body []byte, validateModel 
 	return req, nil
 }
 
-// ImageExecutionPath 根据提供商类型选择 API Key 或 OAuth 执行方式。
+// ImageExecutionPath returns true for OAuth or setup-token providers and false for API key providers.
 func ImageExecutionPath(providerType string) (bool, error) {
 	switch providerType {
 	case "apikey":
@@ -88,7 +88,7 @@ func (r *ImageRequest) StickySessionSeed() string {
 	return NativeImageRequest(r).StickySessionSeed()
 }
 
-// ValidateRoutingModel 使用分组映射后的模型 C 校验 Images 端点，并同步提供商选择所需的图片能力。
+// ValidateRoutingModel validates the group-mapped model and updates the capability used for selection.
 func (r *ImageRequest) ValidateRoutingModel(routingModel string) error {
 	if err := ValidateImageModel(routingModel); err != nil {
 		return err
@@ -222,7 +222,7 @@ func ApplyNativeImageRequest(target *ImageRequest, value *upstreamcore.ImageRequ
 	target.BodyHash = value.BodyHash
 }
 
-// ResolveImageModels 在已选提供商上按原顺序校验分组映射模型、提供商映射及上游模型。
+// ResolveImageModels validates the group-mapped model, then resolves and validates the provider model.
 func ResolveImageModels(requested, groupMapped, fallback string, resolve func(string) string) (string, string, error) {
 	model := strings.TrimSpace(requested)
 	if mapped := strings.TrimSpace(groupMapped); mapped != "" {
@@ -241,8 +241,8 @@ func ResolveImageModels(requested, groupMapped, fallback string, resolve func(st
 	return model, upstream, nil
 }
 
-// ImageOutcome 决定已观测图片是否足以保留失败结果，并维持不同传输的计数回退。
-// OAuth 已完成的正常响应允许使用请求张数；API Key 的 SSE 则必须有实际产出。
+// ImageOutcome returns the image count and whether to retain the result after a failure.
+// Successful OAuth or non-SSE responses can use the requested count; API key SSE requires observed output.
 func ImageOutcome(stream, oauth, eventStream bool, requested, observed int, failure error) (int, bool) {
 	if failure != nil && (!stream || observed <= 0) {
 		return 0, false

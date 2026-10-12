@@ -23,13 +23,13 @@ import (
 )
 
 const (
-	// 1M 输入 token 下，共享价格配置价与官方兜底价的期望费用（USD）。
+	// Expected USD cost for one million input tokens at the configured price.
 	configPricingExpectedPricingConfigCost = 0.4
-	// 用于验证「不相关的共享价格配置配置不会被误命中」的对照价。
+	// Distinct price used to detect an unrelated card match.
 	configPricingUnrelatedCost = 0.9
 )
 
-// tokenPricingForModels 构造 token 计费模式的共享价格配置定价；inputPerMillion 单位为 USD/1M token。
+// tokenPricingForModels creates a token price card; inputPerMillion is USD per million tokens.
 func tokenPricingForModels(models []string, inputPerMillion float64) routing.ModelPricingEntry {
 	return routing.ModelPricingEntry{
 		Models:          models,
@@ -54,7 +54,7 @@ func newPricingConfigServiceWithPricings(groupID int64, pricings []routing.Model
 	return cs
 }
 
-// recordUsageWithConfigPricing 用给定的共享价格配置定价跑一次 RecordUsage，返回落库的 UsageLog。
+// recordUsageWithConfigPricing records usage with the supplied cards and returns the log captured by the test store.
 func recordUsageWithConfigPricing(t *testing.T, requestedModel string, pricings []routing.ModelPricingEntry) *usage.UsageLog {
 	t.Helper()
 	const groupID = int64(777)
@@ -98,7 +98,7 @@ func recordUsageWithConfigPricing(t *testing.T, requestedModel string, pricings 
 	return usageRepo.LastLog
 }
 
-// TestConfigPricing_ExactModelMatch 验证基线：请求模型与共享价格配置定价 key 完全一致 → 按共享价格配置价计。
+// TestConfigPricing_ExactModelMatch checks that an exact card match supplies the input price.
 func TestConfigPricing_ExactModelMatch(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
@@ -106,7 +106,7 @@ func TestConfigPricing_ExactModelMatch(t *testing.T) {
 	require.InDelta(t, configPricingExpectedPricingConfigCost, log.InputCost, 1e-9)
 }
 
-// TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing 验证后缀型号不能借用基础型号的共享价卡。
+// TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing checks that suffixed models cannot borrow the base model's card.
 func TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
@@ -114,7 +114,7 @@ func TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	require.Zero(t, log.InputCost, "缺价不能借用基础型号或无关价卡")
 }
 
-// TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing 验证日期型号必须配置独立价格。
+// TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing checks that dated variants need their own price.
 func TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-2026-08-01", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
@@ -122,7 +122,7 @@ func TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing(t *testing.T
 	require.Zero(t, log.InputCost, "缺价不能借用基础型号或无关价卡")
 }
 
-// TestConfigPricing_ExactVariantWinsOverNormalizedBaseName 验证完整型号的独立价卡不受基名价格影响。
+// TestConfigPricing_ExactVariantWinsOverNormalizedBaseName checks that the full model name selects its own card.
 func TestConfigPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna-high"}, configPricingUnrelatedCost),
@@ -132,7 +132,7 @@ func TestConfigPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
 		"explicit per-variant channel pricing must win over the normalized base name")
 }
 
-// TestConfigPricing_UnrelatedPricingConfigModelNotMatched 验证未匹配的价卡不能替代未知型号的价格。
+// TestConfigPricing_UnrelatedPricingConfigModelNotMatched checks that an unrelated card cannot price an unknown model.
 func TestConfigPricing_UnrelatedPricingConfigModelNotMatched(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.4"}, configPricingUnrelatedCost),

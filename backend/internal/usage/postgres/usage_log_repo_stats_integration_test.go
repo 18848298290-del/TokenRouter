@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// sqlCall 保存查询语句和参数，供查询次数与执行计划检查使用。
+// sqlCall records SQL and arguments for query-count and execution-plan checks.
 type sqlCall struct {
 	Query string `json:"query"`
 	Args  []any  `json:"-"`
@@ -86,7 +86,7 @@ func TestUsageBatchQueryShape(t *testing.T) {
 	t.Logf("TEST_QUERY_SHAPE=%s", raw)
 }
 
-// TestProviderWindowPairMatchesSingles 对照窗口起点、空窗口、反向起点、费用倍率和未来记录。
+// TestProviderWindowPairMatchesSingles covers inclusive starts, empty windows, reversed starts, multipliers, and future records.
 func (s *UsageLogRepoSuite) TestProviderWindowPairMatchesSingles() {
 	u := mustCreateUser(s.T(), s.client, &identity.User{Email: "window-pair@test.local"})
 	k := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: u.ID, Key: "window-pair"})
@@ -113,7 +113,7 @@ func (s *UsageLogRepoSuite) TestProviderWindowPairMatchesSingles() {
 	}
 }
 
-// TestProviderReportRestoresConnectionJIT 在单连接池中确认报表事务结束后恢复连接设置。
+// TestProviderReportRestoresConnectionJIT checks connection settings after the report transaction in a one-connection pool.
 func TestProviderReportRestoresConnectionJIT(t *testing.T) {
 	limit := integrationDB.Stats().MaxOpenConnections
 	integrationDB.SetMaxOpenConns(1)
@@ -131,7 +131,7 @@ func TestProviderReportRestoresConnectionJIT(t *testing.T) {
 	require.Equal(t, before, after)
 }
 
-// TestProviderReportCombinedResults 对照独立聚合，检查费用归属、空端点及非空耗时分母。
+// TestProviderReportCombinedResults compares separate aggregates for cost attribution, empty endpoints, and non-null durations.
 func (s *UsageLogRepoSuite) TestProviderReportCombinedResults() {
 	u := mustCreateUser(s.T(), s.client, &identity.User{Email: "provider-report@test.local"})
 	k := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: u.ID, Key: "provider-report"})
@@ -189,8 +189,8 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 
 	start := now.Add(-1 * time.Hour)
 	end := now.Add(1 * time.Hour)
-	// 按本测试创建的 user 维度过滤:集成库为共享实例,其它用 testEntClient 的兄弟测试会留下
-	// 已提交的 usage_log 行(含零 token 的失败请求),不限定 user 会把它们计入 TotalRequests。
+	// Scope by the fixture user because other tests commit usage logs into this shared database.
+	// Otherwise their records, including zero-token failures, would affect TotalRequests.
 	stats, err := repo.GetStatsWithFilters(ctx, usage.UsageLogFilters{UserID: user.ID, StartTime: &start, EndTime: &end})
 	require.NoError(t, err)
 	require.Equal(t, int64(3), stats.TotalRequests)
@@ -205,7 +205,7 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 	require.NotEmpty(t, stats.EndpointPaths)
 }
 
-// TestUsageLog_GetModelStats_MergesCompositePrefix 验证复合前缀不会拆分内部模型统计。
+// TestUsageLog_GetModelStats_MergesCompositePrefix checks that display prefixes do not split internal-model totals.
 func TestUsageLog_GetModelStats_MergesCompositePrefix(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)

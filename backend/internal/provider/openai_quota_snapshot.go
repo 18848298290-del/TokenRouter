@@ -37,7 +37,7 @@ func BuildCodexUsageExtraUpdates(snapshot *wire.OpenAICodexUsageSnapshot, fallba
 	baseTime := CodexSnapshotBaseTime(snapshot, fallbackNow)
 	updates := make(map[string]any)
 
-	// 保存原始 primary/secondary 字段，便于排查问题
+	// Retain upstream primary and secondary values for diagnostics.
 	if snapshot.PrimaryUsedPercent != nil {
 		updates["codex_primary_used_percent"] = *snapshot.PrimaryUsedPercent
 	}
@@ -61,7 +61,7 @@ func BuildCodexUsageExtraUpdates(snapshot *wire.OpenAICodexUsageSnapshot, fallba
 	}
 	updates["codex_usage_updated_at"] = baseTime.Format(time.RFC3339)
 
-	// 归一化到 5h/7d 规范字段
+	// Also publish normalized five-hour and seven-day fields.
 	if normalized := snapshot.Normalize(); normalized != nil {
 		if normalized.Used5hPercent != nil {
 			updates["codex_5h_used_percent"] = *normalized.Used5hPercent

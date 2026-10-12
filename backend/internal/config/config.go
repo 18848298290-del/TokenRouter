@@ -24,34 +24,33 @@ import (
 )
 
 const (
-	// 使用量记录队列溢出策略。
+	// Usage-record queue overflow policies.
 	UsageRecordOverflowPolicyDrop   = "drop"
 	UsageRecordOverflowPolicySample = "sample"
 	UsageRecordOverflowPolicySync   = "sync"
 
-	// DefaultCSPPolicy is the default Content-Security-Policy with nonce support
-	// __CSP_NONCE__ will be replaced with actual nonce at request time by the SecurityHeaders middleware.
+	// DefaultCSPPolicy is the default Content-Security-Policy.
+	// SecurityHeaders replaces __CSP_NONCE__ with a per-request nonce.
 	DefaultCSPPolicy = httpconfig.DefaultCSPPolicy
 
-	// 连接池隔离策略常量
-	// 用于控制上游 HTTP 连接池的隔离粒度，影响连接复用和资源消耗
-	// ConnectionPoolIsolationProxy: 按代理隔离
-	// 同一代理地址共享连接池，适合代理数量少、提供商数量多的场景。
+	// Upstream HTTP connection pools can be shared by proxy, provider, or both.
+	// Pool isolation determines connection reuse and resource consumption.
+	// ConnectionPoolIsolationProxy shares a pool among providers using the same proxy.
+	// This reduces pool count when many providers use a few proxies.
 	ConnectionPoolIsolationProxy = "proxy"
-	// ConnectionPoolIsolationProvider: 按提供商隔离
-	// 每个提供商独立连接池，适合提供商数量少、需要严格隔离的场景。
+	// ConnectionPoolIsolationProvider gives each provider a separate pool.
 	ConnectionPoolIsolationProvider = "provider"
-	// ConnectionPoolIsolationProviderProxy: 按提供商+代理组合隔离（默认）
-	// 同一提供商+代理组合共享连接池，提供最细粒度的隔离。
+	// ConnectionPoolIsolationProviderProxy isolates each provider/proxy pair by default.
+	// Requests using the same provider and proxy share a pool.
 	ConnectionPoolIsolationProviderProxy = "provider_proxy"
 
-	// DefaultUpstreamResponseReadMaxBytes 上游非流式响应体的默认读取上限。
-	// 128 MB 可容纳 2-3 张 4K PNG（base64 膨胀 33%，单张 4K PNG 最坏约 67MB base64）。
-	// 可通过 gateway.upstream_response_read_max_bytes 配置项覆盖。
+	// DefaultUpstreamResponseReadMaxBytes limits non-streaming upstream response bodies.
+	// The 128 MiB limit accommodates large base64-encoded image responses.
+	// Override it with gateway.upstream_response_read_max_bytes.
 	DefaultUpstreamResponseReadMaxBytes int64 = 128 * 1024 * 1024
 
-	// DefaultModelsListReadMaxBytes 上游模型列表响应体的默认读取上限。
-	// 可通过 gateway.models_list_read_max_bytes 配置项覆盖。
+	// DefaultModelsListReadMaxBytes limits upstream model-list response bodies.
+	// Override it with gateway.models_list_read_max_bytes.
 	DefaultModelsListReadMaxBytes int64 = 8 * 1024 * 1024
 
 	defaultWeChatConnectMode             = "open"
@@ -63,19 +62,19 @@ const (
 	ImageConcurrencyOverflowModeReject = "reject"
 	ImageConcurrencyOverflowModeWait   = "wait"
 
-	// DefaultOpenAIWSClientFirstMessageTimeoutSeconds 是入站首条消息的等待秒数。
+	// DefaultOpenAIWSClientFirstMessageTimeoutSeconds bounds the wait for the first inbound message.
 	DefaultOpenAIWSClientFirstMessageTimeoutSeconds = 30
 )
 
 var (
-	// ErrDingTalkV1AppTypeMismatch 表示钉钉应用类型与企业限制策略冲突。
+	// ErrDingTalkV1AppTypeMismatch reports a conflict between the app type and enterprise restriction.
 	ErrDingTalkV1AppTypeMismatch = authconfig.ErrDingTalkV1AppTypeMismatch
 
-	// ErrDingTalkV4InvalidAppKind 表示钉钉应用种类无效。
+	// ErrDingTalkV4InvalidAppKind reports an invalid DingTalk app kind.
 	ErrDingTalkV4InvalidAppKind = authconfig.ErrDingTalkV4InvalidAppKind
 )
 
-// RequestLogConfig 配置独立请求摘要的保留天数。
+// RequestLogConfig sets retention in days for request summaries.
 type RequestLogConfig struct {
 	RetentionDays int `mapstructure:"retention_days"`
 }
@@ -120,7 +119,7 @@ type Config struct {
 	Team              TeamConfig                 `mapstructure:"team"`
 }
 
-// TeamConfig 控制团队功能的默认开放策略。
+// TeamConfig sets the default availability and limits of team features.
 type TeamConfig struct {
 	Enabled            bool `mapstructure:"enabled"`
 	SelfServiceEnabled bool `mapstructure:"self_service_enabled"`
@@ -182,28 +181,28 @@ type GeminiTierQuotaConfig struct {
 }
 
 type UpdateConfig struct {
-	// ProxyURL 用于访问 GitHub 的代理地址
-	// 支持 http/https/socks5/socks5h 协议
-	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
+	// ProxyURL is the proxy address for GitHub access.
+	// Supported schemes are http, https, socks5, and socks5h.
+	// Examples: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080".
 	ProxyURL string `mapstructure:"proxy_url"`
 }
 
 type IdempotencyConfig struct {
-	// ObserveOnly 为 true 时处于观察期：未携带 Idempotency-Key 的请求继续放行。
+	// ObserveOnly allows requests missing Idempotency-Key during observation.
 	ObserveOnly bool `mapstructure:"observe_only"`
-	// DefaultTTLSeconds 关键写接口的幂等记录默认 TTL（秒）。
+	// DefaultTTLSeconds is the default retention for write-operation idempotency records.
 	DefaultTTLSeconds int `mapstructure:"default_ttl_seconds"`
-	// SystemOperationTTLSeconds 系统操作接口的幂等记录 TTL（秒）。
+	// SystemOperationTTLSeconds is the retention for system-operation idempotency records.
 	SystemOperationTTLSeconds int `mapstructure:"system_operation_ttl_seconds"`
-	// ProcessingTimeoutSeconds processing 状态锁超时（秒）。
+	// ProcessingTimeoutSeconds is the lock timeout for records in processing state.
 	ProcessingTimeoutSeconds int `mapstructure:"processing_timeout_seconds"`
-	// FailedRetryBackoffSeconds 失败退避窗口（秒）。
+	// FailedRetryBackoffSeconds is the retry delay after a failed operation.
 	FailedRetryBackoffSeconds int `mapstructure:"failed_retry_backoff_seconds"`
-	// MaxStoredResponseLen 持久化响应体最大长度（字节）。
+	// MaxStoredResponseLen limits persisted response bodies in bytes.
 	MaxStoredResponseLen int `mapstructure:"max_stored_response_len"`
-	// CleanupIntervalSeconds 过期记录清理周期（秒）。
+	// CleanupIntervalSeconds is the interval between expired-record cleanup runs.
 	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
-	// CleanupBatchSize 每次清理的最大记录数。
+	// CleanupBatchSize limits the records removed in one cleanup batch.
 	CleanupBatchSize int `mapstructure:"cleanup_batch_size"`
 }
 
@@ -258,17 +257,17 @@ type BatchImageConfig struct {
 }
 
 type CreativeConfig struct {
-	// Enabled 控制创作台 HTTP API 是否可用。
+	// Enabled controls Creative Studio HTTP API availability.
 	Enabled bool `mapstructure:"enabled"`
-	// QueueEnabled 控制创作台队列是否启用（第二阶段 worker runtime 使用）。
+	// QueueEnabled enables the Creative Studio worker queue.
 	QueueEnabled bool `mapstructure:"queue_enabled"`
-	// TransientTTLSeconds 输入载荷与临时输出的保留时间（秒）。
+	// TransientTTLSeconds is the retention for input payloads and temporary output.
 	TransientTTLSeconds int `mapstructure:"transient_ttl_seconds"`
-	// MaxAssetBytes 单个上传文件（源图/mask）的大小上限（字节）。
+	// MaxAssetBytes limits each uploaded source image or mask in bytes.
 	MaxAssetBytes int64 `mapstructure:"max_asset_bytes"`
-	// MaxTotalInputBytes 单次任务输入总大小上限（字节）。
+	// MaxTotalInputBytes limits the total input size of one task in bytes.
 	MaxTotalInputBytes int64 `mapstructure:"max_total_input_bytes"`
-	// MaxPromptChars prompt 最大字符数。
+	// MaxPromptChars limits prompt length in characters.
 	MaxPromptChars              int    `mapstructure:"max_prompt_chars"`
 	DefaultResponseMimeType     string `mapstructure:"default_response_mime_type"`
 	DefaultImageSize            string `mapstructure:"default_image_size"`
@@ -287,9 +286,9 @@ type CreativeConfig struct {
 	RecoveryIntervalSeconds     int    `mapstructure:"recovery_interval_seconds"`
 	DelayedMoveLimit            int    `mapstructure:"delayed_move_limit"`
 	RecoverLimit                int    `mapstructure:"recover_limit"`
-	// ExecuteTimeoutSeconds 是单次上游执行调用的超时时间（秒）。
+	// ExecuteTimeoutSeconds bounds one upstream execution attempt.
 	ExecuteTimeoutSeconds int `mapstructure:"execute_timeout_seconds"`
-	// MaxExecuteAttempts 是 provider 瞬时错误的最大执行次数（含首次）。
+	// MaxExecuteAttempts limits attempts after transient provider errors, including the first attempt.
 	MaxExecuteAttempts int `mapstructure:"max_execute_attempts"`
 }
 
@@ -301,43 +300,43 @@ type OIDCConnectConfig = authconfig.OIDCConnectConfig
 
 type DingTalkConnectConfig = authconfig.DingTalkConnectConfig
 
-// EmailOAuthProviderConfig 保存 GitHub/Google 这类邮箱 OAuth 登录的配置。
+// EmailOAuthProviderConfig configures email-based OAuth login such as GitHub and Google.
 type EmailOAuthProviderConfig = authconfig.EmailOAuthProviderConfig
 
-// TokenRefreshConfig OAuth token 自动刷新配置。
+// TokenRefreshConfig configures automatic OAuth token refresh.
 type TokenRefreshConfig struct {
-	// 是否启用自动刷新
+	// Enabled controls automatic token refresh.
 	Enabled bool `mapstructure:"enabled"`
-	// 检查间隔（分钟）
+	// Interval between refresh checks, in minutes.
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
-	// 提前刷新时间（小时），在 token 过期前多久开始刷新
+	// Hours before expiry at which a token becomes eligible for refresh.
 	RefreshBeforeExpiryHours float64 `mapstructure:"refresh_before_expiry_hours"`
-	// 最大重试次数
+	// Maximum retry count.
 	MaxRetries int `mapstructure:"max_retries"`
-	// 重试退避基础时间（秒）
+	// Base retry backoff, in seconds.
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
-	// 每次从数据库读取的候选提供商上限
+	// Maximum candidate providers fetched in one database page.
 	CandidatePageSize int `mapstructure:"candidate_page_size"`
-	// 每个平台允许的并发刷新数
+	// Concurrent refresh limit per platform.
 	ProviderConcurrency int `mapstructure:"provider_concurrency"`
-	// 每个平台、每个进程允许的刷新请求速率
+	// Refresh requests per second per platform in this process.
 	ProviderQPS int `mapstructure:"provider_qps"`
-	// 一个周期内连续临时失败达到此值后停止该平台
+	// Consecutive temporary failures that stop a platform's current refresh cycle.
 	ProviderFailureThreshold int `mapstructure:"provider_failure_threshold"`
-	// 单次上游刷新尝试的超时（秒）
+	// Timeout for one upstream refresh attempt, in seconds.
 	AttemptTimeoutSeconds int `mapstructure:"attempt_timeout_seconds"`
-	// 单个后台刷新周期的总超时（秒）
+	// Total timeout for one background refresh cycle, in seconds.
 	CycleTimeoutSeconds int `mapstructure:"cycle_timeout_seconds"`
 }
 
 type PricingConfig struct {
-	// 模型价格与属性统一目录地址（models.dev 格式）
+	// Model price and attribute catalog URL in models.dev format.
 	RemoteURL string `mapstructure:"remote_url"`
-	// 本地数据目录
+	// Local data directory.
 	DataDir string `mapstructure:"data_dir"`
-	// 可选的自定义价格补充文件路径；空值只使用目录和内嵌补充。
+	// Optional custom price supplement; empty uses the catalog and embedded supplements.
 	FallbackFile string `mapstructure:"fallback_file"`
-	// 目录与本地文件检查间隔（分钟）
+	// Catalog and local-file check interval, in minutes.
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
 }
 
@@ -345,43 +344,43 @@ type ServerConfig struct {
 	Host                     string                        `mapstructure:"host"`
 	Port                     int                           `mapstructure:"port"`
 	Mode                     string                        `mapstructure:"mode"`                      // debug/release
-	EnableServerTiming       bool                          `mapstructure:"enable_server_timing"`      // 是否为管理端页面请求返回 Server-Timing
-	FrontendURL              string                        `mapstructure:"frontend_url"`              // 前端基础 URL，用于生成邮件中的外部链接
-	ReadHeaderTimeout        int                           `mapstructure:"read_header_timeout"`       // 读取请求头超时（秒）
-	MaxHeaderBytes           int                           `mapstructure:"max_header_bytes"`          // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
-	IdleTimeout              int                           `mapstructure:"idle_timeout"`              // 空闲连接超时（秒）
-	TrustedProxies           []string                      `mapstructure:"trusted_proxies"`           // 可信代理列表（CIDR/IP）
-	TrustedProxiesConfigured bool                          `mapstructure:"-" json:"-" yaml:"-"`       // 是否显式配置了可信代理列表
-	MaxRequestBodySize       int64                         `mapstructure:"max_request_body_size"`     // 全局最大请求体限制
-	H2C                      H2CConfig                     `mapstructure:"h2c"`                       // HTTP/2 Cleartext 配置
-	TLSFingerprintCollector  TLSFingerprintCollectorConfig `mapstructure:"tls_fingerprint_collector"` // TLS 指纹收集器配置
+	EnableServerTiming       bool                          `mapstructure:"enable_server_timing"`      // Return Server-Timing for admin page requests.
+	FrontendURL              string                        `mapstructure:"frontend_url"`              // Frontend base URL used for external links in email.
+	ReadHeaderTimeout        int                           `mapstructure:"read_header_timeout"`       // Request-header read timeout, in seconds.
+	MaxHeaderBytes           int                           `mapstructure:"max_header_bytes"`          // Header size limit in bytes; maps to the HTTP/2 header-list limit.
+	IdleTimeout              int                           `mapstructure:"idle_timeout"`              // Idle connection timeout, in seconds.
+	TrustedProxies           []string                      `mapstructure:"trusted_proxies"`           // Trusted proxy CIDRs or IPs.
+	TrustedProxiesConfigured bool                          `mapstructure:"-" json:"-" yaml:"-"`       // Reports whether trusted proxies were configured, including an empty list.
+	MaxRequestBodySize       int64                         `mapstructure:"max_request_body_size"`     // Global request-body size limit, in bytes.
+	H2C                      H2CConfig                     `mapstructure:"h2c"`                       // HTTP/2 cleartext settings.
+	TLSFingerprintCollector  TLSFingerprintCollectorConfig `mapstructure:"tls_fingerprint_collector"` // TLS fingerprint collector settings.
 }
 
-// TLSFingerprintCollectorConfig TLS 指纹收集器配置。
+// TLSFingerprintCollectorConfig configures the TLS fingerprint collector.
 type TLSFingerprintCollectorConfig struct {
-	Host                 string `mapstructure:"host"`                    // 收集器监听地址
-	Port                 int    `mapstructure:"port"`                    // 收集器监听端口
-	PublicBaseURL        string `mapstructure:"public_base_url"`         // 客户端可访问的采集 URL 前缀
-	CertFile             string `mapstructure:"cert_file"`               // 可选服务端证书路径
-	KeyFile              string `mapstructure:"key_file"`                // 可选服务端私钥路径
-	SessionTTLSeconds    int    `mapstructure:"session_ttl_seconds"`     // 采集会话有效期
-	MaxRecordsPerSession int    `mapstructure:"max_records_per_session"` // 每个会话保留的最大采集记录数
+	Host                 string `mapstructure:"host"`                    // Collector listen address.
+	Port                 int    `mapstructure:"port"`                    // Collector listen port.
+	PublicBaseURL        string `mapstructure:"public_base_url"`         // Client-accessible collection URL prefix.
+	CertFile             string `mapstructure:"cert_file"`               // Optional server certificate path.
+	KeyFile              string `mapstructure:"key_file"`                // Optional server private-key path.
+	SessionTTLSeconds    int    `mapstructure:"session_ttl_seconds"`     // Collection session lifetime, in seconds.
+	MaxRecordsPerSession int    `mapstructure:"max_records_per_session"` // Maximum collection records retained per session.
 }
 
-// H2CConfig HTTP/2 Cleartext 配置。
+// H2CConfig configures HTTP/2 cleartext serving.
 type H2CConfig struct {
-	Enabled                      bool   `mapstructure:"enabled"`                          // 是否启用 H2C
-	MaxConcurrentStreams         uint32 `mapstructure:"max_concurrent_streams"`           // 最大并发流数量
-	IdleTimeout                  int    `mapstructure:"idle_timeout"`                     // 空闲超时（秒）
-	MaxReadFrameSize             int    `mapstructure:"max_read_frame_size"`              // 最大帧大小（字节）
-	MaxUploadBufferPerConnection int    `mapstructure:"max_upload_buffer_per_connection"` // 每个连接的上传缓冲区（字节）
-	MaxUploadBufferPerStream     int    `mapstructure:"max_upload_buffer_per_stream"`     // 每个流的上传缓冲区（字节）
+	Enabled                      bool   `mapstructure:"enabled"`                          // Enable H2C.
+	MaxConcurrentStreams         uint32 `mapstructure:"max_concurrent_streams"`           // Maximum concurrent streams.
+	IdleTimeout                  int    `mapstructure:"idle_timeout"`                     // Idle timeout, in seconds.
+	MaxReadFrameSize             int    `mapstructure:"max_read_frame_size"`              // Maximum frame size, in bytes.
+	MaxUploadBufferPerConnection int    `mapstructure:"max_upload_buffer_per_connection"` // Upload buffer per connection, in bytes.
+	MaxUploadBufferPerStream     int    `mapstructure:"max_upload_buffer_per_stream"`     // Upload buffer per stream, in bytes.
 }
 
 type CORSConfig = httpconfig.CORSConfig
 
-// WebAuthnConfig 定义当前部署作为 WebAuthn 依赖方时使用的固定身份。
-// RPID 与 RPOrigins 属于安全边界，不能从不可信的 Host 或 Origin 请求头推断。
+// WebAuthnConfig defines this deployment's fixed WebAuthn relying-party identity.
+// RPID and RPOrigins must not be inferred from untrusted Host or Origin headers.
 type WebAuthnConfig struct {
 	Enabled       bool     `mapstructure:"enabled"`
 	RPDisplayName string   `mapstructure:"rp_display_name"`
@@ -400,8 +399,8 @@ type SecurityConfig struct {
 	CSP             CSPConfig            `mapstructure:"csp"`
 	ProxyFallback   ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
 	ProxyProbe      ProxyProbeConfig     `mapstructure:"proxy_probe"`
-	// TrustForwardedIPForAPIKeyACL 控制是否由原始转发请求头接管客户端 IP 解析。
-	// 关闭时，所有客户端 IP 使用方都以 server.trusted_proxies 为唯一可信来源。
+	// TrustForwardedIPForAPIKeyACL lets raw forwarding headers determine client IPs.
+	// When disabled, client IP consumers rely on server.trusted_proxies.
 	TrustForwardedIPForAPIKeyACL  bool                                       `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
 	ForwardedClientIPHeaders      []string                                   `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
 	forwardedClientIPSettingsLive *atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
@@ -413,7 +412,7 @@ type URLAllowlistConfig struct {
 	PricingHosts      []string `mapstructure:"pricing_hosts"`
 	CRSHosts          []string `mapstructure:"crs_hosts"`
 	AllowPrivateHosts bool     `mapstructure:"allow_private_hosts"`
-	// 关闭 URL 白名单校验时，是否允许 http URL（默认只允许 https）
+	// Allow HTTP URLs when the allowlist is disabled; the default permits HTTPS only.
 	AllowInsecureHTTP bool `mapstructure:"allow_insecure_http"`
 }
 
@@ -426,23 +425,23 @@ type ResponseHeaderConfig struct {
 type CSPConfig = httpconfig.CSPConfig
 
 type ProxyFallbackConfig struct {
-	// AllowDirectOnError 当辅助服务的代理初始化失败时是否允许回退直连。
-	// 仅影响以下非 AI 提供商连接的辅助服务：
-	//   - GitHub Release 更新检查
-	//   - 定价数据拉取
-	// 不影响 AI 提供商网关连接（Claude/OpenAI/Gemini/Antigravity），
-	// 这些关键路径的代理失败始终返回错误，不会回退直连。
-	// 默认 false：避免因代理配置错误导致服务器真实 IP 泄露。
+	// AllowDirectOnError permits direct connections after auxiliary-service proxy initialization fails.
+	// It applies to these auxiliary services:
+	//   - GitHub Release update checks
+	//   - Pricing data downloads
+	// AI gateway connections, including Claude, OpenAI, Gemini, and Antigravity,
+	// return proxy errors rather than connecting directly.
+	// The default is false to prevent proxy misconfiguration from exposing the server IP.
 	AllowDirectOnError bool `mapstructure:"allow_direct_on_error"`
 }
 
 type ProxyProbeConfig struct {
-	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // 已禁用：禁止跳过 TLS 证书验证
-	// URLs 按优先级排列的自定义探测 URL 列表；为空时使用内置回退列表。
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // Unsupported: TLS certificate verification cannot be skipped.
+	// URLs lists probe endpoints in priority order; empty uses the built-in list.
 	URLs []ProbeURLConfig `mapstructure:"urls"`
 }
 
-// ProbeURLConfig 描述一个代理出口探测端点及其响应解析方式。
+// ProbeURLConfig describes a proxy-egress probe endpoint and its response parser.
 type ProbeURLConfig struct {
 	URL    string `mapstructure:"url"`
 	Parser string `mapstructure:"parser"` // ip-api / ipify / chatgpt-trace
@@ -450,8 +449,8 @@ type ProbeURLConfig struct {
 
 type BillingConfig struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	// MinimumBalanceReserve 是余额计费转发前的保守余额下限。
-	// 设为 0 时保持仅要求 balance > 0 的旧行为。
+	// MinimumBalanceReserve is the conservative balance threshold before balance-funded forwarding.
+	// Zero requires only balance > 0.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
 }
 
@@ -463,196 +462,198 @@ type CircuitBreakerConfig struct {
 }
 
 type ConcurrencyConfig struct {
-	// PingInterval: 并发等待期间的 SSE ping 间隔（秒）
+	// PingInterval is the SSE ping interval while waiting for concurrency, in seconds.
 	PingInterval int `mapstructure:"ping_interval"`
 }
 
 type ImageConcurrencyConfig struct {
-	// Enabled: 是否启用图片生成独立并发限制，默认关闭以保持现有行为
+	// Enabled controls the separate image-generation concurrency limit; disabled by default.
 	Enabled bool `mapstructure:"enabled"`
-	// MaxConcurrentRequests: 当前进程允许同时处理的图片生成请求数，0 表示不限制
+	// MaxConcurrentRequests limits concurrent image requests in this process; zero is unlimited.
 	MaxConcurrentRequests int `mapstructure:"max_concurrent_requests"`
-	// OverflowMode: 图片并发达到上限后的处理方式：reject/wait
+	// OverflowMode selects reject or wait when the image concurrency limit is reached.
 	OverflowMode string `mapstructure:"overflow_mode"`
-	// WaitTimeoutSeconds: overflow_mode=wait 时等待图片并发槽位的超时时间（秒）
+	// WaitTimeoutSeconds bounds slot waiting when overflow_mode is wait.
 	WaitTimeoutSeconds int `mapstructure:"wait_timeout_seconds"`
-	// MaxWaitingRequests: overflow_mode=wait 时当前进程允许排队等待的图片请求数
+	// MaxWaitingRequests limits queued image requests in this process when overflow_mode is wait.
 	MaxWaitingRequests int `mapstructure:"max_waiting_requests"`
 }
 
-// GatewayConfig API 网关相关配置。
+// GatewayConfig configures the API gateway.
 type GatewayConfig struct {
-	// 等待上游响应头的超时时间（秒），0 表示无超时
-	// 注意：这不影响流式数据传输，只控制等待响应头的时间
+	// Upstream response-header timeout, in seconds; zero disables it.
+	// This deadline ends when headers arrive and does not limit streaming duration.
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
-	// OpenAIResponseHeaderTimeout: OpenAI/Codex 上游等待响应头的超时时间（秒），0 表示无超时
-	// OpenAI/Codex 请求可能在上游排队较久；默认不使用通用响应头超时截断。
+	// OpenAIResponseHeaderTimeout bounds OpenAI/Codex header waits in seconds; zero disables it.
+	// The default permits long upstream queue waits independently of the generic timeout.
 	OpenAIResponseHeaderTimeout int `mapstructure:"openai_response_header_timeout"`
 	// GrokResponseHeaderTimeout bounds the pre-first-byte wait for xAI/Grok.
 	// A zero value uses the provider-safe default instead of the generic gateway timeout.
 	GrokResponseHeaderTimeout int `mapstructure:"grok_response_header_timeout"`
-	// OpenAIFirstOutputTimeoutSeconds: native HTTP Responses 首个语义输出超时（秒），0 表示禁用。
+	// OpenAIFirstOutputTimeoutSeconds bounds the first semantic output for native HTTP Responses; zero
+	// disables it.
 	OpenAIFirstOutputTimeoutSeconds int `mapstructure:"openai_first_output_timeout_seconds"`
-	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
-	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
+	// OpenAIHighEffortFirstOutputTimeoutSeconds bounds the first semantic output for high/xhigh/max reasoning.
+	// Zero uses OpenAIFirstOutputTimeoutSeconds.
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
-	// 请求体最大字节数，用于网关请求体大小限制
+	// Maximum gateway request-body size, in bytes.
 	MaxBodySize int64 `mapstructure:"max_body_size"`
-	// TextMaxBodySize 限制不允许内联图片或视频载荷的端点请求体大小。
+	// TextMaxBodySize limits bodies on endpoints that disallow inline image or video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
-	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
+	// Non-streaming upstream response limit in bytes, bounding memory used by body reads.
 	UpstreamResponseReadMaxBytes int64 `mapstructure:"upstream_response_read_max_bytes"`
-	// 上游模型列表响应体读取上限（字节）
+	// Upstream model-list response limit, in bytes.
 	ModelsListReadMaxBytes int64 `mapstructure:"models_list_read_max_bytes"`
-	// 代理探测响应体读取上限（字节）
+	// Proxy-probe response limit, in bytes.
 	ProxyProbeResponseReadMaxBytes int64 `mapstructure:"proxy_probe_response_read_max_bytes"`
-	// Gemini 上游响应头调试日志开关（默认关闭，避免高频日志开销）
+	// Log Gemini response headers for debugging; disabled by default to limit log volume.
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
-	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/provider/provider_proxy）
+	// ConnectionPoolIsolation selects proxy, provider, or provider_proxy isolation.
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
-	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
-	// 用于网关未透传/改写 User-Agent 时的兼容兜底（默认关闭，避免影响其他客户端）。
+	// ForceCodexCLI treats OpenAI /v1/responses requests as Codex CLI requests.
+	// Use when a gateway removes or rewrites User-Agent; disabled by default.
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
-	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
-	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
+	// CodexImageGenerationBridgeEnabled injects the image_generation tool and bridge instructions into Codex
+	// /v1/responses.
+	// Disabled by default; requests already containing the tool still follow group capabilities.
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
-	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
-	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
+	// ForcedCodexInstructionsTemplateFile is the template that supplies final Codex instructions.
+	// The rendered template replaces instructions; include {{ .ExistingInstructions }} to retain converted client system text.
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
-	// ForcedCodexInstructionsTemplate: 启动时从模板文件读取并缓存的模板内容。
-	// 该字段不直接参与配置反序列化，仅用于请求热路径避免重复读盘。
+	// ForcedCodexInstructionsTemplate caches the template read at startup.
+	// It is excluded from configuration decoding so requests can use it without disk reads.
 	ForcedCodexInstructionsTemplate string `mapstructure:"-"`
-	// OpenAICompactModel 是显式 compact 请求在提供商映射未命中时使用的全局回退模型。
+	// OpenAICompactModel supplies the global model for explicit compact requests when provider mapping misses.
 	OpenAICompactModel string `mapstructure:"openai_compact_model"`
-	// OpenAIPassthroughAllowTimeoutHeaders: OpenAI 透传模式是否放行客户端超时头
-	// 关闭（默认）可避免 x-stainless-timeout 等头导致上游提前断流。
+	// OpenAIPassthroughAllowTimeoutHeaders permits client timeout headers in OpenAI passthrough mode.
+	// Disabled by default so headers such as x-stainless-timeout do not prematurely end streams.
 	OpenAIPassthroughAllowTimeoutHeaders bool `mapstructure:"openai_passthrough_allow_timeout_headers"`
-	// OpenAIWS: OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
+	// OpenAIWS configures OpenAI Responses WebSocket connections.
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
-	// Live: ChatGPT Frameless Live 会话配置。
+	// Live configures ChatGPT Frameless Live sessions.
 	Live GatewayLiveConfig `mapstructure:"live"`
-	// AdvancedScheduler: 跨平台高级调度器配置。
+	// AdvancedScheduler configures scheduling across platforms.
 	AdvancedScheduler GatewayAdvancedSchedulerConfig `mapstructure:"advanced_scheduler"`
-	// OpenAIHTTP2: OpenAI HTTP 上游协议策略（默认启用 HTTP/2，可按代理能力回退 HTTP/1.1）
+	// OpenAIHTTP2 prefers HTTP/2 and can fall back to HTTP/1.1 for incompatible proxies.
 	OpenAIHTTP2 GatewayOpenAIHTTP2Config `mapstructure:"openai_http2"`
-	// OpenAIProxyStreamCircuit: Responses SSE 代理断流熔断策略。
+	// OpenAIProxyStreamCircuit configures Responses SSE proxy-disconnection isolation.
 	OpenAIProxyStreamCircuit GatewayOpenAIProxyStreamCircuitConfig `mapstructure:"openai_proxy_stream_circuit"`
-	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
+	// ImageConcurrency configures the separate image concurrency limit; disabled by default.
 	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
 
-	// HTTP 上游连接池配置（性能优化：支持高并发场景调优）
-	// MaxIdleConns: 所有主机的最大空闲连接总数
+	// Upstream HTTP connection-pool limits.
+	// MaxIdleConns limits idle connections across all hosts.
 	MaxIdleConns int `mapstructure:"max_idle_conns"`
-	// MaxIdleConnsPerHost: 每个主机的最大空闲连接数（关键参数，影响连接复用率）
+	// MaxIdleConnsPerHost limits idle connections retained per host for reuse.
 	MaxIdleConnsPerHost int `mapstructure:"max_idle_conns_per_host"`
-	// MaxConnsPerHost: 每个主机的最大连接数（包括活跃+空闲），0 表示无限制
+	// MaxConnsPerHost limits active and idle connections per host; zero is unlimited.
 	MaxConnsPerHost int `mapstructure:"max_conns_per_host"`
-	// IdleConnTimeoutSeconds: 空闲连接超时时间（秒）
+	// IdleConnTimeoutSeconds is the idle connection timeout.
 	IdleConnTimeoutSeconds int `mapstructure:"idle_conn_timeout_seconds"`
-	// MaxUpstreamClients: 上游连接池客户端最大缓存数量
-	// 当使用连接池隔离策略时，系统会为不同的提供商/代理组合创建独立的 HTTP 客户端
-	// 此参数限制缓存的客户端数量，超出后会淘汰最久未使用的客户端
-	// 建议值：预估的活跃提供商数 * 1.2（留有余量）
+	// MaxUpstreamClients limits cached upstream HTTP clients.
+	// Pool isolation creates clients for distinct provider/proxy identities.
+	// Exceeding the cache limit evicts the least recently used client.
+	// Size this limit for the expected active provider/proxy identities.
 	MaxUpstreamClients int `mapstructure:"max_upstream_clients"`
-	// ClientIdleTTLSeconds: 上游连接池客户端空闲回收阈值（秒）
-	// 超过此时间未使用的客户端会被标记为可回收
-	// 建议值：根据用户访问频率设置，一般 10-30 分钟
+	// ClientIdleTTLSeconds is the idle threshold for client reclamation.
+	// Clients unused beyond this threshold become eligible for reclamation.
+	// Choose the threshold based on request frequency.
 	ClientIdleTTLSeconds int `mapstructure:"client_idle_ttl_seconds"`
-	// ConcurrencySlotTTLMinutes: 并发槽位过期时间（分钟）
-	// 应大于最长 LLM 请求时间，防止请求完成前槽位过期
+	// ConcurrencySlotTTLMinutes is the concurrency slot lifetime.
+	// Set it longer than the longest LLM request so active slots do not expire.
 	ConcurrencySlotTTLMinutes int `mapstructure:"concurrency_slot_ttl_minutes"`
-	// SessionIdleTimeoutMinutes: 会话空闲超时时间（分钟），默认 5 分钟
-	// 用于 Anthropic OAuth/SetupToken 提供商的会话数量限制功能
-	// 空闲超过此时间的会话将被自动释放
+	// SessionIdleTimeoutMinutes is the session idle timeout; the default is five minutes.
+	// It applies to session-count limits for Anthropic OAuth and SetupToken providers.
+	// Sessions idle past the timeout are released.
 	SessionIdleTimeoutMinutes int `mapstructure:"session_idle_timeout_minutes"`
 
-	// StreamDataIntervalTimeout: 流数据间隔超时（秒），0 表示禁用
+	// StreamDataIntervalTimeout limits gaps between stream data in seconds; zero disables it.
 	StreamDataIntervalTimeout int `mapstructure:"stream_data_interval_timeout"`
-	// StreamKeepaliveInterval: 流式 keepalive 间隔（秒），0 表示禁用
+	// StreamKeepaliveInterval sets streaming keepalive seconds; zero disables it.
 	StreamKeepaliveInterval int `mapstructure:"stream_keepalive_interval"`
-	// ImageStreamDataIntervalTimeout: 图片流数据间隔超时（秒），0 表示禁用
+	// ImageStreamDataIntervalTimeout limits image-stream data gaps in seconds; zero disables it.
 	ImageStreamDataIntervalTimeout int `mapstructure:"image_stream_data_interval_timeout"`
-	// ImageStreamKeepaliveInterval: 图片流式 keepalive 间隔（秒），0 表示禁用
+	// ImageStreamKeepaliveInterval sets image-stream keepalive seconds; zero disables it.
 	ImageStreamKeepaliveInterval int `mapstructure:"image_stream_keepalive_interval"`
-	// ImageNonstreamKeepaliveInterval: 图片非流式 JSON keepalive 间隔（秒），0 表示禁用
+	// ImageNonstreamKeepaliveInterval sets non-streaming image JSON keepalive seconds; zero disables it.
 	ImageNonstreamKeepaliveInterval int `mapstructure:"image_nonstream_keepalive_interval"`
-	// MaxLineSize: 上游 SSE 单行最大字节数（0 使用默认值）
+	// MaxLineSize limits an upstream SSE line in bytes; zero uses the default.
 	MaxLineSize int `mapstructure:"max_line_size"`
 
-	// 是否记录上游错误响应体摘要（避免输出请求内容）
+	// Log summaries of upstream error response bodies.
 	LogUpstreamErrorBody bool `mapstructure:"log_upstream_error_body"`
-	// 上游错误响应体记录最大字节数（超过会截断）
+	// Maximum logged upstream error-body bytes; longer bodies are truncated.
 	LogUpstreamErrorBodyMaxBytes int `mapstructure:"log_upstream_error_body_max_bytes"`
 
-	// API-key 提供商在客户端未提供 anthropic-beta 时，是否按需自动补齐（默认关闭以保持兼容）
+	// Add required anthropic-beta values for API-key providers when absent from the client; disabled by default.
 	InjectBetaForAPIKey bool `mapstructure:"inject_beta_for_apikey"`
 
-	// 是否允许对部分 400 错误触发 failover（默认关闭以避免改变语义）
+	// Allow failover for selected HTTP 400 errors; disabled by default.
 	FailoverOn400 bool `mapstructure:"failover_on_400"`
 
-	// 提供商切换最大次数（遇到上游错误时切换到其他提供商的次数上限）
+	// Maximum provider switches after upstream errors.
 	MaxProviderSwitches int `mapstructure:"max_provider_switches"`
-	// Gemini 提供商切换最大次数（Gemini 平台单独配置，因 API 限制更严格）
+	// Separate maximum provider switches for Gemini.
 	MaxProviderSwitchesGemini int `mapstructure:"max_provider_switches_gemini"`
 
-	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
+	// Antigravity 429 cooldown in minutes when reset time cannot be parsed.
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
 
-	// Scheduling: 提供商调度相关配置
+	// Scheduling configures provider selection and waiting.
 	Scheduling GatewaySchedulingConfig `mapstructure:"scheduling"`
 
-	// TLSFingerprint: TLS 指纹伪装配置
+	// TLSFingerprint configures upstream TLS handshake fingerprints.
 	TLSFingerprint TLSFingerprintConfig `mapstructure:"tls_fingerprint"`
 
-	// UsageRecord: 使用量记录异步队列配置（有界队列 + 固定 worker）
+	// UsageRecord configures the bounded asynchronous usage-record queue and workers.
 	UsageRecord GatewayUsageRecordConfig `mapstructure:"usage_record"`
 
-	// UserGroupRateCacheTTLSeconds: 用户分组倍率热路径缓存 TTL（秒）
+	// UserGroupRateCacheTTLSeconds is the cache lifetime for user/group rate multipliers.
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
-	// ModelsListCacheTTLSeconds 兼容历史配置，当前目录查询已停用候选短缓存。
+	// ModelsListCacheTTLSeconds accepts legacy configuration; catalog queries do not use this cache.
 	ModelsListCacheTTLSeconds int `mapstructure:"models_list_cache_ttl_seconds"`
 
-	// UserMessageQueue: 用户消息串行队列配置
-	// 对 role:"user" 的真实用户消息实施提供商级串行化 + RPM 自适应延迟
+	// UserMessageQueue configures user-message serialization.
+	// It serializes role:"user" messages per provider and applies RPM-based delay.
 	UserMessageQueue UserMessageQueueConfig `mapstructure:"user_message_queue"`
 
-	// Grok 保存 Grok/xAI 网关调度与免费层软门禁配置。
+	// Grok configures Grok/xAI scheduling and the free-tier quota gate.
 	Grok GatewayGrokConfig `mapstructure:"grok"`
 
-	// CNProviders 配置国产 OpenAI 兼容供应商的独立用量监控。
+	// CNProviders configures usage monitoring for Chinese OpenAI-compatible suppliers.
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
 }
 
-// GatewayGrokConfig 保存 Grok 专用的网关调度参数。
+// GatewayGrokConfig configures Grok scheduling and its free-tier quota gate.
 //
-// 免费额度软门禁键位均位于 gateway.grok：
-//   - free_quota_soft_gate_enabled：为明确标记为 free 的 OAuth 提供商启用本地滚动窗口调度门禁；
-//   - free_quota_token_limit：滚动窗口名义 token 额度；
-//   - free_quota_soft_gate_percent：达到名义额度前停止新调度的百分比，范围 1-100；
-//   - free_quota_window_hours：本地用量滚动窗口小时数；
-//   - free_quota_stats_cache_seconds：免费层用量统计缓存 TTL，热路径不等待数据库，
-//     缓存未命中时放行并在后台刷新。
+// The quota gate uses a local rolling usage window.
+// It applies to OAuth providers marked free.
+// The token limit defines the nominal window allowance.
+// The gate stops new scheduling at a configured percentage from 1 to 100.
+// Window duration is measured in hours.
+// Usage statistics are cached so requests do not wait for the database.
+// A cache miss permits scheduling and refreshes statistics in the background.
 type GatewayGrokConfig struct {
-	// PasswordAuthEnabled 控制可选的密码转 SSO OAuth 流程，默认关闭，必须由运维显式启用。
-	// 启用后 POST /admin/grok/oauth/password 才执行实际授权。
+	// PasswordAuthEnabled enables the optional password-to-SSO OAuth flow; disabled by default.
+	// POST /admin/grok/oauth/password performs authorization only when enabled.
 	PasswordAuthEnabled bool `mapstructure:"password_auth_enabled"`
-	// FreeQuotaSoftGateEnabled 仅为明确标记为 free 的 Grok OAuth 提供商启用本地滚动窗口门禁。
+	// FreeQuotaSoftGateEnabled gates Grok OAuth providers marked free using local rolling usage.
 	FreeQuotaSoftGateEnabled bool `mapstructure:"free_quota_soft_gate_enabled"`
-	// FreeQuotaTokenLimit 是滚动窗口的名义 token 额度。
+	// FreeQuotaTokenLimit is the nominal token allowance for the rolling window.
 	FreeQuotaTokenLimit int64 `mapstructure:"free_quota_token_limit"`
-	// FreeQuotaSoftGatePercent 指定停止新调度的额度百分比。
+	// FreeQuotaSoftGatePercent is the allowance percentage that stops new scheduling.
 	FreeQuotaSoftGatePercent int `mapstructure:"free_quota_soft_gate_percent"`
-	// FreeQuotaWindowHours 指定本地用量滚动窗口小时数。
+	// FreeQuotaWindowHours is the local usage window length.
 	FreeQuotaWindowHours int `mapstructure:"free_quota_window_hours"`
-	// FreeQuotaStatsCacheSeconds 是软门禁统计缓存 TTL；热路径不等待 usage_logs，
-	// 未命中时放行并异步刷新。
+	// FreeQuotaStatsCacheSeconds is the quota-statistics cache TTL; requests do not wait for usage_logs.
+	// A cache miss permits scheduling and triggers an asynchronous refresh.
 	FreeQuotaStatsCacheSeconds int `mapstructure:"free_quota_stats_cache_seconds"`
 }
 
-// GatewayCNProvidersConfig 配置国产供应商的周期性余额/额度探测。
-// 该任务默认关闭，开启后探测活动的 API Key 提供商。管理员手动查询独立执行。
+// GatewayCNProvidersConfig configures periodic balance and quota probes for Chinese suppliers.
+// Disabled by default; when enabled it probes active API-key providers. Manual queries run independently.
 type GatewayCNProvidersConfig struct {
-	// MonitorEnabled 显式开启后才运行后台周期探测；手动查询不受此开关影响。
+	// MonitorEnabled enables background probes; manual queries remain available when disabled.
 	MonitorEnabled      bool    `mapstructure:"monitor_enabled"`
 	BalanceThreshold    float64 `mapstructure:"balance_threshold"`
 	IntervalMinutes     int     `mapstructure:"interval_minutes"`
@@ -661,62 +662,62 @@ type GatewayCNProvidersConfig struct {
 	RoundTimeoutSeconds int     `mapstructure:"round_timeout_seconds"`
 }
 
-// GatewayLiveConfig 定义 ChatGPT Frameless Live 会话限制。
+// GatewayLiveConfig defines ChatGPT Frameless Live session limits.
 type GatewayLiveConfig struct {
-	// MaxSessionDurationSeconds 是 Live 会话的硬上限。
+	// MaxSessionDurationSeconds is the hard Live session duration limit.
 	MaxSessionDurationSeconds int `mapstructure:"max_session_duration_seconds"`
 }
 
-// GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
-// 默认启用 HTTP/2；在部分代理不兼容时按策略回退 HTTP/1.1。
+// GatewayOpenAIHTTP2Config configures OpenAI upstream HTTP versions.
+// HTTP/2 is preferred by default, with policy-controlled HTTP/1.1 fallback for incompatible proxies.
 type GatewayOpenAIHTTP2Config struct {
-	// Enabled: 是否启用 OpenAI HTTP/2 优先策略
+	// Enabled enables the OpenAI HTTP/2 preference.
 	Enabled bool `mapstructure:"enabled"`
-	// AllowProxyFallbackToHTTP1: HTTP/HTTPS 代理出现明确 H2 兼容错误时，临时回退 HTTP/1.1
+	// AllowProxyFallbackToHTTP1 temporarily selects HTTP/1.1 after recognized proxy H2 compatibility errors.
 	AllowProxyFallbackToHTTP1 bool `mapstructure:"allow_proxy_fallback_to_http1"`
-	// FallbackErrorThreshold: 回退窗口内累计多少次兼容错误后触发回退
+	// FallbackErrorThreshold is the compatibility-error count that triggers fallback within the window.
 	FallbackErrorThreshold int `mapstructure:"fallback_error_threshold"`
-	// FallbackWindowSeconds: 统计兼容错误的时间窗口（秒）
+	// FallbackWindowSeconds is the compatibility-error counting window.
 	FallbackWindowSeconds int `mapstructure:"fallback_window_seconds"`
-	// FallbackTTLSeconds: 触发后回退 HTTP/1.1 的持续时间（秒）
+	// FallbackTTLSeconds is the duration of HTTP/1.1 fallback.
 	FallbackTTLSeconds int `mapstructure:"fallback_ttl_seconds"`
 }
 
-// GatewayOpenAIProxyStreamCircuitConfig 配置进程内有界的 Responses SSE 代理断流熔断器。
+// GatewayOpenAIProxyStreamCircuitConfig configures bounded, process-local Responses SSE proxy isolation.
 type GatewayOpenAIProxyStreamCircuitConfig struct {
-	// Disabled: 完全关闭代理断流熔断，默认保持开启。
+	// Disabled turns off proxy-disconnection isolation; isolation is enabled by default.
 	Disabled bool `mapstructure:"disabled"`
-	// FailureThreshold: 统计窗口内多少次断流后隔离代理。
+	// FailureThreshold is the disconnection count within the window that isolates a proxy.
 	FailureThreshold int `mapstructure:"failure_threshold"`
-	// WindowSeconds: 断流统计窗口（秒）。
+	// WindowSeconds is the disconnection counting window.
 	WindowSeconds int `mapstructure:"window_seconds"`
-	// TTLSeconds: 代理隔离持续时间（秒）。
+	// TTLSeconds is the proxy isolation duration.
 	TTLSeconds int `mapstructure:"ttl_seconds"`
 }
 
-// UserMessageQueueConfig 用户消息串行队列配置
-// 用于 Anthropic OAuth/SetupToken 提供商的用户消息串行化发送。
+// UserMessageQueueConfig configures serial user-message delivery
+// for Anthropic OAuth and SetupToken providers.
 type UserMessageQueueConfig struct {
-	// Mode: 模式选择
-	// "serialize" = 提供商级串行锁 + RPM 自适应延迟
-	// "throttle" = RPM 自适应前置延迟，请求可并发执行
-	// "" = 禁用（默认）
+	// Mode selects the queue behavior:
+	// "serialize" uses a provider lock and RPM-based delay;
+	// "throttle" adds RPM-based delay while allowing concurrent requests;
+	// "" disables the queue by default.
 	Mode string `mapstructure:"mode"`
-	// Enabled: 已废弃，仅向后兼容（等同于 mode: "serialize"）
+	// Enabled is deprecated; true is equivalent to mode "serialize".
 	Enabled bool `mapstructure:"enabled"`
-	// LockTTLMs: 串行锁 TTL（毫秒），应大于最长请求时间
+	// LockTTLMs is the serial lock lifetime in milliseconds; set it longer than the longest request.
 	LockTTLMs int `mapstructure:"lock_ttl_ms"`
-	// WaitTimeoutMs: 等待获取锁的超时时间（毫秒）
+	// WaitTimeoutMs bounds lock acquisition in milliseconds.
 	WaitTimeoutMs int `mapstructure:"wait_timeout_ms"`
-	// MinDelayMs: RPM 自适应延迟下限（毫秒）
+	// MinDelayMs is the minimum RPM-based delay in milliseconds.
 	MinDelayMs int `mapstructure:"min_delay_ms"`
-	// MaxDelayMs: RPM 自适应延迟上限（毫秒）
+	// MaxDelayMs is the maximum RPM-based delay in milliseconds.
 	MaxDelayMs int `mapstructure:"max_delay_ms"`
-	// CleanupIntervalSeconds: 孤儿锁清理间隔（秒），0 表示禁用
+	// CleanupIntervalSeconds is the orphan-lock cleanup interval; zero disables cleanup.
 	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
 }
 
-// GatewayOpenAIWSConfig 提供 Responses WS 运行参数的部署默认值，管理端可以覆盖。
+// GatewayOpenAIWSConfig supplies deployment defaults for Responses WS, overridable by admin settings.
 type GatewayOpenAIWSConfig struct {
 	ClientFirstMessageTimeoutSeconds            int     `mapstructure:"client_first_message_timeout_seconds"`
 	IngressInterTurnIdleTimeoutSeconds          int     `mapstructure:"ingress_inter_turn_idle_timeout_seconds"`
@@ -744,155 +745,155 @@ type GatewayOpenAIWSConfig struct {
 	StickyPreviousResponseTTLSeconds            int     `mapstructure:"sticky_previous_response_ttl_seconds"`
 }
 
-// GatewayAdvancedSchedulerScoreWeights 高级调度器提供商打分权重。
+// GatewayAdvancedSchedulerScoreWeights weights provider scores in the advanced scheduler.
 type GatewayAdvancedSchedulerScoreWeights = schedulerpolicy.ConfigScoreWeights
 
-// GatewayAdvancedSchedulerConfig 跨平台高级调度器配置。
+// GatewayAdvancedSchedulerConfig configures the cross-platform advanced scheduler.
 type GatewayAdvancedSchedulerConfig struct {
-	// LBTopK 是每次加权选择前保留的高分候选数量。
+	// LBTopK is the number of highest-scoring candidates retained before weighted selection.
 	LBTopK int `mapstructure:"lb_top_k"`
-	// ScoreWeights 是通用高级调度器的候选评分权重。
+	// ScoreWeights weights candidate scores in the advanced scheduler.
 	ScoreWeights GatewayAdvancedSchedulerScoreWeights `mapstructure:"score_weights"`
-	// EWMAErrorRateAlpha 是错误率反馈的 EWMA 平滑系数，取值越大越重视最新样本。
+	// EWMAErrorRateAlpha smooths error-rate feedback; larger values favor recent samples.
 	EWMAErrorRateAlpha float64 `mapstructure:"ewma_error_rate_alpha"`
-	// EWMATTFTAlpha 是首 token 延迟反馈的 EWMA 平滑系数，取值越大越重视最新样本。
+	// EWMATTFTAlpha smooths first-token latency feedback; larger values favor recent samples.
 	EWMATTFTAlpha float64 `mapstructure:"ewma_ttft_alpha"`
-	// StickyEscapeEnabled: 是否允许 session_hash sticky 在提供商健康度劣化时临时逃逸
+	// StickyEscapeEnabled permits leaving session_hash affinity when provider health worsens.
 	StickyEscapeEnabled bool `mapstructure:"sticky_escape_enabled"`
-	// StickyEscapeTTFTMs: TTFT EWMA 超过该阈值时跳过 sticky
+	// StickyEscapeTTFTMs is the TTFT EWMA threshold in milliseconds for skipping affinity.
 	StickyEscapeTTFTMs int `mapstructure:"sticky_escape_ttft_ms"`
-	// StickyEscapeErrorRate: 错误率 EWMA 超过该阈值时跳过 sticky
+	// StickyEscapeErrorRate is the error-rate EWMA threshold for skipping affinity.
 	StickyEscapeErrorRate float64 `mapstructure:"sticky_escape_error_rate"`
 }
 
-// GatewayUsageRecordConfig 使用量记录异步队列配置。
+// GatewayUsageRecordConfig configures the asynchronous usage-record queue.
 type GatewayUsageRecordConfig struct {
-	// WorkerCount: worker 初始数量（自动扩缩容开启时作为初始并发上限）
+	// WorkerCount is the initial worker concurrency, including when autoscaling is enabled.
 	WorkerCount int `mapstructure:"worker_count"`
-	// QueueSize: 队列容量（有界）
+	// QueueSize is the bounded queue capacity.
 	QueueSize int `mapstructure:"queue_size"`
-	// TaskTimeoutSeconds: 单个使用量记录任务超时（秒）
+	// TaskTimeoutSeconds bounds one usage-record task.
 	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
-	// OverflowPolicy: 队列满时策略（drop/sample/sync）
+	// OverflowPolicy selects drop, sample, or sync when the queue is full.
 	OverflowPolicy string `mapstructure:"overflow_policy"`
-	// OverflowSamplePercent: sample 策略下，同步回写采样百分比（1-100）
+	// OverflowSamplePercent is the percentage written synchronously under sample policy, from 1 to 100.
 	OverflowSamplePercent int `mapstructure:"overflow_sample_percent"`
 
-	// AutoScaleEnabled: 是否启用 worker 自动扩缩容
+	// AutoScaleEnabled enables worker autoscaling.
 	AutoScaleEnabled bool `mapstructure:"auto_scale_enabled"`
-	// AutoScaleMinWorkers: 自动扩缩容最小 worker 数
+	// AutoScaleMinWorkers is the minimum worker count.
 	AutoScaleMinWorkers int `mapstructure:"auto_scale_min_workers"`
-	// AutoScaleMaxWorkers: 自动扩缩容最大 worker 数
+	// AutoScaleMaxWorkers is the maximum worker count.
 	AutoScaleMaxWorkers int `mapstructure:"auto_scale_max_workers"`
-	// AutoScaleUpQueuePercent: 队列占用率达到该阈值时触发扩容
+	// AutoScaleUpQueuePercent is the queue occupancy percentage that triggers growth.
 	AutoScaleUpQueuePercent int `mapstructure:"auto_scale_up_queue_percent"`
-	// AutoScaleDownQueuePercent: 队列占用率低于该阈值时触发缩容
+	// AutoScaleDownQueuePercent is the occupancy percentage below which workers shrink.
 	AutoScaleDownQueuePercent int `mapstructure:"auto_scale_down_queue_percent"`
-	// AutoScaleUpStep: 每次扩容步长
+	// AutoScaleUpStep is the number of workers added per adjustment.
 	AutoScaleUpStep int `mapstructure:"auto_scale_up_step"`
-	// AutoScaleDownStep: 每次缩容步长
+	// AutoScaleDownStep is the number of workers removed per adjustment.
 	AutoScaleDownStep int `mapstructure:"auto_scale_down_step"`
-	// AutoScaleCheckIntervalSeconds: 自动扩缩容检测间隔（秒）
+	// AutoScaleCheckIntervalSeconds is the autoscaling check interval.
 	AutoScaleCheckIntervalSeconds int `mapstructure:"auto_scale_check_interval_seconds"`
-	// AutoScaleCooldownSeconds: 自动扩缩容冷却时间（秒）
+	// AutoScaleCooldownSeconds is the delay between autoscaling adjustments.
 	AutoScaleCooldownSeconds int `mapstructure:"auto_scale_cooldown_seconds"`
 }
 
-// TLSFingerprintConfig TLS 指纹伪装配置
-// 用于模拟 Claude CLI (Node.js) 的 TLS 握手特征，避免被识别为非官方客户端。
+// TLSFingerprintConfig configures upstream TLS handshake fingerprints.
+// It can reproduce the TLS handshake characteristics of Claude CLI on Node.js.
 type TLSFingerprintConfig struct {
-	// Enabled: 是否全局启用 TLS 指纹功能
+	// Enabled enables TLS fingerprinting globally.
 	Enabled bool `mapstructure:"enabled"`
-	// Profiles: 预定义的 TLS 指纹配置模板
-	// key 为模板名称，如 "claude_cli_v2", "chrome_120" 等
+	// Profiles contains named TLS fingerprint templates.
+	// Keys are profile names such as "claude_cli_v2" or "chrome_120".
 	Profiles map[string]TLSProfileConfig `mapstructure:"profiles"`
 }
 
-// TLSProfileConfig 单个 TLS 指纹模板的配置
-// 所有列表字段为空时使用内置默认值（Claude CLI 2.x / Node.js 20.x）
-// 建议通过 TLS 指纹采集工具 (tests/tls-fingerprint-web) 获取完整配置。
+// TLSProfileConfig configures one TLS fingerprint template.
+// Empty list fields use built-in defaults for Claude CLI 2.x / Node.js 20.x.
+// Use the TLS fingerprint collector to capture a complete profile.
 type TLSProfileConfig struct {
-	// Name: 模板显示名称
+	// Name is the profile display name.
 	Name string `mapstructure:"name"`
-	// EnableGREASE: 是否启用 GREASE 扩展（Chrome 使用，Node.js 不使用）
+	// EnableGREASE enables GREASE extensions for profiles such as Chrome.
 	EnableGREASE bool `mapstructure:"enable_grease"`
-	// CipherSuites: TLS 加密套件列表
+	// CipherSuites lists TLS cipher suite IDs.
 	CipherSuites []uint16 `mapstructure:"cipher_suites"`
-	// Curves: 椭圆曲线列表
+	// Curves lists supported elliptic curve IDs.
 	Curves []uint16 `mapstructure:"curves"`
-	// PointFormats: 点格式列表
+	// PointFormats lists supported point format IDs.
 	PointFormats []uint16 `mapstructure:"point_formats"`
-	// SignatureAlgorithms: 签名算法列表
+	// SignatureAlgorithms lists signature algorithm IDs.
 	SignatureAlgorithms []uint16 `mapstructure:"signature_algorithms"`
-	// ALPNProtocols: ALPN 协议列表（如 ["h2", "http/1.1"]）
+	// ALPNProtocols lists protocols such as ["h2", "http/1.1"].
 	ALPNProtocols []string `mapstructure:"alpn_protocols"`
-	// SupportedVersions: 支持的 TLS 版本列表（如 [0x0304, 0x0303] 即 TLS1.3, TLS1.2）
+	// SupportedVersions lists TLS versions, such as [0x0304, 0x0303] for TLS 1.3 and 1.2.
 	SupportedVersions []uint16 `mapstructure:"supported_versions"`
-	// KeyShareGroups: Key Share 中发送的曲线组（如 [29] 即 X25519）
+	// KeyShareGroups lists curves sent in Key Share, such as [29] for X25519.
 	KeyShareGroups []uint16 `mapstructure:"key_share_groups"`
-	// PSKModes: PSK 密钥交换模式（如 [1] 即 psk_dhe_ke）
+	// PSKModes lists PSK exchange modes, such as [1] for psk_dhe_ke.
 	PSKModes []uint16 `mapstructure:"psk_modes"`
-	// Extensions: TLS 扩展类型 ID 列表，按发送顺序排列
-	// 空则使用内置默认顺序 [0,11,10,35,16,22,23,13,43,45,51]
-	// GREASE 值(如 0x0a0a)会自动插入 GREASE 扩展
+	// Extensions lists TLS extension IDs in wire order.
+	// Empty uses the built-in order [0,11,10,35,16,22,23,13,43,45,51].
+	// GREASE IDs such as 0x0a0a insert GREASE extensions.
 	Extensions []uint16 `mapstructure:"extensions"`
 }
 
-// GatewaySchedulingConfig providers scheduling configuration.
+// GatewaySchedulingConfig configures provider selection, waiting, and snapshot refresh.
 type GatewaySchedulingConfig struct {
-	// 粘性会话排队配置
+	// Sticky-session queue limits.
 	StickySessionMaxWaiting  int           `mapstructure:"sticky_session_max_waiting"`
 	StickySessionWaitTimeout time.Duration `mapstructure:"sticky_session_wait_timeout"`
 
-	// 兜底排队配置
+	// Queue limits when the sticky provider is unavailable.
 	FallbackWaitTimeout time.Duration `mapstructure:"fallback_wait_timeout"`
 	FallbackMaxWaiting  int           `mapstructure:"fallback_max_waiting"`
 
-	// 兜底层提供商选择策略: "last_used"(按最后使用时间排序，默认) 或 "random"(随机)
+	// Selection mode: "last_used" orders by last use by default; "random" randomizes selection.
 	FallbackSelectionMode string `mapstructure:"fallback_selection_mode"`
 
-	// PreferSoonestReset 开启后，负载感知选择会优先选用「会话窗口最早重置」的提供商
-	// 先用尽即将重置的提供商，保留重置时间还很久的提供商。
-	// 默认 false，保持原有「优先级 → 负载率 → LRU」行为不变。
+	// PreferSoonestReset makes load-aware selection favor providers whose session windows reset soonest.
+	// This consumes allowances near reset before those with more time remaining.
+	// Disabled by default, using priority, load ratio, and LRU ordering.
 	PreferSoonestReset bool `mapstructure:"prefer_soonest_reset"`
 
-	// 负载计算
+	// Batched load calculation and its cache lifetime.
 	LoadBatchEnabled    bool `mapstructure:"load_batch_enabled"`
 	LoadBatchCacheTTLMS int  `mapstructure:"load_batch_cache_ttl_ms"`
-	// 快照桶读取时的 MGET 分块大小
+	// MGET chunk size when reading snapshot buckets.
 	SnapshotMGetChunkSize int `mapstructure:"snapshot_mget_chunk_size"`
-	// 快照重建时的缓存写入分块大小
+	// Cache write chunk size when rebuilding snapshots.
 	SnapshotWriteChunkSize int `mapstructure:"snapshot_write_chunk_size"`
 
-	// 过期槽位清理周期（0 表示禁用）
+	// Expired-slot cleanup interval; zero disables cleanup.
 	SlotCleanupInterval time.Duration `mapstructure:"slot_cleanup_interval"`
 
-	// 受控回源配置
+	// Enable database reads when cached scheduling data is unavailable.
 	DbFallbackEnabled bool `mapstructure:"db_fallback_enabled"`
-	// 受控回源超时（秒），0 表示不额外收紧超时
+	// Database-read timeout in seconds; zero adds no tighter deadline.
 	DbFallbackTimeoutSeconds int `mapstructure:"db_fallback_timeout_seconds"`
-	// 受控回源限流（实例级 QPS），0 表示不限制
+	// Database-read QPS limit per process; zero is unlimited.
 	DbFallbackMaxQPS int `mapstructure:"db_fallback_max_qps"`
 
-	// Outbox 轮询与滞后阈值配置
-	// Outbox 轮询周期（秒）
+	// Outbox polling and rebuild thresholds.
+	// Outbox polling interval, in seconds.
 	OutboxPollIntervalSeconds int `mapstructure:"outbox_poll_interval_seconds"`
-	// Outbox 滞后告警阈值（秒）
+	// Outbox lag warning threshold, in seconds.
 	OutboxLagWarnSeconds int `mapstructure:"outbox_lag_warn_seconds"`
-	// Outbox 触发强制重建阈值（秒）
+	// Outbox lag threshold for a forced rebuild, in seconds.
 	OutboxLagRebuildSeconds int `mapstructure:"outbox_lag_rebuild_seconds"`
-	// Outbox 连续滞后触发次数
+	// Consecutive excessive-lag observations required for a rebuild.
 	OutboxLagRebuildFailures int `mapstructure:"outbox_lag_rebuild_failures"`
-	// Outbox 积压触发重建阈值（行数）
+	// Outbox backlog row count that triggers a rebuild.
 	OutboxBacklogRebuildRows int `mapstructure:"outbox_backlog_rebuild_rows"`
 
-	// 全量重建周期配置
-	// 全量重建周期（秒），0 表示禁用
+	// Periodic full snapshot rebuilds.
+	// Full rebuild interval in seconds; zero disables periodic rebuilds.
 	FullRebuildIntervalSeconds int `mapstructure:"full_rebuild_interval_seconds"`
 }
 
-// DatabaseConfig 数据库连接配置
-// 性能优化：新增连接池参数，避免频繁创建/销毁连接。
+// DatabaseConfig configures database connections and their pool.
+// Pool limits control connection reuse and resource consumption.
 type DatabaseConfig struct {
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
@@ -900,45 +901,45 @@ type DatabaseConfig struct {
 	Password string `mapstructure:"password"`
 	DBName   string `mapstructure:"dbname"`
 	SSLMode  string `mapstructure:"sslmode"`
-	// 连接池配置（性能优化：可配置化连接池参数）
-	// MaxOpenConns: 最大打开连接数，控制数据库连接上限，防止资源耗尽
+	// Database connection-pool limits.
+	// MaxOpenConns limits open database connections.
 	MaxOpenConns int `mapstructure:"max_open_conns"`
-	// MaxIdleConns: 最大空闲连接数，保持热连接减少建连延迟
+	// MaxIdleConns limits idle connections retained for reuse.
 	MaxIdleConns int `mapstructure:"max_idle_conns"`
-	// ConnMaxLifetimeMinutes: 连接最大存活时间，防止长连接导致的资源泄漏
+	// ConnMaxLifetimeMinutes limits a connection's total lifetime in minutes.
 	ConnMaxLifetimeMinutes int `mapstructure:"conn_max_lifetime_minutes"`
-	// ConnMaxIdleTimeMinutes: 空闲连接最大存活时间，及时释放不活跃连接
+	// ConnMaxIdleTimeMinutes limits a connection's idle lifetime in minutes.
 	ConnMaxIdleTimeMinutes int `mapstructure:"conn_max_idle_time_minutes"`
 }
 
-// RedisConfig Redis 连接配置
-// 性能优化：新增连接池和超时参数，提升高并发场景下的吞吐量。
+// RedisConfig configures Redis connections, pool limits, and timeouts.
+// Timeouts bound connection setup, reads, and writes.
 type RedisConfig struct {
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
-	// 连接池与超时配置（性能优化：可配置化连接池参数）
-	// DialTimeoutSeconds: 建立连接超时，防止慢连接阻塞
+	// Redis connection-pool limits and timeouts.
+	// DialTimeoutSeconds bounds connection establishment.
 	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
-	// ReadTimeoutSeconds: 读取超时，避免慢查询阻塞连接池
+	// ReadTimeoutSeconds bounds connection reads.
 	ReadTimeoutSeconds int `mapstructure:"read_timeout_seconds"`
-	// WriteTimeoutSeconds: 写入超时，避免慢写入阻塞连接池
+	// WriteTimeoutSeconds bounds connection writes.
 	WriteTimeoutSeconds int `mapstructure:"write_timeout_seconds"`
-	// PoolSize: 连接池大小，控制最大并发连接数
+	// PoolSize configures the connection pool size.
 	PoolSize int `mapstructure:"pool_size"`
-	// MinIdleConns: 最小空闲连接数，保持热连接减少冷启动延迟
+	// MinIdleConns keeps idle connections ready for reuse.
 	MinIdleConns int `mapstructure:"min_idle_conns"`
-	// EnableTLS: 是否启用 TLS/SSL 连接
+	// EnableTLS enables TLS connections.
 	EnableTLS bool `mapstructure:"enable_tls"`
 }
 
 type OpsConfig struct {
 	// Enabled controls whether ops features should run.
 	//
-	// NOTE: vNext still has a DB-backed feature flag (ops_monitoring_enabled) for runtime on/off.
-	// This config flag is the "hard switch" for deployments that want to disable ops completely.
+	// The database setting ops_monitoring_enabled controls runtime availability
+	// when this deployment-level switch is enabled.
 	Enabled bool `mapstructure:"enabled"`
 
 	// Cleanup controls periodic deletion of old ops data to prevent unbounded growth.
@@ -957,8 +958,8 @@ type OpsCleanupConfig struct {
 	BatchSize    int    `mapstructure:"batch_size"`
 	BatchPauseMS int    `mapstructure:"batch_pause_ms"`
 
-	// 保留天数：0 表示清空目标表，正数表示保留最近对应天数的数据。
-	// vNext 默认所有运维数据集保留 30 天。
+	// Retention in days: zero clears the target table; positive values retain recent data.
+	// All Ops datasets default to 30 days of retention.
 	ErrorLogRetentionDays      int `mapstructure:"error_log_retention_days"`
 	SystemLogRetentionDays     int `mapstructure:"system_log_retention_days"`
 	MinuteMetricsRetentionDays int `mapstructure:"minute_metrics_retention_days"`
@@ -977,23 +978,23 @@ type OpsMetricsCollectorCacheConfig struct {
 type JWTConfig struct {
 	Secret     string `mapstructure:"secret"`
 	ExpireHour int    `mapstructure:"expire_hour"`
-	// AccessTokenExpireMinutes: Access Token 有效期（分钟）
-	// - >0: 使用分钟配置（优先级高于 ExpireHour）
-	// - =0: 回退使用 ExpireHour（向后兼容旧配置）
+	// AccessTokenExpireMinutes is the access-token lifetime in minutes.
+	// Positive values take precedence over ExpireHour.
+	// Zero uses ExpireHour for compatibility.
 	AccessTokenExpireMinutes int `mapstructure:"access_token_expire_minutes"`
-	// RefreshTokenExpireDays: Refresh Token 有效期（天），默认 30 天
+	// RefreshTokenExpireDays is the refresh-token lifetime; the default is 30 days.
 	RefreshTokenExpireDays int `mapstructure:"refresh_token_expire_days"`
-	// RefreshWindowMinutes: 刷新窗口（分钟），在 Access Token 过期前多久开始允许刷新
+	// RefreshWindowMinutes permits refresh this many minutes before access-token expiry.
 	RefreshWindowMinutes int `mapstructure:"refresh_window_minutes"`
 }
 
-// TotpConfig TOTP 双因素认证配置。
+// TotpConfig configures TOTP two-factor authentication.
 type TotpConfig struct {
-	// EncryptionKey 用于加密 TOTP 密钥的 AES-256 密钥（32 字节 hex 编码）
-	// 如果为空，将自动生成一个随机密钥（仅适用于开发环境）
+	// EncryptionKey is the hex-encoded 32-byte AES-256 key used to encrypt TOTP secrets.
+	// Empty generates a random development key at startup.
 	EncryptionKey string `mapstructure:"encryption_key"`
-	// EncryptionKeyConfigured 标记加密密钥是否为手动配置（非自动生成）
-	// 只有手动配置了密钥才允许在管理后台启用 TOTP 功能
+	// EncryptionKeyConfigured reports whether the key was configured rather than generated.
+	// Admin settings permit enabling TOTP only with a configured key.
 	EncryptionKeyConfigured bool `mapstructure:"-"`
 }
 
@@ -1011,11 +1012,11 @@ type DefaultConfig struct {
 }
 
 type RateLimitConfig struct {
-	OverloadCooldownMinutes int `mapstructure:"overload_cooldown_minutes"`  // 529过载冷却时间(分钟)
-	OAuth401CooldownMinutes int `mapstructure:"oauth_401_cooldown_minutes"` // OAuth 401临时不可调度冷却(分钟)
+	OverloadCooldownMinutes int `mapstructure:"overload_cooldown_minutes"`  // HTTP 529 overload cooldown, in minutes.
+	OAuth401CooldownMinutes int `mapstructure:"oauth_401_cooldown_minutes"` // OAuth HTTP 401 scheduling cooldown, in minutes.
 }
 
-// APIKeyAuthCacheConfig API Key 认证缓存配置。
+// APIKeyAuthCacheConfig configures API-key authentication caches.
 type APIKeyAuthCacheConfig struct {
 	L1Size             int                    `mapstructure:"l1_size"`
 	L1TTLSeconds       int                    `mapstructure:"l1_ttl_seconds"`
@@ -1035,46 +1036,46 @@ type InvalidAuthAbuseConfig struct {
 	Capacity      int  `mapstructure:"capacity"`
 }
 
-// SubscriptionCacheConfig 订阅认证 L1 缓存配置。
+// SubscriptionCacheConfig configures the subscription-authentication L1 cache.
 type SubscriptionCacheConfig struct {
 	L1Size        int `mapstructure:"l1_size"`
 	L1TTLSeconds  int `mapstructure:"l1_ttl_seconds"`
 	JitterPercent int `mapstructure:"jitter_percent"`
 }
 
-// DashboardCacheConfig 仪表盘统计缓存配置。
+// DashboardCacheConfig configures dashboard statistics caching.
 type DashboardCacheConfig struct {
-	// Enabled: 是否启用仪表盘缓存
+	// Enabled enables dashboard caching.
 	Enabled bool `mapstructure:"enabled"`
-	// KeyPrefix: Redis key 前缀，用于多环境隔离
+	// KeyPrefix isolates Redis keys across deployments.
 	KeyPrefix string `mapstructure:"key_prefix"`
-	// StatsFreshTTLSeconds: 缓存命中认为“新鲜”的时间窗口（秒）
+	// StatsFreshTTLSeconds is the period during which cached statistics are considered fresh.
 	StatsFreshTTLSeconds int `mapstructure:"stats_fresh_ttl_seconds"`
-	// StatsTTLSeconds: Redis 缓存总 TTL（秒）
+	// StatsTTLSeconds is the total Redis cache lifetime.
 	StatsTTLSeconds int `mapstructure:"stats_ttl_seconds"`
-	// StatsRefreshTimeoutSeconds: 异步刷新超时（秒）
+	// StatsRefreshTimeoutSeconds bounds asynchronous refreshes.
 	StatsRefreshTimeoutSeconds int `mapstructure:"stats_refresh_timeout_seconds"`
 }
 
-// DashboardAggregationConfig 仪表盘预聚合配置。
+// DashboardAggregationConfig configures dashboard preaggregation.
 type DashboardAggregationConfig struct {
-	// Enabled: 是否启用预聚合作业
+	// Enabled enables preaggregation jobs.
 	Enabled bool `mapstructure:"enabled"`
-	// IntervalSeconds: 聚合刷新间隔（秒）
+	// IntervalSeconds is the aggregation refresh interval.
 	IntervalSeconds int `mapstructure:"interval_seconds"`
-	// LookbackSeconds: 回看窗口（秒）
+	// LookbackSeconds is the aggregation lookback window.
 	LookbackSeconds int `mapstructure:"lookback_seconds"`
-	// BackfillEnabled: 是否允许全量回填
+	// BackfillEnabled permits full backfills.
 	BackfillEnabled bool `mapstructure:"backfill_enabled"`
-	// BackfillMaxDays: 回填最大跨度（天）
+	// BackfillMaxDays limits the time span of a backfill.
 	BackfillMaxDays int `mapstructure:"backfill_max_days"`
-	// Retention: 各表保留窗口（天）
+	// Retention sets each table's retention window in days.
 	Retention DashboardAggregationRetentionConfig `mapstructure:"retention"`
-	// RecomputeDays: 启动时重算最近 N 天
+	// RecomputeDays is the number of recent days recomputed at startup.
 	RecomputeDays int `mapstructure:"recompute_days"`
 }
 
-// DashboardAggregationRetentionConfig 预聚合保留窗口。
+// DashboardAggregationRetentionConfig sets retention windows in days.
 type DashboardAggregationRetentionConfig struct {
 	UsageLogsDays         int `mapstructure:"usage_logs_days"`
 	UsageBillingDedupDays int `mapstructure:"usage_billing_dedup_days"`
@@ -1082,17 +1083,17 @@ type DashboardAggregationRetentionConfig struct {
 	DailyDays             int `mapstructure:"daily_days"`
 }
 
-// UsageCleanupConfig 使用记录清理任务配置。
+// UsageCleanupConfig configures usage-record cleanup jobs.
 type UsageCleanupConfig struct {
-	// Enabled: 是否启用清理任务执行器
+	// Enabled enables the cleanup executor.
 	Enabled bool `mapstructure:"enabled"`
-	// MaxRangeDays: 单次任务允许的最大时间跨度（天）
+	// MaxRangeDays limits the time span of one cleanup task.
 	MaxRangeDays int `mapstructure:"max_range_days"`
-	// BatchSize: 单批删除数量
+	// BatchSize limits rows deleted per batch.
 	BatchSize int `mapstructure:"batch_size"`
-	// WorkerIntervalSeconds: 后台任务轮询间隔（秒）
+	// WorkerIntervalSeconds is the background task polling interval.
 	WorkerIntervalSeconds int `mapstructure:"worker_interval_seconds"`
-	// TaskTimeoutSeconds: 单次任务最大执行时长（秒）
+	// TaskTimeoutSeconds bounds one cleanup task.
 	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
 }
 
@@ -1364,7 +1365,7 @@ func (c *Config) SetTrustForwardedIPForAPIKeyACL(enabled bool) {
 	c.SetForwardedClientIPSettings(enabled, c.ForwardedClientIPSettings().Headers)
 }
 
-// normalizeProxyProbeURLs 校验并规范化配置文件中的探测端点。
+// normalizeProxyProbeURLs validates and normalizes configured probe endpoints.
 func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error) {
 	if len(targets) == 0 {
 		return nil, nil
@@ -1397,7 +1398,7 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 	return normalized, nil
 }
 
-// WaitTimeout 返回等待超时的 time.Duration。
+// WaitTimeout returns the configured wait duration, or 30 seconds for a nonpositive value.
 func (c *UserMessageQueueConfig) WaitTimeout() time.Duration {
 	if c.WaitTimeoutMs <= 0 {
 		return 30 * time.Second
@@ -1405,14 +1406,14 @@ func (c *UserMessageQueueConfig) WaitTimeout() time.Duration {
 	return time.Duration(c.WaitTimeoutMs) * time.Millisecond
 }
 
-// GetEffectiveMode 返回生效的模式
-// 注意：Mode 字段已在 load() 中做过白名单校验和规范化，此处无需重复验证。
+// GetEffectiveMode returns serialize, throttle, or an empty string for disabled queuing.
+// Load clears unsupported modes; the legacy Enabled flag also selects serialization.
 func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 	if c.Mode == schedulerpolicy.MessageQueueSerialize || c.Mode == schedulerpolicy.MessageQueueThrottle {
 		return c.Mode
 	}
 	if c.Enabled {
-		return schedulerpolicy.MessageQueueSerialize // 向后兼容
+		return schedulerpolicy.MessageQueueSerialize // Legacy Enabled flag.
 	}
 	return ""
 }
@@ -1422,7 +1423,7 @@ func (s *ServerConfig) Address() string {
 }
 
 func (d *DatabaseConfig) DSN() string {
-	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
+	// Omit an empty password parameter so libpq can parse the remaining DSN fields.
 	if d.Password == "" {
 		return fmt.Sprintf(
 			"host=%s port=%d user=%s dbname=%s sslmode=%s",
@@ -1435,12 +1436,12 @@ func (d *DatabaseConfig) DSN() string {
 	)
 }
 
-// DSNWithTimezone returns DSN with timezone setting.
+// DSNWithTimezone returns a DSN with the supplied time zone; empty uses Asia/Shanghai.
 func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
-	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
+	// Omit an empty password parameter so libpq can parse the remaining DSN fields.
 	if d.Password == "" {
 		return fmt.Sprintf(
 			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s",
@@ -1457,44 +1458,44 @@ func (r *RedisConfig) Address() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
 }
 
-// Load 读取并校验完整配置（要求 jwt.secret 已显式提供）。
+// Load reads and validates the full configuration, requiring a configured jwt.secret.
 func Load() (*Config, error) {
 	return load(false)
 }
 
-// LoadForBootstrap 读取启动阶段配置。
+// LoadForBootstrap reads configuration for startup.
 //
-// 启动阶段允许 jwt.secret 先留空，后续由数据库初始化流程补齐并再次完整校验。
+// It permits an empty jwt.secret; database initialization must supply it and validate again.
 func LoadForBootstrap() (*Config, error) {
 	return load(true)
 }
 
-// load 进程配置、引导配置和数据库运行时设置的分层由对应工程文档维护。
+// load reads process configuration using the sources documented below.
 // @project-doc docs/interfaces/configuration.md#configuration_sources
 func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	configureConfigSource(viper.SetConfigFile, viper.AddConfigPath)
 
-	// 环境变量支持
+	// Map environment variables to dotted configuration keys.
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	if tz, ok := os.LookupEnv("TZ"); ok && strings.TrimSpace(tz) != "" {
-		// 标准 TZ 显式覆盖兼容的 TIMEZONE，避免容器时区与应用统计口径分离。
+		// TZ overrides the legacy TIMEZONE value so container and application statistics use the same zone.
 		viper.Set("timezone", strings.TrimSpace(tz))
 	}
 	if err := viper.BindEnv("server.enable_server_timing", "ENABLE_SERVER_TIMING"); err != nil {
 		return nil, fmt.Errorf("bind ENABLE_SERVER_TIMING: %w", err)
 	}
 
-	// 默认值
+	// Register defaults before decoding configuration.
 	setDefaults()
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("read config error: %w", err)
 		}
-		// 配置文件不存在时使用默认值
+		// Continue with defaults and environment variables when no file is found.
 	}
 	if err := applyLegacyConfigCompatibility(); err != nil {
 		return nil, err
@@ -1520,8 +1521,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	cfg.Gateway.ConnectionPoolIsolation = normalizeLegacyConnectionPoolIsolation(cfg.Gateway.ConnectionPoolIsolation)
-	// 作为兜底保留：setEnvReachableDefaults 已用实际默认值 true 注册该键，
-	// 因而 IsSet 通常恒为 true；若后续误删注册，这里仍能守住默认行为。
+	// setEnvReachableDefaults normally registers this key as true, making IsSet true.
+	// This guard also supplies the default if that registration is absent.
 	if !cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled && !viper.IsSet("gateway.advanced_scheduler.sticky_escape_enabled") {
 		cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled = true
 	}
@@ -1591,13 +1592,13 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.ForcedCodexInstructionsTemplate = string(content)
 	}
 
-	// 兼容旧键 gateway.openai_ws.sticky_previous_response_ttl_seconds。
-	// 新键未配置（<=0）时回退旧键；新键优先。
+	// Accept the legacy gateway.openai_ws.sticky_previous_response_ttl_seconds value.
+	// A positive new value takes precedence; nonpositive values use the old key.
 	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && cfg.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {
 		cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = cfg.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds
 	}
 
-	// Normalize UMQ mode: 白名单校验，非法值在加载时一次性 warn 并清空
+	// Clear unsupported queue modes and warn once during loading.
 	if m := cfg.Gateway.UserMessageQueue.Mode; m != "" && m != schedulerpolicy.MessageQueueSerialize && m != schedulerpolicy.MessageQueueThrottle {
 		slog.Warn("invalid user_message_queue mode, disabling",
 			"mode", m,
@@ -1608,7 +1609,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
 	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
 	if cfg.Totp.EncryptionKey == "" {
-		key, err := generateJWTSecret(32) // Reuse the same random generation function
+		key, err := generateJWTSecret(32)
 		if err != nil {
 			return nil, fmt.Errorf("generate totp encryption key error: %w", err)
 		}
@@ -1621,7 +1622,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 
 	originalJWTSecret := cfg.JWT.Secret
 	if allowMissingJWTSecret && originalJWTSecret == "" {
-		// 启动阶段允许先无 JWT 密钥，后续在数据库初始化后补齐。
+		// Use a temporary valid secret for validation; bootstrap supplies the persisted secret later.
 		cfg.JWT.Secret = strings.Repeat("0", 32)
 	}
 
@@ -1653,14 +1654,14 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	return &cfg, nil
 }
 
-// configureConfigSource 优先使用显式 CONFIG_FILE，否则按既有目录顺序搜索 config.yaml。
+// configureConfigSource uses CONFIG_FILE when set, otherwise searches config.yaml directories in order.
 func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	if configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE")); configFile != "" {
 		setConfigFile(configFile)
 		return
 	}
 
-	// DATA_DIR 优先于容器、当前目录和系统级默认路径。
+	// DATA_DIR precedes container, working-directory, and system paths.
 	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
 		addConfigPath(dataDir)
 	}
@@ -1668,7 +1669,7 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	addConfigPath(".")
 	addConfigPath("./config")
 	addConfigPath("/etc/tokenrouter")
-	// 旧安装继续读取原目录，新目录在两者同时存在时优先。
+	// Legacy installations can use the old path; the new system path takes precedence.
 	addConfigPath("/etc/sub2api")
 }
 
@@ -1679,18 +1680,18 @@ func setDefaults() {
 	viper.SetDefault("server.mode", "release")
 	viper.SetDefault("server.enable_server_timing", false)
 	viper.SetDefault("server.frontend_url", "")
-	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
+	viper.SetDefault("server.read_header_timeout", 10) // 10-second header read timeout.
 	viper.SetDefault("server.max_header_bytes", 64*1024)
-	viper.SetDefault("server.idle_timeout", 120) // 120秒空闲超时
+	viper.SetDefault("server.idle_timeout", 120) // 120-second idle timeout.
 	viper.SetDefault("server.max_request_body_size", int64(256*1024*1024))
-	// H2C 默认配置
+	// H2C defaults.
 	viper.SetDefault("server.h2c.enabled", false)
-	viper.SetDefault("server.h2c.max_concurrent_streams", uint32(50))      // 50 个并发流
-	viper.SetDefault("server.h2c.idle_timeout", 75)                        // 75 秒
-	viper.SetDefault("server.h2c.max_read_frame_size", 1<<20)              // 1MB（够用）
-	viper.SetDefault("server.h2c.max_upload_buffer_per_connection", 2<<20) // 2MB
-	viper.SetDefault("server.h2c.max_upload_buffer_per_stream", 512<<10)   // 512KB
-	// TLS 指纹收集器默认不随主服务启动，只提供页面启停时使用的监听参数。
+	viper.SetDefault("server.h2c.max_concurrent_streams", uint32(50))      // 50 concurrent streams.
+	viper.SetDefault("server.h2c.idle_timeout", 75)                        // 75 seconds.
+	viper.SetDefault("server.h2c.max_read_frame_size", 1<<20)              // 1 MiB.
+	viper.SetDefault("server.h2c.max_upload_buffer_per_connection", 2<<20) // 2 MiB
+	viper.SetDefault("server.h2c.max_upload_buffer_per_stream", 512<<10)   // 512 KiB
+	// The collector starts from the UI; these values supply its listen settings.
 	viper.SetDefault("server.tls_fingerprint_collector.host", "0.0.0.0")
 	viper.SetDefault("server.tls_fingerprint_collector.port", 8443)
 	viper.SetDefault("server.tls_fingerprint_collector.public_base_url", "")
@@ -1722,7 +1723,7 @@ func setDefaults() {
 	viper.SetDefault("cors.allowed_origins", []string{})
 	viper.SetDefault("cors.allow_credentials", true)
 
-	// Passkey 默认关闭，启用时部署方必须显式声明依赖方域名和可信浏览器 Origin。
+	// Passkeys are disabled by default; enabling requires a relying-party domain and trusted browser origins.
 	viper.SetDefault("webauthn.enabled", false)
 	viper.SetDefault("webauthn.rp_display_name", "TokenRouter")
 	viper.SetDefault("webauthn.rp_id", "")
@@ -1773,7 +1774,7 @@ func setDefaults() {
 	// Turnstile
 	viper.SetDefault("turnstile.required", false)
 
-	// LinuxDo Connect OAuth 登录
+	// LinuxDo Connect OAuth login.
 	viper.SetDefault("linuxdo_connect.enabled", false)
 	viper.SetDefault("linuxdo_connect.client_id", "")
 	viper.SetDefault("linuxdo_connect.client_secret", "")
@@ -1789,7 +1790,7 @@ func setDefaults() {
 	viper.SetDefault("linuxdo_connect.userinfo_id_path", "")
 	viper.SetDefault("linuxdo_connect.userinfo_username_path", "")
 
-	// WeChat Connect OAuth 登录
+	// WeChat Connect OAuth login.
 	viper.SetDefault("wechat_connect.enabled", false)
 	viper.SetDefault("wechat_connect.app_id", "")
 	viper.SetDefault("wechat_connect.app_secret", "")
@@ -1807,7 +1808,7 @@ func setDefaults() {
 	viper.SetDefault("wechat_connect.redirect_url", "")
 	viper.SetDefault("wechat_connect.frontend_redirect_url", defaultWeChatConnectFrontendRedirect)
 
-	// Generic OIDC OAuth 登录
+	// Generic OIDC login.
 	viper.SetDefault("oidc_connect.enabled", false)
 	viper.SetDefault("oidc_connect.provider_name", "OIDC")
 	viper.SetDefault("oidc_connect.client_id", "")
@@ -1831,7 +1832,7 @@ func setDefaults() {
 	viper.SetDefault("oidc_connect.userinfo_id_path", "")
 	viper.SetDefault("oidc_connect.userinfo_username_path", "")
 
-	// DingTalk Connect OAuth 登录
+	// DingTalk Connect OAuth login.
 	viper.SetDefault("dingtalk_connect.enabled", false)
 	viper.SetDefault("dingtalk_connect.authorize_url", "https://login.dingtalk.com/oauth2/auth")
 	viper.SetDefault("dingtalk_connect.token_url", "https://api.dingtalk.com/v1.0/oauth2/userAccessToken")
@@ -1916,7 +1917,7 @@ func setDefaults() {
 	viper.SetDefault("batch_image.vertex_batch_prediction_base_url", "")
 	viper.SetDefault("batch_image.vertex_gcs_base_url", "")
 
-	// Creative Studio（创作台）
+	// Creative Studio.
 	viper.SetDefault("creative.enabled", true)
 	viper.SetDefault("creative.queue_enabled", true)
 	viper.SetDefault("creative.transient_ttl_seconds", 1800)
@@ -1943,13 +1944,13 @@ func setDefaults() {
 	viper.SetDefault("creative.execute_timeout_seconds", 300)
 	viper.SetDefault("creative.max_execute_attempts", 3)
 
-	// Ops (vNext)
+	// Ops
 	viper.SetDefault("ops.enabled", true)
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 3 * * *")
 	viper.SetDefault("ops.cleanup.batch_size", 1000)
 	viper.SetDefault("ops.cleanup.batch_pause_ms", 200)
-	// Retention days: vNext defaults to 30 days across ops datasets.
+	// Retain 30 days across Ops datasets by default.
 	viper.SetDefault("request_log.retention_days", 30)
 	viper.SetDefault("ops.cleanup.error_log_retention_days", 30)
 	viper.SetDefault("ops.cleanup.system_log_retention_days", 30)
@@ -1963,9 +1964,9 @@ func setDefaults() {
 	// JWT
 	viper.SetDefault("jwt.secret", "")
 	viper.SetDefault("jwt.expire_hour", 24)
-	viper.SetDefault("jwt.access_token_expire_minutes", 0) // 0 表示回退到 expire_hour
-	viper.SetDefault("jwt.refresh_token_expire_days", 30)  // 30天Refresh Token有效期
-	viper.SetDefault("jwt.refresh_window_minutes", 2)      // 过期前2分钟开始允许刷新
+	viper.SetDefault("jwt.access_token_expire_minutes", 0) // Zero uses expire_hour.
+	viper.SetDefault("jwt.refresh_token_expire_days", 30)  // 30-day refresh-token lifetime.
+	viper.SetDefault("jwt.refresh_window_minutes", 2)      // Permit refresh two minutes before expiry.
 
 	// TOTP
 	viper.SetDefault("totp.encryption_key", "")
@@ -1984,13 +1985,13 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.overload_cooldown_minutes", 10)
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
-	// Pricing 从 models.dev 同步统一目录，本地文件补充专用计费维度。
+	// Pricing uses the models.dev catalog and local supplements for additional billing dimensions.
 	viper.SetDefault("pricing.remote_url", "https://models.dev/catalog.json?type=all")
 	viper.SetDefault("pricing.data_dir", "./data")
 	viper.SetDefault("pricing.fallback_file", "")
 	viper.SetDefault("pricing.check_interval_minutes", 10)
 
-	// Timezone (default to Asia/Shanghai for Chinese users)
+	// Default time zone for local-day statistics.
 	viper.SetDefault("timezone", "Asia/Shanghai")
 	viper.SetDefault("team.enabled", true)
 	viper.SetDefault("team.self_service_enabled", true)
@@ -2052,7 +2053,7 @@ func setDefaults() {
 	viper.SetDefault("idempotency.cleanup_batch_size", 500)
 
 	// Gateway
-	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
+	viper.SetDefault("gateway.response_header_timeout", 600) // Allow ten minutes for upstream LLM queueing before response headers.
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
 	viper.SetDefault("gateway.openai_compact_model", "")
 	viper.SetDefault("gateway.grok_response_header_timeout", 120)
@@ -2068,7 +2069,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
-	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
+	// OpenAI Responses WebSocket defaults.
 	viper.SetDefault("gateway.openai_ws.client_first_message_timeout_seconds", DefaultOpenAIWSClientFirstMessageTimeoutSeconds)
 	viper.SetDefault("gateway.openai_ws.ingress_inter_turn_idle_timeout_seconds", 300)
 	viper.SetDefault("gateway.openai_ws.max_ingress_connections_per_api_key", 64)
@@ -2105,7 +2106,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.advanced_scheduler.score_weights.quota_headroom", 0.0)
 	viper.SetDefault("gateway.advanced_scheduler.score_weights.previous_response", 5.0)
 	viper.SetDefault("gateway.advanced_scheduler.score_weights.session_sticky", 3.0)
-	// OpenAI HTTP 上游协议策略
+	// OpenAI upstream HTTP version policy.
 	viper.SetDefault("gateway.openai_http2.enabled", true)
 	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
 	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
@@ -2115,16 +2116,16 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.failure_threshold", 2)
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.window_seconds", 60)
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.ttl_seconds", 600)
-	// Grok 免费层本地软门禁仅用于调度，管理端 QueryQuota 不经过该门禁。
-	// 免费层识别要求显式标记，因此默认启用不会误拦未知或付费提供商。
+	// The Grok quota gate applies to scheduling; admin QueryQuota bypasses it.
+	// Only providers marked free are gated, so unknown and paid tiers are unaffected.
 	viper.SetDefault("gateway.grok.free_quota_soft_gate_enabled", true)
 	viper.SetDefault("gateway.grok.password_auth_enabled", false)
-	// 运维默认策略：滚动 24 小时名义额度为 50 万 token。
+	// Default nominal allowance: 500,000 tokens in a rolling 24-hour window.
 	viper.SetDefault("gateway.grok.free_quota_token_limit", int64(500_000))
 	viper.SetDefault("gateway.grok.free_quota_soft_gate_percent", 95)
 	viper.SetDefault("gateway.grok.free_quota_window_hours", 24)
 	viper.SetDefault("gateway.grok.free_quota_stats_cache_seconds", 60)
-	// 国产供应商用量监控默认关闭；管理员手动查询不受该开关影响。
+	// Supplier monitoring is disabled by default; manual admin queries remain available.
 	viper.SetDefault("gateway.cn_providers.monitor_enabled", false)
 	viper.SetDefault("gateway.cn_providers.balance_threshold", 0.5)
 	viper.SetDefault("gateway.cn_providers.interval_minutes", 10)
@@ -2145,14 +2146,14 @@ func setDefaults() {
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationProviderProxy)
-	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）
-	viper.SetDefault("gateway.max_idle_conns", 2560)          // 最大空闲连接总数（高并发场景可调大）
-	viper.SetDefault("gateway.max_idle_conns_per_host", 120)  // 每主机最大空闲连接（HTTP/2 场景默认）
-	viper.SetDefault("gateway.max_conns_per_host", 1024)      // 每主机最大连接数（含活跃；流式/HTTP1.1 场景可调大，如 2400+）
-	viper.SetDefault("gateway.idle_conn_timeout_seconds", 90) // 空闲连接超时（秒）
+	// Upstream HTTP connection-pool defaults.
+	viper.SetDefault("gateway.max_idle_conns", 2560)          // Total idle connection limit.
+	viper.SetDefault("gateway.max_idle_conns_per_host", 120)  // Idle connection limit per host.
+	viper.SetDefault("gateway.max_conns_per_host", 1024)      // Active and idle connection limit per host.
+	viper.SetDefault("gateway.idle_conn_timeout_seconds", 90) // Idle timeout, in seconds.
 	viper.SetDefault("gateway.max_upstream_clients", 5000)
 	viper.SetDefault("gateway.client_idle_ttl_seconds", 900)
-	viper.SetDefault("gateway.concurrency_slot_ttl_minutes", 30) // 并发槽位过期时间（支持超长请求）
+	viper.SetDefault("gateway.concurrency_slot_ttl_minutes", 30) // Slot lifetime accommodates long requests.
 	viper.SetDefault("gateway.stream_data_interval_timeout", 180)
 	viper.SetDefault("gateway.stream_keepalive_interval", 10)
 	viper.SetDefault("gateway.image_stream_data_interval_timeout", 900)
@@ -2182,9 +2183,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
-	// 默认 sync：队列满时由提交方内联执行（提交点在响应写出之后，不阻塞客户端）。
-	// sample/drop 会在溢出时静默丢弃计费任务，造成扣费与 usage_logs 对账缺口（issue #3656），
-	// 仅供显式配置的运维场景使用。
+	// The default sync policy runs overflow tasks inline after the response is written.
+	// sample and drop can discard billing tasks, creating charge and usage_logs reconciliation gaps (issue #3656).
+	// Use those policies only when the deployment accepts that loss.
 	viper.SetDefault("gateway.usage_record.overflow_policy", UsageRecordOverflowPolicySync)
 	viper.SetDefault("gateway.usage_record.overflow_sample_percent", 10)
 	viper.SetDefault("gateway.usage_record.auto_scale_enabled", true)
@@ -2198,8 +2199,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.auto_scale_cooldown_seconds", 10)
 	viper.SetDefault("gateway.user_group_rate_cache_ttl_seconds", 30)
 	viper.SetDefault("gateway.models_list_cache_ttl_seconds", 15)
-	// TLS 指纹伪装配置（默认关闭，需要提供商级别单独启用）
-	// 用户消息串行队列默认值
+	// User-message queue defaults.
 	viper.SetDefault("gateway.user_message_queue.enabled", false)
 	viper.SetDefault("gateway.user_message_queue.lock_ttl_ms", 120000)
 	viper.SetDefault("gateway.user_message_queue.wait_timeout_ms", 30000)
@@ -2207,15 +2207,16 @@ func setDefaults() {
 	viper.SetDefault("gateway.user_message_queue.max_delay_ms", 2000)
 	viper.SetDefault("gateway.user_message_queue.cleanup_interval_seconds", 60)
 
+	// Enable TLS fingerprint support by default.
 	viper.SetDefault("gateway.tls_fingerprint.enabled", true)
 	viper.SetDefault("concurrency.ping_interval", 10)
 
 	// TokenRefresh
 	viper.SetDefault("token_refresh.enabled", true)
-	viper.SetDefault("token_refresh.check_interval_minutes", 5)        // 每5分钟检查一次
-	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // 提前30分钟刷新（适配Google 1小时token）
-	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
-	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
+	viper.SetDefault("token_refresh.check_interval_minutes", 5)        // Check every five minutes.
+	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // Refresh 30 minutes early for one-hour Google tokens.
+	viper.SetDefault("token_refresh.max_retries", 3)                   // At most three retries.
+	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // Two-second base backoff.
 	viper.SetDefault("token_refresh.candidate_page_size", 200)
 	viper.SetDefault("token_refresh.provider_concurrency", 4)
 	viper.SetDefault("token_refresh.provider_qps", 2)
@@ -2234,37 +2235,37 @@ func setDefaults() {
 	setEnvReachableDefaults()
 }
 
-// setEnvReachableDefaults 为配置键注册零值默认项，供环境变量赋值。
+// setEnvReachableDefaults registers configuration keys so environment values reach Unmarshal.
 //
-// viper.Unmarshal 只解码 AllKeys 返回的键；该集合由 SetDefault、配置文件键和
-// BindEnv 键组成。AutomaticEnv 覆盖这个集合中的键。构建使用
-// `-tags embed` 时也不会启用 viper_bind_struct。因此仅出现在示例文件中的键无法
-// 通过环境变量到达配置结构，纯环境变量部署会无提示地得到零值。
+// viper.Unmarshal decodes keys from AllKeys: defaults, file keys, and BindEnv keys.
+// AutomaticEnv overrides values for those registered keys. Builds with
+// -tags embed do not enable viper_bind_struct, so keys present only in the example file
+// would otherwise decode to zero values in environment-only deployments.
 //
-// 缺失键解码为零值，各子系统在解码后应用自己的默认值。
+// Missing keys decode to zero values; subsystems then apply their own defaults.
 func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
 
-	// sticky escape 使用实际默认值，保留显式 error rate 0，并让显式 TTFT 0
-	// 进入配置校验。配置文件或环境变量仍可覆盖这些值。
+	// Sticky escape registers effective defaults so an explicit zero error rate is retained
+	// and an explicit zero TTFT reaches validation. Files and environment variables can override these values.
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_error_rate", 0.5)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_ttft_ms", 15000)
 
-	// server.trusted_proxies 与 security.forwarded_client_ip_headers 是另一组例外：
-	// load() 需要区分“显式配置”和“配置缺席”（#4600），而 viper.IsSet 也会把
-	// SetDefault 注册的值视为已配置，因此注册默认值会让可信代理永久表现为显式配置。
-	// 这两个环境变量已由 load() 通过 os.LookupEnv 手工解析，并不会被静默丢弃；
-	// 此处仅通过 BindEnv 将其加入 AllKeys，让环境变量可达性守卫能够识别，且不会
-	// 在环境变量缺席时影响 IsSet。参数完整时 BindEnv 不会返回错误。
+	// server.trusted_proxies and security.forwarded_client_ip_headers use BindEnv:
+	// load must distinguish configured values from absent values (#4600), while IsSet
+	// treats SetDefault entries as configured even when the operator supplies nothing.
+	// load parses these two environment variables through os.LookupEnv.
+	// BindEnv adds the keys to AllKeys for the environment-reachability check,
+	// while leaving IsSet false for absent variables. These complete BindEnv arguments cannot fail.
 	_ = viper.BindEnv("server.trusted_proxies", "SERVER_TRUSTED_PROXIES")
 	_ = viper.BindEnv("security.forwarded_client_ip_headers", "SECURITY_FORWARDED_CLIENT_IP_HEADERS")
 
-	// 第三方登录配置包含客户端密钥，运维通常会通过环境变量注入，
-	// 但这些键此前都无法通过该路径到达配置结构。
+	// Register OAuth client secrets and other login settings so deployments
+	// can supply them through environment variables.
 	for _, provider := range []string{"github_oauth", "google_oauth"} {
 		viper.SetDefault(provider+".enabled", false)
 		viper.SetDefault(provider+".client_id", "")
@@ -2363,8 +2364,8 @@ func (c *Config) Validate() error {
 	if jwtSecret == "" {
 		return fmt.Errorf("jwt.secret is required")
 	}
-	// NOTE: 按 UTF-8 编码后的字节长度计算。
-	// JWT 密钥长度按字节检查，最少 32 字节。
+	// Measure the JWT secret in UTF-8 bytes.
+	// The minimum is 32 bytes.
 	if len([]byte(jwtSecret)) < 32 {
 		return fmt.Errorf("jwt.secret must be at least 32 bytes")
 	}
@@ -2417,8 +2418,8 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Gemini OAuth 配置校验：client_id 与 client_secret 必须同时设置或同时留空。
-	// 留空时表示使用内置的 Gemini CLI OAuth 客户端（其 client_secret 通过环境变量注入）。
+	// Gemini client_id and client_secret must both be set or both be empty.
+	// Empty selects the built-in Gemini CLI OAuth client, whose secret comes from the environment.
 	geminiClientID := strings.TrimSpace(c.Gemini.OAuth.ClientID)
 	geminiClientSecret := strings.TrimSpace(c.Gemini.OAuth.ClientSecret)
 	if (geminiClientID == "") != (geminiClientSecret == "") {
@@ -2469,7 +2470,7 @@ func (c *Config) Validate() error {
 			u.Host = strings.ToLower(u.Host)
 			host := strings.ToLower(u.Hostname())
 			localDevelopment := host == "localhost" || host == "127.0.0.1" || host == "::1"
-			// WebAuthn 仅允许 HTTPS，本地回环地址可使用 HTTP 便于开发调试。
+			// WebAuthn requires HTTPS, except for local loopback origins used in development.
 			if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
 				return fmt.Errorf("webauthn.rp_origins entry %q must use HTTPS (HTTP is allowed only for localhost)", origin)
 			}
@@ -2488,7 +2489,7 @@ func (c *Config) Validate() error {
 	if c.JWT.ExpireHour > 24 {
 		slog.Warn("jwt.expire_hour is high; consider shorter expiration for security", "expire_hour", c.JWT.ExpireHour)
 	}
-	// JWT Refresh Token 配置验证
+	// Validate token lifetimes and the refresh window.
 	if c.JWT.AccessTokenExpireMinutes < 0 {
 		return fmt.Errorf("jwt.access_token_expire_minutes must be non-negative")
 	}
@@ -2778,7 +2779,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("batch_image.vertex_output_retention_hours must be positive")
 		}
 	}
-	// 创作台配置校验。
+	// Validate Creative Studio limits and queue settings.
 	if c.Creative.Enabled {
 		if c.Creative.TransientTTLSeconds <= 0 {
 			return fmt.Errorf("creative.transient_ttl_seconds must be positive")
@@ -3087,7 +3088,7 @@ func (c *Config) Validate() error {
 		(c.Gateway.ImageNonstreamKeepaliveInterval < 5 || c.Gateway.ImageNonstreamKeepaliveInterval > 60) {
 		return fmt.Errorf("gateway.image_nonstream_keepalive_interval must be 0 or between 5-60 seconds")
 	}
-	// 兼容旧键 sticky_previous_response_ttl_seconds
+	// Accept the legacy sticky_previous_response_ttl_seconds key.
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {
 		c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds
 	}
@@ -3424,21 +3425,21 @@ func generateJWTSecret(byteLength int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// GetServerAddress 在完整配置校验前读取服务监听地址，供安装向导等启动阶段使用。
-// 优先级为环境变量、配置文件、默认值。
+// GetServerAddress reads the listen address before full validation, for startup and setup.
+// Environment variables take precedence over the file, then defaults.
 func GetServerAddress() string {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	configureConfigSource(v.SetConfigFile, v.AddConfigPath)
 
-	// 支持用环境变量覆盖配置文件中的监听地址。
+	// Environment variables can override the file's listen address.
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 
-	// 轻量读取保持容错；完整 Load 会对显式文件缺失或不可读返回错误。
+	// This lightweight read ignores file errors; Load reports missing or unreadable explicit files.
 	_ = v.ReadInConfig()
 
 	host := v.GetString("server.host")
@@ -3446,10 +3447,10 @@ func GetServerAddress() string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-// ValidateAbsoluteHTTPURL 验证是否为有效的绝对 HTTP(S) URL。
+// ValidateAbsoluteHTTPURL checks an absolute HTTP(S) URL.
 func ValidateAbsoluteHTTPURL(raw string) error { return authconfig.ValidateAbsoluteHTTPURL(raw) }
 
-// ValidateFrontendRedirectURL 验证前端重定向 URL（可以是绝对 URL 或相对路径）。
+// ValidateFrontendRedirectURL checks an absolute URL or relative frontend redirect path.
 func ValidateFrontendRedirectURL(raw string) error {
 	return authconfig.ValidateFrontendRedirectURL(raw)
 }
@@ -3468,7 +3469,7 @@ func warnIfInsecureURL(field, raw string) {
 	}
 }
 
-// normalizePricingCatalogSource 迁移已知公共旧源及缺失的旧打包资源，不改写部署文件。
+// normalizePricingCatalogSource updates known legacy sources and missing packaged paths in memory.
 func (c *Config) normalizePricingCatalogSource() {
 	if strings.TrimSpace(c.Pricing.RemoteURL) == "https://models.dev/catalog.json" {
 		c.Pricing.RemoteURL = "https://models.dev/catalog.json?type=all"
@@ -3494,7 +3495,7 @@ func (c *Config) normalizePricingCatalogSource() {
 	}
 }
 
-// ValidateDingTalkConfig 使用身份配置的规则校验钉钉登录参数。
+// ValidateDingTalkConfig validates DingTalk login settings using identity configuration rules.
 func ValidateDingTalkConfig(value DingTalkConnectConfig) error {
 	return authconfig.ValidateDingTalkConfig(value)
 }

@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// AdminReadSettings 分别记录管理页设置的覆盖值和最终生效值。
+// AdminReadSettings contains stored overrides and effective values for the admin page.
 type AdminReadSettings struct {
 	AdvancedSchedulerEWMAErrorRateAlpha              string
 	AdvancedSchedulerEWMATTFTAlpha                   string
@@ -44,7 +44,7 @@ type AdminReadSettings struct {
 	AdvancedSchedulerWeightTTFT                      string
 }
 
-// RuntimeSettingsFromAdmin 按字段解析管理设置，分别记录是否设置，并在缺省时使用对应默认值。
+// RuntimeSettingsFromAdmin parses overrides, records presence, and uses defaults for missing fields.
 func RuntimeSettingsFromAdmin(value AdminSettings, defaults AdminDefaults) policy.RuntimeSettings {
 	errorAlpha, _ := ParseAdvancedSchedulerAlphaOverride(value.AdvancedSchedulerEWMAErrorRateAlpha, defaults.Process.EwmaErrorRateAlpha)
 	ttftAlpha, _ := ParseAdvancedSchedulerAlphaOverride(value.AdvancedSchedulerEWMATTFTAlpha, defaults.Process.EwmaTTFTAlpha)
@@ -68,7 +68,7 @@ func RuntimeSettingsFromAdmin(value AdminSettings, defaults AdminDefaults) polic
 	}
 }
 
-// ReadAdminSettings 读取运行参数并规范化反馈设置。
+// ReadAdminSettings parses admin values and normalizes feedback settings.
 func ReadAdminSettings(settings map[string]string, defaults AdminDefaults) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.AdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyAdvancedSchedulerStickyWeightedEnabled] == "true"

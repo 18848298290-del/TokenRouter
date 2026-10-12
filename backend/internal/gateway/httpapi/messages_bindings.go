@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// MessagesBindings 绑定路由、资金、隔离和审核接口，HTTP 状态由本模块处理。
+// MessagesBindings provides routing, funding, isolation, and moderation dependencies.
 type MessagesBindings struct {
 	PlanRoute           func(context.Context, *apikey.APIKey, string) routing.RoutePlan
 	ClientVersions      func(context.Context) (string, string)
@@ -37,7 +37,7 @@ type MessagesBindings struct {
 
 type messagesHTTPBackend struct{ bindings MessagesBindings }
 
-// NewBoundMessagesHandler 直接组合原生 HTTP 行为与固定执行器，不依赖旧 Handler 工厂。
+// NewBoundMessagesHandler binds HTTP admission dependencies to the supplied executor.
 func NewBoundMessagesHandler(options MessagesHTTPOptions, bindings MessagesBindings, prompt MessagesPrompt, concurrency *ConcurrencyHelper, executor execution.Executor) *MessagesHandler {
 	return NewMessagesHandler(options, messagesHTTPBackend{bindings}, prompt, concurrency, executor)
 }

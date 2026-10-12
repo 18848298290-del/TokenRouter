@@ -81,7 +81,8 @@ func waitScheduledRound(t *testing.T, runner *ScheduledTestRunnerService) {
 	}, time.Second, time.Millisecond)
 }
 
-// TestScheduledRunnerStopsPermanently 验证构造无启动，重复 Start 不注册新任务，Stop 之后也不能重新开启 cron。
+// TestScheduledRunnerStopsPermanently checks that construction is idle, start registers once, and stop
+// prevents restart.
 func TestScheduledRunnerStopsPermanently(t *testing.T) {
 	for _, beforeStart := range []bool{false, true} {
 		schedule := &scheduledScheduleStub{}
@@ -103,7 +104,8 @@ func TestScheduledRunnerStopsPermanently(t *testing.T) {
 	}
 }
 
-// TestScheduledRunnerCancelsOffsetBeforeClaim 检查停止信号取消十秒偏移等待，随后跳过到期计划读取。
+// TestScheduledRunnerCancelsOffsetBeforeClaim checks that stop interrupts the ten-second offset before reading
+// due plans.
 func TestScheduledRunnerCancelsOffsetBeforeClaim(t *testing.T) {
 	plans := &scheduledPlansStub{}
 	schedule := &scheduledScheduleStub{}
@@ -124,7 +126,8 @@ func TestScheduledRunnerCancelsOffsetBeforeClaim(t *testing.T) {
 	require.Zero(t, plans.reads.Load())
 }
 
-// TestScheduledRunnerReportsUnfinishedExecution 检查在途测试忽略取消时返回未完成结果，迟到结束后仍返回首次超时。
+// TestScheduledRunnerReportsUnfinishedExecution checks that ignored cancellation returns a timeout retained
+// after late completion.
 func TestScheduledRunnerReportsUnfinishedExecution(t *testing.T) {
 	plans := &scheduledPlansStub{plans: []*ScheduledTestPlan{{ID: 1, ProviderID: 2}}}
 	executor := scheduledExecutorStub{entered: make(chan struct{}), release: make(chan struct{})}
@@ -160,7 +163,8 @@ func (s *scheduledBlockedStop) Stop(context.Context) error {
 	return nil
 }
 
-// TestScheduledRunnerBoundsSchedulerStop 检查调度器忽略取消时，执行器按预算返回并报告尚未完成的阶段。
+// TestScheduledRunnerBoundsSchedulerStop checks that an unresponsive schedule stops within the caller budget
+// with an unfinished-stage error.
 func TestScheduledRunnerBoundsSchedulerStop(t *testing.T) {
 	schedule := &scheduledBlockedStop{release: make(chan struct{}), done: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(schedule.release) })
@@ -182,7 +186,8 @@ func TestScheduledRunnerBoundsSchedulerStop(t *testing.T) {
 	require.Equal(t, int32(1), schedule.stops.Load())
 }
 
-// TestScheduledRunnerCleansPartialStart 验证部分启动失败后仍能取消已进入的回调并释放日历调度资源。
+// TestScheduledRunnerCleansPartialStart checks that stop cancels callbacks and releases scheduler resources
+// after a partial start failure.
 func TestScheduledRunnerCleansPartialStart(t *testing.T) {
 	plans := &scheduledPlansStub{}
 	failed := errors.New("forced schedule start failure")

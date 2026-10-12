@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// PricingHandler 处理管理员价格配置管理请求。
+// PricingHandler handles admin pricing configuration requests.
 type PricingHandler struct {
 	pricingConfigs *routing.PricingConfigService
 	catalog        *routing.PricingCatalog
@@ -65,7 +65,7 @@ type modelPricingRequest struct {
 	TimePricing                  *timePricingRequest      `json:"time_pricing"`
 }
 
-// timePricingRequest 是管理端提交的每日分时倍率配置。
+// timePricingRequest contains daily time-based multipliers submitted by an administrator.
 type timePricingRequest struct {
 	Timezone     string                     `json:"timezone"`
 	WeekdaysOnly bool                       `json:"weekdays_only"`
@@ -181,7 +181,7 @@ func NewPricingHandler(pricingConfigs *routing.PricingConfigService, catalog *ro
 	return &PricingHandler{pricingConfigs: pricingConfigs, catalog: catalog}
 }
 
-// firstNonNilFloat 兼容旧版 fast_mode_multiplier 与新版 fast_multiplier。
+// firstNonNilFloat prefers the current field over its legacy alias, including an explicit zero.
 func firstNonNilFloat(primary, fallback *float64) *float64 {
 	if primary != nil {
 		return primary
@@ -394,7 +394,7 @@ func providerStatsPricingRuleRequestToService(r providerStatsPricingRuleRequest)
 	}
 }
 
-// List handles listing pricingConfigs with pagination
+// List returns pricing configurations with pagination.
 // GET /api/v1/admin/pricing/configs
 func (h *PricingHandler) List(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -422,7 +422,7 @@ func (h *PricingHandler) List(c *gin.Context) {
 	httpx.Paginated(c, out, pag.Total, page, pageSize)
 }
 
-// GetByID handles getting a pricingConfig by ID
+// GetByID returns a pricing configuration by ID.
 // GET /api/v1/admin/pricing/configs/:id
 func (h *PricingHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -440,7 +440,7 @@ func (h *PricingHandler) GetByID(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Create handles creating a new pricingConfig
+// Create creates a pricing configuration.
 // POST /api/v1/admin/pricing/configs
 func (h *PricingHandler) Create(c *gin.Context) {
 	var req createPricingConfigRequest
@@ -487,7 +487,7 @@ func (h *PricingHandler) Create(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Update handles updating a pricingConfig
+// Update updates a pricing configuration.
 // PUT /api/v1/admin/pricing/configs/:id
 func (h *PricingHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -544,7 +544,7 @@ func (h *PricingHandler) Update(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Delete handles deleting a pricingConfig
+// Delete deletes a pricing configuration.
 // DELETE /api/v1/admin/pricing/configs/:id
 func (h *PricingHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -561,7 +561,7 @@ func (h *PricingHandler) Delete(c *gin.Context) {
 	httpx.Success(c, gin.H{"message": "PricingConfig deleted successfully"})
 }
 
-// GetModelDefaultPricing 获取模型的默认定价（用于前端自动填充）
+// GetModelDefaultPricing returns catalogue prices for form autofill.
 // GET /api/v1/admin/pricing/defaults/model?model=claude-sonnet-4
 func (h *PricingHandler) GetModelDefaultPricing(c *gin.Context) {
 	model := strings.TrimSpace(c.Query("model"))
@@ -572,7 +572,6 @@ func (h *PricingHandler) GetModelDefaultPricing(c *gin.Context) {
 	}
 	pricing, err := h.catalog.DefaultPricing(model)
 	if err != nil {
-		// 模型不在定价列表中
 		httpx.Success(c, gin.H{"found": false})
 		return
 	}

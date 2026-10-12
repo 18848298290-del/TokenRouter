@@ -2,7 +2,7 @@ package ws
 
 import "context"
 
-// ImagePolicy 保存当前报文适用的图片资格规则。
+// ImagePolicy contains the image eligibility rules for the current payload.
 type ImagePolicy struct {
 	Allowed  bool
 	Explicit string
@@ -14,7 +14,7 @@ type ImageBilling struct {
 	InputSize string
 }
 
-// RequestPort 每次只调用一个既有解析/策略能力，完整处理顺序由 Normalize 拥有。
+// RequestPort supplies parsing and policy operations in the order chosen by Normalize.
 type RequestPort interface {
 	ModelAttributes(context.Context, int, string, []byte) ([]byte, error)
 	PromptReplace(context.Context, []byte) []byte
@@ -50,7 +50,7 @@ type NormalizeOptions struct {
 	ForceHTTPBridge bool
 }
 
-// RequestNormalizer 保存会话模型状态，按收到的请求帧执行规范化。
+// RequestNormalizer keeps session model state and normalizes each received request frame.
 type RequestNormalizer struct {
 	State   *IngressState
 	Options NormalizeOptions

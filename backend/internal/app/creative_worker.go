@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 )
 
-// provideCreativeWorkerRuntime 为创作台 worker 绑定任务结果处理和用户准入函数。
+// provideCreativeWorkerRuntime binds result handling and user admission to the creative worker.
 func provideCreativeWorkerRuntime(public *creative.Public, executor *creative.Executor, users *identitypostgres.UserStore, concurrency *scheduler.ConcurrencyService, store *settings.Store, read *composite.ReadOptions, cfg *config.Config) *creative.CreativeWorkerRuntime {
 	ports := creative.WorkerPorts{
 		Observe:     creativeObserve,

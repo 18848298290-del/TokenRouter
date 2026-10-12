@@ -18,7 +18,7 @@ type streamReadCloser struct {
 	err     error
 }
 
-// init 在测试进程加载时设置 Gin 测试模式。
+// init enables Gin test mode before tests run.
 func init() { gin.SetMode(gin.TestMode) }
 
 func newPartialHealthFixture() *provideradapter.UpstreamHealth {

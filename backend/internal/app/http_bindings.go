@@ -27,10 +27,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/web"
 )
 
-// httpRouteMount 注册已构造的 HTTP 能力，具体依赖由 app 的各装配函数提供。
+// httpRouteMount registers HTTP handlers built by app constructors.
 type httpRouteMount func(*gin.Engine, httpRouteSecurity, gin.HandlerFunc, func(*gin.RouterGroup))
 
-// provideRouterRuntime 为路由器绑定公开数据和 HTTP 处理函数，规则和状态由各模块管理。
+// provideRouterRuntime binds public data and HTTP handlers; each module owns its rules and state.
 func provideRouterRuntime(requests *requestlog.Service, public *site.PublicService, pages *sitehttp.PageHandler, backendMode *admission.BackendMode, store *settings.Store, redisClient *redis.Client, manager *lifecycle.Manager, cfg *config.Config, mount httpRouteMount, panelSettings *runtimeconfig.PanelSettings, opsService *ops.OpsService, jwtAuth identityhttp.JWTAuthMiddleware, adminAuth identityhttp.AdminAuthMiddleware, auditLog middleware.AuditLogMiddleware, stepUpAuth identityhttp.StepUpAuthMiddleware,
 ) (*server.RouterRuntime, error) {
 	manager.Register(lifecycle.Hook{Name: "SettingsUpdateAdmission", StopOrder: 14, Stop: func(context.Context) error { store.Updates().Seal(); return nil }})
@@ -106,7 +106,7 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 	return rt, nil
 }
 
-// provideHTTPOptions 从启动配置读取监听参数，并按配置优先级选取请求体上限。
+// provideHTTPOptions reads listener settings and selects the body limit by configuration precedence.
 func provideHTTPOptions(cfg *config.Config) server.Options {
 	maxBody := cfg.Server.MaxRequestBodySize
 	if maxBody <= 0 {

@@ -1,6 +1,6 @@
 package messageforward_test
 
-// 本文件覆盖 responses.go 的响应选项、exchange.go 的上游响应处理和 passthrough.go 的透传输出。
+// These scenarios cover response options, upstream exchange handling, and passthrough output.
 
 import (
 	"bufio"
@@ -281,7 +281,7 @@ func (w *failWriteResponseWriter) WriteString(_ string) (int, error) {
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAfterClientDisconnect(t *testing.T) {
-	// 取消请求上下文以模拟客户端断开连接。
+	// Cancel the request context to simulate a disconnected client.
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	cancel()
@@ -350,7 +350,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingErrTooLong(t *testin
 	svc := newResponseRuntimeFixture(
 		&messageforward.Options{Configured: true, PreserveContentType: true, ResponseReadLimit: 134217728, MaxLineSize: 32}, messageforward.
 
-			// Scanner 初始缓冲为 64KB，构造更长单行触发 bufio.ErrTooLong。
+			// Exceed the scanner's 64 KiB initial buffer to trigger bufio.ErrTooLong.
 			Dependencies{}, nil,
 	)
 
@@ -412,7 +412,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuring
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// 模拟上游首个 SSE 事件前的空闲时间，验证下游能收到 ping 保活。
+		// Delay the first upstream SSE event to check downstream ping keepalives.
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte(strings.Join([]string{
 			`data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
@@ -454,7 +454,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// 先写入未闭合的 SSE 事件，确认保活不会插入事件中间。
+		// Leave an SSE event incomplete to check that keepalives cannot split it.
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}` + "\n"))
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte("\n"))
@@ -519,7 +519,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	go func() {
 		defer close(done)
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}` + "\n"))
-		// 保持上游连接静默，触发数据间隔超时分支。
+		// Keep the upstream connection idle to trigger the data interval timeout.
 		time.Sleep(1500 * time.Millisecond)
 		_ = pw.Close()
 	}()
@@ -586,7 +586,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAft
 	require.Equal(t, 8, result.Usage.InputTokens)
 }
 
-// newResponseRuntimeFixture 组合 HTTP 写入器、测试参数和平台读取器。
+// newResponseRuntimeFixture combines HTTP output, test options, and the platform response reader.
 func newResponseRuntimeFixture(options *messageforward.Options, deps messageforward.Dependencies, _ *egress.CompiledHeaderFilter) *messageforward.Runtime {
 	value := messageforward.Options{ResponseReadLimit: 128 * 1024 * 1024}
 	if options != nil {
@@ -607,7 +607,7 @@ func passthroughResponseFixture(runtime *messageforward.Runtime, ctx context.Con
 	return claude.NonStreamResponsePassthrough(ctx, response, upstream.NewOutputContext(boundary.Sink()), options)
 }
 
-// newStreamingRuntimeFixture 每个用例先确定静态 keepalive 参数，再构造运行时。
+// newStreamingRuntimeFixture sets the keepalive interval before constructing the runtime.
 func newStreamingRuntimeFixture(keepalive time.Duration) *messageforward.Runtime {
 	return messageforward.NewRuntime(messageforward.Dependencies{Health: newPartialHealthFixture()}, messageforward.Options{Configured: true, MaxLineSize: defaultMaxLineSize, StreamKeepalive: keepalive})
 }
@@ -636,7 +636,7 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 最小 SSE 事件触发用量解析。
+		// A minimal SSE event exercises usage parsing.
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n"))
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
@@ -802,7 +802,7 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
 	go func() {
-		// 空流直接关闭。
+		// Close an empty stream.
 		_ = pw.Close()
 	}()
 
@@ -825,7 +825,7 @@ func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 包含特殊字符的 content_block_delta（引号、换行、Unicode）
+		// Exercise quotes, newlines, and Unicode inside content_block_delta.
 		_, _ = pw.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello \\\"world\\\"\\n你好\"}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n"))
@@ -840,13 +840,12 @@ func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 
-	// 响应中包含转发的数据。
 	body := rec.Body.String()
 	require.Contains(t, body, "content_block_delta", "响应应包含转发的 SSE 事件")
 }
 
-// TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover 验证上游中途读错误（如 HTTP/2 GOAWAY 触发的 unexpected EOF）发生在向客户端写入任何字节前：
-// 网关返回 *UpstreamFailoverError，由外层重试或更换提供商。
+// TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover checks unexpected EOF before client output.
+// The typed error lets the outer handler retry or select another provider.
 func TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -870,21 +869,20 @@ func TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover(t 
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, failoverErr.RetryableOnSameProvider, "GOAWAY 类错误应允许同提供商重试")
 
-	// ResponseBody 必须是 Anthropic 标准 error 格式：
-	// 1) ExtractUpstreamErrorMessage 能正确从 error.message 提取消息（被 handleFailoverExhausted / ops 日志依赖）
-	// 2) error.type 标记为 upstream_disconnected
+	// The failover body uses the Anthropic error format so exhaustion handling and Ops
+	// can extract error.message and identify error.type as upstream_disconnected.
 	extractedMsg := upstream.ExtractErrorMessage(failoverErr.ResponseBody)
 	require.NotEmpty(t, extractedMsg, "ExtractUpstreamErrorMessage 必须从 ResponseBody 取到非空 message，否则 ops 日志会丢失诊断信息")
 	require.Contains(t, extractedMsg, "upstream stream disconnected")
 	require.Contains(t, string(failoverErr.ResponseBody), `"type":"error"`)
 	require.Contains(t, string(failoverErr.ResponseBody), `"upstream_disconnected"`)
 
-	// 客户端应收不到任何 stream_read_error 事件，由 handler 层根据 failover 结果再决定
+	// The handler decides the final response after failover; this attempt emits no stream error.
 	require.NotContains(t, rec.Body.String(), "stream_read_error")
 }
 
-// TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough 验证上游已经发送过事件（c.Writer 已写过字节）后再发生读错误：
-// SSE 流开始后发生读取错误时，向客户端发送 stream_read_error 事件并结束响应。
+// TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough checks read failures after client output starts.
+// The response ends with a stream_read_error event.
 func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -892,7 +890,7 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-	// 第一次 Read 返回完整 SSE 事件让网关向 client 写入字节，第二次 Read 返回 EOF
+	// The first read supplies a complete SSE event; the second returns unexpected EOF.
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -908,12 +906,12 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	require.Contains(t, err.Error(), "stream read error", "已开始流后应透传普通 stream read error")
 	require.NotNil(t, result, "透传场景下应返回已收集的 streamingResult")
 
-	// 不应被错误地包成 failover error
+	// Once output starts, a read error cannot request failover.
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "已经向客户端写过字节时不能再 failover")
 
-	// 客户端必须收到 Anthropic 标准格式的 SSE error 事件，error.type=stream_read_error，
-	// error.message 含具体根因（让 SDK 能解析、UI 能显示具体错误）
+	// The Anthropic SSE error includes a machine-readable stream_read_error type
+	// and a diagnostic message for clients to display.
 	body := rec.Body.String()
 	require.Contains(t, body, "event: error\n", "必须按 Anthropic SSE 标准发送 error 事件帧")
 	require.Contains(t, body, `"type":"error"`, "data 必须含 type:error 顶层字段（Anthropic 标准）")
@@ -921,7 +919,7 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	require.Contains(t, body, "upstream stream disconnected", "error.message 必须包含具体根因，Claude Code 等客户端才能显示有效错误文案")
 }
 
-// TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses 检查错误响应删除 net.OpError 中的内部地址和上游地址。
+// TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses checks redaction of internal and upstream addresses from net.OpError.
 func TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -956,13 +954,13 @@ func TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses(t *testing.T) 
 	require.NotContains(t, body, "54321")
 	require.NotContains(t, body, "52.1.2.3", "failover ResponseBody 不得泄露上游 IP")
 	require.NotContains(t, body, "443")
-	// 仍然包含可诊断的根因
+	// Keep the diagnostic cause after redacting addresses.
 	require.Contains(t, body, "connection reset by peer")
 	require.Contains(t, body, "upstream stream disconnected")
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData 验证上游 HTTP 200 + SSE 流体内 event:error 帧应保留 data 行原文，
-// 这是 Forward 后续补全 UpstreamFailoverError.ResponseBody 与 Ops 日志的前提。
+// TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData checks raw data from an error event in an HTTP 200 stream.
+// Forward uses that data for the failover response body and Ops diagnostics.
 func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -993,7 +991,7 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	require.Equal(t, "Anthropic upstream is overloaded", upstream.ExtractErrorMessage([]byte(sseErr.RawData)))
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine 检查缺少 data 行的 event:error 是否返回可识别的流错误。
+// TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine checks typed errors for events without data.
 func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -1018,8 +1016,8 @@ func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	require.Equal(t, "", sseErr.RawData)
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput 检查部分输出后的 event:error 是否保留上游错误体，
-// handler 层会因已写客户端响应而停止继续换号。
+// TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput checks that raw error data survives partial output.
+// The handler stops failover after the client response has started.
 func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -1049,7 +1047,7 @@ func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testi
 	require.Contains(t, rec.Body.String(), "message_start")
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine 检查非 JSON 的 SSE 错误内容进入 RawData。
+// TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine checks that RawData accepts non-JSON errors.
 func TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 

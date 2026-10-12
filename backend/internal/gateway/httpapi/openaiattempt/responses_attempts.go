@@ -56,9 +56,9 @@ type responsesAttemptBridge struct {
 	fields                                                                   []zap.Field
 }
 
-// Select 选择支持请求模型的提供商。
+// Select chooses a provider supporting the request model.
 func (b *responsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.ResponseSelection, error) {
-	// Select provider supporting the requested model
+	// Select a provider supporting the requested model.
 	b.reqLog.Debug("openai.provider_selecting", zap.Int("excluded_provider_count", len(excluded)))
 	var scheduleDecision scheduler.PlatformDecision
 	var err error
@@ -129,7 +129,7 @@ func (b *responsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.R
 	return b.selectedView(), nil
 }
 
-// SelectionFailure 将选择失败写为客户端错误。
+// SelectionFailure writes selection failures as client errors.
 func (b *responsesAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
@@ -165,7 +165,7 @@ func (b *responsesAttemptBridge) SelectionFailure(err error, excludedCount int, 
 	}
 }
 
-// Acquire 取得当前提供商的并发槽位。
+// Acquire obtains the selected provider concurrency slot.
 func (b *responsesAttemptBridge) Acquire() bool {
 	if b.sessionAttempts != nil && b.binding().sessions.Track != nil {
 		b.binding().sessions.Track(b.sessionAttempts, b.provider, b.sessionHash)
@@ -175,15 +175,16 @@ func (b *responsesAttemptBridge) Acquire() bool {
 	return acquired
 }
 
-// Forward 向当前提供商转发请求并捕获响应结果。
+// Forward sends the attempt and captures its response result.
 func (b *responsesAttemptBridge) Forward() textflow.ResponseOutcome {
 	var err error
-	// Forward request
+	// Forward the prepared request.
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsRoutingLatencyMsKey, time.Since(b.routingStart).Milliseconds())
 	forwardStart := time.Now()
-	// 快照扣除心跳注释字节，上游失败时仍可按协议输出状态决定换号（#3887）。
+	// Subtract heartbeat comment bytes so failure handling can decide retry eligibility from actual output
+	// (#3887).
 	b.writerSizeBeforeForward = gatewayhttp.OpenAICompactKeepaliveAdjustedWrittenSize(b.c)
-	// 从透传切换到非透传提供商时，从 canonical 请求体派生本次正文并清除上游私有的加密 reasoning。
+	// Derive non-passthrough attempt bodies from canonical input, stripping private reasoning after passthrough.
 	attemptBody := b.binding().deriveOpenAIForwardAttemptBody(b.reqLog, b.forwardBody, b.provider, &b.passthroughFailoverState)
 	b.result, err = func() (*forwardcore.OpenAIResult, error) {
 		defer func() {
@@ -218,7 +219,7 @@ func (b *responsesAttemptBridge) Forward() textflow.ResponseOutcome {
 	return out
 }
 
-// Complete 捕获用量与请求数据并提交完成任务。
+// Complete captures usage and request data before submitting completion.
 func (b *responsesAttemptBridge) Complete() {
 	res := b.result
 
@@ -248,7 +249,7 @@ func (b *responsesAttemptBridge) Complete() {
 	})
 }
 
-// captureCompletion 在提交前复制请求和转发结果，供后台记录器使用。
+// captureCompletion copies request and response data for the background recorder.
 func (b *responsesAttemptBridge) captureCompletion(capture gatewaycapture.OpenAICapture) *completion.Input {
 	gatewayhttp.StampOpenAIRequestedReasoningEffort(capture.Result, b.c)
 	capture.UserAgent = b.c.GetHeader("User-Agent")
@@ -266,7 +267,7 @@ func (b *responsesAttemptBridge) captureCompletion(capture gatewaycapture.OpenAI
 	return gatewaycapture.CaptureOpenAI(gatewayhttp.CompletionContext(b.c), &capture)
 }
 
-// PartialImages 记录已产出部分图片时发生的转发错误。
+// PartialImages records forwarding failures that produced some images.
 func (b *responsesAttemptBridge) PartialImages(err error) {
 	b.reqLog.Warn("openai.forward_partial_error_with_image_result",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -275,7 +276,7 @@ func (b *responsesAttemptBridge) PartialImages(err error) {
 	)
 }
 
-// RetryReady 检查客户端连接和输出状态，决定是否允许重试。
+// RetryReady checks client connection and output state before allowing retries.
 func (b *responsesAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bool {
 	err := failure.Cause
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -295,7 +296,7 @@ func (b *responsesAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bo
 		b.binding().handleFailoverExhausted(b.c, failoverErr, true)
 		return false
 	}
-	// OpenAIForwardMayFailover 已确认可以换号。响应头已提交时，重试耗尽仍返回 SSE 流内错误。
+	// OpenAIForwardMayFailover permits retry; committed headers still require an SSE error if retries exhaust.
 	if b.c.Writer.Written() {
 		*b.streamStarted = true
 	}
@@ -305,7 +306,7 @@ func (b *responsesAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bo
 	return true
 }
 
-// RetryWait 记录同一提供商的重试次数和等待时间。
+// RetryWait records the same-provider retry count and delay.
 func (b *responsesAttemptBridge) RetryWait(failure *textflow.AttemptFailure, retryLimit, retryCount int, retryDelay time.Duration) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -318,7 +319,7 @@ func (b *responsesAttemptBridge) RetryWait(failure *textflow.AttemptFailure, ret
 	)
 }
 
-// Switching 记录提供商切换次数和代理信息。
+// Switching records provider switch counts and proxy details.
 func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, switchCount, maxProviderSwitches int) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -332,7 +333,7 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 	b.reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 }
 
-// OtherFailure 记录转发错误并补充尚未输出的客户端错误。
+// OtherFailure records forwarding errors and supplies any missing client error.
 func (b *responsesAttemptBridge) OtherFailure(err error) {
 	statusCode := 0
 	if v, ok := GetContextInt64(b.c, gatewayhttp.OpsUpstreamStatusCodeKey); ok {
@@ -345,8 +346,8 @@ func (b *responsesAttemptBridge) OtherFailure(err error) {
 	b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.forwardModel, b.requireCompact, b.result), false, nil, err)
 	upstreamErrorAlreadyCommunicated := gatewayhttp.OpenAIForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	b.wroteFallback = false
-	// cyber warning 处理可能已写出 response.failed 或 JSON 错误，
-	// 补充错误前检查输出状态，使客户端收到一次终止错误。
+	// Cyber warning handling may already have written response.failed or JSON;
+	// check output state before writing another terminal error.
 	if !upstreamErrorAlreadyCommunicated && (!recordedWarning || gatewayhttp.OpenAICompactKeepaliveAdjustedWrittenSize(b.c) == b.writerSizeBeforeForward) {
 		b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
 	}
@@ -358,7 +359,7 @@ func (b *responsesAttemptBridge) OtherFailure(err error) {
 	}
 }
 
-// Failed 按错误分类记录转发失败日志。
+// Failed logs the forwarding failure according to its classification.
 func (b *responsesAttemptBridge) Failed() {
 	if gatewayhttp.ShouldLogOpenAIForwardFailureAsWarn(b.c, b.wroteFallback) {
 		b.reqLog.Warn("openai.forward_failed", b.fields...)
@@ -367,10 +368,10 @@ func (b *responsesAttemptBridge) Failed() {
 	b.reqLog.Error("openai.forward_failed", b.fields...)
 }
 
-// Success 更新用量快照并报告调度结果。
+// Success updates usage snapshots and reports scheduling success.
 func (b *responsesAttemptBridge) Success() {
 	if b.result != nil {
-		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新。
+		// Spark shadow codex_* usage is updated exclusively by QueryUsage through /wham/usage bengalfox.
 		if b.provider.View().IsOpenAI() && b.provider.Record.Type == capability.ProviderTypeOAuth && !b.provider.View().IsShadow() {
 			b.binding().updateCodexUsageSnapshotFromHeaders(b.c.Request.Context(), b.provider.Record.ID, b.result.ResponseHeaders)
 		}
@@ -380,7 +381,7 @@ func (b *responsesAttemptBridge) Success() {
 	}
 }
 
-// Completed 记录请求完成时的提供商和切换次数。
+// Completed records the serving provider and switch count.
 func (b *responsesAttemptBridge) Completed(switchCount int) {
 	b.reqLog.Debug("openai.request_completed",
 		zap.Int64("provider_id", b.provider.Record.ID),

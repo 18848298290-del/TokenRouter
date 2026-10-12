@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// contextLoad 将共享查询的存活时间与当前等待者数量关联。
+// contextLoad ties a shared load's lifetime to its active waiters.
 type contextLoad struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -17,8 +17,9 @@ type contextLoad struct {
 	err      error
 }
 
-// GetOrLoadContext 允许等待者独立取消，最后一个等待者退出时取消共享查询。
-// load 使用传入的共享上下文，查询结果按调用方复制。
+// GetOrLoadContext lets waiters cancel independently and cancels a shared load
+// when its final waiter leaves. The loader must use the supplied shared context;
+// each waiter receives a cloned result.
 func (c *Cache) GetOrLoadContext(ctx context.Context, key string, load func(context.Context) (any, error)) (Entry, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Entry{}, false, err
@@ -67,7 +68,7 @@ func (c *Cache) GetOrLoadContext(ctx context.Context, key string, load func(cont
 	}
 }
 
-// leaveContextLoad 先移除无人等待的查询，让后续请求能立即建立自己的查询。
+// leaveContextLoad removes abandoned loads so later callers can start a fresh one.
 func (c *Cache) leaveContextLoad(key string, flight *contextLoad) {
 	c.loadMu.Lock()
 	defer c.loadMu.Unlock()
@@ -80,7 +81,7 @@ func (c *Cache) leaveContextLoad(key string, flight *contextLoad) {
 	}
 }
 
-// runContextLoad 在独立协程中加载，取消后的迟到结果不进入缓存。
+// runContextLoad runs the loader in a goroutine and discards results after cancellation.
 func (c *Cache) runContextLoad(key string, flight *contextLoad, load func(context.Context) (any, error)) {
 	var entry Entry
 	var payload any

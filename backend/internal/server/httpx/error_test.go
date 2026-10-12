@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestLegacyAndCategoryErrorCompatibility 检查错误身份、包装、HTTP 状态码和元数据复制。
+// TestLegacyAndCategoryErrorCompatibility checks error identity, wrapping, status, and metadata copying.
 func TestLegacyAndCategoryErrorCompatibility(t *testing.T) {
 	for _, code := range []int{200, 400, 401, 403, 404, 409, 418, 429, 499, 500, 502, 503, 504, 529} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestLegacyAndCategoryErrorCompatibility(t *testing.T) {
 	}
 }
 
-// TestToHTTP_Legacy 检查空错误和应用错误的 HTTP 状态码与响应体。
+// TestToHTTP_Legacy checks nil and application-error status codes and response bodies.
 func TestToHTTP_Legacy(t *testing.T) {
 	tests := []struct {
 		name           string

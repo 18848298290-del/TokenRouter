@@ -15,7 +15,7 @@ import (
 	openaiupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// RateLimitObserver 解析供应商限流响应并调用健康状态写入函数。
+// RateLimitObserver parses upstream rate-limit responses and writes provider health observations.
 type RateLimitObserver struct {
 	Health          *providercore.HealthService
 	Plans           providercore.OpenAIPlanWriter
@@ -23,12 +23,12 @@ type RateLimitObserver struct {
 	NextGeminiDaily func() *int64
 }
 
-// Observe429 处理 429 限流错误
-// 解析响应头获取重置时间，标记提供商为限流状态。
+// Observe429 derives a reset time from upstream headers, response bodies, or configured cooldowns.
+// Shadow providers are skipped, and OAuth retry policy can defer the health write.
 func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providercore.Record, headers http.Header, responseBody []byte) {
-	// Spark 影子的限流状态由 /wham/usage 的 codex_bengalfox 用量驱动。
-	// /responses 429 中的 x-codex-* 和 usage_limit_reached 属于全局窗口，不能用于暂停仍有配额的影子。
-	// 此处跳过影子，由用量查询维护 codex_* 快照，并由调度资格检查处理额度耗尽。
+	// Spark shadow quotas come from codex_bengalfox in /wham/usage.
+	// x-codex-* and usage_limit_reached in /responses describe global windows and cannot pause a funded shadow.
+	// Usage queries maintain shadow snapshots; scheduling checks enforce their quota limits.
 	if provider.IsShadow() {
 		return
 	}
@@ -37,14 +37,14 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 			return
 		}
 	}
-	// 国产供应商（kimi/zhipu/deepseek）的 429 走专用可恢复路径：余额不足 → 临时停调，
-	// Coding Plan 窗口耗尽 → 冷却到快照重置点。未命中则继续默认 429 逻辑。
+	// Kimi, Zhipu, and DeepSeek balance failures trigger temporary suspension; exhausted
+	// Coding Plan windows cool down until the snapshot reset. Other failures continue below.
 	if provider.IsCNProvider() {
 		if s.observeCNQuota(ctx, provider, responseBody) {
 			return
 		}
 	}
-	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
+	// Prefer OpenAI x-codex-* reset headers for rate_limit_exceeded responses.
 	if provider.Platform == capability.PlatformOpenAI {
 		providercore.PersistOpenAIObservedPlan(ctx, s.Plans, provider, openaiupstream.ParseUsageLimitPlanType(responseBody), slog.Info, slog.Warn)
 		s.PersistCodexSnapshot(ctx, provider, headers)
@@ -57,13 +57,13 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 		}
 	}
 
-	// 2. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
+	// Select the exhausted Anthropic 5h or 7d window from per-window headers.
 	if result := anthropicupstream.CalculateRateLimitReset(headers, slog.Info); result != nil {
 		if !s.Health.ApplyObservedRateLimit(ctx, provider, result.ResetAt) {
 			return
 		}
 
-		// 更新 session window：优先使用 5h-reset 头精确计算，否则从 resetAt 反推
+		// Use the precise 5h reset for the session window when available; otherwise use the selected reset.
 		windowEnd := result.ResetAt
 		if result.FiveHourReset != nil {
 			windowEnd = *result.FiveHourReset
@@ -74,14 +74,13 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 		return
 	}
 
-	// 3. 尝试从响应头解析重置时间（Anthropic 聚合头，向后兼容）
+	// Accept the aggregate Anthropic reset header for older responses.
 	resetTimestamp := headers.Get("anthropic-ratelimit-unified-reset")
 
-	// 4. 如果响应头没有，尝试从响应体解析（OpenAI usage_limit_reached, Gemini）
+	// Without a reset header, inspect OpenAI or Gemini error bodies.
 	if resetTimestamp == "" {
 		switch provider.Platform {
 		case capability.PlatformOpenAI:
-			// 尝试解析 OpenAI 的 usage_limit_reached 错误
 			if resetAt := openaiupstream.ParseUsageLimitResetTime(responseBody, time.Now); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
 				if !s.Health.ApplyObservedRateLimit(ctx, provider, resetTime) {
@@ -91,7 +90,7 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 				return
 			}
 		case capability.PlatformGemini, capability.PlatformAntigravity:
-			// 尝试解析 Gemini 格式（用于其他平台）
+			// Gemini and Antigravity share this error format.
 			if resetAt := gemini.ParseGeminiRateLimitResetTime(responseBody, s.NextGeminiDaily); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
 				if !s.Health.ApplyObservedRateLimit(ctx, provider, resetTime) {
@@ -102,8 +101,8 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 			}
 		}
 
-		// Anthropic 的 429 缺少重置时间时，使用管理端配置的秒级冷却。
-		// 这类响应可能来自 Extra usage required 等错误，短期停调后可重新尝试，管理员也可关闭该冷却。
+		// Anthropic 429 responses without a reset use the configured cooldown in seconds.
+		// This also covers Extra usage required responses; administrators can disable the cooldown.
 		if provider.Platform == capability.PlatformAnthropic {
 			slog.Warn("rate_limit_429_no_reset_time",
 				"provider_id", provider.ID,
@@ -113,12 +112,11 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 			return
 		}
 
-		// 其他平台缺少重置时间时，使用配置的秒级冷却。
+		// Other platforms also use the configured cooldown when no reset is available.
 		s.Health.Apply429Fallback(ctx, provider, "no_reset_time")
 		return
 	}
 
-	// 解析 Unix 时间戳
 	ts, err := strconv.ParseInt(resetTimestamp, 10, 64)
 	if err != nil {
 		slog.Warn("rate_limit_reset_parse_failed", "reset_timestamp", resetTimestamp, "error", err)
@@ -128,19 +126,18 @@ func (s *RateLimitObserver) Observe429(ctx context.Context, provider *providerco
 
 	resetAt := time.Unix(ts, 0)
 
-	// 标记限流状态
 	if !s.Health.ApplyObservedRateLimit(ctx, provider, resetAt) {
 		return
 	}
 
-	// 根据重置时间反推 5h 窗口
+	// Derive the five-hour session window from the reset time.
 	windowEnd := resetAt
 	s.Health.UpdateRejectedSessionWindow(ctx, provider, windowEnd)
 
 	slog.Info("provider_rate_limited", "provider_id", provider.ID, "reset_at", resetAt)
 }
 
-// PersistCodexSnapshot 跳过影子提供商和空响应头，将有效观测写入提供商快照。
+// PersistCodexSnapshot writes parsed quota headers, skipping shadow providers and nil headers.
 func (s *RateLimitObserver) PersistCodexSnapshot(ctx context.Context, value *providercore.Record, headers http.Header) {
 	if s == nil || s.Health == nil || value == nil || headers == nil || value.IsShadow() {
 		return

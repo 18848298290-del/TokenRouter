@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	// gatewayAssemblyProviders 汇总网关协议入口和执行器的 Wire provider。
+	// gatewayAssemblyProviders groups gateway HTTP and executor Wire providers.
 	gatewayAssemblyProviders = wire.NewSet(
 		gatewaysession.NewDigestSessionStore,
 		provideQoderRuntime,

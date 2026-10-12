@@ -15,7 +15,7 @@ const (
 	FailurePromptTooLong
 )
 
-// AttemptFailure 传递原始错误和重试参数，供应商报文由平台适配器解析。
+// AttemptFailure carries the cause and retry policy parsed by the platform adapter.
 type AttemptFailure struct {
 	Cause  error
 	Policy *failover.FailureInfo
@@ -23,7 +23,7 @@ type AttemptFailure struct {
 
 type FailureKind uint8
 
-// Selection 保存本次尝试的提供商信息和重试上限。
+// Selection holds the provider, route plan, and retry limit for an attempt.
 type Selection struct {
 	Plan         routing.CandidatePlan
 	PlanProvided bool
@@ -53,8 +53,8 @@ type MessageOptions struct {
 	Observe                failover.Observe
 }
 
-// MessagePorts 的方法均为单步能力；外部实现不能再包一层提供商切换循环。
-// 每次请求的输出与目标由适配实例持有，固定依赖在构造 HTTP 入口时绑定。
+// MessagePorts supplies individual operations; implementations must leave provider switching to RunMessages.
+// Each adapter owns its request output and target, using dependencies bound at HTTP entry construction.
 type MessagePorts interface {
 	Context() context.Context
 	Begin()
@@ -87,7 +87,7 @@ func (e *AttemptFailure) RetryFailure() *failover.FailureInfo {
 	return e.Policy
 }
 
-// RunMessages 允许请求回退一次分组，并在每个分组内执行提供商尝试循环。
+// RunMessages runs provider attempts and passes fallbackUsed to Fallback to enforce a single group fallback.
 func RunMessages(options MessageOptions, p MessagePorts) {
 	served := false
 	defer func() { p.Finish(served) }()
@@ -146,7 +146,7 @@ func RunMessages(options MessageOptions, p MessagePorts) {
 						fallbackUsed = true
 						retryWithFallback = true
 					}
-					// 回退成功才重新开始，失败响应仍由同一个 HTTP 适配器输出。
+					// Restart after an accepted fallback; the HTTP adapter writes rejected fallback errors.
 					if retryWithFallback {
 						break
 					}

@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate 验证请求快照断言：缺失值不补造，已捕获计划不被后续修改污染。
+// TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate checks missing plans and value-copy isolation.
 func TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate(t *testing.T) {
 	var attempt AttemptRoute
 	_, ok := attempt.Candidate()
@@ -28,7 +28,7 @@ func TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate(t *testing
 	require.Equal(t, int64(3), captured.ProviderID)
 }
 
-// TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping 验证能力每次复核，模型映射仍由实际匹配时传入，不绑定过早的配置副本。
+// TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping checks refreshed capabilities and late-bound model mappings.
 func TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping(t *testing.T) {
 	group := &routing.Group{ID: 7, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolAnthropicMessages: {protocol.ProtocolOpenAIResponses}}}
 	ctx := WithClientProtocol(WithGroup(context.Background(), group), protocol.ProtocolAnthropicMessages)

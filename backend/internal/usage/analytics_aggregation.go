@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// UsageAnalyticsAggregationState 记录多维用量聚合的实时水位和历史覆盖进度。
+// UsageAnalyticsAggregationState tracks the live watermark and historical coverage of usage rollups.
 type UsageAnalyticsAggregationState struct {
 	observedManualStart, observedManualCursor *time.Time
 	LiveWatermark                             time.Time
@@ -24,7 +24,7 @@ type UsageAnalyticsAggregationState struct {
 	LastDurationMS                            int64
 }
 
-// UsageAnalyticsAggregationRepository 定义多维用量预聚合所需的仓储能力。
+// UsageAnalyticsAggregationRepository persists multidimensional usage rollups and their progress.
 type UsageAnalyticsAggregationRepository interface {
 	AggregateUsageAnalyticsRange(ctx context.Context, start, end time.Time) error
 	AggregateUsageAnalyticsHourlyRange(ctx context.Context, start, end time.Time) error

@@ -51,7 +51,7 @@ func TestTencentCaptchaVerifierMapsCredentialsRequestAndResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cloud-secret-id", gotSecretID)
 	require.Equal(t, "cloud-secret-key", gotSecretKey)
-	// 接入点由 service 按站点下发，repository 不得再写死国内站
+	// The adapter must use the service-selected international endpoint.
 	require.Equal(t, "captcha.intl.tencentcloudapi.com", gotEndpoint)
 	require.NotNil(t, client.request)
 	require.Equal(t, uint64(9), *client.request.CaptchaType)

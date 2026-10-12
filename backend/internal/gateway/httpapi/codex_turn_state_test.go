@@ -54,7 +54,7 @@ func TestRelayOpenAICodexTurnStateRecordsOnlyDeliveredState(t *testing.T) {
 	require.NotZero(t, origin)
 	require.Equal(t, int64(42), origin)
 
-	// 上游未返回状态时，清除前一尝试留下的状态。
+	// An upstream response with no state clears the previous attempt's header.
 	svc.Relay(c, &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 43}}, http.Header{})
 	require.Empty(t, c.Writer.Header().Get("X-Codex-Turn-State"))
 }
@@ -116,7 +116,7 @@ func TestWriteOpenAIPassthroughResponseHeaders_RelaysReasoningIncluded(t *testin
 	require.Equal(t, "1", dst.Get("X-Reasoning-Included"))
 }
 
-// TestApplyOpenAICodexBetaFeatures 验证每个 OAuth 请求都携带会话级 beta 头，与 Codex 的 build_model_client_beta_features_header 一致。
+// TestApplyOpenAICodexBetaFeatures checks OAuth defaults, existing headers, and explicit compaction requests.
 func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	oauthProvider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	apiKeyProvider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}

@@ -18,7 +18,7 @@ type SessionLimitCacheSuite struct {
 	cache scheduler.SessionLimitCache
 }
 
-// TestSessionBatchAfterScriptFlush 检查 Redis 丢失脚本缓存后，批量读取仍返回已有的活动会话。
+// TestSessionBatchAfterScriptFlush checks that batch reads find active sessions after Redis loses its script cache.
 func TestSessionBatchAfterScriptFlush(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -33,7 +33,7 @@ func TestSessionBatchAfterScriptFlush(t *testing.T) {
 	require.Equal(t, 1, counts[91001])
 	require.Equal(t, 0, counts[91002])
 
-	// 后续单次活动刷新复用该注册项和空闲窗口。
+	// A subsequent individual refresh keeps the same registration active.
 	require.NoError(t, cache.RefreshSession(ctx, 91001, "session-a", time.Minute))
 	count, err := cache.GetActiveSessionCount(ctx, 91001)
 	require.NoError(t, err)
@@ -45,27 +45,27 @@ func (s *SessionLimitCacheSuite) SetupTest() {
 	s.cache = NewSessionLimitCache(s.rdb, 5)
 }
 
-// TestUnregisterSession_FreesSlotForNewSession 检查 max_sessions=1 时释放会话 A 后，会话 B 能立即注册。
-// 转发失败的请求若未注销，会话槽会占用整个空闲超时窗口（默认 5 分钟）。
+// TestUnregisterSession_FreesSlotForNewSession checks immediate replacement of session A by B at max_sessions=1.
+// A failed attempt left registered would consume capacity for the five-minute idle window.
 func (s *SessionLimitCacheSuite) TestUnregisterSession_FreesSlotForNewSession() {
 	const providerID = int64(101)
 	maxSessions := 1
 	idleTimeout := 5 * time.Minute
 
-	// 会话 A 注册成功（请求开始转发）
+	// Session A represents a request beginning forwarding.
 	allowed, err := s.cache.RegisterSession(s.ctx, providerID, "session-A", maxSessions, idleTimeout)
 	s.RequireNoError(err, "RegisterSession A")
 	s.True(allowed, "首个会话应被允许")
 
-	// A 仍占用会话槽，空闲超时窗口内的新会话 B 被拒。
+	// A still holds the slot, so B is rejected within the idle window.
 	allowed, err = s.cache.RegisterSession(s.ctx, providerID, "session-B", maxSessions, idleTimeout)
 	s.RequireNoError(err, "RegisterSession B before release")
 	s.False(allowed, "槽位被 A 占用时新会话应被拒绝")
 
-	// 请求最终失败：立即释放 A 的会话注册（不等待空闲超时）
+	// A failed attempt unregisters A immediately.
 	s.RequireNoError(s.cache.UnregisterSession(s.ctx, providerID, "session-A"), "UnregisterSession A")
 
-	// A 释放后 B 立即可注册，无需等待空闲超时
+	// B can register as soon as A is released.
 	allowed, err = s.cache.RegisterSession(s.ctx, providerID, "session-B", maxSessions, idleTimeout)
 	s.RequireNoError(err, "RegisterSession B after release")
 	s.True(allowed, "释放后新会话应立即可注册")
@@ -75,8 +75,8 @@ func (s *SessionLimitCacheSuite) TestUnregisterSession_FreesSlotForNewSession() 
 	s.Equal(1, count, "释放后活跃会话数应为 1（仅 B）")
 }
 
-// TestUnregisterSession_IdempotentAndMissing 验证释放操作幂等：
-// 重复释放与释放不存在的会话均不应报错。
+// TestUnregisterSession_IdempotentAndMissing checks repeated cleanup.
+// Missing and empty session IDs can be released without errors.
 func (s *SessionLimitCacheSuite) TestUnregisterSession_IdempotentAndMissing() {
 	const providerID = int64(102)
 
@@ -86,7 +86,7 @@ func (s *SessionLimitCacheSuite) TestUnregisterSession_IdempotentAndMissing() {
 	s.RequireNoError(s.cache.UnregisterSession(s.ctx, providerID, ""), "空 sessionUUID 应为 no-op")
 }
 
-// TestUnregisterSession_OnlyTargetsSpecifiedSession 检查指定会话被移除后，同提供商的其他会话仍然活跃。
+// TestUnregisterSession_OnlyTargetsSpecifiedSession checks that releasing one session leaves its peers active.
 func (s *SessionLimitCacheSuite) TestUnregisterSession_OnlyTargetsSpecifiedSession() {
 	const providerID = int64(103)
 	maxSessions := 2

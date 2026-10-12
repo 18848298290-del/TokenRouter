@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// ListUsers 分页查询用户，并补充最近使用时间和用户专属分组倍率。
+// ListUsers returns a page of users with recent activity and user-specific group rates.
 func (s *UserAdmin) ListUsers(ctx context.Context, page, pageSize int, filters UserListFilters, sortBy, sortOrder string) ([]User, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	users, result, err := s.Users.ListWithFilters(ctx, params, filters)
@@ -34,7 +34,7 @@ func (s *UserAdmin) ListUsers(ctx context.Context, page, pageSize int, filters U
 			}
 		}
 	}
-	// 批量加载用户专属分组倍率
+	// Use a batch lookup when the rate repository supports it.
 	if s.Rates != nil && len(users) > 0 {
 		if batchRepo, ok := s.Rates.(AdminGroupRateBatchReader); ok {
 			userIDs := make([]int64, 0, len(users))
@@ -84,7 +84,7 @@ func (s *UserAdmin) GetUser(ctx context.Context, id int64) (*User, error) {
 	} else {
 		user.LastUsedAt = lastUsedAt
 	}
-	// 加载用户专属分组倍率
+
 	if s.Rates != nil {
 		rates, err := s.Rates.GetByUserID(ctx, id)
 		if err != nil {
@@ -100,8 +100,8 @@ func (s *UserAdmin) GetUserIncludeDeleted(ctx context.Context, id int64) (*User,
 	return s.Users.GetByIDIncludeDeleted(ctx, id)
 }
 
-// AdminNormalizeUserRole 校验并归一化角色输入。
-// 空字符串返回 fallback(未提供时的默认角色);非法值返回错误。
+// AdminNormalizeUserRole accepts admin and user roles.
+// Empty input returns fallback; any other value returns an error.
 func AdminNormalizeUserRole(role, fallback string) (string, error) {
 	if role == "" {
 		return fallback, nil
@@ -130,7 +130,6 @@ func (s *UserAdmin) CreateUser(ctx context.Context, input *CreateUserInput) (*Us
 		apiKeyLimit = *input.APIKeyLimit
 	}
 
-	// 角色可由管理员在创建时指定(admin/user);未提供时默认 user。
 	role, err := AdminNormalizeUserRole(input.Role, RoleUser)
 	if err != nil {
 		return nil, err
@@ -164,7 +163,7 @@ func (s *UserAdmin) CreateUser(ctx context.Context, input *CreateUserInput) (*Us
 	if err := createUser(ctx, user); err != nil {
 		return nil, err
 	}
-	// 创建管理员属权限敏感操作，落审计日志（含操作者），便于事后追溯。
+	// Audit privilege grants with the acting administrator ID.
 	if user.Role == RoleAdmin {
 		s.Observer.Printf("service.admin", "audit: admin user created actor_admin_id=%d target_user_id=%d",
 			input.ActorAdminID, user.ID)
@@ -173,9 +172,9 @@ func (s *UserAdmin) CreateUser(ctx context.Context, input *CreateUserInput) (*Us
 	return user, nil
 }
 
-// AdminEnsureNotLastAdmin 降级管理员前确认系统中仍存在其他管理员，防止零 admin 锁死。
-// 注：读取与写入之间存在竞态窗口，极端并发下仍可能双双降级；作为后台低频操作
-// 的兜底保护足够，彻底防护需依赖数据库层约束。
+// AdminEnsureNotLastAdmin checks that another administrator exists before demotion.
+// The count and update are separate operations, so concurrent demotions can both pass.
+// This check does not provide transactional protection against removing the last administrator.
 func (s *UserAdmin) AdminEnsureNotLastAdmin(ctx context.Context) error {
 	noSubs := false
 	_, result, err := s.Users.ListWithFilters(ctx,
@@ -208,7 +207,7 @@ func (s *UserAdmin) AdminAssignDefaultSubscriptions(ctx context.Context, userID 
 }
 
 func (s *UserAdmin) UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error) {
-	// 校验用户专属分组倍率：必须 > 0（nil 合法，表示清除专属倍率）
+	// A nil rate clears the override; configured rates must be positive.
 	if input.GroupRates != nil {
 		for groupID, rate := range input.GroupRates {
 			if rate != nil && *rate <= 0 {
@@ -236,8 +235,8 @@ func (s *UserAdmin) UpdateUser(ctx context.Context, id int64, input *UpdateUserI
 	oldAllowedGroups := append([]int64(nil), user.AllowedGroups...)
 	oldDisabledPublicGroups := append([]int64(nil), user.DisabledPublicGroups...)
 
-	// fields 与下面的 input.X 判空条件一一对应：管理员没提交的列不写回，
-	// 避免这份快照回滚并发的扣费、状态变更或批量限额调整。
+	// Write only submitted fields so this snapshot cannot overwrite concurrent
+	// charges, status changes, or batch limit updates.
 	var fields UserUpdateFields
 
 	if input.Email != "" {
@@ -280,14 +279,13 @@ func (s *UserAdmin) UpdateUser(ctx context.Context, id int64, input *UpdateUserI
 		fields.Status = true
 	}
 
-	// 角色变更(admin/user);空字符串表示不修改。
 	if input.Role != "" {
 		role, err := AdminNormalizeUserRole(input.Role, user.Role)
 		if err != nil {
 			return nil, err
 		}
-		// 防锁死保护：不允许降级系统中最后一个管理员（自我降级已在 handler 层拦截，
-		// 此处兜底覆盖跨管理员互降导致零 admin 的场景）。
+		// The handler blocks self-demotion. Also check whether demoting another user
+		// would remove the last administrator.
 		if user.Role == RoleAdmin && role == RoleUser {
 			if err := s.AdminEnsureNotLastAdmin(ctx); err != nil {
 				return nil, err
@@ -334,13 +332,12 @@ func (s *UserAdmin) UpdateUser(ctx context.Context, id int64, input *UpdateUserI
 		return nil, err
 	}
 
-	// 角色变更属权限敏感操作，落审计日志（含操作者），便于事后追溯。
+	// Audit role changes with the acting administrator ID.
 	if user.Role != oldRole {
 		s.Observer.Printf("service.admin", "audit: user role changed actor_admin_id=%d target_user_id=%d old_role=%s new_role=%s",
 			input.ActorAdminID, user.ID, oldRole, user.Role)
 	}
 
-	// 同步用户专属分组倍率
 	if input.GroupRates != nil && s.Rates != nil {
 		if err := s.Rates.SyncUserGroupRates(ctx, user.ID, input.GroupRates); err != nil {
 			s.Observer.Printf("service.admin", "failed to sync user group rates: user_id=%d err=%v", user.ID, err)
@@ -348,9 +345,9 @@ func (s *UserAdmin) UpdateUser(ctx context.Context, id int64, input *UpdateUserI
 	}
 
 	if s.Invalidator != nil {
-		// RPMLimit 直接参与 billing_cache_service.checkRPM 的三级级联，
-		// allowed_groups/disabled_public_groups 参与 API Key 分组授权判断；
-		// 不失效缓存会让修改在一个 L2 TTL 内失去效果。
+		// RPM limits and group permissions are included in authentication snapshots.
+		// Invalidate them after these changes so cached authorization does not use stale values
+		// until the L2 TTL expires.
 		if user.Concurrency != oldConcurrency ||
 			user.Status != oldStatus ||
 			user.Role != oldRole ||
@@ -437,7 +434,7 @@ func (s *UserAdmin) BatchUpdateConcurrency(ctx context.Context, userIDs []int64,
 	}
 
 	if s.Invalidator != nil {
-		// 并发数写入后立即失效认证缓存，避免 API Key 继续使用旧并发快照。
+		// Invalidate cached authentication snapshots after the concurrency update.
 		for _, userID := range cleaned {
 			s.Invalidator.InvalidateAuthCacheByUserID(ctx, userID)
 		}
@@ -445,7 +442,7 @@ func (s *UserAdmin) BatchUpdateConcurrency(ctx context.Context, userIDs []int64,
 	return affected, nil
 }
 
-// BatchUpdateLimits 清洗用户 ID 后批量覆盖限制，并在写入成功后失效认证缓存。
+// BatchUpdateLimits removes invalid and duplicate IDs, updates limits, and invalidates authentication caches after success.
 func (s *UserAdmin) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
 	if concurrency == nil && rpmLimit == nil {
 		return 0, fmt.Errorf("at least one of concurrency or rpm_limit is required")
@@ -472,7 +469,7 @@ func (s *UserAdmin) BatchUpdateLimits(ctx context.Context, userIDs []int64, conc
 		return 0, err
 	}
 	if s.Invalidator != nil {
-		// 两个字段都会进入认证快照，必须在数据库写入成功后逐用户失效缓存。
+		// Both limits are cached in authentication snapshots; invalidate after the database write.
 		for _, userID := range cleaned {
 			s.Invalidator.InvalidateAuthCacheByUserID(ctx, userID)
 		}
@@ -481,7 +478,7 @@ func (s *UserAdmin) BatchUpdateLimits(ctx context.Context, userIDs []int64, conc
 }
 
 func (s *UserAdmin) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
-	// 余额调整必须走原子接口：先读后整行写回会把并发的计费扣款覆盖掉。
+	// Use atomic balance operations so concurrent billing deductions cannot be overwritten.
 	var (
 		change BalanceChange
 		err    error
@@ -533,7 +530,7 @@ func (s *UserAdmin) UpdateUserBalance(ctx context.Context, userID int64, balance
 	return user, nil
 }
 
-// AdminTryAccrueAffiliateRebateForAdminRecharge 以尽力而为方式计提返利，不回滚已完成的余额调整。
+// AdminTryAccrueAffiliateRebateForAdminRecharge logs rebate errors and leaves the completed balance adjustment in place.
 func (s *UserAdmin) AdminTryAccrueAffiliateRebateForAdminRecharge(ctx context.Context, userID int64, operation string, amount float64) {
 	if operation != "add" || amount <= 0 || s.Settings == nil || s.Affiliates == nil {
 		return
@@ -628,7 +625,7 @@ func (s *UserAdmin) GetUserRPMStatus(ctx context.Context, userID int64) (*UserRP
 }
 
 func (s *UserAdmin) GetUserUsageStats(ctx context.Context, userID int64, period string) (any, error) {
-	// Return mock data for now
+	// This endpoint returns zero-valued placeholder statistics.
 	return map[string]any{
 		"period":          period,
 		"total_requests":  0,

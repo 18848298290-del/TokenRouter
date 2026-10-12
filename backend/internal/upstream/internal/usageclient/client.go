@@ -35,16 +35,16 @@ func UpstreamUsageEndpoint(base, path string, build func(string, string) string)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", errors.New("invalid base URL")
 	}
-	// 提供商 Base URL 沿用 OpenAI 兼容端点约定：/v1、/v4、/v1beta
-	// 等版本段作为根路径，不能再重复拼接一个 /v1。复用现有端点
-	// 构造器，确保用量查询和转发对同一类 Base URL 的解释一致。
+	// Versioned bases such as /v1, /v4, and /v1beta already supply the API prefix.
+	// Reuse the forwarding URL builder so usage queries do not append a second
+	// version segment to the same provider base URL.
 	endpoint := build(base, path)
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil || parsedEndpoint.Scheme == "" || parsedEndpoint.Host == "" {
 		return "", errors.New("invalid endpoint URL")
 	}
-	// 调用方已经校验过 Base URL；这里再次清理非路径部分，避免未来新增
-	// 调用路径时把历史查询串、片段或用户信息带到上游请求。
+	// Callers validate the base URL. Strip non-path components again so stored
+	// userinfo, query strings, or fragments cannot leak into the query endpoint.
 	parsedEndpoint.User = nil
 	parsedEndpoint.RawQuery = ""
 	parsedEndpoint.ForceQuery = false
@@ -56,8 +56,8 @@ func UpstreamUsageStatusEndpoint(base string) (string, error) {
 	return UpstreamUsageRootEndpoint(base, "/api/status")
 }
 
-// UpstreamUsageTokenEndpoint 构造 New API Token 专用端点并保留尾斜杠，
-// 避免部分实例把无尾斜杠请求重定向后被客户端的禁止重定向策略拦截。
+// UpstreamUsageTokenEndpoint retains the New API token endpoint trailing slash
+// to avoid redirects that the usage client intentionally rejects.
 func UpstreamUsageTokenEndpoint(base string) (string, error) {
 	endpoint, err := UpstreamUsageRootEndpoint(base, "/api/usage/token")
 	if err != nil {
@@ -66,20 +66,20 @@ func UpstreamUsageTokenEndpoint(base string) (string, error) {
 	return strings.TrimRight(endpoint, "/") + "/", nil
 }
 
-// UpstreamUsageWalletEndpoint 构造兼容 New API 分支的钱包余额端点。
-// 该端点固定为 /user/balance，不允许管理员从配置中注入路径。
+// UpstreamUsageWalletEndpoint builds the fixed /user/balance path used by New API forks.
+// The path is defined by the adapter rather than administrator configuration.
 func UpstreamUsageWalletEndpoint(base string) (string, error) {
 	return UpstreamUsageRootEndpoint(base, "/user/balance")
 }
 
-// UpstreamUsageUserSelfEndpoint 构造官方 New API 用户自查询端点。
-// 该端点使用用户级 Access Token 认证。
+// UpstreamUsageUserSelfEndpoint builds the New API /api/user/self endpoint.
+// Callers authenticate this endpoint with a user access token.
 func UpstreamUsageUserSelfEndpoint(base string) (string, error) {
 	return UpstreamUsageRootEndpoint(base, "/api/user/self")
 }
 
-// UpstreamUsageRootEndpoint 从提供商 Base URL 去掉末尾的 OpenAI 版本段，
-// 用于 New API 这类挂在站点根路径下的管理接口。
+// UpstreamUsageRootEndpoint strips a trailing OpenAI version segment for
+// management APIs such as New API that live under the site root.
 func UpstreamUsageRootEndpoint(base, path string) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -133,8 +133,8 @@ func (c *Client) GetURL(ctx context.Context, endpoint string, authenticated bool
 	return c.GetURLWithBearer(ctx, endpoint, token, "")
 }
 
-// GetURLWithHeaders 请求内置适配器声明的固定请求头。
-// 提供商级覆写先应用、再被固定头覆盖，避免探测请求改变认证或团队身份。
+// GetURLWithHeaders sends a GET with adapter-defined headers applied after provider overrides.
+// Fixed headers take precedence so the adapter controls authentication and team identity.
 func (c *Client) GetURLWithHeaders(ctx context.Context, endpoint string, fixedHeaders map[string]string) ([]byte, int, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -147,7 +147,7 @@ func (c *Client) GetURLWithHeaders(ctx context.Context, endpoint string, fixedHe
 	req = req.WithContext(c.Context(req.Context()))
 	req.Header.Set("Accept", "application/json")
 	c.ApplyHeaders(req.Header)
-	// 提供商级覆写不得改变内置适配器的认证身份。
+	// Replace provider-supplied authentication with the adapter credentials.
 	req.Header.Del("Authorization")
 	req.Header.Del("api-key")
 	for headerName, headerValue := range fixedHeaders {
@@ -159,7 +159,7 @@ func (c *Client) GetURLWithHeaders(ctx context.Context, endpoint string, fixedHe
 		if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(value, "\r\n") {
 			return nil, 0, usageview.ErrUpstreamUsageConfigInvalid
 		}
-		// 固定头不允许被提供商覆写；先删除所有大小写变体，再写入规范值。
+		// Remove case variants before setting each protected header.
 		for existing := range req.Header {
 			if strings.EqualFold(existing, name) {
 				delete(req.Header, existing)
@@ -170,14 +170,14 @@ func (c *Client) GetURLWithHeaders(ctx context.Context, endpoint string, fixedHe
 	return c.readResponse(ctx, req)
 }
 
-// GetURLWithBearer 使用固定的 Bearer 令牌和可选用户 ID 请求管理端点。
-// 用户 ID 只会写入适配器定义的 New-Api-User 头，不接受任意 Header 配置。
+// GetURLWithBearer sends a management GET with the supplied bearer token and optional user ID.
+// The user ID is sent in the adapter-defined New-Api-User header.
 func (c *Client) GetURLWithBearer(ctx context.Context, endpoint, bearerToken, userID string) ([]byte, int, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, 0, usageview.ErrUpstreamUsageConfigInvalid
 	}
-	// 复用统一请求实现，但不再拼接路径。
+	// endpoint already contains the complete management path.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, usageview.ErrUpstreamUsageRequestFailed
@@ -185,7 +185,7 @@ func (c *Client) GetURLWithBearer(ctx context.Context, endpoint, bearerToken, us
 	req = req.WithContext(c.Context(req.Context()))
 	req.Header.Set("Accept", "application/json")
 	c.ApplyHeaders(req.Header)
-	// Header Override 不能改变管理查询实际使用的认证身份。
+	// Set the query credentials after provider header overrides.
 	req.Header.Del("Authorization")
 	if strings.TrimSpace(bearerToken) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
@@ -197,7 +197,7 @@ func (c *Client) GetURLWithBearer(ctx context.Context, endpoint, bearerToken, us
 	return c.readResponse(ctx, req)
 }
 
-// readResponse 读取有长度上限的用量响应，并在读取后关闭响应体。
+// readResponse reads a bounded usage response and closes its body, including on read failure.
 func (c *Client) readResponse(ctx context.Context, req *http.Request) ([]byte, int, error) {
 	resp, err := c.Do(req)
 	if err != nil {

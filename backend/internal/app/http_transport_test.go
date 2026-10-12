@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestHTTPTransportConfigurationReadBoundary 检查传输实例在每次请求时读取安全配置。
+// TestHTTPTransportConfigurationReadBoundary checks that each transport request reads current security
+// configuration.
 func TestHTTPTransportConfigurationReadBoundary(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

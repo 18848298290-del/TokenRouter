@@ -21,20 +21,20 @@ const (
 	grokFallbackBodyLimit  = 64 << 10
 )
 
-// AccessDeniedFallbackTransport 保持订阅 CLI 代理为 OAuth 主路由；仅当代理返回
-// 兼容性特有的 403 "Access denied" 且请求体可重放时，才向 api.x.ai 重试一次。
-// 其它授权失败返回原响应，由提供商调度处理。
+// AccessDeniedFallbackTransport retries replayable CLI OAuth requests once at
+// api.x.ai when a 403 matches a recognized CLI compatibility denial.
+// Other authorization failures return to the caller for provider handling.
 type AccessDeniedFallbackTransport struct {
 	Base http.RoundTripper
 }
 
-// prefixedReadCloser 拼接已读取的前缀与剩余响应体，关闭时调用响应体的 Close。
+// prefixedReadCloser replays a buffered prefix and closes the underlying response body.
 type prefixedReadCloser struct {
 	io.Reader
 	io.Closer
 }
 
-// ClientWithAccessDeniedFallback 复制客户端并在单次请求外层增加窄范围回退。
+// ClientWithAccessDeniedFallback clones the client and wraps its transport with CLI denial recovery.
 func ClientWithAccessDeniedFallback(client *http.Client) *http.Client {
 	if client == nil {
 		return nil
@@ -48,7 +48,7 @@ func ClientWithAccessDeniedFallback(client *http.Client) *http.Client {
 	return &clone
 }
 
-// RoundTrip 只接受官方 CLI 身份、OAuth Bearer 和明确 Access denied 响应作为回退候选。
+// RoundTrip retries recognized CLI compatibility denials with a replayable OAuth request.
 func (t *AccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.Base.RoundTrip(req)
 	if err != nil || !IsCLIAccessDeniedFallbackCandidate(req, resp) {
@@ -83,7 +83,7 @@ func (t *AccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.Resp
 	return fallbackResp, nil
 }
 
-// IsCLICompatibilityAccessDenied 识别旧版兼容拒绝与结构化聊天端点权限拒绝。
+// IsCLICompatibilityAccessDenied recognizes plain access-denied and structured chat permission errors.
 func IsCLICompatibilityAccessDenied(body []byte) bool {
 	lower := bytes.ToLower(body)
 	if bytes.Contains(lower, []byte("access denied")) {
@@ -100,7 +100,8 @@ func IsCLICompatibilityAccessDenied(body []byte) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(payload.Error)), chatEndpointDeniedPrefix)
 }
 
-// IsCLIAccessDeniedFallbackCandidate 在读取响应体前检查路由、身份和请求能否重放。
+// IsCLIAccessDeniedFallbackCandidate checks host, identity, status, and replayability before
+// reading the body.
 func IsCLIAccessDeniedFallbackCandidate(req *http.Request, resp *http.Response) bool {
 	return req != nil && req.URL != nil && req.GetBody != nil && resp != nil &&
 		resp.StatusCode == http.StatusForbidden &&
@@ -109,7 +110,7 @@ func IsCLIAccessDeniedFallbackCandidate(req *http.Request, resp *http.Response) 
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Header.Get("Authorization"))), "bearer ")
 }
 
-// newGrokOfficialAPIFallbackRequest 重建请求体，并移除仅属于 CLI 客户端身份的请求头。
+// newGrokOfficialAPIFallbackRequest rebuilds the body for api.x.ai and removes CLI-specific headers.
 func newGrokOfficialAPIFallbackRequest(req *http.Request) (*http.Request, error) {
 	body, err := req.GetBody()
 	if err != nil {
@@ -136,7 +137,7 @@ func newGrokOfficialAPIFallbackRequest(req *http.Request) (*http.Request, error)
 	return fallbackReq, nil
 }
 
-// cloneURL 复制 URL，避免回退时修改原始请求。
+// cloneURL copies a URL so target rewriting does not mutate the caller's request.
 func cloneURL(value *url.URL) *url.URL {
 	if value == nil {
 		return nil
@@ -145,7 +146,7 @@ func cloneURL(value *url.URL) *url.URL {
 	return &clone
 }
 
-// bufferSmallResponseBody 有界读取响应体；超限或失败时恢复已读前缀供调用方继续消费。
+// bufferSmallResponseBody bounds reads and restores consumed bytes on read failure or overflow.
 func bufferSmallResponseBody(resp *http.Response, limit int64) ([]byte, bool) {
 	if resp == nil || resp.Body == nil || limit <= 0 {
 		return nil, false
@@ -165,9 +166,9 @@ func bufferSmallResponseBody(resp *http.Response, limit int64) ([]byte, bool) {
 	return body, true
 }
 
-// ApplyTransportCLIHeaders 在共享 transport 发送请求前写入官方 Grok Build 客户端身份。
-// 仅精确匹配 CLI 代理主机，避免改变直连 api.x.ai 的流量，并统一覆盖 Responses、
-// Chat Completions、媒体、额度探测和提供商测试请求。
+// ApplyTransportCLIHeaders adds Grok Build identity before the shared transport sends a request.
+// It matches the CLI proxy hostname for Responses, Chat, media, quota probes,
+// and provider tests; other hosts pass through unchanged.
 func ApplyTransportCLIHeaders(req *http.Request) {
 	if req == nil || req.URL == nil || !strings.EqualFold(strings.TrimSpace(req.URL.Hostname()), grokCLIProxyHost) {
 		return
@@ -185,7 +186,7 @@ func ApplyTransportCLIHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", CLIUserAgent(version))
 }
 
-// IsTransportCLIVersionSupported 校验覆盖版本是否为规范 SemVer，且不低于内置最低版本。
+// IsTransportCLIVersionSupported accepts canonical SemVer at or above CLIClientVersion.
 func IsTransportCLIVersionSupported(version string) bool {
 	canonical := "v" + version
 	minimum := "v" + CLIClientVersion

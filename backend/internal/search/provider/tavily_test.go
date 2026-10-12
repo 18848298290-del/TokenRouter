@@ -13,7 +13,7 @@ func TestTavilyProvider_Name(t *testing.T) {
 }
 
 func TestTavilyProvider_Search_RequestConstruction(t *testing.T) {
-	// Verify tavilyRequest struct fields map correctly
+	// Request JSON uses Tavily field names and basic search depth.
 	req := tavilyRequest{
 		APIKey:      "test-key",
 		Query:       "golang",
@@ -40,7 +40,7 @@ func TestTavilyProvider_Search_ResponseParsing(t *testing.T) {
 	require.Equal(t, "Go programming language", resp.Results[0].Content)
 	require.InDelta(t, 0.95, resp.Results[0].Score, 0.001)
 
-	// Verify mapping to SearchResult
+	// Tavily content becomes the result snippet; page age is absent.
 	results := make([]SearchResult, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		results = append(results, SearchResult{

@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// defaultSubscriptionAssignerStub 记录赠送订阅的调用与错误。
+// defaultSubscriptionAssignerStub records signup-subscription calls and returns a configured error.
 type defaultSubscriptionAssignerStub struct {
 	calls []billing.AssignSubscriptionInput
 	err   error
@@ -108,7 +108,7 @@ type turnstileVerifierSpy struct {
 	err       error
 }
 
-// authSettingsFixture 使用同一个设置仓储替身读取认证设置。
+// authSettingsFixture shares one settings stub across its settings readers.
 type authSettingsFixture struct {
 	*identity.RuntimeSettings
 	*identity.GrantSettings
@@ -117,7 +117,7 @@ type authSettingsFixture struct {
 	promotion *promotion.RuntimeSettings
 }
 
-// captchaSettingsStore 记录读取次数并模拟读取失败。
+// captchaSettingsStore counts reads and can simulate failures.
 type captchaSettingsStore struct {
 	identity.RuntimeSettingsStore
 	mu               sync.Mutex
@@ -127,7 +127,7 @@ type captchaSettingsStore struct {
 	getMultipleCalls int
 }
 
-// captchaAuthSettings 为验证码测试提供设置读取方法。
+// captchaAuthSettings supplies runtime settings for CAPTCHA tests.
 type captchaAuthSettings struct {
 	identity.AuthSettings
 	runtime *identity.RuntimeSettings
@@ -746,7 +746,7 @@ func newOAuthEmailFlowAuthService(
 	emailService := identity.NewEmailChallenges(emailCache, notification.NewMailer(&settingRepoStub{values: settings}, smtp.New()))
 
 	return identitytestkit.Auth(
-		nil, &identity.AuthDependencies{Users: userRepo, Redeem: redeemRepo, RefreshTokens: refreshTokenCache, Options: identitytestkit.AuthOptions(cfg), Settings: authSettingsPort(settingService), Email: identitytestkit.Email(emailService)}, // 配置认证依赖
+		nil, &identity.AuthDependencies{Users: userRepo, Redeem: redeemRepo, RefreshTokens: refreshTokenCache, Options: identitytestkit.AuthOptions(cfg), Settings: authSettingsPort(settingService), Email: identitytestkit.Email(emailService)}, // Authentication dependencies.
 	)
 }
 
@@ -917,17 +917,11 @@ func newAuthService(repo *userRepoStub, settings map[string]string, emailCache i
 	}
 
 	return identitytestkit.Auth(
-		nil, &identity. // entClient
-				AuthDependencies{Users: repo, Options: identitytestkit.
-			// redeemRepo
-			AuthOptions(
-
-				// refreshTokenCache
-				cfg), Settings: authSettingsPort(settingService), Email: identitytestkit.Email(emailService)},
+		nil, &identity.AuthDependencies{Users: repo, Options: identitytestkit.AuthOptions(cfg), Settings: authSettingsPort(settingService), Email: identitytestkit.Email(emailService)},
 	)
 }
 
-// ConsumeRefreshToken 返回凭据不存在。
+// ConsumeRefreshToken reports that the credential was not found.
 func (s *refreshTokenCacheStub) ConsumeRefreshToken(context.Context, string) (bool, error) {
 	return false, nil
 }
@@ -974,7 +968,7 @@ func (s *authSettingsFixture) IsPromoCodeEnabled(ctx context.Context) bool {
 	return s.promotion.IsPromoCodeEnabled(ctx)
 }
 
-// authSettingsPort 将 nil 夹具转换为 nil 接口。
+// authSettingsPort returns a nil interface for a nil fixture.
 func authSettingsPort(value *authSettingsFixture) identity.AuthSettings {
 	if value == nil {
 		return nil
@@ -982,7 +976,7 @@ func authSettingsPort(value *authSettingsFixture) identity.AuthSettings {
 	return value
 }
 
-// rebuildSessionForTest 根据测试设置的会话选项及缓存构建会话服务。
+// rebuildSessionForTest rebuilds the session service from the fixture options and cache.
 func rebuildSessionForTest(service *identity.AuthService) {
 	service.SessionService = identity.NewSessionService(service.Options.JWT, service.Users, service.RefreshTokens, service.Settings, service.Observer.Log)
 }

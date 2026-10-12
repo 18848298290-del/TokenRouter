@@ -166,7 +166,7 @@ func TestBillingEligibility_PreferredSubscriptionDoesNotFallBackToBalance(t *tes
 		{name: "already over limit", used: 12},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// 即使余额足够，锁定订阅的 Key 也不能在额度耗尽后自动切换成按量模式。
+			// A Key pinned to an exhausted subscription must reject admission even when balance remains.
 			svc := newBillingEligibilityService(t, 100)
 			err := svc.CheckBillingEligibility(
 				context.Background(),

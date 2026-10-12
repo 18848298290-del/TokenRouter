@@ -16,7 +16,7 @@ type AdminUpdateAPIKeyGroupIDResult struct {
 	GrantedGroupName       string // the group name that was auto-granted
 }
 
-// Admin 管理 Key 的分组绑定与消费重置意图，不接管用户或分组规则。
+// Admin manages key group bindings and usage resets using user and group repositories.
 type Admin struct {
 	Keys        APIKeyRepository
 	Users       UserRepository
@@ -32,14 +32,14 @@ type GroupGrantMutations interface {
 	GrantGroupAndUpdateFields(context.Context, *APIKey, APIKeyUpdateFields, int64) error
 }
 
-// AdminUpdateAPIKeyGroupID 管理员修改 API Key 分组绑定
-// groupID: nil=不修改, 指向 0=解绑, 指向正整数=绑定到目标分组
-// AdminUpdateAPIKeyGroupID 通过 updateManagedFields 校验并更新 Key 的分组。
+// AdminUpdateAPIKeyGroupID validates and updates the key's group binding.
+// A nil gid leaves the binding unchanged; zero unbinds it; a positive value selects a group.
+// Exclusive groups are granted to the user together with the key update.
 func (s *Admin) AdminUpdateAPIKeyGroupID(ctx context.Context, id int64, gid *int64) (*AdminUpdateAPIKeyGroupIDResult, error) {
 	return s.updateManagedFields(ctx, id, gid, false, true)
 }
 
-// UpdateManagedFields 保证同一个 HTTP 请求的配置与消费重置一起提交。
+// UpdateManagedFields commits group changes and usage resets in one write or transaction.
 func (s *Admin) UpdateManagedFields(ctx context.Context, id int64, gid *int64, reset bool) (*AdminUpdateAPIKeyGroupIDResult, error) {
 	return s.updateManagedFields(ctx, id, gid, reset, true)
 }
@@ -116,7 +116,7 @@ func (s *Admin) updateManagedFields(ctx context.Context, id int64, gid *int64, r
 		}
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
-	// 所有成功副作用都在唯一写入/事务提交后执行；数据库触发器继续负责 outbox。
+	// Invalidate caches after the write commits. Database triggers enqueue outbox events.
 	if s.Invalidator != nil {
 		s.Invalidator.InvalidateAuthCacheByKey(ctx, key.Key)
 	}

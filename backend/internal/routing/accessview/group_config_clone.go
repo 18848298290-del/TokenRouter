@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// CloneGroupConfig 深拷贝分组配置，保留 nil 和空集合的区别。
+// CloneGroupConfig deep-copies group configuration and preserves nil versus empty collections.
 func CloneGroupConfig(g *GroupConfig) *GroupConfig {
 	if g == nil {
 		return nil
@@ -48,7 +48,7 @@ func cloneGroupPointer[T any](value *T) *T {
 	return &out
 }
 
-// CloneGroupAdvancedSchedulerOverrides 调用 policy 包复制高级调度配置。
+// CloneGroupAdvancedSchedulerOverrides returns an independent copy of advanced scheduling overrides.
 func CloneGroupAdvancedSchedulerOverrides(overrides GroupAdvancedSchedulerOverrides) GroupAdvancedSchedulerOverrides {
 	return policy.CloneGroupAdvancedSchedulerOverrides(overrides)
 }

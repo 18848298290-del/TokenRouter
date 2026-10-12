@@ -12,7 +12,7 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// 满额夹具通过 SQL 查询返回配额用量。
+// geminiFullLocalUsage returns usage at the quota limit through the statistics interface.
 type geminiFullLocalUsage struct{ usagecore.UsageLogRepository }
 
 func TestGeminiThirdPartyAPIKeySkipsLocalQuota(t *testing.T) {
@@ -55,7 +55,7 @@ func TestGeminiThirdPartyAPIKeySkipsLocalQuota(t *testing.T) {
 	require.Nil(t, usage.GeminiProDaily)
 	require.Nil(t, usage.GeminiFlashDaily)
 
-	// 免费档位的 Pro 日配额在此用例中为 50，从统计接口读取用量后预检拒绝满额请求。
+	// The free tier allows 50 Pro requests per day; the fixture reaches that limit.
 	rateLimitSvc := provideGeminiPrecheck(quotaService, &geminiFullLocalUsage{})
 	officialAllowed, err := rateLimitSvc.PreCheckUsage(ctx, official, "gemini-2.5-pro")
 	require.NoError(t, err)

@@ -15,7 +15,7 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
-// SystemSettings 是系统设置的 HTTP JSON 数据。
+// SystemSettings is the combined settings HTTP response.
 type SystemSettings struct {
 	ResponsesWS                         json.RawMessage                  `json:"responses_ws"`
 	ResponsesWSEffective                ws.Parameters                    `json:"responses_ws_effective"`
@@ -24,16 +24,16 @@ type SystemSettings struct {
 	RegistrationEmailSuffixWhitelist    []string                         `json:"registration_email_suffix_whitelist"`
 	RegistrationEmailNormalization      bool                             `json:"registration_email_normalization"`
 	RegistrationEmailDomainQuotaEnabled bool                             `json:"registration_email_domain_quota_enabled"`
-	UserEmailChangeEnabled              bool                             `json:"user_email_change_enabled"` // 是否允许已有邮箱的用户换绑主邮箱
+	UserEmailChangeEnabled              bool                             `json:"user_email_change_enabled"` // allow users with an email identity to replace their primary email
 	PromoCodeEnabled                    bool                             `json:"promo_code_enabled"`
 	PasswordResetEnabled                bool                             `json:"password_reset_enabled"`
 	FrontendURL                         string                           `json:"frontend_url"`
 	InvitationCodeEnabled               bool                             `json:"invitation_code_enabled"`
-	TotpEnabled                         bool                             `json:"totp_enabled"`                   // TOTP 双因素认证
-	TotpEncryptionKeyConfigured         bool                             `json:"totp_encryption_key_configured"` // TOTP 加密密钥是否已配置
-	SessionBindingEnabled               bool                             `json:"session_binding_enabled"`        // 会话 IP/UA 绑定
-	StepUpEnabled                       bool                             `json:"step_up_enabled"`                // 敏感操作 step-up 2FA
-	AuditLogRetentionDays               int                              `json:"audit_log_retention_days"`       // 审计日志保留天数
+	TotpEnabled                         bool                             `json:"totp_enabled"`                   // TOTP two-factor authentication
+	TotpEncryptionKeyConfigured         bool                             `json:"totp_encryption_key_configured"` // whether a TOTP encryption key is configured
+	SessionBindingEnabled               bool                             `json:"session_binding_enabled"`        // bind sessions to IP and User-Agent
+	StepUpEnabled                       bool                             `json:"step_up_enabled"`                // step-up 2FA for sensitive operations
+	AuditLogRetentionDays               int                              `json:"audit_log_retention_days"`       // retention in days
 	LoginAgreementEnabled               bool                             `json:"login_agreement_enabled"`
 	LoginAgreementMode                  string                           `json:"login_agreement_mode"`
 	LoginAgreementUpdatedAt             string                           `json:"login_agreement_updated_at"`
@@ -170,9 +170,9 @@ type SystemSettings struct {
 
 	DefaultConcurrency                   int                                      `json:"default_concurrency"`
 	DefaultBalance                       float64                                  `json:"default_balance"`
-	TeamEnabled                          bool                                     `json:"team_enabled"`         // 团队功能页面开关
-	CreativeEnabled                      bool                                     `json:"creative_enabled"`     // 创作台功能开关
-	RiskControlEnabled                   bool                                     `json:"risk_control_enabled"` // 风控中心功能开关
+	TeamEnabled                          bool                                     `json:"team_enabled"`         // team page access
+	CreativeEnabled                      bool                                     `json:"creative_enabled"`     // Creative Studio access
+	RiskControlEnabled                   bool                                     `json:"risk_control_enabled"` // risk center access
 	CyberSessionBlockEnabled             bool                                     `json:"cyber_session_block_enabled"`
 	CyberSessionBlockTTLSeconds          int                                      `json:"cyber_session_block_ttl_seconds"`
 	AffiliateEnabled                     bool                                     `json:"affiliate_enabled"`
@@ -199,7 +199,7 @@ type SystemSettings struct {
 	FallbackModelGemini      string `json:"fallback_model_gemini"`
 	FallbackModelAntigravity string `json:"fallback_model_antigravity"`
 
-	// Grok 模型映射策略；提供商映射为空时使用这里的默认值。
+	// Grok defaults used when the provider has no model mapping.
 	GrokDefaultTextModel   string `json:"grok_default_text_model"`
 	GrokDefaultBaseURLMode string `json:"grok_default_base_url_mode"`
 
@@ -207,7 +207,7 @@ type SystemSettings struct {
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
 	IdentityPatchPrompt string `json:"identity_patch_prompt"`
 
-	// Ops monitoring (vNext)
+	// Operations monitoring.
 	OpsMonitoringEnabled         bool `json:"ops_monitoring_enabled"`
 	OpsRealtimeMonitoringEnabled bool `json:"ops_realtime_monitoring_enabled"`
 	OpsMetricsIntervalSeconds    int  `json:"ops_metrics_interval_seconds"`
@@ -215,12 +215,10 @@ type SystemSettings struct {
 	MinClaudeCodeVersion string `json:"min_claude_code_version"`
 	MaxClaudeCodeVersion string `json:"max_claude_code_version"`
 
-	// 分组隔离
-
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
-	// 网关转发行为
+	// Gateway forwarding behavior.
 	OpenAITTFTMode                         string                                    `json:"openai_ttft_mode"`
 	EnableFingerprintUnification           bool                                      `json:"enable_fingerprint_unification"`
 	EnableMetadataPassthrough              bool                                      `json:"enable_metadata_passthrough"`
@@ -245,7 +243,7 @@ type SystemSettings struct {
 	PaymentVisibleMethodAlipayEnabled bool   `json:"payment_visible_method_alipay_enabled"`
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 
-	// 通用高级调度器参数；是否启用由分组 scheduler_type 决定。
+	// Shared advanced scheduler parameters; each group's scheduler_type selects whether to use them.
 	AdvancedSchedulerStickyWeightedEnabled           bool   `json:"advanced_scheduler_sticky_weighted_enabled"`
 	AdvancedSchedulerSubscriptionPriorityEnabled     bool   `json:"advanced_scheduler_subscription_priority_enabled"`
 	AdvancedSchedulerEWMAErrorRateAlpha              string `json:"advanced_scheduler_ewma_error_rate_alpha"`
@@ -278,7 +276,7 @@ type SystemSettings struct {
 	AdvancedSchedulerEffectiveStickyEscapeEnabled    bool   `json:"advanced_scheduler_effective_sticky_escape_enabled"`
 	AdvancedSchedulerEffectiveStickyEscapeTTFTMs     string `json:"advanced_scheduler_effective_sticky_escape_ttft_ms"`
 	AdvancedSchedulerEffectiveStickyEscapeErrorRate  string `json:"advanced_scheduler_effective_sticky_escape_error_rate"`
-	// OpenAI 提供商配额自动暂停全局默认阈值。后端按 0~1 存储，0 表示不启用全局默认阈值。
+	// Global OpenAI quota auto-pause thresholds in [0, 1]; zero disables the global default.
 	OpenAIQuotaAutoPauseSettings ops.OpsOpenAIProviderQuotaAutoPauseSettings `json:"openai_provider_quota_auto_pause"`
 
 	// Payment configuration
@@ -307,12 +305,12 @@ type SystemSettings struct {
 	PaymentCancelRateLimitUnit    string `json:"payment_cancel_rate_limit_unit"`
 	PaymentCancelRateLimitMode    string `json:"payment_cancel_rate_limit_window_mode"`
 
-	// 支付宝移动端强制使用二维码支付，不再跳转手机网站支付。
+	// Force QR-code payment for Alipay on mobile devices.
 	PaymentAlipayForceQRCode bool `json:"payment_alipay_force_qrcode"`
-	// 移动端使用支付宝当面付预下单，并通过深链接唤起支付宝客户端。
+	// Use Alipay face-to-face precreation and a deep link to open the mobile app.
 	PaymentAlipayMobilePrecreateDeepLink bool `json:"payment_alipay_mobile_precreate_deep_link"`
 
-	// 余额、订阅到期与提供商限额通知
+	// Balance, subscription expiry, and provider quota notifications.
 	BalanceLowNotifyEnabled         bool                           `json:"balance_low_notify_enabled"`
 	BalanceLowNotifyThreshold       float64                        `json:"balance_low_notify_threshold"`
 	BalanceLowNotifyRechargeURL     string                         `json:"balance_low_notify_recharge_url"`
@@ -320,12 +318,12 @@ type SystemSettings struct {
 	ProviderQuotaNotifyEnabled      bool                           `json:"provider_quota_notify_enabled"`
 	ProviderQuotaNotifyEmails       []identitydto.NotifyEmailEntry `json:"provider_quota_notify_emails"`
 
-	// OpenAI fast/flex 策略
+	// OpenAI Fast/Flex policy.
 	OpenAIFastPolicySettings *gatewaydto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
 
-	// 系统全局提供商自动停调阈值（key = platform，100 = disabled）
+	// Global provider auto-pause thresholds by platform; 100 disables pausing.
 	ProviderSchedulingThresholds map[string]int `json:"provider_scheduling_thresholds,omitempty"`
 
-	// 允许终端用户在用量页查看自己的失败请求
+	// Allow users to view their own failed requests on the usage page.
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
 }

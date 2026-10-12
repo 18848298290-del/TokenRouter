@@ -13,7 +13,7 @@ type Handler struct{ settingService *search.ConfigService }
 
 func New(s *search.ConfigService) *Handler { return &Handler{settingService: s} }
 
-// TestWebSearchEmulation 测试 Web Search 搜索
+// TestWebSearchEmulation runs an administrator search test without reserving quota.
 // POST /api/v1/admin/settings/web-search-emulation/test
 func (h *Handler) TestWebSearchEmulation(c *gin.Context) {
 	var req struct {
@@ -35,7 +35,7 @@ func (h *Handler) TestWebSearchEmulation(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ResetWebSearchUsage 重置指定 provider 的配额用量
+// ResetWebSearchUsage clears quota usage for the requested provider type.
 // POST /api/v1/admin/settings/web-search-emulation/reset-usage
 func (h *Handler) ResetWebSearchUsage(c *gin.Context) {
 	var req struct {
@@ -56,7 +56,7 @@ func (h *Handler) ResetWebSearchUsage(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-// UpdateWebSearchEmulationConfig 更新 Web Search 模拟配置
+// UpdateWebSearchEmulationConfig saves search settings and returns the current configuration with usage.
 // PUT /api/v1/admin/settings/web-search-emulation
 func (h *Handler) UpdateWebSearchEmulationConfig(c *gin.Context) {
 	var cfg search.WebSearchEmulationConfig
@@ -70,7 +70,7 @@ func (h *Handler) UpdateWebSearchEmulationConfig(c *gin.Context) {
 		return
 	}
 
-	// Re-read (with sanitized api keys) to return current state
+	// Read the published configuration, including API keys, before adding usage.
 	updated, err := h.settingService.GetWebSearchEmulationConfig(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -79,7 +79,7 @@ func (h *Handler) UpdateWebSearchEmulationConfig(c *gin.Context) {
 	response.Success(c, search.PopulateWebSearchUsage(c.Request.Context(), updated, h.settingService.Registry()))
 }
 
-// GetWebSearchEmulationConfig 获取 Web Search 模拟配置
+// GetWebSearchEmulationConfig returns search settings, including API keys, with current usage.
 // GET /api/v1/admin/settings/web-search-emulation
 func (h *Handler) GetWebSearchEmulationConfig(c *gin.Context) {
 	cfg, err := h.settingService.GetWebSearchEmulationConfig(c.Request.Context())

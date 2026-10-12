@@ -31,7 +31,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// 夹具提供模型目录查询所需的数据。
+// modelHTTPProviderRows supplies providers for model catalogue fixtures.
 type modelHTTPProviderRows interface {
 	ListSchedulable(context.Context) ([]provider.Record, error)
 	ListSchedulableByGroupID(context.Context, int64) ([]provider.Record, error)
@@ -74,13 +74,14 @@ type gatewayReasoningEffortOptionForTest struct {
 	Default bool   `json:"default"`
 }
 
-// codexModelsRemovalProviderRepo 提供仅含 API Key 提供商的分组模型数据。
+// codexModelsRemovalProviderRepo supplies group models backed by API Key providers.
 type codexModelsRemovalProviderRepo struct {
 	modelHTTPProviderRows
 	providers []provider.Record
 }
 
-// TestGeminiV1BetaListUsesMixedGroupCapabilitiesAndAliases 检查 Gemini 与普通模型目录共用候选，自定义列表及 Key 别名取可用候选的交集。
+// TestGeminiV1BetaListUsesMixedGroupCapabilitiesAndAliases checks shared candidates and intersects custom
+// lists and Key aliases with available models.
 func TestGeminiV1BetaListUsesMixedGroupCapabilitiesAndAliases(t *testing.T) {
 	groupID := int64(42)
 	source := &gatewayModelsProviderRepoStub{byGroup: map[int64][]provider.Record{groupID: {
@@ -196,7 +197,7 @@ func (s *gatewayModelsProviderRepoStub) ListSchedulableByGroupID(ctx context.Con
 			out[i].Schedulable = true
 		}
 		out[i].GroupIDs = []int64{groupID}
-		// 映射夹具通过配置声明可服务的模型范围。
+		// Mapping fixtures declare their supported models through the allowlist.
 		if _, configured := out[i].Credentials["model_whitelist"]; !configured {
 			var allowed []string
 			switch mapping := out[i].Credentials["model_mapping"].(type) {
@@ -225,7 +226,7 @@ func newGatewayModelsHandlerForTest(repo modelHTTPProviderRows) *gatewayhttp.Mod
 	return newGatewayModelsHandlerWithPricingConfigForTest(repo, nil)
 }
 
-// newGatewayModelsHandlerWithPricingConfigForTest 构造可选模型配置的模型接口处理器。
+// newGatewayModelsHandlerWithPricingConfigForTest builds a model handler with optional pricing configuration.
 func newGatewayModelsHandlerWithPricingConfigForTest(repo modelHTTPProviderRows, modelConfigs *routing.PricingConfigService) *gatewayhttp.ModelsHandler {
 	var read func(context.Context, *int64) ([]routing.CatalogueProvider, error)
 	if repo != nil {
@@ -253,7 +254,7 @@ func newGatewayModelsHandlerWithPricingConfigForTest(repo modelHTTPProviderRows,
 	return modelsHTTP(gatewayModelCatalogFixture(), catalogue, nil, nil, nil, &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtest.OfflineView}})
 }
 
-// newGatewayModelsPricingConfigServiceForTest 构造模型接口测试使用的模型配置服务。
+// newGatewayModelsPricingConfigServiceForTest builds pricing configuration for model handler tests.
 func newGatewayModelsPricingConfigServiceForTest(groupID int64, platform string, pricingConfig testkit.Configuration) *routing.PricingConfigService {
 	pricingConfig.GroupIDs = []int64{groupID}
 	repo := &gatewayModelsPricingConfigRepoStub{
@@ -507,7 +508,8 @@ func TestGatewayModelsCompositeKeyFiltersRevokedMappings(t *testing.T) {
 	require.Empty(t, got.Data)
 }
 
-// TestGatewayModels_AntigravityConfiguredModelMetadata 已配置的 Antigravity 型号使用统一展示元数据。
+// TestGatewayModels_AntigravityConfiguredModelMetadata checks that configured Antigravity models use shared
+// display metadata.
 func TestGatewayModels_AntigravityConfiguredModelMetadata(t *testing.T) {
 	groupID := int64(32)
 	h := newGatewayModelsHandlerForTest(
@@ -580,7 +582,8 @@ func TestGatewayModels_QoderUsesExecutionModels(t *testing.T) {
 	require.Contains(t, modelIDsForTest(got.Data), "claude-opus-4-6")
 }
 
-// TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild 检查推理能力元数据与兼容字段同时返回。
+// TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild checks reasoning metadata and compatibility
+// fields together.
 func TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild(t *testing.T) {
 	assertGrokGatewayReasoningEfforts(t, 4409, "grok-4.5", []gatewayReasoningEffortOptionForTest{
 		{Value: "low", Label: "Low"},
@@ -653,7 +656,8 @@ func assertGrokGatewayReasoningEfforts(t *testing.T, groupID int64, modelID stri
 	require.Equal(t, want, model.ReasoningEfforts)
 }
 
-// TestGatewayModels_GrokDefaultsExcludeBuiltinAliases 检查提供商未设置模型范围时展示默认目录。
+// TestGatewayModels_GrokDefaultsExcludeBuiltinAliases checks the default catalogue when the provider has no
+// model restrictions.
 func TestGatewayModels_GrokDefaultsExcludeBuiltinAliases(t *testing.T) {
 	groupID := int64(4410)
 	h := newGatewayModelsHandlerForTest(
@@ -1283,7 +1287,7 @@ func modelIDsForTest(models []gatewayModelItemForTest) []string {
 	return ids
 }
 
-// gatewayModelCatalogFixture 为网关目录测试声明明确的可查询元数据。
+// gatewayModelCatalogFixture declares the metadata available to gateway catalogue tests.
 func gatewayModelCatalogFixture() *catalogtest.Catalog {
 	c := catalogtest.New("claude-opus-4-6", "claude-opus-4-8", "gpt-5", "gpt-5.5", "claude-fable-5", "claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gemini-2.5-flash", "gemini-3.1-flash-image", "grok-4.5", "grok-4.6")
 	for id, entry := range c.Entries {
@@ -1325,7 +1329,8 @@ func (r *codexModelsRemovalProviderRepo) ListSchedulableByGroupID(context.Contex
 	return append([]provider.Record(nil), r.providers...), nil
 }
 
-// TestGatewayRoutesModelsWithClientVersionUsesLocalList 验证带 client_version 的模型请求应继续返回纯 API Key 分组的本地模型列表。
+// TestGatewayRoutesModelsWithClientVersionUsesLocalList checks that client_version requests return local
+// models for API Key groups.
 func TestGatewayRoutesModelsWithClientVersionUsesLocalList(t *testing.T) {
 	repo := &codexModelsRemovalProviderRepo{
 		providers: []provider.Record{
@@ -1373,7 +1378,8 @@ func TestGatewayRoutesModelsWithClientVersionUsesLocalList(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesCodexModelsManifestPathIsRemoved 检查 Codex manifest 路径返回 404，Responses 兼容路由仍可访问。
+// TestGatewayRoutesCodexModelsManifestPathIsRemoved checks a 404 for the manifest path and reachable Responses
+// compatibility routes.
 func TestGatewayRoutesCodexModelsManifestPathIsRemoved(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformOpenAI)
 
@@ -1382,7 +1388,7 @@ func TestGatewayRoutesCodexModelsManifestPathIsRemoved(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 
-	// 合法 Live call 动态段进入 Sideband handler。
+	// A valid Live call path reaches the sideband handler.
 	req = httptest.NewRequest(http.MethodGet, "/backend-api/codex/call_test", nil)
 	recorder = httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)

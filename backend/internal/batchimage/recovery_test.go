@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// recoveryFundsFixture 记录资金释放请求、模拟释放错误并按请求去重。
+// recoveryFundsFixture records release requests, injects failures, and deduplicates request IDs.
 type recoveryFundsFixture struct {
 	releases   []*billing.TaskFundsCommand
 	releaseErr error
@@ -69,7 +69,7 @@ func TestBatchImageBillingRecoveryService_SkipsJobRefreshedByHeartbeat(t *testin
 	repo := newFakeBatchImageRepository()
 	apiKeyID := int64(22)
 	holdAmount := 0.5
-	// updated_at 在 cutoff 之后（慢提交心跳持续续期）：不得误杀退款。
+	// A heartbeat after cutoff keeps the slow submission alive and its funds reserved.
 	fresh := &batchimage.BatchImageJob{
 		BatchID:       "imgbatch_fresh_uploading",
 		UserID:        11,
@@ -111,8 +111,8 @@ func TestBatchImageBillingRecoveryService_EnqueuesRetryWhenReleaseFails(t *testi
 	svc := &batchimage.BillingRecovery{Repo: repo, Funding: batchimage.Funding{Store: billing}, Queue: queue, StaleAfter: time.Minute, Limit: 10}
 
 	released, err := svc.ReleaseStaleUnsubmittedOnce(context.Background())
-	// job 已转 failed、不会再出现在 stale 列表：释放失败必须入队重试
-	// （由 worker 的 releaseTerminalHold 兜底），否则冻结余额永久泄漏。
+	// A failed job disappears from the stale list; enqueue a failed release so
+	// ReleaseTerminalHold can retry it and return the reserved funds.
 	require.Error(t, err)
 	require.Equal(t, 0, released)
 	require.Equal(t, batchimage.BatchImageJobStatusFailed, repo.jobs[stale.BatchID].Status)

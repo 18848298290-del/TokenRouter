@@ -21,7 +21,7 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// 供应商传输使用替身，提供商读取、平台目标和 SSE 输出使用应用装配。
+// nativeProviderTestTransport replaces upstream networking while the test uses assembled provider reads, targets, and SSE output.
 type nativeProviderTestTransport struct {
 	body     string
 	requests []*http.Request

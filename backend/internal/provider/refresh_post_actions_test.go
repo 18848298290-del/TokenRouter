@@ -12,13 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 迟到的成功后置动作不能清除管理员已经更新的凭据与临时停调。
+// refreshSuccessCooldownRepo simulates conditional cleanup so late success cannot erase an administrator update.
 type refreshSuccessCooldownRepo struct {
 	current *Record
 	clears  int
 }
 
-// 清理完成后发布的快照包含已提交的健康状态。
+// refreshSuccessScheduler captures the health state published after cleanup.
 type refreshSuccessScheduler struct {
 	last *Record
 }
@@ -32,7 +32,8 @@ func cooldownPostActions(repo *refreshSuccessCooldownRepo) *RefreshPostActions {
 	}
 }
 
-// ClearRefreshCooldownIfUnchanged 模拟交错执行的条件更新，PostgreSQL 集成测试覆盖行锁和 JSONB 比较。
+// ClearRefreshCooldownIfUnchanged simulates an interleaved conditional write; PostgreSQL tests cover row locks
+// and JSONB comparison.
 func (r *refreshSuccessCooldownRepo) ClearRefreshCooldownIfUnchanged(ctx context.Context, v RefreshCooldownVersion) (bool, error) {
 	if !reflect.DeepEqual(ObserveRefreshCooldown(r.current), v) {
 		return false, nil

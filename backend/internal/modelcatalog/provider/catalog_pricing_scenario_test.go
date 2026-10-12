@@ -1,6 +1,6 @@
 package provider
 
-// 本场景检查 service.go、catalog.go 提供的目录价格与 billing 计算器、pricing 解析和价格换算的协作。
+// These scenarios check catalog prices against billing calculations, price resolution, and unit conversion.
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// gpt56LadderCatalogJSON 为 GPT-5.6 型号配置上下文阶梯价格。
+// gpt56LadderCatalogJSON defines context-tier prices for GPT-5.6 models.
 const gpt56LadderCatalogJSON = `{
 	"gpt-5.6-sol": {"provider": "openai", "mode": "chat", "cache_write_multiplier": 1.25, "flex_multiplier": 0.5,
 		"input_cost_per_token": 5e-06, "input_cost_per_token_priority": 1e-05,
@@ -138,7 +138,8 @@ func TestCalculateCost_PartialLongContextMultiplierDefaultsToOne(t *testing.T) {
 	})
 }
 
-// TestDisplayPricing_PartialLongContextMultiplierDefaultsToOne 检查展示和结算使用相同的缺省倍率，未配置的一侧使用倍率 1。
+// TestDisplayPricing_PartialLongContextMultiplierDefaultsToOne checks that display and billing use 1 for an
+// unset multiplier.
 func TestDisplayPricing_PartialLongContextMultiplierDefaultsToOne(t *testing.T) {
 	service := newBillingFixture(newStubCatalogFromJSON(t, `{
 		"partial-display": {"provider": "openai", "mode": "chat",
@@ -354,7 +355,7 @@ func TestParsePricingData_KeepsImageOnlyPricing(t *testing.T) {
 	require.NotNil(t, pricing)
 	require.InDelta(t, 0.034, pricing.OutputCostPerImage, 1e-12)
 	require.Equal(t, "image_generation", pricing.Mode)
-	// 仅有图片价的条目标记为 token 价缺失，token 计费据此拒绝计价。
+	// An image-only entry lacks token prices and cannot be used for token billing.
 	require.True(t, pricing.TokenPricingAbsent)
 }
 
@@ -378,22 +379,23 @@ func TestBillingService_GetModelPricing_FailsClosedForImageOnlyEntries(t *testin
 	setPricingFixtureData(pricingSvc, data)
 	billingSvc := newBillingFixture(pricingSvc)
 
-	// image-only 条目的 token 计费返回 ErrModelPricingUnavailable。
+	// Token billing rejects image-only entries with ErrModelPricingUnavailable.
 	_, err = billingSvc.GetModelPricing("imagen-9.0-generate")
 	require.ErrorIs(t, err, billingpricing.ErrModelPricingUnavailable)
 
-	// token 价配置为 0 的免费条目正常返回。
+	// Explicit zero token prices remain valid free prices.
 	pricing, err := billingSvc.GetModelPricing("gemini-image-with-token-price")
 	require.NoError(t, err)
 	require.Zero(t, pricing.InputPricePerToken)
 
-	// 图片计费读取 image-only 条目的图片单价。
+	// Image billing uses the image-only entry's per-image price.
 	raw := pricingSvc.GetModelPricing("imagen-9.0-generate")
 	require.NotNil(t, raw)
 	require.InDelta(t, 0.04, raw.OutputCostPerImage, 1e-12)
 }
 
-// TestBillingService_GetDisplayPricing_ChatImageMetadataKeepsTokenMode 验证聊天模型携带按图元数据时仍展示 token 价格。
+// TestBillingService_GetDisplayPricing_ChatImageMetadataKeepsTokenMode checks that image metadata leaves chat
+// prices in token mode.
 func TestBillingService_GetDisplayPricing_ChatImageMetadataKeepsTokenMode(t *testing.T) {
 	pricingSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gemini-3.1-pro-high": {
@@ -409,21 +411,21 @@ func TestBillingService_GetDisplayPricing_ChatImageMetadataKeepsTokenMode(t *tes
 	}})
 	billingSvc := newBillingFixture(pricingSvc)
 
-	// 聊天模型优先展示 token 价格。
+	// Chat models display token prices.
 	chatPricing := billingSvc.DisplayPricing("gemini-3.1-pro-high", 8)
 	require.Equal(t, "token", chatPricing.PricingMode)
 	require.Equal(t, "priced", chatPricing.PriceStatus)
 	require.InDelta(t, 16e-6, chatPricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 96e-6, chatPricing.OutputPricePerToken, 1e-12)
 
-	// 图片生成模型按图片单价展示。
+	// Image-generation models display per-image prices.
 	imagePricing := billingSvc.DisplayPricing("gemini-3.1-flash-image", 2)
 	require.Equal(t, "image", imagePricing.PricingMode)
 	require.Equal(t, "priced", imagePricing.PriceStatus)
 	require.InDelta(t, 0.1344, imagePricing.ImagePrice1K, 1e-12)
 }
 
-// TestBillingService_Gemini35FlashTiersRequireOwnPricing 检查未配置完整档位价格时返回缺价。
+// TestBillingService_Gemini35FlashTiersRequireOwnPricing checks that incomplete tier prices remain unavailable.
 func TestBillingService_Gemini35FlashTiersRequireOwnPricing(t *testing.T) {
 	svc := newBillingFixture(nil)
 	for _, model := range []string{"gemini-3.5-flash-high", "gemini-3.5-flash-low", "gemini-3.5-flash-medium", "gemini-3.5-flash-tiered"} {
@@ -524,7 +526,8 @@ func TestParsePricingData_ParsesModalityFields(t *testing.T) {
 	require.False(t, parsed.SupportsAudioOutput)
 }
 
-// TestEmbeddedSupplementsWithoutResources 验证空工作目录、离线启动及缺失外部文件都保留官方价格。
+// TestEmbeddedSupplementsWithoutResources checks official prices during offline startup with no external
+// resource files.
 func TestEmbeddedSupplementsWithoutResources(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, path := range []string{"", "./resources/model-pricing/model_pricing_supplements.json"} {
@@ -579,7 +582,8 @@ func TestModelsCatalogMediaSupplementAliases(t *testing.T) {
 	}
 }
 
-// TestModelsCatalogGeminiImageTextPricing 同时验证内嵌目录、媒体补充和实际用量拆分。
+// TestModelsCatalogGeminiImageTextPricing checks the embedded catalog, media supplements, and text/image usage
+// split.
 func TestModelsCatalogGeminiImageTextPricing(t *testing.T) {
 	service := NewService(Options{
 		DataDir: t.TempDir(),
@@ -622,7 +626,7 @@ func TestModelsCatalogGeminiImageSupplementPrecedence(t *testing.T) {
 		FallbackFile: supplement,
 	}, &catalogRemoteFixture{body: []byte(fixture)})
 	require.NoError(t, service.ForceUpdate())
-	// 缺少文本费率时，文本报价为未定价。
+	// Missing text rates leave the text quote unpriced.
 	_, err := billingpricing.ResolveModelPricing("gemini-image-test", service.GetModelPricing("gemini-image-test"))
 	require.ErrorIs(t, err, billingpricing.ErrModelPricingUnavailable)
 	require.InDelta(t, 150e-6, service.GetModelPricing("gemini-image-test").OutputCostPerImageToken, 1e-12)
@@ -633,7 +637,7 @@ func TestModelsCatalogGeminiImageSupplementPrecedence(t *testing.T) {
 		require.Zero(t, value.OutputPricePerToken)
 		require.InDelta(t, 150e-6, value.ImageOutputPricePerToken, 1e-12)
 	}
-	// 文本补充按原厂模型名匹配。
+	// Text supplements match the first-party model ID.
 	require.InDelta(t, 9e-6, catalogPriceForTest(t, service, "openrouter/gemini-image-test").OutputPricePerToken, 1e-12)
 }
 
@@ -655,7 +659,8 @@ func TestModelsCatalogImagePriceOverrideAcrossContextTiers(t *testing.T) {
 	}
 }
 
-// TestModelsCatalogGrokInclusiveContextBoundary 覆盖实际目录的阈值前、阈值处及缓存混合输入。
+// TestModelsCatalogGrokInclusiveContextBoundary checks prices below and at the catalog threshold, including
+// cached input.
 func TestModelsCatalogGrokInclusiveContextBoundary(t *testing.T) {
 	service := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, service.Initialize())
@@ -704,7 +709,8 @@ func TestModelsCatalogExplicitZeroImageOutput(t *testing.T) {
 	require.True(t, base.ImageOutputPriceExplicit)
 }
 
-// TestSupplementRulesPublishAtomically 覆盖目录优先、独立单位、操作默认价及失败保留。
+// TestSupplementRulesPublishAtomically checks catalog precedence, price units, operation defaults, and failed
+// publication.
 func TestSupplementRulesPublishAtomically(t *testing.T) {
 	dir := t.TempDir()
 	supplement := filepath.Join(dir, "supplement.json")
@@ -739,7 +745,7 @@ func TestSupplementRulesPublishAtomically(t *testing.T) {
 	require.Equal(t, 0.5, calc.CalculateWebSearchCost(2, nil, 1).ActualCost)
 	zero := 0.0
 	require.Zero(t, calc.CalculateWebSearchCost(2, &zero, 1).ActualCost)
-	// 无长上下文和自定义价卡时，时段与推理倍率取自同一目录数据。
+	// Without context tiers or custom price cards, time and effort multipliers come from the same catalog.
 	resolver := billing.NewPriceResolver(nil, calc, nil, nil)
 	cost, err := calc.CalculateCostUnified(billing.CostInput{Ctx: context.Background(), Model: "claude-test", Tokens: billingpricing.UsageTokens{InputTokens: 10}, RateMultiplier: 1, ServiceTier: "priority", ReasoningEffort: "max", Resolver: resolver})
 	require.NoError(t, err)
@@ -750,7 +756,7 @@ func TestSupplementRulesPublishAtomically(t *testing.T) {
 	require.Equal(t, before.Data, service.Snapshot().Data)
 	require.Equal(t, before.BillingDefaults, service.BillingDefaults())
 	require.Equal(t, before.LastUpdated, service.Snapshot().LastUpdated)
-	// 304 时仍重读补充文件，配置为零的价格和已删除字段同时生效。
+	// A 304 still reloads supplements so zero prices and deleted fields take effect.
 	require.NoError(t, os.WriteFile(supplement, []byte(`{"claude-test":{"cache_creation_input_token_cost_above_1hr":0,"image_prices":{"1K":0}},"_billing_defaults":{"audio_tts_price_per_million_chars":0}}`), 0o600))
 	remote.unchanged = true
 	require.NoError(t, service.syncWithRemote())
@@ -761,14 +767,14 @@ func TestSupplementRulesPublishAtomically(t *testing.T) {
 	require.NoError(t, service.syncWithRemote())
 	require.Empty(t, service.GetModelPricing("claude-test").ImagePrices)
 	require.Equal(t, 0.01, *service.BillingDefaults().WebSearchPricePerCall)
-	// 发布后的快照可独立修改。
+	// Returned snapshots are independently mutable.
 	snap := before
 	snap.BillingDefaults.WebSearchPricePerCall = new(float64)
 	snap.Data["claude-test"].ImagePrices["1K"] = 99
 	require.Empty(t, service.GetModelPricing("claude-test").ImagePrices)
 }
 
-// TestShippedSupplementsAreMinimalAndDocumented 验证分发数据没有混入旧展示字段。
+// TestShippedSupplementsAreMinimalAndDocumented checks that shipped data excludes obsolete display fields.
 func TestShippedSupplementsAreMinimalAndDocumented(t *testing.T) {
 	body := modelcatalog.Supplements()
 	var records map[string]map[string]json.RawMessage
@@ -786,7 +792,8 @@ func TestShippedSupplementsAreMinimalAndDocumented(t *testing.T) {
 	}
 }
 
-// TestModelRulesReturnIndependentValues 防止调用方修改可空倍率或分时数组污染已发布目录。
+// TestModelRulesReturnIndependentValues checks that nullable multipliers and time ranges cannot mutate the
+// published catalog.
 func TestModelRulesReturnIndependentValues(t *testing.T) {
 	entries, diagnostics, err := billingpricing.ParsePricingEntries(map[string]json.RawMessage{"model": json.RawMessage(`{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002,"cache_write_multiplier":1.25,"cache_write_1h_multiplier":2,"fast_multiplier":3,"flex_multiplier":0.5,"max_reasoning_effort_multiplier":4,"time_pricing":{"timezone":"UTC","periods":[{"start_time":"01:00","end_time":"03:00","multiplier":2}]}}`)})
 	require.NoError(t, err)
@@ -805,7 +812,7 @@ func TestModelRulesReturnIndependentValues(t *testing.T) {
 	require.InDelta(t, 2e-6, second.CacheCreation1hPrice, 1e-12)
 }
 
-// TestJevOfflineCatalogPricesKeepProviderIdentity 检查 TypeSafe 直连与渠道免费型号各自查价。
+// TestJevOfflineCatalogPricesKeepProviderIdentity checks separate prices for TypeSafe and free relay models.
 func TestJevOfflineCatalogPricesKeepProviderIdentity(t *testing.T) {
 	service := newOfflinePricingFixture(t)
 	for _, model := range []string{"jev-latest", "jev-preview", "jev-1.13.0"} {
@@ -832,7 +839,8 @@ func TestJevOfflineCatalogPricesKeepProviderIdentity(t *testing.T) {
 	require.Nil(t, service.GetModelPricing("jev-unknown-version"))
 }
 
-// TestJevCatalogPricesOverrideSupplement 检查原厂目录报价和零价优先，渠道报价各自生效。
+// TestJevCatalogPricesOverrideSupplement checks first-party price precedence, including zero, and independent
+// relay prices.
 func TestJevCatalogPricesOverrideSupplement(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{"providers":{"typesafe":{"models":{"jev-latest":{"cost":{"input":0.084,"output":0}},"jev-preview":{"cost":{"input":0,"output":0}}}},"relay":{"models":{"jev-preview":{"cost":{"input":5,"output":2}}}}}}`)}
 	service := NewService(Options{DataDir: t.TempDir(), RemoteURL: "https://models.dev/catalog.json?type=all"}, remote)
@@ -844,7 +852,8 @@ func TestJevCatalogPricesOverrideSupplement(t *testing.T) {
 	require.InDelta(t, 5e-6, service.GetModelPricing("relay/jev-preview").InputCostPerToken, 1e-15)
 }
 
-// TestUnifiedModelSupplementPublishesPriceAndAttributes 检查同一补充文件的属性和价格一起发布，坏属性拒绝整次更新。
+// TestUnifiedModelSupplementPublishesPriceAndAttributes checks joint publication and rejection of invalid
+// attributes.
 func TestUnifiedModelSupplementPublishesPriceAndAttributes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "models.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"jev-preview":{"provider":"typesafe","input_cost_per_token":0.0000001,"output_cost_per_token":0,"attributes":{"display_name":"Custom preview","context":128000,"input_modalities":["text"]}}}`), 0o600))

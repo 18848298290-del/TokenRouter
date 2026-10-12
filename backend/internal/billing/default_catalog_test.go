@@ -28,7 +28,7 @@ func TestDefaultPriceUsesCatalogAndPreservesZero(t *testing.T) {
 	require.Equal(t, 4.0, values["output"])
 	require.Equal(t, 8.0, values["fast_output"])
 	require.Equal(t, 2.0, values["flex_output"])
-	// 长上下文返回应用倍率后的单价：output 4x1.5，fast 8x1.5，flex 2x1.5。
+	// Long-context rates apply the multiplier: output 4x1.5, fast 8x1.5, flex 2x1.5.
 	require.Zero(t, values["long_input"])
 	require.Equal(t, 6.0, values["long_output"])
 	require.Equal(t, 12.0, values["long_fast_output"])
@@ -56,7 +56,7 @@ func TestDefaultPriceContextIntervalsUseInclusiveBoundary(t *testing.T) {
 	require.Len(t, row.ContextIntervals, 2)
 	require.Equal(t, 199999, *row.ContextIntervals[0].MaxTokens)
 	require.Equal(t, 199999, row.ContextIntervals[1].MinTokens)
-	// 目录阈值保持 100，重复查询得到相同的区间。
+	// The catalog threshold remains 200000; repeated queries return the same intervals.
 	require.Equal(t, 200000, catalog.entries["grok-test"].ContextPrices[0].Threshold)
 	require.Equal(t, row, calculator.DefaultModelPrice("grok-test", "xai", "token"))
 }

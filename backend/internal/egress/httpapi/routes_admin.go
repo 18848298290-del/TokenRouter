@@ -4,13 +4,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterProxyRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterProxyRoutes mounts proxy routes after app installs group authentication, rate limits, and auditing.
 func RegisterProxyRoutes(admin *gin.RouterGroup, endpoint *ProxyHandler, stepUpAuth gin.HandlerFunc) {
 	proxies := admin.Group("/proxies")
 	{
 		proxies.GET("", endpoint.List)
 		proxies.GET("/all", endpoint.GetAll)
-		// 代理导出包含提供商密码原文，需要 step-up 二次验证。
+		// Exports contain plaintext proxy passwords and require step-up authentication.
 		proxies.GET("/data", stepUpAuth, endpoint.ExportData)
 		proxies.POST("/data", endpoint.ImportData)
 		proxies.GET("/:id", endpoint.GetByID)
@@ -26,7 +26,7 @@ func RegisterProxyRoutes(admin *gin.RouterGroup, endpoint *ProxyHandler, stepUpA
 	}
 }
 
-// RegisterTLSFingerprintProfileRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterTLSFingerprintProfileRoutes mounts profile and collector routes on the protected admin group.
 func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFingerprintProfileHandler) {
 	profiles := admin.Group("/tls-fingerprint-profiles")
 	{
@@ -47,7 +47,7 @@ func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFi
 	}
 }
 
-// RegisterTLSFingerprintRouterRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterTLSFingerprintRouterRoutes mounts TLS router routes on the protected admin group.
 func RegisterTLSFingerprintRouterRoutes(admin *gin.RouterGroup, endpoint *TLSFingerprintRouterHandler) {
 	routers := admin.Group("/tls-fingerprint-routers")
 	{

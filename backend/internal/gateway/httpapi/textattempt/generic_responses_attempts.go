@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// 单请求适配不另存缓存或重试状态。
+// genericResponsesAttemptBridge holds request-local state for the shared text attempt loop.
 type genericResponsesAttemptBridge struct {
 	messageAttemptBridge
 	requestCtx   context.Context
@@ -27,7 +27,7 @@ type genericResponsesAttemptBridge struct {
 	groupMapping routing.GroupMappingResult
 }
 
-// Select 保留通用 Responses 适配；循环复用 gateway/text。
+// Select chooses a provider for the current Responses attempt.
 func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
 	b.selection, err = b.binding().selectProvider(b.requestCtx, b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0))
@@ -39,7 +39,7 @@ func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (tex
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure 保留通用 Responses 适配；循环复用 gateway/text。
+// FirstSelectionFailure classifies initial selection failure and writes a Responses error.
 func (b *genericResponsesAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	cls := classifyNoProviderErrorFromGin(b.c, b.binding().diagnoser, b.apiKey, b.reqModel, b.reqModel, gatewayhttp.EffectiveAPIKeyPlatform(b.c, b.apiKey))
 	cls = gatewayhttp.RefineSelectionError(err, cls)
@@ -53,10 +53,10 @@ func (b *genericResponsesAttemptBridge) FirstSelectionFailure(err error, _ bool)
 	b.binding().responsesErrorResponse(b.c, cls.Status, cls.ErrType, message)
 }
 
-// Acquire 保留通用 Responses 适配；循环复用 gateway/text。
+// Acquire acquires or adopts the selected provider's concurrency slot.
 func (b *genericResponsesAttemptBridge) Acquire() bool {
 	var err error
-	// 4. Acquire provider concurrency slot
+	// Reuse an acquired slot or follow the selection's wait plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -83,10 +83,10 @@ func (b *genericResponsesAttemptBridge) Acquire() bool {
 	return true
 }
 
-// Forward 保留通用 Responses 适配；循环复用 gateway/text。
+// Forward dispatches a Responses attempt to Gemini or the generic executor.
 func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflow.Outcome {
 	var err error
-	// 5. Forward request
+	// Capture writer size before forwarding so later errors can detect prior output.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	gatewayhttp.SetActualUpstreamEndpoint(b.c, "")
 	if b.provider.Record.Platform == capability.PlatformGemini {
@@ -132,7 +132,7 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 	return out
 }
 
-// OtherFailure 保留通用 Responses 适配；循环复用 gateway/text。
+// OtherFailure reports forwarding errors that were not communicated to the client.
 func (b *genericResponsesAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
@@ -147,9 +147,9 @@ func (b *genericResponsesAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Complete 保留通用 Responses 适配；循环复用 gateway/text。
+// Complete captures usage and records the completed attempt.
 func (b *genericResponsesAttemptBridge) Complete(_ textflow.AttemptState) {
-	// 6. Record usage
+	// Capture request metadata before submitting completion work.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
@@ -158,7 +158,7 @@ func (b *genericResponsesAttemptBridge) Complete(_ textflow.AttemptState) {
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 

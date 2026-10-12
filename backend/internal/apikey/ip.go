@@ -6,9 +6,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ipmatch"
 )
 
-// CheckIPRestrictionWithCompiledRules 使用预编译规则检查 IP 是否允许访问。
+// CheckIPRestrictionWithCompiledRules checks the denylist before requiring a match in a configured allowlist.
 func CheckIPRestrictionWithCompiledRules(clientIP string, whitelist, blacklist *ipmatch.CompiledIPRules) (bool, string) {
-	// 规范化 IP
+	// Trim whitespace and remove a port before parsing the address.
 	clientIP = ipmatch.NormalizeIP(clientIP)
 	if clientIP == "" {
 		return false, "access denied"
@@ -18,12 +18,12 @@ func CheckIPRestrictionWithCompiledRules(clientIP string, whitelist, blacklist *
 		return false, "access denied"
 	}
 
-	// 1. 检查黑名单
+	// A denylist match takes precedence over the allowlist.
 	if blacklist != nil && blacklist.PatternCount > 0 && ipmatch.MatchesCompiledRules(parsedIP, blacklist) {
 		return false, "access denied"
 	}
 
-	// 2. 检查白名单（如果设置了白名单，IP 必须在其中）
+	// A configured allowlist must match, even if all its patterns are invalid.
 	if whitelist != nil && whitelist.PatternCount > 0 && !ipmatch.MatchesCompiledRules(parsedIP, whitelist) {
 		return false, "access denied"
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// inputTokenFixture 提供计数预检测试中的选择和计数操作。
+// inputTokenFixture supplies provider selection and input-count outcomes.
 type inputTokenFixture struct {
 	ctx                 context.Context
 	results             []*AttemptFailure

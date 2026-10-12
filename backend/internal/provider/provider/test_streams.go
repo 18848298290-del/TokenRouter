@@ -14,13 +14,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// 兼容原 data: 前缀后可选空白，保留各平台独立的终态判定。
+// sseDataPrefix accepts optional whitespace after data:; each parser decides when its stream completes.
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
-// TestStreamOutput 将供应商流同步转换为提供商测试事件。
+// TestStreamOutput synchronously converts upstream streams into provider test events.
 type TestStreamOutput struct{}
 
-// Gemini 保留 Gemini 流的内容、图片与终态事件顺序。
+// Gemini emits text and images before the frame's completion event.
 func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 	reader := bufio.NewReader(body)
 
@@ -50,7 +50,7 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 			continue
 		}
 
-		// 同时兼容原生与 CLI 包装的两种响应形状：
+		// Accept both direct AI Studio candidates and the Gemini CLI response wrapper:
 		// - AI Studio: {"candidates": [...]}
 		// - Gemini CLI: {"response": {"candidates": [...]}}
 		if resp, ok := data["response"].(map[string]any); ok && resp != nil {
@@ -58,7 +58,7 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 		}
 		if candidates, ok := data["candidates"].([]any); ok && len(candidates) > 0 {
 			if candidate, ok := candidates[0].(map[string]any); ok {
-				// 先输出内容，再判断本帧是否完成。
+				// Emit content before checking whether this frame ends the stream.
 				if content, ok := candidate["content"].(map[string]any); ok {
 					if parts, ok := content["parts"].([]any); ok {
 						for _, part := range parts {
@@ -82,7 +82,6 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 					}
 				}
 
-				// 内容处理完毕后再发送完成事件。
 				if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
 					s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 					return nil
@@ -90,7 +89,6 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 			}
 		}
 
-		// 错误事件在消息缺失时使用回退文本。
 		if errData, ok := data["error"].(map[string]any); ok {
 			errorMsg := "Unknown error"
 			if msg, ok := errData["message"].(string); ok {
@@ -101,7 +99,7 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 	}
 }
 
-// Anthropic 将 Claude 流转换为提供商测试事件。
+// Anthropic converts Claude stream events into provider test events.
 func (s TestStreamOutput) Anthropic(c *TestRun, body io.Reader) error {
 	reader := bufio.NewReader(body)
 
@@ -190,7 +188,7 @@ func (s TestStreamOutput) Qoder(c *TestRun, body io.ReadCloser) error {
 	return s.Error(c, "Qoder stream ended before any response")
 }
 
-// ChatCompletions 处理 OpenAI 兼容 Chat Completions API 返回的 SSE 分片。
+// ChatCompletions reads SSE chunks from OpenAI-compatible Chat Completions endpoints.
 func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
@@ -265,7 +263,7 @@ func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 	}
 }
 
-// Responses 要求实际收到终态事件，不能把提前 EOF 当作成功。
+// Responses requires a terminal response event; premature EOF is an error.
 func (s TestStreamOutput) Responses(c *TestRun, body io.Reader) error {
 	reader := bufio.NewReader(body)
 	for {
@@ -296,7 +294,6 @@ func (s TestStreamOutput) Responses(c *TestRun, body io.Reader) error {
 
 		switch eventType {
 		case "response.output_text.delta":
-			// Responses 文本增量使用 delta 字段。
 			if delta, ok := data["delta"].(string); ok && delta != "" {
 				s.SendEvent(c, providercore.TestEvent{Type: "content", Text: delta})
 			}
@@ -334,7 +331,7 @@ func (s TestStreamOutput) SendEvent(c *TestRun, event providercore.TestEvent) {
 	}
 }
 
-// Error 记录错误日志和事件，并返回错误文本。
+// Error logs and emits the failure, then returns it as an error.
 func (s TestStreamOutput) Error(c *TestRun, errorMsg string) error {
 	log.Printf("Provider test error: %s", errorMsg)
 	s.SendEvent(c, providercore.TestEvent{Type: "error", Error: errorMsg})

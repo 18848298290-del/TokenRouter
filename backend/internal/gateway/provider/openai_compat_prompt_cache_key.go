@@ -13,13 +13,13 @@ import (
 
 const compatPromptCacheKeyPrefix = "compat_cc_"
 
-// ShouldAutoInjectPromptCacheKeyForCompat 判断兼容请求是否自动生成提示缓存键。
+// ShouldAutoInjectPromptCacheKeyForCompat reports whether this model receives an automatic compatibility cache key.
 func ShouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(model))
 	return trimmed == "gpt-6-astra" || strings.HasPrefix(trimmed, "gpt-5") || strings.Contains(trimmed, "codex")
 }
 
-// DeriveCompatPromptCacheKey 从原首轮稳定内容派生兼容缓存键，不引入新状态。
+// DeriveCompatPromptCacheKey hashes stable opening content and request configuration into a cache key.
 func DeriveCompatPromptCacheKey(req *protocolopenai.ChatCompletionsRequest, mappedModel string) string {
 	if req == nil {
 		return ""
@@ -64,7 +64,7 @@ func DeriveCompatPromptCacheKey(req *protocolopenai.ChatCompletionsRequest, mapp
 	return compatPromptCacheKeyPrefix + upstream.HashSensitiveValueForLog(strings.Join(seedParts, "|"))
 }
 
-// DeriveAnthropicCompatPromptCacheKey 优先根据 cache_control 派生缓存键，缺少标记时使用兼容种子。
+// DeriveAnthropicCompatPromptCacheKey prefers cache_control anchors and otherwise hashes stable opening content.
 func DeriveAnthropicCompatPromptCacheKey(req *protocolanthropic.AnthropicRequest, mappedModel string) string {
 	if req == nil {
 		return ""
@@ -106,7 +106,7 @@ func DeriveAnthropicCompatPromptCacheKey(req *protocolanthropic.AnthropicRequest
 	return compatPromptCacheKeyPrefix + upstream.HashSensitiveValueForLog(strings.Join(seedParts, "|"))
 }
 
-// DeriveAnthropicCacheControlPromptCacheKey 从请求中标有 cache_control 的内容派生缓存键。
+// DeriveAnthropicCacheControlPromptCacheKey hashes ephemeral text anchors and returns empty when none exist.
 func DeriveAnthropicCacheControlPromptCacheKey(req *protocolanthropic.AnthropicRequest) string {
 	if req == nil {
 		return ""

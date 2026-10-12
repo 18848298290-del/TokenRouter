@@ -4,7 +4,7 @@ package app
 
 import "github.com/google/wire"
 
-// modelCatalogAssemblyProviders 构造唯一统一目录实例，价格与属性消费者共享同一发布版本。
+// modelCatalogAssemblyProviders supplies the catalog instance shared by pricing and model-attribute readers.
 var modelCatalogAssemblyProviders = wire.NewSet(
 	provideModelCatalogService,
 	provideModelCatalogRemoteClient,

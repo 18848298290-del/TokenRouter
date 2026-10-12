@@ -41,7 +41,7 @@ func TestQoderNativeChainCompletionFailures(t *testing.T) {
 			completion := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &gatewaytestkit.UserStore{}, &gatewaytestkit.SubscriptionStore{})
 			rec := httptest.NewRecorder()
 			body := []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-			// 将提供商记录和上游结果传入网关完成流程，检查用量记录。
+			// Feed the provider and upstream outcome into completion to check usage recording after a stream failure.
 			executor, input := platform.Runtime.PrepareQoderTarget(gatewayhttp.QoderRequestMetadata(nil), provider, body, protocol.ProtocolOpenAIChatCompletions, "auto")
 			completed, released, bound := 0, 0, 0
 			var completionErr error

@@ -5,18 +5,18 @@ import (
 )
 
 const (
-	// UpstreamModelSyncErrorConfiguration 表示提供商或服务端配置不足，无法执行同步。
+	// UpstreamModelSyncErrorConfiguration indicates missing provider or server configuration.
 	UpstreamModelSyncErrorConfiguration UpstreamModelSyncErrorKind = "configuration"
-	// UpstreamModelSyncErrorUnsupported 表示该提供商形态暂不支持实时模型同步。
+	// UpstreamModelSyncErrorUnsupported indicates a provider type that cannot sync models live.
 	UpstreamModelSyncErrorUnsupported UpstreamModelSyncErrorKind = "unsupported"
-	// UpstreamModelSyncErrorUpstream 表示已配置的上游失败或返回不可用响应。
+	// UpstreamModelSyncErrorUpstream indicates an upstream failure or unusable response.
 	UpstreamModelSyncErrorUpstream UpstreamModelSyncErrorKind = "upstream"
 )
 
-// UpstreamModelSyncErrorKind 对模型同步失败类型做分类，便于安全映射到 HTTP 状态码。
+// UpstreamModelSyncErrorKind classifies sync failures for HTTP status mapping.
 type UpstreamModelSyncErrorKind string
 
-// UpstreamModelSyncError 包装内部失败细节，同时提供可安全返回给客户端的消息。
+// UpstreamModelSyncError separates internal error details from a client-safe message.
 type UpstreamModelSyncError struct {
 	Kind    UpstreamModelSyncErrorKind
 	Message string
@@ -40,7 +40,7 @@ func (e *UpstreamModelSyncError) Unwrap() error {
 	return e.Err
 }
 
-// SafeMessage 返回可发送给 API 客户端的脱敏消息。
+// SafeMessage returns the supplied client-safe message, or a generic message when empty.
 func (e *UpstreamModelSyncError) SafeMessage() string {
 	if e == nil || strings.TrimSpace(e.Message) == "" {
 		return "Failed to sync upstream models"

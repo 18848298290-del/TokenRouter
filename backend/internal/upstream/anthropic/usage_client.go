@@ -17,7 +17,7 @@ import (
 const (
 	defaultClaudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
 
-	// 默认 User-Agent，与用户抓包的请求一致。
+	// Default usage-query User-Agent from captured CLI traffic.
 	defaultUsageUserAgent = "claude-code/2.1.7"
 )
 
@@ -27,40 +27,38 @@ type UsageClient struct {
 	DoTLS             func(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 }
 
-// UsageFetchOptions 包含获取 Claude 用量数据所需的所有选项。
+// UsageFetchOptions supplies credentials and transport identity for a usage query.
 type UsageFetchOptions struct {
 	AccessToken string                  // OAuth access token
-	ProxyURL    string                  // 代理 URL（可选）
-	ProviderID  int64                   // 提供商 ID（用于连接池隔离）
-	TLSProfile  *tlsfingerprint.Profile // TLS 指纹 Profile（nil 表示不启用）
-	Fingerprint *Fingerprint            // 缓存的指纹信息（User-Agent 等）
+	ProxyURL    string                  // Optional proxy URL.
+	ProviderID  int64                   // Separates provider connection pools.
+	TLSProfile  *tlsfingerprint.Profile // Nil disables TLS fingerprint selection.
+	Fingerprint *Fingerprint            // Cached request fingerprint; supplies the User-Agent.
 }
 
-// NewUsageClient 创建 Claude 用量获取服务
-// httpUpstream: 可选，如果提供则支持 TLS 指纹伪装。
+// NewUsageClient creates a usage client with an optional TLS fingerprint transport.
 func NewUsageClient(doTLS func(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)) *UsageClient {
 	return &UsageClient{UsageURL: defaultClaudeUsageURL, DoTLS: doTLS}
 }
 
-// FetchUsageWithOptions 完整版本，支持 TLS 指纹和自定义 User-Agent。
+// FetchUsageWithOptions queries OAuth usage using the selected UA and TLS profile.
 func (s *UsageClient) FetchUsageWithOptions(ctx context.Context, opts *UsageFetchOptions) (*wire.ClaudeUsageResponse, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("options is nil")
 	}
 
-	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.UsageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
 
-	// 设置请求头（与抓包一致，但不设置 Accept-Encoding，让 Go 自动处理压缩）
+	// Let the HTTP transport manage compression by leaving Accept-Encoding unset.
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
-	// 设置 User-Agent（优先使用缓存的 Fingerprint，否则使用默认值）
+	// Prefer the cached fingerprint UA when available.
 	userAgent := defaultUsageUserAgent
 	if opts.Fingerprint != nil && opts.Fingerprint.UserAgent != "" {
 		userAgent = opts.Fingerprint.UserAgent
@@ -69,14 +67,14 @@ func (s *UsageClient) FetchUsageWithOptions(ctx context.Context, opts *UsageFetc
 
 	var resp *http.Response
 
-	// 如果有 TLS Profile 且有 HTTPUpstream，使用 DoWithTLS
+	// TLS fingerprinting requires both a profile and a transport implementation.
 	if opts.TLSProfile != nil && s.DoTLS != nil {
 		resp, err = s.DoTLS(req, opts.ProxyURL, opts.ProviderID, 0, opts.TLSProfile)
 		if err != nil {
 			return nil, fmt.Errorf("request with TLS fingerprint failed: %w", err)
 		}
 	} else {
-		// 不启用 TLS 指纹，使用普通 HTTP 客户端
+		// Use the ordinary HTTP client when TLS fingerprinting is unavailable.
 		client, err := httpclient.GetClient(httpclient.Options{
 			ProxyURL:           opts.ProxyURL,
 			Timeout:            30 * time.Second,

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// ErrRefreshSkipped 表示刷新被跳过（锁竞争或已被其他路径刷新），不计入 failed 或 refreshed。
+// ErrRefreshSkipped reports lock contention or an already-refreshed provider; callers classify it according to their skip policy.
 var ErrRefreshSkipped = fmt.Errorf("refresh skipped")
 
 type ProviderConfigurationRefreshError struct {

@@ -8,7 +8,7 @@ import (
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 )
 
-// WriteOpenAIPassthroughResponseHeaders 保留配额头强制放行和旧回合状态清理顺序。
+// WriteOpenAIPassthroughResponseHeaders applies filtering, copies quota headers, and replaces prior turn state.
 func WriteOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, filter *egress.CompiledHeaderFilter) {
 	if dst == nil || src == nil {
 		return
@@ -16,13 +16,12 @@ func WriteOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 	if filter != nil {
 		egressadapter.WriteFilteredHeaders(dst, src, filter)
 	} else {
-		// 未配置过滤器时透传 content-type。
 		if v := strings.TrimSpace(src.Get("Content-Type")); v != "" {
 			dst.Set("Content-Type", v)
 		}
 	}
-	// 透传 x-codex-* 响应头时，用 EqualFold 查找大小写变体。
-	// 标准 http.Response.Header 通常使用规范化键，测试和自建响应也可能保留小写键。
+	// Match x-codex-* keys case-insensitively because manually built response headers
+	// can retain lowercase keys rather than net/http's canonical spelling.
 	getCaseInsensitiveValues := func(h http.Header, want string) []string {
 		if h == nil {
 			return nil
@@ -55,8 +54,8 @@ func WriteOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 		}
 	}
 
-	// 回合状态不受通用响应头白名单控制；上游缺失时也要清理旧值，避免
-	// failover 后把其它提供商的状态留在下游响应中。
+	// Turn state bypasses the general allowlist. Clear the prior value even when the upstream omits it
+	// so failover cannot leave another provider's turn state in the downstream headers.
 	turnStateKey := http.CanonicalHeaderKey(CodexTurnStateHeader)
 	dst.Del(turnStateKey)
 	for _, value := range getCaseInsensitiveValues(src, CodexTurnStateHeader) {

@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-// 站点管理和公开设置共用以下存储键。
+// Storage keys shared by admin and public site settings.
 const (
 	SettingKeyFrontendURL = "frontend_url"
 )
 
-// AdminSettings 包含站点展示和登录协议设置。
+// AdminSettings contains site display and login agreement settings.
 type AdminSettings struct {
 	APIBaseURL                  string                   `json:"api_base_url"`
 	ContactInfo                 string                   `json:"contact_info"`
@@ -40,7 +40,7 @@ type AdminSettings struct {
 	TablePageSizeOptions        []int                    `json:"table_page_size_options"`
 }
 
-// PrepareAdminSettings 规范化登录协议和表格配置，生成站点待保存值。
+// PrepareAdminSettings normalizes login agreements and table preferences and prepares stored site values.
 func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	updates := map[string]string{}
 	if settings.SiteTexts != nil {

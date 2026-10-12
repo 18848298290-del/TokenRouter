@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLoadLegacyDeploymentConfig 验证完整加载入口保留旧部署的数值与开关，读取后不重写挂载配置。
+// TestLoadLegacyDeploymentConfig checks legacy values and unchanged mounted configuration files.
 func TestLoadLegacyDeploymentConfig(t *testing.T) {
 	body := `gateway:
   max_account_switches: 0
@@ -72,7 +72,7 @@ func TestLoadLegacyDeploymentConfig(t *testing.T) {
 	}
 }
 
-// TestLoadLegacyConfigPrecedence 验证来源优先级仍是环境变量高于 YAML；同一来源显式的新字段覆盖旧字段。
+// TestLoadLegacyConfigPrecedence checks environment-over-YAML and new-name-over-old-name precedence.
 func TestLoadLegacyConfigPrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name, yaml, oldEnv, newEnv string
@@ -97,7 +97,7 @@ func TestLoadLegacyConfigPrecedence(t *testing.T) {
 	}
 }
 
-// TestLoadLegacyConfigEnvironment 验证纯环境变量部署也保留旧连接池参数和关闭开关，不依赖 YAML 出现旧键。
+// TestLoadLegacyConfigEnvironment checks legacy pool values and false switches in environment-only deployments.
 func TestLoadLegacyConfigEnvironment(t *testing.T) {
 	prepareLegacyConfigTest(t, "{}")
 	for key, value := range map[string]string{
@@ -130,7 +130,7 @@ func TestLoadLegacyConfigEnvironment(t *testing.T) {
 	require.Equal(t, ConnectionPoolIsolationProvider, cfg.Gateway.ConnectionPoolIsolation)
 }
 
-// TestLoadLegacyConfigStillValidatesValues 验证兼容旧名称仍须校验取值；不能把非法连接数或拼错的隔离模式当成默认值。
+// TestLoadLegacyConfigStillValidatesValues checks that aliases still reject invalid limits and modes.
 func TestLoadLegacyConfigStillValidatesValues(t *testing.T) {
 	for _, tc := range []struct{ key, value, message string }{
 		{"GATEWAY_OPENAI_WS_MAX_CONNS_PER_ACCOUNT", "-1", "max_conns_per_provider must be positive"},
@@ -146,7 +146,7 @@ func TestLoadLegacyConfigStillValidatesValues(t *testing.T) {
 	}
 }
 
-// TestLegacyConfigPreservesCustomProfileNames 验证自定义配置名含 account 时保持原样，兼容映射不做关键词替换。
+// TestLegacyConfigPreservesCustomProfileNames checks that account in a custom name is not renamed.
 func TestLegacyConfigPreservesCustomProfileNames(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
@@ -156,7 +156,7 @@ func TestLegacyConfigPreservesCustomProfileNames(t *testing.T) {
 	require.Equal(t, "custom", viper.GetString("gateway.tls_fingerprint.profiles.account_gateway.name"))
 }
 
-// TestLoadLegacyConfigMixedNestedFields 验证新旧嵌套对象按字段合并，显式零值和关闭开关不被旧值覆盖，也不丢失同级配置。
+// TestLoadLegacyConfigMixedNestedFields checks field-wise merging, explicit zero/false values, and sibling fields.
 func TestLoadLegacyConfigMixedNestedFields(t *testing.T) {
 	prepareLegacyConfigTest(t, `gateway:
   openai_ws:
@@ -190,7 +190,7 @@ func TestLoadLegacyConfigMixedNestedFields(t *testing.T) {
 	require.Equal(t, 1.2, cfg.Gateway.AdvancedScheduler.ScoreWeights.Load)
 	require.Equal(t, 7.0, cfg.Gateway.AdvancedScheduler.ScoreWeights.Queue)
 
-	// 再次加载必须读取新的文件内容，不能沿用上次在内存中补齐的旧值。
+	// Reload from the changed file instead of reusing in-memory values from the previous load.
 	require.NoError(t, os.WriteFile(os.Getenv("CONFIG_FILE"), []byte("gateway:\n  max_provider_switches: 4\n"), 0o600))
 	cfg, err = Load()
 	require.NoError(t, err)

@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// ResponseTools 保存请求和 WebSocket 当前 turn 的工具恢复信息，会话更新单独保存。
-// 已发布的映射按只读使用，后续 turn 替换为新映射，输出中的 turn 继续使用自己的映射。
+// ResponseTools holds request and active-turn tool restoration state separately from session updates.
+// Callers treat published mappings as read-only and replace them for later turns; active output retains its mapping.
 type ResponseTools struct {
 	mu                        sync.RWMutex
 	openai, grok              bridge.ResponsesClientToolMapping
@@ -19,7 +19,7 @@ type ResponseTools struct {
 	bridgePresent             bool
 }
 
-// WSBridgeTools 保存 HTTP bridge 下一轮继承的工具声明和降级映射。
+// WSBridgeTools holds tool declarations and lowered mappings inherited by the next HTTP bridge turn.
 type WSBridgeTools struct {
 	ClientMapping bridge.ResponsesClientToolMapping
 	LoweredTools  json.RawMessage

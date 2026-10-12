@@ -7,7 +7,7 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// RelayInput 提供同步帧操作和事件回调，适配器执行供应商 relay。
+// RelayInput supplies synchronous frame connections and callbacks for the upstream relay adapter.
 type RelayInput struct {
 	Ctx                context.Context
 	ClientConn         FrameConn
@@ -17,7 +17,7 @@ type RelayInput struct {
 }
 type RelayResult struct {
 	RequestModel string
-	// ResponseServiceTier 是终止响应声明的上游实际服务档位。
+	// ResponseServiceTier is the service tier declared by the terminal upstream response.
 	ResponseServiceTier     string
 	UpstreamResponseModel   string
 	Usage                   wire.ForwardUsage
@@ -60,7 +60,7 @@ type RelayOptions struct {
 	FirstMessageSent                bool
 	StartClientAfterFirstDownstream bool
 	OnUsageParseFailure             func(eventType string, usageRaw string)
-	// OnUpstreamEvent 在每个上游文本事件解析出 type 后回调，由 service 层统一筛选 warning 事件。
+	// OnUpstreamEvent runs after parsing each upstream text event type; the gateway selects warning events.
 	OnUpstreamEvent   func(eventType string, payload []byte)
 	OnTurnComplete    func(turn RelayTurnResult)
 	BeforeWriteClient func(msgType int, payload []byte, wroteDownstream bool) error

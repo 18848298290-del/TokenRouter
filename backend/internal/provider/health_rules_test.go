@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMatchTempUnschedKeyword 测试关键词匹配函数。
 func TestMatchTempUnschedKeyword(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -51,11 +50,10 @@ func TestMatchTempUnschedKeyword(t *testing.T) {
 			want:     "overloaded",
 		},
 		{
-			// matchTempUnschedKeyword 期望 body 已经是小写的
-			// 所以要测试大小写不敏感匹配，需要传入小写的 body
+			// MatchTempUnschedKeyword requires an already-lowercased body and normalizes keywords itself.
 			name:     "case_insensitive_body_lowered",
-			body:     "server is overloaded", // body 已经是小写
-			keywords: []string{"OVERLOADED"}, // keyword 会被转为小写比较
+			body:     "server is overloaded",
+			keywords: []string{"OVERLOADED"},
 			want:     "OVERLOADED",
 		},
 	}
@@ -68,7 +66,6 @@ func TestMatchTempUnschedKeyword(t *testing.T) {
 	}
 }
 
-// TestTruncateTempUnschedMessage 测试消息截断。
 func TestTruncateTempUnschedMessage(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -83,11 +80,11 @@ func TestTruncateTempUnschedMessage(t *testing.T) {
 			want:     "short",
 		},
 		{
-			// 截断后会 TrimSpace，所以末尾的空格会被移除
+			// Truncation is followed by TrimSpace, removing the trailing space at the cut.
 			name:     "truncate_long_message",
 			body:     []byte("this is a very long message that needs to be truncated"),
 			maxBytes: 20,
-			want:     "this is a very long", // 截断后 TrimSpace
+			want:     "this is a very long",
 		},
 		{
 			name:     "empty_body",

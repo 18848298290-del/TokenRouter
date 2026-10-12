@@ -1,6 +1,6 @@
 package antigravity
 
-// 本文件检查 request_transformer.go 的 DummyThoughtSignature 与 protocol/gemini/signature_cleaner.go 的签名清理配合。
+// These scenarios check that request conversion and Gemini signature cleanup use the same dummy signature.
 
 import (
 	"encoding/json"

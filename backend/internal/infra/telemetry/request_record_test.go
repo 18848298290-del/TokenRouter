@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeRequestRecordRemovesUnstorableText 覆盖路径空字符、无效 UTF-8 和多字节截断。
+// TestNormalizeRequestRecordRemovesUnstorableText covers NULs, invalid UTF-8, and multibyte truncation.
 func TestNormalizeRequestRecordRemovesUnstorableText(t *testing.T) {
 	input := RequestRecord{
 		RequestID: "local-id", Path: "/invalid\x00path", Model: "模型\x00" + strings.Repeat("模", 100),
@@ -35,7 +35,7 @@ func TestNormalizeRequestRecordRemovesUnstorableText(t *testing.T) {
 	require.Equal(t, "fail\x00ed", input.Attempts[0].Outcome)
 }
 
-// TestUpdateRequestForIDChecksCaptureIdentity 错配的任务 ID 保持发起请求的摘要不变。
+// TestUpdateRequestForIDChecksCaptureIdentity checks that a mismatched task ID cannot update the parent.
 func TestUpdateRequestForIDChecksCaptureIdentity(t *testing.T) {
 	ctx := WithRequestCapture(t.Context(), RequestRecord{RequestID: "parent"}, nil)
 	called := false
@@ -47,7 +47,7 @@ func TestUpdateRequestForIDChecksCaptureIdentity(t *testing.T) {
 	require.True(t, called)
 }
 
-// TestRecordRelatedRequestFinishesTerminalStates 失败和取消同样记录结束时间。
+// TestRecordRelatedRequestFinishesTerminalStates checks completion times for failed and canceled records too.
 func TestRecordRelatedRequestFinishesTerminalStates(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		t.Run(state, func(t *testing.T) {

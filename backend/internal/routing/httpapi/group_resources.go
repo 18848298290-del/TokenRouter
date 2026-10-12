@@ -14,17 +14,17 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BatchSetGroupRateMultipliersRequest represents batch set rate multipliers request.
+// BatchSetGroupRateMultipliersRequest contains per-user rate multipliers for a group.
 type BatchSetGroupRateMultipliersRequest struct {
 	Entries []billing.GroupRateMultiplierInput `json:"entries" binding:"required"`
 }
 
-// BatchSetGroupRPMOverridesRequest represents batch set rpm_override request.
+// BatchSetGroupRPMOverridesRequest contains per-user RPM overrides for a group.
 type BatchSetGroupRPMOverridesRequest struct {
 	Entries []billing.GroupRPMOverrideInput `json:"entries" binding:"required"`
 }
 
-// GroupUsageSummary 只表达现有管理响应，聚合查询仍由用量能力提供。
+// GroupUsageSummary contains the admin usage totals returned by the usage reader.
 type GroupUsageSummary struct {
 	GroupID       int64   `json:"group_id"`
 	TodayCost     float64 `json:"today_cost"`
@@ -39,7 +39,7 @@ type GroupRateAdministration interface {
 	ClearGroupRPMOverrides(context.Context, int64) error
 }
 
-// GroupResources 提供分组容量和关联资源的查询接口。
+// GroupResources supplies group capacity and linked-resource queries.
 type GroupResources struct {
 	Capacity interface {
 		GetAllGroupCapacity(context.Context) ([]routing.GroupCapacitySummary, error)
@@ -51,7 +51,7 @@ type GroupResources struct {
 	LiveCapability func(context.Context) error
 }
 
-// GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
+// GetLiveCapability reports whether the server can generate Live attestations.
 func (h *GroupHandler) GetLiveCapability(c *gin.Context) {
 	err := h.resources.LiveCapability(c.Request.Context())
 	result := gin.H{"supported": err == nil}
@@ -61,7 +61,7 @@ func (h *GroupHandler) GetLiveCapability(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// GetUsageSummary 返回服务端时区内全部分组的今日、昨日和累计费用。
+// GetUsageSummary returns today's, yesterday's, and all-time group costs in the server timezone.
 // GET /api/v1/admin/groups/usage-summary
 func (h *GroupHandler) GetUsageSummary(c *gin.Context) {
 	todayStart := h.resources.Today()
@@ -86,7 +86,7 @@ func (h *GroupHandler) GetCapacitySummary(c *gin.Context) {
 	response.Success(c, results)
 }
 
-// GetGroupAPIKeys handles getting API keys in a group
+// GetGroupAPIKeys returns a page of API keys in the group.
 // GET /api/v1/admin/groups/:id/api-keys
 func (h *GroupHandler) GetGroupAPIKeys(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -106,7 +106,7 @@ func (h *GroupHandler) GetGroupAPIKeys(c *gin.Context) {
 	response.Paginated(c, keys, total, page, pageSize)
 }
 
-// GetGroupRateMultipliers handles getting rate multipliers for users in a group
+// GetGroupRateMultipliers returns per-user multipliers for the group.
 // GET /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) GetGroupRateMultipliers(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -127,7 +127,7 @@ func (h *GroupHandler) GetGroupRateMultipliers(c *gin.Context) {
 	response.Success(c, entries)
 }
 
-// ClearGroupRateMultipliers handles clearing all rate multipliers for a group
+// ClearGroupRateMultipliers removes every per-user multiplier for the group.
 // DELETE /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) ClearGroupRateMultipliers(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -144,7 +144,7 @@ func (h *GroupHandler) ClearGroupRateMultipliers(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Rate multipliers cleared successfully"})
 }
 
-// BatchSetGroupRateMultipliers handles batch setting rate multipliers for a group
+// BatchSetGroupRateMultipliers saves per-user multipliers for the group.
 // PUT /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) BatchSetGroupRateMultipliers(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -167,7 +167,7 @@ func (h *GroupHandler) BatchSetGroupRateMultipliers(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Rate multipliers updated successfully"})
 }
 
-// BatchSetGroupRPMOverrides handles batch setting rpm_override for users in a group
+// BatchSetGroupRPMOverrides saves per-user RPM overrides for the group.
 // PUT /api/v1/admin/groups/:id/rpm-overrides
 func (h *GroupHandler) BatchSetGroupRPMOverrides(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -190,7 +190,7 @@ func (h *GroupHandler) BatchSetGroupRPMOverrides(c *gin.Context) {
 	response.Success(c, gin.H{"message": "RPM overrides updated successfully"})
 }
 
-// ClearGroupRPMOverrides handles clearing all rpm_override for a group
+// ClearGroupRPMOverrides removes every per-user RPM override for the group.
 // DELETE /api/v1/admin/groups/:id/rpm-overrides
 func (h *GroupHandler) ClearGroupRPMOverrides(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)

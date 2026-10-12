@@ -21,7 +21,7 @@ type GeminiTierQuotaOverride struct {
 	CooldownMinutes *int   `json:"cooldown_minutes"`
 }
 
-// GeminiQuotaOptions 区分静态配置和按原 TTL 加载的动态设置。
+// GeminiQuotaOptions supplies static defaults and a loader for cached dynamic settings.
 type GeminiQuotaOptions struct {
 	StaticTiers  map[string]GeminiTierQuotaOverride
 	StaticPolicy string
@@ -31,7 +31,7 @@ type GeminiQuotaOptions struct {
 	Log          func(string, ...any)
 }
 
-// GeminiQuotaService 拥有唯一策略缓存，构造不读取设置也不启动后台任务。
+// GeminiQuotaService caches quota policy and loads settings on demand.
 type GeminiQuotaService struct {
 	options  GeminiQuotaOptions
 	mu       sync.Mutex
@@ -160,8 +160,7 @@ func (s *GeminiQuotaService) QuotaForProvider(ctx context.Context, provider *Rec
 		return GeminiQuota{}, false
 	}
 
-	// 将 oauth_type 与 tier_id 转为稳定的策略键。
-	// 上游等级字符串的历史别名不会改变策略表。
+	// Normalize OAuth type and legacy tier aliases to the keys used by the policy table.
 	tierKey := GeminiQuotaTierKeyForProvider(provider)
 	if tierKey == "" {
 		return GeminiQuota{}, false
@@ -190,20 +189,17 @@ func (s *GeminiQuotaService) CooldownForProvider(ctx context.Context, provider *
 func NewGeminiQuotaPolicy() *GeminiQuotaPolicy {
 	return &GeminiQuotaPolicy{
 		tiers: map[string]GeminiTierPolicy{
-			// AI Studio / API Key 使用分模型配额。
-			// aistudio_free 免费档：
-			// Pro 为 50 RPD / 2 RPM。
-			// Flash 为 1500 RPD / 15 RPM。
+			// AI Studio and API Key defaults use separate quotas for Pro and Flash.
 			GeminiTierAIStudioFree: {Quota: GeminiQuota{ProRPD: 50, ProRPM: 2, FlashRPD: 1500, FlashRPM: 15}, Cooldown: 30 * time.Minute},
-			// aistudio_paid 的 RPD=-1 表示不限量或按量计费。
+			// A daily limit of -1 represents unlimited or usage-based billing.
 			GeminiTierAIStudioPaid: {Quota: GeminiQuota{ProRPD: -1, ProRPM: 1000, FlashRPD: -1, FlashRPM: 2000}, Cooldown: 5 * time.Minute},
 
-			// Google One 使用共享配额。
+			// Google One shares quota across model classes.
 			GeminiTierGoogleOneFree: {Quota: GeminiQuota{SharedRPD: 1000, SharedRPM: 60}, Cooldown: 30 * time.Minute},
 			GeminiTierGoogleAIPro:   {Quota: GeminiQuota{SharedRPD: 1500, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 			GeminiTierGoogleAIUltra: {Quota: GeminiQuota{SharedRPD: 2000, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 
-			// GCP Code Assist 使用共享配额。
+			// Code Assist shares quota across model classes.
 			GeminiTierGCPStandard:   {Quota: GeminiQuota{SharedRPD: 1500, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 			GeminiTierGCPEnterprise: {Quota: GeminiQuota{SharedRPD: 2000, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 		},
@@ -223,9 +219,8 @@ func (p *GeminiQuotaPolicy) ApplyOverrides(tiers map[string]GeminiTierQuotaOverr
 		if !ok {
 			policy = GeminiTierPolicy{Cooldown: 5 * time.Minute}
 		}
-		// 按凭据中的配额覆盖值解析：
-		// 共享档位将 pro_rpd 解释为 shared_rpd。
-		// 其余档位分别覆盖各模型配额。
+		// Legacy pro_rpd overrides apply to shared_rpd when the tier has a positive shared limit.
+		// Otherwise, Pro and Flash limits are overridden separately.
 		if override.ProRPD != nil {
 			if policy.Quota.SharedRPD > 0 {
 				policy.Quota.SharedRPD = clampGeminiQuotaInt64WithUnlimited(*override.ProRPD)
@@ -235,7 +230,7 @@ func (p *GeminiQuotaPolicy) ApplyOverrides(tiers map[string]GeminiTierQuotaOverr
 		}
 		if override.FlashRPD != nil {
 			if policy.Quota.SharedRPD > 0 {
-				// 共享档位没有独立的 Flash RPD。
+				// A positive shared daily limit takes precedence over the Flash override.
 			} else {
 				policy.Quota.FlashRPD = clampGeminiQuotaInt64WithUnlimited(*override.FlashRPD)
 			}
@@ -321,11 +316,11 @@ func NormalizeGeminiTierID(tierID string) string {
 	if tierID == "" {
 		return ""
 	}
-	// 优先使用包含历史别名的等级归一化规则。
+	// Resolve canonical IDs and legacy aliases first.
 	if canonical := CanonicalGeminiTierID(tierID); canonical != "" {
 		return canonical
 	}
-	// 继续接受历史大写策略键。
+	// Accept uppercase policy keys as well.
 	switch strings.ToUpper(tierID) {
 	case "AISTUDIO_FREE":
 		return GeminiTierAIStudioFree
@@ -375,21 +370,21 @@ func GeminiQuotaTierKeyForProvider(provider *Record) string {
 	if provider == nil || provider.Platform != PlatformGemini {
 		return ""
 	}
-	// 第三方提供商没有 Google 官方提供商等级，不能套用本地模拟配额。
+	// Third-party providers have no Google tier, so local Google quota estimates do not apply.
 	if provider.IsGeminiThirdPartyProvider() {
 		return ""
 	}
 
-	// 历史记录带 project_id 时，GeminiOAuthType 仍默认返回 code_assist。
+	// Legacy records with a project_id default to code_assist in GeminiOAuthType.
 	oauthType := strings.ToLower(strings.TrimSpace(provider.GeminiOAuthType()))
 	rawTier := strings.TrimSpace(provider.GeminiTierID())
 
-	// 优先使用凭据中已保存的规范等级。
+	// Prefer a recognized tier compatible with the provider's OAuth type.
 	if tierID := CanonicalGeminiTierIDForOAuthType(oauthType, rawTier); tierID != "" && tierID != GeminiTierGoogleOneUnknown {
 		return tierID
 	}
 
-	// 等级缺失或未知时使用默认档位。
+	// Use the OAuth type's default when its tier is missing or unknown.
 	switch oauthType {
 	case "google_one":
 		return GeminiTierGoogleOneFree
@@ -398,12 +393,12 @@ func GeminiQuotaTierKeyForProvider(provider *Record) string {
 	case "ai_studio":
 		return GeminiTierAIStudioFree
 	default:
-		// API Key 的 oauth_type 为空时仍按 AI Studio 处理。
+		// API keys with no OAuth type use the AI Studio policy.
 		return GeminiTierAIStudioFree
 	}
 }
 
-// Clone 返回策略值的副本。
+// Clone returns a policy with an independent tier map.
 func (p *GeminiQuotaPolicy) Clone() *GeminiQuotaPolicy {
 	if p == nil {
 		return nil

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ProtocolProviderProfile 描述可展示的原生选项，不包含令牌或提供商标识。
+// ProtocolProviderProfile describes native protocol choices for a provider type and auth mode.
 type ProtocolProviderProfile struct {
 	Platform  string                `json:"platform"`
 	Type      string                `json:"type"`
@@ -25,7 +25,7 @@ type ProtocolGroupProfile struct {
 	DefaultFallbacks map[protocol.ProtocolID][]protocol.ProtocolID `json:"default_fallbacks"`
 }
 
-// ProtocolCatalogResponse 是协议、提供商和分组能力的目录响应。
+// ProtocolCatalogResponse contains the protocol, provider, and group capability catalogue.
 type ProtocolCatalogResponse struct {
 	Protocols           []Protocol                `json:"protocols"`
 	Providers           []ProtocolProviderProfile `json:"providers"`
@@ -33,14 +33,14 @@ type ProtocolCatalogResponse struct {
 	AuxiliaryOperations []AuxiliaryOperation      `json:"auxiliary_operations"`
 }
 
-// AuxiliaryOperation 登记主协议的辅助操作；资源生命周期不会生成新的协议复选框。
+// AuxiliaryOperation associates a resource operation with its protocol and authorization rule.
 type AuxiliaryOperation struct {
 	Operation     string              `json:"operation"`
 	Protocol      protocol.ProtocolID `json:"protocol,omitempty"`
 	Authorization string              `json:"authorization"`
 }
 
-// Protocol 保留管理员目录的 JSON 顺序和字段。
+// Protocol defines the fields and JSON field order of an admin catalogue entry.
 type Protocol struct {
 	ID           protocol.ProtocolID `json:"id"`
 	Name         string              `json:"name"`
@@ -49,7 +49,7 @@ type Protocol struct {
 	Platforms    []string            `json:"platforms"`
 }
 
-// AdminProtocolCatalog 生成管理端使用的协议能力目录。
+// AdminProtocolCatalog builds the admin protocol capability catalogue.
 func AdminProtocolCatalog(endpoints map[protocol.ProtocolID]string) ProtocolCatalogResponse {
 	providers := []ProtocolProviderProfile{}
 	groups := []ProtocolGroupProfile{}
@@ -105,7 +105,7 @@ func publicProtocols(endpoints map[protocol.ProtocolID]string) []Protocol {
 	return out
 }
 
-// NewProtocolCatalogHandler 复制 app 传入的端点表，使用该副本生成目录响应。
+// NewProtocolCatalogHandler copies the supplied endpoint map for subsequent responses.
 func NewProtocolCatalogHandler(endpoints map[protocol.ProtocolID]string) gin.HandlerFunc {
 	snapshot := maps.Clone(endpoints)
 	return func(c *gin.Context) { httpx.Success(c, AdminProtocolCatalog(snapshot)) }

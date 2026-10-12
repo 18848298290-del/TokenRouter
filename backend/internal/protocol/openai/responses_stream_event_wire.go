@@ -5,17 +5,17 @@ import (
 	"strings"
 )
 
-// MarshalJSON 将 ResponsesStreamEvent 渲染成实际传输的 wire 结构。
+// MarshalJSON encodes ResponsesStreamEvent with the fields required on the wire.
 //
-// OpenAI Responses 流式协议要求某些字段即使为零值也必须存在：
-// output_index/content_index/summary_index 的 0 是有效索引；function_call
-// item 必须始终带 call_id/name/arguments（arguments 可以是空字符串）；
-// message item 必须带 content:[]；output_text part 必须带
-// text/annotations/logprobs。Go 的 `omitempty` 会刚好丢掉这些零值，严格的
-// Codex CLI 会拒绝缺少必需字段的 item/delta。
+// Responses stream fields can be required even when their values are zero:
+// output_index, content_index, and summary_index can all be zero. Function call
+// items require call_id, name, and arguments, including an empty arguments string.
+// Message items require a content array, and output_text parts require
+// text, annotations, and logprobs. Struct omitempty tags would omit these values,
+// causing strict Codex clients to reject the item or delta.
 //
-// 此处逐种构造流式事件，Chat 转 Responses 和 Anthropic 转 Responses 共用这些字段规则。
-// 未列出的 event type 使用默认结构体序列化。
+// Chat and Anthropic conversions share these event-specific field rules.
+// Unlisted event types use the default struct encoding.
 func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 	switch e.Type {
 	case "response.output_text.delta", "response.output_text.done":
@@ -99,8 +99,8 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		return json.Marshal(m)
 
 	default:
-		// response.created / completed / done / failed / incomplete 等未单独
-		// 建模的事件继续保留默认结构体序列化。
+		// Lifecycle events such as response.created and response.completed
+		// use the default struct encoding.
 		type alias ResponsesStreamEvent
 		return json.Marshal(alias(e))
 	}
@@ -120,8 +120,8 @@ func (e ResponsesStreamEvent) putItemID(m map[string]any) {
 	}
 }
 
-// outputTextPartWire 渲染 message output_text content part，并始终带上
-// text/annotations/logprobs。
+// outputTextPartWire encodes an output_text part with text and empty
+// annotations and logprobs arrays.
 func outputTextPartWire(part *ResponsesContentPart) map[string]any {
 	text := ""
 	if part != nil {
@@ -135,7 +135,7 @@ func outputTextPartWire(part *ResponsesContentPart) map[string]any {
 	}
 }
 
-// summaryTextPartWire 渲染 reasoning summary part。
+// summaryTextPartWire encodes a reasoning summary part.
 func summaryTextPartWire(part *ResponsesContentPart) map[string]any {
 	text := ""
 	if part != nil {
@@ -147,8 +147,8 @@ func summaryTextPartWire(part *ResponsesContentPart) map[string]any {
 	}
 }
 
-// responsesItemWire 渲染 output_item，并按 item type 补齐必需字段，包括
-// omitempty 原本会丢掉的空数组和空字符串。
+// responsesItemWire fills required output item fields according to item type,
+// including empty arrays and strings that omitempty would omit.
 func responsesItemWire(item *ResponsesOutput) map[string]any {
 	if item == nil {
 		return map[string]any{}
@@ -177,20 +177,20 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["arguments"] = item.Arguments
-		// namespace 子工具的还原调用：codex 按 namespace+name 路由，缺少该字段
-		// 会被判为 unsupported call。
+		// Codex routes namespace tools by namespace and name; omitting the
+		// namespace would make a restored call unsupported.
 		if item.Namespace != "" {
 			m["namespace"] = item.Namespace
 		}
 	case "custom_tool_call":
-		// custom/freeform 工具调用（如 codex 的 exec）：input 为自由文本。缺少
-		// call_id/name 时 codex 无法路由该调用（表现为 unsupported call）。
+		// Custom tools such as Codex exec take free-form input. Codex needs
+		// call_id and name to route the call.
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["input"] = item.Input
 	case "tool_search_call":
-		// tool_search 调用还原项：execution 必须为 "client"（否则 codex 忽略该
-		// 调用），传输报文中的 arguments 为 JSON 对象。
+		// Codex executes restored tool_search calls when execution is "client".
+		// Their arguments are encoded as JSON values.
 		m["call_id"] = item.CallID
 		m["execution"] = "client"
 		m["arguments"] = ToolSearchCallArgumentsJSON(item.Arguments)
@@ -198,7 +198,7 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 	return m
 }
 
-// messageContentWire 渲染 message item 的 content 数组，空输入返回空数组。
+// messageContentWire encodes message content and returns an empty array for empty input.
 func messageContentWire(parts []ResponsesContentPart) []map[string]any {
 	out := make([]map[string]any, 0, len(parts))
 	for _, p := range parts {
@@ -211,7 +211,7 @@ func messageContentWire(parts []ResponsesContentPart) []map[string]any {
 	return out
 }
 
-// reasoningSummaryWire 渲染 reasoning item 的 summary 数组；结果永远是数组。
+// reasoningSummaryWire encodes reasoning summaries and returns an array even for empty input.
 func reasoningSummaryWire(summary []ResponsesSummary) []map[string]any {
 	out := make([]map[string]any, 0, len(summary))
 	for _, s := range summary {
@@ -224,9 +224,9 @@ func reasoningSummaryWire(summary []ResponsesSummary) []map[string]any {
 	return out
 }
 
-// ToolSearchCallArgumentsJSON 把降级 function 调用累积的 arguments 字符串还原为
-// tool_search_call 线上要求的 JSON 对象；模型未按 schema 输出（非法 JSON）时按
-// 字符串返回，由 Codex 解析并报告错误后让模型重试。
+// ToolSearchCallArgumentsJSON restores accumulated function arguments as raw JSON for tool_search_call.
+// Empty arguments become an object; invalid JSON is encoded as a string so the
+// client can report the argument error and request a retry.
 func ToolSearchCallArgumentsJSON(arguments string) json.RawMessage {
 	trimmed := strings.TrimSpace(arguments)
 	if trimmed == "" {

@@ -83,7 +83,6 @@ func TestRetryPostgresDeadlock_StopsWhenContextCanceled(t *testing.T) {
 	require.Equal(t, 1, attempts)
 }
 
-// TestWaitDeadlockRetryCanceled 验证等待阶段继续传播取消。
 func TestWaitDeadlockRetryCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

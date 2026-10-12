@@ -1,6 +1,6 @@
 package forward
 
-// 本文件检查 failure.go 的失败值与 gateway/failover 状态机、gateway/telemetry 指标的协作。
+// These scenarios check failure values with the gateway/failover state machine and telemetry observers.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// mockTempUnscheduler 记录 TempUnscheduleRetryableError 的调用信息。
+// mockTempUnscheduler records temporary-exclusion calls.
 type mockTempUnscheduler struct {
 	calls []tempUnscheduleCall
 }
@@ -26,7 +26,7 @@ type tempUnscheduleCall struct {
 	failoverErr *UpstreamFailoverError
 }
 
-// TestSameProviderRetryDelayFor 检查容量型瞬时错误的指数退避和其他错误的固定等待。
+// TestSameProviderRetryDelayFor checks transient-capacity backoff and fixed waits for other failures.
 func TestSameProviderRetryDelayFor(t *testing.T) {
 	capacityErr := &UpstreamFailoverError{RequestScopedTransient: true}
 
@@ -127,8 +127,6 @@ func TestEffectiveSameProviderRetryLimitHonorsErrorCapAndDisabledProvider(t *tes
 	})
 }
 
-// NewFailoverState 测试
-
 func TestNewFailoverState(t *testing.T) {
 	t.Run("初始化字段正确", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -160,8 +158,6 @@ func TestNewFailoverState(t *testing.T) {
 		})
 	})
 }
-
-// HandleFailoverError：基本切换流程
 
 func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 	t.Run("显式停止不切换提供商且旧错误默认仍切换", func(t *testing.T) {
@@ -231,7 +227,7 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 
 	t.Run("非重试错误_Antigravity_第一次切换无延迟", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// switchCount 从 0→1 时，sleepFailoverDelay(ctx, 1) 的延时 = (1-1)*1s = 0
+			// The first Antigravity switch has no delay.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(500, false, false)
@@ -248,10 +244,10 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 
 	t.Run("非重试错误_Antigravity_第二次切换有1秒延迟", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// switchCount 从 1→2 时，sleepFailoverDelay(ctx, 2) 的延时 = (2-1)*1s = 1s
+			// The second Antigravity switch waits one second.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
-			fs.SwitchCount = 1 // 模拟已切换一次
+			fs.SwitchCount = 1 // One previous switch.
 
 			err := newTestFailoverErr(500, false, false)
 			start := time.Now()
@@ -270,31 +266,29 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](2, false, gatewaytelemetry.Failover)
 
-			// 第一次切换：0→1
+			// First switch.
 			err1 := newTestFailoverErr(500, false, false)
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err1)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SwitchCount)
 
-			// 第二次切换：1→2
+			// Second switch.
 			err2 := newTestFailoverErr(502, false, false)
 			action = fs.HandleFailoverError(context.Background(), mock, 200, "openai", failover.MaxSameProviderRetries, err2)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 2, fs.SwitchCount)
 
-			// 第三次已耗尽：SwitchCount(2) >= MaxSwitches(2)
+			// The third failure exhausts the two-switch budget.
 			err3 := newTestFailoverErr(503, false, false)
 			action = fs.HandleFailoverError(context.Background(), mock, 300, "openai", failover.MaxSameProviderRetries, err3)
 			require.Equal(t, failover.FailoverExhausted, action)
 			require.Equal(t, 2, fs.SwitchCount, "耗尽时不应继续递增")
 
-			// 验证失败提供商列表
 			require.Len(t, fs.FailedProviderIDs, 3)
 			require.Contains(t, fs.FailedProviderIDs, int64(100))
 			require.Contains(t, fs.FailedProviderIDs, int64(200))
 			require.Contains(t, fs.FailedProviderIDs, int64(300))
 
-			// LastFailoverErr 应为最后一次的错误
 			require.Equal(t, err3, fs.LastFailoverErr)
 		})
 	})
@@ -312,8 +306,6 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 		})
 	})
 }
-
-// HandleFailoverError：缓存计费 (ForceCacheBilling)
 
 func TestHandleFailoverError_CacheBilling(t *testing.T) {
 	t.Run("hasBoundSession为true且实际切换时设置ForceCacheBilling", func(t *testing.T) {
@@ -416,20 +408,18 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
 
-			// 第一次：ForceCacheBilling=true → 设置
+			// The first failure enables forced cache billing.
 			err1 := newTestFailoverErr(500, false, true)
 			fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err1)
 			require.True(t, fs.ForceCacheBilling)
 
-			// 第二次：ForceCacheBilling=false → 仍然保持 true
+			// Later failures cannot reset forced cache billing.
 			err2 := newTestFailoverErr(502, false, false)
 			fs.HandleFailoverError(context.Background(), mock, 200, "openai", failover.MaxSameProviderRetries, err2)
 			require.True(t, fs.ForceCacheBilling, "ForceCacheBilling 一旦设置不应被重置")
 		})
 	})
 }
-
-// HandleFailoverError：同提供商重试 (RetryableOnSameProvider)
 
 func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 	t.Run("第一次重试返回FailoverContinue", func(t *testing.T) {
@@ -447,7 +437,7 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			require.Equal(t, 0, fs.SwitchCount, "同提供商重试不应增加切换计数")
 			require.NotContains(t, fs.FailedProviderIDs, int64(100), "同提供商重试不应加入失败列表")
 			require.Empty(t, mock.calls, "同提供商重试期间不应调用 TempUnschedule")
-			// 验证等待了 sameProviderRetryDelay (500ms)
+			// Check the default 500 ms same-provider delay.
 			require.GreaterOrEqual(t, elapsed, 400*time.Millisecond)
 			require.Less(t, elapsed, 2*time.Second)
 		})
@@ -481,13 +471,12 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			}
 			require.Equal(t, failover.MaxSameProviderRetries, fs.SameProviderRetryCount[100])
 
-			// 第 failover.MaxSameProviderRetries+1 次：重试耗尽，应切换提供商
+			// After the same-provider retry budget is spent, switch providers.
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SwitchCount)
 			require.Contains(t, fs.FailedProviderIDs, int64(100))
 
-			// 验证 TempUnschedule 被调用
 			require.Len(t, mock.calls, 1)
 			require.Equal(t, int64(100), mock.calls[0].providerID)
 			require.Equal(t, err, mock.calls[0].failoverErr)
@@ -500,12 +489,12 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](5, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(400, true, false)
 
-			// 提供商 100 第一次重试
+			// Provider 100 uses its first retry.
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SameProviderRetryCount[100])
 
-			// 提供商 200 第一次重试（独立计数）
+			// Provider 200 has an independent retry count.
 			action = fs.HandleFailoverError(context.Background(), mock, 200, "openai", failover.MaxSameProviderRetries, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SameProviderRetryCount[200])
@@ -519,15 +508,15 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](5, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(400, true, false)
 
-			// 耗尽提供商 100 的重试
+			// Exhaust provider 100 retries.
 			for range failover.MaxSameProviderRetries {
 				fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			}
-			// 第 failover.MaxSameProviderRetries+1 次: 重试耗尽 → 切换
+			// The next failure switches providers.
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			require.Equal(t, failover.FailoverContinue, action)
 
-			// 再次遇到提供商 100，计数仍为 failover.MaxSameProviderRetries，条件不满足 → 直接切换
+			// Revisiting provider 100 retains its exhausted retry count and switches immediately.
 			action = fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Len(t, mock.calls, 2, "第二次耗尽也应调用 TempUnschedule")
@@ -536,20 +525,20 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 
 	t.Run("尊重提供商级retryLimit_配置1次只重试1次", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// retryLimit=1 时，同一提供商重试一次后切换。
+			// A limit of one permits one same-provider retry.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](5, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(403, true, false)
 			const retryLimit = 1
 
-			// 第 1 次：同提供商重试
+			// First failure retries the same provider.
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", retryLimit, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SameProviderRetryCount[100])
 			require.Equal(t, 0, fs.SwitchCount, "首次重试不应切换提供商")
 			require.Empty(t, mock.calls, "未耗尽前不应 TempUnschedule")
 
-			// 第二次已达到一次重试上限，切换提供商并调用 TempUnschedule。
+			// The next failure excludes the provider and switches.
 			action = fs.HandleFailoverError(context.Background(), mock, 100, "openai", retryLimit, err)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SameProviderRetryCount[100], "重试计数不应超过 retryLimit")
@@ -561,7 +550,7 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 
 	t.Run("retryLimit为0时立即切换不重试", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// pool_mode_retry_count=0 表示关闭同提供商重试（如 GPT Image 提供商）。
+			// A zero pool retry limit disables same-provider retries.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](5, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(403, true, false)
@@ -574,8 +563,6 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 		})
 	})
 }
-
-// HandleFailoverError：TempUnschedule 调用验证
 
 func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 	t.Run("非重试错误不调用TempUnschedule", func(t *testing.T) {
@@ -598,7 +585,7 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 			for range failover.MaxSameProviderRetries {
 				fs.HandleFailoverError(context.Background(), mock, 42, "openai", failover.MaxSameProviderRetries, err)
 			}
-			// 再次触发时才会执行 TempUnschedule + 切换
+			// The next failure excludes and switches after the retry budget is spent.
 			fs.HandleFailoverError(context.Background(), mock, 42, "openai", failover.MaxSameProviderRetries, err)
 
 			require.Len(t, mock.calls, 1)
@@ -608,8 +595,6 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 		})
 	})
 }
-
-// HandleFailoverError：Context 取消
 
 func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 	t.Run("同提供商重试sleep期间context取消", func(t *testing.T) {
@@ -621,7 +606,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() {
 				time.Sleep(30 * time.Millisecond)
-				cancel() // 通过入口检查后、sleep 期间取消
+				cancel() // Cancel during the wait, after the entry check.
 			}()
 
 			start := time.Now()
@@ -630,7 +615,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 
 			require.Equal(t, failover.FailoverCanceled, action)
 			require.Less(t, elapsed, 400*time.Millisecond, "sleep 应被取消打断")
-			// 进入重试分支后才取消：重试计数已递增
+			// Cancellation during retry waiting occurs after the retry counter increments.
 			require.Equal(t, 1, fs.SameProviderRetryCount[100])
 		})
 	})
@@ -642,7 +627,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 			err := newTestFailoverErr(520, false, false)
 
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel() // 调用前客户端已断开
+			cancel() // Cancel before the call.
 
 			start := time.Now()
 			action := fs.HandleFailoverError(ctx, mock, 100, "openai", failover.MaxSameProviderRetries, err)
@@ -650,7 +635,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 
 			require.Equal(t, failover.FailoverCanceled, action)
 			require.Less(t, elapsed, 100*time.Millisecond, "应立即返回")
-			// 入口已取消时不得改变任何 failover 状态。
+			// Cancellation at entry leaves failover state unchanged.
 			require.Equal(t, 0, fs.SwitchCount, "取消的请求不应计入切换")
 			require.Equal(t, 0, fs.SameProviderRetryCount[100], "取消的请求不应改动重试计数")
 			require.NotContains(t, fs.FailedProviderIDs, int64(100))
@@ -663,11 +648,11 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
-			fs.SwitchCount = 1 // 下一次 switchCount=2 → delay = 1s
+			fs.SwitchCount = 1 // The next switch would wait one second.
 			err := newTestFailoverErr(500, false, false)
 
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel() // 立即取消
+			cancel()
 
 			start := time.Now()
 			action := fs.HandleFailoverError(ctx, mock, 100, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
@@ -678,8 +663,6 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 		})
 	})
 }
-
-// HandleFailoverError：FailedProviderIDs 跟踪
 
 func TestHandleFailoverError_FailedProviderIDs(t *testing.T) {
 	t.Run("切换时添加到失败列表", func(t *testing.T) {
@@ -730,8 +713,6 @@ func TestHandleFailoverError_FailedProviderIDs(t *testing.T) {
 	})
 }
 
-// HandleFailoverError：LastFailoverErr 更新
-
 func TestHandleFailoverError_LastFailoverErr(t *testing.T) {
 	t.Run("每次调用都更新LastFailoverErr", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -760,15 +741,13 @@ func TestHandleFailoverError_LastFailoverErr(t *testing.T) {
 	})
 }
 
-// HandleFailoverError：综合集成场景
-
 func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 	t.Run("模拟完整failover流程_多提供商混合重试与切换", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, true, gatewaytelemetry.Failover) // hasBoundSession=true
 
-			// 1. 提供商 100 遇到可重试错误，同提供商重试 failover.MaxSameProviderRetries 次
+			// Provider 100 consumes its same-provider retry budget.
 			retryErr := newTestFailoverErr(400, true, false)
 			for range failover.MaxSameProviderRetries {
 				action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, retryErr)
@@ -776,29 +755,28 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 				require.False(t, fs.ForceCacheBilling, "同提供商重试期间不应仅因绑定会话强制缓存计费")
 			}
 
-			// 2. 提供商 100 超过重试上限 → TempUnschedule + 切换
+			// The next failure excludes provider 100 and switches.
 			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, retryErr)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 1, fs.SwitchCount)
 			require.True(t, fs.ForceCacheBilling, "实际切换提供商时应设置 ForceCacheBilling")
 			require.Len(t, mock.calls, 1)
 
-			// 3. 提供商 200 遇到不可重试错误 → 直接切换
+			// Provider 200 fails without same-provider retry eligibility.
 			switchErr := newTestFailoverErr(500, false, false)
 			action = fs.HandleFailoverError(context.Background(), mock, 200, "openai", failover.MaxSameProviderRetries, switchErr)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 2, fs.SwitchCount)
 
-			// 4. 提供商 300 遇到不可重试错误 → 再切换
+			// Provider 300 also switches immediately.
 			action = fs.HandleFailoverError(context.Background(), mock, 300, "openai", failover.MaxSameProviderRetries, switchErr)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Equal(t, 3, fs.SwitchCount)
 
-			// 5. 提供商 400 → 已耗尽 (SwitchCount=3 >= MaxSwitches=3)
+			// Provider 400 reaches the three-switch limit.
 			action = fs.HandleFailoverError(context.Background(), mock, 400, "openai", failover.MaxSameProviderRetries, switchErr)
 			require.Equal(t, failover.FailoverExhausted, action)
 
-			// 最终状态验证
 			require.Equal(t, 3, fs.SwitchCount, "耗尽时不再递增")
 			require.Len(t, fs.FailedProviderIDs, 4, "4个不同提供商都在失败列表中")
 			require.True(t, fs.ForceCacheBilling)
@@ -813,21 +791,21 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 
 			err := newTestFailoverErr(500, false, false)
 
-			// 第一次切换：delay = 0s
+			// The first switch has no delay.
 			start := time.Now()
 			action := fs.HandleFailoverError(context.Background(), mock, 100, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed := time.Since(start)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Less(t, elapsed, 200*time.Millisecond, "第一次切换延迟为 0")
 
-			// 第二次切换：delay = 1s
+			// The second switch waits one second.
 			start = time.Now()
 			action = fs.HandleFailoverError(context.Background(), mock, 200, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed = time.Since(start)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.GreaterOrEqual(t, elapsed, 800*time.Millisecond, "第二次切换延迟约 1s")
 
-			// 第三次：耗尽（无延迟，因为在检查延迟之前就返回了）
+			// Exhaustion returns before the delay branch.
 			start = time.Now()
 			action = fs.HandleFailoverError(context.Background(), mock, 300, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed = time.Since(start)
@@ -841,25 +819,23 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover) // hasBoundSession=false
 
-			// 第一次：ForceCacheBilling=false
+			// The first failure leaves forced cache billing disabled.
 			err1 := newTestFailoverErr(500, false, false)
 			fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err1)
 			require.False(t, fs.ForceCacheBilling)
 
-			// 第二次：ForceCacheBilling=true（Antigravity 粘性会话切换）
+			// An explicit failure flag enables forced cache billing.
 			err2 := newTestFailoverErr(500, false, true)
 			fs.HandleFailoverError(context.Background(), mock, 200, "openai", failover.MaxSameProviderRetries, err2)
 			require.True(t, fs.ForceCacheBilling, "错误标志应触发 ForceCacheBilling")
 
-			// 第三次：ForceCacheBilling=false，但状态仍保持 true
+			// Later failures leave the enabled flag set.
 			err3 := newTestFailoverErr(500, false, false)
 			fs.HandleFailoverError(context.Background(), mock, 300, "openai", failover.MaxSameProviderRetries, err3)
 			require.True(t, fs.ForceCacheBilling, "不应重置")
 		})
 	})
 }
-
-// HandleFailoverError：空值和极值
 
 func TestHandleFailoverError_EdgeCases(t *testing.T) {
 	t.Run("StatusCode为0的错误也能正常处理", func(t *testing.T) {
@@ -914,13 +890,11 @@ func TestHandleFailoverError_EdgeCases(t *testing.T) {
 	})
 }
 
-// HandleSelectionExhausted 测试
-
 func TestHandleSelectionExhausted(t *testing.T) {
 	t.Run("无LastFailoverErr时返回Exhausted", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
-			// LastFailoverErr 为 nil
+			// No previous failure.
 
 			action := fs.HandleSelectionExhausted(context.Background())
 			require.Equal(t, failover.FailoverExhausted, action)
@@ -989,7 +963,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 
 	t.Run("context已取消_非503也返回Canceled而非Exhausted", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// 客户端断开后，选择因 context canceled 失败，按取消处理（#4257）。
+			// Canceled selection ends as cancellation rather than provider exhaustion (#4257).
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
 			fs.LastFailoverErr = newTestFailoverErr(520, false, false)
 
@@ -1017,7 +991,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](2, false, gatewaytelemetry.Failover)
 			fs.LastFailoverErr = newTestFailoverErr(503, false, false)
-			fs.SwitchCount = 2 // == MaxSwitches，条件是 <=，仍可重试
+			fs.SwitchCount = 2 // Equality is allowed by the selection-retry budget.
 
 			action := fs.HandleSelectionExhausted(context.Background())
 			require.Equal(t, failover.FailoverContinue, action)

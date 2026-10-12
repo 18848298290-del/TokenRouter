@@ -71,7 +71,7 @@ func TestGrokBillingURLFollowsProviderBaseURL(t *testing.T) {
 	})
 
 	t.Run("billing probe honors the operator allowlist like forwarding", func(t *testing.T) {
-		// 额度探测与转发共用 URL 策略，被白名单拒绝的主机会在发送 OAuth token 前返回错误。
+		// Reject hosts outside the operator allowlist before sending an OAuth token.
 		value := &providercore.Record{
 			Platform: capability.PlatformGrok,
 			Type:     capability.ProviderTypeOAuth,
@@ -252,7 +252,7 @@ func TestGrokQuotaServiceFetchBillingDoesNotRetryNonTransientStatuses(t *testing
 	}
 }
 
-// billingURLForTest 组合 URL 校验和端点解析函数。
+// billingURLForTest combines provider URL validation with billing endpoint resolution.
 func billingURLForTest(value *providercore.Record, operator xai.BaseURLValidator, weekly bool) (string, error) {
 	validator, err := GrokBaseURLValidator(value, operator)
 	if err != nil {

@@ -11,8 +11,8 @@ import (
 	"github.com/dave/dst/decorator"
 )
 
-// iotaNolint 加在第二个及以后的 iota 块前面，让 decorder 跳过这些块的块数检查。
-const iotaNolint = "//nolint:decorder // iota 按块内序号计数，每个枚举需要独立的 const 块。"
+// iotaNolint exempts additional iota blocks from decorder's block count check.
+const iotaNolint = "//nolint:decorder // Separate const blocks keep each iota sequence starting at zero."
 
 // reorder 按 import、const、var、type、func 的顺序重排一个 Go 文件的顶层声明。
 //

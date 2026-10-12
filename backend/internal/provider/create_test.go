@@ -13,7 +13,7 @@ type createSnapshotStore struct {
 	privacyWrites int
 }
 
-// 此处检查创建结果的指针，HTTP 和使用方测试覆盖模型数据转换。
+// deprecatedCreateStore records the provider value supplied to creation.
 type deprecatedCreateStore struct {
 	AdminStore
 	createdProvider *Record
@@ -29,7 +29,7 @@ func (s *createSnapshotStore) UpdatePrivacyModeIfUnchanged(context.Context, Usag
 	return true, nil
 }
 
-// TestCreatePrivacyTaskHasIndependentReturnSnapshot 验证创建后的受跟踪任务不得修改已经返回给 HTTP 的提供商值。
+// TestCreatePrivacyTaskHasIndependentReturnSnapshot checks that post-create privacy work cannot mutate the returned provider.
 func TestCreatePrivacyTaskHasIndependentReturnSnapshot(t *testing.T) {
 	store := &createSnapshotStore{}
 	privacy := NewPrivacyService(store, nil, PrivacyOptions{Antigravity: func(context.Context, string, string, string) string { return AntigravityPrivacySet }})

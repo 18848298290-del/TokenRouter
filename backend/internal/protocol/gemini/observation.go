@@ -2,6 +2,8 @@ package gemini
 
 import "github.com/tidwall/gjson"
 
+// Observation separates reported usage, content output, and a finish reason.
+// HasUsage includes explicit zero counts.
 type Observation struct{ HasUsage, Semantic, Terminal bool }
 
 func ObservePayload(payload []byte) Observation {

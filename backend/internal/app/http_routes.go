@@ -24,7 +24,7 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi"
 )
 
-// httpRouteSecurity 保存各路由族的 middleware 顺序，app 提供中间件实例。
+// httpRouteSecurity holds middleware in route-family order using instances supplied by app.
 type httpRouteSecurity struct {
 	JWT, Admin, Audit, StepUp, BackendAuth, BackendUser gin.HandlerFunc
 	Panel                                               *servermiddleware.PanelRateLimiter
@@ -39,7 +39,7 @@ type (
 	paymentRouteMount func(*gin.RouterGroup, httpRouteSecurity)
 )
 
-// provideHTTPRouteMount 组合各路由注册函数。
+// provideHTTPRouteMount combines route registration functions.
 func provideHTTPRouteMount(auth authRouteMount, user userRouteMount, admin adminRouteMount, gateway gatewayRouteMount, payment paymentRouteMount,
 	_ *idempotency.IdempotencyCoordinator, _ *idempotency.IdempotencyCleanupService,
 ) httpRouteMount {
@@ -54,7 +54,7 @@ func provideHTTPRouteMount(auth authRouteMount, user userRouteMount, admin admin
 	}
 }
 
-// provideAuthRouteMount 将认证 HTTP 处理器和跨模块读取函数绑定到路由注册函数。
+// provideAuthRouteMount binds authentication handlers and cross-module readers to route registration.
 func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 	ePublicSettings *sitehttp.PublicHandler,
 	eNotification *notificationhttp.Handler,
@@ -75,7 +75,7 @@ func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 	}
 }
 
-// provideGatewayRouteMount 为路由注册函数绑定已构造的网关端点。
+// provideGatewayRouteMount binds constructed gateway endpoints to route registration.
 func provideGatewayRouteMount(eCountTokensHTTP *gatewayhttp.CountTokensHandler,
 	eQoderCompatibleHTTP *gatewayhttp.QoderCompatibleHandler,
 	eCompatibleTextHTTP *gatewayhttp.CompatibleTextHandler,
@@ -105,7 +105,7 @@ func providePaymentRouteMount(user *paymenthttp.PaymentHandler, webhook *payment
 	}
 }
 
-// provideUserRouteMount 将用户 HTTP 处理器和跨模块读取函数绑定到路由注册函数。
+// provideUserRouteMount binds user handlers and cross-module readers to route registration.
 func provideUserRouteMount(
 	eUserPromotion *promotionhttp.UserHandler,
 	eSubscription *billinghttp.SubscriptionHandler,
@@ -123,9 +123,9 @@ func provideUserRouteMount(
 		authenticated := v1.Group("")
 		authenticated.Use(security.JWT)
 		authenticated.Use(security.BackendUser)
-		// 面板全局按用户限流：防止单个提供商高频刷接口打爆数据库
+		// Per-user panel limits bound database load from frequent requests.
 		authenticated.Use(security.Panel.Global())
-		// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
+		// Audit user mutations, including TOTP changes, step-up verification, and password changes.
 		authenticated.Use(security.Audit)
 		identityhttp.RegisterUserRoutes(authenticated, eUser, eTotp, ePasskey)
 		promotionhttp.RegisterUserRoutes(authenticated, eUserPromotion)

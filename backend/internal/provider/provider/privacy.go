@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// PrivacyOptions 组合供应商隐私请求，生命周期和条件写入由提供商用例拥有。
+// PrivacyOptions binds upstream privacy calls; the provider service owns lifecycle and conditional writes.
 func PrivacyOptions(factory openai.PrivacyClientFactory, endpoints openai.PrivacyEndpoints) provider.PrivacyOptions {
 	antigravity := provider.AntigravityAuthorization{Options: AntigravityAuthorizationOptions(nil)}
 	options := provider.PrivacyOptions{

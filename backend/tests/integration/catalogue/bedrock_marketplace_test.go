@@ -18,7 +18,7 @@ type bedrockMarketplaceGroups struct {
 	groups []routing.Group
 }
 
-// newBedrockRoutingTestProvider 原地域模型与市场一致性断言使用相同的原生目录和报价实现。
+// newBedrockRoutingTestProvider creates a Bedrock provider with a region and optional global routing.
 func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) providercore.Record {
 	provider := providercore.Record{
 		ID: id, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeBedrock,
@@ -69,7 +69,7 @@ func TestBedrockRegionRouting_MarketplaceUsesSharedResolution(t *testing.T) {
 			for _, model := range groups[0].Models {
 				publicModels = append(publicModels, model.ID)
 			}
-			// 其它可请求型号仍正常展示；只移除本地区不可用的型号及其别名。
+			// The marketplace and requestable catalogue agree on regional exclusions, including aliases.
 			require.ElementsMatch(t, routing.RequestableModelIDs(models.Models), publicModels)
 			if forceGlobal {
 				require.Contains(t, publicModels, "client-alias")

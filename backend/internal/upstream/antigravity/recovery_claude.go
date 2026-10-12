@@ -40,9 +40,9 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 	}
 	respBody := options.ReadErrorBody(resp)
 	claudeReq, projectID, mappedModel, transformOpts, prefix := input.Request, input.ProjectID, input.Model, input.InitialOptions, input.Prefix
-	// 优先检测 thinking block 的 signature 相关错误（400）并重试一次：
-	// Antigravity /v1internal 链路在部分场景会对 thought/thinking signature 做严格校验，
-	// 当历史消息携带的 signature 不合法时会直接 400；去除 thinking 后可继续完成请求。
+	// A signature-related 400 can be retried with less signature-sensitive content.
+	// Invalid historical thinking signatures may fail v1internal validation.
+	// Each recovery stage rebuilds the request before another attempt.
 	if resp.StatusCode == http.StatusBadRequest && IsSignatureRelatedError(respBody) && options.SignatureEnabled(ctx) {
 		upstreamMsg := strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody))
 		upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
@@ -58,9 +58,9 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 			Detail:             upstreamDetail,
 		})
 
-		// Conservative two-stage fallback:
-		// 1) Disable top-level thinking + thinking->text
-		// 2) Only if still signature-related 400: also downgrade tool_use/tool_result to text.
+		// Try thinking recovery before degrading tool blocks:
+		// 1) Disable top-level thinking and convert thinking blocks to text.
+		// 2) If a signature-related 400 persists, also convert tool blocks to text.
 
 		retryStages := []struct {
 			name  string
@@ -138,7 +138,7 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 				Detail:             retryUpstreamDetail,
 			})
 
-			// If this stage fixed the signature issue, we stop; otherwise we may try the next stage.
+			// Stop degrading content once the error is no longer signature-related.
 			if retryResp.StatusCode != http.StatusBadRequest || !IsSignatureRelatedError(retryBody) {
 				respBody = retryBody
 				resp = &http.Response{
@@ -149,7 +149,7 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 				break
 			}
 
-			// Still signature-related; capture context and allow next stage.
+			// Preserve this failed response for the next recovery stage.
 			respBody = retryBody
 			resp = &http.Response{
 				StatusCode: retryResp.StatusCode,
@@ -159,7 +159,7 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 		}
 	}
 
-	// Budget 整流：检测 budget_tokens 约束错误并自动修正重试
+	// Retry a recognized budget constraint with corrected thinking limits.
 	if resp.StatusCode == http.StatusBadRequest && respBody != nil && !IsSignatureRelatedError(respBody) {
 		errMsg := strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody))
 		if options.IsBudgetConstraint(errMsg) && options.BudgetEnabled(ctx) {
@@ -173,11 +173,11 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 				Detail:             options.ErrorDetail(respBody),
 			})
 
-			// 修正 claudeReq 的 thinking 参数（adaptive 模式不修正）
+			// Adaptive thinking does not use an explicit budget correction.
 			if claudeReq.Thinking == nil || claudeReq.Thinking.Type != "adaptive" {
 				retryClaudeReq := claudeReq
 				retryClaudeReq.Messages = append([]protocolanthropic.ClaudeMessage(nil), claudeReq.Messages...)
-				// 创建新的 ThinkingConfig 避免修改原始 claudeReq.Thinking 指针
+				// Allocate a separate config so the original request retains its thinking settings.
 				retryClaudeReq.Thinking = &protocolanthropic.ThinkingConfig{
 					Type:         "enabled",
 					BudgetTokens: options.BudgetTokens,

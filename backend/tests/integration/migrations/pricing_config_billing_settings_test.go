@@ -14,7 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration281MovesSettingsWithoutCopyingGroupValues 验证新配置字段采用默认值，旧分组价格不搬迁；价卡和关联保持原样。
+// TestMigration281MovesSettingsWithoutCopyingGroupValues checks default billing settings while retaining
+// shared prices and group links.
 func TestMigration281MovesSettingsWithoutCopyingGroupValues(t *testing.T) {
 	ctx := context.Background()
 	tx := historicalTx(t, "281_")
@@ -54,7 +55,8 @@ func TestMigration281MovesSettingsWithoutCopyingGroupValues(t *testing.T) {
 	require.Zero(t, count)
 }
 
-// TestPricingConfigBillingSettingsRoundTrip 验证真实 PostgreSQL 覆盖设置与模型价卡的写入、清空和全部读取路径。
+// TestPricingConfigBillingSettingsRoundTrip checks writes, clearing an override, and listing stored billing
+// settings in PostgreSQL.
 func TestPricingConfigBillingSettingsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := routingpostgres.NewPricingConfigStore(integrationDB)

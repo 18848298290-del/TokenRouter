@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 五秒独立写回不阻塞查询返回，应用停止仍能等待或报告未完成。
+// openAIUsageWriteOwner blocks writes to test snapshot ownership and bounded shutdown waits.
 type openAIUsageWriteOwner struct {
 	OAuthUsageReader
 	entered, release, exited chan struct{}
@@ -53,8 +53,8 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	}
 }
 
-// TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 spark 影子用量走
-// QueryUsage(/wham/usage,与 WSv2 无关),staleness 不得被 WSv2 门控,否则首刷后窗口永久冻结。
+// TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 checks expiration of shadow snapshots.
+// Shadows query /wham/usage, so requiring WS capability would leave their usage frozen after the first fetch.
 func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	t.Parallel()
 
@@ -67,7 +67,7 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	freshAt := now.Add(-time.Minute).Format(time.RFC3339)
 	parentID := int64(7001)
 
-	// 影子无 WSv2,但首刷后窗口已存在;过期 codex_usage_updated_at 必须触发再刷新。
+	// A complete shadow snapshot still needs refreshing once its timestamp expires.
 	shadowStale := &Record{
 		Platform:         capability.PlatformOpenAI,
 		Type:             capability.ProviderTypeOAuth,
@@ -79,7 +79,7 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected stale spark shadow (no WSv2) to trigger refresh")
 	}
 
-	// 影子快照时间戳在 TTL 内时使用缓存。
+	// A shadow snapshot within the TTL can be reused.
 	shadowFresh := &Record{
 		Platform:         capability.PlatformOpenAI,
 		Type:             capability.ProviderTypeOAuth,
@@ -91,7 +91,7 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected fresh spark shadow to skip refresh (TTL not elapsed)")
 	}
 
-	// 普通提供商未声明上游 WS 能力时，过期时间戳也不触发这项探测。
+	// Regular providers without upstream WS capability do not trigger this probe on expiration alone.
 	normalNoWS := &Record{
 		Credentials: map[string]any{"upstream_protocols": []string{"openai_responses"}},
 		Platform:    capability.PlatformOpenAI,
@@ -136,7 +136,7 @@ func TestOAuthUsageOpenAIWritebackHasBoundedOwner(t *testing.T) {
 	require.Same(t, err, core.StopContext(context.Background()))
 }
 
-// TestOpenAIUsesOneWindowQuery 核对供应商重置时间和两个窗口结果的独立性。
+// TestOpenAIUsesOneWindowQuery checks reset-based windows and independence of returned statistics.
 func TestOpenAIUsesOneWindowQuery(t *testing.T) {
 	now := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	reset5 := now.Add(time.Hour)

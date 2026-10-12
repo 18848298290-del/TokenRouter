@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// identityAdminKeys 为身份管理转换 Key 只读列表，保留分页查询与排序。
+// identityAdminKeys converts Key summaries for identity administration with pagination and sorting.
 type identityAdminKeys struct{ *keypostgres.KeyStore }
 
 func (p identityAdminKeys) List(ctx context.Context, id int64, page, size int, sortBy, order string) ([]identity.AdminKeySummary, int64, error) {
@@ -45,7 +45,7 @@ func (p identityAdminKeys) List(ctx context.Context, id int64, page, size int, s
 	return out, pagination.Total, nil
 }
 
-// provideIdentityAdmin 绑定同连接事务参与工厂，提交成功后发布缓存失效通知。
+// provideIdentityAdmin binds transaction participants and post-commit cache invalidation dependencies.
 func provideIdentityAdmin(client *dbent.Client, users *identitypostgres.UserStore, keys *keypostgres.KeyStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, rpm scheduler.UserRPMCache, settings *identityAuthSettings, subs identity.DefaultSubscriptionAssigner, balances billing.BalanceAdjuster, records *billing.RedeemAdmin, invalidator apikey.APIKeyAuthCacheInvalidator, cache *billing.Eligibility, affiliates *promotion.AffiliateService, tasks *lifecycle.Tasks) *identity.UserAdmin {
 	observe := identity.Observer{Log: logging.LegacyPrintf}
 	transactions := &identitypostgres.AdminMutations{Client: client, Users: users, Keys: keys, KeysInTx: func(tx *dbent.Tx) identity.AdminKeyParticipant { return keys.LifecycleInTx(tx) }, Observer: observe}
@@ -57,7 +57,7 @@ func provideKeyAdmin(client *dbent.Client, keys *keypostgres.KeyStore, users *id
 	return &apikey.Admin{Keys: keys, Users: users, Groups: keyGroups{Repository: groups}, Mutations: mutations, Invalidator: invalidator, RateLimits: cache}
 }
 
-// provideIdentityAdminHTTP 绑定 Key 展示和实时并发读取函数，用户管理规则由 identity 执行。
+// provideIdentityAdminHTTP binds Key display and live concurrency reads; identity owns user administration rules.
 func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, concurrency *scheduler.ConcurrencyService, totp *identity.TotpService, users *identity.UserService, settings *identity.RuntimeSettings) *identityhttp.AdminUserHandler[keydto.APIKey[routingdto.Group]] {
 	listKeys := func(ctx context.Context, id int64, page, size int, sortBy, order string) ([]keydto.APIKey[routingdto.Group], int64, error) {
 		rows, total, err := keys.GetUserAPIKeys(ctx, id, page, size, sortBy, order)

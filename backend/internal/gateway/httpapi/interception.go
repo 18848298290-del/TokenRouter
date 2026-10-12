@@ -12,14 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
-// WriteInterceptStream 发送流式 mock 响应（用于请求拦截）。
+// WriteInterceptStream writes a synthetic streaming response for an intercepted request.
 func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta.InterceptType) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	// 根据拦截类型决定响应内容
 	var msgID string
 	var outputTokens int
 	var textDeltas []string
@@ -28,29 +27,27 @@ func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta
 	case clientmeta.InterceptTypeSuggestionMode:
 		msgID = GenerateInterceptMessageID()
 		outputTokens = 1
-		textDeltas = []string{""} // 空内容
+		textDeltas = []string{""} // Suggestion probes return empty text.
 	default: // clientmeta.InterceptTypeWarmup
 		msgID = GenerateInterceptMessageID()
 		outputTokens = 2
 		textDeltas = []string{"New", " Conversation"}
 	}
 
-	// 构造与 Anthropic 官方响应字段一致的 message_start 事件。
+	// Emit message_start with Anthropic message and usage fields.
 	messageStartJSON := `{"type":"message_start","message":{"model":` + strconv.Quote(model) + `,"id":` + strconv.Quote(msgID) + `,"type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}`
 
-	// 构造内容块事件。
 	events := []string{
 		`event: message_start` + "\n" + `data: ` + messageStartJSON,
 		`event: content_block_start` + "\n" + `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 	}
 
-	// 按原顺序追加文本增量。
 	for _, text := range textDeltas {
 		deltaJSON := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + strconv.Quote(text) + `}}`
 		events = append(events, `event: content_block_delta`+"\n"+`data: `+deltaJSON)
 	}
 
-	// message_delta 的 usage 只包含本次增量的输出 token。
+	// The terminal message_delta carries the synthetic response's output token count.
 	messageDeltaJSON := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"output_tokens":` + strconv.Itoa(outputTokens) + `}}`
 
 	events = append(events,
@@ -66,13 +63,13 @@ func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta
 	}
 }
 
-// GenerateInterceptMessageID 生成 Anthropic 官方格式的消息 ID：msg_01 + 22 位 Base62。
+// GenerateInterceptMessageID returns msg_01 followed by 22 Base62 characters.
 func GenerateInterceptMessageID() string {
 	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	const idLen = 22
 	randomBytes := make([]byte, idLen)
 	if _, err := rand.Read(randomBytes); err != nil {
-		// 极端情况下熵源不可用，仍保持客户端依赖的固定格式。
+		// If entropy is unavailable, retain the expected ID shape using a timestamp.
 		return fmt.Sprintf("msg_01%022d", time.Now().UnixNano())
 	}
 	b := make([]byte, idLen)
@@ -82,7 +79,7 @@ func GenerateInterceptMessageID() string {
 	return "msg_01" + string(b)
 }
 
-// WriteInterceptResponse 发送非流式 mock 响应（用于请求拦截）。
+// WriteInterceptResponse writes a synthetic non-streaming response for an intercepted request.
 func WriteInterceptResponse(c *gin.Context, model string, interceptType clientmeta.InterceptType) {
 	var msgID, text, stopReason string
 	var outputTokens int
@@ -97,7 +94,7 @@ func WriteInterceptResponse(c *gin.Context, model string, interceptType clientme
 		msgID = GenerateInterceptMessageID()
 		text = "#"
 		outputTokens = 1
-		stopReason = "max_tokens" // max_tokens=1 探测请求的 stop_reason 应为 max_tokens
+		stopReason = "max_tokens" // A max_tokens=1 probe reports max_tokens as its stop reason.
 	default: // clientmeta.InterceptTypeWarmup
 		msgID = GenerateInterceptMessageID()
 		text = "New Conversation"
@@ -105,7 +102,7 @@ func WriteInterceptResponse(c *gin.Context, model string, interceptType clientme
 		stopReason = "end_turn"
 	}
 
-	// 构建与 Anthropic 官方响应字段一致的完整响应。
+	// Use the Anthropic message shape for the synthetic response.
 	response := gin.H{
 		"model":         model,
 		"id":            msgID,

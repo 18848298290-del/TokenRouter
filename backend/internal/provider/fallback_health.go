@@ -10,11 +10,11 @@ const (
 	MaxRateLimit429CooldownSeconds     = 7200
 )
 
-// RateLimit429CooldownSettings 429 默认回避配置。
+// RateLimit429CooldownSettings controls the default cooldown for 429 responses.
 type RateLimit429CooldownSettings struct {
-	// Enabled 是否在无法解析上游重置时间时应用默认 429 回避
+	// Enabled applies the default cooldown when the upstream reset time cannot be parsed.
 	Enabled bool `json:"enabled"`
-	// CooldownSeconds 默认回避时长（秒）
+	// CooldownSeconds is the default cooldown in seconds.
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
@@ -61,7 +61,7 @@ func ClampRateLimit429CooldownSeconds(seconds int) int {
 	return seconds
 }
 
-// DefaultRateLimit429CooldownSettings 返回默认的 429 回避配置（启用，5 秒）。
+// DefaultRateLimit429CooldownSettings enables a five-second default cooldown.
 func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 	return &RateLimit429CooldownSettings{
 		Enabled:         true,

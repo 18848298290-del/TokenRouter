@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	// UsageBillingMonetaryScale 是余额与 API Key 金额计数的规范小数位数，
-	// 对齐 users.balance / api_keys.quota_used 等 NUMERIC(20,8) 列。
+	// UsageBillingMonetaryScale is the decimal scale for balance and API key monetary counters,
+	// matching NUMERIC(20,8) columns such as users.balance and api_keys.quota_used.
 	UsageBillingMonetaryScale = 8
 
 	taskCostEpsilon = 0.00000001
@@ -28,7 +28,7 @@ var (
 	ErrUsageBillingRequestIDRequired = errors.New("usage billing request_id is required")
 	ErrUsageBillingRequestConflict   = errors.New("usage billing request fingerprint conflict")
 
-	// ErrTaskSettlementCostExceedsHold 沿用历史错误 reason 与消息。
+	// ErrTaskSettlementCostExceedsHold reports a capture that exceeds reserved funds.
 	ErrTaskSettlementCostExceedsHold = apperror.Conflict("BATCH_IMAGE_SETTLEMENT_COST_EXCEEDS_HOLD", "batch image settlement cost exceeds held balance")
 
 	ErrImageTaskPricingMissing = apperror.New(apperror.CategoryBadRequest, "BATCH_IMAGE_SETTLEMENT_PRICING_MISSING", "batch image settlement pricing is missing")
@@ -40,7 +40,7 @@ type UsageBillingCommand struct {
 	APIKeyID           int64
 	RequestFingerprint string
 	RequestPayloadHash string
-	// APIKeyBillingMode 与 PreferredSubscriptionID 固化请求进入网关时的资金来源选择。
+	// APIKeyBillingMode and PreferredSubscriptionID record the funding choice at gateway admission.
 	APIKeyBillingMode       string
 	PreferredSubscriptionID *int64
 
@@ -54,7 +54,7 @@ type UsageBillingCommand struct {
 	SubscriptionRateMultiplier      float64
 	SubscriptionRateMultiplierScale float64
 	BalanceRateMultiplier           float64
-	// 批量预占可关闭套餐倍率覆盖，并要求返回后续结算所需的基础金额明细。
+	// Batch reservations can disable plan rate overrides and request base-amount details for later settlement.
 	DisablePlanGroupRateMultiplier bool
 	IncludeAllocationPricing       bool
 	ProviderType                   string
@@ -96,7 +96,7 @@ type UsageBillingApplyResult struct {
 	EffectiveRateMultiplier *float64
 }
 
-// TaskFundsCommand describes an idempotent balance hold operation.
+// TaskFundsCommand describes an idempotent task-funding operation.
 type TaskFundsCommand struct {
 	RequestID          string
 	APIKeyID           int64
@@ -106,13 +106,13 @@ type TaskFundsCommand struct {
 	ActorUserID        int64
 	TeamID             *int64
 	GroupID            *int64
-	// APIKeyBillingMode 与 PreferredSubscriptionID 冻结提交时的资金来源，避免任务执行期间切换 Key 配置改变结算对象。
+	// APIKeyBillingMode and PreferredSubscriptionID freeze submission-time funding so later key edits cannot redirect settlement.
 	APIKeyBillingMode       string
 	PreferredSubscriptionID *int64
 	Task                    TaskReference
 	HoldAmount              float64
 	ActualAmount            float64
-	// 第二版价格快照按基础金额分配，避免订阅与余额共担时沿用同一个倍率。
+	// Version 2 snapshots allocate base amounts so subscription and balance funding can use different rates.
 	PricingSnapshotVersion          int
 	BaseAmountUSD                   float64
 	ActualBaseAmountUSD             float64
@@ -121,13 +121,13 @@ type TaskFundsCommand struct {
 	BalanceRateMultiplier           float64
 	SettlementRateScale             float64
 	DisablePlanGroupRateMultiplier  bool
-	// BalanceHoldAmount 和 SubscriptionHoldAllocations 是提交时持久化的资金预占快照。
-	// 两者都为空时按旧任务处理，视为 HoldAmount 全部来自余额冻结。
+	// BalanceHoldAmount and SubscriptionHoldAllocations are the persisted submission-time holds.
+	// When both are absent, legacy tasks treat all of HoldAmount as a balance hold.
 	BalanceHoldAmount           float64
 	SubscriptionHoldAllocations []BillingAllocation
-	// AllowanceReserved 区分新任务预记和滚动升级期间的旧任务。
+	// AllowanceReserved indicates whether the task pre-recorded allowance usage, including during rolling upgrades.
 	AllowanceReserved bool
-	// ReservedAt 用于只回退仍属于原窗口的预记额度。
+	// ReservedAt identifies the original windows when releasing reserved allowance usage.
 	ReservedAt time.Time
 }
 
@@ -143,7 +143,7 @@ type TaskFundsResult struct {
 	BillingAllocations    []BillingAllocation
 }
 
-// TaskCapturePlan 描述批量任务从预占金额收敛到实际金额时的资金拆分。
+// TaskCapturePlan splits actual task costs across held funds and records subscription releases.
 type TaskCapturePlan struct {
 	BalanceHoldAmount     float64
 	ActualAmountUSD       float64
@@ -153,10 +153,10 @@ type TaskCapturePlan struct {
 	SubscriptionReleases  []BillingAllocation
 }
 
-// TaskScope 标识装配时登记的任务类型，供资金操作选择任务存储。
+// TaskScope identifies a registered task type so funding operations can select its store.
 type TaskScope string
 
-// TaskReference 显式携带原预占动作 ID；新增路由字段不参与历史指纹。
+// TaskReference carries the task and original reserve request IDs; Scope and ReserveRequestID are excluded from fingerprints.
 type TaskReference struct {
 	Scope            TaskScope
 	ID               string
@@ -174,7 +174,7 @@ func (c *UsageBillingCommand) Normalize() {
 		mode = APIKeyBillingModeAuto
 	}
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
-		// 缺省模式代表升级前的命令，保留旧指纹格式；显式模式才写入新字段。
+		// Keep an omitted mode empty in the fingerprint for retry compatibility; normalize supplied modes.
 		fingerprintCommand := *c
 		if rawMode == "" {
 			fingerprintCommand.APIKeyBillingMode = ""
@@ -190,44 +190,44 @@ func (c *UsageBillingCommand) Normalize() {
 	if mode != APIKeyBillingModeSubscription {
 		c.PreferredSubscriptionID = nil
 	}
-	// 量化必须在指纹计算之后：指纹是请求幂等键，保持由原始金额派生可以避免
-	// 升级前后同一 request_id 的重试算出不同指纹而被判为 fingerprint conflict。
+	// Compute the fingerprint from raw amounts before quantizing so retries across upgrades
+	// do not conflict solely because storage precision changed.
 	c.quantizeMonetaryFields()
 }
 
-// quantizeMonetaryFields 量化命令中直接写入 NUMERIC(20,8) 计数列的金额。
-// BillableAmountUSD 和 BaseAmountUSD 仍保留原始精度，供 10 位精度的订阅结算与用量事实使用；
-// 最终余额扣减由仓储层在 SQL 边界单独量化。
+// quantizeMonetaryFields rounds counters written directly to NUMERIC(20,8) columns.
+// BillableAmountUSD and BaseAmountUSD retain precision for subscription settlement and usage facts;
+// the repository separately rounds the final balance deduction before SQL.
 //
-// 不量化时，同一笔 ActualCost 会在两条方向相反的 SQL 上被 PostgreSQL 分别舍入：
+// Without prior rounding, PostgreSQL rounds the results of the two operations independently:
 //
-//	balance    = balance - $1      // 存剩余额度，舍入的是「减法结果」
-//	quota_used = quota_used + $1   // 存累计用量，舍入的是「加法结果」
+//	balance    = balance - $1    // Round the remaining balance.
+//	quota_used = quota_used + $1 // Round accumulated usage.
 //
-// PostgreSQL 对 NUMERIC 采用 half-away-from-zero。当金额在第 9 位出现 half 边界
-// （例：10 个输入 token × 0.00000125 + 5 个输出 token × 0.00001000，再乘分组倍率
-// 1.25 = 0.000078125）时：
+// NUMERIC rounds ties away from zero. For a ninth-decimal tie, such as
+// 10 input tokens * 0.00000125 + 5 output tokens * 0.00001000,
+// scaled by 1.25 to 0.000078125, the deltas differ:
 //
-//	balance:    10000 - 0.000078125 = 9999.999921875 → 9999.99992188（delta 0.00007812）
-//	quota_used:     0 + 0.000078125 =     0.000078125 →     0.00007813（delta 0.00007813）
+//	balance:    10000 - 0.000078125 = 9999.999921875 -> 9999.99992188 (delta 0.00007812)
+//	quota_used:     0 + 0.000078125 =    0.000078125 ->    0.00007813 (delta 0.00007813)
 //
-// 两个 delta 相差 1e-8，余额少扣、Key 配额多记，差额随请求量累积，
-// 使余额、API Key 配额与用量记录无法精确对账（需要 epsilon 比较才能勉强吻合）。
+// The 1e-8 difference accumulates across requests and prevents exact reconciliation
+// between balance deductions, API key counters, and usage records.
 //
-// 在参数进入 SQL 之前量化一次，两条语句就都拿到已经落在 8 位刻度上的同一个金额，
-// 存储阶段不再发生任何舍入，delta 精确相等。
+// Rounding the amount before SQL puts both operations on the same eight-decimal scale,
+// so storing their results does not introduce opposite rounding deltas.
 func (c *UsageBillingCommand) quantizeMonetaryFields() {
 	c.APIKeyQuotaCost = QuantizeUsageBillingAmount(c.APIKeyQuotaCost)
 	c.APIKeyRateLimitCost = QuantizeUsageBillingAmount(c.APIKeyRateLimitCost)
 	c.ProviderQuotaCost = QuantizeUsageBillingAmount(c.ProviderQuotaCost)
 }
 
-// QuantizeUsageBillingAmount 把金额舍入到 UsageBillingMonetaryScale 位小数，
-// 采用与 PostgreSQL NUMERIC 一致的 half-away-from-zero 规则。
+// QuantizeUsageBillingAmount rounds to UsageBillingMonetaryScale decimal places
+// using half-away-from-zero rounding, as PostgreSQL NUMERIC does.
 //
-// 使用 decimal 计算。math.Round(v*1e8)/1e8 的乘除过程会引入额外的二进制
-// 误差，边界值可能被推到错误的一侧。decimal.NewFromFloat 取 float64 的最短十进制
-// 表示，正是 PostgreSQL 把 float8 参数转成 numeric 时所用的表示。
+// Decimal arithmetic avoids the extra binary rounding from math.Round(v*1e8)/1e8
+// near a tie. decimal.NewFromFloat uses the float's shortest decimal representation
+// before rounding. Zero and nonfinite values pass through unchanged.
 func QuantizeUsageBillingAmount(v float64) float64 {
 	if v == 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return v
@@ -303,7 +303,7 @@ func (c *TaskFundsCommand) Normalize() {
 		mode = APIKeyBillingModeAuto
 	}
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
-		// 缺省模式代表升级前的命令，保留旧指纹格式；显式模式才写入新字段。
+		// Keep an omitted mode empty for versioned fingerprint compatibility; normalize supplied modes.
 		fingerprintCommand := *c
 		if rawMode == "" {
 			fingerprintCommand.APIKeyBillingMode = ""
@@ -375,7 +375,7 @@ func buildTaskFundsFingerprint(c *TaskFundsCommand) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// EffectiveTaskBalanceHoldAmount 返回实际冻结余额，并兼容迁移前全额冻结余额的任务。
+// EffectiveTaskBalanceHoldAmount returns the balance hold, treating legacy unsplit holds as entirely balance-funded.
 func EffectiveTaskBalanceHoldAmount(cmd *TaskFundsCommand) float64 {
 	if cmd == nil {
 		return 0
@@ -386,7 +386,7 @@ func EffectiveTaskBalanceHoldAmount(cmd *TaskFundsCommand) float64 {
 	return math.Max(cmd.HoldAmount, 0)
 }
 
-// TotalTaskHoldAmount 返回订阅预占与余额冻结的总和。
+// TotalTaskHoldAmount sums positive subscription holds and the effective balance hold.
 func TotalTaskHoldAmount(cmd *TaskFundsCommand) float64 {
 	if cmd == nil {
 		return 0
@@ -400,7 +400,7 @@ func TotalTaskHoldAmount(cmd *TaskFundsCommand) float64 {
 	return total
 }
 
-// PlanTaskCapture 按订阅优先顺序计算实际结算和应释放的订阅额度。
+// PlanTaskCapture allocates actual costs to subscriptions first and computes unused subscription releases.
 func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	plan := &TaskCapturePlan{}
 	if cmd == nil {
@@ -442,7 +442,7 @@ func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	return plan, nil
 }
 
-// planTaskBaseAmountCapture 按预占时记录的各来源倍率覆盖实际基础金额。
+// planTaskBaseAmountCapture covers actual base cost using the rates recorded for each reserved source.
 func planTaskBaseAmountCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	plan := &TaskCapturePlan{BalanceHoldAmount: EffectiveTaskBalanceHoldAmount(cmd)}
 	remainingBase := math.Max(cmd.ActualBaseAmountUSD, 0)

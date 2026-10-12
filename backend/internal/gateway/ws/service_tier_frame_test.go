@@ -10,11 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode is the B1
-// regression: the rendered Realtime error event must carry a non-empty
-// event_id (so clients can correlate the rejection) and a stable error.code
-// ("policy_violation"). The HTTP-side equivalent is the 403 permission_error
-// JSON body emitted by writeOpenAIFastPolicyBlockedResponse.
+// TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode checks a non-empty
+// correlation ID and the stable policy_violation code in the emitted error.
 func TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode(t *testing.T) {
 	bytes := BuildFastPolicyBlockedEvent(&tierpolicy.BlockedError{Message: "blocked because reasons"})
 	require.NotNil(t, bytes)
@@ -34,8 +31,7 @@ func TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode(t *testing.T) {
 	require.NotEqual(t, eventID, otherID, "event_id must be random per-event")
 }
 
-// TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe ensures the helper returns
-// nil for a nil error (defensive guard for callers that always invoke it).
+// TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe checks the nil-error guard.
 func TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe(t *testing.T) {
 	require.Nil(t, BuildFastPolicyBlockedEvent(nil))
 }

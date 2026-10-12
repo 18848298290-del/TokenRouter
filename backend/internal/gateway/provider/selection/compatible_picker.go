@@ -39,7 +39,7 @@ type compatiblePicker struct {
 	freeQuotaGate atomic.Pointer[providercore.FreeQuotaGate]
 }
 
-// pickerEngine 包含候选评分、计数和反馈操作。
+// pickerEngine provides selection, metrics, and feedback operations.
 type pickerEngine interface {
 	Select(context.Context, schedulercore.PlatformSelectionInput) (*gatewayprovider.SelectionResult, schedulercore.PlatformDecision, error)
 	ReportResult(int64, bool, *int, ...policy.FeedbackConfig)
@@ -69,12 +69,12 @@ func (s *compatiblePicker) Select(ctx context.Context, req schedulercore.Platfor
 	return scope.restore(v), decision, err
 }
 
-// hasOpenAIProviderGroupMetadata 判断提供商是否声明了分组归属信息。
+// hasOpenAIProviderGroupMetadata reports whether a provider has group membership metadata.
 func hasOpenAIProviderGroupMetadata(provider *gatewayprovider.ExecutionProvider) bool {
 	return provider != nil && (len(provider.Record.GroupIDs) > 0 || len(provider.Record.ProviderGroups) > 0)
 }
 
-// openAIStickyProviderMatchesGroup 校验粘性会话提供商是否仍属于当前请求分组。
+// openAIStickyProviderMatchesGroup checks membership in the requested group.
 func openAIStickyProviderMatchesGroup(provider *gatewayprovider.ExecutionProvider, groupID *int64) bool {
 	if provider == nil {
 		return false
@@ -119,7 +119,7 @@ func (s *compatiblePicker) lookupShadowParentProvider(ctx context.Context, id in
 	return provider
 }
 
-// isProviderRequestCompatibleReason 返回提供商是否兼容，并在拒绝时标明具体门禁原因。
+// isProviderRequestCompatibleReason reports compatibility and the first rejection reason.
 func (s *compatiblePicker) isProviderRequestCompatibleReason(ctx context.Context, provider *gatewayprovider.ExecutionProvider, req schedulercore.PlatformSelectionInput) (bool, string) {
 	if s != nil && s.service != nil && !s.service.shadowProtocolsAllowed(ctx, provider) {
 		return false, "parent_protocol_unavailable"
@@ -191,7 +191,7 @@ func (s *compatiblePicker) SnapshotMetrics() schedulercore.PlatformMetricsSnapsh
 	return s.metrics.Snapshot(s.stats.Size())
 }
 
-// groupUsesAdvancedScheduler 只依据最终解析后的分组决定调度模式。
+// groupUsesAdvancedScheduler selects the mode from the resolved group.
 func (s *Compatible) groupUsesAdvancedScheduler(ctx context.Context, groupID *int64) bool {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return false
@@ -224,8 +224,8 @@ func (s *Compatible) getOpenAIProviderScheduler(ctx context.Context, groupID *in
 	return s.picker
 }
 
-// ensureOpenAIProviderScheduler 仅供结果统计和诊断初始化调度器实例。
-// 实际提供商选择仍必须经 getOpenAIProviderScheduler 按分组模式门控。
+// ensureOpenAIProviderScheduler initializes the picker for metrics and diagnostics.
+// Provider selection uses getOpenAIProviderScheduler to enforce the group's scheduler mode.
 func (s *Compatible) ensureOpenAIProviderScheduler() pickerEngine {
 	if s == nil {
 		return nil
@@ -254,9 +254,9 @@ func (s *Compatible) SelectProviderWithScheduler(
 	return s.selectProviderWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", requireCompact, "", false)
 }
 
-// SelectProviderWithSchedulerForCapability 按能力要求调度提供商。
-// previousResponseCanMove 表示首包 input 可自行重建工具续链，previous_response_id 允许跨提供商迁移
-// （开启粘性加权时，绑定提供商获得评分加成）。
+// SelectProviderWithSchedulerForCapability selects a provider meeting the required capability.
+// previousResponseCanMove means the initial input can rebuild the tool chain on another provider.
+// With weighted stickiness, the bound provider receives a score bonus.
 func (s *Compatible) SelectProviderWithSchedulerForCapability(
 	ctx context.Context,
 	groupID *int64,
@@ -277,8 +277,8 @@ func (s *Compatible) SelectProviderWithSchedulerForCapability(
 	return s.selectProviderWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, platform, previousResponseCanMove)
 }
 
-// SelectProviderWithSchedulerForCapabilityAndRoutingModel 同时保留客户端模型 R 与已解析的提供商层模型。
-// 该入口供 /v1/messages 使用，使分组白名单按 R/C 检查，提供商能力与提供商映射按 D 检查。
+// SelectProviderWithSchedulerForCapabilityAndRoutingModel keeps the client and resolved routing models separate.
+// Messages requests check group restrictions against R/C and provider capabilities and mapping against D.
 func (s *Compatible) SelectProviderWithSchedulerForCapabilityAndRoutingModel(
 	ctx context.Context,
 	groupID *int64,
@@ -342,9 +342,9 @@ func (s *Compatible) selectProviderWithScheduler(
 	return s.selectProviderWithSchedulerForRouting(ctx, groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
 }
 
-// selectProviderWithSchedulerForRouting 首次调度仍把隔离代理当作不可用；只有因容量耗尽
-// 失败且熔断器确实在隔离代理时，才用同一提供商层模型重跑一次并忽略隔离。这样健康代理
-// 始终优先，同时避免共享代理场景被熔断器清空全部容量。
+// selectProviderWithSchedulerForRouting tries providers with healthy proxies first.
+// After a no-provider error with active proxy quarantine, it retries once using
+// the same routing model with quarantine bypassed, allowing a shared proxy to serve traffic.
 func (s *Compatible) selectProviderWithSchedulerForRouting(
 	ctx context.Context,
 	groupID *int64,
@@ -373,7 +373,7 @@ func (s *Compatible) selectProviderWithSchedulerForRouting(
 	if derefGroupID(groupID) != originalGroupID {
 		routingModel = s.resolveGroupRoutingModel(ctx, groupID, requestedModel)
 	}
-	// 模型优先提供商在当前组内先尝试；没有可用候选时再使用完整池。
+	// Try model-preferred providers within the group before using the full pool.
 	if _, configured := ctx.Value(preferredProvidersKey{}).(map[int64]struct{}); !configured && previousResponseID == "" {
 		if group, ok := requeststate.GroupFromContext(ctx); ok && group != nil {
 			ids := group.GetRoutingProviderIDs(routingModel)
@@ -424,7 +424,7 @@ func (s *Compatible) selectProviderWithSchedulerForRouting(
 	return s.selectProviderWithSchedulerForRouting(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
 }
 
-// resolveOpenAISchedulerGroup 复核入口已经授权的分组，保持计划与提供商池一致。
+// resolveOpenAISchedulerGroup rechecks the admitted group against the request plan.
 func (s *Compatible) resolveOpenAISchedulerGroup(ctx context.Context, groupID *int64) (context.Context, *int64, error) {
 	var read func(context.Context, int64) (*routing.Group, error)
 	if s != nil && s.schedulingGroups != nil {
@@ -440,9 +440,9 @@ func (s *Compatible) resolveOpenAISchedulerGroup(ctx context.Context, groupID *i
 	return ctx, groupID, nil
 }
 
-// withOpenAIGroupPrivacyRequirement 在一次调度请求内缓存分组隐私资格，避免重试重复查询。
+// withOpenAIGroupPrivacyRequirement caches the group's privacy requirement across selection retries.
 func (s *Compatible) withOpenAIGroupPrivacyRequirement(ctx context.Context, groupID *int64) context.Context {
-	// 父 context 为 nil 时 panic。
+	// A nil parent context is a caller error.
 	if ctx == nil {
 		panic("cannot create context from nil parent")
 	}
@@ -453,7 +453,7 @@ func (s *Compatible) withOpenAIGroupPrivacyRequirement(ctx context.Context, grou
 }
 
 func (s *Compatible) openAIGroupRequiresPrivacySet(ctx context.Context, groupID *int64) bool {
-	// 父 context 为 nil 时 panic。
+	// A nil parent context is a caller error.
 	if ctx == nil {
 		panic("nil context")
 	}
@@ -697,7 +697,7 @@ func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model 
 	return healthTripped
 }
 
-// ObserveOpenAIProviderHealthFailure 记录已经写出响应后无法进入调度反馈的失败。
+// ObserveOpenAIProviderHealthFailure records health failures, including failures after the response starts.
 func (s *Compatible) ObserveOpenAIProviderHealthFailure(ctx context.Context, provider *gatewayprovider.ExecutionProvider, observedErr error) bool {
 	if s == nil || s.healthObserver == nil || provider == nil || observedErr == nil {
 		return false
@@ -710,8 +710,8 @@ func (s *Compatible) ObserveOpenAIProviderHealthFailure(ctx context.Context, pro
 	return handled
 }
 
-// ReportOpenAIProviderScheduleResultForSelection 按本次实际选择模式写入反馈。
-// 基础分组仍清理请求临时状态，但不会污染高级调度统计。
+// ReportOpenAIProviderScheduleResultForSelection uses the settings captured for this selection.
+// Successful basic selections clear transient model state; advanced selections also update statistics.
 func (s *Compatible) ReportOpenAIProviderScheduleResultForSelection(selection *gatewayprovider.SelectionResult, providerID int64, model string, success bool, firstTokenMs *int) {
 	if selection != nil && selection.AdvancedScheduler && selection.AdvancedSchedulerFeedback != nil {
 		s.reportOpenAIProviderScheduleResultWithFeedback(providerID, model, success, firstTokenMs, *selection.AdvancedSchedulerFeedback)
@@ -755,7 +755,7 @@ func (s *Compatible) RecordOpenAIProviderSwitch() {
 	}
 }
 
-// RecordOpenAIProviderSwitchForSelection 只记录高级调度请求的提供商切换。
+// RecordOpenAIProviderSwitchForSelection records switches for advanced selections.
 func (s *Compatible) RecordOpenAIProviderSwitchForSelection(selection *gatewayprovider.SelectionResult) {
 	s.recordOpenAIProviderSwitch(selection != nil && selection.AdvancedScheduler)
 }
@@ -788,19 +788,19 @@ func (s *Compatible) SessionStickyTTL() time.Duration {
 	return time.Hour
 }
 
-// selectBySessionHash 调用共享粘性选择器执行基础调度回退。
+// selectBySessionHash uses the shared sticky selector for basic selection.
 func (s *compatiblePicker) selectBySessionHash(ctx context.Context, req schedulercore.PlatformSelectionInput) (*gatewayprovider.SelectionResult, bool, error) {
 	core, scope := s.platformSelector()
 	value, escaped, err := core.SelectBySessionHash(ctx, cloneSelectionInput(req))
 	return scope.restore(value), escaped, err
 }
 
-// openAIQuotaHeadroomFactor 旧候选只转换额度观测；评分信号使用提供商模块唯一实现。
+// openAIQuotaHeadroomFactor delegates quota scoring to the provider module.
 func openAIQuotaHeadroomFactor(value *gatewayprovider.ExecutionProvider, now time.Time) float64 {
 	return providercore.OpenAIQuotaHeadroomFactor(gatewayprovider.ExecutionRecord(value), now)
 }
 
-// requestRoutingModel 返回提供商层模型，未提供时使用客户端模型。
+// requestRoutingModel uses the routing model when present, otherwise the requested model.
 func requestRoutingModel(input schedulercore.PlatformSelectionInput) string {
 	if model := strings.TrimSpace(input.RoutingModel); model != "" {
 		return model
@@ -808,7 +808,7 @@ func requestRoutingModel(input schedulercore.PlatformSelectionInput) string {
 	return input.RequestedModel
 }
 
-// cloneSelectionInput 复制本次选择输入和排除集合。
+// cloneSelectionInput copies selection input and its exclusion map.
 func cloneSelectionInput(input schedulercore.PlatformSelectionInput) schedulercore.PlatformSelectionInput {
 	input.ExcludedIDs = maps.Clone(input.ExcludedIDs)
 	return input

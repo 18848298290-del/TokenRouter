@@ -9,7 +9,7 @@ import (
 
 type OpenAIDependencies struct{ Handler, Gateway, Funding, Keys, Concurrency bool }
 
-// Missing 按顺序返回缺失的依赖，nil Handler 直接返回错误条目。
+// Missing returns missing dependencies in order. An absent handler returns only "handler".
 func (d OpenAIDependencies) Missing() []string {
 	missing := make([]string, 0, 5)
 	if !d.Handler {

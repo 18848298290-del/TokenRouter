@@ -22,14 +22,14 @@ type Proxy struct {
 	ExpiryWarnDays int        `json:"expiry_warn_days"`
 }
 
-// AdminProxy 是管理员接口使用的 proxy DTO（包含密码等敏感字段）。
-// 注意：普通接口不得使用此 DTO。
+// AdminProxy contains proxy details, including the password, for administrator responses.
+// Use Proxy for endpoints available to ordinary users.
 type AdminProxy struct {
 	Proxy
 	Password string `json:"password,omitempty"`
 }
 
-// AdminProxyWithProviderCount 是管理员接口使用的带提供商统计的 proxy DTO。
+// AdminProxyWithProviderCount adds provider counts and probe results to an admin proxy.
 type AdminProxyWithProviderCount struct {
 	AdminProxy
 	ProviderCount  int64  `json:"provider_count"`

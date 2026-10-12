@@ -9,7 +9,7 @@ import (
 
 var ErrOllamaUsageStopped = errors.New("ollama cloud usage is stopped")
 
-// OllamaUsageRuntime 同时拥有立即首轮、周期和手动查询；停止预算覆盖全部在途活动。
+// OllamaUsageRuntime tracks initial, periodic, and manual queries under one shutdown budget.
 type OllamaUsageRuntime struct {
 	mu               sync.Mutex
 	started, stopped bool

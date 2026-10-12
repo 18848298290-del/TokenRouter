@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// TestNewQoderGatewayServiceUsesInjectedRefreshAPI 检查 app 注入的刷新接口与 Qoder 执行共用会话缓存。
+// TestNewQoderGatewayServiceUsesInjectedRefreshAPI checks that refresh and execution share the injected session cache.
 func TestNewQoderGatewayServiceUsesInjectedRefreshAPI(t *testing.T) {
 	tokens := provideQoderTokens(nil, nil)
 	t.Cleanup(func() { require.NoError(t, tokens.StopContext(context.Background())) })

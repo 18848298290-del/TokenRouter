@@ -19,12 +19,12 @@ type (
 		ForceEmailOnThirdPartySignup        bool
 		RegistrationEmailSuffixWhitelist    []string
 		RegistrationEmailDomainQuotaEnabled bool
-		UserEmailChangeEnabled              bool // 是否允许已有邮箱的用户换绑主邮箱
+		UserEmailChangeEnabled              bool // Allows users with an email address to replace their primary email.
 		PromoCodeEnabled                    bool
 		PasswordResetEnabled                bool
 		InvitationCodeEnabled               bool
-		TotpEnabled                         bool // TOTP 双因素认证
-		PasskeyEnabled                      bool // Passkey 认证由部署级 WebAuthn 配置控制
+		TotpEnabled                         bool // TOTP two-factor authentication.
+		PasskeyEnabled                      bool // Controlled by deployment-level WebAuthn configuration.
 		LoginAgreementEnabled               bool
 		LoginAgreementMode                  string
 		LoginAgreementUpdatedAt             string
@@ -74,7 +74,7 @@ type (
 		PaymentEnabled           bool
 		TeamEnabled              bool
 		TeamSelfServiceEnabled   bool
-		// CreativeEnabled 暴露给前端用于控制创作台页面入口与路由守卫。
+		// CreativeEnabled controls the frontend creative studio entry and route guard.
 		CreativeEnabled       bool
 		OIDCOAuthEnabled      bool
 		OIDCOAuthProviderName string
@@ -89,13 +89,13 @@ type (
 
 		BalanceLowNotifyEnabled    bool
 		ProviderQuotaNotifyEnabled bool
-		// RiskControlEnabled 暴露给前端用于控制风控中心入口显示。
+		// RiskControlEnabled controls the frontend risk control entry.
 		RiskControlEnabled          bool
 		AffiliateEnabled            bool
 		BalanceLowNotifyThreshold   float64
 		BalanceLowNotifyRechargeURL string
 
-		// 允许终端用户在用量页查看自己的失败请求
+		// Allows users to view their own failed requests on the usage page.
 		AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
 	}
 )

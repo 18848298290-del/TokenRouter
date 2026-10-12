@@ -24,7 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// nativeGeminiPricingFixture 记录转发、槽位释放和调度反馈的次数。
+// nativeGeminiPricingFixture counts forwarding, slot release, and scheduling feedback.
 type nativeGeminiPricingFixture struct {
 	bridge   *nativeGeminiAttemptBridge
 	response *httptest.ResponseRecorder
@@ -33,7 +33,8 @@ type nativeGeminiPricingFixture struct {
 	reports  int
 }
 
-// TestNativeGeminiForwardRejectsMissingPricing 覆盖两种生成动作及 Gemini 的三种凭据和 Antigravity。
+// TestNativeGeminiForwardRejectsMissingPricing covers both generation actions, three Gemini credential types, and
+// Antigravity.
 func TestNativeGeminiForwardRejectsMissingPricing(t *testing.T) {
 	for _, target := range []struct{ platform, kind string }{
 		{provider.PlatformGemini, "apikey"},
@@ -61,7 +62,7 @@ func TestNativeGeminiForwardRejectsMissingPricing(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardPricingModels 使用价卡和映射核对实际准入的计费型号。
+// TestNativeGeminiForwardPricingModels checks the admitted billing model against price cards and model mappings.
 func TestNativeGeminiForwardPricingModels(t *testing.T) {
 	input, zero, multiplier := 2e-6, 0.0, 2.0
 	for _, platform := range []string{provider.PlatformGemini, provider.PlatformAntigravity} {
@@ -121,7 +122,8 @@ func TestNativeGeminiForwardPricingModels(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardPricingScope 计数和动作校验交给平台执行器，图片型号遵循共享检查规则。
+// TestNativeGeminiForwardPricingScope leaves counting and action validation to the platform executor and uses
+// shared rules for image models.
 func TestNativeGeminiForwardPricingScope(t *testing.T) {
 	for _, tc := range []struct{ action, model string }{
 		{"countTokens", "unpriced-gemini-model"},
@@ -140,7 +142,7 @@ func TestNativeGeminiForwardPricingScope(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardRechecksProviderPricing 换号后按新提供商的映射再次查价。
+// TestNativeGeminiForwardRechecksProviderPricing checks pricing again with the replacement provider's mapping.
 func TestNativeGeminiForwardRechecksProviderPricing(t *testing.T) {
 	fixture := newNativeGeminiPricingFixture(t, provider.PlatformGemini, "generateContent")
 	bridge := fixture.bridge
@@ -157,7 +159,7 @@ func TestNativeGeminiForwardRechecksProviderPricing(t *testing.T) {
 	require.Equal(t, 2, fixture.releases)
 }
 
-// TestNativeGeminiForwardRouteErrorReleasesSlot 路由校验失败时结束尝试并归还已取得的槽位。
+// TestNativeGeminiForwardRouteErrorReleasesSlot checks that route rejection ends the attempt and releases its slot.
 func TestNativeGeminiForwardRouteErrorReleasesSlot(t *testing.T) {
 	fixture := newNativeGeminiPricingFixture(t, provider.PlatformAntigravity, "generateContent")
 	bridge := fixture.bridge
@@ -176,7 +178,7 @@ func TestNativeGeminiForwardRouteErrorReleasesSlot(t *testing.T) {
 	require.False(t, bridge.c.GetBool(gatewayhttp.OpsClientBusinessLimitedKey))
 }
 
-// newNativeGeminiPricingFixture 用固定目录价和可选分组价卡构造单次尝试。
+// newNativeGeminiPricingFixture builds an attempt with fixed catalogue prices and optional group price cards.
 func newNativeGeminiPricingFixture(t *testing.T, platform, action string, cards ...routing.ModelPricingEntry) *nativeGeminiPricingFixture {
 	t.Helper()
 	fixture := &nativeGeminiPricingFixture{response: httptest.NewRecorder()}

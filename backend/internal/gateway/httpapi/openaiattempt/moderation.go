@@ -27,7 +27,7 @@ func (h *Support) RecordOpenAICyberWarningWithSnapshot(c *gin.Context, reqLog *z
 	return gatewayhttp.RecordOpenAICyberWarningWithSnapshot(gatewayhttp.GatewayModerationEndpoints{}, h.Moderation, c, reqLog, apikey.CopyAPIKey(apiKey), moderationProviderView(provider), model, statusCode, responseBody, warningText, promptExcerpt, snapshot)
 }
 
-// RecordOpenAIForwardErrorCyberWarning 记录错误链中携带的上游 cyber 风控警告。
+// RecordOpenAIForwardErrorCyberWarning records upstream cyber warnings carried by the error chain.
 func (h *Support) RecordOpenAIForwardErrorCyberWarning(c *gin.Context, reqLog *zap.Logger, apiKey *apikey.APIKey, provider *gatewayprovider.ExecutionProvider, model string, statusCode int, err error) bool {
 	warning, ok := forwardcore.WarningFromError(err)
 	if !ok || warning == nil {
@@ -40,7 +40,7 @@ func (h *Support) RecordOpenAIForwardErrorCyberWarning(c *gin.Context, reqLog *z
 	return true
 }
 
-// moderationProviderView 返回审核处置使用的提供商标识。
+// moderationProviderView returns provider identity for moderation handling.
 func moderationProviderView(a *gatewayprovider.ExecutionProvider) *moderationflow.Provider {
 	if a == nil {
 		return nil

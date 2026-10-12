@@ -13,19 +13,19 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// providerHealthRuntime 保存同一次装配创建的健康状态组件。
+// providerHealthRuntime holds the health components created by one application assembly.
 type providerHealthRuntime struct {
 	Health   *provider.HealthService
 	Recovery *provider.RecoveryService
 	Observer *provideradapter.UpstreamHealth
 }
 
-// provideUpstreamHealth 返回 app 已构造的共享健康状态组件。
+// provideUpstreamHealth returns the shared health observer.
 func provideUpstreamHealth(runtime *providerHealthRuntime) *provideradapter.UpstreamHealth {
 	return runtime.Observer
 }
 
-// provideProviderHealthRuntime 为提供商健康状态组件绑定配置、设置读取器和基础设施接口。
+// provideProviderHealthRuntime binds health configuration, settings readers, and infrastructure.
 func provideProviderHealthRuntime(
 	store *providerpostgres.ProviderStore,
 	cache provider.TempUnschedCache,
@@ -66,7 +66,7 @@ func provideProviderHealthRuntime(
 		options.Block = state.BlockProviderScheduling
 	}
 
-	// 恢复与窗口观测会相互调用，完成函数绑定后再返回组件供调用方使用。
+	// Recovery and window observation call each other; bind both before exposing the components.
 	var recovery *provider.RecoveryService
 	options.ClearWindowRateLimit = func(ctx context.Context, id int64) error {
 		return recovery.ClearRateLimit(ctx, id)
@@ -99,12 +99,12 @@ func provideProviderHealthRuntime(
 	}
 }
 
-// provideProviderRecovery 返回共享的提供商恢复用例。
+// provideProviderRecovery returns the shared recovery service.
 func provideProviderRecovery(runtime *providerHealthRuntime) *provider.RecoveryService {
 	return runtime.Recovery
 }
 
-// provideProviderRuntimeState 构造恢复、刷新和执行入口共享的运行状态。
+// provideProviderRuntimeState creates scheduling block state shared by recovery, refresh, and execution.
 func provideProviderRuntimeState() *provider.RuntimeBlockState {
 	return provider.NewRuntimeBlockState(time.Now)
 }

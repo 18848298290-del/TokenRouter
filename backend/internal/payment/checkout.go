@@ -66,7 +66,7 @@ func (s *Checkout) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Cr
 			return nil, err
 		}
 	}
-	// 订阅订单先换算网关扣款基数，再统一应用 fork 的固定费与比例费模型。
+	// Convert the subscription base amount before applying fixed and percentage fees.
 	feeBreakdown, payAmountStr, payAmount, err := CalculateCreateOrderPayAmountForOrderType(limitAmount, methodFee, methodCurrency, req.OrderType, cfg.SubscriptionUSDToCNYRate)
 	if err != nil {
 		return nil, err
@@ -362,7 +362,7 @@ func (s *Checkout) PersistCreatePaymentResponse(ctx context.Context, id int64, s
 	return s.store.PersistCheckoutResponse(ctx, id, sel, response)
 }
 
-// ShouldUseAlipayMobilePrecreate 判断当前订单是否应使用官方支付宝移动端当面付。
+// ShouldUseAlipayMobilePrecreate reports whether this mobile order uses official Alipay precreate.
 func ShouldUseAlipayMobilePrecreate(req CreateOrderRequest, cfg *PaymentConfig, sel *InstanceSelection) bool {
 	return cfg != nil &&
 		cfg.AlipayMobilePrecreateDeepLink &&
@@ -371,7 +371,7 @@ func ShouldUseAlipayMobilePrecreate(req CreateOrderRequest, cfg *PaymentConfig, 
 		strings.EqualFold(strings.TrimSpace(sel.ProviderKey), TypeAlipay)
 }
 
-// SanitizeCreatePaymentResponseDetails 清理所有将写入 PostgreSQL text 字段的支付响应值。
+// SanitizeCreatePaymentResponseDetails removes NUL bytes from response values stored as PostgreSQL text.
 func SanitizeCreatePaymentResponseDetails(pr *CreatePaymentResponse) {
 	if pr == nil {
 		return
@@ -420,7 +420,7 @@ func (s *Checkout) BuildPaymentSubject(plan *SubscriptionPlan, limitAmount float
 	return PaymentSubject(plan, limitAmount, cfg, sel, locale.Default())
 }
 
-// PaymentSubject 生成下单时保存的商品标题。
+// PaymentSubject returns the product title saved when the order is created.
 func PaymentSubject(plan *SubscriptionPlan, limitAmount float64, cfg *PaymentConfig, sel *InstanceSelection, language string) string {
 	if plan != nil {
 		productName := plan.ProductName
@@ -544,8 +544,8 @@ func CalculateCreateOrderPayAmountForOrderType(limitAmount float64, methodFee Fe
 	return CalculateCreateOrderPayAmount(paymentAmount, methodFee, currency)
 }
 
-// CalculateSubscriptionGatewayBaseAmount 计算订阅订单的网关扣款基数。
-// 订阅汇率大于 0 且渠道币种为 CNY 时，扣款基数为 price × rate；其他情况使用 price。
+// CalculateSubscriptionGatewayBaseAmount returns the subscription charge before fees.
+// A positive conversion rate multiplies the price for CNY; other cases use the price directly.
 func CalculateSubscriptionGatewayBaseAmount(amount, usdToCnyRate float64, currency string) float64 {
 	rate := NormalizeSubscriptionUSDToCNYRate(usdToCnyRate)
 	if rate <= 0 || currency != DefaultPaymentCurrency {
@@ -700,7 +700,7 @@ func NormalizePaymentRedirectPath(path string) string {
 	return path
 }
 
-// ResolveWxpayJSAPIAppID 读取 JSAPI 下单使用的 AppID，优先使用 mpAppId，其次使用 appId。
+// ResolveWxpayJSAPIAppID returns mpAppId for JSAPI orders, falling back to appId.
 func ResolveWxpayJSAPIAppID(config map[string]string) string {
 	if appID := strings.TrimSpace(config["mpAppId"]); appID != "" {
 		return appID

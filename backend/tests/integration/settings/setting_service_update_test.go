@@ -157,7 +157,8 @@ func TestSettingService_AffiliateAdminRechargeSetting(t *testing.T) {
 	})
 }
 
-// TestSettingService_PageFeatureFlagsArePersisted 检查页面功能开关分别持久化。
+// TestSettingService_PageFeatureFlagsArePersisted verifies that team and creative
+// studio switches are written independently.
 func TestSettingService_PageFeatureFlagsArePersisted(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := settingskit.NewComposite(repo, &config.Config{})
@@ -171,7 +172,8 @@ func TestSettingService_PageFeatureFlagsArePersisted(t *testing.T) {
 	require.Equal(t, "false", repo.updates[creative.SettingKeyCreativeEnabled])
 }
 
-// TestSettingService_CreativeWorkerCountIsPersisted 验证 worker 数量随系统设置持久化。
+// TestSettingService_CreativeWorkerCountIsPersisted verifies that saving system
+// settings writes the creative worker count.
 func TestSettingService_CreativeWorkerCountIsPersisted(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := settingskit.NewComposite(repo, &config.Config{})
@@ -181,7 +183,8 @@ func TestSettingService_CreativeWorkerCountIsPersisted(t *testing.T) {
 	require.Equal(t, "7", repo.updates[creative.SettingKeyCreativeWorkerCount])
 }
 
-// TestSettingService_CreativeWorkerCountCallbackOnlyAfterWrite 检查写入成功后才更新运行时 worker 数量。
+// TestSettingService_CreativeWorkerCountCallbackOnlyAfterWrite verifies that the
+// runtime callback runs after a successful write and is skipped when writing fails.
 func TestSettingService_CreativeWorkerCountCallbackOnlyAfterWrite(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := settingskit.NewComposite(repo, &config.Config{})
@@ -677,7 +680,8 @@ func TestSettingService_ParseSettings_APIKeyACLTrustForwardedIPUsesStoredValue(t
 	require.False(t, got.APIKeyACLTrustForwardedIP)
 }
 
-// TestSettingService_ParseSettings_CreativeEnabledDefaultsTrue 检查创作台开关在键缺失时开启，值为“false”时关闭。
+// TestSettingService_ParseSettings_CreativeEnabledDefaultsTrue checks that a missing
+// switch enables creative studio and a stored "false" disables it.
 func TestSettingService_ParseSettings_CreativeEnabledDefaultsTrue(t *testing.T) {
 	svc := settingskit.NewComposite(&settingUpdateRepoStub{}, &config.Config{})
 
@@ -688,7 +692,8 @@ func TestSettingService_ParseSettings_CreativeEnabledDefaultsTrue(t *testing.T) 
 	require.False(t, got.CreativeEnabled)
 }
 
-// TestSettingService_ParseSettings_CreativeWorkerCount 验证创作台 worker 设置的默认与脏值回退。
+// TestSettingService_ParseSettings_CreativeWorkerCount checks that missing, zero,
+// and invalid worker counts use the default.
 func TestSettingService_ParseSettings_CreativeWorkerCount(t *testing.T) {
 	svc := settingskit.NewComposite(&settingUpdateRepoStub{}, &config.Config{})
 

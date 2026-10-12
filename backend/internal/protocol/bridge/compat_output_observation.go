@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// CompatOutputMeaning 从本模块写出的完整帧中识别内容输出和终止事件。
-// 文本、推理和工具调用计为内容输出。
+// CompatOutputMeaning returns content-present and terminal flags for a complete frame emitted here.
+// Text, reasoning, and tool calls count as content.
 func CompatOutputMeaning(frame []byte) (bool, bool) {
 	for line := range bytes.SplitSeq(frame, []byte("\n")) {
 		if !bytes.HasPrefix(line, []byte("data:")) {
@@ -45,7 +45,7 @@ func CompatOutputMeaning(frame []byte) (bool, bool) {
 	return false, false
 }
 
-// CompatJSONHasContent 检查完成报文是否包含文本、推理、拒绝信息或工具调用。
+// CompatJSONHasContent checks completed JSON for text, reasoning, refusal, or tool calls.
 func CompatJSONHasContent(data []byte) bool {
 	if anthropic.ObserveMessage(string(data)).Semantic {
 		return true

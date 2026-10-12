@@ -2,7 +2,7 @@ package scheduler
 
 import "context"
 
-// selectOnlyKey 标记仅选择提供商的请求，preservedStickyKey 标记需要保留的粘性绑定。
+// selectOnlyKey marks selection-only requests; preservedStickyKey marks bindings to retain.
 type (
 	selectOnlyKey      struct{}
 	preservedStickyKey struct{}

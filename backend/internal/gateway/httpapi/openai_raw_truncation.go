@@ -15,11 +15,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIRawStreamTruncatedUpstreamMessage 是 raw CC 直转路径上游截断的 Ops 消息。
+// openAIRawStreamTruncatedUpstreamMessage identifies truncated raw Chat Completions streams in Ops.
 const openAIRawStreamTruncatedUpstreamMessage = "Upstream Chat Completions stream ended before any terminal chunk"
 
-// NewOpenAIRawTruncationFailure 处理"上游截断且尚未向客户端写出任何
-// 字节"的情况：响应头还没提交，可以透明换号重试，客户端不会看到半截流。
+// NewOpenAIRawTruncationFailure builds a retryable failure for truncation before client output.
+// The caller must verify that response headers remain uncommitted before retrying another provider.
 func NewOpenAIRawTruncationFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -39,7 +39,7 @@ func NewOpenAIRawTruncationFailure(
 	}
 }
 
-// RecordOpenAIRawTruncation 将上游截断写入 Ops 上下文，供错误日志和提供商健康统计使用。
+// RecordOpenAIRawTruncation records truncation in Ops for error logs and provider health statistics.
 func RecordOpenAIRawTruncation(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -71,8 +71,8 @@ func RecordOpenAIRawTruncation(
 	})
 }
 
-// openAIRawStreamTruncatedMessage 拼出 Ops 消息：干净 EOF 没有底层错误可带，
-// 传输层错误（connection reset / http2 stream error）则保留原因以便定位。
+// openAIRawStreamTruncatedMessage includes the transport cause when available.
+// A clean EOF has no underlying error to append.
 func openAIRawStreamTruncatedMessage(cause error) string {
 	if cause == nil || errors.Is(cause, openai.ErrOpenAIUpstreamStreamTruncated) {
 		return openAIRawStreamTruncatedUpstreamMessage
@@ -80,8 +80,8 @@ func openAIRawStreamTruncatedMessage(cause error) string {
 	return openAIRawStreamTruncatedUpstreamMessage + ": " + cause.Error()
 }
 
-// openAIRawStreamTruncatedErrorBody 构造 failover 错误体，code/message 与
-// 写出后走 openAIUpstreamStreamReadError 的客户端分类保持一致。
+// openAIRawStreamTruncatedErrorBody builds a failover body using the same code and message
+// classification as stream read failures after output has started.
 func openAIRawStreamTruncatedErrorBody(cause error) []byte {
 	code, message := openai.ClassifyUpstreamStreamReadError(cause)
 	body, err := json.Marshal(map[string]any{

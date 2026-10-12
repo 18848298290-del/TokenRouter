@@ -15,7 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestAntigravityRetirementMigration 验证停用、重放及历史记录保留，usage 表的独占锁用于发现意外访问。
+// TestAntigravityRetirementMigration checks retirement, replay, and retained records while an exclusive
+// usage lock detects unexpected access.
 func TestAntigravityRetirementMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23",
@@ -43,7 +44,7 @@ func TestAntigravityRetirementMigration(t *testing.T) {
 	_, err = db.ExecContext(ctx, `INSERT INTO groups(id,name) VALUES(901,'retirement');
  INSERT INTO provider_groups(provider_id,group_id) VALUES(901,901)`)
 	require.NoError(t, err)
-	// 另一连接持有 usage 锁时，迁移仍应完成。
+	// The migration must complete while another connection holds the usage table lock.
 	locked, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = locked.Rollback() }()

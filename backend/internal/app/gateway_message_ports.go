@@ -13,7 +13,7 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// provideRetryCooldown 配置和日志在装配时固定，是否冷却由 provider 判断。
+// provideRetryCooldown binds storage and logging; provider code decides when to apply cooldown.
 func provideRetryCooldown(store *providerpostgres.ProviderStore) *provider.RetryCooldown {
 	var source provider.RetryCooldownStore
 	if store != nil {
@@ -39,7 +39,7 @@ func messageRetryCooldown(command *provider.RetryCooldown) func(context.Context,
 	}
 }
 
-// messageSessionIsolation 从当前 Key 读取会话隔离参数，owner TTL 为一小时。
+// messageSessionIsolation reads isolation settings from the current key and uses a one-hour owner TTL.
 func messageSessionIsolation(cache session.GatewayCache) func(context.Context, *apikey.APIKey, int64, string, string) error {
 	return func(ctx context.Context, key *apikey.APIKey, userID int64, source, hash string) error {
 		if key == nil {
@@ -53,7 +53,7 @@ func messageSessionIsolation(cache session.GatewayCache) func(context.Context, *
 	}
 }
 
-// messageDigestFind 使用共享内存存储，存储按自身的键规则和过期时间查询摘要。
+// messageDigestFind delegates digest lookup and expiry checks to the shared memory store.
 func messageDigestFind(store *session.DigestSessionStore) func(context.Context, int64, string, string) (string, int64, string, bool) {
 	return func(_ context.Context, id int64, prefix, chain string) (string, int64, string, bool) {
 		return store.Find(id, prefix, chain)

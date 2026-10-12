@@ -25,6 +25,7 @@ func NewLiveAttestationCipher(secret string) *LiveAttestationCipher {
 	}
 }
 
+// Encrypt returns raw standard Base64 containing the nonce followed by AES-GCM ciphertext and tag.
 func (c *LiveAttestationCipher) Encrypt(plaintext string) (string, error) {
 	block, err := aes.NewCipher(c.key[:])
 	if err != nil {

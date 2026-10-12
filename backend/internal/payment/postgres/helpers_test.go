@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// paymentConfigSettingRepoStub 保存配置测试的设置值，并记录写入内容。
+// paymentConfigSettingRepoStub stores test settings and captures writes.
 type paymentConfigSettingRepoStub struct {
 	values  map[string]string
 	updates map[string]string

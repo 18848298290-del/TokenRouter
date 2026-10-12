@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// RoutePlanner 组合已通过准入的分组、分组映射及计费元数据。
+// RoutePlanner combines the admitted group, group model mapping, and billing metadata.
 type RoutePlanner struct{ groupPolicies *routing.PricingConfigService }
 
 func NewRoutePlanner(groupPolicies *routing.PricingConfigService) *RoutePlanner {
@@ -35,7 +35,7 @@ func (p *RoutePlanner) PlanRoute(ctx context.Context, group *routing.Group, id *
 	return RoutePlanForMapping(ctx, group, id, requested, mapping)
 }
 
-// RoutePlanForMapping 取得请求分组、复核分组 ID，并构造协议路线。
+// RoutePlanForMapping reads the request group, checks its ID, and builds a protocol route.
 func RoutePlanForMapping(ctx context.Context, group *routing.Group, groupID *int64, requested string, mapping routing.GroupMappingResult) routing.RoutePlan {
 	if group == nil {
 		group, _ = requeststate.GroupFromContext(ctx)
@@ -51,7 +51,7 @@ func RoutePlanForMapping(ctx context.Context, group *routing.Group, groupID *int
 	return routing.Plan(routing.PlanInput{Group: view, GroupID: groupID, ClientProtocol: protocol, RequestedModel: requested, GroupMapping: mapping})
 }
 
-// ProviderForProtocolAttempt 使用当前计划重新验证候选，模型规则仍在原匹配时机读取。
+// ProviderForProtocolAttempt revalidates the candidate against the current plan and reads model rules during matching.
 func ProviderForProtocolAttempt(ctx context.Context, value *ExecutionProvider) (*ExecutionProvider, error) {
 	if value == nil {
 		return nil, fmt.Errorf("provider is nil")

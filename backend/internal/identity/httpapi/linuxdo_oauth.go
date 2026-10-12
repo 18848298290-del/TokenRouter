@@ -48,7 +48,7 @@ type LinuxDoHandler struct {
 
 type CompleteLinuxDoOAuthRequest struct {
 	InvitationCode   string `json:"invitation_code" binding:"required"`
-	AffCode          string `json:"aff_code,omitempty"` // 邀请返利码，仅注册新用户时绑定邀请关系。
+	AffCode          string `json:"aff_code,omitempty"` // Affiliate code used when creating a new account.
 	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
 	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
 }
@@ -57,7 +57,7 @@ func NewLinuxDoHandler(p *PendingHandler, b *OAuthBindHandler, client identity.L
 	return &LinuxDoHandler{p, b, client, load}
 }
 
-// LinuxDoOAuthStart 启动 LinuxDo Connect OAuth 登录流程。
+// LinuxDoOAuthStart starts the LinuxDo Connect login flow.
 // GET /api/v1/auth/oauth/linuxdo/start?redirect=/dashboard
 func (h *LinuxDoHandler) LinuxDoOAuthStart(c *gin.Context) {
 	if !h.RequireActionCaptchaForOAuthLoginStart(c) {
@@ -131,7 +131,7 @@ func (h *LinuxDoHandler) LinuxDoOAuthStart(c *gin.Context) {
 	RespondOAuthStart(c, authURL)
 }
 
-// LinuxDoOAuthCallback 处理 OAuth 回调：创建/登录用户，然后重定向到前端。
+// LinuxDoOAuthCallback resolves the provider identity and redirects through pending login or registration.
 // GET /api/v1/auth/oauth/linuxdo/callback?code=...&state=...
 func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	cfg, cfgErr := h.loadConfig(c.Request.Context())
@@ -230,8 +230,8 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	}
 	compatEmail := strings.TrimSpace(email)
 
-	// 安全考虑：不要把第三方返回的 email 直接映射到本地账号（可能与本地邮箱用户冲突导致账号被接管）。
-	// 统一使用基于 subject 的稳定合成邮箱来做账号绑定。
+	// A provider email can collide with a local account and must not establish ownership.
+	// Use a stable subject-derived synthetic email for binding.
 	if subject != "" {
 		email = identity.OAuthLinuxDoSyntheticEmail(subject)
 	}
@@ -521,7 +521,7 @@ func RedirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *
 func RedirectOAuthFragment(c *gin.Context, frontendCallback string, fragment url.Values) {
 	u, err := url.Parse(frontendCallback)
 	if err != nil {
-		// 兜底：尽力跳转到默认页面，避免卡死在回调页。
+		// If the callback URL cannot be parsed, return to the default dashboard.
 		c.Redirect(http.StatusFound, LinuxDoOAuthDefaultRedirectTo)
 		return
 	}

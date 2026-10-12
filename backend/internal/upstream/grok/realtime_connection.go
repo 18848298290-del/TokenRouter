@@ -46,7 +46,8 @@ func (s *RealtimeSession) Close() error {
 	return s.closeErr
 }
 
-// DialRealtime 仅交换 URL/Header 和技术连接，提供商权限及价格仍在调用方。
+// DialRealtime opens a WebSocket using the supplied target and headers. Callers check provider
+// access and pricing, then close the returned session to release its activity registration.
 func DialRealtime(ctx context.Context, options RealtimeDialOptions) (*RealtimeSession, error) {
 	u, err := url.Parse(options.BaseURL)
 	if err != nil {
@@ -83,7 +84,7 @@ func DialRealtime(ctx context.Context, options RealtimeDialOptions) (*RealtimeSe
 	return &RealtimeSession{FrameConn: conn, done: done}, nil
 }
 
-// ProbeRealtime 握手后关闭连接，拨号失败时返回底层错误。
+// ProbeRealtime closes a successful connection and unwraps dial failures.
 func ProbeRealtime(ctx context.Context, options RealtimeDialOptions) error {
 	conn, err := DialRealtime(ctx, options)
 	if err != nil {

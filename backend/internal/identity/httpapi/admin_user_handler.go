@@ -15,7 +15,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UserAdministration 是管理员 HTTP 实际消费的身份用例接口。
+// UserAdministration provides user operations for administrator HTTP handlers.
 type UserAdministration interface {
 	ListUsers(ctx context.Context, page, pageSize int, filters identity.UserListFilters, sortBy, sortOrder string) ([]identity.User, int64, error)
 	GetUser(ctx context.Context, id int64) (*identity.User, error)
@@ -33,7 +33,7 @@ type UserAdministration interface {
 	ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*identity.ReplaceUserGroupResult, error)
 }
 
-// AdminUserHandler 不接收旧聚合管理服务；Key 展示和并发读取由独立端口提供。
+// AdminUserHandler combines user administration with key listing and concurrency reads.
 type AdminUserHandler[K any] struct {
 	idempotencyhttp.Executor
 
@@ -61,12 +61,12 @@ type CreateUserRequest struct {
 	RPMLimit      int      `json:"rpm_limit"`
 	APIKeyLimit   *int     `json:"api_key_limit" binding:"omitempty,gte=0,lte=2147483647"`
 	AllowedGroups []int64  `json:"allowed_groups"`
-	// DisabledPublicGroups 记录该用户被禁止使用的公开分组。
+	// DisabledPublicGroups lists public groups denied to this user.
 	DisabledPublicGroups []int64 `json:"disabled_public_groups"`
 }
 
-// UpdateUserRequest represents admin update user request
-// 使用指针类型来区分"未提供"和"设置为 0"。
+// UpdateUserRequest contains administrator changes to a user.
+// Pointer fields distinguish omitted values from zero or empty values.
 type UpdateUserRequest struct {
 	Email         string   `json:"email" binding:"omitempty,email"`
 	Password      string   `json:"password" binding:"omitempty,min=6"`
@@ -79,10 +79,10 @@ type UpdateUserRequest struct {
 	APIKeyLimit   *int     `json:"api_key_limit" binding:"omitempty,gte=0,lte=2147483647"`
 	Status        string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups *[]int64 `json:"allowed_groups"`
-	// DisabledPublicGroups 使用指针区分未提供和清空禁用列表。
+	// DisabledPublicGroups is nil to leave the list unchanged or empty to clear it.
 	DisabledPublicGroups *[]int64 `json:"disabled_public_groups"`
-	// GroupRates 用户专属分组倍率配置
-	// map[groupID]*rate，nil 表示删除该分组的专属倍率
+	// GroupRates maps group IDs to user-specific rate multipliers.
+	// A nil rate removes the override for that group.
 	GroupRates map[int64]*float64 `json:"group_rates"`
 }
 
@@ -93,7 +93,7 @@ type UpdateBalanceRequest struct {
 	Notes     string  `json:"notes"`
 }
 
-// BatchUpdateConcurrencyRequest 表示管理员批量修改用户并发数的请求。
+// BatchUpdateConcurrencyRequest sets or adds to user concurrency limits.
 type BatchUpdateConcurrencyRequest struct {
 	UserIDs     []int64 `json:"user_ids"`
 	All         bool    `json:"all"`
@@ -123,7 +123,7 @@ type ReplaceGroupRequest struct {
 	NewGroupID int64 `json:"new_group_id" binding:"required,gt=0"`
 }
 
-// BatchUpdateLimitsRequest 表示管理员批量覆盖用户限制的请求。
+// BatchUpdateLimitsRequest replaces concurrency and RPM limits for selected users.
 type BatchUpdateLimitsRequest struct {
 	UserIDs     []int64 `json:"user_ids"`
 	All         bool    `json:"all"`
@@ -152,15 +152,15 @@ func adminID(c *gin.Context) int64 {
 // Query params:
 //   - status: filter by user status
 //   - role: filter by user role
-//   - search: search in email, username
+//   - search: matches email, username, notes, or API key content
 //   - attr[{id}]: filter by custom attribute value, e.g. attr[1]=company
 //   - group_name: fuzzy filter by allowed group name
-//   - api_key_group_id: 按用户 API Key 绑定的精确分组过滤
+//   - api_key_group_id: matches the exact group bound to a user API key
 func (h *AdminUserHandler[K]) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 
 	search := c.Query("search")
-	// 标准化和验证 search 参数
+	// Limit search input by rune count so truncation preserves UTF-8.
 	search = strings.TrimSpace(search)
 	if runes := []rune(search); len(runes) > 100 {
 		search = string(runes[:100])
@@ -197,7 +197,6 @@ func (h *AdminUserHandler[K]) List(c *gin.Context) {
 		loadInfo, _ = h.concurrency(c.Request.Context(), users)
 	}
 
-	// Build response with concurrency info
 	out := make([]UserWithConcurrency[K], len(users))
 	for i := range users {
 		out[i] = UserWithConcurrency[K]{
@@ -214,12 +213,11 @@ func (h *AdminUserHandler[K]) List(c *gin.Context) {
 func ParseAttributeFilters(c *gin.Context) map[int64]string {
 	result := make(map[int64]string)
 
-	// Get all query params and look for attr[*] pattern
 	for key, values := range c.Request.URL.Query() {
 		if len(values) == 0 || values[0] == "" {
 			continue
 		}
-		// Check if key matches pattern attr[{id}]
+
 		if len(key) > 5 && key[:5] == "attr[" && key[len(key)-1] == ']' {
 			idStr := key[5 : len(key)-1]
 			id, err := strconv.ParseInt(idStr, 10, 64)
@@ -303,7 +301,7 @@ func (h *AdminUserHandler[K]) Create(c *gin.Context) {
 		return
 	}
 
-	// 创建管理员账号属权限敏感操作：需最近完成 step-up 2FA 验证。
+	// Creating an administrator requires the configured step-up check.
 	if req.Role == identity.RoleAdmin {
 		if !h.stepUp(c) {
 			return
@@ -347,22 +345,22 @@ func (h *AdminUserHandler[K]) Update(c *gin.Context) {
 		return
 	}
 
-	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
-	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
+	// Block self-demotion so the caller retains administrator access.
+	// Demotion of another administrator is checked by the service.
 	if req.Role == identity.RoleUser && userID == adminID(c) {
 		response.BadRequest(c, "cannot demote yourself from admin")
 		return
 	}
 
-	// 显式设置管理员角色属于权限敏感操作，必须执行 step-up；前端在角色未变化时不发送该字段。
-	// 这里不先读取目标角色，避免目标被并发降级后又在无验证情况下重新提升的竞态窗口。
+	// Run step-up whenever the request sets the administrator role.
+	// Reading the current role first would permit a concurrent demotion and unchecked re-promotion.
 	if req.Role == identity.RoleAdmin {
 		if !h.stepUp(c) {
 			return
 		}
 	}
 
-	// 使用指针类型直接传递，nil 表示未提供该字段
+	// Pass pointer fields through so nil continues to mean omitted.
 	user, err := h.adminService.UpdateUser(c.Request.Context(), userID, &identity.UpdateUserInput{
 		Email:                req.Email,
 		Password:             req.Password,
@@ -436,7 +434,7 @@ func (h *AdminUserHandler[K]) UpdateBalance(c *gin.Context) {
 	})
 }
 
-// BatchUpdateConcurrency 批量修改用户并发数。
+// BatchUpdateConcurrency updates concurrency limits for selected users.
 // POST /api/v1/admin/users/batch-concurrency
 func (h *AdminUserHandler[K]) BatchUpdateConcurrency(c *gin.Context) {
 	var req BatchUpdateConcurrencyRequest
@@ -594,7 +592,7 @@ func (h *AdminUserHandler[K]) ReplaceGroup(c *gin.Context) {
 	})
 }
 
-// GetUserRPMStatus 返回指定用户当前分钟的 RPM 用量
+// GetUserRPMStatus returns current-minute request counts and limits for a user.
 // GET /api/v1/admin/users/:id/rpm-status
 func (h *AdminUserHandler[K]) GetUserRPMStatus(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -612,8 +610,8 @@ func (h *AdminUserHandler[K]) GetUserRPMStatus(c *gin.Context) {
 	response.Success(c, status)
 }
 
-// BatchUpdateLimits 批量覆盖多个用户的并发数和/或 RPM 上限。
-// 接口：POST /api/v1/admin/users/batch-limits。
+// BatchUpdateLimits replaces concurrency and/or RPM limits for selected users.
+// POST /api/v1/admin/users/batch-limits.
 func (h *AdminUserHandler[K]) BatchUpdateLimits(c *gin.Context) {
 	var req BatchUpdateLimitsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

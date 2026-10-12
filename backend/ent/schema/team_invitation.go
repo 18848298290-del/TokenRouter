@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// TeamInvitation 保存绑定受邀邮箱的短期团队邀请。
+// TeamInvitation stores a short-lived invitation bound to the recipient's email.
 type TeamInvitation struct {
 	ent.Schema
 }

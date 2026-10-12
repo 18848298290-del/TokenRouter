@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// UserStats 用户使用统计。
+// UserStats summarizes a user's requests, tokens, and charges.
 type UserStats struct {
 	TotalRequests   int64   `json:"total_requests"`
 	TotalTokens     int64   `json:"total_tokens"`
@@ -23,13 +23,13 @@ type UserStats struct {
 	CacheReadTokens int64   `json:"cache_read_tokens"`
 }
 
-// DashboardStats 仪表盘统计。
+// DashboardStats contains administrator dashboard metrics.
 type DashboardStats = usage.DashboardStats
 
-// UserDashboardStats 用户仪表盘统计。
+// UserDashboardStats contains user dashboard metrics.
 type UserDashboardStats = usage.UserDashboardStats
 
-// getPerformanceStats 获取 RPM 和 TPM（近 5 分钟平均值，可选纳入 Owner 团队）。
+// getPerformanceStats returns five-minute average RPM and TPM, optionally including the user's owned team.
 func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOwnedTeam bool) (rpm, tpm int64, err error) {
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
 	args := []any{fiveMinutesAgo}
@@ -86,7 +86,7 @@ func (r *Store) GetUserStats(ctx context.Context, userID int64, startTime, endTi
 	return stats, nil
 }
 
-// runDashboardQueries 仅在连接池上并行查询；事务等单连接执行器必须串行使用。
+// runDashboardQueries runs pool queries concurrently and serializes single-connection executors such as transactions.
 func (r *Store) runDashboardQueries(ctx context.Context, queries ...func(context.Context) error) error {
 	if r.db == nil {
 		for _, query := range queries {
@@ -112,7 +112,7 @@ func (r *Store) GetDashboardStats(ctx context.Context) (*DashboardStats, error) 
 	now := r.calendar.Now()
 	todayStart := r.calendar.Today()
 
-	// 实体、聚合用量和近五分钟性能彼此独立，并行读取可缩短接口关键路径。
+	// Entity counts, aggregate usage, and five-minute rates can be queried independently.
 	var rpm, tpm int64
 	err := r.runDashboardQueries(
 		ctx,
@@ -367,7 +367,7 @@ func (r *Store) fillDashboardUsageStatsFromUsageLogs(ctx context.Context, stats 
 	return scanSingleRow(ctx, r.sql, activeUsersQuery, []any{todayUTC, todayEnd, hourStart, hourEnd}, &stats.ActiveUsers, &stats.HourlyActiveUsers)
 }
 
-// GetUserDashboardStats 获取用户专属的仪表盘统计。
+// GetUserDashboardStats returns metrics for the user and their owned team.
 func (r *Store) GetUserDashboardStats(ctx context.Context, userID int64) (*UserDashboardStats, error) {
 	if stats, ok, err := r.getUserDashboardStatsFromAnalytics(ctx, userID); err == nil && ok {
 		return stats, nil
@@ -381,7 +381,7 @@ func (r *Store) GetUserDashboardStats(ctx context.Context, userID int64) (*UserD
 		return nil, err
 	}
 
-	// 用户和 Owner 团队分别使用索引扫描；第二分支排除用户本人，保证只统计一次。
+	// Separate user and team scans can use indexes; excluding the owner from the team branch prevents duplicates.
 	loadAPIKeyStats := func(queryCtx context.Context) error {
 		return scanSingleRow(queryCtx, r.sql, `
 			WITH scoped AS (
@@ -395,7 +395,7 @@ func (r *Store) GetUserDashboardStats(ctx context.Context, userID int64) (*UserD
 		`, []any{userID, teamID, identity.StatusActive}, &stats.TotalAPIKeys, &stats.ActiveAPIKeys)
 	}
 
-	// 累计和今日统计共用同一组可索引范围，避免重复扫描大型使用记录表。
+	// All-time and today totals share one scan of the indexable user and team ranges.
 	var totalDuration, durationCount int64
 	usageStatsQuery := `
 		WITH scoped AS (
@@ -447,7 +447,7 @@ func (r *Store) GetUserDashboardStats(ctx context.Context, userID int64) (*UserD
 		)
 	}
 
-	// 近五分钟窗口有独立时间索引，与累计统计并行执行。
+	// The five-minute query can use the time index independently of all-time totals.
 	var rpm, tpm int64
 	loadPerformanceStats := func(queryCtx context.Context) error {
 		var performanceErr error
@@ -469,7 +469,7 @@ func (r *Store) GetUserDashboardStats(ctx context.Context, userID int64) (*UserD
 	return stats, nil
 }
 
-// getPerformanceStatsByAPIKey 获取指定 API Key 的 RPM 和 TPM（近 5 分钟平均值）。
+// getPerformanceStatsByAPIKey returns five-minute average RPM and TPM for an API key.
 func (r *Store) getPerformanceStatsByAPIKey(ctx context.Context, apiKeyID int64) (rpm, tpm int64, err error) {
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
 	query := `
@@ -488,7 +488,7 @@ func (r *Store) getPerformanceStatsByAPIKey(ctx context.Context, apiKeyID int64)
 	return requestCount / 5, tokenCount / 5, nil
 }
 
-// GetAPIKeyDashboardStats 获取指定 API Key 的仪表盘统计（按 api_key_id 过滤）。
+// GetAPIKeyDashboardStats returns dashboard metrics filtered by API key ID.
 func (r *Store) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*UserDashboardStats, error) {
 	stats, aggregated, err := r.getAPIKeyDashboardStatsFromAnalytics(ctx, apiKeyID)
 	if err != nil {
@@ -496,7 +496,7 @@ func (r *Store) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*U
 	}
 	if err != nil || !aggregated {
 		stats = &UserDashboardStats{}
-		// 累计和今日共用一次原始记录扫描，未来时间记录也参与统计。
+		// All-time and today totals share one raw-record scan and include future-dated records.
 		query := `SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
 			COALESCE(SUM(total_cost), 0), COALESCE(SUM(actual_cost), 0), COALESCE(AVG(duration_ms), 0),
@@ -522,7 +522,7 @@ func (r *Store) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*U
 	stats.ActiveAPIKeys = 1
 	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
 	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
-	// 短窗口读取原始记录，反映当前请求速率。
+	// Read the short window from raw records to reflect recent request rates.
 	rpm, tpm, err := r.getPerformanceStatsByAPIKey(ctx, apiKeyID)
 	if err != nil {
 		return nil, err

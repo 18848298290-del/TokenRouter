@@ -21,18 +21,18 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// creativeManagedKeys 通过共享 KeyStore 为创作台任务提供 Key 操作。
+// creativeManagedKeys uses the shared KeyStore for creative task keys.
 type creativeManagedKeys struct {
 	store *keypostgres.KeyStore
 }
 
-// batchCleanupRuntime 区分清理循环与任务消费循环的生命周期实例。
+// batchCleanupRuntime distinguishes cleanup lifecycle hooks from task consumption hooks.
 type batchCleanupRuntime struct{ *batchimage.Runtime }
 
-// taskRequestActivity 等待提交、下载及管理请求结束，再停止 task worker 和共享存储。
+// taskRequestActivity drains submission, download, and admin requests before task workers and storage stop.
 type taskRequestActivity struct{ *lifecycle.Operations }
 
-// batchImageAccessPorts 从认证上下文读取批量图片任务需要的 Key、订阅和会话 ID。
+// batchImageAccessPorts reads the authenticated key, preferred subscription, and client session ID.
 func batchImageAccessPorts() batchhttp.AccessPorts {
 	return batchhttp.AccessPorts{Key: func(c *gin.Context) (*apikey.APIKey, bool) {
 		k, ok := keyhttp.GetAPIKeyFromContext(c)
@@ -76,7 +76,7 @@ func provideBatchHTTP(s *batchimage.Public, d *batchimage.Download, c *batchimag
 	return h
 }
 
-// provideBatchDownload 装配批量图片下载用例，复用提供商注册表。
+// provideBatchDownload shares the provider registry for batch image downloads.
 func provideBatchDownload(repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, limiter batchimage.BatchImageDownloadLimiter, cfg *config.Config, registry *batchimage.Registry[batchimageprovider.BatchImageProvider]) *batchimage.Download {
 	core := &batchimage.Download{Repo: repo, Limiter: limiter, ResolveProvider: (batchimageprovider.ResultAccess{Registry: registry, Providers: providers}).Download}
 	if cfg != nil {
@@ -85,7 +85,7 @@ func provideBatchDownload(repo batchimage.BatchImageRepository, providers *provi
 	return core
 }
 
-// provideBatchCleanup 注入批量图片清理配置和日志出口，运行循环由模块持有。
+// provideBatchCleanup binds cleanup configuration and logging; the batch image module owns the loop.
 func provideBatchCleanup(repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, cfg *config.Config, registry *batchimage.Registry[batchimageprovider.BatchImageProvider]) *batchimage.Cleanup {
 	core := &batchimage.Cleanup{Repo: repo, Now: time.Now, Observe: creativeObserve, ResolveProvider: (batchimageprovider.ResultAccess{Registry: registry, Providers: providers}).Cleanup}
 	if cfg != nil {

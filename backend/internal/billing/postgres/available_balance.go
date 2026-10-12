@@ -9,6 +9,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// DeductAvailableBalance deducts up to the nonnegative balance and returns the
+// remaining balance and actual deduction. The caller supplies a nonnegative amount.
 func DeductAvailableBalance(ctx context.Context, q postgresinfra.Queryer, userID int64, amount float64) (float64, float64, error) {
 	const query = `
 		WITH locked_user AS (

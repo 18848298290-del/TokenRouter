@@ -7,7 +7,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestStandaloneSourcesRequireObservedURL 验证来源白名单和稳定排序由原生解析拥有，模型生成的陌生 URL 不得进入结果。
+// Keep source order and admit enriched results only when their URL was observed by the search tool.
 func TestStandaloneSourcesRequireObservedURL(t *testing.T) {
 	body := []byte(`{"output":[{"type":"web_search_call","action":{"sources":[{"url":"https://Example.test/a#source","title":"source A","snippet":"source snippet"},{"url":"https://example.test/b","title":"123"}]}},{"type":"message","content":[{"type":"output_text","text":"{\"results\":[{\"url\":\"https://invented.test\",\"title\":\"invented\"},{\"url\":\"https://example.test/a\",\"title\":\"enriched\",\"snippet\":\"summary\"}]}"}]}]}`)
 	results := ExtractGrokWebSearchSources(body, 5)

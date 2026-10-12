@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// FundsStore 以闭合命令隐藏 SQL 锁序及持久化细节。
+// FundsStore owns transaction locking and persistence for complete funding operations.
 type FundsStore interface {
 	Apply(context.Context, *UsageBillingCommand) (*UsageBillingApplyResult, error)
 	Reserve(context.Context, *TaskFundsCommand) (*TaskFundsResult, error)
@@ -13,7 +13,7 @@ type FundsStore interface {
 	Release(context.Context, *TaskFundsCommand) (*TaskFundsResult, error)
 }
 
-// Funds 是普通结算与任务资金的唯一入口。
+// Funds settles request usage and reserves, captures, or releases task funds.
 type Funds struct{ store FundsStore }
 
 func NewFunds(store FundsStore) *Funds { return &Funds{store: store} }

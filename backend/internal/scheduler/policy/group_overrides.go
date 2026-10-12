@@ -1,7 +1,7 @@
 package policy
 
-// GroupAdvancedSchedulerOverrides 保存分组对通用高级调度器的稀疏覆盖。
-// nil 表示继承网关通用设置；指针使 false 和 0 可以作为明确覆盖值保存。
+// GroupAdvancedSchedulerOverrides contains sparse group overrides for advanced scheduling.
+// Nil inherits gateway settings; pointers distinguish supplied false and zero values from missing fields.
 type GroupAdvancedSchedulerOverrides struct {
 	StickyWeightedEnabled       *bool    `json:"sticky_weighted_enabled,omitempty"`
 	SubscriptionPriorityEnabled *bool    `json:"subscription_priority_enabled,omitempty"`

@@ -145,7 +145,7 @@ func TestExecuteStreamingProgressAndPartialFailure(t *testing.T) {
 					require.NoError(t, err)
 				}
 				require.Equal(t, "claude-runtime", result.UpstreamResponseModel)
-				// 终态出错时，已观测的用量和内容输出仍保存在结果中。
+				// A terminal error retains usage and content already observed.
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
 				require.NotNil(t, result.FirstTokenMs)

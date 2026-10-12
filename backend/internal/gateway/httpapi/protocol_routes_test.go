@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestProtocolRouteMethodAndResourceBoundaries 验证准入按方法和子资源区分，已有任务操作使用自己的开关。
+// TestProtocolRouteMethodAndResourceBoundaries checks method and subresource admission, including separate
+// task-operation switches.
 func TestProtocolRouteMethodAndResourceBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
@@ -40,7 +41,7 @@ func TestProtocolRouteMethodAndResourceBoundaries(t *testing.T) {
 	}
 }
 
-// TestProtocolCatalogRoutesAreIndependent 验证返回目录可由调用方持有，但不得反向改写全局路由准入定义。
+// TestProtocolCatalogRoutesAreIndependent checks that modifying returned routes leaves global admission metadata unchanged.
 func TestProtocolCatalogRoutesAreIndependent(t *testing.T) {
 	for _, protocol := range ProtocolEndpoints() {
 		if protocol.ID == ProtocolEmbeddings {

@@ -42,13 +42,13 @@ type groupRepoStubForGroupUpdate struct {
 	lastGetByIDArg int64
 }
 
-// keyGroupsFixture 返回分组数据副本，测试需要的方法由 source 提供。
+// keyGroupsFixture returns group copies from source for the methods used by these tests.
 type keyGroupsFixture struct {
 	apikey.GroupRepository
 	source *groupRepoStubForGroupUpdate
 }
 
-// authCacheInvalidatorStub 记录管理操作触发失效的密钥。
+// authCacheInvalidatorStub records credentials invalidated by admin operations.
 type authCacheInvalidatorStub struct{ keys []string }
 
 func TestAdminService_AdminUpdateAPIKeyGroupID_KeyNotFound(t *testing.T) {
@@ -67,7 +67,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_NilGroupID_NoOp(t *testing.T) {
 	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), got.APIKey.ID)
-	// Update should NOT have been called (updated stays nil)
+	// An omitted group ID leaves the key untouched.
 	require.Nil(t, repo.updated)
 }
 
@@ -100,9 +100,9 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_BindActiveGroup(t *testing.T) {
 	require.Equal(t, int64(10), *got.APIKey.GroupID)
 	require.Equal(t, int64(10), *apiKeyRepo.updated.GroupID)
 	require.Equal(t, []string{"sk-test"}, cache.keys)
-	// M3: verify correct group ID was passed to repo
+	// The repository lookup uses the requested group ID.
 	require.Equal(t, int64(10), groupRepo.lastGetByIDArg)
-	// C1 fix: verify Group object is populated
+	// The response includes the selected group details.
 	require.NotNil(t, got.APIKey.Group)
 	require.Equal(t, "Pro", got.APIKey.Group.Name)
 }
@@ -119,7 +119,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_SameGroup_Idempotent(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, got.APIKey.GroupID)
 	require.Equal(t, int64(10), *got.APIKey.GroupID)
-	// Update is still called (current impl doesn't short-circuit on same group)
+	// Selecting the current group still writes the key and invalidates its cache.
 	require.NotNil(t, apiKeyRepo.updated)
 	require.Equal(t, []string{"sk-test"}, cache.keys)
 }
@@ -177,7 +177,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_PointerIsolation(t *testing.T) {
 	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, &inputGID)
 	require.NoError(t, err)
 	require.NotNil(t, got.APIKey.GroupID)
-	// Mutating the input pointer must NOT affect the stored value
+	// The stored group ID must be independent of the input pointer.
 	inputGID = 999
 	require.Equal(t, int64(10), *got.APIKey.GroupID)
 	require.Equal(t, int64(10), *apiKeyRepo.updated.GroupID)
@@ -188,7 +188,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_NilCacheInvalidator(t *testing.T)
 	apiKeyRepo := &apiKeyRepoStubForGroupUpdate{key: existing}
 	groupRepo := &groupRepoStubForGroupUpdate{group: &routing.Group{ID: 7, Status: billing.StatusActive}}
 	userRepo := &userRepoStubForGroupUpdate{user: &identity.User{ID: 42}}
-	// authCacheInvalidator is nil – should not panic
+	// Cache invalidation is optional.
 	svc := newKeyAdminForTest(apiKeyRepo, groupRepo, userRepo, nil)
 
 	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(7))
@@ -209,11 +209,11 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_ExclusiveGroup_AddsAllowedGroup(t
 	require.NoError(t, err)
 	require.NotNil(t, got.APIKey.GroupID)
 	require.Equal(t, int64(10), *got.APIKey.GroupID)
-	// 验证 AddGroupToAllowedGroups 被调用，且参数正确
+	// Exclusive group binding grants access to the key owner.
 	require.True(t, userRepo.addGroupCalled)
 	require.Equal(t, int64(42), userRepo.addedUserID)
 	require.Equal(t, int64(10), userRepo.addedGroupID)
-	// 验证 result 标记了自动授权
+	// The result reports the granted group for the API response.
 	require.True(t, got.AutoGrantedGroupAccess)
 	require.NotNil(t, got.GrantedGroupID)
 	require.Equal(t, int64(10), *got.GrantedGroupID)
@@ -231,7 +231,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_NonExclusiveGroup_NoAllowedGroupU
 	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
 	require.NoError(t, err)
 	require.NotNil(t, got.APIKey.GroupID)
-	// 非专属分组不触发 AddGroupToAllowedGroups
+	// Public groups do not require an explicit access grant.
 	require.False(t, userRepo.addGroupCalled)
 	require.False(t, got.AutoGrantedGroupAccess)
 }
@@ -271,12 +271,12 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_ExclusiveGroup_AllowedGroupAddFai
 	userRepo := &userRepoStubForGroupUpdate{addGroupErr: errors.New("db error")}
 	svc := newKeyAdminForTest(apiKeyRepo, groupRepo, userRepo, nil)
 
-	// 严格模式：AddGroupToAllowedGroups 失败时，整体操作报错
+	// A failed access grant aborts the key update.
 	_, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "add group to user allowed groups")
 	require.True(t, userRepo.addGroupCalled)
-	// apiKey 不应被更新
+	// The failed grant leaves the key untouched.
 	require.Nil(t, apiKeyRepo.updated)
 }
 
@@ -290,7 +290,7 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_Unbind_NoAllowedGroupUpdate(t *te
 	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(0))
 	require.NoError(t, err)
 	require.Nil(t, got.APIKey.GroupID)
-	// 解绑时不修改 allowed_groups
+	// Unbinding a key leaves the user's group permissions unchanged.
 	require.False(t, userRepo.addGroupCalled)
 	require.False(t, got.AutoGrantedGroupAccess)
 }
@@ -474,7 +474,7 @@ func (s *apiKeyRepoStubForGroupUpdate) Update(_ context.Context, key *apikey.API
 	return nil
 }
 
-// Create 是未使用的测试替身方法，意外调用时触发 panic。
+// Create panics because key creation is outside this fixture's supported operations.
 func (s *apiKeyRepoStubForGroupUpdate) Create(context.Context, *apikey.APIKey) error {
 	panic("unexpected")
 }
@@ -570,7 +570,7 @@ func (s *groupRepoStubForGroupUpdate) GetByID(_ context.Context, id int64) (*rou
 	return &clone, nil
 }
 
-// Create 是未使用的测试替身方法，意外调用时触发 panic。
+// Create panics because group creation is outside this fixture's supported operations.
 func (s *groupRepoStubForGroupUpdate) Create(context.Context, *routing.Group) error {
 	panic("unexpected")
 }
@@ -633,7 +633,7 @@ func (s *groupRepoStubForGroupUpdate) UpdateSortOrders(context.Context, []routin
 	panic("unexpected")
 }
 
-// newKeyAdminForTest 用替身构造管理服务，分组授权由未配置数据库客户端的 AdminGroupMutations 执行。
+// newKeyAdminForTest uses repository stubs and AdminGroupMutations without a database client.
 func newKeyAdminForTest(keys apikey.APIKeyRepository, groups *groupRepoStubForGroupUpdate, users *userRepoStubForGroupUpdate, invalidator *authCacheInvalidatorStub) *apikey.Admin {
 	out := &apikey.Admin{Keys: keys, Mutations: &keypostgres.AdminGroupMutations{Keys: keys, Users: users}}
 	if users != nil {

@@ -40,71 +40,71 @@ type Group struct {
 	IsExclusive bool `json:"is_exclusive,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
-	// 内部幂等恢复标识，不对 API 暴露
+	// Internal idempotent recovery identifier, excluded from API responses
 	DuplicateOperationID *string `json:"duplicate_operation_id,omitempty"`
-	// 分组调度器类型：basic 或 advanced
+	// Group scheduler type: basic or advanced
 	SchedulerType string `json:"scheduler_type,omitempty"`
-	// 分组高级调度器稀疏覆盖；未设置字段继承网关通用设置
+	// Advanced scheduler overrides; unset fields inherit gateway settings
 	AdvancedSchedulerOverrides policy.GroupAdvancedSchedulerOverrides `json:"advanced_scheduler_overrides,omitempty"`
-	// 模型广场展示品牌
+	// Brand displayed in the model marketplace
 	DisplayBrand string `json:"display_brand,omitempty"`
-	// 是否允许该分组使用图片生成能力
+	// Allows image generation in this group
 	AllowImageGeneration bool `json:"allow_image_generation,omitempty"`
-	// 是否允许该分组使用批量图片生成能力
+	// Allows batch image generation in this group
 	AllowBatchImageGeneration bool `json:"allow_batch_image_generation,omitempty"`
-	// 分组独立模型与功能策略
+	// Model and feature policy for this group
 	RoutingPolicy jsontext.Value `json:"routing_policy,omitempty"`
-	// 是否仅允许 Claude Code 客户端
+	// Restricts access to Claude Code clients
 	ClaudeCodeOnly bool `json:"claude_code_only,omitempty"`
-	// 非 Claude Code 请求降级使用的分组 ID
+	// Fallback group ID for non-Claude Code requests
 	FallbackGroupID *int64 `json:"fallback_group_id,omitempty"`
-	// 无效请求兜底使用的分组 ID
+	// Fallback group ID for invalid requests
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request,omitempty"`
-	// 当前分组不可用时优先回退使用的分组 ID
+	// Preferred fallback group ID when this group is unavailable
 	UnavailableFallbackGroupID *int64 `json:"unavailable_fallback_group_id,omitempty"`
-	// 模型路由配置：模型模式 -> 优先提供商ID列表
+	// Model patterns mapped to preferred provider ID lists
 	ModelRouting map[string][]int64 `json:"model_routing,omitempty"`
-	// 是否启用模型路由配置
+	// Enables model routing configuration
 	ModelRoutingEnabled bool `json:"model_routing_enabled,omitempty"`
-	// 是否注入 MCP XML 调用协议提示词（仅 antigravity 平台）
+	// Injects MCP XML tool-call instructions for Antigravity
 	McpXMLInject bool `json:"mcp_xml_inject,omitempty"`
-	// 支持的模型系列：claude, gemini_text, gemini_image
+	// Supported model families: claude, gemini_text, gemini_image
 	SupportedModelScopes []string `json:"supported_model_scopes,omitempty"`
-	// 分组显示排序，数值越小越靠前
+	// Group display order; lower values appear first
 	SortOrder int `json:"sort_order,omitempty"`
-	// 是否允许 /v1/messages 调度到此 OpenAI 分组
+	// Allows /v1/messages dispatch to this OpenAI group
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch,omitempty"`
-	// 允许客户端调用分组的协议与业务入口完整集合
+	// Complete set of client protocols and feature entry points allowed for this group
 	AllowedProtocols []protocol.ProtocolID `json:"allowed_protocols,omitempty"`
 	// ProtocolFallbacks holds the value of the "protocol_fallbacks" field.
 	ProtocolFallbacks map[protocol.ProtocolID][]protocol.ProtocolID `json:"protocol_fallbacks,omitempty"`
 	// ResponsesImagePolicy holds the value of the "responses_image_policy" field.
 	ResponsesImagePolicy string `json:"responses_image_policy,omitempty"`
-	// 是否允许此 OpenAI 分组访问 Live 接口
+	// Allows Live access through this OpenAI group
 	AllowLive bool `json:"allow_live,omitempty"`
-	// 分组加速策略：follow_request/force_priority/force_ultrafast/force_off
+	// Group acceleration policy: follow_request/force_priority/force_ultrafast/force_off
 	OpenaiFastPolicy string `json:"openai_fast_policy,omitempty"`
-	// 是否强制此 OpenAI 分组请求使用 service_tier=priority
+	// Forces service_tier=priority on requests through this OpenAI group
 	ForceOpenaiFast bool `json:"force_openai_fast,omitempty"`
-	// 仅允许非 apikey 类型提供商关联到此分组
+	// Restricts group membership to providers whose type is not apikey
 	RequireOauthOnly bool `json:"require_oauth_only,omitempty"`
-	// 调度时仅允许 privacy 已成功设置的提供商
+	// Restricts scheduling to providers with privacy successfully configured
 	RequirePrivacySet bool `json:"require_privacy_set,omitempty"`
-	// 默认映射模型 ID，当提供商级映射找不到时使用此值
+	// Default model ID when provider-level mapping has no match
 	DefaultMappedModel string `json:"default_mapped_model,omitempty"`
-	// 自定义 /v1/models 展示列表配置；仅影响模型列表响应，不影响调度
+	// Custom /v1/models display configuration; affects list responses, not scheduling
 	ModelsListConfig accessview.GroupModelsListConfig `json:"models_list_config,omitempty"`
-	// 分组主动可用性探测配置
+	// Active availability probe configuration for this group
 	AvailabilityProbeConfig accessview.GroupAvailabilityProbeConfig `json:"availability_probe_config,omitempty"`
-	// 分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流
+	// Per-user RPM limit in this group; zero disables the group limit. The user-wide limit still applies
 	RpmLimit int `json:"rpm_limit,omitempty"`
-	// OpenAI reasoning effort 上限；可选 minimal/low/medium/high/xhigh/max
+	// Maximum OpenAI reasoning effort: minimal/low/medium/high/xhigh/max
 	MaxReasoningEffort string `json:"max_reasoning_effort,omitempty"`
-	// 超过推理强度上限时的访问控制：downgrade 自动降档，deny 拒绝访问
+	// Over-limit action: downgrade lowers reasoning effort; deny rejects the request
 	MaxReasoningEffortOverLimit string `json:"max_reasoning_effort_over_limit,omitempty"`
-	// OpenAI reasoning effort 自定义映射；可按模型精确名、前缀或后缀限定，先映射再应用上限
+	// OpenAI reasoning effort mappings by exact model, prefix, or suffix; applied before the maximum
 	ReasoningEffortMappings []accessview.ReasoningEffortMapping `json:"reasoning_effort_mappings,omitempty"`
-	// 是否开启会话隔离
+	// Enables session isolation
 	SessionIsolationEnabled bool `json:"session_isolation_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the GroupQuery when eager-loading is set.

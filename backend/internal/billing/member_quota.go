@@ -14,14 +14,16 @@ var (
 	ErrTeamMembershipRequired    = apperror.Forbidden("TEAM_MEMBERSHIP_REQUIRED", "Team membership is required")
 )
 
-// MemberQuotaSnapshot 只描述成员资金窗口，团队角色和是否检查由调用用例决定。
+// MemberQuotaSnapshot contains member spending windows. The caller decides whether the member's role requires
+// quota checks.
 type MemberQuotaSnapshot struct {
 	DailyLimitUSD, WeeklyLimitUSD, MonthlyLimitUSD          float64
 	DailyUsageUSD, WeeklyUsageUSD, MonthlyUsageUSD          float64
 	DailyWindowStart, WeeklyWindowStart, MonthlyWindowStart *time.Time
 }
 
-// CheckMemberQuotaSnapshot 保留日、周、月顺序，零限额不限制，不在预检中改写窗口。
+// CheckMemberQuotaSnapshot checks daily, weekly, then monthly limits. Nonpositive limits are unlimited; windows
+// are not modified.
 func CheckMemberQuotaSnapshot(member MemberQuotaSnapshot) error {
 	if member.DailyLimitUSD > 0 && member.DailyUsageUSD >= member.DailyLimitUSD {
 		return ErrTeamMemberDailyExceeded
@@ -35,7 +37,8 @@ func CheckMemberQuotaSnapshot(member MemberQuotaSnapshot) error {
 	return nil
 }
 
-// NormalizeMemberQuotaWindows 返回按当前日期重置过期窗口的额度副本，持久化消费和重置由事务执行。
+// NormalizeMemberQuotaWindows returns a copy with expired calendar windows reset. The caller persists usage and
+// resets in a transaction.
 func NormalizeMemberQuotaWindows(member MemberQuotaSnapshot, now time.Time, calendar timezone.Calendar) MemberQuotaSnapshot {
 	daily, weekly, monthly := calendar.StartOfDay(now), calendar.StartOfWeek(now), calendar.StartOfMonth(now)
 	if member.DailyWindowStart == nil || member.DailyWindowStart.Before(daily) {

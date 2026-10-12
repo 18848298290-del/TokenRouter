@@ -50,8 +50,8 @@ func TestAuthCacheInvalidationTriggers_CoverSecurityMutationsOnly(t *testing.T) 
 	clear()
 	t.Cleanup(clear)
 	t.Cleanup(func() {
-		// 隔离共享集成数据库，避免影响断言全平台分组数量的测试套件。
-		// 最后的清理会在此之后运行，并删除这些硬删除操作产生的失效事件。
+		// Remove committed fixture rows, including the group and its foreign-key references.
+		// The final cleanup runs afterward and removes invalidation events from these hard deletes.
 		_, err := integrationDB.ExecContext(ctx, "DELETE FROM user_allowed_groups WHERE user_id = $1 OR group_id = $2", user.ID, group.ID)
 		require.NoError(t, err)
 		_, err = integrationDB.ExecContext(ctx, "DELETE FROM api_keys WHERE id = $1", key.ID)

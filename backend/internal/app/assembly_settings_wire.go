@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// settingsAssemblyProviders 汇总 settings 模块的 Wire provider。
+// settingsAssemblyProviders groups Wire providers for the settings module.
 var settingsAssemblyProviders = wire.NewSet(
 	provideCompositeReadOptions,
 	providePreAggregationSettings,

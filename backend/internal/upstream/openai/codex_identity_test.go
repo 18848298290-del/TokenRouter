@@ -132,7 +132,7 @@ func TestEnforceCodexIdentityHeaders(t *testing.T) {
 	}
 }
 
-// TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop 检查缺少 originator 时请求头保持不变。
+// TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop verifies that a missing originator leaves headers unchanged.
 func TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop(t *testing.T) {
 	h := make(http.Header)
 	h.Set("user-agent", "third-party-client/1.0.0")

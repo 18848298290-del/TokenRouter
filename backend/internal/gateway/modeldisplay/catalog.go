@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// Catalog 按请求 ID 查询统一目录，协议适配器决定响应字段。
+// Catalog looks up requested model IDs; protocol adapters choose the response fields.
 type Catalog interface {
 	Model(string) OpenAIModel
 	GeminiModel(string, bool) GeminiModel

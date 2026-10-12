@@ -4,14 +4,14 @@ import (
 	"time"
 )
 
-// CNUsageMonitorError 记录最近一次探测失败，不包含凭据或原始响应正文。
+// CNUsageMonitorError records the latest probe failure code and time.
 type CNUsageMonitorError struct {
 	Code       string    `json:"code"`
 	ObservedAt time.Time `json:"observed_at"`
 }
 
-// CNUsageMonitorSnapshot 保存最近成功数据与最近一次尝试状态。失败只更新 LastError，
-// 不覆盖上一次成功的余额或窗口。
+// CNUsageMonitorSnapshot holds the last successful data and the latest attempt status.
+// Failed probes update LastError while retaining the successful balance and windows.
 type CNUsageMonitorSnapshot struct {
 	Version       int                         `json:"version"`
 	Adapter       string                      `json:"adapter"`

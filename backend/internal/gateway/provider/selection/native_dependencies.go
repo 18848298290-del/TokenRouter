@@ -16,7 +16,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// modelRejectionSources 将候选提供商转换为 routing 的模型拒绝判断输入。
+// modelRejectionSources converts candidates to model-rejection inputs for routing.
 func modelRejectionSources(providers []gatewayprovider.ExecutionProvider) []routing.ModelRejectionSource {
 	sources := make([]routing.ModelRejectionSource, len(providers))
 	for i := range providers {
@@ -26,7 +26,7 @@ func modelRejectionSources(providers []gatewayprovider.ExecutionProvider) []rout
 	return sources
 }
 
-// readSnapshotProvider 从已绑定的快照读取器取得提供商。
+// readSnapshotProvider reads a snapshot and wraps it as an execution provider.
 func readSnapshotProvider(ctx context.Context, source Snapshots, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	value, err := source.GetProvider(ctx, id)
 	return gatewayprovider.NewExecutionProvider(value), err
@@ -86,7 +86,7 @@ func mapAntigravityModel(value *gatewayprovider.ExecutionProvider, model string)
 	return provideradapter.MapAntigravityModel(gatewayprovider.ExecutionRecord(value), model)
 }
 
-// defaultWindowCostGuard 返回使用默认参数的窗口费用检查器。
+// defaultWindowCostGuard creates a window-cost guard with default options.
 func defaultWindowCostGuard() *billing.WindowCostGuard {
 	return billing.NewWindowCostGuard(nil, nil, billing.WindowCostGuardOptions{Now: time.Now, Stats: billing.SharedWindowCostMetrics(), Log: func(format string, args ...any) { logging.LegacyPrintf("service.gateway", format, args...) }, Debug: slog.Debug})
 }

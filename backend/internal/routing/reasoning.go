@@ -15,24 +15,24 @@ const (
 	MaxReasoningEffortValueLen = 64
 	MaxReasoningEffortModelLen = 200
 
-	// ReasoningEffortOverLimitDowngrade 表示超出上限时改写为上限值。
+	// ReasoningEffortOverLimitDowngrade clamps effort to the group ceiling.
 	ReasoningEffortOverLimitDowngrade = "downgrade"
-	// ReasoningEffortOverLimitDeny 表示超出上限时拒绝请求。
+	// ReasoningEffortOverLimitDeny rejects effort above the group ceiling.
 	ReasoningEffortOverLimitDeny = "deny"
 
-	// 推理强度映射支持精确、前缀和后缀匹配。
+	// Effort mappings support exact, prefix, and suffix model matches.
 	ReasoningEffortMatchExact  = "exact"
 	ReasoningEffortMatchPrefix = "prefix"
 	ReasoningEffortMatchSuffix = "suffix"
 )
 
-// ReasoningEffortOverLimitError 表示请求的推理强度超过分组上限且策略要求拒绝。
+// ReasoningEffortOverLimitError reports an effort above the group ceiling under a deny policy.
 type ReasoningEffortOverLimitError struct {
 	Requested string
 	Max       string
 }
 
-// ReasoningEffortMapping 在应用分组上限前，改写请求中的 OpenAI/Codex 推理强度值。
+// ReasoningEffortMapping rewrites request effort before applying the group ceiling.
 type ReasoningEffortMapping = accessview.ReasoningEffortMapping
 
 func (e *ReasoningEffortOverLimitError) Error() string {
@@ -53,8 +53,8 @@ func (e *ReasoningEffortOverLimitError) Error() string {
 	return fmt.Sprintf("reasoning effort %q exceeds this group's limit of %q", requested, max)
 }
 
-// NormalizeMaxReasoningEffort 校验并标准化分组策略值。
-// 空字符串表示分组不设置上限。
+// NormalizeMaxReasoningEffort normalizes recognized effort values and returns empty for invalid input.
+// An empty group value means no ceiling.
 func NormalizeMaxReasoningEffort(raw string) string {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
@@ -78,8 +78,8 @@ func NormalizeMaxReasoningEffort(raw string) string {
 	}
 }
 
-// NormalizeReasoningEffortMappingValue 标准化映射规则使用的值。none 只表示
-// 上游协议中的关闭推理状态，不能参与分组上限的强度比较。
+// NormalizeReasoningEffortMappingValue also accepts none to disable upstream reasoning.
+// The none value is not an effort rank for group-ceiling comparisons.
 func NormalizeReasoningEffortMappingValue(raw string) string {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
@@ -89,8 +89,8 @@ func NormalizeReasoningEffortMappingValue(raw string) string {
 	return NormalizeMaxReasoningEffort(value)
 }
 
-// NormalizeRequestedOpenAIReasoningEffort 规范化客户端请求中的推理强度值。
-// none 表示关闭推理，请求审计记录该值，分组上限使用可比较的强度排名。
+// NormalizeRequestedOpenAIReasoningEffort normalizes client effort values.
+// Request auditing retains none; ceiling checks use comparable effort ranks.
 func NormalizeRequestedOpenAIReasoningEffort(raw string) string {
 	return NormalizeReasoningEffortMappingValue(raw)
 }
@@ -161,7 +161,7 @@ func NormalizeReasoningEffortMappingValueForPlatform(platform, raw string) (stri
 	)
 }
 
-// NormalizeMaxReasoningEffortOverLimit 将超限动作归一化；空值兼容历史默认降档。
+// NormalizeMaxReasoningEffortOverLimit normalizes the action, defaulting empty input to downgrade.
 func NormalizeMaxReasoningEffortOverLimit(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", ReasoningEffortOverLimitDowngrade:
@@ -173,8 +173,8 @@ func NormalizeMaxReasoningEffortOverLimit(raw string) string {
 	}
 }
 
-// NormalizeMaxReasoningEffortOverLimitForPlatform 校验动作是否能用于目标平台。
-// 降档是无副作用的兼容默认值；拒绝仅对当前 fork 支持的 OpenAI 分组开放。
+// NormalizeMaxReasoningEffortOverLimitForPlatform validates an action for the platform.
+// Downgrade is accepted for every platform; deny is supported for Anthropic and OpenAI.
 func NormalizeMaxReasoningEffortOverLimitForPlatform(platform, raw string) (string, error) {
 	value := NormalizeMaxReasoningEffortOverLimit(raw)
 	if value == "" {
@@ -217,7 +217,7 @@ func ReasoningEffortRank(raw string) (int, bool) {
 	}
 }
 
-// NormalizeReasoningEffortMatchType 校验并规范化模型匹配类型；模型为空时返回空类型。
+// NormalizeReasoningEffortMatchType normalizes the match type, returning empty when no model is specified.
 func NormalizeReasoningEffortMatchType(matchType, model string) (string, error) {
 	model = strings.TrimSpace(model)
 	matchType = strings.ToLower(strings.TrimSpace(matchType))

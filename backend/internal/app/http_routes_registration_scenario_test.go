@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 http_routes.go 与 http_routes_admin.go 的路由注册和中间件顺序。
+// These tests cover route registration and middleware order in http_routes.go and http_routes_admin.go.
 
 import (
 	"encoding/json"
@@ -18,7 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// TestNativeRouteInventory 对照已登记的路由快照，实际调用生产注册函数并由 Gin 检测重复注册。
+// TestNativeRouteInventory compares production registration with the saved inventory and lets Gin detect
+// duplicate routes.
 func TestNativeRouteInventory(t *testing.T) {
 	r := gin.New()
 	var chain []string
@@ -79,7 +80,7 @@ func TestNativeRouteInventory(t *testing.T) {
 	sort.Strings(expected)
 	sort.Strings(actual)
 	require.Equal(t, expected, actual)
-	// 已下线的管理路由返回 404，调用脚本需要使用当前接口。
+	// Retired administrative routes return 404; callers need to use current endpoints.
 	for _, legacy := range []string{"/api/v1/admin/accounts", "/api/v1/admin/accounts/1", "/api/v1/admin/openai/accounts/1/quota"} {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, legacy, nil))
@@ -87,7 +88,7 @@ func TestNativeRouteInventory(t *testing.T) {
 	}
 }
 
-// inventoryJWT 标记 app 注入的认证中间件，收集处理顺序后中止请求。
+// inventoryJWT identifies the injected authentication middleware in the recorded handler chain.
 func inventoryJWT(c *gin.Context) { c.Next() }
 
 func inventoryAdmin(c *gin.Context) { c.Next() }

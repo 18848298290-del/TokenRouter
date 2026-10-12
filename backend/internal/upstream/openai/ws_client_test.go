@@ -88,7 +88,7 @@ func TestCoderOpenAIWSClientDialer_ProxyClientCacheIdleTTL(t *testing.T) {
 	oldEntry.lastUsedUnixNano = time.Now().Add(-openAIWSProxyClientCacheIdleTTL - time.Minute).UnixNano()
 	impl.proxyMu.Unlock()
 
-	// 触发一次新的代理获取，驱动 TTL 清理。
+	// A cache miss triggers idle-TTL cleanup.
 	_, err = impl.ProxyHTTPClient("http://127.0.0.1:28081", nil)
 	require.NoError(t, err)
 

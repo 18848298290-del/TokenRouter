@@ -118,6 +118,8 @@ func (w *BatchImageDownloadLimitWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// OpenItemContent opens one image for an authorized owner. The caller must close
+// the returned Reader to release the download concurrency permit.
 func (s *Download) OpenItemContent(ctx context.Context, owner BatchImageOwner, batchID string, customID string, imageIndex int) (*BatchImageContentStream, error) {
 	if imageIndex < 0 {
 		return nil, ErrBatchImageItemImageIndexOutOfRange
@@ -197,7 +199,7 @@ func (s *Download) StreamZip(ctx context.Context, owner BatchImageOwner, batchID
 	}
 	maxItems := opts.MaxItems
 	if cap := s.MaxZipItems(); maxItems <= 0 || maxItems > cap {
-		// 客户端传入的 max_items 不得放大管理员配置的 ZIP 上限。
+		// Client max_items cannot raise the administrator-configured ZIP limit.
 		maxItems = cap
 	}
 	if job.SuccessCount > maxItems {

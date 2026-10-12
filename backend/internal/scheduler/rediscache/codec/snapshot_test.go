@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// geminiQuotaUsageFixture 模拟日请求数超过免费档上限、当前分钟没有请求的提供商。
+// geminiQuotaUsageFixture exceeds the free daily request allowance while reporting no requests in the current minute.
 type geminiQuotaUsageFixture struct {
 	minute time.Time
 	calls  int
@@ -24,7 +24,7 @@ func (f *geminiQuotaUsageFixture) GetModelUsage(_ context.Context, _ int64, star
 	return []provider.GeminiModelUsage{{Model: "gemini-3.8-flash", Requests: 1510}}, nil
 }
 
-// TestProviderCodecGeminiQuotaPrecheck 检查缓存读回后的第三方标记和等级如何影响单条及批量配额预检。
+// TestProviderCodecGeminiQuotaPrecheck checks source and tier fields in individual and batch quota checks after cache decoding.
 func TestProviderCodecGeminiQuotaPrecheck(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

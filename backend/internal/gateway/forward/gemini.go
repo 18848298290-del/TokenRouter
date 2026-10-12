@@ -9,16 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// GeminiSession 保存执行入口提供的分组与会话标识。
+// GeminiSession contains group and session identifiers supplied by the entrypoint.
 type GeminiSession struct {
 	GroupID     int64
 	SessionHash string
 }
 
-// GeminiSessionOption 可省略或传 nil，多个选项按顺序覆盖。
+// GeminiSessionOption updates session settings; callers may omit options or pass nil, and later options overwrite earlier ones.
 type GeminiSessionOption func(*GeminiSession)
 
-// Gemini 保留 Antigravity Gemini 入口准备、平台恢复调用和错误输出顺序。
+// Gemini prepares an Antigravity Gemini exchange, invokes recovery, and handles protocol output.
 func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error) {
 	startTime := in.StartedAt
 	originalModel, action, stream, body, isStickySession := in.Model, in.Action, in.Stream, in.Body, in.Sticky
@@ -34,14 +34,14 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		return nil, p.GoogleError(400, "Request body is empty")
 	}
 
-	// 解析请求以获取 image_size（用于图片计费）
+	// Capture requested dimensions for image billing.
 	imageInputSize := p.ImageInputSize(body)
 	imageSize := p.ImageTier(imageInputSize)
 
 	switch action {
 	case "generateContent", "streamGenerateContent":
 	case "countTokens":
-		// 直接返回空值，不透传上游
+		// Answer countTokens locally with zero usage.
 		p.ZeroCount()
 		return &Result{
 			RequestID:    "",
@@ -62,7 +62,6 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 	}
 	billingModel := mappedModel
 
-	// 获取 access_token
 	if !in.TokenAvailable {
 		return nil, p.GoogleError(502, "Antigravity token provider not configured")
 	}
@@ -79,13 +78,13 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 
 	p.Transport()
 
-	// Antigravity 上游要求必须包含身份提示词，注入到请求中
+	// Antigravity requests require an identity prompt.
 	injectedBody, err := p.InjectIdentity(body)
 	if err != nil {
 		return nil, p.GoogleError(400, "Invalid request body")
 	}
 
-	// 清理 Schema
+	// Schema cleanup is best effort; retain the injected body on failure.
 	if cleanedBody, err := p.CleanSchema(injectedBody); err == nil {
 		injectedBody = cleanedBody
 		p.Log(fmt.Sprintf("[Antigravity] Cleaned request schema in forwarded request for provider %s", in.ProviderName))
@@ -97,7 +96,7 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 	if err != nil {
 		return nil, err
 	}
-	// 包装请求
+
 	wrappedBody, err := p.Wrap(projectID, mappedModel, effectiveBody)
 	if err != nil {
 		if p.ProjectRequired(err) {
@@ -106,11 +105,10 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		return nil, p.GoogleError(500, "Failed to build upstream request")
 	}
 
-	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
-	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后返回
+	// Use streamGenerateContent upstream for both client modes.
+	// Buffered clients receive the collected stream as a complete response.
 	upstreamAction := "streamGenerateContent"
 
-	// 执行带重试的请求
 	var recovered GeminiRecovery
 	execution := GeminiExecution{
 		Model:          billingModel,
@@ -129,11 +127,11 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 	hooks.Exchange = func() error {
 		err := p.Retry(ctx, execution)
 		if err != nil {
-			// 检查是否是提供商切换信号，转换为 UpstreamFailoverError 让 Handler 切换提供商
+			// Translate platform switch signals into gateway failover errors.
 			if switchSticky, ok := p.SwitchError(err); ok {
 				return p.Failover(503, nil, false, switchSticky)
 			}
-			// 区分客户端取消和真正的上游失败，返回更准确的错误消息
+			// Distinguish client cancellation from failed upstream retries.
 			if p.ClientCanceled() {
 				return p.GoogleError(502, "Client disconnected before upstream response")
 			}
@@ -171,7 +169,7 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 
 		p.SetError(resp.StatusCode, upstreamMsg, upstreamDetail)
 
-		// 精确匹配服务端配置类 400 错误，触发同提供商重试 + failover
+		// Recognized server-configuration HTTP 400 errors permit same-provider retry and failover.
 		if resp.StatusCode == 400 && p.GoogleConfigError(strings.ToLower(upstreamMsg)) {
 			p.StdLog(fmt.Sprintf("%s status=400 google_config_error failover=true upstream_message=%q provider=%d", prefix, upstreamMsg, in.ProviderID))
 			p.Observe(Notice{

@@ -81,7 +81,7 @@ type usageRankingResponse struct {
 	Limit           int                        `json:"limit"`
 }
 
-// UsageHandler 处理用户侧用量相关请求。
+// UsageHandler serves user usage queries.
 type UsageHandler struct {
 	calendar       timezone.Calendar
 	usageService   *usage.UsageService
@@ -90,7 +90,7 @@ type UsageHandler struct {
 	settingService ports.Settings
 }
 
-// BatchAPIKeysUsageRequest 表示批量 API Key 用量请求。
+// BatchAPIKeysUsageRequest selects API keys for a batch usage query.
 type BatchAPIKeysUsageRequest struct {
 	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
 }
@@ -103,7 +103,7 @@ func usageRankingFloat64Ptr(value float64) *float64 {
 	return &value
 }
 
-// projectUsageRankingResponse 按公开设置裁剪用户接口中的敏感用量字段。
+// projectUsageRankingResponse exposes ranking fields allowed by public visibility settings.
 func projectUsageRankingResponse(ranking *usage.UsageRankingResponse, settings usage.UsageRankingSettings) usageRankingResponse {
 	result := usageRankingResponse{
 		Ranking:         make([]usageRankingItemResponse, 0, len(ranking.Ranking)),
@@ -146,7 +146,7 @@ func projectUsageRankingResponse(ranking *usage.UsageRankingResponse, settings u
 	return result
 }
 
-// NewUsageHandler 创建用户侧用量处理器。
+// NewUsageHandler creates the user usage handler.
 func NewUsageHandler(
 	usageService *usage.UsageService,
 	apiKeyService ports.KeyReader,
@@ -186,7 +186,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			response.ErrorFrom(c, err)
 			return nil, false
 		}
-		// 最终可见性由统一用量范围约束；Owner 可以筛选团队内其他成员的 Key。
+		// The usage scope enforces visibility; owners may filter keys belonging to other team members.
 		apiKeyID = id
 	}
 
@@ -268,7 +268,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			return nil, false
 		}
 		if dateOnly {
-			// 日期输入按整天筛选，结束边界使用次日 00:00。
+			// Use the next calendar midnight as the exclusive end for date-only inputs.
 			t = t.AddDate(0, 0, 1)
 		}
 		endTime = t
@@ -333,7 +333,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 	}, true
 }
 
-// List 分页列出当前用户的用量记录。
+// List returns a page of usage records visible to the current user.
 // GET /api/v1/usage
 func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
@@ -362,7 +362,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// ListErrors 列出当前用户自己的失败请求脱敏视图。
+// ListErrors returns redacted failed requests belonging to the current user.
 // GET /api/v1/usage/errors
 func (h *UsageHandler) ListErrors(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -371,7 +371,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		return
 	}
 
-	// 可见性开关失败关闭；前端隐藏入口只是体验层防护。
+	// Enforce visibility on the server even if the frontend hides the entry point.
 	if h.settingService == nil || !h.settingService.IsUserErrorViewAllowed(c.Request.Context()) {
 		response.Forbidden(c, "Error requests view is disabled")
 		return
@@ -388,7 +388,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 
 	filter := &ops.OpsErrorLogFilter{Page: page, PageSize: pageSize, RequestID: strings.TrimSpace(c.Query("request_id"))}
 
-	// 日期范围使用半开区间 [start, end)，与用量列表语义一致。
+	// Use the same half-open [start, end) date range as the usage list.
 	userTZ := c.Query("timezone")
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		t, err := h.calendar.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
@@ -436,7 +436,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		filter.ErrorTypesAny = types
 	}
 
-	// 排序对齐用量明细:列白名单与方向归一在 repo 层,非法值回退 created_at DESC。
+	// The repository validates columns and normalizes direction, defaulting invalid sort values to created_at DESC.
 	filter.SetSort(c.Query("sort_by"), c.Query("sort_order"))
 
 	result, err := h.opsService.ListUserErrorRequests(c.Request.Context(), subject.UserID, filter)
@@ -447,7 +447,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 	response.Paginated(c, result.Items, int64(result.Total), result.Page, result.PageSize)
 }
 
-// GetErrorDetail 获取当前用户自己的单条失败请求脱敏详情。
+// GetErrorDetail returns one redacted failed request belonging to the current user.
 // GET /api/v1/usage/errors/:id
 func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -476,7 +476,7 @@ func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
 	response.Success(c, detail)
 }
 
-// GetByID 获取当前用户自己的单条用量记录。
+// GetByID returns a usage record belonging to the current requester.
 // GET /api/v1/usage/:id
 func (h *UsageHandler) GetByID(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -497,7 +497,7 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	// 单条详情仅允许实际请求人查看，避免 Member 读取其他成员的请求元数据。
+	// Record details require the actual requester so team members cannot read another member's request metadata.
 	if record.UserID != subject.UserID {
 		response.Forbidden(c, "Not authorized to access this record")
 		return
@@ -506,7 +506,7 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 	response.Success(c, dto.FromUsage(record, locale.FromContext(c.Request.Context())))
 }
 
-// Ranking 获取指定时间范围内的用量排行。
+// Ranking returns usage rankings for the selected time range.
 // GET /api/v1/usage/ranking
 func (h *UsageHandler) Ranking(c *gin.Context) {
 	if _, ok := authctx.GetAuthSubjectFromContext(c); !ok {
@@ -542,11 +542,11 @@ func (h *UsageHandler) Ranking(c *gin.Context) {
 	projected.EndDate = usageRankingDisplayEndDate(endTime)
 	projected.Limit = rankingSettings.Limit
 
-	// 返回本次排行使用的时间范围，日期按用户时区格式化，便于前端展示。
+	// The response includes the applied range formatted in the user's timezone.
 	response.Success(c, projected)
 }
 
-// parseUsageRankingTimeRange 解析排行时间范围，未传参数时默认使用用户时区的今天。
+// parseUsageRankingTimeRange defaults to today in the user's timezone when no dates are supplied.
 func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, calendar timezone.Calendar) (time.Time, time.Time, error) {
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
@@ -571,7 +571,7 @@ func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, ca
 			return time.Time{}, time.Time{}, errors.New("invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 		}
 		if dateOnly {
-			// 日期输入按整天包含处理，SQL 使用 created_at < endTime。
+			// Include the selected end date by using the next midnight with created_at < endTime.
 			parsed = parsed.AddDate(0, 0, 1)
 		}
 		endTime = parsed
@@ -582,12 +582,12 @@ func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, ca
 	return startTime, endTime, nil
 }
 
-// usageRankingDisplayEndDate 将排他结束边界还原成用户选择的日期展示。
+// usageRankingDisplayEndDate converts an exclusive end to the last included display date.
 func usageRankingDisplayEndDate(endTime time.Time) string {
 	return endTime.Add(-time.Nanosecond).Format("2006-01-02")
 }
 
-// Stats 获取当前用户的用量统计。
+// Stats returns usage statistics within the current user's scope.
 // GET /api/v1/usage/stats
 func (h *UsageHandler) Stats(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
@@ -625,7 +625,7 @@ func apiKeyDailyUsageRange(days int, userTZ string, calendar timezone.Calendar) 
 	return startTime, endTime
 }
 
-// DashboardStats 获取用户仪表盘统计。
+// DashboardStats returns the user's dashboard counters.
 // GET /api/v1/usage/dashboard/stats
 func (h *UsageHandler) DashboardStats(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -643,7 +643,7 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// DashboardTrend 获取用户用量趋势。
+// DashboardTrend returns usage trends within the user's scope.
 // GET /api/v1/usage/dashboard/trend
 func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
@@ -666,7 +666,7 @@ func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 	})
 }
 
-// DashboardModels 获取用户模型维度用量统计。
+// DashboardModels returns usage grouped by requested model within the user's scope.
 // GET /api/v1/usage/dashboard/models
 func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
@@ -693,7 +693,7 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	})
 }
 
-// DashboardSnapshotV2 返回当前用户用量页的图表快照数据。
+// DashboardSnapshotV2 returns a combined chart snapshot for the user's usage page.
 // GET /api/v1/usage/dashboard/snapshot-v2
 func (h *UsageHandler) DashboardSnapshotV2(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
@@ -799,7 +799,7 @@ func parseBoolQueryWithDefault(c *gin.Context, key string, fallback bool) (bool,
 	return parsed, true
 }
 
-// usageFilterDisplayEndDate 将半开区间的结束边界转换成前端展示日期。
+// usageFilterDisplayEndDate converts the half-open range's end to the last included display date.
 func usageFilterDisplayEndDate(endTime time.Time) string {
 	if endTime.IsZero() {
 		return ""
@@ -807,7 +807,7 @@ func usageFilterDisplayEndDate(endTime time.Time) string {
 	return endTime.Add(-time.Nanosecond).Format("2006-01-02")
 }
 
-// DashboardAPIKeysUsage 获取当前用户多个 API Key 的用量统计。
+// DashboardAPIKeysUsage returns batch usage for keys owned by the current user.
 // POST /api/v1/usage/dashboard/api-keys-usage
 func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -827,7 +827,7 @@ func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 		return
 	}
 
-	// Limit the number of API key IDs to prevent SQL parameter overflow
+	// Bound batch size to limit query parameters and work per request.
 	if len(req.APIKeyIDs) > 100 {
 		response.BadRequest(c, "Too many API key IDs (maximum 100 allowed)")
 		return
@@ -853,7 +853,7 @@ func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 	response.Success(c, gin.H{"stats": stats})
 }
 
-// GetMyAPIKeyDailyUsage 获取当前用户指定 API Key 的按日用量明细。
+// GetMyAPIKeyDailyUsage returns daily usage for a key owned by the current user.
 // GET /api/v1/user/api-keys/:id/usage/daily?days=30
 func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -905,5 +905,5 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	})
 }
 
-// ParseAPIKeyDailyUsageDays 供仍在旧网关中的公开查询复用原解析规则。
+// ParseAPIKeyDailyUsageDays shares daily-range validation with the public usage endpoint.
 func ParseAPIKeyDailyUsageDays(raw string) (int, bool) { return parseAPIKeyDailyUsageDays(raw) }

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// HTTPTraceSnapshot 是一次出站 HTTP 请求的关键传输阶段快照。
-// 所有时间均相对于请求进入网关后的 started_at，便于和下游日志逐条对齐。
+// HTTPTraceSnapshot holds absolute timestamps for the first observed transport stages
+// and event counts across attempts. StartedAt is the time trace collection was installed.
 type HTTPTraceSnapshot struct {
 	StartedAt                 time.Time
 	GetConnAt                 time.Time
@@ -41,8 +41,7 @@ type httpTraceState struct {
 	upstreamStarted           bool
 }
 
-// WithHTTPTrace 为请求安装低开销的 net/http 阶段回调。
-// 同一个 context 重复调用时复用已有状态，避免覆盖其它请求链路信息。
+// WithHTTPTrace installs net/http stage callbacks, reusing state already in context.
 func WithHTTPTrace(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -55,8 +54,8 @@ func WithHTTPTrace(ctx context.Context) context.Context {
 	return withHTTPTraceClient(ctx, state)
 }
 
-// BeginHTTPTrace 标记首次上游 HTTP 尝试并清除此前其它依赖请求的回调。
-// 后续重试复用同一状态，从而既不污染阶段数据又能统计尝试次数。
+// BeginHTTPTrace clears previously recorded events on the first upstream attempt.
+// Later calls retain the same timestamps and counters to aggregate retries.
 func BeginHTTPTrace(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -154,7 +153,7 @@ func (s *httpTraceState) markFirstResponseByte(at time.Time) {
 	s.mu.Unlock()
 }
 
-// HTTPTraceSnapshotFromContext 返回当前请求已观测到的传输阶段。
+// HTTPTraceSnapshotFromContext returns transport stages and reports whether any were observed.
 func HTTPTraceSnapshotFromContext(ctx context.Context) (HTTPTraceSnapshot, bool) {
 	if ctx == nil {
 		return HTTPTraceSnapshot{}, false
@@ -186,7 +185,7 @@ func HTTPTraceSnapshotFromContext(ctx context.Context) (HTTPTraceSnapshot, bool)
 	return snapshot, true
 }
 
-// HTTPTraceElapsedMs 将阶段绝对时间转换为相对于 started_at 的毫秒数。
+// HTTPTraceElapsedMs converts an absolute stage timestamp to milliseconds since trace installation.
 func HTTPTraceElapsedMs(snapshot HTTPTraceSnapshot, at time.Time) (int64, bool) {
 	if snapshot.StartedAt.IsZero() || at.IsZero() || at.Before(snapshot.StartedAt) {
 		return 0, false

@@ -68,10 +68,10 @@ type openAIResponsesToolSchemaParser struct {
 	probeType string
 }
 
-// SanitizeToolSchemaPatterns removes only schema constraints
-// containing regex lookaround, which OpenAI rejects. It deliberately does not
-// descend into instance-valued keywords such as default, examples, const, or
-// enum.
+// SanitizeToolSchemaPatterns removes schema pattern constraints
+// containing regex lookaround, which OpenAI rejects. It skips
+// instance-valued keywords such as default, examples, const, and
+// enum so instance data stays intact.
 func SanitizeToolSchemaPatterns(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 || !openAIResponsesBodyMayContainRegexLookaround(body) {
 		return body, false, nil
@@ -243,9 +243,9 @@ func (p *openAIResponsesToolSchemaParser) parseObject(
 			}
 		}
 		if context == openAIResponsesToolSchema && schemaRoot && openAIResponsesJSONStringEquals(key, "type") {
-			// Duplicate JSON keys have parser-dependent effective values. Repair a
-			// root type only when it is unique rather than choosing a winner and
-			// potentially changing the client's effective schema.
+			// Duplicate JSON keys have parser-dependent effective values. Repair the
+			// root type when it occurs once; choosing among duplicates could
+			// change the client's effective schema.
 			rootTypeCount++
 			if bytes.Equal(p.body[valueStart:valueEnd], []byte("null")) {
 				nullRootTypeStart = valueStart

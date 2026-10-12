@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// RequestTargetOptions 包含本次凭据类别和目标地址读取函数。
+// RequestTargetOptions supplies credential type, default URLs, and target resolution callbacks.
 type RequestTargetOptions struct {
 	OAuthTarget, APIKey  bool
 	DefaultURL, CodexURL string
@@ -37,7 +37,7 @@ func (o RequestTargetOptions) Resolve() (string, error) {
 	return o.AppendSuffix(target), nil
 }
 
-// BuildResponsesRequest 观察请求端点，归一化报文并构造 Responses 请求。
+// BuildResponsesRequest records the endpoint, normalizes the body, and builds the upstream request.
 func BuildResponsesRequest(ctx context.Context, body []byte, key string, target RequestTargetOptions, observe func(string), normalize func([]byte) []byte, options func(string) openai.ResponsesRequestOptions) (*http.Request, error) {
 	address, err := target.Resolve()
 	if err != nil {
@@ -50,7 +50,7 @@ func BuildResponsesRequest(ctx context.Context, body []byte, key string, target 
 	return openai.BuildResponsesRequest(ctx, body, key, options(address))
 }
 
-// BuildPassthroughRequest 按目标地址和报文归一化配置构造透传请求。
+// BuildPassthroughRequest resolves the target and normalizes the body before constructing a passthrough request.
 func BuildPassthroughRequest(ctx context.Context, body []byte, target RequestTargetOptions, normalize func([]byte) []byte, options func(string) openai.PassthroughRequestOptions) (*http.Request, error) {
 	address, err := target.Resolve()
 	if err != nil {
@@ -60,7 +60,7 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, target RequestTar
 	return openai.BuildPassthroughRequest(ctx, body, options(address))
 }
 
-// ResponsesEndpoint 按平台规则处理 DeepSeek 和其他兼容平台的 URL 版本段。
+// ResponsesEndpoint selects DeepSeek's unversioned path or the standard versioned Responses path.
 func ResponsesEndpoint(platform, base string) string {
 	if platform == capability.PlatformDeepseek {
 		return httpclient.BuildOpenAIEndpointURL(base, "/responses")
@@ -68,7 +68,7 @@ func ResponsesEndpoint(platform, base string) string {
 	return httpclient.BuildOpenAIEndpointURL(base, "/v1/responses")
 }
 
-// NormalizeCNResponsesBody 清理 CN Responses 请求中的服务端状态字段。
+// NormalizeCNResponsesBody removes server-side state from native CN Responses requests.
 func NormalizeCNResponsesBody(native bool, body []byte) []byte {
 	if !native {
 		return body

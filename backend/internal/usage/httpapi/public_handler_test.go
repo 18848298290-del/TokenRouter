@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestPublicUsageDateRangeInjectedCalendar 检查处理器分别使用注入的时区，并按日历日扩展结束日期。
+// TestPublicUsageDateRangeInjectedCalendar checks injected timezones and calendar-day end expansion.
 func TestPublicUsageDateRangeInjectedCalendar(t *testing.T) {
 	newYork, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestPublicUsageDateRangeInjectedCalendar(t *testing.T) {
 	}
 }
 
-// TestPublicUsageDateRangeExplicitOffset 检查带时区偏移的起止时间按传入时刻解析。
+// TestPublicUsageDateRangeExplicitOffset checks that offset timestamps retain their supplied instants.
 func TestPublicUsageDateRangeExplicitOffset(t *testing.T) {
 	h := NewPublicUsageHandler(nil, nil, nil, nil, PublicUsageContext{}, timezone.NewCalendar(time.UTC))
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -150,7 +150,7 @@ func TestUsageUnrestrictedBalanceModeDoesNotExposeSubscription(t *testing.T) {
 	require.False(t, hasSubscription)
 }
 
-// publicUsageContractHandler 为生产 HTTP 用例装配测试上下文和日历。
+// publicUsageContractHandler supplies request context readers and a calendar for HTTP tests.
 func publicUsageContractHandler() *PublicUsageHandler {
 	return NewPublicUsageHandler(nil, nil, nil, nil, PublicUsageContext{
 		Billing: func(c *gin.Context) (*billingcore.APIKeyBillingContext, bool) {

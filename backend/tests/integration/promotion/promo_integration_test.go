@@ -23,10 +23,12 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// 后置失效只计数；失败事务不得触达该端口。
+// promotionInvalidationProbe counts post-commit cache invalidations; failed transactions must leave both
+// counts zero.
 type promotionInvalidationProbe struct{ auth, balance int }
 
-// TestPromotionApplyCodeFundsAndUsageAtomicity 验证组合推广用例与真实存储，验证资金、累计充值、usage 和次数的原子边界。
+// TestPromotionApplyCodeFundsAndUsageAtomicity checks that balance, total recharged, usage records, and
+// usage counts commit together.
 func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 	for _, failure := range []string{"", "usage", "count"} {
 		t.Run("failure_"+failure, func(t *testing.T) {
@@ -88,7 +90,7 @@ func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 			current, readErr = client.User.Get(ctx, user.ID)
 			require.NoError(t, readErr)
 			require.Equal(t, 15.0, current.Balance)
-			// 关系查询保留原公开浅层 JSON，不输出密码或递归实体。
+			// Usage responses match the shallow public user DTO and exclude the password hash.
 			usages, _, err := repo.ListUsagesByPromoCode(ctx, code.ID, pagination.PaginationParams{Page: 1, PageSize: 20})
 			require.NoError(t, err)
 			require.Len(t, usages, 1)

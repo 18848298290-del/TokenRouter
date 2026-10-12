@@ -39,7 +39,7 @@ type unifiedRecordModels struct{}
 
 type unifiedSearchSource struct{}
 
-// TestTextPricingCompactModel 核对 Compact 的全局模型、提供商覆盖与最终结算型号。
+// TestTextPricingCompactModel checks Compact global models, provider overrides, and the final billing model.
 func TestTextPricingCompactModel(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		for _, tc := range []struct {
@@ -98,7 +98,7 @@ func TestTextPricingCompactModel(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, transport.lastReq)
 				require.Equal(t, tc.upstream, gjson.GetBytes(transport.lastBody, "model").String())
-				// 透传在型号未改写时省略 UpstreamModel，此时从 Model 读取实际型号。
+				// Passthrough omits UpstreamModel for an unchanged model, so Model supplies the effective name.
 				require.Equal(t, tc.upstream, completion.ForwardResultBillingModel(result.UpstreamModel, result.Model))
 				billingModel := completion.OpenAIUsageBillingModel(&completion.Result{Model: result.Model, BillingModel: result.BillingModel, UpstreamModel: result.UpstreamModel}, mapping.ToUsageFields(tc.requested, result.UpstreamModel))
 				require.NoError(t, prices.Check(ctx, &groupID, billingModel))
@@ -107,7 +107,7 @@ func TestTextPricingCompactModel(t *testing.T) {
 	}
 }
 
-// TestTextPricingResolvesResponsesChatRoute 在解析为 Chat 的提供商上核对预检与实际转发。
+// TestTextPricingResolvesResponsesChatRoute checks preflight against forwarding when Responses resolves to Chat.
 func TestTextPricingResolvesResponsesChatRoute(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		t.Run(fmt.Sprintf("passthrough=%t", passthrough), func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestTextPricingResolvesResponsesChatRoute(t *testing.T) {
 	}
 }
 
-// TestTextPricingRouteErrorPreservesCause 将协议拒绝交给入口的路由错误处理。
+// TestTextPricingRouteErrorPreservesCause checks that protocol rejection reaches route-error handling.
 func TestTextPricingRouteErrorPreservesCause(t *testing.T) {
 	group := &routing.Group{ID: 100, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolOpenAIResponses: {}}}
 	ctx := requeststate.WithClientProtocol(context.Background(), protocol.ProtocolOpenAIResponses)
@@ -154,7 +154,8 @@ func TestTextPricingRouteErrorPreservesCause(t *testing.T) {
 	require.False(t, c.Writer.Written())
 }
 
-// TestUnifiedTextDispatchUsesSelectedProvider 只装配实际提供商需要的执行器，错误分派会立即失败。
+// TestUnifiedTextDispatchUsesSelectedProvider installs the selected platform's executor so incorrect dispatch
+// fails immediately.
 func TestUnifiedTextDispatchUsesSelectedProvider(t *testing.T) {
 	tests := []struct{ platform, model, path, response string }{
 		{"anthropic", "claude-sonnet-4-5", "/v1/messages", `{"id":"msg-native","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3,"cache_creation_input_tokens":7,"cache_read_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":5},"speed":"fast"}}`},
@@ -212,7 +213,8 @@ func (unifiedRecordEffects) Settled(completion.SettlementInput, *billing.UsageBi
 
 func (unifiedRecordModels) Candidates(model string, _ ...string) []string { return []string{model} }
 
-// TestUnifiedNativeUsageSurvivesCaptureAndRecord 验证统一结果、异步快照及最终计费仍使用原生输入桶。
+// TestUnifiedNativeUsageSurvivesCaptureAndRecord checks native input-token categories through conversion, capture,
+// and billing.
 func TestUnifiedNativeUsageSurvivesCaptureAndRecord(t *testing.T) {
 	tier := "priority"
 	native := &forward.MessagesResult{RequestID: "native-usage", Model: "claude-sonnet-4-5", UpstreamModel: "claude-sonnet-4-5", Usage: protocol.TokenUsage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 30, CacheCreationInputTokens: 12, CacheCreation5mTokens: 5, CacheCreation1hTokens: 7, Speed: "fast"}, Stream: true, ClientDisconnect: true, ServiceTier: &tier, Duration: time.Second}
@@ -243,7 +245,7 @@ func TestUnifiedNativeUsageSurvivesCaptureAndRecord(t *testing.T) {
 	require.Equal(t, "anthropic", row.Platform)
 	require.Equal(t, "priority", *row.ServiceTier)
 
-	// 同一数值标记为 OpenAI 总输入时，扣除缓存读取用量。
+	// When interpreted as OpenAI total input, the same value includes cache tokens that billing subtracts.
 	input.Result.NativeUsage = false
 	require.NoError(t, recorder.Record(context.Background(), input, true))
 	require.Len(t, logs.rows, 2)

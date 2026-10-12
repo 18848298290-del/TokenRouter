@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// SettlementEffectInput 包含已提交的结算金额和待更新的缓存标识。
+// SettlementEffectInput supplies committed amounts and cache identifiers for post-settlement work.
 type SettlementEffectInput struct {
 	UserID, KeyID             int64
 	HasUser, HasKeyRateLimits bool
@@ -12,7 +12,7 @@ type SettlementEffectInput struct {
 	Result                    *UsageBillingApplyResult
 }
 
-// SettlementEffects 是提交后调用的无状态端口集合，缓存队列由唯一 Eligibility 持有。
+// SettlementEffects supplies post-commit callbacks; Eligibility owns the cache update queues.
 type SettlementEffects struct {
 	Cache                         *Eligibility
 	Background                    func(string, func()) bool
@@ -22,7 +22,7 @@ type SettlementEffects struct {
 	NotifyBalance, NotifyProvider func()
 }
 
-// Finalize 保留缓存、Key 窗口、提供商完成和通知的执行顺序。
+// Finalize updates balance and key-window caches, marks provider use, then dispatches notifications.
 func (e SettlementEffects) Finalize(input SettlementEffectInput) {
 	if input.Cost == nil {
 		return
@@ -56,7 +56,7 @@ func (e SettlementEffects) launch(name string, fn func()) bool {
 	return true
 }
 
-// SyncBalance 低于准入阈值时失效，其余情况保持原异步扣减。
+// SyncBalance invalidates balances below admission thresholds and queues deductions for other balances.
 func (e SettlementEffects) SyncBalance(ctx context.Context, id int64, result *UsageBillingApplyResult) {
 	if e.Cache == nil || result == nil || result.BalanceAmountUSD <= 0 {
 		return
@@ -70,7 +70,7 @@ func (e SettlementEffects) SyncBalance(ctx context.Context, id int64, result *Us
 	e.Cache.QueueDeductBalance(id, result.BalanceAmountUSD)
 }
 
-// BalanceBeforeSettlement 优先使用事务返回值还原扣费前余额。
+// BalanceBeforeSettlement reconstructs the previous balance from the transaction result, or returns the snapshot.
 func BalanceBeforeSettlement(snapshot float64, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {
 		return *result.NewBalance + result.BalanceAmountUSD

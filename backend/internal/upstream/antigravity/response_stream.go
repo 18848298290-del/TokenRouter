@@ -38,17 +38,17 @@ type (
 	StreamResult    struct {
 		Usage            *upstream.TokenUsage
 		FirstTokenMs     *int
-		ClientDisconnect bool // 客户端是否在流式传输过程中断开
+		ClientDisconnect bool // client disconnected during streaming
 	}
 )
 
-// ClientWriter 封装流式响应的客户端写入，自动检测断开并标记。
-// 断开后所有写入操作变为 no-op，调用方通过 Disconnected() 判断是否继续 drain 上游。
+// ClientWriter flushes stream writes and records the first write failure.
+// Later writes return false; callers may continue draining upstream for usage.
 type ClientWriter struct {
 	w                upstream.OutputWriter
 	flusher          http.Flusher
 	disconnected     bool
-	prefix           string // 日志前缀，标识来源方法
+	prefix           string // identifies the response path in logs
 	beforeFirstWrite func()
 }
 
@@ -56,7 +56,7 @@ func NewClientWriter(w upstream.OutputWriter, flusher http.Flusher, prefix strin
 	return &ClientWriter{w: w, flusher: flusher, prefix: prefix}
 }
 
-// Write 写入数据到客户端，写入失败时标记断开并返回 false。
+// Write flushes data and returns false after a write failure or prior disconnect.
 func (cw *ClientWriter) Write(p []byte) bool {
 	if cw.disconnected {
 		return false
@@ -70,7 +70,7 @@ func (cw *ClientWriter) Write(p []byte) bool {
 	return true
 }
 
-// Fprintf 格式化写入数据到客户端，写入失败时标记断开并返回 false。
+// Fprintf formats and flushes data, returning false after a write failure or disconnect.
 func (cw *ClientWriter) Fprintf(format string, args ...any) bool {
 	if cw.disconnected {
 		return false
@@ -100,8 +100,8 @@ func (cw *ClientWriter) markDisconnected() {
 	logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during streaming (%s), continuing to drain upstream for billing", cw.prefix)
 }
 
-// HandleStreamReadError 处理上游读取错误的通用逻辑。
-// 返回 (clientDisconnect, handled)：handled=true 表示错误已处理，调用方应返回已收集的 usage。
+// HandleStreamReadError recognizes cancellation and read failures after disconnect.
+// When handled is true, the caller should return the usage collected so far.
 func HandleStreamReadError(err error, clientDisconnected bool, prefix string) (disconnect bool, handled bool) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		logger.LegacyPrintf("service.antigravity_gateway", "Context canceled during streaming (%s), returning collected usage", prefix)
@@ -131,7 +131,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 		return nil, errors.New("streaming not supported")
 	}
 
-	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
+	// Bound each scanned line so a malformed upstream cannot grow it without limit.
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := upstream.DefaultSSELineLimit
 	if s.Options.MaxLineSize > 0 {
@@ -146,7 +146,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 		line string
 		err  error
 	}
-	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	// Read separately so a blocked upstream read does not block timeout handling.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -174,7 +174,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 	}(scanBuf)
 	defer close(done)
 
-	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
+	// Stop waiting when the upstream has been silent for the configured interval.
 	streamInterval := time.Duration(0)
 	if s.Options.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.Options.StreamDataIntervalTimeout) * time.Second
@@ -189,7 +189,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 		intervalCh = intervalTicker.C
 	}
 
-	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
+	// Keep idle downstream connections active through intermediaries.
 	keepaliveInterval := time.Duration(0)
 	if s.Options.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.Options.StreamKeepaliveInterval) * time.Second
@@ -207,7 +207,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 
 	cw := NewClientWriter(c.Writer, flusher, "antigravity gemini")
 
-	// 仅发送一次错误事件，避免多次写入导致协议混乱
+	// Emit at most one error event for this stream.
 	errorEventSent := false
 	sendErrorEvent := func(reason string) {
 		if errorEventSent || cw.Disconnected() {
@@ -249,19 +249,17 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 					continue
 				}
 
-				// 解包 v1internal 响应
 				inner, parseErr := s.UnwrapV1InternalResponse([]byte(payload))
 				if parseErr == nil && inner != nil {
 					payload = string(inner)
 				}
 
-				// 解析 usage
 				if u := bridge.NativeUsageProjection(bridge.NativeExtractGeminiUsage(inner)); u != nil {
 					usage = u
 				}
 				var parsed map[string]any
 				if json.Unmarshal(inner, &parsed) == nil {
-					// Check for MALFORMED_FUNCTION_CALL
+					// Log malformed tool output reported by the upstream.
 					if candidates, ok := parsed["candidates"].([]any); ok && len(candidates) > 0 {
 						if cand, ok := candidates[0].(map[string]any); ok {
 							if fr, ok := cand["finishReason"].(string); ok && fr == "MALFORMED_FUNCTION_CALL" {
@@ -307,7 +305,7 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			// SSE ping/keepalive：保持连接活跃防止 Cloudflare Tunnel 等代理断开
+			// An SSE comment keeps the connection active without adding response content.
 			if !cw.Fprintf(":\n\n") {
 				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity gemini), continuing to drain upstream for billing")
 				continue
@@ -316,8 +314,8 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 	}
 }
 
-// HandleGeminiStreamToNonStreaming 读取上游流式响应，合并为非流式响应返回给客户端
-// Gemini 流式响应是增量的，需要累积所有 chunk 的内容。
+// HandleGeminiStreamToNonStreaming collects the upstream SSE response into Gemini JSON.
+// Text and image parts from incremental chunks are accumulated across the stream.
 func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputContext, resp *http.Response, startTime time.Time) (*StreamResult, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := upstream.DefaultSSELineLimit
@@ -331,15 +329,15 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 	var firstTokenMs *int
 	var last map[string]any
 	var lastWithParts map[string]any
-	var collectedImageParts []map[string]any // 收集所有包含图片的 parts
-	var collectedTextParts []string          // 收集所有文本片段
+	var collectedImageParts []map[string]any // image parts across chunks
+	var collectedTextParts []string          // text fragments across chunks
 
 	type scanEvent struct {
 		line string
 		err  error
 	}
 
-	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	// Read separately so a blocked upstream read does not block timeout handling.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -368,7 +366,7 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 	}(scanBuf)
 	defer close(done)
 
-	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
+	// Stop waiting when the upstream has been silent for the configured interval.
 	streamInterval := time.Duration(0)
 	if s.Options.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.Options.StreamDataIntervalTimeout) * time.Second
@@ -387,7 +385,6 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 流结束，返回收集的响应
 				goto returnResponse
 			}
 			if ev.err != nil {
@@ -410,7 +407,6 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 				continue
 			}
 
-			// 解包 v1internal 响应
 			inner, parseErr := s.UnwrapV1InternalResponse([]byte(payload))
 			if parseErr != nil {
 				continue
@@ -421,7 +417,7 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 				continue
 			}
 
-			// 记录首 token 时间
+			// This path measures the first decoded JSON payload, even if it has no content.
 			if firstTokenMs == nil {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
@@ -429,12 +425,11 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 
 			last = parsed
 
-			// 提取 usage
 			if u := bridge.NativeUsageProjection(bridge.NativeExtractGeminiUsage(inner)); u != nil {
 				usage = u
 			}
 
-			// Check for MALFORMED_FUNCTION_CALL
+			// Log malformed tool output reported by the upstream.
 			if candidates, ok := parsed["candidates"].([]any); ok && len(candidates) > 0 {
 				if cand, ok := candidates[0].(map[string]any); ok {
 					if fr, ok := cand["finishReason"].(string); ok && fr == "MALFORMED_FUNCTION_CALL" {
@@ -448,14 +443,13 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 				}
 			}
 
-			// 保留最后一个有 parts 的响应
+			// Keep content-bearing output when a trailing chunk contains only metadata.
 			if parts := bridge.NativeExtractGeminiParts(parsed); len(parts) > 0 {
 				lastWithParts = parsed
-				// 收集包含图片和文本的 parts
 				for _, part := range parts {
 					if inlineData, ok := part["inlineData"].(map[string]any); ok {
 						collectedImageParts = append(collectedImageParts, part)
-						_ = inlineData // 避免 unused 警告
+						_ = inlineData
 					}
 					if text, ok := part["text"].(string); ok && text != "" {
 						collectedTextParts = append(collectedTextParts, text)
@@ -474,21 +468,18 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 	}
 
 returnResponse:
-	// 选择最后一个有效响应
 	finalResponse := bridge.NativePickGeminiCollectResult(last, lastWithParts)
 
-	// 处理空响应情况 — 触发同提供商重试 + failover 切换提供商
+	// Delegate empty-stream retry or provider switching to the supplied failure policy.
 	if last == nil && lastWithParts == nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] warning: empty stream response (gemini non-stream), triggering failover")
 		return nil, s.Options.Failover([]byte(`{"error":"empty stream response from upstream"}`))
 	}
 
-	// 如果收集到了图片 parts，需要合并到最终响应中
 	if len(collectedImageParts) > 0 {
 		finalResponse = MergeImagePartsToResponse(finalResponse, collectedImageParts)
 	}
 
-	// 如果收集到了文本，需要合并到最终响应中
 	if len(collectedTextParts) > 0 {
 		finalResponse = MergeTextPartsToResponse(finalResponse, collectedTextParts)
 	}
@@ -502,39 +493,34 @@ returnResponse:
 	return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
 }
 
-// GetOrCreateGeminiParts 获取 Gemini 响应的 parts 结构，返回深拷贝和更新回调。
+// GetOrCreateGeminiParts returns a shallow top-level copy and a first-candidate parts setter.
 func GetOrCreateGeminiParts(response map[string]any) (result map[string]any, existingParts []any, setParts func([]any)) {
-	// 深拷贝 response
+	// Nested candidates and content remain shared with the input response.
 	result = make(map[string]any)
 	maps.Copy(result, response)
 
-	// 获取或创建 candidates
 	candidates, ok := result["candidates"].([]any)
 	if !ok || len(candidates) == 0 {
 		candidates = []any{map[string]any{}}
 	}
 
-	// 获取第一个 candidate
 	candidate, ok := candidates[0].(map[string]any)
 	if !ok {
 		candidate = make(map[string]any)
 		candidates[0] = candidate
 	}
 
-	// 获取或创建 content
 	content, ok := candidate["content"].(map[string]any)
 	if !ok {
 		content = map[string]any{"role": "model"}
 		candidate["content"] = content
 	}
 
-	// 获取现有 parts
 	existingParts, ok = content["parts"].([]any)
 	if !ok {
 		existingParts = []any{}
 	}
 
-	// 返回更新回调
 	setParts = func(newParts []any) {
 		content["parts"] = newParts
 		result["candidates"] = candidates
@@ -543,9 +529,9 @@ func GetOrCreateGeminiParts(response map[string]any) (result map[string]any, exi
 	return result, existingParts, setParts
 }
 
-// MergeCollectedPartsToResponse 将收集的所有 parts 合并到 Gemini 响应中
-// 这个函数会合并所有类型的 parts：text、thinking、functionCall、inlineData 等
-// 保持原始顺序，只合并连续的普通 text parts。
+// MergeCollectedPartsToResponse replaces candidate parts with collected stream content.
+// Adjacent ordinary text parts are concatenated; thought and non-text parts retain their order.
+// Nested candidate state may be shared with response.
 func MergeCollectedPartsToResponse(response map[string]any, collectedParts []map[string]any) map[string]any {
 	if len(collectedParts) == 0 {
 		return response
@@ -553,10 +539,6 @@ func MergeCollectedPartsToResponse(response map[string]any, collectedParts []map
 
 	result, _, setParts := GetOrCreateGeminiParts(response)
 
-	// 合并策略：
-	// 1. 保持原始顺序
-	// 2. 连续的普通 text parts 合并为一个
-	// 3. thinking、functionCall、inlineData 等保持原样
 	var mergedParts []any
 	var textBuffer strings.Builder
 
@@ -570,32 +552,28 @@ func MergeCollectedPartsToResponse(response map[string]any, collectedParts []map
 	}
 
 	for _, part := range collectedParts {
-		// 检查是否是普通 text part
 		if text, ok := part["text"].(string); ok {
-			// 检查是否有 thought 标记
 			if thought, _ := part["thought"].(bool); thought {
-				// thinking part，先刷新 text buffer，然后保留原样
+				// Thoughts interrupt ordinary text runs and retain their own metadata.
 				flushTextBuffer()
 				mergedParts = append(mergedParts, part)
 			} else {
-				// 普通 text，累积到 buffer
 				_, _ = textBuffer.WriteString(text)
 			}
 		} else {
-			// 非 text part（functionCall、inlineData 等），先刷新 text buffer，然后保留原样
+			// Tool and image parts interrupt ordinary text runs.
 			flushTextBuffer()
 			mergedParts = append(mergedParts, part)
 		}
 	}
 
-	// 刷新剩余的 text
 	flushTextBuffer()
 
 	setParts(mergedParts)
 	return result
 }
 
-// MergeImagePartsToResponse 将收集到的图片 parts 合并到 Gemini 响应中。
+// MergeImagePartsToResponse appends images unless the response already has inlineData.
 func MergeImagePartsToResponse(response map[string]any, imageParts []map[string]any) map[string]any {
 	if len(imageParts) == 0 {
 		return response
@@ -603,16 +581,14 @@ func MergeImagePartsToResponse(response map[string]any, imageParts []map[string]
 
 	result, existingParts, setParts := GetOrCreateGeminiParts(response)
 
-	// 检查现有 parts 中是否已经有图片
 	for _, p := range existingParts {
 		if pm, ok := p.(map[string]any); ok {
 			if _, hasInline := pm["inlineData"]; hasInline {
-				return result // 已有图片，不重复添加
+				return result // the response already contains image data
 			}
 		}
 	}
 
-	// 添加收集到的图片 parts
 	for _, imgPart := range imageParts {
 		existingParts = append(existingParts, imgPart)
 	}
@@ -620,7 +596,7 @@ func MergeImagePartsToResponse(response map[string]any, imageParts []map[string]
 	return result
 }
 
-// MergeTextPartsToResponse 将收集到的文本合并到 Gemini 响应中。
+// MergeTextPartsToResponse puts concatenated text in the first text part, or prepends one.
 func MergeTextPartsToResponse(response map[string]any, textParts []string) map[string]any {
 	if len(textParts) == 0 {
 		return response
@@ -629,7 +605,6 @@ func MergeTextPartsToResponse(response map[string]any, textParts []string) map[s
 	mergedText := strings.Join(textParts, "")
 	result, existingParts, setParts := GetOrCreateGeminiParts(response)
 
-	// 查找并更新第一个 text part，或创建新的
 	newParts := make([]any, 0, len(existingParts)+1)
 	textUpdated := false
 
@@ -640,7 +615,6 @@ func MergeTextPartsToResponse(response map[string]any, textParts []string) map[s
 			continue
 		}
 		if _, hasText := pm["text"]; hasText && !textUpdated {
-			// 用累积的文本替换
 			newPart := make(map[string]any)
 			maps.Copy(newPart, pm)
 			newPart["text"] = mergedText
@@ -659,8 +633,8 @@ func MergeTextPartsToResponse(response map[string]any, textParts []string) map[s
 	return result
 }
 
-// CollectClaudeStreamResponse 收集上游流式响应，转换为 Claude 非流式格式返回
-// 用于处理客户端非流式请求但上游只支持流式的情况。
+// CollectClaudeStreamResponse collects upstream SSE and returns Claude JSON plus usage.
+// This supports non-streaming clients when the upstream supplies a stream.
 func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, startTime time.Time, originalModel string) ([]byte, *StreamResult, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := upstream.DefaultSSELineLimit
@@ -673,7 +647,7 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 	var firstTokenMs *int
 	var last map[string]any
 	var lastWithParts map[string]any
-	var collectedParts []map[string]any // 收集所有 parts（包括 text、thinking、functionCall、inlineData 等）
+	var collectedParts []map[string]any // all part types in arrival order
 	var meaningfulResponse bool
 
 	type scanEvent struct {
@@ -681,7 +655,7 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 		err  error
 	}
 
-	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	// Read separately so a blocked upstream read does not block timeout handling.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -710,7 +684,7 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 	}(scanBuf)
 	defer close(done)
 
-	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
+	// Stop waiting when the upstream has been silent for the configured interval.
 	streamInterval := time.Duration(0)
 	if s.Options.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.Options.StreamDataIntervalTimeout) * time.Second
@@ -729,7 +703,6 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 流结束，转换并返回响应
 				goto returnResponse
 			}
 			if ev.err != nil {
@@ -752,7 +725,6 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 				continue
 			}
 
-			// 解包 v1internal 响应
 			inner, parseErr := s.UnwrapV1InternalResponse([]byte(payload))
 			if parseErr != nil {
 				continue
@@ -765,12 +737,11 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 
 			last = parsed
 
-			// 保留最后一个有 parts 的响应，并收集所有 parts
+			// Retain content-bearing output when the final chunk contains only metadata.
 			parts := bridge.NativeExtractGeminiParts(parsed)
 			if len(parts) > 0 {
 				lastWithParts = parsed
 
-				// 收集所有 parts（text、thinking、functionCall、inlineData 等）
 				collectedParts = append(collectedParts, parts...)
 			}
 			if len(parts) > 0 || strings.TrimSpace(bridge.NativeExtractGeminiFinishReason(parsed)) != "" {
@@ -792,34 +763,29 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 	}
 
 returnResponse:
-	// 处理空响应情况 — 触发同提供商重试 + failover 切换提供商
+	// A stream with neither content parts nor a finish reason is eligible for failover.
 	if !meaningfulResponse {
 		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] warning: empty stream response (claude non-stream), triggering failover")
 		return nil, nil, s.Options.Failover([]byte(`{"error":"empty stream response from upstream"}`))
 	}
 
-	// 选择最后一个有效响应
 	finalResponse := bridge.NativePickGeminiCollectResult(last, lastWithParts)
 
-	// 将收集的所有 parts 合并到最终响应中
 	if len(collectedParts) > 0 {
 		finalResponse = MergeCollectedPartsToResponse(finalResponse, collectedParts)
 	}
 
-	// 序列化为 JSON（Gemini 格式）
 	geminiBody, err := json.Marshal(finalResponse)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal gemini response: %w", err)
 	}
 
-	// 转换 Gemini 响应为 Claude 格式
 	claudeResp, agUsage, err := TransformGeminiToClaude(geminiBody, originalModel)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] transform_error error=%v body=%s", err, string(geminiBody))
 		return nil, nil, fmt.Errorf("failed to parse upstream response: %w", err)
 	}
 
-	// 转换为 service.upstream.TokenUsage
 	usage := &upstream.TokenUsage{
 		InputTokens:              agUsage.InputTokens,
 		OutputTokens:             agUsage.OutputTokens,
@@ -831,8 +797,8 @@ returnResponse:
 	return claudeResp, &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
 }
 
-// HandleClaudeStreamToNonStreaming 收集上游流式响应，转换为 Claude 非流式格式返回
-// 用于处理客户端非流式请求但上游只支持流式的情况。
+// HandleClaudeStreamToNonStreaming collects upstream SSE and writes a Claude JSON response.
+// Collection failures are mapped to the configured Claude error policy.
 func (s *ResponseAdapter) HandleClaudeStreamToNonStreaming(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string) (*StreamResult, error) {
 	claudeResp, streamRes, err := s.CollectClaudeStreamResponse(resp, startTime, originalModel)
 	if err != nil {
@@ -860,7 +826,7 @@ func (s *ResponseAdapter) HandleClaudeStreamToNonStreaming(c *upstream.OutputCon
 	return streamRes, nil
 }
 
-// HandleClaudeStreamingResponse 处理 Claude 流式响应（Gemini SSE → Claude SSE 转换）。
+// HandleClaudeStreamingResponse converts Gemini SSE to Claude SSE.
 func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string) (*StreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -875,7 +841,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 
 	processor := NewStreamingProcessor(originalModel)
 	var firstTokenMs *int
-	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
+	// Bound each scanned line so a malformed upstream cannot grow it without limit.
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := upstream.DefaultSSELineLimit
 	if s.Options.MaxLineSize > 0 {
@@ -884,7 +850,6 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 	scanBuf := httpclient.GetSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 
-	// 辅助函数：转换 protocolanthropic.ClaudeUsage 到 service.upstream.TokenUsage
 	convertUsage := func(agUsage *protocolanthropic.ClaudeUsage) *upstream.TokenUsage {
 		if agUsage == nil {
 			return &upstream.TokenUsage{}
@@ -901,7 +866,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 		line string
 		err  error
 	}
-	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	// Read separately so a blocked upstream read does not block timeout handling.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -943,7 +908,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 		intervalCh = intervalTicker.C
 	}
 
-	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
+	// Keep idle downstream connections active through intermediaries.
 	keepaliveInterval := time.Duration(0)
 	if s.Options.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.Options.StreamKeepaliveInterval) * time.Second
@@ -961,7 +926,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 
 	cw := NewClientWriter(c.Writer, flusher, "antigravity claude")
 
-	// 仅发送一次错误事件，避免多次写入导致协议混乱
+	// Emit at most one error event for this stream.
 	errorEventSent := false
 	sendErrorEvent := func(reason string) {
 		if errorEventSent || cw.Disconnected() {
@@ -972,7 +937,6 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 		flusher.Flush()
 	}
 
-	// finishUsage 是获取 processor 最终 usage 的辅助函数
 	finishUsage := func() *upstream.TokenUsage {
 		_, agUsage := processor.Finish()
 		return convertUsage(agUsage)
@@ -982,13 +946,12 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 上游完成，发送结束事件
 				finalEvents, agUsage := processor.Finish()
 				if len(finalEvents) > 0 {
 					cw.Write(finalEvents)
 				} else if !processor.MessageStartSent() && !cw.Disconnected() {
-					// 整个流未收到任何可解析的上游数据（全部 SSE 行均无法被 JSON 解析），
-					// 触发 failover 在同提供商重试，避免向客户端发出缺少 message_start 的残缺流
+					// No message_start was emitted and finalization produced no events.
+					// Delegate retry selection before sending an incomplete Claude stream.
 					logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Claude-Stream] empty stream response (no valid events parsed), triggering failover")
 					return nil, s.Options.Failover([]byte(`{"error":"empty stream response from upstream"}`))
 				}
@@ -1009,7 +972,6 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 
 			lastDataAt = time.Now()
 
-			// 处理 SSE 行，转换为 Claude 格式
 			s.observeRaw([]byte(ev.line))
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
 			if len(claudeEvents) > 0 {
@@ -1040,8 +1002,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			// SSE ping 事件：Anthropic 原生格式，客户端会正确处理，
-			// 同时保持连接活跃防止 Cloudflare Tunnel 等代理断开
+			// Anthropic ping events keep idle connections active without adding content.
 			if !cw.Fprintf("event: ping\ndata: {\"type\": \"ping\"}\n\n") {
 				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity claude), continuing to drain upstream for billing")
 				continue
@@ -1071,7 +1032,7 @@ func (s *ResponseAdapter) observeRaw(data []byte) {
 	}
 }
 
-// UnwrapV1InternalResponse 提取 v1internal 的 response JSON 字段，缺失时返回传入的响应体。
+// UnwrapV1InternalResponse extracts response, returning the input when that field is absent.
 func (s *ResponseAdapter) UnwrapV1InternalResponse(body []byte) ([]byte, error) {
 	result := gjson.GetBytes(body, "response")
 	if result.Exists() {

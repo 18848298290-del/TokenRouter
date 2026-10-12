@@ -39,7 +39,7 @@ type CapacityRPM interface {
 	GetRPMBatch(context.Context, []int64) (map[int64]int, error)
 }
 
-// CapacityService 聚合提供商配置和运行计数，计算分组容量。
+// CapacityService aggregates provider configuration and runtime counts into group capacity.
 type CapacityService struct {
 	providerRepo       CapacityProviders
 	groupRepo          CapacityGroups
@@ -52,7 +52,7 @@ func NewCapacityService(providers CapacityProviders, groups CapacityGroups, conc
 	return &CapacityService{providerRepo: providers, groupRepo: groups, concurrencyService: concurrency, sessionLimitCache: sessions, rpmCache: rpm}
 }
 
-// GetAllGroupCapacity 返回全部活跃分组的容量摘要。
+// GetAllGroupCapacity returns capacity summaries for active groups.
 func (s *CapacityService) GetAllGroupCapacity(ctx context.Context) ([]GroupCapacitySummary, error) {
 	groupIDs, err := s.groupRepo.ListActiveIDs(ctx)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *CapacityService) getGroupCapacitiesSequential(ctx context.Context, grou
 	for _, groupID := range groupIDs {
 		cap, err := s.GetGroupCapacity(ctx, groupID)
 		if err != nil {
-			// 单个分组失败时跳过，保留其它分组的部分结果。
+			// Keep partial results when an individual group cannot be read.
 			continue
 		}
 		cap.GroupID = groupID
@@ -182,7 +182,7 @@ func (s *CapacityService) getGroupCapacitiesBatch(ctx context.Context, groupIDs 
 	return results, nil
 }
 
-// GetGroupCapacityByIDs 返回指定分组的容量摘要，仓储支持批量读取时执行一次聚合查询。
+// GetGroupCapacityByIDs returns selected group summaries, using a batch provider query when supported.
 func (s *CapacityService) GetGroupCapacityByIDs(ctx context.Context, groupIDs []int64) (map[int64]GroupCapacitySummary, error) {
 	results := make(map[int64]GroupCapacitySummary, len(groupIDs))
 	if s == nil || len(groupIDs) == 0 {
@@ -259,7 +259,7 @@ func (s *CapacityService) GetGroupCapacity(ctx context.Context, groupID int64) (
 		return GroupCapacitySummary{}, nil
 	}
 
-	// 收集提供商 ID 和容量配置。
+	// Collect provider limits and the session timeout used for each runtime count.
 	providerIDs := make([]int64, 0, len(providers))
 	sessionTimeouts := make(map[int64]time.Duration)
 	var concurrencyMax, sessionsMax, rpmMax int
@@ -283,7 +283,8 @@ func (s *CapacityService) GetGroupCapacity(ctx context.Context, groupID int64) (
 		}
 	}
 
-	// 批量查询运行时容量数据，缓存异常时该指标留空，其他指标继续展示。
+	// Read runtime counters independently. Missing counter data contributes zero while other metrics remain
+	// available.
 	concurrencyMap := map[int64]int{}
 	if s.concurrencyService != nil {
 		concurrencyMap, _ = s.concurrencyService.GetProviderConcurrencyBatch(ctx, providerIDs)
@@ -299,7 +300,7 @@ func (s *CapacityService) GetGroupCapacity(ctx context.Context, groupID int64) (
 		rpmMap, _ = s.rpmCache.GetRPMBatch(ctx, providerIDs)
 	}
 
-	// 聚合提供商级容量为分组级容量。
+	// Sum provider usage into the group totals.
 	var concurrencyUsed, sessionsUsed, rpmUsed int
 	for _, id := range providerIDs {
 		concurrencyUsed += concurrencyMap[id]

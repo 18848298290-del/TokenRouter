@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderHistoryReadsLegacyUpstreamEvents 检查历史事件读取时优先使用新字段。
+// TestProviderHistoryReadsLegacyUpstreamEvents checks that current fields take precedence over legacy fields.
 func TestProviderHistoryReadsLegacyUpstreamEvents(t *testing.T) {
 	events, err := ParseOpsUpstreamErrors(`[{"account_id":7,"account_name":"legacy"},{"account_id":8,"provider_id":9,"provider_name":"current"},null]`)
 	require.NoError(t, err)

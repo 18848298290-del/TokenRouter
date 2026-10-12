@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// Selection 保存选中提供商的标识和已取得资源的释放函数。
+// Selection identifies the selected provider and how to release acquired resources.
 type Selection struct {
 	ProviderID int64
 	Acquired   bool
@@ -30,10 +30,10 @@ type StandaloneFailure struct {
 	Cause error
 }
 
-// noAvailableProvidersError 表示选择阶段没有可用提供商，HTTP 消息以大写字母开头。
+// noAvailableProvidersError reports selection exhaustion with the capitalized HTTP message.
 type noAvailableProvidersError struct{}
 
-// StandaloneRequest 保存独立搜索入口的请求字段，供平台构造器使用。
+// StandaloneRequest holds standalone search fields used by platform request builders.
 type StandaloneRequest struct {
 	Query                    string   `json:"query"`
 	Input                    string   `json:"input"`
@@ -56,8 +56,9 @@ func (e *StandaloneFailure) Unwrap() error { return e.Cause }
 
 func (noAvailableProvidersError) Error() string { return "No available providers" }
 
-// RunStandalone 最多选择四次提供商，首次选择失败直接映射错误，后续失败按故障切换处理。
-// 请求 Lease 由 HTTP 在写完响应后释放；失败切换只提前释放当前 attempt。
+// RunStandalone selects at most four providers. Initial selection errors retain their stage;
+// later failures end failover. HTTP releases the request lease after writing the response.
+// Switching providers releases the current attempt early.
 func RunStandalone(ctx context.Context, request StandaloneRequest, model string, maxResults int, ports StandalonePorts, lease *scheduler.Lease) (StandaloneResult, error) {
 	failed := make(map[int64]struct{})
 	var result StandaloneResult

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging 检查诊断快照是否按调用方需要和日志开关生成。
+// TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging checks capture gating and credential redaction.
 func TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://example.test/v1/messages", nil)
 	request.Header.Set("Authorization", "Bearer fixture-secret")

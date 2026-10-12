@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// providerScoreOptions 读取静态参数，并绑定调度使用的设置缓存和反馈实例。
+// providerScoreOptions binds static parameters and the settings cache and feedback used by scheduling.
 func providerScoreOptions(concurrency *scheduler.ConcurrencyService, shared *schedulerSharedState, store *settings.Store, cfg *config.Config) provider.SchedulerScoreOptions {
 	topK := 7
 	weights := policy.ScoreWeights{Priority: 1, Load: 1, Queue: 0.7, ErrorRate: 0.8, TTFT: 0.5, Previous: 5, SessionSticky: 3}

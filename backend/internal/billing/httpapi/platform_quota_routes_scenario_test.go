@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 routes_user.go 和 routes_admin.go 注册的路由对平台额度接口返回 404。
+// These tests cover removed platform-quota endpoints across user and administrator route registration.
 
 import (
 	"net/http"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRemovedPlatformQuotaRoutesReturnNotFound 检查用户与管理员的平台额度接口返回 404。
+// TestRemovedPlatformQuotaRoutesReturnNotFound checks that both sets of platform-quota endpoints return 404.
 func TestRemovedPlatformQuotaRoutesReturnNotFound(t *testing.T) {
 	router := gin.New()
 	RegisterUserRoutes(router.Group("/api/v1"), &RedeemHandler{}, &SubscriptionHandler{})

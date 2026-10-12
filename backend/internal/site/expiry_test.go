@@ -15,7 +15,7 @@ type announcementExpiryRepoStub struct {
 	called chan time.Time
 }
 
-// blockingExpiryRepository 阻塞归档调用，供测试检查停止时的等待行为。
+// blockingExpiryRepository blocks archiving so tests can check shutdown waiting.
 type blockingExpiryRepository struct {
 	AnnouncementRepository
 	entered, release chan struct{}
@@ -32,7 +32,8 @@ func (r *announcementExpiryRepoStub) ArchiveExpired(_ context.Context, now time.
 	return 1, nil
 }
 
-// TestAnnouncementExpiryServiceRunOnceArchivesExpiredAnnouncements 检查单次扫描使用当前时间调用仓储归档操作。
+// TestAnnouncementExpiryServiceRunOnceArchivesExpiredAnnouncements checks that a scan passes the current time
+// to the repository.
 func TestAnnouncementExpiryServiceRunOnceArchivesExpiredAnnouncements(t *testing.T) {
 	repo := &announcementExpiryRepoStub{called: make(chan time.Time, 1)}
 	svc := NewAnnouncementExpiryService(repo, time.Minute)
@@ -46,7 +47,8 @@ func TestAnnouncementExpiryServiceRunOnceArchivesExpiredAnnouncements(t *testing
 	require.False(t, archivedAt.After(time.Now()))
 }
 
-// TestAnnouncementExpiryServiceStartRunsImmediatelyAndPeriodically 检查启动时的首次扫描、周期扫描和停止后的调用次数。
+// TestAnnouncementExpiryServiceStartRunsImmediatelyAndPeriodically checks immediate and periodic scans and
+// that calls stop after shutdown.
 func TestAnnouncementExpiryServiceStartRunsImmediatelyAndPeriodically(t *testing.T) {
 	interval := 10 * time.Millisecond
 	repo := &announcementExpiryRepoStub{called: make(chan time.Time, 8)}

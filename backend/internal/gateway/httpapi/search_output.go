@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SearchOutput 设置 SSE Header 并逐事件 Flush，非流式请求输出 JSON。
+// SearchOutput sets SSE headers and flushes each event, or writes JSON for a non-streaming request.
 type SearchOutput struct{ Context *gin.Context }
 
 func (o SearchOutput) StartStream() {

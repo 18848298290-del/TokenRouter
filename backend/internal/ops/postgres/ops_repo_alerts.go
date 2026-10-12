@@ -825,7 +825,7 @@ func buildOpsAlertEventsWhere(filter *ops.OpsAlertEventFilter) (string, []any) {
 		idArg := "$" + itoa(len(args))
 		clauses = append(clauses, fmt.Sprintf("(fired_at < %s OR (fired_at = %s AND id < %s))", tsArg, tsArg, idArg))
 	}
-	// Dimensions are stored in JSONB. We filter best-effort without requiring GIN indexes.
+	// Match dimension fields stored in JSONB.
 	if platform := strings.TrimSpace(filter.Platform); platform != "" {
 		args = append(args, platform)
 		clauses = append(clauses, "(dimensions->>'platform') = $"+itoa(len(args)))

@@ -42,7 +42,7 @@ func (f *fakeDiagnoser) DiagnoseModelAvailabilityForPlatform(
 
 func ptrInt64(v int64) *int64 { return &v }
 
-// newTestGinContextWithRequest 在通用测试 context 上补一个 request，方便分类器读取 context。
+// newTestGinContextWithRequest adds a request so classifiers can read its context.
 func newTestGinContextWithRequest() *gin.Context {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -186,7 +186,7 @@ func TestClassifyNoProviderError_HasModelSupport_KeepsRoutingMessageGenerationTo
 
 func TestClassifyNoProviderError_ModelSupportedOnlyByRateLimitedProvider_Returns503(t *testing.T) {
 	c := newTestGinContextWithRequest()
-	// 即使普通调度在冷却期间排除了提供商，持久配置诊断仍应看到支持该模型的提供商。
+	// Persistent diagnostics must still see model support when scheduling filters the provider during cooldown.
 	fd := &fakeDiagnoser{resp: routing.ModelAvailabilityDiagnosis{HasProvidersInPool: true, HasModelSupport: true}}
 	apiKey := &apikey.APIKey{GroupID: ptrInt64(7)}
 
@@ -233,9 +233,10 @@ func TestClassifyNoProviderError_FromGin_NilContextStillSafe(t *testing.T) {
 	require.Empty(t, gatewayhttp.OpsClientBusinessLimitedReason(nil))
 }
 
-// TestClassifySelectionFailureError_ModelNotFoundIsNotOverriddenByRateLimited 验证持久化诊断确认的 404 model_not_found 优先于过滤原因中的限流信号。
-// 例如 pool=9, filtered: model_not_supported=8 model_rate_limited=1，过滤原因同时包含模型不支持和冷却。
-// ModelNotFound=true 时整个分组无法提供该模型，返回 429 会使客户端反复重试，Codex 最终仅显示 exceeded retry limit。
+// TestClassifySelectionFailureError_ModelNotFoundIsNotOverriddenByRateLimited checks that persistent
+// model_not_found takes precedence over rate-limit filtering.
+// For example, a pool can report model_not_supported=8 and model_rate_limited=1 together.
+// ModelNotFound means the group cannot serve the model; returning 429 would cause futile client retries.
 func TestClassifySelectionFailureError_ModelNotFoundIsNotOverriddenByRateLimited(t *testing.T) {
 	modelNotFound := noProviderErrorClassification{
 		Status:        http.StatusNotFound,
@@ -254,8 +255,9 @@ func TestClassifySelectionFailureError_ModelNotFoundIsNotOverriddenByRateLimited
 		"分组里没有任何提供商能服务该模型时，模型级冷却不该把 404 改判成 429")
 }
 
-// TestClassifySelectionFailureError_CallSiteChainKeepsModelNotFoundAttribution 验证先调用 ClassifyNoProviderErrorFromGin，再调用 classifySelectionFailureError。
-// 调用方按 ModelNotFound 决定 Ops 是否标记 routing capacity limited，模型配置错误保持该归因。
+// TestClassifySelectionFailureError_CallSiteChainKeepsModelNotFoundAttribution checks
+// ClassifyNoProviderErrorFromGin followed by classifySelectionFailureError.
+// Callers use ModelNotFound to distinguish model configuration errors from Ops routing capacity limits.
 func TestClassifySelectionFailureError_CallSiteChainKeepsModelNotFoundAttribution(t *testing.T) {
 	c := newTestGinContextWithRequest()
 	fd := &fakeDiagnoser{resp: routing.ModelAvailabilityDiagnosis{HasProvidersInPool: true, HasModelSupport: false}}
@@ -276,8 +278,8 @@ func TestClassifySelectionFailureError_CallSiteChainKeepsModelNotFoundAttributio
 	require.Equal(t, gatewayhttp.OpsClientBusinessLimitedReasonLocalModelConfiguration, gatewayhttp.OpsClientBusinessLimitedReason(c))
 }
 
-// TestClassifySelectionFailureError_StillUpgradesNonModelNotFoundFallback 验证池子里确实存在能服务该模型、只是全部在冷却的提供商时，429 改判仍需保留：
-// 这种情况 fallback 是 503（HasModelSupport=true），重试是有意义的。
+// TestClassifySelectionFailureError_StillUpgradesNonModelNotFoundFallback checks 429 when capable providers
+// are all cooling down; the initial 503 has HasModelSupport=true, so retry can succeed.
 func TestClassifySelectionFailureError_StillUpgradesNonModelNotFoundFallback(t *testing.T) {
 	fallback := noProviderErrorClassification{
 		Status:  http.StatusServiceUnavailable,

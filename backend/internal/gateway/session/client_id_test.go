@@ -36,7 +36,7 @@ func TestSanitizeSessionID(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := SanitizeClientSessionID(tc.in)
 			require.Equal(t, tc.want, got, "SanitizeClientSessionID(%q)", tc.in)
-			// 清理后的输出按 Unicode 字符计数，不得超过数据库列上限。
+			// The database limit counts Unicode characters.
 			require.LessOrEqual(t, len([]rune(got)), MaxPersistedSessionIDLength)
 		})
 	}

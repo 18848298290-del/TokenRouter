@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 测试使用固定的冷却时长和错误报文作为期望值。
+// Fixed expectations check the cooldown duration and client error body.
 const gatewayTransportErrorTempUnschedDuration = 10 * time.Minute
 
 var gatewayTransportFailoverBody = []byte(`{"type":"error","error":{"type":"upstream_error","message":"Upstream request failed"}}`)
@@ -45,10 +45,8 @@ func newTransportErrorFixture(t *testing.T) *privateHTTPBoundary {
 	return c
 }
 
-// TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction pins the
-// contract for transient transport blips (EOF / connection reset): the request
-// fails over to another provider, the current provider stays schedulable, and
-// nothing is written to the response (the handler owns it).
+// TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction checks transient EOF handling.
+// The attempt requests failover, leaves the provider schedulable, and leaves HTTP output to the handler.
 func TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -79,9 +77,8 @@ func TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction(t *testi
 	}
 }
 
-// TestHandleUpstreamTransportError_PersistentEvictsProvider pins the contract
-// for durable faults (dead endpoint / DNS / proxy credentials): fail over AND
-// temporarily unschedule the provider for the transport cooldown.
+// TestHandleUpstreamTransportError_PersistentEvictsProvider checks that connection refusal
+// requests failover and temporarily unschedules the provider for the transport cooldown.
 func TestHandleUpstreamTransportError_PersistentEvictsProvider(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -110,9 +107,8 @@ func TestHandleUpstreamTransportError_PersistentEvictsProvider(t *testing.T) {
 	}
 }
 
-// TestHandleUpstreamTransportError_ClientCanceledNoFailover pins that a
-// canceled client neither fails over nor evicts: the upstream never had a
-// chance to exhibit a fault.
+// TestHandleUpstreamTransportError_ClientCanceledNoFailover checks that cancellation
+// returns directly and leaves the provider schedulable.
 func TestHandleUpstreamTransportError_ClientCanceledNoFailover(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -133,9 +129,8 @@ func TestHandleUpstreamTransportError_ClientCanceledNoFailover(t *testing.T) {
 	}
 }
 
-// TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver pins that an
-// upstream-side timeout (request context still alive) is treated as a
-// transient fault: fail over, no eviction.
+// TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver checks that an upstream timeout
+// with a live request context requests failover and leaves the provider schedulable.
 func TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})

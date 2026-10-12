@@ -10,19 +10,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// DefaultTestModel 是 Kimi 提供商的默认探测模型。
+// DefaultTestModel is the model used for Kimi provider probes.
 const DefaultTestModel = "kimi-k2.5"
 
 type KimiCodingUsageAdapter struct{}
 
 type KimiBalanceUsageAdapter struct{}
 
-// ParseKimiUsageTiers 解析 Kimi For Coding 的 /usages 响应。
+// ParseKimiUsageTiers parses the Kimi For Coding /usages response.
 //
-//   - limits[].detail.{limit,remaining,resetTime} → 5h 窗口（取首个 detail）
-//   - usage.{limit,remaining,resetTime} → 周窗口
+//   - The first limits[].detail supplies the five-hour window.
+//   - usage supplies the weekly window.
 //
-// utilization = (limit-remaining)/limit*100。
+// Utilization is max(limit-remaining, 0)/limit*100, or zero for a nonpositive limit.
 func ParseKimiUsageTiers(body []byte) []usageview.CNQuotaTier {
 	var tiers []usageview.CNQuotaTier
 
@@ -47,7 +47,7 @@ func ParseKimiUsageTiers(body []byte) []usageview.CNQuotaTier {
 				UsedPercent: util,
 				ResetAt:     usageclient.CnNormalizeResetTime(detail.Get("resetTime").Value()),
 			})
-			return false // 取首个 detail 作为 5h 窗口
+			return false // The first detail supplies the five-hour window.
 		})
 	}
 

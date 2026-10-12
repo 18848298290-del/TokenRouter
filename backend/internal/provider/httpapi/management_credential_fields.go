@@ -16,7 +16,7 @@ type BatchUpdateCredentialsRequest struct {
 	Value       any     `json:"value"`
 }
 
-// BatchUpdateCredentials 保留类型校验、预验证 404 和逐项结果格式。
+// BatchUpdateCredentials validates field types and provider existence before returning per-item update results.
 func (h *ManagementHandler) BatchUpdateCredentials(c *gin.Context) {
 	var req BatchUpdateCredentialsRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {

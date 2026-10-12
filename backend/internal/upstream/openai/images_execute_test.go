@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// imagesContractSink 保留每次同步输出，允许在读到终态前验证渐进交付。
+// imagesContractSink captures synchronous output so tests can inspect partial delivery before the terminal event.
 type imagesContractSink struct {
 	chunks    []string
 	flushed   int
@@ -25,7 +25,7 @@ type imagesContractSink struct {
 	onPartial func()
 }
 
-// imagesCloseRecorder 记录本次执行关闭网络响应体的次数。
+// imagesCloseRecorder counts response-body closes for one execution.
 type imagesCloseRecorder struct {
 	io.ReadCloser
 	closed *atomic.Int32
@@ -199,7 +199,7 @@ func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 	require.Greater(t, sink.flushed, 0)
 }
 
-// imagesTestResponseOptions 为测试提供响应读写和观测回调。
+// imagesTestResponseOptions supplies response IO and observation callbacks for tests.
 func imagesTestResponseOptions() ImageResponseOptions {
 	return ImageResponseOptions{
 		ReadBody:          io.ReadAll,

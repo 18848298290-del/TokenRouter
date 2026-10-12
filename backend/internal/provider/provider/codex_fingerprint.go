@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ConvergedInstallationID 返回提供商级恒定的 installation_id。
-// 优先使用管理员配置的 device_id，缺省时从提供商随机种子派生。
+// ConvergedInstallationID returns a stable installation_id for the provider.
+// It prefers the configured device_id and otherwise derives an ID from the provider seed.
 func ConvergedInstallationID(value *acctcore.Record, seed string) string {
 	if value == nil {
 		return ""
@@ -21,7 +21,7 @@ func ConvergedInstallationID(value *acctcore.Record, seed string) string {
 	if seed == "" {
 		return ""
 	}
-	// 哈希使用兼容的种子值，升级后设备、会话及调用身份保持不变。
+	// Keep this derivation prefix stable so existing installation IDs remain valid.
 	return openai.DeriveStableUUIDv4("sub2api:codex-install-id:v2:" + seed)
 }
 

@@ -5,14 +5,14 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Lines 将扫描大小和实际读取留给传输 Adapter。
+// Lines reads response lines; the transport adapter controls scanning and size limits.
 type Lines interface {
 	Scan() bool
 	Text() string
 	Err() error
 }
 
-// Response 只提供本次响应的明确报文事实。
+// Response holds upstream response data and the transport's reader and close function.
 type Response struct {
 	StatusCode int
 	Close      func()
@@ -20,11 +20,11 @@ type Response struct {
 	RequestID  string
 	Headers    map[string][]string
 	Lines      Lines
-	// MaxSSEFrameBytes 限制转换器累计的单帧字节数，零值使用默认上限。
+	// MaxSSEFrameBytes limits bytes accumulated per frame; zero selects the default limit.
 	MaxSSEFrameBytes int
 }
 
-// Output 同步写入协议事件并返回写入错误，HTTP 状态和缓冲由适配器管理。
+// Output writes protocol events synchronously; the adapter manages HTTP status and buffering.
 type Output interface {
 	CopyHeaders(map[string][]string)
 	BeginJSON()

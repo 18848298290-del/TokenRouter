@@ -25,7 +25,7 @@ type GrokVoiceOptions struct {
 
 type GrokVoice struct{ Options GrokVoiceOptions }
 
-// String 防止技术参数中的令牌或请求被默认日志展开。
+// String formats the provider ID while keeping credentials out of formatted output.
 func (o GrokVoiceOptions) String() string {
 	return fmt.Sprintf("media GrokVoice provider=%d", o.ProviderID)
 }

@@ -34,33 +34,33 @@ const (
 	GatewayFailureScopeRequest  GatewayFailureScope = "request"
 )
 
-// AgentIdentityTaskRecoveredError 表示身份任务已恢复，调用方可重试请求。
+// AgentIdentityTaskRecoveredError signals that an identity task recovered and the caller may retry.
 type AgentIdentityTaskRecoveredError struct{}
 
-// GatewayFailureStage 标识请求失败的阶段，零值表示推理阶段。
+// GatewayFailureStage identifies the failure stage; an empty stage follows inference handling.
 type GatewayFailureStage string
 
-// GatewayFailureScope 区分单个提供商、共享凭据设施和请求本身，供切换决策使用。
+// GatewayFailureScope distinguishes provider, shared-credential, and request failures for failover decisions.
 type GatewayFailureScope string
 
-// NextProviderAction 描述提供商切换动作，零值继续尝试，NextProviderStop 终止切换。
+// NextProviderAction controls provider switching; the zero value permits retry and NextProviderStop ends switching.
 type NextProviderAction uint8
 
 type GatewayFailureReason string
 
-// UpstreamFailoverError 表示可能触发提供商切换的上游或凭据错误。
-// 切换动作缺省时按错误状态和重试预算决定下一步。
+// UpstreamFailoverError carries an upstream or credential failure that may trigger provider switching.
+// The caller combines its action with response status and remaining retry budget.
 type UpstreamFailoverError struct {
 	StatusCode                int
-	ResponseBody              []byte              // 上游响应体，用于错误透传规则匹配
-	ResponseHeaders           map[string][]string // 上游响应头值，供 HTTP 适配器读取。
-	ForceCacheBilling         bool                // Antigravity 粘性会话切换时设为 true
-	RetryableOnSameProvider   bool                // 临时性错误（如 Google 间歇性 400、空响应），应在同一提供商上重试 N 次再切换
+	ResponseBody              []byte              // Upstream body used for error-rule matching.
+	ResponseHeaders           map[string][]string // Upstream headers read by HTTP adapters.
+	ForceCacheBilling         bool                // Bill input as cache reads after a sticky-session switch.
+	RetryableOnSameProvider   bool                // Allow retries on this provider before switching.
 	SameProviderRetryDelay    time.Duration
 	SameProviderRetryDeadline time.Time
-	SameProviderRetryMax      int  // 可选的错误级同提供商重试上限，低于 handler 默认预算时优先采用
-	RequestScopedTransient    bool // 故障因素与提供商无关（如上游按客户端身份/模型容量降载）：可同提供商重试，但不得据此对提供商做临时封禁
-	SafeToFailoverAfterWrite  bool // 已写出的内容仅为 SSE 注释等控制字节时，允许在当前流中切换提供商。
+	SameProviderRetryMax      int  // Optional cap when lower than the caller retry budget.
+	RequestScopedTransient    bool // Provider-independent transient failure; provider health must not be penalized for it.
+	SafeToFailoverAfterWrite  bool // Allow failover when written bytes contain only control output, such as SSE comments.
 	Stage                     GatewayFailureStage
 	Scope                     GatewayFailureScope
 	Reason                    GatewayFailureReason
@@ -71,7 +71,7 @@ type UpstreamFailoverError struct {
 
 func (e *AgentIdentityTaskRecoveredError) Error() string { return "agent identity task recovered" }
 
-// OpenAISilentRefusalErrorBody 返回网关用于静默拒绝的错误码和安全消息。
+// OpenAISilentRefusalErrorBody returns the gateway error payload for an empty completion without usage.
 func OpenAISilentRefusalErrorBody() []byte {
 	body, err := json.Marshal(map[string]any{
 		"error": map[string]any{
@@ -86,12 +86,12 @@ func OpenAISilentRefusalErrorBody() []byte {
 	return body
 }
 
-// IsOpenAISilentRefusalErrorBody 判断响应体是否由 OpenAI 静默拒绝检测器生成。
+// IsOpenAISilentRefusalErrorBody checks for the gateway silent-refusal error code.
 func IsOpenAISilentRefusalErrorBody(body []byte) bool {
 	return strings.TrimSpace(gjson.GetBytes(body, "error.code").String()) == openAISilentRefusalErrorCode
 }
 
-// OpenAISilentRefusalClientMessage 返回静默拒绝且 failover 耗尽时给客户端看的错误文案。
+// OpenAISilentRefusalClientMessage returns the message for silent refusal after failover is exhausted.
 func OpenAISilentRefusalClientMessage() string {
 	return openAISilentRefusalClientMessage
 }
@@ -111,8 +111,8 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 	return e != nil && e.Stage == GatewayFailureStageProviderAuth
 }
 
-// ShouldReportProviderScheduleFailure 区分凭据失败归属，提供方级和请求级失败由对应范围处理。
-// 其他错误和推理失败继续向提供商调度健康报告。
+// ShouldReportProviderScheduleFailure reports inference failures and provider-scoped credential failures.
+// Shared and request-scoped credential failures do not count against provider scheduling health.
 func (e *UpstreamFailoverError) ShouldReportProviderScheduleFailure() bool {
 	if e == nil {
 		return false

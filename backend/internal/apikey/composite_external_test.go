@@ -95,7 +95,7 @@ func TestCompositeAPIKeyAuthSnapshotRoundTrip(t *testing.T) {
 	service := testkit.NewService(nil, nil, nil, nil, nil, nil, nil)
 	service.Start()
 
-	// 复合映射必须连同完整分组鉴权信息一起写入并还原，不能依赖额外数据库查询。
+	// Composite mappings must round-trip with full group authentication data, without another database lookup.
 	snapshot := service.KeySnapshotFromAPIKey(context.Background(), key)
 	require.NotNil(t, snapshot)
 	require.Equal(t, apikey.KeyApiKeyAuthSnapshotVersion, snapshot.Version)
@@ -148,7 +148,7 @@ func TestAPIKeyUpdateConvertsBetweenOrdinaryAndComposite(t *testing.T) {
 	require.Len(t, converted.CompositeGroups, 2)
 	require.Equal(t, apikey.APIKeyUpdateFields{GroupID: true, CompositeConfiguration: true}, repo.updatedFields[0])
 
-	// 复合密钥转为普通密钥时，请求需要提供目标分组。
+	// Converting a composite key to an ordinary key requires a target group.
 	toOrdinary := false
 	_, err = service.Update(context.Background(), 10, user.ID, apikey.UpdateAPIKeyRequest{IsComposite: &toOrdinary})
 	require.ErrorIs(t, err, apikey.ErrCompositeKeyTargetRequired)

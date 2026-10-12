@@ -48,7 +48,7 @@ func (h *OpenAITextHandler) Messages(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	// 检查分组是否允许 /v1/messages 调度
+	// Check group permission to schedule /v1/messages.
 	if !h.backend.AllowsMessages(apiKey) {
 		h.backend.PolicyDenied(c)
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
@@ -79,7 +79,8 @@ func (h *OpenAITextHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
-	// 在模型解析、内容审计和会话 hash 计算前替换用户提示词，后续步骤共用改写后的请求体。
+	// Replace user prompts before model resolution, moderation, and session hashing so later steps share the
+	// rewritten body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "anthropic_messages")
 
 	modelResult := gjson.GetBytes(body, "model")
@@ -118,8 +119,8 @@ func (h *OpenAITextHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	// 解析分组模型映射
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Resolve the group model mapping.
+	// Pass the current group and mapped model to the execution plan.
 	groupMappingMsgRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMappingMsg := groupMappingMsgRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingMsgRoutePlan)
@@ -129,7 +130,7 @@ func (h *OpenAITextHandler) Messages(c *gin.Context) {
 	}
 	providerLayerModel := h.backend.MessageProviderModel(c.Request.Context(), apiKey, groupMappedModel)
 
-	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
+	// Bind passthrough rules for downstream non-failover error handling.
 	h.backend.BindErrors(c)
 
 	subscription, _ := SubscriptionFromContext(c)

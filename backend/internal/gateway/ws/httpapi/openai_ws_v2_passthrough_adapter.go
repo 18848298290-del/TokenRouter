@@ -24,9 +24,9 @@ import (
 
 const openaiWSV2PassthroughModeFields = "ws_mode=passthrough ws_router=v2"
 
-// 首输出与活跃读取超时由 gateway/ws 唯一拥有。
+// gateway/ws owns first-output and active-read timeouts.
 
-// openAIWSCoreFrames 将供应商帧连接适配为网关接口。
+// openAIWSCoreFrames adapts upstream frame transport to the gateway interface.
 type openAIWSCoreFrames struct{ openaiwsv2.FrameConn }
 
 func (c openAIWSCoreFrames) ReadFrame(ctx context.Context) (int, []byte, error) {

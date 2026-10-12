@@ -27,7 +27,7 @@ type (
 	BackupObjectStoreSizedUploader = backup.BackupObjectStoreSizedUploader
 )
 
-// Archive 每次执行使用独立回调副本，不共享请求状态。
+// Archive streams backups and keeps each Write call's persistence callback in a separate copy.
 type Archive struct {
 	dumper        backup.DBDumper
 	partSizeBytes int64
@@ -113,6 +113,7 @@ func (s *Archive) Write(ctx context.Context, record *BackupRecord, objectStore B
 	return sizeBytes, errors.Join(err, cleanupErr)
 }
 
+// uploadBackupParts spools and uploads one bounded gzip segment at a time.
 func (s *Archive) uploadBackupParts(ctx context.Context, record *BackupRecord, objectStore BackupObjectStore, src io.Reader) (int64, error) {
 	partSize := s.partSizeBytes
 	if partSize <= 0 {
@@ -184,15 +185,11 @@ func uploadBackupPart(ctx context.Context, objectStore BackupObjectStore, key st
 	return objectStore.UploadFile(ctx, key, file, contentType)
 }
 
-// RestoreBackup 从记录对应存储后端下载备份并流式恢复到数据库
-
 func shouldUseBackupParts(record *BackupRecord, s3Cfg *BackupS3Config) bool {
 	return backup.RecordEffectiveStorageType(record) == BackupStorageTypeS3 &&
 		s3Cfg != nil &&
 		backup.NormalizeBackupS3UploadMode(s3Cfg.UploadMode) == BackupS3UploadModeSpooledPut
 }
-
-// uploadBackupParts 边读取 gzip 流边封卷，内存与临时磁盘都只保留当前一卷。
 
 func (s *Archive) restoreBackupArchive(ctx context.Context, archivePath string) error {
 	archive, err := os.Open(archivePath)
@@ -211,6 +208,7 @@ func (s *Archive) restoreBackupArchive(ctx context.Context, archivePath string) 
 	return nil
 }
 
+// Restore verifies all multipart files before restoring; single-file backups stream directly into the dumper.
 func (s *Archive) Restore(ctx context.Context, record *BackupRecord, objectStore BackupObjectStore) error {
 	if len(record.Parts) > 0 {
 		archivePath, err := downloadBackupParts(ctx, objectStore, record.Parts)
@@ -221,7 +219,6 @@ func (s *Archive) Restore(ctx context.Context, record *BackupRecord, objectStore
 		return s.restoreBackupArchive(ctx, archivePath)
 	}
 
-	// 从记录对应存储后端流式下载
 	body, err := objectStore.Download(ctx, backup.RecordEffectiveStorageKey(record))
 	if err != nil {
 		return fmt.Errorf("backup download failed: %w", err)
@@ -230,19 +227,16 @@ func (s *Archive) Restore(ctx context.Context, record *BackupRecord, objectStore
 	stopClose := context.AfterFunc(ctx, func() { _ = body.Close() })
 	defer stopClose()
 
-	// 流式解压 gzip -> psql（不将全部数据加载到内存）
+	// Decompress directly into the restore reader to keep memory independent of archive size.
 	gzReader, err := gzip.NewReader(body)
 	if err != nil {
 		return fmt.Errorf("gzip reader: %w", err)
 	}
 	defer func() { _ = gzReader.Close() }()
 
-	// 流式恢复
 	if err := s.dumper.Restore(ctx, gzReader); err != nil {
 		return fmt.Errorf("pg restore: %w", err)
 	}
 
 	return nil
 }
-
-// StartRestore 异步恢复备份，立即返回

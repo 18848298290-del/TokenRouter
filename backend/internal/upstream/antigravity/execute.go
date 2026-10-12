@@ -27,7 +27,7 @@ const (
 
 type ResponseMode uint8
 
-// Target 配置单次请求的模型、输出格式、交换和响应处理回调。
+// Target supplies the model, output mode, exchange, and response callbacks for one attempt.
 type Target struct {
 	OutputError    func(error)
 	ProviderID     int64
@@ -44,7 +44,7 @@ type Target struct {
 
 type Executor struct{}
 
-// observedSink 为已经完整形成的输出段补充事实标记，不缓存或重排帧，不改变 TTFT。
+// observedSink marks semantic and terminal output on each emitted segment.
 type observedSink struct {
 	upstream.OutputSink
 	nonStream bool
@@ -110,7 +110,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
 	priorRaw := options.ObserveRaw
-	// 仅保存本次已出现的 usage 字段；部分更新不能抹掉之前的观测。
+	// Merge fields seen in this attempt so partial usage updates retain earlier observations.
 	observedUsage := make(map[string]json.RawMessage)
 	options.ObserveRaw = func(raw []byte) {
 		if priorRaw != nil {
@@ -131,7 +131,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 					observedUsage[field] = json.RawMessage(value.Raw)
 				}
 			}
-			// 将已观测的 Gemini token 字段换算成统一用量。
+			// Convert the accumulated Gemini token fields to normalized usage.
 			payload, _ := json.Marshal(map[string]any{"usageMetadata": observedUsage})
 			if usage := bridge.NativeUsageProjection(bridge.NativeExtractGeminiUsage(payload)); usage != nil {
 				result.Usage = *usage
@@ -215,7 +215,7 @@ func (s *observedSink) Emit(event upstream.OutputEvent) error {
 		event.Semantic = event.Semantic || semantic || a.Semantic || g.Semantic
 		event.Terminal = event.Terminal || terminal || a.Terminal || g.Terminal
 	}
-	// Antigravity 写出字节时关闭普通重试窗口，内容输出和 TTFT 分别记录。
+	// Emitting bytes closes the retry window; semantic output and TTFT are tracked separately.
 	event.CommitForRetry = event.CommitForRetry || len(event.Data) > 0
 	return s.OutputSink.Emit(event)
 }

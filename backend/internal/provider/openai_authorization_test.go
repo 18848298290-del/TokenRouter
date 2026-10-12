@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// TestOpenAIAuthorizationStopWaitsForExchange 验证在供应商交换入口固定停止时刻，验证共享依赖释放前取消并等待本次操作。
+// TestOpenAIAuthorizationStopWaitsForExchange checks that shutdown cancels and waits for an active exchange.
 func TestOpenAIAuthorizationStopWaitsForExchange(t *testing.T) {
 	store := NewOpenAISessionStore()
 	require.False(t, store.runtimeStarted)
@@ -45,7 +45,8 @@ func TestOpenAIAuthorizationStopWaitsForExchange(t *testing.T) {
 	require.True(t, exists, "交换失败不能消费原会话")
 }
 
-// TestOpenAIAuthorizationStopReportsUnfinishedExchange 验证不响应取消的交换会耗尽预算，不能报告完成或在停止后新开任务。
+// TestOpenAIAuthorizationStopReportsUnfinishedExchange checks timeout reporting and rejection of work after
+// stop.
 func TestOpenAIAuthorizationStopReportsUnfinishedExchange(t *testing.T) {
 	store := NewOpenAISessionStore()
 	entered := make(chan struct{})
@@ -93,7 +94,7 @@ func TestChatGPTAccountInfoBelongsToTokenProvider(t *testing.T) {
 		&OpenAITokenInfo{ChatGPTAccountID: "personal-a"},
 		&openai.ChatGPTAccountInfo{ProviderID: "PERSONAL-A"},
 	))
-	// 任一侧缺少 ID 时无法区分，保持既有行为。
+	// Missing IDs are treated as matching for compatibility.
 	require.True(t, ChatGPTAccountInfoBelongsToTokenProvider(
 		&OpenAITokenInfo{},
 		&openai.ChatGPTAccountInfo{ProviderID: "workspace-b"},

@@ -32,7 +32,7 @@ func (r *requestRepositoryStub) Find(_ context.Context, _ string, userID int64, 
 	return []requestlog.Detail{{RequestRecord: telemetry.RequestRecord{RequestID: "request", UserID: 42, ProviderID: 99, Aliases: []telemetry.RequestAlias{{Kind: "upstream", Value: "supplier"}}, Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 99, RequestID: "supplier"}}}, Errors: []requestlog.Failure{{ID: 7, Status: 500}}, AuditIDs: []int64{8}}}, nil
 }
 
-// TestRequestDiagnosticsRequireAdmin 检查详情与写入状态都在读取数据前校验管理员身份。
+// TestRequestDiagnosticsRequireAdmin checks authorization before reading details or writer health.
 func TestRequestDiagnosticsRequireAdmin(t *testing.T) {
 	for _, test := range []struct {
 		name   string

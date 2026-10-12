@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 management.go、management_list.go 和 ollama_usage.go 的用量状态响应。
+// These scenarios cover usage status responses in management.go, management_list.go, and ollama_usage.go.
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 展示夹具提供列表和单条读取函数，检查列表数据一次批量解析。
+// ollamaManagementFixture supplies list and individual reads to test batch resolution of list usage data.
 type ollamaManagementFixture struct {
 	ProviderManagement
 	providers []providercore.Record

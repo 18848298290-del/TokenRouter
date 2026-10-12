@@ -77,7 +77,7 @@ func ReplaceModelInSSELine(line, fromModel, toModel string) string {
 		return line
 	}
 
-	// 使用 gjson 读取 model 字段。
+	// Prefer the top-level model field when it matches.
 	if m := gjson.Get(data, "model"); m.Exists() && m.Str == fromModel {
 		newData, err := sjson.Set(data, "model", toModel)
 		if err != nil {
@@ -86,7 +86,7 @@ func ReplaceModelInSSELine(line, fromModel, toModel string) string {
 		return "data: " + newData
 	}
 
-	// 检查嵌套的 response.model 字段
+	// Responses events may nest the model under response.
 	if m := gjson.Get(data, "response.model"); m.Exists() && m.Str == fromModel {
 		newData, err := sjson.Set(data, "response.model", toModel)
 		if err != nil {
@@ -98,8 +98,8 @@ func ReplaceModelInSSELine(line, fromModel, toModel string) string {
 	return line
 }
 
-// NormalizeOpenAIResponsesFunctionCallArguments 修正 arguments 字符串重复拼接两次的事件，
-// 重复拼接会使 Codex 无法解析工具参数。
+// NormalizeOpenAIResponsesFunctionCallArguments repairs arguments containing two identical JSON documents.
+// Codex cannot parse the concatenated documents as tool arguments.
 func NormalizeOpenAIResponsesFunctionCallArguments(data []byte) ([]byte, bool) {
 	if len(bytes.TrimSpace(data)) == 0 || !bytes.Contains(data, []byte(`"arguments"`)) {
 		return data, false
@@ -197,8 +197,8 @@ func ParseSSEUsageBytes(data []byte, usage *ForwardUsage) {
 	MergeOpenAIUsageNonZero(usage, parsedUsage)
 }
 
-// MergeOpenAIUsageNonZero 合并已观测到的非零用量字段。
-// 兼容上游可能在终态前报告用量，这些值作为回退，最终仍以终态用量为准。
+// MergeOpenAIUsageNonZero updates observed usage with positive source fields.
+// Callers can retain these intermediate counts until terminal usage arrives.
 func MergeOpenAIUsageNonZero(dst *ForwardUsage, src ForwardUsage) {
 	if dst == nil {
 		return
@@ -227,9 +227,9 @@ func ExtractOpenAIUsageFromJSONBytes(body []byte) (ForwardUsage, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ForwardUsage{}, false
 	}
-	// 部分 OpenAI 兼容上游（例如 Cline API）会将标准响应包在 data 字段中：
-	// {"data":{"choices": [...], "usage": {...}}, "success":true}。
-	// 优先读取 usage 和 response.usage，再尝试兼容层 data 包装中的用量。
+	// Compatible upstreams such as Cline may wrap the response in a data object:
+	// {"data":{"choices": [...], "usage": {...}}, "success":true}.
+	// Prefer usage and response.usage, then check the data envelope.
 	candidates := []struct {
 		usagePath      string
 		imageUsagePath string
@@ -248,8 +248,8 @@ func ExtractOpenAIUsageFromJSONBytes(body []byte) (ForwardUsage, bool) {
 	return ForwardUsage{}, false
 }
 
-// OpenAIResponsesCompletedEventIsEmpty 判断终态和此前事件是否都缺少用量、错误和输出。
-// usage 可能仅出现在更早的事件中，因此同时检查累计用量。
+// OpenAIResponsesCompletedEventIsEmpty checks for missing usage, error, and response output in a terminal payload.
+// It also checks accumulated token counts, since usage may arrive in an earlier event.
 func OpenAIResponsesCompletedEventIsEmpty(data []byte, usage *ForwardUsage) bool {
 	if len(data) == 0 || !gjson.ValidBytes(data) {
 		return false
@@ -271,7 +271,7 @@ func OpenAIResponsesCompletedEventIsEmpty(data []byte, usage *ForwardUsage) bool
 	return true
 }
 
-// MergeHostedImageGenToolUsage 补齐 hosted image_generation 工具独立返回的图片 token。
+// MergeHostedImageGenToolUsage fills missing image token counts from hosted image_generation usage.
 func MergeHostedImageGenToolUsage(imageGen gjson.Result, usage *ForwardUsage) {
 	if usage == nil || !imageGen.Exists() || !imageGen.IsObject() {
 		return
@@ -302,7 +302,7 @@ func OpenAIUsageFromGJSON(value gjson.Result) (ForwardUsage, bool) {
 	if !value.Exists() || !value.IsObject() {
 		return ForwardUsage{}, false
 	}
-	// OpenAI Responses 使用 input/output，Chat Completions 使用 prompt/completion，两种都要计费。
+	// Responses uses input/output token names; Chat Completions uses prompt/completion.
 	inputTokens := value.Get("input_tokens").Int()
 	if inputTokens == 0 {
 		inputTokens = value.Get("prompt_tokens").Int()
@@ -311,8 +311,8 @@ func OpenAIUsageFromGJSON(value gjson.Result) (ForwardUsage, bool) {
 	if outputTokens == 0 {
 		outputTokens = value.Get("completion_tokens").Int()
 	}
-	// xAI 可能将 reasoning_tokens 与可见输出 token 分开返回；按 total_tokens
-	// 与推理字段的差额判断独立部分，OpenAI 标准 completion_tokens 已包含推理细节。
+	// xAI can report reasoning separately from visible output. Use total_tokens to detect
+	// that case; standard OpenAI completion_tokens already includes reasoning.
 	reasoningTokens := max(FirstPositiveGJSONInt(
 		value.Get("completion_tokens_details.reasoning_tokens"),
 		value.Get("output_tokens_details.reasoning_tokens"),
@@ -328,9 +328,9 @@ func OpenAIUsageFromGJSON(value gjson.Result) (ForwardUsage, bool) {
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
 	}
-	// 图片输入 token（如 gpt-image-2 的 /v1/images/edits 带图请求），
-	// 上游在 input_tokens_details.image_tokens 单独回传，用于图/文输入分价计费。
-	// 普通文本请求该字段为 0，走原路径行为不变。
+	// Image requests can report input_tokens_details.image_tokens separately
+	// so billing can apply different image and text input prices.
+	// Missing image detail contributes zero image tokens.
 	imageInputTokens := FirstPositiveGJSONInt(
 		value.Get("input_tokens_details.image_tokens"),
 		value.Get("prompt_tokens_details.image_tokens"),
@@ -382,8 +382,8 @@ func OpenAICacheCreationTokensFromUsage(value gjson.Result) int {
 	)
 }
 
-// BodyHasSSEFraming 按 SSE 规范检查是否存在以 data: 或 event: 开头的物理行。
-// 有效 JSON 字符串中的同名文本不会出现在物理行首，因此不会被误判。
+// BodyHasSSEFraming reports whether a physical line begins with data: or event:.
+// Those prefixes inside a valid JSON string cannot occur at a physical line start.
 func BodyHasSSEFraming(body []byte) bool {
 	for line := range bytes.SplitSeq(body, []byte("\n")) {
 		line = bytes.TrimRight(line, "\r")
@@ -502,8 +502,8 @@ func IsResponsesCompactionItemType(itemType string) bool {
 	return IsCompactionItemType(itemType)
 }
 
-// ResponsesOutputHasCompactionItem 判断响应 JSON 的 output 数组是否已包含
-// compaction 条目。
+// ResponsesOutputHasCompactionItem reports whether the response output array
+// contains a compaction item.
 func ResponsesOutputHasCompactionItem(response []byte) bool {
 	for _, item := range gjson.GetBytes(response, "output").Array() {
 		if IsResponsesCompactionItemType(item.Get("type").String()) {
@@ -513,8 +513,8 @@ func ResponsesOutputHasCompactionItem(response []byte) bool {
 	return false
 }
 
-// FindRawCompactionItemFromSSE 从原始 SSE 事件流中提取第一个 compaction 类
-// item 使用 raw JSON，优先取 output_item.done，缺失时取 output_item.added。
+// FindRawCompactionItemFromSSE returns the first raw compaction item from output_item.done,
+// or from output_item.added when no done item exists.
 func FindRawCompactionItemFromSSE(bodyText string) (json.RawMessage, bool) {
 	var found json.RawMessage
 	pick := func(eventType string) {
@@ -598,7 +598,7 @@ func FirstPositiveGJSONInt(values ...gjson.Result) int {
 	return 0
 }
 
-// BoundedJSONNonNegativeInt 在数值范围内解析 JSON 指数记法表示的非负整数。
+// BoundedJSONNonNegativeInt parses a nonnegative integer, including exponent notation, within int range.
 func BoundedJSONNonNegativeInt(value gjson.Result) (int, bool) {
 	if !value.Exists() || value.Type != gjson.Number {
 		return 0, false
@@ -769,7 +769,7 @@ func ForEachOpenAISSEFrame(body string, fn func(string, []byte)) {
 	emit(parser.Finish())
 }
 
-// EffectiveOpenAISSEEventType 优先使用 payload 内的 type，兼容 event 行与 data 行分离的 SSE。
+// EffectiveOpenAISSEEventType prefers the payload type over a separate SSE event line.
 func EffectiveOpenAISSEEventType(payload []byte, eventType string) string {
 	if value := strings.TrimSpace(gjson.GetBytes(payload, "type").String()); value != "" {
 		return value
@@ -777,8 +777,8 @@ func EffectiveOpenAISSEEventType(payload []byte, eventType string) string {
 	return strings.TrimSpace(eventType)
 }
 
-// ParseSSEUsageBytesWithType 兼容带 event 类型的用量解析入口。
-// 先解析 data 中的用量，再根据 event 判定是否按终态用量覆盖。
+// ParseSSEUsageBytesWithType reads usage using the payload type or a separate SSE event type.
+// It returns whether usage was found; terminal usage replaces the aggregate when it has positive counts.
 func ParseSSEUsageBytesWithType(data []byte, eventType string, usage *ForwardUsage) bool {
 	if usage == nil || len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]")) {
 		return false
@@ -788,8 +788,8 @@ func ParseSSEUsageBytesWithType(data []byte, eventType string, usage *ForwardUsa
 		return false
 	}
 	if OpenAIStreamEventTypeIsTerminal(EffectiveOpenAISSEEventType(data, eventType)) {
-		// 某些兼容上游会在 completed 事件附带全零占位 usage；该占位不能
-		// 覆盖此前已收到的用量。终态至少有一个非零字段时才覆盖。
+		// Some upstreams send all-zero placeholder usage in completed events.
+		// Retain earlier counts unless the terminal payload contains a positive token count.
 		if OpenAIUsageHasTokens(&parsedUsage) {
 			*usage = parsedUsage
 		}
@@ -805,7 +805,7 @@ func OpenAIUsageHasTokens(usage *ForwardUsage) bool {
 }
 
 func ReplaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	// 使用 gjson/sjson 替换 model 字段。
+	// Patch a matching top-level model without re-encoding other fields.
 	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
 		newBody, err := sjson.SetBytes(body, "model", toModel)
 		if err != nil {

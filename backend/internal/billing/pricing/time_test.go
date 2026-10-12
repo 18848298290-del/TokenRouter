@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExplicitTimeLocationPreservesDSTRepeatedHour 检查夏令时结束时重复的一点钟按本地窗口计价，结束时刻使用默认倍率。
+// TestExplicitTimeLocationPreservesDSTRepeatedHour checks both repeated 1 a.m. hours and the exclusive window end.
 func TestExplicitTimeLocationPreservesDSTRepeatedHour(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

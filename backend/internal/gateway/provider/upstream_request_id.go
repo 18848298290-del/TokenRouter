@@ -9,12 +9,12 @@ import (
 )
 
 const (
-	// maxUsageUpstreamRequestIDLen 与 usage_logs.upstream_request_id VARCHAR(128) 对齐。
+	// maxUsageUpstreamRequestIDLen is the byte cap used to fit IDs in the VARCHAR(128) column.
 	maxUsageUpstreamRequestIDLen = 128
 )
 
-// UpstreamRequestIDFromHeaders 从直接上游的响应头解析请求标识。
-// 只读提供商指定的头；提供商未指定头名时恒为空串。
+// UpstreamRequestIDFromHeaders reads the direct upstream ID from the provider-configured header.
+// It returns an empty string when the provider has no configured header.
 func UpstreamRequestIDFromHeaders(provider *acctcore.Record, h http.Header) string {
 	if len(h) == 0 {
 		return ""
@@ -26,8 +26,9 @@ func UpstreamRequestIDFromHeaders(provider *acctcore.Record, h http.Header) stri
 	return strings.TrimSpace(h.Get(name))
 }
 
-// usageUpstreamRequestIDPtr 生成落库到 usage_logs.upstream_request_id 的值。
-// WS 轮次的响应头为 nil。超长请求 ID 截断到数据库列宽后写入用量记录。
+// usageUpstreamRequestIDPtr returns the ID stored in usage_logs.upstream_request_id.
+// WebSocket turns and missing IDs return nil. Long IDs are truncated to the byte
+// cap, then trimmed to a valid UTF-8 prefix.
 func usageUpstreamRequestIDPtr(provider *acctcore.Record, h http.Header, wsMode bool) *string {
 	if wsMode {
 		return nil

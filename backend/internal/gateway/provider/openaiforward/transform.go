@@ -96,7 +96,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		p.BridgeEnabled(ctx)
 	var imageIntent bool
 	canonicalImageIntent := p.ImageIntentHint(reqModel, canonicalImageIntentBody)
-	// 显式意图只负责权限门禁；宽泛意图仍负责 namespace 工具处理和图片计费。
+	// Explicit image intent controls permissions; broad intent controls namespace tools and image billing.
 	explicitImageIntent := p.IsExplicitImageGenerationIntent("/v1/responses", reqModel, canonicalImageIntentBody)
 	if codexImageGenerationExplicitToolPolicy == "strip" {
 		decoded, decodeErr := ensureReqBody()
@@ -218,7 +218,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 			p.Log("[OpenAI] Added Codex image_generation bridge instructions")
 		}
 	} else if imageGenerationAllowed && imageIntent && p.OpenAIRequestBodyHasImageGenerationDeclaration(body) {
-		// 完整 image_generation tool 只做 raw 计费读取，校验/桥接/旧字段迁移命中时才展开大 input map。
+		// A complete image tool declaration can be read from raw JSON; validation, bridging, or legacy migration requires decoding input.
 		p.Log("[OpenAI] /responses image_generation request inbound_model=%s mapped_model=%s provider_type=%s", requestView.Model, upstreamModel, profile.Type)
 	}
 
@@ -234,7 +234,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		}
 	}
 
-	// 平台工具规则在分组生图策略之后应用。
+	// Apply platform tool restrictions after the group's image policy.
 	if imageToolsDisabled && p.OpenAIRequestBodyHasImageGenerationDeclaration(body) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -251,8 +251,8 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
-		// Responses OAuth 与 Chat 兼容入口保持一致：纯文本 system 可以无损提升后删除，
-		// JSON object 模式仍需在 input 中保留 JSON 指令供上游兼容校验。
+		// Promoted text system messages can be removed from input. JSON object mode keeps
+		// its JSON instruction in input for upstream compatibility validation.
 		omitPromotedSystemMessages := !strings.EqualFold(
 			strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String()),
 			"json_object",
@@ -283,15 +283,15 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		if codexResult.Modified {
 			markDecodedModified()
 		}
-		// 本次 Forward 使用独立的指纹 ID，failover 后按新提供商重新取得。
-		// 提供商带有 device_id 时补齐 client_metadata 的安装标识，compact 请求跳过此步骤。
+		// Each attempt obtains fingerprint IDs for its selected provider.
+		// Populate installation metadata from device_id when present; compact requests skip this step.
 		if !isCompactRequest && p.ClientMetadata(decoded) {
 			markDecodedModified()
 		}
 		if currentClientPromptCacheKey, ok := decoded["prompt_cache_key"].(string); ok {
 			clientPromptCacheKey = currentClientPromptCacheKey
 		}
-		// 按提供商划分客户端身份的命名空间，换 OAuth 凭据后重新派生身份。
+		// Derive client identity within the selected provider's namespace after OAuth failover.
 		if !isCompactRequest && p.ProviderIdentity(decoded) {
 			markDecodedModified()
 		}
@@ -311,10 +311,10 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 			upstreamModel = codexResult.NormalizedModel
 		}
 		if strings.TrimSpace(clientPromptCacheKey) != "" {
-			// 请求体已包含提供商隔离值，Header 构造使用此处保存的原始值派生命名空间。
+			// The body already has a provider-scoped key; header construction needs the saved client key to derive its namespace.
 			promptCacheKey = clientPromptCacheKey
 		} else if currentPromptCacheKey, ok := decoded["prompt_cache_key"].(string); ok && currentPromptCacheKey != "" {
-			// 客户端未提供键时，使用指纹处理注入的默认值。
+			// Use the fingerprint-injected default when the client supplied no key.
 			promptCacheKey = currentPromptCacheKey
 		} else if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
@@ -330,7 +330,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		if maxOutputTokens.Exists() {
 			switch profile.Platform {
 			case "openai", "deepseek":
-				// 先发送 Responses 输出上限，上游拒绝时在有限次数的 HTTP 重试中移除。
+				// Send the Responses output limit first; bounded HTTP retries remove it if the upstream rejects it.
 			case "anthropic":
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
@@ -347,10 +347,10 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 				markPatchDelete("max_output_tokens")
 			}
 		}
-		// /v1/responses 的规范输出上限字段是 max_output_tokens；部分客户端仍按
-		// Chat Completions 习惯发送 max_tokens，兼容 Responses 上游会拒绝该字段（#4417）。
-		// 仅对 OpenAI 平台归一化：Anthropic 合法使用 max_tokens，其 max_output_tokens
-		// 反向转换已在上方 switch 中处理。
+		// Responses uses max_output_tokens. Some clients send Chat's max_tokens,
+		// which compatible Responses upstreams reject (issue #4417).
+		// Apply this normalization to OpenAI; Anthropic uses max_tokens and is converted
+		// in the platform switch above.
 		if profile.Platform == "openai" {
 			if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() {
 				if !gjson.GetBytes(body, "max_output_tokens").Exists() {
@@ -406,7 +406,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		}
 	}
 	if reqBody != nil {
-		// 将本次完整对象的修改同步到请求体，客户端和工具文本原样保留。
+		// Synchronize decoded-object edits before serializing the request body.
 		if _, decodeErr := ensureReqBody(); decodeErr != nil {
 			return nil, decodeErr
 		}
@@ -434,7 +434,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 			requestView = requeststate.NewOpenAIRequestView(body)
 		}
 	}
-	// 在所有请求体重建完成后排序压缩触发器，确保它始终位于历史输入末尾。
+	// Normalize the compaction trigger after rebuilding the body so it follows historical input.
 	if normalizedBody, changed, normalizeErr := p.NormalizeTrigger(body); normalizeErr != nil {
 		return nil, fmt.Errorf("normalize compaction trigger order: %w", normalizeErr)
 	} else if changed {

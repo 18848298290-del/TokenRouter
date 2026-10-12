@@ -6,7 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAttributeSupplementPreservesCatalog 检查统一补充中的属性按字段补缺，价格由计费解析器处理。
+// TestAttributeSupplementPreservesCatalog checks that supplements fill missing attributes while catalog prices
+// remain intact.
 func TestAttributeSupplementPreservesCatalog(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"typesafe":{"models":{"jev-preview":{"name":"Catalog preview","modalities":{"input":[]},"structured_output":false,"cost":{"input":0,"output":0}}}}}}`))
 	require.NoError(t, err)
@@ -21,7 +22,7 @@ func TestAttributeSupplementPreservesCatalog(t *testing.T) {
 	require.Zero(t, *catalog.Entries["jev-preview"].Cost.Input)
 }
 
-// TestAttributeSupplementRejectsInvalidData 检查非法属性和渠道身份冲突。
+// TestAttributeSupplementRejectsInvalidData checks invalid attributes and conflicting provider identities.
 func TestAttributeSupplementRejectsInvalidData(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"relay":{"models":{"jev-preview":{"modalities":{"input":["image"]}}}}}}`))
 	require.NoError(t, err)

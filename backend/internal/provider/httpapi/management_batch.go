@@ -7,7 +7,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BatchDelete 以有限并发删除多个提供商，并返回稳定的逐提供商结果。
+// BatchDelete deletes providers with bounded concurrency and returns ordered per-provider results.
 // POST /api/v1/admin/providers/batch-delete
 func (h *ManagementHandler) BatchDelete(c *gin.Context) {
 	var req struct {
@@ -78,7 +78,7 @@ func (h *ManagementHandler) BatchClearError(c *gin.Context) {
 	response.Success(c, gin.H{"total": result.Total, "success": result.Success, "failed": result.Failed, "errors": managementFailures(result.Errors)})
 }
 
-// managementFailures 将领域结果转换为 HTTP 字段，nil 和空数组分别返回。
+// managementFailures converts failures to HTTP fields and preserves nil versus empty slices.
 func managementFailures(values []providercore.ManagementBatchFailure) []gin.H {
 	if values == nil {
 		return nil

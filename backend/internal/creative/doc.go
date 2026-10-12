@@ -1,15 +1,15 @@
-// Package creative 提供创作台图片任务的模型目录、提交、执行和结果交付。
+// Package creative provides model discovery, submission, execution, and result delivery for image runs.
 //
-// 阅读入口：
-//   - public.go：列出可用模型，校验请求并创建任务。
-//   - worker.go：消费队列，调用提供商并推进任务状态。
-//   - results.go：保存输出、结算费用和处理失败任务。
+// Reading entry points:
+//   - public.go: lists available models, validates requests, and creates runs.
+//   - worker.go: consumes queued runs, calls providers, and advances state.
+//   - results.go: saves outputs, settles charges, and handles failed runs.
 //
-// 文件分组：
-//   - public.go、queries.go、run.go：公开操作、任务查询和任务数据结构。
-//   - model_*.go、operation_protocol.go：模型设置、分组策略和图片操作协议。
-//   - executor.go、execution_*.go：准备上游执行、归一化输出和判断重试错误。
-//   - worker.go、runtime.go、queue.go：任务消费、工作池和队列接口。
-//   - billing.go、results.go、result_delivery.go：资金预占、结算和临时输出交付。
-//   - runtime_settings.go、settings_participant.go、admin_settings_read.go：读取和校验创作台配置。
+// File groups:
+//   - public.go, queries.go, run.go: public operations, queries, and run data types.
+//   - model_*.go, operation_protocol.go: model settings, group policy, and operation protocols.
+//   - executor.go, execution_*.go: execution preparation, output normalization, and retry classification.
+//   - worker.go, runtime.go, queue.go: queue consumption and worker lifecycle.
+//   - billing.go, results.go, result_delivery.go: funding, settlement, and temporary output delivery.
+//   - runtime_settings.go, settings_participant.go, admin_settings_read.go: configuration parsing and validation.
 package creative

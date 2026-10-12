@@ -8,17 +8,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// SettingKeyTeamEnabled 是团队功能的设置键。
+// SettingKeyTeamEnabled stores the team feature switch.
 const (
 	SettingKeyTeamEnabled = "team_enabled"
 )
 
-// AdminSettings 保存团队功能的启用设置。
+// AdminSettings contains the team feature switch.
 type AdminSettings struct {
 	TeamEnabled bool `json:"team_enabled"`
 }
 
-// PrepareAdminSettings 将团队启用状态编码为设置键值。
+// PrepareAdminSettings encodes the team feature switch for settings storage.
 func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string, error) {
 	values := map[string]string{}
 	values[SettingKeyTeamEnabled] = strconv.FormatBool(value.TeamEnabled)
@@ -26,7 +26,7 @@ func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string
 	return value, values, nil
 }
 
-// SettingsParticipant 声明团队开关的存储键，并准备请求中提供的设置。
+// SettingsParticipant registers the team setting and prepares fields supplied by the request.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"team_enabled"}
 	keys := []string{SettingKeyTeamEnabled}
@@ -55,7 +55,7 @@ func SettingsParticipant() settings.Participant {
 	}}
 }
 
-// PublicSettings 返回配置与进程开关共同决定的团队启用状态，以及自助创建开关。
+// PublicSettings combines the stored and process team switches and returns the self-service switch.
 func PublicSettings(values map[string]string, enabled, selfService bool) (bool, bool) {
 	return values[SettingKeyTeamEnabled] != "false" && enabled, selfService
 }

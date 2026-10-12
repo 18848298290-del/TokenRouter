@@ -43,32 +43,31 @@ type epTrackingRepo struct {
 	tempCalls        int
 }
 
-// 保存每次模型窗口写入，用于核对原模型与家族键。
+// antigravityFamilyStoreFixture records exact-model and family-window writes.
 type antigravityFamilyStoreFixture struct {
 	acct.AntigravityHealthStore
 	modelRateLimitCalls []struct{ modelKey string }
 }
 
-// 夹具记录健康状态写入，策略和供应商错误分类使用生产实现。
+// antigravityPolicyStoreFixture records health writes from production policy and error classification.
 type antigravityPolicyStoreFixture struct {
 	acct.HealthStore
 	tempCalls           int
 	modelRateLimitCalls []struct{ scope, modelKey string }
 }
 
-// 记录两个测试端点，检查重试期间使用同一提供商。
+// stubAntigravityUpstream records the endpoint used for each retry.
 type stubAntigravityUpstream struct {
 	firstBase, secondBase string
 	calls                 []string
 }
 
-// 预检查测试记录是否发送请求，成功响应使用固定报文。
+// recordingOKUpstream counts requests that pass prechecks and returns a fixed success.
 type recordingOKUpstream struct{ calls int }
 
-// stubSmartRetryCache 用于 handleSmartRetry 测试的 GatewayCache mock
-// 仅关注 DeleteSessionProviderID 的调用记录。
+// stubSmartRetryCache records sticky-session deletions during retries.
 type stubSmartRetryCache struct {
-	session.GatewayCache // 调用未实现的方法会 panic。
+	session.GatewayCache // Unimplemented methods panic.
 	deleteCalls          []deleteSessionCall
 }
 
@@ -77,16 +76,16 @@ type deleteSessionCall struct {
 	sessionHash string
 }
 
-// mockSmartRetryUpstream 用于 handleSmartRetry 测试的 mock upstream。
+// mockSmartRetryUpstream replays responses and records retry requests.
 type mockSmartRetryUpstream struct {
 	responses      []*http.Response
-	responseBodies [][]byte // 缓存的 response body 字节（用于 repeatLast 重建）
+	responseBodies [][]byte // Cached bytes used to rebuild replayed bodies.
 	errors         []error
 	callIdx        int
 	calls          []string
 	userAgents     []string
 	requestBodies  [][]byte
-	repeatLast     bool // 超出范围时重复最后一个响应
+	repeatLast     bool // Replay the last response after exhausting the list.
 }
 
 type antigravityRetryStoreFixture struct {
@@ -296,7 +295,7 @@ func TestAntigravityRetryLoop_ModelRateLimited_InjectsCredits(t *testing.T) {
 		},
 		errors: []error{nil},
 	}
-	// 模型已限流 + overages 启用 + 无 AICredits key → 应直接注入积分
+	// A model limit with overages enabled and available credits permits credit injection.
 	provider := &acct.Record{
 		ID:          103,
 		Name:        "acc-103",
@@ -349,7 +348,7 @@ func TestAntigravityRetryLoop_CreditsExhausted_DoesNotInject(t *testing.T) {
 	antigravity.BaseURLs = []string{"https://ag-1.test"}
 	antigravity.DefaultURLAvailability = antigravity.NewURLAvailability(time.Minute)
 
-	// 模型限流 + overages 启用 + AICredits key 生效 → 不应注入积分，应切号
+	// An active credits-exhausted window prevents credit injection and requests a provider switch.
 	provider := &acct.Record{
 		ID:          104,
 		Name:        "acc-104",
@@ -386,7 +385,6 @@ func TestAntigravityRetryLoop_CreditsExhausted_DoesNotInject(t *testing.T) {
 	})
 	_, err := adapter.AntigravityRetryLoop(input)
 
-	// 模型限流 + 积分耗尽 → 应触发切号错误
 	require.Error(t, err)
 	var switchErr *antigravity.AntigravityProviderSwitchError
 	require.ErrorAs(t, err, &switchErr)
@@ -414,7 +412,7 @@ func TestAntigravityRetryLoop_CreditErrorMarksExhausted(t *testing.T) {
 		},
 		errors: []error{nil},
 	}
-	// 模型限流 + overages 启用 + 积分可用 → 注入积分但上游返回积分不足
+	// Credits appear available locally, but the upstream rejects the injected-credit request.
 	provider := &acct.Record{
 		ID:          105,
 		Name:        "acc-105",
@@ -454,7 +452,6 @@ func TestAntigravityRetryLoop_CreditErrorMarksExhausted(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// 验证 AICredits key 已通过 SetModelRateLimit 写入数据库
 	require.Len(t, repo.modelRateLimitCalls, 1, "应通过 SetModelRateLimit 写入 AICredits key")
 	require.Equal(t, acct.CreditsExhaustedKey, repo.modelRateLimitCalls[0].modelKey)
 }
@@ -638,9 +635,7 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 
 		provider := tempRulesProvider([]any{overloadedRule})
 
-		// Use a short-lived context: the backoff sleep (~1s) will be
-		// interrupted, proving the code entered the default retry path
-		// instead of breaking early via error policy.
+		// Cancel during backoff to check that the default retry path is entered.
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
@@ -651,7 +646,6 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 		adapter, input := svc.Bind(p)
 		result, err := adapter.AntigravityRetryLoop(input)
 
-		// Context cancellation during backoff proves default retry was entered
 		require.Nil(t, result)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.GreaterOrEqual(t, upstream.calls, 1, "should have called upstream at least once")
@@ -662,7 +656,6 @@ func TestRetryLoop_ErrorPolicy_NilRateLimitService(t *testing.T) {
 	saveAndSetBaseURLs(t)
 
 	upstream := &epFixedUpstream{statusCode: 429, body: `{"error":"rate limited"}`}
-	// rateLimitService 为 nil 时请求仍能结束。
 	svc := newAntigravityRetryFixture()
 
 	provider := &acct.Record{
@@ -764,29 +757,24 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			adapter, input := svc.Bind(p)
 			result, err := adapter.AntigravityRetryLoop(input)
 
-			// 不应返回 error（Skipped 不触发提供商切换）
 			require.NoError(t, err, "should not return error")
 			require.NotNil(t, result, "result should not be nil")
 			require.NotNil(t, result.Resp, "response should not be nil")
 			defer func() { _ = result.Resp.Body.Close() }()
 
-			// 跳过的自定义错误统一返回 500。
+			// Skipped custom errors are returned as HTTP 500.
 			require.Equal(t, http.StatusInternalServerError, result.Resp.StatusCode,
 				"skipped error should return 500, not %d", upstreamStatus)
 
-			// 不调用 handleError
 			require.Equal(t, 0, handleErrorCount,
 				"handleError should NOT be called for skipped errors")
 
-			// 不标记限流
 			require.Equal(t, 0, repo.rateLimitedCalls,
 				"SetRateLimited should NOT be called for skipped errors")
 
-			// 不停止调度
 			require.Equal(t, 0, repo.setErrCalls,
 				"SetError should NOT be called for skipped errors")
 
-			// 上游调用次数为 1。
 			require.Equal(t, 1, upstream.calls,
 				"should call upstream exactly once (no retry)")
 		})
@@ -1179,11 +1167,9 @@ func TestSingleProviderRetryConstants(t *testing.T) {
 		"总累计等待不超过 30s")
 }
 
-// TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace
-// 核心场景：503 + retryDelay >= 7s + SingleProviderRetry 标记
-// 单提供商的 503 响应触发原地重试。
+// TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace checks capacity retries with one
+// provider.
 func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *testing.T) {
-	// 原地重试成功
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{},
@@ -1203,7 +1189,8 @@ func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *test
 		Concurrency: 1,
 	}
 
-	// 503 + 39s >= 7s 阈值 + MODEL_CAPACITY_EXHAUSTED
+	// The response advertises a delay above the rate-limit threshold, but capacity errors use a separate
+	// retry path.
 	respBody := []byte(`{
 		"error": {
 			"code": 503,
@@ -1222,7 +1209,7 @@ func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *test
 	}
 
 	params := AntigravityRetryRequest{
-		Context: context.Background(), SingleProvider: true, // 关键：设置单提供商标记
+		Context: context.Background(), SingleProvider: true,
 		Prefix:      "[test]",
 		Provider:    provider,
 		AccessToken: "token",
@@ -1244,23 +1231,19 @@ func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *test
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 同一提供商重试成功后返回 resp。
 	require.NotNil(t, result.Resp, "should return successful response from in-place retry")
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
 	require.Nil(t, result.SwitchError, "should NOT return switchError in single provider mode")
 	require.Nil(t, result.Err)
 
-	// 验证未设模型限流（单提供商模式不应设限流）
 	require.Len(t, repo.modelRateLimitCalls, 0,
 		"should NOT set model rate limit in single provider retry mode")
 
-	// 验证确实调用了 upstream（原地重试）
 	require.GreaterOrEqual(t, len(upstream.calls), 1, "should have made at least one retry call")
 }
 
-// TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches
-// 对照组：503 + retryDelay >= 7s + 无 SingleProviderRetry 标记
-// → 照常设模型限流 + 切换提供商。
+// TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches checks model limits with
+// multiple providers.
 func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -1270,8 +1253,7 @@ func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *t
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 503 携带 39 秒等待时间，超过七秒阈值。
-	// RATE_LIMIT_EXCEEDED 触发模型限流检查，MODEL_CAPACITY_EXHAUSTED 使用单独的重试流程。
+	// RATE_LIMIT_EXCEEDED uses the advertised delay; capacity exhaustion has a separate retry path.
 	respBody := []byte(`{
 		"error": {
 			"code": 503,
@@ -1289,7 +1271,7 @@ func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *t
 	}
 
 	params := AntigravityRetryRequest{
-		Context:     context.Background(), // 关键：无单提供商标记
+		Context:     context.Background(),
 		Prefix:      "[test]",
 		Provider:    provider,
 		AccessToken: "token",
@@ -1308,20 +1290,17 @@ func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *t
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 对照：多提供商模式返回 switchError
 	require.NotNil(t, result.SwitchError, "multi-provider mode should return switchError for 503")
 	require.Nil(t, result.Resp, "should not return resp when switchError is set")
 
-	// 对照：多提供商模式应设模型限流
 	require.Len(t, repo.modelRateLimitCalls, 2,
 		"multi-provider mode SHOULD set model rate limit")
 	require.Equal(t, "gemini-3-pro-high", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
-// TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches
-// 检查 429 与 SingleProviderRetry 标记的组合。
-// 单提供商的 503 响应触发原地重试，429 响应切换提供商。
+// TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches checks that the single-provider
+// exception applies to 503 responses.
 func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -1331,7 +1310,7 @@ func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *tes
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 429 + 15s >= 7s 阈值
+	// The advertised delay exceeds the seven-second rate-limit threshold.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -1342,13 +1321,13 @@ func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *tes
 		}
 	}`)
 	resp := &http.Response{
-		StatusCode: http.StatusTooManyRequests, // 429，不是 503
+		StatusCode: http.StatusTooManyRequests,
 		Header:     http.Header{},
 		Body:       io.NopCloser(bytes.NewReader(respBody)),
 	}
 
 	params := AntigravityRetryRequest{
-		Context: context.Background(), SingleProvider: true, // 有单提供商标记
+		Context: context.Background(), SingleProvider: true,
 		Prefix:      "[test]",
 		Provider:    provider,
 		AccessToken: "token",
@@ -1367,17 +1346,15 @@ func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *tes
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 429 即使有单提供商标记，也应走切换提供商
 	require.NotNil(t, result.SwitchError, "429 should still return switchError even with SingleProviderRetry")
 	require.Len(t, repo.modelRateLimitCalls, 1,
 		"429 should still set model rate limit even with SingleProviderRetry")
 }
 
-// TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit
-// 503 + retryDelay < 7s + SingleProviderRetry → 智能重试耗尽后直接返回 503，不设限流
-// 使用 RATE_LIMIT_EXCEEDED，执行一次智能重试。
+// TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit returns 503 after retry
+// exhaustion without cooling the model.
+// RATE_LIMIT_EXCEEDED takes the one-retry path.
 func TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit(t *testing.T) {
-	// 智能重试也返回 503
 	failRespBody := `{
 		"error": {
 			"code": 503,
@@ -1407,7 +1384,6 @@ func TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit(t *test
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 0.1s < 7s 阈值
 	respBody := []byte(`{
 		"error": {
 			"code": 503,
@@ -1447,19 +1423,17 @@ func TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit(t *test
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 关键断言：单提供商 503 模式下，智能重试耗尽后直接返回 503 响应，不切换
 	require.NotNil(t, result.Resp, "should return 503 response directly for single provider mode")
 	require.Equal(t, http.StatusServiceUnavailable, result.Resp.StatusCode)
 	require.Nil(t, result.SwitchError, "should NOT switch provider in single provider mode")
 
-	// 关键断言：不设模型限流
 	require.Len(t, repo.modelRateLimitCalls, 0,
 		"should NOT set model rate limit for 503 in single provider mode")
 }
 
-// TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit
-// 对照组：503 + retryDelay < 7s + 无 SingleProviderRetry → 智能重试耗尽后照常设限流
-// 使用 RATE_LIMIT_EXCEEDED，MODEL_CAPACITY_EXHAUSTED 使用独立的六十次重试流程。
+// TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit records model limits after
+// retry exhaustion.
+// RATE_LIMIT_EXCEEDED uses the rate-limit retry budget; capacity exhaustion has a separate budget.
 func TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -1506,7 +1480,7 @@ func TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit(t *
 	}
 
 	params := AntigravityRetryRequest{
-		Context:     context.Background(), // 无单提供商标记
+		Context:     context.Background(),
 		Prefix:      "[test]",
 		Provider:    provider,
 		AccessToken: "token",
@@ -1528,16 +1502,13 @@ func TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit(t *
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 对照：多提供商模式应返回 switchError
 	require.NotNil(t, result.SwitchError, "multi-provider mode should return switchError for 503")
-	// 对照：多提供商模式应设模型限流
 	require.Len(t, repo.modelRateLimitCalls, 2,
 		"multi-provider mode should set model rate limit")
 	require.Equal(t, "gemini-3-flash", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
-// TestHandleSingleProviderRetryInPlace_Success 原地重试成功。
 func TestHandleSingleProviderRetryInPlace_Success(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1586,9 +1557,8 @@ func TestHandleSingleProviderRetryInPlace_Success(t *testing.T) {
 	require.Nil(t, result.Err)
 }
 
-// TestHandleSingleProviderRetryInPlace_AllRetriesFail 所有重试都失败，返回 503（不设限流）。
+// TestHandleSingleProviderRetryInPlace_AllRetriesFail returns the final 503 for the caller to handle.
 func TestHandleSingleProviderRetryInPlace_AllRetriesFail(t *testing.T) {
-	// 构造 3 个 503 响应（对应 3 次原地重试）
 	var responses []*http.Response
 	var errors []error
 	for range antigravity.AntigravitySingleProviderSmartRetryMaxAttempts {
@@ -1645,20 +1615,17 @@ func TestHandleSingleProviderRetryInPlace_AllRetriesFail(t *testing.T) {
 
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
-	// 关键：返回 503 resp，不返回 switchError
 	require.NotNil(t, result.Resp, "should return 503 response directly")
 	require.Equal(t, http.StatusServiceUnavailable, result.Resp.StatusCode)
 	require.Nil(t, result.SwitchError, "should NOT return switchError - let Handler handle it")
 	require.Nil(t, result.Err)
 
-	// 验证确实重试了指定次数
 	require.Len(t, upstream.calls, antigravity.AntigravitySingleProviderSmartRetryMaxAttempts,
 		"should have made exactly maxAttempts retry calls")
 }
 
-// TestHandleSingleProviderRetryInPlace_WaitDurationClamped 等待时间被限制在 [min, max] 范围。
+// TestHandleSingleProviderRetryInPlace_WaitDurationClamped checks that a zero delay can complete a retry.
 func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
-	// 用短延迟的成功响应，只验证不 panic
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{},
@@ -1696,8 +1663,7 @@ func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
 
 	svc := newAntigravityRetryFixture()
 
-	// waitDuration=0 会被 clamp 到 antigravitySmartRetryMinWait=1s。
-	// 首次重试即成功（200），总耗时 ~1s。
+	// A zero delay is raised to the minimum retry wait.
 	adapter, input := svc.Bind(params)
 	result := adapter.HandleSingleProviderRetryInPlace(input, resp, nil, "https://ag-1.test", 0, "gemini-3-pro")
 	require.NotNil(t, result)
@@ -1706,7 +1672,6 @@ func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
 }
 
-// TestHandleSingleProviderRetryInPlace_ContextCanceled context 取消时立即返回。
 func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 	upstream := &mockSmartRetryUpstream{
 		responses: []*http.Response{nil},
@@ -1728,7 +1693,7 @@ func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cancel() // 立即取消
+	cancel()
 
 	params := AntigravityRetryRequest{
 		Context: ctx, SingleProvider: true,
@@ -1749,11 +1714,9 @@ func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
 	require.Error(t, result.Err, "should return context error")
-	// 不应调用 upstream（因为在等待阶段就被取消了）
 	require.Len(t, upstream.calls, 0, "should not call upstream when context is canceled")
 }
 
-// TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry 网络错误时继续重试。
 func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1761,7 +1724,7 @@ func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing
 		Body:       io.NopCloser(strings.NewReader(`{"result":"ok"}`)),
 	}
 	upstream := &mockSmartRetryUpstream{
-		// 第 1 次网络错误（nil resp），第 2 次成功
+		// A nil response exercises the failed-exchange path before the successful retry.
 		responses: []*http.Response{nil, successResp},
 		errors:    []error{nil, nil},
 	}
@@ -1802,10 +1765,9 @@ func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing
 	require.Len(t, upstream.calls, 2, "first call fails (network error), second succeeds")
 }
 
-// TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit
-// 预检查中，如果有 SingleProviderRetry 标记，即使提供商已限流也跳过直接发请求。
+// TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit checks the single-provider
+// precheck exception.
 func TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit(t *testing.T) {
-	// 创建一个已设模型限流的提供商
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
 		ID:          20,
@@ -1845,12 +1807,11 @@ func TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit(t *tes
 	require.NotNil(t, result, "should return result")
 	require.NotNil(t, result.Resp, "should have response")
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
-	// 关键：尽管限流了，有 SingleProviderRetry 标记时仍然到达了 upstream
 	require.Equal(t, 1, upstream.calls, "should have reached upstream despite rate limit")
 }
 
-// TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit
-// 对照组：无 SingleProviderRetry + 已限流 → 预检查返回 switchError。
+// TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit rejects a limited model
+// before sending a request.
 func TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit(t *testing.T) {
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
@@ -1872,7 +1833,7 @@ func TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit
 
 	svc := newAntigravityRetryFixture()
 	adapter, input := svc.Bind(AntigravityRetryRequest{
-		Context:     context.Background(), // 无单提供商标记
+		Context:     context.Background(),
 		Prefix:      "[test]",
 		Provider:    provider,
 		AccessToken: "token",
@@ -1895,14 +1856,11 @@ func TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit
 	require.Equal(t, provider.ID, switchErr.OriginalProviderID)
 	require.Equal(t, "claude-sonnet-4-5", switchErr.RateLimitedModel)
 
-	// upstream 不应被调用（预检查就短路了）
 	require.Equal(t, 0, upstream.calls, "upstream should NOT be called when pre-check blocks")
 }
 
-// TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E
-// 端到端场景：503 + 单提供商 + 原地重试第 2 次成功。
+// TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E succeeds on the second retry.
 func TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E(t *testing.T) {
-	// 第 1 次原地重试仍返回 503，第 2 次成功
 	fail503Body := `{
 		"error": {
 			"code": 503,
@@ -1966,10 +1924,9 @@ func TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E(t *tes
 	require.Len(t, upstream.calls, 2, "first 503, second OK")
 }
 
-// TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E
-// 通过 antigravityRetryLoop → handleSmartRetry → handleSingleProviderRetryInPlace 完整链路。
+// TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E exercises the outer loop through
+// in-place recovery.
 func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing.T) {
-	// 初始请求返回 503 + 长延迟
 	initial503Body := []byte(`{
 		"error": {
 			"code": 503,
@@ -1987,7 +1944,6 @@ func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing
 		Body:       io.NopCloser(bytes.NewReader(initial503Body)),
 	}
 
-	// 原地重试成功
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{},
@@ -1995,8 +1951,7 @@ func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing
 	}
 
 	upstream := &mockSmartRetryUpstream{
-		// 第 1 次调用（retryLoop 主循环）返回 503
-		// 第 2 次调用（handleSingleProviderRetryInPlace 原地重试）返回 200
+		// The initial exchange fails; the in-place retry succeeds.
 		responses: []*http.Response{initial503Resp, successResp},
 		errors:    []error{nil, nil},
 	}
@@ -2034,12 +1989,10 @@ func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing
 	require.NotNil(t, result.Resp, "should return response")
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
 
-	// 验证未设模型限流
 	require.Len(t, repo.modelRateLimitCalls, 0,
 		"should NOT set model rate limit in single provider retry mode")
 }
 
-// TestHandleSmartRetry_URLLevelRateLimit 测试 URL 级别限流切换。
 func TestHandleSmartRetry_URLLevelRateLimit(t *testing.T) {
 	provider := &acct.Record{
 		ID:       1,
@@ -2088,7 +2041,7 @@ func TestHandleSmartRetry_LongDelay_ReturnsSwitchError(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 15s >= 7s 阈值，应该返回 switchError
+	// A delay above the seven-second threshold requests a provider switch.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2132,7 +2085,6 @@ func TestHandleSmartRetry_LongDelay_ReturnsSwitchError(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", result.SwitchError.RateLimitedModel)
 	require.True(t, result.SwitchError.IsStickySession)
 
-	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
@@ -2155,7 +2107,7 @@ func TestHandleSmartRetry_ShortDelay_SmartRetrySuccess(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 0.5s < 7s 阈值，应该触发智能重试
+	// A sub-threshold delay permits a retry.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2203,7 +2155,7 @@ func TestHandleSmartRetry_ShortDelay_SmartRetrySuccess(t *testing.T) {
 }
 
 func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *testing.T) {
-	// 智能重试后仍然返回 429（需要提供 1 个响应，因为智能重试最多 1 次）
+	// One failed response exhausts the rate-limit retry budget.
 	failRespBody := `{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2231,7 +2183,7 @@ func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *test
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 3s < 7s 阈值，应该触发智能重试（最多 1 次）
+	// The 0.1-second delay permits the single retry.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2278,7 +2230,7 @@ func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *test
 	require.Equal(t, "gemini-3-flash", result.SwitchError.RateLimitedModel)
 	require.False(t, result.SwitchError.IsStickySession)
 
-	// 验证模型限流已设置：Gemini 同时写入精确模型和家族级 scope
+	// Gemini limits include both the exact model and the shared family window.
 	require.Len(t, repo.modelRateLimitCalls, 2)
 	require.Equal(t, "gemini-3-flash", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
@@ -2294,7 +2246,7 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess(t *testing.T) 
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 503 + MODEL_CAPACITY_EXHAUSTED + 39s（上游 retryDelay 应被忽略，使用固定 1s）
+	// Capacity exhaustion uses a fixed retry wait even when the upstream advertises 39 seconds.
 	respBody := []byte(`{
 		"error": {
 			"code": 503,
@@ -2312,7 +2264,6 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess(t *testing.T) 
 		Body:       io.NopCloser(bytes.NewReader(respBody)),
 	}
 
-	// mock: 第 1 次重试返回 200 成功
 	upstream := &mockSmartRetryUpstream{
 		responses: []*http.Response{
 			{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))},
@@ -2349,7 +2300,6 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess(t *testing.T) 
 	require.Nil(t, result.Err)
 	require.Nil(t, result.SwitchError, "MODEL_CAPACITY_EXHAUSTED should not return switchError")
 
-	// 不应设置模型限流
 	require.Empty(t, repo.modelRateLimitCalls, "MODEL_CAPACITY_EXHAUSTED should not set model rate limit")
 	require.Len(t, upstream.calls, 1, "should have made one retry call before success")
 }
@@ -2379,7 +2329,6 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_ContextCancel(t *testing.T)
 		Body:       io.NopCloser(bytes.NewReader(respBody)),
 	}
 
-	// 立即取消上下文，验证重试循环能正确退出
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -2410,11 +2359,11 @@ func TestHandleSmartRetry_NonAntigravityProvider_ContinuesDefaultLogic(t *testin
 	provider := &acct.Record{
 		ID:       4,
 		Name:     "acc-4",
-		Type:     capability.ProviderTypeAPIKey, // 非 Antigravity 平台提供商
+		Type:     capability.ProviderTypeAPIKey,
 		Platform: capability.PlatformAnthropic,
 	}
 
-	// 即使是模型限流响应，非 OAuth 提供商也应该走默认逻辑
+	// Antigravity model-limit handling does not apply to an Anthropic provider.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2462,7 +2411,7 @@ func TestHandleSmartRetry_NonModelRateLimit_ContinuesDefaultLogic(t *testing.T) 
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 429 但没有 RATE_LIMIT_EXCEEDED 或 MODEL_CAPACITY_EXHAUSTED
+	// The 429 lacks a model-limit or capacity-exhaustion reason.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2511,7 +2460,7 @@ func TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 刚好 7s = 7s 阈值，应该返回 switchError
+	// The threshold itself takes the provider-switch path.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2553,7 +2502,6 @@ func TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError(t *testing.T) {
 }
 
 func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing.T) {
-	// 模拟 429 + 长延迟的响应
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2613,10 +2561,10 @@ func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing
 }
 
 func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
-	// 唯一一次重试遇到网络错误（nil response）
+	// A nil response exhausts the single retry as a failed exchange.
 	upstream := &mockSmartRetryUpstream{
-		responses: []*http.Response{nil}, // 返回 nil（模拟网络错误）
-		errors:    []error{nil},          // mock 不返回 error，靠 nil response 触发
+		responses: []*http.Response{nil},
+		errors:    []error{nil},
 	}
 
 	repo := &antigravityRetryStoreFixture{}
@@ -2627,7 +2575,6 @@ func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 0.1s < 7s 阈值，应该触发智能重试
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2672,7 +2619,6 @@ func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", result.SwitchError.RateLimitedModel)
 	require.Len(t, upstream.calls, 1, "should have made one retry call")
 
-	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
@@ -2686,7 +2632,7 @@ func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 429 + RATE_LIMIT_EXCEEDED + 无 retryDelay → 使用默认 1 分钟限流
+	// A missing retryDelay uses the default model-limit duration.
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -2728,7 +2674,6 @@ func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", result.SwitchError.RateLimitedModel)
 	require.True(t, result.SwitchError.IsStickySession)
 
-	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
@@ -2805,22 +2750,18 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession(t *
 	adapter, input := svc.Bind(params)
 	result := adapter.HandleSmartRetry(input, resp, respBody, "https://ag-1.test", 0, availableURLs)
 
-	// 验证返回 switchError
 	require.NotNil(t, result)
 	require.Equal(t, antigravity.SmartRetryActionBreakWithResp, result.Action)
 	require.NotNil(t, result.SwitchError)
 	require.True(t, result.SwitchError.IsStickySession, "switchError should carry IsStickySession=true")
 	require.Equal(t, provider.ID, result.SwitchError.OriginalProviderID)
 
-	// 核心断言：DeleteSessionProviderID 被调用，且参数正确
 	require.Len(t, cache.deleteCalls, 1, "should call DeleteSessionProviderID exactly once")
 	require.Equal(t, int64(42), cache.deleteCalls[0].groupID)
 	require.Equal(t, "sticky-hash-abc", cache.deleteCalls[0].sessionHash)
 
-	// 验证仅重试 1 次
 	require.Len(t, upstream.calls, 1, "should make exactly 1 retry call (maxAttempts=1)")
 
-	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
@@ -2881,7 +2822,6 @@ func TestHandleSmartRetry_ShortDelay_NonStickySession_FailedRetry_NoDeleteSessio
 		},
 		ModelStore: repo,
 		Sticky:     false,
-		// 非粘性会话，sessionHash 为空
 		HandleError: func(int, http.Header, []byte) {
 		},
 	}
@@ -2897,7 +2837,6 @@ func TestHandleSmartRetry_ShortDelay_NonStickySession_FailedRetry_NoDeleteSessio
 	require.NotNil(t, result.SwitchError)
 	require.False(t, result.SwitchError.IsStickySession)
 
-	// 核心断言：sessionHash 为空时不应调用 DeleteSessionProviderID
 	require.Len(t, cache.deleteCalls, 0, "should NOT call DeleteSessionProviderID when sessionHash is empty")
 }
 
@@ -2963,7 +2902,6 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_NilCache_NoPanic(
 
 	availableURLs := []string{"https://ag-1.test"}
 
-	// cache 为 nil，不应 panic
 	svc := newAntigravityRetryFixture()
 	require.NotPanics(t, func() {
 		adapter, input := svc.Bind(params)
@@ -3037,7 +2975,6 @@ func TestHandleSmartRetry_ShortDelay_StickySession_SuccessRetry_NoDeleteSession(
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
 	require.Nil(t, result.SwitchError, "should not return switchError on success")
 
-	// 核心断言：重试成功时不应清除粘性会话
 	require.Len(t, cache.deleteCalls, 0, "should NOT call DeleteSessionProviderID on successful retry")
 }
 
@@ -3051,7 +2988,6 @@ func TestHandleSmartRetry_LongDelay_StickySession_ClearsSession(t *testing.T) {
 		Platform: capability.PlatformAntigravity,
 	}
 
-	// 15s >= 7s 阈值 → 走长延迟路径
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -3099,7 +3035,7 @@ func TestHandleSmartRetry_LongDelay_StickySession_ClearsSession(t *testing.T) {
 
 func TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession(t *testing.T) {
 	upstream := &mockSmartRetryUpstream{
-		responses: []*http.Response{nil}, // 网络错误
+		responses: []*http.Response{nil}, // Simulate a failed exchange.
 		errors:    []error{nil},
 	}
 
@@ -3154,7 +3090,6 @@ func TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession(t 
 	require.NotNil(t, result.SwitchError)
 	require.True(t, result.SwitchError.IsStickySession)
 
-	// 核心断言：网络错误耗尽重试后也应清除粘性绑定
 	require.Len(t, cache.deleteCalls, 1, "should call DeleteSessionProviderID after network error exhausts retry")
 	require.Equal(t, int64(99), cache.deleteCalls[0].groupID)
 	require.Equal(t, "sticky-net-error", cache.deleteCalls[0].sessionHash)
@@ -3237,19 +3172,17 @@ func TestHandleSmartRetry_ShortDelay_503_StickySession_FailedRetry_ClearsSession
 	require.NotNil(t, result.SwitchError)
 	require.True(t, result.SwitchError.IsStickySession)
 
-	// 验证粘性绑定被清除
 	require.Len(t, cache.deleteCalls, 1)
 	require.Equal(t, int64(77), cache.deleteCalls[0].groupID)
 	require.Equal(t, "sticky-503-short", cache.deleteCalls[0].sessionHash)
 
-	// 验证模型限流已设置：Gemini 同时写入精确模型和家族级 scope
+	// Gemini limits include both the exact model and the shared family window.
 	require.Len(t, repo.modelRateLimitCalls, 2)
 	require.Equal(t, "gemini-3-pro", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
 func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagates(t *testing.T) {
-	// 初始 429 响应
 	initialRespBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -3265,7 +3198,6 @@ func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagat
 		Body:       io.NopCloser(bytes.NewReader(initialRespBody)),
 	}
 
-	// 智能重试也返回 429
 	retryRespBody := `{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
@@ -3326,7 +3258,6 @@ func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagat
 	require.Equal(t, "claude-opus-4-6", switchErr.RateLimitedModel)
 	require.True(t, switchErr.IsStickySession, "IsStickySession must propagate through retryLoop")
 
-	// 验证粘性绑定被清除
 	require.Len(t, cache.deleteCalls, 1, "should clear sticky session in handleSmartRetry")
 	require.Equal(t, int64(55), cache.deleteCalls[0].groupID)
 	require.Equal(t, "sticky-loop-test", cache.deleteCalls[0].sessionHash)
@@ -3400,7 +3331,7 @@ func (r *epTrackingRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time
 	return nil
 }
 
-// SetModelRateLimit 返回成功，测试分别检查提供商切换和状态写入次数。
+// SetModelRateLimit succeeds without recording; this fixture counts provider-level writes separately.
 func (r *epProviderRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
 	return nil
 }
@@ -3464,7 +3395,6 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 	}
 	m.callIdx++
 
-	// 确定使用哪个索引
 	respIdx := idx
 	if respIdx >= len(m.responses) {
 		if !m.repeatLast || len(m.responses) == 0 {
@@ -3479,7 +3409,7 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 		return nil, respErr
 	}
 
-	// 首次调用时缓存 body 字节
+	// Cache each body before it is consumed so repeatLast can replay it.
 	if respIdx >= len(m.responseBodies) {
 		for len(m.responseBodies) <= respIdx {
 			m.responseBodies = append(m.responseBodies, nil)
@@ -3491,7 +3421,7 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 		m.responseBodies[respIdx] = bodyBytes
 	}
 
-	// 用缓存的 body 重建 reader（支持重试场景多次读取）
+	// Give each exchange a fresh body reader.
 	cloned := *resp
 	if m.responseBodies[respIdx] != nil {
 		cloned.Body = io.NopCloser(bytes.NewReader(m.responseBodies[respIdx]))
@@ -3503,7 +3433,7 @@ func (m *mockSmartRetryUpstream) DoWithTLS(req *http.Request, proxyURL string, p
 	return m.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
-// newAntigravityRetryFixture 组合平台重试组件和健康状态接口。
+// newAntigravityRetryFixture binds production platform retries to test health callbacks.
 func newAntigravityRetryFixture() *AntigravityRetry {
 	noop := func(string, ...any) {}
 	return &AntigravityRetry{

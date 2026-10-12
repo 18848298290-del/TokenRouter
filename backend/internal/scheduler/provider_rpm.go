@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// ProviderRPMInput 保存提供商 RPM 调度所需的配置。
+// ProviderRPMInput contains the provider's RPM admission settings.
 type ProviderRPMInput struct {
 	ID           int64
 	Enabled      bool
@@ -34,7 +34,7 @@ func PrefetchRPM(ctx context.Context, cache RPMCache, ids []int64) context.Conte
 	return context.WithValue(ctx, rpmPrefetchKey{}, counts)
 }
 
-// AllowProviderRPM 保留软计数、失败放行与粘性三区规则。
+// AllowProviderRPM applies ordinary, sticky-only, or blocked admission using a soft count; read errors use zero.
 func AllowProviderRPM(ctx context.Context, cache RPMCache, input ProviderRPMInput, sticky bool) bool {
 	if !input.Enabled || input.Base <= 0 {
 		return true

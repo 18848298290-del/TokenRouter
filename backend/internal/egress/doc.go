@@ -1,17 +1,17 @@
-// Package egress 管理出站代理、TLS 指纹配置和请求传输策略。
+// Package egress manages outbound proxies, TLS fingerprints, and request transport policies.
 //
-// 阅读入口：
-//   - proxy_admin.go：查询和修改代理，执行连通性探测与质量检查。
-//   - request_policy.go：构造每次请求使用的代理、TLS、Header 和目标校验配置。
-//   - tls_router_service.go：维护 TLS 路由缓存，按客户端请求匹配指纹配置。
+// Reading entry points:
+//   - proxy_admin.go: proxy queries, updates, connectivity probes, and quality checks.
+//   - request_policy.go: per-request proxy, TLS, header, and destination validation settings.
+//   - tls_router_service.go: cached TLS routers and request-to-profile matching.
 //
-// 文件分组：
-//   - proxy*.go：代理数据、管理操作、导入导出、过期维护和断流隔离。
-//   - tls*.go：TLS 配置、路由规则、缓存、复制和请求配置选择。
-//   - collector*.go：TLS 采集记录、短期会话和记录数量限制。
-//   - request_policy.go、http2_policy.go、openai_ws_policy.go：请求策略与 HTTP/2、WebSocket 协议选择。
-//   - url_policy.go、operator_url.go、usage_url.go、monitor_hosts.go：URL 格式、主机白名单和用量监控地址校验。
-//   - ollama*.go、crs_proxy.go：Ollama 云地址与会话 Cookie、CRS 导入代理的匹配与创建。
-//   - header_overrides.go、response_headers.go、cloudflare.go：请求头覆盖、响应头筛选和 Cloudflare 响应识别。
-//   - diagnostics.go：调用方注入的日志函数。
+// File groups:
+//   - proxy*.go: proxy data, administration, transfers, expiration, and stream failure isolation.
+//   - tls*.go: TLS profiles, routing rules, caches, copying, and request selection.
+//   - collector*.go: TLS capture records, short-lived sessions, and record limits.
+//   - request_policy.go, http2_policy.go, openai_ws_policy.go: request policies and HTTP/2 and WebSocket selection.
+//   - url_policy.go, operator_url.go, usage_url.go, monitor_hosts.go: URL, host allowlist, and usage monitor validation.
+//   - ollama*.go, crs_proxy.go: Ollama cloud URLs and session cookies, and CRS proxy matching and creation.
+//   - header_overrides.go, response_headers.go, cloudflare.go: request overrides, response headers, and Cloudflare detection.
+//   - diagnostics.go: caller-supplied logging.
 package egress

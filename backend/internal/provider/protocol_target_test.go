@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestGetAPIProtocol 验证协议凭证维度的平台校验矩阵：
-// DeepSeek 和 Kimi 支持 Responses，字段缺失或无效时回退 Chat Completions。
+// TestGetAPIProtocol checks platform-specific legacy protocol selection.
+// DeepSeek and Kimi accept Responses; missing or invalid values default to Chat Completions.
 func TestGetAPIProtocol(t *testing.T) {
 	t.Parallel()
 
@@ -115,12 +115,12 @@ func TestAdaptiveProtocolBaseURLOverrides(t *testing.T) {
 	require.Equal(t, "https://responses.example.com", provider.GetCNProtocolBaseURL(APIProtocolResponses))
 }
 
-// TestAnthropicProtocolBaseURL 验证 Anthropic 协议默认端点与协议感知的
-// OpenAI 格式 base 回退。
+// TestAnthropicProtocolBaseURL checks platform defaults and custom overrides
+// for legacy Messages configurations.
 func TestAnthropicProtocolBaseURL(t *testing.T) {
 	t.Parallel()
 
-	// 默认端点（按供应商 × 模式）
+	// Default endpoints depend on platform and provider mode.
 	require.Equal(t, "https://api.moonshot.cn/anthropic", (ProtocolTarget{Record: &Record{
 		Platform: capability.PlatformKimi, Type: capability.ProviderTypeAPIKey,
 		Credentials: map[string]any{"api_protocol": APIProtocolAnthropic},
@@ -138,21 +138,21 @@ func TestAnthropicProtocolBaseURL(t *testing.T) {
 		Credentials: map[string]any{"api_protocol": APIProtocolAnthropic},
 	}}).GetAnthropicProtocolBaseURL())
 
-	// 凭证 base_url 覆盖默认值
+	// An explicit base_url overrides the legacy default.
 	require.Equal(t, "https://custom.example.com/anthropic", (ProtocolTarget{Record: &Record{
 		Platform: capability.PlatformZhipu, Type: capability.ProviderTypeAPIKey,
 		Credentials: map[string]any{"api_protocol": APIProtocolAnthropic, "base_url": "https://custom.example.com/anthropic"},
 	}}).GetAnthropicProtocolBaseURL())
 
-	// 非 Anthropic 协议返回空串
+	// A fixed Chat configuration has no Messages base URL.
 	require.Empty(t, (ProtocolTarget{Record: &Record{
 		Platform: capability.PlatformZhipu, Type: capability.ProviderTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://open.bigmodel.cn/api/paas/v4"},
 	}}).GetAnthropicProtocolBaseURL())
 }
 
-// TestGetOpenAIFormatBaseURL_ProtocolAware 验证 Anthropic 协议提供商的 OpenAI
-// 格式路径：官方端点映射到默认 CC base，自定义中继保留 host 与路径前缀。
+// TestGetOpenAIFormatBaseURL_ProtocolAware checks model-list bases for Messages configurations.
+// Platform endpoints map to Chat defaults; custom relays retain their host and path prefix.
 func TestGetOpenAIFormatBaseURL_ProtocolAware(t *testing.T) {
 	t.Parallel()
 
@@ -193,7 +193,7 @@ func TestGetOpenAIFormatBaseURL_ProtocolAware(t *testing.T) {
 	}}
 	require.Equal(t, "https://relay.example.com/moonshot", kimiRelay.GetOpenAIFormatBaseURL())
 
-	// chat_completions 协议下行为不变（凭证 base_url 原样返回）
+	// Chat configurations use the configured base_url directly.
 	ccProvider := ProtocolTarget{Record: &Record{
 		Platform: capability.PlatformDeepseek, Type: capability.ProviderTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://ds-relay.example.com"},

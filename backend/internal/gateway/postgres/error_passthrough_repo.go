@@ -12,12 +12,12 @@ type errorPassthroughRepository struct {
 	client *ent.Client
 }
 
-// NewErrorPassthroughRepository 创建错误透传规则仓库。
+// NewErrorPassthroughRepository creates the error passthrough rule repository.
 func NewErrorPassthroughRepository(client *ent.Client) errorpolicy.ErrorPassthroughRepository {
 	return &errorPassthroughRepository{client: client}
 }
 
-// List 获取所有规则。
+// List returns all rules in ascending priority order.
 func (r *errorPassthroughRepository) List(ctx context.Context) ([]*errorpolicy.ErrorPassthroughRule, error) {
 	rules, err := r.client.ErrorPassthroughRule.Query().
 		Order(ent.Asc(errorpassthroughrule.FieldPriority)).
@@ -33,7 +33,7 @@ func (r *errorPassthroughRepository) List(ctx context.Context) ([]*errorpolicy.E
 	return result, nil
 }
 
-// GetByID 根据 ID 获取规则。
+// GetByID returns a rule, or nil when the ID is absent.
 func (r *errorPassthroughRepository) GetByID(ctx context.Context, id int64) (*errorpolicy.ErrorPassthroughRule, error) {
 	rule, err := r.client.ErrorPassthroughRule.Get(ctx, id)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *errorPassthroughRepository) GetByID(ctx context.Context, id int64) (*er
 	return r.toModel(rule), nil
 }
 
-// Create 创建规则。
+// Create persists an error passthrough rule.
 func (r *errorPassthroughRepository) Create(ctx context.Context, rule *errorpolicy.ErrorPassthroughRule) (*errorpolicy.ErrorPassthroughRule, error) {
 	builder := r.client.ErrorPassthroughRule.Create().
 		SetName(rule.Name).
@@ -82,7 +82,7 @@ func (r *errorPassthroughRepository) Create(ctx context.Context, rule *errorpoli
 	return r.toModel(created), nil
 }
 
-// Update 更新规则。
+// Update replaces a rule's fields, clearing omitted optional values.
 func (r *errorPassthroughRepository) Update(ctx context.Context, rule *errorpolicy.ErrorPassthroughRule) (*errorpolicy.ErrorPassthroughRule, error) {
 	builder := r.client.ErrorPassthroughRule.UpdateOneID(rule.ID).
 		SetName(rule.Name).
@@ -93,7 +93,7 @@ func (r *errorPassthroughRepository) Update(ctx context.Context, rule *errorpoli
 		SetPassthroughBody(rule.PassthroughBody).
 		SetSkipMonitoring(rule.SkipMonitoring)
 
-	// 处理可选字段
+	// Empty slices and nil pointers clear previously stored optional fields.
 	if len(rule.ErrorCodes) > 0 {
 		builder.SetErrorCodes(rule.ErrorCodes)
 	} else {
@@ -132,12 +132,12 @@ func (r *errorPassthroughRepository) Update(ctx context.Context, rule *errorpoli
 	return r.toModel(updated), nil
 }
 
-// Delete 删除规则。
+// Delete removes the rule with the given ID.
 func (r *errorPassthroughRepository) Delete(ctx context.Context, id int64) error {
 	return r.client.ErrorPassthroughRule.DeleteOneID(id).Exec(ctx)
 }
 
-// toModel 将 Ent 实体转换为服务模型。
+// toModel converts an Ent entity to an error policy rule.
 func (r *errorPassthroughRepository) toModel(e *ent.ErrorPassthroughRule) *errorpolicy.ErrorPassthroughRule {
 	rule := &errorpolicy.ErrorPassthroughRule{
 		ID:              e.ID,
@@ -165,7 +165,7 @@ func (r *errorPassthroughRepository) toModel(e *ent.ErrorPassthroughRule) *error
 		rule.Description = e.Description
 	}
 
-	// 用空切片表示空结果。
+	// Represent empty collections as empty slices.
 	if rule.ErrorCodes == nil {
 		rule.ErrorCodes = []int{}
 	}

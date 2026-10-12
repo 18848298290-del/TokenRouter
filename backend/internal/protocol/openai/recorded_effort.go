@@ -10,7 +10,7 @@ func NormalizeRecordedReasoningEffort(raw string) string {
 		return ""
 	}
 
-	// 兼容客户端常见的 x-high / x_high / x high 写法。
+	// Accept client spellings such as x-high, x_high, and x high.
 	value = strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
 
 	switch value {
@@ -23,25 +23,25 @@ func NormalizeRecordedReasoningEffort(raw string) string {
 	case "max":
 		return value
 	default:
-		// 使用记录接受已知档位，未知值返回空字符串。
+		// Unknown effort values are omitted from usage records.
 		return ""
 	}
 }
 
-// GetOpenAIReasoningEffortFromReqBody 提取请求字段指定的推理档位，字段缺失时返回空字符串。
+// GetOpenAIReasoningEffortFromReqBody returns normalized effort and whether a string field was present.
 func GetOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, present bool) {
 	if reqBody == nil {
 		return "", false
 	}
 
-	// 优先读取 reasoning.effort。
+	// The nested reasoning.effort field takes precedence.
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
 		if effort, ok := reasoning["effort"].(string); ok {
 			return NormalizeRecordedReasoningEffort(effort), true
 		}
 	}
 
-	// 部分客户端通过顶层字段传递。
+	// Some clients send the effort in a top-level field.
 	if effort, ok := reqBody["reasoning_effort"].(string); ok {
 		return NormalizeRecordedReasoningEffort(effort), true
 	}

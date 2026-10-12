@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLenientJSONLimitAndOriginalBytes 检查规范化后的字节上限和原始字节保留，外层可包装并识别超限错误。
+// TestLenientJSONLimitAndOriginalBytes checks the expanded size limit, input ownership, and error wrapping.
 func TestLenientJSONLimitAndOriginalBytes(t *testing.T) {
 	original := []byte{'{', '"', 'v', '"', ':', '"', '\n', '"', '}'}
 	saved := append([]byte(nil), original...)

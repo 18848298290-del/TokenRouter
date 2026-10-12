@@ -37,7 +37,7 @@ func (p *openAIPassthroughExecutionAdapter) CompactPath() bool {
 	return IsOpenAIResponsesCompactPath(p.c)
 }
 
-// ForwardModel 与普通转发共用单跳模型规则，压缩专用配置保持优先。
+// ForwardModel applies single-hop model rules, giving Compact-specific configuration priority.
 func (p *openAIPassthroughExecutionAdapter) ForwardModel(model string, compact bool) string {
 	if compact && p.s.Compact != nil {
 		if configured := p.s.Compact.ResolveModel(p.provider, model); configured != "" {
@@ -297,7 +297,7 @@ func (p *openAIPassthroughExecutionAdapter) ObservedServiceTier() string {
 	return ObservedUpstreamResponseServiceTier(p.c)
 }
 
-// openAIRequestGroup 读取当前请求保存的分组。
+// openAIRequestGroup reads the group from the request's API key.
 func openAIRequestGroup(c *gin.Context) *routing.Group {
 	if c == nil {
 		return nil
@@ -313,8 +313,8 @@ func openAIRequestGroup(c *gin.Context) *routing.Group {
 	return key.Group
 }
 
-// openAIResponsesRejectedFieldRetryStateForRequest 为一次提供商尝试创建报文去重状态。
-// 各次尝试共享入站请求的重试预算。
+// openAIResponsesRejectedFieldRetryStateForRequest creates body deduplication state for one provider attempt.
+// Attempts share the inbound request's retry budget.
 func openAIResponsesRejectedFieldRetryStateForRequest(c *gin.Context, initialBody []byte) *openai.ResponsesRejectedFieldRetryState {
 	var budget *openai.ResponsesRejectedFieldRetryBudget
 	if c != nil {

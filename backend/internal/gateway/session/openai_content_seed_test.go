@@ -71,7 +71,7 @@ func TestDeriveOpenAIContentSessionSeed_ChatCompletions_StableAcrossTurns(t *tes
 }
 
 // TestDeriveOpenAIContentSessionSeed_ChatCompletions_IgnoresLaterSystemMessages
-// 验证对话中动态追加的 system 消息不会改变既有粘性身份。
+// checks that later system messages do not change sticky identity.
 func TestDeriveOpenAIContentSessionSeed_ChatCompletions_IgnoresLaterSystemMessages(t *testing.T) {
 	turn1 := []byte(`{
 		"model": "gpt-5.4",
@@ -97,7 +97,7 @@ func TestDeriveOpenAIContentSessionSeed_ChatCompletions_IgnoresLaterSystemMessag
 }
 
 // TestDeriveOpenAIContentSessionSeed_ChatCompletions_UsesLeadingSystemDeveloperPrefix
-// 验证开头连续的 system/developer 仍参与种子，且非前缀消息后的 system 被忽略。
+// checks that leading system/developer messages contribute, while later system messages do not.
 func TestDeriveOpenAIContentSessionSeed_ChatCompletions_UsesLeadingSystemDeveloperPrefix(t *testing.T) {
 	firstSystem := []byte(`{
 		"model": "gpt-5.4",
@@ -378,7 +378,7 @@ func TestDeriveOpenAIContentSessionSeed_AllTruncationOffsetsMatchLegacyBytes(t *
 }
 
 func TestDeriveOpenAIContentSessionSeed_DeterministicMalformedCorpusMatchesLegacy(t *testing.T) {
-	// 用固定随机种子生成畸形 JSON，检查 gjson 的宽容解析结果。
+	// Deterministic malformed JSON fixtures exercise gjson's tolerant parsing.
 	rng := rand.New(rand.NewSource(4274))
 	alphabet := []byte(`{}[]":,modeltfsuinpcr0123456789 \\`)
 	for caseIndex := range 5000 {

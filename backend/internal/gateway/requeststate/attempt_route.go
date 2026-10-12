@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// AttemptRoute 保存当前候选的协议和模型计划。
-// 值复制保持已选计划独立；模型映射在原调用时点由调用方传入。
+// AttemptRoute holds the current candidate's protocol and model plan.
+// The selected plan is copied by value; callers supply model mappings when resolving models.
 type AttemptRoute struct {
 	protocol  protocol.ProtocolID
 	candidate routing.CandidatePlan
@@ -18,12 +18,12 @@ type AttemptRoute struct {
 
 func (a AttemptRoute) Protocol() protocol.ProtocolID { return a.protocol }
 
-// Candidate 返回已捕获的值；缺少原计划时不会补造或重新查询。
+// Candidate returns the captured plan and whether one was provided.
 func (a AttemptRoute) Candidate() (routing.CandidatePlan, bool) {
 	return a.candidate, a.planned
 }
 
-// ResolveAttempt 在刷新提供商后复核能力，分组回退后此前的计划失效。
+// ResolveAttempt rechecks provider capabilities and discards a saved plan belonging to a different group.
 func (s RoutingState) ResolveAttempt(snapshot provider.ProviderSnapshot, previous AttemptRoute) (AttemptRoute, bool, error) {
 	plan, planned := s.plan, s.planSet
 	if planned && s.group != nil && plan.GroupID() != s.group.ID {
@@ -51,7 +51,7 @@ func (s RoutingState) ResolveAttempt(snapshot provider.ProviderSnapshot, previou
 	return result, true, nil
 }
 
-// ResolveModel 复用原生一跳规则，不在选择候选时提前读取模型配置。
+// ResolveModel applies one-hop mapping using configuration supplied at the time of resolution.
 func (a AttemptRoute) ResolveModel(id int64, platform string, mapping map[string]string, requested string) (string, bool) {
 	if a.planned {
 		snapshot := provider.ProviderSnapshot{ID: id, Platform: platform, ModelPolicy: provider.NewModelRoutingSnapshot(mapping)}

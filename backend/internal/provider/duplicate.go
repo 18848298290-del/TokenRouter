@@ -19,13 +19,13 @@ const (
 )
 
 var duplicateProviderDiscardedExtraKeys = map[string]struct{}{
-	// 重试标识用于当前复制操作，后续复制使用各自的标识。
+	// Each duplication operation owns its retry identifier.
 	duplicateProviderOperationIDExtraKey: {},
-	// 外部同步标识只属于一个本地提供商。
+	// External synchronization identifiers belong to one local provider.
 	"crs_account_id": {},
 	"crs_kind":       {},
 	"crs_synced_at":  {},
-	// 本地配额用量与派生窗口时间必须从空状态开始。
+	// Start local usage counters and derived quota windows empty.
 	"quota_used":            {},
 	"quota_daily_used":      {},
 	"quota_weekly_used":     {},
@@ -33,9 +33,9 @@ var duplicateProviderDiscardedExtraKeys = map[string]struct{}{
 	"quota_weekly_start":    {},
 	"quota_daily_reset_at":  {},
 	"quota_weekly_reset_at": {},
-	// Codex 收敛 seed 由系统按提供商生成，复制提供商时必须重新生成。
+	// Generate a fresh provider-specific Codex fingerprint seed for the duplicate.
 	CodexFingerprintSeedExtraKey: {},
-	// 上游观测、能力探测与临时调度状态不属于可复制配置。
+	// Upstream observations, capability probes, and temporary scheduling state are not copied as configuration.
 	"model_rate_limits":                      {},
 	"session_window_utilization":             {},
 	"passive_usage_7d_utilization":           {},
@@ -168,8 +168,8 @@ func (s *Admin) findDuplicateByOperationID(ctx context.Context, operationID stri
 	return &provider, nil
 }
 
-// RecoverDuplicateProvider 只读查找已提交的复制件。
-// 当幂等协调器无法确认响应是否成功持久化时用于恢复，且绝不重复执行创建副作用。
+// RecoverDuplicateProvider looks up a committed duplicate without creating one.
+// The idempotency coordinator uses it when response persistence is uncertain.
 func (s *Admin) RecoverDuplicateProvider(ctx context.Context, id int64, actorScope, operationKey string) (*Record, error) {
 	return s.findDuplicateByOperationID(ctx, duplicateProviderOperationID(id, actorScope, operationKey))
 }
@@ -182,9 +182,9 @@ func cloneProviderValuePointer[T any](value *T) *T {
 	return &cloned
 }
 
-// DuplicateProvider 从源配置创建已暂停调度的提供商，不携带一级运行态字段。
-// 复制凭据与 Extra 的嵌套数据，新提供商规范化时操作独立副本。
-// 链接型影子通过 CreateShadow 创建，复制操作会拒绝这类提供商。
+// DuplicateProvider creates a paused provider from source configuration with fresh runtime state.
+// Credentials and Extra are copied deeply before normalization.
+// Linked shadows must use CreateShadow and are rejected here.
 func (s *Admin) DuplicateProvider(ctx context.Context, id int64, actorScope, operationKey string) (*Record, error) {
 	operationID := duplicateProviderOperationID(id, actorScope, operationKey)
 	existing, err := s.RecoverDuplicateProvider(ctx, id, actorScope, operationKey)
@@ -236,7 +236,7 @@ func (s *Admin) DuplicateProvider(ctx context.Context, id int64, actorScope, ope
 	groups, groupIDs := duplicateProviderGroups(source)
 	proxyID := source.ProxyID
 	if source.ProxyFallbackOriginID != nil {
-		// 代理回退是临时运行态；复制时使用原始配置的代理。
+		// Proxy failover is temporary; copy the originally configured proxy.
 		proxyID = source.ProxyFallbackOriginID
 	}
 	input := &CreateProviderInput{
@@ -262,7 +262,7 @@ func (s *Admin) DuplicateProvider(ctx context.Context, id int64, actorScope, ope
 	if err != nil {
 		return nil, err
 	}
-	// 复制的凭据必须经管理员检查后，才能与源提供商共享线上流量。
+	// An administrator must review copied credentials before enabling shared production traffic.
 	duplicate.Schedulable = false
 	if s.options.Duplicates == nil {
 		return nil, errors.New("provider duplicate repository is not configured")

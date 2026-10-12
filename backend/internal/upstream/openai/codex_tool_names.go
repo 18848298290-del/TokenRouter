@@ -21,16 +21,16 @@ type CodexToolNameField struct {
 	name   string
 }
 
-// AliasOpenAIOAuthReservedToolNames 改写 Codex 保留工具名。
-// 先验证全部声明和引用，避免名称冲突留下仅改写一部分的请求。
+// AliasOpenAIOAuthReservedToolNames rewrites Codex-reserved tool names.
+// It validates all declarations and references before mutation to prevent partial rewrites on collisions.
 func AliasOpenAIOAuthReservedToolNames(reqBody map[string]any) (map[string]string, bool, error) {
 	if reqBody == nil {
 		return nil, false, nil
 	}
 
 	fields := CollectOpenAIResponsesToolNameFields(reqBody)
-	// 历史调用已经使用旧别名时，本轮声明沿用该名字，保证续写与工具结果配对。
-	// 调用方显式声明的同名函数仍是普通工具，不能被当作网关保留别名。
+	// Reuse the legacy alias when history already contains calls under that name.
+	// An explicit declaration of the same name remains a caller-defined tool.
 	alias := CodexPythonToolAlias
 	legacyCall, legacyDeclaration := false, false
 	for _, field := range fields {

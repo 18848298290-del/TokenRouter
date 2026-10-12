@@ -10,10 +10,10 @@ import (
 
 const defaultConversionSSEFrameBytes = 500 * 1024 * 1024
 
-// ErrConversionSSEFrameTooLarge 表示累计的 SSE 帧超过转换器上限。
+// ErrConversionSSEFrameTooLarge indicates that accumulated frame bytes exceed the conversion limit.
 var ErrConversionSSEFrameTooLarge = errors.New("the upstream SSE frame exceeds the size limit")
 
-// conversionSSEScanner 按空行划分上游事件，合并多行 data，并接受省略 event 的帧。
+// conversionSSEScanner separates events on blank lines, joins data lines, and accepts frames without an event field.
 type conversionSSEScanner struct {
 	lines      Lines
 	parser     openai.OpenAICompatSSEFrameParser
@@ -39,7 +39,7 @@ func (s *conversionSSEScanner) Scan() bool {
 	for s.lines.Scan() {
 		line := strings.TrimSuffix(s.lines.Text(), "\r")
 		if line != "" {
-			// 在缓存前累计整行和换行符，短 data 行和注释也计入单帧上限。
+			// Count complete lines and newlines before buffering; short data lines and comments share the frame budget.
 			if len(line) >= s.maxBytes-s.frameBytes {
 				s.err = ErrConversionSSEFrameTooLarge
 				s.finished = true
@@ -59,7 +59,7 @@ func (s *conversionSSEScanner) Scan() bool {
 	s.finished = true
 	s.err = s.lines.Err()
 	frame, ok := s.parser.Finish()
-	// 连接异常可能发生在 JSON 已完整到达之后，交付该帧以读取用量，Err 继续报告读取错误。
+	// A connection error may follow complete JSON. Deliver that frame for usage capture while Err retains the read failure.
 	if s.err != nil && !json.Valid([]byte(frame.Data)) {
 		return false
 	}

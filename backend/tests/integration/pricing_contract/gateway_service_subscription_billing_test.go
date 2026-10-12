@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// contractSettlementInput 包含结算金额、付款方和倍率参数。
+// contractSettlementInput contains settlement amounts, paying-user details, and rates.
 type contractSettlementInput struct {
 	Cost                            *pricing.CostBreakdown
 	User                            *identity.User
@@ -30,13 +30,13 @@ type contractSettlementInput struct {
 	SubscriptionRateMultiplierScale float64
 	BalanceRateMultiplier           float64
 	APIKeyService                   provider.QuotaUpdater
-	Platform                        string // 来自 APIKey 关联 Group 的平台标识
-	// BillingBaseAmountUSD 是分配用户资金前的基础金额，nil 时使用 Cost.TotalCost。
-	// 免费 Fast 使用 Standard 用户基础价和 Fast 提供商统计基础成本。
+	Platform                        string // Platform identifier supplied by the fixture.
+	// BillingBaseAmountUSD is the base amount for user fund allocation; nil uses Cost.TotalCost.
+	// Free Fast uses Standard user pricing while provider statistics retain the Fast base cost.
 	BillingBaseAmountUSD *float64
 }
 
-// TestBuildUsageBillingCommand_BillableAmountTracksActualCost 检查用户计费金额使用 ActualCost。
+// TestBuildUsageBillingCommand_BillableAmountTracksActualCost checks that user charges use ActualCost.
 func TestBuildUsageBillingCommand_BillableAmountTracksActualCost(t *testing.T) {
 	t.Parallel()
 
@@ -158,7 +158,7 @@ func TestBuildUsageBillingCommand_ProviderQuotaUsesProviderStatsCost(t *testing.
 			if cmd.ProviderQuotaCost != tt.wantProviderQuota {
 				t.Errorf("ProviderQuotaCost = %v, want %v", cmd.ProviderQuotaCost, tt.wantProviderQuota)
 			}
-			// 用户余额、订阅和 API Key 配额使用 ActualCost。
+			// Balance, subscription, and API key quota charges use ActualCost.
 			if cmd.BillableAmountUSD != tt.actualCost {
 				t.Errorf("BillableAmountUSD = %v, want %v", cmd.BillableAmountUSD, tt.actualCost)
 			}
@@ -274,7 +274,7 @@ func TestBuildUsageBillingCommand_TokenModeKeepsAllocationRates(t *testing.T) {
 	}
 }
 
-// TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast 检查免费 Fast 使用指定基础价分配用户资金，提供商额度使用 Fast 成本。
+// TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast checks Standard user allocation alongside Fast provider quota cost.
 func TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast(t *testing.T) {
 	standardBase := 0.4
 	fastTotal := 1.2

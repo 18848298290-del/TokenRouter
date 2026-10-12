@@ -28,7 +28,7 @@ const (
 	WechatPaymentOAuthCookiePath  = "/api/v1/auth/oauth/wechat/payment"
 )
 
-// WeChatPaymentHTTPOptions 仅提供支付授权所需的配置和令牌能力，避免构造完整认证图。
+// WeChatPaymentHTTPOptions supplies configuration and token operations for payment OAuth.
 type WeChatPaymentHTTPOptions struct {
 	Config      func(context.Context, string, *gin.Context) (identitycore.WeChatOAuthOptions, error)
 	CallbackURL func(context.Context, *gin.Context) string
@@ -54,7 +54,7 @@ func NewWeChatPaymentHandler(options WeChatPaymentHTTPOptions) *WeChatPaymentHan
 	return &WeChatPaymentHandler{options}
 }
 
-// WeChatPaymentOAuthStart 建立支付授权状态。
+// WeChatPaymentOAuthStart creates the payment authorization state.
 // GET /api/v1/auth/oauth/wechat/payment/start?payment_type=wxpay&redirect=/purchase
 func (h *WeChatPaymentHandler) WeChatPaymentOAuthStart(c *gin.Context) {
 	cfg, err := h.options.Config(c.Request.Context(), "mp", c)
@@ -109,7 +109,7 @@ func (h *WeChatPaymentHandler) WeChatPaymentOAuthStart(c *gin.Context) {
 	c.Redirect(http.StatusFound, authURL)
 }
 
-// WeChatPaymentOAuthCallback 取得 OpenID 后签发支付续接令牌。
+// WeChatPaymentOAuthCallback obtains the OpenID and issues a payment resume token.
 func (h *WeChatPaymentHandler) WeChatPaymentOAuthCallback(c *gin.Context) {
 	frontendCallback := WechatPaymentOAuthFrontendCB
 
@@ -199,7 +199,7 @@ func (h *WeChatPaymentHandler) WeChatPaymentOAuthCallback(c *gin.Context) {
 	identityhttp.RedirectOAuthFragment(c, frontendCallback, fragment)
 }
 
-// ClearWeChatPaymentCookies 保持安全登出时原有的支付 Cookie 清理。
+// ClearWeChatPaymentCookies clears payment OAuth cookies during logout.
 func ClearWeChatPaymentCookies(c *gin.Context) {
 	secureCookie := identityhttp.IsRequestHTTPS(c)
 	WechatPaymentClearCookie(c, WechatPaymentOAuthStateName, secureCookie)

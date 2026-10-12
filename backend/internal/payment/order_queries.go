@@ -7,7 +7,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// AuditLog 记录订单操作、执行者和时间。
+// AuditLog records an order action, actor, and timestamp.
 type AuditLog struct {
 	ID        int64     `json:"id,omitempty"`
 	OrderID   string    `json:"order_id,omitempty"`
@@ -44,7 +44,7 @@ func (s *OrderQueries) AdminListOrders(ctx context.Context, userID int64, p Orde
 	return s.store.AdminListOrders(ctx, userID, p)
 }
 
-// GetOrderAuditLogs 查询指定订单的审计日志。
+// GetOrderAuditLogs returns audit records for the order.
 func (s *OrderQueries) GetOrderAuditLogs(ctx context.Context, id int64) ([]*AuditLog, error) {
 	return s.store.OrderAuditLogs(ctx, id)
 }

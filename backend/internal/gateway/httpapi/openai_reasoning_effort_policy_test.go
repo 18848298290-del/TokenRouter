@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra 验证分组可自行决定不兼容档位的目标值。
+// TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra checks group-defined mappings for
+// incompatible effort values.
 func TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -69,7 +70,8 @@ func TestApplyAnthropicReasoningEffortPolicyForRequest_CapsOutputConfigEffort(t 
 	require.Equal(t, "max", *requested)
 }
 
-// TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault 验证强制平台入口与缺省请求都不能被 Anthropic 分组策略意外改写。
+// TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault checks that Anthropic policy leaves
+// forced-platform and default requests intact.
 func TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault(t *testing.T) {
 	apiKey := &apikey.APIKey{Group: &routing.Group{MaxReasoningEffort: "low"}}
 	for _, forced := range []bool{false, true} {

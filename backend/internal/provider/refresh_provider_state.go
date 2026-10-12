@@ -6,12 +6,12 @@ import (
 	"sync"
 )
 
-// RefreshAttemptGate 在即将交换凭据时检查准入并占用配额。
+// RefreshAttemptGate admits refresh work and returns a release function for any reserved capacity.
 type RefreshAttemptGate interface {
 	Acquire(context.Context) (func(), error)
 }
 
-// RefreshProviderState 只持有单轮平台失败状态；限速与并发门仍由整个 worker 共用。
+// RefreshProviderState tracks failures for one platform cycle; rate and concurrency gates are shared across cycles.
 type RefreshProviderState struct {
 	rateGate            RefreshAttemptGate
 	poolGate            *RefreshConcurrencyGate
@@ -99,7 +99,7 @@ func (p *RefreshProviderState) RecordResult(err error) {
 		return
 	}
 	if p.nonRetryable != nil && p.nonRetryable(err) {
-		// 永久凭据错误按单个提供商处理，该平台的其他提供商继续刷新。
+		// Permanent credential failures affect one provider; other providers on the platform continue.
 		p.consecutiveFailures = 0
 		return
 	}

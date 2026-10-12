@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// messageAttemptBindings 绑定执行函数，textattempt 管理 HTTP 输出和每次尝试的状态。
+// messageAttemptBindings supplies execution callbacks; textattempt owns HTTP output and per-attempt state.
 func messageAttemptBindings(
 	cooldown *provider.RetryCooldown,
 	digest *session.DigestSessionStore,
@@ -110,7 +110,7 @@ func messageAttemptBindings(
 	return b
 }
 
-// provideMessageAttemptRuntime 为消息执行组件绑定共享依赖。
+// provideMessageAttemptRuntime binds shared dependencies to message execution.
 func provideMessageAttemptRuntime(
 	cooldown *provider.RetryCooldown,
 	digest *session.DigestSessionStore,

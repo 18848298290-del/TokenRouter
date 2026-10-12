@@ -2,7 +2,7 @@ package identity
 
 import "time"
 
-// operationClock 在原调用点读取时间；默认仍为系统时钟，不缓存时间快照。
+// operationClock reads the injected clock on each call, defaulting to time.Now.
 type operationClock struct{ read func() time.Time }
 
 func (c operationClock) now() time.Time {

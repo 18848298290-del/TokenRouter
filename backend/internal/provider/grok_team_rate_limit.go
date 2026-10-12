@@ -18,9 +18,9 @@ var globalGrokTeamModelRateLimits = &grokTeamModelRateLimitStore{
 	items: make(map[string]grokTeamModelRateLimit),
 }
 
-// 以下为 Grok OAuth 的进程内 team+model 限流覆盖：同一 team_id 的某提供商在模型上被限流后，
+// grokTeamModelRateLimit records a process-local cooldown shared by OAuth providers in the same team.
 
-// 其它提供商在冷却期内跳过该模型。多实例各自从本实例 429 学习，短 TTL 让状态漂移自行收敛。
+// Each instance learns from its own 429 responses; the short TTL bounds stale observations.
 type grokTeamModelRateLimit struct {
 	Until time.Time
 }
@@ -49,7 +49,8 @@ func ProviderGrokTeamID(provider *Record) string {
 	return strings.TrimSpace(provider.GetCredential("team_id"))
 }
 
-// MarkGrokTeamModelRateLimit 记录 team+model 在截止时间前应被跳过；team_id 或模型为空时无操作。
+// MarkGrokTeamModelRateLimit blocks the team's model until a bounded deadline; missing team IDs or models are
+// ignored.
 func MarkGrokTeamModelRateLimit(provider *Record, model string, until time.Time) {
 	if provider == nil || !provider.IsGrokOAuth() {
 		return
@@ -74,7 +75,6 @@ func MarkGrokTeamModelRateLimit(provider *Record, model string, until time.Time)
 		return
 	}
 	globalGrokTeamModelRateLimits.items[key] = grokTeamModelRateLimit{Until: until}
-	// 顺带清理已过期条目。
 	for k, v := range globalGrokTeamModelRateLimits.items {
 		if !v.Until.After(now) {
 			delete(globalGrokTeamModelRateLimits.items, k)
@@ -82,7 +82,7 @@ func MarkGrokTeamModelRateLimit(provider *Record, model string, until time.Time)
 	}
 }
 
-// IsGrokTeamModelRateLimited 判断提供商所属团队当前是否被指定模型限流。
+// IsGrokTeamModelRateLimited reports whether the provider's team has an active cooldown for the model.
 func IsGrokTeamModelRateLimited(provider *Record, model string, now time.Time) bool {
 	if provider == nil || !provider.IsGrokOAuth() {
 		return false
@@ -106,7 +106,7 @@ func IsGrokTeamModelRateLimited(provider *Record, model string, now time.Time) b
 	return true
 }
 
-// ResolveGrokTeamRateLimitUntil 从提供商限流重置时间推导团队冷却窗口并限制合理范围。
+// ResolveGrokTeamRateLimitUntil bounds a team cooldown derived from the provider's reset time.
 func ResolveGrokTeamRateLimitUntil(resetAt, now time.Time) time.Time {
 	if resetAt.After(now.Add(grokTeamRateLimitMinTTL)) {
 		maxUntil := now.Add(grokTeamRateLimitMaxTTL)

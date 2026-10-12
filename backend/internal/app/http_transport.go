@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// provideHTTPUpstream 构造共享传输实例，每次调用时读取传输所需的配置。
+// provideHTTPUpstream constructs shared transport that reads configuration on each call.
 // @project-doc docs/architecture/system_architecture.md#dependency_layers
 func provideHTTPUpstream(cfg *config.Config) *transport.Client {
 	return transport.New(func() *transport.Options {
@@ -47,7 +47,7 @@ func httpTransportOptions(cfg *config.Config) *transport.Options {
 	}
 }
 
-// provideClaudeUsageFetcher 使用共享 HTTP 池查询 Claude 用量。
+// provideClaudeUsageFetcher queries Claude usage through the shared HTTP pool.
 func provideClaudeUsageFetcher(upstream httpclient.UpstreamTransport) provideradapter.ClaudeUsageClient {
 	if upstream == nil {
 		return anthropic.NewUsageClient(nil)
@@ -55,12 +55,12 @@ func provideClaudeUsageFetcher(upstream httpclient.UpstreamTransport) providerad
 	return anthropic.NewUsageClient(upstream.DoWithTLS)
 }
 
-// provideOpenAIOAuthClient 为 OpenAI OAuth 客户端绑定传输接口。
+// provideOpenAIOAuthClient binds transport to the OpenAI OAuth client.
 func provideOpenAIOAuthClient(upstream httpclient.UpstreamTransport) provideradapter.OpenAIOAuthClient {
 	return openai.NewOAuthClient(upstream)
 }
 
-// provideGeminiOAuthClient 为 Gemini OAuth 客户端绑定按调用读取的启动配置。
+// provideGeminiOAuthClient reads startup configuration on each OAuth call.
 func provideGeminiOAuthClient(cfg *config.Config) providerauth.GeminiOAuthClient {
 	return codeassist.NewOAuthClient(func() codeassist.OAuthConfig {
 		return codeassist.OAuthConfig{

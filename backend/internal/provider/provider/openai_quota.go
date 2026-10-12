@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIQuotaFactory 只准备技术请求；task 复查和持久化使用同一个提供商协调器。
+// OpenAIQuotaFactory prepares quota clients and delegates task recovery and persistence to the shared
+// coordinator.
 type OpenAIQuotaFactory struct {
 	Proxy       func(context.Context, int64) (*egress.Proxy, error)
 	Transport   QoderTransport

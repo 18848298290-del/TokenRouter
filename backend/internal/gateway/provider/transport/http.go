@@ -20,37 +20,29 @@ import (
 )
 
 const (
-	// 默认配置常量
-	// 这些值在配置文件未指定时作为回退默认值使用
-	// defaultMaxIdleConns: 默认最大空闲连接总数
-	// HTTP/2 场景下，单连接可多路复用，240 足以支撑高并发。
+	// Defaults used when transport options are absent or outside their accepted ranges.
+	// defaultMaxIdleConns limits idle connections across hosts.
 	defaultMaxIdleConns = 240
-	// defaultMaxIdleConnsPerHost: 默认每主机最大空闲连接数。
+	// defaultMaxIdleConnsPerHost limits idle connections to one host.
 	defaultMaxIdleConnsPerHost = 120
-	// defaultMaxConnsPerHost: 默认每主机最大连接数（含活跃连接）
-	// 达到连接上限后，新请求等待空闲连接。
+	// defaultMaxConnsPerHost includes active connections; new requests wait at the limit.
 	defaultMaxConnsPerHost = 240
-	// defaultIdleConnTimeout: 默认空闲连接超时时间（90 秒）
-	// 超时后连接会被关闭，释放系统资源（建议小于上游 LB 超时）。
+	// defaultIdleConnTimeout bounds how long unused connections remain open.
 	defaultIdleConnTimeout = 90 * time.Second
-	// defaultResponseHeaderTimeout: 默认等待响应头超时时间（5 分钟）
-	// LLM 请求可能排队较久，需要较长超时。
+	// defaultResponseHeaderTimeout allows for upstream generation queues.
 	defaultResponseHeaderTimeout = 300 * time.Second
-	// defaultMaxUpstreamClients: 默认最大客户端缓存数量
-	// 超出后会淘汰最久未使用的客户端。
+	// defaultMaxUpstreamClients limits the cached upstream clients.
 	defaultMaxUpstreamClients = 5000
-	// defaultClientIdleTTLSeconds: 默认客户端空闲回收阈值（15 分钟）。
+	// defaultClientIdleTTLSeconds is the client eviction idle threshold in seconds.
 	defaultClientIdleTTLSeconds = 900
-	// OpenAI HTTP/2 代理回退策略默认值。
+	// Defaults for switching an incompatible OpenAI proxy to HTTP/1.1.
 	defaultOpenAIHTTP2FallbackErrorThreshold = 2
 	defaultOpenAIHTTP2FallbackWindow         = 60 * time.Second
 	defaultOpenAIHTTP2FallbackTTL            = 10 * time.Minute
 
-	// Grok CLI 代理会拒绝未标识受支持客户端版本的请求。二进制内置已验证版本，
-	// 同时允许运维人员通过环境变量升级，无需等待 TokenRouter 发版。
+	// Hosts used by the Grok CLI access-denied retry path.
 	grokCLIProxyHost    = "cli-chat-proxy.grok.com"
 	grokOfficialAPIHost = "api.x.ai"
-	// preferred pin (not the minimum floor).
 
 	upstreamProtocolModeDefault          = "default"
 	upstreamProtocolModeOpenAIH1         = "openai_h1"
@@ -66,20 +58,22 @@ type openAIHTTP2Settings struct {
 	fallbackTTL               time.Duration
 }
 
-// poolSettings 是连接池参数类型，app 提供配置值。
+// poolSettings contains connection pool settings supplied by the application.
 type poolSettings = httpclient.UpstreamSettings
 
-// upstreamPool 定义平台调用连接池的接口，测试可替换其传输实现。
+// upstreamPool lets tests substitute the transport used for upstream requests.
 type upstreamPool interface {
 	Do(*http.Request, httpclient.UpstreamRequestOptions) (*http.Response, error)
 }
+
+// Client applies provider transport policies and reuses an upstream connection pool.
 type Client struct {
 	source          func() *Options
 	pool            upstreamPool
 	transportPolicy egress.TransportPolicy
 }
 
-// httpClientForEgressPolicy 根据请求的出口策略派生客户端并设置重定向检查。
+// httpClientForEgressPolicy clones the client when a request needs redirect restrictions.
 func httpClientForEgressPolicy(s *Client, client *http.Client, policy egress.EgressPolicy) *http.Client {
 	if client == nil {
 		return nil
@@ -94,7 +88,8 @@ func httpClientForEgressPolicy(s *Client, client *http.Client, policy egress.Egr
 	case policy.PublicHostsOnly && s != nil:
 		clone := *client
 		clone.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-			// 每跳继承下载安全标记，同时保留客户端已有的重定向约束。
+			// Apply the public-host check at every hop before the client
+			// runs its existing redirect policy.
 			next = next.WithContext(upstream.WithHTTPUpstreamPublicHostsOnly(next.Context()))
 			if err := s.redirectChecker(next, via); err != nil {
 				return err
@@ -144,11 +139,8 @@ func (s *Client) redirectChecker(req *http.Request, via []*http.Request) error {
 	return s.validateRequestHost(req)
 }
 
-// getIsolationMode 获取连接池隔离模式
-// 从配置中读取，无效值回退到 provider_proxy 模式
-//
-// 返回:
-//   - string: 隔离模式（proxy/provider/provider_proxy）
+// getIsolationMode returns proxy, provider, or provider_proxy.
+// Missing or invalid settings use provider_proxy.
 func (s *Client) getIsolationMode() string {
 	if s.options() == nil {
 		return "provider_proxy"
@@ -165,8 +157,7 @@ func (s *Client) getIsolationMode() string {
 	}
 }
 
-// maxUpstreamClients 获取最大客户端缓存数量
-// 从配置中读取，无效值使用默认值。
+// maxUpstreamClients returns the configured cache limit or the default for nonpositive values.
 func (s *Client) maxUpstreamClients() int {
 	if s.options() == nil {
 		return defaultMaxUpstreamClients
@@ -177,8 +168,7 @@ func (s *Client) maxUpstreamClients() int {
 	return defaultMaxUpstreamClients
 }
 
-// clientIdleTTL 获取客户端空闲回收阈值
-// 从配置中读取，无效值使用默认值。
+// clientIdleTTL returns the configured idle lifetime or the default for nonpositive values.
 func (s *Client) clientIdleTTL() time.Duration {
 	if s.options() == nil {
 		return time.Duration(defaultClientIdleTTLSeconds) * time.Second
@@ -189,22 +179,10 @@ func (s *Client) clientIdleTTL() time.Duration {
 	return time.Duration(defaultClientIdleTTLSeconds) * time.Second
 }
 
-// resolvePoolSettings 解析连接池配置
-// 根据隔离策略和提供商并发数动态调整连接池参数
-//
-// 参数:
-//   - isolation: 隔离模式
-//   - providerConcurrency: 提供商并发限制
-//
-// 返回:
-//   - poolSettings: 连接池配置
-//
-// 说明:
-//   - 提供商隔离模式下，连接池大小与提供商并发数对应
-//   - 这确保了单提供商不会占用过多连接资源
+// resolvePoolSettings sizes provider-isolated pools to a positive provider concurrency limit.
+// Other pools use the configured global limits.
 func (s *Client) resolvePoolSettings(isolation string, providerConcurrency int) poolSettings {
 	settings := defaultPoolSettings(s.options())
-	// 提供商隔离模式下，根据提供商并发数调整连接池大小
 	if (isolation == "provider" || isolation == "provider_proxy") && providerConcurrency > 0 {
 		settings.MaxIdleConns = providerConcurrency
 		settings.MaxIdleConnsPerHost = providerConcurrency
@@ -221,7 +199,7 @@ func (s *Client) applyProfilePoolSettings(settings poolSettings, profile upstrea
 			settings.ResponseHeaderTimeout = time.Duration(s.options().OpenAIResponseHeaderTimeout) * time.Second
 		}
 	case upstream.HTTPUpstreamProfileGrok:
-		// Grok 首字节可能因容量压力阻塞，独立限制响应头等待；收到头后的流不受影响。
+		// Bound the Grok response-header wait separately from the stream after headers arrive.
 		settings.ResponseHeaderTimeout = 120 * time.Second
 		if s != nil && s.options() != nil {
 			settings.ResponseHeaderTimeout = time.Duration(s.options().GrokResponseHeaderTimeout) * time.Second
@@ -332,28 +310,15 @@ func (s *Client) recordOpenAIHTTP2Success(profile upstream.HTTPUpstreamProfile, 
 	s.transportPolicy.ObserveSuccess(string(profile), protocolMode, proxyKey)
 }
 
-// normalizeProxyURL 标准化代理 URL
-// 处理空值和解析错误，返回标准化的键和解析后的 URL
-//
-// 参数:
-//   - raw: 原始代理 URL 字符串
-//
-// 返回:
-//   - string: 标准化的代理键（空返回 "direct"）
-//   - *url.URL: 解析后的 URL（空返回 nil）
-//   - error: 非空代理 URL 解析失败时返回错误（禁止回退到直连）
+// normalizeProxyURL returns a canonical cache key and parsed proxy URL.
+// Empty input returns "direct" and nil; invalid nonempty input returns an error.
 func normalizeProxyURL(raw string) (string, *url.URL, error) {
 	return proxyinfra.NormalizePoolKey(raw)
 }
 
-// defaultPoolSettings 获取默认连接池配置
-// 读取传入参数，无效值使用常量定义的默认值。
-//
-// 参数:
-//   - cfg: 传输参数
-//
-// 返回:
-//   - poolSettings: 连接池配置
+// defaultPoolSettings applies valid options over the defaults.
+// Zero MaxConnsPerHost removes the connection cap; zero ResponseHeaderTimeout
+// disables the header timeout. Other numeric options require positive values.
 func defaultPoolSettings(cfg *Options) poolSettings {
 	maxIdleConns := defaultMaxIdleConns
 	maxIdleConnsPerHost := defaultMaxIdleConnsPerHost
@@ -388,7 +353,7 @@ func defaultPoolSettings(cfg *Options) poolSettings {
 	}
 }
 
-// New 创建唯一传输适配器，参数读取和底层连接池各自保持原作用域。
+// New creates a client with its own upstream pool and reads options through source.
 func New(source func() *Options) *Client {
 	return &Client{source: source, pool: httpclient.NewUpstreamPool()}
 }
@@ -400,7 +365,7 @@ func (s *Client) options() *Options {
 	return s.source()
 }
 
-// transportOptions 将平台和配置转为一次执行使用的技术快照。
+// transportOptions resolves pool, TLS, redirect, and HTTP/2 settings for one request.
 func (s *Client) transportOptions(req *http.Request, proxyURL string, providerID int64, concurrency int, tlsProfile *tlsfingerprint.Profile) (httpclient.UpstreamRequestOptions, error) {
 	proxyKey, parsedProxy, err := normalizeProxyURL(proxyURL)
 	if err != nil {
@@ -454,7 +419,7 @@ func (s *Client) transportOptions(req *http.Request, proxyURL string, providerID
 	return opts, nil
 }
 
-// Do 保留请求 Header、目标验证与平台策略的执行顺序。
+// Do applies Grok headers, validates the destination, and sends through the selected pool.
 func (s *Client) Do(req *http.Request, proxyURL string, providerID int64, concurrency int) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
@@ -467,7 +432,8 @@ func (s *Client) Do(req *http.Request, proxyURL string, providerID int64, concur
 	return s.pool.Do(req, opts)
 }
 
-// DoWithTLS 保留 nil/明文 HTTP 回退，并将已选定的指纹交给通用池。
+// DoWithTLS sends using the selected TLS fingerprint. A nil profile or a plain
+// HTTP URL uses Do, including its configured proxy.
 func (s *Client) DoWithTLS(req *http.Request, proxyURL string, providerID int64, concurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	if profile == nil || (req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http")) {
 		return s.Do(req, proxyURL, providerID, concurrency)
@@ -483,20 +449,20 @@ func (s *Client) DoWithTLS(req *http.Request, proxyURL string, providerID int64,
 	return s.pool.Do(req, opts)
 }
 
-// CloseIdleConnections 由应用在所有请求和后台副作用完成后调用。
+// CloseIdleConnections closes idle pooled connections when the pool supports it.
 func (s *Client) CloseIdleConnections() {
 	if closer, ok := s.pool.(interface{ CloseIdleConnections() }); ok {
 		closer.CloseIdleConnections()
 	}
 }
 
-// http2Options 将 HTTP/2 设置转换为 egress 的参数类型。
+// http2Options converts the configured HTTP/2 policy to egress options.
 func (s *Client) http2Options() egress.HTTP2Options {
 	v := s.resolveOpenAIHTTP2Settings()
 	return egress.HTTP2Options{Enabled: v.enabled, AllowProxyFallbackToHTTP1: v.allowProxyFallbackToHTTP1, FallbackErrorThreshold: v.fallbackErrorThreshold, FallbackWindow: v.fallbackWindow, FallbackTTL: v.fallbackTTL}
 }
 
-// requestPolicy 根据传输参数和请求标记构造出口策略。
+// requestPolicy combines transport settings with per-request egress restrictions.
 func (s *Client) requestPolicy(req *http.Request) egress.EgressPolicy {
 	input := egress.RequestPolicyInput{}
 	if s != nil {

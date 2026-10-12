@@ -143,7 +143,7 @@ func (e *EasyPay) MerchantIdentityMetadata() map[string]string {
 }
 
 func (e *EasyPay) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
-	// Payment mode determined by instance config, not payment type.
+	// The instance payment mode selects hosted checkout or API checkout.
 	// "popup" → hosted page (submit.php); "qrcode"/default → API call (mapi.php).
 	mode := e.config["paymentMode"]
 	if mode == paymentModePopup {
@@ -153,7 +153,7 @@ func (e *EasyPay) CreatePayment(ctx context.Context, req payment.CreatePaymentRe
 }
 
 // createRedirectPayment builds a submit.php URL for browser redirect.
-// No server-side API call — the user is redirected to EasyPay's hosted page.
+// The browser opens the hosted page; this method makes no server-side request.
 // TradeNo is empty; it arrives via the notify callback after payment.
 func (e *EasyPay) createRedirectPayment(req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	notifyURL, returnURL := e.resolveURLs(req)
@@ -181,7 +181,7 @@ func (e *EasyPay) createRedirectPayment(req payment.CreatePaymentRequest) (*paym
 	return &payment.CreatePaymentResponse{PayURL: payURL}, nil
 }
 
-// createAPIPayment calls mapi.php to get payurl/qrcode (existing behavior).
+// createAPIPayment calls mapi.php to obtain payment URLs and a QR payload.
 func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	notifyURL, returnURL := e.resolveURLs(req)
 	paymentType := e.upstreamPaymentType(req.PaymentType)
@@ -230,31 +230,11 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 	}, nil
 }
 
-// resolveEasyPayReturnedRef absolutizes a payurl/payurl2/qrcode reference that
-// mapi.php returned, resolving it against the instance's configured apiBase.
+// resolveEasyPayReturnedRef resolves mapi.php references beginning with "/" against apiBase.
+// Root-relative URLs need the provider origin before the frontend opens or QR-encodes them.
 //
-// EasyPay-compatible upstreams disagree on this field: some answer with a full
-// checkout URL, others with a site-root-relative path such as
-// "/api/pay/toapp/<order>". createRedirectPayment already builds an absolute URL
-// itself (apiBase + "/submit.php?..."), but the mapi.php branch stored whatever
-// came back verbatim, and nothing downstream repairs it —
-// sanitizeCreatePaymentResponseDetails only strips NUL bytes before the value is
-// persisted to pay_url/qr_code. The frontend then feeds qr_code straight into
-// QRCode.toCanvas (PaymentQRCodeView.renderQR), so a relative path becomes a QR
-// whose payload is a bare path: WeChat renders it as text, and pay_url resolves
-// against the gateway's own domain and 404s.
-//
-// That is precisely the outcome the Alipay provider already refuses to produce —
-// "Setting it as QRCode would let the frontend render an unscannable image"
-// (createPagePayTrade) — so EasyPay is brought in line with the same rule.
-//
-// Only references beginning with "/" are resolved. Anything carrying a scheme is
-// already actionable and is returned untouched, which covers both absolute
-// https:// checkout URLs and app deep links (weixin://, wxp://, alipays://). A
-// reference without a leading slash is left alone as well: QR payloads are
-// frequently opaque tokens rather than paths, and rewriting "OrderToken123" into
-// "<apiBase>/OrderToken123" would break a payload that works today — strictly
-// worse than the bug this fixes.
+// Absolute URLs, app deep links, and opaque tokens are returned unchanged.
+// Treating an opaque QR token as a path would corrupt its payload.
 func resolveEasyPayReturnedRef(apiBase, ref string) string {
 	trimmed := strings.TrimSpace(ref)
 	if !strings.HasPrefix(trimmed, "/") {
@@ -332,8 +312,8 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	return parseEasyPayQueryResponse(statusCode, body, tradeNo, e.MerchantIdentityMetadata())
 }
 
-// parseEasyPayQueryResponse 只把成功 HTTP 响应中的 JSON 对象解释为支付状态。
-// 错误响应不携带原始 body，避免错误页回显敏感信息进入日志或客户端。
+// parseEasyPayQueryResponse accepts payment status only from JSON objects in successful HTTP responses.
+// Errors omit the raw body so upstream error pages cannot leak sensitive values into logs or responses.
 func parseEasyPayQueryResponse(statusCode int, body []byte, fallbackTradeNo string, metadata map[string]string) (*payment.QueryOrderResponse, error) {
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("easypay query HTTP %d", statusCode)
@@ -397,14 +377,14 @@ func parseEasyPayQueryResponse(statusCode int, body []byte, fallbackTradeNo stri
 	}, nil
 }
 
-// VerifyNotification 检查易支付通知字段和签名后解析支付结果。
+// VerifyNotification validates EasyPay notification fields and signature before parsing the result.
 // @project-doc docs/domains/payments_and_entitlements.md#callback_security
 func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
 	values, err := url.ParseQuery(rawBody)
 	if err != nil {
 		return nil, fmt.Errorf("parse notify: %w", err)
 	}
-	// 易支付签名直接拼接参数值，验签前需要检查字段名和结构化字段的内容。
+	// EasyPay concatenates parameter values when signing, so validate names and structured values first.
 	params := make(map[string]string, len(values))
 	for key, entries := range values {
 		switch key {
@@ -412,13 +392,13 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 		default:
 			return nil, fmt.Errorf("unexpected notify param: %s", key)
 		}
-		// 每个字段对应一个值，重复字段会让不同处理步骤读取到不同内容。
+		// Reject duplicate values so every processing step sees the same field content.
 		if len(entries) != 1 {
 			return nil, fmt.Errorf("duplicate notify param: %s", key)
 		}
 		params[key] = entries[0]
 	}
-	// 商品名和扩展参数允许自由文本，订单标识等字段需要独立于参数分隔符。
+	// Names and extension parameters allow free text; structured fields must not contain parameter delimiters.
 	for _, key := range []string{"pid", "trade_no", "out_trade_no", "type", "money", "trade_status"} {
 		value := params[key]
 		if value == "" {

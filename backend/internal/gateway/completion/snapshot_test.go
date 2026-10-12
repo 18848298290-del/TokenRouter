@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResponseModelCompletionSnapshot 检查排队时复制的响应模型保持稳定。
+// TestResponseModelCompletionSnapshot checks that the copied response model survives later source changes.
 func TestResponseModelCompletionSnapshot(t *testing.T) {
 	source := &Input{Result: &Result{UpstreamModel: "sent", UpstreamResponseModel: "first"}}
 	captured := Snapshot(source)

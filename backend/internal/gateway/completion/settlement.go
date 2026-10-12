@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// SettlementInput 保存本次计算结果和主体信息，结算成功后传给通知和统计操作。
+// SettlementInput contains calculated charges and identities for settlement and its committed effects.
 type SettlementInput struct {
 	Cost                                                                                                       *CostBreakdown
 	User                                                                                                       *PayerSnapshot

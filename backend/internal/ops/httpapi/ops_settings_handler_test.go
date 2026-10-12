@@ -81,7 +81,7 @@ func TestOpsRuntimeLoggingHandler_UpdateAndResetSuccess(t *testing.T) {
 	}
 }
 
-// TestEmailReportRejectsLegacyProviderFields 检查报告设置拒绝 account_health_enabled，并接受 provider_health_enabled。
+// TestEmailReportRejectsLegacyProviderFields checks rejection of account_health_enabled and acceptance of provider_health_enabled.
 func TestEmailReportRejectsLegacyProviderFields(t *testing.T) {
 	handler := &OpsHandler{opsService: newRuntimeOpsService(t)}
 	router := gin.New()

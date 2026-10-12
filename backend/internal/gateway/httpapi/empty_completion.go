@@ -16,7 +16,7 @@ const (
 	openAIResponsesEmptyCompletedMessage = "OpenAI upstream returned an empty response.completed stream with no output and no usage"
 )
 
-// UpstreamErrorProvider 只传递已选提供商的安全观测字段。
+// UpstreamErrorProvider contains the selected provider's ID, name, and platform for error observation.
 type UpstreamErrorProvider struct {
 	ID             int64
 	Name, Platform string
@@ -53,8 +53,9 @@ func NewOpenAISilentRefusalFailoverError(c *gin.Context, provider *UpstreamError
 	}
 }
 
-// NewOpenAIResponsesEmptyCompletedFailoverError 将空 Responses 终态标记为可重试的上游异常。
-// 这类响应没有任何可见输出、用量或错误，不应作为成功请求结算。
+// NewOpenAIResponsesEmptyCompletedFailoverError marks an empty Responses terminal event as a retryable upstream
+// failure.
+// Callers use it for responses with no visible output, usage, or error, which cannot be settled as successful requests.
 func NewOpenAIResponsesEmptyCompletedFailoverError(c *gin.Context, provider *UpstreamErrorProvider, upstreamRequestID string) *forwardcore.UpstreamFailoverError {
 	providerID := int64(0)
 	providerName := ""

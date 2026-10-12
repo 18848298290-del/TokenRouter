@@ -11,28 +11,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// RequestableModel 描述客户端可请求的模型，以及模型广场应使用的定价模型。
+// RequestableModel describes an eligible client model and its marketplace pricing identity.
 type RequestableModel struct {
 	AttributeTargets []modelcatalog.Target
-	// UpstreamModels 保存已确认可请求的最终模型，供展示使用。
+	// UpstreamModels contains locally eligible final model names for display.
 	UpstreamModels []string
 	Protocols      []capability.ProtocolID
-	// NativeProtocols 是 Protocols 里每个承接该模型的提供商都能直接处理的协议，请求按这些协议进入时不经过协议转换。
+	// NativeProtocols contains protocols handled directly by every provider route supporting this model.
 	NativeProtocols  []capability.ProtocolID
 	ID               string
 	PricingModel     string
 	PricingAmbiguous bool
 }
 
-// RequestableModelsResult 是分组模型解析结果。
-// Restricted 用于区分分组白名单后的空结果与旧版“没有显式模型”语义。
+// RequestableModelsResult contains a group's resolved model catalogue.
+// Restricted marks whitelist restriction or a failed resolution, distinguishing those from an unconfigured catalogue.
 type RequestableModelsResult struct {
 	Models                    []RequestableModel
 	Restricted                bool
-	HadExplicitProviderModels bool // 用于保持 /v1/models 的历史响应字段结构。
+	HadExplicitProviderModels bool // Indicates whether supplied or provider-configured candidates existed.
 }
 
-// CatalogueRules 提供平台资格、模型映射和执行时观测到的模型信息。
+// CatalogueRules supplies configured models, mapping, and platform eligibility checks.
 type CatalogueRules interface {
 	ConfiguredModels() []string
 	Mapping() map[string]string
@@ -40,7 +40,7 @@ type CatalogueRules interface {
 	UpstreamModels(context.Context, string) []string
 }
 
-// CatalogueProvider 只向目录编排提供可分组和排序的只读快照。
+// CatalogueProvider is a read-only provider snapshot with group membership and catalogue rules.
 type CatalogueProvider struct {
 	provider.ProviderSnapshot
 	GroupIDs         []int64
@@ -53,14 +53,14 @@ type CataloguePolicies interface {
 	GetPricingConfigForGroup(context.Context, int64) (*PricingConfig, error)
 }
 
-// RequestableResolver 按分组策略校验已配置的候选及指定型号。
+// RequestableResolver validates configured candidates or selected models against group policy.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 type RequestableResolver struct {
 	GroupPolicies CataloguePolicies
 	Warn          func(string, ...any)
 }
 
-// requestableQuery 保存一次分组查询的规则和有限候选。
+// requestableQuery holds rules and finite candidates for one group query.
 type requestableQuery struct {
 	providers     []CatalogueProvider
 	protocols     []capability.ProviderProtocols
@@ -70,7 +70,7 @@ type requestableQuery struct {
 	result        RequestableModelsResult
 }
 
-// ResolveWithProviders 校验配置中的具体型号，提供商可由多分组查询预取。
+// ResolveWithProviders validates concrete configured models using the supplied, optionally prefetched providers.
 func (s *RequestableResolver) ResolveWithProviders(ctx context.Context, groupID *int64, platform string, baseModels []string, providers []CatalogueProvider) RequestableModelsResult {
 	query := s.prepare(ctx, groupID, platform, baseModels, providers)
 	result := query.result
@@ -85,7 +85,7 @@ func (s *RequestableResolver) ResolveWithProviders(ctx context.Context, groupID 
 	return result
 }
 
-// ResolveSelectedWithProviders 校验指定的有限型号集合，供单型号查询及其 Key 别名使用。
+// ResolveSelectedWithProviders checks selected names present in the configured candidate set.
 func (s *RequestableResolver) ResolveSelectedWithProviders(ctx context.Context, groupID *int64, platform string, selected []string, providers []CatalogueProvider) RequestableModelsResult {
 	query := s.prepare(ctx, groupID, platform, nil, providers)
 	result := query.result
@@ -140,7 +140,7 @@ func (s *RequestableResolver) prepare(ctx context.Context, groupID *int64, platf
 	return query
 }
 
-// ConfiguredRequestModelsFromProviders 聚合提供商配置中的具体请求型号。
+// ConfiguredRequestModelsFromProviders returns sorted, deduplicated models supplied by provider rules.
 func ConfiguredRequestModelsFromProviders(providers []CatalogueProvider, platform string) []string {
 	modelSet := make(map[string]struct{})
 	hasConfiguredModels := false
@@ -183,8 +183,8 @@ func filterRequestableModelProviders(providers []CatalogueProvider, platform str
 	return filtered
 }
 
-// mergeRequestableModelCandidates 合并提供商配置、分组策略和自定义列表中的具体名称。
-// 通配符用于后续匹配，返回列表包含具体的模型 ID。
+// mergeRequestableModelCandidates combines concrete names from provider rules, group policy, and custom lists.
+// Wildcard patterns constrain later matching; they are excluded from candidate IDs.
 func mergeRequestableModelCandidates(baseModels []string, providers []CatalogueProvider, policy *GroupPolicyView) []string {
 	candidates := make([]string, 0, len(baseModels)+16)
 	seen := make(map[string]struct{}, len(baseModels)+16)
@@ -210,7 +210,8 @@ func mergeRequestableModelCandidates(baseModels []string, providers []CatalogueP
 		if mapping := policy.ModelMapping; len(mapping) > 0 {
 			sources := sortedModelMappingSources(mapping)
 			appendModels(sources...)
-			// 通配来源无法枚举时，具体目标仍可作为请求名称接受资格检查。
+			// A concrete target remains eligible for validation as a request name even when its wildcard source cannot be
+			// enumerated.
 			for _, source := range sources {
 				appendModels(mapping[source])
 			}
@@ -243,7 +244,7 @@ func sortedModelMappingSources(mapping map[string]string) []string {
 	return models
 }
 
-// resolve 用本次查询的规则校验单个请求型号。
+// resolve validates one request model using this query's prepared rules.
 func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (RequestableModel, bool) {
 	policy, providers, billingSource := q.policy, q.providers, q.billingSource
 	groupMappedModel := requestedModel
@@ -261,7 +262,7 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 	upstreamModels := make([]string, 0, len(providers))
 	var attributeTargets []modelcatalog.Target
 	var protocols []capability.ProtocolID
-	// nativeByProtocol 记录协议是否在每个承接该模型的提供商上都走原生路线。
+	// nativeByProtocol is true only when every supporting provider uses the protocol directly.
 	nativeByProtocol := map[capability.ProtocolID]bool{}
 	for i := range providers {
 		provider := &providers[i]
@@ -371,7 +372,7 @@ func uniquePricingModel(models []string) (string, bool) {
 	return selected, false
 }
 
-// RequestableModelIDs 返回保持解析顺序的客户端模型 ID。
+// RequestableModelIDs returns client model IDs in resolution order.
 func RequestableModelIDs(models []RequestableModel) []string {
 	ids := make([]string, 0, len(models))
 	for _, model := range models {
@@ -380,7 +381,7 @@ func RequestableModelIDs(models []RequestableModel) []string {
 	return ids
 }
 
-// matchesCataloguePlatform 只把平台参数用于专用入口的强制过滤。
+// matchesCataloguePlatform applies the optional forced-platform filter.
 func matchesCataloguePlatform(provider *CatalogueProvider, platform string) bool {
 	return platform == "" || provider.Platform == platform
 }

@@ -6,21 +6,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// ParameterDefaults 是 app 提供的静态调度参数。
+// ParameterDefaults contains static scheduling settings supplied by app.
 type ParameterDefaults struct {
 	TopK    int
 	Weights policy.ScoreWeights
 	Runtime policy.RuntimeSettings
 }
 
-// Parameters 在构造时绑定参数来源，动态设置缓存在 SettingsRuntime 中。
+// Parameters binds setting sources at construction and caches dynamic values in SettingsRuntime.
 type Parameters struct {
 	defaults ParameterDefaults
 	source   RuntimeSettingSource
 	runtime  *SettingsRuntime
 }
 
-// DefaultParameters 返回未提供进程配置时使用的默认参数。
+// DefaultParameters returns defaults for use when process settings are absent.
 func DefaultParameters() ParameterDefaults {
 	return ParameterDefaults{TopK: 7, Weights: policy.ScoreWeights{Priority: 1, Load: 1, Queue: .7, ErrorRate: .8, TTFT: .5, Previous: 5, SessionSticky: 3}, Runtime: policy.RuntimeSettings{EwmaErrorRateAlpha: DefaultErrorRateAlpha, EwmaTTFTAlpha: DefaultTTFTAlpha, StickyEscape: policy.NormalizeStickyEscape(policy.StickyEscapeConfig{Enabled: true, TtftMs: 15000, ErrorRate: .5})}}
 }
@@ -29,7 +29,7 @@ func NewParameters(runtime *SettingsRuntime, source RuntimeSettingSource, defaul
 	return &Parameters{runtime: runtime, source: source, defaults: defaults}
 }
 
-// Defaults 返回静态参数的值副本，运行时覆盖作用于副本。
+// Defaults returns static settings by value so runtime overrides can be applied to a copy.
 func (p *Parameters) Defaults() ParameterDefaults {
 	if p == nil {
 		return DefaultParameters()
@@ -37,7 +37,7 @@ func (p *Parameters) Defaults() ParameterDefaults {
 	return p.defaults
 }
 
-// Runtime 从共享 TTL 缓存读取动态设置，接收者为 nil 时使用默认参数。
+// Runtime reads dynamic settings through the shared TTL cache, using defaults for a nil receiver.
 func (p *Parameters) Runtime(ctx context.Context) policy.RuntimeSettings {
 	if p == nil {
 		return (&SettingsRuntime{}).Load(ctx, nil, DefaultParameters().Runtime)
@@ -45,7 +45,7 @@ func (p *Parameters) Runtime(ctx context.Context) policy.RuntimeSettings {
 	return p.runtime.Load(ctx, p.source, p.defaults.Runtime)
 }
 
-// Effective 将传入的分组覆盖值应用到运行参数上。
+// Effective applies the supplied group overrides to runtime settings.
 func (p *Parameters) Effective(ctx context.Context, overrides policy.GroupAdvancedSchedulerOverrides) policy.EffectiveSettings {
 	if ctx == nil {
 		ctx = context.Background()
@@ -54,7 +54,7 @@ func (p *Parameters) Effective(ctx context.Context, overrides policy.GroupAdvanc
 	return policy.ResolveEffective(defaults.TopK, defaults.Weights, p.Runtime(ctx), overrides)
 }
 
-// TopK 返回全局候选数量设置，供诊断使用。
+// TopK returns the global candidate count used by diagnostics.
 func (p *Parameters) TopK(ctx context.Context) int {
 	base := p.Defaults().TopK
 	if base <= 0 {

@@ -20,11 +20,11 @@ const (
 	openAIWSStateStoreMaxEntriesPerMap  = 65536
 	openAIWSStateStoreRedisTimeout      = 3 * time.Second
 
-	// openAIWSInvalidEncryptedDigestsPerSession 是单会话摘要集合的存储自保护上限。
-	// 达到上限后跳过新摘要，该密文下次被上游拒绝时再执行常规恢复。
+	// openAIWSInvalidEncryptedDigestsPerSession bounds the stored digest set for each session.
+	// New digests beyond the limit use normal recovery if the upstream rejects that ciphertext again.
 	openAIWSInvalidEncryptedDigestsPerSession = 512
 
-	// StateStoreRedisTimeout 保持会话读写及旧 preemption 的同一技术预算。
+	// StateStoreRedisTimeout is the shared budget for session storage and preemption operations.
 	StateStoreRedisTimeout = openAIWSStateStoreRedisTimeout
 )
 
@@ -54,16 +54,16 @@ type openAIWSSessionConnBinding struct {
 	expiresAt time.Time
 }
 
-// openAIWSInvalidEncryptedBinding 记录一个会话中已被上游判定失效的
-// encrypted_content 摘要（invalid_encrypted_content lineage）。
+// openAIWSInvalidEncryptedBinding records digests of encrypted_content rejected
+// by the upstream for a session (invalid_encrypted_content lineage).
 type openAIWSInvalidEncryptedBinding struct {
 	digests   map[string]struct{}
 	expiresAt time.Time
 }
 
-// OpenAIWSStateStore 保存 WebSocket 响应与提供商、连接的对应关系。
-// response_id 到 provider_id 优先读取 Redis，并维护本地缓存，用于续接选择。
-// response_id 到 conn_id 保存在当前进程中，用于复用连接上下文。
+// OpenAIWSStateStore maps WebSocket responses to providers and connections.
+// Provider lookup checks the local cache before Redis to select a continuation provider.
+// Connection bindings are process-local because connection state belongs to this instance.
 type OpenAIWSStateStore interface {
 	BindResponseProvider(ctx context.Context, groupID int64, responseID string, providerID int64, ttl time.Duration) error
 	GetResponseProvider(ctx context.Context, groupID int64, responseID string) (int64, error)
@@ -83,11 +83,11 @@ type OpenAIWSStateStore interface {
 	GetSessionConn(groupID int64, sessionHash string) (string, bool)
 	DeleteSessionConn(groupID int64, sessionHash string)
 
-	// 按会话在进程内记录上游拒绝的 encrypted_content 摘要，后续 turn 提前剥离匹配密文。
+	// MarkSessionInvalidEncryptedContent records rejected ciphertext digests for stripping on later turns.
 	MarkSessionInvalidEncryptedContent(groupID int64, sessionHash string, digests []string, ttl time.Duration)
 	GetSessionInvalidEncryptedContentDigests(groupID int64, sessionHash string) map[string]struct{}
-	// HasAnySessionInvalidEncryptedContent 是热路径快速探测：全局无记录时
-	// 调用方可跳过会话哈希计算与摘要匹配。
+	// HasAnySessionInvalidEncryptedContent reports whether any session has recorded digests.
+	// A false result lets callers skip session hashing and digest matching.
 	HasAnySessionInvalidEncryptedContent() bool
 }
 
@@ -112,7 +112,7 @@ type defaultOpenAIWSStateStore struct {
 	lastCleanupUnixNano atomic.Int64
 }
 
-// NewOpenAIWSStateStore 创建默认 WS 状态存储。
+// NewOpenAIWSStateStore creates the in-process state maps and attaches an optional shared cache.
 func NewOpenAIWSStateStore(cache GatewayCache, observers ...func(string, ...any)) OpenAIWSStateStore {
 	store := &defaultOpenAIWSStateStore{
 		cache:                   cache,
@@ -264,7 +264,7 @@ func (s *defaultOpenAIWSStateStore) GetResponseProvider(ctx context.Context, gro
 	defer cancel()
 	providerID, err := s.cache.GetSessionProviderID(cacheCtx, groupID, cacheKey)
 	if err != nil || providerID <= 0 {
-		// 缓存读取失败不阻断主流程，按未命中降级。
+		// Treat cache read failures as misses so provider selection can continue.
 		return 0, nil
 	}
 	return providerID, nil
@@ -455,7 +455,7 @@ func (s *defaultOpenAIWSStateStore) MarkSessionInvalidEncryptedContent(groupID i
 	s.sessionInvalidEncrypted[key] = binding
 	s.sessionInvalidEncryptedMu.Unlock()
 
-	// HasAny/Get 在每个 OpenAI 请求热路径上抢同一把锁，日志 IO 必须在锁外。
+	// Hot-path digest readers share this lock; keep logging I/O outside it.
 	if overflowed > 0 {
 		s.log(
 			"invalid_encrypted_lineage_capacity_overflow dropped_digests=%d capacity=%d",
@@ -505,7 +505,7 @@ func (s *defaultOpenAIWSStateStore) maybeCleanup() {
 		return
 	}
 
-	// 每次限量清理，控制大规模缓存下的扫描耗时。
+	// Bound each cleanup scan to limit lock time as caches grow.
 	s.responseToProviderMu.Lock()
 	cleanupExpiredProviderBindings(s.responseToProvider, now, openAIWSStateStoreCleanupMaxPerMap)
 	s.responseToProviderMu.Unlock()
@@ -618,7 +618,7 @@ func ensureBindingCapacity[T any](bindings map[string]T, incomingKey string, max
 	if _, exists := bindings[incomingKey]; exists {
 		return
 	}
-	// 固定上限保护：淘汰任意一项，优先保证内存有界。
+	// Evict an arbitrary entry to keep memory bounded.
 	for key := range bindings {
 		delete(bindings, key)
 		return
@@ -639,7 +639,7 @@ func openAIHTTPResponseOwnerCacheKey(prefix, responseID string) string {
 	return prefix + hex.EncodeToString(sum[:])
 }
 
-// openAIWSResponseProviderMapKey 为本地缓存生成按分组隔离的键，与 Redis 使用相同分组规则。
+// openAIWSResponseProviderMapKey scopes local entries by group, matching Redis isolation.
 func openAIWSResponseProviderMapKey(groupID int64, responseID string) string {
 	return fmt.Sprintf("%d:%s", groupID, responseID)
 }

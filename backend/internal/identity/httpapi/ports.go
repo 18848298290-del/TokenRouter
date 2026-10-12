@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UserReader 只为当前认证读取用户状态。
+// UserReader loads current user state for authentication.
 type UserReader interface {
 	GetByID(context.Context, int64) (*identity.User, error)
 }
@@ -39,7 +39,7 @@ type (
 	}
 )
 
-// BindingMismatchEvent 记录 HTTP 会话绑定不匹配的用户和请求信息，供审计记录。
+// BindingMismatchEvent contains user and request details for a session-binding audit event.
 type BindingMismatchEvent struct {
 	UserID                                         int64
 	Email, Role, Method, Path, ClientIP, UserAgent string

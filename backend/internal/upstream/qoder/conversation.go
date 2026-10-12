@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// RequestMetadata 保存入站 API Key 标识、Claude Code 标记和请求头。
+// RequestMetadata holds the inbound API key ID, Claude Code marker, and headers.
 type RequestMetadata struct {
 	APIKeyID   int64
 	ClaudeCode bool
@@ -27,8 +27,8 @@ type QoderConversationStore struct {
 	Mu    sync.Mutex
 	Ttl   time.Duration
 	Items map[string]*QoderConversationState
-	// aliases 将外部可见的 response/session id 映射到规范 conversation key。
-	// OpenAI Responses previous_response_id 会使用这张表。
+	// Aliases maps external response or session IDs to canonical conversation keys.
+	// OpenAI Responses uses this map to resolve previous_response_id.
 	Aliases map[string]string
 }
 
@@ -41,7 +41,7 @@ type QoderConversationState struct {
 	LastUsageInput      int
 	LastUsageOutput     int
 	ExpiresAt           time.Time
-	Version             int64 // 版本号，用于检测 rollback 竞态
+	Version             int64 // Version used to detect stale rollbacks
 }
 
 type QoderConversationPlan struct {
@@ -331,8 +331,8 @@ func (p *QoderConversationPlan) RollbackAccepted() {
 	if current == nil {
 		return
 	}
-	// 只回滚本 plan 在 commitAccepted() 中实际写入的 accepted state。
-	// 如果其他 goroutine 已经在其后提交了新状态，则 current 会与 acceptedState 不一致，必须放弃回滚。
+	// Roll back the state written by this plan in CommitAccepted.
+	// A later commit from another goroutine makes this rollback stale.
 	if !QoderConversationStateEqual(current, p.AcceptedState) {
 		logger.LegacyPrintf("service.qoder_conversation", "WARN: stale rollback abandoned key=%s accepted_version=%d current_version=%d", p.Key, p.AcceptedState.Version, current.Version)
 		return
@@ -410,7 +410,7 @@ func (p *QoderConversationPlan) CommitFingerprints(fingerprints []string, usages
 		existing.SessionID == p.SessionID &&
 		existing.SystemFingerprint == p.SystemFingerprint &&
 		existing.ToolsFingerprint == p.ToolsFingerprint {
-		// 继承现有版本号并递增
+		// Increment the version so an older plan cannot roll back this commit.
 		newVersion = existing.Version + 1
 		if _, ok := QoderConversationPrefixLen(committedFingerprints, existing.MessageFingerprints); ok && len(existing.MessageFingerprints) > len(committedFingerprints) {
 			committedFingerprints = append([]string(nil), existing.MessageFingerprints...)
@@ -450,7 +450,7 @@ func (p *QoderConversationPlan) PreviousUsageSnapshot() (bool, int, int) {
 	if p.Store == nil || strings.TrimSpace(p.Key) == "" {
 		return hasUsage, lastUsageInput, lastUsageOutput
 	}
-	// 访问 store.items 必须持有锁，避免与 commitFingerprints 的写操作竞态
+	// Lock the map read against concurrent CommitFingerprints writes.
 	p.Store.Mu.Lock()
 	existing := p.Store.Items[p.Key]
 	p.Store.Mu.Unlock()

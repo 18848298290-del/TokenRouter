@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// RoutingState 复制入口或当前尝试的分组、协议和模型计划。
+// RoutingState holds the group snapshot, protocol, and model plan for an entry or attempt.
 type RoutingState struct {
 	group          *routing.Group
 	plan           routing.RoutePlan
@@ -25,7 +25,7 @@ func RoutingStateFromContext(ctx context.Context) RoutingState {
 	return state
 }
 
-// WithRoutingState 保存已构造的路由状态，身份和资金资格由准入步骤检查。
+// WithRoutingState stores prepared routing state. Admission checks identity and funding eligibility.
 func WithRoutingState(ctx context.Context, state RoutingState) context.Context {
 	return context.WithValue(ctx, routingStateKey{}, state)
 }

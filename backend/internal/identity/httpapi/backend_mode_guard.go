@@ -10,11 +10,11 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BackendModeReader 查询 Backend 模式是否启用。
+// BackendModeReader reports whether backend mode is enabled.
 type BackendModeReader interface{ IsBackendModeEnabled(context.Context) bool }
 
 // BackendModeUserGuard blocks non-admin users from accessing user routes when backend mode is enabled.
-// Must be placed AFTER JWT auth middleware so that the user role is available in context.
+// Register it after JWT authentication so the user role is available in context.
 func BackendModeUserGuard(settingService BackendModeReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService == nil || !settingService.IsBackendModeEnabled(c.Request.Context()) {

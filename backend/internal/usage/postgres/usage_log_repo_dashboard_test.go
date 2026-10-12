@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestRunDashboardQueriesSerializesNonPoolExecutor 验证事务等单连接执行器不会被并发复用。
+// TestRunDashboardQueriesSerializesNonPoolExecutor checks that single-connection executors are used sequentially.
 func TestRunDashboardQueriesSerializesNonPoolExecutor(t *testing.T) {
 	repo := &Store{}
 	var running atomic.Int32
@@ -31,7 +31,7 @@ func TestRunDashboardQueriesSerializesNonPoolExecutor(t *testing.T) {
 	require.False(t, overlapped.Load())
 }
 
-// TestRunDashboardQueriesParallelizesPoolExecutor 验证生产连接池仍会并行执行独立查询。
+// TestRunDashboardQueriesParallelizesPoolExecutor checks concurrent execution of independent pool queries.
 func TestRunDashboardQueriesParallelizesPoolExecutor(t *testing.T) {
 	repo := &Store{db: new(sql.DB)}
 	started := make(chan struct{}, 2)
@@ -61,10 +61,10 @@ func TestRunDashboardQueriesParallelizesPoolExecutor(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-// TestGetUserDashboardStatsUsesIndexableOwnedTeamScope 锁定先解析团队再分支扫描的查询形状。
+// TestGetUserDashboardStatsUsesIndexableOwnedTeamScope checks team resolution followed by separate indexed scans.
 func TestGetUserDashboardStatsUsesIndexableOwnedTeamScope(t *testing.T) {
 	db, mock := newSQLMock(t)
-	// 团队解析完成后，Key、用量和实时性能查询会并行执行。
+	// Allow independent key, usage, and rate queries to execute in any order after team resolution.
 	mock.MatchExpectationsInOrder(false)
 	repo := &Store{sql: db}
 

@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// creativeImageResponseBody 记录生图响应关闭时点，验证下载前已释放连接。
+// creativeImageResponseBody records closure to check that generation releases its connection before download.
 type creativeImageResponseBody struct {
 	io.Reader
 	closed bool
@@ -40,7 +40,7 @@ func TestParseCreativeOpenAIImageOutputs(t *testing.T) {
 	require.Equal(t, 0, outputs[0].Index)
 	require.Equal(t, []byte("png-bytes-1"), outputs[0].Bytes)
 	require.Equal(t, "image/png", outputs[0].Mime)
-	// 空 data 报 502 可重试上游错误。
+	// Empty data produces a retryable 502 upstream error.
 	_, err = ParseCreativeOpenAIImageOutputs([]byte(`{"data":[]}`))
 	require.Error(t, err)
 	var upstreamErr *creative.CreativeUpstreamError
@@ -49,9 +49,9 @@ func TestParseCreativeOpenAIImageOutputs(t *testing.T) {
 	require.True(t, upstreamErr.Retryable)
 }
 
-// TestBuildCreativeOpenAIRequestBody 校验编辑端点、鉴权请求和 b64 输出解析。
+// TestBuildCreativeOpenAIRequestBody checks generation and edit request fields.
 func TestBuildCreativeOpenAIRequestBody(t *testing.T) {
-	// generate：JSON。
+	// Generation uses JSON.
 	run := creative.CreativeRun{Operation: creative.CreativeOperationGenerate, ImageSize: "1K", RequestedOutputCount: 2}
 	payload := creative.CreativeRunPayload{
 		Prompt:     "hello",
@@ -70,21 +70,21 @@ func TestBuildCreativeOpenAIRequestBody(t *testing.T) {
 	require.Equal(t, "png", generateBody["output_format"])
 	require.NotContains(t, generateBody, "output_compression")
 	require.Equal(t, "opaque", generateBody["background"])
-	// DALL-E 使用 response_format 字段选择响应格式。
+	// DALL-E selects Base64 with response_format.
 	dalleBody, _, err := BuildCreativeOpenAIRequestBody(run, payload, "dall-e-3")
 	require.NoError(t, err)
 	var dalleJSON map[string]any
 	require.NoError(t, json.Unmarshal(dalleBody, &dalleJSON))
 	require.Equal(t, "b64_json", dalleJSON["response_format"])
 
-	// GPT Image 2 的 4K 横向尺寸使用 3840x2160 像素值。
+	// GPT Image 2 uses 3840x2160 for landscape 4K output.
 	run = creative.CreativeRun{Operation: creative.CreativeOperationGenerate, ImageSize: "4K", AspectRatio: "16:9", RequestedOutputCount: 1}
 	body, contentType, err = BuildCreativeOpenAIRequestBody(run, payload, "gpt-image-2")
 	require.NoError(t, err)
 	require.Equal(t, "application/json", contentType)
 	require.Contains(t, string(body), `"size":"3840x2160"`)
 
-	// inpaint：multipart，含 image/mask/model/prompt 字段。
+	// Inpaint uses multipart image, mask, model, and prompt fields.
 	run = creative.CreativeRun{Operation: creative.CreativeOperationInpaint, ImageSize: "1K", AspectRatio: "1:1", RequestedOutputCount: 2}
 	payload = creative.CreativeRunPayload{
 		Prompt:     "inpaint me",
@@ -113,7 +113,7 @@ func (b *creativeImageResponseBody) Close() error {
 	return nil
 }
 
-// TestOpenAIImageURLResults 检查两种模型变体和三种操作的下载重试次数与生图次数。
+// TestOpenAIImageURLResults checks download retries and generation counts across models and operations.
 func TestOpenAIImageURLResults(t *testing.T) {
 	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
 		for _, operation := range []string{"generate", "edit", "inpaint"} {
@@ -154,7 +154,7 @@ func TestOpenAIImageURLResults(t *testing.T) {
 	}
 }
 
-// TestOpenAIImageResultFailures 检查结果错误的分类和敏感下载地址过滤。
+// TestOpenAIImageResultFailures checks error classification and filtering of sensitive download addresses.
 func TestOpenAIImageResultFailures(t *testing.T) {
 	for _, test := range []struct {
 		name, body, code string
@@ -191,7 +191,7 @@ func TestOpenAIImageResultFailures(t *testing.T) {
 	}
 }
 
-// TestOpenAIImageBase64Preferred 验证已有 Base64 时无需下载 URL。
+// TestOpenAIImageBase64Preferred checks that decodable Base64 avoids a URL download.
 func TestOpenAIImageBase64Preferred(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		target := &Target{OpenAI: &OpenAIOptions{FetchImage: func(context.Context, string) (string, error) {

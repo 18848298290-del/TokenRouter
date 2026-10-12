@@ -68,12 +68,12 @@ func CurrencyMinorUnit(currency string) int {
 	return paymentCurrencyAmountUnitFor(currency).apiMinorUnit
 }
 
-// CurrencyMaxFractionDigits 返回支付金额允许展示和输入的小数位数。
+// CurrencyMaxFractionDigits returns the fractional precision allowed for payment input and display.
 func CurrencyMaxFractionDigits(currency string) int {
 	return paymentCurrencyAmountUnitFor(currency).maxFractionDigits
 }
 
-// FormatAmountForCurrency 按币种允许的小数位格式化支付金额。
+// FormatAmountForCurrency formats a payment amount with the currency precision.
 func FormatAmountForCurrency(amount float64, currency string) string {
 	return decimal.NewFromFloat(amount).StringFixed(int32(CurrencyMaxFractionDigits(currency)))
 }
@@ -117,17 +117,17 @@ func MinorUnitToAmount(value int64, currency string) float64 {
 	return decimal.NewFromInt(value).Div(factor).InexactFloat64()
 }
 
-// YuanToFen 将人民币金额字符串换算为分。
+// YuanToFen converts a CNY amount string to fen.
 func YuanToFen(yuanStr string) (int64, error) {
 	return AmountToMinorUnit(yuanStr, DefaultPaymentCurrency)
 }
 
-// FenToYuan 将人民币分值换算为元。
+// FenToYuan converts fen to yuan.
 func FenToYuan(fen int64) float64 {
 	return MinorUnitToAmount(fen, DefaultPaymentCurrency)
 }
 
-// ProviderConfigCurrency 读取 Stripe 和 Airwallex 的配置币种，其他渠道或无效配置使用 CNY。
+// ProviderConfigCurrency reads the Stripe or Airwallex currency, using CNY for other providers or invalid settings.
 func ProviderConfigCurrency(providerKey string, cfg map[string]string) string {
 	switch strings.TrimSpace(providerKey) {
 	case TypeStripe, TypeAirwallex:

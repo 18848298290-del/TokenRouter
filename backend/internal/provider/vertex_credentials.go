@@ -50,7 +50,8 @@ func VertexServiceAccountJSON(provider *Record) ([]byte, error) {
 	return nil, errors.New("service_account_json not found in credentials")
 }
 
-// VertexProjectID 优先使用配置的 project，解析失败时返回空字符串。
+// VertexProjectID prefers the configured project ID, then parses service account credentials; failures return
+// an empty string.
 func (r *Record) VertexProjectID(parseProject func([]byte) (string, error)) string {
 	if r == nil {
 		return ""

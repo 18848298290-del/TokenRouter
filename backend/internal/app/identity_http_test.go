@@ -33,7 +33,7 @@ type userHandlerEmailCacheStub struct {
 	data *identitycore.VerificationCodeData
 }
 
-// userHandlerSettingRepoStub 通过 GetValue 开启测试中的邮箱换绑设置。
+// userHandlerSettingRepoStub supplies email-change settings through GetValue.
 type userHandlerSettingRepoStub struct {
 	settings.Repository
 	values map[string]string
@@ -139,9 +139,9 @@ func TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, []int64{29}, refreshTokenCache.revokedUserIDs)
-	// resolvedTokenVersion 从 email 和 password_hash 的指纹推导 JWT token_version，
-	// 内存中的 TokenVersion 自增值无需写回 users 表。
-	// 会话撤销通过上面的 refresh session 清理完成。
+	// resolvedTokenVersion derives JWT token_version from email and password_hash fingerprints.
+	// The in-memory TokenVersion increment does not need a users-table write.
+	// Session revocation is handled by the refresh-session cleanup asserted above.
 	require.Equal(t, int64(7), repo.user.TokenVersion)
 
 	var resp struct {
@@ -155,7 +155,7 @@ func TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens(t *testing.T) {
 	require.Equal(t, "All sessions have been revoked. Please log in again.", resp.Data.Message)
 }
 
-// newUserProfileCore 让资料更新的异步副作用由本测试拥有，退出前等待完成。
+// newUserProfileCore owns asynchronous profile updates and waits for them during test cleanup.
 func newUserProfileCore(t *testing.T, users identitycore.UserRepository) *identitycore.UserService {
 	t.Helper()
 	tasks := lifecycle.NewTasks()
@@ -167,7 +167,7 @@ func newUserProfileCore(t *testing.T, users identitycore.UserRepository) *identi
 	return identitycore.NewUserService(users, nil, nil, nil, tasks.Go)
 }
 
-// newUserBindingAuth 为资料测试绑定会话和邮箱验证函数，数据库连接设为 nil。
+// newUserBindingAuth binds session and email verification with a nil database connection for profile tests.
 func newUserBindingAuth(users identitycore.UserRepository, refresh identitycore.RefreshTokenCache, cfg *config.Config, settings identitycore.AuthSettings, email identitycore.AuthEmail) *identitycore.AuthService {
 	options := &identitycore.AuthOptions{JWT: identitycore.SessionOptions{Secret: cfg.JWT.Secret, ExpireHour: cfg.JWT.ExpireHour}}
 	deps := &identitycore.AuthDependencies{Users: users, RefreshTokens: refresh, Options: options, Settings: settings, Email: email}
@@ -177,7 +177,7 @@ func newUserBindingAuth(users identitycore.UserRepository, refresh identitycore.
 	return core
 }
 
-// newUserBindingSettings 组合身份设置读取器，在调用时读取邮箱换绑开关。
+// newUserBindingSettings combines identity readers that check the email-change setting on each call.
 func newUserBindingSettings(repo settings.Repository, cfg *config.Config) *identityAuthSettings {
 	store := settings.New(repo)
 	return provideIdentityAuthSettings(provideIdentitySettings(store), provideGrantSettings(store, cfg, nil), provideSiteDisplay(store, cfg), provideOAuthSettings(store, cfg), providePromotionSettings(store))
@@ -880,10 +880,10 @@ func TestUserHandlerUnbindIdentityRevokesAllUserSessionsWhenAuthServiceConfigure
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, []int64{23}, refreshTokenCache.revokedUserIDs)
-	// 会话撤销通过 refresh session 清理完成。
-	// resolvedTokenVersion 从 email 和 password_hash 指纹推导 token_version，
-	// 内存中的 TokenVersion 无需写回 users 表。
-	// 此处检查会话清理后用户行保持不变。
+	// Refresh-session cleanup revokes sessions.
+	// resolvedTokenVersion derives token_version from email and password_hash fingerprints,
+	// so the in-memory TokenVersion needs no users-table write.
+	// The user row remains unchanged after session cleanup.
 	require.Equal(t, int64(4), repo.user.TokenVersion)
 }
 
@@ -954,7 +954,7 @@ func TestUserHandlerBindEmailIdentityRejectsWrongCurrentPasswordForBoundEmail(t 
 		},
 	}
 	emailService := identitycore.NewEmailChallenges(emailCache, nil)
-	// 换绑主邮箱需要开启 user_email_change_enabled，关闭时在校验密码前返回 403。
+	// Enable user_email_change_enabled to reach password validation; a disabled setting returns 403 first.
 	settingService := newUserBindingSettings(&userHandlerSettingRepoStub{values: map[string]string{
 		identitycore.SettingKeyUserEmailChangeEnabled: "true",
 	}}, cfg)
@@ -1026,7 +1026,7 @@ func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 	require.Contains(t, resp.Data.AuthorizeURL, "redirect=%2Fsettings%2Fprofile")
 }
 
-// ConsumeRefreshToken 返回未找到凭据的结果，与此桩的读取结果一致。
+// ConsumeRefreshToken reports a missing credential, matching this stub's read result.
 func (s *userHandlerRefreshTokenCacheStub) ConsumeRefreshToken(context.Context, string) (bool, error) {
 	return false, nil
 }

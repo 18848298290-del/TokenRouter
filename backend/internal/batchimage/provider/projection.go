@@ -18,13 +18,13 @@ const (
 )
 
 type (
-	// Provider 是批量图片执行使用的提供商记录。
+	// Provider is the provider record used to execute batch image jobs.
 	Provider = provider.Record
-	// GeminiTokenCache 缓存 Gemini 访问令牌。
+	// GeminiTokenCache caches Gemini access tokens.
 	GeminiTokenCache = provider.AccessTokenCache
 )
 
-// BatchImageProvider 定义图片作业的提交、轮询、取消、结果读取和资源清理。
+// BatchImageProvider submits, polls, cancels, reads results, and cleans up image jobs.
 type BatchImageProvider interface {
 	Name() string
 	SupportsProvider(*Provider) bool
@@ -35,7 +35,7 @@ type BatchImageProvider interface {
 	Cleanup(context.Context, *batchimage.BatchImageJob, *Provider, batchimage.CleanupTarget) error
 }
 
-// batchImageProviderAPIKey 返回去除首尾空白后的提供商 API Key。
+// batchImageProviderAPIKey returns the trimmed provider API key, or empty for nil.
 func batchImageProviderAPIKey(value *Provider) string {
 	if value == nil {
 		return ""
@@ -43,7 +43,7 @@ func batchImageProviderAPIKey(value *Provider) string {
 	return strings.TrimSpace(value.GetCredential("api_key"))
 }
 
-// resolveBatchProtocol 返回提供商匹配的批量图片协议及匹配结果。
+// resolveBatchProtocol returns the matched upstream batch protocol and whether a route exists.
 func resolveBatchProtocol(value *Provider) (capability.ProtocolID, bool) {
 	plan := routing.Plan(routing.PlanInput{ClientProtocol: capability.ProtocolImageBatches})
 	candidate, ok := plan.ResolveCandidate(value.RoutingSnapshot())

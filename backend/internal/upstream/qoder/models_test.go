@@ -16,7 +16,6 @@ func TestDefaultModels(t *testing.T) {
 		"qwen3.8-max",
 		"qwen3.7-max",
 		"qwen3.7-plus",
-		// 默认模型接口需要列出这些路由。
 		"kimi-k3",
 		"kimi-k2.7-code",
 		"glm-5.3",

@@ -363,7 +363,7 @@ func (a *Airwallex) Refund(ctx context.Context, req payment.RefundRequest) (*pay
 	return refundResp, nil
 }
 
-// QueryRefund 查询 Airwallex 退款单当前状态，用于 REFUND_PENDING 后的人工最终确认。
+// QueryRefund reads the current Airwallex refund status for local finalization.
 func (a *Airwallex) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
 	refundID := strings.TrimSpace(req.RefundID)
 	if refundID == "" {

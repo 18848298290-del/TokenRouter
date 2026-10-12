@@ -19,14 +19,14 @@ const (
 
 var ErrSessionIsolationConflict = infraerrors.Forbidden("SESSION_ISOLATION_CONFLICT", SessionIsolationConflictMessage)
 
-// OwnerStore 原子记录首次会话归属并更新有效期。
+// OwnerStore supports atomic first-owner binding and expiry refresh.
 type OwnerStore interface {
 	SetSessionOwnerGroupID(context.Context, int64, string, string, int64, time.Duration) (bool, error)
 	GetSessionOwnerGroupID(context.Context, int64, string, string) (int64, error)
 	RefreshSessionOwnerTTL(context.Context, int64, string, string, time.Duration) error
 }
 
-// IsolationInput 不携带完整 Key 或分组实体。
+// IsolationInput identifies the user, target group, and session to check.
 type IsolationInput struct {
 	UserID, GroupID int64
 	Source, Hash    string
@@ -34,7 +34,8 @@ type IsolationInput struct {
 	TTL             time.Duration
 }
 
-// EnsureIsolation 根据用户、最终分组和会话标识检查会话归属。
+// EnsureIsolation records the first group to use a session.
+// It rejects a different target group when that target has isolation enabled.
 func EnsureIsolation(ctx context.Context, cache OwnerStore, input IsolationInput) error {
 	userID, source, sessionHash, ttl := input.UserID, input.Source, input.Hash, input.TTL
 	source = strings.TrimSpace(source)
@@ -49,7 +50,7 @@ func EnsureIsolation(ctx context.Context, cache OwnerStore, input IsolationInput
 	targetGroupID := input.GroupID
 	targetIsolationEnabled := input.Enabled
 
-	// 指定会话先尝试登记首次所属分组，包括未开启隔离的分组。
+	// Record the first group even when it has isolation disabled.
 	written, err := cache.SetSessionOwnerGroupID(ctx, userID, source, sessionHash, targetGroupID, ttl)
 	if err != nil {
 		return err
@@ -60,7 +61,7 @@ func EnsureIsolation(ctx context.Context, cache OwnerStore, input IsolationInput
 
 	ownerGroupID, err := cache.GetSessionOwnerGroupID(ctx, userID, source, sessionHash)
 	if err != nil {
-		// owner 在 SetNX 与 Get 之间过期时，允许再尝试一次首次绑定。
+		// Retry first-owner binding once in case the record expired between SetNX and Get.
 		written, setErr := cache.SetSessionOwnerGroupID(ctx, userID, source, sessionHash, targetGroupID, ttl)
 		if setErr != nil {
 			return setErr

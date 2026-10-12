@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// urlPattern 用于从 403 响应体中提取 URL（降级方案）。
+// urlPattern extracts an HTTPS link when structured error metadata is unavailable.
 var urlPattern = regexp.MustCompile(`https://[^\s"'\\]+`)
 
-// ClassifyForbiddenType 根据 403 响应体判断禁止类型。
+// ClassifyForbiddenType classifies a 403 body as validation, violation, or forbidden.
 func ClassifyForbiddenType(body string) string {
 	lower := strings.ToLower(body)
 	switch {
@@ -25,9 +25,9 @@ func ClassifyForbiddenType(body string) string {
 	}
 }
 
-// ExtractValidationURL 从 403 响应 JSON 中提取验证/申诉链接。
+// ExtractValidationURL reads a validation or appeal link from a 403 response.
 func ExtractValidationURL(body string) string {
-	// 1. 尝试结构化 JSON 提取: /error/details[*]/metadata/validation_url 或 appeal_url
+	// Prefer links in error.details metadata.
 	var parsed struct {
 		Error struct {
 			Details []struct {
@@ -46,14 +46,14 @@ func ExtractValidationURL(body string) string {
 		}
 	}
 
-	// 2. 降级：正则匹配 URL
+	// Raw URL extraction requires validation, verification, or appeal wording.
 	lower := strings.ToLower(body)
 	if !strings.Contains(lower, "validation") &&
 		!strings.Contains(lower, "verify") &&
 		!strings.Contains(lower, "appeal") {
 		return ""
 	}
-	// 先解码常见转义再匹配
+	// Decode escaped ampersands before extracting query parameters.
 	normalized := strings.ReplaceAll(body, `\u0026`, "&")
 	if m := urlPattern.FindString(normalized); m != "" {
 		return m

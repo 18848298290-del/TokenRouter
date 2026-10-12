@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	// INTERNAL 500 渐进惩罚：连续多轮全部返回特定 500 错误时的惩罚时长。
-	Internal500PenaltyTier1Duration  = 30 * time.Minute // 第 1 轮：临时不可调度 30 分钟
-	Internal500PenaltyTier2Duration  = 2 * time.Hour    // 第 2 轮：临时不可调度 2 小时
-	Internal500PenaltyTier3Threshold = 3                // 第 3+ 轮：永久禁用
+	// Escalate penalties after consecutive rounds of exhausted INTERNAL 500 retries.
+	Internal500PenaltyTier1Duration  = 30 * time.Minute // First round: pause for 30 minutes.
+	Internal500PenaltyTier2Duration  = 2 * time.Hour    // Second round: pause for two hours.
+	Internal500PenaltyTier3Threshold = 3                // Third and later rounds: set error status.
 
-	// CreditsExhaustedKey 是 model_rate_limits 中标记积分耗尽的特殊 key。
-	// 与普通模型限流完全同构：通过 SetModelRateLimit / isRateLimitActiveForKey 读写。
+	// CreditsExhaustedKey identifies exhausted AI Credits in model_rate_limits.
+	// It uses the same storage and expiry checks as model rate limits.
 	CreditsExhaustedKey      = "AICredits"
 	CreditsExhaustedDuration = 5 * time.Hour
 )
@@ -34,18 +34,18 @@ type AntigravityHealth struct {
 	Logf              func(string, ...any)
 }
 
-// Internal500CounterCache 追踪 Antigravity 提供商连续 INTERNAL 500 失败轮数。
+// Internal500CounterCache tracks consecutive exhausted INTERNAL 500 retry rounds.
 type Internal500CounterCache interface {
-	// IncrementInternal500Count 原子递增计数并返回当前值
+	// IncrementInternal500Count atomically increments and returns the count.
 	IncrementInternal500Count(ctx context.Context, providerID int64) (int64, error)
-	// ResetInternal500Count 清零计数器（成功响应时调用）
+	// ResetInternal500Count clears the count after a successful response.
 	ResetInternal500Count(ctx context.Context, providerID int64) error
 }
 
-// ApplyInternal500Penalty 根据连续 INTERNAL 500 轮次数应用渐进惩罚
-// count=1: temp_unschedulable 30 分钟
-// count=2: temp_unschedulable 2 小时
-// count>=3: SetError 永久禁用。
+// ApplyInternal500Penalty escalates the response to consecutive exhausted retry rounds.
+// The first round pauses scheduling for 30 minutes; the second pauses for two hours.
+// At three or more rounds, the provider enters error status.
+// Error status has no automatic cooldown expiry.
 func (s *AntigravityHealth) ApplyInternal500Penalty(
 	ctx context.Context, prefix string, provider *Record, count int64,
 ) {
@@ -81,7 +81,7 @@ func (s *AntigravityHealth) ApplyInternal500Penalty(
 	}
 }
 
-// HandleInternal500RetryExhausted 处理 INTERNAL 500 重试耗尽：递增计数器并应用惩罚。
+// HandleInternal500RetryExhausted increments the round counter and applies its penalty.
 func (s *AntigravityHealth) HandleInternal500RetryExhausted(
 	ctx context.Context, prefix string, provider *Record,
 ) {
@@ -97,7 +97,7 @@ func (s *AntigravityHealth) HandleInternal500RetryExhausted(
 	s.ApplyInternal500Penalty(ctx, prefix, provider, count)
 }
 
-// ResetInternal500Counter 成功响应时清零 INTERNAL 500 计数器。
+// ResetInternal500Counter clears the INTERNAL 500 count after a successful response.
 func (s *AntigravityHealth) ResetInternal500Counter(
 	ctx context.Context, prefix string, providerID int64,
 ) {
@@ -110,7 +110,7 @@ func (s *AntigravityHealth) ResetInternal500Counter(
 	}
 }
 
-// SetCreditsExhausted 标记提供商积分耗尽：写入 model_rate_limits["AICredits"] + 更新缓存。
+// SetCreditsExhausted stores an AICredits model rate limit and publishes the updated provider.
 func (s *AntigravityHealth) SetCreditsExhausted(ctx context.Context, provider *Record) {
 	if provider == nil || provider.ID == 0 {
 		return
@@ -125,7 +125,7 @@ func (s *AntigravityHealth) SetCreditsExhausted(ctx context.Context, provider *R
 		provider.ID, resetAt.UTC().Format(time.RFC3339))
 }
 
-// ClearCreditsExhausted 清除提供商的 AICredits 限流 key。
+// ClearCreditsExhausted removes the provider's AICredits rate limit.
 func (s *AntigravityHealth) ClearCreditsExhausted(ctx context.Context, provider *Record) {
 	if provider == nil || provider.ID == 0 || provider.Extra == nil {
 		return
@@ -146,14 +146,14 @@ func (s *AntigravityHealth) ClearCreditsExhausted(ctx context.Context, provider 
 	}
 }
 
-// SetModelRateLimitByModelName 使用官方模型 ID 设置模型级限流
-// 直接使用上游返回的模型 ID（如 claude-sonnet-4-5）作为限流 key
-// 返回是否已成功设置（若模型名为空或 repo 为 nil 将返回 false）。
+// SetModelRateLimitByModelName stores a rate limit under the upstream model ID.
+// The model ID is used directly, for example claude-sonnet-4-5.
+// It returns false for an empty model name, nil repository, or failed write.
 func SetModelRateLimitByModelName(ctx context.Context, repo AntigravityHealthStore, providerID int64, modelName, prefix string, statusCode int, resetAt time.Time, afterSmartRetry bool, logf func(string, ...any)) bool {
 	if repo == nil || modelName == "" {
 		return false
 	}
-	// 使用官方模型 ID 作为 key。
+	// Use the upstream model ID as the storage key.
 	if err := repo.SetModelRateLimit(ctx, providerID, modelName, resetAt); err != nil {
 		logf("%s status=%d model_rate_limit_failed model=%s error=%v", prefix, statusCode, modelName, err)
 		return false
@@ -185,13 +185,13 @@ func (s *AntigravityHealth) SetAntigravityModelRateLimits(ctx context.Context, r
 	return success
 }
 
-// UpdateProviderModelRateLimitInCache 立即更新 Redis 中提供商的模型限流状态。
+// UpdateProviderModelRateLimitInCache updates the record's model rate limit and publishes it.
 func (s *AntigravityHealth) UpdateProviderModelRateLimitInCache(ctx context.Context, provider *Record, modelKey string, resetAt time.Time) {
 	if s.Publish == nil || provider == nil || modelKey == "" {
 		return
 	}
 
-	// 更新提供商对象的 Extra 字段
+	// Update the record before publishing the snapshot.
 	if provider.Extra == nil {
 		provider.Extra = make(map[string]any)
 	}
@@ -207,7 +207,7 @@ func (s *AntigravityHealth) UpdateProviderModelRateLimitInCache(ctx context.Cont
 		"rate_limit_reset_at": resetAt.UTC().Format(time.RFC3339),
 	}
 
-	// 更新 Redis 快照
+	// Publish the updated snapshot.
 	if err := s.Publish(ctx, provider); err != nil {
 		s.Logf("[antigravity-Forward] cache_update_failed provider=%d model=%s err=%v", provider.ID, modelKey, err)
 	}

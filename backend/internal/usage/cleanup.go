@@ -15,16 +15,16 @@ const (
 	UsageCleanupStatusCanceled  = "canceled"
 )
 
-// UsageCleanupFilters 定义清理任务过滤条件
-// 时间范围为必填，其他字段可选
-// JSON 序列化用于存储任务参数
+// UsageCleanupFilters selects records for a persisted cleanup task.
+// The time range is required; other filters are optional.
+// Task parameters are stored as JSON.
 //
-// start_time/end_time 使用 RFC3339 时间格式
-// 以 UTC 或用户时区解析后的时间为准
+// start_time and end_time use RFC3339 timestamps,
+// with offsets resolved from UTC or the user's timezone before storage.
 //
-// 说明：
-// - nil 表示未设置该过滤条件
-// - 过滤条件均为精确匹配。
+// Optional filter rules:
+//   - nil leaves the field unrestricted.
+//   - Supplied fields use exact matching.
 type UsageCleanupFilters struct {
 	StartTime   time.Time `json:"start_time"`
 	EndTime     time.Time `json:"end_time"`
@@ -39,8 +39,8 @@ type UsageCleanupFilters struct {
 	BillingType *int8     `json:"billing_type,omitempty"`
 }
 
-// UsageCleanupTask 表示使用记录清理任务
-// 状态包含 pending/running/succeeded/failed/canceled。
+// UsageCleanupTask tracks deletion of usage records.
+// States are pending, running, succeeded, failed, and canceled.
 type UsageCleanupTask struct {
 	ID          int64
 	Status      string
@@ -56,19 +56,19 @@ type UsageCleanupTask struct {
 	UpdatedAt   time.Time
 }
 
-// UsageCleanupRepository 定义清理任务持久层接口。
+// UsageCleanupRepository persists cleanup tasks and deletes matching usage records.
 type UsageCleanupRepository interface {
 	CreateTask(ctx context.Context, task *UsageCleanupTask) error
 	ListTasks(ctx context.Context, params pagination.PaginationParams) ([]UsageCleanupTask, *pagination.PaginationResult, error)
-	// ClaimNextPendingTask 抢占下一条可执行任务：
-	// - 优先 pending
-	// - 若 running 超过 staleRunningAfterSeconds（可能由于进程退出/崩溃/超时），允许重新抢占继续执行
+	// ClaimNextPendingTask claims the next executable task:
+	//   - Select the oldest eligible task by creation time.
+	//   - Reclaim running tasks older than staleRunningAfterSeconds to resume interrupted work.
 	ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*UsageCleanupTask, error)
-	// GetTaskStatus 查询任务状态；若不存在返回 sql.ErrNoRows
+	// GetTaskStatus returns the task state or ErrCleanupTaskNotFound when absent.
 	GetTaskStatus(ctx context.Context, taskID int64) (string, error)
-	// UpdateTaskProgress 更新任务进度（deleted_rows）用于断点续跑/展示
+	// UpdateTaskProgress saves deleted_rows for progress display and resumed tasks.
 	UpdateTaskProgress(ctx context.Context, taskID int64, deletedRows int64) error
-	// CancelTask 将任务标记为 canceled（仅允许 pending/running）
+	// CancelTask marks pending or running tasks canceled.
 	CancelTask(ctx context.Context, taskID int64, canceledBy int64) (bool, error)
 	MarkTaskSucceeded(ctx context.Context, taskID int64, deletedRows int64) error
 	MarkTaskFailed(ctx context.Context, taskID int64, deletedRows int64, errorMsg string) error

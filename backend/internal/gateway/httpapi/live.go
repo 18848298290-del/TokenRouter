@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// LiveAPIKey 是 HTTP 准入使用的只读 Key 数据。
+// LiveAPIKey contains read-only key data for HTTP admission.
 type LiveAPIKey struct {
 	ID           int64
 	UserID       int64
@@ -40,8 +40,8 @@ type LiveSubject struct {
 }
 type LiveSubscription struct{ ID int64 }
 
-// LiveHTTPPorts 将认证、审核和资金准入绑定到应用唯一实例。
-// 异步执行接收会话记录的快照。
+// LiveHTTPPorts connects authentication, moderation, funding, and Live execution.
+// Asynchronous execution receives a snapshot of the session record.
 type LiveHTTPPorts interface {
 	APIKey(*gin.Context) (*LiveAPIKey, bool)
 	Subject(*gin.Context) (LiveSubject, bool)
@@ -59,7 +59,7 @@ type LiveHTTPPorts interface {
 	UpstreamStatus(error) int
 }
 
-// LiveHandler 独占 SDP、JSON、WebSocket 升级及错误响应。
+// LiveHandler handles SDP, JSON, WebSocket upgrades, and HTTP error output.
 type LiveHandler struct {
 	RequestLifetime
 	ports LiveHTTPPorts
@@ -67,7 +67,7 @@ type LiveHandler struct {
 
 func NewLiveHandler(ports LiveHTTPPorts) *LiveHandler { return &LiveHandler{ports: ports} }
 
-// Live 创建 ChatGPT Frameless Live 会话并返回 SDP 应答。
+// Live creates a ChatGPT Frameless Live session and returns its SDP answer.
 func (h *LiveHandler) Live(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -225,7 +225,7 @@ func (h *LiveHandler) WriteLiveCreateError(c *gin.Context, err error) {
 	}
 }
 
-// LiveSideband 为已认证调用方代理 Live 控制 WebSocket。
+// LiveSideband proxies the Live control WebSocket for an authenticated caller.
 func (h *LiveHandler) LiveSideband(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -283,7 +283,7 @@ func liveEnabledForAPIKey(apiKey *LiveAPIKey) bool {
 		apiKey.Group.AllowLive
 }
 
-// cloneLiveModelMapping 复制模型映射，输入为空时返回空映射。
+// cloneLiveModelMapping copies the mapping and returns an allocated empty map for empty input.
 func cloneLiveModelMapping(mapping map[string]string) map[string]string {
 	result := make(map[string]string, len(mapping))
 	maps.Copy(result, mapping)

@@ -16,7 +16,7 @@ import (
 func TestResolveProviderUpstreamModel_Antigravity(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity}}
-	// Antigravity 平台使用 DefaultAntigravityModelMapping
+	// Antigravity uses DefaultAntigravityModelMapping.
 	got := resolveProviderUpstreamModel(context.Background(), provider, "claude-sonnet-4-6")
 	require.Equal(t, "claude-sonnet-4-6", got)
 }

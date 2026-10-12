@@ -23,7 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// archiveHTTPFixture 组合提供商和代理测试接口，记录导入参数及列表查询。
+// archiveHTTPFixture records provider and proxy import inputs and list queries.
 type archiveHTTPFixture struct {
 	*managementMutationFixture
 	egress.ProxyAdministrator
@@ -173,8 +173,8 @@ func TestExportDataWithoutProxies(t *testing.T) {
 	require.Nil(t, resp.Data.Providers[0].ProxyKey)
 }
 
-// TestExportDataExcludesSparkShadow 验证导出时排除 spark 影子提供商
-// (影子无凭据、导入侧强制 credentials 非空,混入会产出无法还原的坏备份),并透出跳过计数。
+// TestExportDataExcludesSparkShadow checks that exports skip Spark shadows and report the skipped count.
+// Shadows have no credentials, so including them would produce backups rejected by import validation.
 func TestExportDataExcludesSparkShadow(t *testing.T) {
 	router, adminSvc := setupProviderDataRouter()
 
@@ -193,8 +193,8 @@ func TestExportDataExcludesSparkShadow(t *testing.T) {
 			Name:             "mother (Spark)",
 			Platform:         capability.PlatformOpenAI,
 			Type:             capability.ProviderTypeOAuth,
-			Credentials:      map[string]any{}, // 影子恒空凭据
-			ParentProviderID: &parentID,        // 影子标记
+			Credentials:      map[string]any{}, // Shadows have empty credentials.
+			ParentProviderID: &parentID,        // Identifies the shadow's parent.
 			QuotaDimension:   providercore.QuotaDimensionSpark,
 			Status:           billing.StatusActive,
 		},

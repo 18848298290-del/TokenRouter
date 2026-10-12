@@ -1,6 +1,6 @@
 package billing
 
-// 本文件覆盖 calculator.go、media_pricing.go 和 public_quote.go 的报价与结算一致性。
+// These cases check quote and settlement consistency across calculator.go, media_pricing.go, and public_quote.go.
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestMediaUnitPriceRejectsMissingPrice 验证缺少独立按张报价时不能生成通用单价。
+// TestMediaUnitPriceRejectsMissingPrice checks that missing per-image rates do not produce a guessed unit price.
 func TestMediaUnitPriceRejectsMissingPrice(t *testing.T) {
 	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"grok-imagine-video-1.5": {CatalogRules: pricing.CatalogRules{VideoPrices: map[string]float64{"480p": 0.08}}, TokenPricingAbsent: true},
@@ -36,7 +36,7 @@ func TestMediaUnitPriceRejectsMissingPrice(t *testing.T) {
 	require.InDelta(t, 0.4, video.ActualCost, 1e-12)
 }
 
-// TestPartialImageCardQuoteMatchesReservation 检查报价展示的尺寸和任务预占的单价一致。
+// TestPartialImageCardQuoteMatchesReservation checks that displayed sizes use the task reservation unit prices.
 func TestPartialImageCardQuoteMatchesReservation(t *testing.T) {
 	for _, oneK := range []float64{0, 0.1} {
 		t.Run(fmt.Sprint(oneK), func(t *testing.T) {
@@ -62,7 +62,7 @@ func TestPartialImageCardQuoteMatchesReservation(t *testing.T) {
 	}
 }
 
-// TestPerRequestMediaPathsShareCardPrices 将公开报价、任务单价与普通结算放在同一个场景验证。
+// TestPerRequestMediaPathsShareCardPrices compares public quotes, task unit prices, and request settlement.
 func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 	for _, mode := range []pricing.BillingMode{pricing.BillingModePerRequest, pricing.BillingModeImage} {
 		for _, defaultValue := range []*float64{nil, requestTestPrice(0), requestTestPrice(0.3)} {
@@ -113,7 +113,8 @@ func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 	}
 }
 
-// TestContextRequestCardHasNoFixedImageQuote 未知上下文不能将默认价或第一个区间当作固定图片价。
+// TestContextRequestCardHasNoFixedImageQuote checks that unknown context prevents treating a default or interval
+// rate as a fixed image price.
 func TestContextRequestCardHasNoFixedImageQuote(t *testing.T) {
 	low, high, base := 0.03, 0.10, 0.05
 	maxTokens := 128000

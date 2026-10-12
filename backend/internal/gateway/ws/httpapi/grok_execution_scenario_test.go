@@ -1,6 +1,6 @@
 package httpapi
 
-// Grok 执行场景覆盖 gateway/provider/model_policy.go 的模型解析、gateway/provider/health_observation.go 的健康处理和 gateway/httpapi/openai_response_output.go 的错误输出。
+// Grok execution scenarios cover model resolution, provider health updates, and HTTP error output.
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func TestGrokFinalUpstreamModelNormalization(t *testing.T) {
 	}
 }
 
-// TestGrokExplicitMappingPrecedesBuiltinNormalization 验证提供商映射目标随后才执行平台别名解析。
+// TestGrokExplicitMappingPrecedesBuiltinNormalization checks platform alias resolution after provider mapping.
 func TestGrokExplicitMappingPrecedesBuiltinNormalization(t *testing.T) {
 	direct := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -90,7 +90,7 @@ func TestGrokExplicitMappingPrecedesBuiltinNormalization(t *testing.T) {
 	require.Equal(t, "grok-latest", gatewayprovider.ExecutionModelPolicy(aliasTarget).UpstreamModel(context.Background(), "client-alias"))
 }
 
-// TestGrokRuntimeModelKeysUseFinalUpstreamID 验证封禁与限流状态不会按别名重复建键。
+// TestGrokRuntimeModelKeysUseFinalUpstreamID checks that aliases share blocking and rate-limit keys.
 func TestGrokRuntimeModelKeysUseFinalUpstreamID(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -109,11 +109,11 @@ func TestGrokRuntimeModelKeysUseFinalUpstreamID(t *testing.T) {
 	require.Equal(t, "grok-latest", gatewayprovider.ExecutionModelPolicy(provider).CanonicalSchedulingModel("client-alias"))
 	require.Equal(t, []string{"grok"}, gatewayprovider.ExecutionModelPolicy(provider).LimitKeys(context.Background(), "grok"))
 	require.Equal(t, "grok", (&provideradapter.ModelHealth{}).LimitKey(gatewayprovider.ExecutionRecord(provider), "grok", nil))
-	// 状态处理接收最终上游模型后不得再次命中 grok-4.5 -> grok-4.3。
+	// The final upstream model must not be remapped from grok-4.5 to grok-4.3 during health handling.
 	require.Equal(t, grok.DefaultResponsesModel, (&provideradapter.ModelHealth{}).LimitKey(gatewayprovider.ExecutionRecord(provider), grok.DefaultResponsesModel, nil))
 }
 
-// TestGrokModelNotFoundWritesFinalUpstreamID 验证 Grok 默认错误处理写入最终上游模型键。
+// TestGrokModelNotFoundWritesFinalUpstreamID checks the model key written by default error handling.
 func TestGrokModelNotFoundWritesFinalUpstreamID(t *testing.T) {
 	repo := &grokModelStateProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -142,7 +142,7 @@ func TestGrokModelNotFoundWritesFinalUpstreamID(t *testing.T) {
 	require.False(t, wsFixtureProviderBlocked(svc, provider))
 }
 
-// TestGrokTransientErrorBlocksOnlyFinalModel 验证 API Key 的连续瞬态错误只冷却最终模型。
+// TestGrokTransientErrorBlocksOnlyFinalModel checks that repeated API Key transient errors cool down the final model.
 func TestGrokTransientErrorBlocksOnlyFinalModel(t *testing.T) {
 	repo := &grokModelStateProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -173,7 +173,7 @@ func TestGrokTransientErrorBlocksOnlyFinalModel(t *testing.T) {
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
-// TestGrokCountTokensUsesCanonicalModel 验证 count-tokens 转换记录映射模型并发送最终模型。
+// TestGrokCountTokensUsesCanonicalModel checks that count-tokens records the mapped model and sends the final model.
 func TestGrokCountTokensUsesCanonicalModel(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{

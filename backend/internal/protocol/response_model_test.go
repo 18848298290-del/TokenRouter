@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResponseModelObserver 检查响应模型声明的优先级和缺失时的结果。
+// TestResponseModelObserver checks model declaration precedence and absent-model results.
 func TestResponseModelObserver(t *testing.T) {
 	t.Run("responses terminal wins", func(t *testing.T) {
 		var o ResponseModelObserver

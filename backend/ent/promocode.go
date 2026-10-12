@@ -17,19 +17,19 @@ type PromoCode struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
-	// 优惠码
+	// Promotion code
 	Code string `json:"code,omitempty"`
-	// 赠送余额金额
+	// Balance credit amount
 	BonusAmount float64 `json:"bonus_amount,omitempty"`
-	// 最大使用次数，0表示无限制
+	// Maximum uses; 0 means unlimited
 	MaxUses int `json:"max_uses,omitempty"`
-	// 已使用次数
+	// Number of uses
 	UsedCount int `json:"used_count,omitempty"`
-	// 状态: active, disabled
+	// Status: active, disabled
 	Status string `json:"status,omitempty"`
-	// 过期时间，null表示永不过期
+	// Expiration time; null means no expiration
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	// 备注
+	// Notes
 	Notes *string `json:"notes,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`

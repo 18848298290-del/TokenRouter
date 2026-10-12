@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPriorityCacheTTLUsesPricesRegardlessOfSource 检查各价格来源的 Fast TTL 金额和展示一致。
+// TestPriorityCacheTTLUsesPricesRegardlessOfSource checks Fast TTL cost and display parity across sources.
 func TestPriorityCacheTTLUsesPricesRegardlessOfSource(t *testing.T) {
 	for _, source := range []string{"models.dev", "local_supplement"} {
 		t.Run(source, func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPriorityCacheTTLUsesPricesRegardlessOfSource(t *testing.T) {
 	}
 }
 
-// TestPartialImageCardDoesNotDeclareMissingSizesFree 检查缺失尺寸的价卡按缺价处理，目录补全由应用层执行。
+// TestPartialImageCardDoesNotDeclareMissingSizesFree leaves missing sizes unpriced for application-level catalog lookup.
 func TestPartialImageCardDoesNotDeclareMissingSizesFree(t *testing.T) {
 	zero := 0.0
 	resolved := ResolvePriceCards(&ModelPricingEntry{BillingMode: BillingModeImage, Intervals: []PricingInterval{{TierLabel: "1K", PerRequestPrice: &zero}}}, nil, PricingSourceUnpriced, true)
@@ -48,7 +48,7 @@ func TestPartialImageCardDoesNotDeclareMissingSizesFree(t *testing.T) {
 	require.Zero(t, shown.ImagePrice1K)
 }
 
-// TestContextTierImageOverrides 检查图片价覆盖后的费用、展示区间和目录输入副本。
+// TestContextTierImageOverrides checks image overrides in costs, display intervals, and catalog copies.
 func TestContextTierImageOverrides(t *testing.T) {
 	input, imageInput, imageOutput, zero, multiplier := 2e-6, 1e-6, 3e-6, 0.0, 2.0
 	base := &ModelPricing{
@@ -125,7 +125,7 @@ func TestContextTierImageOverrides(t *testing.T) {
 	}
 }
 
-// TestPriceCardsPreserveInputsAndPricePresence 检查倍率继承后的费用、价格来源和输入副本，并区分免费与缺价。
+// TestPriceCardsPreserveInputsAndPricePresence checks inherited multipliers and distinguishes free from missing prices.
 func TestPriceCardsPreserveInputsAndPricePresence(t *testing.T) {
 	base := &ModelPricing{InputPricePerToken: 0.000001, SupportsServiceTier: true}
 	pricingConfigMultiplier := 1.5
@@ -149,7 +149,7 @@ func TestPriceCardsPreserveInputsAndPricePresence(t *testing.T) {
 	require.Equal(t, PricingSourceConfig, free.Source)
 }
 
-// TestZeroPricingTimeDoesNotEnablePricingTimeMultiplier 检查价卡分时规则使用 PricingAt，零值时倍率为 1。
+// TestZeroPricingTimeDoesNotEnablePricingTimeMultiplier checks that a zero PricingAt disables card time rules.
 func TestZeroPricingTimeDoesNotEnablePricingTimeMultiplier(t *testing.T) {
 	at := time.Date(2026, 6, 29, 2, 0, 0, 0, time.UTC)
 	card := &ModelPricingEntry{TimePricing: &TimePricingConfig{Timezone: "UTC", Periods: []TimePricingPeriod{{StartTime: "01:00", EndTime: "04:00", Multiplier: 2}}}}

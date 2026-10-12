@@ -5,14 +5,14 @@ import (
 )
 
 const (
-	// SortOrderAsc 表示升序排列。
+	// SortOrderAsc selects ascending order.
 	SortOrderAsc = "asc"
 
-	// SortOrderDesc 表示降序排列。
+	// SortOrderDesc selects descending order.
 	SortOrderDesc = "desc"
 )
 
-// PaginationParams 保存页码、每页数量和排序设置。
+// PaginationParams contains page, size, and sorting options.
 type PaginationParams struct {
 	Page      int
 	PageSize  int
@@ -20,7 +20,7 @@ type PaginationParams struct {
 	SortOrder string
 }
 
-// PaginationResult 保存总条数和分页信息。
+// PaginationResult contains total rows and page metadata.
 type PaginationResult struct {
 	Total    int64
 	Page     int
@@ -28,7 +28,7 @@ type PaginationResult struct {
 	Pages    int
 }
 
-// Offset 返回当前页在结果集中的起始位置。
+// Offset returns the zero-based offset, treating pages below one as the first page.
 func (p PaginationParams) Offset() int {
 	if p.Page < 1 {
 		p.Page = 1
@@ -36,7 +36,7 @@ func (p PaginationParams) Offset() int {
 	return (p.Page - 1) * p.Limit()
 }
 
-// Limit 返回每页数量，默认 20 条，上限 1000 条。
+// Limit returns the page size, defaulting to 20 and capping it at 1000.
 func (p PaginationParams) Limit() int {
 	if p.PageSize < 1 {
 		return 20
@@ -47,7 +47,8 @@ func (p PaginationParams) Limit() int {
 	return p.PageSize
 }
 
-// NormalizeSortOrder 将排序方向转换为 asc 或 desc，无效输入使用默认方向。
+// NormalizeSortOrder returns asc or desc, using defaultOrder for invalid input.
+// An invalid defaultOrder selects desc.
 func NormalizeSortOrder(order string, defaultOrder string) string {
 	switch strings.ToLower(strings.TrimSpace(defaultOrder)) {
 	case SortOrderAsc:
@@ -66,12 +67,12 @@ func NormalizeSortOrder(order string, defaultOrder string) string {
 	}
 }
 
-// NormalizedSortOrder 返回参数中的排序方向，无效输入使用默认方向。
+// NormalizedSortOrder normalizes the requested order with the supplied default.
 func (p PaginationParams) NormalizedSortOrder(defaultOrder string) string {
 	return NormalizeSortOrder(p.SortOrder, defaultOrder)
 }
 
-// ResultFromTotal 按总条数和分页参数计算总页数。
+// ResultFromTotal computes page metadata using the normalized limit.
 func ResultFromTotal(total int64, params PaginationParams) *PaginationResult {
 	pages := int(total) / params.Limit()
 	if int(total)%params.Limit() > 0 {
@@ -85,7 +86,7 @@ func ResultFromTotal(total int64, params PaginationParams) *PaginationResult {
 	}
 }
 
-// Slice 根据分页参数返回当前页的切片。
+// Slice returns the requested page, sharing the input's backing array.
 func Slice[T any](items []T, params PaginationParams) []T {
 	if len(items) == 0 {
 		return []T{}

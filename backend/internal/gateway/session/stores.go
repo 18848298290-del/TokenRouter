@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ErrReasoningContentNotFound 表示按 reasoning item id 查询缓存时未命中。
+// ErrReasoningContentNotFound indicates a cache miss for a reasoning item ID.
 var ErrReasoningContentNotFound = errors.New("reasoning content not found")
 
 // OpenAIWSSessionPreemptionCache is an optional GatewayCache capability. The
@@ -18,47 +18,40 @@ type OpenAIWSSessionPreemptionCache interface {
 	CompareAndDeleteOpenAIResponsesSessionWindow(ctx context.Context, groupID int64, sessionHash string, expected []byte) (bool, error)
 }
 
-// CyberSessionBlockStore 是 cyber 会话屏蔽表的存取接口。
-// rediscache 的 gatewayCache 通过原生可选能力适配接入，测试桩未实现时自动降级为关闭。
+// CyberSessionBlockStore reads and writes cyber session blocks.
+// AdaptCyberSessionBlockStore discovers this optional capability; caches lacking both supported interfaces disable blocking.
 type CyberSessionBlockStore interface {
 	SetCyberSessionBlocked(ctx context.Context, scopeKey string, keys []string, ttl time.Duration) error
 	IsCyberSessionScopeActive(ctx context.Context, scopeKey string) (bool, error)
 	FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error)
 }
 
-// GatewayCache 定义网关服务的缓存操作接口。
-// 提供粘性会话（Sticky Session）的存储、查询、刷新和删除功能。
-//
-// GatewayCache defines cache operations for gateway service.
-// Provides sticky session storage, retrieval, refresh and deletion capabilities.
+// GatewayCache stores sticky provider bindings and first-owner group records.
 type GatewayCache interface {
-	// GetSessionProviderID 获取粘性会话绑定的提供商 ID
-	// Get the provider ID bound to a sticky session
+	// GetSessionProviderID returns the provider bound to the sticky session.
 	GetSessionProviderID(ctx context.Context, groupID int64, sessionHash string) (int64, error)
-	// SetSessionProviderID 设置粘性会话与提供商的绑定关系
-	// Set the binding between sticky session and provider
+	// SetSessionProviderID binds a sticky session to a provider for the supplied TTL.
 	SetSessionProviderID(ctx context.Context, groupID int64, sessionHash string, providerID int64, ttl time.Duration) error
-	// RefreshSessionTTL 刷新粘性会话的过期时间
-	// Refresh the expiration time of a sticky session
+	// RefreshSessionTTL extends the sticky binding lifetime.
 	RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error
-	// DeleteSessionProviderID 删除粘性会话绑定，用于提供商不可用时主动清理
-	// Delete sticky session binding, used to proactively clean up when provider becomes unavailable
+	// DeleteSessionProviderID removes a binding, for example when its provider becomes unavailable.
 	DeleteSessionProviderID(ctx context.Context, groupID int64, sessionHash string) error
-	// SetSessionOwnerGroupID 首次记录指定会话所属分组，写入成功时返回 true。
+	// SetSessionOwnerGroupID records the first owner group and returns true when inserted.
 	SetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string, groupID int64, ttl time.Duration) (bool, error)
-	// GetSessionOwnerGroupID 读取指定会话首次所属的分组。
+	// GetSessionOwnerGroupID returns the session's first owner group.
 	GetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string) (int64, error)
-	// RefreshSessionOwnerTTL 刷新指定会话归属记录的有效期。
+	// RefreshSessionOwnerTTL extends the ownership record lifetime.
 	RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error
 }
 
-// ReasoningContentCache 为 Responses 转 Chat 提供可选的推理内容缓存。
+// ReasoningContentCache optionally supplies reasoning text for Responses-to-Chat conversion.
 type ReasoningContentCache interface {
 	SetReasoningContent(ctx context.Context, itemID string, content string, ttl time.Duration) error
 	GetReasoningContent(ctx context.Context, itemID string) (string, error)
 }
 
-// GrokVideoBillingCache 保存异步视频任务创建时的价格快照，并通过跨实例计费标记防止轮询重复扣费。
+// GrokVideoBillingCache stores creation-time price snapshots for asynchronous videos.
+// Shared billing claims prevent duplicate charges from polling across instances.
 type GrokVideoBillingCache interface {
 	SetGrokVideoPendingBilling(ctx context.Context, key string, payload []byte, ttl time.Duration) error
 	GetGrokVideoPendingBilling(ctx context.Context, key string) ([]byte, error)

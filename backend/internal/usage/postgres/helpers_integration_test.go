@@ -284,19 +284,19 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *api
 	return k
 }
 
-// testEntClient 返回共享 Ent 客户端，供内部提交事务的测试使用。
-// 测试结束后级联截断 users 及其依赖表，清理已提交的数据。
+// testEntClient returns the shared Ent client for tests that commit their own transactions.
+// Cleanup truncates users and dependent tables to remove committed test data.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	t.Cleanup(func() {
-		// 以 users 为根级联清理依赖数据，迁移预置的默认分组仍可供后续测试使用。
+		// Cascade from users to clear fixtures while retaining migration-seeded groups for later tests.
 		_, err := integrationDB.ExecContext(context.Background(), "TRUNCATE users RESTART IDENTITY CASCADE")
 		require.NoError(t, err, "清理集成测试提交的数据")
 	})
 	return integrationEntClient
 }
 
-// testEntTx 返回测试使用的 Ent 事务，测试结束后自动回滚。
+// testEntTx starts an Ent transaction and rolls it back during test cleanup.
 func testEntTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 
@@ -321,7 +321,7 @@ func (s *UsageLogRepoSuite) createUsageLog(user *identity.User, apiKey *apikey.A
 		UserID:       user.ID,
 		APIKeyID:     apiKey.ID,
 		ProviderID:   provider.ID,
-		RequestID:    uuid.New().String(), // 每条记录使用独立的请求 ID
+		RequestID:    uuid.New().String(), // Unique IDs prevent fixture deduplication.
 		Model:        "claude-3",
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,

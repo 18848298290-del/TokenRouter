@@ -149,7 +149,7 @@ func TestServerTimingCollectorIsRequestScoped(t *testing.T) {
 
 func TestServerTimingCollectorForUserUIMarker(t *testing.T) {
 	active := false
-	// 使用 allowlist 外的路径，确保采集行为只由用户端 UI 标记触发。
+	// Use a path outside the allowlist so the user UI marker is what triggers collection.
 	recorder := runServerTimingRequest(t, true, "/api/v1/settings/public", "", "1", "admin", func(c *gin.Context) {
 		active = timing.Active(c.Request.Context())
 		c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -157,7 +157,7 @@ func TestServerTimingCollectorForUserUIMarker(t *testing.T) {
 	if !active {
 		t.Fatal("collector was not attached for user UI marker")
 	}
-	// 即使路径不在用户 allowlist 内，管理员角色仍可收到耗时响应头。
+	// Administrators can receive collected timings outside the user allowlist.
 	if recorder.Header().Get(timing.HeaderName) == "" {
 		t.Fatal("admin timing header missing for user-UI-marked request")
 	}

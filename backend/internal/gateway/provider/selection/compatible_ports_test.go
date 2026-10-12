@@ -17,7 +17,7 @@ import (
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
-// openAIProviderLoadPlan 保存候选评分，供负载排序测试断言。
+// openAIProviderLoadPlan holds candidate scores for load-order assertions.
 type openAIProviderLoadPlan struct {
 	candidates []schedulercore.CandidateScore
 }
@@ -62,7 +62,7 @@ func openAIPlanScores(plan openAIProviderLoadPlan) map[int64]float64 {
 	return scores
 }
 
-// TestBuildOpenAIProviderLoadPlan_ResetWeightPrefersSoonestReset 验证 Reset 权重 > 0 时，会话窗口最早重置的提供商应获得更高分。
+// TestBuildOpenAIProviderLoadPlan_ResetWeightPrefersSoonestReset checks that positive reset weight favors the earliest window reset.
 func TestBuildOpenAIProviderLoadPlan_ResetWeightPrefersSoonestReset(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(1 * time.Hour)
@@ -78,7 +78,7 @@ func TestBuildOpenAIProviderLoadPlan_ResetWeightPrefersSoonestReset(t *testing.T
 	require.Greater(t, scores[2], scores[1], "重置时间最早的提供商（ID=2）得分更高")
 }
 
-// TestBuildOpenAIProviderLoadPlan_ResetWeightZeroNoEffect 检查 Reset 权重为 0 时，改变窗口重置时间是否保持分数相同。
+// TestBuildOpenAIProviderLoadPlan_ResetWeightZeroNoEffect checks that reset times do not affect scores when reset weight is zero.
 func TestBuildOpenAIProviderLoadPlan_ResetWeightZeroNoEffect(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(1 * time.Hour)
@@ -94,7 +94,7 @@ func TestBuildOpenAIProviderLoadPlan_ResetWeightZeroNoEffect(t *testing.T) {
 	require.Equal(t, scores[1], scores[2], "Reset 权重为 0 时两提供商得分相同")
 }
 
-// TestBuildOpenAIProviderLoadPlan_BillingRatesDoNotAffectScoreOrOrder 检查不同计费倍率下候选分数和排序是否相同。
+// TestBuildOpenAIProviderLoadPlan_BillingRatesDoNotAffectScoreOrOrder checks that billing multipliers do not change candidate scores or order.
 func TestBuildOpenAIProviderLoadPlan_BillingRatesDoNotAffectScoreOrOrder(t *testing.T) {
 	expensiveRate := 100.0
 	cheapRate := 0.01
@@ -132,7 +132,7 @@ func TestBuildOpenAIProviderLoadPlan_BillingRatesDoNotAffectScoreOrOrder(t *test
 	require.Equal(t, []int64{1, 2}, []int64{ranked[0].Provider.ID, ranked[1].Provider.ID})
 }
 
-// TestBuildOpenAIProviderLoadPlan_ResetWeightIgnoresNilWindow 验证无活跃窗口的提供商 reset 因子为 0，应低于拥有未来窗口的提供商。
+// TestBuildOpenAIProviderLoadPlan_ResetWeightIgnoresNilWindow checks that a missing window has zero reset factor and ranks below an upcoming reset.
 func TestBuildOpenAIProviderLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(2 * time.Hour)

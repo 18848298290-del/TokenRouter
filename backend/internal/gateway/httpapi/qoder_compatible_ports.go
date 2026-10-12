@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// QoderCompatibleTarget 提供执行、刷新和完成数据捕获接口。
+// QoderCompatibleTarget supports execution, credential refresh, and completion-data capture.
 type QoderCompatibleTarget interface {
 	Snapshot() provider.ProviderSnapshot
 	Forward(context.Context, *gin.Context, []byte, protocol.ProtocolID, string) (*forward.MessagesResult, error)
@@ -24,7 +24,7 @@ type QoderCompatibleTarget interface {
 	Completion(context.Context, QoderCompletionCapture) *completion.Input
 }
 
-// QoderCompatibleSelection 保存本次选择取得的槽位和反馈参数。
+// QoderCompatibleSelection exposes the selected target, acquired slot, and scheduling feedback.
 type QoderCompatibleSelection interface {
 	Target() QoderCompatibleTarget
 	Acquired() bool
@@ -34,14 +34,14 @@ type QoderCompatibleSelection interface {
 	Switched()
 }
 
-// QoderCompatibleExecution 提供提供商选择、路由和粘性会话接口。
+// QoderCompatibleExecution supplies provider selection, routing, and sticky-session operations.
 type QoderCompatibleExecution interface {
 	Select(context.Context, *int64, string, string, map[int64]struct{}, int64) (QoderCompatibleSelection, error)
 	Plan(context.Context, *apikey.APIKey, string) routing.RoutePlan
 	BindStickySession(context.Context, *int64, string, int64) error
 }
 
-// QoderCompletionCapture 在入队前取得原请求展示与资金参数，完成队列不持有 Gin。
+// QoderCompletionCapture carries request and funding data captured before queueing, independent of Gin.
 type QoderCompletionCapture struct {
 	Result                                                              *forward.MessagesResult
 	Key                                                                 *apikey.APIKey
@@ -51,7 +51,7 @@ type QoderCompletionCapture struct {
 	Pricing                                                             routing.PricingUsageFields
 }
 
-// QoderCompatibleOptions 注入唯一实例，不在 HTTP 构造时启动资源或复制缓存。
+// QoderCompatibleOptions supplies shared services and resources to the HTTP adapter.
 type QoderCompatibleOptions struct {
 	Execution QoderCompatibleExecution
 	Funding   interface {
@@ -71,7 +71,7 @@ type QoderCompatibleOptions struct {
 	MaySwitch         func(error) bool
 }
 
-// QoderCompatibleRuntime 只拥有兼容入口的 HTTP 适配与完成输入冻结。
+// QoderCompatibleRuntime adapts compatible HTTP requests and captures completion inputs.
 type QoderCompatibleRuntime struct {
 	options           QoderCompatibleOptions
 	concurrencyHelper *ConcurrencyHelper

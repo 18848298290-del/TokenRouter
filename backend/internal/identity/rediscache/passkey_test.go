@@ -28,7 +28,7 @@ func TestPasskeySessionStoreConsumesSessionOnce(t *testing.T) {
 	require.Equal(t, "login", consumed.Kind)
 	require.EqualValues(t, 42, consumed.UserID)
 
-	// challenge 被 GETDEL 消费后，同一 token 不能再次完成认证。
+	// A token consumed through GETDEL cannot complete authentication again.
 	_, err = store.Consume(ctx, token)
 	require.ErrorIs(t, err, identity.ErrPasskeySession)
 }

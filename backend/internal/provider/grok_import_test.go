@@ -63,12 +63,12 @@ func TestGrokSSOImportCredentialsPreservesRequestedBaseURL(t *testing.T) {
 
 	credentials := GrokSSOImportCredentials(built, reqCredentials)
 
-	// token 字段以兑换结果为准；base_url 是运营侧配置，必须保留请求里的自定义地址
+	// Use exchanged tokens while retaining the operator's custom endpoint.
 	require.Equal(t, "at-1", credentials["access_token"])
 	require.Equal(t, "https://relay.example.com/v1", credentials["base_url"])
 	require.Equal(t, true, credentials["header_override_enabled"])
 	require.Equal(t, map[string]any{"x-relay-key": "k"}, credentials["header_overrides"])
-	// 入参不被污染（req.Credentials 会被多个 worker 并发读取）
+	// Workers share the request credentials, so merging must leave that map unchanged.
 	require.Equal(t, "https://relay.example.com/v1", reqCredentials["base_url"])
 }
 
@@ -112,7 +112,7 @@ func TestGrokSSOImportWorkerRecoversPanicWithoutExposingToken(t *testing.T) {
 	defer func() { _ = oauthService.StopContext(context.Background()) }()
 	h := &GrokProviderImport{Authorization: oauthService, Options: GrokProviderImportOptions{LogError: func(string, ...any) {}}}
 
-	// worker 必须把 panic 转换为失败项，同时不能在响应中回显令牌。
+	// A worker panic becomes a failed item without disclosing the token in its response.
 	result := h.safeCreateProviderFromSSOToken(context.Background(), GrokSSOToOAuthRequest{}, sensitiveToken, 2, 3)
 	require.False(t, result.created)
 	require.Equal(t, 2, result.item.Index)

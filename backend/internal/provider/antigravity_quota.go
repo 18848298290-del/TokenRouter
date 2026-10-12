@@ -14,7 +14,7 @@ const (
 	ForbiddenTypeViolation  = "violation"
 	ForbiddenTypeForbidden  = "forbidden"
 
-	// 机器可读的错误码。
+	// Machine-readable error codes.
 	ErrorCodeForbidden       = "forbidden"
 	ErrorCodeUnauthenticated = "unauthenticated"
 	ErrorCodeRateLimited     = "rate_limited"
@@ -35,7 +35,7 @@ type AntigravityQuotaOptions struct {
 }
 type AntigravityQuota struct{ Options AntigravityQuotaOptions }
 
-// CanFetch 检查是否可以获取此提供商的额度。
+// CanFetch reports whether the provider is Antigravity and has an access token.
 func (f *AntigravityQuota) CanFetch(provider *Record) bool {
 	if provider.Platform != PlatformAntigravity {
 		return false
@@ -44,7 +44,7 @@ func (f *AntigravityQuota) CanFetch(provider *Record) bool {
 	return accessToken != ""
 }
 
-// FetchQuota 获取 Antigravity 提供商额度信息。
+// FetchQuota fetches Antigravity model quotas and available subscription metadata.
 func (f *AntigravityQuota) FetchQuota(ctx context.Context, provider *Record, proxyURL string) (*QuotaResult, error) {
 	accessToken := provider.GetCredential("access_token")
 	projectID := provider.GetCredential("project_id")
@@ -54,10 +54,10 @@ func (f *AntigravityQuota) FetchQuota(ctx context.Context, provider *Record, pro
 		return nil, fmt.Errorf("create antigravity client failed: %w", err)
 	}
 
-	// 调用 API 获取配额
+	// Fetch model quotas with the configured response-size limit.
 	modelsResp, modelsRaw, err := client.FetchAvailableModels(ctx, accessToken, projectID, f.Options.ReadLimit())
 	if err != nil {
-		// 403 Forbidden: 不报错，返回 is_forbidden 标记
+		// Represent a forbidden response as usage state instead of a fetch error.
 		if forbiddenBody, ok := f.Options.ForbiddenBody(err); ok {
 			now := time.Now()
 			fbType := f.Options.ClassifyForbidden(forbiddenBody)
@@ -77,10 +77,10 @@ func (f *AntigravityQuota) FetchQuota(ctx context.Context, provider *Record, pro
 		return nil, err
 	}
 
-	// 调用 LoadCodeAssist 获取订阅等级和 AI Credits 余额（非关键路径，失败不影响主流程）
+	// Subscription and AI Credits discovery is best effort; model quotas remain usable on failure.
 	tierRaw, tierNormalized, loadResp := f.fetchSubscriptionTier(ctx, client, accessToken)
 
-	// 转换为 UsageInfo
+	// Convert quota and subscription responses for display.
 	usageInfo := f.BuildUsageInfo(modelsResp, tierRaw, tierNormalized, loadResp)
 
 	return &QuotaResult{
@@ -89,8 +89,8 @@ func (f *AntigravityQuota) FetchQuota(ctx context.Context, provider *Record, pro
 	}, nil
 }
 
-// fetchSubscriptionTier 获取提供商订阅等级，失败返回空字符串。
-// 同时返回 LoadCodeAssistResponse，以便提取 AI Credits 余额。
+// fetchSubscriptionTier returns raw and normalized tiers, or empty strings on failure.
+// It also returns the response so callers can read AI Credits.
 func (f *AntigravityQuota) fetchSubscriptionTier(ctx context.Context, client AntigravityQuotaClient, accessToken string) (raw, normalized string, loadResp *google.AntigravityLoadCodeAssistResponse) {
 	loadResp, _, err := client.LoadCodeAssist(ctx, accessToken)
 	if err != nil {
@@ -101,12 +101,12 @@ func (f *AntigravityQuota) fetchSubscriptionTier(ctx context.Context, client Ant
 		return "", "", nil
 	}
 
-	raw = loadResp.GetTier() // 已有方法：paidTier > currentTier
+	raw = loadResp.GetTier() // Prefer paidTier over currentTier.
 	normalized = NormalizeAntigravityTier(raw)
 	return raw, normalized, loadResp
 }
 
-// NormalizeAntigravityTier 将原始 tier 字符串归一化为 FREE/PRO/ULTRA/UNKNOWN。
+// NormalizeAntigravityTier returns FREE, PRO, ULTRA, UNKNOWN, or empty for an empty input.
 func NormalizeAntigravityTier(raw string) string {
 	if raw == "" {
 		return ""
@@ -124,7 +124,7 @@ func NormalizeAntigravityTier(raw string) string {
 	}
 }
 
-// BuildUsageInfo 将 API 响应转换为 UsageInfo。
+// BuildUsageInfo converts quota and subscription responses to usage display data.
 func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAvailableModelsResponse, tierRaw, tierNormalized string, loadResp *google.AntigravityLoadCodeAssistResponse) *UsageInfo {
 	now := time.Now()
 	info := &UsageInfo{
@@ -135,13 +135,13 @@ func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAva
 		SubscriptionTierRaw:     tierRaw,
 	}
 
-	// 遍历所有模型，填充 AntigravityQuota 和 AntigravityQuotaDetails
+	// Skip models without quota information.
 	for modelName, modelInfo := range modelsResp.Models {
 		if modelInfo.QuotaInfo == nil {
 			continue
 		}
 
-		// remainingFraction 是剩余比例 (0.0-1.0)，转换为使用率百分比
+		// Convert the remaining fraction in [0,1] to used percentage.
 		utilization := int((1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100)
 
 		info.AntigravityQuota[modelName] = &AntigravityModelQuota{
@@ -149,7 +149,7 @@ func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAva
 			ResetTime:   modelInfo.QuotaInfo.ResetTime,
 		}
 
-		// 填充模型详细能力信息
+		// Copy model capabilities alongside quota information.
 		detail := &AntigravityModelDetail{
 			DisplayName:        modelInfo.DisplayName,
 			SupportsImages:     modelInfo.SupportsImages,
@@ -163,7 +163,7 @@ func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAva
 		info.AntigravityQuotaDetails[modelName] = detail
 	}
 
-	// 废弃模型转发规则
+	// Expose upstream replacements for deprecated model IDs.
 	if len(modelsResp.DeprecatedModelIDs) > 0 {
 		info.ModelForwardingRules = make(map[string]string, len(modelsResp.DeprecatedModelIDs))
 		for oldID, deprecated := range modelsResp.DeprecatedModelIDs {
@@ -171,7 +171,7 @@ func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAva
 		}
 	}
 
-	// 同时设置 FiveHour 用于兼容展示（取主要模型）
+	// Populate the legacy FiveHour display from the first available priority model.
 	priorityModels := []string{"claude-sonnet-4-20250514", "claude-sonnet-4", "gemini-2.5-pro"}
 	for _, modelName := range priorityModels {
 		if modelInfo, ok := modelsResp.Models[modelName]; ok && modelInfo.QuotaInfo != nil {
@@ -203,7 +203,7 @@ func (f *AntigravityQuota) BuildUsageInfo(modelsResp *google.AntigravityFetchAva
 	return info
 }
 
-// GetProxyURL 获取提供商的代理 URL。
+// GetProxyURL resolves the provider's proxy URL, or returns empty when unavailable.
 func (f *AntigravityQuota) GetProxyURL(ctx context.Context, provider *Record) string {
 	if provider.ProxyID == nil || f.Options.ResolveProxy == nil {
 		return ""

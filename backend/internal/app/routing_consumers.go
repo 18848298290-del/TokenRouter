@@ -10,13 +10,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// keyGroups 从 routing 读取 Key 需要的分组数据。
+// keyGroups reads routing group data for API keys.
 type keyGroups struct{ Repository routing.GroupRepository }
 
-// identityAdminGroups 从 routing 读取用户管理需要的分组字段。
+// identityAdminGroups reads group fields for user administration.
 type identityAdminGroups struct{ Repository routing.GroupRepository }
 
-// billingGroups 从 routing 读取套餐展示需要的分组名称。
+// billingGroups reads group names for subscription plan display.
 type billingGroups struct{ Repository routing.GroupRepository }
 
 func (p keyGroups) GetByID(ctx context.Context, id int64) (*routing.Group, error) {
@@ -70,7 +70,7 @@ func (b billingGroups) GetByIDLite(ctx context.Context, id int64) (*billing.Subs
 	if err != nil || g == nil {
 		return nil, err
 	}
-	// 订阅接口展示请求语言的分组文案。
+	// Subscription responses use the group copy for the request language.
 	display, _ := routing.GroupDisplay(g, locale.FromContext(ctx))
 	return &billing.SubscriptionPlanGroup{ID: g.ID, Name: display.DisplayName}, nil
 }

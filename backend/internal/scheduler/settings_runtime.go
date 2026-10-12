@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// 设置键对应数据库中的运行参数记录。
+// These keys identify persisted runtime settings.
 const (
 	SettingKeyAdvancedSchedulerStickyWeightedEnabled       = "advanced_scheduler_sticky_weighted_enabled"
 	SettingKeyAdvancedSchedulerSubscriptionPriorityEnabled = "advanced_scheduler_subscription_priority_enabled"
@@ -37,13 +37,13 @@ const (
 	advancedSchedulerSettingDBTimeout                      = 2 * time.Second
 )
 
-// RuntimeSettingSource 提供批量读取和逐键读取，批量失败时按键重试。
+// RuntimeSettingSource supports batch reads and per-key retries when a batch fails.
 type RuntimeSettingSource interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 	GetValue(context.Context, string) (string, error)
 }
 
-// SettingsRuntime 缓存带 TTL 的设置快照，并用 singleflight 合并并发读取。每次请求合并参数。
+// SettingsRuntime caches settings with a TTL and coalesces concurrent reads through singleflight.
 type SettingsRuntime struct {
 	cache       atomic.Value
 	sf          singleflight.Group
@@ -69,7 +69,7 @@ type cachedAdvancedSchedulerSetting struct {
 	expiresAt                   int64
 }
 
-// WeightOverrideSpec 保留管理与校验使用的稳定顺序。
+// WeightOverrideSpec maps a persisted key to its scoring name in the ordered override list.
 type WeightOverrideSpec struct {
 	Key  string
 	Name string
@@ -145,8 +145,8 @@ func (s *SettingsRuntime) Load(ctx context.Context, repo RuntimeSettingSource, d
 
 			values, err := repo.GetMultiple(dbCtx, AdvancedSchedulerRuntimeSettingKeys())
 			if err != nil {
-				// 批量读取失败时逐键读取全部设置，包括 TopK 和权重。
-				// 降级结果缓存一个 TTL，日志记录批量读取失败的原因。
+				// Retry every key, including TopK and weights, after a batch read failure.
+				// Cache the recovered settings for one TTL and log the batch failure.
 				s.diagnostics.event("warn", "advanced_scheduler_settings_batch_load_failed", "error", err)
 				values = make(map[string]string)
 				for _, key := range AdvancedSchedulerRuntimeSettingKeys() {
@@ -204,7 +204,7 @@ func (s *SettingsRuntime) Load(ctx context.Context, repo RuntimeSettingSource, d
 	})
 
 	settings, _ := result.(policy.RuntimeSettings)
-	// 每个请求复制一份权重映射后再应用覆盖值。
+	// Each caller gets its own weight map before applying overrides.
 	settings.WeightOverrides = CloneAdvancedSchedulerWeightOverrides(settings.WeightOverrides)
 	return settings
 }
@@ -325,7 +325,7 @@ func CloneAdvancedSchedulerWeightOverrides(in map[string]float64) map[string]flo
 	return out
 }
 
-// Store 替换缓存值并更新 TTL，调用方在设置写入成功后刷新缓存时调用。
+// Store replaces the cached settings and renews the TTL after a successful settings write.
 func (s *SettingsRuntime) Store(value policy.RuntimeSettings) {
 	s.sf.Forget("advanced_scheduler_settings")
 	s.cache.Store(&cachedAdvancedSchedulerSetting{

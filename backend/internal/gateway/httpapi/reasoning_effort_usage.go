@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// BindRequestedReasoningEffort 在任何策略改写前保存客户端请求的档位。
+// BindRequestedReasoningEffort captures the client's effort before policy rewrites.
 func BindRequestedReasoningEffort(c *gin.Context, body []byte, model string) {
 	if c == nil || c.Request == nil {
 		return
@@ -19,7 +19,7 @@ func BindRequestedReasoningEffort(c *gin.Context, body []byte, model string) {
 	c.Request = c.Request.WithContext(requeststate.WithRequestedReasoningEffort(c.Request.Context(), *effort))
 }
 
-// StampOpenAIRequestedReasoningEffort 将请求 context 中的档位写入转发结果。
+// StampOpenAIRequestedReasoningEffort fills an unset result effort from the request context.
 func StampOpenAIRequestedReasoningEffort(result *forwardcore.OpenAIResult, c *gin.Context) {
 	if result == nil || result.RequestedReasoningEffort != nil || c == nil || c.Request == nil {
 		return
@@ -27,7 +27,7 @@ func StampOpenAIRequestedReasoningEffort(result *forwardcore.OpenAIResult, c *gi
 	result.RequestedReasoningEffort = requeststate.RequestedReasoningEffortFromContext(c.Request.Context())
 }
 
-// StampForwardRequestedReasoningEffort 将兼容桥的客户端档位写入转发结果。
+// StampForwardRequestedReasoningEffort fills an unset compatible result effort from the request context.
 func StampForwardRequestedReasoningEffort(result *forwardcore.MessagesResult, c *gin.Context) {
 	if result == nil || result.RequestedReasoningEffort != nil || c == nil || c.Request == nil {
 		return

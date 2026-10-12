@@ -49,7 +49,7 @@ func (p *QoderAuthorization) prepare(ctx context.Context, site string, proxyID *
 		return "", nil, nil, err
 	}
 
-	// 国内站必须复用授权 URL 中的 UUID machine_id，并保持其余机器字段为空。
+	// The CN site reuses the authorization URL's UUID machine_id and leaves other machine fields empty.
 	machine := qoder.NewMachineForSite(profile.Site)
 	machine.MachineID = req.MachineID
 	flow := &qoder.AuthorizationFlow{
@@ -65,7 +65,7 @@ func (p *QoderAuthorization) prepare(ctx context.Context, site string, proxyID *
 	return sessionID, session, &provider.QoderAuthURLResult{AuthURL: flow.AuthURL, SessionID: sessionID, State: state, ExpiresIn: int64(provider.QoderOAuthSessionTTL / time.Second), Interval: provider.QoderOAuthPollInterval, Site: string(profile.Site)}, nil
 }
 
-// GenerateAuthURLForSite 以下委托供 HTTP 消费，实际会话状态和权限顺序由提供商用例拥有。
+// GenerateAuthURLForSite delegates session creation and authorization checks to the provider service.
 func (p *QoderAuthorization) GenerateAuthURLForSite(ctx context.Context, site string, id *int64) (*provider.QoderAuthURLResult, error) {
 	return p.Core.GenerateAuthURLForSite(ctx, site, id)
 }

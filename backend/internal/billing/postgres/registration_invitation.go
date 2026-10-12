@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// RegistrationInvitations 使用调用方选定的连接，不开启、提交或回滚事务。
+// RegistrationInvitations uses the supplied connection. The caller owns transaction begin, commit, and rollback.
 type RegistrationInvitations struct{ client *dbent.Client }
 
 func NewRegistrationInvitations(client *dbent.Client) *RegistrationInvitations {
@@ -68,7 +68,8 @@ func (r *RegistrationInvitations) Consume(ctx context.Context, invitationID, use
 	return nil
 }
 
-// RestoreSnapshot 维持原注册补偿字段集和原始存储错误；不影响调用方的事务所有权。
+// RestoreSnapshot writes redemption snapshot fields for registration compensation and returns persistence errors
+// unchanged.
 func (r *RegistrationInvitations) RestoreSnapshot(ctx context.Context, code *billing.RedeemCode) error {
 	if code == nil {
 		return nil

@@ -37,8 +37,8 @@ const (
 
 	geminiAppliedTempPolicyHeader = "X-TokenRouter-Internal-Temp-Policy-Applied"
 
-	// Gemini 的 functionCall 需要 thoughtSignature；缺少时沿用既有占位签名。
-	// 协议说明：https://ai.google.dev/gemini-api/docs/thought-signatures
+	// Fill missing functionCall thought signatures with the compatibility sentinel.
+	// Protocol reference: https://ai.google.dev/gemini-api/docs/thought-signatures
 	geminiDummyThoughtSignature = "skip_thought_signature_validator"
 
 	geminiCustomCodeSkippedClientMessage = "Upstream gateway error"
@@ -77,7 +77,7 @@ func (s *Gemini) validateUpstreamBaseURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// Forward 准备一次 Messages 到 Gemini 的执行，提供商切换由外层网关决定。
+// Forward prepares one Messages-to-Gemini attempt; the outer gateway selects replacement providers.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, body []byte) (*forwardcore.MessagesResult, error) {
 	c := &attempt{Output: output}
@@ -97,7 +97,7 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	}
 
 	originalModel := req.Model
-	// 所有 Gemini 提供商类型都执行提供商模型映射，OAuth 也必须与调度和可见模型解析保持一致。
+	// Apply model mappings for every credential type so OAuth execution agrees with selection and catalog resolution.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
 	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(body)
@@ -271,7 +271,7 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	usage := &result.Usage
 	firstTokenMs := result.FirstTokenMs
 
-	// 图片生成计费
+	// Resolve image count and size for billing.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)
@@ -318,7 +318,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return nil, c.GoogleError(http.StatusBadRequest, "Request body is empty")
 	}
 
-	// 过滤掉 parts 为空的消息（Gemini API 不接受空 parts）
+	// Gemini rejects messages with empty parts.
 	if filteredBody, err := gemini.FilterEmptyParts(body); err == nil {
 		body = filteredBody
 	}
@@ -330,10 +330,10 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return nil, c.GoogleError(http.StatusNotFound, "Unsupported action: "+action)
 	}
 
-	// 补齐 functionCall 的既有占位签名，保留上游严格校验下的兼容行为。
+	// Supply the compatibility sentinel for function calls missing a thought signature.
 	body = ensureGeminiFunctionCallThoughtSignatures(body)
 
-	// 分组映射后的模型进入提供商后统一解析为最终上游模型，不按凭据类型跳过。
+	// Resolve the group-mapped model through provider mappings for every credential type.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), originalModel, provideradapter.ModelDefaults())
 	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
 	if err != nil {
@@ -352,7 +352,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	useUpstreamStream := stream
 	upstreamAction := action
 	if provider.Record.Type == capability.ProviderTypeOAuth && !stream && action == "generateContent" && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
-		// Code Assist 的非流响应可能为空，沿用流式上游收集后返回的方式。
+		// Collect the upstream stream because Code Assist may return an empty non-streaming response.
 		useUpstreamStream = true
 		upstreamAction = "streamGenerateContent"
 	}
@@ -406,8 +406,8 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 
 			if resp.StatusCode >= 400 {
 				respBody := s.readUpstreamErrorBody(resp)
-				// OAuth 缺少 AI Studio scope 时保留计数估算回退；
-				// 这项检查先于错误策略，不受自定义错误码影响。
+				// Estimate countTokens when OAuth lacks AI Studio scope.
+				// This check precedes custom error policy evaluation.
 				if action == "countTokens" && isOAuth && gemininative.IsGeminiInsufficientScope(resp.Header, respBody) {
 					estimated := gemininative.EstimateGeminiCountTokens(body)
 					c.Count(estimated)
@@ -524,7 +524,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	usage := &result.Usage
 	firstTokenMs := result.FirstTokenMs
 
-	// 图片生成计费
+	// Resolve image count and size for billing.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)
@@ -555,9 +555,9 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	}, nil
 }
 
-// checkErrorPolicyInLoop 在重试循环内预检查错误策略。
-// 返回 true 表示策略已匹配（调用者应 break），resp 已重建可直接使用。
-// 返回 false 表示 ErrorPolicyNone，resp 已重建，调用者继续走重试逻辑。
+// checkErrorPolicyInLoop evaluates error policy before retrying.
+// A match tells the caller to stop retrying. The returned response body is readable
+// after policy inspection; responses that need no inspection are returned unchanged.
 func (s *Gemini) checkErrorPolicyInLoop(
 	ctx context.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, mappedModel string,
 ) (matched bool, rebuilt *http.Response) {
@@ -573,11 +573,11 @@ func (s *Gemini) checkErrorPolicyInLoop(
 	}
 	policy := s.Health.CheckErrorPolicy(ctx, gatewayprovider.ExecutionRecord(provider), gatewayprovider.HealthObservationFromContext(ctx, resp.StatusCode, nil, body, []string{mappedModel}))
 	if policy == providercore.ErrorPolicyTempUnscheduled {
-		// CheckErrorPolicy 已写入临时不可调度状态，给最终错误处理留下内部标记，
-		// 避免同一个响应再次执行规则并重复写库。
+		// Mark the temporary scheduling policy as applied
+		// so final error handling does not repeat the database update.
 		rebuilt.Header.Set(geminiAppliedTempPolicyHeader, "1")
 	}
-	// 池模式由 handler 层按提供商配置的重试预算处理，不能再叠加 Gemini 固定内部重试。
+	// Pool retries use the handler budget; do not add Gemini retries after a policy match.
 	return policy != providercore.ErrorPolicyNone, rebuilt
 }
 
@@ -586,13 +586,13 @@ func (s *Gemini) shouldRetryGeminiUpstreamError(provider *gatewayprovider.Execut
 	case 429, 500, 502, 503, 504, 529:
 		return true
 	case 403:
-		// Code Assist 的激活或配额传播可能短暂返回 403，保持原重试资格。
+		// Code Assist activation or quota propagation can produce a transient 403.
 		if provider == nil || provider.Record.Type != capability.ProviderTypeOAuth {
 			return false
 		}
 		oauthType := strings.ToLower(strings.TrimSpace(provider.View().GetCredential("oauth_type")))
 		if oauthType == "" && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
-			// 兼容只保存 project_id 的历史 Code Assist 提供商。
+			// Older Code Assist records identify the mode through project_id alone.
 			oauthType = "code_assist"
 		}
 		return oauthType == "code_assist"
@@ -610,8 +610,8 @@ func (s *Gemini) shouldFailoverGeminiUpstreamError(statusCode int) bool {
 	}
 }
 
-// skippedErrorPolicyFailoverError 处理 ErrorPolicyCustomSkipped：跳过提供商状态写入不等于跳过换号。
-// 可切换的状态码返回 UpstreamFailoverError；池模式仅对配置的状态允许同提供商重试。
+// skippedErrorPolicyFailoverError permits failover when custom policy skips health changes.
+// Pool mode allows same-provider retry only for configured statuses.
 func (s *Gemini) skippedErrorPolicyFailoverError(c *attempt, provider *gatewayprovider.ExecutionProvider, statusCode int, respBody []byte, upstreamRequestID string) *forwardcore.UpstreamFailoverError {
 	if !s.shouldFailoverGeminiUpstreamError(statusCode) {
 		return nil
@@ -643,7 +643,7 @@ func (s *Gemini) skippedErrorPolicyFailoverError(c *attempt, provider *gatewaypr
 	}
 }
 
-// upstreamErrorDetail 按配置截断上游错误体，用于运维日志。
+// upstreamErrorDetail truncates the upstream error body according to logging settings.
 func (s *Gemini) upstreamErrorDetail(body []byte) string {
 	if s == nil || !s.Options.Configured || !s.Options.LogErrorBody {
 		return ""
@@ -684,8 +684,8 @@ func (s *Gemini) ForwardAIStudioGET(ctx context.Context, provider *gatewayprovid
 	return gemininative.ReadAIStudioModel(ctx, path, options)
 }
 
-// applyGeminiUpstreamErrorPolicy 统一 Gemini 三种协议入口的显式策略和默认状态处理。
-// 池模式绕过时绝不能继续调用 handleGeminiUpstreamError，否则 429 会写入本地限流。
+// applyGeminiUpstreamErrorPolicy applies custom and default handling across Gemini entry points.
+// Pool bypass skips the default observer so a 429 does not create a local cooldown.
 func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -719,12 +719,12 @@ func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 	return decision
 }
 
-// ensureGeminiFunctionCallThoughtSignatures 调用 Gemini 协议函数补充函数调用的 thought signature。
+// ensureGeminiFunctionCallThoughtSignatures fills missing function-call signatures through the protocol adapter.
 func ensureGeminiFunctionCallThoughtSignatures(body []byte) []byte {
 	return bridge.NativeEnsureGeminiFunctionCallThoughtSignatures(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
 }
 
-// convertClaudeMessagesToGeminiGenerateContent 调用 Gemini 协议转换函数生成请求体。
+// convertClaudeMessagesToGeminiGenerateContent converts a Claude body using the Gemini protocol adapter.
 func convertClaudeMessagesToGeminiGenerateContent(body []byte) ([]byte, error) {
 	return bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
 }
@@ -748,7 +748,7 @@ func (s *Gemini) extractImageInputSize(body []byte) string {
 	return ""
 }
 
-// observeHealth 执行健康观测并将凭据和附加状态写回执行提供商。
+// observeHealth evaluates the response and copies updated credentials and extra state into the execution target.
 func (s *Gemini) observeHealth(ctx context.Context, target *gatewayprovider.ExecutionProvider, status int, headers http.Header, body []byte) {
 	record := gatewayprovider.ExecutionRecord(target)
 	updated := s.Errors.Observe(ctx, record, status, headers, body, gatewayprovider.HealthObservationFromContext(ctx, status, headers, body, nil))

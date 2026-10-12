@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	// 基础预热窗口：访问令牌剩余有效期低于该值时刷新。
-	// Grok 访问令牌通常约一小时有效，提前刷新可在请求路径缓存未命中时保持提供商池可用。
+	// GrokTokenRefreshSkew is the base window for refreshing tokens before expiry.
+	// Refreshing ahead of requests helps keep providers usable on token-cache misses.
 	GrokTokenRefreshSkew = time.Hour
 
-	// 每个提供商的预热窗口减去一个由稳定种子计算的偏移量，范围为 [0, GrokTokenRefreshJitterMax]。
-	// 同批导入的提供商因此分散到不同刷新时间。
+	// GrokTokenRefreshJitterMax bounds the stable offset subtracted from each provider's refresh window.
+	// The offset spreads refreshes for providers imported together.
 	GrokTokenRefreshJitterMax = 3 * time.Minute
 
-	// 为刷新窗口设置下限，偏移后仍有时间完成刷新。
+	// GrokTokenRefreshSkewMin leaves time to finish a refresh after applying jitter.
 	GrokTokenRefreshSkewMin = 30 * time.Minute
 )
 
@@ -25,7 +25,7 @@ type GrokTokenRefresher struct {
 	grokOAuthService GrokRefreshTokenService
 }
 
-// 刷新器接收提供商的 token 和凭据转换函数。
+// GrokRefreshTokenService refreshes tokens and converts the results into stored credentials.
 type GrokRefreshTokenService interface {
 	RefreshProviderToken(context.Context, *Record) (*GrokTokenInfo, error)
 	BuildProviderCredentials(*GrokTokenInfo) map[string]any
@@ -58,13 +58,14 @@ func (r *GrokTokenRefresher) NeedsRefresh(provider *Record, refreshWindow time.D
 	if refreshWindow < GrokTokenRefreshSkew {
 		refreshWindow = GrokTokenRefreshSkew
 	}
-	// 根据提供商 ID 哈希生成确定性偏移，在错开预热刷新的同时保证测试结果稳定。
+	// A stable provider-ID hash spreads refresh times reproducibly.
 	refreshWindow = GrokTokenRefreshWindowWithJitter(provider.ID, refreshWindow)
 	return time.Until(*expiresAt) < refreshWindow
 }
 
-// GrokTokenRefreshWindowWithJitter 返回 refreshWindow 减去由 providerID 决定的稳定偏移量，
-// 偏移范围为 [0, jitterMax]；基础窗口不低于 GrokTokenRefreshSkewMin 时，结果也不会低于该值。
+// GrokTokenRefreshWindowWithJitter subtracts a provider-specific offset in [0, GrokTokenRefreshJitterMax).
+// Positive provider IDs with windows above GrokTokenRefreshSkewMin are clamped to that minimum; other inputs
+// pass through.
 func GrokTokenRefreshWindowWithJitter(providerID int64, refreshWindow time.Duration) time.Duration {
 	if providerID <= 0 || refreshWindow <= GrokTokenRefreshSkewMin {
 		return refreshWindow
@@ -76,7 +77,7 @@ func GrokTokenRefreshWindowWithJitter(providerID int64, refreshWindow time.Durat
 		b[i] = byte(id >> (8 * i))
 	}
 	_, _ = h.Write(b[:])
-	// 偏移范围为 [0, GrokTokenRefreshJitterMax)。
+	// Jitter is measured in whole seconds and excludes the upper bound.
 	jitter := time.Duration(h.Sum32()%uint32(GrokTokenRefreshJitterMax/time.Second)) * time.Second
 	out := refreshWindow - jitter
 	if out < GrokTokenRefreshSkewMin {

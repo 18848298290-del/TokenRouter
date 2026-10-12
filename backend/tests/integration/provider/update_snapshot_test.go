@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestProviderConfigurationPreservesConcurrentRuntime 验证普通名称编辑不能把读取之后发生的使用时间和限流窗口写回旧值。
+// TestProviderConfigurationPreservesConcurrentRuntime checks that a rename from a stale record
+// preserves newer last-used and rate-limit timestamps.
 func TestProviderConfigurationPreservesConcurrentRuntime(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

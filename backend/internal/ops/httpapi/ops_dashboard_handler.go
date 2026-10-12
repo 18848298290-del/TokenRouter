@@ -13,7 +13,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// GetDashboardOverview returns vNext ops dashboard overview (raw path).
+// GetDashboardOverview returns the monitoring overview using the configured data source.
 // GET /api/v1/admin/ops/dashboard/overview
 func (h *OpsHandler) GetDashboardOverview(c *gin.Context) {
 	if h.opsService == nil {
@@ -53,7 +53,7 @@ func (h *OpsHandler) GetDashboardOverview(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardThroughputTrend returns throughput time series (raw path).
+// GetDashboardThroughputTrend returns the throughput time series.
 // GET /api/v1/admin/ops/dashboard/throughput-trend
 func (h *OpsHandler) GetDashboardThroughputTrend(c *gin.Context) {
 	if h.opsService == nil {
@@ -94,7 +94,7 @@ func (h *OpsHandler) GetDashboardThroughputTrend(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardLatencyHistogram 返回成功请求的时长分布。
+// GetDashboardLatencyHistogram returns successful-request duration buckets.
 // GET /api/v1/admin/ops/dashboard/latency-histogram
 func (h *OpsHandler) GetDashboardLatencyHistogram(c *gin.Context) {
 	if h.opsService == nil {
@@ -163,7 +163,7 @@ func parseOpsLatencyBucketBoundaries(raw string) ([]int64, error) {
 	return normalized, nil
 }
 
-// GetDashboardErrorTrend returns error counts time series (raw path).
+// GetDashboardErrorTrend returns error counts over time.
 // GET /api/v1/admin/ops/dashboard/error-trend
 func (h *OpsHandler) GetDashboardErrorTrend(c *gin.Context) {
 	if h.opsService == nil {
@@ -204,7 +204,7 @@ func (h *OpsHandler) GetDashboardErrorTrend(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardErrorDistribution returns error distribution by status code (raw path).
+// GetDashboardErrorDistribution returns error counts grouped by status code.
 // GET /api/v1/admin/ops/dashboard/error-distribution
 func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 	if h.opsService == nil {
@@ -244,7 +244,7 @@ func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardTokenStats 返回按模型聚合的通用 Token 请求统计。
+// GetDashboardTokenStats returns request token statistics grouped by model.
 // GET /api/v1/admin/ops/dashboard/token-stats
 func (h *OpsHandler) GetDashboardTokenStats(c *gin.Context) {
 	if h.opsService == nil {

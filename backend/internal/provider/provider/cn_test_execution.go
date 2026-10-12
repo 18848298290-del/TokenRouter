@@ -23,7 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
-// CNProviderTest 保留国产供应商的固定协议和自适应顺序，共享同一技术传输。
+// CNProviderTest probes fixed or adaptive CN provider protocols through a shared transport.
 type CNProviderTest struct {
 	Transport   QoderTransport
 	Profiles    *egressprovider.TLSProfiles
@@ -47,7 +47,7 @@ func defaultCNProviderTestModel(platform string) string {
 	}
 }
 
-// Execute 按提供商协议选择 Chat、Responses 或 Anthropic 测试端点。
+// Execute selects a Chat, Responses, or Anthropic probe from the provider protocol.
 func (s *CNProviderTest) Execute(
 	c *TestRun,
 	value *providercore.Record,
@@ -163,8 +163,8 @@ func (s *CNProviderTest) Execute(
 	}
 }
 
-// executeChat 保留上游自适应测试使用的 Chat 探测入口，
-// 具体请求仍复用 fork 已有的国产供应商测试实现（含请求头覆写、代理和 TLS 指纹）。
+// executeChat gives adaptive probes access to Execute, including header overrides, proxies, and TLS
+// profiles.
 func (s *CNProviderTest) executeChat(
 	c *TestRun,
 	value *providercore.Record,

@@ -66,7 +66,7 @@ func TestValidateGoogleIDTokenPayload(t *testing.T) {
 	}
 }
 
-// TestGoogleOfficialValidatorWithLocalJWKS 使用官方验证库校验本地 RSA 签名和测试 JWKS。
+// TestGoogleOfficialValidatorWithLocalJWKS validates local RSA signatures through the Google library.
 func TestGoogleOfficialValidatorWithLocalJWKS(t *testing.T) {
 	ctx := context.Background()
 	key, e := rsa.GenerateKey(rand.Reader, 2048)
@@ -119,7 +119,7 @@ func TestGoogleOfficialValidatorWithLocalJWKS(t *testing.T) {
 				signature[len(signature)-1] ^= 1
 				parts[2] = encode(signature)
 				token = strings.Join(parts, ".")
-			} // 修改签名字节后按 JWT 格式重新编码。
+			} // Re-encode the modified signature in JWT format.
 			payload, e := validator.Validate(ctx, token, "test-client")
 			if e == nil {
 				_, e = ValidateGoogleIDTokenPayload(payload, "test-client", time.Now())
@@ -133,7 +133,7 @@ func TestGoogleOfficialValidatorWithLocalJWKS(t *testing.T) {
 	}
 }
 
-// RoundTrip 将官方验证器的公钥请求发送到测试服务器提供的 JWKS 地址。
+// RoundTrip redirects public-key requests to the test JWKS server.
 func (t googleFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	copy := r.Clone(r.Context())
 	copy.URL = t.target

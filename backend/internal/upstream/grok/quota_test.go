@@ -77,8 +77,7 @@ func TestParseResetHeaderRelativeSecondsNotMisreadAsEpoch(t *testing.T) {
 	t.Parallel()
 
 	headers := http.Header{}
-	// xAI 可能以相对秒数（如 "60"）返回重置窗口。
-	// 该值表示从当前时间起约六十秒后重置。
+	// A relative reset value of 60 means approximately one minute from observation.
 	headers.Set("x-ratelimit-reset-requests", "60")
 	headers.Set("x-ratelimit-remaining-requests", "0")
 

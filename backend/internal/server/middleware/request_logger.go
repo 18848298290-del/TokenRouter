@@ -17,7 +17,7 @@ import (
 
 const requestIDHeader = "X-Request-ID"
 
-// requestIDWriter 在提交 HTTP 响应时恢复本服务的请求 ID。
+// requestIDWriter restores local request IDs before committing the HTTP response.
 type requestIDWriter struct {
 	gin.ResponseWriter
 	id       string
@@ -35,13 +35,13 @@ func (w *requestIDWriter) protect() {
 	w.Header().Set(legacyInternalRequestIDHeader, w.id)
 }
 
-// WriteHeader 固定关联头后记录响应状态。
+// WriteHeader restores correlation headers before recording the response status.
 func (w *requestIDWriter) WriteHeader(code int) {
 	w.protect()
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// WriteHeaderNow 提交已固定关联头的响应。
+// WriteHeaderNow commits the response with restored correlation headers.
 func (w *requestIDWriter) WriteHeaderNow() {
 	w.protect()
 	w.ResponseWriter.WriteHeaderNow()
@@ -57,7 +57,7 @@ func (w *requestIDWriter) WriteString(data string) (int, error) {
 	return w.ResponseWriter.WriteString(data)
 }
 
-// Flush 使 SSE 的首次刷新携带本地 ID。
+// Flush restores local IDs before an SSE response is flushed.
 func (w *requestIDWriter) Flush() {
 	w.protect()
 	w.ResponseWriter.Flush()
@@ -68,10 +68,10 @@ func (w *requestIDWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.Hijack()
 }
 
-// Unwrap 让标准库的 ResponseController 读取底层连接能力。
+// Unwrap exposes the underlying writer to http.ResponseController.
 func (w *requestIDWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// RequestLogger 在请求入口注入 request-scoped logger。
+// RequestLogger assigns a local request ID, installs a request logger, and records request completion.
 // @project-doc docs/operations/request_lookup.md#request_identity
 func RequestLogger(observers ...func(telemetry.RequestRecord)) gin.HandlerFunc {
 	return func(c *gin.Context) {

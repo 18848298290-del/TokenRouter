@@ -11,15 +11,15 @@ type deferredOutputWriter struct {
 	output OutputWriter
 }
 
-// OutputHead 是输出适配器需要的响应元数据，Header 在传递时复制。
+// OutputHead contains response metadata. OutputContext clones headers when passing them to the sink.
 type OutputHead struct {
-	// Committed 记录输出适配器当前的 HTTP 提交状态。
+	// Committed records whether the output adapter has committed HTTP headers.
 	Committed bool
 	Status    int
 	Header    http.Header
 }
 
-// OutputEvent 是一个输出片段，写入和刷新错误同步返回执行方。
+// OutputEvent is one output chunk; sink write and flush errors return synchronously.
 type OutputEvent struct {
 	Data           []byte
 	Flush          bool
@@ -28,16 +28,16 @@ type OutputEvent struct {
 	Terminal       bool
 }
 
-// OutputSink 由 HTTP 或其他调用适配器实现，拥有实际写入与刷新。
+// OutputSink owns writes and flushes for HTTP or other output adapters.
 type OutputSink interface {
 	Begin(OutputHead) error
 	Emit(OutputEvent) error
 }
 
-// OutputContext 提供一次转换所需的字节输出接口。
+// OutputContext supplies byte-oriented output for one conversion.
 type OutputContext struct{ Writer OutputWriter }
 
-// OutputWriter 按编解码器的调用顺序，通过 sink 写出数据。
+// OutputWriter emits through the sink in codec call order.
 type OutputWriter interface {
 	io.Writer
 	Header() http.Header
@@ -57,7 +57,7 @@ type sinkWriter struct {
 	next    *OutputEvent
 }
 
-// NewDeferredOutputContext 在首次访问输出接口时取得响应 Header。
+// NewDeferredOutputContext loads initial response metadata on first writer access.
 func NewDeferredOutputContext(sink OutputSink) *OutputContext {
 	return &OutputContext{Writer: &deferredOutputWriter{sink: sink}}
 }
@@ -83,7 +83,7 @@ func (w *deferredOutputWriter) Written() bool {
 	return false
 }
 
-// CloneHeader 复制 Header 和各字段的值切片。
+// CloneHeader copies the map and each value slice.
 func CloneHeader(src http.Header) http.Header {
 	if src == nil {
 		return nil
@@ -101,7 +101,7 @@ func CloneHeader(src http.Header) http.Header {
 	return dst
 }
 
-// NewOutputContext 为一次流转换建立独立元数据，禁止跨请求复用。
+// NewOutputContext creates per-conversion metadata. Callers must not reuse it across requests.
 func NewOutputContext(sink OutputSink) *OutputContext {
 	header := make(http.Header)
 	status := http.StatusOK
@@ -165,13 +165,13 @@ func (w *sinkWriter) Flush() {
 	}
 }
 
-// Header 设置待发送的响应头，OutputSink 写入响应。
+// Header sets a pending header for the output sink.
 func (c *OutputContext) Header(key, value string) { c.Writer.Header().Set(key, value) }
 
-// WriteHeaderNow 通过 sink.Begin 提交响应头，刷新由 Flush 触发。
+// WriteHeaderNow commits through sink.Begin; Flush requests flushing separately.
 func (w *sinkWriter) WriteHeaderNow() { _ = w.begin() }
 
-// Data 设置缺省内容类型并写出响应，无 body 状态提交响应头。
+// Data sets a missing Content-Type and writes the body, or only commits headers for bodyless status codes.
 func (c *OutputContext) Data(status int, contentType string, body []byte) {
 	if len(c.Writer.Header()["Content-Type"]) == 0 {
 		c.Writer.Header()["Content-Type"] = []string{contentType}
@@ -184,7 +184,7 @@ func (c *OutputContext) Data(status int, contentType string, body []byte) {
 	_, _ = c.Writer.Write(body)
 }
 
-// NextEvent 为下一次同步字节写入设置内容和终止标记。
+// NextEvent sets semantic and terminal flags for the next synchronous write.
 func (c *OutputContext) NextEvent(semantic, terminal bool) {
 	if writer, ok := c.Writer.(*deferredOutputWriter); ok {
 		(&OutputContext{Writer: writer.writer()}).NextEvent(semantic, terminal)
@@ -195,10 +195,10 @@ func (c *OutputContext) NextEvent(semantic, terminal bool) {
 	}
 }
 
-// Status 设置后续输出使用的状态码，响应在写入时提交。
+// Status sets the pending status code; the next write commits it.
 func (c *OutputContext) Status(status int) { c.Writer.WriteHeader(status) }
 
-// JSON 编码并通过 Data 输出响应，编码失败时提交状态码。
+// JSON encodes and sends a response through Data. Encoding errors commit the status without a body.
 func (c *OutputContext) JSON(status int, value any) {
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -209,7 +209,7 @@ func (c *OutputContext) JSON(status int, value any) {
 	c.Data(status, "application/json; charset=utf-8", body)
 }
 
-// Err 返回本次同步输出的错误，后续读取或取消由平台决定。
+// Err returns the output error. The platform decides whether to keep reading or cancel.
 func (c *OutputContext) Err() error {
 	if writer, ok := c.Writer.(*deferredOutputWriter); ok {
 		if writer.output == nil {

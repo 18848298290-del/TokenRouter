@@ -5,12 +5,12 @@ import (
 	"unicode/utf8"
 )
 
-// MaxPersistedSessionIDLength 保留既有数据库列宽；超长整值拒绝，不截断。
+// MaxPersistedSessionIDLength is the database column limit in Unicode characters; longer IDs are rejected.
 const MaxPersistedSessionIDLength = 255
 
-// SanitizeClientSessionID 规范化客户端提供的原始会话标识：去除首尾空白，包含控制字符
-// （CR、LF、制表符、NUL 等）或超过数据库列上限时整值拒绝，防止日志或请求头
-// 注入内容进入关联数据。缺失或无效输入返回空字符串。
+// SanitizeClientSessionID trims surrounding whitespace and rejects invalid UTF-8,
+// ASCII control characters within the trimmed ID, and values exceeding the database limit.
+// Rejection prevents log or header injection through correlation data and returns an empty string.
 func SanitizeClientSessionID(raw string) string {
 	if !utf8.ValidString(raw) {
 		return ""
@@ -22,7 +22,7 @@ func SanitizeClientSessionID(raw string) string {
 	count := 0
 	for _, r := range trimmed {
 		if r < 0x20 || r == 0x7f {
-			// 关联标识含控制字符时丢弃整个值。
+			// Reject the whole correlation ID when it contains a control character.
 			return ""
 		}
 		count++
@@ -33,7 +33,7 @@ func SanitizeClientSessionID(raw string) string {
 	return trimmed
 }
 
-// ExtractClientSessionID 按调用方指定的 Header 顺序读取会话 ID，Grok 扩展由对应入口启用。
+// ExtractClientSessionID checks headers in the supplied order, then the Grok header when enabled.
 func ExtractClientSessionID(header func(string) string, names []string, grok bool) string {
 	for _, name := range names {
 		if value := SanitizeClientSessionID(header(name)); value != "" {

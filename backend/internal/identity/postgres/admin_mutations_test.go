@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// bindingUsersFixture 返回测试指定的目标身份，数据库由绑定事务适配持有。
+// bindingUsersFixture supplies the target user while the binding adapter owns database writes.
 type bindingUsersFixture struct {
 	identitycore.UserRepository
 	user *identitycore.User
@@ -277,7 +277,7 @@ func TestAdminServiceBindUserAuthIdentityRejectsInvalidProviderType(t *testing.T
 	require.Equal(t, "INVALID_INPUT", apperror.Reason(err))
 }
 
-// newAdminServiceAuthIdentityBindingTestClient 创建管理员身份绑定测试使用的 SQLite 客户端。
+// newAdminServiceAuthIdentityBindingTestClient creates a SQLite client for identity binding tests.
 func newAdminServiceAuthIdentityBindingTestClient(t *testing.T) *dbent.Client {
 	t.Helper()
 
@@ -298,7 +298,7 @@ func (s bindingUsersFixture) GetByID(context.Context, int64) (*identitycore.User
 	return s.user, nil
 }
 
-// newIdentityBindingAdminForTest 使用数据库事务和指定用户构造管理员服务。
+// newIdentityBindingAdminForTest builds an admin service with real transactions and a fixed user.
 func newIdentityBindingAdminForTest(client *dbent.Client, user *identitycore.User) *identitycore.UserAdmin {
 	users := bindingUsersFixture{user: user}
 	return identitycore.NewUserAdmin(identitycore.AdminDependencies{Users: users, Transactions: &AdminMutations{Client: client, Users: users}})

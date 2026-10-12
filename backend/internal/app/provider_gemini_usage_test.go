@@ -10,7 +10,7 @@ import (
 )
 
 func TestGeminiAggregateUsageUsesProviderCost(t *testing.T) {
-	// 用户扣费倍率与提供商成本倍率不同时，Gemini 本地用量按提供商成本倍率计算。
+	// Gemini local usage uses provider cost even when the user charge differs.
 	stats := []usagecore.ModelStat{
 		{
 			Model:        "gemini-2.5-pro",

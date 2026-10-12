@@ -12,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 导入和后台共用刷新协调器，存储替身模拟同身份条件写入。
+// importRefreshStore simulates conditional credential writes for the coordinator shared by import and
+// background refresh.
 type importRefreshStore struct {
 	mu            sync.Mutex
 	current       *Record
@@ -113,7 +114,7 @@ func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 		})
 	}()
 	<-started
-	// 普通刷新必须等待同一把锁，不能在导入交换期间执行。
+	// Ordinary refresh waits on the same lock while the import exchange is active.
 	executor := &lifecycleRefreshExecutor{started: make(chan struct{}), release: make(chan struct{})}
 	go func() {
 		_, err := api.RefreshIfNeeded(context.Background(), &Record{ID: 1}, executor, time.Minute)

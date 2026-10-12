@@ -28,16 +28,16 @@ type errorPassthroughCache struct {
 	localMu             sync.RWMutex
 }
 
-// NewErrorPassthroughCache 创建错误透传规则缓存。
+// NewErrorPassthroughCache creates the Redis-backed rule cache.
 func NewErrorPassthroughCache(rdb *redis.Client) errorpolicy.ErrorPassthroughCache {
 	return &errorPassthroughCache{
 		rdb: rdb,
 	}
 }
 
-// Get 从缓存获取规则列表。
+// Get returns independent rule copies from local cache or Redis; misses and read failures return false.
 func (c *errorPassthroughCache) Get(ctx context.Context) ([]*errorpolicy.ErrorPassthroughRule, bool) {
-	// 先检查本地缓存
+	// The local cache avoids a Redis read when populated.
 	c.localMu.RLock()
 	if c.localCache != nil {
 		rules := errorpolicy.CloneRules(c.localCache)
@@ -46,7 +46,7 @@ func (c *errorPassthroughCache) Get(ctx context.Context) ([]*errorpolicy.ErrorPa
 	}
 	c.localMu.RUnlock()
 
-	// 从 Redis 获取
+	// A local miss loads the shared Redis value.
 	data, err := c.rdb.Get(ctx, errorPassthroughCacheKey).Bytes()
 	if err != nil {
 		if err != redis.Nil {
@@ -61,7 +61,7 @@ func (c *errorPassthroughCache) Get(ctx context.Context) ([]*errorpolicy.ErrorPa
 		return nil, false
 	}
 
-	// 更新本地缓存
+	// Keep an independent local copy so callers can mutate their results.
 	c.localMu.Lock()
 	c.localCache = errorpolicy.CloneRules(rules)
 	c.localMu.Unlock()
@@ -69,7 +69,7 @@ func (c *errorPassthroughCache) Get(ctx context.Context) ([]*errorpolicy.ErrorPa
 	return rules, true
 }
 
-// Set 设置缓存。
+// Set writes rules to Redis, then publishes an independent local copy.
 func (c *errorPassthroughCache) Set(ctx context.Context, rules []*errorpolicy.ErrorPassthroughRule) error {
 	rules = errorpolicy.CloneRules(rules)
 	data, err := json.Marshal(rules)
@@ -81,7 +81,7 @@ func (c *errorPassthroughCache) Set(ctx context.Context, rules []*errorpolicy.Er
 		return err
 	}
 
-	// 更新本地缓存
+	// Keep an independent local copy so callers can mutate their results.
 	c.localMu.Lock()
 	c.localCache = errorpolicy.CloneRules(rules)
 	c.localMu.Unlock()
@@ -89,23 +89,23 @@ func (c *errorPassthroughCache) Set(ctx context.Context, rules []*errorpolicy.Er
 	return nil
 }
 
-// Invalidate 使缓存失效。
+// Invalidate clears local rules and deletes the shared Redis value.
 func (c *errorPassthroughCache) Invalidate(ctx context.Context) error {
-	// 清除本地缓存
+	// Clear local state even if the Redis deletion fails.
 	c.localMu.Lock()
 	c.localCache = nil
 	c.localMu.Unlock()
 
-	// 清除 Redis 缓存
+	// Delete the shared cached value.
 	return c.rdb.Del(ctx, errorPassthroughCacheKey).Err()
 }
 
-// NotifyUpdate 通知其他实例刷新缓存。
+// NotifyUpdate asks other instances to refresh their caches.
 func (c *errorPassthroughCache) NotifyUpdate(ctx context.Context) error {
 	return c.rdb.Publish(ctx, errorPassthroughPubSubKey, "refresh").Err()
 }
 
-// SubscribeUpdates 订阅缓存更新通知。
+// SubscribeUpdates starts one update subscriber and rejects calls after StopSubscription.
 func (c *errorPassthroughCache) SubscribeUpdates(ctx context.Context, handler func()) {
 	subscriberCtx, cancel := context.WithCancel(ctx)
 	c.subscriptionMu.Lock()
@@ -131,19 +131,19 @@ func (c *errorPassthroughCache) SubscribeUpdates(ctx context.Context, handler fu
 				if msg == nil {
 					return
 				}
-				// 清除本地缓存，下次访问时会从 Redis 或数据库重新加载
+				// Clear the local value so subsequent reads reload rules.
 				c.localMu.Lock()
 				c.localCache = nil
 				c.localMu.Unlock()
 
-				// 调用处理函数
+				// The handler can reload rules after invalidation.
 				handler()
 			}
 		}
 	}()
 }
 
-// StopSubscription 取消订阅并等待最后一次回调完成。
+// StopSubscription cancels the subscriber and waits for any active callback to finish.
 func (c *errorPassthroughCache) StopSubscription() {
 	c.subscriptionMu.Lock()
 	c.subscriptionStopped = true

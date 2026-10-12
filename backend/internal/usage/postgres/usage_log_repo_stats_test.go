@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestProviderReportOwnsJITTransaction 将 JIT 设置限定在报表事务，错误路径也结束事务。
+// TestProviderReportOwnsJITTransaction checks transaction-local JIT settings and cleanup on errors.
 func TestProviderReportOwnsJITTransaction(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		db, mock := newSQLMock(t)
@@ -38,7 +38,7 @@ func TestProviderReportOwnsJITTransaction(t *testing.T) {
 	}
 }
 
-// TestStatsEndpointSourceQueries 未选中的端点维度不向数据库发送查询。
+// TestStatsEndpointSourceQueries checks that unselected endpoint dimensions issue no query.
 func TestStatsEndpointSourceQueries(t *testing.T) {
 	for _, source := range []string{"", "inbound", "upstream", "path"} {
 		db, mock := newSQLMock(t)
@@ -83,8 +83,8 @@ func TestResolveEndpointColumn(t *testing.T) {
 		{"inbound", "ul.inbound_endpoint"},
 		{"upstream", "ul.upstream_endpoint"},
 		{"path", "ul.inbound_endpoint || ' -> ' || ul.upstream_endpoint"},
-		{"", "ul.inbound_endpoint"},        // 默认字段
-		{"unknown", "ul.inbound_endpoint"}, // 未知类型使用默认字段
+		{"", "ul.inbound_endpoint"},        // Default column
+		{"unknown", "ul.inbound_endpoint"}, // Unknown types use the default column.
 	}
 
 	for _, tc := range tests {
@@ -103,7 +103,7 @@ func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	providerID := int64(3667)
 	actualExpr := regexp.QuoteMeta("COALESCE(SUM(actual_cost), 0) as actual_cost")
 
-	// 入站、上游和完整路径聚合都使用用户实际扣费。
+	// Inbound, upstream, and full-path aggregates use user charges.
 	for _, endpoint := range []string{"/v1/chat/completions", "/api/v1/coding/chat", "/v1/chat/completions -> /api/v1/coding/chat"} {
 		mock.ExpectQuery("(?s)SELECT.*"+actualExpr+".*provider_id = \\$3").
 			WithArgs(start, end, providerID).
@@ -134,7 +134,7 @@ func TestGeminiUsageTotalsBatchUsesProviderCost(t *testing.T) {
 	providerID := int64(3667)
 	providerCostExpr := regexp.QuoteMeta("COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1)")
 
-	// 批量统计与单提供商模型聚合都使用提供商成本。
+	// Batch and single-provider model aggregates use provider costs.
 	mock.ExpectQuery("(?s)"+providerCostExpr+".*"+providerCostExpr+".*FROM usage_logs").
 		WithArgs(sqlmock.AnyArg(), start, end).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -275,7 +275,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsProviderCost(t *testi
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
 
-	// 未设置 ProviderID 筛选时也返回 TotalProviderCost。
+	// TotalProviderCost is also returned when ProviderID is unset.
 	filters := usage.UsageLogFilters{}
 
 	mock.ExpectQuery("FROM usage_logs").

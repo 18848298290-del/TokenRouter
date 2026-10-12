@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AlphaSearchTarget 不暴露完整提供商，准备好的请求禁止序列化或日志展开。
+// AlphaSearchTarget holds a prepared request and its execution callbacks.
+// The request may contain credentials; do not serialize or expand it in logs.
 type AlphaSearchTarget struct {
 	ProviderID        int64
 	Request           *http.Request `json:"-"`
@@ -29,7 +30,8 @@ type AlphaSearchTarget struct {
 	Headers           func(http.Header, http.Header)
 }
 
-// AlphaSearchExecutor 保留独立搜索与 PAT Responses 回退的错误/用量差异。
+// AlphaSearchExecutor executes standalone search or the PAT Responses fallback,
+// with separate error handling and quota-update rules for each path.
 type AlphaSearchExecutor struct{}
 
 func (t *AlphaSearchTarget) TargetID() int64 {
@@ -65,10 +67,10 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 	if err != nil {
 		return result, t.TransportError(err)
 	}
-	// 错误处理可能回卷 resp.Body；始终释放真正承载连接的原始响应体。
+	// Error handling may replace resp.Body for replay; close the body that owns the connection.
 	originalBody := resp.Body
 	defer func() { _ = originalBody.Close() }()
-	// 耗时仍在响应释放前取得；失败观测不改变旧错误返回和计费决策。
+	// Measure duration before closing the body and record the returned failure.
 	defer func() {
 		result.Duration = time.Since(started)
 		result.Cancelled = errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded)

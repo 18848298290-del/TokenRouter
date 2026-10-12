@@ -1,25 +1,25 @@
 package provider
 
-// 邀请重置结果使用公开的数据格式，交换操作由注入的执行接口完成。
+// CodexInviteResetStatus exposes invitation eligibility and available rate-limit resets.
 type CodexInviteResetStatus struct {
 	ReferralKey       string         `json:"referral_key"`
 	InviteEligibility map[string]any `json:"invite_eligibility,omitempty"`
 	EligibilityRules  []string       `json:"eligibility_rules,omitempty"`
-	// ShouldShow 表示上游是否建议 Codex Desktop 主动展示邀请入口，管理端只作为状态标记展示。
+	// ShouldShow is the upstream suggestion to display invitations in Codex Desktop; admins see it as a status flag.
 	ShouldShow *bool `json:"should_show,omitempty"`
-	// GrantAction 保留上游返回的原始奖励动作，便于排查新增奖励类型。
+	// GrantAction retains the raw upstream reward action for diagnosing new reward types.
 	GrantAction string `json:"grant_action,omitempty"`
-	// GrantAmount 表示单次邀请达成后双方获得的奖励数量。
+	// GrantAmount is the reward amount each party receives for a completed invitation.
 	GrantAmount *int `json:"grant_amount,omitempty"`
-	// HasRewards 表示当前邀请活动是否会发放奖励，nil 表示上游没有返回该字段。
+	// HasRewards reports whether invitations grant rewards; nil means the field was absent upstream.
 	HasRewards *bool `json:"has_rewards,omitempty"`
-	// GrantType 是管理端使用的稳定奖励类型枚举。
+	// GrantType is the normalized reward type used by the admin UI.
 	GrantType string `json:"grant_type,omitempty"`
-	// InviteAvailable 表示当前提供商是否还能继续通过推荐入口发送 Codex 邀请。
+	// InviteAvailable reports whether this provider can send further Codex referral invitations.
 	InviteAvailable bool `json:"invite_available"`
-	// InviteUnavailableReason 是推荐入口不可用时返回给前端判断的稳定原因码。
+	// InviteUnavailableReason is a stable reason code for an unavailable invitation entry point.
 	InviteUnavailableReason string `json:"invite_unavailable_reason,omitempty"`
-	// InviteUnavailableMessage 是推荐入口不可用时展示给管理员的非致命提示。
+	// InviteUnavailableMessage is a nonfatal explanation displayed to the administrator.
 	InviteUnavailableMessage string                   `json:"invite_unavailable_message,omitempty"`
 	RequiresConsent          bool                     `json:"requires_consent"`
 	AvailableCount           int                      `json:"available_count"`

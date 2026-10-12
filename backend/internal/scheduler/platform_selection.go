@@ -38,14 +38,14 @@ type PlatformSelectionInput struct {
 	RequirePrivacySet        bool
 	PreviousResponseID       string
 	PreviousResponseCanMove  bool
-	RequestedModel           string // 客户端请求模型 R，用于限制检查、错误消息和会话标识。
-	RoutingModel             string // 提供商层模型：普通请求为 C，Messages 为分组映射后的 D。
+	RequestedModel           string // Client model R, used for restrictions, errors, and session identity.
+	RoutingModel             string // Provider-layer model: C for ordinary requests, group-mapped D for Messages.
 	RequiredTransport        string
 	RequiredCapability       provider.OpenAIEndpointCapability
 	RequiredImageCapability  provider.OpenAIImagesCapability
 	RequireCompact           bool
 	ExcludedIDs              map[int64]struct{}
-	// AdvancedSchedulerFeedbackConfig 与 StickyEscapeConfig 固定本次请求使用的有效策略。
+	// AdvancedSchedulerFeedbackConfig and StickyEscapeConfig capture the effective policy for this request.
 	AdvancedSchedulerFeedbackConfig policy.FeedbackConfig
 	StickyEscapeConfig              policy.StickyEscapeConfig
 }
@@ -91,7 +91,7 @@ type ProbeBudget struct {
 	limited   bool
 }
 
-// PlatformCandidateScore 使用同一评分结果，仅保留本次候选的无凭据关联。
+// PlatformCandidateScore associates shared scoring results with this request's credential-free candidate data.
 type PlatformCandidateScore struct {
 	Provider                                                         *FlowProvider
 	LoadInfo                                                         *ProviderLoadInfo
@@ -104,7 +104,7 @@ type PlatformCandidateScore struct {
 	Factors                                                          CandidateFactors
 }
 
-// PlatformSelectionPorts 提供平台资格检查，PlatformSelector 决定评分、绑定优先级、抢槽与等待顺序。
+// PlatformSelectionPorts supplies eligibility checks; PlatformSelector orders scoring, bindings, slot acquisition, and waiting.
 type PlatformSelectionPorts struct {
 	BasicStickyTTL       time.Duration
 	CheckPricing         func(context.Context, *int64, string) bool
@@ -157,7 +157,7 @@ type PlatformSelectionPorts struct {
 	Unavailable                                                    func(context.Context, string, string, bool, string, ...[]FlowProvider) error
 }
 
-// PlatformSelector 共用反馈与计数实例，每次选择使用本次请求的数据和回调。
+// PlatformSelector shares feedback and counters while using each request's inputs and callbacks.
 type PlatformSelector struct {
 	ports       PlatformSelectionPorts
 	concurrency *ConcurrencyService
@@ -365,7 +365,7 @@ func (s *PlatformSelector) Select(
 		req.StickyEscapeConfig = policy.NormalizeStickyEscape(effective.StickyEscape)
 	}
 	defer func() {
-		// 成功选择结果携带请求开始时捕获的反馈配置，反馈回写使用这份配置。
+		// Return the captured feedback settings so completion uses the policy selected for this request.
 		if selectionResult != nil && selectionResult.AdvancedSchedulerFeedback == nil && s != nil && s.ports.Available {
 			feedback := NormalizeFeedbackConfig(req.AdvancedSchedulerFeedbackConfig)
 			selectionResult.AdvancedSchedulerFeedback = &feedback
@@ -527,12 +527,12 @@ func (s *PlatformSelector) SelectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	// 粘性选择过滤已超额的免费 OAuth 提供商。管理端额度查询和导入探测各自执行。
+	// Sticky selection rejects exhausted free OAuth providers; admin queries and import probes run separately.
 	if provider != nil && len(s.ports.FreeQuota(ctx, []FlowProvider{*provider})) == 0 {
 		clearBinding()
 		return nil, false, nil
 	}
-	// 团队与模型冷却期间，粘性选择过滤同团队中仍处于 429 窗口的关联提供商。
+	// During team/model cooldown, related providers in the team's 429 window are ineligible for stickiness.
 	now := s.now()
 	upstreamModel := s.ports.CanonicalModel(provider, req.RequestedModel)
 	if provider != nil && s.ports.TeamLimited(provider, upstreamModel, now) {
@@ -570,7 +570,7 @@ func (s *PlatformSelector) SelectBySessionHash(
 	}
 
 	cfg := s.ports.Options()
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
+	// WaitPlan uses Concurrency because it waits for physical Redis slots; EffectiveLoadFactor is a scoring denominator.
 	if s.concurrency != nil {
 		if escapeCfg.Enabled && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.Snapshot(providerID)
@@ -725,12 +725,12 @@ func (s *PlatformSelector) SelectByLoadBalance(
 	if len(providers) == 0 {
 		return nil, 0, 0, 0, s.ports.Unavailable(ctx, req.RequestedModel, req.routingModel(), false, PlatformFilterStats{}.Summary(""), providers)
 	}
-	// Grok 调度在此检查本地免费层额度，管理端探测单独执行。
+	// Check Grok's local free-tier allowance here; admin probes run separately.
 	providers = s.ports.FreeQuota(ctx, providers)
 	if len(providers) == 0 {
 		return nil, 0, 0, 0, s.ports.Unavailable(ctx, req.RequestedModel, req.routingModel(), false, PlatformFilterStats{}.Summary("grok_free_quota_soft_gate"))
 	}
-	// 团队与模型限流冷却：发生 429 的团队关联提供商跳过热点模型。
+	// Providers in a rate-limited team skip the affected model during its cooldown.
 	if req.Platform == "" || req.Platform == capability.PlatformGrok {
 		now := s.now()
 		filtered := s.ports.FilterTeamLimited(providers, req.RequestedModel, now)
@@ -740,7 +740,7 @@ func (s *PlatformSelector) SelectByLoadBalance(
 		if filtered != nil {
 			providers = filtered
 		}
-		// 按提供商和模型执行免费额度软性阻断，其他模型仍可参与调度。
+		// Apply free-quota blocks per provider and model so other models remain eligible.
 		modelFiltered := s.ports.FilterModelQuota(providers, req.RequestedModel, now)
 		if len(modelFiltered) == 0 && len(providers) > 0 {
 			return nil, 0, 0, 0, s.ports.Unavailable(ctx, req.RequestedModel, req.routingModel(), false, PlatformFilterStats{}.Summary("grok_model_quota_block"))
@@ -775,7 +775,7 @@ func (s *PlatformSelector) SelectByLoadBalance(
 			filterStats.Exclude("runtime_blocked")
 			continue
 		}
-		// 当前分组的隐私要求在候选资格检查时生效。
+		// Apply the current group's privacy requirement before scoring candidates.
 		if req.RequirePrivacySet && !provider.IsPrivacySet() {
 			filterStats.Exclude("privacy_not_set")
 			continue
@@ -832,9 +832,9 @@ func (s *PlatformSelector) SelectByLoadBalance(
 						return result, candidateCount, topK, loadSkew, nil
 					}
 				}
-				// 常规池既无法获取也无法排队（含仅剩不支持 compact 的候选）时，
-				// 回退到订阅池的等待计划：busy-but-waitable 的订阅提供商不应因常规池存在
-				// 而被丢弃，否则开启订阅优先反而让本可排队成功的请求硬失败。
+				// If the ordinary pool can neither acquire nor queue a request, including when compact is unsupported,
+				// try the subscription pool's wait plan. Busy subscription providers may still accept queued work.
+				// Discarding that plan would fail requests that can wait successfully with subscription priority enabled.
 				subResult, subCandidateCount, subTopK, subLoadSkew, subErr := s.finishLoadBalanceSelectionFallback(ctx, req, attempt, budget, filterStats)
 				if subErr == nil && subResult != nil {
 					return subResult, subCandidateCount, subTopK, subLoadSkew, nil
@@ -942,7 +942,7 @@ func (s *PlatformSelector) finishLoadBalanceSelectionFallback(
 
 	cfg := s.ports.Options()
 	compactBlocked := attempt.compactBlocked
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
+	// WaitPlan uses Concurrency because it waits for physical Redis slots; EffectiveLoadFactor is a scoring denominator.
 	passes := 1
 	if budget != nil && budget.limited {
 		passes = 4

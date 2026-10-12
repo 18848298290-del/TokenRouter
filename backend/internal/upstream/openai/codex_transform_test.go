@@ -9,10 +9,8 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// TestFilterCodexInput_StripsFunctionCallItemID_WhenPreservingReferences 验证续链模式下
-// 也会剥离 function_call 中非 fc 前缀（例如 item_*）的 id。OpenAI 上游要求
-// function_call id 以 "fc" 开头，否则会返回 400：
-// "Expected an ID that begins with 'fc'."（#3785）.
+// TestFilterCodexInput_StripsFunctionCallItemID_WhenPreservingReferences covers item_* IDs
+// that upstream rejects because function_call IDs require the fc prefix (issue #3785).
 func TestFilterCodexInput_StripsFunctionCallItemID_WhenPreservingReferences(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -43,8 +41,7 @@ func TestFilterCodexInput_StripsFunctionCallItemID_WhenPreservingReferences(t *t
 	require.Equal(t, "bash", fc["name"])
 }
 
-// TestFilterCodexInput_KeepsFcID_WhenPreservingReferences 验证续链模式下会保留
-// function_call 中有效的 fc* id。
+// TestFilterCodexInput_KeepsFcID_WhenPreservingReferences verifies valid fc IDs survive continuation.
 func TestFilterCodexInput_KeepsFcID_WhenPreservingReferences(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -172,7 +169,7 @@ func TestFilterCodexInput_PreservesNativeRemoteItemReferences(t *testing.T) {
 	}
 }
 
-// TestFilterCodexInput_StripsItemIDFromAllToolCallInputTypes 检查调用输入项中的 item_* ID 被删除。
+// TestFilterCodexInput_StripsItemIDFromAllToolCallInputTypes checks invalid item_* call IDs.
 func TestFilterCodexInput_StripsItemIDFromAllToolCallInputTypes(t *testing.T) {
 	types := []string{"function_call", "tool_call", "local_shell_call", "tool_search_call", "custom_tool_call", "mcp_tool_call"}
 
@@ -196,8 +193,7 @@ func TestFilterCodexInput_StripsItemIDFromAllToolCallInputTypes(t *testing.T) {
 	}
 }
 
-// TestFilterCodexInput_OutputTypeKeepsItemID 验证工具输出项（例如
-// function_call_output）仍会保留 id，只有调用输入类型受 fc* 约束。
+// TestFilterCodexInput_OutputTypeKeepsItemID verifies function_call_output IDs survive continuation.
 func TestFilterCodexInput_OutputTypeKeepsItemID(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -218,8 +214,7 @@ func TestFilterCodexInput_OutputTypeKeepsItemID(t *testing.T) {
 	require.Equal(t, "o1", out["id"], "output item id should be preserved")
 }
 
-// TestFilterCodexInput_NonToolCallItemKeepsID 验证续链模式下，不受 fc* 调用输入
-// 和 msg* message 前缀约束的条目仍会保留 id；message 另有独立测试覆盖。
+// TestFilterCodexInput_NonToolCallItemKeepsID verifies that a valid web-search ID survives continuation.
 func TestFilterCodexInput_NonToolCallItemKeepsID(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -238,8 +233,8 @@ func TestFilterCodexInput_NonToolCallItemKeepsID(t *testing.T) {
 	require.Equal(t, "ws_001", item["id"], "unconstrained items keep their id in preserve mode")
 }
 
-// TestFilterCodexInput_StripsMessageItemID_WhenPreservingReferences 验证续链模式下
-// 仍会移除非 msg 前缀的 message id；OpenAI 上游会以 400 拒绝 item_* id。
+// TestFilterCodexInput_StripsMessageItemID_WhenPreservingReferences covers message IDs
+// that upstream rejects because they lack the msg prefix.
 func TestFilterCodexInput_StripsMessageItemID_WhenPreservingReferences(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -267,8 +262,7 @@ func TestFilterCodexInput_StripsMessageItemID_WhenPreservingReferences(t *testin
 	require.NotNil(t, msg["content"], "content must be preserved")
 }
 
-// TestFilterCodexInput_KeepsMsgID_WhenPreservingReferences 验证续链模式会保留
-// 合法的 msg* id，供上游引用上下文。
+// TestFilterCodexInput_KeepsMsgID_WhenPreservingReferences verifies valid message references survive.
 func TestFilterCodexInput_KeepsMsgID_WhenPreservingReferences(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -288,8 +282,7 @@ func TestFilterCodexInput_KeepsMsgID_WhenPreservingReferences(t *testing.T) {
 	require.Equal(t, "msg_validID123", msg["id"], "valid msg* id must be preserved")
 }
 
-// TestFilterCodexInput_StripsMessageIDWhenNotPreservingReferences 验证非续链路径
-// 无论 id 前缀是否合法，都会移除 message id。
+// TestFilterCodexInput_StripsMessageIDWhenNotPreservingReferences checks both valid and invalid prefixes.
 func TestFilterCodexInput_StripsMessageIDWhenNotPreservingReferences(t *testing.T) {
 	for _, id := range []string{"item_abc", "msg_validID123"} {
 		input := []any{
@@ -312,8 +305,7 @@ func TestFilterCodexInput_StripsMessageIDWhenNotPreservingReferences(t *testing.
 	}
 }
 
-// TestFilterCodexInput_MessageIDStripDoesNotMutateInput 验证移除 id 时不会原地修改
-// 调用方传入的 map。
+// TestFilterCodexInput_MessageIDStripDoesNotMutateInput protects caller-owned maps.
 func TestFilterCodexInput_MessageIDStripDoesNotMutateInput(t *testing.T) {
 	original := map[string]any{
 		"type": "message",
@@ -329,8 +321,7 @@ func TestFilterCodexInput_MessageIDStripDoesNotMutateInput(t *testing.T) {
 	require.Equal(t, "item_abc", original["id"], "original input must not be mutated")
 }
 
-// TestFilterCodexInput_MessageStripKeepsFunctionCallBehavior 验证 message 与
-// function_call 分别按各自的 id 规则处理（#3785）。
+// TestFilterCodexInput_MessageStripKeepsFunctionCallBehavior checks separate message and call ID rules.
 func TestFilterCodexInput_MessageStripKeepsFunctionCallBehavior(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -385,22 +376,22 @@ func TestFilterCodexInput_MessageStripKeepsFunctionCallBehavior(t *testing.T) {
 	require.Equal(t, "fc_abc123", out["call_id"], "call_id pairing must survive")
 }
 
-// TestEnsureCodexReasoningInclude 验证启用推理时补齐 include，并保持幂等及已有条目。
+// TestEnsureCodexReasoningInclude checks insertion, idempotence and retention of existing entries.
 func TestEnsureCodexReasoningInclude(t *testing.T) {
-	// reasoning 存在时补充缺失的 include。
+	// A nonempty reasoning object requires encrypted content in include.
 	body := map[string]any{"reasoning": map[string]any{"effort": "medium"}}
 	require.True(t, EnsureCodexReasoningInclude(body))
 	require.Equal(t, []any{"reasoning.encrypted_content"}, body["include"])
-	// 幂等：再次调用不重复
+	// A second call must not duplicate the entry.
 	require.False(t, EnsureCodexReasoningInclude(body))
 
-	// 缺少 reasoning 时请求保持不变。
+	// Requests without reasoning remain unchanged.
 	body2 := map[string]any{}
 	require.False(t, EnsureCodexReasoningInclude(body2))
 	_, ok := body2["include"]
 	require.False(t, ok)
 
-	// 既有 include 保留并追加
+	// Retain existing include entries when appending.
 	body3 := map[string]any{
 		"reasoning": map[string]any{"effort": "high"},
 		"include":   []any{"foo"},
@@ -409,7 +400,7 @@ func TestEnsureCodexReasoningInclude(t *testing.T) {
 	require.Equal(t, []any{"foo", "reasoning.encrypted_content"}, body3["include"])
 }
 
-// TestDefaultCodexSynthInstructionsModelAware 检查各模型使用的 Codex base prompt。
+// TestDefaultCodexSynthInstructionsModelAware checks model-specific embedded prompts.
 func TestDefaultCodexSynthInstructionsModelAware(t *testing.T) {
 	require.True(t, strings.Contains(DefaultCodexSynthInstructions("gpt-5-codex"), "You are Codex, based on GPT-5"))
 	require.True(t, strings.Contains(DefaultCodexSynthInstructions("gpt-5.5"), "You are Codex, a coding agent based on GPT-5"))

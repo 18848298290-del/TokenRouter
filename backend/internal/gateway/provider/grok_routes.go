@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokRoutes 根据目标策略读取动态默认地址。
+// GrokRoutes builds validated endpoints using provider settings and runtime defaults.
 type GrokRoutes struct {
 	Validate    grok.BaseURLValidator
 	DefaultMode func(context.Context) string

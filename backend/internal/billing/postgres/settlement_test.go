@@ -161,7 +161,7 @@ func TestReserveUsageBillingBatchImageBilling_StrictSubscriptionRejectsPartialHo
 			1.0, 1.0, 1.0,
 			0.8, 0.8, 0.8, `{}`,
 		))
-	// 批量任务在提交上游前预占剩余额度，额度不足时返回错误。
+	// Tasks reserve quota before upstream submission and reject insufficient quota.
 	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET.*WHERE id = \$7`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1.0, 1.0, 1.0, preferredID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -205,7 +205,7 @@ func TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance(t *
 			1.0, 1.0, 1.0,
 			0.8, 0.8, 0.8, `{}`,
 		))
-	// 指定订阅只扣到额度上限，剩余基础用量按余额倍率形成欠费。
+	// The pinned subscription stops at its quota; remaining base usage becomes balance debt at the balance multiplier.
 	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET.*WHERE id = \$7`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1.0, 1.0, 1.0, preferredID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -252,7 +252,7 @@ func TestApplyUsageBillingEffects_StrictSubscriptionWithoutGroupFiltersRestricte
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	// 无最终分组时，指定订阅查询筛选没有分组限制的套餐。
+	// Without a final group, the pinned subscription query requires an unrestricted plan.
 	mock.ExpectQuery(`(?s)SELECT\s+id,\s+plan_id,.*FROM user_subscriptions.*AND NOT EXISTS\s*\(\s*SELECT 1\s+FROM subscription_plan_groups.*FOR UPDATE`).
 		WithArgs(int64(42), billing.SubscriptionStatusActive, billing.SubscriptionStatusPending, preferredID).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -348,8 +348,8 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	// dedup 与归档表均无 hold claim，表示该任务未成功冻结资金。
-	// 此时跳过释放，以免把其他任务的冻结资金计入可用余额。
+	// No hold claim in either deduplication table means the task never committed a reservation.
+	// Skip release so another task's frozen funds cannot become available balance.
 	mock.ExpectQuery(`SELECT 1\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
 		WithArgs(("batch_image_hold:" + "imgbatch_phantom"), int64(7)).
 		WillReturnError(sql.ErrNoRows)
@@ -578,7 +578,7 @@ func TestUsageBillingMonetaryEffectsQuantizeBeforeSQL(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestTaskProjectionRequiresRegisteredScope 检查未登记的任务作用域在开启事务前返回错误。
+// TestTaskProjectionRequiresRegisteredScope checks that unknown task scopes fail before beginning a transaction.
 func TestTaskProjectionRequiresRegisteredScope(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -589,7 +589,7 @@ func TestTaskProjectionRequiresRegisteredScope(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchImageHoldClaimRequestID 检查资金预占使用任务提供的请求 ID。
+// TestBatchImageHoldClaimRequestID checks that billing uses the reservation ID supplied by the task.
 func TestBatchImageHoldClaimRequestID(t *testing.T) {
 	require.Empty(t, taskHoldClaimRequestID(nil))
 	for _, id := range []string{"batch_image_hold:imgbatch_x", "creative_hold:crun_x"} {

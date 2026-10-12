@@ -28,19 +28,13 @@ type authCacheStub struct {
 	deleteAuthKeys []string
 }
 
-// apiKeyRepoStub 是 APIKeyRepository 接口的测试桩实现。
-// APIKeyService.Delete 的测试通过它设置仓储返回值并记录删除操作。
-//
-// 设计说明：
-//   - apiKey/getByIDErr: 模拟 GetKeyAndOwnerID 返回的记录与错误
-//   - deleteErr: 模拟 Delete 返回的错误
-//   - deletedIDs: 记录被调用删除的 API Key ID，用于断言验证
+// apiKeyRepoStub supplies lookup results and records key writes for service tests.
 type apiKeyRepoStub struct {
-	apiKey              *APIKey // 轻量查询返回的记录
-	getByIDErr          error   // 轻量查询的错误返回值
-	deleteErr           error   // 删除操作的错误返回值
-	updateErr           error   // 更新操作的错误返回值
-	deletedIDs          []int64 // 记录已删除的密钥编号列表
+	apiKey              *APIKey // Record returned by key lookups
+	getByIDErr          error   // Lookup error
+	deleteErr           error   // Deletion error
+	updateErr           error   // Update error
+	deletedIDs          []int64 // IDs passed to deletion methods
 	updatedKeys         []APIKey
 	allowListByUserID   bool
 	listByUserIDKeys    []APIKey
@@ -53,14 +47,10 @@ type apiKeyRepoStub struct {
 	touchedUsedAts      []time.Time
 }
 
-// apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。
-// 用于验证删除操作时缓存清理逻辑是否被正确调用。
-//
-// 设计说明：
-//   - invalidated: 记录被清除缓存的用户 ID 列表
+// apiKeyCacheStub records creation-counter and authentication-cache invalidation.
 type apiKeyCacheStub struct {
-	invalidated    []int64  // 记录调用 DeleteCreateAttemptCount 时传入的用户 ID
-	deleteAuthKeys []string // 记录调用 DeleteAuthCache 时传入的缓存 key
+	invalidated    []int64  // User IDs passed to DeleteCreateAttemptCount
+	deleteAuthKeys []string // Cache keys passed to DeleteAuthCache
 }
 
 type touchSingleflightRepo struct {
@@ -70,7 +60,7 @@ type touchSingleflightRepo struct {
 	blockCh chan struct{}
 }
 
-// dailyUsageCalendarCache 记录日期计算用到的计数和 TTL。
+// dailyUsageCalendarCache captures the date-based counter key and expiry.
 type dailyUsageCalendarCache struct {
 	APIKeyCache
 	key string
@@ -150,13 +140,7 @@ func TestAPIKeyService_GetByKey_CachesNegativeOnRepoMiss(t *testing.T) {
 	require.Equal(t, int32(1), repoCalls.Load())
 }
 
-// TestApiKeyService_Delete_Success 测试所有者成功删除 API Key 的场景。
-// 预期行为：
-//   - GetKeyAndOwnerID 返回所有者 ID 为 7
-//   - 调用者 userID 为 7（匹配）
-//   - Delete 成功执行
-//   - 缓存被正确清除（使用 ownerID）
-//   - 返回 nil 错误
+// TestApiKeyService_Delete_Success checks owner deletion and cleanup of authentication and touch caches.
 func TestApiKeyService_Delete_Success(t *testing.T) {
 	repo := &apiKeyRepoStub{
 		apiKey: &APIKey{ID: 42, UserID: 7, Key: "k"},
@@ -165,10 +149,10 @@ func TestApiKeyService_Delete_Success(t *testing.T) {
 	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
 	svc.lastUsedTouchL1.Store(int64(42), time.Now())
 
-	err := svc.Delete(context.Background(), 42, 7) // API Key ID=42, 调用者 userID=7
+	err := svc.Delete(context.Background(), 42, 7) // Owner 7 deletes key 42.
 	require.NoError(t, err)
-	require.Equal(t, []int64{42}, repo.deletedIDs)  // 验证正确的 API Key 被删除
-	require.Equal(t, []int64{7}, cache.invalidated) // 验证所有者的缓存被清除
+	require.Equal(t, []int64{42}, repo.deletedIDs)  // Requested key deletion
+	require.Equal(t, []int64{7}, cache.invalidated) // Owner's creation counter cleared
 	require.Equal(t, []string{svc.KeyAuthCacheKey("k")}, cache.deleteAuthKeys)
 	_, exists := svc.lastUsedTouchL1.Load(int64(42))
 	require.False(t, exists, "delete should clear touch debounce cache")
@@ -219,7 +203,7 @@ func TestAPIKeyService_TouchLastUsed_ExpiredDebounceTouchesAgain(t *testing.T) {
 
 	require.NoError(t, svc.TouchLastUsed(context.Background(), 123))
 
-	// 强制将 debounce 时间回拨到窗口之外，触发第二次写库。
+	// Move the debounce deadline into the past so a second write is eligible.
 	svc.lastUsedTouchL1.Store(int64(123), time.Now().Add(-KeyApiKeyLastUsedMinTouch-time.Second))
 
 	require.NoError(t, svc.TouchLastUsed(context.Background(), 123))
@@ -517,14 +501,13 @@ func (s *apiKeyRepoStub) Update(ctx context.Context, key *APIKey, _ APIKeyUpdate
 	return s.updateErr
 }
 
-// Delete 记录被删除的 API Key ID 并返回预设的错误。
-// 通过 deletedIDs 可以验证删除操作是否被正确调用。
+// Delete records the requested key ID and returns the configured error.
 func (s *apiKeyRepoStub) Delete(ctx context.Context, id int64) error {
 	s.deletedIDs = append(s.deletedIDs, id)
 	return s.deleteErr
 }
 
-// DeleteWithAudit 与 Delete 一样记录被删除的 ID,供 service 测试断言。
+// DeleteWithAudit records the requested key ID for service assertions.
 func (s *apiKeyRepoStub) DeleteWithAudit(ctx context.Context, id int64) error {
 	s.deletedIDs = append(s.deletedIDs, id)
 	return s.deleteErr
@@ -614,29 +597,28 @@ func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKe
 	panic("unexpected GetRateLimitData call")
 }
 
-// GetCreateAttemptCount 返回 0，表示用户未超过创建次数限制。
+// GetCreateAttemptCount returns zero so these tests are not creation-rate-limited.
 func (s *apiKeyCacheStub) GetCreateAttemptCount(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }
 
-// IncrementCreateAttemptCount 空实现，本测试不验证此行为。
+// IncrementCreateAttemptCount is a no-op in this fixture.
 func (s *apiKeyCacheStub) IncrementCreateAttemptCount(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// DeleteCreateAttemptCount 记录被清除缓存的用户 ID。
-// 删除 API Key 时会调用此方法清除用户的创建尝试计数缓存。
+// DeleteCreateAttemptCount records the user whose creation counter was cleared.
 func (s *apiKeyCacheStub) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
 	s.invalidated = append(s.invalidated, userID)
 	return nil
 }
 
-// IncrementDailyUsage 空实现，本测试不验证此行为。
+// IncrementDailyUsage is a no-op in this fixture.
 func (s *apiKeyCacheStub) IncrementDailyUsage(ctx context.Context, apiKey string) error {
 	return nil
 }
 
-// SetDailyUsageExpiry 空实现，本测试不验证此行为。
+// SetDailyUsageExpiry is a no-op in this fixture.
 func (s *apiKeyCacheStub) SetDailyUsageExpiry(ctx context.Context, apiKey string, ttl time.Duration) error {
 	return nil
 }

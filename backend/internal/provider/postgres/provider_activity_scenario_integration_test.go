@@ -2,7 +2,7 @@
 
 package postgres
 
-// 本场景覆盖 provider_states.go 的活动时间写入和 provider_queries.go 的排序查询。
+// This scenario covers activity writes in provider_states.go and list ordering in provider_queries.go.
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// TestProviderActivityListAndBatchUpdate 核对提供商自身活动字段的批量更新和双向排序。
+// TestProviderActivityListAndBatchUpdate checks batch activity updates and ascending and descending ordering.
 func TestProviderActivityListAndBatchUpdate(t *testing.T) {
 	db := postgrescontainer.New(t)
 	client := ent.NewClient(ent.Driver(sql.OpenDB(dialect.Postgres, db)))

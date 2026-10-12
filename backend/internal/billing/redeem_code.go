@@ -14,8 +14,8 @@ const (
 	RedeemTypeInvitation   = "invitation"
 
 	// Admin adjustment type constants.
-	AdjustmentTypeAdminBalance     = "admin_balance"     // 管理员调整余额
-	AdjustmentTypeAdminConcurrency = "admin_concurrency" // 管理员调整并发数
+	AdjustmentTypeAdminBalance     = "admin_balance"     // Administrator balance adjustment.
+	AdjustmentTypeAdminConcurrency = "admin_concurrency" // Administrator concurrency adjustment.
 
 	StatusUnused   = "unused"
 	StatusUsed     = "used"
@@ -30,7 +30,7 @@ type RedeemCode struct {
 	Type   string
 	Value  float64
 	Status string
-	// RequiresPayment 表示领取者需要有成功付款记录。
+	// RequiresPayment requires the recipient to have a paid-order history.
 	RequiresPayment bool
 	MaxUses         int
 	UsedCount       int

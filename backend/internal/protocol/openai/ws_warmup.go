@@ -6,12 +6,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// IsWSWarmupPayload 识别客户端明确声明的无生成预热请求。
+// IsWSWarmupPayload recognizes a valid response.create request with generate set to boolean false.
 func IsWSWarmupPayload(payload []byte) bool {
 	return gjson.ValidBytes(payload) && gjson.GetBytes(payload, "type").String() == "response.create" && gjson.GetBytes(payload, "generate").Type == gjson.False
 }
 
-// WSWarmupEvents 构造带稳定响应 ID 的空预热事件，时间与 ID 由调用方提供。
+// WSWarmupEvents builds empty warmup events sharing the caller-provided response ID and Unix timestamp.
 // @project-doc docs/interfaces/openai_upstream.md#responses_ws_warmup
 func WSWarmupEvents(responseID, model string, createdAt int64) ([][]byte, error) {
 	response := ResponsesResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model, Output: []ResponsesOutput{}}

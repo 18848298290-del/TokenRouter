@@ -64,7 +64,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// translatePersistenceError 将数据库的缺失记录和唯一键冲突转换为应用错误。
+// translatePersistenceError maps missing records and uniqueness conflicts to application errors.
 func translatePersistenceError(err error, notFound, conflict *apperror.ApplicationError) error {
 	if err == nil {
 		return nil
@@ -82,7 +82,7 @@ func NewBatchImageRepository(db *sql.DB) batchimage.BatchImageRepository {
 	return &Repository{db: db, sql: db}
 }
 
-// NewRepositoryWithSQL 参与已有 SQL 执行器；不会在构造时获取连接或启动任务。
+// NewRepositoryWithSQL uses the supplied SQL executor; construction does not acquire a connection.
 func NewRepositoryWithSQL(sqlq SQLExecutor) *Repository { return &Repository{sql: sqlq} }
 
 func (r *Repository) CreateBatchImageJob(ctx context.Context, params batchimage.CreateBatchImageJobParams) (*batchimage.BatchImageJob, error) {
@@ -526,8 +526,8 @@ func (r *Repository) replaceBatchImageItemsForJobWithSQL(ctx context.Context, sq
 	if err := sqlq.QueryRowContext(ctx, `SELECT id, status FROM batch_image_jobs WHERE batch_id = $1 FOR UPDATE`, batchID).Scan(&id, &status); err != nil {
 		return translatePersistenceError(err, batchimage.ErrBatchImageJobNotFound, nil)
 	}
-	// 仅允许 indexing 状态重建 item 表：防止锁过期后掉队的 worker
-	// 重写已完成/已结算 job 的条目，造成账目与结果漂移。
+	// Rebuild items only while indexing. A worker whose lock expired must not overwrite
+	// completed or settled results and make the recorded charges disagree with them.
 	if status != batchimage.BatchImageJobStatusIndexing {
 		return batchimage.ErrBatchImageIndexStateConflict
 	}
@@ -823,7 +823,7 @@ func createBatchImageJobWithSQL(ctx context.Context, sqlq SQLExecutor, params ba
 	}
 	internalModel := strings.TrimSpace(params.InternalModel)
 	if internalModel == "" {
-		// 兼容未显式传入内部模型的旧调用方，保持任务可正常创建和结算。
+		// Older callers omit the internal model; use the upstream model for those jobs.
 		internalModel = params.Model
 	}
 	return scanBatchImageJob(sqlq.QueryRowContext(ctx, `

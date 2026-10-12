@@ -34,7 +34,7 @@ var (
 	opsCleanupCronParser       = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 )
 
-// CleanupBackend 提供维护锁和分批清理操作。
+// CleanupBackend supplies maintenance locking and batched cleanup operations.
 type CleanupBackend interface {
 	AdvisoryLocker
 	AcquireMaintenance(context.Context) (func(), bool, error)
@@ -61,8 +61,8 @@ type OpsCleanupService struct {
 
 	instanceID string
 
-	// mu 保护 cron 实例和 effective 配置的切换。
-	// Reload 可以多次重建 cron，started/stopped 记录服务的启停状态。
+	// mu protects replacement of cron and the effective configuration.
+	// Reload can rebuild cron repeatedly; started and stopped track the service lifecycle.
 	mu        sync.Mutex
 	cron      *cron.Cron
 	started   bool
@@ -95,8 +95,7 @@ func NewOpsCleanupService(
 	}
 }
 
-// Start 首次启动 cron 调度。Enabled / Schedule 由 effective 配置决定（settings 优先 cfg）。
-// 重复调用幂等。
+// Start starts cron once using settings overrides ahead of deployment configuration.
 func (s *OpsCleanupService) Start() {
 	if s == nil {
 		return
@@ -120,8 +119,8 @@ func (s *OpsCleanupService) Start() {
 	}
 }
 
-// Stop 关闭 cron。幂等。
-// Stop 在锁外等待所有已退出调度的 cron，包括此前 Reload 留下的在途作业。
+// Stop stops scheduling and waits for active jobs. Repeated calls are safe.
+// It waits outside mu for all retired cron instances, including jobs left by Reload.
 func (s *OpsCleanupService) Stop() {
 	if s == nil {
 		return
@@ -139,7 +138,8 @@ func (s *OpsCleanupService) Stop() {
 	}
 }
 
-// stopCronLocked 停掉当前 cron 实例（带 3s 超时）。调用方持锁。
+// stopCronLocked retires cron and waits up to opsCleanupCronStopTimeout while holding mu.
+// It retains the drain signal so Stop can finish waiting after a local timeout.
 func (s *OpsCleanupService) stopCronLocked() {
 	if s.cron == nil {
 		return
@@ -162,8 +162,8 @@ func (s *OpsCleanupService) stopCronLocked() {
 	s.cron = nil
 }
 
-// applyScheduleLocked 重新计算 effective 配置并按其 schedule 重建 cron。调用方持锁。
-// 若 effective.Enabled=false（用户在 UI 关闭清理），停旧 cron 后直接返回，不创建新 cron。
+// applyScheduleLocked refreshes effective settings and rebuilds cron. The caller holds mu.
+// When cleanup is disabled, it retires the current cron without creating a replacement.
 func (s *OpsCleanupService) applyScheduleLocked(ctx context.Context) error {
 	s.computeEffectiveLocked(ctx)
 	s.stopCronLocked()
@@ -204,10 +204,10 @@ func (s *OpsCleanupService) applyScheduleLocked(ctx context.Context) error {
 	return nil
 }
 
-// Reload 重新读取 ops_advanced_settings.data_retention 并按新配置重建 cron。
-// 适用于 admin 在 UI 修改清理设置后立即生效（schedule / enabled 改动需要 Reload；
-// retention 改动 runScheduled 顶部也会刷新，下一次触发即生效）。
-// 若 service 还未 Start 或已 Stop，Reload 不做任何事。
+// Reload refreshes ops_advanced_settings.data_retention and rebuilds the schedule.
+// Call it after schedule or enabled changes. Retention values also refresh at each run.
+
+// Calls before Start or after Stop do nothing.
 func (s *OpsCleanupService) Reload(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -220,14 +220,14 @@ func (s *OpsCleanupService) Reload(ctx context.Context) error {
 	return s.applyScheduleLocked(ctx)
 }
 
-// computeEffectiveLocked 计算生效配置并写入 s.effective。调用方持锁。
+// computeEffectiveLocked updates s.effective. The caller holds mu.
 //
-// 优先级：UI 写入的 settings.ops_advanced_settings.data_retention 覆盖 cfg.Ops.Cleanup 的副本。
-//   - Enabled：settings 直接覆盖
-//   - Schedule：settings 非空时覆盖，否则保留 cfg
-//   - *RetentionDays：settings >=0 时覆盖（包括 0=TRUNCATE），<0 沿用 cfg
+// Stored data_retention settings override a copy of cfg.Ops.Cleanup:
+// Enabled replaces the deployment value.
+// A nonempty Schedule replaces the deployment schedule.
+// Nonnegative retention days override deployment values; zero selects TRUNCATE.
 //
-// 若 settings 表无该 key（ErrSettingNotFound）或解析失败，整体 fallback 到 cfg.Ops.Cleanup。
+// Missing or invalid settings leave deployment cleanup values in effect.
 func (s *OpsCleanupService) computeEffectiveLocked(ctx context.Context) {
 	base := CleanupOptions{}
 	if s.cfg != nil {
@@ -282,7 +282,7 @@ func (s *OpsCleanupService) computeEffectiveLocked(ctx context.Context) {
 		}
 	}
 
-	// 系统日志保留期读取运行时日志配置。
+	// System log retention comes from the runtime log configuration.
 	runtimeRaw, runtimeErr := s.settingRepo.GetValue(ctx, SettingKeyOpsRuntimeLogConfig)
 	if runtimeErr != nil && !errors.Is(runtimeErr, ErrSettingNotFound) {
 		reportOptions(s.cfg,
@@ -299,15 +299,15 @@ func (s *OpsCleanupService) computeEffectiveLocked(ctx context.Context) {
 	s.effective = base
 }
 
-// snapshotEffective 取一份 effective 副本（runCleanupOnce 等读路径使用）。
+// snapshotEffective returns a copy of the current cleanup configuration under mu.
 func (s *OpsCleanupService) snapshotEffective() CleanupOptions {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.effective
 }
 
-// refreshEffectiveBeforeRun 在 cron 触发时刷新 effective，让 retention 改动当次即生效。
-// schedule 改动不影响当次（cron 调度由库管理，需要 Reload 才换 schedule）。
+// refreshEffectiveBeforeRun applies current retention settings to this run.
+// Schedule changes require Reload to replace cron's schedule.
 func (s *OpsCleanupService) refreshEffectiveBeforeRun(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -322,7 +322,6 @@ func (s *OpsCleanupService) runScheduled() {
 	ctx, cancel := context.WithTimeout(context.Background(), opsCleanupRunTimeout)
 	defer cancel()
 
-	// 让 retention 改动当次生效（schedule/enabled 改动需要 Reload）。
 	s.refreshEffectiveBeforeRun(ctx)
 
 	release, ok := s.tryAcquireLeaderLock(ctx)
@@ -356,7 +355,7 @@ func (s *OpsCleanupService) runScheduled() {
 		return
 	}
 	s.recordHeartbeatSuccess(runAt, time.Since(startedAt), counts)
-	// 清理成功写入 info 日志，删除计数用于查询。
+	// Record deletion counts at info level for later inspection.
 	reportCleanupCompleted(s.cfg, counts.String())
 }
 

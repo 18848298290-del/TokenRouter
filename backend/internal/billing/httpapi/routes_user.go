@@ -2,7 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes 注册所属用户接口，共享鉴权、限流和审计已由 app 安装。
+// RegisterUserRoutes registers billing endpoints on a group with authentication, rate limits, and auditing
+// installed by the caller.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, redeemEndpoint *RedeemHandler, subscriptionEndpoint *SubscriptionHandler) {
 	redeem := authenticated.Group("/redeem")
 	{
@@ -10,7 +11,6 @@ func RegisterUserRoutes(authenticated *gin.RouterGroup, redeemEndpoint *RedeemHa
 		redeem.GET("/history", redeemEndpoint.GetHistory)
 	}
 
-	// 用户订阅
 	subscriptions := authenticated.Group("/subscriptions")
 	{
 		subscriptions.GET("", subscriptionEndpoint.List)

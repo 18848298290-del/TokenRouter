@@ -12,7 +12,7 @@ type qoderTestTarget struct {
 	record   *provider.Record
 }
 
-// Target 将选中的提供商封装为单次测试组件，公开字段返回脱敏数据。
+// Target wraps the selected provider for a test and exposes credential-free information.
 func (s *QoderProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return qoderTestTarget{executor: s, record: value}
 }

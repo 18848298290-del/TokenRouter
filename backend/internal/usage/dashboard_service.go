@@ -17,10 +17,10 @@ const (
 	defaultDashboardStatsRefreshTimeout = 30 * time.Second
 )
 
-// ErrDashboardStatsCacheMiss 标记仪表盘缓存未命中。
+// ErrDashboardStatsCacheMiss indicates that dashboard statistics are absent from cache.
 var ErrDashboardStatsCacheMiss = errors.New("仪表盘缓存未命中")
 
-// DashboardStatsCache 定义仪表盘统计缓存接口。
+// DashboardStatsCache stores serialized dashboard statistics.
 type DashboardStatsCache interface {
 	GetDashboardStats(ctx context.Context) (string, error)
 	SetDashboardStats(ctx context.Context, data string, ttl time.Duration) error
@@ -40,14 +40,14 @@ type dashboardStatsCacheEntry struct {
 	UpdatedAt int64           `json:"updated_at"`
 }
 
-// DashboardPublicStats 是首页公开展示所需的轻量统计。
+// DashboardPublicStats contains the homepage's public counters.
 type DashboardPublicStats struct {
 	TodayTokens int64
 	TotalTokens int64
 	TotalUsers  int64
 }
 
-// DashboardService 提供管理员仪表盘统计服务。
+// DashboardService provides administrator dashboard statistics.
 type DashboardService struct {
 	calendar       timezone.Calendar
 	queryCaches    *dashboardQueryCaches
@@ -68,7 +68,7 @@ type DashboardService struct {
 	preAggregation AggregationSettings
 }
 
-// DashboardReaders 提供按时间范围查询和公开统计查询。
+// DashboardReaders supplies range-limited and public-statistics queries.
 type DashboardReaders struct {
 	Range  dashboardStatsRangeFetcher
 	Public dashboardPublicStatsFetcher
@@ -139,7 +139,7 @@ func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregat
 	}
 }
 
-// SetPreAggregationSettings 注入统一运行时配置，并在设置变化时清除共享仪表盘缓存。
+// SetPreAggregationSettings binds runtime settings and evicts shared dashboard statistics when usage settings change.
 func (s *DashboardService) SetPreAggregationSettings(settings AggregationSettings) {
 	if s == nil {
 		return
@@ -176,7 +176,7 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardSta
 	return stats, nil
 }
 
-// GetPublicDashboardStats 返回首页公开统计，避免触发完整管理员仪表盘查询。
+// GetPublicDashboardStats uses a dedicated public reader when available, otherwise derives counters from full dashboard statistics.
 func (s *DashboardService) GetPublicDashboardStats(ctx context.Context) (*DashboardPublicStats, error) {
 	if fetcher := s.readers.Public; fetcher != nil {
 		now := time.Now().UTC()
@@ -207,7 +207,7 @@ func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTi
 	return trend, nil
 }
 
-// GetUsageTrendWithUsageFilters 让管理端图表使用包含团队维度的统一过滤条件。
+// GetUsageTrendWithUsageFilters passes unified filters, including team scope, to capable repositories.
 func (s *DashboardService) GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) ([]TrendDataPoint, error) {
 	type filteredRepository interface {
 		GetUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, UsageLogFilters) ([]TrendDataPoint, error)
@@ -251,7 +251,7 @@ func (s *DashboardService) GetModelStatsWithFiltersBySource(ctx context.Context,
 	return s.GetModelStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, providerID, groupID, requestType, stream, billingType)
 }
 
-// GetModelStatsWithUsageFiltersBySource 按统一过滤条件和模型来源返回统计。
+// GetModelStatsWithUsageFiltersBySource returns statistics for unified filters and the selected model source.
 func (s *DashboardService) GetModelStatsWithUsageFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, modelSource string) ([]ModelStat, error) {
 	type filteredRepository interface {
 		GetModelStatsWithUsageFiltersBySource(context.Context, time.Time, time.Time, UsageLogFilters, string) ([]ModelStat, error)
@@ -274,7 +274,7 @@ func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTi
 	return stats, nil
 }
 
-// GetGroupStatsWithUsageFilters 让分组图表与明细共用团队过滤条件。
+// GetGroupStatsWithUsageFilters passes shared filters, including team scope, to capable repositories.
 func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) ([]GroupStat, error) {
 	type filteredRepository interface {
 		GetGroupStatsWithUsageFilters(context.Context, time.Time, time.Time, UsageLogFilters) ([]GroupStat, error)
@@ -289,7 +289,7 @@ func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, st
 	return s.GetGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.RequestType, filters.Stream, filters.BillingType)
 }
 
-// GetGroupUsageSummary 返回全部分组的今日、昨日和累计费用。
+// GetGroupUsageSummary returns today's, yesterday's, and retained total costs for all groups.
 func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]GroupUsageSummary, error) {
 	results, err := s.usageRepo.GetAllGroupUsageSummary(ctx, todayStart)
 	if err != nil {
@@ -522,7 +522,7 @@ func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyI
 	return stats, nil
 }
 
-// SetBackgroundRunner 只在构造期绑定现有任务拥有者。
+// SetBackgroundRunner binds the background-task owner during construction.
 func (s *DashboardService) SetBackgroundRunner(fn func(string, func()) bool) {
 	if fn != nil {
 		s.runBackground = fn

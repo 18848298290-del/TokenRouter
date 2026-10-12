@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// advancedSchedulerEffectiveSettingsForGroup 将分组覆盖置于运行时全局设置之上。
+// advancedSchedulerEffectiveSettingsForGroup applies group overrides to global runtime settings.
 func (s *Compatible) advancedSchedulerEffectiveSettingsForGroup(ctx context.Context, group *routing.Group) policy.EffectiveSettings {
 	var parameters *schedulercore.Parameters
 	if s != nil {
@@ -18,8 +18,8 @@ func (s *Compatible) advancedSchedulerEffectiveSettingsForGroup(ctx context.Cont
 	return parameters.Effective(ctx, schedulerGroupOverrides(group))
 }
 
-// advancedSchedulerEffectiveSettingsForRequest 读取最终目标分组并生成请求级有效配置。
-// 分组不存在或未被加载时只使用全局配置，保持无分组路径的历史行为。
+// advancedSchedulerEffectiveSettingsForRequest resolves the final group and returns request settings.
+// A missing group uses global settings.
 func (s *Compatible) advancedSchedulerEffectiveSettingsForRequest(
 	ctx context.Context,
 	groupID *int64,
@@ -30,12 +30,12 @@ func (s *Compatible) advancedSchedulerEffectiveSettingsForRequest(
 	return s.advancedSchedulerEffectiveSettingsForGroup(ctx, s.advancedSchedulerGroupForRequest(ctx, groupID))
 }
 
-// advancedSchedulerGroupForRequest 优先复用请求上下文的最终分组，必要时再读取调度快照。
+// advancedSchedulerGroupForRequest reuses the request group or reads it when a scheduling snapshot is configured.
 func (s *Compatible) advancedSchedulerGroupForRequest(ctx context.Context, id *int64) *routing.Group {
 	return schedulerRequestGroup(ctx, id, s != nil && s.schedulerSnapshot != nil, s.readSchedulingGroup)
 }
 
-// schedulerGroupOverrides 返回最终高级分组的配置覆盖值，基础分组返回空配置。
+// schedulerGroupOverrides returns advanced-group overrides and an empty override for basic or missing groups.
 func schedulerGroupOverrides(group *routing.Group) policy.GroupAdvancedSchedulerOverrides {
 	if group != nil && group.UsesAdvancedScheduler() {
 		return group.AdvancedSchedulerOverrides
@@ -43,7 +43,7 @@ func schedulerGroupOverrides(group *routing.Group) policy.GroupAdvancedScheduler
 	return policy.GroupAdvancedSchedulerOverrides{}
 }
 
-// schedulerRequestGroup 保留请求优先和仅有快照时回源的顺序。
+// schedulerRequestGroup prefers a valid request group and permits a repository read when snapshots are configured.
 func schedulerRequestGroup(ctx context.Context, id *int64, snapshotAvailable bool, read func(context.Context, int64) (*routing.Group, error)) *routing.Group {
 	if id == nil || *id <= 0 {
 		return nil

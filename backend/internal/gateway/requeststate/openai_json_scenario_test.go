@@ -1,7 +1,7 @@
 package requeststate
 
-// JSON 字段场景检查 gjson 的读取与类型判断、sjson 的字段写入。
-// body.go、openai_view.go 和 codex_bootstrap.go 使用这些操作处理请求字段。
+// These JSON scenarios check gjson field reads and types, and sjson field writes.
+// body.go, openai_view.go, and codex_bootstrap.go use these operations on requests.
 
 import (
 	"strings"
@@ -12,7 +12,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// TestOpenAIHandler_GjsonExtraction 检查 gjson 提取 model 和 stream 字段的结果。
+// TestOpenAIHandler_GjsonExtraction checks model and stream field extraction.
 func TestOpenAIHandler_GjsonExtraction(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -40,31 +40,31 @@ func TestOpenAIHandler_GjsonExtraction(t *testing.T) {
 	}
 }
 
-// TestOpenAIHandler_GjsonValidation 检查 JSON 合法性及 model、stream 的字段类型。
+// TestOpenAIHandler_GjsonValidation checks JSON validity and model/stream types.
 func TestOpenAIHandler_GjsonValidation(t *testing.T) {
-	// 非法 JSON 被 gjson.ValidBytes 拦截
+	// Malformed JSON fails validation.
 	require.False(t, gjson.ValidBytes([]byte(`{invalid json`)))
 
-	// 数字 model 的类型与 gjson.String 不同。
+	// A numeric model is present but is not a string.
 	body := []byte(`{"model":123}`)
 	modelResult := gjson.GetBytes(body, "model")
 	require.True(t, modelResult.Exists())
 	require.NotEqual(t, gjson.String, modelResult.Type)
 
-	// null model 的类型与 gjson.String 不同。
+	// A null model is present but is not a string.
 	body2 := []byte(`{"model":null}`)
 	modelResult2 := gjson.GetBytes(body2, "model")
 	require.True(t, modelResult2.Exists())
 	require.NotEqual(t, gjson.String, modelResult2.Type)
 
-	// 字符串 stream 的类型与 gjson.True、gjson.False 不同。
+	// A string stream value is not a JSON boolean.
 	body3 := []byte(`{"model":"gpt-4","stream":"true"}`)
 	streamResult := gjson.GetBytes(body3, "stream")
 	require.True(t, streamResult.Exists())
 	require.NotEqual(t, gjson.True, streamResult.Type)
 	require.NotEqual(t, gjson.False, streamResult.Type)
 
-	// 数字 stream 的类型与 gjson.True、gjson.False 不同。
+	// A numeric stream value is not a JSON boolean.
 	body4 := []byte(`{"model":"gpt-4","stream":1}`)
 	streamResult2 := gjson.GetBytes(body4, "stream")
 	require.True(t, streamResult2.Exists())
@@ -72,9 +72,9 @@ func TestOpenAIHandler_GjsonValidation(t *testing.T) {
 	require.NotEqual(t, gjson.False, streamResult2.Type)
 }
 
-// TestOpenAIHandler_InstructionsInjection 检查 instructions 的读取和写入。
+// TestOpenAIHandler_InstructionsInjection checks instructions reads and writes.
 func TestOpenAIHandler_InstructionsInjection(t *testing.T) {
-	// 缺少 instructions 时写入指令。
+	// Insert instructions when the field is absent.
 	body := []byte(`{"model":"gpt-4"}`)
 	existing := gjson.GetBytes(body, "instructions").String()
 	require.Empty(t, existing)
@@ -82,17 +82,17 @@ func TestOpenAIHandler_InstructionsInjection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "test instruction", gjson.GetBytes(newBody, "instructions").String())
 
-	// 读取已存在的 instructions。
+	// Read an existing instructions value.
 	body2 := []byte(`{"model":"gpt-4","instructions":"existing"}`)
 	existing2 := gjson.GetBytes(body2, "instructions").String()
 	require.Equal(t, "existing", existing2)
 
-	// 空白 instructions 经 TrimSpace 后为空。
+	// Whitespace-only instructions become empty after trimming.
 	body3 := []byte(`{"model":"gpt-4","instructions":"   "}`)
 	existing3 := strings.TrimSpace(gjson.GetBytes(body3, "instructions").String())
 	require.Empty(t, existing3)
 
-	// 正常 JSON 写入 instructions 后仍可解析。
+	// Writing instructions retains valid JSON.
 	validBody := []byte(`{"model":"gpt-4"}`)
 	result, setErr := sjson.SetBytes(validBody, "instructions", "hello")
 	require.NoError(t, setErr)

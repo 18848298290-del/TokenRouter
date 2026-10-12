@@ -37,8 +37,8 @@ func ObservedUpstreamResponseServiceTier(c *gin.Context) string {
 	return UpstreamResponseModelObserverFromContext(c).ServiceTier()
 }
 
-// ResolvedOpenAIUpstreamServiceTierFromObserver 保留最终出站档位；实际响应
-// 档位在用量记录时结合凭据协议处理，不在观测阶段提升请求档位。
+// ResolvedOpenAIUpstreamServiceTierFromObserver returns the outbound tier unchanged.
+// Usage recording interprets the observed tier with the credential protocol; observation cannot promote the request tier.
 func ResolvedOpenAIUpstreamServiceTierFromObserver(_ *forwardcore.ResponseObserver, outboundBodyTier *string) *string {
 	return outboundBodyTier
 }
@@ -47,8 +47,8 @@ func ResolvedOpenAIUpstreamServiceTier(c *gin.Context, outboundBodyTier *string)
 	return ResolvedOpenAIUpstreamServiceTierFromObserver(UpstreamResponseModelObserverFromContext(c), outboundBodyTier)
 }
 
-// ObserveOpenAIServiceTierInContext 将原始 OpenAI 响应事件写入当前请求的
-// observer，供同步完成快照保存模型和服务档位。
+// ObserveOpenAIServiceTierInContext records an OpenAI event in the request observer
+// for completion capture of the response model and service tier.
 func ObserveOpenAIServiceTierInContext(c *gin.Context, payload []byte, eventType string) {
 	if c == nil || len(payload) == 0 {
 		return
@@ -60,7 +60,7 @@ func ObserveOpenAIServiceTierInContext(c *gin.Context, payload []byte, eventType
 	observer.ObserveOpenAI(payload, eventType)
 }
 
-// ObserveOpenAISSEBody 逐帧记录 Responses SSE 中的实际服务档位。
+// ObserveOpenAISSEBody records the service tier from each Responses SSE frame.
 func ObserveOpenAISSEBody(c *gin.Context, body string) {
 	if c == nil || strings.TrimSpace(body) == "" {
 		return
@@ -70,14 +70,14 @@ func ObserveOpenAISSEBody(c *gin.Context, body string) {
 	})
 }
 
-// captureResponseModel 在单次执行返回前固定原始观测，原生执行器的结果优先。
+// captureResponseModel fills an unset result model from the observer before the attempt returns.
 func captureResponseModel(c *gin.Context, result *forwardcore.OpenAIResult) {
 	if result != nil && result.UpstreamResponseModel == "" {
 		result.UpstreamResponseModel = UpstreamResponseModelObserverFromContext(c).Model()
 	}
 }
 
-// resetResponseModel 清除上一尝试的模型，恢复请求从自身响应读取模型。
+// resetResponseModel clears the previous attempt's model before observing a recovery response.
 func resetResponseModel(c *gin.Context) {
 	if observer := UpstreamResponseModelObserverFromContext(c); observer != nil {
 		observer.ResetModel()

@@ -47,7 +47,7 @@ type PolicyCompletion struct {
 	BlockKey       string
 }
 
-// BlockPlan 只携带已解析的会话键，解析与 Redis 的既有实现继续各自复用。
+// BlockPlan holds resolved session keys for the block store.
 type BlockPlan struct {
 	ScopeKey string
 	Keys     []string
@@ -81,7 +81,7 @@ func cloneID(in *int64) *int64 {
 	return &v
 }
 
-// Dispatch 在提交屏障前拍快照，闭包只持有独立输入和固定依赖。
+// Dispatch snapshots mutable input before submitting a background task with a separate timeout.
 func (r Runtime) Dispatch(ctx context.Context, in PolicyCompletion) {
 	in.Usage = completion.Snapshot(in.Usage)
 	in.Meta.GroupID = cloneID(in.Meta.GroupID)
@@ -101,7 +101,7 @@ func (r Runtime) Dispatch(ctx context.Context, in PolicyCompletion) {
 	})
 }
 
-// SnapshotContent 保留当前轮多模态快照，并隔离所有可变切片。
+// SnapshotContent copies the current turn's image and content slices for independent use.
 func SnapshotContent(in moderation.ContentModerationInput) moderation.ContentModerationInput {
 	in.Images = slices.Clone(in.Images)
 	in.Items = slices.Clone(in.Items)

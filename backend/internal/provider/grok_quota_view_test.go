@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// TestGrokProbeResultDoesNotExposeSharedValues 检查共享查询的各次返回值分别复制额度、Header 和本地统计。
+// TestGrokProbeResultDoesNotExposeSharedValues checks that shared probe results give each caller independent
+// quota, headers, and usage.
 func TestGrokProbeResultDoesNotExposeSharedValues(t *testing.T) {
 	limit, retry := int64(20), 9
 	source := &GrokQuotaProbeResult{Snapshot: &usageview.QuotaSnapshot{

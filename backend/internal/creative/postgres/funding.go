@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// FundingParticipant writes task funding metadata in the caller-owned transaction.
+// The caller commits or rolls back the transaction.
 type FundingParticipant struct {
 	tx *sql.Tx
 	id string

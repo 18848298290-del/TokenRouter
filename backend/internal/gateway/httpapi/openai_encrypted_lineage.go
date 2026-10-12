@@ -12,26 +12,26 @@ import (
 )
 
 const (
-	// invalid_encrypted_content 表示上游拒绝的加密 reasoning 或 compaction 项。
-	// 客户端会话历史可能反复携带这些项，每轮都会触发拒绝、剥离和重试。
-	// OpenAIWSStateStore 按会话保存 encrypted_content 摘要，并设置 TTL 和容量限制。
-	// 后续请求剥离命中摘要的项，新密文使用不同摘要。
+	// OpenAIInvalidEncryptedContentReason identifies rejected encrypted reasoning or compaction items.
+	// Clients may resend these items in later turns, repeating the rejection and retry.
+	// The shared session store keeps their digests with TTL and capacity limits.
+	// Later requests strip matching digests; newly encrypted content has a different digest.
 
 	OpenAIInvalidEncryptedContentReason = "invalid_encrypted_content"
 
-	// OpenAIWSIngressLineageContextKey 在 gin context 中携带 ingress 会话哈希，
-	// 供 HTTP bridge turn 内的 lineage 记录复用同一会话键。
+	// OpenAIWSIngressLineageContextKey carries the ingress session hash in Gin context
+	// so HTTP bridge turns use the same key for invalid-content tracking.
 	OpenAIWSIngressLineageContextKey = "openai_ws_ingress_session_hash"
 )
 
-// OpenAIEncryptedLineage 通过 HTTP 与 WS 共用的会话存储读写失效密文。
+// OpenAIEncryptedLineage tracks rejected ciphertext in the session store shared by HTTP and WS.
 type OpenAIEncryptedLineage struct {
 	Store session.OpenAIWSStateStore
 	TTL   func() time.Duration
 }
 
-// Mark 把本次被上游拒绝的密文摘要写入
-// 会话 lineage。digests 须在剥离前收集。
+// Mark stores rejected ciphertext digests for the session.
+// Callers collect digests before stripping the items.
 func (s *OpenAIEncryptedLineage) Mark(groupID int64, sessionHash string, digests []string) {
 	if s == nil || len(digests) == 0 || strings.TrimSpace(sessionHash) == "" {
 		return
@@ -43,8 +43,8 @@ func (s *OpenAIEncryptedLineage) Mark(groupID int64, sessionHash string, digests
 	stateStore.MarkSessionInvalidEncryptedContent(groupID, sessionHash, digests, s.TTL())
 }
 
-// Digests 返回会话已知失效密文摘要；全局无记录
-// 时（常态）零成本返回 nil。
+// Digests returns known invalid ciphertext digests for the session.
+// It skips the session lookup when the store has no invalid-content records.
 func (s *OpenAIEncryptedLineage) Digests(groupID int64, sessionHash string) map[string]struct{} {
 	if s == nil || strings.TrimSpace(sessionHash) == "" {
 		return nil
@@ -56,8 +56,8 @@ func (s *OpenAIEncryptedLineage) Digests(groupID int64, sessionHash string) map[
 	return stateStore.GetSessionInvalidEncryptedContentDigests(groupID, sessionHash)
 }
 
-// SessionHash 取 lineage 会话键：优先 ingress 循环
-// 写入的会话哈希（与读取侧同键），否则按请求体派生。
+// SessionHash prefers the ingress session hash used by the reader.
+// Otherwise it derives a hash from the request body.
 func (s *OpenAIEncryptedLineage) SessionHash(c *gin.Context, body []byte) string {
 	if c != nil {
 		if fromCtx := strings.TrimSpace(c.GetString(OpenAIWSIngressLineageContextKey)); fromCtx != "" {
@@ -67,8 +67,8 @@ func (s *OpenAIEncryptedLineage) SessionHash(c *gin.Context, body []byte) string
 	return GenerateOpenAISessionHash(c, body)
 }
 
-// MarkPayload 在上游以
-// invalid_encrypted_content 拒绝 payload 时记录其密文摘要并输出观测日志。
+// MarkPayload records and logs ciphertext digests from a payload rejected with
+// invalid_encrypted_content. The caller determines whether the payload was rejected.
 func (s *OpenAIEncryptedLineage) MarkPayload(
 	c *gin.Context,
 	payload []byte,
@@ -88,9 +88,9 @@ func (s *OpenAIEncryptedLineage) MarkPayload(
 	gatewayprovider.LogOpenAIWSModeInfo("%s provider_id=%d turn=%d digests=%d", logKey, providerID, turn, len(digests))
 }
 
-// Strip 对 payload 执行会话失效密文剥离并
-// 输出观测日志（logKey / logKey+"_skip"），返回（可能已替换的）payload 与剥离
-// 项数；未命中或剥离失败时原样返回。
+// Strip removes items whose ciphertext digests are in invalid and returns the payload and removal count.
+// It logs removals under logKey and errors under logKey+"_skip".
+// No match or a stripping error leaves the payload unchanged.
 func (s *OpenAIEncryptedLineage) Strip(
 	payload []byte,
 	invalid map[string]struct{},

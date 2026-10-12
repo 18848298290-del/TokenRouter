@@ -11,7 +11,7 @@ import (
 
 var releaseOwner = redis.NewScript(`if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`)
 
-// Runtime 保留各个调用者原有键，不追加技术层前缀。
+// Runtime uses caller-supplied keys without adding a prefix.
 type Runtime struct{ client *redis.Client }
 
 func NewRuntime(c *redis.Client) ops.RuntimeCache {

@@ -28,6 +28,8 @@ type RefreshResult struct {
 	ExpiresAt time.Time
 }
 
+// Refresh rebuilds PAT sessions or exchanges refresh tokens using the saved site and mode.
+// The caller persists the returned identity and expiry.
 func (r *RefreshExchange) Refresh(ctx context.Context, provider *CredentialInput) (*RefreshResult, error) {
 	site, err := credentialSite(provider)
 	if err != nil {

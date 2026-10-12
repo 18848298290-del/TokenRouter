@@ -15,7 +15,7 @@ type OrderLifecycle struct {
 	fulfillmentReconcileCursor uint64
 }
 
-// LifeStore 提供订单闭合状态操作及后台处理所需的批量查询。
+// LifeStore supplies order-closing operations and batch queries for background processing.
 type LifeStore interface {
 	ForceExpire(context.Context, int64, string) error
 	TouchPending(context.Context, int64, time.Time) error

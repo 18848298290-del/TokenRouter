@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
-// JevProviderTest 使用网关相同的执行器进行手动和后台探测。
+// JevProviderTest uses the gateway executor for manual and background probes.
 type JevProviderTest struct {
 	Transport   httpclient.UpstreamTransport
 	ValidateURL func(string) (string, error)
@@ -24,17 +24,17 @@ type jevTestTarget struct {
 	record   *provider.Record
 }
 
-// Target 固定本次测试使用的提供商配置。
+// Target binds the provider record used by this probe.
 func (s *JevProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return jevTestTarget{s, value}
 }
 
-// Information 返回测试使用的提供商快照。
+// Information returns the provider routing snapshot used by the probe.
 func (t jevTestTarget) Information() provider.TestTargetInfo {
 	return provider.TestTargetInfo{ProviderSnapshot: t.record.RoutingSnapshot()}
 }
 
-// Execute 执行管理员传入的决策问题，未提供问题时发送最小 Noul 探测。
+// Execute submits the supplied decision questions or a minimal Noul probe when none are supplied.
 func (t jevTestTarget) Execute(ctx context.Context, request provider.PreparedTestRequest, sink provider.TestEventSink) error {
 	run := NewTestRun(ctx, nil, sink)
 	defer run.Cancel()

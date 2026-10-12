@@ -26,7 +26,7 @@ func provideOAuthTokenCache(rdb *redis.Client) provider.AccessTokenCache {
 	return rediscache.NewOAuthTokenCache(rdb)
 }
 
-// provideOpenAIAuthorization 构造共享的授权实例，通过设置读取器取得动态 UA。
+// provideOpenAIAuthorization creates shared authorization with a dynamic User-Agent reader.
 func provideOpenAIAuthorization(proxies egress.ProxyRepository, client provideradapter.OpenAIOAuthClient, privacy openai.PrivacyClientFactory, settings *gateway.RuntimeSettings, routers provideradapter.OpenAITokenRouterReader, profiles provideradapter.OpenAITokenProfileResolver) *provider.OpenAIAuthorization {
 	deps := &provideradapter.OpenAIAuthorizationDependencies{
 		Proxies:        proxies,
@@ -52,12 +52,12 @@ func provideOpenAIProviderOAuth(auth *provider.OpenAIAuthorization, admin *provi
 			return proxy.URL(), true, nil
 		},
 	})
-	// 后置流程在所属额度和提供商依赖停止前完成；超时由统一生命周期报告。
+	// Quota actions finish before quota and provider dependencies stop; the lifecycle manager reports timeouts.
 	manager.Register(lifecycle.Hook{Name: "OpenAIQuotaActions", StopOrder: 14, Stop: handler.QuotaActions.StopContext})
 	return handler
 }
 
-// provideOpenAIQuota 组合提供商查询、数据库写入和共享任务协调器。
+// provideOpenAIQuota binds provider reads, persistence, and the shared task coordinator.
 func provideOpenAIQuota(admin *provider.Admin, store *postgres.ProviderStore, proxies egress.ProxyRepository, transport httpclient.UpstreamTransport, token *provider.OpenAITokenSource, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, connections *openaiws.OpenAIWSConnections, coordinator *provider.OpenAITaskCoordinator) *provider.OpenAIQuotaService {
 	factory := &provideradapter.OpenAIQuotaFactory{
 		Proxy: proxies.GetByID, Transport: transport, Profiles: profiles, Routers: routers,
@@ -82,7 +82,7 @@ func provideOpenAIQuota(admin *provider.Admin, store *postgres.ProviderStore, pr
 	})
 }
 
-// provideOpenAITokens 绑定共享的刷新协调器、缓存和指标，网关构造时接入运行阻断检查。
+// provideOpenAITokens binds shared refresh and caching with token metrics and runtime scheduling blocks.
 func provideOpenAITokens(store *postgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.OpenAIAuthorization, refresh *provider.OAuthRefreshAPI, blocks *provider.RuntimeBlockState) *provider.OpenAITokenSource {
 	executor := &provider.OpenAITokenRefresher{Authorization: authorization}
 	return &provider.OpenAITokenSource{
@@ -104,7 +104,7 @@ func provideOpenAITokens(store *postgres.ProviderStore, cache provider.AccessTok
 	}
 }
 
-// provideOpenAIExecutionCredentials 绑定持久存储读取函数及两种 token 源，凭据在执行时读取。
+// provideOpenAIExecutionCredentials binds storage and both token sources for reads during execution.
 func provideOpenAIExecutionCredentials(store *postgres.ProviderStore, openai *provider.OpenAITokenSource, grok *provider.GrokTokenSource) *provider.OpenAIExecutionCredentials {
 	out := &provider.OpenAIExecutionCredentials{}
 	if store != nil {

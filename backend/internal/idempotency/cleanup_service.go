@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// IdempotencyCleanupService 定期清理已过期的幂等记录。
+// IdempotencyCleanupService periodically deletes expired idempotency records.
 type IdempotencyCleanupService struct {
 	observer    Observer
 	lifecycleMu sync.Mutex
@@ -23,7 +23,7 @@ type IdempotencyCleanupService struct {
 	stopCh    chan struct{}
 }
 
-// CleanupOptions 包含幂等记录清理的周期、批量大小和观察器。
+// CleanupOptions configures the cleanup interval, batch size, and observer.
 type CleanupOptions struct {
 	Observer Observer
 	Interval time.Duration
@@ -78,7 +78,7 @@ func (s *IdempotencyCleanupService) runLoop() {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
-	// 启动后先清理一轮，防止重启后积压。
+	// Clean up immediately so a restart does not defer accumulated expired records.
 	s.cleanupOnce()
 
 	for {

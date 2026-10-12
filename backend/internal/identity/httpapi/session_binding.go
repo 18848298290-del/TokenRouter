@@ -10,11 +10,11 @@ import (
 	ip "github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// SessionBindingContext 全局中间件：将请求的客户端 IP 与 User-Agent 注入
-// request context，供 token 签发路径（登录 / 刷新 / OAuth 回调）读取并写入会话绑定，
-// 同时作为审计日志、会话绑定校验的统一客户端 IP 来源。
-// IP 取值与 API Key IP 限制共用转发 IP 开关：开启时旧版原始转发头逻辑
-// 接管解析，关闭时使用 Gin 的 server.trusted_proxies 可信代理链。
+// SessionBindingContext stores the resolved client IP and normalized User-Agent
+// in request context for token issuance, binding checks, and audit records.
+// It shares forwarding settings with API key IP restrictions.
+// When forwarding is enabled, configured headers supply the address;
+// otherwise the Gin trusted-proxy chain resolves it.
 func SessionBindingContext(settings func() ForwardedIPSettings) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		forwardedIPSettings := settings()
@@ -30,8 +30,8 @@ func SessionBindingContext(settings func() ForwardedIPSettings) gin.HandlerFunc 
 	}
 }
 
-// RequestSessionBinding 返回当前请求的会话指纹，优先取 SessionBindingContext
-// 注入的解析结果（保证与 token 签发路径取值一致）；注入缺失时使用安全回退。
+// RequestSessionBinding returns injected binding data so checks match token issuance.
+// Without injected data, it uses the trusted-proxy address and normalized User-Agent.
 func RequestSessionBinding(c *gin.Context) *identity.SessionBinding {
 	if binding := identity.SessionBindingFromContext(c.Request.Context()); binding != nil {
 		return binding
@@ -42,8 +42,8 @@ func RequestSessionBinding(c *gin.Context) *identity.SessionBinding {
 	}
 }
 
-// SecurityClientIP 返回当前请求用于安全敏感记录（审计日志等）的客户端 IP。
-// 与会话绑定、API Key IP 限制共用同一套客户端 IP 来源。
+// SecurityClientIP returns the address used for security-sensitive records.
+// It prefers injected session-binding data, then uses the trusted-proxy chain.
 func SecurityClientIP(c *gin.Context) string {
 	if binding := identity.SessionBindingFromContext(c.Request.Context()); binding != nil &&
 		strings.TrimSpace(binding.IP) != "" {
@@ -52,12 +52,12 @@ func SecurityClientIP(c *gin.Context) string {
 	return ip.GetTrustedClientIP(c)
 }
 
-// EnforceSessionBinding 校验 access token 的会话指纹（IP/UA 绑定）。
-// 指纹不匹配时：撤销该会话家族的所有 refresh token、写入审计安全事件、返回 401。
-// 返回 false 表示请求已被中断。
+// EnforceSessionBinding checks an access token's IP/User-Agent fingerprint when enabled.
+// A mismatch attempts family revocation, records an audit event when configured, and returns 401.
+// False means the request was aborted.
 //
-// 兼容性：claims.BindingHash 为空（功能上线前签发的旧 token）时放行，
-// 该会话在下一次 refresh 轮转时会自动获得绑定。
+// Tokens with no binding hash are accepted; a later refresh can add the binding.
+// An empty current fingerprint also bypasses the comparison.
 func EnforceSessionBinding(
 	c *gin.Context,
 	authService SessionAuth,

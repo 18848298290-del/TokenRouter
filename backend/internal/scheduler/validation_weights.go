@@ -7,12 +7,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// ValidationWeightSource 为管理写入校验提供单次批量读取，校验时读取数据库中的当前值。
+// ValidationWeightSource reads current persisted weights in one batch for admin validation.
 type ValidationWeightSource interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 }
 
-// LoadValidationWeights 将启动值与动态覆盖合并，非法覆盖继续回退到有效启动值。
+// LoadValidationWeights merges runtime overrides with startup weights and uses startup values for
+// invalid overrides.
 func LoadValidationWeights(ctx context.Context, source ValidationWeightSource, defaults AdminDefaults) (policy.ScoreWeights, error) {
 	w := EffectiveAdminWeights(defaults)
 	base := policy.ScoreWeights{Priority: w.Priority, Load: w.Load, Queue: w.Queue, ErrorRate: w.ErrorRate, TTFT: w.TTFT, Reset: w.Reset, QuotaHeadroom: w.QuotaHeadroom, Previous: w.PreviousResponse, SessionSticky: w.SessionSticky}

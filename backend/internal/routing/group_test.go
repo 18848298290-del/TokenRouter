@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingConfigNestedSnapshotIsolation 检查嵌套 JSON 数组和对象的副本隔离。
+// TestPricingConfigNestedSnapshotIsolation checks independent copies of nested JSON arrays and objects.
 func TestPricingConfigNestedSnapshotIsolation(t *testing.T) {
 	source := &GroupRoutingPolicy{FeaturesConfig: map[string]any{"extension": []any{map[string]any{"enabled": true}, []any{"original"}}}}
 	copied := source.Clone()

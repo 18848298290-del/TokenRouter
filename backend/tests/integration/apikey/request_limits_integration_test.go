@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestRequestLimitsPersistence 覆盖空库迁移、重复执行、局部更新和认证查询。
+// TestRequestLimitsPersistence checks migration reapplication, partial updates, and authentication reads.
 func TestRequestLimitsPersistence(t *testing.T) {
 	db, client := keyDatabase(t)
 	ctx := context.Background()
@@ -32,7 +32,7 @@ func TestRequestLimitsPersistence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded.ConcurrencyLimit)
 	require.Equal(t, 10, loaded.RPMLimit)
-	// 更新 RPM 时，陈旧对象中的并发值不能覆盖数据库配置。
+	// An RPM-only edit must not overwrite the stored concurrency limit with stale data.
 	_, err = db.ExecContext(ctx, "DELETE FROM auth_cache_invalidation_outbox")
 	require.NoError(t, err)
 	key.ConcurrencyLimit = 99
@@ -47,11 +47,11 @@ func TestRequestLimitsPersistence(t *testing.T) {
 	loaded, err = repo.GetByKeyForAuth(ctx, key.Key)
 	require.NoError(t, err)
 	require.Zero(t, loaded.ConcurrencyLimit)
-	// 两项配置的独立修改都需要通知其他实例清理认证缓存。
+	// Each independent limit update must enqueue authentication cache invalidation.
 	var invalidations int
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT count(*) FROM auth_cache_invalidation_outbox").Scan(&invalidations))
 	require.Equal(t, 2, invalidations)
-	// 数据库约束阻止绕过 HTTP 校验的负值写入。
+	// The database constraint rejects negative limits even when HTTP validation is bypassed.
 	_, err = db.ExecContext(ctx, "UPDATE api_keys SET rpm_limit=-1 WHERE id=$1", key.ID)
 	require.Error(t, err)
 	var count int

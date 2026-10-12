@@ -251,7 +251,7 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 }
 
 func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *testing.T) {
-	// 队列满时不再立即丢弃：阻塞等待入队，直到调用方 ctx 到期才标记 dropped（issue #3656）。
+	// A full queue waits until the caller's deadline before marking the log dropped (issue #3656).
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
@@ -280,7 +280,7 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *t
 }
 
 func TestUsageLogRepositoryCreateBestEffort_QueueFullWaitsForDrain(t *testing.T) {
-	// 批处理器腾出队列空间后，等待中的记录成功入队。
+	// The waiting log enters the queue after space becomes available.
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
@@ -288,7 +288,7 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullWaitsForDrain(t *testing.T)
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		<-repo.bestEffortBatchCh // 排空占位请求，为阻塞中的入队腾出空间
+		<-repo.bestEffortBatchCh // Remove the placeholder to release the blocked enqueue.
 		req := <-repo.bestEffortBatchCh
 		sendUsageLogBestEffortResult(req.resultCh, nil)
 	}()
@@ -342,7 +342,7 @@ func TestUsageLogRepositoryCreate_BatchPathCanceledContextMarksNotPersisted(t *t
 }
 
 func TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted(t *testing.T) {
-	// 队列满时阻塞等待入队，直到调用方 ctx 到期才标记 not persisted（issue #3656）。
+	// A full queue waits until the caller's deadline before marking the log not persisted (issue #3656).
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.createBatchCh = make(chan usageLogCreateRequest, 1)
@@ -844,7 +844,7 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 	s.Require().Equal(int64(1), stats.TotalRequests)
 }
 
-// TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates 验证 Owner 可见团队用量且重叠条件不会重复计数。
+// TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates checks owner-visible team usage without double counting.
 func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates() {
 	owner := mustCreateUser(s.T(), s.client, &identity.User{Email: "userdash-owner@test.com"})
 	member := mustCreateUser(s.T(), s.client, &identity.User{Email: "userdash-member@test.com"})
@@ -875,9 +875,9 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDup
 	memberTeamKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: member.ID, TeamID: &teamID, Key: "sk-userdash-member-team"})
 	memberPersonalKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: member.ID, Key: "sk-userdash-member-personal"})
 
-	// 固定时间用于检查累计范围，今日统计取决于测试运行日期。
+	// Fixed timestamps test all-time totals; today's totals depend on the test date.
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	// 四条记录分别覆盖 Owner 本人、成员团队、Owner 团队 Key 和成员个人用量。
+	// Rows cover the owner, a team member, the owner's team key, and a member's personal key.
 	logs := []*usage.UsageLog{
 		{
 			UserID: owner.ID, BillingUserID: owner.ID, APIKeyID: ownerPersonalKey.ID, ProviderID: provider.ID,
@@ -976,12 +976,11 @@ func (s *UsageLogRepoSuite) TestGetProviderTodayStats() {
 
 func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	now := time.Now().UTC().Truncate(time.Second)
-	// 使用固定的时间偏移确保 hour1 和 hour2 在同一天且都在过去
-	// 选择当天 02:00 和 03:00 作为测试时间点（基于 now 的日期）
+	// Use two completed hours on the same UTC day so both can be aggregated.
 	dayStart := truncateToDayUTC(now)
-	hour1 := dayStart.Add(2 * time.Hour) // 当天 02:00
-	hour2 := dayStart.Add(3 * time.Hour) // 当天 03:00
-	// 如果当前时间早于 hour2，则使用昨天的时间
+	hour1 := dayStart.Add(2 * time.Hour) // 02:00 UTC
+	hour2 := dayStart.Add(3 * time.Hour) // 03:00 UTC
+	// Use yesterday if today's second hour has not ended yet.
 	if now.Before(hour2.Add(time.Hour)) {
 		dayStart = dayStart.Add(-24 * time.Hour)
 		hour1 = dayStart.Add(2 * time.Hour)
@@ -1044,7 +1043,7 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 
 	aggRepo := newDashboardAggregationRepositoryWithSQL(s.tx)
 	aggStart := hour1.Add(-5 * time.Minute)
-	aggEnd := hour2.Add(time.Hour) // 确保覆盖 hour2 的所有数据
+	aggEnd := hour2.Add(time.Hour) // Include the entire second hour.
 	s.Require().NoError(aggRepo.AggregateRange(s.ctx, aggStart, aggEnd))
 	s.Require().NoError(aggRepo.AggregateUsageAnalyticsRange(s.ctx, aggStart, aggEnd))
 
@@ -1127,7 +1126,7 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().Equal(int64(450), daily.totalDurationMs)
 	s.Require().Equal(int64(2), daily.activeUsers)
 
-	// 多维小时表的用户汇总必须与相同范围的原始记录一致。
+	// Hourly user totals must match raw records over the same range.
 	var analyticsRequests, analyticsInput, analyticsOutput, analyticsDuration int64
 	var analyticsTotalCost, analyticsActualCost float64
 	err = scanSingleRow(s.ctx, s.tx, `
@@ -1146,7 +1145,7 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().InDelta(1.5, analyticsTotalCost, 0.000001)
 	s.Require().InDelta(1.4, analyticsActualCost, 0.000001)
 
-	// 迟到记录落入已完成小时后，回看重算替换该小时的聚合值。
+	// Recomputing a completed hour replaces its aggregate to include late records.
 	lateDuration := 50
 	_, err = s.repo.Create(s.ctx, &usage.UsageLog{
 		UserID: user1.ID, APIKeyID: apiKey1.ID, ProviderID: provider.ID,
@@ -1174,7 +1173,7 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().InDelta(1.55, analyticsActualCost, 0.000001)
 }
 
-// TestUsageAnalyticsQueriesExecuteOnPostgreSQL 验证非日参数、批量 ID 和分组汇总能通过 PostgreSQL 类型解析并执行。
+// TestUsageAnalyticsQueriesExecuteOnPostgreSQL checks PostgreSQL parameter typing for hourly, batch, and group queries.
 func (s *UsageLogRepoSuite) TestUsageAnalyticsQueriesExecuteOnPostgreSQL() {
 	loc, err := time.LoadLocation("Pacific/Honolulu")
 	s.Require().NoError(err)
@@ -1506,7 +1505,7 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	s.Require().NoError(err, "GetUserModelStats")
 	s.Require().Len(stats, 2)
 
-	// Should be ordered by total_tokens DESC
+	// Models are ordered by descending total tokens.
 	s.Require().Equal("claude-3-opus", stats[0].Model)
 	s.Require().Equal(int64(300), stats[0].TotalTokens)
 }
@@ -1610,7 +1609,7 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 	s.Require().NoError(err, "GetModelStatsWithFilters apiKey filter")
 	s.Require().Len(stats, 2)
 
-	// 提供商筛选时仍分别返回用户实际扣费、提供商成本和标准费用。
+	// Filtering by provider keeps user charges, provider costs, and standard costs distinct.
 	stats, err = s.repo.GetModelStatsWithFilters(s.ctx, startTime, endTime, 0, 0, provider.ID, 0, nil, nil, nil)
 	s.Require().NoError(err, "GetModelStatsWithFilters provider filter")
 	s.Require().Len(stats, 2)
@@ -1627,7 +1626,7 @@ func (s *UsageLogRepoSuite) TestGetGeminiUsageTotalsBatchUsesProviderCost() {
 	proRate, proStatsCost := 2.0, 0.4
 	flashRate, flashStatsCost := 1.5, 0.1
 
-	// 两条记录的用户扣费远高于提供商成本，批量聚合需要分别返回两者。
+	// User charges exceed provider costs in these rows, making cost-source mistakes observable.
 	logs := []*usage.UsageLog{
 		{
 			UserID:                 user.ID,
@@ -1844,7 +1843,7 @@ func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
-// TestResponseModelRoundTrip 验证响应模型观测可以与未知历史数据共存。
+// TestResponseModelRoundTrip checks known response models alongside historical unknown values.
 func (s *UsageLogRepoSuite) TestResponseModelRoundTrip() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "response-model@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "response-model-key", Name: "model"})
@@ -1869,7 +1868,7 @@ func (s *UsageLogRepoSuite) TestResponseModelRoundTrip() {
 	}
 }
 
-// truncateToDayUTC 返回 UTC 日期的起始时间。
+// truncateToDayUTC returns the start of the UTC day.
 func truncateToDayUTC(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)

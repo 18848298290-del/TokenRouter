@@ -12,7 +12,7 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// RelayTurn 处理 ctx_pool 的单轮帧循环，记录输出、usage、首 token 时间和错误。
+// RelayTurn runs one pooled-connection turn, collecting output, usage, first-token timing, and failures.
 func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input ClientPayload, turn int, o StreamOptions, hooks *StreamHooks) (*ForwardResult, error) {
 	payload, payloadBytes, originalModel, routingModel := input.PayloadRaw, input.PayloadBytes, input.OriginalModel, input.RoutingModel
 	imageBillingModel, imageSizeTier, imageInputSize := input.ImageBillingModel, input.ImageSizeTier, input.ImageInputSize
@@ -95,7 +95,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			}
 			lastEventType = eventType
 		}
-		// 先保存用量和风控证据，错误提前返回后 AfterTurn 仍可完成风控处理。
+		// Capture usage and risk evidence before early error returns so AfterTurn can process them.
 		// @project-doc docs/domains/content_moderation.md#upstream_cyber_policy
 		if p.ShouldParseUsage(eventType) {
 			p.ParseUsage(upstreamMessage, &usage)
@@ -110,7 +110,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			errorStatus := p.ErrorStatus(upstreamMessage)
 			fallbackReason, _ := p.ClassifyError(errCodeRaw, errTypeRaw, errMsgRaw)
 			if fallbackReason == "invalid_encrypted_content" {
-				// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
+				// Remember rejected ciphertext digests and forward the error; later turns strip those digests before sending.
 				if digests := p.EncryptedDigests(payload); len(digests) > 0 {
 					p.MarkEncrypted(digests)
 					p.Log(fmt.Sprintf(
@@ -128,7 +128,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				o.PreviousRecovery &&
 				!wroteDownstream
 			if recoverablePrevNotFound {
-				// 可恢复事件的日志避开 error 词，LegacyPrintf 会根据该词判断 ERROR 级别。
+				// Avoid error in the recoverable log label because LegacyPrintf uses it to select ERROR severity.
 				p.Log(fmt.Sprintf(
 					"ingress_ws_prev_response_recoverable provider_id=%d turn=%d conn_id=%s idx=%d reason=%s code=%s type=%s message=%s previous_response_id=%s previous_response_id_kind=%s response_id=%s store_disabled=%v has_prompt_cache_key=%v",
 					o.ProviderID,
@@ -163,8 +163,8 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 					turnPromptCacheKey != "",
 				))
 			}
-			// previous_response_not_found 在 ingress 模式支持单次恢复重试：
-			// 不把该 error 直接下发客户端，而是由上层去掉 previous_response_id 后重放当前 turn。
+			// Suppress a recoverable previous_response_not_found event while ingress
+			// removes previous_response_id and replays the current turn once.
 			if recoverablePrevNotFound {
 				lease.MarkBroken()
 				errMsg := strings.TrimSpace(errMsgRaw)
@@ -226,7 +226,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				)
 			}
 			if terminalPolicy.Decision.Generic {
-				// 已发送前导事件时无法切换 HTTP 状态，改用通用 WS 错误结束当前 turn。
+				// After leading events are delivered, finish with a generic WS error.
 				upstreamMessage = p.GenericEvent()
 			}
 		}
@@ -241,9 +241,9 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				}
 			}
 			replayCollector.AddEvent(eventType, upstreamMessage)
-			// 输出给客户端的副本改写 server_is_overloaded 和 slow_down，使 Codex 执行退避重试。
-			// Codex 会将原错误码判为致命错误并结束会话，HTTP/SSE 和 HTTP bridge 使用同样的改写。
-			// upstreamMessage 保留上游原始报文，客户端失败和瞬时终态的健康处理据此判断提供商状态。
+			// Rewrite capacity codes in the client copy so Codex can back off and retry.
+			// HTTP/SSE and the HTTP bridge use the same rewriting for server_is_overloaded and slow_down.
+			// Health classification retains the unmodified capacity codes in upstreamMessage.
 			clientMessage := upstreamMessage
 			if eventType == "error" || eventType == "response.failed" {
 				if rewritten, changed := p.CapacityShed(clientMessage); changed {
@@ -274,7 +274,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			}
 		}
 		if isTerminalEvent {
-			// 客户端断开后将上游连接标记为 broken，连接池丢弃该连接。
+			// Mark a disconnected client's lease broken so the pool discards the connection.
 			if clientDisconnected {
 				lease.MarkBroken()
 			}

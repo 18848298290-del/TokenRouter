@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CompatResponseResult 记录上游响应，计费模型由入站处理器补充。
+// CompatResponseResult records the upstream response and usage; the inbound handler supplies billing-model context.
 type CompatResponseResult struct {
 	ReasoningEffort, ResolvedTier                *string
 	ResponseID                                   string
@@ -39,7 +39,7 @@ type ChatFailure struct {
 	Type, Message string
 }
 
-// ChatResponseOptions 配置 Chat 响应的读取、转换、输出和错误处理。
+// ChatResponseOptions configures Chat conversion, output, reading and error handling.
 type ChatResponseOptions struct {
 	Runtime                           bridge.Runtime
 	RequestContext                    context.Context
@@ -67,7 +67,8 @@ type ChatResponseOptions struct {
 	ReadFailure                       func(error) error
 }
 
-// NewCompatStreamHeaderWriter 在原首个输出点设置 Header，不提前提交响应。
+// NewCompatStreamHeaderWriter returns a one-shot header writer to invoke at first output.
+// Creating the closure does not commit the response.
 func NewCompatStreamHeaderWriter(c *upstream.OutputContext, headers http.Header, filter func(http.Header, http.Header)) func() {
 	written := false
 	return func() {
@@ -84,7 +85,7 @@ func NewCompatStreamHeaderWriter(c *upstream.OutputContext, headers http.Header,
 	}
 }
 
-// ReadChatBuffered 收集 Responses 终态并转换为 Chat 响应。
+// ReadChatBuffered collects the Responses terminal result and converts it to Chat JSON.
 func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options ChatResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -113,10 +114,9 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 	chatResp := bridge.ResponsesToChatCompletions(options.Runtime, finalResponse, originalModel)
 
 	options.Headers(c.Writer.Header(), resp.Header)
-	// 非流式响应必须为标准 JSON。上游被强制流式，其响应头 Content-Type 为
-	// text/event-stream，会经 WriteFilteredHeaders 透传进来；而 c.JSON 走 Gin 的
-	// writeContentType 仅在头不存在时才设置，无法覆盖。这里显式 Set 强制改回 JSON，
-	// 否则下游"看头判流式"的中间层（如 new-api）会把本应聚合的 JSON 当成 SSE 处理。
+	// Replace the forwarded SSE Content-Type before writing aggregated JSON.
+	// Downstream proxies that select a parser from this header would otherwise treat
+	// the buffered JSON body as an SSE stream.
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusOK, chatResp)
 
@@ -141,15 +141,15 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 	return result, nil
 }
 
-// ReadChatStreaming 将 Responses 事件转换为 Chat 流，并收集用量。
+// ReadChatStreaming converts Responses events to a Chat stream and collects usage.
 func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options ChatResponseOptions, originalModel, upstreamModel string, startTime time.Time, requestBodyLen int) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
 
 	state := bridge.NewResponsesEventToChatState(options.Runtime)
 	state.Model = originalModel
-	// 网关作为计费链路的一环，不能把下游 usage 输出绑定到客户端是否显式请求。
-	// raw Chat Completions 直转路径已经强制透出 usage，这里保持同样行为，避免级联代理计费为 0。
+	// Include usage even when the client did not request it so chained billing proxies
+	// receive token counts, matching the direct Chat forwarding path.
 	state.IncludeUsage = true
 
 	var usage wire.ForwardUsage
@@ -162,7 +162,7 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 	var streamFailoverErr error
 	var streamNonFailoverErr error
 	var cyberPolicyErr error
-	// Grok Chat bridge 复用 Responses SSE，需对原生搜索调用去重计数以计费。
+	// Deduplicate native search calls across Responses events for Grok search billing.
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := options.CountSearch
@@ -483,7 +483,7 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 		return missingTerminalErr()
 	}
 
-	// With keepalive: goroutine + channel + select
+	// Read upstream asynchronously so keepalive and timeout handling can run while reads block.
 	type scanEvent struct {
 		line string
 		err  error

@@ -21,7 +21,7 @@ func main() {
 	}
 }
 
-// run 在返回错误前完成已取得资源的释放。
+// run closes the database connection before returning, including on failure.
 func run() error {
 	email := flag.String("email", "", "Admin email to issue a JWT for (defaults to first active admin)")
 	flag.Parse()

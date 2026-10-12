@@ -2,7 +2,7 @@ package ws
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 
-// RequestUsageDecoder 将同一请求档位和服务层级解析用于每轮独立用量快照。
+// RequestUsageDecoder parses request tiers and effort for independent per-turn usage snapshots.
 type RequestUsageDecoder struct{}
 
 func (RequestUsageDecoder) ServiceTier(body []byte) *string {

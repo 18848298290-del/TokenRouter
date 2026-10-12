@@ -40,12 +40,12 @@ func ParseVertexServiceAccountJSON(raw []byte) (*google.ServiceAccountKey, error
 	if strings.TrimSpace(key.ProjectID) == "" {
 		return nil, errors.New("service account json missing project_id")
 	}
-	// 固定 Google token 端点，拒绝凭据中的自定义 token_uri。
+	// Override custom token_uri values with the fixed Google token endpoint.
 	key.TokenURI = DefaultTokenURL
 	return &key, nil
 }
 
-// ServiceAccountProjectID 复用完整凭据校验，供提供商按需解析项目标识。
+// ServiceAccountProjectID validates the credential fields before returning the project ID.
 func ServiceAccountProjectID(raw []byte) (string, error) {
 	key, err := ParseVertexServiceAccountJSON(raw)
 	if err != nil {
@@ -150,7 +150,7 @@ func BuildVertexAnthropicRequestBody(body []byte) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// ExchangeServiceAccountToken 只进行供应商签名和交换，缓存与锁归提供商用例。
+// ExchangeServiceAccountToken signs and exchanges credentials; provider orchestration owns caching and locks.
 // @project-doc docs/interfaces/gemini_upstream.md#vertex_service_account_execution
 func ExchangeServiceAccountToken(ctx context.Context, key *google.ServiceAccountKey, proxyURL string) (string, time.Duration, error) {
 	return googleauth.ExchangeServiceAccountToken(ctx, key, proxyURL)

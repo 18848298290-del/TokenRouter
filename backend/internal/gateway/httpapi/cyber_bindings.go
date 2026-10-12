@@ -11,7 +11,7 @@ import (
 
 type cyberHTTPBackend struct{ core *session.CyberBlocks }
 
-// NewBoundCyberHandler 绑定会话、审核与完成接口。
+// NewBoundCyberHandler binds session blocking, moderation, and completion services.
 func NewBoundCyberHandler(core *session.CyberBlocks, moderator ModerationPort, runtime moderationflow.Runtime) *CyberHandler {
 	return NewCyberHandler(cyberHTTPBackend{core}, moderator, GatewayModerationEndpoints{}, runtime)
 }

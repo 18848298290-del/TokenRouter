@@ -68,11 +68,11 @@ func TestSettingServiceResolveGrokBaseURLHonorsModeAndExplicitPins(t *testing.T)
 	provider := &providercore.Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{}}
 	require.Equal(t, xai.DefaultUSWest2BaseURL, provideradapter.GrokProviderBaseURLOr(provider, GrokBaseURLForMode(svc.GetGrokDefaultBaseURLMode(context.Background()))))
 
-	// 指定的官方端点保持固定。
+	// A configured official endpoint remains pinned.
 	provider.Credentials["base_url"] = xai.DefaultBaseURL
 	require.Equal(t, xai.DefaultBaseURL, provideradapter.GrokProviderBaseURLOr(provider, GrokBaseURLForMode(svc.GetGrokDefaultBaseURLMode(context.Background()))))
 
-	// 指定的区域端点优先于默认值。
+	// A configured regional endpoint overrides the runtime default.
 	provider.Credentials["base_url"] = xai.DefaultEUWest1BaseURL
 	require.Equal(t, xai.DefaultEUWest1BaseURL, provideradapter.GrokProviderBaseURLOr(provider, GrokBaseURLForMode(svc.GetGrokDefaultBaseURLMode(context.Background()))))
 }

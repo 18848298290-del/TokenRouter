@@ -18,7 +18,7 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// provideGrokExecutor 复用凭据、HTTP 池、健康状态和应用活动屏障。
+// provideGrokExecutor shares credentials, HTTP transport, health state, and request activity tracking.
 func provideGrokExecutor(cfg *config.Config, credentials *gatewayadapter.RequestCredentials, transport httpclient.UpstreamTransport, output *gatewayhttp.OpenAIResponseOutput, health *provideradapter.GrokHealth, tls *egressprovider.TLSProfiles, readers *gatewayadapter.RuntimeReaders, blocks *provider.RuntimeBlockState, deferred *provider.DeferredService, store gatewayadapter.ExecutionProviderStore, activity *gatewayRequestActivity, prices *billing.PriceResolver, connections *openaiws.OpenAIWSConnections) *gatewayhttp.GrokExecutor {
 	routes := provideGrokRoutes(cfg, readers)
 	var attributes *routing.ModelAttributeService
@@ -28,7 +28,7 @@ func provideGrokExecutor(cfg *config.Config, credentials *gatewayadapter.Request
 	return &gatewayhttp.GrokExecutor{Attributes: attributes, FastPolicy: &gatewayadapter.ExecutionFastPolicy{Readers: readers, Prices: prices}, Credentials: credentials, Transport: transport, Output: output, Health: health, Routes: routes, TLS: tls, Dialer: connections.Dialer(), Enter: activity.Enter, Failure: &gatewayhttp.UpstreamTransportFailure{Health: &provideradapter.TransportHealth{Runtime: blocks, Deferred: deferred, Store: store}}}
 }
 
-// provideGrokRoutes 绑定静态目标地址策略，默认模式在请求期间读取。
+// provideGrokRoutes binds the startup URL policy and reads the default mode at request time.
 func provideGrokRoutes(cfg *config.Config, readers *gatewayadapter.RuntimeReaders) gatewayadapter.GrokRoutes {
 	routes := gatewayadapter.GrokRoutes{Validate: grok.ValidateBaseURL}
 	if cfg != nil {
@@ -40,7 +40,8 @@ func provideGrokRoutes(cfg *config.Config, readers *gatewayadapter.RuntimeReader
 	return routes
 }
 
-// provideGrokHealth 与 OpenAI 快照写入共享节流器，与选号共享运行阻断及模型冷却。
+// provideGrokHealth shares runtime blocks and model cooldowns with selection and creates a 30-second write
+// throttle.
 func provideGrokHealth(store *providerpostgres.ProviderStore, health *provideradapter.UpstreamHealth, blocks *provider.RuntimeBlockState, models *provider.ModelTransientState) *provideradapter.GrokHealth {
 	return &provideradapter.GrokHealth{
 		Store: store, Health: health, Runtime: blocks, ModelTransient: models,

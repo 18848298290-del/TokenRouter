@@ -36,9 +36,8 @@ type mockDriveClient struct {
 }
 
 func TestGeminiOAuthService_GenerateAuthURL_RedirectURIStrategy(t *testing.T) {
-	// NOTE: This test sets process env; it must not run in parallel.
-	// The built-in Gemini CLI client secret is not embedded in this repository.
-	// Tests set a dummy secret via env to simulate operator-provided configuration.
+	// This test changes process environment variables and cannot run in parallel.
+	// Supply a dummy CLI secret through the operator configuration path.
 	t.Setenv(geminicli.GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
 	type testCase struct {
@@ -197,7 +196,6 @@ func TestGeminiOAuthService_BuildProviderCredentials(t *testing.T) {
 		assertCredStr(t, creds, "access_token", "token-only")
 		assertCredStr(t, creds, "expires_at", "1700000000")
 
-		// 可选字段不应存在
 		for _, key := range []string{"refresh_token", "token_type", "scope", "project_id", "tier_id", "oauth_type"} {
 			if _, ok := creds[key]; ok {
 				t.Fatalf("不应包含空字段 %q", key)
@@ -245,7 +243,6 @@ func TestGeminiOAuthService_BuildProviderCredentials(t *testing.T) {
 
 		creds := svc.BuildProviderCredentials(tokenInfo)
 
-		// 仅包含基础字段
 		if len(creds) != 3 { // access_token, expires_at, refresh_token
 			t.Fatalf("creds 字段数量不匹配: got=%d want=3, keys=%v", len(creds), credKeys(creds))
 		}
@@ -327,7 +324,6 @@ func TestGeminiOAuthService_GetOAuthConfig(t *testing.T) {
 			if result.AIStudioOAuthEnabled != tt.wantEnabled {
 				t.Fatalf("AIStudioOAuthEnabled = %v, want %v", result.AIStudioOAuthEnabled, tt.wantEnabled)
 			}
-			// RequiredRedirectURIs 始终包含 AI Studio redirect URI
 			if len(result.RequiredRedirectURIs) != 1 || result.RequiredRedirectURIs[0] != geminicli.AIStudioOAuthRedirectURI {
 				t.Fatalf("RequiredRedirectURIs 不匹配: got=%v", result.RequiredRedirectURIs)
 			}
@@ -341,9 +337,8 @@ func TestGeminiOAuthService_Stop_NoPanic(t *testing.T) {
 	svc := newGeminiAuthorizationForTest(nil, nil, nil, nil, &geminicli.OAuthConfig{})
 	svc.Start()
 
-	// 调用 Stop 不应 panic
 	stopGeminiAuthorization(t, svc)
-	// 多次调用也不应 panic
+	// Stopping an already stopped service is safe.
 	stopGeminiAuthorization(t, svc)
 }
 
@@ -586,7 +581,7 @@ func TestGeminiOAuthService_RefreshProviderToken_DefaultOAuthType(t *testing.T) 
 	svc.Start()
 	defer stopGeminiAuthorization(t, svc)
 
-	// 无 oauth_type 凭据的旧提供商
+	// Legacy credentials omit oauth_type.
 	provider := &providercore.Record{
 		Platform: capability.PlatformGemini,
 		Type:     capability.ProviderTypeOAuth,
@@ -675,7 +670,7 @@ func TestGeminiOAuthService_RefreshProviderToken_CodeAssist_NoProjectID_AutoDete
 	}
 
 	svc := newGeminiAuthorizationForTest(&mockGeminiProxyRepo{}, client, codeAssist, nil, &geminicli.OAuthConfig{
-		// 此处检查发现失败时的回退，平台本地 HTTP 测试覆盖网络响应解析。
+		// Inject discovery failure here; platform HTTP tests cover response parsing.
 	})
 
 	svc.Options.FetchProject = func(context.Context, string, string) (string, error) {
@@ -690,7 +685,7 @@ func TestGeminiOAuthService_RefreshProviderToken_CodeAssist_NoProjectID_AutoDete
 		Credentials: map[string]any{
 			"refresh_token": "rt",
 			"oauth_type":    "code_assist",
-			// 无 project_id，触发 fetchProjectID
+			// Omitting project_id triggers project discovery.
 		},
 	}
 
@@ -718,20 +713,18 @@ func TestGeminiOAuthService_RefreshProviderToken_CodeAssist_NoProjectID_FailsEmp
 		},
 	}
 
-	// 返回有 currentTier 但无 cloudaicompanionProject 的响应，
-	// 使 fetchProjectID 走"已注册用户"路径（尝试 Cloud Resource Manager -> 失败 -> 返回错误），
-	// 避免走 onboardUser 路径（5 次重试 x 2 秒 = 10 秒超时）
+	// A current tier with no project exercises discovery for an already onboarded user.
+	// This reaches the failing resource-manager lookup without waiting for onboarding retries.
 	codeAssist := &mockGeminiCodeAssistClient{
 		loadCodeAssistFunc: func(ctx context.Context, accessToken, proxyURL string, req *geminicli.LoadCodeAssistRequest) (*geminicli.LoadCodeAssistResponse, error) {
 			return &geminicli.LoadCodeAssistResponse{
 				CurrentTier: &geminicli.TierInfo{ID: "STANDARD"},
-				// 无 CloudAICompanionProject
 			}, nil
 		},
 	}
 
 	svc := newGeminiAuthorizationForTest(&mockGeminiProxyRepo{}, client, codeAssist, nil, &geminicli.OAuthConfig{
-		// 此处检查发现失败时的回退，平台本地 HTTP 测试覆盖网络响应解析。
+		// Inject discovery failure here; platform HTTP tests cover response parsing.
 	})
 
 	svc.Options.FetchProject = func(context.Context, string, string) (string, error) {
@@ -784,7 +777,7 @@ func TestGeminiOAuthService_RefreshProviderToken_GoogleOne_FreshCache(t *testing
 			"tier_id":       "google_ai_pro",
 		},
 		Extra: map[string]any{
-			// 缓存刷新时间在 24 小时内
+			// The tier cache is within its 24-hour freshness window.
 			"drive_tier_updated_at": time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
 		},
 	}
@@ -793,7 +786,6 @@ func TestGeminiOAuthService_RefreshProviderToken_GoogleOne_FreshCache(t *testing
 	if err != nil {
 		t.Fatalf("RefreshProviderToken 返回错误: %v", err)
 	}
-	// 缓存新鲜，应使用已有的 tier_id
 	if info.TierID != providercore.GeminiTierGoogleAIPro {
 		t.Fatalf("TierID 应使用缓存值: got=%q want=%q", info.TierID, providercore.GeminiTierGoogleAIPro)
 	}
@@ -822,7 +814,6 @@ func TestGeminiOAuthService_RefreshProviderToken_GoogleOne_NoTierID_DefaultsFree
 			"refresh_token": "rt",
 			"oauth_type":    "google_one",
 			"project_id":    "proj",
-			// 无 tier_id
 		},
 	}
 
@@ -830,9 +821,7 @@ func TestGeminiOAuthService_RefreshProviderToken_GoogleOne_NoTierID_DefaultsFree
 	if err != nil {
 		t.Fatalf("RefreshProviderToken 返回错误: %v", err)
 	}
-	// FetchGoogleOneTier 会被调用但 oauthClient（此处 mock）不实现 Drive API，
-	// svc.FetchGoogleOneTier 的 DriveClient 查询失败，随后使用默认值。
-	// 由于没有 tier_id 且 FetchGoogleOneTier 失败，应默认为 google_one_free
+	// With no stored tier and an unavailable Drive lookup, use the free tier.
 	if info.TierID != providercore.GeminiTierGoogleOneFree {
 		t.Fatalf("TierID 应为默认 free: got=%q", info.TierID)
 	}
@@ -848,7 +837,6 @@ func TestGeminiOAuthService_RefreshProviderToken_UnauthorizedClient_Fallback(t *
 			if oauthType == "code_assist" {
 				return nil, fmt.Errorf("unauthorized_client: client mismatch")
 			}
-			// ai_studio 路径成功
 			return &geminicli.TokenResponse{
 				AccessToken: "recovered",
 				ExpiresIn:   3600,
@@ -856,7 +844,7 @@ func TestGeminiOAuthService_RefreshProviderToken_UnauthorizedClient_Fallback(t *
 		},
 	}
 
-	// 启用自定义 OAuth 客户端以触发 fallback 路径
+	// A custom OAuth client enables recovery through AI Studio.
 	cfg := &geminicli.OAuthConfig{
 		ClientID:     "custom-id",
 		ClientSecret: "custom-secret",
@@ -895,7 +883,7 @@ func TestGeminiOAuthService_RefreshProviderToken_UnauthorizedClient_NoFallback(t
 		},
 	}
 
-	// 无自定义 OAuth 客户端，无法 fallback
+	// Without a custom OAuth client, the alternate exchange is unavailable.
 	svc := newGeminiAuthorizationForTest(&mockGeminiProxyRepo{}, client, nil, nil, &geminicli.OAuthConfig{})
 	svc.Start()
 	defer stopGeminiAuthorization(t, svc)
@@ -946,7 +934,7 @@ func TestGeminiOAuthService_ExchangeCode_InvalidState(t *testing.T) {
 	svc.Start()
 	defer stopGeminiAuthorization(t, svc)
 
-	// 手动创建 session（必须设置 CreatedAt，否则会因 TTL 过期被拒绝）
+	// Set CreatedAt so TTL validation accepts this manually created session.
 	svc.Store.Set("test-session", &providercore.GeminiOAuthSession{
 		State:        "correct-state",
 		CodeVerifier: "verifier",

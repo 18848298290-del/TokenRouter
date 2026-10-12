@@ -52,7 +52,7 @@ func (p *OpenAIResponseOutput) ProtocolError(resp *http.Response, c *gin.Context
 		message = "Upstream returned an invalid non-streaming response"
 	}
 	SetOpsUpstreamError(c, http.StatusBadGateway, message, "")
-	// body-signal Compact 心跳提交 200 后，错误通过 response.failed 终止事件返回。
+	// After a body-signaled Compact heartbeat commits 200, terminate errors with response.failed.
 	if OpenAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
 		WriteOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message, MarkOpsStreamError)
 		return fmt.Errorf("non-streaming openai protocol error: %s", message)
@@ -68,7 +68,7 @@ func (p *OpenAIResponseOutput) ProtocolError(resp *http.Response, c *gin.Context
 	return fmt.Errorf("non-streaming openai protocol error: %s", message)
 }
 
-// OpenAIResponseGroupID 使用当前 HTTP 请求已更新的 Key 分组，保留响应归属键。
+// OpenAIResponseGroupID reads the updated HTTP request key group used for response ownership.
 func OpenAIResponseGroupID(c *gin.Context) int64 {
 	if c == nil {
 		return 0

@@ -55,7 +55,7 @@ func TestWSPassthroughUsageMeta_UpdateFromResponseCreate_MappedModelCandidate(t 
 	require.Equal(t, "max", *got, "mapped model should preserve max on multi-turn update")
 }
 
-// TestWSUsageModelConcurrentDirections 验证复用生产上下行调用的两个方法，以同一开始屏障固定并发读写。
+// TestWSUsageModelConcurrentDirections starts session-model reads and writes from the same barrier.
 func TestWSUsageModelConcurrentDirections(t *testing.T) {
 	m := NewUsageMeta("first", nil, nil)
 	start := make(chan struct{})

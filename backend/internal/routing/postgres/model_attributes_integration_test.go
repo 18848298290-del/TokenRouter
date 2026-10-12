@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestModelAttributeBatchLookup 验证真实数据库中的共享、停用和未关联分组。
+// TestModelAttributeBatchLookup covers shared, disabled, and unassociated profiles in PostgreSQL.
 func TestModelAttributeBatchLookup(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := context.Background()

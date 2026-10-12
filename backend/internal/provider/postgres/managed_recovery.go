@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ApplyManagedRecoveryStep 每条 SQL 独立提交，身份、错误和步骤状态与读取时一致才执行恢复。
+// ApplyManagedRecoveryStep conditionally updates one recovery step when identity, error, and step-specific state match the observation.
 func (r *ProviderStore) ApplyManagedRecoveryStep(ctx context.Context, step provider.ManagedRecoveryStep, v provider.ManagedRecoveryVersion) (bool, error) {
 	args := []any{v.ID, v.ErrorMessage}
 	where, values, err := usageObservationPredicate(v.UsageObservationVersion, 3, step == provider.ManagedRecoveryRateLimit)
@@ -57,7 +57,7 @@ func (r *ProviderStore) ApplyManagedRecoveryStep(ctx context.Context, step provi
 	if err != nil || rows == 0 {
 		return false, err
 	}
-	// 状态写入后尝试发布 outbox，发布失败时已提交的状态保持不变。
+	// Outbox publication follows the state write; publication failure leaves the state change in place.
 	if err := r.enqueue(ctx, r.sql, ProviderChanged, &v.ID, nil, nil); err != nil {
 		r.observe("[SchedulerOutbox] enqueue managed recovery failed: provider=%d step=%d err=%v", v.ID, step, err)
 	}

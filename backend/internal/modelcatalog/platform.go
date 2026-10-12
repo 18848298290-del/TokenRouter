@@ -11,7 +11,8 @@ const (
 	OllamaDefaultOutputLimit      = 65535
 )
 
-// applyPlatform 登记目录未表达的服务限制。对应依据和完整型号表见模型能力文档。
+// applyPlatform applies service constraints absent from the catalog. The linked document records model
+// coverage and sources.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_attributes
 func (r *Resolution) applyPlatform() {
 	t := r.Target
@@ -109,7 +110,8 @@ func (r *Resolution) applyPlatform() {
 			patch.TopP = valuePointer(true)
 		}
 	}
-	// 兼容服务的历史 thinking 形状按已实现的协议族处理，模型能力继续来自目录。
+	// Use the implemented protocol family for legacy thinking encodings; model capabilities still come from the
+	// catalog.
 	if t.UpstreamProtocol == "anthropic_messages" {
 		if signature := thinkingSignatureMode(model); signature != "" {
 			r.Rules.SignatureMode = signature
@@ -162,7 +164,7 @@ func (r *Resolution) antigravityPatch(patch *Attributes) {
 	}
 }
 
-// applyAdapter 描述当前转换器能够编码的格式；管理员值不扩展转换实现。
+// applyAdapter limits attributes to formats the current converter can encode, including administrator overrides.
 func (r *Resolution) applyAdapter() {
 	t := r.Target
 	patch := Attributes{}
@@ -215,7 +217,7 @@ func claudeThinkingMode(model string, attrs Attributes) string {
 		}
 		return "budget"
 	}
-	// Vertex 的日期与 default 已分别查表，此处只选择相同型号的报文编码。
+	// Vertex date and default IDs have already been looked up separately; this selects their shared message encoding.
 	identity, _, _ := strings.Cut(model, "@")
 	switch identity {
 	case "claude-sonnet-5-5":

@@ -32,7 +32,8 @@ type ManagedRefreshOptions struct {
 	Warn, Error func(string, ...any)
 }
 
-// ManagedRefreshService 拥有单提供商/批量共用的管理刷新规则，协调器包围原独立提交顺序。
+// ManagedRefreshService coordinates credential refresh and separate persistence steps for individual and batch
+// administration.
 type ManagedRefreshService struct{ options ManagedRefreshOptions }
 
 func NewManagedRefreshService(options ManagedRefreshOptions) *ManagedRefreshService {
@@ -120,7 +121,7 @@ func (s *ManagedRefreshService) refresh(ctx context.Context, value *Record) (*Re
 	return updated, "", nil
 }
 
-// current 在 CAS 冲突后返回当前记录，本次交换结果的后续操作终止。
+// current reloads the provider after a CAS conflict so the discarded exchange result causes no further updates.
 func (s *ManagedRefreshService) current(ctx context.Context, id int64) (*Record, string, error) {
 	current, err := s.options.Store.GetProvider(ctx, id)
 	if err != nil {
@@ -132,7 +133,7 @@ func (s *ManagedRefreshService) current(ctx context.Context, id int64) (*Record,
 	return current, "", nil
 }
 
-// ClearError 清理状态后尝试使 token 失效，供单项和批量管理共用。
+// ClearError clears provider health state and attempts token-cache invalidation for administrative callers.
 func (s *ManagedRefreshService) ClearError(ctx context.Context, id int64) (*Record, error) {
 	value, err := s.options.Store.ClearProviderError(ctx, id)
 	if err != nil {

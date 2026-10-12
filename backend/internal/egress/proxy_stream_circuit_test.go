@@ -35,7 +35,7 @@ func TestOpenAIProxyStreamCircuitThresholdTTLAndSuccessReset(t *testing.T) {
 	require.False(t, tripped, "failures outside the window must not accumulate")
 }
 
-// TestOpenAIProxyStreamCircuitCollapsesBurstFailures 验证同一复用连接引发的并发断流只应累计一次，独立的后续故障仍可触发隔离。
+// TestOpenAIProxyStreamCircuitCollapsesBurstFailures checks that bursts count once and later failures can quarantine a proxy.
 func TestOpenAIProxyStreamCircuitCollapsesBurstFailures(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{
@@ -59,7 +59,7 @@ func TestOpenAIProxyStreamCircuitCollapsesBurstFailures(t *testing.T) {
 	require.True(t, circuit.IsBlocked(1, base.Add(5*time.Second)))
 }
 
-// TestOpenAIProxyStreamCircuitDisabled 验证显式禁用后不记录故障，也不产生任何隔离容量。
+// TestOpenAIProxyStreamCircuitDisabled checks that disabled circuits record no failures or active blocks.
 func TestOpenAIProxyStreamCircuitDisabled(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{

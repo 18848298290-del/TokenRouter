@@ -47,7 +47,7 @@ func TestLeaderLockCache_ReleaseIsCompareAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	// 模拟 A 的锁过期后，实例 B 已重新获取同一个锁。
+	// Simulate B acquiring the lock after A's lease expires.
 	require.NoError(t, cache.rdb.Set(ctx, leaderLockKeyPrefix+key, "B", time.Minute).Err())
 
 	require.NoError(t, cache.ReleaseLeaderLock(ctx, key, "A"))

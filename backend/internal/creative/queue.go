@@ -15,24 +15,24 @@ var (
 	ErrInvalidCreativeQueuePayload = infraerrors.New(infraerrors.CategoryBadRequest, "CREATIVE_QUEUE_INVALID_PAYLOAD", "invalid creative queue payload")
 )
 
-// ReservedCreativeRun 是队列保留的一次任务。
+// ReservedCreativeRun identifies a reserved task and the lease token required for queue updates.
 type ReservedCreativeRun struct {
 	RunID      string
 	LeaseToken string
 }
 
-// CreativeRunJobLock 是任务级分布式锁。
+// CreativeRunJobLock is a task-level distributed lock that the holder releases after processing.
 type CreativeRunJobLock interface {
 	Release(ctx context.Context) error
 }
 
-// CreativeRunJobLockRefresher 是可选的锁续期能力；由具体锁实现按需提供。
+// CreativeRunJobLockRefresher optionally renews a task lock during processing.
 type CreativeRunJobLockRefresher interface {
 	Refresh(ctx context.Context, ttl time.Duration) (bool, error)
 }
 
-// CreativeRunQueue 是创作台任务的 Redis 队列抽象。
-// 实现位于 internal/creative/rediscache/queue.go，语义与批量图片队列一致。
+// CreativeRunQueue coordinates ready, delayed, and active tasks using lease tokens.
+// The Redis implementation is in internal/creative/rediscache/queue.go.
 type CreativeRunQueue interface {
 	Enqueue(ctx context.Context, runID string) error
 	Reserve(ctx context.Context, blockTimeout time.Duration) (ReservedCreativeRun, error)
@@ -44,27 +44,27 @@ type CreativeRunQueue interface {
 	TryAcquireJobLock(ctx context.Context, runID string, ttl time.Duration) (CreativeRunJobLock, bool, error)
 }
 
-// CreativeTransientStore 是创作台临时 Redis 存储抽象。
-// 输入载荷和输出图片本体存放在临时存储中，TTL 到期即失效。数据库保存任务元数据。
+// CreativeTransientStore stores task payloads and media with expiration.
+// Payloads and image bytes expire with their TTL; the database stores task metadata.
 type CreativeTransientStore interface {
-	// SavePayload 保存任务载荷（prompt 与元数据），TTL 为配置的 transient_ttl_seconds。
+	// SavePayload stores the prompt and payload metadata for the configured transient TTL.
 	SavePayload(ctx context.Context, runID string, payload *CreativeRunPayload) error
-	// LoadPayload 读取任务载荷；不存在或过期返回明确错误。
+	// LoadPayload returns the payload or ErrCreativeTransientNotFound when absent or expired.
 	LoadPayload(ctx context.Context, runID string) (*CreativeRunPayload, error)
-	// SaveInput 保存一张源图字节，idx 从 0 开始。
+	// SaveInput stores source image bytes at the zero-based index.
 	SaveInput(ctx context.Context, runID string, idx int, data []byte) error
-	// LoadInputs 按数量读取全部源图字节；缺失任一张都视为失败。
+	// LoadInputs returns count source images or an error if any image is missing.
 	LoadInputs(ctx context.Context, runID string, count int) ([][]byte, error)
-	// SaveMask 保存 mask 字节。
+	// SaveMask stores mask bytes for the configured transient TTL.
 	SaveMask(ctx context.Context, runID string, data []byte) error
-	// LoadMask 读取 mask 字节；任务无 mask 时返回明确错误。
+	// LoadMask returns mask bytes or ErrCreativeTransientNotFound when absent.
 	LoadMask(ctx context.Context, runID string) ([]byte, error)
-	// SaveOutput 保存一张临时输出图片，写入时设置独立 TTL。
+	// SaveOutput stores one output image with the supplied TTL, using the default when nonpositive.
 	SaveOutput(ctx context.Context, runID string, index int, data []byte, ttl time.Duration) error
-	// LoadOutput 读取临时输出图片；不存在或过期返回明确错误。
+	// LoadOutput returns image bytes or ErrCreativeTransientNotFound when absent or expired.
 	LoadOutput(ctx context.Context, runID string, index int) ([]byte, error)
-	// DeleteOutput 删除单张临时输出（客户端 ack 或清理），幂等。
+	// DeleteOutput removes one output after acknowledgment or during cleanup; missing keys are harmless.
 	DeleteOutput(ctx context.Context, runID string, index int) error
-	// DeleteRunTransient 删除任务的全部临时数据（payload/inputs/mask/outputs），幂等。
+	// DeleteRunTransient removes payload, inputs, mask, and outputs; nonpositive counts trigger key discovery.
 	DeleteRunTransient(ctx context.Context, runID string, inputCount, outputCount int) error
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// refundOrderFixture 使用隔离数据库和本地供应商，通过公开入口执行退款。
+// refundOrderFixture builds a persisted refund order and workflow in the test PostgreSQL database.
 func refundOrderFixture(t *testing.T, status string) (*dbent.Client, *payment.RefundWorkflow, *dbent.PaymentOrder) {
 	t.Helper()
 	ctx := context.Background()
@@ -159,7 +159,8 @@ func TestImmediateRefundAuditFailureIsNotReported(t *testing.T) {
 	require.Error(t, e, "必须保留的退款成功审计写入失败不能返回成功")
 }
 
-// TestRefundPreparationAuditFailureStopsChannel 检查准备记录失败时，预扣、状态和审计回滚，渠道调用次数为零。
+// TestRefundPreparationAuditFailureStopsChannel checks rollback of the deduction, state, and audit before
+// any provider call.
 func TestRefundPreparationAuditFailureStopsChannel(t *testing.T) {
 	ctx := context.Background()
 	c, s, o := refundOrderFixture(t, payment.OrderStatusCompleted)
@@ -183,8 +184,9 @@ func TestRefundPreparationAuditFailureStopsChannel(t *testing.T) {
 	require.Zero(t, count)
 }
 
-// TestRefundPreparedRecoveryDoesNotRepeatChannelOrDeduction 检查即时成功结果写入失败后的查询恢复。
-// 重复恢复后渠道退款次数和余额扣减次数均应保持一次。
+// TestRefundPreparedRecoveryDoesNotRepeatChannelOrDeduction checks query recovery after saving immediate
+// success fails.
+// Repeated recovery must leave exactly one provider refund and one balance deduction.
 func TestRefundPreparedRecoveryDoesNotRepeatChannelOrDeduction(t *testing.T) {
 	ctx := context.Background()
 	c, s, o := refundOrderFixture(t, payment.OrderStatusCompleted)
@@ -206,7 +208,7 @@ func TestRefundPreparedRecoveryDoesNotRepeatChannelOrDeduction(t *testing.T) {
 	require.Nil(t, result)
 	require.Error(t, err)
 	assertRefundPostgresState(t, ctx, c, o.UserID, o.ID, 50, payment.OrderStatusRefunding, 0)
-	// 故障持续时再次确认应返回错误，准备扣减次数仍为一次。
+	// While the audit failure persists, confirmation must fail without deducting again.
 	result, err = s.QueryAndFinalizeRefund(ctx, o.ID)
 	require.Nil(t, result)
 	require.Error(t, err)
@@ -224,7 +226,8 @@ func TestRefundPreparedRecoveryDoesNotRepeatChannelOrDeduction(t *testing.T) {
 	assertRefundPostgresState(t, ctx, c, o.UserID, o.ID, 50, payment.OrderStatusRefunded, 1)
 }
 
-// TestRefundMissingRecoveryRequiresManualVerification 检查恢复记录缺失或损坏时返回人工核验要求，渠道调用次数为零。
+// TestRefundMissingRecoveryRequiresManualVerification checks that missing recovery records require manual
+// review before any provider call.
 func TestRefundMissingRecoveryRequiresManualVerification(t *testing.T) {
 	for _, status := range []string{payment.OrderStatusRefundPending, payment.OrderStatusRefunding} {
 		t.Run(status, func(t *testing.T) {
@@ -244,7 +247,8 @@ func TestRefundMissingRecoveryRequiresManualVerification(t *testing.T) {
 	}
 }
 
-// TestRefundInvalidPreparedFactsRequireManualVerification 检查准备记录缺字段、损坏或金额矛盾时要求人工核验。
+// TestRefundInvalidPreparedFactsRequireManualVerification checks missing fields, corrupt JSON, and
+// contradictory deductions.
 func TestRefundInvalidPreparedFactsRequireManualVerification(t *testing.T) {
 	for _, variant := range []string{"missing_choice", "corrupt_json", "contradictory_deduction"} {
 		t.Run(variant, func(t *testing.T) {
@@ -288,7 +292,8 @@ func TestRefundInvalidPreparedFactsRequireManualVerification(t *testing.T) {
 	}
 }
 
-// TestRefundRepeatedAttemptsPreserveFactsWithUniqueAction 检查订单和动作唯一索引下，后续合法退款尝试仍能写入审计记录。
+// TestRefundRepeatedAttemptsPreserveFactsWithUniqueAction checks that later refund attempts retain audits
+// under order/action uniqueness.
 func TestRefundRepeatedAttemptsPreserveFactsWithUniqueAction(t *testing.T) {
 	ctx := context.Background()
 	c, s, o := refundOrderFixture(t, payment.OrderStatusCompleted)

@@ -62,7 +62,7 @@ func (b *qoderCompatibleAttemptBridge) SelectionFailed(err error, pending, first
 		b.h.errorResponse(b.c, http.StatusServiceUnavailable, "api_error", "No available providers: "+err.Error(), b.endpoint)
 		return
 	}
-	// 原 Qoder 状态不写 LastFailoverErr，因此没有 503 单提供商退避分支。
+	// Qoder retry state does not track LastFailoverErr, so exhaustion has no single-provider 503 backoff path.
 	if b.Context().Err() != nil {
 		return
 	}
@@ -75,7 +75,7 @@ func (b *qoderCompatibleAttemptBridge) SelectionFailed(err error, pending, first
 func (b *qoderCompatibleAttemptBridge) Acquire(retry bool) bool {
 	var err error
 	if retry {
-		// 重试等待期间的心跳会计入当前尝试的已写字节数。
+		// Heartbeats written during the retry wait count toward this attempt's written bytes.
 		b.writerSize = b.c.Writer.Size()
 		b.release, err = b.h.acquireQoderRetryProviderSlot(b.c, qoderTargetSnapshot(b.provider), b.selection, b.stream, b.streamStarted)
 	} else {
@@ -185,7 +185,7 @@ func (b *qoderCompatibleAttemptBridge) Switched() {
 	b.selection.Switched()
 }
 
-// qoderTargetSnapshot 提供等待所需的目标数据，nil 目标返回拒绝结果。
+// qoderTargetSnapshot returns the target data needed for slot waits, or nil when no target exists.
 func qoderTargetSnapshot(target QoderCompatibleTarget) *providercore.ProviderSnapshot {
 	if target == nil {
 		return nil

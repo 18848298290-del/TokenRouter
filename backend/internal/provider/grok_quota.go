@@ -67,7 +67,7 @@ func NewGrokQuotaService(options GrokQuotaOptions, runtime *ProbeRuntime) *GrokQ
 	return &GrokQuotaService{Options: options, Runtime: runtime}
 }
 
-// QueryQuota 合并 xAI billing 数据与主动额度响应头探测；Free 提供商的 billing 响应不含 usage_percent。
+// QueryQuota prefers authoritative billing quota and otherwise combines billing with an active header probe.
 func (s *GrokQuotaService) QueryQuota(ctx context.Context, providerID int64) (*GrokQuotaProbeResult, error) {
 	billingResult, billingErr := s.ProbeBilling(ctx, providerID)
 	if billingErr == nil && billingResult != nil && GrokBillingHasAuthoritativeQuota(billingResult.Billing) {
@@ -124,9 +124,9 @@ func (s *GrokQuotaService) ProbeUsageDirect(ctx context.Context, providerID int6
 		if limited {
 			s.Options.NormalizeResets(snapshot, resetAt, time.Now())
 		}
-		// 探测失败不能覆盖此前观测到的快照。401/403 以及传输或服务端错误通常不带额度响应头，
-		// 只有成功响应或带有效限流响应头的 429 才适合持久化。成功但不带响应头的 200 仍会记录为
-		// 明确的“无响应头”观测，使界面能够区分这种情况与从未探测。
+		// Preserve earlier observations on authentication, transport, or server failure.
+		// Persist observed headers for statuses below 400 or 429. A headerless 200 also records
+		// a completed probe so the UI can distinguish it from an unobserved provider.
 		persistErr := error(nil)
 		persisted := false
 		shouldPersist := statusCode < 400 || statusCode == 429
@@ -166,15 +166,15 @@ func (s *GrokQuotaService) ProbeUsageDirect(ctx context.Context, providerID int6
 	return result, nil
 }
 
-// ProbeBilling 调用 xAI billing 端点，提供商用量展示通过该查询取得结果。
+// ProbeBilling queries xAI billing for provider usage display and coalesces concurrent probes.
 func (s *GrokQuotaService) ProbeBilling(ctx context.Context, providerID int64) (*GrokQuotaProbeResult, error) {
 	return s.RunProbeFlight(ctx, "billing:"+strconv.FormatInt(providerID, 10), func(sharedCtx context.Context) (*GrokQuotaProbeResult, error) {
 		return s.ProbeBillingDirect(sharedCtx, providerID)
 	})
 }
 
-// ProbeMediaEligibility 刷新计费状态，并按媒体调度使用的持久化提供商快照重新判断资格。
-// 探测失败时保持拒绝；禁止访问或 Free 等确定状态作为普通的不合格结果返回。
+// ProbeMediaEligibility refreshes billing and evaluates the reloaded provider snapshot.
+// It returns a probe error when billing remains unobserved; known ineligibility is an ordinary result.
 func (s *GrokQuotaService) ProbeMediaEligibility(ctx context.Context, providerID int64) (bool, string, error) {
 	_, probeErr := s.ProbeBilling(ctx, providerID)
 	provider, err := s.LoadGrokOAuthProvider(ctx, providerID)
@@ -263,7 +263,7 @@ func (s *GrokQuotaService) ProbeBillingDirect(ctx context.Context, providerID in
 	}, nil
 }
 
-// PreferBillingObservationStatus 汇总失败探测状态，优先保留可确定媒体资格的 403。
+// PreferBillingObservationStatus prioritizes 403 because it determines media ineligibility.
 func (s *GrokQuotaService) PreferBillingObservationStatus(weeklyStatus, monthlyStatus int) int {
 	if weeklyStatus == 403 || monthlyStatus == 403 {
 		return 403
@@ -295,7 +295,7 @@ func (s *GrokQuotaService) RunProbeFlight(
 	return CloneGrokQuotaProbeResult(result), nil
 }
 
-// StopContext 等待共享探测与模型同步结束。
+// StopContext stops the shared runtime and waits for probes and model sync within the caller's budget.
 func (s *GrokQuotaService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil

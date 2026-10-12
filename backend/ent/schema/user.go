@@ -35,8 +35,8 @@ func (User) Mixin() []ent.Mixin {
 
 func (User) Fields() []ent.Field {
 	return []ent.Field{
-		// 唯一约束通过部分索引实现（WHERE deleted_at IS NULL），支持软删除后重用
-		// 见迁移文件 016_soft_delete_partial_unique_indexes.sql
+		// A partial unique index on active rows allows email addresses to be reused after soft deletion.
+		// See migration 016_soft_delete_partial_unique_indexes.sql.
 		field.String("email").
 			MaxLen(255).
 			NotEmpty(),
@@ -58,18 +58,18 @@ func (User) Fields() []ent.Field {
 			MaxLen(20).
 			Default(identity.StatusActive),
 
-		// 可选资料字段（后续迁移加入，数据库默认值为空字符串）
-		// preferred_locale 保存用户主动选择的界面和通知语言。
+		// Optional profile fields.
+		// preferred_locale stores the user's chosen interface and notification language.
 		field.String("preferred_locale").MaxLen(35).Optional().Nillable(),
 		field.String("username").
 			MaxLen(100).
 			Default(""),
-		// wechat 字段已迁移到 user_attribute_values（见迁移 019）
+		// The wechat profile field lives in user_attribute_values; see migration 019.
 		field.String("notes").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
 
-		// TOTP 双因素认证字段
+		// TOTP two-factor authentication.
 		field.String("totp_secret_encrypted").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Optional().
@@ -98,7 +98,7 @@ func (User) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 
-		// 余额不足通知
+		// Low-balance notifications.
 		field.Bool("balance_notify_enabled").
 			Default(true),
 		field.String("balance_notify_threshold_type").
@@ -114,10 +114,10 @@ func (User) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Default(0),
 
-		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
+		// User-wide RPM limit, checked after group limits; zero means unlimited.
 		field.Int("rpm_limit").
 			Default(0),
-		// 用户可创建的 API Key 数量上限，0 表示不限制。
+		// Maximum API keys the user can create; zero means unlimited.
 		field.Int("api_key_limit").
 			Default(identity.DefaultUserAPIKeyLimit).
 			Range(0, identity.MaxUserAPIKeyLimit),
@@ -149,7 +149,7 @@ func (User) Edges() []ent.Edge {
 
 func (User) Indexes() []ent.Index {
 	return []ent.Index{
-		// email 字段已在 Fields() 中声明 Unique()，无需重复索引
+		// Active-email uniqueness is enforced by the SQL migration's partial index.
 		index.Fields("status"),
 		index.Fields("deleted_at"),
 	}

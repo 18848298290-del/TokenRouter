@@ -21,7 +21,8 @@ type task struct {
 	wg        sync.WaitGroup
 }
 
-// Wheel 的构造不启动 goroutine。任务身份防止取消后的回调重新覆盖同名新任务。
+// Wheel schedules named callbacks after Start. Task identity prevents canceled
+// callbacks from rearming over a replacement with the same name.
 type Wheel struct {
 	mu       sync.Mutex
 	tw       *collection.TimingWheel
@@ -33,7 +34,8 @@ type Wheel struct {
 
 func New() *Wheel { return &Wheel{tasks: make(map[string]*task)} }
 
-// Start 保持一秒 tick 与 3600 槽，只启动一次；初始化错误交由 app 回收。
+// Start initializes a one-second, 3600-slot wheel and arms queued tasks.
+// Repeated starts are harmless until shutdown; a stopped wheel cannot restart.
 func (w *Wheel) Start() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -81,7 +83,7 @@ func (w *Wheel) schedule(name string, delay time.Duration, fn func(), recurring 
 	}
 }
 
-// arm 在持锁状态投递；底层回调异步执行，不在投递线程调用业务函数。
+// arm requires w.mu. The timing wheel dispatches the callback asynchronously.
 func (w *Wheel) arm(t *task) {
 	if err := w.tw.SetTimer(t.name, func() { w.execute(t) }, t.delay); err != nil {
 		logging.LegacyPrintf("service.timing_wheel", "[TimingWheel] SetTimer failed for %q: %v", t.name, err)
@@ -127,7 +129,8 @@ func (w *Wheel) cancel(name string) *task {
 
 func (w *Wheel) Cancel(name string) { w.cancel(name) }
 
-// CancelAndWait 用于拥有者停止及最后一次 flush；不能在该任务自己的回调中调用。
+// CancelAndWait cancels a named task and waits for its active callback.
+// Calling it from that same callback deadlocks.
 func (w *Wheel) CancelAndWait(name string) {
 	if t := w.cancel(name); t != nil {
 		t.wg.Wait()
@@ -136,7 +139,8 @@ func (w *Wheel) CancelAndWait(name string) {
 
 func (w *Wheel) Stop() { _ = w.Shutdown(context.Background()) }
 
-// Shutdown 先封闭调度，再等待已进入执行的回调；超时不会谎报回调已经结束。
+// Shutdown rejects future scheduling and waits for active callbacks.
+// Context cancellation returns an error while those callbacks may still be running.
 func (w *Wheel) Shutdown(ctx context.Context) error {
 	w.mu.Lock()
 	if w.stopDone == nil {

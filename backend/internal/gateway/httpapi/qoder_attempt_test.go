@@ -73,14 +73,14 @@ type qoderAnthropicStreamEventForTest struct {
 	Data  map[string]any
 }
 
-// qoderFailingHTTPWriter 模拟同步写失败，验证客户端断开后仍能收集尾部用量。
+// qoderFailingHTTPWriter simulates synchronous write failures to test tail-usage collection after a client disconnect.
 type qoderFailingHTTPWriter struct {
 	gin.ResponseWriter
 	failAfter int
 	writes    int
 }
 
-// assertQoderContextCapabilityForTest 同时校验顶层上限和可选档位的两个运行时字段。
+// assertQoderContextCapabilityForTest checks the top-level limit and both optional runtime context fields.
 func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, wantTokens int, wantRuntime bool) {
 	t.Helper()
 	modelConfig := requireQoderPayloadMapForTest(t, payload["model_config"], "model_config")
@@ -103,7 +103,7 @@ func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, w
 	require.False(t, hasRuntimeOverride)
 }
 
-// requireQoderPayloadMapForTest 校验 payload 路径为 JSON 对象并返回对应 map。
+// requireQoderPayloadMapForTest returns a fixture object or fails the test when the value is not an object.
 func requireQoderPayloadMapForTest(t *testing.T, value any, path string) map[string]any {
 	t.Helper()
 	result, ok := value.(map[string]any)
@@ -115,7 +115,8 @@ func (c qoderContextClientFixture) StreamRequestContext(ctx context.Context, _ *
 	return c.request(ctx)
 }
 
-// TestQoderForwardContextDetachesStreamingFromClientCancellation 在 Execute 进入供应商后取消客户端请求，检查转发预算。
+// TestQoderForwardContextDetachesStreamingFromClientCancellation cancels the client inside Execute to check the
+// forwarding budget.
 func TestQoderForwardContextDetachesStreamingFromClientCancellation(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		t.Run(strconv.FormatBool(stream), func(t *testing.T) {
@@ -383,7 +384,7 @@ func TestQoderGatewayChatCompletionsConvertsLegacyFunctions(t *testing.T) {
 	upstream := qoderLastUpstreamPayloadForTest(t, client)
 	tools := qoderFixtureValue[[]any](t, upstream["tools"])
 	require.Len(t, tools, 1)
-	// 兼容旧版 OpenAI Chat Completions 客户端传入的 functions/function_call。
+	// Legacy Chat clients supply tools through functions and function_call.
 	function := qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, tools[0])["function"])
 	require.Equal(t, "get_weather", function["name"])
 	require.Equal(t, "Get weather", function["description"])
@@ -2112,7 +2113,7 @@ func TestQoderGatewayNonStreamingReadDoesNotCommitResponseBeforeError(t *testing
 	require.False(t, c.Writer.Written())
 }
 
-// TestQoderPartialUsageOnError 检查 Qoder 失败时的输出和已观测 usage。
+// TestQoderPartialUsageOnError checks output and observed usage when Qoder fails.
 func TestQoderPartialUsageOnError(t *testing.T) {
 	body := qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "served"}}}}) + qoderWrappedSSELineForTest(t, map[string]any{"usage": map[string]any{"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}}) + qoderWrappedErrorSSELineForTest(t, 502, map[string]any{"code": "500", "message": "local fixture upstream failure"})
 	writers := map[string]func(context.Context, *gin.Context, *http.Response) (*qoder.QoderStreamResult, error){
@@ -3728,7 +3729,7 @@ func (w *qoderFailingHTTPWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-// qoderFixtureValue 检查解码夹具的类型，类型不符时使断言失败。
+// qoderFixtureValue checks and returns the decoded fixture value as T.
 func qoderFixtureValue[T any](t *testing.T, raw any) T {
 	t.Helper()
 	value, ok := raw.(T)
@@ -3736,7 +3737,7 @@ func qoderFixtureValue[T any](t *testing.T, raw any) T {
 	return value
 }
 
-// qoderEventResponse 将事件夹具编码为上游报文，生产流式入口执行输出转换。
+// qoderEventResponse encodes event fixtures for the production stream parser and converter.
 func qoderEventResponse(t *testing.T, events []qoder.SSEEvent) *http.Response {
 	t.Helper()
 	var body strings.Builder
@@ -3778,7 +3779,7 @@ func qoderEventResponse(t *testing.T, events []qoder.SSEEvent) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body.String()))}
 }
 
-// writeQoderOpenAIEvents 将事件夹具交给响应解析和转换函数。
+// writeQoderOpenAIEvents passes event fixtures through OpenAI response parsing and conversion.
 func writeQoderOpenAIEvents(t *testing.T, c *upstreamcore.OutputContext, model string, events []qoder.SSEEvent, mappers ...qoder.QoderToolNameMapper) error {
 	t.Helper()
 	options := []qoder.QoderOpenAIStreamResponseOption{qoder.QoderOpenAIStreamIncludeUsage(true)}
@@ -3789,7 +3790,7 @@ func writeQoderOpenAIEvents(t *testing.T, c *upstreamcore.OutputContext, model s
 	return err
 }
 
-// writeQoderAnthropicEvents 复用与实际请求相同的响应解析和内容块生命周期。
+// writeQoderAnthropicEvents exercises the production parser and content-block lifecycle.
 func writeQoderAnthropicEvents(t *testing.T, c *upstreamcore.OutputContext, model string, events []qoder.SSEEvent, mappers ...qoder.QoderToolNameMapper) error {
 	t.Helper()
 	var options []qoder.QoderAnthropicStreamResponseOption
@@ -3994,7 +3995,7 @@ func TestQoderThinkingUsesProviderMappedRouteKey(t *testing.T) {
 	assertQoderThinkingPayload(t, payload, true, "", false)
 }
 
-// assertQoderThinkingPayload 校验 Qoder 会读取的所有开关和等级副本保持一致。
+// assertQoderThinkingPayload checks that all reasoning switches and effort copies sent to Qoder agree.
 func assertQoderThinkingPayload(t *testing.T, payload map[string]any, enabled bool, effort string, hasEffort bool) {
 	t.Helper()
 	raw, err := json.Marshal(payload)

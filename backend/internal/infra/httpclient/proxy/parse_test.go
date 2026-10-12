@@ -62,7 +62,7 @@ func TestParse_有效SOCKS5代理_自动升级为SOCKS5H(t *testing.T) {
 	if err != nil {
 		t.Fatalf("有效 SOCKS5 代理应成功: %v", err)
 	}
-	// socks5 自动升级为 socks5h，确保 DNS 由代理端解析
+	// Normalize the SOCKS5 alias to SOCKS5H.
 	if trimmed != "socks5h://127.0.0.1:1080" {
 		t.Errorf("trimmed 应升级为 socks5h: got %q", trimmed)
 	}
@@ -102,7 +102,7 @@ func TestParse_不支持的Scheme(t *testing.T) {
 }
 
 func TestParse_含密码URL脱敏(t *testing.T) {
-	// 场景 1: 带密码的 socks5 URL 应成功解析并升级为 socks5h
+	// Normalization must retain credentials on a valid SOCKS URL.
 	trimmed, parsed, err := Parse("socks5://user:secret_password@proxy.local:1080")
 	if err != nil {
 		t.Fatalf("含密码的有效 URL 应成功: %v", err)
@@ -120,7 +120,7 @@ func TestParse_含密码URL脱敏(t *testing.T) {
 		t.Error("升级后应保留 UserInfo")
 	}
 
-	// 场景 2: 带密码但缺少 host（触发 Redacted 脱敏路径）
+	// A missing host must produce a diagnostic with the password redacted.
 	_, _, err = Parse("http://user:secret_password@:0/")
 	if err == nil {
 		t.Fatal("缺少 host 应返回错误")
@@ -147,7 +147,7 @@ func TestParse_带空白的有效URL(t *testing.T) {
 }
 
 func TestParse_Scheme大小写不敏感(t *testing.T) {
-	// 大写 SOCKS5 应被接受并升级为 socks5h
+	// Uppercase SOCKS5 also normalizes to SOCKS5H.
 	trimmed, parsed, err := Parse("SOCKS5://proxy.example.com:1080")
 	if err != nil {
 		t.Fatalf("大写 SOCKS5 应被接受: %v", err)
@@ -159,7 +159,7 @@ func TestParse_Scheme大小写不敏感(t *testing.T) {
 		t.Errorf("大写 SOCKS5 trimmed 应升级为 socks5h://: got %q", trimmed)
 	}
 
-	// 大写 HTTP 应被接受（不变）
+	// Uppercase HTTP is accepted.
 	_, _, err = Parse("HTTP://proxy.example.com:8080")
 	if err != nil {
 		t.Fatalf("大写 HTTP 应被接受: %v", err)
@@ -197,7 +197,7 @@ func TestParse_SOCKS5H保持不变(t *testing.T) {
 	if err != nil {
 		t.Fatalf("有效 SOCKS5H 代理应成功: %v", err)
 	}
-	// socks5h 不需要升级，应保持原样
+	// An existing SOCKS5H scheme requires no alias conversion.
 	if trimmed != "socks5h://proxy.local:1080" {
 		t.Errorf("trimmed 不应变化: got %q", trimmed)
 	}
@@ -207,7 +207,7 @@ func TestParse_SOCKS5H保持不变(t *testing.T) {
 }
 
 func TestParse_无Scheme裸地址(t *testing.T) {
-	// 无 scheme 的裸地址，Go url.Parse 将其视为 path，Host 为空
+	// A bare address lacks URL authority, so Host is empty.
 	_, _, err := Parse("proxy.example.com:8080")
 	if err == nil {
 		t.Fatal("无 scheme 的裸地址应返回错误")

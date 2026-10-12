@@ -12,7 +12,7 @@ import (
 
 var ErrSettingNotFound = apperror.NotFound("SETTING_NOT_FOUND", "setting not found")
 
-// Setting 是 settings 表中的设置值。
+// Setting represents a row in the settings table.
 type Setting struct {
 	ID        int64
 	Key       string
@@ -20,7 +20,7 @@ type Setting struct {
 	UpdatedAt time.Time
 }
 
-// Repository 提供设置读写，批量写入在一次事务中提交。
+// Repository reads and writes settings. Implementations must commit batch writes atomically.
 type Repository interface {
 	Get(context.Context, string) (*Setting, error)
 	GetValue(context.Context, string) (string, error)
@@ -31,7 +31,7 @@ type Repository interface {
 	Delete(context.Context, string) error
 }
 
-// ConditionalRepository 在一次事务中比较旧值并提交整个设置批次。
+// ConditionalRepository compares expected values and commits the complete batch atomically.
 type ConditionalRepository interface {
 	Repository
 	CompareAndSetMultiple(context.Context, map[string]string, map[string]*string) error
@@ -43,8 +43,8 @@ type subscription struct {
 	fn     func()
 }
 
-// Store 提供设置读写和订阅通知，业务校验和领域缓存在调用模块处理。
-// 调用方在设置持久化和缓存刷新完成后调用 NotifyUpdated。
+// Store provides setting reads, writes, and subscriptions. Calling modules own validation and domain caches.
+// Call NotifyUpdated after persistence and cache refresh complete.
 // @project-doc docs/interfaces/configuration.md#runtime_settings
 type Store struct {
 	updates     *Updates
@@ -55,7 +55,7 @@ type Store struct {
 	subscribers []*subscription
 }
 
-// New 在 repo 为 Store 时返回该实例，否则为 repo 创建 Store。
+// New returns repo when it is already a Store; otherwise it wraps repo in a Store.
 func New(repo Repository) *Store {
 	if store, ok := repo.(*Store); ok {
 		return store
@@ -81,7 +81,7 @@ func (s *Store) SetMultiple(ctx context.Context, values map[string]string) error
 func (s *Store) GetAll(ctx context.Context) (map[string]string, error) { return s.repo.GetAll(ctx) }
 func (s *Store) Delete(ctx context.Context, key string) error          { return s.repo.Delete(ctx, key) }
 
-// SetVersion 设置应用版本。
+// SetVersion sets the application version.
 func (s *Store) SetVersion(version string) {
 	s.mu.Lock()
 	s.version = version
@@ -94,7 +94,8 @@ func (s *Store) Version() string {
 	return s.version
 }
 
-// Subscribe 按登记顺序同步通知。注销幂等并阻止尚未领取的回调；已领取的回调可以完成一次。
+// Subscribe registers a synchronous callback in registration order and returns an idempotent unsubscribe
+// function. A callback already claimed by NotifyUpdated may still finish after unsubscribe.
 func (s *Store) Subscribe(fn func()) func() {
 	if fn == nil {
 		return func() {}
@@ -122,8 +123,8 @@ func (s *Store) Subscribe(fn func()) func() {
 	}
 }
 
-// NotifyUpdated 通知已登记的订阅者，调用方在持久化和缓存刷新后调用。
-// 回调在锁外执行，允许回调注销自身或继续读取设置。
+// NotifyUpdated invokes active subscribers. Call it after persistence and cache refresh.
+// Callbacks execute outside the lock so they can unsubscribe themselves or read settings.
 func (s *Store) NotifyUpdated() {
 	s.mu.RLock()
 	subs := append([]*subscription(nil), s.subscribers...)
@@ -135,10 +136,10 @@ func (s *Store) NotifyUpdated() {
 	}
 }
 
-// Updates 返回与 Store 共用生命周期的综合更新协调器。
+// Updates returns this Store's combined settings update coordinator.
 func (s *Store) Updates() *Updates { return s.updates }
 
-// StringOrDefault 返回键对应的非空字符串，缺键或空串时返回 fallback，空白字符按输入保留。
+// StringOrDefault returns a nonempty stored value or fallback. Whitespace is retained.
 func StringOrDefault(values map[string]string, key, fallback string) string {
 	if value, ok := values[key]; ok && value != "" {
 		return value
@@ -146,7 +147,7 @@ func StringOrDefault(values map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// IsExplicitFalse 识别 false、0、off 和 disabled 四种关闭表示。
+// IsExplicitFalse recognizes false, 0, off, and disabled after trimming and case normalization.
 func IsExplicitFalse(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "false", "0", "off", "disabled":

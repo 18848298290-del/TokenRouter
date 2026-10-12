@@ -19,7 +19,7 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// SearchTransport 使用原客户端池的闭合请求接口，不创建独立连接池。
+// SearchTransport sends requests through the shared pool with proxy, provider, and concurrency parameters.
 type SearchTransport interface {
 	Do(*http.Request, string, int64, int) (*http.Response, error)
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestRequestLimitsAtomicAdmission 用并行请求验证多个客户端共用同一份上限。
+// TestRequestLimitsAtomicAdmission checks shared limits with concurrent clients.
 func TestRequestLimitsAtomicAdmission(t *testing.T) {
 	client := rediscontainer.New(t)
 	cache := &ApiKeyCache{rdb: client}
@@ -46,7 +46,7 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 			require.EqualValues(t, 3, accepted.Load())
 		})
 	}
-	// 同一请求的 Redis 命令重放不重复计数，也不推迟 RPM 窗口。
+	// Replaying a reservation must neither double-count the request nor extend its RPM window.
 	require.NoError(t, client.FlushDB(ctx).Err())
 	for _, limits := range [][2]int{{1, 0}, {0, 1}, {1, 1}} {
 		require.NoError(t, client.Del(ctx, requestLimitKeys(9)...).Err())
@@ -63,7 +63,7 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 			require.EqualValues(t, 1, client.ZCard(ctx, requestLimitKeys(9)[1]).Val())
 		}
 	}
-	// 并发拒绝不占用 RPM，归还槽后仍能使用下一次额度。
+	// Concurrency rejection leaves RPM capacity available after the active slot is released.
 	require.NoError(t, client.FlushDB(ctx).Err())
 	_, err := cache.ReserveRequest(ctx, 2, "first", 1, 2)
 	require.NoError(t, err)
@@ -78,13 +78,13 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 	require.Positive(t, retry)
 	require.LessOrEqual(t, retry, time.Minute)
 	require.Zero(t, client.ZCard(ctx, requestLimitKeys(2)[0]).Val())
-	// Key ID 独立，复合分组使用同一 ID 时共用额度。
+	// Different key IDs have independent limits; composite groups share their key ID.
 	_, err = cache.ReserveRequest(ctx, 3, "other", 1, 2)
 	require.NoError(t, err)
 	require.NoError(t, cache.RefreshRequest(ctx, 3, "other"))
 	require.NoError(t, cache.ReleaseRequest(ctx, 3, "other"))
 	require.ErrorIs(t, cache.RefreshRequest(ctx, 3, "other"), apikey.ErrKeyLimiterUnavailable)
-	// 过期的租约和 RPM 记录在下一次准入时清理。
+	// The next admission prunes expired leases and RPM records.
 	now := time.Now().Add(-3 * time.Minute).UnixMilli()
 	require.NoError(t, client.ZAdd(ctx, requestLimitKeys(4)[0], redis.Z{Score: float64(now), Member: "stale"}).Err())
 	require.NoError(t, client.ZAdd(ctx, requestLimitKeys(4)[1], redis.Z{Score: float64(now), Member: "stale"}).Err())

@@ -10,7 +10,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// provideSystemOneExecutor 为决策请求绑定共享传输、价格预检和提供商健康组件。
+// provideSystemOneExecutor binds shared transport, pricing preflight, and provider health to decision requests.
 func provideSystemOneExecutor(cfg *config.Config, transport httpclient.UpstreamTransport, headers *egress.CompiledHeaderFilter, health *provideradapter.UpstreamHealth, prices *billing.PriceResolver, activity *gatewayRequestActivity) *gatewayhttp.SystemOneExecutor {
 	executor := &gatewayhttp.SystemOneExecutor{
 		Transport:    transport,

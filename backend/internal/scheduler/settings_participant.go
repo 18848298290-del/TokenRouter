@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// SettingsParticipant 保存静态默认值并写入调度设置键。
+// SettingsParticipant validates supplied scheduler fields against defaults and prepares setting writes.
 func SettingsParticipant(defaults AdminDefaults) settings.Participant {
 	keys := []string{SettingKeyAdvancedSchedulerEWMAErrorRateAlpha, SettingKeyAdvancedSchedulerEWMATTFTAlpha, SettingKeyAdvancedSchedulerLBTopK, SettingKeyAdvancedSchedulerStickyEscapeEnabled, SettingKeyAdvancedSchedulerStickyEscapeErrorRate, SettingKeyAdvancedSchedulerStickyEscapeTTFTMs, SettingKeyAdvancedSchedulerStickyWeightedEnabled, SettingKeyAdvancedSchedulerSubscriptionPriorityEnabled, SettingKeyAdvancedSchedulerWeightErrorRate, SettingKeyAdvancedSchedulerWeightLoad, SettingKeyAdvancedSchedulerWeightPreviousResponse, SettingKeyAdvancedSchedulerWeightPriority, SettingKeyAdvancedSchedulerWeightQueue, SettingKeyAdvancedSchedulerWeightQuotaHeadroom, SettingKeyAdvancedSchedulerWeightReset, SettingKeyAdvancedSchedulerWeightSessionSticky, SettingKeyAdvancedSchedulerWeightTTFT}
 	return settings.Participant{Module: "scheduler", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {

@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// geminiExecutionAdapter 保存本次凭据和响应，调用平台恢复方法和 Executor。
+// geminiExecutionAdapter holds attempt credentials and response state for platform recovery and execution.
 type geminiExecutionAdapter struct {
 	s                       *Antigravity
 	c                       *attempt

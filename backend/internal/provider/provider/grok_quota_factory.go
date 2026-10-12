@@ -9,16 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokQuotaStore 只包含原探测所需的读取、观测字段和限流写入。
+// GrokQuotaStore reads providers and writes quota snapshots and rate limits.
 type GrokQuotaStore interface {
 	GetByID(context.Context, int64) (*provider.Record, error)
 	UpdateExtra(context.Context, int64, map[string]any) error
 	provider.GrokRateLimitWriter
 }
 
-// NewGrokQuota 组合共享额度探测实例和平台接口。
+// NewGrokQuota binds platform queries and provider state to a shared probe runtime.
 func NewGrokQuota(store GrokQuotaStore, token *provider.GrokTokenSource, requests *GrokQuotaTransport, stats provider.LocalUsageStats) *provider.GrokQuotaService {
-	// 未配置传输时仍保留重置等本地错误入口，不执行网络请求。
+	// Keep local validation available when no network transport is configured.
 	if requests == nil {
 		requests = &GrokQuotaTransport{}
 	}

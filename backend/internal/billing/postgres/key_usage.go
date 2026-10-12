@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// apiKeyRateLimitUsageSetSQL 使用 $1 累计费用，窗口时间取当前 PostgreSQL 事务的 NOW()。
+	// apiKeyRateLimitUsageSetSQL adds the cost in $1 using the PostgreSQL transaction's NOW() for window times.
 	apiKeyRateLimitUsageSetSQL = `			usage_5h = CASE WHEN window_5h_start IS NOT NULL AND window_5h_start + INTERVAL '5 hours' <= NOW() THEN $1 ELSE usage_5h + $1 END,
 			usage_1d = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN $1 ELSE usage_1d + $1 END,
 			usage_7d = CASE WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN $1 ELSE usage_7d + $1 END,
@@ -21,7 +21,7 @@ const (
 			updated_at = NOW()`
 )
 
-// KeyUsageStore 写入 Key 的消费累计和资金窗口。
+// KeyUsageStore writes API Key quota usage and spending windows.
 type KeyUsageStore struct {
 	client *dbent.Client
 	sql    KeyUsageSQL
@@ -35,7 +35,7 @@ func NewKeyUsageStore(client *dbent.Client, db KeyUsageSQL) *KeyUsageStore {
 	return &KeyUsageStore{client: client, sql: db}
 }
 
-// IncrementQuotaUsed 使用 Ent 原子递增 quota_used 字段并返回新值。
+// IncrementQuotaUsed atomically increments quota_used through Ent and returns the new value.
 func (r *KeyUsageStore) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	updated, err := r.client.APIKey.UpdateOneID(id).
 		Where(apikey.DeletedAtIsNil()).
@@ -76,8 +76,8 @@ func (r *KeyUsageStore) IncrementQuotaUsedAndGetState(ctx context.Context, id in
 	return state, nil
 }
 
-// IncrementRateLimitUsage atomically increments all rate limit usage counters and initializes
-// window start times via COALESCE if not already set.
+// IncrementRateLimitUsage atomically adds costs, resetting expired windows
+// and initializing missing window starts with transaction time.
 func (r *KeyUsageStore) IncrementRateLimitUsage(ctx context.Context, id int64, cost float64) error {
 	_, err := r.sql.ExecContext(ctx, `
 		UPDATE api_keys SET
@@ -128,7 +128,7 @@ func (r *KeyUsageStore) GetRateLimitData(ctx context.Context, id int64) (result 
 	return data, rows.Err()
 }
 
-// ApplyKeyUsageReset 将消费字段附加到调用方的更新语句。
+// ApplyKeyUsageReset adds quota and window resets to the caller's update builder.
 func ApplyKeyUsageReset(builder *dbent.APIKeyUpdate, input billing.KeyUsageReset) {
 	if input.ResetQuota {
 		builder.SetQuotaUsed(input.QuotaUsed)
@@ -140,7 +140,7 @@ func ApplyKeyUsageReset(builder *dbent.APIKeyUpdate, input billing.KeyUsageReset
 			SetUsage1d(input.Windows.Usage1d).
 			SetUsage7d(input.Windows.Usage7d)
 
-		// 按输入设置或清空各限流窗口的开始时间。
+		// Nil window starts clear their stored values.
 		if input.Windows.Window5hStart != nil {
 			builder.SetWindow5hStart(*input.Windows.Window5hStart)
 		} else {

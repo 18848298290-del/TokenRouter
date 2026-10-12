@@ -18,7 +18,7 @@ func provideQoderAuthorizationHTTP(source *provideradapter.QoderAuthorization) *
 	return providerhttp.NewQoderOAuthHandler(source)
 }
 
-// provideQoderAuthorization 绑定代理读取接口，授权组件和供应商执行器分别管理会话与请求。
+// provideQoderAuthorization binds proxy lookup; authorization owns sessions and upstream code owns requests.
 func provideQoderAuthorization(proxies egress.ProxyRepository) *provideradapter.QoderAuthorization {
 	return provideradapter.NewQoderAuthorization(func(ctx context.Context, id *int64) (string, error) {
 		if id == nil {
@@ -38,14 +38,14 @@ func provideQoderAuthorization(proxies egress.ProxyRepository) *provideradapter.
 	}, nil)
 }
 
-// provideQoderTokens 构造唯一提供商会话缓存，站点交换由供应商构建器负责。
+// provideQoderTokens creates the shared execution session cache with upstream site exchange.
 func provideQoderTokens(transport provideradapter.QoderTransport, profiles *egressprovider.TLSProfiles) *provideradapter.QoderTokenProvider {
 	source := provideradapter.NewQoderTokenProvider(qoder.SessionBuilder{})
 	source.SetHTTPUpstream(transport, profiles)
 	return source
 }
 
-// provideTokenCacheInvalidator 为失效操作绑定共享的会话和 token 缓存。
+// provideTokenCacheInvalidator binds the shared session and access-token caches.
 func provideTokenCacheInvalidator(cache providerauth.AccessTokenCache, sessions *provideradapter.QoderTokenProvider) providerauth.TokenCacheInvalidator {
 	return providerauth.NewCompositeTokenCacheInvalidator(cache, sessions, slog.Warn)
 }

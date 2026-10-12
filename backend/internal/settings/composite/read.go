@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// ReadOptions 包含各模块的设置读取器和当前运行快照。
+// ReadOptions provides module readers, runtime defaults, and the model publication callback.
 type ReadOptions struct {
 	ResponsesWS        *ws.Runtime
 	OAuth              *identity.OAuthSettings
@@ -38,7 +38,7 @@ type ReadOptions struct {
 	PublishModel       func(string)
 }
 
-// Parse 将传入设置和各模块的解析结果组合为管理快照。
+// Parse combines stored values and module read results into an admin snapshot.
 func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 	prior := options.Forwarded()
 	forwarded := runtimeconfig.ReadForwardedSettings(settings, prior)
@@ -87,7 +87,7 @@ func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 
 	result.ApplySchedulerAdminReadSettings(scheduler.ReadAdminSettings(settings, options.Scheduler))
 
-	// 读取管理快照时，通过注入的函数发布动态默认模型。
+	// Reading the admin snapshot also publishes the dynamic default model when a callback is installed.
 	if options.PublishModel != nil {
 		options.PublishModel(result.GrokDefaultTextModel)
 	}
@@ -95,26 +95,26 @@ func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 	return result
 }
 
-// ApplyAuditAdminReadSettings 将审计日志保留天数写入快照。
+// ApplyAuditAdminReadSettings copies audit retention days into the snapshot.
 func (s *Snapshot) ApplyAuditAdminReadSettings(value *audit.AdminReadSettings) {
 	s.AuditLogRetentionDays = value.AuditLogRetentionDays
 }
 
-// ApplyCreativeAdminReadSettings 将创作台开关、模型和任务并发数写入快照。
+// ApplyCreativeAdminReadSettings copies Creative Studio access, model, and worker settings into the snapshot.
 func (s *Snapshot) ApplyCreativeAdminReadSettings(value *creative.AdminReadSettings) {
 	s.CreativeEnabled = value.CreativeEnabled
 	s.CreativeModelSettings = value.CreativeModelSettings
 	s.CreativeWorkerCount = value.CreativeWorkerCount
 }
 
-// ApplyModerationAdminReadSettings 将会话封禁和风控设置写入快照。
+// ApplyModerationAdminReadSettings copies session blocking and risk control settings into the snapshot.
 func (s *Snapshot) ApplyModerationAdminReadSettings(value *moderation.AdminReadSettings) {
 	s.CyberSessionBlockEnabled = value.CyberSessionBlockEnabled
 	s.CyberSessionBlockTTLSeconds = value.CyberSessionBlockTTLSeconds
 	s.RiskControlEnabled = value.RiskControlEnabled
 }
 
-// ApplyNotificationAdminReadSettings 将 SMTP 连接、发件人和凭据状态写入快照。
+// ApplyNotificationAdminReadSettings copies SMTP connection, sender, and credential settings into the snapshot.
 func (s *Snapshot) ApplyNotificationAdminReadSettings(value *notification.AdminReadSettings) {
 	s.SMTPFrom = value.SMTPFrom
 	s.SMTPFromName = value.SMTPFromName
@@ -126,7 +126,7 @@ func (s *Snapshot) ApplyNotificationAdminReadSettings(value *notification.AdminR
 	s.SMTPUsername = value.SMTPUsername
 }
 
-// ApplyOpsAdminReadSettings 将额度自动暂停和监控设置写入快照。
+// ApplyOpsAdminReadSettings copies quota auto-pause and monitoring settings into the snapshot.
 func (s *Snapshot) ApplyOpsAdminReadSettings(value *ops.AdminReadSettings) {
 	s.OpenAIQuotaAutoPauseSettings = value.OpenAIQuotaAutoPauseSettings
 	s.OpsMetricsIntervalSeconds = value.OpsMetricsIntervalSeconds
@@ -134,7 +134,7 @@ func (s *Snapshot) ApplyOpsAdminReadSettings(value *ops.AdminReadSettings) {
 	s.OpsRealtimeMonitoringEnabled = value.OpsRealtimeMonitoringEnabled
 }
 
-// ApplyPaymentAdminReadSettings 将支付宝和微信支付的展示方式及来源写入快照。
+// ApplyPaymentAdminReadSettings copies Alipay and WeChat Pay visibility and source settings into the snapshot.
 func (s *Snapshot) ApplyPaymentAdminReadSettings(value *payment.AdminReadSettings) {
 	s.PaymentVisibleMethodAlipayEnabled = value.PaymentVisibleMethodAlipayEnabled
 	s.PaymentVisibleMethodAlipaySource = value.PaymentVisibleMethodAlipaySource
@@ -142,7 +142,7 @@ func (s *Snapshot) ApplyPaymentAdminReadSettings(value *payment.AdminReadSetting
 	s.PaymentVisibleMethodWxpaySource = value.PaymentVisibleMethodWxpaySource
 }
 
-// ApplyPromotionAdminReadSettings 将邀请、推广和返佣设置写入快照。
+// ApplyPromotionAdminReadSettings copies invitation, promotion, and rebate settings into the snapshot.
 func (s *Snapshot) ApplyPromotionAdminReadSettings(value *promotion.AdminReadSettings) {
 	s.AdminRechargeRebateEnabled = value.AdminRechargeRebateEnabled
 	s.AffiliateEnabled = value.AffiliateEnabled
@@ -154,19 +154,19 @@ func (s *Snapshot) ApplyPromotionAdminReadSettings(value *promotion.AdminReadSet
 	s.PromoCodeEnabled = value.PromoCodeEnabled
 }
 
-// ApplyProviderAdminReadSettings 将提供商额度通知和调度阈值写入快照。
+// ApplyProviderAdminReadSettings copies provider quota notifications and scheduling thresholds into the snapshot.
 func (s *Snapshot) ApplyProviderAdminReadSettings(value *provider.AdminReadSettings) {
 	s.ProviderQuotaNotifyEmails = value.ProviderQuotaNotifyEmails
 	s.ProviderQuotaNotifyEnabled = value.ProviderQuotaNotifyEnabled
 	s.ProviderSchedulingThresholds = value.ProviderSchedulingThresholds
 }
 
-// ApplySearchAdminReadSettings 将搜索模拟开关写入快照。
+// ApplySearchAdminReadSettings copies the search emulation setting into the snapshot.
 func (s *Snapshot) ApplySearchAdminReadSettings(value *search.AdminReadSettings) {
 	s.WebSearchEmulationEnabled = value.WebSearchEmulationEnabled
 }
 
-// ApplyUsageAdminReadSettings 将错误请求查看权限和用量排行设置写入快照。
+// ApplyUsageAdminReadSettings copies failed-request visibility and usage ranking settings into the snapshot.
 func (s *Snapshot) ApplyUsageAdminReadSettings(value *usage.AdminReadSettings) {
 	s.AllowUserViewErrorRequests = value.AllowUserViewErrorRequests
 	s.UsageRankingEnabled = value.UsageRankingEnabled

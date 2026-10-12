@@ -16,34 +16,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 批量读取替身按请求 ID 返回提供商记录。
+// usageBatchRecordFixture returns provider records for requested IDs.
 type usageBatchRecordFixture struct {
 	OAuthUsageReader
 	providers []Record
 }
 
-// 夹具返回空统计，主动与被动用量展示由生产组件执行。
+// usageBatchStatisticsFixture supplies empty local statistics to usage scenarios.
 type usageBatchStatisticsFixture struct{}
 
-// 写入替身记录用量查询输出，窗口计算和同步规则由查询组件执行。
+// usageFableWriteFixture captures the updates produced by active-to-passive synchronization.
 type usageFableWriteFixture struct {
 	OAuthUsageReader
 	updates chan map[string]any
 }
 
-// 查询期间管理员修改身份后，条件写入会拒绝此前身份的用量结果。
+// activePassiveIdentityRepo rejects writes after the observed credential identity changes.
 type activePassiveIdentityRepo struct {
 	sessionWindowSyncRepo
 	current Record
 }
 
-// 查询组件和 singleflight 共用一次查询，调用方取消后查询继续，停止操作会取消并等待查询结束。
+// oauthUsageLifecycleReader counts record reads during shared-query shutdown tests.
 type oauthUsageLifecycleReader struct {
 	OAuthUsageReader
 	reads atomic.Int32
 }
 
-// sessionWindowSyncRepo 记录 syncActiveToPassive 触发的所有写操作。
+// sessionWindowSyncRepo records writes triggered by SyncActiveToPassive.
 type sessionWindowSyncRepo struct {
 	OAuthUsageReader
 
@@ -57,7 +57,7 @@ type sessionWindowEndCall struct {
 	End        time.Time
 }
 
-// 缺失提供商和并发查询的错误写入同一结果集，写入共用同步保护。
+// usageBatchRaceRepo mixes missing and unsupported providers to exercise concurrent error collection.
 type usageBatchRaceRepo struct{ OAuthUsageReader }
 
 func TestProviderUsageService_GetUsageBatch_BestEffortByProvider(t *testing.T) {
@@ -206,7 +206,7 @@ func TestAnthropicActiveUsageDoesNotWriteNewCredentialIdentity(t *testing.T) {
 	require.Empty(t, repo.sessionWindowEnds)
 }
 
-// UpdateUsageExtraIfUnchanged 为查询测试模拟条件写入，SQL 行为由数据库测试覆盖。
+// UpdateUsageExtraIfUnchanged models credential checks before recording a write.
 func (r *activePassiveIdentityRepo) UpdateUsageExtraIfUnchanged(ctx context.Context, v UsageObservationVersion, updates map[string]any) (bool, error) {
 	if !MatchesCredentialVersion(&r.current, v.CredentialVersion) {
 		return false, nil
@@ -221,7 +221,8 @@ func (r *activePassiveIdentityRepo) UpdateUsageSessionWindowEndIfUnchanged(ctx c
 	return true, r.UpdateSessionWindowEnd(ctx, v.ID, end)
 }
 
-// TestAnthropicUsageNegativeCacheIdentityAndTTL 验证正负缓存与共享 flight 都维持提供商命名空间，仅允许当前身份消费其结果。
+// TestAnthropicUsageNegativeCacheIdentityAndTTL checks error-cache invalidation on credential changes and
+// expiry.
 func TestAnthropicUsageNegativeCacheIdentityAndTTL(t *testing.T) {
 	now := time.Date(2026, 9, 13, 1, 0, 0, 0, time.UTC)
 	cache := NewOAuthUsageCache()
@@ -373,7 +374,7 @@ func TestSyncActiveToPassive_SkipsSessionWindowEndWhenResetMissing(t *testing.T)
 	}
 }
 
-// UpdateUsageExtraIfUnchanged 模拟条件更新并记录窗口字段写入。
+// UpdateUsageExtraIfUnchanged records updates as an accepted conditional write.
 func (r *sessionWindowSyncRepo) UpdateUsageExtraIfUnchanged(ctx context.Context, v UsageObservationVersion, updates map[string]any) (bool, error) {
 	return true, r.UpdateExtra(ctx, v.ID, updates)
 }

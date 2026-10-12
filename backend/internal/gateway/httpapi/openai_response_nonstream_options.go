@@ -67,7 +67,7 @@ func (p *OpenAIResponseOutput) NonStreamOptions(ctx context.Context, c *gin.Cont
 		ExtractError:    openai.ExtractOpenAISSEErrorMessage,
 		CompactFallback: func(body []byte, message string) error { return NewOpenAICompactFailure(c, body, message) },
 		TerminalFailover: func(resp *http.Response, event string, body []byte, message, model string) error {
-			//nolint:revive // 函数返回具体指针类型，直接 return 会把 nil 指针包成非 nil 的 error。
+			//nolint:revive // Returning the concrete pointer directly would wrap a nil pointer in a non-nil error.
 			if failure := p.nonStreamingTerminalFailure(c, resp, provider, false, event, body, message, model); failure != nil {
 				return failure
 			}

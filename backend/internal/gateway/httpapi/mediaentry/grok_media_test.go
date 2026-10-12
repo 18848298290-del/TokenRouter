@@ -25,7 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// compositeGrokVideoCacheStub 仅在指定分组返回任务绑定提供商。
+// compositeGrokVideoCacheStub returns a task-bound provider for the configured group.
 type compositeGrokVideoCacheStub struct {
 	groupID    int64
 	providerID int64
@@ -122,16 +122,16 @@ func TestShouldRecordGrokMediaUsage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 结果为 nil 时跳过计费。
+			// A missing result has no billable usage.
 			require.False(t, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, nil))
-			// 即时辅助函数只对图片生成计费，异步视频在状态查询时计费。
+			// Images are billed immediately; asynchronous videos are billed on status queries.
 			result := &forwardcore.OpenAIResult{ImageCount: 1, VideoCount: 0}
 			if tt.endpoint.IsGenerationRequest() && !isGrokVideoCreateEndpoint(tt.endpoint) && strings.TrimSpace(tt.model) != "" {
 				require.Equal(t, tt.want, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, result))
 			} else {
 				require.False(t, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, result))
 			}
-			// 计费单位为零时跳过计费。
+			// Zero billable units skip settlement.
 			empty := &forwardcore.OpenAIResult{}
 			require.False(t, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, empty))
 		})
@@ -213,7 +213,7 @@ func (s *compositeGrokVideoCacheStub) GetSessionOwnerGroupID(context.Context, in
 
 func TestResolveCompositeGrokVideoAPIKeyUsesPersistedOwnerAfterMappingRemoval(t *testing.T) {
 	cache := &compositeGrokVideoCacheStub{groupID: 20, providerID: 88, ownerID: 20}
-	// 存储替身接入视频任务归属服务。
+	// Use the persisted task owner even when the key no longer has the group mapping.
 	tasks := gatewaymedia.NewVideoTasks(cache, nil, gatewaymedia.VideoOptions{})
 	handler := New(Bindings{Dependencies: gatewayhttp.OpenAIDependencies{Gateway: true}, VideoTasks: func() *gatewaymedia.VideoTasks { return tasks }})
 
@@ -235,7 +235,7 @@ func TestResolveCompositeGrokVideoAPIKeyRestoresBoundGroup(t *testing.T) {
 	openAIGroup := &routing.Group{ID: 10, Status: billing.StatusActive}
 	grokGroup := &routing.Group{ID: 20, Status: billing.StatusActive}
 	cache := &compositeGrokVideoCacheStub{groupID: grokGroup.ID, providerID: 88}
-	// 存储替身接入视频任务归属服务。
+	// Resolve the task against the key's composite groups.
 	tasks := gatewaymedia.NewVideoTasks(cache, nil, gatewaymedia.VideoOptions{})
 	handler := New(Bindings{Dependencies: gatewayhttp.OpenAIDependencies{Gateway: true}, VideoTasks: func() *gatewaymedia.VideoTasks { return tasks }})
 

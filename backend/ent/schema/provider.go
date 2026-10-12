@@ -13,31 +13,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Provider 定义 AI API 提供商实体的 schema。
+// Provider defines upstream credentials and scheduling state for AI API access.
 //
-// 提供商是系统的核心资源，代表一个可用于调用 AI API 的凭证。
-// 例如：一个 Claude API 提供商、一个 Gemini OAuth 提供商等。
+// A provider represents credentials for an upstream API.
+// Examples include Claude API keys and Gemini OAuth accounts.
 //
-// 主要功能：
-//   - 存储不同平台（Claude、Gemini、OpenAI 等）的 API 凭证
-//   - 支持多种认证类型（api_key、oauth、cookie 等）
-//   - 管理提供商的调度状态（可调度、速率限制、过载等）
-//   - 通过分组机制实现提供商的灵活分配
+// The schema stores:
+//   - Credentials for platforms such as Claude, Gemini, and OpenAI.
+//   - The authentication type that determines the credential format.
+//   - Availability, rate-limit, and overload state used by scheduling.
+//   - Group membership used to select providers for requests.
 type Provider struct {
 	ent.Schema
 }
 
-// Annotations 返回 schema 的注解配置。
-// 这里指定数据库表名为 "providers"。
+// Annotations sets the database table name.
 func (Provider) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "providers"},
 	}
 }
 
-// Mixin 返回该 schema 使用的混入组件。
-// - TimeMixin: 自动管理 created_at 和 updated_at 时间戳
-// - SoftDeleteMixin: 提供软删除功能（deleted_at）。
+// Mixin supplies timestamps and soft deletion.
 func (Provider) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
@@ -45,47 +42,47 @@ func (Provider) Mixin() []ent.Mixin {
 	}
 }
 
-// Fields 定义提供商实体的所有字段。
+// Fields defines provider credentials, configuration, and scheduling state.
 func (Provider) Fields() []ent.Field {
 	return []ent.Field{
-		// name: 提供商显示名称，用于在界面中标识提供商
+		// Provider display name.
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
-		// notes: 管理员备注（可为空）
+		// Optional administrator notes.
 		field.String("notes").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// platform: 所属平台，如 "claude", "gemini", "openai" 等
+		// Upstream platform, such as claude, gemini, or openai.
 		field.String("platform").
 			MaxLen(50).
 			NotEmpty(),
 
-		// type: 认证类型，如 "api_key", "oauth", "cookie" 等
-		// 不同类型决定了 credentials 中存储的数据结构
+		// Authentication type.
+		// Determines the data stored in credentials.
 		field.String("type").
 			MaxLen(20).
 			NotEmpty(),
 
-		// credentials: 认证凭证，以 JSONB 格式存储
-		// 结构取决于 type 字段：
-		// - api_key: {"api_key": "sk-xxx"}
+		// Authentication credentials stored as JSONB.
+		// The format depends on type:
+		// - apikey: {"api_key": "sk-xxx"}
 		// - oauth: {"access_token": "...", "refresh_token": "...", "expires_at": "..."}
 		// - cookie: {"session_key": "..."}
 		field.JSON("credentials", map[string]any{}).
 			Default(func() map[string]any { return map[string]any{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// extra: 扩展数据，存储平台特定的额外信息
-		// 如 CRS 提供商的 crs_account_id、组织信息等
+		// Platform-specific metadata.
+		// For example, a CRS account ID or organization details.
 		field.JSON("extra", map[string]any{}).
 			Default(func() map[string]any { return map[string]any{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// proxy_id: 关联的代理配置 ID（可选）
-		// 用于需要通过特定代理访问 API 的场景
+		// Optional proxy configuration ID.
+		// Requests use this proxy to reach the upstream API.
 		field.Int64("proxy_id").
 			Optional().
 			Nillable(),
@@ -93,95 +90,91 @@ func (Provider) Fields() []ent.Field {
 			Optional().Nillable().
 			Comment("Original proxy id replaced by expiry-fallback; for manual revert. NULL = not in fallback."),
 
-		// concurrency: 提供商最大并发请求数
-		// 用于限制同一时间对该提供商发起的请求数量
+		// Maximum concurrent requests to this provider.
 		field.Int("concurrency").
 			Default(3),
 
 		field.Int("load_factor").Optional().Nillable(),
 
-		// priority: 提供商优先级，数值越小优先级越高
-		// 调度器会优先使用高优先级的提供商
+		// Lower priority values are preferred by scheduling.
 		field.Int("priority").
 			Default(50),
 
-		// rate_multiplier: 提供商计费倍率（>=0，允许 0 表示该提供商计费为 0）
-		// 提供商成本使用此倍率，用户与 API Key 扣费使用分组倍率。
+		// Provider cost multiplier; zero makes provider cost zero.
+		// User and API key charges use group pricing multipliers.
 		field.Float("rate_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),
 
-		// status: 提供商状态，如 "active", "error", "disabled"
+		// Provider status, such as active, error, or disabled.
 		field.String("status").
 			MaxLen(20).
 			Default(provider.StatusActive),
 
-		// error_message: 错误信息，记录提供商异常时的详细信息
+		// Details of the provider's error state.
 		field.String("error_message").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// last_used_at: 最后使用时间，用于统计和调度
+		// Last usage time for statistics and scheduling.
 		field.Time("last_used_at").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
-		// expires_at: 提供商过期时间（可为空）
 		field.Time("expires_at").
 			Optional().
 			Nillable().
 			Comment("Provider expiration time (NULL means no expiration).").
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
-		// auto_pause_on_expired: 过期后自动暂停调度
 		field.Bool("auto_pause_on_expired").
 			Default(true).
 			Comment("Auto pause scheduling when provider expires."),
 
-		// 调度和速率限制相关字段
-		// 这些字段在 migrations/005_schema_parity.sql 中添加
+		// Scheduling and rate-limit state.
+		// See migrations/005_schema_parity.sql.
 
-		// schedulable: 是否可被调度器选中
-		// false 表示提供商暂时不参与请求分配（如正在刷新 token）
+		// Whether the scheduler may select this provider.
+		// false temporarily excludes it, for example during token refresh.
 		field.Bool("schedulable").
 			Default(true),
 
-		// rate_limited_at: 触发速率限制的时间
-		// 当收到 429 错误时记录
+		// Time a rate limit was observed.
+		// Recorded when a 429 response triggers rate limiting.
 		field.Time("rate_limited_at").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 
-		// rate_limit_reset_at: 速率限制预计解除的时间
-		// 调度器会在此时间之前避免使用该提供商
+		// Expected rate-limit reset time.
+		// Scheduling skips the provider until this time.
 		field.Time("rate_limit_reset_at").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 
-		// overload_until: 过载状态解除时间
-		// 当收到 529 错误（API 过载）时设置
+		// End of the overload cooldown.
+		// Set when a 529 response triggers overload handling.
 		field.Time("overload_until").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 
-		// temp_unschedulable_until: 临时不可调度状态解除时间
-		// 当命中临时不可调度规则时设置，在此时间前调度器应跳过该提供商
+		// Deadline for temporary scheduling exclusion.
+		// A matching temporary exclusion rule prevents selection until this time.
 		field.Time("temp_unschedulable_until").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 
-		// temp_unschedulable_reason: 临时不可调度原因，便于排障审计
+		// Reason for temporary exclusion, retained for diagnosis.
 		field.String("temp_unschedulable_reason").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// session_window_*: 会话窗口相关字段
-		// 用于管理某些需要会话时间窗口的 API（如 Claude Pro）
+		// Session window state.
+		// Used by APIs with session windows, such as Claude Pro.
 		field.Time("session_window_start").
 			Optional().
 			Nillable().
@@ -202,16 +195,16 @@ func (Provider) Fields() []ent.Field {
 	}
 }
 
-// Edges 定义提供商实体的关联关系。
+// Edges defines provider group, proxy, shadow, and usage relationships.
 func (Provider) Edges() []ent.Edge {
 	return []ent.Edge{
-		// groups: 提供商所属的分组（多对多关系）
-		// 通过 provider_groups 中间表实现
-		// 一个提供商可以属于多个分组，一个分组可以包含多个提供商
+		// Group membership is many-to-many.
+		// provider_groups stores each membership.
+		// A provider can belong to multiple groups, and each group can contain multiple providers.
 		edge.To("groups", Group.Type).
 			Through("provider_groups", ProviderGroup.Type),
-		// proxy: 提供商使用的代理配置（可选的一对一关系）
-		// 使用已有的 proxy_id 外键字段
+		// Each provider can reference one proxy; a proxy can serve multiple providers.
+		// The relation uses the proxy_id field.
 		edge.To("proxy", Proxy.Type).
 			Field("proxy_id").
 			Unique(),
@@ -223,29 +216,28 @@ func (Provider) Edges() []ent.Edge {
 			From("parent").
 			Field("parent_provider_id").
 			Unique(),
-		// usage_logs: 该提供商的使用日志
+		// Usage records attributed to this provider.
 		edge.To("usage_logs", UsageLog.Type),
 	}
 }
 
-// Indexes 定义数据库索引，优化查询性能。
-// 每个索引对应一个常用的查询条件。
+// Indexes supports provider filtering and scheduling queries.
 func (Provider) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("platform"),            // 按平台筛选
-		index.Fields("type"),                // 按认证类型筛选
-		index.Fields("status"),              // 按状态筛选
-		index.Fields("proxy_id"),            // 按代理筛选
-		index.Fields("priority"),            // 按优先级排序
-		index.Fields("last_used_at"),        // 按最后使用时间排序
-		index.Fields("schedulable"),         // 筛选可调度提供商
-		index.Fields("rate_limited_at"),     // 筛选速率限制提供商
-		index.Fields("rate_limit_reset_at"), // 筛选速率限制解除时间
-		index.Fields("overload_until"),      // 筛选过载提供商
-		// 调度热路径复合索引（线上由 SQL 迁移创建部分索引，schema 仅用于模型可读性对齐）
+		index.Fields("platform"),
+		index.Fields("type"),
+		index.Fields("status"),
+		index.Fields("proxy_id"),
+		index.Fields("priority"),
+		index.Fields("last_used_at"),
+		index.Fields("schedulable"),
+		index.Fields("rate_limited_at"),
+		index.Fields("rate_limit_reset_at"),
+		index.Fields("overload_until"),
+		// SQL migrations create partial versions of these scheduling indexes in production.
 		index.Fields("platform", "priority"),
 		index.Fields("priority", "status"),
-		index.Fields("deleted_at"), // 软删除查询优化
+		index.Fields("deleted_at"),
 		index.Fields("parent_provider_id"),
 	}
 }

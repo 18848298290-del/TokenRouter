@@ -20,7 +20,7 @@ func NewRiskDelivery(mail *Mailer) *RiskDelivery {
 	return &RiskDelivery{emailService: mail}
 }
 
-// SendViolationEmail 发送用户语言的风控通知。
+// SendViolationEmail sends a moderation notice in the user's language.
 func (s *RiskDelivery) SendViolationEmail(ctx context.Context, cfg *contract.RiskPolicy, log *contract.RiskLog) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationViolation, RecipientEmail: log.UserEmail,
@@ -29,7 +29,7 @@ func (s *RiskDelivery) SendViolationEmail(ctx context.Context, cfg *contract.Ris
 	})
 }
 
-// SendAccountDisabledEmail 使用账户偏好选择封禁通知模板。
+// SendAccountDisabledEmail selects the suspension template using account preferences.
 func (s *RiskDelivery) SendAccountDisabledEmail(ctx context.Context, cfg *contract.RiskPolicy, log *contract.RiskLog) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationDisabled, RecipientEmail: log.UserEmail,
@@ -38,7 +38,7 @@ func (s *RiskDelivery) SendAccountDisabledEmail(ctx context.Context, cfg *contra
 	})
 }
 
-// SendCyberAccountDisabledEmail 将会话风控结果填入同一套用户通知模板。
+// SendCyberAccountDisabledEmail renders a session risk warning with the account suspension template.
 func (s *RiskDelivery) SendCyberAccountDisabledEmail(ctx context.Context, cfg *contract.RiskPolicy, warning *contract.RiskWarning) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationDisabled, RecipientEmail: warning.UserEmail,

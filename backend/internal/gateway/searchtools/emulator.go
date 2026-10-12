@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// Searcher 由 search.Manager 实现，由该实例管理配额预占和回滚。
+// Searcher is implemented by search.Manager, which owns quota reservation and rollback.
 type Searcher interface {
 	SearchWithBestProvider(context.Context, contract.SearchRequest) (*contract.SearchResponse, string, error)
 }
@@ -36,7 +36,7 @@ type Request struct {
 	OnAccepted                    func()
 }
 
-// Result 的账单 usage 保持零值；合成正文中展示的估算数不能变成供应商计量。
+// Result leaves billable usage at zero. Estimates in synthetic responses are not upstream measurements.
 type Result struct {
 	Model    string
 	Duration time.Duration
@@ -68,7 +68,7 @@ type Emulator struct {
 func (e *ProxyFailure) Error() string { return e.Cause.Error() }
 func (e *ProxyFailure) Unwrap() error { return e.Cause }
 
-// NewEmulator 不启动 worker，不复制搜索 Manager、客户端或配额状态。
+// NewEmulator uses the supplied search source and policy readers; construction starts no workers.
 func NewEmulator(source SearchSource, settings Settings, groupPolicies GroupPolicy, now func() time.Time, newID func() string, observe func(Event)) *Emulator {
 	if now == nil {
 		now = time.Now
@@ -82,7 +82,7 @@ func (s *Emulator) observe(e Event) {
 	}
 }
 
-// ShouldEmulate 按 Manager、工具形状、全局、提供商和分组策略的顺序短路判断。
+// ShouldEmulate checks the search manager, tool shape, global setting, provider mode, then group policy.
 func (s *Emulator) ShouldEmulate(ctx context.Context, in PolicyInput) bool {
 	if s.source.Current() == nil {
 		return false
@@ -120,7 +120,8 @@ func (s *Emulator) Search(ctx context.Context, proxyURL, query string) (*contrac
 	return response, provider, nil
 }
 
-// Execute 在本地搜索前释放串行资源，写入失败时停止合成输出并返回零用量完成结果。
+// Execute calls OnAccepted before searching so the caller can release serial resources.
+// Stream write failures stop output and return a completion result with zero usage.
 func (s *Emulator) Execute(ctx context.Context, in Request, out Output) (*Result, error) {
 	started := s.now()
 	if in.OnAccepted != nil {

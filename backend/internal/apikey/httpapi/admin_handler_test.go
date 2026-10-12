@@ -19,13 +19,13 @@ import (
 	groupdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
-// failingUpdateGroupService 让管理请求返回指定的服务错误。
+// failingUpdateGroupService returns a configured error from admin updates.
 type failingUpdateGroupService struct {
 	*adminUpdateFixture
 	err error
 }
 
-// adminUpdateFixture 保存管理请求测试使用的 API Key。
+// adminUpdateFixture stores keys used by admin request tests.
 type adminUpdateFixture struct{ apiKeys []apikey.APIKey }
 
 func TestAdminAPIKeyHandler_UpdateGroup_InvalidID(t *testing.T) {
@@ -62,7 +62,7 @@ func TestAdminAPIKeyHandler_UpdateGroup_KeyNotFound(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 
-	// ErrAPIKeyNotFound 对应 HTTP 404。
+	// Missing keys map to HTTP 404.
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
@@ -177,7 +177,7 @@ func TestAdminAPIKeyHandler_UpdateGroup_ServiceError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// TestAdminAPIKeyHandler_UpdateGroup_EmptyBody_NoChange 验证空请求体不修改 group_id，并返回原 Key。
+// TestAdminAPIKeyHandler_UpdateGroup_EmptyBody_NoChange checks that an empty object returns the unchanged key.
 func TestAdminAPIKeyHandler_UpdateGroup_EmptyBody_NoChange(t *testing.T) {
 	router := setupAPIKeyHandler(newAdminUpdateFixture())
 
@@ -201,7 +201,7 @@ func TestAdminAPIKeyHandler_UpdateGroup_EmptyBody_NoChange(t *testing.T) {
 	require.Equal(t, int64(10), resp.Data.APIKey.ID)
 }
 
-// TestAdminAPIKeyHandler_UpdateGroup_GroupNotActive 验证 GROUP_NOT_ACTIVE 映射为 HTTP 400。
+// TestAdminAPIKeyHandler_UpdateGroup_GroupNotActive checks that GROUP_NOT_ACTIVE maps to HTTP 400.
 func TestAdminAPIKeyHandler_UpdateGroup_GroupNotActive(t *testing.T) {
 	svc := &failingUpdateGroupService{
 		adminUpdateFixture: newAdminUpdateFixture(),
@@ -218,7 +218,7 @@ func TestAdminAPIKeyHandler_UpdateGroup_GroupNotActive(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "GROUP_NOT_ACTIVE")
 }
 
-// TestAdminAPIKeyHandler_UpdateGroup_NegativeGroupID 验证 INVALID_GROUP_ID 映射为 HTTP 400。
+// TestAdminAPIKeyHandler_UpdateGroup_NegativeGroupID checks that INVALID_GROUP_ID maps to HTTP 400.
 func TestAdminAPIKeyHandler_UpdateGroup_NegativeGroupID(t *testing.T) {
 	svc := &failingUpdateGroupService{
 		adminUpdateFixture: newAdminUpdateFixture(),
@@ -280,7 +280,7 @@ func (s *adminUpdateFixture) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID
 	return nil, apikey.ErrAPIKeyNotFound
 }
 
-// UpdateManagedFields 模拟分组更新和限速用量重置的返回结果。
+// UpdateManagedFields simulates group changes and window usage resets.
 func (s *adminUpdateFixture) UpdateManagedFields(ctx context.Context, id int64, gid *int64, reset bool) (*apikey.AdminUpdateAPIKeyGroupIDResult, error) {
 	result, err := s.AdminUpdateAPIKeyGroupID(ctx, id, gid)
 	if err != nil {

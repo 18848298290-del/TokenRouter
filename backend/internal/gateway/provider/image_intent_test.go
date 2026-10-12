@@ -19,7 +19,7 @@ var (
 	passthroughImageIntentBenchmarkSink            bool
 	openAIResponsesImageIntentRoutingBenchmarkSink provider.OpenAIEndpointCapability
 
-	// benchmarkStringSink 保存图片计费基准的解析结果。
+	// benchmarkStringSink retains parsing results in image-billing benchmarks.
 	benchmarkStringSink string
 )
 
@@ -676,7 +676,7 @@ func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
 			imageIntent := ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body)
-			// 对照优化前路径：路由阶段会再次扫描同一份未修改的 body。
+			// The baseline scans the same unchanged body again during route selection.
 			requiredCapability := provider.OpenAIEndpointCapabilityTextGeneration
 			if ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body) && platform == capability.PlatformOpenAI {
 				requiredCapability = provider.OpenAIEndpointCapabilityResponses

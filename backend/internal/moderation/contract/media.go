@@ -2,7 +2,7 @@ package contract
 
 import "time"
 
-// ContentModerationMedia 保存管理员复审所需的图片快照及获取状态。
+// ContentModerationMedia stores an image snapshot and its retrieval status for administrator review.
 type ContentModerationMedia struct {
 	ID             int64     `json:"id"`
 	LogID          *int64    `json:"-"`

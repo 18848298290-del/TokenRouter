@@ -37,7 +37,7 @@ type PasskeyFinishRequest struct {
 }
 
 type PasskeyBeginLoginRequest struct {
-	// TurnstileToken 承载阿里云验证码的 captchaVerifyParam（复用既有请求字段名）
+	// TurnstileToken carries Aliyun captchaVerifyParam using the shared request field.
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
@@ -59,7 +59,7 @@ func NewPasskeyHandler(
 	}
 }
 
-// BeginLogin 启动无需用户名的可发现凭据登录流程。
+// BeginLogin starts a username-free login ceremony with discoverable credentials.
 func (h *PasskeyHandler) BeginLogin(c *gin.Context) {
 	var req PasskeyBeginLoginRequest
 	_ = c.ShouldBindJSON(&req)
@@ -79,9 +79,9 @@ func (h *PasskeyHandler) BeginLogin(c *gin.Context) {
 	response.Success(c, PasskeyOptionsResponse{SessionToken: token, Options: assertion})
 }
 
-// FinishLogin 校验 Passkey assertion 并创建普通 TokenRouter token 会话。
-// WebAuthn 强制执行用户验证，成功的 assertion 已提供抗钓鱼多因素认证，
-// 因此无需再进入独立的 TOTP challenge 流程。
+// FinishLogin verifies a Passkey assertion and creates a TokenRouter session.
+// The WebAuthn ceremony requires user verification, so a successful assertion
+// completes login without a separate TOTP challenge.
 func (h *PasskeyHandler) FinishLogin(c *gin.Context) {
 	req, ok := BindPasskeyFinishRequest(c)
 	if !ok {

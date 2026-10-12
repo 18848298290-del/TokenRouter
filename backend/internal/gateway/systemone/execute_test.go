@@ -49,7 +49,7 @@ func (p *runProbe) Complete(context.Context, upstream.AttemptResult)     { p.com
 func (p *runProbe) MissingUsage(context.Context, upstream.AttemptResult) { p.warnings++ }
 func (p *runProbe) Switch()                                              { p.switches++ }
 
-// TestRunCompletesOnceAndReleasesSlots 覆盖换号、写入失败、缺失用量和重试次数上限。
+// TestRunCompletesOnceAndReleasesSlots covers provider switches, write failures, missing usage, and retry exhaustion.
 func TestRunCompletesOnceAndReleasesSlots(t *testing.T) {
 	failure := Outcome{Err: errors.New("busy"), Failure: &failover.FailureInfo{RetryNext: true}}
 	for _, tc := range []struct {
@@ -81,7 +81,7 @@ func TestRunCompletesOnceAndReleasesSlots(t *testing.T) {
 	require.Zero(t, p.calls)
 }
 
-// TestRunPoolRetries 检查同提供商预算、换号预算和租约释放分别计算。
+// TestRunPoolRetries checks separate same-provider and switch budgets, including lease release.
 func TestRunPoolRetries(t *testing.T) {
 	failure := Outcome{Err: errors.New("busy"), Failure: &failover.FailureInfo{RetryNext: true, RetryableOnSameProvider: true, SameProviderRetryDelay: 7 * time.Second}, RetryLimit: 2}
 	success := Outcome{Result: upstream.AttemptResult{Served: true, HasUsage: true}}
@@ -122,7 +122,7 @@ func TestRunPoolRetries(t *testing.T) {
 	}
 }
 
-// TestRunPoolRetryCancellation 检查退避期间取消后释放租约且不再请求上游。
+// TestRunPoolRetryCancellation checks that cancellation during backoff releases the lease and stops upstream calls.
 func TestRunPoolRetryCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())

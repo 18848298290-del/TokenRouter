@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// TestUserListSearchAndActivityOrder 对照跨表搜索结果，并检查空值排序和分页。
+// TestUserListSearchAndActivityOrder checks cross-table search, null ordering, and pagination.
 func TestUserListSearchAndActivityOrder(t *testing.T) {
 	db := postgrescontainer.New(t)
 	client := ent.NewClient(ent.Driver(sql.OpenDB(dialect.Postgres, db)))
@@ -57,7 +57,7 @@ func TestUserListSearchAndActivityOrder(t *testing.T) {
 			require.Equal(t, want, actual, search)
 		}
 	}
-	// 相同活动时间由用户 ID 决定顺序；无记录用户的空值位置随方向变化。
+	// User IDs break activity-time ties; null placement follows the sort direction.
 	stamp := time.Now().UTC().Truncate(time.Second)
 	_, err = db.Exec("INSERT INTO usage_user_activity(user_id,last_used_at) VALUES($1,$3),($2,$3)", ids[0], ids[1], stamp)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestUserListSearchAndActivityOrder(t *testing.T) {
 			require.Equal(t, id, got[0].ID)
 		}
 	}
-	// 搜索与五类筛选的全部开关组合都应按交集计数和分页。
+	// Search and all combinations of the five filters must count and page their intersection.
 	var groupID, attributeID int64
 	require.NoError(t, db.QueryRow("INSERT INTO groups(name) VALUES('activity-filter') RETURNING id").Scan(&groupID))
 	require.NoError(t, db.QueryRow("INSERT INTO user_attribute_definitions(key,name,type) VALUES('activity-filter','筛选','text') RETURNING id").Scan(&attributeID))

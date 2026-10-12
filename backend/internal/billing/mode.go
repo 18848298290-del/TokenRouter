@@ -4,15 +4,15 @@ import (
 	"strings"
 )
 
-// API Key 结算模式常量。auto 保持存量 Key 的订阅优先、余额补足行为。
+// API Key funding modes. Auto uses subscription quota first and balance for the remainder.
 const (
 	APIKeyBillingModeAuto         = "auto"
 	APIKeyBillingModeSubscription = "subscription"
 	APIKeyBillingModeBalance      = "balance"
 )
 
-// NormalizeAPIKeyBillingMode 校验并规范化 API Key 结算模式。
-// 空值兼容旧客户端，按自动选择处理。
+// NormalizeAPIKeyBillingMode trims, lowercases, and validates the funding mode.
+// An empty value selects auto for clients that omit this field.
 func NormalizeAPIKeyBillingMode(value string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {

@@ -10,7 +10,7 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// ThinkingRequestOptions 固化原调用入口的协议族和模型资格，保留未指定模型时的兼容过滤。
+// ThinkingRequestOptions carries the entry protocol and model capabilities used to filter thinking blocks.
 type ThinkingRequestOptions struct {
 	// Efforts is the resolved set of levels; nil uses the protocol defaults.
 	Efforts                                 []string
@@ -50,7 +50,7 @@ func DefaultEffortForThinkingEnabled(options ThinkingRequestOptions) *string {
 		return nil
 	}
 	if options.NativeReasoningEffort {
-		// DeepSeek 原生支持 reasoning_effort，不在这里注入默认值。
+		// Providers with native reasoning_effort support choose their own default.
 		return nil
 	}
 	effort := "high"
@@ -173,7 +173,8 @@ func NormalizeGLM53AnthropicThinking(body []byte, options ThinkingRequestOptions
 	return modified, true
 }
 
-// configuredGLMEffort keeps supported values and bounds protocol aliases by the resolved set.
+// configuredGLMEffort prefers an allowed explicit value, then the mapped effort.
+// Otherwise it chooses the first allowed level at or above that effort, or the highest available level.
 func configuredGLMEffort(raw, fallback string, allowed []string) string {
 	value := NormalizeEffortToken(raw)
 	if slices.Contains(allowed, value) {

@@ -70,7 +70,7 @@ func (d *PendingFlowDatabase) FindOIDCCompatEmailUser(ctx context.Context, email
 	return UserFromEntity(userEntity), nil
 }
 
-// FindDingTalkCompatEmailUser 通过真实邮箱查找可与 DingTalk 账号兼容绑定的现有用户。
+// FindDingTalkCompatEmailUser finds an existing account eligible for DingTalk binding by real email.
 func (d *PendingFlowDatabase) FindDingTalkCompatEmailUser(ctx context.Context, email string) (*identitycore.User, error) {
 	client := d.Client
 	if client == nil {

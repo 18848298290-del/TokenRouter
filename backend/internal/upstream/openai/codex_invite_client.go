@@ -21,7 +21,7 @@ const (
 	codexInviteResetUnavailableMessage = "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用"
 )
 
-// CodexInviteClient 只拥有一次邀请请求的传输参数与响应体。
+// CodexInviteClient holds transport options and reads and closes invitation responses.
 type CodexInviteClient struct {
 	Token           string
 	UserAgent       string
@@ -87,7 +87,7 @@ func (s *CodexInviteClient) doJSON(req *http.Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 响应体会被完整读取，关闭失败不影响本次调用结果。
+	// Close errors do not replace the response read or decode result.
 	defer func() { _ = resp.Body.Close() }()
 
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, ImageErrorBodyReadLimit))
@@ -120,7 +120,7 @@ func codexInviteResetUpstreamBusinessError(statusCode int, body string) error {
 	if statusCode != http.StatusForbidden || !strings.Contains(detail, "推荐邀请不可用") {
 		return nil
 	}
-	// 上游在活动关闭或提供商不具备推荐资格时会返回 403，仍可能保留可用重置次数。
+	// Referral-unavailable responses use 403 even when existing reset credits remain usable.
 	return apperror.Forbidden(codexInviteResetUnavailable, codexInviteResetUnavailableMessage).WithMetadata(map[string]string{
 		"upstream_status": fmt.Sprint(statusCode),
 		"upstream_detail": detail,
@@ -156,7 +156,7 @@ func BuildCodexBackendURL(path string, query map[string]string) (string, error) 
 	return base.String(), nil
 }
 
-// codexInviteDetail 保留字符串及其它 JSON 值的原展示转换。
+// codexInviteDetail formats a JSON value for display, returning empty for nil.
 func codexInviteDetail(value any) string {
 	if value == nil {
 		return ""

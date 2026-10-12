@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// RuntimeStatusOptions 包含批量读取函数和设置读取函数，查询顺序由提供商模块决定。
+// RuntimeStatusOptions binds batch and settings readers; the provider core determines query order.
 func RuntimeStatusOptions(concurrency *scheduler.ConcurrencyService, usage interface {
 	GetProviderWindowStats(context.Context, int64, time.Time) (*usage.ProviderStats, error)
 }, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings interface {

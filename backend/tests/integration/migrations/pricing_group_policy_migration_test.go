@@ -40,7 +40,7 @@ INSERT INTO usage_logs(user_id,api_key_id,account_id,model,channel_id,total_cost
 	for _, id := range []int64{91001, 91002, 91003} {
 		var raw []byte
 		require.NoError(t, tx.QueryRowContext(ctx, `SELECT routing_policy FROM groups WHERE id=$1`, id).Scan(&raw))
-		// 历史迁移的策略保留平台层级，不能用新版本扁平实体解释。
+		// Decode the historical platform-nested policy with its own shape; current entities use flat fields.
 		var policy struct {
 			Enabled                bool                         `json:"enabled"`
 			RestrictModels         bool                         `json:"restrict_models"`

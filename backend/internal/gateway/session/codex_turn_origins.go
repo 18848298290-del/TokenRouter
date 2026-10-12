@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// CodexTurnOrigins 根据回合状态的摘要记录签发提供商。
-// HTTP 暂存头真正提交后才登记，提供商切换时据此判断是否移除回带值。
+// CodexTurnOrigins records the issuing provider by turn-state digest.
+// HTTP registers staged headers after committing them and uses ownership to strip replayed state on provider switches.
 type CodexTurnOrigins struct {
 	origins sync.Map
 	writes  atomic.Uint64
@@ -25,7 +25,7 @@ func NewCodexTurnOrigins(now func() time.Time) *CodexTurnOrigins {
 	return &CodexTurnOrigins{now: now}
 }
 
-// Record 按写入时的 TTL 保存归属，每 256 次登记清扫一次过期记录。
+// Record stores ownership using the supplied TTL and sweeps expired entries every 256 writes.
 func (s *CodexTurnOrigins) Record(seed string, id int64, ttl time.Duration) {
 	if s == nil || seed == "" || id <= 0 {
 		return
@@ -44,7 +44,7 @@ func (s *CodexTurnOrigins) Record(seed string, id int64, ttl time.Duration) {
 	})
 }
 
-// Owner 仅返回仍有效的签发提供商；未知或已过期的来源保持原透传资格。
+// Owner returns an unexpired issuing provider. Missing or expired ownership returns false.
 func (s *CodexTurnOrigins) Owner(seed string) (int64, bool) {
 	if s == nil || seed == "" {
 		return 0, false

@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// paymentCompositeFields 明确记录综合设置字段到现有支付配置的映射。
+// paymentCompositeFields maps composite settings fields to payment configuration fields.
 var paymentCompositeFields = []struct{ input, target string }{
 	{"payment_enabled", "enabled"},
 	{"payment_min_amount", "min_amount"},
@@ -35,7 +35,7 @@ var paymentCompositeFields = []struct{ input, target string }{
 	{"payment_alipay_mobile_precreate_deep_link", "alipay_mobile_precreate_deep_link"},
 }
 
-// SettingsParticipant 复用唯一支付校验；先准备，整批提交后才刷新渠道运行表。
+// SettingsParticipant validates payment settings and refreshes providers after the batch commits.
 func SettingsParticipant(refresh func(context.Context) error) settings.Participant {
 	fields := make([]string, len(paymentCompositeFields))
 	for i, field := range paymentCompositeFields {

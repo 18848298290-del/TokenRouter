@@ -60,7 +60,7 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// mockTempUnscheduler 记录 TempUnscheduleRetryableError 的调用信息。
+// mockTempUnscheduler records calls to TempUnscheduleRetryableError.
 type mockTempUnscheduler struct {
 	calls []tempUnscheduleCall
 }
@@ -75,7 +75,7 @@ type countingGatewaySchedulerCache struct {
 	snapshotCalls atomic.Int64
 }
 
-// cyberSessionBlockHandlerCacheStub 模拟已命中的会话屏蔽缓存，并记录读取次数。
+// cyberSessionBlockHandlerCacheStub returns a cached session block and counts reads.
 type cyberSessionBlockHandlerCacheStub struct {
 	blocked   bool
 	readCalls int
@@ -103,15 +103,15 @@ type openAIHTTPPassthroughSSERateLimitUpstream struct {
 	providerIDs []int64
 }
 
-// openAIResponsesFailoverProviderRepo 为 failover 用例提供按平台选号和提供商回读。
+// openAIResponsesFailoverProviderRepo supplies platform selection and provider rereads for failover tests.
 type openAIResponsesFailoverProviderRepo struct {
 	gatewayprovider.ExecutionProviderStore
 
 	providers []gatewayprovider.ExecutionProvider
 }
 
-// openAIResponsesFailoverCancelUpstream 固定返回 HTTP 520，可在首次上游调用时
-// 触发回调（用于模拟“上游在途期间客户端断开”）。
+// openAIResponsesFailoverCancelUpstream returns HTTP 520 and can invoke a callback
+// on the first call to simulate a client disconnect while the upstream request is in flight.
 type openAIResponsesFailoverCancelUpstream struct {
 	httpclient.
 		UpstreamTransport
@@ -120,7 +120,7 @@ type openAIResponsesFailoverCancelUpstream struct {
 	onFirstDo   func()
 }
 
-// mixedHTTPTransport 通过本地 HTTP server 记录选中的提供商和上游端点。
+// mixedHTTPTransport records selected providers and endpoints through a local HTTP server.
 type mixedHTTPTransport struct {
 	mu        sync.Mutex
 	providers []int64
@@ -128,7 +128,7 @@ type mixedHTTPTransport struct {
 
 type mixedHTTPNoSearch struct{}
 
-// newEmptyGenericSelectionFixture 使用默认预算构造执行入口，提供商和窗口来源留空。
+// newEmptyGenericSelectionFixture uses default budgets with no provider or window data sources.
 func newEmptyGenericSelectionFixture() *selection.Generic {
 	return selection.NewGeneric(selection.GenericDependencies{}, selection.DefaultOptions())
 }
@@ -167,7 +167,8 @@ func TestChatCompletionsRejectsGPTImageModelsBeforeScheduling(t *testing.T) {
 	}
 }
 
-// TestChatCompletionsRejectsGroupMappedImageModel 验证两个 Chat Completions 入口都按分组映射模型 G 校验端点能力。
+// TestChatCompletionsRejectsGroupMappedImageModel checks endpoint capability against the group-mapped model at
+// both Chat Completions endpoints.
 func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
 	groupID := int64(4349)
 	pricingConfigService := newGatewayExecutionPricingConfigServiceForTest(groupID, capability.PlatformOpenAI, routingtestkit.Configuration{
@@ -208,7 +209,8 @@ func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency 确认无效请求不会占用并发额度。
+// TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency checks that invalid requests consume
+// no concurrency slots.
 func TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency(t *testing.T) {
 	var acquireCalls atomic.Int64
 	cache := &httptestkit.ConcurrencyHooks{
@@ -239,8 +241,6 @@ func newOpenAIImageChatRejectionHandler(t *testing.T) *gatewayHTTPEndpointsFixtu
 func newOpenAIImageChatRejectionHandlerWithCache(t *testing.T, cache *httptestkit.ConcurrencyHooks) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 	return newOpenAIImageChatRejectionHandlerWithService(t, cache, &gatewayExecutionFixture{}, newExecutionAvailabilityForTest(
-
-		// newOpenAIImageChatRejectionHandlerWithChannel 构造带分组映射的 OpenAI Chat 测试处理器。
 		nil, nil, nil), newEmptyCompatibleSelectionFixture())
 }
 
@@ -248,7 +248,7 @@ func setImageChatTestAuth(c *gin.Context) {
 	setImageChatTestAuthForGroup(c, 0)
 }
 
-// setImageChatTestAuthForGroup 注入带可选分组的图片端点测试身份。
+// setImageChatTestAuthForGroup injects image endpoint authentication with an optional group.
 func setImageChatTestAuthForGroup(c *gin.Context, groupID int64) {
 	apiKey := &apikey.APIKey{ID: 4348, UserID: 4348, User: &identity.User{ID: 4348}}
 	if groupID > 0 {
@@ -1064,7 +1064,8 @@ func TestOpsRecoveredCredentialFailoverDoesNotCreateRequestError(t *testing.T) {
 	require.Equal(t, string(forwardcore.GatewayFailureStageProviderAuth), events[1].Stage)
 }
 
-// TestHandleGroupSelectionBusinessError 验证客户端策略拒绝不会被误报为服务不可用。
+// TestHandleGroupSelectionBusinessError checks that client policy rejection is not reported as service
+// unavailability.
 func TestHandleGroupSelectionBusinessError(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -1250,7 +1251,7 @@ func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testin
 		Concurrency: 1,
 	})
 
-	// 使用未初始化依赖，检查请求返回依赖错误。
+	// Missing dependencies should produce a dependency error.
 	h := newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{})
 	require.NotPanics(t, func() {
 		h.Responses(c)
@@ -1711,7 +1712,7 @@ func (u *openAIHTTPPassthroughFailoverUpstream) Do(_ *http.Request, _ string, pr
 	}, nil
 }
 
-// DoWithTLS 使故障转移测试桩兼容 fork 的 TLS 指纹上游接口。
+// DoWithTLS adapts the failover stub to the TLS fingerprint transport interface.
 func (u *openAIHTTPPassthroughFailoverUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
@@ -1740,7 +1741,7 @@ func (u *openAIHTTPPassthroughAuthFailoverUpstream) Do(_ *http.Request, _ string
 	}, nil
 }
 
-// DoWithTLS 使认证故障转移测试桩兼容 fork 的 TLS 指纹上游接口。
+// DoWithTLS adapts the authentication failover stub to the TLS fingerprint transport interface.
 func (u *openAIHTTPPassthroughAuthFailoverUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
@@ -1773,7 +1774,7 @@ func (u *openAIHTTPPassthroughSSERateLimitUpstream) Do(_ *http.Request, _ string
 	}, nil
 }
 
-// DoWithTLS 使 SSE 限流测试桩兼容 fork 的 TLS 指纹上游接口。
+// DoWithTLS adapts the SSE rate-limit stub to the TLS fingerprint transport interface.
 func (u *openAIHTTPPassthroughSSERateLimitUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
@@ -1879,7 +1880,8 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-// TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider 验证认证错误耗尽同号预算后切换提供商。
+// TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider checks provider
+// switching after authentication retries are exhausted.
 func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2073,7 +2075,8 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-// TestOpenAIHTTPResourceBindingSharesImageCapacity 检查共享资源和 HTTP 入口使用同一个图片并发限制器。
+// TestOpenAIHTTPResourceBindingSharesImageCapacity checks that HTTP handlers share the same image concurrency
+// limiter.
 func TestOpenAIHTTPResourceBindingSharesImageCapacity(t *testing.T) {
 	resources := &gatewayhttp.OpenAIHTTPResources{
 		Concurrency:  gatewayhttp.NewConcurrencyHelper(nil, gatewayhttp.SSEPingFormatNone, 0),
@@ -2285,10 +2288,10 @@ func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*
 	return c, rec
 }
 
-// TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected 复现
-// #4257：客户端在上游请求在途期间断开，上游随后返回可 failover 的 520。
-// 客户端断开后结束提供商选择，将请求归类为 499，
-// 提供商 2 的调用次数保持为零。
+// TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected reproduces
+// issue #4257: the client disconnects during an upstream call that returns retryable HTTP 520.
+// The disconnect stops provider selection and classifies the request as 499;
+// provider 2 receives no calls.
 func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2305,7 +2308,7 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	_, hasFinalUpstreamErr := c.Get(gatewayhttp.OpsUpstreamStatusCodeKey)
 	require.False(t, hasFinalUpstreamErr, "不应记录 failover 耗尽的上游错误终态")
 
-	// 上游返回的 520 保留为 failover 事件，执行组件在返回错误前记录。
+	// The executor records the upstream 520 as a failover event before returning the error.
 	rawEvents, ok := c.Get(gatewayhttp.OpsUpstreamErrorsKey)
 	require.True(t, ok)
 	events, ok := rawEvents.([]*opscore.OpsUpstreamErrorEvent)
@@ -2315,9 +2318,9 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	require.Equal(t, 520, events[0].UpstreamStatusCode)
 }
 
-// TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient 检查客户端在线时，
-// 提供商 1 返回 520 后切换到提供商 2，两个提供商都返回 520 时，
-// 按提供商耗尽返回 502。
+// TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient checks that
+// an upstream 520 switches a connected client to provider 2, and two failed providers
+// produce a 502 when the provider budget is exhausted.
 func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -2555,7 +2558,8 @@ func newOpenAICompatibleStreamValidationContext(path, body string, claudeCodeOnl
 	return c, rec
 }
 
-// TestOpenAITextAssemblyReadAndStopBoundaries 检查三种文本入口在读取报文前拒绝缺失依赖或已关闭的请求。
+// TestOpenAITextAssemblyReadAndStopBoundaries checks rejection before body reads when dependencies are missing
+// or request activity has stopped.
 func TestOpenAITextAssemblyReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("openai-text-contract")}
 	h := provideOpenAITextHTTP(nil, nil, nil, nil, nil, nil, nil, nil, nil, provideOpenAITextAttemptRuntime(provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)), activity, nil, nil, nil, nil)
@@ -2639,7 +2643,8 @@ func mixedUpstreamResponse(w http.ResponseWriter, r *http.Request, failAnthropic
 	}
 }
 
-// TestMixedGroupTextHTTP 用实际选择、协议转换及完成器覆盖三种入口与跨平台故障转移。
+// TestMixedGroupTextHTTP exercises all three endpoints and cross-platform failover with selection, conversion,
+// and completion.
 func TestMixedGroupTextHTTP(t *testing.T) {
 	for _, path := range []string{"/v1/messages", "/v1/responses", "/v1/chat/completions"} {
 		for _, platform := range []string{"anthropic", "openai", "gemini", "failover"} {
@@ -2656,7 +2661,7 @@ func TestMixedGroupTextHTTP(t *testing.T) {
 				providers := &mixedHTTPProviders{}
 				for index, p := range []string{"anthropic", "openai", "gemini"} {
 					record := &providercore.Record{ID: int64(index + 1), Name: p, Platform: p, Type: "apikey", Status: "active", Schedulable: true, Priority: index + 1, Concurrency: 1, GroupIDs: []int64{groupID}, Credentials: map[string]any{"api_key": "test-key", "base_url": upstream.URL}}
-					// 混合分组的测试提供商明确声明各自可承接的型号。
+					// Mixed-group providers declare the models they can serve.
 					record.Credentials["model_whitelist"] = []string{map[string]string{"anthropic": "claude-sonnet-4-5-20250929", "openai": "gpt-5.4", "gemini": "gemini-2.5-flash"}[p]}
 					if p == "openai" && platform == "failover" {
 						record.Credentials["model_mapping"] = map[string]any{"claude-sonnet-4-5-20250929": "gpt-5.4"}

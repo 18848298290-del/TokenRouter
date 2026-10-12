@@ -122,7 +122,6 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	// 读取请求体
 	body, err := ReadLenientJSONRequestBodyWithPrealloc(c.Request, h.options.MaxBodyBytes)
 	if err != nil {
 		if maxErr, ok := compatibleMaxBytesError(err); ok {
@@ -140,16 +139,14 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, "", false)
 
-	// 验证 JSON
 	if !gjson.ValidBytes(body) {
 		LogRequestBodyParseFailure(reqLog, body, nil)
 		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
-	// 在模型解析、内容审计和会话 hash 计算前替换用户提示词，后续步骤共用改写后的请求体。
+	// Apply prompt replacements before model parsing, moderation, and session hashing so all use the same body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "openai_responses")
 
-	// 按原字段规则读取模型与流标志
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -162,7 +159,7 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// 在协议转换前应用客户端指定档位的策略，审计保存改写前的值。
+	// Apply client effort policy before conversion; auditing retains the requested value.
 	policyBody, _, policyErr := h.backend.Reasoning(c, apiKey, body)
 	if policyErr != nil {
 		h.backend.PolicyDenied(c)
@@ -179,8 +176,8 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, reqModel, reqStream)
 	h.backend.ObserveEndpoint(c, reqStream)
-	// 生图能力和模型级限流以分组映射模型 G 及其请求体为准。
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Image capability and model rate limits use the group-mapped model and body.
+	// The route plan captures the effective group and model mapping.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
@@ -195,21 +192,19 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// 绑定错误展示规则
 	h.backend.BindErrors(c)
 
 	subscription, _ := SubscriptionFromContext(c)
 
 	h.backend.AuthLatency(c, time.Since(requestStart).Milliseconds())
 
-	// 1. 获取用户并发槽
 	userReleaseFunc, err := h.concurrency.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.responses.user_slot_acquire_failed", zap.Error(err))
 		h.concurrencyError(c, err, "user", streamStarted)
 		return
 	}
-	// 只追加新取得的请求租约，保留生图意图等之前固化的上下文。
+	// Carry the newly acquired lease into the context that already holds image intent.
 	if lease := scheduler.RequestLease(c.Request.Context()); lease != nil {
 		requestCtx = scheduler.WithRequestLease(requestCtx, lease)
 	}
@@ -218,7 +213,7 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	// 2. 等待后复查资金资格
+	// Recheck funding eligibility after waiting for the user slot.
 	if err := h.backend.Eligibility(requestCtx, apiKey, subscription); err != nil {
 		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := BillingErrorDetails(err)
@@ -229,7 +224,6 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// 解析请求并生成会话哈希
 	bodyRef := requeststate.NewRequestBodyRef(body)
 	parsedReq, _ := requeststate.ParseGatewayRequest(bodyRef, "responses")
 	if parsedReq == nil {
@@ -303,7 +297,6 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	// 读取请求体
 	body, err := ReadLenientJSONRequestBodyWithPrealloc(c.Request, h.options.MaxBodyBytes)
 	if err != nil {
 		if maxErr, ok := compatibleMaxBytesError(err); ok {
@@ -321,17 +314,15 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, "", false)
 
-	// 验证 JSON
 	if !gjson.ValidBytes(body) {
 		LogRequestBodyParseFailure(reqLog, body, nil)
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
 
-	// 在模型解析、内容审计和会话 hash 计算前替换用户提示词，后续步骤共用改写后的请求体。
+	// Apply prompt replacements before model parsing, moderation, and session hashing so all use the same body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "chat_completions")
 
-	// 读取模型与流标志
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -344,7 +335,7 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 兼容入口按 Messages/Responses 的策略检查分组上限。
+	// Apply the same group reasoning limits as the Messages and Responses entries.
 	policyBody, _, policyErr := h.backend.Reasoning(c, apiKey, body)
 	if policyErr != nil {
 		h.backend.PolicyDenied(c)
@@ -357,8 +348,8 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", InvalidStreamFieldTypeMessage)
 		return
 	}
-	// Chat Completions 按分组映射模型 G 检查端点能力，日志和错误消息使用客户端模型 R。
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Check Chat capability against the group-mapped model; logs and errors use the client model.
+	// The route plan captures the effective group and model mapping.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
@@ -376,14 +367,12 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 绑定错误展示规则
 	h.backend.BindErrors(c)
 
 	subscription, _ := SubscriptionFromContext(c)
 
 	h.backend.AuthLatency(c, time.Since(requestStart).Milliseconds())
 
-	// 1. 获取用户并发槽
 	userReleaseFunc, err := h.concurrency.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.cc.user_slot_acquire_failed", zap.Error(err))
@@ -395,7 +384,7 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	// 2. 等待后复查资金资格
+	// Recheck funding eligibility after waiting for the user slot.
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		reqLog.Info("gateway.cc.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := BillingErrorDetails(err)
@@ -406,7 +395,6 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 解析请求并生成会话哈希
 	bodyRef := requeststate.NewRequestBodyRef(body)
 	parsedReq, _ := requeststate.ParseGatewayRequest(bodyRef, "chat_completions")
 	if parsedReq == nil {

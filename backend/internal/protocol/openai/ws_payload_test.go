@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// benchmarkOpenAIWSBytesSink 保存模型替换基准的结果。
+// benchmarkOpenAIWSBytesSink retains model-replacement benchmark output.
 var benchmarkOpenAIWSBytesSink []byte
 
 func TestOpenAIWSPayloadString_OnlyAcceptsStringValues(t *testing.T) {
@@ -26,7 +26,7 @@ func TestOpenAIWSPayloadString_OnlyAcceptsStringValues(t *testing.T) {
 func TestPopulateOpenAIUsageFromResponseJSONAcceptsChatUsageShape(t *testing.T) {
 	usage := &ForwardUsage{}
 
-	// 非流式 WS 结果可能直接带 Chat Completions usage 字段，必须参与计费。
+	// Non-streaming WebSocket results may use Chat Completions usage fields for billing.
 	PopulateUsageFromResponseJSON(
 		[]byte(`{"id":"resp_1","usage":{"prompt_tokens":23,"completion_tokens":6,"prompt_tokens_details":{"cached_tokens":5}}}`),
 		usage,
@@ -50,9 +50,9 @@ func TestReplaceOpenAIWSMessageModel_OptimizedStillCorrect(t *testing.T) {
 	require.Equal(t, `{"model":"custom-model","response":{"model":"custom-model"}}`, string(ReplaceWSMessageModel(both, "gpt-5.1", "custom-model")))
 }
 
-// TestIsOpenAIWSTokenEvent_TerminalEventsExcluded 检查终止事件返回 false。
-// 将 response.completed 或 response.done 计为 token 事件，会在缺少 delta 时
-// 把终止时刻写入 firstTokenMs，误报首 token 延迟（issue #2651）。
+// TestIsOpenAIWSTokenEvent_TerminalEventsExcluded checks that terminal events do not start token timing.
+// Counting response.completed or response.done as a token event when deltas are absent
+// would record completion time as first-token latency (issue #2651).
 func TestIsOpenAIWSTokenEvent_TerminalEventsExcluded(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -95,8 +95,8 @@ func TestIsOpenAIWSTokenEvent_TerminalEventsExcluded(t *testing.T) {
 	}
 }
 
-// TestIsOpenAIWSTokenEvent_DisjointWithTerminal 检查终止事件与 token 事件互斥。
-// firstTokenMs 依赖这一区分，交集会导致 issue #2651 中的延迟误报。
+// TestIsOpenAIWSTokenEvent_DisjointWithTerminal checks that terminal events are excluded from token events.
+// firstTokenMs depends on this distinction to avoid the latency error in issue #2651.
 func TestIsOpenAIWSTokenEvent_DisjointWithTerminal(t *testing.T) {
 	terminalEvents := []string{
 		"response.completed",

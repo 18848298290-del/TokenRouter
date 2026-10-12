@@ -31,7 +31,7 @@ func TestAppendAPIKeyAliasesToGeminiModelsJSON(t *testing.T) {
 	require.Equal(t, "next", gjson.GetBytes(body, "nextPageToken").String())
 }
 
-// TestGeminiSingleModelSelectsOnlyBoundTarget 复合 Key 的单型号请求仅校验目标组及其精确别名目标。
+// TestGeminiSingleModelSelectsOnlyBoundTarget checks the chosen composite group and exact alias target.
 func TestGeminiSingleModelSelectsOnlyBoundTarget(t *testing.T) {
 	group := &routing.Group{ID: 7, Status: "active", AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolGeminiGenerateContent}, ModelsListConfig: routing.GroupModelsListConfig{Enabled: true, Models: []string{"known"}}}
 	other := &routing.Group{ID: 8, Status: "active", AllowedProtocols: group.AllowedProtocols}

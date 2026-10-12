@@ -14,7 +14,7 @@ type ParsedPricingTimePeriod struct {
 	multiplier float64
 }
 
-// ValidateTimePricingConfig 校验分时倍率配置；nil 或空 periods 表示未启用。
+// ValidateTimePricingConfig validates periods; nil or empty periods disable time pricing.
 func ValidateTimePricingConfig(config *TimePricingConfig) error {
 	if config == nil || len(config.Periods) == 0 {
 		return nil
@@ -23,7 +23,7 @@ func ValidateTimePricingConfig(config *TimePricingConfig) error {
 	return err
 }
 
-// MultiplierAt 返回 at 对应的分时倍率；无配置或脏配置安全降级为 1。
+// MultiplierAt returns the active multiplier, or 1 for missing/invalid rules, a zero time, or a nil location.
 func (config *TimePricingConfig) MultiplierAt(at time.Time, location *time.Location) float64 {
 	if config == nil || len(config.Periods) == 0 || at.IsZero() {
 		return 1.0
@@ -52,6 +52,7 @@ func (config *TimePricingConfig) MultiplierAt(at time.Time, location *time.Locat
 	return 1.0
 }
 
+// ParsePricingTime returns seconds since midnight; an end value of midnight means the end of the day.
 func ParsePricingTime(value string, end bool) (int, error) {
 	if end && (value == "00:00" || value == "00:00:00") {
 		return 24 * 60 * 60, nil
@@ -107,7 +108,7 @@ func ParsePricingTimePeriods(periods []TimePricingPeriod) ([]ParsedPricingTimePe
 	return parsed, nil
 }
 
-// ValidateTimezoneName 拒绝空时区名和依赖进程环境的 Local 时区。
+// ValidateTimezoneName rejects empty names and the process-dependent Local timezone.
 func ValidateTimezoneName(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("timezone is required")
@@ -118,7 +119,7 @@ func ValidateTimezoneName(name string) error {
 	return nil
 }
 
-// ResolvedTimeMultiplier 使用传入的时区计算价卡分时倍率。
+// ResolvedTimeMultiplier computes the token card's time multiplier using the supplied location.
 func ResolvedTimeMultiplier(resolved *ResolvedPricing, at time.Time, location *time.Location) float64 {
 	if resolved == nil || resolved.Mode != BillingModeToken || resolved.ConfigPricing == nil {
 		return 1

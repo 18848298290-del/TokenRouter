@@ -20,9 +20,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// PassthroughOptions 配置响应透传的观测、HTTP 输出和心跳。
+// PassthroughOptions configures response observation, HTTP output and keepalive.
 type PassthroughOptions struct {
-	// ObserveModel 在恢复响应模型前读取上游模型声明。
+	// ObserveModel reads the upstream model before restoring the client-facing model.
 	ObserveModel func([]byte, string)
 	StreamOptions
 	NonStream                    NonStreamOptions
@@ -33,7 +33,7 @@ type PassthroughOptions struct {
 	PassthroughFailoverWithModel func(string, []byte, string, string) error
 }
 
-// ReadPassthroughStreaming 透传 SSE，并记录用量和终态。
+// ReadPassthroughStreaming forwards SSE while recording usage and terminal state.
 func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options PassthroughOptions, startTime time.Time, originalModel, mappedModel string) (*StreamingResult, error) {
 	options.Headers(c.Writer.Header(), resp.Header)
 
@@ -75,22 +75,17 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 	var bareErrorPayload []byte
 	bareErrorProviderSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
-	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
+	// Buffer preamble events until output starts so empty failures can still fail over.
 	pendingLines := make([]string, 0, 8)
 
-	// pendingLines 在首段内容前缓冲事件，首次写入前 HTTP 响应头也处于待提交状态。
-	// 推理等待期间发送 SSE 注释心跳，提交响应头并刷新中间代理的空闲超时。
-	// 某生产部署在 12 小时内有 44 个 /v1/responses 请求等待 600~900s 才产生输出，
-	// 每个请求生成 3~5 万 output token，均被 nginx 的 proxy_read_timeout(600s) 中断为 504。
-	// proxy_read_timeout 衡量两次读取的间隔，心跳可维持这些长推理请求的连接。
-	// pendingLines 和提供商请求头在内容开始时交付，心跳字节由
-	// OpenAICompactKeepaliveAdjustedWrittenSize 排除（#3887），首输出前仍可切换提供商。
-	// 此处上游已返回 text/event-stream，使用普通 SSE 心跳；Compact 心跳还要求 compact 标记。
+	// Send SSE comment heartbeats during long reasoning waits to refresh proxy idle timers.
+	// Preamble events and provider headers remain staged until content starts. Keepalive
+	// bytes are excluded from the output-commit check so pre-output failover remains available
+	// (issue #3887). This upstream response is SSE; Compact has its own keepalive eligibility.
 	stopKeepalive := options.StartKeepalive(c.Writer.Header())
-	// 任何返回路径都要停拍。Stop 与心跳 goroutine 之间有互斥锁，
-	// 返回后不会再有字节写出。
+	// Stop the heartbeat on every return path and wait for any active heartbeat write.
 	defer stopKeepalive()
-	// flushPending 标记尚未遇到 SSE 空行的写入。函数退出时刷新残留数据，已断连时跳过。
+	// flushPending tracks bytes not yet followed by a blank SSE line; flush on return unless disconnected.
 	flushPending := false
 	pendingSSEEventType := ""
 	flushPendingOutput := func() {
@@ -165,7 +160,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 			eventType = strings.TrimSpace(eventType)
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
 			if wire.IsResponseLifecycleEvent(eventType) {
-				// 生命周期事件头与 data 一起下发，避免留下已过滤终态的孤立 event 行。
+				// Deliver lifecycle headers with their data so filtering a terminal event also removes its header.
 				pendingLifecycleHeader = line
 				continue
 			}
@@ -218,7 +213,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 				}
 			}
 			eventType := wire.EffectiveOpenAISSEEventType(dataBytes, rawEventType)
-			// 按规范化后的类型重新裁决，清除旧 done 事件头留下的抑制标记。
+			// Recompute suppression after normalization, including legacy done events renamed to failed.
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
 			if !capacityFailoverSuppressedLogged && options.NativeOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -241,9 +236,8 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 				if failedMessage == "" {
 					failedMessage = "Upstream response failed"
 				}
-				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
-				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
-				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
+				// Read terminal usage before marking cyber_policy so the observation records consumed
+				// tokens instead of stale zero counts.
 				wire.ParseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				if hit, code, msg := DetectOpenAICyberPolicy(dataBytes); hit {
 					cyberHit = true
@@ -287,8 +281,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := options.ErrorRule(dataBytes, failedMessage); matched {
-							// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
-							// antigravity 先例），否则透传命中的 failed 在监控中不可见。
+							// Record upstream errors even when a passthrough rule handles the client response.
 							options.RecordError(upstreamRequestID, "http_error", dataBytes, failedMessage)
 							options.MarkCommitted()
 							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -347,7 +340,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 			if lineStartsClientOutput && trimmedData != "[DONE]" && !wire.OpenAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
 			}
-			// 透传流在写出前也要识别空 completed，确保仍可安全切换提供商。
+			// Detect empty completion before writing so passthrough can still fail over.
 			if (eventType == "response.completed" || eventType == "response.done") &&
 				!sawFailedEvent && !semanticOutputSeen && !clientOutputStarted &&
 				wire.OpenAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
@@ -387,8 +380,8 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 				pendingLines = append(pendingLines, line)
 				continue
 			}
-			// 内容输出开始时停止心跳。停止操作可重复调用，并等待心跳 goroutine 完成写入，
-			// 此后 ResponseWriter 由本循环独占。
+			// Stop and join heartbeat writes before content output; repeated calls are safe.
+			// This loop then owns ResponseWriter writes.
 			if !clientOutputStarted {
 				stopKeepalive()
 			}
@@ -470,7 +463,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 	return resultWithUsage(), nil
 }
 
-// ReadPassthroughNonStreaming 读取并透传非流式响应。
+// ReadPassthroughNonStreaming reads and forwards a buffered response while observing usage.
 func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	body, err := options.NonStream.ReadBody(resp.Body)
 	if err != nil {
@@ -526,7 +519,7 @@ func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink 
 	}, nil
 }
 
-// ReadPassthroughSSEAsJSON 收集 SSE 终态并输出 JSON 响应。
+// ReadPassthroughSSEAsJSON collects an SSE terminal response and writes JSON.
 func ReadPassthroughSSEAsJSON(resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, body []byte, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := wire.ExtractOpenAISSETerminalEvent(bodyText)

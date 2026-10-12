@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingConcurrentReadAndReload 验证更新线程整体替换目录时，并发读者只看见一份完整价格，停止后目录仍可读取。
+// TestPricingConcurrentReadAndReload checks that concurrent readers see complete prices and can query after Stop.
 func TestPricingConcurrentReadAndReload(t *testing.T) {
 	dir := t.TempDir()
 	first := filepath.Join(dir, "first.json")
@@ -47,7 +47,8 @@ func TestPricingConcurrentReadAndReload(t *testing.T) {
 	require.NotNil(t, service.GetModelPricing("model"))
 }
 
-// TestModelAttributesCanonicalFallbackKeepsPricing 验证服务接入属性回退后仍保留价格来源隔离。
+// TestModelAttributesCanonicalFallbackKeepsPricing checks that public attribute lookup keeps provider prices
+// separate.
 func TestModelAttributesCanonicalFallbackKeepsPricing(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{
 		"models":{"openai/gpt-image-2.5-flare":{
@@ -75,7 +76,8 @@ func TestModelAttributesCanonicalFallbackKeepsPricing(t *testing.T) {
 	require.InDelta(t, 1e-6, s.GetModelPricing("azure/gpt-image-2.5-flare").InputCostPerToken, 1e-12)
 }
 
-// TestDirectoryReaderTracksPublishedVersion 候选和名称随成功发布更新，坏目录保留上一版。
+// TestDirectoryReaderTracksPublishedVersion checks successful metadata updates and retention after invalid
+// catalog input.
 func TestDirectoryReaderTracksPublishedVersion(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(modelsCatalogFixture), etag: "v1"}
 	service := NewService(Options{RemoteURL: "https://models.dev/catalog.json", DataDir: t.TempDir()}, remote)
@@ -101,7 +103,7 @@ func TestDirectoryReaderTracksPublishedVersion(t *testing.T) {
 	require.Equal(t, "New name", *service.ModelEntry("claude-new").Attributes.DisplayName)
 }
 
-// TestOutputModalityMetadata 按完整型号返回模态，缺失值表示未知。
+// TestOutputModalityMetadata checks full-ID modality lookup and unknown values for missing metadata.
 func TestOutputModalityMetadata(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{"providers":{"google":{"models":{"arbitrary-output":{"name":"Image","modalities":{"output":["image"]}},"gemini-text-image-name":{"name":"Text","modalities":{"output":["text"]}},"unknown":{"name":"Unknown"}}}}}`)}
 	service := NewService(Options{RemoteURL: "https://models.dev/catalog.json", DataDir: t.TempDir()}, remote)

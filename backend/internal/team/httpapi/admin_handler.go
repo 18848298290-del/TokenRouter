@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// AdminHandler 处理平台管理员的团队运维操作。
+// AdminHandler handles platform-admin team operations.
 type AdminHandler struct {
 	service *team.TeamService
 }
@@ -60,7 +60,7 @@ func (h *AdminHandler) GetUsage(c *gin.Context) {
 		return
 	}
 	query := team.TeamUsageQuery{}
-	// 管理员统计弹窗按成员并行查询同一团队，空值表示团队整体。
+	// An omitted member_id aggregates the whole team; a supplied ID selects one member.
 	if rawMemberID := strings.TrimSpace(c.Query("member_id")); rawMemberID != "" {
 		memberID, err := strconv.ParseInt(rawMemberID, 10, 64)
 		if err != nil || memberID <= 0 {

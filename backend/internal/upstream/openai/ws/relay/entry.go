@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// EntryInput 包含透传转发使用的连接、首帧和选项。
+// EntryInput supplies the relay's connections, first frame, context, and options.
 type EntryInput struct {
 	Ctx                context.Context
 	ClientConn         FrameConn
@@ -13,8 +13,8 @@ type EntryInput struct {
 	Options            RelayOptions
 }
 
-// runCaddyStyleRelay 采用 Caddy reverseproxy 的双向隧道思想：
-// 连接建立后并发复制两个方向，任一方向退出后关闭转发。
+// runCaddyStyleRelay follows Caddy reverseproxy's bidirectional tunnel model:
+// copy frames concurrently in both directions and finish when either direction exits.
 //
 // Reference:
 // - Project: caddyserver/caddy (Apache-2.0)
@@ -32,7 +32,7 @@ func runCaddyStyleRelay(
 	return Relay(ctx, clientConn, upstreamConn, firstClientMessage, options)
 }
 
-// RunEntry 是 openai_ws_v2 包对外的统一入口。
+// RunEntry starts a bidirectional relay from the supplied entry parameters.
 func RunEntry(input EntryInput) (RelayResult, *RelayExit) {
 	return runCaddyStyleRelay(
 		input.Ctx,

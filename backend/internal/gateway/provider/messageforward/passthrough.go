@@ -11,7 +11,7 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// anthropicPassthroughAdapter 保留直通请求的代理解析与 Header 规则。
+// anthropicPassthroughAdapter supplies proxy resolution and output handling for passthrough requests.
 type anthropicPassthroughAdapter struct{ *attempt }
 
 func (a *anthropicPassthroughAdapter) TokenKind() string { return a.tokenType }
@@ -50,7 +50,7 @@ func (a *anthropicPassthroughAdapter) ExecutePassthrough(ctx context.Context, in
 	}, a.c.Sink())
 }
 
-// passthrough 使用独立 attempt，保持直通分支自己的请求准备时点。
+// passthrough creates an attempt so request preparation runs within the passthrough flow.
 func (r *Runtime) passthrough(ctx context.Context, output HTTPBoundary, target *gatewayprovider.ExecutionProvider, input forwardcore.APIKeyInput) (*forwardcore.Result, error) {
 	adapter := &anthropicPassthroughAdapter{attempt: newAttempt(r, output, target)}
 	return forwardcore.APIKeyPassthrough(ctx, adapter, adapter.input(), input)

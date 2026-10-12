@@ -27,7 +27,7 @@ func NewEmailChallenges(cache EmailCache, sender EmailChallengeSender) *EmailCha
 	return &EmailChallenges{cache: cache, sender: sender}
 }
 
-// GenerateVerifyCode 生成 6 位数字验证码。
+// GenerateVerifyCode generates a six-digit random code.
 func (s *EmailChallenges) GenerateVerifyCode() (string, error) {
 	const digits = "0123456789"
 	code := make([]byte, 6)
@@ -41,9 +41,9 @@ func (s *EmailChallenges) GenerateVerifyCode() (string, error) {
 	return string(code), nil
 }
 
-// SendVerifyCode 发送验证码邮件。
+// SendVerifyCode stores a registration code before sending its email.
+// A send failure leaves the stored code and its cooldown in place.
 func (s *EmailChallenges) SendVerifyCode(ctx context.Context, email, siteName string, locale ...string) error {
-	// 检查是否在冷却期内
 	existing, err := s.cache.GetVerificationCode(ctx, email)
 	if err == nil && existing != nil {
 		if time.Since(existing.CreatedAt) < VerifyCodeCooldown {
@@ -51,13 +51,12 @@ func (s *EmailChallenges) SendVerifyCode(ctx context.Context, email, siteName st
 		}
 	}
 
-	// 生成验证码
 	code, err := s.GenerateVerifyCode()
 	if err != nil {
 		return fmt.Errorf("generate code: %w", err)
 	}
 
-	// 保存验证码到 Redis
+	// Store the code before sending so verification can find it as soon as mail arrives.
 	data := &VerificationCodeData{
 		Code:      code,
 		Attempts:  0,
@@ -71,19 +70,18 @@ func (s *EmailChallenges) SendVerifyCode(ctx context.Context, email, siteName st
 	return s.sender.SendVerifyCodeMessage(ctx, email, siteName, code, FirstEmailLocale(locale))
 }
 
-// VerifyCode 验证验证码。
+// VerifyCode checks the code and attempt limit, then tries to delete a matching code.
 func (s *EmailChallenges) VerifyCode(ctx context.Context, email, code string) error {
 	data, err := s.cache.GetVerificationCode(ctx, email)
 	if err != nil || data == nil {
 		return ErrInvalidVerifyCode
 	}
 
-	// 检查是否已达到最大尝试次数
 	if data.Attempts >= MaxVerifyCodeAttempts {
 		return ErrVerifyCodeMaxAttempts
 	}
 
-	// 验证码不匹配 (constant-time comparison to prevent timing attacks)
+	// Compare equal-length codes in constant time.
 	if subtle.ConstantTimeCompare([]byte(data.Code), []byte(code)) != 1 {
 		data.Attempts++
 		remaining := time.Until(data.ExpiresAt)
@@ -99,7 +97,7 @@ func (s *EmailChallenges) VerifyCode(ctx context.Context, email, code string) er
 		return ErrInvalidVerifyCode
 	}
 
-	// 验证成功，删除验证码
+	// Deletion failures are logged; a matching code still succeeds.
 	if err := s.cache.DeleteVerificationCode(ctx, email); err != nil {
 		slog.Error("failed to delete verification code after success", "email", email, "error", err)
 	}
@@ -120,14 +118,12 @@ func (s *EmailChallenges) SendPasswordResetEmail(ctx context.Context, email, sit
 	var token string
 	var needSaveToken bool
 
-	// Check if token already exists
 	existing, err := s.cache.GetPasswordResetToken(ctx, email)
 	if err == nil && existing != nil {
 		// Token exists, reuse it (allows resending email without generating new token)
 		token = existing.Token
 		needSaveToken = false
 	} else {
-		// Generate new token
 		token, err = s.GeneratePasswordResetToken()
 		if err != nil {
 			return fmt.Errorf("generate token: %w", err)
@@ -135,7 +131,7 @@ func (s *EmailChallenges) SendPasswordResetEmail(ctx context.Context, email, sit
 		needSaveToken = true
 	}
 
-	// Save token to Redis (only if new token generated)
+	// Store a newly generated token before sending; retries reuse it until expiry.
 	if needSaveToken {
 		data := &PasswordResetTokenData{
 			Token:     token,
@@ -152,16 +148,14 @@ func (s *EmailChallenges) SendPasswordResetEmail(ctx context.Context, email, sit
 	return s.sender.SendPasswordResetMessage(ctx, email, siteName, fullResetURL, FirstEmailLocale(locale))
 }
 
-// SendPasswordResetEmailWithCooldown sends password reset email with cooldown check (called by queue worker)
-// This method wraps SendPasswordResetEmail with email cooldown to prevent email bombing.
+// SendPasswordResetEmailWithCooldown skips recent sends and starts a cooldown after successful delivery.
+// Queue workers use this method to limit repeated reset emails.
 func (s *EmailChallenges) SendPasswordResetEmailWithCooldown(ctx context.Context, email, siteName, resetURL string, locale ...string) error {
-	// Check email cooldown to prevent email bombing
 	if s.cache.IsPasswordResetEmailInCooldown(ctx, email) {
 		slog.Info("password reset email skipped due to cooldown", "email", email)
 		return nil // Silent success to prevent revealing cooldown to attackers
 	}
 
-	// Send email using core method
 	if err := s.SendPasswordResetEmail(ctx, email, siteName, resetURL, FirstEmailLocale(locale)); err != nil {
 		return err
 	}
@@ -189,14 +183,14 @@ func (s *EmailChallenges) VerifyPasswordResetToken(ctx context.Context, email, t
 	return nil
 }
 
-// ConsumePasswordResetToken verifies and deletes the token (one-time use).
+// ConsumePasswordResetToken verifies the token, then attempts to delete it.
+// Verification and deletion are separate operations; deletion errors are logged.
 func (s *EmailChallenges) ConsumePasswordResetToken(ctx context.Context, email, token string) error {
-	// Verify first
 	if err := s.VerifyPasswordResetToken(ctx, email, token); err != nil {
 		return err
 	}
 
-	// Delete after verification (one-time use)
+	// A deletion failure does not change the successful verification result.
 	if err := s.cache.DeletePasswordResetToken(ctx, email); err != nil {
 		slog.Error("failed to delete password reset token after consumption", "email", email, "error", err)
 	}

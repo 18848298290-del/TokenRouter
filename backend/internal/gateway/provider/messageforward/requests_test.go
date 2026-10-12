@@ -31,7 +31,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// stubIdentityCache 提供网关构造 Header 时读取的指纹数据。
+// stubIdentityCache supplies fingerprints for gateway header construction.
 type stubIdentityCache struct {
 	fingerprint *anthropic.Fingerprint
 	setCalls    int
@@ -63,7 +63,7 @@ func newVertexServiceAccount(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens 检查 Vertex 拒绝的 Beta token 会在请求构造时删除（issue #3358）。
+// TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens checks removal of betas rejected by Vertex (issue #3358).
 func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 	c := newVertexBetaTestContext(t,
 		"claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,"+
@@ -82,13 +82,13 @@ func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 
 	outBeta := anthropic.GetHeaderRaw(req.Header, "anthropic-beta")
 
-	// Vertex 拒绝的 token 必须全部剥掉。
+	// These unsupported tokens must be removed from the outgoing header.
 	for _, bad := range []string{
 		"advisor-tool-2026-03-01",
 		"prompt-caching-scope-2026-01-05",
 		"redact-thinking-2026-02-12",
 		"thinking-token-count-2026-05-13",
-		// 客户端身份 beta：Vertex service_account 不需要，亦不在白名单。
+		// Client identity betas are absent from the Vertex service account allowlist.
 		"claude-code-20250219",
 		"oauth-2025-04-20",
 	} {
@@ -96,7 +96,7 @@ func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 			"token %q 必须被剥离；实际 outgoing beta=%q", bad, outBeta)
 	}
 
-	// 白名单内的 token 必须保留。
+	// Allowlisted tokens remain in the outgoing header.
 	for _, keep := range []string{
 		"interleaved-thinking-2025-05-14",
 		"context-management-2025-06-27",
@@ -106,7 +106,7 @@ func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 	}
 }
 
-// TestVertexBetaFilter_DropsHeaderWhenAllUnsupported 验证全部 token 都不受 Vertex 支持时，outgoing header 不应下发 anthropic-beta。
+// TestVertexBetaFilter_DropsHeaderWhenAllUnsupported checks omission of an empty outgoing beta header.
 func TestVertexBetaFilter_DropsHeaderWhenAllUnsupported(t *testing.T) {
 	c := newVertexBetaTestContext(t,
 		"prompt-caching-scope-2026-01-05,redact-thinking-2026-02-12")
@@ -124,7 +124,7 @@ func TestVertexBetaFilter_DropsHeaderWhenAllUnsupported(t *testing.T) {
 		"所有 token 被剥离后不应残留 anthropic-beta header")
 }
 
-// TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta 检查最终 Beta Header 缺少 context-management 时删除请求体中的对应字段。
+// TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta checks removal of body fields whose final beta token is absent.
 func TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta(t *testing.T) {
 	c := newVertexBetaTestContext(t, "prompt-caching-scope-2026-01-05")
 
@@ -143,7 +143,7 @@ func TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta(t *testing.T) {
 	require.Empty(t, anthropic.GetHeaderRaw(req.Header, "anthropic-beta"))
 }
 
-// TestVertexBetaFilter_BlocksViaBetaPolicy 检查 Vertex 请求携带被禁用的 Beta token 时返回错误。
+// TestVertexBetaFilter_BlocksViaBetaPolicy checks rejection of a blocked beta on Vertex requests.
 func TestVertexBetaFilter_BlocksViaBetaPolicy(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -174,7 +174,7 @@ func TestVertexBetaFilter_BlocksViaBetaPolicy(t *testing.T) {
 	require.Equal(t, "context management is blocked", err.Error())
 }
 
-// TestFilterVertexBetaTokens 检查 Vertex 请求使用的白名单过滤、删除集合、去重和空输入处理。
+// TestFilterVertexBetaTokens checks the allowlist, removal set, deduplication, and empty input.
 func TestFilterVertexBetaTokens(t *testing.T) {
 	t.Run("whitelist filters unsupported", func(t *testing.T) {
 		out := vertex.FilterBetaTokens(
@@ -260,11 +260,10 @@ func readRequestBodyForTest(t *testing.T, req *http.Request) []byte {
 	return body
 }
 
-// TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing 检查 Vertex 请求缺少 context-management Beta 时删除请求体中的对应字段。
+// TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing checks body/header consistency.
 func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	// 客户端 header 包含 interleaved-thinking。
 	c.Request.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
 
 	provider := &gatewayprovider.ExecutionProvider{
@@ -273,7 +272,7 @@ func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManageme
 			Credentials: map[string]any{"project_id": "vertex-proj", "location": "us-east5"},
 		},
 	}
-	// body 带了 context_management 字段（客户端透传 / normalize 补齐 / mimicry 注入等场景都可能导致）
+	// The body can carry context_management from the client or an earlier normalization step.
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"messages":[{"role":"user","content":"hi"}]}`)
 
 	svc := NewRuntime(Dependencies{}, Options{})
@@ -286,13 +285,13 @@ func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManageme
 	got := readRequestBodyForTest(t, req)
 	require.False(t, gjson.GetBytes(got, "context_management").Exists(),
 		"Vertex 路径下客户端 header 缺 context-management beta 时，必须 strip body 同名字段")
-	// 请求体中的 context_management 与最终 Beta Header 对应。
+	// The final beta header and context_management body field must agree.
 	outBeta := anthropic.GetHeaderRaw(req.Header, "anthropic-beta")
 	require.False(t, anthropic.AnthropicBetaTokensContains(outBeta, "context-management-2025-06-27"),
 		"与 body 对称：outgoing anthropic-beta header 也不含 context-management beta")
 }
 
-// TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent 验证 Vertex 路径反面：客户端 header 含 context-management beta 时保留字段。
+// TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent checks the allowed-beta path.
 func TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -368,7 +367,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BearerAuthScheme(t *testing.T
 	require.Empty(t, anthropic.GetHeaderRaw(countReq.Header, "cookie"))
 }
 
-// TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL 检查透传请求拒绝无效的上游地址。
+// TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL checks upstream URL validation.
 func TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -506,7 +505,7 @@ func readUpstreamBodyForTest(t *testing.T, req *http.Request) []byte {
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsContextManagementWhenClientHeaderMissingBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	// 客户端 beta 列表为 oauth。
+	// The client supplies no context-management beta.
 	c.Request.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
 
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
@@ -567,7 +566,7 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd
 			Schedulable: true,
 		},
 	}
-	// Haiku + mimic CC 使用完整 beta，其中包含 context-management；body 必须对称保留。
+	// Haiku mimicry sends the full beta set, including context-management, so the body field stays.
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildRequest(
@@ -629,8 +628,8 @@ func TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndTo
 			Schedulable: true,
 		},
 	}
-	// sonnet + mimic CC → final beta = FullClaudeCodeMimicryBetas（含 context-management）→
-	// body 保留。
+	// Sonnet mimicry sends FullClaudeCodeMimicryBetas, including context-management,
+	// so the corresponding body field stays.
 	body := []byte(`{"model":"claude-sonnet-4-6","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildRequest(
@@ -651,8 +650,8 @@ func TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndTo
 }
 
 func TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField(t *testing.T) {
-	// 端到端验证：真 CC 客户端 + haiku + 客户端 header 带 context-management beta
-	// → final beta 透传 → 不应该过度删除 body 字段
+	// A real Claude Code client supplies the context-management beta for Haiku.
+	// Passing the beta through must also keep its body field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -672,7 +671,7 @@ func TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField
 		context.Background(), c, &AttemptState{},
 
 		provider, body,
-		"oauth-tok", "oauth", "claude-haiku-4-5", false, false, // mimicClaudeCode=false（真 CC）
+		"oauth-tok", "oauth", "claude-haiku-4-5", false, false, // mimicClaudeCode=false for a real Claude Code client.
 	)
 	require.NoError(t, err)
 
@@ -686,8 +685,8 @@ func TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField
 }
 
 func TestBuildCountTokensRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd(t *testing.T) {
-	// count_tokens 继续注入 BetaContextManagement 和 BetaTokenCounting；
-	// sanitize 看到最终 beta header 含 context-management beta 后保留字段。
+	// Counting injects BetaContextManagement and BetaTokenCounting.
+	// Sanitization keeps the body field because the final header contains its beta token.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -721,7 +720,7 @@ func TestBuildCountTokensRequest_OAuthMimicHaiku_PreservesContextManagementEndTo
 }
 
 func TestBuildCountTokensRequest_OAuthMimic_DropsInjectedMaxTokens(t *testing.T) {
-	// OAuth mimic 会为普通 messages 请求注入 max_tokens=128000，count_tokens 上游不接受该生成参数。
+	// OAuth normalization injects max_tokens=128000 for generation; count_tokens rejects that field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -752,7 +751,7 @@ func TestBuildCountTokensRequest_OAuthMimic_DropsInjectedMaxTokens(t *testing.T)
 }
 
 func TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd(t *testing.T) {
-	// API-key + haiku + 客户端 header 不带 context-management beta → final beta 不含 → strip
+	// API key counting strips context_management when the client omits its beta token.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -798,8 +797,8 @@ func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_PreservesContextManag
 }
 
 func TestBuildUpstreamRequest_APIKeyHaikuWithContextManagement_StripsField(t *testing.T) {
-	// API-key + haiku + body 带 context_management + 客户端 header 未带 context-management beta
-	// → final beta 不含 → body 字段被 strip
+	// The API key request carries context_management without its beta token.
+	// Sanitization must remove the body field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -839,7 +838,7 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing
 			Schedulable: true,
 		},
 	}
-	// 客户端默认透传 "fallbacks":"default"（Claude Code / SDK / OpenCode 等）
+	// Simulate a client sending the default fallbacks value.
 	body := []byte(`{"model":"claude-haiku-4-5","fallbacks":"default","messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildRequest(
@@ -865,7 +864,7 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsFallbacksWhenClientHeaderMissingBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	// 客户端 beta 列表为 oauth。
+	// The client supplies no server-side-fallback beta.
 	c.Request.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
 
 	body := []byte(`{"model":"claude-haiku-4-5","fallbacks":"default","messages":[]}`)
@@ -885,7 +884,7 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesFallbacksWhenCl
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	c.Request.Header.Set("Anthropic-Beta", "oauth-2025-04-20,server-side-fallback-2026-07-01")
 
-	// 模型数组形态：有 beta 时必须原样保留
+	// The model-array form stays intact when its beta token is present.
 	body := []byte(`{"model":"claude-opus-4-7","fallbacks":["claude-opus-4-6","claude-sonnet-4-6"],"messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildPassthroughRequest(
@@ -910,7 +909,7 @@ func TestClaudeAPIKeyFastModeCannotBypassSystemFilter(t *testing.T) {
 	ctx := fastModeTestContext(apikey.APIKeyFastModePolicyForceOn, "claude-opus-4-8")
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil).WithContext(ctx)
-	// 模拟系统 Beta 策略已将 Claude Fast token 标记为过滤。
+	// Simulate a system beta policy that filters Claude Fast.
 	state := &AttemptState{BetaEvaluated: true, BetaFilters: map[string]struct{}{anthropic.BetaFastMode: {}}}
 
 	req, wireBody, err := svc.buildRequest(ctx, c, state, provider, []byte(`{"model":"claude-opus-4-8","messages":[]}`), "test-key", "apikey", "claude-opus-4-8", false, false)

@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/bedrock"
 )
 
-// NewBedrockSignerFromProvider 从 Provider 凭证创建 BedrockSigner。
+// NewBedrockSignerFromProvider creates a signer from the provider credentials.
 func NewBedrockSignerFromProvider(value *provider.Record) (*bedrock.BedrockSigner, error) {
 	accessKeyID := value.GetCredential("aws_access_key_id")
 	if accessKeyID == "" {
@@ -17,9 +17,9 @@ func NewBedrockSignerFromProvider(value *provider.Record) (*bedrock.BedrockSigne
 	if secretAccessKey == "" {
 		return nil, fmt.Errorf("aws_secret_access_key not found in credentials")
 	}
-	// 与模型解析和 HTTP 端点共用来源区域，global 推理不能改变签名范围。
+	// Use the HTTP endpoint source region for signing even when inference uses a global model.
 	region := bedrock.BedrockRuntimeRegion(&bedrock.RouteInput{Region: value.GetCredential("aws_region"), ForceGlobal: value.GetCredential("aws_force_global") == "true"})
-	sessionToken := value.GetCredential("aws_session_token") // 可选
+	sessionToken := value.GetCredential("aws_session_token") // Optional.
 
 	return bedrock.NewBedrockSigner(accessKeyID, secretAccessKey, sessionToken, region), nil
 }

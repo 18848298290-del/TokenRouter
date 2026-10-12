@@ -56,7 +56,7 @@ func (s *OrderStore) PaidOrders(ctx context.Context, start, end time.Time, statu
 	return orderValues(rows), e
 }
 
-// HasPaidOrder 根据付款确认时间判断历史付款，后续退款仍属于付过款。
+// HasPaidOrder uses payment confirmation time, so refunded orders still count as past payments.
 func (s *OrderStore) HasPaidOrder(ctx context.Context, userID int64) (bool, error) {
 	client := s.client
 	if tx := dbent.TxFromContext(ctx); tx != nil {

@@ -26,7 +26,7 @@ import (
 	teampostgres "github.com/TokenFlux/TokenRouter/internal/team/postgres"
 )
 
-// insertBatchImageAllowanceTestJob 创建额度预记测试所需的最小任务记录。
+// insertBatchImageAllowanceTestJob inserts the task fields required by allowance reservation tests.
 func insertBatchImageAllowanceTestJob(t *testing.T, batchID string, actorUserID, billingUserID, apiKeyID int64, teamID *int64, createdAt time.Time) {
 	t.Helper()
 	_, err := integrationDB.ExecContext(context.Background(), `
@@ -420,7 +420,7 @@ func TestUsageBillingRepositoryBatchImageUnlimitedKeyReleaseKeepsExistingUsage(t
 		Key:    "sk-batch-unlimited-" + uuid.NewString(),
 		Name:   "batch-unlimited",
 	})
-	// 预占时间与窗口使用同一数据库时钟，预占时刻落在窗口内。
+	// Read the reservation time from the database window start so both use the same clock.
 	var reservedAt time.Time
 	err := integrationDB.QueryRowContext(ctx, `
 		UPDATE api_keys SET quota_used = 1, usage_5h = 1, usage_1d = 1, usage_7d = 1,
@@ -768,7 +768,7 @@ func TestUsageBillingRepositoryBatchImageReleaseKeepsNewWindowConservative(t *te
 	require.InDelta(t, 0.5, usage5h, 0.000001)
 }
 
-// newTaskFundsFixture 为任务资金测试构造结算存储和资金服务。
+// newTaskFundsFixture constructs the settlement store and task funds service.
 func newTaskFundsFixture(db *sql.DB) *billing.Funds {
 	return billing.NewFunds(newSettlementFixture(db))
 }

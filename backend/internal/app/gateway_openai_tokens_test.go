@@ -15,7 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// TestOpenAITokenAssemblyKeepsReadAndStopBoundaries 检查 token 计数入口在读取报文前拒绝缺失依赖或已停止的请求。
+// TestOpenAITokenAssemblyKeepsReadAndStopBoundaries checks rejection before body reads when dependencies are
+// missing or request activity has stopped.
 func TestOpenAITokenAssemblyKeepsReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("token-contract")}
 	first := provideOpenAITokensHTTP(nil, nil, nil, nil, nil, nil, activity, nil, nil, nil, nil)

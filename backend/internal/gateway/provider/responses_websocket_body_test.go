@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIResponsesInputTextMaxChars 是长文本透传测试的输入长度。
+// openAIResponsesInputTextMaxChars is the long-text passthrough fixture size.
 const openAIResponsesInputTextMaxChars = 10000000
 
 func TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup(t *testing.T) {
@@ -33,7 +33,7 @@ func TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup(t *test
 	require.Equal(t, "compaction_trigger", items[3].Get("type").String())
 }
 
-// TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI 验证 WebSocket 兼容处理只对 OpenAI 清理推理内容。
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI checks platform-specific reasoning cleanup.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","store":true,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}]}`)
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
@@ -142,7 +142,7 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesNativeItemI
 		require.Equal(t, "ctc_valid", gjson.GetBytes(normalized, "input.1.id").String())
 		require.False(t, gjson.GetBytes(normalized, "input.2.id").Exists())
 		require.Equal(t, "tsc_valid", gjson.GetBytes(normalized, "input.3.id").String())
-		// Responses 的 call_id 用于关联调用和输出。
+		// Responses call_id links a call to its output.
 		require.Equal(t, "call_custom_1", gjson.GetBytes(normalized, "input.0.call_id").String())
 		require.Equal(t, "call_search_1", gjson.GetBytes(normalized, "input.2.call_id").String())
 	}

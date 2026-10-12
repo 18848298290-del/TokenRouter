@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestRemoveAsyncImageStorageSettingMigration 约束迁移只清理已废弃的运行时设置。
+// TestRemoveAsyncImageStorageSettingMigration checks that the SQL targets the retired image-storage setting.
 func TestRemoveAsyncImageStorageSettingMigration(t *testing.T) {
 	content, err := FS.ReadFile("234_remove_async_image_storage_setting.sql")
 	require.NoError(t, err)
@@ -26,7 +26,8 @@ func TestRemoveAsyncImageStorageSettingMigration(t *testing.T) {
 	require.Equal(t, []string{"DELETE FROM settings WHERE key = 'image_storage_config';"}, statements)
 }
 
-// TestRemoveAsyncImageStorageSettingMigrationPreservesBackupSettings 验证迁移只删除废弃键。
+// TestRemoveAsyncImageStorageSettingMigrationPreservesBackupSettings checks that deleting the retired
+// setting retains backup settings.
 func TestRemoveAsyncImageStorageSettingMigrationPreservesBackupSettings(t *testing.T) {
 	content, err := FS.ReadFile("234_remove_async_image_storage_setting.sql")
 	require.NoError(t, err)
@@ -52,7 +53,7 @@ func TestRemoveAsyncImageStorageSettingMigrationPreservesBackupSettings(t *testi
 	_, err = db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, "image_storage_config", `{"enabled":true}`)
 	require.NoError(t, err)
 
-	// DELETE 本身应可重复执行，确保迁移保持幂等。
+	// Repeating the DELETE checks migration idempotency.
 	_, err = db.Exec(string(content))
 	require.NoError(t, err)
 	_, err = db.Exec(string(content))

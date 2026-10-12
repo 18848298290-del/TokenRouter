@@ -18,7 +18,7 @@ type oauthCaptchaVerifier struct {
 	proof identity.TencentCaptchaProof
 }
 
-// captchaRuntimeFixture 提供验证码设置，调用嵌入接口中的其他方法会使测试失败。
+// captchaRuntimeFixture provides CAPTCHA settings; calls to other embedded methods fail the test.
 type captchaRuntimeFixture struct {
 	identity.AuthSettings
 	runtime *identity.RuntimeSettings
@@ -81,7 +81,7 @@ func newOAuthCaptchaTestHandler(enabled bool) (*AuthenticationHandler, *oauthCap
 	auth := identity.NewAuthService(&identity.AuthDependencies{Settings: settings, Tencent: identity.NewTencentCaptchaService(runtime, verifier)}, nil)
 	session := NewSessionHandler(auth, nil, nil, nil, nil, nil, SessionHTTPOptions{})
 	pending := NewPendingHandler(session, nil, PendingHTTPOptions{})
-	// 提供商依赖设为 nil，GET 请求应在读取配置和写入 Cookie 前完成验证码检查。
+	// Nil provider dependencies verify that GET CAPTCHA checks run before configuration reads or cookie writes.
 	return &AuthenticationHandler{
 		Session: session, Pending: pending,
 		Email:    NewEmailOAuthHandler(pending, nil, nil),

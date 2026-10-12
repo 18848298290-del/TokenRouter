@@ -53,7 +53,7 @@ func TestSummarizeOpenAIWSDialError(t *testing.T) {
 	require.Equal(t, "req_123", reqID)
 }
 
-// TestOpenAIWSErrorEventDiagnostics 验证错误字段从实际报文解析后，按生产日志规则净化并保留可诊断信息。
+// TestOpenAIWSErrorEventDiagnostics checks parsed error fields against production log normalization.
 func TestOpenAIWSErrorEventDiagnostics(t *testing.T) {
 	message := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_request","message":"invalid input"}}`)
 	code, kind, msg := SummarizeOpenAIWSErrorEventFieldsFromRaw(protocolopenai.ParseWSErrorEventFields(message))

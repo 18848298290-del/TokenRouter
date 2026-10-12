@@ -57,10 +57,10 @@ type OidcJWK struct {
 	Y   string `json:"y"`
 }
 
-// OIDCClient 交换授权码、读取用户资料，并按配置的算法列表校验 ID Token。
+// OIDCClient exchanges codes, retrieves profiles, and validates ID tokens against allowed algorithms.
 type OIDCClient struct{}
 
-// OIDCOptions 是 identity.OIDCOAuthOptions 的类型别名。
+// OIDCOptions aliases the identity module's OIDC configuration.
 type OIDCOptions = identity.OIDCOAuthOptions
 
 func OidcExchangeCode(
@@ -449,11 +449,11 @@ func (k OidcJWK) PublicKey() (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode ec y: %w", err)
 		}
-		//nolint:staticcheck // 这里需要生成 ecdsa.PublicKey，保留 elliptic 曲线检查兼容 JWT。
+		//nolint:staticcheck // JWT verification requires an ecdsa.PublicKey with validated curve coordinates.
 		if !curve.IsOnCurve(x, y) {
 			return nil, errors.New("ec point is not on curve")
 		}
-		return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil //nolint:staticcheck // JWK 使用裸坐标；迁移到 ecdsa.ParseUncompressedPublicKey 需改变点编码
+		return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil //nolint:staticcheck // JWK supplies raw coordinates; ParseUncompressedPublicKey requires encoded points.
 	default:
 		return nil, fmt.Errorf("unsupported jwk kty: %s", k.Kty)
 	}

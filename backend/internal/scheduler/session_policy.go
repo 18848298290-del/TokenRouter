@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// SessionBinding 只包含本次调度允许管理的空闲会话参数。
+// SessionBinding contains the idle-session settings managed by this scheduling attempt.
 type SessionBinding struct {
 	ProviderID  int64
 	SessionID   string
@@ -14,7 +14,7 @@ type SessionBinding struct {
 	IdleTimeout time.Duration
 }
 
-// RegisterSession 保留已有会话刷新、容量限制与 Redis 错误放行。
+// RegisterSession refreshes or admits a session within capacity and allows requests on cache errors.
 func RegisterSession(ctx context.Context, cache SessionLimitCache, input SessionBinding) bool {
 	if !input.Enabled || input.Limit <= 0 || input.SessionID == "" || cache == nil {
 		return true
@@ -23,7 +23,7 @@ func RegisterSession(ctx context.Context, cache SessionLimitCache, input Session
 	return err != nil || allowed
 }
 
-// FinishSession 成功及可结算部分结果保留空闲窗口，其余完成结果立即注销。
+// FinishSession retains served sessions for their idle window and unregisters unserved sessions.
 func FinishSession(ctx context.Context, cache SessionLimitCache, input SessionBinding, outcome AttemptOutcome, diagnostics Diagnostics) {
 	if outcome.Served || !input.Enabled || input.Limit <= 0 || input.SessionID == "" || cache == nil {
 		return

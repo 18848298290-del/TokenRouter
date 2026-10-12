@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// SnapshotMetadata 保存重建和展开事件所需的提供商 ID、名称、平台及所属分组。
+// SnapshotMetadata identifies a provider and its platform and groups for rebuilds and event expansion.
 type SnapshotMetadata struct {
 	ID       int64
 	Name     string
@@ -13,13 +13,13 @@ type SnapshotMetadata struct {
 	GroupIDs []int64
 }
 
-// SnapshotProvider 向调度器提供重建元数据，发布数据由存储适配器保存。
-// 同一批次的重建复用该对象。
+// SnapshotProvider exposes rebuild metadata while the storage adapter holds publishable data.
+// Rebuilds within a batch reuse the object.
 type SnapshotProvider interface {
 	SnapshotMetadata() SnapshotMetadata
 }
 
-// SnapshotGroup 保存判断分组启停所需的当前状态。
+// SnapshotGroup holds the current state used to decide whether group buckets are active.
 type SnapshotGroup struct {
 	ID       int64
 	Hydrated bool
@@ -27,7 +27,7 @@ type SnapshotGroup struct {
 	Status   string
 }
 
-// SnapshotProviderSource 按分组和平台查询可调度提供商，返回可发布的快照对象。
+// SnapshotProviderSource queries schedulable providers by group and platform as publishable snapshots.
 type SnapshotProviderSource interface {
 	GetByID(context.Context, int64) (SnapshotProvider, error)
 	GetByIDs(context.Context, []int64) ([]SnapshotProvider, error)
@@ -45,7 +45,8 @@ type SnapshotGroupSource interface {
 	ListActive(context.Context) ([]SnapshotGroup, error)
 }
 
-// SnapshotOptions 由 app 提供。nil 配置使用默认值，DbFallbackEnabled 为 false 则关闭数据库回退。
+// SnapshotOptions configures the service. Nil uses defaults; false DbFallbackEnabled disables database
+// fallback.
 type SnapshotOptions struct {
 	DbFallbackEnabled          bool
 	DbFallbackMaxQPS           int
@@ -58,7 +59,7 @@ type SnapshotOptions struct {
 	OutboxBacklogRebuildRows   int
 }
 
-// SnapshotCache 读写调度快照，快照对象由存储适配器解码和发布。
+// SnapshotCache reads and writes scheduler snapshots decoded and published by the storage adapter.
 type SnapshotCache interface {
 	GetSnapshot(context.Context, SchedulerBucket) ([]SnapshotProvider, bool, error)
 	CaptureBucketWriteToken(context.Context, SchedulerBucket) (SchedulerBucketWriteToken, error)
@@ -77,7 +78,7 @@ type SnapshotCache interface {
 	SetOutboxWatermark(context.Context, int64) error
 }
 
-// SnapshotBindings 提供未找到提供商或分组时的错误值，以及诊断回调。
+// SnapshotBindings supplies not-found errors and diagnostic callbacks.
 type SnapshotBindings struct {
 	ProviderNotFound error
 	GroupNotFound    error

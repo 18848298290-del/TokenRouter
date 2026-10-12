@@ -83,7 +83,8 @@ VALUES ($1, 'subscription', 0, 'unused', 1, 0, 'legacy redeem', $2, 14)
 RETURNING id
 `, "MIGRATE-REDEEM-"+time.Unix(0, suffix).UTC().Format("150405000000"), group2ID).Scan(&redeemCodeID))
 
-	// 历史表限制同一用户和分组只有一条未删除订阅，支付来源样本使用另一名用户。
+	// The historical schema allows one undeleted subscription per user and group, so the payment fixture uses
+	// another user.
 	var paymentUserID int64
 	require.NoError(t, tx.QueryRowContext(ctx, `INSERT INTO users (email, password_hash) VALUES ($1, 'hash') RETURNING id`, "payment-"+int64ToString(suffix)+"@example.test").Scan(&paymentUserID))
 

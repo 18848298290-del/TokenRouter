@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestVideoTasksRedisOwnershipAndCompletion 通过隔离的 Redis 检查任务归属、完成认领和失败释放。
+// TestVideoTasksRedisOwnershipAndCompletion checks task ownership, billing claims, and release using isolated Redis.
 func TestVideoTasksRedisOwnershipAndCompletion(t *testing.T) {
 	ctx := context.Background()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
@@ -98,7 +98,7 @@ func TestVideoTasksRedisOwnershipAndCompletion(t *testing.T) {
 	claimed, err := tasks.ClaimGrokVideoBilling(ctx, "no-pending", 2, 3)
 	require.NoError(t, err)
 	require.True(t, claimed, "缺少观测时不能提前消耗领取权")
-	// JSON 编码省略零值字段。
+	// Optional zero-value fields are omitted from JSON.
 	data, err := json.Marshal(GrokVideoPendingBilling{Model: "old"})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"model":"old"}`, string(data))

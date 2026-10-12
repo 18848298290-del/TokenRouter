@@ -12,12 +12,12 @@ type tlsFingerprintProfileRepository struct {
 	client *ent.Client
 }
 
-// NewTLSFingerprintProfileRepository 创建 TLS 指纹模板仓库。
+// NewTLSFingerprintProfileRepository creates a TLS profile repository.
 func NewTLSFingerprintProfileRepository(client *ent.Client) egress.TLSFingerprintProfileRepository {
 	return &tlsFingerprintProfileRepository{client: client}
 }
 
-// List 获取所有模板。
+// List returns all TLS profiles ordered by name.
 func (r *tlsFingerprintProfileRepository) List(ctx context.Context) ([]*egress.TLSFingerprintProfile, error) {
 	profiles, err := r.client.TLSFingerprintProfile.Query().
 		Order(ent.Asc(tlsfingerprintprofile.FieldName)).
@@ -33,7 +33,7 @@ func (r *tlsFingerprintProfileRepository) List(ctx context.Context) ([]*egress.T
 	return result, nil
 }
 
-// GetByID 根据 ID 获取模板。
+// GetByID returns a TLS profile, or nil when the ID is missing.
 func (r *tlsFingerprintProfileRepository) GetByID(ctx context.Context, id int64) (*egress.TLSFingerprintProfile, error) {
 	p, err := r.client.TLSFingerprintProfile.Get(ctx, id)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *tlsFingerprintProfileRepository) GetByID(ctx context.Context, id int64)
 	return r.toModel(p), nil
 }
 
-// Create 创建模板。
+// Create persists a TLS profile.
 func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *egress.TLSFingerprintProfile) (*egress.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.Create().
 		SetName(p.Name).
@@ -89,7 +89,7 @@ func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *egress.
 	return r.toModel(created), nil
 }
 
-// Update 更新模板。
+// Update replaces a TLS profile's fields, clearing empty optional values.
 func (r *tlsFingerprintProfileRepository) Update(ctx context.Context, p *egress.TLSFingerprintProfile) (*egress.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.UpdateOneID(p.ID).
 		SetName(p.Name).
@@ -154,12 +154,12 @@ func (r *tlsFingerprintProfileRepository) Update(ctx context.Context, p *egress.
 	return r.toModel(updated), nil
 }
 
-// Delete 删除模板。
+// Delete deletes a TLS profile.
 func (r *tlsFingerprintProfileRepository) Delete(ctx context.Context, id int64) error {
 	return r.client.TLSFingerprintProfile.DeleteOneID(id).Exec(ctx)
 }
 
-// toModel 将 Ent 实体转换为服务模型。
+// toModel converts an Ent entity to an egress profile.
 func (r *tlsFingerprintProfileRepository) toModel(e *ent.TLSFingerprintProfile) *egress.TLSFingerprintProfile {
 	p := &egress.TLSFingerprintProfile{
 		ID:                  e.ID,
@@ -179,7 +179,7 @@ func (r *tlsFingerprintProfileRepository) toModel(e *ent.TLSFingerprintProfile) 
 		UpdatedAt:           e.UpdatedAt,
 	}
 
-	// 确保切片不为 nil
+	// Use empty slices so JSON responses contain arrays rather than null.
 	if p.CipherSuites == nil {
 		p.CipherSuites = []uint16{}
 	}

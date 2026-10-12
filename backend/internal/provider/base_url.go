@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// OpenAIBaseURL 解析 OpenAI 协议族提供商的上游 base_url。
-// 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
-// Grok 的默认地址由调用方解析，此处返回空字符串。
+// OpenAIBaseURL resolves the upstream base URL for OpenAI and CN providers.
+// CN providers include Kimi, Zhipu, and DeepSeek. Grok uses GetGrokBaseURL;
+// this method returns empty for Grok and other unsupported platforms.
 func (r *Record) OpenAIBaseURL(adaptive bool) string {
 	if !r.IsOpenAI() && !r.IsCNProvider() {
 		return ""
@@ -23,7 +23,7 @@ func (r *Record) OpenAIBaseURL(adaptive bool) string {
 			return baseURL
 		}
 	}
-	// 平台默认 base_url：CN 供应商按 provider_mode 选择 payg / coding 默认值。
+	// CN defaults depend on the payg or coding provider mode.
 	switch r.Platform {
 	case PlatformKimi:
 		if r.GetProviderMode() == ProviderModeCoding {

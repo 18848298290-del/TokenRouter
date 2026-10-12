@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
-// TestSetBalanceReturnsLockedOldValue 用真实行锁固定结算先于 set 提交，核对返回的实际旧值。
+// TestSetBalanceReturnsLockedOldValue holds a row lock until settlement commits, then checks the old balance returned by SetBalance.
 func TestSetBalanceReturnsLockedOldValue(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)

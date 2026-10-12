@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CCRequestOptions 通过调用方提供的回调写入平台专属 Header。
+// CCRequestOptions supplies transport and platform-specific header callbacks for Chat requests.
 type CCRequestOptions struct {
 	URL              string
 	Token            string `json:"-"`
@@ -25,7 +25,8 @@ type CCRequestOptions struct {
 	TransportError   func(error) error
 }
 
-// SendChatRequest 保持取得 context、构造、释放及 Header 覆写的原先后顺序。
+// SendChatRequest builds and sends a Chat request after transport preparation and final header overrides.
+// The caller owns the returned response body.
 func SendChatRequest(ctx context.Context, body []byte, options CCRequestOptions) (*http.Response, error) {
 	upstreamCtx, release := options.RequestContext(ctx)
 	request, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, options.URL, bytes.NewReader(body))
@@ -58,6 +59,6 @@ func SendChatRequest(ctx context.Context, body []byte, options CCRequestOptions)
 	return response, nil
 }
 
-// String 避免调试输出展开请求凭据和透传 Header。
+// String returns a label that omits credentials and forwarded headers.
 func (CCRequestOptions) String() string     { return "openai chat request options" }
 func (o CCRequestOptions) GoString() string { return o.String() }

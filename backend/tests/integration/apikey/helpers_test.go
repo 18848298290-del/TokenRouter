@@ -21,7 +21,7 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// newAPIKeyRepoSQLite 创建使用 SQLite 的 API Key 测试存储。
+// newAPIKeyRepoSQLite creates an in-memory SQLite API key store with foreign keys enabled.
 func newAPIKeyRepoSQLite(t *testing.T) (*postgres.KeyStore, *dbent.Client) {
 	t.Helper()
 
@@ -39,7 +39,7 @@ func newAPIKeyRepoSQLite(t *testing.T) (*postgres.KeyStore, *dbent.Client) {
 	return newKeyStoreFixture(client, db), client
 }
 
-// mustCreateAPIKeyRepoUser 创建 API Key 测试使用的用户。
+// mustCreateAPIKeyRepoUser creates an active user for API key storage tests.
 func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.Client, email string) *identity.User {
 	t.Helper()
 	u, err := client.User.Create().
@@ -52,7 +52,7 @@ func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.C
 	return identitypostgres.UserFromEntity(u)
 }
 
-// newLimitedAPIKey 按用户、密钥和状态构造限额测试使用的 Key。
+// newLimitedAPIKey constructs an API key fixture for user-limit tests.
 func newLimitedAPIKey(userID int64, key, status string) *apikey.APIKey {
 	return &apikey.APIKey{
 		UserID: userID,
@@ -62,7 +62,7 @@ func newLimitedAPIKey(userID int64, key, status string) *apikey.APIKey {
 	}
 }
 
-// newKeyStoreFixture 使用传入的 SQL 连接和 Ent 客户端构造 Key 存储与批量用量查询。
+// newKeyStoreFixture uses the supplied executor for both key storage and batched usage totals.
 func newKeyStoreFixture(client *dbent.Client, exec postgresinfra.Executor) *postgres.KeyStore {
 	return postgres.NewKeyStoreWithSQL(client, exec, func(ctx context.Context, ids []int64) (map[int64]float64, error) {
 		return usagepostgres.ReadAPIKeyUsageTotals(ctx, exec, nil, ids)

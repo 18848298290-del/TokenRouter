@@ -9,8 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_TopLevelFunctionTool 验证 issue #5364 的最小复现体：Codex Desktop 内置 automation_update 带
-// parameters.type = null，upstream 回 400 invalid_function_parameters。
+// TestSanitizeOpenAIResponsesToolParameterTypes_TopLevelFunctionTool reproduces issue #5364:
+// the Codex Desktop automation_update tool sends parameters.type=null, causing HTTP 400 invalid_function_parameters.
 func TestSanitizeOpenAIResponsesToolParameterTypes_TopLevelFunctionTool(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.6-sol",
@@ -31,16 +31,16 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_TopLevelFunctionTool(t *testi
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
-	// 只改 type，工具其余定义原样保留。
+	// The repair keeps the rest of the tool definition.
 	require.Equal(t, "automation_update", gjson.GetBytes(sanitized, "tools.0.name").String())
 	require.Equal(t, "Update an automation.", gjson.GetBytes(sanitized, "tools.0.description").String())
 	require.True(t, gjson.GetBytes(sanitized, "tools.0.parameters.properties").IsObject())
-	// 请求体其余字段不受影响。
+	// Unrelated request fields retain their values.
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(sanitized, "model").String())
 	require.Equal(t, "Reply with OK.", gjson.GetBytes(sanitized, "input").String())
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched 检查合法 Schema 返回 changed=false 和原字节，保留 prompt cache 前缀。
+// TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched checks byte retention for prompt cache prefixes.
 func TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"ok","parameters":{"type":"object","properties":{}}}]}`)
 
@@ -51,7 +51,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched(t *testi
 	require.Equal(t, string(body), string(sanitized))
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_MissingTypeNotInvented 检查缺失 type 的 Schema 保持原样，缺失表示允许任意类型。
+// TestSanitizeOpenAIResponsesToolParameterTypes_MissingTypeNotInvented keeps permissive schemas unconstrained.
 func TestSanitizeOpenAIResponsesToolParameterTypes_MissingTypeNotInvented(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"ok","parameters":{"properties":{}}}]}`)
 
@@ -115,8 +115,8 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_ObjectUnionMissingTypeSafetyB
 	}
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools 验证多轮历史：工具定义沉进 input 后，upstream 报错路径形如
-// input[N].tools[i].tools[j].parameters，两层都要修。
+// TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools covers tool definitions nested in history.
+// Both input[N].tools[i].parameters and input[N].tools[i].tools[j].parameters require repair.
 func TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools(t *testing.T) {
 	body := []byte(`{
 		"input": [
@@ -147,13 +147,13 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools(t *testing
 	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.0.tools.1.parameters.type").String())
 	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.1.parameters.type").String())
 	require.Equal(t, "null", gjson.GetBytes(sanitized, "input.1.parameters.type").Raw)
-	// 原本合法的兄弟条目保持不变。
+	// Valid neighboring tools retain their fields.
 	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.0.tools.0.parameters.type").String())
 	require.Equal(t, "hi", gjson.GetBytes(sanitized, "input.0.content").String())
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_ChatCompletionsShape 验证 ChatCompletions 形态的工具（{type:"function", function:{...}}）同样可能出现在
-// Responses 请求里，见 normalizeCodexTools。
+// TestSanitizeOpenAIResponsesToolParameterTypes_ChatCompletionsShape covers function wrappers
+// of the form {type:"function", function:{...}} inside Responses requests.
 func TestSanitizeOpenAIResponsesToolParameterTypes_ChatCompletionsShape(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","function":{"name":"legacy","parameters":{"type":null}}}]}`)
 
@@ -238,7 +238,7 @@ func TestSanitizeOpenAIResponsesToolSchemas_InvalidAndTrailingJSON(t *testing.T)
 	}
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_OnlyOffendingIndexRewritten 验证索引映射：只有坏条目被改，前后兄弟条目按原下标保持不变。
+// TestSanitizeOpenAIResponsesToolParameterTypes_OnlyOffendingIndexRewritten checks repair at a stable array index.
 func TestSanitizeOpenAIResponsesToolParameterTypes_OnlyOffendingIndexRewritten(t *testing.T) {
 	body := []byte(`{"tools":[
 		{"type":"function","name":"a","parameters":{"type":"object"}},
@@ -257,7 +257,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_OnlyOffendingIndexRewritten(t
 	require.Equal(t, 3, int(gjson.GetBytes(sanitized, "tools.#").Int()))
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps 验证畸形/非常规形态不得 panic，且一律按不变处理。
+// TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps checks unsupported field shapes pass through.
 func TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps(t *testing.T) {
 	cases := []struct {
 		name string
@@ -285,7 +285,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps(t *te
 	}
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_DepthGuard 检查超深嵌套在深度上限处停止处理并成功返回。
+// TestSanitizeOpenAIResponsesToolParameterTypes_DepthGuard checks that nested namespaces do not panic.
 func TestSanitizeOpenAIResponsesToolParameterTypes_DepthGuard(t *testing.T) {
 	tool := map[string]any{"type": "function", "name": "deep", "parameters": map[string]any{"type": nil}}
 	for range 12 {
@@ -300,7 +300,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_DepthGuard(t *testing.T) {
 	})
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_OutputStaysValidJSON 检查输出为合法 JSON，目标字段之外的内容与输入相同。
+// TestSanitizeOpenAIResponsesToolParameterTypes_OutputStaysValidJSON checks valid output and unrelated field retention.
 func TestSanitizeOpenAIResponsesToolParameterTypes_OutputStaysValidJSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","tool_choice":"none","store":false,"tools":[{"type":"function","name":"automation_update","parameters":{"type":null,"properties":{}}}]}`)
 
@@ -315,8 +315,8 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_OutputStaysValidJSON(t *testi
 	require.Equal(t, false, decoded["store"])
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_DoesNotMutateInputBody 验证输入 body 是调用方持有的缓冲区（Forward 里 canonicalImageIntentBody 与它同源），
-// 净化返回新切片，输入切片保留原字节。
+// TestSanitizeOpenAIResponsesToolParameterTypes_DoesNotMutateInputBody checks ownership of the caller buffer.
+// A successful repair returns separate bytes and leaves the input intact.
 func TestSanitizeOpenAIResponsesToolParameterTypes_DoesNotMutateInputBody(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"a","parameters":{"type":null}}]}`)
 	original := append([]byte(nil), body...)
@@ -489,12 +489,12 @@ func buildToolSchemaNullTypeBody(t *testing.T, hits int) []byte {
 	return body
 }
 
-// TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits 检查命中数增加时，重写次数保持固定。
+// TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits bounds allocations for many repairs.
 //
-// 逐个 sjson.SetBytes 的写法每命中一处就重扫并全量拷贝一次文档，命中 N 处即 N 次
-// 全量拷贝；/v1/responses 的 body 上限是 gateway.max_body_size（默认 256MB），
-// 构造请求可以塞进百万级命中，会被放大成 TB 级 memcpy。这里用分配次数锁死该行为：
-// 命中数放大 500 倍，分配次数不得随之增长。
+// Patching each path with sjson.SetBytes rescans and copies the whole document per hit.
+// Large request bodies with many null types would multiply the copying cost.
+// The fixtures increase the hit count from 4 to 2000; an allocation ceiling detects
+// a return to one full document rewrite per hit.
 func TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits(t *testing.T) {
 	small := buildToolSchemaNullTypeBody(t, 4)
 	large := buildToolSchemaNullTypeBody(t, 2000)
@@ -506,13 +506,13 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits
 		_, _, _ = SanitizeToolParameterTypes(large)
 	})
 
-	// 命中切片扩容是对数级，留出充裕余量；线性写法在这里会是 2000 量级。
-	// 干净环境实测 large 约 17 allocs，200 是 10 倍余量，同时容忍 CI 慢 pod 上
-	// 包内后台 goroutine（日志/ticker）对进程级 Mallocs 的噪声污染。
+	// Allow room for edit-slice growth while rejecting one allocation per hit.
+	// The ceiling includes headroom for process-wide allocation noise from background
+	// goroutines during AllocsPerRun.
 	require.Less(t, largeAllocs, 200.0,
 		"分配次数随命中数线性增长，说明退回了逐路径全量重写 (small=%v large=%v)", smallAllocs, largeAllocs)
 
-	// 同时确认大 body 的结果确实全部修好了。
+	// Check that the large fixture actually repairs every null type.
 	sanitized, changed, err := SanitizeToolParameterTypes(large)
 	require.NoError(t, err)
 	require.True(t, changed)

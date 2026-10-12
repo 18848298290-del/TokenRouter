@@ -35,7 +35,7 @@ func (s *providerOutput) Emit(event upstream.OutputEvent) error {
 
 func (b trackedMediaBody) Close() error { b.closed.Store(true); return b.ReadCloser.Close() }
 
-// TestEmbeddingsAdapterOwnsNativeTargetAndResponse 用本地 HTTP 服务检查执行目标、凭据 Header、请求报文和响应关闭。
+// TestEmbeddingsAdapterOwnsNativeTargetAndResponse checks headers, body, result mapping, and response closure with a local server.
 func TestEmbeddingsAdapterOwnsNativeTargetAndResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer sensitive-fixture", r.Header.Get("Authorization"))

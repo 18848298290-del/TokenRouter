@@ -1,18 +1,18 @@
 package egress
 
-// Diagnostics 接收调用方注入的日志函数。
+// Diagnostics holds a caller-supplied logging function.
 type Diagnostics struct {
 	Logf func(component, format string, args ...any)
 }
 
-// Log 将组件名和格式化参数传给日志函数。
+// Log forwards the component and formatting arguments when a logger is configured.
 func (d Diagnostics) Log(component, format string, args ...any) {
 	if d.Logf != nil {
 		d.Logf(component, format, args...)
 	}
 }
 
-// diagnosticsOption 返回首个日志配置，未传入时返回零值。
+// diagnosticsOption returns the first option, or a zero value when none is supplied.
 func diagnosticsOption(options []Diagnostics) Diagnostics {
 	if len(options) > 0 {
 		return options[0]

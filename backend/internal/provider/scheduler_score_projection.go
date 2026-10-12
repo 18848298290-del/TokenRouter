@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// SchedulerScoreProviders 仅查询管理评分所需的候选集合，保持筛选与分页独立。
+// SchedulerScoreProviders reads candidate pools for administrative scoring independently of page size.
 type SchedulerScoreProviders interface {
 	ListProvidersForSchedulerScoreFilter(context.Context, string, string, string, string, int64, string) ([]Record, error)
 	ListSchedulableProvidersForAdvancedSchedulerScore(context.Context, *int64, string) ([]Record, error)
@@ -24,7 +24,7 @@ type SchedulerLoad struct {
 	CurrentConcurrency, WaitingCount, LoadRate int
 }
 
-// SchedulerScoreOptions 提供评分参数和执行接口，执行时共用 scheduler 的反馈实例。
+// SchedulerScoreOptions supplies load and scoring callbacks using shared scheduler feedback.
 type SchedulerScoreOptions struct {
 	Load  func(context.Context, []SchedulerLoadRequest) (map[int64]*SchedulerLoad, error)
 	Score func(context.Context, *accessview.GroupConfig, []*Record, map[int64]*SchedulerLoad) map[int64]ProviderSchedulerScore
@@ -36,7 +36,7 @@ type SchedulerScoreView struct {
 	options      SchedulerScoreOptions
 }
 
-// ProviderSchedulerScore 表示管理端展示的提供商调度评分。
+// ProviderSchedulerScore holds scheduling scores displayed to administrators.
 type ProviderSchedulerScore struct {
 	BaseScore             float64 `json:"base_score"`
 	StickyScore           float64 `json:"sticky_score"`
@@ -44,7 +44,7 @@ type ProviderSchedulerScore struct {
 	StickyWeightedEnabled bool    `json:"sticky_weighted_enabled"`
 }
 
-// ProviderSchedulerGroupScore 表示提供商在指定分组中的调度评分。
+// ProviderSchedulerGroupScore holds a provider's scheduling score within one group.
 type ProviderSchedulerGroupScore struct {
 	GroupID   *int64 `json:"group_id"`
 	GroupName string `json:"group_name,omitempty"`
@@ -58,8 +58,8 @@ func NewSchedulerScoreView(reader SchedulerScoreProviders, options SchedulerScor
 	return &SchedulerScoreView{reader, options}
 }
 
-// scoreAdvancedSchedulerPool 对池内提供商计算通用高级调度分数快照。
-// loadMap 为共享的提供商负载数据（含池内全部提供商即可，多余条目无害）；传 nil 时自行批查。
+// scoreAdvancedSchedulerPool scores the schedulable providers in a pool.
+// A supplied loadMap may include extra providers; nil triggers a batch load read.
 func (h *SchedulerScoreView) scoreAdvancedSchedulerPool(ctx context.Context, group *accessview.GroupConfig, providers []Record, loadMap map[int64]*SchedulerLoad) map[int64]ProviderSchedulerScore {
 	if len(providers) == 0 {
 		return nil
@@ -94,8 +94,8 @@ func (h *SchedulerScoreView) scoreAdvancedSchedulerPool(ctx context.Context, gro
 	return result
 }
 
-// fetchAdvancedSchedulerLoadMap 一次性批查给定高级调度候选的负载数据；
-// 失败时记录日志并返回空表，评分核心会将缺失负载视为中性信号。
+// fetchAdvancedSchedulerLoadMap reads candidate loads in one deduplicated batch.
+// Read failures are logged and return an empty map; missing load observations receive neutral scores.
 func (h *SchedulerScoreView) fetchAdvancedSchedulerLoadMap(ctx context.Context, providers []*Record) map[int64]*SchedulerLoad {
 	loadMap := map[int64]*SchedulerLoad{}
 	if h.options.Load == nil || len(providers) == 0 {
@@ -154,8 +154,8 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 		return nil, nil
 	}
 
-	// 先取各分组池，再对"过滤池 ∪ 分组池"的提供商并集做一次负载批查，
-	// 按批次查询 Redis，供各候选池共用。
+	// Collect group pools before querying loads for the union of the filtered and group pools.
+	// Each scoring pool then shares that batch of load observations.
 	groupIDList := make([]int64, 0, len(advancedGroups))
 	for groupID := range advancedGroups {
 		groupIDList = append(groupIDList, groupID)
@@ -238,7 +238,7 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 		}
 		scoreGroupPool(&gid, advancedGroups[gid], groupNameByID, pool)
 	}
-	// 只返回至少属于一个高级调度分组的评分；基础分组和未分组提供商不显示该管理配置。
+	// Expose base scores for providers with advanced group scores; basic or ungrouped providers omit this view.
 	for providerID := range baseScores {
 		if _, ok := groupScoresByProvider[providerID]; !ok {
 			delete(baseScores, providerID)
@@ -272,7 +272,7 @@ func (h *SchedulerScoreView) listProviderSchedulerScoreFilterPool(
 	return providers
 }
 
-// Build 保留过滤池与分组池的并集负载批查，以及分组稳定排序。
+// Build scores the filtered and group pools using shared load data and returns group scores ordered by group ID.
 func (h *SchedulerScoreView) Build(ctx context.Context, values []Record, platform, kind, status, search string, groupID int64, privacy string) (map[int64]*ProviderSchedulerScore, map[int64][]ProviderSchedulerGroupScore) {
 	pool := h.listProviderSchedulerScoreFilterPool(ctx, platform, kind, status, search, groupID, privacy)
 	return h.buildAdvancedProviderSchedulerScores(ctx, values, pool)

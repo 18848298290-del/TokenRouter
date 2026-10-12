@@ -30,7 +30,7 @@ type BatchAPIKeysUsageRequest struct {
 	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
 }
 
-// parseOptionalBoolDashboardFilter 解析可选布尔筛选，空值表示不启用该条件。
+// parseOptionalBoolDashboardFilter returns nil for an empty filter and rejects invalid booleans.
 func parseOptionalBoolDashboardFilter(c *gin.Context, key string) (*bool, error) {
 	raw := strings.TrimSpace(c.Query(key))
 	if raw == "" {
@@ -52,10 +52,10 @@ func NewDashboardHandler(dashboardService *usage.DashboardService, calendar time
 	}
 }
 
-// parseTimeRange parses start_date, end_date query parameters
-// Uses user's timezone if provided, otherwise falls back to server timezone.
+// parseTimeRange parses start_date and end_date, expanding date-only ends by one calendar day.
+// Missing or invalid timezones use the server calendar.
 func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time.Time) {
-	userTZ := c.Query("timezone") // Get user's timezone from request
+	userTZ := c.Query("timezone")
 	now := calendar.NowInUserLocation(userTZ)
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
@@ -88,7 +88,7 @@ func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time
 	return startTime, endTime
 }
 
-// GetStats handles getting dashboard statistics
+// GetStats returns dashboard statistics and handler uptime.
 // GET /api/v1/admin/dashboard/stats
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	stats, err := h.dashboardService.GetDashboardStats(c.Request.Context())
@@ -97,65 +97,64 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		return
 	}
 
-	// Calculate uptime in seconds
 	uptime := int64(time.Since(h.startTime).Seconds())
 
 	response.Success(c, gin.H{
-		// 用户统计
+		// User counts.
 		"total_users":     stats.TotalUsers,
 		"today_new_users": stats.TodayNewUsers,
 		"active_users":    stats.ActiveUsers,
 
-		// API Key 统计
+		// API key counts.
 		"total_api_keys":  stats.TotalAPIKeys,
 		"active_api_keys": stats.ActiveAPIKeys,
 
-		// 提供商统计
+		// Provider counts by status.
 		"total_providers":     stats.TotalProviders,
 		"normal_providers":    stats.NormalProviders,
 		"error_providers":     stats.ErrorProviders,
 		"ratelimit_providers": stats.RateLimitProviders,
 		"overload_providers":  stats.OverloadProviders,
 
-		// 累计 Token 使用统计
+		// Retained usage totals.
 		"total_requests":              stats.TotalRequests,
 		"total_input_tokens":          stats.TotalInputTokens,
 		"total_output_tokens":         stats.TotalOutputTokens,
 		"total_cache_creation_tokens": stats.TotalCacheCreationTokens,
 		"total_cache_read_tokens":     stats.TotalCacheReadTokens,
 		"total_tokens":                stats.TotalTokens,
-		"total_cost":                  stats.TotalCost,       // 标准计费
-		"total_actual_cost":           stats.TotalActualCost, // 实际扣除
+		"total_cost":                  stats.TotalCost,       // Cost before the user multiplier.
+		"total_actual_cost":           stats.TotalActualCost, // Amount charged.
 
-		// 今日 Token 使用统计
+		// Today's usage totals.
 		"today_requests":              stats.TodayRequests,
 		"today_input_tokens":          stats.TodayInputTokens,
 		"today_output_tokens":         stats.TodayOutputTokens,
 		"today_cache_creation_tokens": stats.TodayCacheCreationTokens,
 		"today_cache_read_tokens":     stats.TodayCacheReadTokens,
 		"today_tokens":                stats.TodayTokens,
-		"today_cost":                  stats.TodayCost,       // 今日标准计费
-		"today_actual_cost":           stats.TodayActualCost, // 今日实际扣除
+		"today_cost":                  stats.TodayCost,       // Today's cost before the user multiplier.
+		"today_actual_cost":           stats.TodayActualCost, // Today's amount charged.
 
-		// 系统运行统计
+		// Request latency and uptime.
 		"average_duration_ms": stats.AverageDurationMs,
 		"uptime":              uptime,
 
-		// 性能指标
+		// Recent request and token rates.
 		"rpm": stats.Rpm,
 		"tpm": stats.Tpm,
 
-		// 预聚合新鲜度
+		// Aggregation freshness and hourly activity.
 		"hourly_active_users": stats.HourlyActiveUsers,
 		"stats_updated_at":    stats.StatsUpdatedAt,
 		"stats_stale":         stats.StatsStale,
 	})
 }
 
-// GetRealtimeMetrics handles getting real-time system metrics
+// GetRealtimeMetrics returns placeholder zero-valued metrics.
 // GET /api/v1/admin/dashboard/realtime
 func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
-	// Return mock data for now
+	// These fields are not connected to live measurements.
 	response.Success(c, gin.H{
 		"active_requests":       0,
 		"requests_per_minute":   0,
@@ -164,14 +163,14 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 	})
 }
 
-// GetUsageTrend handles getting usage trend data
+// GetUsageTrend returns filtered usage trends.
 // GET /api/v1/admin/dashboard/trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id, model, provider_id, group_id, request_type, stream, billing_type.
+// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id, model, provider_id,
+// group_id, request_type, stream, billing_type.
 func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 	granularity := c.DefaultQuery("granularity", "day")
 
-	// Parse optional filter params
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	var model string
 	var requestType *int16
@@ -254,13 +253,12 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	})
 }
 
-// GetModelStats handles getting model usage statistics
+// GetModelStats returns usage grouped by the selected model source.
 // GET /api/v1/admin/dashboard/models
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, provider_id, group_id, request_type, stream, billing_type.
 func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 
-	// Parse optional filter params
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	modelSource := usage.ModelSourceRequested
 	var requestType *int16
@@ -346,7 +344,7 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	})
 }
 
-// GetGroupStats handles getting group usage statistics
+// GetGroupStats returns filtered group usage statistics.
 // GET /api/v1/admin/dashboard/groups
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, provider_id, group_id, request_type, stream, billing_type.
 func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
@@ -429,7 +427,7 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	})
 }
 
-// GetAPIKeyUsageTrend handles getting API key usage trend data
+// GetAPIKeyUsageTrend returns trends for the top API keys.
 // GET /api/v1/admin/dashboard/api-keys-trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 5).
 func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
@@ -456,7 +454,7 @@ func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 	})
 }
 
-// GetUserUsageTrend handles getting user usage trend data
+// GetUserUsageTrend returns trends for the top spending users.
 // GET /api/v1/admin/dashboard/users-trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12).
 func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
@@ -494,7 +492,7 @@ func parseRankingLimit(raw string) int {
 	return limit
 }
 
-// GetUserSpendingRanking handles getting user spending ranking data.
+// GetUserSpendingRanking returns users ranked by spending.
 // GET /api/v1/admin/dashboard/users-ranking
 func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
@@ -520,7 +518,7 @@ func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchUsersUsage handles getting usage stats for multiple users
+// GetBatchUsersUsage returns usage statistics for multiple users.
 // POST /api/v1/admin/dashboard/users-usage
 func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	var req BatchUsersUsageRequest
@@ -535,7 +533,7 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 		return
 	}
 
-	// cacheKey 必须包含当日日期，否则跨午夜后 30s 内会复用昨天的 "today_*" 结果。
+	// The service cache includes today's date so midnight cannot reuse yesterday's today_* totals.
 	stats, hit, err := h.dashboardService.GetBatchUsersUsageCached(c.Request.Context(), userIDs)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage stats")
@@ -547,7 +545,7 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchAPIKeysUsage handles getting usage stats for multiple API keys
+// GetBatchAPIKeysUsage returns usage statistics for multiple API keys.
 // POST /api/v1/admin/dashboard/api-keys-usage
 func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 	var req BatchAPIKeysUsageRequest
@@ -573,7 +571,7 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetUserBreakdown handles getting per-user usage breakdown within a dimension.
+// GetUserBreakdown returns per-user usage within the selected dimension.
 // GET /api/v1/admin/dashboard/user-breakdown
 // Query params: start_date, end_date, group_id, model, endpoint, endpoint_type, limit.
 func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
@@ -595,7 +593,6 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 	dim.Endpoint = c.Query("endpoint")
 	dim.EndpointType = c.DefaultQuery("endpoint_type", "inbound")
 
-	// Additional filter conditions
 	if v := c.Query("user_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			dim.UserID = id
@@ -638,7 +635,7 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 		}
 	}
 
-	// sort_by 由 repo 层 allowlist 校验;非法值静默回退默认排序(actual_cost)。
+	// The repository validates sort_by against an allowlist and defaults invalid values to actual_cost.
 	dim.SortBy = strings.TrimSpace(c.Query("sort_by"))
 
 	limit := 50

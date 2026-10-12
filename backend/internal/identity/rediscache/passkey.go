@@ -20,7 +20,7 @@ type passkeySessionStore struct {
 	redis *redis.Client
 }
 
-// NewPasskeySessionStore 创建基于 Redis 的一次性 WebAuthn 会话存储。
+// NewPasskeySessionStore creates a Redis store for one-time WebAuthn sessions.
 func NewPasskeySessionStore(redisClient *redis.Client) identity.PasskeySessionStore {
 	return &passkeySessionStore{redis: redisClient}
 }
@@ -56,7 +56,7 @@ func (s *passkeySessionStore) Consume(
 	if token == "" || len(token) > 128 {
 		return nil, identity.ErrPasskeySession
 	}
-	// GETDEL 保证 challenge 在首次 finish 尝试时即失效，防止并发重放。
+	// GETDEL consumes the challenge on the first finish attempt, preventing concurrent reuse.
 	payload, err := s.redis.GetDel(ctx, passkeySessionPrefix+token).Bytes()
 	if err == redis.Nil {
 		return nil, identity.ErrPasskeySession

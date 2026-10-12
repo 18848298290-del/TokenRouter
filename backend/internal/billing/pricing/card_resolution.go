@@ -1,6 +1,6 @@
 package pricing
 
-// ResolveConfiguredPricing 应用显式价卡的区间、默认桶和倍率，不修改输入价卡。
+// ResolveConfiguredPricing applies a card's intervals, default prices, and multipliers without modifying the card.
 func ResolveConfiguredPricing(config *ModelPricingEntry, base *ModelPricing, source string) *ResolvedPricing {
 	mode := config.BillingMode
 	if mode == "" {
@@ -21,17 +21,17 @@ func ResolveConfiguredPricing(config *ModelPricingEntry, base *ModelPricing, sou
 	return resolved
 }
 
-// PriceCardOverrides 区分显式价格/区间与仅覆盖倍率的条目。
+// PriceCardOverrides reports whether a card supplies explicit prices or valid token intervals.
 func PriceCardOverrides(card *ModelPricingEntry) bool {
 	return card != nil && (HasExplicitPricingPrice(*card) || len(FilterValidTokenIntervals(card.Intervals)) > 0)
 }
 
-// PriceCardNeedsBase 判断是否需要读取 token 基础价，供旧适配保持按需查询。
+// PriceCardNeedsBase reports whether resolution needs token base prices.
 func PriceCardNeedsBase(card *ModelPricingEntry) bool {
 	return card == nil || (card.BillingMode != BillingModePerRequest && card.BillingMode != BillingModeImage && card.BillingMode != BillingModeVideo)
 }
 
-// ResolvePriceCards 统一价格来源优先级及纯倍率继承，不获取任何外部数据。
+// ResolvePriceCards selects price sources and inherits modifier-only cards using the supplied data.
 // @project-doc docs/domains/routing_and_billing.md#group_model_pricing
 func ResolvePriceCards(configPricing *ModelPricingEntry, base *ModelPricing, baseSource string, longContextEnabled bool) *ResolvedPricing {
 	var resolved *ResolvedPricing

@@ -17,8 +17,7 @@ func TestGrokTokenRefreshWindowWithJitter_StableAndBounded(t *testing.T) {
 	require.GreaterOrEqual(t, w1, GrokTokenRefreshSkewMin)
 	require.LessOrEqual(t, w1, base)
 
-	// 不同提供商通常应得到不同结果。该性质并不保证任意提供商对都不同，
-	// 但连续 ID 的哈希分布足以在小样本中断言存在差异。
+	// Different provider IDs may collide, but this sample should contain more than one refresh window.
 	seen := map[time.Duration]bool{}
 	for id := int64(1); id <= 50; id++ {
 		seen[GrokTokenRefreshWindowWithJitter(id, base)] = true
@@ -28,7 +27,7 @@ func TestGrokTokenRefreshWindowWithJitter_StableAndBounded(t *testing.T) {
 
 func TestGrokTokenRefresher_NeedsRefresh_UsesSkewFloor(t *testing.T) {
 	refresher := NewGrokTokenRefresher(nil)
-	// 令牌 50 分钟后过期，位于一小时预热窗口内，应当刷新。
+	// Fifty minutes remaining falls inside the one-hour refresh window even after jitter.
 	expires := time.Now().Add(50 * time.Minute).UTC().Format(time.RFC3339)
 	provider := &Record{
 		ID:       7,
@@ -40,10 +39,10 @@ func TestGrokTokenRefresher_NeedsRefresh_UsesSkewFloor(t *testing.T) {
 			"expires_at":    expires,
 		},
 	}
-	// 传入很小的窗口，NeedsRefresh 会先提升到 grokTokenRefreshSkew 再应用错峰偏移。
+	// NeedsRefresh raises this small window to GrokTokenRefreshSkew before applying jitter.
 	require.True(t, refresher.NeedsRefresh(provider, time.Minute))
 
-	// 过期时间仍很远时无需刷新。
+	// A token expiring well beyond the window needs no refresh.
 	provider.Credentials["expires_at"] = time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
 	require.False(t, refresher.NeedsRefresh(provider, time.Minute))
 }

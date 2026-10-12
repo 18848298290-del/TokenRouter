@@ -11,7 +11,7 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// RequestCredentials 读取执行凭据并处理 Grok 请求级凭据恢复，app 注入依赖。
+// RequestCredentials resolves execution credentials and handles Grok credential recovery within a request.
 type RequestCredentials struct {
 	Source             *providercore.OpenAIExecutionCredentials
 	HasGrokTokenSource bool
@@ -19,7 +19,7 @@ type RequestCredentials struct {
 	Runtime            *providercore.RuntimeBlockState
 }
 
-// CredentialObserver 只接收本次脱敏分类，HTTP Adapter 把它关联到现有 Ops 请求。
+// CredentialObserver receives the sanitized failure classification for association with the Ops request.
 type CredentialObserver interface {
 	ObserveCredentialFailure(int64, forwardcore.GrokCredentialFailure)
 }
@@ -158,7 +158,7 @@ func credentialFailover(output CredentialObserver, provider *ExecutionProvider, 
 	}
 }
 
-// credentialMutation 将凭据失败分类转换为提供商存储需要的更新条件。
+// credentialMutation converts a credential failure into conditional provider updates.
 func credentialMutation(class forwardcore.GrokCredentialFailure) providercore.GrokCredentialMutation {
 	return providercore.GrokCredentialMutation{
 		Permanent:     class.Permanent,

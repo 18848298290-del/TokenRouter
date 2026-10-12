@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// redeemUpdateBuilder 是兑换快照字段的唯一赋值实现，注册补偿和普通管理复用。
+// redeemUpdateBuilder restores redemption snapshot fields for management updates and registration compensation.
 func redeemUpdateBuilder(client *dbent.Client, code *billing.RedeemCode) *dbent.RedeemCodeUpdateOne {
 	update := client.RedeemCode.UpdateOneID(code.ID).
 		SetCode(code.Code).

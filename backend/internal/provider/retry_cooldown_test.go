@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// retryExhaustedCooldownRepoStub 记录同提供商重试耗尽后的本地冷却写入。
+// retryExhaustedCooldownRepoStub records local cooldown writes after same-provider retries are exhausted.
 type retryExhaustedCooldownRepoStub struct {
 	RetryCooldownStore
 
@@ -20,7 +20,7 @@ type retryExhaustedCooldownRepoStub struct {
 
 type capacityShedProviderRepoStub struct {
 	RetryCooldownStore
-	// 嵌入接口，未实现的方法会 panic（不应被调用）
+	// Unexpected calls through the embedded nil interface panic.
 
 	tempUnschedCalls int
 }
@@ -34,8 +34,8 @@ func (r *retryExhaustedCooldownRepoStub) SetTempUnschedulable(context.Context, i
 	return nil
 }
 
-// TestTempUnscheduleRetryableError_PoolModeSkipsLegacyCooldown 验证池模式的
-// 同提供商重试耗尽后进入提供商切换。
+// TestTempUnscheduleRetryableError_PoolModeSkipsLegacyCooldown checks that exhausted
+// pool-mode retries do not write a local cooldown before failover.
 func TestTempUnscheduleRetryableError_PoolModeSkipsLegacyCooldown(t *testing.T) {
 	poolProvider := &Record{
 		LoadLocation: time.LoadLocation, ID: 81,
@@ -52,7 +52,7 @@ func TestTempUnscheduleRetryableError_PoolModeSkipsLegacyCooldown(t *testing.T) 
 
 	require.Zero(t, repo.tempCalls)
 
-	// 非池模式提供商对特殊错误使用兼容冷却规则。
+	// Non-pool providers retain status-specific cooldown handling.
 	repo.provider = &Record{LoadLocation: time.LoadLocation, ID: 82, Type: capability.ProviderTypeOAuth, Platform: capability.PlatformAntigravity}
 	svc.Apply(context.Background(), RetryCooldownInput{ProviderID: repo.provider.ID, Status: 502, Retryable: true})
 	require.Equal(t, 1, repo.tempCalls)
@@ -77,7 +77,7 @@ func TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient(t *testing.T) {
 		require.Zero(t, repo.tempUnschedCalls)
 	})
 
-	// 同样的 502 未标记为请求级瞬时故障时，按提供商错误执行临时停调。
+	// A 502 without the request-scoped transient flag triggers a provider cooldown.
 	t.Run("未标记时保持原有临时摘号语义", func(t *testing.T) {
 		repo := &capacityShedProviderRepoStub{}
 		svc := NewRetryCooldown(repo, RetryCooldownOptions{})

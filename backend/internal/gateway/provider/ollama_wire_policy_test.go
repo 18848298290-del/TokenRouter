@@ -14,7 +14,7 @@ import (
 	upstreamollama "github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// ollamaMaxTokensCapTestProvider 构造带自定义 cap 的 Ollama Cloud usage 提供商。
+// ollamaMaxTokensCapTestProvider creates an Ollama Cloud usage provider with a custom output cap.
 func ollamaMaxTokensCapTestProvider(id int64, cap any) *ExecutionProvider {
 	provider := ollamaUsageProvider(id)
 	provider.Record.Extra[upstreamollama.MaxTokensCapExtraKey] = cap
@@ -51,12 +51,12 @@ func TestOllamaCloudMaxTokensCap(t *testing.T) {
 func TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolution(t *testing.T) {
 	body := []byte(`{"model":"deepseek-chat","max_tokens":100000}`)
 
-	// 参数上限在最终能力解析后应用。
+	// Output caps are applied after the final capabilities are resolved.
 	ollama := ollamaCloudRawChatCompletionsTestProvider()
 	require.JSONEq(t, `{"model":"deepseek-chat","max_tokens":100000}`,
 		string(ApplyOllamaCloudRawChatCompletionsRequest(ollama, body)))
 
-	// 官方 DeepSeek（api.deepseek.com + force_chat_completions）→ 字节级不变。
+	// The official DeepSeek endpoint stays byte-for-byte unchanged even when Chat is forced.
 	official := rawChatCompletionsTestProvider()
 	official.Record.Credentials["base_url"] = "https://api.deepseek.com"
 	official.Record.Extra = map[string]any{
@@ -64,12 +64,12 @@ func TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolutio
 	}
 	require.Equal(t, body, ApplyOllamaCloudRawChatCompletionsRequest(official, body))
 
-	// ollama.com 但无 force_chat_completions（Extra 缺键）→ 不通过钩子判定门槛，字节级不变。
+	// An Ollama endpoint without a Chat routing override skips normalization.
 	noForce := ollamaCloudRawChatCompletionsTestProvider()
 	noForce.Record.Extra = nil
 	require.Equal(t, body, ApplyOllamaCloudRawChatCompletionsRequest(noForce, body))
 
-	// 空 body → 原样返回。
+	// Empty bodies retain their nil or empty representation.
 	require.Equal(t, []byte(nil), ApplyOllamaCloudRawChatCompletionsRequest(ollama, nil))
 	require.Equal(t, []byte{}, ApplyOllamaCloudRawChatCompletionsRequest(ollama, []byte{}))
 }

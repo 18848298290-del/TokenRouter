@@ -18,13 +18,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// integrationDSN 和 integrationDB 供各迁移测试创建事务和历史数据库。
+// integrationDSN and integrationDB let migration tests create transactions and historical databases.
 var (
 	integrationDSN string
 	integrationDB  *sql.DB
 )
 
-// testTx 为测试创建独立事务，在测试结束后回滚。
+// testTx creates a transaction and registers rollback at test cleanup.
 func testTx(t *testing.T) *sql.Tx {
 	t.Helper()
 	tx, err := integrationDB.BeginTx(context.Background(), nil)
@@ -33,7 +33,7 @@ func testTx(t *testing.T) *sql.Tx {
 	return tx
 }
 
-// historicalTx 按文件名顺序执行 before 之前的 SQL，在独立数据库中准备历史版本的表结构。
+// historicalTx prepares an isolated database using migrations whose filenames sort before before.
 func historicalTx(t *testing.T, before string) *sql.Tx {
 	t.Helper()
 	ctx := context.Background()

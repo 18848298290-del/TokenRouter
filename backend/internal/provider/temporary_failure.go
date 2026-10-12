@@ -10,13 +10,13 @@ const (
 	emptyResponseCooldown     = time.Minute
 )
 
-// TemporaryFailureStore 独立写入临时停调字段。
+// TemporaryFailureStore writes temporary scheduling suspensions.
 type TemporaryFailureStore interface {
 	SetTempUnschedulable(context.Context, int64, time.Time, string) error
 }
 
-// TempUnscheduleGoogleConfigError 对服务端配置类 400 错误触发临时封禁，
-// 停调期间，后续请求会跳过该提供商。
+// TempUnscheduleGoogleConfigError attempts a one-minute suspension after a Google configuration error.
+// Persistence failures are logged; successful suspensions exclude the provider from scheduling.
 func TempUnscheduleGoogleConfigError(ctx context.Context, repo TemporaryFailureStore, providerID int64, logPrefix string, logf func(string, ...any)) {
 	until := time.Now().Add(googleConfigErrorCooldown)
 	reason := "400: invalid project resource name (auto temp-unschedule 1m)"
@@ -27,8 +27,8 @@ func TempUnscheduleGoogleConfigError(ctx context.Context, repo TemporaryFailureS
 	}
 }
 
-// TempUnscheduleEmptyResponse 对空流式响应触发临时封禁，
-// 停调期间，后续请求会跳过这个返回空响应的提供商。
+// TempUnscheduleEmptyResponse attempts a one-minute suspension after an empty stream response.
+// Persistence failures are logged; successful suspensions exclude the provider from scheduling.
 func TempUnscheduleEmptyResponse(ctx context.Context, repo TemporaryFailureStore, providerID int64, logPrefix string, logf func(string, ...any)) {
 	until := time.Now().Add(emptyResponseCooldown)
 	reason := "empty stream response (auto temp-unschedule 1m)"

@@ -49,7 +49,7 @@ func TestNormalizeProviderTestMode(t *testing.T) {
 	}
 }
 
-// TestDecisionTestingRequiresJev 检查决策请求只能交给 Jev，并把结构化参数传入执行器。
+// TestDecisionTestingRequiresJev checks that Jev receives structured decision input and other platforms reject it.
 func TestDecisionTestingRequiresJev(t *testing.T) {
 	for _, platform := range []string{PlatformJev, PlatformOpenAI} {
 		t.Run(platform, func(t *testing.T) {
@@ -120,7 +120,8 @@ func (s *testSinkStub) Emit(_ context.Context, event TestEvent) error {
 	return s.err
 }
 
-// TestTestingValidatesBeforeLoadAndPreservesMissingProvider 检查无效协议在读取前返回错误，提供商缺失时在提交 SSE Header 前返回通用错误。
+// TestTestingValidatesBeforeLoadAndPreservesMissingProvider checks early protocol validation and sanitized
+// load errors.
 func TestTestingValidatesBeforeLoadAndPreservesMissingProvider(t *testing.T) {
 	loader := &testLoaderStub{err: errors.New("private database error")}
 	svc := NewTestService(loader, TestOptions{})
@@ -133,7 +134,8 @@ func TestTestingValidatesBeforeLoadAndPreservesMissingProvider(t *testing.T) {
 	require.Equal(t, "Provider not found", sink.emitted[1].Error)
 }
 
-// TestTestingDispatchesExplicitImageWithoutDuplicateLoad 检查图片类型优先于 Compact，请求读取一次提供商并返回脱敏测试目标。
+// TestTestingDispatchesExplicitImageWithoutDuplicateLoad checks that image type overrides Compact with one
+// provider load.
 func TestTestingDispatchesExplicitImageWithoutDuplicateLoad(t *testing.T) {
 	var got PreparedTestRequest
 	loader := &testLoaderStub{target: testTargetStub{info: TestTargetInfo{ProviderSnapshot: ProviderSnapshot{Platform: PlatformGemini, Type: ProviderTypeAPIKey}}, run: func(_ context.Context, req PreparedTestRequest, _ TestEventSink) error { got = req; return nil }}}
@@ -146,7 +148,8 @@ func TestTestingDispatchesExplicitImageWithoutDuplicateLoad(t *testing.T) {
 	require.True(t, got.ExplicitType)
 }
 
-// TestTestingCancelsExecutionOnFirstWriteFailure 验证即使平台执行器忽略输出错误，用例也必须取消其 context 并只尝试一次失败写入。
+// TestTestingCancelsExecutionOnFirstWriteFailure checks cancellation and error reuse when an executor ignores
+// a write failure.
 func TestTestingCancelsExecutionOnFirstWriteFailure(t *testing.T) {
 	failed := errors.New("sink failed")
 	sink := &testSinkStub{err: failed}
@@ -160,7 +163,8 @@ func TestTestingCancelsExecutionOnFirstWriteFailure(t *testing.T) {
 	require.Len(t, sink.emitted, 1)
 }
 
-// TestTestingBackgroundPreservesWireTextAndClock 检查后台收集事件时修复 JSON 字符、丢弃编码失败的事件，并采用最后一个错误。
+// TestTestingBackgroundPreservesWireTextAndClock checks UTF-8 normalization, dropped unencodable events, and
+// the last error.
 func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 	start := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	clockCalls := 0
@@ -192,7 +196,8 @@ func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 	require.Equal(t, "probe/1.0", loader.request.UserAgent)
 }
 
-// TestTestingRejectsProtocolOutsideProviderCapability 检查文字测试使用提供商已启用的协议，图片测试按图片能力执行。
+// TestTestingRejectsProtocolOutsideProviderCapability checks text protocol restrictions and separate image
+// eligibility.
 func TestTestingRejectsProtocolOutsideProviderCapability(t *testing.T) {
 	cases := []struct {
 		name     string

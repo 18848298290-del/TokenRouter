@@ -19,7 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform 验证回退重建目标分组的模型和粘性计划，原 Key 与映射保持原样。
+// TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform checks target-group model and sticky plans while leaving
+// the original key and mapping intact.
 func TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx := requeststate.WithClientProtocol(context.Background(), protocol.ProtocolAnthropicMessages)
@@ -73,7 +74,8 @@ func TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform(t *testing.T) {
 	require.Equal(t, 1, resolveCount)
 }
 
-// TestGroupFallbackStopsAfterOutputOrCancellation 验证已提交的流不能因换组重新开始；客户端取消同样不能触发回退授权。
+// TestGroupFallbackStopsAfterOutputOrCancellation checks that committed output and cancellation prevent
+// fallback authorization.
 func TestGroupFallbackStopsAfterOutputOrCancellation(t *testing.T) {
 	for _, scenario := range []string{"output", "stream", "cancelled"} {
 		t.Run(scenario, func(t *testing.T) {

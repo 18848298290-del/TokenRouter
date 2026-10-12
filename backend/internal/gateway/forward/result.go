@@ -7,9 +7,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Result 保存本次转发的观测结果。
+// Result holds observations from one forwarding attempt.
 type Result struct {
-	// UpstreamResponseModel 是协议转换前的上游模型声明；空值表示未声明。
+	// UpstreamResponseModel is the upstream model before protocol conversion; empty means undeclared.
 	UpstreamResponseModel                      string
 	RequestID                                  string
 	UpstreamHeaders                            map[string][]string

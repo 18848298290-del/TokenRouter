@@ -14,18 +14,18 @@ func TestBuildOpenAIChatCompletionsURL(t *testing.T) {
 		base string
 		want string
 	}{
-		// 已是 /chat/completions：原样返回
+		// Reuse a complete chat/completions endpoint.
 		{"already chat/completions", "https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		// 以 /v1 结尾：追加 /chat/completions
+		// Append the relative endpoint to a versioned base.
 		{"bare /v1", "https://api.openai.com/v1", "https://api.openai.com/v1/chat/completions"},
-		// 其他情况：追加 /v1/chat/completions
+		// Append the full endpoint to an unversioned base.
 		{"bare domain", "https://api.openai.com", "https://api.openai.com/v1/chat/completions"},
 		{"domain with trailing slash", "https://api.openai.com/", "https://api.openai.com/v1/chat/completions"},
-		// 第三方上游常见形式
+		// Cover third-party path prefixes and version segments.
 		{"third-party bare domain", "https://api.deepseek.com", "https://api.deepseek.com/v1/chat/completions"},
 		{"third-party with path prefix", "https://api.gptgod.online/api", "https://api.gptgod.online/api/v1/chat/completions"},
 		{"third-party versioned path", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/chat/completions"},
-		// 带空白字符
+		// Trim surrounding whitespace.
 		{"whitespace trimmed", "  https://api.openai.com/v1  ", "https://api.openai.com/v1/chat/completions"},
 	}
 
@@ -99,7 +99,7 @@ func TestBuildOpenAIEndpointURLPreservesURLComponents(t *testing.T) {
 	}
 }
 
-// TestBuildOpenAIResponsesURL_ProbeURL 检查不同 OpenAI base URL 的探测端点均为 /v1/responses。
+// TestBuildOpenAIResponsesURL_ProbeURL checks response probe paths, retaining a supplied version segment.
 func TestBuildOpenAIResponsesURL_ProbeURL(t *testing.T) {
 	t.Parallel()
 

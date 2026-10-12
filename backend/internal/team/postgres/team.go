@@ -26,7 +26,7 @@ type TeamRepository struct {
 	db       *sql.DB
 }
 
-// UsageReports 读取经团队用例限制后的报表范围。
+// UsageReports reads reports within the scope authorized by the team service.
 type UsageReports interface {
 	GetTeamUsageSummary(context.Context, int64, team.TeamUsageQuery) (*team.TeamUsageSummary, error)
 	ListTeamMemberUsageSeries(context.Context, int64, team.TeamUsageQuery) ([]team.TeamMemberUsageSeries, error)
@@ -36,7 +36,8 @@ type TeamRowScanner interface {
 	Scan(dest ...any) error
 }
 
-// TeamKeys 的事务参与方法不允许替换调用方连接或提交事务。
+// TeamKeys manages team credentials. Its InTx methods use the supplied transaction
+// and leave commit or rollback to the caller.
 type TeamKeys interface {
 	ListTeamKeyStrings(context.Context, int64) ([]string, error)
 	ListTeamKeys(context.Context, int64, *int64) ([]team.TeamAPIKeyItem, error)
@@ -51,12 +52,12 @@ type MemberUsage interface {
 	ResetMemberUsage(context.Context, int64, int64, bool, bool, bool, time.Time) error
 }
 
-// NewTeamRepositoryWithReports 为生产团队仓储注入统一用量报表读取器。
+// NewTeamRepositoryWithReports creates a team repository with the shared usage report reader.
 func NewTeamRepositoryWithReports(db *sql.DB, keys TeamKeys, usage MemberUsage, calendar timezone.Calendar, reports UsageReports) team.TeamRepository {
 	return &TeamRepository{db: db, keys: keys, usage: usage, calendar: &calendar, reports: reports}
 }
 
-// NewTeamRepository 创建使用事务保证成员和所有权约束的团队仓储。
+// NewTeamRepository creates a repository that updates membership and ownership in transactions.
 func NewTeamRepository(db *sql.DB, keys TeamKeys, usage MemberUsage, calendar ...*timezone.Calendar) team.TeamRepository {
 	repo := &TeamRepository{db: db, keys: keys, usage: usage}
 	if len(calendar) > 0 {
@@ -185,7 +186,7 @@ func (r *TeamRepository) ListMembers(ctx context.Context, teamID int64) ([]team.
 	if err != nil {
 		return nil, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Iteration errors are returned through rows.Err; closing a read result is best effort.
 	defer func() { _ = rows.Close() }()
 	members := make([]team.TeamMembership, 0)
 	for rows.Next() {
@@ -232,7 +233,7 @@ func (r *TeamRepository) ListInvitations(ctx context.Context, teamID int64) ([]t
 	if err != nil {
 		return nil, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Iteration errors are returned through rows.Err; closing a read result is best effort.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamInvitation, 0)
 	for rows.Next() {
@@ -313,7 +314,7 @@ func (r *TeamRepository) RevokeInvitation(ctx context.Context, teamID, invitatio
 	return nil
 }
 
-// PreviewInvitation 仅在令牌、状态和受邀邮箱均匹配时返回邀请摘要。
+// PreviewInvitation returns a summary for a pending, unexpired token matching the invitee email.
 func (r *TeamRepository) PreviewInvitation(ctx context.Context, tokenHash, normalizedEmail string, now time.Time) (*team.TeamInvitationPreview, error) {
 	var invitationID int64
 	var invitationEmail, status string
@@ -359,7 +360,8 @@ func (r *TeamRepository) ResolveInvitation(ctx context.Context, tokenHash string
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// 同一用户接受不同邀请时先串行化，再获取邀请和团队行锁，避免形成反向等待。
+	// Serialize invitations for the same user before locking invitation and team rows
+	// so concurrent acceptances acquire locks in the same order.
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, userID); err != nil {
 		return nil, err
 	}
@@ -411,7 +413,8 @@ func (r *TeamRepository) ResolveInvitation(ctx context.Context, tokenHash string
 	if teamStatus != team.TeamStatusActive {
 		return nil, team.ErrTeamSuspended
 	}
-	// 团队行锁获取后另起一条语句统计，确保能看到前一个接受事务刚提交的成员。
+	// Count in a separate statement after acquiring the team lock so the count sees
+	// members committed by the preceding acceptance transaction.
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_memberships WHERE team_id = $1 AND left_at IS NULL AND role = 'member'`, teamID).Scan(&memberCount); err != nil {
 		return nil, err
 	}
@@ -434,7 +437,7 @@ func (r *TeamRepository) ResolveInvitation(ctx context.Context, tokenHash string
 		teamID, userID, defaultDaily, defaultWeekly, defaultMonthly, now); err != nil {
 		return nil, MapTeamConstraintError(err)
 	}
-	// 再次加入时旧 Membership 生命周期内的 Key 不得自动恢复可用。
+	// Rejoining must not reactivate keys created during an earlier membership.
 	if err = r.keys.DisableHistoricalMemberInTx(ctx, tx, teamID, userID, now); err != nil {
 		return nil, err
 	}
@@ -671,7 +674,8 @@ func (r *TeamRepository) ForceTransfer(ctx context.Context, teamID, toUserID int
 	return r.GetContextByTeamID(ctx, teamID)
 }
 
-// transferTeamOwnership 分两步交换角色，避免部分唯一索引在单条 UPDATE 中看到两个 Owner。
+// transferTeamOwnership demotes before promoting so the partial unique index
+// never observes two active owners during the role swap.
 func transferTeamOwnership(ctx context.Context, tx *sql.Tx, teamID, fromUserID, toUserID int64, now time.Time) error {
 	demoted, err := tx.ExecContext(ctx, `
 		UPDATE team_memberships SET role = 'member', daily_limit_usd = 0, weekly_limit_usd = 0, monthly_limit_usd = 0, updated_at = $4
@@ -708,7 +712,7 @@ func (r *TeamRepository) ListAdmin(ctx context.Context) ([]team.TeamAdminListIte
 	if err != nil {
 		return nil, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Iteration errors are returned through rows.Err; closing a read result is best effort.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamAdminListItem, 0)
 	for rows.Next() {
@@ -780,7 +784,8 @@ func (r *TeamRepository) normalizeMemberWindows(member *team.TeamMembership, now
 	normalizeMemberQuotaWindows(member, now, r.dateCalendar())
 }
 
-// dateCalendar 让团队消费窗口与只读统计使用相同的装配时区。
+// dateCalendar uses the configured timezone for membership windows and usage reports;
+// it defaults to time.Local when no calendar is supplied.
 func (r *TeamRepository) dateCalendar() timezone.Calendar {
 	if r.calendar != nil {
 		return *r.calendar

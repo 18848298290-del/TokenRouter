@@ -58,7 +58,8 @@ func TestFailoverClientGone(t *testing.T) {
 	})
 }
 
-// TestCountTokensNativeHTTPAttemptContract 验证无槽计数保留资金预检、逐次原报文改写和失败会话释放，不提交费用或完成任务。
+// TestCountTokensNativeHTTPAttemptContract checks funding preflight, fresh body rewrites, and failed-session release
+// for slot-free counts.
 func TestCountTokensNativeHTTPAttemptContract(t *testing.T) {
 	fixture := &countHTTPContract{t: t, group: 42}
 	key := &apikey.APIKey{ID: 7, GroupID: &fixture.group, Group: &routing.Group{}}

@@ -158,7 +158,7 @@ func TestBuildGrokMediaURLs(t *testing.T) {
 	_, err = BuildVideoURLWithValidator(DefaultBaseURL, " ", nil)
 	require.Error(t, err)
 
-	// 纯点片段和控制字符不能进入上游视频路径。
+	// Reject dot segments and NUL/CR/LF before constructing a video URL.
 	for _, requestID := range []string{".", "..", "req\x00id", "req\rid", "req\nid"} {
 		_, err = BuildVideoURLWithValidator(DefaultBaseURL, requestID, nil)
 		require.Error(t, err, "request_id=%q", requestID)
@@ -186,7 +186,7 @@ func TestValidateBaseURLAllowsPublicThirdPartyGrokAPI(t *testing.T) {
 }
 
 func TestValidateBaseURLPathPrefixPolicy(t *testing.T) {
-	// 非官方主机保留管理员配置的任意 path 前缀。
+	// Custom hosts retain administrator-defined path prefixes.
 	prefixed, err := ValidateBaseURL("https://relay.example.test/xai/v1/")
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/xai/v1", prefixed)
@@ -195,12 +195,12 @@ func TestValidateBaseURLPathPrefixPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/tenant-a/proxy", deepPrefixed)
 
-	// 空 path 仍按惯例补 /v1，保持既有配置兼容。
+	// Empty paths default to /v1 for existing configurations.
 	rootOnly, err := ValidateBaseURL("https://relay.example.test")
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/v1", rootOnly)
 
-	// 官方主机固定 /v1 前缀。
+	// Official hosts require the /v1 prefix.
 	_, err = ValidateBaseURL("https://api.x.ai/xai/v1")
 	require.Error(t, err)
 	_, err = ValidateBaseURL("https://cli-chat-proxy.grok.com/other")
@@ -219,7 +219,7 @@ func TestIsOfficialBaseURL(t *testing.T) {
 		"https://api.x.ai/%76%31",
 		"https://api.x.ai:8443/v1",
 		"HTTPS://CLI-CHAT-PROXY.GROK.COM:443/%76%31/",
-		"::invalid::url", // 无法解析的值按官方处理，回落默认端点
+		"::invalid::url", // Invalid URLs select the default endpoint.
 	}
 	for _, raw := range official {
 		require.True(t, IsOfficialBaseURL(raw), "expected official: %q", raw)
@@ -230,7 +230,7 @@ func TestIsOfficialBaseURL(t *testing.T) {
 		"https://relay.example.test/xai/v1",
 		"http://relay.example.test/v1",
 		"https://grok.com.evil.example.test/v1",
-		"https://api.x.ai.evil.example.test/v1", // 后缀伪装不属于 *.api.x.ai
+		"https://api.x.ai.evil.example.test/v1", // A lookalike suffix is outside *.api.x.ai.
 	}
 	for _, raw := range custom {
 		require.False(t, IsOfficialBaseURL(raw), "expected custom: %q", raw)
@@ -251,7 +251,7 @@ func TestRegionalAPIEndpointsAreOfficialAndTrusted(t *testing.T) {
 		require.Equal(t, raw, validated)
 	}
 
-	// 区域端点作为官方主机同样强制 /v1 path
+	// Regional hosts also require /v1.
 	_, err := ValidateTrustedBaseURL("https://us-east-1.api.x.ai/other")
 	require.Error(t, err)
 }

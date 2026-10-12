@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// legacyConfigKeys 列出部署配置的旧键及其替代键。
+// legacyConfigKeys maps retired deployment keys to their replacements.
 var legacyConfigKeys = []struct {
 	oldKey string
 	newKey string
@@ -35,8 +35,8 @@ var legacyConfigKeys = []struct {
 	{"gateway.openai_scheduler.sticky_escape_error_rate", "gateway.advanced_scheduler.sticky_escape_error_rate"},
 }
 
-// applyLegacyConfigCompatibility 在加载边界统一旧名称，不改写部署文件或环境变量。
-// 环境变量优先于 YAML；同一来源的新名称优先。使用字段是否存在判断，保留零值和 false。
+// applyLegacyConfigCompatibility resolves old names in memory during configuration loading.
+// Environment values precede YAML; new names win within each source. Presence checks retain zero and false.
 // @project-doc docs/interfaces/configuration.md#configuration_sources
 func applyLegacyConfigCompatibility() error {
 	for _, item := range legacyConfigKeys {
@@ -48,7 +48,7 @@ func applyLegacyConfigCompatibility() error {
 		if viper.InConfig(item.newKey) || !viper.InConfig(item.oldKey) {
 			continue
 		}
-		// 合并到内存中的 YAML 层，避免 Set 的最高优先级遮蔽环境变量。
+		// Merge into the in-memory YAML layer so environment variables retain precedence over the aliases.
 		parts := strings.Split(item.newKey, ".")
 		patch := map[string]any{}
 		parent := patch
@@ -65,7 +65,7 @@ func applyLegacyConfigCompatibility() error {
 	return nil
 }
 
-// normalizeLegacyConnectionPoolIsolation 保持旧部署的连接池隔离粒度。
+// normalizeLegacyConnectionPoolIsolation maps old names to the same pool isolation granularity.
 func normalizeLegacyConnectionPoolIsolation(value string) string {
 	switch value {
 	case "account":
@@ -77,7 +77,7 @@ func normalizeLegacyConnectionPoolIsolation(value string) string {
 	}
 }
 
-// warnLegacyResponsesWSSettings 提示部署者从分组协议控制客户端 WS 权限。
+// warnLegacyResponsesWSSettings directs operators to group protocols for client WS permissions.
 func warnLegacyResponsesWSSettings() {
 	for _, key := range []string{"gateway.openai_ws.allow_store_recovery", "gateway.openai_ws.apikey_enabled", "gateway.openai_ws.enabled", "gateway.openai_ws.event_flush_batch_size", "gateway.openai_ws.event_flush_interval_ms", "gateway.openai_ws.force_http", "gateway.openai_ws.http_bridge_enabled", "gateway.openai_ws.ingress_mode_default", "gateway.openai_ws.mode_router_v2_enabled", "gateway.openai_ws.oauth_enabled", "gateway.openai_ws.payload_log_sample_rate", "gateway.openai_ws.prewarm_generate_enabled", "gateway.openai_ws.responses_websockets", "gateway.openai_ws.responses_websockets_v2", "gateway.openai_ws.retry_backoff_initial_ms", "gateway.openai_ws.retry_backoff_max_ms", "gateway.openai_ws.retry_jitter_ratio", "gateway.openai_ws.retry_total_budget_ms", "gateway.openai_ws.store_disabled_conn_mode", "gateway.openai_ws.store_disabled_force_new_conn"} {
 		_ = viper.BindEnv(key)

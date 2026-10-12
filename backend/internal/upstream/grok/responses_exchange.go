@@ -8,7 +8,7 @@ import (
 )
 
 type ResponsesExchange struct {
-	// 桥接与辅助请求保持原单次交换，不继承原生 Responses 的解码重试。
+	// SingleExchange disables decryption recovery for bridge and auxiliary requests.
 	SingleExchange bool
 	Build          func([]byte) (*http.Request, error)
 	Do             func(*http.Request) (*http.Response, error)

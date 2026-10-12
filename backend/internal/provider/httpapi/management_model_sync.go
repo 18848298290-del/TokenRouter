@@ -12,7 +12,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SyncUpstreamModels 从提供商上游同步实时支持模型列表。
+// SyncUpstreamModels fetches the provider's currently supported models from upstream.
 // POST /api/v1/admin/providers/:id/models/sync-upstream
 func (h *ManagementHandler) SyncUpstreamModels(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -53,7 +53,7 @@ func (h *ManagementHandler) SyncUpstreamModels(c *gin.Context) {
 	response.Success(c, gin.H{"models": models})
 }
 
-// SyncUpstreamModelsPreview 使用未保存提供商的临时凭证同步上游实时支持模型列表。
+// SyncUpstreamModelsPreview fetches supported models using credentials for an unsaved provider.
 // POST /api/v1/admin/providers/models/sync-upstream-preview
 func (h *ManagementHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {

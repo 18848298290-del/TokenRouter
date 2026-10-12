@@ -8,7 +8,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// GetAuthCacheInvalidationHealth 返回持久化 outbox 延迟与订阅器健康状态。
+// GetAuthCacheInvalidationHealth returns persisted outbox lag and subscriber health.
 func (h *OpsHandler) GetAuthCacheInvalidationHealth(c *gin.Context) {
 	if h.opsService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")

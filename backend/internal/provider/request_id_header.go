@@ -10,12 +10,13 @@ import (
 const (
 	maxUpstreamRequestIDHeaderNameLen = 64
 
-	// ProviderExtraUpstreamRequestIDHeader 是提供商 extra 中的键，值为直接上游声明请求标识的响应头名。
-	// 未指定时不记录上游请求标识。
+	// ProviderExtraUpstreamRequestIDHeader names the Extra field containing the direct upstream request-ID
+	// response header.
+	// An unset field disables upstream request-ID recording.
 	ProviderExtraUpstreamRequestIDHeader = "upstream_request_id_header"
 )
 
-// UpstreamRequestIDHeaderName 返回提供商指定的上游请求标识头名，未指定时为空串。
+// UpstreamRequestIDHeaderName returns the configured upstream request-ID header, or an empty string when unset.
 func UpstreamRequestIDHeaderName(provider *Record) string {
 	if provider == nil {
 		return ""
@@ -23,8 +24,8 @@ func UpstreamRequestIDHeaderName(provider *Record) string {
 	return strings.TrimSpace(provider.GetExtraString(ProviderExtraUpstreamRequestIDHeader))
 }
 
-// ValidateUpstreamRequestIDHeaderExtra 校验并规范化 extra 中的上游请求标识头名：
-// 必须是合法的 HTTP 头字段名且不超过 64 字节；空白值视为未指定并从 extra 中移除。
+// ValidateUpstreamRequestIDHeaderExtra trims and validates the header name in place.
+// Names must be valid HTTP header fields of at most 64 bytes; blank strings remove the Extra entry.
 func ValidateUpstreamRequestIDHeaderExtra(extra map[string]any) error {
 	if extra == nil {
 		return nil

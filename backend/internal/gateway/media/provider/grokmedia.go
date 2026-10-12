@@ -28,7 +28,7 @@ type GrokMediaOptions struct {
 
 type GrokMedia struct{ Options GrokMediaOptions }
 
-// String 防止技术参数中的令牌或请求被默认日志展开。
+// String formats the provider ID while keeping credentials out of formatted output.
 func (o GrokMediaOptions) String() string {
 	return fmt.Sprintf("media GrokMedia provider=%d", o.ProviderID)
 }

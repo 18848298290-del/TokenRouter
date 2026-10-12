@@ -17,7 +17,7 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// APIKeyFastModePolicy 只读取鉴权中间件写入的可信策略。
+// APIKeyFastModePolicy reads the trusted policy set during authentication.
 func APIKeyFastModePolicy(ctx context.Context) string {
 	if ctx == nil {
 		return apikey.APIKeyFastModePolicyFollowRequest
@@ -31,7 +31,7 @@ func APIKeyFastModePolicy(ctx context.Context) string {
 	return policy
 }
 
-// WithAPIKeyFastModePolicy 将刷新后的单 Key 策略覆盖到派生请求上下文中。
+// WithAPIKeyFastModePolicy binds a refreshed Key policy to a derived request context.
 func WithAPIKeyFastModePolicy(ctx context.Context, policy string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -43,7 +43,7 @@ func WithAPIKeyFastModePolicy(ctx context.Context, policy string) context.Contex
 	return apikey.WithFastModePolicy(ctx, normalized)
 }
 
-// FastModePricingModel 优先使用入口记录的用户可见模型，确保能力判断与分组定价一致。
+// FastModePricingModel prefers the ingress model so capability checks use the same model as group pricing.
 func FastModePricingModel(ctx context.Context, fallback string) string {
 	if ctx != nil {
 		if model, ok := ctx.Value(telemetry.Model).(string); ok && strings.TrimSpace(model) != "" {
@@ -53,8 +53,8 @@ func FastModePricingModel(ctx context.Context, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-// SupportsFastMode 按当前有效分组和模型定价判断 Fast 强制开启能力。
-// 缺少分组、解析器或定价结果时按不支持处理，避免 Key 配置误向上游注入 Fast。
+// SupportsFastMode checks Fast capability using the effective group and model price.
+// Missing group, resolver, or price metadata disables forced Fast injection.
 func SupportsFastMode(ctx context.Context, resolver *billing.PriceResolver, model string) bool {
 	if ctx == nil || resolver == nil {
 		return false
@@ -71,8 +71,8 @@ func SupportsFastMode(ctx context.Context, resolver *billing.PriceResolver, mode
 	return resolved != nil && resolved.SupportsServiceTier
 }
 
-// SupportsAnthropicFastMode 将 Claude Fast 强制开启限制到 Anthropic API Key 直连适配器。
-// Bedrock、Vertex 和 OAuth/Setup Token 路径不会由单 Key 策略注入 Fast。
+// SupportsAnthropicFastMode limits forced Fast injection to direct Anthropic API Key providers.
+// Bedrock, Vertex, OAuth, and Setup Token requests do not receive Key-forced Fast.
 func SupportsAnthropicFastMode(ctx context.Context, resolver *billing.PriceResolver,
 
 	provider *ExecutionProvider, model string,
@@ -81,7 +81,7 @@ func SupportsAnthropicFastMode(ctx context.Context, resolver *billing.PriceResol
 		SupportsFastMode(ctx, resolver, model)
 }
 
-// addAnthropicBetaToken 在保留其它 beta 的同时补齐指定 token。
+// addAnthropicBetaToken adds a missing token while retaining other beta tokens.
 func addAnthropicBetaToken(header, token string) string {
 	if claude.ContainsBetaToken(header, token) {
 		return header
@@ -93,8 +93,8 @@ func addAnthropicBetaToken(header, token string) string {
 	return header + "," + token
 }
 
-// ApplyAnthropicFastMode 将单 Key 策略编码为 Claude 官方 Fast wire 格式。
-// 这里只改写候选请求，最终 beta filter/block 仍由系统策略执行。
+// ApplyAnthropicFastMode encodes the Key policy into Claude Fast request fields.
+// System beta filtering and blocking still apply after this request rewrite.
 func ApplyAnthropicFastMode(
 	ctx context.Context, resolver *billing.PriceResolver,
 

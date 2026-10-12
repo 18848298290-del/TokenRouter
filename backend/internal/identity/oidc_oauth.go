@@ -11,7 +11,7 @@ import (
 
 type OIDCOAuthOptions struct {
 	Enabled                 bool   `mapstructure:"enabled"`
-	ProviderName            string `mapstructure:"provider_name"` // 显示名: "Keycloak" 等
+	ProviderName            string `mapstructure:"provider_name"` // Display name, such as "Keycloak".
 	ClientID                string `mapstructure:"client_id"`
 	ClientSecret            string `mapstructure:"client_secret"`
 	IssuerURL               string `mapstructure:"issuer_url"`
@@ -20,20 +20,20 @@ type OIDCOAuthOptions struct {
 	TokenURL                string `mapstructure:"token_url"`
 	UserInfoURL             string `mapstructure:"userinfo_url"`
 	JWKSURL                 string `mapstructure:"jwks_url"`
-	Scopes                  string `mapstructure:"scopes"`                // 默认 "openid email profile"
-	RedirectURL             string `mapstructure:"redirect_url"`          // 后端回调地址（需在提供方后台登记）
-	FrontendRedirectURL     string `mapstructure:"frontend_redirect_url"` // 前端接收 token 的路由（默认：/auth/oidc/callback）
+	Scopes                  string `mapstructure:"scopes"`                // Defaults to "openid email profile".
+	RedirectURL             string `mapstructure:"redirect_url"`          // Backend callback URL registered with the provider.
+	FrontendRedirectURL     string `mapstructure:"frontend_redirect_url"` // Frontend token callback route; defaults to /auth/oidc/callback.
 	TokenAuthMethod         string `mapstructure:"token_auth_method"`     // client_secret_post / client_secret_basic / none
 	UsePKCE                 bool   `mapstructure:"use_pkce"`
 	ValidateIDToken         bool   `mapstructure:"validate_id_token"`
 	UsePKCEExplicit         bool   `mapstructure:"-" yaml:"-"`
 	ValidateIDTokenExplicit bool   `mapstructure:"-" yaml:"-"`
-	AllowedSigningAlgs      string `mapstructure:"allowed_signing_algs"`   // 默认 "RS256,ES256,PS256"
-	ClockSkewSeconds        int    `mapstructure:"clock_skew_seconds"`     // 默认 120
-	RequireEmailVerified    bool   `mapstructure:"require_email_verified"` // 默认 false
+	AllowedSigningAlgs      string `mapstructure:"allowed_signing_algs"`   // Defaults to "RS256,ES256,PS256".
+	ClockSkewSeconds        int    `mapstructure:"clock_skew_seconds"`     // Defaults to 120 seconds.
+	RequireEmailVerified    bool   `mapstructure:"require_email_verified"` // Defaults to false.
 
-	// 可选：用于从 userinfo JSON 中提取字段的 gjson 路径。
-	// 为空时，服务端会尝试一组常见字段名。
+	// Optional gjson paths for fields in the userinfo response.
+	// Empty paths use a set of common field names.
 	UserInfoEmailPath    string `mapstructure:"userinfo_email_path"`
 	UserInfoIDPath       string `mapstructure:"userinfo_id_path"`
 	UserInfoUsernamePath string `mapstructure:"userinfo_username_path"`
@@ -64,7 +64,7 @@ type OIDCUserInfoClaims struct {
 	AvatarURL     string
 }
 
-// OIDCVerifiedClaims 包含 SDK 验证后的 OIDC 身份和资料字段。
+// OIDCVerifiedClaims contains identity and profile claims verified by the SDK.
 type OIDCVerifiedClaims struct {
 	Issuer, Subject, Email, PreferredUsername, Name string
 	EmailVerified                                   *bool

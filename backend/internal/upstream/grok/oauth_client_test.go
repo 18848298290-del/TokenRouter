@@ -51,7 +51,7 @@ func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	// 测试会注入回环令牌端点，白名单校验需要不安全覆盖开关。
+	// The loopback token endpoint requires the unsafe override switch in this test.
 	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 	t.Setenv(EnvTokenURL, server.URL)
 
@@ -131,7 +131,7 @@ func TestGrokOAuthEntitlementDenialRequiresExplicitEvidence(t *testing.T) {
 }
 
 func TestNewGrokOAuthClient_UnvalidatedTokenURLFallsBackToDefault(t *testing.T) {
-	// 未开启不安全覆盖时不得使用环境变量中的任意 TokenURL，保持失败关闭。
+	// An arbitrary environment endpoint must not receive tokens when overrides are disabled.
 	t.Setenv(EnvAllowUnsafeURLOverrides, "")
 	t.Setenv(EnvTokenURL, "https://evil.example/oauth/token")
 

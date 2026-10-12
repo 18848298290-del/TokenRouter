@@ -33,7 +33,7 @@ func (cyberRuntimeSettingsFixture) GetValue(_ context.Context, key string) (stri
 	}
 }
 
-// TestNativeCyberSessionBindingOnRedis 检查 app 和 HTTP 查询读写相同的 Redis 命名空间，scope 与 TTL 一致。
+// TestNativeCyberSessionBindingOnRedis checks that app and HTTP access share the Redis namespace, scope, and TTL.
 func TestNativeCyberSessionBindingOnRedis(t *testing.T) {
 	client := rediscontainer.New(t)
 	cache := gatewayredis.NewGatewayCache(client)

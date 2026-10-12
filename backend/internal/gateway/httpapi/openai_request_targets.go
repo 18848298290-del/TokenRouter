@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ChatURL 解析提供商的（非 Grok）Chat Completions 上游端点。
+// ChatURL resolves the upstream Chat Completions endpoint for non-Grok providers.
 func (s *OpenAIRequests) ChatURL(provider *gatewayprovider.ExecutionProvider) (string, error) {
 	baseURL := gatewayprovider.ExecutionProtocolTarget(provider).GetOpenAIBaseURL()
 	if baseURL == "" {
@@ -34,8 +34,8 @@ func (s *OpenAIRequests) ChatURL(provider *gatewayprovider.ExecutionProvider) (s
 	return httpclient.BuildOpenAIEndpointURL(validatedURL, "/v1/chat/completions"), nil
 }
 
-// ChatFallbackTarget 为两条 Chat Completions 回退路径解析提供商凭据和端点。
-// Grok 使用 Grok OAuth/API Key 认证和 CLI 端点。
+// ChatFallbackTarget resolves credentials and endpoints for Chat Completions fallback paths.
+// Grok uses its OAuth or API key credentials and CLI endpoint.
 func (s *OpenAIRequests) ChatFallbackTarget(ctx context.Context, provider *gatewayprovider.ExecutionProvider) (apiKey string, targetURL string, err error) {
 	if provider.View().IsGrok() {
 		apiKey, _, err = s.Credentials.Resolve(ctx, gatewayprovider.ExecutionRecord(provider))
@@ -110,12 +110,12 @@ func (s *OpenAIRequests) SendChat(
 	})
 }
 
-// AnthropicURL 保留旧入口，目标校验与路径拼接由唯一实现执行。
+// AnthropicURL validates and builds the native Anthropic target URL.
 func (s *OpenAIRequests) AnthropicURL(provider *gatewayprovider.ExecutionProvider) (string, error) {
 	return forward.NativeAnthropicTargetURL(provider.Record.ID, gatewayprovider.ExecutionProtocolTarget(provider).GetAnthropicProtocolBaseURL(), s.ValidateBaseURL)
 }
 
-// BuildAnthropic 从当前请求 Header 和提供商策略构造请求。
+// BuildAnthropic builds a request from inbound headers and provider policy.
 func (s *OpenAIRequests) BuildAnthropic(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, apiKey, targetURL string) (*http.Request, []byte, error) {
 	var err error
 	body, err = s.applyModelAttributes(ctx, provider, body, "anthropic_messages")
@@ -148,7 +148,7 @@ func (s *OpenAIRequests) RawChatURL(provider *gatewayprovider.ExecutionProvider)
 	return s.ChatURL(provider)
 }
 
-// ImagesURL 保留默认端点、第三方 base 和编辑路径的选择顺序。
+// ImagesURL selects the generation or edit endpoint and applies a configured base URL.
 func (s *OpenAIRequests) ImagesURL(provider *gatewayprovider.ExecutionProvider, endpoint string) (string, error) {
 	targetURL := openAIImagesGenerationsURL
 	if endpoint == upstream.OpenAIImagesEditsEndpoint {

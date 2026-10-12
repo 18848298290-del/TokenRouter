@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 apikey_middleware.go、qoder_gateway.go 与 usage.go 使用的 Key 和订阅上下文读取。
+// These tests cover API key and subscription context reads used by gateway middleware, Qoder, and usage handlers.
 
 import (
 	"testing"

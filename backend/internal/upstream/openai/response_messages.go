@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MessagesResponseOptions 在通用读取选项上补充 Messages 的失败和用量处理。
+// MessagesResponseOptions adds Messages failure and usage handling to shared response options.
 type MessagesResponseOptions struct {
 	ChatResponseOptions
 	MessagesFailure       func([]byte, string, bool, bool) ChatFailure
@@ -27,7 +27,7 @@ type MessagesResponseOptions struct {
 	RecordMissingTerminal func(string)
 }
 
-// ReadMessagesBuffered 保留 Messages 独立的取消、终态和失败用量处理。
+// ReadMessagesBuffered converts a Responses terminal result to Messages JSON and observes usage.
 func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, options MessagesResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -85,7 +85,7 @@ func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, option
 	return result, nil
 }
 
-// ReadMessagesStreaming 保留 Messages 独立的取消、终态和失败用量处理。
+// ReadMessagesStreaming converts Responses events to Messages SSE and returns observed usage on failures.
 func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, options MessagesResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
@@ -182,8 +182,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		}
 		if eventType == "response.failed" || isBareErrorEvent {
 			payloadBytes := []byte(payload)
-			// cyber_policy 致命不可重试：标记供 handler 事后记录；以 Anthropic SSE error 事件
-			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
+			// Record cyber_policy as non-retryable and send an Anthropic error event.
+			// Stop conversion after this rejection so no later content follows the error.
 			if hit, code, msg := DetectOpenAICyberPolicy(payloadBytes); hit {
 				options.MarkCyber(CyberObservation{
 					Code:           code,
@@ -295,7 +295,7 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return resultWithUsage(), nil
 	}
 
-	// handleScanErr logs scanner errors if meaningful.
+	// handleScanErr logs read errors other than cancellation and deadline expiration.
 	handleScanErr := func(err error) {
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn("openai messages stream: read error",
@@ -321,10 +321,10 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return processDataLine(payload)
 	}
 
-	// ── Determine keepalive interval ──
+	// Resolve the downstream keepalive interval.
 	keepaliveInterval := options.KeepaliveInterval()
 
-	// ── No keepalive: fast synchronous path (no goroutine overhead) ──
+	// Scan synchronously when neither timeout nor keepalive work is needed.
 	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		var parser wire.OpenAICompatSSEFrameParser
 		for scanner.Scan() {
@@ -355,7 +355,7 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return missingTerminalErr()
 	}
 
-	// ── With keepalive: goroutine + channel + select ──
+	// Read asynchronously so timers continue while upstream reads block.
 	type scanEvent struct {
 		line string
 		err  error

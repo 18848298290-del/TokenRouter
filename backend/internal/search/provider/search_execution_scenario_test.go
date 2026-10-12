@@ -1,6 +1,6 @@
 package provider
 
-// 本文件覆盖 executor.go、brave.go 与 search/manager.go 的供应商选择和 HTTP 搜索。
+// These scenarios exercise provider selection through the Manager and Brave HTTP executor.
 
 import (
 	"context"

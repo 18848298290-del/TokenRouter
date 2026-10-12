@@ -28,14 +28,15 @@ var (
 	integrationEntClient *dbent.Client
 )
 
-// TestMain 设置 Gin 测试模式和 UTC 时区，再启动 PostgreSQL 运行全部测试。
+// TestMain configures Gin test mode and UTC, then runs the suite with PostgreSQL.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	time.Local = time.UTC
 	os.Exit(runPostgresTests(m))
 }
 
-// runPostgresTests 在隔离 PostgreSQL 中应用迁移并运行支付资金测试，退出前关闭连接和容器。
+// runPostgresTests applies migrations in isolated PostgreSQL and closes the client and container after the
+// tests.
 func runPostgresTests(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

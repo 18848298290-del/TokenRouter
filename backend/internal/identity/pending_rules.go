@@ -8,7 +8,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Pending 流程值不包含 cookie、HTTP 状态或事务句柄。
+// Values shared by pending authentication flows.
 const (
 	OAuthCompletionResponseKey = "completion_response"
 	OAuthPromoCodeStateKey     = "promo_code"
@@ -78,8 +78,8 @@ func PendingSessionWantsInvitation(payload map[string]any) bool {
 	return strings.EqualFold(strings.TrimSpace(PendingSessionStringValue(payload, "error")), "invitation_required")
 }
 
-// PendingSessionRequiresEmailCompletion 判断 callback 写入的 completion payload 是否处于"补邮箱"状态。
-// 钉钉跨组织/staff 邮箱缺失时进入此状态：前端跳到补邮箱页，exchange 不应走 adoption apply。
+// PendingSessionRequiresEmailCompletion reports whether the callback requests a missing email.
+// DingTalk profiles lacking an email use this step; exchange must defer adoption until completion.
 func PendingSessionRequiresEmailCompletion(payload map[string]any) bool {
 	if v, ok := payload["requires_email_completion"].(bool); ok && v {
 		return true
@@ -87,9 +87,9 @@ func PendingSessionRequiresEmailCompletion(payload map[string]any) bool {
 	return strings.EqualFold(strings.TrimSpace(PendingSessionStringValue(payload, "step")), "email_completion")
 }
 
-// PendingSessionRequiresBindLogin 判断 callback 写入的 completion payload 是否处于"必须绑定已有账户"状态。
-// 钉钉 signupBlocked=true（注册关 + 钉钉企业豁免关）时进入此状态：前端渲染 bind_login 表单，
-// exchange 不应消费 session，否则后续 /pending/bind-login 找不到 session。
+// PendingSessionRequiresBindLogin reports whether the callback requires an existing account.
+// DingTalk uses this step when registration and the organization exemption are disabled.
+// Exchange must leave the session available for the subsequent /pending/bind-login request.
 func PendingSessionRequiresBindLogin(payload map[string]any) bool {
 	return strings.EqualFold(strings.TrimSpace(PendingSessionStringValue(payload, "step")), "bind_login_required")
 }
@@ -246,8 +246,8 @@ func NormalizePendingOAuthCompletionResponse(payload map[string]any) map[string]
 		delete(normalized, key)
 	}
 	step := strings.ToLower(strings.TrimSpace(PendingSessionStringValue(normalized, "step")))
-	// 把多种 choice 别名归一为 OAuthPendingChoiceStep；bind_login_required 是独立终态
-	// （前端渲染 needsBindLogin），此状态单独处理。
+	// Normalize choice aliases to OAuthPendingChoiceStep. Keep bind_login_required separate:
+	// the frontend renders its needsBindLogin form for that step.
 	switch step {
 	case "choice", "choose_account_action", "choose_account", "choose", "email_required":
 		normalized["step"] = OAuthPendingChoiceStep

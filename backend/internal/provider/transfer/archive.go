@@ -11,7 +11,7 @@ import (
 
 const (
 	DataType = "tokenrouter-data"
-	// LegacyDataType 仅用于读取改名前导出的同版本文件。
+	// LegacyDataType accepts same-version exports made under the former product name.
 	LegacyDataType = "sub2api-data"
 	DataVersion    = 2
 )
@@ -27,14 +27,14 @@ type DataPayload struct {
 	ExportedAt string         `json:"exported_at"`
 	Proxies    []DataProxy    `json:"proxies"`
 	Providers  []DataProvider `json:"providers"`
-	// SkippedShadows 记录导出时被排除的 spark 影子提供商数量(见 ExportData)。仅作可见性提示,
-	// 导入侧忽略该字段;omitempty 保持向后兼容。
+	// SkippedShadows reports how many Spark shadow providers export excluded.
+	// Import ignores this informational count; zero is omitted for compatibility.
 	SkippedShadows int `json:"skipped_shadows,omitempty"`
 }
 
-// DataProvider 用于管理员备份导出，Credentials 包含凭据原文。
-// 格式不包含 parent_provider_id 或 quota_dimension，导入要求凭据非空，无法重建影子的父子链接。
-// Spark 影子及其独立优先级、并发、分组和状态不在导出范围，前端会提示跳过的影子数量。
+// DataProvider is an administrator backup entry whose Credentials contain plaintext secrets.
+// It has no parent_provider_id or quota_dimension; imports require credentials and cannot reconstruct shadow links.
+// Spark shadows and their independent priority, concurrency, groups, and state are excluded from export.
 type DataProvider struct {
 	Name               string         `json:"name"`
 	Notes              *string        `json:"notes,omitempty"`
@@ -62,7 +62,7 @@ type DataImportResult struct {
 	Errors          []DataImportError `json:"errors,omitempty"`
 }
 
-// UnmarshalJSON 接受导入条目中的扩展字段。
+// UnmarshalJSON decodes an entry while allowing unknown extension fields.
 func (a *DataProvider) UnmarshalJSON(data []byte) error {
 	type dataProviderAlias DataProvider
 
@@ -75,7 +75,7 @@ func (a *DataProvider) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ValidateHeader 校验导入的类型、版本和字段，接受兼容的品牌名称。
+// ValidateHeader checks archive type, version, and required collections, accepting the legacy brand name.
 // @project-doc docs/interfaces/http_api.md#product_name_compatibility
 func ValidateHeader(payload DataPayload) error {
 	if payload.Type != DataType && payload.Type != LegacyDataType {
@@ -93,7 +93,7 @@ func ValidateHeader(payload DataPayload) error {
 	return nil
 }
 
-// UnmarshalJSON 在出现旧账号字段时返回错误，要求输入使用提供商集合。
+// UnmarshalJSON rejects unknown payload fields, including the legacy accounts collection.
 func (p *DataPayload) UnmarshalJSON(data []byte) error {
 	type payload DataPayload
 	var value payload

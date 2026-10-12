@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// settingReadFunc 用受控读取验证发布与刷新之间的竞态。
+// settingReadFunc controls reads to test races between refresh and publication.
 type settingReadFunc func(context.Context, []string) (map[string]string, error)
 
 func (f settingReadFunc) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
@@ -39,7 +39,7 @@ func TestParametersPartialUpdateAndReset(t *testing.T) {
 	}
 }
 
-// 零空闲连接同时适用于部署默认值、在线覆盖和恢复默认。
+// TestRuntimeAcceptsZeroIdleConnections covers zero idle connections in defaults, overrides, and reset.
 func TestRuntimeAcceptsZeroIdleConnections(t *testing.T) {
 	defaults := DefaultParameters()
 	defaults.MinIdlePerProvider = 0

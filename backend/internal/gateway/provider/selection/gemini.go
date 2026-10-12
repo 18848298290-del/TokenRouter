@@ -30,8 +30,8 @@ func (s *Gemini) SelectProviderForModelWithExclusions(ctx context.Context, group
 	return scope.oldProvider(selected), err
 }
 
-// resolvePlatformAndSchedulingMode 解析目标平台和调度模式。
-// 返回：平台名称、是否使用混合调度、是否强制平台、已解析分组、错误。
+// resolvePlatformAndSchedulingMode validates the group and resolves any forced platform.
+// The mixed-scheduling flag is false; an empty platform permits all group platforms.
 func (s *Gemini) resolvePlatformAndSchedulingMode(ctx context.Context, groupID *int64) (platform string, useMixedScheduling bool, hasForcePlatform bool, group *routing.Group, err error) {
 	var read func(context.Context, int64) (*routing.Group, error)
 	if s.groupRepo != nil {
@@ -48,11 +48,8 @@ func (s *Gemini) resolvePlatformAndSchedulingMode(ctx context.Context, groupID *
 	return "", false, false, group, nil
 }
 
-// tryStickySessionHit 尝试从粘性会话获取提供商。
-// 如果命中且提供商可用则返回提供商；如果提供商不可用则清理会话并返回 nil。
-//
-// tryStickySessionHit attempts to get provider from sticky session.
-// Returns provider if hit and usable; clears session and returns nil if provider unavailable.
+// tryStickySessionHit returns a usable provider bound to the session.
+// Unschedulability or model cooldown clears the binding; other rejected lookups leave it intact.
 func (s *Gemini) tryStickySessionHit(
 	ctx context.Context,
 	groupID *int64,
@@ -92,11 +89,7 @@ func (s *Gemini) tryStickySessionHit(
 	return provider
 }
 
-// isProviderUsableForRequest 检查提供商是否可用于当前请求。
-// 验证：模型调度、模型支持、平台匹配、速率限制预检。
-//
-// isProviderUsableForRequest checks if provider is usable for current request.
-// Validates: model scheduling, model support, platform matching, rate limit precheck.
+// isProviderUsableForRequest checks model scheduling, model support, platform, and quota precheck.
 func (s *Gemini) isProviderUsableForRequest(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -132,10 +125,8 @@ func (s *Gemini) isProviderUsableForRequestWithPrecheck(
 	return true
 }
 
-// isProviderValidForPlatform 检查提供商是否匹配目标平台。
-// 普通请求使用分组的全部候选；强制平台请求额外限定提供商平台。
-//
-// isProviderValidForPlatform checks if provider matches target platform.
+// isProviderValidForPlatform accepts any platform when no platform is forced.
+// A forced platform limits candidates to that platform.
 func (s *Gemini) isProviderValidForPlatform(provider *gatewayprovider.ExecutionProvider, platform string, useMixedScheduling bool) bool {
 	return provider != nil && (platform == "" || provider.Record.Platform == platform)
 }
@@ -158,7 +149,7 @@ func (s *Gemini) passesRateLimitPreCheckWithCache(ctx context.Context, provider 
 	return ok
 }
 
-// eligibleGeminiProviders 在高级和基础调度器前复用 Gemini 现有的全部硬过滤规则。
+// eligibleGeminiProviders applies exclusions and Gemini eligibility checks before either scheduler.
 func (s *Gemini) eligibleGeminiProviders(
 	ctx context.Context,
 	providers []gatewayprovider.ExecutionProvider,
@@ -186,7 +177,7 @@ func (s *Gemini) eligibleGeminiProviders(
 	return eligible
 }
 
-// groupUsesAdvancedScheduler 根据最终分组配置判断是否使用高级调度，无分组时返回 false。
+// groupUsesAdvancedScheduler reads the final group's mode and returns false when no group is available.
 func (s *Gemini) groupUsesAdvancedScheduler(ctx context.Context, groupID *int64, hasForcePlatform bool) bool {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return false
@@ -216,7 +207,7 @@ func (s *Gemini) advancedSchedulerStats() *schedulercore.RuntimeStats {
 	return s.advancedProviderStats
 }
 
-// advancedSchedulerEffectiveSettingsForRequest 返回最终分组的高级调度有效配置。
+// advancedSchedulerEffectiveSettingsForRequest returns effective advanced settings for the final group.
 func (s *Gemini) advancedSchedulerEffectiveSettingsForRequest(ctx context.Context, id *int64) policy.EffectiveSettings {
 	if ctx == nil {
 		ctx = context.Background()
@@ -225,7 +216,7 @@ func (s *Gemini) advancedSchedulerEffectiveSettingsForRequest(ctx context.Contex
 	return s.schedulerParameters.Effective(ctx, schedulerGroupOverrides(group))
 }
 
-// selectAdvancedGeminiProvider 在 Gemini 已完成硬过滤后复用通用高级评分与 Top-K 选择。
+// selectAdvancedGeminiProvider scores eligible Gemini candidates and selects from Top-K.
 func (s *Gemini) selectAdvancedGeminiProvider(
 	ctx context.Context,
 	groupID *int64,
@@ -265,7 +256,7 @@ func (s *Gemini) selectAdvancedGeminiProvider(
 	return source[selectionOrder[0].Provider]
 }
 
-// groupModelUnsupportedErrorIfApplicable 在确认是分组模型限制时返回 typed error。
+// groupModelUnsupportedErrorIfApplicable returns a typed rejection when otherwise eligible candidates cannot support the model.
 func (s *Gemini) groupModelUnsupportedErrorIfApplicable(ctx context.Context, providers []gatewayprovider.ExecutionProvider, requestedModel string, platform string, excludedIDs map[int64]struct{}, useMixedScheduling bool) error {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || len(providers) == 0 {
@@ -311,7 +302,7 @@ func (s *Gemini) buildPreCheckUsageResultMap(ctx context.Context, providers []ga
 	return result
 }
 
-// isModelSupportedByProvider 根据提供商平台检查模型支持。
+// isModelSupportedByProvider applies the provider platform's model support rules.
 func (s *Gemini) isModelSupportedByProvider(provider *gatewayprovider.ExecutionProvider, requestedModel string) bool {
 	if provider.Record.Platform == capability.PlatformAntigravity {
 		if strings.TrimSpace(requestedModel) == "" {
@@ -374,7 +365,7 @@ func (s *Gemini) listSchedulableProvidersOnce(ctx context.Context, groupID *int6
 	return s.providerRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
 }
 
-// HasAntigravityProviders 检查是否有可用的 antigravity 提供商。
+// HasAntigravityProviders reports whether the group has schedulable Antigravity providers.
 func (s *Gemini) HasAntigravityProviders(ctx context.Context, groupID *int64) (bool, error) {
 	providers, err := s.listSchedulableProvidersOnce(ctx, groupID, capability.PlatformAntigravity, false)
 	if err != nil {
@@ -383,10 +374,10 @@ func (s *Gemini) HasAntigravityProviders(ctx context.Context, groupID *int64) (b
 	return len(providers) > 0, nil
 }
 
-// SelectProviderForAIStudioEndpoints 为 generativelanguage.googleapis.com
-// （如 GET /v1beta/models）选择适合的提供商。
-// 优先使用 AI Studio API Key，然后依次尝试无 project_id 的 OAuth、
-// 将 ai_studio OAuth 与其余 Gemini 提供商分开。
+// SelectProviderForAIStudioEndpoints ranks providers for generativelanguage.googleapis.com
+// endpoints such as GET /v1beta/models. An API Key with a nonempty key ranks first,
+// followed by OAuth without project_id, ai_studio OAuth, and other OAuth providers.
+// Advanced scoring applies within the best credential rank.
 func (s *Gemini) SelectProviderForAIStudioEndpoints(ctx context.Context, groupID *int64) (*gatewayprovider.ExecutionProvider, error) {
 	var read func(context.Context, int64) (*routing.Group, error)
 	if s.groupRepo != nil {
@@ -503,7 +494,7 @@ func (s *Gemini) SelectProviderForAIStudioEndpoints(ctx context.Context, groupID
 	return s.hydrateSelectedProvider(ctx, selected)
 }
 
-// resolveAdvancedSchedulerGroup 为不经过普通模型选择的 Gemini 入口补齐最终分组。
+// resolveAdvancedSchedulerGroup resolves the final group for Gemini entry points outside normal model selection.
 func (s *Gemini) resolveAdvancedSchedulerGroup(ctx context.Context, groupID *int64) (*routing.Group, bool) {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return nil, false
@@ -523,7 +514,7 @@ func (s *Gemini) resolveAdvancedSchedulerGroup(ctx context.Context, groupID *int
 	return group, err == nil && group != nil
 }
 
-// readSchedulingGroup 从 Gemini 分组仓库读取调度配置。
+// readSchedulingGroup reads full scheduling settings from the Gemini group repository.
 func (s *Gemini) readSchedulingGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	if s.groupRepo == nil {
 		return nil, nil

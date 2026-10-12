@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// TestResponsesPayload 构造提供商测试与用量探针共用的 Responses 报文。
+// TestResponsesPayload builds the Responses request shared by provider tests and usage probes.
 func TestResponsesPayload(modelID string, prompt string, isOAuth bool) map[string]any {
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {
@@ -26,18 +26,18 @@ func TestResponsesPayload(modelID string, prompt string, isOAuth bool) map[strin
 		"stream": true,
 	}
 
-	// OAuth 使用 ChatGPT 内部 API 时必须关闭服务端存储。
+	// The internal ChatGPT API requires server-side storage to be disabled for OAuth.
 	if isOAuth {
 		payload["store"] = false
 	}
 
-	// 两类提供商的 Responses 测试均使用 DefaultInstructions。
+	// Both OAuth and API key probes use the shared instructions.
 	payload["instructions"] = DefaultInstructions
 
 	return payload
 }
 
-// TestChatCompletionsPayload 构造 Chat Completions 提供商测试报文。
+// TestChatCompletionsPayload builds a streaming Chat Completions provider probe.
 func TestChatCompletionsPayload(modelID string, prompt string) map[string]any {
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {

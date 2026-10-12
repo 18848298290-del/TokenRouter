@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// CaptureSessions 拥有短期会话、到期和记录上限，不能访问监听或证书文件。
+// CaptureSessions manages capture sessions, expiration, and record limits.
 type CaptureSessions struct {
 	mu     sync.Mutex
 	states map[string]*captureSession
@@ -58,6 +58,8 @@ func (s *CaptureSessions) Create(baseURL, caPEM string, ttl time.Duration) (*TLS
 	return &TLSFingerprintCollectorSession{Token: token, ExpiresAt: expires, CaptureURL: baseURL + "/capture/" + token, CAPEM: caPEM}, nil
 }
 
+// Append stores record and retains the newest max records. max must be nonnegative.
+// Records remain shared with the caller and must be treated as immutable after insertion.
 func (s *CaptureSessions) Append(token string, record *TLSFingerprintCaptureRecord, max int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,6 +74,7 @@ func (s *CaptureSessions) Append(token string, record *TLSFingerprintCaptureReco
 	return nil
 }
 
+// List returns a newly allocated slice in newest-first order; record pointers remain shared.
 func (s *CaptureSessions) List(token string) ([]*TLSFingerprintCaptureRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -97,7 +97,7 @@ func NormalizeCodexCallIDForItemType(itemType, id string) string {
 
 func CompactCodexCallIDForItemType(itemType, id string) string {
 	prefix := protocolopenai.OpenAIResponsesToolCallIDPrefix(itemType) + "_"
-	// 调用 ID 的哈希前缀需要保持稳定，改变前缀会破坏已有调用与结果的配对。
+	// Keep the hash domain stable so existing calls still match their results.
 	digest := sha256.Sum256([]byte("sub2api:codex-call-id:v1:" + id))
 	encoded := hex.EncodeToString(digest[:])
 	return prefix + encoded[:CodexCallIDMaxLength-len(prefix)]
@@ -117,7 +117,7 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 	if protocolopenai.NormalizeOpenAIOAuthResponsesCompatibilityFields(reqBody) {
 		result.Modified = true
 	}
-	// 工具续链需求会影响存储策略与 input 过滤逻辑。
+	// Tool continuation determines which input references survive filtering.
 	needsToolContinuation := protocolopenai.NeedsToolContinuation(reqBody)
 
 	model := ""
@@ -143,8 +143,7 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 			result.Modified = true
 		}
 	} else {
-		// OAuth 走 ChatGPT internal API 时，store 必须为 false；显式 true 也会强制覆盖。
-		// 避免上游返回 "Store must be set to false"。
+		// The ChatGPT internal API requires store=false, including when the caller requests true.
 		if v, ok := reqBody["store"].(bool); !ok || v {
 			reqBody["store"] = false
 			result.Modified = true
@@ -171,13 +170,12 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 		}
 	}
 
-	// 请求带 reasoning 时补齐 include:["reasoning.encrypted_content"]，与真实 Codex 对齐
-	// （compact 端点形态不同，单独处理，此处跳过）。
+	// Request encrypted reasoning for replay; Compact has a separate request shape.
 	if !opts.IsCompact && EnsureCodexReasoningInclude(reqBody) {
 		result.Modified = true
 	}
 
-	// 兼容遗留的 functions 和 function_call，转换为 tools 和 tool_choice
+	// Convert legacy functions and function_call fields to tools and tool_choice.
 	if functionsRaw, ok := reqBody["functions"]; ok {
 		if functions, k := functionsRaw.([]any); k {
 			tools := make([]any, 0, len(functions))
@@ -237,14 +235,14 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 		}
 	}
 
-	// ChatGPT internal Codex endpoint 不接受 system role，因此把文本同步到 instructions。
-	// Responses JSON object 等调用方仍需在 input 中保留 developer 指引；Chat Completions
-	// 兼容路径可在无损提升纯文本消息后将其省略。
+	// ChatGPT rejects the system role, so copy its text into instructions.
+	// Responses JSON mode still needs developer guidance in input; the Chat bridge
+	// may omit pure-text messages after promoting them losslessly.
 	if ExtractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
 		result.Modified = true
 	}
 
-	// instructions 处理逻辑：根据是否是 Codex CLI 分别调用不同方法
+	// Fill missing instructions unless the caller disables default injection.
 	if !opts.SkipDefaultInstructions && ApplyInstructions(reqBody, opts.IsCodexCLI) {
 		result.Modified = true
 	}
@@ -256,12 +254,12 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 	if imageToolsDisabled && ApplyCodexSparkImageUnsupportedInstructions(reqBody) {
 		result.Modified = true
 	}
-	// gpt-5.3-codex-spark 上游会拒绝 image_generation 工具，Codex CLI 默认携带时需要剥离。
+	// Remove client-supplied image tools when the resolved model rules disable them.
 	if imageToolsDisabled && StripCodexSparkImageGenerationTools(reqBody) {
 		result.Modified = true
 	}
 
-	// 续链场景保留 item_reference 与 id，避免 call_id 上下文丢失。
+	// Retain valid item references needed to pair tool calls with their results.
 	if input, ok := reqBody["input"].([]any); ok {
 		if normalizedInput, modified := NormalizeCodexToolRoleMessages(input); modified {
 			input = normalizedInput
@@ -578,19 +576,19 @@ func ToolsContainImageGeneration(rawTools any) bool {
 	return false
 }
 
-// IsOpenAIImageGenerationToolMap 判断 map 工具是否为扁平或命名空间格式的生图声明。
+// IsOpenAIImageGenerationToolMap recognizes flat and namespace image tool declarations.
 func IsOpenAIImageGenerationToolMap(tool map[string]any) bool {
 	return IsOpenAIImageGenerationType(FirstNonEmptyString(tool["type"])) ||
 		IsImageGenNamespaceToolMap(tool)
 }
 
-// IsImageGenNamespaceToolMap 判断 map 工具是否为 Codex 生图命名空间。
+// IsImageGenNamespaceToolMap recognizes the Codex image generation namespace.
 func IsImageGenNamespaceToolMap(tool map[string]any) bool {
 	return strings.TrimSpace(FirstNonEmptyString(tool["type"])) == "namespace" &&
 		IsOpenAIImageGenNamespaceName(FirstNonEmptyString(tool["name"]))
 }
 
-// InputContainsImageGenerationTool 检测 Responses Lite input 中嵌套的生图工具声明。
+// InputContainsImageGenerationTool finds image tools in Responses Lite additional_tools items.
 func InputContainsImageGenerationTool(rawInput any) bool {
 	input, ok := rawInput.([]any)
 	if !ok {
@@ -611,8 +609,8 @@ func InputContainsImageGenerationTool(rawInput any) bool {
 	return false
 }
 
-// StripOpenAIImageGenerationTools 对称处理顶层 tools、Responses Lite additional_tools
-// 和 tool_choice 中的生图声明；返回值表示请求体是否被修改。
+// StripOpenAIImageGenerationTools removes image declarations from tools, Lite additional_tools
+// and tool_choice. It reports whether the request changed.
 func StripOpenAIImageGenerationTools(reqBody map[string]any) bool {
 	if reqBody == nil {
 		return false
@@ -628,7 +626,7 @@ func StripOpenAIImageGenerationTools(reqBody map[string]any) bool {
 	return modified
 }
 
-// StripOpenAIImageGenerationToolList 从指定工具数组中移除所有生图声明。
+// StripOpenAIImageGenerationToolList removes image declarations from the named tool array.
 func StripOpenAIImageGenerationToolList(container map[string]any, key string) bool {
 	rawTools, ok := container[key]
 	if !ok || rawTools == nil {
@@ -658,7 +656,7 @@ func StripOpenAIImageGenerationToolList(container map[string]any, key string) bo
 	return true
 }
 
-// StripOpenAIImageGenerationToolsFromInput 清理 Responses Lite input 内的生图工具。
+// StripOpenAIImageGenerationToolsFromInput removes image tools from Responses Lite input.
 func StripOpenAIImageGenerationToolsFromInput(reqBody map[string]any) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok {
@@ -681,7 +679,7 @@ func StripOpenAIImageGenerationToolsFromInput(reqBody map[string]any) bool {
 		if _, hasTools := item["tools"]; hasTools {
 			filteredInput = append(filteredInput, rawItem)
 		}
-		// 移除唯一声明的能力后，空 additional_tools 容器对上游无意义，直接丢弃。
+		// Drop additional_tools items whose last declaration was removed.
 	}
 	if modified {
 		reqBody["input"] = filteredInput
@@ -689,8 +687,7 @@ func StripOpenAIImageGenerationToolsFromInput(reqBody map[string]any) bool {
 	return modified
 }
 
-// StripOpenAIImageGenerationToolsFromRawPayload 为直接转发原始 HTTP 或 WebSocket
-// 请求体的路径提供统一清理入口。
+// StripOpenAIImageGenerationToolsFromRawPayload removes image tools from raw HTTP or WS JSON.
 func StripOpenAIImageGenerationToolsFromRawPayload(payload []byte, hasDeclaration bool) ([]byte, bool, error) {
 	if !hasDeclaration {
 		if json.Valid(payload) {
@@ -713,8 +710,8 @@ func StripOpenAIImageGenerationToolsFromRawPayload(payload []byte, hasDeclaratio
 	return rebuilt, true, nil
 }
 
-// StripCodexSparkImageGenerationTools 会从 Spark 请求中移除生图声明和选择。
-// gpt-5.3-codex-spark 会拒绝这些能力，而 Codex 客户端可能默认携带它们。
+// StripCodexSparkImageGenerationTools removes image declarations and choices.
+// Spark rejects these capabilities even when a Codex client includes them by default.
 func StripCodexSparkImageGenerationTools(reqBody map[string]any) bool {
 	return StripOpenAIImageGenerationTools(reqBody)
 }
@@ -909,8 +906,8 @@ func EnsureOpenAIResponsesImageGenerationTool(reqBody map[string]any, spark bool
 	if spark {
 		return false
 	}
-	// Codex 客户端生图函数、命名空间和 hosted 工具不能并存，先识别精确函数名，
-	// 再复用完整 hosted/namespace 检测逻辑避免重复注入。
+	// Recognize the Codex image function, namespace and hosted tool forms before
+	// injection so a request cannot receive duplicate image capabilities.
 	if HasCodexImageGenerationFunctionTool(reqBody) {
 		return false
 	}
@@ -1105,9 +1102,9 @@ func ExtractTextFromContent(content any) string {
 	}
 }
 
-// ExtractSystemMessagesFromInput 扫描 role=="system" 的 input 消息并把文本同步到
-// instructions。默认将消息改为 developer，让 Responses JSON mode 仍能看到 input 指引；
-// omitPromoted 为 true 时删除已无损提升的纯文本项，混合或异常内容仍保留为 developer。
+// ExtractSystemMessagesFromInput copies system text into instructions and changes
+// retained messages to developer for Responses JSON mode. With omitPromoted,
+// losslessly promoted text items are removed; mixed or malformed content is retained.
 func ExtractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok || len(input) == 0 {
@@ -1158,8 +1155,8 @@ func ExtractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) b
 	return true
 }
 
-// ExtractLosslessTextFromContent 仅在全部内容都能由 instructions 字符串表示且不会丢失
-// 非文本部分时返回文本。
+// ExtractLosslessTextFromContent returns text when every content part can be
+// represented in instructions without dropping non-text content.
 func ExtractLosslessTextFromContent(content any) (string, bool) {
 	switch v := content.(type) {
 	case string:
@@ -1209,12 +1206,8 @@ func ExtractPromptLikeInstructionsFromInput(reqBody map[string]any) string {
 	return strings.Join(texts, "\n\n")
 }
 
-// DefaultCodexSynthInstructions 返回合成路径在 instructions 为空时应填入的默认提示词。
-//
-// 按 model 选择真实 Codex CLI 的 base instructions（codex 系→GPT-5-Codex，
-// gpt-5.5 及未单独维护的 GPT-5 版本→GPT-5.5，gpt-5.2→GPT-5.2，gpt-5.1→GPT-5.1），
-// 使合成请求在提示词层面贴近真实 Codex 行为；
-// 若内嵌 prompt 意外为空，回退到最小占位符以保证字段非空。
+// DefaultCodexSynthInstructions selects embedded model-specific Codex instructions.
+// It returns a minimal coding prompt when the selected embedded text is empty.
 func DefaultCodexSynthInstructions(model string) string {
 	if instructions := strings.TrimSpace(CodexBaseInstructionsForModel(model)); instructions != "" {
 		return instructions
@@ -1222,10 +1215,9 @@ func DefaultCodexSynthInstructions(model string) string {
 	return "You are a helpful coding assistant."
 }
 
-// EnsureCodexReasoningInclude 在请求带 reasoning 时补齐 include:["reasoning.encrypted_content"]。
-//
-// 真实 Codex 在 reasoning 存在时总会请求加密推理内容（ChatGPT/store=false 场景下用于上下文回放）。
-// 该函数为加法式、幂等：仅在 include 缺失或未包含该项时追加；对非数组的异常 include 不做破坏性改写。
+// EnsureCodexReasoningInclude adds reasoning.encrypted_content when reasoning is a nonempty object.
+// Encrypted content carries reasoning between store=false turns. Existing entries
+// are retained, duplicate insertion is avoided, and non-array include values are unchanged.
 func EnsureCodexReasoningInclude(reqBody map[string]any) bool {
 	reasoning, ok := reqBody["reasoning"].(map[string]any)
 	if !ok || len(reasoning) == 0 {
@@ -1245,16 +1237,14 @@ func EnsureCodexReasoningInclude(reqBody map[string]any) bool {
 		reqBody["include"] = append(existing, encrypted)
 		return true
 	default:
-		// include 为非预期类型时保持原样，避免破坏调用方意图。
+		// Leave unexpected include types to upstream validation.
 		return false
 	}
 }
 
-// ApplyCodexClientMetadata 在请求体补齐 client_metadata["x-codex-installation-id"]，
-// 取值为提供商真实的 openai_device_id（最新 Codex 在请求体携带的安装标识）。
-//
-// 提供商存在 device_id 且目标键缺失时补齐该键，已有 client_metadata 字段保持原样。
-// device_id 为空时跳过，重复调用结果相同。
+// ApplyCodexClientMetadata fills a missing or blank x-codex-installation-id with deviceID.
+// Other metadata fields are retained. Empty device IDs and unsupported metadata types
+// leave the request unchanged.
 func ApplyCodexClientMetadata(reqBody map[string]any, deviceID string) bool {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -1288,7 +1278,7 @@ func ApplyCodexClientMetadata(reqBody map[string]any, deviceID string) bool {
 	}
 }
 
-// ApplyInstructions 处理 instructions 字段：仅在 instructions 为空时填充默认值。
+// ApplyInstructions fills empty instructions with the model-specific default.
 func ApplyInstructions(reqBody map[string]any, isCodexCLI bool) bool {
 	if !IsInstructionsEmpty(reqBody) {
 		return false
@@ -1298,8 +1288,7 @@ func ApplyInstructions(reqBody map[string]any, isCodexCLI bool) bool {
 	return true
 }
 
-// IsInstructionsEmpty 检查 instructions 字段是否为空
-// 处理以下情况：字段不存在、nil、空字符串、纯空白字符串。
+// IsInstructionsEmpty reports whether instructions is missing, nil, non-string or blank.
 func IsInstructionsEmpty(reqBody map[string]any) bool {
 	val, exists := reqBody["instructions"]
 	if !exists {
@@ -1394,27 +1383,12 @@ func FilterCodexInputWithOptions(input []any, opts CodexInputFilterOptions) []an
 		}
 		typ, _ := m["type"].(string)
 
-		// chatgpt.com codex (OAuth path) runs with store=false (forced by
-		// ApplyCodexOAuthTransform). Replaying a reasoning item with its rs_*
-		// id but no encrypted_content 404s upstream ("Item with id 'rs_...'
-		// not found") — the 404 is triggered by the id lookup, not by the
-		// reasoning item itself. So strip the id (always, independent of
-		// PreserveReferences) yet keep the item: under store=false
-		// encrypted_content is the official channel for carrying reasoning
-		// context across turns, and dropping the whole item silently degrades
-		// multi-turn agent reasoning. Preserve encrypted_content/content/
-		// summary and every other field verbatim. Upstream additionally
-		// requires a summary field — a missing one is rejected with 400
-		// "Missing required parameter 'input[N].summary'" — so backfill an
-		// empty array when it is absent. Contracts verified end-to-end against
-		// chatgpt.com codex (gpt-5.5); see issue #1957.
-		// compaction_summary items (cmp_*) are the other encrypted_content
-		// carrier. Verified against the live backend: they require
-		// encrypted_content (a missing one is rejected with 400), and with it
-		// present the cmp_* id does not 404 whether kept or stripped. Being
-		// neither reasoning nor tool calls, they flow through the generic path
-		// below (id stripped when !PreserveReferences, encrypted_content
-		// preserved either way), which is safe and needs no special-casing.
+		// OAuth uses store=false, so replayed reasoning IDs can cause upstream 404s.
+		// Remove id and call_id while retaining encrypted_content, content and summary
+		// for reasoning replay. A missing or null summary becomes an empty array to satisfy
+		// upstream validation (issue #1957).
+		// Compaction summaries require encrypted_content and use the generic path below:
+		// PreserveReferences controls their IDs while their ciphertext is retained.
 		if typ == "reasoning" {
 			newItem := make(map[string]any, len(m))
 			for key, value := range m {
@@ -1432,8 +1406,7 @@ func FilterCodexInputWithOptions(input []any, opts CodexInputFilterOptions) []an
 			continue
 		}
 
-		// 仅修正真正的 tool/function call 标识，避免误改普通 message/reasoning id；
-		// 若 item_reference 指向 legacy call_* 标识，则仅修正该引用本身。
+		// Normalize tool-call identifiers and legacy call_* references while retaining unrelated item IDs.
 		fixCallIDPrefix := func(id string) string {
 			return NormalizeCodexFilterCallID(typ, id, opts.PreserveCallIDs)
 		}
@@ -1463,7 +1436,7 @@ func FilterCodexInputWithOptions(input []any, opts CodexInputFilterOptions) []an
 
 		newItem := m
 		copied := false
-		// 仅在需要修改字段时创建副本，避免直接改写原始输入。
+		// Copy on modification so caller-owned input maps remain unchanged.
 		ensureCopy := func() {
 			if copied {
 				return
@@ -1514,12 +1487,11 @@ func FilterCodexInputWithOptions(input []any, opts CodexInputFilterOptions) []an
 		}
 
 		if typ == "reasoning" {
-			// OAuth 上游 store=false 时不会持久化 rs_* id；保留 reasoning 内容，
-			// 但移除 id，避免上游按不可达的 item id 续链时报 404。
+			// Reasoning IDs cannot be resolved under store=false; retain the reasoning content.
 			ensureCopy()
 			delete(newItem, "id")
 			if summary, ok := newItem["summary"]; !ok || summary == nil {
-				// 上游要求 reasoning item 带 summary；缺失时补空数组避免参数校验失败。
+				// An empty summary satisfies upstream validation when the field is missing.
 				newItem["summary"] = []any{}
 			}
 		}
@@ -1539,8 +1511,8 @@ func FilterCodexInputWithOptions(input []any, opts CodexInputFilterOptions) []an
 
 func IsCodexToolCallItemType(typ string) bool { return protocolopenai.IsCodexToolCallItemType(typ) }
 
-// IsCodexToolCallInputType 仅匹配 call-input 类型（不含 output），这些类型的
-// id 必须以 "fc" 开头，上游会校验 "Expected an ID that begins with 'fc'."。
+// IsCodexToolCallInputType recognizes call inputs whose IDs have type-specific prefixes.
+// Output items are excluded; OpenAIResponsesInputItemIDPrefix handles their constraints.
 func IsCodexToolCallInputType(typ string) bool {
 	switch typ {
 	case "function_call",
@@ -1642,7 +1614,7 @@ func NormalizeCodexTools(reqBody map[string]any) bool {
 	return modified
 }
 
-// IsOpenAIImageGenerationType 判断工具类型是否为原生生图工具。
+// IsOpenAIImageGenerationType recognizes the hosted image generation tool type.
 func IsOpenAIImageGenerationType(value string) bool {
 	return strings.TrimSpace(value) == "image_generation"
 }
@@ -1671,8 +1643,8 @@ func OpenAIResponsesInputItemIDPrefix(itemType string) (string, bool) {
 	}
 }
 
-// ShouldStripOpenAIResponsesInputItemID 判断回放请求中的 ID 是否无效。
-// 无效 ID 必须删除，伪造替代 ID 可能指向另一个上游对象。
+// ShouldStripOpenAIResponsesInputItemID reports whether a replay ID violates its type prefix.
+// Remove invalid IDs: inventing a replacement may reference a different upstream object.
 func ShouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	prefix, constrained := OpenAIResponsesInputItemIDPrefix(itemType)
 	if !constrained {
@@ -1681,7 +1653,7 @@ func ShouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	return id == "" || !strings.HasPrefix(id, prefix)
 }
 
-// IsOpenAIImageGenNamespaceName 判断命名空间是否为 Codex 生图命名空间。
+// IsOpenAIImageGenNamespaceName recognizes the Codex image generation namespace.
 func IsOpenAIImageGenNamespaceName(value string) bool {
 	return strings.TrimSpace(value) == "image_gen"
 }

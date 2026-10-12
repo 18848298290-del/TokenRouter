@@ -18,7 +18,8 @@ import (
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 )
 
-// TestCodexImportHTTPDatabaseContract 验证真实 PostgreSQL 与实际管理用例验证 HTTP 导入、同批更新和部分失败；平台隐私任务不在本测试执行。
+// TestCodexImportHTTPDatabaseContract checks HTTP import, same-batch updates, and partial failure using
+// PostgreSQL and the admin service; privacy jobs are disabled.
 func TestCodexImportHTTPDatabaseContract(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeRunsWorkspaceMigration 校验创作台任务的浏览器工作区隔离迁移。
+// TestCreativeRunsWorkspaceMigration checks browser-workspace isolation for creative runs.
 func TestCreativeRunsWorkspaceMigration(t *testing.T) {
 	content, err := FS.ReadFile("256_creative_runs_workspace.sql")
 	require.NoError(t, err)

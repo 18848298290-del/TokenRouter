@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestTierObservationUsesCurrentIdentityAndFieldPatch 验证真实配置事务验证 Drive 观测只写自身字段，并在取锁后重新比较凭据身份。
+// TestTierObservationUsesCurrentIdentityAndFieldPatch checks that tier and Drive storage updates preserve admin fields
+// and reject credentials changed during observation or before the configuration lock.
 func TestTierObservationUsesCurrentIdentityAndFieldPatch(t *testing.T) {
 	for _, scenario := range []string{"success", "changed_during_observation", "changed_before_lock", "outbox_failure", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {

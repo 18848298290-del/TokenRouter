@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// BalanceStore 提供原子余额操作和同事务的身份并发数写入端口。
+// BalanceStore applies atomic balance changes using the transaction in context when present.
 type BalanceStore struct{ client *dbent.Client }
 
 func NewBalanceStore(client *dbent.Client) *BalanceStore { return &BalanceStore{client: client} }
@@ -47,7 +47,7 @@ func (r *BalanceStore) AddBalance(ctx context.Context, id int64, amount float64)
 	return nil
 }
 
-// ApplyRedeemBalanceAdjustment 原子应用兑换码余额增量，并确保余额不低于 0。
+// ApplyRedeemBalanceAdjustment atomically applies a redemption delta and clamps the balance to zero.
 func (r *BalanceStore) ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, delta float64) error {
 	const updateSQL = `
 		UPDATE users
@@ -69,9 +69,9 @@ func (r *BalanceStore) ApplyRedeemBalanceAdjustment(ctx context.Context, id int6
 	return nil
 }
 
-// AdjustBalance 原子地把 delta 累加到余额上，结果为负时整条语句不生效。
-// 相比"读余额 → 算新值 → 整行写回"，这里把读与写压进同一条 UPDATE，
-// 并发的计费扣款不会被旧快照覆盖。
+// AdjustBalance atomically adds delta and rejects changes that would make the balance negative.
+// The UPDATE uses the current stored balance so concurrent billing deductions
+// cannot be overwritten by a stale user snapshot.
 func (r *BalanceStore) AdjustBalance(ctx context.Context, id int64, delta float64) (billing.BalanceChange, error) {
 	const updateSQL = `
 		UPDATE users
@@ -87,7 +87,7 @@ func (r *BalanceStore) AdjustBalance(ctx context.Context, id int64, delta float6
 		return change, nil
 	}
 
-	// 0 行既可能是用户不存在，也可能是余额不足以承受这次扣减，需要区分。
+	// No matched row can mean a missing user or insufficient balance; distinguish them with a read.
 	current, err := r.currentBalance(ctx, id)
 	if err != nil {
 		return billing.BalanceChange{}, err
@@ -95,10 +95,10 @@ func (r *BalanceStore) AdjustBalance(ctx context.Context, id int64, delta float6
 	return billing.BalanceChange{Old: current, New: current + delta}, billing.ErrBalanceNegative
 }
 
-// SetBalance 原子地把余额置为 value，并返回变更前后的值。
+// SetBalance atomically replaces the balance and returns its previous and new values.
 func (r *BalanceStore) SetBalance(ctx context.Context, id int64, value float64) (billing.BalanceChange, error) {
 	if value < 0 {
-		// 连同当前余额一起返回，便于上层给出可读的错误信息。
+		// Return the current and requested balances so the caller can explain the rejection.
 		current, err := r.currentBalance(ctx, id)
 		if err != nil {
 			return billing.BalanceChange{}, err
@@ -127,7 +127,7 @@ func (r *BalanceStore) SetBalance(ctx context.Context, id int64, value float64) 
 	return change, nil
 }
 
-// currentBalance 读取用户当前余额，用户不存在时返回 ErrUserNotFound。
+// currentBalance reads the current balance and returns ErrUserNotFound for a missing user.
 func (r *BalanceStore) currentBalance(ctx context.Context, id int64) (balance float64, err error) {
 	rows, err := clientFromContext(ctx, r.client).QueryContext(ctx,
 		`SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL`, id)
@@ -151,7 +151,7 @@ func (r *BalanceStore) currentBalance(ctx context.Context, id int64) (balance fl
 	return balance, rows.Err()
 }
 
-// scanBalanceChange 执行一条 RETURNING 旧余额、新余额的语句。ok 为 false 表示语句未命中任何行。
+// scanBalanceChange executes a statement returning old and new balances. A missing result returns ok=false.
 func scanBalanceChange(ctx context.Context, client *dbent.Client, query string, args ...any) (change billing.BalanceChange, ok bool, err error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -174,17 +174,18 @@ func scanBalanceChange(ctx context.Context, client *dbent.Client, query string, 
 	return change, true, rows.Err()
 }
 
-// CreditAffiliateTransfer 保留返利转入同时增加余额与累计充值的原规则，仅参与调用方事务。
+// CreditAffiliateTransfer adds the transfer to balance and, for positive amounts, total recharged using the
+// transaction in context.
 func (r *BalanceStore) CreditAffiliateTransfer(ctx context.Context, id int64, amount float64) error {
 	return r.UpdateBalance(ctx, id, amount)
 }
 
-// CreditRegistrationPromo 增加优惠注册余额，正数金额同步计入累计充值。
+// CreditRegistrationPromo adds a registration credit; positive amounts also increase total recharged.
 func (r *BalanceStore) CreditRegistrationPromo(ctx context.Context, id int64, amount float64) error {
 	return r.UpdateBalance(ctx, id, amount)
 }
 
-// ApplyInitialUserFunds 将初始余额写入用户创建语句。
+// ApplyInitialUserFunds sets the initial balance on a user creation builder.
 func ApplyInitialUserFunds(create *dbent.UserCreate, funds billing.InitialUserFunds) {
 	create.SetBalance(funds.Balance)
 }

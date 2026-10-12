@@ -12,14 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestHistoricalIngressCleanupDryRunAndExecute 验证干跑只报告原分类，执行时按原截止时间/认证过滤删除分析记录。
+// TestHistoricalIngressCleanupDryRunAndExecute checks classification-only dry runs and deletion with time and auth filters.
 func TestHistoricalIngressCleanupDryRunAndExecute(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { _, err := integrationDB.ExecContext(ctx, "TRUNCATE ops_error_logs"); require.NoError(t, err) })
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	// 独立提交的测试表状态只在此隔离容器内使用，事务确保数据写入一致。
+	// Commit the fixture atomically so repository queries can read it from other connections.
 	_, err = tx.ExecContext(ctx, "TRUNCATE ops_error_logs")
 	require.NoError(t, err)
 	before := time.Now().UTC()

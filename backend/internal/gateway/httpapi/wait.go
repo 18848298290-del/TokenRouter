@@ -18,21 +18,21 @@ const (
 
 	// SSEPingFormatClaude is the Claude/Anthropic SSE ping format.
 	SSEPingFormatClaude SSEPingFormat = "data: {\"type\": \"ping\"}\n\n"
-	// SSEPingFormatNone indicates no ping should be sent (e.g., OpenAI has no ping spec).
+	// SSEPingFormatNone disables ping output.
 	SSEPingFormatNone SSEPingFormat = ""
 	// SSEPingFormatComment is an SSE comment ping for OpenAI/Codex CLI clients.
 	SSEPingFormatComment SSEPingFormat = ":\n\n"
 )
 
-// SSEPingFormat defines the format of SSE ping events for different platforms.
+// SSEPingFormat defines the wire format of a keepalive event.
 type SSEPingFormat string
 
-// 旧 HTTP 错误入口使用相同核心类型，保留 errors.As 与字段访问。
+// ConcurrencyError aliases the scheduler error for HTTP callers, including errors.As matching.
 type ConcurrencyError = scheduler.ConcurrencyError
 
 type WaitQueueFullError = scheduler.WaitQueueFullError
 
-// ConcurrencyHelper provides common concurrency slot management for gateway handlers.
+// ConcurrencyHelper adapts concurrency slot management to gateway HTTP handlers.
 type ConcurrencyHelper struct {
 	concurrencyService *scheduler.ConcurrencyService
 	keyID              func(*gin.Context) int64
@@ -61,7 +61,7 @@ func StreamHasOnlyHeartbeats(c *gin.Context) bool {
 	return heartbeatBytes > 0 && c.Writer.Size() == heartbeatBytes
 }
 
-// NewConcurrencyHelper creates a new ConcurrencyHelper.
+// NewConcurrencyHelper binds slot management, ping settings, and an optional API key resolver.
 func NewConcurrencyHelper(concurrencyService *scheduler.ConcurrencyService, pingFormat SSEPingFormat, pingInterval time.Duration, keyID ...func(*gin.Context) int64) *ConcurrencyHelper {
 	if pingInterval <= 0 {
 		pingInterval = DefaultPingInterval
@@ -83,7 +83,7 @@ func NewConcurrencyHelper(concurrencyService *scheduler.ConcurrencyService, ping
 	}
 }
 
-// EnterUserWait 和 EnterProviderWait 仅转接有所有权的等待结果。
+// EnterUserWait returns an owned scheduler wait result; callers must release an entered wait.
 func (h *ConcurrencyHelper) EnterUserWait(ctx context.Context, id int64, limit int) (scheduler.WaitResult, error) {
 	return h.concurrencyService.EnterUserWait(ctx, id, limit)
 }
@@ -92,8 +92,8 @@ func (h *ConcurrencyHelper) EnterProviderWait(ctx context.Context, id int64, lim
 	return h.concurrencyService.EnterProviderWait(ctx, id, limit)
 }
 
-// TryAcquireUserSlot 尝试立即获取用户并发槽位。
-// 返回值: (releaseFunc, acquired, error)。
+// TryAcquireUserSlot attempts immediate acquisition of a user slot.
+// It returns the release function, whether a slot was acquired, and any store error.
 func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (func(), bool, error) {
 	result, err := h.concurrencyService.AcquireUserSlot(ctx, userID, maxConcurrency)
 	if err != nil {
@@ -105,7 +105,7 @@ func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64
 	return result.ReleaseFunc, true, nil
 }
 
-// TryAcquireUserSlotForAPIKey 获取用户槽位并同步记录 API Key 统计槽位。
+// TryAcquireUserSlotForAPIKey acquires a user slot and tracks the API key's statistics slot.
 func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKey(ctx context.Context, userID int64, maxConcurrency int, apiKeyID int64) (func(), bool, error) {
 	releaseFunc, acquired, err := h.TryAcquireUserSlot(ctx, userID, maxConcurrency)
 	if err != nil || !acquired {
@@ -114,7 +114,7 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKey(ctx context.Context, use
 	return h.withAPIKeySlot(ctx, apiKeyID, releaseFunc), true, nil
 }
 
-// AcquireOpenAIWSIngressLease 独立于单轮用户和提供商槽位，限制整个客户端 WebSocket 生命周期。
+// AcquireOpenAIWSIngressLease limits the whole client connection independently of per-turn user and provider slots.
 func (h *ConcurrencyHelper) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int) (*scheduler.OpenAIWSIngressLease, bool, error) {
 	if h == nil || h.concurrencyService == nil {
 		return nil, false, fmt.Errorf("concurrency service is unavailable")
@@ -122,8 +122,8 @@ func (h *ConcurrencyHelper) AcquireOpenAIWSIngressLease(ctx context.Context, api
 	return h.concurrencyService.AcquireOpenAIWSIngressLease(ctx, apiKeyID, maxConnections)
 }
 
-// TryAcquireProviderSlot 尝试立即获取提供商并发槽位。
-// 返回值: (releaseFunc, acquired, error)。
+// TryAcquireProviderSlot attempts immediate acquisition of a provider slot.
+// It returns the release function, whether a slot was acquired, and any store error.
 func (h *ConcurrencyHelper) TryAcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int) (func(), bool, error) {
 	result, err := h.concurrencyService.AcquireProviderSlot(ctx, providerID, maxConcurrency)
 	if err != nil {
@@ -135,8 +135,8 @@ func (h *ConcurrencyHelper) TryAcquireProviderSlot(ctx context.Context, provider
 	return result.ReleaseFunc, true, nil
 }
 
-// AcquireUserSlotWithWait 获取用户并发槽位，必要时进入等待队列。
-// 流式请求等待期间会发送 ping，并在真正写出流时更新 streamStarted。
+// AcquireUserSlotWithWait waits for a user slot when immediate acquisition fails.
+// Streaming waits emit configured pings and mark streamStarted when output begins.
 func (h *ConcurrencyHelper) AcquireUserSlotWithWait(c *gin.Context, userID int64, maxConcurrency int, isStream bool, streamStarted *bool) (func(), error) {
 	return h.AcquireUserSlotWithWaitTimeout(c, userID, maxConcurrency, maxConcurrencyWait, isStream, streamStarted)
 }
@@ -169,13 +169,12 @@ func (h *ConcurrencyHelper) withAPIKeySlot(ctx context.Context, apiKeyID int64, 
 	}
 }
 
-// AcquireProviderSlotWithWait 获取提供商并发槽位，必要时等待。
-// For streaming requests, sends ping events during the wait.
-// streamStarted is updated if streaming response has begun.
+// AcquireProviderSlotWithWait waits for a provider slot when immediate acquisition fails.
+// Streaming waits emit the configured ping format.
+// streamStarted lets callers choose an in-stream error after a ping has committed the response.
 func (h *ConcurrencyHelper) AcquireProviderSlotWithWait(c *gin.Context, providerID int64, maxConcurrency int, isStream bool, streamStarted *bool) (func(), error) {
 	ctx := c.Request.Context()
 
-	// Try to acquire immediately
 	releaseFunc, acquired, err := h.TryAcquireProviderSlot(ctx, providerID, maxConcurrency)
 	if err != nil {
 		return nil, err
@@ -185,28 +184,27 @@ func (h *ConcurrencyHelper) AcquireProviderSlotWithWait(c *gin.Context, provider
 		return releaseFunc, nil
 	}
 
-	// Need to wait - handle streaming ping if needed
 	return h.waitForSlotWithPing(c, "provider", providerID, maxConcurrency, isStream, streamStarted)
 }
 
-// waitForSlotWithPing waits for a concurrency slot, sending ping events for streaming requests.
-// streamStarted pointer is updated when streaming begins (for proper error handling by caller).
+// waitForSlotWithPing waits for a slot using the default concurrency timeout.
+// The observer updates streamStarted when ping output begins.
 func (h *ConcurrencyHelper) waitForSlotWithPing(c *gin.Context, slotType string, id int64, maxConcurrency int, isStream bool, streamStarted *bool) (func(), error) {
 	return h.WaitForSlotWithPingTimeout(c, slotType, id, maxConcurrency, maxConcurrencyWait, isStream, streamStarted, false)
 }
 
-// WaitForSlotWithPingTimeout waits for a concurrency slot with a custom timeout.
+// WaitForSlotWithPingTimeout waits with a custom timeout and an optional immediate acquisition attempt.
 func (h *ConcurrencyHelper) WaitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool) (func(), error) {
 	return h.concurrencyService.WaitForSlot(c.Request.Context(), slotType, id, maxConcurrency, timeout, tryImmediate,
 		WaitObserver(c, h.pingFormat, h.pingInterval, isStream, streamStarted, true))
 }
 
-// AcquireProviderSlotWithWaitTimeout 使用指定超时等待提供商槽位，并保持 SSE 心跳。
+// AcquireProviderSlotWithWaitTimeout waits for a provider slot with a custom timeout and configured SSE pings.
 func (h *ConcurrencyHelper) AcquireProviderSlotWithWaitTimeout(c *gin.Context, providerID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
 	return h.WaitForSlotWithPingTimeout(c, "provider", providerID, maxConcurrency, timeout, isStream, streamStarted, true)
 }
 
-// WaitObserver 发送 HTTP 心跳并标记首次输出。串行队列在 writer 支持 Flusher 时输出心跳。
+// WaitObserver emits HTTP keepalives and marks first output; strict mode rejects writers that cannot flush.
 func WaitObserver(c *gin.Context, format SSEPingFormat, interval time.Duration, isStream bool, started *bool, strict bool) scheduler.WaitObserver {
 	if !isStream || format == "" {
 		return scheduler.WaitObserver{}
@@ -239,7 +237,7 @@ func WaitObserver(c *gin.Context, format SSEPingFormat, interval time.Duration, 
 	}}
 }
 
-// Service 返回兼容入口共用的并发服务实例。
+// Service returns the shared concurrency service used by compatible handlers.
 func (h *ConcurrencyHelper) Service() *scheduler.ConcurrencyService {
 	if h == nil {
 		return nil

@@ -136,7 +136,7 @@ func TestClassifyGrokUpstreamFailure_ValidationNoCool(t *testing.T) {
 }
 
 func TestClassifyGrokUpstreamFailure_FreeUsageWinsOver5xx(t *testing.T) {
-	// 代理可能把免费额度错误改写为合成的 502，此时应以响应体为准。
+	// A proxy may report quota exhaustion as 502; the body classification must take precedence.
 	d := grok.ClassifyGrokUpstreamFailure(http.StatusBadGateway, []byte(`subscription:free-usage-exhausted for model grok-4.3`), "grok-4.3")
 	require.Equal(t, grok.GrokFailureFreeUsage, d.Class)
 	require.NotEqual(t, grok.GrokFailureServer, d.Class)
@@ -203,7 +203,7 @@ func TestShouldFailoverGrokUpstreamErrorExistingCodesStillWork(t *testing.T) {
 	}
 }
 
-// TestGrokStreamIdleFailoverError 验证 Grok 流空闲超时的故障转移错误。
+// TestGrokStreamIdleFailoverError checks retry metadata for an idle Grok stream.
 func TestGrokStreamIdleFailoverError(t *testing.T) {
 	provider := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 	err := GrokStreamIdleFailure(provider, 180*time.Second)

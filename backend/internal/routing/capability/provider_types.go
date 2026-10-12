@@ -1,20 +1,20 @@
 package capability
 
 const (
-	// ProviderTypeOAuth 等常量定义能力目录中的提供商类型。
-	ProviderTypeOAuth          = "oauth"           // OAuth类型提供商（full scope: profile + inference）
-	ProviderTypeSetupToken     = "setup-token"     // Setup Token类型提供商（inference only scope）
-	ProviderTypeAPIKey         = "apikey"          // API Key类型提供商
-	ProviderTypeUpstream       = "upstream"        // 上游透传类型提供商（通过 Base URL + API Key 连接上游）
-	ProviderTypeBedrock        = "bedrock"         // AWS Bedrock 类型提供商（通过 SigV4 签名或 API Key 连接 Bedrock，由 credentials.auth_mode 区分）
-	ProviderTypeServiceAccount = "service_account" // Google Service Account 类型提供商（用于 Vertex AI）
-	ProviderTypeCosy           = "cosy"            // Qoder COSY 协议提供商
+	// ProviderTypeOAuth and the following constants identify provider authentication types.
+	ProviderTypeOAuth          = "oauth"           // OAuth with profile and inference scopes.
+	ProviderTypeSetupToken     = "setup-token"     // Setup token with inference scope.
+	ProviderTypeAPIKey         = "apikey"          // API key authentication.
+	ProviderTypeUpstream       = "upstream"        // Upstream passthrough using a base URL and API key.
+	ProviderTypeBedrock        = "bedrock"         // Bedrock SigV4 or API key authentication, selected by credentials.auth_mode.
+	ProviderTypeServiceAccount = "service_account" // Google service account for Vertex AI.
+	ProviderTypeCosy           = "cosy"            // Qoder COSY authentication.
 
 	OpenAIAuthModePersonalAccessToken = "personalAccessToken"
 	OpenAIAuthModeAgentIdentity       = "agentIdentity"
 )
 
-// PolicyScopeMatches 根据提供商认证类型判断规则作用域。
+// PolicyScopeMatches checks a rule scope against the provider authentication type.
 func PolicyScopeMatches(scope string, isOAuth bool, isBedrock bool) bool {
 	switch scope {
 	case "all":
@@ -26,6 +26,6 @@ func PolicyScopeMatches(scope string, isOAuth bool, isBedrock bool) bool {
 	case "bedrock":
 		return isBedrock
 	default:
-		return true // 未知作用域允许匹配。
+		return true // Unknown scopes allow a match.
 	}
 }

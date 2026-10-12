@@ -24,7 +24,7 @@ type usageAnalyticsWindow struct {
 	rawTailStart   time.Time
 }
 
-// usageAnalyticsDailySplit 保存日表日期区间以及两侧小时表的精确时间边界。
+// usageAnalyticsDailySplit separates daily date bounds from the surrounding hourly timestamp bounds.
 type usageAnalyticsDailySplit struct {
 	hourlyHeadEnd   time.Time
 	hourlyTailStart time.Time
@@ -32,14 +32,14 @@ type usageAnalyticsDailySplit struct {
 	dailyEndDate    string
 }
 
-// dailySplit 将小时边界与日表日期拆成独立参数，避免 PostgreSQL 把小时边界推断成 date。
+// dailySplit separates timestamp and date parameters so PostgreSQL does not infer hourly bounds as dates.
 func (window usageAnalyticsWindow) dailySplit() usageAnalyticsDailySplit {
 	hourlyHeadEnd := window.dailyStart
 	hourlyTailStart := window.dailyEnd
 	dailyStart := window.dailyStart
 	dailyEnd := window.dailyEnd
 	if !dailyEnd.After(dailyStart) {
-		// 窗口内没有完整 UTC 日时，日表使用空区间，小时表覆盖全部聚合区间。
+		// With no complete UTC day, the daily range is empty and hourly buckets cover the aggregate range.
 		hourlyHeadEnd = window.aggregateStart
 		hourlyTailStart = window.aggregateStart
 		dailyStart = window.dailyEnd
@@ -53,12 +53,12 @@ func (window usageAnalyticsWindow) dailySplit() usageAnalyticsDailySplit {
 	}
 }
 
-// args 按“小时头部结束、小时尾部开始、日表开始、日表结束”的顺序返回查询参数。
+// args returns hourly head end, hourly tail start, daily start, and daily end in query order.
 func (split usageAnalyticsDailySplit) args() []any {
 	return []any{split.hourlyHeadEnd, split.hourlyTailStart, split.dailyStartDate, split.dailyEndDate}
 }
 
-// resolveUsageAnalyticsWindow 仅在聚合覆盖完整时返回可安全组合的聚合与原始边界。
+// resolveUsageAnalyticsWindow splits the requested range into covered aggregate buckets and raw edges.
 func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time.Time) (usageAnalyticsWindow, bool, error) {
 	window := usageAnalyticsWindow{start: start.UTC(), end: end.UTC()}
 	if r == nil || r.preAggregation == nil || !end.After(start) || !r.preAggregation.UsageEnabled(ctx) {
@@ -81,15 +81,15 @@ func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time
 
 	window.aggregateStart = ceilHourUTC(window.start)
 	if coverageStart := state.coverage.Time.UTC(); coverageStart.After(window.aggregateStart) {
-		// 历史覆盖尚未完成时，仅让覆盖线之前的区间回退原始表。
+		// Read the unbackfilled head from raw records.
 		window.aggregateStart = coverageStart
 	}
 	if end.UTC().After(state.watermark.UTC()) {
-		// 当前小时聚合到 watermark，尾部只读取 watermark 之后的新记录。
+		// The current hour is aggregated through the watermark; raw records supply the remaining tail.
 		window.aggregateEnd = ceilHourUTC(state.watermark.UTC())
 		window.rawTailStart = state.watermark.UTC()
 	} else {
-		// 历史任意结束时间只使用完整小时，剩余不足一小时从原始表读取。
+		// Historical ranges use complete hours and read the partial final hour from raw records.
 		window.aggregateEnd = end.UTC().Truncate(time.Hour)
 		window.rawTailStart = window.aggregateEnd
 	}
@@ -104,7 +104,7 @@ func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time
 	}
 	window.dailyStart = ceilDayUTC(window.aggregateStart)
 	window.dailyEnd = window.aggregateEnd.Truncate(24 * time.Hour)
-	// 没有完整 UTC 日时，查询使用整个范围内的完整小时。
+	// Without a complete UTC day, hourly buckets cover the aggregate range.
 	return window, true, nil
 }
 
@@ -141,7 +141,7 @@ func (r *Store) getOwnedTeamID(ctx context.Context, userID int64) (int64, error)
 	return teamID.Int64, nil
 }
 
-// getUserDashboardStatsFromAnalytics 使用小时聚合和最多两个原始边界计算用户仪表盘。
+// getUserDashboardStatsFromAnalytics combines daily and hourly aggregates with up to two raw edges.
 func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID int64) (*usage.UserDashboardStats, bool, error) {
 	if r == nil || r.preAggregation == nil || !r.preAggregation.UsageEnabled(ctx) {
 		return nil, false, nil
@@ -172,7 +172,7 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 	var rpm, tpm int64
 	group, groupCtx := errgroup.WithContext(ctx)
 
-	// Key 数量、累计用量、今日用量和实时性能互不依赖，并行读取可缩短仪表盘关键路径。
+	// Key counts, all-time usage, today's usage, and recent rates can be queried independently.
 	group.Go(func() error {
 		return scanSingleRow(groupCtx, r.sql, `
 			WITH scoped AS (
@@ -262,7 +262,7 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 		)
 	})
 	group.Go(func() error {
-		// “今日”按业务时区单独切边界，不能用 UTC 日桶的午夜代替本地整日明细。
+		// Today's range starts at business-timezone midnight, which can split a UTC daily bucket.
 		todayStart := r.calendar.Today()
 		todayEnd := time.Now().UTC()
 		todayFilters := UsageLogFilters{

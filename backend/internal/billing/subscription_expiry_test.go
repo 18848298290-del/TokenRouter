@@ -36,7 +36,7 @@ type subscriptionExpirySettingRepoStub struct {
 	multiErr error
 }
 
-// 可控存储证明停止会取消在途调用并等待退出，重复启动不会创建第二轮。
+// expiryLifecycleRepo lets tests hold an operation to check cancellation, stop waiting, and repeated starts.
 type expiryLifecycleRepo struct {
 	UserSubscriptionRepository
 	entered      chan struct{}

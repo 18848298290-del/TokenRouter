@@ -584,9 +584,8 @@ func TestGrokTokenProviderRejectsStaleDBTokenWithoutExpiry(t *testing.T) {
 	require.Empty(t, token)
 }
 
-// TestGrokTokenProviderManualTestBypassesSchedulingGate 复现 #4598：管理员必须
-// 能对调度器当前排除的提供商（手动关闭、限流、过载或临时冷却）运行“测试连接”，
-// 同时生产请求路径仍应拒绝这些提供商。
+// TestGrokTokenProviderManualTestBypassesSchedulingGate covers administrative probes of disabled,
+// rate-limited, overloaded, or cooling providers while production requests reject them (#4598).
 func TestGrokTokenProviderManualTestBypassesSchedulingGate(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	tests := []struct {
@@ -777,7 +776,7 @@ func (s *grokOAuthClientStub) ConvertSSOToBuild(context.Context, string, string)
 	return s.ssoResponse, nil
 }
 
-// newGrokAuthorizationForTest 构造授权测试组件，配置密码授权开关。
+// newGrokAuthorizationForTest configures the authorization client and password-login switch.
 func newGrokAuthorizationForTest(proxies egress.ProxyRepository, client providercore.GrokAuthorizationClient, enabled ...bool) *providercore.GrokAuthorization {
 	options := GrokAuthorizationOptions(proxies, func() bool { return len(enabled) > 0 && enabled[0] })
 	return providercore.NewGrokAuthorization(client, options)
@@ -835,12 +834,12 @@ func (c *grokTokenCacheForProviderTest) ReleaseRefreshLock(context.Context, stri
 	return nil
 }
 
-// newGrokTokenSourceForTest 组合提供商读取、缓存和 token 策略。
+// newGrokTokenSourceForTest binds provider reads, token caching, and refresh policy.
 func newGrokTokenSourceForTest(repo providercore.RefreshRepository, cache providercore.AccessTokenCache) *providercore.GrokTokenSource {
 	return &providercore.GrokTokenSource{Repository: repo, Cache: cache, Policy: providercore.GrokProviderRefreshPolicy()}
 }
 
-// bindGrokRefreshForTest 注入共享刷新协调器，锁和持久化由协调器管理。
+// bindGrokRefreshForTest delegates locking and persistence to the shared refresh coordinator.
 func bindGrokRefreshForTest(source *providercore.GrokTokenSource, refresh *providercore.OAuthRefreshAPI, executor providercore.OAuthRefreshExecutor) {
 	source.Refresh = func(ctx context.Context, value *providercore.Record, window time.Duration) (*providercore.OAuthRefreshResult, error) {
 		return refresh.RefreshIfNeeded(ctx, value, executor, window)

@@ -103,7 +103,7 @@ type openAIWSWriteFailAfterFirstTurnConn struct {
 	failOnWrite bool
 }
 
-// openAIWSIngressCapacityShedRepo 接收非容量类错误触发的提供商状态写入。
+// openAIWSIngressCapacityShedRepo accepts provider health writes for errors unrelated to capacity shedding.
 type openAIWSIngressCapacityShedRepo struct {
 	wsFixtureProviderStore
 }
@@ -126,7 +126,7 @@ type openAIWSStatusErrorDialer struct {
 	err    error
 }
 
-// runtimeTestDialer 记录拨号预算，并为后台预热创建独立连接。
+// runtimeTestDialer records dial budgets and creates separate prewarm connections.
 type runtimeTestDialer struct {
 	mu      sync.Mutex
 	conns   []openai.WSClientConn
@@ -264,8 +264,8 @@ func (r *gatewayTTLSettingRepo) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream 连接 ProxyResponsesWebSocketFromClient 与 captureConn 上游。
-// 测试检查 service_tier=fast 在上游写入前按管理员配置规范化并过滤。
+// TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream connects ingress execution to a capture connection.
+// It checks that service_tier=fast is normalized and filtered by administrator policy before upstream writes.
 func TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream(t *testing.T) {
 	options := &wsFixtureOptions{}
 	options.Request.URLPolicy.Enabled = false
@@ -373,10 +373,10 @@ func TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream(t *testing.T) 
 	require.Equal(t, "gpt-5.5", upstream["model"])
 }
 
-// TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream is the
-// integration flavour of TestWSResponseCreate_BlockReturnsTypedError. It
-// asserts that with a custom block rule, the client receives a Realtime-style
-// error event AND the upstream FrameConn never receives the offending frame.
+// TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream checks a custom block rule
+// through the ingress adapter. The client receives a Realtime-style error event
+// before the policy close frame, and the upstream connection receives no request.
+// This covers delivery behavior beyond the typed-error unit test.
 func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing.T) {
 	options := &wsFixtureOptions{}
 	options.Request.URLPolicy.Enabled = false
@@ -456,13 +456,9 @@ func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing
 			return
 		}
 		proxyErr := svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, provider, "sk-test", firstMessage, nil)
-		// Mirror the production handler (openai_gateway_handler.go:1325-1328):
-		// when the proxy returns an OpenAIWSClientCloseError, surface its
-		// status code to the client via a graceful close handshake. Without
-		// this the deferred CloseNow() above would tear down the TCP
-		// connection without sending a close frame, and the C3 timing
-		// assertion (next read returns CloseStatus=1008) would see EOF
-		// instead.
+		// Send the returned policy close status through a graceful handshake, as RunEntry does.
+		// CloseNow alone tears down TCP before the client can observe the close status.
+		// The second client read below checks for status 1008.
 		if closeErr, ok := errors.AsType[*gatewayhttp.OpenAIWSClientCloseError](proxyErr); ok {
 			_ = conn.Close(closeErr.StatusCode(), closeErr.Reason())
 		}
@@ -480,20 +476,20 @@ func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing
 	require.NoError(t, clientConn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","stream":false,"service_tier":"priority"}`)))
 	cancelWrite()
 
-	// 客户端先读取 error 事件。coder/websocket@v1.8.14 的 Conn.Write 在 write.go:307-311 同步 Flush，
-	// 关闭握手再次取得同一 writeFrameMu，因此数据帧先于关闭帧写出。
+	// Read the error event before checking the close frame.
+	// The blocking write and subsequent close handshake must preserve that ordering.
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 	_, event, readErr := clientConn.Read(readCtx)
 	cancelRead()
 	require.NoError(t, readErr, "first read must succeed and return the error event before any close frame")
 	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
 	require.Equal(t, "invalid_request_error", gjson.GetBytes(event, "error.type").String())
-	// B1 regression: event_id + error.code must be populated.
+	// Clients need both a policy code and an event ID for correlation.
 	require.Equal(t, "policy_violation", gjson.GetBytes(event, "error.code").String())
 	require.NotEmpty(t, gjson.GetBytes(event, "event_id").String(), "event_id must be present so clients can correlate")
 	require.Contains(t, gjson.GetBytes(event, "error.message").String(), "ws priority blocked for testing")
 
-	// 下一次读取返回 CloseError，检查 error 事件先于关闭帧。
+	// The next read must observe the policy close after the error event.
 	readCtx2, cancelRead2 := context.WithTimeout(context.Background(), 3*time.Second)
 	_, _, secondReadErr := clientConn.Read(readCtx2)
 	cancelRead2()
@@ -503,7 +499,7 @@ func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing
 
 	select {
 	case serverErr := <-serverErrCh:
-		// 服务端返回 OpenAIWSClientCloseError，handler 据此关闭连接。此处检查错误类型。
+		// The handler receives the typed close error used to send the policy close frame.
 		require.Error(t, serverErr)
 		var closeErr *gatewayhttp.OpenAIWSClientCloseError
 		require.True(t, errors.As(serverErr, &closeErr), "block 应返回 OpenAIWSClientCloseError，得到 %T: %v", serverErr, serverErr)
@@ -512,13 +508,13 @@ func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing
 		t.Fatal("等待 ingress 关闭超时")
 	}
 
-	// Critical: the offending frame must NEVER reach the upstream.
-	// captureDialer.DialCount may legitimately be 0 or 1 depending on whether
-	// the lease was acquired before policy fired; either way, no writes.
+	// The blocked frame must not reach upstream.
+	// The dial count can be zero or one depending on lease acquisition timing;
+	// both cases must leave the upstream write list empty.
 	require.Empty(t, captureConn.writes, "block 命中后上游不应收到 response.create")
 }
 
-// newOpenAIWSV2TestConfig 为网络夹具设置短退避，算法测试自行指定时长。
+// newOpenAIWSV2TestConfig supplies the sticky response TTL for network fixtures.
 func newOpenAIWSV2TestConfig() *wsFixtureOptions {
 	options := &wsFixtureOptions{}
 
@@ -556,7 +552,7 @@ func (d *openAIWSSingleConnDialer) Dial(
 	return d.conn, 0, nil, nil
 }
 
-// TestOpenAIWSDownstreamWriteContext_CancellationOwnership 验证租约控制信号不会抢先取消当前下行帧。
+// TestOpenAIWSDownstreamWriteContext_CancellationOwnership checks that lease cancellation does not interrupt a client-bound write.
 func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
 	t.Run("普通控制上下文已取消", func(t *testing.T) {
 		controlCtx, cancelControl := context.WithCancelCause(context.Background())
@@ -602,7 +598,7 @@ func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
 	})
 }
 
-// TestOpenAIWSImageIntentForRoutingModel 验证 WebSocket 生图判断只使用分组映射模型 G。
+// TestOpenAIWSImageIntentForRoutingModel checks image intent against group-mapped model G.
 func TestOpenAIWSImageIntentForRoutingModel(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -812,7 +808,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 }
 
 // TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_LeaseLossSendsRetryClose
-// 验证租约丢失发生在上游终态读取后时，客户端先收到终态事件，再收到 1013 关闭帧。
+// checks terminal-event delivery before status 1013 when the lease is lost after the terminal read.
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_LeaseLossSendsRetryClose(t *testing.T) {
 	options := &wsFixtureOptions{}
 	options.Request.URLPolicy.Enabled = false
@@ -1631,7 +1627,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	options.WS.WriteTimeoutSeconds = 3
 
 	upstreamConn := &openAIWSCaptureConn{
-		// 首轮先返回 created，让客户端能在终态前发送 session.update；后续终态等待对应请求到达。
+		// Send created first so session.update can arrive before the terminal; later terminals wait for their request.
 		readDelays: []time.Duration{0, 200 * time.Millisecond, 200 * time.Millisecond},
 		events: [][]byte{
 			[]byte(`{"type":"response.created","response":{"id":"resp_passthrough_turn_1","model":"upstream-turn-1"}}`),
@@ -1749,7 +1745,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Equal(t, "resp_passthrough_turn_1", gjson.GetBytes(event, "response.id").String())
 	require.Equal(t, "client-turn-1", gjson.GetBytes(event, "response.model").String())
 
-	// 首轮流式输出期间更新下一轮模型，首轮终态使用首轮的 R/C/U 快照。
+	// Update the next model during turn one; its terminal must retain turn one's model snapshot.
 	sessionWriteCtx, cancelSessionWrite := context.WithTimeout(context.Background(), 3*time.Second)
 	err = clientConn.Write(sessionWriteCtx, websocket.MessageText, []byte(`{"type":"session.update","session":{"model":"client-turn-2"}}`))
 	cancelSessionWrite()
@@ -1778,7 +1774,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 
 	select {
 	case serverErr := <-serverErrCh:
-		// 客户端正常关闭后，服务端 goroutine 可能以错误形式收到关闭帧，测试接受该结果。
+		// The server reader can report a normal client close as an error.
 		if serverErr != nil {
 			require.Contains(t, serverErr.Error(), "StatusNormalClosure",
 				"server error should only be a normal close frame, got: %v", serverErr)
@@ -1815,7 +1811,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Len(t, upstreamConn.writes, 3, "passthrough 模式应转发两轮 response.create 和一次 session.update")
 	require.Equal(t, "upstream-turn-1", fmt.Sprint(upstreamConn.writes[0]["model"]))
 	require.Equal(t, false, upstreamConn.writes[0]["parallel_tool_calls"])
-	// session.update 保留对象结构，并将第二轮请求模型替换为上游模型。
+	// session.update retains its object structure and uses the second turn's upstream model.
 	secondTurnSession, ok := upstreamConn.writes[1]["session"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "upstream-turn-2", fmt.Sprint(secondTurnSession["model"]))
@@ -4625,7 +4621,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 	firstTurn := readMessage()
 	require.Equal(t, "resp_turn_prev_once_1", gjson.GetBytes(firstTurn, "response.id").String())
 
-	// 恢复重试删除全部重复的 previous_response_id 键，否则会再次触发 previous_response_not_found。
+	// Remove every duplicate previous_response_id during recovery so the stale ID cannot fail again.
 	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_turn_prev_once_1","input":[],"previous_response_id":"resp_turn_prev_duplicate"}`)
 	secondTurn := readMessage()
 	require.Equal(t, "resp_turn_prev_once_2", gjson.GetBytes(secondTurn, "response.id").String())
@@ -4861,8 +4857,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 	options.WS.ReadTimeoutSeconds = 3
 	options.WS.WriteTimeoutSeconds = 3
 
-	// 多个上游事件：前几个为非 terminal 事件，最后一个为 terminal。
-	// 第一个事件延迟 250ms 让客户端 RST 有时间传播，使 writeClientMessage 可靠失败。
+	// Send two nonterminal events followed by a terminal event.
+	// Delay the first event 250 ms to let client disconnection reach the server before its write.
 	captureConn := &openAIWSCaptureConn{
 		readDelays: []time.Duration{250 * time.Millisecond, 0, 0},
 		events: [][]byte{
@@ -4953,7 +4949,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 	err = clientConn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"response.create","model":"custom-original-model","stream":false,"service_tier":"flex"}`))
 	cancelWrite()
 	require.NoError(t, err)
-	// 立即关闭客户端，模拟客户端在 relay 期间断连。
+	// Disconnect immediately to exercise client loss during relay.
 	require.NoError(t, clientConn.CloseNow(), "模拟 ingress 客户端提前断连")
 
 	select {
@@ -5321,7 +5317,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncrypted
 		return message
 	}
 
-	// turn1：携带失效密文，上游以 invalid_encrypted_content 拒绝。
+	// Turn one sends stale ciphertext and receives invalid_encrypted_content.
 	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"stale-cipher","summary":[]},{"type":"input_text","text":"hi"}]}`)
 	firstEvent := readMessage()
 	require.Equal(t, "error", gjson.GetBytes(firstEvent, "type").String())
@@ -5329,7 +5325,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncrypted
 	secondEvent := readMessage()
 	require.Equal(t, "response.failed", gjson.GetBytes(secondEvent, "type").String())
 
-	// turn2：客户端历史仍带同一失效密文，进场应被 lineage 预剥离后再发上游。
+	// Turn two repeats the stale ciphertext; lineage tracking should strip it before the upstream write.
 	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"stale-cipher","summary":[]},{"type":"input_text","text":"hi"},{"type":"input_text","text":"again"}]}`)
 	thirdEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(thirdEvent, "type").String())
@@ -5424,7 +5420,7 @@ func TestOpenAIWSIngressPreviousResponseRecoveryEnabled(t *testing.T) {
 	require.True(t, svc.openAIWSIngressPreviousResponseRecoveryEnabled())
 }
 
-// TestApplyOpenAIWSReasoningEffortPolicyUsesSessionModel 验证省略 model 的后续帧仍能命中分组映射。
+// TestApplyOpenAIWSReasoningEffortPolicyUsesSessionModel checks group mappings for later frames that omit model.
 func TestApplyOpenAIWSReasoningEffortPolicyUsesSessionModel(t *testing.T) {
 	hooks := &ws.OpenAIIngressHooks{
 		ReasoningEffortMappings: []routing.ReasoningEffortMapping{{
@@ -6380,9 +6376,9 @@ func TestCombineOpenAIWSReplayItems(t *testing.T) {
 		delta := []json.RawMessage{json.RawMessage(`{"b":2}`)}
 		combined := openai.CombineOpenAIWSReplayItems(history, delta)
 		require.Len(t, combined, 2)
-		// combined 使用独立的数组，追加元素后 history 保持原样。
+		// The combined slice owns its backing array so appending leaves history unchanged.
 		require.NotSame(t, &history[0], &combined[0])
-		// 正文共享：不发生字节级深拷贝。
+		// Item bodies share their existing byte slices.
 		require.Same(t, &history[0][0], &combined[0][0])
 		require.Same(t, &delta[0][0], &combined[1][0])
 	})
@@ -6463,9 +6459,9 @@ func (r *openAIWSIngressCapacityShedRepo) UpdateExtra(context.Context, int64, ma
 	return nil
 }
 
-// TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient 验证 ctx_pool 将 error / response.failed 中的容量降载码改写为 server_error。
-// HTTP/SSE 与 http_bridge 使用相同规则。Codex 将 server_is_overloaded / slow_down 视为致命错误，打印 “Selected model is at capacity” 后终止会话；server_error 会触发退避重试。
-// 非容量类错误码原样下发，客户端根据错误码处理。
+// TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient checks capacity-code rewriting to server_error in pooled mode.
+// HTTP/SSE and the HTTP bridge use the same retryable code for capacity shedding.
+// Other error codes pass through for client handling.
 func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -6583,7 +6579,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 				}
 				frames = append(frames, string(message))
 			}
-			// 本轮已终止，主动断开客户端让 ingress 退出 turn 循环。
+			// End the client connection after the terminal so the ingress turn loop exits.
 			_ = clientConn.CloseNow()
 
 			require.NotEmpty(t, frames, "客户端应至少收到一个下发事件")
@@ -6604,7 +6600,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 	}
 }
 
-// TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn 验证 ctx_pool 在错误返回前保存风控证据和用量，供 AfterTurn 使用。
+// TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn checks that evidence and usage reach AfterTurn on errors.
 func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -7072,12 +7068,12 @@ func (d *runtimeTestDialer) Dial(ctx context.Context, _ string, _ http.Header, _
 	if conn != nil {
 		return conn, 0, nil, nil
 	}
-	// 延迟预热拨号，使其与后续客户端轮次交错执行。
+	// Delay prewarm dialing to overlap later client turns.
 	time.Sleep(time.Millisecond)
 	return &openAIWSFakeConn{}, 0, nil, nil
 }
 
-// TestWSRuntimeAcrossTurns 覆盖后台预热与逐轮快照并发，以及热更新后的重连预算。
+// TestWSRuntimeAcrossTurns covers concurrent prewarming and turn snapshots, plus reconnect budgets after updates.
 func TestWSRuntimeAcrossTurns(t *testing.T) {
 	previousPingIdle := openAIWSIngressPreflightPingIdle
 	openAIWSIngressPreflightPingIdle = 0

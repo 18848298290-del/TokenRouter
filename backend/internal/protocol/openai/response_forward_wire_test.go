@@ -38,7 +38,7 @@ func BenchmarkOpenAIUsageExtractOptimized(b *testing.B) {
 }
 
 func TestExtractOpenAIUsageFromJSONBytes_MergesHostedImageGenToolUsage(t *testing.T) {
-	// 流式终态把主 usage 和生图工具 usage 分别放在 response 下。
+	// Streaming terminal events nest both main usage and image tool usage under response.
 	body := []byte(`{
 		"type": "response.completed",
 		"response": {
@@ -68,7 +68,7 @@ func TestExtractOpenAIUsageFromJSONBytes_MergesHostedImageGenToolUsage(t *testin
 }
 
 func TestExtractOpenAIUsageFromJSONBytes_NonStreamingMergesImageGen(t *testing.T) {
-	// 非流式响应在顶层返回主 usage 和生图工具 usage。
+	// Non-streaming responses put both main usage and image tool usage at the top level.
 	body := []byte(`{
 		"id": "resp_abc123",
 		"object": "response",
@@ -234,7 +234,7 @@ func TestReplaceModelInResponseBody(t *testing.T) {
 	}
 }
 
-// TestReplaceModelInSSELine 检查 SSE 行中的模型字段替换。
+// TestReplaceModelInSSELine checks model replacement within SSE data lines.
 func TestReplaceModelInSSELine(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -393,25 +393,25 @@ func TestReplaceModelInSSEBody(t *testing.T) {
 func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	usage := &ForwardUsage{InputTokens: 9, OutputTokens: 8, CacheReadInputTokens: 7}
 
-	// 非终态事件携带 usage 时合并其中的非零字段。
+	// Merge positive usage fields received before the terminal event.
 	ParseSSEUsageBytes([]byte(`{"type":"response.in_progress","response":{"usage":{"input_tokens":1,"output_tokens":2}}}`), usage)
 	require.Equal(t, 1, usage.InputTokens)
 	require.Equal(t, 2, usage.OutputTokens)
 	require.Equal(t, 7, usage.CacheReadInputTokens)
 
-	// completed 事件，应提取 usage
+	// Completed events supply terminal usage.
 	ParseSSEUsageBytes([]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}`), usage)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
 
-	// done 事件同样可能携带最终 usage
+	// Legacy done events can also supply terminal usage.
 	ParseSSEUsageBytes([]byte(`{"type":"response.done","response":{"usage":{"input_tokens":13,"output_tokens":15,"input_tokens_details":{"cached_tokens":4}}}}`), usage)
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 15, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
 
-	// failed 事件在部分上游路径也会携带已消耗 usage，应与 WS/passthrough 保持一致
+	// Failed events can report consumed tokens, as in WebSocket and passthrough paths.
 	ParseSSEUsageBytes([]byte(`{"type":"response.failed","response":{"usage":{"input_tokens":17,"output_tokens":19,"input_tokens_details":{"cached_tokens":6}}}}`), usage)
 	require.Equal(t, 17, usage.InputTokens)
 	require.Equal(t, 19, usage.OutputTokens)

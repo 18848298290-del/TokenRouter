@@ -256,7 +256,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 					clientDisconnected = true
 					o.Log("[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
 				} else if line == "" {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
+					// Flush at SSE event boundaries to avoid a syscall for every line.
 					flusher.Flush()
 					lastDataAt = time.Now()
 					resetKeepaliveTimer()

@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// SetPrivacy 调用 Antigravity API 设置隐私并验证结果。
-// 流程：
-//  1. setUserSettings 清空设置 → 检查返回值 {"userSettings":{}}
-//  2. fetchUserInfo 二次验证隐私是否已生效（需要 project_id）
+// SetPrivacy applies Antigravity privacy settings and verifies the result.
+// The API sequence is:
+//  1. Clear settings with setUserSettings and require an empty userSettings response.
+//  2. Verify privacy with fetchUserInfo, which requires project_id.
 //
-// 返回 privacy_mode 值："privacy_set" 成功，"privacy_set_failed" 失败，空串表示无法执行。
+// It returns privacy_set on success, privacy_set_failed on failure, or an empty string when accessToken is empty.
 func (s *AntigravityAuthorization) SetPrivacy(ctx context.Context, accessToken, projectID, proxyURL string) string {
 	if accessToken == "" {
 		return ""
@@ -26,7 +26,7 @@ func (s *AntigravityAuthorization) SetPrivacy(ctx context.Context, accessToken, 
 		return AntigravityPrivacyFailed
 	}
 
-	// 第 1 步：调用 setUserSettings，检查返回值
+	// Require a successful empty-settings response before verifying privacy.
 	setResp, err := client.SetUserSettings(ctx, accessToken)
 	if err != nil {
 		s.Options.Warn("antigravity_privacy_set_failed", "error", err.Error())
@@ -39,7 +39,7 @@ func (s *AntigravityAuthorization) SetPrivacy(ctx context.Context, accessToken, 
 		return AntigravityPrivacyFailed
 	}
 
-	// 第 2 步：调用 fetchUserInfo 二次验证隐私是否已生效
+	// Verify the applied settings using the account's project ID.
 	if strings.TrimSpace(projectID) == "" {
 		s.Options.Warn("antigravity_privacy_missing_project_id")
 		return AntigravityPrivacyFailed

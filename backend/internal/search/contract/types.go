@@ -19,8 +19,8 @@ type SearchResult struct {
 // SearchRequest describes a web search to perform.
 type SearchRequest struct {
 	Query      string
-	MaxResults int    // defaults to defaultMaxResults if <= 0
-	ProxyURL   string // optional HTTP proxy URL
+	MaxResults int    // Defaults to DefaultMaxResults when nonpositive.
+	ProxyURL   string // Optional proxy override applied by the executor.
 }
 
 // SearchResponse holds the results of a web search.
@@ -33,8 +33,8 @@ type SearchResponse struct {
 type ProviderConfig struct {
 	Type         string `json:"type"`                    // ProviderTypeBrave | ProviderTypeTavily
 	APIKey       string `json:"api_key"`                 // secret
-	QuotaLimit   int64  `json:"quota_limit"`             // 0 = unlimited
-	SubscribedAt *int64 `json:"subscribed_at,omitempty"` // subscription start (unix seconds); quota resets monthly from this date
+	QuotaLimit   int64  `json:"quota_limit"`             // Nonpositive values mean unlimited.
+	SubscribedAt *int64 `json:"subscribed_at,omitempty"` // Unix seconds; quota TTL includes a 24-hour buffer.
 	ProxyURL     string `json:"-"`                       // resolved proxy URL (not persisted)
 	ProxyID      int64  `json:"-"`                       // resolved proxy ID for unavailability tracking
 	ExpiresAt    *int64 `json:"expires_at,omitempty"`    // optional expiration (unix seconds)

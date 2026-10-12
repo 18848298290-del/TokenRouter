@@ -29,7 +29,7 @@ var (
 	ErrInvalidResetToken = infraerrors.BadRequest("INVALID_RESET_TOKEN", "invalid or expired password reset token")
 )
 
-// EmailCache defines cache operations for email service.
+// EmailCache stores email verification codes, reset tokens, and send-rate limits.
 type EmailCache interface {
 	GetVerificationCode(ctx context.Context, email string) (*VerificationCodeData, error)
 	SetVerificationCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error
@@ -45,8 +45,8 @@ type EmailCache interface {
 	SetPasswordResetToken(ctx context.Context, email string, data *PasswordResetTokenData, ttl time.Duration) error
 	DeletePasswordResetToken(ctx context.Context, email string) error
 
-	// Password reset email cooldown methods
-	// Returns true if in cooldown period (email was sent recently)
+	// Password reset send cooldown.
+	// IsPasswordResetEmailInCooldown reports whether a recent send started a cooldown.
 	IsPasswordResetEmailInCooldown(ctx context.Context, email string) bool
 	SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error
 
@@ -55,7 +55,7 @@ type EmailCache interface {
 	GetNotifyCodeUserRate(ctx context.Context, userID int64) (int64, error)
 }
 
-// VerificationCodeData represents verification code data.
+// VerificationCodeData tracks a code, failed attempts, and its expiry.
 type VerificationCodeData struct {
 	Code      string
 	Attempts  int
@@ -63,7 +63,7 @@ type VerificationCodeData struct {
 	ExpiresAt time.Time // absolute expiry; used to preserve remaining TTL when updating attempts
 }
 
-// PasswordResetTokenData represents password reset token data.
+// PasswordResetTokenData stores a reset token and creation time.
 type PasswordResetTokenData struct {
 	Token     string
 	CreatedAt time.Time

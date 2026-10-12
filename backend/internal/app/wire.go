@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// initializeApplication 构造并登记资源，Application.Run 负责启动。
+// initializeApplication constructs and registers resources; Application.Run starts them.
 func initializeApplication(ctx context.Context, cfg *config.Config, info BuildInfo, manager *lifecycle.Manager, restarter *lifecycle.Restarter, tasks *lifecycle.Tasks) (*Application, error) {
 	wire.Build(
 		egressAssemblyProviders,

@@ -18,8 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestAuthPubSubReconnect 验证现有双实例发布订阅协议、真实断线重订阅及停止顺序。
-// 两个实例用于检查认证缓存的发布订阅，平台额度仍由单进程协调。
+// TestAuthPubSubReconnect checks two cache instances, network reconnection, and shutdown order.
+// The two instances exercise authentication pub/sub; platform quotas remain process-local.
 func TestAuthPubSubReconnect(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -74,7 +74,7 @@ func TestAuthPubSubReconnect(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 	}
 	publish("after-publish")
-	// 仅操作本测试隔离 Redis 容器中的订阅连接，验证实际网络重连。
+	// Disconnect subscribers in this test's isolated Redis container to exercise network reconnection.
 	killed, e := rdb.ClientKillByFilter(ctx, "TYPE", "pubsub").Result()
 	require.NoError(t, e)
 	require.Equal(t, int64(2), killed)

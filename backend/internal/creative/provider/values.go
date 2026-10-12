@@ -14,8 +14,8 @@ func ReadCreativeUpstreamBody(body io.Reader, limit int64) ([]byte, error) {
 	return upstream.ReadLimitedBody(body, limit)
 }
 
-// CreativeOpenAIImageSize 把创作台尺寸档位映射为 OpenAI images 协议支持的像素尺寸。
-// 4K 档位遵守 GPT Image 2 的 3840 最大边长和约 8.3MP 总像素上限。
+// CreativeOpenAIImageSize maps creative size tiers and aspect ratios to OpenAI pixel dimensions.
+// The 4K mapping uses a maximum edge of 3840 pixels and about 8.3 million pixels.
 func CreativeOpenAIImageSize(imageSize, aspectRatio string) string {
 	tier := pricing.NormalizeImageBillingTierOrDefault(imageSize)
 	ratio := strings.TrimSpace(aspectRatio)
@@ -47,7 +47,7 @@ func CreativeOpenAIImageSize(imageSize, aspectRatio string) string {
 	}
 }
 
-// CreativeGrokImageResolution 把尺寸档位映射为 grok imagine 的 resolution（1k/2k）。
+// CreativeGrokImageResolution maps size tiers to the Grok resolution values 1k and 2k.
 func CreativeGrokImageResolution(imageSize string) string {
 	if pricing.NormalizeImageBillingTierOrDefault(imageSize) == pricing.ImageBillingSize1K {
 		return "1k"
@@ -63,7 +63,7 @@ func DecodeBase64Image(raw string) (upstream.DecodedImage, error) {
 	return upstream.DecodeBase64Image(raw)
 }
 
-// CreativeFileExtension 返回 MIME 对应的文件扩展名（用于 multipart 文件名）。
+// CreativeFileExtension selects an extension for multipart filenames, defaulting to png.
 func CreativeFileExtension(mime string) string {
 	switch strings.ToLower(strings.TrimSpace(mime)) {
 	case "image/jpeg":

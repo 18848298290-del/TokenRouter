@@ -30,13 +30,13 @@ type redeemRepoStub struct {
 	batchUpdateCalled bool
 }
 
-// settingsPrices 保存计费测试的设置与价卡。
+// settingsPrices holds settings and price cards for billing tests.
 type settingsPrices struct {
 	settings pricing.BillingSettings
 	cards    []routing.ModelPricingEntry
 }
 
-// catalogFixture 保存测试提供的模型价格目录。
+// catalogFixture holds model prices supplied by a test.
 type catalogFixture struct {
 	pricingData map[string]*pricing.CatalogModelPricing
 }
@@ -137,7 +137,7 @@ func (s *redeemRepoStub) SumPositiveBalanceByUser(ctx context.Context, userID in
 	panic("unexpected SumPositiveBalanceByUser call")
 }
 
-// newCalculator 使用测试目录构造计价器。
+// newCalculator constructs a calculator with the test catalog.
 func newCalculator(catalog *provider.Service) *billing.Calculator {
 	return newCalculatorWithPrices(catalog, nil)
 }
@@ -165,14 +165,14 @@ func newCatalogFixture(fixture catalogFixture) *provider.Service {
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// testPtrFloat64 返回给定浮点数的指针。
+// testPtrFloat64 returns a pointer to the supplied value.
 func testPtrFloat64(v float64) *float64 { return &v }
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
 func revokeSubscriptionFixture() *billing.UserSubscription {
 	now := time.Now().UTC()
-	// 夹具使用当天零点作为窗口起点，零点后一小时内也属于当前日窗口。
+	// Start at today's midnight so the fixture remains in the current daily window during the first hour of the day.
 	windowStart := timezone.NewCalendar(now.Location()).StartOfDay(now)
 	return &billing.UserSubscription{
 		ID:                 1,

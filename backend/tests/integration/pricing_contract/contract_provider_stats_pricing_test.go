@@ -44,7 +44,7 @@ func TestTryModelFilePricing_AppliesLongContextPricing(t *testing.T) {
 	result := bs.ModelFileStatsCost("gpt-5.6-sol", tokens, "", "")
 
 	require.NotNil(t, result)
-	// 输入和缓存读取使用 2 倍输入档位，输出使用 1.5 倍档位。
+	// Input and cache reads use the 2x long-context rate; output uses 1.5x.
 	require.InDelta(t, 0.233, *result, 1e-12)
 }
 
@@ -115,12 +115,12 @@ func TestTryModelFilePricing_CombinesPriorityAndLongContextPricing(t *testing.T)
 	result := bs.ModelFileStatsCost("gpt-5.6-sol", tokens, "priority", "")
 
 	require.NotNil(t, result)
-	// priority 单价先应用，再叠加长上下文输入 2 倍、输出 1.5 倍。
+	// Apply priority prices before the 2x input and 1.5x output long-context rates.
 	require.InDelta(t, 0.534, *result, 1e-12)
 }
 
 func TestTryModelFilePricing_PricingNotFound(t *testing.T) {
-	// "nonexistent-model" does not match any fallback pattern
+	// The fixture has no catalog entry for nonexistent-model.
 	bs := newTestBillingServiceWithPrices(map[string]*pricing.ModelPricing{})
 	tokens := pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}
 	result := bs.ModelFileStatsCost("nonexistent-model", tokens, "", "")
@@ -128,7 +128,7 @@ func TestTryModelFilePricing_PricingNotFound(t *testing.T) {
 }
 
 func TestTryModelFilePricing_NilFallback(t *testing.T) {
-	// getFallbackPricing returns nil when key maps to nil
+	// A nil price entry supplies no catalog price.
 	bs := newTestBillingServiceWithPrices(map[string]*pricing.ModelPricing{
 		"claude-sonnet-4": nil,
 	})
@@ -144,7 +144,7 @@ func TestTryModelFilePricing_ZeroCost(t *testing.T) {
 			OutputPricePerToken: 0.002,
 		},
 	})
-	tokens := pricing.UsageTokens{} // all zero tokens → cost = 0 → nil
+	tokens := pricing.UsageTokens{} // Zero usage returns no provider cost.
 	result := bs.ModelFileStatsCost("claude-sonnet-4", tokens, "", "")
 	require.Nil(t, result)
 }
@@ -164,7 +164,7 @@ func TestTryModelFilePricing_WithImageOutput(t *testing.T) {
 	}
 	result := bs.ModelFileStatsCost("claude-sonnet-4", tokens, "", "")
 	require.NotNil(t, result)
-	// ImageOutputTokens 是 OutputTokens 的子集，先扣除再按图片单价计。
+	// ImageOutputTokens is part of OutputTokens; subtract it before pricing text output.
 	// 100*0.001 + (50-10)*0.002 + 10*0.01 = 0.1 + 0.08 + 0.1 = 0.28
 	require.InDelta(t, 0.28, *result, 1e-12)
 }
@@ -194,7 +194,7 @@ func TestTryModelFilePricing_WithCacheTokens(t *testing.T) {
 func TestResolveProviderStatsCost_NilPricingConfigService(t *testing.T) {
 	result := contractProviderStatsCost(
 		context.Background(),
-		nil, // channelService is nil
+		nil, // No pricing configuration service.
 		newTestBillingServiceWithPrices(map[string]*pricing.ModelPricing{}),
 		"", 1, 1, "claude-sonnet-4", "",
 		pricing.UsageTokens{InputTokens: 100}, 1, 0.5, "",
@@ -219,7 +219,7 @@ func TestResolveProviderStatsCost_EmptyUpstreamModel(t *testing.T) {
 }
 
 func TestResolveProviderStatsCost_GetPricingConfigForGroupReturnsNil(t *testing.T) {
-	// Group 99 is NOT in the cache, so GetPricingConfigForGroup returns nil
+	// Group 99 has no cached pricing configuration.
 	cs := newTestPricingConfigServiceForStats(t, &routingtestkit.Configuration{
 		ID:     1,
 		Status: billing.StatusActive,
@@ -229,7 +229,7 @@ func TestResolveProviderStatsCost_GetPricingConfigForGroupReturnsNil(t *testing.
 		context.Background(),
 		cs,
 		newTestBillingServiceWithPrices(map[string]*pricing.ModelPricing{}),
-		"", 1, 99, "claude-sonnet-4", "", // groupID 99 has no channel
+		"", 1, 99, "claude-sonnet-4", "", // Group 99 has no pricing configuration.
 		pricing.UsageTokens{InputTokens: 100}, 1, 0.5, "",
 	)
 	require.Nil(t, result)
@@ -261,7 +261,7 @@ func TestResolveProviderStatsCost_HitsCustomRule(t *testing.T) {
 		context.Background(),
 		cs, nil, // billingService not needed when custom rule hits
 		"", 1, 10, "claude-sonnet-4", "",
-		tokens, 1, 999.0, "priority", // 自定义提供商价格不叠加服务层级倍率
+		tokens, 1, 999.0, "priority", // Custom provider prices do not apply service-tier multipliers.
 	)
 	require.NotNil(t, result)
 	// 100*0.01 + 50*0.02 = 1.0 + 1.0 = 2.0
@@ -284,7 +284,7 @@ func TestResolveProviderStatsCost_DoesNotUseUserPrice(t *testing.T) {
 			"claude-sonnet-4": {InputPricePerToken: 0.001, OutputPricePerToken: 0.002},
 		}),
 		"", 1, 10, "claude-sonnet-4", "",
-		tokens, 1, 0.75, "", // 用户售价不进入提供商成本计算
+		tokens, 1, 0.75, "", // The user charge is excluded from provider costs.
 	)
 	require.NotNil(t, result)
 	require.InDelta(t, 0.2, *result, 1e-12)
@@ -630,7 +630,7 @@ func TestResolveProviderStatsCost_AllMiss_ReturnsNil(t *testing.T) {
 	}
 	cs := newTestPricingConfigServiceForStats(t, pricingConfig, 10, "anthropic")
 
-	// BillingService with no pricing for the model
+	// The fixture catalog has no price for this model.
 	bs := newTestBillingServiceWithPrices(map[string]*pricing.ModelPricing{})
 
 	tokens := pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}
@@ -661,7 +661,7 @@ func TestResolveProviderStatsCost_NilBillingService_Skips模型目录(t *testing
 }
 
 func TestResolveProviderStatsCost_CustomRuleDoesNotUseUserPrice(t *testing.T) {
-	// 提供商成本规则独立于用户售价。
+	// Provider cost rules use prices independent of the user charge.
 	pricingConfig := &routingtestkit.Configuration{
 		ID:     1,
 		Status: billing.StatusActive,
@@ -686,10 +686,10 @@ func TestResolveProviderStatsCost_CustomRuleDoesNotUseUserPrice(t *testing.T) {
 		context.Background(),
 		cs, nil,
 		"", 1, 10, "claude-sonnet-4", "",
-		tokens, 1, 99.0, "", // 用户售价不参与提供商成本规则
+		tokens, 1, 99.0, "", // The user charge is excluded from provider costs.
 	)
 	require.NotNil(t, result)
-	// 自定义成本规则按 100*0.05 得到 5.0。
+	// The custom rule charges 100 * 0.05 = 5.0.
 	require.InDelta(t, 5.0, *result, 1e-12)
 }
 
@@ -720,8 +720,8 @@ func TestApplyProviderStatsCost_UsesUsageLogServiceTier(t *testing.T) {
 	require.InDelta(t, 0.4, *usageLog.ProviderStatsCost, 1e-12)
 }
 
-// applyContractProviderStatsCost 为用量日志计算提供商成本。
-// 上游模型为空时使用请求模型，再通过定价解析器匹配成本规则。
+// applyContractProviderStatsCost calculates provider cost for a usage log.
+// It uses the requested model when the upstream model is empty, then resolves cost rules.
 func applyContractProviderStatsCost(
 	ctx context.Context,
 	usageLog *usage.UsageLog,
@@ -758,8 +758,8 @@ func applyContractProviderStatsCost(
 	)
 }
 
-// newTestBillingServiceWithPrices 使用给定的回退价格构造计价器。
-// 价格表的键使用模型匹配后的名称，例如 claude-sonnet-4。
+// newTestBillingServiceWithPrices constructs a calculator from the supplied catalog prices.
+// Map keys use the matched model name, such as claude-sonnet-4.
 func newTestBillingServiceWithPrices(prices map[string]*pricing.ModelPricing) *billing.Calculator {
 	return newCalculatorWithPrices(nil, prices)
 }

@@ -1,6 +1,6 @@
 package httpapi
 
-// WS 关闭归因场景覆盖 gateway/httpapi/ws_errors.go 和 gateway/ws/entry_rules.go，检查关闭分类与提供商故障上报的配合。
+// Close-attribution scenarios check HTTP close classification against WS provider-failure reporting.
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 )
 
-// TestOpenAIWSIngressEndedByClient_GoingAwayWithoutCancellationStillReported 检查上游主动关闭时记录提供商故障。
+// TestOpenAIWSIngressEndedByClient_GoingAwayWithoutCancellationStillReported checks provider reporting for an upstream-initiated close.
 func TestOpenAIWSIngressEndedByClient_GoingAwayWithoutCancellationStillReported(t *testing.T) {
 	err := gatewayhttp.NewOpenAIWSClientCloseError(
 		coderws.StatusGoingAway, "upstream going away", errors.New("upstream closed session"))
@@ -24,7 +24,7 @@ func TestOpenAIWSIngressEndedByClient_GoingAwayWithoutCancellationStillReported(
 	require.True(t, gatewayws.EntryShouldReportFailure(err), "真实上游故障仍须归因提供商")
 }
 
-// TestOpenAIWSIngressEndedByClient_AbnormalClosuresStillReportProviderFailure 检查异常关闭进入提供商故障判断。
+// TestOpenAIWSIngressEndedByClient_AbnormalClosuresStillReportProviderFailure checks abnormal-close attribution.
 func TestOpenAIWSIngressEndedByClient_AbnormalClosuresStillReportProviderFailure(t *testing.T) {
 	cases := []struct {
 		name string
@@ -50,7 +50,7 @@ func TestOpenAIWSIngressEndedByClient_AbnormalClosuresStillReportProviderFailure
 			err:  errors.New("upstream websocket read failed"),
 		},
 		{
-			// 空闲超时之外的 deadline 按停滞故障处理。
+			// A deadline outside the inter-turn idle timeout counts as a stalled request.
 			name: "deadline_without_normal_close",
 			err:  fmt.Errorf("upstream stalled: %w", context.DeadlineExceeded),
 		},

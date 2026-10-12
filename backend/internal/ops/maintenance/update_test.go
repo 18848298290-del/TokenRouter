@@ -92,13 +92,13 @@ func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
 	svc := newRollbackTestService("0.1.147", releases)
 
 	for _, target := range []string{
-		"",         // 空版本
-		"0.1.147",  // 当前版本
-		"v0.1.147", // 带前缀的当前版本
-		"0.1.148",  // 更新版本
-		"0.1.142",  // 超出最近 3 个版本
-		"9.9.9",    // 不存在的版本
-		"0.1.146;$(touch /tmp/tokenrouter-pwned)", // 非法 shell 字符
+		"",         // Empty version
+		"0.1.147",  // Current version
+		"v0.1.147", // Current version with prefix
+		"0.1.148",  // Newer version
+		"0.1.142",  // Outside the three most recent versions
+		"9.9.9",    // Unknown version
+		"0.1.146;$(touch /tmp/tokenrouter-pwned)", // Invalid shell characters
 	} {
 		err := svc.RollbackToVersion(context.Background(), target)
 		require.ErrorIs(t, err, ErrRollbackVersionNotAllowed, "target %q should be rejected", target)
@@ -106,7 +106,7 @@ func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
 }
 
 func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
-	// release 中没有当前平台资产：目标应先通过允许列表，再在资产查找阶段失败。
+	// An allowed release with no asset for this platform must fail during asset selection.
 	releases := []*ops.GitHubRelease{
 		{TagName: "v0.1.147"},
 		{TagName: "v0.1.146"},
@@ -120,7 +120,7 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Contains(t, err.Error(), "no compatible release found")
 }
 
-// newMaintenanceUpdateForTest 使用测试缓存和 GitHub 客户端创建发布查询与安装器。
+// newMaintenanceUpdateForTest constructs release queries and an installer with test cache and GitHub clients.
 func newMaintenanceUpdateForTest(cache ops.UpdateCache, client *updateServiceGitHubClientStub, version, buildType string) *UpdateService {
 	return NewUpdateService(ops.NewReleaseQuery(cache, client, version, buildType), opsadapter.NewBinaryInstaller(client, nil))
 }

@@ -85,7 +85,7 @@ func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model 
 				}
 			}
 		case "web_search_call":
-			// 结果已合入文本输出，此处跳过。
+			// Search calls have no separate Chat output; the model response is carried by message text.
 		}
 	}
 
@@ -156,19 +156,17 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
 	case "response.function_call_arguments.delta",
-		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
-		// 均按 OutputIndex 累加到对应工具调用。
+		// Custom tool input deltas use the same field as function argument deltas.
+		// Map both through OutputIndex to the matching tool call.
 		"response.custom_tool_call_input.delta":
 		return resToChatHandleFuncArgsDelta(evt, state)
 	case "response.reasoning_summary_text.delta",
-		// Codex 客户端使用的原始推理文本增量 reasoning_text.delta，
-		// 与 reasoning summary 一样映射为 reasoning_content。
+		// Map raw reasoning text to reasoning_content just like reasoning summaries.
 		"response.reasoning_text.delta":
 		return resToChatHandleReasoningDelta(evt, state)
 	case "response.reasoning_summary_text.done":
 		return nil
-	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
-	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
+	// Accept response.done from WebSocket and passthrough paths alongside response.completed.
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		return resToChatHandleCompleted(evt, state)
 	default:
@@ -229,7 +227,6 @@ func resToChatHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToCh
 			state.ServiceTier = evt.Response.ServiceTier
 		}
 	}
-	// Emit the role chunk.
 	if state.SentRole {
 		return nil
 	}
@@ -249,8 +246,8 @@ func resToChatHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 }
 
 func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	// function_call 与 custom_tool_call（custom/freeform 工具）均按工具调用注册，
-	// 以便后续 *_input.delta / *_arguments.delta 能映射到正确的工具索引。
+	// Register function and custom calls so later input and argument deltas
+	// can resolve the correct Chat tool index.
 	if evt.Item == nil || (evt.Item.Type != "function_call" && evt.Item.Type != "custom_tool_call") {
 		return nil
 	}
@@ -374,8 +371,8 @@ func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
 	return usage
 }
 
-// promptDetailsFromResponses 将 Responses 的 input_tokens_details 映射为 Chat 的 prompt_tokens_details。
-// 没有可输出字段时返回 nil，省略空明细。
+// promptDetailsFromResponses maps input token details to Chat prompt token details.
+// It returns nil when every supported count is zero.
 func promptDetailsFromResponses(src *ResponsesInputTokensDetails) *ChatTokenDetails {
 	if src == nil {
 		return nil
@@ -391,9 +388,8 @@ func promptDetailsFromResponses(src *ResponsesInputTokensDetails) *ChatTokenDeta
 	}
 }
 
-// completionDetailsFromResponses 将 Responses 的 output_tokens_details 映射为 Chat 的 completion_tokens_details。
-// 字段对应 OpenAI CompletionUsage，包括 reasoning_tokens、audio_tokens 和预测输出的 accepted/rejected 计数。
-// 没有可输出字段时返回 nil。
+// completionDetailsFromResponses maps reasoning, audio, and accepted/rejected prediction counts
+// to Chat completion token details. It returns nil when all supported counts are zero.
 func completionDetailsFromResponses(src *ResponsesOutputTokensDetails) *ChatTokenDetails {
 	if src == nil {
 		return nil
@@ -455,9 +451,8 @@ func NewBufferedResponseAccumulator() *BufferedResponseAccumulator {
 	}
 }
 
-// ProcessEvent inspects a single Responses SSE event and accumulates any
-// content it carries. Only delta events that contribute to the final output
-// are handled; all other event types are silently ignored.
+// ProcessEvent records added tool calls and accumulates text, reasoning, and argument deltas.
+// Other event types do not contribute to this accumulator.
 func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) {
 	switch event.Type {
 	case "response.output_text.delta":
@@ -491,9 +486,7 @@ func (a *BufferedResponseAccumulator) HasContent() bool {
 	return a.text.Len() > 0 || len(a.funcCalls) > 0 || a.reasoning.Len() > 0
 }
 
-// BuildOutput constructs a []ResponsesOutput from the accumulated delta
-// content. The order matches what ResponsesToChatCompletions expects:
-// reasoning → message → function_calls.
+// BuildOutput emits accumulated reasoning, then a message, then function calls.
 func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	var out []ResponsesOutput
 
@@ -530,9 +523,8 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	return out
 }
 
-// SupplementResponseOutput fills resp.Output from accumulated delta content
-// when the terminal event delivered an empty output array. If resp.Output is
-// already populated, this is a no-op (preserves backward compatibility).
+// SupplementResponseOutput fills an empty resp.Output from accumulated content.
+// A populated output takes precedence over the accumulator.
 func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesResponse) {
 	if resp == nil || len(resp.Output) > 0 {
 		return

@@ -16,8 +16,8 @@ func ShouldStripNonPairCallID(itemType string) bool {
 	}
 }
 
-// IsCompactionItemType 判断条目类型是否为 Codex remote compact 结果；
-// 上游同时使用 "compaction" 和 "compaction_summary" 两种名称。
+// IsCompactionItemType reports whether an item is a Codex remote compaction result.
+// Upstreams use both "compaction" and "compaction_summary".
 func IsCompactionItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
 	case "compaction", "compaction_summary":

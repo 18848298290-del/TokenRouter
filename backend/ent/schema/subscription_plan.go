@@ -16,11 +16,10 @@ import (
 
 // SubscriptionPlan holds the schema definition for the SubscriptionPlan entity.
 //
-// 删除策略：硬删除
-// SubscriptionPlan 使用硬删除：
-//   - 套餐为管理员维护的商品配置，删除即表示下架移除
-//   - 通过 for_sale 字段控制是否在售，删除仅用于彻底移除
-//   - 已购买的订阅记录保存在 UserSubscription 中，不受套餐删除影响
+// Plans are hard-deleted.
+// Plans are administrator-managed product configurations.
+// for_sale controls availability for purchase; deletion removes the plan.
+// Purchased subscriptions and their per-subscription limits are stored in UserSubscription.
 type SubscriptionPlan struct {
 	ent.Schema
 }
@@ -69,11 +68,11 @@ func (SubscriptionPlan) Fields() []ent.Field {
 		field.JSON("group_ids", []int64{}).
 			Default([]int64{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("套餐包含的分组 ID 列表；空列表表示对全部分组可用"),
+			Comment("Group IDs covered by the plan; an empty list covers all groups"),
 		field.JSON("group_rate_multipliers", map[int64]float64{}).
 			Default(func() map[int64]float64 { return map[int64]float64{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("套餐内各分组使用订阅额度时的专属计费倍率；key 为 group_id"),
+			Comment("Subscription billing multipliers by group_id for this plan"),
 		field.String("features").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),

@@ -13,30 +13,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AffiliateHandler 处理管理端邀请返利能力：
-// 包括专属用户列表、专属邀请码、专属返利比例和批量操作。
+// AffiliateHandler manages custom invitation codes and rebate rates,
+// including user lookup, paginated records, and batch rate updates.
 type AffiliateHandler struct {
 	affiliateService *promotion.AffiliateService
 	lookupUsers      func(context.Context, string) ([]AffiliateUserSummary, error)
 	calendar         timezone.Calendar
 }
 
-// UpdateUserSettings 更新单个用户的邀请返利配置。
+// UpdateAffiliateUserRequest updates a user's affiliate settings.
 // PUT /api/v1/admin/affiliates/users/:user_id
 //
-// 两个字段都可选，并会独立应用。
+// Both settings are optional and are applied independently.
 type UpdateAffiliateUserRequest struct {
 	AffCode              *string  `json:"aff_code"`
 	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent"`
-	// ClearRebateRate 显式清除用户专属比例（写入 NULL），用于区分“未传字段”。
+	// ClearRebateRate writes NULL to remove the override, distinguishing a clear from an omitted field.
 	ClearRebateRate bool `json:"clear_rebate_rate"`
 }
 
-// BatchSetRate 为多个用户批量设置或清除同一个专属返利比例。
+// BatchSetRateRequest sets or clears one rate for multiple users.
 //
-// 协议：clear=true 表示清除比例，此时忽略 aff_rebate_rate_percent。
-// 否则必须传 aff_rebate_rate_percent，并应用到所有 user_id。
-// 显式 clear 标记用于避免 JSON 解码无法区分“未传字段”和 null 的歧义。
+// When clear is true, aff_rebate_rate_percent is ignored and overrides are removed.
+// Otherwise aff_rebate_rate_percent is required and applies to every supplied user ID.
+// The clear flag distinguishes removal from an omitted or null JSON rate.
 //
 // POST /api/v1/admin/affiliates/users/batch-rate
 type BatchSetRateRequest struct {
@@ -45,19 +45,19 @@ type BatchSetRateRequest struct {
 	Clear                bool     `json:"clear"`
 }
 
-// AffiliateUserSummary 是 LookupUsers 返回给前端选择器的最小用户结构。
+// AffiliateUserSummary contains the user fields needed by the lookup selector.
 type AffiliateUserSummary struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email"`
 	Username string `json:"username"`
 }
 
-// NewAffiliateHandler 创建管理端邀请返利处理器。
+// NewAffiliateHandler builds the admin affiliate handler.
 func NewAffiliateHandler(affiliate *promotion.AffiliateService, lookup func(context.Context, string) ([]AffiliateUserSummary, error), calendar timezone.Calendar) *AffiliateHandler {
 	return &AffiliateHandler{affiliateService: affiliate, lookupUsers: lookup, calendar: calendar}
 }
 
-// ListUsers 返回带专属邀请返利配置的用户分页列表。
+// ListUsers returns a page of users with custom affiliate settings.
 // GET /api/v1/admin/affiliates/users
 func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -110,10 +110,10 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 	httpx.Success(c, gin.H{"user_id": userID})
 }
 
-// ClearUserSettings 移除用户所有专属邀请返利配置：
-// 清除专属返利比例，并重新生成系统随机邀请码。
+// ClearUserSettings clears the user's rebate override and generates
+// a replacement invitation code.
 //
-// 两次写入在本 handler 内顺序执行；若中途失败，管理员可重复调用完成幂等清理。
+// The writes run sequentially; a failure may leave the rate cleared before the code is reset.
 // DELETE /api/v1/admin/affiliates/users/:user_id
 func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -157,7 +157,7 @@ func (h *AffiliateHandler) BatchSetRate(c *gin.Context) {
 	httpx.Success(c, gin.H{"affected": len(req.UserIDs)})
 }
 
-// LookupUsers 按邮箱或用户名搜索用户，用于添加专属用户弹窗。
+// LookupUsers searches by email or username for the custom-user dialog.
 // GET /api/v1/admin/affiliates/users/lookup?q=
 func (h *AffiliateHandler) LookupUsers(c *gin.Context) {
 	keyword := c.Query("q")
@@ -174,7 +174,7 @@ func (h *AffiliateHandler) LookupUsers(c *gin.Context) {
 	httpx.Success(c, result)
 }
 
-// GetUserOverview 返回单个用户的邀请返利概览。
+// GetUserOverview returns a user's affiliate summary.
 // GET /api/v1/admin/affiliates/users/:user_id/overview
 func (h *AffiliateHandler) GetUserOverview(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -190,7 +190,7 @@ func (h *AffiliateHandler) GetUserOverview(c *gin.Context) {
 	httpx.Success(c, overview)
 }
 
-// ListInviteRecords 返回全站邀请人与被邀请人的关系记录。
+// ListInviteRecords returns inviter and invitee relationships across the site.
 // GET /api/v1/admin/affiliates/invites
 func (h *AffiliateHandler) ListInviteRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -203,7 +203,7 @@ func (h *AffiliateHandler) ListInviteRecords(c *gin.Context) {
 	httpx.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
-// ListRebateRecords 返回订单维度的邀请返利记录。
+// ListRebateRecords returns rebate records with their source-order details.
 // GET /api/v1/admin/affiliates/rebates
 func (h *AffiliateHandler) ListRebateRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -216,7 +216,7 @@ func (h *AffiliateHandler) ListRebateRecords(c *gin.Context) {
 	httpx.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
-// ListTransferRecords 返回邀请返利额度转入余额的流水记录。
+// ListTransferRecords returns records of affiliate quota transfers into balance.
 // GET /api/v1/admin/affiliates/transfers
 func (h *AffiliateHandler) ListTransferRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)

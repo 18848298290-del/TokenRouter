@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// tokenVersionReader 返回版本复核使用的提供商记录。
+// tokenVersionReader supplies the database record for token version checks.
 type tokenVersionReader struct {
 	value *Record
 	err   error
@@ -38,7 +38,7 @@ func TestCheckTokenVersion(t *testing.T) {
 				ID:          1,
 				Credentials: map[string]any{"_token_version": int64(100)},
 			},
-			expectedStale: true, // 当前 provider 无版本但 DB 有，说明已被异步刷新，当前已过时
+			expectedStale: true, // A database version supersedes an unversioned snapshot.
 		},
 		{
 			name: "both_no_version",
@@ -50,7 +50,7 @@ func TestCheckTokenVersion(t *testing.T) {
 				ID:          1,
 				Credentials: map[string]any{},
 			},
-			expectedStale: false, // 两边都没有版本号，说明从未被异步刷新过，允许缓存
+			expectedStale: false, // Unversioned records are treated as current.
 		},
 		{
 			name: "same_version",
@@ -86,7 +86,7 @@ func TestCheckTokenVersion(t *testing.T) {
 				ID:          1,
 				Credentials: map[string]any{"_token_version": int64(200)},
 			},
-			expectedStale: true, // 当前版本过时
+			expectedStale: true, // The database version is newer.
 		},
 		{
 			name: "repo_error",
@@ -96,7 +96,7 @@ func TestCheckTokenVersion(t *testing.T) {
 			},
 			latestProvider: nil,
 			repoErr:        errors.New("db error"),
-			expectedStale:  false, // 查询失败，默认允许缓存
+			expectedStale:  false, // Lookup failures permit use of the current token.
 		},
 		{
 			name: "repo_returns_nil",
@@ -106,13 +106,13 @@ func TestCheckTokenVersion(t *testing.T) {
 			},
 			latestProvider: nil,
 			repoErr:        nil,
-			expectedStale:  false, // 查询返回 nil，默认允许缓存
+			expectedStale:  false, // A missing record permits use of the current token.
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 表格测试直接调用 token 版本比较实现。
+			// Compare the supplied snapshot against the simulated database record.
 			repo := tokenVersionReader{value: tt.latestProvider, err: tt.repoErr}
 			_, isStale := CheckTokenVersion(context.Background(), tt.provider, repo)
 			require.Equal(t, tt.expectedStale, isStale)
@@ -126,7 +126,7 @@ func TestCheckTokenVersion_NilRepo(t *testing.T) {
 		Credentials: map[string]any{"_token_version": int64(100)},
 	}
 	_, isStale := CheckTokenVersion(context.Background(), provider, nil)
-	require.False(t, isStale) // nil repo，默认允许缓存
+	require.False(t, isStale) // A missing repository permits use of the current token.
 }
 
 func (r tokenVersionReader) GetByID(context.Context, int64) (*Record, error) {

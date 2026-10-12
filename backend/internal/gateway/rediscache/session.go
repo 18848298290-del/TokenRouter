@@ -26,8 +26,8 @@ const (
 
 	reasoningContentPrefix = "reasoning_content:"
 
-	// reasoningContentDefaultTTL 是推理缓存的默认有效期，支持 Codex 会话在七天内恢复。
-	// 调用方传入非正 TTL 时使用该值。
+	// reasoningContentDefaultTTL allows cached reasoning to support session recovery for seven days.
+	// Nonpositive caller TTLs select this default.
 	reasoningContentDefaultTTL = 7 * 24 * time.Hour
 
 	cyberSessionBlockPrefix         = "cyber_session_block:"
@@ -36,16 +36,6 @@ const (
 )
 
 var (
-	// DeleteSessionProviderID 删除粘性会话与提供商的绑定关系。
-	// 当检测到绑定的提供商不可用（如状态错误、禁用、不可调度等）时调用，
-	// 以便下次请求能够重新选择可用提供商。
-	//
-	// DeleteSessionProviderID removes the sticky session binding for the given session.
-	// Called when the bound provider becomes unavailable (e.g., error status, disabled,
-	// or unschedulable), allowing subsequent requests to select a new available provider.
-
-	// SetSessionOwnerGroupID 在首次写入时记录指定会话所属的分组。
-
 	claimOpenAIResponsesSessionWindowScript = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
@@ -128,12 +118,6 @@ func NewGatewayCache(rdb *redis.Client) session.GatewayCache {
 	return &gatewayCache{rdb: rdb, StickyCache: schedulerredis.NewStickyCache(rdb)}
 }
 
-// buildSessionKey 构建 session key，包含 groupID 实现分组隔离
-// 格式: sticky_session:{groupID}:{sessionHash}
-
-// buildSessionOwnerKey 按用户和来源生成指定会话的归属键。
-// 格式为 sticky_session_owner:{userID}:{source}:{sessionHash}。
-
 func buildOpenAIResponsesSessionWindowKey(groupID int64, sessionHash string) string {
 	return fmt.Sprintf("%s%d:%s", openAIResponsesSessionWindowPrefix, groupID, sessionHash)
 }
@@ -203,7 +187,7 @@ func (c *gatewayCache) CompareAndDeleteOpenAIResponsesSessionWindow(ctx context.
 	return n == 1, err
 }
 
-// SetGrokVideoPendingBilling 保存视频创建成功时的计费快照，供后续状态轮询使用。
+// SetGrokVideoPendingBilling stores the creation-time billing snapshot for later status polling.
 func (c *gatewayCache) SetGrokVideoPendingBilling(ctx context.Context, key string, payload []byte, ttl time.Duration) error {
 	if c == nil || c.rdb == nil {
 		return errors.New("gateway cache unavailable")
@@ -218,7 +202,7 @@ func (c *gatewayCache) SetGrokVideoPendingBilling(ctx context.Context, key strin
 	return c.rdb.Set(ctx, grokVideoPendingBillingPrefix+key, payload, ttl).Err()
 }
 
-// GetGrokVideoPendingBilling 读取异步视频计费快照，Redis miss 作为正常空值返回。
+// GetGrokVideoPendingBilling returns the video billing snapshot, or nil on a Redis miss.
 func (c *gatewayCache) GetGrokVideoPendingBilling(ctx context.Context, key string) ([]byte, error) {
 	if c == nil || c.rdb == nil {
 		return nil, errors.New("gateway cache unavailable")
@@ -234,7 +218,7 @@ func (c *gatewayCache) GetGrokVideoPendingBilling(ctx context.Context, key strin
 	return payload, err
 }
 
-// ClaimGrokVideoBilled 使用 SET NX 让同一视频任务在多实例轮询中只有一个结算者。
+// ClaimGrokVideoBilled uses SET NX to select one billing claimant while the claim key exists.
 func (c *gatewayCache) ClaimGrokVideoBilled(ctx context.Context, key string, ttl time.Duration) (bool, error) {
 	if c == nil || c.rdb == nil {
 		return false, errors.New("gateway cache unavailable")
@@ -249,7 +233,7 @@ func (c *gatewayCache) ClaimGrokVideoBilled(ctx context.Context, key string, ttl
 	return c.rdb.SetNX(ctx, grokVideoBilledPrefix+key, "1", ttl).Result()
 }
 
-// ReleaseGrokVideoBilled 在持久化结算失败时释放领取，允许后续轮询重试。
+// ReleaseGrokVideoBilled releases a failed settlement claim so later polls can retry.
 func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) error {
 	if c == nil || c.rdb == nil {
 		return errors.New("gateway cache unavailable")
@@ -261,7 +245,7 @@ func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) e
 	return c.rdb.Del(ctx, grokVideoBilledPrefix+key).Err()
 }
 
-// SetReasoningContent 按 reasoning item ID 缓存全文，itemID 或 content 为空时返回 nil。
+// SetReasoningContent stores text by item ID; empty IDs or content are ignored when the cache is available.
 func (c *gatewayCache) SetReasoningContent(ctx context.Context, itemID string, content string, ttl time.Duration) error {
 	if c == nil || c.rdb == nil {
 		return errors.New("gateway cache unavailable")
@@ -276,8 +260,8 @@ func (c *gatewayCache) SetReasoningContent(ctx context.Context, itemID string, c
 	return c.rdb.Set(ctx, reasoningContentPrefix+itemID, content, ttl).Err()
 }
 
-// GetReasoningContent 返回缓存的 reasoning 全文；未命中返回
-// session.ErrReasoningContentNotFound。
+// GetReasoningContent returns cached reasoning text; empty IDs and misses return
+// session.ErrReasoningContentNotFound.
 func (c *gatewayCache) GetReasoningContent(ctx context.Context, itemID string) (string, error) {
 	if c == nil || c.rdb == nil {
 		return "", errors.New("gateway cache unavailable")
@@ -343,7 +327,7 @@ func (c *gatewayCache) IsCyberSessionScopeActive(ctx context.Context, scopeKey s
 }
 
 // FindCyberSessionBlocked checks bounded batches in caller order and stops at
-// the first blocked key, preserving the original earliest-match behavior.
+// the first blocked key.
 func (c *gatewayCache) FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error) {
 	if len(keys) == 0 {
 		return "", nil
@@ -371,7 +355,7 @@ func liveCallKey(callHash string) string {
 	return liveCallPrefix + callHash
 }
 
-// HashLiveCallID 生成不暴露原始 call ID 的 Redis 映射键片段。
+// HashLiveCallID hashes the call ID for use in a Redis key.
 func HashLiveCallID(callID string) string {
 	sum := sha256.Sum256([]byte(callID))
 	return hex.EncodeToString(sum[:])

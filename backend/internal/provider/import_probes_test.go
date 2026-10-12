@@ -44,7 +44,6 @@ type grokImportProbeSchedulerTestSnapshot struct {
 	maxWorkers int
 }
 
-// 测试注入日志记录函数。
 type grokImportProbeScheduler = GrokImportProbeScheduler
 
 func (p *importProbeLifecyclePort) QueryQuota(ctx context.Context, _ int64) (*GrokImportProbeResult, error) {
@@ -58,7 +57,8 @@ func (p *importProbeLifecyclePort) QueryQuota(ctx context.Context, _ int64) (*Gr
 	return nil, ctx.Err()
 }
 
-// TestImportProbesStopCancelsPendingAndWaits 验证待执行探测属于尽力工作；停止取消队列并等待已领取项，不能继续认领或宣称探测成功。
+// TestImportProbesStopCancelsPendingAndWaits checks that shutdown discards queued probes, waits for active
+// work, and rejects later scheduling.
 func TestImportProbesStopCancelsPendingAndWaits(t *testing.T) {
 	p := &importProbeLifecyclePort{started: make(chan struct{}), cancelled: make(chan struct{})}
 	queue := NewGrokImportProbeScheduler(GrokImportProbeOptions{Concurrency: 1})

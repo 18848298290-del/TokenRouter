@@ -419,7 +419,7 @@ func TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases(t *testi
 	billing := &fakeBatchImageBillingRepo{}
 	svc := newBatchSettlementFixture(repo, billing, nil, &fakeBatchImagePricingResolver{unitPrice: 0.50}, nil,
 
-		// 前 N-1 次：记录失败并返回错误（等待 worker 重试）。
+		// The first N-1 failures return an error for the worker to retry.
 		nil)
 
 	for range batchimage.BatchImageSettlementMaxRetries - 1 {
@@ -427,15 +427,15 @@ func TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases(t *testi
 		require.ErrorIs(t, err, batchimage.ErrBatchImageSettlementCostExceedsHold)
 		require.Equal(t, batchimage.BatchImageJobStatusSettling, repo.jobs[job.BatchID].Status)
 	}
-	// 达到重试上限后释放冻结并转为 failed。
+	// Reaching the retry limit releases the reservation and fails the job.
 	_, err := svc.Settle(context.Background(), job.BatchID)
 	require.ErrorIs(t, err, batchimage.ErrBatchImageSettlementBillingFailed)
 	require.Equal(t, batchimage.BatchImageJobStatusFailed, repo.jobs[job.BatchID].Status)
 	require.Empty(t, billing.captures)
 	require.Len(t, billing.releases, 1)
 	require.Equal(t, batchimage.BatchImageReleaseRequestID(job.BatchID), billing.releases[0].RequestID)
-	// 释放指纹必须与 processor/Cancel/recovery 一致地使用 RequestHash，
-	// 否则共享同一 request id 的后续释放会命中指纹冲突（毒消息）。
+	// Release uses RequestHash across processor, Cancel, and recovery because the
+	// shared request ID rejects differing payload fingerprints.
 	require.Equal(t, requestHash, billing.releases[0].RequestPayloadHash)
 }
 
@@ -465,8 +465,8 @@ func TestBatchImageSettlementService_InvalidCountsExhaustsAndReleases(t *testing
 
 func TestReleaseBatchImageBalanceHold_TreatsFingerprintConflictAsReleased(t *testing.T) {
 	job := testSettlingBatchImageJob("imgbatch_release_conflict")
-	// 历史版本用 manifestHash 释放过一次：同一 request id 再以 RequestHash
-	// 释放会命中指纹冲突，资金已归还时按幂等成功处理。
+	// A historical release used manifestHash. Releasing with RequestHash conflicts
+	// with the same request ID, but succeeds idempotently because funds were returned.
 	billing := &fakeBatchImageBillingRepo{releaseErr: billingcore.ErrUsageBillingRequestConflict}
 	err := (batchimage.Funding{Store: billing}).Release(context.Background(), job, "request-hash")
 	require.NoError(t, err)

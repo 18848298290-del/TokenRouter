@@ -18,7 +18,7 @@ import (
 	identitytestkit "github.com/TokenFlux/TokenRouter/internal/identity/testkit"
 )
 
-// TestPendingFinalizeRollbackAndCompensation 验证原两段注册事务在真实 PostgreSQL 上的回滚与补偿。
+// TestPendingFinalizeRollbackAndCompensation checks rollback and compensation across two registration transactions in PostgreSQL.
 func TestPendingFinalizeRollbackAndCompensation(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx := context.Background()

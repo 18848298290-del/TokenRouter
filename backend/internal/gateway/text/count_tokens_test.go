@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// countFixture 检查计数循环中的无槽尝试、提供商排除和资源释放次数。
+// countFixture records counting attempts, provider exclusions, and session releases.
 type countFixture struct {
 	ctx                          context.Context
 	outcomes                     []*AttemptFailure

@@ -7,9 +7,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems 检查终止事件的空 output 由流中报告的 item 重建。
-// 累积器只建模一个 reasoning 和一个 message，经其重建会把多 item 回合压缩成
-// 单个伪造 message。
+// TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems checks reconstruction from done items.
+// The delta accumulator models one reasoning item and one message, so it cannot retain
+// the identities and structure of an arbitrary multi-item turn.
 func TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 
@@ -49,7 +49,6 @@ func TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems(t *test
 	require.Equal(t, "shipped", gjson.GetBytes(normalized, "response.output.1.content.0.text").String())
 }
 
-// TestResponsesStreamOutputItemsOrderByOutputIndex 检查乱序到达的 item 按 output_index 输出。
 func TestResponsesStreamOutputItemsOrderByOutputIndex(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{"type":"response.output_item.done","output_index":2,"item":{"id":"c","type":"message"}}`))
@@ -61,7 +60,7 @@ func TestResponsesStreamOutputItemsOrderByOutputIndex(t *testing.T) {
 	require.Equal(t, "c", gjson.GetBytes(built, "1.id").String())
 }
 
-// TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents 检查没有 done item 的流使用增量重建。
+// TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents verifies that added and delta events do not count as completed items.
 func TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}`))
@@ -74,8 +73,8 @@ func TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents(t *testin
 	require.Equal(t, string(raw), string(normalized))
 }
 
-// TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput 验证终止事件可能带有非空但被截断的 output：流报告了两个 item，终止事件只带一个，
-// 且其 id 不是流中报告的 id。此时以已报告 item 为准。
+// TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput covers a terminal output that
+// contains one synthetic item after the stream has reported two real items.
 func TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{
@@ -100,7 +99,6 @@ func TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput(t *test
 		"the id the stream reported must replace the fabricated one")
 }
 
-// TestNormalizeResponsesStreamingTerminalOutputLeavesCompleteOutputAlone 验证已完整的终止 output 不应被重写。
 func TestNormalizeResponsesStreamingTerminalOutputLeavesCompleteOutputAlone(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{

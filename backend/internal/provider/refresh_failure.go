@@ -10,7 +10,7 @@ const (
 	RefreshFailureCooldown
 )
 
-// RefreshFailureVersion 记录交换失败时的身份，后续写入按身份和调度状态比较。
+// RefreshFailureVersion captures the attempted identity and scheduling state for conditional failure writes.
 type RefreshFailureVersion struct {
 	CredentialVersion
 	Schedulable bool
@@ -23,8 +23,9 @@ type RefreshFailure struct {
 	Until   time.Time
 }
 
-// RefreshFailureWriter 返回身份是否仍匹配；同身份已有更长 cooldown 时保持原值但仍算匹配。
-// 未匹配不得触发内存阻断、成功失效或新的交换。
+// RefreshFailureWriter reports whether the expected identity and state match; retaining a longer existing
+// cooldown still counts as a match.
+// A mismatch must not trigger an in-memory block, success invalidation, or another exchange.
 type RefreshFailureWriter interface {
 	ApplyOAuthRefreshFailure(context.Context, RefreshFailureVersion, RefreshFailure) (bool, error)
 }

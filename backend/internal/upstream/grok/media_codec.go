@@ -28,11 +28,11 @@ const (
 	GrokMediaEndpointVideoStatus       GrokMediaEndpoint = "video_status"
 	GrokMediaEndpointVideoContent      GrokMediaEndpoint = "video_content"
 
-	// xAI Imagine 官方图片编辑数量上限。
+	// Maximum source images accepted by Imagine image editing.
 	GrokMediaMaxEditSourceImages = 3
 )
 
-// Grok Imagine 官方图片几何规格参考：
+// Imagine aspect ratios are documented at:
 // https://docs.x.ai/developers/model-capabilities/images/generation
 var grokImagineAspectRatioValues = []struct {
 	label string
@@ -210,7 +210,7 @@ func (m MediaCodec) ParseGrokMediaJSONRequest(body []byte, info *GrokMediaReques
 	info.MaskImageURL = m.ExtractGrokMediaImageURL(gjson.GetBytes(body, "mask"))
 }
 
-// ExtractGrokMediaImageURL 优先读取 xAI 官方 url，并兼容历史字符串和 image_url 形态。
+// ExtractGrokMediaImageURL accepts strings and image objects, preferring the url field.
 func (m MediaCodec) ExtractGrokMediaImageURL(value gjson.Result) string {
 	if !value.Exists() {
 		return ""
@@ -221,7 +221,7 @@ func (m MediaCodec) ExtractGrokMediaImageURL(value gjson.Result) string {
 	return m.GrokMediaJSONImageURL(value)
 }
 
-// GrokMediaJSONImageURL 优先读取 xAI 官方 url，空白时兼容历史 image_url。
+// GrokMediaJSONImageURL uses url, then the legacy image_url field when url is blank.
 func (m MediaCodec) GrokMediaJSONImageURL(value gjson.Result) string {
 	if imageURL := strings.TrimSpace(value.Get("url").String()); imageURL != "" {
 		return imageURL
@@ -321,7 +321,7 @@ func (m MediaCodec) ParseGrokMediaMultipartRequest(contentType string, body []by
 	}
 }
 
-// RewriteGrokMediaRequestModel 同时支持 JSON 与 multipart 媒体请求的模型改写。
+// RewriteGrokMediaRequestModel rewrites models in JSON and multipart media requests.
 func (m MediaCodec) RewriteGrokMediaRequestModel(body []byte, contentType, model string) ([]byte, string, error) {
 	return upstream.RewriteImageModel(body, contentType, model)
 }
@@ -331,8 +331,8 @@ func (m MediaCodec) GrokMediaSignedVideoContentURL(body []byte, requestID string
 	if rawURL == "" {
 		return "", nil
 	}
-	// 上游 TokenRouter 返回自身代理端点时，调用方按提供商 base URL 重建 relay 地址，
-	// 并附加上游 API Key 进行认证。
+	// For a TokenRouter proxy URL, the caller reconstructs the relay URL from the
+	// provider base URL and authenticates with the upstream API key.
 	if m.IsGrokMediaVideoContentURL(rawURL, requestID) {
 		return "", nil
 	}
@@ -345,7 +345,7 @@ func (m MediaCodec) GrokMediaSignedVideoContentURL(body []byte, requestID string
 	return parsed.String(), nil
 }
 
-// IsGrokCLIProxyTarget 只按规范化主机名识别官方 CLI 网关，端口和路径不影响判断。
+// IsGrokCLIProxyTarget matches the CLI hostname regardless of port or path.
 func (m MediaCodec) IsGrokCLIProxyTarget(rawURL string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	return err == nil && strings.EqualFold(parsed.Hostname(), "cli-chat-proxy.grok.com")
@@ -493,7 +493,7 @@ func (m MediaCodec) NormalizeGrokMediaForwardBody(endpoint GrokMediaEndpoint, bo
 	return body, contentType, nil
 }
 
-// CanonicalizeGrokMediaImageURLFields 把指定对象或对象数组中的 image_url 统一为 url。
+// CanonicalizeGrokMediaImageURLFields converts image_url to url in objects or object arrays.
 func (m MediaCodec) CanonicalizeGrokMediaImageURLFields(body []byte, fields ...string) ([]byte, error) {
 	out := body
 	for _, field := range fields {
@@ -520,7 +520,7 @@ func (m MediaCodec) CanonicalizeGrokMediaImageURLFields(body []byte, fields ...s
 	return out, nil
 }
 
-// CanonicalizeGrokMediaImageURLObject 规范化单个图片引用，并让非空官方字段优先。
+// CanonicalizeGrokMediaImageURLObject normalizes an image reference, preferring a nonempty url.
 func (m MediaCodec) CanonicalizeGrokMediaImageURLObject(body []byte, path string) ([]byte, error) {
 	legacyPath := path + ".image_url"
 	legacy := gjson.GetBytes(body, legacyPath)
@@ -563,7 +563,7 @@ func (m MediaCodec) ExtractGrokMediaVideoRequestID(body []byte) string {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ""
 	}
-	// task_id 仅作为兼容兜底，不能改变历史字段的匹配优先级。
+	// Prefer request_id and id fields before accepting a task_id alias.
 	for _, path := range []string{"request_id", "id", "data.request_id", "data.id", "video.request_id", "video.id", "task_id", "data.task_id", "video.task_id"} {
 		if id := strings.TrimSpace(gjson.GetBytes(body, path).String()); id != "" {
 			return id
@@ -710,7 +710,7 @@ func (m MediaCodec) GrokImagineGCD(a, b int) int {
 	return a
 }
 
-// NormalizeImagineAspectRatio 校验并返回 grok imagine 支持的 aspect_ratio，不支持时返回空串（上游取默认）。
+// NormalizeImagineAspectRatio returns a supported ratio or an empty string for the upstream default.
 func NormalizeImagineAspectRatio(aspectRatio string) string {
 	aspectRatio = strings.TrimSpace(aspectRatio)
 	if aspectRatio == "" {

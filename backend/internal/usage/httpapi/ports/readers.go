@@ -41,7 +41,7 @@ type Settings interface {
 	IsUserErrorViewAllowed(context.Context) bool
 }
 
-// KeyQueries 将 Key 查询和所有权检查委托给注入的函数。
+// KeyQueries delegates key lookup, ownership checks, and search to injected functions.
 type KeyQueries struct {
 	Lookup    func(context.Context, int64) (*KeyReference, error)
 	Ownership func(context.Context, int64, []int64) ([]int64, error)

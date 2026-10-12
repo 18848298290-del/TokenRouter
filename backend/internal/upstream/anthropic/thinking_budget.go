@@ -12,7 +12,7 @@ const (
 	BudgetRectifyBudgetTokens = 32000
 	// BudgetRectifyMaxTokens is the max_tokens value to set when rectifying.
 	BudgetRectifyMaxTokens = 64000
-	// BudgetRectifyMinMaxTokens is the minimum max_tokens that must exceed budget_tokens.
+	// BudgetRectifyMinMaxTokens is the smallest output limit above the rectified thinking budget.
 	BudgetRectifyMinMaxTokens = 32001
 )
 
@@ -25,18 +25,15 @@ const (
 func IsThinkingBudgetConstraintError(errMsg string) bool {
 	m := strings.ToLower(errMsg)
 
-	// Condition 1: budget_tokens or budget tokens
 	hasBudget := strings.Contains(m, "budget_tokens") || strings.Contains(m, "budget tokens")
 	if !hasBudget {
 		return false
 	}
 
-	// Condition 2: thinking
 	if !strings.Contains(m, "thinking") {
 		return false
 	}
 
-	// Condition 3: constraint indicator
 	if strings.Contains(m, ">= 1024") || strings.Contains(m, "greater than or equal to 1024") {
 		return true
 	}
@@ -47,12 +44,11 @@ func IsThinkingBudgetConstraintError(errMsg string) bool {
 	return false
 }
 
-// RectifyThinkingBudget modifies the request body to fix budget_tokens constraint errors.
-// It sets thinking.budget_tokens = 32000, thinking.type = "enabled" (unless adaptive),
-// and ensures max_tokens >= 32001.
-// Returns (modified body, true) if changes were applied, or (original body, false) if not.
+// RectifyThinkingBudget skips adaptive thinking. Otherwise it sets enabled
+// thinking with a 32000-token budget and raises max_tokens to 64000 when below
+// 32001. JSON update failures leave that field unchanged; the boolean reports
+// whether any update succeeded.
 func RectifyThinkingBudget(body []byte) ([]byte, bool) {
-	// If thinking type is "adaptive", skip rectification entirely
 	thinkingType := gjson.GetBytes(body, "thinking.type").String()
 	if thinkingType == "adaptive" {
 		return body, false
@@ -61,7 +57,6 @@ func RectifyThinkingBudget(body []byte) ([]byte, bool) {
 	modified := body
 	changed := false
 
-	// Set thinking.type = "enabled"
 	if thinkingType != "enabled" {
 		if result, err := sjson.SetBytes(modified, "thinking.type", "enabled"); err == nil {
 			modified = result
@@ -69,7 +64,6 @@ func RectifyThinkingBudget(body []byte) ([]byte, bool) {
 		}
 	}
 
-	// Set thinking.budget_tokens = 32000
 	currentBudget := gjson.GetBytes(modified, "thinking.budget_tokens").Int()
 	if currentBudget != BudgetRectifyBudgetTokens {
 		if result, err := sjson.SetBytes(modified, "thinking.budget_tokens", BudgetRectifyBudgetTokens); err == nil {
@@ -78,7 +72,6 @@ func RectifyThinkingBudget(body []byte) ([]byte, bool) {
 		}
 	}
 
-	// Ensure max_tokens >= BudgetRectifyMinMaxTokens
 	maxTokens := gjson.GetBytes(modified, "max_tokens").Int()
 	if maxTokens < int64(BudgetRectifyMinMaxTokens) {
 		if result, err := sjson.SetBytes(modified, "max_tokens", BudgetRectifyMaxTokens); err == nil {

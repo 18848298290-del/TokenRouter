@@ -1,19 +1,19 @@
 package failover
 
 const (
-	// OAuth429MaxProviderAttempts 保留 OpenAI 同提供商窗口耗尽后的提供商总预算。
+	// OAuth429MaxProviderAttempts bounds OpenAI provider attempts after same-provider retry windows expire.
 	OAuth429MaxProviderAttempts   = 3
 	OAuth429StormMinSwitches      = 1
 	FirstOutputTimeoutMaxSwitches = 1
 )
 
-// OAuth429State 保存当前请求内 Grok 后续尝试的 429 状态。
+// OAuth429State tracks whether a Grok 429 has scheduled its final follow-up attempt.
 type OAuth429State struct{ grokFollowupPending bool }
 
-// OAuth429Provider 保存调用方确定的提供商认证类别。
+// OAuth429Provider contains the provider categories determined by the caller.
 type OAuth429Provider struct{ OpenAI, Grok bool }
 
-// StopOAuth429 保留 OpenAI 和 Grok 不同的后续预算及无状态兼容路径。
+// StopOAuth429 applies platform-specific retry budgets; nil state uses the stateless Grok status/count rule.
 func StopOAuth429(provider OAuth429Provider, status, failedSwitches int, state *OAuth429State) bool {
 	if failedSwitches < OAuth429StormMinSwitches {
 		return false
@@ -36,7 +36,7 @@ func StopOAuth429(provider OAuth429Provider, status, failedSwitches int, state *
 	return failedSwitches >= OAuth429MaxProviderAttempts
 }
 
-// FirstOutputExhausted 累计符合首输出恢复条件的错误，判断是否耗尽预算。
+// FirstOutputExhausted counts eligible first-output recovery switches and reports exhaustion.
 func FirstOutputExhausted(eligible bool, switches *int) bool {
 	if !eligible || switches == nil {
 		return false

@@ -13,10 +13,10 @@ import (
 
 const openAIImagesJSONKeepaliveKey = "openai_images_json_keepalive"
 
-// openAIImagesJSONKeepalive 在 OAuth 上游内部生成 SSE 时保持非流式图片请求连接。
-// JSON 允许前导空白，因此每次心跳都不会破坏最终 JSON 文档的解析。
-// 首次心跳会提交 200 状态；之后的上游错误仍以 OpenAI 兼容 JSON 返回，
-// 与 compact SSE keepalive 路径的状态取舍保持一致。
+// openAIImagesJSONKeepalive keeps non-streaming image requests open while OAuth upstreams generate SSE internally.
+// Leading whitespace is valid JSON, so heartbeats leave the final document parseable.
+// The first heartbeat commits HTTP 200; later errors use OpenAI-compatible JSON
+// within that committed response.
 type openAIImagesJSONKeepalive struct {
 	mu      sync.Mutex
 	writer  gin.ResponseWriter
@@ -31,7 +31,8 @@ type openAIImagesJSONKeepaliveWriter struct {
 	k *openAIImagesJSONKeepalive
 }
 
-// StartOpenAIImagesJSONKeepalive 为非流式图片请求启动空白心跳；非正间隔表示禁用。
+// StartOpenAIImagesJSONKeepalive starts whitespace heartbeats for non-streaming image requests; nonpositive intervals
+// disable them.
 func StartOpenAIImagesJSONKeepalive(c *gin.Context, interval time.Duration) func() {
 	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
@@ -113,7 +114,7 @@ func (k *openAIImagesJSONKeepalive) markStoppedLocked() {
 	close(k.stop)
 }
 
-// StopOpenAIImagesJSONKeepaliveCommitted 停止心跳，并返回是否已经提交 200 响应。
+// StopOpenAIImagesJSONKeepaliveCommitted stops and waits for heartbeats, then reports whether HTTP 200 was committed.
 func StopOpenAIImagesJSONKeepaliveCommitted(c *gin.Context) bool {
 	k := openAIImagesJSONKeepaliveFromContext(c)
 	if k == nil {
@@ -126,14 +127,14 @@ func StopOpenAIImagesJSONKeepaliveCommitted(c *gin.Context) bool {
 	return committed
 }
 
-// OpenAIImagesJSONKeepalivePresent 判断当前响应是否安装了图片 JSON keepalive，
-// 包括首个心跳尚未写出的快速响应阶段。
+// OpenAIImagesJSONKeepalivePresent reports whether an image JSON heartbeat is installed,
+// including the interval before its first write.
 func OpenAIImagesJSONKeepalivePresent(c *gin.Context) bool {
 	return openAIImagesJSONKeepaliveFromContext(c) != nil
 }
 
-// OpenAIImagesJSONKeepaliveAdjustedWrittenSize 从响应大小中排除心跳空白，
-// 使提供商重试和故障切换仍可继续执行。
+// OpenAIImagesJSONKeepaliveAdjustedWrittenSize excludes heartbeat whitespace
+// from the byte count used to determine whether provider retries remain safe.
 func OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	if c == nil || c.Writer == nil {
 		return -1

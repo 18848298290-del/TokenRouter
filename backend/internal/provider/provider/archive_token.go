@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// DecodeArchiveIDToken 解码 OpenAI 导入的身份提示，调用方负责身份验证。
+// DecodeArchiveIDToken decodes imported OpenAI identity hints. The caller is responsible for authentication.
 func DecodeArchiveIDToken(token string) (*provider.ArchiveIdentityHints, error) {
 	claims, err := openai.DecodeIDToken(token)
 	if err != nil {

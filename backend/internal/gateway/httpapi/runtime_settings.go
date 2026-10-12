@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// GatewaySettingsEndpoints 声明设置的 HTTP 操作，对应模块实现设置规则。
+// GatewaySettingsEndpoints declares HTTP operations for the gateway settings service.
 type GatewaySettingsEndpoints interface {
 	GetRectifierSettings(*gin.Context)
 	UpdateRectifierSettings(*gin.Context)
@@ -18,10 +18,10 @@ type GatewaySettingsEndpoints interface {
 	UpdateBetaPolicySettings(*gin.Context)
 }
 
-// RuntimeSettingsHandler 处理网关策略设置的查询和更新。
+// RuntimeSettingsHandler reads and updates gateway policy settings.
 type RuntimeSettingsHandler struct{ settingService *gateway.RuntimeSettings }
 
-// UpdateRectifierSettingsRequest 保留旧请求字段。
+// UpdateRectifierSettingsRequest contains request-correction switches and signature patterns.
 type UpdateRectifierSettingsRequest struct {
 	Enabled                  bool     `json:"enabled"`
 	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
@@ -30,12 +30,12 @@ type UpdateRectifierSettingsRequest struct {
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
 }
 
-// UpdateBetaPolicySettingsRequest 保留旧请求字段。
+// UpdateBetaPolicySettingsRequest contains the beta policy rules to save.
 type UpdateBetaPolicySettingsRequest struct {
 	Rules []gatewaydto.BetaPolicyRule `json:"rules"`
 }
 
-// RegisterGatewaySettingsRoutes 在已经鉴权和审计的设置组中注册网关设置接口。
+// RegisterGatewaySettingsRoutes requires a settings group with authentication and auditing installed.
 func RegisterGatewaySettingsRoutes(adminSettings *gin.RouterGroup, endpoint GatewaySettingsEndpoints) {
 	adminSettings.GET("/rectifier", endpoint.GetRectifierSettings)
 	adminSettings.PUT("/rectifier", endpoint.UpdateRectifierSettings)
@@ -43,12 +43,12 @@ func RegisterGatewaySettingsRoutes(adminSettings *gin.RouterGroup, endpoint Gate
 	adminSettings.PUT("/beta-policy", endpoint.UpdateBetaPolicySettings)
 }
 
-// NewRuntimeSettingsHandler 注入生产链共用的规则实例。
+// NewRuntimeSettingsHandler binds the shared runtime settings service.
 func NewRuntimeSettingsHandler(settings *gateway.RuntimeSettings) *RuntimeSettingsHandler {
 	return &RuntimeSettingsHandler{settingService: settings}
 }
 
-// GetRectifierSettings 返回请求修正策略设置。
+// GetRectifierSettings returns request-correction settings.
 func (h *RuntimeSettingsHandler) GetRectifierSettings(c *gin.Context) {
 	settings, err := h.settingService.GetRectifierSettings(c.Request.Context())
 	if err != nil {
@@ -69,7 +69,7 @@ func (h *RuntimeSettingsHandler) GetRectifierSettings(c *gin.Context) {
 	})
 }
 
-// UpdateRectifierSettings 更新请求修正策略设置。
+// UpdateRectifierSettings updates request-correction settings.
 func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 	var req UpdateRectifierSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -77,7 +77,7 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	// 校验并清理自定义匹配关键词
+	// Bound the pattern count and length before trimming and saving.
 	const maxPatterns = 50
 	const maxPatternLen = 500
 	if len(req.APIKeySignaturePatterns) > maxPatterns {
@@ -110,7 +110,6 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	// 重新获取设置返回
 	updatedSettings, err := h.settingService.GetRectifierSettings(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -130,7 +129,7 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 	})
 }
 
-// GetBetaPolicySettings 返回 beta 策略设置。
+// GetBetaPolicySettings returns beta policy settings.
 func (h *RuntimeSettingsHandler) GetBetaPolicySettings(c *gin.Context) {
 	settings, err := h.settingService.GetBetaPolicySettings(c.Request.Context())
 	if err != nil {
@@ -145,7 +144,7 @@ func (h *RuntimeSettingsHandler) GetBetaPolicySettings(c *gin.Context) {
 	httpx.Success(c, gatewaydto.BetaPolicySettings{Rules: rules})
 }
 
-// UpdateBetaPolicySettings 更新 beta 策略设置。
+// UpdateBetaPolicySettings updates beta policy settings.
 func (h *RuntimeSettingsHandler) UpdateBetaPolicySettings(c *gin.Context) {
 	var req UpdateBetaPolicySettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -164,7 +163,6 @@ func (h *RuntimeSettingsHandler) UpdateBetaPolicySettings(c *gin.Context) {
 		return
 	}
 
-	// Re-fetch to return updated settings
 	updated, err := h.settingService.GetBetaPolicySettings(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)

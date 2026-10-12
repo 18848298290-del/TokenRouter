@@ -10,7 +10,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// 保留三种管理目录 JSON 变体；零值字段和省略行为不做统一化。
+// The three catalog response shapes differ in zero-value fields and omission rules.
 type claudeCatalogModel struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
@@ -34,7 +34,7 @@ type grokCatalogModel struct {
 	DisplayName string `json:"display_name,omitempty"`
 }
 
-// GetAvailableModels 读取提供商数据，查询模型目录并编码为接口响应。
+// GetAvailableModels loads a provider and returns its model catalog in the platform's response format.
 func (h *ManagementHandler) GetAvailableModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -89,7 +89,7 @@ func adminCatalogResponse(v routing.AdminCatalogResult) any {
 	}
 }
 
-// GetAntigravityDefaultModelMapping 展示原默认表的独立副本；平台来源仍由装配提供。
+// GetAntigravityDefaultModelMapping returns a copy of the defaults supplied during application assembly.
 func (h *ManagementHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, maps.Clone(h.modelDefaults.Antigravity()))
 }

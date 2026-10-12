@@ -15,7 +15,7 @@ type Queries struct {
 	Observe        func(string, ...any)
 }
 
-// CreativeOutputContent 是输出内容的返回结构。
+// CreativeOutputContent contains image bytes and their response MIME type.
 type CreativeOutputContent struct {
 	Content     []byte
 	ContentType string
@@ -47,7 +47,7 @@ func (s *Queries) warn(event string, values ...any) {
 	}
 }
 
-// GetRun 返回单个任务（含输出元数据），校验所有权。
+// GetRun returns task and output metadata after checking user and workspace ownership.
 func (s *Queries) GetRun(ctx context.Context, scope CreativeRunScope, runID string) (*CreativeRunPublic, error) {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *Queries) GetRun(ctx context.Context, scope CreativeRunScope, runID stri
 	return CreativeRunToPublic(run, outputs), nil
 }
 
-// ListRuns 返回当前用户的任务列表（created_at desc 分页）。
+// ListRuns returns the user's workspace tasks ordered by descending creation time.
 func (s *Queries) ListRuns(ctx context.Context, scope CreativeRunScope, filter CreativeRunFilter) (*CreativeListRunsResponse, error) {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
 	if err != nil {
@@ -105,7 +105,8 @@ func (s *Queries) ListRuns(ctx context.Context, scope CreativeRunScope, filter C
 		}
 	}
 	for _, run := range runs {
-		// 历史列表同样需要输出元数据，否则前端无法关联本地素材与缺失占位。
+		// Output metadata lets the frontend associate history entries with local media or missing-media
+		// placeholders.
 		outputs := outputByRun[run.RunID]
 		if !batchOutputs {
 			outputs, err = s.Repo.ListCreativeRunOutputs(ctx, run.RunID)
@@ -118,8 +119,8 @@ func (s *Queries) ListRuns(ctx context.Context, scope CreativeRunScope, filter C
 	return &CreativeListRunsResponse{Data: data, HasMore: len(data) == filter.Limit}, nil
 }
 
-// GetOutputContent 校验所有权与输出状态后从临时存储读取图片字节。
-// 输出过期或缺失时，将 succeeded 任务转为 result_lost 并返回错误。
+// GetOutputContent checks ownership and output status before reading temporary image bytes.
+// Expired or missing output downgrades a succeeded task to result_lost and returns an error.
 func (s *Queries) GetOutputContent(ctx context.Context, scope CreativeRunScope, runID string, outputIndex int) (*CreativeOutputContent, error) {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
 	if err != nil {
@@ -166,7 +167,7 @@ func (s *Queries) GetOutputContent(ctx context.Context, scope CreativeRunScope, 
 		if errors.Is(err, ErrCreativeTransientUnavailable) {
 			return nil, ErrCreativeTransientFailed
 		}
-		// 临时输出已被 TTL 清理或丢失：成功任务转为 result_lost。
+		// Expired, missing, or corrupt output downgrades a succeeded task to result_lost.
 		if markErr := s.MarkRunResultLost(ctx, run); markErr != nil {
 			return nil, markErr
 		}
@@ -179,7 +180,7 @@ func (s *Queries) GetOutputContent(ctx context.Context, scope CreativeRunScope, 
 	return &CreativeOutputContent{Content: data, ContentType: contentType}, nil
 }
 
-// MarkRunResultLost 把 succeeded 任务降级为 result_lost；数据库失败必须返回以便重试。
+// MarkRunResultLost downgrades a succeeded task to result_lost and returns database errors for retry.
 func (s *Queries) MarkRunResultLost(ctx context.Context, run *CreativeRun) error {
 	if run == nil || run.Status != CreativeRunStatusSucceeded {
 		return nil
@@ -190,7 +191,7 @@ func (s *Queries) MarkRunResultLost(ctx context.Context, run *CreativeRun) error
 	})
 }
 
-// AckOutput 在客户端确认保存后删除临时输出并标记 acked，幂等。
+// AckOutput records client acknowledgment before deleting temporary output; repeated calls are safe.
 func (s *Queries) AckOutput(ctx context.Context, scope CreativeRunScope, runID string, outputIndex int) error {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
 	if err != nil {
@@ -212,7 +213,7 @@ func (s *Queries) AckOutput(ctx context.Context, scope CreativeRunScope, runID s
 		return err
 	}
 	if output.Status == CreativeRunOutputStatusAcked {
-		// 重复 ack 视为成功（幂等）。
+		// Repeated acknowledgments succeed and retry any outstanding deletion.
 		if s.TransientStore != nil {
 			_ = s.TransientStore.DeleteOutput(ctx, runID, outputIndex)
 		}
@@ -231,13 +232,13 @@ func (s *Queries) AckOutput(ctx context.Context, scope CreativeRunScope, runID s
 				"output_index", outputIndex,
 				"error", err,
 			)
-			// 数据库已经记录 ack，删除失败由 transient cleanup 负责补偿。
+			// The acknowledgment is durable; transient cleanup retries failed deletion.
 		}
 	}
 	return nil
 }
 
-// now 返回注入时钟的时间，缺省时使用系统时间。
+// now returns the injected clock's time or the system time when no clock is configured.
 func (s *Queries) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

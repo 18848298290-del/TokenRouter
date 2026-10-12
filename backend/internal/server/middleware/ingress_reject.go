@@ -30,7 +30,7 @@ const (
 
 var activeIngressRejectRecorder atomic.Pointer[ingressRejectRecorderHolder]
 
-// IngressRejectReason 标识预期的网关准入失败，此类失败不能视为运维请求错误。
+// IngressRejectReason identifies expected admission failures, excluded from Ops request errors.
 type IngressRejectReason string
 
 type IngressRejectRecorder interface {
@@ -39,7 +39,7 @@ type IngressRejectRecorder interface {
 
 type ingressRejectRecorderHolder struct{ recorder IngressRejectRecorder }
 
-// InvalidAuthClientKey 供装配复用相同的地址归一化，不改变无效认证分桶。
+// InvalidAuthClientKey normalizes the security client IP for invalid-authentication buckets.
 func InvalidAuthClientKey(c *gin.Context) string {
 	return normalizeIngressRejectIP(identityhttp.SecurityClientIP(c))
 }
@@ -52,7 +52,7 @@ func SetIngressRejectRecorder(recorder IngressRejectRecorder) {
 	activeIngressRejectRecorder.Store(&ingressRejectRecorderHolder{recorder: recorder})
 }
 
-// MarkIngressRejected 标记请求在进入网关前已被拒绝。
+// MarkIngressRejected records a rejection before gateway execution.
 func MarkIngressRejected(c *gin.Context, reason IngressRejectReason) {
 	if c == nil || reason == "" {
 		return
@@ -60,7 +60,7 @@ func MarkIngressRejected(c *gin.Context, reason IngressRejectReason) {
 	c.Set(ingressRejectReasonContextKey, reason)
 }
 
-// GetIngressRejectReason 返回准入拒绝原因；未拒绝时返回空值。
+// GetIngressRejectReason returns the admission rejection reason and whether a nonempty marker exists.
 func GetIngressRejectReason(c *gin.Context) (IngressRejectReason, bool) {
 	if c == nil {
 		return "", false

@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// TestImagesRetryKeepsMixedCandidatePool 验证先选 Grok 后重试仍使用混合选号，执行器随本次提供商变化。
+// TestImagesRetryKeepsMixedCandidatePool checks that a Grok attempt can retry on another platform.
 func TestImagesRetryKeepsMixedCandidatePool(t *testing.T) {
 	groupID := int64(12)
 	calls := 0
@@ -46,7 +46,7 @@ func TestImagesRetryKeepsMixedCandidatePool(t *testing.T) {
 	require.Equal(t, 2, calls)
 }
 
-// TestCompleteGrokRecordsVideoTerminalState 无可计费用量的失败、过期和重复完成查询也能结束任务。
+// TestCompleteGrokRecordsVideoTerminalState checks task state reporting even when there is no billable usage.
 func TestCompleteGrokRecordsVideoTerminalState(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		t.Run(state, func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestCompleteGrokRecordsVideoTerminalState(t *testing.T) {
 			tasks := media.NewVideoTasks(nil, nil, media.VideoOptions{})
 			runtime := New(Bindings{Dependencies: gatewayhttp.OpenAIDependencies{Gateway: true}, VideoTasks: func() *media.VideoTasks { return tasks }})
 			adapter := &generationRequestAdapter{h: runtime, apiKey: &apikey.APIKey{ID: 1}, selection: &gatewayadapter.SelectionResult{Provider: &gatewayadapter.ExecutionProvider{}}, endpoint: grok.GrokMediaEndpointVideoStatus, requestID: "video-1"}
-			// 两次转换分别发生在媒体执行返回和完成通知入口。
+			// Convert once at the media result boundary and again at completion.
 			value := generationResultView(&forward.OpenAIResult{VideoState: state})
 			adapter.completeGrok(ctx, value)
 			require.Equal(t, state, child.State)

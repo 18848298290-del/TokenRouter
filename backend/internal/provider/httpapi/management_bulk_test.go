@@ -64,7 +64,7 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 
 	router := gin.New()
 	providerHandler := newMutationHandler(adminSvc, nil)
-	// 与生产路由一致，探测入口独立绑定；普通批量更新不会触发它。
+	// Bind the probe endpoint separately, as production routes do, to check that bulk updates do not invoke it.
 	router.POST("/api/v1/admin/providers/:id/test", NewTestHandler(tests, nil).Test)
 	router.POST("/api/v1/admin/providers/bulk-update", providerHandler.BulkUpdate)
 
@@ -80,7 +80,7 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	// 等待异步配置同步结束，确认没有向 OpenAI 上游发探测或写回能力状态。
+	// Allow time for an unexpected asynchronous probe, then check upstream requests and capability writes.
 	select {
 	case <-repo.done:
 		t.Fatal("OpenAI capability probe must not run")

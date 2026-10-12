@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// privateHTTPBoundary 记录输出和活动写入，完整 HTTP 响应由公开入口测试覆盖。
+// privateHTTPBoundary records output and write state; public entry point tests cover the full HTTP response.
 type privateHTTPBoundary struct {
 	HTTPBoundary
 	Request *http.Request
@@ -28,7 +28,7 @@ type privateOutputSink struct {
 	written  bool
 }
 
-// 请求构造测试提供 Header。调用响应方法时，嵌入的 nil 接口会使测试失败。
+// requestBoundaryFixture supplies headers. Calling an unimplemented response method panics through the nil interface.
 type requestBoundaryFixture struct {
 	HTTPBoundary
 	Request *http.Request
@@ -150,7 +150,7 @@ func newBetaRuntime(values map[string]string) *gateway.RuntimeSettings {
 	})
 }
 
-// GetMultiple 每次读取返回独立映射，设置用例可以在主动失效后观察新值。
+// GetMultiple returns a fresh map so tests can observe changed settings after cache invalidation.
 func (s betaSettingsFixture) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, key := range keys {

@@ -5,14 +5,14 @@ import (
 	"strings"
 )
 
-// ModelMappingDefaults 提供专用路由和独立型号配额的读取函数。
+// ModelMappingDefaults supplies platform route aliases and default mappings.
 type ModelMappingDefaults struct {
-	// Models 枚举专用路由别名，Spark 返回独立配额对应的型号。
+	// Models lists platform route aliases, or the independently quota-limited models for Spark.
 	Models      func(*Record) []string
 	Antigravity func() map[string]string
 }
 
-// ResolveCompactForwardModel 应用 Compact 附加映射，空值时使用回退模型。
+// ResolveCompactForwardModel applies the Compact mapping, retaining the input for missing or empty targets.
 func ResolveCompactForwardModel(value *Record, model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" || value == nil {
@@ -25,7 +25,7 @@ func ResolveCompactForwardModel(value *Record, model string) string {
 	return model
 }
 
-// ResolveForwardMappedModel 保留提供商映射的一跳与空映射回退，调用方仍决定平台规范化。
+// ResolveForwardMappedModel applies one mapping hop and retains the input for missing or empty targets.
 func ResolveForwardMappedModel(value *Record, requested string, defaults ModelMappingDefaults) string {
 	if value == nil {
 		return ""
@@ -37,19 +37,17 @@ func ResolveForwardMappedModel(value *Record, requested string, defaults ModelMa
 	return strings.TrimSpace(mapped)
 }
 
-// ResolveModelMapping 读取不可变配置并返回独立映射，不在共享提供商内写入派生缓存。
+// ResolveModelMapping returns a separate mapping built from configured entries or platform defaults.
 func ResolveModelMapping(a *Record, defaults ModelMappingDefaults) map[string]string {
 	rawMapping, _ := a.Credentials["model_mapping"].(map[string]any)
 	if a.Credentials == nil {
-		// Antigravity 平台使用默认映射
 		if a.Platform == PlatformAntigravity {
 			return maps.Clone(defaults.Antigravity())
 		}
-		// Bedrock 默认映射由 forwardBedrock 统一处理（需配合 region prefix 调整）
+		// Bedrock forwarding applies defaults together with the region prefix.
 		return nil
 	}
 	if len(rawMapping) == 0 {
-		// Antigravity 平台使用默认映射
 		if a.Platform == PlatformAntigravity {
 			return maps.Clone(defaults.Antigravity())
 		}

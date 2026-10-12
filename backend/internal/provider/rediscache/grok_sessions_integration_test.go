@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestGrokSessionsRedisWireAndSingleConsumption 检查两个 Store 共用 Redis 会话 JSON、键和 TTL，并且会话只能消费一次。
+// TestGrokSessionsRedisWireAndSingleConsumption checks shared session JSON, keys, TTL, and single consumption
+// across stores.
 func TestGrokSessionsRedisWireAndSingleConsumption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

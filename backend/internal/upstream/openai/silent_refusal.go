@@ -11,6 +11,8 @@ import (
 
 const SilentRefusalMinRequestBodyBytes = 64 * 1024
 
+// ChatSilentRefusalDetector tracks whether a large request ends with stop but no
+// content, tool calls, reasoning, usage, or error. Create one detector per attempt.
 type ChatSilentRefusalDetector struct {
 	enabled         bool
 	sawContent      bool
@@ -23,6 +25,7 @@ type ChatSilentRefusalDetector struct {
 	finishReason    string
 }
 
+// NewChatSilentRefusalDetector enables detection at SilentRefusalMinRequestBodyBytes.
 func NewChatSilentRefusalDetector(requestBodyLen int) *ChatSilentRefusalDetector {
 	return &ChatSilentRefusalDetector{
 		enabled: requestBodyLen >= SilentRefusalMinRequestBodyBytes,

@@ -7,14 +7,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// CRSAuthorization 按平台补全导入凭据。
+// CRSAuthorization completes imported credentials using the provider's platform.
 type CRSAuthorization struct {
 	Claude *ClaudeAuthorization
 	OpenAI *OpenAIAuthorization
 	Gemini *GeminiAuthorization
 }
 
-// Coordinated 复用导入路径的原锁键与条件写入，不改变导入的状态资格。
+// Coordinated refreshes imports using platform lock keys and conditional writes.
 func (s *CRSAuthorization) Coordinated(coordinator *OAuthRefreshAPI, geminiKey func(*Record) string) func(context.Context, *Record) error {
 	return func(ctx context.Context, record *Record) error {
 		var key string
@@ -41,7 +41,7 @@ func (s *CRSAuthorization) Coordinated(coordinator *OAuthRefreshAPI, geminiKey f
 	}
 }
 
-// Refresh 保留导入的尽力交换，失败不改变已落库的同步结果。
+// Refresh attempts a post-import token exchange; failure leaves the saved import intact.
 func (s *CRSAuthorization) Refresh(ctx context.Context, provider *Record) map[string]any {
 	if provider.Type != capability.ProviderTypeOAuth {
 		return nil
@@ -59,10 +59,10 @@ func (s *CRSAuthorization) Refresh(ctx context.Context, provider *Record) map[st
 		if refreshErr != nil {
 			err = refreshErr
 		} else {
-			// 保留现有非令牌配置。
+			// Start with the existing non-token configuration.
 			newCredentials = make(map[string]any)
 			maps.Copy(newCredentials, provider.Credentials)
-			// 覆盖本次返回的令牌字段。
+			// Apply token fields returned by this exchange.
 			newCredentials["access_token"] = tokenInfo.AccessToken
 			newCredentials["token_type"] = tokenInfo.TokenType
 			newCredentials["expires_in"] = tokenInfo.ExpiresIn
@@ -83,7 +83,7 @@ func (s *CRSAuthorization) Refresh(ctx context.Context, provider *Record) map[st
 			err = refreshErr
 		} else {
 			newCredentials = BuildOpenAIProviderCredentials(tokenInfo)
-			// 保留响应未覆盖的非令牌配置。
+			// Retain stored fields omitted by the response.
 			for k, v := range provider.Credentials {
 				if _, exists := newCredentials[k]; !exists {
 					newCredentials[k] = v
@@ -110,7 +110,7 @@ func (s *CRSAuthorization) Refresh(ctx context.Context, provider *Record) map[st
 	}
 
 	if err != nil {
-		// 刷新失败不改变已完成的同步结果。
+		// Exchange failure leaves the completed import intact.
 		return nil
 	}
 

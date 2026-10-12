@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUserActivityPartitionDrop 使用隔离 schema 检查分区删除、回滚和目标校验。
+// TestUserActivityPartitionDrop checks partition deletion, rollback, and target validation in an isolated schema.
 func TestUserActivityPartitionDrop(t *testing.T) {
 	ctx := context.Background()
 	tx, err := integrationDB.BeginTx(ctx, nil)

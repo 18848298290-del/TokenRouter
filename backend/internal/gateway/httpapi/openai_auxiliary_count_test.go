@@ -247,7 +247,7 @@ func TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI(t *testing.T) {
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	// 本地环境中的无效或过期密钥不得导致单元测试套件失败。
+	// Skip obviously incomplete local credentials before attempting the live comparison.
 	if strings.HasPrefix(apiKey, "sk-") && len(apiKey) < 20 {
 		t.Skip("OPENAI_API_KEY looks incomplete")
 	}
@@ -286,7 +286,7 @@ func TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI(t *testing.T) {
 
 			actual, err := callOpenAIInputTokensAPIForTest(client, apiKey, prepared.Request)
 			if err != nil {
-				// 实时 API 对比遇到凭据或临时网络错误时跳过。
+				// Skip live comparisons when credentials are rejected or a network error occurs.
 				var netErr net.Error
 				if strings.Contains(err.Error(), "status=401") ||
 					strings.Contains(err.Error(), "invalid_api_key") ||

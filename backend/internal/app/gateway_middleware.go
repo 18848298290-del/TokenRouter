@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// provideGatewayRouteMiddleware 为网关路由绑定鉴权、分组检查和请求记录中间件。
+// provideGatewayRouteMiddleware binds gateway authentication, group checks, and request recording.
 func provideGatewayRouteMiddleware(
 	apiKeyAuth keyhttp.APIKeyAuthMiddleware,
 	apiKeyService *apikey.APIKeyService,
@@ -71,7 +71,7 @@ func provideGatewayRouteMiddleware(
 	}
 }
 
-// provideGroupAssignmentGuard 为分组检查绑定 Key 读取和拒绝请求的记录函数。
+// provideGroupAssignmentGuard binds effective group access and rejection recording.
 func provideGroupAssignmentGuard(writer func(*gin.Context, int, string)) gin.HandlerFunc {
 	return gatewayhttp.RequireGroupAssignment(gatewayhttp.GroupAssignmentOptions{
 		Access:     gatewayhttp.EffectiveGroupAssignment,

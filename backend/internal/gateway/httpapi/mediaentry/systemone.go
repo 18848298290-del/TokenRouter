@@ -25,7 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// systemOneRun 保存当前请求的提供商选择和完成快照来源。
+// systemOneRun holds provider selection and completion inputs for one request.
 type systemOneRun struct {
 	h            *Runtime
 	c            *gin.Context
@@ -37,14 +37,14 @@ type systemOneRun struct {
 	selection    *gatewayprovider.SelectionResult
 }
 
-// NewSystemOne 固定本次请求的身份、模型和分组信息。
+// NewSystemOne captures the request identity, model, and group inputs.
 func (p mediaHTTPAdapter) NewSystemOne(c *gin.Context, input gatewayhttp.AuxiliaryHTTPInput, log *zap.Logger, stream *bool) gatewayhttp.SystemOneHTTPExecution {
 	key, _ := keyhttp.GetAPIKeyFromContext(c)
 	subscription, _ := gatewayhttp.SubscriptionFromContext(c)
 	return &systemOneRun{h: p.h, c: c, input: input, key: key, subscription: subscription, log: log, stream: stream}
 }
 
-// ModerateSystemOne 将结构化决策内容交给文本审核。
+// ModerateSystemOne submits structured decision content for text moderation.
 func (p mediaHTTPAdapter) ModerateSystemOne(c *gin.Context, log *zap.Logger, model string, body []byte) bool {
 	key, _ := keyhttp.GetAPIKeyFromContext(c)
 	subject, _ := authctx.GetAuthSubjectFromContext(c)
@@ -56,7 +56,7 @@ func (p mediaHTTPAdapter) ModerateSystemOne(c *gin.Context, log *zap.Logger, mod
 	return true
 }
 
-// Select 使用决策协议和 Jev 平台筛选当前分组的候选。
+// Select selects Jev candidates for the current group and routing context.
 func (p *systemOneRun) Select(ctx context.Context, excluded map[int64]struct{}) (provider.ProviderSnapshot, error) {
 	selection, _, err := p.h.bindings.Common.Selection.SelectProviderWithSchedulerForCapability(ctx, p.key.GroupID, "", "", p.input.Model, excluded, egress.OpenAIUpstreamTransportHTTPSSE, "", false, false, provider.PlatformJev)
 	p.selection = selection
@@ -68,14 +68,14 @@ func (p *systemOneRun) Select(ctx context.Context, excluded map[int64]struct{}) 
 	return value, err
 }
 
-// Acquire 复用调度取得的槽位，或按调度计划等待槽位。
+// Acquire reuses a scheduler-acquired slot or waits according to the selection plan.
 func (p *systemOneRun) Acquire(_ context.Context) (func(), bool) {
 	return p.h.bindings.Common.Support.AcquireResponsesProviderSlot(p.c, p.key.GroupID, "", p.selection, false, p.stream, p.log)
 }
 
-// Forward 复查资金并调用当前提供商。
+// Forward rechecks funding and calls the selected provider.
 func (p *systemOneRun) Forward(ctx context.Context) systemone.Outcome {
-	// 提供商等待期间资金可能变化，调用上游前再次检查。
+	// Funding can change while waiting for a provider slot.
 	if failure := (mediaHTTPAdapter{p.h}).checkFunding(p.c, true); failure != nil {
 		gatewayhttp.WriteSystemOneError(p.c, failure.Status, failure.Code, "", "", failure.Message)
 		return systemone.Outcome{Err: failure.Err}
@@ -93,12 +93,12 @@ func (p *systemOneRun) Forward(ctx context.Context) systemone.Outcome {
 	return outcome
 }
 
-// Report 将上游完成状态和最终模型反馈给调度器。
+// Report reports upstream completion and the final model to the scheduler.
 func (p *systemOneRun) Report(ctx context.Context, outcome systemone.Outcome) {
 	if ctx.Err() != nil && !outcome.Result.Served {
 		return
 	}
-	// 已观测到答案的客户端写入失败仍算上游完成。
+	// A client write failure still counts as upstream completion when an answer was served.
 	if p.c.Writer.Written() && !outcome.Result.Served && outcome.Failure == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (p *systemOneRun) Report(ctx context.Context, outcome systemone.Outcome) {
 	p.h.bindings.Common.Selection.ReportOpenAIProviderScheduleResult(p.selection.Provider, model, outcome.Result.Served, nil, outcome.Err)
 }
 
-// Complete 捕获资金归属和用量，提交共享完成队列。
+// Complete captures funding ownership and usage for the shared completion queue.
 func (p *systemOneRun) Complete(ctx context.Context, result upstream.AttemptResult) {
 	value := &forward.OpenAIResult{RequestID: result.RequestID, Model: p.input.Mapping.MappedModel, UpstreamModel: result.UpstreamModel, UpstreamResponseModel: result.UpstreamResponseModel, UpstreamHeaders: result.UpstreamHeaders, Usage: openai.ForwardUsage{InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens}, Duration: result.Duration}
 	if value.Model == "" {
@@ -128,19 +128,19 @@ func (p *systemOneRun) Complete(ctx context.Context, result upstream.AttemptResu
 	})
 }
 
-// MissingUsage 记录用量告警，并把上游尝试关联到请求详情。
+// MissingUsage logs a usage warning and links the upstream attempt to the request record.
 func (p *systemOneRun) MissingUsage(_ context.Context, result upstream.AttemptResult) {
 	value := p.selection.Provider.Record
 	p.log.Warn("systemone.usage_invalid", zap.Int64("provider_id", value.ID), zap.String("upstream_request_id", result.RequestID))
 	gatewayhttp.AppendOpsUpstreamError(p.c, ops.OpsUpstreamErrorEvent{Platform: provider.PlatformJev, ProviderID: value.ID, ProviderName: value.Name, UpstreamStatusCode: http.StatusOK, UpstreamRequestID: result.RequestID, Kind: "usage_invalid", Message: "SystemOne usage is missing or invalid; billing skipped"})
 }
 
-// Switch 记录本次提供商切换。
+// Switch records a provider switch.
 func (p *systemOneRun) Switch() {
 	p.h.bindings.Common.Selection.RecordOpenAIProviderSwitchForSelection(p.selection)
 }
 
-// End 输出尚未交付的最终错误。
+// End writes the final error if the response is unwritten and the request is active.
 func (p *systemOneRun) End(err error) {
 	if err == nil || p.c.Writer.Written() || p.c.Request.Context().Err() != nil {
 		return

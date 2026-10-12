@@ -12,7 +12,7 @@ type openaiTestTarget struct {
 	record   *provider.Record
 }
 
-// Target 将本次请求状态与提供商记录隔离，不向公开测试信息暴露凭据。
+// Target wraps the provider for execution and exposes credential-free test information.
 func (s *OpenAIProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return openaiTestTarget{executor: s, record: value}
 }

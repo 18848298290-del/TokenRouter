@@ -40,7 +40,7 @@ import (
 	responseupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// 读取器在输出内容和用量后报错，测试检查返回结果。
+// The reader fails after emitting content and usage so partial results can be checked.
 type grokObservationErrorReader struct{ err error }
 
 type grokPingFilterTestReadCloser struct {
@@ -75,8 +75,8 @@ type errReadCloser struct {
 	err error
 }
 
-// streamSelectionDiagnosticSource 为流执行后的下一次提供商选择提供调度查询数据。
-// 诊断查询副本包含分组和活动状态，流夹具保存传输字段。
+// streamSelectionDiagnosticSource supplies scheduler data for selection after stream execution.
+// The diagnostic copy includes group and active state; the stream fixture holds transport fields.
 type streamSelectionDiagnosticSource struct {
 	value gatewayprovider.ExecutionProvider
 	group routing.Group
@@ -84,7 +84,8 @@ type streamSelectionDiagnosticSource struct {
 
 func (r grokObservationErrorReader) Read([]byte) (int, error) { return 0, r.err }
 
-// TestGrokNativeObservationRetainsPartialUsageAfterReadError 验证可见输出后的读取错误仍保留用量。
+// TestGrokNativeObservationRetainsPartialUsageAfterReadError checks usage retention after visible output and a
+// read error.
 func TestGrokNativeObservationRetainsPartialUsageAfterReadError(t *testing.T) {
 	failure := errors.New("fixture truncated stream")
 	payload := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\",\"usage\":{\"input_tokens\":9,\"output_tokens\":2}}\n\n"
@@ -174,8 +175,9 @@ func TestGrokResponsesBillingPingFilterComposesWithClientToolStream(t *testing.T
 	require.Contains(t, string(output), `"id":"resp_1"`)
 }
 
-// TestGrokResponsesBillingPingFilterConvertsPingVariants 验证`event: ping` 不属于 Responses 事件闭集，无论载荷形态都会破坏严格客户端，
-// 因此所有兼容变体都改写为 SSE 注释（issue #5105）。
+// TestGrokResponsesBillingPingFilterConvertsPingVariants checks that every compatible ping variant becomes an
+// SSE comment.
+// Strict Responses clients reject event: ping regardless of its payload (issue #5105).
 func TestGrokResponsesBillingPingFilterConvertsPingVariants(t *testing.T) {
 	frames := []string{
 		"event: ping\ndata: {\"type\":\"ping\",\"x-opencode-type\":\"inference-cost\",\"cost\":\"0.06029240\"}\n\n",
@@ -219,13 +221,15 @@ func TestGrokResponsesBillingPingFilterPreservesNonPingFrames(t *testing.T) {
 	require.Equal(t, input, filterGrokPingTestInput(t, input))
 }
 
-// TestGrokResponsesBillingPingFilterPassesThroughPingFrameWithUnknownField 验证带未知 SSE 字段的候选帧逐字节回放。
+// TestGrokResponsesBillingPingFilterPassesThroughPingFrameWithUnknownField checks byte-for-byte replay of
+// frames with unknown SSE fields.
 func TestGrokResponsesBillingPingFilterPassesThroughPingFrameWithUnknownField(t *testing.T) {
 	input := "event: ping\nid: 7\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n"
 	require.Equal(t, input, filterGrokPingTestInput(t, input))
 }
 
-// TestGrokResponsesBillingPingFilterPassesThroughOversizedPingFrame 验证超过行数或字节上限后停止缓冲，候选帧原样直通。
+// TestGrokResponsesBillingPingFilterPassesThroughOversizedPingFrame checks unbuffered passthrough after the
+// line or byte limit.
 func TestGrokResponsesBillingPingFilterPassesThroughOversizedPingFrame(t *testing.T) {
 	lines := []string{"event: ping"}
 	for range grok.ResponsesPingFrameMaxLines {
@@ -261,7 +265,8 @@ func TestGrokResponsesBillingPingFilterConvertsPartialPingFrameAtEOF(t *testing.
 	require.Equal(t, ": ping\n\n", filterGrokPingTestInput(t, input))
 }
 
-// TestGrokResponsesBillingPingFilterDoesNotFilterNonGrokProviders 验证非 Grok 入口经过实际响应输出，保留 ping 与终态报文。
+// TestGrokResponsesBillingPingFilterDoesNotFilterNonGrokProviders checks that non-Grok output keeps ping and
+// terminal frames.
 func TestGrokResponsesBillingPingFilterDoesNotFilterNonGrokProviders(t *testing.T) {
 	input := "event: ping\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n" +
 		"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"non-grok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1},\"output\":[]}}\n\n"
@@ -480,8 +485,9 @@ func TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver(t *testing.T
 	}
 }
 
-// TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver 覆盖 created、in_progress、error、response.failed 的降载序列。
-// 预期执行同提供商重试并记录请求级瞬时标记，客户端输出为空。
+// TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver covers created, in_progress, error, and
+// response.failed capacity shedding.
+// Expect same-provider retry and a request-scoped transient marker before any client output.
 func TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver(t *testing.T) {
 	cfg := &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: cfg})
@@ -519,8 +525,9 @@ func TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver(t *test
 	require.Empty(t, rec.Body.String())
 }
 
-// TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient 验证开始输出后发生降载时，返回一个 response.failed，错误码为 server_error。
-// Codex 对该码执行退避重试，对 server_is_overloaded / slow_down 则终止会话。
+// TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient checks a single response.failed with
+// server_error after output starts.
+// Codex backs off for server_error but ends the session for server_is_overloaded or slow_down.
 func TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -568,8 +575,9 @@ func TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient(t *testing.T) 
 	require.True(t, logSink.ContainsFieldValue("upstream_request_id", "rid-shed-after-output"))
 }
 
-// TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE 验证 body-signal 提升后的 Compact 请求将上游 JSON 转为 SSE（#3875）。
-// Codex remote compact v2 需要 SSE，收到 JSON 会报 stream closed before response.completed 并重连。
+// TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE checks JSON-to-SSE bridging for body-signaled
+// Compact requests (#3875).
+// Codex remote compact v2 expects SSE; JSON causes stream closed before response.completed and reconnection.
 func TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -598,14 +606,15 @@ func TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE(t *testing.T
 	require.Equal(t, "response.completed", events[1][0])
 	require.Equal(t, "resp_compact_json", gjson.Get(events[1][1], "response.id").String())
 
-	// 计费与响应元数据不受写回形态影响。
+	// Billing and response metadata are independent of the output format.
 	require.NotNil(t, result.Usage)
 	require.Equal(t, 9, result.Usage.InputTokens)
 	require.Equal(t, 4, result.Usage.OutputTokens)
 	require.Equal(t, "resp_compact_json", result.ResponseID)
 }
 
-// TestHandleNonStreamingResponse_PathBasedCompactStaysJSON 验证 path-based Compact 缺少 client-stream 标记时输出 JSON，适用于 Codex v1 unary 和链式网关。
+// TestHandleNonStreamingResponse_PathBasedCompactStaysJSON checks JSON output without client-stream for Codex
+// v1 unary and chained gateways.
 func TestHandleNonStreamingResponse_PathBasedCompactStaysJSON(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, false)
@@ -629,7 +638,8 @@ func TestHandleNonStreamingResponse_PathBasedCompactStaysJSON(t *testing.T) {
 	require.Equal(t, "compaction", gjson.Get(body, "output.0.type").String())
 }
 
-// TestHandleSSEToJSON_CompactClientStreamBridgesToSSE 验证 Compact 上游 SSE 提取为 JSON 后，client-stream 请求重新合成为 SSE。
+// TestHandleSSEToJSON_CompactClientStreamBridgesToSSE checks SSE reconstruction after extracting Compact
+// upstream SSE into JSON.
 func TestHandleSSEToJSON_CompactClientStreamBridgesToSSE(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -653,8 +663,10 @@ func TestHandleSSEToJSON_CompactClientStreamBridgesToSSE(t *testing.T) {
 	require.Equal(t, "resp_compact_sse", gjson.Get(events[1][1], "response.id").String())
 }
 
-// TestHandleSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput 使用 #3777 的上游形状：compaction 仅在 raw output_item.done 中，终态 output 为空。
-// 提取时用 raw item 补充 output，使桥接输出一个 compaction item。缺失时 Codex 报 expected exactly one compaction output item, got 0 并重试，每次重试重新计费（#3887）。
+// TestHandleSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput covers compaction in raw
+// output_item.done with empty terminal output (#3777).
+// Supplement output with the raw compaction item; otherwise Codex retries the missing item and each retry is
+// billed (#3887).
 func TestHandleSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -694,7 +706,8 @@ func TestHandleSSEToJSON_CompactRawOutputItemDoneRepairsEmptyTerminalOutput(t *t
 	require.Equal(t, 4, result.Usage.OutputTokens)
 }
 
-// TestHandleSSEToJSON_PathBasedCompactRawOutputItemDoneRepairsJSON 验证 path-based Compact 缺少 client-stream 标记时，写回包含 compaction item 的 JSON。
+// TestHandleSSEToJSON_PathBasedCompactRawOutputItemDoneRepairsJSON checks that path-based Compact JSON
+// includes the compaction item.
 func TestHandleSSEToJSON_PathBasedCompactRawOutputItemDoneRepairsJSON(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, false)
@@ -714,7 +727,7 @@ func TestHandleSSEToJSON_PathBasedCompactRawOutputItemDoneRepairsJSON(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// 写回 body 是修补后的 JSON 文档。
+	// The response body contains the repaired JSON document.
 	body := rec.Body.String()
 	require.NotContains(t, body, "event:")
 	require.NotContains(t, body, "data:")
@@ -723,7 +736,8 @@ func TestHandleSSEToJSON_PathBasedCompactRawOutputItemDoneRepairsJSON(t *testing
 	require.Equal(t, "compact-v1-raw", gjson.Get(body, "output.0.encrypted_content").String())
 }
 
-// TestReconstructResponseOutputFromSSE_PrefersRawDoneItems 验证 raw done item 是协议上的最终完整形态，优先于 delta 重建且不得重复计入。
+// TestReconstructResponseOutputFromSSE_PrefersRawDoneItems checks that complete done items take precedence
+// over deltas and are counted once.
 func TestReconstructResponseOutputFromSSE_PrefersRawDoneItems(t *testing.T) {
 	bodyText := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"hel"}`,
@@ -740,7 +754,8 @@ func TestReconstructResponseOutputFromSSE_PrefersRawDoneItems(t *testing.T) {
 	require.Equal(t, "hello", items[0].Get("content.0.text").String())
 }
 
-// TestReconstructResponseOutputFromSSE_CompactionAddedFallback 验证无任何 done 事件时，退回收集 output_item.added 中的 compaction 类 item。
+// TestReconstructResponseOutputFromSSE_CompactionAddedFallback checks compaction collection from added events
+// when done events are absent.
 func TestReconstructResponseOutputFromSSE_CompactionAddedFallback(t *testing.T) {
 	bodyText := `data: {"type":"response.output_item.added","output_index":0,"item":{"id":"cmp_add","type":"compaction","encrypted_content":"added-only"}}` + "\n" + `data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`
 
@@ -752,7 +767,8 @@ func TestReconstructResponseOutputFromSSE_CompactionAddedFallback(t *testing.T) 
 	require.Equal(t, "added-only", items[0].Get("encrypted_content").String())
 }
 
-// TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded 验证 compaction 仅出现在 added 时补入结果，done 已包含时计入一次。
+// TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded checks missing compaction recovery and
+// deduplication against done items.
 func TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded(t *testing.T) {
 	bodyText := strings.Join([]string{
 		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"cmp_mixed","type":"compaction","encrypted_content":"mixed"}}`,
@@ -767,8 +783,8 @@ func TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded(t *testing
 	require.Equal(t, "msg_1", items[0].Get("id").String())
 	require.Equal(t, "cmp_mixed", items[1].Get("id").String())
 
-	// done 已含 compaction：added 中的同一 item（无 id 可去重的最坏情况用
-	// 不同 raw 表达）不得再收集，Codex 要求恰好一个 compaction item。
+	// The done event already contains compaction; the added item uses different raw bytes and no ID
+	// to check deduplication when Codex requires exactly one compaction item.
 	bodyText = strings.Join([]string{
 		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"compaction","status":"in_progress"}}`,
 		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"compaction","status":"completed","encrypted_content":"final"}}`,
@@ -781,7 +797,8 @@ func TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded(t *testing
 	require.Equal(t, "final", items[0].Get("encrypted_content").String())
 }
 
-// TestHandleSSEToJSON_CompactSupplementsMissingCompactionIntoNonEmptyOutput 验证终态 output 已有 message，但 compaction 仅在 raw output_item.done 时，提取结果补入 compaction。
+// TestHandleSSEToJSON_CompactSupplementsMissingCompactionIntoNonEmptyOutput checks adding raw compaction to
+// terminal output that already contains a message.
 func TestHandleSSEToJSON_CompactSupplementsMissingCompactionIntoNonEmptyOutput(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
@@ -813,8 +830,8 @@ func TestHandleSSEToJSON_CompactSupplementsMissingCompactionIntoNonEmptyOutput(t
 	require.Len(t, gjson.Get(events[2][1], "response.output").Array(), 2)
 }
 
-// TestReconstructResponseOutputFromSSE_NonCompactionAddedStillUsesDeltas 验证非 compaction 的 output_item.added 不参与回退收集（added 阶段的 message
-// 通常是空壳），仍走 delta 重建。
+// TestReconstructResponseOutputFromSSE_NonCompactionAddedStillUsesDeltas checks that non-compaction added items
+// use delta reconstruction because added messages are usually incomplete.
 func TestReconstructResponseOutputFromSSE_NonCompactionAddedStillUsesDeltas(t *testing.T) {
 	bodyText := strings.Join([]string{
 		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","content":[]}}`,
@@ -1304,7 +1321,8 @@ func TestResponsesStreamCyberPolicyPrecedesPassthroughRule(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesStreaming_ResponseFailedCustomStatusFailsOver 验证 HTTP 200 的 Responses 终止失败事件执行提供商配置策略。
+// TestOpenAIResponsesStreaming_ResponseFailedCustomStatusFailsOver checks provider policy for failure events
+// inside HTTP 200 streams.
 func TestOpenAIResponsesStreaming_ResponseFailedCustomStatusFailsOver(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1566,7 +1584,7 @@ func TestOpenAIResponseFlush_KeepaliveFlushesImmediately(t *testing.T) {
 
 func TestOpenAIResponseFlush_KeepaliveDoesNotSplitOpenEvent(t *testing.T) {
 	const dataLine = `data: {"type":"response.output_text.delta","delta":"a"}`
-	// 填满 16 个槽位的扫描队列，证明读取器到达受控空行前主循环已处理 data。
+	// Fill the 16-slot scanner queue so the main loop processes data before the controlled blank line.
 	dataLines := make([]string, 17)
 	for i := range dataLines {
 		dataLines[i] = dataLine
@@ -1904,8 +1922,9 @@ func TestExtractOpenAIResponseIDFromJSONBytes(t *testing.T) {
 	require.Empty(t, protocolopenai.ExtractOpenAIResponseIDFromJSONBytes([]byte(`not-json`)))
 }
 
-// TestExtractOpenAIUsage_CapturesImageInputTokens 验证复现 #4386：gpt-image-2 /v1/images/edits 的 usage 携带 input_tokens_details.image_tokens，
-// 提取器须将图片输入 token 单独填入 ImageInputTokens（此前被丢弃并入 InputTokens 按文本价计费）。
+// TestExtractOpenAIUsage_CapturesImageInputTokens covers input_tokens_details.image_tokens in gpt-image-2
+// edits (#4386).
+// Image input tokens belong in ImageInputTokens so they receive image pricing.
 func TestExtractOpenAIUsage_CapturesImageInputTokens(t *testing.T) {
 	body := []byte(`{"usage":{"input_tokens":371,"input_tokens_details":{"image_tokens":352,"text_tokens":19},"output_tokens":439,"output_tokens_details":{"image_tokens":439,"text_tokens":0},"total_tokens":810}}`)
 	usage, ok := protocolopenai.ExtractOpenAIUsageFromJSONBytes(body)
@@ -1915,14 +1934,14 @@ func TestExtractOpenAIUsage_CapturesImageInputTokens(t *testing.T) {
 	require.Equal(t, 439, usage.OutputTokens)
 	require.Equal(t, 439, usage.ImageOutputTokens)
 
-	// 部分上游使用 prompt_tokens，此处测试 prompt_tokens_details 的回退读取。
+	// Some upstreams use prompt_tokens; check the prompt_tokens_details fallback.
 	promptStyle := []byte(`{"usage":{"prompt_tokens":100,"prompt_tokens_details":{"image_tokens":80}}}`)
 	pu, ok := protocolopenai.ExtractOpenAIUsageFromJSONBytes(promptStyle)
 	require.True(t, ok)
 	require.Equal(t, 100, pu.InputTokens)
 	require.Equal(t, 80, pu.ImageInputTokens)
 
-	// 纯文本请求：无 image_tokens 时 ImageInputTokens 为 0，行为不变。
+	// Text-only usage leaves ImageInputTokens at zero.
 	textOnly := []byte(`{"usage":{"input_tokens":50,"output_tokens":10}}`)
 	tu, ok := protocolopenai.ExtractOpenAIUsageFromJSONBytes(textOnly)
 	require.True(t, ok)
@@ -2049,7 +2068,8 @@ func TestOpenAIStreamingPostOutputDisconnectQuarantinesSharedProxyWithoutSameStr
 		},
 	}
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize}}})
-	// 本用例需要把两次循环视为独立故障，关闭生产环境的并发断流折叠窗口。
+	// Disable the production concurrent-truncation coalescing window so the two loops count as independent
+	// failures.
 	svc.Output.ProxyCircuit = egress.NewProxyStreamCircuit(egress.ProxyStreamCircuitSettings{
 		FailureThreshold: 2,
 		FailureWindow:    time.Minute,
@@ -2188,7 +2208,7 @@ func TestOpenAIStreamingResponseFailedCapacityBeforeOutputReturnsFailover(t *tes
 		Header: http.Header{"X-Request-Id": []string{"rid-capacity"}},
 	}
 
-	// 池模式未配置 502 时，瞬态容量错误也在同一提供商上有限次重试。
+	// Transient capacity failures get bounded same-provider retries even when pool mode does not list 502.
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, ID: 1,
@@ -2299,8 +2319,9 @@ func TestOpenAIStreamingResponseFailedBeforeOutputRateLimitUsesPoolRetryPolicy(t
 	require.Equal(t, http.StatusTooManyRequests, opsEvents[len(opsEvents)-1].UpstreamStatusCode)
 }
 
-// TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockProviderScheduling 验证流内 rate limit 进入 OAuth 同提供商重试窗口，但不立即写提供商级限流/封禁状态：
-// HTTP 200 流的 x-codex-* 头不能让窗口内的提供商提前失去调度资格。
+// TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockProviderScheduling checks OAuth same-provider retries
+// before provider-wide rate limiting.
+// HTTP 200 x-codex-* headers must not remove scheduling eligibility during that retry window.
 func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockProviderScheduling(t *testing.T) {
 	cfg := &responsesFixtureOptions{Response: OpenAIResponseOptions{StreamDataIntervalTimeout: 0, StreamKeepaliveInterval: 0, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: cfg})
@@ -2453,7 +2474,7 @@ func TestOpenAIStreamingContextWindowResponseFailedBeforeOutputAppliesPassthroug
 	require.Equal(t, upstreamMessage, gjson.Get(body, "error.message").String())
 	require.NotContains(t, body, "response.failed")
 	require.NotContains(t, body, "Upstream request failed")
-	// 命中透传规则也应记录 ops 上游错误事件（对齐 CC/Messages 与 antigravity 先例）。
+	// A matched passthrough rule still records an Ops upstream error event.
 	opsVal, opsRecorded := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, opsRecorded, "passthrough hit should record an ops upstream error event")
 	opsEvents, _ := opsVal.([]*ops.OpsUpstreamErrorEvent)
@@ -2760,7 +2781,7 @@ func TestOpenAIStreamingTooLong(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 写入超过 MaxLineSize 的单行数据，触发 ErrTooLong
+		// A line larger than MaxLineSize triggers ErrTooLong.
 		payload := "data: " + strings.Repeat("a", 128*1024) + "\n"
 		_, _ = pw.Write([]byte(payload))
 	}()
@@ -2952,8 +2973,8 @@ func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *te
 	require.True(t, ok)
 	require.Zero(t, usage.CacheReadInputTokens, "官方嵌套缓存读取字段显式为零时仍应优先于兼容顶层别名")
 
-	// xAI 可能在可见 output_tokens 外单独返回 reasoning_tokens；仅算术一致的
-	// 形态视为独立字段，OpenAI 标准形态已将推理 token 纳入 completion/output。
+	// xAI may report reasoning_tokens separately from visible output_tokens; treat them as separate only
+	// when the arithmetic agrees. Standard OpenAI output tokens already include reasoning.
 	usage, ok = protocolopenai.ExtractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":10000,"output_tokens":500,"total_tokens":10800,"output_tokens_details":{"reasoning_tokens":300}}}`))
 	require.True(t, ok)
 	require.Equal(t, 800, usage.OutputTokens)
@@ -3024,7 +3045,7 @@ func TestHandleNonStreamingResponse_OAuthJSONBodyWithDataEventTextKeepsJSONUsage
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
 
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{}})
-	// Compact JSON 输出文本可以包含 data:/event: 普通字样，但不能因此被误判为 SSE。
+	// Ordinary data:/event: text inside Compact JSON must not cause SSE detection.
 	jsonBody := `{"id":"resp_oauth_compact","object":"response","model":"gpt-5.4","status":"completed",` +
 		`"output":[{"type":"message","content":[{"type":"output_text",` +
 		`"text":"processing data: 1,2,3 then event: click finished"}]}],` +
@@ -3041,7 +3062,7 @@ func TestHandleNonStreamingResponse_OAuthJSONBodyWithDataEventTextKeepsJSONUsage
 	require.NotNil(t, result)
 	require.Equal(t, 11, result.Usage.InputTokens)
 	require.Equal(t, 22, result.Usage.OutputTokens)
-	// 响应原样返回 JSON，包含上游用量。
+	// Return the JSON response with upstream usage.
 	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	require.Equal(t, "resp_oauth_compact", gjson.Get(rec.Body.String(), "id").String())
 	require.Equal(t, int64(33), gjson.Get(rec.Body.String(), "usage.total_tokens").Int())
@@ -3199,7 +3220,8 @@ func TestOpenAIGatewayService_NativeOAuth_NamespaceNonStreamingResponse(t *testi
 	require.Contains(t, rec.Body.String(), `"namespace":"collaboration"`)
 }
 
-// TestResponsesLifecycleCompatibility 覆盖实测裸终态、旧 done、重复用量及真正断流的客户端表现。
+// TestResponsesLifecycleCompatibility covers bare terminals, legacy done events, repeated usage, and truncated
+// streams.
 func TestResponsesLifecycleCompatibility(t *testing.T) {
 	const delta = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello!\"}\n\n"
 	const completed = `{"object":"response","id":"resp_compat","model":"upstream-model","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello!","annotations":[]}]}],"usage":{"input_tokens":7,"output_tokens":9},"vendor":{"opaque":"keep"}}`
@@ -3292,7 +3314,7 @@ func TestResponsesLifecycleCompatibility(t *testing.T) {
 				require.NotNil(t, result)
 				require.Equal(t, tt.output, result.Usage.OutputTokens)
 				assertOpenAISSEFrames(t, recorder.Body.String(), tt.types)
-				// 用客户端实际收到的 JSON type 判定完成，不借助服务端宽松的 event 行回退。
+				// Detect client completion from the delivered JSON type rather than the server event-line fallback.
 				protocolopenai.ForEachOpenAISSEFrame(recorder.Body.String(), func(_ string, data []byte) {
 					if gjson.GetBytes(data, "type").String() == "response.completed" {
 						require.Equal(t, "completed", gjson.GetBytes(data, "response.status").String())
@@ -3306,7 +3328,8 @@ func TestResponsesLifecycleCompatibility(t *testing.T) {
 	}
 }
 
-// TestResponsesLifecycleErrorThenFailedDone 验证前置 error 不会抑制规范化后的失败终态。
+// TestResponsesLifecycleErrorThenFailedDone checks that a preceding error does not suppress a normalized
+// failed terminal.
 func TestResponsesLifecycleErrorThenFailedDone(t *testing.T) {
 	for _, mode := range []string{"standard", "async", "passthrough"} {
 		for _, header := range []string{"", "event: response.done\n"} {
@@ -3340,7 +3363,7 @@ func TestResponsesLifecycleErrorThenFailedDone(t *testing.T) {
 	}
 }
 
-// compileHTTPFixtureHeaders 使用 Header 策略，nil 表示使用默认配置。
+// compileHTTPFixtureHeaders compiles header policy; nil selects defaults.
 func compileHTTPFixtureHeaders(options *responsesFixtureOptions) *egress.CompiledHeaderFilter {
 	if options == nil {
 		return nil
@@ -3525,7 +3548,7 @@ func (s streamSelectionDiagnosticSource) ListSchedulableProvidersForAdvancedSche
 	return []gatewayprovider.ExecutionProvider{s.value}, nil
 }
 
-// selectionDiagnosticForStreamTest 通过实际诊断接口观察同一代理熔断实例。
+// selectionDiagnosticForStreamTest observes the shared proxy circuit breaker through its diagnostic interface.
 func selectionDiagnosticForStreamTest(t *testing.T, source *OpenAIResponsesExecutor, value *gatewayprovider.ExecutionProvider) (bool, string) {
 	t.Helper()
 	copy := *value

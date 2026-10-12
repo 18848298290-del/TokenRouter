@@ -50,10 +50,11 @@ import (
 )
 
 const (
-	// 原大文本完整转发夹具保留相同长度。
+	// Keep the full large-text fixture length.
 	openAIResponsesInputTextMaxChars = 10000000
 
-	// codexNamespaceRequestBody 模拟 Codex 多智能体请求及带残留 namespace 的普通消息项。
+	// codexNamespaceRequestBody represents Codex multi-agent calls and ordinary messages with leftover namespace
+	// fields.
 	codexNamespaceRequestBody = `{
 	"model":"gpt-5.6-terra",
 	"stream":false,
@@ -95,7 +96,7 @@ type openAIPassthroughFailoverRepo struct {
 	overloadCalls  []time.Time
 }
 
-// mappingHTTPTransport 将构造好的上游请求发给本机 HTTP 服务。
+// mappingHTTPTransport sends the built upstream request to a local HTTP server.
 type mappingHTTPTransport struct {
 	client   *http.Client
 	endpoint *url.URL
@@ -198,7 +199,7 @@ func TestForward_ResponsesServiceTierFastNormalizedToPriorityUpstream(t *testing
 	require.NotNil(t, upstream.lastBody)
 	require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String(),
 		"client alias fast must reach the upstream as priority")
-	// 计费上下文：result 携带归一化后的 tier。
+	// The billing result carries the normalized tier.
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 }
@@ -280,7 +281,8 @@ func TestForwardStreaming_ServiceTierPropagatedToResult(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier, "streaming billing context must carry the normalized tier")
-	// Responses SSE 原样透传上游 service_tier，省略该字段时下游也省略。计费另行记录请求中的 tier。
+	// Responses SSE keeps the upstream service_tier, including omission; billing records the request tier
+	// separately.
 	require.Contains(t, rec.Body.String(), `"delta":"hi"`, "streamed content must reach the client")
 	require.NotContains(t, rec.Body.String(), `"service_tier"`, "upstream did not return service_tier, client stream must stay untouched")
 }
@@ -292,7 +294,7 @@ func TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	// 上游回显 service_tier=default（例如请求实际被降级）。
+	// An upstream default tier can indicate that the requested tier was downgraded.
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-resp-echo"}},
@@ -322,7 +324,7 @@ func TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
-	// 非流式响应原样透传：客户端同样看到 default。
+	// Non-streaming passthrough exposes the upstream default tier.
 	require.Contains(t, rec.Body.String(), `"service_tier":"default"`)
 	require.NotContains(t, rec.Body.String(), `"service_tier":"priority"`)
 }
@@ -365,7 +367,7 @@ func TestForwardStreaming_KeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
-	// 流式原样透传：客户端在终止事件里看到 default。
+	// Streaming passthrough exposes default in the terminal event.
 	require.Contains(t, rec.Body.String(), `"service_tier":"default"`)
 }
 
@@ -376,7 +378,7 @@ func TestForward_ServiceTierFilteredByPolicyBillsStandard(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	// 管理员配置 priority → filter：字段在出站前被删除。
+	// The administrator priority-to-filter rule removes the outbound field.
 	settings := &tierpolicy.OpenAIFastPolicySettings{Rules: []tierpolicy.OpenAIFastPolicyRule{{
 		ServiceTier: tierpolicy.OpenAIFastTierPriority,
 		Action:      anthropic.BetaPolicyActionFilter,
@@ -412,7 +414,7 @@ func TestForward_ServiceTierFilteredByPolicyBillsStandard(t *testing.T) {
 	result, err := svc.Forward(context.Background(), c, provider, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// 出站 body 已剥离 service_tier、上游也未回显 → 无 tier → 按标准价计费。
+	// With the outbound tier removed and no upstream tier, billing uses the standard rate.
 	require.False(t, gjson.GetBytes(upstream.lastBody, "service_tier").Exists(),
 		"policy filter must strip service_tier from the outbound body")
 	require.Nil(t, result.ServiceTier, "filtered request must not bill as fast")
@@ -464,7 +466,7 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	require.NotEqual(t, upstream.requests[0].Header.Get("Authorization"), upstream.requests[1].Header.Get("Authorization"))
 	require.Equal(t, "task-new", decodeAgentAssertionTask(t, upstream.requests[1].Header.Get("Authorization")))
 
-	// 连续两次 task 失效时，在一次重试后返回错误。
+	// Two consecutive task-invalid failures return an error after one retry.
 	upstream.responses = []*http.Response{
 		{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
 		{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
@@ -477,7 +479,7 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	require.Equal(t, 2, registerCalls)
 	require.Len(t, upstream.requests, 4)
 
-	// 透传路径在 task 失效时同样重试一次。
+	// Passthrough also retries task invalidation once.
 	provider.Record.Extra = map[string]any{"openai_passthrough": true}
 	provider.Record.Credentials["task_id"] = "task-old-passthrough"
 	upstream.responses = []*http.Response{
@@ -706,7 +708,8 @@ func TestOpenAIGatewayForwardDoesNotRecurseWhenCompactFallbackAlsoFails(t *testi
 	require.Equal(t, "http_error", events[1].Kind)
 }
 
-// TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure 验证成功恢复但没有模型声明时保持未知。
+// TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure checks that recovery without a model
+// declaration leaves the model unknown.
 func TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	recorder := httptest.NewRecorder()
@@ -1833,7 +1836,8 @@ func TestDeepSeekResponsesCompactSkipsClientToolAdaptation(t *testing.T) {
 	require.Equal(t, "/responses/compact", upstream.lastReq.URL.Path)
 }
 
-// TestOpenAIResponsesEmptyCompletedFailsOver 验证标准流和透传流都会在写出前切换空终态提供商。
+// TestOpenAIResponsesEmptyCompletedFailsOver checks pre-output failover for empty terminals in standard and
+// passthrough streams.
 func TestOpenAIResponsesEmptyCompletedFailsOver(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "managed"
@@ -1870,7 +1874,7 @@ func TestOpenAIResponsesEmptyCompletedFailsOver(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesEmptyCompletedExemptions 锁定有输出、有用量或有输出项的合法终态。
+// TestOpenAIResponsesEmptyCompletedExemptions checks valid terminals with content, usage, or output items.
 func TestOpenAIResponsesEmptyCompletedExemptions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1916,7 +1920,7 @@ func TestOpenAIResponsesEmptyCompletedExemptions(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesCompletedEventIsEmpty 检查各字段组合下的空终态判定。
+// TestOpenAIResponsesCompletedEventIsEmpty checks terminal emptiness across field combinations.
 func TestOpenAIResponsesCompletedEventIsEmpty(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -2221,8 +2225,9 @@ func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *t
 	require.Equal(t, "png", gjson.GetBytes(upstream.lastBody, "tools.0.output_format").String())
 }
 
-// TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions 验证#4417：/v1/responses 原生转发路径需将 Chat-Completions 风格的 max_tokens 归一化为
-// max_output_tokens，并移除兼容上游不接受的 prompt_cache_options。
+// TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions checks that native Responses
+// forwarding
+// maps max_tokens to max_output_tokens and removes unsupported prompt_cache_options (#4417).
 func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions(t *testing.T) {
 	runForward := func(t *testing.T, body []byte) []byte {
 		t.Helper()
@@ -2778,7 +2783,7 @@ func TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool(t *tes
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	// 自定义 API Key 服务不使用 Codex OAuth 的 Spark 工具限制。
+	// Custom API key services do not use Codex OAuth Spark tool restrictions.
 	c.Set("api_key", &apikey.APIKey{Group: &routing.Group{AllowImageGeneration: true}})
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
@@ -3497,7 +3502,7 @@ func TestOpenAIGatewayServiceForward_CodexBridgeSkipsCompactRequests(t *testing.
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0")
 	provider := newOpenAIImageGenerationControlTestProvider()
 
-	// /responses/compact 上游拒绝 tool_choice，compact 请求跳过 bridge 工具注入。
+	// Compact upstreams reject tool_choice, so Compact skips bridge tool injection.
 	result, err := svc.Forward(context.Background(), c, provider, []byte(`{"model":"gpt-5.4","input":"summarize the conversation","stream":false}`))
 
 	require.NoError(t, err)
@@ -3812,7 +3817,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 		},
 	}
 
-	// 不配置令牌 provider，验证从本次凭据读取 token 的路径。
+	// Omit the token provider to exercise credentials from the current provider.
 	svc.Requests.Credentials.OpenAI = nil
 
 	result, err := svc.Forward(context.Background(), c, provider, originalBody)
@@ -3820,15 +3825,15 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
 
-	// 透传 OAuth 请求体设置 store=false 和 stream=true。
+	// OAuth passthrough sets store=false and stream=true.
 	require.Equal(t, false, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.Equal(t, true, gjson.GetBytes(upstream.lastBody, "stream").Bool())
 	require.Equal(t, "local-test-instructions", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
-	// 其余关键字段保持原值。
+	// Other request fields retain their values.
 	require.Equal(t, "gpt-5.2", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
 
-	// 2) only auth is replaced; inbound auth/cookie are not forwarded
+	// Provider authentication replaces inbound credentials and cookies.
 	require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "codex_cli_rs/0.1.0", upstream.lastReq.Header.Get("User-Agent"))
 	require.Empty(t, upstream.lastReq.Header.Get("Cookie"))
@@ -3839,17 +3844,18 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 	require.Equal(t, "remote_compaction_v2", upstream.lastReq.Header.Get("x-codex-beta-features"))
 
-	// 3) required OAuth headers are present
+	// OAuth requests include the required host and account headers.
 	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
 	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
 
-	// 4) downstream SSE keeps tool name (no toolCorrector)
+	// Downstream SSE retains the upstream tool name.
 	body := rec.Body.String()
 	require.Contains(t, body, "apply_patch")
 	require.NotContains(t, body, "\"name\":\"edit\"")
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest 验证自动透传默认保留 namespace 声明、tool_choice 与历史调用项，只清理普通项残留字段。
+// TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest checks namespace declarations,
+// tool_choice, and historical calls while clearing stale ordinary-item fields.
 func TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3902,7 +3908,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest(t *test
 	require.Contains(t, rec.Body.String(), `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse 验证兼容开关打开时恢复旧的请求摊平与响应还原行为。
+// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse checks request
+// flattening and response restoration with compatibility mode enabled.
 func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3975,7 +3982,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAnd
 	require.Contains(t, downstream, `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse 验证原生 OAuth 在兼容开关打开时同样恢复旧行为。
+// TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse checks namespace
+// compatibility mode for native OAuth.
 func TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4021,7 +4029,8 @@ func TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStrea
 	require.Contains(t, rec.Body.String(), `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest 验证平名冲突只会在兼容摊平模式中发生。
+// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest checks name
+// collisions in flattening mode.
 func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4207,7 +4216,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *te
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
 
-	// store=true + stream=false should be forced to store=false + stream=true by gatewayprovider.ApplyCodexOAuthTransform (OAuth legacy path)
+	// The OAuth transform forces store=false and stream=true.
 	inputBody := []byte(`{"model":"gpt-5.2","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
 
 	resp := &http.Response{
@@ -4237,7 +4246,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *te
 	_, err := svc.Forward(context.Background(), c, provider, inputBody)
 	require.NoError(t, err)
 
-	// legacy path rewrites request body (not byte-equal)
+	// OAuth transformation rewrites the request body.
 	require.NotEqual(t, inputBody, upstream.lastBody)
 	require.Contains(t, string(upstream.lastBody), `"store":false`)
 	require.Contains(t, string(upstream.lastBody), `"stream":true`)
@@ -4290,7 +4299,7 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	// 复合 UA（前缀不是 codex_cli_rs），历史实现会误判为非 Codex 并走 opencode。
+	// A composite UA whose leading token is not codex_cli_rs must not select the opencode identity.
 	c.Request.Header.Set("User-Agent", "Mozilla/5.0 codex_cli_rs/0.1.0")
 
 	inputBody := []byte(`{"model":"gpt-5.2","stream":true,"store":false,"input":[{"type":"text","text":"hi"}]}`)
@@ -4322,7 +4331,8 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	_, err := svc.Forward(context.Background(), c, provider, inputBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	// 浏览器型复合 UA 被替换为默认 Codex UA（codex-tui 形态），originator 随最终 UA 配套（issue #3901）。
+	// Replace the browser-style composite UA with the default codex-tui identity and paired originator (issue
+	// #3901).
 	require.Equal(t, gateway.DefaultOpenAICodexUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 	require.NotEqual(t, "opencode", upstream.lastReq.Header.Get("originator"))
@@ -4420,7 +4430,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughF
 	require.True(t, c.Writer.Written(), "非 429/529 的 passthrough 错误应直接写回客户端")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 
-	// should append an upstream error event with passthrough=true
+	// Passthrough errors are recorded with passthrough=true.
 	v, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
 	arr, ok := v.([]*ops.OpsUpstreamErrorEvent)
@@ -4459,9 +4469,9 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			wantStatus:   http.StatusBadGateway,
 			wantMessage:  "Upstream authentication failed",
 		},
-		// 瞬时 5xx（500/502/503/504/520-524）对 API-key 提供商已改走多提供商
-		// failover（见 APIKeyPassthrough_Transient5xxTriggersFailover），此处
-		// 改用非瞬时 5xx 状态码，继续覆盖净化重建路径。
+		// Transient 5xx statuses (500/502/503/504/520-524) trigger API key provider failover.
+		// APIKeyPassthrough_Transient5xxTriggersFailover covers those statuses;
+		// use a non-transient 5xx here to exercise sanitized error reconstruction.
 		{
 			name:         "html 5xx",
 			statusCode:   530,
@@ -5045,8 +5055,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA(t 
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired 验证透传保留 codex-tui 等官方 UA，并从最终 UA 推导 originator。
-// 身份首段不匹配会触发上游 404（#3901）。
+// TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired checks official UA retention
+// and originator derivation.
+// Mismatched leading identity tokens cause upstream 404 responses (#3901).
 func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired(t *testing.T) {
 	const tuiUA = "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)"
 
@@ -5265,7 +5276,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *test
 	start := time.Now()
 	result, err := svc.Forward(context.Background(), c, provider, originalBody)
 	require.NoError(t, err)
-	// sanity: duration after start
+	// Timing measurements are nonnegative.
 	require.GreaterOrEqual(t, time.Since(start), time.Duration(0))
 	require.NotNil(t, result.FirstTokenMs)
 	require.GreaterOrEqual(t, *result.FirstTokenMs, 0)
@@ -5278,7 +5289,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollec
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
-	// 首次写入成功，后续写入失败，模拟客户端中途断开。
+	// The first write succeeds and subsequent writes fail to simulate client disconnection.
 	c.Writer = &httptestkit.FailingWriter{ResponseWriter: c.Writer, FailAfter: 1}
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -5422,7 +5433,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
-	// 注意：刻意不发送 [DONE]，模拟上游中途断流。
+	// Omit [DONE] to simulate upstream truncation.
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid-truncate"}},
@@ -5538,7 +5549,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
-// TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel 验证完整后缀型号原样发送且不生成推理档位。
+// TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel checks that suffix models are sent intact
+// without a synthesized effort.
 func TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -5883,7 +5895,8 @@ func TestOpenAIGatewayServiceForward_DisablesResponsesLiteParallelToolCallsForAP
 	}
 }
 
-// TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools 验证 OAuth Responses 原样保留 namespace 声明和历史工具调用字段。
+// TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools checks namespace declarations and historical
+// tool-call fields.
 func TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5909,8 +5922,9 @@ func TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools(t *testing.T) {
 	require.Empty(t, OpenAIResponsesNamespaceNames(c))
 }
 
-// TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls 验证 API Key 自定义上游若接受 namespace 工具声明，也要求历史 function_call 原样携带
-// namespace。声明仍为命名空间工具却清掉调用项字段，会触发 Missing namespace。
+// TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls checks that custom upstreams accepting
+// namespace tools
+// also receive namespace on historical function_call items; removing it causes Missing namespace.
 func TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5932,8 +5946,9 @@ func TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls(t *testi
 	require.False(t, gjson.GetBytes(forwarded, "input.1.namespace").Exists())
 }
 
-// TestOpenAIGatewayService_OAuthCompactKeepsFlattening 验证 Compact 请求摊平 namespace 并清理工具声明。
-// Compact 执行历史摘要，input[].namespace 会触发 400 Unknown parameter（#4761）。
+// TestOpenAIGatewayService_OAuthCompactKeepsFlattening checks namespace flattening and tool-declaration
+// cleanup for Compact.
+// Compact summarizes history and rejects input[].namespace with 400 Unknown parameter (#4761).
 func TestOpenAIGatewayService_OAuthCompactKeepsFlattening(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5954,7 +5969,8 @@ func TestOpenAIGatewayService_OAuthCompactKeepsFlattening(t *testing.T) {
 	require.Equal(t, "collaboration__spawn_agent", gjson.GetBytes(forwarded, "input.0.name").String())
 }
 
-// TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior 验证提供商兼容开关打开后恢复 namespace 摊平旧行为。
+// TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior checks namespace flattening through the
+// provider compatibility flag.
 func TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5978,7 +5994,8 @@ func TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior(t *testing.
 	}, OpenAIResponsesNamespaceNames(c)["collaboration__spawn_agent"])
 }
 
-// TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames 验证 failover 复用 gin.Context 时，转发前清除上个提供商的映射。
+// TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames checks that failover clears the previous provider
+// mapping from reused Gin state.
 func TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6258,7 +6275,8 @@ func (p mappingHTTPTransport) DoWithTLS(request *http.Request, proxy string, id 
 	return p.Do(request, proxy, id, concurrency)
 }
 
-// TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce 验证 HTTP 透传发送配置映射后的模型，执行一次映射并回填请求模型。
+// TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce checks one model mapping and restoration of the
+// requested model.
 func TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
 		for _, stream := range []bool{false, true} {

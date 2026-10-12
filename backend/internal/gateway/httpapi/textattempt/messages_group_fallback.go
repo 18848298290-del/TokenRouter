@@ -15,13 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Fallback 调用分组准入接口，gateway/text 限制每个请求最多回退一次。
+// Fallback resolves an authorized group for a prompt-too-long failure; gateway/text limits fallback to once per request.
 func (b *messageAttemptBridge) Fallback(cause error, fallbackUsed bool) bool {
 	var tooLong *antigravity.PromptTooLongError
 	if !errors.As(cause, &tooLong) {
 		return false
 	}
-	// 已输出的内容和已提交的流不能换组重放，也不能再写一份 JSON 错误。
+	// Committed output or cancellation prevents group replay and any additional JSON error.
 	if b.Context().Err() != nil || b.c.Writer.Written() || (b.streamStarted != nil && *b.streamStarted) {
 		return false
 	}
@@ -54,7 +54,7 @@ func (b *messageAttemptBridge) Fallback(cause error, fallbackUsed bool) bool {
 		d.handleStreamingAwareError(b.c, http.StatusForbidden, "permission_error", "fallback group does not allow this request", false)
 		return false
 	}
-	// 入口的平台、客户端会话与已触发的计费策略继续生效，分组使用重新授权后的快照。
+	// Retain platform, session, and triggered billing policy while replacing the group with the newly authorized snapshot.
 	ctx := requeststate.WithGroup(b.Context(), resolved.Group)
 	ctx = apikey.WithRuntimeAPIKey(ctx, resolved)
 	ctx = requeststate.WithPrefetchedStickySession(ctx, 0, 0)
@@ -84,7 +84,7 @@ func (b *messageAttemptBridge) Fallback(cause error, fallbackUsed bool) bool {
 	return true
 }
 
-// Fallback 在回退成功后同步请求 context 和模型映射，使用兼容入口的报文数据。
+// Fallback updates the Responses request context and model mapping after successful group fallback.
 func (b *genericResponsesAttemptBridge) Fallback(cause error, used bool) bool {
 	if !b.messageAttemptBridge.Fallback(cause, used) {
 		return false

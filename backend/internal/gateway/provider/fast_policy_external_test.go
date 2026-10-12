@@ -37,7 +37,7 @@ func TestClaudeAPIKeyFastModeWireEncoding(t *testing.T) {
 	require.True(t, claude.ContainsBetaToken(claude.GetHeaderRaw(headers, "anthropic-beta"), "context-management-2025-06-27"))
 }
 
-// TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType 检查各凭据类型在缺少定价解析器时是否仍执行强制关闭。
+// TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType checks forced removal across credential types with no price resolver.
 func TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType(t *testing.T) {
 	ctx := fastModeTestContext(apikey.APIKeyFastModePolicyForceOff, "claude-opus-4-8")
 

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// GenerationResult 是 HTTP 完成之前的明确观测；不携带提供商或请求上下文。
+// GenerationResult holds response observations used to prepare completion.
 type GenerationResult struct {
 	RequestID, ResponseID, Model, BillingModel, UpstreamModel                    string
 	Headers, ResponseHeaders                                                     map[string][]string
@@ -22,7 +22,7 @@ type GenerationResult struct {
 	ImageSize, ImageInputSize, ImageOutputSize, ImageSizeSource, VideoResolution string
 	ImageOutputSizes                                                             []string
 	ImageSizeBreakdown                                                           map[string]int
-	// VideoState 是已归一化的视频任务状态，用于完成请求摘要。
+	// VideoState is the normalized task state for the completed request summary.
 	VideoState string
 }
 type GenerationSelection struct {
@@ -65,7 +65,7 @@ type GenerationFailure struct {
 	SelectedID          int64
 }
 
-// GenerationPorts 提供当前生成请求的选择、执行和输出操作。
+// GenerationPorts supplies provider selection, execution, and output operations for a generation request.
 type GenerationPorts interface {
 	SelectGeneration(context.Context, map[int64]struct{}) (GenerationSelection, bool, error)
 	ActivateGeneration(GenerationSelection)
@@ -82,7 +82,7 @@ type GenerationPorts interface {
 	EndGeneration(GenerationFailure)
 }
 
-// RunImages 保留 JSON keepalive 独立输出窗口与部分图片完成的 mandatory 路径。
+// RunImages manages retries and JSON keepalives, submitting completion when partial images exist.
 func RunImages(ctx context.Context, request GenerationRequest, p GenerationPorts) {
 	excluded := map[int64]struct{}{}
 	retries := map[int64]int{}
@@ -187,7 +187,7 @@ func RunImages(ctx context.Context, request GenerationRequest, p GenerationPorts
 	}
 }
 
-// RunGrokMedia 在原归属提供商上查询旧任务；查询不会因生成资格或 failover 改投其它提供商。
+// RunGrokMedia runs generation attempts and keeps video lookups on the task's bound provider.
 func RunGrokMedia(ctx context.Context, request GenerationRequest, p GenerationPorts) {
 	if request.MaxSwitches <= 0 {
 		request.MaxSwitches = 3
@@ -299,7 +299,7 @@ func RunGrokMedia(ctx context.Context, request GenerationRequest, p GenerationPo
 	}
 }
 
-// CloneGenerationResult 在原生输出、请求编排和完成准备之间提供独立可变字段。
+// CloneGenerationResult copies mutable fields for independent output, execution, and completion snapshots.
 func CloneGenerationResult(input *GenerationResult) *GenerationResult {
 	if input == nil {
 		return nil

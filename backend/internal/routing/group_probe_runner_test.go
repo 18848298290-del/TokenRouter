@@ -8,7 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mappedProbeExecutor 检查执行探测使用选中的模型，历史记录使用管理员请求的模型。
+// mappedProbeExecutor checks that execution uses the selected model while history records the configured
+// request model.
 type mappedProbeExecutor struct {
 	t *testing.T
 }
@@ -62,7 +63,7 @@ func TestGroupAvailabilityProbeRunDueSkipsOverlappingRun(t *testing.T) {
 		t.Fatal("first run did not reach ClaimDue")
 	}
 
-	// 首轮运行中再次调用时应跳过领取，worker 数由实例上限控制。
+	// A second call during an active round skips claiming; the instance limit bounds workers.
 	runner.runDue()
 	if calls, _ := repo.claimSnapshot(); calls != 1 {
 		t.Fatalf("ClaimDue() calls during overlap = %d, want 1", calls)

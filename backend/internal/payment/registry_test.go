@@ -14,7 +14,7 @@ type mockProvider struct {
 	supportedTypes []PaymentType
 }
 
-// blockedProvider 暂停候选渠道构造，用于检查发布前的注册表读取。
+// blockedProvider pauses provider construction to test registry reads before publication.
 type blockedProvider struct {
 	mockProvider
 	entered, release chan struct{}

@@ -56,7 +56,7 @@ func flushOpsErrorLogBatch(batch []opsErrorLogJob) {
 	}
 }
 
-// OpsErrorLogQueueLength 记录测试中的同步提交，工作线程和停机处理由 ops 集成测试覆盖。
+// OpsErrorLogQueueLength tracks synchronous test submissions; Ops integration tests cover workers and shutdown.
 func OpsErrorLogQueueLength() int64 { return testOpsCaptureQueue.Health().Length }
 
 func OpsErrorLogEnqueuedTotal() int64 { return testOpsCaptureQueue.Health().Enqueued }
@@ -125,7 +125,7 @@ func TestOpsErrorLoggerMiddleware_HardSkipsIngressRejection(t *testing.T) {
 	settings := &ingressRejectSettingRepo{}
 	repo := &ingressRejectOpsRepo{}
 	ops := newOpsServiceFixture(repo, settings)
-	// 构造阶段可能读取其它运行时设置，此处只统计请求路径中的读取。
+	// Construction may read other settings; count reads from the request path only.
 	settings.getValueCalls = 0
 
 	router := gin.New()
@@ -417,8 +417,9 @@ func TestOpsErrorLoggerMiddleware_PrefersContextRequestID(t *testing.T) {
 	require.Equal(t, "context-request-id", job.entry.RequestID)
 }
 
-// TestLogOpsStreamError_RecordsInBandConcurrencyLimit 验证 HTTP 200 流内的并发错误由 MarkOpsStreamError 补记。
-// 日志按 IntendedStatus=429 分级，StatusCode 记录已提交的 200。
+// TestLogOpsStreamError_RecordsInBandConcurrencyLimit checks MarkOpsStreamError capture for concurrency
+// failures inside HTTP 200 streams.
+// Severity uses IntendedStatus=429 while StatusCode retains the committed 200.
 func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -441,8 +442,8 @@ func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
 	require.Equal(t, "request", job.entry.ErrorPhase)
 	require.True(t, job.entry.IsBusinessLimited)
 	require.True(t, job.entry.Stream)
-	require.Equal(t, http.StatusOK, job.entry.StatusCode) // 实际状态码保持 200
-	require.Equal(t, "P1", job.entry.Severity)            // 用 IntendedStatus 429 分级
+	require.Equal(t, http.StatusOK, job.entry.StatusCode) // Retain the actual wire status of 200.
+	require.Equal(t, "P1", job.entry.Severity)            // Classify severity using IntendedStatus 429.
 	require.Equal(t, "test-model", job.entry.Model)
 	require.Equal(t, "Concurrency limit exceeded for provider, please retry later", job.entry.ErrorMessage)
 }
@@ -475,7 +476,7 @@ func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
 	require.Contains(t, job.entry.ErrorBody, openai.OpenAIUpstreamHTTP2StreamErrorCode)
 }
 
-// TestLogOpsStreamError_NoopWhenNotMarked 验证未标记流内错误时，正常 200 流的错误记录为空。
+// TestLogOpsStreamError_NoopWhenNotMarked checks that an unmarked successful stream creates no error log.
 func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -489,7 +490,7 @@ func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 }
 
-// TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring 验证命中 skip_monitoring=true 透传规则时不落库，与其它采集分支一致。
+// TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring checks suppression by skip_monitoring=true.
 func TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -521,7 +522,7 @@ func TestShouldSkipFinalOpsFailureUsesOnlyFinalAttemptRule(t *testing.T) {
 	require.True(t, shouldSkipFinalOpsFailure(c))
 }
 
-// TestMarkOpsStreamError_FirstWins 验证后续通用错误帧到达后仍保留首个错误标记。
+// TestMarkOpsStreamError_FirstWins checks that later generic error frames do not replace the first marker.
 func TestMarkOpsStreamError_FirstWins(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

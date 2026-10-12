@@ -44,9 +44,9 @@ type OpsRequestDetailFilter struct {
 
 	// kind: success|error|all
 	Kind string
-	// SLAOnly 仅在错误行上保留 SLA 口径内的错误，用于 SLA 卡片详情。
+	// SLAOnly keeps SLA-counted error rows for summary-card drilldown.
 	SLAOnly bool
-	// IgnoredStatusCodes 是客户端侧状态码忽略列表；nil 表示使用系统默认值，空切片表示不按状态码忽略。
+	// IgnoredStatusCodes lists ignored client statuses; nil uses defaults, and an empty slice ignores none.
 	IgnoredStatusCodes []int
 
 	Platform string

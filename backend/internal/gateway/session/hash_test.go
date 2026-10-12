@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// benchmarkStringSink 保存会话散列和缓存内容基准的结果。
+// benchmarkStringSink retains session hash and cache-content benchmark results.
 var benchmarkStringSink string
 
-// hashTestAdapter 调用 GenerateSessionHash，并关闭测试中的观测输出。
+// hashTestAdapter invokes GenerateSessionHash with observation disabled.
 type hashTestAdapter struct{}
 
 type (
@@ -673,7 +673,7 @@ func NewRequestBodyRef(body []byte) *requeststate.RequestBodyRef {
 	return requeststate.NewRequestBodyRef(body)
 }
 
-// BenchmarkGenerateSessionHash_Metadata 关注 JSON 解析与正则匹配开销。
+// BenchmarkGenerateSessionHash_Metadata measures metadata parsing and session extraction.
 func BenchmarkGenerateSessionHash_Metadata(b *testing.B) {
 	body := []byte(`{"metadata":{"user_id":"session_123e4567-e89b-12d3-a456-426614174000"},"messages":[{"content":"hello"}]}`)
 
@@ -706,7 +706,7 @@ func BenchmarkGenerateSessionHash_LargeAnthropicMessages(b *testing.B) {
 	}
 }
 
-// BenchmarkExtractCacheableContent_System 关注字符串拼接路径的性能。
+// BenchmarkExtractCacheableContent_System measures system-text concatenation.
 func BenchmarkExtractCacheableContent_System(b *testing.B) {
 	req := buildSystemCacheableRequest(12)
 
@@ -716,7 +716,7 @@ func BenchmarkExtractCacheableContent_System(b *testing.B) {
 	}
 }
 
-// benchmarkBodySizes 指定会话散列基准的目标输入大小。
+// benchmarkBodySizes lists target payload sizes for session hash benchmarks.
 func benchmarkBodySizes() []struct {
 	name  string
 	bytes int
@@ -732,7 +732,7 @@ func benchmarkBodySizes() []struct {
 	}
 }
 
-// buildLargeAnthropicMessagesBody 构造重复文本的 Messages 请求，并按参数添加缓存标记。
+// buildLargeAnthropicMessagesBody builds repeated-text messages with optional cache markers.
 func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
@@ -754,7 +754,7 @@ func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) 
 	return []byte(builder.String())
 }
 
-// buildSystemCacheableRequest 构造每段都带缓存标记的系统消息请求。
+// buildSystemCacheableRequest builds system blocks that each carry a cache marker.
 func buildSystemCacheableRequest(parts int) *requeststate.ParsedRequest {
 	var builder strings.Builder
 	_, _ = builder.WriteString(`{"system":[`)

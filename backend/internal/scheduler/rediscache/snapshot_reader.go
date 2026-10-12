@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// SnapshotReader 从 SnapshotService 读取快照并解码为提供商记录。
+// SnapshotReader retrieves SnapshotService values and unwraps them as provider records.
 type SnapshotReader struct{ source *scheduler.SnapshotService }
 
 func NewSnapshotReader(source *scheduler.SnapshotService) *SnapshotReader {

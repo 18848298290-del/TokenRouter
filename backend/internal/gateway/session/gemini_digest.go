@@ -12,11 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// geminiDigestSessionKeyPrefix Gemini 摘要 fallback 会话 key 前缀。
+// geminiDigestSessionKeyPrefix identifies Gemini digest-derived sessions.
 const geminiDigestSessionKeyPrefix = "gemini:digest:"
 
-// BuildGeminiDigestChain 根据 Gemini 请求生成摘要链
-// 格式: s:<hash>-u:<hash>-m:<hash>-u:<hash>-...
+// BuildGeminiDigestChain hashes Gemini system instructions and message parts.
+// Format: s:<hash>-u:<hash>-m:<hash>-u:<hash>-...
 // s = systemInstruction, u = user, m = model.
 func BuildGeminiDigestChain(req *protocolgemini.GeminiRequest) string {
 	if req == nil {
@@ -25,15 +25,13 @@ func BuildGeminiDigestChain(req *protocolgemini.GeminiRequest) string {
 
 	var parts []string
 
-	// 1. system instruction
 	if req.SystemInstruction != nil && len(req.SystemInstruction.Parts) > 0 {
 		partsData, _ := json.Marshal(req.SystemInstruction.Parts)
 		parts = append(parts, "s:"+upstream.ShortHash(partsData))
 	}
 
-	// 2. contents
 	for _, c := range req.Contents {
-		prefix := "u" // user
+		prefix := "u"
 		if c.Role == "model" {
 			prefix = "m"
 		}
@@ -44,11 +42,11 @@ func BuildGeminiDigestChain(req *protocolgemini.GeminiRequest) string {
 	return strings.Join(parts, "-")
 }
 
-// GenerateGeminiPrefixHash 生成前缀 hash（用于分区隔离）
-// 组合: userID + apiKeyID + ip + userAgent + platform + model
-// 返回 16 字符的 Base64 编码的 SHA256 前缀。
+// GenerateGeminiPrefixHash scopes sessions by user, API key, source, platform, and model.
+// The source includes the IP and normalized user agent.
+// It returns the first 12 SHA-256 bytes as 16 URL-safe Base64 characters.
 func GenerateGeminiPrefixHash(userID, apiKeyID int64, ip, userAgent, platform, model string) string {
-	// 组合所有标识符
+	// Normalize client version noise before combining identifiers.
 	normalizedUserAgent := requeststate.NormalizeSessionUserAgent(userAgent)
 	combined := strconv.FormatInt(userID, 10) + ":" +
 		strconv.FormatInt(apiKeyID, 10) + ":" +
@@ -58,18 +56,18 @@ func GenerateGeminiPrefixHash(userID, apiKeyID int64, ip, userAgent, platform, m
 		model
 
 	hash := sha256.Sum256([]byte(combined))
-	// 取前 12 字节，Base64 编码后正好 16 字符
+	// Twelve bytes encode to exactly 16 Base64 characters.
 	return base64.RawURLEncoding.EncodeToString(hash[:12])
 }
 
-// ParseGeminiSessionValue 解析 Gemini 会话缓存值
-// 格式: {uuid}:{providerID}。
+// ParseGeminiSessionValue parses a cached Gemini session binding.
+// Format: {uuid}:{providerID}.
 func ParseGeminiSessionValue(value string) (uuid string, providerID int64, ok bool) {
 	if value == "" {
 		return "", 0, false
 	}
 
-	// 找到最后一个 ":" 的位置（因为 uuid 可能包含 ":"）
+	// Split at the last colon because the UUID may contain colons.
 	i := strings.LastIndex(value, ":")
 	if i <= 0 || i >= len(value)-1 {
 		return "", 0, false
@@ -84,14 +82,14 @@ func ParseGeminiSessionValue(value string) (uuid string, providerID int64, ok bo
 	return uuid, providerID, true
 }
 
-// FormatGeminiSessionValue 格式化 Gemini 会话缓存值
-// 格式: {uuid}:{providerID}。
+// FormatGeminiSessionValue encodes a Gemini session binding.
+// Format: {uuid}:{providerID}.
 func FormatGeminiSessionValue(uuid string, providerID int64) string {
 	return uuid + ":" + strconv.FormatInt(providerID, 10)
 }
 
-// GenerateGeminiDigestSessionKey 拼接 prefixHash 和 uuid 各自前八位，生成 Gemini 内容摘要的会话键。
-// SelectProviderWithLoadAwareness 据此保持会话粘性。
+// GenerateGeminiDigestSessionKey joins up to eight bytes each of prefixHash and uuid.
+// Provider selection uses the result for sticky routing.
 func GenerateGeminiDigestSessionKey(prefixHash, uuid string) string {
 	prefix := prefixHash
 	if len(prefixHash) >= 8 {

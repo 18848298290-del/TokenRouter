@@ -49,7 +49,8 @@ func nativePrepareContext(ctx context.Context) (*gin.Context, *httptest.Response
 	return c, recorder
 }
 
-// TestUnifiedWarmupStopsBeforeQueueAndUpstream 验证预热不启动队列或上游，并保留传入上下文。
+// TestUnifiedWarmupStopsBeforeQueueAndUpstream checks that warmup interception retains the caller context and
+// bypasses queueing and forwarding.
 func TestUnifiedWarmupStopsBeforeQueueAndUpstream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -69,7 +70,7 @@ func TestUnifiedWarmupStopsBeforeQueueAndUpstream(t *testing.T) {
 	require.Equal(t, deadline, retained)
 }
 
-// TestUnifiedMessageQueueOwnsOneRelease 覆盖首响应提前释放、取消释放及外层清理重复调用。
+// TestUnifiedMessageQueueOwnsOneRelease checks release on upstream acceptance or cancellation and repeated outer cleanup.
 func TestUnifiedMessageQueueOwnsOneRelease(t *testing.T) {
 	for _, cancelBeforeAccept := range []bool{false, true} {
 		t.Run(map[bool]string{false: "accepted", true: "canceled"}[cancelBeforeAccept], func(t *testing.T) {

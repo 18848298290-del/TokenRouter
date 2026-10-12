@@ -298,21 +298,22 @@ type snapshotTestProvider struct {
 	GroupIDs    []int64
 }
 
-// retirementProviderSource 按平台过滤夹具，并通过屏障控制数据库查询完成时机。
+// retirementProviderSource filters fixtures by platform and can block database queries at a test
+// barrier.
 type retirementProviderSource struct {
 	SnapshotProviderSource
 	providers        []SnapshotProvider
 	listPlatformFunc func(context.Context, string) ([]SnapshotProvider, error)
 }
 
-// planSnapshotCache 记录并控制快照重建调用，供停止流程测试使用。
+// planSnapshotCache records and blocks rebuild calls for shutdown tests.
 type planSnapshotCache struct {
 	SnapshotCache
 	calls chan struct{}
 	block chan struct{}
 }
 
-// updateSnapshotValue 为快照更新测试提供重建元数据。
+// updateSnapshotValue provides rebuild metadata for cache update tests.
 type updateSnapshotValue struct{ id int64 }
 
 type updateSnapshotCache struct {
@@ -826,7 +827,8 @@ func TestSchedulerBulkProviderEventScopesOpenAIRebuildToFreshPlatform(t *testing
 	require.Empty(t, deleted)
 }
 
-// TestSchedulerBulkProviderEventScopesQoderRebuildToFreshPlatform 锁定 fork 的独立 Qoder 调度范围。
+// TestSchedulerBulkProviderEventScopesQoderRebuildToFreshPlatform checks Qoder and shared buckets in
+// former and current groups.
 func TestSchedulerBulkProviderEventScopesQoderRebuildToFreshPlatform(t *testing.T) {
 	cache := newBulkEventSnapshotCache()
 	repo := newBulkEventProviderRepo(&snapshotTestProvider{ID: 13, Platform: PlatformQoder, GroupIDs: []int64{82}})
@@ -894,7 +896,7 @@ func TestSchedulerBulkProviderEventKeepsGroupMembershipIn(t *testing.T) {
 
 func TestSchedulerBulkProviderEventRefreshesAntigravityAndSharedPool(t *testing.T) {
 	cache := newBulkEventSnapshotCache()
-	// Antigravity 状态变化同步到所属分组的共享池。
+	// Antigravity updates also refresh the groups' shared provider pools.
 	repo := newBulkEventProviderRepo(&snapshotTestProvider{ID: 2, Platform: PlatformAntigravity, GroupIDs: []int64{22}})
 	svc := newBulkEventTestService(cache, repo)
 
@@ -2145,7 +2147,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagBacklogRetryDoesNotBypassNewLagTh
 	}
 	svc := NewSnapshotService(cache, repo, nil, nil, cfg)
 
-	// 先仅让 backlog 降级，并使其失败重建进入到期重试状态。
+	// Start a failed backlog rebuild, then make its retry due.
 	svc.checkOutboxLag(context.Background(), 0)
 	if cache.listBucketCalls != 1 {
 		t.Fatalf("expected the backlog degradation to attempt one rebuild, got %d", cache.listBucketCalls)
@@ -2154,7 +2156,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagBacklogRetryDoesNotBypassNewLagTh
 	svc.outboxRebuildRetryAt = time.Now().Add(-time.Second)
 	svc.lagMu.Unlock()
 
-	// backlog 恢复后，首次 lag 降级观测从自己的失败次数门槛开始计数。
+	// After backlog recovery, lag observations start a separate threshold count.
 	repo.rows = []int64{1}
 	repo.events[0].CreatedAt = time.Now().Add(-time.Hour)
 	svc.checkOutboxLag(context.Background(), 0)
@@ -2182,13 +2184,13 @@ func TestSchedulerSnapshotServiceCheckOutboxLagLagRetryDoesNotDelayOrEscalateNew
 	}
 	svc := NewSnapshotService(cache, repo, nil, nil, cfg)
 
-	// 先仅让 lag 降级，并使失败重建处于冷却期。
+	// Start a failed lag rebuild and leave its retry in cooldown.
 	svc.checkOutboxLag(context.Background(), 0)
 	if cache.listBucketCalls != 1 {
 		t.Fatalf("expected the lag degradation to attempt one rebuild, got %d", cache.listBucketCalls)
 	}
 
-	// lag 恢复时 backlog 刚进入降级，立即开始重建，首次失败使用基础重试代数。
+	// A new backlog episode starts immediately after lag recovery and begins its own failure count.
 	repo.events[0].CreatedAt = time.Now()
 	repo.rows = []int64{100}
 	svc.checkOutboxLag(context.Background(), 0)
@@ -2214,7 +2216,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagBacklogRetrySurvivesUnknownBacklo
 	}
 	svc := NewSnapshotService(cache, repo, nil, nil, cfg)
 
-	// backlog 重建失败后开始按原因隔离的冷却期。
+	// A failed backlog rebuild starts a cooldown specific to that reason.
 	svc.checkOutboxLag(context.Background(), 0)
 	if cache.listBucketCalls != 1 {
 		t.Fatalf("expected one initial backlog rebuild, got %d", cache.listBucketCalls)
@@ -2226,7 +2228,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagBacklogRetrySurvivesUnknownBacklo
 		t.Fatalf("expected a future backlog retry, got %s", retryAt)
 	}
 
-	// MaxID 临时失败时，backlog 健康状态保持未知。
+	// A transient MaxID failure leaves backlog health unknown.
 	repo.maxIDErr = errors.New("max id unavailable")
 	svc.checkOutboxLag(context.Background(), 0)
 	svc.lagMu.Lock()
@@ -2238,8 +2240,8 @@ func TestSchedulerSnapshotServiceCheckOutboxLagBacklogRetrySurvivesUnknownBacklo
 		t.Fatalf("expected unknown backlog to preserve retry state, got reason=%q failures=%d retry_at=%s", retryReason, failures, retryAtAfterUnknown)
 	}
 
-	// MaxID 恢复但 backlog 仍降级时，原冷却期仍然有效；只有冷却期到期
-	// 才能触发重试。
+	// Once MaxID recovers, a still-degraded backlog retains the cooldown
+	// and retries after it expires.
 	repo.maxIDErr = nil
 	svc.checkOutboxLag(context.Background(), 0)
 	if cache.listBucketCalls != 1 {
@@ -2267,7 +2269,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagPreemptsUnknownBacklogRetryAtThre
 	}
 	svc := NewSnapshotService(cache, repo, nil, nil, cfg)
 
-	// backlog 启动第一代失败重建后保持未知状态。
+	// Make backlog health unknown after its first failed rebuild.
 	svc.checkOutboxLag(context.Background(), 0)
 	if cache.listBucketCalls != 1 {
 		t.Fatalf("expected one initial backlog rebuild, got %d", cache.listBucketCalls)
@@ -2275,7 +2277,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagPreemptsUnknownBacklogRetryAtThre
 	repo.maxIDErr = errors.New("max id unavailable")
 	repo.events[0].CreatedAt = time.Now().Add(-time.Hour)
 
-	// lag 降级观测独立于 backlog 冷却期累积，达到自身门槛后触发重建。
+	// Lag observations accumulate independently and trigger a rebuild at their own threshold.
 	for observation := 1; observation <= 2; observation++ {
 		svc.checkOutboxLag(context.Background(), 0)
 		if cache.listBucketCalls != 1 {
@@ -2432,7 +2434,7 @@ func TestSchedulerSnapshotServiceEmptyPollDoesNotReleaseRunningRebuild(t *testin
 		t.Fatal("first rebuild did not start")
 	}
 
-	// 空批次恢复 episode/retry 状态，运行中的重建任务仍持有执行名额。
+	// An empty poll clears episode and retry state while the active rebuild retains its execution slot.
 	svc.pollOutbox()
 
 	secondDone := make(chan struct{})
@@ -2643,7 +2645,7 @@ func TestSnapshotStopCancelsWork(t *testing.T) {
 	<-done
 }
 
-// TestSchedulerSnapshotService_UpdateProviderInCache 检查提供商快照更新和错误处理。
+// TestSchedulerSnapshotService_UpdateProviderInCache covers publication, nil inputs, and cache errors.
 func TestSchedulerSnapshotService_UpdateProviderInCache(t *testing.T) {
 	t.Run("calls cache.SetProvider", func(t *testing.T) {
 		cache := &updateSnapshotCache{}
@@ -2884,7 +2886,7 @@ func (c *batchQueryBenchmarkCache) SetSnapshot(_ context.Context, _ SchedulerBuc
 	return nil
 }
 
-// AcquireBucketLease 将批量快照缓存的桶锁包装成租约。
+// AcquireBucketLease wraps the batch cache's bucket lock in a releasable lease.
 func (c *batchSnapshotCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -2893,7 +2895,7 @@ func (c *batchSnapshotCache) AcquireBucketLease(ctx context.Context, bucket Sche
 	return NewBucketLease(func(cleanup context.Context) error { return c.UnlockBucket(cleanup, bucket) }), true, nil
 }
 
-// AcquireBucketLease 为批量查询基准提供桶锁租约。
+// AcquireBucketLease provides a bucket lease for the batch-query benchmark.
 func (c *batchQueryBenchmarkCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -3185,7 +3187,7 @@ func requireFullRebuildNoMutationOrDB(t *testing.T, cache *fullRebuildLifecycleC
 	require.Zero(t, cache.totalSetAttempts())
 }
 
-// AcquireBucketLease 使用全量重建夹具的锁获取结果，成功时登记解锁函数。
+// AcquireBucketLease attaches an unlock callback after the full-rebuild fixture acquires a lock.
 func (c *fullRebuildLifecycleCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -3225,7 +3227,7 @@ func schedulerFullRebuildState(svc *SnapshotService) (requested uint64, complete
 	return svc.fullRebuildRequested, svc.fullRebuildCompleted
 }
 
-// AcquireBucketLease 返回全量重建测试配置的获取结果。
+// AcquireBucketLease returns the full-rebuild fixture's lock acquisition result.
 func (c *schedulerFullRebuildTestCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	return nil, ok, err
@@ -3492,7 +3494,8 @@ func expectedGroupLifecycleBuckets(groupID int64) []SchedulerBucket {
 }
 
 func expectedCanonicalProviderQueryCount() int {
-	// expectedCanonicalProviderQueryCount 统计分组查询数，single/forced 共用一次查询，空平台加载组内全部提供商。
+	// Single and forced buckets share one query per platform; the empty platform queries all group
+	// providers.
 	return len(schedulerSnapshotPlatforms())
 }
 
@@ -3524,7 +3527,7 @@ func requireLifecycleNotSeen(t *testing.T, seen map[batchSeenKey]struct{}, group
 	}
 }
 
-// AcquireBucketLease 将分组生命周期夹具的桶锁交给租约释放。
+// AcquireBucketLease gives the group-lifecycle fixture a lease that releases its bucket lock.
 func (c *groupLifecycleTestCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -3706,7 +3709,7 @@ func int64Range(start, end int64) []int64 {
 	return values
 }
 
-// AcquireBucketLease 为 outbox 清理测试提供可释放的桶锁。
+// AcquireBucketLease provides a releasable bucket lock for outbox cleanup tests.
 func (c *outboxCleanupCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -3826,7 +3829,7 @@ func (r *retirementGroupRepo) ListActive(context.Context) ([]SnapshotGroup, erro
 	return r.groups, r.err
 }
 
-// AcquireBucketLease 登记退役竞争测试的桶锁释放函数。
+// AcquireBucketLease registers bucket-lock cleanup for retirement race tests.
 func (c *retirementRaceCache) AcquireBucketLease(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (*BucketLease, bool, error) {
 	ok, err := c.TryLockBucket(ctx, bucket, ttl)
 	if err != nil || !ok {
@@ -3864,7 +3867,7 @@ func snapshotTestData(value SnapshotProvider) *snapshotTestProvider {
 	}
 }
 
-// ptrInt64 构造测试所需的可选分组 ID。
+// ptrInt64 returns an optional group ID for tests.
 func ptrInt64(value int64) *int64 { return &value }
 
 func (r *retirementProviderSource) ListSchedulableByPlatform(ctx context.Context, platform string) ([]SnapshotProvider, error) {

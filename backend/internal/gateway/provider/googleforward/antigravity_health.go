@@ -13,9 +13,9 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// antigravityRetryLoopParams 重试循环的参数。
+// antigravityRetryLoopParams supplies credentials, transport, and feedback for one retry loop.
 type antigravityRetryLoopParams struct {
-	userAgent       string // 指定提供商探测显式提供，普通转发保持空值。
+	userAgent       string // Set by provider probes; ordinary forwarding leaves this empty.
 	ctx             context.Context
 	prefix          string
 	provider        *gatewayprovider.ExecutionProvider
@@ -25,15 +25,15 @@ type antigravityRetryLoopParams struct {
 	body            []byte
 	c               *attempt
 	httpUpstream    httpclient.UpstreamTransport
-	providerRepo    gatewayprovider.ExecutionProviderStore // 用于智能重试的模型级别限流
+	providerRepo    gatewayprovider.ExecutionProviderStore // Stores model cooldowns during smart retry.
 	handleError     func(ctx context.Context, prefix string, provider *gatewayprovider.ExecutionProvider, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *provideradapter.AntigravityModelLimitResult
-	requestedModel  string // 用于限流检查的原始请求模型
-	isStickySession bool   // 是否为粘性会话（用于提供商切换时的缓存计费判断）
-	groupID         int64  // 用于模型级限流时清除粘性会话
-	sessionHash     string // 用于模型级限流时清除粘性会话
+	requestedModel  string // Original requested model used for rate-limit checks.
+	isStickySession bool   // Controls cache billing when switching a sticky provider.
+	groupID         int64  // Group whose sticky binding is cleared on model throttling.
+	sessionHash     string // Session whose sticky binding is cleared on model throttling.
 }
 
-// logPrefix 生成统一的日志前缀。
+// logPrefix formats the provider and optional session for logs.
 func logPrefix(sessionID, providerName string) string {
 	if sessionID != "" {
 		return fmt.Sprintf("[antigravity-Forward] session=%s provider=%s", sessionID, providerName)
@@ -50,7 +50,7 @@ func (s *Antigravity) shouldFailoverUpstreamError(statusCode int) bool {
 	}
 }
 
-// isSingleProviderRetry 检查 context 中是否设置了单提供商退避重试标记。
+// isSingleProviderRetry reports whether single-provider backoff is enabled in context.
 func isSingleProviderRetry(ctx context.Context) bool {
 	v, _ := requeststate.SingleProviderRetryFromContext(ctx)
 	return v
@@ -65,7 +65,7 @@ func (s *Antigravity) clearStickySession(ctx context.Context, groupID int64, ses
 	}
 }
 
-// 将本次观测交给 provider 判断健康状态并写入。
+// handleUpstreamError delegates health evaluation and persistence to the provider observer.
 
 func (s *Antigravity) handleUpstreamError(ctx context.Context, prefix string, value *gatewayprovider.ExecutionProvider, status int, headers http.Header, body []byte, model string, groupID int64, sessionHash string, sticky bool) *provideradapter.AntigravityModelLimitResult {
 	view := gatewayprovider.ExecutionRecord(value)

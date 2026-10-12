@@ -15,7 +15,7 @@ const (
 	ResponsesWSPerSession        = "per_session"
 )
 
-// ResponsesWSConnectionMode 返回已保存的连接方式，缺省时复用连接。
+// ResponsesWSConnectionMode returns the saved connection mode, defaulting to pooled connections.
 func (r *Record) ResponsesWSConnectionMode() string {
 	if r != nil && r.Extra[ResponsesWSConnectionModeKey] == ResponsesWSPerSession {
 		return ResponsesWSPerSession
@@ -23,12 +23,12 @@ func (r *Record) ResponsesWSConnectionMode() string {
 	return ResponsesWSPooled
 }
 
-// SupportsResponsesWS 根据上游协议集合判断是否可以直接建立 Responses WS。
+// SupportsResponsesWS reports whether an OpenAI provider advertises the Responses WebSocket protocol.
 func (r *Record) SupportsResponsesWS() bool {
 	return r != nil && r.IsOpenAI() && slices.Contains(r.UpstreamProtocols(), capability.ProtocolResponsesWebSocket)
 }
 
-// parseResponsesWSConnectionMode 校验所有保存入口使用的连接方式。
+// parseResponsesWSConnectionMode validates the mode accepted by persistence paths.
 func parseResponsesWSConnectionMode(raw any) (string, error) {
 	value, ok := raw.(string)
 	if !ok || (value != ResponsesWSPooled && value != ResponsesWSPerSession) {
@@ -37,7 +37,7 @@ func parseResponsesWSConnectionMode(raw any) (string, error) {
 	return value, nil
 }
 
-// validateResponsesWSConnectionModePatch 检查增量请求中提供的连接方式。
+// validateResponsesWSConnectionModePatch validates the mode when supplied in an Extra patch.
 func validateResponsesWSConnectionModePatch(extra map[string]any) error {
 	if value, present := extra[ResponsesWSConnectionModeKey]; present {
 		_, err := parseResponsesWSConnectionMode(value)
@@ -46,7 +46,7 @@ func validateResponsesWSConnectionModePatch(extra map[string]any) error {
 	return nil
 }
 
-// normalizeResponsesWS 在协议集合通过校验后转换旧连接设置。
+// normalizeResponsesWS converts legacy connection settings after protocol validation.
 func normalizeResponsesWS(a *Record) error {
 	if a == nil || !a.IsOpenAI() {
 		return nil

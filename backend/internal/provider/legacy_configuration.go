@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// 接收输入时删除废弃探测键，路由和调度使用协议配置。
+// DeprecatedOpenAIProviderExtraKeys lists obsolete probe fields discarded on input; routing uses protocol
+// configuration.
 var DeprecatedOpenAIProviderExtraKeys = [...]string{
 	"openai_responses_probe_status", "openai_responses_supported",
 	"openai_compact_supported", "openai_compact_checked_at",
@@ -14,14 +15,14 @@ var DeprecatedOpenAIProviderExtraKeys = [...]string{
 	"openai_native_compaction_v2_last_status", "openai_native_compaction_v2_last_error",
 }
 
-// DiscardDeprecatedProviderExtra 静默移除旧客户端可能继续提交的废弃提供商扩展键。
+// DiscardDeprecatedProviderExtra removes obsolete extra fields still submitted by older clients.
 func DiscardDeprecatedProviderExtra(extra map[string]any) {
 	NormalizeLegacyOpenAIProviderExtra(extra)
 	DiscardDeprecatedExtra(extra)
 }
 
-// NormalizeDeprecatedProviderExtraUpdate 规范化用于整份替换的提供商 Extra。
-// 返回的布尔值表示是否执行替换：空对象清空 Extra，仅含废弃键时跳过更新。
+// NormalizeDeprecatedProviderExtraUpdate prepares a complete replacement of provider extra.
+// The boolean requests replacement: an empty object clears extra, while obsolete-only input skips the update.
 func NormalizeDeprecatedProviderExtraUpdate(extra map[string]any) (map[string]any, bool) {
 	if extra == nil {
 		return nil, false
@@ -34,15 +35,15 @@ func NormalizeDeprecatedProviderExtraUpdate(extra map[string]any) (map[string]an
 	return normalized, true
 }
 
-// DiscardDeprecatedExtra 清理写入数据中的废弃扩展键。
+// DiscardDeprecatedExtra removes obsolete billing-probe and long-context fields in place.
 func DiscardDeprecatedExtra(extra map[string]any) {
 	delete(extra, "upstream_billing_probe")
 	delete(extra, "upstream_billing_probe_enabled")
 	delete(extra, "openai_long_context_billing_enabled")
 }
 
-// NormalizeLegacyOpenAIProviderExtra 清理提供商历史探测字段并规范化压缩开关。
-// 规范化请求携带的开关，省略项保持缺省，auto 和其他兼容值按开启处理。
+// NormalizeLegacyOpenAIProviderExtra removes obsolete probe fields and normalizes compaction switches in place.
+// Omitted switches stay absent; supplied values other than force_off become force_on, including auto.
 // @project-doc docs/interfaces/openai_upstream.md#openai_account_configuration
 func NormalizeLegacyOpenAIProviderExtra(extra map[string]any) {
 	for _, key := range DeprecatedOpenAIProviderExtraKeys {

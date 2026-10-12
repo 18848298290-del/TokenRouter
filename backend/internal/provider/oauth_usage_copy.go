@@ -7,7 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
-// CloneUsageInfo 隔离缓存/flight 与每个请求；纯展示值的复制不改变金额或字段省略规则。
+// CloneUsageInfo copies nested display values so callers can mutate results independently of caches and shared
+// queries.
 func CloneUsageInfo(value *UsageInfo) *UsageInfo {
 	if value == nil {
 		return nil

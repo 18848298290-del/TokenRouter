@@ -271,7 +271,7 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			}`,
 			expectedShouldRetry:     true,
 			expectedShouldRateLimit: false,
-			minWait:                 1 * time.Second, // 0.5s < 1s, 使用最小等待时间 1s
+			minWait:                 1 * time.Second, // a 0.5-second delay is raised to the one-second minimum
 			modelName:               "claude-opus-4",
 		},
 		{

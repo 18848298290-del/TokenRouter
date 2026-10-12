@@ -17,8 +17,8 @@ func SameUpstreamUsageIdentity(expected, current *Record, expectedConfig Upstrea
 		return false
 	}
 	if expected.ProxyID != nil && !SameUpstreamUsageProxy(expected.Proxy, current.Proxy, *expected.ProxyID) {
-		// 仓储可能暂时没有预加载代理详情；两边都缺失时交给客户端构建阶段
-		// 配置缺失时返回请求错误。
+		// Repositories may omit proxy details from both snapshots. In that case,
+		// leave missing proxy configuration errors to client construction.
 		if expected.Proxy != nil || current.Proxy != nil {
 			return false
 		}

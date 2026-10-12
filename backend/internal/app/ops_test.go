@@ -66,10 +66,10 @@ func TestGetOpsAPIKeyFallsBackToOpsFallbackKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
-	// 主 key 缺席（鉴权早退场景）：返回 nil。
+	// An early authentication exit can leave the primary Key absent.
 	require.Nil(t, provideOpsObservationAccess().APIKey(c))
 
-	// 写入 ops 专用 fallback key 后应能取到，且带齐 user/group。
+	// The Ops-specific Key includes its loaded user and group for error recording.
 	groupID := int64(55)
 	apiKey := &apikey.APIKey{
 		ID:      100,
@@ -103,7 +103,7 @@ func TestGetOpsAPIKeyPrefersPrimaryContextKey(t *testing.T) {
 	require.Equal(t, int64(1), got.ID, "已鉴权请求应优先使用正式 api key")
 }
 
-// TestOpsObservationAccessUsesTypedIngressMarker 检查拒绝标记按类型识别，普通字符串被忽略。
+// TestOpsObservationAccessUsesTypedIngressMarker checks typed rejection markers and ignores ordinary strings.
 func TestOpsObservationAccessUsesTypedIngressMarker(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	access := provideOpsObservationAccess()

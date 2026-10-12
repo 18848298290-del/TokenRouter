@@ -9,7 +9,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource 检查候选资格使用的平台注册集合与执行器登记一致，且每个平台登记一次。
+// TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource checks one complete registration per supported platform.
 func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testing.T) {
 	registrations := provideRefreshPlatforms(nil, nil, nil, &provider.AntigravityAuthorization{}, provideradapter.NewQoderAuthorization(nil, nil), nil, nil, nil)
 	platforms := make([]string, 0, len(registrations))

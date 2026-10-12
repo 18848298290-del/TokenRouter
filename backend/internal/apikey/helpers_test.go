@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// errAuthCacheMiss 模拟缓存未命中。包内测试使用 redis.Nil 检查 Redis 未命中的兼容性。
+// errAuthCacheMiss simulates a cache miss. Internal tests use redis.Nil to check Redis miss handling.
 var errAuthCacheMiss = errors.New("auth cache miss")
 
 type compositeGroupRepoStub struct {
@@ -37,7 +37,7 @@ type authCacheStub struct {
 	deleteAuthKeys []string
 }
 
-// apiKeyTestDependencies 提供测试依赖替身，实际状态由所属模块创建。
+// apiKeyTestDependencies supplies test doubles; each owning module constructs its own state.
 type apiKeyTestDependencies struct {
 	apiKeyRepo            apikey.APIKeyRepository
 	userRepo              identity.UserRepository

@@ -34,7 +34,7 @@ type KeyStore struct {
 	usageTotals UsageTotalsReader
 }
 
-// UsageTotalsReader 按 Key ID 查询用于排序的用量汇总。
+// UsageTotalsReader loads usage totals by key ID for sorting.
 type UsageTotalsReader func(context.Context, []int64) (map[int64]float64, error)
 
 func NewKeyStore(client *dbent.Client, sqlDB *sql.DB, usage UsageTotalsReader) *KeyStore {
@@ -46,11 +46,11 @@ func NewKeyStoreWithSQL(client *dbent.Client, sqlq SQLExecutor, usage UsageTotal
 }
 
 func (r *KeyStore) KeyActiveQuery() *dbent.APIKeyQuery {
-	// 默认过滤已软删除记录，避免删除后仍被查询到。
+	// Exclude soft-deleted keys from ordinary reads.
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
-// KeyApiKeyFastModePolicyForPersistence 兼容绕过服务层的旧夹具和内部调用。
+// KeyApiKeyFastModePolicyForPersistence supplies a valid default for callers that bypass service validation.
 func KeyApiKeyFastModePolicyForPersistence(value string) string {
 	policy, ok := keycore.NormalizeAPIKeyFastModePolicy(value)
 	if ok {
@@ -59,7 +59,7 @@ func KeyApiKeyFastModePolicyForPersistence(value string) string {
 	return value
 }
 
-// KeyApiKeyBillingModeForPersistence 兼容绕过服务层的旧夹具和内部调用。
+// KeyApiKeyBillingModeForPersistence supplies a valid default for callers that bypass service validation.
 func KeyApiKeyBillingModeForPersistence(value string) string {
 	mode, ok := keycore.NormalizeAPIKeyBillingMode(value)
 	if ok {
@@ -73,7 +73,7 @@ func (r *KeyStore) Create(ctx context.Context, key *keycore.APIKey) error {
 		return fmt.Errorf("api key is required")
 	}
 
-	// API Key 数量判断和插入必须共用事务；PostgreSQL 上的用户行锁会串行化同一用户的并发创建。
+	// Count and insert in one transaction; the PostgreSQL user-row lock serializes creation for that user.
 	txClient, sqlq, commit, rollback, err := r.KeyBeginAPIKeyCreateTransaction(ctx)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func (r *KeyStore) Create(ctx context.Context, key *keycore.APIKey) error {
 	return nil
 }
 
-// KeyBeginAPIKeyCreateTransaction 返回创建流程使用的 Ent client、SQL 执行器和事务收尾函数。
+// KeyBeginAPIKeyCreateTransaction returns the Ent client, SQL executor, and transaction cleanup functions.
 func (r *KeyStore) KeyBeginAPIKeyCreateTransaction(ctx context.Context) (*dbent.Client, SQLExecutor, func() error, func(), error) {
 	if existing := dbent.TxFromContext(ctx); existing != nil {
 		client := existing.Client()
@@ -119,14 +119,14 @@ func (r *KeyStore) KeyBeginAPIKeyCreateTransaction(ctx context.Context) (*dbent.
 		return nil, nil, nil, nil, err
 	}
 
-	// 仓储可能已经绑定到调用方创建的事务，此时由调用方负责提交或回滚。
+	// A store already bound to a caller transaction leaves commit and rollback to that caller.
 	if r.sql == nil {
 		return nil, nil, nil, nil, fmt.Errorf("sql executor is not configured")
 	}
 	return r.client, r.sql, func() error { return nil }, func() {}, nil
 }
 
-// KeyLockAPIKeyOwnerAndCount 锁定用户并统计所有未软删除的 API Key。
+// KeyLockAPIKeyOwnerAndCount locks the user on PostgreSQL and counts keys that are not soft-deleted.
 func (r *KeyStore) KeyLockAPIKeyOwnerAndCount(ctx context.Context, sqlq SQLExecutor, userID int64) (int64, int, error) {
 	lockQuery := `SELECT api_key_limit FROM users WHERE id = $1 AND deleted_at IS NULL`
 	if r.client.Driver().Dialect() == dialect.Postgres {
@@ -149,7 +149,7 @@ func (r *KeyStore) KeyLockAPIKeyOwnerAndCount(ctx context.Context, sqlq SQLExecu
 	return current, limit, nil
 }
 
-// KeyCreateAPIKeyRecord 使用指定事务 client 插入 API Key 记录。
+// KeyCreateAPIKeyRecord inserts a key using the supplied transaction client.
 func KeyCreateAPIKeyRecord(ctx context.Context, client *dbent.Client, key *keycore.APIKey) (*dbent.APIKey, error) {
 	builder := client.APIKey.Create().
 		SetUserID(key.UserID).
@@ -192,7 +192,7 @@ func KeyCreateAPIKeyRecord(ctx context.Context, client *dbent.Client, key *keyco
 	return created, nil
 }
 
-// KeyReplaceCompositeGroupRecords 在调用方事务内完整替换复合 Key 的分组映射。
+// KeyReplaceCompositeGroupRecords replaces all mappings within the caller's transaction.
 func KeyReplaceCompositeGroupRecords(ctx context.Context, client *dbent.Client, apiKeyID int64, bindings []keycore.APIKeyCompositeGroup) error {
 	if _, err := client.APIKeyCompositeGroup.Delete().
 		Where(apikeycompositegroup.APIKeyIDEQ(apiKeyID)).
@@ -214,7 +214,7 @@ func KeyReplaceCompositeGroupRecords(ctx context.Context, client *dbent.Client, 
 	return client.APIKeyCompositeGroup.CreateBulk(builders...).Exec(ctx)
 }
 
-// KeyWithAPIKeyCompositeGroups 统一按用户配置顺序加载复合映射及分组。
+// KeyWithAPIKeyCompositeGroups loads mappings and groups in user-configured order.
 func KeyWithAPIKeyCompositeGroups(query *dbent.APIKeyQuery) *dbent.APIKeyQuery {
 	return query.WithCompositeGroups(func(q *dbent.APIKeyCompositeGroupQuery) {
 		q.Order(dbent.Asc(apikeycompositegroup.FieldSortOrder), dbent.Asc(apikeycompositegroup.FieldID)).
@@ -237,7 +237,7 @@ func (r *KeyStore) GetByID(ctx context.Context, id int64) (*keycore.APIKey, erro
 	return KeyApiKeyEntityToService(m), nil
 }
 
-// GetManagedKeyByUserAndGroup 查找某用户 + 分组的服务端托管隐藏 Key（如创作台执行 Key）。
+// GetManagedKeyByUserAndGroup finds a hidden managed key for the user, group, and manager.
 func (r *KeyStore) GetManagedKeyByUserAndGroup(ctx context.Context, userID, groupID int64, managedBy string) (*keycore.APIKey, error) {
 	m, err := r.KeyActiveQuery().
 		Where(
@@ -256,17 +256,17 @@ func (r *KeyStore) GetManagedKeyByUserAndGroup(ctx context.Context, userID, grou
 	return KeyApiKeyEntityToService(m), nil
 }
 
-// CreateManagedKey 创建服务端托管的隐藏 Key；与普通 Key 共用创建路径（含数量限制），
-// managed_by 由调用方在 key.ManagedBy 上显式标记。
+// CreateManagedKey uses the normal creation path, including the key count limit.
+// The caller sets key.ManagedBy to identify the manager.
 func (r *KeyStore) CreateManagedKey(ctx context.Context, key *keycore.APIKey) error {
 	return r.Create(ctx, key)
 }
 
-// GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
-// 相比 GetByID，此方法性能更优，因为：
-//   - 使用 Select() 只查询必要字段，减少数据传输量
-//   - 不加载完整的 API Key 实体及其关联数据（User、Group 等）
-//   - 适用于删除等只需 key 与用户 ID 的场景
+// GetKeyAndOwnerID reads the credential and owner ID for a key.
+// It selects the two fields needed by operations such as deletion.
+// Related user and group records are not loaded.
+// Soft-deleted keys are excluded.
+// A missing active key returns ErrAPIKeyNotFound.
 func (r *KeyStore) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	m, err := r.KeyActiveQuery().
 		Where(apikey.IDEQ(id)).
@@ -404,12 +404,12 @@ func (r *KeyStore) GetByKeyForAuth(ctx context.Context, key string) (*keycore.AP
 }
 
 func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keycore.APIKeyUpdateFields) error {
-	// 空掩码代表调用方不改任何列，直接返回，避免产生一次无意义的整行写。
+	// An empty field mask means the caller requested no writes.
 	if fields.IsEmpty() {
 		return nil
 	}
 
-	// 只有复合配置会改关联表，需要与 API Key 主记录放在同一事务中。
+	// Composite mappings and the key record must change in the same transaction.
 	if fields.CompositeConfiguration && dbent.TxFromContext(ctx) == nil {
 		tx, err := r.client.Tx(ctx)
 		if err == nil {
@@ -424,11 +424,11 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 			return err
 		}
 	}
-	// 使用原子操作：将软删除检查与更新合并到同一语句，避免竞态条件。
-	// 之前的实现先检查 Exist 再 UpdateOneID，若在两步之间发生软删除，
-	// 则会更新已删除的记录。
-	// 这里选择 Update().Where()，确保只有未软删除记录能被更新。
-	// 同时显式设置 updated_at，避免二次查询带来的并发可见性问题。
+	// Include the soft-delete predicate in the update to prevent writing a concurrently deleted key.
+	// A separate existence check would race with deletion.
+	// Update().Where() applies the predicate and mutation in one statement.
+	// Zero affected rows report a missing or deleted key.
+	// Set updated_at here so the returned timestamp needs no second query.
 	client := clientFromContext(ctx, r.client)
 	now := time.Now()
 	builder := client.APIKey.Update().
@@ -492,7 +492,7 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		}
 	}
 
-	// IP 限制字段
+	// An empty supplied IP rule set clears the corresponding stored field.
 	if fields.IPRules {
 		if len(key.IPWhitelist) > 0 {
 			builder.SetIPWhitelist(key.IPWhitelist)
@@ -512,7 +512,7 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		return err
 	}
 	if affected == 0 {
-		// 更新影响行数为 0，说明记录不存在或已被软删除。
+		// No matching active record remains.
 		return keycore.ErrAPIKeyNotFound
 	}
 	if fields.CompositeConfiguration {
@@ -521,12 +521,12 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		}
 	}
 
-	// 使用同一时间戳回填，避免并发删除导致二次查询失败。
+	// Reuse the write timestamp; a second query could race with deletion.
 	key.UpdatedAt = now
 	return nil
 }
 
-// RotateCredential 原子替换凭据，不写回读取快照中的配置或用量。
+// RotateCredential conditionally replaces the credential without writing stale configuration or usage fields.
 func (r *KeyStore) RotateCredential(ctx context.Context, key *keycore.APIKey, oldKey string) error {
 	now := time.Now()
 	affected, err := clientFromContext(ctx, r.client).APIKey.Update().
@@ -544,7 +544,7 @@ func (r *KeyStore) RotateCredential(ctx context.Context, key *keycore.APIKey, ol
 		return err
 	}
 	if affected == 0 {
-		// 旧凭据已轮换、记录已删除或归属已变更时，不能覆盖当前记录。
+		// Rotation, deletion, or ownership changes make the supplied old credential ineligible.
 		return keycore.ErrAPIKeyRotationConflict
 	}
 	key.UpdatedAt = now
@@ -552,9 +552,9 @@ func (r *KeyStore) RotateCredential(ctx context.Context, key *keycore.APIKey, ol
 }
 
 func (r *KeyStore) Delete(ctx context.Context, id int64) error {
-	// 存在唯一键约束 生成 tombstone key 用来释放原 key，长度远小于 128，满足 schema 限制
+	// A short tombstone frees the unique credential while fitting the 128-character column.
 	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
-	// 显式软删除：避免依赖 Hook 行为，确保 deleted_at 一定被设置。
+	// Set deleted_at in the update so soft deletion does not depend on hooks.
 	affected, err := r.client.APIKey.Update().
 		Where(apikey.IDEQ(id), apikey.DeletedAtIsNil()).
 		SetKey(tombstoneKey).
@@ -581,8 +581,8 @@ func (r *KeyStore) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// DeleteWithAudit 为兼容滚动升级保留历史方法名。
-// 该方法以原子方式写入墓碑并软删除 Key，不保留凭据材料；墓碑会释放唯一键值以便安全复用。
+// DeleteWithAudit keeps the historical API name for callers.
+// It atomically soft-deletes the key and replaces the credential with a tombstone, freeing the unique value.
 func (r *KeyStore) DeleteWithAudit(ctx context.Context, id int64) error {
 	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
 
@@ -623,7 +623,7 @@ func (r *KeyStore) KeyDeleteWithTombstone(ctx context.Context, exec *dbent.Clien
 		return err
 	}
 	if affected == 0 {
-		// 并发/重复删除:记录已存在(已软删)则幂等返回 nil(defer 回滚空事务),否则 NotFound。
+		// Repeated deletion succeeds if the record still exists as a tombstone; an unknown ID returns NotFound.
 		exists, existErr := r.client.APIKey.Query().
 			Where(apikey.IDEQ(id)).
 			Exist(mixins.SkipSoftDelete(ctx))
@@ -640,7 +640,7 @@ func (r *KeyStore) KeyDeleteWithTombstone(ctx context.Context, exec *dbent.Clien
 
 func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIKeyListFilters) *dbent.APIKeyQuery {
 	q := r.KeyActiveQuery().Where(apikey.UserIDEQ(userID))
-	// 创作台等场景的服务端托管隐藏 Key 不出现在普通 Key 列表中。
+	// Hide server-managed keys, including creative execution keys, from ordinary key lists.
 	q = q.Where(apikey.ManagedByIsNil())
 
 	if filters.Search != "" {
@@ -662,7 +662,7 @@ func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIK
 			))
 		}
 	}
-	// scope 只接受已定义的个人和团队范围，空值表示不限制。
+	// Personal and team are the supported scope filters; empty includes both.
 	switch filters.Scope {
 	case "personal":
 		q = q.Where(apikey.TeamIDIsNil())
@@ -709,7 +709,7 @@ func (r *KeyStore) ListByUserID(ctx context.Context, userID int64, params pagina
 	return outKeys, pagination.ResultFromTotal(int64(total), params), nil
 }
 
-// KeyAttachLastUsedIPs 为当前页 API Key 批量附加最近一条非空使用 IP。
+// KeyAttachLastUsedIPs loads each page key's latest nonempty usage IP in one batch.
 func (r *KeyStore) KeyAttachLastUsedIPs(ctx context.Context, keys []keycore.APIKey) error {
 	if len(keys) == 0 || r.sql == nil {
 		return nil
@@ -733,7 +733,7 @@ func (r *KeyStore) KeyAttachLastUsedIPs(ctx context.Context, keys []keycore.APIK
 }
 
 func (r *KeyStore) KeyLatestUsageLogIPs(ctx context.Context, apiKeyIDs []int64) (result map[int64]string, err error) {
-	// 空批次或没有执行器时提前返回，不读取 dialect。
+	// Return before reading the dialect when there is no work or executor.
 	if len(apiKeyIDs) == 0 || r.sql == nil {
 		return map[int64]string{}, nil
 	}
@@ -902,7 +902,7 @@ func (r *KeyStore) SearchAPIKeys(ctx context.Context, userID int64, keyword stri
 	return outKeys, nil
 }
 
-// ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil。
+// ClearGroupIDByGroupID clears ordinary bindings and removes composite mappings for the group.
 func (r *KeyStore) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.APIKey.Update().
@@ -918,7 +918,7 @@ func (r *KeyStore) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (in
 	return int64(n + deleted), err
 }
 
-// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID。
+// UpdateGroupIDByUserAndGroup moves the user's key bindings from oldGroupID to newGroupID.
 func (r *KeyStore) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.APIKey.Update().
@@ -928,7 +928,7 @@ func (r *KeyStore) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldG
 	if err != nil {
 		return 0, err
 	}
-	// 目标分组已存在时保留其原前缀，并删除旧分组映射避免唯一约束冲突。
+	// If the target mapping exists, retain its prefix and remove the old mapping to avoid a uniqueness conflict.
 	bindings, err := client.APIKeyCompositeGroup.Query().
 		Where(apikeycompositegroup.GroupIDEQ(oldGroupID), apikeycompositegroup.HasAPIKeyWith(apikey.UserIDEQ(userID), apikey.DeletedAtIsNil())).
 		All(ctx)
@@ -955,7 +955,7 @@ func (r *KeyStore) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldG
 	return int64(n + len(bindings)), nil
 }
 
-// CountByGroupID 获取分组的 API Key 数量。
+// CountByGroupID counts non-deleted keys bound directly or through a composite mapping.
 func (r *KeyStore) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	count, err := r.KeyActiveQuery().Where(apikey.Or(
 		apikey.GroupIDEQ(groupID),
@@ -1125,7 +1125,7 @@ func (r *KeyStore) KeyLoadAPIKeyUsageTotals(ctx context.Context, ids []int64) (m
 	return r.usageTotals(ctx, ids)
 }
 
-// clientFromContext 返回上下文中的事务 client，未开启事务时返回默认 client。
+// clientFromContext returns the context transaction's client, or defaultClient when absent.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1133,34 +1133,34 @@ func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.
 	return defaultClient
 }
 
-// translatePersistenceError 把记录缺失和唯一约束冲突转换成调用方指定的业务错误。
+// translatePersistenceError maps missing rows and unique conflicts to caller-supplied application errors.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
 	}
 
-	// 兼容 Ent ORM 和标准 database/sql 的 NotFound 行为。
-	// Ent 使用自定义的 NotFoundError，而标准库使用 sql.ErrNoRows。
-	// 这里同时处理两种情况，保持业务错误映射一致。
+	// Ent and database/sql report missing rows with different error types.
+	// Handle both dbent.NotFoundError and sql.ErrNoRows.
+	// The application error retains the persistence error as its cause.
 	if notFound != nil && (errors.Is(err, sql.ErrNoRows) || dbent.IsNotFound(err)) {
 		return notFound.WithCause(err)
 	}
 
-	// 处理唯一约束冲突（如邮箱已存在、名称重复等）
+	// Map unique constraint violations when the caller supplies a conflict error.
 	if conflict != nil && isUniqueConstraintViolation(err) {
 		return conflict.WithCause(err)
 	}
 
-	// 未匹配任何规则，返回原始错误
+	// Other persistence failures pass through unchanged.
 	return err
 }
 
-// isUniqueConstraintViolation 调用 PostgreSQL 错误检测函数判断唯一约束冲突。
+// isUniqueConstraintViolation delegates PostgreSQL error classification.
 func isUniqueConstraintViolation(err error) bool {
 	return postgresinfra.IsUniqueConstraintViolation(err)
 }
 
-// scanSingleRow 查询一行数据，并在扫描后关闭结果集。
+// scanSingleRow reads one row and closes the result set after scanning.
 func scanSingleRow(ctx context.Context, q SQLExecutor, query string, args []any, dest ...any) error {
 	return postgresinfra.ScanSingleRow(ctx, q, query, args, dest...)
 }

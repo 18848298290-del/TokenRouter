@@ -39,7 +39,7 @@ func (options ImageBackfillOptions) ReportFailure(index int) {
 	}
 }
 
-// Backfill 按下载选项为带 URL 的图片补全 Base64。
+// Backfill fills missing Base64 image data according to the download options.
 // @project-doc docs/interfaces/openai_upstream.md#images_url_backfill
 func (options ImageBackfillOptions) Backfill(ctx context.Context, body []byte) []byte {
 	if !options.Enabled || !gjson.ValidBytes(body) || (options.Stream || strings.EqualFold(strings.TrimSpace(options.ResponseFormat), "url")) {
@@ -59,13 +59,13 @@ func (options ImageBackfillOptions) Backfill(ctx context.Context, body []byte) [
 		}
 		encoded, err := options.FetchBase64(ctx, rawURL)
 		if err != nil {
-			// 下载错误可能含带签名的 URL，日志只记录阶段与条目，不记录原始地址。
+			// Download errors may contain signed URLs; report the item index without the raw error.
 			options.ReportFailure(index)
 			continue
 		}
 		updated, err := sjson.SetBytes(body, fmt.Sprintf("data.%d.b64_json", index), encoded)
 		if err != nil {
-			// 响应写回失败时同样保留原始图片项。
+			// Keep the original image item when response rewriting fails.
 			options.ReportFailure(index)
 			continue
 		}
@@ -74,8 +74,8 @@ func (options ImageBackfillOptions) Backfill(ctx context.Context, body []byte) [
 	return body
 }
 
-// FetchBase64 下载图片 URL 并返回标准 base64。
-// 目的地和每次重定向都必须是公网主机，内容类型只信字节嗅探结果。
+// FetchBase64 returns standard Base64 for a validated data URI or downloaded image.
+// The transport must enforce public hosts on every redirect; content is checked by byte sniffing.
 func (options ImageBackfillOptions) FetchBase64(ctx context.Context, rawURL string) (string, error) {
 	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
 		if encoded := NormalizeOpenAIImageBase64(rawURL); encoded != "" {
@@ -92,7 +92,7 @@ func (options ImageBackfillOptions) FetchBase64(ctx context.Context, rawURL stri
 	if options.Do == nil {
 		return "", errors.New("http upstream is not configured")
 	}
-	// URL 校验器为 base URL 规范化路径；下载必须保留签名 URL 的原始转义和尾斜杠。
+	// Validate the target but retain signed URL escaping and trailing slashes that base-URL normalization may change.
 	downloadURL := strings.TrimSpace(rawURL)
 	if _, err := options.ValidateURL(downloadURL); err != nil {
 		return "", fmt.Errorf("invalid image url: %w", err)
@@ -128,7 +128,7 @@ func (options ImageBackfillOptions) FetchBase64(ctx context.Context, rawURL stri
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// RejectPrivateImageHost 拒绝 URL 中直接写出的内网、回环和未指定地址。
+// RejectPrivateImageHost rejects literal private, loopback and unspecified hosts in image URLs.
 func RejectPrivateImageHost(downloadURL string) error {
 	parsed, err := url.Parse(downloadURL)
 	if err != nil {
@@ -140,7 +140,7 @@ func RejectPrivateImageHost(downloadURL string) error {
 	return nil
 }
 
-// IsBackfillImageContent 只允许常见位图格式，避免把 SVG/HTML 等内容写入 b64_json。
+// IsBackfillImageContent permits PNG, JPEG, WebP and GIF bytes, excluding SVG and HTML.
 func IsBackfillImageContent(data []byte) bool {
 	_, ok := openAIImageBackfillContentTypes[strings.ToLower(http.DetectContentType(data))]
 	return ok

@@ -14,7 +14,7 @@ type requestedReasoningEffortContextKey struct{}
 
 type openAIReasoningEffortPolicyContextKey struct{}
 
-// openAIReasoningEffortPolicy 复制请求的推理强度策略，异步转发使用独立的分组切片。
+// openAIReasoningEffortPolicy holds request policy with a copied group mapping slice.
 type openAIReasoningEffortPolicy struct {
 	maxEffort    string
 	overLimit    string
@@ -22,7 +22,7 @@ type openAIReasoningEffortPolicy struct {
 	mappings     []routing.ReasoningEffortMapping
 }
 
-// WithRequestedReasoningEffort 将请求进入策略层前捕获的客户端档位绑定到 context。
+// WithRequestedReasoningEffort binds the client effort captured before policy rewriting.
 func WithRequestedReasoningEffort(ctx context.Context, effort string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -34,7 +34,7 @@ func WithRequestedReasoningEffort(ctx context.Context, effort string) context.Co
 	return context.WithValue(ctx, requestedReasoningEffortContextKey{}, effort)
 }
 
-// RequestedReasoningEffortFromContext 读取已绑定的客户端档位。
+// RequestedReasoningEffortFromContext returns the captured client effort, or nil when absent.
 func RequestedReasoningEffortFromContext(ctx context.Context) *string {
 	if ctx == nil {
 		return nil
@@ -50,7 +50,7 @@ func RequestedReasoningEffortFromContext(ctx context.Context) *string {
 	return &effort
 }
 
-// WithOpenAIReasoningEffortPolicyForModel 绑定策略并保留客户端模型，供模型范围映射使用。
+// WithOpenAIReasoningEffortPolicyForModel binds policy and the client model for scoped mappings.
 func WithOpenAIReasoningEffortPolicyForModel(ctx context.Context, maxEffort string, mappings []routing.ReasoningEffortMapping, overLimit, requestModel string) context.Context {
 	return withOpenAIReasoningEffortPolicyForModel(ctx, maxEffort, mappings, overLimit, requestModel)
 }
@@ -67,7 +67,7 @@ func withOpenAIReasoningEffortPolicyForModel(ctx context.Context, maxEffort stri
 	})
 }
 
-// ApplyOpenAIReasoningEffortPolicyFromContext 执行先前绑定的请求级策略。
+// ApplyOpenAIReasoningEffortPolicyFromContext applies the bound request policy.
 func ApplyOpenAIReasoningEffortPolicyFromContext(ctx context.Context, body []byte) ([]byte, bool, error) {
 	if ctx == nil {
 		return body, false, nil
@@ -79,8 +79,8 @@ func ApplyOpenAIReasoningEffortPolicyFromContext(ctx context.Context, body []byt
 	return ApplyOpenAIReasoningEffortPolicyForModel(body, policy.maxEffort, policy.mappings, policy.overLimit, policy.requestModel)
 }
 
-// ApplyOpenAIReasoningEffortPolicy 先应用模型范围映射，再按配置降档或拒绝超限请求。
-// 未指定的值保持不变，继续由上游默认值控制。
+// ApplyOpenAIReasoningEffortPolicy maps effort for the request model before capping or rejecting excess effort.
+// Omitted values stay absent so upstream defaults apply.
 func ApplyOpenAIReasoningEffortPolicy(body []byte, maxEffort string, mappings []routing.ReasoningEffortMapping, overLimit string) ([]byte, bool, error) {
 	return ApplyOpenAIReasoningEffortPolicyForModel(body, maxEffort, mappings, overLimit, "")
 }

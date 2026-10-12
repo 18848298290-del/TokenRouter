@@ -16,10 +16,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// redisImageTag 指定集成测试的 Redis 镜像。
+// redisImageTag selects the Redis image for integration tests.
 const redisImageTag = "redis:8.4-alpine"
 
-// startRedis 启动 Redis 容器并注册客户端与容器的清理操作。
+// startRedis starts a container and registers client and container cleanup.
 func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 	t.Helper()
 	ensureDockerAvailable(t)
@@ -48,7 +48,7 @@ func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 	return rdb
 }
 
-// ensureDockerAvailable 在 Docker 不可用时按 CI 和严格验证开关决定失败或跳过。
+// ensureDockerAvailable fails in CI or strict mode, and otherwise skips when Docker is absent.
 func ensureDockerAvailable(t *testing.T) {
 	t.Helper()
 	if dockerAvailable() {
@@ -60,7 +60,7 @@ func ensureDockerAvailable(t *testing.T) {
 	t.Skip("Docker 未启用，跳过依赖 testcontainers 的集成测试")
 }
 
-// dockerAvailable 检查 Docker 主机变量或常见 socket 路径。
+// dockerAvailable checks DOCKER_HOST and common socket paths; it does not probe the daemon.
 func dockerAvailable() bool {
 	if os.Getenv("DOCKER_HOST") != "" {
 		return true
@@ -85,7 +85,7 @@ func dockerAvailable() bool {
 	return false
 }
 
-// userHomeDir 返回用户目录，读取失败时返回空字符串。
+// userHomeDir returns the home directory, or an empty string on error.
 func userHomeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

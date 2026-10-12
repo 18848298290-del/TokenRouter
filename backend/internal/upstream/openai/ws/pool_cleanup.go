@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// requestCleanup 合并清理通知，网络关闭由池的后台任务完成。
+// requestCleanup coalesces cleanup signals; background workers close the connections.
 func (p *WSConnPool) requestCleanup() {
 	select {
 	case p.cleanupWakeCh <- struct{}{}:
@@ -12,20 +12,20 @@ func (p *WSConnPool) requestCleanup() {
 	}
 }
 
-// releaseUndeliveredConn 归还尚未交付的租约，取消路径通过后台任务回收连接。
+// releaseUndeliveredConn returns an undelivered lease and schedules cleanup so cancellation can return promptly.
 func (p *WSConnPool) releaseUndeliveredConn(providerID int64, conn *WSConn) {
 	conn.release()
 	p.notifyProviderPoolChanged(providerID)
 	p.requestCleanup()
 }
 
-// connMaxAgeReached 检查连接是否达到最大寿命。
+// connMaxAgeReached reports whether the connection has reached its configured lifetime.
 func (p *WSConnPool) connMaxAgeReached(conn *WSConn, now time.Time) bool {
 	maxAge := p.maxConnAge()
 	return conn != nil && maxAge > 0 && conn.age(now) >= maxAge
 }
 
-// retireExpiredConnsLocked 淘汰已经关闭或过期的空闲连接，调用方持有 ap.mu。
+// retireExpiredConnsLocked removes closed connections and expired unleased, unpinned connections. The caller holds ap.mu.
 func (p *WSConnPool) retireExpiredConnsLocked(ap *openAIWSProviderPool, now time.Time) []*WSConn {
 	var evicted []*WSConn
 	for id, conn := range ap.conns {
@@ -42,7 +42,7 @@ func (p *WSConnPool) retireExpiredConnsLocked(ap *openAIWSProviderPool, now time
 			if conn.isLeased() || p.isConnPinnedLocked(ap, id) {
 				continue
 			}
-			// 等待者可以领取仍有效的连接，过期连接需要重新拨号。
+			// Waiters can take valid connections; expired connections require a fresh dial.
 			expired = p.connMaxAgeReached(conn, now)
 			if !conn.supportsIdlePingWithoutReader() && conn.idleDuration(now) >= openAIWSConnIdleRecycleAfter {
 				expired = true

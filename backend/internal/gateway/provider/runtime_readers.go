@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// RuntimeReaders 包含执行适配器使用的配置与策略读取接口。
-// 各读取器共享应用实例；调用方仍在原请求位置读取动态值。
+// RuntimeReaders supplies configuration and policy readers for execution adapters.
+// Readers share app instances; dynamic values are read when the request needs them.
 type RuntimeReaders struct {
 	Attributes *routing.ModelAttributeService
 	Gateway    *gateway.RuntimeSettings

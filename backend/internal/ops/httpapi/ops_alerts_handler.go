@@ -462,7 +462,7 @@ func (h *OpsHandler) UpdateAlertEventStatus(c *gin.Context) {
 	response.Success(c, gin.H{"updated": true})
 }
 
-// CreateAlertSilence 创建指定范围的运维告警静默规则。
+// CreateAlertSilence creates a silence for the specified scope.
 // POST /api/v1/admin/ops/alert-silences
 func (h *OpsHandler) CreateAlertSilence(c *gin.Context) {
 	if h.opsService == nil {

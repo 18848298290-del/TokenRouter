@@ -25,6 +25,8 @@ type RetryPolicy struct {
 	ObserveRetry   func(*http.Response, []byte, string, int, time.Duration)
 }
 
+// ExecuteUpstream retries eligible HTTP failures within the supplied attempt and time limits.
+// The caller closes the returned response body; bodies discarded for retry are closed here.
 func ExecuteUpstream(ctx context.Context, body []byte, options RequestOptions, policy RetryPolicy) (*http.Response, error) {
 	var resp *http.Response
 	var err error

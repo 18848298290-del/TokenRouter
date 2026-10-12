@@ -33,7 +33,7 @@ type advancedSchedulerDiagnosticConcurrencyCache struct {
 	requests [][]schedulercore.ProviderWithConcurrency
 }
 
-// diagnosticWindowCache 的批量读取返回测试用量，单条读取返回错误。
+// diagnosticWindowCache returns fixture usage in batch reads and errors on individual reads.
 type diagnosticWindowCache struct {
 	billing.WindowCostCache
 	costs map[int64]float64
@@ -484,7 +484,7 @@ func TestAdvancedSchedulerScoreDiagnosticService_EscapedStickyUsesRegularWindowC
 	require.Equal(t, "escaped", signal.State)
 }
 
-// newDiagnosticsForTest 为诊断测试构造参数和只读诊断服务。
+// newDiagnosticsForTest creates a read-only diagnostic service for tests.
 func newDiagnosticsForTest(source DiagnosticSource, concurrency *schedulercore.ConcurrencyService) *Diagnostics {
 	return NewDiagnostics(source, Shared{Concurrency: concurrency}, nil, nil)
 }
@@ -508,7 +508,7 @@ func (c *diagnosticWindowCache) GetWindowCostBatch(_ context.Context, ids []int6
 	return out, nil
 }
 
-// providers 将测试候选转换为诊断列表，输入为 nil 时返回 nil。
+// providers converts fixture candidates to diagnostic records and preserves nil input.
 func (s *diagnosticScope) providers(values []*gatewayprovider.ExecutionProvider) []*schedulercore.DiagnosticProvider {
 	if values == nil {
 		return nil

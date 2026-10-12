@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// mustJSONMarshal 将测试数据编码为 JSON，编码失败时结束当前测试。
+// mustJSONMarshal encodes test data or fails the current test.
 func mustJSONMarshal(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)
@@ -102,8 +102,8 @@ func TestParseNewAPITokenUsageConvertsQuotaUnits(t *testing.T) {
 	require.Equal(t, "Default Token", usage.Subscription.PlanName)
 	require.Equal(t, time.Unix(1893456000, 0).UTC(), *usage.ExpiresAt)
 
-	// 无限量 token 的 quota 字段可能因上游整数溢出而出现负数。
-	// 无限量模式忽略这些数值字段。
+	// Upstream integer overflow can make unlimited token counters negative.
+	// Normalization omits those counters for unlimited subscriptions.
 	unlimitedResponse, err := ParseNewAPITokenUsage([]byte(`{"code":true,"data":{"object":"token_usage","name":"Unlimited","total_granted":-16015,"total_used":1995297521,"total_available":-1995313536,"unlimited_quota":true,"expires_at":0}}`))
 	require.NoError(t, err)
 	unlimited, err := NormalizeNewAPITokenUsage(unlimitedResponse, settings)

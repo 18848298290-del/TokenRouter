@@ -2,7 +2,7 @@ package telemetry
 
 const (
 	RequestID ContextKey = "ctx_request_id"
-	// ClientRequestID 兼容读取内部请求 ID 的旧调用方。
+	// ClientRequestID is a compatibility alias for the internal RequestID key.
 	ClientRequestID        ContextKey = RequestID
 	ParentRequestID        ContextKey = "ctx_parent_request_id"
 	ParentClientRequestID  ContextKey = "ctx_parent_client_request_id"
@@ -17,5 +17,5 @@ const (
 	ProviderID             ContextKey = "ctx_provider_id"
 )
 
-// ContextKey 区分请求观测键与普通字符串键。
+// ContextKey separates telemetry keys from ordinary string context keys.
 type ContextKey string

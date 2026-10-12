@@ -25,7 +25,7 @@ func (s *Recorder) CalculateRecordUsageCost(
 	if opts == nil {
 		opts = &PricingOptions{}
 	}
-	// 图片生成：共享价格配置定价为令牌计费时走令牌路径，否则走图片计费
+	// A configured token billing mode takes precedence over per-image billing.
 	if result.ImageCount > 0 {
 		if resolved, pricingModel := s.resolveConfigPricingForUsage(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
 			return s.CalculateTokenCost(ctx, result, apiKey, provider, billingModel, requestedModel, billingModelSource, groupMappedModel, multiplier, opts)
@@ -38,7 +38,7 @@ func (s *Recorder) CalculateRecordUsageCost(
 		return s.CalculateImageCost(ctx, result, apiKey, provider, billingModel, requestedModel, billingModelSource, groupMappedModel, billingModel, nil, imageMultiplier, opts.PricingAt)
 	}
 
-	// 语音用量优先按价格配置的连续单位价格结算，未配置时沿用价格配置通用音频价。
+	// Audio uses configured continuous-unit pricing when available, then the general audio price settings.
 	if result.AudioUsage != nil {
 		resolved, pricingModel := s.resolveConfigPricingForUsage(
 			ctx, billingModel, apiKey,
@@ -65,7 +65,7 @@ func (s *Recorder) CalculateRecordUsageCost(
 		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, multiplier)
 	}
 
-	// Token 费用与搜索附加费分别计算，搜索不会替代模型本身的 token 费用。
+	// Search surcharges are added to model token charges.
 	tokenCost := s.CalculateTokenCost(ctx, result, apiKey, provider, billingModel, requestedModel, billingModelSource, groupMappedModel, multiplier, opts)
 	if result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)
@@ -178,7 +178,7 @@ func (s *Recorder) CalculateTokenCost(
 		opts = &PricingOptions{}
 	}
 
-	// 共享价格配置中的价格优先，计费模型也按该配置选择。
+	// Configured prices determine both the price and the billing model.
 	if resolved, resolvedModel := s.resolveConfigPricingForUsage(ctx, billingModel, apiKey); resolved != nil {
 		gid := apiKey.Group.ID
 		cost, err = s.billingService.CalculateCostUnified(CostInput{
@@ -245,8 +245,8 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
 	if result != nil && result.WebSearchCalls > 0 {
-		// Codex alpha/search 网页搜索按次计费，使用配置单价，nil 时默认 0.01（$10/1000 次）。
-		// 上游缺少 usage/token 字段，价格单独配置。倍率与图片和视频按次计费相同，按用户专属、分组、系统默认的顺序选择基础倍率，高峰因子在此处排除。
+		// Codex alpha/search is billed per call using the configured price; nil defaults to USD 0.01.
+		// Search has no token usage. Its base multiplier follows user, group, then system defaults, excluding peak factors.
 		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), webSearchMultiplier), nil
 	}
 	if IsGrokVideoUsageResult(result, billingModels) {
@@ -269,7 +269,7 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 	}
 
 	if result != nil && result.ImageCount > 0 {
-		// 共享价格配置定价为令牌计费时走令牌路径，否则走图片计费
+		// Configured token pricing takes precedence; otherwise use per-image pricing when available.
 		resolved := s.ResolveConfigPricing(ctx, billingModel, apiKey)
 		if resolved != nil && resolved.Mode != BillingModeToken {
 			return s.CalculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier)
@@ -279,7 +279,7 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 		}
 	}
 
-	// Token 成本与搜索附加费分开计算，搜索费不得掩盖 token 定价失败。
+	// Compute token costs separately so search charges cannot hide missing token prices.
 	var tokenCost *CostBreakdown
 	var lastErr error
 	if len(billingModels) > 0 && billingModel != "" {
@@ -326,7 +326,7 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 			}
 			return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
 		}
-		// 仅搜索且没有模型的纯工具路径允许单独计算搜索费用。
+		// A tool-only request without a model can be billed for search alone.
 		if searchCost != nil {
 			return searchCost, nil
 		}
@@ -338,7 +338,7 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 	if searchCost == nil || (searchCost.TotalCost == 0 && searchCost.ActualCost == 0) {
 		return tokenCost, nil
 	}
-	// 费用由令牌费用与搜索附加费相加。
+
 	tokenCost.TotalCost += searchCost.TotalCost
 	tokenCost.ActualCost += searchCost.ActualCost
 	return tokenCost, nil
@@ -352,8 +352,8 @@ func IsGrokVideoUsageResult(result *Result, billingModels []string) bool {
 	if result == nil || result.VideoCount <= 0 {
 		return false
 	}
-	// VideoCount 本身就是异步视频完成计费的权威依据。
-	// 存在模型族时优先匹配，但不得因重命名或映射丢失视频计费模式。
+	// A positive VideoCount identifies video completion even after model renaming or mapping.
+	// Model-family matches are sufficient but are not required.
 	candidates := append([]string{}, billingModels...)
 	candidates = append(candidates, result.BillingModel, result.Model, result.UpstreamModel)
 	if slices.ContainsFunc(candidates, IsGrokVideoBillingModel) {
@@ -412,8 +412,8 @@ func ForwardResultReasoningEffort(result *Result) string {
 	return *result.ReasoningEffort
 }
 
-// imageUsesTokenPricing 仅在上游报告 token 用量且没有按张价时使用该型号的 token 报价。
-// 固定单张预留仍要求按张价，不能把 token 单价当作单张价格。
+// imageUsesTokenPricing accepts a model token price when usage is reported and no per-image price exists.
+// Fixed per-image reservations still require a per-image price; a token price is not a reservation amount.
 func (s *Recorder) imageUsesTokenPricing(model, size string, usage TokenUsage) bool {
 	if usage.InputTokens <= 0 && usage.OutputTokens <= 0 && usage.CacheReadInputTokens <= 0 && usage.CacheCreationInputTokens <= 0 && usage.ImageInputTokens <= 0 && usage.ImageOutputTokens <= 0 {
 		return false
@@ -494,7 +494,7 @@ func (s *Recorder) FilterCNProviderBillingModelCandidates(
 			continue
 		}
 		if IsCNProviderClaudeFallbackCandidate(candidate) {
-			// 纯倍率可用于媒体计费，国产模型的 Claude 基础价仍需单独配置。
+			// A Claude fallback candidate for a CN provider requires an effective price override.
 			resolved := s.ResolveConfigPricing(ctx, candidate, apiKey)
 			if !resolved.HasEffectiveOverridePricing() {
 				continue
@@ -525,7 +525,7 @@ func OpenAIUsageBillingModel(result *Result, fields PricingUsageFields) string {
 
 	switch fields.BillingModelSource {
 	case BillingModelSourceUpstream:
-		// 图片计价使用解析出的图片模型，上游文本模型用于文本处理。
+		// Keep the resolved image billing model when the upstream text model describes text processing.
 		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" && (result.ImageCount <= 0 || explicitBillingModel == "") {
 			billingModel = upstreamModel
 		}

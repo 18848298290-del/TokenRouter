@@ -9,7 +9,7 @@ import (
 	"entgo.io/ent/schema/mixin"
 )
 
-// TimeMixin provides created_at and updated_at fields compatible with the existing schema.
+// TimeMixin sets created_at on creation and refreshes updated_at on Ent updates.
 type TimeMixin struct {
 	mixin.Schema
 }

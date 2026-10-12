@@ -1,14 +1,14 @@
 package usageview
 
-// BillingProductSummary 是供前端使用的规范化产品用量记录。
+// BillingProductSummary is a normalized product usage record for display.
 type BillingProductSummary struct {
 	Product      string   `json:"product"`
 	UsagePercent *float64 `json:"usage_percent,omitempty"`
 }
 
-// BillingSummary 是合并周度和月度数据后的 billing 视图。
+// BillingSummary combines weekly and monthly billing observations.
 type BillingSummary struct {
-	PeriodType           string                  `json:"period_type,omitempty"` // weekly、monthly 或 unknown
+	PeriodType           string                  `json:"period_type,omitempty"` // weekly, monthly, or unknown
 	UsagePercent         *float64                `json:"usage_percent,omitempty"`
 	PeriodStart          string                  `json:"period_start,omitempty"`
 	PeriodEnd            string                  `json:"period_end,omitempty"`
@@ -19,7 +19,7 @@ type BillingSummary struct {
 	BillingPeriodStart   string                  `json:"billing_period_start,omitempty"`
 	BillingPeriodEnd     string                  `json:"billing_period_end,omitempty"`
 	UsedPercent          *float64                `json:"used_percent,omitempty"`
-	Plan                 string                  `json:"plan,omitempty"` // SuperGrok、SuperGrok Heavy 或空字符串
+	Plan                 string                  `json:"plan,omitempty"` // SuperGrok, SuperGrok Heavy, or empty
 	StatusCode           int                     `json:"status_code,omitempty"`
 	WeeklyStatusCode     int                     `json:"weekly_status_code,omitempty"`
 	MonthlyStatusCode    int                     `json:"monthly_status_code,omitempty"`

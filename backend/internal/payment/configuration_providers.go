@@ -102,7 +102,7 @@ func (s *ConfigService) ListProviderInstancesWithConfig(ctx context.Context) ([]
 	return result, nil
 }
 
-// ConfigDecryptAndMaskConfig 读取管理员展示的配置，并移除支付提供商的敏感字段。
+// ConfigDecryptAndMaskConfig reads configuration for the admin API and removes provider secrets.
 func (s *ConfigService) ConfigDecryptAndMaskConfig(providerKey, stored string) map[string]string {
 	cfg := s.ConfigDecryptConfig(stored)
 	if cfg == nil {
@@ -193,8 +193,8 @@ func (s *ConfigService) CreateProviderInstance(ctx context.Context, req CreatePr
 	})
 }
 
-// TestProviderDraft 使用未持久化的 EasyPay 草稿执行只读查单探测。
-// 探测订单号不会写入本地或发起任何真实扣款。
+// TestProviderDraft probes EasyPay with an unsaved configuration using a read-only order query.
+// The probe order number is not persisted and cannot initiate a charge.
 func (s *ConfigService) TestProviderDraft(ctx context.Context, req TestProviderDraftRequest) (*ProviderDraftTestResult, error) {
 	providerKey := strings.TrimSpace(req.ProviderKey)
 	if providerKey != TypeEasyPay {
@@ -240,7 +240,7 @@ func ConfigValidateProviderRequest(providerKey, name, supportedTypes string) err
 	if !ConfigValidProviderKeys[providerKey] {
 		return infraerrors.BadRequest("VALIDATION_ERROR", fmt.Sprintf("invalid provider key: %s", providerKey))
 	}
-	// supported_types can be empty (provider accepts no payment types until configured)
+	// Supported types may be empty.
 	return nil
 }
 
@@ -298,8 +298,6 @@ func ConfigEasyPayCustomMethodTypeConflictsWithBuiltin(methodType string) bool {
 }
 
 // UpdateProviderInstance updates a provider instance by ID (patch semantics).
-// NOTE: This function exceeds 30 lines due to per-field nil-check patch update
-// boilerplate and pending-order safety checks.
 func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, req UpdateProviderInstanceRequest) (*ProviderInstance, error) {
 	current, err := s.store.Instance(ctx, id)
 	if err != nil {
@@ -497,7 +495,7 @@ func (s *ConfigService) ConfigMergeConfig(ctx context.Context, id int64, newConf
 	return existing, nil
 }
 
-// ConfigDecryptConfig 读取支付实例配置，无法解析时记录日志并返回空配置。
+// ConfigDecryptConfig reads provider configuration, logging and returning nil on parse failure.
 func (s *ConfigService) ConfigDecryptConfig(stored string) map[string]string {
 	config, ok := parseProviderConfig(stored, s.encryptionKey)
 	if !ok {
@@ -532,9 +530,8 @@ func (s *ConfigService) ConfigCountForcedExpiredOrders(ctx context.Context, prov
 	return s.store.CountForcedExpiredByProvider(ctx, providerInstanceID)
 }
 
-// ConfigEncryptConfig serialises a provider config for storage.
-// New records are written as plaintext JSON; the historical AES-GCM wrapping
-// has been dropped but ConfigDecryptConfig still accepts old ciphertext during migration.
+// ConfigEncryptConfig serializes provider configuration as plaintext JSON.
+// ConfigDecryptConfig also accepts legacy AES-GCM ciphertext.
 func (s *ConfigService) ConfigEncryptConfig(cfg map[string]string) (string, error) {
 	data, err := json.Marshal(cfg)
 	if err != nil {

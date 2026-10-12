@@ -7,14 +7,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// 持久化键通过常量和别名供各平台共用。
+// These persisted extra keys are shared by platform adapters.
 const (
 	CNUsageMonitorSnapshotExtraKey   = "cn_usage_monitor_snapshot"
 	UpstreamUsageQueryExtraKey       = "upstream_usage_query"
 	OllamaCloudUsageSnapshotExtraKey = "ollama_cloud_usage_snapshot"
 )
 
-// EffectiveUpstreamUsageConfig 解析提供商的生效配置。缺少配置时使用安全的默认适配器。
+// EffectiveUpstreamUsageConfig resolves stored settings over platform defaults; Jev queries default to disabled.
 func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, error) {
 	config := UpstreamUsageQueryConfig{Enabled: provider == nil || provider.Platform != PlatformJev, Adapter: UpstreamUsageDefaultAdapter}
 	if adapter := CNUpstreamUsageAdapterName(provider); adapter != "" {
@@ -70,7 +70,7 @@ func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, e
 	return config, nil
 }
 
-// NormalizeUpstreamUsageExtra 校验并规范化创建/更新请求中的查询配置。
+// NormalizeUpstreamUsageExtra validates and replaces query configuration in a create or update request.
 func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 	if extra == nil {
 		return nil
@@ -114,7 +114,7 @@ func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 			normalized["base_url"] = parsed
 		}
 	}
-	// 不接受任何可能把凭据或任意请求模板带入 Extra 的字段。
+	// Restrict fields so extra cannot carry credentials or arbitrary request templates.
 	for key := range object {
 		if key != "enabled" && key != "adapter" && key != "base_url" {
 			return ErrUpstreamUsageConfigInvalid
@@ -124,8 +124,8 @@ func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 	return nil
 }
 
-// NormalizedUpstreamUsageConfigValue 复制并规范化已有配置。
-// 保存时清除历史记录中的敏感字段和任意请求模板。
+// NormalizedUpstreamUsageConfigValue copies and normalizes a valid configuration.
+// Invalid configurations, including those with sensitive or template fields, return nil and false.
 func NormalizedUpstreamUsageConfigValue(value any) (any, bool) {
 	if value == nil {
 		return nil, false
@@ -182,7 +182,7 @@ func CNUpstreamUsageAdapterName(provider *Record) string {
 	case PlatformDeepseek:
 		return UpstreamUsageAdapterDeepseekBalance
 	default:
-		// 智谱 payg 没有公开余额协议，手动查询保持明确“不支持”而不发请求。
+		// Zhipu PAYG has no supported balance adapter, so the caller reports unsupported.
 		return ""
 	}
 }

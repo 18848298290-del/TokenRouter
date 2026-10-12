@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestMain 在 HTTP 与存储组合测试的进程启动时设置一次模式。
+// TestMain sets UTC and Gin test mode once before HTTP and storage tests run.
 func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	gin.SetMode(gin.TestMode)

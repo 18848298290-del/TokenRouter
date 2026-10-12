@@ -40,7 +40,7 @@ type grokMediaContentUpstreamStub struct {
 	responses []*http.Response
 }
 
-// grokPoolPolicyProviderRepo 记录 Grok 池模式错误策略产生的提供商状态写入。
+// grokPoolPolicyProviderRepo records provider-state writes from Grok pool error policy.
 type grokPoolPolicyProviderRepo struct {
 	*grokQuotaProviderRepo
 	setErrorCalls            int
@@ -50,7 +50,7 @@ type grokPoolPolicyProviderRepo struct {
 	lastModelRateLimitReason string
 }
 
-// grokMediaFixture 只装配媒体场景使用的固定依赖。
+// grokMediaFixture binds dependencies used by media execution tests.
 func grokMediaFixture(transport httpclient.UpstreamTransport) *GrokExecutor {
 	return &GrokExecutor{Credentials: gatewaytestkit.RequestCredentials(nil, nil, nil, nil), Transport: transport, Output: &OpenAIResponseOutput{Options: OpenAIResponseOptions{ReadLimit: 128 * 1024 * 1024}}, Health: &provideradapter.GrokHealth{}, Routes: gatewayprovider.GrokRoutes{Validate: (egress.OperatorURLPolicy{}).Validate}, Failure: &UpstreamTransportFailure{}}
 }
@@ -375,7 +375,7 @@ func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 	require.Equal(t, "done", gjson.GetBytes(rewritten, "status").String())
 }
 
-// mediaErrorResponseFixture 通过生产媒体入口处理给定响应，仍使用场景原健康实例。
+// mediaErrorResponseFixture feeds a response through media execution using the fixture's health service.
 func mediaErrorResponseFixture(executor *GrokExecutor, ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, requestID, model string) (*forwardcore.OpenAIResult, error) {
 	local := *executor
 	local.Transport = &auxiliaryHTTPRecorder{resp: resp}
@@ -450,13 +450,13 @@ func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 
 	require.Equal(t, time.Duration(0), media.GrokVideoE2EDuration("", time.Now()))
 	require.Equal(t, time.Duration(0), media.GrokVideoE2EDuration("not-a-time", time.Now()))
-	// CreatedAt 位于未来时按零处理，以兼容时钟偏移。
+	// Clamp a future CreatedAt to zero elapsed time to tolerate clock skew.
 	require.Equal(t, time.Duration(0), media.GrokVideoE2EDuration(time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), time.Now()))
 }
 
 func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	t.Parallel()
-	// GrokVideoE2EDuration 能解析 GrokVideoPendingCreatedAtNow 的结果。
+	// GrokVideoE2EDuration must parse timestamps produced by GrokVideoPendingCreatedAtNow.
 	stamp := media.GrokVideoPendingCreatedAtNow()
 	require.NotEmpty(t, stamp)
 	d := media.GrokVideoE2EDuration(stamp, time.Now().UTC().Add(2*time.Second))
@@ -464,7 +464,7 @@ func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	require.LessOrEqual(t, d, 3*time.Second)
 }
 
-// TestGrokMediaUsageCarriesTerminalState 状态查询的失败结果继续传给媒体完成处理器。
+// TestGrokMediaUsageCarriesTerminalState checks that failed status results reach media completion processing.
 func TestGrokMediaUsageCarriesTerminalState(t *testing.T) {
 	for _, state := range []string{"failed", "expired", "cancelled", "done", "pending"} {
 		body, err := json.Marshal(map[string]string{"status": state})
@@ -478,24 +478,24 @@ func TestGrokMediaUsageCarriesTerminalState(t *testing.T) {
 
 func TestIsGrokVideoStatusBillable(t *testing.T) {
 	t.Parallel()
-	// 官方成功条件为 status=done 且存在 video.url。
+	// Billing requires status=done and a nonempty video.url.
 	require.True(t, media.IsGrokVideoStatusBillable([]byte(`{
 		"status":"done",
 		"model":"grok-imagine-video-1.5",
 		"video":{"url":"https://vidgen.x.ai/x.mp4","duration":8,"respect_moderation":true}
 	}`)))
 
-	// 以下为官方非成功状态。
+	// Incomplete or missing status is not billable.
 	require.False(t, media.IsGrokVideoStatusBillable(nil))
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"pending"}`)))
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"expired"}`)))
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"failed"}`)))
-	// done 状态缺少 video.url 时不可计费。
+	// done without video.url is not billable.
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"done"}`)))
-	// 只有 URL 的旧版或非官方结构不足以触发计费。
+	// A URL alone is insufficient evidence of completion.
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"url":"https://example.com/v.mp4"}`)))
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"download_url":"/v1/videos/task/content"}`)))
-	// completed 并非官方枚举值。
+	// completed is not the accepted done status.
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/x.mp4"}}`)))
 }
 
@@ -508,7 +508,7 @@ func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T
 		VideoResolution:      pricing.VideoBillingResolution720P,
 		VideoDurationSeconds: 8,
 	}
-	// 使用 docs.x.ai 视频生成文档中的官方完成响应体。
+	// This fixture uses the done/video.url completion shape.
 	body := []byte(`{
 		"status":"done",
 		"model":"grok-imagine-video-1.5",
@@ -518,9 +518,9 @@ func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.VideoCount)
 	require.Equal(t, "grok-imagine-video-1.5", result.Model)
-	// 官方状态响应不含分辨率，应采用创建任务时的请求值。
+	// With no resolution in the status response, use the saved creation request.
 	require.Equal(t, pricing.VideoBillingResolution720P, result.VideoResolution)
-	// 时长优先采用官方 video.duration。
+	// Use video.duration when the completed response supplies it.
 	require.Equal(t, 12, result.VideoDurationSeconds)
 }
 
@@ -533,7 +533,7 @@ func TestExtractGrokVideoBillingFromStatusBodyFallsBackToPending(t *testing.T) {
 		VideoResolution:      pricing.VideoBillingResolution1080P,
 		VideoDurationSeconds: 10,
 	}
-	// 响应包含 done 与 video.url，但正文没有模型或时长。
+	// The response confirms completion but omits model and duration.
 	body := []byte(`{"status":"done","video":{"url":"https://vidgen.x.ai/signed.mp4"}}`)
 	result := ExtractGrokVideoBillingFromStatusBody(body, pending, "req-2")
 	require.NotNil(t, result)
@@ -577,7 +577,7 @@ func TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone(t *testing.T) 
 	require.Equal(t, 9, meta.VideoDurationSeconds)
 	require.Equal(t, "grok-imagine-video-1.5", meta.Model)
 
-	// 官方非 done 状态不得设置计费单位。
+	// Pending status must not generate billable units.
 	pendingOnly := grokMediaUsageFromResponse(
 		grok.GrokMediaEndpointVideoStatus,
 		grok.GrokMediaRequestInfo{},
@@ -585,7 +585,7 @@ func TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone(t *testing.T) 
 	)
 	require.Equal(t, 0, pendingOnly.VideoCount)
 
-	// completed 不等同于官方 done 状态。
+	// completed is not treated as done.
 	completed := grokMediaUsageFromResponse(
 		grok.GrokMediaEndpointVideoStatus,
 		grok.GrokMediaRequestInfo{},
@@ -959,7 +959,7 @@ func TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID(t *testing.T) 
 	require.Equal(t, "grok-imagine-video-1.5", result.BillingModel)
 	require.Equal(t, 3, result.Usage.InputTokens)
 	require.Equal(t, 4, result.Usage.OutputTokens)
-	// 创建阶段只受理任务，在状态返回 video.url 前 VideoCount 保持为零。
+	// Creation accepts the task; VideoCount stays zero until completion includes video.url.
 	require.Equal(t, 0, result.ImageCount)
 	require.Empty(t, result.ImageSize)
 	require.Equal(t, 0, result.VideoCount)
@@ -1038,7 +1038,7 @@ func TestForwardGrokMediaVideoGenerationPreservesImageToVideoModel(t *testing.T)
 	require.JSONEq(t, `{"model":"grok-imagine-video-1.5","prompt":"animate","image":{"url":"data:image/png;base64,aW1n"}}`, string(upstream.lastBody))
 	require.Equal(t, "video-request-456", result.ResponseID)
 	require.Equal(t, "grok-imagine-video-1.5", result.BillingModel)
-	// 未指定 duration 时按上游默认 8 秒计费。
+	// An omitted duration uses the eight-second billing default.
 	require.Equal(t, pricing.VideoBillingDefaultDurationSeconds, result.VideoDurationSeconds)
 }
 
@@ -1276,7 +1276,7 @@ func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int6
 	return nil
 }
 
-// newGrokPoolPolicyGateway 构造使用通用错误策略的 Grok 网关测试实例。
+// newGrokPoolPolicyGateway creates a Grok fixture with shared error-policy handling.
 func newGrokPoolPolicyGateway(provider *gatewayprovider.ExecutionProvider) (*OpenAIResponsesExecutor, *grokPoolPolicyProviderRepo) {
 	baseRepo := &grokFixtureProviders{
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{provider.Record.ID: provider},
@@ -1299,7 +1299,7 @@ func newGrokPoolPolicyGateway(provider *gatewayprovider.ExecutionProvider) (*Ope
 	return svc, repo
 }
 
-// newGrokPoolProvider 返回开启池模式的 Grok API Key 提供商。
+// newGrokPoolProvider returns a Grok API key provider configured in pool mode.
 func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{

@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// TestCompiledRulesPreserveInvalidPatternCount 保留 ACL 区分空白名单和全部无效白名单所需的事实。
+// TestCompiledRulesPreserveInvalidPatternCount checks that ACLs can distinguish
+// empty allowlists from allowlists containing only invalid patterns.
 func TestCompiledRulesPreserveInvalidPatternCount(t *testing.T) {
 	rules := CompileIPRules([]string{"invalid", ""})
 	if rules.PatternCount != 2 || MatchesCompiledRules(net.ParseIP("203.0.113.2"), rules) {

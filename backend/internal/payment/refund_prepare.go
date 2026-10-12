@@ -51,7 +51,6 @@ func (s *RefundWorkflow) ValidateRefundRequest(ctx context.Context, oid, uid int
 	if o.Status != OrderStatusCompleted {
 		return nil, infraerrors.BadRequest("INVALID_STATUS", "only completed orders can request refund")
 	}
-	// Check provider instance allows user refund
 	inst, err := s.runtime.Instance(ctx, o)
 	if err != nil || inst == nil {
 		return nil, infraerrors.Forbidden("USER_REFUND_DISABLED", "refund is not available for this order")
@@ -71,14 +70,13 @@ func (s *RefundWorkflow) PrepareRefund(ctx context.Context, oid int64, amt float
 	if !slices.Contains(ok, o.Status) {
 		return nil, nil, infraerrors.BadRequest("INVALID_STATUS", "order status does not allow refund")
 	}
-	// Check provider instance allows admin refund
 	inst, instErr := s.runtime.Instance(ctx, o)
 	if instErr != nil {
 		s.runtime.Warn("refund: provider instance lookup failed", "orderID", oid, "error", instErr)
 		return nil, nil, infraerrors.InternalServer("PROVIDER_LOOKUP_FAILED", "failed to look up payment provider for this order")
 	}
 	if inst == nil {
-		// Legacy order without provider_instance_id — block refund
+		// A refund requires a resolvable historical provider instance.
 		return nil, nil, infraerrors.Forbidden("REFUND_DISABLED", "refund is not available for this order")
 	}
 	if !inst.RefundEnabled {
@@ -146,7 +144,7 @@ func (s *RefundWorkflow) PrepDeduct(ctx context.Context, o *Order, p *RefundPlan
 		return nil
 	}
 	p.DeductionType = DeductionTypeBalance
-	// 非强制退款必须先确认余额足以完成权益回收，避免无提示地少扣余额。
+	// Require force confirmation before recovering less balance than the requested refund.
 	if u.Balance < p.RefundAmount && !force {
 		return &RefundResult{Success: false, Warning: "user balance is insufficient for deduction, use force", RequireForce: true}
 	}

@@ -19,7 +19,7 @@ import (
 
 var errKeyLimitRetry = errors.New("retry provider")
 
-// keyLimitEntry 运行完整入站编排，外部系统使用可观测的请求槽替身。
+// keyLimitEntry runs entry orchestration with observable request-slot substitutes.
 type keyLimitEntry struct {
 	cancelClient context.CancelFunc
 	EntryPorts
@@ -32,7 +32,7 @@ type keyLimitEntry struct {
 
 type quietEntryLog struct{}
 
-// keyLimitTarget 用回调驱动实际的逐轮准入、完成和故障转移。
+// keyLimitTarget drives turn admission, completion, and failover through the entry callbacks.
 type keyLimitTarget struct {
 	EntryTarget
 	root *keyLimitEntry
@@ -192,7 +192,7 @@ func (target *keyLimitTarget) Run(ctx context.Context, _ ClientSocket, _ []byte,
 	return nil
 }
 
-// TestEntryKeyLimits 覆盖首轮、后续轮次、空闲释放和同轮故障转移。
+// TestEntryKeyLimits covers first and later turns, idle release, and retries within a turn.
 func TestEntryKeyLimits(t *testing.T) {
 	for _, mode := range []string{"two_turns", "rpm", "retry", "lost_lease", "local_warmup"} {
 		t.Run(mode, func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestEntryKeyLimits(t *testing.T) {
 	}
 }
 
-// TestEntryClientDisconnectKeepsUpstream 校验逐轮取消监听没有把普通断连转成内部终止。
+// TestEntryClientDisconnectKeepsUpstream verifies that client disconnect does not trigger an internal abort.
 func TestEntryClientDisconnectKeepsUpstream(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())

@@ -11,11 +11,10 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// installMutex prevents concurrent installation attempts (TOCTOU protection).
+// installMutex serializes HTTP installation attempts within this process.
 var installMutex sync.Mutex
 
-// RegisterRoutes registers setup wizard routes
-// RestartRequester 由 CLI 入口注入，setup 不依赖完整应用图。
+// RestartRequester lets the CLI entry point provide restart handling.
 type RestartRequester interface{ RequestRestart() error }
 
 // SetupStatus represents the current setup state.
@@ -24,7 +23,7 @@ type SetupStatus struct {
 	Step       string `json:"step"`
 }
 
-// TestDatabaseRequest represents database test request.
+// TestDatabaseRequest contains connection parameters for a database check.
 type TestDatabaseRequest struct {
 	Host     string `json:"host" binding:"required"`
 	Port     int    `json:"port" binding:"required"`
@@ -34,7 +33,7 @@ type TestDatabaseRequest struct {
 	SSLMode  string `json:"sslmode"`
 }
 
-// TestRedisRequest represents Redis test request.
+// TestRedisRequest contains connection parameters for a Redis check.
 type TestRedisRequest struct {
 	Host      string `json:"host" binding:"required"`
 	Port      int    `json:"port" binding:"required"`
@@ -44,7 +43,7 @@ type TestRedisRequest struct {
 	EnableTLS bool   `json:"enable_tls"`
 }
 
-// InstallRequest represents installation request.
+// InstallRequest contains the initial database, Redis, administrator, and server settings.
 type InstallRequest struct {
 	Database DatabaseConfig `json:"database" binding:"required"`
 	Redis    RedisConfig    `json:"redis" binding:"required"`
@@ -52,6 +51,7 @@ type InstallRequest struct {
 	Server   ServerConfig   `json:"server"`
 }
 
+// RegisterRoutes registers setup endpoints and uses the first optional restarter.
 func RegisterRoutes(r *gin.Engine, restarters ...RestartRequester) {
 	var restarter RestartRequester
 	if len(restarters) > 0 {
@@ -59,10 +59,10 @@ func RegisterRoutes(r *gin.Engine, restarters ...RestartRequester) {
 	}
 	setup := r.Group("/setup")
 	{
-		// Status endpoint is always accessible (read-only)
+		// Status remains readable after setup completes.
 		setup.GET("/status", getStatus)
 
-		// All modification endpoints are protected by setupGuard
+		// Connection tests and installation are available only while setup is needed.
 		protected := setup.Group("")
 		protected.Use(setupGuard())
 		{
@@ -81,7 +81,7 @@ func getStatus(c *gin.Context) {
 	})
 }
 
-// setupGuard middleware ensures setup endpoints are only accessible during setup mode.
+// setupGuard rejects requests once setup is complete or disabled.
 func setupGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !NeedsSetup() {
@@ -93,7 +93,7 @@ func setupGuard() gin.HandlerFunc {
 	}
 }
 
-// validatePassword checks password strength.
+// validatePassword accepts passwords between 8 and 128 bytes.
 func validatePassword(password string) error {
 	if len(password) < 8 {
 		return fmt.Errorf("password must be at least 8 characters")
@@ -104,7 +104,7 @@ func validatePassword(password string) error {
 	return nil
 }
 
-// testDatabase tests database connection.
+// testDatabase validates connection parameters and tests the database connection.
 func testDatabase(c *gin.Context) {
 	var req TestDatabaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -112,7 +112,6 @@ func testDatabase(c *gin.Context) {
 		return
 	}
 
-	// Security: Validate all inputs to prevent injection attacks
 	if !validateHostname(req.Host) {
 		response.Error(c, http.StatusBadRequest, "Invalid hostname format")
 		return
@@ -155,7 +154,7 @@ func testDatabase(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Connection successful"})
 }
 
-// testRedis tests Redis connection.
+// testRedis validates connection parameters and tests the Redis connection.
 func testRedis(c *gin.Context) {
 	var req TestRedisRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -163,7 +162,6 @@ func testRedis(c *gin.Context) {
 		return
 	}
 
-	// Security: Validate inputs
 	if !validateHostname(req.Host) {
 		response.Error(c, http.StatusBadRequest, "Invalid hostname format")
 		return
@@ -199,13 +197,12 @@ func testRedis(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Connection successful"})
 }
 
-// installWithRestart 执行首次安装，并在成功后请求重启。
+// installWithRestart installs the system and requests a restart when a restarter is supplied.
 func installWithRestart(c *gin.Context, restarter RestartRequester) {
-	// TOCTOU Protection: Acquire mutex to prevent concurrent installation
 	installMutex.Lock()
 	defer installMutex.Unlock()
 
-	// Double-check after acquiring lock
+	// Another request may have completed installation while this request waited for the lock.
 	if !NeedsSetup() {
 		response.Error(c, http.StatusForbidden, "Setup is not allowed: system is already installed")
 		return
@@ -224,8 +221,6 @@ func installWithRestart(c *gin.Context, restarter RestartRequester) {
 	req.Redis.Host = strings.TrimSpace(req.Redis.Host)
 	req.Redis.Username = strings.TrimSpace(req.Redis.Username)
 
-	// COMPREHENSIVE INPUT VALIDATION
-	// Database validation
 	if !validateHostname(req.Database.Host) {
 		response.Error(c, http.StatusBadRequest, "Invalid database hostname")
 		return
@@ -243,7 +238,6 @@ func installWithRestart(c *gin.Context, restarter RestartRequester) {
 		return
 	}
 
-	// Redis validation
 	if !validateHostname(req.Redis.Host) {
 		response.Error(c, http.StatusBadRequest, "Invalid Redis hostname")
 		return
@@ -261,7 +255,6 @@ func installWithRestart(c *gin.Context, restarter RestartRequester) {
 		return
 	}
 
-	// Admin validation
 	if !validateEmail(req.Admin.Email) {
 		response.Error(c, http.StatusBadRequest, "Invalid admin email format")
 		return
@@ -271,13 +264,11 @@ func installWithRestart(c *gin.Context, restarter RestartRequester) {
 		return
 	}
 
-	// Server validation
 	if req.Server.Port != 0 && !validatePort(req.Server.Port) {
 		response.Error(c, http.StatusBadRequest, "Invalid server port")
 		return
 	}
 
-	// SET DEFAULTS
 	if req.Database.SSLMode == "" {
 		req.Database.SSLMode = "disable"
 	}
@@ -294,7 +285,7 @@ func installWithRestart(c *gin.Context, restarter RestartRequester) {
 	if req.Server.Mode == "" {
 		req.Server.Mode = "release"
 	}
-	// Validate server mode
+
 	if req.Server.Mode != "release" && req.Server.Mode != "debug" {
 		response.Error(c, http.StatusBadRequest, "Invalid server mode (must be 'release' or 'debug')")
 		return

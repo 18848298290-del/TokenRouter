@@ -211,7 +211,7 @@ func TestUsageRecordWorkerPool_AutoScaleUpAndDown(t *testing.T) {
 
 	block := make(chan struct{})
 
-	// 填满运行槽位 + 队列，触发扩容阈值。
+	// Fill running slots and the queue to trigger growth.
 	for range 8 {
 		require.Equal(t, UsageRecordSubmitModeEnqueued, pool.Submit(func(ctx context.Context) {
 			<-block
@@ -260,7 +260,7 @@ func TestUsageRecordWorkerPool_AutoScaleDownRequiresLowRunningUtilization(t *tes
 		}))
 	}
 
-	// 虽然 waiting=0，但 running 利用率为 100%，不应缩容。
+	// An empty queue with fully occupied workers must not trigger shrinkage.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 2, pool.Stats().MaxConcurrency)
 
@@ -444,18 +444,18 @@ func TestUsageRecordWorkerPool_ResizeAndLogDropBranches(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
-	// 目标值与当前值相同，应该直接返回。
+	// An unchanged target is a no-op.
 	pool.resizePool(1, 1, 0, 0, 0, 8, "noop")
 	require.Equal(t, 1, pool.Stats().MaxConcurrency)
 
-	// 在限流窗口内应静默返回。
+	// Suppress repeated drop logging within the rate-limit window.
 	pool.lastDropLogNanos.Store(time.Now().UnixNano())
 	require.NotPanics(t, func() {
 		pool.logDrop("full")
 	})
 }
 
-// TestStopWaitsForSynchronousOverflow 检查停止同时等待 pond 队列和已转为同步执行的溢出任务。
+// TestStopWaitsForSynchronousOverflow checks that stopping waits for queued and inline overflow tasks.
 func TestStopWaitsForSynchronousOverflow(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 1, TaskTimeout: time.Second, OverflowPolicy: "sync"})
 	first, releaseQueue := make(chan struct{}), make(chan struct{})
@@ -477,7 +477,7 @@ func TestStopWaitsForSynchronousOverflow(t *testing.T) {
 	require.Contains(t, err.Error(), "unfinished tasks")
 }
 
-// TestStartAfterStopDoesNotCreateWorker 验证停止是不可逆屏障，顺序与并发的重复调用都不能重开 worker。
+// TestStartAfterStopDoesNotCreateWorker checks that repeated and concurrent calls cannot restart a stopped pool.
 func TestStartAfterStopDoesNotCreateWorker(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 1, AutoScaleEnabled: true, AutoScaleMinWorkers: 1, AutoScaleMaxWorkers: 2})
 	pool.Stop()

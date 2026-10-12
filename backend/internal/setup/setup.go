@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	// Config paths.
+	// ConfigFileName is the configuration file written by setup.
 	ConfigFileName          = "config.yaml"
 	InstallLockFile         = ".installed"
 	defaultUserConcurrency  = 5
@@ -30,14 +30,14 @@ const (
 	adminBootstrapReasonUsersExistWithoutAdmin = "users_exist_without_admin"
 )
 
-// SetupConfig 保存初始设置所需的配置。
+// SetupConfig contains the configuration used for initial installation.
 type SetupConfig struct {
 	Database                DatabaseConfig `json:"database" yaml:"database"`
 	Redis                   RedisConfig    `json:"redis" yaml:"redis"`
-	Admin                   AdminConfig    `json:"admin" yaml:"-"` // 不写入配置文件。
+	Admin                   AdminConfig    `json:"admin" yaml:"-"` // Omitted from the configuration file.
 	Server                  ServerConfig   `json:"server" yaml:"server"`
 	JWT                     JWTConfig      `json:"jwt" yaml:"jwt"`
-	Timezone                string         `json:"timezone" yaml:"timezone"` // 例如 "Asia/Shanghai" 或 "UTC"。
+	Timezone                string         `json:"timezone" yaml:"timezone"` // IANA time zone, such as "Asia/Shanghai" or "UTC".
 	MigrationTimeoutSeconds int            `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
 }
 
@@ -61,7 +61,7 @@ type JWTConfig struct {
 	ExpireHour int    `json:"expire_hour" yaml:"expire_hour"`
 }
 
-// setupDefaultAdminConcurrency 使用统一的首次管理员并发默认值。
+// setupDefaultAdminConcurrency returns the initial administrator's concurrency limit.
 func setupDefaultAdminConcurrency() int {
 	return defaultUserConcurrency
 }
@@ -69,15 +69,13 @@ func setupDefaultAdminConcurrency() int {
 // GetDataDir returns the data directory for storing config and lock files.
 // Priority: DATA_DIR env > /app/data (if exists and writable) > current directory.
 func GetDataDir() string {
-	// Check DATA_DIR environment variable first
 	if dir := os.Getenv("DATA_DIR"); dir != "" {
 		return dir
 	}
 
-	// Check if /app/data exists and is writable (Docker environment)
 	dockerDataDir := "/app/data"
 	if info, err := os.Stat(dockerDataDir); err == nil && info.IsDir() {
-		// Try to check if writable by creating a temp file
+		// Probe the container data directory before selecting it for persistent files.
 		testFile := dockerDataDir + "/.write_test"
 		if f, err := os.Create(testFile); err == nil {
 			_ = f.Close()
@@ -86,21 +84,20 @@ func GetDataDir() string {
 		}
 	}
 
-	// Default to current directory
 	return "."
 }
 
-// GetConfigFilePath returns the full path to config.yaml.
+// GetConfigFilePath returns the config.yaml path under GetDataDir.
 func GetConfigFilePath() string {
 	return GetDataDir() + "/" + ConfigFileName
 }
 
-// GetInstallLockPath returns the full path to .installed lock file.
+// GetInstallLockPath returns the installation marker path under GetDataDir.
 func GetInstallLockPath() string {
 	return GetDataDir() + "/" + InstallLockFile
 }
 
-// skipSetupEnabled 解析显式跳过首次安装向导的环境开关。
+// skipSetupEnabled reports whether SKIP_SETUP disables the installation wizard.
 func skipSetupEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKIP_SETUP"))) {
 	case "true", "1", "yes":
@@ -110,22 +107,20 @@ func skipSetupEnabled() bool {
 	}
 }
 
-// NeedsSetup checks if the system needs initial setup
-// Uses multiple checks to prevent attackers from forcing re-setup by deleting config.
+// NeedsSetup reports whether setup is enabled and both installation files are absent.
+// Stat errors other than nonexistence disable setup, as does either existing file.
 func NeedsSetup() bool {
 	if skipSetupEnabled() {
 		logging.L().Debug("setup.needs_setup_bypassed", zap.String("reason", "skip_setup_enabled"))
 		return false
 	}
 
-	// Check 1: Config file must not exist
 	if _, err := os.Stat(GetConfigFilePath()); !os.IsNotExist(err) {
-		return false // Config exists, no setup needed
+		return false
 	}
 
-	// Check 2: Installation lock file (harder to bypass)
 	if _, err := os.Stat(GetInstallLockPath()); !os.IsNotExist(err) {
-		return false // Lock file exists, already installed
+		return false
 	}
 
 	return true
@@ -136,12 +131,10 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 }
 func TestRedisConnection(cfg *RedisConfig) error { return bootstrap.TestSetupRedisConnection(cfg) }
 func Install(cfg *SetupConfig) error {
-	// Security check: prevent re-installation if already installed
 	if !NeedsSetup() {
 		return fmt.Errorf("system is already installed, re-installation is not allowed")
 	}
 
-	// Generate JWT secret if not provided
 	if cfg.JWT.Secret == "" {
 		secret, err := generateSecret(32)
 		if err != nil {
@@ -151,7 +144,6 @@ func Install(cfg *SetupConfig) error {
 		logging.LegacyPrintf("setup", "%s", "Warning: JWT secret auto-generated. Consider setting a fixed secret for production.")
 	}
 
-	// Test connections
 	if err := TestDatabaseConnection(&cfg.Database); err != nil {
 		return fmt.Errorf("database connection failed: %w", err)
 	}
@@ -160,7 +152,6 @@ func Install(cfg *SetupConfig) error {
 		return fmt.Errorf("redis connection failed: %w", err)
 	}
 
-	// Initialize database
 	if err := initializeDatabase(cfg); err != nil {
 		return fmt.Errorf("database initialization failed: %w", err)
 	}
@@ -170,12 +161,11 @@ func Install(cfg *SetupConfig) error {
 		return fmt.Errorf("admin user creation failed: %w", err)
 	}
 
-	// Write config file
 	if err := writeConfigFile(cfg); err != nil {
 		return fmt.Errorf("config file creation failed: %w", err)
 	}
 
-	// Create installation lock file to prevent re-setup attacks
+	// The separate marker keeps setup disabled if the configuration file is later removed.
 	if err := createInstallLock(); err != nil {
 		return fmt.Errorf("failed to create install lock: %w", err)
 	}
@@ -183,7 +173,7 @@ func Install(cfg *SetupConfig) error {
 	return nil
 }
 
-// createInstallLock creates a lock file to prevent re-installation attacks.
+// createInstallLock writes the marker used by NeedsSetup to disable reinstallation.
 func createInstallLock() error {
 	content := fmt.Sprintf("installed_at=%s\n", time.Now().UTC().Format(time.RFC3339))
 	return os.WriteFile(GetInstallLockPath(), []byte(content), 0o400) // Read-only for owner
@@ -214,13 +204,12 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 }
 
 func writeConfigFile(cfg *SetupConfig) error {
-	// Ensure timezone has a default value
 	tz := cfg.Timezone
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
 
-	// Prepare config for YAML (exclude sensitive data and admin config)
+	// Persist runtime credentials and defaults; administrator credentials are used only for bootstrap.
 	yamlConfig := struct {
 		Server   ServerConfig   `yaml:"server"`
 		Database DatabaseConfig `yaml:"database"`
@@ -288,15 +277,13 @@ func generateSecret(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// Auto Setup for Docker Deployment
-
-// AutoSetupEnabled checks if auto setup is enabled via environment variable.
+// AutoSetupEnabled accepts the exact AUTO_SETUP values true, 1, and yes.
 func AutoSetupEnabled() bool {
 	val := os.Getenv("AUTO_SETUP")
 	return val == "true" || val == "1" || val == "yes"
 }
 
-// getEnvOrDefault gets environment variable or returns default value.
+// getEnvOrDefault returns a nonempty environment value or the supplied default.
 func getEnvOrDefault(key, defaultValue string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -304,7 +291,7 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvIntOrDefault gets environment variable as int or returns default value.
+// getEnvIntOrDefault returns a parsed environment integer, or the default for missing or invalid values.
 func getEnvIntOrDefault(key string, defaultValue int) int {
 	if val := os.Getenv(key); val != "" {
 		if i, err := strconv.Atoi(val); err == nil {
@@ -314,8 +301,8 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// AutoSetupFromEnv performs automatic setup using environment variables
-// This is designed for Docker deployment where all config is passed via env vars.
+// AutoSetupFromEnv installs using environment variables and writes configuration and an installation marker.
+// The caller checks NeedsSetup before invoking this automatic deployment path.
 func AutoSetupFromEnv() error {
 	logging.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
 	logging.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
@@ -326,7 +313,6 @@ func AutoSetupFromEnv() error {
 		tz = getEnvOrDefault("TIMEZONE", "Asia/Shanghai")
 	}
 
-	// Build config from environment variables
 	cfg := &SetupConfig{
 		Database: DatabaseConfig{
 			Host:     getEnvOrDefault("DATABASE_HOST", "localhost"),
@@ -361,7 +347,6 @@ func AutoSetupFromEnv() error {
 		MigrationTimeoutSeconds: getEnvIntOrDefault("SETUP_MIGRATION_TIMEOUT_SECONDS", 0),
 	}
 
-	// Generate JWT secret if not provided
 	if cfg.JWT.Secret == "" {
 		secret, err := generateSecret(32)
 		if err != nil {
@@ -371,28 +356,24 @@ func AutoSetupFromEnv() error {
 		logging.LegacyPrintf("setup", "%s", "Warning: JWT secret auto-generated. Consider setting a fixed secret for production.")
 	}
 
-	// Test database connection
 	logging.LegacyPrintf("setup", "%s", "Testing database connection...")
 	if err := TestDatabaseConnection(&cfg.Database); err != nil {
 		return fmt.Errorf("database connection failed: %w", err)
 	}
 	logging.LegacyPrintf("setup", "%s", "Database connection successful")
 
-	// Test Redis connection
 	logging.LegacyPrintf("setup", "%s", "Testing Redis connection...")
 	if err := TestRedisConnection(&cfg.Redis); err != nil {
 		return fmt.Errorf("redis connection failed: %w", err)
 	}
 	logging.LegacyPrintf("setup", "%s", "Redis connection successful")
 
-	// Initialize database
 	logging.LegacyPrintf("setup", "%s", "Initializing database...")
 	if err := initializeDatabase(cfg); err != nil {
 		return fmt.Errorf("database initialization failed: %w", err)
 	}
 	logging.LegacyPrintf("setup", "%s", "Database initialized successfully")
 
-	// Create admin user
 	logging.LegacyPrintf("setup", "%s", "Creating admin user...")
 	created, reason, err := createAdminUser(cfg)
 	if err != nil {
@@ -411,14 +392,12 @@ func AutoSetupFromEnv() error {
 		}
 	}
 
-	// Write config file
 	logging.LegacyPrintf("setup", "%s", "Writing configuration file...")
 	if err := writeConfigFile(cfg); err != nil {
 		return fmt.Errorf("config file creation failed: %w", err)
 	}
 	logging.LegacyPrintf("setup", "%s", "Configuration file created")
 
-	// Create installation lock file
 	if err := createInstallLock(); err != nil {
 		return fmt.Errorf("failed to create install lock: %w", err)
 	}

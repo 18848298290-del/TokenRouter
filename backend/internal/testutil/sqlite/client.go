@@ -15,7 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/enttest"
 )
 
-// NewClient 创建启用外键的 SQLite 测试数据库。PostgreSQL 事务行为由集成测试检查。
+// NewClient creates a SQLite test database with foreign keys enabled. PostgreSQL transaction behavior is
+// covered by integration tests.
 func NewClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	name := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()))

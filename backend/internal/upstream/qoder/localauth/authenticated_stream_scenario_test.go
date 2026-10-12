@@ -1,6 +1,6 @@
 package localauth
 
-// 本文件覆盖 local_auth.go 的认证读取、qoder/session.go 的会话建立与 qoder/client.go 的流式请求。
+// This scenario covers local authentication, COSY session creation, and a streaming API request.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// TestRealAPI 使用本地认证调用 Qoder 流式 API。
+// TestRealAPI calls Qoder with local credentials when QODER_RUN_REAL_API_TESTS=1.
 func TestRealAPI(t *testing.T) {
 	if os.Getenv("QODER_RUN_REAL_API_TESTS") != "1" {
 		t.Skip("set QODER_RUN_REAL_API_TESTS=1 to run real Qoder API integration test")
@@ -106,7 +106,7 @@ func TestRealAPI(t *testing.T) {
 	}
 }
 
-// collectStream 在请求结束或超时前收集文本事件。
+// collectStream collects text until completion or timeout.
 func collectStream(ctx context.Context, resp *http.Response, t *testing.T) ([]string, bool) {
 	t.Helper()
 	var textParts []string

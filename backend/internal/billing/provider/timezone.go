@@ -10,7 +10,7 @@ import (
 
 var pricingTimeLocations sync.Map
 
-// LoadPricingLocation 在技术边界加载并复用时区，纯定价只接收返回的 Location。
+// LoadPricingLocation loads and caches a timezone for callers to pass into pricing calculations.
 func LoadPricingLocation(name string) (*time.Location, error) {
 	if err := pricing.ValidateTimezoneName(name); err != nil {
 		return nil, err

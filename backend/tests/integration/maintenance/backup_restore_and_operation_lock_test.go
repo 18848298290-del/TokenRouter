@@ -23,13 +23,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// brokenSQLReader 在有效 SQL 后返回读取错误，模拟 gzip 尾部损坏。
+// brokenSQLReader returns a read error after valid SQL to simulate a corrupt gzip trailer.
 type brokenSQLReader struct{ sent bool }
 
-// 测试设置仅隔离归档元数据，归档数据始终来自真实 PostgreSQL。
+// Test settings isolate archive metadata; archive contents come from PostgreSQL.
 type backupSettings struct{ values map[string]string }
 
-// TestSystemLockOwnership 使用测试框架的隔离数据库检查锁所有权。
+// TestSystemLockOwnership checks lock ownership in an isolated test database.
 func TestSystemLockOwnership(t *testing.T) {
 	ctx := context.Background()
 	integrationDB := maintenanceDatabase(t)
@@ -85,7 +85,7 @@ func TestSystemLockOwnership(t *testing.T) {
 	}
 }
 
-// TestRestoreSQLFailure 验证用独立 PostgreSQL 与本机 psql 检查真实进程退出码，不依赖模拟返回。
+// TestRestoreSQLFailure checks real psql exit statuses against isolated PostgreSQL.
 func TestRestoreSQLFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -128,7 +128,7 @@ func TestRestoreSQLFailure(t *testing.T) {
 	if count != 1 {
 		t.Error("失败恢复未保持原数据库")
 	}
-	// 成功路径确实提交，随后取消恢复必须保留这个已提交状态。
+	// A successful restore commits; canceling a later restore must retain that committed state.
 	err = dumper.Restore(ctx, strings.NewReader("DELETE FROM fixture; INSERT INTO fixture VALUES(2);"))
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestRestoreSQLFailure(t *testing.T) {
 	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM fixture WHERE id=2").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("取消恢复未回滚: count=%d error=%v", count, err)
 	}
-	// 输入读取失败在关闭标准输入前取消 psql，不能以 EOF 代替完整归档。
+	// A read failure cancels psql before closing stdin so incomplete input is not accepted as EOF.
 	err = dumper.Restore(ctx, &brokenSQLReader{})
 	if err == nil {
 		t.Fatal("损坏输入不能报告成功")
@@ -154,7 +154,7 @@ func TestRestoreSQLFailure(t *testing.T) {
 		t.Fatalf("输入失败未回滚: count=%d error=%v", count, err)
 	}
 
-	// 使用真实 pg_dump、gzip、本地归档与 psql 完成一轮备份恢复演练。
+	// Exercise backup and restore with pg_dump, gzip, a local archive, and psql.
 	path := t.TempDir()
 	settings := &backupSettings{values: map[string]string{}}
 	core := backup.New(settings, backup.Options{DatabaseName: "test_restore", LocalPath: path, Now: time.Now}, nil, nil, bp.NewLocalBackupStore(path), bp.NewArchive(dumper, 0), func(ctx context.Context) (func(), bool, error) {
@@ -196,7 +196,7 @@ func (s *backupSettings) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
-// maintenanceDatabase 只创建本测试的隔离数据库，使用已发布迁移验证原表与维护锁。
+// maintenanceDatabase creates an isolated database with published migrations for data and maintenance locks.
 func maintenanceDatabase(t *testing.T) *sql.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

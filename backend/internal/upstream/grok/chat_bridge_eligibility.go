@@ -52,16 +52,16 @@ var grokChatResponsesBridgeTopLevelFields = map[string]struct{}{
 	"service_tier": {},
 }
 
-// GrokChatResponsesBridgeEligibility 只接受能由 Responses 桥接完整保留语义的
-// Chat Completions 请求；其它请求继续走原始 Chat，避免字段被静默丢弃或改写。
+// GrokChatResponsesBridgeEligibility accepts Chat requests whose fields can be
+// represented by the Responses converter and returns a rejection reason otherwise.
 func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil || root == nil {
 		return false, "invalid_json"
 	}
 
-	// 这些字段显式设为 JSON null 时不产生效果；接受常见 SDK 的这种表示可继续走桥接，
-	// 非 null 值仍不支持，因为 Responses 转换器无法保留其 Chat Completions 语义。
+	// JSON null has no effect for these fields and is accepted for SDK compatibility.
+	// Non-null values cannot be represented by the Responses converter.
 	for _, field := range []string{"stop", "reasoning_effort"} {
 		if raw, exists := root[field]; exists && !m.GrokChatJSONNull(raw) {
 			return false, "unsupported_" + field
@@ -228,8 +228,8 @@ func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string
 				continue
 			}
 			if ok, reason := m.GrokChatStructuredContentBridgeable(raw); !ok {
-				// 空内容数组伴随 reasoning_content 时，转换器仍可输出独立推理部分；
-				// 不要把此例外扩展到不支持或格式错误的内容部分。
+				// An empty content array can accompany a separate reasoning_content part.
+				// Malformed or unsupported content parts still fail validation.
 				if !hasReasoningContent || reason != "empty_message_content" {
 					return false, reason
 				}
@@ -367,8 +367,8 @@ func (m BodyCodec) GrokChatRequiredMessageContentBridgeable(raw json.RawMessage)
 		}
 		return true, ""
 	}
-	// 结构化内容仅允许由 text、image_url 或 input_image 组成的数组；它们可无损转换为
-	// Responses input_text/input_image，从而保留 Chat Completions 语义。
+	// Structured content accepts text, image_url, and input_image arrays that the
+	// converter can represent as Responses input_text and input_image parts.
 	return m.GrokChatStructuredContentBridgeable(raw)
 }
 
@@ -482,8 +482,8 @@ func (m BodyCodec) GrokChatNullOrEmptyArray(raw json.RawMessage) bool {
 }
 
 func (m BodyCodec) GrokChatResponsesCacheIntentBody(body []byte) ([]byte, error) {
-	// Responses 转换器会省略空 Chat tools 数组；此时 auto/none 也没有语义效果，不能阻止
-	// 普通无工具缓存路由。非空的已转换工具始终完整保留。
+	// The converter omits an empty tools array. Remove its ineffective auto/none
+	// choice so requests without tools can use cache routing; retain populated tools.
 	if gjson.GetBytes(body, "tools").Exists() {
 		return append([]byte(nil), body...), nil
 	}
@@ -499,7 +499,7 @@ func (m BodyCodec) GrokChatResponsesCacheIntentBody(body []byte) ([]byte, error)
 	return json.Marshal(root)
 }
 
-// GrokChatResponsesBridgeModel 判断模型是否支持 Chat 到 Responses 的 Grok 桥接。
+// GrokChatResponsesBridgeModel reports whether the model supports the Chat bridge.
 func (m BodyCodec) GrokChatResponsesBridgeModel(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
 	case "grok-4.5", "grok-4.6", "grok-4.6-latest":

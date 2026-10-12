@@ -24,7 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// alphaRequestAdapter 处理 HTTP 输出、平台恢复和观测，media 决定提供商尝试顺序。
+// alphaRequestAdapter handles HTTP output, platform recovery, and observation.
+// The media package orders provider attempts.
 type alphaRequestAdapter struct {
 	h                           *Runtime
 	c                           *gin.Context
@@ -40,8 +41,9 @@ type alphaRequestAdapter struct {
 	oauth429                    failover.OAuth429State
 }
 
-// recordAlphaSearchUsage 为成功的 alpha/search 记录一次 WebSearchCalls，按分组单价乘倍率计费。
-// 上游缺少 usage 字段。任务提交到 mandatory 池，池满时同步执行。
+// recordAlphaSearchUsage bills a successful alpha/search as one WebSearchCalls unit
+// using the group price and multiplier.
+// The upstream supplies no usage field. Mandatory tasks run synchronously when the pool is full.
 func (h *Runtime) recordAlphaSearchUsage(
 	c *gin.Context,
 	apiKey *apikey.APIKey,

@@ -19,7 +19,7 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// provideKeyStore 为 Key 事务存储绑定 usage 批量统计查询。
+// provideKeyStore binds bulk usage queries to the API key transaction store.
 func provideKeyStore(client *dbent.Client, db *sql.DB, settings *preaggregation.PreAggregationSettingsService) *keypostgres.KeyStore {
 	return keypostgres.NewKeyStore(client, db, func(ctx context.Context, ids []int64) (map[int64]float64, error) {
 		return usagepostgres.ReadAPIKeyUsageTotals(ctx, db, settings, ids)
@@ -30,7 +30,7 @@ func provideKeyRepository(keys *keypostgres.KeyStore) apikey.APIKeyRepository {
 	return keys
 }
 
-// provideKeys 注入路由策略和资金接口，L1 缓存和订阅在启动时创建。
+// provideKeys supplies routing and billing dependencies. Start creates the L1 cache and subscriptions.
 func provideKeys(
 	keys *keypostgres.KeyStore,
 	users *identitypostgres.UserStore,

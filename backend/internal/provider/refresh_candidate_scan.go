@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// OAuthRefreshCandidatePager 按页面大小和记录 ID 游标扫描刷新候选。
+// OAuthRefreshCandidatePager scans refresh candidates by page size and record ID cursor.
 type OAuthRefreshCandidatePager interface {
 	ListOAuthRefreshCandidatePage(context.Context, OAuthRefreshPageOptions) (*OAuthRefreshCandidatePage, error)
 }
 
-// RefreshScanOptions 提供单轮扫描的配置值和记录函数。
+// RefreshScanOptions supplies the budget, page size, platforms, and log callbacks for one scan.
 type RefreshScanOptions struct {
 	Timeout                  time.Duration
 	PageSize                 int
@@ -19,7 +19,7 @@ type RefreshScanOptions struct {
 	Debug, Info, Warn, Error func(string, ...any)
 }
 
-// RefreshCandidateScan 持有唯一恢复游标；周期由 app 注入的提供商刷新循环驱动。
+// RefreshCandidateScan holds the resume cursor used by the application's refresh loop.
 type RefreshCandidateScan struct {
 	mu      sync.Mutex
 	afterID int64
@@ -37,7 +37,7 @@ type RefreshPageStats struct {
 func (s *RefreshCandidateScan) Position() int64      { s.mu.Lock(); defer s.mu.Unlock(); return s.afterID }
 func (s *RefreshCandidateScan) SetPosition(id int64) { s.mu.Lock(); s.afterID = id; s.mu.Unlock() }
 
-// Run 执行一次有界且可从游标恢复的刷新周期。
+// Run performs one bounded refresh cycle and retains the cursor for resumption.
 func (s *RefreshCandidateScan) Run(parent context.Context, pager OAuthRefreshCandidatePager, options RefreshScanOptions, process func(context.Context, []Record) RefreshPageStats) {
 	noop := func(string, ...any) {}
 	if options.Debug == nil {
@@ -115,7 +115,8 @@ func (s *RefreshCandidateScan) Run(parent context.Context, pager OAuthRefreshCan
 		stats.Skipped += pageStats.Skipped
 		stats.Failed += pageStats.Failed
 
-		// 页面未完整处理时不得推进游标；OAuthRefreshAPI 会重读数据库并复查过期时间，因此重读页面是安全的。
+		// Keep the cursor on an interrupted page. Reprocessing is safe because OAuthRefreshAPI rereads credentials and
+		// expiry.
 		if ctx.Err() != nil {
 			break
 		}

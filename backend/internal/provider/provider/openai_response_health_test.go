@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 测试通过提供商运行状态的时钟控制时间。
+// response429Clock lets tests advance provider runtime time.
 type response429Clock struct{ nanos atomic.Int64 }
 
 func TestOpenAI429FastPath_BlocksOAuthOnlyAfterRetryWindow(t *testing.T) {
@@ -42,8 +42,8 @@ func TestOpenAIHTTP429StillUsesQuotaResetHeaders(t *testing.T) {
 	require.True(t, svc.Runtime.Blocked(provider.ID, func() string { return providercore.RefreshCredentialIdentity(provider) }), "HTTP 429 保留上游配额重置边界")
 }
 
-// TestOpenAI429FastPath_SkipsSparkShadow spark 影子被选中后若 /responses 返回 429,
-// 不得按 global x-codex-* 信号写内存运行时熔断(否则 spark 被冷却到 global reset、单影子场景无可用提供商)。
+// TestOpenAI429FastPath_SkipsSparkShadow keeps global /responses quota signals
+// from pausing a Spark shadow until the global reset, which could exhaust a single-shadow pool.
 func TestOpenAI429FastPath_SkipsSparkShadow(t *testing.T) {
 	svc := &OpenAIResponseHealth{Runtime: providercore.NewRuntimeBlockState(time.Now)}
 	parentID := int64(800)

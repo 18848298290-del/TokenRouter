@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// UsageCleanupTask 定义使用记录清理任务的 schema。
+// UsageCleanupTask defines usage-record cleanup jobs and their progress.
 type UsageCleanupTask struct {
 	ent.Schema
 }

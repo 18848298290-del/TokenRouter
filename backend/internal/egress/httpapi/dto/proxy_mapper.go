@@ -26,7 +26,7 @@ func ProxyFromEgress(p *egress.Proxy) *Proxy {
 }
 
 // ProxyFromEgressAdmin converts a service Proxy to AdminProxy DTO for admin users.
-// It includes the password field - user-facing endpoints must not use this.
+// The response includes the password and requires administrator access.
 func ProxyFromEgressAdmin(p *egress.Proxy) *AdminProxy {
 	if p == nil {
 		return nil
@@ -42,7 +42,7 @@ func ProxyFromEgressAdmin(p *egress.Proxy) *AdminProxy {
 }
 
 // ProxyWithProviderCountFromEgressAdmin converts a service ProxyWithProviderCount to AdminProxyWithProviderCount DTO.
-// It includes the password field - user-facing endpoints must not use this.
+// The response includes the password and requires administrator access.
 func ProxyWithProviderCountFromEgressAdmin(p *egress.ProxyWithProviderCount) *AdminProxyWithProviderCount {
 	if p == nil {
 		return nil

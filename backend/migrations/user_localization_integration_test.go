@@ -19,7 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUserLocalizationMigrations 检查空库升级、历史内容、语言偏好及事务失败回滚。
+// TestUserLocalizationMigrations checks fresh upgrades, historical content, language preferences, and
+// rollback.
 func TestUserLocalizationMigrations(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("localization"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -31,7 +32,7 @@ func TestUserLocalizationMigrations(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	require.NoError(t, postgres.ApplyMigrations(ctx, db, migrations.FS))
-	// 聚合查询与页面展示共同处理未初始化、空译文和有效译文。
+	// Aggregate queries and page display share resolution of missing, empty, valid, and stale translations.
 	t.Run("group display expression", func(t *testing.T) {
 		userContext := locale.WithUserPresentation(locale.WithLanguage(ctx, "en"), true)
 		expression := postgres.LocalizedTextExpression(userContext, "g.localization", "display_name", "g.name")
@@ -78,7 +79,7 @@ func TestUserLocalizationMigrations(t *testing.T) {
  ('site_title_zh','中文标题'),('site_subtitle','  '),('site_subtitle_zh',''),('site_subtitle_en',''),('notification_email_locale:user:991','zh'),
  ('notification_email_template:auth.verify_code:zh','{"subject":"验证码","html":"<p>正文</p>"}');`)
 	require.NoError(t, err)
-	// 单个迁移失败时同事务中新增的字段与内容都回滚。
+	// A later failure in the transaction rolls back the migration's new fields and content.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	migration, err := migrations.FS.ReadFile("290_user_localization.sql")
@@ -117,7 +118,7 @@ func TestUserLocalizationMigrations(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-// TestHomeTextMigration 检查旧字段中的空值、译文和重复执行。
+// TestHomeTextMigration checks empty legacy fields, translations, and replay.
 func TestHomeTextMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("home_text"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())

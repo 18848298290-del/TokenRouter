@@ -125,7 +125,7 @@ func TestForwardAsChatCompletions_ServiceTierFastNormalizedToPriorityUpstream(t 
 	}
 
 	_, err := svc.Text.Chat(context.Background(), c, provider, body, "", "gpt-5.5")
-	require.Error(t, err) // upstream 400 → 错误返回，但请求体已被 recorder 捕获
+	require.Error(t, err) // The upstream returns 400 after the recorder captures the request.
 	require.NotNil(t, upstream.lastBody)
 	require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String(),
 		"client alias fast must reach upstream as priority")
@@ -202,7 +202,7 @@ func TestForwardAsChatCompletions_KeepsOutboundAndObservedServiceTiersSeparate(t
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
-	// 缓冲转回 Chat Completions：客户端响应里如实回显 default。
+	// Buffered Chat conversion reports the observed default tier to the client.
 	require.Contains(t, rec.Body.String(), `"service_tier":"default"`)
 	require.NotContains(t, rec.Body.String(), `"service_tier":"priority"`)
 }
@@ -505,7 +505,7 @@ func TestForwardAsChatCompletions_APIKeyResponsesRecordsThirdPartyMaxEffort(t *t
 func TestForwardAsChatCompletions_APIKeyResponsesDoesNotRecordDroppedNestedEffort(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	// Chat Completions 只接受顶层 reasoning_effort；嵌套字段不会进入协议转换结果。
+	// Chat conversion accepts top-level reasoning_effort; nested reasoning.effort is dropped.
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hello"}],"reasoning":{"effort":"max"},"stream":false}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -2285,7 +2285,7 @@ func TestForwardAsChatCompletionsForGrokComposerBridgesImageInput(t *testing.T) 
 	require.NotNil(t, repo.updates[55]["grok_usage_snapshot"])
 }
 
-// forcedResponsesChatTestProvider 让 Chat 入站进入 Responses 错误转换测试路径。
+// forcedResponsesChatTestProvider routes Chat input through Responses for error conversion tests.
 func forcedResponsesChatTestProvider() *gatewayprovider.ExecutionProvider {
 	provider := rawChatCompletionsTestProvider()
 	provider.Record.Extra = map[string]any{"openai_text_route_mode": "force_responses"}
@@ -2344,7 +2344,8 @@ func TestForwardAsChatCompletions_ResponseFailed_NoRule_Still502(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code, "without passthrough rule should still be 502")
 }
 
-// TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500 验证 HTTP 200 流内失败未命中自定义错误码时返回通用错误。
+// TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500 checks generic output when an
+// in-stream error misses configured codes.
 func TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2375,7 +2376,8 @@ func TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500
 	require.Zero(t, repo.setErrorCalls)
 }
 
-// TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver 验证 response.failed 携带非默认状态码时，命中提供商策略并切换提供商。
+// TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver checks failover for an event
+// status matched by provider policy.
 func TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2443,7 +2445,7 @@ func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	normalizeResponsesRequestServiceTier(req)
 	require.Equal(t, "flex", req.ServiceTier)
 
-	// OpenAI 官方合法 tier 应被透传保留。
+	// Recognized tiers pass through unchanged.
 	req.ServiceTier = "auto"
 	normalizeResponsesRequestServiceTier(req)
 	require.Equal(t, "auto", req.ServiceTier)
@@ -2456,7 +2458,7 @@ func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	normalizeResponsesRequestServiceTier(req)
 	require.Equal(t, "scale", req.ServiceTier)
 
-	// 真未知值仍被剥离。
+	// Unknown tier values are removed.
 	req.ServiceTier = "turbo"
 	normalizeResponsesRequestServiceTier(req)
 	require.Empty(t, req.ServiceTier)
@@ -2475,7 +2477,7 @@ func TestNormalizeResponsesBodyServiceTier(t *testing.T) {
 	require.Equal(t, "flex", tier)
 	require.Equal(t, "flex", gjson.GetBytes(body, "service_tier").String())
 
-	// OpenAI 官方 tier 直接保留在 body 中（透传上游）。
+	// Recognized tiers remain in the upstream body.
 	body, tier, err = normalizeResponsesBodyServiceTier([]byte(`{"model":"gpt-5.1","service_tier":"auto"}`))
 	require.NoError(t, err)
 	require.Equal(t, "auto", tier)
@@ -2496,7 +2498,7 @@ func TestNormalizeResponsesBodyServiceTier(t *testing.T) {
 	require.Equal(t, "ultrafast", tier)
 	require.Equal(t, "ultrafast", gjson.GetBytes(body, "service_tier").String())
 
-	// 真未知值才会被删除。
+	// Unknown tier values are removed.
 	body, tier, err = normalizeResponsesBodyServiceTier([]byte(`{"model":"gpt-5.1","service_tier":"turbo"}`))
 	require.NoError(t, err)
 	require.Empty(t, tier)

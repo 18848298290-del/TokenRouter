@@ -28,7 +28,7 @@ type executionBody struct {
 	closes *atomic.Int32
 }
 
-// failedAfterPayload 在读完载荷后模拟连接中断。
+// failedAfterPayload simulates a connection failure after the payload is read.
 type failedAfterPayload struct{ io.Reader }
 
 func (s *executionSink) Begin(upstream.OutputHead) error { return nil }

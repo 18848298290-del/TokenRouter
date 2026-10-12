@@ -24,7 +24,7 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 		},
 
 		{
-			// 官方 SDK 与部分中转把字段回成 snake_case。
+			// Accept snake_case fields returned by SDKs and compatible gateways.
 
 			name: "snake_case inline_data",
 
@@ -66,7 +66,7 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 		},
 
 		{
-			// 非图片的内联附件（例如音频）不能按图片计费。
+			// Non-image attachments, such as audio, do not count as images.
 
 			name: "non image mime type",
 
@@ -97,8 +97,8 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 	}
 }
 
-// TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount 验证累积式 SSE 会把同一张图在后续 chunk 里整段重发，逐 chunk 累加会重复计费。
-// 计数器取单个 payload 内的最大值，正是为了挡住这一点。
+// TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount covers repeated images in cumulative SSE chunks.
+// The counter uses the largest image count in one payload to prevent duplicate billing.
 func TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	c.Images = 0
@@ -119,14 +119,14 @@ func TestObserveGeminiImageOutputs_KeepsLargestChunk(t *testing.T) {
 	c.ObserveImagesForTest([]byte(geminiImageResponse(
 		`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}},` +
 			`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`)))
-	// 仅含 usageMetadata 的收尾 chunk 保持已累计图片数。
+	// A usage-only trailing chunk leaves the observed image count unchanged.
 	c.ObserveImagesForTest([]byte(`{"usageMetadata":{"promptTokenCount":9}}`))
 
 	require.Equal(t, 2, c.Images)
 }
 
-// TestBeginGeminiImageOutputObservation_ResetsPerForward 验证 failover 会拿同一个 gin.Context 重跑 Forward，计数器必须按次重置，
-// 否则失败提供商已经回吐的图会被叠加到成功提供商的账单上。
+// TestBeginGeminiImageOutputObservation_ResetsPerForward checks reset before another forwarding attempt.
+// Images from a failed provider must not enter the next provider's bill.
 func TestBeginGeminiImageOutputObservation_ResetsPerForward(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	oneImage := []byte(geminiImageResponse(`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`))
@@ -141,9 +141,9 @@ func TestBeginGeminiImageOutputObservation_ResetsPerForward(t *testing.T) {
 	require.Equal(t, 1, c.Images)
 }
 
-// TestResolveGeminiImageCount 验证 issue #5358：自定义模型名（客户端名与上游映射名都不在白名单里）走 Gemini 原生
-// generateContent 生图，改动前 ImageCount 恒为 0，calculateRecordUsageCost 的按次
-// 计费分支整条不触发，四次生图全部记 $0。
+// TestResolveGeminiImageCount covers image output under custom model identifiers.
+// Observed inline images must trigger per-image billing even when neither
+// the client model nor the mapped model is a known image-model name.
 func TestResolveGeminiImageCount(t *testing.T) {
 	oneImage := []byte(geminiImageResponse(`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`))
 	textOnly := []byte(geminiImageResponse(`{"text":"hello"}`))

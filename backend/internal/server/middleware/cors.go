@@ -14,7 +14,7 @@ import (
 
 var corsWarningOnce sync.Once
 
-// CORS 跨域中间件。
+// CORS applies the configured cross-origin policy and handles preflight requests.
 func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 	allowedOrigins := normalizeOrigins(cfg.AllowedOrigins)
 	allowAll := slices.Contains(allowedOrigins, "*")
@@ -51,7 +51,7 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 		"accept", "origin", "Cache-Control", "X-Requested-With", "X-API-Key", "X-Admin-UI-Request", "X-User-UI-Request",
 		"X-Request-ID", "X-Client-Request-ID",
 	}
-	// OpenAI Node SDK 会发送 x-stainless-* 请求头，需在 CORS 中显式放行。
+	// Permit the OpenAI Node SDK's x-stainless-* headers in browser requests.
 	openAIProperties := []string{
 		"lang", "package-version", "os", "arch", "retry-count", "runtime",
 		"runtime-version", "async", "helper-method", "poll-helper", "custom-poll-interval", "timeout",
@@ -83,7 +83,7 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 			c.Writer.Header().Set("Access-Control-Expose-Headers", "ETag, Server-Timing, X-Request-ID, X-TokenRouter-Request-ID, X-Sub2API-Request-ID, X-Client-Request-ID")
 			c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 		}
-		// 处理预检请求
+		// End OPTIONS requests with the preflight decision.
 		if c.Request.Method == http.MethodOptions {
 			if originAllowed {
 				c.AbortWithStatus(http.StatusNoContent)

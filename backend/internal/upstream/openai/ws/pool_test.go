@@ -89,7 +89,7 @@ func TestPoolConcurrentOptionsPublication(t *testing.T) {
 	workers.Wait()
 }
 
-// TestPrewarmUpdatesDuringDial 检查迟到连接、剩余拨号名额和忙连接对在线缩容的响应。
+// TestPrewarmUpdatesDuringDial checks late connections and unused dial reservations when capacity shrinks.
 func TestPrewarmUpdatesDuringDial(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                      string
@@ -162,7 +162,7 @@ func TestPrewarmUpdatesDuringDial(t *testing.T) {
 				require.NoError(t, lease.WriteJSON(map[string]any{"type": "response.create"}, time.Second))
 				lease.Release()
 			}
-			// 空闲数量为零时，新请求仍可按需建连，释放后立即回收。
+			// A zero idle limit still permits on-demand dialing; release then reclaims the connection.
 			if tc.maximum == 0 {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
@@ -225,7 +225,7 @@ func BenchmarkOpenAIWSPoolAcquire(b *testing.B) {
 	})
 }
 
-// TestWSPoolConstructionDoesNotStartWorkers 检查后台任务在调用 Start 后启动。
+// TestWSPoolConstructionDoesNotStartWorkers checks that construction leaves worker startup to Start.
 func TestWSPoolConstructionDoesNotStartWorkers(t *testing.T) {
 	pool := NewWSConnPool(nil)
 	t.Cleanup(pool.Close)
@@ -242,7 +242,7 @@ func TestWSPoolConstructionDoesNotStartWorkers(t *testing.T) {
 	}
 }
 
-// TestWSPoolRepeatedStartAndClose 验证并发重复 Start 共享同一启动屏障；关闭后的入口不能再次创建连接或 worker。
+// TestWSPoolRepeatedStartAndClose checks concurrent idempotent startup and rejects acquisition after shutdown.
 func TestWSPoolRepeatedStartAndClose(t *testing.T) {
 	pool := NewWSConnPool(nil)
 	var callers sync.WaitGroup
@@ -264,7 +264,7 @@ func TestWSPoolRepeatedStartAndClose(t *testing.T) {
 	require.ErrorIs(t, err, openai.ErrWSConnClosed)
 }
 
-// TestWSPoolCloseBeforeStart 验证尚未启用的按需资源同样允许关闭，之后不能由迟到请求重新开启。
+// TestWSPoolCloseBeforeStart checks that closing an unused pool prevents later startup.
 func TestWSPoolCloseBeforeStart(t *testing.T) {
 	pool := NewWSConnPool(nil)
 	pool.Close()
@@ -273,7 +273,7 @@ func TestWSPoolCloseBeforeStart(t *testing.T) {
 	require.True(t, pool.closed)
 }
 
-// TestWSPoolExpiredConnectionIsRetiredBeforeHandoff 检查排队请求对过期连接的处理。
+// TestWSPoolExpiredConnectionIsRetiredBeforeHandoff checks ordinary and required waiters after expiry.
 func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		name := "ordinary"
@@ -302,7 +302,7 @@ func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 				_, waiters, _ := pool.ProviderPoolLoad(req.Provider.ID)
 				require.Equal(t, 1, waiters)
 				time.Sleep(2 * time.Millisecond)
-				// 会话仍持有租约时可以完成当前工作。
+				// An active lease can finish its work even after the connection reaches its age limit.
 				require.NoError(t, first.WriteJSONContext(ctx, map[string]string{"type": "response.create"}))
 				first.Release()
 				synctest.Wait()
@@ -321,7 +321,7 @@ func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 	}
 }
 
-// TestWSPoolChecksAgeBetweenCleanupSweeps 检查连接在两次周期清理之间过期的情况。
+// TestWSPoolChecksAgeBetweenCleanupSweeps checks expiry before the next periodic cleanup.
 func TestWSPoolChecksAgeBetweenCleanupSweeps(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -340,7 +340,7 @@ func TestWSPoolChecksAgeBetweenCleanupSweeps(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledAcquireDoesNotWaitForClose 检查取消返回与后台关闭握手的时序。
+// TestWSPoolCanceledAcquireDoesNotWaitForClose checks prompt cancellation during a blocked close handshake.
 func TestWSPoolCanceledAcquireDoesNotWaitForClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
@@ -378,7 +378,7 @@ func TestWSPoolCanceledAcquireDoesNotWaitForClose(t *testing.T) {
 		_, waiters, conns := pool.ProviderPoolLoad(req.Provider.ID)
 		require.Zero(t, waiters)
 		require.Zero(t, conns)
-		// 池关闭需要等清理任务完成，已经取消的请求可以先返回。
+		// Shutdown joins cleanup; the canceled acquisition can return before cleanup finishes.
 		stopped := make(chan struct{})
 		go func() {
 			pool.Close()
@@ -396,7 +396,7 @@ func TestWSPoolCanceledAcquireDoesNotWaitForClose(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledDeliveryClosesInBackground 检查领取租约后、交付前发生取消的情况。
+// TestWSPoolCanceledDeliveryClosesInBackground checks cancellation after acquisition but before delivery.
 func TestWSPoolCanceledDeliveryClosesInBackground(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
@@ -432,7 +432,7 @@ func TestWSPoolCanceledDeliveryClosesInBackground(t *testing.T) {
 	})
 }
 
-// TestWSPoolShutdownCloseDoesNotBlockWaiterExit 检查池关闭期间的等待者退出。
+// TestWSPoolShutdownCloseDoesNotBlockWaiterExit checks that waiters exit during a blocked shutdown close.
 func TestWSPoolShutdownCloseDoesNotBlockWaiterExit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -475,7 +475,7 @@ func TestWSPoolShutdownCloseDoesNotBlockWaiterExit(t *testing.T) {
 	})
 }
 
-// TestWSPoolHandoffPrecedesIdleClose 检查交付租约与关闭多余空闲连接的时序。
+// TestWSPoolHandoffPrecedesIdleClose checks lease delivery while surplus idle connections close.
 func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		name := "ordinary"
@@ -507,7 +507,7 @@ func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 				defer cancel()
 				result := acquireWSInBackground(pool, ctx, req)
 				synctest.Wait()
-				// 两个租约已归还，等待者和归还方接着争取池的访问锁。
+				// Release both leases under the pool lock so the waiter sees both available at its next wakeup.
 				ap.mu.Lock()
 				first.release()
 				second.release()
@@ -545,7 +545,7 @@ func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 	}
 }
 
-// TestWSPoolUnchangedDestinationReusesConnection 检查拨号参数首尾空白的规范化。
+// TestWSPoolUnchangedDestinationReusesConnection checks whitespace normalization of dial parameters.
 func TestWSPoolUnchangedDestinationReusesConnection(t *testing.T) {
 	pool, req := newWSReuseTestPool(1, 1)
 	defer pool.Close()
@@ -562,7 +562,7 @@ func TestWSPoolUnchangedDestinationReusesConnection(t *testing.T) {
 	require.True(t, second.Reused())
 }
 
-// TestWSPoolDestinationCompatibility 检查地址和代理变更后的连接选择。
+// TestWSPoolDestinationCompatibility checks selection after a destination or proxy change.
 func TestWSPoolDestinationCompatibility(t *testing.T) {
 	for _, destination := range []string{"url", "proxy"} {
 		for _, preference := range []string{"ordinary", "preferred", "required"} {
@@ -597,7 +597,7 @@ func TestWSPoolDestinationCompatibility(t *testing.T) {
 	}
 }
 
-// TestWSPoolDestinationChangeKeepsActiveLease 检查目标变更时正在使用的连接。
+// TestWSPoolDestinationChangeKeepsActiveLease checks that a destination change leaves active work usable.
 func TestWSPoolDestinationChangeKeepsActiveLease(t *testing.T) {
 	pool, req := newWSReuseTestPool(2, 2)
 	defer pool.Close()
@@ -612,7 +612,7 @@ func TestWSPoolDestinationChangeKeepsActiveLease(t *testing.T) {
 	require.NoError(t, first.WriteJSONContext(context.Background(), map[string]string{"type": "response.create"}))
 }
 
-// TestWSPoolPrewarmDropsChangedDestination 检查地址和代理变化后迟到的预热结果。
+// TestWSPoolPrewarmDropsChangedDestination checks late prewarm results after destination or proxy changes.
 func TestWSPoolPrewarmDropsChangedDestination(t *testing.T) {
 	for _, destination := range []string{"url", "proxy"} {
 		t.Run(destination, func(t *testing.T) {
@@ -657,7 +657,7 @@ func TestWSPoolPrewarmDropsChangedDestination(t *testing.T) {
 	}
 }
 
-// TestWSPoolWaiterUsesAnyCompatibleConnection 检查另一个会话先结束时的连接交付。
+// TestWSPoolWaiterUsesAnyCompatibleConnection checks handoff when another session finishes first.
 func TestWSPoolWaiterUsesAnyCompatibleConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -689,7 +689,7 @@ func TestWSPoolWaiterUsesAnyCompatibleConnection(t *testing.T) {
 	})
 }
 
-// TestWSPoolIdleLimitExcludesLeasedConnections 检查繁忙期间的空闲连接保留数量。
+// TestWSPoolIdleLimitExcludesLeasedConnections checks idle retention while other connections are busy.
 func TestWSPoolIdleLimitExcludesLeasedConnections(t *testing.T) {
 	pool, req := newWSReuseTestPool(128, 12)
 	defer pool.Close()
@@ -708,7 +708,7 @@ func TestWSPoolIdleLimitExcludesLeasedConnections(t *testing.T) {
 	require.Equal(t, 22, state.Connections)
 }
 
-// TestWSPoolShrinkRespectsBusyAndIdleLimits 检查缩容时忙连接、空闲数量和回收顺序。
+// TestWSPoolShrinkRespectsBusyAndIdleLimits checks idle counts and eviction order while retaining active leases.
 func TestWSPoolShrinkRespectsBusyAndIdleLimits(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
@@ -740,7 +740,7 @@ func TestWSPoolShrinkRespectsBusyAndIdleLimits(t *testing.T) {
 			require.Equal(t, tc.want, state.Connections)
 			require.Equal(t, 1, state.LeasedConnections)
 			require.NoError(t, leases[0].WriteJSONContext(context.Background(), map[string]string{"type": "response.create"}))
-			// 最久未使用的空闲连接先被回收。
+			// Reclaim the least recently used idle connection first.
 			select {
 			case <-leases[1].Conn.closedCh:
 			default:
@@ -753,7 +753,7 @@ func TestWSPoolShrinkRespectsBusyAndIdleLimits(t *testing.T) {
 	}
 }
 
-// TestWSPoolZeroIdleHandsConnectionToWaiter 检查禁留空闲连接时的租约交接。
+// TestWSPoolZeroIdleHandsConnectionToWaiter checks lease handoff when idle retention is disabled.
 func TestWSPoolZeroIdleHandsConnectionToWaiter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
@@ -999,7 +999,7 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsyncCooldown(t *testing.T) {
 	firstDialCount := dialer.DialCount()
 	require.GreaterOrEqual(t, firstDialCount, 2)
 
-	// 人工制造缺口触发新一轮预热需求。
+	// Remove a connection to create demand for another prewarm batch.
 	ap, ok := pool.getProviderPool(providerID)
 	require.True(t, ok)
 	require.NotNil(t, ap)
@@ -1067,7 +1067,7 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsyncFailureSuppress(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 	require.Equal(t, 2, dialer.DialCount())
 
-	// 连续失败达到阈值后，预热进入抑制期。
+	// Consecutive failures at the threshold suppress another prewarm attempt.
 	pool.ensureTargetIdleAsync(providerID)
 	time.Sleep(120 * time.Millisecond)
 	require.Equal(t, 2, dialer.DialCount())
@@ -1084,7 +1084,7 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	provider := &WSPoolProvider{ID: providerID, Type: "apikey"}
 	conn := NewWSConn("busy", providerID, &openAIWSFakeConn{}, nil, nil, "")
 	conn.compatibility = wsCompatibilityForRequest(WSAcquireRequest{Provider: provider, WSURL: "wss://example.com/v1/responses"})
-	require.True(t, conn.tryAcquire()) // 占用连接，触发后续排队
+	require.True(t, conn.tryAcquire()) // Occupy the connection so the next request queues.
 
 	ap := pool.getOrCreateProviderPool(providerID)
 	ap.mu.Lock()
@@ -1154,7 +1154,7 @@ func TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNot
 	require.NoError(t, first.err)
 	require.NotNil(t, first.lease)
 
-	// 拨号和占用期间的等待都计入提供商队列。
+	// Waits during dialing and active leases both count toward the provider queue.
 	require.Eventually(t, func() bool {
 		ap, ok := pool.getProviderPool(provider.ID)
 		if !ok || ap == nil {
@@ -1212,7 +1212,7 @@ func TestOpenAIWSConnPool_PrewarmHintChangeDoesNotInvalidateHealthyDial(t *testi
 	pool.ensureTargetIdleAsync(provider.ID)
 	<-dialer.firstStarted
 
-	// 预热拨号期间 priority 路由提示发生变化，其他参数兼容的连接仍可入池。
+	// A routing hint change during prewarming still allows an otherwise compatible connection into the pool.
 	ap.mu.Lock()
 	ap.lastAcquire = &WSAcquireRequest{
 		Provider: provider,
@@ -1410,7 +1410,7 @@ func TestOpenAIWSConnPool_ReusesPreferredConnWithStableRandomTLSProfileKey(t *te
 	require.Equal(t, 1, dialer.DialCount())
 }
 
-// TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures 验证 WS 握手 beta feature 的归一化与连接复用。
+// TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures checks normalization and reuse of handshake features.
 func TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1499,7 +1499,7 @@ func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *te
 	require.Equal(t, 2, dialer.DialCount())
 }
 
-// TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS 检查 beta 相同、TLS 指纹不同的空闲连接会被替换。
+// TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS checks TLS compatibility independently of beta features.
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1924,7 +1924,7 @@ func TestOpenAIWSConn_ReadAndWriteCanProceedConcurrently(t *testing.T) {
 		readDone <- err
 	}()
 
-	// 让读取先占用 readMu。
+	// Give the reader time to acquire readMu before testing the independent write lock.
 	time.Sleep(20 * time.Millisecond)
 
 	start := time.Now()
@@ -2135,21 +2135,18 @@ func TestOpenAIWSConnPool_Close(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	pool := newStartedWSConnPoolForTest(cfg)
 
-	// Close 应该可以安全调用
 	pool.Close()
 
-	// workerStopCh 应已关闭
 	select {
 	case <-pool.workerStopCh:
-		// 预期：channel 已关闭
 	default:
 		t.Fatal("Close 后 workerStopCh 应已关闭")
 	}
 
-	// 多次调用 Close 不应 panic
+	// Repeated shutdown is safe.
 	pool.Close()
 
-	// nil pool 调用 Close 不应 panic
+	// A nil pool also accepts Close.
 	var nilPool *WSConnPool
 	nilPool.Close()
 }
@@ -2194,11 +2191,9 @@ func TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats(t *testing.T) {
 	require.GreaterOrEqual(t, conn.idleDuration(time.Now()), time.Duration(0))
 	require.False(t, conn.isLeased())
 
-	// 覆盖空上下文路径
 	_, err = conn.readMessage(context.Background())
 	require.NoError(t, err)
 
-	// 覆盖 nil 保护分支
 	var nilConn *WSConn
 	require.ErrorIs(t, nilConn.writeJSONWithTimeout(context.Background(), map[string]any{}, time.Second), errOpenAIWSConnClosed)
 	_, err = nilConn.readMessageWithTimeout(10 * time.Millisecond)
@@ -2293,7 +2288,6 @@ func TestOpenAIWSConnPool_Close_ClosesOnlyIdleConnections(t *testing.T) {
 
 	select {
 	case <-idle.closedCh:
-		// 空闲连接应已关闭。
 	default:
 		t.Fatal("空闲连接应在 Close 时被关闭")
 	}
@@ -2389,7 +2383,7 @@ func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	require.Equal(t, int64(7), metrics.AcquireTotal)
 	require.Equal(t, int64(3), metrics.AcquireReuseTotal)
 
-	// 非 transport metrics dialer 路径
+	// A dialer without transport metrics returns an empty snapshot.
 	pool.clientDialer = &openAIWSFakeDialer{}
 	require.Equal(t, openai.WSTransportMetricsSnapshot{}, pool.SnapshotTransportMetrics())
 	pool.SetClientDialerForTest(nil)
@@ -2405,7 +2399,7 @@ func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	require.Equal(t, time.Duration(0), nilPool.prewarmCooldown())
 	require.Equal(t, 10*time.Second, nilPool.dialTimeout())
 
-	// shouldSuppressPrewarmLocked 覆盖 3 条分支
+	// Missing or expired failure times clear suppression; recent repeated failures retain it.
 	now := time.Now()
 	apNilFail := &openAIWSProviderPool{prewarmFails: 1}
 	require.False(t, pool.shouldSuppressPrewarmLocked(apNilFail, now))
@@ -2417,12 +2411,12 @@ func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	apRecentFail := &openAIWSProviderPool{prewarmFails: openAIWSPrewarmFailureSuppress, prewarmFailAt: now}
 	require.True(t, pool.shouldSuppressPrewarmLocked(apRecentFail, now))
 
-	// recordConnPickDuration 的保护分支
+	// Negative pick durations count as zero; a nil pool ignores them.
 	nilPool.recordConnPickDuration(10 * time.Millisecond)
 	pool.recordConnPickDuration(-10 * time.Millisecond)
 	require.Equal(t, int64(1), pool.metrics.connPickTotal.Load())
 
-	// provider pool 读写分支
+	// Invalid provider IDs and unexpected stored values are handled defensively.
 	require.Nil(t, nilPool.getOrCreateProviderPool(1))
 	require.Nil(t, pool.getOrCreateProviderPool(0))
 	pool.providers.Store(int64(7), "invalid")
@@ -2436,7 +2430,7 @@ func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	_, ok = pool.getProviderPool(8)
 	require.False(t, ok)
 
-	// health check 条件
+	// Idle health checks require a connection that supports pings without a reader.
 	require.False(t, pool.shouldHealthCheckConn(nil))
 	conn := NewWSConn("health", 1, &openAIWSFakeConn{}, nil, nil, "")
 	conn.lastUsedNano.Store(time.Now().Add(-openAIWSConnHealthCheckIdle - time.Second).UnixNano())
@@ -2613,7 +2607,7 @@ func TestOpenAIWSConnPool_TargetConnCountAndPrewarmBranches(t *testing.T) {
 	require.NoError(t, pool.UpdateOptions(*cfg))
 	require.Equal(t, 1, pool.targetConnCountLocked(ap, 1), "minIdle 应被 maxConns 截断")
 
-	// 覆盖 waiters>0 且 target 需要至少 len(conns)+1 的分支
+	// Waiters require a target of at least one more than the current connection count.
 	cfg.MinIdlePerProvider = 0
 	cfg.PoolTargetUtilization = 0.9
 	require.NoError(t, pool.UpdateOptions(*cfg))
@@ -2624,14 +2618,14 @@ func TestOpenAIWSConnPool_TargetConnCountAndPrewarmBranches(t *testing.T) {
 	target := pool.targetConnCountLocked(ap, 4)
 	require.GreaterOrEqual(t, target, len(ap.conns)+1)
 
-	// 提供商池缺失时跳过预热拨号。
+	// Skip prewarm dialing when the provider pool is missing.
 	req := WSAcquireRequest{
 		Provider: &WSPoolProvider{ID: 999, Type: "apikey"},
 		WSURL:    "wss://example.com/v1/responses",
 	}
 	pool.prewarmConns(999, req, 1)
 
-	// prewarm: 拨号失败分支（prewarmFails 累加）
+	// Failed prewarm dials increment the failure count.
 	providerID := int64(1000)
 	cfg.MinIdlePerProvider = 1
 	cfg.MaxIdlePerProvider = 1
@@ -2662,7 +2656,7 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ws url is empty")
 
-	// 无效连接条目被清理后，可以使用释放的容量重新拨号。
+	// Cleaning invalid connection entries frees capacity for a new dial.
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
 	cfg.QueueLimitPerConn = 1
@@ -2682,7 +2676,7 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	require.False(t, lease.Reused())
 	lease.Release()
 
-	// queue full 分支：waiters 达上限
+	// Reject acquisition when the waiter limit is reached.
 	provider2 := &WSPoolProvider{ID: 2002, Type: "apikey"}
 	ap2 := fullPool.getOrCreateProviderPool(provider2.ID)
 	conn := NewWSConn("queue_full", provider2.ID, &openAIWSFakeConn{}, nil, nil, "")
@@ -3000,7 +2994,7 @@ func TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded(t *t
 	require.Equal(t, generation+1, ap.generation)
 	ap.mu.Unlock()
 
-	// ClearProvider 前捕获的预热连接不能在凭据恢复后重新进入连接池。
+	// A prewarm batch captured before ClearProvider cannot reenter the pool after credentials recover.
 	pool.prewarmConns(providerID, req, 1, generation)
 	ap.mu.Lock()
 	require.Empty(t, ap.conns)

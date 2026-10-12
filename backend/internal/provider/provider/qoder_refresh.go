@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderRefreshOptions 绑定站点 token 交换和凭据转换函数，刷新协调器负责持久化。
+// QoderRefreshOptions binds token exchange and credential conversion; the refresh coordinator persists results.
 type QoderRefreshOptions struct {
 	Exchange         qoder.RefreshExchange
 	Transport        QoderTransport
@@ -18,7 +18,7 @@ type QoderRefreshOptions struct {
 	BuildCredentials func(*provider.QoderTokenInfo) map[string]any
 }
 
-// QoderTokenRefresher 编排一次 Qoder 站点刷新。
+// QoderTokenRefresher performs a Qoder site token refresh.
 type QoderTokenRefresher struct {
 	options QoderRefreshOptions
 }

@@ -12,7 +12,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// selectProviderByPreviousResponseIDForCapability 使用已完成分组映射及协议专用映射的提供商层模型校验响应链提供商。
+// selectProviderByPreviousResponseIDForCapability validates the response-chain provider using an already mapped routing model.
 func (s *Compatible) selectProviderByPreviousResponseIDForCapability(
 	ctx context.Context,
 	groupID *int64,
@@ -68,7 +68,7 @@ func (s *Compatible) selectProviderByPreviousResponseIDForCapability(
 	return nil, nil
 }
 
-// ResolveProviderIDByPreviousResponseIDForScheduler 根据提供商层模型解析可继续指定响应链的提供商。
+// ResolveProviderIDByPreviousResponseIDForScheduler resolves a provider eligible to continue the response chain for the routing model.
 func (s *Compatible) ResolveProviderIDByPreviousResponseIDForScheduler(
 	ctx context.Context,
 	groupID *int64,
@@ -91,7 +91,7 @@ func (s *Compatible) ResolveProviderIDByPreviousResponseIDForScheduler(
 	return providerID
 }
 
-// resolveProviderByPreviousResponseIDForCapability 校验响应链绑定提供商的模型、能力和分组白名单。
+// resolveProviderByPreviousResponseIDForCapability checks the bound provider's model, capabilities, and group restrictions.
 func (s *Compatible) resolveProviderByPreviousResponseIDForCapability(
 	ctx context.Context,
 	groupID *int64,
@@ -201,7 +201,7 @@ func (s *Compatible) resolveProviderByPreviousResponseIDForCapability(
 	return providerID, provider, responseID, store
 }
 
-// ResolveTransport 根据当前提供商和启动配置调用 egress 的传输选择规则。
+// ResolveTransport applies egress transport rules to the current provider configuration.
 func (s *Compatible) ResolveTransport(value *gatewayprovider.ExecutionProvider) egress.OpenAIWSProtocolDecision {
 	view := gatewayprovider.ExecutionProtocolRecord(value)
 	if view !=

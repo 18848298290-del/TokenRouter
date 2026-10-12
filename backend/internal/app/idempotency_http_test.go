@@ -24,7 +24,8 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
-// TestIdempotencyHTTPUsesExplicitApplicationCoordinator 检查写入口共享协调器，以及各次装配的处理期限独立生效。
+// TestIdempotencyHTTPUsesExplicitApplicationCoordinator checks shared coordination and independent processing
+// deadlines across application instances.
 func TestIdempotencyHTTPUsesExplicitApplicationCoordinator(t *testing.T) {
 	options := idempotency.DefaultIdempotencyConfig()
 	options.DefaultTTL = 2 * time.Hour
@@ -49,7 +50,7 @@ func TestIdempotencyHTTPUsesExplicitApplicationCoordinator(t *testing.T) {
 		require.Equal(t, 2*time.Hour, handler.DefaultWriteIdempotencyTTL())
 		require.Equal(t, 17*time.Minute, handler.DefaultSystemOperationIdempotencyTTL())
 	}
-	// 同路由的两个入口共享认领结果，并能重放响应。
+	// Two handlers for the same route share claims and can replay responses.
 	calls := 0
 	router := gin.New()
 	request := 0

@@ -30,7 +30,7 @@ func newOpenAIImageConfigPricingResolverForTest(t *testing.T, groupID int64, mod
 	return billingtestkit.PriceResolver(cs, NewBillingService(nil))
 }
 
-// NewBillingService 使用测试目录构造计价器。
+// NewBillingService builds a calculator from the test catalog.
 func NewBillingService(catalog *provider.Service) *billing.Calculator {
 	return billingtestkit.Calculator(catalog, nil)
 }

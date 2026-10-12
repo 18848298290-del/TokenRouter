@@ -13,13 +13,13 @@ import (
 
 const responsesReasoningCacheTTL = 7 * 24 * time.Hour
 
-// ReasoningHistory 通过传入的缓存存取推理历史，操作超时为两秒，缓存有效期为七天。
+// ReasoningHistory caches reasoning text for seven days with a two-second budget per operation.
 type ReasoningHistory struct {
 	Cache ReasoningContentCache
 	Warn  func(string, error)
 }
 
-// Lookup 按 reasoning item ID 读取缓存，缓存不可用或未命中时返回空字符串。
+// Lookup retrieves reasoning text by item ID and returns empty on a miss or unavailable cache.
 func (s *ReasoningHistory) Lookup(itemID string) string {
 	if s == nil || s.Cache == nil {
 		return ""
@@ -34,8 +34,8 @@ func (s *ReasoningHistory) Lookup(itemID string) string {
 	return content
 }
 
-// FromInput 用请求历史里仍带明文的 reasoning item 刷新缓存，
-// 帮助 Redis 清理或跨实例漂移后的 encrypted-only 副本恢复。
+// FromInput refreshes cached reasoning from plaintext items in request history,
+// allowing later encrypted-only items to recover after cache eviction or instance changes.
 func (s *ReasoningHistory) FromInput(inputRaw json.RawMessage) {
 	if s == nil || s.Cache == nil {
 		return
@@ -56,7 +56,7 @@ func (s *ReasoningHistory) FromInput(inputRaw json.RawMessage) {
 	}
 }
 
-// FromEvents 从 Responses 流事件里提取已完成的 reasoning item。
+// FromEvents caches completed reasoning items from Responses stream events.
 func (s *ReasoningHistory) FromEvents(events []protocolopenai.ResponsesStreamEvent) {
 	for _, event := range events {
 		if event.Type == "response.output_item.done" && event.Item != nil {
@@ -65,7 +65,7 @@ func (s *ReasoningHistory) FromEvents(events []protocolopenai.ResponsesStreamEve
 	}
 }
 
-// FromOutput 从非流式 Responses 输出中提取 reasoning item。
+// FromOutput caches reasoning items from a non-streaming Responses output.
 func (s *ReasoningHistory) FromOutput(output []protocolopenai.ResponsesOutput) {
 	for i := range output {
 		s.cacheItem(&output[i])
@@ -87,7 +87,8 @@ func (s *ReasoningHistory) cacheItem(item *protocolopenai.ResponsesOutput) {
 	}
 }
 
-// Store 在独立 context 中写入推理缓存，客户端断开后仍可完成上游排水。写入失败时记录日志，响应继续输出。
+// Store writes with an independent context so client cancellation does not interrupt caching during upstream draining.
+// It reports write failures through Warn and lets response output continue.
 func (s *ReasoningHistory) Store(itemID, content string) {
 	if s == nil || s.Cache == nil {
 		return

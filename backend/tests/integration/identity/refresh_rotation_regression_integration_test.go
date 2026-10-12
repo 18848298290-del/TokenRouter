@@ -19,14 +19,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// refreshReadBarrier 让两个请求都读取到原凭据，再同时进入轮换，验证真实 Redis 原子消费。
+// refreshReadBarrier lets both requests read one credential before racing Redis consumption.
 type refreshReadBarrier struct {
 	identity.RefreshTokenCache
 	arrived chan struct{}
 	release chan struct{}
 }
 
-// refreshDeleteFailure 同时覆盖旧删除入口与新消费入口，不模拟 Redis 的成功行为。
+// refreshDeleteFailure injects failures into both deletion and consumption methods.
 type refreshDeleteFailure struct {
 	identity.RefreshTokenCache
 	failure error

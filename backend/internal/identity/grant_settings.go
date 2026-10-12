@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// 默认接纳值和存储键保持原格式。
+// Signup-grant defaults and persistent setting keys.
 const (
 	defaultAuthSourceBalance                            = 0
 	defaultAuthSourceConcurrency                        = 5
@@ -113,28 +113,28 @@ var (
 	}
 )
 
-// GrantSettingsStore 提供赠送配置的单键读取和批量读写。
+// GrantSettingsStore reads and writes signup-grant settings.
 type GrantSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 	GetMultiple(context.Context, []string) (map[string]string, error)
 	SetMultiple(context.Context, map[string]string) error
 }
 
-// GrantSettingsOptions 只包含启动默认值与只读套餐引用校验。
+// GrantSettingsOptions contains startup defaults and a subscription-plan validator.
 type GrantSettingsOptions struct {
 	DefaultBalance     float64
 	DefaultConcurrency int
 	ValidatePlans      func(context.Context, []DefaultSubscriptionSetting) error
 }
 
-// GrantSettings 拥有注册和首次绑定的默认配置，实际资金变更仍由 billing 承担。
+// GrantSettings reads signup and first-binding defaults; billing applies balance changes.
 type GrantSettings struct {
 	settingRepo GrantSettingsStore
 	options     GrantSettingsOptions
 }
 
 type authSourceDefaultKeySet struct {
-	// source 标识认证来源。
+	// source identifies the authentication provider.
 	source           string
 	balance          string
 	concurrency      string
@@ -143,7 +143,7 @@ type authSourceDefaultKeySet struct {
 	grantOnFirstBind string
 }
 
-// NewGrantSettings 绑定赠送设置存储和套餐校验函数。
+// NewGrantSettings binds the settings store and subscription-plan validator.
 func NewGrantSettings(repo GrantSettingsStore, options GrantSettingsOptions) *GrantSettings {
 	if options.ValidatePlans == nil {
 		options.ValidatePlans = func(ctx context.Context, items []DefaultSubscriptionSetting) error {
@@ -153,7 +153,7 @@ func NewGrantSettings(repo GrantSettingsStore, options GrantSettingsOptions) *Gr
 	return &GrantSettings{settingRepo: repo, options: options}
 }
 
-// GetDefaultConcurrency 读取默认并发数，读取失败或值非法时使用启动默认值。
+// GetDefaultConcurrency returns the configured limit or the startup default on read or parse failure.
 func (s *GrantSettings) GetDefaultConcurrency(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultConcurrency)
 	if err != nil {
@@ -165,7 +165,7 @@ func (s *GrantSettings) GetDefaultConcurrency(ctx context.Context) int {
 	return s.options.DefaultConcurrency
 }
 
-// GetDefaultBalance 读取默认余额，读取失败或值非法时使用启动默认值。
+// GetDefaultBalance returns the configured balance or the startup default on read or parse failure.
 func (s *GrantSettings) GetDefaultBalance(ctx context.Context) float64 {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultBalance)
 	if err != nil {
@@ -177,7 +177,7 @@ func (s *GrantSettings) GetDefaultBalance(ctx context.Context) float64 {
 	return s.options.DefaultBalance
 }
 
-// GetDefaultSubscriptions 读取默认赠送订阅，读取失败时返回 nil。
+// GetDefaultSubscriptions returns configured signup subscriptions, or nil on read failure.
 func (s *GrantSettings) GetDefaultSubscriptions(ctx context.Context) []DefaultSubscriptionSetting {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultSubscriptions)
 	if err != nil {
@@ -186,7 +186,7 @@ func (s *GrantSettings) GetDefaultSubscriptions(ctx context.Context) []DefaultSu
 	return ParseDefaultSubscriptions(value)
 }
 
-// GetAuthSourceDefaultSettings 批量读取并解析各认证来源的赠送设置。
+// GetAuthSourceDefaultSettings reads and parses grant settings for all authentication providers.
 func (s *GrantSettings) GetAuthSourceDefaultSettings(ctx context.Context) (*AuthSourceDefaultSettings, error) {
 	keys := AuthSourceSettingKeys()
 
@@ -198,7 +198,7 @@ func (s *GrantSettings) GetAuthSourceDefaultSettings(ctx context.Context) (*Auth
 	return parseAuthSourceSettings(settings), nil
 }
 
-// ResolveAuthSourceGrantSettings 按注册或首次绑定开关，将来源赠送设置合并到全局默认值。
+// ResolveAuthSourceGrantSettings combines global and provider defaults according to the signup or first-binding grant flag.
 func (s *GrantSettings) ResolveAuthSourceGrantSettings(ctx context.Context, signupSource string, firstBind bool) (ProviderDefaultGrantSettings, bool, error) {
 	result := ProviderDefaultGrantSettings{
 		Balance:       s.GetDefaultBalance(ctx),
@@ -227,7 +227,7 @@ func (s *GrantSettings) ResolveAuthSourceGrantSettings(ctx context.Context, sign
 	return mergeProviderDefaultGrantSettings(result, providerDefaults), true, nil
 }
 
-// UpdateAuthSourceDefaultSettings 校验并批量保存各认证来源的赠送设置。
+// UpdateAuthSourceDefaultSettings validates and saves grant settings for all providers.
 func (s *GrantSettings) UpdateAuthSourceDefaultSettings(ctx context.Context, settings *AuthSourceDefaultSettings) error {
 	updates, err := s.PrepareAuthSourceDefaults(ctx, settings)
 	if err != nil {
@@ -301,8 +301,8 @@ func mergeProviderDefaultGrantSettings(globalDefaults ProviderDefaultGrantSettin
 		GrantOnFirstBind: providerDefaults.GrantOnFirstBind,
 	}
 
-	// 字段是否配置按键是否存在判断，管理员保存与解析默认值相同的值时也会覆盖 globalDefaults。
-	// 例如管理员保存并发 5、全局默认值为 1 时，该渠道的新用户取得并发 5。
+	// Nonnegative balances and positive concurrency values override the global defaults,
+	// including values equal to the provider parser defaults.
 	if providerDefaults.Balance >= 0 {
 		result.Balance = providerDefaults.Balance
 	}
@@ -342,7 +342,7 @@ func (s *GrantSettings) PrepareAuthSourceDefaults(ctx context.Context, settings 
 	return encodeAuthSourceSettings(settings), nil
 }
 
-// AuthSourceSettingKeys 返回按认证来源排列的设置键清单。
+// AuthSourceSettingKeys returns setting keys grouped by authentication provider.
 func AuthSourceSettingKeys() []string {
 	return []string{
 		SettingKeyAuthSourceDefaultEmailBalance,
@@ -384,7 +384,7 @@ func AuthSourceSettingKeys() []string {
 	}
 }
 
-// parseAuthSourceSettings 解析各认证来源的默认赠送设置。
+// parseAuthSourceSettings parses grant defaults for each authentication provider.
 func parseAuthSourceSettings(settings map[string]string) *AuthSourceDefaultSettings {
 	return &AuthSourceDefaultSettings{
 		Email:                        parseProviderDefaultGrantSettings(settings, emailAuthSourceDefaultKeys),
@@ -398,7 +398,7 @@ func parseAuthSourceSettings(settings map[string]string) *AuthSourceDefaultSetti
 	}
 }
 
-// encodeAuthSourceSettings 编码赠送设置，金额保留八位小数，空订阅编码为空数组。
+// encodeAuthSourceSettings encodes balances with eight decimal places and nil subscriptions as empty arrays.
 func encodeAuthSourceSettings(settings *AuthSourceDefaultSettings) map[string]string {
 	updates := make(map[string]string, 36)
 	writeProviderDefaultGrantUpdates(updates, emailAuthSourceDefaultKeys, settings.Email)

@@ -10,7 +10,7 @@ import (
 
 var defaultIdempotencyMetrics idempotencyMetrics
 
-// IdempotencyMetricsSnapshot 包含进程内累计的幂等指标。
+// IdempotencyMetricsSnapshot contains cumulative process-wide idempotency metrics.
 type IdempotencyMetricsSnapshot struct {
 	ClaimTotal                uint64  `json:"claim_total"`
 	ReplayTotal               uint64  `json:"replay_total"`
@@ -31,13 +31,13 @@ type idempotencyMetrics struct {
 	storeUnavailableTotal    atomic.Uint64
 }
 
-// Observer 输出已脱敏的幂等事件消息。
+// Observer receives idempotency event messages prepared by the caller.
 type Observer interface {
 	Observe(component, message string)
 }
 type ObserverFunc func(component, message string)
 
-// GetIdempotencyMetricsSnapshot 返回当前幂等指标快照。
+// GetIdempotencyMetricsSnapshot reads the current process-wide idempotency counters.
 func GetIdempotencyMetricsSnapshot() IdempotencyMetricsSnapshot {
 	totalMicros := defaultIdempotencyMetrics.processingDurationMicros.Load()
 	return IdempotencyMetricsSnapshot{
@@ -80,7 +80,7 @@ func (c *IdempotencyCoordinator) recordIdempotencyProcessingDuration(endpoint, s
 	c.logIdempotencyMetric("idempotency_processing_duration_ms", endpoint, scope, strconv.FormatFloat(duration.Seconds()*1000, 'f', 3, 64), attrs)
 }
 
-// RecordIdempotencyStoreUnavailable 记录幂等存储不可用事件（用于降级路径观测）。
+// RecordIdempotencyStoreUnavailable records a storage failure and the chosen handling strategy.
 func (c *IdempotencyCoordinator) RecordIdempotencyStoreUnavailable(endpoint, scope, strategy string) {
 	defaultIdempotencyMetrics.storeUnavailableTotal.Add(1)
 	attrs := map[string]string{}
@@ -148,7 +148,7 @@ func safeAuditField(v string) string {
 	if value == "" {
 		return "-"
 	}
-	// 日志按 key=value 输出，替换空白避免解析歧义。
+	// Replace whitespace so values remain single fields in key=value logs.
 	value = strings.ReplaceAll(value, "\n", "_")
 	value = strings.ReplaceAll(value, "\r", "_")
 	value = strings.ReplaceAll(value, "\t", "_")
@@ -166,7 +166,7 @@ func builderWriteByte(builder *strings.Builder, value byte) {
 
 func (f ObserverFunc) Observe(component, message string) { f(component, message) }
 
-// notifyObserver 调用当前实例的观察函数。
+// notifyObserver delivers the message when an observer is configured.
 func notifyObserver(observer Observer, component, message string) {
 	if observer != nil {
 		observer.Observe(component, message)

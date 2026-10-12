@@ -57,7 +57,7 @@ type openAIQuotaRefreshEnvelope struct {
 	Data OpenAIQuotaRefreshResponse `json:"data"`
 }
 
-// openAIShadowFixture 返回影子创建结果或测试指定的错误。
+// openAIShadowFixture returns a shadow creation result or the configured error.
 type openAIShadowFixture struct {
 	OpenAIAdminOperations
 	createSparkShadowErr error
@@ -204,15 +204,13 @@ func TestCreateShadow_ReturnsCreatedShadow(t *testing.T) {
 	data, ok := resp["data"].(map[string]any)
 	require.True(t, ok, "response should have data field")
 
-	// parent_provider_id 必须存在并等于路径参数。
+	// The response identifies the parent selected by the path parameter.
 	pid, ok := data["parent_provider_id"].(float64)
 	require.True(t, ok, "parent_provider_id should be present")
 	require.Equal(t, float64(42), pid)
 
-	// quota_dimension 必须是 spark。
 	require.Equal(t, providercore.QuotaDimensionSpark, data["quota_dimension"])
 
-	// name 需要原样返回。
 	require.Equal(t, "p-spark", data["name"])
 }
 
@@ -244,7 +242,7 @@ func TestCreateShadow_ServiceError(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 
-	// 普通服务错误由 ErrorFrom 返回 HTTP 500。
+	// An unclassified service error maps to HTTP 500 through ErrorFrom.
 	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest)
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }

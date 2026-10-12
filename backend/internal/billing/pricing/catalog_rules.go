@@ -10,20 +10,20 @@ import (
 )
 
 var (
-	// AboveTierPricePattern 匹配目录中的长上下文绝对价字段。
-	// 服务档后缀和 cache 侧字段不参与阈值及倍率折算。
+	// AboveTierPricePattern matches absolute long-context token prices in catalog entries.
+	// Service-tier suffixes and cache fields do not contribute to this threshold conversion.
 	AboveTierPricePattern = regexp.MustCompile(`^(input|output)_cost_per_token_above_(\d+)k_tokens$`)
-	// CacheTierPricePattern 匹配缓存长上下文单价字段，供价格数据校验告警使用。
-	// 组 1 为缓存基础价字段，组 2 为 1 小时缓存时长段，组 3 为服务档后缀。
+	// CacheTierPricePattern matches long-context cache prices for validation diagnostics.
+	// Groups capture the base cache field, optional 1h TTL segment, and service-tier suffix.
 	CacheTierPricePattern = regexp.MustCompile(`^(cache_(?:creation|read)_input_token_cost)(_above_1hr)?_above_\d+k_tokens((?:_[a-z]+)?)$`)
 
-	// 模型广场可下发的模态取值白名单与固定输出顺序。
+	// MarketplaceModalityOrder lists supported display modalities in output order.
 	MarketplaceModalityOrder = []string{"text", "image", "audio", "video"}
 )
 
-// DeriveLongContextFromAboveTierFields 将目录中的 above_XXXk 绝对价折算为本 fork
-// 计费模型使用的阈值和倍率。多个阈值同时存在时取最小阈值；cache 侧 above 价由
-// 计费核心按输入倍率统一处理，不在此处单独写入结构体。
+// DeriveLongContextFromAboveTierFields converts above_XXXk prices to a threshold and multipliers.
+// When several thresholds exist, it selects the smallest. Billing applies the input
+// multiplier to cache prices, so this conversion does not copy cache-specific above prices.
 func DeriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *CatalogModelPricing) {
 	if pricing == nil ||
 		pricing.LongContextInputTokenThreshold > 0 ||
@@ -82,7 +82,7 @@ func DeriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *Cat
 	if tier.output > 0 && pricing.OutputCostPerToken > 0 {
 		outputMultiplier = tier.output / pricing.OutputCostPerToken
 	}
-	// above 价格没有高于基础价时不创建阶梯，避免错误目录导致降价。
+	// Create a context tier only when at least one price increases over its base price.
 	if inputMultiplier <= 1 && outputMultiplier <= 1 {
 		return
 	}
@@ -91,7 +91,7 @@ func DeriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *Cat
 	pricing.LongContextOutputCostMultiplier = outputMultiplier
 }
 
-// IsLopsidedLongContextLadder 判断折算后的阶梯是否只有输入或输出一侧有附加费。
+// IsLopsidedLongContextLadder reports whether a context tier increases only one of input and output prices.
 func IsLopsidedLongContextLadder(pricing *CatalogModelPricing) bool {
 	if pricing == nil || pricing.LongContextInputTokenThreshold <= 0 {
 		return false
@@ -99,7 +99,7 @@ func IsLopsidedLongContextLadder(pricing *CatalogModelPricing) bool {
 	return (pricing.LongContextInputCostMultiplier > 1) != (pricing.LongContextOutputCostMultiplier > 1)
 }
 
-// OrphanCacheTierFields 找出没有可回落基础价的 cache above 字段，供加载时告警。
+// OrphanCacheTierFields finds positive cache above prices with no positive base price for loader diagnostics.
 func OrphanCacheTierFields(rawEntry json.RawMessage) []string {
 	if !bytes.Contains(rawEntry, []byte("_above_")) {
 		return nil
@@ -128,7 +128,7 @@ func OrphanCacheTierFields(rawEntry json.RawMessage) []string {
 	return orphans
 }
 
-// SanitizeModalities 过滤定价文件中的非模态取值并去重，按固定顺序输出。
+// SanitizeModalities filters and deduplicates modalities in the fixed display order.
 func SanitizeModalities(values []string) []string {
 	present := make(map[string]bool, len(values))
 	for _, value := range values {
@@ -143,14 +143,14 @@ func SanitizeModalities(values []string) []string {
 	return out
 }
 
-// DeriveModalities 从定价条目合成输入/输出模态：supported_modalities 缺失的一侧
-// 用 mode 兜底，再用 supports_* 标记和图片输入价补充（图片编辑体现为图片输入价）。
+// DeriveModalities fills missing input or output modalities from mode, then supplements them
+// with supports_* flags and image-input pricing, which can indicate image editing.
 func DeriveModalities(p *CatalogModelPricing) ([]string, []string) {
 	if p == nil {
 		return nil, nil
 	}
 
-	// 复制后再追加，避免并发查询时写共享底层数组（pricingData 里的切片被多个请求复用）。
+	// Copy before appending because concurrent catalog queries share the source slice backing arrays.
 	input := append([]string{}, p.SupportedModalities...)
 	output := append([]string{}, p.SupportedOutputModalities...)
 	if len(input) == 0 || len(output) == 0 {
@@ -186,7 +186,7 @@ func DeriveModalities(p *CatalogModelPricing) ([]string, []string) {
 	return in, out
 }
 
-// ModalitiesFromMode 按 模型目录 mode 推断基础模态；未知 mode 一律按文字模型处理。
+// ModalitiesFromMode infers base modalities from mode, defaulting unknown modes to text input and output.
 func ModalitiesFromMode(mode string) ([]string, []string) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "image_generation":
@@ -198,18 +198,18 @@ func ModalitiesFromMode(mode string) ([]string, []string) {
 	case "realtime":
 		return []string{"text", "audio"}, []string{"text", "audio"}
 	default:
-		// chat/responses/completion 等对话类模式至少支持文字输入输出。
+		// Conversational modes use text as their base input and output modality.
 		return []string{"text"}, []string{"text"}
 	}
 }
 
-// BuildModelLookupCandidates 为价格和属性提供相同的完整模型身份。
+// BuildModelLookupCandidates supplies the same full identity candidates for prices and attributes.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_metadata_lookup
 func BuildModelLookupCandidates(model string) []string {
 	return BuildModelIdentityCandidates(model)
 }
 
-// BuildModelIdentityCandidates 仅解析已知 Google 资源路径，保留供应商限定名和版本。
+// BuildModelIdentityCandidates normalizes known Google resource paths while retaining vendor qualifiers and versions.
 func BuildModelIdentityCandidates(model string) []string {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" {
@@ -223,7 +223,7 @@ func BuildModelIdentityCandidates(model string) []string {
 }
 
 func NormalizeModelNameForPricing(model string) string {
-	// 规范资源路径和名称写法，保留型号及档位。
+	// Strip protocol resource prefixes while retaining model names and tier suffixes.
 	model = strings.TrimSpace(model)
 	model = strings.TrimLeft(model, "/")
 	model = strings.TrimPrefix(model, "models/")

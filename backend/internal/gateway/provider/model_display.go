@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// ModelDisplayCatalogue 将统一目录条目转换为客户端展示字段。
+// ModelDisplayCatalogue converts unified catalogue entries into client-facing display fields.
 type ModelDisplayCatalogue struct{ Source modelcatalog.Reader }
 
 func (c ModelDisplayCatalogue) ModelAttributes(model string) modelcatalog.Attributes {
@@ -17,7 +17,7 @@ func (c ModelDisplayCatalogue) ModelAttributes(model string) modelcatalog.Attrib
 	return c.Source.ModelEntry(model).Attributes
 }
 
-// Model 保留请求 ID，名称和厂商按完整身份查询统一目录。
+// Model keeps the requested model ID and looks up its full identity for the display name and vendor.
 func (c ModelDisplayCatalogue) Model(id string) modeldisplay.OpenAIModel {
 	model := modeldisplay.OpenAIModel{ID: id, Object: "model", Type: "model", OwnedBy: "tokenrouter", DisplayName: id}
 	if c.Source != nil {
@@ -32,7 +32,7 @@ func (c ModelDisplayCatalogue) Model(id string) modeldisplay.OpenAIModel {
 	return model
 }
 
-// GeminiModel 生成已通过协议检查的 Gemini 模型资源。
+// GeminiModel formats a Gemini model resource. Callers check protocol eligibility first.
 func (c ModelDisplayCatalogue) GeminiModel(id string, _ bool) modeldisplay.GeminiModel {
 	id = strings.TrimPrefix(id, "models/")
 	return modeldisplay.GeminiModel{Name: "models/" + id, DisplayName: c.Model(id).DisplayName, SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"}}

@@ -12,7 +12,7 @@ import (
 )
 
 func TestGrokTeamModelRateLimit_MarksAndFiltersSiblings(t *testing.T) {
-	// 使用唯一团队 ID，避免与其他测试相互影响。
+	// Use a time-qualified team ID to separate this fixture's cooldown state.
 	team := "team-test-" + time.Now().Format("150405.000")
 	a1 := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -65,8 +65,8 @@ func TestGrokTeamModelRateLimit_Expires(t *testing.T) {
 	}
 	past := time.Now().Add(-time.Minute)
 	providercore.MarkGrokTeamModelRateLimit(gatewayprovider.ExecutionRecord(a), "grok-4.5", past)
-	// mark 会把已过期截止时间校正为从当前时间起的默认 TTL，因此通过直接写入存储验证过期清理。
-	// 传入过去时间时不会采用 resolveGrokTeamRateLimitUntil 路径，mark 会在截止时间不晚于当前时间时使用当前时间加默认时长。
+	// Marking an expired deadline substitutes the default TTL from the current time.
+	// The resulting cooldown must therefore still be active.
 	require.True(t, isGrokTeamModelRateLimited(a, "grok-4.5", time.Now()))
 }
 

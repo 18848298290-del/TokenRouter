@@ -60,7 +60,6 @@ func TestExtractGeminiCLISessionHash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 创建测试上下文
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
@@ -68,10 +67,8 @@ func TestExtractGeminiCLISessionHash(t *testing.T) {
 				c.Request.Header.Set("x-gemini-api-privileged-user-id", tt.privilegedUserID)
 			}
 
-			// 调用函数
 			result := ExtractGeminiCLISessionHash(c, []byte(tt.body))
 
-			// 验证结果
 			if tt.wantEmpty {
 				require.Empty(t, result, "expected empty session hash")
 			} else {

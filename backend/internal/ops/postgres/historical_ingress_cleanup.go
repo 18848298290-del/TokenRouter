@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// HistoricalIngressCleanup 按主键分页清理截止时间前的分析记录。
+// HistoricalIngressCleanup pages through historical error records by primary key for cleanup.
 type HistoricalIngressCleanup struct{ db *sql.DB }
 
 func NewHistoricalIngressCleanup(db *sql.DB) *HistoricalIngressCleanup {

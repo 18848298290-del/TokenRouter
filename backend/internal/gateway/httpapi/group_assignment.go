@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GroupAssignmentAccess 是 HTTP 门禁使用的只读分组资格数据。
+// GroupAssignmentAccess contains read-only group eligibility for HTTP admission.
 type (
 	GroupAssignmentAccess  struct{ Loaded, Assigned, CompositeNoGroup bool }
 	GroupAssignmentOptions struct {
@@ -16,7 +16,8 @@ type (
 	}
 )
 
-// RequireGroupAssignment 保留未分组裁决与错误顺序，普通 Key 不读取请求体。
+// RequireGroupAssignment rejects loaded keys without a group unless the composite endpoint permits none; it does not
+// read the body.
 func RequireGroupAssignment(options GroupAssignmentOptions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		access := options.Access(c)
@@ -32,7 +33,7 @@ func RequireGroupAssignment(options GroupAssignmentOptions) gin.HandlerFunc {
 	}
 }
 
-// EffectiveGroupAssignment 读取已完成 Key 认证和复合选组后的原生请求快照。
+// EffectiveGroupAssignment reads group state after key authentication and composite group selection.
 func EffectiveGroupAssignment(c *gin.Context) GroupAssignmentAccess {
 	key, ok := EffectiveAPIKey(c)
 	if !ok || key == nil {

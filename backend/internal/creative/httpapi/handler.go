@@ -20,20 +20,20 @@ import (
 )
 
 const (
-	// 创作台 multipart 单字段大小上限：配置值通过 limit+1 读取检测，避免静默截断。
+	// creativeMaxUploadPartSize is the default file-part limit; reading limit+1 detects oversize files.
 	creativeMaxUploadPartSize = 40 << 20
 
-	// multipart 请求体除图片外还包含字段与边界，预留少量空间后再套用总输入上限。
+	// Allow multipart fields and boundaries in addition to the image input byte limit.
 	creativeMultipartOverheadBytes = 1 << 20
 )
 
-// CreativeHandler 处理创作台用户侧请求。
+// CreativeHandler handles user-facing creative requests.
 type CreativeHandler struct {
 	enter   func() (func(), error)
 	service CreativeUseCases
 }
 
-// creativeCreateRunRequest 是创建任务 multipart 报文的解析结果。
+// creativeCreateRunRequest contains parsed multipart run inputs.
 type creativeCreateRunRequest struct {
 	GroupID       int64
 	Model         string
@@ -48,7 +48,7 @@ type creativeCreateRunRequest struct {
 	ThinkingLevel string
 }
 
-// CreativeUseCases 提供创作台 HTTP 处理器调用的任务操作。
+// CreativeUseCases supplies run operations to the HTTP handler.
 type CreativeUseCases interface {
 	ListModels(context.Context, int64) (*creative.CreativeModelsResponse, error)
 	GetCapabilities(context.Context) *creative.CreativeCapabilitiesResponse
@@ -61,12 +61,12 @@ type CreativeUseCases interface {
 	AckOutput(context.Context, creative.CreativeRunScope, string, int) error
 }
 
-// NewCreativeHandler 创建创作台 handler。
+// NewCreativeHandler creates a handler with the supplied run operations.
 func NewCreativeHandler(service CreativeUseCases) *CreativeHandler {
 	return &CreativeHandler{service: service}
 }
 
-// creativeRunScopeFromRequest 解析创作台浏览器工作区并绑定当前用户身份。
+// creativeRunScopeFromRequest validates the browser workspace and binds it to the authenticated user.
 func creativeRunScopeFromRequest(c *gin.Context, userID int64) (creative.CreativeRunScope, error) {
 	workspaceID, err := creative.NormalizeCreativeWorkspaceID(c.GetHeader(creative.CreativeWorkspaceHeader))
 	if err != nil {
@@ -75,7 +75,7 @@ func creativeRunScopeFromRequest(c *gin.Context, userID int64) (creative.Creativ
 	return creative.CreativeRunScope{UserID: userID, WorkspaceID: workspaceID}, nil
 }
 
-// ListModels 返回当前用户可用的分组 + 图片模型组合。
+// ListModels returns group and image-model combinations available to the current user.
 // GET /api/v1/creative/models
 func (h *CreativeHandler) ListModels(c *gin.Context) {
 	if h.enter != nil {
@@ -97,11 +97,11 @@ func (h *CreativeHandler) ListModels(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// 面板 envelope 的 data 直接放数组，避免再包一层 {data: [...]}。
+	// Place the array directly in the response envelope data field.
 	response.Success(c, got.Data)
 }
 
-// ListCapabilities 返回创作台输入限制与允许的图片 MIME 类型。
+// ListCapabilities returns creative input limits and accepted image MIME types.
 // GET /api/v1/creative/capabilities
 func (h *CreativeHandler) ListCapabilities(c *gin.Context) {
 	if h.enter != nil {
@@ -120,7 +120,7 @@ func (h *CreativeHandler) ListCapabilities(c *gin.Context) {
 	response.Success(c, h.service.GetCapabilities(c.Request.Context()))
 }
 
-// CreateRun 解析 multipart/form-data 并创建创作台任务。
+// CreateRun parses multipart/form-data and creates a creative run.
 // POST /api/v1/creative/runs
 func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	if h.enter != nil {
@@ -150,7 +150,7 @@ func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	if h.service != nil && h.service.MaxTotalInputBytes() > 0 {
 		totalInputLimit = h.service.MaxTotalInputBytes()
 	}
-	// 先限制整个请求体，避免解析器在服务层总量校验前累积任意多的文件。
+	// Limit the body before parsing so uploaded files cannot accumulate beyond the service input limit.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, totalInputLimit+creativeMultipartOverheadBytes)
 	req, err := parseCreativeCreateRunMultipart(c, partLimit, totalInputLimit)
 	if err != nil {
@@ -181,10 +181,10 @@ func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	response.Success(c, got)
 }
 
-// parseCreativeCreateRunMultipart 手工解析 multipart 表单：
-// 字段 group_id/model/operation/prompt/image_size/aspect_ratio/quality/background/
-// thinking_level，
-// source_images 接收多个上传文件，mask 接收单个上传文件。
+// parseCreativeCreateRunMultipart parses run fields and file parts under byte limits.
+// It accepts model, operation, prompt, size, aspect ratio, quality, background,
+// thinking level, and group ID fields.
+// source_images accepts multiple uploads; mask supplies a single image.
 func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit int64) (*creativeCreateRunRequest, error) {
 	contentType := c.GetHeader("Content-Type")
 	_, params, err := mime.ParseMediaType(contentType)
@@ -279,7 +279,7 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 		case "quality":
 			req.Quality = value
 		case "output_format", "output_compression", "response_mime_type":
-			// 创作台统一输出 PNG，旧格式参数不再兼容。
+			// Output format is determined by the provider adapter; client format options are rejected.
 			return nil, creative.ErrCreativeInvalidParams
 		case "background":
 			req.Background = strings.ToLower(value)
@@ -293,7 +293,7 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 	return req, nil
 }
 
-// normalizeCreativeUploadMime 归一化上传文件 MIME；缺失或非法时按字节魔数嗅探。
+// normalizeCreativeUploadMime normalizes known image MIME types, then tries byte signatures.
 func normalizeCreativeUploadMime(headerMIME string, data []byte) string {
 	switch strings.ToLower(strings.TrimSpace(headerMIME)) {
 	case "image/png":
@@ -315,7 +315,7 @@ func normalizeCreativeUploadMime(headerMIME string, data []byte) string {
 	return strings.ToLower(strings.TrimSpace(headerMIME))
 }
 
-// ListRuns 返回当前用户的任务列表。
+// ListRuns returns runs for the authenticated user and browser workspace.
 // GET /api/v1/creative/runs
 func (h *CreativeHandler) ListRuns(c *gin.Context) {
 	if h.enter != nil {
@@ -347,11 +347,11 @@ func (h *CreativeHandler) ListRuns(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// 面板 envelope 的 data 直接放数组，前端按数组或 {items,total} 宽容解析。
+	// Place the run array directly in the response envelope data field.
 	response.Success(c, got.Data)
 }
 
-// ListActiveRuns 返回所有尚未进入可交付终态的任务，使用不透明游标分页。
+// ListActiveRuns pages runs awaiting a deliverable terminal state using an opaque cursor.
 // GET /api/v1/creative/runs/active?limit=100&cursor=<opaque>
 func (h *CreativeHandler) ListActiveRuns(c *gin.Context) {
 	if h.enter != nil {
@@ -410,7 +410,7 @@ func (h *CreativeHandler) ListActiveRuns(c *gin.Context) {
 	})
 }
 
-// GetRun 返回单个任务详情。
+// GetRun returns details for a run in the authenticated browser workspace.
 // GET /api/v1/creative/runs/:id
 func (h *CreativeHandler) GetRun(c *gin.Context) {
 	if h.enter != nil {
@@ -440,7 +440,7 @@ func (h *CreativeHandler) GetRun(c *gin.Context) {
 	response.Success(c, got)
 }
 
-// GetOutputContent 返回临时输出图片字节；过期返回 410 风格错误。
+// GetOutputContent returns transient image bytes or an expiry error mapped to HTTP 410.
 // GET /api/v1/creative/runs/:id/outputs/:index/content
 func (h *CreativeHandler) GetOutputContent(c *gin.Context) {
 	if h.enter != nil {
@@ -477,7 +477,7 @@ func (h *CreativeHandler) GetOutputContent(c *gin.Context) {
 	c.Data(http.StatusOK, content.ContentType, content.Content)
 }
 
-// AckOutput 客户端确认接收后删除临时输出。
+// AckOutput records client receipt and requests deletion of the transient output.
 // POST /api/v1/creative/runs/:id/outputs/:index/ack
 func (h *CreativeHandler) AckOutput(c *gin.Context) {
 	if h.enter != nil {
@@ -511,5 +511,5 @@ func (h *CreativeHandler) AckOutput(c *gin.Context) {
 	response.Success(c, gin.H{"acked": true})
 }
 
-// BindActivity 在构造阶段绑定任务入口关闭屏障，释放覆盖完整 HTTP 流式输出。
+// BindActivity installs the shutdown admission check before serving requests; activity covers the response.
 func (h *CreativeHandler) BindActivity(enter func() (func(), error)) { h.enter = enter }

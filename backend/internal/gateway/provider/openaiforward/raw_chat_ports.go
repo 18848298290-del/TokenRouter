@@ -31,10 +31,10 @@ type RawChatPorts interface {
 	UpdateGrokUsage(context.Context, string, http.Header, int)
 }
 
-// RawGrokDecision 表示 Grok 健康处理的结果。
+// RawGrokDecision contains Grok health handling's output and retry decisions.
 type RawGrokDecision struct{ Failover, Generic, RetrySame bool }
 
-// RawGrokRetry 固化平台已有的同提供商恢复预算。
+// RawGrokRetry contains the budget and timing for recovery on the same provider.
 type RawGrokRetry struct {
 	Retryable bool
 	Delay     time.Duration

@@ -52,8 +52,8 @@ func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.R
 	}
 
 	provider.UpdatedAt = updated.UpdatedAt
-	// 普通提供商编辑（如 model_mapping / credentials）也需要立即刷新单提供商快照，
-	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
+	// Refresh the provider snapshot after configuration edits, including credentials and model mappings,
+	// so gateway reads need not wait for a delayed or failing outbox worker.
 	if contextTx == nil {
 		r.afterChange(baseCtx, provider.ID)
 	}
@@ -80,7 +80,7 @@ func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.
 
 	schedulable := provider.Schedulable
 	if provider.Status == acctcore.StatusError {
-		// 处于错误状态的提供商从调度池排除。
+		// Error status excludes the provider from scheduling.
 		schedulable = false
 	}
 
@@ -113,8 +113,8 @@ func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.
 		builder.ClearProxyID()
 	}
 
-	// 使用时间、限流/过载和会话窗口只由各自的运行写入口维护。
-	// 普通配置更新按字段合并锁内的最新记录，nil 字段保持当前值。
+	// Activity, rate-limit, overload, and session-window fields have dedicated runtime writers.
+	// Configuration changes merge supplied fields into the locked current record before this update.
 	if provider.ExpiresAt != nil {
 		builder.SetExpiresAt(*provider.ExpiresAt)
 	} else {

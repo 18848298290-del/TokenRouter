@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// 身份模块拥有这些已有持久键。
+// Persistent setting keys owned by identity.
 const (
 	SettingKeyAliyunCaptchaPrefix                    = "aliyun_captcha_prefix"
 	SettingKeyDefaultConcurrency                     = "default_concurrency"
@@ -19,7 +19,7 @@ const (
 	SettingKeyTurnstileSiteKey                       = "turnstile_site_key"
 )
 
-// AdminSettings 包含身份认证的管理配置。
+// AdminSettings contains administrator-managed authentication settings.
 type AdminSettings struct {
 	AliyunCaptchaAccessKeyID               string   `json:"aliyun_captcha_access_key_id"`
 	AliyunCaptchaAccessKeySecret           string   `json:"aliyun_captcha_access_key_secret"`
@@ -120,7 +120,8 @@ type AdminSettings struct {
 	WeChatConnectScopes                    string   `json:"wechat_connect_scopes"`
 }
 
-// PrepareAdminSettings 规范化身份设置并生成待保存值，空密钥按保留已存值处理。
+// PrepareAdminSettings normalizes authentication settings into values to persist.
+// Empty secrets leave stored credentials unchanged.
 func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	updates := make(map[string]string)
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)

@@ -40,13 +40,13 @@ type OpenAIImagesUpstreamError struct {
 	Param             string
 	UpstreamRequestID string
 
-	// SynthesizedFromModelText 表示网关从本轮模型返回的文字推断出图片生成错误。
-	// 提供商能力冷却另由 shouldCoolOpenAIImagesToolForError 判断。
+	// SynthesizedFromModelText marks an error inferred from model text.
+	// Provider capability cooldown requires separate upstream error evidence.
 	SynthesizedFromModelText bool
 }
 
-// OpenAIImagesSelfBuiltRequestContextKey 标记由 BuildOpenAIImagesResponsesRequest 完整构造上游请求体的请求，
-// 其中 tool_choice 与匹配的 image_generation 工具始终存在，且不受客户端控制。
+// OpenAIImagesSelfBuiltRequestContextKey marks requests built by BuildOpenAIImagesResponsesRequest.
+// These requests contain a gateway-controlled tool_choice and matching image_generation declaration.
 type OpenAIImagesSelfBuiltRequestContextKey struct{}
 
 func (e *OpenAIImagesUpstreamError) Error() string {
@@ -103,7 +103,7 @@ func (e *OpenAIImagesUpstreamError) ClientMessage() string {
 	return "Upstream request failed"
 }
 
-// IsOpenAIImagesRetryableUpstreamError 判断 Images 上游错误是否属于可换号重试的 5xx 服务端故障。
+// IsOpenAIImagesRetryableUpstreamError accepts server-error statuses of 500 or greater for provider retry.
 func IsOpenAIImagesRetryableUpstreamError(err *OpenAIImagesUpstreamError) bool {
 	return err != nil && err.StatusCode >= http.StatusInternalServerError
 }
@@ -620,16 +620,15 @@ func OpenAIImagesUpstreamErrorFromSSEPayload(payload []byte) *OpenAIImagesUpstre
 		response := gjson.GetBytes(payload, "response")
 		return OpenAIImagesUpstreamErrorFromGJSON(response.Get("error"), response.Get("id").String())
 	case "response.incomplete":
-		// 上游在生成预算内未产出图片（超时或截断）时返回 response.incomplete。
-		// 将其转换为可重试的上游错误，允许切换提供商。
+		// Classify incomplete generation by reason: policy failures are client errors; other failures can retry.
 		return OpenAIImagesIncompleteUpstreamError(gjson.GetBytes(payload, "response"))
 	default:
 		return nil
 	}
 }
 
-// ExtractOpenAIImagesModelText 提取图片请求终态中的文本输出；有文本但没有图片
-// 表明 image tool 没有执行，后续需再按内容策略或能力失败分类。
+// ExtractOpenAIImagesModelText collects text from deltas, completed responses and completed items.
+// When no image is returned, the caller classifies this text as a policy or capability failure.
 func ExtractOpenAIImagesModelText(body []byte) string {
 	var b strings.Builder
 	collect := func(s string) {
@@ -696,8 +695,8 @@ func IsOpenAIImagesContentPolicyRefusal(text string) bool {
 	return false
 }
 
-// ExtractOpenAIImagesModelRefusal 仅返回带明确安全/审核信号的文本；普通提示建议
-// 属于上游能力失败，应保持可重试。
+// ExtractOpenAIImagesModelRefusal returns text with safety or moderation markers.
+// Ordinary prompt advice remains a retryable capability failure.
 func ExtractOpenAIImagesModelRefusal(body []byte) string {
 	text := ExtractOpenAIImagesModelText(body)
 	if !IsOpenAIImagesContentPolicyRefusal(text) {
@@ -728,14 +727,13 @@ func OpenAIImagesTextFallbackErrorForText(text string) *OpenAIImagesUpstreamErro
 		ErrorType:  "upstream_error",
 		Code:       "image_generation_unavailable",
 		Message:    "Upstream did not execute image generation",
-		// 模型文字推断的错误允许本轮切换提供商。30 分钟的图片工具冷却需要上游错误帧证据。
+		// Model-text errors allow provider retry; the 30-minute tool cooldown requires an upstream error frame.
 		SynthesizedFromModelText: true,
 	}
 }
 
-// SummarizeOpenAIImagesNoOutputBody 从上游 SSE 响应体提取诊断摘要，用于软失败时
-// 记录到 ops 日志（上游无图、无标准错误的场景）。提取最终事件类型、response.status、
-// incomplete_details.reason，并附 body 截断片段，便于事后定位上游到底返回了什么。
+// SummarizeOpenAIImagesNoOutputBody extracts event type, response status and incomplete reason
+// for no-image diagnostics, plus a body snippet limited to 1024 bytes before the truncation suffix.
 func SummarizeOpenAIImagesNoOutputBody(body []byte) string {
 	return SummarizeOpenAIImagesNoOutputBodyWithSnippet(body, true, 1024)
 }
@@ -772,7 +770,7 @@ func SummarizeOpenAIImagesNoOutputBodyWithSnippet(body []byte, includeBody bool,
 	if !includeBody {
 		return b.String()
 	}
-	// 附 body 截断片段（脱敏后），上限 1KB，避免日志膨胀。
+	// Bound the snippet by maxSnippet (1024 bytes by default); callers own redaction.
 	snippet := strings.TrimSpace(string(body))
 	if maxSnippet <= 0 {
 		maxSnippet = 1024
@@ -786,20 +784,19 @@ func SummarizeOpenAIImagesNoOutputBodyWithSnippet(body []byte, includeBody bool,
 	return b.String()
 }
 
-// OpenAIImagesIncompleteUpstreamError 从 response.incomplete 事件构建可重试的上游错误。
-// incomplete_details.reason 常见取值：max_output_tokens / content_filter 等。
-// content_filter 视为客户端错误（400，重试无意义）；其余（生成超时/截断）视为
-// 可重试的 502，触发 failover 换提供商重试。
+// OpenAIImagesIncompleteUpstreamError classifies a response.incomplete event.
+// Content-filter and moderation reasons become HTTP 400; other reasons become
+// retryable HTTP 502 errors for provider failover.
 func OpenAIImagesIncompleteUpstreamError(response gjson.Result) *OpenAIImagesUpstreamError {
 	if !response.Exists() {
 		return nil
 	}
 	reason := strings.TrimSpace(response.Get("incomplete_details.reason").String())
-	statusCode := http.StatusBadGateway // 默认可重试（生成未完成）
+	statusCode := http.StatusBadGateway // Incomplete generation is retryable by default.
 	errType := "incomplete_error"
 	if strings.Contains(strings.ToLower(reason), "content_filter") ||
 		strings.Contains(strings.ToLower(reason), "moderation") {
-		statusCode = http.StatusBadRequest // 内容过滤，重试无意义
+		statusCode = http.StatusBadRequest // Policy filtering is a client error.
 		errType = "image_generation_user_error"
 	}
 	message := "Upstream did not complete image generation"
@@ -963,7 +960,7 @@ func BuildOpenAIImagesStreamErrorBodyFromUpstream(err *OpenAIImagesUpstreamError
 	return body
 }
 
-// ParseOpenAIImagesSSEUsageBytes 优先读取生图工具自身的 token 用量，字段不完整时保留 Responses 顶层用量。
+// ParseOpenAIImagesSSEUsageBytes prefers complete image-tool usage, retaining top-level usage otherwise.
 func ParseOpenAIImagesSSEUsageBytes(data []byte, usage *wire.ForwardUsage) {
 	wire.ParseSSEUsageBytes(data, usage)
 	if usage == nil || !gjson.ValidBytes(data) || gjson.GetBytes(data, "type").String() != "response.completed" {
@@ -974,7 +971,7 @@ func ParseOpenAIImagesSSEUsageBytes(data []byte, usage *wire.ForwardUsage) {
 	}
 }
 
-// OpenAIImagesToolUsageFromGJSON 原子解析生图工具用量，避免部分字段覆盖导致少计费。
+// OpenAIImagesToolUsageFromGJSON requires a complete tool-usage record before overriding token counts.
 func OpenAIImagesToolUsageFromGJSON(value gjson.Result) (wire.ForwardUsage, bool) {
 	if !value.Exists() || !value.IsObject() {
 		return wire.ForwardUsage{}, false

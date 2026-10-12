@@ -1,6 +1,6 @@
 package googleforward
 
-// 这些导出方法供测试调用包内实现。
+// These exports expose package internals to external tests.
 var (
 	ResolveProjectForTest      = resolveAntigravityProjectID
 	EnsureSignatureForTest     = ensureGeminiFunctionCallThoughtSignatures
@@ -13,7 +13,7 @@ var (
 	AntigravityBodyForTest     = (*Antigravity).buildAntigravityCompatGeminiBody
 )
 
-// AttemptForTest 允许断言状态复位及观测结果，仍使用同一实际状态类型。
+// AttemptForTest exposes attempt state for reset and observation assertions.
 type AttemptForTest = attempt
 
 func (a *attempt) ObserveImagesForTest(body []byte) { a.observeImages(body) }

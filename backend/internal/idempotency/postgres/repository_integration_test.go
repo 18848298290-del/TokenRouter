@@ -149,7 +149,8 @@ func TestIdempotencyRepo_StatusTransition_ToSucceeded(t *testing.T) {
 	require.Nil(t, got.LockedUntil)
 }
 
-// idempotencyTestTx 在隔离 PostgreSQL 中应用迁移，并为每个测试创建结束时回滚的事务。
+// idempotencyTestTx applies migrations in an isolated PostgreSQL instance and rolls back the test
+// transaction at cleanup.
 func idempotencyTestTx(t *testing.T) *sql.Tx {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -175,12 +176,12 @@ func uniqueIdempotencyValue(t *testing.T, prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, safeName)
 }
 
-// hashedTestValue 根据测试名称生成包含 64 个字符的 SHA-256 十六进制字符串，用于 VARCHAR(64) 列。
+// hashedTestValue hashes the test name and prefix into 64 hex characters for VARCHAR(64) columns.
 func hashedTestValue(t *testing.T, prefix string) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(uniqueIdempotencyValue(t, prefix)))
 	return hex.EncodeToString(sum[:])
 }
 
-// ptrTime 返回时间值的指针。
+// ptrTime returns a pointer to the supplied time.
 func ptrTime(t time.Time) *time.Time { return &t }

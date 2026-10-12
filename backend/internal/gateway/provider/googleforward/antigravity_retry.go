@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// antigravityRetryAdapter 将当前尝试交给共享的提供商重试器。
+// antigravityRetryAdapter binds the current attempt to the shared provider retry service.
 func (s *Antigravity) antigravityRetryAdapter(p antigravityRetryLoopParams) (*antigravity.RetryAdapter, antigravity.RetryInput) {
 	value := gatewayprovider.ExecutionRecord(p.provider)
 	factory := s.Retry
@@ -32,7 +32,7 @@ func (s *Antigravity) antigravityRetryAdapter(p antigravityRetryLoopParams) (*an
 		PolicyModelFallback: requeststate.HealthModel(p.ctx, nil),
 
 		Do: func(req *http.Request) (*http.Response, error) {
-			// 请求交换可更新本次窗口，下次签名恢复前同步尝试状态。
+			// Exchange may update quota windows; synchronize them before signature recovery retries.
 			resp, err := p.httpUpstream.Do(req, p.proxyURL, p.provider.Record.ID, p.provider.Record.Concurrency)
 			value.Extra = gatewayprovider.ExecutionRecord(p.provider).Extra
 			return resp, err

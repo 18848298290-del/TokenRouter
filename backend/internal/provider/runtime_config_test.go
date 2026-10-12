@@ -95,34 +95,34 @@ func TestGetRPMStickyBuffer(t *testing.T) {
 		extra       map[string]any
 		expected    int
 	}{
-		// 基础退化
+		// Missing or disabled base limits.
 		{"nil extra", 0, nil, 0},
 		{"no keys", 0, map[string]any{}, 0},
 		{"base_rpm=0", 0, map[string]any{"base_rpm": 0}, 0},
 
-		// 新公式: concurrency + maxSessions, floor = base/5
+		// Computed buffer: concurrency plus sessions, subject to the base/5 floor.
 		{"conc=3 sess=10 → 13", 3, map[string]any{"base_rpm": 15, "max_sessions": 10}, 13},
 		{"conc=2 sess=5 → 7", 2, map[string]any{"base_rpm": 10, "max_sessions": 5}, 7},
 		{"conc=3 sess=15 → 18", 3, map[string]any{"base_rpm": 30, "max_sessions": 15}, 18},
 
-		// floor 生效 (conc+sess < base/5)
+		// The floor applies when concurrency plus sessions is too small.
 		{"conc=0 sess=0 base=15 → floor 3", 0, map[string]any{"base_rpm": 15}, 3},
 		{"conc=0 sess=0 base=10 → floor 2", 0, map[string]any{"base_rpm": 10}, 2},
 		{"conc=0 sess=0 base=1 → floor 1", 0, map[string]any{"base_rpm": 1}, 1},
 		{"conc=0 sess=0 base=4 → floor 1", 0, map[string]any{"base_rpm": 4}, 1},
 		{"conc=1 sess=0 base=15 → floor 3", 1, map[string]any{"base_rpm": 15}, 3},
 
-		// 手动 override
+		// Positive manual overrides take precedence.
 		{"custom buffer=5", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": 5, "max_sessions": 10}, 5},
 		{"custom buffer=0 fallback", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": 0, "max_sessions": 10}, 13},
 		{"custom buffer negative fallback", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": -1, "max_sessions": 10}, 13},
 		{"custom buffer with float", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": float64(7)}, 7},
 
-		// 负值 clamp
+		// Negative inputs are clamped to zero.
 		{"negative concurrency clamped", -5, map[string]any{"base_rpm": 15, "max_sessions": 10}, 10},
 		{"negative maxSessions clamped", 3, map[string]any{"base_rpm": 15, "max_sessions": -5}, 3},
 
-		// 高并发低会话
+		// Concurrency can exceed the retained session count.
 		{"conc=10 sess=5 → 15", 10, map[string]any{"base_rpm": 10, "max_sessions": 5}, 15},
 
 		// json.Number

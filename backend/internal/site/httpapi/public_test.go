@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// calendarPublicSource 提供空站点设置，供测试使用实例注入的日历。
+// calendarPublicSource supplies empty settings so the test exercises the injected calendar.
 type calendarPublicSource struct{}
 
 func TestPublicCalendarMatchesAPIAndInjection(t *testing.T) {

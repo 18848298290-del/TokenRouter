@@ -35,7 +35,7 @@ func (reauthenticationGroups) GetByIDLite(_ context.Context, id int64) (*routing
 	return &routing.Group{ID: id, Status: "active"}, nil
 }
 
-// TestReauthenticate 拒绝已撤销身份，并保留已放行请求的原始快照。
+// TestReauthenticate rejects revoked access and leaves the admitted request's snapshot unchanged.
 func TestReauthenticate(t *testing.T) {
 	for _, name := range []string{"active", "deleted", "lookup_error", "replacement_key", "disabled", "inactive_user", "missing_user", "expired", "quota", "billing_changed", "ip_denied", "team_removed"} {
 		t.Run(name, func(t *testing.T) {
@@ -94,7 +94,7 @@ func (c staleReauthenticationCache) GetAuthCache(context.Context, string) (*APIK
 	return c.entry, nil
 }
 
-// TestReauthenticateBypassesPositiveCache 证明缓存仍认可旧 Key 时，逐轮复核也会拒绝已删除凭据。
+// TestReauthenticateBypassesPositiveCache checks that a cached credential cannot authorize a deleted key on a later turn.
 func TestReauthenticateBypassesPositiveCache(t *testing.T) {
 	ctx := context.Background()
 	previous := &APIKey{ID: 1, UserID: 2, Key: "sk-cached", Status: "active", User: &identity.User{ID: 2, Status: "active"}}

@@ -39,7 +39,7 @@ type ResponsesReasoning struct {
 
 // ResponsesText configures text output options in the Responses API.
 type ResponsesText struct {
-	Format    json.RawMessage `json:"format,omitempty"`    // Responses API 的结构化输出格式。
+	Format    json.RawMessage `json:"format,omitempty"`    // Responses structured output format
 	Verbosity string          `json:"verbosity,omitempty"` // "low" | "medium" | "high"
 }
 
@@ -53,7 +53,7 @@ type ResponsesInputItem struct {
 	Role    string          `json:"role,omitempty"`
 	Content json.RawMessage `json:"content,omitempty"` // string or []ResponsesContentPart
 
-	// type=reasoning，用于多轮回放加密推理。
+	// type=reasoning: encrypted reasoning replayed across turns
 	EncryptedContent string `json:"encrypted_content,omitempty"`
 
 	// type=function_call
@@ -69,13 +69,13 @@ type ResponsesInputItem struct {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	Type     string `json:"type"` // input_text、output_text、input_image 或 input_file
+	Type     string `json:"type"` // input_text, output_text, input_image, or input_file
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
 
-	// input_file 字段。
+	// Fields for input_file parts.
 	Filename string `json:"filename,omitempty"`
-	FileData string `json:"file_data,omitempty"` // data URI 格式的文件内容
+	FileData string `json:"file_data,omitempty"` // file content encoded as a data URI
 	FileID   string `json:"file_id,omitempty"`
 }
 
@@ -87,7 +87,7 @@ type ResponsesTool struct {
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
 
-	// type=namespace 的子工具列表，tools 与 children 为同义字段，二选一。
+	// Namespace child tools; tools and children are alternate names, so callers supply one.
 	Tools    []ResponsesTool `json:"tools,omitempty"`
 	Children []ResponsesTool `json:"children,omitempty"`
 
@@ -104,14 +104,14 @@ type ResponsesTool struct {
 type ResponsesResponse struct {
 	ID     string `json:"id"`
 	Object string `json:"object"` // "response"
-	// CreatedAt 是 Unix 创建时间戳。严格 Responses 客户端将其视为必填字段，
-	// 缺失会以 missing field 'created_at' 终止反序列化，因此始终输出且不使用 omitempty。
+	// CreatedAt is the Unix creation time in seconds. Strict Responses clients require
+	// created_at even when zero; omitting it causes a missing-field decoding error.
 	CreatedAt   int64             `json:"created_at"`
 	Model       string            `json:"model"`
 	Status      string            `json:"status"` // "completed" | "incomplete" | "failed"
 	Output      []ResponsesOutput `json:"output"`
 	Usage       *ResponsesUsage   `json:"usage,omitempty"`
-	ServiceTier string            `json:"service_tier,omitempty"` // 原样回传上游 tier
+	ServiceTier string            `json:"service_tier,omitempty"` // upstream service tier echoed to the client
 
 	// incomplete_details is present when status="incomplete"
 	IncompleteDetails *ResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
@@ -125,7 +125,7 @@ type ResponsesError struct {
 	Code       string `json:"code"`
 	Type       string `json:"type,omitempty"`
 	Message    string `json:"message"`
-	StatusCode int    `json:"status_code,omitempty"` // 聚合上游报告的状态码，供提供商错误策略判断。
+	StatusCode int    `json:"status_code,omitempty"` // upstream status code used by provider error policies
 }
 
 // ResponsesIncompleteDetails explains why a response is incomplete.
@@ -151,10 +151,10 @@ type ResponsesOutput struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
-	// 来源为 namespace 子工具时的归属命名空间（codex 按 namespace+name 路由该调用）。
+	// Namespace containing the tool; Codex routes by namespace and name.
 	Namespace string `json:"namespace,omitempty"`
 
-	// type=custom_tool_call（custom/freeform 工具，input 为自由文本）
+	// type=custom_tool_call: free-form tool input
 	Input string `json:"input,omitempty"`
 
 	// type=web_search_call
@@ -208,7 +208,7 @@ type ResponsesStreamEvent struct {
 
 	// response.created / response.completed / response.done / response.failed / response.incomplete
 	Response *ResponsesResponse `json:"response,omitempty"`
-	// 部分 OpenAI 兼容上游将 usage 放在终止事件顶层。
+	// Some compatible upstreams put usage at the top level of terminal events.
 	Usage *ResponsesUsage `json:"usage,omitempty"`
 
 	// response.output_item.added / response.output_item.done
@@ -230,11 +230,11 @@ type ResponsesStreamEvent struct {
 	Input string `json:"input,omitempty"`
 
 	// response.reasoning_summary_text.delta / done
-	// 复用上面的 Text/Delta 字段，SummaryIndex 标识 summary part。
+	// Reuses Text and Delta; SummaryIndex identifies the summary part.
 	SummaryIndex int `json:"summary_index,omitempty"`
 
-	// response.content_part.added / done 以及
-	// response.reasoning_summary_part.added / done。
+	// response.content_part.added / done and
+	// response.reasoning_summary_part.added / done
 	Part *ResponsesContentPart `json:"part,omitempty"`
 
 	// error event fields
@@ -262,7 +262,7 @@ type ChatCompletionsRequest struct {
 	ReasoningEffort     string             `json:"reasoning_effort,omitempty"` // "low" | "medium" | "high" | "xhigh" | "max"
 	ServiceTier         string             `json:"service_tier,omitempty"`
 	Stop                json.RawMessage    `json:"stop,omitempty"`            // string or []string
-	ResponseFormat      json.RawMessage    `json:"response_format,omitempty"` // Chat Completions 的结构化输出格式。
+	ResponseFormat      json.RawMessage    `json:"response_format,omitempty"` // Chat Completions structured output format
 
 	// Legacy function calling (deprecated but still supported)
 	Functions    []ChatFunction  `json:"functions,omitempty"`
@@ -290,7 +290,7 @@ type ChatMessage struct {
 
 // ChatContentPart is a typed content part in a multi-modal message.
 type ChatContentPart struct {
-	Type     string        `json:"type"` // text、image_url 或 file
+	Type     string        `json:"type"` // text, image_url, or file
 	Text     string        `json:"text,omitempty"`
 	ImageURL *ChatImageURL `json:"image_url,omitempty"`
 	File     *ChatFile     `json:"file,omitempty"`
@@ -302,16 +302,16 @@ type ChatImageURL struct {
 	Detail string `json:"detail,omitempty"` // "auto" | "low" | "high"
 }
 
-// ChatFile 保存 "file" 内容 part 的载荷（例如 PDF 输入）。
+// ChatFile holds a file content part, such as a PDF input.
 type ChatFile struct {
 	Filename string `json:"filename,omitempty"`
-	FileData string `json:"file_data,omitempty"` // data URI 格式的文件内容
+	FileData string `json:"file_data,omitempty"` // file content encoded as a data URI
 	FileID   string `json:"file_id,omitempty"`
 }
 
 // ChatTool describes a tool available to the model.
 type ChatTool struct {
-	Type     string        `json:"type"` // function、web_search、code_execution 或 x_search
+	Type     string        `json:"type"` // function, web_search, code_execution, or x_search
 	Function *ChatFunction `json:"function,omitempty"`
 
 	// type=x_search
@@ -376,10 +376,10 @@ type ChatUsage struct {
 	CompletionTokensDetails *ChatTokenDetails `json:"completion_tokens_details,omitempty"`
 }
 
-// ChatTokenDetails 提供 token 使用明细。prompt_tokens_details 与
-// completion_tokens_details 复用同一结构；未设置字段会被省略，因此两侧只输出各自适用的字段。
+// ChatTokenDetails is shared by prompt_tokens_details and completion_tokens_details.
+// Zero fields are omitted; callers populate the details applicable to each side.
 //
-// 字段集合对齐 OpenAI 官方 CompletionUsage schema：
+// Common OpenAI CompletionUsage fields are:
 //   - prompt_tokens_details: cached_tokens, audio_tokens
 //   - completion_tokens_details: reasoning_tokens, audio_tokens,
 //     accepted_prediction_tokens, rejected_prediction_tokens
@@ -415,21 +415,21 @@ type ChatChunkChoice struct {
 // ChatDelta carries incremental content in a streaming chunk.
 type ChatDelta struct {
 	Role             string         `json:"role,omitempty"`
-	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
+	Content          *string        `json:"content,omitempty"` // nil omits the field; a non-nil pointer preserves an empty string
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	Reasoning        *string        `json:"reasoning,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
 }
 
-// TextProtocol 描述普通文本请求发往上游时使用的协议。
+// TextProtocol identifies the upstream protocol for a text request.
 type TextProtocol string
 
-// RawOutput 返回反序列化时保留的工具结果原文，转换器只读此值。
+// RawOutput returns the retained tool output bytes. Callers must treat the returned slice as read-only.
 func (i *ResponsesInputItem) RawOutput() json.RawMessage {
 	return i.outputRaw
 }
 
-// UnmarshalJSON 保留数组或对象形式的工具输出，供协议转换时还原多模态内容。
+// UnmarshalJSON retains non-string tool output as raw JSON for multimodal protocol conversion.
 func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 	type alias ResponsesInputItem
 	var wire struct {
@@ -456,7 +456,7 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON 容忍字符串形式的工具声明：codex 会以 "name" 简写声明 custom 工具。
+// UnmarshalJSON accepts a tool name string as shorthand for a custom tool declaration.
 func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 	var name string
 	if err := json.Unmarshal(data, &name); err == nil {
@@ -472,9 +472,9 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON 处理 tool_search_call 项的线上形态（复用 CallID/Arguments 字段）：
-// execution 固定为 "client"（codex 的必填字段，非 client 的调用会被静默忽略），
-// arguments 编码为 JSON 对象。其余类型使用默认结构体序列化。
+// MarshalJSON encodes tool_search_call using CallID and Arguments.
+// Execution is "client" so Codex handles the call; arguments use their raw JSON value.
+// Other output types use the default struct encoding.
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	type responsesOutputAlias ResponsesOutput
 	if o.Type != "tool_search_call" {
@@ -493,8 +493,8 @@ func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// UnmarshalJSON 同时接受普通 function call 的字符串参数和 tool_search_call 的
-// 对象参数。桥接层内部统一存储字符串，因此对象参数会保留为原始 JSON 文本。
+// UnmarshalJSON accepts string function arguments and raw tool_search_call arguments.
+// Raw JSON is stored as text because the bridge represents arguments as strings.
 func (o *ResponsesOutput) UnmarshalJSON(data []byte) error {
 	type responsesOutputAlias ResponsesOutput
 
@@ -542,7 +542,7 @@ func (o *ResponsesOutput) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON 兼容 OpenAI Responses 与 Chat Completions 两种 usage 字段命名。
+// UnmarshalJSON accepts both Responses and Chat Completions usage field names.
 func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	type responsesUsageAlias ResponsesUsage
 	type cacheTokenPresence struct {
@@ -612,7 +612,7 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON 同时兼容官方字符串参数，以及部分 OpenAI 兼容历史回放里的对象参数。
+// UnmarshalJSON accepts string arguments and raw JSON arguments from compatible history replay.
 func (c *ChatFunctionCall) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Name      string          `json:"name"`
@@ -636,7 +636,7 @@ func (c *ChatFunctionCall) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ReasoningText 返回消息中的推理文本；正式字段有内容时优先于兼容别名。
+// ReasoningText prefers nonempty reasoning_content over the reasoning alias in a message.
 func (m ChatMessage) ReasoningText() string {
 	if m.ReasoningContent != "" {
 		return m.ReasoningContent
@@ -644,7 +644,7 @@ func (m ChatMessage) ReasoningText() string {
 	return m.Reasoning
 }
 
-// ReasoningText 返回增量中的推理文本，正式字段存在时优先使用其值，包括空字符串。
+// ReasoningText prefers a present reasoning_content field, including an empty string, in a delta.
 func (d ChatDelta) ReasoningText() *string {
 	if d.ReasoningContent != nil {
 		return d.ReasoningContent

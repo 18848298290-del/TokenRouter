@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterRedeemCodeRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterRedeemCodeRoutes registers administrator redemption routes. The caller installs authentication, rate
+// limits, and auditing.
 func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandler) {
 	codes := admin.Group("/redeem-codes")
 	{
@@ -21,7 +22,8 @@ func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandl
 	}
 }
 
-// RegisterSubscriptionRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterSubscriptionRoutes registers administrator subscription routes. The caller installs authentication, rate
+// limits, and auditing.
 func RegisterSubscriptionRoutes(admin *gin.RouterGroup, endpoint *AdminSubscriptionHandler) {
 	subscriptions := admin.Group("/subscriptions")
 	{
@@ -37,9 +39,7 @@ func RegisterSubscriptionRoutes(admin *gin.RouterGroup, endpoint *AdminSubscript
 		subscriptions.DELETE("/:id", endpoint.Revoke)
 	}
 
-	// 套餐下的订阅列表
 	admin.GET("/plans/:id/subscriptions", endpoint.ListByPlan)
 
-	// 用户下的订阅列表
 	admin.GET("/users/:id/subscriptions", endpoint.ListByUser)
 }

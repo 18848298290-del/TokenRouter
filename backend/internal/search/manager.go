@@ -13,16 +13,16 @@ import (
 	"time"
 )
 
-// Timeout constants for proxy and search operations.
+// Proxy failure retention and quota counter lifetimes.
 const (
 	proxyUnavailableTTL = 5 * time.Minute
 	quotaTTLBuffer      = 24 * time.Hour
-	defaultQuotaTTL     = 31*24*time.Hour + quotaTTLBuffer // fallback when no subscription date
+	defaultQuotaTTL     = 31*24*time.Hour + quotaTTLBuffer // Used when the subscription date is unset.
 
 )
 
 // ErrProxyUnavailable indicates the search failed due to a proxy connectivity issue.
-// Callers may use this to trigger provider switching instead of direct fallback.
+// Callers can switch the upstream provider when its shared proxy fails.
 var ErrProxyUnavailable = errors.New("websearch: proxy unavailable")
 
 // weighted is a provider candidate with computed quota weight.
@@ -31,7 +31,8 @@ type weighted struct {
 	weight int64
 }
 
-// Manager 的配置不可变，旧请求持有的代次继续使用同一快照。
+// Manager owns an immutable configuration snapshot that remains valid for in-flight requests after
+// replacement.
 type Manager struct {
 	configs  []ProviderConfig
 	state    QuotaState
@@ -54,9 +55,10 @@ func NewManager(configs []ProviderConfig, state QuotaState, executor Executor, w
 	return &Manager{configs: CloneProviderConfigs(configs), state: state, executor: executor, work: work}
 }
 
-// SearchWithBestProvider selects a provider using quota-weighted load balancing,
-// reserves quota, executes the search, and rolls back quota on failure.
-// If the search fails due to a proxy error, the proxy is marked unavailable for 5 minutes.
+// SearchWithBestProvider tries providers in randomized quota-weighted order and returns the successful
+// provider type.
+// Failed searches attempt to release confirmed quota reservations; cancellation stops further attempts.
+// Search-provider proxies with known IDs are marked unavailable for five minutes on connectivity errors.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#moderation_search_boundaries
 func (m *Manager) SearchWithBestProvider(ctx context.Context, req SearchRequest) (*SearchResponse, string, error) {
 	if err := ctx.Err(); err != nil {
@@ -97,14 +99,14 @@ func (m *Manager) SearchWithBestProvider(ctx context.Context, req SearchRequest)
 			if m.executor.IsProxyError(err) {
 				m.markProxyUnavailable(ctx, cfg, req.ProxyURL)
 				if req.ProxyURL != "" {
-					// Provider-level proxy is shared by all providers — no point
-					// trying others with the same broken proxy; signal provider switch.
+					// The request proxy is shared by all search providers, so another search
+					// provider would use the same failing proxy. Ask the caller to switch upstream providers.
 					slog.Warn("websearch: provider proxy error, aborting failover",
 						"provider", cfg.Type, "error", err)
 					return nil, "", fmt.Errorf("%w: %s", ErrProxyUnavailable, err.Error())
 				}
-				// Provider-specific proxy failed — try the next provider which
-				// may use a different (or no) proxy.
+				// A search-provider proxy failure permits trying the next search provider,
+				// which may have a different proxy configuration.
 				slog.Warn("websearch: provider proxy error, trying next provider",
 					"provider", cfg.Type, "error", err)
 				continue
@@ -137,9 +139,9 @@ func (m *Manager) filterAvailableProviders(ctx context.Context, providerProxyURL
 	return out
 }
 
-// selectByQuotaWeight orders candidates by remaining quota weight.
-// Providers with quota_limit=0 (no limit set) get weight 0 and are placed last.
-// Among providers with quota, higher remaining quota = higher priority.
+// selectByQuotaWeight ranks candidates with positive remaining quota ahead of other candidates.
+// Unlimited and exhausted candidates follow in configuration order.
+// Positive weights are multiplied by a random factor; reservation enforces the actual limit.
 func (m *Manager) selectByQuotaWeight(ctx context.Context, candidates []ProviderConfig) []ProviderConfig {
 	items := m.computeWeights(ctx, candidates)
 	withQuota, withoutQuota := partitionByQuota(items)
@@ -173,8 +175,8 @@ func partitionByQuota(items []weighted) (withQuota, withoutQuota []weighted) {
 	return
 }
 
-// sortByStableRandomWeight assigns a fixed random factor to each item before sorting,
-// ensuring deterministic sort behavior (transitivity) within a single call.
+// sortByStableRandomWeight samples each candidate's score once before sorting
+// so comparisons remain transitive during that sort.
 func sortByStableRandomWeight(items []weighted) {
 	if len(items) <= 1 {
 		return
@@ -218,9 +220,7 @@ func (m *Manager) isProviderAvailable(cfg ProviderConfig) bool {
 	return true
 }
 
-// --- Proxy availability tracking ---
-
-// markProxyUnavailable marks the effective proxy as unavailable for proxyUnavailableTTL.
+// markProxyUnavailable records a failure for a search-provider proxy with a known ID.
 func (m *Manager) markProxyUnavailable(ctx context.Context, cfg ProviderConfig, providerProxyURL string) {
 	proxyID := resolveProxyID(cfg, providerProxyURL)
 	if proxyID <= 0 || m.state == nil {
@@ -232,7 +232,7 @@ func (m *Manager) markProxyUnavailable(ctx context.Context, cfg ProviderConfig, 
 	}
 }
 
-// isProxyAvailable checks whether a proxy is currently marked as unavailable.
+// isProxyAvailable reports whether a proxy can be tried; missing storage allows the attempt.
 func (m *Manager) isProxyAvailable(ctx context.Context, proxyID int64) bool {
 	if m.state == nil || proxyID <= 0 {
 		return true
@@ -240,16 +240,16 @@ func (m *Manager) isProxyAvailable(ctx context.Context, proxyID int64) bool {
 	return m.state.ProxyAvailable(ctx, proxyID)
 }
 
-// resolveProxyID determines the effective proxy ID for a provider+provider combination.
+// resolveProxyID returns the search-provider proxy ID unless a request-level proxy overrides it.
 func resolveProxyID(cfg ProviderConfig, providerProxyURL string) int64 {
 	if providerProxyURL != "" {
-		return 0 // provider proxy has no ID in provider config
+		return 0 // The request-level proxy has no ID in the search configuration.
 	}
 	return cfg.ProxyID
 }
 
-// --- Quota management ---
-
+// tryReserveQuota returns whether the request may proceed and whether an increment
+// was confirmed. Storage errors allow the request with no confirmed reservation.
 func (m *Manager) tryReserveQuota(ctx context.Context, cfg ProviderConfig) (bool, bool) {
 	if cfg.QuotaLimit <= 0 {
 		return true, false
@@ -291,10 +291,8 @@ func (m *Manager) rollbackQuota(ctx context.Context, cfg ProviderConfig) {
 	}
 }
 
-// --- Search execution ---
-
-// TestSearch executes a search using the first available provider without reserving quota.
-// Intended for admin test functionality only.
+// TestSearch tries keyed, unexpired providers in configuration order until one succeeds.
+// Administrator tests bypass quota reservation and proxy-availability filtering.
 func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchResponse, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
@@ -324,8 +322,6 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 	return nil, "", fmt.Errorf("websearch: no available provider")
 }
 
-// --- HTTP client cache ---
-
 // GetUsage returns the current usage count for the given provider.
 func (m *Manager) GetUsage(ctx context.Context, providerType string) (int64, error) {
 	if m.state == nil {
@@ -342,13 +338,9 @@ func (m *Manager) ResetUsage(ctx context.Context, providerType string) error {
 	return m.state.Reset(ctx, providerType)
 }
 
-// --- Provider factory ---
-
-// --- Redis key helpers ---
-
-// quotaTTLFromSubscription calculates the TTL for the quota counter based on
-// the provider's subscription start date. Quota resets monthly from that date.
-// When the Redis key expires naturally, the next INCR creates a fresh counter (lazy refresh).
+// quotaTTLFromSubscription returns the time to the next subscription date plus a 24-hour buffer.
+// An unset date uses 32 days. Usage resets when the counter expires and is recreated,
+// so the nominal monthly date is not an exact reset deadline.
 func quotaTTLFromSubscription(subscribedAt *int64) time.Duration {
 	if subscribedAt == nil || *subscribedAt == 0 {
 		return defaultQuotaTTL
@@ -356,15 +348,15 @@ func quotaTTLFromSubscription(subscribedAt *int64) time.Duration {
 	next := nextMonthlyReset(time.Unix(*subscribedAt, 0).UTC())
 	ttl := time.Until(next) + quotaTTLBuffer
 	if ttl <= quotaTTLBuffer {
-		// Already past the reset — next cycle
+		// Use the default lifetime if the computed date has already passed.
 		ttl = defaultQuotaTTL
 	}
 	return ttl
 }
 
-// nextMonthlyReset returns the next monthly reset time based on the subscription start date.
-// E.g., subscribed on Jan 15 → resets on Feb 15, Mar 15, etc.
-// Handles day-of-month overflow: Jan 31 → Feb 28 (not Mar 3).
+// nextMonthlyReset returns the next subscription date at midnight UTC.
+// The subscription day anchors each month; a future subscription can be the first returned date.
+// Days beyond the target month are clamped to its last day; a zero input returns one month from now.
 func nextMonthlyReset(subscribedAt time.Time) time.Time {
 	now := time.Now().UTC()
 	if subscribedAt.IsZero() {
@@ -378,8 +370,8 @@ func nextMonthlyReset(subscribedAt time.Time) time.Time {
 	return addMonthsClamped(subscribedAt, months+1)
 }
 
-// addMonthsClamped adds N months to a date, clamping the day to the last day of the target month.
-// E.g., Jan 31 + 1 month = Feb 28 (not Mar 3).
+// addMonthsClamped adds nonnegative months, clamps the day to the target month, and returns midnight UTC.
+// For example, January 31 plus one month becomes February 28 in a non-leap year.
 func addMonthsClamped(t time.Time, months int) time.Time {
 	y, m, d := t.Date()
 	targetMonth := time.Month(int(m) + months)

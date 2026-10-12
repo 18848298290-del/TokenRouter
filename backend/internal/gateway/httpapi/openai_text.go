@@ -25,7 +25,7 @@ const (
 	OpenAIPromptCacheSession
 )
 
-// OpenAITextOptions 配置 HTTP 限制和提供商切换上限。
+// OpenAITextOptions configures HTTP limits and the provider switch limit.
 type OpenAITextOptions struct {
 	MaxBodyBytes             int64
 	MaxSwitches              int
@@ -33,10 +33,10 @@ type OpenAITextOptions struct {
 	ForceCodexCLI            bool
 }
 
-// OpenAISessionInput 分别提供粘性会话、客户端隔离标识和上游缓存键。
+// OpenAISessionInput separates sticky-session identity, client isolation, and upstream cache keys.
 type OpenAISessionInput uint8
 
-// OpenAITextCall 保存通过 HTTP 准入的请求数据，执行接口同步捕获完成快照。
+// OpenAITextCall holds admitted HTTP request data for synchronous completion capture.
 type OpenAITextCall struct {
 	Route                                                          routing.RoutePlan
 	Protocol                                                       protocol.ProtocolID
@@ -55,8 +55,8 @@ type OpenAITextCall struct {
 	Log                                                            *zap.Logger
 }
 
-// OpenAITextBackend 提供逐步执行接口、请求状态和同步观测。
-// 三条入口的读取、校验、审核、等待和循环调用顺序均由本 HTTP Adapter 决定。
+// OpenAITextBackend supplies execution steps, request state, and synchronous observations.
+// The HTTP adapter orders reading, validation, moderation, waiting, and loop execution for all three entries.
 type OpenAITextBackend interface {
 	Access(*gin.Context) (*apikey.APIKey, bool)
 	Dependencies(*gin.Context, *zap.Logger) bool
@@ -106,7 +106,7 @@ type OpenAITextBackend interface {
 	EnsureFallback(*gin.Context, bool) bool
 }
 
-// OpenAITextHandler 不创建工作任务、反馈或缓存，app 可将同一对象绑定三种协议路由。
+// OpenAITextHandler binds app-owned execution capabilities to the three text protocol routes.
 type OpenAITextHandler struct {
 	executor execution.Executor
 	RequestLifetime
@@ -120,7 +120,7 @@ func NewOpenAITextHandler(options OpenAITextOptions, backend OpenAITextBackend, 
 	return &OpenAITextHandler{executor: executor, options: options, backend: backend, prompt: prompt}
 }
 
-// executeText 的入参全部来自已经完成的前置步骤，不追加读取或提前解释报文。
+// executeText receives already prepared inputs and passes them to the execution loop.
 func (h *OpenAITextHandler) executeText(c *gin.Context, call OpenAITextCall, kind execution.TextKind) {
 	request := execution.Request{
 		Hints:       requeststate.ExecutionHintsFromContext(c.Request.Context()),

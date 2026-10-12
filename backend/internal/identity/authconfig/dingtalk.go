@@ -7,6 +7,8 @@ var (
 	ErrDingTalkV4InvalidAppKind  = errors.New("dingtalk: dingtalk_app_kind must be internal_app")
 )
 
+// ValidateDingTalkConfig accepts disabled configurations and validates the app kind
+// and organization restriction of enabled configurations.
 func ValidateDingTalkConfig(cfg DingTalkConnectConfig) error {
 	if !cfg.Enabled {
 		return nil

@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestPublicQuotePreservesExactImagePrices 验证仅有按张报价的型号仍显示价格，零价不等于缺价。
+// TestPublicQuotePreservesExactImagePrices checks image-only quotes and distinguishes free from unpriced models.
 func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"grok-imagine-image-quality": {CatalogRules: pricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.05}}, TokenPricingAbsent: true},
@@ -41,7 +41,7 @@ func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 	require.Equal(t, "unpriced", quote.PriceStatus)
 }
 
-// TestPricingManagementFreeImageOverridesCatalog 检查用户零价生效时，目录成本仍有独立的尺寸价格。
+// TestPricingManagementFreeImageOverridesCatalog checks that free user pricing leaves catalog size costs independent.
 func TestPricingManagementFreeImageOverridesCatalog(t *testing.T) {
 	zero := 0.0
 	groupID := int64(1)

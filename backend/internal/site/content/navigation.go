@@ -9,13 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// NavigationCopy 是用户菜单和页脚链接可翻译的展示内容。
+// NavigationCopy contains localized menu or footer link text and destination.
 type NavigationCopy struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`
 }
 
-// CustomMenuItem 按稳定 ID 保存菜单，页面授权使用 PageSlug 和 Visibility。
+// CustomMenuItem has a stable ID; page authorization uses PageSlug and Visibility.
 type CustomMenuItem struct {
 	Resolution   *locale.Resolution             `json:"localization_resolution,omitempty"`
 	ID           string                         `json:"id"`
@@ -28,13 +28,13 @@ type CustomMenuItem struct {
 	Localization *locale.Update[NavigationCopy] `json:"localization,omitempty"`
 }
 
-// EndpointCopy 包含接口复制入口的名称和说明。
+// EndpointCopy contains the name and description of a copyable API endpoint.
 type EndpointCopy struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// CustomEndpoint 的接口地址在各语言间共用。
+// CustomEndpoint shares its endpoint URL across languages.
 type CustomEndpoint struct {
 	Resolution   *locale.Resolution           `json:"localization_resolution,omitempty"`
 	ID           string                       `json:"id"`
@@ -44,7 +44,7 @@ type CustomEndpoint struct {
 	Localization *locale.Update[EndpointCopy] `json:"localization,omitempty"`
 }
 
-// FooterLinkGroup 包含一列页脚链接，标题单独翻译。
+// FooterLinkGroup contains one column of footer links with a separately translated title.
 type FooterLinkGroup struct {
 	Resolution   *locale.Resolution     `json:"localization_resolution,omitempty"`
 	ID           string                 `json:"id"`
@@ -53,7 +53,7 @@ type FooterLinkGroup struct {
 	Localization *locale.Update[string] `json:"localization,omitempty"`
 }
 
-// FooterLink 通过稳定 ID 对应各语言的文字和目标地址。
+// FooterLink identifies localized labels and destinations by a stable ID.
 type FooterLink struct {
 	Resolution   *locale.Resolution             `json:"localization_resolution,omitempty"`
 	ID           string                         `json:"id"`
@@ -62,13 +62,13 @@ type FooterLink struct {
 	Localization *locale.Update[NavigationCopy] `json:"localization,omitempty"`
 }
 
-// legacyItemID 给尚未保存 ID 的历史条目生成确定的编辑标识。
+// legacyItemID generates a deterministic editor ID for an entry without a stored ID.
 func legacyItemID(kind string, index int, value string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", kind, index, value)))
 	return hex.EncodeToString(sum[:8])
 }
 
-// ParseMenus 保留历史菜单 ID；管理员条目使用单语言资料。
+// ParseMenus keeps existing menu IDs and assigns deterministic IDs to entries that lack one.
 func ParseMenus(raw string) []CustomMenuItem {
 	items := []CustomMenuItem{}
 	_ = json.Unmarshal([]byte(raw), &items)
@@ -80,7 +80,7 @@ func ParseMenus(raw string) []CustomMenuItem {
 	return items
 }
 
-// ParseEndpoints 将接口配置解析为带稳定 ID 的条目。
+// ParseEndpoints parses endpoint entries and assigns missing IDs.
 func ParseEndpoints(raw string) []CustomEndpoint {
 	items := []CustomEndpoint{}
 	_ = json.Unmarshal([]byte(raw), &items)
@@ -92,7 +92,7 @@ func ParseEndpoints(raw string) []CustomEndpoint {
 	return items
 }
 
-// ParseFooterGroups 为历史分组和链接补充编辑标识。
+// ParseFooterGroups assigns missing IDs to footer groups and links.
 func ParseFooterGroups(raw string) []FooterLinkGroup {
 	items := []FooterLinkGroup{}
 	_ = json.Unmarshal([]byte(raw), &items)

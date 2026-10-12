@@ -11,7 +11,7 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIUpstreamWarningError 实现共享的上游警告接口。
+// openAIUpstreamWarningError implements the shared upstream warning interface.
 var _ forwardcore.UpstreamWarningCarrier = (*openAIUpstreamWarningError)(nil)
 
 type openAIUpstreamWarningError struct {
@@ -19,7 +19,7 @@ type openAIUpstreamWarningError struct {
 	err     error
 }
 
-// ParseOpenAICyberPolicyEvent 识别供应商安全策略事件，记录截断后的正文和已观测用量。
+// ParseOpenAICyberPolicyEvent captures a safety-policy event with a bounded body and observed usage.
 func ParseOpenAICyberPolicyEvent(payload []byte, upstreamStatus int, usage *openai.ForwardUsage) *moderationflow.Mark {
 	hit, code, message := upstreamopenai.DetectOpenAICyberPolicy(payload)
 	if !hit {
@@ -57,7 +57,7 @@ func (e *openAIUpstreamWarningError) Unwrap() error {
 	return e.err
 }
 
-// ExtractOpenAICyberWarningMessage 提取可直接回传给下游客户端的 cyber 风控提示。
+// ExtractOpenAICyberWarningMessage returns a sanitized, bounded cyber-policy message for the client.
 func ExtractOpenAICyberWarningMessage(responseBody []byte, warningText string) string {
 	if hit, _, message := upstreamopenai.DetectOpenAICyberPolicy(responseBody); hit && strings.TrimSpace(message) != "" {
 		return logredact.TruncateLine([]byte(logredact.SanitizeUpstreamQueries(message)), 2048)
@@ -79,7 +79,7 @@ func ExtractOpenAICyberWarningMessage(responseBody []byte, warningText string) s
 	return "OpenAI rejected this request because it may violate cyber safety policy."
 }
 
-// IsOpenAICyberWarningPayload 判断上游响应体或错误文本是否属于 OpenAI cyber 风控拒绝。
+// IsOpenAICyberWarningPayload reports whether the upstream body or error text indicates a cyber-policy rejection.
 func IsOpenAICyberWarningPayload(responseBody []byte, warningText string) bool {
 	if upstreamopenai.IsOpenAICyberWarningText(warningText) {
 		return true
@@ -98,7 +98,7 @@ func OpenAIUpstreamWarningIsCyber(warning *forwardcore.UpstreamWarning) bool {
 	if warning == nil {
 		return false
 	}
-	// WS 重试和 cyber 存储使用相同的识别规则，上游风控拒绝进入统计。
+	// WebSocket retries and cyber-policy records use the same rejection detector.
 	return IsOpenAICyberWarningPayload(warning.ResponseBody, warning.Message)
 }
 

@@ -9,7 +9,8 @@ import (
 	"slices"
 )
 
-// ReasoningOption 对应目录的推理开关、档位或 token 预算。nil 档位表示供应商默认值。
+// ReasoningOption describes a reasoning toggle, effort level, or token budget. A nil level selects the
+// provider default.
 type ReasoningOption struct {
 	Type   string    `json:"type"`
 	Values []*string `json:"values,omitempty"`
@@ -17,12 +18,12 @@ type ReasoningOption struct {
 	Max    *int      `json:"max,omitempty"`
 }
 
-// Interleaved 保存目录的 true 或指定 reasoning 字段。
+// Interleaved represents catalog true values or a named reasoning field.
 type Interleaved struct {
 	Field string `json:"field,omitempty"`
 }
 
-// ParameterCondition 限定可调参数的请求状态；多个条件同时满足时参数可用。
+// ParameterCondition limits a parameter to request states satisfying all supplied conditions.
 type ParameterCondition struct {
 	Efforts  []string `json:"efforts,omitempty"`
 	Thinking *bool    `json:"thinking,omitempty"`
@@ -30,7 +31,7 @@ type ParameterCondition struct {
 
 type ParameterConditions map[string]ParameterCondition
 
-// MediaCapabilities 包含平台已经实现的媒体操作与细分参数。
+// MediaCapabilities contains media operations and parameters implemented by the adapters.
 type MediaCapabilities struct {
 	VideoOperations    []string `json:"video_operations,omitempty"`
 	VideoParameters    []string `json:"video_parameters,omitempty"`
@@ -44,7 +45,7 @@ type MediaCapabilities struct {
 	InputFidelity      *bool    `json:"input_fidelity,omitempty"`
 }
 
-// MarshalJSON 区分未配置的列表与管理员清空的列表。
+// MarshalJSON distinguishes unset lists from lists explicitly cleared by an administrator.
 func (m MediaCapabilities) MarshalJSON() ([]byte, error) {
 	type plain MediaCapabilities
 	body, err := json.Marshal(plain(m))
@@ -93,7 +94,7 @@ func (v *Interleaved) UnmarshalJSON(body []byte) error {
 	return nil
 }
 
-// EffortSupport 返回指定档位是否被声明支持；nil 表示目录和配置均未声明。
+// EffortSupport reports declared support for an effort level; nil means support is unknown.
 func (a Attributes) EffortSupport(effort string) *bool {
 	if a.Reasoning != nil && !*a.Reasoning {
 		return valuePointer(false)

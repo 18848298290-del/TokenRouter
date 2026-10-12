@@ -9,7 +9,7 @@ import (
 	"strconv"
 )
 
-// 身份设置键和管理员凭据前缀沿用已有存储与认证协议。
+// Persistent identity setting keys and the administrator credential prefix.
 const (
 	AdminAPIKeyPrefix                             = "admin-"
 	SettingKeyAdminAPIKey                         = "admin_api_key"
@@ -40,7 +40,7 @@ const (
 	SettingKeyUserEmailChangeEnabled              = "user_email_change_enabled"
 )
 
-// RuntimeSettingsStore 提供身份设置的按键读取、批量读取、写入和删除。
+// RuntimeSettingsStore reads, writes, and deletes identity settings.
 type RuntimeSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 	GetMultiple(context.Context, []string) (map[string]string, error)
@@ -48,28 +48,27 @@ type RuntimeSettingsStore interface {
 	Delete(context.Context, string) error
 }
 
-// RuntimeSettings 读取并解析注册、安全和验证码设置。
+// RuntimeSettings reads registration, security, and captcha settings.
 type RuntimeSettings struct {
 	settingRepo RuntimeSettingsStore
 	notFound    error
 }
 
-// NewRuntimeSettings 绑定设置存储，动态值在调用读取方法时查询。
+// NewRuntimeSettings binds the store; getters read runtime values on each call.
 func NewRuntimeSettings(repo RuntimeSettingsStore, notFound error) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo, notFound: notFound}
 }
 
-// IsRegistrationEnabled 读取注册开关，读取失败时返回 false。
+// IsRegistrationEnabled reads the registration switch and returns false on read failure.
 func (s *RuntimeSettings) IsRegistrationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)
 	if err != nil {
-		// 安全默认：如果设置不存在或查询出错，默认关闭注册
 		return false
 	}
 	return value == "true"
 }
 
-// IsEmailVerifyEnabled 读取邮箱验证开关，读取失败时返回 false。
+// IsEmailVerifyEnabled reads the email verification switch and returns false on read failure.
 func (s *RuntimeSettings) IsEmailVerifyEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyEmailVerifyEnabled)
 	if err != nil {
@@ -78,7 +77,7 @@ func (s *RuntimeSettings) IsEmailVerifyEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// IsRegistrationEmailDomainQuotaEnabled 读取注册邮箱域名配额开关，读取失败时返回 false。
+// IsRegistrationEmailDomainQuotaEnabled reads the domain quota switch and returns false on read failure.
 func (s *RuntimeSettings) IsRegistrationEmailDomainQuotaEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEmailDomainQuotaEnabled)
 	if err != nil {
@@ -87,7 +86,7 @@ func (s *RuntimeSettings) IsRegistrationEmailDomainQuotaEnabled(ctx context.Cont
 	return value == "true"
 }
 
-// IsUserEmailChangeEnabled 读取邮箱换绑开关，读取失败时返回 false。
+// IsUserEmailChangeEnabled reads the email-change switch and returns false on read failure.
 func (s *RuntimeSettings) IsUserEmailChangeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyUserEmailChangeEnabled)
 	if err != nil {
@@ -96,7 +95,7 @@ func (s *RuntimeSettings) IsUserEmailChangeEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// GetRegistrationEmailSuffixWhitelist 读取邮箱后缀白名单，读取失败时返回空列表。
+// GetRegistrationEmailSuffixWhitelist reads allowed email suffixes or returns an empty list on failure.
 func (s *RuntimeSettings) GetRegistrationEmailSuffixWhitelist(ctx context.Context) []string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEmailSuffixWhitelist)
 	if err != nil {
@@ -105,47 +104,46 @@ func (s *RuntimeSettings) GetRegistrationEmailSuffixWhitelist(ctx context.Contex
 	return ParseRegistrationEmailSuffixWhitelist(value)
 }
 
-// IsPasswordResetEnabled 检查邮箱验证和密码重置开关均已开启。
+// IsPasswordResetEnabled reports whether both email verification and password reset are enabled.
 func (s *RuntimeSettings) IsPasswordResetEnabled(ctx context.Context) bool {
-	// Password reset requires email verification to be enabled
 	if !s.IsEmailVerifyEnabled(ctx) {
 		return false
 	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPasswordResetEnabled)
 	if err != nil {
-		return false // 默认关闭
+		return false // Disabled when settings cannot be read.
 	}
 	return value == "true"
 }
 
-// IsTotpEnabled 读取 TOTP 开关，读取失败时返回 false。
+// IsTotpEnabled reads the TOTP switch and returns false on read failure.
 func (s *RuntimeSettings) IsTotpEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyTotpEnabled)
 	if err != nil {
-		return false // 默认关闭
+		return false // Disabled when settings cannot be read.
 	}
 	return value == "true"
 }
 
-// IsSessionBindingEnabled 读取会话绑定开关，读取失败时返回 false。
+// IsSessionBindingEnabled reads the session binding switch and returns false on read failure.
 func (s *RuntimeSettings) IsSessionBindingEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySessionBindingEnabled)
 	if err != nil {
-		return false // 默认关闭
+		return false // Disabled when settings cannot be read.
 	}
 	return value == "true"
 }
 
-// IsStepUpEnabled 读取二次验证开关，读取失败时返回 false。
+// IsStepUpEnabled reads the step-up switch and returns false on read failure.
 func (s *RuntimeSettings) IsStepUpEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStepUpEnabled)
 	if err != nil {
-		return false // 默认关闭
+		return false // Disabled when settings cannot be read.
 	}
 	return value == "true"
 }
 
-// GetDefaultUserRPMLimit 读取默认用户 RPM 上限，读取失败或值非法时返回零。
+// GetDefaultUserRPMLimit returns the default RPM limit, or zero for a missing or invalid value.
 func (s *RuntimeSettings) GetDefaultUserRPMLimit(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultUserRPMLimit)
 	if err != nil || value == "" {
@@ -157,7 +155,7 @@ func (s *RuntimeSettings) GetDefaultUserRPMLimit(ctx context.Context) int {
 	return 0
 }
 
-// GetDefaultUserAPIKeyLimit 读取默认 Key 数量上限，缺少设置或值非法时返回默认值。
+// GetDefaultUserAPIKeyLimit returns the configured limit or DefaultUserAPIKeyLimit when unavailable or invalid.
 func (s *RuntimeSettings) GetDefaultUserAPIKeyLimit(ctx context.Context) int {
 	if s == nil || s.settingRepo == nil {
 		return DefaultUserAPIKeyLimit
@@ -172,7 +170,7 @@ func (s *RuntimeSettings) GetDefaultUserAPIKeyLimit(ctx context.Context) int {
 	return DefaultUserAPIKeyLimit
 }
 
-// IsTurnstileEnabled 读取 Turnstile 开关，读取失败时返回 false。
+// IsTurnstileEnabled reads the Turnstile switch and returns false on read failure.
 func (s *RuntimeSettings) IsTurnstileEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyTurnstileEnabled)
 	if err != nil {
@@ -181,7 +179,7 @@ func (s *RuntimeSettings) IsTurnstileEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// GetTurnstileSecretKey 读取 Turnstile 密钥，读取失败时返回空字符串。
+// GetTurnstileSecretKey reads the Turnstile secret or returns an empty string on failure.
 func (s *RuntimeSettings) GetTurnstileSecretKey(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyTurnstileSecretKey)
 	if err != nil {
@@ -190,7 +188,7 @@ func (s *RuntimeSettings) GetTurnstileSecretKey(ctx context.Context) string {
 	return value
 }
 
-// GetCaptchaProviderConfig 批量读取并解析验证码提供方设置。
+// GetCaptchaProviderConfig reads and parses captcha provider settings in one batch.
 func (s *RuntimeSettings) GetCaptchaProviderConfig(ctx context.Context) (CaptchaProviderConfig, error) {
 	values, err := s.settingRepo.GetMultiple(ctx, []string{
 		SettingKeyTurnstileEnabled,
@@ -231,7 +229,7 @@ func (s *RuntimeSettings) GetCaptchaProviderConfig(ctx context.Context) (Captcha
 	}, nil
 }
 
-// GetTencentCaptchaConfig 读取腾讯验证码配置，读取失败时返回零值。
+// GetTencentCaptchaConfig returns Tencent captcha settings or a zero value on read failure.
 func (s *RuntimeSettings) GetTencentCaptchaConfig(ctx context.Context) TencentCaptchaConfig {
 	config, err := s.GetCaptchaProviderConfig(ctx)
 	if err != nil {
@@ -240,9 +238,8 @@ func (s *RuntimeSettings) GetTencentCaptchaConfig(ctx context.Context) TencentCa
 	return config.Tencent
 }
 
-// GenerateAdminAPIKey 生成带 admin- 前缀的随机密钥并保存到设置表。
+// GenerateAdminAPIKey generates and stores a random key with the admin- prefix.
 func (s *RuntimeSettings) GenerateAdminAPIKey(ctx context.Context) (string, error) {
-	// 生成 32 字节随机数 = 64 位十六进制字符
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("generate random bytes: %w", err)
@@ -250,7 +247,6 @@ func (s *RuntimeSettings) GenerateAdminAPIKey(ctx context.Context) (string, erro
 
 	key := AdminAPIKeyPrefix + hex.EncodeToString(bytes)
 
-	// 存储到 settings 表
 	if err := s.settingRepo.Set(ctx, SettingKeyAdminAPIKey, key); err != nil {
 		return "", fmt.Errorf("save admin api key: %w", err)
 	}
@@ -258,7 +254,7 @@ func (s *RuntimeSettings) GenerateAdminAPIKey(ctx context.Context) (string, erro
 	return key, nil
 }
 
-// GetAdminAPIKeyStatus 查询管理员密钥是否存在，并返回掩码值。
+// GetAdminAPIKeyStatus reports key presence and masks values longer than 14 characters.
 func (s *RuntimeSettings) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey string, exists bool, err error) {
 	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
 	if err != nil {
@@ -271,7 +267,6 @@ func (s *RuntimeSettings) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey s
 		return "", false, nil
 	}
 
-	// 脱敏：显示前 10 位和后 4 位
 	if len(key) > 14 {
 		maskedKey = key[:10] + "..." + key[len(key)-4:]
 	} else {
@@ -281,24 +276,24 @@ func (s *RuntimeSettings) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey s
 	return maskedKey, true, nil
 }
 
-// GetAdminAPIKey 读取管理员密钥，未配置时返回空字符串。
+// GetAdminAPIKey reads the administrator key or returns an empty string when unconfigured.
 func (s *RuntimeSettings) GetAdminAPIKey(ctx context.Context) (string, error) {
 	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
 	if err != nil {
 		if errors.Is(err, s.notFound) {
-			return "", nil // 未配置，返回空字符串
+			return "", nil // No key is configured.
 		}
-		return "", err // 数据库错误
+		return "", err // Propagate other storage failures.
 	}
 	return key, nil
 }
 
-// DeleteAdminAPIKey 删除已保存的管理员密钥。
+// DeleteAdminAPIKey removes the stored administrator key.
 func (s *RuntimeSettings) DeleteAdminAPIKey(ctx context.Context) error {
 	return s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
 }
 
-// IsRegistrationEmailNormalizationEnabled 读取注册邮箱归一化开关，读取失败时返回 false。
+// IsRegistrationEmailNormalizationEnabled reads the normalization switch and returns false on read failure.
 func (s *RuntimeSettings) IsRegistrationEmailNormalizationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEmailNormalization)
 	if err != nil {

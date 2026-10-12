@@ -20,8 +20,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	subscription := input.Subscription
 	s.normalizeResult(result, provider, false, provider, input.RequestID)
 
-	// 强制缓存计费：将 input_tokens 转为 cache_read_input_tokens
-	// 用于粘性会话切换时的特殊计费处理
+	// Treat uncached input as cache reads when sticky-session switching requests cache billing.
+
 	if input.ForceCacheBilling && result.Usage.InputTokens > 0 {
 		s.printf("service.gateway", "force_cache_billing: %d input_tokens → cache_read_input_tokens (provider=%d)",
 			result.Usage.InputTokens, provider.ID)
@@ -29,14 +29,14 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		result.Usage.InputTokens = 0
 	}
 
-	// 按提供商设置重新分类缓存 token。提供商设置优先，全局一小时 TTL 注入开启时默认按五分钟缓存计费。
+	// Provider cache overrides take precedence. Global one-hour injection defaults eligible providers to five-minute billing.
 	cacheTTLOverridden := false
 	if overrideTarget := s.cacheOverrideTarget(ctx, input); overrideTarget != "" {
 		applyCacheOverride(&result.Usage, overrideTarget)
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
+	// Balance multipliers prefer user overrides, then group and system defaults.
 	multiplier := s.defaultMultiplier
 	subscriptionMultiplier := multiplier
 	balanceMultiplier := multiplier
@@ -54,13 +54,12 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	} else {
 		multiplier = ResolveUsageRateMultiplier(ctx, user.ID, apiKey.GroupID, apiKey.Group, multiplier, subscription, nil)
 	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
+	// Apply the peak factor to token billing, including image tokens, but not per-image billing.
+	// Compute it separately so the user/group multiplier cache does not retain a time-dependent value.
 	rateNow := s.now()
 	opts.PricingAt = rateNow
 	multiplier, imageMultiplier := ComputePeakAwareMultipliers(apiKey, multiplier, rateNow)
 
-	// 确定计费模型
 	billingModel := ForwardResultBillingModel(result.Model, result.UpstreamModel)
 	if input.BillingModelSource == BillingModelSourceUpstream && result.UpstreamModel != "" {
 		billingModel = result.UpstreamModel
@@ -72,28 +71,26 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		billingModel = input.OriginalModel
 	}
 
-	// 确定 RequestedModel（分组映射前的原始模型）
+	// RequestedModel records the model before group mapping.
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
 	}
 
-	// 计算费用
 	cost := s.CalculateRecordUsageCost(ctx, result, apiKey, provider, billingModel, requestedModel, input.BillingModelSource, input.GroupMappedModel, multiplier, imageMultiplier, opts)
 
-	// 此处预填 billing_type，统一扣费完成后用结算结果覆盖。
+	// The settlement result replaces this provisional billing type.
 	isSubscriptionBilling := subscription != nil
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
 	}
 
-	// 创建使用日志
 	providerRateMultiplier := provider.RateMultiplier
 	usageLog := s.BuildRecordUsageLog(ctx, input, result, apiKey, user, provider, subscription,
 		requestedModel, multiplier, imageMultiplier, providerRateMultiplier, billingType, cacheTTLOverridden, cost, opts)
 
-	// 计算提供商统计定价费用（Qoder 会先按原始请求 alias、再按分组映射模型 / 最终 upstream 匹配自定义规则）
+	// Qoder provider-cost rules prefer the requested alias, then the group-mapped and upstream models.
 	if apiKey.GroupID != nil {
 		s.applyProviderStatsCost(ctx, usageLog,
 			provider.ID, *apiKey.GroupID, result.UpstreamModel, requestedModel, input.GroupMappedModel,
@@ -125,7 +122,7 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	})
 
 	if billingErr != nil {
-		// 结算事务失败时仍保留已计算的用量与成本明细；ActualCost 置零明确表示本次未成功结算。
+		// Keep usage and calculated costs for reconciliation; zero ActualCost marks an unsuccessful settlement.
 		usageLog.ActualCost = 0
 		s.WriteUsage(ctx, usageLog, "service.gateway")
 		return billingErr
@@ -248,10 +245,9 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}
 	s.normalizeResult(result, billingProvider, true, provider, input.RequestID)
 
-	// OpenAI input_tokens 包含缓存读取和写入，此处分为未缓存输入、缓存读取和缓存写入三个独立计费桶。
+	// Split OpenAI total input into uncached input, cache reads, and cache creation for separate billing.
 	actualInputTokens := max(result.Usage.InputTokens-result.Usage.CacheReadInputTokens-result.Usage.CacheCreationInputTokens, 0)
 
-	// Calculate cost
 	tokens := UsageTokens{
 		InputTokens:         actualInputTokens,
 		ImageInputTokens:    result.Usage.ImageInputTokens,
@@ -261,7 +257,6 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		ImageOutputTokens:   result.Usage.ImageOutputTokens,
 	}
 
-	// Get rate multiplier
 	multiplier := s.defaultMultiplier
 	subscriptionMultiplier := multiplier
 	balanceMultiplier := multiplier
@@ -278,8 +273,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	} else {
 		multiplier = ResolveUsageRateMultiplier(ctx, user.ID, apiKey.GroupID, apiKey.Group, multiplier, subscription, nil)
 	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 Resolve，以免污染 user:group 倍率缓存。
+	// Apply peak factors to token billing, including image tokens, while retaining the per-image base multiplier.
+	// Keep time-dependent factors outside the user/group multiplier cache.
 	baseMultiplier := multiplier
 	rateNow := s.now()
 	if !input.PricingAt.IsZero() {
@@ -315,7 +310,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			return err
 		}
 		s.observeEvent(BillingEvent{Kind: "pricing_missing", Component: "service.openai_gateway", Models: billingModels, RequestedModel: input.OriginalModel, MappedModel: input.GroupMappedModel, UpstreamModel: result.UpstreamModel, KeyID: apiKey.ID, ProviderID: provider.ID, Err: err})
-		// 缺价时保留媒体计费单位，金额清零但图片数、尺寸和视频时长仍须记录。
+		// Retain media counts, dimensions, and duration when missing prices make charges zero.
 		mode := string(BillingModeToken)
 		if cost != nil && cost.BillingMode != "" {
 			mode = cost.BillingMode
@@ -323,8 +318,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		cost = &CostBreakdown{BillingMode: mode}
 	}
 
-	// 免费 Fast 只减免用户侧费用。保留 Fast 的 TotalCost 供提供商统计和审计，
-	// 并记录 Standard 基础金额供统一订阅/余额分配使用。
+	// Free Fast uses standard prices for user charges while retaining Fast TotalCost for provider statistics.
+	// The standard base amount drives subscription and balance allocation.
 	var billingBaseAmountUSD *float64
 	if GroupBillsOpenAIFastAtStandard(apiKey, billingProvider, serviceTier) && cost != nil {
 		standardCost, standardErr := s.CalculateOpenAIRecordUsageCostAt(
@@ -344,7 +339,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			if !IsUsagePricingUnavailableError(standardErr) {
 				return standardErr
 			}
-			// 标准价缺失时用户费用为零，提供商统计仍使用 Fast 成本。
+			// Missing standard prices yield zero user charges while provider statistics retain Fast costs.
 			s.observeEvent(BillingEvent{Kind: "standard_pricing_missing", Component: "service.openai_gateway", RequestID: input.RequestID, Err: standardErr})
 			standardCost = &CostBreakdown{}
 		}
@@ -353,19 +348,18 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		cost.ActualCost = standardCost.ActualCost
 	}
 
-	// 此处预填 billing_type，统一扣费完成后用结算结果覆盖。
+	// The settlement result replaces this provisional billing type.
 	isSubscriptionBilling := subscription != nil
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
 	}
 
-	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
 	providerRateMultiplier := provider.RateMultiplier
 	requestID := input.RequestID
 
-	// 确定 RequestedModel（分组映射前的原始模型）
+	// RequestedModel records the model before group mapping.
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
@@ -443,10 +437,10 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	usageLog.DurationMs = &durationMs
 	usageLog.FirstTokenMs = result.FirstTokenMs
 	usageLog.CreatedAt = time.Now()
-	// 记录共享价格配置 ID、模型映射链和计费模式
+
 	usageLog.PricingConfigID = OptionalInt64Ptr(input.PricingConfigID)
 	usageLog.ModelMappingChain = OptionalTrimmedStringPtr(input.ModelMappingChain)
-	// 设置计费模式
+
 	if cost != nil && cost.BillingMode != "" {
 		billingMode := cost.BillingMode
 		usageLog.BillingMode = &billingMode
@@ -460,17 +454,16 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		billingMode := string(BillingModeToken)
 		usageLog.BillingMode = &billingMode
 	}
-	// 添加 UserAgent
+
 	if input.UserAgent != "" {
 		usageLog.UserAgent = &input.UserAgent
 	}
 
-	// 添加 IPAddress
 	if input.IPAddress != "" {
 		usageLog.IPAddress = &input.IPAddress
 	}
 
-	// 记录客户端指定的 SessionID，缺失或无效时为 nil。
+	// Store the captured client session ID; empty values become nil.
 	usageLog.SessionID = OptionalTrimmedStringPtr(input.ClientSessionID)
 
 	if apiKey.GroupID != nil {
@@ -480,7 +473,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		usageLog.SubscriptionID = &subscription.ID
 	}
 
-	// 计算提供商统计定价费用（Qoder 会先按原始请求 alias、再按分组映射模型 / 最终 upstream 匹配自定义规则）
+	// Qoder provider-cost rules prefer the requested alias, then the group-mapped and upstream models.
 	if apiKey.GroupID != nil {
 		s.applyProviderStatsCost(ctx, usageLog,
 			provider.ID, *apiKey.GroupID, result.UpstreamModel, requestedModel, input.GroupMappedModel,
@@ -507,7 +500,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}()
 
 	if billingErr != nil {
-		// 结算事务失败时仍保留已计算的用量与成本明细；ActualCost 置零明确表示本次未成功结算。
+		// Keep usage and calculated costs for reconciliation; zero ActualCost marks an unsuccessful settlement.
 		usageLog.ActualCost = 0
 		s.WriteUsage(ctx, usageLog, "service.openai_gateway")
 		return billingErr
@@ -516,8 +509,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	return nil
 }
 
-// RecordCyber 对符合条件的错误补记用量，调用 RecordOpenAI 应用计费或零费用规则。
-// 调用方在提交前复制 Input。
+// RecordCyber records eligible error usage through the normal billing path with the Cyber request classification.
+// Callers snapshot Input before queue submission.
 func (s *Recorder) RecordCyber(ctx context.Context, in *Input) {
 	if s == nil || in == nil || in.APIKey == nil || in.User == nil || in.Provider == nil || in.Result == nil || strings.TrimSpace(in.Result.Model) == "" {
 		return

@@ -10,7 +10,7 @@ import (
 
 var ErrMonitorURLInvalid = errors.New("invalid monitor URL")
 
-// MonitorHostPolicy 保留后台监控的官方主机优先与自定义主机显式 allowlist 约束。
+// MonitorHostPolicy accepts official hosts and requires an enabled allowlist for custom monitor hosts.
 type MonitorHostPolicy struct {
 	Enabled, AllowInsecureHTTP, AllowPrivate bool
 	AllowedHosts                             []string

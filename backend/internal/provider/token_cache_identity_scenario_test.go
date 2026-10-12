@@ -1,6 +1,6 @@
 package provider
 
-// 本文件检查 openai_token.go 与 claude_token.go 的缓存键平台隔离。
+// Token cache identities are namespaced by platform.
 
 import (
 	"testing"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestCacheKeyUniqueness(t *testing.T) {
-	// 不同平台使用各自的缓存键前缀。
+	// The same provider ID must produce different keys across platforms.
 	provider := &Record{ID: 123}
 
 	openaiKey := OpenAITokenCacheKey(provider)

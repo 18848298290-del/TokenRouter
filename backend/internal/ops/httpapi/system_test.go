@@ -56,10 +56,10 @@ type systemUpdateErrorEnvelope struct {
 	Message string `json:"message"`
 }
 
-// restartRecorder 记录重启请求次数。
+// restartRecorder counts restart requests.
 type restartRecorder struct{ calls int }
 
-// systemOperationFixture 模拟维护 HTTP 操作使用的带所有者租约。
+// systemOperationFixture models owner-specific maintenance leases for HTTP tests.
 type systemOperationFixture struct {
 	mu     sync.Mutex
 	nextID int64
@@ -122,8 +122,8 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.Equal(t, "internal error", body.Message)
 }
 
-// TestSystemHandlerPerformUpdateSurvivesClientDisconnect 覆盖 #4504：浏览器或反向代理
-// 取消请求后，下载在有截止时间的独立上下文中继续运行。
+// TestSystemHandlerPerformUpdateSurvivesClientDisconnect covers #4504: downloads continue
+// under an independent deadline after the browser or reverse proxy cancels the request.
 func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -367,7 +367,7 @@ func requireSystemLockStatus(t *testing.T, repo *systemOperationFixture, wantSta
 
 func (r *restartRecorder) RequestRestart() error { r.calls++; return nil }
 
-// ClaimOperation 按租约有效期判断是否可以认领操作，并保存认领者标识。
+// ClaimOperation checks lease expiration and records the new owner token.
 func (r *systemOperationFixture) ClaimOperation(ctx context.Context, c idempotency.OperationClaim) (*idempotency.IdempotencyRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -51,13 +51,13 @@ func (a *turnAuthentication) Reauthenticate(_ context.Context, _ *apikey.APIKey,
 	return a.key, a.err
 }
 
-// AcquireRequest 为未设置限制的认证用例提供可释放的准入结果。
+// AcquireRequest supplies releasable admission for authentication tests with no limiter.
 func (a *turnAuthentication) AcquireRequest(ctx context.Context, key *apikey.APIKey) (context.Context, func(), time.Duration, error) {
 	a.acquired = key
 	return ctx, func() {}, 0, a.acquireErr
 }
 
-// TestAuthorizeTurn 用当前快照检查资金；身份失败不得进入资金检查，也不得覆盖上一轮快照。
+// TestAuthorizeTurn checks funding with the current snapshot and retains the prior snapshot on authentication failure.
 func TestAuthorizeTurn(t *testing.T) {
 	for _, name := range []string{"allowed", "deleted", "funding_denied", "subscription_missing"} {
 		t.Run(name, func(t *testing.T) {
@@ -111,7 +111,7 @@ func (s turnSubscriptions) ValidateAndCheckLimits(*billing.UserSubscription) (bo
 	return false, nil
 }
 
-// TestAuthorizeTurnReloadsSubscription 验证资金检查读取本轮订阅，不复用连接建立时的剩余额度。
+// TestAuthorizeTurnReloadsSubscription checks funding against current subscription usage.
 func TestAuthorizeTurnReloadsSubscription(t *testing.T) {
 	key := &apikey.APIKey{ID: 1, User: &identity.User{ID: 2}, Group: &routing.Group{AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesWebSocket}}}
 	old := &billing.UserSubscription{ID: 3, DailyUsageUSD: 0}
@@ -129,7 +129,7 @@ func TestAuthorizeTurnReloadsSubscription(t *testing.T) {
 	require.Zero(t, old.DailyUsageUSD)
 }
 
-// TestKeyAdmissionUsesCurrentTurnLimits 后续轮次使用重新认证得到的上限。
+// TestKeyAdmissionUsesCurrentTurnLimits verifies that later turns use limits from reauthentication.
 func TestKeyAdmissionUsesCurrentTurnLimits(t *testing.T) {
 	original := &apikey.APIKey{ID: 1, User: &identity.User{ID: 2}, BillingMode: billing.APIKeyBillingModeBalance, RPMLimit: 20}
 	original.Group = &routing.Group{AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesWebSocket}}
@@ -150,7 +150,7 @@ func TestKeyAdmissionUsesCurrentTurnLimits(t *testing.T) {
 	require.Equal(t, 20, original.RPMLimit)
 }
 
-// 分组取消 WS 许可后，下一轮在资金检查前拒绝，已经完成的轮次快照保持独立。
+// TestAuthorizeTurnRejectsRevokedWSProtocol rejects before funding checks and keeps the completed-turn snapshot independent.
 func TestAuthorizeTurnRejectsRevokedWSProtocol(t *testing.T) {
 	original := &apikey.APIKey{
 		ID: 1, User: &identity.User{ID: 2}, BillingMode: billing.APIKeyBillingModeBalance,
@@ -182,12 +182,12 @@ func (r *entryKeyReader) Reauthenticate(context.Context, *apikey.APIKey, apikey.
 	return nil, apikey.ErrAPIKeyNotFound
 }
 
-// AcquireRequest 为访问快照测试提供请求准入接口。
+// AcquireRequest supplies admission for access-snapshot tests.
 func (r *entryKeyReader) AcquireRequest(ctx context.Context, _ *apikey.APIKey) (context.Context, func(), time.Duration, error) {
 	return ctx, func() {}, 0, nil
 }
 
-// TestEntryAccessKeepsProjectionIndependentAndLazy 验证策略按需刷新，模型和 effort 映射使用独立数据，认证快照保持原样。
+// TestEntryAccessKeepsProjectionIndependentAndLazy checks lazy policy refresh and independent model and effort mappings.
 func TestEntryAccessKeepsProjectionIndependentAndLazy(t *testing.T) {
 	reader := &entryKeyReader{}
 	key := &apikey.APIKey{ID: 9, UserID: 7, Key: "fixture-key", ModelMapping: map[string]string{"alias": "original"}, Group: &routing.Group{ReasoningEffortMappings: []routing.ReasoningEffortMapping{{}}}}
@@ -202,7 +202,7 @@ func TestEntryAccessKeepsProjectionIndependentAndLazy(t *testing.T) {
 	require.NotSame(t, &key.Group.ReasoningEffortMappings[0], &view.Group.ReasoningEffortMappings[0])
 }
 
-// TestWSTurnPricing 检查后续轮次换型号、按次零价和当前分组的独立定价。
+// TestWSTurnPricing covers model changes, zero per-request prices, and group-specific pricing.
 func TestWSTurnPricing(t *testing.T) {
 	zero := 0.0
 	prices := &admission.ModelPricing{Resolver: testkit.ResolverWithCards(t, billing.NewCalculator(nil, billing.CalculatorOptions{}), []routing.ModelPricingEntry{{
@@ -237,7 +237,7 @@ func TestWSTurnPricing(t *testing.T) {
 	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
 }
 
-// TestPrepareCompletionKeepsTurnIdentity 覆盖 HTTP 适配器把连接上下文误传给轮次结算的情形。
+// TestPrepareCompletionKeepsTurnIdentity catches connection context leaking into turn settlement.
 func TestPrepareCompletionKeepsTurnIdentity(t *testing.T) {
 	root := telemetry.WithRequestCapture(context.WithValue(context.Background(), telemetry.RequestID, "connection"), telemetry.RequestRecord{RequestID: "connection", UserID: 2, APIKeyID: 1, StartedAt: time.Now(), State: "running"}, nil)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

@@ -9,7 +9,7 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
-// buildSystemSettingsResponse 将已读取的设置和支付配置转换为管理响应。
+// buildSystemSettingsResponse converts loaded settings and payment configuration to the admin response.
 func buildSystemSettingsResponse(
 	settings *composite.Snapshot,
 	paymentCfg *payment.PaymentConfig,

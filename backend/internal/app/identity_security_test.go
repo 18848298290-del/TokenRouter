@@ -15,7 +15,7 @@ func TestPasskeyServiceDisabledFailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, svc.Enabled())
 
-	// 部署未配置 RP 安全参数时，公开登录入口拒绝服务。
+	// Public login is disabled when relying-party security settings are absent.
 	_, _, err = svc.BeginLogin(context.Background())
 	require.ErrorIs(t, err, identity.ErrPasskeysDisabled)
 }

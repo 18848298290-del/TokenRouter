@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// RefreshProviderExecution 提供已选平台的资格判断和单个提供商刷新接口。
+// RefreshProviderExecution supplies platform eligibility checks and one-provider refresh execution.
 type RefreshProviderExecution struct {
 	Platform     string
 	State        *RefreshProviderState
@@ -18,7 +18,8 @@ type RefreshProviderExecution struct {
 	Execute      func(context.Context, *Record, time.Duration, *RefreshProviderState) error
 }
 
-// RefreshPageProcessor 拥有按平台分组、并发 worker、取消/隔离跳过及结果统计。
+// RefreshPageProcessor groups candidates by platform, runs workers, handles cancellation and platform blocks,
+// and counts results.
 type RefreshPageProcessor struct {
 	Concurrency int
 	Info, Warn  func(string, ...any)

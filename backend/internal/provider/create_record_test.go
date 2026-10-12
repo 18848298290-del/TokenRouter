@@ -41,7 +41,7 @@ func TestBuildProviderForCreateRequiresCustomGeminiThirdPartyBaseURL(t *testing.
 	require.NotNil(t, provider)
 }
 
-// TestBuildProviderForCreateNormalizesLegacyOpenAIConfigurationForCreateAndImport 检查通用导入调用 CreateProvider，创建时清理废弃 OpenAI 配置。
+// TestBuildProviderForCreateNormalizesLegacyOpenAIConfigurationForCreateAndImport checks deprecated OpenAI settings in the shared creation path.
 func TestBuildProviderForCreateNormalizesLegacyOpenAIConfigurationForCreateAndImport(t *testing.T) {
 	input := &CreateProviderInput{
 		Name:     "legacy-openai",

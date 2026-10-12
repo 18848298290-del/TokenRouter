@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// PendingRepository 实现身份用例的持久化边界。
+// PendingRepository converts stored pending authentication state into identity domain values.
 type PendingRepository struct{ store *AuthPendingIdentityService }
 
 func NewPendingRepository(client *dbent.Client, clocks ...func() time.Time) *PendingRepository {

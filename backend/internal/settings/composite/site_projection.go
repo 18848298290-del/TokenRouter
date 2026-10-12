@@ -2,7 +2,7 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/site"
 
-// SiteAdminSettings 从综合快照提取站点设置。
+// SiteAdminSettings extracts site settings from the snapshot.
 func (s *Snapshot) SiteAdminSettings() site.AdminSettings {
 	return site.AdminSettings{
 		APIBaseURL:                  s.APIBaseURL,
@@ -32,7 +32,7 @@ func (s *Snapshot) SiteAdminSettings() site.AdminSettings {
 	}
 }
 
-// ApplySiteAdminSettings 将站点设置写入综合快照。
+// ApplySiteAdminSettings copies site settings into the snapshot.
 func (s *Snapshot) ApplySiteAdminSettings(value site.AdminSettings) {
 	s.APIBaseURL = value.APIBaseURL
 	s.ContactInfo = value.ContactInfo
@@ -60,7 +60,8 @@ func (s *Snapshot) ApplySiteAdminSettings(value site.AdminSettings) {
 	s.TablePageSizeOptions = value.TablePageSizeOptions
 }
 
-// ApplySiteAdminReadSettings 将站点展示、订阅入口和登录协议设置写入快照。
+// ApplySiteAdminReadSettings copies site display, subscription entry, and login agreement settings into the
+// snapshot.
 func (s *Snapshot) ApplySiteAdminReadSettings(value *site.AdminReadSettings) {
 	s.APIBaseURL = value.APIBaseURL
 	s.ContactInfo = value.ContactInfo

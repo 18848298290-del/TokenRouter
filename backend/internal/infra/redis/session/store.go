@@ -12,7 +12,7 @@ import (
 
 var ErrNotConfigured = errors.New("redis session store not configured")
 
-// Store 在同一命名空间内保存 JSON 会话和一次性消费标记。
+// Store saves JSON sessions and consumption markers in one Redis namespace.
 type Store struct {
 	rdb    *redis.Client
 	prefix string
@@ -97,7 +97,8 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return s.rdb.Del(ctx, s.dataKey(id), s.usedKey(id)).Err()
 }
 
-// TryConsume 仅在会话存在且首次领取时返回 true。
+// TryConsume claims a consumption marker, then checks that the session still exists.
+// It returns true for the successful claimant; the session data remains readable.
 func (s *Store) TryConsume(ctx context.Context, id string) (bool, error) {
 	if s == nil || s.rdb == nil {
 		return false, ErrNotConfigured

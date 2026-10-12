@@ -20,7 +20,7 @@ const (
 	liveObserverStoreRetryLimit = 5
 )
 
-// ProxyLiveSideband 让认证后的客户端接管控制连接；媒体始终不经过这里。
+// ProxyLiveSideband gives an authenticated client the control connection; media uses a separate path.
 func (s *Service) ProxyLiveSideband(
 	ctx context.Context,
 	record *session.LiveCallRecord,
@@ -42,13 +42,13 @@ func (s *Service) ProxyLiveSideband(
 		return session.ErrLiveControllerChanged
 	}
 
-	// 归还控制权使用独立预算；请求取消不能阻止原会话恢复观察。
+	// Use a separate cleanup budget so cancellation still allows the session observer to resume.
 	releaseController := func() {
 		cleanup, done := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
 		defer done()
 		_, _ = store.ReleaseLiveController(cleanup, record.CallHash, owner)
 	}
-	// observer 轮询到接管状态后会关闭旧控制连接；取消不继续查询或拨号。
+	// Allow the observer to notice takeover and close its connection before dialing a replacement.
 	if !waitLiveObserver(ctx, liveObserverPollInterval) || ctx.Err() != nil {
 		releaseController()
 		go s.Observe(record)
@@ -138,9 +138,9 @@ func (s *Service) ProxyLiveSideband(
 	return runErr
 }
 
-// SessionEnded 判断控制连接退出后是否需要结束会话、记录用量并释放租约。
-// session.ErrLiveUnavailable 表示续租失败，RefreshLiveLease 在 leaseID 被回收后返回失败。
-// 此时需要结束会话，重连会使连接在缺少并发槽的情况下每秒重试直到 ExpiresAt。
+// SessionEnded reports whether to finalize usage and release the session lease.
+// session.ErrLiveUnavailable includes renewal failure after a lease has been reclaimed.
+// Reconnecting after lease loss would repeatedly open an unreserved connection until ExpiresAt.
 func SessionEnded(err error) bool {
 	return errors.Is(err, session.ErrLiveCallNotFound) ||
 		errors.Is(err, session.ErrLiveUnavailable) ||
@@ -196,7 +196,7 @@ func (s *Service) Observe(record *session.LiveCallRecord) {
 		return
 	}
 	if claimErr != nil {
-		// 无法确认控制权时保存会话快照，到期后完成一次结算和租约释放。
+		// If ownership cannot be confirmed, retain the snapshot and attempt finalization after expiry.
 		s.FinalizeAfterExpiry(ctx, record)
 		return
 	}
@@ -216,7 +216,7 @@ func (s *Service) Observe(record *session.LiveCallRecord) {
 			if errors.Is(getErr, session.ErrLiveCallNotFound) {
 				return
 			}
-			// Redis 查询失败时有限重试，超过次数后按会话到期时间结束会话。
+			// Bound Redis read retries, then wait for session expiry before finalization.
 			storeErrStreak++
 			if storeErrStreak >= liveObserverStoreRetryLimit {
 				s.FinalizeAfterExpiry(ctx, record)
@@ -344,16 +344,16 @@ func (s *Service) WaitForObserverRetry(ctx context.Context, record *session.Live
 	}
 	controller, getErr := store.GetLiveController(context.Background(), record.CallHash)
 	if getErr != nil && !errors.Is(getErr, session.ErrLiveCallNotFound) {
-		// store 读取失败交回 observer 主循环重试，到期后结束会话。
+		// Let the observer loop retry store reads and finalize expired sessions.
 		return true
 	}
-	// 过期不在此处判定：返回 true 让调用方回到循环顶部的过期分支，由它 finalize
-	// （写 usage log + 释放租约）。在这里直接返回 false 会让会话静默结束、不留记录。
+	// Return to the loop's expiry check so it can write usage and release the lease.
+	// Returning false here on expiry would silently skip finalization.
 	return getErr == nil && controller == session.LiveControllerObserver
 }
 
-// FinalizeAfterExpiry 在 observer 读取存储失败时使用最后快照，最迟于会话到期后完成。
-// MarkLiveCallClosed 返回的 first 标记用于和其他恢复路径去重。
+// FinalizeAfterExpiry waits for expiry using the last snapshot when observer storage reads fail.
+// Finalize uses MarkLiveCallClosed to deduplicate competing cleanup paths; cancellation skips the wait.
 func (s *Service) FinalizeAfterExpiry(ctx context.Context, record *session.LiveCallRecord) {
 	if record == nil {
 		return
@@ -417,7 +417,7 @@ func waitLiveObserver(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// Lookup 校验会话 ID、API Key、付款用户和分组绑定，已关闭的记录返回未找到。
+// Lookup validates call ID, API key, payer, and group bindings; closed records return not found.
 func (s *Service) Lookup(ctx context.Context, callID string, identity session.LiveCallIdentity) (*session.LiveCallRecord, error) {
 	store, err := s.ports.Store()
 	if err != nil {

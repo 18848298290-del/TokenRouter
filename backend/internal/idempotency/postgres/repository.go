@@ -14,7 +14,7 @@ type idempotencyRepository struct {
 	sql Executor
 }
 
-// Executor 保留 DB 与显式 SQL 事务的存储适配能力；生产仍由 app 传入独立 DB。
+// Executor accepts either a database connection pool or an explicit SQL transaction.
 type Executor interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	ExecContext(context.Context, string, ...any) (sql.Result, error)

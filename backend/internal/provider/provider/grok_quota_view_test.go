@@ -68,7 +68,7 @@ func TestGrokQuotaFetcherBuildUsageInfoUnknownUntilFirstSnapshot(t *testing.T) {
 func TestGrokQuotaFetcherDoesNotTreatGrok45ResponsesWindowAsHeavy(t *testing.T) {
 	t.Parallel()
 
-	// 8300/53M 是 grok-4.5 Responses 限流窗口，不是通用档位指纹。
+	// The 8300-request and 53M-token windows identify a plan only when observed for grok-4.5 Responses.
 	reqLimit, tokLimit := int64(8300), int64(53_000_000)
 	fresh := time.Now().UTC().Format(time.RFC3339)
 	provider := &providercore.Record{

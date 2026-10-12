@@ -4,7 +4,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// SchedulerAdminSettings 从综合快照提取调度设置。
+// SchedulerAdminSettings extracts scheduler settings from the snapshot.
 func (s *Snapshot) SchedulerAdminSettings() scheduler.AdminSettings {
 	return scheduler.AdminSettings{
 		AdvancedSchedulerEWMAErrorRateAlpha:          s.AdvancedSchedulerEWMAErrorRateAlpha,
@@ -28,7 +28,7 @@ func (s *Snapshot) SchedulerAdminSettings() scheduler.AdminSettings {
 	}
 }
 
-// ApplySchedulerAdminSettings 将调度设置写入综合快照。
+// ApplySchedulerAdminSettings copies scheduler settings into the snapshot.
 func (s *Snapshot) ApplySchedulerAdminSettings(value scheduler.AdminSettings) {
 	s.AdvancedSchedulerEWMAErrorRateAlpha = value.AdvancedSchedulerEWMAErrorRateAlpha
 	s.AdvancedSchedulerEWMATTFTAlpha = value.AdvancedSchedulerEWMATTFTAlpha

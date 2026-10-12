@@ -11,7 +11,7 @@ const (
 	PromoCodeStatusDisabled = "disabled"
 )
 
-// PromoCode 注册优惠码。
+// PromoCode describes a registration promotion and its usage limits.
 type PromoCode struct {
 	ID          int64
 	Code        string
@@ -24,11 +24,11 @@ type PromoCode struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 
-	// 关联
+	// Loaded usage records.
 	UsageRecords []PromoCodeUsage
 }
 
-// PromoCodeUsage 优惠码使用记录。
+// PromoCodeUsage records a user's promotion credit.
 type PromoCodeUsage struct {
 	ID          int64
 	PromoCodeID int64
@@ -36,12 +36,12 @@ type PromoCodeUsage struct {
 	BonusAmount float64
 	UsedAt      time.Time
 
-	// 关联
+	// Loaded code and user details.
 	PromoCode *PromoCode
 	User      *UserView
 }
 
-// CreatePromoCodeInput 创建优惠码输入。
+// CreatePromoCodeInput contains the fields for a new promotion code.
 type CreatePromoCodeInput struct {
 	Code        string
 	BonusAmount float64
@@ -50,7 +50,7 @@ type CreatePromoCodeInput struct {
 	Notes       string
 }
 
-// UpdatePromoCodeInput 更新优惠码输入。
+// UpdatePromoCodeInput contains optional edits to a promotion code.
 type UpdatePromoCodeInput struct {
 	Code        *string
 	BonusAmount *float64
@@ -60,7 +60,7 @@ type UpdatePromoCodeInput struct {
 	Notes       *string
 }
 
-// UserView 包含优惠码使用记录中的用户资料。
+// UserView contains user details included in promotion usage records.
 type UserView struct {
 	ID                         int64
 	Email                      string
@@ -98,7 +98,7 @@ func (p *PromoCode) CanUseAt(now time.Time) bool {
 	return true
 }
 
-// IsExpired 检查是否已过期。
+// IsExpired reports whether the code expired before the current time.
 func (p *PromoCode) IsExpired() bool { return p.IsExpiredAt(time.Now()) }
 
 func (p *PromoCode) IsExpiredAt(now time.Time) bool {

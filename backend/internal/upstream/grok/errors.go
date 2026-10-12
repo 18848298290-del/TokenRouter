@@ -9,9 +9,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// IsGrokContentPolicyRejection 识别 xAI 针对单次请求的内容安全拒绝。
-// 这类失败由提示词或媒体内容引起，切换 OAuth 提供商无法改变结果，反而会错误消耗提供商池。
-// 匹配条件必须保持严格：提供商权益或封禁消息也可能提到策略，但仍应走正常的提供商故障转移路径。
+// IsGrokContentPolicyRejection recognizes request-level xAI content rejections.
+// These prompt or media failures should not consume the OAuth provider pool through retries.
+// Entitlement and account bans can also mention policy and require provider failover.
 func IsGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 	if statusCode != http.StatusForbidden || len(responseBody) == 0 {
 		return false
@@ -101,6 +101,7 @@ func IsGrokContentPolicyCode(value string) bool {
 }
 
 func IsGrokProviderAccessCode(value string) bool {
+	// permission-denied can also indicate moderation; classify it by message instead.
 	switch NormalizeGrokErrorMarker(value) {
 	case "account_suspended",
 		"account_disabled",
@@ -110,7 +111,6 @@ func IsGrokProviderAccessCode(value string) bool {
 		"entitlement_required",
 		"not_entitled",
 		"plan_required":
-		// permission-denied 同时用于权益拒绝和请求级安全拦截，交由错误消息进一步判断。
 		return true
 	default:
 		return false
@@ -143,7 +143,7 @@ func GrokContentPolicyMessage(value string) bool {
 		return false
 	}
 
-	// xAI 媒体安全响应会使用这些明确短语，不会与普通提供商策略或权益消息混淆。
+	// Match specific media moderation phrases to distinguish account and entitlement failures.
 	for _, phrase := range []string{
 		"the moderation feature is not available",
 		"image is sensitive",
@@ -235,7 +235,7 @@ func GrokStructuredErrorMessageCandidates(body []byte) []string {
 	return candidates
 }
 
-// IsSpendingLimitError 判断响应体是否表示 xAI 消费限额或余额耗尽。
+// IsSpendingLimitError reports whether the response indicates exhausted spending or credits.
 func IsSpendingLimitError(responseBody []byte) bool {
 	if len(responseBody) == 0 {
 		return false

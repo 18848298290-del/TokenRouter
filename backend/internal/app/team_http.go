@@ -8,5 +8,5 @@ import (
 	teamhttp "github.com/TokenFlux/TokenRouter/internal/team/httpapi"
 )
 
-// teamHTTPProviders 汇总团队用户端和管理端 HTTP 构造函数。
+// teamHTTPProviders groups user and admin team HTTP constructors.
 var teamHTTPProviders = wire.NewSet(teamhttp.NewUserHandler, teamhttp.NewAdminHandler)

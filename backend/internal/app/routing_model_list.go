@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// catalogueReader 查询指定分组或全部可调度提供商，由网关适配器转换模型数据。
+// catalogueReader reads schedulable providers for one group or all groups and converts their model data.
 func catalogueReader(store *providerpostgres.ProviderStore) func(context.Context, *int64) ([]routing.CatalogueProvider, error) {
 	return func(ctx context.Context, id *int64) ([]routing.CatalogueProvider, error) {
 		var values []provider.Record
@@ -27,7 +27,7 @@ func catalogueReader(store *providerpostgres.ProviderStore) func(context.Context
 	}
 }
 
-// provideRequestableCatalogue 为目录解析绑定提供商存储和分组策略。
+// provideRequestableCatalogue binds provider reads and group policies for model resolution.
 func provideRequestableCatalogue(store *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService) *routing.RequestableCatalogue {
 	return &routing.RequestableCatalogue{Read: catalogueReader(store), Resolver: routing.RequestableResolver{GroupPolicies: modelConfigs, Warn: slog.Warn}, Warn: slog.Warn}
 }

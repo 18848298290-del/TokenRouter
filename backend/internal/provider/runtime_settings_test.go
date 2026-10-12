@@ -22,10 +22,10 @@ type mockSettingRepo struct {
 	getValueCalls int
 }
 
-// 设置替身提供单键读写，运行配置缓存使用生产实现。
+// cooldownSettingsStore supplies single-key reads and writes while tests use the production settings cache.
 type cooldownSettingsStore struct{ data map[string]string }
 
-// ollamaSettingsStore 保存配置测试使用的键值。
+// ollamaSettingsStore holds key-value settings for configuration tests.
 type ollamaSettingsStore struct{ values map[string]string }
 
 func newMockSettingRepo() *mockSettingRepo {
@@ -183,7 +183,7 @@ func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
 	require.Error(t, err)
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 61})
 	require.Error(t, err)
-	// DebounceMinutes=0 表示旧客户端省略字段，写入时应补为默认值 1。
+	// Zero represents a field omitted by an older client; saving supplies the one-minute default.
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 0})
 	require.NoError(t, err)
 	settings, err = settingsService.GetOllamaCloudUsageSettings(context.Background())
@@ -197,8 +197,8 @@ func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
 	require.Equal(t, 90, settings.IntervalMinutes)
 	require.Equal(t, 2, settings.DebounceMinutes)
 
-	// debounce >= interval 会使 min(lastUsed+debounce, fetchedAt+maxWait) 中的
-	// debounce 项永远无法生效，相当于静默忽略管理员设置，因此应直接拒绝。
+	// A debounce at least as long as the interval cannot win the deadline calculation
+	// min(lastUsed+debounce, fetchedAt+maxWait), so configuration rejects it.
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 15, DebounceMinutes: 15})
 	require.Error(t, err, "debounce equal to interval must be rejected")
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 15, DebounceMinutes: 60})
@@ -206,7 +206,7 @@ func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 16, DebounceMinutes: 15})
 	require.NoError(t, err, "debounce below interval stays valid")
 
-	// JSON 缺少 debounce_minutes 时默认取 1。
+	// Missing debounce_minutes in stored JSON defaults to one minute.
 	repo.values[SettingKeyOllamaCloudUsageSettings] = `{"enabled":true,"interval_minutes":45}`
 	settings, err = settingsService.GetOllamaCloudUsageSettings(context.Background())
 	require.NoError(t, err)
@@ -293,7 +293,7 @@ func TestSetOverloadCooldownSettings_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 检查 JSON 编解码后的配置值。
+	// Check settings after JSON encoding and decoding.
 	settings, err := svc.GetOverloadCooldownSettings(context.Background())
 	require.NoError(t, err)
 	require.False(t, settings.Enabled)
@@ -322,13 +322,13 @@ func TestSetOverloadCooldownSettings_DisabledNormalizesOutOfRange(t *testing.T) 
 	repo := newCooldownSettingsStore()
 	svc := NewRuntimeSettings(repo, errCooldownSettingMissing)
 
-	// enabled=false + cooldown_minutes=0 应该保存成功，值被归一化为 10
+	// Disabled cooldowns accept zero and normalize it to ten minutes.
 	err := svc.SetOverloadCooldownSettings(context.Background(), &OverloadCooldownSettings{
 		Enabled: false, CooldownMinutes: 0,
 	})
 	require.NoError(t, err, "disabled with invalid minutes should NOT be rejected")
 
-	// 验证持久化后读回来的值
+	// Read back the persisted normalized value.
 	settings, err := svc.GetOverloadCooldownSettings(context.Background())
 	require.NoError(t, err)
 	require.False(t, settings.Enabled)
@@ -361,7 +361,7 @@ func TestOverloadCooldownSettings_JSONRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Equal(t, original, decoded)
 
-	// 检查 JSON 字段使用 snake_case 名称。
+	// Check the snake_case JSON field names.
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(data, &raw))
 	_, hasEnabled := raw["enabled"]

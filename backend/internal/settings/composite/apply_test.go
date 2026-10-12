@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestApplicationsUseOneCommittedSnapshot 保证全部应用读取同一次持久化回读，不使用原请求零值。
+// TestApplicationsUseOneCommittedSnapshot checks that every application receives the same persisted snapshot.
 func TestApplicationsUseOneCommittedSnapshot(t *testing.T) {
 	reads := 0
 	var order []string
@@ -37,7 +37,7 @@ func TestApplicationsUseOneCommittedSnapshot(t *testing.T) {
 	require.Equal(t, []string{"gateway", "site", "creative"}, order)
 }
 
-// TestApplicationsDoNotPublishAfterReadFailure 保持提交后读取失败不会发布零值；下一次更新不继承上次快照。
+// TestApplicationsDoNotPublishAfterReadFailure checks that a failed read returning nil skips module application.
 func TestApplicationsDoNotPublishAfterReadFailure(t *testing.T) {
 	failed := errors.New("read failed")
 	applied := false

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupClientProtocolMatrix 验证分组协议集合独立于提供商平台，默认只开放三个文本入口。
+// TestGroupClientProtocolMatrix checks platform-independent admission and the three default text entries.
 func TestGroupClientProtocolMatrix(t *testing.T) {
 	supported := SupportedGroupClientProtocols("")
 	require.Len(t, supported, 22)

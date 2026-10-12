@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeCreativeModelSettings 检查白名单字段校验、去重和排序。
+// TestNormalizeCreativeModelSettings checks allowlist validation, deduplication, and ordering.
 func TestNormalizeCreativeModelSettings(t *testing.T) {
 	settings, err := NormalizeCreativeModelSettings([]CreativeModelSetting{{
 		GroupID:    12,
@@ -38,7 +38,7 @@ func TestNormalizeCreativeModelSettings(t *testing.T) {
 	}
 }
 
-// TestCreativeSettingsReuseGroupQuery 同组多项设置共用一次分组和提供商读取。
+// TestCreativeSettingsReuseGroupQuery checks one group and provider read across settings for the same group.
 func TestCreativeSettingsReuseGroupQuery(t *testing.T) {
 	fixture := &targetQueryFixture{}
 	service := newTargetQueryPublic(fixture)

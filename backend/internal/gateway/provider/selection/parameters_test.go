@@ -23,7 +23,7 @@ func (r *snapshotGroupBindingReader) GetByID(context.Context, int64) (*routing.G
 	return r.group, nil
 }
 
-// TestSnapshotNativeBindingPreservesGroupOverrides 检查请求未携带分组时各入口读取分组配置及管理员覆盖。
+// TestSnapshotNativeBindingPreservesGroupOverrides checks group settings and overrides when request context lacks a group.
 func TestSnapshotNativeBindingPreservesGroupOverrides(t *testing.T) {
 	for _, platform := range []string{"gateway", "gemini", "openai"} {
 		t.Run(platform, func(t *testing.T) {

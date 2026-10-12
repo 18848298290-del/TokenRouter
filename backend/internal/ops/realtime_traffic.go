@@ -40,7 +40,7 @@ func (s *OpsService) GetRealtimeTrafficSummary(ctx context.Context, filter *OpsD
 	return s.opsRepo.GetRealtimeTrafficSummary(ctx, filter)
 }
 
-// GetWindowStats 返回指定窗口的请求数和 token 数，供 WebSocket 等实时采样使用。
+// GetWindowStats returns request and token counts for realtime sampling, including WebSocket updates.
 func (s *OpsService) GetWindowStats(ctx context.Context, startTime, endTime time.Time) (*OpsWindowStats, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err

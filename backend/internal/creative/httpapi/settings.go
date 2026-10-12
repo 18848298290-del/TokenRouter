@@ -13,7 +13,7 @@ type SettingsCandidates interface {
 	ListCreativeModelCandidates(context.Context) ([]creative.CreativeModelCandidate, error)
 }
 
-// SettingsHandler 查询创作台设置候选项和 worker 状态。
+// SettingsHandler reads creative model candidates and worker status.
 type SettingsHandler struct {
 	reader SettingsCandidates
 	status func() creative.CreativeWorkerStatus

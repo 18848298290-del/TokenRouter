@@ -26,8 +26,8 @@ type CreateAnnouncementRequest struct {
 	Status       string                                `json:"status" binding:"omitempty,oneof=draft active archived"`
 	NotifyMode   string                                `json:"notify_mode" binding:"omitempty,oneof=silent popup"`
 	Targeting    site.AnnouncementTargeting            `json:"targeting"`
-	StartsAt     *int64                                `json:"starts_at"` // Unix seconds, 0/empty = immediate
-	EndsAt       *int64                                `json:"ends_at"`   // Unix seconds, 0/empty = never
+	StartsAt     *int64                                `json:"starts_at"` // Unix seconds; nil or <=0 means immediate
+	EndsAt       *int64                                `json:"ends_at"`   // Unix seconds; nil or <=0 means no expiry
 }
 
 type UpdateAnnouncementRequest struct {
@@ -37,8 +37,8 @@ type UpdateAnnouncementRequest struct {
 	Status       *string                               `json:"status" binding:"omitempty,oneof=draft active archived"`
 	NotifyMode   *string                               `json:"notify_mode" binding:"omitempty,oneof=silent popup"`
 	Targeting    *site.AnnouncementTargeting           `json:"targeting"`
-	StartsAt     *int64                                `json:"starts_at"` // Unix seconds, 0 = clear
-	EndsAt       *int64                                `json:"ends_at"`   // Unix seconds, 0 = clear
+	StartsAt     *int64                                `json:"starts_at"` // Unix seconds; nil retains the value, 0 clears it
+	EndsAt       *int64                                `json:"ends_at"`   // Unix seconds; nil retains the value, 0 clears it
 }
 
 // NewAdminAnnouncementHandler creates a new admin announcement handler.
@@ -48,7 +48,7 @@ func NewAdminAnnouncementHandler(announcementService *site.AnnouncementService) 
 	}
 }
 
-// List handles listing announcements with filters
+// List returns announcements matching the requested filters and sort order.
 // GET /api/v1/admin/announcements
 func (h *AdminAnnouncementHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
@@ -84,7 +84,7 @@ func (h *AdminAnnouncementHandler) List(c *gin.Context) {
 	response.Paginated(c, out, paginationResult.Total, page, pageSize)
 }
 
-// GetByID handles getting an announcement by ID
+// GetByID returns an announcement by ID.
 // GET /api/v1/admin/announcements/:id
 func (h *AdminAnnouncementHandler) GetByID(c *gin.Context) {
 	announcementID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -102,7 +102,7 @@ func (h *AdminAnnouncementHandler) GetByID(c *gin.Context) {
 	response.Success(c, AnnouncementFromService(item))
 }
 
-// Create handles creating a new announcement
+// Create creates an announcement attributed to the authenticated actor.
 // POST /api/v1/admin/announcements
 func (h *AdminAnnouncementHandler) Create(c *gin.Context) {
 	var req CreateAnnouncementRequest
@@ -145,7 +145,7 @@ func (h *AdminAnnouncementHandler) Create(c *gin.Context) {
 	response.Success(c, AnnouncementFromService(created))
 }
 
-// Update handles updating an announcement
+// Update applies supplied announcement fields.
 // PUT /api/v1/admin/announcements/:id
 func (h *AdminAnnouncementHandler) Update(c *gin.Context) {
 	announcementID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -207,7 +207,7 @@ func (h *AdminAnnouncementHandler) Update(c *gin.Context) {
 	response.Success(c, AnnouncementFromService(updated))
 }
 
-// Delete handles deleting an announcement
+// Delete deletes an announcement by ID.
 // DELETE /api/v1/admin/announcements/:id
 func (h *AdminAnnouncementHandler) Delete(c *gin.Context) {
 	announcementID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -224,7 +224,7 @@ func (h *AdminAnnouncementHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Announcement deleted successfully"})
 }
 
-// ListReadStatus handles listing users read status for an announcement
+// ListReadStatus returns users' read status for an announcement.
 // GET /api/v1/admin/announcements/:id/read-status
 func (h *AdminAnnouncementHandler) ListReadStatus(c *gin.Context) {
 	announcementID, err := strconv.ParseInt(c.Param("id"), 10, 64)

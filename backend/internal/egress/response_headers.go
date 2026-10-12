@@ -5,11 +5,11 @@ import (
 )
 
 var (
-	// defaultAllowed 定义允许透传的响应头白名单
-	// 注意：以下头部由 Go HTTP 包自动处理，不应手动设置：
-	//   - content-length: 由 ResponseWriter 根据实际写入数据自动设置
-	//   - transfer-encoding: 由 HTTP 库根据需要自动添加/移除
-	//   - connection: 由 HTTP 库管理连接复用
+	// defaultAllowed lists response headers passed through by default.
+	// The HTTP stack controls the following headers on the outgoing response:
+	//   - content-length depends on the bytes written by ResponseWriter.
+	//   - transfer-encoding depends on the outgoing HTTP framing.
+	//   - connection depends on the server's connection reuse policy.
 	defaultAllowed = map[string]struct{}{
 		"content-type":                   {},
 		"content-encoding":               {},
@@ -35,7 +35,7 @@ var (
 		"x-reasoning-included": {},
 	}
 
-	// hopByHopHeaders 是跳过的 hop-by-hop 头部，这些头部由 HTTP 库自动处理。
+	// hopByHopHeaders blocks framing and connection headers managed by the HTTP stack.
 	hopByHopHeaders = map[string]struct{}{
 		"content-length":    {},
 		"transfer-encoding": {},
@@ -45,7 +45,7 @@ var (
 	defaultCompiledHeaderFilter = CompileHeaderFilter(ResponseHeaderOptions{})
 )
 
-// ResponseHeaderOptions 配置响应头的放行和移除规则。
+// ResponseHeaderOptions configures additional allowed headers and forced removals.
 type ResponseHeaderOptions struct {
 	Enabled           bool
 	AdditionalAllowed []string
@@ -62,7 +62,7 @@ func CompileHeaderFilter(cfg ResponseHeaderOptions) *CompiledHeaderFilter {
 	for key := range defaultAllowed {
 		allowed[key] = struct{}{}
 	}
-	// 关闭时只使用默认白名单，additional/force_remove 不生效
+	// Disabled configuration uses defaults and ignores additional and force-remove entries.
 	if cfg.Enabled {
 		for _, key := range cfg.AdditionalAllowed {
 			normalized := strings.ToLower(strings.TrimSpace(key))
@@ -91,7 +91,7 @@ func CompileHeaderFilter(cfg ResponseHeaderOptions) *CompiledHeaderFilter {
 	}
 }
 
-// Allows 保留强制移除、白名单和逐跳头的原判定顺序。
+// Allows applies forced removal, the allowlist, and transport-header exclusions in that order.
 func (filter *CompiledHeaderFilter) Allows(name string) bool {
 	if filter == nil {
 		filter = defaultCompiledHeaderFilter

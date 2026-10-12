@@ -17,19 +17,19 @@ const (
 	blockTypeWebSearchToolResult = "web_search_tool_result"
 )
 
-// 两种块类型只会作为带引号的 JSON 字符串值出现，因此可用原始子串做快速预检，
-// 不受键值空格格式影响。
+// Quoted block type names allow a quick substring check
+// regardless of whitespace around JSON keys and values.
 var (
 	patternServerToolUse       = []byte(`"server_tool_use"`)
 	patternWebSearchToolResult = []byte(`"web_search_tool_result"`)
 )
 
-// FilterWebSearchHistoryBlocks 从历史消息移除目标上游拒绝的搜索块。
-// tool-use ID 带 ToolUseIDPrefix 的 server_tool_use 和 web_search_tool_result 由网关模拟，转发时全部移除。
-// 要求思考内容回传的 DeepSeek、Kimi、GLM 等兼容上游接受 text、thinking、image、tool_use 和 tool_result，
-// 因此移除全部搜索块；Anthropic strict 和未知协议族保留上游签发的搜索块。
-// 模拟响应的文本摘要继续保留搜索上下文，剥空的消息按 FilterThinkingBlocksForRetry 的方式补占位文本。
-// 无需修改时返回原 body。
+// FilterWebSearchHistoryBlocks removes search blocks rejected by the target upstream.
+// Gateway-emulated server_tool_use and web_search_tool_result blocks have ToolUseIDPrefix IDs and are always removed.
+// Callers set stripAll for thinking-passback providers such as DeepSeek, Kimi, and GLM,
+// which accept text, thinking, image, tool_use, and tool_result blocks. Otherwise upstream-issued search blocks remain.
+// Text summaries retain search context. Emptied messages receive placeholder text as in FilterThinkingBlocksForRetry.
+// It returns body unchanged when no blocks need removal.
 func FilterWebSearchHistoryBlocks(body []byte, stripAll bool) []byte {
 	if !bytes.Contains(body, patternServerToolUse) && !bytes.Contains(body, patternWebSearchToolResult) {
 		return body
@@ -57,7 +57,7 @@ func FilterWebSearchHistoryBlocks(body []byte, stripAll bool) []byte {
 			continue
 		}
 
-		// 延迟分配：只有命中需剥离的块才构建新 slice。
+		// Allocate a replacement slice only after finding a block to remove.
 		var newContent []any
 		for i, block := range content {
 			blockMap, isMap := block.(map[string]any)

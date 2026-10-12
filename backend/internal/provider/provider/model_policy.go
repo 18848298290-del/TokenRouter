@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// ModelDefaults 提供平台默认模型目录的按需读取函数。
+// ModelDefaults supplies on-demand platform model candidates and Antigravity defaults.
 func ModelDefaults() provider.ModelMappingDefaults {
 	return provider.ModelMappingDefaults{
 		Models:      DefaultProviderModels,
@@ -14,7 +14,7 @@ func ModelDefaults() provider.ModelMappingDefaults {
 	}
 }
 
-// ModelRules 在检查平台资格时读取站点信息。
+// ModelRules reads site credentials when evaluating Qoder compatibility.
 func ModelRules(value *provider.Record) provider.ModelPlatformRules {
 	return provider.ModelPlatformRules{
 		NormalizeQoder:      qoder.NormalizeModelForWhitelist,
@@ -29,7 +29,7 @@ func ModelRules(value *provider.Record) provider.ModelPlatformRules {
 	}
 }
 
-// SupportsOpenAIEndpoint 在端点能力检查实际需要时提供平台媒体资格，不提前读取资格。
+// SupportsOpenAIEndpoint supplies Grok media eligibility when the endpoint check needs it.
 func SupportsOpenAIEndpoint(value *provider.Record, capability provider.OpenAIEndpointCapability) bool {
 	return value.SupportsOpenAIEndpointCapability(capability, func() (bool, string) {
 		return provider.GrokMediaGenerationEligibility(value, GrokTierRules())

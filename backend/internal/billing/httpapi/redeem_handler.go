@@ -49,7 +49,7 @@ func (h *RedeemHandler) Redeem(c *gin.Context) {
 	response.Success(c, RedeemCodeFromService(result))
 }
 
-// GetHistory 分页返回当前用户的兑换历史。
+// GetHistory returns a page of the current user's redemption history.
 // GET /api/v1/redeem/history?page=1&page_size=20
 func (h *RedeemHandler) GetHistory(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

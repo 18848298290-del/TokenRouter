@@ -21,14 +21,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// routingDatabase 创建测试数据库和 Ent 客户端，数据库夹具在测试结束时关闭连接。
+// routingDatabase creates a test database and Ent client; the database fixture closes connections at
+// cleanup.
 func routingDatabase(t *testing.T) (*dbent.Client, *sql.DB) {
 	t.Helper()
 	db := postgrescontainer.New(t)
 	return dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db))), db
 }
 
-// newGroupStoreFixture 为分组存储配置提供商关联、用户权限删除和调度通知操作。
+// newGroupStoreFixture wires provider links, user-access deletion, and scheduler outbox writes into
+// group storage.
 func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *routingpostgres.GroupStore {
 	return routingpostgres.NewGroupStore(client, db, routingpostgres.GroupStoreOptions{
 		Providers: func(exec postgresinfra.Executor) routingpostgres.GroupLinkParticipant {

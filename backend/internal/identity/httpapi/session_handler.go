@@ -14,7 +14,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SessionHTTPSettings 每次操作读取动态开关，保持各入口原有生效时机。
+// SessionHTTPSettings reads current authentication switches for each operation.
 type SessionHTTPSettings interface {
 	IsBackendModeEnabled(context.Context) bool
 	IsTotpEnabled(context.Context) bool
@@ -26,14 +26,14 @@ type InvitationReader interface {
 	GetByCode(context.Context, string) (*identity.RedeemCode, error)
 }
 
-// PromotionPreview 包含推广校验结果、赠送金额和错误信息。
+// PromotionPreview contains validation results, bonus amount, and error details.
 type PromotionPreview struct {
 	Valid       bool
 	BonusAmount float64
 	ErrorCode   string
 }
 
-// SessionHTTPOptions 注入 HTTP 观察、Cookie 操作和启动参数，不接受整份 config。
+// SessionHTTPOptions supplies HTTP callbacks, cookie operations, and startup parameters.
 type SessionHTTPOptions struct {
 	BackendMode         func(context.Context) bool
 	AuditActor          func(*gin.Context, int64, string)
@@ -59,12 +59,12 @@ type RegisterRequest struct {
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
-	PromoCode             string `json:"promo_code"`      // 注册优惠码
-	InvitationCode        string `json:"invitation_code"` // 邀请码
-	AffCode               string `json:"aff_code"`        // 邀请返利码
+	PromoCode             string `json:"promo_code"`      // Signup promotion code.
+	InvitationCode        string `json:"invitation_code"` // Registration invitation code.
+	AffCode               string `json:"aff_code"`        // Affiliate invitation code.
 }
 
-// SendVerifyCodeRequest 发送验证码请求。
+// SendVerifyCodeRequest requests a registration email verification code.
 type SendVerifyCodeRequest struct {
 	Email                 string `json:"email" binding:"required,email"`
 	TurnstileToken        string `json:"turnstile_token"`
@@ -72,10 +72,10 @@ type SendVerifyCodeRequest struct {
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
 }
 
-// SendVerifyCodeResponse 发送验证码响应。
+// SendVerifyCodeResponse reports verification-mail queuing and the retry delay.
 type SendVerifyCodeResponse struct {
 	Message   string `json:"message"`
-	Countdown int    `json:"countdown"` // 倒计时秒数
+	Countdown int    `json:"countdown"` // Seconds.
 }
 
 // LoginRequest represents the login request payload.
@@ -100,12 +100,12 @@ type Login2FARequest struct {
 	TotpCode  string `json:"totp_code" binding:"required,len=6"`
 }
 
-// ValidatePromoCodeRequest 验证优惠码请求。
+// ValidatePromoCodeRequest requests signup-promotion validation.
 type ValidatePromoCodeRequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
-// ValidatePromoCodeResponse 验证优惠码响应。
+// ValidatePromoCodeResponse reports promotion validity and the bonus amount.
 type ValidatePromoCodeResponse struct {
 	Valid       bool    `json:"valid"`
 	BonusAmount float64 `json:"bonus_amount,omitempty"`
@@ -113,18 +113,18 @@ type ValidatePromoCodeResponse struct {
 	Message     string  `json:"message,omitempty"`
 }
 
-// ValidateInvitationCodeRequest 验证邀请码请求。
+// ValidateInvitationCodeRequest requests registration-invitation validation.
 type ValidateInvitationCodeRequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
-// ValidateInvitationCodeResponse 验证邀请码响应。
+// ValidateInvitationCodeResponse reports invitation validity.
 type ValidateInvitationCodeResponse struct {
 	Valid     bool   `json:"valid"`
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
-// ForgotPasswordRequest 忘记密码请求。
+// ForgotPasswordRequest requests a password-reset email.
 type ForgotPasswordRequest struct {
 	Email                 string `json:"email" binding:"required,email"`
 	TurnstileToken        string `json:"turnstile_token"`
@@ -132,47 +132,47 @@ type ForgotPasswordRequest struct {
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
 }
 
-// ForgotPasswordResponse 忘记密码响应。
+// ForgotPasswordResponse reports acceptance of a password-reset request.
 type ForgotPasswordResponse struct {
 	Message string `json:"message"`
 }
 
-// ResetPasswordRequest 重置密码请求。
+// ResetPasswordRequest supplies the reset token and replacement password.
 type ResetPasswordRequest struct {
 	Email       string `json:"email" binding:"required,email"`
 	Token       string `json:"token" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
-// ResetPasswordResponse 重置密码响应。
+// ResetPasswordResponse reports password-reset completion.
 type ResetPasswordResponse struct {
 	Message string `json:"message"`
 }
 
-// RefreshTokenRequest 刷新 Token 请求。
+// RefreshTokenRequest supplies the credential to rotate.
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
-// RefreshTokenResponse 刷新 Token 响应。
+// RefreshTokenResponse contains the replacement access and refresh tokens.
 type RefreshTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"` // Access Token有效期（秒）
+	ExpiresIn    int    `json:"expires_in"` // Access-token lifetime in seconds.
 	TokenType    string `json:"token_type"`
 }
 
-// LogoutRequest 登出请求。
+// LogoutRequest optionally supplies a refresh token to revoke.
 type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token,omitempty"` // 可选：撤销指定的Refresh Token
+	RefreshToken string `json:"refresh_token,omitempty"` // Optional credential to revoke.
 }
 
-// LogoutResponse 登出响应。
+// LogoutResponse reports logout completion.
 type LogoutResponse struct {
 	Message string `json:"message"`
 }
 
-// RevokeAllSessionsResponse 撤销所有会话响应。
+// RevokeAllSessionsResponse reports revocation of the user's refresh sessions.
 type RevokeAllSessionsResponse struct {
 	Message string `json:"message"`
 }
@@ -233,7 +233,7 @@ func (h *SessionHandler) Register(c *gin.Context) {
 	}
 	h.auditActor(c, 0, strings.TrimSpace(req.Email))
 
-	// 验证当前启用的验证码（邮箱验证码注册场景避免重复校验一次性票据）
+	// Email-code registration reuses the CAPTCHA check performed when requesting the code.
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
 	if err := h.authService.VerifyCaptchaForRegister(c.Request.Context(), proof, clientip.GetClientIP(c), req.VerifyCode); err != nil {
 		response.ErrorFrom(c, err)
@@ -250,7 +250,7 @@ func (h *SessionHandler) Register(c *gin.Context) {
 	h.respondWithTokenPair(c, user)
 }
 
-// SendVerifyCode 发送邮箱验证码
+// SendVerifyCode queues a registration email verification code.
 // POST /api/v1/auth/send-verify-code
 func (h *SessionHandler) SendVerifyCode(c *gin.Context) {
 	var req SendVerifyCodeRequest
@@ -299,7 +299,7 @@ func (h *SessionHandler) Login(c *gin.Context) {
 		return
 	}
 	h.auditActor(c, user.ID, user.Email)
-	_ = token // token 由 authService.Login 返回但此处由 respondWithTokenPair 重新生成
+	_ = token // The response helper issues the access/refresh pair after the remaining login checks.
 
 	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
 		response.ErrorFrom(c, err)
@@ -341,7 +341,6 @@ func (h *SessionHandler) Login2FA(c *gin.Context) {
 		"temp_token_len", len(req.TempToken),
 		"totp_code_len", len(req.TotpCode))
 
-	// Get the login session
 	session, err := h.totpService.GetLoginSession(c.Request.Context(), req.TempToken)
 	if err != nil || session == nil {
 		tokenPrefix := ""
@@ -360,7 +359,6 @@ func (h *SessionHandler) Login2FA(c *gin.Context) {
 		"user_id", session.UserID,
 		"email", session.Email)
 
-	// Verify the TOTP code
 	if err := h.totpService.VerifyCode(c.Request.Context(), session.UserID, req.TotpCode); err != nil {
 		slog.Debug("login_2fa_verify_failed",
 			"user_id", session.UserID,
@@ -369,7 +367,7 @@ func (h *SessionHandler) Login2FA(c *gin.Context) {
 		return
 	}
 
-	// Get the user (before session deletion so we can check backend mode)
+	// Load the user before consuming the challenge so backend-mode checks can still reject login.
 	user, err := h.userService.GetByID(c.Request.Context(), session.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -403,7 +401,7 @@ func (h *SessionHandler) Login2FA(c *gin.Context) {
 		}
 	}
 
-	// Delete the login session (only after all checks pass)
+	// Attempt challenge deletion after the login checks pass.
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 
 	if session.PendingOAuthBind == nil {
@@ -437,10 +435,9 @@ func (h *SessionHandler) GetCurrentUser(c *gin.Context) {
 	response.Success(c, UserProfileResponseFromService(user, identities))
 }
 
-// ValidatePromoCode 验证优惠码（公开接口，注册前调用）
+// ValidatePromoCode checks a signup promotion before registration.
 // POST /api/v1/auth/validate-promo-code
 func (h *SessionHandler) ValidatePromoCode(c *gin.Context) {
-	// 检查优惠码功能是否启用
 	if h.settingSvc != nil && !h.settingSvc.IsPromoCodeEnabled(c.Request.Context()) {
 		response.Success(c, ValidatePromoCodeResponse{
 			Valid:     false,
@@ -459,10 +456,9 @@ func (h *SessionHandler) ValidatePromoCode(c *gin.Context) {
 	response.Success(c, ValidatePromoCodeResponse{Valid: preview.Valid, BonusAmount: preview.BonusAmount, ErrorCode: preview.ErrorCode})
 }
 
-// ValidateInvitationCode 验证邀请码（公开接口，注册前调用）
+// ValidateInvitationCode checks an invitation before registration.
 // POST /api/v1/auth/validate-invitation-code
 func (h *SessionHandler) ValidateInvitationCode(c *gin.Context) {
-	// 检查邀请码功能是否启用
 	if h.settingSvc == nil || !h.settingSvc.IsInvitationCodeEnabled(c.Request.Context()) {
 		response.Success(c, ValidateInvitationCodeResponse{
 			Valid:     false,
@@ -477,7 +473,6 @@ func (h *SessionHandler) ValidateInvitationCode(c *gin.Context) {
 		return
 	}
 
-	// 验证邀请码
 	redeemCode, err := h.redeemService.GetByCode(c.Request.Context(), req.Code)
 	if err != nil {
 		response.Success(c, ValidateInvitationCodeResponse{
@@ -487,7 +482,6 @@ func (h *SessionHandler) ValidateInvitationCode(c *gin.Context) {
 		return
 	}
 
-	// 检查类型和状态
 	if redeemCode.Type != identity.RedeemTypeInvitation {
 		response.Success(c, ValidateInvitationCodeResponse{
 			Valid:     false,
@@ -509,7 +503,7 @@ func (h *SessionHandler) ValidateInvitationCode(c *gin.Context) {
 	})
 }
 
-// ForgotPassword 请求密码重置
+// ForgotPassword requests a password-reset email.
 // POST /api/v1/auth/forgot-password
 func (h *SessionHandler) ForgotPassword(c *gin.Context) {
 	var req ForgotPasswordRequest
@@ -531,8 +525,7 @@ func (h *SessionHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Request password reset (async)
-	// Note: This returns success even if email doesn't exist (to prevent enumeration)
+	// Queue the reset email while returning the same success response for unknown addresses.
 	if err := h.authService.RequestPasswordResetAsync(c.Request.Context(), req.Email, frontendBaseURL, c.GetHeader("Accept-Language")); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -543,7 +536,7 @@ func (h *SessionHandler) ForgotPassword(c *gin.Context) {
 	})
 }
 
-// ResetPassword 重置密码
+// ResetPassword applies a password-reset token.
 // POST /api/v1/auth/reset-password
 func (h *SessionHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
@@ -552,7 +545,6 @@ func (h *SessionHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Reset password
 	if err := h.authService.ResetPassword(c.Request.Context(), req.Email, req.Token, req.NewPassword); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -563,7 +555,7 @@ func (h *SessionHandler) ResetPassword(c *gin.Context) {
 	})
 }
 
-// RefreshToken 刷新 Token
+// RefreshToken rotates the supplied refresh token.
 // POST /api/v1/auth/refresh
 func (h *SessionHandler) RefreshToken(c *gin.Context) {
 	var req RefreshTokenRequest
@@ -592,18 +584,17 @@ func (h *SessionHandler) RefreshToken(c *gin.Context) {
 	})
 }
 
-// Logout 用户登出
+// Logout attempts refresh-token revocation and clears login cookies.
 // POST /api/v1/auth/logout
 func (h *SessionHandler) Logout(c *gin.Context) {
 	var req LogoutRequest
-	// 允许空请求体（向后兼容）
+	// Accept empty request bodies for clients that only need cookie cleanup.
 	_ = c.ShouldBindJSON(&req)
 
-	// 如果提供了 Refresh Token，撤销它
 	if req.RefreshToken != "" {
 		if err := h.authService.RevokeRefreshToken(c.Request.Context(), req.RefreshToken); err != nil {
 			slog.Debug("failed to revoke refresh token", "error", err)
-			// 不影响登出流程
+			// Revocation errors do not prevent cookie cleanup.
 		}
 	}
 	if h.options.LogoutPending != nil {
@@ -615,7 +606,7 @@ func (h *SessionHandler) Logout(c *gin.Context) {
 	})
 }
 
-// RevokeAllSessions 撤销当前用户的所有会话
+// RevokeAllSessions revokes the current user's refresh sessions.
 // POST /api/v1/auth/revoke-all-sessions
 func (h *SessionHandler) RevokeAllSessions(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

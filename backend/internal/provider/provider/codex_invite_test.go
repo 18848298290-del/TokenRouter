@@ -301,7 +301,7 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T)
 	require.Equal(t, "router-token", upstream.profiles[0].Name)
 }
 
-// newCodexInviteForTest 将传输替身接入邀请重置服务与平台客户端。
+// newCodexInviteForTest connects the transport stub to the invite/reset service and platform client.
 func newCodexInviteForTest(reader codexInviteResetAdminServiceStub, transport QoderTransport, token *providercore.OpenAITokenSource, profiles *egressprovider.TLSProfiles, routers OpenAITokenRouterReader) *providercore.CodexInviteResetService {
 	factory := CodexInviteFactory{Token: token, Proxy: reader.GetProxy, Transport: transport, Profiles: profiles, Routers: routers}
 	return &providercore.CodexInviteResetService{Options: providercore.CodexInviteResetOptions{

@@ -185,13 +185,13 @@ func TestCreateTradeUsesPagePayForDesktop(t *testing.T) {
 	if resp.PayURL == "" {
 		t.Fatal("expected pay_url for desktop page pay")
 	}
-	// page.pay 返回的是收银台页面 URL，不是可扫码支付内容，不能透传给 QRCode。
+	// page.pay returns a browser checkout URL, so QRCode must remain empty.
 	if resp.QRCode != "" {
 		t.Fatalf("qr_code = %q, want empty for page pay", resp.QRCode)
 	}
 }
 
-// TestCreateTradeRedirectModeSkipsPrecreate 验证当实例配置 paymentMode == "redirect" 时，桌面支付必须跳过 precreate 直接走 page.pay。
+// TestCreateTradeRedirectModeSkipsPrecreate checks that desktop redirect mode calls page.pay directly.
 func TestCreateTradeRedirectModeSkipsPrecreate(t *testing.T) {
 	origPreCreate := alipayTradePreCreate
 	origPagePay := alipayTradePagePay

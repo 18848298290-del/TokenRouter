@@ -26,7 +26,7 @@ type batchUpdateRedeemRepoStub struct {
 	fields billing.RedeemCodeBatchUpdateFields
 }
 
-// redeemAdminFixture 提供兑换管理测试数据并记录请求参数。
+// redeemAdminFixture supplies redemption records and captures request parameters.
 type redeemAdminFixture struct {
 	redeems             []billing.RedeemCode
 	lastListRedeemCodes struct {
@@ -37,7 +37,7 @@ type redeemAdminFixture struct {
 }
 
 func TestCreateAndRedeem_TypeDefaultsToBalance(t *testing.T) {
-	// 缺少 type 时按 balance 校验。空服务在校验通过后 panic，辅助函数返回 0。
+	// Missing type uses balance validation. The empty service panics after validation; the helper returns zero.
 	h := newCreateAndRedeemHandler()
 	code := postCreateAndRedeemValidation(t, h, map[string]any{
 		"code":    "test-balance-default",
@@ -106,7 +106,7 @@ func TestCreateAndRedeem_SubscriptionValidParamsPassValidation(t *testing.T) {
 
 func TestCreateAndRedeem_BalanceIgnoresSubscriptionFields(t *testing.T) {
 	h := newCreateAndRedeemHandler()
-	// balance 类型允许省略 plan_id。
+	// Balance requests may omit plan_id.
 	code := postCreateAndRedeemValidation(t, h, map[string]any{
 		"code":    "test-balance-no-extras",
 		"type":    "balance",
@@ -176,7 +176,7 @@ func TestResolveRedeemCodeExpiresAt_RejectsConflictingInputs(t *testing.T) {
 	require.Nil(t, expiresAt)
 }
 
-// TestGenerate_CustomCodeLength 检查接口接受 32 个字符，并拒绝超长输入。
+// TestGenerate_CustomCodeLength checks the 32-code-point limit, including supplementary Unicode characters.
 func TestGenerate_CustomCodeLength(t *testing.T) {
 	for _, char := range []string{"兑", "a", "𠮷"} {
 		for _, length := range []int{32, 33} {
@@ -321,7 +321,7 @@ func TestRedeemHandlerEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// TestRedeemPaymentRequirementHTTP 检查生成、编辑和响应中的付款条件字段。
+// TestRedeemPaymentRequirementHTTP checks payment requirements in generation, updates, and responses.
 func TestRedeemPaymentRequirementHTTP(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		router, fixture := setupRedeemAdminContractRouter()
@@ -360,7 +360,7 @@ func TestRedeemPaymentRequirementHTTP(t *testing.T) {
 	}
 }
 
-// TestRedeemSearchUnicode 检查列表和导出完整传递兑换码，并按字符截断超长搜索词。
+// TestRedeemSearchUnicode checks list/export parity and code-point truncation of long search terms.
 func TestRedeemSearchUnicode(t *testing.T) {
 	code := "兑" + strings.Repeat("𠮷", 31)
 	limit := strings.Repeat("兑𠮷", 50)
@@ -423,13 +423,13 @@ func TestRedeemExportSortDefaults(t *testing.T) {
 	require.Equal(t, "desc", adminSvc.lastListRedeemCodes.sortOrder)
 }
 
-// newCreateAndRedeemHandler 使用空 RedeemService 构造处理器，供请求参数校验测试调用。
+// newCreateAndRedeemHandler uses an empty RedeemService for request validation tests.
 func newCreateAndRedeemHandler() *AdminRedeemHandler {
 	return NewAdminRedeemHandler(newRedeemAdminFixture(), &billing.RedeemService{})
 }
 
-// postCreateAndRedeemValidation 调用 CreateAndRedeem 并返回 HTTP 状态码。
-// 空 RedeemService 在参数校验通过后可能 panic，辅助函数捕获后返回 0。
+// postCreateAndRedeemValidation calls CreateAndRedeem and returns its HTTP status.
+// It returns zero when the empty service panics after parameter validation.
 func postCreateAndRedeemValidation(t *testing.T, handler *AdminRedeemHandler, body any) (code int) {
 	t.Helper()
 
@@ -443,7 +443,7 @@ func postCreateAndRedeemValidation(t *testing.T, handler *AdminRedeemHandler, bo
 
 	defer func() {
 		if r := recover(); r != nil {
-			// 捕获空服务触发的 panic，以 0 标记已进入服务调用。
+			// Zero marks a recovered panic from the empty service.
 			code = 0
 		}
 	}()
@@ -517,7 +517,7 @@ func (s *batchUpdateRedeemRepoStub) SumPositiveBalanceByUser(ctx context.Context
 	return 0, errors.New("not implemented")
 }
 
-// setupRedeemExportRouter 登记兑换码导出路由并返回调用记录。
+// setupRedeemExportRouter registers the export route and returns its call-recording fixture.
 func setupRedeemExportRouter() (*gin.Engine, *redeemAdminFixture) {
 	router := gin.New()
 	adminSvc := newRedeemAdminFixture()
@@ -531,7 +531,7 @@ func newRedeemAdminFixture() *redeemAdminFixture {
 	return &redeemAdminFixture{redeems: []billing.RedeemCode{{ID: 5, Code: "R-TEST", Type: billing.RedeemTypeBalance, Value: 10, Status: billing.StatusUnused, CreatedAt: time.Now().UTC()}}}
 }
 
-// setupRedeemAdminContractRouter 为兑换管理接口测试装配处理器和路由。
+// setupRedeemAdminContractRouter assembles redemption management handlers and routes for tests.
 func setupRedeemAdminContractRouter() (*gin.Engine, *redeemAdminFixture) {
 	router := gin.New()
 	source := newRedeemAdminFixture()

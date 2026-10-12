@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// BasicProvider 保存基础排序使用的提供商身份和观测值。
+// BasicProvider contains provider identity and observations used for basic selection.
 type BasicProvider struct {
 	ID               int64
 	Type             string
@@ -75,7 +75,7 @@ func FilterBySoonestReset(providers []BasicCandidate, now func() time.Time) []Ba
 		}
 	}
 	if minEnd == nil {
-		// 所有提供商均无活跃窗口，返回输入集合。
+		// No active window supplies a reset preference, so retain the entire pool.
 		return providers
 	}
 	result := make([]BasicCandidate, 0, len(providers))
@@ -96,7 +96,7 @@ func SelectByLRU(providers []BasicCandidate, preferOAuth bool) *BasicCandidate {
 		return &providers[0]
 	}
 
-	// 1. 找到最小的 LastUsedAt（nil 被视为最小）
+	// Never-used providers precede every timestamp.
 	var minTime *time.Time
 	hasNil := false
 	for _, acc := range providers {
@@ -109,7 +109,7 @@ func SelectByLRU(providers []BasicCandidate, preferOAuth bool) *BasicCandidate {
 		}
 	}
 
-	// 2. 收集所有具有最小 LastUsedAt 的提供商索引
+	// Keep all providers tied for least recent use.
 	var candidateIdxs []int
 	for i, acc := range providers {
 		if hasNil {
@@ -123,12 +123,11 @@ func SelectByLRU(providers []BasicCandidate, preferOAuth bool) *BasicCandidate {
 		}
 	}
 
-	// 3. 如果只有一个候选，直接返回
 	if len(candidateIdxs) == 1 {
 		return &providers[candidateIdxs[0]]
 	}
 
-	// 4. 如果有多个候选且 preferOAuth，优先选择 OAuth 类型
+	// OAuth preference breaks ties among equally recent providers.
 	if preferOAuth {
 		var oauthIdxs []int
 		for _, idx := range candidateIdxs {
@@ -141,7 +140,7 @@ func SelectByLRU(providers []BasicCandidate, preferOAuth bool) *BasicCandidate {
 		}
 	}
 
-	// 5. 随机选择一个
+	// Randomize the remaining tie.
 	selectedIdx := candidateIdxs[mathrand.Intn(len(candidateIdxs))]
 	return &providers[selectedIdx]
 }
@@ -169,6 +168,7 @@ func SortProvidersByPriorityAndLastUsed(providers []*BasicProvider, preferOAuth 
 	ShuffleWithinPriorityAndLastUsed(providers, preferOAuth)
 }
 
+// ShuffleWithinSortGroups shuffles in place within adjacent equal-sort groups; callers sort the slice first.
 func ShuffleWithinSortGroups(providers []BasicCandidate) {
 	if len(providers) <= 1 {
 		return
@@ -244,6 +244,7 @@ func SameProviderGroup(a, b *BasicProvider) bool {
 	return SameLastUsedAt(a.LastUsedAt, b.LastUsedAt)
 }
 
+// SameLastUsedAt compares whole seconds; two nil timestamps are equal.
 func SameLastUsedAt(a, b *time.Time) bool {
 	switch {
 	case a == nil && b == nil:
@@ -280,7 +281,7 @@ func ShuffleWithinPriority(providers []*BasicProvider, now func() time.Time) {
 		for end < len(providers) && providers[end].Priority == priority {
 			end++
 		}
-		// 对 [start, end) 范围内的提供商随机打乱
+
 		if end-start > 1 {
 			r.Shuffle(end-start, func(i, j int) {
 				providers[start+i], providers[start+j] = providers[start+j], providers[start+i]

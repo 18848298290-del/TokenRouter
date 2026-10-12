@@ -7,6 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// NullableFloat64Patch distinguishes an omitted field from null (clear) and a numeric value, including zero.
 type NullableFloat64Patch struct {
 	Present bool     `json:"-"`
 	Value   *float64 `json:"-"`

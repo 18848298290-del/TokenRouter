@@ -28,7 +28,7 @@ type MediaTarget struct {
 	CopyHeaders    func(http.Header, http.Header)
 }
 
-// MissingImageOutput 只描述供应商成功报文缺少实际图片，故障转移由调用者决定。
+// MissingImageOutput reports a success response without image data. The caller decides whether to fail over.
 type MissingImageOutput struct {
 	Body    []byte
 	Headers http.Header
@@ -108,7 +108,7 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 	return result, nil
 }
 
-// BuildMediaRequest 保持 CLI 头先于 Content-Type、提供商覆写最后应用的原顺序。
+// BuildMediaRequest applies CLI headers, then Content-Type, then provider overrides.
 func BuildMediaRequest(ctx context.Context, endpoint GrokMediaEndpoint, targetURL, token, contentType string, body []byte, cliHeaders, overrides func(http.Header)) (*http.Request, error) {
 	var reader io.Reader
 	if endpoint.RequiresRequestBody() {

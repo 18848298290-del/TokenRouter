@@ -22,6 +22,10 @@ const (
 	maxDecompressedBodySize   = 64 << 20
 )
 
+// ReadRequestBodyWithPrealloc reads the body and decodes supported Content-Encoding values.
+// Decoded data is truncated at 64 MiB; callers must validate completeness. Successful
+// decoding removes encoding and length headers and updates ContentLength. The caller
+// supplies any limit on the compressed or unencoded body and closes the original body.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	if req == nil || req.Body == nil {
 		return nil, nil
@@ -94,8 +98,8 @@ func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
 	}
 }
 
-// BindJSONStrict 绑定单个 JSON 对象，拒绝未知字段，并按 binding 标签校验结构体。
-// credentials、extra 等 map 字段的内容由调用方校验。
+// BindJSONStrict decodes one JSON value, rejects unknown struct fields, and applies binding validation.
+// Callers validate map contents such as credentials and extra.
 func BindJSONStrict(c *gin.Context, target any) error {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()

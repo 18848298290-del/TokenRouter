@@ -8,16 +8,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ErrConflict 表示提交的内容版本已被其他编辑覆盖。
+// ErrConflict indicates that the submitted revision differs from the saved revision.
 var ErrConflict = apperror.Conflict("LOCALIZATION_CONFLICT", "Content changed. Reload before saving.")
 
-// Translation 保存译文及其已经核对的原文版本。
+// Translation pairs translated content with the source revision it was reviewed against.
 type Translation[T any] struct {
 	Value          T     `json:"value"`
 	SourceRevision int64 `json:"source_revision"`
 }
 
-// Content 保存一份原文及各语言的完整译文。
+// Content stores source content and complete translations by language.
 // @project-doc docs/interfaces/user_localization.md#localized_content
 type Content[T any] struct {
 	SourceLocale   *string                   `json:"source_locale"`
@@ -27,31 +27,32 @@ type Content[T any] struct {
 	SourceRevision int64                     `json:"source_revision"`
 }
 
-// Update 包含用户读取时的版本和本次已经核对的语言。
+// Update includes the revision read by the editor and the languages reviewed or deleted.
 type Update[T any] struct {
 	Content[T]
 	ReviewedLocales []string `json:"reviewed_locales,omitempty"`
 	DeletedLocales  []string `json:"deleted_locales,omitempty"`
 }
 
-// Resolution 记录内容实际使用的语言，未知原文语言保持为空。
+// Resolution identifies the selected language; nil means the source language is unknown.
 type Resolution struct {
 	Locale   *string `json:"locale"`
 	Fallback bool    `json:"fallback"`
 }
 
-// TextUpdates 是独立短文案的编辑集合。
+// TextUpdates groups edits to independent text fields.
 type TextUpdates map[string]Update[string]
 
-// TextContent 为 schema 生成器提供具名的字符串内容类型。
+// TextContent gives schema generation a named string-content type.
 type TextContent Content[string]
 
-// Original 将尚未标注语言的历史内容包装为原文。
+// Original wraps legacy content whose source language is unknown.
 func Original[T any](value T) Content[T] {
 	return Content[T]{Source: value, Translations: map[string]Translation[T]{}}
 }
 
-// Resolve 选择已核对的译文，缺失或过期时返回原文。
+// Resolve selects source or current reviewed translations in locale candidate order.
+// It returns the source when no candidate matches.
 func (c Content[T]) Resolve(code string) (T, Resolution) {
 	for _, candidate := range Candidates(code) {
 		if c.SourceLocale != nil && Normalize(*c.SourceLocale) == candidate {
@@ -64,7 +65,8 @@ func (c Content[T]) Resolve(code string) (T, Resolution) {
 	return c.Source, Resolution{Locale: c.SourceLocale, Fallback: c.SourceLocale == nil || Normalize(*c.SourceLocale) != Normalize(code)}
 }
 
-// Prepare 校验完整内容并推进版本，持久化时仍需原子比较旧 Revision。
+// Prepare validates an update and advances its revisions.
+// Persistence must still compare the previous Revision atomically when saving.
 func Prepare[T any](current Content[T], input Update[T], validate func(T) error) (Content[T], error) {
 	if current.Revision != input.Revision {
 		return current, ErrConflict
@@ -99,7 +101,7 @@ func Prepare[T any](current Content[T], input Update[T], validate func(T) error)
 		}
 		deleted[code] = true
 	}
-	// 省略译文表示保留，删除操作单独列出语言。
+	// Omitted translations are retained; deletion requires a separate locale entry.
 	for code, translation := range current.Translations {
 		if !deleted[code] {
 			next.Translations[code] = translation
@@ -142,7 +144,7 @@ func Prepare[T any](current Content[T], input Update[T], validate func(T) error)
 		}
 	}
 	next.Revision = current.Revision + 1
-	// JSON 往返使源对象和嵌套数组脱离请求方持有的引用。
+	// A JSON round trip detaches nested content from caller-owned references.
 	data, err := json.Marshal(next)
 	if err != nil {
 		return current, err
@@ -154,7 +156,7 @@ func Prepare[T any](current Content[T], input Update[T], validate func(T) error)
 	return result, nil
 }
 
-// SearchTexts 收集原文和当前已核对译文，供用户搜索使用。
+// SearchTexts returns sorted, distinct source and current-translation text for search.
 func SearchTexts[T any](content Content[T], fields func(T) []string) []string {
 	seen := map[string]bool{}
 	for _, value := range fields(content.Source) {

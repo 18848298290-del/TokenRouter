@@ -16,7 +16,7 @@ import (
 const aliyunCaptchaTimeoutMillis = 10_000
 
 type aliyunCaptchaVerifier struct {
-	protocol      string // "HTTPS"；测试注入 "HTTP" 指向 httptest.Server
+	protocol      string // HTTPS in production; tests use HTTP with httptest.Server.
 	timeoutMillis int
 }
 
@@ -27,8 +27,8 @@ func NewAliyunCaptchaVerifier() identity.AliyunCaptchaVerifier {
 	}
 }
 
-// VerifyCaptcha 调用阿里云验证码 2.0 VerifyIntelligentCaptcha。
-// AK/SK 是可热更的后台设置，每次调用按当前凭证新建 client。
+// VerifyCaptcha calls Aliyun Captcha 2.0 VerifyIntelligentCaptcha.
+// Create a client per call so runtime access-key changes take effect.
 func (v *aliyunCaptchaVerifier) VerifyCaptcha(ctx context.Context, cred identity.AliyunCaptchaCredentials, captchaVerifyParam string) (*identity.AliyunCaptchaVerifyResult, error) {
 	client, err := captcha.NewClient(&openapiutil.Config{
 		AccessKeyId:     dara.String(cred.AccessKeyID),
@@ -60,8 +60,8 @@ func (v *aliyunCaptchaVerifier) VerifyCaptcha(ctx context.Context, cred identity
 	return result, nil
 }
 
-// normalizeAliyunCaptchaError 把 SDK 的两种错误类型归一化为 identity.AliyunCaptchaAPIError，
-// 其余错误（网络/超时等）原样返回。
+// normalizeAliyunCaptchaError converts both SDK error types to identity.AliyunCaptchaAPIError.
+// Other errors, including transport failures, are returned unchanged.
 func normalizeAliyunCaptchaError(err error) error {
 	if teaErr, ok := errors.AsType[*tea.SDKError](err); ok {
 		return &identity.AliyunCaptchaAPIError{

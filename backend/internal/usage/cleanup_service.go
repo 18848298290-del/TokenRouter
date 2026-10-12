@@ -18,7 +18,7 @@ const (
 	usageCleanupWorkerName = "usage_cleanup_worker"
 )
 
-// UsageCleanupService 负责创建与执行使用记录清理任务。
+// UsageCleanupService creates and executes usage-record cleanup tasks.
 type UsageCleanupService struct {
 	repo        UsageCleanupRepository
 	timingWheel TimingWheel
@@ -121,7 +121,7 @@ func (s *UsageCleanupService) Stop() {
 		if s.timingWheel != nil {
 			s.timingWheel.CancelAndWait(usageCleanupWorkerName)
 		}
-		// CreateTask 也会立即派发 runOnce，必须与时间轮路径一起等待。
+		// CreateTask also dispatches runOnce immediately; wait for that work as well as timing-wheel callbacks.
 		s.workWG.Wait()
 		s.logMessage("service.usage_cleanup", "[UsageCleanup] stopped")
 	})
@@ -217,7 +217,7 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 	batchSize := s.batchSize()
 	deletedTotal := task.DeletedRows
 	completedScan := false
-	// 已有进度也可能来自 stale reclaim，必须在所有退出路径修复已删除范围。
+	// Progress may come from a reclaimed task; repair the deleted range on every exit path.
 	defer func() {
 		if completedScan || deletedTotal > 0 {
 			s.recomputeDeletedRange(task)
@@ -246,7 +246,7 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 		deleted, err := s.repo.DeleteUsageLogsBatch(ctx, task.Filters, batchSize)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				// 任务被中断（例如服务停止/超时），保持 running 状态，后续通过 stale reclaim 续跑。
+				// Leave interrupted tasks running so stale-task reclamation can resume them.
 				s.logMessage("service.usage_cleanup", "[UsageCleanup] task interrupted: task=%d err=%v", task.ID, err)
 				return
 			}
@@ -358,7 +358,7 @@ func (s *UsageCleanupService) CancelTask(ctx context.Context, taskID int64, canc
 		return err
 	}
 	if !ok {
-		// 状态可能并发改变
+		// A concurrent state transition may have prevented cancellation.
 		currentStatus, getErr := s.repo.GetTaskStatus(ctx, taskID)
 		if getErr == nil && currentStatus == UsageCleanupStatusCanceled {
 			s.logMessage("service.usage_cleanup", "[UsageCleanup] cancel_task idempotent race hit: task=%d operator=%d", taskID, canceledBy)
@@ -452,7 +452,7 @@ func (s *UsageCleanupService) taskTimeout() time.Duration {
 	return 30 * time.Minute
 }
 
-// recomputeDeletedRange 由聚合器执行重算，使用聚合器的运行上下文。
+// recomputeDeletedRange requests repair under the aggregator's runtime context.
 // @project-doc docs/operations/pre_aggregation.md#usage_state_ownership
 func (s *UsageCleanupService) recomputeDeletedRange(task *UsageCleanupTask) {
 	if s.dashboard != nil {

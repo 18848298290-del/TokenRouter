@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestSubscriptionCalendarBoundaries 检查日额度按本地日历重置，覆盖 DST 切换日。
+// TestSubscriptionCalendarBoundaries checks daily resets on local calendar days across DST changes.
 func TestSubscriptionCalendarBoundaries(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

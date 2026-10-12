@@ -22,9 +22,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// RunEntry 拥有入站升级后的准入、提供商尝试及每 turn 调度/资金/审核/完成编排。
+// RunEntry handles admission, provider attempts, and per-turn scheduling, funding, moderation, and completion after upgrade.
 func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSocket, firstMessage []byte) {
-	// 逐轮租约失效时终止整个会话，HTTP 桥接的断连隔离仍能接收内部取消。
+	// A lost turn lease aborts the session, including HTTP bridge work detached from client cancellation.
 	ctx, abortSession := requestcontext.WithAbort(ctx)
 	defer abortSession()
 	requestRecords := newEntryRequestRecords(ctx)
@@ -32,7 +32,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 	apiKey, subject, reqLog := in.Key, in.Subject, p.Logger()
 	clientLifecycleCtx, firstTurnStartedAt := in.ClientLifecycleContext, in.FirstTurnStartedAt
 	var err error
-	// 用户提示词替换必须在首帧模型解析、内容审计和会话 hash 前执行，保证 WS 首轮请求与 HTTP 入口一致。
+	// Apply prompt replacement before model parsing, moderation, and session hashing, as in the HTTP entry path.
 	firstMessage = p.Prompt(ctx, firstMessage)
 	firstMessage, err = modeltrace.RewriteAPIKeyAdditionalModels(firstMessage, apiKey.ModelMapping)
 	if err != nil {
@@ -66,7 +66,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 	p.SetLogger(reqLog)
 	p.ObserveFirst(clientReqModel)
 	firstCyber := p.CaptureCyber(firstMessage)
-	// WS passthrough 的客户端帧和上游事件可能并发回调，按 turn 保存提示词摘要需要加锁。
+	// Client-frame and upstream-event callbacks can run concurrently, so protect the per-turn prompt snapshots.
 	cyberPromptExcerptByTurn := map[int]string{}
 	cyberSnapshotByTurn := map[int]moderation.ContentModerationInput{}
 	var cyberPromptExcerptMu sync.RWMutex
@@ -102,7 +102,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		p.Close(1008, decision.Message)
 		return
 	}
-	// 取得完整首帧后先检查指定会话和派生会话的风控屏蔽，再连接上游。
+	// Check both explicit and derived session blocks after receiving the first frame and before connecting upstream.
 	if cyberBlockKey := p.BlockedSession(ctx, firstMessage); cyberBlockKey != "" {
 		p.BlockedError(ctx)
 		p.Close(1008, p.BlockedMessage())
@@ -110,13 +110,13 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return
 	}
 
-	// 首轮按分组映射后的模型 G 检查生图能力，当前分组和映射结果保存为本次计划。
+	// Check image capability against the group-mapped model G and save the group mapping in the request plan.
 	ctx, groupMappingWS := p.Plan(ctx, reqModel)
 	mappedFirstMessage, routingModelWS, _ := p.ImageIntent(reqModel, firstMessage, groupMappingWS)
 	imageIntent := p.ExplicitImage(routingModelWS, mappedFirstMessage)
 	initialSchedulingCtx := ctx
 	if imageIntent {
-		// 首轮选择检查生图请求的模型级限流。
+		// Include model-level image rate limits in first-turn selection.
 		initialSchedulingCtx = p.ImageContext(initialSchedulingCtx)
 	}
 	if imageIntent && !p.ImagesAllowed() {
@@ -140,7 +140,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			currentUserRelease = nil
 		}
 	}
-	// 取得槽位后立即登记释放函数，提前返回时也会释放。
+	// Register cleanup before acquiring slots so early returns release them.
 	defer releaseTurnSlots()
 
 	userReleaseFunc, userAcquired, err := p.AcquireUser(ctx)
@@ -180,7 +180,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return
 	}
 
-	// Key 槽位在轮次之间释放，可重试的同一轮持有到最终完成。
+	// Release Key slots between turns; retain the slot across retries until that turn finishes.
 	var keyMu sync.Mutex
 	var keyRelease func()
 	acquireKey := func() error {
@@ -283,8 +283,8 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return ensureUserSlotHeld()
 	}
 
-	// 生图请求要求提供商支持 Responses API，与 HTTP 入口相同（#4417）。
-	// WSv2 自身使用 Responses，首轮按分组模型 G 识别生图意图，被动 namespace 按普通请求处理（#4476）。
+	// Image requests require Responses API support, as in the HTTP entry path (#4417).
+	// Detect first-turn image intent from group model G; passive namespaces remain ordinary requests (#4476).
 	requiredCapability := imageIntent && requestPlatform == "openai"
 
 	for {
@@ -374,9 +374,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			EntryInt("candidate_count", scheduleDecision.CandidateCount),
 		)
 
-		// 首帧保持客户端模型 R，由 service 层与后续 turn 一样逐轮执行 R -> G -> U。
+		// Keep client model R in the first frame; the turn executor applies R -> G -> U for each turn.
 		wsFirstMessageForUsageFallback := append([]byte(nil), firstMessage...)
-		// 每轮从鉴权缓存刷新策略，读取失败时使用最近一次有效值。
+		// Refresh policy from the authentication cache each turn; retain the last valid value on read failure.
 		var currentFastModePolicy atomic.Value
 		currentFastModePolicy.Store(apiKey.FastModePolicy)
 		maxReasoningEffort := ""
@@ -416,7 +416,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					requestedModel = clientReqModel
 				}
 				turnCtx, redirectedModel := p.Redirect(ctx, requestedModel)
-				// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+				// Save this turn's group and mapping in its request plan.
 				turnCtx, turnMapping := p.Plan(turnCtx, redirectedModel)
 				mappedPayload, turnRoutingModel, _ := p.ImageIntent(redirectedModel, payload, turnMapping)
 				turnImageIntent := p.ExplicitImage(turnRoutingModel, mappedPayload)
@@ -430,7 +430,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					)
 				}
 				if turnImageIntent {
-					// 后续 turn 的提供商资格检查必须包含该轮生图限流范围。
+					// Include this turn's image rate-limit scope in provider eligibility checks.
 					turnCtx = p.ImageContext(turnCtx)
 				}
 				turnCapability := turnImageIntent && requestPlatform == "openai"
@@ -492,9 +492,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if turn == 1 {
 					return nil
 				}
-				// 覆盖槽位前先释放此前取得的槽位。
+				// Release held slots before replacing their release callbacks.
 				releaseTurnSlots()
-				// 后续 turn 各自申请并发槽，空闲期间释放槽位。
+				// Acquire concurrency slots for each later turn and release them while idle.
 				userReleaseFunc, userAcquired, err := p.AcquireUser(ctx)
 				if err != nil {
 					return p.CloseError(1011, "failed to acquire user concurrency slot", err)
@@ -502,7 +502,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if !userAcquired {
 					return p.CloseError(1013, "too many concurrent requests, please retry later", nil)
 				}
-				// 每轮放行前复核当前身份与资金，失败时释放本轮用户槽。
+				// Recheck identity and funding before admission; release the user slot if verification fails.
 				if err := p.AuthorizeTurn(ctx); err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
@@ -553,7 +553,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					turnClientModel = clientReqModel
 				}
 				turnCtx, turnModel := p.Redirect(requestCtx, turnClientModel)
-				// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+				// Save this turn's group and mapping in its completion plan.
 				turnCtx, turnGroupMapping := p.Plan(turnCtx, turnModel)
 				releaseTurnSlots()
 				defer p.ClearCyber()
@@ -583,9 +583,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if result == nil || result.LocalWarmup {
 					return
 				}
-				// WS 每个 turn 的分组映射可能覆盖默认计费模型，统一在记录用量前解析。
+				// Resolve the turn's group billing-model override before recording usage.
 				result.BillingModel = EntryBillingModel(result, turnGroupMapping, turnModel, result.UpstreamModel)
-				// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新。
+				// Spark shadow providers update codex_* through QueryUsage (/wham/usage bengalfox).
 				if provider.Type == "oauth" && !provider.Shadow {
 					selection.Target.UpdateUsage(ctx, result.ResponseHeaders)
 				}
@@ -609,11 +609,11 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			},
 		}
 
-		// 原生 WS turn 执行器在解析首帧时执行分组及提供商映射，此处只处理会话链字段。
+		// The turn executor maps group and provider models when parsing the frame; prepare continuation fields here.
 		wsFirstMessage := append([]byte(nil), wsAttemptMessage...)
-		// 切组/会话失配防护：previous_response_id 未在当前分组命中粘连提供商时，
-		// 说明该会话链不属于本次调度到的提供商；原样转发会触发上游会话链鉴权失败。
-		// 因此只在上下文可迁移时剥离首包 previous_response_id，后续 turn 仍由 WS 转发层处理。
+		// A previous_response_id without a sticky hit may belong to a different provider or group.
+		// Forwarding that continuation can fail upstream authorization.
+		// Strip it from the first frame when context is movable; the forwarding layer handles later turns.
 		if previousResponseID != "" && !scheduleDecision.StickyPreviousHit && previousResponseCanMove {
 			wsFirstMessage = p.RemovePrevious(wsFirstMessage)
 			reqLog.Debug("openai.websocket_previous_response_id_stripped_cross_group",

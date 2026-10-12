@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// buildRequest 根据已选提供商类型调用请求构造器。
+// buildRequest selects a request builder for the chosen provider type.
 func (r *Runtime) buildRequest(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, body []byte, token, tokenType, model string, stream, mimic bool) (*http.Request, []byte, error) {
 	attributes, err := gatewayadapter.ResolveModelAttributes(ctx, target, model, r.dependencies.Attributes, "anthropic_messages")
 	if err != nil {
@@ -111,7 +111,7 @@ func (r *Runtime) buildCountRequest(ctx context.Context, output HTTPBoundary, st
 	return anthropic.BuildCountTokensRequest(ctx, body, token, tokenType, model, mimic, options)
 }
 
-// requestOptions 保存本次目标和准备状态，平台构造器读取动态设置。
+// requestOptions captures the target and preparation state for builders that read dynamic settings.
 func (r *Runtime) requestOptions(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, model, tokenType string, mimic bool) anthropic.RequestOptions {
 	options := anthropic.RequestOptions{
 		InjectAPIKeyBeta: r.options.InjectAPIKeyBeta,
@@ -148,7 +148,7 @@ func (r *Runtime) requestOptions(ctx context.Context, output HTTPBoundary, state
 		return provideradapter.HeaderOverrideValue(gatewayadapter.ExecutionProtocolRecord(target), "anthropic-beta")
 	}
 	options.CheckFastBeta = func(ctx context.Context) error {
-		//nolint:revive // checkBetaTokens 返回具体指针类型，直接 return 会把 nil 指针包成非 nil 的 error。
+		//nolint:revive // checkBetaTokens returns a concrete pointer; returning a nil pointer directly would produce a non-nil error interface.
 		if err := r.checkBetaTokens(ctx, []string{anthropic.BetaFastMode}, target, model); err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func (r *Runtime) requestOptions(ctx context.Context, output HTTPBoundary, state
 	return options
 }
 
-// requestURL 根据普通、计数或透传请求选择端点，为自定义 relay 添加代理查询参数。
+// requestURL selects a Messages or counting endpoint and adds the proxy query parameter for custom relays.
 func (r *Runtime) requestURL(target *gatewayadapter.ExecutionProvider, count, passthrough bool) (string, error) {
 	endpoint, path := anthropic.ClaudeAPIURL, "/v1/messages"
 	if count {

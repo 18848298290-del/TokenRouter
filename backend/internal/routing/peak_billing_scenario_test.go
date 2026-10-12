@@ -1,6 +1,6 @@
 package routing
 
-// 本场景测试检查 billing/pricing/settings.go 的峰值倍率计算，配置校验由 pricing_settings.go 提供。
+// This scenario checks peak multipliers in billing/pricing/settings.go; pricing_settings.go validates configuration.
 
 import (
 	"testing"
@@ -60,7 +60,7 @@ func TestPeakMultiplierAt_Boundaries(t *testing.T) {
 }
 
 func TestPeakMultiplierAt_RespectsTimezoneLocation(t *testing.T) {
-	// 按 UTC 计算峰值时段，北京 15:00 对应 UTC 07:00，处于 [14:00,18:00) 之外。
+	// Peak hours use UTC: 15:00 in Beijing is 07:00 UTC, outside [14:00, 18:00).
 	nonUTC := time.Date(2026, 6, 29, 15, 0, 0, 0, mustLoad("Asia/Shanghai"))
 	g := newPeakGroup(true, "14:00", "18:00", 3.0)
 	if got := g.PeakMultiplierAt(nonUTC.In(time.UTC)); got != 1.0 {

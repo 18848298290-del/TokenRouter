@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// forceHTTPVersion 读取 req transport 中的 HTTP 版本设置。
+// forceHTTPVersion reads the HTTP version override from the req transport.
 func forceHTTPVersion(t *testing.T, client *req.Client) string {
 	t.Helper()
 	transport := client.GetTransport()

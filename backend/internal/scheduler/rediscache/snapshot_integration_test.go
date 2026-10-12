@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// TestBucketLeaseExpiredOwnerCannotReleaseSuccessor 检查 Redis 中旧锁过期后，旧句柄释放时仍保留继任持有者的锁。
+// TestBucketLeaseExpiredOwnerCannotReleaseSuccessor checks that an expired owner's release leaves the successor lock intact.
 func TestBucketLeaseExpiredOwnerCannotReleaseSuccessor(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)

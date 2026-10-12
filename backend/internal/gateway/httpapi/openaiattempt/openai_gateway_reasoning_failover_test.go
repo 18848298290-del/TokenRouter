@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// kiroReasoningCanonicalBody 模拟带有 Kiro 专属加密 reasoning 项的 Responses 请求。
+// kiroReasoningCanonicalBody represents a Responses request with Kiro-private encrypted reasoning.
 const kiroReasoningCanonicalBody = `{"model":"gpt-5.1","stream":false,"input":[` +
 	`{"type":"message","role":"user","content":"hello"},` +
 	`{"type":"reasoning","id":"rs_kiro_abc123","encrypted_content":"ENC_BLOB","summary":[{"type":"summary_text","text":"thinking"}]},` +
@@ -42,8 +42,8 @@ func reasoningItemCount(t *testing.T, body []byte) int {
 	return count
 }
 
-// TestDeriveOpenAIForwardAttemptBody_CrossModeStripsKiroReasoning 验证透传提供商切换到
-// 非透传提供商时会移除整个加密 reasoning 项，同时保持 canonical 请求体不变。
+// TestDeriveOpenAIForwardAttemptBody_CrossModeStripsKiroReasoning checks removal of encrypted reasoning items
+// when switching from passthrough to non-passthrough, with canonical input unchanged.
 func TestDeriveOpenAIForwardAttemptBody_CrossModeStripsKiroReasoning(t *testing.T) {
 	canonical := []byte(kiroReasoningCanonicalBody)
 	kiro := newOpenAIPassthroughProvider(1, true)
@@ -67,8 +67,8 @@ func TestDeriveOpenAIForwardAttemptBody_CrossModeStripsKiroReasoning(t *testing.
 	require.JSONEq(t, kiroReasoningCanonicalBody, string(canonical))
 }
 
-// TestDeriveOpenAIForwardAttemptBody_SameModePreservesReasoning 验证同模式重试和切换到
-// 透传提供商时都继续使用完整的 canonical reasoning。
+// TestDeriveOpenAIForwardAttemptBody_SameModePreservesReasoning checks full canonical reasoning for
+// same-mode retries and switches to passthrough providers.
 func TestDeriveOpenAIForwardAttemptBody_SameModePreservesReasoning(t *testing.T) {
 	canonical := []byte(kiroReasoningCanonicalBody)
 
@@ -105,8 +105,8 @@ func TestDeriveOpenAIForwardAttemptBody_SameModePreservesReasoning(t *testing.T)
 	})
 }
 
-// TestDeriveOpenAIForwardAttemptBody_SanitizationSticksAcrossBedrockRetries 验证跨模式后
-// 所有后续非透传提供商重试都会继续使用清理后的请求体。
+// TestDeriveOpenAIForwardAttemptBody_SanitizationSticksAcrossBedrockRetries checks that
+// every subsequent non-passthrough retry uses sanitized input after a cross-mode switch.
 func TestDeriveOpenAIForwardAttemptBody_SanitizationSticksAcrossBedrockRetries(t *testing.T) {
 	canonical := []byte(kiroReasoningCanonicalBody)
 	state := &openAIPassthroughFailoverState{}

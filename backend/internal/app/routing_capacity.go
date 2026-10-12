@@ -11,13 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// capacityProviders 将提供商存储记录转换为路由需要的容量数据。
+// capacityProviders converts provider records to routing capacity data.
 type capacityProviders struct {
 	Store    *providerpostgres.ProviderStore
 	Settings func(context.Context) provider.QuotaAutoPauseSettings
 }
 
-// provideGroupCapacity 绑定提供商存储及并发、会话和 RPM 实例，查询时读取动态设置。
+// provideGroupCapacity binds provider storage and concurrency, session, and RPM readers with dynamic quota settings.
 func provideGroupCapacity(providers *providerpostgres.ProviderStore, groups *routingpostgres.GroupStore, concurrency *scheduler.ConcurrencyService, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings *provider.QuotaSettingsCache) *routing.CapacityService {
 	return routing.NewCapacityService(capacityProviders{Store: providers, Settings: func(ctx context.Context) provider.QuotaAutoPauseSettings {
 		return settings.GetOpenAIQuotaAutoPauseSettings(ctx)

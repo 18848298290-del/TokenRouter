@@ -1,6 +1,6 @@
 package postgres_test
 
-// 本场景覆盖 payment/resume.go 的令牌签发与解析，以及 payment/testkit/fulfillment.go 的签名配置装配。
+// These scenarios exercise token signing and parsing in payment/resume.go and signing configuration in payment/testkit/fulfillment.go.
 
 import (
 	"crypto/hmac"

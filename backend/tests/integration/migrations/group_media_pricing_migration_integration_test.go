@@ -11,12 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestRemoveGroupMediaPricingMigration 验证删列迁移可以重放，不修改模型价卡和独立于分组配置的历史任务快照。
+// TestRemoveGroupMediaPricingMigration checks replay and retention of model pricing and the group rate
+// multiplier.
 func TestRemoveGroupMediaPricingMigration(t *testing.T) {
 	tx, err := integrationDB.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	// 用事务内临时表隔离迁移验证，不修改集成库已有业务表。
+	// A transaction-local temporary table isolates the migration from the shared business tables.
 	_, err = tx.Exec(`CREATE TEMP TABLE groups (id bigint, model_pricing jsonb, rate_multiplier numeric, image_price_1k numeric, image_price_2k numeric, image_price_4k numeric, video_price_480p numeric, video_price_720p numeric, video_price_1080p numeric, video_model_prices jsonb, image_rate_independent boolean, image_rate_multiplier numeric, video_rate_independent boolean, video_rate_multiplier numeric)`)
 	require.NoError(t, err)
 	_, err = tx.Exec(`INSERT INTO groups (id,model_pricing,rate_multiplier,image_price_1k,video_model_prices,image_rate_multiplier) VALUES (1,'[{"models":["gpt-image-2"],"billing_mode":"image","per_request_price":0}]',1.5,0.4,'{"grok-imagine-video":{"480p":0.2}}',0.5)`)
@@ -40,5 +41,3 @@ func TestRemoveGroupMediaPricingMigration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, columns)
 }
-
-// 媒体价卡在创建、回填和更新后保留计费模式、分辨率、零价以及批量策略。

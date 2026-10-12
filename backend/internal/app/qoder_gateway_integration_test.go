@@ -48,10 +48,10 @@ import (
 	usagepg "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// balanceReader 从数据库读取余额并返回给 billing。
+// balanceReader reads a database balance for billing.
 type balanceReader struct{ db *sql.DB }
 
-// storageQoderRuntime 提供供应商与依赖的测试实现，执行、租约、资金和分析记录使用生产模块。
+// storageQoderRuntime supplies test callbacks while execution, leases, settlement, and usage storage use production components.
 type storageQoderRuntime struct {
 	prepare        func(context.Context, gateway.Request) (gateway.Request, error)
 	check          func(context.Context) error
@@ -64,7 +64,7 @@ func (r balanceReader) GetByID(ctx context.Context, id int64) (*billing.UserSumm
 	return u, err
 }
 
-// TestQoderHTTPStorageChain 使用 PostgreSQL、Redis、完成记录 worker 和本地供应商 HTTP。
+// TestQoderHTTPStorageChain uses PostgreSQL, Redis, a completion worker, and a local upstream HTTP server.
 func TestQoderHTTPStorageChain(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 		require.NoError(t, concur.StopContext(stopCtx))
 	})
 
-	// 等待阶段使用 Redis 计数，取消、写入失败或再次权益检查被拒绝时，请求在调用供应商前结束。
+	// Redis tracks waiting requests. Cancellation, heartbeat write failure, or failed funding rechecks stop execution before provider selection.
 	for _, kind := range []string{"wait-cancel", "wait-heartbeat-failure", "wait-billing-recheck"} {
 		t.Run(kind, func(t *testing.T) {
 			const id int64 = 990099
@@ -236,7 +236,7 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 				})
 			}
 
-			// HTTP 使用固定的 Execute 函数，认证数据和请求报文按请求传入。
+			// The HTTP executor receives authentication and body data for each request.
 			runtime := &storageQoderRuntime{}
 			runtime.prepare = func(callCtx context.Context, request gateway.Request) (gateway.Request, error) {
 				grp, err := groups.GetByID(callCtx, group.ID)
@@ -351,7 +351,7 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("completion did not finish")
 			}
-			// 重放完成操作检查持久化幂等，供应商调用次数保持为一。
+			// Replaying completion checks persistent idempotency; the upstream request count remains one.
 			complete(ctx, last)
 			select {
 			case err := <-done:

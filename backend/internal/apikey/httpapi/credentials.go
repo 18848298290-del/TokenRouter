@@ -31,7 +31,7 @@ func HasCredentialInput(c *gin.Context) bool {
 		c.GetHeader("x-goog-api-key") != ""
 }
 
-// AbortTeamError 将团队生命周期与成员限额错误映射为稳定的网关响应。
+// AbortTeamError maps team lifecycle and member limit failures to gateway responses.
 func AbortTeamError(c *gin.Context, err error) bool {
 	switch {
 	case errors.Is(err, apikey.ErrTeamMemberDailyExceeded):
@@ -106,7 +106,7 @@ func AbortGoogleError(c *gin.Context, status int, message string) {
 	c.Abort()
 }
 
-// GoogleTeamError 返回 Google 风格团队鉴权错误需要的状态码和消息。
+// GoogleTeamError returns the status and message for a Google-style team authentication error.
 func GoogleTeamError(err error) (int, string, bool) {
 	switch {
 	case errors.Is(err, apikey.ErrTeamMemberDailyExceeded), errors.Is(err, apikey.ErrTeamMemberWeeklyExceeded), errors.Is(err, apikey.ErrTeamMemberMonthlyExceeded):

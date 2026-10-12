@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ImagesTarget 是已准备的单次技术目标，不能序列化请求中的凭据。
+// ImagesTarget holds a prepared image attempt. Do not serialize credentials in Request.
 type ImagesTarget struct {
 	ProviderID                          int64
 	OAuth                               bool
@@ -31,10 +31,10 @@ type ImagesTarget struct {
 	ResponseError                       func(*http.Response, int, error) error
 }
 
-// ImagesExecutor 对已选提供商执行一次图片请求。
+// ImagesExecutor sends one image request to the selected provider.
 type ImagesExecutor struct{}
 
-// imagesObservedSink 记录同步输出的提交状态、内容标记和写入失败。
+// imagesObservedSink records synchronous output commitment, content and write failures.
 type imagesObservedSink struct {
 	upstream.OutputSink
 	committed, retryCommitted, semantic, failed bool
@@ -84,9 +84,9 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if err != nil {
 		return result, t.TransportError(err)
 	}
-	// 在处理结果与原错误副作用之后释放最终响应体，再结束活动登记。
+	// Close the final response body after result handling, before releasing activity registration.
 	defer func() { _ = resp.Body.Close() }()
-	// 与原网关一致，耗时取在响应关闭之前。
+	// Measure duration before closing the response body.
 	defer func() { result.Duration = time.Since(started) }()
 	if resp.StatusCode >= 400 {
 		body := t.ReadErrorBody(resp)
@@ -139,7 +139,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if output != nil {
 		result.HTTPCommitted = output.Writer.Written()
 	}
-	// OAuth 非流式请求或尚未产出图片的流式请求失败时，调用 ResponseError 处理。
+	// OAuth failures before any completed image, or in buffered mode, use ResponseError.
 	if err != nil && t.OAuth && (!input.Stream || result.ObservedImages <= 0) {
 		err = t.ResponseError(resp, before, err)
 	}

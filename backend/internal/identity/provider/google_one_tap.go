@@ -17,7 +17,7 @@ type GoogleIDTokenVerifier = identity.GoogleIDTokenVerifier
 
 type GoogleAPIIDTokenVerifier struct{}
 
-// Verify 使用 Google 官方验证器校验签名和标准声明，再收紧本站依赖的身份字段。
+// Verify uses the Google validator for signature and standard claims, then checks required identity fields.
 func (GoogleAPIIDTokenVerifier) Verify(ctx context.Context, credential string, audience string) (*GoogleIDTokenClaims, error) {
 	payload, err := idtoken.Validate(ctx, credential, audience)
 	if err != nil {
@@ -26,7 +26,7 @@ func (GoogleAPIIDTokenVerifier) Verify(ctx context.Context, credential string, a
 	return ValidateGoogleIDTokenPayload(payload, audience, time.Now())
 }
 
-// ValidateGoogleIDTokenPayload 对官方验证器的结果再做本站所需的严格声明检查。
+// ValidateGoogleIDTokenPayload checks application-required claims after signature validation.
 func ValidateGoogleIDTokenPayload(payload *idtoken.Payload, audience string, now time.Time) (*GoogleIDTokenClaims, error) {
 	if payload == nil {
 		return nil, errors.New("google id token payload is missing")

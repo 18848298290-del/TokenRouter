@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// 限制单请求的 Redis 查询工作量，保留最可能匹配续接的近期转录前缀。
+// Bound Redis lookup work per request while retaining recent transcript prefixes for continuation matching.
 const maxOpenAICyberTranscriptLookupKeys = 256
 
 type openAICyberTranscriptBlockKeys struct {
@@ -21,8 +21,8 @@ type openAICyberTranscriptBlockKeys struct {
 	lookupKeysTruncated bool
 }
 
-// deriveOpenAICyberTranscriptBlockKeys 返回累计对话内容哈希和最新用户轮次前的上下文键。
-// 上下文键需要包含模型生成历史，共享的首轮模板跳过该匹配。
+// deriveOpenAICyberTranscriptBlockKeys computes cumulative transcript hashes and the context key before the latest user turn.
+// The context key requires model-generated history so shared first-turn templates do not match.
 func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyberTranscriptBlockKeys {
 	if len(body) == 0 {
 		return openAICyberTranscriptBlockKeys{}
@@ -35,7 +35,7 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 	h := sha256.New()
 	_, _ = h.Write([]byte("cyber-transcript:v3|api_key="))
 	_, _ = h.Write([]byte(strconv.FormatInt(apiKeyID, 10)))
-	// 模型与工具定义属于请求配置；根指令仍是模型可见的上下文，参与身份计算。
+	// Model and tool definitions are configuration; root instructions are visible context and contribute to identity.
 	for _, field := range []string{"instructions"} {
 		v := root.Get(field)
 		if !v.Exists() || (v.Type == gjson.String && strings.TrimSpace(v.String()) == "") {
@@ -61,7 +61,8 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 		nextLookupKey := 0
 		lookupKeysRotated := false
 		lastLookupKey := ""
-		// 此处按熵估计判断内容变化。准确区分固定 few-shot 助手条目需要经认证的服务端历史。
+		// Assistant roles and output item types indicate generated history heuristically.
+		// Distinguishing fixed few-shot examples requires authenticated server-side history.
 		hasModelGeneratedItem := false
 		sequence.ForEach(func(_, item gjson.Result) bool {
 			canonical := item.Raw

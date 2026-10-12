@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CreateGroupRequest represents create group request.
+// CreateGroupRequest contains the settings for a new group.
 type CreateGroupRequest struct {
 	Localization               *locale.Update[routing.GroupCopy]       `json:"localization"`
 	RoutingPolicy              routing.GroupRoutingPolicy              `json:"routing_policy"`
@@ -30,56 +30,55 @@ type CreateGroupRequest struct {
 	SortOrder                  *int                                    `json:"sort_order"`
 	RateMultiplier             float64                                 `json:"rate_multiplier"`
 	IsExclusive                bool                                    `json:"is_exclusive"`
-	// 会话隔离开启后拒绝其它分组已归属的显式会话切入。
+	// Session isolation rejects explicit sessions already owned by another group.
 	SessionIsolationEnabled bool `json:"session_isolation_enabled"`
 
-	// 图片生成权限独立于共享价格配置。
+	// Image permissions belong to the group independently of its shared pricing configuration.
 	AllowImageGeneration      bool `json:"allow_image_generation"`
 	AllowBatchImageGeneration bool `json:"allow_batch_image_generation"`
 
 	ClaudeCodeOnly                  bool   `json:"claude_code_only"`
 	FallbackGroupID                 *int64 `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
-	// UnavailableFallbackGroupID 当前分组停用时 API Key 优先回退到的分组。
+	// UnavailableFallbackGroupID is the preferred API key fallback when this group is disabled.
 	UnavailableFallbackGroupID *int64 `json:"unavailable_fallback_group_id"`
-	// 模型路由配置（仅 anthropic 平台使用）
+	// Legacy provider routing by model.
 	ModelRouting        map[string][]int64 `json:"model_routing"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
 	MCPXMLInject        *bool              `json:"mcp_xml_inject"`
-	// 支持的模型系列（仅 antigravity 平台使用）
+	// Legacy Antigravity model-family metadata.
 	SupportedModelScopes []string `json:"supported_model_scopes"`
-	// 客户端文本协议完整准入集合；nil 表示创建时采用平台默认值。
+	// Allowed client protocols; nil uses the creation defaults.
 	AllowedProtocols             []protocol.ProtocolID                         `json:"allowed_protocols"`
 	ProtocolFallbacks            map[protocol.ProtocolID][]protocol.ProtocolID `json:"protocol_fallbacks"`
 	ResponsesImagePolicy         string                                        `json:"responses_image_policy"`
 	LegacyAllowedClientProtocols []protocol.ProtocolID                         `json:"allowed_client_protocols"`
-	// OpenAI Messages 旧兼容开关。
+	// Legacy OpenAI Messages compatibility switch.
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
 	AllowLive             bool `json:"allow_live"`
-	// OpenAI 分组是否强制请求使用 Fast 优先级。
+	// Whether to force Fast priority for OpenAI requests.
 	ForceOpenAIFast bool `json:"force_openai_fast"`
-	// 新策略优先于旧布尔输入，省略时保持兼容。
+	// When supplied, this policy takes precedence over the legacy boolean.
 	OpenAIFastPolicy *string `json:"openai_fast_policy"`
-	// OpenAI 分组的 Fast 请求是否按 Standard 价格计费。
 
 	RequireOAuthOnly        bool                                 `json:"require_oauth_only"`
 	RequirePrivacySet       bool                                 `json:"require_privacy_set"`
 	DefaultMappedModel      string                               `json:"default_mapped_model"`
 	ModelsListConfig        routing.GroupModelsListConfig        `json:"models_list_config"`
 	AvailabilityProbeConfig routing.GroupAvailabilityProbeConfig `json:"availability_probe_config"`
-	// 分组 RPM 上限（0 = 不限制）
+	// Requests per minute; zero means unlimited.
 	RPMLimit int `json:"rpm_limit"`
-	// OpenAI/Codex 请求推理强度上限，空字符串表示不限制。
+	// OpenAI/Codex reasoning-effort ceiling; empty means unlimited.
 	MaxReasoningEffort string `json:"max_reasoning_effort"`
-	// 超过上限时的访问控制：downgrade（默认）或 deny。
+	// Action above the ceiling: downgrade (default) or deny.
 	MaxReasoningEffortOverLimit string `json:"max_reasoning_effort_over_limit"`
-	// OpenAI/Codex 推理强度映射，可按模型精确名、前缀或后缀限定。
+	// Effort mappings can target exact model names, prefixes, or suffixes.
 	ReasoningEffortMappings []routing.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
-	// 从指定分组复制提供商（创建后自动绑定）
+	// Bind providers from these groups after creation.
 	CopyProvidersFromGroupIDs []int64 `json:"copy_providers_from_group_ids"`
 }
 
-// UpdateGroupRequest represents update group request.
+// UpdateGroupRequest contains changes to an existing group.
 type UpdateGroupRequest struct {
 	Localization               *locale.Update[routing.GroupCopy]        `json:"localization"`
 	RoutingPolicy              *routing.GroupRoutingPolicy              `json:"routing_policy"`
@@ -91,53 +90,52 @@ type UpdateGroupRequest struct {
 	SortOrder                  *int                                     `json:"sort_order"`
 	RateMultiplier             *float64                                 `json:"rate_multiplier"`
 	IsExclusive                *bool                                    `json:"is_exclusive"`
-	// nil 表示不修改会话隔离开关。
+	// Nil leaves session isolation unchanged.
 	SessionIsolationEnabled *bool  `json:"session_isolation_enabled"`
 	Status                  string `json:"status" binding:"omitempty,oneof=active inactive"`
 
-	// 图片生成权限独立于共享价格配置。
+	// Image permissions belong to the group independently of its shared pricing configuration.
 	AllowImageGeneration      *bool `json:"allow_image_generation"`
 	AllowBatchImageGeneration *bool `json:"allow_batch_image_generation"`
 
 	ClaudeCodeOnly                  *bool  `json:"claude_code_only"`
 	FallbackGroupID                 *int64 `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
-	// UnavailableFallbackGroupID 当前分组停用时 API Key 优先回退到的分组。
+	// UnavailableFallbackGroupID is the preferred API key fallback when this group is disabled.
 	UnavailableFallbackGroupID *int64 `json:"unavailable_fallback_group_id"`
-	// 模型路由配置（仅 anthropic 平台使用）
+	// Legacy provider routing by model.
 	ModelRouting        map[string][]int64 `json:"model_routing"`
 	ModelRoutingEnabled *bool              `json:"model_routing_enabled"`
 	MCPXMLInject        *bool              `json:"mcp_xml_inject"`
-	// 支持的模型系列（仅 antigravity 平台使用）
+	// Legacy Antigravity model-family metadata.
 	SupportedModelScopes *[]string `json:"supported_model_scopes"`
-	// nil 表示不修改，空数组表示显式关闭全部文本协议（所有平台均合法）。
+	// Nil leaves protocols unchanged; an empty array disables all client protocols.
 	AllowedProtocols             *[]protocol.ProtocolID                        `json:"allowed_protocols"`
 	ProtocolFallbacks            map[protocol.ProtocolID][]protocol.ProtocolID `json:"protocol_fallbacks"`
 	ResponsesImagePolicy         string                                        `json:"responses_image_policy"`
 	LegacyAllowedClientProtocols *[]protocol.ProtocolID                        `json:"allowed_client_protocols"`
-	// OpenAI Messages 旧兼容开关。
+	// Legacy OpenAI Messages compatibility switch.
 	AllowMessagesDispatch *bool `json:"allow_messages_dispatch"`
 	AllowLive             *bool `json:"allow_live"`
-	// OpenAI 分组是否强制请求使用 Fast 优先级。
+	// Whether to force Fast priority for OpenAI requests.
 	ForceOpenAIFast *bool `json:"force_openai_fast"`
-	// 新策略优先于旧布尔输入，省略时保持兼容。
+	// When supplied, this policy takes precedence over the legacy boolean.
 	OpenAIFastPolicy *string `json:"openai_fast_policy"`
-	// OpenAI 分组的 Fast 请求是否按 Standard 价格计费。
 
 	RequireOAuthOnly        *bool                                 `json:"require_oauth_only"`
 	RequirePrivacySet       *bool                                 `json:"require_privacy_set"`
 	DefaultMappedModel      *string                               `json:"default_mapped_model"`
 	ModelsListConfig        *routing.GroupModelsListConfig        `json:"models_list_config"`
 	AvailabilityProbeConfig *routing.GroupAvailabilityProbeConfig `json:"availability_probe_config"`
-	// 分组 RPM 上限（0 = 不限制）；nil 表示未提供不改动
+	// Requests per minute; zero means unlimited and nil leaves the limit unchanged.
 	RPMLimit *int `json:"rpm_limit"`
-	// OpenAI/Codex 请求推理强度上限；空字符串清除，nil 不修改。
+	// OpenAI/Codex reasoning-effort ceiling; empty clears it and nil leaves it unchanged.
 	MaxReasoningEffort *string `json:"max_reasoning_effort"`
-	// 超过上限时的访问控制；空字符串视为 downgrade，nil 不修改。
+	// Action above the ceiling; empty means downgrade and nil leaves it unchanged.
 	MaxReasoningEffortOverLimit *string `json:"max_reasoning_effort_over_limit"`
-	// nil 不修改，空数组清空，非空数组替换。
+	// Nil leaves mappings unchanged; an empty array clears them, otherwise replaces them.
 	ReasoningEffortMappings *[]routing.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
-	// 从指定分组复制提供商（同步操作：先清空当前分组的提供商绑定，再绑定源分组的提供商）
+	// Replace current provider bindings with providers from these groups.
 	CopyProvidersFromGroupIDs []int64 `json:"copy_providers_from_group_ids"`
 }
 
@@ -149,7 +147,7 @@ type UpdateSortOrderRequest struct {
 	} `json:"updates" binding:"required,min=1"`
 }
 
-// GroupAdministration 提供路由管理所需的操作。
+// GroupAdministration defines group management operations used by HTTP handlers.
 type GroupAdministration interface {
 	ListGroups(context.Context, int, int, string, string, string, *bool, string, string) ([]routing.Group, int64, error)
 	GetAllGroups(context.Context) ([]routing.Group, error)
@@ -164,7 +162,7 @@ type GroupAdministration interface {
 	UpdateGroupSortOrders(context.Context, []routing.GroupSortOrderUpdate) error
 }
 
-// GroupHandler 只解码输入和输出 HTTP，业务规则通过窄用例接口调用。
+// GroupHandler decodes HTTP input and delegates group rules to GroupAdministration.
 type GroupHandler struct {
 	idempotencyhttp.Executor
 
@@ -180,7 +178,7 @@ func NewGroupHandler(admin GroupAdministration, resources ...GroupResources) *Gr
 	return handler
 }
 
-// List handles listing all groups with pagination
+// List returns groups with filtering and pagination.
 // GET /api/v1/admin/groups
 func (h *GroupHandler) List(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -191,7 +189,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 	platform := ""
 	status := c.Query("status")
 	search := c.Query("search")
-	// 标准化和验证 search 参数
+
 	search = strings.TrimSpace(search)
 	if len(search) > 100 {
 		search = search[:100]
@@ -219,9 +217,9 @@ func (h *GroupHandler) List(c *gin.Context) {
 	httpx.Paginated(c, outGroups, total, page, pageSize)
 }
 
-// GetAll 返回所有启用分组，不分页。
-// 传入 ?include_inactive=true 时同时返回禁用分组，供管理端筛选、
-// 绑定和维护已禁用分组。
+// GetAll returns enabled groups without pagination.
+// With ?include_inactive=true it also returns disabled groups for administration.
+//
 // GET /api/v1/admin/groups/all
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	if _, supplied := c.GetQuery("platform"); supplied {
@@ -251,7 +249,7 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 	httpx.Success(c, outGroups)
 }
 
-// GetByID handles getting a group by ID
+// GetByID returns a group by ID.
 // GET /api/v1/admin/groups/:id
 func (h *GroupHandler) GetByID(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -269,7 +267,7 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 	httpx.Success(c, groupdto.AdminGroupFromRouting[struct{}](group))
 }
 
-// GetModelsListCandidates 获取自定义 /v1/models 列表可选模型 ID。
+// GetModelsListCandidates returns model IDs eligible for a custom /v1/models list.
 // GET /api/v1/admin/groups/:id/models-list-candidates
 func (h *GroupHandler) GetModelsListCandidates(c *gin.Context) {
 	if _, supplied := c.GetQuery("platform"); supplied {
@@ -295,7 +293,7 @@ func (h *GroupHandler) GetModelsListCandidates(c *gin.Context) {
 	httpx.Success(c, gin.H{"models": models})
 }
 
-// Create handles creating a new group
+// Create creates a group.
 // POST /api/v1/admin/groups
 func (h *GroupHandler) Create(c *gin.Context) {
 	var req CreateGroupRequest
@@ -357,8 +355,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 	httpx.Success(c, groupdto.AdminGroupFromRouting[struct{}](group))
 }
 
-// Duplicate 创建停用状态的分组副本，并保留源分组的提供商绑定。
-// 接口：POST /api/v1/admin/groups/:id/duplicate。
+// Duplicate creates a disabled copy with the source group's provider bindings.
+// POST /api/v1/admin/groups/:id/duplicate
 func (h *GroupHandler) Duplicate(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || groupID <= 0 {
@@ -404,7 +402,7 @@ func (h *GroupHandler) Duplicate(c *gin.Context) {
 	httpx.Success(c, result.Data)
 }
 
-// Update handles updating a group
+// Update updates a group.
 // PUT /api/v1/admin/groups/:id
 func (h *GroupHandler) Update(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -473,7 +471,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 	httpx.Success(c, groupdto.AdminGroupFromRouting[struct{}](group))
 }
 
-// Delete handles deleting a group
+// Delete deletes a group.
 // DELETE /api/v1/admin/groups/:id
 func (h *GroupHandler) Delete(c *gin.Context) {
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -491,7 +489,7 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	httpx.Success(c, gin.H{"message": "Group deleted successfully"})
 }
 
-// UpdateSortOrder handles updating group sort orders
+// UpdateSortOrder updates group sort order in a batch.
 // PUT /api/v1/admin/groups/sort-order
 func (h *GroupHandler) UpdateSortOrder(c *gin.Context) {
 	var req UpdateSortOrderRequest

@@ -8,17 +8,17 @@ import (
 )
 
 const (
-	// TLSRouterMatchContains 表示 User-Agent 包含 pattern 即命中。
+	// TLSRouterMatchContains matches a User-Agent containing the pattern.
 	TLSRouterMatchContains = "contains"
-	// TLSRouterMatchPrefix 表示 User-Agent 以 pattern 开头即命中。
+	// TLSRouterMatchPrefix matches a User-Agent starting with the pattern.
 	TLSRouterMatchPrefix = "prefix"
-	// TLSRouterMatchExact 表示 User-Agent 与 pattern 完全相等才命中。
+	// TLSRouterMatchExact matches a User-Agent equal to the pattern.
 	TLSRouterMatchExact = "exact"
-	// TLSRouterMatchRegex 表示使用正则匹配 User-Agent。
+	// TLSRouterMatchRegex matches a User-Agent using a regular expression.
 	TLSRouterMatchRegex = "regex"
 )
 
-// TLSFingerprintRouterRule 表示 TLS 路由器中的一条 UA 匹配规则。
+// TLSFingerprintRouterRule selects TLS and header settings by User-Agent.
 type TLSFingerprintRouterRule struct {
 	Name                    string `json:"name"`
 	Enabled                 bool   `json:"enabled"`
@@ -30,7 +30,7 @@ type TLSFingerprintRouterRule struct {
 	UpstreamOriginator      string `json:"upstream_originator,omitempty"`
 }
 
-// TLSFingerprintRouter TLS 指纹路由器。
+// TLSFingerprintRouter contains request routing rules and token-request settings.
 type TLSFingerprintRouter struct {
 	ID                                       int64                      `json:"id"`
 	Name                                     string                     `json:"name"`
@@ -45,13 +45,13 @@ type TLSFingerprintRouter struct {
 	UpdatedAt                                time.Time                  `json:"updated_at"`
 }
 
-// ValidationError 包含校验失败的字段和原因。
+// ValidationError identifies the invalid field and the reason.
 type ValidationError struct {
 	Field   string
 	Message string
 }
 
-// Validate 验证路由器配置的有效性。
+// Validate checks the router name, token settings, and each rule.
 func (r *TLSFingerprintRouter) Validate() error {
 	if r.Name == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}
@@ -76,7 +76,7 @@ func (r *TLSFingerprintRouter) Validate() error {
 	return nil
 }
 
-// Validate 验证路由规则配置的有效性。
+// Validate requires a pattern and compiles it when the normalized match type is regex.
 func (r TLSFingerprintRouterRule) Validate() error {
 	if strings.TrimSpace(r.Pattern) == "" {
 		return &ValidationError{Field: "pattern", Message: "pattern is required"}
@@ -94,7 +94,7 @@ func (r TLSFingerprintRouterRule) Validate() error {
 	}
 }
 
-// NormalizeTLSRouterMatchType 归一化 TLS 路由器匹配类型。
+// NormalizeTLSRouterMatchType trims and lowercases the type, defaulting unknown values to contains.
 func NormalizeTLSRouterMatchType(matchType string) string {
 	switch strings.ToLower(strings.TrimSpace(matchType)) {
 	case TLSRouterMatchPrefix:
@@ -108,7 +108,7 @@ func NormalizeTLSRouterMatchType(matchType string) string {
 	}
 }
 
-// Error 返回字段名和失败原因。
+// Error returns the field name and validation reason.
 func (e *ValidationError) Error() string {
 	return e.Field + ": " + e.Message
 }

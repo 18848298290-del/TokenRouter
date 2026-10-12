@@ -19,7 +19,7 @@ import (
 
 type coreRuntimeReady struct{}
 
-// provideCoreRuntime 登记缓存、清理任务和共享连接的启停。
+// provideCoreRuntime registers cache, cleanup, and shared connection lifecycle hooks.
 func provideCoreRuntime(
 	authCacheInvalidationWorker *apikey.AuthCacheInvalidationWorker,
 	schedulerSnapshot *scheduler.SnapshotService,

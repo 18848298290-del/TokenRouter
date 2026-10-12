@@ -64,7 +64,8 @@ func TestPageHTTPBoundaryAndVisibility(t *testing.T) {
 	}
 }
 
-// TestPageImagesCannotReadMarkdown 检查匿名图片请求、译文正文和指向正文的图片别名。
+// TestPageImagesCannotReadMarkdown checks anonymous image requests against translated content and symlinks to
+// Markdown.
 func TestPageImagesCannotReadMarkdown(t *testing.T) {
 	data := t.TempDir()
 	store := filesystem.New(data)

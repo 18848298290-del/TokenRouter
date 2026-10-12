@@ -1,6 +1,6 @@
 package scheduler
 
-// Diagnostics 接收 app 提供的日志回调。
+// Diagnostics contains logging callbacks supplied by app.
 type Diagnostics struct {
 	Event func(level, event string, fields ...any)
 	Logf  func(scope, format string, args ...any)

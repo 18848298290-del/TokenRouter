@@ -17,53 +17,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
-// panelRateLimitWindow 面板限流固定窗口时长（所有档位均按每分钟计数）。
+// panelRateLimitWindow is the fixed window shared by all panel rate limits.
 const panelRateLimitWindow = time.Minute
 
-// panelRateLimitAllower 抽象底层限流原语，便于单测注入。
+// panelRateLimitAllower supplies the counter used by panel middleware.
 type panelRateLimitAllower interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (AllowResult, error)
 }
 
-// PanelRateLimiter 面板（管理面 /api/v1）API 限流器。
-//
-// 设计要点：
-//   - 认证接口按「用户 ID」维度计数：与客户端 IP 完全无关，反向代理/共享出口
-//     （所有请求源 IP 坍缩为 127.0.0.1 等）不会互相误伤。
-//   - 公开接口按安全客户端 IP 计数：仅统计全局单播地址，回环/内网/链路本地
-//     地址（反代内部转发地址）直接跳过，避免误拦整条反代链路的流量。
-//   - 配置走进程内缓存（60s TTL），热路径零 DB 访问。
-//   - Redis 异常一律 fail-open：限流是保护措施，不能反过来把面板打挂。
-//
-// PanelSettingsReader 是面板请求读取已发布配置的窄接口。
+// PanelSettingsReader supplies cached panel rate limit settings.
 type PanelSettingsReader interface {
 	GetPanelRateLimitSettingsCached(context.Context) runtimeconfig.PanelRateLimitSettings
 }
 
+// PanelRateLimiter applies panel API limits and allows requests when counters fail.
 type PanelRateLimiter struct {
 	limiter        panelRateLimitAllower
 	settingService PanelSettingsReader
 }
 
-// NewPanelRateLimiter 创建面板限流器。
+// NewPanelRateLimiter creates panel middleware using the supplied counter and settings.
 func NewPanelRateLimiter(counter *RateLimiter, settingService PanelSettingsReader) *PanelRateLimiter {
 	limiter := &PanelRateLimiter{settingService: settingService}
 	if counter != nil {
 		limiter.limiter = counter
 	}
-	// Redis 未初始化时保持 fail-open，避免可选依赖缺失导致面板请求空指针崩溃。
+	// A missing counter leaves requests unrestricted when Redis is unavailable at startup.
 	return limiter
 }
 
-// Global 认证面板接口的全局按用户限流（宽松档，覆盖所有登录后端点）。
+// Global limits authenticated panel requests by user ID, keeping users behind a shared proxy independent.
 func (p *PanelRateLimiter) Global() gin.HandlerFunc {
 	return p.userScoped("global", func(s runtimeconfig.PanelRateLimitSettings) int {
 		return s.UserRPM
 	})
 }
 
-// Heavy 重查询接口的按用户限流（严格档，覆盖 usage/dashboard 等聚合统计端点）。
-// 与 Global 叠加计数：一次重查询同时消耗两档额度。
+// Heavy limits aggregate queries such as usage and dashboard requests by user ID.
+// When installed with Global, a request consumes both limits.
 func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 	return p.userScoped("heavy", func(s runtimeconfig.PanelRateLimitSettings) int {
 		return s.HeavyRPM
@@ -88,7 +79,7 @@ func (p *PanelRateLimiter) userScoped(scope string, limitOf func(runtimeconfig.P
 		}
 		subject, ok := authctx.GetAuthSubjectFromContext(c)
 		if !ok || subject.UserID <= 0 {
-			// 无认证主体（认证中间件缺位时的防御分支）：放行，避免误伤
+			// Authentication middleware owns rejection of requests with no valid subject.
 			c.Next()
 			return
 		}
@@ -102,7 +93,7 @@ func (p *PanelRateLimiter) userScoped(scope string, limitOf func(runtimeconfig.P
 		key := "panel:" + scope + ":user:" + strconv.FormatInt(subject.UserID, 10)
 		result, err := p.limiter.Allow(c.Request.Context(), key, limit, panelRateLimitWindow)
 		if err != nil {
-			// fail-open：Redis 异常不阻断面板访问
+			// Counter failures leave panel access available.
 			slog.Warn("panel rate limit check failed, allowing request", "scope", scope, "error", err)
 			c.Next()
 			return
@@ -115,10 +106,9 @@ func (p *PanelRateLimiter) userScoped(scope string, limitOf func(runtimeconfig.P
 	}
 }
 
-// PublicIP 无需认证的公开接口按客户端 IP 限流。
-// 使用与审计日志/会话绑定一致的安全客户端 IP 解析；解析结果为回环/内网/
-// 链路本地地址时跳过计数（这类地址通常是反代内部转发地址，按它计数会把
-// 整条反代链路的所有真实用户合并进同一个桶造成大面积误拦截）。
+// PublicIP limits unauthenticated endpoints using the security client IP resolver.
+// Loopback, private, and link-local addresses are skipped because they may identify
+// a shared reverse proxy whose users would otherwise consume a single bucket.
 func (p *PanelRateLimiter) PublicIP() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if p == nil || p.limiter == nil || p.settingService == nil {
@@ -150,8 +140,8 @@ func (p *PanelRateLimiter) PublicIP() gin.HandlerFunc {
 	}
 }
 
-// isPubliclyRoutableClientIP 判断地址是否为可作为限流依据的全局单播地址。
-// 回环、RFC1918/ULA 内网、链路本地与未指定地址返回 false。
+// isPubliclyRoutableClientIP reports whether an address is eligible for public IP limiting.
+// It requires global unicast and excludes loopback, private, link-local, and unspecified addresses.
 func isPubliclyRoutableClientIP(clientIP string) bool {
 	ip := net.ParseIP(clientIP)
 	if ip == nil {

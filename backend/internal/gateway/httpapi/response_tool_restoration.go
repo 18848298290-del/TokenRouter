@@ -21,7 +21,7 @@ import (
 
 const responseToolsContextKey = "gateway_response_tools"
 
-// 初始化只保护每个 HTTP 请求的状态指针发布，工具内容仍由请求自己持有。
+// responseToolsInit serializes publication of per-request state pointers; each request owns its tool data.
 var responseToolsInit sync.Mutex
 
 func SetCodexToolNameReverse(c *gin.Context, reverse map[string]string) {
@@ -46,7 +46,7 @@ func CodexToolNameReverseFromContext(c *gin.Context) map[string]string {
 	return responseTools(c, false).CodexNames(false)
 }
 
-// UpdateCodexToolNameReverseForWSFrame 将会话更新与仍在输出的当前 turn 分开保存.
+// UpdateCodexToolNameReverseForWSFrame stores session updates separately from the turn still producing output.
 func UpdateCodexToolNameReverseForWSFrame(c *gin.Context, frame []byte, reverse map[string]string) {
 	if c == nil {
 		return

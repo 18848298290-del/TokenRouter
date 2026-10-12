@@ -72,14 +72,14 @@ func SseEventIndex(event map[string]any) (int, bool) {
 	}
 }
 
-// ApplyCacheTTLOverride 将所有 cache creation tokens 归入指定的 TTL 类型。
-// target 为 "5m" 或 "1h"。返回 true 表示发生了变更。
+// ApplyCacheTTLOverride moves cache creation tokens to target ("5m" or "1h").
+// It reports whether the usage changed.
 func ApplyCacheTTLOverride(usage *protocol.TokenUsage, target string) bool {
 	return protocol.ApplyCacheTTLOverride(usage, target)
 }
 
-// RewriteCacheCreationJSON 在 JSON usage 对象中重写 cache_creation 嵌套对象的 TTL 分类。
-// usageObj 是 usage JSON 对象（map[string]any）。
+// RewriteCacheCreationJSON reclassifies nested cache_creation counters in usageObj
+// and reports whether it changed them.
 func RewriteCacheCreationJSON(usageObj map[string]any, target string) bool {
 	ccObj, ok := usageObj["cache_creation"].(map[string]any)
 	if !ok {
@@ -96,15 +96,15 @@ func RewriteCacheCreationJSON(usageObj map[string]any, target string) bool {
 	return true
 }
 
-// ReconcileCachedTokens 兼容 Kimi 等上游：
-// 将 OpenAI 风格的 cached_tokens 映射到 Claude 标准的 cache_read_input_tokens。
+// ReconcileCachedTokens fills the Anthropic cache-read counter from a positive
+// OpenAI-style cached_tokens value when the standard counter is not positive.
 func ReconcileCachedTokens(usage map[string]any) bool {
 	if usage == nil {
 		return false
 	}
 	cacheRead, _ := usage["cache_read_input_tokens"].(float64)
 	if cacheRead > 0 {
-		return false // 已有标准字段，无需处理
+		return false // Retain a positive standard counter.
 	}
 	cached, _ := usage["cached_tokens"].(float64)
 	if cached <= 0 {

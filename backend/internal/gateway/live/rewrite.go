@@ -14,12 +14,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
-// ModelResolver 解析当前提供商和最终分组的模型映射。
+// ModelResolver resolves model mappings for the current provider and final group.
 type ModelResolver interface {
 	ResolveModel(context.Context, *int64, string) (string, string, error)
 }
 
-// RewriteClientPayload 对每轮 session.model 执行 Key、分组和提供商映射。
+// RewriteClientPayload applies API key, group, and provider mappings to each turn's session.model.
 func RewriteClientPayload(
 	ctx context.Context,
 	record *session.LiveCallRecord,

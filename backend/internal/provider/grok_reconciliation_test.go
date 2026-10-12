@@ -9,7 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 停止对账时，服务会取消按需启动的读取和周期刷新。
+// grokReconcileBlockingPager holds a page read until cancellation or an explicit release to exercise shutdown
+// waiting.
 type grokReconcileBlockingPager struct {
 	entered, release, exited chan struct{}
 	ignoreCancel             bool

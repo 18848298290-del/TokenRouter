@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ErrorForTest 供外部测试调用 handleError。
+// ErrorForTest exposes handleError to external tests.
 func ErrorForTest(runtime *Runtime, ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, response *http.Response, retry bool, models ...string) (*forward.Result, error) {
 	return runtime.handleError(ctx, output, &AttemptState{}, target, response, retry, models...)
 }

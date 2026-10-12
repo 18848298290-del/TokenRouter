@@ -123,7 +123,7 @@ type ProxyQualityCheckItem struct {
 	CFRay      string `json:"cf_ray,omitempty"`
 }
 
-// ProxyExitInfo represents proxy exit information from ip-api.com.
+// ProxyExitInfo contains the exit IP and any location fields returned by a probe target.
 type ProxyExitInfo struct {
 	IP          string
 	City        string
@@ -132,7 +132,7 @@ type ProxyExitInfo struct {
 	CountryCode string
 }
 
-// ProxyExitInfoProber tests proxy connectivity and retrieves exit information.
+// ProxyExitInfoProber tests connectivity and returns exit information and latency in milliseconds.
 type ProxyExitInfoProber interface {
 	ProbeProxy(ctx context.Context, proxyURL string) (*ProxyExitInfo, int64, error)
 }

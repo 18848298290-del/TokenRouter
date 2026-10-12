@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTasksStopDrainsChildrenAndRejectsLaterWork 检查停止期间接收在途任务派生的子任务，全部完成后才关闭接收。
+// TestTasksStopDrainsChildrenAndRejectsLaterWork checks that draining accepts children and seals admission
+// after all tasks finish.
 func TestTasksStopDrainsChildrenAndRejectsLaterWork(t *testing.T) {
 	tasks := NewTasks()
 	parent := make(chan struct{})

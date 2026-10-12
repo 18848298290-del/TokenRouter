@@ -54,7 +54,7 @@ func TestLogRequestBodyParseFailure_ShortBodyHasNoTail(t *testing.T) {
 
 func TestLogRequestBodyParseFailure_LargeBodyBoundedSnippets(t *testing.T) {
 	log, logs := newObservedLogger(t)
-	// 约 1MB 的请求体只记录受限的首尾片段，头部保留结构前缀，尾部保留末端字节。
+	// The roughly 1 MiB body checks bounded snippets that retain the beginning and ending bytes.
 	body := []byte(`{"model":"claude-sonnet-4-6","big":"` + strings.Repeat("A", 1<<20) + `"`)
 
 	LogRequestBodyParseFailure(log, body, nil)
@@ -66,7 +66,7 @@ func TestLogRequestBodyParseFailure_LargeBodyBoundedSnippets(t *testing.T) {
 	require.Contains(t, head, "claude-sonnet-4-6")
 	require.Contains(t, tail, "AAA")
 	require.NotContains(t, tail, "claude-sonnet-4-6")
-	// strconv.Quote 会增加外层引号和转义，四倍长度是宽松上限。
+	// strconv.Quote adds quotes and escapes; four times the snippet size is a loose bound for this fixture.
 	require.LessOrEqual(t, len(head), parseFailureSnippetLen*4)
 	require.LessOrEqual(t, len(tail), parseFailureSnippetLen*4)
 }

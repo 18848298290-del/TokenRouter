@@ -9,7 +9,7 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminReadSettings 包含余额展示、默认权益和到期通知设置。
+// AdminReadSettings contains balance display, default entitlement, and expiry notification settings.
 type AdminReadSettings struct {
 	BalanceIconSVG                  string
 	BalanceLowNotifyEnabled         bool
@@ -24,7 +24,7 @@ type AdminReadSettings struct {
 	USDExchangeRate                 float64
 }
 
-// ReadAdminSettings 从传入的设置值解析余额展示、默认权益和到期通知设置。
+// ReadAdminSettings parses billing settings, using defaultBalance when the configured balance is invalid.
 func ReadAdminSettings(settings map[string]string, defaultBalance func() float64) *AdminReadSettings {
 	balanceUnitName := strings.TrimSpace(settings[SettingKeyBalanceUnitName])
 	if balanceUnitName == "" {
@@ -59,7 +59,7 @@ func ReadAdminSettings(settings map[string]string, defaultBalance func() float64
 	return result
 }
 
-// ReadBalanceUnitName 按键读取余额单位并去除空白，读取失败时返回 USD。
+// ReadBalanceUnitName trims the configured balance unit and returns USD on read failure or an empty value.
 func ReadBalanceUnitName(ctx context.Context, store interface {
 	GetValue(context.Context, string) (string, error)
 },

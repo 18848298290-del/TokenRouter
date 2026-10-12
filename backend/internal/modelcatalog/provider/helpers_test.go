@@ -30,7 +30,7 @@ const (
 	modelsCatalogFixture = `{"models":{"anthropic/claude-test":{"name":"Claude"}},"providers":{"anthropic":{"models":{"claude-test":{"name":"Claude","reasoning":true,"limit":{"output":10},"cost":{"input":3,"output":15,"cache_write":3.75,"cache_read":0.3,"tiers":[{"tier":{"type":"context","size":100},"input":6,"output":30,"cache_write":7.5,"cache_read":0.6},{"tier":{"type":"context","size":200},"input":9,"output":45,"cache_write":11.25,"cache_read":0.9}]}},"attributes-only":{"name":"No price","temperature":false}}}}}`
 )
 
-// modelCatalogFixture 在服务启动前准备目录选项和模型价格数据。
+// modelCatalogFixture supplies options and prices before service initialization.
 type modelCatalogFixture struct {
 	options     Options
 	pricingData map[string]*pricing.CatalogModelPricing
@@ -64,7 +64,7 @@ func newStubCatalogFromJSON(t *testing.T, body string) *Service {
 	return service
 }
 
-// parsePricingFixture 使用生产解析器读取价格测试数据。
+// parsePricingFixture reads test prices through the production parser.
 func parsePricingFixture(body []byte) (map[string]*pricing.CatalogModelPricing, error) {
 	raw, err := pricing.DecodeCatalogEntries(body)
 	if err != nil {
@@ -77,7 +77,7 @@ func parsePricingFixture(body []byte) (map[string]*pricing.CatalogModelPricing, 
 	return values, err
 }
 
-// newOfflinePricingFixture 加载内嵌目录和官方价格补充。
+// newOfflinePricingFixture loads the embedded catalog and official supplements.
 func newOfflinePricingFixture(t *testing.T) *Service {
 	t.Helper()
 	service := newModelCatalogFixture(modelCatalogFixture{options: Options{DataDir: t.TempDir()}})
@@ -85,7 +85,7 @@ func newOfflinePricingFixture(t *testing.T) *Service {
 	return service
 }
 
-// catalogPriceForTest 查询目录并转换成计费价格。
+// catalogPriceForTest resolves a catalog entry into billing prices.
 func catalogPriceForTest(t *testing.T, service *Service, model string) *pricing.ModelPricing {
 	t.Helper()
 	value, err := pricing.ResolveModelPricing(model, service.GetModelPricing(model))
@@ -100,7 +100,7 @@ func (r *catalogRemoteFixture) FetchCatalog(_ context.Context, _ string, validat
 	return r.body, r.etag, r.unchanged, r.err
 }
 
-// readCatalogTestFile 读取并发发布测试准备的目录正文。
+// readCatalogTestFile reads catalog bodies prepared by concurrent-publication tests.
 func readCatalogTestFile(t *testing.T, path string) []byte {
 	t.Helper()
 	body, err := os.ReadFile(path)
@@ -108,7 +108,7 @@ func readCatalogTestFile(t *testing.T, path string) []byte {
 	return body
 }
 
-// newBillingFixture 目录和计费测试组合生产计算器，并注入缺省倍率和时钟。
+// newBillingFixture constructs the production calculator with default multipliers and a clock.
 func newBillingFixture(catalog *Service) *billing.Calculator {
 	var source billing.PriceCatalog
 	if catalog != nil {

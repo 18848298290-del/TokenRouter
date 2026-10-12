@@ -18,7 +18,7 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// modelRateLimitsKey 是模型限流快照的字段名。
+// modelRateLimitsKey identifies model cooldowns in provider snapshots.
 const modelRateLimitsKey = "model_rate_limits"
 
 type requestableModelsPricingConfigRepoStub struct {
@@ -26,14 +26,15 @@ type requestableModelsPricingConfigRepoStub struct {
 	err error
 }
 
-// sequencedRequestableModelsProviderRepoStub 模拟第一次提供商查询失败、第二次查询恢复。
+// sequencedRequestableModelsProviderRepoStub fails its first query and succeeds on later calls.
 type sequencedRequestableModelsProviderRepoStub struct {
 	catalogueRows
 	providers []providercore.Record
 	calls     int
 }
 
-// TestResolveRequestableModels_RequiresModelLevelSchedulability 验证可见模型至少存在一个未被模型级限流的提供商。
+// TestResolveRequestableModels_RequiresModelLevelSchedulability requires a provider outside model
+// cooldown for visibility.
 func TestResolveRequestableModels_RequiresModelLevelSchedulability(t *testing.T) {
 	groupID := int64(4120)
 	pricingConfig := routingtestkit.Configuration{
@@ -77,7 +78,7 @@ func (s *requestableModelsPricingConfigRepoStub) ListAll(context.Context) ([]rou
 	return nil, s.err
 }
 
-// ListSchedulableByGroupID 在首次调用返回临时错误，后续调用返回当前提供商快照。
+// ListSchedulableByGroupID fails once, then returns a copy of the configured providers.
 func (s *sequencedRequestableModelsProviderRepoStub) ListSchedulableByGroupID(context.Context, int64) ([]providercore.Record, error) {
 	s.calls++
 	if s.calls == 1 {
@@ -86,7 +87,7 @@ func (s *sequencedRequestableModelsProviderRepoStub) ListSchedulableByGroupID(co
 	return append([]providercore.Record(nil), s.providers...), nil
 }
 
-// requestableModelByID 从解析结果中查找指定客户端模型。
+// requestableModelByID finds a client model in the resolved catalogue.
 func requestableModelByID(models []routing.RequestableModel, id string) (routing.RequestableModel, bool) {
 	for _, model := range models {
 		if model.ID == id {
@@ -366,7 +367,8 @@ func TestResolveRequestableModels_UpstreamNormalizesAnthropicOAuthMapping(t *tes
 	require.False(t, model.PricingAmbiguous)
 }
 
-// TestResolveRequestableModels_OpenAIUsesActualForwardedModel 检查 OpenAI OAuth 与自动透传提供商按最终转发模型定价。
+// TestResolveRequestableModels_OpenAIUsesActualForwardedModel checks upstream pricing identity for
+// OAuth and passthrough providers.
 func TestResolveRequestableModels_OpenAIUsesActualForwardedModel(t *testing.T) {
 	price := 0.09
 	tests := []struct {
@@ -505,7 +507,8 @@ func TestResolveRequestableModels_ProviderQueryFailureKeepsEmpty(t *testing.T) {
 	require.Empty(t, routing.RequestableModelIDs(result.Models))
 }
 
-// TestResolveRequestableModels_NextQueryRecoversProviderFailure 提供商读取失败后，下一次请求读取已恢复的配置。
+// TestResolveRequestableModels_NextQueryRecoversProviderFailure checks that a new request retries a
+// failed provider read.
 func TestResolveRequestableModels_NextQueryRecoversProviderFailure(t *testing.T) {
 	groupID := int64(4121)
 	repo := &sequencedRequestableModelsProviderRepoStub{providers: []providercore.Record{{
@@ -541,7 +544,7 @@ func TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidat
 	svc := newCatalogueFixture(&modelsListProviderRepoStub{byGroup: map[int64][]providercore.Record{groupID: {provider}}}, routing.NewPricingConfigService(&requestableModelsPricingConfigRepoStub{
 		err: errors.New("temporary price configuration failure"),
 	}, nil, routing.PricingConfigOptions{
-		// 价格读取失败不影响独立的分组策略读取。
+		// Group policy reads remain independent of pricing read failures.
 		ReadGroup: func(context.Context, int64) (*routing.Group, error) { return nil, nil },
 		Warn:      slog.Warn,
 		Now: time.
@@ -555,7 +558,8 @@ func TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidat
 	require.Contains(t, routing.RequestableModelIDs(result.Models), "client-alias")
 }
 
-// TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty 验证价格配置读取失败不会为无提供商分组伪造默认模型。
+// TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty prevents default
+// models appearing without providers.
 func TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty(t *testing.T) {
 	groupID := int64(4117)
 	svc := newCatalogueFixture(&modelsListProviderRepoStub{byGroup: map[int64][]providercore.Record{groupID: {}}}, routing.NewPricingConfigService(&requestableModelsPricingConfigRepoStub{

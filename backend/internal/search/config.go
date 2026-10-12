@@ -57,7 +57,7 @@ type ConfigService struct {
 	revision  uint64
 }
 
-// Registry 保存当前 Manager，各调用方通过同一注册表获取实例。
+// Registry shares the current Manager across callers and retires replaced instances.
 type Registry struct{ current atomic.Pointer[Manager] }
 
 // WebSearchEmulationConfig holds the global web search emulation configuration.
@@ -68,14 +68,14 @@ type WebSearchEmulationConfig struct {
 
 // WebSearchProviderConfig describes a single search provider (Brave or Tavily).
 type WebSearchProviderConfig struct {
-	Type             string `json:"type"`                    // ProviderTypeBrave | Tavily
-	APIKey           string `json:"api_key,omitempty"`       // secret — omitted in API responses
-	APIKeyConfigured bool   `json:"api_key_configured"`      // read-only mask
-	QuotaLimit       *int64 `json:"quota_limit"`             // nil = unlimited, >0 = limited
-	SubscribedAt     *int64 `json:"subscribed_at,omitempty"` // subscription start (unix seconds); quota resets monthly
-	QuotaUsed        int64  `json:"quota_used,omitempty"`    // read-only: current usage from Redis
-	ProxyID          *int64 `json:"proxy_id"`                // optional proxy association
-	ExpiresAt        *int64 `json:"expires_at,omitempty"`    // optional expiration timestamp
+	Type             string `json:"type"`                    // ProviderTypeBrave or ProviderTypeTavily.
+	APIKey           string `json:"api_key,omitempty"`       // Secret; SanitizeWebSearchConfig clears it.
+	APIKeyConfigured bool   `json:"api_key_configured"`      // Read-only indicator that a key is configured.
+	QuotaLimit       *int64 `json:"quota_limit"`             // Nil or zero means unlimited; positive values limit calls.
+	SubscribedAt     *int64 `json:"subscribed_at,omitempty"` // Unix seconds; anchors quota TTL.
+	QuotaUsed        int64  `json:"quota_used,omitempty"`    // Usage read from the current Manager.
+	ProxyID          *int64 `json:"proxy_id"`                // Optional proxy ID.
+	ExpiresAt        *int64 `json:"expires_at,omitempty"`    // Optional expiration in Unix seconds.
 }
 
 // WebSearchTestResult holds the result of a search test.
@@ -376,7 +376,7 @@ func PopulateWebSearchUsage(ctx context.Context, cfg *WebSearchEmulationConfig, 
 	return &out
 }
 
-// SanitizeWebSearchConfig returns a copy with api_key fields masked and quota usage populated.
+// SanitizeWebSearchConfig returns a copy with API keys cleared and usage read from the current Manager.
 func SanitizeWebSearchConfig(ctx context.Context, cfg *WebSearchEmulationConfig, registry *Registry) *WebSearchEmulationConfig {
 	if cfg == nil {
 		return nil
@@ -384,15 +384,15 @@ func SanitizeWebSearchConfig(ctx context.Context, cfg *WebSearchEmulationConfig,
 	out := *CloneConfig(cfg)
 	out.Providers = make([]WebSearchProviderConfig, len(cfg.Providers))
 
-	// Load usage from the global Manager (reads from Redis)
+	// Use the Manager published in this registry.
 	mgr := registry.Get()
 
 	for i, p := range cfg.Providers {
 		out.Providers[i] = CloneConfig(&WebSearchEmulationConfig{Providers: []WebSearchProviderConfig{p}}).Providers[0]
 		out.Providers[i].APIKeyConfigured = p.APIKey != ""
-		out.Providers[i].APIKey = "" // never return the secret
+		out.Providers[i].APIKey = "" // Expose key presence through APIKeyConfigured.
 
-		// Populate quota usage from Redis
+		// Keep copied usage if no Manager is published.
 		if mgr != nil {
 			used, _ := mgr.GetUsage(ctx, p.Type)
 			out.Providers[i].QuotaUsed = used

@@ -488,7 +488,7 @@ func TestPrepareGrokImageEditRejectsMoreThanThreeSources(t *testing.T) {
 	require.Contains(t, err.Error(), "maximum of 3 source images")
 }
 
-// TestGrokMediaForwardBodyPreservesModel 检查媒体转发中的完整型号和图片输入。
+// TestGrokMediaForwardBodyPreservesModel checks full model identifiers and image inputs.
 func TestGrokMediaForwardBodyPreservesModel(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -613,7 +613,7 @@ func TestPatchGrokResponsesBody_MultipleReasoningContentNull(t *testing.T) {
 	require.False(t, items[2].Get("content").Exists())
 }
 
-// TestPatchGrokResponsesBodyCombinesAdditionalToolsAndDropsOrphanControls 验证 Grok 请求合并附加工具并移除孤立的控制字段。
+// TestPatchGrokResponsesBodyCombinesAdditionalToolsAndDropsOrphanControls checks tool merging and removal of controls with no tools.
 func TestPatchGrokResponsesBodyCombinesAdditionalToolsAndDropsOrphanControls(t *testing.T) {
 	body := []byte(`{
 		"input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup"}]},{"role":"user","content":"hi"}],

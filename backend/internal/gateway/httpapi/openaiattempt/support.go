@@ -29,7 +29,7 @@ type cyberSessionBlockWritePlan struct {
 	keys     []string
 }
 
-// Support 为文本、WS 和媒体适配提供共享的请求资源和用例接口。
+// Support shares request resources and execution interfaces across text, WS, and media adapters.
 type Support struct {
 	Concurrency *gatewayhttp.ConcurrencyHelper
 	Sticky      gatewayhttp.SlotStickyBinder
@@ -40,7 +40,7 @@ type Support struct {
 	Submission  gatewayhttp.CompletionSubmission
 }
 
-// OpenAIProviderScheduleModel 依次读取输出模型、请求观测模型和提供商配置的上游模型。
+// OpenAIProviderScheduleModel prefers result model, observed request model, then configured upstream model.
 func OpenAIProviderScheduleModel(c *gin.Context, provider *gatewayprovider.ExecutionProvider, forwardModel string, requireCompact bool, result *forwardcore.OpenAIResult) string {
 	if result != nil {
 		if actual := strings.TrimSpace(result.UpstreamModel); actual != "" {
@@ -57,7 +57,7 @@ func OpenAIProviderScheduleModel(c *gin.Context, provider *gatewayprovider.Execu
 	return gatewayprovider.ExecutionModelPolicy(provider).OpenAIUpstream(forwardModel, requireCompact)
 }
 
-// AppendOpenAIProviderProxyLogFields 追加可公开的代理定位字段。
+// AppendOpenAIProviderProxyLogFields appends proxy diagnostic fields safe for logs.
 func AppendOpenAIProviderProxyLogFields(fields []zap.Field, provider *gatewayprovider.ExecutionProvider) []zap.Field {
 	if provider == nil {
 		return fields
@@ -76,14 +76,14 @@ func AppendOpenAIProviderProxyLogFields(fields []zap.Field, provider *gatewaypro
 	return fields
 }
 
-// HandleOpenAISelectionBusinessError 将选组业务错误写为 OpenAI 响应。
+// HandleOpenAISelectionBusinessError writes group-selection business errors in OpenAI format.
 func (h *Support) HandleOpenAISelectionBusinessError(c *gin.Context, err error, streamStarted bool) bool {
 	return handleGroupSelectionBusinessError(c, err, streamStarted, func(status int, errType string, message string, streamStarted bool) {
 		gatewayhttp.DefaultOpenAIErrorOutput().StreamError(c, status, errType, message, streamStarted)
 	})
 }
 
-// HandleAnthropicFailoverExhausted 将上游切号错误转换为 Anthropic 格式。
+// HandleAnthropicFailoverExhausted writes an exhausted failover error in Anthropic format.
 func (h *Support) HandleAnthropicFailoverExhausted(c *gin.Context, failoverErr *forwardcore.UpstreamFailoverError, streamStarted bool) {
 	if failoverErr != nil && gatewayprovider.IsOpenAIRequestBodyTooLarge(failoverErr) {
 		gatewayhttp.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, forwardcore.OpenAIRequestBodyTooLargeClientMessage, "")
@@ -116,7 +116,7 @@ func (h *Support) HandleAnthropicFailoverExhausted(c *gin.Context, failoverErr *
 	gatewayhttp.DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, status, errType, errMsg, streamStarted)
 }
 
-// EnsureAnthropicErrorResponse 在尚未写出响应时补充 Anthropic 错误。
+// EnsureAnthropicErrorResponse supplies an Anthropic error when no response has been written.
 func (h *Support) EnsureAnthropicErrorResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil || c.Writer.Written() {
 		return false
@@ -138,8 +138,8 @@ func (h *Support) AcquireResponsesProviderSlot(
 	return release, result
 }
 
-// AcquireOpenAIProviderSlot 申请调度选中的提供商槽位，处理等待、取消和释放。
-// 调用方可传入错误写入函数，以输出对应协议的错误格式。
+// AcquireOpenAIProviderSlot obtains the selected provider slot and handles waiting, cancellation, and release.
+// Callers may supply an error writer for their protocol.
 func (h *Support) AcquireOpenAIProviderSlot(
 	c *gin.Context,
 	groupID *int64,
@@ -166,7 +166,7 @@ func (h *Support) AcquireOpenAIProviderSlot(
 	return release, true
 }
 
-// GetContextInt64 将 HTTP 观测值中的 int、int32、int64 和 float64 转为 int64。
+// GetContextInt64 converts int, int32, int64, and float64 observations to int64.
 func GetContextInt64(c *gin.Context, key string) (int64, bool) {
 	if c == nil || key == "" {
 		return 0, false
@@ -199,7 +199,7 @@ func (h *Support) HandleFailoverExhausted(c *gin.Context, failoverErr *forwardco
 	}, SkipMonitoring: func(c *gin.Context) { c.Set(gatewayhttp.OpsSkipPassthroughKey, true) }})
 }
 
-// HandleFailoverExhaustedSimple 根据上游状态码写出重试耗尽的错误。
+// HandleFailoverExhaustedSimple maps the upstream status to an exhausted-retry error.
 func (h *Support) HandleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := gatewayhttp.MapOpenAIUpstreamError(statusCode)
 	gatewayhttp.SetOpsUpstreamError(c, statusCode, errMsg, "")
@@ -244,7 +244,7 @@ func (h *Support) RecordCyberPolicyIfMarked(c *gin.Context, apiKey *apikey.APIKe
 			call.HasPlan = true
 		}
 	}
-	// 后台任务使用此处捕获的请求和用量快照。
+	// Background tasks use request and usage snapshots captured here.
 	compaction := gatewayhttp.IsOpenAINativeCompactionV2(c)
 	if len(nativeCompaction) > 0 {
 		compaction = nativeCompaction[0]
@@ -309,7 +309,7 @@ func EnsureOpenAIPoolModeSessionHash(sessionHash string, provider *gatewayprovid
 	if sessionHash != "" || provider == nil || !provider.View().IsPoolMode() {
 		return sessionHash
 	}
-	// 为当前请求生成粘性会话键，同提供商重试复用该提供商。
+	// Create a request sticky-session key so same-provider retries keep their provider.
 	return "openai-pool-retry-" + uuid.NewString()
 }
 
@@ -331,13 +331,13 @@ func cyberSessionScopeKey(apiKeyID int64, c *gin.Context) string {
 	return gatewaysession.CyberSessionScopeKey(apiKeyID, strings.TrimSpace(clientip.GetClientIP(c)), c.GetHeader("User-Agent"))
 }
 
-// handleGroupSelectionBusinessError 读取 Key 并使用平台目录生成业务错误响应。
+// handleGroupSelectionBusinessError reads the key and platform catalogue to write business errors.
 func handleGroupSelectionBusinessError(c *gin.Context, err error, started bool, write func(int, string, string, bool)) bool {
 	return gatewayhttp.WriteGroupSelectionBusinessError(c, err, started, keyhttp.GetAPIKeyFromContext, gatewayprovider.ModelDisplayCatalogue{}, write)
 }
 
-// ResolveOpenAIUpstreamEndpoint 返回 OpenAI 兼容提供商实际使用的上游端点。
-// 同一入站可选择 Chat 或 Responses，因此优先读取转发结果，缺失时读取当前尝试上下文，再使用平台规范端点。
+// ResolveOpenAIUpstreamEndpoint returns the endpoint used by the compatible provider.
+// Prefer the result, then attempt context, then platform default because one entry can use Chat or Responses.
 func ResolveOpenAIUpstreamEndpoint(c *gin.Context, provider *gatewayprovider.ExecutionProvider, result *forwardcore.OpenAIResult) string {
 	if result != nil {
 		if endpoint := strings.TrimSpace(result.UpstreamEndpoint); endpoint != "" {

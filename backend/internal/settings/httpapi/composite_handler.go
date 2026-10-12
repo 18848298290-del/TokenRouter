@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 )
 
-// CompositeSettings 提供综合设置读取和已登记的更新流程。
+// CompositeSettings provides combined settings reads and the registered update flow.
 type CompositeSettings interface {
 	GetAllSettings(context.Context) (*composite.Snapshot, error)
 	GetAuthSourceDefaultSettings(context.Context) (*identity.AuthSourceDefaultSettings, error)
@@ -40,7 +40,8 @@ type CreativeModelSettings interface {
 	ListCreativeModelCandidates(context.Context) ([]creative.CreativeModelCandidate, error)
 }
 
-// Handler 仅拥有综合 HTTP 接口依赖，所有缓存与业务实例由 app 唯一装配。
+// Handler holds dependencies for the combined settings HTTP endpoints; app assembly supplies shared service
+// instances.
 type Handler struct {
 	settingService       CompositeSettings
 	settingsParticipants *settings.Registry
@@ -68,7 +69,7 @@ type HandlerOptions struct {
 	Creative         CreativeModelSettings
 }
 
-// NewHandler 构造不回源、不启动任务；参与者必须在路由开放前固定。
+// NewHandler stores dependencies. Participants must be registered before routes accept requests.
 func NewHandler(o HandlerOptions) *Handler {
 	return &Handler{settingService: o.Settings, settingsParticipants: o.Participants, participantError: o.ParticipantError, opsService: o.Monitoring, paymentConfigService: o.Payment, turnstileService: o.Turnstile, aliyunCaptchaService: o.Aliyun, userAttributeService: o.Attributes, totpService: o.Totp, userService: o.User, creativeModelReader: o.Creative}
 }

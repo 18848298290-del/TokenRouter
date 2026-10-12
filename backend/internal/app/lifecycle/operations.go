@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Operations 在关闭入口后拒绝新操作，等待已经进入的同步调用完成。
+// Operations rejects new calls after shutdown begins and waits for calls already admitted.
 type Operations struct {
 	mu       sync.Mutex
 	active   int
@@ -24,6 +24,8 @@ func NewOperations(name string) *Operations {
 	return &Operations{name: name, idle: idle}
 }
 
+// Enter admits a call and returns an idempotent release function. The caller must release it when the call
+// finishes.
 func (o *Operations) Enter() (func(), error) {
 	o.mu.Lock()
 	if o.closed {
@@ -48,7 +50,7 @@ func (o *Operations) Enter() (func(), error) {
 	}, nil
 }
 
-// StopContext 返回首次停止的结果，超时结果会传给后续调用。
+// StopContext shares the first stop result, including timeout errors; a waiting caller can cancel its own wait.
 func (o *Operations) StopContext(ctx context.Context) error {
 	o.mu.Lock()
 	if o.closed {

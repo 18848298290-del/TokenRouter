@@ -80,7 +80,7 @@ func (s *AuthService) AuthValidateOAuthRegistrationInvitation(ctx context.Contex
 }
 
 // VerifyOAuthEmailCode verifies the locally entered email verification code for
-// third-party signup and binding flows. This is intentionally independent from
+// third-party signup and binding flows, regardless of
 // the global registration email verification toggle.
 func (s *AuthService) VerifyOAuthEmailCode(ctx context.Context, email, verifyCode string) error {
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -179,7 +179,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	return tokenPair, user, nil
 }
 
-// RegisterVerifiedOAuthEmailAccount 为已由 OAuth 提供方验证过邮箱的新用户创建本地账号。
+// RegisterVerifiedOAuthEmailAccount creates a local account using a provider-verified email address.
 func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	ctx context.Context,
 	email string,
@@ -267,7 +267,7 @@ func (s *AuthService) AuthCreateOAuthEmailAccountUser(ctx context.Context, user 
 		return ErrServiceUnavailable
 	}
 
-	// OAuth 注册先归一化邮箱，邀请码在后续步骤核销。
+	// Create the account with normalized email checks; consume the invitation during finalization.
 	err := s.AuthCreateRegisteredUser(ctx, user, &AuthRegistrationArtifacts{EnforceEmailDomainQuota: true})
 	if err != nil && user.ID > 0 && !errors.Is(err, ErrEmailExists) {
 		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
@@ -275,8 +275,8 @@ func (s *AuthService) AuthCreateOAuthEmailAccountUser(ctx context.Context, user 
 	return err
 }
 
-// FinalizeOAuthEmailAccount applies invitation usage and normal signup bootstrap
-// only after the pending OAuth flow has fully reached its last reversible step.
+// FinalizeOAuthEmailAccount consumes the invitation and applies signup grants and affiliate binding.
+// Call it after the pending OAuth flow has completed its reversible steps.
 func (s *AuthService) FinalizeOAuthEmailAccount(
 	ctx context.Context,
 	user *User,
@@ -345,8 +345,8 @@ func (s *AuthService) ValidatePasswordCredentials(ctx context.Context, email, pa
 	return user, nil
 }
 
-// RecordSuccessfulLogin updates last-login activity after a non-standard login
-// flow finishes with a real session.
+// RecordSuccessfulLogin backfills the local email identity when applicable and records
+// login activity after a custom login flow succeeds.
 func (s *AuthService) RecordSuccessfulLogin(ctx context.Context, userID int64) {
 	if s != nil && s.Users != nil && userID > 0 {
 		user, err := s.Users.GetByID(ctx, userID)

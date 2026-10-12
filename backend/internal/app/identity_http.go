@@ -26,19 +26,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// identityVerificationDelivery 转换身份模块生成的验证邮件事件。
+// identityVerificationDelivery adapts verification email events produced by identity.
 type identityVerificationDelivery struct {
 	mail       *notification.Mailer
 	challenges *identity.EmailChallenges
 }
 
-// identityHTTP 组合身份认证和微信支付授权的 HTTP 处理器。
+// identityHTTP combines authentication and WeChat payment authorization handlers.
 type identityHTTP struct {
 	*identityhttp.AuthenticationHandler
 	*paymenthttp.WeChatPaymentHandler
 }
 
-// identityHTTPSettings 在请求期间读取认证设置，并按各字段规则处理缺省值和读取错误。
+// identityHTTPSettings reads authentication settings per request with field-specific defaults and error handling.
 type identityHTTPSettings struct {
 	*identityAuthSettings
 	*admission.BackendMode
@@ -58,7 +58,7 @@ func providePromotionUserHTTP(s *promotion.AffiliateService) *promotionhttp.User
 	return promotionhttp.NewUserHandler(s)
 }
 
-// GenerateVerifyCode 调用身份模块生成验证码，再交给投递流程。
+// GenerateVerifyCode delegates code generation to identity email challenges.
 func (d identityVerificationDelivery) GenerateVerifyCode() (string, error) {
 	return d.challenges.GenerateVerifyCode()
 }
@@ -173,7 +173,7 @@ func provideIdentityHTTP(g *identityAuthGraph, users *identity.UserService, cfg 
 	return &identityHTTP{auth, pay}
 }
 
-// identityProfileObserve 按调用方传入的级别写入资料同步日志。
+// identityProfileObserve writes profile synchronization logs at the requested level, defaulting to info.
 func identityProfileObserve(level, message string, args ...any) {
 	switch level {
 	case "error":

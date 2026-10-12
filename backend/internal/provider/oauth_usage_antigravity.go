@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// AntigravityUsageOptions 提供供应商资格检查、额度查询和报文诊断函数。
+// AntigravityUsageOptions supplies quota eligibility, fetching, error conversion, and enrichment.
 type AntigravityUsageOptions struct {
 	CanFetch func(*Record) bool
 	Fetch    func(context.Context, *Record) (*UsageInfo, error)
@@ -14,13 +14,13 @@ type AntigravityUsageOptions struct {
 	Enrich   func(*UsageInfo, *Record)
 }
 
-// antigravityUsageFlightResult 保存共享查询结果，等待者需要核对结果的来源身份。
+// antigravityUsageFlightResult identifies the credentials behind a shared query result.
 type antigravityUsageFlightResult struct {
 	Usage    *UsageInfo
 	Identity string
 }
 
-// GetAntigravityUsage 获取 Antigravity 提供商额度。
+// GetAntigravityUsage returns cached or freshly fetched Antigravity quota information.
 func (s *OAuthUsageService) GetAntigravityUsage(ctx context.Context, provider *Record) (*UsageInfo, error) {
 	if s.options.Antigravity.CanFetch == nil || !s.options.Antigravity.CanFetch(provider) {
 		now := s.options.Now()
@@ -28,7 +28,7 @@ func (s *OAuthUsageService) GetAntigravityUsage(ctx context.Context, provider *R
 	}
 
 	identity := UsageCacheIdentity(provider)
-	// 1. 检查缓存
+	// Reuse a fresh result only when its credential identity matches.
 	if cache, ok := s.cache.LoadAntigravity(provider.ID); ok && cache.Identity == identity {
 		ttl := AntigravityCacheTTL(cache.UsageInfo)
 		if s.options.Now().Sub(cache.Timestamp) < ttl {
@@ -40,21 +40,21 @@ func (s *OAuthUsageService) GetAntigravityUsage(ctx context.Context, provider *R
 		}
 	}
 
-	// 2. singleflight 防止并发击穿
+	// Coalesce concurrent queries for this provider.
 	flightKey := fmt.Sprintf("ag-usage:%d", provider.ID)
 	result, flightErr, _ := s.cache.DoAntigravity(flightKey, func() (any, error) {
-		// 再次检查缓存（等待期间可能已被填充）
+		// Another query may have filled the cache before this flight started.
 		if cache, ok := s.cache.LoadAntigravity(provider.ID); ok && cache.Identity == identity {
 			ttl := AntigravityCacheTTL(cache.UsageInfo)
 			if s.options.Now().Sub(cache.Timestamp) < ttl {
 				usage := cache.UsageInfo
-				// 按当前时间重新计算 RemainingSeconds。
+				// Recalculate the countdown from the current clock.
 				RecalcAntigravityRemainingSeconds(usage, s.options.Now)
 				return antigravityUsageFlightResult{usage, identity}, nil
 			}
 		}
 
-		// 共享查询使用独立 context，每个等待方可单独取消。
+		// The shared fetch has its own timeout and is canceled when the service stops.
 		fetchCtx, fetchCancel, beginErr := s.BeginDetached(ctx, 30*time.Second)
 		if beginErr != nil {
 			return nil, beginErr

@@ -42,9 +42,9 @@ func TestOpenAIWSStateStoreInvalidEncryptedContentLineage(t *testing.T) {
 		for _, digest := range []string{"d1", "d2", "d3"} {
 			require.Contains(t, digests, digest)
 		}
-		// 组隔离：另一组同名会话不可见。
+		// The same session hash in another group remains isolated.
 		require.Nil(t, store.GetSessionInvalidEncryptedContentDigests(2, "session-a"))
-		// 返回值是拷贝，修改后重新读取应得到存储中的值。
+		// Mutating the returned copy must not alter stored digests.
 		digests["d4"] = struct{}{}
 		require.Len(t, store.GetSessionInvalidEncryptedContentDigests(1, "session-a"), 3)
 	})
@@ -161,7 +161,7 @@ func TestOpenAIWSStateStore_SessionTurnStateTTL(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "turn_state_1", state)
 
-	// group 隔离
+	// Session bindings are isolated by group.
 	_, ok = store.GetSessionTurnState(10, "session_hash_1")
 	require.False(t, ok)
 
@@ -178,7 +178,7 @@ func TestOpenAIWSStateStore_SessionConnTTL(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "conn_1", connID)
 
-	// group 隔离
+	// Session bindings are isolated by group.
 	_, ok = store.GetSessionConn(10, "session_hash_conn_1")
 	require.False(t, ok)
 

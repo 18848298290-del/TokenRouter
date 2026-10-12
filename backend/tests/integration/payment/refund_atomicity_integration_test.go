@@ -20,8 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// TestPaymentRefundPostgresAtomicity 通过公开退款确认入口检查仓储写入的事务原子性。
-// 供应商 HTTP 使用测试服务，余额 SQL、订单认领、审计写入和提交使用生产实现。
+// TestPaymentRefundPostgresAtomicity checks transactional refund confirmation through the public workflow.
+// Provider HTTP uses a test server; deductions, order claims, audit writes, and commits use production storage.
 func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 	for _, concurrent := range []bool{false, true} {
 		name := "audit_failure_rolls_back_then_retry"
@@ -39,7 +39,7 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 					http.Error(w, "unexpected refund request", http.StatusBadRequest)
 					return
 				}
-				// 两个调用先读到 pending，再同时向 PostgreSQL 发起认领。
+				// Both callers read the pending state before competing for the PostgreSQL claim.
 				if calls.Add(1) == 2 && concurrent {
 					close(ready)
 				}
@@ -83,7 +83,7 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 				SetProviderInstanceID(strconv.FormatInt(instance.ID, 10)).Save(ctx)
 			require.NoError(t, err)
 			orderID := strconv.FormatInt(order.ID, 10)
-			// 订单与审计独立于 users 的级联清理，测试结束时分别删除。
+			// Orders and audits need separate cleanup from the users cascade.
 			t.Cleanup(func() {
 				_, cleanupErr := client.PaymentAuditLog.Delete().Where(paymentauditlog.OrderIDEQ(orderID)).Exec(context.Background())
 				require.NoError(t, cleanupErr)
@@ -119,7 +119,7 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 				}
 				require.Equal(t, 1, successes)
 			} else {
-				// 触发器先确认扣款已在同一事务内可见，再使最后的审计写入失败。
+				// The trigger checks that the deduction is visible in this transaction, then fails the final audit write.
 				functionName := fmt.Sprintf("test_refund_audit_failure_%d", order.ID)
 				triggerName := functionName + "_trigger"
 				t.Cleanup(func() {
@@ -158,7 +158,7 @@ $$`, functionName, orderID, user.ID))
 			}
 
 			assertRefundPostgresState(t, ctx, client, user.ID, order.ID, 50, payment.OrderStatusRefunded, 1)
-			// 已完成订单再次确认应返回拒绝，余额保持。
+			// Confirming the completed refund again must fail and leave the balance unchanged.
 			_, err = svc.QueryAndFinalizeRefund(ctx, order.ID)
 			require.Error(t, err)
 			assertRefundPostgresState(t, ctx, client, user.ID, order.ID, 50, payment.OrderStatusRefunded, 1)

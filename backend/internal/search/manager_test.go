@@ -89,15 +89,15 @@ func TestQuotaTTLFromSubscription_ZeroSubscription(t *testing.T) {
 }
 
 func TestQuotaTTLFromSubscription_ValidSubscription(t *testing.T) {
-	// 订阅起点在十天前，下一次月度重置约在二十天后。
+	// A subscription ten days ago places the next monthly date roughly twenty days ahead.
 	sub := time.Now().Add(-10 * 24 * time.Hour).Unix()
 	ttl := quotaTTLFromSubscription(&sub)
-	require.Greater(t, ttl, 15*24*time.Hour) // 至少还有十五天。
+	require.Greater(t, ttl, 15*24*time.Hour) // At least fifteen days remain.
 	require.Less(t, ttl, 25*24*time.Hour+quotaTTLBuffer)
 }
 
 func TestNextMonthlyReset_SubscribedRecentPast(t *testing.T) {
-	// 每个月都有十日，可直接构造本月的订阅起点。
+	// The tenth exists in every month, so this fixture needs no day clamping.
 	now := time.Now().UTC()
 	sub := time.Date(now.Year(), now.Month(), 10, 0, 0, 0, 0, time.UTC)
 	next := nextMonthlyReset(sub)
@@ -106,12 +106,12 @@ func TestNextMonthlyReset_SubscribedRecentPast(t *testing.T) {
 }
 
 func TestNextMonthlyReset_SubscribedLongAgo(t *testing.T) {
-	// 订阅起点为六个月前的一日。
+	// Anchor the subscription to the first day six months ago.
 	sub := time.Now().UTC().AddDate(0, -6, 0)
 	sub = time.Date(sub.Year(), sub.Month(), 1, 0, 0, 0, 0, time.UTC)
 	next := nextMonthlyReset(sub)
 	require.True(t, next.After(time.Now().UTC()))
-	// 下一次重置落在一个月内。
+	// The next monthly date falls within roughly one month.
 	require.True(t, next.Before(time.Now().UTC().AddDate(0, 1, 1)))
 }
 
@@ -125,28 +125,28 @@ func TestAddMonthsClamped_Jan31ToFeb(t *testing.T) {
 	sub := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
 	next := addMonthsClamped(sub, 1)
 	require.Equal(t, time.Month(2), next.Month())
-	require.Equal(t, 28, next.Day()) // 2026 年二月有二十八天。
+	require.Equal(t, 28, next.Day()) // February 2026 has 28 days.
 }
 
 func TestAddMonthsClamped_Jan31ToFebLeapYear(t *testing.T) {
 	sub := time.Date(2028, 1, 31, 0, 0, 0, 0, time.UTC)
 	next := addMonthsClamped(sub, 1)
 	require.Equal(t, time.Month(2), next.Month())
-	require.Equal(t, 29, next.Day()) // 2028 年二月有二十九天。
+	require.Equal(t, 29, next.Day()) // February 2028 has 29 days.
 }
 
 func TestAddMonthsClamped_Mar31ToApr(t *testing.T) {
 	sub := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
 	next := addMonthsClamped(sub, 1)
 	require.Equal(t, time.Month(4), next.Month())
-	require.Equal(t, 30, next.Day()) // 四月有三十天。
+	require.Equal(t, 30, next.Day()) // April has 30 days.
 }
 
 func TestAddMonthsClamped_NormalDay(t *testing.T) {
 	sub := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	next := addMonthsClamped(sub, 1)
 	require.Equal(t, time.Month(2), next.Month())
-	require.Equal(t, 15, next.Day()) // 十五日在目标月份存在。
+	require.Equal(t, 15, next.Day()) // The fifteenth exists in the target month.
 }
 
 func TestIsProviderAvailable_EmptyAPIKey(t *testing.T) {
@@ -164,7 +164,7 @@ func TestIsProviderAvailable_Valid(t *testing.T) {
 	m := newTestManager(nil, nil)
 	future := time.Now().Add(1 * time.Hour).Unix()
 	require.True(t, m.isProviderAvailable(ProviderConfig{APIKey: "k", ExpiresAt: &future}))
-	require.True(t, m.isProviderAvailable(ProviderConfig{APIKey: "k"})) // 未设置到期时间。
+	require.True(t, m.isProviderAvailable(ProviderConfig{APIKey: "k"})) // No expiration is configured.
 }
 
 func TestResolveProxyID_ProviderProxyOverrides(t *testing.T) {

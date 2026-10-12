@@ -52,7 +52,7 @@ func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testi
 		"last_attempt_at": fetched.UTC().Format(time.RFC3339Nano),
 		"next_refresh_at": fetched.Add(time.Hour).UTC().Format(time.RFC3339Nano),
 	}, &activity)
-	// 成功快照之后没有新活动时，不应进入候选列表。
+	// A successful snapshot with no later activity is not due for refresh.
 	_ = createProvider("ollama-not-due-idle", "https://ollama.com", nil, map[string]any{
 		"status":          providercore.OllamaCloudUsageStatusOK,
 		"fetched_at":      now.Add(-time.Hour).UTC().Format(time.RFC3339Nano),
@@ -75,19 +75,19 @@ func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testi
 	require.Equal(t, proxy.URL(), providers[0].Proxy.URL())
 }
 
-// TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions 固定 SQL 时间戳解析路径，
-// 覆盖实际写入数据库的小数秒精度和时区表示。
+// TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions exercises SQL parsing
+// with the fractional precision and timezone forms written to the database.
 //
-// 每个夹具的 fetched_at 都只早 2 分钟，并在 30 秒后产生活动；正确解析的记录尚未到期，
-// 因为防抖与最小抓取间隔都会把到期时间推到未来。解析失败的时间戳会变为 NULL，
-// 并进入开放分支而被判定到期，因此必须断言这些记录不存在，测试才能捕获解析失败：
+// Each snapshot was fetched about two minutes ago, with activity thirty seconds ago.
+// Debounce and the minimum fetch interval keep it from being due. A parse failure becomes NULL
+// and takes the fail-open branch, so these records must be absent to detect parser failures.
 //
-//   - Go 使用 UTC 时间，即以 "Z" 标识。PostgreSQL 17 起 jsonpath .datetime() 才接受 "Z"，
-//     因此若没有 ollamaCloudUsageParseRFC3339SQL 中的 Z -> +00:00 改写，
-//     PostgreSQL 14–16 会把所有夹具误判为到期；
-//   - 7/8/9 位小数秒超过 .datetime() 支持的微秒精度，必须先截断。
+//   - Go UTC timestamps end in Z. PostgreSQL 14-16 require rewriting that suffix to +00:00
+//     before jsonpath .datetime(); otherwise these fixtures appear due.
+//     PostgreSQL 17 and later accept Z directly.
+//   - Seven to nine fractional digits exceed the parser's microsecond precision and need truncation.
 //
-// 可在最低支持版本上运行，覆盖与数据库版本相关的路径：
+// Run against an older supported PostgreSQL version to exercise that compatibility path:
 //
 //	TOKENROUTER_TEST_POSTGRES_IMAGE=postgres:15-alpine go test -tags integration ./tests/integration/provider/
 func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T) {
@@ -97,7 +97,7 @@ func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T
 	now := time.Date(2026, time.July, 22, 14, 0, 0, 0, time.UTC)
 	activity := now.Add(-30 * time.Second)
 
-	// 三个值表示同一个 now-2m 时刻，但使用不同精度和时区表示。
+	// These values are about two minutes old, with different fractional precision and timezone notation.
 	notDue := map[string]string{
 		"nano-z":         "2026-07-22T13:58:00.123456789Z",
 		"eight-positive": "2026-07-22T14:58:00.12345678+01:00",
@@ -120,7 +120,7 @@ func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T
 		})
 	}
 
-	// 防止测试空通过：真正到期的记录仍必须返回。
+	// Include a truly due record so an empty result cannot make the test pass.
 	staleFetched := now.Add(-2 * time.Hour)
 	due := mustCreateProvider(t, tx.Client(), &providercore.Record{
 		Name: "ollama-precision-due", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
@@ -479,7 +479,8 @@ func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *te
 	require.ErrorIs(t, err, providercore.ErrOllamaCloudUsageIdentityChanged)
 }
 
-// TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra 验证无变化的凭证持久化仍需清除废弃字段，但不得影响 Ollama 状态；真实凭据变化会使其失效。
+// TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra checks retired-field cleanup, unchanged Ollama
+// identity, and token-rotation invalidation.
 func TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -534,9 +535,9 @@ func TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra(t *testing.T
 	require.NotContains(t, ollamaLoaded.Extra, providercore.OllamaCloudUsageSnapshotExtraKey)
 }
 
-// TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService 验证 SQL 候选层会在 LIMIT 前
-// 应用防抖、最大等待和失败退避规则，并与 provider.OllamaCloudUsageIsAutoRefreshDue 保持一致；
-// 同时验证超过 20 个活跃但未到期的分组不会让真正达到最大等待时间的分组饥饿。
+// TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService checks that SQL applies debounce,
+// maximum wait, and failure backoff before LIMIT, matching OllamaCloudUsageIsAutoRefreshDue.
+// More than twenty active but not-yet-due groups must not starve a group past its maximum wait.
 func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -587,32 +588,32 @@ func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 		})
 	}
 
-	// 21 个分组在刷新后有活动但尚未经过防抖期；旧实现中它们会每分钟占满 20 个名额，
-	// 使真正到期的分组无法刷新。
+	// Twenty-one recently active groups exceed the twenty-row limit.
+	// They must be filtered before LIMIT so due groups can still refresh.
 	notDueIDs := make(map[int64]struct{}, 21)
 	for i := range 21 {
-		// 10 分钟前刷新、10 秒前使用，due_at = lastUsed+debounce = now+50s，尚未到期。
+		// Fetched ten minutes ago and used ten seconds ago: due_at is now+50s, so it is not due.
 		acc := createOK(fmt.Sprintf("ollama-not-due-debounce-%02d", i), now.Add(-10*time.Minute), now.Add(-10*time.Second))
 		notDueIDs[acc.ID] = struct{}{}
 	}
 
-	// 通过最大等待规则真正到期：2 小时前刷新，持续活动到 10 秒前。
-	// due_at = min(now-10s+1m, now-2h+1h) = now-1h，已经到期。
+	// Maximum wait makes this group due despite activity ten seconds ago.
+	// due_at = min(now-10s+1m, now-2h+1h) = now-1h.
 	maxWaitDue := createOK("ollama-due-maxwait", now.Add(-2*time.Hour), now.Add(-10*time.Second))
 
-	// 成功后防抖期已过：2 分钟前使用且防抖为 1 分钟，应当到期。
+	// Activity two minutes ago is past the one-minute debounce.
 	debounceDue := createOK("ollama-due-debounce", now.Add(-30*time.Minute), now.Add(-2*time.Minute))
 
-	// 成功后仍在防抖期内，不应到期。
+	// Recent activity remains within the debounce period.
 	_ = createOK("ollama-not-due-fresh", now.Add(-30*time.Minute), now.Add(-20*time.Second))
 
-	// 失败后即使有新活动，也会受 next_refresh_at 退避约束。
+	// New activity after a failure still respects next_refresh_at backoff.
 	_ = createFailed("ollama-fail-backoff", now.Add(-30*time.Minute), now.Add(-2*time.Minute), now.Add(10*time.Minute), "")
 
-	// 失败退避结束后出现新请求，应当到期。
+	// New activity after backoff expires makes this group due.
 	failDue := createFailed("ollama-fail-due", now.Add(-30*time.Minute), now.Add(-2*time.Minute), now.Add(-time.Minute), "")
 
-	// next_refresh_at 无效时按开放策略处理，既不终止查询，也不阻止活动到期。
+	// Invalid next_refresh_at fails open to activity-based eligibility without aborting the query.
 	failInvalidNext := createFailed("ollama-fail-invalid-next", now.Add(-30*time.Minute), now.Add(-2*time.Minute), time.Time{}, "not-a-timestamp")
 
 	providers, err := repo.ListDueOllamaCloudUsageProviders(ctx, now, debounce, maxWait, 20)
@@ -625,15 +626,15 @@ func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 	require.Contains(t, ids, failInvalidNext.ID, "invalid next_refresh_at must fail open to activity due")
 	require.LessOrEqual(t, len(providers), 20)
 
-	// 以下夹具与 provider.OllamaCloudUsageIsAutoRefreshDue 的语义一致；
-	// 即使未到期分组数量超过上限，它们也不应出现在结果中。
+	// These fixtures follow OllamaCloudUsageIsAutoRefreshDue:
+	// not-yet-due groups stay out even when their count exceeds the result limit.
 	for _, id := range ids {
 		_, isNotDue := notDueIDs[id]
 		require.False(t, isNotDue, "not-yet-due debounce group %d must not be returned by SQL LIMIT layer", id)
 	}
 	require.NotContains(t, ids, int64(0))
 
-	// 明确未到期的名称必须被排除，包括刚成功刷新的分组和仍在退避期的失败分组。
+	// Exclude both recently successful groups and failed groups still in backoff.
 	for _, provider := range providers {
 		require.NotContains(t, provider.Name, "not-due")
 		require.NotEqual(t, "ollama-fail-backoff", provider.Name)

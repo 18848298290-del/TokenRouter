@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAICountCall 不携带提供商凭据、Gin 或资金写入能力。
+// OpenAICountCall carries request identity, routing inputs, and a mapped-body reader for token counting.
 type OpenAICountCall struct {
 	Key                                              *apikey.APIKey
 	Model, ProviderLayerModel, SessionHash, Platform string
@@ -147,7 +147,7 @@ func (h *OpenAITokensHandler) CountTokens(c *gin.Context) {
 	h.backend.ObserveRequest(c, reqModel, false)
 	h.backend.ObserveEndpoint(c, false)
 
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Capture the group and mapping in a request-local route plan.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
@@ -171,7 +171,7 @@ func (h *OpenAITokensHandler) CountTokens(c *gin.Context) {
 	}
 
 	sessionHash := h.backend.SessionHash(c, OpenAISelectionSession, body)
-	// 无槽、利润门豁免仍由专用选择能力执行；此链只尝试一次且不提交用量。
+	// The dedicated selector skips slots and profit admission. Counting makes one attempt and records no usage.
 	textflow.RunSingleCountTokens(h.backend.CountExecution(c, OpenAICountCall{
 		Key: apiKey, Model: reqModel, ProviderLayerModel: providerLayerModel, SessionHash: sessionHash,
 		Platform: requestPlatform, Mapping: groupMapping, MappedBody: mappedBodyForMessages, Log: reqLog, StartedAt: requestStart,

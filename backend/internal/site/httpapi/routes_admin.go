@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterAnnouncementRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterAnnouncementRoutes adds announcement management routes to a group whose
+// authentication, rate limiting, and auditing middleware is installed by app.
 func RegisterAnnouncementRoutes(admin *gin.RouterGroup, endpoint *AdminAnnouncementHandler) {
 	announcements := admin.Group("/announcements")
 	{

@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// MemberUsageStore 写入成员的消费累计和窗口。
+// MemberUsageStore resets member usage and calendar windows.
 type MemberUsageStore struct {
 	db       *sql.DB
 	calendar *timezone.Calendar

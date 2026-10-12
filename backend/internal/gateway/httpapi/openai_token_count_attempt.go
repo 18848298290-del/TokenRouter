@@ -23,7 +23,7 @@ func (p OpenAITokenPorts) CountExecution(c *gin.Context, call OpenAICountCall) t
 }
 
 func (p *openAICountAttempt) Select() (bool, error) {
-	// 计数入口使用免利润检查的无槽选择器。
+	// Token counting uses slot-free selection with profit checks disabled.
 	provider, err := p.ports.Execution.SelectCount(p.c.Request.Context(), p.key.GroupID, p.call.SessionHash, p.call.ProviderLayerModel, p.call.Platform)
 	p.provider = provider
 	return provider != nil, err

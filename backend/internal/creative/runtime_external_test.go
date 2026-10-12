@@ -18,36 +18,36 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// parallelCreativeQueue 通过内存通道为并行 worker 提供任务。
+// parallelCreativeQueue supplies tasks to parallel workers through a channel.
 type parallelCreativeQueue struct {
 	ready chan string
 }
 
-// parallelCreativeRunRepo 为并行测试保护 fake 仓储的 map 访问。
+// parallelCreativeRunRepo serializes fake repository map access used by parallel workers.
 type parallelCreativeRunRepo struct {
 	*creativeFakeRunRepo
 	mu sync.Mutex
 }
 
-// parallelCreativeTransient 保护并行结算写入的输出 map。
+// parallelCreativeTransient protects the output map during concurrent settlement.
 type parallelCreativeTransient struct {
 	*creativeFakeTransient
 	mu sync.Mutex
 }
 
-// parallelCreativeBilling 保护并行结算更新的 fake 计数器。
+// parallelCreativeBilling serializes updates to fake billing counters.
 type parallelCreativeBilling struct {
 	*creativeFakeBillingRepo
 	mu sync.Mutex
 }
 
-// parallelCreativeUserCache 以原子计数模拟用户并发槽位。
+// parallelCreativeUserCache models concurrency slots with an atomic counter.
 type parallelCreativeUserCache struct {
 	creativeUserCacheFixture
 	active atomic.Int64
 }
 
-// overlappingCreativeExecutor 在两个 platform 调用同时进入时通知测试，然后等待统一放行。
+// overlappingCreativeExecutor signals when two calls overlap and holds them until the test releases them.
 type overlappingCreativeExecutor struct {
 	active      atomic.Int64
 	overlapped  chan struct{}
@@ -56,7 +56,7 @@ type overlappingCreativeExecutor struct {
 	releaseOnce sync.Once
 }
 
-// TestCreativeWorkerRuntimeWorkerCount 检查 worker 数量默认值和正数热更新。
+// TestCreativeWorkerRuntimeWorkerCount checks the default and positive pool-size updates.
 func TestCreativeWorkerRuntimeWorkerCount(t *testing.T) {
 	runtime := newCreativeRuntimeFixture(nil, nil, &config.Config{})
 	require.Equal(t, creative.DefaultCreativeWorkerCount, runtime.WorkerCount())
@@ -67,7 +67,7 @@ func TestCreativeWorkerRuntimeWorkerCount(t *testing.T) {
 	require.Equal(t, 3, runtime.WorkerCount())
 }
 
-// TestCreativeWorkerRuntimeStartStopAndScale 验证任务 worker 池可启动、缩容并完整停止。
+// TestCreativeWorkerRuntimeStartStopAndScale covers startup, scale-down, and shutdown.
 func TestCreativeWorkerRuntimeStartStopAndScale(t *testing.T) {
 	fixture := newCreativeWorkerFixture()
 	runtime := newCreativeRuntimeFixture(fixture.worker, fixture.service, &config.Config{
@@ -84,7 +84,7 @@ func TestCreativeWorkerRuntimeStartStopAndScale(t *testing.T) {
 	require.False(t, runtime.Running())
 }
 
-// TestCreativeWorkerRuntimeStatus 检查状态快照的运行状态、工作池规模和忙碌 worker 数量。
+// TestCreativeWorkerRuntimeStatus checks running, active-worker, and busy-worker snapshot values.
 func TestCreativeWorkerRuntimeStatus(t *testing.T) {
 	stopped := newCreativeRuntimeFixture(nil, nil, &config.Config{
 		Creative: config.CreativeConfig{QueueEnabled: true},
@@ -139,7 +139,7 @@ func TestCreativeWorkerRuntimeStatus(t *testing.T) {
 	require.Equal(t, creative.CreativeWorkerStatus{}, runtime.Status())
 }
 
-// TestCreativeWorkerRuntimeParallelProviderExecution 验证两个 worker 可让同一用户的两个任务并行进入 platform。
+// TestCreativeWorkerRuntimeParallelProviderExecution checks overlapping executions for one user with two slots.
 func TestCreativeWorkerRuntimeParallelProviderExecution(t *testing.T) {
 	fixture := newCreativeWorkerFixture()
 	seedCreativeRun(fixture, "crun_parallel_1", true)
@@ -179,7 +179,7 @@ func TestCreativeWorkerRuntimeParallelProviderExecution(t *testing.T) {
 		t.Fatal("两个创作台任务未同时进入 platform")
 	}
 	executor.allow()
-	// 等待两个并行任务成功后检查停止，停止时的取消行为由专门测试覆盖。
+	// Wait for both tasks to finish so shutdown cancellation cannot mask the parallel execution result.
 	require.Eventually(t, func() bool {
 		first, e1 := repo.GetCreativeRunByRunID(context.Background(), "crun_parallel_1")
 		second, e2 := repo.GetCreativeRunByRunID(context.Background(), "crun_parallel_2")
@@ -195,7 +195,7 @@ func TestCreativeWorkerRuntimeParallelProviderExecution(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusSucceeded, second.Status)
 }
 
-// TestStoppedRuntimesRejectStart 检查停止后的工作池拒绝再次启动。
+// TestStoppedRuntimesRejectStart checks that stopping before startup prevents a later start.
 func TestStoppedRuntimesRejectStart(t *testing.T) {
 	t.Run("creative", func(t *testing.T) {
 		q := &parallelCreativeQueue{ready: make(chan string)}
@@ -372,105 +372,91 @@ func (e *overlappingCreativeExecutor) allow() {
 	e.releaseOnce.Do(func() { close(e.release) })
 }
 
-// CreateCreativeRun 持锁创建测试任务。
 func (r *parallelCreativeRunRepo) CreateCreativeRun(ctx context.Context, params creative.CreateCreativeRunParams) (*creative.CreativeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.CreateCreativeRun(ctx, params)
 }
 
-// GetCreativeRunByRunIDForOwner 持锁读取指定用户和工作区的任务。
 func (r *parallelCreativeRunRepo) GetCreativeRunByRunIDForOwner(ctx context.Context, scope creative.CreativeRunScope, runID string) (*creative.CreativeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.GetCreativeRunByRunIDForOwner(ctx, scope, runID)
 }
 
-// GetCreativeRunByIdempotencyKey 持锁按幂等键读取任务。
 func (r *parallelCreativeRunRepo) GetCreativeRunByIdempotencyKey(ctx context.Context, scope creative.CreativeRunScope, key string) (*creative.CreativeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.GetCreativeRunByIdempotencyKey(ctx, scope, key)
 }
 
-// ListCreativeRunsForOwner 持锁列出指定用户的任务。
 func (r *parallelCreativeRunRepo) ListCreativeRunsForOwner(ctx context.Context, scope creative.CreativeRunScope, filter creative.CreativeRunFilter) ([]*creative.CreativeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.ListCreativeRunsForOwner(ctx, scope, filter)
 }
 
-// TransitionCreativeRunStatus 持锁推进任务状态。
 func (r *parallelCreativeRunRepo) TransitionCreativeRunStatus(ctx context.Context, runID, toStatus string, opts creative.CreativeRunTransitionOptions) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.TransitionCreativeRunStatus(ctx, runID, toStatus, opts)
 }
 
-// GetCreativeRunOutput 持锁读取任务输出。
 func (r *parallelCreativeRunRepo) GetCreativeRunOutput(ctx context.Context, runID string, outputIndex int) (*creative.CreativeRunOutput, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.GetCreativeRunOutput(ctx, runID, outputIndex)
 }
 
-// MarkCreativeRunOutputAcked 持锁标记输出已确认。
 func (r *parallelCreativeRunRepo) MarkCreativeRunOutputAcked(ctx context.Context, runID string, outputIndex int, now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.MarkCreativeRunOutputAcked(ctx, runID, outputIndex, now)
 }
 
-// ListCreativeRunsDueForTransientCleanup 持锁列出等待清理临时数据的任务。
 func (r *parallelCreativeRunRepo) ListCreativeRunsDueForTransientCleanup(ctx context.Context, cutoff time.Time, limit int) ([]*creative.CreativeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.ListCreativeRunsDueForTransientCleanup(ctx, cutoff, limit)
 }
 
-// IncrementCreativeRunAttempt 持锁递增执行尝试次数。
 func (r *parallelCreativeRunRepo) IncrementCreativeRunAttempt(ctx context.Context, runID string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.IncrementCreativeRunAttempt(ctx, runID)
 }
 
-// IncrementCreativeRunSettlementAttempt 持锁递增结算尝试次数。
 func (r *parallelCreativeRunRepo) IncrementCreativeRunSettlementAttempt(ctx context.Context, runID string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.IncrementCreativeRunSettlementAttempt(ctx, runID)
 }
 
-// IncrementCreativeRunReleaseAttempt 持锁递增释放资金尝试次数。
 func (r *parallelCreativeRunRepo) IncrementCreativeRunReleaseAttempt(ctx context.Context, runID string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.IncrementCreativeRunReleaseAttempt(ctx, runID)
 }
 
-// SetCreativeRunProvisioningPhase 持锁写入任务准备阶段。
 func (r *parallelCreativeRunRepo) SetCreativeRunProvisioningPhase(ctx context.Context, runID, phase string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.SetCreativeRunProvisioningPhase(ctx, runID, phase)
 }
 
-// MarkCreativeRunProviderSucceeded 持锁标记提供商执行成功。
 func (r *parallelCreativeRunRepo) MarkCreativeRunProviderSucceeded(ctx context.Context, runID string, providerID int64, now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.MarkCreativeRunProviderSucceeded(ctx, runID, providerID, now)
 }
 
-// SetCreativeRunReconcileError 持锁写入任务恢复错误和下次重试时间。
 func (r *parallelCreativeRunRepo) SetCreativeRunReconcileError(ctx context.Context, runID, message string, next time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.creativeFakeRunRepo.SetCreativeRunReconcileError(ctx, runID, message, next)
 }
 
-// cloneCreativeParallelValue 复制查询结果，供调用方在锁外读取。
+// cloneCreativeParallelValue deep-copies fixture results so callers can read them after the lock is released.
 func cloneCreativeParallelValue[T any](v T) T {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -483,7 +469,6 @@ func cloneCreativeParallelValue[T any](v T) T {
 	return result
 }
 
-// RecordProviderOutcome 持锁写入提供商输出元数据。
 func (r *parallelCreativeRunRepo) RecordProviderOutcome(ctx context.Context, id string, providerID int64, outputs []creative.CreativeRunOutput, now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -496,7 +481,7 @@ func (r *parallelCreativeRunRepo) CompleteProviderOutcome(ctx context.Context, i
 	return r.creativeFakeRunRepo.CompleteProviderOutcome(ctx, id, cost, lost, now)
 }
 
-// LoadOutput 与 SaveOutput 使用同一把锁读取输出。
+// LoadOutput shares the SaveOutput mutex and returns an owned copy of the bytes.
 func (s *parallelCreativeTransient) LoadOutput(ctx context.Context, runID string, index int) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

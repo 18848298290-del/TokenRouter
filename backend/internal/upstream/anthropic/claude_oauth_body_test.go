@@ -80,11 +80,8 @@ func TestInjectAnthropicCacheControlTTL1h_OnlyUpdatesExistingEphemeralCacheContr
 	require.Equal(t, "1h", gjson.GetBytes(result, "tools.0.cache_control.ttl").String())
 }
 
-// normalizeClaudeOAuthRequestBody 的 context_management 补齐测试
-//
-// 该函数不按 model 名短路：thinking=enabled/adaptive 时补齐 context_management，
-// 与 model 无关。strip 责任移交 sanitizeAnthropicBodyForBetaTokens（在
-// buildUpstreamRequest 层按最终 beta header 执行）。
+// Context-management defaults depend on thinking mode. Final beta gating runs
+// separately in SanitizeAnthropicBodyForBetaTokens.
 
 func TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingEnabled(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","thinking":{"type":"enabled","budget_tokens":1000},"messages":[]}`)
@@ -101,8 +98,7 @@ func TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingAdapti
 }
 
 func TestNormalizeClaudeOAuthRequestBody_HaikuStillInjects_StripDeferredToSanitize(t *testing.T) {
-	// Haiku + thinking=enabled：normalize 阶段仍按 CLI mimicry 行为补齐字段；
-	// 最终是否保留仍由 beta 能力对称的 sanitize 统一决定。
+	// Normalization supplies the field for Haiku too; final beta gating may remove it.
 	body := []byte(`{"model":"claude-haiku-4-5","thinking":{"type":"enabled","budget_tokens":1000},"messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
 	require.True(t, gjson.GetBytes(out, "context_management").Exists(),
@@ -123,7 +119,7 @@ func TestNormalizeClaudeOAuthRequestBody_NoThinking_NoInject(t *testing.T) {
 	require.False(t, gjson.GetBytes(out, "context_management").Exists())
 }
 
-// TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel 检查请求体保留客户端型号。
+// TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel checks the client model is retained.
 func TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
@@ -136,7 +132,7 @@ func TestSanitizeOpenCodeText_RewritesCanonicalSentence(t *testing.T) {
 	require.Equal(t, strings.TrimSpace(ClaudeCodeSystemPrompt), got)
 }
 
-// TestSystemHasClaudeCodeBillingAttribution 验证代理流量识别只接受完整的 system 计费归因块。
+// TestSystemHasClaudeCodeBillingAttribution requires a complete system billing marker.
 func TestSystemHasClaudeCodeBillingAttribution(t *testing.T) {
 	tests := []struct {
 		name string
@@ -178,7 +174,7 @@ func TestSystemHasClaudeCodeBillingAttribution(t *testing.T) {
 	}
 }
 
-// TestIsProxiedClaudeCodeRequest 验证代理识别不能由任意 metadata.user_id 绕过。
+// TestIsProxiedClaudeCodeRequest rejects arbitrary metadata.user_id values.
 func TestIsProxiedClaudeCodeRequest(t *testing.T) {
 	validMetadata := FormatMetadataUserID(
 		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -323,7 +319,7 @@ func TestSystemIncludesClaudeCodePrompt(t *testing.T) {
 			},
 			want: false,
 		},
-		// json.RawMessage cases (conversion path: ForwardAsResponses / ForwardAsChatCompletions)
+		// Protocol conversion supplies system as json.RawMessage.
 		{
 			name:   "json.RawMessage string with Claude Code prompt",
 			system: json.RawMessage(`"` + ClaudeCodeSystemPrompt + `"`),
@@ -422,7 +418,7 @@ func TestInjectClaudeCodePrompt(t *testing.T) {
 			wantSystemLen: 1,
 			wantFirstText: ClaudeCodeSystemPrompt,
 		},
-		// json.RawMessage cases (conversion path: ForwardAsResponses / ForwardAsChatCompletions)
+		// Protocol conversion supplies system as json.RawMessage.
 		{
 			name:           "json.RawMessage string system",
 			body:           `{"model":"claude-3","system":"Custom prompt"}`,
@@ -483,18 +479,18 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 		name             string
 		body             string
 		system           any
-		wantSystemText   string // system array 第一个 block 的 text
-		wantMessagesLen  int    // messages 数组长度
-		wantFirstMsgRole string // 第一条消息的 role
-		wantFirstMsgText string // 第一条消息的 content[0].text
-		wantAckMsgText   string // 第二条消息的 content[0].text
+		wantSystemText   string // Text of the first system block.
+		wantMessagesLen  int
+		wantFirstMsgRole string
+		wantFirstMsgText string // content[0].text of the first message.
+		wantAckMsgText   string // content[0].text of the acknowledgment.
 	}{
 		{
 			name:            "nil system - no messages injected",
 			body:            `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`,
 			system:          nil,
 			wantSystemText:  ClaudeCodeSystemPrompt,
-			wantMessagesLen: 1, // 原始 1 条消息，不注入
+			wantMessagesLen: 1, // Original message; no injection.
 		},
 		{
 			name:            "empty string system - no messages injected",
@@ -577,10 +573,8 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 			err := json.Unmarshal(result, &parsed)
 			require.NoError(t, err)
 
-			// system 数组包含 Claude Code CLI 的三个内容块：
-			//   [0] billing attribution block (x-anthropic-billing-header: cc_version=...;)
-			//   [1] Claude Code 身份前缀 block (不带 cache_control)
-			//   [2] 工具无关的通用提示词扩充 block (带 cache_control，作为缓存断点)
+			// The default system contains billing, identity, and expansion blocks.
+			// The expansion owns the cache breakpoint.
 			systemArr, ok := parsed["system"].([]any)
 			require.True(t, ok, "system should be an array, got %T", parsed["system"])
 			require.Len(t, systemArr, 3, "system array should have exactly 3 blocks (billing + cc prompt + expansion)")
@@ -591,7 +585,7 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 			require.Contains(t, billingBlock["text"], "x-anthropic-billing-header:")
 			require.Contains(t, billingBlock["text"], "cc_version=")
 			require.Contains(t, billingBlock["text"], "cc_entrypoint=cli")
-			// billing block 省略 cch 签名字段。
+			// The billing marker omits cch.
 			require.NotContains(t, billingBlock["text"], "cch=")
 
 			systemBlock, ok := systemArr[1].(map[string]any)
@@ -609,13 +603,12 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 			require.True(t, ok, "expansion block should have cache_control")
 			require.Equal(t, "ephemeral", cc["type"])
 
-			// 检查 messages
 			messages, ok := parsed["messages"].([]any)
 			require.True(t, ok, "messages should be an array")
 			require.Len(t, messages, tt.wantMessagesLen)
 
 			if tt.wantFirstMsgRole != "" && len(messages) >= 2 {
-				// 检查注入的 instruction 消息
+				// Check the injected instruction and acknowledgment pair.
 				firstMsg, ok := messages[0].(map[string]any)
 				require.True(t, ok)
 				require.Equal(t, tt.wantFirstMsgRole, firstMsg["role"])
@@ -627,7 +620,7 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 				require.True(t, ok)
 				require.Equal(t, tt.wantFirstMsgText, firstBlock["text"])
 
-				// 检查注入的 ack 消息
+				// Check the injected acknowledgment.
 				ackMsg, ok := messages[1].(map[string]any)
 				require.True(t, ok)
 				require.Equal(t, "assistant", ackMsg["role"])

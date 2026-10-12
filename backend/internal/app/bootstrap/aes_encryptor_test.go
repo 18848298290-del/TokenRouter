@@ -12,9 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// 测试辅助函数。
-
-// aesHexKey 构造一个全填充为 b 的 n 字节密钥并以 hex 编码返回。
+// aesHexKey returns n copies of byte b encoded as hex.
 func aesHexKey(n int, b byte) string {
 	raw := make([]byte, n)
 	for i := range raw {
@@ -23,14 +21,14 @@ func aesHexKey(n int, b byte) string {
 	return hex.EncodeToString(raw)
 }
 
-// aesTestCfg 用给定 hex 密钥字符串构造最小 Config。
+// aesTestCfg creates a minimal configuration with the supplied hex key.
 func aesTestCfg(keyHex string) *config.Config {
 	return &config.Config{
 		Totp: config.TotpConfig{EncryptionKey: keyHex},
 	}
 }
 
-// aesEncryptor 创建一个持有合法 32 字节密钥的加密器，测试失败时立即终止。
+// aesEncryptor creates an encryptor with a valid 32-byte key or fails the test.
 func aesEncryptor(t *testing.T) *AESEncryptor {
 	t.Helper()
 	enc, err := NewAESEncryptor(aesTestCfg(aesHexKey(32, 0x42)))
@@ -39,15 +37,14 @@ func aesEncryptor(t *testing.T) *AESEncryptor {
 	return enc
 }
 
-// NewAESEncryptor 构造测试。
-
 func TestNewAESEncryptor_ValidKey32Bytes(t *testing.T) {
 	enc, err := NewAESEncryptor(aesTestCfg(aesHexKey(32, 0x01)))
 	require.NoError(t, err)
 	require.NotNil(t, enc)
 }
 
-// TestNewAESEncryptor_WrongKeyLength 验证 16 / 24 字节密钥在 AES 体系内合法，但本实现仅接受 AES-256（32 字节）。
+// TestNewAESEncryptor_WrongKeyLength checks that configuration requires AES-256 even though AES also supports
+// 16- and 24-byte keys.
 func TestNewAESEncryptor_WrongKeyLength(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -69,7 +66,7 @@ func TestNewAESEncryptor_WrongKeyLength(t *testing.T) {
 	}
 }
 
-// TestNewAESEncryptor_MissingOrInvalidConfig 检查空字符串与非法 hex 编码的错误。
+// TestNewAESEncryptor_MissingOrInvalidConfig checks empty and malformed hex keys.
 func TestNewAESEncryptor_MissingOrInvalidConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -88,8 +85,6 @@ func TestNewAESEncryptor_MissingOrInvalidConfig(t *testing.T) {
 		})
 	}
 }
-
-// 加解密往返测试。
 
 func TestAESEncryptor_RoundTrip(t *testing.T) {
 	enc := aesEncryptor(t)
@@ -118,8 +113,6 @@ func TestAESEncryptor_RoundTrip(t *testing.T) {
 	}
 }
 
-// IV 和 Nonce 随机性测试。
-
 func TestAESEncryptor_Encrypt_NonceRandomness(t *testing.T) {
 	enc := aesEncryptor(t)
 	const iterations = 30
@@ -132,12 +125,10 @@ func TestAESEncryptor_Encrypt_NonceRandomness(t *testing.T) {
 		seen[ct] = struct{}{}
 	}
 
-	// 30 次加密相同明文，每次因随机 Nonce 应产生不同密文。
+	// Random nonces should produce distinct ciphertexts across these 30 encryptions.
 	assert.Len(t, seen, iterations,
 		"每次加密应因随机 Nonce 产生唯一密文，共 %d 次", iterations)
 }
-
-// Decrypt 错误处理测试。
 
 func TestAESDecrypt_InvalidBase64(t *testing.T) {
 	enc := aesEncryptor(t)
@@ -148,7 +139,7 @@ func TestAESDecrypt_InvalidBase64(t *testing.T) {
 
 func TestAESDecrypt_TooShort(t *testing.T) {
 	enc := aesEncryptor(t)
-	// GCM Nonce 为 12 字节；仅提供 2 字节，必然短于 NonceSize。
+	// Two bytes cannot contain the 12-byte GCM nonce.
 	short := base64.StdEncoding.EncodeToString([]byte{0x01, 0x02})
 	_, err := enc.Decrypt(short)
 	require.Error(t, err)
@@ -164,7 +155,7 @@ func TestAESDecrypt_TamperedCiphertext(t *testing.T) {
 	raw, err := base64.StdEncoding.DecodeString(ct)
 	require.NoError(t, err)
 
-	// Nonce 占前 12 字节；翻转其后第一个字节（密文体）。
+	// The first 12 bytes contain the nonce; flip the first ciphertext byte.
 	raw[12] ^= 0xFF
 	_, err = enc.Decrypt(base64.StdEncoding.EncodeToString(raw))
 	require.Error(t, err, "篡改密文体后解密应失败")
@@ -179,13 +170,11 @@ func TestAESDecrypt_TamperedTag(t *testing.T) {
 	raw, err := base64.StdEncoding.DecodeString(ct)
 	require.NoError(t, err)
 
-	// GCM 认证标签占最后 16 字节；翻转最后一个字节。
+	// The final 16 bytes contain the GCM authentication tag.
 	raw[len(raw)-1] ^= 0xFF
 	_, err = enc.Decrypt(base64.StdEncoding.EncodeToString(raw))
 	require.Error(t, err, "篡改 GCM 标签后解密应失败")
 }
-
-// 跨实例加解密测试。
 
 func TestAESEncryptor_CrossInstance_SameKey_CanDecrypt(t *testing.T) {
 	keyHex := aesHexKey(32, 0xDE)

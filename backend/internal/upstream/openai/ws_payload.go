@@ -132,11 +132,9 @@ func ShouldInferIngressFunctionCallOutputPreviousResponseID(
 	if signals.HasFunctionCallOutputMissingCallID {
 		return false
 	}
-	// If the client already sent the actual tool-call context, treat this as
-	// a full replay / self-contained continuation payload rather than
-	// downgrading it into an inferred delta continuation. item_reference alone
-	// is not enough on the store=false WS path: it still needs a valid prior
-	// response anchor so upstream can resolve the referenced function_call.
+	// A payload with the actual tool-call context is self-contained and needs no inferred anchor.
+	// An item_reference alone still needs a valid previous response ID on the store=false
+	// WebSocket path so upstream can resolve the referenced function_call.
 	if signals.HasToolCallContext {
 		return false
 	}
@@ -173,7 +171,7 @@ func AlignStoreDisabledPreviousResponseID(
 	return updated, true, nil
 }
 
-// CombineOpenAIWSReplayItems 合并历史与增量为新头数组，正文共享不复制。
+// CombineOpenAIWSReplayItems shares item bytes, allocating a slice when delta is nonempty; otherwise it returns history.
 func CombineOpenAIWSReplayItems(history, delta []json.RawMessage) []json.RawMessage {
 	if len(delta) == 0 {
 		return history
@@ -183,16 +181,16 @@ func CombineOpenAIWSReplayItems(history, delta []json.RawMessage) []json.RawMess
 	return append(combined, delta...)
 }
 
-// OpenAIWSPayloadStringView 返回与 payload 共享底层数组的零拷贝 string 视图，
-// 供 gjson.Get 使用（gjson.GetBytes 会整段复制结果 Raw，对 input 这类占
-// payload 主体的字段是每次 O(payload) 分配）。调用方必须保证 payload 在结果
-// 存活期间不可变（replay 所有权不变式）。
+// OpenAIWSPayloadStringView returns a string sharing payload's backing array for gjson.Get.
+// Using gjson.GetBytes would copy the result's Raw bytes, which can span most of input.
+// The caller must keep payload immutable for the lifetime of the returned string
+// and any replay items that share its bytes.
 func OpenAIWSPayloadStringView(payload []byte) string {
 	return unsafe.String(unsafe.SliceData(payload), len(payload))
 }
 
-// OpenAIWSRawMessageFromResult 优先返回 parent 的子切片（gjson 值零拷贝共享），
-// Index 不可用时回退为复制。共享要求 parent 遵守上面的不可变约定。
+// OpenAIWSRawMessageFromResult returns a matching subslice of parent when its index is valid, or a copy otherwise.
+// The caller must keep parent immutable while the returned message shares its bytes.
 func OpenAIWSRawMessageFromResult(parent []byte, value gjson.Result) json.RawMessage {
 	idx := value.Index
 	if idx > 0 && idx+len(value.Raw) <= len(parent) && string(parent[idx:idx+len(value.Raw)]) == value.Raw {
@@ -231,18 +229,18 @@ func NormalizeOpenAIWSPayloadWithoutInputAndPreviousResponseID(payload []byte) (
 	}
 	delete(decoded, "input")
 	delete(decoded, "previous_response_id")
-	// Codex 会在每次 response.create 时更新传输元数据，这些字段不改变 previous_response_id 引用的上下文。
+	// Codex updates transport metadata per response.create; it does not change the referenced response context.
 	delete(decoded, "client_metadata")
 	delete(decoded, "stream_options")
-	// 官方 Codex 使用 generate=false 预热连接，后续业务请求会省略该字段；只归一化 false，保留 true 的语义变化。
+	// Codex prewarms with generate=false and omits it on later requests. Ignore false for comparison, but retain true.
 	if generate, ok := decoded["generate"].(bool); ok && !generate {
 		delete(decoded, "generate")
 	}
 	return json.Marshal(decoded)
 }
 
-// OpenAIWSExtractNormalizedInputSequence 拆出 input 序列。返回的正文尽可能与
-// payload 共享底层数组（零拷贝），受 replay 所有权不变式保护。
+// OpenAIWSExtractNormalizedInputSequence extracts input items, sharing payload bytes when possible.
+// The caller must keep payload immutable while the returned items remain in use.
 func OpenAIWSExtractNormalizedInputSequence(payload []byte) ([]json.RawMessage, bool, error) {
 	if len(payload) == 0 {
 		return nil, false, nil
@@ -253,8 +251,8 @@ func OpenAIWSExtractNormalizedInputSequence(payload []byte) ([]json.RawMessage, 
 	}
 	if inputValue.Type == gjson.JSON {
 		if inputValue.IsArray() {
-			// gjson 宽容解析；数组整体先做零分配合法性校验，避免把断裂
-			// JSON 塞进 replay 历史。
+			// gjson accepts partial JSON. Validate the whole array before adding its items
+			// to replay history so a truncated payload cannot become stored history.
 			arrayRaw := OpenAIWSRawMessageFromResult(payload, inputValue)
 			if !json.Valid(arrayRaw) {
 				return nil, true, errors.New("input array json is invalid")
@@ -315,7 +313,7 @@ func OpenAIWSRawItemsHasPrefix(items []json.RawMessage, prefix []json.RawMessage
 		return false
 	}
 	for idx := range prefix {
-		// 快路径：客户端逐字节重发历史时直接比较，避免整轮历史的解码/再编码。
+		// Compare identical replays directly to avoid decoding and re-encoding the full history.
 		if bytes.Equal(bytes.TrimSpace(prefix[idx]), bytes.TrimSpace(items[idx])) {
 			continue
 		}
@@ -337,7 +335,7 @@ func OpenAIWSRawItemsHasFunctionCallOutput(items []json.RawMessage) bool {
 	return false
 }
 
-// OpenAIWSRawItemsHaveToolCallContextForOutputs 判断工具输出是否带有对应的工具调用上下文。
+// OpenAIWSRawItemsHaveToolCallContextForOutputs reports whether every output has matching call context.
 func OpenAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool {
 	if len(items) == 0 {
 		return false
@@ -370,9 +368,9 @@ func OpenAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool
 	return true
 }
 
-// SanitizeOpenAIWSHistoricalReplayToolCalls 清理历史中没有对应输出的工具调用，
-// 避免剥离 previous_response_id 后向上游重放无法闭合的旧调用上下文。
-// SanitizeOpenAIWSHistoricalReplayToolCalls 返回的新头数组与 previousItems 共享正文。
+// SanitizeOpenAIWSHistoricalReplayToolCalls drops historical calls with no matching output
+// in either sequence, so replay after removing previous_response_id has no unanswered calls.
+// The returned slice shares item bytes with previousItems, which callers must keep immutable.
 func SanitizeOpenAIWSHistoricalReplayToolCalls(
 	previousItems []json.RawMessage,
 	currentItems []json.RawMessage,
@@ -407,7 +405,7 @@ func SanitizeOpenAIWSHistoricalReplayToolCalls(
 	return sanitized
 }
 
-// OpenAIWSRawPayloadHasToolCallOutput 判断 response.create payload 的 input 是否包含工具输出。
+// OpenAIWSRawPayloadHasToolCallOutput reports whether a response.create input includes tool output.
 func OpenAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
@@ -430,10 +428,9 @@ func OpenAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	return false
 }
 
-// BuildOpenAIWSReplayInputSequenceFromItems 基于已解析的当前 turn input 构建
-// replay 序列。返回序列的正文与 previousFullInput/currentItems 共享所有权
-// （见 CombineOpenAIWSReplayItems 上方的所有权不变式），头数组可能直接转移自
-// currentItems。
+// BuildOpenAIWSReplayInputSequenceFromItems combines parsed current input with replay history.
+// It shares item bytes with both inputs and may return an input slice directly.
+// Callers must keep the shared bytes immutable while the result is in use.
 func BuildOpenAIWSReplayInputSequenceFromItems(
 	previousFullInput []json.RawMessage,
 	previousFullInputExists bool,
@@ -485,7 +482,7 @@ func SetOpenAIWSPayloadInputSequence(
 	if !fullInputExists {
 		return payload, nil
 	}
-	// Preserve [] vs null semantics when input exists but is empty.
+	// Encode present but empty input as an array, not null.
 	inputForMarshal := fullInput
 	if inputForMarshal == nil {
 		inputForMarshal = []json.RawMessage{}
@@ -497,8 +494,8 @@ func SetOpenAIWSPayloadInputSequence(
 	return sjson.SetRawBytes(payload, "input", inputRaw)
 }
 
-// BuildOpenAIWSCurrentTurnRetryPayload 构造替换提供商可用的无链路当前回合请求。
-// 只有 input 能完整覆盖所有 function_call_output 时才允许剥离 previous_response_id。
+// BuildOpenAIWSCurrentTurnRetryPayload builds a self-contained request for another provider.
+// It returns an eligible payload only when replay input covers every tool output's call context.
 func BuildOpenAIWSCurrentTurnRetryPayload(
 	payload []byte,
 	fullInput []json.RawMessage,
@@ -618,7 +615,7 @@ func WSPayloadStringFromRaw(payload []byte, key string) string {
 	return strings.TrimSpace(gjson.GetBytes(payload, key).String())
 }
 
-// dropWSRetryPayloadKey 删除报文字段并记录字段名。
+// dropWSRetryPayloadKey deletes a field and records its name when present.
 func dropWSRetryPayloadKey(payload map[string]any, key string, removed *[]string) {
 	if len(payload) == 0 || strings.TrimSpace(key) == "" {
 		return
@@ -630,8 +627,8 @@ func dropWSRetryPayloadKey(payload map[string]any, key string, removed *[]string
 	*removed = append(*removed, key)
 }
 
-// ApplyWSRetryPayloadStrategy 在第二次及后续 WS 尝试中移除可选的 include 字段。
-// prompt_cache_key 用于会话标识，重试时继续发送。
+// ApplyWSRetryPayloadStrategy removes optional include fields on attempts after the first.
+// It keeps prompt_cache_key because the key identifies the session.
 func ApplyWSRetryPayloadStrategy(payload map[string]any, attempt int) (strategy string, removedKeys []string) {
 	if len(payload) == 0 {
 		return "empty", nil

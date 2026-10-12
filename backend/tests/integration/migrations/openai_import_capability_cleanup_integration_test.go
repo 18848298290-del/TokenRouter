@@ -11,7 +11,8 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestOpenAIImportCapabilityCleanupMigration 验证覆盖异常历史数据、模板缺省语义和重复执行，不依赖生产设置内容。
+// TestOpenAIImportCapabilityCleanupMigration checks malformed legacy data, absent templates, and replay with
+// isolated settings.
 func TestOpenAIImportCapabilityCleanupMigration(t *testing.T) {
 	ctx := context.Background()
 	tx := testTx(t)

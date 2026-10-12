@@ -93,7 +93,7 @@ func (a *antigravityChatStreamAdapter) emitResponseEvent(event *protocolopenai.R
 	}
 }
 
-// writeChunk 在输出前恢复工具名。
+// writeChunk restores client tool names before writing the SSE chunk.
 func (a *antigravityChatStreamAdapter) writeChunk(chunk protocolopenai.ChatCompletionsChunk, writer *ClientWriter) {
 	payload, err := json.Marshal(chunk)
 	if err != nil {
@@ -365,6 +365,8 @@ func (s *ResponseAdapter) HandleAntigravityCompatStream(
 	}
 }
 
+// StartAntigravityCompatScanner starts line scanning and returns a stop function.
+// Call stop once; the caller must also close body to release a blocked read.
 func (s *ResponseAdapter) StartAntigravityCompatScanner(
 	body io.Reader,
 ) (<-chan antigravityCompatScanEvent, func(), int) {

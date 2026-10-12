@@ -5,7 +5,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
-// TLSProfiles 将 TLS 策略服务返回的配置转换为传输指纹。
+// TLSProfiles converts egress TLS policy results into transport fingerprints.
 type TLSProfiles struct {
 	*egress.TLSFingerprintProfileService
 }
@@ -21,7 +21,7 @@ func (p *TLSProfiles) core() *egress.TLSFingerprintProfileService {
 	return p.TLSFingerprintProfileService
 }
 
-// ResolveRequestTLS 根据提供商资格和路由匹配结果解析 TLS 策略，再转换为传输指纹。
+// ResolveRequestTLS resolves provider eligibility and router selection into a transport fingerprint.
 func (p *TLSProfiles) ResolveRequestTLS(selection egress.TLSSelection) *tlsfingerprint.Profile {
 	return ToTLSProfile(p.core().ResolveRequestPolicy(selection).TLSProfile)
 }
@@ -31,8 +31,8 @@ func (p *TLSProfiles) ResolveTokenTLSProfileByID(id int64) (*tlsfingerprint.Prof
 	return ToTLSProfile(profile), ok
 }
 
-// ToTLSProfile 将 egress 的 TLS 模板转换为传输使用的指纹配置。
-// 拨号器对空切片字段使用内置默认值。
+// ToTLSProfile copies an egress TLS profile into transport fingerprint settings.
+// The dialer uses built-in defaults for empty slices.
 func ToTLSProfile(p *egress.TLSFingerprintProfile) *tlsfingerprint.Profile {
 	if p == nil {
 		return nil
@@ -53,7 +53,7 @@ func ToTLSProfile(p *egress.TLSFingerprintProfile) *tlsfingerprint.Profile {
 	}
 }
 
-// FromTLSProfile 复制传输指纹的各字段，生成出站策略使用的 TLS 模板。
+// FromTLSProfile copies transport fingerprint fields into an egress TLS profile.
 func FromTLSProfile(p *tlsfingerprint.Profile) *egress.TLSFingerprintProfile {
 	if p == nil {
 		return nil

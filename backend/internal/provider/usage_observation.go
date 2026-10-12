@@ -12,7 +12,7 @@ var (
 	ErrUsageObservationWriterMissing = errors.New("usage observation conditional writer is not configured")
 )
 
-// UsageObservationVersion 限定上游观测可以写入的提供商身份与原健康窗口，不进入公开输出。
+// UsageObservationVersion captures provider identity and health windows for conditional observation writes.
 type UsageObservationVersion struct {
 	CredentialVersion
 	ParentProviderID                               *int64
@@ -20,10 +20,13 @@ type UsageObservationVersion struct {
 	RateLimitedAt, RateLimitResetAt, OverloadUntil *time.Time
 }
 
-// UsageObservationWriter 为快照写入、设置限流和清除限流分别提交并发布通知。
+// UsageExtraWriter conditionally writes a usage snapshot for the observed provider version.
 type UsageExtraWriter interface {
 	UpdateUsageExtraIfUnchanged(context.Context, UsageObservationVersion, map[string]any) (bool, error)
 }
+
+// UsageObservationWriter conditionally writes snapshots and changes rate limits
+// for the observed provider version.
 type UsageObservationWriter interface {
 	UsageExtraWriter
 	SetUsageRateLimitIfUnchanged(context.Context, UsageObservationVersion, time.Time) (bool, error)
@@ -41,7 +44,7 @@ func ObserveUsageVersion(value *Record) UsageObservationVersion {
 	}
 }
 
-// UsageCacheIdentity 仅在进程内校验缓存来源，不改变 Redis 协议、提供商 key 或 TTL。
+// UsageCacheIdentity identifies cached usage by credentials, status, parent, and quota dimension.
 func UsageCacheIdentity(value *Record) string {
 	if value == nil {
 		return ""

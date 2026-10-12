@@ -57,7 +57,7 @@ func (s *APIKeyRepoSuite) TestUpdateForkSpecificFields() {
 	loaded.FastModePolicy = apikey.APIKeyFastModePolicyForceOff
 	loaded.FallbackWhenGroupUnavailable = false
 
-	// 各扩展字段分别由更新掩码控制。
+	// The update mask selects each policy field independently.
 	s.Require().NoError(s.repo.Update(s.ctx, loaded, apikey.APIKeyUpdateFields{
 		FastModePolicy:               true,
 		FallbackWhenGroupUnavailable: true,
@@ -82,7 +82,7 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 		},
 	}
 
-	// 检查主记录与两条映射在同一事务内创建，加载时按用户指定顺序返回。
+	// Creating a composite key must load both mappings in the requested order.
 	s.Require().NoError(s.repo.Create(s.ctx, key))
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err)
@@ -102,7 +102,7 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	s.Require().Len(listed, 1)
 	s.Require().Equal(key.ID, listed[0].ID)
 
-	// 更新后映射列表应与请求中的列表相同。
+	// Replacing the mapping list must remove entries omitted from the request.
 	got.CompositeGroups = []apikey.APIKeyCompositeGroup{
 		{GroupID: claudeGroup.ID, Prefix: "Anthropic", NormalizedPrefix: "anthropic", SortOrder: 0},
 	}
@@ -119,7 +119,7 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	s.Require().NoError(err)
 	s.Require().Empty(cleared.CompositeGroups)
 
-	// 唯一约束测试放在末尾，PostgreSQL 事务进入失败状态后无需再执行其他断言。
+	// Run the uniqueness violation last because PostgreSQL aborts the transaction on error.
 	_, err = s.client.APIKeyCompositeGroup.Create().
 		SetAPIKeyID(key.ID).
 		SetGroupID(openAIGroup.ID).
@@ -148,7 +148,7 @@ func (s *APIKeyRepoSuite) TestCompositeKeyNormalizedPrefixUniqueConstraint() {
 		},
 	}
 
-	// 数据库唯一约束检查跨分组的规范化前缀重复写入。
+	// The unique constraint rejects a normalized prefix reused for another group.
 	s.Require().NoError(s.repo.Create(s.ctx, key))
 	_, err := s.client.APIKeyCompositeGroup.Create().
 		SetAPIKeyID(key.ID).
@@ -193,7 +193,7 @@ func (s *APIKeyRepoSuite) TestGetByKey_NotFound() {
 
 func (s *APIKeyRepoSuite) TestGetByKeyForAuth_PreservesSelectedGroupFields() {
 	user := s.mustCreateUser("getbykey-auth-dispatch@test.com")
-	// 认证查询保留路由策略与基础倍率，价格从独立配置读取。
+	// Authentication loads the selected group's routing policies.
 	lbTopK := 4
 	group, err := s.client.Group.Create().
 		SetName("g-auth-dispatch").
@@ -362,13 +362,12 @@ func (s *APIKeyRepoSuite) TestListByGroupID() {
 
 	s.mustCreateApiKey(user.ID, "sk-grp-1", "K1", &group.ID)
 	s.mustCreateApiKey(user.ID, "sk-grp-2", "K2", &group.ID)
-	s.mustCreateApiKey(user.ID, "sk-grp-3", "K3", nil) // no group
+	s.mustCreateApiKey(user.ID, "sk-grp-3", "K3", nil) // Excluded from the group query.
 
 	keys, page, err := s.repo.ListByGroupID(s.ctx, group.ID, pagination.PaginationParams{Page: 1, PageSize: 10})
 	s.Require().NoError(err, "ListByGroupID")
 	s.Require().Len(keys, 2)
 	s.Require().Equal(int64(2), page.Total)
-	// 检查已预加载用户。
 	s.Require().NotNil(keys[0].User)
 }
 
@@ -431,7 +430,7 @@ func (s *APIKeyRepoSuite) TestClearGroupIDByGroupID() {
 
 	k1 := s.mustCreateApiKey(user.ID, "sk-clr-1", "K1", &group.ID)
 	k2 := s.mustCreateApiKey(user.ID, "sk-clr-2", "K2", &group.ID)
-	s.mustCreateApiKey(user.ID, "sk-clr-3", "K3", nil) // no group
+	s.mustCreateApiKey(user.ID, "sk-clr-3", "K3", nil) // Already unassigned; excluded from the affected count.
 
 	affected, err := s.repo.ClearGroupIDByGroupID(s.ctx, group.ID)
 	s.Require().NoError(err, "ClearGroupIDByGroupID")
@@ -487,7 +486,7 @@ func (s *APIKeyRepoSuite) TestCRUD_Search_ClearGroupID() {
 	s.Require().Len(found, 1)
 	s.Require().Equal(key.ID, found[0].ID)
 
-	// ClearGroupIDByGroupID
+	// Clearing a group must update both the key and the group count.
 	k2 := s.mustCreateApiKey(user.ID, "sk-test-2", "Group Key", &group.ID)
 	k2.GroupID = &group.ID
 
@@ -557,14 +556,13 @@ func (s *APIKeyRepoSuite) TestIncrementQuotaUsedAndGetState() {
 	s.Require().Equal(apikey.StatusAPIKeyQuotaExhausted, got.Status)
 }
 
-// TestIncrementQuotaUsed_Concurrent 检查 PostgreSQL 并发递增的原子性。
-// 测试通过 suite 的共享客户端提交写入。
+// TestIncrementQuotaUsed_Concurrent checks that concurrent PostgreSQL increments accumulate.
+// It uses an isolated database with committed writes shared by the goroutines.
 func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 	integrationDB, client := keyDatabase(t)
 	repo := newKeyStoreFixture(client, integrationDB)
 	ctx := context.Background()
 
-	// 创建测试用户和 API Key
 	u, err := client.User.Create().
 		SetEmail("concurrent-incr-" + time.Now().Format(time.RFC3339Nano) + "@test.com").
 		SetPasswordHash("hash").
@@ -585,7 +583,6 @@ func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 		_ = client.User.DeleteOneID(u.ID).Exec(ctx)
 	})
 
-	// 10 个 goroutine 各递增 1.0，总计应为 10.0
 	const goroutines = 10
 	const increment = 1.0
 	var wg sync.WaitGroup
@@ -604,7 +601,6 @@ func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 		require.NoError(t, e, "goroutine %d failed", i)
 	}
 
-	// 验证最终结果
 	got, err := repo.GetByID(ctx, k.ID)
 	require.NoError(t, err, "GetByID")
 	require.Equal(t, float64(goroutines)*increment, got.QuotaUsed,

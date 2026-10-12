@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-// LiveCallRequest 是两种下游创建协议转换后的请求，Session 保存原始 JSON。
+// LiveCallRequest holds a normalized downstream creation request and the raw session JSON.
 type LiveCallRequest struct {
 	SDP     string          `json:"sdp"`
 	Session json.RawMessage `json:"session"`
 }
 
-// ValidateLiveCallRequest 校验 SDP 和原始 session JSON 的基本结构。
+// ValidateLiveCallRequest requires nonempty SDP and a JSON object for the session.
 func ValidateLiveCallRequest(request *LiveCallRequest) error {
 	if request == nil || strings.TrimSpace(request.SDP) == "" {
 		return errors.New("sdp is required")

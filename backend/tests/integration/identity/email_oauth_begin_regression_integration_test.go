@@ -30,7 +30,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// failNextTransaction 在用户创建后拒绝下一次 Begin，补偿删除通过 PostgreSQL 执行。
+// failNextTransaction rejects the next transaction after user creation; compensation deletes through PostgreSQL.
 type failNextTransaction struct {
 	dialect.Driver
 	armed    atomic.Bool
@@ -62,7 +62,7 @@ func (s oauthSettings) GetMultiple(ctx context.Context, keys []string) (map[stri
 	return out, nil
 }
 
-// TestEmailOAuthBeginFailureCompensatesUser 覆盖真实创建提交后、第二段绑定事务无法开始的失败边界。
+// TestEmailOAuthBeginFailureCompensatesUser covers a binding transaction failing to begin after user creation commits.
 func TestEmailOAuthBeginFailureCompensatesUser(t *testing.T) {
 	integrationDB, _ := identityDatabase(t)
 	ctx := context.Background()

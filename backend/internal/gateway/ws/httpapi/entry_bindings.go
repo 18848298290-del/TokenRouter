@@ -37,7 +37,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Bindings 绑定 WS 入站和每轮执行接口。
+// Bindings connects WebSocket entry and per-turn execution dependencies.
 type Bindings struct {
 	BindSticky   func(context.Context, *int64, string, int64) error
 	Pricing      *admission.ModelPricing
@@ -64,7 +64,7 @@ type Bindings struct {
 
 type openAIWSHTTPBackend struct{ bindings Bindings }
 
-// openAIWSEntryAdapter 的每个方法仅接入一个已有能力，主循环与 turn 回调在 gateway/ws。
+// openAIWSEntryAdapter supplies entry operations; gateway/ws owns the loop and turn callbacks.
 type openAIWSEntryAdapter struct {
 	bindings     Bindings
 	c            *gin.Context
@@ -76,7 +76,7 @@ type openAIWSEntryAdapter struct {
 	log          *zap.Logger
 }
 
-// openAIWSEntryTarget 向 WS 流程提供所选提供商的逐步执行接口。
+// openAIWSEntryTarget exposes execution steps for the selected provider.
 type openAIWSEntryTarget struct {
 	root      *openAIWSEntryAdapter
 	provider  *gatewayprovider.ExecutionProvider
@@ -84,10 +84,10 @@ type openAIWSEntryTarget struct {
 	token     string
 }
 
-// wsEntryLogger 只持有日志句柄，后台完成回调不保留 HTTP 请求对象。
+// wsEntryLogger holds a logger so background completion callbacks do not retain the HTTP request.
 type wsEntryLogger struct{ log *zap.Logger }
 
-// New 将 HTTP 升级接口与 WS 用例绑定。
+// New binds HTTP upgrade handling to WebSocket execution.
 func New(options ResponsesWSOptions, b Bindings) *ResponsesWSHandler {
 	return NewResponsesWSHandler(options, openAIWSHTTPBackend{bindings: b}, b.Common.Support.Concurrency)
 }
@@ -143,7 +143,7 @@ func (p openAIWSHTTPBackend) Entry(c *gin.Context, call ResponsesWSCall) gateway
 
 func (p *openAIWSEntryAdapter) Logger() gatewayws.EntryLogger { return wsEntryLogger{p.log} }
 func (p *openAIWSEntryAdapter) SetLogger(log gatewayws.EntryLogger) {
-	// 固定适配器的 With 返回同类记录器；违反此内部约定仍作为编程错误失败。
+	// With returns wsEntryLogger; another implementation violates this internal requirement.
 	typed, ok := log.(wsEntryLogger)
 	if !ok {
 		panic("unexpected websocket entry logger type")
@@ -238,7 +238,7 @@ func (p *openAIWSEntryAdapter) FeatureDenied() {
 	gatewayhttp.MarkOpsClientBusinessLimited(p.c, gatewayhttp.OpsClientBusinessLimitedReasonLocalFeatureGate)
 }
 
-// AcquireKey 为当前轮次预占 Key 请求额度，返回租约取消信号。
+// AcquireKey reserves this turn's Key request allowance and returns a context carrying lease cancellation.
 func (p *openAIWSEntryAdapter) AcquireKey(ctx context.Context) (context.Context, func(), error) {
 	if p.bindings.Keys == nil {
 		return ctx, nil, p.CloseError(1011, "API key request limiter unavailable", apikey.ErrKeyLimiterUnavailable)
@@ -278,7 +278,7 @@ func (p *openAIWSEntryAdapter) Eligibility(ctx context.Context) error {
 	return p.bindings.CheckFunding(ctx, p.key, p.subscription, "", false)
 }
 
-// AuthorizeTurn 使用当前身份和订阅检查下一轮，已放行轮次使用各自的完成快照。
+// AuthorizeTurn checks current identity and subscription data; admitted turns retain their completion snapshots.
 func (p *openAIWSEntryAdapter) AuthorizeTurn(ctx context.Context) error {
 	if p.bindings.Keys == nil || p.bindings.CheckFunding == nil {
 		return apikey.ErrAuthenticationStopped
@@ -503,7 +503,7 @@ func (t *openAIWSEntryTarget) UpdateUsage(ctx context.Context, headers map[strin
 func (t *openAIWSEntryTarget) PrepareCompletion(ctx context.Context, result *gatewayws.ForwardResult, capture gatewayws.TurnCapture, model string, mapping routing.GroupMappingResult, body []byte, cyber bool) *completion.Input {
 	p := t.root
 	legacy := gatewayprovider.ForwardResultFromWS(result)
-	// 完成快照携带本轮请求 ID 和模型映射，后台任务通过本轮记录器补充诊断信息。
+	// Capture this turn's request ID, model mapping, and recorder for background completion diagnostics.
 	captureContext := gatewayhttp.PropagateAPIKeyModelRedirectTrace(gatewayhttp.CompletionContext(p.c), ctx)
 	if id := telemetry.RequestIDValue(ctx); id != "" {
 		captureContext = context.WithValue(captureContext, telemetry.RequestID, id)
@@ -593,7 +593,7 @@ func (l wsEntryLogger) Debug(message string, fields ...gatewayws.EntryField) {
 	l.log.Debug(message, wsEntryLogFields(fields)...)
 }
 
-// FailoverPresentation 只转换错误展示字段，HTTP 映射由原生 Adapter 唯一持有。
+// FailoverPresentation extracts display fields; the HTTP adapter maps them to client responses.
 func FailoverPresentation(err *forwardcore.UpstreamFailoverError) *gatewayhttp.ResponsesWSFailure {
 	if err == nil {
 		return nil

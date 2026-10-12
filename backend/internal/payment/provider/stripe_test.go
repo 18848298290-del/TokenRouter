@@ -15,7 +15,7 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// stripeRefundBackend 捕获 Stripe SDK 的退款参数，避免测试访问外部网络。
+// stripeRefundBackend captures Stripe SDK refund parameters and serves local test responses.
 type stripeRefundBackend struct {
 	params []*stripe.RefundCreateParams
 }

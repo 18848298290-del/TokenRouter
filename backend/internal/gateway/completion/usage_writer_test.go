@@ -10,12 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// usageWriterSpy 接收用量，测试通过请求观察者检查后台补记后的摘要。
+// usageWriterSpy accepts usage while request observers expose the updated summary.
 type usageWriterSpy struct{}
 
 func (usageWriterSpy) Create(context.Context, *UsageLog) (bool, error) { return true, nil }
 
-// TestWriteUsagePreservesRequestLifecycle 覆盖请求结束前后及 WS 轮次的后台用量补记。
+// TestWriteUsagePreservesRequestLifecycle covers background updates before and after HTTP and WS-turn completion.
 func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		for _, child := range []bool{false, true} {
@@ -63,7 +63,7 @@ func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 	}
 }
 
-// TestWriteUsageKeepsTaskSeparateFromPollingRequest 后台任务的用量不能完成当前轮询请求。
+// TestWriteUsageKeepsTaskSeparateFromPollingRequest checks that task usage cannot finish the polling request.
 func TestWriteUsageKeepsTaskSeparateFromPollingRequest(t *testing.T) {
 	var parent, task telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "poll", State: "running"}, func(record telemetry.RequestRecord) { parent = record })

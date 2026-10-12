@@ -23,7 +23,7 @@ type AnnouncementRead struct {
 	AnnouncementID int64 `json:"announcement_id,omitempty"`
 	// UserID holds the value of the "user_id" field.
 	UserID int64 `json:"user_id,omitempty"`
-	// 用户首次已读时间
+	// Time the user first read the announcement
 	ReadAt time.Time `json:"read_at,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`

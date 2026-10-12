@@ -7,7 +7,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CRSHandler 只解析管理请求，六类同步及逐条结果由提供商用例拥有。
+// CRSHandler binds administrator requests and delegates synchronization and per-item results to provider.CRSSync.
 type CRSHandler struct{ core *provider.CRSSync }
 
 type SyncFromCRSRequest struct {
@@ -25,7 +25,7 @@ type PreviewFromCRSRequest struct {
 
 func NewCRSHandler(core *provider.CRSSync) *CRSHandler { return &CRSHandler{core: core} }
 
-// SyncFromCRS 执行管理员同步。
+// SyncFromCRS synchronizes the selected CRS accounts for an administrator.
 // POST /api/v1/admin/providers/sync/crs
 func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 	var req SyncFromCRSRequest
@@ -34,7 +34,7 @@ func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 		return
 	}
 
-	// 缺省同步代理，传入 false 时关闭同步。
+	// Proxy synchronization defaults to enabled; false disables it.
 	syncProxies := true
 	if req.SyncProxies != nil {
 		syncProxies = *req.SyncProxies
@@ -48,7 +48,7 @@ func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 		SelectedProviderIDs: req.SelectedProviderIDs,
 	})
 	if err != nil {
-		// 按 CRS 接口格式返回错误内容。
+		// Return the error in the CRS endpoint's response format.
 		response.InternalError(c, "CRS sync failed: "+err.Error())
 		return
 	}
@@ -56,7 +56,7 @@ func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// PreviewFromCRS 返回同步前预览。
+// PreviewFromCRS returns a preview before synchronization.
 // POST /api/v1/admin/providers/sync/crs/preview
 func (h *CRSHandler) PreviewFromCRS(c *gin.Context) {
 	var req PreviewFromCRSRequest

@@ -14,10 +14,10 @@ const (
 	ProviderBulkChanged
 )
 
-// ProviderEvent 表达存储写入产生的技术变更，实际 outbox 名称与编码由装配提供。
+// ProviderEvent identifies a storage change; application assembly supplies its outbox name and encoding.
 type ProviderEvent uint8
 
-// ProviderEvents 提供 outbox 编码、事件写入和提交后的缓存发布。
+// ProviderEvents encodes and writes outbox events and publishes cache updates after commit.
 type ProviderEvents interface {
 	Name(ProviderEvent) string
 	Write(context.Context, postgresinfra.Executor, ProviderEvent, *int64, *int64, any) error
@@ -55,7 +55,7 @@ func (r *ProviderStore) dropSnapshot(ctx context.Context, id int64) {
 	}
 }
 
-// afterChangeDetached 在请求取消后仍以短超时传播最新提供商快照。
+// afterChangeDetached propagates the latest provider snapshot with a two-second timeout independent of request cancellation.
 func (r *ProviderStore) afterChangeDetached(ctx context.Context, providerID int64) {
 	base := context.Background()
 	if ctx != nil {

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDecisionPreservesLazyPolicyOrder 检查系统短路、分组关闭和按需查价的调用顺序。
+// TestDecisionPreservesLazyPolicyOrder checks short-circuiting, group force_off, and lazy price checks.
 func TestDecisionPreservesLazyPolicyOrder(t *testing.T) {
 	for _, tc := range []struct {
 		name, group, key, original, action string
@@ -34,7 +34,7 @@ func TestDecisionPreservesLazyPolicyOrder(t *testing.T) {
 	}
 }
 
-// TestEmptyBodyDoesNotReadFastPolicy 检查空报文直接返回。
+// TestEmptyBodyDoesNotReadFastPolicy checks that empty input bypasses policy reads.
 func TestEmptyBodyDoesNotReadFastPolicy(t *testing.T) {
 	result, err := ApplyBody(nil, DecisionInput{})
 	require.NoError(t, err)

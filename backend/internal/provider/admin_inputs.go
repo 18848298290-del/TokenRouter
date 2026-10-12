@@ -10,14 +10,14 @@ type CreateProviderInput struct {
 	ProxyID            *int64
 	Concurrency        int
 	Priority           int
-	RateMultiplier     *float64 // 提供商计费倍率（>=0，允许 0）
+	RateMultiplier     *float64 // Provider billing multiplier; zero is allowed.
 	LoadFactor         *int
 	GroupIDs           []int64
 	ExpiresAt          *int64
 	AutoPauseOnExpired *bool
 }
 
-// ShadowOptions 描述影子创建参数；影子不持认证凭据。
+// ShadowOptions specifies creation settings for a shadow that inherits authentication credentials.
 type ShadowOptions struct {
 	Name        string
 	Priority    int
@@ -26,21 +26,21 @@ type ShadowOptions struct {
 }
 
 type UpdateProviderInput struct {
-	// PatchCredentials 只由字段维护用例设置，HTTP 不能借此写任意完整凭据。
+	// PatchCredentials enables internal field maintenance and cannot be set through JSON input.
 	PatchCredentials bool `json:"-"`
-	// PatchExtra 仅用于维护字段，保留锁内最新的无关管理配置。
+	// PatchExtra preserves unrelated settings from the latest locked record during field maintenance.
 	PatchExtra bool `json:"-"`
-	// ExpectedCredentials 只由内部刷新入口提供，HTTP 输入不能设置。
+	// ExpectedCredentials is supplied by internal refresh callers and excluded from JSON input.
 	ExpectedCredentials *CredentialVersion `json:"-"`
 	Name                string
 	Notes               *string
-	Type                string // Provider type: oauth, setup-token, apikey
+	Type                string // Provider type.
 	Credentials         map[string]any
 	Extra               map[string]any
 	ProxyID             *int64
-	Concurrency         *int     // 使用指针区分"未提供"和"设置为0"
-	Priority            *int     // 使用指针区分"未提供"和"设置为0"
-	RateMultiplier      *float64 // 提供商计费倍率（>=0，允许 0）
+	Concurrency         *int     // Nil leaves the value unchanged; a pointer to zero sets zero.
+	Priority            *int     // Nil leaves the value unchanged; a pointer to zero sets zero.
+	RateMultiplier      *float64 // Provider billing multiplier; zero is allowed.
 	LoadFactor          *int
 	Status              string
 	GroupIDs            *[]int64
@@ -48,7 +48,7 @@ type UpdateProviderInput struct {
 	AutoPauseOnExpired  *bool
 }
 
-// BulkUpdateProvidersInput 指定批量修改的筛选条件和待更新字段，省略的字段保持不变。
+// BulkUpdateProvidersInput selects providers and the fields to update; omitted fields remain unchanged.
 type BulkUpdateProvidersInput struct {
 	ProviderIDs    []int64
 	Filters        *BulkUpdateProviderFilters
@@ -56,7 +56,7 @@ type BulkUpdateProvidersInput struct {
 	ProxyID        *int64
 	Concurrency    *int
 	Priority       *int
-	RateMultiplier *float64 // 提供商计费倍率（>=0，允许 0）
+	RateMultiplier *float64 // Provider billing multiplier; zero is allowed.
 	LoadFactor     *int
 	Status         string
 	Schedulable    *bool
@@ -74,14 +74,14 @@ type BulkUpdateProviderFilters struct {
 	PrivacyMode string
 }
 
-// BulkUpdateProviderResult 保留单提供商修改结果。
+// BulkUpdateProviderResult records one provider's update outcome.
 type BulkUpdateProviderResult struct {
 	ProviderID int64  `json:"provider_id"`
 	Success    bool   `json:"success"`
 	Error      string `json:"error,omitempty"`
 }
 
-// BulkUpdateProvidersResult 保留批量结果的顺序与计数。
+// BulkUpdateProvidersResult records ordered outcomes and success/failure counts.
 type BulkUpdateProvidersResult struct {
 	Success    int                        `json:"success"`
 	Failed     int                        `json:"failed"`
@@ -90,9 +90,9 @@ type BulkUpdateProvidersResult struct {
 	Results    []BulkUpdateProviderResult `json:"results"`
 }
 
-// ProviderBulkUpdate 表达批量配置补丁；nil 指针表示不修改对应字段。
+// ProviderBulkUpdate is a configuration patch; nil pointers leave their fields unchanged.
 type ProviderBulkUpdate struct {
-	// ProtocolUpdates 是校验后的逐提供商非敏感协议补丁，同一 SQL 原子合并。
+	// ProtocolUpdates contains validated, non-secret protocol patches merged atomically in one SQL statement.
 	ProtocolUpdates map[int64]map[string]any
 
 	Name           *string
@@ -105,6 +105,6 @@ type ProviderBulkUpdate struct {
 	Schedulable    *bool
 	Credentials    map[string]any
 	Extra          map[string]any
-	// EnsureCodexFingerprintSeed 要求仓储原子保留或生成启用收敛的提供商 seed。
+	// EnsureCodexFingerprintSeed asks storage to atomically retain or create a seed when fingerprint convergence is enabled.
 	EnsureCodexFingerprintSeed bool
 }

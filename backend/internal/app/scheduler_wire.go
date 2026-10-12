@@ -10,7 +10,7 @@ import (
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
-// schedulerProviders 构造共享调度实例，生命周期管理器调用其 Start 和 Stop。
+// schedulerProviders builds shared scheduling instances whose lifecycle hooks start and stop them.
 var schedulerProviders = wire.NewSet(provideSelectionSnapshots, provideSelectionReads, provideSelectionShared, provideSelectionFreeQuota, provideSelectionModelTransient, provideSelectionProxyCircuit, provideGenericSelection, provideCompatibleSelection, provideGeminiSelection, provideSchedulerSharedState, provideUpstreamHealth, provideSchedulerDiagnosticsHTTP, provideSchedulerCache,
 	wire.Bind(new(scheduler.SnapshotCache), new(*schedulerredis.SnapshotCache)),
 	provideSchedulerSnapshot,

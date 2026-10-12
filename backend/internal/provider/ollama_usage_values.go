@@ -38,7 +38,7 @@ var (
 	)
 )
 
-// OllamaUsageFetchInput 保存出站用量查询参数。
+// OllamaUsageFetchInput contains outbound usage-query parameters.
 type OllamaUsageFetchInput struct {
 	ProviderID  int64
 	Concurrency int
@@ -49,21 +49,23 @@ type OllamaUsageFetchInput struct {
 
 type OllamaUsageObservation = usageview.OllamaUsageObservation
 
-// OllamaCloudUsageSettings 控制可选的请求驱动刷新任务。
+// OllamaCloudUsageSettings controls optional activity-triggered refreshes.
 //
-// IntervalMinutes 是最大等待上限：模型请求持续到达并不断推迟尾随防抖时，
-// 超过该时长会强制刷新。DebounceMinutes 是分组最近一次请求后的静默期。
+// IntervalMinutes caps waiting when ongoing requests keep postponing debounce.
+// DebounceMinutes is the quiet period after the group's latest request.
 type OllamaCloudUsageSettings struct {
 	Enabled         bool `json:"enabled"`
-	IntervalMinutes int  `json:"interval_minutes"` // 请求持续到达时的最大等待时间
-	DebounceMinutes int  `json:"debounce_minutes"` // 最近一次请求后的尾随静默期
+	IntervalMinutes int  `json:"interval_minutes"` // Maximum wait during continuous activity, in minutes.
+	DebounceMinutes int  `json:"debounce_minutes"` // Quiet period after the latest request, in minutes.
 }
 
 type OllamaCloudUsageData = usageview.OllamaCloudUsageData
 
-// OllamaCloudUsageSnapshot 是保存在提供商 Extra 中的用量观测。
-// NextRefreshAt 随快照持久化。ok 状态下它表示最大等待时间，自动刷新由分组活动时间与防抖、最大等待共同决定。
-// failed 或 unauthorized 状态下它表示 Retry-After 或指数退避计算的最早重试时间，实际到期取它与 activityDue 的较晚值。
+// OllamaCloudUsageSnapshot is a usage observation stored in provider Extra.
+// On success, scheduling uses activity, debounce, and the configured maximum wait, independent of
+// NextRefreshAt.
+// On failure, NextRefreshAt is the retry/backoff floor; scheduling uses the later of it and the activity-based
+// due time.
 type OllamaCloudUsageSnapshot struct {
 	Status        string                `json:"status"`
 	Data          *OllamaCloudUsageData `json:"data,omitempty"`
@@ -75,7 +77,7 @@ type OllamaCloudUsageSnapshot struct {
 	LastError     string                `json:"last_error,omitempty"`
 }
 
-// OllamaCloudUsageState 是向管理员暴露的专用 DTO。
+// OllamaCloudUsageState contains the usage state exposed to administrators.
 type OllamaCloudUsageState struct {
 	ProviderID              int64                     `json:"provider_id"`
 	Eligible                bool                      `json:"eligible"`

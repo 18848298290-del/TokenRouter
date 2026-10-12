@@ -17,21 +17,21 @@ const (
 	SettingKeyProviderQuotaNotifyEmails  = "provider_quota_notify_emails"
 )
 
-// AdminSettings 明确区分提供商健康阈值和通知目的地。
+// AdminSettings contains provider scheduling thresholds and quota notification settings.
 type AdminSettings struct {
 	ProviderQuotaNotifyEnabled   bool            `json:"provider_quota_notify_enabled"`
 	ProviderQuotaNotifyEmails    []contact.Entry `json:"provider_quota_notify_emails"`
 	ProviderSchedulingThresholds map[string]int  `json:"provider_scheduling_thresholds"`
 }
 
-// AdminReadSettings 保存综合管理页展示的提供商设置。
+// AdminReadSettings contains provider settings displayed on the admin settings page.
 type AdminReadSettings struct {
 	ProviderQuotaNotifyEmails    []contact.Entry
 	ProviderQuotaNotifyEnabled   bool
 	ProviderSchedulingThresholds map[string]int
 }
 
-// PrepareAdminSettings 准备管理设置的写入值，邮箱按设置格式序列化，nil 阈值按缺省值处理。
+// PrepareAdminSettings serializes notification settings and validates supplied thresholds. Nil thresholds are omitted.
 func PrepareAdminSettings(value AdminSettings) (map[string]string, error) {
 	values := map[string]string{SettingKeyProviderQuotaNotifyEnabled: strconv.FormatBool(value.ProviderQuotaNotifyEnabled), SettingKeyProviderQuotaNotifyEmails: contact.MarshalNotifyEmails(value.ProviderQuotaNotifyEmails)}
 	if value.ProviderSchedulingThresholds != nil {
@@ -48,7 +48,7 @@ func PrepareAdminSettings(value AdminSettings) (map[string]string, error) {
 	return values, nil
 }
 
-// ReadAdminSettings 从同一批持久化数据解析展示值，并处理字段缺省值。
+// ReadAdminSettings parses stored settings and applies defaults for missing values.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 
@@ -70,7 +70,7 @@ func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	return result
 }
 
-// SettingsParticipant 准备提供商设置键的写入数据。
+// SettingsParticipant prepares writes for provider settings keys.
 func SettingsParticipant() settings.Participant {
 	keys := []string{SettingKeyProviderQuotaNotifyEnabled, SettingKeyProviderQuotaNotifyEmails, SettingKeyProviderSchedulingThresholds}
 	return settings.Participant{Module: "provider", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {

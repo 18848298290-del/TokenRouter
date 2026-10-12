@@ -64,6 +64,8 @@ func NormalizeImageBillingTierOrDefault(size string) string {
 	return ImageBillingSize2K
 }
 
+// ResolveImageBillingSize prefers the highest recognized output tier, then the input tier,
+// then 2K. OutputSize retains the first reported size for display, which may differ from BillingSize.
 func ResolveImageBillingSize(inputSize string, outputSizes []string) ImageBillingSizeResolution {
 	inputSize = strings.TrimSpace(inputSize)
 	outputSizes = CompactTrimmedStrings(outputSizes)

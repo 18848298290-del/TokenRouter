@@ -11,9 +11,9 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ResponsesStreamOutputItems 按 output_index 保存 response.output_item.done 中的原始 item。
-// 缓冲重建和流式收集都优先使用 done item，保存 item 身份、status、phase、顺序和未知类型。
-// 增量累积器仅记录一个 reasoning、一个 message 和多个 function call，供缺少 done item 时使用。
+// ResponsesStreamOutputItems stores raw output_item.done items by output_index.
+// Completed items retain identity, status, phase, order, and unknown types during reconstruction.
+// Delta accumulation models one reasoning item, one message, and function calls when done items are absent.
 type ResponsesStreamOutputItems struct {
 	items map[int]json.RawMessage
 }
@@ -22,8 +22,8 @@ func NewResponsesStreamOutputItems() *ResponsesStreamOutputItems {
 	return &ResponsesStreamOutputItems{items: make(map[int]json.RawMessage)}
 }
 
-// Observe 原样记录 response.output_item.done 事件中的 item。保留原始 JSON 字节，
-// 使厂商扩展字段和未来字段在重建时不丢失。
+// Observe copies raw items from response.output_item.done events so reconstruction retains
+// vendor extensions and fields unknown to this gateway.
 func (r *ResponsesStreamOutputItems) Observe(data []byte) {
 	if r == nil || len(data) == 0 || !gjson.ValidBytes(data) {
 		return
@@ -43,7 +43,7 @@ func (r *ResponsesStreamOutputItems) HasItems() bool {
 	return r != nil && len(r.items) > 0
 }
 
-// Count 返回流中报告为 done 的不同 output item 数量。
+// Count returns the number of distinct completed output indexes.
 func (r *ResponsesStreamOutputItems) Count() int {
 	if r == nil {
 		return 0
@@ -51,7 +51,7 @@ func (r *ResponsesStreamOutputItems) Count() int {
 	return len(r.items)
 }
 
-// BuildOutput 按 output_index 排序返回已记录的 item。
+// BuildOutput returns recorded items ordered by output_index.
 func (r *ResponsesStreamOutputItems) BuildOutput() ([]byte, bool) {
 	if !r.HasItems() {
 		return nil, false
@@ -84,8 +84,8 @@ func NormalizeResponsesStreamingTerminalOutput(data []byte, acc *BufferedRespons
 	hasAccumulatedOutput := (acc != nil && acc.HasContent()) || len(imageOutputs) > 0 || doneItems.HasItems()
 	if output.Exists() && output.IsArray() {
 		terminalCount := len(output.Array())
-		// 终止 output 至少包含流中报告数量的 item 时保持不变；数量更少表示终止事件
-		// 丢弃了流中已经报告为 done 的 item，此时以已报告 item 作为本轮权威记录。
+		// A shorter terminal output has omitted reported items; rebuild it from done events.
+		// Keep a nonempty terminal output with at least as many items.
 		if terminalCount > 0 && terminalCount >= doneItems.Count() {
 			return data, false
 		}
@@ -95,8 +95,8 @@ func NormalizeResponsesStreamingTerminalOutput(data []byte, acc *BufferedRespons
 	}
 
 	outputJSON := []byte("[]")
-	// 与 ReconstructResponseOutputFromSSE 保持相同优先级：流实际报告的 item 优先于
-	// delta 重建结果。图片生成 item 也会以 done 事件到达，因此此处不能再拼接 imageOutputs。
+	// Prefer reported items as ReconstructResponseOutputFromSSE does. Image items also arrive
+	// in done events, so appending imageOutputs here would duplicate them.
 	if reconstructed, ok := doneItems.BuildOutput(); ok {
 		outputJSON = reconstructed
 	} else if reconstructed, ok := BuildResponsesOutputJSON(acc, imageOutputs); ok {
@@ -109,10 +109,10 @@ func NormalizeResponsesStreamingTerminalOutput(data []byte, acc *BufferedRespons
 	return updated, true
 }
 
-// CollectRawResponsesOutputItemsFromSSE 按到达顺序收集 output_item.done 中的原始 item。
-// 已产出结果的图片项会修正进行中状态，其余字段保留原始 JSON 字节，包括 encrypted_content、
-// summary、opaque 等压缩字段（#3777 问题 2）。done 缺少 compaction 时，再从 added 收集，
-// 部分上游的 compaction 完整结果仅出现在 added 中。
+// CollectRawResponsesOutputItemsFromSSE collects raw done items in arrival order.
+// It repairs completed image status while retaining fields such as encrypted_content,
+// summary, and opaque (#3777 issue 2). If done events lack compaction, it also reads
+// compaction items from added events, where some upstreams send the complete result.
 func CollectRawResponsesOutputItemsFromSSE(bodyText string) ([]byte, bool) {
 	var items []json.RawMessage
 	seen := make(map[string]struct{})
@@ -143,8 +143,8 @@ func CollectRawResponsesOutputItemsFromSSE(bodyText string) ([]byte, bool) {
 		}
 		appendItem(gjson.GetBytes(data, "item"))
 	})
-	// done 缺少 compaction 时再检查 added，支持其他 item 有 done、compaction 仅有 added 的流。
-	// Codex 要求恰好一个 compaction item，done 已包含时跳过 added。
+	// Some streams report compaction only in added events. Read those only when done lacks it
+	// to avoid duplicating the single compaction item Codex expects.
 	if !hasCompactionItem {
 		protocolopenai.ForEachSSEDataPayload(bodyText, func(data []byte) {
 			if strings.TrimSpace(gjson.GetBytes(data, "type").String()) != "response.output_item.added" {
@@ -167,12 +167,10 @@ func CollectRawResponsesOutputItemsFromSSE(bodyText string) ([]byte, bool) {
 	return outputJSON, true
 }
 
-// ReconstructResponseOutputFromSSE 扫描原始 SSE 正文，为 output 为空的终止
-// 事件重建 JSON output 数组。优先使用 output_item.done 中的原始条目，因为
-// Responses 协议将其定义为条目的最终形态；delta 累加仅覆盖文本、函数调用和
-// reasoning 内容，会静默丢弃 compaction 等未知类型，进而导致 Codex remote
-// compact v2 报告没有拿到唯一的 compaction 条目（#3887）。无法重建时返回
-// (nil, false)。
+// ReconstructResponseOutputFromSSE rebuilds output from raw SSE, preferring completed items.
+// Delta accumulation covers text, function calls, and reasoning but loses unknown types
+// such as compaction. Missing that item breaks Codex remote compact v2 (#3887).
+// It returns (nil, false) when no output can be reconstructed.
 func ReconstructResponseOutputFromSSE(bodyText string) ([]byte, bool) {
 	if outputJSON, ok := CollectRawResponsesOutputItemsFromSSE(bodyText); ok {
 		return outputJSON, true

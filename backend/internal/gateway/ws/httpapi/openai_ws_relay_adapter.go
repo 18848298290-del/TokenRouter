@@ -10,7 +10,7 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
-// wsPlatformFrames 在网关与供应商 relay 之间转换帧枚举。
+// wsPlatformFrames converts gateway frame types to the upstream relay enum.
 type wsPlatformFrames struct{ gatewayws.FrameConn }
 
 func (c wsPlatformFrames) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
@@ -30,7 +30,7 @@ func relayExitProjection(e openaiwsv2.RelayExit) gatewayws.RelayExit {
 	return gatewayws.RelayExit{Stage: e.Stage, Err: e.Err, Graceful: e.Graceful, WroteDownstream: e.WroteDownstream}
 }
 
-// RunRelay 接入帧执行原语；回调中的网关资格、快照及完成规则全部由网关核心提供。
+// RunRelay adapts frame transport; the gateway supplies admission, snapshot, and completion callbacks.
 func (p *wsPassthroughAdapter) RunRelay(input gatewayws.RelayInput) (gatewayws.RelayResult, *gatewayws.RelayExit) {
 	o := input.Options
 	opts := openaiwsv2.RelayOptions{

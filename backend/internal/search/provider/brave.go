@@ -16,7 +16,7 @@ const (
 	braveProviderName   = "brave"
 )
 
-// braveSearchURL is pre-parsed at init time; url.Parse cannot fail on a constant literal.
+// braveSearchURL parses the fixed, valid endpoint once at initialization.
 var braveSearchURL, _ = url.Parse(braveSearchEndpoint)
 
 // BraveProvider implements web search via the Brave Search API.
@@ -40,7 +40,7 @@ type braveResult struct {
 }
 
 // NewBraveProvider creates a Brave Search provider.
-// The caller is responsible for configuring the http.Client with proxy/timeouts.
+// The caller configures proxy and timeouts; a nil client uses http.DefaultClient.
 func NewBraveProvider(apiKey string, httpClient *http.Client) *BraveProvider {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -59,7 +59,7 @@ func (b *BraveProvider) Search(ctx context.Context, req SearchRequest) (*SearchR
 		count = braveMaxCount
 	}
 
-	u := *braveSearchURL // copy the pre-parsed URL
+	u := *braveSearchURL // Keep query parameters local to this request.
 	q := u.Query()
 	q.Set("q", req.Query)
 	q.Set("count", strconv.Itoa(count))

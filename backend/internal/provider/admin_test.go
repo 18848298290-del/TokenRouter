@@ -24,10 +24,10 @@ type providerRepoStubForClearProviderError struct {
 	clearTempUnschedCalls    int
 }
 
-// adminClearErrorRuntimeBlockRecorder 记录管理员恢复后的内存阻断清理。
+// adminClearErrorRuntimeBlockRecorder records in-memory blocks cleared by admin recovery.
 type adminClearErrorRuntimeBlockRecorder struct{ clearedIDs []int64 }
 
-// deleteProviderStore 替换删除所需的数据库读写，级联顺序由 Admin 执行。
+// deleteProviderStore supplies deletion storage calls so tests can verify Admin's cascade order.
 type deleteProviderStore struct {
 	AdminStore
 	shadows            []*Record

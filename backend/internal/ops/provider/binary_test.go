@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// binaryFixtureClient 将受信资产请求映射到本地测试夹具。
+// binaryFixtureClient maps trusted asset requests to local fixtures.
 type binaryFixtureClient struct {
 	url       string
 	downloads *[]string
@@ -95,7 +95,7 @@ func TestBinaryInstallAndRollback(t *testing.T) {
 	data, err = os.ReadFile(exe)
 	require.NoError(t, err)
 	require.Equal(t, "old", string(data))
-	// 第二次 rename 失败时必须恢复原二进制。
+	// Failure of the second rename must restore the previous executable.
 	calls := 0
 	installer.rename = func(a, b string) error {
 		calls++
@@ -114,14 +114,14 @@ func TestBinaryInstallAndRollback(t *testing.T) {
 	data, err = os.ReadFile(exe)
 	require.NoError(t, err)
 	require.Equal(t, "old", string(data))
-	// 旧版本只有旧归档名称，校验和必须仍按实际下载文件匹配。
+	// Legacy releases use legacy archive names, which must still match their checksum entries.
 	sum = fmt.Sprintf("%x  %s\n", sha256.Sum256(buffer.Bytes()), legacyName)
 	require.NoError(t, installer.Apply(context.Background(), assets[1:]))
 	require.Equal(t, "https://github.com/fixture/"+legacyName, downloads[len(downloads)-1])
 	require.NoError(t, installer.Rollback())
 }
 
-// TestBinaryArchiveNameCompatibility 验证新旧归档条目均可读取，且新条目不受排列顺序影响。
+// TestBinaryArchiveNameCompatibility checks both names and prefers tokenrouter regardless of entry order.
 func TestBinaryArchiveNameCompatibility(t *testing.T) {
 	for _, names := range [][]string{{"sub2api"}, {"tokenrouter"}, {"sub2api", "tokenrouter"}, {"tokenrouter", "sub2api"}} {
 		var buffer bytes.Buffer

@@ -19,7 +19,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// APIKeyHandler 只持有 Key 用例与路由展示端口；分组算法和容量查询仍由其原所有者提供。
+// APIKeyHandler handles key use cases and delegates group presentation and capacity reads.
 type APIKeyHandler[G any] struct {
 	idempotencyhttp.Executor
 
@@ -38,19 +38,19 @@ type CreateAPIKeyRequest struct {
 	Scope       string `json:"scope" binding:"omitempty,oneof=personal team"`
 	GroupID     *int64 `json:"group_id"` // nullable
 	IsComposite bool   `json:"is_composite"`
-	// CompositeGroups 是复合 Key 的完整分组前缀映射。
+	// CompositeGroups contains the full set of group-prefix mappings.
 	CompositeGroups         []apikey.APIKeyCompositeGroupInput `json:"composite_groups"`
-	CustomKey               *string                            `json:"custom_key"`       // 可选的自定义key
-	IPWhitelist             []string                           `json:"ip_whitelist"`     // IP 白名单
-	IPBlacklist             []string                           `json:"ip_blacklist"`     // IP 黑名单
-	FastModePolicy          string                             `json:"fast_mode_policy"` // Fast 模式策略，空值表示跟随请求
-	BillingMode             string                             `json:"billing_mode"`     // 结算模式，空值表示自动选择
+	CustomKey               *string                            `json:"custom_key"`       // Optional custom credential
+	IPWhitelist             []string                           `json:"ip_whitelist"`     // Allowed IP addresses and CIDRs
+	IPBlacklist             []string                           `json:"ip_blacklist"`     // Denied IP addresses and CIDRs
+	FastModePolicy          string                             `json:"fast_mode_policy"` // Empty follows the client request
+	BillingMode             string                             `json:"billing_mode"`     // Empty selects funding automatically
 	PreferredSubscriptionID *int64                             `json:"preferred_subscription_id"`
-	ModelMapping            map[string]string                  `json:"model_mapping"`   // 当前 Key 的完整模型重定向规则
-	Quota                   *float64                           `json:"quota"`           // 配额限制 (USD)
-	ExpiresInDays           *int                               `json:"expires_in_days"` // 过期天数
+	ModelMapping            map[string]string                  `json:"model_mapping"`   // Complete model redirect rules for this key
+	Quota                   *float64                           `json:"quota"`           // Quota limit in USD
+	ExpiresInDays           *int                               `json:"expires_in_days"` // Validity in days
 
-	// Key 请求上限，0 表示不限制。
+	// Key request limits; zero means unlimited.
 	ConcurrencyLimit int `json:"concurrency_limit"`
 	RPMLimit         int `json:"rpm_limit"`
 
@@ -58,7 +58,7 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h *float64 `json:"rate_limit_5h"`
 	RateLimit1d *float64 `json:"rate_limit_1d"`
 	RateLimit7d *float64 `json:"rate_limit_7d"`
-	// 绑定分组不可用时是否允许使用其明确配置的回退分组，nil 表示使用服务层默认值。
+	// Permits the configured fallback when the bound group is unavailable; nil uses the service default.
 	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"`
 }
 
@@ -67,20 +67,20 @@ type UpdateAPIKeyRequest struct {
 	Name        string `json:"name"`
 	GroupID     *int64 `json:"group_id"`
 	IsComposite *bool  `json:"is_composite"`
-	// CompositeGroups 非 nil 时完整替换复合映射。
+	// CompositeGroups replaces all mappings when non-nil.
 	CompositeGroups         *[]apikey.APIKeyCompositeGroupInput `json:"composite_groups"`
 	Status                  string                              `json:"status" binding:"omitempty,oneof=active inactive"`
-	IPWhitelist             *[]string                           `json:"ip_whitelist"`     // IP 白名单（nil 不修改，空数组清空）
-	IPBlacklist             *[]string                           `json:"ip_blacklist"`     // IP 黑名单（nil 不修改，空数组清空）
-	FastModePolicy          *string                             `json:"fast_mode_policy"` // nil 表示保持原配置
-	BillingMode             *string                             `json:"billing_mode"`     // nil 表示保持原配置
+	IPWhitelist             *[]string                           `json:"ip_whitelist"`     // nil: unchanged; empty: clear the allowlist
+	IPBlacklist             *[]string                           `json:"ip_blacklist"`     // nil: unchanged; empty: clear the denylist
+	FastModePolicy          *string                             `json:"fast_mode_policy"` // nil leaves the policy unchanged
+	BillingMode             *string                             `json:"billing_mode"`     // nil leaves the funding mode unchanged
 	PreferredSubscriptionID *int64                              `json:"preferred_subscription_id"`
-	ModelMapping            *map[string]string                  `json:"model_mapping"` // nil 不修改，空对象清空
-	Quota                   *float64                            `json:"quota"`         // 配额限制 (USD), 0=无限制
-	ExpiresAt               *string                             `json:"expires_at"`    // 过期时间 (ISO 8601)
-	ResetQuota              *bool                               `json:"reset_quota"`   // 重置已用配额
+	ModelMapping            *map[string]string                  `json:"model_mapping"` // nil: unchanged; empty object: clear mappings
+	Quota                   *float64                            `json:"quota"`         // Quota limit in USD; zero means unlimited
+	ExpiresAt               *string                             `json:"expires_at"`    // Expiration timestamp in RFC3339 format
+	ResetQuota              *bool                               `json:"reset_quota"`   // Reset consumed quota
 
-	// nil 保持配置，0 清除该项请求上限。
+	// Nil leaves each request limit unchanged; zero clears it.
 	ConcurrencyLimit *int `json:"concurrency_limit"`
 	RPMLimit         *int `json:"rpm_limit"`
 
@@ -88,8 +88,8 @@ type UpdateAPIKeyRequest struct {
 	RateLimit5h         *float64 `json:"rate_limit_5h"`
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
-	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
-	// nil 表示保持原配置不变。
+	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset window usage
+	// Nil leaves the fallback setting unchanged.
 	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"`
 }
 
@@ -98,7 +98,7 @@ type ApiKeyLimitInput struct {
 	value *float64
 }
 
-// APIKeyBillingSubscriptionOptionResponse 是前端选择指定订阅时使用的安全摘要。
+// APIKeyBillingSubscriptionOptionResponse exposes subscription options for funding selection.
 type APIKeyBillingSubscriptionOptionResponse struct {
 	ID               int64     `json:"id"`
 	PlanID           int64     `json:"plan_id"`
@@ -112,7 +112,7 @@ func NewAPIKeyHandler[G any](keys *apikey.APIKeyService, present func(*routing.G
 	return &APIKeyHandler[G]{apiKeyService: keys, presentGroup: present}
 }
 
-// SetGroupPresentation 设置已授权控制台查询的分组展示函数。
+// SetGroupPresentation configures group rendering for authorized console queries.
 func (h *APIKeyHandler[G]) SetGroupPresentation(present func(context.Context, *routing.Group, *accessview.GroupCapacitySummary, bool) *G) {
 	h.groupPresentation = present
 }
@@ -131,7 +131,7 @@ func (h *APIKeyHandler[G]) keyResponse(k *apikey.APIKey, language string) *dto.A
 	})
 }
 
-// ValidateAPIKeyLimitFields 对 HTTP 请求中显式提供的限额执行服务层统一校验。
+// ValidateAPIKeyLimitFields applies service validation to supplied HTTP limit fields.
 func ValidateAPIKeyLimitFields(limits ...ApiKeyLimitInput) error {
 	for _, limit := range limits {
 		if limit.value == nil {
@@ -144,7 +144,7 @@ func ValidateAPIKeyLimitFields(limits ...ApiKeyLimitInput) error {
 	return nil
 }
 
-// ValidateAPIKeyCreateRequest 校验创建请求中的限额与相对有效期。
+// ValidateAPIKeyCreateRequest validates limits and relative expiration.
 func ValidateAPIKeyCreateRequest(req CreateAPIKeyRequest) error {
 	if err := ValidateAPIKeyLimitFields(
 		ApiKeyLimitInput{field: "quota", value: req.Quota},
@@ -160,7 +160,7 @@ func ValidateAPIKeyCreateRequest(req CreateAPIKeyRequest) error {
 	return nil
 }
 
-// ValidateAPIKeyUpdateRequest 只校验更新请求中实际出现的限额字段。
+// ValidateAPIKeyUpdateRequest validates supplied update limits.
 func ValidateAPIKeyUpdateRequest(req UpdateAPIKeyRequest) error {
 	return ValidateAPIKeyLimitFields(
 		ApiKeyLimitInput{field: "quota", value: req.Quota},
@@ -171,7 +171,7 @@ func ValidateAPIKeyUpdateRequest(req UpdateAPIKeyRequest) error {
 }
 
 // List handles listing user's API keys with pagination
-// GET /api/v1/api-keys
+// GET /api/v1/keys
 func (h *APIKeyHandler[G]) List(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -218,7 +218,7 @@ func (h *APIKeyHandler[G]) List(c *gin.Context) {
 }
 
 // GetByID handles getting a single API key
-// GET /api/v1/api-keys/:id
+// GET /api/v1/keys/:id
 func (h *APIKeyHandler[G]) GetByID(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -238,7 +238,7 @@ func (h *APIKeyHandler[G]) GetByID(c *gin.Context) {
 		return
 	}
 
-	// 验证所有权
+	// Return the same error for missing keys and keys owned by another user.
 	if key.UserID != subject.UserID {
 		response.ErrorFrom(c, apikey.ErrAPIKeyNotFound)
 		return
@@ -248,7 +248,7 @@ func (h *APIKeyHandler[G]) GetByID(c *gin.Context) {
 }
 
 // Create handles creating a new API key
-// POST /api/v1/api-keys
+// POST /api/v1/keys
 func (h *APIKeyHandler[G]) Create(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -307,7 +307,7 @@ func (h *APIKeyHandler[G]) Create(c *gin.Context) {
 }
 
 // Update handles updating an API key
-// PUT /api/v1/api-keys/:id
+// PUT /api/v1/keys/:id
 func (h *APIKeyHandler[G]) Update(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -382,7 +382,7 @@ func (h *APIKeyHandler[G]) Update(c *gin.Context) {
 	response.Success(c, h.keyResponse(key, locale.FromContext(c.Request.Context())))
 }
 
-// RotateCredential 轮换当前用户的 API Key 凭据并返回原记录的新凭据。
+// RotateCredential replaces the current user's key credential and returns the updated record.
 func (h *APIKeyHandler[G]) RotateCredential(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -403,7 +403,7 @@ func (h *APIKeyHandler[G]) RotateCredential(c *gin.Context) {
 }
 
 // Delete handles deleting an API key
-// DELETE /api/v1/api-keys/:id
+// DELETE /api/v1/keys/:id
 func (h *APIKeyHandler[G]) Delete(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -426,7 +426,7 @@ func (h *APIKeyHandler[G]) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "API key deleted successfully"})
 }
 
-// GetAvailableGroups 获取用户可以绑定的分组列表
+// GetAvailableGroups lists groups the user may bind to a key.
 // GET /api/v1/groups/available
 func (h *APIKeyHandler[G]) GetAvailableGroups(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -478,7 +478,7 @@ func (h *APIKeyHandler[G]) GetAvailableGroups(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// GetBillingOptions 返回当前作用域可用于指定结算的订阅列表。
+// GetBillingOptions lists subscriptions available for funding in the requested scope.
 // GET /api/v1/keys/billing-options?scope=personal|team
 func (h *APIKeyHandler[G]) GetBillingOptions(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -519,7 +519,7 @@ func (h *APIKeyHandler[G]) getAvailableGroupCapacityMap(ctx context.Context, gro
 		groupIDs = append(groupIDs, groups[i].ID)
 	}
 
-	// 容量只作为分组选项的辅助负载信息，失败时保持原分组列表可用。
+	// Capacity is optional load information; a failed lookup must not prevent listing groups.
 	capacityMap, err := h.groupCapacityService.GetGroupCapacityByIDs(ctx, groupIDs)
 	if err != nil {
 		return nil
@@ -527,7 +527,7 @@ func (h *APIKeyHandler[G]) getAvailableGroupCapacityMap(ctx context.Context, gro
 	return capacityMap
 }
 
-// GetUserGroupRates 获取当前用户的专属分组倍率配置
+// GetUserGroupRates returns the current user's group-specific rate multipliers.
 // GET /api/v1/groups/rates
 func (h *APIKeyHandler[G]) GetUserGroupRates(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

@@ -158,7 +158,7 @@ func TestBackfillOpenAIImagesB64JSON(t *testing.T) {
 				require.Equal(t, want, items[i].Get("b64_json").String(), "data.%d.b64_json", i)
 			}
 			require.Len(t, tt.upstream.requests, tt.wantDownloads)
-			// b64_json 更新后，其他字段保持原样。
+			// Backfilling b64_json leaves all other response fields unchanged.
 			original := gjson.Parse(tt.body)
 			original.Get("data").ForEach(func(key, item gjson.Result) bool {
 				item.ForEach(func(field, value gjson.Result) bool {
@@ -197,7 +197,7 @@ func TestBackfillOpenAIImagesB64JSON_DownloadRequestShape(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:7890", upstream.lastProxyURL)
 	_, hasDeadline := req.Context().Deadline()
 	require.True(t, hasDeadline)
-	// 下载跟随重定向，并逐跳检查目的地是否解析为公网地址。
+	// Download requests permit redirects and require public destinations at every hop.
 	require.True(t, upstreamcore.HTTPUpstreamPublicHostsOnly(req.Context()))
 	require.False(t, upstreamcore.HTTPUpstreamRedirectsDisabled(req.Context()))
 }
@@ -227,7 +227,7 @@ func TestBackfillOpenAIImagesB64JSON_RejectsPrivateHosts(t *testing.T) {
 	}
 	require.Empty(t, upstream.requests, "private destinations must never be requested")
 
-	// 同一配置下公网主机下载成功，测试覆盖目的地地址检查。
+	// The same configuration accepts a public hostname, isolating the host validation check.
 	got := svc.backfillOpenAIImagesB64JSON(context.Background(), provider, nil, []byte(`{"created":1,"data":[{"url":"http://cdn.example.com/a.png"}]}`))
 	require.Equal(t, base64.StdEncoding.EncodeToString(b64BackfillPNGBytes), gjson.GetBytes(got, "data.0.b64_json").String())
 	require.Len(t, upstream.requests, 1)
@@ -270,7 +270,8 @@ func TestBackfillOpenAIImagesB64JSON_NonObjectBodies(t *testing.T) {
 	require.Empty(t, upstream.requests)
 }
 
-// TestBackfillOpenAIImagesB64JSON_ForkBoundaries 验证非 Images 同步交付、非法响应和非 OpenAI API Key 提供商都不得触发额外网络请求。
+// TestBackfillOpenAIImagesB64JSON_ForkBoundaries checks that ineligible requests, invalid bodies, and
+// blocked URLs cause no download.
 func TestBackfillOpenAIImagesB64JSON_ForkBoundaries(t *testing.T) {
 	body := []byte(`{"data":[{"url":"https://cdn.example.com/a.png"}]}`)
 	upstream := &auxiliaryHTTPRecorder{}
@@ -290,7 +291,8 @@ func TestBackfillOpenAIImagesB64JSON_ForkBoundaries(t *testing.T) {
 	require.Empty(t, upstream.requests)
 }
 
-// TestBackfillOpenAIImagesB64JSON_SizeAndDataURLValidation 验证超限下载及伪装为图片的 data URI 都保持原始结果，不能影响主请求成功。
+// TestBackfillOpenAIImagesB64JSON_SizeAndDataURLValidation checks that oversized downloads and invalid
+// image data URIs leave the response unchanged.
 func TestBackfillOpenAIImagesB64JSON_SizeAndDataURLValidation(t *testing.T) {
 	oversized := make([]byte, upstreamopenai.OpenAIImageMaxDownloadBytes+1)
 	copy(oversized, b64BackfillPNGBytes)
@@ -306,7 +308,8 @@ func TestBackfillOpenAIImagesB64JSON_SizeAndDataURLValidation(t *testing.T) {
 	require.Len(t, upstream.requests, 1)
 }
 
-// TestBackfillOpenAIImagesB64JSON_PreservesBillingMetadata 验证下载图片可以补全响应，但不得改变 fork 已按原始响应确定的计费尺寸和用量。
+// TestBackfillOpenAIImagesB64JSON_PreservesBillingMetadata checks that downloaded image bytes do not change
+// response-derived size and usage.
 func TestBackfillOpenAIImagesB64JSON_PreservesBillingMetadata(t *testing.T) {
 	var img bytes.Buffer
 	require.NoError(t, png.Encode(&img, image.NewNRGBA(image.Rect(0, 0, 2, 2))))

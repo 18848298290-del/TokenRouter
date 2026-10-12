@@ -5,19 +5,19 @@ import (
 )
 
 const (
-	// ClaudeCodeBillingHeaderPrefix 是协议报文中计费归因文本的前缀。
+	// ClaudeCodeBillingHeaderPrefix identifies billing-attribution text in the request.
 	ClaudeCodeBillingHeaderPrefix = "x-anthropic-billing-header"
 
-	// ClaudeCodeEntrypointMarker 是报文中标识入口来源的字段名。
+	// ClaudeCodeEntrypointMarker identifies the entrypoint field in request text.
 	ClaudeCodeEntrypointMarker = "cc_entrypoint="
 )
 
-// ClaudeRequest Claude Messages API 请求。
+// ClaudeRequest is a Claude Messages API request.
 type ClaudeRequest struct {
 	Model        string                 `json:"model"`
 	Messages     []ClaudeMessage        `json:"messages"`
 	MaxTokens    int                    `json:"max_tokens,omitempty"`
-	System       json.RawMessage        `json:"system,omitempty"` // string 或 []SystemBlock
+	System       json.RawMessage        `json:"system,omitempty"` // string or []SystemBlock
 	Stream       bool                   `json:"stream,omitempty"`
 	Temperature  *float64               `json:"temperature,omitempty"`
 	TopP         *float64               `json:"top_p,omitempty"`
@@ -28,51 +28,49 @@ type ClaudeRequest struct {
 	Metadata     *ClaudeMetadata        `json:"metadata,omitempty"`
 }
 
-// ClaudeMessage Claude 消息。
+// ClaudeMessage is a message in a Claude conversation.
 type ClaudeMessage struct {
 	Role    string          `json:"role"` // user, assistant
 	Content json.RawMessage `json:"content"`
 }
 
-// ThinkingConfig Thinking 配置。
+// ThinkingConfig configures Claude's thinking mode and token budget.
 type ThinkingConfig struct {
 	Type         string `json:"type"`                    // "enabled" / "adaptive" / "disabled"
 	BudgetTokens int    `json:"budget_tokens,omitempty"` // thinking budget
 }
 
-// ClaudeMetadata 请求元数据。
+// ClaudeMetadata contains request metadata.
 type ClaudeMetadata struct {
 	UserID string `json:"user_id,omitempty"`
 }
 
-// ClaudeTool Claude 工具定义
-// 支持两种格式：
-// 1. 标准格式: { "name": "...", "description": "...", "input_schema": {...} }
-// 2. Custom 格式 (MCP): { "type": "custom", "name": "...", "custom": { "description": "...", "input_schema": {...} } }。
+// ClaudeTool represents a standard tool or an MCP custom tool.
+// Standard tools use Description and InputSchema; MCP custom tools set Type to "custom" and use Custom.
 type ClaudeTool struct {
-	Type        string          `json:"type,omitempty"` // "custom" 或空（标准格式）
+	Type        string          `json:"type,omitempty"` // "custom" or empty for the standard form
 	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`  // 标准格式使用
-	InputSchema map[string]any  `json:"input_schema,omitempty"` // 标准格式使用
-	Custom      *CustomToolSpec `json:"custom,omitempty"`       // custom 格式使用
+	Description string          `json:"description,omitempty"`  // standard form
+	InputSchema map[string]any  `json:"input_schema,omitempty"` // standard form
+	Custom      *CustomToolSpec `json:"custom,omitempty"`       // custom form
 }
 
-// CustomToolSpec MCP custom 工具规格。
+// CustomToolSpec contains an MCP custom tool's description and schema.
 type CustomToolSpec struct {
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema"`
 }
 
-// ClaudeCustomToolSpec 兼容旧命名（MCP custom 工具规格）。
+// ClaudeCustomToolSpec is the legacy name for CustomToolSpec.
 type ClaudeCustomToolSpec = CustomToolSpec
 
-// SystemBlock system prompt 数组形式的元素。
+// SystemBlock is an element of an array-valued system prompt.
 type SystemBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-// ContentBlock Claude 消息内容块（解析后）。
+// ContentBlock is a decoded Claude message content block.
 type ContentBlock struct {
 	Type string `json:"type"`
 	// text
@@ -92,14 +90,14 @@ type ContentBlock struct {
 	Source *ImageSource `json:"source,omitempty"`
 }
 
-// ImageSource Claude 图片来源。
+// ImageSource contains an encoded Claude image.
 type ImageSource struct {
 	Type      string `json:"type"`       // "base64"
-	MediaType string `json:"media_type"` // "image/png", "image/jpeg" 等
+	MediaType string `json:"media_type"` // e.g. "image/png" or "image/jpeg"
 	Data      string `json:"data"`
 }
 
-// ClaudeResponse Claude Messages API 响应。
+// ClaudeResponse is a Claude Messages API response.
 type ClaudeResponse struct {
 	ID           string              `json:"id"`
 	Type         string              `json:"type"` // "message"
@@ -107,11 +105,11 @@ type ClaudeResponse struct {
 	Model        string              `json:"model"`
 	Content      []ClaudeContentItem `json:"content"`
 	StopReason   string              `json:"stop_reason,omitempty"`   // end_turn, tool_use, max_tokens
-	StopSequence *string             `json:"stop_sequence,omitempty"` // null 或具体值
+	StopSequence *string             `json:"stop_sequence,omitempty"` // null or a stop sequence
 	Usage        ClaudeUsage         `json:"usage"`
 }
 
-// ClaudeContentItem Claude 响应内容项。
+// ClaudeContentItem is a content item in a Claude response.
 type ClaudeContentItem struct {
 	Type string `json:"type"` // text, thinking, tool_use
 
@@ -128,7 +126,7 @@ type ClaudeContentItem struct {
 	Input any    `json:"input,omitempty"`
 }
 
-// ClaudeUsage Claude 用量统计。
+// ClaudeUsage contains Claude token counts.
 type ClaudeUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
@@ -137,19 +135,19 @@ type ClaudeUsage struct {
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
 }
 
-// ClaudeError Claude 错误响应。
+// ClaudeError is a Claude error response.
 type ClaudeError struct {
 	Type  string      `json:"type"` // "error"
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorDetail 错误详情。
+// ErrorDetail contains the upstream error type and message.
 type ErrorDetail struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 
-// ClaudeModel Claude API 模型格式。
+// ClaudeModel describes a model returned by the Claude API.
 type ClaudeModel struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`

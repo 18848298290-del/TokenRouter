@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ImageConcurrencyLimiter 限制本进程内的图片请求并发数。
+// ImageConcurrencyLimiter bounds image request concurrency within this process.
 type ImageConcurrencyLimiter struct {
 	mu      sync.Mutex
 	notify  chan struct{}

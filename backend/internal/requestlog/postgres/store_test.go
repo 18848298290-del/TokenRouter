@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
-// TestSaveClassifiesInvalidRecords 数据错误可丢弃，连接故障和数据库约束错误保留重试。
+// TestSaveClassifiesInvalidRecords distinguishes discardable data errors from retryable connection and constraint failures.
 func TestSaveClassifiesInvalidRecords(t *testing.T) {
 	for _, test := range []struct {
 		code    string
@@ -46,7 +46,7 @@ func TestSaveClassifiesInvalidRecords(t *testing.T) {
 	}
 }
 
-// TestSaveRejectsUnencodableRecord 超出 JSON 时间范围的快照可以被队列识别为无效。
+// TestSaveRejectsUnencodableRecord marks timestamps outside JSON's range as invalid snapshots.
 func TestSaveRejectsUnencodableRecord(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestSaveRejectsUnencodableRecord(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestFindResolvesIDsOnce 检查同一详情查询共用候选 ID，并保留各来源的权限参数。
+// TestFindResolvesIDsOnce checks shared candidate IDs and source-specific authorization parameters.
 func TestFindResolvesIDsOnce(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -96,7 +96,7 @@ func TestFindResolvesIDsOnce(t *testing.T) {
 	}
 }
 
-// TestFindStopsWhenLookupIsCanceled ID 解析被取消时结束查询，后续来源不继续读库。
+// TestFindStopsWhenLookupIsCanceled checks that canceled ID resolution prevents further source queries.
 func TestFindStopsWhenLookupIsCanceled(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

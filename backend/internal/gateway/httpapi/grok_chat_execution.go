@@ -25,10 +25,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// ChatResponses 执行兼容桥接；不适用时由调用者选择原生 Chat 分支。
-// ChatResponses 将严格兼容的 Chat 请求转换为 xAI
-// Responses 格式，并复用既有的 Responses-to-Chat 响应转换器。Grok CLI 使用独立的
-// 上游协议，因此这里不会执行 Codex OAuth 转换。
+// ChatResponses bridges compatible Chat requests to xAI Responses and converts the response back to Chat.
+// Its handled result is false when the caller should use native Chat execution.
+// Grok CLI uses its own upstream protocol, so the bridge omits Codex OAuth transformations.
+
 func (s *GrokExecutor) ChatResponses(
 	ctx context.Context,
 	c *gin.Context,
@@ -55,8 +55,8 @@ func (s *GrokExecutor) ChatResponses(
 	codec := gatewayprovider.GrokBodyCodec()
 	codec.Attributes = func(string) modelcatalog.Attributes { return attributes.Attributes }
 	cacheIdentity := ResolveGrokCacheIdentity(c, body, promptCacheKey, upstreamModel)
-	// 图片输入使用 Responses 桥接，普通 Chat Completions 路径会丢弃非 Composer 模型的 image_url。
-	// 因此缺少 prompt-cache 身份的图片请求也使用 Responses。
+	// Use Responses for image input because ordinary Chat drops image_url for non-Composer models.
+	// Eligible image requests therefore use this bridge even without a prompt-cache identity.
 	hasImageInput := protocolopenai.JSONValueMayContainImageInput(gjson.GetBytes(body, "messages"))
 	if provider.Route.Protocol() == "" && !gatewayprovider.GrokBodyCodec().GrokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity) && (!hasImageInput || !gatewayprovider.GrokBodyCodec().GrokChatResponsesBridgeModel(upstreamModel)) {
 		return nil, false, nil
@@ -68,10 +68,10 @@ func (s *GrokExecutor) ChatResponses(
 	}
 	responsesReq.Model = upstreamModel
 	responsesReq.Stream = true
-	// 让 Chat 与原生 Responses 对 OpenAI 兼容的 service_tier 别名保持一致；共享
-	// 规范化器删除未知值后再发往 xAI。
+	// Normalize service_tier aliases with the same rules as native Responses and
+	// remove unknown values before sending the request to xAI.
 	responsesReq.ServiceTier = protocolopenai.ServiceTierValue(responsesReq.ServiceTier)
-	// 这些字段对 Codex 有用，但 Grok CLI 协议不需要；桥接请求应尽量贴近原生 Grok。
+	// Include and Store are Codex fields that the Grok CLI request does not need.
 	responsesReq.Include = nil
 	responsesReq.Store = nil
 
@@ -79,7 +79,7 @@ func (s *GrokExecutor) ChatResponses(
 	if err != nil {
 		return nil, true, fmt.Errorf("marshal grok responses bridge request: %w", err)
 	}
-	// 在 Grok 能力清理前保存转换后的 Responses 工具意图，缓存路由使用这份客户端函数工具声明。
+	// Save converted client-tool intent before Grok capability filtering for cache-route selection.
 	intentBody, err := gatewayprovider.GrokBodyCodec().GrokChatResponsesCacheIntentBody(responsesBody)
 	if err != nil {
 		return nil, true, fmt.Errorf("normalize grok responses bridge cache intent: %w", err)

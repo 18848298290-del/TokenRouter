@@ -587,7 +587,7 @@ func ConsumePendingOAuthBrowserSessionTx(
 	}
 
 	if _, err := tx.Client().PendingAuthSession.UpdateOneID(storedSession.ID).
-		// 读取后的并发事务可能已经完成消费，写入时仍须取得唯一消费权。
+		// A concurrent transaction may have consumed the session since the read; claim it conditionally.
 		Where(pendingauthsession.ConsumedAtIsNil()).
 		SetConsumedAt(now).
 		SetCompletionCodeHash("").

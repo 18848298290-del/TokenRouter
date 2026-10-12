@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// splitChain 辅助函数：按 "-" 分割摘要链。
+// splitChain splits the digest chain into entries.
 func splitChain(chain string) []string {
 	if chain == "" {
 		return nil
@@ -25,7 +25,7 @@ func splitChain(chain string) []string {
 	return parts
 }
 
-// mustParseAnthropicDigestRequest 仅拆出原报文的两个原始 JSON 字段，保持测试载荷字节。
+// mustParseAnthropicDigestRequest extracts raw system and messages fields without re-encoding them.
 func mustParseAnthropicDigestRequest(t *testing.T, body string) struct {
 	System   json.RawMessage
 	Messages json.RawMessage
@@ -111,8 +111,7 @@ func TestBuildAnthropicDigestChain_WithSystemContentBlocks(t *testing.T) {
 }
 
 func TestBuildAnthropicDigestChain_ConversationPrefixRelationship(t *testing.T) {
-	// 核心测试：验证对话增长时链的前缀关系
-	// 上一轮的完整链一定是下一轮链的前缀
+	// Appending a conversation turn must retain the previous digest chain as a prefix.
 	round1 := mustParseAnthropicDigestRequest(t, `{"system":"You are a helpful assistant","messages":[{"role":"user","content":"hello"}]}`)
 	chain1 := BuildAnthropicDigestChain(round1.System, round1.Messages)
 

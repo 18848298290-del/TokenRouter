@@ -7,7 +7,7 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// UpdateConfiguration 与普通更新共享一次事务和同连接 outbox，不独立发布成功事件。
+// UpdateConfiguration uses updateProvider's transaction for configuration changes and the outbox write.
 func (r *ProviderStore) UpdateConfiguration(ctx context.Context, value *acctcore.Record, change acctcore.ConfigurationChange) error {
 	return r.updateProvider(ctx, value, &change)
 }

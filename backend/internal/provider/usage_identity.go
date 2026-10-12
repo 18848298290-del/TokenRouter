@@ -40,7 +40,7 @@ func UpstreamUsageContextFingerprint(provider *Record, config UpstreamUsageQuery
 		},
 	}
 	if provider.Proxy != nil {
-		// 指纹只留在进程内；代理密码不会进入日志、响应或浏览器缓存。
+		// Include proxy credentials in the digest input so credential changes invalidate the identity.
 		payload.Proxy = struct {
 			ID       int64
 			Protocol string

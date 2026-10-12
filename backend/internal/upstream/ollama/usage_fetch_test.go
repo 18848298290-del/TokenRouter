@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 本地 TLS 测试只替换拨号目标；供应商输入 URL 和响应身份保持原样核对。
+// fetchBody counts closes of the response returned by the local TLS fixture.
 type fetchBody struct {
 	io.ReadCloser
 	closed *atomic.Int64

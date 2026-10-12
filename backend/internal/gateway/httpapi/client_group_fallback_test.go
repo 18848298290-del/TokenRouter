@@ -44,7 +44,8 @@ func (f *clientFallbackFunding) CheckKey(_ context.Context, key *apikey.APIKey, 
 	return nil
 }
 
-// TestClientGroupFallbackPrecedesPoliciesAndExecution 使用 HTTP 适配器测试回退顺序，授权、资金读取和执行终点使用替身。
+// TestClientGroupFallbackPrecedesPoliciesAndExecution checks HTTP adapter ordering with stubbed authorization,
+// funding, and execution.
 func TestClientGroupFallbackPrecedesPoliciesAndExecution(t *testing.T) {
 	cases := []struct {
 		name   string

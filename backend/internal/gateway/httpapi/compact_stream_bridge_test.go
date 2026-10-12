@@ -15,7 +15,8 @@ import (
 	httpapitestkit "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/testkit"
 )
 
-// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents 验证心跳已提交后，2xx 桥接续写事件而不重复提交响应头。
+// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents checks that committed streams append success
+// events.
 func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
@@ -34,7 +35,8 @@ func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents(t *testin
 	require.Equal(t, "resp_ka_1", gjson.Get(events[1][1], "response.id").String())
 }
 
-// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent 验证心跳提交 200 后，上游非 2xx 以 response.failed 收尾，并标记流内错误供 Ops 采集。
+// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent checks response.failed and Ops
+// observation after HTTP 200.
 func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
@@ -55,7 +57,8 @@ func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent
 	require.Equal(t, http.StatusBadGateway, streamErr.IntendedStatus)
 }
 
-// TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath 验证心跳未提交时非 2xx 行为不变：返回 false，调用方按原 JSON+状态码写回。
+// TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath checks that uncommitted failures leave
+// JSON output to the caller.
 func TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
@@ -113,7 +116,7 @@ func TestBuildOpenAICompactSSEPayload_InjectsMissingResponseID(t *testing.T) {
 	events := httpapitestkit.ParseCompactSSE(t, string(payload))
 	require.Len(t, events, 2)
 	completed := events[1][1]
-	// Codex 的 ResponseCompleted 要求非空字符串 response.id，缺失时补入该字段。
+	// A generated nonempty response.id lets Codex parse ResponseCompleted.
 	id := gjson.Get(completed, "response.id").String()
 	require.True(t, strings.HasPrefix(id, "resp_"), "缺失 id 必须注入 resp_* 兜底: %q", id)
 	require.NotEqual(t, "resp_", id)
@@ -144,7 +147,7 @@ func TestBuildOpenAICompactSSEPayload_DropsMalformedUsage(t *testing.T) {
 
 			events := httpapitestkit.ParseCompactSSE(t, string(payload))
 			completed := events[len(events)-1][1]
-			// 删除无法解析为 Codex 整数结构的 usage，防止 completed 事件解析失败。
+			// Remove usage that cannot decode into integer token fields, allowing the completed event to parse.
 			require.False(t, gjson.Get(completed, "response.usage").Exists())
 		})
 	}
@@ -180,17 +183,17 @@ func TestBuildOpenAICompactSSEPayload_RejectsNonJSONObject(t *testing.T) {
 func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) {
 	finalResponse := []byte(`{"id":"resp_1","output":[{"type":"compaction","encrypted_content":"x"}]}`)
 
-	// 未标记 client stream：不写出，走原 JSON 路径。
+	// Unmarked clients keep JSON output.
 	c, rec := newCompactBridgeTestContext(t, false)
 	require.False(t, WriteOpenAICompactSSEBridge(c, http.StatusOK, finalResponse, MarkOpsStreamError))
 	require.Zero(t, rec.Body.Len())
 
-	// 标记但上游非 2xx：错误响应保持 JSON 原样（Codex 依赖 HTTP 状态码走重试）。
+	// Before commitment, non-2xx responses keep HTTP status handling for client retry decisions.
 	c, rec = newCompactBridgeTestContext(t, true)
 	require.False(t, WriteOpenAICompactSSEBridge(c, http.StatusBadGateway, finalResponse, MarkOpsStreamError))
 	require.Zero(t, rec.Body.Len())
 
-	// 标记且 2xx：合成 SSE。
+	// A marked 2xx response is converted to SSE.
 	c, rec = newCompactBridgeTestContext(t, true)
 	require.True(t, WriteOpenAICompactSSEBridge(c, http.StatusOK, finalResponse, MarkOpsStreamError))
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -198,9 +201,9 @@ func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) 
 	require.Contains(t, rec.Body.String(), "event: response.completed")
 }
 
-// TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt 验证 issue #5601：严格的 Responses 客户端把 created_at 当必填字段，缺失即
-// `missing field 'created_at'`。writeOpenAICompactSSEFailureMessage 存在的理由就是
-// 让 Codex 能把这帧识别成合法终止事件；解析不了就退化回它想避免的盲重连。
+// TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt checks the required timestamp in failure events (#5601).
+// Strict Responses clients reject a missing created_at field and cannot recognize the terminal event.
+// An unrecognized terminal event can cause a stream-closed retry.
 func TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

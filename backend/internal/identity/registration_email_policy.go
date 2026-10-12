@@ -13,8 +13,8 @@ var RegistrationEmailDomainPattern = regexp.MustCompile(
 	`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`,
 )
 
-// RegistrationEmailDomain 返回邮箱对应的可注册主域名，用于域名注册额度归一化。
-// 例如 abc.com 和 sub.abc.com 都返回 abc.com；公共后缀无法识别时保留原域名。
+// RegistrationEmailDomain returns the registrable domain used for registration quotas.
+// For example, abc.com and sub.abc.com share abc.com; unrecognized suffixes keep their domain.
 func RegistrationEmailDomain(email string) string {
 	_, domain, ok := SplitEmailForPolicy(email)
 	if !ok {
@@ -23,7 +23,7 @@ func RegistrationEmailDomain(email string) string {
 	return NormalizeRegistrationEmailDomain(domain)
 }
 
-// NormalizeRegistrationEmailDomain 将邮箱域名归一为可注册主域名。
+// NormalizeRegistrationEmailDomain reduces an email domain to its registrable domain.
 func NormalizeRegistrationEmailDomain(domain string) string {
 	domain = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(domain, "@")))
 	domain = strings.TrimRight(domain, ".")
@@ -37,7 +37,7 @@ func NormalizeRegistrationEmailDomain(domain string) string {
 	return registrable
 }
 
-// NormalizeRegistrationEmailAddress 返回用于唯一性检查的收件箱身份，不修改实际保存的邮箱。
+// NormalizeRegistrationEmailAddress returns a uniqueness key; callers retain the stored email address.
 func NormalizeRegistrationEmailAddress(email string) string {
 	local, domain, ok := SplitEmailForPolicy(email)
 	if !ok {
@@ -47,11 +47,11 @@ func NormalizeRegistrationEmailAddress(email string) string {
 	if domain == "" {
 		return ""
 	}
-	// 首字符为 + 时没有可安全保留的基础本地部分，不能把不同地址都折叠为空值。
+	// Keep a leading plus so distinct addresses do not collapse to an empty local part.
 	if plusIndex := strings.IndexByte(local, '+'); plusIndex > 0 {
 		local = local[:plusIndex]
 	}
-	// 只有 Gmail 家族明确忽略本地部分的点号；其他服务商可能把点号视为有效字符。
+	// Ignore local-part dots for Gmail domains; other providers may treat dots as significant.
 	if domain == "gmail.com" || domain == "googlemail.com" {
 		if dotStripped := strings.ReplaceAll(local, ".", ""); dotStripped != "" {
 			local = dotStripped
@@ -87,7 +87,7 @@ func IsRegistrationEmailSuffixAllowed(email string, whitelist []string) bool {
 	return false
 }
 
-// IsRegistrationEmailSuffixLimited 判断非空白名单是否对该邮箱域名启用单账户额度。
+// IsRegistrationEmailSuffixLimited reports whether an email is outside a nonempty allowlist.
 func IsRegistrationEmailSuffixLimited(email string, whitelist []string) bool {
 	return len(whitelist) > 0 && !IsRegistrationEmailSuffixAllowed(email, whitelist)
 }

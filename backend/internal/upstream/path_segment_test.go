@@ -6,9 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSanitizedUpstreamPathSuffixRejectsNonConformingSegments 验证上游路径后缀拒绝不合规的路径段。
 func TestSanitizedUpstreamPathSuffixRejectsNonConformingSegments(t *testing.T) {
-	// 到达业务代码的 URL.Path 已是百分号解码后的结果，因此用例按解码后的形态书写。
+	// URL.Path is percent-decoded before validation, so fixtures use decoded input.
 	rejected := []string{
 		"/..",
 		"/../..",
@@ -35,7 +34,7 @@ func TestSanitizedUpstreamPathSuffixRejectsNonConformingSegments(t *testing.T) {
 		"/a,b",
 		"/a=b",
 		"/a&b",
-		// 路径段字符允许 `\w`、`-` 和 `.`，其余字符拒绝。
+		// Only ASCII letters, digits, underscore, hyphen, and dot are accepted.
 		"/a~b",
 		"/a@b",
 		"/a+b",
@@ -50,7 +49,7 @@ func TestSanitizedUpstreamPathSuffixRejectsNonConformingSegments(t *testing.T) {
 		"/a b",
 		"/a∕b", // DIVISION SLASH
 		"/a／b", // FULLWIDTH SOLIDUS
-		// 只由点组成的片段一律拒绝（各实现对其解释不一致）。
+		// Dot-only segments are rejected across differing path-normalization implementations.
 		"/...",
 		"/....",
 		"/compact/...",

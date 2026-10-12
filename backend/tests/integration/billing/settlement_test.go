@@ -37,7 +37,7 @@ type usageBillingApplyOutcome struct {
 	err    error
 }
 
-// directUsageExecutor 通过 SQL 执行器同步写入用量，供锁顺序测试使用。
+// directUsageExecutor writes usage synchronously through SQL for lock-order tests.
 type directUsageExecutor struct{ infra.Executor }
 
 func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
@@ -325,7 +325,7 @@ func TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit(t *
 		MonthlyUsageUSD:    860,
 	})
 
-	// 模拟到期前最后两小时的一次大额消费，验证低层刷新和外层封顶同时生效。
+	// A large charge in the final two hours checks that the daily reset still respects the remaining monthly quota.
 	result, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 		RequestID:         uuid.NewString(),
 		APIKeyID:          apiKey.ID,
@@ -491,7 +491,7 @@ func TestUsageBillingRepositoryApply_PreferredSubscriptionChargesOverflowToBalan
 		FROM user_subscriptions
 		WHERE id = $1
 	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage))
-	// 订阅用量保持硬封顶，后续绑定该订阅的新请求会在预检阶段被拒绝。
+	// Subscription usage stays capped, leaving no quota for subsequent admission checks.
 	require.InDelta(t, 10, dailyUsage, 0.000001)
 	require.InDelta(t, 10, weeklyUsage, 0.000001)
 	require.InDelta(t, 10, monthlyUsage, 0.000001)
@@ -505,7 +505,7 @@ func TestUsageBillingRepositoryApply_DeadlockLockOrderAllowsConcurrentTeamUsageL
 	runUsageBillingConcurrentUsageLogInsert(t, true)
 }
 
-// runUsageBillingConcurrentUsageLogInsert 检查个人和团队日志写入能与计费事务并发完成。
+// runUsageBillingConcurrentUsageLogInsert checks that personal and team usage inserts can complete alongside settlement.
 func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -570,7 +570,7 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 		MonthlyUsageUSD:    0.9,
 	})
 
-	// 先占用订阅行，迫使计费事务在持有用户锁后等待订阅锁。
+	// Hold the subscription row so settlement waits for it while holding the paying-user lock.
 	blockerTx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	blockerReleased := false
@@ -671,7 +671,7 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 	require.Equal(t, 1, usageCount)
 }
 
-// assertUsageBillingUserLockAllowsKeyShare 检查取得付款用户锁后仍能执行 usage_logs 外键检查。
+// assertUsageBillingUserLockAllowsKeyShare checks that the settlement lock permits the key-share lock used by usage_logs foreign keys.
 func assertUsageBillingUserLockAllowsKeyShare(t *testing.T, ctx context.Context, userID int64) {
 	t.Helper()
 	probeTx, err := integrationDB.BeginTx(ctx, nil)
@@ -683,7 +683,7 @@ func assertUsageBillingUserLockAllowsKeyShare(t *testing.T, ctx context.Context,
 	).Scan(&lockedUserID))
 }
 
-// waitForUsageBillingUserLock 等待计费事务取得用户行锁，再继续测试的并发操作。
+// waitForUsageBillingUserLock waits until settlement holds the user row before the concurrent test operation proceeds.
 func waitForUsageBillingUserLock(ctx context.Context, userID int64, applyDone <-chan usageBillingApplyOutcome) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -696,7 +696,7 @@ func waitForUsageBillingUserLock(ctx context.Context, userID int64, applyDone <-
 		err = probeTx.QueryRowContext(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE NOWAIT`, userID).Scan(&lockedUserID)
 		_ = probeTx.Rollback()
 		if err == nil {
-			// 尚未加锁，继续等待计费事务推进到用户锁。
+			// The probe acquired the row, so wait for settlement to reach its user lock.
 		} else {
 			var pgErr *pq.Error
 			if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
@@ -845,7 +845,7 @@ func TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription(t *
 		MonthlyLimitUSD: float64Ptr(1),
 	})
 
-	// 套餐以 0.5x 覆盖 2 美元基础费用，剩余 1 美元按非 token 的 0.25x 从余额扣除。
+	// The plan covers $2 of base cost at 0.5x; the remaining $1 uses the 0.25x balance rate.
 	result, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 		RequestID:                       uuid.NewString(),
 		APIKeyID:                        apiKey.ID,
@@ -1174,7 +1174,7 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		apiKeyID, providerID := newFixture(t, map[string]any{
 			"quota_daily_limit": 10.0,
 		})
-		// 第一次低于日限额：不应入队 outbox
+		// Below the daily limit, no outbox event is needed.
 		_, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1185,7 +1185,7 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		require.NoError(t, err)
 		require.Equal(t, 0, outboxCountFor(t, providerID), "below limit should not enqueue")
 
-		// 第二次跨越日限额：应入队一次 outbox
+		// Crossing the daily limit emits one outbox event.
 		_, err = repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1196,7 +1196,7 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		require.NoError(t, err)
 		require.Equal(t, 1, outboxCountFor(t, providerID), "crossing daily limit should enqueue once")
 
-		// 再次递增（已超）：不应重复入队
+		// Further usage above the limit does not emit another crossing event.
 		_, err = repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1217,7 +1217,7 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 			APIKeyID:          apiKeyID,
 			ProviderID:        providerID,
 			ProviderType:      capability.ProviderTypeAPIKey,
-			ProviderQuotaCost: 15, // 单次即跨越
+			ProviderQuotaCost: 15, // Crosses the weekly limit in one charge.
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, outboxCountFor(t, providerID), "single-shot crossing weekly limit should enqueue once")
@@ -1390,7 +1390,7 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
-// newAggregationFixture 为聚合存储配置资金去重记录的归档回调。
+// newAggregationFixture wires billing-deduplication archival into the aggregation store.
 func newAggregationFixture(q infra.Executor) *usagepg.AggregationStore {
 	return usagepg.NewAggregationStoreWithSQL(q, timezone.NewCalendar(time.Local), func(ctx context.Context, t time.Time) error {
 		return postgres.ArchiveUsageDedup(ctx, q, t)

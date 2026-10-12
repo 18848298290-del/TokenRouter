@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// RankingSettingsUpdate 保留管理请求的字段存在性。
+// RankingSettingsUpdate uses pointers to distinguish omitted boolean and sort fields.
 type RankingSettingsUpdate struct {
 	Limit           int
 	Enabled         *bool
@@ -18,10 +18,10 @@ type RankingSettingsUpdate struct {
 	ShowActualCost  *bool
 }
 
-// rankingSortError 保留历史 HTTP 文案，错误身份由领域校验表达。
+// rankingSortError identifies an invalid ranking field and provides its HTTP error text.
 type rankingSortError struct{}
 
-// ResolveRankingSettings 保留旧客户端省略时回退以及显式排序必须可见的规则。
+// ResolveRankingSettings applies supplied fields, keeps omitted values, and makes the sorting metric visible.
 func ResolveRankingSettings(current UsageRankingSettings, input RankingSettingsUpdate) (UsageRankingSettings, error) {
 	if input.Limit > 0 {
 		current.Limit = input.Limit
@@ -50,7 +50,7 @@ func ResolveRankingSettings(current UsageRankingSettings, input RankingSettingsU
 	return NormalizeUsageRankingSettings(current), nil
 }
 
-// PrepareRankingSettings 只生成原格式的持久值，供综合与旧直接入口复用。
+// PrepareRankingSettings normalizes settings and encodes their persisted string values.
 func PrepareRankingSettings(value UsageRankingSettings) (UsageRankingSettings, map[string]string) {
 	value = NormalizeUsageRankingSettings(value)
 	return value, map[string]string{
@@ -63,7 +63,7 @@ func PrepareRankingSettings(value UsageRankingSettings) (UsageRankingSettings, m
 	}
 }
 
-// SettingsParticipant 准备用量排行和用户错误记录的展示设置。
+// SettingsParticipant prepares ranking and user error-display settings.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"usage_ranking_limit", "usage_ranking_enabled", "usage_ranking_sort_by", "usage_ranking_show_total_tokens", "usage_ranking_show_requests", "usage_ranking_show_actual_cost", "allow_user_view_error_requests"}
 	keys := []string{SettingKeyUsageRankingLimit, SettingKeyUsageRankingEnabled, SettingKeyUsageRankingSortBy, SettingKeyUsageRankingShowTotalTokens, SettingKeyUsageRankingShowRequests, SettingKeyUsageRankingShowActualCost, SettingKeyAllowUserViewErrorRequests}

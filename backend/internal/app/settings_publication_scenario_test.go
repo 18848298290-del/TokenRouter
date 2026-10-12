@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 settings_defaults.go、settings_readers.go 与 settings_composite_runtime.go 的 Backend 模式发布。
+// These tests cover backend-mode publication across settings defaults, readers, and combined updates.
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	settingshttp "github.com/TokenFlux/TokenRouter/internal/settings/httpapi"
 )
 
-// delayedBackendReadFixture 阻塞先发起的回源请求，综合管理查询使用批量读取接口。
+// delayedBackendReadFixture blocks an earlier single-key load while admin queries use batch reads.
 type delayedBackendReadFixture struct {
 	*settingHandlerRepoStub
 	entered, release chan struct{}
@@ -32,7 +32,7 @@ func (r *delayedBackendReadFixture) GetValue(ctx context.Context, key string) (s
 	return r.settingHandlerRepoStub.GetValue(ctx, key)
 }
 
-// TestSettingUpdateLateBackendModeLoad 检查综合 HTTP 保存并发布设置后，先前发起的回源结果被丢弃。
+// TestSettingUpdateLateBackendModeLoad checks that a load started before settings publication cannot overwrite the published value.
 func TestSettingUpdateLateBackendModeLoad(t *testing.T) {
 	repo := &delayedBackendReadFixture{settingHandlerRepoStub: &settingHandlerRepoStub{values: map[string]string{}}, entered: make(chan struct{}), release: make(chan struct{})}
 	store := settings.New(repo)

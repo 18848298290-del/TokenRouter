@@ -1,6 +1,6 @@
 package billing
 
-// QuotaNotifyDimension 表示一个额度窗口的已提交用量与通知配置。
+// QuotaNotifyDimension contains committed usage and alert settings for one quota window.
 type QuotaNotifyDimension struct {
 	Name               string
 	Enabled            bool
@@ -9,7 +9,7 @@ type QuotaNotifyDimension struct {
 	CurrentUsed, Limit float64
 }
 
-// BalanceThreshold 保留固定值与累计充值比例的现有计算顺序。
+// BalanceThreshold converts percentages of positive total recharges; otherwise it returns the threshold unchanged.
 func BalanceThreshold(threshold float64, kind string, recharged float64) float64 {
 	if kind == "percentage" && recharged > 0 {
 		return recharged * threshold / 100
@@ -21,7 +21,8 @@ func CrossedDownward(oldValue, newValue, threshold float64) bool {
 	return oldValue >= threshold && newValue < threshold
 }
 
-// EffectiveBalanceThreshold 按通知开关、用户阈值和充值金额计算余额提醒阈值。
+// EffectiveBalanceThreshold applies the global switch and user override, returning false for disabled or
+// nonpositive thresholds.
 func EffectiveBalanceThreshold(globalEnabled bool, globalThreshold float64, userThreshold *float64, kind string, recharged float64) (float64, bool) {
 	if !globalEnabled {
 		return 0, false

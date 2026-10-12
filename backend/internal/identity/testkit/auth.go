@@ -14,7 +14,7 @@ import (
 
 type affiliate struct{ source *promotion.AffiliateService }
 
-// AuthOptions 为认证测试提供启动参数，不读取环境或运行设置。
+// AuthOptions copies startup configuration for tests without reading runtime settings or the environment.
 func AuthOptions(cfg *config.Config) *identity.AuthOptions {
 	if cfg == nil {
 		return nil
@@ -28,7 +28,7 @@ func AuthOptions(cfg *config.Config) *identity.AuthOptions {
 	return out
 }
 
-// Auth 绑定原事务适配与用户仓储实际支持的可选能力，构造不启动任务。
+// Auth wires the transaction adapter and optional capabilities supported by the supplied user repository.
 func Auth(client *dbent.Client, deps *identity.AuthDependencies) *identity.AuthService {
 	if deps.Observer.Log == nil {
 		deps.Observer.Log = logging.LegacyPrintf
@@ -54,7 +54,7 @@ func Auth(client *dbent.Client, deps *identity.AuthDependencies) *identity.AuthS
 	return core
 }
 
-// Email 保留未配置邮件挑战时真正的 nil 接口。
+// Email returns a nil interface when the concrete email service is nil.
 func Email(value *identity.EmailChallenges) identity.AuthEmail {
 	if value == nil {
 		return nil
@@ -62,7 +62,7 @@ func Email(value *identity.EmailChallenges) identity.AuthEmail {
 	return value
 }
 
-// EmailQueue 将 nil 队列指针转换为 nil 接口。
+// EmailQueue returns a nil interface when the queue pointer is nil.
 func EmailQueue(value *notification.EmailQueueService) identity.AuthEmailQueue {
 	if value == nil {
 		return nil
@@ -70,7 +70,7 @@ func EmailQueue(value *notification.EmailQueueService) identity.AuthEmailQueue {
 	return value
 }
 
-// Promo 只暴露身份用例所需的推广端口。
+// Promo adapts a promotion service to authentication operations, preserving nil.
 func Promo(value *promotion.PromoService) identity.AuthPromo {
 	if value == nil {
 		return nil
@@ -78,7 +78,7 @@ func Promo(value *promotion.PromoService) identity.AuthPromo {
 	return value
 }
 
-// Affiliate 只转换返回值形状，返利与关系规则仍由推广模块执行。
+// Affiliate adapts return values while delegating referral rules to the promotion service.
 func Affiliate(value *promotion.AffiliateService) identity.AuthAffiliate {
 	if value == nil {
 		return nil

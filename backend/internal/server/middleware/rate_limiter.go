@@ -17,41 +17,41 @@ const (
 	RateLimitFailClose
 )
 
-// FixedWindowAllower 只返回标量计数结果，避免 HTTP Adapter 引用具体 Redis 包或共享业务实体。
+// FixedWindowAllower supplies counter results independently of the storage implementation.
 type FixedWindowAllower interface {
 	Allow(context.Context, string, int, time.Duration) (bool, int64, time.Duration, error)
 }
 
-// RateLimiter 为固定窗口结果提供 HTTP 适配。
+// RateLimiter adapts fixed-window counts to HTTP middleware.
 type RateLimiter struct {
 	allower FixedWindowAllower
 	prefix  string
 }
 
-// RateLimitFailureMode Redis 故障策略。
+// RateLimitFailureMode controls whether counter errors allow or reject requests.
 type RateLimitFailureMode int
 
-// RateLimitOptions 限流可选配置。
+// RateLimitOptions configures counter failure handling.
 type RateLimitOptions struct {
 	FailureMode RateLimitFailureMode
 }
 
-// AllowResult 单次固定窗口限流判定结果。
+// AllowResult describes one fixed-window rate limit decision.
 type AllowResult struct {
-	// Allowed 是否放行
+	// Allowed reports whether the request is within the limit.
 	Allowed bool
-	// Count 当前窗口内累计请求数（含本次）
+	// Count includes the current request in the window's total.
 	Count int64
-	// RetryAfter 超限时距窗口重置的剩余时间（尽力而为；PTTL 不可用时回退为完整窗口）
+	// RetryAfter is the remaining window duration on rejection; the counter may return a full window if TTL lookup fails.
 	RetryAfter time.Duration
 }
 
-// NewRateLimiter 接受计数能力，HTTP 层不构造数据库客户端。
+// NewRateLimiter wraps the supplied counter for HTTP callers.
 func NewRateLimiter(allower FixedWindowAllower) *RateLimiter {
 	return &RateLimiter{allower: allower, prefix: "rate_limit:"}
 }
 
-// Allow 保留面板调用方的结果形状，错误时继续返回零值。
+// Allow returns the counter decision, or a zero result when the counter fails.
 func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (AllowResult, error) {
 	allowed, count, retry, err := r.allower.Allow(ctx, key, limit, window)
 	if err != nil {
@@ -60,11 +60,11 @@ func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window t
 	return AllowResult{Allowed: allowed, Count: count, RetryAfter: retry}, nil
 }
 
-// clientIPForRateLimit 返回 IP 维度限流使用的客户端地址。
-// 与审计日志/会话绑定/API Key IP ACL 共用同一套安全客户端 IP 解析
-// （SessionBindingContext 快照：兼容开关开启时信任反代转发头，关闭时走
-// server.trusted_proxies 可信链）。避免默认反代部署下 Gin ClientIP 恒等于
-// 代理地址、所有用户坍缩进同一个限流桶造成整体误拦截。
+// clientIPForRateLimit returns the client address used to key IP rate limits.
+// The security resolver shares the request's forwarded-IP settings with audit,
+// session binding, and API Key ACL checks. It trusts forwarding headers in
+// compatibility mode and uses the configured trusted proxy chain otherwise.
+// This keeps clients behind a shared proxy in separate buckets when forwarding is trusted.
 func clientIPForRateLimit(c *gin.Context) string {
 	if resolved := ippkg.GetSecurityClientIP(c, false); resolved != "" {
 		return resolved
@@ -72,7 +72,7 @@ func clientIPForRateLimit(c *gin.Context) string {
 	return c.ClientIP()
 }
 
-// LimitWithOptions 返回速率限制中间件（带可选配置）。
+// LimitWithOptions limits requests by client IP and defaults to allowing requests on counter errors.
 func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Duration, opts RateLimitOptions) gin.HandlerFunc {
 	failureMode := opts.FailureMode
 	if failureMode != RateLimitFailClose {
@@ -87,12 +87,11 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 				abortRateLimit(c, window)
 				return
 			}
-			// Redis 错误时放行，避免影响正常服务
+			// Allow requests when the configured failure mode favors availability.
 			c.Next()
 			return
 		}
 
-		// 超过限制
 		if !result.Allowed {
 			abortRateLimit(c, result.RetryAfter)
 			return

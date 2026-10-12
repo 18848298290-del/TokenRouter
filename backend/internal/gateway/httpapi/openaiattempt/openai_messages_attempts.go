@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAIMessageAttemptBridge 与 Responses 共享固定能力，保留各自错误与计量时机。
+// openAIMessageAttemptBridge shares Responses resources with Messages-specific error and usage handling.
 type openAIMessageAttemptBridge struct {
 	responsesAttemptBridge
 	providerLayerModel, currentRoutingModel, promptCacheKey string
@@ -28,7 +28,7 @@ type openAIMessageAttemptBridge struct {
 	mappedBodyForMessages                                   func(bool, string) []byte
 }
 
-// Select 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Select chooses a provider using the Messages routing model and records its identity.
 func (b *openAIMessageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.ResponseSelection, error) {
 	b.reqLog.Debug("openai_messages.provider_selecting", zap.Int("excluded_provider_count", len(excluded)))
 	var scheduleDecision scheduler.PlatformDecision
@@ -65,7 +65,7 @@ func (b *openAIMessageAttemptBridge) Select(excluded map[int64]struct{}) (textfl
 	return b.selectedView(), nil
 }
 
-// SelectionFailure 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// SelectionFailure writes Messages selection or exhausted-failover errors unless the client disconnected.
 func (b *openAIMessageAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
@@ -102,14 +102,14 @@ func (b *openAIMessageAttemptBridge) SelectionFailure(err error, excludedCount i
 	}
 }
 
-// Forward 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Forward applies Messages mapping and client policy, then records the result and timing.
 func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	gatewayhttp.BindNativeMessageStreamState(b.c, b.streamStarted)
 	var err error
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsRoutingLatencyMsKey, time.Since(b.routingStart).Milliseconds())
 	forwardStart := time.Now()
 
-	// 应用分组模型映射到请求体
+	// Apply the group model mapping to the attempt body.
 	attemptBody := b.mappedBodyForMessages(b.groupMappingMsg.Mapped, b.groupMappingMsg.MappedModel)
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	b.result, err = func() (*forwardcore.OpenAIResult, error) {
@@ -158,7 +158,7 @@ func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	return out
 }
 
-// Complete 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Complete captures Messages usage, payload hash, and pricing fields before submission.
 func (b *openAIMessageAttemptBridge) Complete() {
 	res := b.result
 
@@ -187,7 +187,7 @@ func (b *openAIMessageAttemptBridge) Complete() {
 	})
 }
 
-// PartialImages 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// PartialImages logs forwarding failures that still produced images.
 func (b *openAIMessageAttemptBridge) PartialImages(err error) {
 	b.reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -196,7 +196,7 @@ func (b *openAIMessageAttemptBridge) PartialImages(err error) {
 	)
 }
 
-// RetryReady 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// RetryReady rejects retries after disconnection or output and reports eligible provider failures.
 func (b *openAIMessageAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bool {
 	err := failure.Cause
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -222,7 +222,7 @@ func (b *openAIMessageAttemptBridge) RetryReady(failure *textflow.AttemptFailure
 	return true
 }
 
-// RetryWait 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// RetryWait logs the same-provider retry budget and delay.
 func (b *openAIMessageAttemptBridge) RetryWait(failure *textflow.AttemptFailure, retryLimit, retryCount int, retryDelay time.Duration) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -235,7 +235,7 @@ func (b *openAIMessageAttemptBridge) RetryWait(failure *textflow.AttemptFailure,
 	)
 }
 
-// Switching 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Switching logs the provider switch count and limit.
 func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure, switchCount, maxProviderSwitches int) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -247,7 +247,7 @@ func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure,
 	)
 }
 
-// OtherFailure 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// OtherFailure handles disconnection and cyber warnings, then writes any missing Anthropic error.
 func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 	if b.result != nil && b.result.ClientDisconnect {
 		b.reqLog.Info("openai_messages.client_disconnected",
@@ -278,7 +278,7 @@ func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Success 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Success reports scheduling success and observed first-token latency.
 func (b *openAIMessageAttemptBridge) Success() {
 	if b.result != nil {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), true, b.result.FirstTokenMs)
@@ -287,7 +287,7 @@ func (b *openAIMessageAttemptBridge) Success() {
 	}
 }
 
-// Completed 保留 OpenAI Messages 适配差异；提供商重试复用同一核心。
+// Completed logs the serving provider and total switch count.
 func (b *openAIMessageAttemptBridge) Completed(switchCount int) {
 	b.reqLog.Debug("openai_messages.request_completed",
 		zap.Int64("provider_id", b.provider.Record.ID),

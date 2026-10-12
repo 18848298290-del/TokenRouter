@@ -61,7 +61,7 @@ func TestParseGatewayRequest_SystemNull(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":null}`)
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "")
 	require.NoError(t, err)
-	// system:null 按字段已存在处理，跳过默认 system 注入。
+	// system:null counts as present, suppressing default system injection.
 	require.True(t, parsed.HasSystem)
 	require.Equal(t, []byte("null"), parsed.SystemRaw())
 }
@@ -166,7 +166,7 @@ func TestParseGatewayRequest_GeminiWithModel(t *testing.T) {
 }
 
 func TestParseGatewayRequest_GeminiIgnoresAnthropicFields(t *testing.T) {
-	// Gemini 格式下 system/messages 字段应被忽略
+	// Gemini parsing ignores Anthropic system and messages fields.
 	body := []byte(`{
 		"system": "should be ignored",
 		"messages": [{"role": "user", "content": "ignored"}],
@@ -195,7 +195,7 @@ func TestParseGatewayRequest_GeminiNoContents(t *testing.T) {
 }
 
 func TestParseGatewayRequest_AnthropicIgnoresGeminiFields(t *testing.T) {
-	// Anthropic 格式下 contents/systemInstruction 字段应被忽略
+	// Anthropic parsing ignores Gemini contents and systemInstruction fields.
 	body := []byte(`{
 		"system": "real system",
 		"messages": [{"role": "user", "content": "real content"}],
@@ -211,13 +211,13 @@ func TestParseGatewayRequest_AnthropicIgnoresGeminiFields(t *testing.T) {
 	require.Equal(t, "real content", messages[0].Get("content").String())
 }
 
-// TestParseGatewayRequest_TypeValidation 检查字段类型错误。
+// TestParseGatewayRequest_TypeValidation checks rejection of incorrectly typed fields.
 func TestParseGatewayRequest_TypeValidation(t *testing.T) {
 	tests := []struct {
 		name      string
 		body      string
 		wantErr   bool
-		errSubstr string // 期望的错误信息子串（为空则不检查）
+		errSubstr string // Expected error substring; empty skips the check.
 	}{
 		{
 			name:      "model 为 int",
@@ -240,7 +240,7 @@ func TestParseGatewayRequest_TypeValidation(t *testing.T) {
 		{
 			name:      "model 为 null — gjson Null 类型触发类型校验错误",
 			body:      `{"model":null}`,
-			wantErr:   true, // gjson: Exists()=true, Type=Null != String → 返回错误
+			wantErr:   true, // gjson considers null present, but it is not a string.
 			errSubstr: "invalid model field type",
 		},
 		{
@@ -258,7 +258,7 @@ func TestParseGatewayRequest_TypeValidation(t *testing.T) {
 		{
 			name:      "stream 为 null — gjson Null 类型触发类型校验错误",
 			body:      `{"stream":null}`,
-			wantErr:   true, // gjson: Exists()=true, Type=Null != True && != False → 返回错误
+			wantErr:   true, // gjson considers null present, but it is not a boolean.
 			errSubstr: "invalid stream field type",
 		},
 		{
@@ -284,7 +284,7 @@ func TestParseGatewayRequest_TypeValidation(t *testing.T) {
 	}
 }
 
-// TestParseGatewayRequest_OptionalFieldsMissing 检查可选字段缺失时的默认值。
+// TestParseGatewayRequest_OptionalFieldsMissing checks defaults for absent optional fields.
 func TestParseGatewayRequest_OptionalFieldsMissing(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -353,7 +353,7 @@ func TestParseGatewayRequest_OptionalFieldsMissing(t *testing.T) {
 	}
 }
 
-// TestParseGatewayRequest_MaxTokensBoundary 检查 max_tokens 的取值范围。
+// TestParseGatewayRequest_MaxTokensBoundary checks numeric max_tokens handling.
 func TestParseGatewayRequest_MaxTokensBoundary(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -379,12 +379,12 @@ func TestParseGatewayRequest_MaxTokensBoundary(t *testing.T) {
 		{
 			name:          "超大值不 panic",
 			body:          `{"max_tokens":9999999999999999}`,
-			wantMaxTokens: 10000000000000000, // float64 精度导致 9999999999999999 → 1e16
+			wantMaxTokens: 10000000000000000, // float64 rounds 9999999999999999 to 1e16.
 		},
 		{
 			name:          "null 值被忽略",
 			body:          `{"max_tokens":null}`,
-			wantMaxTokens: 0, // gjson Type=Null != Number → 条件不满足，跳过
+			wantMaxTokens: 0, // Null is not a number, so max_tokens is ignored.
 		},
 	}
 
@@ -448,7 +448,7 @@ func TestParseGatewayRequest_OutputEffort(t *testing.T) {
 }
 
 func TestDescribeInvalidJSON_TruncatedBody(t *testing.T) {
-	// 模拟请求体在传输中途被截断或被中间件部分消费。
+	// Model a body truncated during transport or partially consumed by middleware.
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi`)
 
 	err := DescribeInvalidJSON(body)
@@ -523,8 +523,8 @@ func BenchmarkParseGatewayRequest_New_Large(b *testing.B) {
 	}
 }
 
-// parseIntegralNumber 将 JSON 解码后的整数值转换为 int，小数、NaN、Inf 和越界值返回 false。
-// 基准测试用它读取 json.Unmarshal 生成的 max_tokens 字段。
+// parseIntegralNumber converts decoded integral values to int, rejecting fractions, NaN, infinity, and out-of-range values.
+// The benchmark uses it to read max_tokens from json.Unmarshal output.
 func parseIntegralNumber(raw any) (int, bool) {
 	switch v := raw.(type) {
 	case float64:
@@ -562,7 +562,7 @@ func parseIntegralNumber(raw any) (int, bool) {
 	}
 }
 
-// parseGatewayRequestOld 先用 json.Unmarshal 提取字段，再调用 ParseGatewayRequest，测量重复解析的开销。
+// parseGatewayRequestOld extracts fields with json.Unmarshal before calling ParseGatewayRequest to measure duplicate parsing.
 func parseGatewayRequestOld(body []byte, protocol string) (*ParsedRequest, error) {
 	parsed := &ParsedRequest{
 		Body: NewRequestBodyRef(body),
@@ -573,7 +573,6 @@ func parseGatewayRequestOld(body []byte, protocol string) (*ParsedRequest, error
 		return nil, err
 	}
 
-	// model
 	if raw, ok := req["model"]; ok {
 		s, ok := raw.(string)
 		if !ok {
@@ -582,7 +581,6 @@ func parseGatewayRequestOld(body []byte, protocol string) (*ParsedRequest, error
 		parsed.Model = s
 	}
 
-	// stream
 	if raw, ok := req["stream"]; ok {
 		b, ok := raw.(bool)
 		if !ok {
@@ -591,21 +589,18 @@ func parseGatewayRequestOld(body []byte, protocol string) (*ParsedRequest, error
 		parsed.Stream = b
 	}
 
-	// metadata.user_id
 	if meta, ok := req["metadata"].(map[string]any); ok {
 		if uid, ok := meta["user_id"].(string); ok {
 			parsed.MetadataUserID = uid
 		}
 	}
 
-	// thinking.type
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && thinkType == "enabled" {
 			parsed.ThinkingEnabled = true
 		}
 	}
 
-	// max_tokens
 	if raw, ok := req["max_tokens"]; ok {
 		if n, ok := parseIntegralNumber(raw); ok {
 			parsed.MaxTokens = n
@@ -615,12 +610,12 @@ func parseGatewayRequestOld(body []byte, protocol string) (*ParsedRequest, error
 	return ParseGatewayRequest(parsed.Body, protocol)
 }
 
-// buildSmallJSON 构建 ~500B 的小型测试 JSON。
+// buildSmallJSON builds a compact multi-message benchmark request.
 func buildSmallJSON() []byte {
 	return []byte(`{"model":"claude-sonnet-4-5","stream":true,"max_tokens":4096,"metadata":{"user_id":"user-abc123"},"thinking":{"type":"enabled","budget_tokens":2048},"system":"You are a helpful assistant.","messages":[{"role":"user","content":"What is the meaning of life?"},{"role":"assistant","content":"The meaning of life is a philosophical question."},{"role":"user","content":"Can you elaborate?"}]}`)
 }
 
-// buildLargeJSON 构建 ~50KB 的大型测试 JSON（大量 messages）。
+// buildLargeJSON builds a benchmark request with 200 messages.
 func buildLargeJSON() []byte {
 	b := []byte(`{"model":"claude-sonnet-4-5","stream":true,"max_tokens":8192,"metadata":{"user_id":"user-xyz789"},"system":[{"type":"text","text":"You are a detailed assistant.","cache_control":{"type":"ephemeral"}}],"messages":[`)
 
@@ -677,7 +672,7 @@ func BenchmarkParseGatewayRequest_LargeGeminiContents(b *testing.B) {
 	}
 }
 
-// buildLargeAnthropicMessagesBody 构造重复文本的 Messages 请求，并按参数添加缓存标记。
+// buildLargeAnthropicMessagesBody repeats Messages text to a target size and optionally adds cache markers.
 func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
@@ -699,7 +694,7 @@ func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) 
 	return []byte(builder.String())
 }
 
-// buildLargeGeminiContentsBody 构造达到目标大小的 Gemini 文本内容请求。
+// buildLargeGeminiContentsBody repeats Gemini contents to a target size.
 func buildLargeGeminiContentsBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)

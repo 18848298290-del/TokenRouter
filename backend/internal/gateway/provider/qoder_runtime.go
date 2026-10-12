@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderRuntimeOptions 包含提供商令牌源、传输和平台会话依赖。
+// QoderRuntimeOptions supplies token, transport, and conversation dependencies.
 type QoderRuntimeOptions struct {
 	Attributes    *routing.ModelAttributeService
 	Tokens        *provideradapter.QoderTokenProvider
@@ -29,7 +29,7 @@ type QoderRuntimeOptions struct {
 	Conversations *qoder.QoderConversationStore
 }
 
-// QoderRuntime 持有唯一平台执行器和会话状态；提供商选择、资金与全局重试在调用方。
+// QoderRuntime owns the Qoder executor and conversation state. Callers handle provider selection, funding, and retries.
 type QoderRuntime struct {
 	options       QoderRuntimeOptions
 	mu            sync.Mutex
@@ -38,7 +38,7 @@ type QoderRuntime struct {
 	enter         func() (func(), error)
 }
 
-// NewQoderRuntime 构造不启动后台任务，保留已有会话存储的作用域。
+// NewQoderRuntime reuses the supplied conversation store or creates one with the Qoder TTL.
 func NewQoderRuntime(options QoderRuntimeOptions) *QoderRuntime {
 	conversations := options.Conversations
 	if conversations == nil {
@@ -47,14 +47,14 @@ func NewQoderRuntime(options QoderRuntimeOptions) *QoderRuntime {
 	return &QoderRuntime{options: options, conversations: conversations}
 }
 
-// BindAttemptActivity 在开放入口前绑定应用拥有者，保持首次执行器创建时固化的回调。
+// BindAttemptActivity sets the activity callback. Call it before the first Executor call, which captures the callback.
 func (r *QoderRuntime) BindAttemptActivity(enter func() (func(), error)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.enter = enter
 }
 
-// Executor 按需创建并复用 Qoder 执行器。
+// Executor lazily creates and reuses the Qoder executor.
 func (r *QoderRuntime) Executor() *qoder.Executor {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -64,12 +64,12 @@ func (r *QoderRuntime) Executor() *qoder.Executor {
 	return r.executor
 }
 
-// PrepareQoderTarget 根据本次提供商记录构造 Qoder 执行目标。
+// PrepareQoderTarget builds an execution target and maps the request model for the provider.
 func (r *QoderRuntime) PrepareQoderTarget(metadata qoder.RequestMetadata, value *provider.Record, body []byte, wire protocol.ProtocolID, responseModel string) (upstream.Executor, upstream.AttemptInput) {
 	return r.Executor(), upstream.AttemptInput{Protocol: wire, Body: mapQoderRequestModel(value, body), ResponseModel: responseModel, Stream: qoder.GjsonBool(body, "stream"), Target: r.Target(metadata, value)}
 }
 
-// Target 绑定会话和客户端读取函数，执行时取得所需资源。
+// Target binds session and client readers that resolve resources during execution.
 func (r *QoderRuntime) Target(metadata qoder.RequestMetadata, value *provider.Record) *qoder.Target {
 	site, err := qoderRuntimeSite(value)
 	if err != nil {
@@ -119,7 +119,7 @@ func (r *QoderRuntime) Target(metadata qoder.RequestMetadata, value *provider.Re
 	}
 }
 
-// ObserveQoderFailure 将失败交给提供商健康观测器。
+// ObserveQoderFailure reports a failure to the provider health observer.
 func (r *QoderRuntime) ObserveQoderFailure(ctx context.Context, value *provider.Record, err error) {
 	if r == nil || value == nil {
 		return

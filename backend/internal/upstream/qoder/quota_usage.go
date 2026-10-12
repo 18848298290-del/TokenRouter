@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// QuotaUsageResponse 保留站点额度报文及历史字段别名。
+// QuotaUsageResponse accepts site quota fields and their legacy aliases.
 type QuotaUsageResponse struct {
 	UserID               string         `json:"userId"`
 	UserType             string         `json:"userType"`
@@ -27,7 +27,7 @@ type QuotaUsageResponse struct {
 	IsPlanQuotaProrated  bool           `json:"isPlanQuotaProrated"`
 }
 
-// QuotaProgress 区分缺省字段与显式零值，避免误推导可用额度。
+// QuotaProgress distinguishes missing fields from explicit zero values when deriving available quota.
 type QuotaProgress struct {
 	Total          float64 `json:"total"`
 	Cap            float64 `json:"cap"`
@@ -83,7 +83,7 @@ func qoderJSONHasAnyField(fields map[string]json.RawMessage, names ...string) bo
 	return false
 }
 
-// NormalizeQuotaProgress 只归一化供应商计量，不执行提供商健康或资金决策。
+// NormalizeQuotaProgress derives quota totals, remaining capacity, and percentage for display.
 func NormalizeQuotaProgress(raw *QuotaProgress, useCapAsTotal bool) *QuotaProgress {
 	if raw == nil {
 		return nil

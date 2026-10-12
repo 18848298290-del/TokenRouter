@@ -19,7 +19,7 @@ import (
 )
 
 // @project-doc docs/interfaces/grok_upstream.md#grok_account_contract
-// GrokExecutor 绑定单次平台执行的固定依赖，提供商切换和完成处理由请求拥有者负责。
+// GrokExecutor binds single-attempt platform dependencies; the request owner handles failover and completion.
 type GrokExecutor struct {
 	Attributes  *routing.ModelAttributeService
 	FastPolicy  *gatewayadapter.ExecutionFastPolicy
@@ -41,7 +41,7 @@ func (s *GrokExecutor) TLSProfile(target *gatewayadapter.ExecutionProvider, matc
 	return s.TLS.ResolveRequestTLS(gatewayadapter.ExecutionTLSSelection(target, matches))
 }
 
-// BuildResponsesRequest 在调用时选择动态默认地址，并转发允许的请求头。
+// BuildResponsesRequest resolves the current default URL and forwards allowed request headers.
 func (s *GrokExecutor) BuildResponsesRequest(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, token, identity string, runtimeDefault bool) (*http.Request, error) {
 	targetURL, err := s.Routes.Responses(target, runtimeDefault)
 	if err != nil {

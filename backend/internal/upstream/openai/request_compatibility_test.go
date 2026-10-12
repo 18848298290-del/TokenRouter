@@ -9,10 +9,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// benchmarkIntSink 记录空 Base64 图片候选的命中次数。
+// benchmarkIntSink retains empty-Base64 candidate counts from benchmarks.
 var benchmarkIntSink int
 
-// TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem 验证跨模式故障转移时删除完整的加密推理项。
+// TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem checks whole-item removal on cross-mode retry.
 func TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[` +
 		`{"type":"message","role":"user","content":"hi"},` +
@@ -23,7 +23,7 @@ func TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem(t *tes
 	sanitized, changed, err := SanitizeOpenAICrossModeFailoverReasoning(body)
 	require.NoError(t, err)
 	require.True(t, changed)
-	// 加密内容所在的 reasoning 项整体删除。
+	// Remove the complete reasoning item that carries ciphertext.
 	require.NotContains(t, string(sanitized), "reasoning")
 	require.NotContains(t, string(sanitized), "rs_kiro_1")
 	require.NotContains(t, string(sanitized), "summary_text")
@@ -130,7 +130,7 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 }
 
-// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools 检查 input[].additional_tools 中的 Lite 工具被识别为工具声明。
+// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools checks nested Lite declarations.
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
 	normalized, changed, err := NormalizeOpenAIParallelToolCallsWithoutTools(liteBody, false)
@@ -138,14 +138,14 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAddition
 	require.False(t, changed)
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
 
-	// 非 Lite 请求的空 additional_tools 不构成有效工具声明，字段仍需删除。
+	// Empty additional_tools in a non-Lite request does not count as a tool declaration.
 	emptyLiteBody := []byte(`{"input":[{"type":"additional_tools","tools":[]}],"parallel_tool_calls":true}`)
 	normalized, changed, err = NormalizeOpenAIParallelToolCallsWithoutTools(emptyLiteBody, false)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 
-	// Lite 请求的 parallel_tool_calls 固定为 false。
+	// Lite requests force parallel_tool_calls=false.
 	toolLessLiteBody := []byte(`{"input":"hi","parallel_tool_calls":false}`)
 	normalized, changed, err = NormalizeOpenAIParallelToolCallsWithoutTools(toolLessLiteBody, true)
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAddition
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
 }
 
-// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression 检查 input[].additional_tools 中的 Lite 工具被识别为工具声明。
+// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression checks nested Lite declarations.
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
 	normalized, changed, err := NormalizeOpenAIParallelToolCallsWithoutTools(liteBody, false)
@@ -161,14 +161,14 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAddition
 	require.False(t, changed)
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
 
-	// 非 Lite 请求的空 additional_tools 不构成有效工具声明，字段仍需删除。
+	// Empty additional_tools in a non-Lite request does not count as a tool declaration.
 	emptyLiteBody := []byte(`{"input":[{"type":"additional_tools","tools":[]}],"parallel_tool_calls":true}`)
 	normalized, changed, err = NormalizeOpenAIParallelToolCallsWithoutTools(emptyLiteBody, false)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 
-	// Lite 请求的 parallel_tool_calls 固定为 false。
+	// Lite requests force parallel_tool_calls=false.
 	toolLessLiteBody := []byte(`{"input":"hi","parallel_tool_calls":false}`)
 	normalized, changed, err = NormalizeOpenAIParallelToolCallsWithoutTools(toolLessLiteBody, true)
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func BenchmarkOpenAIResponses_LargeInputEmptyBase64Guard(b *testing.B) {
 	}
 }
 
-// benchmarkBodySizes 指定图片字段预检基准的目标输入大小。
+// benchmarkBodySizes lists target input sizes for image-field prechecks.
 func benchmarkBodySizes() []struct {
 	name  string
 	bytes int
@@ -244,7 +244,7 @@ func benchmarkBodySizes() []struct {
 	}
 }
 
-// buildLargeOpenAIResponsesBody 构造带函数工具定义的 Responses 文本请求。
+// buildLargeOpenAIResponsesBody builds a text request with function tool definitions.
 func buildLargeOpenAIResponsesBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)

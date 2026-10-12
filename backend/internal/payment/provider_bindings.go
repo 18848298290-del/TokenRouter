@@ -117,8 +117,8 @@ func (s *ProviderBindings) GetEnabledWebhookProvidersByKey(ctx context.Context, 
 	return providers, nil
 }
 
-// GetOrderProvider creates a provider using the order's original instance config.
-// Falls back to registry lookup if instance ID is missing (legacy orders).
+// GetOrderProvider constructs a provider from the order's bound instance and its current configuration.
+// Unbound legacy orders may use the registry when the provider is unambiguous.
 func (s *ProviderBindings) GetOrderProvider(ctx context.Context, o *Order) (Provider, error) {
 	inst, err := s.GetOrderProviderInstance(ctx, o)
 	if err != nil {
@@ -252,8 +252,7 @@ func (s *ProviderBindings) GetOrderProviderInstance(ctx context.Context, o *Orde
 }
 
 // GetRefundOrderProviderInstance resolves the provider instance for refund paths.
-// Refunds must be pinned to an explicit historical binding, so legacy
-// "best-effort" provider guessing is intentionally not allowed here.
+// Refunds require a saved historical instance binding.
 func (s *ProviderBindings) GetRefundOrderProviderInstance(ctx context.Context, o *Order) (*ProviderInstance, error) {
 	if s == nil || s.store == nil || o == nil {
 		return nil, nil
@@ -352,8 +351,8 @@ func PsLegacyOrderMatchesInstance(orderPaymentType string, inst *ProviderInstanc
 	return InstanceSupportsType(inst.SupportedTypes, baseType)
 }
 
-// GetRefundProvider creates a provider using the order's original instance config.
-// Delegates to GetOrderProvider which handles instance lookup and fallback.
+// GetRefundProvider constructs a provider from the order's saved instance binding.
+// An unresolved binding is an error; refunds cannot select an arbitrary registered merchant.
 func (s *ProviderBindings) GetRefundProvider(ctx context.Context, o *Order) (Provider, error) {
 	inst, err := s.GetRefundOrderProviderInstance(ctx, o)
 	if err != nil {
@@ -366,7 +365,7 @@ func (s *ProviderBindings) GetRefundProvider(ctx context.Context, o *Order) (Pro
 }
 
 // EnsureProviders lazily initializes the provider registry on first call.
-// EnsureProviders 只有完整读取成功才发布并标记；失败保留下一次重试机会。
+// An instance-list failure leaves initialization retryable; individual invalid providers are skipped.
 func (s *ProviderBindings) EnsureProviders(ctx context.Context) {
 	s.providerMu.Lock()
 	defer s.providerMu.Unlock()
@@ -381,12 +380,12 @@ func (s *ProviderBindings) EnsureProviders(ctx context.Context) {
 	s.providersLoaded = true
 }
 
-// RefreshProviders 在候选构造完成后原子替换，查询失败不清空已发布的表。
+// RefreshProviders replaces the registry after loading candidates and retains it when the instance query fails.
 func (s *ProviderBindings) RefreshProviders(ctx context.Context) {
 	_ = s.RefreshProvidersChecked(ctx)
 }
 
-// RefreshProvidersChecked 让必须确认运行配置生效的综合设置入口取得加载失败。
+// RefreshProvidersChecked refreshes the registry and returns load errors to settings callers.
 func (s *ProviderBindings) RefreshProvidersChecked(ctx context.Context) error {
 	s.providerMu.Lock()
 	defer s.providerMu.Unlock()

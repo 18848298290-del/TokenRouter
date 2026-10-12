@@ -29,7 +29,7 @@ type errorRulesFixtureRepo struct {
 	rules []*errorpolicy.ErrorPassthroughRule
 }
 
-// TestAnthropicErrorEntryRuleAndMonitoring 检查错误处理经 HTTP Adapter 提交的响应和监控标记。
+// TestAnthropicErrorEntryRuleAndMonitoring checks the HTTP adapter's error response and monitoring flag.
 func TestAnthropicErrorEntryRuleAndMonitoring(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

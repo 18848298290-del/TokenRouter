@@ -34,12 +34,6 @@ func newTestOAuthProvider(id int64, extra map[string]any) *providercore.Record {
 	}
 }
 
-// --- deriveStableUUIDv4 ---
-
-// --- GetCodexFingerprintMode ---
-
-// --- resolveConvergedInstallationID ---
-
 func TestResolveConvergedInstallationID_UsesDeviceID(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{"openai_device_id": "real-device-id"})
 	assert.Equal(t, "real-device-id", ConvergedInstallationID(provider, testCodexFingerprintSeed))
@@ -60,23 +54,19 @@ func TestResolveConvergedInstallationID_DifferentSeeds(t *testing.T) {
 	assert.NotEqual(t, a, b)
 }
 
-// --- resolveConvergedThreadID ---
-
-// --- off 模式：resolveCodexFingerprintIDsFromRequest 返回 nil ---
-
 func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{providercore.CodexFingerprintModeExtraKey: "off"})
 	ids := CodexFingerprintIDsFromRequest(provider, nil)
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-// TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff 检查指纹功能缺省时返回 nil，出站使用客户端身份（#5610）。
+// TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff keeps client identity when fingerprinting is
+// unconfigured (#5610).
 func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
 	provider := newTestOAuthProvider(1, nil)
 	assert.Nil(t, CodexFingerprintIDsFromRequest(provider, nil), "无 extra 应视为 off")
 }
 
-// TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored 检查管理员启用指纹功能后的结果。
 func TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored(t *testing.T) {
 	for _, mode := range []string{"device", "session", "full"} {
 		t.Run(mode, func(t *testing.T) {
@@ -108,8 +98,6 @@ func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *t
 	}
 }
 
-// --- applyCodexFingerprintHeaders: off 模式 ---
-
 func TestApplyCodexFingerprintHeaders_OffMode(t *testing.T) {
 	h := http.Header{}
 	h.Set("x-codex-installation-id", "original-install-id")
@@ -120,8 +108,6 @@ func TestApplyCodexFingerprintHeaders_OffMode(t *testing.T) {
 	assert.Equal(t, "original-install-id", h.Get("x-codex-installation-id"), "nil ids 不改写")
 	assert.Equal(t, "original-window-id", h.Get("x-codex-window-id"), "nil ids 不改写")
 }
-
-// --- applyCodexFingerprintHeaders: device 模式 ---
 
 func TestApplyCodexFingerprintHeaders_DeviceMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
@@ -146,8 +132,6 @@ func TestApplyCodexFingerprintHeaders_DeviceMode(t *testing.T) {
 	assert.Equal(t, "user-session", meta["session_id"], "device 模式不改写 session_id")
 	assert.Equal(t, "seccomp", meta["sandbox"], "非指纹字段保留原样")
 }
-
-// --- applyCodexFingerprintHeaders: session 模式 ---
 
 func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
@@ -189,8 +173,6 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	assert.Equal(t, "user", meta["thread_source"], "thread_source 保留原样")
 }
 
-// --- session 模式：不同客户端得到不同 thread ---
-
 func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -220,8 +202,6 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	assert.Equal(t, hA.Get("x-codex-installation-id"), hB.Get("x-codex-installation-id"))
 }
 
-// --- full 模式 ---
-
 func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "full",
@@ -249,8 +229,6 @@ func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	assert.Equal(t, hA.Get("x-codex-window-id"), hB.Get("x-codex-window-id"), "full 模式 window_id 应相同")
 }
 
-// --- H1 修复验证：头和体的 turn_id 一致性 ---
-
 func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -261,12 +239,11 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	ids := CodexFingerprintIDsFromRequest(provider, clientHeaders)
 	require.NotNil(t, ids)
 
-	// 头改写
 	h := http.Header{}
 	h.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`)
 	openai.ApplyCodexFingerprintHeaders(h, ids)
 
-	// 体改写（使用同一份 ids）
+	// Use the same generated IDs for header and body rewriting.
 	reqBody := map[string]any{
 		"client_metadata": map[string]any{
 			"x-codex-installation-id": "x",
@@ -277,19 +254,16 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	}
 	openai.ApplyCodexFingerprintClientMetadata(reqBody, ids)
 
-	// 从头 turn-metadata JSON 提取 turn_id
 	var headerMeta map[string]any
 	require.NoError(t, json.Unmarshal([]byte(h.Get("x-codex-turn-metadata")), &headerMeta))
 	headerTurnID, ok := headerMeta["turn_id"].(string)
 	require.True(t, ok, "头 turn-metadata 应包含 string 类型的 turn_id")
 
-	// 从体 client_metadata 提取 turn_id
 	cm, ok := reqBody["client_metadata"].(map[string]any)
 	require.True(t, ok, "请求体应包含 client_metadata")
 	bodyTurnID, ok := cm["turn_id"].(string)
 	require.True(t, ok, "体 client_metadata 应包含 string 类型的 turn_id")
 
-	// 从体内嵌 turn-metadata JSON 提取 turn_id
 	embeddedRaw, ok := cm["x-codex-turn-metadata"].(string)
 	require.True(t, ok, "体 client_metadata 应包含 x-codex-turn-metadata 字符串")
 	var bodyMeta map[string]any
@@ -336,8 +310,6 @@ func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.
 		assert.Equal(t, headerMeta[key], bodyMeta[key], "rebuilt metadata field %s must match", key)
 	}
 }
-
-// --- applyCodexFingerprintClientMetadata ---
 
 func TestApplyCodexFingerprintClientMetadata_OffMode(t *testing.T) {
 	reqBody := map[string]any{
@@ -457,12 +429,8 @@ func TestApplyCodexFingerprintClientMetadata_FullMode(t *testing.T) {
 	assert.Equal(t, convergedSession, cm["thread_id"], "full 模式 thread_id 应等于 session_id")
 }
 
-// --- extractClientSessionID ---
-
-// --- 透传路径：raw 字节版 client_metadata 改写 ---
-
-// rawVsMapClientMetadata 用同一份 ids 分别跑 map 版与 raw 字节版，
-// 返回两侧最终的 client_metadata 解码结果。
+// rawVsMapClientMetadata applies the same IDs to map and raw-byte rewrites
+// and returns their decoded client_metadata values.
 func rawVsMapClientMetadata(t *testing.T, body []byte, ids *openai.FingerprintIDs) (map[string]any, map[string]any) {
 	t.Helper()
 
@@ -709,8 +677,6 @@ func TestApplyCodexFingerprintClientMetadataRaw_Noop(t *testing.T) {
 	assert.False(t, changed)
 	assert.Nil(t, out)
 }
-
-// --- context 暂存与出站头应用（透传/非透传共用 seam）---
 
 func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testing.T) {
 	provider := newTestOAuthProvider(4244, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})

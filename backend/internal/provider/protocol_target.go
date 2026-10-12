@@ -7,14 +7,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ProtocolTarget 组合本次协议选择与提供商配置，只用于当前执行或维护查询。
-// Protocol 不写入 Record 或共享缓存；零值沿用配置协议。
+// ProtocolTarget combines a per-operation protocol selection with provider configuration.
+// An empty Protocol uses the configured protocol; this selection is not stored on Record.
 type ProtocolTarget struct {
 	*Record
 	Protocol protocolcore.ProtocolID
 }
 
-// ConfiguredAPIProtocol 从提供商配置读取 API 协议。
+// ConfiguredAPIProtocol reads the CN protocol setting, defaulting other or invalid configurations to Chat
+// Completions.
 func (r *Record) ConfiguredAPIProtocol() string {
 	if r == nil || !r.IsCNProvider() {
 		return APIProtocolChatCompletions
@@ -37,13 +38,13 @@ func (r *Record) ConfiguredAPIProtocol() string {
 	return APIProtocolChatCompletions
 }
 
-// GetOpenAIBaseURL 根据本次协议选择读取原地址，不改变保存的提供商配置。
+// GetOpenAIBaseURL resolves the OpenAI base URL using this operation's adaptive-protocol setting.
 func (a ProtocolTarget) GetOpenAIBaseURL() string {
 	return a.OpenAIBaseURL(a.IsAdaptiveAPIProtocol())
 }
 
-// GetAPIProtocol 返回供应商协议变体，请求副本使用已解析的目标，
-// 配置了协议集合的提供商使用分协议模式，历史数据使用对应的读取默认值。
+// GetAPIProtocol returns the selected protocol variant when recognized, or the configured variant otherwise.
+// Unified CN protocol sets resolve to adaptive mode when no operation-specific variant is selected.
 func (a ProtocolTarget) GetAPIProtocol() string {
 	if a.Record != nil && a.Protocol != "" {
 		switch a.Protocol {
@@ -59,8 +60,8 @@ func (a ProtocolTarget) GetAPIProtocol() string {
 	return a.ConfiguredAPIProtocol()
 }
 
-// UsesNativeCNResponses 报告当前提供商是否应按原生 Responses 协议转发
-// （配置为 responses，或 adaptive 且平台具备对应端点）。
+// UsesNativeCNResponses reports whether a platform with native Responses support
+// is configured for Responses or adaptive routing.
 func (a ProtocolTarget) UsesNativeCNResponses() bool {
 	if a.Record == nil || !a.SupportsNativeCNResponses() {
 		return false
@@ -73,14 +74,14 @@ func (a ProtocolTarget) UsesNativeCNResponses() bool {
 	}
 }
 
-// IsAdaptiveAPIProtocol 报告提供商是否按入站协议动态选择供应商原生端点。
+// IsAdaptiveAPIProtocol reports whether endpoint selection follows the inbound protocol.
 func (a ProtocolTarget) IsAdaptiveAPIProtocol() bool {
 	return a.GetAPIProtocol() == APIProtocolAdaptive
 }
 
-// GetCNProtocolBaseURL 返回国产供应商指定协议的上游 base URL。
-// adaptive 提供商优先使用 api_base_urls 中的分协议地址，缺失时按平台和
-// provider_mode 使用官方默认端点。base_url 继续作为 Chat Completions 地址兼容旧字段。
+// GetCNProtocolBaseURL returns the CN platform's base URL for a protocol.
+// Unified or adaptive configurations prefer api_base_urls; Chat also accepts legacy base_url.
+// Otherwise the platform and provider mode determine the default endpoint.
 func (a ProtocolTarget) GetCNProtocolBaseURL(protocol string) string {
 	if a.Record == nil || !a.IsCNProvider() {
 		return ""
@@ -100,15 +101,16 @@ func (a ProtocolTarget) GetCNProtocolBaseURL(protocol string) string {
 	return a.DefaultCNProtocolBaseURL(protocol)
 }
 
-// IsAnthropicProtocol 报告提供商是否以原生 Anthropic 协议接入上游
-// （/v1/messages 直通，适配 Claude Code 等客户端）。
+// IsAnthropicProtocol reports whether the selected variant is Anthropic Messages.
+// Adaptive selection is checked separately by callers.
 func (a ProtocolTarget) IsAnthropicProtocol() bool {
 	return a.GetAPIProtocol() == APIProtocolAnthropic
 }
 
-// GetAnthropicProtocolBaseURL 返回 Anthropic 协议提供商的上游 base_url
-// （上游路径为 {base}/v1/messages）。优先取凭证 base_url，缺失时按
-// 供应商 × 接入模式返回默认端点。非 Anthropic 协议提供商返回空串。
+// GetAnthropicProtocolBaseURL resolves a Messages endpoint for Anthropic or adaptive variants.
+// Unified or adaptive CN configurations use protocol-specific slots; legacy API-key and upstream records
+// prefer base_url.
+// Otherwise platform and provider mode determine the default; unsupported variants return empty.
 func (a ProtocolTarget) GetAnthropicProtocolBaseURL() string {
 	if a.Record == nil || (!a.IsAnthropicProtocol() && !a.IsAdaptiveAPIProtocol()) {
 		return ""
@@ -136,16 +138,16 @@ func (a ProtocolTarget) GetAnthropicProtocolBaseURL() string {
 	}
 }
 
-// GetOpenAIFormatBaseURL 返回供 OpenAI 格式端点（/v1/models、/v1/chat/completions
-// 等）使用的 base。chat_completions / responses 协议下与 GetOpenAIBaseURL
-// 一致；anthropic 协议下，官方端点映射到对应的 OpenAI 格式端点，自定义中继则
-// 只移除末尾的 /anthropic 协议段，保留中继 host 与路径前缀。
+// GetOpenAIFormatBaseURL resolves a base for OpenAI-format model and Chat endpoints.
+// Non-Messages configurations use GetOpenAIBaseURL. Messages defaults map to the platform's OpenAI base.
+// For custom Messages relays, remove the trailing /anthropic segment
+// while retaining the relay host and preceding path.
 func (a ProtocolTarget) GetOpenAIFormatBaseURL() string {
 	if a.Record == nil {
 		return ""
 	}
 
-	// 固定 Messages 提供商通过地址槽识别模型同步根，保留中继路径前缀。
+	// Detect a migrated fixed-Messages base through the protocol slots before deriving the model-list base.
 	anthropicBase := a.IsAnthropicProtocol()
 	if _, unified := a.Credentials[UpstreamProtocolsKey]; unified && a.IsCNProvider() {
 		urls, _ := a.Credentials["api_base_urls"].(map[string]any)

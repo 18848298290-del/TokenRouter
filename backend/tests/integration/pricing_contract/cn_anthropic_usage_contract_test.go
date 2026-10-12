@@ -49,7 +49,7 @@ func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 			uncachedInput := max(openAIUsage.InputTokens-openAIUsage.CacheReadInputTokens-openAIUsage.CacheCreationInputTokens, 0)
 			require.Equal(t, tt.wantInput, uncachedInput)
 
-			// 固定平时时刻，检查未缓存输入的计费。
+			// Use a fixed off-peak time to isolate the charge for uncached input.
 			cost, err := billing.CalculateCostUnified(billingcore.CostInput{
 				Ctx: context.Background(), Model: tt.model, RateMultiplier: 1,
 				Resolver:  billingtestkit.PriceResolver(nil, billing),

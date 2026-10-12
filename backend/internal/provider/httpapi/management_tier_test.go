@@ -17,7 +17,7 @@ import (
 	geminicli "github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
-// 模拟 Drive 查询期间管理员已经替换凭据与非 tier 配置。
+// This fixture replaces credentials and non-tier configuration during the Drive query.
 type tierIdentityPort interface {
 	ProviderManagement
 	provider.TierManagementStore

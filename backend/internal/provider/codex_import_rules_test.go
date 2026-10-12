@@ -378,7 +378,7 @@ func buildCodexTestJWTForTest(t *testing.T, exp time.Time, extraClaims map[strin
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
 
-// TestCodexImportInjectedClockAndExpiryBoundaries 检查 JWT exp 使用大于比较，到期值使用小于等于比较。
+// TestCodexImportInjectedClockAndExpiryBoundaries checks the strict JWT grace comparison and inclusive expiry cutoff.
 func TestCodexImportInjectedClockAndExpiryBoundaries(t *testing.T) {
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	options := CodexImportOptions{Now: func() time.Time { return now }, OAuthClientID: "fixture-client"}

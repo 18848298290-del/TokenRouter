@@ -12,7 +12,7 @@ type cnTestTarget struct {
 	record   *provider.Record
 }
 
-// Target 固定本次提供商快照，适配器只根据已经准备好的测试路由执行。
+// Target binds the selected provider record to the prepared test route.
 func (s *CNProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return cnTestTarget{executor: s, record: value}
 }
@@ -29,7 +29,7 @@ func (t cnTestTarget) Execute(ctx context.Context, request provider.PreparedTest
 	var err error
 	switch request.Route {
 	case provider.TestRouteCNAdaptive:
-		// 管理员选定协议时只验证该端点，未选定时依次验证全部已启用协议。
+		// An explicit protocol selects one endpoint; otherwise all enabled endpoints are probed.
 		err = t.executor.ExecuteAdaptive(run, t.record, request.Model, request.Prompt, provider.TestProtocolID(request.Protocol))
 	case provider.TestRouteCNResponses:
 		err = t.executor.Responses.Execute(run, t.record, request.Model, request.Prompt, request.Mode, request.TestType)

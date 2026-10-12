@@ -15,7 +15,8 @@ type GrokUsageProbe struct {
 	LocalUsage24h, LocalUsage7d, LocalUsageMonthly *WindowStats
 }
 
-// GrokUsageOptions 只提供供应商观测/报文解析和依赖可用性；快照新鲜度与统计组合由核心拥有。
+// GrokUsageOptions supplies upstream observations and parsing; the service controls freshness and local
+// statistics.
 type GrokUsageOptions struct {
 	Available      func() bool
 	StatsAvailable func() bool
@@ -64,7 +65,7 @@ func (s *OAuthUsageService) GetGrokUsage(ctx context.Context, provider *Record, 
 				ctx, s.stats.usageLogRepo, provider.ID, usage.GrokBilling, s.options.Now().UTC(), s.options.Warn,
 			)
 		}
-		// 将本地窗口统计附加到官方 7 天和 30 天进度条。
+		// Attach matching local statistics to the upstream weekly and monthly progress windows.
 		if usage.SevenDay != nil && usage.GrokLocalUsage7d != nil {
 			usage.SevenDay.WindowStats = usage.GrokLocalUsage7d
 		}
@@ -77,7 +78,8 @@ func (s *OAuthUsageService) GetGrokUsage(ctx context.Context, provider *Record, 
 	return usage, nil
 }
 
-// GrokLocalUsageForQuota 根据 billing 是否提供权威额度选择 Free 或付费统计窗口。
+// GrokLocalUsageForQuota chooses billing windows when upstream quota is known, or rolling free-tier usage
+// otherwise.
 func GrokLocalUsageForQuota(
 	ctx context.Context,
 	repo LocalUsageStats,
@@ -93,7 +95,7 @@ func GrokLocalUsageForQuota(
 	return GrokLocalUsage24h(ctx, repo, providerID, now, warn), nil, nil
 }
 
-// GrokLocalUsage24h 查询以当前时间为结束点的滚动 24 小时本地用量。
+// GrokLocalUsage24h queries local usage starting 24 hours before now.
 func GrokLocalUsage24h(ctx context.Context, repo LocalUsageStats, providerID int64, now time.Time, warn func(string, ...any)) *WindowStats {
 	if repo == nil || providerID <= 0 {
 		return nil
@@ -185,7 +187,7 @@ func (s *OAuthUsageService) ShouldProbeGrokBilling(providerID int64, now time.Ti
 	return true
 }
 
-// cloneGrokUsageProbe 隔离供应商共享 flight 的返回值，保持 nil 统计和账单字段。
+// cloneGrokUsageProbe copies a shared probe result, retaining nil statistics and billing fields.
 func cloneGrokUsageProbe(value *GrokUsageProbe) *GrokUsageProbe {
 	if value == nil {
 		return nil

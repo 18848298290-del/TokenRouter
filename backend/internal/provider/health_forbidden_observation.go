@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ForbiddenObservation 将平台分类与提供商处罚权限分开。
+// ForbiddenObservation carries the upstream 403 classification used by provider health rules.
 type ForbiddenObservation struct {
 	Message                  string
 	Body                     []byte
@@ -45,16 +45,16 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 	return prefix + fallback
 }
 
-// ApplyForbiddenObservation handle403 处理 403 Forbidden 错误
-// Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
-// OpenAI 与国产平台提供商的 403 使用 HTML 豁免和累计冷却；
-// 其他平台调用 SetError。
+// ApplyForbiddenObservation applies platform-specific health rules for HTTP 403 responses.
+// Antigravity failures become account errors. OpenAI and CN providers use HTML exemptions
+// and configured cooldown thresholds; Kimi concurrency failures use a temporary pause.
+// Remaining platforms are marked as errored.
 func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
 	if provider.Platform == capability.PlatformAntigravity {
 		return s.handleAntigravity403(ctx, provider, observation)
 	}
-	// Kimi 将提供商级并发/业务限制返回为 403；保留切号信号，但不把精确文案
-	// 送入会永久禁用提供商的累计 403 计数器。
+	// Kimi reports concurrency limits as 403. Use a temporary pause and keep the failover signal
+	// so repeated capacity failures do not accumulate toward an account-error threshold.
 	if provider.Platform == capability.PlatformKimi && observation.ConcurrentRequestLimited {
 		s.ApplyCNConcurrencyLimit(ctx, provider, observation.ConcurrencyReason)
 		return true
@@ -62,7 +62,7 @@ func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider 
 	if provider.Platform == capability.PlatformOpenAI || provider.IsCNProvider() {
 		return s.handleOpenAI403(ctx, provider, observation)
 	}
-	// 非 Antigravity 平台调用 SetError。
+	// Remaining platforms treat the failure as an account error.
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
 		observation.Message,
@@ -74,10 +74,9 @@ func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider 
 }
 
 func (s *HealthService) handleOpenAI403(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
-	// 上游代理或 CDN 在请求到达 OpenAI API 前拦截时，可能返回 HTML 403，
-	// 响应表明当前请求被代理或端点拦截，提供商凭据和权限状态保持不变。
-	// 若继续计数或写提供商状态，同一个错误请求会在 failover 中逐个处罚提供商，
-	// 最终把整组提供商错误地下线。这里只跳过提供商处罚，保留调用方既有切号行为。
+	// An HTML 403 may come from a proxy or CDN before the request reaches the API.
+	// Treating it as a credential failure could penalize every provider tried during failover.
+	// Leave provider state unchanged here; the caller controls request retry behavior.
 	if observation.HTML {
 		s.options.Warn(
 			"openai_403_html_body_skips_provider_penalty",
@@ -96,16 +95,14 @@ func (s *HealthService) handleOpenAI403(ctx context.Context, provider *Record, o
 	return s.ApplyForbidden(ctx, provider, msg)
 }
 
-// handleAntigravity403 处理 Antigravity 平台的 403 错误
-// validation（需要验证）→ 永久 SetError（需人工去 Google 验证后恢复）
-// violation（违规封号）→ 永久 SetError（需人工处理）
-// generic（通用禁止）→ 永久 SetError。
+// handleAntigravity403 marks the provider as errored with a classification-specific message.
+// Validation failures include a verification URL when available so an administrator can act.
 func (s *HealthService) handleAntigravity403(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
 	fbType := observation.Kind
 
 	switch fbType {
 	case ForbiddenTypeValidation:
-		// VALIDATION_REQUIRED: 永久禁用，需人工去 Google 验证后手动恢复
+		// Google verification requires manual intervention before recovery.
 		msg := buildForbiddenErrorMessage(
 			"Validation required (403):",
 			observation.Message,
@@ -119,7 +116,7 @@ func (s *HealthService) handleAntigravity403(ctx context.Context, provider *Reco
 		return true
 
 	case ForbiddenTypeViolation:
-		// 违规封号: 永久禁用，需人工处理
+		// An account violation requires manual intervention before recovery.
 		msg := buildForbiddenErrorMessage(
 			"Provider violation (403):",
 			observation.Message,
@@ -130,7 +127,6 @@ func (s *HealthService) handleAntigravity403(ctx context.Context, provider *Reco
 		return true
 
 	default:
-		// 通用 403 调用 SetError。
 		msg := buildForbiddenErrorMessage(
 			"Access forbidden (403):",
 			observation.Message,

@@ -8,7 +8,7 @@ const (
 	ModeDisabled = "disabled"
 )
 
-// ProviderPolicy 保存判断工具是否启用所需的提供商配置。
+// ProviderPolicy holds the provider settings used to enable search emulation.
 type ProviderPolicy struct {
 	ID       int64
 	Platform string
@@ -16,7 +16,7 @@ type ProviderPolicy struct {
 	Extra    map[string]any
 }
 
-// ModeSelection 将历史布尔配置的诊断交给外层，纯裁决不安装日志后端。
+// ModeSelection exposes legacy boolean values for the caller to diagnose.
 type ModeSelection struct {
 	Mode       string
 	LegacyBool *bool

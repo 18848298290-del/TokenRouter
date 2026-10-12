@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
-// teamReportSource 复用预聚合时间划分，小时桶保留团队报表的本地日期分组。
+// teamReportSource combines raw ranges and hourly rollups for grouping by local report dates.
 func (r *Store) teamReportSource(ctx context.Context, teamID int64, request team.TeamUsageQuery) (query.TeamReportSource, bool, error) {
 	if r.preAggregation == nil || !r.preAggregation.UsageEnabled(ctx) {
 		return query.TeamReportSource{}, false, nil
@@ -20,7 +20,7 @@ func (r *Store) teamReportSource(ctx context.Context, teamID int64, request team
 	if request.APIKeyID != nil {
 		filters.APIKeyID = *request.APIKeyID
 	}
-	// 半小时和四十五分钟时区的午夜会切开 UTC 小时桶，此时按原始时间分组。
+	// Fractional-hour timezone offsets split UTC buckets at midnight; use raw timestamps for those ranges.
 	for cursor := request.From; cursor.Before(request.To); {
 		local := cursor.In(r.calendar.Location())
 		_, offset := local.Zone()
@@ -34,7 +34,7 @@ func (r *Store) teamReportSource(ctx context.Context, teamID int64, request team
 		cursor = next
 	}
 
-	// 聚合桶的留存可能长于原始记录，按当前筛选下仍存在的记录确定起点。
+	// Rollups can outlive raw records; start from the oldest retained record matching this query.
 	where, args := query.TeamUsageWhere(teamID, request)
 	var oldest sql.NullTime
 	if err := scanSingleRow(ctx, r.sql, "SELECT MIN(ul.created_at) FROM usage_logs ul WHERE "+where, args, &oldest); err != nil {
@@ -57,7 +57,7 @@ func (r *Store) teamReportSource(ctx context.Context, teamID int64, request team
 	}, true, nil
 }
 
-// GetTeamUsageSummary 在聚合可用时读取小时桶，失败后完整回退原始查询。
+// GetTeamUsageSummary uses available rollups and retries the full raw query when aggregation fails.
 // @project-doc docs/operations/pre_aggregation.md#query_routing_and_fallback
 func (r *Store) GetTeamUsageSummary(ctx context.Context, teamID int64, request team.TeamUsageQuery) (*team.TeamUsageSummary, error) {
 	source, ok, err := r.teamReportSource(ctx, teamID, request)
@@ -74,7 +74,7 @@ func (r *Store) GetTeamUsageSummary(ctx context.Context, teamID int64, request t
 	return query.UsageSummaryFromSource(ctx, r.sql, query.RawTeamReportSource(teamID, request), r.calendar)
 }
 
-// ListTeamMemberUsageSeries 保留当前成员和范围内有用量的历史成员。
+// ListTeamMemberUsageSeries includes current members and former members with usage in the range.
 func (r *Store) ListTeamMemberUsageSeries(ctx context.Context, teamID int64, request team.TeamUsageQuery) ([]team.TeamMemberUsageSeries, error) {
 	source, ok, err := r.teamReportSource(ctx, teamID, request)
 	if err == nil && ok {

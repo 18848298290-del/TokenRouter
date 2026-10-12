@@ -15,18 +15,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// 审计相关 gin context 覆写键：handler / 认证中间件可通过这些键补充审计信息。
+// Handlers and authentication middleware use these Gin context keys to supply audit metadata.
 const (
 	auditCtxKeyAction     = "audit_action"
 	auditCtxKeyActorID    = "audit_actor_id"
 	auditCtxKeyActorEmail = "audit_actor_email"
 	auditCtxKeySkip       = "audit_skip"
-	// ContextKeyAuthEmail 认证中间件写入的用户邮箱（审计用）。
+	// ContextKeyAuthEmail holds the email supplied by authentication middleware.
 	ContextKeyAuthEmail = "auth_email"
 )
 
 var (
-	// auditSensitiveReads 需要审计的敏感 GET 读取（method+FullPath → 动作名）。
+	// auditSensitiveReads maps audited GET method/route pairs to action names.
 	auditSensitiveReads = map[string]string{
 		"GET /api/v1/admin/providers/data":            "admin.providers.export",
 		"GET /api/v1/admin/proxies/data":              "admin.proxies.export",
@@ -41,7 +41,7 @@ var (
 		"GET /api/v1/admin/data-management/s3/config": "admin.data_management.s3_config.read",
 	}
 
-	// auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
+	// auditActionOverrides supplies fixed action names before route-based derivation.
 	auditActionOverrides = map[string]string{
 		"POST /api/v1/auth/login":                                 audit.AuditActionLogin,
 		"POST /api/v1/auth/login/2fa":                             audit.AuditActionLogin2FA,
@@ -61,8 +61,8 @@ var (
 		"POST /api/v1/subscriptions/:id/revoke":                   audit.AuditActionUserSubscriptionRevoke,
 	}
 
-	// auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
-	// 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
+	// auditBodyOmittedRoutes lists routes whose bodies contain credentials embedded in strings.
+	// Key-based redaction cannot safely inspect these values, so the entire body is omitted.
 	auditBodyOmittedRoutes = map[string]struct{}{
 		"POST /api/v1/auth/passkey/login/finish":                     {},
 		"POST /api/v1/user/passkeys/register/finish":                 {},
@@ -71,22 +71,22 @@ var (
 	}
 )
 
-// AuditLogMiddleware 管理面操作审计中间件类型（用于 wire 注入区分）。
+// AuditLogMiddleware distinguishes audit middleware for Wire injection.
 type AuditLogMiddleware gin.HandlerFunc
 
-// restoredBody 把审计中间件按上限读出的前缀与未读完的原始 body 拼接回填，
-// 保证 handler 读到完整请求体；Close 委托给原始 body。
+// restoredBody combines the captured prefix with the unread original body.
+// Handlers receive the complete body; Close delegates to the original body.
 type restoredBody struct {
 	io.Reader
 	closer io.Closer
 }
 
-// SetAuditAction 允许 handler / 中间件为当前请求指定审计动作名（覆盖自动推导）。
+// SetAuditAction overrides the action derived for the current request.
 func SetAuditAction(c *gin.Context, action string) {
 	c.Set(auditCtxKeyAction, action)
 }
 
-// SetAuditActor 允许 handler 在认证上下文缺失时（如登录接口）补充操作者身份。
+// SetAuditActor supplies or overrides the actor, including during login before authentication.
 func SetAuditActor(c *gin.Context, userID int64, email string) {
 	if userID > 0 {
 		c.Set(auditCtxKeyActorID, userID)
@@ -96,15 +96,15 @@ func SetAuditActor(c *gin.Context, userID int64, email string) {
 	}
 }
 
-// SkipAudit 跳过当前请求的审计记录。
+// SkipAudit suppresses the audit record for the current request.
 func SkipAudit(c *gin.Context) {
 	c.Set(auditCtxKeySkip, true)
 }
 
-// NewAuditLogMiddleware 创建审计中间件。
-// 记录范围：变更类请求（POST/PUT/PATCH/DELETE）+ 白名单内的敏感 GET 读取。
-// 挂载位置：admin / user / admin-payment 组挂在各自认证中间件之后（只审计已认证请求，
-// 未过认证的 401/403 不入库）；auth 组（登录/注册/刷新）无前置认证，天然记录失败尝试。
+// NewAuditLogMiddleware records mutations and selected sensitive reads.
+// It records POST, PUT, PATCH, DELETE, and allowlisted GET requests.
+// Mount it after authentication for admin, user, and admin-payment groups so rejected authentication is excluded.
+// The auth group has no preceding authentication and therefore includes failed login, registration, and refresh attempts.
 func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.Redactor) AuditLogMiddleware {
 	return AuditLogMiddleware(func(c *gin.Context) {
 		routeKey := c.Request.Method + " " + c.FullPath()
@@ -128,9 +128,9 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			return
 		}
 
-		// 捕获请求体（读出后回填，避免影响后续 ShouldBindJSON）。
-		// 只读取脱敏解析上限内的字节，超出部分与已读部分拼接回填，
-		// 避免大体积导入请求被完整复制进内存两次。
+		// Restore captured bytes so downstream JSON binding can read the complete body.
+		// Read only the capture limit plus one byte and retain the unread stream,
+		// avoiding a second full in-memory copy of large import bodies.
 		var bodyRedacted string
 		if _, omit := auditBodyOmittedRoutes[routeKey]; omit {
 			bodyRedacted = "<credential-bearing body omitted>"
@@ -154,7 +154,7 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 		}
 
 		status := c.Writer.Status()
-		// token 刷新成功属于高频常规操作，只记录失败（潜在攻击信号）。
+		// Successful refreshes are routine high-volume events; retain failures for investigation.
 		if routeKey == "POST /api/v1/auth/refresh" && status < 400 {
 			return
 		}
@@ -185,7 +185,7 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			entry.RequestID = requestID
 		}
 
-		// 操作者身份：优先取认证中间件写入的上下文，其次取 handler 覆写（登录等场景）。
+		// Read authentication metadata first, then apply any actor overrides supplied by the handler.
 		if subject, ok := authctx.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
 			uid := subject.UserID
 			entry.ActorUserID = &uid
@@ -209,7 +209,7 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			}
 		}
 
-		// 请求头凭证掩码（仅保留首尾）。
+		// Mask credentials before storing request-header metadata.
 		entry.CredentialMasked = MaskedRequestCredential(c)
 
 		extra := map[string]any{}
@@ -233,7 +233,7 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 
 func (b *restoredBody) Close() error { return b.closer.Close() }
 
-// MaskedRequestCredential 提取请求头中的凭证并做首尾掩码。
+// MaskedRequestCredential extracts and masks the API key or Authorization credential.
 func MaskedRequestCredential(c *gin.Context) string {
 	if apiKey := strings.TrimSpace(c.GetHeader("x-api-key")); apiKey != "" {
 		return "x-api-key " + audit.MaskAuditCredential(apiKey)
@@ -249,8 +249,8 @@ func MaskedRequestCredential(c *gin.Context) string {
 	return audit.MaskAuditCredential(authHeader)
 }
 
-// deriveAuditAction 由 method + 路由模板自动推导动作名，
-// 例：PUT /api/v1/admin/providers/:id → admin.providers.update。
+// deriveAuditAction combines the method and route template into an action name.
+// For example, PUT /api/v1/admin/providers/:id becomes admin.providers.update.
 func deriveAuditAction(method, fullPath string) string {
 	path := strings.TrimPrefix(fullPath, "/api/v1/")
 	path = strings.Trim(path, "/")

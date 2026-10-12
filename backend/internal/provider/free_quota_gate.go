@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// grokFreeQuotaGateCacheMinSweepAge 是条目可被清理前的最短存活时间。
+// grokFreeQuotaGateCacheMinSweepAge is the minimum entry age for eviction.
 const grokFreeQuotaGateCacheMinSweepAge = 5 * time.Minute
 
-// FreeQuotaOptions 是免费档位调度准入的配置参数。
+// FreeQuotaOptions configures scheduling admission for free-tier providers.
 type FreeQuotaOptions struct {
 	Enabled      bool
 	TokenLimit   int64
@@ -20,13 +20,13 @@ type FreeQuotaOptions struct {
 	CacheSeconds int
 }
 
-// FreeQuotaCandidate 不携带凭据，只表达已判定的资格和提供商 ID。
+// FreeQuotaCandidate carries a provider ID and the caller's eligibility decision.
 type FreeQuotaCandidate struct {
 	ID       int64
 	Eligible bool
 }
 
-// FreeQuotaGate 拥有一个选择作用域的缓存与刷新去重；后台任务由应用管理。
+// FreeQuotaGate owns a selection scope's cache and coalesces refreshes; the application owns background tasks.
 type FreeQuotaGate struct {
 	cache      sync.Map
 	inFlight   sync.Map
@@ -51,13 +51,13 @@ type grokFreeQuotaGateCacheEntry struct {
 	known     bool
 }
 
-// FreeQuotaMetrics 保留各选择作用域共用的累计观测。
+// FreeQuotaMetrics holds cumulative observations shared across selection scopes.
 type FreeQuotaMetrics struct {
 	QueryFailureTotal atomic.Int64
 	BlockedTotal      atomic.Int64
 }
 
-// NewFreeQuotaGate 构造免费额度检查器，配置读取和异步回源在调用时执行。
+// NewFreeQuotaGate constructs a gate; Blocked reads settings and schedules usage queries on demand.
 func NewFreeQuotaGate(options func() FreeQuotaOptions, load func(context.Context, []int64, time.Time) (map[int64]int64, error), background func(string, func()) bool, now func() time.Time, observe func(bool, string, ...any), metrics *FreeQuotaMetrics) *FreeQuotaGate {
 	if now == nil {
 		now = time.Now
@@ -104,8 +104,8 @@ func calculateGrokFreeQuotaSoftGateTokens(limit int64, percent int) int64 {
 	return (limit/100)*int64(percent) + (limit%100)*int64(percent)/100
 }
 
-// IsExplicitGrokFreeOAuthProvider 判断免费层软门禁是否适用；只有凭据或 extra 中
-// subscription_tier/plan_type 明确等于 free 的 OAuth 提供商命中，推断免费、basic 或空套餐均不命中。
+// IsExplicitGrokFreeOAuthProvider reports whether a Grok OAuth provider has a subscription_tier
+// or plan_type equal to free in credentials or extra. Inferred free, basic, and missing tiers do not qualify.
 func IsExplicitGrokFreeOAuthProvider(provider *Record) bool {
 	if provider == nil || !provider.IsGrokOAuth() {
 		return false
@@ -123,7 +123,7 @@ func IsExplicitGrokFreeOAuthProvider(provider *Record) bool {
 	return false
 }
 
-// Blocked 返回已知超限提供商；未命中与失败保持故障放行，并在后台加载。
+// Blocked returns providers known to exceed the threshold. Cache misses and query failures allow admission.
 func (g *FreeQuotaGate) Blocked(providers []FreeQuotaCandidate) map[int64]bool {
 	if g == nil {
 		return nil
@@ -145,7 +145,8 @@ func (g *FreeQuotaGate) Blocked(providers []FreeQuotaCandidate) map[int64]bool {
 			entry, valid := cached.(grokFreeQuotaGateCacheEntry)
 			if valid {
 				age := now.Sub(entry.checkedAt)
-				// cacheTTL 为 0 表示已知条目不过期；首次未命中仍放行并安排刷新。
+				// A zero cacheTTL keeps entries fresh indefinitely; an initial miss still allows admission
+				// and starts a refresh.
 				fresh := settings.cacheTTL <= 0 || (age >= 0 && age < settings.cacheTTL)
 				if fresh {
 					if entry.known {
@@ -155,7 +156,7 @@ func (g *FreeQuotaGate) Blocked(providers []FreeQuotaCandidate) map[int64]bool {
 				}
 			}
 		}
-		// 缓存未命中或过期时本次请求放行，并异步刷新。
+		// Missing or stale usage allows this request through while the cache refreshes asynchronously.
 		if _, exists := seenMissing[provider.ID]; !exists {
 			seenMissing[provider.ID] = struct{}{}
 			missingIDs = append(missingIDs, provider.ID)
@@ -175,7 +176,7 @@ func (g *FreeQuotaGate) Blocked(providers []FreeQuotaCandidate) map[int64]bool {
 	return blocked
 }
 
-// refresh 合并同一缓存作用域的在途加载，不改变查询的独立 context。
+// refresh coalesces in-flight loads within this gate and queries with an independent context.
 func (g *FreeQuotaGate) refresh(settings grokFreeQuotaGateSettings, providerIDs []int64) {
 	toFetch := make([]int64, 0, len(providerIDs))
 	for _, id := range providerIDs {
@@ -196,14 +197,15 @@ func (g *FreeQuotaGate) refresh(settings grokFreeQuotaGateSettings, providerIDs 
 			g.inFlight.Delete(id)
 		}
 	}
-	// 应用关闭前等待查询任务完成，查询使用独立 context。
+	// The application tracks this task for shutdown; its query has an independent context.
 	if !g.background("provider/free_quota_gate.go:stats_refresh", func() {
 		defer release()
 		now := g.now().UTC()
 		statsByID, err := g.load(context.Background(), toFetch, now.Add(-window))
 		if err != nil {
 			g.metrics.QueryFailureTotal.Add(1)
-			// 保存负缓存防止热路径反复查询；known=false 会持续放行，直到成功刷新。
+			// Cache failures to suppress repeated queries. Unknown entries allow admission until a
+			// successful refresh.
 			for _, providerID := range toFetch {
 				g.cache.Store(providerID, grokFreeQuotaGateCacheEntry{checkedAt: now})
 			}
@@ -236,8 +238,8 @@ func (g *FreeQuotaGate) refresh(settings grokFreeQuotaGateSettings, providerIDs 
 	}
 }
 
-// sweepGrokFreeQuotaGateCache 回收超过 TTL 较久的条目，删除或离开免费档位的提供商可随之释放内存。
-// 仍活跃的提供商会在下次未命中时重新填充。
+// sweepGrokFreeQuotaGateCache evicts long-stale entries, including providers that left the free tier or were deleted.
+// Active providers repopulate their entries on the next miss.
 func sweepGrokFreeQuotaGateCache(cache *sync.Map, now time.Time, cacheTTL time.Duration) {
 	if cache == nil || cacheTTL <= 0 {
 		return

@@ -184,7 +184,7 @@ func TestGatewayCacheSuite(t *testing.T) {
 	suite.Run(t, new(GatewayCacheSuite))
 }
 
-// TestReasoningHistoryNativeRoundTrip 检查请求回填和响应记录的 Redis 键及七天有效期。
+// TestReasoningHistoryNativeRoundTrip checks request/output reasoning keys and the seven-day Redis TTL.
 func (s *GatewayCacheSuite) TestReasoningHistoryNativeRoundTrip() {
 	store, ok := s.cache.(session.ReasoningContentCache)
 	require.True(s.T(), ok)
@@ -204,7 +204,7 @@ func (s *GatewayCacheSuite) TestReasoningHistoryNativeRoundTrip() {
 	require.Empty(s.T(), history.Lookup("missing_reasoning"))
 }
 
-// buildSessionKey 构造用于检查 Redis 持久化结果的会话键。
+// buildSessionKey builds the key used to inspect persisted session bindings.
 func buildSessionKey(groupID int64, hash string) string {
 	return fmt.Sprintf("sticky_session:%d:%s", groupID, hash)
 }

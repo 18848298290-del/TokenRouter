@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 )
 
-// executeBody 统计上游响应体的关闭次数。
+// executeBody counts calls that close the upstream response body.
 type executeBody struct {
 	io.ReadCloser
 	closes *atomic.Int32

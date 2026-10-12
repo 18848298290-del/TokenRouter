@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/bedrock"
 )
 
-// bedrock 转发请求到 AWS Bedrock。
+// bedrock forwards a request through AWS Bedrock.
 func (r *Runtime) bedrock(
 	ctx context.Context,
 	output HTTPBoundary, state *AttemptState,
@@ -57,7 +57,7 @@ func (r *Runtime) bedrock(
 		betaHeader = output.RequestHeaders().Get("anthropic-beta")
 	}
 
-	// 准备请求体（注入 anthropic_version/anthropic_beta，移除 Bedrock 不支持的字段，清理 cache_control）
+	// Prepare version and beta fields, remove unsupported fields, and sanitize cache_control.
 	betaTokens, err := r.bedrockBetaTokens(ctx, provider, betaHeader, body, mappedModel, attributes.Rules)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,6 @@ func (r *Runtime) bedrock(
 	logging.LegacyPrintf("service.gateway", "[Bedrock] 命中 Bedrock 分支: provider=%d name=%s model=%s->%s stream=%v",
 		provider.Record.ID, provider.Record.Name, reqModel, mappedModel, reqStream)
 
-	// 根据提供商类型选择认证方式
 	var signer *bedrock.BedrockSigner
 	var bedrockAPIKey string
 	if provider.View().IsBedrockAPIKey() {
@@ -125,7 +124,7 @@ func (r *Runtime) bedrock(
 	return converted, nil
 }
 
-// bedrockError 处理 Bedrock 上游 4xx/5xx 错误（failover + 错误响应）。
+// bedrockError handles upstream 4xx/5xx responses through failover or client error output.
 func (r *Runtime) bedrockError(
 	ctx context.Context,
 	resp *http.Response,
@@ -133,7 +132,7 @@ func (r *Runtime) bedrockError(
 	provider *gatewayprovider.ExecutionProvider,
 	mappedModel string,
 ) (*forward.Result, error) {
-	// 同提供商重试耗尽后判断是否切换提供商。
+	// Check provider failover after same-provider retries are exhausted.
 	if forward.ShouldRetry(provider.View().IsOAuth(), resp.StatusCode) {
 		if forward.ShouldFailover(resp.StatusCode) {
 			respBody, _ := r.readErrorBody(resp)
@@ -164,7 +163,7 @@ func (r *Runtime) bedrockError(
 		return r.handleError(ctx, output, state, provider, resp, true, mappedModel)
 	}
 
-	// 无法在当前提供商重试时，返回换号决定。
+	// Return a failover decision for statuses that do not qualify for an internal retry.
 	if forward.ShouldFailover(resp.StatusCode) {
 		respBody, _ := r.readErrorBody(resp)
 		_ = resp.Body.Close()
@@ -189,7 +188,7 @@ func (r *Runtime) bedrockError(
 		}
 	}
 
-	// 其余错误按原协议输出。
+	// Render remaining errors in the client protocol.
 	return r.handleError(ctx, output, state, provider, resp, false, mappedModel)
 }
 
@@ -210,7 +209,7 @@ func (r *Runtime) bedrockOptions(ctx context.Context, output HTTPBoundary, state
 	return options, policy
 }
 
-// bedrockBetaTokens 依次校验 Header、转换平台 token，并再次校验转换结果。
+// bedrockBetaTokens checks the header policy, resolves platform tokens, then checks the resulting tokens.
 func (r *Runtime) bedrockBetaTokens(ctx context.Context, target *gatewayprovider.ExecutionProvider, header string, body []byte, model string, rules ...modelcatalog.ExecutionRules) ([]string, error) {
 	policy := r.evaluateBeta(ctx, target, header, model)
 	if policy.BlockErr != nil {
@@ -223,7 +222,7 @@ func (r *Runtime) bedrockBetaTokens(ctx context.Context, target *gatewayprovider
 	return anthropic.FilterBetaTokens(tokens, policy.FilterSet), nil
 }
 
-// PrepareBedrockCompatibility 在分组映射后清理请求体，并原地更新 Header。
+// PrepareBedrockCompatibility cleans the group-mapped body and updates headers in place.
 func (r *Runtime) PrepareBedrockCompatibility(ctx context.Context, headers http.Header, body []byte, model string, target *gatewayprovider.ExecutionProvider, groupID *int64) []byte {
 	if groupID == nil || r.dependencies.GroupPolicies == nil {
 		return body

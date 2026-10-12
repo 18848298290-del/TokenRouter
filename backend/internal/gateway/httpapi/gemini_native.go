@@ -72,7 +72,7 @@ func NewGeminiNativeHandler(options GeminiNativeOptions, backend GeminiNativeBac
 	return &GeminiNativeHandler{executor: executor, options: options, backend: backend, prompt: prompt, concurrency: concurrency, newID: newID}
 }
 
-// WriteGoogleError 写出 Google 格式的 JSON 错误。
+// WriteGoogleError writes a Google-format JSON error.
 func WriteGoogleError(c *gin.Context, status int, message string) {
 	status, message = modelAttributeError(c, status, message)
 	c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
@@ -118,7 +118,7 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	// 原生入口同样只检查分组协议，实际供应商由提供商选择确定。
+	// Admission checks the group protocol; provider selection determines the upstream platform.
 	if apiKey.Group == nil || !apiKey.Group.AllowsClientProtocol(protocol.ProtocolGeminiGenerateContent) {
 		WriteGoogleError(c, http.StatusForbidden, "This group does not allow Gemini GenerateContent requests")
 		return
@@ -129,8 +129,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		WriteGoogleError(c, http.StatusNotFound, err.Error())
 		return
 	}
-	// URL 里的模型名最终会被拼进上游 /v1beta/models/{model}:{action}，
-	// 转发前校验请求片段的合规性。
+	// The model becomes part of /v1beta/models/{model}:{action}, so validate it as a
+	// URL path segment before forwarding.
 	if !h.backend.SafeModelSegment(modelName) {
 		WriteGoogleError(c, http.StatusBadRequest, "Invalid model in URL")
 		return
@@ -160,7 +160,7 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	}
 	h.backend.ObserveRequest(c, modelName, stream)
 	h.backend.ObserveEndpoint(c, stream)
-	// 在内容审计、会话 hash 计算和转发前替换用户提示词，审计与转发使用同一请求体。
+	// Apply prompt replacement before moderation, session hashing, and forwarding so they use the same body.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "gemini")
 
 	if decision := h.backend.Moderate(c, reqLog, apiKey, authSubject, modelName, body); decision != nil && decision.Blocked {
@@ -168,23 +168,20 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
-	// 解析分组模型映射
-	// 当前分组和分组映射结果进入独立计划，不改变原解析位置。
+	// Capture the effective group and mapping in the route plan.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, modelName)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
-	reqModel := modelName // 保存映射前的原始模型名
+	reqModel := modelName // Client model before group mapping.
 	if groupMapping.Mapped {
 		modelName = groupMapping.MappedModel
 	}
 
-	// 读取订阅，未绑定订阅时结果为空。
 	subscription, _ := SubscriptionFromContext(c)
 
-	// Gemini 原生请求不发送 Claude 心跳帧。
+	// Native Gemini requests must not receive Claude heartbeat frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrency.Service(), SSEPingFormatNone, 0)
 
-	// 1）获取用户并发槽
 	streamStarted := false
 	h.backend.BindErrors(c)
 	userReleaseFunc, err := geminiConcurrency.AcquireUserSlotWithWait(c, authSubject.UserID, authSubject.Concurrency, stream, &streamStarted)
@@ -193,13 +190,13 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		WriteGoogleError(c, http.StatusTooManyRequests, err.Error())
 		return
 	}
-	// 请求取消时释放槽位，长连接中断也会触发释放。
+	// Release the user slot on request cancellation, including connection loss.
 	userReleaseFunc = scheduler.WrapRelease(c.Request.Context(), scheduler.ReleaseOnCancel, userReleaseFunc)
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
 	}
 
-	// 2）等待后复查资金资格
+	// Recheck funding eligibility after waiting for the user slot.
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		reqLog.Info("gemini.billing_eligibility_check_failed", zap.Error(err))
 		status, _, message, retryAfter := BillingErrorDetails(err)
@@ -210,12 +207,11 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
-	// 3）根据请求内容准备粘性会话选择
-	// 优先使用 Gemini CLI 的会话标识（privileged-user-id + tmp 目录哈希）
+	// Prefer Gemini CLI identity from the privileged user ID and temporary-directory hash.
 	sessionHash := ExtractGeminiCLISessionHash(c, body)
 	explicitGeminiCLISession := sessionHash != ""
 	if sessionHash == "" {
-		// Fallback: 使用通用的会话哈希生成逻辑（适用于其他客户端）
+		// Other clients use the shared session hash derived from request content and metadata.
 		parsedReq, _ := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), capability.PlatformGemini)
 		if parsedReq != nil {
 			parsedReq.SessionContext = &requeststate.SessionContext{
@@ -236,7 +232,7 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 	}
 
-	// 查询粘性会话绑定的提供商 ID（用于检测提供商切换）
+	// Read the bound provider so later attempts can detect a provider switch.
 	var sessionBoundProviderID int64
 	if sessionKey != "" {
 		sessionBoundProviderID, _ = h.backend.CachedSession(c.Request.Context(), apiKey.GroupID, sessionKey)
@@ -249,8 +245,7 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 	}
 
-	// === Gemini 内容摘要会话 Fallback 逻辑 ===
-	// 会话标识无效时（sessionBoundProviderID == 0），尝试按内容摘要链匹配。
+	// When there is no provider binding, try matching the conversation digest chain.
 	var geminiDigestChain string
 	var geminiPrefixHash string
 	var geminiSessionUUID string
@@ -258,13 +253,10 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	useDigestFallback := sessionBoundProviderID == 0
 
 	if useDigestFallback {
-		// 解析 Gemini 请求体
 		var geminiReq protocolgemini.GeminiRequest
 		if err := json.Unmarshal(body, &geminiReq); err == nil && len(geminiReq.Contents) > 0 {
-			// 生成摘要链
 			geminiDigestChain = h.backend.DigestChain(&geminiReq)
 			if geminiDigestChain != "" {
-				// 生成前缀 hash
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := clientip.GetClientIP(c)
 				geminiPrefixHash = h.backend.PrefixHash(
@@ -276,7 +268,6 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 					modelName,
 				)
 
-				// 查找会话
 				foundUUID, foundProviderID, foundMatchedChain, found := h.backend.FindSession(
 					c.Request.Context(),
 					geminiGroupID(apiKey.GroupID),
@@ -293,16 +284,15 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 						zap.String("digest_chain", TruncateGeminiDigestChain(geminiDigestChain)),
 					)
 
-					// 关键：如果原 sessionKey 为空，使用 prefixHash + uuid 作为 sessionKey
-					// 这样 SelectProviderWithLoadAwareness 的粘性会话逻辑会优先使用匹配到的提供商
+					// Create a key from the prefix hash and matched UUID when no explicit key exists,
+					// so provider selection can reuse the matched provider through the sticky binding.
 					if sessionKey == "" {
 						sessionKey = h.backend.DigestSessionKey(geminiPrefixHash, foundUUID)
 					}
 					_ = h.backend.BindSticky(c.Request.Context(), apiKey.GroupID, sessionKey, foundProviderID)
 				} else {
-					// 生成新的会话 UUID
 					geminiSessionUUID = h.newID()
-					// 为新会话也生成 sessionKey（用于后续请求的粘性会话）
+					// Give new digest sessions a key for subsequent sticky requests.
 					if sessionKey == "" {
 						sessionKey = h.backend.DigestSessionKey(geminiPrefixHash, geminiSessionUUID)
 					}
@@ -311,7 +301,6 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 	}
 
-	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个提供商
 	hasBoundSession := sessionKey != "" && sessionBoundProviderID > 0
 
 	request := execution.Request{
@@ -361,12 +350,12 @@ func ParseGeminiModelAction(rest string) (model string, action string, err error
 		return "", "", &GeminiPathParseError{"missing path"}
 	}
 
-	// 标准路径：{model}:{action}
+	// Standard syntax: {model}:{action}.
 	if i := strings.Index(rest, ":"); i > 0 && i < len(rest)-1 {
 		return rest[:i], rest[i+1:], nil
 	}
 
-	// 兼容路径：{model}/{action}
+	// Compatibility syntax: {model}/{action}.
 	if i := strings.Index(rest, "/"); i > 0 && i < len(rest)-1 {
 		return rest[:i], rest[i+1:], nil
 	}
@@ -375,25 +364,22 @@ func ParseGeminiModelAction(rest string) (model string, action string, err error
 }
 
 func ExtractGeminiCLISessionHash(c *gin.Context, body []byte) string {
-	// 1. 从请求体中提取 tmp 目录哈希
 	match := GeminiCLITmpDirRegex.FindSubmatch(body)
 	if len(match) < 2 {
-		return "" // 没有找到 tmp 目录，不使用粘性会话
+		return "" // No CLI-specific session identity; the caller can use shared session detection.
 	}
 	tmpDirHash := string(match[1])
 
-	// 2. 提取 privileged-user-id
 	privilegedUserID := strings.TrimSpace(c.GetHeader("x-gemini-api-privileged-user-id"))
 
-	// 3. 组合生成最终的 session hash
 	if privilegedUserID != "" {
-		// 组合两个标识符：privileged-user-id + tmp 目录哈希
+		// Combine user identity with the directory hash to scope the session.
 		combined := privilegedUserID + ":" + tmpDirHash
 		hash := sha256.Sum256([]byte(combined))
 		return hex.EncodeToString(hash[:])
 	}
 
-	// 如果没有 privileged-user-id，直接使用 tmp 目录哈希
+	// Without a privileged user ID, use the directory hash directly.
 	return tmpDirHash
 }
 

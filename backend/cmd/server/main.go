@@ -41,19 +41,19 @@ var (
 )
 
 func init() {
-	// 如果 Version 已通过 ldflags 注入（例如 -X main.Version=...），则不要覆盖。
+	// Keep the version supplied through ldflags, such as -X main.Version=...
 	if strings.TrimSpace(Version) != "" {
 		return
 	}
 
-	// 默认从 embedded VERSION 文件读取版本号（编译期打包进二进制）。
+	// Use the VERSION file embedded at build time when ldflags supplies no version.
 	Version = strings.TrimSpace(embeddedVersion)
 	if Version == "" {
 		Version = "0.0.0-dev"
 	}
 }
 
-// main 初始化启动日志并运行服务，启动失败时输出错误并以非零状态退出。
+// main initializes bootstrap logging and exits with a nonzero status when the server fails.
 func main() {
 	logging.InitBootstrap()
 	err := run()
@@ -63,7 +63,7 @@ func main() {
 	}
 }
 
-// run 将退出决定留在主协程，清理完成后才返回给 main。
+// run returns to main after cleanup so the main goroutine controls process exit.
 func run() (err error) {
 	syncOnReturn := true
 	defer func() {
@@ -114,16 +114,13 @@ func runSetupServer(ctx context.Context, restarter *lifecycle.Restarter) (err er
 	r.Use(middleware.CORS(config.CORSConfig{}))
 	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: config.DefaultCSPPolicy}, nil))
 
-	// Register setup routes
 	setup.RegisterRoutes(r, restarter)
 
-	// Serve embedded frontend if available
 	if web.HasEmbeddedFrontend() {
 		r.Use(web.ServeEmbeddedFrontend())
 	}
 
-	// Get server address from config.yaml or environment variables (SERVER_HOST, SERVER_PORT)
-	// This allows users to run setup on a different address if needed
+	// Setup uses config.yaml or SERVER_HOST and SERVER_PORT for its listen address.
 	addr := config.GetServerAddress()
 	log.Printf("Setup wizard available at http://%s", addr)
 	log.Println("Complete the setup wizard to configure TokenRouter")
@@ -144,7 +141,7 @@ func runSetupServer(ctx context.Context, restarter *lifecycle.Restarter) (err er
 	return lifecycle.Serve(ctx, server)
 }
 
-// runMainServer 装配正式服务并协调进程启动与关闭。
+// runMainServer constructs the application and coordinates startup and shutdown.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func runMainServer(ctx context.Context, restarter *lifecycle.Restarter) (err error) {
 	syncOnReturn := true
@@ -168,7 +165,7 @@ func runMainServer(ctx context.Context, restarter *lifecycle.Restarter) (err err
 	return application.Run(ctx)
 }
 
-// syncBootstrapLogs 用于没有完整应用图的入口，日志同步也必须有界。
+// syncBootstrapLogs bounds log flushing for entry points that do not construct the full application.
 func syncBootstrapLogs() error {
 	manager := lifecycle.New()
 	manager.Register(lifecycle.Hook{Name: "BootstrapLogs", Stop: func(context.Context) error { logging.Sync(); return nil }})

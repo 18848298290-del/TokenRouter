@@ -16,14 +16,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 交换器只使用本地可控闸门，真实数据库在交换暂停期间完成管理员改凭据。
+// refreshExchange pauses token exchange so an administrator credential update can commit first.
 type refreshExchange struct {
 	started chan struct{}
 	release chan struct{}
 	calls   int
 }
 
-// TestRefreshCredentialsCASAndOuterRollback 验证核对状态比较及同连接参与，外层回滚和 outbox 写入失败都不能留下轮换凭据。
+// TestRefreshCredentialsCASAndOuterRollback checks stale-version rejection and transaction isolation.
+// Credential updates inside an outer transaction remain pending until its caller commits.
 func TestRefreshCredentialsCASAndOuterRollback(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -55,7 +56,7 @@ func TestRefreshCredentialsCASAndOuterRollback(t *testing.T) {
 	pending, err := tx.Client().Provider.Get(txCtx, row.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.Credentials["refresh_token"])
-	// 独立连接提交前仍看到旧值，证明参与方法没有自行提交。
+	// A separate connection still sees committed credentials while the outer transaction is pending.
 	require.Equal(t, "administrator", readVersion().Credentials["refresh_token"])
 	require.NoError(t, tx.Rollback())
 	require.Equal(t, "administrator", readVersion().Credentials["refresh_token"])

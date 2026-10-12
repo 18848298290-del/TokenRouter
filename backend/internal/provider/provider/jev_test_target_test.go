@@ -32,7 +32,8 @@ func (t *jevProbeTransport) Do(req *http.Request, _ string, _ int64, _ int) (*ht
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
-// TestJevDecisionTestForwardsQuestions 检查混合问题、结构化状态和扩展字段随测试请求发送，型号按提供商映射解析。
+// TestJevDecisionTestForwardsQuestions checks mixed question types, structured state, extension
+// fields, and provider model mapping.
 func TestJevDecisionTestForwardsQuestions(t *testing.T) {
 	transport := &jevProbeTransport{response: `{"model":"jev-1.13.0","answers":{"ready":{"type":"noul","noul":0.9},"route":{"type":"choice","choice":"fast","confidence":0.8,"probabilities":{"fast":0.8,"slow":0.2}},"quality":{"type":"score","score":1,"confidence":0.9,"probabilities":{"0":0.1,"1":0.9},"legend":"low to high"}},"usage":{"input_tokens":23,"output_tokens":0}}`}
 	component := &JevProviderTest{Transport: transport, ValidateURL: func(url string) (string, error) { return url, nil }}
@@ -57,7 +58,7 @@ func TestJevDecisionTestForwardsQuestions(t *testing.T) {
 	require.JSONEq(t, transport.response, string(response))
 }
 
-// TestJevDecisionTestRejectsInvalidPayload 检查无效表单在发出 HTTP 请求前失败。
+// TestJevDecisionTestRejectsInvalidPayload rejects invalid input before sending an HTTP request.
 func TestJevDecisionTestRejectsInvalidPayload(t *testing.T) {
 	for _, body := range []string{`null`, `[]`, `{"state":true,"questions":{}}`, `{"state":"ok","questions":{"x":{"type":"score","instructions":"Rate","criteria":["one"]}}}`, `{"stream":true,"state":"ok","questions":{"x":{"type":"noul","instructions":"Ready?"}}}`} {
 		t.Run(body, func(t *testing.T) {
@@ -75,7 +76,8 @@ func (s *jevProbeEvents) Emit(_ context.Context, event provider.TestEvent) error
 	return nil
 }
 
-// TestJevProviderProbeUsesSystemOne 检查后台和手动测试使用相同的原生请求及事件格式。
+// TestJevProviderProbeUsesSystemOne checks that manual and background probes use the same native
+// requests and events.
 func TestJevProviderProbeUsesSystemOne(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		transport := &jevProbeTransport{}

@@ -2,7 +2,7 @@ package forward
 
 import "context"
 
-// MimicPorts 提供平台格式与设置读取，流程不接收旧提供商或动态 JSON 对象。
+// MimicPorts supplies settings and platform-specific client-identity rewrites.
 type MimicPorts interface {
 	SystemSettings(context.Context) (bool, string, string)
 	RewriteMimicSystem([]byte, string, string, string) []byte
@@ -14,7 +14,7 @@ type MimicPorts interface {
 	ToolsLast([]byte) []byte
 }
 
-// Mimic 保留兼容入口的系统、指纹、消息缓存和工具改写顺序及失败降级。
+// Mimic applies system, metadata, cache, and tool rewrites in order for eligible requests.
 func Mimic(ctx context.Context, p MimicPorts, eligible bool, body []byte, model string) []byte {
 	if !eligible || len(body) == 0 {
 		return body

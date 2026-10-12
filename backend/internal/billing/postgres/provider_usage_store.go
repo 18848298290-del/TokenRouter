@@ -6,14 +6,14 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// ProviderUsageOptions 提供用量提交后的变更通知、同步和日志函数。
+// ProviderUsageOptions supplies change notifications, synchronization, and logging after successful usage writes.
 type ProviderUsageOptions struct {
 	Changed func(context.Context, int64) error
 	Sync    func(context.Context, int64)
 	Observe func(string, ...any)
 }
 
-// ProviderUsageStore 拥有提供商消费写入及原提交后顺序；事务参与使用 ProviderUsageInTx。
+// ProviderUsageStore writes usage and runs notifications afterward. Caller-owned transactions use ProviderUsageInTx.
 type ProviderUsageStore struct {
 	exec    postgresinfra.Executor
 	options ProviderUsageOptions

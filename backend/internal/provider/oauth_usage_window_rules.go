@@ -8,17 +8,17 @@ import (
 
 const (
 	OAuthUsageAPICacheTTL         = 3 * time.Minute
-	OAuthUsageAPIErrorCacheTTL    = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
-	OAuthUsageAntigravityErrorTTL = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
-	OAuthUsageAPIQueryMaxJitter   = 800 * time.Millisecond // 用量查询最大随机延迟
+	OAuthUsageAPIErrorCacheTTL    = 1 * time.Minute        // Error cache TTL, including 429 responses.
+	OAuthUsageAntigravityErrorTTL = 1 * time.Minute        // Cache TTL for recoverable Antigravity errors.
+	OAuthUsageAPIQueryMaxJitter   = 800 * time.Millisecond // Maximum query jitter.
 	OAuthUsageWindowStatsCacheTTL = 1 * time.Minute
 	OAuthUsageOpenAIProbeCacheTTL = 10 * time.Minute
 	OAuthUsageGrokProbeRetryTTL   = 1 * time.Minute
 	OAuthUsageGrokFreeQuotaWindow = 24 * time.Hour
 )
 
-// BuildPassiveUsageWindow 从 Extra 中的被动采样数据（utilization 为 0-1 小数、reset 为 Unix 秒）
-// 构建用量窗口，无数据时返回 nil。
+// BuildPassiveUsageWindow reads fractional utilization and a Unix-second reset from Extra.
+// It returns nil when both values are absent or nonpositive.
 func BuildPassiveUsageWindow(extra map[string]any, utilKey, resetKey string, now func() time.Time) *UsageProgress {
 	util := ParseExtraFloat64(extra[utilKey])
 	resetRaw := ParseExtraFloat64(extra[resetKey])
@@ -39,9 +39,9 @@ func BuildPassiveUsageWindow(extra map[string]any, utilKey, resetKey string, now
 	}
 }
 
-// ApplyExtraToUsage rebuilds the codex 5h/7d windows in usage from the
-// provider's Extra map.  Called after mergeProviderExtra to make the in-memory
-// UsageInfo consistent with the just-persisted Extra values.
+// ApplyExtraToUsage updates Codex five-hour and seven-day windows from Extra.
+// Existing windows remain when Extra cannot produce a replacement.
+// Callers may use it before or after merging a fresh probe result.
 func ApplyExtraToUsage(usage *UsageInfo, extra map[string]any, now time.Time, clock func() time.Time) {
 	if usage == nil {
 		return
@@ -104,7 +104,7 @@ func BuildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 		}
 	}
 
-	// 窗口已过期（resetAt 在 now 之前）→ 额度已重置，归零
+	// Expired windows display zero utilization after their reset time.
 	if progress.ResetsAt != nil && !now.Before(*progress.ResetsAt) {
 		progress.Utilization = 0
 	}
@@ -112,7 +112,7 @@ func BuildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 	return progress
 }
 
-// CodexWindowStatsStart 按 Codex 上游返回的重置时间对齐本地用量统计窗口。
+// CodexWindowStatsStart aligns local statistics with a future upstream reset, or uses a rolling window.
 func CodexWindowStatsStart(progress *UsageProgress, fallbackWindow time.Duration, now time.Time) time.Time {
 	if progress != nil && progress.ResetsAt != nil && now.Before(*progress.ResetsAt) {
 		return progress.ResetsAt.Add(-fallbackWindow)
@@ -120,7 +120,7 @@ func CodexWindowStatsStart(progress *UsageProgress, fallbackWindow time.Duration
 	return now.Add(-fallbackWindow)
 }
 
-// ParseUsageTime 尝试多种格式解析时间。
+// ParseUsageTime parses supported RFC 3339 timestamp variants.
 func ParseUsageTime(s string) (time.Time, error) {
 	formats := []string{
 		time.RFC3339,
@@ -136,13 +136,13 @@ func ParseUsageTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
 }
 
-// BuildUsageInfo 构建 UsageInfo。
+// BuildUsageInfo converts an Anthropic usage response and computes window countdowns.
 func BuildUsageInfo(resp *ClaudeUsageResponse, updatedAt *time.Time, now func() time.Time, logf func(string, ...any)) *UsageInfo {
 	info := &UsageInfo{
 		UpdatedAt: updatedAt,
 	}
 
-	// 5 小时窗口 - 始终创建对象（即使 ResetsAt 为空）
+	// Keep the five-hour object even when the upstream reset time is absent.
 	info.FiveHour = &UsageProgress{
 		Utilization: resp.FiveHour.Utilization,
 	}
@@ -155,7 +155,7 @@ func BuildUsageInfo(resp *ClaudeUsageResponse, updatedAt *time.Time, now func() 
 		}
 	}
 
-	// 7 天窗口
+	// Include the seven-day window when a reset value is present.
 	if resp.SevenDay.ResetsAt != "" {
 		if sevenDayReset, err := ParseUsageTime(resp.SevenDay.ResetsAt); err == nil {
 			info.SevenDay = &UsageProgress{
@@ -171,7 +171,7 @@ func BuildUsageInfo(resp *ClaudeUsageResponse, updatedAt *time.Time, now func() 
 		}
 	}
 
-	// 7 天 Sonnet 窗口
+	// Include the Sonnet window when a reset value is present.
 	if resp.SevenDaySonnet.ResetsAt != "" {
 		if sonnetReset, err := ParseUsageTime(resp.SevenDaySonnet.ResetsAt); err == nil {
 			info.SevenDaySonnet = &UsageProgress{
@@ -187,7 +187,7 @@ func BuildUsageInfo(resp *ClaudeUsageResponse, updatedAt *time.Time, now func() 
 		}
 	}
 
-	// 7 天 Fable 窗口（响应头 7d_oi 对应的窗口）
+	// Fable corresponds to the 7d_oi response-header window.
 	if fable := resp.SevenDayOverageIncluded; fable.ResetsAt != "" {
 		if fableReset, err := ParseUsageTime(fable.ResetsAt); err == nil {
 			info.SevenDayFable = &UsageProgress{
@@ -206,15 +206,14 @@ func BuildUsageInfo(resp *ClaudeUsageResponse, updatedAt *time.Time, now func() 
 	return info
 }
 
-// EstimateSetupTokenUsage 根据 session_window 推算 Setup Token 提供商的使用量。
+// EstimateSetupTokenUsage derives five-hour usage from stored session state.
 func EstimateSetupTokenUsage(provider *Record, now func() time.Time) *UsageInfo {
 	info := &UsageInfo{}
 
-	// 如果有 session_window 信息
 	if provider.SessionWindowEnd != nil {
 		remaining := max(int(provider.SessionWindowEnd.Sub(now()).Seconds()), 0)
 
-		// 优先使用响应头记录的 utilization，将 0 到 1 的小数转换为百分比。
+		// Prefer sampled fractional utilization, converting it to percent.
 		var utilization float64
 		var found bool
 		if stored, ok := provider.Extra["session_window_utilization"]; ok {
@@ -230,7 +229,7 @@ func EstimateSetupTokenUsage(provider *Record, now func() time.Time) *UsageInfo 
 			}
 		}
 
-		// 如果没有存储的 utilization，回退到状态估算
+		// When utilization is missing, estimate it from the stored window status.
 		if !found {
 			switch provider.SessionWindowStatus {
 			case "rejected":
@@ -246,22 +245,22 @@ func EstimateSetupTokenUsage(provider *Record, now func() time.Time) *UsageInfo 
 			RemainingSeconds: remaining,
 		}
 
-		// 窗口重置时间早于 now 时，利用率归零，与 BuildCodexUsageProgressFromExtra 的处理相同。
-		// 主动查询尚未回写 SessionWindowEnd 时，界面仍能展示已重置的额度。
+		// Clear utilization when the window has expired.
+		// This reflects the reset while an active query has yet to update SessionWindowEnd.
 		if info.FiveHour.ResetsAt != nil && !now().Before(*info.FiveHour.ResetsAt) {
 			info.FiveHour.Utilization = 0
 			info.FiveHour.ResetsAt = nil
 			info.FiveHour.RemainingSeconds = 0
 		}
 	} else {
-		// 没有窗口信息，返回空数据
+		// Keep an empty five-hour object when no session window is known.
 		info.FiveHour = &UsageProgress{
 			Utilization:      0,
 			RemainingSeconds: 0,
 		}
 	}
 
-	// Setup Token 无法获取 7d 数据
+	// Session state does not supply a seven-day window.
 	return info
 }
 
@@ -287,8 +286,8 @@ func BuildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 	}
 }
 
-// RecalcAntigravityRemainingSeconds 重新计算 Antigravity UsageInfo 中各窗口的 RemainingSeconds
-// 从缓存取出时刷新剩余秒数。
+// RecalcAntigravityRemainingSeconds refreshes the five-hour countdown on a cached usage value.
+// Expired countdowns are clamped to zero.
 func RecalcAntigravityRemainingSeconds(info *UsageInfo, now func() time.Time) {
 	if info == nil {
 		return
@@ -299,15 +298,15 @@ func RecalcAntigravityRemainingSeconds(info *UsageInfo, now func() time.Time) {
 	}
 }
 
-// AntigravityCacheTTL 根据 UsageInfo 内容决定缓存 TTL
-// 403 forbidden 状态稳定，缓存与成功相同（3 分钟）；
-// 其他错误（401/网络）可能快速恢复，缓存 1 分钟。
+// AntigravityCacheTTL chooses the cache lifetime from the observation status.
+// Success and forbidden results use three minutes.
+// Other errors use one minute so recoverable failures are checked sooner.
 func AntigravityCacheTTL(info *UsageInfo) time.Duration {
 	if info == nil {
 		return OAuthUsageAntigravityErrorTTL
 	}
 	if info.IsForbidden {
-		return OAuthUsageAPICacheTTL // 封号/验证状态不会很快变
+		return OAuthUsageAPICacheTTL
 	}
 	if info.ErrorCode != "" || info.Error != "" {
 		return OAuthUsageAntigravityErrorTTL

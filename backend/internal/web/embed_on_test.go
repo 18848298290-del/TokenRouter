@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// mockSettingsProvider 返回测试配置并记录读取次数。
+// mockSettingsProvider returns test settings and counts reads.
 type mockSettingsProvider struct {
 	settings any
 	err      error
@@ -81,13 +81,12 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_title_has_attributes", func(t *testing.T) {
-		// index.html 使用无属性的 <title> 标签，标题替换按该标签匹配。
+		// Title replacement matches the attribute-free title tag emitted in index.html.
 		html := []byte(`<html><head><title lang="en">TokenRouter</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"NewSite"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
 
-		// 带属性的标题标签返回输入 HTML。
 		assert.Equal(t, string(html), string(result))
 	})
 
@@ -225,7 +224,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 		settingsJSON := []byte(`{"test":"data"}`)
 		result := server.injectSettings(settingsJSON)
 
-		// 注入脚本包含 nonce 占位符。
+		// The cached script retains a placeholder for the request's nonce.
 		assert.Contains(t, string(result), `<script nonce="__CSP_NONCE_VALUE__">`)
 		assert.Contains(t, string(result), `window.__APP_CONFIG__={"test":"data"};`)
 		assert.Contains(t, string(result), `</script></head>`)
@@ -242,7 +241,6 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 		settingsJSON := []byte(`{}`)
 		result := server.injectSettings(settingsJSON)
 
-		// 脚本注入在 </head> 之前。
 		headCloseIndex := bytes.Index(result, []byte("</head>"))
 		scriptIndex := bytes.Index(result, []byte(`<script nonce="`))
 
@@ -277,12 +275,11 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		// 请求上下文携带本次响应的 nonce。
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 
-		// 使用 SecurityHeaders 中间件约定的上下文键。
+		// Simulate the context value supplied by SecurityHeaders.
 		testNonce := "test-nonce-12345"
 		c.Set(middleware.CSPNonceKey, testNonce)
 
@@ -292,7 +289,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 
 		body := w.Body.String()
-		// 响应使用请求上下文中的 nonce。
+
 		assert.NotContains(t, body, NonceHTMLPlaceholder)
 		assert.Contains(t, body, `nonce="`+testNonce+`"`)
 	})
@@ -313,17 +310,17 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		server.serveIndexHTML(c1)
 		assert.Equal(t, 1, provider.called)
 
-		// 第二次请求复用缓存。
+		// The second request reuses the cached template.
 		w2 := httptest.NewRecorder()
 		c2, _ := gin.CreateTestContext(w2)
 		c2.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 		c2.Set(middleware.CSPNonceKey, "nonce2")
 
 		server.serveIndexHTML(c2)
-		// 缓存命中后的配置读取次数保持一致。
+		// A cache hit avoids another settings read.
 		assert.Equal(t, 1, provider.called)
 
-		// 每个请求使用自己的 nonce。
+		// The cached template still receives a fresh nonce per request.
 		assert.Contains(t, w2.Body.String(), `nonce="nonce2"`)
 	})
 
@@ -356,7 +353,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		// 使用 Gin 路由器处理 304 响应。
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
 			c.Set(middleware.CSPNonceKey, "test-nonce")
@@ -364,14 +360,14 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		})
 		router.Use(server.Middleware())
 
-		// 首次请求填充缓存并取得 ETag。
+		// Prime the cache and obtain its ETag.
 		w1 := httptest.NewRecorder()
 		req1 := httptest.NewRequest(http.MethodGet, "/", nil)
 		router.ServeHTTP(w1, req1)
 		etag := w1.Header().Get("ETag")
 		require.NotEmpty(t, etag)
 
-		// 第二次请求携带 If-None-Match。
+		// Revalidate the cached response using the ETag.
 		w2 := httptest.NewRecorder()
 		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
 		req2.Header.Set("If-None-Match", etag)
@@ -407,7 +403,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		// 失效后重新读取设置。
+		// Force a settings read after invalidation.
 		server.InvalidateCache()
 
 		w := httptest.NewRecorder()
@@ -417,7 +413,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		server.serveIndexHTML(c)
 
-		// 设置读取失败时返回基础 HTML 和 200 状态。
+		// A settings failure leaves the base page available with status 200.
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 	})
@@ -432,7 +428,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		// 首次请求填充缓存。
+		// Prime the cache before changing settings.
 		w1 := httptest.NewRecorder()
 		c1, _ := gin.CreateTestContext(w1)
 		c1.Request = httptest.NewRequest(http.MethodGet, "/", nil)
@@ -445,7 +441,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 
 		provider.settings = map[string]string{"test": "new_value"}
 
-		// 第二次请求读取新设置。
+		// Invalidation forces the next request to read the new settings.
 		w2 := httptest.NewRecorder()
 		c2, _ := gin.CreateTestContext(w2)
 		c2.Request = httptest.NewRequest(http.MethodGet, "/", nil)
@@ -457,7 +453,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 
 	t.Run("handles_nil_server", func(t *testing.T) {
 		var server *FrontendServer
-		// nil 接收者的失效调用可以直接返回。
+
 		assert.NotPanics(t, func() {
 			server.InvalidateCache()
 		})
@@ -465,7 +461,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 
 	t.Run("handles_nil_cache", func(t *testing.T) {
 		server := &FrontendServer{}
-		// 缓存尚未初始化时，失效调用可以直接返回。
+
 		assert.NotPanics(t, func() {
 			server.InvalidateCache()
 		})
@@ -563,7 +559,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/models", nil)
-		// 模拟浏览器地址栏导航，请求应由 SPA 接管。
+		// Simulate address-bar navigation so the SPA handles the request.
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		router.ServeHTTP(w, req)
 
@@ -805,7 +801,7 @@ func TestHasEmbeddedFrontend(t *testing.T) {
 	})
 }
 
-// TestServeEmbeddedFrontend 验证内嵌前端的请求处理。
+// TestServeEmbeddedFrontend covers static files, SPA navigation, and API bypass.
 func TestServeEmbeddedFrontend(t *testing.T) {
 	t.Run("serves_static_files", func(t *testing.T) {
 		middleware := ServeEmbeddedFrontend()
@@ -869,7 +865,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/models", nil)
-		// 兼容入口将浏览器页面导航交给 SPA。
+		// The entry point without settings injection also serves browser navigation through the SPA.
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		router.ServeHTTP(w, req)
 
@@ -917,7 +913,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 }
 
-// BenchmarkReplaceNoncePlaceholder 测量 nonce 占位符替换的开销。
+// BenchmarkReplaceNoncePlaceholder measures nonce substitution cost.
 func BenchmarkReplaceNoncePlaceholder(b *testing.B) {
 	html := []byte(`<!DOCTYPE html><html><head><script nonce="__CSP_NONCE_VALUE__">window.__APP_CONFIG__={"test":"data"};</script></head><body></body></html>`)
 	nonce := "abcdefghijklmnop123456=="
@@ -946,7 +942,7 @@ func BenchmarkFrontendServerServeIndexHTML(b *testing.B) {
 	}
 }
 
-// TestFrontendServerLateHTMLPublication 检查后续请求使用失效之后读取的新设置。
+// TestFrontendServerLateHTMLPublication checks that a render started before invalidation cannot populate the new cache.
 func TestFrontendServerLateHTMLPublication(t *testing.T) {
 	p := &blockingPublic{entered: make(chan struct{}), release: make(chan struct{})}
 	s, err := NewFrontendServer(p)

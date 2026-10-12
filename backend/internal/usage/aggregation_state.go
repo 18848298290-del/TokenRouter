@@ -17,17 +17,17 @@ const (
 
 var ErrAnalyticsRequestSuperseded = errors.New("manual backfill request superseded")
 
-// AnalyticsChangeKind 是现有聚合状态的闭合更新种类。
+// AnalyticsChangeKind identifies the fields an aggregation-state update may change.
 type AnalyticsChangeKind uint8
 
-// AnalyticsStateChange 包含分析任务的状态更新及预期的手工回填时间。
+// AnalyticsStateChange carries updated fields and the expected manual-backfill target and cursor.
 type AnalyticsStateChange struct {
 	Kind                                      AnalyticsChangeKind
 	State                                     UsageAnalyticsAggregationState
 	ExpectedManualStart, ExpectedManualCursor *time.Time
 }
 
-// ApplyAnalyticsStateChange 在存储锁定的最新行上应用本次拥有的字段。
+// ApplyAnalyticsStateChange applies the change's fields to the latest row locked by the store.
 // @project-doc docs/operations/pre_aggregation.md#usage_state_ownership
 func ApplyAnalyticsStateChange(current UsageAnalyticsAggregationState, change AnalyticsStateChange) (UsageAnalyticsAggregationState, error) {
 	next := current

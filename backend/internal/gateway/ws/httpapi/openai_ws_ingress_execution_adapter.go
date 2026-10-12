@@ -26,8 +26,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// executeWSIngressAdapter 处理客户端入站 WebSocket（OpenAI Responses WS Mode）并转发到上游。
-// 当前实现按“单请求 -> 终止事件 -> 下一请求”的顺序代理，适配 Codex CLI 的 turn 模式。
+// executeWSIngressAdapter adapts an inbound Responses WebSocket to upstream execution.
+// Turns proceed from one request through its terminal event before the next request.
 func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 	ctx context.Context,
 	c *gin.Context,
@@ -49,7 +49,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 	if provider == nil {
 		return errors.New("provider is nil")
 	}
-	// 复用 Gin 上下文时清理上一个提供商留下的工具名称映射。
+	// Clear the previous provider's tool-name mapping before reusing the Gin context.
 	gatewayhttp.SetCodexToolNameReverse(c, nil)
 	if _, err := gatewayhttp.PrepareCodexIdentity(ctx, c, s.Requests.Providers, provider); err != nil {
 		return err
@@ -60,8 +60,8 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 
 	tlsRouterMatch := s.Requests.MatchTLS(c, provider)
 
-	// 会话开始时读取 OpenAI Fast Policy 并绑定到上下文，后续帧共享这份配置。
-	// 配置读取时机见 gatewayprovider.WithFastPolicyContext。
+	// Read global Fast policy once at session start and share it with later frames.
+	// See gatewayprovider.WithFastPolicyContext for the settings snapshot lifetime.
 	if s.Requests.Readers != nil {
 		if settings, err := s.Requests.Readers.Gateway.GetOpenAIFastPolicySettings(ctx); err == nil && settings != nil {
 			ctx = gatewayprovider.WithFastPolicyContext(ctx, settings)
@@ -188,7 +188,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			return fmt.Errorf("build ws headers: %w", buildHdrErr)
 		}
 		tlsProfile, tlsProfileKey := s.Requests.WSTLSProfile(provider, tlsRouterMatch)
-		// 后台预热与逐轮替换执行器并发，凭据刷新使用固定的身份服务。
+		// Prewarming runs concurrently with turn-executor replacement; capture the identity service for header refresh.
 		identity := s.Requests.Identity
 		baseAcquireReq = openaiws.WSAcquireRequest{
 			Provider: openAIWSPoolProviderView(provider),
@@ -249,7 +249,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 		req.PreferredConnID = strings.TrimSpace(preferred)
 		req.ForcePreferredConn = forcePreferredConn
 		req.ForceNewConn = false
-		// 当前轮次的快照决定等待预算，排队期间的配置更新在下一轮生效。
+		// Freeze the acquisition budget for this turn; queued requests use new settings on the next turn.
 		acquireTimeout := s.openAIWSAcquireTimeout()
 		acquireCtx, acquireCancel := context.WithTimeout(ctx, acquireTimeout)
 		lease, acquireErr := pool.Acquire(acquireCtx, req)
@@ -381,7 +381,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			if hooks != nil {
 				streamHooks = &gatewayws.StreamHooks{OnUpstreamError: hooks.OnUpstreamError}
 			}
-			// 此连接句柄只能来自本适配器；保持错误类型按编程错误失败。
+			// Leases come from this adapter; another implementation is a programming error.
 			typedLease, ok := lease.(*wsIngressLease)
 			if !ok {
 				panic("unexpected websocket ingress lease type")
@@ -419,7 +419,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 	return runtime.Run(ctx, firstClientMessage)
 }
 
-// responsesWSHTTPBridgeAllowed 根据分组转换规则和上游能力检查 HTTP 路线。
+// responsesWSHTTPBridgeAllowed checks group conversion rules and upstream HTTP capabilities.
 func responsesWSHTTPBridgeAllowed(c *gin.Context, provider *gatewayprovider.ExecutionProvider) bool {
 	key := gatewayhttp.GetExecutionAPIKey(c)
 	if key == nil || key.Group == nil || provider == nil {
@@ -435,7 +435,7 @@ func responsesWSHTTPBridgeAllowed(c *gin.Context, provider *gatewayprovider.Exec
 	return ok && target == capability.ProtocolOpenAIResponses
 }
 
-// activeCodexFingerprintMode 返回具有指纹种子的提供商所配置的 Codex 指纹模式。
+// activeCodexFingerprintMode returns the configured mode when a fingerprint seed is present.
 func activeCodexFingerprintMode(provider *gatewayprovider.ExecutionProvider) providercore.CodexFingerprintMode {
 	if provider == nil || gatewayprovider.ExecutionProtocolRecord(provider).GetCodexFingerprintMode() == providercore.CodexFingerprintOff {
 		return providercore.CodexFingerprintOff
@@ -446,7 +446,7 @@ func activeCodexFingerprintMode(provider *gatewayprovider.ExecutionProvider) pro
 	return gatewayprovider.ExecutionProtocolRecord(provider).GetCodexFingerprintMode()
 }
 
-// openAIWSPoolProviderView 构造连接池使用的提供商标识、并发额度和指纹模式。
+// openAIWSPoolProviderView supplies provider identity, concurrency allowance, and fingerprint mode to the pool.
 func openAIWSPoolProviderView(provider *gatewayprovider.ExecutionProvider) *openaiws.WSPoolProvider {
 	if provider == nil {
 		return nil

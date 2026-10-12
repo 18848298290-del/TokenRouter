@@ -16,7 +16,7 @@ var (
 	ErrProviderNotInFallback = apperror.BadRequest("PROVIDER_NOT_IN_FALLBACK", "provider is not in proxy fallback state")
 )
 
-// ListProviders 按筛选条件分页查询提供商，并返回总数。
+// ListProviders returns a filtered page and the total number of matching providers.
 func (s *Admin) ListProviders(ctx context.Context, page, pageSize int, platform, providerType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Record, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	providers, result, err := s.providerRepo.ListWithFilters(ctx, params, platform, providerType, status, search, groupID, privacyMode)
@@ -26,7 +26,7 @@ func (s *Admin) ListProviders(ctx context.Context, page, pageSize int, platform,
 	return providers, result.Total, nil
 }
 
-// ListProvidersForSchedulerScoreFilter 查询当前管理端筛选范围内用于调度评分的提供商。
+// ListProvidersForSchedulerScoreFilter returns providers matching the admin score filters.
 func (s *Admin) ListProvidersForSchedulerScoreFilter(ctx context.Context, platform, providerType, status, search string, groupID int64, privacyMode string) ([]Record, error) {
 	if s == nil || s.providerRepo == nil {
 		return nil, nil
@@ -34,7 +34,7 @@ func (s *Admin) ListProvidersForSchedulerScoreFilter(ctx context.Context, platfo
 	return s.providerRepo.ListAllWithFilters(ctx, platform, providerType, status, search, groupID, privacyMode)
 }
 
-// ListSchedulableProvidersForAdvancedSchedulerScore 查询指定分组内可参与高级评分的提供商。
+// ListSchedulableProvidersForAdvancedSchedulerScore returns schedulable providers in the given group.
 func (s *Admin) ListSchedulableProvidersForAdvancedSchedulerScore(ctx context.Context, groupID *int64, platform string) ([]Record, error) {
 	if s == nil || s.providerRepo == nil || groupID == nil || *groupID <= 0 {
 		return nil, nil
@@ -64,7 +64,7 @@ func (s *Admin) GetProvidersByIDs(ctx context.Context, ids []int64) ([]*Record, 
 }
 
 func (s *Admin) DeleteProvider(ctx context.Context, id int64) error {
-	// 级联删除 spark 影子提供商（先删影子，再删母提供商）
+	// Delete Spark shadows before deleting their parent.
 	shadows, err := s.providerRepo.ListShadowsByParent(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list spark shadows for cascade delete: %w", err)
@@ -115,8 +115,8 @@ func (s *Admin) ResetProviderQuota(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// spark 影子提供商不持自有配额(凭据透传母提供商、spark 用量走独立 codex_* 维度由 QueryUsage 维护),
-	// 影子共用母提供商额度，额度重置需要指定母提供商，此处返回 400。
+	// Spark shadows share their parent's credentials and quota. QueryUsage maintains their codex_* usage separately.
+	// Quota resets must target the parent; a shadow reset returns a bad-request error.
 	if provider.IsCredentialShadow() {
 		return apperror.New(apperror.CategoryBadRequest, "SPARK_SHADOW_NO_QUOTA_RESET",
 			"cannot reset quota for a spark shadow provider; manage it on the parent provider")

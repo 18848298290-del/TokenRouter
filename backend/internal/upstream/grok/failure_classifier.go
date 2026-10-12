@@ -20,9 +20,9 @@ const (
 	GrokFailureRateLimit     GrokUpstreamFailureClass = "rate_limit"
 	GrokFailureAuth          GrokUpstreamFailureClass = "auth_error"
 	GrokFailureServer        GrokUpstreamFailureClass = "server_error"
-	// GrokFailureCompatibility represents a request-history/body-shape that is
-	// incompatible with the selected provider or upstream replay contract. It
-	// is provider-independent: fail over, but never quarantine the pool.
+	// GrokFailureCompatibility identifies replay or body formats the selected upstream
+	// cannot process. The caller can try another provider without cooling down
+	// credentials for a request compatibility failure.
 	GrokFailureCompatibility GrokUpstreamFailureClass = "compatibility_error"
 
 	GrokFreeUsageProbeCooldown = 10 * time.Minute
@@ -33,28 +33,29 @@ var (
 	ReGrokModelFor  = regexp.MustCompile(`(?i)(?:for\s+model|model|模型)\s*[:：]?\s*([a-z0-9][a-z0-9._-]{2,80})`)
 )
 
-// GrokUpstreamFailureClass 用于决定临时停调冷却与响应提交前的提供商切换。
-// 分类优先分析响应体，以识别代理改写状态码后的免费额度耗尽和空输出错误。
+// GrokUpstreamFailureClass determines cooldowns and failover before response commitment.
+// Body matching recognizes quota and empty-output errors even when proxies rewrite status codes.
 type GrokUpstreamFailureClass string
 
-// GrokUpstreamFailureDecision 是纯分类结果，调用方再映射到提供商状态更新方法。
+// GrokUpstreamFailureDecision describes the state changes for the caller to apply.
 type GrokUpstreamFailureDecision struct {
 	Class          GrokUpstreamFailureClass
 	Model          string
 	Cooldown       time.Duration
 	ShouldCooldown bool
-	// ShouldFailover 表示应在终止响应写入前尝试其它提供商；内容策略拒绝由独立路径处理。
+	// ShouldFailover requests another provider before finalizing the response. Content policy is
+	// handled separately.
 	ShouldFailover bool
-	// 已知模型的空输出使用 BlockModel，免费额度耗尽默认冷却提供商。
+	// BlockModel scopes empty-output cooldowns to a known model; free-usage exhaustion cools the provider.
 	BlockModel   bool
 	Reason       string
 	TokensActual *int64
 	TokensLimit  *int64
 }
 
-// ClassifyGrokUpstreamFailure 根据状态码和响应体决定冷却与切换，优先级依次为：
-// 免费额度耗尽、账单硬额度、空输出、模型容量、普通限流、5xx；普通校验错误不冷却。
-// 内容策略 403 必须由调用方在进入此分类器前排除。
+// ClassifyGrokUpstreamFailure prioritizes free usage, billing, compatibility, empty output,
+// capacity, rate limits, and 5xx errors. Ordinary validation failures have no cooldown.
+// Callers must exclude content-policy 403 responses before classification.
 func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedModel string) GrokUpstreamFailureDecision {
 	text, code, low := GrokUpstreamErrorCorpus(statusCode, responseBody)
 	model := ExtractGrokFailureModel(text, responseBody, requestedModel)
@@ -63,7 +64,7 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		actual, limit, hasTokens = ParseGrokTokenPair(string(responseBody))
 	}
 
-	// 免费用量或滚动额度耗尽。
+	// Free or rolling usage exhaustion takes precedence over the HTTP status.
 	if IsGrokFreeUsageExhaustedText(low) || IsGrokFreeUsageCode(code) || IsGrokFreeUsageCode(text) {
 		d := GrokUpstreamFailureDecision{
 			Class: GrokFailureFreeUsage,
@@ -88,7 +89,7 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		return d
 	}
 
-	// 账单硬额度耗尽保持 30 分钟冷却，与既有 402/消费上限处理一致。
+	// Billing exhaustion uses a 30-minute cooldown, including HTTP 402 responses.
 	if IsGrokBillingQuotaText(low) || statusCode == http.StatusPaymentRequired {
 		reason := firstNonEmpty(text, "billing quota")
 		if statusCode == http.StatusPaymentRequired && text == "" {
@@ -111,9 +112,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// HTTP 200 空输出或模型空输出，代理可能将其改写为合成 502。
-	// Responses replay/compaction 载荷可能只在某个 Grok 部署上失败；将这些
-	// 精确的解码/内容形状错误视为提供商无关的兼容性故障，不持久封禁提供商。
+	// Replay and compaction formats may fail on a particular Grok deployment.
+	// Classify recognized decoding errors before empty-output failures so retries
+	// do not persist a provider cooldown for request compatibility problems.
 	if IsGrokCompatibilityError(statusCode, low, code) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureCompatibility,
@@ -147,7 +148,7 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// 模型容量不足或过载。
+	// Capacity failures indicate model overload.
 	if IsGrokModelCapacityText(low) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureModelCapacity,
@@ -166,7 +167,7 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// 未命中免费额度耗尽的普通限流。
+	// Handle ordinary rate limits after excluding free-usage exhaustion.
 	if statusCode == http.StatusTooManyRequests || IsGrokRateLimitText(low) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureRateLimit,
@@ -185,7 +186,7 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// 普通上游 5xx 短暂冷却；合成的空输出 502 已在前面处理。
+	// Other 5xx errors get a short cooldown; synthetic empty-output errors were handled above.
 	if statusCode >= 500 && statusCode <= 599 {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureServer,
@@ -204,9 +205,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 }
 
 func GrokUpstreamErrorCorpus(statusCode int, responseBody []byte) (text, code, low string) {
-	_ = statusCode // 分类器已单独持有传输状态，此处语料只分析响应体。
+	_ = statusCode // The classifier handles transport status separately from the response text.
 	raw := strings.TrimSpace(string(responseBody))
-	// 移除 upstream status 前缀后匹配免费额度和账单错误。
+	// Unwrap the status prefix before matching quota and billing messages.
 	if _, unwrappedBody, ok := UnwrapGrokUpstreamErrorText(raw); ok {
 		raw = unwrappedBody
 	}
@@ -217,7 +218,7 @@ func GrokUpstreamErrorCorpus(statusCode int, responseBody []byte) (text, code, l
 			text = msgFromJSON
 		}
 	}
-	// 原始响应体存在结构化字段时优先采用。
+	// Prefer structured fields in the original body when available.
 	if len(responseBody) > 0 {
 		if m := strings.TrimSpace(firstNonEmpty(
 			gjson.GetBytes(responseBody, "error.message").String(),
@@ -408,7 +409,7 @@ func IsGrokBillingQuotaText(low string) bool {
 // overlay. Model-capacity responses are request pressure, not a team quota;
 // marking them would hide healthy sibling credentials while the bounded
 // same-provider retry is still in progress. Ordinary 429s and free-usage
-// exhaustion retain the existing quota/team isolation behavior.
+// exhaustion mark the team quota overlay.
 func ShouldMarkGrokTeamModelRateLimit(statusCode int, responseBody []byte) bool {
 	decision := ClassifyGrokUpstreamFailure(statusCode, responseBody, "")
 	if decision.Class == GrokFailureModelCapacity {
@@ -422,8 +423,8 @@ func IsGrokCompatibilityError(statusCode int, low, code string) bool {
 		return false
 	}
 	combined := strings.ToLower(strings.TrimSpace(low + " " + code))
-	// Compaction blobs are provider/session-bound and frequently fail with 400
-	// or 422 after a reconnect. Also cover xAI's JSON decoder shape errors.
+	// Recognize compaction decoding failures returned as HTTP 400 or 422.
+	// JSON decoder shape errors are also checked below.
 	for _, phrase := range []string{
 		"could not decode the compaction blob",
 		"cannot decode the compaction blob",
@@ -486,8 +487,8 @@ func IsGrokEmptyModelOutputCode(code string) bool {
 }
 
 func GrokFreeUsageCooldownDuration(low string) time.Duration {
-	// rolling 24-hour 描述上游用量窗口，不代表从代理观察到 429 后冷却 24 小时；
-	// 缺少绝对重置时间时使用短探测间隔，由成功探测解除阻断。
+	// A rolling 24-hour usage window does not imply a 24-hour cooldown from observation.
+	// Use a short probe interval when no absolute reset time is available.
 	return GrokFreeUsageProbeCooldown
 }
 
@@ -519,7 +520,7 @@ func ExtractGrokFailureModel(text string, responseBody []byte, fallback string) 
 	return NormalizeGrokFailureModelID(fallback)
 }
 
-// NormalizeGrokFailureModelID 移除模型提取结果中的空白和句尾标点。
+// NormalizeGrokFailureModelID removes surrounding whitespace and trailing punctuation.
 func NormalizeGrokFailureModelID(model string) string {
 	model = strings.TrimSpace(model)
 	model = strings.TrimRight(model, ".,;:!?")

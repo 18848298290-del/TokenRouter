@@ -63,7 +63,7 @@ func (p *WSPoolOptions) EffectiveMaxConnsByProvider(provider *WSPoolProvider) in
 		return hardCap
 	}
 	if provider.Concurrency <= 0 {
-		// 并发配置为 0/-1 等“无限制”值时，使用全局连接上限。
+		// Nonpositive concurrency means unlimited; use the global connection cap.
 		return hardCap
 	}
 	factor := p.MaxConnsFactorByProvider(provider)

@@ -7,7 +7,7 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// tokenRepositoryReader 适配测试提供商数据，提供商模块执行刷新规则。
+// tokenRepositoryReader adapts provider fixtures for production credential refresh.
 type tokenRepositoryReader struct {
 	source gatewayprovider.ExecutionProviderStore
 }

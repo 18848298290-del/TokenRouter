@@ -24,29 +24,29 @@ type AnthropicEventToResponsesState struct {
 	CurrentItemID   string
 	CurrentItemType string // "message" | "function_call" | "reasoning"
 
-	// 消息输出的内容分片索引与当前文本累积值。
+	// Content-part index and accumulated text for the current message.
 	ContentIndex int
 	TextAccum    string
 
-	// 函数调用当前输出项的信息。
+	// Identity of the current function-call output item.
 	CurrentCallID string
 	CurrentName   string
 
-	// 当前打开输出项的完整内容，在关闭时写入 Outputs。
+	// Full content of the open item, copied into Outputs when it closes.
 	CurrentContent []ResponsesContentPart // message
 	CurrentArgs    string                 // function_call
 	CurrentSummary string                 // reasoning
 
-	// 累积所有已关闭输出项，供终止事件返回完整结果。
+	// Closed output items included in the terminal response.
 	Outputs []ResponsesOutput
 
-	// message_start 和 message_delta 的 InputTokens 为未缓存输入，输出 Responses usage 时加回缓存 token。
+	// InputTokens excludes cached input; Responses usage adds cached tokens back.
 	InputTokens              int
 	OutputTokens             int
 	CacheReadInputTokens     int
 	CacheCreationInputTokens int
 
-	// StopReason 保存最后一个非空的 Anthropic 终止原因，供 message_stop 生成正确的 Responses 终态。
+	// StopReason retains the last nonempty reason for the Responses terminal status.
 	StopReason string
 }
 
@@ -59,8 +59,8 @@ func AnthropicToResponsesResponse(runtime Runtime, resp *AnthropicResponse) *Res
 		id = generateResponsesID(runtime)
 	}
 
-	// Anthropic 响应不携带创建时间，因此使用当前时间；规则与上方生成响应 ID 时保持一致，
-	// 都是为严格客户端补齐必需字段。
+	// Anthropic omits creation time; supply it for clients that require created_at,
+	// as with the generated response ID when the upstream omits one.
 	out := &ResponsesResponse{
 		ID:        id,
 		Object:    "response",
@@ -135,8 +135,8 @@ func AnthropicToResponsesResponse(runtime Runtime, resp *AnthropicResponse) *Res
 		out.IncompleteDetails = &ResponsesIncompleteDetails{Reason: "max_output_tokens"}
 	}
 
-	// Anthropic 的 input_tokens 表示未缓存输入，OpenAI Responses 的 input_tokens 表示总输入。
-	// 转换时把 cache_read 和 cache_creation 加回 input_tokens。
+	// Anthropic input_tokens excludes cache reads and writes; Responses counts all input.
+	// Add both cache buckets to the input total.
 	totalInputTokens := resp.Usage.InputTokens +
 		resp.Usage.CacheReadInputTokens +
 		resp.Usage.CacheCreationInputTokens
@@ -216,7 +216,7 @@ func FinalizeAnthropicResponsesStream(state *AnthropicEventToResponsesState) []R
 	return events
 }
 
-// ResponsesEventToSSE formats a ResponsesStreamEvent as an SSE data line.
+// ResponsesEventToSSE formats an event and JSON data as a complete SSE frame.
 func ResponsesEventToSSE(evt ResponsesStreamEvent) (string, error) {
 	data, err := json.Marshal(evt)
 	if err != nil {
@@ -260,9 +260,9 @@ func anthToResHandleContentBlockStart(runtime Runtime, evt *AnthropicStreamEvent
 
 	switch evt.ContentBlock.Type {
 	case "thinking":
-		// 开始 thinking item 前先关闭当前 item。message 的 text 块结束后仍保持 item 打开，以接收后续 text 块。
-		// 若直接覆盖 CurrentItemType 和 CurrentItemID，CurrentContent 中的文本会丢失，completed 仅剩 reasoning。
-		// interleaved-thinking 会产生先 text 后 thinking 的顺序，网关支持该 beta。
+		// Close the message before opening reasoning so accumulated text reaches Outputs.
+		// Text-block stop leaves the message open for further text blocks; replacing its
+		// identity here would lose text when interleaved thinking follows it.
 		events = append(events, closeCurrentResponsesItem(state)...)
 
 		state.CurrentItemID = generateItemID(runtime)
@@ -280,8 +280,8 @@ func anthToResHandleContentBlockStart(runtime Runtime, evt *AnthropicStreamEvent
 	case "text":
 		// If we don't have an open message item, open one
 		if state.CurrentItemType != "message" {
-			// 前一个 reasoning 或 function_call 已在 content_block_stop 时关闭，此时 CurrentItemType 为空。
-			// text、thinking 和 tool_use 分支都在打开新 item 前执行关闭。
+			// A preceding reasoning/function call normally closes at content_block_stop.
+			// Close any remaining item before assigning the next message identity.
 			events = append(events, closeCurrentResponsesItem(state)...)
 
 			state.CurrentItemID = generateItemID(runtime)
@@ -299,8 +299,8 @@ func anthToResHandleContentBlockStart(runtime Runtime, evt *AnthropicStreamEvent
 			}))
 		}
 
-		// OpenAI SDK 只有收到 content_part.added 才会创建对应内容分片，
-		// 因此该事件必须先于同一分片的首个 output_text.delta。
+		// The SDK creates a content part on content_part.added, so emit that event
+		// before the first output_text.delta for the part.
 		state.ContentIndex = len(state.CurrentContent)
 		events = append(events, makeResponsesEvent(state, "response.content_part.added", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
@@ -413,15 +413,15 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "message":
-		// 文本块结束时按 OpenAI 顺序发送两个完成事件，并携带完整文本；
-		// message 输出项保持打开，以便继续接收后续文本块。
+		// Emit full text in both completion events in OpenAI order.
+		// Keep the message item open for subsequent text blocks.
 		text := state.TextAccum
 		state.TextAccum = ""
 		contentIndex := state.ContentIndex
 		state.CurrentContent = append(state.CurrentContent, ResponsesContentPart{Type: "output_text", Text: text})
-		// 关闭 part 后递增 content_index，让同一 item 中的后续 text 块使用新下标。
-		// SDK 按 content[content_index] 累积，重复下标会覆盖此前的可见文本。
-		// 新 item 的 content_index 由 closeCurrentResponsesItem 重置为 0。
+		// Advance the part index so the SDK does not overwrite earlier visible text.
+		// The SDK accumulates text by content[content_index].
+		// closeCurrentResponsesItem resets the index for a new item.
 		state.ContentIndex++
 		return []ResponsesStreamEvent{
 			makeResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
@@ -488,7 +488,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 		return nil
 	}
 
-	// 组装完整输出项，交给 output_item.done 和终止事件输出。
+	// Use the complete item in both output_item.done and the terminal response.
 	item := ResponsesOutput{
 		Type:   state.CurrentItemType,
 		ID:     state.CurrentItemID,
@@ -513,7 +513,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	}
 	state.Outputs = append(state.Outputs, item)
 
-	// 清理当前输出项状态。
+	// Reset per-item accumulation before opening another item.
 	state.CurrentItemType = ""
 	state.CurrentItemID = ""
 	state.CurrentCallID = ""
@@ -526,7 +526,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	state.ContentIndex = 0
 
 	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
-		OutputIndex: state.OutputIndex - 1, // 使用递增前的输出索引。
+		OutputIndex: state.OutputIndex - 1, // index of the item just closed
 		Item:        &item,
 	})}
 }
@@ -556,7 +556,7 @@ func makeResponsesCompletedEvent(
 	seq := state.SequenceNumber
 	state.SequenceNumber++
 
-	// Anthropic 的 input_tokens 为未缓存输入，此处加回缓存 token 后输出 Responses 的输入总量。
+	// Add cached input to Anthropic's uncached count for the Responses input total.
 	totalInputTokens := state.InputTokens + state.CacheReadInputTokens + state.CacheCreationInputTokens
 	usage := &ResponsesUsage{
 		InputTokens:              totalInputTokens,
@@ -575,7 +575,7 @@ func makeResponsesCompletedEvent(
 		eventType = "response.incomplete"
 	}
 
-	// SDK 会直接从终止事件重建最终响应，因此必须带上流中累积的输出项。
+	// The SDK reconstructs the final response from this event, including all accumulated items.
 	outputs := state.Outputs
 	if outputs == nil {
 		outputs = []ResponsesOutput{}

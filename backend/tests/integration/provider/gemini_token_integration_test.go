@@ -107,7 +107,7 @@ func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 			cached, err := cache.GetAccessToken(ctx, provideradapter.GeminiTokenCacheKey(value))
 			require.NoError(t, err)
 			require.Equal(t, expected, cached)
-			// 第二次调用读取同一缓存，不重新交换；凭据未进入公共结果。
+			// A second call reads the cached token without another exchange.
 			token, err := tokenSource.GetAccessToken(ctx, provider.CloneRecord(persisted))
 			require.NoError(t, err)
 			require.Equal(t, expected, token)

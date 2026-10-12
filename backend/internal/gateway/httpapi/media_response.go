@@ -16,7 +16,7 @@ import (
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 )
 
-// ImageErrorResponse 返回图片错误的可选 code/param 和清洗后的客户端错误信息。
+// ImageErrorResponse holds a sanitized client error and optional code and param fields.
 type ImageErrorResponse struct {
 	Status                     int
 	Type, Message, Code, Param string

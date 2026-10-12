@@ -14,12 +14,12 @@ const (
 	opsConcurrencyBatchChunkSize = 200
 )
 
-// opsProviderStatsRepository 查询实时统计需要的提供商字段。
+// opsProviderStatsRepository reads the provider fields needed for live statistics.
 type opsProviderStatsRepository interface {
 	ListOpsProvidersForStats(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error)
 }
 
-// listAllProvidersForOps 优先使用轻量查询，测试桩等旧实现则回退到分页接口。
+// listAllProvidersForOps uses the statistics query when supported and otherwise uses the paginated interface.
 func (s *OpsService) listAllProvidersForOps(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error) {
 	if s == nil || s.providerRepo == nil {
 		return []ProviderObservation{}, nil
@@ -97,7 +97,7 @@ func (s *OpsService) getProvidersLoadMapBestEffort(ctx context.Context, provider
 		end := min(i+opsConcurrencyBatchChunkSize, len(batch))
 		part, err := s.concurrencyService.GetProvidersLoadBatch(ctx, batch[i:end])
 		if err != nil {
-			// 负载查询失败时返回零值。
+			// Missing load entries are displayed as zero when a batch query fails.
 			log.Printf("[Ops] GetProvidersLoadBatch failed: %v", err)
 			continue
 		}
@@ -163,7 +163,7 @@ func (s *OpsService) GetConcurrencyStats(
 			waiting = int64(load.WaitingCount)
 		}
 
-		// ProviderObservation-level view picks one display group (the first group).
+		// Display the matched group, or the provider's first group when no group filter is set.
 		displayGroupID := int64(0)
 		displayGroupName := ""
 		if matchedGroup != nil {
@@ -204,7 +204,7 @@ func (s *OpsService) GetConcurrencyStats(
 			p.WaitingInQueue += waiting
 		}
 
-		// GroupObservation aggregation (one provider may contribute to multiple groups).
+		// A provider contributes to each matching group.
 		if matchedGroup != nil {
 			grp := matchedGroup
 			if _, ok := group[grp.ID]; !ok {
@@ -327,7 +327,7 @@ func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []User
 		end := min(i+opsConcurrencyBatchChunkSize, len(batch))
 		part, err := s.concurrencyService.GetUsersLoadBatch(ctx, batch[i:end])
 		if err != nil {
-			// 负载查询失败时返回零值。
+			// Missing load entries are displayed as zero when a batch query fails.
 			log.Printf("[Ops] GetUsersLoadBatch failed: %v", err)
 			continue
 		}
@@ -337,7 +337,7 @@ func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []User
 	return out
 }
 
-// GetUserConcurrencyStats returns real-time concurrency usage for all active users.
+// GetUserConcurrencyStats returns live concurrency for active users with running or waiting requests.
 func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*UserConcurrencyInfo, *time.Time, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, nil, err

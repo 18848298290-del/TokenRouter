@@ -15,7 +15,7 @@ func TestCreativeOwnershipEnforced(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
 	runID := "crun_ownerother00001"
-	// 任务属于用户 99，当前用户是 7。
+	// User 7 attempts to access a task owned by user 99.
 	seedOwnedRun(t, svc, runID, 99, creative.CreativeRunStatusSucceeded)
 	store := testassert.MustType[*creativeFakeTransient](svc.TransientStore)
 	store.outputs[runID+":0"] = []byte("img")
@@ -29,7 +29,7 @@ func TestCreativeOwnershipEnforced(t *testing.T) {
 	err = svc.AckOutput(ctx, testCreativeScope(7), runID, 0)
 	require.ErrorIs(t, err, creative.ErrCreativeRunNotFound)
 
-	// 本人访问不受影响。
+	// The owner can still access the task.
 	got, err := svc.GetRun(ctx, testCreativeScope(99), runID)
 	require.NoError(t, err)
 	require.Equal(t, runID, got.ID)
@@ -40,7 +40,7 @@ func TestCreativeGetOutputContentExpiresToResultLost(t *testing.T) {
 	ctx := context.Background()
 	runID := "crun_outputexpired001"
 	repo := testassert.MustType[*creativeFakeRunRepo](svc.Repo)
-	// succeeded 任务，输出已过期且临时键已不存在。
+	// The succeeded task has expired output metadata and no transient bytes.
 	past := time.Now().Add(-time.Minute)
 	repo.runs[runID] = &creative.CreativeRun{
 		RunID:                runID,
@@ -60,7 +60,7 @@ func TestCreativeGetOutputContentExpiresToResultLost(t *testing.T) {
 
 	_, err := svc.GetOutputContent(ctx, testCreativeScope(7), runID, 0)
 	require.ErrorIs(t, err, creative.ErrCreativeOutputExpired)
-	// 输出过期的任务进入 result_lost。
+	// Output expiry downgrades the task to result_lost.
 	require.Equal(t, creative.CreativeRunStatusResultLost, repo.runs[runID].Status)
 }
 
@@ -85,7 +85,7 @@ func TestCreativeGetOutputContentMissingTransientToResultLost(t *testing.T) {
 	repo.outputs[runID] = []*creative.CreativeRunOutput{
 		{RunID: runID, OutputIndex: 0, Status: creative.CreativeRunOutputStatusSucceeded, MimeType: creativeStringValuePtr("image/png"), TransientExpiresAt: &future},
 	}
-	// 临时存储中的输出字节已丢失或被清理。
+	// No output bytes exist despite an unexpired metadata timestamp.
 
 	_, err := svc.GetOutputContent(ctx, testCreativeScope(7), runID, 0)
 	require.ErrorIs(t, err, creative.ErrCreativeResultLost)
@@ -104,12 +104,12 @@ func TestCreativeGetOutputContentSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("png-bytes"), content.Content)
 	require.Equal(t, "image/png", content.ContentType)
-	// 成功读取不得误降级。
+	// Reading available output keeps the task succeeded.
 	require.Equal(t, creative.CreativeRunStatusSucceeded, testassert.MustType[*creativeFakeRunRepo](svc.Repo).runs[runID].Status)
 }
 
-// TestCreativeListRunsIncludesOutputs 校验历史列表携带输出元数据：
-// 前端历史组件依赖 outputs 关联本地素材与缺失占位，列表不能只返回任务壳。
+// TestCreativeListRunsIncludesOutputs checks the metadata used to match history entries to local media.
+// Missing-media placeholders also depend on this output metadata.
 func TestCreativeListRunsIncludesOutputs(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -124,7 +124,7 @@ func TestCreativeListRunsIncludesOutputs(t *testing.T) {
 	require.Equal(t, "image/png", got.Data[0].Outputs[0].MimeType)
 }
 
-// seedOwnedRun 种入一个属于指定用户的 succeeded 任务（含一张 succeeded 输出）。
+// seedOwnedRun creates an owned task in the requested state with one succeeded output.
 func seedOwnedRun(t *testing.T, svc *creative.Public, runID string, userID int64, status string) {
 	t.Helper()
 	repo := testassert.MustType[*creativeFakeRunRepo](svc.Repo)

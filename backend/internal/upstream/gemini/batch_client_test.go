@@ -42,7 +42,7 @@ func TestBatchClientLocalTLSAndStreamCancellation(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"downloadUri":"https://%s/bytes","mimeType":"application/jsonl"}`, r.Host)
 		case r.URL.Path == "/bytes":
 			w.Header().Set("Content-Type", "application/jsonl")
-			// 声明一个未发送的字节，使客户端能区分取消与正常下载完成。
+			// Advertise one unsent byte so cancellation is distinguishable from a complete download.
 			w.Header().Set("Content-Length", fmt.Sprint(len("first-line\n")+1))
 			_, _ = io.WriteString(w, "first-line\n")
 			_ = http.NewResponseController(w).Flush()

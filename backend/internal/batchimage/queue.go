@@ -38,7 +38,7 @@ type BatchImageQueue interface {
 	TryAcquireJobLock(ctx context.Context, batchID string, ttl time.Duration) (BatchImageJobLock, bool, error)
 }
 
-// BatchImageJobLockRefresher 明确报告续期时失去所有权。
+// BatchImageJobLockRefresher reports ownership loss when renewing a lock.
 type BatchImageJobLockRefresher interface {
 	Refresh(context.Context, time.Duration) error
 }

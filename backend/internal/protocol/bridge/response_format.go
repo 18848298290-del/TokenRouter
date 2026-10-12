@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 )
 
-// chatResponseFormatToResponsesTextFormat 将 Chat Completions 的 json_schema
-// 嵌套结构展平为 Responses API text.format 所需的结构。
+// chatResponseFormatToResponsesTextFormat flattens the Chat Completions json_schema
+// wrapper into the Responses text.format shape.
 func chatResponseFormatToResponsesTextFormat(raw json.RawMessage) json.RawMessage {
 	raw = normalizedRawJSON(raw)
 	if len(raw) == 0 {
@@ -35,8 +35,8 @@ func chatResponseFormatToResponsesTextFormat(raw json.RawMessage) json.RawMessag
 	return out
 }
 
-// responsesTextFormatToChatResponseFormat 将 Responses API 展平的
-// json_schema 恢复为 Chat Completions response_format 的嵌套结构。
+// responsesTextFormatToChatResponseFormat wraps the flat Responses json_schema
+// format in the Chat Completions response_format shape.
 func responsesTextFormatToChatResponseFormat(raw json.RawMessage) json.RawMessage {
 	raw = normalizedRawJSON(raw)
 	if len(raw) == 0 {
@@ -76,7 +76,7 @@ func responsesTextFormatToChatResponseFormat(raw json.RawMessage) json.RawMessag
 	return out
 }
 
-// normalizedRawJSON 剥离首尾空白，并把空值与 null 统一为未配置。
+// normalizedRawJSON trims whitespace and treats empty or null values as unset.
 func normalizedRawJSON(raw json.RawMessage) json.RawMessage {
 	raw = bytesTrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -85,7 +85,7 @@ func normalizedRawJSON(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
 }
 
-// rawJSONObject 将原始 JSON 对象解析为保留子字段原文的映射。
+// rawJSONObject decodes an object while retaining each child field as raw JSON.
 func rawJSONObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -94,7 +94,7 @@ func rawJSONObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	return obj, true
 }
 
-// rawJSONString 构造一个 JSON 字符串原始值。
+// rawJSONString encodes a string as a raw JSON value.
 func rawJSONString(value string) json.RawMessage {
 	data, _ := json.Marshal(value)
 	return data

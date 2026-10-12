@@ -59,7 +59,7 @@ func (s *QuotaClient) GetJSON(ctx context.Context, path string, query map[string
 	return s.DoJSON(req, expectedTaskID)
 }
 
-// GetJSONRaw 获取未经对象反序列化的 JSON，供明细接口兼容数组等顶层结构。
+// GetJSONRaw returns response bytes so callers can accept arrays and other top-level JSON shapes.
 func (s *QuotaClient) GetJSONRaw(ctx context.Context, path string, query map[string]string) ([]byte, error) {
 	target, err := s.Options.URL(path, query)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *QuotaClient) PostJSON(ctx context.Context, path string, body map[string
 	return s.DoJSON(req, expectedTaskID)
 }
 
-// ApplyHeaders 每次调用都重新生成 Agent Assertion，并返回签名实际使用的 task ID。
+// ApplyHeaders authenticates each request and returns the task ID used by Agent Identity signing.
 func (s *QuotaClient) ApplyHeaders(req *http.Request) (string, error) {
 	if req == nil || !s.Options.Available {
 		return "", errors.New("openai quota request context is unavailable")
@@ -147,7 +147,7 @@ func (s *QuotaClient) DoJSON(req *http.Request, expectedTaskID string) (map[stri
 	return result, nil
 }
 
-// DoJSONRaw 执行请求并保留原始响应；Agent task 失效时最多注册并重放一次。
+// DoJSONRaw reads and closes each response, recovering an invalid Agent task and replaying at most once.
 func (s *QuotaClient) DoJSONRaw(req *http.Request, expectedTaskID string) ([]byte, error) {
 	for recovered := false; ; {
 		resp, err := s.Options.Do(req)
@@ -189,7 +189,8 @@ func (s *QuotaClient) DoJSONRaw(req *http.Request, expectedTaskID string) ([]byt
 	}
 }
 
-// CloneOpenAIQuotaRequest 为一次性恢复重放复制请求体和请求头。
+// CloneOpenAIQuotaRequest clones headers and recreates the body for recovery replay.
+// A nonempty body without GetBody cannot be replayed.
 func CloneOpenAIQuotaRequest(req *http.Request) (*http.Request, error) {
 	if req == nil {
 		return nil, errors.New("openai quota request is nil")

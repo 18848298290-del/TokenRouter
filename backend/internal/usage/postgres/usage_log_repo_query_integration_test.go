@@ -20,13 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUsageRequestIDConditionUsesIndexes 在稀疏命中和外部 ID 冲突下检查结果与执行计划。
+// TestUsageRequestIDConditionUsesIndexes checks results and plans for sparse matches and external ID collisions.
 func TestUsageRequestIDConditionUsesIndexes(t *testing.T) {
 	ctx := t.Context()
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	// 临时表使用生产索引，各测试的历史记录不会进入候选集合。
+	// Temporary tables retain production indexes and isolate lookup candidates from other test records.
 	_, err = tx.ExecContext(ctx, `
 CREATE TEMP TABLE usage_logs (LIKE public.usage_logs INCLUDING ALL) ON COMMIT DROP;
 CREATE TEMP TABLE request_records (LIKE public.request_records INCLUDING ALL) ON COMMIT DROP;
@@ -98,7 +98,7 @@ ANALYZE ops_system_logs;`)
 	}
 }
 
-// TestResponseModelMigrationPreservesHistory 在事务内还原旧列结构，确认增量迁移保留历史空值。
+// TestResponseModelMigrationPreservesHistory recreates the old columns in a transaction and checks historical NULL values.
 func (s *UsageLogRepoSuite) TestResponseModelMigrationPreservesHistory() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "response-history@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "response-history", Name: "history"})
@@ -124,7 +124,7 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 	client := tx.Client()
 	repo := NewUsageLogRepositoryWithSQL(client, tx, timezone.NewCalendar(time.Local))
 
-	// 一个活跃用户、一个将被软删的用户，各一条日志。
+	// Create one log for an active user and one for a user to be soft-deleted.
 	active := mustCreateUser(t, client, &identity.User{Email: "active-listfilter@test.com"})
 	deleted := mustCreateUser(t, client, &identity.User{Email: "deleted-listfilter@test.com"})
 	apiKey := mustCreateApiKey(t, client, &apikey.APIKey{UserID: deleted.ID, Key: "sk-del-1", Name: "k"})
@@ -144,7 +144,7 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// 软删除该用户（触发 SoftDeleteMixin Hook → UPDATE deleted_at）。
+	// The SoftDeleteMixin hook turns deletion into an update of deleted_at.
 	require.NoError(t, client.User.DeleteOneID(deleted.ID).Exec(ctx))
 
 	logs, _, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 50},
@@ -156,14 +156,14 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 		byUser[l.UserID] = l
 	}
 
-	// 已删用户的日志加载用户资料后，包含邮箱和删除时间。
+	// Historical log hydration includes the deleted user's email and deletion time.
 	delLog, ok := byUser[deleted.ID]
 	require.True(t, ok, "deleted user's usage log must still be listed")
 	require.NotNil(t, delLog.User, "deleted user identity must resolve")
 	require.Equal(t, "deleted-listfilter@test.com", delLog.User.Email)
 	require.NotNil(t, delLog.User.DeletedAt, "DeletedAt must be set for soft-deleted user")
 
-	// 活跃用户：DeletedAt 为 nil。
+	// Active users have a nil DeletedAt.
 	actLog := byUser[active.ID]
 	require.NotNil(t, actLog.User)
 	require.Nil(t, actLog.User.DeletedAt)

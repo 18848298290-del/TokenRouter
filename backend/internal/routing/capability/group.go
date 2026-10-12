@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// canonicalGroupClientProtocols 从唯一目录派生顺序，避免新增协议遗漏校验。
+// canonicalGroupClientProtocols derives ordering and validation coverage from the protocol catalog.
 var canonicalGroupClientProtocols = func() []ProtocolID {
 	out := []ProtocolID{}
 	for _, protocol := range protocolCatalog {
@@ -15,17 +15,17 @@ var canonicalGroupClientProtocols = func() []ProtocolID {
 	return out
 }()
 
-// SupportedGroupClientProtocols 返回所有公开入口；上游资格在逐提供商选路时判断。
+// SupportedGroupClientProtocols returns public entries; upstream eligibility is checked per provider.
 func SupportedGroupClientProtocols(_ string) []ProtocolID {
 	return append([]ProtocolID{}, canonicalGroupClientProtocols...)
 }
 
-// DefaultGroupClientProtocols 只默认开放三个文本入口，其余能力由管理员显式启用。
+// DefaultGroupClientProtocols enables the three text entries. Administrators opt in to other protocols.
 func DefaultGroupClientProtocols(_ string) []ProtocolID {
 	return []ProtocolID{ProtocolAnthropicMessages, ProtocolOpenAIResponses, ProtocolOpenAIChatCompletions}
 }
 
-// ValidateGroupClientProtocols 校验完整协议集合并返回固定顺序的副本。
+// ValidateGroupClientProtocols validates the set and returns a copy in catalog order.
 func ValidateGroupClientProtocols(platform string, protocols []ProtocolID) ([]ProtocolID, error) {
 	supported := make(map[ProtocolID]struct{})
 	for _, protocol := range SupportedGroupClientProtocols(platform) {
@@ -58,7 +58,7 @@ func ValidateGroupClientProtocols(platform string, protocols []ProtocolID) ([]Pr
 	return out, nil
 }
 
-// SetGroupClientProtocol 更新单个协议，并按协议目录顺序返回集合。
+// SetGroupClientProtocol updates one selection and returns protocols in catalog order.
 func SetGroupClientProtocol(protocols []ProtocolID, target ProtocolID, enabled bool) []ProtocolID {
 	selected := make(map[ProtocolID]struct{}, len(protocols)+1)
 	for _, protocol := range protocols {
@@ -78,7 +78,8 @@ func SetGroupClientProtocol(protocols []ProtocolID, target ProtocolID, enabled b
 	return out
 }
 
-// DefaultProtocolFallbacks 省略入口表示自动匹配，显式空目标列表表示仅原生。
+// DefaultProtocolFallbacks leaves entries absent for automatic matching; an explicit empty list requires
+// native execution.
 func DefaultProtocolFallbacks(_ string) map[ProtocolID][]ProtocolID {
 	return map[ProtocolID][]ProtocolID{}
 }

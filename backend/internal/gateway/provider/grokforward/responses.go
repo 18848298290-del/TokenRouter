@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Forward 准备 Grok 请求并处理响应，通过 ResponsesExecutor 执行网络恢复。
+// Forward prepares a Grok request and processes output, using ResponsesExecutor for transport recovery.
 func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.OpenAIResult, error) {
 	body, originalModel, reqStream, startTime := in.Body, in.OriginalModel, in.Stream, in.StartedAt
 
@@ -39,7 +39,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 	}
 	if p.ImageModel(upstreamModel) {
 		err := fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
-		// 这是客户端点选择错误，直接返回 400，避免 handler 将普通错误改写为通用 502。
+		// Report the endpoint mismatch as 400 before the handler can convert it to a generic 502.
 		if in.HTTPPresent {
 			p.InvalidRequest(err.Error(), "model")
 		}
@@ -52,16 +52,16 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		return nil, err
 	}
 	p.ClientTools(clientToolMapping)
-	// xAI 没有原生 /responses/compact；改成普通 Responses 摘要轮次，响应阶段再封装为 compaction 条目。
+	// Emulate Compact with a Responses summary turn and wrap the result as a compaction item.
 	if in.Compact {
 		patchedBody, err = o.Codec.BuildGrokCompactRequestBody(patchedBody)
 		if err != nil {
 			return nil, err
 		}
 	}
-	// 从 xAI 实际接收的请求派生身份，使 Codex Responses Lite 的 additional_tools
-	// 成为稳定工具前缀的一部分。若 Claude Code session 只存在于 metadata.user_id，
-	// 则在 metadata 被剥离前使用原始请求保留该身份。
+	// Derive cache identity from the upstream payload so additional_tools contributes
+	// to the stable tool prefix. Use the original body when Claude Code session identity
+	// would otherwise be lost during metadata stripping.
 	cacheIdentityBody := patchedBody
 	if grok.ExtractClaudeCodeSessionIDFromPayload(body) != "" {
 		cacheIdentityBody = body
@@ -72,8 +72,8 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 	if err != nil {
 		return nil, fmt.Errorf("apply grok prompt cache identity: %w", err)
 	}
-	// Free OAuth 携带客户端函数工具时复用混合工具缓存路由，补齐 web_search/x_search，
-	// 避免 xAI 强制落到不可缓存的 build-free 层级。
+	// Add web_search and x_search to the Free OAuth client-tool route
+	// to avoid routing it to the uncacheable build-free tier.
 	patchedBody, err = p.FreeCacheRoute(patchedBody, mixedCacheIntentBody, cacheIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
@@ -140,7 +140,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 					handledResult, handleErr = p.HandleError(ctx, resp, patchedBody, upstreamModel)
 					return true, handleErr
 				}
-				// 配额/限流响应写入团队模型覆盖层；容量属于请求压力，不应隐藏健康提供商。
+				// Quota and rate limits affect the team-model overlay; capacity pressure does not hide healthy providers.
 				if p.ShouldMarkTeam(resp.StatusCode, respBody) {
 					p.MarkTeam(upstreamModel)
 				}
@@ -216,8 +216,8 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		Duration:              time.Since(startTime),
 		FirstTokenMs:          firstTokenMs,
 	}
-	// 从共享 Responses 处理器传递搜索与图片计数；否则流式或 JSON 统计虽会运行，
-	// 但 search_price_per_1k 与图片费用不会生效。
+	// Carry search and image counts into the result so settlement can apply
+	// per-search and per-image prices.
 	if searchCount > 0 {
 		result.SearchCount = searchCount
 	}

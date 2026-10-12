@@ -63,7 +63,7 @@ func TestGeminiAuthorizationStopBoundsInFlightRefresh(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("原有有限刷新流程未结束")
 		}
-		// 等待超时结果固定，不能在流程稍后结束时把第一次关闭改称成功。
+		// The first shutdown timeout remains the result even after in-flight work finishes.
 		require.ErrorIs(t, authorization.StopContext(context.Background()), context.DeadlineExceeded)
 		require.EqualValues(t, 4, client.calls.Load(), "本次未改变已进入流程的原重试次数")
 	})
@@ -197,25 +197,25 @@ func TestInferGoogleOneTier(t *testing.T) {
 		storageBytes int64
 		want         string
 	}{
-		// 检查小于等于零的输入。
+		// Nonpositive storage has an unknown tier.
 		{name: "0 bytes -> unknown", storageBytes: 0, want: GeminiTierGoogleOneUnknown},
 		{name: "负数 -> unknown", storageBytes: -1, want: GeminiTierGoogleOneUnknown},
 
-		// 容量超过 100 TB 时识别为 ultra。
+		// Storage above 100 TB selects Ultra.
 		{name: "> 100TB -> ultra", storageBytes: int64(StorageTierUnlimited) + 1, want: GeminiTierGoogleAIUltra},
 		{name: "200TB -> ultra", storageBytes: 200 * int64(TB), want: GeminiTierGoogleAIUltra},
 
-		// >= 2TB -> pro (但 <= 100TB)
+		// From 2 TB through 100 TB selects Pro.
 		{name: "正好 2TB -> pro", storageBytes: int64(StorageTierAIPremium), want: GeminiTierGoogleAIPro},
 		{name: "5TB -> pro", storageBytes: 5 * int64(TB), want: GeminiTierGoogleAIPro},
 		{name: "100TB 正好 -> pro (不是 > 100TB)", storageBytes: int64(StorageTierUnlimited), want: GeminiTierGoogleAIPro},
 
-		// >= 15GB -> free (但 < 2TB)
+		// From 15 GB up to 2 TB selects Free.
 		{name: "正好 15GB -> free", storageBytes: int64(StorageTierFree), want: GeminiTierGoogleOneFree},
 		{name: "100GB -> free", storageBytes: 100 * int64(GB), want: GeminiTierGoogleOneFree},
 		{name: "略低于 2TB -> free", storageBytes: int64(StorageTierAIPremium) - 1, want: GeminiTierGoogleOneFree},
 
-		// 容量低于 15 GB 时返回 unknown。
+		// Storage below 15 GB has an unknown tier.
 		{name: "1GB -> unknown", storageBytes: int64(GB), want: GeminiTierGoogleOneUnknown},
 		{name: "略低于 15GB -> unknown", storageBytes: int64(StorageTierFree) - 1, want: GeminiTierGoogleOneUnknown},
 		{name: "1 byte -> unknown", storageBytes: 1, want: GeminiTierGoogleOneUnknown},

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// BillingSettings 是共享价格配置的计费策略，独立于模型价卡是否命中。
+// BillingSettings holds shared pricing policy applied independently of whether a model card matches.
 type BillingSettings struct {
 	PeakRateEnabled              bool     `json:"peak_rate_enabled"`
 	PeakStart                    string   `json:"peak_start"`
@@ -22,7 +22,7 @@ type BillingSettings struct {
 	AudioSTTPricePerHour         *float64 `json:"audio_stt_price_per_hour"`
 }
 
-// DefaultBillingSettings 保持未配置时的既有计费规则。
+// DefaultBillingSettings returns policy defaults for an unconfigured group.
 func DefaultBillingSettings() BillingSettings {
 	return BillingSettings{
 		PeakRateMultiplier:           1,
@@ -32,7 +32,7 @@ func DefaultBillingSettings() BillingSettings {
 	}
 }
 
-// Clone 隔离价卡缓存和调用方的可空单价。
+// Clone copies optional prices so callers cannot mutate cached amounts.
 func (s BillingSettings) Clone() BillingSettings {
 	if s.WebSearchPricePerCall != nil {
 		v := *s.WebSearchPricePerCall
@@ -57,10 +57,10 @@ func (s BillingSettings) Clone() BillingSettings {
 	return s
 }
 
-// parseMinutes 把 "HH:MM" 解析为当日分钟数（0..1439），格式非法返回 (0,false)。
+// parseMinutes parses a time as minutes since midnight (0..1439), returning false for invalid input.
 func parseMinutes(hhmm string) (int, bool) {
-	// 手工解析避免计费热路径反复走 time.Parse；接受集保持与 time.Parse("15:04", s) 一致：
-	// 小时允许 1-2 位数字（0..23），分钟必须是 2 位数字（00..59）。
+	// Parse directly on the billing hot path. As with time.Parse("15:04", s),
+	// hours accept one or two digits (0..23), and minutes require two digits (00..59).
 	colon := strings.IndexByte(hhmm, ':')
 	if (colon != 1 && colon != 2) || len(hhmm)-colon-1 != 2 {
 		return 0, false
@@ -84,12 +84,12 @@ func parseMinutes(hhmm string) (int, bool) {
 	return hour*60 + minute, true
 }
 
-// PeakMultiplierAt 返回指定时刻 now 的高峰因子。
-//   - 未启用 / 未配置 / 配置非法（start>=end 或格式错误） / 非高峰时段 → 返回 1.0（安全降级）
-//   - 区间为左闭右开 [PeakStart, PeakEnd)，起止时间需要在同一天。
-//   - 调用方先将时刻转换到日期对象的时区
+// PeakMultiplierAt returns the peak multiplier for now's local clock time.
+//   - Disabled, absent, invalid, or inactive windows return 1.
+//   - The window is [PeakStart, PeakEnd), with both endpoints on the same day.
+//   - Callers convert now to the billing timezone before calling.
 //
-// 该方法是纯函数，不读取任何外部状态，便于单测。
+// The method uses the supplied settings and time without external reads.
 func (s *BillingSettings) PeakMultiplierAt(now time.Time) float64 {
 	if s == nil || !s.PeakRateEnabled || s.PeakStart == "" || s.PeakEnd == "" {
 		return 1.0

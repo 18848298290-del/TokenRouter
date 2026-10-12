@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ValidateJevCredentials 校验 SystemOne 提供商的认证方式和 API Key。
+// ValidateJevCredentials requires API-key authentication and a nonempty key for Jev providers.
 func ValidateJevCredentials(value *Record) error {
 	if value == nil || value.Platform != PlatformJev {
 		return nil
@@ -20,7 +20,7 @@ func ValidateJevCredentials(value *Record) error {
 	return nil
 }
 
-// GetJevBaseURL 返回管理员配置的地址或 TypeSafe 官方地址。
+// GetJevBaseURL returns the configured endpoint or the default TypeSafe endpoint.
 func (r *Record) GetJevBaseURL() string {
 	if base := strings.TrimSpace(r.GetCredential("base_url")); base != "" {
 		return base

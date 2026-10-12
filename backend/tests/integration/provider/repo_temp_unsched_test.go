@@ -296,7 +296,7 @@ func TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T
 	require.Contains(t, normalized, "schedulable = TRUE",
 		"永久不可调度提供商不能继续进入 OAuth 刷新候选")
 	require.Contains(t, normalized, "status = 'active'")
-	// setup-token 的 access_token 有效期同为 8 小时，与 OAuth 一起进入后台刷新候选。
+	// IncludeSetupToken admits setup-token providers alongside OAuth providers for background refresh.
 	require.Contains(t, normalized, "type IN ('oauth', 'setup-token')")
 	require.Contains(t, normalized, "platform = 'qoder' AND type = 'cosy'")
 	require.Contains(t, normalized, "platform = ANY($1)")

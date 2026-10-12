@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CredentialFailoverClientResponse 为已分类的凭据失败生成客户端响应。
+// CredentialFailoverClientResponse returns a client status and message for a classified credential failure.
 func CredentialFailoverClientResponse(failoverErr *forwardcore.UpstreamFailoverError) (int, string) {
 	if failoverErr != nil && failoverErr.Reason == forwardcore.OpenAIUpstreamAccessStateReason && strings.TrimSpace(failoverErr.ClientMessage) != "" {
 		status := failoverErr.ClientStatusCode
@@ -24,7 +24,7 @@ func CredentialFailoverClientResponse(failoverErr *forwardcore.UpstreamFailoverE
 	return http.StatusServiceUnavailable, forwardcore.GrokCredentialUnavailableClientMessage
 }
 
-// ProjectOpenAIFailoverError 提取平台确认的错误展示信息，HTTP 层应用展示规则。
+// ProjectOpenAIFailoverError extracts classified failure details for HTTP error-rule processing.
 func ProjectOpenAIFailoverError(err *forwardcore.UpstreamFailoverError) *OpenAIFailoverError {
 	if err == nil {
 		return nil

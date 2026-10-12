@@ -13,7 +13,8 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// moduleStorageProviders 按模块构造存储，事务参与者使用同一个数据库连接。
+// moduleStorageProviders groups module storage constructors that share application database and cache
+// dependencies.
 var moduleStorageProviders = wire.NewSet(
 	provideCreativeQueue,
 	provideCreativeTransientStore,

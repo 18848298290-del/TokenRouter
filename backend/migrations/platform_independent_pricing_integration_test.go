@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestPlatformIndependentPricingMigration 检查迁移 SQL 的价格合并、作用域隔离和冲突回滚。
+// TestPlatformIndependentPricingMigration checks price merging, scope isolation, and conflict rollback.
 func TestPlatformIndependentPricingMigration(t *testing.T) {
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("pricing_migration"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -90,7 +90,7 @@ INSERT INTO groups(name,model_pricing) VALUES ('group price','[{"platform":"anth
 		var archivedConfig string
 		require.NoError(t, tx.QueryRowContext(ctx, `SELECT jsonb_agg(entry - 'intervals' ORDER BY ordinal)::TEXT FROM platform_independent_pricing_archive CROSS JOIN LATERAL jsonb_array_elements(entries) WITH ORDINALITY AS item(entry, ordinal) WHERE scope='config' AND scope_id=76001`).Scan(&archivedConfig))
 		require.JSONEq(t, originalConfig, archivedConfig)
-		// 再次执行迁移后，管理员修改的价格和条目 ID 保持不变。
+		// Replaying the migration must retain administrator-edited prices and entry IDs.
 		var priceID int64
 		require.NoError(t, tx.QueryRowContext(ctx, `UPDATE pricing_config_model_pricing SET input_price=9 WHERE pricing_config_id=76001 AND models='["claude-test"]' RETURNING id`).Scan(&priceID))
 		_, err = tx.ExecContext(ctx, string(migration))

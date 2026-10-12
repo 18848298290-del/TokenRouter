@@ -55,13 +55,13 @@ func (s *BillingRecovery) ReleaseStaleUnsubmittedOnce(ctx context.Context) (int,
 			return released, err
 		}
 		msg := "batch image submission did not reach platform before recovery cutoff"
-		// 原子转 failed 并复核 stale 条件：List 与转态之间 job 可能已被慢提交
-		// 心跳续期或提交成功（provider_job_name 已写入），此时绝不能退款，
-		// 否则上游任务照常产生成本而用户已拿回冻结余额。
+		// Recheck staleness in the state update: submission may have refreshed its heartbeat
+		// or saved provider_job_name since the list query. Releasing funds in that case
+		// would refund a job that is still incurring upstream costs.
 		applied, err := s.Repo.FailStaleUnsubmittedBatchImageJob(ctx, job.BatchID, cutoff, "SUBMIT_STALE_BEFORE_PROVIDER", msg)
 		if err != nil {
-			// applied=true 时 UPDATE 已提交（仅审计事件写入失败）：必须继续释放，
-			// 否则 job 已转 failed、不再出现在 stale 列表，冻结余额会永久泄漏。
+			// With applied=true the state update committed and only the audit write failed.
+			// Continue releasing funds because failed jobs disappear from the stale list.
 			if !applied {
 				lastErr = err
 				continue
@@ -76,9 +76,9 @@ func (s *BillingRecovery) ReleaseStaleUnsubmittedOnce(ctx context.Context) (int,
 		}
 		job.Status = BatchImageJobStatusFailed
 		if err := s.Funding.Release(ctx, job, BatchImageDerefString(job.RequestHash)); err != nil {
-			// job 已转 failed、不会再进入 stale 列表：必须给释放失败留下
-			// 自动重试路径（入队后由 worker 的 releaseTerminalHold 兜底），
-			// 否则冻结余额永久泄漏。
+			// Failed jobs disappear from the stale list. Enqueue failed releases so the
+			// worker can retry through ReleaseTerminalHold; otherwise these reservations
+			// would remain held indefinitely.
 			s.warn("batch_image.recovery_release_failed",
 				"batch_id", job.BatchID,
 				"error", err,
@@ -107,7 +107,7 @@ func (s *BillingRecovery) EnqueueReleaseRetry(ctx context.Context, batchID strin
 	}
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now uses the injected clock when configured, otherwise the system clock.
 func (s *BillingRecovery) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

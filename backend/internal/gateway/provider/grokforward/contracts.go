@@ -16,7 +16,7 @@ import (
 
 const ComposerVisionModel = "grok-build-0.1"
 
-// Input 包含已选提供商和本次请求参数。
+// Input holds the selected provider and request parameters.
 type Input struct {
 	ProviderID                           int64
 	ProviderName, ProviderType, Platform string
@@ -27,7 +27,7 @@ type Input struct {
 	StartedAt                            time.Time
 }
 
-// Options 包含 Grok 编解码器、行长度上限和请求生命周期登记函数。
+// Options holds the codec, line-size limit, and request-lifecycle registration function.
 type Options struct {
 	ResolveAttributes func(context.Context, string) (modelcatalog.Attributes, error)
 	Codec             grok.BodyCodec
@@ -61,7 +61,7 @@ type Notice struct {
 	UpstreamRequestID, Kind, Message string
 }
 
-// Ports 将提供商健康和 HTTP 读取缩为单步能力；服务不通过单一回调保留整段编排。
+// Ports supplies request preparation, provider health, HTTP exchange, and output operations.
 type Ports interface {
 	BillingModel(string) string
 	UpstreamModel(string) string

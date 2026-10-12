@@ -12,38 +12,39 @@ import (
 )
 
 const (
-	// openAIStreamKeepaliveBytesContextKey 是 Responses SSE 心跳字节数的上下文键。
+	// openAIStreamKeepaliveBytesContextKey stores the Responses SSE heartbeat byte count.
 	openAIStreamKeepaliveBytesContextKey = "openai_stream_keepalive_bytes"
 
-	// openAICompactSSEKeepaliveKey 存放 body-signal compact 请求的下游 SSE 心跳器。
+	// openAICompactSSEKeepaliveKey stores the downstream SSE heartbeat for compact requests.
 	openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 )
 
-// openAICompactSSEKeepalive 在等待 Compact 上游 JSON 时发送 SSE 注释心跳。
-// 大上下文处理可能持续数分钟，Nginx 或 Cloudflare Tunnel 的空闲超时会中断静默连接，Codex 重连会重复消耗压缩配额（#3887）。
-// SSE 注释由 eventsource 解析器忽略。首拍延迟一个 interval，此前的鉴权、参数或限流错误按 JSON 和 HTTP 状态返回。
-// 首拍提交 200 后，后续错误通过 response.failed 返回。
+// openAICompactSSEKeepalive sends SSE comments while waiting for an upstream Compact JSON response.
+// Heartbeats keep idle proxies from disconnecting long compactions and causing quota-consuming retries (#3887).
+// The first heartbeat waits one interval, allowing earlier failures to use JSON and their HTTP status.
+// After a heartbeat commits HTTP 200, later failures use response.failed events.
 type openAICompactSSEKeepalive struct {
 	mu      sync.Mutex
 	writer  gin.ResponseWriter
 	started bool
 	stopped bool
-	// bytes 记录已写出的心跳注释字节数。判断 Forward 是否开始输出协议内容时，
-	// OpenAICompactKeepaliveAdjustedWrittenSize 会扣除这些字节。
+	// bytes counts heartbeat comment bytes, which OpenAICompactKeepaliveAdjustedWrittenSize
+	// excludes when determining whether protocol output has started.
 	bytes int
 	stop  chan struct{}
 }
 
-// compactKeepaliveWriter 包装 gin.ResponseWriter，写方法在互斥锁下停止心跳，读方法加锁读取状态。
-// Forward 前读取 Size 时心跳继续运行。心跳 goroutine 直接写入内层 k.writer。
+// compactKeepaliveWriter stops heartbeats under the mutex before writes and locks state reads.
+// Size reads leave heartbeats running; the heartbeat goroutine writes directly to k.writer.
 type compactKeepaliveWriter struct {
 	gin.ResponseWriter
 	k *openAICompactSSEKeepalive
 }
 
-// StartOpenAICompactSSEKeepalive 为标记为 body-signal 客户端流式的 Compact 请求启动心跳，返回幂等停止函数。
-// interval<=0 或缺少标记时返回空操作。c.Writer 包装为 compactKeepaliveWriter，
-// 请求开始构造响应时在互斥锁下停止心跳，Forward 内部的本地拒绝也通过该包装器写入。
+// StartOpenAICompactSSEKeepalive starts heartbeats for compact requests marked as client-streaming and returns an
+// idempotent stop function.
+// A missing marker or nonpositive interval disables heartbeats. The wrapper stops them
+// before response construction, including local rejections written inside Forward.
 func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	if !OpenAICompactClientWantsStream(c) {
 		return func() {}
@@ -51,9 +52,9 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 	return StartOpenAISSEKeepalive(c, interval)
 }
 
-// StartOpenAISSEKeepalive 供已确认使用 SSE 的调用方启动心跳。
-// 例如 /v1/responses 透传进入流式循环时，上游已返回 text/event-stream，SSE 响应头也已设置。
-// OpenAICompactKeepaliveAdjustedWrittenSize 排除心跳字节后判断是否可以换号（#3887）。
+// StartOpenAISSEKeepalive starts heartbeats for callers that have already selected SSE output.
+// Callers include Responses passthrough after the upstream returns text/event-stream.
+// Use OpenAICompactKeepaliveAdjustedWrittenSize to exclude heartbeat bytes from failover checks (#3887).
 func StartOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
@@ -90,15 +91,15 @@ func StartOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	}()
 	return func() {
 		k.Stop()
-		// 请求结束后恢复中间件 writer，compact 包装器随请求释放。
+		// Restore the middleware writer when this request releases its compact wrapper.
 		if current, ok := c.Writer.(*compactKeepaliveWriter); ok && current == wrappedWriter {
 			c.Writer = originalWriter
 		}
 	}
 }
 
-// beat 在锁内提交（首次）响应头并写出一条 SSE 注释行；返回 false 表示心跳已
-// 停止或下游写入失败，goroutine 应退出。
+// beat commits headers on the first beat and writes an SSE comment under the mutex.
+// A false result tells the goroutine to exit after stopping or a downstream write failure.
 func (k *openAICompactSSEKeepalive) beat() bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -124,7 +125,7 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	return true
 }
 
-// Stop 停止心跳；幂等，可与写回路径并发调用。
+// Stop stops heartbeats and is safe to repeat or call concurrently with response writes.
 func (k *openAICompactSSEKeepalive) Stop() {
 	k.mu.Lock()
 	k.markStoppedLocked()
@@ -139,8 +140,9 @@ func (k *openAICompactSSEKeepalive) markStoppedLocked() {
 	close(k.stop)
 }
 
-// StopOpenAICompactSSEKeepaliveCommitted 停止 Compact 心跳，并返回心跳是否已提交 200。
-// 调用方据此选择 JSON 状态响应或 SSE 终止事件。函数通过互斥锁等待心跳写入完成，返回后由调用方接管 ResponseWriter。
+// StopOpenAICompactSSEKeepaliveCommitted stops heartbeats and reports whether they committed HTTP 200.
+// It waits for any heartbeat write under the mutex before the caller takes over the writer and chooses JSON or SSE
+// error output.
 func StopOpenAICompactSSEKeepaliveCommitted(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -160,9 +162,9 @@ func StopOpenAICompactSSEKeepaliveCommitted(c *gin.Context) bool {
 	return committed
 }
 
-// OpenAICompactKeepaliveAdjustedWrittenSize 返回扣除 compact 心跳注释后的已写字节数，无心跳时等于 c.Writer.Size()。
-// handler 比较 Forward 前后的结果判断是否开始输出协议内容，已输出时结束换号。
-// 仅写出心跳时返回 gin 的“未写出”值 -1，上游 429/5xx 仍可进入换号处理（#3887）。
+// OpenAICompactKeepaliveAdjustedWrittenSize returns bytes written excluding compact and stream heartbeats.
+// Handlers compare values around Forward to detect protocol output that prevents failover.
+// Heartbeat-only output returns Gin's unwritten value, -1, so upstream 429/5xx failures can still fail over (#3887).
 func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	if c == nil || c.Writer == nil {
 		return -1
@@ -194,7 +196,7 @@ func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	return -1
 }
 
-// suspend 在请求开始构造响应时停止心跳，重复调用安全。Header 访问也会触发停止。
+// suspend idempotently stops heartbeats before response construction, including Header access.
 func (w *compactKeepaliveWriter) suspend() {
 	if w.k == nil {
 		return
@@ -250,7 +252,7 @@ func (w *compactKeepaliveWriter) Flush() {
 	w.ResponseWriter.Flush()
 }
 
-// Hijack 在内层 writer 已释放时返回空值。
+// Hijack returns an error when the inner writer has been released.
 func (w *compactKeepaliveWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if w.ResponseWriter == nil {
 		return nil, nil, errors.New("response writer released")
@@ -274,7 +276,7 @@ func (w *compactKeepaliveWriter) Pusher() http.Pusher {
 	return w.ResponseWriter.Pusher()
 }
 
-// Status 状态读取只有在 keepalive 与内层 writer 都有效时才加锁委托。
+// Status reads the inner writer under the heartbeat mutex, or returns zero if either is absent.
 func (w *compactKeepaliveWriter) Status() int {
 	if w.k == nil || w.ResponseWriter == nil {
 		return 0
@@ -302,7 +304,7 @@ func (w *compactKeepaliveWriter) Written() bool {
 	return w.ResponseWriter.Written()
 }
 
-// RecordOpenAIStreamKeepaliveBytes 单独记录流心跳字节数。
+// RecordOpenAIStreamKeepaliveBytes accumulates bytes written by stream heartbeats.
 func RecordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
 	if c == nil || written <= 0 {
 		return
@@ -314,7 +316,7 @@ func RecordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
 	c.Set(openAIStreamKeepaliveBytesContextKey, current+written)
 }
 
-// OpenAIStreamClientOutputStarted 优先读取本地输出标记，再检查扣除心跳后的字节数。
+// OpenAIStreamClientOutputStarted checks the local output marker, then the byte count excluding heartbeats.
 func OpenAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	if localStarted {
 		return true
@@ -322,6 +324,6 @@ func OpenAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	// compact 心跳会提交 HTTP 200，但不属于模型业务输出，不应阻止安全重试。
+	// A compact heartbeat commits HTTP 200 but carries no model output, so safe retries remain possible.
 	return OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0
 }

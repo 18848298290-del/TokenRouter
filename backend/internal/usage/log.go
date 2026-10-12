@@ -13,10 +13,10 @@ type UsageLog struct {
 	TeamID        *int64
 	APIKeyID      int64
 	ProviderID    int64
-	// Platform 固化本次执行提供商的平台，历史记录由迁移保存原统计口径。
+	// Platform snapshots the execution provider's platform; migrations retain historical reporting attribution.
 	Platform  string
 	RequestID string
-	// BillingKey 是本次资金操作的去重键，由请求记录保存关联。
+	// BillingKey is the financial-operation deduplication key linked from the request record.
 	BillingKey string
 	Model      string
 	// RequestedModel is the client-requested model name recorded for stable user/admin display.
@@ -25,26 +25,26 @@ type UsageLog struct {
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Nil means no mapping was applied (requested model was used as-is).
 	UpstreamModel *string
-	// UpstreamResponseModel 保存原始响应声明，不作为计费依据。
+	// UpstreamResponseModel stores the raw response model declaration for diagnostics, not billing.
 	UpstreamResponseModel *string
-	// UpstreamModelMismatch 为空表示上游未声明模型。
+	// UpstreamModelMismatch is nil when the upstream did not declare a model.
 	UpstreamModelMismatch *bool
-	// PricingConfigID 共享价格配置 ID
+	// PricingConfigID identifies the shared pricing configuration.
 	PricingConfigID *int64
-	// ModelMappingChain 模型映射链，如 "a→b→c"
+	// ModelMappingChain records model mappings, for example "a→b→c".
 	ModelMappingChain *string
-	// BillingTier 计费层级标签（per_request/image 模式）
+	// BillingTier labels the selected per-request or image price tier.
 	BillingTier *string
-	// BillingMode 计费模式：token/image
+	// BillingMode identifies the pricing mode, such as token, image, or video.
 	BillingMode *string
-	// ServiceTier 记录归一化后的计费层级；Claude Fast 同样使用 "priority"。
+	// ServiceTier stores the normalized billing tier; Claude Fast also uses "priority".
 	ServiceTier *string
-	// ReasoningEffort 是最终转发给上游的推理档位，可能已经经过分组策略或模型族归一化。
-	// OpenAI: "low" / "medium" / "high" / "xhigh" / "max"；Claude: "low" / "medium" / "high" / "max"。
-	// Nil 表示未提供或不适用。
+	// ReasoningEffort is the forwarded effort after group policy and model-family normalization.
+	// Examples include OpenAI "low", "medium", "high", "xhigh", and "max", or Claude "low", "medium", "high", and "max".
+	// Nil means absent or inapplicable.
 	ReasoningEffort *string
-	// RequestedReasoningEffort 是客户端在策略改写前请求的推理档位。
-	// 历史记录可能为空，此时展示层回退到 ReasoningEffort。
+	// RequestedReasoningEffort is the client's effort before policy rewriting.
+	// Historical values may be absent; display code then uses ReasoningEffort.
 	RequestedReasoningEffort *string
 	// InboundEndpoint is the client-facing API endpoint path, e.g. /v1/chat/completions.
 	InboundEndpoint *string
@@ -77,34 +77,34 @@ type UsageLog struct {
 	BalanceAmountUSD          float64
 	BillingAllocations        []billing.BillingAllocation
 	RateMultiplier            float64
-	LongContextBillingApplied bool // 长上下文规则是否实际增加费用
-	// ProviderRateMultiplier 提供商计费倍率快照（nil 表示历史数据，按 1.0 处理）
+	LongContextBillingApplied bool // Whether long-context rules increased the cost.
+	// ProviderRateMultiplier snapshots the provider multiplier; historical nil values mean 1.0.
 	ProviderRateMultiplier *float64
-	// ProviderStatsCost 提供商统计定价预计算基数（nil 时回退 total_cost，之后再乘提供商倍率）
+	// ProviderStatsCost is the precomputed provider-cost base; nil uses total_cost before applying the provider multiplier.
 	ProviderStatsCost *float64
 
 	BillingType  int8
 	RequestType  RequestType
 	Stream       bool
 	OpenAIWSMode bool
-	// NativeCompactionV2 表示运行时识别出的 OpenAI 原生远程 compaction v2 请求。
+	// NativeCompactionV2 marks OpenAI remote compaction v2 requests identified at runtime.
 	NativeCompactionV2 bool
 	DurationMs         *int
 	FirstTokenMs       *int
 	UserAgent          *string
 	IPAddress          *string
-	// SessionID 是客户端显式提供的请求关联标识，例如 session_id 或 X-Session-Id
-	// 请求头；客户端未提供有效值时为 nil，且绝不从 prompt_cache_key 或内容派生。
+	// SessionID is a client-supplied correlation ID from session_id or X-Session-Id.
+	// Absent or invalid values stay nil; prompt_cache_key and request content are not sources.
 	SessionID *string
-	// UpstreamRequestID 是直接上游在响应头中声明的请求标识，只读提供商
-	// extra.upstream_request_id_header 指定的头；提供商未指定头名、WS 轮次
-	// 与上游没有该头的路径为 nil。
+	// UpstreamRequestID is the immediate upstream's response-header request ID.
+	// The header is selected by provider extra.upstream_request_id_header; unset configuration,
+	// WebSocket turns, and responses without that header leave it nil.
 	UpstreamRequestID *string
 
-	// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
+	// CacheTTLOverridden marks an administrator override of cache-TTL billing.
 	CacheTTLOverridden bool
 
-	// 图片生成字段
+	// Image generation metadata.
 	ImageCount         int
 	ImageSize          *string
 	ImageInputSize     *string
@@ -113,7 +113,7 @@ type UsageLog struct {
 	ImageSizeBreakdown map[string]int
 	MediaType          *string
 
-	// 视频生成字段（Grok 视频按秒计费；video_count>0 的行不要求 image_size）
+	// Grok video is billed per second; rows with video_count > 0 do not require image_size.
 	VideoCount           int
 	VideoResolution      *string
 	VideoDurationSeconds *int

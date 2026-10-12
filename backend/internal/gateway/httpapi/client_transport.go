@@ -14,10 +14,10 @@ const (
 	openAIClientTransportContextKey = "openai_client_transport"
 )
 
-// OpenAIClientTransport 表示客户端入站协议类型。
+// OpenAIClientTransport identifies the inbound client transport.
 type OpenAIClientTransport string
 
-// SetOpenAIClientTransport 标记当前请求的客户端入站协议。
+// SetOpenAIClientTransport records the inbound transport for this request.
 func SetOpenAIClientTransport(c *gin.Context, transport OpenAIClientTransport) {
 	if c == nil {
 		return
@@ -29,7 +29,7 @@ func SetOpenAIClientTransport(c *gin.Context, transport OpenAIClientTransport) {
 	c.Set(openAIClientTransportContextKey, string(normalized))
 }
 
-// GetOpenAIClientTransport 读取当前请求的客户端入站协议。
+// GetOpenAIClientTransport returns the recorded inbound transport, or Unknown if absent or invalid.
 func GetOpenAIClientTransport(c *gin.Context) OpenAIClientTransport {
 	if c == nil {
 		return OpenAIClientTransportUnknown

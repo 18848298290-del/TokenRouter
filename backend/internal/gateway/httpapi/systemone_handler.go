@@ -13,19 +13,19 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/systemone"
 )
 
-// SystemOneHTTPExecution 输出当前请求的最终错误。
+// SystemOneHTTPExecution runs a decision request and writes its final error.
 type SystemOneHTTPExecution interface {
 	systemone.Ports
 	End(error)
 }
 
-// SystemOneHTTPPorts 绑定 SystemOne 的请求工厂和内容审核。
+// SystemOneHTTPPorts supplies the request factory and content moderation for SystemOne.
 type SystemOneHTTPPorts interface {
 	NewSystemOne(*gin.Context, AuxiliaryHTTPInput, *zap.Logger, *bool) SystemOneHTTPExecution
 	ModerateSystemOne(*gin.Context, *zap.Logger, string, []byte) bool
 }
 
-// SystemOne 处理同步决策请求，提供商切换由 systemone.Run 执行。
+// SystemOne handles synchronous decision requests; systemone.Run owns provider failover.
 func (h *AuxiliaryHandler) SystemOne(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "systemone")
 	if !accepted {
@@ -87,12 +87,12 @@ func (h *AuxiliaryHandler) SystemOne(c *gin.Context) {
 	run.End(systemone.Run(c.Request.Context(), h.ports.MaxSwitches(), run))
 }
 
-// IsSystemOneEndpoint 识别决策请求入口。
+// IsSystemOneEndpoint reports whether a path is the decision endpoint, allowing a trailing slash.
 func IsSystemOneEndpoint(path string) bool {
 	return strings.TrimSuffix(path, "/") == EndpointSystemOne
 }
 
-// WriteSystemOneError 输出决策入口的网关错误，供鉴权、准入和执行阶段共用。
+// WriteSystemOneError writes gateway errors shared by authentication, admission, and execution.
 func WriteSystemOneError(c *gin.Context, status int, kind, code, param, message string) {
 	if c.Writer.Written() {
 		return

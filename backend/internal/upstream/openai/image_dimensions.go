@@ -12,10 +12,10 @@ import (
 	"strings"
 )
 
-// MaxOpenAIImageDimensionProbeBytes 限制图片头探测量，避免异常响应触发无界读取。
+// MaxOpenAIImageDimensionProbeBytes bounds header reads from image responses.
 const MaxOpenAIImageDimensionProbeBytes int64 = 1 << 20
 
-// DetectOpenAIImageResultSize 从 base64 图片结果中读取实际像素尺寸，不解码完整像素数据。
+// DetectOpenAIImageResultSize reads pixel dimensions from Base64 image headers without decoding pixels.
 func DetectOpenAIImageResultSize(encoded string) string {
 	payload := strings.TrimSpace(encoded)
 	if strings.HasPrefix(strings.ToLower(payload), "data:") {
@@ -45,7 +45,7 @@ func DetectOpenAIImageResultSize(encoded string) string {
 	return ""
 }
 
-// DetectOpenAIWebPDimensions 从 WebP 的 VP8X、VP8 或 VP8L 头中读取画布尺寸。
+// DetectOpenAIWebPDimensions reads canvas dimensions from VP8X, VP8 or VP8L headers.
 func DetectOpenAIWebPDimensions(header []byte) (int, int, bool) {
 	if len(header) < 16 || string(header[:4]) != "RIFF" || string(header[8:12]) != "WEBP" {
 		return 0, 0, false
@@ -78,10 +78,10 @@ func DetectOpenAIWebPDimensions(header []byte) (int, int, bool) {
 	}
 }
 
-// ReconcileOpenAIResponsesImageResultSizes 用最终图片字节修正响应元数据中的尺寸。
+// ReconcileOpenAIResponsesImageResultSizes updates result metadata from final image bytes.
 func ReconcileOpenAIResponsesImageResultSizes(results []OpenAIResponsesImageResult, firstMeta *OpenAIResponsesImageResult) {
 	for i := range results {
-		// ChatGPT OAuth 可能把显式尺寸归一化为 auto，最终图片字节才是元数据与分档计费的权威来源。
+		// OAuth may report auto for an explicit size; use final image dimensions for metadata and billing tiers.
 		if actualSize := DetectOpenAIImageResultSize(results[i].Result); actualSize != "" {
 			results[i].Size = actualSize
 		}

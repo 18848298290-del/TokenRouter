@@ -11,7 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration275RemovesRedundantPricingControls 验证迁移只清除退役配置，分组协议、其他功能和价格规则保持原值；重复执行安全。
+// TestMigration275RemovesRedundantPricingControls checks replay and targeted removal while retaining
+// protocols, other features, and prices.
 func TestMigration275RemovesRedundantPricingControls(t *testing.T) {
 	tx := historicalTx(t, "275_")
 	ctx := context.Background()

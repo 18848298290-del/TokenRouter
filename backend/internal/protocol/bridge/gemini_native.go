@@ -14,16 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// NativeGeminiUsage 保存从 Gemini 响应解析出的 token 用量。
+// NativeGeminiUsage contains token counts extracted from a Gemini response.
 type NativeGeminiUsage struct{ InputTokens, OutputTokens, CacheReadInputTokens, ImageOutputTokens int }
 
-// NativeGeminiOptions 保存调用方选择的签名策略。
+// NativeGeminiOptions contains caller-selected signature and thinking settings.
 type NativeGeminiOptions struct {
 	DummyThoughtSignature string
 	Thinking              *GeminiThinkingConfig
 }
 
-// NativeGeminiRuntime 接收调用方提供的消息和工具 ID 生成函数。
+// NativeGeminiRuntime supplies message and tool ID generators.
 type NativeGeminiRuntime struct {
 	MessageID func() string
 	RandomHex func(int) string
@@ -138,7 +138,7 @@ func NativeExtractGeminiUsage(data []byte) *NativeGeminiUsage {
 	cached := int(usage.Get("cachedContentTokenCount").Int())
 	thoughts := int(usage.Get("thoughtsTokenCount").Int())
 
-	// 从 candidatesTokensDetails 提取 IMAGE 模态 token 数
+	// Read the IMAGE modality count separately from total candidate tokens.
 	imageTokens := 0
 	candidateDetails := usage.Get("candidatesTokensDetails")
 	if candidateDetails.Exists() {
@@ -151,8 +151,7 @@ func NativeExtractGeminiUsage(data []byte) *NativeGeminiUsage {
 		})
 	}
 
-	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
+	// Gemini promptTokenCount includes cached tokens; Claude input_tokens excludes them.
 	return &NativeGeminiUsage{
 		InputTokens:          prompt - cached,
 		OutputTokens:         cand + thoughts,
@@ -181,7 +180,7 @@ func NativeAsInt(v any) (int, bool) {
 }
 
 func NativeEnsureGeminiFunctionCallThoughtSignatures(options NativeGeminiOptions, body []byte) []byte {
-	// Fast path: only run when functionCall is present.
+	// Skip JSON decoding when there are no function calls.
 	if !bytes.Contains(body, []byte(`"functionCall"`)) {
 		return body
 	}
@@ -335,7 +334,7 @@ func NativeConvertClaudeMessagesToGeminiGenerateContent(options NativeGeminiOpti
 }
 
 func NativeStripGeminiFunctionIDs(req map[string]any) {
-	// Defensive cleanup: some upstreams reject unexpected `id` fields in functionCall/functionResponse.
+	// Some upstreams reject id fields in functionCall and functionResponse.
 	contents, ok := req["contents"].([]any)
 	if !ok {
 		return
@@ -410,10 +409,10 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 		parts := make([]any, 0)
 		switch content := mm["content"].(type) {
 		case string:
-			// 字符串形式的 content，保留所有内容（包括空白）
+			// Preserve whitespace in string content.
 			parts = append(parts, map[string]any{"text": content})
 		case []any:
-			// 如果只有一个 block，不过滤空白（让上游 API 报错）
+			// Leave single-block whitespace for upstream validation.
 			singleBlock := len(content) == 1
 
 			for _, block := range content {
@@ -425,8 +424,7 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 				switch bt {
 				case "text":
 					if text, ok := bm["text"].(string); ok {
-						// 单个 block 时保留所有内容（包括空白）
-						// 多个 blocks 时过滤掉空白
+						// Drop blank text only when the message has multiple blocks.
 						if singleBlock || strings.TrimSpace(text) != "" {
 							parts = append(parts, map[string]any{"text": text})
 						}
@@ -479,14 +477,14 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 						}
 					}
 				default:
-					// best-effort: preserve unknown blocks as text
+					// Serialize unknown blocks as text.
 					if b, err := json.Marshal(bm); err == nil {
 						parts = append(parts, map[string]any{"text": string(b)})
 					}
 				}
 			}
 		default:
-			// ignore
+			// Unsupported content shapes contribute no parts.
 		}
 
 		out = append(out, map[string]any{
@@ -542,10 +540,9 @@ func NativeConvertClaudeToolsToGeminiTools(tools any) []any {
 		var name, desc string
 		var params any
 
-		// 检查是否为 custom 类型工具 (MCP)
 		toolType, _ := tm["type"].(string)
 		if toolType == "custom" {
-			// Custom 格式: 从 custom 字段获取 description 和 input_schema
+			// Custom tools nest description and input_schema under custom.
 			custom, ok := tm["custom"].(map[string]any)
 			if !ok {
 				continue
@@ -554,7 +551,6 @@ func NativeConvertClaudeToolsToGeminiTools(tools any) []any {
 			desc, _ = custom["description"].(string)
 			params = custom["input_schema"]
 		} else {
-			// 标准格式: 从顶层字段获取
 			name, _ = tm["name"].(string)
 			desc, _ = tm["description"].(string)
 			params = tm["input_schema"]
@@ -564,14 +560,12 @@ func NativeConvertClaudeToolsToGeminiTools(tools any) []any {
 			continue
 		}
 
-		// 为 nil params 提供默认值
 		if params == nil {
 			params = map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
 			}
 		}
-		// 清理 JSON Schema
 		cleanedParams := NativeCleanToolSchema(params)
 
 		funcDecls = append(funcDecls, map[string]any{
@@ -640,13 +634,12 @@ func NativeNormalizeGeminiRequestForAIStudio(body []byte) []byte {
 
 func NativeIsClaudeWebSearchToolMap(tool map[string]any) bool {
 	toolType, _ := tool["type"].(string)
-	// 名为 web_search 的普通 function 仍属于客户端工具；Hermes 等 Chat Completions
-	// 客户端会用普通 function 表示其内置运行时工具。声明为服务端搜索类型的
-	// 工具才能提升为 Gemini 的 googleSearch 内置工具。
+	// Client functions named web_search remain client tools, as used by Hermes.
+	// Promote a tool to googleSearch only when its type declares server-side search.
 	return strings.HasPrefix(toolType, "web_search") || toolType == "google_search"
 }
 
-// NativeCleanToolSchema 清理工具的 JSON Schema，移除 Gemini 不支持的字段。
+// NativeCleanToolSchema returns a copy with unsupported Gemini schema fields removed.
 func NativeCleanToolSchema(schema any) any {
 	if schema == nil {
 		return nil
@@ -656,7 +649,6 @@ func NativeCleanToolSchema(schema any) any {
 	case map[string]any:
 		cleaned := make(map[string]any)
 		for key, value := range v {
-			// 跳过不支持的字段
 			if key == "$schema" || key == "$id" || key == "$ref" ||
 				key == "$defs" || key == "definitions" ||
 				key == "additionalProperties" || key == "patternProperties" || key == "minLength" ||
@@ -664,7 +656,6 @@ func NativeCleanToolSchema(schema any) any {
 				key == "deprecated" {
 				continue
 			}
-			// 递归清理嵌套对象
 			cleaned[key] = NativeCleanToolSchema(value)
 		}
 		if enum, ok := cleaned["enum"].([]any); ok {
@@ -674,7 +665,7 @@ func NativeCleanToolSchema(schema any) any {
 				delete(cleaned, "enum")
 			}
 		}
-		// 规范化 type 字段为大写
+		// Gemini uses uppercase type names and a single non-null type.
 		if typeVal, ok := cleaned["type"].(string); ok {
 			cleaned["type"] = strings.ToUpper(typeVal)
 		} else if typeValues, ok := cleaned["type"].([]any); ok {
@@ -708,7 +699,7 @@ func NativeCleanToolSchema(schema any) any {
 	}
 }
 
-// NativeNormalizeGeminiEnum 将 Gemini 要求的枚举值统一转换为字符串。
+// NativeNormalizeGeminiEnum converts scalar enum values to strings and rejects compound values.
 func NativeNormalizeGeminiEnum(values []any) ([]any, bool) {
 	normalized := make([]any, len(values))
 	for i, value := range values {
@@ -731,7 +722,7 @@ func NativeNormalizeGeminiEnum(values []any) ([]any, bool) {
 	return normalized, true
 }
 
-// NativeIncrementIntegralSchemaBound 将整数独占下界安全地转换为包含下界。
+// NativeIncrementIntegralSchemaBound converts an integer exclusive bound to an inclusive bound.
 func NativeIncrementIntegralSchemaBound(value any) (any, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -760,14 +751,14 @@ func NativeIncrementIntegralSchemaBound(value any) (any, bool) {
 	}
 }
 
-// NativeSchemaNumberLess 比较 cleaner 支持的 JSON 数值表示。
+// NativeSchemaNumberLess compares the finite JSON numeric forms supported by the cleaner.
 func NativeSchemaNumberLess(left, right any) bool {
 	leftNumber, leftOK := NativeSchemaNumberFloat64(left)
 	rightNumber, rightOK := NativeSchemaNumberFloat64(right)
 	return leftOK && rightOK && leftNumber < rightNumber
 }
 
-// NativeSchemaNumberFloat64 将 JSON schema 数值转换为可比较的有限浮点数。
+// NativeSchemaNumberFloat64 converts a JSON schema number to a finite float64.
 func NativeSchemaNumberFloat64(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -804,7 +795,7 @@ func NativeConvertClaudeGenerationConfig(req map[string]any) map[string]any {
 	return out
 }
 
-// NativePickGeminiCollectResult 优先返回包含内容分片的响应，否则返回最后一个响应。
+// NativePickGeminiCollectResult prefers a response with content parts, then the last response.
 func NativePickGeminiCollectResult(last map[string]any, lastWithParts map[string]any) map[string]any {
 	if lastWithParts != nil {
 		return lastWithParts
@@ -815,7 +806,7 @@ func NativePickGeminiCollectResult(last map[string]any, lastWithParts map[string
 	return map[string]any{}
 }
 
-// NativeUsageProjection 将 Gemini 用量转换为统一用量，输入为空时返回 nil。
+// NativeUsageProjection converts Gemini counts to shared usage; nil input returns nil.
 func NativeUsageProjection(usage *NativeGeminiUsage) *protocol.TokenUsage {
 	if usage == nil {
 		return nil

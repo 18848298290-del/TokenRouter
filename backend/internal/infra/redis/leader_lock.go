@@ -9,8 +9,8 @@ import (
 
 const leaderLockKeyPrefix = "leader:lock:"
 
-// leaderLockReleaseScript 只释放仍由当前 owner 持有的锁。
-// 这样可以避免旧持有者的延迟释放误删已经被其他实例重新获取的锁。
+// leaderLockReleaseScript compares the owner before deleting the lock.
+// A delayed release by an old owner must not delete a successor's lock.
 var leaderLockReleaseScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
@@ -22,7 +22,7 @@ type LeaderLock struct {
 	rdb *redis.Client
 }
 
-// NewLeaderLockCache 创建缓存版周期任务主实例锁。
+// NewLeaderLockCache creates a Redis-backed leader lock for periodic jobs.
 func NewLeaderLockCache(rdb *redis.Client) *LeaderLock {
 	return &LeaderLock{rdb: rdb}
 }

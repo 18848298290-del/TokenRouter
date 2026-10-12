@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
-// TestEgressTLSProfileRoundTripAndIsolation 检查 TLS 配置往返转换后的字段、nil 与空切片，以及修改隔离。
+// TestEgressTLSProfileRoundTripAndIsolation checks field values, nil and empty slices, and mutation isolation.
 func TestEgressTLSProfileRoundTripAndIsolation(t *testing.T) {
 	source := &tlsfingerprint.Profile{Name: "cache-identity", EnableGREASE: true, CipherSuites: []uint16{1}, Curves: []uint16{}, PointFormats: []uint16{2}, SignatureAlgorithms: []uint16{3}, ALPNProtocols: []string{"h2", "http/1.1"}, SupportedVersions: []uint16{4}, KeyShareGroups: []uint16{5}, PSKModes: []uint16{6}, Extensions: []uint16{7}}
 	policy := egress.RequestPolicy(egress.RequestPolicyInput{TLSProfile: FromTLSProfile(source)})

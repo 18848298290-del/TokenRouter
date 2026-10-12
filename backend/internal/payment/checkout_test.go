@@ -320,7 +320,7 @@ func TestCalculateCreateOrderPayAmountForSubscriptionKeepsNonCNYPrice(t *testing
 	}
 }
 
-// TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDisabled 检查汇率为 0 时 CNY 订阅按套餐价格收款。
+// A zero conversion rate charges CNY subscriptions at the plan price.
 func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -333,7 +333,7 @@ func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDis
 	}
 }
 
-// TestCalculateCreateOrderPayAmountForBalanceIgnoresSubscriptionRate 检查余额充值按充值金额收款。
+// The subscription conversion rate does not affect balance recharge amounts.
 func TestCalculateCreateOrderPayAmountForBalanceIgnoresSubscriptionRate(t *testing.T) {
 	t.Parallel()
 

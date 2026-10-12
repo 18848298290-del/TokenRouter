@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// UnifiedTextExecutor 根据当次选中的提供商执行一次交换，选号和切号只由外层循环拥有。
+// UnifiedTextExecutor executes one exchange on the selected provider; the caller owns selection and failover.
 type UnifiedTextExecutor struct {
 	Pricing          *admission.ModelPricing
 	OpenAI           *OpenAIResponsesExecutor
@@ -34,7 +34,7 @@ type UnifiedTextExecutor struct {
 	MessageQueueWait time.Duration
 }
 
-// EnforceClient 对 OpenAI 兼容提供商执行客户端策略，其他适配器验证各自入口。
+// EnforceClient applies client policy to OpenAI-compatible providers.
 func (e *UnifiedTextExecutor) EnforceClient(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, match egress.TLSFingerprintRouterMatchResult) error {
 	c.Request = c.Request.WithContext(ctx)
 	if target.View().IsOpenAICompatible() {
@@ -86,7 +86,7 @@ func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *
 	return e.native(ctx, c, target, body, protocol.ProtocolOpenAIChatCompletions)
 }
 
-// prepare 在提供商确定后检查模型价格和推理策略，每次切号都重新计算。
+// prepare checks model pricing and reasoning policy for each selected provider attempt.
 func (e *UnifiedTextExecutor) prepare(c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) ([]byte, error) {
 	SetOpsSelectedProvider(c, target.Record.ID, target.Record.Platform)
 	if err := e.checkPricing(c, target, body, source); err != nil {
@@ -114,7 +114,7 @@ func (e *UnifiedTextExecutor) prepare(c *gin.Context, target *gatewayadapter.Exe
 	return result, err
 }
 
-// native 保留各供应商的独立报文和凭据实现，不把完整 HTTP handler 嵌入另一个 handler。
+// native dispatches to each platform's request and credential implementation.
 func (e *UnifiedTextExecutor) native(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) (*forward.OpenAIResult, error) {
 	var result *forward.MessagesResult
 	var err error
@@ -167,7 +167,7 @@ func (e *UnifiedTextExecutor) native(ctx context.Context, c *gin.Context, target
 	case provider.PlatformQoder:
 		before := c.Writer.Size()
 		result, err = ForwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source)
-		// 凭据恢复属于同一提供商的一次受限恢复，不能在已输出后重放。
+		// Credential recovery retries the same provider once, before any result or output is delivered.
 		if err != nil && result == nil && c.Writer.Size() == before && qoder.MayRefreshAttempt(err) && e.QoderRefresh != nil {
 			fresh, refreshErr := e.QoderRefresh.RefreshProviderSession(ctx, &target.Record)
 			if refreshErr == nil && fresh != nil {
@@ -181,7 +181,7 @@ func (e *UnifiedTextExecutor) native(ctx context.Context, c *gin.Context, target
 	return nativeTextResult(result, GetUpstreamEndpoint(c, target.Record.Platform)), err
 }
 
-// nativeTextResult 保存上游协议的输入用量分类和缓存时长，供完成器结算。
+// nativeTextResult retains native token categories and cache durations for completion billing.
 func nativeTextResult(value *forward.MessagesResult, endpoint string) *forward.OpenAIResult {
 	if value == nil {
 		return nil

@@ -34,7 +34,7 @@ const (
 	ProviderTestModeLegacyCompact = "legacy_compact"
 )
 
-// TestEvent represents a SSE event for provider testing.
+// TestEvent is an SSE event emitted during provider testing.
 type TestEvent struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
@@ -48,9 +48,10 @@ type TestEvent struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// TestRequest 表达测试意图；Type 为 nil 时保留历史模型名推断，客户端元数据不包含凭据。
+// TestRequest describes a provider test. When Type and Mode omit a test type,
+// the execution adapter infers it.
 type TestRequest struct {
-	// SystemOne 保存本次决策测试的 state 和 questions。
+	// SystemOne holds the state and questions for a decision test.
 	SystemOne json.RawMessage
 
 	ProviderID            int64
@@ -73,7 +74,7 @@ type TestTargetInfo struct {
 	APIProtocol string
 }
 
-// TestTarget 提供单次测试执行和脱敏的提供商快照。
+// TestTarget executes one test and exposes provider metadata without credentials.
 type TestTarget interface {
 	Information() TestTargetInfo
 	Execute(context.Context, PreparedTestRequest, TestEventSink) error
@@ -82,7 +83,8 @@ type TestLoader interface {
 	LoadTestTarget(context.Context, TestRequest) (TestTarget, error)
 }
 
-// Begin 的 commit 区分仅准备元数据与立即提交；HTTP Header/Flush 的实现由 Adapter 拥有。
+// TestEventSink receives test output. Begin commits metadata when its boolean argument is true; the adapter
+// handles HTTP headers and flushing.
 type TestEventSink interface {
 	Begin(context.Context, bool) error
 	Emit(context.Context, TestEvent) error
@@ -97,7 +99,7 @@ type TestService struct {
 	options TestOptions
 }
 
-// 首次输出失败立即取消执行上下文，后续写出复用相同错误。
+// testGuardedSink cancels execution on the first write failure and returns that error on later writes.
 type testGuardedSink struct {
 	mu     sync.Mutex
 	next   TestEventSink
@@ -105,14 +107,14 @@ type testGuardedSink struct {
 	err    error
 }
 
-// 后台直接收集事件，通过 JSON 编码处理非法 UTF-8，编码失败的 Data 被丢弃。
+// testResultSink collects background events through JSON to normalize invalid UTF-8 and drops unencodable events.
 type testResultSink struct {
 	mu    sync.Mutex
 	texts []string
 	err   string
 }
 
-// NormalizeProviderTestType 统一管理端传入的测试类型，空值由调用方按兼容方式处理。
+// NormalizeProviderTestType normalizes known types and defaults empty or unknown values to text.
 func NormalizeProviderTestType(testType string) string {
 	switch strings.ToLower(strings.TrimSpace(testType)) {
 	case ProviderTestTypeDecision:
@@ -126,8 +128,8 @@ func NormalizeProviderTestType(testType string) string {
 	}
 }
 
-// ProviderTestTypeFromArgs 返回类型以及是否由调用方明确指定。
-// 省略类型时按模型名判断，管理端请求传入 text、image 或 decision。
+// ProviderTestTypeFromArgs returns the normalized type and whether a nonempty argument was supplied.
+// An omitted or blank argument returns text with false so callers can apply type inference.
 func ProviderTestTypeFromArgs(testTypes ...string) (string, bool) {
 	if len(testTypes) == 0 || strings.TrimSpace(testTypes[0]) == "" {
 		return ProviderTestTypeText, false
@@ -135,9 +137,9 @@ func ProviderTestTypeFromArgs(testTypes ...string) (string, bool) {
 	return NormalizeProviderTestType(testTypes[0]), true
 }
 
-// ResolveProviderTestModeAndType 兼容少量旧调用把 text/image 放在 mode 字段的情况。
+// ResolveProviderTestModeAndType accepts legacy calls with text or image in the mode argument.
 func ResolveProviderTestModeAndType(mode string, testTypes ...string) (string, string, bool) {
-	// 兼容新调用方把参数顺序写成 testType、mode 的形式。
+	// Also accept arguments supplied in testType, mode order.
 	if len(testTypes) > 0 {
 		rawMode := strings.ToLower(strings.TrimSpace(mode))
 		rawTypeOrMode := strings.ToLower(strings.TrimSpace(testTypes[0]))
@@ -244,7 +246,7 @@ func (s *TestService) execute(ctx context.Context, request TestRequest, sink Tes
 	return target.Execute(ctx, prepared, sink)
 }
 
-// TestProtocolID 把管理端传入的测试协议转换为原生协议 ID，未知值返回空字符串。
+// TestProtocolID maps an admin test protocol to its native ID, returning an empty string for unknown values.
 func TestProtocolID(protocol string) capability.ProtocolID {
 	switch protocol {
 	case APIProtocolSystemOne:
@@ -260,9 +262,9 @@ func TestProtocolID(protocol string) capability.ProtocolID {
 	}
 }
 
-// testProtocolAllowed 判断本次测试能否直连所选协议。
-// OpenAI API Key 可在 Responses 与 Chat 之间任选，OAuth 只有 Responses；
-// 国产平台可测试已启用的协议，其他平台使用各自固定的测试端点。
+// testProtocolAllowed reports whether a test may select the requested protocol.
+// OpenAI API keys allow Responses or Chat; other OpenAI types allow Responses.
+// CN platforms allow enabled protocols; other platforms reject explicit protocol selection.
 func testProtocolAllowed(info TestTargetInfo, protocol string) bool {
 	switch info.Platform {
 	case PlatformJev:

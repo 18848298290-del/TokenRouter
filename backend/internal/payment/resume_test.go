@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestCanonicalizeReturnURLRemovesUserParameters 检查用户参数清理和服务端订单参数生成。
+// TestCanonicalizeReturnURLRemovesUserParameters checks that only server-generated order parameters survive.
 func TestCanonicalizeReturnURLRemovesUserParameters(t *testing.T) {
 	t.Parallel()
 
@@ -41,7 +41,7 @@ func TestCanonicalizeReturnURLRemovesUserParameters(t *testing.T) {
 	}
 }
 
-// TestCanonicalizeReturnURLRejectsUnsafeAuthority 使用普通标记检查地址组成部分的限制。
+// TestCanonicalizeReturnURLRejectsUnsafeAuthority rejects userinfo and delimiters in the authority.
 func TestCanonicalizeReturnURLRejectsUnsafeAuthority(t *testing.T) {
 	t.Parallel()
 
@@ -57,7 +57,7 @@ func TestCanonicalizeReturnURLRejectsUnsafeAuthority(t *testing.T) {
 		t.Run(authority, func(t *testing.T) {
 			t.Parallel()
 			raw := "https://" + authority + ResumePaymentResultReturnPath
-			// 即使请求来源与地址一致，地址本身也要通过字段检查。
+			// Matching the request origin does not exempt the URL from authority validation.
 			canonical, err := CanonicalizeReturnURL(raw, authority, raw)
 			if err == nil || canonical != "" {
 				t.Fatalf("unsafe authority accepted: URL=%q, err=%v", canonical, err)
@@ -66,7 +66,7 @@ func TestCanonicalizeReturnURLRejectsUnsafeAuthority(t *testing.T) {
 	}
 }
 
-// TestCanonicalizeReturnURLRebuildsAddress 覆盖常见站点地址和编码路径的规范化。
+// TestCanonicalizeReturnURLRebuildsAddress checks host forms and encoded path normalization.
 func TestCanonicalizeReturnURLRebuildsAddress(t *testing.T) {
 	t.Parallel()
 

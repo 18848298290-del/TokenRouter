@@ -40,7 +40,7 @@ func (c *lifecycleSubscription) SubscribeAuthCacheInvalidation(ctx context.Conte
 	return ctx.Err()
 }
 
-// TestAuthenticationStopWaitsBeforeClosingCaches 验证预算超时不提前关闭仍被在途认证使用的订阅与 L1。
+// TestAuthenticationStopWaitsBeforeClosingCaches checks that a timeout leaves resources open for active authentication.
 func TestAuthenticationStopWaitsBeforeClosingCaches(t *testing.T) {
 	repo := &lifecycleLookup{entered: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
@@ -110,7 +110,7 @@ func TestAuthenticationStopWaitsBeforeClosingCaches(t *testing.T) {
 	require.ErrorIs(t, service.TouchLastUsed(context.Background(), 1), ErrAuthenticationStopped)
 }
 
-// TestAuthenticationConcurrentStartStop 覆盖停止先于启动及重复调用，不允许关闭后创建新订阅。
+// TestAuthenticationConcurrentStartStop covers concurrent and repeated lifecycle calls without restarting stopped work.
 func TestAuthenticationConcurrentStartStop(t *testing.T) {
 	for range 10 {
 		service := NewAPIKeyService(nil, nil, nil, nil, nil, nil, nil)
@@ -130,7 +130,7 @@ func (r *lifecycleOutbox) Claim(ctx context.Context, _ string, _ int, _ time.Dur
 	return nil, ctx.Err()
 }
 
-// TestOutboxStopWaitsForClaim 模拟忽略取消的旧存储调用，停止预算仍必须有界返回并停止后续认领。
+// TestOutboxStopWaitsForClaim checks bounded shutdown when a repository call ignores cancellation.
 func TestOutboxStopWaitsForClaim(t *testing.T) {
 	repo := &lifecycleOutbox{entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once

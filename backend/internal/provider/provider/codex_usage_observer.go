@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CodexUsageObserver 通过共享写入节流器和后台任务保存全局额度响应头。
-// 影子提供商资格仍由调用方在原位置判断。
+// CodexUsageObserver saves quota header snapshots through a shared write throttle and background runner.
+// The caller checks whether shadow providers are eligible for this observation.
 type CodexUsageObserver struct {
 	Store interface {
 		UpdateExtra(context.Context, int64, map[string]any) error

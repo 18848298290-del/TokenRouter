@@ -14,7 +14,7 @@ import (
 	moderationpg "github.com/TokenFlux/TokenRouter/internal/moderation/postgres"
 )
 
-// TestModerationTransaction 验证 Cyber warning 与用户禁用仍处于同一数据库事务。
+// TestModerationTransaction checks that Cyber warnings and user bans commit or roll back in the same transaction.
 func TestModerationTransaction(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := context.Background()

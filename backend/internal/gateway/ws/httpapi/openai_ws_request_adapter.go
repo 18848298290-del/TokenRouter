@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// wsRequestAdapter 提供提供商和分组资格数据，并调用平台 codec。
+// wsRequestAdapter supplies provider and group eligibility data and invokes the platform codec.
 type wsRequestAdapter struct {
 	*wsPassthroughAdapter
 	client  *coderws.Conn
@@ -33,7 +33,7 @@ func (p *wsRequestAdapter) Mutate(current []byte, path, value string) ([]byte, e
 		return next, nil
 	}
 
-	// 需要修改 payload 且 sjson 失败时，使用 map 改写。
+	// If sjson cannot update the payload, decode and rewrite the supported fields through a map.
 	payload := make(map[string]any)
 	if unmarshalErr := json.Unmarshal(current, &payload); unmarshalErr != nil {
 		return nil, err

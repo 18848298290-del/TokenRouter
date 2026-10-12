@@ -84,7 +84,7 @@ type ProfileUserProfileIdentityTxRunner interface {
 	WithUserProfileIdentityTx(ctx context.Context, fn func(txCtx context.Context) error) error
 }
 
-// UserService 用户服务。
+// UserService manages user profiles, credentials, and account updates.
 type UserService struct {
 	operationClock
 	runBackground        func(string, func()) bool
@@ -96,7 +96,7 @@ type UserService struct {
 	lastActiveTouchSF    singleflight.Group
 }
 
-// ProfileSettings 只提供资料页面需要的动态设置。
+// ProfileSettings reads runtime settings used by the profile page.
 type ProfileSettings interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 	GetValue(context.Context, string) (string, error)
@@ -109,7 +109,7 @@ type (
 	}
 )
 
-// NotifyVerificationNotice 只表达身份已确认的验证码投递事实。
+// NotifyVerificationNotice contains the recipient and verification code prepared for delivery.
 type NotifyVerificationNotice struct {
 	UserID                        int64
 	Email, Code, Locale, SiteName string
@@ -120,7 +120,7 @@ type NotifyVerificationSender interface {
 	SendNotifyVerification(context.Context, NotifyVerificationNotice) error
 }
 
-// IsValidUserAPIKeyLimit 判断用户 API Key 数量上限能否安全写入数据库。
+// IsValidUserAPIKeyLimit reports whether the limit fits the supported database range.
 func IsValidUserAPIKeyLimit(limit int) bool {
 	return limit >= 0 && limit <= MaxUserAPIKeyLimit
 }
@@ -132,7 +132,7 @@ func NewUserService(users UserRepository, settings ProfileSettings, auth UserAut
 	return &UserService{operationClock: clockFromOptional(clocks), userRepo: users, settingRepo: settings, authCacheInvalidator: auth, billingCache: balance, runBackground: background}
 }
 
-// GetFirstAdmin 获取首个管理员用户（用于 Admin API Key 认证）。
+// GetFirstAdmin returns the first administrator for Admin API Key authentication.
 func (s *UserService) GetFirstAdmin(ctx context.Context) (*User, error) {
 	admin, err := s.userRepo.GetFirstAdmin(ctx)
 	if err != nil {
@@ -141,7 +141,7 @@ func (s *UserService) GetFirstAdmin(ctx context.Context) (*User, error) {
 	return admin, nil
 }
 
-// GetProfile 获取用户资料。
+// GetProfile loads the user, credential fingerprint, and avatar.
 func (s *UserService) GetProfile(ctx context.Context, userID int64) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -288,7 +288,7 @@ func (s *UserService) UnbindUserAuthProviderWithResult(ctx context.Context, user
 	return updatedUser, true, nil
 }
 
-// UpdateProfile 更新用户资料。
+// UpdateProfile updates the requested profile fields and invalidates changed concurrency data.
 func (s *UserService) UpdateProfile(ctx context.Context, userID int64, req UpdateProfileRequest) (*User, error) {
 	if txRunner, ok := s.userRepo.(ProfileUserProfileIdentityTxRunner); ok {
 		var (
@@ -325,7 +325,7 @@ func (s *UserService) ProfileUpdateProfile(ctx context.Context, userID int64, re
 	}
 	oldConcurrency := user.Concurrency
 
-	// fields 只登记本次请求真正带上的字段，避免旧快照覆盖并发写入。
+	// Declare requested fields so a stale user snapshot cannot overwrite concurrent updates.
 	var fields UserUpdateFields
 	if req.ClearPreferredLocale {
 		user.PreferredLocale = nil
@@ -340,12 +340,11 @@ func (s *UserService) ProfileUpdateProfile(ctx context.Context, userID int64, re
 		fields.PreferredLocale = true
 	}
 
-	// 主邮箱属于登录身份，不能在普通资料更新中无验证修改。
+	// The login email must be changed through verified identity binding.
 	if req.Email != nil {
 		return nil, oldConcurrency, ErrProfileEmailChangeForbidden
 	}
 
-	// 更新字段
 	if req.Username != nil {
 		user.Username = *req.Username
 		fields.Username = true
@@ -837,15 +836,14 @@ func ProfileMaskOpaqueIdentity(value string) string {
 	}
 }
 
-// ChangePassword 修改密码
-// Security: Increments TokenVersion to invalidate all existing JWT tokens.
+// ChangePassword verifies the current password and persists the new password hash.
+// The changed credential fingerprint invalidates previously issued tokens.
 func (s *UserService) ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
 	}
 
-	// 验证当前密码
 	if !user.CheckPassword(req.CurrentPassword) {
 		return ErrPasswordIncorrect
 	}
@@ -854,12 +852,11 @@ func (s *UserService) ChangePassword(ctx context.Context, userID int64, req Chan
 		return fmt.Errorf("set password: %w", err)
 	}
 
-	// Increment TokenVersion to invalidate all existing tokens
-	// This ensures that any tokens issued before the password change become invalid
+	// Update the in-memory version; persistence below changes the credential fingerprint.
 	user.TokenVersion++
 
-	// TokenVersion 没有对应的数据库列（见 ResolvedTokenVersion：它由 email+password_hash
-	// 指纹推导），改密写回 password_hash 即可让旧 token 失效。
+	// TokenVersion has no database column. ResolvedTokenVersion derives it from
+	// email and password_hash, so persisting the new hash invalidates old tokens.
 	if err := s.userRepo.Update(ctx, user, UserUpdateFields{PasswordHash: true}); err != nil {
 		return fmt.Errorf("update user: %w", err)
 	}
@@ -867,7 +864,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID int64, req Chan
 	return nil
 }
 
-// GetByID 根据 ID 获取用户（管理员功能）。
+// GetByID loads a user with the credential fingerprint and avatar for administrative use.
 func (s *UserService) GetByID(ctx context.Context, id int64) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
@@ -888,8 +885,8 @@ func ProfileNormalizeLoadedUserTokenVersion(user *User) {
 	user.TokenVersionResolved = true
 }
 
-// TouchLastActive 通过防抖更新 users.last_active_at，减少鉴权热路径写放大。
-// 该操作为尽力而为，不应中断正常请求。
+// TouchLastActive throttles writes to users.last_active_at on authentication requests.
+// Load and write failures are logged and do not fail the request.
 func (s *UserService) TouchLastActive(ctx context.Context, userID int64) {
 	if s == nil || s.userRepo == nil || userID <= 0 {
 		return
@@ -903,7 +900,7 @@ func (s *UserService) TouchLastActive(ctx context.Context, userID int64) {
 	s.TouchLastActiveForUser(ctx, user)
 }
 
-// TouchLastActiveForUser 使用已加载的用户信息更新 last_active_at，避免重复读取数据库。
+// TouchLastActiveForUser uses an already loaded user to avoid another database read.
 func (s *UserService) TouchLastActiveForUser(ctx context.Context, user *User) {
 	if s == nil || s.userRepo == nil || user == nil || user.ID <= 0 {
 		return
@@ -961,7 +958,7 @@ func (s *UserService) ProfileHydrateUserAvatar(ctx context.Context, user *User) 
 	return nil
 }
 
-// List 获取用户列表（管理员功能）。
+// List returns a page of users for administrative use.
 func (s *UserService) List(ctx context.Context, params pagination.PaginationParams) ([]User, *pagination.PaginationResult, error) {
 	users, pagination, err := s.userRepo.List(ctx, params)
 	if err != nil {
@@ -970,7 +967,7 @@ func (s *UserService) List(ctx context.Context, params pagination.PaginationPara
 	return users, pagination, nil
 }
 
-// UpdateBalance 更新用户余额（管理员功能）。
+// UpdateBalance updates the balance and invalidates authentication and billing caches.
 func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount float64) error {
 	if err := s.userRepo.UpdateBalance(ctx, userID, amount); err != nil {
 		return fmt.Errorf("update balance: %w", err)
@@ -995,7 +992,7 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 	return nil
 }
 
-// UpdateConcurrency 更新用户并发数（管理员功能）。
+// UpdateConcurrency updates the concurrency limit and invalidates authentication caches.
 func (s *UserService) UpdateConcurrency(ctx context.Context, userID int64, concurrency int) error {
 	if err := s.userRepo.UpdateConcurrency(ctx, userID, concurrency); err != nil {
 		return fmt.Errorf("update concurrency: %w", err)
@@ -1006,7 +1003,7 @@ func (s *UserService) UpdateConcurrency(ctx context.Context, userID int64, concu
 	return nil
 }
 
-// UpdateStatus 更新用户状态（管理员功能）。
+// UpdateStatus updates account status and invalidates authentication caches.
 func (s *UserService) UpdateStatus(ctx context.Context, userID int64, status string) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -1025,7 +1022,7 @@ func (s *UserService) UpdateStatus(ctx context.Context, userID int64, status str
 	return nil
 }
 
-// Delete 删除用户（管理员功能）。
+// Delete invalidates authentication caches before deleting the user.
 func (s *UserService) Delete(ctx context.Context, userID int64) error {
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
@@ -1047,8 +1044,8 @@ func (s *UserService) SendNotifyEmailCode(ctx context.Context, userID int64, ema
 		return fmt.Errorf("generate code: %w", err)
 	}
 
-	// Send email first — if SMTP fails, don't write cache or increment counters,
-	// so the user is not locked out by cooldown/rate-limit for a code they never received.
+	// Send before caching or incrementing counters so failed delivery does not
+	// consume the recipient's cooldown or user-level allowance.
 	if err := s.SendNotifyVerifyEmail(ctx, emailService, userID, email, code, FirstEmailLocale(locale)); err != nil {
 		return err
 	}
@@ -1065,7 +1062,7 @@ func (s *UserService) SendNotifyEmailCode(ctx context.Context, userID int64, ema
 	return nil
 }
 
-// ProfileCheckNotifyCodeRateLimitWithClock 使用指定时钟检查邮箱冷却时间和用户级限流。
+// ProfileCheckNotifyCodeRateLimitWithClock checks email cooldown and per-user limits using now.
 func ProfileCheckNotifyCodeRateLimitWithClock(ctx context.Context, cache EmailCache, userID int64, email string, now func() time.Time) error {
 	existing, err := cache.GetNotifyVerifyCode(ctx, email)
 	if err == nil && existing != nil {
@@ -1080,7 +1077,7 @@ func ProfileCheckNotifyCodeRateLimitWithClock(ctx context.Context, cache EmailCa
 	return nil
 }
 
-// ProfileSaveNotifyVerifyCodeWithClock 使用指定时钟将验证码保存到缓存。
+// ProfileSaveNotifyVerifyCodeWithClock stores a code with timestamps from now.
 func ProfileSaveNotifyVerifyCodeWithClock(ctx context.Context, cache EmailCache, email, code string, now func() time.Time) error {
 	data := &VerificationCodeData{
 		Code:      code,
@@ -1103,7 +1100,7 @@ func (s *UserService) VerifyAndAddNotifyEmail(ctx context.Context, userID int64,
 	return s.ProfileAddOrVerifyNotifyEmail(ctx, userID, email)
 }
 
-// ProfileVerifyNotifyCodeWithClock 使用指定时钟校验验证码与缓存记录。
+// ProfileVerifyNotifyCodeWithClock checks the code and uses now to retain the expiry on failed attempts.
 func ProfileVerifyNotifyCodeWithClock(ctx context.Context, cache EmailCache, email, code string, now func() time.Time) error {
 	data, err := cache.GetNotifyVerifyCode(ctx, email)
 	if err != nil || data == nil {
@@ -1130,9 +1127,8 @@ func ProfileVerifyNotifyCodeWithClock(ctx context.Context, cache EmailCache, ema
 }
 
 // ProfileAddOrVerifyNotifyEmail adds the email to user's extra notification emails or marks it as verified.
-// Note: concurrent calls for the same user could race on the read-modify-write of
-// BalanceNotifyExtraEmails. The window is small (requires two verify flows completing
-// simultaneously), and the worst case is a duplicate entry which is harmless.
+// Concurrent changes to BalanceNotifyExtraEmails can overwrite each other because
+// this read-modify-write replaces the whole list.
 func (s *UserService) ProfileAddOrVerifyNotifyEmail(ctx context.Context, userID int64, email string) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -1181,7 +1177,7 @@ func (s *UserService) RemoveNotifyEmail(ctx context.Context, userID int64, email
 	return s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true})
 }
 
-// ToggleNotifyEmail toggles the disabled state of a notification email entry.
+// ToggleNotifyEmail sets the disabled state of a notification email entry.
 func (s *UserService) ToggleNotifyEmail(ctx context.Context, userID int64, email string, disabled bool) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {

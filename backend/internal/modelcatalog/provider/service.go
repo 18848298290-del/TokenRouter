@@ -20,12 +20,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// RemoteClient 获取带 ETag 条件的统一模型目录。
+// RemoteClient fetches the model catalog using an ETag validator.
 type RemoteClient interface {
 	FetchCatalog(ctx context.Context, url, etag string) ([]byte, string, bool, error)
 }
 
-// Service 维护价格与展示属性共享的模型目录，统一加载、同步和原子发布。
+// Service loads, synchronizes, and publishes catalog prices and display attributes together.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_metadata_lookup
 type Service struct {
 	billingDefaults  purepricing.OperationPrices
@@ -42,23 +42,23 @@ type Service struct {
 	pricingData      map[string]*CatalogModelPricing
 	lastUpdated      time.Time
 	localHash        string
-	// 补充文件在最近一次成功重建时的内容指纹，定时器据此判断是否
-	// 需要从本地目录缓存重建叠加层。
+	// Fingerprint of supplement contents from the last successful rebuild.
+	// The update loop compares it to decide whether to rebuild local supplement layers.
 	customFilesHash string
 
-	// 停止信号
+	// Closed to stop the update loop.
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 	startOnce sync.Once
 	stopOnce  sync.Once
 }
 
-// 目录值属于纯定价包，provider 只持有一个可替换的缓存实例。
+// CatalogModelPricing uses the billing package's price representation.
 type (
 	CatalogModelPricing = purepricing.CatalogModelPricing
 )
 
-// Options 包含 app 在启动时读取的模型目录配置。
+// Options contains catalog configuration supplied by app at startup.
 type Options struct {
 	DataDir              string
 	RemoteURL            string
@@ -68,11 +68,11 @@ type Options struct {
 	AllowInsecureHTTP    bool
 	AllowPrivateHosts    bool
 	PricingHosts         []string
-	// 每次查询取得一次完整模型身份候选生成器。
+	// Acquires one complete model-identity candidate generator per query.
 	ModelLookupCandidates func() func(string) []string
 }
 
-// Snapshot 是可交给纯查询或测试消费者的独立目录快照。
+// Snapshot contains independently mutable pricing data and a fixed catalog identity for queries and tests.
 type Snapshot struct {
 	BillingDefaults            purepricing.OperationPrices
 	catalogIdentity            *modelcatalog.Catalog
@@ -82,7 +82,8 @@ type Snapshot struct {
 	LastError                  string
 }
 
-// NewService 构造目录运行时；初始化及后台同步由应用生命周期显式启动。
+// NewService constructs the catalog service. The application calls Initialize and Start to load and
+// synchronize it.
 func NewService(options Options, remoteClient RemoteClient) *Service {
 	s := &Service{
 		options:      &options,
@@ -93,7 +94,8 @@ func NewService(options Options, remoteClient RemoteClient) *Service {
 	return s
 }
 
-// NewServiceFromSnapshot 支持以已经解析的数据初始化，无后台启动或加载 I/O。
+// NewServiceFromSnapshot initializes from parsed data without I/O or background work. It takes ownership of
+// snapshot.Data.
 func NewServiceFromSnapshot(options Options, remote RemoteClient, snapshot Snapshot) *Service {
 	s := NewService(options, remote)
 	s.pricingData = snapshot.Data
@@ -108,14 +110,14 @@ func NewServiceFromSnapshot(options Options, remote RemoteClient, snapshot Snaps
 	return s
 }
 
-// Initialize 初始化价格服务。
+// Initialize loads the initial model catalog and attempts to create its cache directory.
 func (s *Service) Initialize() error {
-	// 确保数据目录存在
+	// A cache-directory error is logged; an in-memory catalog can still serve queries.
 	if err := os.MkdirAll(s.currentOptions().DataDir, 0o755); err != nil {
 		logging.LegacyPrintf("service.modelcatalog", "[ModelCatalog] Failed to create data directory: %v", err)
 	}
 
-	// 首次加载价格数据
+	// Load the catalog before starting background synchronization.
 	if err := s.loadInitialCatalog(); err != nil {
 		return fmt.Errorf("failed to load model catalog: %w", err)
 	}
@@ -124,15 +126,15 @@ func (s *Service) Initialize() error {
 	return nil
 }
 
-// Stop 停止价格服务。
+// Stop signals the update loop and waits for its in-flight work to finish.
 func (s *Service) Stop() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 	s.Wait()
 	logging.LegacyPrintf("service.modelcatalog", "%s", "[ModelCatalog] Service stopped")
 }
 
-// startUpdateScheduler 启动定时调度器：每个周期先做远程目录条件同步（配置了 remote_url 时），
-// 再比对补充文件指纹做本地热重载（配置了补充文件时）。远程与补充均未配置则不启动。
+// startUpdateScheduler starts remote conditional synchronization followed by local supplement checks each cycle.
+// It starts no loop when neither a remote URL nor a supplement path is configured.
 func (s *Service) startUpdateScheduler() {
 	if s == nil || s.options == nil {
 		return
@@ -178,17 +180,17 @@ func (s *Service) startUpdateScheduler() {
 	logging.LegacyPrintf("service.modelcatalog", "[ModelCatalog] Update scheduler started (check every %v, remote sync=%t, custom file watch=%t)", checkInterval, remoteEnabled, watchCustom)
 }
 
-// loadInitialCatalog 从缓存或内嵌快照加载统一目录，后台启动后再同步远程。
+// loadInitialCatalog loads the cached or embedded catalog before background remote synchronization.
 func (s *Service) loadInitialCatalog() error {
 	return s.loadModelsCatalog()
 }
 
-// syncWithRemote 使用条件请求同步模型目录。
+// syncWithRemote conditionally fetches the remote catalog.
 func (s *Service) syncWithRemote() error {
 	return s.updateModelsCatalog(false)
 }
 
-// hasCustomPricingFiles 报告是否配置了补充文件路径（不要求文件存在）。
+// hasCustomPricingFiles reports whether a supplement path is configured, regardless of file existence.
 func (s *Service) hasCustomPricingFiles() bool {
 	if s == nil || s.options == nil {
 		return false
@@ -196,8 +198,8 @@ func (s *Service) hasCustomPricingFiles() bool {
 	return strings.TrimSpace(s.currentOptions().FallbackFile) != ""
 }
 
-// customPricingFilesFingerprint 返回补充文件当前内容的 sha256。
-// 长度前缀和正文一起参与计算，不可读的文件按空正文处理；未配置时返回空串。
+// customPricingFilesFingerprint hashes the length-prefixed supplement body with SHA-256.
+// Unreadable files contribute an empty body. An unconfigured path returns an empty string.
 func (s *Service) customPricingFilesFingerprint() string {
 	if !s.hasCustomPricingFiles() {
 		return ""
@@ -211,7 +213,7 @@ func (s *Service) customPricingFilesFingerprint() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// loadLocalPricingEntries 读取一层本地价格；未配置或文件已删除表示空层。
+// loadLocalPricingEntries reads a local pricing layer. An unconfigured or deleted file is an empty layer.
 func loadLocalPricingEntries(path string) (map[string]json.RawMessage, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -227,13 +229,13 @@ func loadLocalPricingEntries(path string) (map[string]json.RawMessage, error) {
 	return decodeModelSupplement(body, path)
 }
 
-// decodeModelSupplement 对内嵌和外部补充使用相同的完整校验。
+// decodeModelSupplement applies the same validation to embedded and external supplements.
 func decodeModelSupplement(body []byte, source string) (map[string]json.RawMessage, error) {
 	entries, err := purepricing.DecodeCatalogEntries(body)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	// 补充可以不带价格，但已提供字段必须合法；被目录覆盖的补充字段也须校验。
+	// All supplied pricing fields require validation, even when catalog values take precedence.
 	_, diagnostics, _ := purepricing.ParsePricingEntries(entries)
 	if err := diagnostics.ValidationError(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
@@ -241,10 +243,10 @@ func decodeModelSupplement(body []byte, source string) (map[string]json.RawMessa
 	return entries, nil
 }
 
-// reloadIfCustomFilesChanged 比对补充文件指纹，与最近一次重建时不同则从
-// 本地目录缓存重建内存数据。文件被删除视为该层清空，照常重建；文件存在但不可读或不是
-// JSON 对象时保留当前数据且不更新指纹，下一轮会再次尝试并重复告警。目录正文与远程同步
-// 锚点(localHash)不受本路径影响。
+// reloadIfCustomFilesChanged rebuilds local layers when their fingerprint changes.
+// Deleting the supplement clears that layer. Invalid or unreadable files retain the published data
+// and fingerprint so later cycles retry and report the failure.
+// The catalog body and remote synchronization hash remain independent of supplement contents.
 func (s *Service) reloadIfCustomFilesChanged() {
 	fingerprint := s.customPricingFilesFingerprint()
 	s.mu.RLock()
@@ -258,12 +260,12 @@ func (s *Service) reloadIfCustomFilesChanged() {
 	}
 }
 
-// reloadCustomPricingLayers 从缓存或内存目录重建本地补充层。
+// reloadCustomPricingLayers rebuilds supplements using the cached or in-memory catalog.
 func (s *Service) reloadCustomPricingLayers() error {
 	return s.loadModelsCatalog()
 }
 
-// warnLopsidedLongContextLadders 报告疑似由不同目录版本拼接出的单侧阶梯。
+// warnLopsidedLongContextLadders reports tiers with a surcharge on just one side.
 func warnLopsidedLongContextLadders(entries []string) {
 	if len(entries) == 0 {
 		return
@@ -276,7 +278,7 @@ func warnLopsidedLongContextLadders(entries []string) {
 	logging.LegacyPrintf("service.modelcatalog", "[ModelCatalog] Warning: %d model(s) derive a one-sided long-context ladder (surcharge on only input or only output); base prices and above-tier prices likely come from different price versions: %s", total, strings.Join(entries, ", "))
 }
 
-// warnOrphanCacheTierFields 报告没有基础价的 cache above 字段，避免静默按零计费。
+// warnOrphanCacheTierFields reports above-tier cache prices lacking the base price required for billing.
 func warnOrphanCacheTierFields(entries []string) {
 	if len(entries) == 0 {
 		return
@@ -289,8 +291,8 @@ func warnOrphanCacheTierFields(entries []string) {
 	logging.LegacyPrintf("service.modelcatalog", "[ModelCatalog] Warning: %d model(s) carry cache above-tier prices without a base cache price; that cache item bills at $0 until the catalog/supplement supplies the base: %s", total, strings.Join(entries, ", "))
 }
 
-// warnDroppedLongContextLadders 在价格目录热更新时检测原有阶梯是否意外消失。
-// 阶梯现在完全由目录数据驱动，告警可避免一次目录回滚静默造成少收。
+// warnDroppedLongContextLadders reports models whose context tiers disappear during reload.
+// A catalog rollback can remove surcharges, so administrators need to verify these changes.
 func warnDroppedLongContextLadders(old, next map[string]*CatalogModelPricing) {
 	if len(old) == 0 {
 		return
@@ -334,7 +336,7 @@ func (s *Service) validateCatalogURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// GetModelPricing 在原有锁边界内调用纯目录查询。
+// GetModelPricing reads prices under the catalog lock. Callers must treat the returned price as read-only.
 func (s *Service) GetModelPricing(modelName string) *CatalogModelPricing {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -356,7 +358,7 @@ func (s *Service) GetModelPricing(modelName string) *CatalogModelPricing {
 	return query.GetModelPricing(modelName)
 }
 
-// GetModelModalities 在原有锁边界内调用纯目录查询。
+// GetModelModalities returns input and output modalities from the pricing catalog under its read lock.
 func (s *Service) GetModelModalities(modelName string) ([]string, []string) {
 	if s == nil {
 		return nil, nil
@@ -367,7 +369,7 @@ func (s *Service) GetModelModalities(modelName string) ([]string, []string) {
 	return query.GetModelModalities(modelName)
 }
 
-// GetStatus 获取服务状态。
+// GetStatus returns the catalog version, model count, and last update outcome.
 func (s *Service) GetStatus() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -385,18 +387,19 @@ func (s *Service) GetStatus() map[string]any {
 	}
 }
 
-// ForceUpdate 强制下载模型目录；远程地址为空时重载本地补充。
+// ForceUpdate downloads the catalog unconditionally, or reloads local supplements when no remote URL is
+// configured.
 func (s *Service) ForceUpdate() error {
 	return s.updateModelsCatalog(true)
 }
 
-// catalogFilePath 返回统一目录缓存路径，不读取旧价格缓存。
+// catalogFilePath returns the models.dev cache path.
 func (s *Service) catalogFilePath() string {
 	return filepath.Join(s.currentOptions().DataDir, "models_dev_catalog.json")
 }
 
-// ListModelNamesByProvider 返回指定 provider 在定价目录中的全部模型名
-// provider 匹配不区分大小写，返回结果按字母序排序。
+// ListModelNamesByProvider returns sorted model names from the pricing catalog.
+// Provider matching is case-insensitive.
 func (s *Service) ListModelNamesByProvider(provider string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -412,7 +415,7 @@ func (s *Service) ListModelNamesByProvider(provider string) []string {
 	return names
 }
 
-// Start 在初始化和所有绑定完成后启动更新调度。
+// Start begins synchronization once. Call it after initialization and dependency binding.
 func (s *Service) Start() {
 	s.startOnce.Do(s.startUpdateScheduler)
 }
@@ -424,7 +427,7 @@ func (s *Service) currentOptions() Options {
 	return *s.options
 }
 
-// Snapshot 返回独立的 map、条目与切片，调用者不能改写运行目录。
+// Snapshot copies pricing maps, entries, and slices so callers can modify them independently.
 func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -442,12 +445,12 @@ func (s *Service) Snapshot() Snapshot {
 	return out
 }
 
-// Wait 等待已启动的更新任务退出。Stop 发送停止信号后也使用该等待方法。
+// Wait blocks until started update work exits. Stop calls it after signaling the loop.
 func (s *Service) Wait() {
 	s.wg.Wait()
 }
 
-// catalogQuery 为本次查询取得一份完整模型身份候选。
+// catalogQuery acquires one model-identity candidate generator for this query.
 func (s *Service) catalogQuery() *purepricing.CatalogQuery {
 	options := s.currentOptions()
 	var candidates func(string) []string
@@ -460,7 +463,7 @@ func (s *Service) catalogQuery() *purepricing.CatalogQuery {
 	}
 }
 
-// ReadOnlySnapshot 返回固定目录供一次管理查询使用，不加载文件、不访问网络。
+// ReadOnlySnapshot returns an in-memory catalog fixed for one administrative query.
 func (s *Service) ReadOnlySnapshot() *Service {
 	return NewServiceFromSnapshot(s.currentOptions(), nil, s.Snapshot())
 }

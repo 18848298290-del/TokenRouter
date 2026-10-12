@@ -16,7 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestVideoContentNativeLocalTLS 验证本地 TLS 只替换网络目的地，核对签名下载不携带授权头、认证 relay 保留原头与 Range。
+// Local TLS checks that signed downloads omit credentials and relay downloads retain authentication
+// and Range.
 func TestVideoContentNativeLocalTLS(t *testing.T) {
 	for _, signed := range []bool{true, false} {
 		name := "relay"

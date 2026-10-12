@@ -35,7 +35,7 @@ type metric struct {
 	intervals []interval
 }
 
-// Collector 保存请求级耗时样本，可安全并发使用。
+// Collector stores request timing intervals and supports concurrent access.
 type Collector struct {
 	startedAt time.Time
 
@@ -44,7 +44,7 @@ type Collector struct {
 	cacheStatus string
 }
 
-// New 创建从 startedAt 开始计算总耗时的采集器。
+// New creates a collector whose total duration starts at startedAt; zero uses the current time.
 func New(startedAt time.Time) *Collector {
 	if startedAt.IsZero() {
 		startedAt = time.Now()
@@ -55,7 +55,7 @@ func New(startedAt time.Time) *Collector {
 	}
 }
 
-// WithCollector 将采集器附加到上下文。
+// WithCollector attaches a non-nil collector to context.
 func WithCollector(ctx context.Context, collector *Collector) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -66,7 +66,7 @@ func WithCollector(ctx context.Context, collector *Collector) context.Context {
 	return context.WithValue(ctx, contextKey{}, collector)
 }
 
-// FromContext 返回上下文中启用的请求耗时采集器。
+// FromContext returns the request timing collector when present.
 func FromContext(ctx context.Context) (*Collector, bool) {
 	if ctx == nil {
 		return nil, false
@@ -75,13 +75,13 @@ func FromContext(ctx context.Context) (*Collector, bool) {
 	return collector, ok && collector != nil
 }
 
-// Active 表示当前请求是否启用了耗时采集。
+// Active reports whether context has a timing collector.
 func Active(ctx context.Context) bool {
 	_, ok := FromContext(ctx)
 	return ok
 }
 
-// Record 向指标添加已完成的时间区间和操作次数。
+// Record adds a completed interval and operation count to the context collector.
 func Record(ctx context.Context, name string, startedAt, endedAt time.Time, count int) {
 	collector, ok := FromContext(ctx)
 	if !ok {
@@ -90,7 +90,8 @@ func Record(ctx context.Context, name string, startedAt, endedAt time.Time, coun
 	collector.Record(name, startedAt, endedAt, count)
 }
 
-// RecordInterval 仅添加耗时而不增加操作次数，适用于一次逻辑操作包含多次阻塞驱动调用的场景。
+// RecordInterval adds duration without increasing the operation count, allowing
+// multiple blocking driver calls to belong to one logical operation.
 func RecordInterval(ctx context.Context, name string, startedAt, endedAt time.Time) {
 	collector, ok := FromContext(ctx)
 	if !ok {
@@ -99,7 +100,7 @@ func RecordInterval(ctx context.Context, name string, startedAt, endedAt time.Ti
 	collector.record(name, startedAt, endedAt, 0)
 }
 
-// Record 直接向采集器添加已完成的时间区间。
+// Record adds a completed interval and counts at least one operation.
 func (c *Collector) Record(name string, startedAt, endedAt time.Time, count int) {
 	if count <= 0 {
 		count = 1
@@ -129,7 +130,7 @@ func (c *Collector) record(name string, startedAt, endedAt time.Time, count int)
 	c.mu.Unlock()
 }
 
-// Observe 开始记录指标区间，并返回可重复安全调用的结束函数。
+// Observe starts an interval and returns an idempotent function that records its end.
 func Observe(ctx context.Context, name string) func() {
 	collector, ok := FromContext(ctx)
 	name = normalizeMetricName(name)
@@ -145,17 +146,17 @@ func Observe(ctx context.Context, name string) func() {
 	}
 }
 
-// ObserveDependency 开始记录具名外部依赖区间。
+// ObserveDependency starts an interval for a named external dependency.
 func ObserveDependency(ctx context.Context, module string) func() {
 	return Observe(ctx, dependencyMetricName(module))
 }
 
-// RecordDependency 记录已完成的外部依赖时间区间。
+// RecordDependency records a completed external dependency call.
 func RecordDependency(ctx context.Context, module string, startedAt, endedAt time.Time) {
 	Record(ctx, dependencyMetricName(module), startedAt, endedAt, 1)
 }
 
-// SetCacheStatus 记录当前请求的响应缓存结果。
+// SetCacheStatus records hit, miss, or bypass, ignoring unrecognized values.
 func SetCacheStatus(ctx context.Context, status string) {
 	collector, ok := FromContext(ctx)
 	if !ok {
@@ -170,7 +171,7 @@ func SetCacheStatus(ctx context.Context, status string) {
 	collector.mu.Unlock()
 }
 
-// HeaderValue 生成长度受限且顺序确定的 Server-Timing 响应头值。
+// HeaderValue returns the context collector's Server-Timing value, or an empty string.
 func HeaderValue(ctx context.Context, endedAt time.Time, cacheStatus string) string {
 	collector, ok := FromContext(ctx)
 	if !ok {
@@ -179,7 +180,8 @@ func HeaderValue(ctx context.Context, endedAt time.Time, cacheStatus string) str
 	return collector.HeaderValue(endedAt, cacheStatus)
 }
 
-// HeaderValue 生成长度受限且顺序确定的 Server-Timing 响应头值。
+// HeaderValue builds a bounded Server-Timing value with sorted dependency names.
+// Durations use interval unions so overlapping calls do not double-count elapsed time.
 func (c *Collector) HeaderValue(endedAt time.Time, cacheStatus string) string {
 	if c == nil {
 		return ""

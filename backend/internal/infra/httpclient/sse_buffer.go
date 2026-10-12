@@ -12,6 +12,8 @@ var SSEScannerBuf64KPool = sync.Pool{
 
 type SSEScannerBuf64K [SSEScannerBuf64KSize]byte
 
+// GetSSEScannerBuf64K borrows a buffer whose contents may come from an earlier use.
+// Return it with PutSSEScannerBuf64K after the scanner has finished using it.
 func GetSSEScannerBuf64K() *SSEScannerBuf64K {
 	v := SSEScannerBuf64KPool.Get()
 	buf, ok := v.(*SSEScannerBuf64K)
@@ -21,6 +23,8 @@ func GetSSEScannerBuf64K() *SSEScannerBuf64K {
 	return buf
 }
 
+// PutSSEScannerBuf64K returns a borrowed buffer. The caller must stop using it
+// and return it at most once; nil is ignored.
 func PutSSEScannerBuf64K(buf *SSEScannerBuf64K) {
 	if buf == nil {
 		return

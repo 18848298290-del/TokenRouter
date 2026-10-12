@@ -25,14 +25,14 @@ import (
 
 const CompositeKeyNoGroupContextKey = "composite_key_no_group"
 
-// CompositeModelResponseWriter 将常见协议响应中的内部模型恢复为客户端复合模型。
+// CompositeModelResponseWriter restores the client composite model in protocol response metadata.
 type CompositeModelResponseWriter struct {
 	gin.ResponseWriter
 	clientModel string
 	actualModel string
 }
 
-// ResolveCompositeAPIKeyRequest 根据客户端模型选择复合 Key 分组，并改写为去除分组前缀的模型。
+// ResolveCompositeAPIKeyRequest selects the group from the model prefix and strips that prefix for forwarding.
 // @project-doc docs/domains/composite_api_keys.md#group_selection
 func ResolveCompositeAPIKeyRequest(c *gin.Context, apiKeyService *apikey.APIKeyService, apiKey *apikey.APIKey) (*apikey.APIKey, error) {
 	if apiKey == nil || !apiKey.IsComposite {
@@ -82,7 +82,7 @@ func ResolveCompositeAPIKeyRequest(c *gin.Context, apiKeyService *apikey.APIKeyS
 	return selected, nil
 }
 
-// SetCompositeModelContext 记录客户端模型和内部模型，供日志及响应恢复使用。
+// SetCompositeModelContext records client and internal model names for logging and response restoration.
 func SetCompositeModelContext(c *gin.Context, clientModel, actualModel string) {
 	if c == nil {
 		return
@@ -111,12 +111,12 @@ func (w *CompositeModelResponseWriter) WriteString(value string) (int, error) {
 	return w.Write([]byte(value))
 }
 
-// ReplaceCompositeResponseModel 改写协议模型字段，正文文本保持原样。
+// ReplaceCompositeResponseModel rewrites protocol model fields while leaving content text unchanged.
 func ReplaceCompositeResponseModel(data []byte, actualModel, clientModel string) []byte {
 	return modeltrace.ReplaceModelMetadata(data, actualModel, clientModel)
 }
 
-// GetCompositeModelFromContext 返回复合 Key 的客户端模型与内部模型。
+// GetCompositeModelFromContext returns the composite key's client and internal model names.
 func GetCompositeModelFromContext(c *gin.Context) (clientModel, actualModel string, ok bool) {
 	if c == nil {
 		return "", "", false
@@ -126,7 +126,7 @@ func GetCompositeModelFromContext(c *gin.Context) (clientModel, actualModel stri
 	return clientModel, actualModel, clientModel != "" && actualModel != ""
 }
 
-// IsCompositeKeyNoModelEndpoint 识别仅按 Key 身份工作或聚合全部映射的入口。
+// IsCompositeKeyNoModelEndpoint reports whether an endpoint uses key identity or aggregates all group mappings.
 func IsCompositeKeyNoModelEndpoint(method, path string) bool {
 	if IsCompositeKeyModelListEndpoint(method, path) || IsAPIKeyUsageRequest(method, path) {
 		return true
@@ -134,7 +134,7 @@ func IsCompositeKeyNoModelEndpoint(method, path string) bool {
 	return IsBatchImageBillingBypassRequest(method, path) || IsGrokVideoTaskRead(method, path)
 }
 
-// IsCompositeKeyModelListEndpoint 识别复合 Key 需要聚合映射的模型列表入口。
+// IsCompositeKeyModelListEndpoint identifies model lists that aggregate composite key mappings.
 func IsCompositeKeyModelListEndpoint(method, path string) bool {
 	if method != http.MethodGet {
 		return false
@@ -147,8 +147,8 @@ func IsCompositeKeyModelListEndpoint(method, path string) bool {
 	}
 }
 
-// IsCompositeKeyBillingBypassEndpoint 仅识别按 Key 身份读取既有数据的入口。
-// 模型列表执行 Key 额度、余额和订阅校验。
+// IsCompositeKeyBillingBypassEndpoint identifies reads of existing data that bypass consumption checks.
+// Model lists still require key quota, balance, and subscription checks.
 func IsCompositeKeyBillingBypassEndpoint(method, path string) bool {
 	if IsAPIKeyUsageRequest(method, path) {
 		return true
@@ -156,7 +156,7 @@ func IsCompositeKeyBillingBypassEndpoint(method, path string) bool {
 	return IsBatchImageBillingBypassRequest(method, path) || IsGrokVideoTaskRead(method, path)
 }
 
-// IsGrokVideoTaskRead 识别不携带模型、仅通过任务归属查询的 Grok 视频入口。
+// IsGrokVideoTaskRead identifies video queries authorized by task ownership rather than a request model.
 func IsGrokVideoTaskRead(method, path string) bool {
 	if method != http.MethodGet {
 		return false
@@ -165,13 +165,13 @@ func IsGrokVideoTaskRead(method, path string) bool {
 	return strings.HasPrefix(cleanPath, "/v1/videos/") || strings.HasPrefix(cleanPath, "/videos/")
 }
 
-// IsCompositeKeyUnsupportedEndpoint 识别一个连接可能携带多模型的实时入口。
+// IsCompositeKeyUnsupportedEndpoint identifies realtime endpoints that can use multiple models per connection.
 func IsCompositeKeyUnsupportedEndpoint(method, path, routePath string) bool {
 	cleanPath := strings.TrimSuffix(path, "/")
 	if cleanPath == "/v1/live" || cleanPath == "/backend-api/codex/realtime/calls" {
 		return true
 	}
-	// Codex Live sideband 与普通 Codex HTTP 入口共享前缀，只能通过已匹配的路由模板区分。
+	// Codex Live sideband shares its prefix with ordinary HTTP endpoints, so use the matched route template.
 	if method == http.MethodGet && routePath == "/backend-api/codex/:call_id" {
 		return true
 	}
@@ -185,7 +185,7 @@ func IsGeminiNativeModelEndpoint(path string) bool {
 	return strings.Contains(path, "/v1beta/models/")
 }
 
-// CompositeGeminiModelFromParams 从 Gemini URL 提取带前缀模型。
+// CompositeGeminiModelFromParams extracts the prefixed model from Gemini URL parameters.
 func CompositeGeminiModelFromParams(c *gin.Context) (string, error) {
 	if c.Request.Method == http.MethodGet {
 		model := strings.TrimPrefix(strings.TrimSpace(c.Param("model")), "/")
@@ -209,7 +209,7 @@ func CompositeGeminiModelFromParams(c *gin.Context) (string, error) {
 	return modelAction[:separator], nil
 }
 
-// RewriteCompositeGeminiParams 将 Gin 参数更新为去除分组前缀的模型。
+// RewriteCompositeGeminiParams replaces Gin model parameters with the model stripped of its group prefix.
 func RewriteCompositeGeminiParams(c *gin.Context, actualModel string) {
 	for i := range c.Params {
 		switch c.Params[i].Key {
@@ -224,7 +224,7 @@ func RewriteCompositeGeminiParams(c *gin.Context, actualModel string) {
 	}
 }
 
-// CompositeModelFromRequest 读取 JSON 或 multipart 请求的顶层 model。
+// CompositeModelFromRequest reads the top-level model from JSON or multipart input.
 func CompositeModelFromRequest(request *http.Request) (string, error) {
 	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if strings.HasPrefix(mediaType, "multipart/") {
@@ -258,8 +258,8 @@ func RewriteCompositeRequestModel(request *http.Request, actualModel string) err
 	return nil
 }
 
-// RewriteCompositeAdditionalModels 处理 Responses 工具中的附加模型。
-// 同一分组的前缀会被剥离；跨分组模型会使一次请求需要多套路由，因此明确拒绝。
+// RewriteCompositeAdditionalModels resolves additional models declared by Responses tools.
+// It strips same-group prefixes and rejects cross-group models because a request has one selected route.
 func RewriteCompositeAdditionalModels(request *http.Request, apiKey *apikey.APIKey, selected *apikey.APIKeyCompositeGroup) error {
 	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if strings.HasPrefix(mediaType, "multipart/") || apiKey == nil || selected == nil {
@@ -277,7 +277,7 @@ func RewriteCompositeAdditionalModels(request *http.Request, apiKey *apikey.APIK
 		}
 		binding, actualModel, resolveErr := apiKey.ResolveCompositeModel(model)
 		if resolveErr != nil {
-			// 附加模型本身可能合法地包含斜杠；只有命中已配置前缀时才参与复合路由。
+			// Model IDs can contain slashes; interpret a prefix only when it matches a configured group.
 			continue
 		}
 		if binding.GroupID != selected.GroupID {
@@ -307,7 +307,7 @@ func ReadAndRestoreRequestBody(request *http.Request) ([]byte, error) {
 		return rawBody, nil
 	}
 
-	// 使用临时请求解压，失败时将完整压缩体交给后续处理器返回错误。
+	// Decompress a cloned request so downstream handlers can read the full compressed body after a failure.
 	decodeRequest := request.Clone(request.Context())
 	decodeRequest.Body = io.NopCloser(bytes.NewReader(rawBody))
 	decodeRequest.ContentLength = int64(len(rawBody))
@@ -405,7 +405,7 @@ func RewriteMultipartModel(request *http.Request, actualModel string) error {
 	return nil
 }
 
-// AbortCompositeKeyError 按通用网关格式输出结构化复合 Key 错误。
+// AbortCompositeKeyError writes a structured composite key error in the endpoint's protocol.
 func AbortCompositeKeyError(c *gin.Context, err error) {
 	status := httpx.ErrorCode(err)
 	code := infraerrors.Reason(err)
@@ -437,7 +437,7 @@ func IsOpenAICompositeEndpoint(path string) bool {
 		strings.HasPrefix(path, "/backend-api/codex/")
 }
 
-// AbortCompositeKeyGoogleError 按 Google 协议格式输出复合 Key 错误。
+// AbortCompositeKeyGoogleError writes a composite key error in Google format.
 func AbortCompositeKeyGoogleError(c *gin.Context, err error) {
 	keyhttp.AbortGoogleError(c, httpx.ErrorCode(err), infraerrors.Reason(err)+": "+infraerrors.Message(err))
 }

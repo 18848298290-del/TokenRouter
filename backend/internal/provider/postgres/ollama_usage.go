@@ -33,8 +33,8 @@ type lockedOllamaCloudUsageMember struct {
 	snapshotJSON  string
 }
 
-// ListOllamaCloudUsageGroupProviders 通过一次 ID 查询和一次批量装载解析所有给定身份的同组提供商。
-// API Key 用于本次查询参数。
+// ListOllamaCloudUsageGroupProviders resolves matching identity groups with one ID query and one batch load.
+// API keys are passed as query parameters.
 func (r *ProviderStore) ListOllamaCloudUsageGroupProviders(ctx context.Context, providers []*acctcore.Record) ([]acctcore.Record, error) {
 	if r == nil || r.sql == nil {
 		return nil, acctcore.ErrOllamaCloudUsageUnavailable
@@ -126,8 +126,8 @@ func (r *ProviderStore) UpdateOllamaCloudUsageSnapshot(ctx context.Context, prov
 	return r.updateOllamaCloudUsageGroup(ctx, provider, payload, true)
 }
 
-// DisableOllamaCloudUsageAutoRefresh 按共享身份组关闭自动刷新，并保留已加载身份的 CAS 校验。
-// 提供商更换 API Key 后，该操作不能误关新身份组。
+// DisableOllamaCloudUsageAutoRefresh disables refresh for the shared identity group using the loaded identity as a CAS condition.
+// An API key change prevents this operation from disabling the new identity group.
 func (r *ProviderStore) DisableOllamaCloudUsageAutoRefresh(ctx context.Context, provider *acctcore.Record) error {
 	if !ollamaCloudUsageProviderHasSession(provider) {
 		return acctcore.ErrOllamaCloudUsageSessionRequired
@@ -351,18 +351,18 @@ func canonicalJSON(raw string) string {
 	return string(encoded)
 }
 
-// ollamaCloudUsageParseRFC3339SQL 复用经过验证的 RFC3339(/Nano) 解析路径；
-// 时间戳缺失或无效时返回 NULL，以便按首次刷新处理。
+// ollamaCloudUsageParseRFC3339SQL builds an RFC3339/Nano parser expression.
+// Missing or invalid timestamps yield NULL and are treated as an initial refresh.
 //
-// 值进入 jsonpath 前会经过两次改写：
-//  1. 截断超过 6 位的小数秒，因为 .datetime() 不接受高于微秒的精度，而 Go 会输出 9 位；
-//  2. 把尾随 "Z" 改写为 "+00:00"。PostgreSQL 17 起 jsonpath .datetime() 才接受
-//     ISO-8601 的 "Z" 标识，而本服务写入的所有时间戳都是 UTC（因此以 "Z" 结尾）。
-//     若不改写，PostgreSQL 16 及更早版本会静默返回 NULL，使所有到期列均为 NULL，
-//     最终让 ListDueOllamaCloudUsageProviders 退化到开放分支。
+// Normalize values before passing them to jsonpath:
+//  1. Truncate fractional seconds to six digits because .datetime() accepts microseconds while Go can emit nine digits.
+//  2. Replace a trailing "Z" with "+00:00" for PostgreSQL versions whose jsonpath parser
+//     does not accept the UTC "Z" suffix used by this service.
+//     Otherwise valid timestamps can silently become NULL, causing due-time queries
+//     to treat the records as initial refreshes.
 //
-// jsonpath 将格式匹配但日期非法的值（例如 2026-02-30）解析为 NULL，
-// 查询按开放策略处理这些记录。
+// The silent jsonpath call also returns NULL for invalid dates such as 2026-02-30.
+// These records remain eligible for an initial refresh.
 func ollamaCloudUsageParseRFC3339SQL(expression string) string {
 	return `CASE
 		WHEN ` + expression + ` IS NULL THEN NULL
@@ -383,18 +383,18 @@ func ollamaCloudUsageParseRFC3339SQL(expression string) string {
 	END`
 }
 
-// ListDueOllamaCloudUsageProviders 为每个精确 API Key 最多返回一个真正到期、
-// 由活动驱动的候选提供商。它会在 LIMIT 前按防抖、最大等待和失败退避规则判断到期，
-// 尚未到期的分组留给后续扫描。
-// Provider.LastUsedAt 会写入分组 MAX(last_used_at)，供服务层纯函数再次检查，
-// 防止查询候选与执行刷新之间出现竞态。
+// ListDueOllamaCloudUsageProviders returns at most one due provider per exact API key.
+// Debounce, maximum wait, and failure backoff are applied before LIMIT;
+// groups that are not due remain available for later scans.
+// Each record's LastUsedAt contains the group's MAX(last_used_at), allowing the service
+// to recheck whether a refresh is due before execution.
 //
-// 规则与 acctcore.ollamaCloudUsageAutoRefreshDueAt 保持一致，两处修改必须同步：
-//   - 快照或时间缺失/无效时按首次刷新处理；
-//   - 成功后仅处理晚于 fetched_at 的活动，
-//     due_at = GREATEST(LEAST(last_used+debounce, fetched+maxWait), fetched+minFetchInterval)；
-//   - 失败或未授权后仅处理晚于 last_attempt 的活动，活动到期时间仍使用 LEAST 公式，
-//     最终 due_at 不早于有效的 next_refresh_at，无效或缺失值按开放策略处理。
+// Keep these rules synchronized with acctcore.ollamaCloudUsageAutoRefreshDueAt:
+//   - Missing or invalid snapshots and timestamps are treated as an initial refresh.
+//   - After success, activity must be later than fetched_at, with
+//     due_at = GREATEST(LEAST(last_used+debounce, fetched+maxWait), fetched+minFetchInterval).
+//   - After failure or unauthorized status, activity must be later than last_attempt and uses the same LEAST formula.
+//     due_at is at least a valid next_refresh_at; missing or invalid values add no backoff.
 func (r *ProviderStore) ListDueOllamaCloudUsageProviders(
 	ctx context.Context,
 	now time.Time,
@@ -544,7 +544,7 @@ func (r *ProviderStore) ListDueOllamaCloudUsageProviders(
 		if provider == nil {
 			continue
 		}
-		// 写入分组 MAX(last_used_at)，供服务层判断是否到期。
+		// Use the group's MAX(last_used_at) for the service's due-time check.
 		if row.groupLastUsed != nil {
 			ts := row.groupLastUsed.UTC()
 			provider.LastUsedAt = &ts
@@ -586,7 +586,7 @@ func lockAndMatchProviderProxyIdentity(ctx context.Context, client *dbent.Client
 	return current == egress.ProxyConnectionIdentityFromProxy(provider.Proxy), rows.Err()
 }
 
-// OllamaCloudBaseURLMatchesSQL 生成匹配 Ollama Cloud 地址的 SQL 条件。
+// OllamaCloudBaseURLMatchesSQL builds a SQL predicate matching Ollama Cloud URLs.
 func OllamaCloudBaseURLMatchesSQL(expression string) string {
 	return OllamaCloudBaseURLMatchSQLPrefix + expression + OllamaCloudBaseURLMatchSQLSuffix
 }

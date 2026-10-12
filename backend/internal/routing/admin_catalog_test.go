@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAdminCatalogUsesConfiguredIDs 覆盖各平台、OAuth 和透传使用同一候选规则。
+// TestAdminCatalogUsesConfiguredIDs checks shared candidate rules across platforms, OAuth, and passthrough.
 func TestAdminCatalogUsesConfiguredIDs(t *testing.T) {
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "qoder", "grok", "kimi", "zhipu", "deepseek"} {
 		t.Run(platform, func(t *testing.T) {
@@ -30,7 +30,7 @@ func TestAdminCatalogUsesConfiguredIDs(t *testing.T) {
 	}
 }
 
-// TestAdminCatalogUnknownConfiguredID 目录为空时仍返回管理员配置的型号。
+// TestAdminCatalogUnknownConfiguredID checks that configured IDs survive an empty metadata catalog.
 func TestAdminCatalogUnknownConfiguredID(t *testing.T) {
 	catalog := NewAdminCatalog(AdminCatalogOptions{})
 	result, err := catalog.Available(AdminCatalogInput{Platform: "openai"}, func() []string { return []string{"vendor/new-model"} })

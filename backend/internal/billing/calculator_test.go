@@ -10,7 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestPerRequestContextPricingIgnoresModelName 验证模型名称不改变按次区间及默认价的选择。
+// TestPerRequestContextPricingIgnoresModelName checks that model names do not affect per-request interval or
+// default-price selection.
 func TestPerRequestContextPricingIgnoresModelName(t *testing.T) {
 	for _, model := range []string{"custom-chat", "custom-image-analyzer", "gpt-image-alias"} {
 		for _, withDefault := range []bool{false, true} {
@@ -54,7 +55,7 @@ func TestPerRequestContextPricingIgnoresModelName(t *testing.T) {
 	}
 }
 
-// TestPerRequestLabelStillPrecedesContext 检查按次标签优先于上下文区间和默认价。
+// TestPerRequestLabelStillPrecedesContext checks that labels take precedence over context intervals and default prices.
 func TestPerRequestLabelStillPrecedesContext(t *testing.T) {
 	labelPrice, contextPrice, defaultPrice := 0.07, 0.10, 0.05
 	card := &ModelPricingEntry{

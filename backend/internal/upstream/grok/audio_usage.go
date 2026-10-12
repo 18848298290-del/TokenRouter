@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// AwaitGrokRealtimeAudioObserved 在任一中继方向结束时返回本次会话是否真正传输过音频。
+// AwaitGrokRealtimeAudioObserved waits for one relay result and returns the observed audio flag.
 func AwaitGrokRealtimeAudioObserved(errCh <-chan error, audioObserved *atomic.Bool) (bool, error) {
 	err := <-errCh
 	if audioObserved == nil {
@@ -19,7 +19,7 @@ func AwaitGrokRealtimeAudioObserved(errCh <-chan error, audioObserved *atomic.Bo
 	return audioObserved.Load(), err
 }
 
-// GrokRealtimeEventHasAudio 仅把包含非空音频负载的事件视为可计费音频，转录文本不计入。
+// GrokRealtimeEventHasAudio reports nonempty audio payloads, excluding transcript events.
 func GrokRealtimeEventHasAudio(msg []byte) bool {
 	if !gjson.ValidBytes(msg) {
 		return false
@@ -37,12 +37,12 @@ func GrokRealtimeEventHasAudio(msg []byte) bool {
 	return false
 }
 
-// EstimateGrokVoiceAudioUsage 从请求和响应推导计费单位：TTS 按百万字符，
-// STT 在时长未知时按请求体大小估算小时数，自定义 Voice 不产生用量。
+// EstimateGrokVoiceAudioUsage returns TTS units in millions of characters, STT hours,
+// or realtime minutes. Other endpoints, including custom voices, return nil.
 func EstimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType string, respBody []byte, elapsed time.Duration) *protocol.AudioUsage {
 	switch strings.TrimSpace(endpoint) {
 	case "tts":
-		// 优先读取 JSON input/text 字段，否则回退到原始请求体长度。
+		// Count runes in JSON input, text, or prompt; otherwise use the raw body byte count.
 		chars := 0
 		if gjson.ValidBytes(reqBody) {
 			for _, key := range []string{"input", "text", "prompt"} {
@@ -60,7 +60,7 @@ func EstimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 		}
 		return &protocol.AudioUsage{Mode: "tts", DurationOrUnits: float64(chars) / 1_000_000.0}
 	case "stt":
-		// 优先采用响应时长，不能只信任客户端 duration_seconds；同时以请求体估算和实际耗时作为下限。
+		// Prefer response duration, then elapsed time, client duration, and the size estimate.
 		secs := 0.0
 		if gjson.ValidBytes(respBody) {
 			for _, path := range []string{"duration", "duration_seconds", "audio_duration", "usage.seconds"} {
@@ -70,7 +70,7 @@ func EstimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 				}
 			}
 		}
-		// multipart 请求按压缩语音约 16KB/s 估算保守下限。
+		// Estimate duration from body bytes at 16,000 bytes per second, including multipart overhead.
 		sizeFloor := 0.0
 		if len(reqBody) > 0 {
 			sizeFloor = float64(len(reqBody)) / 16000.0
@@ -90,7 +90,7 @@ func EstimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 		if secs <= 0 {
 			secs = sizeFloor
 		}
-		// 客户端时长明显低于请求体或实际耗时下限时，采用更大的下限防止少计费。
+		// When the selected duration equals the client value, raise values below half the size or elapsed-time floor.
 		if clientSecs > 0 && secs == clientSecs {
 			floor := sizeFloor
 			if elapsed.Seconds() > floor {

@@ -30,7 +30,7 @@ func TestBillingErrorDetails_MapsUserRPMExceededToTooManyRequests(t *testing.T) 
 }
 
 func TestBillingErrorDetails_APIKeyRateLimitStillMaps(t *testing.T) {
-	// 回归保护：加 RPM 分支后不应影响已有 APIKey rate limit 的映射。
+	// API key window limits use the same rate-limit classification as RPM limits.
 	for _, err := range []error{apikey.ErrAPIKeyRateLimit5hExceeded, apikey.ErrAPIKeyRateLimit1dExceeded, apikey.ErrAPIKeyRateLimit7dExceeded} {
 		status, code, _, _ := BillingErrorDetails(err)
 		require.Equal(t, http.StatusTooManyRequests, status, "status for %v", err)

@@ -21,7 +21,7 @@ func (h *OpenAITextHandler) errorResponse(c *gin.Context, status int, kind, mess
 	h.errorOutput().WriteError(c, status, kind, message)
 }
 
-// writeOpenAIRequestError 保留 compact 已提交状态下的终态事件与普通 JSON 错误。
+// writeOpenAIRequestError writes a terminal event for committed Compact responses or a JSON error otherwise.
 func writeOpenAIRequestError(c *gin.Context, status int, kind, message string, stop func(*gin.Context) bool, mark func(*gin.Context, string, string, int), metadata func(*gin.Context) (string, string)) {
 	if stop(c) {
 		mark(c, kind, message, status)
@@ -86,7 +86,7 @@ func (h *OpenAITextHandler) recoverAnthropicMessagesPanic(c *gin.Context, starte
 	}
 }
 
-// errorOutput 为测试和专用 HTTP backend 提供观测接口，使用生产默认输出器的算法。
+// errorOutput supplies test and specialized backend observation hooks to the default output implementation.
 func (h *OpenAITextHandler) errorOutput() OpenAIErrorOutput {
 	return OpenAIErrorOutput{stopCompact: h.backend.StopCompact, markStream: h.backend.MarkStream, markFailure: h.backend.MarkStreamFailure, metadata: h.backend.ErrorMetadata}
 }

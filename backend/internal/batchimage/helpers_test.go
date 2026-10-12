@@ -71,7 +71,7 @@ type fakeProcessorProvider struct {
 	openResultCalled bool
 }
 
-// batchProvidersFixtureSource 提供候选查询数据，候选筛选与资金处理由生产模块执行。
+// batchProvidersFixtureSource supplies records to production candidate filtering and funding code.
 type batchProvidersFixtureSource interface {
 	GetByID(context.Context, int64) (*providercore.Record, error)
 	ListSchedulableByPlatform(context.Context, string) ([]providercore.Record, error)
@@ -127,7 +127,7 @@ type fakeBatchImageRepository struct {
 	replaceCalls  int
 }
 
-// resultProviderFixture 返回作业绑定的提供商，供下载和清理使用。
+// resultProviderFixture returns the bound provider for download and cleanup tests.
 type resultProviderFixture struct{ provider *providercore.Record }
 
 type fakeBatchImagePricingResolver struct {
@@ -263,7 +263,7 @@ func (p *fakeBatchImageDownloadPermit) Release(context.Context) error {
 	return nil
 }
 
-// newBatchProcessorFixture 为提供商处理器配置仓储、结果索引和资金操作。
+// newBatchProcessorFixture wires the repository, result indexer, and funding operations.
 func newBatchProcessorFixture(repo batchimage.BatchImageRepository, registry *batchimage.Registry[batchimageprovider.BatchImageProvider], providers batchimageprovider.ResultProviders, indexer *batchimage.ResultIndexer, funds batchimage.FundingStore, auth apikey.APIKeyAuthCacheInvalidator, delay time.Duration) *batchimage.ProviderProcessor {
 	core := &batchimage.ProviderProcessor{Repo: repo, Funding: nativeTaskFundingFixture(funds), DefaultRequeue: delay, Indexer: indexer}
 	if registry != nil && providers != nil {
@@ -296,7 +296,7 @@ func newBatchSettlementFixture(repo batchimage.BatchImageRepository, funds batch
 	return core
 }
 
-// nativeTaskFundingFixture 为批量任务资金操作绑定测试存储。
+// nativeTaskFundingFixture binds a test store to batch funding operations.
 func nativeTaskFundingFixture(store batchimage.FundingStore) batchimage.Funding {
 	return batchimage.Funding{Store: store}
 }
@@ -382,7 +382,7 @@ func batchGroupProjection(v *batchimage.GroupView) *batchimage.GroupView { retur
 
 func taskFixtureBilling(core *batchimage.Public) batchimage.FundingStore { return core.Funding.Store }
 
-// newBatchPublicFixture 配置公共接口的依赖和选项，资金操作在调用时读取测试替身。
+// newBatchPublicFixture wires public operations to test dependencies and runtime options.
 func newBatchPublicFixture(repo batchimage.BatchImageRepository, providers batchProvidersFixtureSource, pricingConfigs *routing.PricingConfigService, groups batchGroupFixtureSource, rates batchimage.BatchImageUserGroupRateRepository, queue batchimage.BatchImageQueue, registry *batchimage.Registry[batchimageprovider.BatchImageProvider], prices batchimage.ImagePricer, funds batchimage.FundingStore, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config) *batchimage.Public {
 	core := &batchimage.Public{Repo: repo, UserGroupRateRepo: rates, Queue: queue, Pricing: prices, Funding: nativeTaskFundingFixture(funds), Observe: resultObserve}
 	if providers != nil {
@@ -856,8 +856,8 @@ func (r *fakeBatchImageRepository) BulkCreateBatchImageItems(ctx context.Context
 }
 
 func (r *fakeBatchImageRepository) ReplaceBatchImageItemsForJob(_ context.Context, batchID string, items []batchimage.CreateBatchImageItemParams, counts batchimage.BatchImageCounts) error {
-	// 已登记的作业在 indexing 状态下允许重建条目。
-	// 单测直接构造但未登记的作业也允许写入条目。
+	// Registered jobs can rebuild items only while indexing.
+	// Unregistered jobs constructed directly by tests can also write items.
 	if job, ok := r.jobs[batchID]; ok && job.Status != batchimage.BatchImageJobStatusIndexing {
 		return batchimage.ErrBatchImageIndexStateConflict
 	}
@@ -1147,7 +1147,7 @@ func newBatchCleanupFixture(repo batchimage.BatchImageRepository, registry *batc
 	return &batchimage.Cleanup{Repo: repo, ResolveProvider: (batchimageprovider.ResultAccess{Registry: registry, Providers: providers}).Cleanup, Options: batchimage.CleanupOptions{InputRetention: time.Duration(cfg.BatchImage.InputRetentionAfterTerminalHours) * time.Hour, Interval: time.Duration(cfg.BatchImage.CleanupIntervalMinutes) * time.Minute, BatchSize: cfg.BatchImage.CleanupBatchSize}}
 }
 
-// cloneResultAllocations 调用资金模块的复制函数，复制仓储替身保存的分配记录。
+// cloneResultAllocations copies stored allocations through the funding module helper.
 func cloneResultAllocations(values []billing.BillingAllocation) []billing.BillingAllocation {
 	if len(values) == 0 {
 		return nil
@@ -1301,7 +1301,7 @@ func (p *fakeBatchImageProcessor) Process(_ context.Context, batchID string) (ba
 	return p.result, p.err
 }
 
-// Heartbeat 通过锁持有的任务更新队列心跳。
+// Heartbeat updates queue activity through the held job lock.
 func (l fakeBatchImageLock) Heartbeat(ctx context.Context) error {
 	return l.queue.Heartbeat(ctx, l.queue.reserved.BatchID)
 }

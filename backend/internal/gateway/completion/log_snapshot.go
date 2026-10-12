@@ -13,7 +13,7 @@ type snapshotBestEffortLogWriter struct {
 	best BestEffortLogWriter
 }
 
-// SnapshotLogWriter 为每次存储调用复制记录，转为同步写入时重新复制同一输入。
+// SnapshotLogWriter copies the record for each storage call, including synchronous retries.
 func SnapshotLogWriter(repo LogWriter) LogWriter {
 	if repo == nil {
 		return nil

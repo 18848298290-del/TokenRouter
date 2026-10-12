@@ -12,7 +12,8 @@ import (
 
 func TestRedeemRejectsInvitationCodeBeforeGrantingBenefits(t *testing.T) {
 	ctx := context.Background()
-	// 使用 nil 用户仓储，确保邀请码在进入权益发放和用户查询前就被拒绝。
+	// The nil user repository makes any user lookup fail, checking that invitation codes are rejected before
+	// granting entitlements.
 	redeemRepo := &paymentOrderLifecycleRedeemRepo{
 		codesByCode: map[string]*billing.RedeemCode{
 			"INVITE-001": {

@@ -35,7 +35,7 @@ func (APIKey) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("user_id"),
 		field.Int64("team_id").Optional().Nillable(),
-		// Owner 锁定与 Member 自行停用必须分开保存，普通 Key 更新不得清除此标记。
+		// Owner-imposed locks are separate from member deactivation; ordinary key updates must retain this flag.
 		field.Bool("team_owner_disabled").Default(false),
 		field.String("key").
 			MaxLen(128).
@@ -47,32 +47,32 @@ func (APIKey) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
-		// 复合 Key 不使用单一 group_id，而是通过前缀映射选择请求分组。
+		// Composite keys select groups through prefix mappings rather than a single group_id.
 		field.Bool("is_composite").
 			Default(false).
-			Comment("是否通过模型前缀在多个分组之间路由"),
+			Comment("Routes across groups using model prefixes"),
 		field.String("status").
 			MaxLen(20).
 			Default(apikey.StatusActive),
-		// 单个 API Key 的 Fast 模式策略，默认保持下游请求的现有行为。
+		// The default Fast mode policy follows the client's request.
 		field.String("fast_mode_policy").
 			MaxLen(32).
 			Default("follow_request").
-			Comment("API Key 的 Fast 模式策略：follow_request、force_on 或 force_off"),
-		// API Key 可显式锁定订阅或余额；auto 保持历史的订阅优先行为。
+			Comment("API key Fast mode policy: follow_request, force_on, or force_off"),
+		// Keys can select subscription or balance funding; auto spends subscription funds first.
 		field.String("billing_mode").
 			MaxLen(32).
 			Default("auto").
-			Comment("API Key 结算模式：auto、subscription 或 balance"),
+			Comment("API key billing mode: auto, subscription, or balance"),
 		field.Int64("preferred_subscription_id").
 			Optional().
 			Nillable().
-			Comment("billing_mode 为 subscription 时锁定使用的用户订阅 ID"),
-		// 每个 API Key 可在进入分组与提供商映射前覆盖客户端模型名。
+			Comment("User subscription ID selected when billing_mode is subscription"),
+		// Key model mappings apply before group and provider mappings.
 		field.JSON("model_mapping", map[string]string{}).
 			Default(func() map[string]string { return map[string]string{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("API Key 自定义模型重定向规则"),
+			Comment("Custom model redirect rules for this API key"),
 		field.Time("last_used_at").
 			Optional().
 			Nillable().
@@ -101,7 +101,7 @@ func (APIKey) Fields() []ent.Field {
 			Nillable().
 			Comment("Expiration time for this API key (null = never expires)"),
 
-		// Key 请求上限默认关闭，由网关在准入时检查。
+		// The gateway checks these request limits at admission; zero disables each limit.
 		field.Int("concurrency_limit").NonNegative().Default(0),
 		field.Int("rpm_limit").NonNegative().Default(0),
 
@@ -146,16 +146,16 @@ func (APIKey) Fields() []ent.Field {
 			Nillable().
 			Comment("Start time of the current 7d rate limit window"),
 
-		// 绑定分组停用时是否允许请求级回退到同平台默认分组。
+		// Allows request-level fallback to the same platform's default group when the bound group is unavailable.
 		field.Bool("fallback_when_group_unavailable").
 			Default(true).
-			Comment("绑定分组不可用时自动回退到同平台默认分组"),
-		// managed_by 标记服务端托管的隐藏 Key（如创作台执行 Key），普通用户接口不得暴露或操作。
+			Comment("Falls back to the same platform's default group when the bound group is unavailable"),
+		// managed_by identifies hidden server-managed keys; ordinary user APIs must not expose or modify them.
 		field.String("managed_by").
 			MaxLen(32).
 			Optional().
 			Nillable().
-			Comment("托管来源标识：creative_studio 表示创作台隐藏执行 Key，NULL 表示普通用户 Key"),
+			Comment("Managing source: creative_studio for hidden execution keys; NULL for ordinary user keys"),
 	}
 }
 
@@ -182,7 +182,7 @@ func (APIKey) Edges() []ent.Edge {
 
 func (APIKey) Indexes() []ent.Index {
 	return []ent.Index{
-		// key 字段已在 Fields() 中声明 Unique()，无需重复索引
+		// Fields declares the unique key constraint.
 		index.Fields("user_id"),
 		index.Fields("team_id"),
 		index.Fields("group_id"),

@@ -307,7 +307,7 @@ func TestGrokQuotaServiceQueryQuotaFreeFallsBackToGrok45(t *testing.T) {
 	t.Parallel()
 
 	provider := healthyGrokQuotaOAuthProvider(51)
-	// 使用有效模型缓存，使账单与主动额度请求的次数可单独断言。
+	// A fresh model cache keeps background catalogue sync out of the billing and active-probe request counts.
 	provider.Extra = map[string]any{providercore.GrokObservedModelsExtraKey: map[string]any{
 		"models": []string{"grok-4.5"}, "fetched_at": time.Now().UTC().Format(time.RFC3339),
 	}}
@@ -356,7 +356,7 @@ func TestGrokQuotaServiceQueryQuotaPaidBillingSkipsActiveProbe(t *testing.T) {
 	t.Parallel()
 
 	provider := healthyGrokQuotaOAuthProvider(52)
-	// 本用例通过有效模型缓存跳过后台目录同步，单独检查账单与主动额度请求。
+	// A fresh model cache keeps background catalogue sync out of the billing and active-probe request counts.
 	provider.Extra = map[string]any{providercore.GrokObservedModelsExtraKey: map[string]any{
 		"models": []string{"grok-4.5"}, "fetched_at": time.Now().UTC().Format(time.RFC3339),
 	}}

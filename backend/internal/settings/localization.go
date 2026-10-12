@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// LocalizedTextFields 将管理字段映射到各业务原文的存储键。
+// LocalizedTextFields maps admin fields to the stored source-text keys.
 var LocalizedTextFields = map[string]string{
 	"balance_unit_name":               "balance_unit_name",
 	"balance_low_notify_recharge_url": "balance_low_notify_recharge_url",
@@ -23,10 +23,11 @@ var LocalizedTextFields = map[string]string{
 	"smtp_from_name":                  "smtp_from_name",
 }
 
-// LocalizedTexts 是综合设置中普通用户可见的独立文案。
+// LocalizedTexts contains independently localized user-facing text in combined settings.
 type LocalizedTexts = locale.TextUpdates
 
-// ReadLocalizedTexts 构建编辑值，历史原文在管理员选择之前保持未知语言。
+// ReadLocalizedTexts builds editor values; legacy source text keeps an unknown language until an
+// administrator selects one.
 func ReadLocalizedTexts(values map[string]string) LocalizedTexts {
 	result := LocalizedTexts{}
 	for field, key := range LocalizedTextFields {
@@ -41,7 +42,7 @@ func ReadLocalizedTexts(values map[string]string) LocalizedTexts {
 	return result
 }
 
-// LocalizationParticipant 校验文案及链接，在数据库事务中检查已保存版本。
+// LocalizationParticipant validates text and URLs and prepares expected values for transactional revision checks.
 func LocalizationParticipant() Participant {
 	keys := make([]string, 0, len(LocalizedTextFields))
 	for _, key := range LocalizedTextFields {

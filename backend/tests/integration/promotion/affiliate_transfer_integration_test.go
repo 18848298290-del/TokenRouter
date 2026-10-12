@@ -14,7 +14,8 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// TestAffiliateTransferLedgerFailureRollsBackFunds 验证转账流水失败必须回滚同事务的清零、余额和累计充值，不能只保证计提原子性。
+// TestAffiliateTransferLedgerFailureRollsBackFunds checks that a ledger failure rolls back quota clearing,
+// balance credit, and total recharged together.
 func TestAffiliateTransferLedgerFailureRollsBackFunds(t *testing.T) {
 	ctx := context.Background()
 	client, integrationDB := testStore(t)

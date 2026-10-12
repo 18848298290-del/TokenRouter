@@ -7,24 +7,24 @@ const (
 	OllamaCloudUsageModelWindowSevenDay OllamaCloudUsageModelWindow = "seven_day"
 )
 
-// OllamaCloudUsageWindow 是单个官方用量窗口的最小化脱敏视图。
+// OllamaCloudUsageWindow contains usage and reset information from an official usage window.
 type OllamaCloudUsageWindow struct {
 	UsedPercent float64    `json:"used_percent"`
 	ResetAt     *time.Time `json:"reset_at,omitempty"`
 	ResetText   string     `json:"reset_text,omitempty"`
 }
 
-// OllamaCloudUsageModelWindow 标识模型请求数所属的官方用量窗口。
+// OllamaCloudUsageModelWindow identifies the window containing a model request count.
 type OllamaCloudUsageModelWindow string
 
-// OllamaCloudUsageModel 保存 Ollama 用量页面按窗口展示的模型及请求数。
+// OllamaCloudUsageModel contains the model and request count shown for an Ollama usage window.
 type OllamaCloudUsageModel struct {
 	Model    string                      `json:"model"`
 	Window   OllamaCloudUsageModelWindow `json:"window"`
 	Requests int64                       `json:"requests"`
 }
 
-// OllamaCloudUsageData 明确排除原始 HTML 和浏览器会话数据。
+// OllamaCloudUsageData contains parsed display values from the usage page.
 type OllamaCloudUsageData struct {
 	Plan     string                  `json:"plan,omitempty"`
 	FiveHour *OllamaCloudUsageWindow `json:"five_hour,omitempty"`
@@ -33,7 +33,7 @@ type OllamaCloudUsageData struct {
 	Models   []OllamaCloudUsageModel `json:"models,omitempty"`
 }
 
-// OllamaUsageObservation 分离实际 HTTP 观测和提供商的失败计数、重试与存储规则。
+// OllamaUsageObservation holds HTTP results for provider retry, failure-count, and storage decisions.
 type OllamaUsageObservation struct {
 	Data         *OllamaCloudUsageData
 	HTTPStatus   int

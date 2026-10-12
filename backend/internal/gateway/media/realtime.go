@@ -9,10 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// DefaultRealtimeDialTimeout 设置下游升级前的上游握手超时，会话时长由连接生命周期控制。
+// DefaultRealtimeDialTimeout bounds the upstream handshake before downstream upgrade, not session duration.
 const DefaultRealtimeDialTimeout = 12 * time.Second
 
-// RealtimePorts 仅在下游升级前取得凭据和连接，保持四次候选预算。
+// RealtimePorts supplies selection, credentials, and dialing before the downstream connection is upgraded.
 type RealtimePorts interface {
 	SelectRealtime(context.Context, map[int64]struct{}) (provider.ProviderSnapshot, bool, error)
 	AcquireRealtime(context.Context, provider.ProviderSnapshot) (func(), bool)
@@ -21,7 +21,7 @@ type RealtimePorts interface {
 	RealtimeOpenFailed(context.Context, provider.ProviderSnapshot, error)
 }
 
-// RealtimeLease 明确拥有上游连接及提供商槽；下游连接由 HTTP Adapter 关闭。
+// RealtimeLease owns the upstream connection and provider slot; the HTTP adapter closes the downstream.
 type RealtimeLease struct {
 	Provider provider.ProviderSnapshot
 	Conn     upstream.FrameConn
@@ -30,7 +30,7 @@ type RealtimeLease struct {
 	err      error
 }
 
-// RealtimeAdmission 区分没有候选、上游不可用与等待层已经输出错误。
+// RealtimeAdmission distinguishes missing candidates, upstream failure, and a wait-layer rejection.
 type RealtimeAdmission struct {
 	Lease         *RealtimeLease
 	CandidateSeen bool

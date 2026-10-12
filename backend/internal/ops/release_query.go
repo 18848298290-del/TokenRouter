@@ -33,9 +33,9 @@ type GitHubAsset struct {
 	Size               int64  `json:"size"`
 }
 
-// RollbackVersion 描述系统允许回退到的正式版本。
+// RollbackVersion describes a stable release eligible for rollback.
 type RollbackVersion struct {
-	Version     string `json:"version"` // 不带 v 前缀，例如 0.1.146。
+	Version     string `json:"version"` // Version without the v prefix, such as 0.1.146.
 	PublishedAt string `json:"published_at"`
 	HTMLURL     string `json:"html_url"`
 }
@@ -105,7 +105,7 @@ func parseVersion(v string) [3]int {
 	return result
 }
 
-// compareVersions compares two semantic versions.
+// compareVersions compares numeric major, minor, and patch components, ignoring prerelease suffixes.
 func compareVersions(current, latest string) int {
 	currentParts := parseVersion(current)
 	latestParts := parseVersion(latest)
@@ -198,8 +198,8 @@ func (s *ReleaseQuery) FetchLatestRelease(ctx context.Context) (*UpdateInfo, err
 	}, nil
 }
 
-// normalizeRollbackVersion 只接受可安全用于下载与手动命令展示的 v?MAJOR.MINOR.PATCH。
-// 严格格式既保证排序语义，也防止 release tag 中的 shell 元字符进入复制命令。
+// normalizeRollbackVersion accepts v?MAJOR.MINOR.PATCH for downloads and displayed commands.
+// The restricted format supports version ordering and excludes shell metacharacters from copied commands.
 func normalizeRollbackVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
 	version = strings.TrimPrefix(version, "v")
@@ -223,10 +223,10 @@ func normalizeRollbackVersion(raw string) (string, bool) {
 	return strings.Join(parts, "."), true
 }
 
-// NormalizeRollbackVersion 保留旧比较入口的唯一规则。
+// NormalizeRollbackVersion exposes the same validation used for rollback candidates.
 func NormalizeRollbackVersion(raw string) (string, bool) { return normalizeRollbackVersion(raw) }
 
-// FetchRollbackCandidates 拉取最近 release，并只保留严格早于当前版本的最新候选。
+// FetchRollbackCandidates fetches recent releases and retains stable versions older than the current version.
 func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
 	releases, err := s.githubClient.FetchRecentReleases(ctx, githubRepo, rollbackFetchPageSize)
 	if err != nil {
@@ -248,7 +248,7 @@ func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRe
 		if !valid || seen[v] {
 			continue
 		}
-		// 仅允许严格早于当前版本的正式语义版本，同时排除当前版本。
+		// Only stable versions strictly older than the current version are eligible.
 		if compareVersions(v, currentVersion) >= 0 {
 			continue
 		}
@@ -271,8 +271,8 @@ func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRe
 	return candidates, nil
 }
 
-// ListRollbackVersions 返回严格早于当前版本的最近正式版本，按新到旧排序。
-// 草稿、预发布和非标准版本号均不会进入列表。
+// ListRollbackVersions returns recent eligible stable releases, newest first.
+// Drafts, prereleases, and nonstandard version strings are excluded.
 func (s *ReleaseQuery) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
 	releases, err := s.FetchRollbackCandidates(ctx)
 	if err != nil {

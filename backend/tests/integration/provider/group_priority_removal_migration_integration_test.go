@@ -12,14 +12,14 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration240RemovesProviderGroupPriority 验证关联优先级迁移可重复执行且清理完整。
+// TestMigration240RemovesProviderGroupPriority checks complete and repeatable removal of membership priority.
 func TestMigration240RemovesProviderGroupPriority(t *testing.T) {
 	ctx := context.Background()
 	migrationSQL, err := dbmigrations.FS.ReadFile("240_remove_account_group_priority.sql")
 	require.NoError(t, err)
 	tx := testTx(t)
 
-	// 测试数据库已应用全部迁移，在事务内恢复迁移前的表结构后执行升级。
+	// Restore the pre-migration schema inside a transaction because the test database already has all migrations.
 	_, err = tx.ExecContext(ctx, `
 ALTER TABLE provider_groups RENAME TO account_groups;
 ALTER TABLE account_groups RENAME COLUMN provider_id TO account_id;
@@ -62,7 +62,7 @@ WHERE schemaname = current_schema()
 `).Scan(&indexCount))
 	require.Zero(t, indexCount)
 
-	// 历史迁移验证完成后回到当前名称，再验证实际提供商仓储的排序。
+	// Restore current table names before checking repository ordering.
 	_, err = tx.ExecContext(ctx, `ALTER TABLE account_groups RENAME COLUMN account_id TO provider_id; ALTER TABLE account_groups RENAME TO provider_groups`)
 	require.NoError(t, err)
 
@@ -73,7 +73,7 @@ VALUES ('migration-240-capacity-order')
 RETURNING id
 `).Scan(&groupID))
 
-	// 先插入低优先级提供商，使 ID 顺序与优先级顺序相反；同优先级提供商再按 ID 稳定排序。
+	// Insert lower priority first so ID and priority order differ; equal priorities must sort by ID.
 	insertProvider := func(name string, priority int) int64 {
 		t.Helper()
 		var providerID int64
@@ -88,7 +88,7 @@ RETURNING id
 	highPriorityFirstID := insertProvider("migration-240-high-priority-first", 10)
 	highPrioritySecondID := insertProvider("migration-240-high-priority-second", 10)
 
-	// 打乱关联写入顺序，检查容量查询仍按提供商优先级排序。
+	// Insert memberships out of order to check that capacity queries use provider priority.
 	for _, providerID := range []int64{lowPriorityID, highPrioritySecondID, highPriorityFirstID} {
 		_, err = tx.ExecContext(ctx, `
 INSERT INTO provider_groups (provider_id, group_id)
@@ -108,7 +108,7 @@ VALUES ($1, $2)
 	})
 }
 
-// testTx 为迁移测试创建事务，测试结束时回滚结构变更。
+// testTx creates a transaction whose schema changes roll back when the test ends.
 func testTx(t *testing.T) *sql.Tx {
 	t.Helper()
 	tx, err := integrationDB.BeginTx(context.Background(), nil)

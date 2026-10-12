@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// E2E 用户流程测试
-// 测试完整的用户操作链路：注册 → 登录 → 创建 API Key → 调用网关 → 查询用量
+// These E2E tests exercise registration, login, API key creation,
+// gateway access, and usage queries against a running deployment.
 
 var (
 	testUserEmail    = "e2e-test-" + fmt.Sprintf("%d", time.Now().UnixMilli()) + "@test.local"
@@ -22,9 +22,9 @@ var (
 	testUserName     = "e2e-test-user"
 )
 
-// TestUserRegistrationAndLogin 测试用户注册和登录流程。
+// TestUserRegistrationAndLogin registers a user, logs in, and reads the current profile.
 func TestUserRegistrationAndLogin(t *testing.T) {
-	// 步骤 1: 注册新用户
+	// Register the user used by the following login subtest.
 	t.Run("注册新用户", func(t *testing.T) {
 		payload := map[string]string{
 			"email":    testUserEmail,
@@ -42,7 +42,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 
 		respBody, _ := io.ReadAll(resp.Body)
 
-		// 注册可能返回 200（成功）或 400（邮箱已存在）或 403（注册已关闭）
+		// Continue after a possible duplicate-email response; skip registration when it is disabled.
 		switch resp.StatusCode {
 		case 200:
 			t.Logf("✅ 用户注册成功: %s", testUserEmail)
@@ -55,7 +55,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 		}
 	})
 
-	// 步骤 2: 登录获取 JWT
+	// Retain the login token for the profile subtest.
 	var accessToken string
 	t.Run("用户登录获取JWT", func(t *testing.T) {
 		payload := map[string]string{
@@ -82,7 +82,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 			t.Fatalf("解析登录响应失败: %v", err)
 		}
 
-		// 尝试从标准响应格式获取 token
+		// Accept both a top-level token and a token inside the data envelope.
 		if token, ok := result["access_token"].(string); ok && token != "" {
 			accessToken = token
 		} else if data, ok := result["data"].(map[string]any); ok {
@@ -96,7 +96,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 			return
 		}
 
-		// 验证 token 不为空且格式基本正确
+		// Reject implausibly short tokens before using them in subsequent requests.
 		if len(accessToken) < 10 {
 			t.Fatalf("access_token 格式异常: %s", accessToken)
 		}
@@ -109,7 +109,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 		return
 	}
 
-	// 步骤 3: 使用 JWT 获取当前用户信息
+	// Use the acquired token to fetch the current profile.
 	t.Run("获取当前用户信息", func(t *testing.T) {
 		resp, err := doRequest(t, "GET", "/api/user/me", nil, accessToken)
 		if err != nil {
@@ -126,9 +126,9 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 	})
 }
 
-// TestAPIKeyLifecycle 测试 API Key 的创建和使用。
+// TestAPIKeyLifecycle creates an API key, calls the gateway, and queries usage.
 func TestAPIKeyLifecycle(t *testing.T) {
-	// 先登录获取 JWT
+	// Later subtests need a successful login.
 	accessToken := loginTestUser(t)
 	if accessToken == "" {
 		t.Skip("无法登录，跳过 API Key 生命周期测试")
@@ -137,7 +137,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 
 	var apiKey string
 
-	// 步骤 1: 创建 API Key
+	// Retain the created key for the gateway subtest.
 	t.Run("创建API_Key", func(t *testing.T) {
 		payload := map[string]string{
 			"name": "e2e-test-key-" + fmt.Sprintf("%d", time.Now().UnixMilli()),
@@ -162,7 +162,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 			t.Fatalf("解析响应失败: %v", err)
 		}
 
-		// 从响应中提取 key
+		// Accept a top-level key or a key inside the data envelope.
 		if key, ok := result["key"].(string); ok {
 			apiKey = key
 		} else if data, ok := result["data"].(map[string]any); ok {
@@ -176,7 +176,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 			return
 		}
 
-		// 验证 API Key 脱敏日志（只显示前 8 位）
+		// Log at most the first eight bytes of the key.
 		masked := apiKey
 		if len(masked) > 8 {
 			masked = masked[:8] + "..."
@@ -189,9 +189,9 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		return
 	}
 
-	// 步骤 2: 使用 API Key 调用网关（需要 Claude 或 Gemini 可用）
+	// Use the new key to access the gateway.
 	t.Run("使用API_Key调用网关", func(t *testing.T) {
-		// 尝试调用 models 列表（最轻量的 API 调用）
+		// Listing models exercises gateway authentication without generating content.
 		resp, err := doRequest(t, "GET", "/v1/models", nil, apiKey)
 		if err != nil {
 			t.Fatalf("网关请求失败: %v", err)
@@ -200,7 +200,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 
 		respBody, _ := io.ReadAll(resp.Body)
 
-		// 可能返回 200（成功）或 402（余额不足）或 403（无可用提供商）
+		// Log success and account restrictions; this smoke test does not assert the status code.
 		switch {
 		case resp.StatusCode == 200:
 			t.Logf("✅ API Key 网关调用成功")
@@ -213,7 +213,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		}
 	})
 
-	// 步骤 3: 查询用量记录
+	// Query usage with the login token.
 	t.Run("查询用量记录", func(t *testing.T) {
 		resp, err := doRequest(t, "GET", "/api/usage/dashboard", nil, accessToken)
 		if err != nil {
@@ -231,7 +231,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	})
 }
 
-// 辅助函数
+// Request and credential helpers.
 
 func doRequest(t *testing.T, method, path string, body []byte, token string) (*http.Response, error) {
 	t.Helper()
@@ -261,12 +261,12 @@ func doRequest(t *testing.T, method, path string, body []byte, token string) (*h
 func loginTestUser(t *testing.T) string {
 	t.Helper()
 
-	// 先尝试用管理员账户登录
+	// Use configured administrator credentials when ADMIN_PASSWORD is set.
 	adminEmail := getEnv("ADMIN_EMAIL", "admin@tokenrouter.local")
 	adminPassword := getEnv("ADMIN_PASSWORD", "")
 
 	if adminPassword == "" {
-		// 尝试用测试用户
+		// Otherwise use the test user's credentials.
 		adminEmail = testUserEmail
 		adminPassword = testUserPassword
 	}
@@ -305,7 +305,7 @@ func loginTestUser(t *testing.T) string {
 	return ""
 }
 
-// redactAPIKey API Key 脱敏，只显示前 8 位。
+// redactAPIKey trims whitespace and exposes eight leading bytes; shorter keys are fully masked.
 func redactAPIKey(key string) string {
 	key = strings.TrimSpace(key)
 	if len(key) <= 8 {

@@ -12,10 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// homeTextSource 给公开接口与首屏注入提供相同的站点设置。
+// homeTextSource supplies the same site settings to the public API and HTML injection.
 type homeTextSource map[string]string
 
-// TestLegalTranslationKeepsConsent 覆盖译文核对、原文变更和协议确认版本。
+// TestLegalTranslationKeepsConsent verifies that reviewed translations keep the
+// consent revision, while source edits change it and make translations stale.
 func TestLegalTranslationKeepsConsent(t *testing.T) {
 	zh := "zh-Hans"
 	docs := []LoginAgreementDocument{{ID: "terms", Title: "条款", ContentMD: "正文"}}
@@ -42,7 +43,8 @@ func TestLegalTranslationKeepsConsent(t *testing.T) {
 	require.True(t, info.Fallback)
 }
 
-// TestOptionalSiteTextDistinguishesEmpty 确认未配置与有意留空在公开展示中可以区分。
+// TestOptionalSiteTextDistinguishesEmpty verifies that saving an empty field
+// makes it distinguishable from an unconfigured field.
 func TestOptionalSiteTextDistinguishesEmpty(t *testing.T) {
 	values := map[string]string{}
 	editor := ParseLocalizedTexts(values)
@@ -62,7 +64,8 @@ func TestOptionalSiteTextDistinguishesEmpty(t *testing.T) {
 	require.Contains(t, ResolveSiteTexts(values, "zh-Hans"), "site_title")
 }
 
-// TestSiteTextOverrides 检查已保存的空文案与尚未配置的字段。
+// TestSiteTextOverrides checks that the API and HTML injection report configured
+// fields even when their saved text is empty.
 func TestSiteTextOverrides(t *testing.T) {
 	en := "en"
 	for _, tc := range []struct {

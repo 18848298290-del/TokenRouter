@@ -65,8 +65,8 @@ func TestCodexProviderIdentityNamespaceUsesStableCredentialSource(t *testing.T) 
 
 	seed := "11111111-1111-4111-8111-111111111111"
 	seeded := &providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Extra: map[string]any{providercore.CodexFingerprintSeedExtraKey: seed}}
-	require.Equal(t, "seed:"+seed, CodexIdentityNamespace(seeded)) // Local row IDs repeat across independent deployments, so they are not a
-	// safe fallback for upstream identity.
+	// Local row IDs can collide across deployments; use the seed for upstream identity.
+	require.Equal(t, "seed:"+seed, CodexIdentityNamespace(seeded))
 
 	require.Empty(t, CodexIdentityNamespace(&providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}))
 

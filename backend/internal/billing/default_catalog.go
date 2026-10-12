@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// WithPriceCatalog 在独立目录快照上复用相同算法、数据规则。
+// WithPriceCatalog reuses calculation options with a separate catalog snapshot.
 func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 	out := *s
 	out.catalog = catalog
@@ -16,7 +16,7 @@ func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 	return &out
 }
 
-// DefaultModelPrice 返回模型的基础计费规则，配置的零价按已定价处理。
+// DefaultModelPrice returns base billing rules for display; an explicit zero price counts as priced.
 func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.DefaultModelPrice {
 	result := pricing.DefaultModelPrice{Model: model, Platform: platform, BillingMode: "token", PriceStatus: "unpriced", Prices: []pricing.DefaultPriceValue{}}
 	add := func(key string, value float64, unit string) {
@@ -50,7 +50,7 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	}
 	knownImage := raw != nil && len(raw.ImagePrices) > 0
 	imageModel := mode == "image" || pricing.HasExplicitImageGenerationPricing(raw) || pricing.LooksLikeImageModel(model)
-	// 聊天模型附带的图片元数据不切换 token 模式；纯按张价和明确的图片模型使用媒体单位。
+	// Chat image metadata keeps token billing. Per-image rates and image models use media units.
 	hasImagePrice := knownImage || pricing.HasImageUnitPrice(raw) && (imageModel || raw.TokenPricingAbsent)
 	if hasImagePrice {
 		if result.PriceSources == nil {
@@ -96,7 +96,7 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	if base.MaxReasoningEffortMultiplier != nil {
 		add("max_reasoning", *base.MaxReasoningEffortMultiplier, "multiplier")
 	}
-	// 长上下文单价包含 Fast/Flex 倍率。任一长上下文倍率大于 1 才展示阶梯。
+	// Long-context rates include Fast/Flex multipliers. Show the tier when either long-context multiplier exceeds one.
 	if base.LongContextInputThreshold > 0 && (base.LongContextInputMultiplier > 1 || base.LongContextOutputMultiplier > 1) {
 		result.LongContextThreshold = base.LongContextInputThreshold
 		result.LongContextThresholdInclusive = base.LongContextThresholdInclusive
@@ -137,13 +137,13 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	return result
 }
 
-// defaultTokenPrices 用一个计费单位计算展示单价，缓存和图片 token 回退由计费算法处理。
+// defaultTokenPrices computes display rates using token billing rules, including cache and image token price defaults.
 func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPricing, prefix, tier string, applyLongCtx bool) []pricing.DefaultPriceValue {
 	prices := make([]pricing.DefaultPriceValue, 0, 7)
 	add := func(key string, value float64, unit string) {
 		prices = append(prices, pricing.DefaultPriceValue{Key: key, Value: &value, Unit: unit})
 	}
-	// 报价用量需达到目录阈值；严格大于阈值的模型额外加一个输入 token。
+	// Quote usage must reach the catalog threshold; exclusive thresholds require one extra input token.
 	gate := 0
 	if applyLongCtx && base.LongContextInputThreshold > 0 {
 		gate = base.LongContextInputThreshold

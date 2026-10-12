@@ -82,7 +82,6 @@ func RedisInt64(value any) (int64, error) {
 		_, err := fmt.Sscan(typed, &parsed)
 		return parsed, err
 	default:
-		// 错误字符串保持小写开头，便于上层继续包装上下文。
 		return 0, fmt.Errorf("redis 整数类型无效: %T", value)
 	}
 }

@@ -8,10 +8,10 @@ import (
 	"syscall"
 )
 
-// SanitizeStreamError 返回不含网络地址的客户端可见错误描述。
-// 默认 (*net.OpError).Error() 会拼接 Source/Addr 字段，泄露内部 IP/端口与上游
-// 服务器地址（例如 "read tcp 10.0.0.1:54321->52.1.2.3:443: read: connection
-// reset by peer"）。该函数只保留可识别的错误类别，原始 err 仍在调用点写入日志。
+// SanitizeStreamError returns an error category suitable for client responses.
+// net.OpError.Error includes source and destination addresses, so return the
+// recognized cause or operation name instead of its formatted network details.
+// Callers can log the original error separately for diagnosis.
 func SanitizeStreamError(err error) string {
 	if err == nil {
 		return ""

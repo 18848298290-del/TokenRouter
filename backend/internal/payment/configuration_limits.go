@@ -19,7 +19,7 @@ type ConfigEasyPayCustomMethodDisplayConfig struct {
 
 // GetAvailableMethodLimits collects all payment types from enabled provider
 // instances and returns limits for each, plus the global widest range.
-// Stripe 实例按服务商级 "stripe" 聚合，兼容旧实例保存的 card/link 等子方式。
+// Stripe instances share the "stripe" group, including legacy card/link subtype configurations.
 func (s *ConfigService) GetAvailableMethodLimits(ctx context.Context) (*MethodLimitsResponse, error) {
 	instances, err := s.store.ListInstances(ctx, InstanceFilter{EnabledOnly: true})
 	if err != nil {
@@ -198,9 +198,9 @@ func (s *ConfigService) ConfigPcInstanceEasyPayCustomMethodDisplayName(inst *Pro
 	return ""
 }
 
-// ConfigPcGroupByPaymentType 按用户可见支付方式聚合服务商实例。
-// Stripe 统一映射为 "stripe"，因为 Checkout 只展示一个 Stripe 入口，具体支付方式由 Stripe Dashboard 控制。
-// seen 用于避免同一个实例在一个分组里重复计数。
+// ConfigPcGroupByPaymentType groups provider instances by visible payment method.
+// Stripe has one Checkout entry; its Dashboard controls the methods shown inside Checkout.
+// Each instance is counted once per group.
 func ConfigPcGroupByPaymentType(instances []*ProviderInstance) map[string][]*ProviderInstance {
 	typeInstances := make(map[string][]*ProviderInstance)
 	seen := make(map[string]map[int64]bool)
@@ -214,7 +214,6 @@ func ConfigPcGroupByPaymentType(instances []*ProviderInstance) map[string][]*Pro
 		}
 	}
 	for _, inst := range instances {
-		// Stripe 服务商统一归到单个 "stripe" 分组。
 		if inst.ProviderKey == TypeStripe {
 			add(TypeStripe, inst)
 			continue

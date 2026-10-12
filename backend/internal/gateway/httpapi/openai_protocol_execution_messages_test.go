@@ -41,7 +41,7 @@ type openAICompatFailingWriter struct {
 	writes    int
 }
 
-// errTailReader 先返回指定数据，再以 err 代替 io.EOF，模拟上游连接在流中断开。
+// errTailReader returns data followed by err instead of EOF to simulate a broken upstream stream.
 type errTailReader struct {
 	data []byte
 	off  int
@@ -270,7 +270,7 @@ func TestForwardAsAnthropic_PreservesMaxForFinalGPT56ResponsesModel(t *testing.T
 	}
 }
 
-// rawGPT56ResponsesAPIKeyProvider 构造带模型映射的 Responses API Key 测试提供商。
+// rawGPT56ResponsesAPIKeyProvider builds a Responses API key fixture with model mapping.
 func rawGPT56ResponsesAPIKeyProvider(requestedModel, mappedModel string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -289,7 +289,7 @@ func rawGPT56ResponsesAPIKeyProvider(requestedModel, mappedModel string) *gatewa
 	}
 }
 
-// rawGPT56ResponsesOAuthProvider 构造带模型映射的 Responses OAuth 测试提供商。
+// rawGPT56ResponsesOAuthProvider builds a Responses OAuth fixture with model mapping.
 func rawGPT56ResponsesOAuthProvider(requestedModel, mappedModel string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -551,7 +551,8 @@ func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *t
 	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 }
 
-// TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity 验证 OAuth Messages 即使映射到非 Codex 模型，也通过 ChatGPT Codex 端点并恢复官方身份头。
+// TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity checks that non-Codex models still use the
+// Codex endpoint and identity for OAuth.
 func TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -2302,7 +2303,8 @@ func TestForwardGrokMessagesDropsRedundantViewImage(t *testing.T) {
 	assertGrokInlineImageTools(t, upstream.lastBody, "tools.#(name==\"%s\")")
 }
 
-// TestForwardAsAnthropicForGrokUsesXAIResponses 验证 Grok Messages 使用 Grok 请求头和端点，Codex 身份恢复用于 OpenAI OAuth。
+// TestForwardAsAnthropicForGrokUsesXAIResponses checks Grok headers and endpoints, keeping Codex identity
+// specific to OpenAI OAuth.
 func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2350,7 +2352,8 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "ok")
 }
 
-// TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce 验证 Grok Messages 在提供商缓存身份变化后应剥离旧推理密文，并通过同一路由重试一次。
+// TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce checks that stale reasoning ciphertext is
+// stripped and retried on the same route after the provider cache identity changes.
 func TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2565,7 +2568,7 @@ func TestNativeAnthropicPassthroughRecordsOutputConfigEffort(t *testing.T) {
 }
 
 func TestNativeAnthropicPassthroughThinkingEnabledFallback(t *testing.T) {
-	// 启用 thinking 且省略 effort 时，passback-required 白名单中的 k3 使用 high。
+	// With thinking enabled and effort omitted, the passback-required model k3 uses high.
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +
 		`"thinking":{"type":"enabled","budget_tokens":1024},` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
@@ -2598,7 +2601,7 @@ func TestNativeAnthropicPassthroughStreamRecordsEffort(t *testing.T) {
 }
 
 func TestNativeAnthropicPassthroughNoEffortStaysNil(t *testing.T) {
-	// 省略 output_config.effort 且未启用 thinking 时，结果为 nil。
+	// Omitting output_config.effort with thinking disabled leaves the result nil.
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
 	upstream := &auxiliaryHTTPRecorder{resp: nativeAnthropicBufferedResponse()}
@@ -2811,7 +2814,8 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonStreaming(t *testing.T) {
 	require.False(t, result.Stream)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone 验证文本块未关闭时收到 [DONE]，依次输出 content_block_stop、message_delta 和 message_stop。
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone checks that [DONE] closes an open
+// block before message_delta and message_stop.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2866,8 +2870,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone(t
 	require.NotNil(t, result.FirstTokenMs)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation 验证覆盖按索引聚合多分片 tool_call，并收尾为 stop_reason=tool_use 的
-// Anthropic tool_use 块。
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation checks that indexed tool_call
+// fragments
+// form Anthropic tool_use blocks with stop_reason=tool_use.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"weather in sf?"}],"tools":[{"name":"get_weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true},"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2916,8 +2921,10 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation(t *
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls 验证交错的并行工具参数分片。
-// 上游声明顺序与 index 不同时，下游按 index 输出各自闭合的 Anthropic tool_use 块。
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls checks interleaved tool
+// arguments.
+// When declaration order differs from index order, each Anthropic tool_use block is closed and emitted by
+// index.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":64,"messages":[{"role":"user","content":"read the file and print the directory"}],"tools":[{"name":"Read","input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}}},{"name":"Bash","input_schema":{"type":"object","properties":{"command":{"type":"string"}}}}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3012,7 +3019,8 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelTool
 	require.Equal(t, 9, result.Usage.OutputTokens)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens 验证 finish_reason=length 经 Chat、Responses、Anthropic 转换后为 stop_reason=max_tokens。
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens checks that finish_reason=length
+// becomes stop_reason=max_tokens through Chat, Responses, and Anthropic conversion.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3044,8 +3052,8 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens(t
 	require.Contains(t, out, "event: message_stop")
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage 验证上游立即以 [DONE] 结束时，仍须生成包含 message_start、message_delta 和
-// message_stop 的完整 Anthropic 流。
+// TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage checks that an immediate [DONE]
+// still produces message_start, message_delta, and message_stop.
 func TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3070,8 +3078,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage(t 
 	require.Contains(t, out, "event: message_stop")
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler 验证非故障转移的 4xx 使用共享错误处理器。
-// 响应按状态选择 Anthropic 错误类型，保留上游消息并记录 Ops 错误。
+// TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler checks shared handling for
+// non-failover 4xx responses.
+// The status selects the Anthropic error type; the upstream message and Ops error are retained.
 func TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3109,7 +3118,8 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHan
 	require.Equal(t, "invalid roles", events[0].Message)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize 验证流读取中断返回错误，输出以截断状态结束。
+// TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize checks that a read failure leaves
+// truncated output and returns an error.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3142,7 +3152,8 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *
 	require.NotContains(t, out, "event: message_stop", "no synthetic completion after a broken read")
 }
 
-// TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint 验证已确认支持 Responses 的 API Key 提供商使用 /v1/responses。
+// TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint checks /v1/responses for API key
+// providers with confirmed Responses support.
 func TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()

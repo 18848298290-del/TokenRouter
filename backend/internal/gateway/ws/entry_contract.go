@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// EntryKey 保存入站 WebSocket 所需的已验证访问数据。
+// EntryKey contains validated access data needed by the WebSocket entry path.
 type EntryKey struct {
 	ID                int64
 	UserID            int64
@@ -43,7 +43,7 @@ type EntryInput struct {
 	MaxProviderSwitches    int
 }
 
-// EntryProvider 保存提供商资格和展示字段。
+// EntryProvider contains provider eligibility and display data.
 type EntryProvider struct {
 	provider.ProviderSnapshot
 	Name   string
@@ -77,7 +77,7 @@ type EntryCyberSnapshot struct {
 	Input   moderation.ContentModerationInput
 }
 
-// EntryHooks 在 turn 生命周期中接收入口回调。
+// EntryHooks receives entry callbacks during each turn.
 type EntryHooks struct {
 	ContextForTurn              func(int) context.Context
 	ClientLifecycleContext      context.Context
@@ -95,7 +95,7 @@ type EntryHooks struct {
 	AfterTurn                   func(TurnCapture)
 }
 
-// EntryTarget 提供已选提供商的一次执行操作，执行时由目标处理凭据。
+// EntryTarget executes a selected provider attempt and handles its credentials.
 type EntryTarget interface {
 	MappedModel(string) string
 	Report(string, bool, *int)
@@ -117,7 +117,7 @@ type EntryCompletion interface {
 	Record(context.Context, *completion.Input, bool) error
 }
 
-// EntryPorts 提供单步能力，提供商循环、每轮资源及完成时序由 RunEntry 拥有。
+// EntryPorts supplies operations used by RunEntry, which owns provider retries, turn resources, and completion ordering.
 type EntryPorts interface {
 	Logger() EntryLogger
 	SetLogger(EntryLogger)
@@ -175,7 +175,7 @@ type EntryPorts interface {
 	SubmitCompletion(*ForwardResult, func(context.Context))
 }
 
-// EntryField 保存可写入日志的字段值。
+// EntryField stores a typed log-field value.
 type EntryField struct {
 	Key     string
 	Text    string

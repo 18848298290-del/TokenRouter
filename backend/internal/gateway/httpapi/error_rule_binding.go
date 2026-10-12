@@ -9,7 +9,7 @@ import (
 
 const errorPassthroughServiceContextKey = "error_passthrough_service"
 
-// BindErrorPassthroughService 将唯一错误规则实例绑定到当前 HTTP 请求。
+// BindErrorPassthroughService binds the shared error-rule service to this HTTP request.
 func BindErrorPassthroughService(c *gin.Context, svc *errorpolicy.ErrorPassthroughService) {
 	if c == nil || svc == nil {
 		return
@@ -17,7 +17,7 @@ func BindErrorPassthroughService(c *gin.Context, svc *errorpolicy.ErrorPassthrou
 	c.Set(errorPassthroughServiceContextKey, svc)
 }
 
-// BoundErrorPassthroughService 读取本请求的规则实例，不安装全局状态。
+// BoundErrorPassthroughService reads the error-rule service bound to this request.
 func BoundErrorPassthroughService(c *gin.Context) *errorpolicy.ErrorPassthroughService {
 	if c == nil {
 		return nil
@@ -33,7 +33,7 @@ func BoundErrorPassthroughService(c *gin.Context) *errorpolicy.ErrorPassthroughS
 	return svc
 }
 
-// ApplyErrorPassthroughRule 按规则改写错误响应；未命中时返回默认响应参数。
+// ApplyErrorPassthroughRule applies a matching rule, or returns the supplied defaults when none matches.
 func ApplyErrorPassthroughRule(
 	c *gin.Context,
 	platform string,
@@ -67,12 +67,12 @@ func ApplyErrorPassthroughRule(
 		errMsg = *rule.CustomMessage
 	}
 
-	// 命中 skip_monitoring 时在 context 中标记，供 ops_error_logger 跳过记录。
+	// Mark matching skip_monitoring rules so Ops can omit ordinary error logging.
 	if rule.SkipMonitoring {
 		c.Set(OpsSkipPassthroughKey, true)
 	}
 
-	// 与现有 failover 场景保持一致：命中规则时统一返回 upstream_error。
+	// Matched rules use the upstream_error type, as in failover error responses.
 	errType = "upstream_error"
 	return status, errType, errMsg, true
 }

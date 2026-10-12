@@ -52,7 +52,7 @@ var (
 		CheckOrigin: func(r *http.Request) bool {
 			return isAllowedOpsWSOrigin(r)
 		},
-		// 优先协商 tokenrouter-admin，兼容 sub2api-admin。JWT 用于认证。
+		// Prefer tokenrouter-admin while accepting sub2api-admin for compatibility. JWT authenticates the request.
 		Subprotocols: []string{"tokenrouter-admin", "sub2api-admin"},
 	}
 
@@ -102,8 +102,8 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 	}
 
 	rt := h.opsService.Realtime()
-	// Lazily start the background refresh loop so unit tests that never hit the
-	// websocket route don't spawn goroutines that depend on DB/Redis stubs.
+	// Prepare the shared refresh runtime on demand when a WebSocket request arrives.
+
 	rt.Prepare(h.opsService)
 
 	// Reserve a global slot before upgrading the connection to keep the limit strict.
@@ -187,7 +187,7 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 		}
 	})
 
-	// Push QPS data every 2 seconds (values are globally cached and refreshed at most once per qpsWSRefreshInterval).
+	// Push the payload cached by the shared realtime runtime every two seconds.
 	pushTicker := time.NewTicker(qpsWSPushInterval)
 	defer pushTicker.Stop()
 

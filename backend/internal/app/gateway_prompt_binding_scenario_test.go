@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 gateway_messages_execution.go 与 gateway_count_tokens.go 共用的提示词策略。
+// These tests cover prompt policy caching across token-count HTTP handlers.
 
 import (
 	"net/http"
@@ -18,7 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// TestPromptPolicyDirectHTTPBindingSharesCache 检查两个 HTTP 入口共享提示词缓存，在请求时读取设置，并在返回校验错误前执行替换。
+// TestPromptPolicyDirectHTTPBindingSharesCache checks that two handlers share one lazy settings load even when
+// requests fail validation.
 func TestPromptPolicyDirectHTTPBindingSharesCache(t *testing.T) {
 	repository := &readerStoreProbe{}
 	prompts := provideGatewayPromptPolicy(settings.New(repository))

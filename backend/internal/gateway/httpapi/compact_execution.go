@@ -13,7 +13,7 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// CompactExecutor 绑定固定模型配置与 HTTP 观测；一次恢复仍由 compact.Recovery 决定。
+// CompactExecutor supplies model configuration and HTTP observations to compact.Recovery.
 type CompactExecutor struct {
 	Models          gatewayprovider.CompactModels
 	LogBody         bool

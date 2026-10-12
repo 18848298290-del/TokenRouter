@@ -95,7 +95,8 @@ func (p *openAIRawChatAdapter) RawOptions(r *http.Response, billing, model strin
 	return p.s.Output.RawOptions(p.c, r, p.provider, billing, model, tier, WriteForwardChatError)
 }
 
-// GrokDecision 复用平台的健康解释，仅返回编排需要的三个判断。
+// GrokDecision returns the three retry decisions needed by orchestration from the platform health
+// classification.
 func (p *openAIRawChatAdapter) GrokDecision(ctx context.Context, resp *http.Response, b []byte, m string) openaiexecution.RawGrokDecision {
 	d := gatewayprovider.ApplyGrokExecutionHealth(ctx, p.s.Grok.Health, p.provider, resp.StatusCode, resp.Header, b, "", m)
 	return openaiexecution.RawGrokDecision{Failover: d.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(p.provider), resp.StatusCode, gatewayprovider.ShouldFailoverGrokResponse(resp.StatusCode, b)), Generic: d.ShouldReturnGenericError(), RetrySame: d.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(p.provider), resp.StatusCode)}

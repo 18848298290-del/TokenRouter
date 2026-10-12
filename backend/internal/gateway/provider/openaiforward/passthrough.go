@@ -34,7 +34,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	attemptImageIntentInvalidated, reasoningEffort, reqStream, startTime := in.ImageIntentInvalidated, in.ReasoningEffort, in.Stream, in.StartedAt
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
-	// 仅替换模型字段，保留大请求体及未知扩展字段的透传形状。
+	// Patch the model in place so large bodies and unknown extension fields retain their representation.
 	policyInputModel := p.ForwardModel(reqModel, p.CompactPath())
 	if policyInputModel == "" {
 		policyInputModel = reqModel
@@ -57,7 +57,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			p.Reject(403, "forbidden_error", rejectMsg, "")
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		// Codex passthrough 允许省略 instructions，但仍拒绝显式的非法值。
+		// Codex passthrough permits omitted instructions; invalid supplied values were rejected above.
 		if p.CodexModel(policyInputModel) && !gjson.GetBytes(body, "instructions").Exists() {
 			nextBody, setErr := sjson.SetBytes(body, "instructions", openai.DefaultCodexSynthInstructions(policyInputModel))
 			if setErr != nil {
@@ -84,7 +84,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 
 		p.StageFingerprint(nil)
-		// 透传与普通转换路径使用同一指纹规则，局部修改 client_metadata 可减少大请求体的解析开销。
+		// Use the shared fingerprint rules with a local client_metadata patch to limit parsing of large bodies.
 		if !p.CompactPath() {
 			fingerprintIDs := p.Fingerprint()
 			if fingerprintIDs != nil {
@@ -96,7 +96,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 					body = updatedBody
 				}
 			}
-			// nil 清除前一个提供商的指纹 ID。
+			// A nil result clears the previous provider's fingerprint IDs.
 			p.StageFingerprint(fingerprintIDs)
 		}
 	}
@@ -141,8 +141,8 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	if sanitized {
 		body = sanitizedBody
 	}
-	// 透传分支后续的 OAuth/APIKey 兼容归一化可能删除无工具请求的
-	// parallel_tool_calls，Responses Lite 在此补上 false。
+	// Earlier OAuth/API key normalization can remove parallel_tool_calls on requests
+	// without tools. Restore false here for Responses Lite.
 	if p.HasContext() && p.LiteHeader() {
 		liteBody, liteChanged, liteErr := p.NormalizeLite(body)
 		if liteErr != nil {
@@ -163,7 +163,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	}
 	body = updatedBody
 
-	// 宽泛意图保留给图片状态和计费，显式意图单独负责权限门禁。
+	// Broad image intent controls state and billing; explicit image intent controls permission checks.
 	imageIntent := p.ImageIntent(reqModel, canonicalImageIntentBody, policyModel, body, attemptImageIntentInvalidated)
 	explicitImageIntent := p.ExplicitImageIntent(policyModel, body)
 	if explicitImageIntent && !p.ImageAllowed() {
@@ -233,11 +233,11 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		resp, err = p.SendPass(upstreamReq)
 		p.Latency(time.Since(upstreamStart))
 		if err != nil {
-			// 未收到 HTTP 响应时交给外层切换提供商，持久故障仍由统一处理器临时摘除。
+			// Transport failures request outer failover; the shared handler also unschedules persistent faults.
 			return nil, p.TransportErrorPass(ctx, err)
 		}
 		if resp.StatusCode >= 400 {
-			// 只为识别失效任务而预读；恢复响应体，保证恢复失败后的错误处理仍读取原响应。
+			// Read the error for recovery checks, then restore the body for subsequent error handling.
 			probeBody := p.ReadErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
@@ -270,9 +270,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 				continue
 			}
 
-			// 透传模式默认保持原样代理；容量错误以及 API-key 上游的瞬时
-			// 5xx 应先触发多提供商 failover，且此时尚未写入下游响应。
-			// probeBody 已在上方任务探测时读取过一次，直接复用避免重复读取。
+			// Check capacity and transient API key failures before committing passthrough output
+			// so the outer handler can select another provider.
+			// Reuse the body already read for recovery checks.
 			if p.ShouldFailover(resp.StatusCode, probeBody) {
 				return nil, p.FailoverError(ctx, resp, body, probeBody)
 			}

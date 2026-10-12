@@ -518,7 +518,7 @@ func (s *GroupRepoSuite) TestUpdateSortOrders_BatchCaseWhen() {
 		{ID: g1.ID, SortOrder: 30},
 		{ID: g2.ID, SortOrder: 10},
 		{ID: g3.ID, SortOrder: 20},
-		{ID: g2.ID, SortOrder: 15}, // 重复 ID 应以最后一次为准
+		{ID: g2.ID, SortOrder: 15}, // The last update for a duplicate ID wins.
 	})
 	s.Require().NoError(err)
 
@@ -641,7 +641,6 @@ func (s *GroupRepoSuite) TestListActive() {
 	groups, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err, "ListActive")
 	s.Require().Len(groups, len(baseGroups)+1)
-	// Verify our test group is in the results
 	var found bool
 	for _, g := range groups {
 		if g.Name == "active1" {
@@ -691,9 +690,8 @@ func (s *GroupRepoSuite) TestListActiveDoesNotPartitionGroups() {
 
 	groups, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err, "ListActiveByPlatform")
-	// 两个启用的分组均进入列表，停用分组不返回。
+	// Both active groups appear regardless of protocol configuration; the disabled group is excluded.
 	s.Require().Len(groups, len(before)+2)
-	// Verify our test group is in the results
 	var found bool
 	for _, g := range groups {
 		if g.Name == "g1" {
@@ -786,9 +784,9 @@ func (s *GroupRepoSuite) TestGetProviderCount_Empty() {
 	s.Require().Zero(count)
 }
 
-// TestListWithFilters_ActiveProviderCount_LessThanTotal 验证 ActiveProviderCount 正确区分可用与不可用提供商。
-// 当分组内存在 disabled 或 schedulable=false 的提供商时，ActiveProviderCount 必须小于 ProviderCount，
-// 且与 GetProviderCount 返回的 active 值一致。
+// TestListWithFilters_ActiveProviderCount_LessThanTotal checks that disabled or unschedulable providers
+// contribute to ProviderCount but not ActiveProviderCount, and that both counts agree
+// with GetProviderCount.
 func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal() {
 	g := &routing.Group{
 		Name: "g-mixed-status",
@@ -820,14 +818,13 @@ func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal()
 		s.Require().NoError(err)
 	}
 
-	// 提供商 1：active + schedulable，同时计入 total 与 active。
+	// Active and schedulable: included in both counts.
 	link(insertProvider("acc-active-sched", billing.StatusActive, true))
-	// 提供商 2：disabled，仅计入 total。
+	// Disabled: included in the total count.
 	link(insertProvider("acc-disabled", billing.StatusDisabled, true))
-	// 提供商 3：active 但不可调度，仅计入 total。
+	// Active but unschedulable: included in the total count.
 	link(insertProvider("acc-unschedulable", billing.StatusActive, false))
 
-	// 通过筛选列表读取提供商数量。
 	isExclusive := false
 	groups, _, err := s.repo.ListWithFilters(s.ctx,
 		pagination.PaginationParams{Page: 1, PageSize: 100},
@@ -845,16 +842,17 @@ func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal()
 	s.Assert().Equal(int64(3), found.ProviderCount, "ProviderCount must count all 3 providers")
 	s.Assert().Equal(int64(1), found.ActiveProviderCount, "ActiveProviderCount must count only the active+schedulable provider")
 
-	// GetProviderCount 返回相同的总数和可用数量。
+	// The direct count query should agree with the filtered list.
 	total, active, err := s.repo.GetProviderCount(s.ctx, g.ID)
 	s.Require().NoError(err)
 	s.Assert().Equal(found.ProviderCount, total, "GetProviderCount total must match ListWithFilters ProviderCount")
 	s.Assert().Equal(found.ActiveProviderCount, active, "GetProviderCount active must match ListWithFilters ActiveProviderCount")
 }
 
-// TestListWithFilters_RateLimitedProviderCount 验证临时受限提供商不会计入可用提供商数。
-// rate_limit / overload / temp_unschedulable 都会让提供商退出当前调度池，
-// ActiveProviderCount 按当前调度条件统计。
+// TestListWithFilters_RateLimitedProviderCount excludes temporarily blocked providers from the active
+// count.
+// Rate limits, overload, temporary unschedulability, and auto-paused expiry
+// remove providers from the current schedulable pool.
 func (s *GroupRepoSuite) TestListWithFilters_RateLimitedProviderCount() {
 	g := &routing.Group{
 		Name: "g-rate-limited",
@@ -1040,21 +1038,19 @@ func (s *GroupRepoSuite) TestDelete_SoftDelete_NotVisibleInList() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, group))
 
-	// 获取删除前的列表数量
 	listBefore, _, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 100})
 	s.Require().NoError(err)
 	beforeCount := len(listBefore)
 
-	// 软删除
 	err = s.repo.Delete(s.ctx, group.ID)
 	s.Require().NoError(err, "Delete (soft delete)")
 
-	// 软删除的分组从查询列表中排除。
+	// Soft-deleted groups are excluded from list results.
 	listAfter, _, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 100})
 	s.Require().NoError(err)
 	s.Require().Len(listAfter, beforeCount-1, "soft deleted group should not appear in list")
 
-	// GetByID 对软删除的分组返回未找到。
+	// Direct lookup also treats a soft-deleted group as missing.
 	_, err = s.repo.GetByID(s.ctx, group.ID)
 	s.Require().Error(err)
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
@@ -1074,11 +1070,10 @@ func (s *GroupRepoSuite) TestDelete_SoftDeletedGroup_lockForUpdate() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, group))
 
-	// 软删除
 	err := s.repo.Delete(s.ctx, group.ID)
 	s.Require().NoError(err)
 
-	// GetByID 通过 deleted_at IS NULL 排除软删除的分组并返回 ErrGroupNotFound。
+	// Direct lookup returns ErrGroupNotFound for the soft-deleted row.
 	_, err = s.repo.GetByID(s.ctx, group.ID)
 	s.Require().Error(err, "should fail to get soft-deleted group")
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
@@ -1094,18 +1089,15 @@ func (s *GroupRepoSuite) transaction(t *testing.T) *dbent.Tx {
 	return tx
 }
 
-// TestListWithProviderCountSort_AttachesActiveCount 验证通过 provider_count 排序时，
-// ActiveProviderCount 与 ProviderCount 都被正确附加到返回结果中，
-// 排序按提供商总数计算。
+// TestListWithProviderCountSort_AttachesActiveCount checks that sorting by total provider count
+// returns both total and active counts.
 func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
-	// 分组 A：total=2，active=1（包含 1 个 disabled 提供商）。
 	gA := &routing.Group{
 		Name: "sort-count-a", RateMultiplier: 1, Status: billing.StatusActive,
 		AllowedProtocols:     capability.DefaultGroupClientProtocols(capability.PlatformAnthropic),
 		ProtocolFallbacks:    capability.DefaultProtocolFallbacks(capability.PlatformAnthropic),
 		ResponsesImagePolicy: "inherit",
 	}
-	// 分组 B：total=1，active=1。
 	gB := &routing.Group{
 		Name: "sort-count-b", RateMultiplier: 1, Status: billing.StatusActive,
 		AllowedProtocols:     capability.DefaultGroupClientProtocols(capability.PlatformAnthropic),
@@ -1130,10 +1122,10 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 		s.Require().NoError(err)
 	}
 
-	// gA：1 active + 1 disabled，因此 total=2，active=1。
+	// Group A has two providers in total and one active provider.
 	link(insertProvider("sa-active", billing.StatusActive), gA.ID)
 	link(insertProvider("sa-disabled", billing.StatusDisabled), gA.ID)
-	// gB：1 active，因此 total=1，active=1。
+	// Group B has one provider, which is active.
 	link(insertProvider("sb-active", billing.StatusActive), gB.ID)
 
 	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{
@@ -1157,7 +1149,7 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 	s.Assert().Equal(int64(1), cB.ProviderCount, "gB ProviderCount must be 1")
 	s.Assert().Equal(int64(1), cB.ActiveProviderCount, "gB ActiveProviderCount must be 1")
 
-	// 按 total 降序排列时，gA（total=2）排在 gB（total=1）前面。
+	// Descending total count places group A before group B despite equal active counts.
 	indexByID := make(map[int64]int, len(groups))
 	for i, g := range groups {
 		indexByID[g.ID] = i
@@ -1190,7 +1182,7 @@ func (s *GroupRepoSuite) TestList_DefaultSortBySortOrderAsc() {
 	}
 	s.Require().Contains(indexByID, g1.ID)
 	s.Require().Contains(indexByID, g2.ID)
-	// g2 has SortOrder=10, g1 has SortOrder=20; ascending means g2 comes first
+	// Ascending SortOrder places g2 (10) before g1 (20).
 	s.Require().Less(indexByID[g2.ID], indexByID[g1.ID])
 }
 
@@ -1227,7 +1219,7 @@ func (s *GroupRepoSuite) TestList_SortBySortOrderDesc() {
 	s.Require().Less(indexByID[g2.ID], indexByID[g1.ID])
 }
 
-// TestUnifiedProtocolRoundTrip 检查分组协议设置的保存和回读。
+// TestUnifiedProtocolRoundTrip checks persistence of group protocol settings and empty collections.
 func (s *GroupRepoSuite) TestUnifiedProtocolRoundTrip() {
 	original := &routing.Group{Name: "protocol-group", Status: billing.StatusActive, RateMultiplier: 1, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages}, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolAnthropicMessages: {protocol.ProtocolOpenAIResponses}}, ResponsesImagePolicy: "disabled"}
 	s.Require().NoError(s.repo.Create(s.ctx, original))

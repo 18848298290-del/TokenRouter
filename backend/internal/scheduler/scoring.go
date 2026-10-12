@@ -19,8 +19,8 @@ const (
 	DefaultTTFTAlpha      = 0.2
 )
 
-// RuntimeStats 保存所有高级调度分组共享的运行时反馈。
-// 提供商没有反馈样本时，错误率按 0% 处理，其它可选信号仍使用中性值。
+// RuntimeStats stores provider feedback shared by advanced scheduler groups.
+// Unobserved error rates count as 0%; other missing optional signals receive neutral scores.
 type RuntimeStats struct {
 	now           func() time.Time
 	providers     sync.Map
@@ -28,21 +28,21 @@ type RuntimeStats struct {
 	switchCount   atomic.Int64
 }
 
-// FeedbackConfig 保存一次请求回写运行时反馈时使用的 EWMA 系数。
-// 统计仍按提供商共享，但系数由请求最终命中的分组决定。
+// FeedbackConfig holds the EWMA coefficients used to report a request's outcome.
+// Feedback is shared by provider; the request's final group determines the coefficients.
 type FeedbackConfig = policy.FeedbackConfig
 
 type advancedProviderRuntimeStat struct {
 	errorRateEWMABits atomic.Uint64
 	ttftEWMABits      atomic.Uint64
-	// 诊断页需要区分“零错误率”和“尚无样本”，因此保留样本数与最近观测时间。
+	// Sample counts and timestamps distinguish zero errors from unobserved providers in diagnostics.
 	errorSamples          atomic.Int64
 	ttftSamples           atomic.Int64
 	lastObservedUnixNano  atomic.Int64
 	lastTTFTObservedNanos atomic.Int64
 }
 
-// FeedbackSnapshot 是诊断与评分共享的只读反馈快照，记录 EWMA 聚合后的健康指标和观测时间。
+// FeedbackSnapshot contains EWMA health metrics and observation times for scoring and diagnostics.
 type FeedbackSnapshot struct {
 	HasFeedback    bool
 	ErrorRate      float64
@@ -54,7 +54,7 @@ type FeedbackSnapshot struct {
 	LastTTFTAt     *time.Time
 }
 
-// CandidateScore 是完成平台硬过滤后的通用高级调度候选。
+// CandidateScore holds an advanced scheduler candidate after platform eligibility checks.
 type CandidateScore struct {
 	Provider           *ScoreProvider
 	LoadInfo           *ProviderLoadInfo
@@ -73,7 +73,7 @@ type CandidateScore struct {
 	Factors            CandidateFactors
 }
 
-// CandidateFactors 保存评分使用的归一化因子，供诊断展示。
+// CandidateFactors contains normalized scoring factors for diagnostics.
 type CandidateFactors struct {
 	Priority      float64
 	Load          float64
@@ -84,7 +84,7 @@ type CandidateFactors struct {
 	QuotaHeadroom float64
 }
 
-// ScoreRanges 记录本次候选池的归一化范围，供诊断接口直接解释公式。
+// ScoreRanges holds the candidate pool's normalization ranges for diagnostic formulas.
 type ScoreRanges struct {
 	MinPriority       int
 	MaxPriority       int
@@ -99,7 +99,7 @@ type ScoreRanges struct {
 
 type candidateHeap []CandidateScore
 
-// ScoreInput 只携带平台无关的可选调度信号。
+// ScoreInput contains optional scheduling signals and selection parameters.
 type ScoreInput struct {
 	Now                      func() time.Time
 	GroupID                  *int64
@@ -117,7 +117,7 @@ type SelectionRNG struct {
 	state uint64
 }
 
-// ScoreSnapshot 是管理端和高级调度器共用的评分展示结构。
+// ScoreSnapshot contains scores displayed by the admin API and advanced scheduler.
 type ScoreSnapshot struct {
 	BaseScore             float64
 	StickyScore           float64
@@ -125,9 +125,9 @@ type ScoreSnapshot struct {
 	StickyWeightedEnabled bool
 }
 
-// ScoreProvider 保存提供商评分所需的数值和标识。
+// ScoreProvider holds the provider values and identifiers needed for scoring.
 type ScoreProvider struct {
-	// Name 和 ProjectionID 供诊断关联候选使用。
+	// Name and ProjectionID identify candidates in diagnostics.
 	Name             string
 	ProjectionID     uint64
 	ID               int64
@@ -160,7 +160,7 @@ func (s *RuntimeStats) loadOrCreate(providerID int64) *advancedProviderRuntimeSt
 	}
 
 	stat := &advancedProviderRuntimeStat{}
-	// 未观测错误率按 0% 处理，后续样本从零基线更新 EWMA。
+	// Unobserved errors start at 0%; subsequent samples update EWMA from this baseline.
 	stat.errorRateEWMABits.Store(math.Float64bits(0))
 	stat.ttftEWMABits.Store(math.Float64bits(math.NaN()))
 	actual, loaded := s.providers.LoadOrStore(providerID, stat)
@@ -297,7 +297,7 @@ func (h candidateHeap) Len() int {
 }
 
 func (h candidateHeap) Less(i, j int) bool {
-	// 最小堆根节点保存最差候选，便于在线维护 Top-K。
+	// Keep the worst candidate at the root so a better candidate can replace it in Top-K.
 	return CandidateBetter(h[j], h[i])
 }
 
@@ -334,7 +334,7 @@ func CandidateBetter(left, right CandidateScore) bool {
 	if left.Provider.Priority != right.Provider.Priority {
 		return left.Provider.Priority < right.Provider.Priority
 	}
-	// 负载与等待参与评分，同分时按实体 ID 排序。
+	// Load and queue length already affect Score; ID breaks ties after priority.
 	return left.Provider.ID < right.Provider.ID
 }
 
@@ -377,7 +377,7 @@ func SortCandidates(candidates []CandidateScore) {
 	}
 }
 
-// ScoreCandidates 对硬过滤后的候选执行通用评分，并返回负载偏斜。
+// ScoreCandidates scores eligible providers and returns the standard deviation of known load rates.
 // @project-doc docs/architecture/provider_scheduling_and_cache.md#advanced_scheduler_selection
 func ScoreCandidates(
 	providers []*ScoreProvider,
@@ -391,8 +391,8 @@ func ScoreCandidates(
 	return candidates, skew
 }
 
-// ScoreCandidatesWithRanges 与实际评分共用同一条计算路径，
-// 额外返回归一化范围，供管理员诊断界面逐项解释结果。
+// ScoreCandidatesWithRanges computes production scores and returns normalization
+// ranges so diagnostics can explain each factor.
 func ScoreCandidatesWithRanges(
 	providers []*ScoreProvider,
 	loadMap map[int64]*ProviderLoadInfo,
@@ -519,7 +519,7 @@ func ScoreCandidatesWithRanges(
 			loadFactor = 1 - Clamp01(float64(item.LoadInfo.LoadRate)/100.0)
 			queueFactor = 1 - Clamp01(float64(item.LoadInfo.WaitingCount)/float64(maxWaiting))
 		}
-		// 没有错误反馈等价于 0% 错误率，因此获得完整健康度分值。
+		// Unobserved errors count as 0%, giving the full health score.
 		errorFactor := 1.0
 		if item.HasFeedback {
 			errorFactor = 1 - Clamp01(item.ErrorRate)
@@ -640,7 +640,7 @@ func BuildWeightedSelectionOrder(candidates []CandidateScore, input ScoreInput) 
 		}
 	}
 	for i := range pool {
-		// 将 Top-K 分值平移到正区间，让每个候选都有机会被抽中。
+		// Shift Top-K scores above zero so every candidate has a chance of selection.
 		weight := (pool[i].Score - minScore) + 1.0
 		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
 			weight = 1.0
@@ -712,7 +712,7 @@ func BuildScoreSnapshot(
 			StickyScoreInfinity:   !stickyWeightedEnabled,
 		}
 		if stickyWeightedEnabled {
-			// 上一响应的亲缘加分只适用于实际 OpenAI 提供商。
+			// Previous-response affinity applies to OpenAI providers.
 			platform := candidate.Provider.Platform
 			score.StickyScore = candidate.Score + weights.SessionSticky
 			if platform == capability.PlatformOpenAI {

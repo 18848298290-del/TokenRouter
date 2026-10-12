@@ -14,18 +14,18 @@ import (
 )
 
 const (
-	// RedeemActionCreate: code does not exist — create it, then redeem.
+	// RedeemActionCreate creates and redeems a missing code.
 	RedeemActionCreate RedeemAction = iota
-	// RedeemActionRedeem: code exists but is unused — skip creation, redeem only.
+	// RedeemActionRedeem redeems an existing unused code.
 	RedeemActionRedeem
-	// RedeemActionSkipCompleted: code exists and is already used — skip to mark completed.
+	// RedeemActionSkipCompleted skips redemption of an already used code.
 	RedeemActionSkipCompleted
 
 	FulfillmentLeaseDuration = 5 * time.Minute
 )
 
-// ErrOrderNotFound 表示支付回调引用的 out_trade_no 在本地订单表中不存在。
-// Webhook 处理器会把它当成终态错误处理，返回 2xx 避免支付平台持续重试。
+// ErrOrderNotFound means the callback out_trade_no has no matching local order.
+// Webhook handlers acknowledge this terminal error with 2xx to stop provider retries.
 var ErrOrderNotFound = errors.New("payment order not found")
 
 // RedeemAction represents the idempotency decision for balance fulfillment.
@@ -35,7 +35,7 @@ func (s *Fulfillment) HandlePaymentNotification(ctx context.Context, n *PaymentN
 	if n == nil {
 		return nil
 	}
-	// 本次只让 Stripe 的异步失败事件改变订单状态，其他渠道维持原有忽略语义。
+	// Only Stripe failure notifications transition orders; other providers' failure notifications are ignored.
 	if n.Status == ProviderStatusFailed && GetBasePaymentType(pk) != TypeStripe {
 		return nil
 	}
@@ -66,7 +66,7 @@ func (s *Fulfillment) HandlePaymentNotification(ctx context.Context, n *PaymentN
 }
 
 func (s *Fulfillment) FindPaymentNotificationOrder(ctx context.Context, orderID string) (*Order, error) {
-	// 优先按发送给渠道的外部订单号查询，旧版 sub2_N 载荷仅在确实未命中时回退。
+	// Look up the exact merchant order number before trying a legacy sub2_N local ID.
 	order, err := s.store.OrderByTradeNumber(ctx, orderID)
 	if err == nil {
 		return order, nil
@@ -86,7 +86,7 @@ func (s *Fulfillment) FindPaymentNotificationOrder(ctx context.Context, orderID 
 	return nil, fmt.Errorf("%w: out_trade_no=%s", ErrOrderNotFound, orderID)
 }
 
-// ParseLegacyPaymentOrderID 在商户订单号查询未命中时，从早期 sub2_ 载荷中解析本地订单 ID。
+// ParseLegacyPaymentOrderID parses a sub2_ local ID only after a merchant order lookup misses.
 func ParseLegacyPaymentOrderID(orderID string, notFound bool) (int64, bool) {
 	const legacyOrderIDPrefix = "sub2_"
 	if !notFound {
@@ -359,7 +359,7 @@ func (s *Fulfillment) AcquirePaymentFulfillmentLease(ctx context.Context, o *Ord
 		return nil, infraerrors.Conflict("CONFLICT", "order status changed while acquiring fulfillment lease")
 	}
 
-	// 重新读取数据库时间戳，避免依赖应用时钟精度。
+	// Reload the stored timestamp so the lease version uses database precision.
 	claimed, err := s.store.Order(ctx, o.ID)
 	if err != nil {
 		return nil, fmt.Errorf("reload acquired fulfillment lease: %w", err)
@@ -392,7 +392,7 @@ func (s *Fulfillment) DoBalance(ctx context.Context, o *Order, lease *Fulfillmen
 		if err := s.ApplyAffiliateRebateForOrder(ctx, o); err != nil {
 			return err
 		}
-		// Code already created and redeemed — just mark completed
+		// The code has already granted the balance; finish the order.
 		return s.MarkCompleted(ctx, o, lease, "RECHARGE_SUCCESS")
 	case RedeemActionCreate:
 		rc := &billing.RedeemCode{Code: o.RechargeCode, Type: billing.RedeemTypeBalance, Value: o.Amount, Status: billing.StatusUnused}
@@ -400,7 +400,7 @@ func (s *Fulfillment) DoBalance(ctx context.Context, o *Order, lease *Fulfillmen
 			return fmt.Errorf("create redeem code: %w", err)
 		}
 	case RedeemActionRedeem:
-		// Code exists but unused — skip creation, proceed to redeem
+		// Reuse the existing unused code.
 	}
 	if _, err := s.redeemService.Redeem(billing.ContextSkipRedeemAffiliate(ctx), o.UserID, o.RechargeCode); err != nil {
 		return fmt.Errorf("redeem balance: %w", err)
@@ -606,7 +606,7 @@ func (s *Fulfillment) ApplyAffiliateRebateForOrder(ctx context.Context, o *Order
 	return s.store.ApplyOrderRebate(ctx, o, base)
 }
 
-// AffiliateRebateBasePoints 只返回订单实际购买的推理积分，绝不使用支付金额兜底。
+// AffiliateRebateBasePoints returns purchased reasoning points, or zero when no valid base exists.
 func AffiliateRebateBasePoints(o *Order) float64 {
 	points, ok := OrderPurchasedReasoningPoints(o)
 	if !ok {
@@ -622,7 +622,7 @@ func (s *Fulfillment) MarkFailed(ctx context.Context, oid int64, lease *Fulfillm
 	}
 	now := s.runtime.Now()
 	r := OrderErrorMessage(cause)
-	// 租约版本可阻止旧工作协程覆盖新的履约所有者。
+	// The lease version prevents a stale worker from overwriting a newer fulfillment owner.
 	c, e := s.store.TransitionOrder(ctx, OrderTransition{
 		ID:           oid,
 		From:         []string{OrderStatusRecharging},

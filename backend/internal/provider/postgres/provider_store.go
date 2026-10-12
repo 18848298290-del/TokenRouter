@@ -13,7 +13,7 @@ import (
 
 const postgresParameterBatchSize = 50000
 
-// ProviderStoreOptions 提供数据转换、事件写入和时钟配置。
+// ProviderStoreOptions supplies record conversion, event publishing, diagnostics, and clock dependencies.
 type ProviderStoreOptions struct {
 	Events         ProviderEvents
 	OllamaIdentity func(*providercore.Record) bool
@@ -78,10 +78,10 @@ func (r *ProviderStore) afterChange(ctx context.Context, id int64) {
 	}
 }
 
-// SetEvents 设置提供商事件回调。
+// SetEvents replaces the provider event callbacks.
 func (r *ProviderStore) SetEvents(events ProviderEvents) { r.options.Events = events }
 
-// clientFromContext 返回 ent.NewTxContext 中的事务客户端，未设置事务时返回默认客户端。
+// clientFromContext returns the client from ent.NewTxContext, or defaultClient when no transaction is present.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()

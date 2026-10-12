@@ -59,7 +59,7 @@ func TestResolveGrokStandaloneSearchModelUsesRuntimeDefault(t *testing.T) {
 	require.Equal(t, model, gjson.GetBytes(body, "model").String())
 }
 
-// buildStandaloneXSearchForTest 构造启用 X 搜索的请求体。
+// buildStandaloneXSearchForTest builds an X-search request body.
 func buildStandaloneXSearchForTest(r searchtools.StandaloneRequest, m string) ([]byte, error) {
 	return GrokStandaloneSearchBody(r, m, 0, true)
 }

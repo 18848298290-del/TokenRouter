@@ -19,17 +19,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// failConfigurationOutbox 模拟调度 outbox 写入失败。
+// failConfigurationOutbox simulates a scheduler outbox write failure.
 type failConfigurationOutbox struct{ providerEventsFixture }
 
-// Write 返回用于触发事务回滚的错误。
+// Write returns a database error that aborts the configuration transaction.
 func (failConfigurationOutbox) Write(ctx context.Context, exec postgresinfra.Executor, _ providerpostgres.ProviderEvent, _, _ *int64, _ any) error {
-	// 在事务连接写入 outbox 时返回错误，检查配置更新随事务回滚。
+	// Fail on the transaction connection so configuration changes roll back with the outbox write.
 	_, err := exec.ExecContext(ctx, "INSERT INTO test_missing_outbox_fixture DEFAULT VALUES")
 	return err
 }
 
-// mustCreateGroup 使用 Ent 默认值和传入字段创建测试分组。
+// mustCreateGroup applies fixture defaults, creates a group, and fills its database identity and timestamps.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -67,7 +67,7 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
-// mustBindProviderToGroup 创建提供商与分组的关系。
+// mustBindProviderToGroup creates a provider/group membership.
 func mustBindProviderToGroup(t *testing.T, client *dbent.Client, providerID, groupID int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -79,7 +79,7 @@ func mustBindProviderToGroup(t *testing.T, client *dbent.Client, providerID, gro
 	require.NoError(t, err, "create provider_group")
 }
 
-// mustCreateProxy 使用给定字段创建代理并回填数据库字段。
+// mustCreateProxy applies fixture defaults, creates a proxy, and fills its database identity and timestamps.
 func mustCreateProxy(t *testing.T, client *dbent.Client, p *egress.Proxy) *egress.Proxy {
 	t.Helper()
 	ctx := context.Background()
@@ -125,7 +125,7 @@ func mustCreateProxy(t *testing.T, client *dbent.Client, p *egress.Proxy) *egres
 	return p
 }
 
-// mustCreateProvider 使用给定字段创建提供商并回填数据库字段。
+// mustCreateProvider applies fixture defaults, forces schedulability, and fills the saved identity and timestamps.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -213,8 +213,8 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
-// testEntTx 创建在测试结束时回滚的事务。
-// 提交事务的竞争测试自行删除测试行。
+// testEntTx creates a transaction that rolls back during test cleanup.
+// Tests that commit to exercise races must delete their own rows.
 func testEntTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 	tx, err := integrationEntClient.Tx(context.Background())
@@ -223,7 +223,7 @@ func testEntTx(t *testing.T) *dbent.Tx {
 	return tx
 }
 
-// testEntClient 返回本测试进程共用的 Ent 客户端。
+// testEntClient returns the Ent client shared by the test process.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	return integrationEntClient

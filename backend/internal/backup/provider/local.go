@@ -77,7 +77,7 @@ func (s *LocalBackupStore) Delete(_ context.Context, key string) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	// 解析父目录后删除目标路径。目标为符号链接时删除链接本身。
+	// Resolve the parent directory, then delete the entry itself, including a final symlink.
 	full, err := s.safePath(key)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 	return written, nil
 }
 
-// rooted 校验目标后用同一个目录句柄访问，防止校验后替换路径造成越界。
+// rooted validates the target and accesses it through the same directory handle to contain path replacement races.
 func (s *LocalBackupStore) rooted(key string) (*os.Root, string, error) {
 	full, err := s.safePath(key)
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *LocalBackupStore) rooted(key string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	// 尚不存在的上传路径逐级解析其最近的现有父目录。
+	// For new upload paths, find the nearest existing parent and resolve its symlinks.
 	probe := full
 	var suffix []string
 	for {
@@ -216,12 +216,12 @@ func (s *LocalBackupStore) rooted(key string) (*os.Root, string, error) {
 	}
 }
 
-// DefaultBackupLocalPath 返回数据目录下的 backups 路径。
+// DefaultBackupLocalPath returns the backups directory beneath the application data directory.
 func DefaultBackupLocalPath() string {
 	return filepath.Join(resolveBackupDataDir(), "backups")
 }
 
-// resolveBackupDataDir 依次选择 DATA_DIR、可写的 /app/data 和当前目录。
+// resolveBackupDataDir chooses DATA_DIR, a writable /app/data, or the current directory, in that order.
 func resolveBackupDataDir() string {
 	if dir := os.Getenv("DATA_DIR"); strings.TrimSpace(dir) != "" {
 		return dir

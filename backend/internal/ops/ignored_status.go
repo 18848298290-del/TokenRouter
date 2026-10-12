@@ -6,6 +6,7 @@ func DefaultOpsIgnoredStatusCodes() []int {
 	return []int{401, 403}
 }
 
+// NormalizeOpsIgnoredStatusCodes returns sorted unique codes. Nil uses defaults; an empty slice disables exclusions.
 func NormalizeOpsIgnoredStatusCodes(codes []int) []int {
 	if codes == nil {
 		return DefaultOpsIgnoredStatusCodes()

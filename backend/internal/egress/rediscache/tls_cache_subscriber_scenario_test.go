@@ -1,6 +1,6 @@
 package rediscache
 
-// 本场景检查 tls_profile_cache.go 和 tls_router_cache.go 的订阅停止与 Redis 关闭顺序。
+// This scenario covers subscriber shutdown ordering for TLS profile and router caches.
 
 import (
 	"context"
@@ -62,7 +62,7 @@ func TestTLSFingerprintCacheSubscriberStopsBeforeRedisClose(t *testing.T) {
 				}
 			}, time.Second, 10*time.Millisecond)
 
-			// 停止函数等待订阅协程退出，Redis 在订阅停止后关闭。
+			// StopSubscription waits for the subscriber before the deferred Redis close.
 			cache.StopSubscription()
 			cache.StopSubscription()
 		})

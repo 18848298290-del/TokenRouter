@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// InternalGeminiGenerationOptions 是平台已确定的生成约束，转换不识别模型名称。
+// InternalGeminiGenerationOptions contains generation limits resolved by the caller.
 type InternalGeminiGenerationOptions struct {
 	DefaultOutputTokens    int
 	MaxOutputTokens        int
@@ -43,8 +43,8 @@ func InternalIsCodeExecutionTool(tool ClaudeTool) bool {
 	return strings.TrimSpace(tool.Type) == "code_execution"
 }
 
-// InternalHasMixedToolInvocations 判断构建后的工具声明是否同时包含函数声明与内置工具
-// （googleSearch/codeExecution）。仅在两者并存时需要开启 includeServerSideToolInvocations。
+// InternalHasMixedToolInvocations reports whether functions and built-in search or code tools coexist.
+// Mixed declarations require includeServerSideToolInvocations.
 func InternalHasMixedToolInvocations(declarations []GeminiToolDeclaration) bool {
 	hasFunctions, hasBuiltin := false, false
 	for _, declaration := range declarations {
@@ -58,7 +58,7 @@ func InternalHasMixedToolInvocations(declarations []GeminiToolDeclaration) bool 
 	return hasFunctions && hasBuiltin
 }
 
-// BuildInternalGeminiTools 构建 tools。
+// BuildInternalGeminiTools converts Claude tools to v1internal declarations and returns diagnostics.
 func BuildInternalGeminiTools(tools []ClaudeTool) ([]GeminiToolDeclaration, []string) {
 	diagnostics := []string{}
 	diagnostic := func(format string, args ...any) { diagnostics = append(diagnostics, fmt.Sprintf(format, args...)) }
@@ -69,13 +69,11 @@ func BuildInternalGeminiTools(tools []ClaudeTool) ([]GeminiToolDeclaration, []st
 	hasWebSearch := InternalHasWebSearchTool(tools)
 	hasCodeExecution := slices.ContainsFunc(tools, InternalIsCodeExecutionTool)
 
-	// 普通工具
 	var funcDecls []GeminiFunctionDecl
 	for _, tool := range tools {
 		if InternalIsWebSearchTool(tool) || InternalIsCodeExecutionTool(tool) {
 			continue
 		}
-		// 跳过无效工具名称
 		if strings.TrimSpace(tool.Name) == "" {
 			diagnostic("Warning: skipping tool with empty name")
 			continue
@@ -84,7 +82,7 @@ func BuildInternalGeminiTools(tools []ClaudeTool) ([]GeminiToolDeclaration, []st
 		var description string
 		var inputSchema map[string]any
 
-		// 检查是否为 custom 类型工具 (MCP)
+		// Custom tools store their description and schema in a nested specification.
 		if tool.Type == "custom" {
 			if tool.Custom == nil || tool.Custom.InputSchema == nil {
 				diagnostic("[Warning] Skipping invalid custom tool '%s': missing custom spec or input_schema", tool.Name)
@@ -93,20 +91,16 @@ func BuildInternalGeminiTools(tools []ClaudeTool) ([]GeminiToolDeclaration, []st
 			description = tool.Custom.Description
 			inputSchema = tool.Custom.InputSchema
 		} else {
-			// 标准格式: 从顶层字段获取
 			description = tool.Description
 			inputSchema = tool.InputSchema
 		}
 
-		// 清理 JSON Schema
-		// 1. 深度清理 [undefined] 值
+		// Remove placeholder values before adapting the schema to v1internal.
 		DeepCleanUndefined(inputSchema)
-		// 2. 转换为符合 Gemini v1internal 的 schema
 		params := CleanJSONSchema(inputSchema)
-		// 为 nil schema 提供默认值
 		if params == nil {
 			params = map[string]any{
-				"type":       "object", // lowercase type
+				"type":       "object",
 				"properties": map[string]any{},
 			}
 		}
@@ -152,7 +146,7 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 	diagnostic := func(format string, args ...any) { diagnostics = append(diagnostics, fmt.Sprintf(format, args...)) }
 	maxLimit := options.MaxOutputTokens
 	config := &GeminiGenerationConfig{
-		MaxOutputTokens: options.DefaultOutputTokens, // 默认最大输出
+		MaxOutputTokens: options.DefaultOutputTokens,
 	}
 
 	isReasoning := options.ReasoningModel
@@ -160,19 +154,17 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 		config.StopSequences = options.StopSequences
 	}
 
-	// 如果请求中指定了 MaxTokens，使用请求值
 	if req.MaxTokens > 0 {
 		config.MaxOutputTokens = req.MaxTokens
 	}
 
-	// Thinking 配置
 	if req.Thinking != nil && (req.Thinking.Type == "enabled" || req.Thinking.Type == "adaptive") {
 		config.ThinkingConfig = &GeminiThinkingConfig{
 			IncludeThoughts: true,
 		}
 
-		// - thinking.type=enabled：budget_tokens>0 时使用该预算
-		// - thinking.type=adaptive：在 Antigravity 的高阶 Opus（4.6+）上覆写为 （24576）
+		// A positive caller-selected adaptive budget overrides the requested budget.
+		// Otherwise, an absent positive budget uses the upstream dynamic value (-1).
 		budget := -1
 		if req.Thinking.BudgetTokens > 0 {
 			budget = req.Thinking.BudgetTokens
@@ -181,14 +173,13 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 			budget = options.AdaptiveThinkingBudget
 		}
 
-		// 正预算需要做上限与 max_tokens 约束；动态预算（-1）直接透传给上游。
+		// Apply limits to positive budgets; pass the dynamic budget (-1) through.
 		if budget > 0 {
-			// gemini-2.5-flash 上限
 			if options.ThinkingBudgetLimit > 0 && budget > options.ThinkingBudgetLimit {
 				budget = options.ThinkingBudgetLimit
 			}
 
-			// 自动修正：max_tokens 必须大于 budget_tokens（Claude 上游要求）
+			// Claude requires output capacity beyond the thinking budget.
 			if adjusted, ok := EnsureMaxTokensGreaterThanBudget(config.MaxOutputTokens, budget, options.BudgetPadding); ok {
 				diagnostic("[Antigravity] Auto-adjusted max_tokens from %d to %d (must be > budget_tokens=%d)",
 					config.MaxOutputTokens, adjusted, budget)
@@ -202,7 +193,6 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 		config.MaxOutputTokens = maxLimit
 	}
 
-	// 其他参数
 	if !isReasoning {
 		if req.Temperature != nil && !options.DropTemperature {
 			config.Temperature = req.Temperature
@@ -218,9 +208,9 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 	return config, diagnostics
 }
 
-// EnsureMaxTokensGreaterThanBudget 将 max_tokens 调整到大于 budget_tokens。
-// Claude API 要求启用 thinking 时，max_tokens 必须大于 thinking.budget_tokens
-// 返回调整后的 maxTokens 和是否进行了调整。
+// EnsureMaxTokensGreaterThanBudget raises maxTokens to budgetTokens + padding when needed.
+// Callers supply positive padding to satisfy the Claude thinking budget constraint.
+// The boolean reports whether maxTokens changed.
 func EnsureMaxTokensGreaterThanBudget(maxTokens, budgetTokens, padding int) (int, bool) {
 	if budgetTokens > 0 && maxTokens <= budgetTokens {
 		return budgetTokens + padding, true

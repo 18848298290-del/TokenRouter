@@ -43,21 +43,21 @@ func TestCountGrokNativeSearchCallsFromSSEBodyDedups(t *testing.T) {
 
 func TestCountGrokNativeSearchCallsInSSEDataDedup_LiveStreamPath(t *testing.T) {
 	t.Parallel()
-	// 模拟实时流式累加器，依次处理 item.done 与 response.completed。
-	// 同一 call_id 只能计费一次，防止附加费接近翻倍的回归。
+	// Process item.done followed by response.completed with the same accumulator.
+	// A shared call_id contributes one surcharge across both events.
 	seen := make(map[string]struct{})
 	done := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws1","call_id":"c1"}}`)
 	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"web_search_call","id":"ws1","call_id":"c1"},{"type":"x_search_call","id":"xs1","call_id":"c2"}]}}`)
 	require.Equal(t, 1, CountGrokNativeSearchCallsInSSEDataDedup(done, seen))
 	require.Equal(t, 1, CountGrokNativeSearchCallsInSSEDataDedup(completed, seen))
-	// 未去重的原始路径仍会重复统计同一对事件包。
+	// The per-payload helper counts each event independently.
 	require.Equal(t, 1, CountGrokNativeSearchCallsInSSEData(done))
 	require.Equal(t, 2, CountGrokNativeSearchCallsInSSEData(completed))
 }
 
 func TestCountGrokNativeSearchCallsInSSEDataDedup_NoIDStillDedups(t *testing.T) {
 	t.Parallel()
-	// 上游省略 call_id 或 id 时，计数器用合成键识别重复调用。
+	// Synthetic keys deduplicate completed calls when the upstream omits IDs.
 	seen := make(map[string]struct{})
 	done := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call"}}`)
 	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"web_search_call"}]}}`)
@@ -85,7 +85,7 @@ func stringsJoin(lines ...string) string {
 }
 
 func TestCountGrokNativeSearchCallsFromJSON_MessagesStyleBody(t *testing.T) {
-	// 验证 Anthropic 缓冲的 Grok /v1/messages 路径使用同一计数器。
+	// Buffered Messages responses use the same Responses output counter.
 	body := []byte(`{"id":"r1","output":[{"type":"web_search_call","id":"ws1"},{"type":"message","role":"assistant"}]}`)
 	require.Equal(t, 1, CountGrokNativeSearchCallsFromJSONBytes(body))
 }

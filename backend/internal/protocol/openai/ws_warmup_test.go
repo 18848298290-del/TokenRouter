@@ -7,7 +7,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 预热识别要求布尔 false，缺省或其他类型仍按普通生成请求处理。
+// TestWSWarmupPayloadAndEvents checks that only boolean false selects warmup, and checks the empty event pair.
 func TestWSWarmupPayloadAndEvents(t *testing.T) {
 	require.True(t, IsWSWarmupPayload([]byte(`{"type":"response.create","generate":false}`)))
 	for _, body := range []string{`{"type":"response.create"}`, `{"type":"response.create","generate":true}`, `{"type":"response.create","generate":"false"}`, `{"type":"response.create","generate":null}`, `{"type":"session.update","generate":false}`, `{"type":"response.create","generate":false} trailing`} {

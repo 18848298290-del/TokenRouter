@@ -2,7 +2,7 @@ package content
 
 import "github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 
-// LoginAgreementCopy 将协议标题和正文作为完整语言版本。
+// LoginAgreementCopy stores an agreement's title and body as one language version.
 type LoginAgreementCopy struct {
 	Title     string `json:"title"`
 	ContentMD string `json:"content_md"`

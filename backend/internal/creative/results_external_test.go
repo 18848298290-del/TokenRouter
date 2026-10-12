@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// creativeFakeUsageLogRepo 记录 Create 收到的用量日志。
+// creativeFakeUsageLogRepo collects usage logs passed to Create.
 type creativeFakeUsageLogRepo struct {
 	usage.UsageLogRepository
 	logs []*usage.UsageLog
@@ -55,7 +55,7 @@ func TestCreativeSucceedRunIdempotentSettlement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, creative.CreativeRunStatusSucceeded, second.Status)
 
-	// 捕获与用量日志各只发生一次，且幂等键稳定。
+	// Repeated completion captures funds and logs usage once with stable billing identifiers.
 	require.Equal(t, 1, billing.captureN)
 	require.Equal(t, []string{"creative_capture:" + runID}, billing.captureIDs)
 	require.Len(t, usageRepo.logs, 1)
@@ -63,13 +63,14 @@ func TestCreativeSucceedRunIdempotentSettlement(t *testing.T) {
 	require.Equal(t, "creative_settle:"+runID, usageRepo.logs[0].BillingKey)
 	require.Equal(t, "image", stringValue(usageRepo.logs[0].BillingMode))
 	require.Equal(t, 1, usageRepo.logs[0].ImageCount)
-	// 输出行保持一条 succeeded，重复结算不产生重复输出。
+	// Repeated settlement keeps a single succeeded output row.
 	outputs := repo.outputs[runID]
 	require.Len(t, outputs, 1)
 	require.Equal(t, creative.CreativeRunOutputStatusSucceeded, outputs[0].Status)
 }
 
-// TestCreativeSucceedRunRequiresTransientOutput 校验任务成功前必须先持久化输出。
+// TestCreativeSucceedRunRequiresTransientOutput checks rejection of empty output and billable loss after
+// save failures.
 func TestCreativeSucceedRunRequiresTransientOutput(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -92,7 +93,7 @@ func TestCreativeSucceedRunRequiresTransientOutput(t *testing.T) {
 			name:  "empty output",
 			bytes: []byte{},
 			configure: func(svc *creative.Public) {
-				// 使用默认 fake transient，校验空字节在写入前被拒绝。
+				// The default transient fake verifies that empty bytes are rejected before a write.
 			},
 		},
 	}
@@ -138,7 +139,7 @@ func TestCreativeSucceedRunRequiresTransientOutput(t *testing.T) {
 				require.Equal(t, creative.CreativeRunOutputStatusPending, repo.outputs[runID][0].Status)
 				require.Zero(t, billingRepo.captureN)
 			} else {
-				// 已发生服务但无法交付时，记录 result_lost 并计费一次。
+				// Confirmed generation with undeliverable output is billed once and recorded as result_lost.
 				require.NoError(t, err)
 				require.Equal(t, creative.CreativeRunStatusResultLost, repo.runs[runID].Status)
 				require.Equal(t, 1, billingRepo.captureN)

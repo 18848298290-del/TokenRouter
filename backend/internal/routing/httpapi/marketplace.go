@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// MarketplaceStatsReader 查询首页公开统计。
+// MarketplaceStatsReader reads public homepage statistics.
 type MarketplaceStatsReader interface {
 	PublicStats(context.Context) (dto.ModelMarketplaceStats, error)
 }
@@ -26,7 +26,7 @@ func NewMarketplaceHandler(marketplace *routing.Marketplace, stats MarketplaceSt
 	return &MarketplaceHandler{marketplace: marketplace, stats: stats}
 }
 
-// ListPublic 默认附带容量，页面可通过 include_capacity=false 跳过容量查询。
+// ListPublic includes capacity by default; include_capacity=false skips that query.
 func (h *MarketplaceHandler) ListPublic(c *gin.Context) {
 	includeCapacity, err := strconv.ParseBool(c.DefaultQuery("include_capacity", "true"))
 	if err != nil {
@@ -41,7 +41,7 @@ func (h *MarketplaceHandler) ListPublic(c *gin.Context) {
 	httpx.Success(c, dto.ModelMarketplaceGroupsFromRouting(groups))
 }
 
-// StatsPublic 返回公开的 Token 和用户计数。
+// StatsPublic returns public token and user counts.
 func (h *MarketplaceHandler) StatsPublic(c *gin.Context) {
 	stats, err := h.stats.PublicStats(c.Request.Context())
 	if err != nil {
@@ -51,7 +51,7 @@ func (h *MarketplaceHandler) StatsPublic(c *gin.Context) {
 	httpx.Success(c, stats)
 }
 
-// RegisterPublicMarketplaceRoutes 注册公开市场模型和统计查询路由。
+// RegisterPublicMarketplaceRoutes registers public model and statistics queries.
 func RegisterPublicMarketplaceRoutes(v1 *gin.RouterGroup, endpoint *MarketplaceHandler) {
 	marketplace := v1.Group("/marketplace")
 	marketplace.GET("/models", endpoint.ListPublic)

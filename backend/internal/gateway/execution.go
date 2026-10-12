@@ -10,17 +10,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// RequestMetadata 是 HTTP 适配在执行前取得的值快照；不保留响应器或请求对象。
+// RequestMetadata contains values captured by the HTTP adapter before execution.
 type RequestMetadata = execution.RequestMetadata
 
-// FundingState 保存认证和复合选组完成后的访问数据及指定权益。
-// 资金算法和最终授权仍由 billing 执行。
+// FundingState contains authenticated access data and the selected subscription after composite-group resolution.
+// Billing performs funding checks and settlement authorization.
 type FundingState = execution.FundingState
 
-// ExecutionResult 独立返回最后一次已执行尝试，即使该尝试同时失败也保留观测用量。
+// ExecutionResult retains the final executed attempt and its observed usage even when execution fails.
 type ExecutionResult = execution.ExecutionResult
 
-// QoderRuntime 由 app 构造并绑定选择、恢复和执行能力。HTTP 调用传入请求数据和同步输出回调。
+// QoderRuntime supplies request preparation, funding checks, provider selection, and recovery decisions.
 type QoderRuntime interface {
 	Prepare(context.Context, Request) (Request, error)
 	Check(context.Context, Request, bool) error
@@ -31,19 +31,19 @@ type QoderRuntime interface {
 	QueueFailure(string, error)
 }
 
-// ExecutionObserver 在请求处理中同步报告 HTTP 观测和等待心跳。
+// ExecutionObserver synchronously reports request observations and wait heartbeats.
 type ExecutionObserver interface {
 	Prepared(Request)
 	Selected(provider.ProviderSnapshot)
 	Waiting(string) scheduler.WaitObserver
 }
 
-// NewQoderExecutor 绑定 Qoder 执行依赖和尝试流程。
+// NewQoderExecutor binds Qoder runtime and concurrency dependencies.
 func NewQoderExecutor(maxProviders int, waitTimeout time.Duration, concurrency *scheduler.ConcurrencyService, runtime QoderRuntime) *QoderUseCase {
 	return &QoderUseCase{MaxProviders: maxProviders, WaitTimeout: waitTimeout, concurrency: concurrency, runtime: runtime}
 }
 
-// Execute 不要求调用者组装选择、刷新、计费或完成回调。
+// Execute prepares a request and runs provider selection, attempts, and completion with the bound runtime.
 func (u *QoderUseCase) Execute(ctx context.Context, request Request, output upstream.OutputSink) (ExecutionResult, error) {
 	var result ExecutionResult
 	if err := ctx.Err(); err != nil {

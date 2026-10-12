@@ -11,7 +11,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ProviderTerminology 拒绝管理契约中的旧上游账号字段；凭据与第三方导入载荷交给所属适配器。
+// ProviderTerminology rejects legacy account fields in selected admin query parameters and top-level JSON fields.
 func ProviderTerminology() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := strings.TrimPrefix(c.Request.URL.Path, "/api/v1/admin/")
@@ -53,7 +53,7 @@ func ProviderTerminology() gin.HandlerFunc {
 					return
 				}
 			}
-			// Gin 的缓存供 ShouldBindBodyWith 使用；普通 JSON 绑定仍需读取同一请求体。
+			// Restore the body for ordinary JSON binding; Gin's cache is used by ShouldBindBodyWith.
 			if raw, ok := c.Get(gin.BodyBytesKey); ok {
 				if body, ok := raw.([]byte); ok {
 					c.Request.Body = io.NopCloser(bytes.NewReader(body))

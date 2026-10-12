@@ -11,16 +11,16 @@ import (
 )
 
 const (
-	// contentSessionSeedPrefix 为内容派生种子添加前缀，与 sess-xxx 等指定会话 ID 区分。
+	// contentSessionSeedPrefix separates content-derived seeds from explicit IDs such as sess-xxx.
 	contentSessionSeedPrefix = "compat_cs_"
 
-	// contentStablePrefixSessionSeedPrefix 标识仅由跨独立提示仍保持稳定的请求字段派生的缓存身份。
+	// contentStablePrefixSessionSeedPrefix identifies cache seeds shared across independent prompts.
 	contentStablePrefixSessionSeedPrefix = "compat_csp_"
 )
 
-// OpenAIContentSeed 从 OpenAI 格式请求体构建稳定会话种子。
-// 仅包含跨对话轮次不变的字段；Chat 仅采集开头的 system/developer 前缀，
-// 同时支持 Chat Completions 与 Responses API。
+// OpenAIContentSeed derives a session seed from Chat Completions or Responses input.
+// It includes model, tools, instructions, and the first user input. Chat includes leading system/developer messages;
+// Responses includes system/developer items throughout its input array.
 func OpenAIContentSeed(body []byte) string {
 	if len(body) == 0 {
 		return ""
@@ -38,7 +38,7 @@ func OpenAIContentSeed(body []byte) string {
 	)
 	var fields [contentSessionSeedFieldCount]gjson.Result
 	var seen uint8
-	// 从首个根容器开始扫描，以匹配 gjson.GetBytes 对带非 JSON 前缀畸形输入的行为。
+	// Start at the first root container to match gjson.GetBytes on malformed inputs with non-JSON prefixes.
 	root := body
 	for i := range body {
 		switch body[i] {
@@ -57,7 +57,7 @@ scanRoot:
 		if key.Index < nextKeyOffset || key.Index > len(root) {
 			return false
 		}
-		// 畸形输入下 Result.ForEach 可能越过根对象右花括号；分隔区间不会包含前一个值内部的花括号。
+		// For malformed input, ForEach can pass the root closing brace. The gap excludes braces inside the prior value.
 		if bytes.IndexByte(root[nextKeyOffset:key.Index], '}') >= 0 {
 			return false
 		}
@@ -180,8 +180,8 @@ scanRoot:
 	return contentSessionSeedPrefix + b.String()
 }
 
-// OpenAIAnchoredContentSeed 仅在存在有效用户输入锚点时返回旧版内容派生种子，
-// 防止只有模型字段的请求形成租户级缓存路由身份。
+// OpenAIAnchoredContentSeed returns a content seed when meaningful user input is present.
+// This prevents model-only requests from creating a tenant-wide cache routing identity.
 func OpenAIAnchoredContentSeed(body []byte) string {
 	if !hasOpenAIContentSessionUserAnchor(body) {
 		return ""
@@ -258,10 +258,10 @@ func hasMeaningfulOpenAIContent(content gjson.Result) bool {
 	return meaningful
 }
 
-// OpenAIStablePrefixSeed 根据 OpenAI 格式请求的可复用前缀构建种子。
-// 用户与助手内容会被排除，使共享系统提示或工具前缀的独立请求能够复用上游提示缓存身份。
+// OpenAIStablePrefixSeed derives a cache seed from reusable request fields.
+// It excludes user and assistant content so independent requests can share system and tool prefix cache identity.
 //
-// 返回空值表示请求没有有效的稳定前缀，调用方必须使用范围更小的回退身份。
+// An empty result means no usable prefix; callers must choose a more narrowly scoped identity.
 func OpenAIStablePrefixSeed(body []byte) string {
 	if len(body) == 0 {
 		return ""

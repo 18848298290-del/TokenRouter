@@ -11,7 +11,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// HealthInput 保存健康测试所需的依赖。
+// HealthInput supplies dependencies for provider health tests.
 type HealthInput struct {
 	Store   gatewayadapter.ExecutionProviderStore
 	Cache   provider.TempUnschedCache
@@ -40,7 +40,7 @@ func (s healthStore) ListByPlatform(ctx context.Context, platform string) ([]pro
 	return out, err
 }
 
-// NewHealthObserver 构造独立测试图；全部裁决调用生产原生实现。
+// NewHealthObserver wires production health decisions to test dependencies.
 func NewHealthObserver(input HealthInput) *provideradapter.UpstreamHealth {
 	options := input.Options
 	options.Now = time.Now

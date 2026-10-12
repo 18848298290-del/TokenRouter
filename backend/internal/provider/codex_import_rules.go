@@ -413,8 +413,8 @@ func ResolveCodexImportExpiry(req CodexSessionImportRequest, item *CodexImportPr
 	if item == nil {
 		return nil, nil, nil, nil, errors.New("导入项为空")
 	}
-	// Agent Identity 没有 OAuth access token 有效期，其 runtime/task 生命周期由上游恢复链处理。
-	// 因此导入时不能套用 OAuth 过期拒绝或自动暂停策略。
+	// Agent Identity runtime/task recovery is managed upstream and has no OAuth access-token expiry.
+	// Do not apply OAuth expiry rejection or automatic pause rules to these imports.
 	if item.IsAgentIdentity {
 		return nil, nil, nil, nil, nil
 	}
@@ -520,9 +520,9 @@ func SanitizeCodexImportCredentialExtras(input map[string]any) map[string]any {
 	return CloneValues(out)
 }
 
-// BuildCodexImportIdentityKeys 生成导入条目的匹配键。refresh_token 缺失时
-// Codex session 只能作为 accessToken-only 凭据使用，此时以 access token
-// 使用指纹匹配身份，同 workspace 的 provider 和 user 标识可能共享。
+// BuildCodexImportIdentityKeys builds matching keys for an import entry.
+// Without a refresh token, a Codex session is an access-token-only credential.
+// Match by token fingerprint because provider and user identifiers may be shared in a workspace.
 func BuildCodexImportIdentityKeys(providerID, userID, email, accessToken, refreshToken string) []string {
 	accessToken = strings.TrimSpace(accessToken)
 	refreshToken = strings.TrimSpace(refreshToken)
@@ -533,9 +533,9 @@ func BuildCodexImportIdentityKeys(providerID, userID, email, accessToken, refres
 }
 
 func BuildCodexAgentIdentityKeys(providerID string) []string {
-	// 同一 ChatGPT 提供商下的 Agent Identity 凭据应合并，但同一用户可能拥有多个 Team
-	// 提供商。这里不能用 user、email 或 runtime 作为回退键：user_id 会跨 Team 共享，
-	// runtime_id 则会在同一提供商注册新 runtime 时变化。
+	// Merge Agent Identity credentials for the same ChatGPT provider. A user can belong to multiple teams,
+	// so user and email are unsafe substitutes for the provider key.
+	// Runtime IDs can change when the same provider registers another runtime.
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return nil
@@ -744,7 +744,7 @@ func codexUnixTime(value int64) time.Time {
 	return time.Unix(value, 0).UTC()
 }
 
-// validateCodexPrivateKey 未配置技术校验时失败关闭，不能把 Agent Identity 私钥当成普通字符串接受。
+// validateCodexPrivateKey rejects input when no validator is configured; a private key requires structural validation.
 func validateCodexPrivateKey(validate func(string) error, key string) error {
 	if validate == nil {
 		return errors.New("agent identity private key validator is not configured")

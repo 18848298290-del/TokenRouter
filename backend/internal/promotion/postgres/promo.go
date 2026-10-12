@@ -88,12 +88,12 @@ func (r *promoCodeRepository) GetByCodeForUpdate(ctx context.Context, code strin
 	return promoCodeEntityToService(m), nil
 }
 
-// Update 写入管理员可编辑的字段。
+// Update writes administrator-editable fields.
 //
-// 这里刻意不写 used_count：它由兑换路径的 IncrementUsedCount 原子递增，
-// 而 used_count >= max_uses 正是"优惠码用完了"的判定依据。若管理员编辑
-// （改有效期、改额度……）时按快照把 used_count 回写，并发的兑换计数就会被抹掉，
-// 兑换次数统计随之失真。PromoService.Update 也从不修改该字段。
+// IncrementUsedCount atomically increments used_count during redemption.
+// A positive max_uses is exhausted when used_count reaches it. Writing a stale
+// used_count snapshot during an admin edit would erase concurrent redemptions.
+// Both this method and PromoService.Update leave used_count to the redemption path.
 func (r *promoCodeRepository) Update(ctx context.Context, code *promotion.PromoCode) error {
 	client := clientFromContext(ctx, r.client)
 	builder := client.PromoCode.UpdateOneID(code.ID).
@@ -253,7 +253,7 @@ func (r *promoCodeRepository) IncrementUsedCount(ctx context.Context, id int64) 
 	return err
 }
 
-// Entity to Service conversions
+// Entity-to-service conversions.
 
 func promoCodeEntityToService(m *dbent.PromoCode) *promotion.PromoCode {
 	if m == nil {
@@ -317,7 +317,7 @@ func promoNote(s *string) string {
 	return *s
 }
 
-// promoUserView 将用户实体转换为优惠码使用记录中的用户资料。
+// promoUserView converts a user entity to the profile included in promotion usage records.
 func promoUserView(u *dbent.User) *promotion.UserView {
 	if u == nil {
 		return nil

@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityDegradedUsage 从 FetchQuota 错误构建降级 UsageInfo。
+// AntigravityDegradedUsage builds a partial UsageInfo from a quota-fetch error.
 func AntigravityDegradedUsage(err error, now time.Time) *providercore.UsageInfo {
 	errMsg := fmt.Sprintf("usage API error: %v", err)
 	slog.Warn("antigravity usage fetch failed, returning degraded response", "error", err)
@@ -20,8 +20,8 @@ func AntigravityDegradedUsage(err error, now time.Time) *providercore.UsageInfo 
 		Error:     errMsg,
 	}
 
-	// 从错误信息推断 error_code 和状态标记
-	// 错误格式来自 antigravity/client.go: "fetchAvailableModels 失败 (HTTP %d): ..."
+	// Classify the text returned by the Antigravity quota client.
+	// HTTP status fragments survive the client's contextual error wrapping.
 	errStr := err.Error()
 	switch {
 	case strings.Contains(errStr, "HTTP 401") ||
@@ -38,14 +38,10 @@ func AntigravityDegradedUsage(err error, now time.Time) *providercore.UsageInfo 
 	return info
 }
 
-// EnrichUsageWithProviderError 结合提供商错误状态修正 UsageInfo
-// 场景 1（成功路径）：FetchAvailableModels 正常返回，但提供商已因 403 被标记为 error，
-//
-//	需要在正常 usage 数据上附加 forbidden/validation 信息。
-//
-// 场景 2（降级路径）：被封号的提供商 OAuth token 失效，FetchAvailableModels 返回 401，
-//
-//	降级逻辑设置了 needs_reauth，但提供商实际是 403 封号/需验证，需覆盖为正确状态。
+// EnrichUsageWithProviderError adds stored forbidden or verification state to usage data.
+// A successful usage fetch can coexist with a provider disabled by a 403.
+// Stored ban or verification evidence also overrides a degraded 401's needs_reauth flag,
+// so the response describes the provider's known restriction.
 func EnrichUsageWithProviderError(info *providercore.UsageInfo, value *providercore.Record) {
 	if info == nil || value == nil || value.Status != providercore.StatusError {
 		return

@@ -38,7 +38,7 @@ type ModerationPort interface {
 
 type ContentModerationIdentity = moderationflow.Identity
 
-// GatewayModerationEndpoints 读取请求路由和强制平台。
+// GatewayModerationEndpoints reads the request route and forced platform.
 type GatewayModerationEndpoints struct{}
 
 func ContentModerationStatus(decision *moderation.ContentModerationDecision) int {
@@ -78,7 +78,8 @@ func RecordOpenAICyberWarningWithSnapshot(endpoints ModerationEndpoints, svc Mod
 	if svc == nil || c == nil {
 		return false
 	}
-	// WS 上游事件回调和 turn 收尾都可能观察到同一个 cyber_policy 终止事件，这里按请求/turn 去重。
+	// Deduplicate per request or turn because both WS event callbacks and turn completion can observe
+	// cyber_policy.
 	if c.GetBool(CyberWarningRecordedKey) {
 		return false
 	}
@@ -175,7 +176,7 @@ func SetOpenAICyberWarningRequestSnapshot(c *gin.Context, protocol string, body 
 	if c == nil || len(body) == 0 {
 		return
 	}
-	// Cyber 与本地审核共用当前轮快照，其中包含工具输出和图片上下文。
+	// Cyber warnings and local moderation use the same turn content, including tool output and images.
 	snapshot := moderation.ExtractContentModerationInput(protocol, body)
 	c.Set(CyberWarningSnapshotKey, snapshot)
 	excerpt := moderation.ExtractContentModerationPromptExcerptFromInput(snapshot)

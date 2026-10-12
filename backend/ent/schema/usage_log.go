@@ -14,34 +14,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// UsageLog 定义使用日志实体的 schema。
+// UsageLog stores API usage and billing facts.
 //
-// 使用日志记录每次 API 调用的详细信息，包括 token 使用量、成本计算等。
-// UsageLog 用于追加用量记录。
+// Records include token counts and calculated costs for API calls.
+// Callers append usage records to this table.
 type UsageLog struct {
 	ent.Schema
 }
 
-// Annotations 返回 schema 的注解配置。
+// Annotations sets the database table name.
 func (UsageLog) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "usage_logs"},
 	}
 }
 
-// Fields 定义使用日志实体的所有字段。
+// Fields defines request attribution, usage, and billing fields.
 func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
-		// 关联字段
+		// Request attribution.
 		field.Int64("user_id"),
-		// 原始 SQL 写入由触发器兼容旧路径，仓储层仍会显式写入付款人快照。
+		// Repositories write the payer snapshot; a database trigger supports legacy raw SQL inserts.
 		field.Int64("billing_user_id").Optional(),
 		field.Int64("team_id").Optional().Nillable(),
 		field.Int64("api_key_id"),
 		field.Int64("provider_id"),
-		// 平台随使用事实保存，提供商或分组变动不会改变历史统计。
+		// Snapshot the platform so later provider or group edits cannot change historical statistics.
 		field.String("platform").MaxLen(64).Default("unknown"),
-		// billing_key 保存资金操作的稳定去重值，旧记录为空时使用 request_id。
+		// billing_key deduplicates fund operations; legacy rows with no value use request_id.
 		field.String("billing_key").MaxLen(255).Optional().Nillable(),
 		field.String("request_id").
 			MaxLen(64).
@@ -56,18 +56,18 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 		// UpstreamModel stores the actual upstream model name when model mapping
-		// is applied. NULL means no mapping — the requested model was used as-is.
+		// is applied. NULL means no upstream model was recorded.
 		field.String("upstream_model").
 			MaxLen(100).
 			Optional().
 			Nillable(),
-		// 上游响应模型用于管理员审计；历史与缺失观测保持为空。
+		// The upstream response model is for administrator audits; missing observations and legacy rows remain NULL.
 		field.String("upstream_response_model").MaxLen(200).Optional().Nillable(),
 		field.Bool("upstream_model_mismatch").Optional().Nillable(),
-		field.Int64("pricing_config_id").Optional().Nillable().Comment("共享价格配置 ID"),
-		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("模型映射链"),
-		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("计费层级标签"),
-		field.String("billing_mode").MaxLen(20).Optional().Nillable().Comment("计费模式：token/per_request/image"),
+		field.Int64("pricing_config_id").Optional().Nillable().Comment("Shared pricing configuration ID"),
+		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("Model mapping chain"),
+		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("Billing tier label"),
+		field.String("billing_mode").MaxLen(20).Optional().Nillable().Comment("Billing mode: token/per_request/image"),
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
@@ -75,7 +75,7 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
-		// Token 计数字段
+		// Token counts.
 		field.Int("input_tokens").
 			Default(0),
 		field.Int("output_tokens").
@@ -89,7 +89,7 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("cache_creation_1h_tokens").
 			Default(0),
 
-		// 成本字段
+		// Costs and funding allocations.
 		field.Float("input_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
@@ -122,15 +122,15 @@ func (UsageLog) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
 		field.Bool("long_context_billing_applied").
 			Default(false).
-			Comment("该请求是否因长上下文规则实际增加费用"),
+			Comment("Records whether long-context rules increased this request's cost"),
 
-		// provider_rate_multiplier: 提供商计费倍率快照（NULL 表示按 1.0 处理）
+		// Provider cost multiplier snapshot; NULL is treated as 1.0.
 		field.Float("provider_rate_multiplier").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
 
-		// 其他字段
+		// Request timing and client metadata.
 		field.Int8("billing_type").
 			Default(0),
 		field.Bool("stream").
@@ -146,11 +146,11 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 		field.String("ip_address").
-			MaxLen(45). // 支持 IPv6
+			MaxLen(45). // Fits IPv6 addresses.
 			Optional().
 			Nillable(),
 
-		// 图片生成字段（仅 gemini-3-pro-image 等图片模型使用）
+		// Image generation usage, including image models such as gemini-3-pro-image.
 		field.Int("image_count").
 			Default(0),
 		field.String("image_size").
@@ -173,24 +173,24 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// 视频生成字段（Grok 视频按秒计费；billing_mode 走 token/其他模式时这些列仍标记视频用量）
+		// Video usage remains identifiable under any billing_mode; Grok video charges use seconds.
 		field.Int("video_count").
 			Default(0).
-			Comment("视频生成数量；>0 表示本行是视频生成用量"),
+			Comment("Generated video count; a positive value identifies video usage"),
 		field.String("video_resolution").
 			MaxLen(10).
 			Optional().
 			Nillable().
-			Comment("计费用视频分辨率 480p/720p/1080p"),
+			Comment("Video resolution used for billing: 480p/720p/1080p"),
 		field.Int("video_duration_seconds").
 			Optional().
 			Nillable().
-			Comment("提交时请求的视频时长（秒），按秒计费的乘数"),
-		// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
+			Comment("Requested video duration at submission, in seconds, used for per-second billing"),
+		// Records an administrator override of cache TTL billing.
 		field.Bool("cache_ttl_overridden").
 			Default(false),
 
-		// 时间戳（只有 created_at，日志不可修改）
+		// Creation time is immutable; usage records have no updated_at field.
 		field.Time("created_at").
 			Default(time.Now).
 			Immutable().
@@ -198,7 +198,7 @@ func (UsageLog) Fields() []ent.Field {
 	}
 }
 
-// Edges 定义使用日志实体的关联关系。
+// Edges defines request attribution and subscription relationships.
 func (UsageLog) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("user", User.Type).
@@ -231,7 +231,7 @@ func (UsageLog) Edges() []ent.Edge {
 	}
 }
 
-// Indexes 定义数据库索引，优化查询性能。
+// Indexes supports attribution, model, request, and time-range lookups.
 func (UsageLog) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("user_id"),
@@ -245,10 +245,10 @@ func (UsageLog) Indexes() []ent.Index {
 		index.Fields("model"),
 		index.Fields("requested_model"),
 		index.Fields("request_id"),
-		// 复合索引用于时间范围查询
+		// Composite indexes support time-range queries for users and keys.
 		index.Fields("user_id", "created_at"),
 		index.Fields("api_key_id", "created_at"),
-		// 分组维度时间范围查询（线上由 SQL 迁移创建 group_id IS NOT NULL 的部分索引）
+		// Production uses a SQL partial index with group_id IS NOT NULL for group time-range queries.
 		index.Fields("group_id", "created_at"),
 	}
 }

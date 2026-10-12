@@ -28,7 +28,7 @@ func (r *attributeHTTPStore) ForGroup(context.Context, int64) (*routing.ModelAtt
 	return r.saved, nil
 }
 
-// ForGroups 为 HTTP 管理测试提供批量属性读取。
+// ForGroups supplies batch attribute reads for admin HTTP tests.
 func (r *attributeHTTPStore) ForGroups(_ context.Context, ids []int64) (map[int64]*routing.ModelAttributeConfig, error) {
 	result := make(map[int64]*routing.ModelAttributeConfig, len(ids))
 	for _, id := range ids {

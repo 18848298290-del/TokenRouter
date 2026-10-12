@@ -117,7 +117,8 @@ func (r *announcementRepository) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ArchiveExpired 只归档展示中且已经到达结束时间的公告，避免覆盖草稿或人工归档状态。
+// ArchiveExpired archives active announcements whose end time is at or before now.
+// Drafts and already archived announcements keep their status.
 func (r *announcementRepository) ArchiveExpired(ctx context.Context, now time.Time) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	updated, err := client.Announcement.Update().
@@ -278,7 +279,7 @@ func announcementEntitiesToService(models []*dbent.Announcement) []site.Announce
 	return out
 }
 
-// clientFromContext 优先返回上下文中的 Ent 事务客户端，未开启事务时返回默认客户端。
+// clientFromContext returns the Ent transaction client from ctx, or fallback when no transaction is present.
 func clientFromContext(ctx context.Context, fallback *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -286,7 +287,7 @@ func clientFromContext(ctx context.Context, fallback *dbent.Client) *dbent.Clien
 	return fallback
 }
 
-// announcementPersistenceError 将未找到数据库记录的错误转换为公告不存在错误。
+// announcementPersistenceError maps missing database rows to ErrAnnouncementNotFound.
 func announcementPersistenceError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) || dbent.IsNotFound(err) {
 		return site.ErrAnnouncementNotFound.WithCause(err)

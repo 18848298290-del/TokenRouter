@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// QueueObserver 提供请求级的排队事件回调。
+// QueueObserver contains request-scoped queue event callbacks.
 type QueueObserver struct {
 	Wait  WaitObserver
 	Event func(name string, providerID int64, err error)
@@ -19,7 +19,7 @@ func (o QueueObserver) event(name string, id int64, err error) {
 	}
 }
 
-// acquireWithWait 先尝试取得串行锁，取得后执行 RPM 延迟，否则进入等待。
+// acquireWithWait tries the serialization lock immediately, then applies RPM spacing or waits for the lock.
 func (s *UserMessageQueueService) acquireWithWait(parent context.Context, providerID int64, baseRPM int, timeout time.Duration, observer QueueObserver) (*Lease, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -33,7 +33,7 @@ func (s *UserMessageQueueService) acquireWithWait(parent context.Context, provid
 	return s.WaitForLock(ctx, providerID, baseRPM, observer)
 }
 
-// finishQueueAcquire 在延迟开始前将锁交给 Lease 管理，延迟被取消时立即释放锁。
+// finishQueueAcquire gives the lock to a Lease before delaying and releases it if the delay is canceled.
 func (s *UserMessageQueueService) finishQueueAcquire(ctx context.Context, id int64, rpm int, result *QueueLockResult, observer QueueObserver) (*Lease, error) {
 	released := false
 	lease := NewLease(context.Background(), ReleaseOnCompletion, func() {
@@ -49,7 +49,7 @@ func (s *UserMessageQueueService) finishQueueAcquire(ctx context.Context, id int
 		}
 	})
 	if err := s.EnforceDelay(ctx, id, rpm); err != nil && ctx.Err() != nil {
-		// 此时尚未报告取得锁，取消后的释放也跳过锁事件通知。
+		// Acquisition has not been reported, so cancellation cleanup also skips lock event notifications.
 		lease.Release()
 		return nil, ctx.Err()
 	}
@@ -58,7 +58,7 @@ func (s *UserMessageQueueService) finishQueueAcquire(ctx context.Context, id int
 	return lease, nil
 }
 
-// WaitForLock 仅轮询资源；同步观察失败立即终止等待。
+// WaitForLock polls for the lock and stops when a synchronous observer fails.
 func (s *UserMessageQueueService) WaitForLock(ctx context.Context, providerID int64, baseRPM int, observer QueueObserver) (*Lease, error) {
 	if observer.Wait.Begin != nil {
 		if err := observer.Wait.Begin(); err != nil {
@@ -96,7 +96,7 @@ func (s *UserMessageQueueService) WaitForLock(ctx context.Context, providerID in
 	}
 }
 
-// ThrottleWithWait 按 RPM 计算延迟，在给定超时内等待并发送心跳。
+// ThrottleWithWait applies an RPM-based delay within the timeout and sends heartbeats while waiting.
 func (s *UserMessageQueueService) ThrottleWithWait(parent context.Context, id int64, rpm int, timeout time.Duration, observer QueueObserver) error {
 	operation, done, err := s.runtime.Enter(parent, "message-throttle")
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *UserMessageQueueService) ThrottleWithWait(parent context.Context, id in
 	}
 }
 
-// AcquireWithWait 将整个认领、延迟和已取得串行锁纳入生命周期等待。
+// AcquireWithWait tracks acquisition, delay, and the acquired lock until lifecycle cleanup completes.
 func (s *UserMessageQueueService) AcquireWithWait(parent context.Context, id int64, rpm int, timeout time.Duration, observer QueueObserver) (*Lease, error) {
 	operation, done, err := s.runtime.Enter(parent, fmt.Sprintf("message-lock:%d", id))
 	if err != nil {

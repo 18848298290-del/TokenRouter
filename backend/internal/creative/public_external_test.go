@@ -29,14 +29,15 @@ import (
 
 type creativeCatalogTestProviders struct{ values []creative.CatalogProvider }
 
-// creativePricingConfigFixture 提供测试价格配置。
+// creativePricingConfigFixture supplies shared price cards for tests.
 type creativePricingConfigFixture struct {
 	routing.PricingConfigRepository
 	cards    []routing.ModelPricingEntry
 	platform string
 }
 
-// TestCreativeCatalogueIncludesGroupMappingTargets 空白名单提供商可展示分组映射中的具体图片目标。
+// TestCreativeCatalogueIncludesGroupMappingTargets checks concrete image targets with an unrestricted
+// provider allowlist.
 func TestCreativeCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"draw-alias", "draw-*"} {
 		t.Run(source, func(t *testing.T) {
@@ -68,7 +69,7 @@ func TestCreativeCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	}
 }
 
-// TestCreativeOperationsForPlatform 平台能力矩阵。
+// TestCreativeOperationsForPlatform checks the platform operation matrix.
 func TestCreativeOperationsForPlatform(t *testing.T) {
 	require.Equal(t, []string{"generate", "edit"}, creative.CreativeOperationsForPlatform(capability.PlatformGemini))
 	require.Equal(t, []string{"generate", "edit", "inpaint"}, creative.CreativeOperationsForPlatform(capability.PlatformOpenAI))
@@ -76,14 +77,14 @@ func TestCreativeOperationsForPlatform(t *testing.T) {
 	require.Nil(t, creative.CreativeOperationsForPlatform(capability.PlatformAnthropic))
 }
 
-// TestCreativeGrokDefaultImageCandidates 空配置提供商返回空目录。
+// TestCreativeGrokDefaultImageCandidates checks that empty provider settings yield an empty catalogue.
 func TestCreativeGrokDefaultImageCandidates(t *testing.T) {
 	provider := &providercore.Record{Platform: capability.PlatformGrok, Credentials: map[string]any{}}
 	models := creativeProviderModelsForTest(t, provider)
 	require.Empty(t, models)
 }
 
-// TestCreativeGrokDefaultImageCandidatesWithQualityWhitelist 校验精确白名单不会漏掉画质模型。
+// TestCreativeGrokDefaultImageCandidatesWithQualityWhitelist checks an exact quality-model allowlist entry.
 func TestCreativeGrokDefaultImageCandidatesWithQualityWhitelist(t *testing.T) {
 	provider := &providercore.Record{
 		Platform: capability.PlatformGrok,
@@ -95,7 +96,7 @@ func TestCreativeGrokDefaultImageCandidatesWithQualityWhitelist(t *testing.T) {
 	require.Equal(t, []string{"grok-imagine-image-quality"}, models)
 }
 
-// TestCreativeMappedFinalModelCapability 检查文本请求别名映射到图片模型时的最终模型校验。
+// TestCreativeMappedFinalModelCapability checks image capabilities after resolving request aliases.
 func TestCreativeMappedFinalModelCapability(t *testing.T) {
 	provider := &providercore.Record{
 		Platform: capability.PlatformOpenAI,
@@ -105,16 +106,16 @@ func TestCreativeMappedFinalModelCapability(t *testing.T) {
 		},
 	}
 	models := creativeProviderModelsForTest(t, provider)
-	// 非图片目标不能进入目录。
+	// A text model target cannot enter the image catalogue.
 	require.NotContains(t, models, "text-alias")
-	// 反向映射目标为图片模型的别名进入目录。
+	// Aliases resolving to image models are eligible catalogue entries.
 	provider.Credentials["model_mapping"] = map[string]any{"draw-alias": "gpt-image-2"}
 	models = creativeProviderModelsForTest(t, provider)
 	require.Contains(t, models, "draw-alias")
 	require.Contains(t, models, "gpt-image-2", "最终模型也可以直接请求")
 }
 
-// TestCreativeGrokConfiguredImageWhitelistCandidates 校验代理侧图片模型变体能从白名单进入候选。
+// TestCreativeGrokConfiguredImageWhitelistCandidates checks proxy image variants from the allowlist.
 func TestCreativeGrokConfiguredImageWhitelistCandidates(t *testing.T) {
 	provider := &providercore.Record{
 		Platform: capability.PlatformGrok,
@@ -126,7 +127,7 @@ func TestCreativeGrokConfiguredImageWhitelistCandidates(t *testing.T) {
 	require.Equal(t, []string{"grok-imagine-image-lite"}, models)
 }
 
-// TestCreativeGeminiConfiguredImageWhitelistCandidates 校验 Gemini 无映射提供商不会漏掉图片模型变体。
+// TestCreativeGeminiConfiguredImageWhitelistCandidates checks image variants on a provider with no mappings.
 func TestCreativeGeminiConfiguredImageWhitelistCandidates(t *testing.T) {
 	provider := &providercore.Record{
 		Platform: capability.PlatformGemini,
@@ -138,7 +139,8 @@ func TestCreativeGeminiConfiguredImageWhitelistCandidates(t *testing.T) {
 	require.Equal(t, []string{"gemini-3-pro-image-quality"}, models)
 }
 
-// TestCreativeDirectoryAndCreateUseGroupPolicy 检查目录和提交使用相同的模型映射，并在无共享价格配置时执行分组策略。
+// TestCreativeDirectoryAndCreateUseGroupPolicy checks shared mapping and admission rules without a pricing
+// configuration.
 func TestCreativeDirectoryAndCreateUseGroupPolicy(t *testing.T) {
 	for _, platform := range []string{creative.PlatformOpenAI, creative.PlatformGemini, creative.PlatformGrok} {
 		for _, source := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
@@ -178,7 +180,7 @@ func TestCreativeDirectoryAndCreateUseGroupPolicy(t *testing.T) {
 				require.Equal(t, final, validated.FinalModel)
 				require.Nil(t, svc.GroupMapping, "准入不依赖共享价格配置服务")
 
-				// 空白名单使目录和提交同时拒绝该模型。
+				// An empty restricted allowlist rejects the model in both listing and submission.
 				group.RoutingPolicy.AllowedModels = nil
 				groups.active = []routing.Group{*group}
 				models, err = svc.ListModels(context.Background(), 7)
@@ -224,18 +226,18 @@ func TestCreativeCreateRunPersistsOnlyMetadata(t *testing.T) {
 
 	require.Len(t, repo.createParams, 1)
 	stored := repo.createParams[0]
-	// prompt 只以 sha256 落库。
+	// The database receives the prompt hash.
 	require.Equal(t, creative.Sha256Hex([]byte(params.Prompt)), stored.PromptHash)
 	require.NotContains(t, stored.PromptHash, "绝不应落库")
 	require.NotEmpty(t, stored.RequestFingerprint)
-	// 任务与输出行保存素材元数据。
+	// Task and output rows contain media metadata.
 	require.Equal(t, 1, stored.RequestedOutputCount)
 	for _, output := range repo.outputs[created.ID] {
 		require.Equal(t, creative.CreativeRunOutputStatusPending, output.Status)
 		require.Nil(t, output.MimeType)
 		require.Nil(t, output.ByteSize)
 	}
-	// 图片字节只进入临时存储。
+	// Image bytes go to transient storage.
 	_, err = store.LoadInputs(ctx, created.ID, 1)
 	require.NoError(t, err)
 	require.Empty(t, store.outputs)
@@ -244,18 +246,16 @@ func TestCreativeCreateRunPersistsOnlyMetadata(t *testing.T) {
 func TestCreativeListModelsFiltersAndContent(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
-	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[
+	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)
 
-	// 无图片权限的分组不出现在模型列表。
-	creativeGroupReader](svc.GroupRepo).source)
-
+	// Groups with image generation disabled are excluded.
 	noImage := newCreativeTestGroup()
 	noImage.ID = 13
 	noImage.AllowImageGeneration = false
 	groupRepo.byID[13] = noImage
 	groupRepo.active = append(groupRepo.active, *noImage)
 
-	// 没有图片候选提供商的分组不出现。
+	// Groups without image-capable providers are excluded.
 	unsupported := newCreativeTestGroup()
 	unsupported.ID = 14
 	unsupported.Name = "Claude"
@@ -275,19 +275,18 @@ func TestCreativeListModelsFiltersAndContent(t *testing.T) {
 	}
 }
 
-// TestCreativeListModelsFallbacks 覆盖提供商映射和图片价格缺省时的模型目录：
-// 提供商未配置 model_mapping 时使用平台图片模型候选。
-// 分组未配置 image_price_* 时使用平台默认尺寸档位并按默认价计费。
+// TestCreativeListModelsFallbacks checks model sizes and prices when provider mappings or price overrides
+// are absent.
+// Provider allowlists supply concrete candidates when model_mapping is empty.
+// Model capabilities determine sizes even when no per-size price override exists.
 func TestCreativeListModelsFallbacks(t *testing.T) {
 	svc := newCreativeTestService()
 	svc.ImageUnitPrice = creativePriceFixture(newCreativeMediaCalculator(), nil)
 	ctx := context.Background()
 	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)
-	providerRepo := testassert.MustType[*creativeFakeProviderRepo](testassert.MustType[
+	providerRepo := testassert.MustType[*creativeFakeProviderRepo](testassert.MustType[creativeProviderReader](svc.ProviderRepo).source)
 
-	// openai 分组：未配置图片价格和提供商映射时，默认候选中的 GPT Image 2 支持三档尺寸。
-	creativeProviderReader](svc.ProviderRepo).source)
-
+	// The OpenAI allowlist supplies GPT Image candidates without provider mappings or price overrides.
 	openaiGroup := newCreativeTestGroup()
 	openaiGroup.ID = 21
 	openaiGroup.Name = "ChatGPT Image"
@@ -304,7 +303,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 		},
 	}}
 
-	// gemini 分组：未配置图片价格和提供商映射时，默认候选支持 1K、2K、4K 尺寸。
+	// The Gemini allowlist mixes fixed-1K and higher-resolution image models.
 	geminiGroup := newCreativeTestGroup()
 	geminiGroup.ID = 22
 
@@ -320,7 +319,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 		},
 	}}
 
-	// grok 分组：未配置图片价格时支持 1K、2K 尺寸和 generate/edit 操作。
+	// Grok models expose 1K/2K and generate/edit with default pricing.
 	grokGroup := newCreativeTestGroup()
 	grokGroup.ID = 23
 	grokGroup.Name = "Grok Imagine"
@@ -337,7 +336,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 		},
 	}}
 
-	// openai 分组：配置 1K 价格时尺寸返回 1K，模型来自映射。
+	// A 1K price override supplies pricing while the mapped GPT Image 2 model retains all supported sizes.
 	pricedGroup := newCreativeTestGroup()
 	pricedGroup.ID = 24
 	pricedGroup.Name = "GPT Image Priced"
@@ -373,7 +372,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 		byGroup[item.GroupID] = append(byGroup[item.GroupID], item)
 	}
 
-	// openai 无映射回退：两个候选模型、默认价大于 0；GPT Image 2 额外开放 4K。
+	// Both allowlisted OpenAI models have default prices; GPT Image 2 also exposes 4K.
 	require.Len(t, byGroup[21], 2)
 	for _, item := range byGroup[21] {
 		require.Equal(t, []string{"low", "medium", "high", "auto"}, item.Qualities)
@@ -394,7 +393,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 	require.ElementsMatch(t, []string{"gpt-image-1", "gpt-image-2"},
 		[]string{byGroup[21][0].Model, byGroup[21][1].Model})
 
-	// gemini 无映射回退：固定 1K 模型只开放 1K，支持高分辨率的模型开放三档尺寸。
+	// Gemini tiers follow model capabilities, including 512 for Flash 3.1.
 	require.Len(t, byGroup[22], 3)
 	require.Equal(t, []string{"1K"}, byModel(byGroup[22], "gemini-2.5-flash-image").ImageSizes)
 	require.Equal(t, []string{"1K", "2K", "4K"}, byModel(byGroup[22], "gemini-3-pro-image").ImageSizes)
@@ -405,7 +404,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 	require.ElementsMatch(t, []string{"gemini-2.5-flash-image", "gemini-3-pro-image", "gemini-3.1-flash-image"},
 		[]string{byGroup[22][0].Model, byGroup[22][1].Model, byGroup[22][2].Model})
 
-	// grok 回退：1K/2K 档 + generate/edit。
+	// Grok defaults include 1K/2K and generate/edit.
 	require.Len(t, byGroup[23], 2)
 	grok1 := byModel(byGroup[23], "grok-imagine-image-1.0")
 	require.Equal(t, []string{"1K", "2K"}, grok1.ImageSizes)
@@ -419,7 +418,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 	require.Equal(t, 1, grok2.MaxOutputCount)
 	require.Equal(t, 3, grok2.MaxReferenceImages)
 
-	// GPT Image 2 即使未配置 4K 覆盖价，也开放 4K 并回退默认价格。
+	// A missing 4K price override does not remove GPT Image 2's 4K capability.
 	require.Len(t, byGroup[24], 1)
 	require.Equal(t, "gpt-image-2", byGroup[24][0].Model)
 	require.Equal(t, []string{"1K", "2K", "4K"}, byGroup[24][0].ImageSizes)
@@ -499,7 +498,7 @@ func TestCreativeFilterImageSizesForModel(t *testing.T) {
 	}
 }
 
-// TestCreativePricingUsesResolvedPricingConfigPrice 校验创作台与模型广场共用共享价格配置图片定价。
+// TestCreativePricingUsesResolvedPricingConfigPrice checks image prices from shared pricing configurations.
 func TestCreativePricingUsesResolvedPricingConfigPrice(t *testing.T) {
 	price := 1.0
 	resolver := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
@@ -516,7 +515,7 @@ func TestCreativePricingUsesResolvedPricingConfigPrice(t *testing.T) {
 	require.InDelta(t, 1, svc.CreativePrice(context.Background(), creativeGroupProjection(group), "gpt-image-2", "2K"), 1e-9)
 	require.InDelta(t, 1, svc.CreativePrice(context.Background(), creativeGroupProjection(group), "gpt-image-2", "4K"), 1e-9)
 
-	// Gemini 512 优先匹配共享价格配置自定义 tier；未配置 512 时回退共享价格配置默认价格。
+	// Gemini 512 prefers a matching price tier, then the price card's default.
 	price512 := 0.5
 	defaultPrice := 1.25
 	resolver = newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
@@ -550,7 +549,7 @@ func TestCreativeModelSettingsEmptyListClosesCreativeDirectory(t *testing.T) {
 	require.Empty(t, models.Data)
 }
 
-// TestValidateCreateParams 覆盖 CreateRun 的参数校验矩阵。
+// TestValidateCreateParams covers model-specific creation parameter validation.
 func TestValidateCreateParams(t *testing.T) {
 	t.Run("OpenAI 模型参数通过且固定单输出", func(t *testing.T) {
 		svc := newCreativeTestService()
@@ -848,7 +847,7 @@ func TestValidateCreateParams(t *testing.T) {
 	})
 }
 
-// TestCreateRunIdempotency 覆盖幂等重放与幂等冲突。
+// TestCreateRunIdempotency covers replay, conflicting bodies, and independent keys.
 func TestCreateRunIdempotency(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -859,30 +858,30 @@ func TestCreateRunIdempotency(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusQueued, first.Status)
 	require.True(t, creative.IsValidCreativeRunID(first.ID))
 
-	// 相同 Key + 相同请求体：返回原任务并标记重放。
+	// The same key and body return the existing task as a replay.
 	replay, err := svc.CreateRun(ctx, testCreativeScope(7), validCreateParams(), "idem-key-1")
 	require.NoError(t, err)
 	require.True(t, replay.IdempotentReplay)
 	require.Equal(t, first.ID, replay.ID)
 
-	// 相同 Key + 不同请求体：返回冲突。
+	// Reusing the key for a different body is a conflict.
 	conflictParams := validCreateParams()
 	conflictParams.Prompt = "完全不同的 prompt"
 	_, err = svc.CreateRun(ctx, testCreativeScope(7), conflictParams, "idem-key-1")
 	require.ErrorIs(t, err, creative.ErrCreativeRunIdempotencyConflict)
 
-	// 相同请求体 + 不同 Key：创建独立任务。
+	// A different key creates an independent task for the same body.
 	retry, err := svc.CreateRun(ctx, testCreativeScope(7), validCreateParams(), "idem-key-2")
 	require.NoError(t, err)
 	require.False(t, retry.IdempotentReplay)
 	require.NotEqual(t, first.ID, retry.ID)
 
-	// 计费预占与入队各发生两次（重放不重复扣费/入队）。
+	// Only the two newly created tasks reserve funds and enter the queue.
 	require.Equal(t, 2, testassert.MustType[*creativeFakeBillingRepo](creativeFixtureBilling(svc)).reserveN)
 	require.Len(t, testassert.MustType[*creativeFakeQueue](svc.Queue).enqueued, 2)
 }
 
-// TestCreativePricingIgnoresQuality 校验质量不改价且每次任务固定一张输出。
+// TestCreativePricingIgnoresQuality checks equal pricing across quality options and a single output per task.
 func TestCreativePricingIgnoresQuality(t *testing.T) {
 	svc := newCreativeTestService()
 	configureOpenAICreativeTestService(svc)
@@ -902,8 +901,8 @@ func TestCreativePricingIgnoresQuality(t *testing.T) {
 	require.Len(t, testassert.MustType[*creativeFakeRunRepo](svc.Repo).outputs[highRun.ID], 1)
 }
 
-// TestCreativeEnabledGate 检查数据库运行时开关 creative_enabled：
-// 关闭时 ListModels 返回空列表（前端展示“已停用”空态），CreateRun 返回 ErrCreativeDisabled。
+// TestCreativeEnabledGate checks the creative_enabled runtime setting.
+// Disabling it empties ListModels and makes CreateRun return ErrCreativeDisabled.
 func TestCreativeEnabledGate(t *testing.T) {
 	t.Run("运行时关闭时 ListModels 返回空列表", func(t *testing.T) {
 		svc := newCreativeTestService()
@@ -945,7 +944,7 @@ func TestCreativeEnabledGate(t *testing.T) {
 	})
 }
 
-// TestCreativeGeminiNanoBananaCandidates 校验创作台支持 Gemini nano-banana 别名族。
+// TestCreativeGeminiNanoBananaCandidates checks Gemini proxy aliases in the nano-banana family.
 func TestCreativeGeminiNanoBananaCandidates(t *testing.T) {
 	for _, model := range []string{"nano-banana-pro", "nano-banana-2", "NANO-BANANA-PRO", "models/nano-banana-2"} {
 		require.True(t, creative.IsCreativeGeminiImageModel(model), "模型 %q 应识别为 Gemini 生图模型", model)
@@ -991,7 +990,8 @@ func TestCreativeModelSettingsFilterAndCreateValidation(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestCreativeUnpricedModelDoesNotReserve 检查缺价型号的目录过滤和创建拒绝。
+// TestCreativeUnpricedModelDoesNotReserve checks catalogue exclusion and creation rejection for unpriced
+// models.
 func TestCreativeUnpricedModelDoesNotReserve(t *testing.T) {
 	svc := newCreativeTestService()
 	svc.ImageUnitPrice = creativePriceFixture(billingtestkit.Calculator(nil, nil), nil)
@@ -1003,7 +1003,7 @@ func TestCreativeUnpricedModelDoesNotReserve(t *testing.T) {
 	require.Zero(t, testassert.MustType[*creativeFakeBillingRepo](creativeFixtureBilling(svc)).reserveN)
 }
 
-// TestBuildCreativeRequestFingerprint 校验指纹确定性：输入不变指纹不变，任一字段变化指纹变化。
+// TestBuildCreativeRequestFingerprint checks deterministic hashes and sensitivity to prompt and group changes.
 func TestBuildCreativeRequestFingerprint(t *testing.T) {
 	base := creative.CreativeFingerprintPayload{
 		GroupID:      12,
@@ -1028,7 +1028,7 @@ func TestBuildCreativeRequestFingerprint(t *testing.T) {
 	require.NotEqual(t, first, creative.BuildCreativeRequestFingerprint(changedGroup))
 }
 
-// TestCreativeMixedGroupCatalog 按实际提供商能力提供同组多平台模型，并固化创建时的供应商。
+// TestCreativeMixedGroupCatalog checks model capabilities and platform selection within a mixed-platform group.
 func TestCreativeMixedGroupCatalog(t *testing.T) {
 	svc := newCreativeTestService()
 	rows := testassert.MustType[*creativeFakeProviderRepo](testassert.MustType[creativeProviderReader](svc.ProviderRepo).source)
@@ -1056,7 +1056,7 @@ func TestCreativeMixedGroupCatalog(t *testing.T) {
 			require.Equal(t, platform == creative.PlatformOpenAI, creative.CreativeContainsOption(entry.Operations, "inpaint"))
 		}
 	}
-	// 禁用提供商媒体协议后，模型不能只凭白名单继续出现在目录。
+	// Disabling media protocols removes models even when their names remain allowlisted.
 	for i := range rows.byGroup[12] {
 		rows.byGroup[12][i].Credentials["upstream_protocols"] = []string{}
 	}
@@ -1065,7 +1065,7 @@ func TestCreativeMixedGroupCatalog(t *testing.T) {
 	require.Empty(t, listed.Data)
 }
 
-// TestCreativeRejectsClientOnlyGroupBeforeFunding 检查专用客户端组在列出候选和预留资金前被拒绝。
+// TestCreativeRejectsClientOnlyGroupBeforeFunding checks catalogue exclusion and rejection before reservation.
 func TestCreativeRejectsClientOnlyGroupBeforeFunding(t *testing.T) {
 	svc := newCreativeTestService()
 	groups := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)
@@ -1088,7 +1088,7 @@ func (a creativeCatalogTestProviders) ListSchedulableByGroupIDAndPlatform(contex
 	return a.values, nil
 }
 
-// creativeProviderModelsForTest 通过 CreativeModelsForGroup 读取提供商的模型候选。
+// creativeProviderModelsForTest returns sorted candidates from CreativeModelsForGroup.
 func creativeProviderModelsForTest(t *testing.T, value *providercore.Record) []string {
 	t.Helper()
 	value = providercore.CloneRecord(value)
@@ -1126,7 +1126,7 @@ func makeTestPNG(t *testing.T, width, height int) []byte {
 	return buf.Bytes()
 }
 
-// configureOpenAICreativeTestService 将校验夹具切换到 OpenAI，检查 PNG inpaint 规则。
+// configureOpenAICreativeTestService selects an OpenAI fixture supporting PNG inpainting.
 func configureOpenAICreativeTestService(svc *creative.Public) {
 	group := newCreativeTestGroup()
 	group.Name = "OpenAI Image"
@@ -1145,7 +1145,7 @@ func configureOpenAICreativeTestService(svc *creative.Public) {
 	}}
 }
 
-// configureGrok2CreativeTestService 将校验夹具切换到支持质量的 Grok 2.0。
+// configureGrok2CreativeTestService selects the Grok 2.0 fixture with quality options.
 func configureGrok2CreativeTestService(svc *creative.Public) {
 	group := newCreativeTestGroup()
 	group.Name = "Grok Imagine 2"
@@ -1182,7 +1182,8 @@ func newResolverWithPricingConfig(t *testing.T, cards []routing.ModelPricingEntr
 	})
 }
 
-// BenchmarkCreativeConfiguredValidation 测量 65 个提供商的单型号校验，包含提供商规则准备。
+// BenchmarkCreativeConfiguredValidation measures single-model validation across 65 providers, including
+// rule preparation.
 func BenchmarkCreativeConfiguredValidation(b *testing.B) {
 	service := newCreativeTestService()
 	configureOpenAICreativeTestService(service)

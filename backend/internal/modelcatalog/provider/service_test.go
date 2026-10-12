@@ -94,7 +94,7 @@ func TestParsePricingData_WarnsLopsidedLongContextLadder(t *testing.T) {
 	require.False(t, logSink.ContainsMessage("consistent"))
 }
 
-// TestDefaultCatalogSnapshot_CacheTierContract 检查发布目录的上下文阶梯和缓存报价。
+// TestDefaultCatalogSnapshot_CacheTierContract checks published context tiers and cache prices.
 func TestDefaultCatalogSnapshot_CacheTierContract(t *testing.T) {
 	service := newOfflinePricingFixture(t)
 	price := service.GetModelPricing("gpt-5.6-sol")
@@ -190,7 +190,7 @@ func TestCatalogLookupClaudeEquivalentVersions(t *testing.T) {
 			require.Equal(t, []string{"text"}, input)
 		}
 	}
-	// 日期后缀代表独立型号，价格和能力按完整版本查询。
+	// Dated model IDs have independent prices and capabilities.
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"claude-sonnet-4.20250514": catalogLookupTestPricing(1e-6, "video"),
 		"claude-opus-4-6":          catalogLookupTestPricing(2e-6, "image"),
@@ -248,7 +248,8 @@ func TestCatalogLookupOpenAIDedicatedFallbackBeforeGenericBase(t *testing.T) {
 	}
 }
 
-// TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct 验证 preview 和 latest 后缀不会继承基础型号的价格或能力。
+// TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct checks that preview and latest IDs require their own
+// prices and capabilities.
 func TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct(t *testing.T) {
 	for _, model := range []string{"gpt-5.4", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-terra", "gpt-6-astra"} {
 		pricing := catalogLookupTestPricing(17e-6, "text", "image")
@@ -309,7 +310,7 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 		input, _ := svc.GetModelModalities(alias)
 		require.Nil(t, input)
 	}
-	// 默认模型配置只去空白，返回的名称也要兼容前缀、大小写和已知固定别名。
+	// Changing the runtime default, including its prefix or case, must not resolve catalog aliases.
 	for _, target := range []string{"GROK-4.6", "xai/grok-4.6", "X-AI/GROK-4.6", "grok-4.6-latest"} {
 		xai.SetRuntimeDefaultTextModel(target)
 		for _, alias := range []string{"grok", "grok-latest"} {
@@ -318,7 +319,7 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 			require.Nil(t, input, target)
 		}
 	}
-	// 完整别名条目仍可独立配价，未知模型和跨客户端名称不会继承 Grok 能力。
+	// An explicit alias can carry its own price; unknown and unrelated IDs have no inherited Grok capabilities.
 	mutatePricingFixture(svc, func(data map[string]*billingpricing.CatalogModelPricing) { data["grok-latest"] = text })
 	require.Same(t, text, svc.GetModelPricing("grok-latest"))
 	for _, model := range []string{"grok-unknown", "gpt-5.4", "claude-sonnet-4"} {
@@ -328,7 +329,8 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 	}
 }
 
-// TestCatalogLookupGrokDefaultAliasCycle 检查默认配置出现别名循环时返回未知模型。
+// TestCatalogLookupGrokDefaultAliasCycle checks unknown catalog IDs even when the runtime default forms an
+// alias cycle.
 func TestCatalogLookupGrokDefaultAliasCycle(t *testing.T) {
 	previous := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(previous) })
@@ -397,7 +399,8 @@ func TestPricingHotReload_InvalidFileKeepsCurrentDataUntilFixed(t *testing.T) {
 	require.NotEqual(t, before, svc.Snapshot().CustomFilesHash)
 }
 
-// TestPricingHotReload_DownloadRefreshesFingerprint 检查远程下载重建后指纹与当前文件内容一致，下一轮定时比对跳过重载。
+// TestPricingHotReload_DownloadRefreshesFingerprint checks that remote publication records the current
+// supplement fingerprint.
 func TestPricingHotReload_DownloadRefreshesFingerprint(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{`+hotReloadModelJSON("custom-a", 4e-6, 8e-6)+`}`)
 	svc.options.RemoteURL = "https://example.com/pricing.json"
@@ -417,7 +420,8 @@ func TestPricingHotReload_DownloadRefreshesFingerprint(t *testing.T) {
 	require.Contains(t, svc.Snapshot().Data, "sentinel", "下载已消化文件变化，不得再次重建")
 }
 
-// TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL 检查未配置 remote_url 时调度器仍比对补充文件的改动。
+// TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL checks that a supplement path starts the loop
+// without a remote URL.
 func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 	svc := NewService(Options{
 		RemoteURL:    "",
@@ -445,7 +449,8 @@ func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 	}
 }
 
-// TestSupplementRemovalAndRecreation 检查补充文件更新、删除和重建后，目录与条件请求标识保持有效。
+// TestSupplementRemovalAndRecreation checks catalog data and conditional-request identity across supplement
+// edits and deletion.
 func TestSupplementRemovalAndRecreation(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{"custom-model":{"input_cost_per_token":0.000004,"output_cost_per_token":0.000008}}`)
 	before := svc.Snapshot()
@@ -496,7 +501,7 @@ func TestPricingNonEmptyInvalidRemoteURLStillReturnsValidationError(t *testing.T
 	require.Contains(t, err.Error(), "invalid pricing url")
 }
 
-// TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol 检查自定义目录条目按完整模型名读取价格和产品规则。
+// TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol checks prices and rules by complete model ID.
 func TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol(t *testing.T) {
 	pricingSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.6":       {InputCostPerToken: 4e-6},
@@ -523,7 +528,7 @@ func TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol(t *testing.T) {
 	}
 }
 
-// TestCatalogService_MergesFallbackOnlyModels 检查补充文件中的新模型可查询，远程 token 报价优先。
+// TestCatalogService_MergesFallbackOnlyModels checks supplement-only models and catalog price precedence.
 func TestCatalogService_MergesFallbackOnlyModels(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{"remote-model":{"input_cost_per_token":9,"output_cost_per_token":9},"local-model":{"input_cost_per_token":0.000004,"output_cost_per_token":0.000008}}`)
 	require.InDelta(t, 1e-6, svc.GetModelPricing("remote-model").InputCostPerToken, 1e-12)
@@ -610,7 +615,7 @@ func TestCatalogService_Gemini36FlashThinkingTiersUseBasePricing(t *testing.T) {
 	}
 }
 
-// TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing 验证后缀型号不会复用基础模型价格。
+// TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing checks that suffixed IDs require their own prices.
 func TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{
 		InputCostPerToken:       1.5e-6,
@@ -649,7 +654,8 @@ func TestCatalogService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testi
 	require.Same(t, tierPricing, svc.GetModelPricing("models/gemini-3.6-flash-low"))
 }
 
-// TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence 验证未来出现档位专属价格时优先精确匹配。
+// TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence checks exact lookup of a configured
+// tier-specific price.
 func TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 1.5e-6}
 	tierPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 2e-6}
@@ -665,7 +671,7 @@ func TestDefaultPricingIncludesGemini36FlashRates(t *testing.T) {
 	svc := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, svc.Initialize())
 	require.NotNil(t, svc.GetModelPricing("gemini-3.6-flash"))
-	// 后缀型号按完整 ID 查询目录报价。
+	// Suffixed IDs query prices by their complete model identity.
 	for _, suffix := range []string{"high", "low", "medium", "tiered"} {
 		model := "gemini-3.6-flash-" + suffix
 		if _, exists := svc.pricingData[model]; !exists {
@@ -674,12 +680,12 @@ func TestDefaultPricingIncludesGemini36FlashRates(t *testing.T) {
 	}
 }
 
-// TestDefaultPricingIncludesGemini35FlashRates 验证内置快照只为已登记的完整型号提供价格。
+// TestDefaultPricingIncludesGemini35FlashRates checks prices for registered complete IDs in the embedded snapshot.
 func TestDefaultPricingIncludesGemini35FlashRates(t *testing.T) {
 	svc := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, svc.Initialize())
 	require.NotNil(t, svc.GetModelPricing("gemini-3.5-flash"))
-	// 后缀型号按完整 ID 查询目录报价。
+	// Suffixed IDs query prices by their complete model identity.
 	for _, suffix := range []string{"high", "low", "medium", "tiered"} {
 		model := "gemini-3.5-flash-" + suffix
 		if _, exists := svc.pricingData[model]; !exists {
@@ -688,7 +694,7 @@ func TestDefaultPricingIncludesGemini35FlashRates(t *testing.T) {
 	}
 }
 
-// TestDefaultCatalogRequiresConfiguredAutoReviewPricing 要求内部型号通过手动价卡或模型映射取得价格。
+// TestDefaultCatalogRequiresConfiguredAutoReviewPricing checks that the internal ID has no implicit catalog price.
 func TestDefaultCatalogRequiresConfiguredAutoReviewPricing(t *testing.T) {
 	service := newOfflinePricingFixture(t)
 	require.NotContains(t, service.Snapshot().Data, "codex-auto-review")
@@ -722,7 +728,7 @@ func TestListModelNamesByProvider_ReturnsMatchingModels(t *testing.T) {
 
 	got := svc.ListModelNamesByProvider("anthropic")
 	require.ElementsMatch(t, []string{"claude-opus-4-5-20251101", "claude-sonnet-4-5"}, got)
-	// 模型名按字母序排列。
+	// Names are returned in alphabetical order.
 	require.Equal(t, "claude-opus-4-5-20251101", got[0])
 	require.Equal(t, "claude-sonnet-4-5", got[1])
 }
@@ -872,7 +878,7 @@ func TestGetModelModalities(t *testing.T) {
 	}
 }
 
-// TestCatalogQueryFreezesOneCandidateFactory 检查每次查询生成一次完整型号候选。
+// TestCatalogQueryFreezesOneCandidateFactory checks one identity-candidate generator per query.
 func TestCatalogQueryFreezesOneCandidateFactory(t *testing.T) {
 	factories, lookups := 0, 0
 	options := Options{ModelLookupCandidates: func() func(string) []string {
@@ -892,7 +898,7 @@ func TestCatalogQueryFreezesOneCandidateFactory(t *testing.T) {
 	require.Equal(t, 1, lookups)
 }
 
-// TestCatalogSnapshotIsIndependent 检查快照数据可独立修改，并区分 nil 和空切片。
+// TestCatalogSnapshotIsIndependent checks independent mutation and the distinction between nil and empty slices.
 func TestCatalogSnapshotIsIndependent(t *testing.T) {
 	service := NewServiceFromSnapshot(Options{}, nil, Snapshot{Data: map[string]*CatalogModelPricing{"model": {InputCostPerToken: 1, SupportedModalities: []string{"text"}, SupportedOutputModalities: []string{}}}})
 	snapshot := service.Snapshot()
@@ -907,7 +913,7 @@ func TestCatalogSnapshotIsIndependent(t *testing.T) {
 	require.Nil(t, empty.Snapshot().Data)
 }
 
-// TestPricingConstructionAndLifecycle 检查初始化后启动更新任务，重复停止等待同一任务退出。
+// TestPricingConstructionAndLifecycle checks explicit startup and repeated Stop calls waiting for the same work.
 func TestPricingConstructionAndLifecycle(t *testing.T) {
 	remote := &lifecyclePricingRemote{}
 	service := NewService(Options{DataDir: t.TempDir(), RemoteURL: "https://pricing.invalid/catalog"}, remote)
@@ -922,7 +928,8 @@ func TestPricingConstructionAndLifecycle(t *testing.T) {
 	require.NotNil(t, service.GetModelPricing("remote-model"))
 }
 
-// TestDeepseekDefaultCatalogUsesNativeEntries 验证默认目录原厂报价；中继的历史型号仍可独立存在。
+// TestDeepseekDefaultCatalogUsesNativeEntries checks first-party prices while allowing separate historical
+// relay IDs.
 func TestDeepseekDefaultCatalogUsesNativeEntries(t *testing.T) {
 	pricingService := newOfflinePricingFixture(t)
 	pricingData := pricingService.Snapshot().Data
@@ -946,7 +953,8 @@ func TestDeepseekDefaultCatalogUsesNativeEntries(t *testing.T) {
 	}
 }
 
-// TestEmbeddedSupplementsCustomLayer 验证目录优先、自定义零价、官方缺项及删除后的恢复。
+// TestEmbeddedSupplementsCustomLayer checks catalog precedence, custom zero prices, and restoration after
+// deletion.
 func TestEmbeddedSupplementsCustomLayer(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "custom.json")
@@ -983,7 +991,8 @@ func TestEmbeddedSupplementsCustomLayer(t *testing.T) {
 	require.Equal(t, 0.01, *service.BillingDefaults().WebSearchPricePerCall)
 }
 
-// TestEmbeddedSupplementsSurviveInvalidCustomFile 验证首次启动遇到损坏文件时仍保留官方补充。
+// TestEmbeddedSupplementsSurviveInvalidCustomFile checks official supplements remain available after invalid
+// startup input.
 func TestEmbeddedSupplementsSurviveInvalidCustomFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "custom.json")
@@ -995,7 +1004,7 @@ func TestEmbeddedSupplementsSurviveInvalidCustomFile(t *testing.T) {
 	require.Equal(t, 0.01, *service.BillingDefaults().WebSearchPricePerCall)
 }
 
-// TestModelsCatalogFallbackIsStable 检查目录按原厂完整型号查询价格和属性。
+// TestModelsCatalogFallbackIsStable checks complete first-party IDs for prices and attributes.
 func TestModelsCatalogFallbackIsStable(t *testing.T) {
 	service := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, service.Initialize())
@@ -1038,7 +1047,7 @@ func TestModelsCatalogFallbackOriginAndSupplements(t *testing.T) {
 	require.NoError(t, service.ForceUpdate())
 	check(service, 5e-6)
 	check(service.ReadOnlySnapshot(), 5e-6)
-	// 本地补充可添加精确模型，目录已有报价优先。
+	// Local supplements can add exact model IDs; existing catalog prices take precedence.
 	require.InDelta(t, 8e-6, service.GetModelPricing("claude-opus-4-7").InputCostPerToken, 1e-12)
 }
 
@@ -1046,7 +1055,7 @@ func TestModelsCatalogFallbackDoesNotBorrowRelayOnlyModel(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{"providers":{"relay":{"models":{"claude-opus-4-6":{"cost":{"input":1,"output":2}}}}}}`)}
 	service := NewService(Options{DataDir: t.TempDir(), RemoteURL: "https://models.dev/catalog.json"}, remote)
 	require.NoError(t, service.ForceUpdate())
-	// 唯一来源的完整名称可查询中继报价，未知变体返回未定价。
+	// A complete ID with one source can resolve relay pricing; unknown variants remain unpriced.
 	require.NotNil(t, service.GetModelPricing("claude-opus-4-6"))
 	require.Nil(t, service.GetModelPricing("claude-opus-4-6-thinking"))
 	require.Nil(t, service.ReadOnlySnapshot().GetModelPricing("claude-opus-4-6-thinking"))
@@ -1104,7 +1113,7 @@ func TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot(t *testing.T) {
 			require.Equal(t, beforeFile, afterFile)
 		})
 	}
-	// 合法的零价可以正常发布，并清除之前的错误。
+	// A valid zero-price supplement can publish and clear an earlier error.
 	require.NoError(t, os.WriteFile(patch, []byte(`{"claude-test":{"input_cost_per_token":0}}`), 0o600))
 	require.NoError(t, service.ForceUpdate())
 	require.InDelta(t, 3e-6, service.GetModelPricing("claude-test").InputCostPerToken, 1e-12)
@@ -1120,7 +1129,7 @@ func TestModelsCatalogInvalidLocalReloadReportsError(t *testing.T) {
 	require.NoError(t, service.ForceUpdate())
 	before := service.Snapshot().Data
 	require.NoError(t, os.WriteFile(patch, []byte(`{"claude-test":{"input_cost_per_token":"invalid"}}`), 0o600))
-	// 304 表示远程内容未变，同步入口仍报告本地补充的校验错误。
+	// A 304 still reports local supplement validation errors.
 	remote.unchanged = true
 	require.ErrorContains(t, service.syncWithRemote(), "input_cost_per_token")
 	service.reloadIfCustomFilesChanged()
@@ -1137,16 +1146,17 @@ func TestModelsCatalogMistralNativeAlias(t *testing.T) {
 	require.Equal(t, qualified, plain)
 	require.Equal(t, service.ModelAttributes("mistral/devstral-latest"), service.ModelAttributes("devstral-latest"))
 	require.NotNil(t, service.ModelAttributes("devstral-latest").Context)
-	// 中继记录保持自己的价格与属性。
+	// Relay records retain their own prices and attributes.
 	require.InDelta(t, 0.44e-6, catalogPriceForTest(t, service, "requesty/devstral-latest").InputPricePerToken, 1e-12)
 }
 
-// TestModelsCatalogOfflineManualUpdate 验证磁盘缓存不存在时，手动更新仍能使用已加载的内存目录。
+// TestModelsCatalogOfflineManualUpdate checks that manual reload can use the in-memory catalog when disk cache
+// is unavailable.
 func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	dir := t.TempDir()
 	cache := filepath.Join(dir, "cache")
 	patch := filepath.Join(dir, "supplement.json")
-	// 用不可作为目录的路径稳定模拟缓存不可写，测试不依赖进程的文件权限。
+	// Use a regular file as the cache directory so failure is independent of process permissions.
 	require.NoError(t, os.WriteFile(cache, []byte("unwritable cache"), 0o600))
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":0.000007}}`), 0o600))
 	service := NewService(Options{DataDir: cache, FallbackFile: patch}, nil)
@@ -1157,7 +1167,7 @@ func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	require.InDelta(t, 9e-6, service.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
 	require.NotEqual(t, before.Version, service.AttributesSnapshot().Version)
 	require.Empty(t, service.AttributesSnapshot().LastError)
-	// 本地更新同样完整校验，失败时保留上一次成功价格和属性。
+	// A failed local update retains the last successfully published prices and attributes.
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":"invalid"}}`), 0o600))
 	require.Error(t, service.ForceUpdate())
 	require.InDelta(t, 9e-6, service.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
@@ -1247,7 +1257,8 @@ func TestModelsCatalogReadOnlyCacheStillServesOfflineData(t *testing.T) {
 	require.NotNil(t, s.ModelAttributes("claude-sonnet-4-5").Context)
 }
 
-// TestModelsCatalogConditionalUpdate 验证普通更新使用 ETag，强制更新清空条件，304 仍应用本地补充。
+// TestModelsCatalogConditionalUpdate checks ETag use, forced requests, and local supplement application after
+// a 304.
 func TestModelsCatalogConditionalUpdate(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1270,7 +1281,8 @@ func TestModelsCatalogConditionalUpdate(t *testing.T) {
 	require.Nil(t, service.GetModelPricing("custom-model"))
 }
 
-// TestModelsCatalogRejectsLegacyRemote 验证自定义旧远程文件报迁移错误，内存和磁盘版本均保持不变。
+// TestModelsCatalogRejectsLegacyRemote checks that legacy remote input leaves disk and memory unchanged and
+// reports a migration error.
 func TestModelsCatalogRejectsLegacyRemote(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(modelsCatalogFixture)}
 	service := NewService(Options{RemoteURL: "https://custom.example/prices.json", DataDir: t.TempDir()}, remote)
@@ -1287,7 +1299,7 @@ func TestModelsCatalogRejectsLegacyRemote(t *testing.T) {
 	require.Equal(t, disk, readCatalogTestFile(t, service.catalogFilePath()))
 }
 
-// TestModelsCatalogDroppedAbsoluteTierWarns 检查更新后绝对阶梯消失时记录告警。
+// TestModelsCatalogDroppedAbsoluteTierWarns checks warnings when context tiers disappear during an update.
 func TestModelsCatalogDroppedAbsoluteTierWarns(t *testing.T) {
 	sink, restore := captureStructuredLog(t)
 	defer restore()
@@ -1299,7 +1311,7 @@ func TestModelsCatalogDroppedAbsoluteTierWarns(t *testing.T) {
 	require.True(t, sink.ContainsMessageAtLevel("Long-context ladder dropped", "warn"))
 }
 
-// TestModelsCatalogAttributesOnlyWithUnknownPatch 验证没有价格的合法目录仍能发布属性，无价格补充不生成价格。
+// TestModelsCatalogAttributesOnlyWithUnknownPatch checks that valid attributes publish without fabricated prices.
 func TestModelsCatalogAttributesOnlyWithUnknownPatch(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "supplement.json")
@@ -1312,7 +1324,7 @@ func TestModelsCatalogAttributesOnlyWithUnknownPatch(t *testing.T) {
 	require.Equal(t, "No prices", *service.ModelAttributes("attributes-only").DisplayName)
 }
 
-// TestIncompleteCatalogFieldsAreNotReplaced 验证缺一侧报价时也保留目录已有字段。
+// TestIncompleteCatalogFieldsAreNotReplaced checks that a partial catalog price retains its existing fields.
 func TestIncompleteCatalogFieldsAreNotReplaced(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "prices.json")
@@ -1328,7 +1340,8 @@ func TestIncompleteCatalogFieldsAreNotReplaced(t *testing.T) {
 	require.Empty(t, *service.ModelAttributes("partial").OutputModalities)
 }
 
-// TestSupplementRejectsInvalidOperationAndRule 检查无基础价或已有目录报价的补充条目仍需通过校验。
+// TestSupplementRejectsInvalidOperationAndRule checks validation even for entries without base prices or with
+// catalog precedence.
 func TestSupplementRejectsInvalidOperationAndRule(t *testing.T) {
 	for _, body := range []string{
 		`{"_billing_defaults":{"web_search_price_per_call":-1}}`,
@@ -1425,7 +1438,7 @@ func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 	}
 }
 
-// catalogLookupTestPricing 为不同型号设置不同单价，供测试识别命中的条目。
+// catalogLookupTestPricing uses distinct prices to identify which model entry a lookup selects.
 func catalogLookupTestPricing(input float64, modalities ...string) *billingpricing.CatalogModelPricing {
 	return &billingpricing.CatalogModelPricing{
 		InputCostPerToken: input, OutputCostPerToken: input * 5,
@@ -1445,8 +1458,8 @@ func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
-// newHotReloadCatalog 在数据目录里放好目录缓存与补充文件并完成首次加载。
-// 传空串表示不配置补充文件。
+// newHotReloadCatalog prepares a cache and supplement file, then loads the initial catalog.
+// An empty supplement body leaves the supplement path unconfigured.
 func newHotReloadCatalog(t *testing.T, fallbackJSON string) *Service {
 	t.Helper()
 	dir := t.TempDir()

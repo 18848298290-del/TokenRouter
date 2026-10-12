@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Probe 选择分组提供商并测试，传入本次分组映射后的模型。
+// Probe selects a group provider and tests the group-mapped model.
 type Probe struct {
 	ProviderTest    ProviderTester
 	gatewaySvc      *Generic
@@ -17,12 +17,12 @@ type Probe struct {
 	geminiCompatSvc *Gemini
 }
 
-// ProviderTester 定义已选提供商的测试操作。
+// ProviderTester runs a test against a selected provider.
 type ProviderTester interface {
 	RunTestBackgroundWithPromptAndUserAgent(context.Context, int64, string, string, string) (*provider.ScheduledTestResult, error)
 }
 
-// NewProbe 绑定平台选择器和提供商测试器。
+// NewProbe binds platform selectors and the provider tester.
 func NewProbe(test ProviderTester, generic *Generic, compatible *Compatible, gemini *Gemini) Probe {
 	return Probe{ProviderTest: test, gatewaySvc: generic, openAIGateway: compatible, geminiCompatSvc: gemini}
 }
@@ -32,7 +32,7 @@ func (s Probe) Select(ctx context.Context, due routing.GroupAvailabilityProbeDue
 	if err != nil {
 		return routing.GroupProbeTarget{}, err
 	}
-	// 选择仍以请求模型校验白名单，测试只接收分组映射结果，避免丢失别名或重复映射。
+	// Selection checks the requested model; the probe receives the group-mapped model for subsequent provider mapping.
 	routingModel := model
 	if s.openAIGateway != nil {
 		routingModel = s.openAIGateway.resolveGroupRoutingModel(ctx, &due.GroupID, model)

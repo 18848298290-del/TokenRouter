@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// messageHTTPBindings 保存各模块接口和无状态 HTTP 辅助函数。
+// messageHTTPBindings holds module interfaces and stateless HTTP helpers.
 type messageHTTPBindings struct {
 	options     gatewayhttp.MessagesHTTPOptions
 	bindings    gatewayhttp.MessagesBindings
@@ -34,7 +34,7 @@ type messageHTTPBindings struct {
 	concurrency *gatewayhttp.ConcurrencyHelper
 }
 
-// provideMessageHTTPBindings 为消息 HTTP 入口绑定依赖，执行组件由单独的构造函数提供。
+// provideMessageHTTPBindings binds Messages HTTP dependencies; executors are constructed separately.
 func provideMessageHTTPBindings(
 	planner *gatewayprovider.RoutePlanner,
 	cache session.GatewayCache,

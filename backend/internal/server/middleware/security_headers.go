@@ -20,42 +20,42 @@ const (
 	NonceTemplate = "__CSP_NONCE__"
 	// CloudflareInsightsDomain is the domain for Cloudflare Web Analytics.
 	CloudflareInsightsDomain = "https://static.cloudflareinsights.com"
-	// GoogleIdentityScriptURL 是 Google Identity Services 官方脚本地址。
+	// GoogleIdentityScriptURL is the Google Identity Services script URL.
 	GoogleIdentityScriptURL = "https://accounts.google.com/gsi/client"
-	// GoogleIdentityResourceURL 是 One Tap iframe 与网络请求使用的路径来源。
+	// GoogleIdentityResourceURL is the source for One Tap frames and network requests.
 	GoogleIdentityResourceURL = "https://accounts.google.com/gsi/"
-	// GoogleIdentityStyleURL 是 One Tap 浏览器界面使用的官方样式地址。
+	// GoogleIdentityStyleURL is the stylesheet URL for the One Tap UI.
 	GoogleIdentityStyleURL = "https://accounts.google.com/gsi/style"
-	// TencentCaptchaDomain 是腾讯验证码 2.0 中国站 Web SDK 域名。
+	// TencentCaptchaDomain is the Chinese Tencent CAPTCHA 2.0 Web SDK origin.
 	TencentCaptchaDomain = "https://turing.captcha.qcloud.com"
-	// TencentCaptchaStaticDomain 是腾讯验证码静态资源域名。
+	// TencentCaptchaStaticDomain matches Tencent CAPTCHA static resource hosts.
 	TencentCaptchaStaticDomain = "https://*.captcha.gtimg.com"
-	// TencentCaptchaCDNDomain 是天御国内站的核心 JS CDN 主机：
-	// 入口脚本 TJCaptcha.js 会再从这里加载 /1/tgJCap.*.js，缺失时会被 script-src 拦截。
+	// TencentCaptchaCDNDomain serves the Chinese CAPTCHA SDK's core JavaScript.
+	// TJCaptcha.js loads /1/tgJCap.*.js from this host, which also needs script-src permission.
 	TencentCaptchaCDNDomain = "https://turing.captcha.gtimg.com"
-	// TencentCaptchaGlobalDomain 是天御国际站的 Web SDK 与验证弹窗 iframe 主机。
+	// TencentCaptchaGlobalDomain serves the international CAPTCHA SDK and challenge frames.
 	TencentCaptchaGlobalDomain = "https://ca.turing.captcha.qcloud.com"
-	// TencentCaptchaGlobalCDNDomain 是天御国际站的核心 JS CDN 主机。
+	// TencentCaptchaGlobalCDNDomain serves the international CAPTCHA SDK's core JavaScript.
 	TencentCaptchaGlobalCDNDomain = "https://global.turing.captcha.gtimg.com"
-	// TencentCaptchaPrehandleDomain 是天御 SDK 动态预处理脚本与预处理接口主机。
+	// TencentCaptchaPrehandleDomain serves CAPTCHA preprocessing scripts and requests.
 	TencentCaptchaPrehandleDomain = "https://www.tycaptcha.com"
-	// TencentCaptchaJQueryDomain 是国内站入口脚本动态加载的 jQuery CDN 主机。
+	// TencentCaptchaJQueryDomain serves jQuery loaded by the Chinese CAPTCHA entry script.
 	TencentCaptchaJQueryDomain = "https://cloudcache.tencentcs.com"
-	// TencentCaptchaRceDomain 是国际站风控校验接口主机。
+	// TencentCaptchaRceDomain serves international CAPTCHA risk checks.
 	TencentCaptchaRceDomain = "https://rce.tencentrio.com"
-	// TencentCaptchaWorkerSource 是天御国际站创建验证码 Web Worker 时使用的来源。
+	// TencentCaptchaWorkerSource allows blob-backed workers for international CAPTCHA.
 	TencentCaptchaWorkerSource = "blob:"
-	// AliyunCaptchaStaticDomain 是阿里云验证码 Web SDK 与样式资源域名。
+	// AliyunCaptchaStaticDomain matches Aliyun CAPTCHA SDK and stylesheet hosts.
 	AliyunCaptchaStaticDomain = "https://*.alicdn.com"
 	// StripeDomain is the domain for Stripe.js SDK.
 	StripeDomain = "https://*.stripe.com"
-	// AirwallexStaticDomain 是 Airwallex 生产环境 SDK 脚本域名。
+	// AirwallexStaticDomain serves the production Airwallex SDK.
 	AirwallexStaticDomain = "https://static.airwallex.com"
-	// AirwallexCheckoutDomain 是 Airwallex 生产环境收银台元素和 iframe 域名。
+	// AirwallexCheckoutDomain serves production checkout elements and frames.
 	AirwallexCheckoutDomain = "https://checkout.airwallex.com"
-	// AirwallexDemoStaticDomain 是 Airwallex 沙箱环境 SDK 脚本域名。
+	// AirwallexDemoStaticDomain serves the sandbox Airwallex SDK.
 	AirwallexDemoStaticDomain = "https://static-demo.airwallex.com"
-	// AirwallexDemoCheckoutDomain 是 Airwallex 沙箱环境收银台元素和 iframe 域名。
+	// AirwallexDemoCheckoutDomain serves sandbox checkout elements and frames.
 	AirwallexDemoCheckoutDomain = "https://checkout-demo.airwallex.com"
 )
 
@@ -110,7 +110,7 @@ var requiredCSPDirectiveValues = []struct {
 }
 
 // GenerateNonce generates a cryptographically secure random nonce.
-// 返回 error 以确保调用方在 crypto/rand 失败时能正确降级。
+// It returns an error if crypto/rand cannot supply randomness.
 func GenerateNonce() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -138,7 +138,7 @@ func SecurityHeaders(cfg httpconfig.CSPConfig, getFrameSrcOrigins func() []strin
 		policy = httpconfig.DefaultCSPPolicy
 	}
 
-	// Enhance policy with required directives (nonce placeholder and Cloudflare Insights)
+	// Supplement configured policies with the sources required by frontend integrations.
 	policy = enhanceCSPPolicy(policy)
 
 	return func(c *gin.Context) {
@@ -160,10 +160,9 @@ func SecurityHeaders(cfg httpconfig.CSPConfig, getFrameSrcOrigins func() []strin
 		}
 
 		if cfg.Enabled {
-			// Generate nonce for this request
 			nonce, err := GenerateNonce()
 			if err != nil {
-				// crypto/rand 失败时降级为无 nonce 的 CSP 策略
+				// Allow inline scripts if nonce generation fails.
 				log.Printf("[SecurityHeaders] %v — 降级为无 nonce 的 CSP", err)
 				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'unsafe-inline'"))
 			} else {
@@ -187,10 +186,9 @@ func isAPIRoutePath(c *gin.Context) bool {
 		strings.HasPrefix(path, "/images")
 }
 
-// enhanceCSPPolicy 确保 CSP 策略包含 nonce 支持和运行时组件必需域名。
-// 这样旧配置文件没有及时补域名时，验证码和支付组件仍能正常加载。
+// enhanceCSPPolicy adds nonce support and sources required by frontend integrations.
+// This lets CAPTCHA and payment components load with older custom policies.
 func enhanceCSPPolicy(policy string) string {
-	// Add nonce placeholder to script-src if not present
 	if !strings.Contains(policy, NonceTemplate) && !strings.Contains(policy, "'nonce-") {
 		policy = addToDirective(policy, "script-src", NonceTemplate)
 	}
@@ -216,37 +214,31 @@ func directiveHasValue(policy, directive, value string) bool {
 }
 
 // addToDirective adds a value to a specific CSP directive.
-// If the directive doesn't exist, it will be added after default-src.
+// A missing directive is inserted after a terminated default-src directive, or prepended.
 func addToDirective(policy, directive, value string) string {
-	// Find the directive in the policy
 	directivePrefix := directive + " "
 	idx := strings.Index(policy, directivePrefix)
 
 	if idx == -1 {
-		// Directive not found, add it after default-src or at the beginning
 		defaultSrcIdx := strings.Index(policy, "default-src ")
 		if defaultSrcIdx != -1 {
-			// Find the end of default-src directive (next semicolon)
 			endIdx := strings.Index(policy[defaultSrcIdx:], ";")
 			if endIdx != -1 {
 				insertPos := defaultSrcIdx + endIdx + 1
-				// Insert new directive after default-src
+
 				return policy[:insertPos] + " " + directive + " 'self' " + value + ";" + policy[insertPos:]
 			}
 		}
-		// Fallback: prepend the directive
+
 		return directive + " 'self' " + value + "; " + policy
 	}
 
-	// Find the end of this directive (next semicolon or end of string)
 	endIdx := strings.Index(policy[idx:], ";")
 
 	if endIdx == -1 {
-		// No semicolon found, directive goes to end of string
 		return policy + " " + value
 	}
 
-	// Insert value before the semicolon
 	insertPos := idx + endIdx
 	return policy[:insertPos] + " " + value + policy[insertPos:]
 }

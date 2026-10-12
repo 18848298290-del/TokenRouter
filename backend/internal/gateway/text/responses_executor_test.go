@@ -87,7 +87,7 @@ func TestFixedResponsesRetainsPartialFailureAcrossIndependentRequests(t *testing
 	}
 }
 
-// TestPricingRejectionStopsTextAttempts 覆盖三个文本入口共用的尝试循环及错误返回。
+// TestPricingRejectionStopsTextAttempts checks pricing rejection across all three shared text entry kinds.
 func TestPricingRejectionStopsTextAttempts(t *testing.T) {
 	prices := &admission.ModelPricing{Resolver: billing.NewPriceResolver(nil, billing.NewCalculator(nil, billing.CalculatorOptions{}), nil, nil)}
 	rejected := prices.Check(context.Background(), nil, "codex-auto-review")
@@ -121,7 +121,7 @@ func TestPricingRejectionStopsTextAttempts(t *testing.T) {
 	}
 }
 
-// TestUsagePricingFailureKeepsCompletion 结算阶段的普通缺价错误仍经过完成处理。
+// TestUsagePricingFailureKeepsCompletion checks that settlement-stage pricing errors still complete served output.
 func TestUsagePricingFailureKeepsCompletion(t *testing.T) {
 	runtime := &fixedResponseRuntime{outcome: ResponseOutcome{NativePartial: true, Outcome: Outcome{
 		Err: pricing.ErrModelPricingUnavailable, HasResult: true,

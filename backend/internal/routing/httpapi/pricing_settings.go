@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// optionalBillingPrice 保留省略、null 和零值的区别。
+// optionalBillingPrice distinguishes omitted, null, and zero prices.
 type optionalBillingPrice struct{ routing.PriceUpdate }
 
 type billingSettingsRequest struct {

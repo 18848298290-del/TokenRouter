@@ -31,7 +31,7 @@ func provideGeminiAuthorization(proxies egress.ProxyRepository, client provider.
 	return provider.NewGeminiAuthorization(client, discovery, drive, options)
 }
 
-// provideGeminiQuotaPolicy 绑定静态参数和动态设置读取器，共用配额设置缓存。
+// provideGeminiQuotaPolicy binds static quotas and a dynamic policy reader to the shared quota cache.
 func provideGeminiQuotaPolicy(cfg *config.Config, store *settings.Store) *provider.GeminiQuotaService {
 	tiers := make(map[string]provider.GeminiTierQuotaOverride, len(cfg.Gemini.Quota.Tiers))
 	for id, v := range cfg.Gemini.Quota.Tiers {
@@ -42,7 +42,7 @@ func provideGeminiQuotaPolicy(cfg *config.Config, store *settings.Store) *provid
 	}})
 }
 
-// provideGeminiPrecheck 使用洛杉矶时区和独立的每日统计缓存。
+// provideGeminiPrecheck uses Los Angeles time and its own daily usage cache.
 func provideGeminiPrecheck(policy *provider.GeminiQuotaService, usage usageerrors.UsageLogRepository) *provider.GeminiPrecheck {
 	location, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
@@ -51,7 +51,7 @@ func provideGeminiPrecheck(policy *provider.GeminiQuotaService, usage usageerror
 	return provider.NewGeminiPrecheck(policy, newProviderGeminiUsageReader(usage), provider.GeminiPrecheckOptions{Now: time.Now, Location: location, Info: slog.Info})
 }
 
-// provideGeminiTokens 组合 project 查询、Vertex 凭据交换和凭据字段保存。
+// provideGeminiTokens binds project lookup, Vertex token exchange, and credential persistence.
 func provideGeminiTokens(store *postgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.GeminiAuthorization, refresh *provider.OAuthRefreshAPI) *provider.GeminiTokenSource {
 	executor := &provider.GeminiTokenRefresher{Authorization: authorization, Key: provideradapter.GeminiTokenCacheKey}
 	return &provider.GeminiTokenSource{Options: provider.GeminiTokenOptions{
@@ -71,7 +71,7 @@ func provideGeminiTokens(store *postgres.ProviderStore, cache provider.AccessTok
 	}}
 }
 
-// provideAntigravityTokens 绑定共享的回填状态、冷却缓存和刷新协调器。
+// provideAntigravityTokens binds project backfill, the cooldown cache, and the shared refresh coordinator.
 func provideAntigravityTokens(store *postgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.AntigravityAuthorization, refresh *provider.OAuthRefreshAPI, cooldown provider.TempUnschedCache) *provider.AntigravityTokenSource {
 	executor := &provider.AntigravityRefreshRules{
 		RefreshProviderToken:     authorization.RefreshProviderToken,

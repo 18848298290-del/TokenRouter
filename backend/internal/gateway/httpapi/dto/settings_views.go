@@ -1,6 +1,6 @@
 package dto
 
-// RectifierSettings 是请求修正设置的 HTTP 响应数据。
+// RectifierSettings is the HTTP representation of request correction settings.
 type RectifierSettings struct {
 	Enabled                  bool     `json:"enabled"`
 	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
@@ -9,7 +9,7 @@ type RectifierSettings struct {
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
 }
 
-// BetaPolicyRule 是 beta 策略规则的 HTTP 数据。
+// BetaPolicyRule is the HTTP representation of a beta-token policy rule.
 type BetaPolicyRule struct {
 	BetaToken            string   `json:"beta_token"`
 	Action               string   `json:"action"`
@@ -20,12 +20,12 @@ type BetaPolicyRule struct {
 	FallbackErrorMessage string   `json:"fallback_error_message,omitempty"`
 }
 
-// BetaPolicySettings 是 beta 策略设置的 HTTP 数据。
+// BetaPolicySettings contains beta-token rules for the HTTP API.
 type BetaPolicySettings struct {
 	Rules []BetaPolicyRule `json:"rules"`
 }
 
-// OpenAIFastPolicyRule 是 OpenAI Fast 策略规则的 HTTP 数据。
+// OpenAIFastPolicyRule is the HTTP representation of an OpenAI Fast policy rule.
 type OpenAIFastPolicyRule struct {
 	ServiceTier          string   `json:"service_tier"`
 	Action               string   `json:"action"`
@@ -37,7 +37,7 @@ type OpenAIFastPolicyRule struct {
 	FallbackErrorMessage string   `json:"fallback_error_message,omitempty"`
 }
 
-// OpenAIFastPolicySettings 是 OpenAI Fast 策略设置的 HTTP 数据。
+// OpenAIFastPolicySettings contains OpenAI Fast rules for the HTTP API.
 type OpenAIFastPolicySettings struct {
 	Rules []OpenAIFastPolicyRule `json:"rules"`
 }

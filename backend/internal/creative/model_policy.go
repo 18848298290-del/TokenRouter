@@ -10,12 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// groupModelPolicy 固定一次目录查询或执行尝试的分组策略，价格配置不参与模型准入。
+// groupModelPolicy snapshots group admission rules for one query or execution attempt, independently of pricing.
 type groupModelPolicy struct {
 	view *routing.GroupPolicyView
 }
 
-// creativeModelQuery 复用一个分组的提供商及模型规则。
+// creativeModelQuery reuses provider records and model rules for one group.
 type creativeModelQuery struct {
 	attributes *routing.ModelAttributeSession
 	group      *GroupView
@@ -32,7 +32,7 @@ func newGroupModelPolicy(policy routing.GroupRoutingPolicy) groupModelPolicy {
 	}}
 }
 
-// resolve 只执行一次分组映射；上游阶段留给具体提供商解析完成后检查。
+// resolve applies one group mapping and defers upstream restrictions until provider model resolution.
 func (p groupModelPolicy) resolve(requested string) (string, bool) {
 	mapped := p.view.ResolveModel(requested)
 	if p.view.RestrictionSource() != routing.BillingModelSourceUpstream {
@@ -48,7 +48,7 @@ func (p groupModelPolicy) allowsUpstream(model string) bool {
 	return p.view.RestrictionSource() != routing.BillingModelSourceUpstream || !p.view.IsModelRestricted(model)
 }
 
-// candidates 合并可枚举的请求名称，返回可选模型列表。通配符留给后续匹配使用。
+// candidates merges concrete request names; wildcard rules are applied during later matching.
 func (p groupModelPolicy) candidates(configured []string, providers []CatalogProvider) []string {
 	models := make(map[string]struct{})
 	add := func(values ...string) {
@@ -83,7 +83,7 @@ func (p groupModelPolicy) candidates(configured []string, providers []CatalogPro
 	return result
 }
 
-// prepareCreativeModels 按已开放的操作读取提供商，每个平台读取一次。
+// prepareCreativeModels reads providers once per platform with enabled operations.
 func (s *Public) prepareCreativeModels(ctx context.Context, group *GroupView) (*creativeModelQuery, error) {
 	if s.ProviderRepo == nil || group == nil || group.ClaudeCodeOnly {
 		return nil, nil
@@ -144,7 +144,7 @@ func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string)
 	return out, nil
 }
 
-// resolve 校验具体型号，并按 OpenAI、Gemini、Grok 的顺序选择图片能力。
+// resolve validates a concrete model and selects image capabilities in OpenAI, Gemini, Grok order.
 func (q *creativeModelQuery) resolve(ctx context.Context, model string, display bool) (creativeModelRoute, bool, error) {
 	if q == nil || ctx.Err() != nil || strings.TrimSpace(model) == "" || strings.ContainsAny(model, "*?") {
 		return creativeModelRoute{}, false, nil

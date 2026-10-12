@@ -7,7 +7,7 @@ import (
 )
 
 func TestOpenAIImageOutputCounter_TextOnlyResponsesStream(t *testing.T) {
-	// 回归覆盖：纯文本 /v1/responses 流不能因为 message output item 被记为图片。
+	// A message output item in a text-only Responses stream must not count as an image.
 	sseBody := `data: {"type":"response.created","response":{"id":"resp_123"}}
 
 data: {"type":"response.output_item.added","item":{"id":"item_1","type":"message","role":"assistant","status":"in_progress"}}
@@ -26,7 +26,7 @@ data: [DONE]`
 }
 
 func TestOpenAIImageOutputCounter_DataArraySkipsNonImageObjects(t *testing.T) {
-	// 图片 data 参与图片计数，其他 data 数组的图片计数为零。
+	// Only data entries containing image output contribute to the image count.
 	nonImageData := `data: {"type":"response.completed","response":{"id":"resp_1","output":[{"id":"item_1","type":"message","content":[{"type":"output_text","text":"Hello"}]}]},"data":[{"id":"not_an_image","status":"done"}]}
 
 data: [DONE]`
@@ -51,7 +51,7 @@ data: [DONE]`
 }
 
 func TestOpenAIImageOutputCounter_CompletedImageEventRequiresOutput(t *testing.T) {
-	// 回归覆盖：缺少 result/b64_json/url 的 image_generation.completed 事件不能只凭 id 计数。
+	// An image_generation.completed ID alone is insufficient: result, b64_json, or url is required.
 	emptyCompleted := `data: {"type":"image_generation.completed","item":{"type":"image_generation.completed","id":"call_1"}}
 
 data: [DONE]`
@@ -70,7 +70,7 @@ data: [DONE]`
 }
 
 func TestOpenAIImageOutputCounter_JSONDataArraySkipsNonImageObjects(t *testing.T) {
-	// 回归覆盖：非流式 JSON 响应中的非图片 data 数组也不能触发图片计费。
+	// Non-image entries in a JSON data array must not trigger image billing.
 	body := []byte(`{
 		"id": "resp_1",
 		"object": "response",

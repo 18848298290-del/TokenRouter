@@ -2,7 +2,7 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/billing"
 
-// BillingAdminSettings 从综合快照提取计费设置。
+// BillingAdminSettings extracts billing settings from the snapshot.
 func (s *Snapshot) BillingAdminSettings() billing.AdminSettings {
 	return billing.AdminSettings{
 		BalanceIconSVG:                  s.BalanceIconSVG,
@@ -19,7 +19,7 @@ func (s *Snapshot) BillingAdminSettings() billing.AdminSettings {
 	}
 }
 
-// ApplyBillingAdminSettings 将计费设置写入综合快照。
+// ApplyBillingAdminSettings copies billing settings into the snapshot.
 func (s *Snapshot) ApplyBillingAdminSettings(value billing.AdminSettings) {
 	s.BalanceIconSVG = value.BalanceIconSVG
 	s.BalanceLowNotifyEnabled = value.BalanceLowNotifyEnabled
@@ -34,7 +34,8 @@ func (s *Snapshot) ApplyBillingAdminSettings(value billing.AdminSettings) {
 	s.USDExchangeRate = value.USDExchangeRate
 }
 
-// ApplyBillingAdminReadSettings 将余额显示、通知、默认额度和汇率设置写入快照。
+// ApplyBillingAdminReadSettings copies balance display, notification, grant, and exchange-rate settings into
+// the snapshot.
 func (s *Snapshot) ApplyBillingAdminReadSettings(value *billing.AdminReadSettings) {
 	s.BalanceIconSVG = value.BalanceIconSVG
 	s.BalanceLowNotifyEnabled = value.BalanceLowNotifyEnabled

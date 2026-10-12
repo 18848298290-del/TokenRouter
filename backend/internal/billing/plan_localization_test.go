@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestPlanTextRequiresLocalization 防止普通列更新成功后，购买页仍读取旧内容。
+// TestPlanTextRequiresLocalization prevents column-only text edits that would leave purchase-page localization stale.
 func TestPlanTextRequiresLocalization(t *testing.T) {
 	text := "Updated"
 	for _, request := range []UpdatePlanRequest{

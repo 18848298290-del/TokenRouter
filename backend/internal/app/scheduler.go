@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// schedulerSharedState 保存跨平台共享的调度反馈、运行参数和粘性会话统计。
+// schedulerSharedState holds scheduling feedback, runtime parameters, and sticky-session statistics shared across platforms.
 type schedulerSharedState struct {
 	Feedback   *scheduler.RuntimeStats
 	Settings   *scheduler.SettingsRuntime
@@ -75,7 +75,7 @@ func provideConcurrency(cache scheduler.ConcurrencyCache, cfg *config.Config) *s
 		Event: logging.Event,
 	},
 	)
-	// 启动时清理上个进程遗留的槽位，周期任务由生命周期管理器启动。
+	// Clean up slots left by a previous process now; lifecycle startup starts periodic cleanup.
 	if err := core.CleanupStaleProcessSlots(context.Background()); err != nil {
 		logging.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
 	}
@@ -103,7 +103,7 @@ func provideMessageQueue(cache scheduler.UserMsgQueueCache, rpm scheduler.RPMCac
 	)
 }
 
-// provideSelectionSnapshots 返回快照读取适配器，来源缺失时返回 nil 接口。
+// provideSelectionSnapshots returns a snapshot adapter, or a nil interface when the source is absent.
 func provideSelectionSnapshots(source *scheduler.SnapshotService) selection.Snapshots {
 	if source == nil {
 		return nil
@@ -111,7 +111,7 @@ func provideSelectionSnapshots(source *scheduler.SnapshotService) selection.Snap
 	return schedulerredis.NewSnapshotReader(source)
 }
 
-// schedulerParameterDefaults 从进程配置读取调度默认参数，零值直接传给调度器。
+// schedulerParameterDefaults overlays process configuration on scheduler defaults, retaining default TopK when configured nonpositive.
 func schedulerParameterDefaults(cfg *config.Config) scheduler.ParameterDefaults {
 	defaults := scheduler.DefaultParameters()
 	if cfg == nil {

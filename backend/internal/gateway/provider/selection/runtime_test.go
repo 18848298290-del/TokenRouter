@@ -9,7 +9,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// TestSchedulerRuntimeBindingKeepsSharedState 检查三种执行入口与诊断是否共用调度状态。
+// TestSchedulerRuntimeBindingKeepsSharedState checks that all three selectors and diagnostics share feedback and settings.
 func TestSchedulerRuntimeBindingKeepsSharedState(t *testing.T) {
 	feedback := schedulercore.NewRuntimeStats(time.Now)
 	settings := schedulercore.NewParameters(schedulercore.NewSettingsRuntime(schedulercore.Diagnostics{}), nil, schedulercore.DefaultParameters())

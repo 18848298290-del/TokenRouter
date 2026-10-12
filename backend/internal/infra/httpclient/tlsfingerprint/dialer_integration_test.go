@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	utls "github.com/refraction-networking/utls" //nolint:revive // 包名是 tls，别名用来和 crypto/tls 区分。
+	utls "github.com/refraction-networking/utls" //nolint:revive // The package is named tls; the alias distinguishes it from crypto/tls.
 )
 
-// CapturedFingerprint 解码 tls-fingerprint-web 抓包服务返回的 JSON 指纹。
+// CapturedFingerprint holds the JSON returned by tls-fingerprint-web.
 type CapturedFingerprint struct {
 	JA3Raw              string   `json:"ja3_raw"`
 	JA3Hash             string   `json:"ja3_hash"`
@@ -34,12 +34,12 @@ type CapturedFingerprint struct {
 	EnableGREASE        bool     `json:"enable_grease"`
 }
 
-// TestDialerAgainstCaptureServer 比较抓包服务收到的 TLS 指纹与配置模板。
+// TestDialerAgainstCaptureServer compares captured fingerprints with profile settings.
 //
-// 默认抓包服务：https://tls.sub2api.org:8090
-// 可通过环境变量选择服务：TLSFINGERPRINT_CAPTURE_URL=https://localhost:8443
+// Default capture server: https://tls.sub2api.org:8090
+// Override with TLSFINGERPRINT_CAPTURE_URL=https://localhost:8443
 //
-// 运行：go test -tags=integration -v -run TestDialerAgainstCaptureServer ./internal/infra/httpclient/tlsfingerprint/...
+// Run: go test -tags=integration -v -run TestDialerAgainstCaptureServer ./internal/infra/httpclient/tlsfingerprint/...
 func TestDialerAgainstCaptureServer(t *testing.T) {
 	captureURL := os.Getenv("TLSFINGERPRINT_CAPTURE_URL")
 	if captureURL == "" {
@@ -55,7 +55,7 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 			profile: &Profile{
 				Name:         "default",
 				EnableGREASE: false,
-				// 空模板使用内置默认值。
+				// Empty fields use built-in defaults.
 			},
 		},
 		{
@@ -201,7 +201,7 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 			t.Logf("JA3 Hash: %s", captured.JA3Hash)
 			t.Logf("JA4:      %s", captured.JA4)
 
-			// 按拨号器规则补齐模板的默认值。
+			// Apply the same defaults as the dialer before comparing the capture.
 			effectiveCipherSuites := tc.profile.CipherSuites
 			if len(effectiveCipherSuites) == 0 {
 				effectiveCipherSuites = defaultCipherSuites
@@ -241,7 +241,6 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 				effectivePSKModes = []uint16{1} // psk_dhe_ke
 			}
 
-			// 比较抓包结果与模板字段。
 			assertIntSliceEqual(t, "cipher_suites", uint16sToInts(effectiveCipherSuites), captured.CipherSuites)
 			assertIntSliceEqual(t, "curves", uint16sToInts(effectiveCurves), captured.Curves)
 			assertIntSliceEqual(t, "point_formats", uint16sToInts(effectivePointFormats), captured.PointFormats)
@@ -257,13 +256,12 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 				t.Logf("  enable_grease: %v OK", captured.EnableGREASE)
 			}
 
-			// 检查扩展顺序。
-			// 未配置 Extensions 时使用 Node.js 24.x 的默认顺序。
+			// An empty Extensions field uses the Node.js 24.x default order.
 			expectedExtOrder := uint16sToInts(defaultExtensionOrder)
 			if len(tc.profile.Extensions) > 0 {
 				expectedExtOrder = uint16sToInts(tc.profile.Extensions)
 			}
-			// 比较前从预期值和抓包结果中去除 GREASE。
+			// Exclude variable GREASE values from both sides of the comparison.
 			var filteredExpected, filteredActual []int
 			for _, e := range expectedExtOrder {
 				if !isGREASEValue(uint16(e)) {
@@ -277,7 +275,7 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 			}
 			assertIntSliceEqual(t, "extensions (order, non-GREASE)", filteredExpected, filteredActual)
 
-			// 输出抓包 JSON 供排查差异。
+			// Log the full capture to diagnose mismatches.
 			capturedJSON, _ := json.MarshalIndent(captured, "  ", "  ")
 			t.Logf("Full captured fingerprint:\n  %s", string(capturedJSON))
 		})
@@ -308,7 +306,7 @@ func fetchCapturedFingerprint(t *testing.T, captureURL string, profile *Profile)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		// 公共采集服务可能因证书过期或网络波动不可用，此时跳过外部依赖测试。
+		// Skip known external certificate and connectivity failures.
 		skipIfExternalServiceUnavailable(t, err)
 		return nil
 	}
@@ -334,7 +332,8 @@ func fetchCapturedFingerprint(t *testing.T, captureURL string, profile *Profile)
 	return &fp
 }
 
-// skipIfExternalServiceUnavailable 在抓包服务不可达时跳过测试，其他错误直接失败。
+// skipIfExternalServiceUnavailable skips known certificate or connectivity failures
+// and fails the test for other non-nil errors.
 func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -404,9 +403,8 @@ func assertStringSliceEqual(t *testing.T, name string, expected, actual []string
 	t.Logf("  %s: %v OK", name, expected)
 }
 
-// TestBuildClientHelloSpecNewFields 检查模板的 ALPN、版本、密钥交换和 PSK 模式。
+// TestBuildClientHelloSpecNewFields checks ALPN, versions, key shares, and PSK modes.
 func TestBuildClientHelloSpecNewFields(t *testing.T) {
-	// 设置自定义 ALPN、TLS 版本、密钥交换组和 PSK 模式。
 	profile := &Profile{
 		Name:                "custom_full",
 		EnableGREASE:        false,
@@ -422,12 +420,10 @@ func TestBuildClientHelloSpecNewFields(t *testing.T) {
 
 	spec := buildClientHelloSpecFromProfile(profile)
 
-	// 比较加密套件。
 	if len(spec.CipherSuites) != 2 || spec.CipherSuites[0] != 0x1301 {
 		t.Errorf("cipher suites: got %v", spec.CipherSuites)
 	}
 
-	// 检查扩展字段值。
 	var foundALPN, foundVersions, foundKeyShare, foundPSK, foundSigAlgs bool
 	for _, ext := range spec.Extensions {
 		switch e := ext.(type) {
@@ -468,7 +464,7 @@ func TestBuildClientHelloSpecNewFields(t *testing.T) {
 		}
 	}
 
-	// nil 模板使用默认配置。
+	// A nil profile uses built-in defaults.
 	specDefault := buildClientHelloSpecFromProfile(nil)
 	for _, ext := range specDefault.Extensions {
 		switch e := ext.(type) {

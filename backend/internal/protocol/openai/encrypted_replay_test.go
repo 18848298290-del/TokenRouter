@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTrimOpenAIEncryptedReasoningItems_ContentNull 验证 content 为 null 的加密推理项处理。
+// TestTrimOpenAIEncryptedReasoningItems_ContentNull checks that cleanup retains the reasoning summary.
 func TestTrimOpenAIEncryptedReasoningItems_ContentNull(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "grok-4.5",

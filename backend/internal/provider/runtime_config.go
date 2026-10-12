@@ -16,8 +16,8 @@ const (
 	WindowCostNotSchedulable = billing.WindowCostNotSchedulable
 )
 
-// RuntimeConfig 为规则计算提供当前配置和窗口数据。
-// 凭据不会进入这个只读配置输入。
+// RuntimeConfig supplies provider configuration and window data for rule evaluation.
+// Callers provide scheduling metadata rather than authentication credentials.
 type RuntimeConfig struct {
 	Extra              map[string]any `json:"-"`
 	Concurrency        int
@@ -25,11 +25,11 @@ type RuntimeConfig struct {
 	SessionWindowEnd   *time.Time
 }
 
-// WindowCostSchedulability 窗口费用调度状态。
+// WindowCostSchedulability is the spending-window scheduling state.
 type WindowCostSchedulability = billing.WindowCostSchedulability
 
-// SanitizeManagedBaseRPM 对 extra map 中的 base_rpm 值进行范围校验和归一化。
-// 负值归零，超过 10000 截断为 10000。extra 为 nil 或不含 base_rpm 时无操作。
+// SanitizeManagedBaseRPM normalizes base_rpm in the supplied Extra map.
+// Values are clamped to 0 through 10000; a nil map or missing key is unchanged.
 func SanitizeManagedBaseRPM(extra map[string]any) {
 	if extra == nil {
 		return
@@ -47,8 +47,8 @@ func SanitizeManagedBaseRPM(extra map[string]any) {
 	extra["base_rpm"] = v
 }
 
-// GetMaxSessions 获取最大并发会话数
-// 返回 0 表示未启用。
+// GetMaxSessions returns the maximum concurrent session count.
+// Zero disables the session limit.
 func (a *RuntimeConfig) GetMaxSessions() int {
 	if a.Extra == nil {
 		return 0
@@ -59,8 +59,8 @@ func (a *RuntimeConfig) GetMaxSessions() int {
 	return 0
 }
 
-// GetSessionIdleTimeoutMinutes 获取会话空闲超时分钟数
-// 默认值为 5 分钟。
+// GetSessionIdleTimeoutMinutes returns the session idle timeout in minutes.
+// Missing or nonpositive values default to five minutes.
 func (a *RuntimeConfig) GetSessionIdleTimeoutMinutes() int {
 	if a.Extra == nil {
 		return 5
@@ -74,8 +74,8 @@ func (a *RuntimeConfig) GetSessionIdleTimeoutMinutes() int {
 	return 5
 }
 
-// GetBaseRPM 获取基础 RPM 限制
-// 返回 0 表示未启用（负数视为无效配置，按 0 处理）。
+// GetBaseRPM returns the base requests-per-minute limit.
+// Zero disables the limit; missing, invalid, and negative values return zero.
 func (a *RuntimeConfig) GetBaseRPM() int {
 	if a.Extra == nil {
 		return 0
@@ -89,8 +89,8 @@ func (a *RuntimeConfig) GetBaseRPM() int {
 	return 0
 }
 
-// GetRPMStrategy 获取 RPM 策略
-// "tiered" = 三区模型（默认）, "sticky_exempt" = 粘性豁免。
+// GetRPMStrategy returns the request-rate scheduling strategy.
+// "tiered" uses three admission levels by default; "sticky_exempt" exempts sticky requests above the base limit.
 func (a *RuntimeConfig) GetRPMStrategy() string {
 	if a.Extra == nil {
 		return "tiered"
@@ -103,9 +103,9 @@ func (a *RuntimeConfig) GetRPMStrategy() string {
 	return "tiered"
 }
 
-// GetRPMStickyBuffer 获取 RPM 粘性缓冲数量
-// Cache-driven: buffer = concurrency + maxSessions（覆盖幽灵窗口 + 稳态会话需求）
-// floor = baseRPM / 5（向后兼容 maxSessions=0 且 concurrency=0 场景）。
+// GetRPMStickyBuffer returns the extra request capacity reserved for sticky sessions.
+// A positive override wins; otherwise concurrency plus maxSessions covers active requests and retained sessions.
+// With a positive base RPM, the computed buffer is at least max(baseRPM/5, 1); otherwise it is zero.
 func (a *RuntimeConfig) GetRPMStickyBuffer() int {
 	if a.Extra == nil {
 		return 0
@@ -117,14 +117,14 @@ func (a *RuntimeConfig) GetRPMStickyBuffer() int {
 	return policy.RPMStickyBuffer(a.GetBaseRPM(), a.Concurrency, a.GetMaxSessions(), override)
 }
 
-// CheckRPMSchedulability 根据当前 RPM 计数检查调度状态
-// 复用 WindowCostSchedulability 三态：Schedulable / StickyOnly / NotSchedulable。
+// CheckRPMSchedulability evaluates the current request-per-minute count.
+// The result is Schedulable, StickyOnly, or NotSchedulable.
 func (a *RuntimeConfig) CheckRPMSchedulability(current int) WindowCostSchedulability {
 	return WindowCostSchedulability(policy.CheckRPM(current, a.GetBaseRPM(), a.GetRPMStickyBuffer(), a.GetRPMStrategy()))
 }
 
-// GetWindowCostLimit 获取 5h 窗口费用阈值（美元）
-// 返回 0 表示未启用。
+// GetWindowCostLimit returns the five-hour spending threshold in USD.
+// Zero disables the spending limit.
 func (a *RuntimeConfig) GetWindowCostLimit() float64 {
 	if a.Extra == nil {
 		return 0
@@ -135,8 +135,8 @@ func (a *RuntimeConfig) GetWindowCostLimit() float64 {
 	return 0
 }
 
-// GetWindowCostStickyReserve 获取粘性会话预留额度（美元）
-// 默认值为 10。
+// GetWindowCostStickyReserve returns the spending reserve for sticky sessions in USD.
+// Missing or nonpositive values default to 10 USD.
 func (a *RuntimeConfig) GetWindowCostStickyReserve() float64 {
 	if a.Extra == nil {
 		return 10.0
@@ -150,15 +150,15 @@ func (a *RuntimeConfig) GetWindowCostStickyReserve() float64 {
 	return 10.0
 }
 
-// GetCurrentWindowStartTime 获取当前有效的窗口开始时间
-// 逻辑：
-// 1. 如果窗口未过期（SessionWindowEnd 存在且在当前时间之后），使用记录的 SessionWindowStart
-// 2. 否则（窗口过期或未设置），使用新的预测窗口开始时间（从当前整点开始）。
+// GetCurrentWindowStartTime returns the active spending window start.
+// The stored window is used when both timestamps are present and its end is in the future.
+// Otherwise, the predicted window starts at the current hour
+// in the supplied time's location.
 func (a *RuntimeConfig) GetCurrentWindowStartTime(now time.Time) time.Time {
 	return billing.CurrentCostWindowStart(a.SessionWindowStart, a.SessionWindowEnd, now)
 }
 
-// ParseExtraFloat64 从 extra 字段解析 float64 值。
+// ParseExtraFloat64 parses a numeric Extra value, returning zero for unsupported or invalid input.
 func ParseExtraFloat64(value any) float64 {
 	switch v := value.(type) {
 	case float64:
@@ -213,20 +213,20 @@ func ParseExtraInt(value any) int {
 	return 0
 }
 
-// GetUserMsgQueueMode 获取用户消息队列模式
-// "serialize" = 串行队列, "throttle" = 软性限速, "" = 未设置（使用全局配置）。
+// GetUserMsgQueueMode returns the provider message queue mode.
+// "serialize" queues requests, "throttle" applies soft rate limiting, and empty uses the global setting.
 func (a *RuntimeConfig) GetUserMsgQueueMode() string {
 	if a.Extra == nil {
 		return ""
 	}
-	// 优先读取新字段 user_msg_queue_mode（白名单校验，非法值视为未设置）
+	// Prefer user_msg_queue_mode; an unsupported nonempty mode uses the global setting.
 	if mode, ok := a.Extra["user_msg_queue_mode"].(string); ok && mode != "" {
 		if mode == "serialize" || mode == "throttle" {
 			return mode
 		}
-		return "" // 非法值 fallback 到全局配置
+		return "" // An invalid mode uses global configuration.
 	}
-	// 向后兼容: user_msg_queue_enabled: true → "serialize"
+	// The legacy user_msg_queue_enabled flag selects serialize when true.
 	if enabled, ok := a.Extra["user_msg_queue_enabled"].(bool); ok && enabled {
 		return "serialize"
 	}

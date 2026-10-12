@@ -28,8 +28,8 @@ const (
 	openAIInputTokensFallbackMinimum = 1
 )
 
-// ForwardCountTokensAsAnthropic 将 Anthropic /v1/messages/count_tokens 桥接到
-// OpenAI POST /v1/responses/input_tokens，并返回 Anthropic 兼容结果。
+// ForwardCountTokensAsAnthropic bridges Anthropic /v1/messages/count_tokens to
+// OpenAI POST /v1/responses/input_tokens and returns an Anthropic-compatible result.
 func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 	ctx context.Context,
 	c *gin.Context,
@@ -42,8 +42,8 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 		return fmt.Errorf("count_tokens: missing provider")
 	}
 
-	// 三家国产供应商的兼容层都没有可依赖的 count_tokens 端点；无论提供商使用
-	// Chat、Anthropic 还是 Responses 上游协议，都只做本地估算且不改变提供商状态。
+	// CN providers and Grok use local estimates regardless of their configured protocol.
+	// These providers bypass upstream counting and provider health updates.
 	if provider.View().IsCNProvider() || provider.View().IsGrok() {
 		estimated, err := tokenestimate.Anthropic(body)
 		if err != nil {
@@ -280,8 +280,8 @@ func isOpenAIOAuthInputTokensUnsupported(statusCode int, body []byte) bool {
 		return true
 	}
 
-	// 上游代理可能在请求到达 API 前拦截 OAuth 平台端点，并返回没有结构化错误的 HTML 403 页面。
-	// 该响应属于端点不可用，count_tokens 应回退本地估算且不能影响提供商健康状态。
+	// An upstream proxy can return an HTML 403 before the request reaches the OAuth API.
+	// Treat this as an unavailable counting endpoint and estimate locally without changing provider health.
 	if statusCode == http.StatusForbidden && upstream.IsHTMLResponse(body) {
 		return true
 	}

@@ -46,7 +46,7 @@ var (
 	ErrBackupStorageConfigCorrupt = infraerrors.InternalServer("BACKUP_STORAGE_CONFIG_CORRUPT", "backup storage config data is corrupted")
 	ErrBackupContentConfigCorrupt = infraerrors.InternalServer("BACKUP_CONTENT_CONFIG_CORRUPT", "backup content config data is corrupted")
 	ErrDatabaseMaintenanceBusy    = infraerrors.Conflict("MAINTENANCE_BUSY", "another database maintenance task is running")
-	// ErrSecretEncryptionKeyNotConfigured 表示当前使用的是重启后会变化的临时密钥，不能持久化新的 S3 密钥。
+	// ErrSecretEncryptionKeyNotConfigured rejects new S3 secrets when the encryption key changes on restart.
 	ErrSecretEncryptionKeyNotConfigured = infraerrors.BadRequest(
 		"SECRET_ENCRYPTION_KEY_NOT_CONFIGURED",
 		"cannot store the S3 secret access key: no fixed secret encryption key is configured, so the auto-generated key would change on every restart and make the stored secret undecryptable after a restart or upgrade. Set a fixed TOTP_ENCRYPTION_KEY (e.g. generate one with `openssl rand -hex 32`) and try again",
@@ -99,20 +99,18 @@ var (
 	}
 )
 
-// 接口定义
-
-// DBDumper 抽象数据库导出和恢复操作。
+// DBDumper exports and restores database contents.
 type DBDumper interface {
 	Dump(ctx context.Context, opts BackupDumpOptions) (io.ReadCloser, error)
 	Restore(ctx context.Context, data io.Reader) error
 }
 
-// BackupDumpOptions 控制 pg_dump 的导出范围。
+// BackupDumpOptions controls which table data pg_dump excludes.
 type BackupDumpOptions struct {
 	ExcludeTableData []string
 }
 
-// BackupObjectStore 抽象备份文件存储后端。
+// BackupObjectStore stores and retrieves backup files.
 type BackupObjectStore interface {
 	Upload(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error)
 	UploadFile(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error)
@@ -122,29 +120,27 @@ type BackupObjectStore interface {
 	HeadBucket(ctx context.Context) error
 }
 
-// BackupObjectStoreProgressUploader 是支持上报上传进度的对象存储扩展接口。
+// BackupObjectStoreProgressUploader reports uploaded bytes during file uploads.
 type BackupObjectStoreProgressUploader interface {
 	UploadFileWithProgress(ctx context.Context, key string, body io.Reader, contentType string, onProgress func(uploadedBytes int64)) (sizeBytes int64, err error)
 }
 
-// BackupObjectStoreSizedUploader 可直接上传已知长度的分卷，避免兼容模式再次落盘计算大小。
+// BackupObjectStoreSizedUploader uploads known-length parts without spooling them again to determine their size.
 type BackupObjectStoreSizedUploader interface {
 	UploadSized(ctx context.Context, key string, body io.Reader, contentType string, sizeBytes int64) (int64, error)
 }
 
-// BackupObjectStoreFactory 根据 S3 配置创建对象存储客户端。
+// BackupObjectStoreFactory creates an object store from S3 configuration.
 type BackupObjectStoreFactory func(ctx context.Context, cfg *BackupS3Config) (BackupObjectStore, error)
 
-// 数据模型
-
-// BackupStorageConfig 备份存储配置，决定后续新备份写入本地还是远程对象存储。
+// BackupStorageConfig selects the local or remote destination for subsequent backups.
 type BackupStorageConfig struct {
 	Type      string         `json:"type"`
 	LocalPath string         `json:"local_path"`
 	S3        BackupS3Config `json:"s3"`
 }
 
-// BackupContentConfig 控制备份文件中包含哪些非核心历史数据。
+// BackupContentConfig selects optional historical and runtime data for a backup.
 type BackupContentConfig struct {
 	IncludeUsageRecords bool     `json:"include_usage_records"`
 	IncludeOpsLogs      bool     `json:"include_ops_logs"`
@@ -153,29 +149,29 @@ type BackupContentConfig struct {
 	ExcludedTableData   []string `json:"excluded_table_data,omitempty"`
 }
 
-// BackupS3Config S3 兼容存储配置（支持 Cloudflare R2）。
+// BackupS3Config configures S3-compatible storage, including Cloudflare R2.
 type BackupS3Config struct {
-	Endpoint          string `json:"endpoint"` // 例如 https://<account_id>.r2.cloudflarestorage.com
-	Region            string `json:"region"`   // R2 用 "auto"
+	Endpoint          string `json:"endpoint"` // For example, https://<account_id>.r2.cloudflarestorage.com
+	Region            string `json:"region"`   // Use "auto" for R2.
 	Bucket            string `json:"bucket"`
 	AccessKeyID       string `json:"access_key_id"`
 	SecretAccessKey   string `json:"secret_access_key,omitempty"`
-	Prefix            string `json:"prefix"` // S3 key 前缀，如 "backups/"
+	Prefix            string `json:"prefix"` // Object key prefix, such as "backups/"
 	ForcePathStyle    bool   `json:"force_path_style"`
 	UploadConcurrency int    `json:"upload_concurrency"`
 	UploadPartSizeMB  int    `json:"upload_part_size_mb"`
 	UploadMode        string `json:"upload_mode"`
 }
 
-// BackupScheduleConfig 定时备份配置。
+// BackupScheduleConfig controls scheduled backups and retention.
 type BackupScheduleConfig struct {
 	Enabled     bool   `json:"enabled"`
-	CronExpr    string `json:"cron_expr"`    // cron 表达式，如 "0 2 * * *" 每天凌晨2点
-	RetainDays  int    `json:"retain_days"`  // 备份文件过期天数，默认14，0=不自动清理
-	RetainCount int    `json:"retain_count"` // 最多保留份数，0=不限制
+	CronExpr    string `json:"cron_expr"`    // Five-field cron expression; "0 2 * * *" runs daily at 02:00.
+	RetainDays  int    `json:"retain_days"`  // Age limit in days for cleanup; zero disables age-based cleanup.
+	RetainCount int    `json:"retain_count"` // Maximum retained backups; zero means unlimited.
 }
 
-// BackupRecord 备份记录。
+// BackupRecord stores backup metadata and backup/restore progress.
 type BackupRecord struct {
 	ID            string       `json:"id"`
 	Status        string       `json:"status"`      // pending, running, completed, failed
@@ -183,34 +179,34 @@ type BackupRecord struct {
 	FileName      string       `json:"file_name"`
 	StorageType   string       `json:"storage_type,omitempty"`
 	StorageKey    string       `json:"storage_key,omitempty"`
-	S3Key         string       `json:"s3_key"` // 兼容旧版本远程备份记录
+	S3Key         string       `json:"s3_key"` // Legacy remote backup key
 	Parts         []BackupPart `json:"parts,omitempty"`
 	SizeBytes     int64        `json:"size_bytes"`
 	TriggeredBy   string       `json:"triggered_by"` // manual, scheduled
 	ErrorMsg      string       `json:"error_message,omitempty"`
 	StartedAt     string       `json:"started_at"`
 	FinishedAt    string       `json:"finished_at,omitempty"`
-	ExpiresAt     string       `json:"expires_at,omitempty"`     // 过期时间
+	ExpiresAt     string       `json:"expires_at,omitempty"`     // Expiration timestamp
 	Progress      string       `json:"progress,omitempty"`       // "pending", "dumping", "uploading", ""
 	RestoreStatus string       `json:"restore_status,omitempty"` // "", "running", "completed", "failed"
 	RestoreError  string       `json:"restore_error,omitempty"`
 	RestoredAt    string       `json:"restored_at,omitempty"`
 }
 
-// BackupDownloadPart 描述一个可下载的备份分卷。
+// BackupDownloadPart describes a downloadable archive part.
 type BackupDownloadPart struct {
 	Index     int    `json:"index"`
 	SizeBytes int64  `json:"size_bytes"`
 	URL       string `json:"url"`
 }
 
-// BackupDownloadResponse 兼容单文件 URL 与分卷 URL 列表。
+// BackupDownloadResponse carries either a single-file URL or a list of part URLs.
 type BackupDownloadResponse struct {
 	URL   string               `json:"url,omitempty"`
 	Parts []BackupDownloadPart `json:"parts,omitempty"`
 }
 
-// BackupService 数据库备份恢复服务。
+// BackupService coordinates database backups and restores.
 type BackupService struct {
 	cleanupCancels  map[uint64]context.CancelFunc
 	cleanupSequence uint64
@@ -231,38 +227,36 @@ type BackupService struct {
 	archive              ArchiveExecutor
 	maintenance          MaintenanceLock
 	encryptor            SecretEncryptor
-	// encryptionKeyConfigured 标记加密密钥是否由部署显式配置；临时密钥不能用于持久化新凭证。
+	// encryptionKeyConfigured reports whether the deployment supplies a persistent key for new credentials.
 	encryptionKeyConfigured bool
 	storeFactory            BackupObjectStoreFactory
 
 	localStore BackupObjectStore
 
-	opMu      sync.Mutex // 保护 backingUp/restoring 标志
+	opMu      sync.Mutex // Protects backingUp and restoring.
 	backingUp bool
 	restoring bool
 
-	storeMu sync.Mutex // 保护 store/s3Cfg 缓存
+	storeMu sync.Mutex // Protects the store and s3Cfg cache.
 	store   BackupObjectStore
 	s3Cfg   *BackupS3Config
 
-	recordsMu sync.Mutex // 保护 records 的 load/save 操作
+	recordsMu sync.Mutex // Serializes record loads and saves.
 
 	cronMu      sync.Mutex
 	cronSched   *cron.Cron
 	cronEntryID cron.EntryID
 
-	wg           sync.WaitGroup     // 追踪活跃的备份/恢复 goroutine
-	shuttingDown atomic.Bool        // 阻止新备份启动
-	bgCtx        context.Context    // 所有后台操作的 parent context
-	bgCancel     context.CancelFunc // 取消所有活跃后台操作
+	wg           sync.WaitGroup     // Tracks active backup and restore goroutines.
+	shuttingDown atomic.Bool        // Rejects new operations during shutdown.
+	bgCtx        context.Context    // Parent context for background operations.
+	bgCancel     context.CancelFunc // Cancels active background operations.
 }
 
-// IsConfigured 检查必要字段是否已配置。
+// IsConfigured reports whether the bucket and both credential fields are present.
 func (c *BackupS3Config) IsConfigured() bool {
 	return c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
 }
-
-// SetMaintenanceDB 注入数据库连接，使备份与其他数据库重任务共享互斥锁。
 
 func (s *BackupService) recoverStaleRecords() {
 	loadCtx, loadCancel := context.WithTimeout(s.bgCtx, 10*time.Second)
@@ -313,7 +307,7 @@ func (s *BackupService) cleanupStaleBackupObjects(record *BackupRecord) error {
 	return s.deleteBackupObjects(ctx, record)
 }
 
-// EncryptionKeyConfigured 报告备份加密密钥是否已配置。
+// EncryptionKeyConfigured reports whether a persistent backup encryption key is configured.
 func (s *BackupService) EncryptionKeyConfigured() bool {
 	return s != nil && s.encryptionKeyConfigured
 }
@@ -350,7 +344,7 @@ func (s *BackupService) UpdateStorageConfig(ctx context.Context, cfg BackupStora
 		}
 		cfg.S3 = *s3Cfg
 	} else {
-		// 本地模式只切换写入目标，保留已保存的远程配置，方便用户后续切回远程备份。
+		// Keep the remote configuration available when switching back from local storage.
 		cfg.S3 = s.loadStoredEncryptedS3Config(ctx)
 	}
 
@@ -363,7 +357,7 @@ func (s *BackupService) UpdateStorageConfig(ctx context.Context, cfg BackupStora
 	}
 
 	if cfg.Type == BackupStorageTypeS3 {
-		// 继续写旧 key，兼容旧接口和旧版本回滚。
+		// Write the legacy key for older API clients and binary rollback.
 		s3Data, err := json.Marshal(cfg.S3)
 		if err != nil {
 			return nil, fmt.Errorf("marshal s3 config: %w", err)
@@ -390,8 +384,6 @@ func (s *BackupService) TestStorageConnection(ctx context.Context, cfg BackupSto
 	}
 }
 
-// 备份内容配置管理
-
 func (s *BackupService) GetContentConfig(ctx context.Context) (*BackupContentConfig, error) {
 	cfg, err := s.loadContentConfig(ctx)
 	if err != nil {
@@ -414,8 +406,7 @@ func (s *BackupService) UpdateContentConfig(ctx context.Context, cfg BackupConte
 	return &normalized, nil
 }
 
-// S3 配置管理（兼容旧接口）
-
+// S3 configuration methods support the legacy API.
 func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error) {
 	cfg, err := s.loadS3Config(ctx)
 	if err != nil {
@@ -429,7 +420,7 @@ func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error
 	if cfg == nil {
 		return &BackupS3Config{UploadMode: BackupS3UploadModeSpooledPut}, nil
 	}
-	// 脱敏返回
+
 	cfg.UploadMode = NormalizeBackupS3UploadMode(cfg.UploadMode)
 	cfg.SecretAccessKey = ""
 	return cfg, nil
@@ -465,7 +456,7 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 }
 
 func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config) error {
-	// 如果没提供 secret，用已保存的
+	// An omitted secret reuses the saved credential for the connection test.
 	if cfg.SecretAccessKey == "" {
 		old, _ := s.loadS3Config(ctx)
 		if old != nil {
@@ -484,8 +475,6 @@ func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config
 	return store.HeadBucket(ctx)
 }
 
-// 定时备份管理
-
 func (s *BackupService) GetSchedule(ctx context.Context) (*BackupScheduleConfig, error) {
 	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupSchedule)
 	if err != nil || raw == "" {
@@ -502,7 +491,7 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 	if cfg.Enabled && cfg.CronExpr == "" {
 		return nil, infraerrors.BadRequest("INVALID_CRON", "cron expression is required when schedule is enabled")
 	}
-	// 验证 cron 表达式
+
 	if cfg.CronExpr != "" {
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 		if _, err := parser.Parse(cfg.CronExpr); err != nil {
@@ -518,7 +507,6 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 		return nil, fmt.Errorf("save schedule config: %w", err)
 	}
 
-	// 应用或停止定时任务
 	if cfg.Enabled {
 		if err := s.applyCronSchedule(&cfg); err != nil {
 			return nil, err
@@ -538,7 +526,6 @@ func (s *BackupService) applyCronSchedule(cfg *BackupScheduleConfig) error {
 		return fmt.Errorf("cron scheduler not initialized")
 	}
 
-	// 移除旧任务
 	if s.cronEntryID != 0 {
 		s.cronSched.Remove(s.cronEntryID)
 		s.cronEntryID = 0
@@ -575,9 +562,8 @@ func (s *BackupService) runScheduledBackup() {
 	ctx, cancel := context.WithTimeout(ctx0, 30*time.Minute)
 	defer cancel()
 
-	// 读取定时备份配置中的过期天数
 	schedule, _ := s.GetSchedule(ctx)
-	expireDays := 14 // 默认14天过期
+	expireDays := 14 // Scheduled backups default to 14 days.
 	if schedule != nil && schedule.RetainDays > 0 {
 		expireDays = schedule.RetainDays
 	}
@@ -594,7 +580,7 @@ func (s *BackupService) runScheduledBackup() {
 	}
 	s.log("service.backup", "[Backup] 定时备份完成: id=%s size=%d", record.ID, record.SizeBytes)
 
-	// 清理过期备份（复用已加载的 schedule）
+	// Apply retention using the schedule loaded for this run.
 	if schedule == nil {
 		return
 	}
@@ -603,10 +589,8 @@ func (s *BackupService) runScheduledBackup() {
 	}
 }
 
-// 备份/恢复核心
-
-// createBackup 创建全量数据库备份并写入当前配置的存储后端（流式处理）
-// expireDays: 备份过期天数，0=永不过期，默认 14 天。
+// createBackup streams the selected database contents to the configured store.
+// expireDays sets the expiration age in days; zero leaves the backup without an expiration.
 func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, expireDays int) (*BackupRecord, error) {
 	if s.shuttingDown.Load() {
 		return nil, infraerrors.ServiceUnavailable("SERVER_SHUTTING_DOWN", "server is shutting down")
@@ -673,7 +657,7 @@ func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, ex
 	return record, nil
 }
 
-// StartBackup 异步创建备份，立即返回 running 状态的记录。
+// StartBackup launches a backup asynchronously and returns its running record.
 func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, expireDays int) (*BackupRecord, error) {
 	ctx, done, beginErr := s.begin(ctx)
 	if beginErr != nil {
@@ -702,7 +686,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	s.backingUp = true
 	s.opMu.Unlock()
 
-	// 初始化阶段出错时自动重置标志
+	// Release the operation claim if initialization fails before launching the worker.
 	launched := false
 	defer func() {
 		if !launched {
@@ -713,7 +697,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		}
 	}()
 
-	// 在返回前加载存储配置和创建 store，避免 goroutine 中配置被修改
+	// Capture the destination before launching the worker so later configuration changes cannot redirect this backup.
 	storageType, objectStore, s3Cfg, err := s.getCurrentBackupStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("init object store: %w", err)
@@ -732,7 +716,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	}
 
 	launched = true
-	// 在启动 goroutine 前完成拷贝，避免数据竞争
+	// Copy the response before the worker begins mutating the record.
 	result := *record
 
 	s.wg.Go(func() {
@@ -783,7 +767,7 @@ func (s *BackupService) newBackupRecord(storageType string, s3Cfg *BackupS3Confi
 	}
 }
 
-// executeBackup 后台执行备份（独立于 HTTP context）。
+// executeBackup runs under the service context, independently of the HTTP request.
 func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config, dumpOptions BackupDumpOptions) {
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
@@ -808,8 +792,6 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 		s.log("service.backup", "[Backup] 保存备份记录失败: %v", err)
 	}
 }
-
-// writeBackupPayload 统一执行 pg_dump、gzip 与对象写入，并在任何失败后清理已登记对象。
 
 func (s *BackupService) restoreBackup(ctx context.Context, backupID string) error {
 	releaseMaintenance, acquired, err := s.maintenance(ctx)
@@ -877,7 +859,7 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 	s.restoring = true
 	s.opMu.Unlock()
 
-	// 初始化阶段出错时自动重置标志
+	// Release the operation claim if initialization fails before launching the worker.
 	launched := false
 	defer func() {
 		if !launched {
@@ -930,7 +912,7 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 	return &result, nil
 }
 
-// executeRestore 后台执行恢复。
+// executeRestore restores in the background and saves the resulting status.
 func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupObjectStore) {
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
@@ -952,14 +934,12 @@ func (s *BackupService) completeRestore(record *BackupRecord) {
 	}
 }
 
-// 备份记录管理
-
 func (s *BackupService) ListBackups(ctx context.Context) ([]BackupRecord, error) {
 	records, err := s.loadRecords(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// 倒序返回（最新在前）
+
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].StartedAt > records[j].StartedAt
 	})
@@ -1001,11 +981,11 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 		return ErrBackupNotFound
 	}
 	if found.Status == "running" {
-		// 后台上传可能仍在使用已登记分卷；删除会让完成后的记录引用缺失对象。
+		// An active upload may still use these parts; deleting them would leave the completed record with missing objects.
 		return ErrBackupInProgress
 	}
 
-	// 删除不完整时保留记录，便于管理员重试并定位残留对象。
+	// Retain metadata after incomplete deletion so administrators can locate and retry residual objects.
 	if err := s.deleteBackupObjects(ctx, found); err != nil {
 		return err
 	}
@@ -1013,7 +993,7 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 	return s.saveRecordsLocked(ctx, remaining)
 }
 
-// GetBackupDownloadURL 获取单文件或分卷备份的预签名下载地址。
+// GetBackupDownloadURL returns download URLs for a single file or its archive parts.
 func (s *BackupService) GetBackupDownloadURL(ctx context.Context, backupID string) (BackupDownloadResponse, error) {
 	var download BackupDownloadResponse
 	record, err := s.GetBackupRecord(ctx, backupID)
@@ -1055,7 +1035,7 @@ func (s *BackupService) GetBackupDownloadURL(ctx context.Context, backupID strin
 	return download, nil
 }
 
-// OpenBackupDownload 打开备份文件读取流，供本地模式走同源鉴权下载。
+// OpenBackupDownload opens a local backup for an authenticated same-origin download. The caller closes the stream.
 func (s *BackupService) OpenBackupDownload(ctx context.Context, backupID string) (io.ReadCloser, *BackupRecord, error) {
 	record, err := s.GetBackupRecord(ctx, backupID)
 	if err != nil {
@@ -1078,8 +1058,6 @@ func (s *BackupService) OpenBackupDownload(ctx context.Context, backupID string)
 	}
 	return body, record, nil
 }
-
-// 内部方法
 
 func (s *BackupService) loadStorageConfig(ctx context.Context) (*BackupStorageConfig, error) {
 	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupStorageConfig)
@@ -1183,11 +1161,11 @@ func (s *BackupService) prepareS3ConfigForSave(ctx context.Context, cfg BackupS3
 	}
 	cfg.UploadMode = uploadMode
 
-	// 如果没提供 secret，优先保留统一配置中的旧值，其次保留旧 S3 配置。
+	// An omitted secret uses the unified configuration first, then the legacy S3 configuration.
 	if cfg.SecretAccessKey == "" {
 		cfg.SecretAccessKey = s.loadStoredEncryptedS3Secret(ctx)
 	} else {
-		// 自动生成的临时密钥会在重启后变化，使用它落库会让新密文永久无法解密。
+		// A temporary key changes on restart and would make the persisted ciphertext unreadable.
 		if !s.encryptionKeyConfigured {
 			return nil, ErrSecretEncryptionKeyNotConfigured
 		}
@@ -1201,7 +1179,7 @@ func (s *BackupService) prepareS3ConfigForSave(ctx context.Context, cfg BackupS3
 }
 
 func (s *BackupService) loadStoredEncryptedS3Config(ctx context.Context) BackupS3Config {
-	// 直接读取原始配置，避免把已解密的 SecretAccessKey 再写回数据库。
+	// Read stored ciphertext directly so a decrypted secret cannot be written back as plaintext.
 	if raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupStorageConfig); err == nil && raw != "" {
 		var storageCfg BackupStorageConfig
 		if json.Unmarshal([]byte(raw), &storageCfg) == nil && backupS3ConfigHasValue(storageCfg.S3) {
@@ -1242,11 +1220,11 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, ErrBackupS3ConfigCorrupt
 	}
-	// 解密 SecretAccessKey
+
 	if cfg.SecretAccessKey != "" {
 		decrypted, err := s.encryptor.Decrypt(cfg.SecretAccessKey)
 		if err != nil {
-			// 兼容未加密的旧数据：如果解密失败，保持原值
+			// Keep the stored value on decryption failure to support legacy plaintext credentials.
 			s.log("service.backup", "[Backup] S3 SecretAccessKey 解密失败（可能是旧的未加密数据）: %v", err)
 		} else {
 			cfg.SecretAccessKey = decrypted
@@ -1352,14 +1330,14 @@ func (s *BackupService) buildStorageKey(storageType string, s3Cfg *BackupS3Confi
 	return s.buildS3Key(s3Cfg, fileName)
 }
 
-// loadRecords 加载备份记录，区分"无数据"和"数据损坏"。
+// loadRecords returns no records for missing settings and an error for malformed JSON.
 func (s *BackupService) loadRecords(ctx context.Context) ([]BackupRecord, error) {
 	s.recordsMu.Lock()
 	defer s.recordsMu.Unlock()
 	return s.loadRecordsLocked(ctx)
 }
 
-// loadRecordsLocked 在已持有 recordsMu 锁的情况下加载记录。
+// loadRecordsLocked requires the caller to hold recordsMu.
 func (s *BackupService) loadRecordsLocked(ctx context.Context) ([]BackupRecord, error) {
 	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupRecords)
 	if err != nil || raw == "" {
@@ -1372,7 +1350,7 @@ func (s *BackupService) loadRecordsLocked(ctx context.Context) ([]BackupRecord, 
 	return records, nil
 }
 
-// saveRecordsLocked 在已持有 recordsMu 锁的情况下保存记录。
+// saveRecordsLocked requires the caller to hold recordsMu.
 func (s *BackupService) saveRecordsLocked(ctx context.Context, records []BackupRecord) error {
 	data, err := json.Marshal(records)
 	if err != nil {
@@ -1381,14 +1359,13 @@ func (s *BackupService) saveRecordsLocked(ctx context.Context, records []BackupR
 	return s.settingRepo.Set(ctx, settingKeyBackupRecords, string(data))
 }
 
-// saveRecord 保存单条记录（带互斥锁保护）。
+// saveRecord updates or appends a record while holding recordsMu.
 func (s *BackupService) saveRecord(ctx context.Context, record *BackupRecord) error {
 	s.recordsMu.Lock()
 	defer s.recordsMu.Unlock()
 
 	records, _ := s.loadRecordsLocked(ctx)
 
-	// 更新已有记录或追加
 	found := false
 	for i := range records {
 		if records[i].ID == record.ID {
@@ -1401,7 +1378,6 @@ func (s *BackupService) saveRecord(ctx context.Context, record *BackupRecord) er
 		records = append(records, *record)
 	}
 
-	// 限制记录数量
 	if len(records) > maxBackupRecords {
 		records = records[len(records)-maxBackupRecords:]
 	}
@@ -1422,7 +1398,6 @@ func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupS
 		return err
 	}
 
-	// 按时间倒序
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].StartedAt > records[j].StartedAt
 	})
@@ -1434,12 +1409,10 @@ func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupS
 	for i, r := range records {
 		shouldDelete := false
 
-		// 按保留份数清理
 		if schedule.RetainCount > 0 && i >= schedule.RetainCount {
 			shouldDelete = true
 		}
 
-		// 按保留天数清理
 		if schedule.RetainDays > 0 && r.StartedAt != "" {
 			startedAt, err := time.Parse(time.RFC3339, r.StartedAt)
 			if err == nil && time.Since(startedAt) > time.Duration(schedule.RetainDays)*24*time.Hour {
@@ -1479,7 +1452,7 @@ func normalizeBackupStorageType(value string) string {
 	}
 }
 
-// NormalizeBackupS3UploadMode 归一化备份上传模式；旧配置默认走磁盘暂存的兼容路径。
+// NormalizeBackupS3UploadMode defaults empty legacy settings to spooled_put and returns empty for unknown modes.
 func NormalizeBackupS3UploadMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", BackupS3UploadModeSpooledPut:
@@ -1550,7 +1523,7 @@ func RecordEffectiveStorageType(record *BackupRecord) string {
 	if record.S3Key != "" {
 		return BackupStorageTypeS3
 	}
-	// 上游分卷记录可能没有 fork 的 storage_type，只保留 parts[].s3_key。
+	// Upstream multipart records may omit storage_type and identify objects through parts[].s3_key.
 	for _, part := range record.Parts {
 		if BackupPartStorageKey(part) != "" {
 			return BackupStorageTypeS3
@@ -1576,7 +1549,7 @@ func legacyS3Key(storageType, storageKey string) string {
 	return ""
 }
 
-// BackupObjectKeys 返回记录关联的全部单文件或分卷对象键，并兼容旧字段。
+// BackupObjectKeys returns deduplicated file and part keys, including legacy fields.
 func BackupObjectKeys(record *BackupRecord) []string {
 	if record == nil {
 		return nil
@@ -1604,7 +1577,7 @@ func BackupObjectKeys(record *BackupRecord) []string {
 	return keys
 }
 
-// deleteBackupObjects 使用记录绑定的存储后端删除全部对象；任何失败都会返回并保留调用方元数据。
+// deleteBackupObjects uses the record's storage type and reports deletion failures without changing metadata.
 func (s *BackupService) deleteBackupObjects(ctx context.Context, record *BackupRecord) error {
 	if len(BackupObjectKeys(record)) == 0 {
 		return nil
@@ -1628,5 +1601,3 @@ func DeleteBackupObjectKeys(ctx context.Context, objectStore BackupObjectStore, 
 	}
 	return errors.Join(errs...)
 }
-
-// LocalBackupStore 将备份文件保存到应用数据目录下，key 只能是相对路径。

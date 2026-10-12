@@ -2,7 +2,7 @@
 
 package app
 
-// 本文件检查 gateway_completion_billing.go 与 gateway_billing_rates.go 装配的计费记录器和持久化存储。
+// These tests cover the completion recorders, rate caches, and persistent stores wired by app.
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 	usagepg "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// 完成记录集成测试使用应用中的记录器和倍率缓存。
+// Use the application constructors for completion recorders and rate caches.
 var (
 	NewCompletionRecordersForTest = ProvideGatewayCompletionRecorders
 	NewGatewayBillingRatesForTest = provideGatewayBillingRates
@@ -33,14 +33,15 @@ var (
 
 type nativeCompletionCatalog struct{ billing.PriceCatalog }
 
-// 测试直接执行存储 SQL，写入按同步方式完成。
+// nativeCompletionSQL executes storage writes synchronously through the test database.
 type nativeCompletionSQL struct{ *sql.DB }
 
 func (nativeCompletionCatalog) GetModelPricing(string) *pricing.CatalogModelPricing {
 	return &pricing.CatalogModelPricing{InputCostPerToken: 0.01, OutputCostPerToken: 0.02}
 }
 
-// TestNativeCompletionRuntimeOneFinancialEffect 检查两种完成记录器调用结算和用量存储，重放后各保留一次资金变动和记录。
+// TestNativeCompletionRuntimeOneFinancialEffect checks that replay leaves one financial change and usage record
+// for each recorder.
 func TestNativeCompletionRuntimeOneFinancialEffect(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()

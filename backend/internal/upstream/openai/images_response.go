@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ImageResponseOptions 配置图片响应的读取、输出和观测。
+// ImageResponseOptions configures image response reading, output and observation.
 type ImageResponseOptions struct {
 	PreserveContentType bool
 	Backfill            func([]byte) []byte
@@ -34,14 +34,14 @@ type ImageResponseOptions struct {
 	Logf                func(string, ...any)
 }
 
-// WriteImagesStreamEvent 写出并刷新一条图片 SSE 事件。
+// WriteImagesStreamEvent writes and flushes one image SSE event.
 func WriteImagesStreamEvent(c *upstream.OutputContext, options ImageResponseOptions, flusher http.Flusher, eventName string, payload []byte) error {
 	if strings.TrimSpace(eventName) != "" {
 		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", eventName); err != nil {
 			return err
 		}
 	}
-	// partial_image 和 completed 事件标记为内容输出，completed 同时标记为终态。
+	// Partial and completed images count as content; completed images also mark terminal output.
 	if strings.HasSuffix(eventName, ".partial_image") || strings.HasSuffix(eventName, ".completed") {
 		c.NextEvent(true, strings.HasSuffix(eventName, ".completed"))
 	}
@@ -52,7 +52,7 @@ func WriteImagesStreamEvent(c *upstream.OutputContext, options ImageResponseOpti
 	return nil
 }
 
-// TryWriteImagesStreamEvent 写出图片事件，并更新断连状态和最后写入时间。
+// TryWriteImagesStreamEvent writes an event and updates disconnect state and last-write time.
 func TryWriteImagesStreamEvent(
 	c *upstream.OutputContext, options ImageResponseOptions,
 	flusher http.Flusher,
@@ -77,7 +77,7 @@ func TryWriteImagesStreamEvent(
 	return true
 }
 
-// ReadImagesOAuthNonStreaming 读取 OAuth 图片结果，输出响应并返回用量和图片数量。
+// ReadImagesOAuthNonStreaming collects OAuth image results, writes the response and returns usage and sizes.
 func ReadImagesOAuthNonStreaming(
 	resp *http.Response,
 	sink upstream.OutputSink, options ImageResponseOptions,
@@ -113,7 +113,7 @@ func ReadImagesOAuthNonStreaming(
 			}
 			return wire.ForwardUsage{}, 0, nil, textFallbackErr
 		}
-		// 真空响应：既无图也无文字输出，保持短暂可重试语义并优先同提供商重试。
+		// A response with neither images nor text uses the caller's empty-output retry policy.
 		options.ObserveError(http.StatusBadGateway, "upstream did not return image output", options.Summary(body))
 		return wire.ForwardUsage{}, 0, nil, options.EmptyOutput(body)
 	}
@@ -131,7 +131,7 @@ func ReadImagesOAuthNonStreaming(
 	return usage, len(results), OpenAIResponsesImageResultSizes(results), nil
 }
 
-// ReadImagesOAuthStreaming 转发 OAuth 图片流，收集图片数量、尺寸和用量。
+// ReadImagesOAuthStreaming forwards image events and collects output count, sizes and usage.
 func ReadImagesOAuthStreaming(
 	resp *http.Response,
 	c *upstream.OutputContext, options ImageResponseOptions,
@@ -282,7 +282,7 @@ func ReadImagesOAuthStreaming(
 					return
 				}
 				outputErr := fmt.Errorf("upstream did not return image output")
-				// 软失败：终态没有图片且没有可分类文本时，记录诊断摘要并返回可重试错误。
+				// A terminal response without images or classifiable text records a diagnostic and returns an error.
 				options.ObserveError(http.StatusBadGateway, "upstream did not return image output", options.Summary(dataBytes))
 				TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBody(outputErr.Error()))
 				processDataErr = outputErr

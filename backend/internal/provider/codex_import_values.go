@@ -7,7 +7,7 @@ import (
 
 const codexImportClockSkewSeconds int64 = 120
 
-// CodexImportProviders 只提供导入所需的已校验管理用例。
+// CodexImportProviders supplies validated create and update operations for imports.
 type CodexImportProviders interface {
 	CreateProvider(context.Context, *CreateProviderInput) (*Record, error)
 	UpdateProvider(context.Context, int64, *UpdateProviderInput) (*Record, error)
@@ -19,14 +19,14 @@ type CodexImportOptions struct {
 	Invalidate         func(context.Context, *Record) error
 }
 
-// CodexImporter 逐项匹配、检查有效期并写入提供商，通过注入的接口解析平台密钥。
+// CodexImporter matches entries, checks expiry, and saves providers using injected platform key parsers.
 type CodexImporter struct {
 	providers CodexImportProviders
 	archive   *Archive
 	options   CodexImportOptions
 }
 
-// CodexOrganizationClaim 保留导入 JWT 的原组织字段，仅供非认证提示解析。
+// CodexOrganizationClaim contains organization fields decoded as import hints, not authentication proof.
 type CodexOrganizationClaim struct {
 	ID        string `json:"id"`
 	Role      string `json:"role"`

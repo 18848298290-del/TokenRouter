@@ -22,7 +22,7 @@ type AlphaSearchRequestOptions struct {
 	ResponsesLiteHeader string
 }
 
-// BuildAlphaSearchRequest 保留官方独立搜索/PAT 回退的原协议头顺序。
+// BuildAlphaSearchRequest builds a standalone search request and strips Responses headers after overrides.
 func BuildAlphaSearchRequest(ctx context.Context, body []byte, options AlphaSearchRequestOptions) (*http.Request, error) {
 	parsedURL, err := url.Parse(options.URL)
 	if err != nil {
@@ -82,7 +82,7 @@ func BuildAlphaSearchRequest(ctx context.Context, body []byte, options AlphaSear
 	return req, nil
 }
 
-// BuildAlphaSearchResponsesRequest 保留官方独立搜索/PAT 回退的原协议头顺序。
+// BuildAlphaSearchResponsesRequest builds the streaming Responses fallback with an isolated search session.
 func BuildAlphaSearchResponsesRequest(ctx context.Context, alphaBody []byte, body []byte, options AlphaSearchRequestOptions) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
@@ -129,15 +129,10 @@ func BuildAlphaSearchResponsesRequest(ctx context.Context, alphaBody []byte, bod
 	return req, nil
 }
 
-// StripAlphaSearchResponsesHeaders 让独立搜索请求与官方 Codex
-// SearchClient 的线协议保持一致。alpha/search 不是 /responses 的子请求：官方
-// 客户端仅在 Provider/Auth 基础头之外附加 x-codex-turn-metadata，不发送
-// OpenAI-Beta、会话隔离或 Responses Lite 状态头。originator 与 User-Agent
-// 属于官方默认客户端头，必须保留。
-//
-// alpha/search 使用专用构造器生成官方 SearchClient 的最小线协议形态；
-// 该函数作为最后一道防线，避免提供商 header 覆写或后续改动重新带入
-// Responses 专用头，使 PAT 的 alpha/search 被上游按错误认证路径处理。
+// StripAlphaSearchResponsesHeaders removes Responses-specific headers after provider overrides.
+// Standalone alpha/search uses the SearchClient headers, including turn metadata,
+// originator and User-Agent. Responses beta, session and Lite headers can route
+// PAT searches through the wrong upstream authentication path.
 func StripAlphaSearchResponsesHeaders(headers http.Header, liteHeader string) {
 	if headers == nil {
 		return

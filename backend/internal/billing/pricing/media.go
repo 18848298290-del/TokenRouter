@@ -1,14 +1,14 @@
 package pricing
 
-// CalculateImageCost 对显式单张价格计算费用，保持乘法顺序与负倍率回退。
+// CalculateImageCost charges an explicit per-image price and clamps negative rate multipliers to zero.
 func CalculateImageCost(unitPrice float64, imageCount int, rateMultiplier float64) *CostBreakdown {
 	if imageCount <= 0 {
 		return &CostBreakdown{}
 	}
-	// 计算总费用
+	// Base cost is the unit price times the image count.
 	totalCost := unitPrice * float64(imageCount)
 
-	// 应用倍率（保存时强制 > 0；负数按 0 处理避免按 1x 误扣）
+	// Clamp invalid negative rates to zero.
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
@@ -21,7 +21,7 @@ func CalculateImageCost(unitPrice float64, imageCount int, rateMultiplier float6
 	}
 }
 
-// CalculateVideoCost 对显式每秒价格计算费用，时长规则使用同一纯定义。
+// CalculateVideoCost charges each video's normalized duration at the supplied per-second price.
 func CalculateVideoCost(perSecondPrice float64, videoCount, durationSeconds int, rateMultiplier float64) *CostBreakdown {
 	if videoCount <= 0 {
 		return &CostBreakdown{}
@@ -41,13 +41,13 @@ func CalculateVideoCost(perSecondPrice float64, videoCount, durationSeconds int,
 	}
 }
 
-// HasImageUnitPrice 识别目录明确提供的按张价格，显式零价也有效。
+// HasImageUnitPrice recognizes an explicit per-image catalog price, including zero.
 func HasImageUnitPrice(catalogPrice *CatalogModelPricing) bool {
 	return catalogPrice != nil && (catalogPrice.OutputCostPerImage > 0 ||
 		catalogPrice.ImagePricePresent && catalogPrice.OutputCostPerImage == 0)
 }
 
-// DefaultImagePrice 按尺寸读取明确单价，不按固定倍率猜测更大尺寸。
+// DefaultImagePrice uses the requested size's price, or the flat image price when no size map exists.
 func DefaultImagePrice(price *CatalogModelPricing, size string) (float64, bool) {
 	if price == nil {
 		return 0, false
@@ -64,7 +64,7 @@ func DefaultImagePrice(price *CatalogModelPricing, size string) (float64, bool) 
 	return 0, false
 }
 
-// DefaultVideoPrice 只读取相同型号、相同分辨率的每秒单价。
+// DefaultVideoPrice reads the supplied model's per-second price for the normalized resolution.
 func DefaultVideoPrice(price *CatalogModelPricing, resolution string) (float64, bool) {
 	if price == nil {
 		return 0, false

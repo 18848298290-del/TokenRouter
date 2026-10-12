@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestPricingDisplayPreservesDefaultRanges 验证展示必须补齐首段、中间空档和尾段，并与同一上下文的实际单价一致。
+// TestPricingDisplayPreservesDefaultRanges checks that leading, interior, and trailing gaps match the billed prices for the same context size.
 func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, freeFast := range []bool{false, true} {
@@ -22,7 +22,7 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 				card := routing.ModelPricingEntry{
 					Models: []string{"custom-ranges"}, BillingMode: routing.BillingModeToken,
 					InputPrice: testPtrFloat64(0.001), FastMultiplier: testPtrFloat64(3),
-					// 有意按倒序保存，展示排序不能改动管理员配置。
+					// Reverse order checks that display sorting leaves the configured intervals unchanged.
 					Intervals: []routing.PricingInterval{
 						{MinTokens: 200, MaxTokens: testPtrInt(300), InputPrice: testPtrFloat64(0.003)},
 						{MinTokens: 100, MaxTokens: testPtrInt(150), InputPrice: testPtrFloat64(0.002)},
@@ -73,7 +73,7 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 	}
 }
 
-// TestPricingDisplayOnlyFlattensCompleteUniformRanges 验证默认价与全部区间价格相同才允许压平；缺少基础价的范围不能用其它区间价代替。
+// TestPricingDisplayOnlyFlattensCompleteUniformRanges permits flattening when all ranges, including the default, have the same price.
 func TestPricingDisplayOnlyFlattensCompleteUniformRanges(t *testing.T) {
 	rCalculator := billingtestkit.ResolverCalculator()
 	for _, pricedBase := range []bool{true, false} {
@@ -102,7 +102,7 @@ func TestPricingDisplayOnlyFlattensCompleteUniformRanges(t *testing.T) {
 	}
 }
 
-// TestPricingIntervalsDistinguishMissingBaseFromExplicitZero 验证倍率只调整存在的基础价；显式默认零价和显式区间零价仍是有效免费价格。
+// TestPricingIntervalsDistinguishMissingBaseFromExplicitZero checks that multipliers require base prices and explicit zero prices remain free.
 func TestPricingIntervalsDistinguishMissingBaseFromExplicitZero(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, kind := range []string{"missing", "builtin", "zero_base", "zero_interval"} {
@@ -157,7 +157,7 @@ func TestPricingIntervalsDistinguishMissingBaseFromExplicitZero(t *testing.T) {
 	}
 }
 
-// TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice 验证部分范围有显式价格不代表其它范围也有价；缺价的倍率区间必须继续报缺价。
+// TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice checks that a multiplier range with no base price remains unavailable.
 func TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice(t *testing.T) {
 	rCalculator := billingtestkit.ResolverCalculator()
 	r := billingtestkit.SharedPriceResolver(rCalculator, 1, pricing.DefaultBillingSettings(), []routing.ModelPricingEntry{{Models: []string{"custom-partial"}, BillingMode: routing.BillingModeToken, Intervals: []routing.PricingInterval{{MinTokens: 0, MaxTokens: testPtrInt(100), InputMultiplier: testPtrFloat64(2)}, {MinTokens: 100, InputPrice: testPtrFloat64(0.003)}}}})

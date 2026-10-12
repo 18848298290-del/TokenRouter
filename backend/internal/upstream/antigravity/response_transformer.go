@@ -11,20 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// fallbackCounter 降级伪随机 ID 的全局计数器，混入 seed 避免高并发下 UnixNano 相同导致碰撞。
+// fallbackCounter adds per-call variation when random IDs use a time-based seed.
 var fallbackCounter uint64
 
-// NonStreamingProcessor 只适配旧构造及诊断，响应状态由 bridge 唯一持有。
+// NonStreamingProcessor adds platform diagnostics to the shared response processor.
 type NonStreamingProcessor struct {
 	*bridge.GeminiToAnthropicResponseProcessor
 }
 
-// TransformGeminiToClaude 将 Gemini 响应转换为 Claude 格式（非流式）。
+// TransformGeminiToClaude converts a wrapped or direct Gemini response to Claude JSON.
 func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *ClaudeUsage, error) {
-	// 解包 v1internal 响应
 	var v1Resp V1InternalResponse
 	if err := json.Unmarshal(geminiResp, &v1Resp); err != nil {
-		// 尝试直接解析为 GeminiResponse
+		// Try the direct Gemini response format when envelope decoding fails.
 		var directResp GeminiResponse
 		if err2 := json.Unmarshal(geminiResp, &directResp); err2 != nil {
 			return nil, nil, fmt.Errorf("parse gemini response: %w", err)
@@ -33,7 +32,7 @@ func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *
 		v1Resp.ResponseID = directResp.ResponseID
 		v1Resp.ModelVersion = directResp.ModelVersion
 	} else if len(v1Resp.Response.Candidates) == 0 {
-		// 第一次解析成功但 candidates 为空，说明是直接的 GeminiResponse 格式
+		// An envelope with no candidates may instead contain a direct Gemini response.
 		var directResp GeminiResponse
 		if err2 := json.Unmarshal(geminiResp, &directResp); err2 != nil {
 			return nil, nil, fmt.Errorf("parse gemini response as direct: %w", err2)
@@ -43,11 +42,9 @@ func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *
 		v1Resp.ModelVersion = directResp.ModelVersion
 	}
 
-	// 使用处理器转换
 	processor := NewNonStreamingProcessor()
 	claudeResp := processor.Process(&v1Resp.Response, v1Resp.ResponseID, originalModel)
 
-	// 序列化
 	respBytes, err := json.Marshal(claudeResp)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal claude response: %w", err)
@@ -56,14 +53,14 @@ func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *
 	return respBytes, &claudeResp.Usage, nil
 }
 
-// generateRandomID 生成密码学安全的随机 ID。
+// generateRandomID returns a temporary 12-character alphanumeric identifier.
 func generateRandomID() string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	id := make([]byte, 12)
 	randBytes := make([]byte, 12)
 	if _, err := rand.Read(randBytes); err != nil {
-		// 避免在请求路径里 panic：极端情况下熵源不可用时降级为伪随机。
-		// 这里主要用于生成响应/工具调用的临时 ID，安全要求不高但需尽量避免碰撞。
+		// If the entropy source fails, use time and a counter to generate a temporary ID.
+		// These response and tool-call IDs are not authentication secrets.
 		cnt := atomic.AddUint64(&fallbackCounter, 1)
 		seed := uint64(time.Now().UnixNano()) ^ cnt
 		seed ^= uint64(len(err.Error())) << 32
@@ -81,7 +78,7 @@ func generateRandomID() string {
 	return string(id)
 }
 
-// generateAnthropicMsgID 生成 Anthropic 官方格式的消息 ID：msg_01 + 22 位 Base62。
+// generateAnthropicMsgID returns msg_01 followed by 22 alphanumeric characters.
 func generateAnthropicMsgID() string {
 	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	const idLen = 22
@@ -108,7 +105,7 @@ func (p *NonStreamingProcessor) Process(response *GeminiResponse, responseID, mo
 	return result
 }
 
-// geminiConversionRuntime 为响应转换提供随机 ID 和消息 ID 生成函数。
+// geminiConversionRuntime supplies response and tool-call ID generators.
 func geminiConversionRuntime() bridge.GeminiConversionRuntime {
 	return bridge.GeminiConversionRuntime{RandomID: generateRandomID, MessageID: generateAnthropicMsgID}
 }

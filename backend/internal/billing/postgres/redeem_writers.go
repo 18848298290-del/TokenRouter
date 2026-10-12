@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// RedeemBalanceWriter 与身份并发写入分离，避免计费持有身份字段算法。
+// RedeemBalanceWriter applies balance changes; identity-owned concurrency changes use RedeemConcurrencyWriter.
 type RedeemBalanceWriter interface {
 	UpdateBalance(context.Context, int64, float64) error
 	ApplyRedeemBalanceAdjustment(context.Context, int64, float64) error
@@ -16,7 +16,7 @@ type RedeemConcurrencyWriter interface {
 	ApplyRedeemConcurrencyAdjustment(context.Context, int64, int) error
 }
 
-// RedeemWriters 将兑换写入操作转发到调用方传入的事务 context。
+// RedeemWriters forwards entitlement changes with the caller's transaction context.
 type RedeemWriters struct {
 	Balances    RedeemBalanceWriter
 	Concurrency RedeemConcurrencyWriter

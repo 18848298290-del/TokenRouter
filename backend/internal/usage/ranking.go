@@ -14,10 +14,10 @@ const (
 	MaxUsageRankingLimit     = 100
 )
 
-// UsageRankingSortBy 表示用户侧用量排行的排名指标。
+// UsageRankingSortBy selects the metric used to rank users.
 type UsageRankingSortBy string
 
-// UsageRankingSettings 是用户侧排行读取和展示共用的运行时配置。
+// UsageRankingSettings configures public ranking queries and visible metrics.
 type UsageRankingSettings struct {
 	Enabled         bool
 	SortBy          UsageRankingSortBy
@@ -43,12 +43,12 @@ func NormalizeUsageRankingSortByInternal(value string) UsageRankingSortBy {
 	return UsageRankingSortByTotalTokens
 }
 
-// NormalizeUsageRankingSortBy 将历史或非法值回退到总 Token 排序。
+// NormalizeUsageRankingSortBy defaults unrecognized values to total tokens.
 func NormalizeUsageRankingSortBy(value string) UsageRankingSortBy {
 	return NormalizeUsageRankingSortByInternal(value)
 }
 
-// NormalizeUsageRankingSettings 保证排序依据始终可见，避免用户无法理解排行名次。
+// NormalizeUsageRankingSettings makes the sorting metric visible so users can interpret the order.
 func NormalizeUsageRankingSettings(settings UsageRankingSettings) UsageRankingSettings {
 	settings.SortBy = NormalizeUsageRankingSortByInternal(string(settings.SortBy))
 	settings.Limit = NormalizeUsageRankingLimit(settings.Limit)

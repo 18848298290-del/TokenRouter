@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// SetCNUsageDecisionCAS 在提供商版本仍与观测时一致时更新额度处置状态。
-// 延续原单语句健康写入及其提交后尽力 outbox，不扩大为新的闭合事务。
+// SetCNUsageDecisionCAS updates quota-related scheduling state when the observed provider version still matches.
+// The health update is one SQL statement; a separate best-effort outbox write follows it.
 func (r *ProviderStore) SetCNUsageDecisionCAS(ctx context.Context, id int64, expected time.Time, until time.Time, reason string, clear bool) (bool, error) {
 	query := `UPDATE providers SET temp_unschedulable_until=$1,temp_unschedulable_reason=$2,updated_at=NOW()
  WHERE id=$3 AND deleted_at IS NULL AND updated_at=$4

@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 )
 
-// requestLimitCacheStub 记录租约释放次数，缓存的其余能力由嵌入接口提供。
+// requestLimitCacheStub records lease releases and embeds unused cache operations.
 type requestLimitCacheStub struct {
 	APIKeyCache
 	released   int
@@ -36,7 +36,7 @@ func (s *requestLimitCacheStub) ReleaseRequest(ctx context.Context, _ int64, _ s
 	return ctx.Err()
 }
 
-// TestRequestLimitsValidation 覆盖空值、清零和数据库整数范围。
+// TestRequestLimitsValidation covers absent limits, clearing limits, and database integer bounds.
 func TestRequestLimitsValidation(t *testing.T) {
 	for _, n := range []int{0, 1, 2147483647} {
 		require.NoError(t, ValidateRequestLimits(&n, &n))
@@ -48,7 +48,7 @@ func TestRequestLimitsValidation(t *testing.T) {
 	}
 }
 
-// TestRequestLimitsReleaseAfterCancellation 保证取消请求后仍能归还租约，重复释放只执行一次。
+// TestRequestLimitsReleaseAfterCancellation checks that release survives cancellation and runs once.
 func TestRequestLimitsReleaseAfterCancellation(t *testing.T) {
 	cache := &requestLimitCacheStub{}
 	service := &APIKeyService{cache: cache}
@@ -62,7 +62,7 @@ func TestRequestLimitsReleaseAfterCancellation(t *testing.T) {
 	require.Equal(t, 1, cache.released)
 }
 
-// TestRequestLimitsUnavailable 拒绝缺少限制存储的受限请求，默认 Key 可以继续处理。
+// TestRequestLimitsUnavailable rejects limited keys without storage while admitting unlimited keys.
 func TestRequestLimitsUnavailable(t *testing.T) {
 	service := &APIKeyService{}
 	_, release, _, err := service.AcquireRequest(context.Background(), &APIKey{ConcurrencyLimit: 1})
@@ -73,7 +73,7 @@ func TestRequestLimitsUnavailable(t *testing.T) {
 	release()
 }
 
-// TestRequestLimitSnapshotRoundTrip 保证缓存保存请求上限，并拒绝缺少上限的旧版本。
+// TestRequestLimitSnapshotRoundTrip retains request limits and rejects snapshots predating them.
 func TestRequestLimitSnapshotRoundTrip(t *testing.T) {
 	service := &APIKeyService{}
 	_, used, err := service.KeyApplyAuthCacheEntry("old", &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: 46}})
@@ -89,7 +89,7 @@ func TestRequestLimitSnapshotRoundTrip(t *testing.T) {
 	require.Equal(t, 20, key.RPMLimit)
 }
 
-// TestRequestLeaseRenewalFailure 验证续租失败时取消处理，并在返回后清理租约。
+// TestRequestLeaseRenewalFailure checks cancellation on renewal failure and cleanup after release.
 func TestRequestLeaseRenewalFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cache := &requestLimitCacheStub{refreshErr: ErrKeyLimiterUnavailable}
@@ -113,7 +113,7 @@ func TestRequestLeaseRenewalFailure(t *testing.T) {
 	})
 }
 
-// TestRequestLeaseSurvivesClientCancellation 断连后继续执行的处理器仍占用并发槽。
+// TestRequestLeaseSurvivesClientCancellation keeps a concurrency slot while processing continues after disconnect.
 func TestRequestLeaseSurvivesClientCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cache := &requestLimitCacheStub{}
@@ -137,7 +137,7 @@ func TestRequestLeaseSurvivesClientCancellation(t *testing.T) {
 	})
 }
 
-// TestRequestReservationUnknownOutcome 在预占响应丢失后清理可能已经写入的槽位。
+// TestRequestReservationUnknownOutcome cleans up a slot that may have been reserved before response loss.
 func TestRequestReservationUnknownOutcome(t *testing.T) {
 	cache := &requestLimitCacheStub{reserveErr: ErrKeyLimiterUnavailable}
 	service := &APIKeyService{cache: cache}

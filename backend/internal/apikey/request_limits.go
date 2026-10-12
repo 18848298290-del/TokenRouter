@@ -13,22 +13,22 @@ import (
 )
 
 var (
-	// ErrKeyConcurrencyExceeded 表示该 Key 的活跃请求已达到上限。
+	// ErrKeyConcurrencyExceeded reports that the key has reached its active request limit.
 	ErrKeyConcurrencyExceeded = errors.New("API key concurrency limit exceeded")
-	// ErrKeyRPMExceeded 表示该 Key 在最近一分钟的请求已达到上限。
+	// ErrKeyRPMExceeded reports that the key has reached its rolling one-minute request limit.
 	ErrKeyRPMExceeded = errors.New("API key RPM limit exceeded")
-	// ErrKeyLimiterUnavailable 表示请求限制存储不可用。
+	// ErrKeyLimiterUnavailable reports an unavailable request-limit store or lease.
 	ErrKeyLimiterUnavailable = errors.New("API key request limiter unavailable")
 )
 
-// RequestLimitCache 原子预占 Key 的请求额度，并维护活跃请求租约。
+// RequestLimitCache atomically reserves request capacity and maintains active request leases.
 type RequestLimitCache interface {
 	ReserveRequest(context.Context, int64, string, int, int) (time.Duration, error)
 	RefreshRequest(context.Context, int64, string) error
 	ReleaseRequest(context.Context, int64, string) error
 }
 
-// ValidateRequestLimits 校验 PostgreSQL integer 能保存的非负请求上限。
+// ValidateRequestLimits checks nonnegative limits within the PostgreSQL integer range.
 func ValidateRequestLimits(concurrency, rpm *int) error {
 	for field, value := range map[string]*int{"concurrency_limit": concurrency, "rpm_limit": rpm} {
 		if value != nil && (*value < 0 || int64(*value) > math.MaxInt32) {
@@ -38,8 +38,8 @@ func ValidateRequestLimits(concurrency, rpm *int) error {
 	return nil
 }
 
-// AcquireRequest 在准入时计入 RPM，并让并发租约存续到 release 被调用。
-// 续租失败会取消返回的上下文，调用方应停止处理请求。
+// AcquireRequest counts RPM at admission and renews the concurrency lease until release is called.
+// Renewal failure cancels the returned context; callers must stop processing and release the lease.
 // @project-doc docs/domains/routing_and_billing.md#api_key_request_limits
 func (s *APIKeyService) AcquireRequest(ctx context.Context, key *APIKey) (context.Context, func(), time.Duration, error) {
 	if key.ConcurrencyLimit <= 0 && key.RPMLimit <= 0 {
@@ -57,7 +57,7 @@ func (s *APIKeyService) AcquireRequest(ctx context.Context, key *APIKey) (contex
 	retry, err := cache.ReserveRequest(reserveCtx, key.ID, id, key.ConcurrencyLimit, key.RPMLimit)
 	cancelReserve()
 	if err != nil {
-		// 响应丢失时 Redis 可能已经预占，使用独立上下文清理本次并发槽。
+		// Redis may have reserved before losing the response. Clean up using an independent context.
 		if !errors.Is(err, ErrKeyConcurrencyExceeded) && !errors.Is(err, ErrKeyRPMExceeded) {
 			releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
 			_ = cache.ReleaseRequest(releaseCtx, key.ID, id)
@@ -82,7 +82,7 @@ func (s *APIKeyService) AcquireRequest(ctx context.Context, key *APIKey) (contex
 			case <-stop:
 				return
 			case <-ticker.C:
-				// 图片等处理器可能在断连后继续收集结果，租约维持到处理器返回。
+				// Handlers may collect results after disconnect, so keep renewing until they release the lease.
 				refreshCtx, cancelRefresh := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 				err := cache.RefreshRequest(refreshCtx, key.ID, id)
 				cancelRefresh()
@@ -100,7 +100,7 @@ func (s *APIKeyService) AcquireRequest(ctx context.Context, key *APIKey) (contex
 			close(stop)
 			abort()
 			<-done
-			// 客户端断开后仍需归还租约，清理使用独立的超时预算。
+			// Release after client cancellation using an independent cleanup timeout.
 			releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancelRelease()
 			_ = cache.ReleaseRequest(releaseCtx, key.ID, id)

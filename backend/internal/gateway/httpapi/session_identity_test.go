@@ -192,7 +192,7 @@ func TestResolveOpenAIMessagesMetadataSession_BlankClaudeHeaderKeepsContentFallb
 	require.Empty(t, cacheKey)
 }
 
-// metadataSessionForTest 请求 Header 与内容种子的组合仍验证实际原生函数。
+// metadataSessionForTest combines HTTP session headers and content seeds through the production session resolver.
 func metadataSessionForTest(c *gin.Context, hash, key, model string, body []byte) (string, string) {
 	return gatewaysession.MessagesMetadataSession(ClaudeCodeSessionIDFromHeader(c), hash, key, model, body)
 }
@@ -204,7 +204,7 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 
 	bodyWithKey := []byte(`{"prompt_cache_key":"ses_aaa"}`)
 
-	// 1) session_id header wins
+	// The session_id header takes precedence.
 	c.Request.Header.Set("session_id", "sess-123")
 	c.Request.Header.Set("conversation_id", "conv-456")
 	h1 := GenerateOpenAISessionHash(c, bodyWithKey)
@@ -212,7 +212,7 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 		t.Fatalf("expected non-empty hash")
 	}
 
-	// 2) conversation_id used when session_id absent
+	// Use conversation_id when session_id is absent.
 	c.Request.Header.Del("session_id")
 	h2 := GenerateOpenAISessionHash(c, bodyWithKey)
 	if h2 == "" {
@@ -222,7 +222,7 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 		t.Fatalf("expected different hashes for different keys")
 	}
 
-	// 3) prompt_cache_key used when both headers absent
+	// Use prompt_cache_key when both headers are absent.
 	c.Request.Header.Del("conversation_id")
 	h3 := GenerateOpenAISessionHash(c, bodyWithKey)
 	if h3 == "" {
@@ -232,7 +232,7 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 		t.Fatalf("expected different hashes for different keys")
 	}
 
-	// 4) empty when no signals
+	// Return an empty hash when the request has no session or content signal.
 	h4 := GenerateOpenAISessionHash(c, []byte(`{}`))
 	if h4 != "" {
 		t.Fatalf("expected empty hash when no signals")
@@ -478,7 +478,7 @@ func TestExtractClientSessionID_SupportedHeaders(t *testing.T) {
 }
 
 func TestExtractClientSessionID_HeaderPrecedence(t *testing.T) {
-	// session_id 的优先级高于 conversation_id 和各类 X-* 请求头。
+	// session_id takes precedence over conversation_id and supported X-* headers.
 	c := newSessionHeaderContext(t, map[string]string{
 		"session_id":      "primary",
 		"conversation_id": "secondary", OpenCodeSessionIDHeader: "tertiary", CodeBuddyConversationHeader: "quaternary",
@@ -492,7 +492,7 @@ func TestExtractClientSessionID_Sanitizes(t *testing.T) {
 }
 
 func TestExtractClientSessionID_IgnoresNonSessionHeaders(t *testing.T) {
-	// prompt_cache_key 和逐请求 ID 不是持久会话标识。
+	// Cache keys and per-request IDs are excluded from the persisted client session ID.
 	c := newSessionHeaderContext(t, map[string]string{
 		"prompt_cache_key": "cache-key-should-not-persist",
 		"X-Request-Id":     "req-should-not-persist",
@@ -533,7 +533,7 @@ func TestExtractClientSessionID_GrokConversationHeaderForForcedRoute(t *testing.
 }
 
 func TestExtractClientSessionID_InjectionHeaderDropped(t *testing.T) {
-	// 支持的请求头携带 CRLF 时，整个值被拒绝。
+	// Reject the entire supported header value when it contains CRLF.
 	c := newSessionHeaderContext(t, map[string]string{"session_id": "abc"})
 	c.Request.Header.Set("session_id", "abc\r\nX-Injected: 1")
 	require.Equal(t, "", ExtractClientSessionID(c))

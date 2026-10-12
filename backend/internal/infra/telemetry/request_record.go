@@ -16,13 +16,13 @@ import (
 
 const requestCaptureKey ContextKey = "request_capture"
 
-// RequestAlias 保存外部标识、计费键和关联请求。
+// RequestAlias labels an external identifier, billing key, or related request ID.
 type RequestAlias struct {
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
 }
 
-// RequestAttempt 保存一次上游尝试的诊断元数据。
+// RequestAttempt holds diagnostics for one upstream attempt.
 type RequestAttempt struct {
 	Number     int    `json:"number"`
 	ProviderID int64  `json:"provider_id,omitempty"`
@@ -32,7 +32,8 @@ type RequestAttempt struct {
 	Outcome    string `json:"outcome,omitempty"`
 }
 
-// RequestRecord 是独立于监控采样的请求摘要，正文和凭据留在业务处理器中。
+// RequestRecord summarizes a request independently of monitoring sampling.
+// Keep request bodies and credentials out of its fields.
 type RequestRecord struct {
 	ErrorCode       string           `json:"error_code,omitempty"`
 	RequestID       string           `json:"request_id"`
@@ -56,14 +57,14 @@ type RequestRecord struct {
 	Timings         map[string]int64 `json:"timings,omitempty"`
 }
 
-// RequestCapture 串行化同一次请求的元数据更新和持久化通知。
+// RequestCapture serializes record updates and their observer notifications.
 type RequestCapture struct {
 	mu      sync.Mutex
 	record  RequestRecord
 	observe func(RequestRecord)
 }
 
-// NewRequestID 为独立调用生成 UUID。
+// NewRequestID generates a random version 4 UUID.
 func NewRequestID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -72,7 +73,7 @@ func NewRequestID() string {
 	return formatRequestID(b[:])
 }
 
-// StableRequestID 为后台任务派生可重放的请求 ID。
+// StableRequestID derives a deterministic request ID from a background task key.
 func StableRequestID(key string) string {
 	b := sha256.Sum256([]byte("TokenRouter/request/" + key))
 	b[6] = b[6]&0x0f | 0x80
@@ -84,7 +85,7 @@ func formatRequestID(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// RequestIDValue 返回请求入口分配的 ID。
+// RequestIDValue returns the trimmed internal request ID from context.
 func RequestIDValue(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -93,7 +94,7 @@ func RequestIDValue(ctx context.Context) string {
 	return strings.TrimSpace(id)
 }
 
-// WithRequestCapture 在上下文中登记请求记录及其观察者。
+// WithRequestCapture attaches a record and observer, then publishes its initial snapshot.
 func WithRequestCapture(ctx context.Context, record RequestRecord, observe func(RequestRecord)) context.Context {
 	capture := &RequestCapture{record: record, observe: observe}
 	ctx = context.WithValue(ctx, requestCaptureKey, capture)
@@ -101,7 +102,8 @@ func WithRequestCapture(ctx context.Context, record RequestRecord, observe func(
 	return ctx
 }
 
-// UpdateRequest 在同步更新后交付完整快照，后台接收方可以按更新时间去重。
+// UpdateRequest serializes a mutation and publishes a changed snapshot with an increasing timestamp.
+// The update and observer callbacks run under the capture lock and must not reenter it.
 func UpdateRequest(ctx context.Context, update func(*RequestRecord)) {
 	if ctx == nil {
 		return
@@ -127,7 +129,7 @@ func UpdateRequest(ctx context.Context, update func(*RequestRecord)) {
 	}
 }
 
-// UpdateRequestForID 更新指定请求的记录器，返回是否找到对应请求。
+// UpdateRequestForID applies update when the captured request ID matches and reports the match.
 func UpdateRequestForID(ctx context.Context, id string, update func(*RequestRecord)) bool {
 	matched := false
 	UpdateRequest(ctx, func(record *RequestRecord) {
@@ -139,7 +141,7 @@ func UpdateRequestForID(ctx context.Context, id string, update func(*RequestReco
 	return matched
 }
 
-// AddRequestAlias 把外部或历史标识登记为可检索的别名。
+// AddRequestAlias registers a unique alias, ignoring invalid values and entries beyond the limit.
 func AddRequestAlias(ctx context.Context, kind, value string) {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 255 || strings.ContainsAny(value, "\r\n\x00") {
@@ -156,7 +158,7 @@ func AddRequestAlias(ctx context.Context, kind, value string) {
 	})
 }
 
-// CopyRequestCapture 把同一请求的记录器传给脱离 HTTP 生命周期的完成任务。
+// CopyRequestCapture shares the recorder with a context used by detached completion work.
 func CopyRequestCapture(destination, source context.Context) context.Context {
 	if source == nil {
 		return destination
@@ -167,7 +169,8 @@ func CopyRequestCapture(destination, source context.Context) context.Context {
 	return destination
 }
 
-// RecordRelatedRequest 保存连接轮次或后台任务，并登记到发起请求。
+// RecordRelatedRequest publishes a child record with inherited request metadata
+// and adds its ID to the parent's aliases.
 func RecordRelatedRequest(ctx context.Context, record RequestRecord) {
 	if ctx == nil {
 		return
@@ -217,7 +220,8 @@ func cloneRequestRecord(record RequestRecord) RequestRecord {
 	return record
 }
 
-// MergeRequestRecord 将后台完成事实补入已保存的入口快照。
+// MergeRequestRecord merges a newer snapshot with saved metadata and aliases.
+// Older or equal timestamps return previous; saved failure and cancellation states take precedence.
 func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	if !next.UpdatedAt.After(previous.UpdatedAt) {
 		return previous
@@ -283,10 +287,11 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	return next
 }
 
-// CloneRequestRecord 复制可变集合，使后台存储和响应脱敏各自持有数据。
+// CloneRequestRecord copies slices and the timings map for independent mutation.
+// The FinishedAt pointer remains shared and should be treated as immutable.
 func CloneRequestRecord(record RequestRecord) RequestRecord { return cloneRequestRecord(record) }
 
-// WithChildRequest 为同一连接内的逻辑请求建立独立记录。
+// WithChildRequest creates a separate capture for a logical request on the same connection.
 func WithChildRequest(ctx context.Context, record RequestRecord) context.Context {
 	var observe func(RequestRecord)
 	if capture, ok := ctx.Value(requestCaptureKey).(*RequestCapture); ok {
@@ -311,7 +316,7 @@ func WithChildRequest(ctx context.Context, record RequestRecord) context.Context
 	return WithRequestCapture(ctx, record, observe)
 }
 
-// IsChildRequest 判断当前 ID 是否已经由连接轮次分配。
+// IsChildRequest reports whether the captured record has a parent request ID.
 func IsChildRequest(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -325,7 +330,7 @@ func IsChildRequest(ctx context.Context) bool {
 	return capture.record.ParentRequestID != ""
 }
 
-// NormalizeRequestRecord 限制诊断字段大小，外部 ID 超长时保持缺失。
+// NormalizeRequestRecord bounds diagnostic text and collections, discarding invalid external IDs.
 func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	record = cloneRequestRecord(record)
 	record.Model = requestText(record.Model, 200)
@@ -362,7 +367,7 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 
 func requestText(value string, limit int) string {
 	value = strings.ToValidUTF8(value, "")
-	// PostgreSQL 的文本和 JSONB 字段无法保存空字符，URL 解码后的路径可能包含它。
+	// PostgreSQL text and JSONB reject NUL characters, which decoded paths may contain.
 	value = strings.ReplaceAll(value, "\x00", "")
 	if len(value) <= limit {
 		return value

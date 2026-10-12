@@ -6,10 +6,10 @@ import (
 	"sync"
 )
 
-// ErrAuthenticationStopped 表示认证服务已停止接收工作。
+// ErrAuthenticationStopped reports that authentication is no longer accepting work.
 var ErrAuthenticationStopped = errors.New("API Key authentication is stopping")
 
-// authOperationGate 把停止认领与在途计数放在同一个临界区，禁止 Wait 与零计数 Add 竞争。
+// authOperationGate serializes admission and shutdown so Wait cannot race with Add on a zero count.
 type authOperationGate struct {
 	mu       sync.Mutex
 	stopping bool
@@ -32,7 +32,7 @@ func (g *authOperationGate) stop() { g.mu.Lock(); g.stopping = true; g.mu.Unlock
 
 func (g *authOperationGate) isStopping() bool { g.mu.Lock(); defer g.mu.Unlock(); return g.stopping }
 
-// Start 只在 app 完成绑定后初始化缓存与订阅；停止过的实例不能重新认领工作。
+// Start initializes caches and subscriptions after dependencies are bound. A stopped service cannot restart.
 func (s *APIKeyService) Start() {
 	if s == nil {
 		return
@@ -45,7 +45,7 @@ func (s *APIKeyService) Start() {
 	s.runtimeStart.Do(func() { s.initAuthCaches(); s.StartAuthCacheInvalidationSubscriber(context.Background()) })
 }
 
-// StopContext 拒绝新工作并等待在途完成，再取消订阅和关闭 L1；超时不假装资源已经释放。
+// StopContext rejects new work and drains active operations before closing subscriptions and L1 caches.
 func (s *APIKeyService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -76,5 +76,5 @@ func (s *APIKeyService) StopContext(ctx context.Context) error {
 	}
 }
 
-// Stop 保留旧同步等待入口，生产生命周期使用带预算的 StopContext。
+// Stop waits synchronously; production shutdown uses StopContext with a deadline.
 func (s *APIKeyService) Stop() { _ = s.StopContext(context.Background()) }

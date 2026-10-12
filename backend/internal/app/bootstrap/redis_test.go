@@ -37,7 +37,6 @@ func TestBuildRedisOptions(t *testing.T) {
 	require.Equal(t, 10, opts.MinIdleConns)
 	require.Nil(t, opts.TLSConfig)
 
-	// Test case with TLS enabled
 	cfgTLS := &config.Config{
 		Redis: config.RedisConfig{
 			Host:      "localhost",

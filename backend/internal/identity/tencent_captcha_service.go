@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	// TencentCaptchaRegionCN 中国站（cloud.tencent.com）；TencentCaptchaRegionINTL 国际站（tencentcloud.com）。
-	// 该值同时决定前端加载的 SDK 脚本与服务端校验接入点，两端必须一致：
-	// 国际站 CaptchaAppId 配国内站 SDK 会被腾讯直接判为「appid 所属地域与实际使用地域不符」。
+	// TencentCaptchaRegionCN selects cloud.tencent.com; TencentCaptchaRegionINTL selects tencentcloud.com.
+	// The region selects both the browser SDK and the server verification endpoint.
+	// Both must match the captcha application's region for verification to succeed.
 	TencentCaptchaRegionCN   = "cn"
 	TencentCaptchaRegionINTL = "intl"
 
@@ -35,7 +35,7 @@ type TencentCaptchaCredentials struct {
 	AppSecretKey   string
 	CloudSecretID  string
 	CloudSecretKey string
-	// Endpoint 服务端票据校验接入点，由地域推导，repository 层直接使用
+	// Verification endpoint derived from the region and passed to the provider adapter.
 	Endpoint string
 }
 
@@ -55,7 +55,7 @@ type TencentCaptchaService struct {
 	verifier       TencentCaptchaVerifier
 }
 
-// TencentCaptchaEndpoint 按后台配置的地域返回服务端接入点，未知值回退中国站。
+// TencentCaptchaEndpoint returns the region's verification endpoint, defaulting to China for unknown values.
 func TencentCaptchaEndpoint(region string) string {
 	if region == TencentCaptchaRegionINTL {
 		return TencentCaptchaEndpointINTL
@@ -63,7 +63,7 @@ func TencentCaptchaEndpoint(region string) string {
 	return TencentCaptchaEndpointCN
 }
 
-// NormalizeTencentCaptchaRegion 非法值一律视为中国站。
+// NormalizeTencentCaptchaRegion maps unknown values to the China region.
 func NormalizeTencentCaptchaRegion(value string) string {
 	if value == TencentCaptchaRegionINTL {
 		return TencentCaptchaRegionINTL
@@ -71,7 +71,7 @@ func NormalizeTencentCaptchaRegion(value string) string {
 	return TencentCaptchaRegionCN
 }
 
-// NewTencentCaptchaService 创建使用运行时设置的腾讯验证码服务。
+// NewTencentCaptchaService creates a verifier backed by runtime settings.
 func NewTencentCaptchaService(settingService CaptchaSettings, verifier TencentCaptchaVerifier) *TencentCaptchaService {
 	return &TencentCaptchaService{settingService: settingService, verifier: verifier}
 }
@@ -93,7 +93,7 @@ func (s *TencentCaptchaService) VerifyTicket(ctx context.Context, ticket, randst
 }
 
 func (s *TencentCaptchaService) VerifyTicketWithConfig(ctx context.Context, config TencentCaptchaConfig, ticket, randstr, remoteIP string) error {
-	// 同一请求使用同一份配置快照，避免分次读取时开关和密钥不一致。
+	// Read one configuration snapshot so the switch and credentials agree within this request.
 	credentials, ok := ParseTencentCaptchaCredentials(config)
 	if !ok || s.verifier == nil {
 		return ErrTencentCaptchaNotConfigured
@@ -158,5 +158,5 @@ func ParseTencentCaptchaCredentials(config TencentCaptchaConfig) (TencentCaptcha
 	return credentials, true
 }
 
-// SetObserver 在开始提供请求前注入日志观察者。
+// SetObserver installs the logger before the service begins handling requests.
 func (s *TencentCaptchaService) SetObserver(logf LogFunc) { s.observer = Observer{Log: logf} }

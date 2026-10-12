@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCNProviderThresholdCandidates 从统一监控快照读取 5h / weekly 候选。
+// TestCNProviderThresholdCandidates reads five-hour and weekly candidates from a monitor snapshot.
 func TestCNProviderThresholdCandidates(t *testing.T) {
 	t.Parallel()
 	observed := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -25,12 +25,12 @@ func TestCNProviderThresholdCandidates(t *testing.T) {
 	cands := CNProviderThresholdCandidates(provider, capability.PlatformKimi)
 	require.Len(t, cands, 2)
 
-	// 缺少 used 的窗口不产生候选。
+	// A window with no usage value produces no candidate.
 	partial := cnCodingTestProvider(capability.PlatformKimi)
 	attachCNMonitorLimits(partial, observed, []UpstreamUsageLimit{{Name: "5h", ResetAt: &reset5h}})
 	require.Empty(t, filterNil(CNProviderThresholdCandidates(partial, capability.PlatformKimi)))
 
-	// 身份变化后旧快照失效。
+	// Changing credentials invalidates the prior snapshot identity.
 	provider.Credentials["api_key"] = "sk-changed"
 	require.Empty(t, CNProviderThresholdCandidates(provider, capability.PlatformKimi))
 }
@@ -45,8 +45,8 @@ func filterNil(cands []*SchedulingThresholdCandidate) []*SchedulingThresholdCand
 	return out
 }
 
-// TestEvaluateProviderSchedulingThreshold_KimiCodingPlan 集成验证：kimi coding 提供商
-// 5h 用量超阈值且窗口未重置 → 主动停调至 5h 重置点。
+// TestEvaluateProviderSchedulingThreshold_KimiCodingPlan checks that five-hour usage
+// above the threshold pauses a Coding Plan provider until that window resets.
 func TestEvaluateProviderSchedulingThreshold_KimiCodingPlan(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -67,19 +67,19 @@ func TestEvaluateProviderSchedulingThreshold_KimiCodingPlan(t *testing.T) {
 	require.True(t, reset.Equal(*decision.Until))
 }
 
-// TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped 窗口已重置（reset<=now）
-// 或用量低于阈值 → 不停调（candidateMatchesThreshold 要求 until.After(now)）。
+// TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped checks that expired windows
+// and usage below the threshold do not pause scheduling; matching requires a future reset.
 func TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	// 重置时间已过。
+	// The reset deadline has elapsed.
 	expiredUsed := 99.0
 	expiredReset := now.Add(-time.Hour)
 	expired := cnCodingTestProvider(capability.PlatformZhipu)
 	attachCNMonitorLimits(expired, now, []UpstreamUsageLimit{{Name: "5h", Used: &expiredUsed, ResetAt: &expiredReset}})
 	require.False(t, EvaluateProviderSchedulingThreshold(expired, map[string]int{capability.PlatformZhipu: 80}, now).ShouldPause)
 
-	// 用量低于阈值。
+	// Usage is below the configured threshold.
 	lowUsed := 20.0
 	lowReset := now.Add(3 * time.Hour)
 	low := cnCodingTestProvider(capability.PlatformZhipu)
@@ -240,7 +240,7 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIPreservesPercentageSemantics(
 	require.Equal(t, 91.0, openAIDecision.UsedPercent)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot 检查过期快照按可用处理。
+// TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot checks that stale usage cannot pause scheduling.
 func TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -259,7 +259,7 @@ func TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot(t *testing
 	require.False(t, decision.ShouldPause)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow 检查窗口到期后丢弃该窗口的利用率。
+// TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow checks that reset windows no longer contribute usage.
 func TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow(t *testing.T) {
 	t.Parallel()
 
@@ -278,7 +278,8 @@ func TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow(t *testing.T
 	require.False(t, decision.ShouldPause)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot 验证新鲜 5h 快照仍按阈值暂停。
+// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot checks a fresh five-hour snapshot
+// above threshold.
 func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -302,7 +303,8 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot(
 	require.True(t, resetAt.Equal(*decision.Until))
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow 检查有效的满额 7d 快照触发暂停。
+// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow checks a fresh seven-day
+// snapshot above threshold.
 func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow(t *testing.T) {
 	t.Parallel()
 
@@ -525,7 +527,7 @@ func TestEvaluateProviderSchedulingThreshold_GrokUsesConfiguredThresholds(t *tes
 
 func TestEvaluateProviderSchedulingThreshold_GrokUsesOnlyHeaderQuotaWindow(t *testing.T) {
 	t.Parallel()
-	// 账单 seven_day 与 thirty_day 不得触发暂停，只有 grok_sched_* 可以。
+	// Billing usage cannot trigger the pause; the grok_sched_* header window determines eligibility.
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	weeklyEnd := now.Add(3 * time.Hour)
 	weeklyPct := 99.0

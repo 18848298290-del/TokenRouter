@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// OpenAIUsageOptions 提供供应商探测和影子提供商的数据转换接口。
+// OpenAIUsageOptions supplies regular and shadow-provider quota probes.
 type OpenAIUsageOptions struct {
 	Probe  func(context.Context, *Record) (map[string]any, error)
 	Shadow func(context.Context, int64, time.Time) (map[string]any, error)
@@ -29,7 +29,7 @@ func (s *OAuthUsageService) GetOpenAIUsage(ctx context.Context, provider *Record
 
 	if (force || ShouldRefreshOpenAICodexSnapshot(provider, usage, now)) && s.ShouldProbeOpenAICodexSnapshot(provider.ID, now, force) {
 		if provider.IsShadow() {
-			// 影子提供商沿用母提供商凭据查询专有窗口，快照仍只写影子行自身。
+			// Shadow probes use parent credentials, while the snapshot belongs to the shadow row.
 			if s.options.OpenAI.Shadow != nil {
 				if updates, err := s.options.OpenAI.Shadow(ctx, provider.ID, now); err == nil && len(updates) > 0 {
 					if err := ctx.Err(); err != nil {
@@ -98,9 +98,9 @@ func isOpenAICodexSnapshotStale(provider *Record, now time.Time) bool {
 	if provider == nil || !provider.IsOpenAIOAuth() {
 		return false
 	}
-	// 普通提供商通过 Responses WS 刷新 Codex 用量，资格取自上游协议集合。
-	// Spark 影子从 /wham/usage 的 codex_bengalfox 读取用量，以 codex_usage_updated_at TTL 判断过期，
-	// 不受 WSv2 开关限制。实际查询频率仍由 ShouldProbeOpenAICodexSnapshot 的缓存 TTL 控制。
+	// Regular providers refresh Codex usage through Responses WS and require that upstream capability.
+	// Spark shadows read codex_bengalfox from /wham/usage and use codex_usage_updated_at for freshness.
+	// ShouldProbeOpenAICodexSnapshot separately limits probe frequency for both paths.
 	if !provider.IsShadow() && !provider.SupportsResponsesWS() {
 		return false
 	}
@@ -134,7 +134,7 @@ func (s *OAuthUsageService) ShouldProbeOpenAICodexSnapshot(providerID int64, now
 	return true
 }
 
-// ProbeOpenAICodexSnapshot 保留响应 Header 探测和尽力写回，不把额度展示升级为限流状态。
+// ProbeOpenAICodexSnapshot fetches display usage and schedules a best-effort snapshot write.
 func (s *OAuthUsageService) ProbeOpenAICodexSnapshot(ctx context.Context, value *Record) (map[string]any, error) {
 	ctx, finish, err := s.activity.begin(ctx, ErrOAuthUsageStopped)
 	if err != nil {
@@ -157,7 +157,8 @@ func (s *OAuthUsageService) ProbeOpenAICodexSnapshot(ctx context.Context, value 
 	return CloneValues(updates), nil
 }
 
-// PersistOpenAICodexProbeSnapshot 在派发前登记独立五秒写回，关闭时等待且拒绝新增。
+// PersistOpenAICodexProbeSnapshot registers a detached five-second write before dispatch so shutdown can track
+// it.
 func (s *OAuthUsageService) PersistOpenAICodexProbeSnapshot(value *Record, updates map[string]any) {
 	if s == nil || s.providerRepo == nil || value == nil || value.ID <= 0 || len(updates) == 0 {
 		return

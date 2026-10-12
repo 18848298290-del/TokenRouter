@@ -13,7 +13,7 @@ import (
 
 const providerSchedulingThresholdCredentialKey = "provider_scheduling_threshold"
 
-// ProviderSchedulingThresholdDecision 表示单个提供商的纯停调判定结果。
+// ProviderSchedulingThresholdDecision describes a provider pause decision without applying it.
 type ProviderSchedulingThresholdDecision struct {
 	ShouldPause      bool
 	Platform         string
@@ -31,7 +31,7 @@ type SchedulingThresholdCandidate struct {
 	Until       *time.Time
 }
 
-// EvaluateProviderSchedulingThreshold 根据当前平台阈值快照判断提供商是否应暂停调度。
+// EvaluateProviderSchedulingThreshold evaluates observed usage against provider overrides and platform thresholds.
 func EvaluateProviderSchedulingThreshold(provider *Record, thresholds map[string]int, now time.Time) ProviderSchedulingThresholdDecision {
 	decision := ProviderSchedulingThresholdDecision{}
 	if provider == nil {
@@ -221,7 +221,7 @@ func identityValuesConflict(left, right string) bool {
 	return left != "" && right != "" && !strings.EqualFold(left, right)
 }
 
-// firstStringValue 返回给定键中第一个非空字符串，用于 OpenAI Codex 阈值快照的身份匹配。
+// firstStringValue returns the first nonempty string or JSON-encoded value for Codex snapshot identity comparison.
 func firstStringValue(values map[string]any, keys ...string) string {
 	if len(values) == 0 {
 		return ""
@@ -322,8 +322,8 @@ func anthropicFableThresholdCandidate(provider *Record) *SchedulingThresholdCand
 	}
 }
 
-// grokThresholdCandidates 读取响应头记录的滚动额度窗口，
-// 不使用官方账单的 7 天或 30 天窗口执行自动停调。
+// grokThresholdCandidates reads the rolling quota window recorded from response headers.
+// Official seven-day and thirty-day billing windows do not trigger this scheduling pause.
 func grokThresholdCandidates(provider *Record) []*SchedulingThresholdCandidate {
 	if provider == nil {
 		return nil
@@ -338,8 +338,8 @@ func grokThresholdCandidates(provider *Record) []*SchedulingThresholdCandidate {
 	}
 }
 
-// CNProviderThresholdCandidates 读取独立监控保存的统一窗口快照。快照身份必须与
-// 当前凭据、地址、代理和 TLS 设置一致时，快照才可参与调度。
+// CNProviderThresholdCandidates reads monitoring windows whose snapshot identity matches
+// the current credentials, endpoint, proxy, and TLS settings.
 func CNProviderThresholdCandidates(provider *Record, platform string) []*SchedulingThresholdCandidate {
 	if provider == nil || provider.Platform != platform || !provider.IsCodingPlan() {
 		return nil

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// LiveControllerPending 表示会话尚未由 observer 或客户端控制。
+	// LiveControllerPending means neither the observer nor the client controls the session yet.
 	LiveControllerPending  = "pending"
 	LiveControllerObserver = "observer"
 	LiveControllerProxy    = "proxy"
@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	// ErrLiveUnavailable 表示运行环境或基础设施无法提供 Live 服务。
+	// ErrLiveUnavailable indicates that the runtime or infrastructure cannot provide Live service.
 	ErrLiveUnavailable        = errors.New("live is unavailable")
 	ErrLiveConcurrencyFull    = errors.New("live concurrency is full")
 	ErrLiveCallNotFound       = errors.New("live call not found")
@@ -26,14 +26,14 @@ var (
 	ErrLiveClientPolicyDenied = errors.New("live client is denied by provider policy")
 )
 
-// LiveAttestationUnavailableError 保留无法生成或复用设备证明的具体原因。
+// LiveAttestationUnavailableError explains why device attestation could not be generated or reused.
 type LiveAttestationUnavailableError struct {
 	Reason string
 }
 
 type LiveCallRequest = wire.LiveCallRequest
 
-// LiveCallIdentity 保存创建者身份和 fork 路由所需的入站元数据。
+// LiveCallIdentity holds the creator identity and inbound metadata needed for fork routing.
 type LiveCallIdentity struct {
 	APIKeyID        int64
 	ActorUserID     int64
@@ -48,7 +48,7 @@ type LiveCallIdentity struct {
 	ModelMapping    map[string]string
 }
 
-// LiveCallRecord 保存跨实例接管 Live 控制连接所需的会话状态。
+// LiveCallRecord stores session state needed to take over Live control on another instance.
 type LiveCallRecord struct {
 	CallID             string
 	CallHash           string
@@ -72,11 +72,11 @@ type LiveCallRecord struct {
 	UserAgent          string
 	IPAddress          string
 	InboundEndpoint    string
-	// AttestationCiphertext 仅用于让同一会话的 Sideband 复用创建时的证明。
+	// AttestationCiphertext lets Sideband reuse the attestation issued when this session was created.
 	AttestationCiphertext string
 }
 
-// LiveCallStore 是 GatewayCache 的 Redis 适配器可提供的 Live 会话存取接口。
+// LiveCallStore is the Live session storage capability supplied by the Redis gateway cache.
 type LiveCallStore interface {
 	SaveLiveCall(ctx context.Context, record *LiveCallRecord, ttl time.Duration) error
 	GetLiveCall(ctx context.Context, callHash string) (*LiveCallRecord, error)

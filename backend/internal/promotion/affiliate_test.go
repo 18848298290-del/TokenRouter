@@ -8,41 +8,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolveRebateRatePercent_PerUserOverride 验证邀请人的专属比例优先于全局比例，
-// NULL 会回退到全局比例，越界专属比例会被静默裁剪到允许范围。
+// TestResolveRebateRatePercent_PerUserOverride checks custom rate precedence,
+// global defaults for nil overrides, and clamping of out-of-range overrides.
 //
-// 这里故意让 SettingService 为 nil，使 globalRebateRatePercent 返回默认值，
-// 以覆盖不额外搭建设置 stub 的兜底路径。
+// A nil settings reader makes globalRebateRatePercent return the default,
+// exercising the missing-reader path.
 func TestResolveRebateRatePercent_PerUserOverride(t *testing.T) {
 	t.Parallel()
 	svc := &AffiliateService{}
 
-	// nil 专属比例会回退到全局默认值。
+	// A nil override uses the global default.
 	require.InDelta(t, AffiliateRebateRateDefault,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{}), 1e-9)
 
-	// 设置专属比例后优先生效。
+	// A custom rate takes precedence.
 	rate := 50.0
 	require.InDelta(t, 50.0,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{AffRebateRatePercent: &rate}), 1e-9)
 
-	// 专属比例为 0 表示明确不返利。
+	// A zero override disables rebates for this inviter.
 	zero := 0.0
 	require.InDelta(t, 0.0,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{AffRebateRatePercent: &zero}), 1e-9)
 
-	// 高于最大值时会裁剪到最大值。
+	// Rates above the maximum are clamped.
 	tooHigh := 250.0
 	require.InDelta(t, AffiliateRebateRateMax,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{AffRebateRatePercent: &tooHigh}), 1e-9)
 
-	// 低于最小值时会裁剪到最小值。
+	// Rates below the minimum are clamped.
 	tooLow := -5.0
 	require.InDelta(t, AffiliateRebateRateMin,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{AffRebateRatePercent: &tooLow}), 1e-9)
 }
 
-// TestIsEnabled_NilSettingServiceReturnsDefault 验证设置服务缺失时安全返回默认关闭状态。
+// TestIsEnabled_NilSettingServiceReturnsDefault checks that a missing settings reader disables affiliates.
 func TestIsEnabled_NilSettingServiceReturnsDefault(t *testing.T) {
 	t.Parallel()
 	svc := &AffiliateService{}
@@ -50,8 +50,8 @@ func TestIsEnabled_NilSettingServiceReturnsDefault(t *testing.T) {
 	require.Equal(t, AffiliateEnabledDefault, svc.IsEnabled(context.Background()))
 }
 
-// TestValidateExclusiveRate_BoundaryAndInvalid 覆盖管理端专属比例校验：
-// nil 表示清除，范围内数值通过，NaN/Inf 和越界值会返回 BadRequest。
+// TestValidateExclusiveRate_BoundaryAndInvalid checks that nil clears the override,
+// finite in-range values pass, and NaN, infinity, and out-of-range values fail.
 func TestValidateExclusiveRate_BoundaryAndInvalid(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, validateExclusiveRate(nil))
@@ -82,10 +82,10 @@ func TestMaskEmail(t *testing.T) {
 func TestIsValidAffiliateCodeFormat(t *testing.T) {
 	t.Parallel()
 
-	// 邀请码格式校验同时服务于：
-	// 1) 系统自动生成的 12 位随机码（A-Z 去 I/O，2-9 去 0/1）
-	// 2) 管理员设置的自定义专属码（如 "VIP2026"、"NEW_USER-1"）
-	// 因此校验放宽到 [A-Z0-9_-]{4,32}（要求调用方先 ToUpper）。
+	// The validator accepts both generated and custom codes:
+	// generated codes use 12 characters from A-Z excluding I/O and digits 2-9;
+	// custom codes include values such as "VIP2026" and "NEW_USER-1".
+	// The shared format is [A-Z0-9_-]{4,32}; callers uppercase input first.
 	cases := []struct {
 		name string
 		in   string
@@ -98,7 +98,7 @@ func TestIsValidAffiliateCodeFormat(t *testing.T) {
 		{"valid admin custom with hyphen", "NEW-USER", true},
 		{"valid admin custom with underscore", "VIP_2026", true},
 		{"valid 32-char max", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", true},
-		// 管理员自定义码允许 I/O/0/1 等历史上排除过的字符。
+		// Custom codes may contain I, O, 0, and 1, which generated codes exclude.
 		{"letter I now allowed", "IBCDEFGHJKLM", true},
 		{"letter O now allowed", "OBCDEFGHJKLM", true},
 		{"digit 0 now allowed", "0BCDEFGHJKLM", true},
@@ -107,7 +107,7 @@ func TestIsValidAffiliateCodeFormat(t *testing.T) {
 		{"too long (33 chars)", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456", false},
 		{"lowercase rejected (caller must ToUpper first)", "abcdefghjklm", false},
 		{"empty", "", false},
-		{"utf8 non-ascii", "ÄÄÄÄÄÄ", false}, // 非 ASCII 字节不在允许字符集内
+		{"utf8 non-ascii", "ÄÄÄÄÄÄ", false}, // Non-ASCII bytes are outside the accepted character set.
 		{"ascii punctuation .", "ABCDEFGHJK.M", false},
 		{"whitespace", "ABCDEFGHJK M", false},
 	}

@@ -8,8 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// ParseSSEUsagePassthrough 从 Anthropic SSE data 行提取 usage（包级函数：
-// Anthropic 平台 passthrough 与国产供应商原生 Anthropic 直通共用）。
+// ParseSSEUsagePassthrough extracts usage from Anthropic SSE data shared by
+// Anthropic passthrough and Chinese providers' Anthropic-compatible streams.
 func ParseSSEUsagePassthrough(data string, usage *protocol.TokenUsage) {
 	if usage == nil || data == "" || data == "[DONE]" {
 		return
@@ -27,7 +27,7 @@ func ParseSSEUsagePassthrough(data string, usage *protocol.TokenUsage) {
 			usage.CacheCreationInputTokens = int(msgUsage.Get("cache_creation_input_tokens").Int())
 			usage.CacheReadInputTokens = int(msgUsage.Get("cache_read_input_tokens").Int())
 
-			// 保持与通用解析一致：message_start 允许覆盖 5m/1h 明细（包括 0）。
+			// message_start can replace 5m/1h details with zero, as in the general parser.
 			cc5m := msgUsage.Get("cache_creation.ephemeral_5m_input_tokens")
 			cc1h := msgUsage.Get("cache_creation.ephemeral_1h_input_tokens")
 			if cc5m.Exists() || cc1h.Exists() {
@@ -86,8 +86,8 @@ func ParseSSEUsagePassthrough(data string, usage *protocol.TokenUsage) {
 		}
 	}
 
-	// Kimi 的 Anthropic 兼容流在 message_start 中用 input_tokens 表示总输入，在 message_delta 中表示未缓存输入。
-	// prompt_tokens 在两类事件中都表示总量，此处据此转换为 TokenUsage 中各自独立的计费桶。
+	// Kimi uses input_tokens for total input at message_start and uncached input at message_delta.
+	// prompt_tokens is the total in both events; normalize it into separate billing buckets.
 	usageNode := parsed.Get("usage")
 	if parsed.Get("type").String() == "message_start" {
 		usageNode = parsed.Get("message.usage")
@@ -95,9 +95,9 @@ func ParseSSEUsagePassthrough(data string, usage *protocol.TokenUsage) {
 	NormalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 }
 
-// NormalizeAnthropicCompatiblePromptUsage 将 provider 原生的 OpenAI 风格
-// prompt/cache 字段转换为 Claude 的互斥 usage 桶。原生 Anthropic 响应没有这些
-// 别名，因此保持原样。
+// NormalizeAnthropicCompatiblePromptUsage converts OpenAI-style prompt/cache
+// aliases into mutually exclusive Claude usage buckets. It returns whether
+// normalization was applied; responses without these aliases remain unchanged.
 func NormalizeAnthropicCompatiblePromptUsage(usageNode gjson.Result, usage *protocol.TokenUsage) bool {
 	if usage == nil || !usageNode.Exists() {
 		return false

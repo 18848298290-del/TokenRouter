@@ -21,12 +21,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// proxyProviderIDsPayloadMatcher 比较 outbox 数据中的提供商 ID 顺序。
+// proxyProviderIDsPayloadMatcher checks provider IDs and their order in an outbox payload.
 type proxyProviderIDsPayloadMatcher struct {
 	want []int64
 }
 
-// Match 解码 outbox 数据并比较提供商 ID 列表。
+// Match decodes a byte-slice payload and compares its provider IDs with the expected list.
 func (m proxyProviderIDsPayloadMatcher) Match(value driver.Value) bool {
 	raw, ok := value.([]byte)
 	if !ok {

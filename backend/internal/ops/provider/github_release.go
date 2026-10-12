@@ -27,29 +27,28 @@ type githubReleaseClientError struct {
 	err error
 }
 
-// ReleaseOptions 配置发布查询的代理、认证和下载参数。
+// ReleaseOptions configures the proxy and authentication for release queries and downloads.
 type ReleaseOptions struct {
 	ProxyURL                string
 	AllowDirectOnProxyError bool
 	GitHubToken             string
 }
 
-// ReleaseClient 为系统维护提供发布资产下载方法。
+// ReleaseClient queries releases and downloads assets for maintenance operations.
 type ReleaseClient interface {
 	ops.ReleaseQueryClient
 	DownloadFile(context.Context, string, string, int64) error
 	FetchChecksumFile(context.Context, string) ([]byte, error)
 }
 
-// NewReleaseClient 创建 GitHub Release 客户端
-// proxyURL 为空时直连 GitHub，支持 http/https/socks5/socks5h 协议
-// 代理配置失败时行为由 allowDirectOnProxyError 控制：
-//   - false（默认）：返回错误占位客户端，禁止回退到直连
-//   - true：回退到直连（仅限管理员显式开启）
+// NewReleaseClient creates a GitHub release client.
+// An empty ProxyURL connects directly; proxies support HTTP, HTTPS, SOCKS5, and SOCKS5H.
+// AllowDirectOnProxyError controls proxy initialization failures:
+//   - false (default): return a client whose operations report the initialization error.
+//   - true: connect directly when proxy initialization fails.
 func NewReleaseClient(options ReleaseOptions) ReleaseClient {
 	proxyURL, allowDirectOnProxyError := options.ProxyURL, options.AllowDirectOnProxyError
-	// 安全说明：httpclient.GetClient 的错误链（url.Parse / proxyutil）不含明文代理凭据，
-	// 此信息通过 slog 写入服务端日志。
+	// Proxy initialization failures are logged when direct fallback is disabled.
 	sharedClient, err := httpclient.GetClient(httpclient.Options{
 		Timeout:  30 * time.Second,
 		ProxyURL: proxyURL,
@@ -64,7 +63,7 @@ func NewReleaseClient(options ReleaseOptions) ReleaseClient {
 	apiClient := cloneHTTPClient(sharedClient)
 	apiClient.CheckRedirect = githubAPICheckRedirect(apiClient.CheckRedirect)
 
-	// 下载客户端需要更长的超时时间
+	// Asset downloads have a longer timeout than API requests.
 	downloadClient, err := httpclient.GetClient(httpclient.Options{
 		Timeout:  10 * time.Minute,
 		ProxyURL: proxyURL,
@@ -85,19 +84,19 @@ func NewReleaseClient(options ReleaseOptions) ReleaseClient {
 	}
 }
 
-// cloneHTTPClient 复制客户端配置，避免更新检查修改共享客户端的重定向策略。
+// cloneHTTPClient copies settings so release queries can set their own redirect policy.
 func cloneHTTPClient(client *http.Client) *http.Client {
 	cloned := *client
 	return &cloned
 }
 
-// isGitHubAPIURL 仅接受无用户信息、无显式端口的 GitHub HTTPS API 地址。
+// isGitHubAPIURL accepts HTTPS api.github.com URLs with no user information or explicit port.
 func isGitHubAPIURL(url *url.URL) bool {
 	return url != nil && strings.EqualFold(url.Scheme, "https") && url.User == nil &&
 		strings.EqualFold(url.Host, "api.github.com")
 }
 
-// githubAPICheckRedirect 在重定向离开 GitHub API 时移除认证头。
+// githubAPICheckRedirect removes authentication when redirects leave the trusted GitHub API.
 func githubAPICheckRedirect(previous func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if !isGitHubAPIURL(req.URL) {
@@ -106,7 +105,7 @@ func githubAPICheckRedirect(previous func(*http.Request, []*http.Request) error)
 		if previous != nil {
 			return previous(req, via)
 		}
-		// 自定义 CheckRedirect 会替代 net/http 的默认策略，因此需要显式保留 10 次上限。
+		// A custom CheckRedirect replaces the default, so retain its ten-redirect limit when no prior policy exists.
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
@@ -114,7 +113,7 @@ func githubAPICheckRedirect(previous func(*http.Request, []*http.Request) error)
 	}
 }
 
-// newAPIRequest 只为受信任的 GitHub API 地址附加更新令牌。
+// newAPIRequest attaches the update token to trusted GitHub API requests.
 func (c *githubReleaseClient) newAPIRequest(ctx context.Context, url string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -175,7 +174,7 @@ func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo stri
 		perPage = 10
 	}
 	if perPage > 100 {
-		perPage = 100 // GitHub API 的硬性上限。
+		perPage = 100 // GitHub API page-size limit.
 	}
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", repo, perPage)
 
@@ -208,7 +207,7 @@ func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string
 		return err
 	}
 
-	// 使用预配置的下载客户端（已包含代理配置）
+	// Use the download client configured with the selected proxy.
 	resp, err := c.downloadHTTPClient.Do(req)
 	if err != nil {
 		return err

@@ -12,7 +12,7 @@ type grokTestTarget struct {
 	record   *provider.Record
 }
 
-// Target 将选中的提供商封装为单次测试组件，公开字段返回脱敏数据。
+// Target binds the selected record to a probe whose public information omits credentials.
 func (s *GrokProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return grokTestTarget{executor: s, record: value}
 }

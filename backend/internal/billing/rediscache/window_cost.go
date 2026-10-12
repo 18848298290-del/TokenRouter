@@ -19,14 +19,14 @@ type WindowCostCache struct{ rdb *redis.Client }
 func NewWindowCostCache(rdb *redis.Client) *WindowCostCache { return &WindowCostCache{rdb: rdb} }
 func windowCostKey(id int64) string                         { return fmt.Sprintf("%s%d", windowCostKeyPrefix, id) }
 
-// 5h 窗口费用缓存实现
+// Provider five-hour cost-window cache.
 
-// GetWindowCost 获取缓存的窗口费用。
+// GetWindowCost returns the cached cost, a hit flag, and any Redis or decoding error.
 func (c *WindowCostCache) GetWindowCost(ctx context.Context, providerID int64) (float64, bool, error) {
 	key := windowCostKey(providerID)
 	val, err := c.rdb.Get(ctx, key).Float64()
 	if err == redis.Nil {
-		return 0, false, nil // 缓存未命中
+		return 0, false, nil // Cache miss.
 	}
 	if err != nil {
 		return 0, false, err
@@ -34,25 +34,25 @@ func (c *WindowCostCache) GetWindowCost(ctx context.Context, providerID int64) (
 	return val, true, nil
 }
 
-// SetWindowCost 设置窗口费用缓存。
+// SetWindowCost caches a provider's window cost for 30 seconds.
 func (c *WindowCostCache) SetWindowCost(ctx context.Context, providerID int64, cost float64) error {
 	key := windowCostKey(providerID)
 	return c.rdb.Set(ctx, key, cost, windowCostCacheTTL).Err()
 }
 
-// GetWindowCostBatch 批量获取窗口费用缓存。
+// GetWindowCostBatch returns cached costs, omitting missing or unparseable values.
 func (c *WindowCostCache) GetWindowCostBatch(ctx context.Context, providerIDs []int64) (map[int64]float64, error) {
 	if len(providerIDs) == 0 {
 		return make(map[int64]float64), nil
 	}
 
-	// 构建批量查询的 keys
+	// Keep key order aligned with providerIDs for MGET results.
 	keys := make([]string, len(providerIDs))
 	for i, providerID := range providerIDs {
 		keys[i] = windowCostKey(providerID)
 	}
 
-	// 使用 MGET 批量获取
+	// Fetch the requested keys in one Redis call.
 	vals, err := c.rdb.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, err
@@ -61,9 +61,9 @@ func (c *WindowCostCache) GetWindowCostBatch(ctx context.Context, providerIDs []
 	results := make(map[int64]float64, len(providerIDs))
 	for i, val := range vals {
 		if val == nil {
-			continue // 缓存未命中
+			continue // Cache miss.
 		}
-		// 尝试解析为 float64
+		// Accept Redis string values and numeric test-client values.
 		switch v := val.(type) {
 		case string:
 			if cost, err := strconv.ParseFloat(v, 64); err == nil {

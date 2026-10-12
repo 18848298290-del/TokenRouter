@@ -27,7 +27,7 @@ func TestIsOpsRealtimeRequestCanceled(t *testing.T) {
 	require.True(t, isOpsRealtimeRequestCanceled(nil, context.Canceled))
 	require.True(t, isOpsRealtimeRequestCanceled(nil, errors.New("pq: canceling statement due to user request")))
 
-	// 驱动错误可能丢失 context.Canceled 包装，此时继续检查原始请求上下文。
+	// Drivers may lose the context.Canceled wrapper, so also inspect the original request context.
 	requestCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	c := &gin.Context{Request: httptest.NewRequest(http.MethodGet, "/api/v1/admin/ops/concurrency", nil).WithContext(requestCtx)}

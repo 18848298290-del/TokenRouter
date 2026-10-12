@@ -22,7 +22,7 @@ const (
 	qoderJSONAuthSignature
 	qoderJSONAuthBearer
 
-	// GenerationPath 是 Qoder LLM 推理的 SSE 流式端点。
+	// GenerationPath is the Qoder LLM inference SSE endpoint.
 	GenerationPath = "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
 )
 
@@ -56,7 +56,7 @@ var (
 	}
 )
 
-// Client 是支持 COSY 协议的 Qoder API HTTP 客户端。
+// Client sends Qoder API requests using the COSY protocol.
 type Client struct {
 	APIBaseURL    string
 	ClientVersion string
@@ -66,12 +66,12 @@ type Client struct {
 	HTTPClient    *http.Client
 }
 
-// RequestDoer 执行已构造好的 HTTP 请求。
+// RequestDoer executes a prepared HTTP request.
 type RequestDoer func(req *http.Request) (*http.Response, error)
 
 type qoderJSONAuthMode uint8
 
-// APIError 表示 Qoder API 返回的错误。
+// APIError describes a Qoder API failure.
 type APIError struct {
 	StatusCode          int
 	Body                string
@@ -80,22 +80,22 @@ type APIError struct {
 	AgentLimitResetTime int64
 }
 
-// SSEEvent 表示从 Qoder 流中解析出的 SSE 事件。
+// SSEEvent is an event parsed from a Qoder stream.
 type SSEEvent struct {
-	Type             string // text_delta、reasoning_delta、tool_call_delta、usage、error
-	Text             string // text_delta 和 reasoning_delta 事件内容
-	ToolCallID       string // tool_call_delta 事件 ID
-	ToolCallIndex    int    // tool_call_delta 事件序号
-	HasToolCallIndex bool   // Qoder 返回 tool call index 时为 true
-	ToolType         string // tool_call_delta 事件类型
-	ToolName         string // tool_call_delta 事件名称
-	Arguments        string // tool_call_delta 事件参数，JSON 字符串
-	PromptTokens     int    // usage 事件的输入 token
-	CompletionTokens int    // usage 事件的输出 token
-	TotalTokens      int    // usage 事件的总 token
+	Type             string // text_delta, reasoning_delta, tool_call_delta, usage, or error
+	Text             string // Content of text_delta or reasoning_delta
+	ToolCallID       string // Tool call ID
+	ToolCallIndex    int    // Tool call index
+	HasToolCallIndex bool   // Whether a tool call index is available
+	ToolType         string // Tool call type
+	ToolName         string // Tool name
+	Arguments        string // Tool arguments as JSON text
+	PromptTokens     int    // Input tokens from usage
+	CompletionTokens int    // Output tokens from usage
+	TotalTokens      int    // Total tokens from usage
 	UsageDetails     UsageDetails
-	HasUsage         bool // Qoder 返回 usage payload 时为 true
-	IsDone           bool // 收到 [DONE] 信号时为 true
+	HasUsage         bool // Whether Qoder supplied a usage payload
+	IsDone           bool // Whether the stream signals completion
 }
 
 type UsageDetails struct {
@@ -112,7 +112,7 @@ type CompletionTokensDetails struct {
 	ReasoningTokens int
 }
 
-// QoderSSEWrapper 是 Qoder SSE 外层结构。
+// QoderSSEWrapper is the outer Qoder SSE envelope.
 type QoderSSEWrapper struct {
 	Body            string `json:"body"`
 	StatusCode      string `json:"statusCode"`
@@ -128,7 +128,7 @@ type qoderErrorBody struct {
 
 type qoderErrorCode string
 
-// QoderSSEInner 是 Qoder SSE body 的内层结构。
+// QoderSSEInner is the decoded body of a Qoder SSE envelope.
 type QoderSSEInner struct {
 	Choices []QoderSSEChoice `json:"choices"`
 	Usage   *QoderSSEUsage   `json:"usage,omitempty"`
@@ -173,7 +173,7 @@ type QoderSSEToolCall struct {
 	} `json:"function"`
 }
 
-// QoderSSEUsage 是 Qoder SSE payload 中携带的 token usage 对象。
+// QoderSSEUsage holds token counts from a Qoder SSE payload.
 type QoderSSEUsage struct {
 	PromptTokens            int                      `json:"-"`
 	CompletionTokens        int                      `json:"-"`
@@ -184,7 +184,7 @@ type QoderSSEUsage struct {
 	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
-// MayRefreshAttempt 允许刷新 401 和 403 认证错误，额度和权益拒绝返回 false。
+// MayRefreshAttempt permits refresh for HTTP 401 or 403, except quota and entitlement failures.
 func MayRefreshAttempt(err error) bool {
 	var failure *APIError
 	if !errors.As(err, &failure) || failure.IsAgentLimit() || failure.IsEntitlementDenied() {
@@ -193,12 +193,14 @@ func MayRefreshAttempt(err error) bool {
 	return failure.StatusCode == http.StatusUnauthorized || failure.StatusCode == http.StatusForbidden
 }
 
-// MaySwitchAttempt 判断 Qoder 错误是否支持切换提供商，重试窗口和次数由调用方决定。
+// MaySwitchAttempt reports whether an error permits provider failover.
+// The caller controls the retry window and attempt count.
 func MaySwitchAttempt(err error) bool {
 	return maySwitchAttempt(err, true)
 }
 
-// MaySwitchCompatibleAttempt 判断 Messages/Responses 是否可切换提供商，非 APIError 返回 false。
+// MaySwitchCompatibleAttempt reports whether Messages or Responses may fail over.
+// Errors that do not wrap APIError return false.
 func MaySwitchCompatibleAttempt(err error) bool {
 	return maySwitchAttempt(err, false)
 }
@@ -211,7 +213,7 @@ func maySwitchAttempt(err error, unknown bool) bool {
 	return failure.IsAgentLimit() || failure.IsEntitlementDenied() || failure.StatusCode == http.StatusTooManyRequests || failure.StatusCode >= 500
 }
 
-// NewClient 创建新的 Qoder API 客户端。
+// NewClient creates a global-site client, optionally overriding its gateway URL.
 func NewClient(apiBaseURL string) *Client {
 	profile := MustProfileForSite(SiteGlobal)
 	if strings.TrimSpace(apiBaseURL) != "" {
@@ -220,7 +222,8 @@ func NewClient(apiBaseURL string) *Client {
 	return NewClientForProfile(profile)
 }
 
-// NewClientForProfile 使用可注入端点的站点 profile 创建 COSY 客户端。
+// NewClientForProfile creates a COSY client with the profile endpoints.
+// An invalid site selects the default global profile.
 func NewClientForProfile(profile Profile) *Client {
 	normalized, err := NormalizeProfile(profile)
 	if err != nil {
@@ -236,12 +239,13 @@ func NewClientForProfile(profile Profile) *Client {
 	}
 }
 
-// StreamRequestContext 使用传入 context 向 Qoder API 发送流式 POST 请求。
+// StreamRequestContext sends a streaming POST. The caller closes the response body.
 func (c *Client) StreamRequestContext(ctx context.Context, session *SessionContext, path string, bodyJSON []byte, extraHeaders map[string]string) (*http.Response, error) {
 	return c.StreamRequestContextWithDoer(ctx, session, path, bodyJSON, extraHeaders, nil)
 }
 
-// StreamRequestContextWithDoer 使用传入执行器发送流式 POST 请求。
+// StreamRequestContextWithDoer sends a streaming POST through doer.
+// A nil doer uses the client HTTP transport. The caller closes a successful response body.
 func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *SessionContext, path string, bodyJSON []byte, extraHeaders map[string]string, doer RequestDoer) (*http.Response, error) {
 	if path == "" {
 		path = GenerationPath
@@ -297,8 +301,8 @@ func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *Sess
 	return resp, nil
 }
 
-// JSONRequestContextWithDoer 向 Gateway 发送签名的 COSY JSON 请求并解析响应。
-// logicalPath 不包含 /algo 前缀，构造实际 URL 时会自动补齐该前缀。
+// JSONRequestContextWithDoer sends a signed COSY request and decodes the JSON response.
+// The request URL receives an /algo prefix when logicalPath does not already contain it.
 func (c *Client) JSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -312,7 +316,7 @@ func (c *Client) JSONRequestContextWithDoer(
 	return c.jsonRequestContextWithDoer(ctx, method, session, logicalPath, bodyJSON, extraHeaders, doer, out, qoderJSONAuthCOSY)
 }
 
-// SignatureJSONRequestContextWithDoer 使用登录前的 Appcode 签名模式发送 Gateway JSON 请求。
+// SignatureJSONRequestContextWithDoer sends gateway JSON using pre-login Appcode signing.
 func (c *Client) SignatureJSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -326,7 +330,7 @@ func (c *Client) SignatureJSONRequestContextWithDoer(
 	return c.jsonRequestContextWithDoer(ctx, method, session, logicalPath, bodyJSON, extraHeaders, doer, out, qoderJSONAuthSignature)
 }
 
-// BearerJSONRequestContextWithDoer 使用提供商 security OAuth token 发送 Gateway JSON 请求。
+// BearerJSONRequestContextWithDoer sends gateway JSON with the security OAuth token.
 func (c *Client) BearerJSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -381,7 +385,7 @@ func (c *Client) jsonRequestContextWithDoer(
 	}
 	requestURL := c.APIBaseURL + actualPath
 	if encodedBody != "" {
-		// 官方 Gateway builder 会用 Encode=1 标记经过 COSY 编码的请求体，签名仍只使用不含 query 的逻辑路径。
+		// Encode=1 marks the COSY-encoded body; signing uses the logical path without its query.
 		parsedURL, parseErr := url.Parse(requestURL)
 		if parseErr != nil {
 			return fmt.Errorf("qoder: parse gateway request URL: %w", parseErr)
@@ -449,7 +453,7 @@ func ensureLeadingSlash(path string) string {
 	return "/" + path
 }
 
-// unwrapQoderJSONResponse 同时兼容 Gateway wrapper、明文 JSON 和编码后的 body。
+// unwrapQoderJSONResponse accepts gateway envelopes, plain JSON, and encoded bodies.
 func unwrapQoderJSONResponse(body []byte) ([]byte, int, error) {
 	trimmed := []byte(strings.TrimSpace(string(body)))
 	if len(trimmed) == 0 {
@@ -512,18 +516,18 @@ func (e *APIError) Error() string {
 	return "Qoder upstream error"
 }
 
-// IsAgentLimit 判断错误是否为 Qoder agent quota/rate limit。
+// IsAgentLimit reports whether the error identifies an agent quota or rate limit.
 func (e *APIError) IsAgentLimit() bool {
 	return e != nil && (e.Code == "115" || e.AgentLimitResetTime > 0)
 }
 
-// IsEntitlementDenied 判断错误是否为 Qoder 模型或提供商权限拒绝。
-// 这类错误不是认证 token 失效，不应消耗 refresh token。
+// IsEntitlementDenied reports a model or provider entitlement rejection.
+// Entitlement failures do not justify spending a refresh token.
 func (e *APIError) IsEntitlementDenied() bool {
 	return e != nil && e.Code == "112"
 }
 
-// AgentLimitResetAt 返回解析后的 Qoder agent limit 重置时间。
+// AgentLimitResetAt returns the reset time decoded from Unix milliseconds.
 func (e *APIError) AgentLimitResetAt() (time.Time, bool) {
 	if e == nil || e.AgentLimitResetTime <= 0 {
 		return time.Time{}, false
@@ -531,7 +535,7 @@ func (e *APIError) AgentLimitResetAt() (time.Time, bool) {
 	return time.UnixMilli(e.AgentLimitResetTime), true
 }
 
-// ParseAPIErrorBody 解析 Qoder HTTP/SSE 错误响应体。
+// ParseAPIErrorBody parses and redacts a Qoder HTTP or SSE error body.
 func ParseAPIErrorBody(statusCode int, body string) *APIError {
 	apiErr := &APIError{
 		StatusCode: statusCode,
@@ -543,7 +547,7 @@ func ParseAPIErrorBody(statusCode int, body string) *APIError {
 	return apiErr
 }
 
-// RedactSensitiveText 在错误返回给客户端或写入日志/快照前脱敏 Qoder 凭据。
+// RedactSensitiveText removes Qoder credentials before errors reach clients, logs, or snapshots.
 func RedactSensitiveText(input string) string {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -633,7 +637,7 @@ func (c *Client) setHeaders(req *http.Request, session *SessionContext, path, en
 	req.Header.Set("cosy-organization-id", session.Identity.OrganizationID)
 	req.Header.Set("cosy-organization-tags", organizationTags)
 	if site != SiteCN {
-		// 国际站继续保留当前推理路由使用的业务头。
+		// Global inference requests include the CLI agent business headers.
 		req.Header.Set("cosy-scene", "assistant")
 		req.Header.Set("cosy-business-product", "cli")
 		req.Header.Set("cosy-business-type", "agent")
@@ -663,7 +667,7 @@ func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Sit
 		site = session.Site
 	}
 	if site == SiteCN {
-		// 国内客户端的 Gateway builder 固定发送空机器 token/type/code。
+		// The CN gateway expects empty machine token, type, and code headers.
 		machineToken = ""
 		machineType = ""
 	} else {
@@ -688,7 +692,7 @@ func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Sit
 	clientVersion := c.requestClientVersion(session)
 	clientType := "5"
 	if site == SiteCN {
-		// Qoder CN 桌面构建的运行模式为 ide，官方协议将其映射为客户端类型 0。
+		// The CN desktop IDE client uses protocol client type 0.
 		clientType = "0"
 	}
 
@@ -794,8 +798,8 @@ func qoderIntField(raw map[string]any, key string) int {
 	return 0
 }
 
-// ParseSSELine 解析 Qoder 流里的单行 SSE "data:"。
-// 如果该行没有有效事件，则返回 nil。
+// ParseSSELine parses one Qoder SSE data line.
+// Non-data lines and envelopes without events return nil; malformed JSON returns an error.
 func ParseSSELine(line string) ([]SSEEvent, error) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "data:") {
@@ -1192,7 +1196,8 @@ func parseWrappedAPIError(wrapper QoderSSEWrapper) error {
 	return apiErr
 }
 
-// StreamEvents 从响应体读取 SSE 行并返回事件 channel。
+// StreamEvents reads SSE events and closes the response body when reading ends.
+// Callers must drain the channel so the reader goroutine can finish.
 func StreamEvents(resp *http.Response) <-chan SSEEvent {
 	ch := make(chan SSEEvent, 16)
 	go func() {

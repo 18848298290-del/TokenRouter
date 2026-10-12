@@ -58,13 +58,13 @@ func TestForceCacheBilling_TokenConversion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 根据输入用量构造待转换的响应报文。
+			// Build a response from the input usage to exercise reclassification.
 			usage := upstream.TokenUsage{
 				InputTokens:          tt.inputTokens,
 				CacheReadInputTokens: tt.cacheReadInputTokens,
 			}
 
-			// ParseClaudeUsageFromResponseBody 读取转换后的响应用量。
+			// Read the reclassified response usage.
 			body, err := json.Marshal(struct {
 				Usage upstream.TokenUsage `json:"usage"`
 			}{Usage: usage})
@@ -89,10 +89,8 @@ func TestForceCacheBilling_TokenConversion(t *testing.T) {
 	}
 }
 
-// 非流式响应 reconcile 测试
-
 func TestNonStreamingReconcile_KimiResponse(t *testing.T) {
-	// 模拟 Kimi 非流式响应
+	// Kimi reports cache hits under cached_tokens.
 	body := []byte(`{
 		"id": "msg_123",
 		"type": "message",
@@ -110,13 +108,12 @@ func TestNonStreamingReconcile_KimiResponse(t *testing.T) {
 		}
 	}`)
 
-	// 模拟 handleNonStreamingResponse 中的逻辑
+	// Exercise the nonstream cache-read reconciliation.
 	var response struct {
 		Usage upstream.TokenUsage `json:"usage"`
 	}
 	require.NoError(t, json.Unmarshal(body, &response))
 
-	// reconcile
 	if response.Usage.CacheReadInputTokens == 0 {
 		cachedTokens := gjson.GetBytes(body, "usage.cached_tokens").Int()
 		if cachedTokens > 0 {
@@ -127,17 +124,17 @@ func TestNonStreamingReconcile_KimiResponse(t *testing.T) {
 		}
 	}
 
-	// 验证内部 usage（计费用）
+	// Check internal billing usage.
 	assert.Equal(t, 23, response.Usage.CacheReadInputTokens)
 	assert.Equal(t, 23, response.Usage.InputTokens)
 	assert.Equal(t, 7, response.Usage.OutputTokens)
 
-	// 验证返回给客户端的 JSON body
+	// Check the client-visible JSON.
 	assert.Equal(t, int64(23), gjson.GetBytes(body, "usage.cache_read_input_tokens").Int())
 }
 
 func TestNonStreamingReconcile_NativeClaude(t *testing.T) {
-	// 原生 Claude 响应：cache_read_input_tokens 已有值
+	// An existing Anthropic cache-read count takes precedence.
 	body := []byte(`{
 		"usage": {
 			"input_tokens": 100,
@@ -152,13 +149,13 @@ func TestNonStreamingReconcile_NativeClaude(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(body, &response))
 
-	// CacheReadInputTokens == 30，条件不成立，整个 reconcile 分支不会执行
+	// A nonzero cache-read count bypasses reconciliation.
 	assert.NotZero(t, response.Usage.CacheReadInputTokens)
 	assert.Equal(t, 30, response.Usage.CacheReadInputTokens)
 }
 
 func TestNonStreamingReconcile_NoCachedTokens(t *testing.T) {
-	// 没有 cached_tokens 字段
+	// A response without cached_tokens keeps zero cache-read usage.
 	body := []byte(`{
 		"usage": {
 			"input_tokens": 100,
@@ -183,7 +180,6 @@ func TestNonStreamingReconcile_NoCachedTokens(t *testing.T) {
 		}
 	}
 
-	// cache_read_input_tokens 应保持为 0
 	assert.Equal(t, 0, response.Usage.CacheReadInputTokens)
 	assert.Equal(t, int64(0), gjson.GetBytes(body, "usage.cache_read_input_tokens").Int())
 }

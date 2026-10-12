@@ -119,7 +119,7 @@ func pricingTimePricingTestConfig(periods ...routing.TimePricingPeriod) *routing
 	return &routing.TimePricingConfig{Timezone: "Asia/Shanghai", Periods: periods}
 }
 
-// contractTimeLocation 为定价接口测试加载时区，配置校验和倍率计算由生产实现执行。
+// contractTimeLocation loads the fixture timezone; production code validates settings and computes multipliers.
 func contractTimeLocation(value *pricing.TimePricingConfig) *time.Location {
 	if value == nil {
 		return nil

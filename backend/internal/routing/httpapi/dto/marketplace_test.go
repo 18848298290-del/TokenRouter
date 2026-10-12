@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestImagePriceJSONPreservesFreeAndMissingSizes 防止部分尺寸免费时把其他尺寸也显示为免费。
+// TestImagePriceJSONPreservesFreeAndMissingSizes distinguishes free sizes from sizes with no price.
 func TestImagePriceJSONPreservesFreeAndMissingSizes(t *testing.T) {
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "image", PriceStatus: "priced", ImagePriceSizes: []string{"1K", "2K"}, ImagePrice1K: 0, ImagePrice2K: 0.1})
 	body, err := json.Marshal(row)
@@ -22,7 +22,7 @@ func TestImagePriceJSONPreservesFreeAndMissingSizes(t *testing.T) {
 	require.NotContains(t, fields, "image_price_4k")
 }
 
-// TestMarketplacePricingJSONIncludesTokenModifiers 检查模型广场能拿到分时规则和 Max 推理倍率。
+// TestMarketplacePricingJSONIncludesTokenModifiers checks time-based pricing and Max reasoning multipliers.
 func TestMarketplacePricingJSONIncludesTokenModifiers(t *testing.T) {
 	maxMultiplier := 1.5
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{
@@ -51,7 +51,7 @@ func TestMarketplacePricingJSONIncludesTokenModifiers(t *testing.T) {
 	}`, string(body))
 }
 
-// TestMarketplacePricingJSONOmitsAbsentTokenModifiers 检查没有倍率的模型不输出这两个字段。
+// TestMarketplacePricingJSONOmitsAbsentTokenModifiers checks that unset modifiers are omitted.
 func TestMarketplacePricingJSONOmitsAbsentTokenModifiers(t *testing.T) {
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "token", PriceStatus: "priced", InputPricePerToken: 1e-6})
 	body, err := json.Marshal(row)

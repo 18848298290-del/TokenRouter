@@ -21,10 +21,10 @@ type marketplacePrices struct {
 	calculator *billing.Calculator
 }
 
-// marketplaceStats 返回公开首页需要的 Dashboard 计数。
+// marketplaceStats reads dashboard counts for the public homepage.
 type marketplaceStats struct{ source *usage.DashboardService }
 
-// provideMarketplace 绑定分组、设置和报价查询，平台模型信息在查询时读取。
+// provideMarketplace binds groups, settings, and quotes with model information read at query time.
 func provideMarketplace(groups *routingpostgres.GroupStore, store *settings.Store, catalogue *routing.RequestableCatalogue, prices *billing.PriceResolver, calculator *billing.Calculator, capacity *routing.CapacityService, availability routing.GroupAvailabilityProbeRepository, cfg *config.Config, attributes *routing.ModelAttributeService) *routing.Marketplace {
 	options := routing.MarketplaceOptions{Attributes: attributes.ResolveGroups, Timezone: cfg.Timezone, Now: time.Now, Warn: slog.Warn}
 	return routing.NewMarketplace(groups, store, catalogue, catalogue.Resolver, marketplacePrices{prices, calculator}, capacity, availability, options)
@@ -48,7 +48,7 @@ func (p marketplacePrices) GetModelModalities(model string) ([]string, []string)
 	return p.calculator.GetModelModalities(model)
 }
 
-// provideMarketplaceHTTP 为市场 Handler 绑定公开统计查询。
+// provideMarketplaceHTTP binds public statistics to the marketplace handler.
 func provideMarketplaceHTTP(core *routing.Marketplace, dashboard *usage.DashboardService) *routinghttp.MarketplaceHandler {
 	return routinghttp.NewMarketplaceHandler(core, marketplaceStats{source: dashboard})
 }

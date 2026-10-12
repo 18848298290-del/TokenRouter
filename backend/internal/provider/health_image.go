@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 图片能力使用独立的缓存条目记录原因和冷却时间。
+// Image generation uses a separate model-limit key for its reason and cooldown.
 const (
 	OpenAIImageRateLimitReason        = "openai_image_rate_limited"
 	OpenAIImageCapabilityLossReason   = "openai_image_capability_lost"
@@ -15,7 +15,7 @@ const (
 	OpenAIImageGenerationRateLimitKey = "openai:image_generation"
 )
 
-// ApplyImageRateLimit 按图片能力记录 OpenAI 限流，其他能力保持当前状态。
+// ApplyImageRateLimit records an OpenAI image-generation cooldown independently of other capabilities.
 func (s *HealthService) ApplyImageRateLimit(ctx context.Context, provider *Record, statusCode int, observe func() (bool, time.Time)) bool {
 	if s == nil || provider == nil || s.providerRepo == nil {
 		return false
@@ -23,7 +23,7 @@ func (s *HealthService) ApplyImageRateLimit(ctx context.Context, provider *Recor
 	if provider.Platform != capability.PlatformOpenAI {
 		return false
 	}
-	// 池模式由上游提供商池负责能力切换，不能写入本地生图能力限流。
+	// Pool mode delegates capability selection upstream, so it skips this local image rate limit.
 	if provider.IsPoolMode() {
 		return false
 	}
@@ -44,7 +44,7 @@ func (s *HealthService) ApplyImageRateLimit(ctx context.Context, provider *Recor
 	return true
 }
 
-// ApplyImageCapabilityLoss 在上游明确拒绝图片工具时暂时冷却提供商的图片调度。
+// ApplyImageCapabilityLoss cools down image scheduling when the upstream rejects the image capability.
 func (s *HealthService) ApplyImageCapabilityLoss(ctx context.Context, provider *Record, statusCode int, capabilityLost bool) bool {
 	if s == nil || provider == nil || s.providerRepo == nil {
 		return false

@@ -15,7 +15,7 @@ import (
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
-// GeminiHTTPBindings 提供会话读取和路径资格检查。
+// GeminiHTTPBindings provides session lookup, sticky binding, and URL model validation.
 type GeminiHTTPBindings struct {
 	SafeModelSegment func(string) bool
 	FindSession      func(context.Context, int64, string, string) (string, int64, string, bool)
@@ -26,7 +26,7 @@ type geminiNativeHTTPBackend struct {
 	gemini GeminiHTTPBindings
 }
 
-// NewBoundGeminiNativeHandler 绑定 HTTP 处理和 Gemini 数据读取接口。
+// NewBoundGeminiNativeHandler binds HTTP handling to Gemini session and validation services.
 func NewBoundGeminiNativeHandler(options GeminiNativeOptions, bindings MessagesBindings, gemini GeminiHTTPBindings, prompt MessagesPrompt, concurrency *ConcurrencyHelper, newID func() string, executor execution.Executor) *GeminiNativeHandler {
 	return NewGeminiNativeHandler(options, geminiNativeHTTPBackend{messagesHTTPBackend{bindings}, gemini}, prompt, concurrency, newID, executor)
 }

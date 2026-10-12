@@ -4,5 +4,5 @@ package identity_test
 
 import "testing"
 
-// runIdentityTests 执行无需数据库的测试集合。
+// runIdentityTests runs the tests that do not require PostgreSQL containers.
 func runIdentityTests(m *testing.M) int { return m.Run() }

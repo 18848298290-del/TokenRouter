@@ -6,18 +6,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// RuntimeSettingsStore 按键读取路由设置。
+// RuntimeSettingsStore reads routing settings by key.
 type RuntimeSettingsStore interface {
 	GetValue(context.Context, string) (string, error)
 }
 type RuntimeSettings struct{ settingRepo RuntimeSettingsStore }
 
-// NewRuntimeSettings 构造不回源，参数读取由现有请求编排触发。
+// NewRuntimeSettings stores the reader; settings are loaded when queried.
 func NewRuntimeSettings(repo RuntimeSettingsStore) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo}
 }
 
-// IsModelFallbackEnabled 保持原缺省、未知平台及故障语义。
+// IsModelFallbackEnabled returns true only for the stored value "true"; read errors disable fallback.
 func (s *RuntimeSettings) IsModelFallbackEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyEnableModelFallback)
 	if err != nil {
@@ -26,7 +26,7 @@ func (s *RuntimeSettings) IsModelFallbackEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// GetFallbackModel 保持原缺省、未知平台及故障语义。
+// GetFallbackModel returns a platform default on an empty value or read failure, and empty for an unknown platform.
 func (s *RuntimeSettings) GetFallbackModel(ctx context.Context, platform string) string {
 	var key string
 	var defaultModel string

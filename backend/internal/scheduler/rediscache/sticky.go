@@ -13,7 +13,7 @@ const (
 	stickySessionOwnerPrefix = "sticky_session_owner:"
 )
 
-// StickyCache 使用调度 Redis 存储粘性绑定，普通粘性和指定会话归属各自设置 TTL。
+// StickyCache stores bindings in Redis with separate TTLs for ordinary stickiness and designated session ownership.
 type StickyCache struct{ rdb *redis.Client }
 
 func NewStickyCache(rdb *redis.Client) *StickyCache { return &StickyCache{rdb: rdb} }

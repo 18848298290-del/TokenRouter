@@ -33,7 +33,7 @@ type Usage struct {
 }
 type RelayResult struct {
 	RequestModel string
-	// ResponseServiceTier 是终止响应声明的上游实际服务档位。
+	// ResponseServiceTier is the actual upstream tier reported by the terminal response.
 	ResponseServiceTier     string
 	UpstreamResponseModel   string
 	Usage                   Usage
@@ -73,7 +73,7 @@ type RelayOptions struct {
 	FirstMessageSent                bool
 	StartClientAfterFirstDownstream bool
 	OnUsageParseFailure             func(eventType string, usageRaw string)
-	// OnUpstreamEvent 在每个上游文本事件解析出 type 后回调，由 service 层统一筛选 warning 事件。
+	// OnUpstreamEvent receives typed upstream text events; the caller selects warning events.
 	OnUpstreamEvent   func(eventType string, payload []byte)
 	OnTurnComplete    func(turn RelayTurnResult)
 	BeforeWriteClient func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error
@@ -200,12 +200,12 @@ func Relay(
 		return upstreamConn.WriteFrame(writeCtx, msgType, payload)
 	}
 	writeClient := func(msgType coderws.MessageType, payload []byte) error {
-		// 下行写超时故意不挂在 relayCtx 上：coder/websocket 在已武装的 write
-		// ctx 被取消时会直接硬关连接（context.AfterFunc 的 stop 不等待执行中
-		// 的回调），外部取消若落在一次已成功写入的解除武装窗口内，会连同尚未
-		// 发出的 close 帧一起冲掉，客户端只能看到裸 EOF 而收不到关闭码。与读
-		// 侧 conn.Read(context.Background()) 同理，取消路径的连接回收由各退出
-		// 分支调用 Close/CloseNow 完成。
+		// Keep downstream writes independent of relay cancellation. coder/websocket can hard-close
+		// the connection when a write context is canceled, even after a successful write while
+		// its cancellation callback is being disarmed. context.AfterFunc's stop does not join
+		// a running callback, so cancellation can discard the pending close frame and expose EOF.
+		// As with background-context reads, exit handlers reclaim the connection with
+		// Close or CloseNow so the adapter can send the intended close code.
 		writeCtx, cancel := context.WithTimeout(context.Background(), getWriteTimeout())
 		defer cancel()
 		return clientConn.WriteFrame(writeCtx, msgType, payload)
@@ -306,8 +306,8 @@ func Relay(
 	go runIdleWatchdog(relayCtx, nowFn, options.IdleTimeout, &lastActivity, onTrace, exitCh)
 
 	firstExit := <-exitCh
-	// 外层入口取消属于控制面关闭，不是上游的正常断开。此处保持客户端连接，
-	// 由适配器返回精确的租约或请求关闭码；内部 relayCancel 不会取消 ctx。
+	// Parent cancellation is a control-plane shutdown. Keep the client connection for the
+	// adapter to send its lease or request close code; relayCancel does not cancel the parent.
 	if ctx.Err() != nil {
 		firstExit.graceful = false
 	}
@@ -330,7 +330,7 @@ func Relay(
 	secondExit := relayExitSignal{graceful: true}
 	hasSecondExit := false
 
-	// 客户端断开后尽力继续读取上游短窗口，捕获延迟 usage/terminal 事件用于计费。
+	// After a graceful client disconnect, briefly drain upstream usage and terminal events for billing.
 	if firstExit.stage == "read_client" && firstExit.graceful {
 		dropDownstreamWrites.Store(true)
 		secondExit, hasSecondExit = waitRelayExit(exitCh, drainTimeout)
@@ -522,9 +522,9 @@ func runUpstreamToClient(
 		if err != nil {
 			emitTurnComplete(onTurnComplete, state, finalizePendingBareError(state, nowFn()))
 			graceful := isDisconnectError(err)
-			// WebSocket 正常关闭只表示传输握手完成；上游一旦开始 Responses 回合，
-			// 仍必须收到终态协议事件才算成功。1000/EOF 若发生在终态前，应视为
-			// relay 失败，适配器据此报告尚未完成的回合。
+			// A normal WebSocket close completes the transport handshake, not an active Responses turn.
+			// A turn with an observed response ID needs a terminal event; otherwise report the
+			// disconnect as a relay failure so the adapter can report the unfinished turn.
 			if graceful && openAIWSRelayActiveTurnID(state) != "" {
 				graceful = false
 				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
@@ -572,7 +572,7 @@ func runUpstreamToClient(
 			}
 			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure, onUpstreamEvent)
 		case coderws.MessageBinary:
-			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
+			// Forward binary frames without attempting JSON observation.
 		}
 		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
@@ -700,7 +700,7 @@ func relayErrorString(err error) string {
 	return err.Error()
 }
 
-// firstRelayResponseServiceTier 从 Responses 终止事件提取上游实际服务档位。
+// firstRelayResponseServiceTier reads the nested or top-level service tier from a response event.
 func firstRelayResponseServiceTier(message []byte) string {
 	if len(message) == 0 {
 		return ""
@@ -717,7 +717,7 @@ func firstRelayResponseServiceTier(message []byte) string {
 	return ""
 }
 
-// observeRelayTurnResponseServiceTier 记录终止事件声明的处理档位。
+// observeRelayTurnResponseServiceTier records a nonempty tier from a terminal event.
 func observeRelayTurnResponseServiceTier(turn *relayTurnTiming, tier string) {
 	if turn == nil {
 		return
@@ -751,7 +751,7 @@ func observeUpstreamMessage(
 	if responseID == "" {
 		responseID = strings.TrimSpace(values[2].String())
 	}
-	// terminal 事件缺少响应标识时，从顶层 id 读取。
+	// Use the top-level ID for terminal events that omit a response ID.
 	if responseID == "" && isTerminalEvent(eventType) {
 		responseID = strings.TrimSpace(values[3].String())
 	}
@@ -1044,7 +1044,7 @@ func parseUsageAndAccumulate(
 		if onParseFailure != nil {
 			onParseFailure(eventType, usageRaw)
 		}
-		// 任一字段解析失败时，返回空用量。
+		// Reject the usage snapshot if a validated token field is invalid.
 		return Usage{}
 	}
 	reasoningTokens := usageResult.Get("output_tokens_details.reasoning_tokens").Int()

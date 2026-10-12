@@ -31,33 +31,31 @@ func TestProviderFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	got := ProviderFromRecordShallow(src)
 	require.NotNil(t, got)
 
-	// 敏感键不在 Credentials 里
 	require.NotContains(t, got.Credentials, "access_token")
 	require.NotContains(t, got.Credentials, "refresh_token")
 	require.NotContains(t, got.Credentials, "id_token")
 	require.NotContains(t, got.Credentials, "api_key")
-	// 非敏感键保留
+
 	require.Equal(t, "https://api.example.com", got.Credentials["base_url"])
 	require.Equal(t, map[string]any{"foo": "bar"}, got.Credentials["model_mapping"])
 
-	// 状态 map 标记敏感键存在
 	require.True(t, got.CredentialsStatus["has_access_token"])
 	require.True(t, got.CredentialsStatus["has_refresh_token"])
 	require.True(t, got.CredentialsStatus["has_id_token"])
 	require.True(t, got.CredentialsStatus["has_api_key"])
 
-	// JSON 序列化校验：响应体里不会出现敏感子串
+	// Check the serialized response as well as the DTO so secrets cannot leak through JSON.
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "rt-secret")
 	require.NotContains(t, string(raw), "at-secret")
 	require.NotContains(t, string(raw), "sk-secret")
 	require.NotContains(t, string(raw), "id-secret")
-	// 状态标识应序列化进 JSON
+
 	require.Contains(t, string(raw), "credentials_status")
 	require.Contains(t, string(raw), "has_refresh_token")
 
-	// 原始 provider.Record 不应被改动
+	// Redaction leaves the source provider intact.
 	require.Equal(t, "rt-secret", src.Credentials["refresh_token"])
 }
 
@@ -119,7 +117,7 @@ func TestProviderFromServiceShallow_RedactsLegacyUpstreamUsageSecrets(t *testing
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "legacy-secret")
-	// 映射层不得修改数据库对象中的历史值。
+	// Mapping leaves historical database values intact.
 	legacyConfig, ok := src.Extra[provider.UpstreamUsageQueryExtraKey].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, legacyConfig, "api_key")
@@ -168,7 +166,7 @@ func TestProviderFromServiceShallow_OpenAIOAuthTLSFingerprint(t *testing.T) {
 	require.Equal(t, int64(-1), *got.TLSFingerprintProfileID)
 }
 
-// TestProviderDTOHasIndependentNestedValues 验证展示 DTO 的嵌套修改不能回写提供商配置或缓存中的 map。
+// TestProviderDTOHasIndependentNestedValues checks that editing nested DTO values leaves source maps intact.
 func TestProviderDTOHasIndependentNestedValues(t *testing.T) {
 	value := &provider.Record{Now: time.Now, LoadLocation: time.LoadLocation, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "model"}}, Extra: map[string]any{"policy": map[string]any{"enabled": true}}}
 	view := ProviderFromRecordShallow(value)

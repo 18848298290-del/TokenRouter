@@ -38,12 +38,12 @@ var (
 	ErrOAuthInvitationRequired = infraerrors.Forbidden("OAUTH_INVITATION_REQUIRED", "invitation code required to complete oauth registration")
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
 
-	// ErrPasswordIncorrect 表示当前密码校验失败。
+	// ErrPasswordIncorrect reports a failed current-password check.
 	ErrPasswordIncorrect = infraerrors.BadRequest("PASSWORD_INCORRECT", "current password is incorrect")
 )
 
 type CaptchaProof struct {
-	// TurnstileToken 承载 Cloudflare Turnstile token；阿里云验证码复用该字段承载 captchaVerifyParam
+	// TurnstileToken carries a Cloudflare token or an Aliyun captchaVerifyParam.
 	TurnstileToken string
 	TencentTicket  string
 	TencentRandstr string
@@ -59,25 +59,25 @@ type AuthSignupGrantPlan struct {
 	Subscriptions []DefaultSubscriptionSetting
 }
 
-// SendVerifyCodeResult 发送验证码返回结果。
+// SendVerifyCodeResult contains the delay before requesting another verification code.
 type SendVerifyCodeResult struct {
-	Countdown int `json:"countdown"` // 倒计时秒数
+	Countdown int `json:"countdown"` // Seconds.
 }
 
 type AuthRegistrationArtifacts struct {
 	InvitationRedeemCode *RedeemCode
-	// EnforceEmailDomainQuota 仅为普通注册和 OAuth 邮箱补全开启非白名单域名额度。
+	// EnforceEmailDomainQuota enables non-whitelisted domain quotas for registration and OAuth email completion.
 	EnforceEmailDomainQuota bool
 }
 
-// RegisterWithVerification 用户注册（支持邮件验证、优惠码、邀请码和邀请返利码），返回 token 和用户。
+// RegisterWithVerification registers a user with optional email verification, promo, invitation, and affiliate codes, then returns a token and user.
 func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode, promoCode, invitationCode, affiliateCode string) (string, *User, error) {
-	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
+	// Registration is disabled when settings are unavailable.
 	if s.Settings == nil || !s.Settings.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
 	}
 
-	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
+	// Reserve synthetic OAuth addresses to prevent collisions with local accounts.
 	if IsReservedEmail(email) {
 		return "", nil, ErrEmailReserved
 	}
@@ -99,10 +99,8 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 	artifacts.EnforceEmailDomainQuota = true
 
-	// 检查是否需要邮件验证
 	if s.Settings != nil && s.Settings.IsEmailVerifyEnabled(ctx) {
-		// 如果邮件验证已开启但邮件服务未配置，拒绝注册
-		// 这是一个配置错误，不应该允许绕过验证
+		// Reject registration when required email verification cannot run.
 		if s.Email == nil {
 			s.Observer.Printf("service.auth", "%s", "[Auth] Email verification enabled but email service not configured, rejecting registration")
 			return "", nil, ErrServiceUnavailable
@@ -110,13 +108,12 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		if verifyCode == "" {
 			return "", nil, ErrEmailVerifyRequired
 		}
-		// 验证邮箱验证码
+
 		if err := s.Email.VerifyCode(ctx, email, verifyCode); err != nil {
 			return "", nil, fmt.Errorf("verify code: %w", err)
 		}
 	}
 
-	// 密码哈希
 	hashedPassword, err := s.HashPassword(password)
 	if err != nil {
 		return "", nil, fmt.Errorf("hash password: %w", err)
@@ -124,13 +121,12 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 
 	grantPlan := s.AuthResolveSignupGrantPlan(ctx, "email")
 
-	// 新用户默认 RPM（0 = 不限制）。注册时写入，后续作为用户级兜底。
+	// Snapshot the default RPM limit at signup; zero means unlimited.
 	var defaultRPMLimit int
 	if s.Settings != nil {
 		defaultRPMLimit = s.Settings.GetDefaultUserRPMLimit(ctx)
 	}
 
-	// 创建用户
 	user := &User{
 		Email:        email,
 		PasswordHash: hashedPassword,
@@ -141,7 +137,7 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 	if err := s.AuthCreateRegisteredUser(ctx, user, artifacts); err != nil {
-		// 优先检查邮箱冲突错误（竞态条件下可能发生）
+		// An email can become occupied after the preflight check.
 		switch {
 		case errors.Is(err, ErrEmailExists):
 			return "", nil, ErrEmailExists
@@ -158,20 +154,18 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	s.AuthAssignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 	s.AuthBindRegistrationAffiliate(ctx, user.ID, affiliateCode)
 
-	// 应用优惠码（如果提供且功能已启用）
 	if promoCode != "" && s.Promo != nil && s.Settings != nil && s.Settings.IsPromoCodeEnabled(ctx) {
 		if err := s.Promo.ApplyPromoCode(ctx, user.ID, promoCode); err != nil {
-			// 优惠码应用失败不影响注册，只记录日志
+			// Promo failures are logged while registration continues.
 			s.Observer.Printf("service.auth", "[Auth] Failed to apply promo code for user %d: %v", user.ID, err)
 		} else {
-			// 重新获取用户信息以获取更新后的余额
+			// Reload the balance after applying the promotion.
 			if updatedUser, err := s.Users.GetByID(ctx, user.ID); err == nil {
 				user = updatedUser
 			}
 		}
 	}
 
-	// 生成 token
 	token, err := s.GenerateToken(ctx, user)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
@@ -180,9 +174,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	return token, user, nil
 }
 
-// SendVerifyCode 发送邮箱验证码（同步方式）。
+// SendVerifyCode sends a registration verification email synchronously.
 func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale ...string) error {
-	// 检查是否开放注册（默认关闭）
+	// Registration defaults to disabled.
 	if s.Settings == nil || !s.Settings.IsRegistrationEnabled(ctx) {
 		return ErrRegDisabled
 	}
@@ -190,7 +184,7 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 	if IsReservedEmail(email) {
 		return ErrEmailReserved
 	}
-	// 检查邮箱是否已存在
+
 	existsEmail, err := s.AuthRegistrationEmailExists(ctx, email)
 	if err != nil {
 		s.Observer.Printf("service.auth", "[Auth] Database error checking email exists: %v", err)
@@ -203,12 +197,10 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 		return err
 	}
 
-	// 发送验证码
 	if s.Email == nil {
 		return errors.New("email service not configured")
 	}
 
-	// 获取网站名称
 	siteName := "TokenRouter"
 	if s.Settings != nil {
 		siteName = s.Settings.GetSiteName(ctx)
@@ -217,11 +209,11 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 	return s.Email.SendVerifyCode(ctx, email, siteName, FirstEmailLocale(locale))
 }
 
-// SendVerifyCodeAsync 异步发送邮箱验证码并返回倒计时。
+// SendVerifyCodeAsync queues a registration verification email and returns a retry delay.
 func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
 	s.Observer.Printf("service.auth", "[Auth] SendVerifyCodeAsync called for email: %s", email)
 
-	// 检查是否开放注册（默认关闭）
+	// Registration defaults to disabled.
 	if s.Settings == nil || !s.Settings.IsRegistrationEnabled(ctx) {
 		s.Observer.Printf("service.auth", "%s", "[Auth] Registration is disabled")
 		return nil, ErrRegDisabled
@@ -230,7 +222,7 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 	if IsReservedEmail(email) {
 		return nil, ErrEmailReserved
 	}
-	// 检查邮箱是否已存在
+
 	existsEmail, err := s.AuthRegistrationEmailExists(ctx, email)
 	if err != nil {
 		s.Observer.Printf("service.auth", "[Auth] Database error checking email exists: %v", err)
@@ -244,19 +236,16 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 		return nil, err
 	}
 
-	// 检查邮件队列服务是否配置
 	if s.EmailQueue == nil {
 		s.Observer.Printf("service.auth", "%s", "[Auth] Email queue service not configured")
 		return nil, errors.New("email queue service not configured")
 	}
 
-	// 获取网站名称
 	siteName := "TokenRouter"
 	if s.Settings != nil {
 		siteName = s.Settings.GetSiteName(ctx)
 	}
 
-	// 异步发送
 	s.Observer.Printf("service.auth", "[Auth] Enqueueing verify code for: %s", email)
 	if err := s.EmailQueue.EnqueueVerifyCode(email, siteName, FirstEmailLocale(locale)); err != nil {
 		s.Observer.Printf("service.auth", "[Auth] Failed to enqueue: %v", err)
@@ -265,13 +254,13 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 
 	s.Observer.Printf("service.auth", "[Auth] Verify code enqueued successfully for: %s", email)
 	return &SendVerifyCodeResult{
-		Countdown: 60, // 60秒倒计时
+		Countdown: 60, // Seconds.
 	}, nil
 }
 
-// VerifyCaptchaForRegister 在注册场景下验证当前启用的验证码。
-// 当邮箱验证开启且已提交验证码时，说明验证码发送阶段已完成验证码校验，
-// 此处跳过二次校验，避免一次性 token 在注册提交时重复使用导致误报失败。
+// VerifyCaptchaForRegister validates the enabled CAPTCHA for registration.
+// When email verification is enabled and a code is supplied, the code-request step
+// has already checked the one-time CAPTCHA token, so registration does not consume it again.
 func (s *AuthService) VerifyCaptchaForRegister(ctx context.Context, proof CaptchaProof, remoteIP, verifyCode string) error {
 	if s.IsEmailVerifyEnabled(ctx) && strings.TrimSpace(verifyCode) != "" {
 		s.Observer.Printf("service.auth", "%s", "[Auth] Email verify flow detected, skip duplicate captcha check on register")
@@ -324,7 +313,7 @@ func (s *AuthService) VerifyCaptcha(ctx context.Context, proof CaptchaProof, rem
 	return nil
 }
 
-// AuthCaptchaProvidersConflict 同一时间仅允许启用一家人机验证服务商。
+// AuthCaptchaProvidersConflict reports whether more than one CAPTCHA provider is enabled.
 func AuthCaptchaProvidersConflict(enabled ...bool) bool {
 	count := 0
 	for _, e := range enabled {
@@ -335,8 +324,8 @@ func AuthCaptchaProvidersConflict(enabled ...bool) bool {
 	return count > 1
 }
 
-// VerifyActionCaptchaIfEnabled 仅保护动作触发的扩展入口（OAuth 登录启动、passkey 登录），
-// 腾讯天御与阿里云验证码启用时拦截；不扩大 Cloudflare Turnstile 的既有覆盖范围。
+// VerifyActionCaptchaIfEnabled checks Tencent or Aliyun CAPTCHA for OAuth and Passkey login starts.
+// Cloudflare Turnstile does not guard these action endpoints.
 func (s *AuthService) VerifyActionCaptchaIfEnabled(ctx context.Context, proof CaptchaProof, remoteIP string) error {
 	if s == nil || s.Settings == nil {
 		return ErrServiceUnavailable
@@ -373,7 +362,7 @@ func (s *AuthService) VerifyActionCaptchaIfEnabled(ctx context.Context, proof Ca
 	)
 }
 
-// IsTurnstileEnabled 检查是否启用 Turnstile 验证。
+// IsTurnstileEnabled reports whether Turnstile verification is enabled.
 func (s *AuthService) IsTurnstileEnabled(ctx context.Context) bool {
 	if s.Turnstile == nil {
 		return false
@@ -381,15 +370,15 @@ func (s *AuthService) IsTurnstileEnabled(ctx context.Context) bool {
 	return s.Turnstile.IsEnabled(ctx)
 }
 
-// IsRegistrationEnabled 检查是否开放注册。
+// IsRegistrationEnabled reports whether registration is enabled.
 func (s *AuthService) IsRegistrationEnabled(ctx context.Context) bool {
 	if s.Settings == nil {
-		return false // 安全默认：settingService 未配置时关闭注册
+		return false // Missing settings disable registration.
 	}
 	return s.Settings.IsRegistrationEnabled(ctx)
 }
 
-// IsEmailVerifyEnabled 检查是否开启邮件验证。
+// IsEmailVerifyEnabled reports whether registration requires email verification.
 func (s *AuthService) IsEmailVerifyEnabled(ctx context.Context) bool {
 	if s.Settings == nil {
 		return false
@@ -397,30 +386,26 @@ func (s *AuthService) IsEmailVerifyEnabled(ctx context.Context) bool {
 	return s.Settings.IsEmailVerifyEnabled(ctx)
 }
 
-// Login 用户登录，返回 JWT token。
+// Login verifies password credentials and returns a JWT and the active user.
 func (s *AuthService) Login(ctx context.Context, email, password string) (string, *User, error) {
-	// 查找用户
 	user, err := s.Users.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return "", nil, ErrInvalidCredentials
 		}
-		// 记录数据库错误，向用户返回服务不可用。
+		// Log database errors and return a service-unavailable error to the caller.
 		s.Observer.Printf("service.auth", "[Auth] Database error during login: %v", err)
 		return "", nil, ErrServiceUnavailable
 	}
 
-	// 验证密码
 	if !s.CheckPassword(password, user.PasswordHash) {
 		return "", nil, ErrInvalidCredentials
 	}
 
-	// 检查用户状态
 	if !user.IsActive() {
 		return "", nil, ErrUserNotActive
 	}
 
-	// 生成 JWT token
 	token, err := s.GenerateToken(ctx, user)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
@@ -429,8 +414,8 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 	return token, user, nil
 }
 
-// AuthCanBypassRegistrationDisabledForOAuth 在钉钉企业模式（internal_only）且
-// dingtalk_connect_bypass_registration=true 时，允许跳过全局 registration_enabled 检查。
+// AuthCanBypassRegistrationDisabledForOAuth permits DingTalk signup when internal_only
+// and dingtalk_connect_bypass_registration are both enabled.
 func (s *AuthService) AuthCanBypassRegistrationDisabledForOAuth(ctx context.Context, signupSource string) bool {
 	if signupSource != "dingtalk" {
 		return false
@@ -442,22 +427,21 @@ func (s *AuthService) AuthCanBypassRegistrationDisabledForOAuth(ctx context.Cont
 	return cfg.CorpRestrictionPolicy == "internal_only"
 }
 
-// LoginOrRegisterOAuthWithTokenPair 用于第三方 OAuth/SSO 登录，返回完整的 TokenPair。
-// LoginOrRegisterOAuth 返回单个 token，本方法返回 TokenPair。
-// invitationCode 仅在邀请码注册模式下新用户注册时使用；已有账号登录时忽略。
-// affiliateCode 是邀请返利码，仅在新用户注册时生效；signupSource 用于渠道默认授权和钉钉注册豁免。
+// LoginOrRegisterOAuthWithTokenPair signs in an OAuth user and returns an access/refresh pair.
+// New users are created when registration policy allows it.
+// invitationCode and affiliateCode apply to new accounts.
+// signupSource selects provider grants and the DingTalk registration exemption.
 func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, email, username, invitationCode, affiliateCode, signupSource string) (*TokenPair, *User, error) {
 	return s.AuthLoginOrRegisterOAuthWithTokenPair(ctx, email, username, invitationCode, affiliateCode, "", signupSource)
 }
 
-// LoginOrRegisterOAuthWithTokenPairAndPromoCode 用于 OAuth 新用户注册时额外应用优惠码。
-// promoCode 只在本次确实创建新用户时生效，已有账号登录不会重复应用。
+// LoginOrRegisterOAuthWithTokenPairAndPromoCode signs in an OAuth user with an optional signup promotion.
+// The promotion applies only when this call creates the account.
 func (s *AuthService) LoginOrRegisterOAuthWithTokenPairAndPromoCode(ctx context.Context, email, username, invitationCode, affiliateCode, promoCode, signupSource string) (*TokenPair, *User, error) {
 	return s.AuthLoginOrRegisterOAuthWithTokenPair(ctx, email, username, invitationCode, affiliateCode, promoCode, signupSource)
 }
 
 func (s *AuthService) AuthLoginOrRegisterOAuthWithTokenPair(ctx context.Context, email, username, invitationCode, affiliateCode, promoCode, signupSource string) (*TokenPair, *User, error) {
-	// 检查 refreshTokenCache 是否可用
 	if s.RefreshTokens == nil {
 		return nil, nil, errors.New("refresh token cache not configured")
 	}
@@ -479,7 +463,7 @@ func (s *AuthService) AuthLoginOrRegisterOAuthWithTokenPair(ctx context.Context,
 	created := false
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			// OAuth 首次登录视为注册
+			// A missing OAuth account must satisfy registration policy.
 			if s.Settings == nil || (!s.Settings.IsRegistrationEnabled(ctx) && !s.AuthCanBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 				return nil, nil, ErrRegDisabled
 			}
@@ -499,8 +483,8 @@ func (s *AuthService) AuthLoginOrRegisterOAuthWithTokenPair(ctx context.Context,
 				return nil, nil, fmt.Errorf("hash password: %w", err)
 			}
 
-			// 优先使用调用方传入的 signupSource，如 dingtalk、linuxdo、oidc 或 wechat。
-			// 缺省时才按邮箱后缀判断，有邮箱的 OAuth 用户仍按其授权渠道读取设置。
+			// Use the supplied provider for grants, including users with real email addresses.
+			// Infer the provider from the address only when signupSource is absent.
 			if strings.TrimSpace(signupSource) == "" {
 				signupSource = AuthInferLegacySignupSource(email)
 			}
@@ -648,7 +632,7 @@ func (s *AuthService) AuthBindRegistrationAffiliate(ctx context.Context, userID 
 		if err := s.AuthRunFailOpenDBStep(ctx, "auth_affiliate_bind_inviter", func(stepCtx context.Context) error {
 			return s.Affiliate.BindInviterByCode(stepCtx, userID, code)
 		}); err != nil {
-			// 邀请返利码绑定失败不影响注册结果，只记录日志便于排查。
+			// Affiliate-binding failures are logged while registration continues.
 			s.Observer.Printf("service.auth", "[Auth] Failed to bind affiliate inviter for user %d: %v", userID, err)
 		}
 	}
@@ -774,8 +758,8 @@ func (s *AuthService) AuthValidateRegistrationEmailPolicy(ctx context.Context, e
 	return nil
 }
 
-// AuthValidateRegistrationEmailQuota 保留白名单为空时的全放行行为；配置白名单后，
-// 默认严格拒绝非白名单邮箱，仅在域名额度开关开启时按主域名共享一个名额。
+// AuthValidateRegistrationEmailQuota allows any domain when the whitelist is empty.
+// Otherwise, non-whitelisted domains need an enabled quota and share one slot per registrable domain.
 func (s *AuthService) AuthValidateRegistrationEmailQuota(ctx context.Context, email string) error {
 	if s == nil || s.Settings == nil {
 		return nil
@@ -794,7 +778,7 @@ func (s *AuthService) AuthValidateRegistrationEmailQuota(ctx context.Context, em
 	quotaRepo := s.DomainRegistration
 	ok := quotaRepo != nil
 	if !ok {
-		// 无数据库的单元测试桩保持兼容；生产装配必须具备原子仓储能力。
+		// Database-backed registration requires atomic quota checks; database-free test stores may omit them.
 		if s.HasDatabase() {
 			return ErrServiceUnavailable
 		}
@@ -819,7 +803,7 @@ func (s *AuthService) AuthRegistrationEmailDomainLimit(ctx context.Context, emai
 	if !IsRegistrationEmailSuffixLimited(email, whitelist) {
 		return "", nil
 	}
-	// 事务内再次读取开关，避免预检后设置被关闭仍按额度放行。
+	// Recheck inside the transaction in case the quota setting changed after preflight.
 	if !s.Settings.IsRegistrationEmailDomainQuotaEnabled(ctx) {
 		return "", AuthBuildEmailSuffixNotAllowedError(whitelist)
 	}
@@ -859,28 +843,25 @@ func AuthBuildEmailSuffixNotAllowedError(whitelist []string) error {
 	})
 }
 
-// IsPasswordResetEnabled 检查是否启用密码重置功能
-// 要求：必须同时开启邮件验证且 SMTP 配置正确。
+// IsPasswordResetEnabled reports whether email verification and password reset are enabled.
 func (s *AuthService) IsPasswordResetEnabled(ctx context.Context) bool {
 	if s.Settings == nil {
 		return false
 	}
-	// Must have email verification enabled and SMTP configured
+
 	if !s.Settings.IsEmailVerifyEnabled(ctx) {
 		return false
 	}
 	return s.Settings.IsPasswordResetEnabled(ctx)
 }
 
-// AuthPreparePasswordReset validates the password reset request and returns necessary data
-// Returns (siteName, resetURL, shouldProceed)
-// shouldProceed is false when we should silently return success (to prevent enumeration).
+// AuthPreparePasswordReset returns the site name, reset URL, and whether to proceed.
+// Callers return silent success when shouldProceed is false to limit account enumeration.
 func (s *AuthService) AuthPreparePasswordReset(ctx context.Context, email, frontendBaseURL string) (string, string, bool) {
-	// Check if user exists (but don't reveal this to the caller)
 	user, err := s.Users.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			// Security: Log but don't reveal that user doesn't exist
+			// Keep the missing-account result internal to limit enumeration.
 			s.Observer.Printf("service.auth", "[Auth] Password reset requested for non-existent email: %s", email)
 			return "", "", false
 		}
@@ -888,25 +869,22 @@ func (s *AuthService) AuthPreparePasswordReset(ctx context.Context, email, front
 		return "", "", false
 	}
 
-	// Check if user is active
 	if !user.IsActive() {
 		s.Observer.Printf("service.auth", "[Auth] Password reset requested for inactive user: %s", email)
 		return "", "", false
 	}
 
-	// Get site name
 	siteName := "TokenRouter"
 	if s.Settings != nil {
 		siteName = s.Settings.GetSiteName(ctx)
 	}
 
-	// Build reset URL base
 	resetURL := fmt.Sprintf("%s/reset-password", strings.TrimSuffix(frontendBaseURL, "/"))
 
 	return siteName, resetURL, true
 }
 
-// RequestPasswordResetAsync 异步请求密码重置（队列发送）
+// RequestPasswordResetAsync queues a password-reset email.
 // Security: Returns the same response regardless of whether the email exists (prevent user enumeration).
 func (s *AuthService) RequestPasswordResetAsync(ctx context.Context, email, frontendBaseURL string, locale ...string) error {
 	if !s.IsPasswordResetEnabled(ctx) {
@@ -930,10 +908,9 @@ func (s *AuthService) RequestPasswordResetAsync(ctx context.Context, email, fron
 	return nil
 }
 
-// ResetPassword 重置密码
-// Security: Increments TokenVersion to invalidate all existing JWT tokens.
+// ResetPassword verifies the reset token, attempts to consume it, and changes the active user's password.
+// Changing the stored password invalidates existing JWTs.
 func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPassword string) error {
-	// Check if password reset is enabled
 	if !s.IsPasswordResetEnabled(ctx) {
 		return infraerrors.Forbidden("PASSWORD_RESET_DISABLED", "password reset is not enabled")
 	}
@@ -942,12 +919,11 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 		return ErrServiceUnavailable
 	}
 
-	// Verify and consume the reset token (one-time use)
+	// Verify the reset token before changing credentials.
 	if err := s.Email.ConsumePasswordResetToken(ctx, email, token); err != nil {
 		return err
 	}
 
-	// Get user
 	user, err := s.Users.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
@@ -957,32 +933,29 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 		return ErrServiceUnavailable
 	}
 
-	// Check if user is active
 	if !user.IsActive() {
 		return ErrUserNotActive
 	}
 
-	// Hash new password
 	hashedPassword, err := s.HashPassword(newPassword)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	// Update password and increment TokenVersion
 	user.PasswordHash = hashedPassword
-	user.TokenVersion++ // Invalidate all existing tokens
+	user.TokenVersion++
 
-	// TokenVersion 无对应数据库列（见 ResolvedTokenVersion：由 email+password_hash 指纹推导），
-	// 写回 password_hash 本身即可让旧 token 失效。
+	// TokenVersion has no database column: ResolvedTokenVersion derives it from email and password_hash.
+	// Persisting password_hash changes the fingerprint used to validate existing tokens.
 	if err := s.Users.Update(ctx, user, UserUpdateFields{PasswordHash: true}); err != nil {
 		s.Observer.Printf("service.auth", "[Auth] Database error updating password for user %d: %v", user.ID, err)
 		return ErrServiceUnavailable
 	}
 
-	// Also revoke all refresh tokens for this user
+	// Revoke cached refresh sessions after persisting the password.
 	if err := s.RevokeAllUserSessions(ctx, user.ID); err != nil {
 		s.Observer.Printf("service.auth", "[Auth] Failed to revoke refresh tokens for user %d: %v", user.ID, err)
-		// Don't return error - password was already changed successfully
+		// The password change has succeeded, so revocation errors are logged.
 	}
 
 	s.Observer.Printf("service.auth", "[Auth] Password reset successful for user: %s", email)

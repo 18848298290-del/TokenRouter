@@ -1,6 +1,6 @@
 package app
 
-// 本文件检查 http_routes_admin.go 与 http_modules_wire.go 组合的协议目录和前端协议定义。
+// These tests compare the assembled administrative protocol catalogue with frontend protocol definitions.
 
 import (
 	"encoding/json"
@@ -44,7 +44,7 @@ func TestProtocolCatalogFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 测试默认核对前端夹具，更新协议目录后需要导出并检查字段差异。
+	// Catalogue changes require exporting the frontend fixture and reviewing field differences.
 	frontend := filepath.Join("..", "..", "..", "frontend", "src")
 	fixture, err := os.ReadFile(filepath.Join(frontend, "__tests__", "fixtures", "protocol-catalog.json"))
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestProtocolCatalogFixture(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(fixture), string(actual))
 
-	// TypeScript 联合类型需要覆盖协议目录，增删协议后同步更新。
+	// Keep the TypeScript union synchronized with catalogue additions and removals.
 	types, err := os.ReadFile(filepath.Join(frontend, "types", "index.ts"))
 	require.NoError(t, err)
 	block := regexp.MustCompile(`(?s)export type ProtocolID =\s*((?:\s*\|\s*'[^']+')+)`).FindSubmatch(types)

@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Task 7: 验证 generateRandomID 和降级碰撞防护 ---
-
 func TestGenerateRandomID_Uniqueness(t *testing.T) {
 	seen := make(map[string]struct{}, 100)
 	for i := range 100 {
@@ -34,7 +32,7 @@ func TestGenerateAnthropicMsgID_FormatAndUniqueness(t *testing.T) {
 }
 
 func TestFallbackCounter_Increments(t *testing.T) {
-	// 验证 fallbackCounter 的原子递增行为确保降级分支不会生成相同 seed
+	// Check the counter values used to vary time-based seeds.
 	before := atomic.LoadUint64(&fallbackCounter)
 	cnt1 := atomic.AddUint64(&fallbackCounter, 1)
 	cnt2 := atomic.AddUint64(&fallbackCounter, 1)
@@ -44,7 +42,7 @@ func TestFallbackCounter_Increments(t *testing.T) {
 }
 
 func TestFallbackCounter_ConcurrentIncrements(t *testing.T) {
-	// 验证并发递增的原子性 — 每次递增都应产生唯一值
+	// Each concurrent increment must receive a distinct counter value.
 	const goroutines = 50
 	results := make([]uint64, goroutines)
 	var wg sync.WaitGroup
@@ -58,7 +56,6 @@ func TestFallbackCounter_ConcurrentIncrements(t *testing.T) {
 	}
 	wg.Wait()
 
-	// 所有结果应唯一
 	seen := make(map[uint64]bool, goroutines)
 	for _, v := range results {
 		assert.False(t, seen[v], "并发递增产生了重复值: %d", v)
@@ -90,7 +87,6 @@ func TestGenerateRandomID_Length(t *testing.T) {
 }
 
 func TestGenerateRandomID_ConcurrentUniqueness(t *testing.T) {
-	// 验证并发调用不会产生重复 ID
 	const goroutines = 100
 	results := make([]string, goroutines)
 	var wg sync.WaitGroup

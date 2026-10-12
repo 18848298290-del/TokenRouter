@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// TestSystemOneCompositeErrorUsesDecisionEndpoint 检查独立端点识别及客户端可读取的复合前缀错误。
+// TestSystemOneCompositeErrorUsesDecisionEndpoint checks endpoint matching and machine-readable prefix errors.
 func TestSystemOneCompositeErrorUsesDecisionEndpoint(t *testing.T) {
 	for _, path := range []string{EndpointSystemOne, EndpointSystemOne + "/"} {
 		require.True(t, IsSystemOneEndpoint(path))

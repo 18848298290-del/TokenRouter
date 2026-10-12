@@ -11,7 +11,7 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ClientPayload 保存本轮按入站规则规范化后的独立报文。
+// ClientPayload contains this turn's normalized ingress payload and routing metadata.
 type ClientPayload struct {
 	PayloadRaw                []byte
 	ProviderIdentitySourceRaw []byte
@@ -27,11 +27,11 @@ type ClientPayload struct {
 	RequestedReasoningEffort  *string
 }
 
-// ForwardResult 保存一次 WS turn 的可观测结果和恢复输入。
+// ForwardResult contains one turn's observed result and recovery input.
 type ForwardResult struct {
-	// LocalWarmup 表示该轮预热在网关本地完成。
+	// LocalWarmup reports that the gateway completed the warmup locally.
 	LocalWarmup bool `json:"-"`
-	// UpstreamResponseModel 保存当前 turn 的原始上游模型声明。
+	// UpstreamResponseModel is the original model declaration observed in this turn's upstream response.
 	UpstreamResponseModel string
 	VideoCount            int
 	VideoResolution       string
@@ -73,7 +73,7 @@ type ForwardResult struct {
 	WSProviderFailoverReplayInput []json.RawMessage
 }
 
-// TurnCapture 固化当前 turn，完成处理只接收该快照。
+// TurnCapture supplies the current turn's snapshot to completion processing.
 type TurnCapture struct {
 	Turn               int
 	StartedAt          time.Time
@@ -85,7 +85,7 @@ type TurnCapture struct {
 	PayloadSource      string
 }
 
-// IngressHooks 由请求准入组件提供，入站流程决定回调时机。
+// IngressHooks supplies admission callbacks whose timing is controlled by the ingress flow.
 type IngressHooks struct {
 	TurnStarted   func(int, time.Time)
 	BeforeTurn    func(int) error
@@ -93,7 +93,7 @@ type IngressHooks struct {
 	AfterTurn     func(TurnCapture)
 }
 
-// IngressState 是一条入站会话的明确状态；技术 Adapter 仅同步握手字段。
+// IngressState holds one ingress session's model, handshake, and connection state.
 type IngressState struct {
 	OriginalModel   string
 	TurnState       string
@@ -102,7 +102,7 @@ type IngressState struct {
 	StoreDisabled   bool
 }
 
-// ConnLease 提供本次连接池租约的读写和释放操作。
+// ConnLease exposes connection identity, health, ping, and release operations for a pool lease.
 type ConnLease interface {
 	ConnID() string
 	MarkBroken()
@@ -111,12 +111,12 @@ type ConnLease interface {
 	PingWithTimeout(time.Duration) error
 }
 
-// PreviousTurn 是纯协议严格续接比较器，具体编解码仍由供应商原语提供。
+// PreviousTurn compares protocol state for strict continuation.
 type PreviousTurn interface {
 	Keep([]byte, string, bool) (bool, string, error)
 }
 
-// ReplayCodec 调用供应商协议处理函数，网关决定恢复方式和调用顺序。
+// ReplayCodec supplies upstream payload operations; the gateway chooses recovery and call order.
 type ReplayCodec interface {
 	Extract([]byte) ([]json.RawMessage, bool, error)
 	BuildFromItems([]json.RawMessage, bool, []json.RawMessage, bool, bool) ([]json.RawMessage, bool)
@@ -136,7 +136,7 @@ type ReplayCodec interface {
 	ClassifyPrevious(string) string
 }
 
-// IngressPort 的方法执行单步操作或一次上游 turn，提供商切换和会话重试由入站流程控制。
+// IngressPort supplies individual operations and upstream turns; ingress controls session retries.
 type IngressPort interface {
 	Parse([]byte, bool, int) (ClientPayload, error)
 	ShouldBridge(ClientPayload) bool
@@ -168,7 +168,7 @@ type IngressPort interface {
 	BindWarning(int64, int64, string, error)
 }
 
-// IngressOptions 配置入站会话的控制预算和提供商绑定策略。
+// IngressOptions configures session budgets and provider affinity.
 type IngressOptions struct {
 	ProviderType       string
 	BridgeThreshold    int64
@@ -185,7 +185,7 @@ type IngressOptions struct {
 	SessionStickyTTL   time.Duration
 }
 
-// IngressSession 管理 bridge 和 ctx_pool 的逐轮循环及恢复状态。
+// IngressSession owns HTTP bridge and pooled-connection turn loops and recovery state.
 type IngressSession struct {
 	Refresh func() Parameters
 	State   *IngressState
@@ -196,7 +196,7 @@ type IngressSession struct {
 	Port    IngressPort
 }
 
-// AcquireRecoveryError 仅标记允许进行一次提供商身份恢复的拨号失败。
+// AcquireRecoveryError marks a dial failure eligible for one provider-identity recovery attempt.
 type AcquireRecoveryError struct{ Err error }
 
 func (e *AcquireRecoveryError) Error() string { return e.Err.Error() }

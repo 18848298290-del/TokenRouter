@@ -18,13 +18,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// selectionSnapshotFixture 提供待解码的快照，数据库复核读取独立记录。
+// selectionSnapshotFixture supplies cached snapshots separately from database recheck records.
 type selectionSnapshotFixture struct {
 	schedulercore.SnapshotCache
 	providersByID map[int64]*gatewayprovider.ExecutionProvider
 }
 
-// selectPreviousResponseForTest 构造上下文和模型输入，调用上一响应的提供商选择方法。
+// selectPreviousResponseForTest prepares context and model mapping for response-chain selection.
 func selectPreviousResponseForTest(s *Compatible, ctx context.Context, group *int64, previous, model string, excluded map[int64]struct{}, compact bool) (*gatewayprovider.SelectionResult, error) {
 	ctx = s.withCandidatePolicy(ctx, group, "")
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, group)
@@ -430,8 +430,8 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_BusyKeepsSticky
 
 	concurrencyCache := selectionConcurrencyFixture{
 		acquireResults: map[int64]bool{
-			21: false, // previous_response 命中的提供商繁忙
-			22: true,  // 次优提供商可用（若回退会命中）
+			21: false, // The response-bound provider is busy.
+			22: true,  // The alternative is available if selection incorrectly switches providers.
 		},
 		waitCounts: map[int64]int{
 			21: 999,

@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestStreamWriter 将业务测试事件写入 HTTP 响应。
+// TestStreamWriter writes and flushes provider test events to an HTTP response.
 type TestStreamWriter interface {
 	http.ResponseWriter
 	http.Flusher
@@ -30,7 +30,7 @@ func (s *TestEventSink) Begin(_ context.Context, commit bool) error {
 }
 
 func (s *TestEventSink) Emit(_ context.Context, event provider.TestEvent) error {
-	// 编码失败时写出空 data 行，写出失败则返回错误，由用例取消执行。
+	// Encoding failures emit an empty data line; write failures return an error so the use case can cancel execution.
 	raw, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(s.writer, "data: %s\n\n", raw); err != nil {
 		return err

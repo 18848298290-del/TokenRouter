@@ -12,8 +12,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// IsContentPolicyRejection 识别只由当前请求内容触发的 OpenAI 安全拒绝。
-// 这类错误即使通过流内事件被推断为 502，也不能命中提供商级自定义错误策略。
+// IsContentPolicyRejection identifies OpenAI refusals tied to the request content.
+// Callers must exclude these from provider-wide error rules, even when stream events imply HTTP 502.
 func IsContentPolicyRejection(responseBody []byte) bool {
 	if len(responseBody) == 0 {
 		return false
@@ -44,8 +44,8 @@ func IsContentPolicyRejection(responseBody []byte) bool {
 	return false
 }
 
-// IsRequestScopedProviderFailure 识别应按单次请求处理的提供商错误。
-// 413 请求体限制可能是提供商上游代理的独有限制，仍允许切换提供商，因此不在这里统一排除。
+// IsRequestScopedProviderFailure identifies failures specific to one request.
+// HTTP 413 remains eligible for provider failover because an upstream proxy may impose its own size limit.
 func IsRequestScopedProviderFailure(provider *ExecutionProvider, statusCode int, responseBody []byte) bool {
 	upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(responseBody))
 	if hit, _, _ := upstreamopenai.DetectOpenAICyberPolicy(responseBody); hit {
@@ -60,7 +60,7 @@ func IsRequestScopedProviderFailure(provider *ExecutionProvider, statusCode int,
 	return provider != nil && provider.Record.Platform == capability.PlatformGrok && grok.IsGrokContentPolicyRejection(statusCode, responseBody)
 }
 
-// IsTransientProviderFailure 保留状态码与请求处理错误的短期恢复分类。
+// IsTransientProviderFailure classifies status codes and processing errors that may recover shortly.
 func IsTransientProviderFailure(statusCode int, responseBody []byte) bool {
 	switch statusCode {
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
@@ -72,8 +72,8 @@ func IsTransientProviderFailure(statusCode int, responseBody []byte) bool {
 	}
 }
 
-// OpenAIWSHTTPBridgeRequestScopedError 识别只与当前请求有关的错误。
-// 这类错误既不修改提供商状态，也不能因为池模式配置而回放当前 turn。
+// OpenAIWSHTTPBridgeRequestScopedError identifies errors specific to the current request.
+// Callers must neither change provider health nor replay the turn under pool retry rules for these errors.
 func OpenAIWSHTTPBridgeRequestScopedError(provider *ExecutionProvider, statusCode int, message string, body []byte) bool {
 	if hit, _, _ := upstreamopenai.DetectOpenAICyberPolicy(body); hit {
 		return true

@@ -48,7 +48,7 @@ func fastModeTestResolver() *billingcore.PriceResolver {
 	return billingtestkit.PriceResolver(nil, billing)
 }
 
-// newFastPolicyContract 为服务档位策略创建动态设置读取器。
+// newFastPolicyContract creates a dynamic settings reader for service-tier policy tests.
 func newFastPolicyContract(t *testing.T, value *tierpolicy.OpenAIFastPolicySettings) *gatewayprovider.ExecutionFastPolicy {
 	t.Helper()
 	repo := &gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{}}

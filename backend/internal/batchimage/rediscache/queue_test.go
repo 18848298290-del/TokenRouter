@@ -117,7 +117,7 @@ func TestBatchImageQueue_ReserveAtomicallyMovesJobToActive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, batchID, reserved.BatchID)
 
-	// 弹出与写入 active 必须原子完成：ready 已空，active 中有该 job。
+	// Reservation atomically empties ready and adds the job to active.
 	require.Equal(t, int64(0), queue.rdb.LLen(ctx, queue.readyKey).Val())
 	score, err := queue.rdb.ZScore(ctx, queue.activeKey, batchID).Result()
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestBatchImageQueue_ReserveDropsInvalidPayload(t *testing.T) {
 
 	_, err := queue.Reserve(ctx, 10*time.Millisecond)
 	require.ErrorIs(t, err, batchimage.ErrInvalidBatchImageQueuePayload)
-	// 非法 payload 不得残留在 active zset，否则 stale 恢复会无限重投。
+	// Invalid payloads must leave active or stale recovery will keep requeuing them.
 	require.ErrorIs(t, queue.rdb.ZScore(ctx, queue.activeKey, "not-a-batch-id").Err(), redis.Nil)
 }
 
@@ -150,7 +150,7 @@ func TestBatchImageQueue_HeartbeatOnlyRefreshesExistingActiveMember(t *testing.T
 	queue, _ := newBatchImageQueueTest(t)
 	batchID := "imgbatch_heartbeat"
 
-	// 不在 active 中：心跳不得创建幽灵成员。
+	// A heartbeat must not add a job that is absent from active.
 	require.NoError(t, queue.Heartbeat(ctx, batchID))
 	require.ErrorIs(t, queue.rdb.ZScore(ctx, queue.activeKey, batchID).Err(), redis.Nil)
 
@@ -176,7 +176,7 @@ func TestBatchImageQueue_JobLockRefreshExtendsTTLOnlyForHolder(t *testing.T) {
 	ttl := mr.TTL(queue.lockKey(batchID))
 	require.Greater(t, ttl, 5*time.Minute)
 
-	// token 不匹配时不得续期他人持有的锁。
+	// A mismatched token must not extend another owner lock.
 	require.NoError(t, queue.rdb.Set(ctx, queue.lockKey(batchID), "other-token", time.Minute).Err())
 	require.ErrorIs(t, refresher.Refresh(ctx, 10*time.Minute), batchimage.ErrBatchImageLeaseLost)
 	ttl = mr.TTL(queue.lockKey(batchID))

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// makeOverlayService 用设置仓储和基础配置构造清理服务。
+// makeOverlayService constructs a cleanup service with stored settings and deployment defaults.
 func makeOverlayService(repo Settings, base CleanupOptions) *OpsCleanupService {
 	cfg := &Options{}
 	cfg.Ops.Cleanup = base
@@ -129,7 +129,7 @@ func TestComputeEffective_EmptyScheduleFallbackToCfg(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
 		CleanupEnabled:             true,
-		CleanupSchedule:            "   ", // 空白被 trim 后视为空
+		CleanupSchedule:            "   ", // Whitespace is treated as empty after trimming.
 		ErrorLogRetentionDays:      5,
 		MinuteMetricsRetentionDays: 5,
 		HourlyMetricsRetentionDays: 5,

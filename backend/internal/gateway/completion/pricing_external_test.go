@@ -20,7 +20,7 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestOpenAIUsageBillingModelPreservesImagePricingModel 验证图片轮次不会被文本上游模型覆盖计价。
+// TestOpenAIUsageBillingModelPreservesImagePricingModel checks that the upstream text model cannot replace an image billing model.
 func TestOpenAIUsageBillingModelPreservesImagePricingModel(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -236,7 +236,7 @@ func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingNormali
 	require.InDelta(t, 0.44, cost.ActualCost, 1e-12)
 }
 
-// TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider 检查按标准价格结算 Fast 所需的平台、提供商和档位条件。
+// TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider checks platform, provider, and tier eligibility for standard-priced Fast.
 func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider(t *testing.T) {
 	apiKey := &completion.KeySnapshot{Group: &completion.GroupSnapshot{FreeOpenAIFast: true, SupportsOpenAIFast: true}}
 

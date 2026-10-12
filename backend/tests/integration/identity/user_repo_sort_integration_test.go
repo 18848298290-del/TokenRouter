@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// mustCreateProvider 创建排序测试使用的提供商并回填数据库字段。
+// mustCreateProvider creates a sorting fixture and fills database-generated fields.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()

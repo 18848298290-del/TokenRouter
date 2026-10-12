@@ -18,7 +18,7 @@ const (
 	CountBody
 )
 
-// Options 保存启动时传入的传输参数，动态策略在请求处理中读取。
+// Options holds startup transport parameters; dynamic policies are read during requests.
 type Options struct {
 	Configured           bool
 	InjectAPIKeyBeta     bool
@@ -36,8 +36,8 @@ type Options struct {
 	URLValidation        egress.ValidationOptions
 }
 
-// AttemptState 保存一次请求准备和响应转换的状态。
-// BetaEvaluated 区分尚未查询和已经得到空过滤集，保持 Messages 与 count 的读取差异。
+// AttemptState holds request preparation and response conversion state for one attempt.
+// BetaEvaluated distinguishes an empty filter result from a query that has not run.
 type AttemptState struct {
 	BetaEvaluated bool
 	BetaFilters   map[string]struct{}
@@ -45,11 +45,11 @@ type AttemptState struct {
 	MimicDebug    string
 }
 
-// BodyKind 固定不同入口的超限错误形状，不让 provider 决定 HTTP envelope。
+// BodyKind selects the entry point's response-body limit error format.
 type BodyKind uint8
 
-// HTTPBoundary 定义当前 HTTP 请求的交换与观测操作。
-// 实现由 HTTP Adapter 持有，provider 不获取 Gin Context 或通用 Get/Set 容器。
+// HTTPBoundary provides output and observation operations for the current HTTP request.
+// The HTTP adapter implements it and owns the Gin context.
 type HTTPBoundary interface {
 	Present() bool
 	RequestPresent() bool

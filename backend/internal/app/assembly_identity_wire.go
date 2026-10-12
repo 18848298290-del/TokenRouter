@@ -12,7 +12,7 @@ import (
 	identityredis "github.com/TokenFlux/TokenRouter/internal/identity/rediscache"
 )
 
-// identityAssemblyProviders 汇总 identity 模块的 Wire provider。
+// identityAssemblyProviders groups Wire providers for the identity module.
 var identityAssemblyProviders = wire.NewSet(
 	provideIdentityAdminHTTP,
 	identityhttp.NewTotpHandler,

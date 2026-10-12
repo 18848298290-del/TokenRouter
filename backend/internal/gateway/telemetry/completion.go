@@ -13,7 +13,7 @@ func ObserveCompletion(component, message string) {
 	logging.LegacyPrintf(component, "%s", message)
 }
 
-// CompletionBillingEvent 保留缺价、免费搜索与档位降级的级别及结构化字段。
+// CompletionBillingEvent logs missing prices, free searches, and tier downgrades with event-specific fields and levels.
 func CompletionBillingEvent(e completion.BillingEvent) {
 	switch e.Kind {
 	case "pricing_missing":

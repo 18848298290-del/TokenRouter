@@ -9,17 +9,17 @@ import (
 	"strings"
 )
 
-// ErrNoPricingEntries 表示没有可用报价；调用方仍须先检查逐条解码诊断。
+// ErrNoPricingEntries means no usable prices were found; callers must also check entry diagnostics.
 var ErrNoPricingEntries = errors.New("no valid pricing entries found")
 
-// CatalogDiagnostics 描述纯解析发现的目录问题，日志输出由 provider 负责。
+// CatalogDiagnostics describes parsing issues for the provider to report.
 type CatalogDiagnostics struct {
 	Skipped                           int
 	InvalidEntries                    []string
 	OrphanCacheTiers, LopsidedLadders []string
 }
 
-// ValidationError 把逐条解码错误交给要求完整发布的目录加载器处理。
+// ValidationError combines entry errors for loaders that require all entries to validate before publication.
 func (d CatalogDiagnostics) ValidationError() error {
 	if len(d.InvalidEntries) == 0 {
 		return nil
@@ -27,7 +27,7 @@ func (d CatalogDiagnostics) ValidationError() error {
 	return fmt.Errorf("invalid pricing entries: %s", strings.Join(d.InvalidEntries, "; "))
 }
 
-// DecodeCatalogEntries 读取本地价格对象，并在合并前统一旧字段名称。
+// DecodeCatalogEntries reads price objects and normalizes legacy field names before merging.
 func DecodeCatalogEntries(body []byte) (map[string]json.RawMessage, error) {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(body, &entries); err != nil {
@@ -50,7 +50,7 @@ func DecodeCatalogEntries(body []byte) (map[string]json.RawMessage, error) {
 	return entries, nil
 }
 
-// normalizeCatalogEntry 只在输入边界兼容 litellm_provider；新字段的空值和 null 同样优先。
+// normalizeCatalogEntry accepts litellm_provider when provider is absent; even an empty or null provider takes precedence.
 func normalizeCatalogEntry(raw json.RawMessage) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -70,7 +70,7 @@ func normalizeCatalogEntry(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(fields)
 }
 
-// ParsePricingEntries 在已读取的原始条目上执行唯一价格解析，不读取配置或文件。
+// ParsePricingEntries parses supplied entries and returns prices with validation diagnostics.
 func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*CatalogModelPricing, CatalogDiagnostics, error) {
 	result := make(map[string]*CatalogModelPricing)
 	skipped := 0
@@ -78,12 +78,12 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 	var orphanCacheTiers, lopsidedLadders []string
 
 	for modelName, rawEntry := range rawData {
-		// 跳过 sample_spec 等文档条目
+		// sample_spec contains documentation rather than a model price.
 		if modelName == "sample_spec" {
 			continue
 		}
 
-		// 尝试解析每个条目
+		// Normalize legacy fields before decoding the price entry.
 		normalized, decodeErr := normalizeCatalogEntry(rawEntry)
 		var entry CatalogRawEntry
 		if decodeErr == nil {
@@ -95,7 +95,7 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			continue
 		}
 
-		// 可空单价保留零值，负数和非有限值拒绝整次发布。
+		// Keep explicit zeros; report negative or nonfinite amounts so loaders can reject publication.
 		invalidAmount := false
 		value := reflect.ValueOf(entry)
 		fields := value.Type()
@@ -109,7 +109,7 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 		if invalidAmount {
 			continue
 		}
-		// 规则和补丁同样需要校验，不能因缺少基础价绕过更新验证。
+		// Validate rules and patches even when they supply no base prices.
 		if err := entry.Validate(); err != nil {
 			invalidEntries = append(invalidEntries, fmt.Sprintf("%s: %v", modelName, err))
 			continue
@@ -123,7 +123,7 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			}
 			continue
 		}
-		// 只保留有有效价格的条目
+		// Entries need at least one token or media price.
 		if entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil && len(entry.ImagePrices) == 0 && len(entry.VideoPrices) == 0 {
 			continue
 		}
@@ -156,11 +156,11 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			SupportsVideoInput:          entry.SupportsVideoInput,
 			TokenPricingAbsent:          entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil,
 		}
-		// models.dev 缺失任一文本价格桶时保持未定价，图片报价不能补成免费文本输出。
+		// models.dev requires both text price buckets; an image price cannot imply free text output.
 		if entry.Source == "models.dev" && (entry.InputCostPerToken == nil || entry.OutputCostPerToken == nil) {
 			pricing.TokenPricingAbsent = true
 		}
-		// 保持原字段优先，兼容部分厂商使用的输入模态字段名。
+		// Use the alternate input-modality field when supported_modalities is empty.
 		if len(pricing.SupportedModalities) == 0 {
 			pricing.SupportedModalities = entry.SupportedInputModalities
 		}
@@ -215,12 +215,12 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			invalidEntries = append(invalidEntries, fmt.Sprintf("%s: %v", modelName, err))
 			continue
 		}
-		// 显式 long_context 字段（包括显式 0）优先于目录阶梯和 above 绝对价字段。
+		// Explicit long_context fields, including zero, take precedence over catalog tiers and above prices.
 		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||
 			entry.LongContextInputCostMultiplier != nil ||
 			entry.LongContextOutputCostMultiplier != nil
 		if hasExplicitLongContext {
-			// 只保留兼容阈值与倍率，避免新的绝对阶梯绕过管理员的关闭或改价。
+			// Clear absolute tiers so they cannot bypass an administrator's threshold or multiplier override.
 			pricing.ContextPrices = nil
 		} else {
 			DeriveLongContextFromAboveTierFields(rawEntry, pricing)

@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// ResponsesLiteValidationError 记录 Responses Lite 校验失败对应的请求字段。
+// ResponsesLiteValidationError identifies the request field that failed Lite validation.
 type ResponsesLiteValidationError struct {
 	param   string
 	message string
@@ -25,9 +25,9 @@ func newOpenAIResponsesLiteValidationError(param, format string, args ...any) er
 	return &ResponsesLiteValidationError{param: param, message: fmt.Sprintf(format, args...)}
 }
 
-// normalizeOpenAIResponsesLiteTools 整理 Responses Lite 请求：reasoning 覆盖所有轮次，
-// 关闭顶层并行工具调用，并把私有 namespace 声明移入 input.additional_tools。
-// 不受支持的 hosted 工具返回错误，静默丢弃会改变客户端要求执行的工具。
+// normalizeOpenAIResponsesLiteTools enables all-turn reasoning, disables parallel tool calls,
+// and moves namespace declarations into input.additional_tools.
+// Unsupported hosted tools return an error because dropping them would change the requested work.
 func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
@@ -97,7 +97,7 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	return ensureOpenAIResponsesLiteParallelToolCalls(reqBody, true)
 }
 
-// ensureOpenAIResponsesLiteParallelToolCalls 保留 fork 的全量串行策略，统一关闭并行工具调用。
+// ensureOpenAIResponsesLiteParallelToolCalls disables parallel calls and combines the change flags.
 func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed bool) (bool, error) {
 	if ensureOpenAIResponsesLiteParallelToolCallsDisabled(reqBody) {
 		return true, nil
@@ -105,7 +105,7 @@ func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed 
 	return changed, nil
 }
 
-// ensureOpenAIResponsesLiteRequestFields 统一补齐 Lite 请求的跨工具字段约束。
+// ensureOpenAIResponsesLiteRequestFields applies Lite reasoning and parallel-call requirements.
 func ensureOpenAIResponsesLiteRequestFields(reqBody map[string]any) (bool, error) {
 	reasoningChanged, err := ensureOpenAIResponsesLiteReasoningContext(reqBody)
 	if err != nil {
@@ -115,7 +115,7 @@ func ensureOpenAIResponsesLiteRequestFields(reqBody map[string]any) (bool, error
 	return reasoningChanged || parallelToolCallsChanged, nil
 }
 
-// ensureOpenAIResponsesLiteReasoningContext 强制 Lite 请求携带全轮次推理上下文，同时保留其它推理参数。
+// ensureOpenAIResponsesLiteReasoningContext sets all_turns while retaining other reasoning fields.
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) (bool, error) {
 	rawReasoning, exists := reqBody["reasoning"]
 	if !exists || rawReasoning == nil {
@@ -133,7 +133,7 @@ func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) (bool, er
 	return true, nil
 }
 
-// ensureOpenAIResponsesLiteParallelToolCallsDisabled 强制 Lite 上游只串行发起顶层工具调用。
+// ensureOpenAIResponsesLiteParallelToolCallsDisabled sets parallel_tool_calls to false.
 func ensureOpenAIResponsesLiteParallelToolCallsDisabled(reqBody map[string]any) bool {
 	if parallelToolCalls, exists := reqBody["parallel_tool_calls"].(bool); exists && !parallelToolCalls {
 		return false
@@ -248,6 +248,8 @@ func openAIResponsesLiteToolIdentityForError(rawTool any) string {
 	return fmt.Sprintf("tool type %q name %q", strings.TrimSpace(FirstNonEmptyString(tool["type"])), strings.TrimSpace(FirstNonEmptyString(tool["name"])))
 }
 
+// NormalizeResponsesLiteToolsPayload validates and rewrites a Lite request, preserving JSON numbers.
+// It returns the original bytes when validation fails or no fields change.
 func NormalizeResponsesLiteToolsPayload(body []byte) ([]byte, bool, error) {
 	if !json.Valid(body) {
 		return body, false, fmt.Errorf("decode responses Lite request body: invalid JSON")
@@ -269,7 +271,7 @@ func NormalizeResponsesLiteToolsPayload(body []byte) ([]byte, bool, error) {
 	return rebuilt, true, nil
 }
 
-// NormalizeResponsesLiteParallelToolCallsPayload 只补齐所有 OpenAI Lite 出站共享的并行调用约束。
+// NormalizeResponsesLiteParallelToolCallsPayload disables parallel calls in an OpenAI Lite request.
 func NormalizeResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
 	if !gjson.ValidBytes(body) {
 		return body, false, fmt.Errorf("decode responses Lite request body: invalid JSON")
@@ -287,5 +289,5 @@ func NormalizeResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, 
 	return rebuilt, true, nil
 }
 
-// Parameter 返回客户端错误应指向的原始请求字段，供协议 HTTP 适配器使用。
+// Parameter returns the original request field for the HTTP adapter's client error.
 func (e *ResponsesLiteValidationError) Parameter() string { return e.param }

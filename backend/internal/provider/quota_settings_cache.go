@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// SettingKeyOpsAdvancedSettings 是提供商缓存读取 Ops 设置时使用的键。
+	// SettingKeyOpsAdvancedSettings identifies the shared Ops settings read by the provider cache.
 	SettingKeyOpsAdvancedSettings = "ops_advanced_settings"
 
 	openAIQuotaAutoPauseSettingsCacheTTL   = 60 * time.Second
@@ -19,7 +19,7 @@ const (
 	openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings"
 )
 
-// QuotaSettingsCache 保存提供商阈值快照，共享 Ops JSON 通过读取接口解析。
+// QuotaSettingsCache caches provider thresholds decoded from the shared Ops settings JSON.
 type QuotaSettingsCache struct {
 	settingRepo interface {
 		GetValue(context.Context, string) (string, error)
@@ -35,7 +35,7 @@ type cachedOpenAIQuotaAutoPauseSettings struct {
 	expiresAt int64
 }
 
-// NewQuotaSettingsCache 创建阈值缓存，调用方可同步预热，读取缺失或过期条目时触发异步刷新。
+// NewQuotaSettingsCache creates a cache supporting synchronous warmup and asynchronous refresh on stale reads.
 func NewQuotaSettingsCache(repo interface {
 	GetValue(context.Context, string) (string, error)
 }, notFound error, decode func(string) QuotaAutoPauseSettings,
@@ -52,15 +52,15 @@ func (s *QuotaSettingsCache) GetOpenAIQuotaAutoPauseSettings(ctx context.Context
 	if cached != nil && now < cached.expiresAt {
 		return cached.settings
 	}
-	// 缓存过期或未设置：触发后台刷新，但不阻塞当前请求。
-	// singleflight.DoChan 会合并并发刷新；这里有意忽略返回 channel，
-	// 结果会通过 atomic 缓存对外可见。
+	// Refresh missing or expired settings in the background so reads do not wait for the database.
+	// singleflight coalesces refreshes. The result channel is unused because
+	// the refresh publishes its result through the atomic cache.
 	s.openAIQuotaAutoPauseSettingsSF.DoChan(openAIQuotaAutoPauseSettingsRefreshKey, func() (any, error) {
 		s.refreshOpenAIQuotaAutoPauseSettings(context.Background())
 		return nil, nil
 	})
 	if cached != nil {
-		return cached.settings // 刷新期间先返回旧值
+		return cached.settings // Return the prior value while refreshing.
 	}
 	return QuotaAutoPauseSettings{}
 }
@@ -90,7 +90,7 @@ func (s *QuotaSettingsCache) refreshOpenAIQuotaAutoPauseSettings(ctx context.Con
 	if err == nil {
 		settings = s.decode(raw)
 	} else if !errors.Is(err, s.notFound) {
-		// 读取失败时返回缓存值，并缩短下次刷新间隔。
+		// Retain cached settings on read failure and retry after a shorter interval.
 		if prior, _ := s.openAIQuotaAutoPauseSettingsCache.Load().(*cachedOpenAIQuotaAutoPauseSettings); prior != nil {
 			settings = prior.settings
 		}
@@ -115,7 +115,7 @@ func (s *QuotaSettingsCache) SetOpenAIQuotaAutoPauseSettings(settings QuotaAutoP
 	})
 }
 
-// Apply 发布已提交的阈值，共享 JSON 未变化时使缓存过期并交给后台刷新。
+// Apply publishes explicit thresholds; otherwise it expires the cache for a later background refresh.
 func (s *QuotaSettingsCache) Apply(value QuotaAutoPauseSettings, explicit bool) {
 	s.openAIQuotaAutoPauseSettingsSF.Forget(openAIQuotaAutoPauseSettingsRefreshKey)
 	if explicit {

@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// maxRedactDepth 限制递归深度以防止栈溢出。
+// maxRedactDepth bounds recursive traversal of nested or cyclic values.
 const maxRedactDepth = 32
 
 var (
@@ -76,8 +76,8 @@ func RedactJSON(raw []byte, extraKeys ...string) string {
 	return string(encoded)
 }
 
-// RedactText 脱敏非结构化文本中的常见敏感字段。
-// JSON 输入交给 RedactJSON，其他输入匹配 key=value、key:"value" 和预设凭据格式。
+// RedactText masks recognized sensitive fields in text. Valid JSON uses RedactJSON;
+// other input is matched against key/value forms and known credential patterns.
 func RedactText(input string, extraKeys ...string) string {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -226,8 +226,8 @@ func normalizeKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
 
-// MaskCredential 去掉凭证首尾空白，保留前 6 字节与末 4 字节，中间替换为 ****。
-// 非空且长度不超过 14 字节的凭证整体替换为 ****。
+// MaskCredential trims whitespace and masks nonempty credentials of at most 14 bytes.
+// Longer credentials retain their first 6 and last 4 bytes around "****".
 func MaskCredential(credential string) string {
 	credential = strings.TrimSpace(credential)
 	if credential == "" {

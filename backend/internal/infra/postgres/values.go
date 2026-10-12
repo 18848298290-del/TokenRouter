@@ -12,6 +12,7 @@ func NullPositiveInt64(v *int64) any {
 	return *v
 }
 
+// TruncateText trims whitespace and removes whole runes until s fits max bytes.
 func TruncateText(s string, max int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= max {

@@ -145,7 +145,7 @@ func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, res
 			writeEvent(event)
 		}
 
-		// EOF 前最后一行即使没有换行符也要处理。
+		// Process a final data line even when EOF arrives without a trailing newline.
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -247,7 +247,7 @@ func PickGeminiCollectResult(last map[string]any, lastWithParts map[string]any) 
 	return bridge.NativePickGeminiCollectResult(last, lastWithParts)
 }
 
-// AppendCollectedGeminiParts 聚合 SSE 增量，同时保持 reasoning 与普通文本的边界。
+// AppendCollectedGeminiParts joins adjacent text deltas with the same thought flag.
 func AppendCollectedGeminiParts(collected []any, parts []map[string]any) []any {
 	for _, part := range parts {
 		partCopy := make(map[string]any, len(part))
@@ -274,17 +274,16 @@ func AppendCollectedGeminiParts(collected []any, parts []map[string]any) []any {
 	return collected
 }
 
-// MergeCollectedGeminiParts 将完整 SSE part 序列写回最终 Gemini 响应。
+// MergeCollectedGeminiParts writes the collected SSE parts into the first candidate.
 func MergeCollectedGeminiParts(response map[string]any, collectedParts []any) map[string]any {
 	if len(collectedParts) == 0 {
 		return response
 	}
 
-	// 浅拷贝外层响应，避免直接改动调用方保留的 map。
+	// Copy each modified container so the caller retains its response maps and slices.
 	result := make(map[string]any)
 	maps.Copy(result, response)
 
-	// 取出或创建 candidates。
 	candidates, ok := result["candidates"].([]any)
 	if !ok || len(candidates) == 0 {
 		candidates = []any{map[string]any{}}
@@ -292,7 +291,6 @@ func MergeCollectedGeminiParts(response map[string]any, collectedParts []any) ma
 		candidates = append([]any(nil), candidates...)
 	}
 
-	// 取出第一个 candidate。
 	candidate, ok := candidates[0].(map[string]any)
 	if !ok {
 		candidate = make(map[string]any)
@@ -304,7 +302,6 @@ func MergeCollectedGeminiParts(response map[string]any, collectedParts []any) ma
 		candidates[0] = candidate
 	}
 
-	// 取出或创建 content。
 	content, ok := candidate["content"].(map[string]any)
 	if !ok {
 		content = map[string]any{"role": "model"}
@@ -403,7 +400,7 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 			trimmed := strings.TrimRight(line, "\r\n")
 			if after, ok0 := strings.CutPrefix(trimmed, "data:"); ok0 {
 				payload := strings.TrimSpace(after)
-				// keepalive 和结束标记直接透传。
+				// Pass empty payloads and completion markers through unchanged.
 				if payload == "[DONE]" {
 					c.NextEvent(false, true)
 				}
@@ -442,10 +439,10 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 					observed := geminiwire.ObservePayload(rawBytes)
 					c.NextEvent(observed.Semantic, observed.Terminal)
 					if isOAuth {
-						// SSE 格式需要双换行分隔事件。
+						// Terminate each rebuilt SSE event with a blank line.
 						_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", rawToWrite)
 					} else {
-						// AI Studio 响应直接透传。
+						// Pass AI Studio data lines through unchanged.
 						_, _ = io.WriteString(c.Writer, line)
 					}
 					flusher.Flush()
@@ -467,8 +464,8 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 	return &NativeStreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
 }
 
-// UnwrapGeminiResponse 解包 Gemini OAuth 响应中的 response 字段
-// 使用 gjson 零拷贝提取，避免完整 Unmarshal+Marshal。
+// UnwrapGeminiResponse extracts an object or array in response, otherwise returning raw.
+// It uses the raw JSON field to avoid decoding and re-encoding the full payload.
 func UnwrapGeminiResponse(raw []byte) ([]byte, error) {
 	result := gjson.GetBytes(raw, "response")
 	if result.Exists() && result.Type == gjson.JSON {
@@ -477,18 +474,18 @@ func UnwrapGeminiResponse(raw []byte) ([]byte, error) {
 	return raw, nil
 }
 
-// ConvertGeminiToClaudeMessage 使用上游 ID 生成器转换响应，并转换网关用量类型。
+// ConvertGeminiToClaudeMessage converts a response with generated message IDs and upstream usage counters.
 func ConvertGeminiToClaudeMessage(geminiResp map[string]any, originalModel string, rawData []byte, includeInlineData bool) (map[string]any, *upstream.TokenUsage) {
 	result, usage := bridge.NativeConvertGeminiToClaudeMessage(bridge.NativeGeminiRuntime{MessageID: upstream.GenerateAnthropicMsgID, RandomHex: upstream.RandomHex}, geminiResp, originalModel, rawData, includeInlineData)
 	return result, LegacyNativeGeminiUsage(usage)
 }
 
-// ExtractGeminiUsage 调用协议桥接解析用量，并转换为上游用量类型。
+// ExtractGeminiUsage parses Gemini usage through the protocol bridge into upstream counters.
 func ExtractGeminiUsage(data []byte) *upstream.TokenUsage {
 	return LegacyNativeGeminiUsage(bridge.NativeExtractGeminiUsage(data))
 }
 
-// ExtractGeminiParts 调用 Gemini 协议转换提取响应内容。
+// ExtractGeminiParts returns response content parts through the Gemini protocol bridge.
 func ExtractGeminiParts(geminiResp map[string]any) []map[string]any {
 	return bridge.NativeExtractGeminiParts(geminiResp)
 }

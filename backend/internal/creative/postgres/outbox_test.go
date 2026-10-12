@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestCreativeRunOutboxClaimAndComplete 校验 outbox 领取带 lease 并可由同一 token 完成。
+// TestCreativeRunOutboxClaimAndComplete checks lease claims and completion with the matching token.
 func TestCreativeRunOutboxClaimAndComplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestCreativeRunOutboxClaimAndComplete(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestCreativeRunOutboxRejectsLostLease 校验旧 token 不能覆盖新领取者。
+// TestCreativeRunOutboxRejectsLostLease checks that a stale token cannot overwrite the current lease.
 func TestCreativeRunOutboxRejectsLostLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

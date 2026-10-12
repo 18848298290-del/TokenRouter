@@ -19,9 +19,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ExecuteAdaptive 验证自适应国产平台提供商实际使用的原生端点。
-// selected 为空时依次验证全部已启用协议：智谱验证 Chat Completions 与 Anthropic，
-// DeepSeek 和 Kimi 还验证 Responses；selected 非空时只验证该协议。
+// ExecuteAdaptive probes the enabled native endpoints for a CN provider.
+// An empty selected value probes every enabled protocol; a non-empty value
+// restricts the probe to that protocol.
 func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record, modelID string, prompt string, selected protocol.ProtocolID) error {
 	testModelID := strings.TrimSpace(modelID)
 	if testModelID == "" {
@@ -34,7 +34,7 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 		return (TestStreamOutput{}).Error(c, "No API key available")
 	}
 
-	// Chat 探测负责开启 SSE 生命周期；全部原生端点通过前抑制中间完成事件。
+	// Suppress intermediate completion events until every selected endpoint succeeds.
 	c.SetSuppressCompletion(true)
 	defer c.SetSuppressCompletion(false)
 	enabled := value.UpstreamProtocols()
@@ -48,7 +48,7 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 		enabled = []protocol.ProtocolID{selected}
 	}
 	c.Begin(false)
-	// Chat 探测自带开始事件；不测 Chat 时在这里补发，管理端据此记录连接建立。
+	// Chat emits its own start event; emit one here when Chat is not selected.
 	if !slices.Contains(enabled, protocol.ProtocolOpenAIChatCompletions) {
 		c.Begin(true)
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -135,7 +135,7 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	apiURL := cnTestResponsesURL(value.Platform, baseURL)
 
 	payload := openai.TestResponsesPayload(testModelID, prompt, false)
-	// DeepSeek 原生 Responses 端点无状态，不需要 OpenAI 探测使用的合成 instructions。
+	// The native Responses probe omits the synthetic instructions used by the OpenAI probe.
 	delete(payload, "instructions")
 	payloadBytes, _ := json.Marshal(payload)
 	if (providercore.ProtocolTarget{Record: value}).UsesNativeCNResponses() {
@@ -183,7 +183,7 @@ func (s *CNProviderTest) doAdaptiveRequest(req *http.Request, value *providercor
 	return s.Transport.DoWithTLS(req, proxyURL, value.ID, value.Concurrency, s.resolveTLSProfile(value))
 }
 
-// cnAnthropicBaseURLMisconfigHint 给仍指向 OpenAI 兼容端点的 Anthropic 提供商返回可操作提示。
+// cnAnthropicBaseURLMisconfigHint identifies OpenAI endpoint paths in an Anthropic base URL.
 func cnAnthropicBaseURLMisconfigHint(baseURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

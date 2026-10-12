@@ -15,10 +15,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// runtimeGroupFallbackResolver 为各文本入口固定同一组授权、资金与会话校验顺序。
+// runtimeGroupFallbackResolver applies authorization, funding, and session checks in the same order for text
+// handlers.
 type runtimeGroupFallbackResolver func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
 
-// provideFundingAdmission 复用唯一权益缓存和现有 RPM 存储，资金检查通过后才累计 RPM。
+// provideFundingAdmission shares eligibility and RPM stores; successful funding checks precede RPM accounting.
 func provideFundingAdmission(funds *billing.Eligibility, rpm scheduler.UserRPMCache, rates billing.UserGroupRateRepository) *admission.FundingAdmission {
 	limiter := scheduler.NewRPMAdmission(rpm, rates, scheduler.Diagnostics{Logf: logging.LegacyPrintf})
 	return admission.NewFundingAdmission(funds, limiter)
@@ -64,7 +65,8 @@ func provideGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission
 	}
 }
 
-// provideClientGroupFallbackResolver 初始客户端回退只复查资金；最终入口统一获取并发并累计一次 RPM。
+// provideClientGroupFallbackResolver rechecks funding without counting RPM. The final handler acquires
+// concurrency and counts RPM once.
 func provideClientGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission.FundingAdmission, subscriptions *billing.SubscriptionService, cache session.GatewayCache) func(context.Context, *apikey.APIKey, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error) {
 	resolve := provideGroupFallbackResolver(keys, funding, subscriptions, cache, true)
 	if resolve == nil {

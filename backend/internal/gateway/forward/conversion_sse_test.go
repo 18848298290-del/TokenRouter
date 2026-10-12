@@ -25,7 +25,7 @@ func (l *conversionTestLines) Scan() bool {
 func (l *conversionTestLines) Text() string { return l.lines[l.next-1] }
 func (l *conversionTestLines) Err() error   { return l.err }
 
-// TestConversionSSEScannerReadError 检查连接错误发生时完整 JSON 的交付和错误返回。
+// TestConversionSSEScannerReadError checks delivery of complete JSON alongside a connection error.
 func TestConversionSSEScannerReadError(t *testing.T) {
 	readErr := errors.New("读取中断")
 	for _, payload := range []string{`{"type":"message_delta","usage":{"output_tokens":25}}`, `{"type":"message_delta"`} {
@@ -41,7 +41,7 @@ func TestConversionSSEScannerReadError(t *testing.T) {
 	}
 }
 
-// TestConversionSSEScannerFrameLimit 检查短行累计、单帧预算重置和超限后的停止读取。
+// TestConversionSSEScannerFrameLimit checks accumulated short lines, per-frame budget reset, and stopping at the limit.
 func TestConversionSSEScannerFrameLimit(t *testing.T) {
 	for _, line := range []string{"data: x", ": comment", "id: 123"} {
 		t.Run(line, func(t *testing.T) {

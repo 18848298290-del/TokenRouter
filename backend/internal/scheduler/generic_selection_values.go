@@ -11,7 +11,7 @@ type flowScore struct {
 	score    CandidateScore
 }
 
-// flowBasic 将候选转换为基础排序所需的数据。
+// flowBasic extracts the fields used by basic ordering.
 func flowBasic(a *FlowProvider) *BasicProvider {
 	if a == nil {
 		return nil

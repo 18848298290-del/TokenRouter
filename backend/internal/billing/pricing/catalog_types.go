@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-// CatalogModelPricing 保存每 token 单价及目录元数据，存在性标记区分缺价和显式零价。
+// CatalogModelPricing holds token prices and catalog metadata; presence flags distinguish missing prices from explicit zero.
 type CatalogModelPricing struct {
 	CatalogRules
 	InputPricePresent           bool                  `json:"-"`
@@ -18,7 +18,7 @@ type CatalogModelPricing struct {
 	Source                      string                `json:"source,omitempty"`
 	PriceSources                map[string]string     `json:"price_sources,omitempty"`
 	ContextPrices               []CatalogContextPrice `json:"context_prices,omitempty"`
-	// 保留价格桶是否显式存在，供默认价格页区分免费与不适用。
+	// Presence flags let the default-price page distinguish free from unavailable buckets.
 	CacheCreationPricePresent           bool    `json:"-"`
 	CacheReadPricePresent               bool    `json:"-"`
 	ImagePricePresent                   bool    `json:"-"`
@@ -40,11 +40,11 @@ type CatalogModelPricing struct {
 	Provider                            string  `json:"provider"`
 	Mode                                string  `json:"mode"`
 	SupportsPromptCaching               bool    `json:"supports_prompt_caching"`
-	OutputCostPerImage                  float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
-	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
-	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格（如 gpt-image-2 图片编辑）
+	OutputCostPerImage                  float64 `json:"output_cost_per_image"`       // Price per generated image.
+	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // Price per image output token.
+	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // Price per image input token, such as image-editing input.
 
-	// 模型能力元数据：由模型广场下发给前端展示输入/输出模态，不参与计费。
+	// Capability metadata supplies marketplace input/output modality displays.
 	SupportedModalities       []string `json:"supported_modalities"`
 	SupportedOutputModalities []string `json:"supported_output_modalities"`
 	SupportsVision            bool     `json:"supports_vision"`
@@ -52,13 +52,13 @@ type CatalogModelPricing struct {
 	SupportsAudioOutput       bool     `json:"supports_audio_output"`
 	SupportsVideoInput        bool     `json:"supports_video_input"`
 
-	// TokenPricingAbsent 表示源数据缺少 token 定价；models.dev 要求输入和输出桶都存在。
-	// models.dev 缺价时直接返回未定价；旧文件继续兼容单侧 token 单价。
-	// 独立图片计费可继续读取此类条目的媒体价格。
+	// TokenPricingAbsent indicates missing token prices; models.dev requires both input and output prices.
+	// Legacy files accept one-sided token prices, while incomplete models.dev entries remain unpriced.
+	// Media prices in these entries remain available for separate image billing.
 	TokenPricingAbsent bool `json:"-"`
 }
 
-// CatalogRawEntry 使用指针保留原始价格字段的缺失与显式零值。
+// CatalogRawEntry uses pointers to distinguish omitted price fields from explicit zero.
 type CatalogRawEntry struct {
 	CatalogRules
 	Source                              string                `json:"source,omitempty"`
@@ -92,13 +92,13 @@ type CatalogRawEntry struct {
 	SupportsVideoInput                  bool                  `json:"supports_video_input"`
 }
 
-// CatalogContextPrice 保存目录给出的绝对阶梯价，适用于超过 Threshold 的整次用量。
+// CatalogContextPrice holds absolute catalog prices for the whole usage above its provider's threshold.
 type CatalogContextPrice struct {
 	Threshold int                  `json:"threshold"`
 	Pricing   *CatalogModelPricing `json:"pricing"`
 }
 
-// CloneCatalogPrice 递归复制阶梯与来源标签，避免只读快照丢失零价存在性。
+// CloneCatalogPrice recursively copies tiers and source labels while retaining price presence flags.
 func CloneCatalogPrice(value *CatalogModelPricing) *CatalogModelPricing {
 	if value == nil {
 		return nil
@@ -120,7 +120,7 @@ func CloneCatalogPrice(value *CatalogModelPricing) *CatalogModelPricing {
 	return &result
 }
 
-// UnmarshalJSON 用同一价格解析器读取阶梯，保留缓存桶缺失与零价的区别。
+// UnmarshalJSON parses a context tier through the catalog parser, retaining absent versus zero cache prices.
 func (c *CatalogContextPrice) UnmarshalJSON(body []byte) error {
 	var raw struct {
 		Threshold int             `json:"threshold"`

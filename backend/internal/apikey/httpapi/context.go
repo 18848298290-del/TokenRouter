@@ -6,17 +6,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// Key 上下文包含认证字段和排障用的 fallback 字段，认证结果由认证流程给出。
+// Context keys distinguish authenticated keys from keys loaded for failure diagnostics.
 const (
 	ContextKeyAPIKey            = "api_key"
 	ContextKeyOpsFallbackAPIKey = "ops_fallback_api_key"
 	ContextKeyForcePlatform     = "force_platform"
 )
 
-// APIKeyAuthMiddleware 是 API Key 认证的 Gin 中间件。
+// APIKeyAuthMiddleware is Gin middleware for API key authentication.
 type APIKeyAuthMiddleware gin.HandlerFunc
 
-// GetAPIKeyFromContext 从上下文中获取 API key。
+// GetAPIKeyFromContext reads the key stored by authentication middleware.
 func GetAPIKeyFromContext(c *gin.Context) (*apikey.APIKey, bool) {
 	value, exists := c.Get(string(ContextKeyAPIKey))
 	if !exists {
@@ -26,9 +26,9 @@ func GetAPIKeyFromContext(c *gin.Context) (*apikey.APIKey, bool) {
 	return apiKey, ok
 }
 
-// SetOpsFallbackAPIKey 记录已加载的 API Key，供 Ops 错误日志在鉴权早退时回退使用。
-// 与 ContextKeyAPIKey 区分：写入它不代表请求已通过鉴权，因此不影响 handler、
-// 审计日志等对“已鉴权”的判断。
+// SetOpsFallbackAPIKey stores a loaded key for Ops error logs when authentication exits early.
+// This diagnostic value does not establish authorization for handlers or audit logs.
+// Authenticated keys use ContextKeyAPIKey.
 func SetOpsFallbackAPIKey(c *gin.Context, apiKey *apikey.APIKey) {
 	if c == nil || apiKey == nil {
 		return
@@ -36,7 +36,7 @@ func SetOpsFallbackAPIKey(c *gin.Context, apiKey *apikey.APIKey) {
 	c.Set(string(ContextKeyOpsFallbackAPIKey), apiKey)
 }
 
-// GetOpsFallbackAPIKey 读取 Ops 错误日志专用的回退 API Key。
+// GetOpsFallbackAPIKey reads the diagnostic key reserved for Ops error logging.
 func GetOpsFallbackAPIKey(c *gin.Context) (*apikey.APIKey, bool) {
 	value, exists := c.Get(string(ContextKeyOpsFallbackAPIKey))
 	if !exists {
@@ -46,26 +46,26 @@ func GetOpsFallbackAPIKey(c *gin.Context) (*apikey.APIKey, bool) {
 	return apiKey, ok
 }
 
-// ForcePlatform 返回设置强制平台的中间件
-// 同时设置 request.Context（供 Service 使用）和 gin.Context（供 Handler 快速检查）。
+// ForcePlatform returns middleware that selects a required platform.
+// It sets request context for services and Gin context for handlers.
 func ForcePlatform(platform string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 设置到 request.Context，使用 requeststate.ForcePlatform 供 Service 层读取
+		// Services read the platform through apikey.ForcePlatformFromContext.
 		ctx := apikey.WithForcePlatform(c.Request.Context(), platform)
 		c.Request = c.Request.WithContext(ctx)
-		// 同时设置到 gin.Context，供 Handler 快速检查
+		// Handlers read the same platform through the Gin context helpers.
 		c.Set(string(ContextKeyForcePlatform), platform)
 		c.Next()
 	}
 }
 
-// HasForcePlatform 检查是否有强制平台（用于 Handler 跳过分组检查）。
+// HasForcePlatform reports whether the Gin context contains a required platform.
 func HasForcePlatform(c *gin.Context) bool {
 	_, exists := c.Get(string(ContextKeyForcePlatform))
 	return exists
 }
 
-// GetForcePlatformFromContext 从 gin.Context 获取强制平台。
+// GetForcePlatformFromContext reads the required platform from Gin context.
 func GetForcePlatformFromContext(c *gin.Context) (string, bool) {
 	value, exists := c.Get(string(ContextKeyForcePlatform))
 	if !exists {

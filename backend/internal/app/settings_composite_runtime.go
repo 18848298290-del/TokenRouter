@@ -30,12 +30,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// provideCompositeSettingsHTTP 为综合设置 HTTP 入口绑定各领域组件和设置协调器。
+// provideCompositeSettingsHTTP binds domain services and settings coordination to the combined settings handler.
 func provideCompositeSettingsHTTP(source *composite.Runtime, registry *settings.Registry, monitor *ops.OpsService, pay *payment.ConfigService, turnstile *identity.TurnstileService, aliyun *identity.AliyunCaptchaService, attributes *identity.UserAttributeService, totp *identity.TotpService, users *identity.UserService, creative *creative.Public) *settingshttp.Handler {
 	return settingshttp.NewHandler(settingshttp.HandlerOptions{Settings: source, Participants: registry, Monitoring: monitor, Payment: pay, Turnstile: turnstile, Aliyun: aliyun, Attributes: attributes, Totp: totp, User: users, Creative: creative})
 }
 
-// provideCompositeReadOptions 为综合设置绑定共享读取器，后台初始化和管理查询使用同一套设置解释规则。
+// provideCompositeReadOptions shares settings interpretation between background initialization and admin queries.
 func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, sockets *ws.Runtime) *composite.ReadOptions {
 	return &composite.ReadOptions{ResponsesWS: sockets, OAuth: oauth, Gateway: *gatewayRules, Scheduler: *defaults, DefaultBalance: func() float64 { return cfg.Default.UserBalance }, DefaultConcurrency: func() int { return cfg.Default.UserConcurrency }, Forwarded: func() runtimeconfig.ForwardedInput {
 		value := cfg.ForwardedClientIPSettings()
@@ -45,7 +45,7 @@ func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettin
 	}}
 }
 
-// provideCompositeRuntime 从完整配置提取参数，绑定设置组件及提交后的发布顺序。
+// provideCompositeRuntime binds configuration, settings services, and the publication order after commit.
 func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *composite.ReadOptions, grants *identity.GrantSettings, gatewayRuntime *gateway.RuntimeSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, plans *billing.Plans, backendMode *admission.BackendMode, providerRuntime *provider.RuntimeSettings, quota *provider.QuotaSettingsCache, forwarded *runtimeconfig.ForwardedSettings, shared *schedulerSharedState, worker *creative.CreativeWorkerRuntime, monitor *ops.OpsService) *composite.Runtime {
 	prepare := composite.PrepareOptions{ReadValues: store.GetAll, Gateway: *gatewayRules, Scheduler: *defaults, ValidatePlans: func(ctx context.Context, value []billing.DefaultSubscriptionSetting) error {
 		return billing.ValidateDefaultSubscriptionPlans(ctx, value, plans.GetPlan)
@@ -94,12 +94,12 @@ func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *co
 	return composite.NewRuntime(store, *read, prepare, grants, gatewayRuntime, cfg.Totp.EncryptionKeyConfigured, steps)
 }
 
-// provideSettingsParticipants 登记设置准备器，构造失败时终止应用启动。
+// provideSettingsParticipants registers settings preparers; construction failure aborts application startup.
 func provideSettingsParticipants(runtime *payment.Runtime, grants *identity.GrantSettings, schedulerDefaults *scheduler.AdminDefaults, gatewayRules *gateway.AdminSettingsRules, sockets *ws.Runtime) (*settings.Registry, error) {
 	return settings.NewRegistry(staticSettingsParticipants(runtime, grants, schedulerDefaults, gatewayRules, sockets.Defaults())...)
 }
 
-// staticSettingsParticipants 登记各设置字段所属的模块和存储键，供装配测试逐项核对。
+// staticSettingsParticipants maps fields to owning modules and storage keys for assembly validation.
 func staticSettingsParticipants(runtime *payment.Runtime, grants *identity.GrantSettings, schedulerDefaults *scheduler.AdminDefaults, gatewayRules *gateway.AdminSettingsRules, socketDefaults ...ws.Parameters) []settings.Participant {
 	defaults := ws.DefaultParameters()
 	if len(socketDefaults) > 0 {

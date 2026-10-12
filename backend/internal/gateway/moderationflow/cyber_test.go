@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// 捕获队列任务后改写请求数据，证明执行阶段只看到提交时快照。
+// queuedCyberTasks delays execution so tests can mutate the request after its snapshot is submitted.
 type queuedCyberTasks struct{ task func() }
 
 type cyberEffects struct {

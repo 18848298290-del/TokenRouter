@@ -37,19 +37,19 @@ func TestMigrationsRunner_ConcurrentInstancesSerializeOnSessionLock(t *testing.T
 func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	tx := testTx(t)
 
-	// 重复应用迁移后，检查执行结果和数据库结构。
+	// Reapply migrations before checking the recorded history and schema.
 	require.NoError(t, postgresinfra.ApplyMigrations(context.Background(), integrationDB, migrations.FS))
 
-	// schema_migrations 记录已应用的迁移。
+	// Migration history records the applied files.
 	var applied int
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&applied))
 	require.GreaterOrEqual(t, applied, 7, "expected schema_migrations to contain applied migrations")
 
-	// users 包含仓储查询使用的用户名和备注。
+	// User stores read username and notes from these columns.
 	requireColumn(t, tx, "users", "username", "character varying", 100, false)
 	requireColumn(t, tx, "users", "notes", "text", 0, false)
 
-	// providers 包含调度状态、限流时间和会话窗口字段。
+	// Provider scheduling requires status, rate-limit timing, and session-window fields.
 	requireColumn(t, tx, "providers", "notes", "text", 0, true)
 	requireColumn(t, tx, "providers", "schedulable", "boolean", 0, false)
 	requireColumn(t, tx, "providers", "rate_limited_at", "timestamp with time zone", 0, true)
@@ -58,21 +58,21 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "providers", "session_window_status", "character varying", 20, true)
 	requireIndex(t, tx, "providers", "idx_providers_autopause_expiry_due")
 
-	// OpenAI Live 的开关在 groups，免费 Fast 的开关在 pricing_configs。
+	// Live access belongs to groups; free Fast pricing belongs to pricing_configs.
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireNoColumn(t, tx, "groups", "free_openai_fast")
 	requireColumn(t, tx, "pricing_configs", "free_openai_fast", "boolean", 0, false)
 
-	// api_keys 的 key 字段长度为 128。
+	// API keys support up to 128 characters.
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
 
-	// subscription_plans 保存日、周和月额度。
+	// Subscription plans store daily, weekly, and monthly allowances.
 	requireColumn(t, tx, "subscription_plans", "daily_limit_usd", "numeric", 0, true)
 	requireColumn(t, tx, "subscription_plans", "weekly_limit_usd", "numeric", 0, true)
 	requireColumn(t, tx, "subscription_plans", "monthly_limit_usd", "numeric", 0, true)
 	requireNoColumn(t, tx, "subscription_plans", "group_id")
 
-	// user_subscriptions 按套餐记录额度和订单来源。
+	// Subscriptions retain plan-specific allowances and source-order attribution.
 	requireColumn(t, tx, "user_subscriptions", "plan_id", "bigint", 0, false)
 	requireColumn(t, tx, "user_subscriptions", "daily_limit_usd", "numeric", 0, true)
 	requireColumn(t, tx, "user_subscriptions", "weekly_limit_usd", "numeric", 0, true)
@@ -84,7 +84,7 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireIndex(t, tx, "user_subscriptions", "idx_user_subscriptions_user_status_starts_expires")
 	requireIndex(t, tx, "user_subscriptions", "idx_user_subscriptions_user_plan_starts")
 
-	// batch_image_jobs 持久化内部模型，以及订阅和余额分别预占的金额。
+	// Batch image jobs snapshot the internal model and separate balance and subscription holds.
 	requireColumn(t, tx, "batch_image_jobs", "internal_model", "character varying", 128, false)
 	requireColumn(t, tx, "batch_image_jobs", "balance_hold_amount", "numeric", 0, false)
 	requireColumn(t, tx, "batch_image_jobs", "subscription_hold_allocations", "jsonb", 0, false)
@@ -92,19 +92,19 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "batch_image_jobs", "balance_rate_multiplier", "numeric", 0, false)
 	requireColumn(t, tx, "batch_image_jobs", "plan_group_rate_multiplier_enabled", "boolean", 0, false)
 
-	// payment_orders 保存订阅订单的套餐快照。
+	// Subscription payment orders retain their plan snapshot.
 	requireColumn(t, tx, "payment_orders", "plan_id", "bigint", 0, true)
 	requireColumn(t, tx, "payment_orders", "plan_snapshot", "jsonb", 0, true)
 	requireNoColumn(t, tx, "payment_orders", "subscription_group_id")
 	requireNoColumn(t, tx, "payment_orders", "subscription_days")
 
-	// redeem_codes 保存兑换关联的套餐字段。
+	// Redeem codes refer to plans for subscription redemption.
 	requireColumn(t, tx, "redeem_codes", "plan_id", "bigint", 0, true)
 	requireNoColumn(t, tx, "redeem_codes", "group_id")
 	requireNoColumn(t, tx, "redeem_codes", "validity_days")
 	requireIndex(t, tx, "redeem_codes", "idx_redeem_codes_plan_id")
 
-	// usage_logs 的 billing_type 用于筛选和统计。
+	// Usage records retain billing type for filtering and aggregation.
 	requireColumn(t, tx, "usage_logs", "billing_type", "smallint", 0, false)
 	requireColumn(t, tx, "usage_logs", "request_type", "smallint", 0, false)
 	requireColumn(t, tx, "usage_logs", "openai_ws_mode", "boolean", 0, false)
@@ -118,10 +118,10 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_logs", "video_count", "integer", 0, false)
 	requireColumn(t, tx, "usage_logs", "video_resolution", "character varying", 10, true)
 	requireColumn(t, tx, "usage_logs", "video_duration_seconds", "integer", 0, true)
-	// ops_system_logs: 按 API Key ID 过滤系统日志的列和索引。
+	// System logs support filtering by API key and creation time.
 	requireColumn(t, tx, "ops_system_logs", "api_key_id", "bigint", 0, true)
 	requireIndex(t, tx, "ops_system_logs", "idx_ops_system_logs_api_key_id_created_at")
-	// 数据共享迁移删除了对应的表和字段。
+	// Retired data-sharing tables and fields must be absent.
 	for _, table := range []string{"data_share_sessions", "data_share_export_artifacts"} {
 		var regclass sql.NullString
 		require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.' || $1)", table).Scan(&regclass))
@@ -162,18 +162,18 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 		"'mixed'",
 	)
 
-	// 套餐迁移删除 groups 上的订阅字段。
+	// Subscription settings belong to plans after migration.
 	requireNoColumn(t, tx, "groups", "subscription_type")
 	requireNoColumn(t, tx, "groups", "daily_limit_usd")
 	requireNoColumn(t, tx, "groups", "weekly_limit_usd")
 	requireNoColumn(t, tx, "groups", "monthly_limit_usd")
 	requireNoColumn(t, tx, "groups", "default_validity_days")
 
-	// scheduler_outbox pending 事件去重支持。
+	// Pending scheduler events have a deduplication key and index.
 	requireColumn(t, tx, "scheduler_outbox", "dedup_key", "text", 0, true)
 	requireIndex(t, tx, "scheduler_outbox", "idx_scheduler_outbox_pending_dedup_key")
 
-	// usage_billing_dedup 记录计费去重数据。
+	// Billing deduplication records retain the request fingerprint and lookup indexes.
 	var usageBillingDedupRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))
 	require.True(t, usageBillingDedupRegclass.Valid, "expected usage_billing_dedup table to exist")
@@ -187,44 +187,44 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_billing_dedup_archive", "request_fingerprint", "character varying", 64, false)
 	requireIndex(t, tx, "usage_billing_dedup_archive", "usage_billing_dedup_archive_pkey")
 
-	// settings 保存运行设置。
+	// Runtime settings are persisted in settings.
 	var settingsRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.settings')").Scan(&settingsRegclass))
 	require.True(t, settingsRegclass.Valid, "expected settings table to exist")
 
-	// security_secrets 保存服务端密钥。
+	// Server-side secrets are persisted in security_secrets.
 	var securitySecretsRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.security_secrets')").Scan(&securitySecretsRegclass))
 	require.True(t, securitySecretsRegclass.Valid, "expected security_secrets table to exist")
 
-	// 有界的入口拒绝安全聚合表。
+	// Ingress rejection counts are indexed by time bucket and client IP.
 	requireColumn(t, tx, "ops_ingress_reject_aggregates", "bucket_start", "timestamp with time zone", 0, false)
 	requireColumn(t, tx, "ops_ingress_reject_aggregates", "client_ip", "inet", 0, false)
 	requireColumn(t, tx, "ops_ingress_reject_aggregates", "request_count", "bigint", 0, false)
 	requireIndex(t, tx, "ops_ingress_reject_aggregates", "idx_ops_ingress_reject_aggregates_bucket")
 	requireIndex(t, tx, "ops_ingress_reject_aggregates", "idx_ops_ingress_reject_aggregates_ip_bucket")
-	// user_allowed_groups 保存用户可用分组。
+	// User group grants are persisted in user_allowed_groups.
 	var uagRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.user_allowed_groups')").Scan(&uagRegclass))
 	require.True(t, uagRegclass.Valid, "expected user_allowed_groups table to exist")
 
-	// user_disabled_public_groups 保存用户禁用的公开分组。
+	// Public groups disabled by a user are persisted in user_disabled_public_groups.
 	var udpgRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.user_disabled_public_groups')").Scan(&udpgRegclass))
 	require.True(t, udpgRegclass.Valid, "expected user_disabled_public_groups table to exist")
 
-	// 迁移 012 为 user_subscriptions 添加软删除时间。
+	// Subscriptions retain a nullable soft-deletion timestamp.
 	requireColumn(t, tx, "user_subscriptions", "deleted_at", "timestamp with time zone", 0, true)
 
-	// 迁移 013 创建孤立分组授权的审计表。
+	// Orphaned group grants have an audit table.
 	var orphanAuditRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.orphan_allowed_groups_audit')").Scan(&orphanAuditRegclass))
 	require.True(t, orphanAuditRegclass.Valid, "expected orphan_allowed_groups_audit table to exist")
 
-	// provider_groups 的创建时间带时区。
+	// Provider-group creation timestamps include a timezone.
 	requireColumn(t, tx, "provider_groups", "created_at", "timestamp with time zone", 0, false)
 
-	// user_allowed_groups 的创建时间带时区。
+	// User group preference timestamps include a timezone.
 	requireColumn(t, tx, "user_allowed_groups", "created_at", "timestamp with time zone", 0, false)
 	requireColumn(t, tx, "user_disabled_public_groups", "created_at", "timestamp with time zone", 0, false)
 	requireIndex(t, tx, "user_disabled_public_groups", "idx_user_disabled_public_groups_group_id")

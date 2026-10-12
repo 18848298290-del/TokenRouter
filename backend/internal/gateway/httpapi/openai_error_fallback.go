@@ -14,7 +14,7 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	// 两类心跳停止后读取 Writer 状态，此时心跳 goroutine 已结束写入。
+	// Stop both heartbeat writers before inspecting Writer state.
 	compactKeepaliveCommitted := StopOpenAICompactSSEKeepaliveCommitted(c)
 	if compactKeepaliveCommitted {
 		streamStarted = true
@@ -29,7 +29,7 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 		imageKeepaliveResponseWritten = adjustedSize >= 0
 	}
 	compactKeepaliveHasMeaningfulOutput := compactKeepaliveCommitted && OpenAICompactKeepaliveAdjustedWrittenSize(c) > 0
-	// Compact 心跳提交 200 响应头后，如果尚未写出协议事件，补充 response.failed。
+	// A Compact heartbeat may have committed HTTP 200 while a terminal protocol event is still needed.
 	if (IsResponseCommitted(c) && (!compactKeepaliveCommitted || compactKeepaliveHasMeaningfulOutput)) ||
 		(!compactKeepaliveCommitted && imageKeepaliveResponseWritten) {
 		return false
@@ -44,7 +44,7 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 			status = warning.StatusCode
 		}
 	}
-	// 普通 SSE 心跳写出后，追加协议终态。图片 JSON 若仅写出心跳空白，则补写 JSON 错误。
+	// SSE heartbeats require a terminal event; image JSON padding can still be followed by a JSON error.
 	if c.Writer.Written() && !imageKeepalivePaddingOnly {
 		streamStarted = true
 	}
@@ -62,16 +62,16 @@ func ShouldLogOpenAIForwardFailureAsWarn(c *gin.Context, wroteFallback bool) boo
 	return c.Writer.Written()
 }
 
-// OpenAIForwardErrorAlreadyCommunicated 判断转发层是否已把上游终止错误写给客户端。
+// OpenAIForwardErrorAlreadyCommunicated reports whether forwarding already delivered the upstream error.
 //
-// 响应流可能收到状态码 200 里的终止失败事件，例如安全策略拒绝。
-// 转发层会先原样转发该终止事件，再返回错误给处理层做日志和统计；
-// 处理层不能再追加通用失败事件，否则严格客户端会看到重复终止事件。
+// HTTP 200 streams can carry terminal failures such as policy refusals.
+// Forwarding delivers the event before returning an error for logging and metrics.
+// Appending a generic failure afterward would give strict clients duplicate terminal events.
 func OpenAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForward int, err error) bool {
 	if err == nil || c == nil || c.Writer == nil {
 		return false
 	}
-	// 扣除 compact 心跳字节后判断响应是否开始输出（#3887）。
+	// Exclude heartbeat bytes when checking whether response output started (#3887).
 	if OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward || OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 		return false
 	}

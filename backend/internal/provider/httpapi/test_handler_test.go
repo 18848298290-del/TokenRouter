@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// decisionTestLoader 保存 HTTP 表单传给测试服务的字段。
+// decisionTestLoader records fields passed from HTTP input to the test service.
 type decisionTestLoader struct {
 	request provider.TestRequest
 	loads   int
@@ -36,7 +36,7 @@ func (l *decisionTestLoader) Execute(ctx context.Context, _ provider.PreparedTes
 	return sink.Emit(ctx, provider.TestEvent{Type: "test_complete", Success: true})
 }
 
-// TestTestHandlerDecisionJSON 检查结构化表单绑定和损坏 JSON 的早期拒绝。
+// TestTestHandlerDecisionJSON checks structured input binding and early rejection of malformed JSON.
 func TestTestHandlerDecisionJSON(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string

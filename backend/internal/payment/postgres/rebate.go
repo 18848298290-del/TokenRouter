@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// ApplyOrderRebate commits the audit claim and rebate together so retries cannot grant twice.
 func (s *OrderStore) ApplyOrderRebate(ctx context.Context, o *payment.Order, basePoints float64) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {

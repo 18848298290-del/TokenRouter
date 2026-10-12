@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// policyPriceStore 为测试提供价格配置，分组策略由独立的读取接口提供。
+// policyPriceStore supplies test prices; a separate reader supplies group policy.
 type policyPriceStore struct {
 	PricingConfigRepository
 	configs []PricingConfig

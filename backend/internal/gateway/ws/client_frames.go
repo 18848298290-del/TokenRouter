@@ -23,9 +23,9 @@ type clientFrameConn struct {
 	restoreToolNames     func([]byte) []byte
 }
 
-// policyFrameConn 包装客户端 FrameConn，每个发往上游的帧先通过 OpenAI Fast 策略。
-// filter 返回新 payload 时转发，返回 PolicyBlocked 时通过 onBlock 发送错误事件并终止 relay 读取，
-// 其他错误按传输错误返回。入站会话通过 parseClientPayload 执行同类检查。
+// policyFrameConn applies the OpenAI Fast policy to each client frame sent upstream.
+// The filter returns the forwarded payload or a PolicyBlocked result, which calls onBlock and ends reads.
+// Other errors propagate to the relay. Ingress sessions perform the same checks in parseClientPayload.
 type policyFrameConn struct {
 	closeError  func(int, string, error) error
 	closedError error
@@ -35,7 +35,7 @@ type policyFrameConn struct {
 	onBlock     func(blocked *PolicyBlocked)
 }
 
-// TurnActivity 通过同一个原子标记协调终态提交和下一轮空闲等待。
+// TurnActivity coordinates terminal delivery and inter-turn idle waits with a shared atomic flag.
 type TurnActivity struct {
 	Waiting *atomic.Bool
 	Started chan struct{}
@@ -146,8 +146,8 @@ func (c *clientFrameConn) WriteFrame(ctx context.Context, msgType int, payload [
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	// 控制取消后，读路径发送带原因的关闭帧。写入使用原截止时间完成当前帧，再由关闭握手结束连接。
-	// 若写入直接继承父取消，coder/websocket 可能在帧已到达客户端、Write 尚未返回时关闭 TCP。
+	// On control cancellation, the read path sends a close frame. Finish this write with its existing deadline.
+	// Inheriting cancellation could make coder/websocket close TCP after delivery but before Write returns.
 	writeCtx := context.WithoutCancel(ctx)
 	if deadline, ok := ctx.Deadline(); ok {
 		var cancel context.CancelFunc
@@ -166,7 +166,7 @@ func (c *clientFrameConn) Close() error {
 	return nil
 }
 
-// NewPolicyFrames 组合同步入站/出站过滤，供 HTTP 与协议 Adapter 复用。
+// NewPolicyFrames wraps synchronous inbound and outbound filters for HTTP and protocol adapters.
 func NewPolicyFrames(inner FrameConn, filter func(int, []byte) ([]byte, *PolicyBlocked, error), writeFilter func(int, []byte) ([]byte, error), onBlock func(*PolicyBlocked), closeError func(int, string, error) error, closedError error) FrameConn {
 	return &policyFrameConn{inner: inner, filter: filter, writeFilter: writeFilter, onBlock: onBlock, closeError: closeError, closedError: closedError}
 }

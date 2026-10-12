@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestMain 在测试启动前统一设置模式，保留各协议测试的并行执行。
+// TestMain sets Gin mode before protocol tests run in parallel.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	m.Run()

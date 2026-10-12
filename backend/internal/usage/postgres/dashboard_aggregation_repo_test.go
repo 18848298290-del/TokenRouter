@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestAggregationCalendarSurvivesTransaction 检查事务内聚合按注入时区计算每天的起止时间。
+// TestAggregationCalendarSurvivesTransaction checks daily bounds in the injected timezone inside transactions.
 func TestAggregationCalendarSurvivesTransaction(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

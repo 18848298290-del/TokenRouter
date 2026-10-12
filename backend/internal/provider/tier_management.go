@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GoogleOneTierObservation 保存本次供应商查询的档位结果。
+// GoogleOneTierObservation holds the tier and storage data from one upstream query.
 type GoogleOneTierObservation struct {
 	TierID     string
 	Storage    *GoogleOneStorage
@@ -48,14 +48,14 @@ type TierBatchResult struct {
 	Errors                 []TierRefreshFailure
 }
 
-// TierManagement 检查资格、批量查询并条件写入，通过平台接口调用 Drive。
+// TierManagement validates eligibility, queries tiers, and writes updates conditional on credential identity.
 type TierManagement struct {
 	store    TierManagementStore
 	options  TierManagementOptions
 	activity operationActivity
 }
 
-// ProviderTierManagementOptions 将 Drive 查询结果转换为档位数据。
+// ProviderTierManagementOptions adapts Drive queries to tier observations.
 func ProviderTierManagementOptions(source *GeminiAuthorization) TierManagementOptions {
 	return TierManagementOptions{Observe: func(ctx context.Context, v *Record) (GoogleOneTierObservation, error) {
 		kind, ok := v.Credentials["oauth_type"].(string)
@@ -98,7 +98,7 @@ func (s *TierManagement) Refresh(ctx context.Context, v *Record) (*TierRefreshRe
 }
 
 func (s *TierManagement) refresh(ctx context.Context, v *Record) (*TierRefreshResult, error) {
-	// 停止或调用方取消后，排队项不能再开始供应商观测。
+	// Queued work must check cancellation before starting an upstream observation.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (s *TierManagement) refresh(ctx context.Context, v *Record) (*TierRefreshRe
 	return &TierRefreshResult{TierID: observation.TierID, StorageInfo: extra}, nil
 }
 
-// GoogleOneTierExtraPatch 只写本轮 Drive 观测字段。
+// GoogleOneTierExtraPatch returns fields reported by this Drive observation.
 func GoogleOneTierExtraPatch(observation GoogleOneTierObservation) map[string]any {
 	out := map[string]any{}
 	if observation.Storage != nil {
@@ -137,7 +137,7 @@ func GoogleOneTierExtraPatch(observation GoogleOneTierObservation) map[string]an
 	return out
 }
 
-// ProjectGoogleOneTier 将档位结果转换为完整展示数据，写入时按字段更新。
+// ProjectGoogleOneTier merges an observation into independent extra and credential maps for display.
 func ProjectGoogleOneTier(v *Record, observation GoogleOneTierObservation) (map[string]any, map[string]any) {
 	extra := CloneValues(v.Extra)
 	if extra == nil {

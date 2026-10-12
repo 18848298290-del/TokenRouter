@@ -17,7 +17,7 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Created 保存公共响应和选中提供商的标识。
+// Created holds the public response and selected provider ID.
 type Created struct {
 	SDP        []byte
 	CallID     string
@@ -25,14 +25,14 @@ type Created struct {
 	ProviderID int64
 }
 
-// CreateTarget 提供本次选择的模型数据、客户端资格和供应商请求操作。
+// CreateTarget supplies model resolution, client eligibility, and upstream creation for a selected provider.
 type CreateTarget interface {
 	ResolveModel(context.Context, string) (string, string, error)
 	AllowsClient(context.Context, session.LiveCallIdentity) bool
 	Create(context.Context, *session.LiveCallRequest, string) (*Created, error)
 }
 
-// Candidate 拥有当前提供商槽的释放能力，Live 租约接替后立即释放普通槽。
+// Candidate owns the ordinary provider slot released after the Live lease is acquired and creation returns.
 type Candidate struct {
 	ID          int64
 	Concurrency int
@@ -41,7 +41,7 @@ type Candidate struct {
 	Target      CreateTarget
 }
 
-// CreatePorts 提供凭据、选路和观测操作。
+// CreatePorts supplies credentials, routing, and observation operations.
 type CreatePorts interface {
 	PrepareAttestation(context.Context) (string, string, error)
 	Select(context.Context, *int64, string, map[int64]struct{}) (*Candidate, error)
@@ -52,7 +52,7 @@ type CreatePorts interface {
 	Observe(*session.LiveCallRecord)
 }
 
-// Creator 负责 Live 创建尝试、租约接替、会话保存和 observer 启动顺序。
+// Creator orders Live creation, lease acquisition, session storage, and observer startup.
 type Creator struct {
 	runtime     *Service
 	ports       CreatePorts
@@ -75,8 +75,8 @@ func liveGroupID(id *int64) int64 {
 	return *id
 }
 
-// Create 创建 Frameless 会话。调用方须在调用期间持有普通用户槽位；
-// 调度器持有的普通提供商槽位会被同一个 Live 租约原子接替。
+// Create opens a Frameless session. The caller holds the ordinary user slot during the call.
+// A Live lease accounts for the session before the ordinary provider slot is released.
 func (s *Creator) Create(
 	ctx context.Context,
 	request *session.LiveCallRequest,
@@ -219,7 +219,7 @@ func (s *Creator) Create(
 	return nil, session.ErrLiveUnavailable
 }
 
-// cloneModelMapping 复制模型映射，nil 输入转换为空对象。
+// cloneModelMapping copies model mappings, returning an empty map for nil input.
 func cloneModelMapping(mapping map[string]string) map[string]string {
 	result := make(map[string]string, len(mapping))
 	maps.Copy(result, mapping)

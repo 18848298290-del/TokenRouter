@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 读取后注入真实数据库变化，固定重现配置写入与刷新、消费、健康维护的交错。
+// Inject committed database changes after reads to reproduce configuration, refresh, usage, and health-write
+// interleavings.
 type configurationInterleave struct {
 	*providerpostgres.ProviderStore
 	afterRead func()

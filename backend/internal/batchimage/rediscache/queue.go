@@ -21,8 +21,8 @@ const (
 	defaultBatchImageInflightTTL    = 7 * 24 * time.Hour
 	defaultBatchImageJobLockTTL     = 5 * time.Minute
 
-	// batchImageReservePollInterval 是原子 Reserve 脚本空轮询的间隔。
-	// 用轮询替代 BRPop 是为了保证 "弹出 + 写 active" 的原子性。
+	// batchImageReservePollInterval controls idle polling of the atomic reserve script.
+	// Polling lets the script pop ready and add active in one atomic operation.
 	batchImageReservePollInterval = time.Second
 )
 
@@ -59,9 +59,9 @@ end
 return 0
 `)
 
-	// batchImageReserveScript 原子地从 ready 弹出并写入 active zset。
-	// BRPop + ZAdd 两步方案在两步之间进程崩溃时 job 会脱离所有队列结构，
-	// 且 inflight 去重键（默认 7 天）会挡住所有重新入队。
+	// batchImageReserveScript atomically moves a ready job into the active sorted set.
+	// Separate BRPop and ZAdd calls can lose a job if the process stops between them;
+	// the inflight key then blocks enqueue until its TTL expires (seven days by default).
 	batchImageReserveScript = redis.NewScript(`
 local job = redis.call("RPOP", KEYS[1])
 if not job then
@@ -71,9 +71,9 @@ redis.call("ZADD", KEYS[2], ARGV[1], job)
 return job
 `)
 
-	// batchImageEnqueueScript 原子地设置 inflight 去重键并推入 ready。
-	// SetNX + LPush 两步方案在两步之间进程崩溃时，inflight 键（默认 7 天）
-	// 会挡住所有后续入队，而 job 从未进入 ready。
+	// batchImageEnqueueScript atomically creates the inflight key and pushes the ready job.
+	// Separate SetNX and LPush calls can leave an inflight key without a ready job after
+	// a crash, blocking enqueue until the TTL expires (seven days by default).
 	batchImageEnqueueScript = redis.NewScript(`
 if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
   redis.call("LPUSH", KEYS[2], ARGV[1])
@@ -82,7 +82,7 @@ end
 return 0
 `)
 
-	// 队列数据格式保持不变；锁 token 比较与队列修改处于同一 Lua 调用。
+	// Compare the lock token and mutate queue state in the same Lua call.
 	batchImageOwnedMutation = redis.NewScript(`
 local owner=redis.call("GET",KEYS[1])
 if ARGV[2]=="" then
@@ -233,8 +233,8 @@ func (q *batchImageQueue) reserveOnce(ctx context.Context) (string, error) {
 	}
 	batchID, ok := raw.(string)
 	if !ok || !batchimage.IsValidBatchImageID(batchID) {
-		// 非法 payload 已被脚本写入 active，必须移除，否则 stale 恢复会把它
-		// 无限重投回 ready。
+		// The reserve script already added this invalid payload to active. Remove it
+		// so stale recovery does not keep returning it to ready.
 		if ok && batchID != "" {
 			_ = q.rdb.ZRem(ctx, q.activeKey, batchID).Err()
 		}
@@ -243,7 +243,7 @@ func (q *batchImageQueue) reserveOnce(ctx context.Context) (string, error) {
 	return batchID, nil
 }
 
-// RequeueAfter 恢复没有有效锁的任务，已有持有者的队列记录保持原样。
+// RequeueAfter recovers an unlocked job and leaves records owned by an active lock unchanged.
 func (q *batchImageQueue) RequeueAfter(ctx context.Context, id string, delay time.Duration) error {
 	return q.mutateOwned(ctx, id, "", "requeue", delay)
 }
@@ -326,7 +326,7 @@ func (l *batchImageRedisJobLock) Release(ctx context.Context) error {
 	return batchImageReleaseLockScript.Run(ctx, l.rdb, []string{l.key}, l.token).Err()
 }
 
-// Refresh 在仍持有锁（token 匹配）时续期 TTL，供长处理任务的心跳调用。
+// Refresh extends the TTL only while the stored token matches this lock owner.
 func (l *batchImageRedisJobLock) Refresh(ctx context.Context, ttl time.Duration) error {
 	if l == nil || l.rdb == nil || l.key == "" || l.token == "" {
 		return nil

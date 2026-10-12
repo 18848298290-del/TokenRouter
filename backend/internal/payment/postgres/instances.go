@@ -97,7 +97,7 @@ func (s *InstanceStore) PaidDailyAmount(ctx context.Context, id string, start ti
 	return 0, nil
 }
 
-// CountEnabledInstances 保持旧 webhook fallback 的单条 COUNT 查询。
+// CountEnabledInstances counts enabled instances for legacy webhook resolution.
 func (s *InstanceStore) CountEnabledInstances(ctx context.Context, key string) (int, error) {
 	return s.client.PaymentProviderInstance.Query().Where(paymentproviderinstance.ProviderKeyEQ(key), paymentproviderinstance.EnabledEQ(true)).Count(ctx)
 }

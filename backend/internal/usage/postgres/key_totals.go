@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// ReadAPIKeyUsageTotals returns charges over the last 30 days, including zero entries for keys with no usage.
+// Aggregate failures retry the full range against raw records.
 func ReadAPIKeyUsageTotals(ctx context.Context, sqlq sqlExecutor, preAggregation *preaggregation.PreAggregationSettingsService, keyIDs []int64) (map[int64]float64, error) {
 	result := make(map[int64]float64, len(keyIDs))
 	if len(keyIDs) == 0 {

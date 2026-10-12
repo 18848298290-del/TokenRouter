@@ -9,7 +9,7 @@ import (
 
 const announcementExpiryUpdateTimeout = 5 * time.Second
 
-// AnnouncementExpiryService 定期将已经到达结束时间的展示中公告归档。
+// AnnouncementExpiryService periodically archives active announcements that have reached their end time.
 type AnnouncementExpiryService struct {
 	lifecycleMu      sync.Mutex
 	started          bool
@@ -21,7 +21,7 @@ type AnnouncementExpiryService struct {
 	wg               sync.WaitGroup
 }
 
-// NewAnnouncementExpiryService 创建公告到期归档服务。
+// NewAnnouncementExpiryService creates an expiry worker; Start launches it.
 func NewAnnouncementExpiryService(announcementRepo AnnouncementRepository, interval time.Duration) *AnnouncementExpiryService {
 	return &AnnouncementExpiryService{
 		announcementRepo: announcementRepo,
@@ -30,7 +30,7 @@ func NewAnnouncementExpiryService(announcementRepo AnnouncementRepository, inter
 	}
 }
 
-// Start 启动公告到期归档任务，并在启动后立即执行一次。
+// Start launches an immediate scan followed by periodic scans. A stopped service cannot restart.
 func (s *AnnouncementExpiryService) Start() {
 	if s == nil || s.announcementRepo == nil || s.interval <= 0 {
 		return
@@ -58,7 +58,7 @@ func (s *AnnouncementExpiryService) Start() {
 	})
 }
 
-// Stop 停止公告到期归档任务并等待当前扫描结束。
+// Stop stops the expiry worker and waits for its current scan to finish.
 func (s *AnnouncementExpiryService) Stop() {
 	if s == nil {
 		return

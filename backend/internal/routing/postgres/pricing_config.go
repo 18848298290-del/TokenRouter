@@ -16,12 +16,12 @@ type PricingConfigStore struct {
 	db *sql.DB
 }
 
-// NewPricingConfigStore 创建价格配置数据访问实例。
+// NewPricingConfigStore creates a SQL-backed pricing configuration store.
 func NewPricingConfigStore(db *sql.DB) *PricingConfigStore {
 	return &PricingConfigStore{db: db}
 }
 
-// runInTx 在事务中执行 fn，成功 commit，失败 rollback。
+// runInTx commits fn on success and rolls back if fn fails.
 func (r *PricingConfigStore) runInTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -61,21 +61,18 @@ func (r *PricingConfigStore) Create(ctx context.Context, pricingConfig *routing.
 			return fmt.Errorf("insert price configuration: %w", err)
 		}
 
-		// 设置分组关联
 		if len(pricingConfig.GroupIDs) > 0 {
 			if err := setGroupIDsTx(ctx, tx, pricingConfig.ID, pricingConfig.GroupIDs); err != nil {
 				return err
 			}
 		}
 
-		// 设置模型定价
 		if len(pricingConfig.ModelPricing) > 0 {
 			if err := replaceModelPricingTx(ctx, tx, pricingConfig.ID, pricingConfig.ModelPricing); err != nil {
 				return err
 			}
 		}
 
-		// 设置提供商统计定价规则
 		if len(pricingConfig.ProviderStatsPricingRules) > 0 {
 			if err := replaceProviderStatsPricingRulesTx(ctx, tx, pricingConfig.ID, pricingConfig.ProviderStatsPricingRules); err != nil {
 				return err
@@ -161,21 +158,19 @@ func (r *PricingConfigStore) Update(ctx context.Context, pricingConfig *routing.
 			return routing.ErrPricingConfigNotFound
 		}
 
-		// 更新分组关联
+		// Nil leaves associations unchanged; an empty slice clears them.
 		if pricingConfig.GroupIDs != nil {
 			if err := setGroupIDsTx(ctx, tx, pricingConfig.ID, pricingConfig.GroupIDs); err != nil {
 				return err
 			}
 		}
 
-		// 更新模型定价
 		if pricingConfig.ModelPricing != nil {
 			if err := replaceModelPricingTx(ctx, tx, pricingConfig.ID, pricingConfig.ModelPricing); err != nil {
 				return err
 			}
 		}
 
-		// 更新提供商统计定价规则
 		if pricingConfig.ProviderStatsPricingRules != nil {
 			if err := replaceProviderStatsPricingRulesTx(ctx, tx, pricingConfig.ID, pricingConfig.ProviderStatsPricingRules); err != nil {
 				return err
@@ -216,18 +211,16 @@ func (r *PricingConfigStore) List(ctx context.Context, params pagination.Paginat
 
 	whereClause := strings.Join(where, " AND ")
 
-	// 计数
 	var total int64
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM pricing_configs c WHERE %s", whereClause)
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count price configurations: %w", err)
 	}
 
-	pageSize := params.Limit() // 约束在 [1, 100]
+	pageSize := params.Limit() // Clamped to [1, 100].
 	page := max(params.Page, 1)
 	offset := (page - 1) * pageSize
 
-	// 查询 pricingConfig 列表
 	dataQuery := fmt.Sprintf(
 		`SELECT c.id, c.name, c.description, c.status, c.billing_model_source,
           c.peak_rate_enabled, c.peak_start, c.peak_end, c.peak_rate_multiplier,
@@ -269,7 +262,7 @@ func (r *PricingConfigStore) List(ctx context.Context, params pagination.Paginat
 		return nil, nil, fmt.Errorf("iterate price configurations: %w", err)
 	}
 
-	// 批量加载分组 ID 和模型定价（避免 N+1）
+	// Batch-load associations and prices to avoid one query per configuration.
 	if len(pricingConfigIDs) > 0 {
 		groupMap, err := r.batchLoadGroupIDs(ctx, pricingConfigIDs)
 		if err != nil {
@@ -371,19 +364,16 @@ func (r *PricingConfigStore) ListAll(ctx context.Context) ([]routing.PricingConf
 		return pricingConfigs, nil
 	}
 
-	// 批量加载分组 ID
 	groupMap, err := r.batchLoadGroupIDs(ctx, pricingConfigIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// 批量加载模型定价
 	pricingMap, err := r.batchLoadModelPricing(ctx, pricingConfigIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// 批量加载提供商统计定价规则
 	statsRulesMap, err := r.batchLoadProviderStatsPricingRules(ctx, pricingConfigIDs)
 	if err != nil {
 		return nil, err
@@ -398,7 +388,7 @@ func (r *PricingConfigStore) ListAll(ctx context.Context) ([]routing.PricingConf
 	return pricingConfigs, nil
 }
 
-// batchLoadGroupIDs 批量加载多个价格配置的分组 ID。
+// batchLoadGroupIDs reads group IDs for multiple pricing configurations.
 func (r *PricingConfigStore) batchLoadGroupIDs(ctx context.Context, pricingConfigIDs []int64) (map[int64][]int64, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT pricing_config_id, group_id FROM pricing_config_groups

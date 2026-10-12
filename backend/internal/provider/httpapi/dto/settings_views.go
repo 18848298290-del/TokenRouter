@@ -1,12 +1,12 @@
 package dto
 
-// OverloadCooldownSettings 是过载冷却设置的 HTTP 数据结构。
+// OverloadCooldownSettings is the HTTP representation of overload cooldown settings.
 type OverloadCooldownSettings struct {
 	Enabled         bool `json:"enabled"`
 	CooldownMinutes int  `json:"cooldown_minutes"`
 }
 
-// OpenAI403CooldownSettings 是 OpenAI 403 冷却设置的 HTTP 数据结构。
+// OpenAI403CooldownSettings is the HTTP representation of OpenAI 403 cooldown settings.
 type OpenAI403CooldownSettings struct {
 	Enabled                 bool `json:"enabled"`
 	CooldownMinutes         int  `json:"cooldown_minutes"`
@@ -15,18 +15,18 @@ type OpenAI403CooldownSettings struct {
 	ThresholdWindowMinutes  int  `json:"threshold_window_minutes"`
 }
 
-// RateLimit429CooldownSettings 是 429 冷却设置的 HTTP 数据结构。
+// RateLimit429CooldownSettings is the HTTP representation of 429 cooldown settings.
 type RateLimit429CooldownSettings struct {
 	Enabled         bool `json:"enabled"`
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
-// OpenAIImagesOAuthUnavailableCooldownSettings 是 OAuth 图片不可用时的冷却设置。
+// OpenAIImagesOAuthUnavailableCooldownSettings configures cooldown after OAuth image unavailability.
 type OpenAIImagesOAuthUnavailableCooldownSettings struct {
 	CooldownMinutes int `json:"cooldown_minutes"`
 }
 
-// StreamTimeoutSettings 是流式请求超时设置的 HTTP 数据结构。
+// StreamTimeoutSettings is the HTTP representation of streaming timeout settings.
 type StreamTimeoutSettings struct {
 	Enabled                bool   `json:"enabled"`
 	Action                 string `json:"action"`

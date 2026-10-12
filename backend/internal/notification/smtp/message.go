@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-// smtpMessage 保存 SMTP 信封地址与完整 MIME 报文。
+// smtpMessage contains envelope addresses and the complete MIME message.
 type smtpMessage struct {
 	envelopeFrom string
 	envelopeTo   string
 	data         []byte
 }
 
-// buildSMTPMessage 构造符合邮件协议的 HTML MIME 报文。
+// buildSMTPMessage builds an HTML MIME message with encoded headers and body.
 func buildSMTPMessage(config *SMTPConfig, to, subject, body string) (smtpMessage, error) {
 	if config == nil {
 		return smtpMessage{}, errors.New("missing SMTP configuration")
@@ -78,7 +78,7 @@ func buildSMTPMessage(config *SMTPConfig, to, subject, body string) (smtpMessage
 	}, nil
 }
 
-// parseSMTPAddress 校验单个 SMTP 地址并拒绝换行注入。
+// parseSMTPAddress validates a single address and rejects line breaks to prevent header injection.
 func parseSMTPAddress(value, field string) (*mail.Address, error) {
 	if strings.ContainsAny(value, "\r\n") {
 		return nil, fmt.Errorf("invalid SMTP %s address: contains a line break", field)
@@ -95,7 +95,7 @@ func parseSMTPAddress(value, field string) (*mail.Address, error) {
 	return address, nil
 }
 
-// generateEmailMessageID 生成随机且带发送域名的 Message-ID。
+// generateEmailMessageID creates a random Message-ID using the sender's domain when available.
 func generateEmailMessageID(fromAddress, smtpHost string) (string, error) {
 	randomID := make([]byte, 16)
 	if _, err := rand.Read(randomID); err != nil {

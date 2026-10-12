@@ -18,7 +18,8 @@ import (
 
 const OpenAIResponseDefaultMaxLineSize = 500 * 1024 * 1024
 
-// OpenAIResponseOptions 接收应用的静态配置，TTFT 设置在请求时读取。
+// OpenAIResponseOptions holds static settings. Timeout and interval integers are seconds;
+// body and line limits are bytes. TTFT mode is read per request.
 type OpenAIResponseOptions struct {
 	ImageStreamDataIntervalTimeout, ImageStreamKeepaliveInterval               int
 	Configured                                                                 bool
@@ -31,7 +32,7 @@ type OpenAIResponseOptions struct {
 	ReadLimit                                                                  int64
 }
 
-// OpenAIResponseOutput 组合原生响应读取器与 HTTP 输出、健康和诊断，不持有选号或结算循环。
+// OpenAIResponseOutput combines upstream response readers with HTTP output, health policy, and diagnostics.
 type OpenAIResponseOutput struct {
 	Reasoning    *session.ReasoningHistory
 	Options      OpenAIResponseOptions
@@ -63,7 +64,7 @@ func (p *OpenAIResponseOutput) redact(ctx context.Context, target *gatewayadapte
 	return p.Redact(ctx, target, body)
 }
 
-// ExecutionErrorProvider 返回当前尝试的提供商诊断字段。
+// ExecutionErrorProvider returns diagnostic fields for the current attempt provider.
 func ExecutionErrorProvider(value *gatewayadapter.ExecutionProvider) *UpstreamErrorProvider {
 	if value == nil {
 		return nil
@@ -71,7 +72,7 @@ func ExecutionErrorProvider(value *gatewayadapter.ExecutionProvider) *UpstreamEr
 	return &UpstreamErrorProvider{ID: value.Record.ID, Name: value.Record.Name, Platform: value.Record.Platform}
 }
 
-// ReadStreamObservation 返回已读取的流结果和读取错误，由入口判断是否完成。
+// ReadStreamObservation returns the observed stream result and read error; the entry decides completion.
 func (p *OpenAIResponseOutput) ReadStreamObservation(ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayadapter.ExecutionProvider, started time.Time, original, mapped, effort string) (*openai.StreamingResult, error) {
 	return openai.ReadStreamingResponse(ctx, resp, upstream.NewOutputContext(ResponseSink{Writer: c.Writer}), p.StreamOptions(ctx, c, target, effort), started, original, mapped, effort)
 }

@@ -24,7 +24,7 @@ func newCreativeTestTransientStore(client *redis.Client) creative.CreativeTransi
 	return NewCreativeTransientStore(client, &TransientOptions{TransientTTLSeconds: 60})
 }
 
-// TestCreativeTransientStoreRoundTrip 校验临时存储的读写删全链路。
+// TestCreativeTransientStoreRoundTrip covers payload, media, and deletion operations.
 func TestCreativeTransientStoreRoundTrip(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -63,13 +63,13 @@ func TestCreativeTransientStoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("out0"), output)
 
-	// 删除单张输出：幂等，重复删除不报错。
+	// Deleting an output twice succeeds.
 	require.NoError(t, store.DeleteOutput(ctx, runID, 0))
 	require.NoError(t, store.DeleteOutput(ctx, runID, 0))
 	_, err = store.LoadOutput(ctx, runID, 0)
 	require.Error(t, err)
 
-	// 删除任务全部临时数据。
+	// Task cleanup removes the remaining payload, mask, and inputs.
 	require.NoError(t, store.DeleteRunTransient(ctx, runID, 2, 1))
 	_, err = store.LoadPayload(ctx, runID)
 	require.Error(t, err)
@@ -79,7 +79,7 @@ func TestCreativeTransientStoreRoundTrip(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreativeTransientStoreExpiry 校验 TTL 到期后无法读取。
+// TestCreativeTransientStoreExpiry checks that payloads and outputs become unreadable after expiry.
 func TestCreativeTransientStoreExpiry(t *testing.T) {
 	server, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -89,7 +89,7 @@ func TestCreativeTransientStoreExpiry(t *testing.T) {
 	require.NoError(t, store.SavePayload(ctx, runID, &creative.CreativeRunPayload{RunID: runID, Prompt: "x"}))
 	require.NoError(t, store.SaveOutput(ctx, runID, 0, []byte("out"), time.Minute))
 
-	// 快进 61 秒越过 60 秒 TTL。
+	// Advance beyond the configured 60-second TTL.
 	server.FastForward(61 * time.Second)
 
 	_, err := store.LoadPayload(ctx, runID)
@@ -98,7 +98,7 @@ func TestCreativeTransientStoreExpiry(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrCreativeTransientFailed)
 }
 
-// TestCreativeTransientStoreInputsMissing 校验缺失任一张源图时报错。
+// TestCreativeTransientStoreInputsMissing checks failure when one requested source image is absent.
 func TestCreativeTransientStoreInputsMissing(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -110,7 +110,7 @@ func TestCreativeTransientStoreInputsMissing(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreativeQueueEnqueueReserveAck 检查任务入队、保留和确认的状态变化。
+// TestCreativeQueueEnqueueReserveAck covers queue reservation, duplicate rejection, and acknowledgment.
 func TestCreativeQueueEnqueueReserveAck(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -126,28 +126,28 @@ func TestCreativeQueueEnqueueReserveAck(t *testing.T) {
 	runID := "crun_testqueue0123456"
 
 	require.NoError(t, queue.Enqueue(ctx, runID))
-	// 重复入队返回明确冲突。
+	// Duplicate enqueue attempts return a conflict.
 	require.ErrorIs(t, queue.Enqueue(ctx, runID), creative.ErrCreativeAlreadyQueued)
 
 	reserved, err := queue.Reserve(ctx, time.Second)
 	require.NoError(t, err)
 	require.Equal(t, runID, reserved.RunID)
 
-	// 队列已空。
+	// A reserved task is no longer available to another reservation.
 	_, err = queue.Reserve(ctx, 50*time.Millisecond)
 	require.ErrorIs(t, err, creative.ErrCreativeQueueEmpty)
 
-	// 非法 payload 校验。
+	// Invalid task IDs are rejected before enqueueing.
 	require.ErrorIs(t, queue.Enqueue(ctx, "bad-id"), creative.ErrInvalidCreativeQueuePayload)
 
-	// Ack 后任务彻底离开队列结构。
+	// Acknowledgment leaves no delayed task to return to ready.
 	require.NoError(t, queue.Ack(ctx, runID, reserved.LeaseToken))
 	moved, err := queue.MoveDueDelayedToReady(ctx, 10)
 	require.NoError(t, err)
 	require.Equal(t, 0, moved)
 }
 
-// TestCreativeQueueRecoverStaleActive 校验 stale active 恢复重投 ready。
+// TestCreativeQueueRecoverStaleActive checks that fresh tasks stay active and a zero threshold is rejected.
 func TestCreativeQueueRecoverStaleActive(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -167,17 +167,17 @@ func TestCreativeQueueRecoverStaleActive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, runID, reserved.RunID)
 
-	// 立刻恢复不会动新鲜任务。
+	// A freshly reserved task is not stale.
 	recovered, err := queue.RecoverStaleActive(ctx, time.Minute, 10)
 	require.NoError(t, err)
 	require.Equal(t, 0, recovered)
 
-	// staleAfter 为 0 视为非法参数。
+	// A zero stale threshold is invalid.
 	_, err = queue.RecoverStaleActive(ctx, 0, 10)
 	require.ErrorIs(t, err, creative.ErrInvalidCreativeQueuePayload)
 }
 
-// TestCreativeQueueLeaseFencingOldWorkerCannotAck 校验 stale 接管后旧 worker token 不能再确认任务。
+// TestCreativeQueueLeaseFencingOldWorkerCannotAck checks that recovery invalidates the old worker's token.
 func TestCreativeQueueLeaseFencingOldWorkerCannotAck(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -189,7 +189,7 @@ func TestCreativeQueueLeaseFencingOldWorkerCannotAck(t *testing.T) {
 	require.NoError(t, queue.Enqueue(ctx, runID))
 	first, err := queue.Reserve(ctx, time.Second)
 	require.NoError(t, err)
-	// 模拟 worker A 长时间失联，恢复脚本原子转移并清除旧 token。
+	// Age worker A's heartbeat so recovery moves the task and clears its lease token atomically.
 	require.NoError(t, client.ZAdd(ctx, "creative:queue:active", redis.Z{Score: float64(time.Now().Add(-time.Hour).UnixMilli()), Member: runID}).Err())
 	moved, err := queue.RecoverStaleActive(ctx, time.Minute, 10)
 	require.NoError(t, err)

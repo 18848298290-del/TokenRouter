@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// bmRepoStub 仅提供准入开关读取，并记录原回源次数。
+// bmRepoStub counts backend-mode setting reads.
 type bmRepoStub struct {
 	getValueFn func(ctx context.Context, key string) (string, error)
 	calls      int

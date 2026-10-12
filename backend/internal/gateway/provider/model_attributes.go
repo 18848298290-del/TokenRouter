@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// ResolveModelAttributes 在最终模型确定后读取本次请求固定的目录与分组配置。
+// ResolveModelAttributes reads the request's catalogue and group settings after the final model is known.
 func ResolveModelAttributes(ctx context.Context, value *ExecutionProvider, model string, service *routing.ModelAttributeService, protocols ...string) (modelcatalog.Resolution, error) {
 	upstreamProtocol := ""
 	if value != nil {
@@ -48,7 +48,7 @@ func ExecutionModelAttributes(value *ExecutionProvider, model string) modelcatal
 	return modelcatalog.Attributes{}
 }
 
-// ModelConversionOptions 将已解析能力交给纯协议转换器，未知参数保持原样。
+// ModelConversionOptions supplies resolved capabilities to protocol converters; unknown capabilities allow the parameter.
 func ModelConversionOptions(result modelcatalog.Resolution) bridge.RequestOptions {
 	attrs := result.Attributes
 	max := attrs.EffortSupport("max")
@@ -59,7 +59,7 @@ func ModelConversionOptions(result modelcatalog.Resolution) bridge.RequestOption
 	}
 }
 
-// GeminiThinking 使用本次最终模型的控制集合，将客户端选项转换为 Gemini 参数。
+// GeminiThinking converts client controls using the final model's supported Gemini options.
 func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.GeminiThinkingConfig, error) {
 	attrs := result.Attributes
 	minimum, maximum := attrs.ReasoningBudget()
@@ -74,7 +74,7 @@ func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.Gemini
 	return bridge.ResolveGeminiThinking(bridge.ParseGeminiThinkingInput(body), options)
 }
 
-// ApplyModelAttributeParameters 在已有参数准备阶段应用本次路线的能力值。
+// ApplyModelAttributeParameters applies the resolved route's parameter rules to the body.
 func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) ([]byte, error) {
 	result = result.ForRequest(ModelRequestState(body))
 	remove := append([]string(nil), result.Rules.DropFields...)
@@ -213,7 +213,7 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 	return state
 }
 
-// PrepareModelAttributeParameters 在模型与工具模型确定后应用本次请求的属性快照。
+// PrepareModelAttributeParameters applies the request's attribute snapshot to the final model and image tool models.
 func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService, protocols ...string) ([]byte, error) {
 	if routing.ModelAttributesFromContext(ctx) == nil {
 		ctx = routing.WithModelAttributes(ctx, service)
@@ -249,7 +249,7 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 	return body, nil
 }
 
-// PrepareGrokResponses 先按最终路线处理参数，再生成 Grok 报文供缓存身份和转发共用。
+// PrepareGrokResponses applies final-route parameters and builds a body shared by cache identity and forwarding.
 func PrepareGrokResponses(ctx context.Context, provider *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService) ([]byte, error) {
 	resolution, err := ResolveModelAttributes(ctx, provider, model, service, "openai_responses")
 	if err != nil {

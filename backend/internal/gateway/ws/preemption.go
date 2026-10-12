@@ -20,20 +20,20 @@ const (
 
 var ErrSessionPreempted = errors.New("openai ws session preempted by newer request")
 
-// PreemptKey 保留分组、Key 和会话三个隔离维度。
+// PreemptKey isolates ownership by group, API Key, and session.
 type PreemptKey struct {
 	GroupID     int64
 	APIKeyID    int64
 	SessionHash string
 }
 
-// PreemptState 仅提供本次抢占需要清理的会话状态。
+// PreemptState exposes the session state cleared when ownership is lost.
 type PreemptState interface {
 	DeleteSessionTurnState(int64, string)
 	DeleteSessionConn(int64, string)
 }
 
-// Preemption 使用传入的注册表和缓存处理会话抢占。
+// Preemption coordinates session ownership using the supplied registry and cache.
 type Preemption struct {
 	Registry     *PreemptRegistry
 	Cache        session.OpenAIWSSessionPreemptionCache
@@ -82,7 +82,7 @@ func (r *PreemptRegistry) Begin(key PreemptKey, cancel func()) (cleanup func(), 
 	}, hadPrevious
 }
 
-// Begin 注册当前入站连接，清理旧会话状态并观察远端所有者。
+// Begin registers this connection, preempts prior owners, and watches remote ownership. The caller runs the returned cleanup.
 func (s *Preemption) Begin(ctx context.Context, key PreemptKey) (context.Context, func(), bool, bool) {
 	preemptCtx, cancel := context.WithCancelCause(ctx)
 	ownerToken := uuid.NewString()
@@ -186,7 +186,7 @@ func (s *Preemption) Watch(ctx context.Context, key PreemptKey, ownerToken strin
 	return func() { once.Do(func() { close(stopCh) }) }
 }
 
-// IsSessionPreemptedError 保留普通及预热回退错误链的同一抢占判定。
+// IsSessionPreemptedError recognizes direct, wrapped, and prewarm fallback preemption errors.
 func IsSessionPreemptedError(err error) bool {
 	if err == nil {
 		return false

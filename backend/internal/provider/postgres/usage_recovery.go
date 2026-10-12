@@ -7,7 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ClearUsageErrorIfUnchanged 保留单条恢复 SQL 与提交后尽力 outbox，原子比较本轮观察身份和错误。
+// ClearUsageErrorIfUnchanged atomically matches the observed identity and error before recovery, then
+// attempts an outbox write.
 func (r *ProviderStore) ClearUsageErrorIfUnchanged(ctx context.Context, v provider.UsageRecoveryVersion) (bool, error) {
 	if v.Status != provider.StatusError {
 		return false, nil

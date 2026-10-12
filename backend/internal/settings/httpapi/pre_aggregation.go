@@ -32,7 +32,7 @@ type preAggregationBackfillRequest struct {
 	Days int `json:"days"`
 }
 
-// AggregationStatus 查询预聚合任务的运行状态。
+// AggregationStatus reads pre-aggregation task status.
 type AggregationStatus interface {
 	RuntimeStatus(context.Context) preaggregation.PreAggregationRuntimeStatus
 }
@@ -41,7 +41,7 @@ type UsageBackfill interface {
 	TriggerBackfill(time.Time, time.Time) error
 }
 
-// PreAggregationHandler 复用唯一设置控制器与运行任务，只承担 HTTP 映射。
+// PreAggregationHandler maps HTTP requests to the shared settings controller and running tasks.
 type PreAggregationHandler struct {
 	preAggregationSettings *preaggregation.PreAggregationSettingsService
 	dashboardAggregation   UsageBackfill
@@ -52,7 +52,7 @@ func NewPreAggregationHandler(settings *preaggregation.PreAggregationSettingsSer
 	return &PreAggregationHandler{preAggregationSettings: settings, dashboardAggregation: usage, opsAggregation: ops}
 }
 
-// GetPreAggregationSettings 返回统一设置、部署能力和任务运行状态。
+// GetPreAggregationSettings returns runtime settings, deployment availability, and task status.
 func (h *PreAggregationHandler) GetPreAggregationSettings(c *gin.Context) {
 	if h.preAggregationSettings == nil {
 		response.InternalError(c, "Pre-aggregation settings service not available")
@@ -61,7 +61,7 @@ func (h *PreAggregationHandler) GetPreAggregationSettings(c *gin.Context) {
 	response.Success(c, h.buildPreAggregationSettingsResponse(c))
 }
 
-// UpdatePreAggregationSettings 完整更新唯一的运行时预聚合配置。
+// UpdatePreAggregationSettings replaces the runtime pre-aggregation configuration.
 func (h *PreAggregationHandler) UpdatePreAggregationSettings(c *gin.Context) {
 	if h.preAggregationSettings == nil {
 		response.InternalError(c, "Pre-aggregation settings service not available")
@@ -92,7 +92,7 @@ func (h *PreAggregationHandler) UpdatePreAggregationSettings(c *gin.Context) {
 	response.Success(c, h.buildPreAggregationSettingsResponse(c))
 }
 
-// BackfillPreAggregation 按最近天数异步回填使用记录聚合。
+// BackfillPreAggregation requests an asynchronous usage backfill for the specified number of recent days.
 func (h *PreAggregationHandler) BackfillPreAggregation(c *gin.Context) {
 	if h.preAggregationSettings == nil || h.dashboardAggregation == nil {
 		response.InternalError(c, "Usage pre-aggregation service not available")

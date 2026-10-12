@@ -4,10 +4,10 @@ import (
 	"context"
 )
 
-// Observe 接收结构化组件和原日志内容，由 app 连接唯一日志后端。
+// Observe sends component names and formatted log events to the application's logger.
 type Observe func(component, format string, args ...any)
 
-// EligibilityOptions 是计费准入的独立运行参数。
+// EligibilityOptions contains billing admission runtime settings.
 type EligibilityOptions struct {
 	Dates   DateRuntime
 	Billing BillingOptions
@@ -23,7 +23,7 @@ type CircuitBreakerOptions struct {
 	HalfOpenRequests    int
 }
 
-// BalanceReader 查询用户权益快照，余额更新使用原子写入接口。
+// BalanceReader reads the user's balance and entitlement summary.
 type BalanceReader interface {
 	GetByID(context.Context, int64) (*UserSummary, error)
 }
@@ -31,7 +31,7 @@ type APIKeyRateLimitLoader interface {
 	GetRateLimitData(context.Context, int64) (*APIKeyRateLimitData, error)
 }
 
-// KeySnapshot 包含 Key 的消费准入字段。
+// KeySnapshot contains the Key fields needed for spending admission.
 type KeySnapshot struct {
 	ID          int64
 	BillingMode string
@@ -40,10 +40,10 @@ type KeySnapshot struct {
 	RateLimit7d float64
 }
 
-// GroupSnapshot 标识最终消费分组。
+// GroupSnapshot identifies the final group used for the request.
 type GroupSnapshot struct{ ID int64 }
 
-// CheckInput 包含付款人、Key 和分组的资金准入数据。
+// CheckInput contains the payer, Key, group, and subscription used for funding admission.
 type CheckInput struct {
 	Payer        *UserSummary
 	Key          *KeySnapshot

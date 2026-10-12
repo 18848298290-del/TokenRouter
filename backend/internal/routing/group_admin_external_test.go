@@ -37,14 +37,14 @@ type deleteGroupAPIKeyRepoStub struct {
 	listGroupIDs []int64
 }
 
-// groupModelsListProviderRepoStub 返回候选模型测试中的可调度提供商。
+// groupModelsListProviderRepoStub returns schedulable providers for catalog tests.
 type groupModelsListProviderRepoStub struct {
 	routing.GroupProviders
 	providers     []provider.Record
 	calledGroupID int64
 }
 
-// authCacheInvalidatorStub 记录管理操作提交后的缓存失效调用。
+// authCacheInvalidatorStub records invalidations after administrative commits.
 type authCacheInvalidatorStub struct {
 	groupIDs []int64
 	keys     []string
@@ -60,7 +60,7 @@ type groupRepoStubForInvalidRequestFallback struct {
 	updated *routing.Group
 }
 
-// groupPlatformRepoStub 为 UpdateGroup 提供读取和更新方法，其余方法来自内嵌接口。
+// groupPlatformRepoStub implements UpdateGroup reads and writes; unused methods come from the embedded interface.
 type groupPlatformRepoStub struct {
 	routing.GroupRepository
 
@@ -229,7 +229,8 @@ func TestAdminServiceGroupAdvancedSchedulerOverrides(t *testing.T) {
 	})
 }
 
-// TestAdminService_GetGroupModelsListCandidates_UsesConfiguredRequestModels 检查 OpenAI-compatible 分组的候选来自配置的请求模型。
+// TestAdminService_GetGroupModelsListCandidates_UsesConfiguredRequestModels checks candidates from configured
+// request IDs.
 func TestAdminService_GetGroupModelsListCandidates_UsesConfiguredRequestModels(t *testing.T) {
 	groupID := int64(10)
 	groupRepo := &groupRepoStubForAdmin{
@@ -262,7 +263,8 @@ func TestAdminService_GetGroupModelsListCandidates_UsesConfiguredRequestModels(t
 	require.Equal(t, []string{"claude-sonnet-4-6", "deepseek-v4-flash", "deepseek-v4-pro"}, models)
 }
 
-// TestGroupModelsListCandidatesApplyGroupMappingAndRestrictions 覆盖请求、分组映射和上游三个白名单阶段。
+// TestGroupModelsListCandidatesApplyGroupMappingAndRestrictions covers requested, group-mapped, and upstream
+// allowlist stages.
 func TestGroupModelsListCandidatesApplyGroupMappingAndRestrictions(t *testing.T) {
 	for _, stage := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		t.Run(stage, func(t *testing.T) {
@@ -294,7 +296,7 @@ func TestGroupModelsListCandidatesApplyGroupMappingAndRestrictions(t *testing.T)
 			} else {
 				require.ElementsMatch(t, append(append([]string{}, requested...), mapped...), models)
 			}
-			// 自定义列表筛选可请求的模型，已失效的上游名称会被排除。
+			// The custom list filters requestable IDs and excludes upstream names that are no longer valid requests.
 			group.ModelsListConfig = routing.GroupModelsListConfig{Enabled: true, Models: []string{"gemini-3.8-flash", "unavailable-alias"}}
 			models, err = svc.GetGroupModelsListCandidates(context.Background(), group.ID, "")
 			require.NoError(t, err)
@@ -303,7 +305,7 @@ func TestGroupModelsListCandidatesApplyGroupMappingAndRestrictions(t *testing.T)
 	}
 }
 
-// TestAdminServiceCustomModelsCannotInventUnsupportedModels 检查自定义模型缺少提供商支持时返回空列表。
+// TestAdminServiceCustomModelsCannotInventUnsupportedModels checks that custom IDs still require provider support.
 func TestAdminServiceCustomModelsCannotInventUnsupportedModels(t *testing.T) {
 	groupID := int64(12)
 	groupRepo := &groupRepoStubForAdmin{
@@ -334,7 +336,8 @@ func TestAdminServiceCustomModelsCannotInventUnsupportedModels(t *testing.T) {
 	require.Equal(t, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, models)
 }
 
-// TestAdminService_GetGroupModelsListCandidates_FiltersCustomModelsList 检查候选模型与自定义模型列表取交集。
+// TestAdminService_GetGroupModelsListCandidates_FiltersCustomModelsList checks the intersection with the
+// custom list.
 func TestAdminService_GetGroupModelsListCandidates_FiltersCustomModelsList(t *testing.T) {
 	groupID := int64(13)
 	groupRepo := &groupRepoStubForAdmin{
@@ -366,7 +369,8 @@ func TestAdminService_GetGroupModelsListCandidates_FiltersCustomModelsList(t *te
 	require.Equal(t, []string{"deepseek-v4-pro", "deepseek-v4-flash"}, models)
 }
 
-// TestAdminServiceGetGroupModelsListCandidatesKeepsEmptyIntersection 检查切换平台后的空模型交集。
+// TestAdminServiceGetGroupModelsListCandidatesKeepsEmptyIntersection checks that an empty candidate
+// intersection stays empty.
 func TestAdminServiceGetGroupModelsListCandidatesKeepsEmptyIntersection(t *testing.T) {
 	groupID := int64(14)
 	groupRepo := &groupRepoStubForAdmin{
@@ -398,7 +402,8 @@ func TestAdminServiceGetGroupModelsListCandidatesKeepsEmptyIntersection(t *testi
 	require.Empty(t, models)
 }
 
-// TestAdminService_GetGroupModelsListCandidates_FallsBackToPlatformDefaults 默认目录仍受分组协议限制。
+// TestAdminService_GetGroupModelsListCandidates_FallsBackToPlatformDefaults checks group protocol restrictions
+// on candidates.
 func TestAdminService_GetGroupModelsListCandidates_FallsBackToPlatformDefaults(t *testing.T) {
 	groupID := int64(11)
 	groupRepo := &groupRepoStubForAdmin{
@@ -460,7 +465,8 @@ func TestAdminService_CreateGroup_PreservesExplicitSortOrder(t *testing.T) {
 	require.Equal(t, 0, repo.listWithFiltersCalls)
 }
 
-// TestAdminService_UpdateGroup_OpenAIFastInvalidatesAuthCache 检查两个 Fast 字段更新后按分组失效认证缓存。
+// TestAdminService_UpdateGroup_OpenAIFastInvalidatesAuthCache checks group cache invalidation after Fast field
+// updates.
 func TestAdminService_UpdateGroup_OpenAIFastInvalidatesAuthCache(t *testing.T) {
 	existingGroup := &routing.Group{ID: 1, Name: "existing-fast", Status: billing.StatusActive}
 	repo := &groupRepoStubForAdmin{getByID: existingGroup}
@@ -500,7 +506,7 @@ func TestAdminService_UpdateGroup_InvalidatesAuthCacheOnRPMLimitChange(t *testin
 	require.Equal(t, []int64{1}, invalidator.groupIDs, "分组 RPMLimit 写入 auth snapshot，变更后必须失效 API Key 认证缓存")
 }
 
-// TestAdminGroupOpenAIFastPolicy 检查 Fast 策略优先于布尔输入，以及更新后的策略值和缓存失效。
+// TestAdminGroupOpenAIFastPolicy checks named-policy precedence, persisted values, and cache invalidation.
 func TestAdminGroupOpenAIFastPolicy(t *testing.T) {
 	for _, policy := range []string{"follow_request", "force_priority", "force_ultrafast", "force_off"} {
 		t.Run(policy, func(t *testing.T) {
@@ -531,7 +537,8 @@ func TestAdminGroupOpenAIFastPolicy(t *testing.T) {
 	}
 }
 
-// TestAdminServiceCreateGroupUsesUnifiedClientProtocolDefaults 验证新分组统一开放三个文本协议，非文本入口保持关闭。
+// TestAdminServiceCreateGroupUsesUnifiedClientProtocolDefaults checks the three default text entries and
+// closed non-text entries.
 func TestAdminServiceCreateGroupUsesUnifiedClientProtocolDefaults(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	group, err := newGroupAdminForTest(repo, nil, nil).CreateGroup(context.Background(), &routing.CreateGroupInput{Name: "mixed", RateMultiplier: 1})
@@ -734,7 +741,7 @@ func TestAdminServiceUpdateGroupPreservesExplicitEmptyClientProtocols(t *testing
 	require.Empty(t, group.AllowedProtocols)
 }
 
-// TestAdminServiceUpdateGroupPreservesAllConfiguredProtocols 验证更新名称或其他策略不会隐式修改客户端入口。
+// TestAdminServiceUpdateGroupPreservesAllConfiguredProtocols checks that unrelated updates retain client entries.
 func TestAdminServiceUpdateGroupPreservesAllConfiguredProtocols(t *testing.T) {
 	protocols := []protocol.ProtocolID{protocol.ProtocolAnthropicMessages, protocol.ProtocolOpenAIResponses, protocol.ProtocolGeminiGenerateContent, protocol.ProtocolImageBatches}
 	repo := &groupRepoStubForAdmin{getByID: &routing.Group{ID: 1, Name: "before", Status: billing.StatusActive, AllowedProtocols: protocols}}
@@ -855,7 +862,8 @@ func TestAdminService_CreateGroup_DisablesBatchImageWhenImageGenerationDisabled(
 	require.False(t, group.AllowBatchImageGeneration)
 }
 
-// TestAdminServiceCreateGroupAllowsExplicitBatchProtocol 检查各平台分组均可配置批量图片协议，提供商在创建任务时选择。
+// TestAdminServiceCreateGroupAllowsExplicitBatchProtocol checks group batch admission independently of
+// provider selection.
 func TestAdminServiceCreateGroupAllowsExplicitBatchProtocol(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	group, err := newGroupAdminForTest(repo, nil, nil).CreateGroup(context.Background(), &routing.CreateGroupInput{Name: "batch", RateMultiplier: 1, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolImageBatches}})
@@ -863,7 +871,8 @@ func TestAdminServiceCreateGroupAllowsExplicitBatchProtocol(t *testing.T) {
 	require.True(t, group.AllowBatchImageGeneration)
 }
 
-// TestAdminServiceCreateGroupPreservesFastPolicies 验证功能策略保存于分组，执行时仅由适用提供商使用。
+// TestAdminServiceCreateGroupPreservesFastPolicies checks stored group policies for applicable execution
+// providers.
 func TestAdminServiceCreateGroupPreservesFastPolicies(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	group, err := newGroupAdminForTest(repo, nil, nil).CreateGroup(context.Background(), &routing.CreateGroupInput{Name: "fast", RateMultiplier: 1, ForceOpenAIFast: true})
@@ -1514,7 +1523,8 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackAllowsAntigravity(t *tes
 	require.Equal(t, fallbackID, *repo.updated.FallbackGroupIDOnInvalidRequest)
 }
 
-// TestUpdateGroupDoesNotInvalidateIndependentPricingCache 检查更新分组名称和策略时的价格配置缓存失效次数。
+// TestUpdateGroupDoesNotInvalidateIndependentPricingCache checks pricing cache calls after group policy and
+// name updates.
 func TestUpdateGroupDoesNotInvalidateIndependentPricingCache(t *testing.T) {
 	repo := &groupPlatformRepoStub{group: &routing.Group{ID: 7, Name: "before"}}
 	spy := &pricingConfigCacheInvalidatorSpy{}
@@ -1525,7 +1535,8 @@ func TestUpdateGroupDoesNotInvalidateIndependentPricingCache(t *testing.T) {
 	require.Zero(t, spy.calls)
 }
 
-// TestUpdateGroupWithoutPricingConfigCacheInvalidator 检查缓存失效接口缺失时更新成功，缓存按 TTL 重建。
+// TestUpdateGroupWithoutPricingConfigCacheInvalidator checks successful updates when no pricing invalidator is
+// supplied.
 func TestUpdateGroupWithoutPricingConfigCacheInvalidator(t *testing.T) {
 	repo := &groupPlatformRepoStub{group: &routing.Group{ID: 7, Name: "g"}}
 	svc := newGroupAdminForTest(repo, nil, nil)
@@ -1535,7 +1546,8 @@ func TestUpdateGroupWithoutPricingConfigCacheInvalidator(t *testing.T) {
 	require.Equal(t, "g", got.Name)
 }
 
-// TestUpdateGroupDoesNotInvalidatePricingConfigCacheWhenUpdateFails 检查分组更新失败时的价格配置缓存失效次数。
+// TestUpdateGroupDoesNotInvalidatePricingConfigCacheWhenUpdateFails checks pricing cache calls after a failed
+// update.
 func TestUpdateGroupDoesNotInvalidatePricingConfigCacheWhenUpdateFails(t *testing.T) {
 	repo := &groupPlatformRepoStub{
 		group:     &routing.Group{ID: 7, Name: "g"},
@@ -1581,7 +1593,8 @@ func TestProtocolGroupPersistenceAndCacheIsolation(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpx.ErrorCode(err))
 }
 
-// TestGroupProtocolLegacyPatchDoesNotHideInvalidInput 检查协议集合校验先于媒体补丁，重复或未知的协议返回输入错误。
+// TestGroupProtocolLegacyPatchDoesNotHideInvalidInput checks that protocol validation precedes legacy media
+// patches.
 func TestGroupProtocolLegacyPatchDoesNotHideInvalidInput(t *testing.T) {
 	for _, protocols := range [][]protocol.ProtocolID{
 		{"unknown"},
@@ -1697,7 +1710,7 @@ func (s *groupModelsListProviderRepoStub) ListSchedulableByGroupID(_ context.Con
 	return gatewayprovider.CatalogueProviders(records), nil
 }
 
-// groupAdvancedSchedulerOverrideTestPointer 为可选的调度参数生成指针。
+// groupAdvancedSchedulerOverrideTestPointer creates optional scheduling values for tests.
 func groupAdvancedSchedulerOverrideTestPointer[T any](value T) *T { return &value }
 
 func (s *authCacheInvalidatorStub) InvalidateAuthCacheByGroupID(_ context.Context, id int64) {

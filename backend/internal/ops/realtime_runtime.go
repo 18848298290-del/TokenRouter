@@ -25,7 +25,7 @@ type opsWSQPSCache struct {
 	closed  bool
 }
 
-// RealtimeRuntime 持有按需采样和订阅统计，HTTP 只负责握手与帧。
+// RealtimeRuntime owns on-demand sampling and subscriber counts; HTTP handles handshakes and frames.
 type RealtimeRuntime struct {
 	cache              *opsWSQPSCache
 	wsConnCount        atomic.Int32
@@ -298,7 +298,7 @@ func (r *RealtimeRuntime) ReleaseIP(clientIP string) {
 	r.wsConnCountByIP[clientIP] = current - 1
 }
 
-// Stop 在 HTTP 请求完成后由 app 调用，取消延迟停机并等待按需刷新退出。
+// Stop cancels delayed shutdown and waits for sampling to exit after app finishes HTTP requests.
 func (r *RealtimeRuntime) Stop() {
 	r.qpsWSIdleStopMu.Lock()
 	r.qpsWSRuntimeClosed = true

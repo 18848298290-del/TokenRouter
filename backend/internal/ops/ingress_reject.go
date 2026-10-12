@@ -265,7 +265,7 @@ func (a *OpsIngressRejectAggregator) snapshotAndEnqueue(reset bool) {
 	a.enqueue(items)
 }
 
-// snapshotLocked 捕获计数器增量。reset 为 false 时维度键保留整分钟，周期刷新共用该分钟的预算。
+// snapshotLocked captures counter deltas. When reset is false, dimension keys retain the minute's shared budget across flushes.
 func (a *OpsIngressRejectAggregator) snapshotLocked(reset bool) []*OpsIngressRejectAggregate {
 	items := make([]*OpsIngressRejectAggregate, 0)
 	for i := range a.shards {

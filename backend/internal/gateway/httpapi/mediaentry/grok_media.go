@@ -23,7 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// grokVideoObserver 记录视频任务日志，media 判断完成资格并认领结算。
+// grokVideoObserver logs video task events; media checks completion eligibility and claims settlement.
 type grokVideoObserver struct{ log *zap.Logger }
 
 func (h *Runtime) resolveCompositeGrokVideoAPIKey(
@@ -53,7 +53,7 @@ func (h *Runtime) resolveCompositeGrokVideoAPIKey(
 	return &selected, owner.ProviderID, nil
 }
 
-// grokMediaRequiredCapability 返回新媒体生成请求的能力限制，状态查询使用任务绑定路由。
+// grokMediaRequiredCapability restricts generation requests. Status queries use the task-bound provider.
 func grokMediaRequiredCapability(endpoint grok.GrokMediaEndpoint) providercore.OpenAIEndpointCapability {
 	if endpoint.IsGenerationRequest() {
 		return providercore.OpenAIEndpointCapabilityGrokMediaGeneration
@@ -133,7 +133,7 @@ func recordGrokMediaUsage(
 	body []byte,
 	requestID string,
 ) {
-	// 没有转发结果时不存在可结算用量，也不能继续读取模型元数据。
+	// A missing result has no usage to settle or model metadata to read.
 	if result == nil {
 		return
 	}

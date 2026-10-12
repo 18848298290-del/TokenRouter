@@ -5,50 +5,50 @@ import (
 	"strings"
 )
 
-// PricingSource 定价来源标识。
+// Pricing source labels identify configured, catalog, and unavailable prices.
 const (
 	PricingSourceConfig   = "pricing_config"
 	PricingSourceCatalog  = "catalog"
 	PricingSourceUnpriced = "unpriced"
 )
 
-// ResolvedPricing 统一定价解析结果。
+// ResolvedPricing contains the effective billing mode, prices, and configuration.
 type ResolvedPricing struct {
-	// Mode 计费模式
+	// Mode selects the units used for billing.
 	Mode BillingMode
 
-	// Token 模式：模型目录或回退规则提供的基础定价。
+	// Base token prices supplied to resolution.
 	BasePricing *ModelPricing
 
-	// Token 模式：区间定价列表（如有，覆盖 BasePricing 中的对应字段）
+	// Token intervals override corresponding BasePricing fields.
 	Intervals []PricingInterval
 
-	// 按次/图片模式：分层定价
+	// Labeled or context-based prices for request and media billing.
 	RequestTiers []PricingInterval
 
-	// 按次/图片模式：默认价格（未命中层级时使用）
+	// Default unit price when no tier matches.
 	DefaultPerRequestPrice float64
-	// DefaultPerRequestPricePresent 区分明确的免费默认价与未配置。
+	// DefaultPerRequestPricePresent distinguishes an explicit free default from an omitted price.
 	DefaultPerRequestPricePresent bool `json:"-"`
 
-	// 来源标识
-	Source string // "pricing_config", "catalog", "fallback", "unpriced"
+	// Source identifies where the base prices were resolved.
+	Source string // "pricing_config", "catalog", or "unpriced"
 
-	// 是否支持缓存细分
+	// Whether cache writes support separate TTL prices.
 	SupportsCacheBreakdown bool
 
-	// 是否支持 service_tier（Fast/Flex）
+	// Whether service-tier pricing is supported.
 	SupportsServiceTier bool
 
-	// 价卡定价原始配置（用于区间模式下获取图片输出价格）
+	// The effective card, also used for image prices and modifiers during interval resolution.
 	ConfigPricing *ModelPricingEntry `json:"-"`
 
 	LongContextPricingEnabled bool `json:"-"`
-	// 空结构仍可承载倍率元数据，但不代表存在基础价；显式零单价不设置此标记。
+	// A placeholder may carry modifiers without base prices; explicit zero prices remain available.
 	BasePricingUnavailable bool `json:"-"`
 }
 
-// ApplyPricingModifiers 在独立副本上覆盖同名倍率；不创建基础价格，也不切换按次计费。
+// ApplyPricingModifiers overrides modifiers on a copy of existing token prices.
 func ApplyPricingModifiers(resolved *ResolvedPricing, config *ModelPricingEntry) {
 	if resolved == nil || resolved.Mode != BillingModeToken || config == nil || resolved.BasePricing == nil {
 		return
@@ -63,7 +63,7 @@ func ApplyPricingModifiers(resolved *ResolvedPricing, config *ModelPricingEntry)
 	if resolved.ConfigPricing != nil {
 		merged = resolved.ConfigPricing.Clone()
 	}
-	// 区间解析会再次读取这些元数据，因此同步覆盖其副本，避免旧价卡倍率覆盖分组值。
+	// Interval resolution rereads card metadata, so update the copied card along with base pricing.
 	if config.FastMultiplier != nil || config.FastModeMultiplier != nil {
 		merged.FastMultiplier = config.FastMultiplier
 		merged.FastModeMultiplier = config.FastModeMultiplier
@@ -89,19 +89,19 @@ func (r *ResolvedPricing) IsUnpriced() bool {
 	if r.Source == PricingSourceUnpriced {
 		return true
 	}
-	// 没有显式价卡时保留图片等独立价格回退；这里只阻止已配置但缺少基础价的倍率条目。
+	// With a configured token card, modifier-only data needs a base price; other paths may resolve media prices separately.
 	if r.Mode != BillingModeToken || r.ConfigPricing == nil || r.hasBaseTokenPricing() {
 		return false
 	}
 	return !slices.ContainsFunc(r.Intervals, PricingIntervalHasEffectiveTokenPricing)
 }
 
-// hasBaseTokenPricing 区分有效基础价（包含显式免费）与仅用于保存倍率的占位结构。
+// hasBaseTokenPricing distinguishes available prices, including free prices, from modifier placeholders.
 func (r *ResolvedPricing) hasBaseTokenPricing() bool {
 	return r != nil && r.BasePricing != nil && !r.BasePricingUnavailable
 }
 
-// tokenPricingForInterval 同时供结算和展示使用；没有基础价的纯倍率区间保持未定价。
+// tokenPricingForInterval serves settlement and display; modifier-only intervals without a base remain unpriced.
 func (r *ResolvedPricing) tokenPricingForInterval(interval *PricingInterval) *ModelPricing {
 	if r == nil {
 		return nil
@@ -124,23 +124,23 @@ func (r *ResolvedPricing) HasEffectivePricing() bool {
 	return r != nil && !r.IsUnpriced() && r.Source == PricingSourceConfig && r.ConfigPricing != nil && r.ConfigPricing.HasEffectivePricing()
 }
 
-// HasConfiguredPricing 识别实际参与解析的价卡，包括保留内置来源的纯倍率配置。
-// 媒体计费按此结果分流，不能把基础价格来源当成“是否配置价卡”的标志。
+// HasConfiguredPricing reports whether resolution used a card, including modifier-only cards with catalog base prices.
+// Media billing uses this result because Source alone does not indicate whether a card was configured.
 func (r *ResolvedPricing) HasConfiguredPricing() bool {
 	return r != nil && r.ConfigPricing != nil
 }
 
-// HasEffectiveOverridePricing 判断共享价格配置是否提供了显式价格，包括显式零价。
+// HasEffectiveOverridePricing reports whether effective configuration pricing exists, including explicit zero.
 func (r *ResolvedPricing) HasEffectiveOverridePricing() bool {
 	return r != nil && !r.IsUnpriced() && r.Source == PricingSourceConfig &&
 		r.ConfigPricing != nil && r.ConfigPricing.HasEffectivePricing()
 }
 
-// ApplyTokenOverrides 应用 token 模式的价卡覆盖。
+// ApplyTokenOverrides applies token-card defaults and intervals to resolved pricing.
 func ApplyTokenOverrides(chPricing *ModelPricingEntry, resolved *ResolvedPricing) {
-	// 过滤掉所有价格字段都为空的无效 interval
+	// Keep intervals with token prices or token multipliers.
 	validIntervals := FilterValidTokenIntervals(chPricing.Intervals)
-	// 配置独立的 1h 缓存写入价时，强制启用缓存 TTL 明细计费。
+	// An explicit 1h cache price enables TTL detail billing.
 	if chPricing.CacheWrite1hPrice != nil {
 		resolved.SupportsCacheBreakdown = true
 	}
@@ -151,9 +151,9 @@ func ApplyTokenOverrides(chPricing *ModelPricingEntry, resolved *ResolvedPricing
 		}
 	}
 
-	// 先把价卡默认单价覆盖到独立的基础价，再保存区间；区间留空字段、倍率及
-	// 未命中区间时都使用这份基础价，不能跳过默认单价而回退内置价或零价。
-	// 只有默认单价能建立基础价；区间单价仅在命中该区间时生效。
+	// Apply card defaults to an independent base before storing intervals. Missing interval buckets,
+	// interval multipliers, and requests outside intervals all use that base.
+	// Only default prices establish a base; interval prices apply when that interval matches.
 	baseConfig := *chPricing
 	baseConfig.Intervals = nil
 	resolved.BasePricingUnavailable = !resolved.hasBaseTokenPricing() && !HasExplicitPricingPrice(baseConfig)
@@ -161,7 +161,7 @@ func ApplyTokenOverrides(chPricing *ModelPricingEntry, resolved *ResolvedPricing
 	if resolved.BasePricing == nil {
 		resolved.BasePricing = &ModelPricing{}
 	} else {
-		// 防止修改 目录中的共享价格
+		// Keep shared catalog prices immutable.
 		cloned := *resolved.BasePricing
 		resolved.BasePricing = &cloned
 	}
@@ -175,8 +175,8 @@ func ApplyTokenOverrides(chPricing *ModelPricingEntry, resolved *ResolvedPricing
 	}
 }
 
-// applyConfigImagePriceOverrides 在基础价和每个阶梯中应用同一份图片价卡语义。
-// 图片输出未配置或显式为零时不计费；图片输入未配置或为零时回退该档文本输入价。
+// applyConfigImagePriceOverrides applies image-card rules to a base price or context tier.
+// Omitted or zero image output is free; omitted or zero image input uses that tier's text input price.
 func applyConfigImagePriceOverrides(pricing *ModelPricing, chPricing *ModelPricingEntry) {
 	pricing.ImageOutputPricePerToken = 0
 	if chPricing.ImageOutputPrice != nil {
@@ -190,7 +190,7 @@ func applyConfigImagePriceOverrides(pricing *ModelPricing, chPricing *ModelPrici
 	}
 }
 
-// ApplyRequestTierOverrides 应用按次/图片模式的价卡覆盖。
+// ApplyRequestTierOverrides applies request and media unit-price overrides.
 func ApplyRequestTierOverrides(chPricing *ModelPricingEntry, resolved *ResolvedPricing) {
 	resolved.RequestTiers = FilterValidRequestIntervals(chPricing.Intervals)
 	if chPricing.PerRequestPrice != nil {
@@ -199,8 +199,8 @@ func ApplyRequestTierOverrides(chPricing *ModelPricingEntry, resolved *ResolvedP
 	}
 }
 
-// ApplyResolvedPriceMultiplier 在价卡价覆盖完成后缩放最终价格。
-// 配置校验保证倍率只会与至少一个显式价格同时存在。
+// ApplyResolvedPriceMultiplier scales prices after card overrides.
+// Callers validate that a price multiplier accompanies an explicit price.
 func ApplyResolvedPriceMultiplier(resolved *ResolvedPricing, chPricing *ModelPricingEntry) {
 	multiplier, configured := NormalizedPriceMultiplier(chPricing)
 	if resolved == nil || !configured {
@@ -212,14 +212,14 @@ func ApplyResolvedPriceMultiplier(resolved *ResolvedPricing, chPricing *ModelPri
 	resolved.RequestTiers = MultiplyPricingIntervals(resolved.RequestTiers, multiplier)
 	resolved.DefaultPerRequestPrice *= multiplier
 
-	// 区间转模型价格时还会读取价卡级图片价格，因此保存一份同步缩放的副本。
+	// Interval conversion reads card-level image prices, so keep a correspondingly scaled card copy.
 	scaledConfigPricing := chPricing.Clone()
 	scaledConfigPricing.PriceMultiplier = nil
 	MultiplyPricingFields(&scaledConfigPricing, multiplier)
 	resolved.ConfigPricing = &scaledConfigPricing
 }
 
-// ApplyResolvedFastModeMultiplier 在普通价卡价完成覆盖和缩放后附加 Fast 计费倍率。
+// ApplyResolvedFastModeMultiplier adds Fast and Flex multipliers after standard prices are resolved and scaled.
 func ApplyResolvedFastModeMultiplier(resolved *ResolvedPricing, chPricing *ModelPricingEntry) {
 	if resolved == nil || resolved.Mode != BillingModeToken {
 		return
@@ -228,7 +228,7 @@ func ApplyResolvedFastModeMultiplier(resolved *ResolvedPricing, chPricing *Model
 	ApplyConfigFlexMultiplier(resolved.BasePricing, chPricing)
 }
 
-// NormalizedPriceMultiplier 返回可安全用于计费的倍率；未配置时不触发任何缩放。
+// NormalizedPriceMultiplier returns the multiplier and whether it was set, clamping negative values to zero.
 func NormalizedPriceMultiplier(pricing *ModelPricingEntry) (float64, bool) {
 	if pricing == nil || pricing.PriceMultiplier == nil {
 		return 1, false
@@ -239,7 +239,7 @@ func NormalizedPriceMultiplier(pricing *ModelPricingEntry) (float64, bool) {
 	return *pricing.PriceMultiplier, true
 }
 
-// MultiplyModelPricing 复制并缩放所有金额字段，不修改长上下文本身的倍率配置。
+// MultiplyModelPricing copies and scales amounts, retaining context thresholds and multiplier settings.
 func MultiplyModelPricing(pricing *ModelPricing, multiplier float64) *ModelPricing {
 	if pricing == nil {
 		return nil
@@ -264,7 +264,7 @@ func MultiplyModelPricing(pricing *ModelPricing, multiplier float64) *ModelPrici
 	return &scaled
 }
 
-// MultiplyPricingIntervals 返回独立的区间切片，并缩放其中所有价格字段。
+// MultiplyPricingIntervals copies the interval slice and scales its price fields.
 func MultiplyPricingIntervals(intervals []PricingInterval, multiplier float64) []PricingInterval {
 	if intervals == nil {
 		return nil
@@ -282,7 +282,7 @@ func MultiplyPricingIntervals(intervals []PricingInterval, multiplier float64) [
 	return scaled
 }
 
-// MultiplyPricingFields 缩放价卡配置副本中的显式价格字段。
+// MultiplyPricingFields replaces a card's explicit prices with scaled copies.
 func MultiplyPricingFields(pricing *ModelPricingEntry, multiplier float64) {
 	if pricing == nil {
 		return
@@ -306,9 +306,9 @@ func MultiplyPricePointer(price *float64, multiplier float64) *float64 {
 	return &scaled
 }
 
-// FilterValidTokenIntervals 过滤掉 token 模式下没有 token 价格字段的无效 interval。
-// 前端可能创建了只有 min/max 但无价格的空 interval；mode 切换后残留的
-// per_request 字段也不能让 token 计费误判为有效区间。
+// FilterValidTokenIntervals keeps intervals with token prices or token multipliers.
+// Empty editor intervals and per_request-only fields left after a mode change
+// do not constitute token pricing.
 func FilterValidTokenIntervals(intervals []PricingInterval) []PricingInterval {
 	var valid []PricingInterval
 	for _, iv := range intervals {
@@ -322,7 +322,7 @@ func FilterValidTokenIntervals(intervals []PricingInterval) []PricingInterval {
 	return valid
 }
 
-// FilterValidRequestIntervals 过滤掉 per_request / image 模式下没有按次价格的无效 interval。
+// FilterValidRequestIntervals keeps request and media tiers with an explicit per-request price.
 func FilterValidRequestIntervals(intervals []PricingInterval) []PricingInterval {
 	var valid []PricingInterval
 	for _, iv := range intervals {
@@ -333,13 +333,13 @@ func FilterValidRequestIntervals(intervals []PricingInterval) []PricingInterval 
 	return valid
 }
 
-// GetIntervalPricing 根据 context token 数获取区间定价。
-// 如果有区间列表，找到匹配区间并构造 ModelPricing；否则直接返回 BasePricing。
+// GetIntervalPricing selects prices for the supplied context token count.
+// A matching interval overrides the base; no match uses available base pricing.
 func GetIntervalPricing(resolved *ResolvedPricing, totalContextTokens int) *ModelPricing {
 	return resolved.tokenPricingForInterval(FindMatchingInterval(resolved.Intervals, totalContextTokens))
 }
 
-// IntervalToModelPricingWithBase 将区间价转换为模型价，未配置的字段按基础价格回退。
+// IntervalToModelPricingWithBase converts an interval to model prices, inheriting unspecified fields from base.
 func IntervalToModelPricingWithBase(iv *PricingInterval, supportsCacheBreakdown bool, chPricing *ModelPricingEntry, base *ModelPricing) *ModelPricing {
 	if iv == nil {
 		return base
@@ -351,8 +351,8 @@ func IntervalToModelPricingWithBase(iv *PricingInterval, supportsCacheBreakdown 
 		cloned := *base
 		pricing = &cloned
 		pricing.SupportsCacheBreakdown = supportsCacheBreakdown
-		// 区间价本身已经表达上下文分段；不要把模型文件里的长上下文
-		// 阈值再次带入展示或后续计算。
+		// The explicit interval already defines the context range; clear built-in long-context
+		// multipliers so display and billing do not apply another threshold rule.
 		pricing.LongContextInputThreshold = 0
 		pricing.LongContextInputMultiplier = 0
 		pricing.LongContextOutputMultiplier = 0
@@ -380,7 +380,7 @@ func IntervalToModelPricingWithBase(iv *PricingInterval, supportsCacheBreakdown 
 		pricing.CacheCreationPriceExplicit = true
 		pricing.CacheCreation5mPrice = *iv.CacheWritePrice
 		if iv.CacheWrite1hPrice == nil {
-			// 兼容旧配置：只有 cache_write_price 时两种 TTL 使用同一单价。
+			// A cache_write_price override covers both TTLs when no separate 1h override is supplied.
 			pricing.CacheCreation1hPrice = *iv.CacheWritePrice
 		}
 	} else if iv.CacheWriteMultiplier != nil {
@@ -401,7 +401,7 @@ func IntervalToModelPricingWithBase(iv *PricingInterval, supportsCacheBreakdown 
 		pricing.CacheReadPricePerToken *= *iv.CacheReadMultiplier
 		pricing.CacheReadPricePerTokenPriority *= *iv.CacheReadMultiplier
 	}
-	// 价卡定价存在时显式覆盖图片输出价格；图片输入价格沿用价卡级配置，区间本身不携带该字段。
+	// Image input/output overrides come from the card because intervals have no image-price fields.
 	if chPricing != nil {
 		applyConfigImagePriceOverrides(pricing, chPricing)
 		ApplyConfigFastModeMultiplier(pricing, chPricing)
@@ -410,7 +410,7 @@ func IntervalToModelPricingWithBase(iv *PricingInterval, supportsCacheBreakdown 
 	return pricing
 }
 
-// GetRequestTierPrice 根据层级标签获取按次价格。
+// GetRequestTierPrice returns a labeled unit price, or zero if no tier matches.
 func GetRequestTierPrice(resolved *ResolvedPricing, tierLabel string) float64 {
 	price, ok := GetRequestTierPriceValue(resolved, tierLabel)
 	if !ok {
@@ -432,7 +432,7 @@ func GetRequestTierPriceValue(resolved *ResolvedPricing, tierLabel string) (floa
 	return 0, false
 }
 
-// GetRequestTierPriceByContext 根据 context token 数获取按次价格。
+// GetRequestTierPriceByContext returns an unlabeled context-tier price, or zero if no tier matches.
 func GetRequestTierPriceByContext(resolved *ResolvedPricing, totalContextTokens int) float64 {
 	price, ok := GetRequestTierPriceByContextValue(resolved, totalContextTokens)
 	if !ok {
@@ -441,7 +441,7 @@ func GetRequestTierPriceByContext(resolved *ResolvedPricing, totalContextTokens 
 	return price
 }
 
-// GetRequestTierPriceByContextValue 匹配未设置标签的上下文区间。
+// GetRequestTierPriceByContextValue matches context intervals with no label and reports price presence.
 func GetRequestTierPriceByContextValue(resolved *ResolvedPricing, totalContextTokens int) (float64, bool) {
 	if resolved == nil {
 		return 0, false
@@ -457,7 +457,7 @@ func GetRequestTierPriceByContextValue(resolved *ResolvedPricing, totalContextTo
 	return 0, false
 }
 
-// ResolveRequestUnitPrice 统一按次标签、上下文区间和默认价；未知上下文不能投影成固定单价。
+// ResolveRequestUnitPrice tries label, context interval, then default; unknown context requires a fixed price.
 func ResolveRequestUnitPrice(resolved *ResolvedPricing, label string, totalContext *int) (float64, bool) {
 	if resolved == nil {
 		return 0, false
@@ -477,7 +477,7 @@ func ResolveRequestUnitPrice(resolved *ResolvedPricing, label string, totalConte
 			if strings.TrimSpace(iv.TierLabel) != "" || iv.PerRequestPrice == nil {
 				continue
 			}
-			// 所有上下文价与明确默认价相同才可固定报价，包含整张价卡免费。
+			// A fixed quote requires every context price to equal the explicit default, including a free card.
 			if !hasDefault || *iv.PerRequestPrice != resolved.DefaultPerRequestPrice {
 				return 0, false
 			}
@@ -489,8 +489,8 @@ func ResolveRequestUnitPrice(resolved *ResolvedPricing, label string, totalConte
 	return 0, false
 }
 
-// HasExplicitPricingPrice 判断是否配置了实际价格，不把层级倍率当作基础价格。
-// 这样 price_multiplier 与旧版 fast_mode_multiplier 仍不能单独改变默认定价。
+// HasExplicitPricingPrice reports supplied price amounts, including zero, independently of tier multipliers.
+// A price_multiplier or legacy fast_mode_multiplier alone does not supply a base price.
 func HasExplicitPricingPrice(p ModelPricingEntry) bool {
 	mode := p.BillingMode
 	if mode == "" {
@@ -519,17 +519,17 @@ func HasExplicitPricingPrice(p ModelPricingEntry) bool {
 	return false
 }
 
-// NormalizePriceModelName 只处理查询大小写与首尾空白，保留完整型号。
+// NormalizePriceModelName normalizes case and surrounding whitespace while retaining the full model name.
 func NormalizePriceModelName(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
-// ApplyConfigPrice 在价格副本上应用价卡覆盖，图片价格可为 nil。
+// ApplyConfigPrice applies card overrides to a copy of pricing; pricing must be non-nil when a card is supplied.
 func ApplyConfigPrice(pricing *ModelPricing, configPricing *ModelPricingEntry) *ModelPricing {
 	if configPricing == nil {
 		return pricing
 	}
-	// 复制目录价格后应用覆盖值。
+	// Copy before overriding shared catalog prices.
 	cloned := *pricing
 	pricing = &cloned
 	ApplyConfigTokenPriceOverrides(pricing, configPricing)

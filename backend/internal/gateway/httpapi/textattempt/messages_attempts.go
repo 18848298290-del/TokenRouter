@@ -28,7 +28,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// messageAttemptBridge 适配 Messages 单次尝试，异步完成仅捕获 completion.Input。
+// messageAttemptBridge adapts one Messages attempt and captures completion.Input before asynchronous recording.
 type messageAttemptBridge struct {
 	fixed                                          *messageExecutionDependencies
 	c                                              *gin.Context
@@ -52,7 +52,7 @@ type messageAttemptBridge struct {
 	result                                         *forwardcore.MessagesResult
 }
 
-// PrepareAttempt 准备当前尝试的模型和请求体。
+// PrepareAttempt resolves the model and body for the current attempt.
 func (b *messageAttemptBridge) PrepareAttempt() bool {
 	var err error
 	b.attemptParsedReq, b.attemptGroupMapping, err = b.binding().prepareGatewayAttemptRequest(
@@ -66,9 +66,8 @@ func (b *messageAttemptBridge) PrepareAttempt() bool {
 	return true
 }
 
-// Select 选择支持请求模型的提供商。
+// Select chooses a provider that supports the requested model.
 func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
-	// 选择支持该模型的提供商
 	b.reqLog.Info("sticky.selecting_provider",
 		zap.String("session_key", b.sessionKey),
 		zap.Int64("sticky_bound_provider_id", b.sessionBoundProviderID),
@@ -86,7 +85,6 @@ func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Sel
 		b.binding().trackSession(b.sessionAttempts, b.provider, b.sessionKey)
 	}
 
-	// [DEBUG-STICKY] 打印提供商选择结果
 	b.reqLog.Info("sticky.provider_selected",
 		zap.Int64("selected_provider_id", b.provider.Record.ID),
 		zap.String("provider_name", b.provider.Record.Name),
@@ -99,7 +97,7 @@ func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Sel
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure 将首次选择失败转换为客户端错误。
+// FirstSelectionFailure converts initial selection failure into a client error.
 func (b *messageAttemptBridge) FirstSelectionFailure(err error, fallbackUsed bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().handleStreamingAwareError(b.c, status, errType, message, responseStarted)
@@ -125,7 +123,7 @@ func (b *messageAttemptBridge) FirstSelectionFailure(err error, fallbackUsed boo
 	b.binding().handleStreamingAwareError(b.c, cls.Status, cls.ErrType, message, *b.streamStarted)
 }
 
-// Intercept 识别并直接响应 warmup 请求。
+// Intercept directly answers recognized warmup requests when interception is enabled.
 func (b *messageAttemptBridge) Intercept() bool {
 	if b.provider.View().IsInterceptWarmupEnabled() {
 		interceptType := clientmeta.DetectInterceptType(b.body, b.reqModel, b.parsedReq.MaxTokens, b.isClaudeCodeClient)
@@ -145,9 +143,9 @@ func (b *messageAttemptBridge) Intercept() bool {
 	return false
 }
 
-// Acquire 取得提供商槽位，等待成功后绑定粘性会话。
+// Acquire acquires a provider slot and binds the sticky session after a successful wait.
 func (b *messageAttemptBridge) Acquire() bool {
-	// 3. 获取提供商并发槽位
+	// Reuse the selection's slot or wait according to its plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -197,7 +195,7 @@ func (b *messageAttemptBridge) Acquire() bool {
 			b.binding().handleConcurrencyError(b.c, err, "provider", *b.streamStarted)
 			return false
 		}
-		// Slot acquired: no longer waiting in queue.
+		// Stop counting this request as waiting once its slot is acquired.
 		releaseWait()
 		b.reqLog.Info("sticky.bind_after_wait",
 			zap.String("session_key", b.sessionKey),
@@ -207,23 +205,23 @@ func (b *messageAttemptBridge) Acquire() bool {
 			b.reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
-	// 提供商槽位/等待计数需要在超时或断开时安全回收
+	// Release the provider slot when the request times out or disconnects.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 	b.sessionAttempts.Own(b.provider.Record.ID, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward 应用消息队列和兼容策略，再向所选平台转发请求。
+// Forward applies queue and compatibility policies before dispatching to the selected platform.
 func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Outcome {
 	var err error
-	// 用户消息串行队列开始。
+	// Queue mode determines whether to serialize or apply a soft RPM delay.
 	var queueRelease func()
 	umqMode := b.binding().getUserMsgQueueMode(b.provider, b.attemptParsedReq)
 
 	switch umqMode {
 	case queuepolicy.MessageQueueSerialize:
-		// 串行模式：获取锁 + RPM 延迟 + 释放（当前行为不变）
+		// Serialize requests under a lease and apply the provider's RPM delay.
 		baseRPM := gatewaycapture.ExecutionRuntimeConfig(b.provider).GetBaseRPM()
 		release, qErr := b.binding().userMsgQueueHelper.AcquireWithWait(
 			b.c, b.provider.Record.ID, baseRPM, b.reqStream, b.streamStarted,
@@ -231,7 +229,7 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 			b.reqLog,
 		)
 		if qErr != nil {
-			// fail-open: 记录 warn，不阻止请求
+			// Queue acquisition failures are logged and allow forwarding to proceed.
 			b.reqLog.Warn("gateway.umq_acquire_failed",
 				zap.Int64("provider_id", b.provider.Record.ID),
 				zap.Error(qErr),
@@ -241,7 +239,7 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		}
 
 	case queuepolicy.MessageQueueThrottle:
-		// 按 RPM 添加自适应延迟，并发槽位继续按并发限制管理。
+		// Apply an RPM-based delay while concurrency slots remain independently limited.
 		baseRPM := gatewaycapture.ExecutionRuntimeConfig(b.provider).GetBaseRPM()
 		if tErr := b.binding().userMsgQueueHelper.ThrottleWithPing(
 			b.c, b.provider.Record.ID, baseRPM, b.reqStream, b.streamStarted,
@@ -263,21 +261,19 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		}
 	}
 
-	// context 取消时自动释放串行锁，queueRelease 由 serialize 模式创建。
+	// Release the serial lease on cancellation when serialize mode created one.
 	queueRelease = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, queueRelease)
 	b.sessionAttempts.Own(b.provider.Record.ID, queueRelease)
-	// 注入回调到 ParsedRequest：使用外层 wrapper 以便提前清理 AfterFunc
+	// Use the wrapped release callback so upstream acceptance also unregisters cancellation cleanup.
 	b.attemptParsedReq.OnUpstreamAccepted = queueRelease
-	// 用户消息串行队列结束。
 
-	// Bedrock CC 兼容：清理 body 专有字段 + 过滤 anthropic-beta header，适用于所有转发路径
+	// Apply Bedrock body-field and anthropic-beta filtering before either forwarding path.
 	if err := b.attemptParsedReq.ReplaceBody(b.binding().bedrockCompat(b.c, b.attemptParsedReq.Body.Bytes(), b.attemptParsedReq.Model, b.provider, b.currentAPIKey.GroupID)); err != nil {
 		b.binding().errorResponse(b.c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return textflow.Outcome{Stop: true}
 	}
 	attemptBody := b.attemptParsedReq.Body.Bytes()
 
-	// 转发请求 - 根据提供商平台分流
 	b.c.Set("parsed_request", b.attemptParsedReq)
 
 	requestCtx := b.c.Request.Context()
@@ -285,12 +281,12 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
 	if state.ForceCacheBilling {
-		// 将故障转移后的缓存计费标记传给同步响应改写函数。
+		// Pass the failover cache-billing flag to synchronous response rewriting.
 		requestCtx = requeststate.WithForceCacheBilling(requestCtx)
-		// 分组回退会重建提供商尝试状态，请求 context 保存已触发的计费策略直至完成。
+		// Group fallback rebuilds attempts, so retain the triggered billing policy in the request context.
 		b.c.Request = b.c.Request.WithContext(requestCtx)
 	}
-	// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
+	// Compare writer size after forwarding to prevent failover once output has been sent.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	if b.provider.Record.Platform == capability.PlatformAntigravity {
 		b.result, err = b.binding().forwardAntigravity(requestCtx, b.c, b.provider, attemptBody, b.hasBoundSession)
@@ -298,11 +294,11 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		b.result, err = b.binding().forwardMessages(requestCtx, b.c, b.provider, b.attemptParsedReq)
 	}
 
-	// 释放尚未由回调释放的串行锁。
+	// Release a serial lease that the acceptance callback has not already released.
 	if queueRelease != nil {
 		queueRelease()
 	}
-	// 清理回调引用，防止 failover 重试时旧回调被错误调用
+	// Clear the callback so a later failover attempt cannot invoke the previous lease's callback.
 	b.attemptParsedReq.OnUpstreamAccepted = nil
 
 	if b.providerReleaseFunc != nil {
@@ -327,7 +323,7 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 	return out
 }
 
-// Complete 捕获用量和请求数据并提交完成任务。
+// Complete captures usage and request data and submits completion work.
 func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 	usageResult := b.result
 
@@ -352,11 +348,11 @@ func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 		usageResult.ReasoningEffort = gatewaycapture.DefaultEffortForThinkingEnabled(protocolModel)
 	}
 
-	// 完成任务捕获 ForceCacheBilling 的布尔值，failover 响应体可随请求释放。
+	// Capture the cache-billing flag by value so completion does not retain the failover body.
 	forceCacheBilling := state.ForceCacheBilling || requeststate.IsForceCacheBilling(b.Context())
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
+	// Capture funding and request data before queueing so the worker uses this snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: usageResult,
 
@@ -392,7 +388,7 @@ func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 	})
 }
 
-// OtherFailure 补充尚未输出的客户端错误并记录失败日志。
+// OtherFailure writes any missing client error and logs the forwarding failure.
 func (b *messageAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
@@ -420,22 +416,22 @@ func (b *messageAttemptBridge) OtherFailure(err error) {
 	b.reqLog.Error("gateway.forward_failed", forwardFailedFields...)
 }
 
-// Success 增加 RPM 计数并更新粘性会话。
+// Success increments applicable RPM counters and updates sticky-session bindings.
 func (b *messageAttemptBridge) Success() {
-	// RPM 计数递增（Forward 成功后）
-	// 注意：TOCTOU 竞态是已知且可接受的设计权衡，与 WindowCost 一致的 soft-limit 模式。
-	// 在高并发下可能短暂超出 RPM 限制，但不会导致请求失败。
+	// Count successful forwarding toward the provider's soft RPM limit.
+	// Selection and increment are separate, so concurrent requests can temporarily exceed the limit.
+	// A counter-write failure is logged after the response has succeeded.
 	if b.provider.View().IsAnthropicOAuthOrSetupToken() && gatewaycapture.ExecutionRuntimeConfig(b.provider).GetBaseRPM() > 0 {
 		if err := b.binding().incrementRPM(b.c.Request.Context(), b.provider.Record.ID); err != nil {
 			b.reqLog.Warn("gateway.rpm_increment_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
 
-	// 绑定粘性会话（成功转发后绑定/刷新）
-	// - 无现有绑定（首次请求）：创建绑定
-	// - 选中提供商与粘性提供商一致：刷新 TTL
-	// - 粘性提供商因负载/RPM 被跳过、选中了其他提供商：不覆盖原绑定，
-	//   下次请求粘性提供商恢复后仍可命中
+	// Create or refresh a sticky binding after successful forwarding.
+	// A first request creates the binding.
+	// Selecting the bound provider refreshes its TTL.
+	// When load or RPM sends the request elsewhere, keep the existing binding
+	// so later requests can return to that provider after it recovers.
 	if b.sessionKey != "" && (b.sessionBoundProviderID == 0 || b.sessionBoundProviderID == b.provider.Record.ID) {
 		if err := b.binding().bindSticky(b.c.Request.Context(), b.currentAPIKey.GroupID, b.sessionKey, b.provider.Record.ID); err != nil {
 			b.reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))

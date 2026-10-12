@@ -10,7 +10,7 @@ import (
 	anthropicredis "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/rediscache"
 )
 
-// upstreamAssemblyProviders 汇总上游客户端的 Wire provider。
+// upstreamAssemblyProviders groups upstream client Wire providers.
 var upstreamAssemblyProviders = wire.NewSet(
 	wire.Bind(new(httpclient.UpstreamTransport), new(*gatewaytransport.Client)),
 	upstreamClientProviders,

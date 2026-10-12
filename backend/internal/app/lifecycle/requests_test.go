@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRequestsWaitIncludesHandlerTail 检查 handler 完成尾部清理后才关闭依赖资源。
+// TestRequestsWaitIncludesHandlerTail checks that dependencies stay open until handler cleanup finishes.
 func TestRequestsWaitIncludesHandlerTail(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -51,7 +51,8 @@ func TestRequestsWaitIncludesHandlerTail(t *testing.T) {
 	require.NoError(t, <-served)
 }
 
-// TestRequestsCloseHijackedConnectionsBeforeWaiting 检查 ResponseWriter 原样传给 handler，并主动关闭 hijack 连接触发清理。
+// TestRequestsCloseHijackedConnectionsBeforeWaiting checks ResponseWriter passthrough and active closure of
+// hijacked connections.
 func TestRequestsCloseHijackedConnectionsBeforeWaiting(t *testing.T) {
 	address := make(chan string, 1)
 	hijacked := make(chan struct{})
@@ -93,7 +94,7 @@ func TestRequestsCloseHijackedConnectionsBeforeWaiting(t *testing.T) {
 	require.NoError(t, manager.Stop(stopCtx))
 }
 
-// TestRequestsCloseLateHijack 检查关闭快照取得后升级的连接由 ConnState 关闭。
+// TestRequestsCloseLateHijack checks that ConnState closes connections hijacked after the shutdown snapshot.
 func TestRequestsCloseLateHijack(t *testing.T) {
 	manager := New()
 	server := &http.Server{}

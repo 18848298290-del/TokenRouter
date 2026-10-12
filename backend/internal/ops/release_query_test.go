@@ -58,15 +58,15 @@ func newRollbackTestService(current string, releases []*GitHubRelease) *ReleaseQ
 
 func TestUpdateServiceListRollbackVersionsFiltersAndCaps(t *testing.T) {
 	releases := []*GitHubRelease{
-		{TagName: "v0.1.148", PublishedAt: "2026-07-09T00:00:00Z"},                       // 新于当前版本，排除。
-		{TagName: "v0.1.147", PublishedAt: "2026-07-08T00:00:00Z"},                       // 当前版本，排除。
-		{TagName: "v0.1.146-rc1", PublishedAt: "2026-07-07T12:00:00Z", Prerelease: true}, // 预发布版本，排除。
+		{TagName: "v0.1.148", PublishedAt: "2026-07-09T00:00:00Z"},                       // Exclude versions newer than the current version.
+		{TagName: "v0.1.147", PublishedAt: "2026-07-08T00:00:00Z"},                       // Exclude the current version.
+		{TagName: "v0.1.146-rc1", PublishedAt: "2026-07-07T12:00:00Z", Prerelease: true}, // Exclude prereleases.
 		{TagName: "v0.1.146", PublishedAt: "2026-07-07T00:00:00Z"},
-		{TagName: "v0.1.145", PublishedAt: "2026-07-06T00:00:00Z", Draft: true}, // 草稿，排除。
+		{TagName: "v0.1.145", PublishedAt: "2026-07-06T00:00:00Z", Draft: true}, // Exclude drafts.
 		{TagName: "v0.1.144", PublishedAt: "2026-07-05T00:00:00Z"},
-		{TagName: "v0.1.144", PublishedAt: "2026-07-05T00:00:00Z"}, // 重复版本，排除。
+		{TagName: "v0.1.144", PublishedAt: "2026-07-05T00:00:00Z"}, // Exclude duplicate versions.
 		{TagName: "v0.1.143", PublishedAt: "2026-07-04T00:00:00Z"},
-		{TagName: "v0.1.142", PublishedAt: "2026-07-03T00:00:00Z"}, // 超过 3 个版本上限，排除。
+		{TagName: "v0.1.142", PublishedAt: "2026-07-03T00:00:00Z"}, // Exclude entries beyond the three-version limit.
 	}
 	svc := newRollbackTestService("0.1.147", releases)
 

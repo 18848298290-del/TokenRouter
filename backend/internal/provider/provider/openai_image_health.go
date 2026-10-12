@@ -29,7 +29,8 @@ func openAIImageResetAt(headers http.Header, body []byte) time.Time {
 	return now.Add(time.Minute)
 }
 
-// ObserveOpenAIImageRateLimit 在提供商规则允许后才解析重置观测，保留日志和取时顺序。
+// ObserveOpenAIImageRateLimit parses reset signals when provider health rules permit an image-limit
+// observation.
 func ObserveOpenAIImageRateLimit(ctx context.Context, health *provider.HealthService, value *provider.Record, status int, headers http.Header, body []byte) bool {
 	return health.ApplyImageRateLimit(ctx, value, status, func() (bool, time.Time) {
 		if !openai.IsImageRateLimitError(status, body) {
@@ -39,7 +40,7 @@ func ObserveOpenAIImageRateLimit(ctx context.Context, health *provider.HealthSer
 	})
 }
 
-// ObserveOpenAIImageCapabilityLoss 仅把供应商能力拒绝观测传给提供商状态规则。
+// ObserveOpenAIImageCapabilityLoss passes a classified capability denial to provider health rules.
 func ObserveOpenAIImageCapabilityLoss(ctx context.Context, health *provider.HealthService, value *provider.Record, status int, body []byte) bool {
 	return health.ApplyImageCapabilityLoss(ctx, value, status, openai.IsImageCapabilityLossError(status, body))
 }

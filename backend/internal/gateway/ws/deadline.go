@@ -14,7 +14,7 @@ const (
 	deadlinePhaseFirstSemantic deadlinePhase = iota + 1
 	deadlinePhaseActiveRead
 
-	// TextFrame 是 WebSocket 文本帧的类型编号。
+	// TextFrame is the WebSocket text-frame type number.
 	TextFrame = 1
 )
 
@@ -23,7 +23,7 @@ var (
 	ErrActiveTurnTimeout  = errors.New("openai websocket passthrough active turn read timeout")
 )
 
-// FrameConn 提供同步读写和关闭，具体协议连接属于 Adapter。
+// FrameConn provides synchronous frame I/O and closure; adapters own the protocol connection.
 type FrameConn interface {
 	ReadFrame(context.Context) (int, []byte, error)
 	WriteFrame(context.Context, int, []byte) error
@@ -80,7 +80,7 @@ func (e *ActiveTurnTimeoutError) Unwrap() error {
 	return ErrActiveTurnTimeout
 }
 
-// NewDeadlineConn 为会话设置首内容输出和活跃读取超时，turn 空闲时暂停计时。
+// NewDeadlineConn applies first-output and active-read timeouts, with no timer between turns.
 func NewDeadlineConn(inner FrameConn, activeReadTimeout time.Duration, resolve func([]byte) Deadline, closedError error) *DeadlineConn {
 	return &DeadlineConn{inner: inner, activeReadTimeout: activeReadTimeout, resolveDeadline: resolve, closedError: closedError, deadlineChanged: make(chan struct{}, 1)}
 }
@@ -313,7 +313,7 @@ func IsTerminalOutput(payload []byte) bool {
 	}
 }
 
-// connectionClosedError 保持空连接也返回错误，旧调用方注入原错误身份。
+// connectionClosedError returns the injected error when available, including for a missing inner connection.
 func (c *DeadlineConn) connectionClosedError() error {
 	if c != nil && c.closedError != nil {
 		return c.closedError

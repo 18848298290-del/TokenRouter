@@ -26,14 +26,14 @@ func TestOllamaCloudUsageIsAutoRefreshDue(t *testing.T) {
 	require.False(t, OllamaCloudUsageIsAutoRefreshDue(okSnap, ptr(now.Add(-30*time.Second)), now, debounce, maxWait), "debounce not elapsed")
 	require.True(t, OllamaCloudUsageIsAutoRefreshDue(okSnap, ptr(now.Add(-time.Minute)), now, debounce, maxWait), "single request quiet for debounce")
 
-	// 请求持续到达时，即使刚刚使用，旧刷新时间对应的最大等待也会强制到期。
+	// Continuous requests still become due when the maximum wait since the last fetch expires.
 	oldFetched := now.Add(-2 * time.Hour)
 	oldSnap := &OllamaCloudUsageSnapshot{
 		Status: OllamaCloudUsageStatusOK, FetchedAt: ptr(oldFetched),
 		LastAttemptAt: oldFetched, NextRefreshAt: oldFetched.Add(maxWait),
 	}
 	require.True(t, OllamaCloudUsageIsAutoRefreshDue(oldSnap, ptr(now), now, debounce, maxWait), "max-wait forces due while requests continue")
-	// 快照很旧时，首次请求因 fetched+maxWait 已过而立即到期。
+	// The first request after a stale snapshot is immediately due once fetchedAt+maxWait has passed.
 	require.True(t, OllamaCloudUsageIsAutoRefreshDue(oldSnap, ptr(now.Add(-time.Second)), now, debounce, maxWait), "stale snapshot first request immediate")
 
 	failSnap := &OllamaCloudUsageSnapshot{
@@ -50,15 +50,16 @@ func TestOllamaCloudUsageIsAutoRefreshDue(t *testing.T) {
 	}, nil, now, debounce, maxWait), "ok without fetched_at fails open")
 }
 
-// TestOllamaCloudUsageAutoRefreshDueAtHonoursMinFetchInterval 检查请求活动触发的刷新遵守最小抓取间隔。
-// 最大等待时间到期时，刷新立即执行。
+// TestOllamaCloudUsageAutoRefreshDueAtHonoursMinFetchInterval checks the minimum interval between successful
+// fetches.
+// A stale snapshot is due once the maximum wait has elapsed and new activity exists.
 func TestOllamaCloudUsageAutoRefreshDueAtHonoursMinFetchInterval(t *testing.T) {
 	debounce := time.Minute
 	maxWait := time.Hour
 	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	ptr := func(ts time.Time) *time.Time { return &ts }
 
-	// 防抖期已经结束，但最近一次成功抓取仍在最小间隔内。
+	// Debounce has elapsed, but the last successful fetch remains within the minimum interval.
 	recent := now.Add(-5 * time.Minute)
 	recentSnap := &OllamaCloudUsageSnapshot{
 		Status: OllamaCloudUsageStatusOK, FetchedAt: ptr(recent), LastAttemptAt: recent,
@@ -70,7 +71,7 @@ func TestOllamaCloudUsageAutoRefreshDueAtHonoursMinFetchInterval(t *testing.T) {
 	require.False(t, OllamaCloudUsageIsAutoRefreshDue(recentSnap, ptr(now.Add(-2*time.Minute)), now, debounce, maxWait),
 		"debounce alone must not refresh within the min fetch interval")
 
-	// 越过最小间隔后，再次由防抖时间决定是否到期。
+	// After the minimum interval, a quiet debounce window can trigger refresh.
 	atFloor := now.Add(-OllamaCloudUsageMinFetchInterval)
 	floorSnap := &OllamaCloudUsageSnapshot{
 		Status: OllamaCloudUsageStatusOK, FetchedAt: ptr(atFloor), LastAttemptAt: atFloor,
@@ -78,7 +79,7 @@ func TestOllamaCloudUsageAutoRefreshDueAtHonoursMinFetchInterval(t *testing.T) {
 	require.True(t, OllamaCloudUsageIsAutoRefreshDue(floorSnap, ptr(now.Add(-2*time.Minute)), now, debounce, maxWait),
 		"past the floor a quiet debounce window is due")
 
-	// 最小间隔不会推迟已经由最大等待强制触发的刷新。
+	// A maximum wait longer than the minimum interval still triggers refresh for stale data.
 	stale := now.Add(-2 * time.Hour)
 	staleSnap := &OllamaCloudUsageSnapshot{
 		Status: OllamaCloudUsageStatusOK, FetchedAt: ptr(stale), LastAttemptAt: stale,

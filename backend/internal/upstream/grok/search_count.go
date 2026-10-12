@@ -9,13 +9,13 @@ import (
 	wireopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// CountGrokNativeSearchCallsFromJSONBytes 统计 Responses JSON 中已完成的原生搜索工具调用，
-// 包括 web_search_call、x_search_call、tool_search_call 及同名 function/custom tool 调用。
+// CountGrokNativeSearchCallsFromJSONBytes counts search calls in Responses output:
+// web_search_call, x_search_call, tool_search_call, and matching function/custom calls.
 func CountGrokNativeSearchCallsFromJSONBytes(body []byte) int {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return 0
 	}
-	// 兼容层可能同时保留顶层 output 和 response.output；优先规范嵌套响应，避免重复计费。
+	// Prefer nested output when a compatibility layer also copies it to the root.
 	if nested := gjson.GetBytes(body, "response.output"); nested.IsArray() {
 		return CountGrokNativeSearchCallsInOutputArray(nested)
 	}
@@ -34,15 +34,16 @@ func CountGrokNativeSearchCallsFromSSEBody(body string) int {
 	return total
 }
 
-// CountGrokNativeSearchCallsInSSEData 统计单个 SSE payload，不跨事件去重；
-// 实时流应使用 Dedup 版本，避免 item.done 与 response.completed 重复计费。
+// CountGrokNativeSearchCallsInSSEData counts one payload without cross-event deduplication.
+// Streaming callers use the Dedup variant to avoid charging item.done and response.completed twice.
 func CountGrokNativeSearchCallsInSSEData(data []byte) int {
 	n, _ := CountGrokNativeSearchCallsInSSEDataWithKeys(data)
 	return n
 }
 
-// CountGrokNativeSearchCallsInSSEDataDedup 只累计未出现过的调用 ID，调用方必须在整个流中复用 seen。
-// 缺少 call_id/id 时用类型、名称和序号构造合成键，避免跨事件重复计费。
+// CountGrokNativeSearchCallsInSSEDataDedup counts unseen calls. Reuse a non-nil seen map for the
+// whole stream.
+// Missing call_id/id values use type, name, and ordinal keys; nil seen disables deduplication.
 func CountGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struct{}) int {
 	if seen == nil {
 		return CountGrokNativeSearchCallsInSSEData(data)
@@ -51,13 +52,13 @@ func CountGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 	if n <= 0 {
 		return 0
 	}
-	// 优先使用稳定 ID，缺失时生成合成键，不能直接累加原始数量。
+	// Every counted item needs an ID or synthetic key before it can be accumulated.
 	if len(keys) < n {
-		// 为所有条目重建键，使无 ID 条目也具备指纹。
+		// Rebuild all keys so items lacking IDs also have a fingerprint.
 		keys = CollectGrokNativeSearchCallKeys(data)
 	}
 	if len(keys) == 0 {
-		// n 大于零却没有键属于异常，按零附加费 fail-closed。
+		// Omit the surcharge when calls cannot be identified safely.
 		return 0
 	}
 	added := 0
@@ -75,7 +76,7 @@ func CountGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 			if !isItemDone || !strings.HasPrefix(k, "synth:") {
 				continue
 			}
-			// 每个无 ID 的 item.done 都是独立完成调用，递增序号以准确结算中断流。
+			// Treat each anonymous item.done as a completed call, including interrupted streams.
 			separator := strings.LastIndexByte(k, ':')
 			if separator < 0 {
 				continue
@@ -99,7 +100,7 @@ func CollectGrokNativeSearchCallKeys(data []byte) []string {
 	if len(data) == 0 || !gjson.ValidBytes(data) {
 		return nil
 	}
-	// 空 type 表示没有 SSE envelope 的裸条目；其它非完成事件不包含可计费调用。
+	// An empty type denotes a bare item; other non-completion events are not chargeable.
 	switch strings.TrimSpace(gjson.GetBytes(data, "type").String()) {
 	case "response.output_item.done", "response.completed", "response.done", "":
 	default:
@@ -118,7 +119,7 @@ func CollectGrokNativeSearchCallKeys(data []byte) []string {
 			strings.TrimSpace(item.Get("item.id").String()),
 		)
 		if key == "" {
-			// 同类调用加入序号，避免一个完成响应中的多个无 ID 搜索被 type:name 合并。
+			// Ordinals distinguish multiple anonymous calls of the same type and name.
 			base := "synth:" + strings.ToLower(strings.TrimSpace(item.Get("type").String())) +
 				":" + strings.ToLower(strings.TrimSpace(item.Get("name").String()))
 			syntheticOrdinals[base]++
@@ -147,7 +148,7 @@ func CountGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
 	if len(data) == 0 || !gjson.ValidBytes(data) {
 		return 0, nil
 	}
-	// 仅在条目或响应完成时计数，不在每个 delta 上累加；空 type 表示裸条目。
+	// Count item or response completion events; deltas do not add calls.
 	switch strings.TrimSpace(gjson.GetBytes(data, "type").String()) {
 	case "response.output_item.done", "response.completed", "response.done", "":
 	default:
@@ -181,7 +182,7 @@ func CountGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
 		consider(item)
 		return true
 	})
-	// 兼容没有嵌套 item 键的裸输出条目事件。
+	// Accept bare output items without a nested item field.
 	if n == 0 && IsGrokNativeSearchOutputItem(gjson.ParseBytes(data)) {
 		consider(gjson.ParseBytes(data))
 	}

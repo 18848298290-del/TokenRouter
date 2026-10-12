@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ManualCredentialExchange 只合并本次交换结果，提供商持久化与锁由管理用例拥有。
+// ManualCredentialExchange refreshes and merges platform credentials; its caller owns locking and persistence.
 type ManualCredentialExchange struct {
 	Claude      *ClaudeAuthorization
 	OpenAI      *OpenAIAuthorization
@@ -21,7 +21,7 @@ type ManualCredentialExchange struct {
 	Qoder       func(context.Context, *Record) (map[string]any, error)
 }
 
-// Refresh 保留各平台字段类型、缺省值、错误文本与项目缺失信号。
+// Refresh returns merged credentials and whether Antigravity project discovery is incomplete.
 func (h *ManualCredentialExchange) Refresh(ctx context.Context, provider *Record) (map[string]any, bool, error) {
 	var newCredentials map[string]any
 	if provider.IsQoderCosy() {
@@ -33,7 +33,7 @@ func (h *ManualCredentialExchange) Refresh(ctx context.Context, provider *Record
 	} else if provider.IsOpenAI() {
 		tokenInfo, err := h.OpenAI.RefreshProviderToken(ctx, provider)
 		if err != nil {
-			// 刷新失败但 access_token 可能仍有效，尝试设置隐私
+			// The caller may still attempt privacy settings with the existing token after this failure.
 			return nil, false, err
 		}
 
@@ -69,7 +69,7 @@ func (h *ManualCredentialExchange) Refresh(ctx context.Context, provider *Record
 			}
 		}
 
-		// 如果 project_id 获取失败，更新凭证但不标记为 error
+		// Return refreshed credentials with a missing-project signal for the caller to handle.
 		if tokenInfo.ProjectIDMissing {
 			return newCredentials, true, nil
 		}
@@ -87,17 +87,16 @@ func (h *ManualCredentialExchange) Refresh(ctx context.Context, provider *Record
 			newCredentials["base_url"] = baseURL
 		}
 	} else {
-		// Claude 交换保持原 token 字段形状及空白值过滤。
+		// Claude stores expiry fields as decimal strings and ignores empty optional token fields.
 		tokenInfo, err := h.Claude.RefreshProviderToken(ctx, provider)
 		if err != nil {
 			return nil, false, err
 		}
 
-		// 保留非令牌配置，例如 intercept_warmup_requests。
+		// Copy operational settings such as intercept_warmup_requests before replacing token fields.
 		newCredentials = make(map[string]any)
 		maps.Copy(newCredentials, provider.Credentials)
 
-		// 只更新原先认可的令牌字段。
 		newCredentials["access_token"] = tokenInfo.AccessToken
 		newCredentials["token_type"] = tokenInfo.TokenType
 		newCredentials["expires_in"] = strconv.FormatInt(tokenInfo.ExpiresIn, 10)

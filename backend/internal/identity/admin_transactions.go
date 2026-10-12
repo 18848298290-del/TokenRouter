@@ -51,7 +51,7 @@ func (s *UserAdmin) BindUserAuthIdentity(ctx context.Context, userID int64, inpu
 }
 
 func (s *UserAdmin) DeleteUser(ctx context.Context, id int64) error {
-	// 保护管理员账号，避免后台误删最高权限用户。
+	// Administrator accounts cannot be deleted through this operation.
 	user, err := s.Users.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -98,14 +98,15 @@ func (s *UserAdmin) ListKeysForDeletion(ctx context.Context, userID int64) ([]Ad
 		}
 	}
 	return keys, nil
-} // ReplaceUserGroup 替换用户的专属分组
+}
 
+// ReplaceUserGroup moves a user from one exclusive group to another.
 func (s *UserAdmin) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*ReplaceUserGroupResult, error) {
 	if oldGroupID == newGroupID {
 		return nil, infraerrors.BadRequest("SAME_GROUP", "old and new group must be different")
 	}
 
-	// 验证新分组存在且为活跃的专属分组
+	// The target must be an active exclusive group.
 	newGroup, err := s.Groups.GetByID(ctx, newGroupID)
 	if err != nil {
 		return nil, err
@@ -122,7 +123,7 @@ func (s *UserAdmin) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, ne
 		return nil, err
 	}
 
-	// 失效该用户所有 Key 的认证缓存
+	// Invalidate every key because group access is included in authentication snapshots.
 	if s.Invalidator != nil {
 		keys, keyErr := s.Keys.ListKeysByUserID(ctx, userID)
 		if keyErr == nil {

@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// VideoCompletion 保存视频完成计费所需的观测值。
+// VideoCompletion holds observations needed to bill a completed video.
 type VideoCompletion struct {
 	RequestID, ResponseID, Model, BillingModel, UpstreamModel, VideoResolution string
 	ImageCount, VideoCount, VideoDurationSeconds                               int
 	Duration                                                                   time.Duration
 }
 
-// VideoNotice 将日志级别和字段交给入口记录。
+// VideoNotice supplies event fields for entry-layer logging.
 type VideoNotice struct {
 	ProviderID      int64
 	Kind            string
@@ -42,7 +42,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// PrepareCompletion 先读快照再领取；无足够观测不消耗领取权。
+// PrepareCompletion loads the creation snapshot before claiming billing and skips claims when observations are insufficient.
 func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64, taskRequestID string, statusResult *VideoCompletion, now func() time.Time, observer VideoObserver) *VideoCompletion {
 	if now == nil {
 		now = time.Now
@@ -74,7 +74,7 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 		videoNotice(observer, VideoNotice{Kind: "already_claimed", TaskID: taskRequestID})
 		return nil
 	}
-	// 合并创建快照：分辨率只来自请求，模型和时长仅用于补齐状态响应缺失值。
+	// Merge the creation snapshot: prefer its resolution and fill missing models and duration.
 	merged := *statusResult
 	if pending != nil {
 		if strings.TrimSpace(merged.Model) == "" {
@@ -86,7 +86,7 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 		if strings.TrimSpace(merged.UpstreamModel) == "" {
 			merged.UpstreamModel = pending.UpstreamModel
 		}
-		// 官方状态不返回分辨率，始终优先采用创建请求值。
+		// Use the creation request's resolution when available; the status response omits it.
 		if strings.TrimSpace(pending.VideoResolution) != "" {
 			merged.VideoResolution = pending.VideoResolution
 		}
@@ -103,17 +103,17 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	if strings.TrimSpace(merged.BillingModel) == "" {
 		merged.BillingModel = merged.Model
 	}
-	// 强制使用任务级持久 ID，使 usage_billing_dedup 能覆盖多次轮询和请求上下文局部 ID。
+	// Use a task-stable ID so usage_billing_dedup covers repeated polls with different request IDs.
 	merged.RequestID = StableGrokVideoBillingRequestID(firstNonEmpty(merged.ResponseID, taskRequestID))
 	merged.ResponseID = firstNonEmpty(merged.ResponseID, taskRequestID)
 	merged.VideoCount = 1
-	// 纯视频结算将 ImageCount 清零，按视频价格计算。
+	// Clear image units so this completion is billed as video.
 	merged.ImageCount = 0
-	// 创建请求省略分辨率时使用官方默认 480p。
+	// Default an omitted resolution to 480p.
 	merged.VideoResolution = pricing.NormalizeVideoBillingResolutionOrDefault(merged.VideoResolution)
-	// 状态和创建请求均未提供时长时使用官方默认 8 秒。
+	// Default duration to 8 seconds when neither status nor creation supplies it.
 	merged.VideoDurationSeconds = pricing.NormalizeVideoBillingDurationSecondsOrDefault(merged.VideoDurationSeconds)
-	// 异步视频耗时从创建受理计算到首次发现完成，不能只记录单次轮询的短耗时。
+	// Measure from creation acceptance to observed completion, rather than the duration of one poll.
 	if pending != nil {
 		if e2e := GrokVideoE2EDuration(pending.CreatedAt, now()); e2e > 0 {
 			merged.Duration = e2e
@@ -123,7 +123,7 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	return &merged
 }
 
-// GrokVideoRequestState 将上游视频状态转为请求摘要的状态。
+// GrokVideoRequestState normalizes upstream task status for the request summary.
 func GrokVideoRequestState(statusBody []byte) string {
 	if !gjson.ValidBytes(statusBody) {
 		return ""
@@ -142,8 +142,8 @@ func GrokVideoRequestState(statusBody []byte) string {
 	}
 }
 
-// IsGrokVideoStatusBillable 匹配官方成功条件：status 为 done 且 video.url 非空。
-// pending、expired、failed 或缺少视频地址的 done 状态均不可计费。
+// IsGrokVideoStatusBillable requires done status and a nonempty video.url.
+// Pending, expired, failed, and done responses lacking a URL are not billable.
 func IsGrokVideoStatusBillable(statusBody []byte) bool {
 	if len(statusBody) == 0 || !gjson.ValidBytes(statusBody) {
 		return false
@@ -154,9 +154,9 @@ func IsGrokVideoStatusBillable(statusBody []byte) bool {
 	return strings.TrimSpace(gjson.GetBytes(statusBody, "video.url").String()) != ""
 }
 
-// ExtractGrokVideoBillingFromStatusBody 根据官方 done 状态构建用量单位。
-// 字段优先级遵循官方文档：时长取 video.duration（秒），模型取顶层 model。
-//   - 分辨率：状态响应不提供，依次回退到创建时待计费快照和默认 480p
+// ExtractGrokVideoBillingFromStatusBody builds video units from a billable done response.
+// It reads seconds from video.duration and the model from the top-level model field.
+// Resolution comes from the creation snapshot; PrepareCompletion supplies the default when absent.
 func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideoPendingBilling, requestID, observedResponseID string) *VideoCompletion {
 	if !IsGrokVideoStatusBillable(statusBody) {
 		return nil
@@ -168,13 +168,13 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 	durationSeconds := 0
 
 	if gjson.ValidBytes(statusBody) {
-		// 官方模型字段位于顶层。
+		// The model is a top-level status field.
 		model = strings.TrimSpace(gjson.GetBytes(statusBody, "model").String())
-		// 官方时长字段为 video.duration，单位是秒。
+		// video.duration is measured in seconds.
 		if v := gjson.GetBytes(statusBody, "video.duration"); v.Exists() && v.Type == gjson.Number {
 			durationSeconds = int(v.Int())
 			if durationSeconds == 0 && v.Float() > 0 {
-				// 此 API 通常不会返回不足一秒的值，仍接受上方截断后的整数结果。
+				// Fractional seconds are truncated; values below one second remain zero.
 				durationSeconds = int(v.Float())
 			}
 		}
@@ -189,20 +189,20 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		if upstreamModel == "" {
 			upstreamModel = pending.UpstreamModel
 		}
-		// 官方状态不含分辨率，因此存在创建请求值时始终采用该值。
+		// Resolution is supplied by the creation snapshot because the status response omits it.
 		resolution = pending.VideoResolution
 		if durationSeconds <= 0 {
 			durationSeconds = pending.VideoDurationSeconds
 		}
 	}
 	if model == "" {
-		// 状态省略模型时使用官方默认视频模型族。
+		// Use the default video model family when the status omits its model.
 		model = "grok-imagine-video"
 	}
 	if billingModel == "" {
 		billingModel = model
 	}
-	// 文档约定分辨率仅来自请求；为空时由处理器应用官方默认值 480p。
+	// Leave missing resolution empty for PrepareCompletion to default to 480p.
 	if resolution != "" {
 		resolution = pricing.NormalizeVideoBillingResolutionOrDefault(resolution)
 	}

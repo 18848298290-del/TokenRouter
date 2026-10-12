@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// GrokTierRules 提供供应商档位解析函数。
+// GrokTierRules supplies upstream tier parsing and free-quota recognition.
 type GrokTierRules struct {
 	SubscriptionTierFromJWT   func(string) string
 	NormalizeSubscriptionTier func(string) string
@@ -17,7 +17,7 @@ func KnownGrokFreeProvider(provider *Record, rules GrokTierRules) bool {
 	if provider == nil || !provider.IsGrokOAuth() {
 		return false
 	}
-	// 实时访问令牌 JWT 优先于陈旧的账单或凭据快照，令牌刷新后可立即反映降级到免费档位。
+	// The current access token's tier overrides older billing and credential snapshots after a tier change.
 	if jwtTier := rules.SubscriptionTierFromJWT(provider.GetCredential("access_token")); jwtTier != "" {
 		return isGrokFreeSubscriptionTier(jwtTier, rules)
 	}
@@ -32,14 +32,13 @@ func KnownGrokFreeProvider(provider *Record, rules GrokTierRules) bool {
 				paidSignal = true
 			}
 		}
-		// 用量百分比或月度美元上限可以证明提供商属于付费计划。
+		// Usage percentages or a positive monthly spending limit count as paid-plan evidence.
 		if billing.UsagePercent != nil || billing.UsedPercent != nil ||
 			(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0) {
 			paidSignal = true
 		}
-		// xAI 会故意为 Free 提供商返回空 plan，只有付费订阅才带 SuperGrok plan/月度限额。
-		// 因此，成功且没有付费信号的月度账单按 Free 判断，
-		// 部分探测仍按关闭策略处理。
+		// A successful monthly observation without paid evidence can identify a free provider.
+		// An incomplete observation qualifies only when MonthlyUpdatedAt confirms monthly data.
 		if strings.TrimSpace(billing.MonthlyUpdatedAt) != "" ||
 			(billing.StatusCode >= 200 && billing.StatusCode < 300 &&
 				!billing.Partial && len(billing.FailedWindows) == 0) {
@@ -59,7 +58,7 @@ func KnownGrokFreeProvider(provider *Record, rules GrokTierRules) bool {
 			inferredFreeSignal = true
 		}
 	}
-	// 此处仅凭证中的 subscription_tier 具有权威性，不采用 plan_type 或扩展字段。
+	// Use the credential subscription_tier here; plan_type and arbitrary extra fields are not tier evidence.
 	if tier := strings.TrimSpace(provider.GetCredential("subscription_tier")); tier != "" {
 		if isGrokFreeSubscriptionTier(tier, rules) {
 			freeSignal = true
@@ -67,7 +66,7 @@ func KnownGrokFreeProvider(provider *Record, rules GrokTierRules) bool {
 			paidSignal = true
 		}
 	}
-	// 付费证据优先于推断的 Free 档位，即使快照仍包含历史 200 万 Free token 限额，也按付费处理。
+	// Paid evidence takes precedence over free signals, including a stale free-token limit.
 	return !paidSignal && (freeSignal || inferredFreeSignal)
 }
 

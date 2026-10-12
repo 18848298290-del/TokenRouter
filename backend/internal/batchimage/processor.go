@@ -202,8 +202,8 @@ func (p *ProviderProcessor) IndexAndSettle(ctx context.Context, job *BatchImageJ
 		if errors.Is(err, ErrBatchImageIndexOutputMissing) {
 			return BatchImageProcessResult{}, err
 		}
-		// job 状态已被并发方推进（如已进入 settling/终态）：不是索引数据问题，
-		// 短延迟 requeue 让下一轮按最新状态处理，不能误转 failed。
+		// Another worker has advanced the job, possibly to settlement or a terminal state.
+		// Requeue briefly to read that state again instead of reporting an indexing failure.
 		if errors.Is(err, ErrBatchImageIndexStateConflict) {
 			return BatchImageProcessResult{RequeueAfter: time.Millisecond}, nil
 		}
@@ -334,8 +334,8 @@ func (i *ResultIndexer) Index(ctx context.Context, job *BatchImageJob, platform 
 		if err != nil {
 			return nil, err
 		}
-		// 与提交时的 custom_id 集对账：platform 输出中未知/多余的行不能进入 item 表，
-		// 否则 success+fail > item_count 会让结算永远校验失败。
+		// Reconcile against submitted custom IDs. Extra provider rows would make
+		// success+fail exceed item_count and cause settlement validation to keep failing.
 		if len(expected) > 0 {
 			if _, ok := expected[parsed.CustomID]; !ok {
 				unknownCount++
@@ -376,8 +376,8 @@ func (i *ResultIndexer) Index(ctx context.Context, job *BatchImageJob, platform 
 		}
 		return nil, err
 	}
-	// 为输出中遗漏的已提交项补写失败记录：
-	// 否则用户看不到该项，且只按成功数计费会掩盖 platform 的丢单。
+	// Record submitted items missing from provider output as failures so users can see
+	// the missing results even though billing charges only for successful images.
 	missingCount := 0
 	if len(expected) > 0 {
 		missingIDs := make([]string, 0)
@@ -431,8 +431,8 @@ func (i *ResultIndexer) Index(ctx context.Context, job *BatchImageJob, platform 
 	return result, nil
 }
 
-// ListExpectedCustomIDs 返回该 job 当前 item 表中的全部 custom_id 集合，
-// 即提交时预创建（或上一轮索引重建）的完整条目清单，用于与 platform 输出对账。
+// ListExpectedCustomIDs returns all custom IDs currently stored for the job,
+// including submission placeholders or rebuilt items, for provider result reconciliation.
 func (i *ResultIndexer) ListExpectedCustomIDs(ctx context.Context, batchID string) (map[string]struct{}, error) {
 	const pageSize = 500
 	expected := make(map[string]struct{})
@@ -665,7 +665,7 @@ func (i *ResultIndexer) warn(event string, values ...any) {
 	}
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now uses the injected clock when configured, otherwise the system clock.
 func (i *ResultIndexer) now() time.Time {
 	if i.Now != nil {
 		return i.Now()

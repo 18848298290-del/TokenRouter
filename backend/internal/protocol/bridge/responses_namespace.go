@@ -8,18 +8,18 @@ import (
 	"strings"
 )
 
-// ResponsesNamespaceName 标识 Responses namespace 中的函数子工具。
-// 该别名让原生转发与 Chat 桥接路径共享同一套 namespace 身份约定。
+// ResponsesNamespaceName identifies a function within a Responses namespace.
+// Native forwarding and Chat conversion share this identity type.
 type ResponsesNamespaceName = NamespacedToolName
 
-// FlattenResponsesNamespaces 将 Codex 私有 namespace 声明转换为公开的 Responses 函数工具，
-// 并重写请求中带 namespace 的函数调用。
+// FlattenResponsesNamespaces replaces namespace declarations with function tools and
+// rewrites qualified historical calls and tool choice in req.
 func FlattenResponsesNamespaces(req map[string]any) (map[string]ResponsesNamespaceName, bool, error) {
 	return FlattenResponsesNamespacesExcept(req, nil)
 }
 
-// FlattenResponsesNamespacesExcept 支持保留指定的服务端 namespace 声明，其余行为与
-// FlattenResponsesNamespaces 相同。
+// FlattenResponsesNamespacesExcept flattens namespaces while retaining declarations
+// whose names are enabled in preserved.
 func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]bool) (map[string]ResponsesNamespaceName, bool, error) {
 	if req == nil {
 		return nil, false, nil
@@ -119,8 +119,8 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 	return names, true, nil
 }
 
-// RestoreResponsesNamespaceCalls 将 JSON Responses 载荷中的摊平函数调用还原为
-// Codex 所需的 namespace/name 身份。
+// RestoreResponsesNamespaceCalls restores the namespace and name of flattened
+// function calls in a Responses JSON payload.
 func RestoreResponsesNamespaceCalls(payload []byte, names map[string]ResponsesNamespaceName) ([]byte, bool, error) {
 	if len(payload) == 0 || len(names) == 0 {
 		return payload, false, nil

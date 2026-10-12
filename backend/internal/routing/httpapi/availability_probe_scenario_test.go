@@ -1,6 +1,6 @@
 package httpapi
 
-// 本场景测试覆盖 routing/group_availability_probe_config.go 的配置归一化和管理接口错误状态。
+// These scenarios check probe configuration normalization and administrative HTTP error statuses.
 
 import (
 	"net/http"
@@ -127,7 +127,7 @@ func TestNormalizeGroupAvailabilityProbeConfigForAdminWriteReturnsBadRequest(t *
 	}
 }
 
-// groupAvailabilityProbeRetryPointer 为可选的重试次数生成指针，供测试区分省略和零值。
+// groupAvailabilityProbeRetryPointer distinguishes omitted retry counts from explicit zero in tests.
 func groupAvailabilityProbeRetryPointer(value int) *int {
 	return &value
 }

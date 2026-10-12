@@ -8,18 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// FilterThinkingBlocks 从请求体中移除不适合直发的 thinking block。
-// 过滤失败时返回原 body，避免整流逻辑影响主请求。
-// 主要用于避免无效 thinking block signature 触发上游 400。
+// FilterThinkingBlocks removes thinking blocks unsuitable for direct forwarding.
+// Filtering errors return the input body.
+// This removes missing and placeholder signatures that can cause upstream 400 responses.
 //
-// 策略：
-//   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
-//   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块（避免 400）
-//     例如缺失、空值或占位 signature 的块
+// Filtering rules:
+//   - With thinking disabled, remove thinking-related blocks.
+//   - With thinking enabled or adaptive, retain assistant thinking blocks with
+//     nonempty signatures other than the placeholder; remove other thinking blocks.
+//     Untyped blocks containing a thinking key are removed in either mode.
 //
-// 调用方传入 mappedModel 时按上游协议族选择规则：Anthropic 官方协议执行过滤，
-// DeepSeek/Kimi/GLM/MiniMax 等 passback-required 上游必须原样回传历史 thinking block。
-// 未传 mappedModel 时保留旧行为，便于既有单元测试和纯工具调用继续使用。
+// The mapped model selects the protocol rules. Anthropic requests use filtering;
+// passback-required families such as DeepSeek, Kimi, GLM, and MiniMax retain historical thinking blocks.
+// Omitting mappedModel enables the default Anthropic filters.
 func FilterThinkingBlocks(body []byte, mappedModel ...string) []byte {
 	return requeststate.FilterThinkingBlocks(body, thinkingRequestOptions(mappedModel...))
 }
@@ -32,36 +33,32 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel ...string) 
 	return requeststate.FilterSignatureSensitiveBlocksForRetry(body, thinkingRequestOptions(mappedModel...))
 }
 
-// DefaultEffortForThinkingEnabled 给"开启 thinking 但协议层没有 effort 档位概念"
-// 的国产模型族返回默认 effort，用于 usage_log.reasoning_effort 展示。
+// DefaultEffortForThinkingEnabled returns a display effort for passback-required
+// models without native effort levels, for usage_log.reasoning_effort.
 func DefaultEffortForThinkingEnabled(mappedModel string) *string {
 	return requeststate.DefaultEffortForThinkingEnabled(thinkingRequestOptions(mappedModel))
 }
 
-// ApplyThinkingEnabledFallback 在调用方尚未解析出 effort 时，为启用 thinking 的
-// 国产 passback-required 上游缺少 effort 时补默认值，已有值原样保留。
+// ApplyThinkingEnabledFallback supplies the default for a thinking-enabled,
+// passback-required model when effort is absent. Existing effort values take precedence.
 func ApplyThinkingEnabledFallback(effort *string, body []byte, mappedModel string) *string {
 	return requeststate.ApplyThinkingEnabledFallback(effort, body, thinkingRequestOptions(mappedModel))
 }
 
-// NormalizeGLMOpenAIReasoningEffort 将 OpenAI Chat Completions 的
-// reasoning_effort 档位映射到 GLM/z.ai 原生 high/max 档位。
-// 仅对映射后的 glm-* 模型生效，其它上游保持原请求不变。
+// NormalizeGLMOpenAIReasoningEffort maps OpenAI reasoning effort fields to
+// GLM/z.ai levels, including low for GLM 5.3.
+// It applies to mapped glm-* model names and leaves other models unchanged.
 func NormalizeGLMOpenAIReasoningEffort(body []byte, mappedModel string) ([]byte, bool) {
 	return requeststate.NormalizeGLMOpenAIReasoningEffort(body, thinkingRequestOptions(mappedModel))
 }
 
-// Thinking Budget Rectifier
-
-// NormalizeChineseLLMThinking 修正国产 Anthropic 兼容上游的 thinking.type 差异。
-// 当前仅 MiniMax M 系列需要把 Anthropic SDK 默认的 enabled 改成 adaptive。
+// NormalizeChineseLLMThinking adjusts thinking.type for MiniMax M models.
+// It maps the Anthropic SDK's enabled mode to adaptive.
 func NormalizeChineseLLMThinking(body []byte, mappedModel string) ([]byte, bool) {
 	return requeststate.NormalizeChineseLLMThinking(body, strings.HasPrefix(strings.ToLower(strings.TrimSpace(mappedModel)), "minimax-m"))
 }
 
-// 请求体、raw range 和会话上下文只由 requeststate 实现。
-
-// thinkingRequestOptions 只按原协议分类选择开关；报文算法由 requeststate 唯一实现。
+// thinkingRequestOptions selects model-family flags for requeststate's body transformations.
 func thinkingRequestOptions(models ...string) requeststate.ThinkingRequestOptions {
 	options := requeststate.ThinkingRequestOptions{PreFilter: true, RetryFilters: true, DummySignature: antigravity.DummyThoughtSignature}
 	if len(models) == 0 {

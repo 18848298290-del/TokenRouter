@@ -25,7 +25,7 @@ func main() {
 	}
 }
 
-// run 在返回错误前完成已取得资源的释放。
+// run closes the database connection before returning, including on failure.
 func run() error {
 	beforeRaw := flag.String("before", "", "required RFC3339 cutoff; only older rows are considered")
 	execute := flag.Bool("execute", false, "delete matched rows (default is dry-run)")

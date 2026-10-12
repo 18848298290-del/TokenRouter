@@ -1,6 +1,6 @@
 package modelmap
 
-// ActionRule 包含模型范围及对应动作。
+// ActionRule selects an action and error message by model scope.
 type ActionRule struct {
 	Action               string
 	ErrorMessage         string
@@ -9,7 +9,7 @@ type ActionRule struct {
 	FallbackErrorMessage string
 }
 
-// MatchesAny 沿用精确或末尾通配符规则匹配模型白名单。
+// MatchesAny checks exact names and trailing-wildcard patterns in a whitelist.
 func MatchesAny(model string, whitelist []string) bool {
 	for _, pattern := range whitelist {
 		if Matches(pattern, model) {
@@ -19,7 +19,8 @@ func MatchesAny(model string, whitelist []string) bool {
 	return false
 }
 
-// ResolveAction 按模型白名单选择主动作或回退动作；空回退仍放行。
+// ResolveAction uses the primary action for an empty or matching whitelist; an unmatched model uses the fallback
+// or pass.
 func ResolveAction(rule ActionRule, model string) (action, errorMessage string) {
 	if len(rule.ModelWhitelist) == 0 {
 		return rule.Action, rule.ErrorMessage
@@ -30,5 +31,5 @@ func ResolveAction(rule ActionRule, model string) (action, errorMessage string) 
 	if rule.FallbackAction != "" {
 		return rule.FallbackAction, rule.FallbackErrorMessage
 	}
-	return "pass", "" // 缺省回退保持放行
+	return "pass", ""
 }

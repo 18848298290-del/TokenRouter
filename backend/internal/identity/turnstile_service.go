@@ -14,19 +14,19 @@ var (
 	ErrTurnstileInvalidSecretKey   = infraerrors.BadRequest("TURNSTILE_INVALID_SECRET_KEY", "invalid turnstile secret key")
 )
 
-// TurnstileVerifier 验证 Turnstile token 的接口。
+// TurnstileVerifier verifies Turnstile challenge tokens.
 type TurnstileVerifier interface {
 	VerifyToken(ctx context.Context, secretKey, token, remoteIP string) (*TurnstileVerifyResponse, error)
 }
 
-// TurnstileService Turnstile 验证服务。
+// TurnstileService validates challenges using runtime settings and an external verifier.
 type TurnstileService struct {
 	observer       Observer
 	settingService CaptchaSettings
 	verifier       TurnstileVerifier
 }
 
-// TurnstileVerifyResponse Cloudflare Turnstile 验证响应。
+// TurnstileVerifyResponse contains the Cloudflare verification response.
 type TurnstileVerifyResponse struct {
 	Success     bool     `json:"success"`
 	ChallengeTS string   `json:"challenge_ts"`
@@ -36,7 +36,7 @@ type TurnstileVerifyResponse struct {
 	CData       string   `json:"cdata"`
 }
 
-// NewTurnstileService 创建 Turnstile 服务实例。
+// NewTurnstileService creates a Turnstile verification service.
 func NewTurnstileService(settingService CaptchaSettings, verifier TurnstileVerifier) *TurnstileService {
 	return &TurnstileService{
 		settingService: settingService,
@@ -50,7 +50,6 @@ func (s *TurnstileService) VerifyTokenWithSecret(ctx context.Context, secretKey,
 		return ErrTurnstileNotConfigured
 	}
 
-	// 如果 token 为空，返回错误
 	if token == "" {
 		s.observer.Printf("service.turnstile", "%s", "[Turnstile] Token is empty")
 		return ErrTurnstileVerificationFailed
@@ -75,27 +74,26 @@ func (s *TurnstileService) VerifyTokenWithSecret(ctx context.Context, secretKey,
 	return nil
 }
 
-// IsEnabled 检查 Turnstile 是否启用。
+// IsEnabled reads the Turnstile enablement setting.
 func (s *TurnstileService) IsEnabled(ctx context.Context) bool {
 	return s.settingService.IsTurnstileEnabled(ctx)
 }
 
-// ValidateSecretKey 验证 Turnstile Secret Key 是否有效。
+// ValidateSecretKey probes the verifier and rejects invalid-input-secret responses.
 func (s *TurnstileService) ValidateSecretKey(ctx context.Context, secretKey string) error {
-	// 发送一个测试 token 的验证请求来检查 secret_key 是否有效
+	// Use a dummy challenge to probe the secret key.
 	result, err := s.verifier.VerifyToken(ctx, secretKey, "test-validation", "")
 	if err != nil {
 		return fmt.Errorf("validate secret key: %w", err)
 	}
 
-	// 检查是否有 invalid-input-secret 错误
 	if slices.Contains(result.ErrorCodes, "invalid-input-secret") {
 		return ErrTurnstileInvalidSecretKey
 	}
 
-	// 其他错误（如 invalid-input-response）说明 secret key 是有效的
+	// Other response codes, including invalid-input-response, are accepted by this probe.
 	return nil
 }
 
-// SetObserver 在开始提供请求前注入日志观察者。
+// SetObserver installs the logger before the service begins handling requests.
 func (s *TurnstileService) SetObserver(logf LogFunc) { s.observer = Observer{Log: logf} }

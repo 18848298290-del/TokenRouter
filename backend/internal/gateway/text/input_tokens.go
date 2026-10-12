@@ -6,7 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 )
 
-// InputTokensPorts 不提供用户并发、资金提交或完成任务；选择器若交付提供商槽，单次 Forward 负责释放。
+// InputTokensPorts supplies counting operations without user slots or billing completion.
+// Forward must release any provider slot returned by selection.
 type InputTokensPorts interface {
 	Context() context.Context
 	Select(map[int64]struct{}) (Selection, bool, error)
@@ -16,7 +17,7 @@ type InputTokensPorts interface {
 	Exhausted(*AttemptFailure)
 }
 
-// RunInputTokens 按计数端点的独立预算选择提供商并计数。
+// RunInputTokens selects providers and counts input tokens within the counting endpoint's retry budget.
 func RunInputTokens(p InputTokensPorts, maxSwitches int) {
 	excluded := make(map[int64]struct{})
 	same := make(map[int64]int)

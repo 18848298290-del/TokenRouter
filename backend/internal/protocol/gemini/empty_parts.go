@@ -2,8 +2,8 @@ package gemini
 
 import "encoding/json"
 
-// FilterEmptyParts 过滤掉 parts 为空的消息
-// Gemini API 不接受空 parts，需要在请求前过滤。
+// FilterEmptyParts removes content entries whose parts field is an empty array.
+// Gemini rejects empty parts; absent or non-array fields are left for upstream validation.
 func FilterEmptyParts(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -37,7 +37,6 @@ func FilterEmptyParts(body []byte) ([]byte, error) {
 			continue
 		}
 
-		// 跳过 parts 为空数组的消息
 		if len(partsSlice) == 0 {
 			modified = true
 			continue

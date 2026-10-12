@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// NativeMessageEvent 描述待输出的事件或 HTTP 层需要执行的 Flush、首 token 标记。
+// NativeMessageEvent carries an output event, flush request, or first-token marker for the HTTP layer.
 type NativeMessageEvent struct {
 	Name       string
 	Data       any
@@ -14,7 +14,7 @@ type NativeMessageEvent struct {
 	FirstToken bool
 }
 
-// NativeGeminiMessagesStream 保存 Gemini 转 Messages 的流状态，跟踪 thinking 内容和块索引。
+// NativeGeminiMessagesStream tracks text, tool blocks, and usage while converting Gemini to Messages.
 type NativeGeminiMessagesStream struct {
 	runtime        NativeGeminiRuntime
 	finishReason   string
@@ -30,18 +30,18 @@ type NativeGeminiMessagesStream struct {
 	usage          NativeGeminiUsage
 }
 
-// NewNativeGeminiMessagesStream 构造仅创建本次流的状态；负索引表示尚未打开任何内容块。
+// NewNativeGeminiMessagesStream creates stream state with negative indexes for unopened blocks.
 func NewNativeGeminiMessagesStream(runtime NativeGeminiRuntime) *NativeGeminiMessagesStream {
 	return &NativeGeminiMessagesStream{runtime: runtime, openBlockIndex: -1, openToolIndex: -1}
 }
 
-// Usage 返回已观测用量的副本。
+// Usage returns a copy of the observed usage.
 func (s *NativeGeminiMessagesStream) Usage() *NativeGeminiUsage {
 	value := s.usage
 	return &value
 }
 
-// Begin 保留读取首个上游事件前的 message_start 与刷新顺序。
+// Begin emits message_start followed by a flush before upstream events are consumed.
 func (s *NativeGeminiMessagesStream) Begin(messageID, originalModel string) iter.Seq[NativeMessageEvent] {
 	return func(yield func(NativeMessageEvent) bool) {
 		emit := func(name string, data any) bool { return yield(NativeMessageEvent{Name: name, Data: data}) }
@@ -71,7 +71,7 @@ func (s *NativeGeminiMessagesStream) Begin(messageID, originalModel string) iter
 	}
 }
 
-// Process 按消费方的迭代节奏产生事件，不缓冲整个 payload 的输出。
+// Process yields events as the consumer advances. Usage updates after all output is consumed.
 func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []byte) iter.Seq[NativeMessageEvent] {
 	return func(yield func(NativeMessageEvent) bool) {
 		emit := func(name string, data any) bool { return yield(NativeMessageEvent{Name: name, Data: data}) }
@@ -84,9 +84,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 		parts := NativeExtractGeminiParts(geminiResp)
 		for _, part := range parts {
 			if text, ok := part["text"].(string); ok && text != "" {
-				// 开始文本块前先关闭已打开的 tool_use 块，和 functionCall 分支
-				// 先关闭文本块的处理保持对称；否则工具块和文本块会在
-				// Anthropic SSE 中重叠，违反 content block 生命周期约束。
+				// Close the tool block before opening a text block so Anthropic content blocks do not overlap.
 				if s.openToolIndex >= 0 {
 					if !emit("content_block_stop", map[string]any{
 						"type":  "content_block_stop",
@@ -155,7 +153,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 					name = "tool"
 				}
 
-				// 工具调用前先关闭当前文本块。
+				// Close the text block before opening a tool block.
 				if s.openBlockIndex >= 0 {
 					if !emit("content_block_stop", map[string]any{
 						"type":  "content_block_stop",
@@ -167,7 +165,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 					s.openBlockType = ""
 				}
 
-				// 分片收到工具参数时，保持同一个 tool_use 块并持续发出 delta。
+				// Keep one tool block for successive argument fragments with the same tool name.
 				if s.openToolIndex >= 0 && s.openToolName != name {
 					if !emit("content_block_stop", map[string]any{
 						"type":  "content_block_stop",
@@ -204,7 +202,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 				argsJSONText := "{}"
 				switch v := args.(type) {
 				case nil:
-					// 保持默认的 "{}"。
+					// Use the default empty JSON object.
 				case string:
 					if strings.TrimSpace(v) != "" {
 						argsJSONText = v
@@ -241,7 +239,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 	}
 }
 
-// Finish 依次关闭内容块、输出终态用量和消息结束事件。
+// Finish closes open blocks, emits final usage and message_stop, then requests a flush.
 func (s *NativeGeminiMessagesStream) Finish() iter.Seq[NativeMessageEvent] {
 	return func(yield func(NativeMessageEvent) bool) {
 		emit := func(name string, data any) bool { return yield(NativeMessageEvent{Name: name, Data: data}) }

@@ -54,7 +54,7 @@ func TestGetUserGroupRateMultiplier_UsesCacheAndSingleflight(t *testing.T) {
 	}
 
 	close(start)
-	// 所有调用方记录 cache miss 后再释放 loader，此时请求已进入 singleflight。
+	// Wait for every caller to record a cache miss before releasing the shared load.
 	require.Eventually(t, func() bool {
 		_, miss, _, _, _ := GroupRateCacheStats()
 		return miss == int64(concurrent)
@@ -67,7 +67,7 @@ func TestGetUserGroupRateMultiplier_UsesCacheAndSingleflight(t *testing.T) {
 	}
 	require.Equal(t, int64(1), repo.calls.Load())
 
-	// 再次读取命中缓存。
+	// A subsequent lookup uses the populated cache.
 	got := svc.Resolve(context.Background(), 101, 202, 1.2)
 	require.Equal(t, rate, got)
 	require.Equal(t, int64(1), repo.calls.Load())
@@ -116,7 +116,7 @@ func TestGetUserGroupRateMultiplier_CacheHitAndNilRepo(t *testing.T) {
 	require.Equal(t, int64(0), fallback)
 	require.Equal(t, int64(0), repo.calls.Load())
 
-	// 无 repo 时直接返回分组默认倍率
+	// A cached value remains usable without a repository; invalid IDs return the group default.
 	svc2 := NewGroupRateResolver(nil, gocache.New(time.Minute, time.Minute), DefaultGroupRateCacheTTL, nil, "service.gateway", nil)
 	svc2.cache.Set(key, 1.9, time.Minute)
 	require.Equal(t, 1.9, svc2.Resolve(context.Background(), 101, 202, 1.4))
@@ -183,7 +183,7 @@ func (s *userGroupRateRepoHotpathStub) GetByUserAndGroup(ctx context.Context, us
 	return s.rate, nil
 }
 
-// resetGatewayRateStatsForTest 重置分组倍率缓存的观测计数。
+// resetGatewayRateStatsForTest clears shared group-rate cache counters.
 func resetGatewayRateStatsForTest() {
 	m := SharedGroupRateMetrics()
 	m.Hit.Store(0)
@@ -193,7 +193,7 @@ func resetGatewayRateStatsForTest() {
 	m.Fallback.Store(0)
 }
 
-// GroupRateCacheStats 读取分组倍率缓存的累计观测值。
+// GroupRateCacheStats returns cumulative group-rate cache counters.
 func GroupRateCacheStats() (int64, int64, int64, int64, int64) {
 	return groupRateMetrics.Hit.Load(), groupRateMetrics.Miss.Load(), groupRateMetrics.Load.Load(), groupRateMetrics.Shared.Load(), groupRateMetrics.Fallback.Load()
 }

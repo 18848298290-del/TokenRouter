@@ -5,12 +5,13 @@ import (
 	"fmt"
 )
 
-// PublicInputStore 保持一次批量读取，避免将公开设置拆成逐字段查询。
+// PublicInputStore loads the settings needed for public responses in one batch.
 type PublicInputStore interface {
 	GetMultiple(context.Context, []string) (map[string]string, error)
 }
 
-// PublicInputOptions 包含 app 提供的公开设置转换函数，web 接收转换后的公开值。
+// PublicInputOptions contains the converters and version source supplied by app
+// for public settings responses.
 type PublicInputOptions struct {
 	Auth    func(map[string]string) PublicAuth
 	Usage   func(map[string]string) PublicUsage
@@ -21,12 +22,14 @@ type InputSource struct {
 	options PublicInputOptions
 }
 
-// NewInputSource 构造不回源，公开 API/embed/CSP 复用同一来源。
+// NewInputSource creates the shared source for public API, HTML, and CSP settings.
+// Construction does not read the store.
 func NewInputSource(store PublicInputStore, options PublicInputOptions) *InputSource {
 	return &InputSource{store: store, options: options}
 }
 
-// LoadSitePublicInputs 在返回前仅保留公开键，敏感值不会进入 HTML 渲染输入。
+// LoadSitePublicInputs filters raw settings to PublicValueKeys before returning
+// them alongside the converted authentication and usage settings.
 func (s *InputSource) LoadSitePublicInputs(ctx context.Context) (PublicInputs, error) {
 	raw, err := s.store.GetMultiple(ctx, PublicInputKeys())
 	if err != nil {
@@ -40,7 +43,8 @@ func (s *InputSource) LoadSitePublicInputs(ctx context.Context) (PublicInputs, e
 }
 func (s *InputSource) PublicVersion() string { return s.options.Version() }
 
-// PublicInputKeys 保留旧公开聚合的查询集合和顺序；返回独立列表。
+// PublicInputKeys returns a fresh list of keys needed to assemble public settings,
+// including credentials used by the authentication converter.
 func PublicInputKeys() []string {
 	return []string{
 		"balance_unit_name_localized", "oidc_connect_provider_name_localized", "balance_low_notify_recharge_url_localized",

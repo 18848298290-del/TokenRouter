@@ -17,7 +17,8 @@ type contentModerationInputBuilder struct {
 	seenImages map[string]struct{}
 }
 
-// contentModerationAuditInput 根据配置生成仅供上游审核的副本，完整原文仍保留在原输入中。
+// contentModerationAuditInput applies audit limits to a copy, retaining the full content in the original
+// input.
 func contentModerationAuditInput(input ContentModerationInput, cfg *ContentModerationConfig) ContentModerationInput {
 	if cfg == nil {
 		return input
@@ -94,12 +95,13 @@ func contentModerationRunePrefix(text string, limit int) (string, int) {
 	return text, count
 }
 
-// ExtractContentModerationPromptExcerptFromInput 生成兼容旧列表字段的短摘要。
+// ExtractContentModerationPromptExcerptFromInput builds the short excerpt used by legacy list fields.
 func ExtractContentModerationPromptExcerptFromInput(input ContentModerationInput) string {
 	return trimRawContentModerationText(input.Text, maxCyberWarningPromptExcerptRunes)
 }
 
-// ExtractContentModerationInput 只提取当前轮新增的用户输入和工具结果，避免重复审核历史消息。
+// ExtractContentModerationInput extracts current-turn user input and tool results so history is not
+// audited again.
 func ExtractContentModerationInput(protocol string, body []byte) ContentModerationInput {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ContentModerationInput{}
@@ -287,7 +289,7 @@ func collectResponsesInputItem(item gjson.Result, builder *contentModerationInpu
 			return
 		}
 	}
-	// 未知形态的工具结果仍保存完整结构，避免新增协议字段形成审核盲区。
+	// Keep unknown tool-result structures intact so added protocol fields remain visible to moderation.
 	builder.addText(ContentModerationSourceTool, item.Raw)
 	collectImagesRecursively(item, ContentModerationSourceTool, builder)
 }

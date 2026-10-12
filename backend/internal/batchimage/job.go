@@ -103,11 +103,11 @@ type BatchImageJob struct {
 	APIKeyID      *int64
 	ProviderID    *int64
 	GroupID       *int64
-	// BillingMode 与 PreferredSubscriptionID 冻结任务提交时的 API Key 资金来源。
+	// BillingMode and PreferredSubscriptionID snapshot the API key funding source at submission.
 	BillingMode             string
 	PreferredSubscriptionID *int64
 	Platform                string
-	// Model、RequestedModel 和 InternalModel 分别记录上游模型、客户端模型和内部路由模型。
+	// Model, RequestedModel, and InternalModel identify the upstream, client, and internal routing models.
 	Model             string
 	RequestedModel    string
 	InternalModel     string
@@ -128,13 +128,13 @@ type BatchImageJob struct {
 	EstimatedCost float64
 	HoldAmount    *float64
 	ActualCost    *float64
-	// BalanceHoldAmount 和 SubscriptionHoldAllocations 记录提交时的混合预占结果。
+	// BalanceHoldAmount and SubscriptionHoldAllocations record the funds reserved at submission.
 	BalanceHoldAmount           float64
 	SubscriptionHoldAllocations []billing.BillingAllocation
 	SubscriptionRateMultiplier  float64
 	BalanceRateMultiplier       float64
 	PlanGroupRateEnabled        bool
-	// AllowanceReserved 表示预计金额已经计入 Key 和团队成员额度。
+	// AllowanceReserved reports whether the estimate counts toward key and team-member quotas.
 	AllowanceReserved       bool
 	BaseUnitPrice           float64
 	GroupRateMultiplier     float64
@@ -183,7 +183,7 @@ type CreateBatchImageJobParams struct {
 	BillingMode             string
 	PreferredSubscriptionID *int64
 	Platform                string
-	// Model、RequestedModel 和 InternalModel 分别记录上游模型、客户端模型和内部路由模型。
+	// Model, RequestedModel, and InternalModel identify the upstream, client, and internal routing models.
 	Model             string
 	RequestedModel    string
 	InternalModel     string
@@ -327,12 +327,12 @@ type BatchImageRepository interface {
 	GetBatchImageJobByID(ctx context.Context, id int64) (*BatchImageJob, error)
 	ListBatchImageJobsForOwner(ctx context.Context, userID, apiKeyID int64, filter BatchImageJobFilter) ([]*BatchImageJob, error)
 	TransitionBatchImageJobStatus(ctx context.Context, batchID, toStatus string, opts BatchImageTransitionOptions) error
-	// TouchBatchImageJobSubmitting 刷新未提交（created/uploading）job 的 updated_at，
-	// 作为慢提交期间的心跳，防止被 stale 恢复扫描误杀。
+	// TouchBatchImageJobSubmitting refreshes updated_at for created/uploading jobs
+	// so recovery can distinguish a slow submission from an abandoned job.
 	TouchBatchImageJobSubmitting(ctx context.Context, batchID string) error
-	// FailStaleUnsubmittedBatchImageJob 原子地将仍处于 created/uploading 且
-	// provider_job_name 为空、updated_at 早于 cutoff 的 job 转为 failed。
-	// 返回 false 表示 job 已被并发推进（如已提交成功），调用方不得释放冻结。
+	// FailStaleUnsubmittedBatchImageJob atomically fails a created/uploading job with
+	// an empty provider_job_name and updated_at before cutoff.
+	// A false result means the stale condition no longer holds; callers must not release funds.
 	FailStaleUnsubmittedBatchImageJob(ctx context.Context, batchID string, cutoff time.Time, code, message string) (bool, error)
 	UpdateBatchImageJobProviderOutputRef(ctx context.Context, batchID, providerOutputRef string) error
 	UpdateBatchImageJobProviderSubmit(ctx context.Context, params UpdateBatchImageJobProviderSubmitParams) error

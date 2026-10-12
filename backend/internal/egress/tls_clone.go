@@ -4,7 +4,7 @@ import (
 	"slices"
 )
 
-// CloneTLSFingerprintProfile 隔离配置来源、缓存和请求所持有的可变字段。
+// CloneTLSFingerprintProfile copies mutable fields to isolate configuration, caches, and requests.
 func CloneTLSFingerprintProfile(p *TLSFingerprintProfile) *TLSFingerprintProfile {
 	if p == nil {
 		return nil
@@ -23,7 +23,7 @@ func CloneTLSFingerprintProfile(p *TLSFingerprintProfile) *TLSFingerprintProfile
 	return &copied
 }
 
-// CloneTLSFingerprintRouter 保持 nil/空集合差异，并隔离可空配置和规则数组。
+// CloneTLSFingerprintRouter copies optional values and rules, preserving nil versus empty slices.
 func CloneTLSFingerprintRouter(p *TLSFingerprintRouter) *TLSFingerprintRouter {
 	if p == nil {
 		return nil
@@ -44,7 +44,7 @@ func clonePointer[T any](p *T) *T {
 	return &copied
 }
 
-// CloneTLSProfiles 为缓存序列化复制 TLS 配置数组，区分 nil 和空数组。
+// CloneTLSProfiles deep-copies profiles while preserving nil versus empty slices.
 func CloneTLSProfiles(values []*TLSFingerprintProfile) []*TLSFingerprintProfile {
 	if values == nil {
 		return nil
@@ -56,7 +56,7 @@ func CloneTLSProfiles(values []*TLSFingerprintProfile) []*TLSFingerprintProfile 
 	return out
 }
 
-// CloneTLSRouters 为缓存序列化复制 TLS 路由数组，区分 nil 和空数组。
+// CloneTLSRouters deep-copies routers while preserving nil versus empty slices.
 func CloneTLSRouters(values []*TLSFingerprintRouter) []*TLSFingerprintRouter {
 	if values == nil {
 		return nil

@@ -311,7 +311,7 @@ func TestUserRepositoryCreateWithRegistrationEmailGuardsRejectsSecondDomainAccou
 	require.ErrorIs(t, err, identity.ErrEmailDomainRegistrationLimit)
 }
 
-// TestNormalizedUserEmailSQLMatchesMigrationIndex 防止查询与函数索引的归一化表达式发生漂移。
+// TestNormalizedUserEmailSQLMatchesMigrationIndex guards query and expression-index consistency.
 func TestNormalizedUserEmailSQLMatchesMigrationIndex(t *testing.T) {
 	content, err := migrations.FS.ReadFile("220_users_registration_email_normalized_index_notx.sql")
 	require.NoError(t, err)
@@ -350,7 +350,7 @@ func TestApplyRedeemAdjustment_MissingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// seedAliasUser 创建邮箱别名测试使用的用户。
+// seedAliasUser creates a user for email alias tests.
 func seedAliasUser(t *testing.T, repo *UserStore, email string) *identity.User {
 	t.Helper()
 	user := &identity.User{

@@ -15,7 +15,7 @@ import (
 
 const CodexTurnStateHeader = "x-codex-turn-state"
 
-// CodexTurnStateHeaders 在原响应提交位置记录来源，状态表由应用独立持有。
+// CodexTurnStateHeaders records provider ownership when response state is delivered or committed.
 // @project-doc docs/interfaces/openai_upstream.md#openai_protocol_dispatch
 type CodexTurnStateHeaders struct {
 	Origins *session.CodexTurnOrigins
@@ -40,7 +40,8 @@ func ExtractCodexTurnState(headers http.Header) string {
 	return strings.TrimSpace(headers.Get(CodexTurnStateHeader))
 }
 
-// StageCodexTurnState 不发布来源，仍允许首输出守卫丢弃当前尝试。
+// StageCodexTurnState copies state headers without recording ownership, allowing the attempt to be discarded before
+// output.
 func StageCodexTurnState(dst *http.Header, headers http.Header) {
 	if dst == nil {
 		return
@@ -95,7 +96,7 @@ func (s *CodexTurnStateHeaders) Commit(c *gin.Context, target *gatewayadapter.Ex
 	s.note(c, target)
 }
 
-// Guard 删除已知来自另一提供商的状态。未知、同提供商与过期记录允许回放。
+// Guard removes state known to belong to another provider. Same-provider, unknown, and expired ownership allow replay.
 func (s *CodexTurnStateHeaders) Guard(c *gin.Context, target *gatewayadapter.ExecutionProvider, headers http.Header) {
 	if s == nil || headers == nil || target == nil || strings.TrimSpace(headers.Get(CodexTurnStateHeader)) == "" {
 		return

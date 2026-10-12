@@ -11,29 +11,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// 会话限制缓存常量定义
+// Active sessions use a sorted set for each provider.
 //
-// 设计说明：
-// 使用 Redis 有序集合（Sorted Set）跟踪每个提供商的活跃会话：
+// Session representation:
+// The set tracks session activity used for max_sessions admission.
 // - Key: session_limit:provider:{providerID}
-// - Member: sessionUUID（从 metadata.user_id 中提取）
-// - Score: Unix 时间戳（会话最后活跃时间）
+// Member: sessionUUID extracted from metadata.user_id.
+// Score: last activity time in Unix seconds.
 //
-// 通过 ZREMRANGEBYSCORE 自动清理过期会话，无需手动管理 TTL。
+// Score-based pruning removes idle sessions; key TTL also removes inactive sets.
 const (
-	// 会话限制键前缀
-	// 格式: session_limit:provider:{providerID}。
+	// Provider session key prefix.
+	// Format: session_limit:provider:{providerID}.
 	sessionLimitKeyPrefix = "session_limit:provider:"
 )
 
 var (
-	// registerSessionScript 注册会话活动
-	// Redis TIME 提供各实例共用的服务器时间。
+	// registerSessionScript refreshes an existing session or admits a new one below maxSessions.
+	// Redis TIME supplies the clock shared by instances.
 	// KEYS[1] = session_limit:provider:{providerID}
 	// ARGV[1] = maxSessions
-	// ARGV[2] = idleTimeout（秒）
+	// ARGV[2] = idleTimeout in seconds.
 	// ARGV[3] = sessionUUID
-	// 返回: 1 = 允许, 0 = 拒绝。
+	// Returns 1 for admission, 0 for rejection.
 	registerSessionScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
 		-- 5.0 及以上默认按效果复制；保留调用不改变行为。
@@ -73,9 +73,9 @@ var (
 		return 0
 	`)
 
-	// refreshSessionScript 刷新会话时间戳
+	// refreshSessionScript refreshes the timestamp of an existing session.
 	// KEYS[1] = session_limit:provider:{providerID}
-	// ARGV[1] = idleTimeout（秒）
+	// ARGV[1] = idleTimeout in seconds.
 	// ARGV[2] = sessionUUID.
 	refreshSessionScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
@@ -97,9 +97,9 @@ var (
 		return 1
 	`)
 
-	// getActiveSessionCountScript 获取活跃会话数
+	// getActiveSessionCountScript prunes idle sessions and returns the remaining count.
 	// KEYS[1] = session_limit:provider:{providerID}
-	// ARGV[1] = idleTimeout（秒）。
+	// ARGV[1] = idleTimeout in seconds.
 	getActiveSessionCountScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
 		-- 5.0 及以上默认按效果复制；保留调用不改变行为。
@@ -117,9 +117,9 @@ var (
 		return redis.call('ZCARD', key)
 	`)
 
-	// isSessionActiveScript 检查会话是否活跃
+	// isSessionActiveScript checks a session against the idle cutoff and removes it if expired.
 	// KEYS[1] = session_limit:provider:{providerID}
-	// ARGV[1] = idleTimeout（秒）
+	// ARGV[1] = idleTimeout in seconds.
 	// ARGV[2] = sessionUUID.
 	isSessionActiveScript = redis.NewScript(`
 		-- 兼容 3.2-4.x：脚本使用 TIME，需启用按效果复制，确保写入能同步到从库。
@@ -150,17 +150,17 @@ var (
 
 type sessionLimitCache struct {
 	rdb                *redis.Client
-	defaultIdleTimeout time.Duration // 默认空闲超时（用于 GetActiveSessionCount）
+	defaultIdleTimeout time.Duration // Default idle timeout for queries without a provider-specific value.
 }
 
-// NewSessionLimitCache 创建会话限制缓存
-// defaultIdleTimeoutMinutes: 默认空闲超时时间（分钟），用于无参数查询。
+// NewSessionLimitCache creates Redis session storage.
+// Nonpositive defaultIdleTimeoutMinutes uses five minutes for queries without an override.
 func NewSessionLimitCache(rdb *redis.Client, defaultIdleTimeoutMinutes int) scheduler.SessionLimitCache {
 	if defaultIdleTimeoutMinutes <= 0 {
-		defaultIdleTimeoutMinutes = 5 // 默认 5 分钟
+		defaultIdleTimeoutMinutes = 5 // Five minutes.
 	}
 
-	// Pipeline 使用前预加载 Lua 脚本，脚本缺失时 Pipeline 会返回 NOSCRIPT。
+	// Warm the script cache for Run calls. Batch queries use EVAL and also work after a cache flush.
 	ctx := context.Background()
 	scripts := []*redis.Script{
 		registerSessionScript,
@@ -180,15 +180,15 @@ func NewSessionLimitCache(rdb *redis.Client, defaultIdleTimeoutMinutes int) sche
 	}
 }
 
-// sessionLimitKey 生成会话限制的 Redis 键。
+// sessionLimitKey returns the provider's Redis session key.
 func sessionLimitKey(providerID int64) string {
 	return fmt.Sprintf("%s%d", sessionLimitKeyPrefix, providerID)
 }
 
-// RegisterSession 注册会话活动。
+// RegisterSession records activity and reports admission; Redis errors return true together with the error.
 func (c *sessionLimitCache) RegisterSession(ctx context.Context, providerID int64, sessionUUID string, maxSessions int, idleTimeout time.Duration) (bool, error) {
 	if sessionUUID == "" || maxSessions <= 0 {
-		return true, nil // 无效参数，默认允许
+		return true, nil // An empty session or disabled limit requires no admission check.
 	}
 
 	key := sessionLimitKey(providerID)
@@ -199,13 +199,13 @@ func (c *sessionLimitCache) RegisterSession(ctx context.Context, providerID int6
 
 	result, err := registerSessionScript.Run(ctx, c.rdb, []string{key}, maxSessions, idleTimeoutSeconds, sessionUUID).Int()
 	if err != nil {
-		return true, err // 失败开放：缓存错误时允许请求通过
+		return true, err // Allow admission while reporting the cache error.
 	}
 	return result == 1, nil
 }
 
-// UnregisterSession 立即移除会话注册（不等待空闲超时）
-// 请求最终失败时调用：上游从未服务该会话，继续占槽会卡住 max_sessions 受限的提供商。
+// UnregisterSession removes a registration immediately.
+// Failed attempts release registrations so they do not consume max_sessions capacity until idle expiry.
 func (c *sessionLimitCache) UnregisterSession(ctx context.Context, providerID int64, sessionUUID string) error {
 	if sessionUUID == "" {
 		return nil
@@ -213,7 +213,7 @@ func (c *sessionLimitCache) UnregisterSession(ctx context.Context, providerID in
 	return c.rdb.ZRem(ctx, sessionLimitKey(providerID), sessionUUID).Err()
 }
 
-// RefreshSession 刷新会话时间戳。
+// RefreshSession updates an existing session's activity time.
 func (c *sessionLimitCache) RefreshSession(ctx context.Context, providerID int64, sessionUUID string, idleTimeout time.Duration) error {
 	if sessionUUID == "" {
 		return nil
@@ -229,7 +229,7 @@ func (c *sessionLimitCache) RefreshSession(ctx context.Context, providerID int64
 	return err
 }
 
-// GetActiveSessionCount 获取活跃会话数。
+// GetActiveSessionCount prunes idle sessions using the default timeout and returns the remaining count.
 func (c *sessionLimitCache) GetActiveSessionCount(ctx context.Context, providerID int64) (int, error) {
 	key := sessionLimitKey(providerID)
 	idleTimeoutSeconds := int(c.defaultIdleTimeout.Seconds())
@@ -241,7 +241,7 @@ func (c *sessionLimitCache) GetActiveSessionCount(ctx context.Context, providerI
 	return result, nil
 }
 
-// GetActiveSessionCountBatch 批量获取多个提供商的活跃会话数。
+// GetActiveSessionCountBatch returns successful counts; failed providers are omitted and the error result is nil.
 func (c *sessionLimitCache) GetActiveSessionCountBatch(ctx context.Context, providerIDs []int64, idleTimeouts map[int64]time.Duration) (map[int64]int, error) {
 	if len(providerIDs) == 0 {
 		return make(map[int64]int), nil
@@ -249,13 +249,13 @@ func (c *sessionLimitCache) GetActiveSessionCountBatch(ctx context.Context, prov
 
 	results := make(map[int64]int, len(providerIDs))
 
-	// 使用 pipeline 批量执行
+	// Pipeline the per-provider queries.
 	pipe := c.rdb.Pipeline()
 
 	cmds := make(map[int64]*redis.Cmd, len(providerIDs))
 	for _, providerID := range providerIDs {
 		key := sessionLimitKey(providerID)
-		// 使用各提供商自己的 idleTimeout，如果没有则用默认值
+		// Use a positive provider-specific idle timeout when supplied.
 		idleTimeout := c.defaultIdleTimeout
 		if idleTimeouts != nil {
 			if t, ok := idleTimeouts[providerID]; ok && t > 0 {
@@ -266,7 +266,7 @@ func (c *sessionLimitCache) GetActiveSessionCountBatch(ctx context.Context, prov
 		cmds[providerID] = getActiveSessionCountScript.Eval(ctx, pipe, []string{key}, idleTimeoutSeconds)
 	}
 
-	// 执行 pipeline，即使部分失败也尝试获取成功的结果
+	// Read successful results even if other pipeline commands fail.
 	_, _ = pipe.Exec(ctx)
 
 	for providerID, cmd := range cmds {
@@ -278,7 +278,7 @@ func (c *sessionLimitCache) GetActiveSessionCountBatch(ctx context.Context, prov
 	return results, nil
 }
 
-// IsSessionActive 检查会话是否活跃。
+// IsSessionActive reports whether the session is within the default idle timeout.
 func (c *sessionLimitCache) IsSessionActive(ctx context.Context, providerID int64, sessionUUID string) (bool, error) {
 	if sessionUUID == "" {
 		return false, nil

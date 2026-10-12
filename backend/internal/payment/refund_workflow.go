@@ -44,7 +44,7 @@ func (s *RefundWorkflow) compensateFailure(ctx context.Context, p *RefundPlan, r
 	return &RefundResult{Warning: "gateway failed: " + cause.Error() + ", rolled back"}, nil
 }
 
-// QueryAndFinalizeRefund 查询已提交退款的渠道结果并完成本地结算。
+// QueryAndFinalizeRefund queries a submitted refund and completes local settlement.
 func (s *RefundWorkflow) QueryAndFinalizeRefund(ctx context.Context, id int64) (*RefundResult, error) {
 	order, err := s.store.Order(ctx, id)
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *RefundWorkflow) QueryAndFinalizeRefund(ctx context.Context, id int64) (
 		return nil, fmt.Errorf("query refund: %w", err)
 	}
 	if err = ValidateRefundProviderResponse(resp); err != nil {
-		// 不明响应不猜测成功/失败，保留原准备事实供人工核实。
+		// Keep preparation intact for manual verification when the provider result is inconclusive.
 		if resp == nil || strings.TrimSpace(resp.Status) != ProviderStatusFailed {
 			return nil, RefundRecoveryRequired(err.Error())
 		}
@@ -119,7 +119,7 @@ func (s *RefundWorkflow) FinalizePendingRefundSuccess(ctx context.Context, p *Re
 	return s.store.CompleteRefund(ctx, p, nil, ApplyRefundDeduction)
 }
 
-// ApplyRefundDeduction 只使用当前事务的权益参与能力，保留非负实际扣减及到期撤销。
+// ApplyRefundDeduction uses transaction-bound rights, records actual balance deductions, and revokes subscriptions that would expire.
 func ApplyRefundDeduction(ctx context.Context, rights RefundRights, p *RefundPlan) error {
 	if p.DeductionType == DeductionTypeBalance && p.BalanceToDeduct > 0 {
 		actual, err := rights.DeductBalance(ctx, p.Order.UserID, p.BalanceToDeduct)

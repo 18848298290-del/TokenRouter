@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpenAIWSIngressEndedByClient_MatchesCloseCodeReportedInLog 检查关闭码、客户端结束原因与诊断结果。
+// TestOpenAIWSIngressEndedByClient_MatchesCloseCodeReportedInLog checks that a
+// normal close in diagnostics is also classified as a client-side termination.
 func TestOpenAIWSIngressEndedByClient_MatchesCloseCodeReportedInLog(t *testing.T) {
 	errs := []error{
 		coderws.CloseError{Code: coderws.StatusNormalClosure, Reason: "client done"},

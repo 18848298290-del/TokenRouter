@@ -51,7 +51,7 @@ var (
 	)
 )
 
-// GrokReconciliationOptions 只提供提供商存储、共用平台执行器和失效观察接口。
+// GrokReconciliationOptions supplies storage, refresh execution, invalidation, and timing dependencies.
 type GrokReconciliationOptions struct {
 	Pager            OAuthRefreshCandidatePager
 	Reader           RefreshRepository
@@ -63,19 +63,20 @@ type GrokReconciliationOptions struct {
 	Skew             time.Duration
 }
 
-// GrokReconciliationService 拥有管理对账的分类、分页、逐条结果与可等待的生命周期。
+// GrokReconciliationService classifies paged OAuth records, reports per-provider results, and tracks work for
+// shutdown.
 type GrokReconciliationService struct {
 	options  GrokReconciliationOptions
 	activity operationActivity
 }
 
-// GrokOAuthReconciler 是面向管理端的窄化对账接口。
+// GrokOAuthReconciler exposes OAuth reconciliation to administrative callers.
 type GrokOAuthReconciler interface {
 	ReconcileGrokOAuth(ctx context.Context, input GrokOAuthReconcileInput) (*GrokOAuthReconcileResult, error)
 }
 
-// GrokOAuthConditionalErrorWriter 提供对账使用的窄化 CAS 更新接口。
-// 只有活动 Grok OAuth 提供商的完整凭据仍与更新前观察值一致时，仓储才能改变其状态。
+// GrokOAuthConditionalErrorWriter conditionally marks an active Grok OAuth provider as errored.
+// The repository must verify that its complete credentials still match the observed values.
 type GrokOAuthConditionalErrorWriter interface {
 	SetGrokOAuthErrorIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, errorMsg string) (bool, error)
 }
@@ -87,7 +88,8 @@ type GrokOAuthReconcileInput struct {
 	RefreshWindow time.Duration
 }
 
-// GrokOAuthReconcileItem 只包含元数据，凭据、提供商身份字段、上游响应体和原始错误均不得通过该接口返回。
+// GrokOAuthReconcileItem exposes provider IDs and classified outcomes; credentials, account identity, and raw
+// upstream errors must stay private.
 type GrokOAuthReconcileItem struct {
 	ProviderID int64  `json:"provider_id"`
 	Reason     string `json:"reason"`
@@ -169,7 +171,7 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 
 		ActiveOnly: true,
 
-		// 对账只扫描 OAuth 提供商，并且不要求 refresh token，以便发现结构不完整的记录。
+		// Include OAuth records with missing refresh tokens so reconciliation can detect incomplete credentials.
 		IncludeSetupToken: false,
 
 		RequireRefreshToken: false,
@@ -245,7 +247,7 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 			}
 			latestReason, latestAction, stillActionable := ClassifyGrokOAuthReconcileProvider(latest, refreshWindow, s.options.Now)
 			if !stillActionable || latestAction != GrokOAuthReconcileActionBlock {
-				// 提供商在分页加载后已发生变化时，跳过本次基于分页快照的处置。
+				// Skip the action when the provider changed after the page was loaded.
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
 				break
@@ -265,7 +267,7 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 				break
 			}
 			if !applied {
-				// 最终重读后重新授权赢得 CAS 竞争；只有 CAS 成功后才安装运行时快速路径，因此保留最新活动提供商。
+				// A concurrent update won the CAS. Install runtime blocks only after a successful write.
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
 				break

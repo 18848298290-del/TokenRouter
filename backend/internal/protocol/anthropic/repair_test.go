@@ -41,7 +41,7 @@ func TestStripEmptyTextBlocks(t *testing.T) {
 	})
 
 	t.Run("preserves non-map blocks in content", func(t *testing.T) {
-		// tool_result 的 content 可以是字符串，非对象内容按输入返回。
+		// String-valued tool_result content passes through unchanged.
 		input := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"string content"},{"type":"text","text":""}]}]}`)
 		out := StripEmptyTextBlocks(input)
 		var req map[string]any
@@ -55,7 +55,7 @@ func TestStripEmptyTextBlocks(t *testing.T) {
 	})
 
 	t.Run("handles deeply nested tool_result", func(t *testing.T) {
-		// 嵌套 tool_result 中的空文本也需要移除。
+		// Empty text is removed from nested tool_result content too.
 		input := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":""},{"type":"text","text":"deep"}]}]}]}]}`)
 		out := StripEmptyTextBlocks(input)
 		var req map[string]any

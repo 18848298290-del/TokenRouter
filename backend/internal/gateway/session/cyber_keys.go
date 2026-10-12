@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CyberSessionTranscriptBlockKeys 返回完整请求键，以及容忍改写的可选上下文键。
-// 只有观察到模型生成历史，才产生后者。
+// CyberSessionTranscriptBlockKeys returns the full-request key and an optional key preceding the latest user turn.
+// The preceding-context key requires model-generated history and tolerates edits to the latest user input.
 func CyberSessionTranscriptBlockKeys(apiKeyID int64, body []byte) []string {
 	derived := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
 	if len(derived.lookupKeys) == 0 {
@@ -28,7 +28,8 @@ func CyberSessionTranscriptLookupKeys(apiKeyID int64, body []byte) []string {
 	return deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body).lookupKeys
 }
 
-// CyberSessionScopeKey 标记曾命中的请求来源，命中后再解析转录并执行 MGET，最终屏蔽由内容键决定。
+// CyberSessionScopeKey identifies sources with prior blocks. An active scope triggers transcript lookup;
+// content keys determine whether the request is blocked.
 func CyberSessionScopeKey(apiKeyID int64, clientIP, userAgent string) string {
 	if apiKeyID <= 0 {
 		return ""

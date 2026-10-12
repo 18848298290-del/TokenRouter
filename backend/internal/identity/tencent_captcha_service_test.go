@@ -30,8 +30,8 @@ func newTencentCaptchaTestServiceWithRegion(verifier identity.TencentCaptchaVeri
 	return identity.NewTencentCaptchaService(settings, verifier)
 }
 
-// TestTencentCaptchaServiceRoutesVerifyEndpointByRegion 验证站点决定服务端票据校验接入点：国际站账号的密钥在国内站接入点上无法通过鉴权，
-// 因此这条映射一旦错位，国际站验证码会整体失效。
+// TestTencentCaptchaServiceRoutesVerifyEndpointByRegion checks that region selection reaches the verifier.
+// International applications require the international verification endpoint.
 func TestTencentCaptchaServiceRoutesVerifyEndpointByRegion(t *testing.T) {
 	cases := []struct {
 		name         string

@@ -130,14 +130,14 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesInvali
 }
 
 func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathReindexesUnindexedLiveLock() {
-	// 模拟索引丢失的存量锁（升级窗口/索引写失败/释放竞态误删）：
-	// 锁存在且有 TTL，但索引里没有对应 member。
+	// Simulate a missing index entry after an upgrade, failed index write, or release race.
+	// The lock has a TTL but no index member.
 	providerID := int64(705)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, umqLockKey(providerID), "holder-705", time.Minute).Err())
 
-	// 另一个请求争锁失败，应顺手把观测到的持有者锁回填进索引。
+	// A failed contention attempt repairs the observed owner's index entry.
 	acquired, err := s.cache.AcquireLock(s.ctx, providerID, "contender-705", 10_000)
 	require.NoError(s.T(), err)
 	require.False(s.T(), acquired)
@@ -145,15 +145,15 @@ func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathReindexesUnindexedLiveLo
 	score, err := s.rdb.ZScore(s.ctx, umqLockIndexKey, "705").Result()
 	require.NoError(s.T(), err, "busy acquire should re-index the observed live lock")
 	require.Greater(s.T(), int64(score), nowMs)
-	// 锁本身不应被争锁方改动。
+	// The contender leaves the lock owner unchanged.
 	val, err := s.rdb.Get(s.ctx, umqLockKey(providerID)).Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "holder-705", val)
 }
 
 func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathMakesNoTTLLockReconcilable() {
-	// PTTL 为 -1 的锁若缺少索引，reconcile 会跳过它。
-	// 争锁失败时将它按已到期候选回填到索引，等待后台删除。
+	// An unindexed persistent lock would be invisible to reconciliation.
+	// Failed acquisition indexes it as already due so background cleanup can remove it.
 	providerID := int64(706)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, umqLockKey(providerID), "holder-706", 0).Err())
 

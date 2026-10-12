@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthEndpoints 只表达身份 HTTP 的端点集合，支付授权有独立接口。
+// AuthEndpoints lists the identity HTTP handlers. Payment authorization uses a separate interface.
 type AuthEndpoints interface {
 	BindDingTalkOAuthLogin(*gin.Context)
 	BindLinuxDoOAuthLogin(*gin.Context)

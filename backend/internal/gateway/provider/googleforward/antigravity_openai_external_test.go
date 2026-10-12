@@ -99,7 +99,7 @@ func TestAntigravityCompatOAuthUsesNativeTokenAndRoute(t *testing.T) {
 	}
 }
 
-// TestAntigravityCompatResponsesRestoresNamespaceTools 检查 Responses 转发是否恢复 Codex namespace 工具。
+// TestAntigravityCompatResponsesRestoresNamespaceTools checks restoration of Codex namespace tools.
 func TestAntigravityCompatResponsesRestoresNamespaceTools(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -148,7 +148,7 @@ func TestAntigravityCompatResponsesRestoresNamespaceTools(t *testing.T) {
 	}
 }
 
-// TestAntigravityCompatChatRestoresForkToolNames 检查 Chat 转发是否执行工具名的双向映射。
+// TestAntigravityCompatChatRestoresForkToolNames checks tool-name rewriting in both directions.
 func TestAntigravityCompatChatRestoresForkToolNames(t *testing.T) {
 	tests := []struct {
 		name   string

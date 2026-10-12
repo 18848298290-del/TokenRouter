@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockErrorPassthroughRepo 用于测试的 mock repository。
+// mockErrorPassthroughRepo supplies configurable rule-storage results.
 type mockErrorPassthroughRepo struct {
 	rules     []*ErrorPassthroughRule
 	listErr   error
@@ -31,7 +31,7 @@ type mockErrorPassthroughCache struct {
 	notifyCalled     int
 }
 
-// controlledRules 用通道控制读取与更新的执行顺序。
+// controlledRules uses channels to coordinate reads and updates.
 type controlledRules struct {
 	ErrorPassthroughRepository
 	mu      sync.Mutex
@@ -82,7 +82,7 @@ func (m *mockErrorPassthroughCache) NotifyUpdate(ctx context.Context) error {
 }
 
 func (m *mockErrorPassthroughCache) SubscribeUpdates(ctx context.Context, handler func()) {
-	// 单测中无需订阅行为
+	// This fixture does not deliver subscription notifications.
 }
 
 func cloneFixtureRules(rules []*ErrorPassthroughRule) []*ErrorPassthroughRule {
@@ -148,19 +148,19 @@ func (m *mockErrorPassthroughRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// newTestService 创建测试用的服务实例。
+// newTestService constructs a service with a preloaded local snapshot.
 func newTestService(rules []*ErrorPassthroughRule) *ErrorPassthroughService {
 	repo := &mockErrorPassthroughRepo{rules: rules}
 	svc := &ErrorPassthroughService{
 		repo:  repo,
-		cache: nil, // 不使用缓存
+		cache: nil, // No shared cache.
 	}
-	// 直接设置本地缓存作为测试输入。
+
 	svc.setLocalCache(rules)
 	return svc
 }
 
-// newCachedRuleForTest 从 ErrorPassthroughRule 创建 cachedPassthroughRule（测试用）。
+// newCachedRuleForTest compiles a rule for matcher tests.
 func newCachedRuleForTest(rule *ErrorPassthroughRule) *cachedPassthroughRule {
 	cr := &cachedPassthroughRule{ErrorPassthroughRule: rule}
 	if len(rule.Keywords) > 0 {
@@ -185,7 +185,7 @@ func newCachedRuleForTest(rule *ErrorPassthroughRule) *cachedPassthroughRule {
 }
 
 func TestRuleMatches_NoConditions(t *testing.T) {
-	// 没有配置任何条件时，不应该匹配
+	// An empty condition set must not match.
 	svc := newTestService(nil)
 	rule := newCachedRuleForTest(&ErrorPassthroughRule{
 		Enabled:    true,
@@ -263,7 +263,7 @@ func TestRuleMatches_OnlyKeywords_AnyMode(t *testing.T) {
 }
 
 func TestRuleMatches_BothConditions_AnyMode(t *testing.T) {
-	// any 模式：错误码 OR 关键词
+	// Any mode accepts either a status-code or keyword match.
 	svc := newTestService(nil)
 	rule := newCachedRuleForTest(&ErrorPassthroughRule{
 		Enabled:    true,
@@ -320,7 +320,7 @@ func TestRuleMatches_BothConditions_AnyMode(t *testing.T) {
 }
 
 func TestRuleMatches_BothConditions_AllMode(t *testing.T) {
-	// all 模式：错误码 AND 关键词
+	// All mode requires both configured categories.
 	svc := newTestService(nil)
 	rule := newCachedRuleForTest(&ErrorPassthroughRule{
 		Enabled:    true,
@@ -441,7 +441,7 @@ func TestPlatformMatches(t *testing.T) {
 }
 
 func TestMatchRule_Priority(t *testing.T) {
-	// 测试规则按优先级排序，优先级小的先匹配
+	// Rules with lower priority numbers match first.
 	rules := []*ErrorPassthroughRule{
 		{
 			ID:         1,
@@ -618,7 +618,7 @@ func TestMatchRule_CaseInsensitiveKeyword(t *testing.T) {
 }
 
 func TestMatchRule_RealWorldScenario_ContextLimitPassthrough(t *testing.T) {
-	// 场景：上游返回 422 + "context limit has been reached"，需要透传给客户端
+	// Pass through an upstream 422 reporting "context limit has been reached".
 	rules := []*ErrorPassthroughRule{
 		{
 			ID:              1,
@@ -627,7 +627,7 @@ func TestMatchRule_RealWorldScenario_ContextLimitPassthrough(t *testing.T) {
 			Priority:        1,
 			ErrorCodes:      []int{422},
 			Keywords:        []string{"context limit"},
-			MatchMode:       MatchModeAll, // 必须同时满足
+			MatchMode:       MatchModeAll, // Both categories required.
 			Platforms:       []string{"anthropic", "antigravity"},
 			PassthroughCode: true,
 			PassthroughBody: true,
@@ -636,7 +636,6 @@ func TestMatchRule_RealWorldScenario_ContextLimitPassthrough(t *testing.T) {
 
 	svc := newTestService(rules)
 
-	// 测试 Anthropic 平台
 	t.Run("Anthropic 422 with context limit", func(t *testing.T) {
 		body := []byte(`{"type":"error","error":{"type":"invalid_request","message":"The context limit has been reached"}}`)
 		matched := svc.MatchRule("anthropic", 422, body)
@@ -645,28 +644,25 @@ func TestMatchRule_RealWorldScenario_ContextLimitPassthrough(t *testing.T) {
 		assert.True(t, matched.PassthroughBody)
 	})
 
-	// 测试 Antigravity 平台
 	t.Run("Antigravity 422 with context limit", func(t *testing.T) {
 		body := []byte(`{"error":"context limit exceeded"}`)
 		matched := svc.MatchRule("antigravity", 422, body)
 		require.NotNil(t, matched)
 	})
 
-	// 测试 OpenAI 平台（不在规则的平台列表中）
+	// OpenAI is outside the platform filter.
 	t.Run("OpenAI should not match", func(t *testing.T) {
 		body := []byte(`{"error":"context limit exceeded"}`)
 		matched := svc.MatchRule("openai", 422, body)
 		assert.Nil(t, matched, "OpenAI 不在规则的平台列表中")
 	})
 
-	// 测试状态码不匹配
 	t.Run("Wrong status code", func(t *testing.T) {
 		body := []byte(`{"error":"context limit exceeded"}`)
 		matched := svc.MatchRule("anthropic", 400, body)
 		assert.Nil(t, matched, "状态码不匹配")
 	})
 
-	// 测试关键词不匹配
 	t.Run("Wrong keyword", func(t *testing.T) {
 		body := []byte(`{"error":"rate limit exceeded"}`)
 		matched := svc.MatchRule("anthropic", 422, body)
@@ -675,7 +671,7 @@ func TestMatchRule_RealWorldScenario_ContextLimitPassthrough(t *testing.T) {
 }
 
 func TestMatchRule_RealWorldScenario_CustomErrorMessage(t *testing.T) {
-	// 场景：某些错误需要返回自定义消息，隐藏上游详细信息
+	// A custom response hides upstream details.
 	customMsg := "Service temporarily unavailable, please try again later"
 	responseCode := 503
 	rules := []*ErrorPassthroughRule{
@@ -1002,7 +998,6 @@ func newPassthroughRuleForWritePathTest(id int64, keyword, customMsg string) *Er
 	return rule
 }
 
-// testIntPtr 返回测试用整数指针。
 func testIntPtr(i int) *int { return &i }
 
 func testStrPtr(s string) *string { return &s }
@@ -1041,7 +1036,7 @@ func blockedRules() *controlledRules {
 	return &controlledRules{current: fixtureRule(), entered: make(chan struct{}), resume: make(chan struct{}), block: true}
 }
 
-// TestRuleUpdateCannotBeOverwrittenByOlderLoad 检查回源和管理写入按顺序发布，禁用后的缓存保持最新规则。
+// TestRuleUpdateCannotBeOverwrittenByOlderLoad checks ordered publication of reads and administrative writes.
 func TestRuleUpdateCannotBeOverwrittenByOlderLoad(t *testing.T) {
 	repo := blockedRules()
 	svc := NewErrorPassthroughService(repo, nil)
@@ -1057,7 +1052,7 @@ func TestRuleUpdateCannotBeOverwrittenByOlderLoad(t *testing.T) {
 	require.NoError(t, <-loaded)
 	require.NoError(t, <-updated)
 	require.Nil(t, svc.MatchRule("openai", 503, nil))
-	// 反向顺序同样保留最新状态，后续回源读取权威的新值。
+	// A later reload also reads the updated authoritative state.
 	require.NoError(t, svc.reloadRulesFromDB(context.Background()))
 	require.Nil(t, svc.MatchRule("openai", 503, nil))
 }
@@ -1080,7 +1075,7 @@ func TestRuleUpdateCoordinatorWaitHonorsCancellation(t *testing.T) {
 	require.NotNil(t, svc.MatchRule("openai", 503, nil), "未成功写入不能发布禁用状态")
 }
 
-// TestRuleSnapshotOwnership 验证输入、结果和嵌套响应动作均与已编译快照独立。
+// TestRuleSnapshotOwnership checks that inputs and returned nested fields cannot mutate compiled rules.
 func TestRuleSnapshotOwnership(t *testing.T) {
 	source := fixtureRule()
 	svc := NewErrorPassthroughService(nil, nil)
@@ -1104,7 +1099,7 @@ func TestRuleSnapshotOwnership(t *testing.T) {
 	require.Empty(t, second.Keywords)
 }
 
-// TestStopCancelsStartupRuleLoad 验证运行取消能够到达启动中的数据库调用，Stop 不必等外部释放夹具。
+// TestStopCancelsStartupRuleLoad checks that stopping cancels the in-progress startup repository call.
 func TestStopCancelsStartupRuleLoad(t *testing.T) {
 	repo := blockedRules()
 	svc := NewErrorPassthroughService(repo, nil)

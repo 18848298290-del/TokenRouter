@@ -37,7 +37,7 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 		{"非 OAuth 提供商", &Record{Platform: capability.PlatformOpenAI, Type: "api_key"}, CodexFingerprintOff},
 		{"OpenAI setup token", &Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeSetupToken, Extra: map[string]any{CodexFingerprintModeExtraKey: "session"}}, CodexFingerprintSession},
 		{"Anthropic setup token", &Record{Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeSetupToken, Extra: map[string]any{CodexFingerprintModeExtraKey: "session"}}, CodexFingerprintOff},
-		// 指纹功能需要管理员开启，字段缺省、为空或无效时均为 off（#5610）。
+		// Fingerprinting requires administrator opt-in; missing, empty, and invalid values mean off (#5610).
 		{"无 extra 默认 off", newTestOAuthProvider(1, nil), CodexFingerprintOff},
 		{"空值默认 off", newTestOAuthProvider(1, map[string]any{CodexFingerprintModeExtraKey: ""}), CodexFingerprintOff},
 		{"非法值默认 off", newTestOAuthProvider(1, map[string]any{CodexFingerprintModeExtraKey: "invalid"}), CodexFingerprintOff},

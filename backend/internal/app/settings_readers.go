@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// providePanelSettings 为各模块的配置读取器绑定共享 Store，缓存和读取时机由各模块管理。
+// providePanelSettings binds the shared Store to the panel settings reader, which owns its cache and read timing.
 // @project-doc docs/interfaces/configuration.md#runtime_settings
 func providePanelSettings(store *settings.Store) *runtimeconfig.PanelSettings {
 	return runtimeconfig.NewPanelSettings(store)
@@ -49,7 +49,7 @@ func provideBackendMode(store *settings.Store) *admission.BackendMode {
 	return admission.NewBackendMode(store, slog.Warn)
 }
 
-// provideCreativeRuntimeSettings 绑定共享 Store，创作台在每次请求时读取设置。
+// provideCreativeRuntimeSettings binds the shared Store for settings read on each creative request.
 func provideCreativeRuntimeSettings(store *settings.Store) *creative.RuntimeSettings {
 	return creative.NewRuntimeSettings(store, settings.ErrSettingNotFound)
 }

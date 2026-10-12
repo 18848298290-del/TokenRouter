@@ -7,7 +7,7 @@ import (
 )
 
 type RedeemCode struct {
-	RequiresPayment bool       `json:"requires_payment"` // 领取者需要有成功付款记录
+	RequiresPayment bool       `json:"requires_payment"` // Requires a qualifying payment record.
 	ID              int64      `json:"id"`
 	Code            string     `json:"code"`
 	Type            string     `json:"type"`
@@ -16,8 +16,8 @@ type RedeemCode struct {
 	MaxUses         int        `json:"max_uses"`
 	UsedCount       int        `json:"used_count"`
 	ExpiresAt       *time.Time `json:"expires_at"`
-	UsedBy          *int64     `json:"used_by"` // 最后一次成功兑换的用户
-	UsedAt          *time.Time `json:"used_at"` // 最后一次成功兑换的时间
+	UsedBy          *int64     `json:"used_by"` // User of the most recent successful redemption.
+	UsedAt          *time.Time `json:"used_at"` // Time of the most recent successful redemption.
 	CreatedAt       time.Time  `json:"created_at"`
 
 	PlanID *int64 `json:"plan_id"`
@@ -29,15 +29,15 @@ type RedeemCode struct {
 	User *UserSummaryResponse `json:"user,omitempty"`
 }
 
-// AdminRedeemCode 是管理员接口使用的 redeem code DTO（包含 notes 等字段）。
-// 注意：普通用户接口不得返回 notes 等内部信息。
+// AdminRedeemCode exposes all redemption notes to administrators.
+// User endpoints use RedeemCode, which limits notes to administrator balance and concurrency adjustments.
 type AdminRedeemCode struct {
 	RedeemCode
 
 	Notes string `json:"notes"`
 }
 
-// NullableTimeField 用于区分 JSON 字段缺失、传入 null 和传入具体时间。
+// NullableTimeField distinguishes an omitted JSON field, null, and a timestamp.
 type NullableTimeField struct {
 	Set   bool
 	Value *time.Time

@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestProductBrandMigration 验证空库、精确匹配、自定义品牌和重复执行的真实 PostgreSQL 行为。
+// TestProductBrandMigration checks fresh databases, exact matches, custom brands, and replay in PostgreSQL.
 func TestProductBrandMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("brand"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())

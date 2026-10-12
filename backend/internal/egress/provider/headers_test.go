@@ -91,7 +91,7 @@ func TestFilterHeadersEnabledUsesAllowlist(t *testing.T) {
 	}
 }
 
-// TestEgressHeadersPreserveWireCasingAndUnrelatedValues 检查覆写头的名称大小写和认证头内容。
+// TestEgressHeadersPreserveWireCasingAndUnrelatedValues checks override casing and protected credentials.
 func TestEgressHeadersPreserveWireCasingAndUnrelatedValues(t *testing.T) {
 	headers := http.Header{"x-allowed": {"one"}, "X-Allowed": {"two"}, "AUTHORIZATION": {"credential"}}
 	policy := egress.RequestPolicy(egress.RequestPolicyInput{Headers: map[string]string{"X-Allowed": "override", "Authorization": "forbidden"}})

@@ -17,7 +17,7 @@ const (
 	ImageGenerationPermissionMessage = "Image generation is not enabled for this group"
 )
 
-// ImageToolRules 复用平台纯解析函数，不保存配置、提供商或平台可变状态。
+// ImageToolRules supplies pure platform parsers for image tool declarations.
 type ImageToolRules struct {
 	IsImageType     func(string) bool
 	IsNamespaceName func(string) bool
@@ -37,7 +37,7 @@ func NewImageIntentPolicy(rules ImageToolRules) ImageIntentPolicy {
 	return ImageIntentPolicy{rules: rules}
 }
 
-// GroupImagePermission 接收明确的存在性和权限位，保留无分组 Key 的行为。
+// GroupImagePermission allows requests without a group and otherwise uses the group's permission.
 func GroupImagePermission(groupPresent, allowed bool) bool { return !groupPresent || allowed }
 
 func (p ImageIntentPolicy) IsOpenAIResponsesLiteHeader(value string) bool {
@@ -65,7 +65,7 @@ func (p ImageIntentPolicy) IsImageGenerationIntent(endpoint string, requestedMod
 	var modelSeen, toolsSeen, inputSeen, toolChoiceSeen bool
 	imageIntent := false
 	wirejson.ParseView(body).ForEach(func(key, value gjson.Result) bool {
-		// 根对象遍历一次，重复字段取首个值，与 GetBytes 相同。
+		// Visit the root once and use the first duplicate field, matching GetBytes.
 		switch key.Str {
 		case "model":
 			if !modelSeen {
@@ -283,7 +283,7 @@ func (p ImageIntentPolicy) OpenAIRequestBodyImageGenerationToolNeedsNormalizatio
 		if p.OpenAIJSONString(item.Get("type")) != "image_generation" {
 			return true
 		}
-		// 只有旧字段或明确的模型不兼容字段需要修正时才进入 map 修改。
+		// Legacy format and compression fields require map-based normalization.
 		if item.Get("format").Exists() || item.Get("compression").Exists() {
 			needsNormalization = true
 			return false

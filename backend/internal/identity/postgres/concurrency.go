@@ -8,7 +8,7 @@ import (
 	identitycore "github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// ConcurrencyStore 只拥有身份并发额度字段；兑换事务仍由 billing 提交。
+// ConcurrencyStore updates user concurrency limits within caller-owned billing transactions.
 type ConcurrencyStore struct{ client *dbent.Client }
 
 func NewConcurrencyStore(client *dbent.Client) *ConcurrencyStore {
@@ -27,7 +27,7 @@ func (r *ConcurrencyStore) UpdateConcurrency(ctx context.Context, id int64, amou
 	return nil
 }
 
-// ApplyRedeemConcurrencyAdjustment 原子应用兑换码并发增量，并确保并发数不低于 0。
+// ApplyRedeemConcurrencyAdjustment atomically applies the delta and floors concurrency at zero.
 func (r *ConcurrencyStore) ApplyRedeemConcurrencyAdjustment(ctx context.Context, id int64, delta int) error {
 	const updateSQL = `
 		UPDATE users

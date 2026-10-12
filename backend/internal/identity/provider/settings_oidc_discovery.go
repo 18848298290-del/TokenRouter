@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// ResolveSettingsOIDCMetadata 只执行发现文档读取，配置与安全决策留身份核心。
+// ResolveSettingsOIDCMetadata fetches discovery endpoints for the identity settings service.
 func ResolveSettingsOIDCMetadata(ctx context.Context, discoveryURL string) (*identity.OAuthProviderMetadata, error) {
 	discoveryURL = strings.TrimSpace(discoveryURL)
 	if discoveryURL == "" {

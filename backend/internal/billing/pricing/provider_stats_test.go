@@ -126,7 +126,7 @@ func TestFindPricingForModel(t *testing.T) {
 				{ID: 11, Models: []string{"claude-opus-*"}},
 			},
 			model:  "claude-opus-4",
-			wantID: 10, // claude-* 排在前面且匹配，采用该规则。
+			wantID: 10, // claude-* is the first matching wildcard.
 		},
 		{
 			name: "shorter wildcard used when longer does not match",
@@ -135,7 +135,7 @@ func TestFindPricingForModel(t *testing.T) {
 				{ID: 11, Models: []string{"claude-opus-*"}},
 			},
 			model:  "claude-sonnet-4",
-			wantID: 10, // 匹配 claude-*。
+			wantID: 10, // Matches claude-*.
 		},
 	}
 
@@ -224,7 +224,7 @@ func TestCalculateStatsCost_TokenBilling_WithImageOutput(t *testing.T) {
 	}
 	result := CalculateStatsCost(pricing, tokens, 1)
 	require.NotNil(t, result)
-	// 统计费用分别累计 output 和 image output。
+	// Statistics charge output and image-output usage separately.
 	// 100*0.001 + 50*0.002 + 10*0.01 = 0.1 + 0.1 + 0.1 = 0.3
 	require.InDelta(t, 0.3, *result, 1e-12)
 }
@@ -233,7 +233,7 @@ func TestCalculateStatsCost_TokenBilling_PartialPricesNil(t *testing.T) {
 	pricing := &ModelPricingEntry{
 		BillingMode: BillingModeToken,
 		InputPrice:  contractFloat(0.001),
-		// 未填写的输出和缓存价格按 0 计算。
+		// Omitted output and cache prices count as zero.
 	}
 	tokens := UsageTokens{
 		InputTokens:         100,
@@ -242,7 +242,7 @@ func TestCalculateStatsCost_TokenBilling_PartialPricesNil(t *testing.T) {
 	}
 	result := CalculateStatsCost(pricing, tokens, 1)
 	require.NotNil(t, result)
-	// 输入费用为 100*0.001 = 0.1。
+	// Input cost is 100*0.001 = 0.1.
 	require.InDelta(t, 0.1, *result, 1e-12)
 }
 
@@ -252,9 +252,9 @@ func TestCalculateStatsCost_TokenBilling_AllTokensZero(t *testing.T) {
 		InputPrice:  contractFloat(0.001),
 		OutputPrice: contractFloat(0.002),
 	}
-	tokens := UsageTokens{} // 用量均为零。
+	tokens := UsageTokens{} // All usage is zero.
 	result := CalculateStatsCost(pricing, tokens, 1)
-	// 用量为零时返回 nil，由调用方使用默认计价公式。
+	// Zero usage yields nil, allowing the caller to continue price resolution.
 	require.Nil(t, result)
 }
 
@@ -293,7 +293,7 @@ func TestCalculateStatsCost_PerRequestBilling(t *testing.T) {
 func TestCalculateStatsCost_PerRequestBilling_PriceNil(t *testing.T) {
 	pricing := &ModelPricingEntry{
 		BillingMode: BillingModePerRequest,
-		// 按次价格未配置。
+		// Per-request price intentionally omitted.
 	}
 	result := CalculateStatsCost(pricing, UsageTokens{}, 1)
 	require.Nil(t, result)
@@ -323,7 +323,7 @@ func TestCalculateStatsCost_ImageBilling(t *testing.T) {
 func TestCalculateStatsCost_ImageBilling_PriceNil(t *testing.T) {
 	pricing := &ModelPricingEntry{
 		BillingMode: BillingModeImage,
-		// 按次价格未配置。
+		// Per-request price intentionally omitted.
 	}
 	result := CalculateStatsCost(pricing, UsageTokens{}, 1)
 	require.Nil(t, result)
@@ -354,7 +354,7 @@ func TestCalculateStatsCost_AppliesPriceMultiplier(t *testing.T) {
 }
 
 func TestCalculateStatsCost_DefaultBillingMode_FallsToToken(t *testing.T) {
-	// BillingMode 为空时按 token 计费。
+	// An empty BillingMode uses token billing.
 	pricing := &ModelPricingEntry{
 		InputPrice:  contractFloat(0.001),
 		OutputPrice: contractFloat(0.002),
@@ -390,7 +390,7 @@ func TestTryCustomRules_FirstMatchWins(t *testing.T) {
 	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50}
 	result := TryCustomRules(configPricing.ProviderStatsPricingRules, 999, 1, "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
-	// 应使用第一条规则的价格：100*0.01 + 50*0.02 = 2.0
+	// The first rule supplies the prices: 100*0.01 + 50*0.02 = 2.0.
 	require.InDelta(t, 2.0, *result, 1e-12)
 }
 
@@ -400,13 +400,13 @@ func TestTryCustomRules_SkipsNonMatchingRules(t *testing.T) {
 	}{
 		ProviderStatsPricingRules: []ProviderStatsPricingRule{
 			{
-				ProviderIDs: []int64{888}, // 不匹配
+				ProviderIDs: []int64{888}, // Provider does not match.
 				Pricing: []ModelPricingEntry{
 					{ID: 100, Models: []string{"claude-opus-4"}, InputPrice: contractFloat(0.99)},
 				},
 			},
 			{
-				GroupIDs: []int64{1}, // 匹配
+				GroupIDs: []int64{1}, // Group matches.
 				Pricing: []ModelPricingEntry{
 					{ID: 200, Models: []string{"claude-opus-4"}, InputPrice: contractFloat(0.05)},
 				},
@@ -416,7 +416,7 @@ func TestTryCustomRules_SkipsNonMatchingRules(t *testing.T) {
 	tokens := UsageTokens{InputTokens: 100}
 	result := TryCustomRules(configPricing.ProviderStatsPricingRules, 999, 1, "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
-	// 跳过规则 1（提供商不匹配），使用规则 2：100*0.05 = 5.0
+	// Skip the mismatched provider rule; the group rule charges 100*0.05 = 5.0.
 	require.InDelta(t, 5.0, *result, 1e-12)
 }
 
@@ -435,7 +435,7 @@ func TestTryCustomRules_NoMatch_ReturnsNil(t *testing.T) {
 	}
 	tokens := UsageTokens{InputTokens: 100}
 	result := TryCustomRules(configPricing.ProviderStatsPricingRules, 999, 2, "claude-opus-4", tokens, 1)
-	require.Nil(t, result) // 提供商和分组都不匹配
+	require.Nil(t, result) // Neither provider nor group matches.
 }
 
 func TestTryCustomRules_RuleMatchesButModelNot_ContinuesToNext(t *testing.T) {
@@ -446,13 +446,13 @@ func TestTryCustomRules_RuleMatchesButModelNot_ContinuesToNext(t *testing.T) {
 			{
 				GroupIDs: []int64{1},
 				Pricing: []ModelPricingEntry{
-					{ID: 100, Models: []string{"gpt-4o"}, InputPrice: contractFloat(0.01)}, // 模型不匹配
+					{ID: 100, Models: []string{"gpt-4o"}, InputPrice: contractFloat(0.01)}, // Model does not match.
 				},
 			},
 			{
 				GroupIDs: []int64{1},
 				Pricing: []ModelPricingEntry{
-					{ID: 200, Models: []string{"claude-opus-4"}, InputPrice: contractFloat(0.05)}, // 模型匹配
+					{ID: 200, Models: []string{"claude-opus-4"}, InputPrice: contractFloat(0.05)}, // Model matches.
 				},
 			},
 		},
@@ -460,8 +460,8 @@ func TestTryCustomRules_RuleMatchesButModelNot_ContinuesToNext(t *testing.T) {
 	tokens := UsageTokens{InputTokens: 100}
 	result := TryCustomRules(configPricing.ProviderStatsPricingRules, 999, 1, "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
-	require.InDelta(t, 5.0, *result, 1e-12) // 使用规则2
+	require.InDelta(t, 5.0, *result, 1e-12) // Uses the second rule.
 }
 
-// contractFloat 返回测试价卡中的可空价格。
+// contractFloat returns a pointer to a test-card price.
 func contractFloat(v float64) *float64 { return &v }

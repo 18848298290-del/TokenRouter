@@ -42,7 +42,8 @@ func TestContentModerationAuditInputAppliesSourceLimitsAndToggles(t *testing.T) 
 	require.Empty(t, audit.ImageItems)
 }
 
-// TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult 检查工具循环提取本轮结果。
+// TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult checks extraction of the
+// current tool-loop result.
 func TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult(t *testing.T) {
 	body := []byte(`{
 		"messages": [

@@ -9,7 +9,7 @@ import (
 
 func TestResolveCLIVersionDefaultsToPinnedClientVersion(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
-	// 默认对外版本固定为 CLIClientVersion，CLIStableVersion 仅作为下限。
+	// The advertised default is CLIClientVersion; CLIStableVersion bounds overrides.
 	require.Equal(t, CLIClientVersion, ResolveCLIVersion())
 	require.True(t, IsSupportedCLIVersion(CLIClientVersion))
 	require.True(t, IsSupportedCLIVersion(CLIStableVersion))

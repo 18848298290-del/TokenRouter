@@ -12,7 +12,7 @@ const (
 	TempUnschedMessageMaxBytes = 2048
 )
 
-// HealthStore 提供各项独立的健康状态写入操作。
+// HealthStore supplies independent provider health reads and writes.
 type HealthStore interface {
 	GetByID(context.Context, int64) (*Record, error)
 	SetError(context.Context, int64, string) error
@@ -44,7 +44,7 @@ type HealthOptions struct {
 	TimeoutCounter              TimeoutCounterCache
 }
 
-// HealthService 拥有通用规则与流超时阈值，供应商报文和模型规范化在外层完成。
+// HealthService applies common health rules and stream-timeout thresholds to errors classified by callers.
 type HealthService struct {
 	providerRepo        HealthStore
 	tempUnschedCache    TempUnschedCache
@@ -184,14 +184,13 @@ func (s *HealthService) TriggerTempUnschedulable(ctx context.Context, provider *
 		reason = strings.TrimSpace(state.ErrorMessage)
 	}
 
-	// 已知模型的失败写入模型键，使调度器只排除当前提供商与模型的组合。
-	// 认证失败或模型未知时，使用下方的提供商临时停调规则。
+	// A known model scopes the cooldown to this provider/model pair.
+	// Authentication failures and unknown models use the provider-wide pause below.
 	modelKey := firstRequestedModel(requestedModel)
 	if modelKey != "" && statusCode != 401 {
 		if err := s.providerRepo.SetModelRateLimit(ctx, provider.ID, modelKey, until, reason); err != nil {
 			s.options.Warn("temp_unsched_model_rate_limit_set_failed", "provider_id", provider.ID, "model", modelKey, "error", err)
-			// 规则已经命中，即使持久化失败也要切换当前请求；
-			// 不得把模型级失败扩大成提供商级阻断。
+			// The rule still requires failover if persistence fails; keep the failure model-scoped.
 			return true
 		}
 		s.options.Info("provider_model_temp_unschedulable", "provider_id", provider.ID, "model", modelKey, "until", until, "rule_index", ruleIndex, "status_code", statusCode)
@@ -214,8 +213,8 @@ func (s *HealthService) TriggerTempUnschedulable(ctx context.Context, provider *
 	return true
 }
 
-// TryTempUnschedulable 允许调用方关闭重复 401 的默认升级。
-// 池模式配置的 401 规则命中时，按该规则暂停提供商。
+// TryTempUnschedulable applies matching pause rules and optionally escalates repeated 401 responses.
+// Pool-mode callers can apply their configured 401 pause without escalation.
 func (s *HealthService) TryTempUnschedulable(ctx context.Context, provider *Record, statusCode int, responseBody []byte, escalateRepeated401 bool, requestedModel ...string) bool {
 	if provider == nil {
 		return false
@@ -223,12 +222,11 @@ func (s *HealthService) TryTempUnschedulable(ctx context.Context, provider *Reco
 	if !provider.IsTempUnschedulableEnabled() {
 		return false
 	}
-	// 401 首次命中可临时不可调度（给 token 刷新窗口）；
-	// 若历史上已因 401 进入过临时不可调度，则本次应升级为 error（返回 false 交由默认错误逻辑处理）。
-	// 平台是否允许重复 401 升级由外层明确传入。
+	// A first 401 pause gives token refresh time to run. If escalation is enabled and the
+	// previous pause was also a 401, return false so the caller applies its default error action.
 	if escalateRepeated401 && statusCode == 401 {
 		reason := provider.TempUnschedulableReason
-		// 缓存可能没有 reason，从 DB 回退读取
+		// Load the persisted reason when the selected provider snapshot omits it.
 		if reason == "" {
 			if dbAcc, err := s.providerRepo.GetByID(ctx, provider.ID); err == nil && dbAcc != nil {
 				reason = dbAcc.TempUnschedulableReason
@@ -249,9 +247,8 @@ func (s *HealthService) TryTempUnschedulable(ctx context.Context, provider *Reco
 	return false
 }
 
-// HandleStreamTimeout 处理流数据超时
-// 根据系统设置决定是否标记提供商为临时不可调度或错误状态
-// 返回是否应该停止该提供商的调度。
+// HandleStreamTimeout counts timeouts and applies the configured action when the threshold is reached.
+// It reports whether the resulting health action requests a scheduling stop.
 func (s *HealthService) HandleStreamTimeout(ctx context.Context, provider *Record, model string) bool {
 	if provider == nil {
 		return false
@@ -279,25 +276,22 @@ func (s *HealthService) HandleStreamTimeout(ctx context.Context, provider *Recor
 		return false
 	}
 
-	// 增加超时计数
 	var count int64 = 1
 	if s.timeoutCounterCache != nil {
 		count, err = s.timeoutCounterCache.IncrementTimeoutCount(ctx, provider.ID, settings.ThresholdWindowMinutes)
 		if err != nil {
 			s.options.Warn("stream_timeout_increment_count_failed", "provider_id", provider.ID, "error", err)
-			// 继续处理，使用 count=1
+			// Treat an unavailable counter as one failure for this decision.
 			count = 1
 		}
 	}
 
 	s.options.Info("stream_timeout_count", "provider_id", provider.ID, "count", count, "threshold", settings.ThresholdCount, "window_minutes", settings.ThresholdWindowMinutes, "model", model)
 
-	// 检查是否达到阈值
 	if count < int64(settings.ThresholdCount) {
 		return false
 	}
 
-	// 达到阈值，执行相应操作
 	switch settings.Action {
 	case StreamTimeoutActionTempUnsched:
 		return s.TriggerStreamTimeoutTempUnsched(ctx, provider, settings, model)
@@ -308,7 +302,7 @@ func (s *HealthService) HandleStreamTimeout(ctx context.Context, provider *Recor
 	}
 }
 
-// TriggerStreamTimeoutTempUnsched 触发流超时临时不可调度。
+// TriggerStreamTimeoutTempUnsched persists a temporary scheduling pause and resets the timeout count.
 func (s *HealthService) TriggerStreamTimeoutTempUnsched(ctx context.Context, provider *Record, settings *StreamTimeoutSettings, model string) bool {
 	now := s.options.Now()
 	until := now.Add(time.Duration(settings.TempUnschedMinutes) * time.Minute)
@@ -316,9 +310,9 @@ func (s *HealthService) TriggerStreamTimeoutTempUnsched(ctx context.Context, pro
 	state := &TempUnschedState{
 		UntilUnix:       until.Unix(),
 		TriggeredAtUnix: now.Unix(),
-		StatusCode:      0, // 超时没有状态码
+		StatusCode:      0, // A stream timeout has no HTTP status.
 		MatchedKeyword:  "stream_timeout",
-		RuleIndex:       -1, // 表示系统级规则
+		RuleIndex:       -1, // A system rule, outside the provider's rule list.
 		ErrorMessage:    "Stream data interval timeout for model: " + model,
 	}
 
@@ -342,7 +336,6 @@ func (s *HealthService) TriggerStreamTimeoutTempUnsched(ctx context.Context, pro
 		}
 	}
 
-	// 重置超时计数
 	if s.timeoutCounterCache != nil {
 		if err := s.timeoutCounterCache.ResetTimeoutCount(ctx, provider.ID); err != nil {
 			s.options.Warn("stream_timeout_reset_count_failed", "provider_id", provider.ID, "error", err)
@@ -353,7 +346,7 @@ func (s *HealthService) TriggerStreamTimeoutTempUnsched(ctx context.Context, pro
 	return true
 }
 
-// TriggerStreamTimeoutError 触发流超时错误状态。
+// TriggerStreamTimeoutError marks the provider as errored and resets the timeout count.
 func (s *HealthService) TriggerStreamTimeoutError(ctx context.Context, provider *Record, model string) bool {
 	errorMsg := "Stream data interval timeout (repeated failures) for model: " + model
 
@@ -363,7 +356,6 @@ func (s *HealthService) TriggerStreamTimeoutError(ctx context.Context, provider 
 		return false
 	}
 
-	// 重置超时计数
 	if s.timeoutCounterCache != nil {
 		if err := s.timeoutCounterCache.ResetTimeoutCount(ctx, provider.ID); err != nil {
 			s.options.Warn("stream_timeout_reset_count_failed", "provider_id", provider.ID, "error", err)
@@ -374,7 +366,8 @@ func (s *HealthService) TriggerStreamTimeoutError(ctx context.Context, provider 
 	return true
 }
 
-// HandleTempUnschedulable 根据错误码策略和池模式决定停调或升级处理，调用方传入模型名。
+// HandleTempUnschedulable applies error-code policy and enables repeated-401 escalation outside pool mode and
+// Antigravity.
 func (s *HealthService) HandleTempUnschedulable(ctx context.Context, value *Record, status int, body []byte, model string) bool {
 	if value == nil || !value.ShouldHandleErrorCode(status) {
 		return false

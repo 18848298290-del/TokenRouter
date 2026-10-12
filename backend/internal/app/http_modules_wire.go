@@ -10,7 +10,7 @@ import (
 	sitehttp "github.com/TokenFlux/TokenRouter/internal/site/httpapi"
 )
 
-// nativeHTTPProviders 汇总 HTTP 构造器，各入口共用已装配的用例实例。
+// nativeHTTPProviders groups HTTP constructors that share application use cases.
 var nativeHTTPProviders = wire.NewSet(
 	billinghttp.NewPlanHandler,
 	billinghttp.NewRedeemHandler,

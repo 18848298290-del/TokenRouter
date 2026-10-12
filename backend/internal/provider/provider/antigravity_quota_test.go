@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// 固定本地供应商响应，使用相同缓存键检查凭据变化后的查询结果。
+// agUsageIdentityTransport returns fixed responses to check cache invalidation when credentials change.
 type agUsageIdentityTransport struct{ calls atomic.Int32 }
 
 func TestFetchQuotaUsesConfiguredModelsListBodyLimit(t *testing.T) {
@@ -50,14 +50,12 @@ func TestFetchQuotaUsesConfiguredModelsListBodyLimit(t *testing.T) {
 }
 
 func TestFetchQuota_ForbiddenReturnsIsForbidden(t *testing.T) {
-	// 模拟 FetchQuota 遇到 403 时的行为：
-	// FetchAvailableModels 返回 ForbiddenError → FetchQuota 应返回 is_forbidden=true
+	// Check the typed 403 error that quota queries use to classify forbidden responses.
 	forbiddenErr := &antigravity.ForbiddenError{
 		StatusCode: 403,
 		Body:       "Access denied",
 	}
 
-	// 验证 ForbiddenError 满足 errors.As
 	var target *antigravity.ForbiddenError
 	require.True(t, errors.As(forbiddenErr, &target))
 	require.Equal(t, 403, target.StatusCode)

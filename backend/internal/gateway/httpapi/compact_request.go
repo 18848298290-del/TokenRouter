@@ -16,16 +16,16 @@ import (
 	openaierrors "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAICompactSessionSeedKey 是 HTTP 请求中存放会话种子的键。
+// OpenAICompactSessionSeedKey stores the HTTP request's compact session seed.
 const OpenAICompactSessionSeedKey = "openai_compact_session_seed"
 
-// IsOpenAIResponsesCompactPath 识别旧 compact 端点及其允许转发的子路径。
+// IsOpenAIResponsesCompactPath identifies the legacy compact endpoint and allowed subpaths.
 func IsOpenAIResponsesCompactPath(c *gin.Context) bool {
 	suffix := strings.TrimSpace(OpenAIResponsesRequestPathSuffix(c))
 	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
 }
 
-// ResolveOpenAICompactSessionID 依次读取会话头、会话种子，缺失时生成随机标识。
+// ResolveOpenAICompactSessionID uses a session header, then a saved seed, then a random ID.
 func ResolveOpenAICompactSessionID(c *gin.Context) string {
 	if c != nil {
 		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
@@ -43,8 +43,8 @@ func ResolveOpenAICompactSessionID(c *gin.Context) string {
 	return uuid.NewString()
 }
 
-// IsBareOpenAIResponsesPath 仅匹配裸 /responses 端点（无 /compact 等子路径），
-// body-signal 提升在裸 Responses 路径上执行，/responses/{id}/... 子路径按自身类型处理。
+// IsBareOpenAIResponsesPath matches Responses endpoints without subpaths such as /compact.
+// Body-triggered compact promotion applies here; /responses/{id}/... subpaths keep their own handling.
 func IsBareOpenAIResponsesPath(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
 		return false
@@ -58,14 +58,15 @@ func IsBareOpenAIResponsesPath(c *gin.Context) bool {
 	}
 }
 
-// IsOpenAIRemoteCompactionV2Request 按 wire 形状识别原生 remote compaction v2 流式协议。
+// IsOpenAIRemoteCompactionV2Request identifies native remote compaction v2 by its wire format.
 func IsOpenAIRemoteCompactionV2Request(body []byte) bool {
 	stream, valid := ParseOpenAICompatibleStream(body)
 	return valid && stream && protocolopenai.HasCompactionTriggerInInput(body)
 }
 
-// normalizeOpenAIResponsesCompactRequest 对 Codex remote compaction v2 使用流式 /responses，其他 body-signal 形状使用 Compact 桥接。
-// 返回规范化后的正文，ok=false 表示错误已写出，调用方结束处理。
+// normalizeOpenAIResponsesCompactRequest uses streaming Responses for native v2 and the Compact bridge for other body
+// triggers.
+// It returns the normalized body; false means an error response has been written and the caller must stop.
 func (h *OpenAITextHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := IsOpenAIResponsesCompactPath(c)
 	if !isCompactRequest && IsBareOpenAIResponsesPath(c) && protocolopenai.HasCompactionTriggerInInput(body) {
@@ -75,7 +76,7 @@ func (h *OpenAITextHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Contex
 			body = normalized
 		}
 		if IsOpenAIRemoteCompactionV2Request(body) {
-			// V2 请求在出站前保存协商标记，供请求头生成使用。
+			// Save v2 negotiation state for outbound header construction.
 			MarkOpenAINativeCompactionV2(c)
 			return body, true
 		}
@@ -130,7 +131,7 @@ func (h *OpenAITextHandler) LogRemoteCompactOutcome(c *gin.Context, startedAt ti
 	if status >= 200 && status < 300 {
 		outcome = "succeeded"
 	}
-	// Compact 心跳已提交 200 时，Ops 通过 MarkOpsStreamError 记录 response.failed 表达的失败状态。
+	// After a heartbeat commits HTTP 200, MarkOpsStreamError records the failure represented by response.failed.
 	if outcome == "succeeded" && c != nil {
 		if _, hasStreamErr := GetOpsStreamError(c); hasStreamErr {
 			outcome = "failed"

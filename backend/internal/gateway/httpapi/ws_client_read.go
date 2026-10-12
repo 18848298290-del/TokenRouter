@@ -10,7 +10,7 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 )
 
-// ReadOpenAIWSClientMessage 将实际连接交给网关读循环，并转换客户端关闭帧错误。
+// ReadOpenAIWSClientMessage reads through the gateway client loop and converts client close-frame errors.
 func ReadOpenAIWSClientMessage(ctx context.Context, conn *coderws.Conn, timeout time.Duration, status coderws.StatusCode, reason string) (coderws.MessageType, []byte, error) {
 	return ReadOpenAIWSClientMessageWithTimeoutStart(ctx, conn, timeout, status, reason, nil, nil)
 }

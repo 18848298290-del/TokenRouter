@@ -2,20 +2,21 @@ package capability
 
 import "slices"
 
-// ProviderProtocols 包含候选提供商的平台、类型、认证模式和已启用协议。
+// ProviderProtocols contains a candidate's platform, type, authentication mode, and enabled protocols.
 type ProviderProtocols struct {
 	Platform, Type, AuthMode string
 	Enabled                  []ProtocolID
 }
 
-// ResolveRoute 保留原生优先、批量 provider 绑定及单步转换规则。
+// ResolveRoute prefers native execution, honors batch provider binding, and otherwise selects a single-step
+// conversion.
 func ResolveRoute(provider ProviderProtocols, source ProtocolID, fallbacks map[ProtocolID][]ProtocolID) (ProtocolID, bool) {
 	enabled := provider.Enabled
 	if slices.Contains(enabled, source) && slices.Contains(NativeProtocolOptions(provider.Platform, provider.Type, provider.AuthMode), source) {
 		return source, true
 	}
 	if source == ProtocolImageBatches {
-		// 批量作业沿用 provider 绑定，仅检查该 provider 的专用上游协议。
+		// Batch jobs use the bound provider's dedicated upstream protocol.
 		target := ProtocolGeminiBatch
 		if provider.Type == ProviderTypeServiceAccount {
 			target = ProtocolVertexBatch

@@ -25,7 +25,7 @@ func (r *Store) GetThroughputTrend(ctx context.Context, filter *ops.OpsDashboard
 		bucketSeconds = 60
 	}
 	if bucketSeconds != 60 && bucketSeconds != 300 && bucketSeconds != 3600 {
-		// Keep a small, predictable set of supported buckets for now.
+		// Unsupported bucket sizes use one-minute buckets.
 		bucketSeconds = 60
 	}
 

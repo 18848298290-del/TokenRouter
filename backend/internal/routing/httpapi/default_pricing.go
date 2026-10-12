@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UpdateDefaultPricing 只在管理员明确更新时重新加载目录，普通查询不触发同步。
+// UpdateDefaultPricing reloads the catalog for an administrative update request. Ordinary queries read the
+// published catalog.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#gateway_default_pricing
 func (h *PricingHandler) UpdateDefaultPricing(c *gin.Context) {
 	if h.catalog == nil || h.catalog.Update == nil {
@@ -28,7 +29,7 @@ func (h *PricingHandler) UpdateDefaultPricing(c *gin.Context) {
 	httpx.Success(c, gin.H{"updated": true})
 }
 
-// ListDefaultPricing 查询网关内存中已加载的默认价格。
+// ListDefaultPricing queries default prices already loaded in gateway memory.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#gateway_default_pricing
 func (h *PricingHandler) ListDefaultPricing(c *gin.Context) {
 	if h.catalog.Query != nil {

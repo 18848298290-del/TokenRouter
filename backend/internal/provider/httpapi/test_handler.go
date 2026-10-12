@@ -13,23 +13,23 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// TestHandler 绑定测试请求字段、SSE 输出及测试成功后的恢复函数。
+// TestHandler binds probe inputs, SSE output, and recovery after a successful test.
 type TestHandler struct {
 	tests   *provider.TestService
 	recover func(context.Context, int64) error
 }
 
-// TestProviderRequest 表示提供商连接测试的请求体。
+// TestProviderRequest is the request body for a provider connection test.
 type TestProviderRequest struct {
 	SystemOne json.RawMessage `json:"systemone"`
 	ModelID   string          `json:"model_id"`
 	Prompt    string          `json:"prompt"`
 	Mode      string          `json:"mode"`
-	// Protocol 只作用于本次文字测试：OpenAI 选择 Responses 或 Chat，国产平台选择已启用的原生协议。
+	// Protocol selects Responses or Chat for OpenAI, or an enabled native protocol for CN platforms, for this text test.
 	Protocol string `json:"protocol"`
-	// TestType 指定文字、图片或决策测试。
+	// TestType selects a text, image, or decision test.
 	TestType string `json:"test_type"`
-	// TestMode 兼容早期客户端使用的字段名，优先级低于 test_type。
+	// TestMode is the older field name and has lower priority than test_type.
 	TestMode string `json:"test_mode"`
 }
 
@@ -47,19 +47,19 @@ func (h *TestHandler) Test(c *gin.Context) {
 	}
 
 	var req TestProviderRequest
-	// 空请求体使用平台默认探测，损坏的 JSON 在调用上游前返回错误。
+	// An empty body uses platform defaults; malformed JSON is rejected before an upstream request.
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		response.BadRequest(c, "Invalid test request JSON")
 		return
 	}
 
-	// 调用共享测试用例，HTTP 输出器同步写入 SSE 事件。
+	// The shared test service writes SSE events synchronously through the HTTP sink.
 	testType := req.TestType
 	if testType == "" {
 		testType = req.TestMode
 	}
 	if err := h.tests.Test(c.Request.Context(), provider.TestRequest{SystemOne: req.SystemOne, ProviderID: providerID, Model: req.ModelID, Prompt: req.Prompt, Mode: req.Mode, Type: &testType, Protocol: req.Protocol, UserAgent: c.GetHeader("User-Agent"), Originator: c.GetHeader("originator")}, NewTestEventSink(c.Writer)); err != nil {
-		// Error already sent via SSE, just log
+		// The test service handles failure events; stop before running recovery.
 		return
 	}
 

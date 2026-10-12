@@ -61,8 +61,8 @@ func (c KeyApiKeyAuthCacheConfig) KeyNegativeEnabled() bool {
 	return c.negativeTTL > 0
 }
 
-// KeyJitterTTL 为缓存 TTL 添加抖动，分散缓存过期和回源的时间。
-// 这里直接使用 rand/v2 的顶层函数：并发安全，无需全局互斥锁。
+// KeyJitterTTL spreads cache expiration and reload times by jittering the TTL.
+// The package-level rand/v2 functions support concurrent calls.
 func (c KeyApiKeyAuthCacheConfig) KeyJitterTTL(ttl time.Duration) time.Duration {
 	if ttl <= 0 {
 		return ttl
@@ -280,8 +280,8 @@ func (s *APIKeyService) KeyLoadAuthCacheEntry(ctx context.Context, key, cacheKey
 		if errors.Is(err, ErrAPIKeyNotFound) {
 			entry := &APIKeyAuthCacheEntry{NotFound: true}
 			if s.authCfg.KeyNegativeEnabled() {
-				// 无效 Key 由攻击者控制且基数很高，只在有界的进程本地缓存中保存负缓存项，
-				// 避免随机 Key 扫描放大为每个实例的 Redis 写入。
+				// Invalid credentials have attacker-controlled cardinality. Keep negative entries
+				// in the bounded local cache to avoid Redis writes for random-key scans.
 				s.KeySetAuthCacheL1(cacheKey, entry)
 			}
 			return entry, nil
@@ -295,7 +295,7 @@ func (s *APIKeyService) KeyLoadAuthCacheEntry(ctx context.Context, key, cacheKey
 	}
 	entry := &APIKeyAuthCacheEntry{Snapshot: snapshot}
 	if apiKey.TeamID != nil {
-		// 团队成员限额是高频变化数据，首版不缓存团队认证快照以保证阻断及时生效。
+		// Team member limits change frequently, so team authentication snapshots bypass caching.
 		return entry, nil
 	}
 	s.KeySetAuthCacheEntry(ctx, cacheKey, entry, s.authCfg.l2TTL)
@@ -332,7 +332,7 @@ func (s *APIKeyService) KeyHydrateTeamAPIKey(ctx context.Context, apiKey *APIKey
 	if err != nil || apiKey == nil || apiKey.TeamID == nil {
 		return apiKey, err
 	}
-	// 禁用 Key 必须先由中间件返回稳定的 401，不能因离队后无法加载 Membership 变成 500。
+	// Return disabled keys before loading membership so departed members still receive the disabled-key error.
 	if !apiKey.IsActive() && apiKey.Status != StatusAPIKeyExpired && apiKey.Status != StatusAPIKeyQuotaExhausted {
 		return apiKey, nil
 	}
@@ -442,13 +442,13 @@ func (s *APIKeyService) KeySnapshotFromAPIKey(ctx context.Context, apiKey *APIKe
 		snapshot.TeamMembership = cloneMembership(apiKey.TeamMembership)
 	}
 
-	// 预取可用分组的用户 RPM override，供认证快照使用。
+	// Prefetch the active group's user RPM override for the authentication snapshot.
 	if apiKey.GroupID != nil && *apiKey.GroupID > 0 && apiKey.Group != nil && apiKey.Group.IsActive() && s.userGroupRateRepo != nil {
 		override, err := s.userGroupRateRepo.GetRPMOverrideByUserAndGroup(ctx, apiKey.User.ID, *apiKey.GroupID)
 		if err == nil && override != nil {
 			snapshot.User.UserGroupRPMOverride = clonePointer(override)
 		}
-		// 查询失败或无 override 时留 nil，checkRPM 会回退到 DB 查询
+		// Nil on a miss or lookup error lets request admission query the override again.
 	}
 	snapshot.Group = KeyAuthGroupSnapshotFromGroup(apiKey.Group)
 	if snapshot.Group != nil {
@@ -556,7 +556,7 @@ func (s *APIKeyService) KeySnapshotToAPIKey(key string, snapshot *APIKeyAuthSnap
 	return apiKey
 }
 
-// KeyAuthGroupSnapshotFromGroup 为认证缓存复制分组及其可变字段。
+// KeyAuthGroupSnapshotFromGroup copies the group and mutable fields for authentication caching.
 func KeyAuthGroupSnapshotFromGroup(group *routing.Group) *APIKeyAuthGroupSnapshot {
 	if group == nil {
 		return nil
@@ -596,7 +596,7 @@ func KeyAuthGroupSnapshotFromGroup(group *routing.Group) *APIKeyAuthGroupSnapsho
 	}
 }
 
-// KeyGroupFromAuthSnapshot 为单次请求还原独立分组对象。
+// KeyGroupFromAuthSnapshot reconstructs an independent group for one request.
 func KeyGroupFromAuthSnapshot(snapshot *APIKeyAuthGroupSnapshot) *routing.Group {
 	if snapshot == nil {
 		return nil

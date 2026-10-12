@@ -1,6 +1,6 @@
 package rediscache
 
-// 本场景检查 concurrency_cache.go、session_limit.go 和 user_msg_queue_cache.go 中 Lua 脚本的复制设置。
+// These scenarios check Lua replication settings in concurrency_cache.go, session_limit.go, and user_msg_queue_cache.go.
 
 import (
 	"context"
@@ -60,7 +60,7 @@ func TestRedisLuaTimeScriptsEnableEffectsReplication(t *testing.T) {
 
 			require.NotEqual(t, -1, timeCallIndex)
 			require.NotEqual(t, -1, replicateIndex)
-			// 使用 TIME 的脚本需要先启用按效果复制，Redis 3.2 至 4.x 才能同步脚本写入。
+			// Scripts using TIME enable effects replication first for Redis 3.2 through 4.x write replication.
 			require.Less(t, replicateIndex, timeCallIndex)
 		})
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTLSProfileSnapshotIsolation 检查写入来源和返回对象的修改是否影响缓存。
+// TestTLSProfileSnapshotIsolation checks that source and returned objects cannot mutate cached profiles.
 func TestTLSProfileSnapshotIsolation(t *testing.T) {
 	source := &TLSFingerprintProfile{ID: 1, Name: "profile", CipherSuites: []uint16{4865}, ALPNProtocols: []string{"h2"}}
 	svc := NewTLSFingerprintProfileService(nil, nil)

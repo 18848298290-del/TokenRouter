@@ -18,13 +18,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// geminiModelReadTarget 保存本次选中的提供商，供模型资源查询使用。
+// geminiModelReadTarget holds the selected provider for model resource queries.
 type geminiModelReadTarget struct {
 	reader *googleforward.Gemini
 	value  *gatewayprovider.ExecutionProvider
 }
 
-// provideModelsHTTP 构造四个模型目录查询入口。
+// provideModelsHTTP constructs the model catalogue handler.
 func provideModelsHTTP(catalog *catalogprovider.Service, catalogue *routing.RequestableCatalogue, reader *googleforward.Gemini, activity *gatewayRequestActivity, choices *selection.Gemini, attributes *routing.ModelAttributeService) *gatewayhttp.ModelsHandler {
 	if catalog == nil {
 		return modelsHTTP(nil, catalogue, reader, activity, choices, attributes)
@@ -32,7 +32,7 @@ func provideModelsHTTP(catalog *catalogprovider.Service, catalogue *routing.Requ
 	return modelsHTTP(catalog, catalogue, reader, activity, choices, attributes)
 }
 
-// modelsHTTP 为目录查询绑定统一元数据读取和客户端权限上下文。
+// modelsHTTP binds catalogue metadata reads and client access context.
 func modelsHTTP(catalog modelcatalog.Reader, catalogue *routing.RequestableCatalogue, reader *googleforward.Gemini, activity *gatewayRequestActivity, choices *selection.Gemini, attributes ...*routing.ModelAttributeService) *gatewayhttp.ModelsHandler {
 	ports := gatewayhttp.ModelsPorts{
 		ReadAccess: keyhttp.GetAPIKeyFromContext, ReadPlatform: keyhttp.GetForcePlatformFromContext,
@@ -71,7 +71,7 @@ func (p geminiModelReadTarget) Read(ctx context.Context, path string) (*gatewayh
 	return &gatewayhttp.ModelHTTPResponse{StatusCode: value.StatusCode, Headers: value.Headers, Body: value.Body}, err
 }
 
-// resolveModelsListReadLimit 返回模型目录读取上限，缺省或非正值使用默认值。
+// resolveModelsListReadLimit returns the configured byte limit, or the default for missing or nonpositive values.
 func resolveModelsListReadLimit(cfg *config.Config) int64 {
 	if cfg != nil && cfg.Gateway.ModelsListReadMaxBytes > 0 {
 		return cfg.Gateway.ModelsListReadMaxBytes

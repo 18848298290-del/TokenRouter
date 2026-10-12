@@ -6,10 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// targetQueryRunRepository 为提交参数校验提供存储接口。
+// targetQueryRunRepository supplies storage for submission validation tests.
 type targetQueryRunRepository struct{ CreativeRunRepository }
 
-// targetQueryFixture 记录单型号校验和设置保存读取的规则及存储。
+// targetQueryFixture records rule and repository reads for single-model validation and settings saves.
 type targetQueryFixture struct {
 	groupReads, providerReads, inventoryReads int
 	checked                                   []string

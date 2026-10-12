@@ -6,7 +6,7 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// GroupAccessDeletion 沿用分组删除事务，按原顺序清理两类用户授权。
+// GroupAccessDeletion removes user group grants in the group deletion transaction.
 type GroupAccessDeletion struct{ exec postgresinfra.Executor }
 
 func GroupAccessDeletionInTx(exec postgresinfra.Executor) GroupAccessDeletion {

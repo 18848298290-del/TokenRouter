@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// ExtractOpenAIReasoningEffortFromBody 读取请求体指定的推理档位。
+// ExtractOpenAIReasoningEffortFromBody reads and normalizes an explicitly supplied effort.
 func ExtractOpenAIReasoningEffortFromBody(body []byte) *string {
 	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
 	if reasoningEffort == "" {
@@ -27,7 +27,7 @@ func ExtractOpenAIReasoningEffortFromBody(body []byte) *string {
 	return nil
 }
 
-// CanonicalRequestedReasoningEffort 读取策略改写前的请求推理档位，包括 none，字段缺失时返回空字符串。
+// CanonicalRequestedReasoningEffort reads the pre-policy effort, including none; missing or unrecognized values return nil.
 func CanonicalRequestedReasoningEffort(body []byte) *string {
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
 	if raw == "" {
@@ -65,7 +65,7 @@ func ExtractOpenAIServiceTierFromBody(body []byte) *string {
 	return openai.NormalizeServiceTier(gjson.GetBytes(body, "service_tier").String())
 }
 
-// ExtractOpenAIReasoningEffort 从 map 请求体读取指定的推理档位。
+// ExtractOpenAIReasoningEffort reads the normalized effort from a decoded request.
 func ExtractOpenAIReasoningEffort(reqBody map[string]any) *string {
 	if value, present := openai.GetOpenAIReasoningEffortFromReqBody(reqBody); present {
 		if value == "" {
@@ -77,7 +77,7 @@ func ExtractOpenAIReasoningEffort(reqBody map[string]any) *string {
 	return nil
 }
 
-// CanonicalRequestedReasoningEffortFromReqBody 是 map 形态请求体的同等入口。
+// CanonicalRequestedReasoningEffortFromReqBody reads the pre-policy effort from a decoded request.
 func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any) *string {
 	if reqBody == nil {
 		return nil
@@ -110,8 +110,8 @@ func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any) *strin
 	return nil
 }
 
-// ValidateOpenAIReasoningEffort 拒绝 Codex 客户端专用的 Ultra 模式。
-// Ultra 在 Codex 内部表示 max 推理加主动多代理，不是 OpenAI 上游协议档位。
+// ValidateOpenAIReasoningEffort rejects the client-only ultra effort value.
+// The upstream request must use a supported effort such as max.
 func ValidateOpenAIReasoningEffort(body []byte, requestedModel string) error {
 	efforts := []string{
 		gjson.GetBytes(body, "reasoning.effort").String(),

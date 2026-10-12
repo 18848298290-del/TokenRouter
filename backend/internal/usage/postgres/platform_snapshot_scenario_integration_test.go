@@ -2,8 +2,8 @@
 
 package postgres
 
-// 本场景覆盖 usage_log_repo_insert.go、usage_log_repo_query.go、usage_log_repo_stats.go
-// 和 usage_analytics_aggregation_repo.go，并对照 Ops 的平台统计。
+// These scenarios cover usage_log_repo_insert.go, usage_log_repo_query.go, usage_log_repo_stats.go,
+// and usage_analytics_aggregation_repo.go, comparing their platform attribution with Ops reports.
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestPlatformSnapshotSurvivesProviderChanges 验证原始查询与两种预聚合都保持请求发生时的平台。
+// TestPlatformSnapshotSurvivesProviderChanges checks that raw queries and both rollups retain the recorded platform.
 func TestPlatformSnapshotSurvivesProviderChanges(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -45,7 +45,7 @@ func TestPlatformSnapshotSurvivesProviderChanges(t *testing.T) {
 	inserted, err := repo.Create(ctx, log)
 	require.NoError(t, err)
 	require.True(t, inserted)
-	// 同一分组中，anthropic 平台的执行记录独立参与统计。
+	// Anthropic usage within the same group must remain a separate platform total.
 	other := *log
 	other.RequestID, other.Platform, other.ActualCost = "snapshot-anthropic", "anthropic", 3
 	inserted, err = repo.Create(ctx, &other)

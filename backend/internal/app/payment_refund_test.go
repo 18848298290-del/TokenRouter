@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// 凭据测试使用应用的读取和数据转换函数，微信资格由支付模块判断。
+// paymentOAuthSettingsFixture supplies settings to app adapters; payment checks WeChat eligibility.
 type paymentOAuthSettingsFixture map[string]string
 
 func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
@@ -100,7 +100,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponseRequiresResumeSigningKey(t *testin
 		identity.SettingKeyWeChatConnectRedirectURL:         "https://api.example.com/api/v1/auth/oauth/wechat/callback",
 		identity.SettingKeyWeChatConnectFrontendRedirectURL: "/auth/wechat/callback",
 	},
-		// 此场景省略支付恢复签名密钥。
+		// Omit the payment resume signing key for this case.
 		nil)
 
 	resp, err := svc.MaybeBuildWeChatOAuthRequiredResponseForSelection(context.Background(), payment.CreateOrderRequest{
@@ -133,7 +133,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 		identity.SettingKeyWeChatConnectRedirectURL:         "https://api.example.com/api/v1/auth/oauth/wechat/callback",
 		identity.SettingKeyWeChatConnectFrontendRedirectURL: "/auth/wechat/callback",
 	},
-		// 未配置专用签名密钥时使用稳定密钥。
+		// Use the stable legacy key when no dedicated signing key is configured.
 		[]byte("0123456789abcdef0123456789abcdef"))
 
 	resp, err := svc.MaybeBuildWeChatOAuthRequiredResponseForSelection(context.Background(), payment.CreateOrderRequest{

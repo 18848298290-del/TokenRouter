@@ -43,7 +43,7 @@ type CyberHandler struct {
 	runtime   moderationflow.Runtime
 }
 
-// CyberPolicyCall 的资金数据已在入口转为 completion 的独立快照。
+// CyberPolicyCall carries funding data already captured as an independent completion snapshot.
 type CyberPolicyCall struct {
 	Key            *apikey.APIKey
 	Provider       *moderationflow.Provider
@@ -83,7 +83,7 @@ func (h *CyberHandler) RejectSession(c *gin.Context, key *apikey.APIKey, body []
 		return false
 	}
 	message := moderationflow.SessionBlockedClientMessage
-	// 心跳已提交时保留 Responses 终止帧及专用 Ops 记录的原先后顺序。
+	// After heartbeat commitment, record the stream failure before writing its terminal Responses event.
 	if h.backend.StopKeepalive(c) {
 		h.backend.MarkStream(c, "permission_error", message, 403)
 		if h.backend.FailedSSE(c, "permission_error", message) {
@@ -140,7 +140,7 @@ func (h *CyberHandler) RecordPolicy(c *gin.Context, in CyberPolicyCall) bool {
 	}
 	c.Set(CyberPolicyRecordedKey, true)
 	RecordOpenAICyberWarningWithSnapshot(h.endpoints, h.moderator, c, RequestLogger(c, "handler.openai_gateway.cyber_policy"), in.Key, in.Provider, in.Model, mark.UpstreamStatus, []byte(mark.Body), mark.Message, excerpt, CurrentOpenAICyberWarningSnapshot(c))
-	// 派发再次冻结资金、metadata 和模型链，队列不捕获 HTTP 状态。
+	// Dispatch snapshots funding, metadata, and the model chain so queued work does not capture HTTP state.
 	h.runtime.Dispatch(c.Request.Context(), moderationflow.PolicyCompletion{Usage: in.Usage, Meta: meta, Mark: *mark, ForwardErrored: in.ForwardErrored, BlockKey: blockKey})
 	return true
 }
@@ -165,7 +165,7 @@ func (h *CyberHandler) Meta(c *gin.Context, key *apikey.APIKey, provider *modera
 	return meta
 }
 
-// ClearCyberTurnState 在 WS turn 结束时通过接口清除标记。
+// ClearCyberTurnState clears policy markers when a WebSocket turn ends.
 func ClearCyberTurnState(c *gin.Context, clearMark func(*gin.Context)) {
 	if c == nil {
 		return

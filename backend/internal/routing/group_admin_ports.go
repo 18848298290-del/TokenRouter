@@ -6,7 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// GroupProvider 包含分组管理所需的提供商 ID、平台和类型。
+// GroupProvider contains the provider identity, platform, and type needed for group administration.
 type GroupProvider struct {
 	ID       int64
 	Platform string
@@ -27,7 +27,7 @@ type GroupAdminInvalidator interface {
 }
 type GroupPricingInvalidator interface{ InvalidateCache() }
 
-// GroupAdminOptions 注入读取时机和原有闭合事务；规则不依赖装配和具体存储。
+// GroupAdminOptions supplies model resolution, global settings, and a transaction callback for group mutations.
 type GroupAdminOptions struct {
 	ModelResolver RequestableResolver
 	DefaultModels func(string) []string
@@ -35,7 +35,7 @@ type GroupAdminOptions struct {
 	Mutate        func(context.Context, func(context.Context) error) error
 }
 
-// GroupAdmin 拥有分组管理和复制规则，缓存与读写均使用 app 提供的唯一实例。
+// GroupAdmin manages and duplicates groups using injected repositories and cache invalidators.
 type GroupAdmin struct {
 	groupRepo                     GroupRepository
 	groupDuplicateRepo            GroupDuplicateRepository
@@ -51,7 +51,8 @@ func NewGroupAdmin(repo GroupRepository, duplicate GroupDuplicateRepository, sor
 	return &GroupAdmin{groupRepo: repo, groupDuplicateRepo: duplicate, groupSortOrderRepo: sortOrder, providerRepo: providers, apiKeyRepo: keys, authCacheInvalidator: invalidator, pricingConfigCacheInvalidator: pricingConfigs, options: options}
 }
 
-// ValidateAdvancedOverrides 按旧次序先验证局部字段，确有权重覆盖才读取动态全局值。
+// ValidateAdvancedOverrides checks local fields before reading global weights, which it reads only when
+// weights are overridden.
 func (s *GroupAdmin) ValidateAdvancedOverrides(ctx context.Context, overrides GroupAdvancedSchedulerOverrides) error {
 	if err := policy.ValidateGroupOverrides(overrides); err != nil {
 		return err

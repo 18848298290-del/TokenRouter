@@ -161,7 +161,7 @@ func TestOpenAIGatewayService_MessagesRoutingModelUsesFullMappingChain(t *testin
 	}
 }
 
-// TestMixedGroupSelectsModelOnActualProviderPlatform 检查各入口校验模型与协议后，是否在请求分组内跨平台选择。
+// TestMixedGroupSelectsModelOnActualProviderPlatform checks cross-platform selection within the group after model and protocol checks.
 func TestMixedGroupSelectsModelOnActualProviderPlatform(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -218,7 +218,7 @@ func (s *mixedSessionLimits) RegisterSession(_ context.Context, id int64, hash s
 	return id != s.blocked, nil
 }
 
-// TestMixedGroupRespectsAnthropicSessionLimit 验证 Anthropic 的会话限制在通用选号循环中仍然生效，并继续尝试组内其它提供商。
+// TestMixedGroupRespectsAnthropicSessionLimit checks that a full Anthropic session quota advances to another group member.
 func TestMixedGroupRespectsAnthropicSessionLimit(t *testing.T) {
 	group := &routing.Group{ID: 91, Hydrated: true, Status: routing.StatusActive}
 	first := mixedGroupProvider(1, capability.PlatformAnthropic, "*", 91)
@@ -256,7 +256,7 @@ func (s mixedSnapshot) GetProvider(_ context.Context, id int64) (*providercore.R
 	return nil, nil
 }
 
-// TestMixedGroupRechecksMembershipAfterSnapshot 验证快照中的旧成员关系不能让已移出分组的提供商通过数据库复核。
+// TestMixedGroupRechecksMembershipAfterSnapshot checks that database revalidation rejects providers removed from the group after a snapshot.
 func TestMixedGroupRechecksMembershipAfterSnapshot(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -326,7 +326,7 @@ func TestOpenAISelectProviderWithScheduler_GroupModelUnsupportedError(t *testing
 	require.Contains(t, err.Error(), "Available models: gpt-5.4, gpt-5.4-mini")
 }
 
-// TestCompactSchedulingRechecksAdministratorSwitchFromDatabase 检查基础和高级调度器读取数据库中的压缩开关，重新启用的提供商可进入候选池。
+// TestCompactSchedulingRechecksAdministratorSwitchFromDatabase checks compact settings against the database in both scheduler modes.
 func TestCompactSchedulingRechecksAdministratorSwitchFromDatabase(t *testing.T) {
 	for _, advanced := range []bool{false, true} {
 		for _, enabled := range []bool{false, true} {
@@ -371,7 +371,7 @@ func TestCompactSchedulingRechecksAdministratorSwitchFromDatabase(t *testing.T) 
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledProvider
-// 验证 Compact 调度只选择管理员启用的提供商。
+// checks that compact selection chooses an administrator-enabled provider.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91001)
@@ -386,7 +386,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledP
 				Concurrency: 1,
 				Priority:    0,
 				Extra:       map[string]any{"openai_compact_mode": "force_off"},
-			}, // 管理员禁用
+			}, // Disabled by the administrator.
 		},
 		{
 			Record: providercore.Record{
@@ -398,7 +398,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledP
 				Concurrency: 1,
 				Priority:    0,
 				Extra:       map[string]any{"openai_compact_mode": "force_on"},
-			}, // 管理员启用
+			}, // Enabled by the administrator.
 		},
 	}
 	cfg := &config.Config{}
@@ -428,7 +428,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledP
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled
-// 验证管理员关闭的提供商不会被 Compact 请求选中。
+// checks that compact selection rejects administrator-disabled providers.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91002)
@@ -484,7 +484,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnabledProvider
-// 缺省压缩开关为开启，管理员关闭后提供商被排除。
+// checks that the compact setting defaults to enabled and honors an explicit disable.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnabledProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91003)
@@ -499,7 +499,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnab
 				Concurrency: 1,
 				Priority:    0,
 				Extra:       map[string]any{"openai_compact_mode": "force_off"},
-			}, // 管理员关闭
+			}, // Disabled by the administrator.
 		},
 		{
 			Record: providercore.Record{
@@ -511,7 +511,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnab
 				Concurrency: 1,
 				Priority:    0,
 				Extra:       map[string]any{},
-			}, // 缺省开启
+			}, // Enabled by default.
 		},
 	}
 	cfg := &config.Config{}
@@ -540,7 +540,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnab
 	require.Equal(t, int64(71021), selection.Provider.Record.ID, "default-enabled provider should be selected")
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok 验证 compact 调度允许 Grok 提供商参与。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok checks that Grok providers can serve compact requests.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91004)
@@ -662,7 +662,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionSepara
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode
-// V2 压缩资格由 V2 管理员开关决定。
+// checks that the v2 administrator switch controls v2 compaction eligibility.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode(t *testing.T) {
 	groupID := int64(91006)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -740,7 +740,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode
 	require.Equal(t, int64(71062), selection.Provider.Record.ID)
 }
 
-// TestAllowsOpenAICompatibleCompact 验证压缩资格开关。
+// TestAllowsOpenAICompatibleCompact checks compact eligibility switches.
 func TestAllowsOpenAICompatibleCompact(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -811,7 +811,7 @@ func TestSparkRoutingByModel(t *testing.T) {
 	})
 
 	t.Run("empty_model_shadow_is_eligible_under_a2", func(t *testing.T) {
-		// model 为空时跳过模型过滤，影子和普通提供商都可成为候选。
+		// An empty model skips model filtering, allowing shadow and ordinary providers.
 		pid := int64(100)
 		parent := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 100, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive, Schedulable: true}}
 		shadow := &gatewayprovider.ExecutionProvider{Record: providercore.Record{
@@ -825,12 +825,12 @@ func TestSparkRoutingByModel(t *testing.T) {
 	})
 }
 
-// TestParentHealthSchedulerIntegration 通过 isProviderRequestCompatible 验证「母提供商不可调度时影子被
-// 调度器拒绝」这一联动在调度器层面端到端生效。
+// TestParentHealthSchedulerIntegration checks shadow eligibility against parent credential health.
+// A parent's manual scheduling pause and global cooldown leave shadow eligibility intact.
 //
-// 使用的接缝：defaultOpenAIProviderScheduler.isProviderRequestCompatible，它通过
-// s.service.schedulerSnapshot.GetProvider(ctx, parentID) 解析母提供商；
-// openAISnapshotCacheStub.providersByID 提供对应的测试桩。
+// The compatibility check reads the parent through the scheduler snapshot.
+// openAISnapshotCacheStub supplies the parent records for these cases.
+// Each case varies parent state while keeping the shadow active.
 func TestParentHealthSchedulerIntegration(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(78100)
@@ -873,7 +873,7 @@ func TestParentHealthSchedulerIntegration(t *testing.T) {
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 78100,
 				Platform:    capability.PlatformOpenAI,
 				Type:        capability.ProviderTypeOAuth,
-				Status:      providercore.StatusError, // IsActive()==false → IsSchedulable()==false
+				Status:      providercore.StatusError, // Inactive parent credentials reject the shadow.
 				Schedulable: true,
 			},
 		}
@@ -884,7 +884,7 @@ func TestParentHealthSchedulerIntegration(t *testing.T) {
 	})
 
 	t.Run("manual_schedulable_false_parent_does_not_reject_shadow", func(t *testing.T) {
-		// 母提供商手动暂停（Schedulable=false）后凭据仍可用，影子仍可被选中。
+		// Manually pausing the parent leaves its credentials usable by the shadow.
 		manualPausedParent := &gatewayprovider.ExecutionProvider{
 			Record: providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 78100,
@@ -892,7 +892,7 @@ func TestParentHealthSchedulerIntegration(t *testing.T) {
 				Type:        capability.ProviderTypeOAuth,
 				Status:      billing.StatusActive,
 				Schedulable: false,
-			}, // 手动暂停
+			}, // Manually paused.
 		}
 		require.False(t, manualPausedParent.View().IsSchedulable(), "前提：手动暂停的母提供商自身不可调度")
 		scheduler := makeScheduler(manualPausedParent)
@@ -901,7 +901,7 @@ func TestParentHealthSchedulerIntegration(t *testing.T) {
 	})
 
 	t.Run("global_rate_limited_parent_does_not_reject_shadow", func(t *testing.T) {
-		// 母提供商的 global 429 冷却与 spark 影子的调度资格独立。
+		// The parent's global 429 cooldown is independent of Spark shadow eligibility.
 		resetAt := time.Now().Add(1 * time.Hour)
 		rateLimitedParent := &gatewayprovider.ExecutionProvider{
 			Record: providercore.Record{
@@ -1047,7 +1047,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabledUsesLeg
 	require.False(t, decision.StickyPreviousHit)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons 检查基础调度的负载批处理路径返回配额自动暂停等过滤原因。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons checks that basic load-batch selection reports quota and other rejection reasons.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(10107)
@@ -1272,7 +1272,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_Embedd
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey 检查生图请求排除管理员声明不支持 Responses API 的 APIKey 提供商。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey checks that image requests reject API Key providers with Responses disabled.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10120)
@@ -1295,7 +1295,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExc
 			Status: billing.StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
 		},
 	}
-	// 此提供商优先级更高且仅允许 Chat，能力检查失效时会被优先选中。
+	// This higher-priority Chat-only provider would win if capability filtering were skipped.
 	unsupported := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 37002, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
@@ -1339,7 +1339,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExc
 	})
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider 检查 alpha/search 请求可选择 OAuth 和 APIKey 提供商。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider checks that alpha/search requests can use OAuth and API Key providers.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10125)
@@ -1491,7 +1491,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_GrokMediaCapabilityFil
 	})
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion 检查高级调度器排除全部候选时返回各过滤原因的数量。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion checks rejection counts when advanced selection filters every candidate.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(101201)
@@ -2178,7 +2178,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SkipsQuarantinedShared
 	require.Equal(t, int64(469803), selection.Provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined 检查所有候选的代理均被隔离时，是否放宽隔离限制继续选择。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined checks that selection bypasses quarantine when all candidate proxies are blocked.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined(t *testing.T) {
 	proxyID := int64(5056)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -2209,7 +2209,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxie
 		"fail-open 只影响本次调度，不应清除隔离状态")
 }
 
-// TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined 检查指定 routingModel 的入口是否执行 fail-open 二次调度。
+// TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined checks that resolved routing models survive the quarantine-bypass retry.
 func TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined(t *testing.T) {
 	proxyID := int64(5057)
 	provider := gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 505701, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive, Schedulable: true, Concurrency: 1, ProxyID: &proxyID}}
@@ -2449,8 +2449,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyKeeps
 
 	concurrencyCache := schedulerTestConcurrencyCache{
 		acquireResults: map[int64]bool{
-			21001: false, // sticky 提供商已满
-			21002: true,  // 若回退负载均衡会命中该提供商（本测试要求不能切换）
+			21001: false, // The sticky provider is full.
+			21002: true,  // Load balancing would select this alternative, but the response chain must stay bound.
 		},
 		waitCounts: map[int64]int{
 			21001: 999,
@@ -3100,7 +3100,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_SkipsStic
 	}
 	cfg := newSchedulerTestOpenAIWSV2Config()
 
-	// 构造“HTTP-only 提供商负载更低”的场景，验证 required transport 会强制过滤。
+	// Give the HTTP-only provider lower load so transport filtering determines the result.
 	concurrencyCache := schedulerTestConcurrencyCache{
 		loadMap: map[int64]*schedulercore.ProviderLoadInfo{
 			2201: {ProviderID: 2201, LoadRate: 0, WaitingCount: 0},
@@ -3306,7 +3306,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallbac
 			3003: {ProviderID: 3003, LoadRate: 10, WaitingCount: 0},
 		},
 		acquireResults: map[int64]bool{
-			3003: false, // top1 失败，必须回退到 top-K 的下一候选
+			3003: false, // If the first candidate fails, try the next Top-K candidate.
 			3002: true,
 		},
 	}
@@ -3342,7 +3342,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallbac
 	}
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused 检查 TopK 排序前排除配额自动暂停的提供商，让健康提供商进入候选池。
+// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused checks that quota-paused providers are excluded before Top-K ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(110)
@@ -3377,7 +3377,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExclude
 	}
 
 	cfg := &config.Config{}
-	cfg.Gateway.AdvancedScheduler.LBTopK = 1 // TopK=1 会让问题必现：暂停提供商会完全挤掉健康提供商。
+	cfg.Gateway.AdvancedScheduler.LBTopK = 1 // With TopK=1, admitting the paused provider would displace the healthy candidate.
 	cfg.Gateway.AdvancedScheduler.ScoreWeights.Priority = 0.4
 	cfg.Gateway.AdvancedScheduler.ScoreWeights.Load = 1.0
 	cfg.Gateway.AdvancedScheduler.ScoreWeights.Queue = 1.0
@@ -3415,7 +3415,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExclude
 	require.NotNil(t, selection.Provider)
 	require.Equal(t, int64(37002), selection.Provider.Record.ID)
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
-	// 初始过滤排除暂停提供商，健康提供商进入候选池。
+	// Initial filtering removes the paused provider and admits the healthy candidate.
 	require.Equal(t, 1, decision.CandidateCount)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
@@ -3556,7 +3556,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceDistributes
 		}
 	}
 
-	// 不同 session 应分配到多个提供商。
+	// Distinct sessions should spread across multiple providers.
 	require.GreaterOrEqual(t, len(selected), 2)
 }
 
@@ -3660,7 +3660,7 @@ func TestDefaultOpenAIProviderScheduler_IsProviderTransportCompatible_Branches(t
 	require.True(t, scheduler.isProviderTransportCompatible(provider, egress.OpenAIUpstreamTransportResponsesWebsocketV2))
 	require.True(t, scheduler.isProviderTransportCompatible(provider, egress.OpenAIUpstreamTransportResponsesWebsocketV2Ingress))
 
-	// HTTP 转换资格来自提供商协议集合。
+	// HTTP conversion eligibility comes from the provider's protocol set.
 	scheduler.service = newCompatibleSelectionForTest(CompatibleDependencies{}, cfg)
 	provider.Record.Credentials = map[string]any{"upstream_protocols": []string{"openai_responses"}}
 	require.False(t, scheduler.isProviderTransportCompatible(provider, egress.OpenAIUpstreamTransportResponsesWebsocketV2))
@@ -3689,7 +3689,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotF
 		},
 		{
 			Record:
-			// 粘性提供商仍在分组内，但分数不足以进入 Top-K。
+			// The sticky provider remains in the group but scores below Top-K.
 			providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 38002,
 				Platform:    capability.PlatformOpenAI,
@@ -3737,7 +3737,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotF
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Provider)
-	// Top-K 候选 38001 满并发时返回该候选的等待计划。
+	// A full Top-K candidate 38001 returns its own wait plan.
 	require.Equal(t, int64(38001), selection.Provider.Record.ID)
 	require.False(t, selection.Acquired)
 	require.NotNil(t, selection.WaitPlan)
@@ -3752,7 +3752,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWa
 	providers := []gatewayprovider.ExecutionProvider{
 		{
 			Record:
-			// 订阅提供商：支持 compact，但并发已满（busy-but-waitable）。
+			// The subscription provider supports compact but has no free slot.
 			providercore.Record{
 				LoadLocation: time.LoadLocation, ID: 38011,
 				Platform:    capability.PlatformOpenAI,
@@ -3768,7 +3768,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWa
 		},
 		{
 			Record:
-			// 常规提供商：明确不支持 compact，无法服务本次请求。
+			// The regular provider has compact disabled and cannot serve this request.
 			providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 38012,
 				Platform:    capability.PlatformOpenAI,
@@ -3803,7 +3803,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWa
 		"gpt-5.1",
 		nil, egress.OpenAIUpstreamTransportAny, true,
 	)
-	// 常规池无候选时，为忙碌的订阅提供商生成等待计划。
+	// An unusable regular pool leaves a wait plan for the busy subscription provider.
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Provider)
@@ -3867,7 +3867,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_UsesWSPassthroughSnaps
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
-// TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel 验证响应链粘性检查不会把 D 重新解析成 C。
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel checks that response-chain stickiness uses D without resolving it back to C.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(26)
@@ -3945,7 +3945,7 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRout
 	}
 }
 
-// TestSystemOneSelectionHonorsProtocol 验证混合分组的决策和聊天候选分别受协议限制。
+// TestSystemOneSelectionHonorsProtocol checks separate protocol eligibility for decision and chat requests in mixed groups.
 func TestSystemOneSelectionHonorsProtocol(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {

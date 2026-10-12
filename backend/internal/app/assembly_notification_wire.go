@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 )
 
-// notificationAssemblyProviders 汇总 notification 模块的 Wire provider。
+// notificationAssemblyProviders groups Wire providers for the notification module.
 var notificationAssemblyProviders = wire.NewSet(
 	provideRiskDelivery,
 	provideAlertDelivery,

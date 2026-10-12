@@ -8,21 +8,21 @@ import (
 	"strings"
 )
 
-// CreativeOperationOrder 保证设置、候选和公开目录中的能力顺序稳定。
+// CreativeOperationOrder defines stable ordering for settings, candidates, and public capabilities.
 var CreativeOperationOrder = []string{
 	CreativeOperationGenerate,
 	CreativeOperationEdit,
 	CreativeOperationInpaint,
 }
 
-// CreativeModelSetting 是管理员配置的创作台分组、模型和能力白名单项。
+// CreativeModelSetting is an administrator allowlist entry for a group, model, and operations.
 type CreativeModelSetting struct {
 	GroupID    int64    `json:"group_id"`
 	Model      string   `json:"model"`
 	Operations []string `json:"operations"`
 }
 
-// CreativeModelCandidate 是管理端可选择的当前生图模型候选。
+// CreativeModelCandidate is an image model available for administrator selection.
 type CreativeModelCandidate struct {
 	GroupID    int64    `json:"group_id"`
 	GroupName  string   `json:"group_name"`
@@ -31,7 +31,7 @@ type CreativeModelCandidate struct {
 	Operations []string `json:"operations"`
 }
 
-// NormalizeCreativeModelSettingsForSave 按当前候选模型能力保留操作，历史不可解析的模型留待管理员处理。
+// NormalizeCreativeModelSettingsForSave intersects operations with resolved capabilities and retains unresolved entries.
 func (s *Public) NormalizeCreativeModelSettingsForSave(ctx context.Context, input []CreativeModelSetting) ([]CreativeModelSetting, error) {
 	normalized, err := NormalizeCreativeModelSettings(input)
 	if err != nil || s == nil || s.GroupRepo == nil {
@@ -64,7 +64,7 @@ func (s *Public) NormalizeCreativeModelSettingsForSave(ctx context.Context, inpu
 	return out, nil
 }
 
-// NormalizeCreativeModelSettings 校验并规范化管理员配置。
+// NormalizeCreativeModelSettings validates and normalizes administrator model settings.
 func NormalizeCreativeModelSettings(input []CreativeModelSetting) ([]CreativeModelSetting, error) {
 	out := make([]CreativeModelSetting, 0, len(input))
 	seenModels := make(map[string]struct{}, len(input))
@@ -112,7 +112,7 @@ func NormalizeCreativeModelSettings(input []CreativeModelSetting) ([]CreativeMod
 	return out, nil
 }
 
-// MarshalCreativeModelSettings 校验后生成稳定 JSON，供 settings 表持久化。
+// MarshalCreativeModelSettings validates settings and produces stable JSON for persistence.
 func MarshalCreativeModelSettings(input []CreativeModelSetting) (string, []CreativeModelSetting, error) {
 	normalized, err := NormalizeCreativeModelSettings(input)
 	if err != nil {
@@ -125,7 +125,7 @@ func MarshalCreativeModelSettings(input []CreativeModelSetting) (string, []Creat
 	return string(raw), normalized, nil
 }
 
-// CreativeModelSettingsIndex 将配置转换为精确的分组+模型索引。
+// CreativeModelSettingsIndex indexes configuration by exact group and model.
 func CreativeModelSettingsIndex(settings []CreativeModelSetting) map[string][]string {
 	index := make(map[string][]string, len(settings))
 	for _, setting := range settings {
@@ -135,7 +135,7 @@ func CreativeModelSettingsIndex(settings []CreativeModelSetting) map[string][]st
 	return index
 }
 
-// CreativeOperationsForModel 计算配置能力与平台能力的交集。
+// CreativeOperationsForModel intersects configured operations with platform capabilities.
 func CreativeOperationsForModel(settings map[string][]string, groupID int64, model string, supported []string) ([]string, bool) {
 	configured, ok := settings[fmt.Sprintf("%d:%s", groupID, strings.TrimSpace(model))]
 	if !ok {

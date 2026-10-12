@@ -20,7 +20,7 @@ type emptyBackupSettings struct{}
 func (emptyBackupSettings) GetValue(context.Context, string) (string, error) { return "", nil }
 func (emptyBackupSettings) Set(context.Context, string, string) error        { return nil }
 
-// TestRestorePasswordBoundary 验证恢复密码在 handler 层复核；路由管理员/step-up 仍由原 server 路由契约覆盖。
+// TestRestorePasswordBoundary checks password verification in the handler; router tests cover administrator and step-up checks.
 func TestRestorePasswordBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name, body     string

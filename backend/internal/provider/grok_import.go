@@ -82,7 +82,7 @@ func NewGrokProviderImport(auth *GrokAuthorization, options GrokProviderImportOp
 func (h *GrokProviderImport) safeCreateProviderFromSSOToken(ctx context.Context, req GrokSSOToOAuthRequest, token string, index, total int) (result grokSSOImportWorkerResult) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			// panic 内容可能含 SSO token 等请求数据，此处记录 panic 值的类型。
+			// Panic values may contain SSO tokens or request data; log the value's type to avoid disclosure.
 			h.Options.LogError("grok_sso_import_worker_panic", "index", index, "panic_type", fmt.Sprintf("%T", recovered))
 			result = grokSSOImportWorkerResult{
 				item: GrokSSOToOAuthItemResult{
@@ -148,10 +148,10 @@ func (h *GrokProviderImport) createProviderFromSSOToken(ctx context.Context, req
 	}
 }
 
-// GrokSSOImportCredentials 合并 SSO 交换结果与导入配置。
-// token 字段使用 BuildProviderCredentials 的结果，base_url 优先使用导入请求中的值，缺省时使用构造结果。
+// GrokSSOImportCredentials merges exchanged OAuth credentials with import settings.
+// Exchanged token fields take precedence; a nonempty requested base_url overrides the built default.
 func GrokSSOImportCredentials(built map[string]any, reqCredentials map[string]any) map[string]any {
-	// 从请求中提取运营配置，password、sso_token 和 cookie 用于临时授权。
+	// Allow operational settings from the request; authorization secrets remain temporary inputs.
 	allowedReqKeys := map[string]struct{}{
 		"base_url":      {},
 		"model_mapping": {},
@@ -173,10 +173,10 @@ func GrokSSOImportCredentials(built map[string]any, reqCredentials map[string]an
 		ops[k] = v
 	}
 	credentials := MergeCredentials(ops, built)
-	// 清理旧调用方可能意外传入的敏感字段。
+	// Remove sensitive fields that older callers may have supplied.
 	for k := range credentials {
 		if IsSensitiveCredentialKey(k) {
-			// 只保留 BuildProviderCredentials 生成的令牌字段。
+			// Retain token fields produced by BuildProviderCredentials.
 			if k == "access_token" || k == "refresh_token" || k == "id_token" {
 				continue
 			}

@@ -11,14 +11,14 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UpstreamUsageQueries 提供管理员用量查询操作。
+// UpstreamUsageQueries provides administrator usage query operations.
 type UpstreamUsageQueries interface {
 	QueryProvider(context.Context, int64) (*provider.UpstreamUsageQueryResult, error)
 	QueryBatch(context.Context, []int64) (map[int64]*provider.UpstreamUsageQueryResult, map[int64]error, error)
 }
 type UpstreamUsageHandler struct{ queries UpstreamUsageQueries }
 
-// UpstreamUsageBatchRequest 是 API Key 上游用量批量查询请求。
+// UpstreamUsageBatchRequest identifies API key providers for an upstream usage query.
 type UpstreamUsageBatchRequest struct {
 	ProviderIDs []int64 `json:"provider_ids" binding:"required"`
 }
@@ -27,7 +27,7 @@ func NewUpstreamUsageHandler(queries UpstreamUsageQueries) *UpstreamUsageHandler
 	return &UpstreamUsageHandler{queries: queries}
 }
 
-// QueryUpstreamUsage 查询 API Key 提供商的实时上游用量。
+// QueryUpstreamUsage fetches an API key provider's current upstream usage.
 // POST /api/v1/admin/providers/:id/upstream-usage/query
 func (h *UpstreamUsageHandler) QueryUpstreamUsage(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -47,7 +47,7 @@ func (h *UpstreamUsageHandler) QueryUpstreamUsage(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// QueryBatchUpstreamUsage 批量查询 API Key 提供商的实时上游用量。
+// QueryBatchUpstreamUsage fetches current upstream usage for multiple API key providers.
 // POST /api/v1/admin/providers/upstream-usage/query/batch
 func (h *UpstreamUsageHandler) QueryBatchUpstreamUsage(c *gin.Context) {
 	var req UpstreamUsageBatchRequest

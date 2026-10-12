@@ -23,7 +23,7 @@ type Dispatch uint8
 
 type TransportDecision struct{ Transport, Reason string }
 
-// Profile 保存当前提供商已确认的协议资格。
+// Profile contains the selected provider's resolved protocol capabilities.
 type Profile struct {
 	Platform, Name, Type                                                    string
 	UsesCodex                                                               bool
@@ -47,7 +47,7 @@ type Prelude struct {
 	Route                                                     Dispatch
 }
 
-// PreludePorts 定义请求准备阶段使用的策略读取、报文转换和观测操作。
+// PreludePorts supplies policy reads, body conversions, and observations during request preparation.
 type PreludePorts interface {
 	BlockGroupImages() bool
 	StripImages([]byte) ([]byte, bool, error)
@@ -84,7 +84,7 @@ type PreludePorts interface {
 	Log(string, ...any)
 }
 
-// PreparePrelude 依次判断 Grok、Messages、Raw Chat 和透传分支。
+// PreparePrelude prepares the request and selects Grok, Anthropic, raw Chat, passthrough, or Responses execution.
 func PreparePrelude(ctx context.Context, body []byte, profile Profile, p PreludePorts) (*Prelude, error) {
 	var err error
 	if p.BlockGroupImages() {

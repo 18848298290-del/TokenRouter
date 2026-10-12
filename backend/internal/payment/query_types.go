@@ -24,7 +24,7 @@ type DashboardStats struct {
 	TopUsers             TopUsersByCurrency         `json:"top_users"`
 }
 
-// CurrencyAmounts 按 ISO 4217 币种保存金额，禁止把不同币种相加。
+// CurrencyAmounts keeps amounts separate by ISO 4217 currency; values in different currencies must not be summed.
 type (
 	CurrencyAmounts map[string]float64
 	DailyStats      struct {
@@ -52,5 +52,5 @@ type TopUserStat struct {
 	Amount float64 `json:"amount"`
 }
 
-// TopUsersByCurrency 为每种币种维护独立排行，避免生成误导性的跨币种榜单。
+// TopUsersByCurrency keeps a separate ranking for each currency.
 type TopUsersByCurrency map[string][]TopUserStat

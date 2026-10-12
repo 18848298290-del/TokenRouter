@@ -81,7 +81,7 @@ func (h *EmailOAuthHandler) EmailOAuthStart(c *gin.Context, provider string) {
 	EmailOAuthSetCookie(c, EmailOAuthRedirectCookie, EncodeCookieValue(redirectTo), secureCookie)
 	EmailOAuthSetCookie(c, EmailOAuthProviderCookie, EncodeCookieValue(provider), secureCookie)
 	CaptureOAuthPromoCode(c, secureCookie)
-	// 兼容直接访问邮箱 OAuth start URL 的 aff_code；邀请页仍优先使用更短的 aff。
+	// Accept aff_code in direct start links; the shorter aff parameter takes precedence.
 	if affCode := strings.TrimSpace(identity.OAuthFirstNonEmpty(c.Query("aff"), c.Query("aff_code"))); affCode != "" {
 		EmailOAuthSetCookie(c, EmailOAuthAffCookie, EncodeCookieValue(affCode), secureCookie)
 	} else {

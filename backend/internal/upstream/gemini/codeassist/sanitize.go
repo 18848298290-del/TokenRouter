@@ -4,6 +4,8 @@ import "strings"
 
 const maxLogBodyLen = 2048
 
+// SanitizeBodyForLogs truncates base64 data URLs and caps the body length.
+// Credential fields remain in the result and require separate redaction.
 func SanitizeBodyForLogs(body string) string {
 	body = truncateBase64InMessage(body)
 	if len(body) > maxLogBodyLen {

@@ -28,13 +28,13 @@ func (h *ManagementHandler) List(c *gin.Context) {
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
-	// 标准化和验证 search 参数
+	// Trim search text and limit it to 100 bytes.
 	search = strings.TrimSpace(search)
 	if len(search) > 100 {
 		search = search[:100]
 	}
 	lite := response.ParseBoolQueryWithDefault(c.Query("lite"), false)
-	// 调度评分需要批量读取候选负载，前端展示该列时才请求计算。
+	// Scheduler scores require a batch load lookup; compute them when the client requests the score column.
 	includeSchedulerScore := response.ParseBoolQueryWithDefault(c.Query("include_scheduler_score"), false)
 
 	var groupID int64

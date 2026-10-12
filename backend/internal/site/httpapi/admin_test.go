@@ -88,7 +88,7 @@ func TestAdminAnnouncementReadStatusSortDefaults(t *testing.T) {
 	require.Equal(t, "asc", userRepo.listParams.SortOrder)
 }
 
-// ArchiveExpired 使排序测试的列表查询跳过过期公告更新。
+// ArchiveExpired lets sorting tests list announcements without changing expiry state.
 func (r *announcementRepoCapture) ArchiveExpired(context.Context, time.Time) (int64, error) {
 	return 0, nil
 }

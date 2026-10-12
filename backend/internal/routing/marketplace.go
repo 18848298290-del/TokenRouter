@@ -45,17 +45,18 @@ type ModelMarketplaceModel struct {
 	ID          string
 	DisplayName string
 	Pricing     pricing.ModelDisplayPricing
-	// InputModalities/OutputModalities 来自定价文件的模型能力元数据；
-	// 查询不到时为 nil，前端能力标签降级为本地规则。
+	// InputModalities and OutputModalities use resolved attributes, or pricing metadata when no attribute reader is
+	// installed.
+	// Nil means the modality is unknown.
 	InputModalities  []string
 	OutputModalities []string
-	// Protocols 是该模型在分组里可以请求的客户端协议，顺序按组内提供商的解析结果。
+	// Protocols lists requestable client protocols in provider-resolution order.
 	Protocols []capability.ProtocolID
-	// NativeProtocols 是 Protocols 中不经过协议转换的那部分。
+	// NativeProtocols contains protocols supported without conversion on every resolved route.
 	NativeProtocols []capability.ProtocolID
 }
 
-// MarketplaceListOptions 指定市场查询需要附带的观测数据。
+// MarketplaceListOptions selects optional observations for a marketplace query.
 type MarketplaceListOptions struct {
 	IncludeCapacity bool
 }
@@ -109,7 +110,7 @@ type MarketplaceOptions struct {
 	Warn       func(string, ...any)
 }
 
-// Marketplace 拥有公开模型市场的编排，辅助观测失败不阻断模型及价格展示。
+// Marketplace assembles public models and prices, tolerating failures in auxiliary observations.
 type Marketplace struct {
 	groups       MarketplaceGroups
 	settings     MarketplaceSettings
@@ -125,7 +126,7 @@ func NewMarketplace(groups MarketplaceGroups, settings MarketplaceSettings, mode
 	return &Marketplace{groups: groups, settings: settings, models: models, requestable: resolver, prices: prices, capacity: capacity, availability: availability, options: options}
 }
 
-// ListPublic 批量读取可见分组的属性，并按需附带容量。
+// ListPublic batch-loads visible groups' attributes and optionally includes capacity.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOptions) ([]ModelMarketplaceGroup, error) {
 	groups, err := s.groups.ListActive(ctx)
@@ -198,7 +199,7 @@ func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOpt
 	return out, nil
 }
 
-// PrefetchProviders 一次读取全部可调度提供商，并按提供商全局优先级恢复分组查询顺序。
+// PrefetchProviders reads providers once and orders each group's pool by global priority, then ID.
 func (s *Marketplace) PrefetchProviders(ctx context.Context) (map[int64][]CatalogueProvider, bool) {
 	if s == nil || s.models == nil {
 		return nil, false
@@ -264,7 +265,7 @@ func (s *Marketplace) getPublicCapacityMap(ctx context.Context, groups []Group) 
 		return nil
 	}
 
-	// 容量是模型广场的辅助负载信息，获取失败时不影响模型和价格展示。
+	// Capacity is optional display data; a failed query leaves models and prices available.
 	capacityMap, err := s.capacity.GetGroupCapacityByIDs(ctx, groupIDs)
 	if err != nil {
 		return nil
@@ -307,7 +308,7 @@ func (s *Marketplace) getPublicAvailabilityMap(ctx context.Context, groups []Gro
 	if strings.TrimSpace(s.options.Timezone) != "" {
 		timezone = strings.TrimSpace(s.options.Timezone)
 	}
-	// 可用性是模型广场的辅助信息，获取失败时不影响模型和价格展示。
+	// Probe availability is optional display data; a failed query leaves models and prices available.
 	windowDays, bucketMinutes := s.resolveMarketplaceAvailabilityWindow(ctx)
 	availabilityMap, err := s.availability.GetSummaryByGroupIDs(ctx, groupIDs, windowDays, bucketMinutes, timezone, s.options.Now())
 	if err != nil {
@@ -385,7 +386,7 @@ func (s *Marketplace) getOfficialPriceRatioConfig(ctx context.Context) (marketpl
 		return marketplaceDiscountConfig{}, false
 	}
 
-	// 官方价折扣依赖管理员配置，任一配置无效则不展示。
+	// Showing the official-price discount requires valid unit-price and exchange-rate settings.
 	price, priceOK := parsePositiveMarketplaceSettingFloat(settings[SettingKeyReasoningPointRMBUnitPrice])
 	exchangeRate, exchangeRateOK := parsePositiveMarketplaceSettingFloat(settings[SettingKeyUSDExchangeRate])
 	if !priceOK || !exchangeRateOK {
@@ -410,7 +411,7 @@ func (s *Marketplace) ModelsForGroup(ctx context.Context, group *Group) []ModelM
 	return s.BuildPublicModels(ctx, group, s.resolveGroupModels(ctx, group))
 }
 
-// BuildPublicModels 为单个分组解析展示属性和报价。
+// BuildPublicModels resolves display attributes and quotes for one group.
 func (s *Marketplace) BuildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef) []ModelMarketplaceModel {
 	if len(modelDefs) == 0 {
 		return nil
@@ -420,7 +421,7 @@ func (s *Marketplace) BuildPublicModels(ctx context.Context, group *Group, model
 	return s.buildPublicModels(ctx, group, modelDefs, attributes[group.ID])
 }
 
-// readAttributes 将本次可见模型交给批量属性读取器，读取失败时返回空属性。
+// readAttributes batch-loads visible models' attributes and returns nil on failure.
 func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64][]MarketplaceModelDef) map[int64]map[string]EffectiveModelAttributes {
 	if s.options.Attributes == nil || len(definitions) == 0 {
 		return nil
@@ -441,7 +442,7 @@ func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64]
 	return attributes
 }
 
-// buildPublicModels 使用已读取的属性生成模型卡片，价格通过共享报价接口解析。
+// buildPublicModels combines loaded attributes with quotes from the shared pricing service.
 func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef, attributes map[string]EffectiveModelAttributes) []ModelMarketplaceModel {
 	models := make([]ModelMarketplaceModel, 0, len(modelDefs))
 	for _, modelDef := range modelDefs {
@@ -483,7 +484,7 @@ func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, model
 	return models
 }
 
-// ModelModalities 用共享定价服务解析模型能力元数据；解析不到时返回 nil。
+// ModelModalities reads metadata for the pricing model, using the public ID when no pricing model is set.
 func (s *Marketplace) ModelModalities(modelDef MarketplaceModelDef) ([]string, []string) {
 	if s.prices == nil {
 		return nil, nil
@@ -495,7 +496,7 @@ func (s *Marketplace) ModelModalities(modelDef MarketplaceModelDef) ([]string, [
 	return s.prices.GetModelModalities(pricingModel)
 }
 
-// RequestableModelPricing 使用共享解析器确定的定价模型，避免展示层再次推导映射链。
+// RequestableModelPricing uses the resolver's pricing model so display code does not repeat model mapping.
 func (s *Marketplace) RequestableModelPricing(ctx context.Context, group *Group, model MarketplaceModelDef) pricing.ModelDisplayPricing {
 	pricingModel := strings.TrimSpace(model.PricingModel)
 	if pricingModel == "" {
@@ -504,7 +505,7 @@ func (s *Marketplace) RequestableModelPricing(ctx context.Context, group *Group,
 	return s.PublicModelPricing(ctx, group, pricingModel)
 }
 
-// PublicModelPricing 将分组价格和计费模式传给 billing，返回公开报价。
+// PublicModelPricing requests a quote with the group's rate multiplier and Fast pricing applicability.
 func (s *Marketplace) PublicModelPricing(ctx context.Context, group *Group, model string) pricing.ModelDisplayPricing {
 	if s.prices == nil {
 		return pricing.UnknownDisplayPricing()
@@ -519,7 +520,7 @@ func (s *Marketplace) resolveGroupModels(ctx context.Context, group *Group) []Ma
 		if len(resolution.Models) > 0 {
 			return buildMarketplaceModelDefsFromRequestable(resolution.Models)
 		}
-		// 已完成提供商和分组策略解析后，空结果必须保持为空，不能再次回退平台默认模型。
+		// An empty resolved catalogue means no eligible models; platform defaults would bypass that result.
 		return nil
 	}
 
@@ -529,7 +530,8 @@ func (s *Marketplace) resolveGroupModels(ctx context.Context, group *Group) []Ma
 	return nil
 }
 
-// resolveGroupModelsWithProviders 直接使用预取提供商生成候选和执行 R -> G -> U 校验。
+// resolveGroupModelsWithProviders uses prefetched providers to validate request, group-mapped, and upstream model
+// stages.
 func (s *Marketplace) resolveGroupModelsWithProviders(ctx context.Context, group *Group, providers []CatalogueProvider) []MarketplaceModelDef {
 	if s == nil || s.models == nil || group == nil {
 		return nil

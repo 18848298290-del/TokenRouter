@@ -249,7 +249,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 	}
 
 	if openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, body) {
-		// 参数型 400 不影响提供商健康；保留上游上下文供 Ops 排障，并向客户端透传完整错误结构。
+		// Parameter errors leave provider health unchanged; retain Ops context and return the full error structure.
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
 			Platform:           provider.Record.Platform,
 			ProviderID:         provider.Record.ID,
@@ -273,7 +273,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 		return nil, fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 请求级排除完成后执行提供商策略，包括未触发故障转移的状态。
+	// Apply provider policy after excluding request errors, including statuses that do not trigger failover.
 	var reqModel string
 	if len(requestedModel) > 0 {
 		reqModel = strings.TrimSpace(requestedModel[0])
@@ -338,7 +338,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 		}
 	}
 
-	// 提供商策略执行后，透传规则决定最终客户端响应。
+	// After provider policy, passthrough rules select the final client response.
 	if status, errType, errMsg, matched := ApplyErrorPassthroughRule(
 		c,
 		provider.Record.Platform,
@@ -364,8 +364,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 只有既有分类明确判定不可故障转移的 400 才属于确定性请求错误。
-	// 池模式重试状态码、server_is_overloaded 和瞬时处理错误按分类重试或返回 502。
+	// A 400 is deterministic only when the classifier rules out failover.
+	// Pool retry statuses, server_is_overloaded, and transient processing failures follow retry or 502 handling.
 	if provider != nil && provider.Record.Platform == capability.PlatformOpenAI &&
 		IsOpenAIDeterministicClientError(resp.StatusCode, defaultFailover) {
 		MarkResponseCommitted(c)
@@ -377,7 +377,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 	}
 	MarkResponseCommitted(c)
 
-	// 按上游状态码写出客户端错误。
+	// Map the upstream status to a client error.
 	var errType, errMsg string
 	var statusCode int
 
@@ -420,7 +420,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
-// CompatError 是 Chat Completions 与 Anthropic Messages 共用的非故障转移错误处理器。
+// CompatError handles non-failover errors for Chat Completions and Anthropic Messages.
 func (p *OpenAIResponseOutput) CompatError(
 	resp *http.Response,
 	c *gin.Context,
@@ -476,7 +476,7 @@ func (p *OpenAIResponseOutput) CompatError(
 	SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
 	if openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, body) {
-		// 兼容协议保留上游 error 对象中的 code、param 等结构化详情。
+		// Keep structured upstream error details such as code and param in compatible protocols.
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
 			Platform:           provider.Record.Platform,
 			ProviderID:         provider.Record.ID,
@@ -552,7 +552,7 @@ func (p *OpenAIResponseOutput) CompatError(
 		}
 	}
 
-	// 提供商策略执行后，透传规则决定最终响应格式。
+	// After provider policy, passthrough rules select the response format.
 	if status, errType, errMsg, matched := ApplyErrorPassthroughRule(
 		c, provider.Record.Platform, resp.StatusCode, body,
 		http.StatusBadGateway, "api_error", "Upstream request failed",
@@ -569,7 +569,7 @@ func (p *OpenAIResponseOutput) CompatError(
 	}
 	MarkResponseCommitted(c)
 
-	// 按既有状态码映射写出兼容协议错误。
+	// Map the upstream status to the compatible protocol error type.
 	errType := "api_error"
 	switch {
 	case resp.StatusCode == http.StatusBadRequest:
@@ -594,7 +594,7 @@ func (p *OpenAIResponseOutput) errorBodyReadLimit() int64 {
 	return limit
 }
 
-// ApplyHTTPFailure 使用传入的首个模型处理 HTTP 失败。
+// ApplyHTTPFailure applies provider health policy using the first supplied model.
 func (p *OpenAIResponseOutput) ApplyHTTPFailure(ctx context.Context, resp *http.Response, target *gatewayprovider.ExecutionProvider, body []byte, models ...string) providercore.UpstreamErrorDecision {
 	if len(models) > 0 {
 		return gatewayprovider.ApplyOpenAIResponseHealth(ctx, p.Health, target, resp.StatusCode, resp.Header, body, false, models[0])
@@ -602,8 +602,8 @@ func (p *OpenAIResponseOutput) ApplyHTTPFailure(ctx context.Context, resp *http.
 	return gatewayprovider.ApplyOpenAIResponseHealth(ctx, p.Health, target, resp.StatusCode, resp.Header, body, false)
 }
 
-// ReadReplayableError 读取并关闭上游错误体，再把 resp.Body 回卷为可重读的副本。
-// 返回值包含原始错误体和脱敏后的错误消息。
+// ReadReplayableError reads and closes the upstream error body, then replaces resp.Body with a readable copy.
+// It returns the raw body and a message with sensitive query parameters sanitized.
 func (p *OpenAIResponseOutput) ReadReplayableError(resp *http.Response) ([]byte, string) {
 	respBody := p.ReadErrorBody(resp)
 	_ = resp.Body.Close()

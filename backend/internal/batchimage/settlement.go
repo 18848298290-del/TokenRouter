@@ -85,8 +85,8 @@ func (s *Settlement) Settle(ctx context.Context, batchID string) (*BatchImageSet
 	if job.ProviderID == nil || *job.ProviderID <= 0 {
 		return nil, ErrBatchImageSettlementMissingProviderID
 	}
-	// 重试耗尽检查必须先于各类可重复失败的校验（counts/manifest/定价/超冻结），
-	// 否则这些错误路径会绕过耗尽出口，settling job 无限 requeue、冻结余额永不释放。
+	// Check exhausted retries before count, manifest, price, and hold validation.
+	// Otherwise repeated validation errors can requeue forever with funds still held.
 	if IsBatchImageSettlementRetryExhausted(job) {
 		return nil, s.FailExhaustedSettlement(ctx, job, "settlement retry limit reached: "+BatchImageDerefString(job.LastErrorCode))
 	}
@@ -177,9 +177,9 @@ func (s *Settlement) Settle(ctx context.Context, batchID string) (*BatchImageSet
 	return result, nil
 }
 
-// IsBatchImageSettlementRetryExhausted 判断 settling job 是否已达重试上限。
-// 重试上限覆盖所有 SETTLEMENT_* 失败码，
-// 否则 SETTLEMENT_COST_EXCEEDS_HOLD / SETTLEMENT_INVALID_COUNTS 等错误会无限 requeue。
+// IsBatchImageSettlementRetryExhausted reports whether a settling job reached its retry limit.
+// All SETTLEMENT_* failures count toward the limit, including invalid counts and
+// costs above the hold, so those failures cannot cause unbounded requeueing.
 func IsBatchImageSettlementRetryExhausted(job *BatchImageJob) bool {
 	return job != nil &&
 		job.Status == BatchImageJobStatusSettling &&
@@ -187,9 +187,9 @@ func IsBatchImageSettlementRetryExhausted(job *BatchImageJob) bool {
 		strings.HasPrefix(BatchImageDerefString(job.LastErrorCode), "SETTLEMENT_")
 }
 
-// RecordSettlementFailure 记录一次结算失败并递增 retry_count。
-// 重试达到上限时立即走耗尽出口（释放冻结余额并转 failed）；
-// 返回非 nil 时调用方应直接返回该错误。
+// RecordSettlementFailure records a failure and increments retry_count.
+// At the retry limit it releases the reservation and fails the job.
+// Callers should return any non-nil error immediately.
 func (s *Settlement) RecordSettlementFailure(ctx context.Context, job *BatchImageJob, code, message string) error {
 	retryCount, recordErr := s.Repo.SetBatchImageJobSettlementFailed(ctx, job.BatchID, code, TruncateBatchImageMessage(message, BatchImageMaxErrorMessageLength))
 	if recordErr != nil {
@@ -212,9 +212,9 @@ func (s *Settlement) FailExhaustedSettlement(ctx context.Context, job *BatchImag
 	if s == nil || s.Repo == nil {
 		return ErrBatchImageSettlementBillingFailed
 	}
-	// 释放指纹必须与其余所有释放点（processor/Cancel/recovery）一致地使用 RequestHash：
-	// 它们共享同一 request id，payloadHash 不同会触发 ErrUsageBillingRequestConflict，
-	// 导致后续 Cancel/重试永远失败、terminal job 变成毒消息。
+	// Use RequestHash for release as processor, Cancel, and recovery do. These paths
+	// share a request ID; differing payload hashes cause ErrUsageBillingRequestConflict.
+	// Consistent fingerprints let cancellation and terminal-job retries share the release.
 	if err := s.Funding.Release(ctx, job, BatchImageDerefString(job.RequestHash)); err != nil {
 		msg := TruncateBatchImageMessage(err.Error(), BatchImageMaxErrorMessageLength)
 		if _, recordErr := s.Repo.SetBatchImageJobSettlementFailed(ctx, job.BatchID, "SETTLEMENT_RELEASE_FAILED", msg); recordErr != nil {
@@ -270,7 +270,7 @@ func (s *Settlement) RecordUsageLog(ctx context.Context, job *BatchImageJob, act
 	}
 	rateMultiplier := job.GroupRateMultiplier * job.BatchDiscountMultiplier
 	if job.PricingSnapshotVersion >= 2 && job.SuccessCount > 0 && job.BaseUnitPrice > 0 && providerRateMultiplier > 0 {
-		// 混合结算没有单一来源倍率，日志记录本次实际生效的等效分组倍率。
+		// Mixed funding has different source rates; log the effective group multiplier for this charge.
 		rateMultiplier = actualCost / (job.BaseUnitPrice * float64(job.SuccessCount) * providerRateMultiplier)
 	}
 	requestedModel := BatchImageRequestedModel(job)
@@ -381,7 +381,7 @@ func firstAllocatedSubscriptionID(values []billing.BillingAllocation) *int64 {
 	return nil
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now uses the injected clock when configured, otherwise the system clock.
 func (s *Settlement) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

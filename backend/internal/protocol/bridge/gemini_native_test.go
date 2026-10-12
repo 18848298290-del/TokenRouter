@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestConvertClaudeToolsToGeminiTools_CustomType 测试 custom 类型工具转换。
 func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -89,11 +88,11 @@ func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 				map[string]any{
 					"type": "custom",
 					"name": "invalid_custom",
-					// 缺少 custom 字段
+					// The nested custom specification is deliberately absent.
 				},
 			},
 
-			expectedLen: 0, // 应该被跳过
+			expectedLen: 0, // Invalid custom tools are skipped.
 
 			description: "缺少custom字段的custom工具应该被跳过",
 		},
@@ -134,7 +133,6 @@ func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 			for _, tool := range toolsArr {
 				toolMap, _ := tool.(map[string]any)
 				if toolMap["name"] != "" {
-					// 检查是否为有效的 custom 工具
 					if toolMap["type"] == "custom" {
 						if toolMap["custom"] != nil {
 							expectedFuncCount++
@@ -202,7 +200,6 @@ func TestCleanToolSchema_NormalizesGeminiUnsupportedSchemaFields(t *testing.T) {
 	require.NotContains(t, emptySchema, "type")
 }
 
-// TestCleanToolSchema_ConvertsNestedIntegerExclusiveMinimum 验证嵌套整数独占下界可无损转换。
 func TestCleanToolSchema_ConvertsNestedIntegerExclusiveMinimum(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",
@@ -253,7 +250,6 @@ func TestCleanToolSchema_ConvertsNestedIntegerExclusiveMinimum(t *testing.T) {
 	require.Equal(t, 3, weak["minimum"])
 }
 
-// TestCleanToolSchema_DropsAmbiguousExclusiveMinimumWithoutConversion 检查无法等价转换的 exclusiveMinimum 是否被删除。
 func TestCleanToolSchema_DropsAmbiguousExclusiveMinimumWithoutConversion(t *testing.T) {
 	for name, schema := range map[string]map[string]any{
 		"number schema": {

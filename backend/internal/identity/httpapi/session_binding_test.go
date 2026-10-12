@@ -112,8 +112,8 @@ func TestSessionBindingContextBoundsPersistedUserAgent(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 }
 
-// TestSecurityClientIPFallsBackWithoutInjectedBinding 验证未经过 SessionBindingContext 注入时（异常挂载顺序/单测直调），回退 trusted_proxies 链，
-// 等价于开关关闭时的历史行为。
+// TestSecurityClientIPFallsBackWithoutInjectedBinding checks that direct calls without
+// SessionBindingContext use the trusted-proxy chain.
 func TestSecurityClientIPFallsBackWithoutInjectedBinding(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))

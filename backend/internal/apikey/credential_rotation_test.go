@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rotationRepository 只模拟凭据更新，未实现的方法会阻止测试意外重置配置或用量。
+// rotationRepository supports credential replacement; other calls fail to expose accidental configuration or usage writes.
 type rotationRepository struct {
 	APIKeyRepository
 	key      *APIKey
@@ -112,7 +112,7 @@ func TestRotateCredentialPreservesKeyAndInvalidatesCredentials(t *testing.T) {
 	svc.authCacheL1.Load().Wait()
 	require.Contains(t, cache.entries, AuthCacheKey(original.Key))
 	repo.onRotate = func(updated *APIKey) {
-		// 提交后连接取消不能跳过清理；新凭据也可能已有负缓存。
+		// Cancellation after commit must not skip cleanup; the new credential may also have a negative cache entry.
 		svc.KeySetAuthCacheL1(AuthCacheKey(updated.Key), &APIKeyAuthCacheEntry{NotFound: true})
 		svc.authNegativeCacheL1.Load().Wait()
 		cancel()

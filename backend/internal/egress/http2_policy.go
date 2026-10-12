@@ -17,7 +17,7 @@ const (
 	TransportGrok                            = "grok"
 )
 
-// HTTP2Options 配置上游 HTTP/2 及代理回退的阈值和持续时间。
+// HTTP2Options configures upstream HTTP/2 and proxy fallback thresholds and durations.
 type HTTP2Options struct {
 	Enabled                   bool
 	AllowProxyFallbackToHTTP1 bool
@@ -26,7 +26,7 @@ type HTTP2Options struct {
 	FallbackTTL               time.Duration
 }
 
-// TransportPolicy 在同一生产上游池的所有调用方之间共享回退状态。
+// TransportPolicy shares HTTP/2 fallback state among callers using the same instance.
 type TransportPolicy struct{ fallbacks sync.Map }
 
 type openAIHTTP2FallbackState struct {
@@ -36,7 +36,7 @@ type openAIHTTP2FallbackState struct {
 	fallbackUntil time.Time
 }
 
-// TransportRequest 包含本次出站请求的传输参数和策略。
+// TransportRequest contains transport settings for one outbound request.
 type TransportRequest struct {
 	TLSProfile                                            *TLSFingerprintProfile
 	Headers                                               map[string]string
@@ -164,7 +164,7 @@ func (s *openAIHTTP2FallbackState) recordFailure(now time.Time, threshold int, w
 	return true, s.fallbackUntil
 }
 
-// Plan 生成连接池使用的策略，TLS 能力不足时回退到 HTTP/1。
+// Plan builds pool policy, selecting HTTP/1 when the TLS profile cannot support HTTP/2.
 func (p *TransportPolicy) Plan(request TransportRequest) EgressPolicy {
 	mode := p.Resolve(request.Profile, request.ProxyKey, request.ProxyScheme, request.HTTP2, request.Now)
 	if request.HasTLSProfile && mode == TransportOpenAIH2 && !request.TLSSupportsHTTP2 {

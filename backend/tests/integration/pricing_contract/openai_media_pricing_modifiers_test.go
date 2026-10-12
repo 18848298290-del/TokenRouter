@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestOpenAIMediaPricingUsesModifierOnlyCards 验证图片和视频的 token 价卡必须保留全部倍率，不能因为继承内置来源而改走按次计费。
+// TestOpenAIMediaPricingUsesModifierOnlyCards checks that token cards retain their multipliers when base prices come from the media catalog.
 func TestOpenAIMediaPricingUsesModifierOnlyCards(t *testing.T) {
 	for _, media := range []string{"image", "video"} {
 		model := "gpt-image-1"
@@ -78,7 +78,7 @@ func TestOpenAIMediaPricingUsesModifierOnlyCards(t *testing.T) {
 	}
 }
 
-// TestOpenAIMediaModifiersPreserveInheritedRequestBilling 验证共享按图或按秒价卡保持原模式，不叠加 token 专属倍率。
+// TestOpenAIMediaModifiersPreserveInheritedRequestBilling checks image and video modes without token-only multipliers.
 func TestOpenAIMediaModifiersPreserveInheritedRequestBilling(t *testing.T) {
 	for _, mode := range []routing.BillingMode{routing.BillingModeImage, routing.BillingModeVideo} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestOpenAIMediaModifiersPreserveInheritedRequestBilling(t *testing.T) {
 	}
 }
 
-// TestCNProviderPricingModifiersDoNotCountAsExplicitPrices 验证放宽媒体价卡识别不能让国产供应商通过倍率条目启用 Claude 内置回退价。
+// TestCNProviderPricingModifiersDoNotCountAsExplicitPrices checks that multiplier-only cards cannot enable Claude catalog prices for CN providers.
 func TestCNProviderPricingModifiersDoNotCountAsExplicitPrices(t *testing.T) {
 	for _, platform := range []string{capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		for _, scope := range []string{"channel"} {
@@ -121,7 +121,7 @@ func TestCNProviderPricingModifiersDoNotCountAsExplicitPrices(t *testing.T) {
 				key := &apikey.APIKey{Group: group}
 				require.NotNil(t, svc.ResolveConfigPricing(context.Background(), model, gatewaycapture.ProjectCompletionKey(key)))
 				require.Empty(t, svc.FilterCNProviderBillingModelCandidates(context.Background(), gatewaycapture.ProjectCompletionProvider(gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: platform}})), gatewaycapture.ProjectCompletionKey(key), []string{model}))
-				// 显式零价仍是管理员的定价合同，应允许候选进入结算。
+				// An explicit zero price is an administrator-provided price, so the candidate remains billable.
 				resolver = billingtestkit.SharedPriceResolver(newCalculator(nil), group.ID, pricing.DefaultBillingSettings(), []routing.ModelPricingEntry{{Models: []string{model}, InputPrice: testPtrFloat64(0)}})
 				svc = completion.NewRecorder(completion.Dependencies{Calculator: newCalculator(nil), Prices: resolver}, completion.RecorderOptions{DefaultMultiplier: 1})
 				require.Equal(t, []string{model}, svc.FilterCNProviderBillingModelCandidates(context.Background(), gatewaycapture.ProjectCompletionProvider(gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: platform}})), gatewaycapture.ProjectCompletionKey(key), []string{model}))

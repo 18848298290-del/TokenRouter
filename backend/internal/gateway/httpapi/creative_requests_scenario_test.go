@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 openai_requests.go、openai_auxiliary_search.go 与 gateway/provider/creative_targets.go 的创作请求构造和平台执行。
+// These scenarios cover creative request construction and execution through OpenAIRequests and CreativeTargets.
 
 import (
 	"context"
@@ -67,7 +67,7 @@ func TestExecuteCreativeGrokEditUsesJSONEditEndpoint(t *testing.T) {
 	require.Equal(t, "https://xai.test/v1/images/generations", upstream.lastReq.URL.String())
 }
 
-// TestCreativeGeminiInpaintIsRejectedBeforeUpstream 校验 OpenAI JSON/multipart 请求体。
+// TestCreativeGeminiInpaintIsRejectedBeforeUpstream checks that unsupported inpainting fails before network execution.
 func TestCreativeGeminiInpaintIsRejectedBeforeUpstream(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{}
 	requests := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: upstream}).Requests

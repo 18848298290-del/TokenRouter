@@ -56,7 +56,7 @@ func TestSnapshotCache_NilReceiver(t *testing.T) {
 func TestSnapshotCache_SetEmptyKey(t *testing.T) {
 	c := NewSnapshotCache(5 * time.Second)
 
-	// Set with empty key should return entry but not store it
+	// An empty key produces an entry without storing it.
 	entry := c.Set("", "value")
 	require.NotEmpty(t, entry.ETag)
 
@@ -65,7 +65,7 @@ func TestSnapshotCache_SetEmptyKey(t *testing.T) {
 }
 
 func TestSnapshotCache_DefaultTTL(t *testing.T) {
-	// 用返回条目的有效期检查默认 TTL。
+	// Inspect the returned entry's expiry to check the default TTL.
 	for _, ttl := range []time.Duration{0, -time.Second} {
 		c := NewSnapshotCache(ttl)
 		before := time.Now()
@@ -88,14 +88,14 @@ func TestSnapshotCache_ETagDeterministic(t *testing.T) {
 func TestSnapshotCache_ETagFormat(t *testing.T) {
 	c := NewSnapshotCache(5 * time.Second)
 	entry := c.Set("k", "test")
-	// ETag should be quoted hex string: "abcdef..."
+	// HTTP entity tags include surrounding quotes.
 	require.True(t, len(entry.ETag) > 2)
 	require.Equal(t, byte('"'), entry.ETag[0])
 	require.Equal(t, byte('"'), entry.ETag[len(entry.ETag)-1])
 }
 
 func TestBuildETagFromAny_UnmarshalablePayload(t *testing.T) {
-	// channels are not JSON-serializable
+	// Channels cannot be marshaled to JSON.
 	etag := BuildETagFromAny(make(chan int))
 	require.Empty(t, etag)
 }
@@ -187,7 +187,7 @@ func TestParseBoolQueryWithDefault(t *testing.T) {
 	}
 }
 
-// TestSnapshotContextCacheKeepsETagAndIsolation 检查快照 ETag、返回值复制和 context 取消。
+// TestSnapshotContextCacheKeepsETagAndIsolation checks ETags, payload copies, and cancellation.
 func TestSnapshotContextCacheKeepsETagAndIsolation(t *testing.T) {
 	cache := NewSnapshotCache(time.Minute)
 	first, hit, err := cache.GetOrLoadContext(context.Background(), "snapshot", func(context.Context) (any, error) { return map[string]int{"requests": 17}, nil })

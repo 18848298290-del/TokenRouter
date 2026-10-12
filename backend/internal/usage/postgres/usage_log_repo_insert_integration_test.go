@@ -19,10 +19,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestResponseModelBatchRoundTrip 使用 PostgreSQL 检查批量 SQL 的列和参数顺序。
+// TestResponseModelBatchRoundTrip checks batch column and argument ordering against PostgreSQL.
 func TestResponseModelBatchRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	// 批量写入会提交到共享数据库，测试结束后由夹具清理数据。
+	// Batch writes commit to the shared database; fixture cleanup removes their records.
 	client := testEntClient(t)
 	suffix := uuid.NewString()
 	user := mustCreateUser(t, client, &identity.User{Email: suffix + "@response-model.test"})
@@ -53,7 +53,7 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		require.Equal(t, want[len(want)-3], nullString(log.UpstreamResponseModel))
 		require.Equal(t, want[len(want)-2], log.UpstreamModelMismatch)
 	}
-	// 尽力批量和单条降级写入都需要传递响应模型的两列。
+	// Both best-effort batches and single-row writes carry the two response-model fields.
 	for _, path := range []string{"best-effort", "fallback"} {
 		model, mismatch := "runtime-version", true
 		log := &usage.UsageLog{UserID: user.ID, APIKeyID: key.ID, ProviderID: upstream.ID, RequestID: suffix + path, Model: "sent", CreatedAt: time.Now(), UpstreamResponseModel: &model, UpstreamModelMismatch: &mismatch}
@@ -70,13 +70,12 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		require.Equal(t, log.UpstreamResponseModel, loaded.UpstreamResponseModel)
 		require.Equal(t, log.UpstreamModelMismatch, loaded.UpstreamModelMismatch)
 	}
-	// 重放时使用已保存的响应模型声明。
+	// A replay uses the response-model declaration already stored.
 	_, _, _, err = repo.batchInsertUsageLogs(integrationDB, keys, prepared)
 	require.NoError(t, err)
 }
 
-// TestUsageLog_SessionIDPersistence 验证 session_id 能完成插入与读取回环，
-// 缺失时则保持为 NULL。
+// TestUsageLog_SessionIDPersistence checks session ID round trips and NULL for missing IDs.
 func TestUsageLog_SessionIDPersistence(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -120,29 +119,29 @@ func TestUsageLog_SessionIDPersistence(t *testing.T) {
 	_, err = repo.Create(ctx, withoutSession)
 	require.NoError(t, err)
 
-	// 插入后读回相同的会话标识。
+	// The session ID survives insertion and retrieval.
 	got, err := repo.GetByID(ctx, withSession.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got.SessionID)
 	require.Equal(t, sessionID, *got.SessionID)
 
-	// 缺失的会话标识读回 nil（NULL）。
+	// An absent session ID reads back as nil (SQL NULL).
 	gotNone, err := repo.GetByID(ctx, withoutSession.ID)
 	require.NoError(t, err)
 	require.Nil(t, gotNone.SessionID)
 }
 
-// BenchmarkUserActivityWrites 使用完整迁移和生产批量写入 SQL 比较活动汇总的开销。
+// BenchmarkUserActivityWrites measures activity-summary overhead with full migrations and production batch SQL.
 func BenchmarkUserActivityWrites(b *testing.B) {
 	benchmarkUserActivityWrites(b, false)
 }
 
-// BenchmarkUserActivityConcurrentWrites 比较并发连接写入同用户及多个用户的吞吐。
+// BenchmarkUserActivityConcurrentWrites compares concurrent writes to shared and distinct users.
 func BenchmarkUserActivityConcurrentWrites(b *testing.B) {
 	benchmarkUserActivityWrites(b, true)
 }
 
-// benchmarkUserActivityWrites 在每个子基准结束时恢复触发器并清理夹具。
+// benchmarkUserActivityWrites restores triggers and cleans fixtures after each sub-benchmark.
 func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 	ctx := context.Background()
 	client := integrationEntClient
@@ -206,7 +205,7 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 	}
 }
 
-// TestUsageLogBillingKeyUpgradeReplay 覆盖旧用量记录与统一 ID 记录之间的双向重放。
+// TestUsageLogBillingKeyUpgradeReplay checks replays in both directions between legacy and unified-ID records.
 func TestUsageLogBillingKeyUpgradeReplay(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

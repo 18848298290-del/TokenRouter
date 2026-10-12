@@ -6,13 +6,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// ErrorResponse 标准错误响应结构。
+// ErrorResponse carries a string error code and message.
 type ErrorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-// NewErrorResponse 创建错误响应。
+// NewErrorResponse creates an error code/message pair.
 func NewErrorResponse(code, message string) ErrorResponse {
 	return ErrorResponse{
 		Code:    code,
@@ -20,7 +20,7 @@ func NewErrorResponse(code, message string) ErrorResponse {
 	}
 }
 
-// AbortWithError 中断请求并返回 JSON 错误。
+// AbortWithError writes a localized JSON error and aborts the Gin handler chain.
 func AbortWithError(c *gin.Context, statusCode int, code, message string) {
 	language := locale.Default()
 	if c.Request != nil {

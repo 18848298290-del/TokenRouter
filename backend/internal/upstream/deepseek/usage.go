@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// DefaultTestModel 是 DeepSeek 提供商的默认探测模型。
+// DefaultTestModel is the model used for DeepSeek connection probes.
 const DefaultTestModel = "deepseek-chat"
 
 type DeepseekBalanceUsageAdapter struct{}

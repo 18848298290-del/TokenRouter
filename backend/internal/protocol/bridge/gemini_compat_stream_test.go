@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNativeGeminiCompatIteratorPreservesPartialUsageAndLazyIDs 检查消费者提前停止迭代时仅生成已输出工具的 ID。
+// TestNativeGeminiCompatIteratorPreservesPartialUsageAndLazyIDs checks that early exit generates IDs only for yielded tools.
 func TestNativeGeminiCompatIteratorPreservesPartialUsageAndLazyIDs(t *testing.T) {
 	generated := 0
 	runtime := NativeGeminiRuntime{RandomHex: func(size int) string { generated++; return strings.Repeat("a", size*2) }}

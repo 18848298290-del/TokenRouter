@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// New 为 token、锁和取消行为测试启动隔离的 Redis 实例。
+// New starts an isolated Redis instance for token, lock, and cancellation tests.
 func New(t *testing.T) *redis.Client {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

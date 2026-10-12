@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap 验证创建目标库之前连接默认 postgres 库。
+// TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap checks that creation uses the postgres maintenance
+// database.
 func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	cfg := &SetupDatabaseConfig{
 		Host:     "db",

@@ -17,10 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// creativeDownloadRequests 使用 URL 校验器检查图片下载地址。
+// creativeDownloadRequests validates image download URLs.
 type creativeDownloadRequests struct{}
 
-// creativeDownloadTransport 检查图片下载请求的传输方式和认证 Header。
+// creativeDownloadTransport checks download transport options and authentication headers.
 type creativeDownloadTransport struct {
 	do func(*http.Request, string, int64, int) (*http.Response, error)
 }
@@ -45,7 +45,7 @@ func (creativeDownloadTransport) DoWithTLS(*http.Request, string, int64, int, *t
 	panic("unexpected generation transport")
 }
 
-// TestCreativeImageDownloadBinding 验证代理、签名 URL、凭据隔离和公网请求标记。
+// TestCreativeImageDownloadBinding checks proxy use, signed URLs, credential isolation, and public-request marking.
 func TestCreativeImageDownloadBinding(t *testing.T) {
 	proxyID := int64(3)
 	value := &ExecutionProvider{Record: provider.Record{
@@ -79,7 +79,7 @@ func TestCreativeImageDownloadBinding(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
-// TestCreativeImageDownloadRejectsUnsafeResults 验证不安全地址在传输前被拒绝，非图片响应不可交付。
+// TestCreativeImageDownloadRejectsUnsafeResults checks pre-transport URL rejection and rejects non-image responses.
 func TestCreativeImageDownloadRejectsUnsafeResults(t *testing.T) {
 	value := &ExecutionProvider{Record: provider.Record{ID: 7, Platform: "openai", Type: "apikey"}}
 	calls := 0

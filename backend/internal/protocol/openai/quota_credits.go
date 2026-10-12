@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// OpenAIRateLimitResetCreditDetailPayload 保存上游重置次数明细的兼容字段。
+// OpenAIRateLimitResetCreditDetailPayload accepts alternate upstream reset credit field names.
 type OpenAIRateLimitResetCreditDetailPayload struct {
 	ExpiresAt      string `json:"expires_at,omitempty"`
 	ExpiresAtCamel string `json:"expiresAt,omitempty"`
@@ -16,7 +16,7 @@ type OpenAIRateLimitResetCreditDetailPayload struct {
 	Status         string `json:"status,omitempty"`
 }
 
-// OpenAIRateLimitResetCreditDetailsPayload 兼容不同版本接口返回的计数和列表容器。
+// OpenAIRateLimitResetCreditDetailsPayload accepts count and list containers from different API versions.
 type OpenAIRateLimitResetCreditDetailsPayload struct {
 	AvailableCount        json.RawMessage `json:"available_count,omitempty"`
 	AvailableCountCamel   json.RawMessage `json:"availableCount,omitempty"`
@@ -26,7 +26,7 @@ type OpenAIRateLimitResetCreditDetailsPayload struct {
 	Data                  json.RawMessage `json:"data,omitempty"`
 }
 
-// OpenAIRateLimitResetCreditDetails 是经过筛选、可安全合并到 usage 的明细结果。
+// OpenAIRateLimitResetCreditDetails holds filtered counts and expiry details for merging into usage.
 type OpenAIRateLimitResetCreditDetails struct {
 	AvailableCount       *int
 	AvailableCreditCount int
@@ -34,7 +34,7 @@ type OpenAIRateLimitResetCreditDetails struct {
 	Credits              []OpenAIRateLimitResetCreditDetail
 }
 
-// ParseOpenAIRateLimitResetCreditDetails 解析多种上游响应形状，并只保留可用的 Codex 次数。
+// ParseOpenAIRateLimitResetCreditDetails accepts alternate response shapes and filters by credit type and status.
 func ParseOpenAIRateLimitResetCreditDetails(body []byte) (OpenAIRateLimitResetCreditDetails, error) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
@@ -101,7 +101,7 @@ func ParseOpenAIRateLimitResetCreditDetails(body []byte) (OpenAIRateLimitResetCr
 	}, nil
 }
 
-// ParseOpenAIResetCreditAvailableCount 读取数字或数字字符串形式的可用次数。
+// ParseOpenAIResetCreditAvailableCount returns the first nonnegative integer encoded as a number or string.
 func ParseOpenAIResetCreditAvailableCount(values ...json.RawMessage) *int {
 	for _, value := range values {
 		trimmed := bytes.TrimSpace(value)
@@ -130,7 +130,7 @@ func ParseOpenAIResetCreditAvailableCount(values ...json.RawMessage) *int {
 	return nil
 }
 
-// FirstPresentResetCreditPayload 返回首个存在的列表，空列表也按存在处理。
+// FirstPresentResetCreditPayload parses the first non-null list; an empty list counts as present.
 func FirstPresentResetCreditPayload(values ...json.RawMessage) ([]*OpenAIRateLimitResetCreditDetailPayload, bool, error) {
 	for _, value := range values {
 		trimmed := bytes.TrimSpace(value)

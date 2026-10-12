@@ -13,14 +13,14 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AdminSubscriptionHandler 处理管理员订阅管理请求。
+// AdminSubscriptionHandler handles administrator subscription operations.
 type AdminSubscriptionHandler struct {
 	idempotencyhttp.Executor
 
 	subscriptionService *billing.SubscriptionService
 }
 
-// AssignSubscriptionRequest 表示分配订阅请求。
+// AssignSubscriptionRequest supplies a subscription grant for one user.
 type AssignSubscriptionRequest struct {
 	UserID       int64  `json:"user_id" binding:"required"`
 	PlanID       int64  `json:"plan_id" binding:"required"`
@@ -28,7 +28,7 @@ type AssignSubscriptionRequest struct {
 	Notes        string `json:"notes"`
 }
 
-// BulkAssignSubscriptionRequest 表示批量分配订阅请求。
+// BulkAssignSubscriptionRequest supplies a subscription grant for multiple users.
 type BulkAssignSubscriptionRequest struct {
 	UserIDs      []int64 `json:"user_ids" binding:"required,min=1"`
 	PlanID       int64   `json:"plan_id" binding:"required"`
@@ -36,19 +36,19 @@ type BulkAssignSubscriptionRequest struct {
 	Notes        string  `json:"notes"`
 }
 
-// AdjustSubscriptionRequest 表示要设置的目标订阅有效期。
+// AdjustSubscriptionRequest sets the target subscription validity period.
 type AdjustSubscriptionRequest struct {
-	Days int `json:"days" binding:"required,min=1,max=36500"` // 从当前时间或待生效开始时间起算的目标有效天数
+	Days int `json:"days" binding:"required,min=1,max=36500"` // Target days from now, or from the pending subscription's start.
 }
 
-// ResetSubscriptionQuotaRequest 表示重置配额请求。
+// ResetSubscriptionQuotaRequest selects the usage windows to reset.
 type ResetSubscriptionQuotaRequest struct {
 	Daily   bool `json:"daily"`
 	Weekly  bool `json:"weekly"`
 	Monthly bool `json:"monthly"`
 }
 
-// toResponsePagination 将分页结果转换为统一响应分页结构。
+// toResponsePagination converts pagination results for HTTP responses.
 func toResponsePagination(p *pagination.PaginationResult) *response.PaginationResult {
 	if p == nil {
 		return nil
@@ -61,19 +61,19 @@ func toResponsePagination(p *pagination.PaginationResult) *response.PaginationRe
 	}
 }
 
-// NewAdminSubscriptionHandler 创建管理员订阅处理器。
+// NewAdminSubscriptionHandler constructs the administrator subscription handler.
 func NewAdminSubscriptionHandler(subscriptionService *billing.SubscriptionService) *AdminSubscriptionHandler {
 	return &AdminSubscriptionHandler{
 		subscriptionService: subscriptionService,
 	}
 }
 
-// List 分页列出订阅并支持筛选。
+// List returns a filtered page of subscriptions.
 // GET /api/v1/admin/subscriptions
 func (h *AdminSubscriptionHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 
-	// 解析可选筛选条件。
+	// Malformed optional IDs are ignored.
 	var userID, planID *int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
@@ -88,7 +88,6 @@ func (h *AdminSubscriptionHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	platform := c.Query("platform")
 
-	// 解析排序参数。
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
@@ -105,7 +104,7 @@ func (h *AdminSubscriptionHandler) List(c *gin.Context) {
 	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
-// GetByID 根据 ID 获取订阅。
+// GetByID returns a subscription by ID.
 // GET /api/v1/admin/subscriptions/:id
 func (h *AdminSubscriptionHandler) GetByID(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -123,7 +122,7 @@ func (h *AdminSubscriptionHandler) GetByID(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(subscription))
 }
 
-// GetProgress 获取订阅用量进度。
+// GetProgress returns quota usage progress for a subscription.
 // GET /api/v1/admin/subscriptions/:id/progress
 func (h *AdminSubscriptionHandler) GetProgress(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -141,7 +140,7 @@ func (h *AdminSubscriptionHandler) GetProgress(c *gin.Context) {
 	response.Success(c, progress)
 }
 
-// Assign 为用户分配订阅。
+// Assign grants a subscription to a user.
 // POST /api/v1/admin/subscriptions/assign
 func (h *AdminSubscriptionHandler) Assign(c *gin.Context) {
 	var req AssignSubscriptionRequest
@@ -150,7 +149,6 @@ func (h *AdminSubscriptionHandler) Assign(c *gin.Context) {
 		return
 	}
 
-	// 从上下文获取管理员用户 ID。
 	adminID := adminID(c)
 
 	subscription, err := h.subscriptionService.AssignSubscription(c.Request.Context(), &billing.AssignSubscriptionInput{
@@ -168,7 +166,7 @@ func (h *AdminSubscriptionHandler) Assign(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(subscription))
 }
 
-// BulkAssign 为多个用户批量分配订阅。
+// BulkAssign grants subscriptions to multiple users.
 // POST /api/v1/admin/subscriptions/bulk-assign
 func (h *AdminSubscriptionHandler) BulkAssign(c *gin.Context) {
 	var req BulkAssignSubscriptionRequest
@@ -177,7 +175,6 @@ func (h *AdminSubscriptionHandler) BulkAssign(c *gin.Context) {
 		return
 	}
 
-	// 从上下文获取管理员用户 ID。
 	adminID := adminID(c)
 
 	result, err := h.subscriptionService.BulkAssignSubscription(c.Request.Context(), &billing.BulkAssignSubscriptionInput{
@@ -195,7 +192,7 @@ func (h *AdminSubscriptionHandler) BulkAssign(c *gin.Context) {
 	response.Success(c, BulkAssignResultFromService(result))
 }
 
-// Extend 将订阅调整为指定的目标有效期。
+// Extend sets the subscription's target validity period.
 // POST /api/v1/admin/subscriptions/:id/extend
 func (h *AdminSubscriptionHandler) Extend(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -226,7 +223,7 @@ func (h *AdminSubscriptionHandler) Extend(c *gin.Context) {
 	})
 }
 
-// ResetQuota 重置订阅的日、周、月用量。
+// ResetQuota resets the selected daily, weekly, or monthly usage windows.
 // POST /api/v1/admin/subscriptions/:id/reset-quota
 func (h *AdminSubscriptionHandler) ResetQuota(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -251,9 +248,9 @@ func (h *AdminSubscriptionHandler) ResetQuota(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(sub))
 }
 
-// Revoke 撤销订阅。
+// Revoke revokes a subscription.
 // POST /api/v1/admin/subscriptions/:id/revoke
-// DELETE /api/v1/admin/subscriptions/:id 作为兼容入口保留。
+// DELETE /api/v1/admin/subscriptions/:id is also supported for compatibility.
 func (h *AdminSubscriptionHandler) Revoke(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -270,7 +267,7 @@ func (h *AdminSubscriptionHandler) Revoke(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Subscription revoked successfully"})
 }
 
-// Restore 恢复已撤销订阅。
+// Restore restores a revoked subscription.
 // POST /api/v1/admin/subscriptions/:id/restore
 func (h *AdminSubscriptionHandler) Restore(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -311,7 +308,7 @@ func (h *AdminSubscriptionHandler) ListByPlan(c *gin.Context) {
 	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
-// ListByUser 列出指定用户的订阅。
+// ListByUser returns a user's subscriptions.
 // GET /api/v1/admin/users/:id/subscriptions
 func (h *AdminSubscriptionHandler) ListByUser(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -333,7 +330,7 @@ func (h *AdminSubscriptionHandler) ListByUser(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// adminID 返回当前订阅管理操作的审计主体。
+// adminID returns the authenticated administrator's audit identity, or zero when absent.
 func adminID(c *gin.Context) int64 {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {

@@ -27,10 +27,10 @@ func TestDigestSessionStore_SaveAndFind(t *testing.T) {
 func TestDigestSessionStore_PrefixMatch(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 保存短链
+	// Store the earlier conversation prefix.
 	store.Save(1, "prefix", "u:a-m:b", "uuid-short", 10, "")
 
-	// 用长链查找，应前缀匹配到短链
+	// A later turn resolves to the stored shorter prefix.
 	uuid, providerID, matchedChain, found := store.Find(1, "prefix", "u:a-m:b-u:c-m:d")
 	require.True(t, found)
 	assert.Equal(t, "uuid-short", uuid)
@@ -45,13 +45,13 @@ func TestDigestSessionStore_LongestPrefixMatch(t *testing.T) {
 	store.Save(1, "prefix", "u:a-m:b", "uuid-2", 2, "")
 	store.Save(1, "prefix", "u:a-m:b-u:c", "uuid-3", 3, "")
 
-	// 应匹配最深的 "u:a-m:b-u:c"（从完整 chain 逐段截断，先命中最长的）
+	// Truncation selects the longest stored prefix, "u:a-m:b-u:c".
 	uuid, providerID, _, found := store.Find(1, "prefix", "u:a-m:b-u:c-m:d-u:e")
 	require.True(t, found)
 	assert.Equal(t, "uuid-3", uuid)
 	assert.Equal(t, int64(3), providerID)
 
-	// 查找中等长度，应匹配到 "u:a-m:b"
+	// A different third item matches the shorter "u:a-m:b" prefix.
 	uuid, providerID, _, found = store.Find(1, "prefix", "u:a-m:b-u:x")
 	require.True(t, found)
 	assert.Equal(t, "uuid-2", uuid)
@@ -61,17 +61,17 @@ func TestDigestSessionStore_LongestPrefixMatch(t *testing.T) {
 func TestDigestSessionStore_SaveDeletesOldChain(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 第一轮：保存 "u:a-m:b"
+	// Store the first turn.
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "")
 
-	// 第二轮：同一 uuid 保存更长的链，传入旧 chain
+	// Extend the same session and supply the prior chain for replacement.
 	store.Save(1, "prefix", "u:a-m:b-u:c-m:d", "uuid-1", 100, "u:a-m:b")
 
-	// 旧链 "u:a-m:b" 应已被删除
+	// The prior chain must be removed.
 	_, _, _, found := store.Find(1, "prefix", "u:a-m:b")
 	assert.False(t, found, "old chain should be deleted")
 
-	// 新链应能找到
+	// The replacement chain remains available.
 	uuid, providerID, _, found := store.Find(1, "prefix", "u:a-m:b-u:c-m:d")
 	require.True(t, found)
 	assert.Equal(t, "uuid-1", uuid)
@@ -81,7 +81,7 @@ func TestDigestSessionStore_SaveDeletesOldChain(t *testing.T) {
 func TestDigestSessionStore_DifferentSessionsNoInterference(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 相同系统提示词，不同用户提示词
+	// Shared system instructions must not merge different user conversations.
 	store.Save(1, "prefix", "s:sys-u:user1", "uuid-1", 100, "")
 	store.Save(1, "prefix", "s:sys-u:user2", "uuid-2", 200, "")
 
@@ -101,7 +101,7 @@ func TestDigestSessionStore_NoMatch(t *testing.T) {
 
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "")
 
-	// 完全不同的 chain
+	// An unrelated chain has no matching prefix.
 	_, _, _, found := store.Find(1, "prefix", "u:x-m:y")
 	assert.False(t, found)
 }
@@ -111,7 +111,7 @@ func TestDigestSessionStore_DifferentPrefixHash(t *testing.T) {
 
 	store.Save(1, "prefix1", "u:a-m:b", "uuid-1", 100, "")
 
-	// 不同 prefixHash 应隔离
+	// Prefix hashes isolate otherwise identical chains.
 	_, _, _, found := store.Find(1, "prefix2", "u:a-m:b")
 	assert.False(t, found)
 }
@@ -121,7 +121,7 @@ func TestDigestSessionStore_DifferentGroupID(t *testing.T) {
 
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "")
 
-	// 不同 groupID 应隔离
+	// Groups isolate otherwise identical chains.
 	_, _, _, found := store.Find(2, "prefix", "u:a-m:b")
 	assert.False(t, found)
 }
@@ -129,7 +129,7 @@ func TestDigestSessionStore_DifferentGroupID(t *testing.T) {
 func TestDigestSessionStore_EmptyDigestChain(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 空链不应保存
+	// Empty chains are not stored.
 	store.Save(1, "prefix", "", "uuid-1", 100, "")
 	_, _, _, found := store.Find(1, "prefix", "")
 	assert.False(t, found)
@@ -142,14 +142,14 @@ func TestDigestSessionStore_TTLExpiration(t *testing.T) {
 
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "")
 
-	// 立即应该能找到
+	// The binding is available before expiry.
 	_, _, _, found := store.Find(1, "prefix", "u:a-m:b")
 	require.True(t, found)
 
-	// 等待过期 + 清理周期
+	// Wait beyond both the TTL and cleanup interval.
 	time.Sleep(300 * time.Millisecond)
 
-	// 过期后应找不到
+	// Expired bindings must not match.
 	_, _, _, found = store.Find(1, "prefix", "u:a-m:b")
 	assert.False(t, found)
 }
@@ -194,7 +194,7 @@ func TestDigestSessionStore_MultipleSessions(t *testing.T) {
 		store.Save(1, "prefix", sess.chain, sess.uuid, sess.providerID, "")
 	}
 
-	// 验证每个会话都能正确查找
+	// Each chain retains its own session binding.
 	for _, sess := range sessions {
 		uuid, providerID, _, found := store.Find(1, "prefix", sess.chain)
 		require.True(t, found, "should find session: %s", sess.chain)
@@ -202,7 +202,7 @@ func TestDigestSessionStore_MultipleSessions(t *testing.T) {
 		assert.Equal(t, sess.providerID, providerID)
 	}
 
-	// 验证继续对话的场景
+	// A later turn reuses the existing conversation.
 	uuid, providerID, _, found := store.Find(1, "prefix", "u:session2-m:reply2-u:newmsg")
 	require.True(t, found)
 	assert.Equal(t, "uuid-2", uuid)
@@ -212,13 +212,13 @@ func TestDigestSessionStore_MultipleSessions(t *testing.T) {
 func TestDigestSessionStore_Performance1000Sessions(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 插入 1000 个会话
+	// Populate the cache before measuring lookups.
 	for i := range 1000 {
 		chain := fmt.Sprintf("s:sys-u:user%d-m:reply%d", i, i)
 		store.Save(1, "prefix", chain, fmt.Sprintf("uuid-%d", i), int64(i), "")
 	}
 
-	// 查找性能测试
+	// Measure repeated prefix lookups across the populated cache.
 	start := time.Now()
 	const lookups = 10000
 	for i := range lookups {
@@ -236,12 +236,12 @@ func TestDigestSessionStore_FindReturnsMatchedChain(t *testing.T) {
 
 	store.Save(1, "prefix", "u:a-m:b-u:c", "uuid-1", 100, "")
 
-	// 精确匹配
+	// Exact match.
 	_, _, matchedChain, found := store.Find(1, "prefix", "u:a-m:b-u:c")
 	require.True(t, found)
 	assert.Equal(t, "u:a-m:b-u:c", matchedChain)
 
-	// 前缀匹配（截断后命中）
+	// Prefix match after truncation.
 	_, _, matchedChain, found = store.Find(1, "prefix", "u:a-m:b-u:c-m:d-u:e")
 	require.True(t, found)
 	assert.Equal(t, "u:a-m:b-u:c", matchedChain)
@@ -250,8 +250,8 @@ func TestDigestSessionStore_FindReturnsMatchedChain(t *testing.T) {
 func TestDigestSessionStore_CacheItemCountStable(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 模拟 100 个独立会话，每个进行 10 轮对话
-	// 正确传递 oldDigestChain 时，每个会话始终只保留 1 个 key
+	// Simulate 100 conversations with ten turns each.
+	// Passing oldDigestChain replaces the previous key for each conversation.
 	for conv := range 100 {
 		var prevMatchedChain string
 		for round := range 10 {
@@ -268,20 +268,20 @@ func TestDigestSessionStore_CacheItemCountStable(t *testing.T) {
 		}
 	}
 
-	// 100 个会话 × 1 key/会话 = 应该 ≤ 100 个 key
-	// 允许少量并发残留，但绝不能接近 100×10=1000
+	// One key per conversation bounds this sequential workload at 100 entries.
+	// Saving later turns must not accumulate a key per turn.
 	itemCount := store.cache.ItemCount()
 	assert.LessOrEqual(t, itemCount, 100, "cache should have at most 100 items (1 per conversation), got %d", itemCount)
 	t.Logf("Cache item count after 100 conversations × 10 rounds: %d", itemCount)
 }
 
 func TestDigestSessionStore_TTLPreventsUnboundedGrowth(t *testing.T) {
-	// 使用极短 TTL 验证大量写入后 cache 能被清理
+	// A short TTL checks cleanup after a burst of new sessions.
 	store := &DigestSessionStore{
 		cache: gocache.New(100*time.Millisecond, 50*time.Millisecond),
 	}
 
-	// 插入 500 个不同的 key（无 oldDigestChain，模拟最坏场景：全是新会话首轮）
+	// All 500 writes start new sessions, so no prior chain can be removed.
 	for i := range 500 {
 		chain := fmt.Sprintf("u:user%d", i)
 		store.Save(1, "prefix", chain, fmt.Sprintf("uuid-%d", i), int64(i), "")
@@ -289,7 +289,7 @@ func TestDigestSessionStore_TTLPreventsUnboundedGrowth(t *testing.T) {
 
 	assert.Equal(t, 500, store.cache.ItemCount())
 
-	// 等待 TTL + 清理周期
+	// Wait beyond both the TTL and cleanup interval.
 	time.Sleep(300 * time.Millisecond)
 
 	assert.Equal(t, 0, store.cache.ItemCount(), "all items should be expired and cleaned up")
@@ -298,20 +298,20 @@ func TestDigestSessionStore_TTLPreventsUnboundedGrowth(t *testing.T) {
 func TestDigestSessionStore_SaveSameChainNoDelete(t *testing.T) {
 	store := NewDigestSessionStore()
 
-	// 保存 chain
+	// Store the initial chain.
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "")
 
-	// 用户重发相同消息：oldDigestChain == digestChain，不应删掉刚设置的 key
+	// Replaying the same chain must not delete the freshly written binding.
 	store.Save(1, "prefix", "u:a-m:b", "uuid-1", 100, "u:a-m:b")
 
-	// 仍然能找到
+	// The replayed binding remains available.
 	uuid, providerID, _, found := store.Find(1, "prefix", "u:a-m:b")
 	require.True(t, found)
 	assert.Equal(t, "uuid-1", uuid)
 	assert.Equal(t, int64(100), providerID)
 }
 
-// TestGeminiSessionContinuousConversation 测试连续会话的摘要链匹配。
+// TestGeminiSessionContinuousConversation checks digest matching across successive turns.
 func TestGeminiSessionContinuousConversation(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)
@@ -319,7 +319,7 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	sessionUUID := "session-uuid-12345"
 	providerID := int64(100)
 
-	// 模拟第一轮对话
+	// First conversation turn.
 	req1 := &protocolgemini.GeminiRequest{
 		SystemInstruction: &protocolgemini.GeminiContent{
 			Parts: []protocolgemini.GeminiPart{{Text: "You are a helpful assistant"}},
@@ -331,16 +331,16 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	chain1 := BuildGeminiDigestChain(req1)
 	t.Logf("Round 1 chain: %s", chain1)
 
-	// 第一轮：没有找到会话，创建新会话
+	// The first turn has no existing session.
 	_, _, _, found := store.Find(groupID, prefixHash, chain1)
 	if found {
 		t.Error("Round 1: should not find existing session")
 	}
 
-	// 保存第一轮会话（首轮无旧 chain）
+	// The first save has no old chain to replace.
 	store.Save(groupID, prefixHash, chain1, sessionUUID, providerID, "")
 
-	// 模拟第二轮对话（用户继续对话）
+	// The second turn includes the first exchange.
 	req2 := &protocolgemini.GeminiRequest{
 		SystemInstruction: &protocolgemini.GeminiContent{
 			Parts: []protocolgemini.GeminiPart{{Text: "You are a helpful assistant"}},
@@ -354,7 +354,7 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	chain2 := BuildGeminiDigestChain(req2)
 	t.Logf("Round 2 chain: %s", chain2)
 
-	// 第二轮通过第一轮的摘要前缀找到会话。
+	// The first-turn prefix resolves the second turn to the same session.
 	foundUUID, foundAccID, matchedChain, found := store.Find(groupID, prefixHash, chain2)
 	if !found {
 		t.Error("Round 2: should find session via prefix matching")
@@ -366,10 +366,10 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 		t.Errorf("Round 2: expected providerID %d, got %d", providerID, foundAccID)
 	}
 
-	// 保存第二轮会话，传入 Find 返回的 matchedChain 以删旧 key
+	// Supply Find's matchedChain to replace the first-turn key.
 	store.Save(groupID, prefixHash, chain2, sessionUUID, providerID, matchedChain)
 
-	// 模拟第三轮对话
+	// The third turn extends the same conversation.
 	req3 := &protocolgemini.GeminiRequest{
 		SystemInstruction: &protocolgemini.GeminiContent{
 			Parts: []protocolgemini.GeminiPart{{Text: "You are a helpful assistant"}},
@@ -385,7 +385,7 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	chain3 := BuildGeminiDigestChain(req3)
 	t.Logf("Round 3 chain: %s", chain3)
 
-	// 第三轮通过第二轮的摘要前缀找到会话。
+	// The second-turn prefix resolves the third turn to the same session.
 	foundUUID, foundAccID, _, found = store.Find(groupID, prefixHash, chain3)
 	if !found {
 		t.Error("Round 3: should find session via prefix matching")
@@ -398,13 +398,13 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	}
 }
 
-// TestGeminiSessionDifferentConversations 测试不同会话不会错误匹配。
+// TestGeminiSessionDifferentConversations checks isolation between unrelated prompts.
 func TestGeminiSessionDifferentConversations(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)
 	prefixHash := "test_prefix_hash"
 
-	// 第一个会话
+	// First conversation.
 	req1 := &protocolgemini.GeminiRequest{
 		Contents: []protocolgemini.GeminiContent{
 			{Role: "user", Parts: []protocolgemini.GeminiPart{{Text: "Tell me about Go programming"}}},
@@ -413,7 +413,7 @@ func TestGeminiSessionDifferentConversations(t *testing.T) {
 	chain1 := BuildGeminiDigestChain(req1)
 	store.Save(groupID, prefixHash, chain1, "session-1", 100, "")
 
-	// 另一个会话使用不同的用户消息。
+	// A different user prompt starts a separate conversation.
 	req2 := &protocolgemini.GeminiRequest{
 		Contents: []protocolgemini.GeminiContent{
 			{Role: "user", Parts: []protocolgemini.GeminiPart{{Text: "What's the weather today?"}}},
@@ -421,25 +421,25 @@ func TestGeminiSessionDifferentConversations(t *testing.T) {
 	}
 	chain2 := BuildGeminiDigestChain(req2)
 
-	// 不同会话不应该匹配
+	// Unrelated conversations must not match.
 	_, _, _, found := store.Find(groupID, prefixHash, chain2)
 	if found {
 		t.Error("Different conversations should not match")
 	}
 }
 
-// TestGeminiSessionPrefixMatchingOrder 测试前缀匹配的优先级（最长匹配优先）。
+// TestGeminiSessionPrefixMatchingOrder checks that the longest prefix wins.
 func TestGeminiSessionPrefixMatchingOrder(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)
 	prefixHash := "test_prefix_hash"
 
-	// 保存不同轮次的会话到不同提供商
+	// Bind successive prefixes to different providers to expose matching priority.
 	store.Save(groupID, prefixHash, "s:sys-u:q1", "session-round1", 1, "")
 	store.Save(groupID, prefixHash, "s:sys-u:q1-m:a1", "session-round2", 2, "")
 	store.Save(groupID, prefixHash, "s:sys-u:q1-m:a1-u:q2", "session-round3", 3, "")
 
-	// 更长的摘要链应匹配提供商 3 对应的最长前缀。
+	// The longest stored prefix belongs to provider 3.
 	_, accID, _, found := store.Find(groupID, prefixHash, "s:sys-u:q1-m:a1-u:q2-m:a2")
 	if !found {
 		t.Error("Should find session")

@@ -12,18 +12,18 @@ type AnthropicRequest struct {
 	Messages  []AnthropicMessage `json:"messages"`
 	Tools     []AnthropicTool    `json:"tools,omitempty"`
 	Stream    bool               `json:"stream,omitempty"`
-	// Speed 为 Claude Fast 模式字段，目前支持 "fast"。
+	// Speed requests Claude Fast mode with "fast".
 	Speed       string             `json:"speed,omitempty"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	TopP        *float64           `json:"top_p,omitempty"`
 	StopSeqs    []string           `json:"stop_sequences,omitempty"`
 	Thinking    *AnthropicThinking `json:"thinking,omitempty"`
 	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
-	// Metadata 会被原样透传给上游。OAuth/Claude-Code 路径依赖 metadata.user_id
-	// 参与上游的"是否为官方 Claude Code 请求"判定；如果经由本结构体重新序列化
-	// 时丢弃该字段，网关侧后续的 metadata 重写(ensureClaudeOAuthMetadataUserID/
-	// RewriteUserIDWithMasking) 在 body 里拿不到起点，就无法重建一个合法的
-	// user_id，进而导致请求被归类为第三方 app。
+	// Metadata survives request reserialization so the OAuth/Claude Code path can
+	// rewrite metadata.user_id before forwarding. Upstream client attribution
+	// depends on that value; dropping metadata here removes the input needed by
+	// ensureClaudeOAuthMetadataUserID and RewriteUserIDWithMasking.
+	// Keep the raw object, including fields this type does not interpret.
 	Metadata     json.RawMessage        `json:"metadata,omitempty"`
 	OutputConfig *AnthropicOutputConfig `json:"output_config,omitempty"`
 }
@@ -56,8 +56,8 @@ type AnthropicContentBlock struct {
 
 	// type=thinking
 	Thinking string `json:"thinking,omitempty"`
-	// Signature 携带提供方的加密推理（例如 xAI encrypted_content），使 Claude 多轮
-	// 客户端可以在后续轮次中原样回传。
+	// Signature carries upstream encrypted reasoning, such as xAI encrypted_content,
+	// for Claude clients to replay unchanged in later turns.
 	Signature string `json:"signature,omitempty"`
 
 	// type=image
@@ -90,17 +90,17 @@ type AnthropicTool struct {
 	CacheControl *AnthropicCacheControl `json:"cache_control,omitempty"`
 }
 
-// AnthropicCacheControl 对应 Anthropic API 的 cache_control 字段。
-// ttl 默认由调用方决定；本项目策略见 claude.DefaultCacheControlTTL。
+// AnthropicCacheControl represents the API's cache_control field.
+// The caller chooses a TTL; see claude.DefaultCacheControlTTL for the project default.
 type AnthropicCacheControl struct {
 	Type string `json:"type"`          // "ephemeral"
-	TTL  string `json:"ttl,omitempty"` // "5m" / "1h" / 省略=默认 5m（由 Anthropic 判定）
+	TTL  string `json:"ttl,omitempty"` // "5m" / "1h"; omission uses the Anthropic default of 5m
 }
 
-// AnthropicResponse 表示 POST /v1/messages 的非流式响应。
+// AnthropicResponse is a Messages response, also embedded in message_start events.
 //
-// StopReason 使用指针，以便流式 message_start 按 Anthropic 官方格式输出 JSON null。
-// 普通字符串的零值会序列化为空字符串，严格客户端会将其视为无效的流中状态。
+// StopReason is a pointer so message_start can serialize JSON null.
+// An empty string is not a valid intermediate stop reason for strict clients.
 type AnthropicResponse struct {
 	ID           string                  `json:"id"`
 	Type         string                  `json:"type"` // "message"
@@ -112,8 +112,8 @@ type AnthropicResponse struct {
 	Usage        AnthropicUsage          `json:"usage"`
 }
 
-// AnthropicPromptTokensDetails 保存兼容 Anthropic 的 provider 偶尔附带的
-// OpenAI 风格 prompt token 明细。
+// AnthropicPromptTokensDetails contains OpenAI-style prompt details returned
+// by some Anthropic-compatible providers.
 type AnthropicPromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens,omitempty"`
 }
@@ -124,10 +124,10 @@ type AnthropicUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	// Speed 为 Claude 实际处理速度：fast 或 standard。
+	// Speed is the actual Claude processing speed: fast or standard.
 	Speed string `json:"speed,omitempty"`
-	// 兼容 Anthropic 的 provider 可能附带 OpenAI 风格的总量/缓存字段，保留后由
-	// 调用方归一化为互斥的计费桶。
+	// Compatible providers may report OpenAI-style total and cached input counts.
+	// Callers normalize these fields into mutually exclusive billing buckets.
 	PromptTokens          int                           `json:"prompt_tokens,omitempty"`
 	CachedTokens          int                           `json:"cached_tokens,omitempty"`
 	PromptTokensDetails   *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
@@ -174,7 +174,7 @@ type AnthropicDelta struct {
 	StopSequence *string `json:"stop_sequence,omitempty"`
 }
 
-// MarshalJSON 输出 text/thinking 块中的空字符串字段，content_block_start 要求这些键存在。
+// MarshalJSON retains empty text/thinking fields required by content_block_start.
 func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
 	type anthropicContentBlock AnthropicContentBlock
 
@@ -200,12 +200,12 @@ func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
 	}
 }
 
-// AnthropicStopReasonPtr 为最终停止原因返回非空字符串指针。
+// AnthropicStopReasonPtr returns a pointer to s, including when s is empty.
 func AnthropicStopReasonPtr(s string) *string {
 	return &s
 }
 
-// AnthropicStopReasonString 返回停止原因；未设置或为 null 时返回空字符串。
+// AnthropicStopReasonString returns the stop reason, or an empty string for nil.
 func AnthropicStopReasonString(p *string) string {
 	if p == nil {
 		return ""

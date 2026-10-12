@@ -68,7 +68,7 @@ type GrokSSOToOAuthResponse struct {
 	Failed  []GrokSSOToOAuthItemResult `json:"failed"`
 }
 
-// 授权 HTTP 使用本模块用例、代理查询和运行诊断接口。
+// GrokOAuthReconciler reconciles authorized credentials with provider records.
 type GrokOAuthReconciler interface {
 	ReconcileGrokOAuth(context.Context, providercore.GrokOAuthReconcileInput) (*providercore.GrokOAuthReconcileResult, error)
 }
@@ -166,8 +166,8 @@ func (h *GrokOAuthHandler) RefreshToken(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// ValidateSSOToken 将 Web SSO Cookie 转换为 Build OAuth 令牌。
-// 响应返回 OAuth token 信息。
+// ValidateSSOToken exchanges a Web SSO cookie for Build OAuth tokens.
+// The response contains the resulting OAuth token information.
 func (h *GrokOAuthHandler) ValidateSSOToken(c *gin.Context) {
 	var req GrokSSOTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -182,8 +182,8 @@ func (h *GrokOAuthHandler) ValidateSSOToken(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// AuthorizePassword 通过 SSO 转换，用邮箱和密码换取 Build OAuth 令牌。
-// 响应绝不包含密码或原始 sso_token。
+// AuthorizePassword exchanges an email and password for Build OAuth tokens through SSO.
+// The response excludes the password and raw SSO token.
 func (h *GrokOAuthHandler) AuthorizePassword(c *gin.Context) {
 	var req GrokPasswordAuthorizeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -346,7 +346,7 @@ func (h *GrokOAuthHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "grok quota service is not enabled")
 		return
 	}
-	// ResetQuota 恒返回 GROK_QUOTA_RESET_UNSUPPORTED（xAI 无 OAuth 配额重置接口），err != nil 恒真为预期。
+	// ResetQuota returns GROK_QUOTA_RESET_UNSUPPORTED because xAI has no OAuth quota reset endpoint.
 	//nolint:staticcheck // SA4023
 	result, err := h.quotaService.ResetQuota(c.Request.Context(), providerID)
 	if err != nil { //nolint:staticcheck // SA4023

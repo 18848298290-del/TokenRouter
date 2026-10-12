@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ResponseSelection 保留 HTTP continuation 的逐候选跳过，不把它计为提供商切换。
+// ResponseSelection can skip an unsupported HTTP continuation candidate without consuming a provider switch.
 type ResponseSelection struct {
 	Selection
 	Available bool
@@ -19,7 +19,7 @@ type ResponseSelection struct {
 	OAuth     failover.OAuth429Provider
 }
 
-// ResponseOutcome 将图片部分成功和首输出恢复资格与普通错误明确分开。
+// ResponseOutcome records partial image results and eligibility for recovery before first output.
 type ResponseOutcome struct {
 	Outcome
 	Images              bool
@@ -32,7 +32,7 @@ type ResponseOptions struct {
 	FirstOutputBudget bool
 }
 
-// ResponsePorts 提供单次选择、转发、观测和完成操作，RunResponses 管理重试计数。
+// ResponsePorts supplies selection, forwarding, observation, and completion; RunResponses owns retry counts.
 type ResponsePorts interface {
 	Context() context.Context
 	CanAttempt() bool
@@ -53,7 +53,8 @@ type ResponsePorts interface {
 	Completed(int)
 }
 
-// RunResponses 管理同提供商恢复和请求的提供商预算，首次输出后结束重放机会。
+// RunResponses manages same-provider recovery and provider-switch budgets.
+// RetryReady must reject replay after output closes the retry window.
 func RunResponses(options ResponseOptions, p ResponsePorts) {
 	served := false
 	if lifecycle, ok := p.(interface {
@@ -90,7 +91,7 @@ func RunResponses(options ResponseOptions, p ResponsePorts) {
 			return
 		}
 		outcome := p.Forward()
-		// 缺价拒绝已经输出客户端错误，此时结束请求。
+		// Pricing rejection has already written a client error, so stop the request.
 		if outcome.Stop || errors.Is(outcome.Err, admission.ErrModelPricingRejected) {
 			return
 		}
@@ -175,7 +176,7 @@ func RunResponses(options ResponseOptions, p ResponsePorts) {
 	}
 }
 
-// ResponsesCapability 根据请求的生图意图返回所需端点能力。
+// ResponsesCapability requires the Responses endpoint for OpenAI image requests.
 func ResponsesCapability(imageIntent bool, platform string) providercore.OpenAIEndpointCapability {
 	if imageIntent && platform == capability.PlatformOpenAI {
 		return providercore.OpenAIEndpointCapabilityResponses
@@ -183,7 +184,7 @@ func ResponsesCapability(imageIntent bool, platform string) providercore.OpenAIE
 	return providercore.OpenAIEndpointCapabilityTextGeneration
 }
 
-// RequiredResponsesCapability 返回压缩或生图请求所需的提供商能力。
+// RequiredResponsesCapability resolves compaction and image endpoint requirements.
 func RequiredResponsesCapability(imageIntent bool, nativeCompactionV2 bool, legacyCompact bool, platform string) providercore.OpenAIEndpointCapability {
 	if nativeCompactionV2 && platform == capability.PlatformOpenAI {
 		return providercore.OpenAIEndpointCapabilityRemoteCompactionV2

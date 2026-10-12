@@ -41,7 +41,7 @@ type CreditsOveragesRetryResult struct {
 	Resp    *http.Response
 }
 
-// ClassifyAntigravity429 将 Antigravity 的 429 响应归类为配额耗尽、限流或未知。
+// ClassifyAntigravity429 distinguishes quota exhaustion, rate limiting, and unknown errors.
 func ClassifyAntigravity429(body []byte) Antigravity429Category {
 	if len(body) == 0 {
 		return Antigravity429Unknown
@@ -58,7 +58,7 @@ func ClassifyAntigravity429(body []byte) Antigravity429Category {
 	return Antigravity429Unknown
 }
 
-// InjectEnabledCreditTypes 在已序列化的 v1internal JSON body 中注入 AI Credits 类型。
+// InjectEnabledCreditTypes enables GOOGLE_ONE_AI credits in a v1internal JSON body.
 func InjectEnabledCreditTypes(body []byte) []byte {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -72,7 +72,7 @@ func InjectEnabledCreditTypes(body []byte) []byte {
 	return result
 }
 
-// ShouldMarkCreditsExhausted 判断一次 credits 请求失败是否应标记为 credits 耗尽。
+// ShouldMarkCreditsExhausted classifies a failed request that already enabled credits.
 func ShouldMarkCreditsExhausted(resp *http.Response, respBody []byte, reqErr error) bool {
 	if reqErr != nil || resp == nil {
 		return false
@@ -80,9 +80,9 @@ func ShouldMarkCreditsExhausted(resp *http.Response, respBody []byte, reqErr err
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout {
 		return false
 	}
-	// 此函数在积分重试失败后调用。
-	// 如果注入 enabledCreditTypes 后仍返回 "Resource has been exhausted"，
-	// 说明积分也已耗尽，应该标记。clearCreditsExhausted 会在后续成功时自动清除。
+	// Network failures, server errors, and parsed rate limits do not prove credit exhaustion.
+	// A remaining exhaustion message after enabledCreditTypes is injected marks credits spent.
+	// A later successful credits request clears that state.
 	if info := ParseAntigravitySmartRetryInfo(respBody); info != nil {
 		return false
 	}
@@ -95,7 +95,7 @@ func ShouldMarkCreditsExhausted(resp *http.Response, respBody []byte, reqErr err
 	return false
 }
 
-// AttemptCreditsOveragesRetry 在确认免费配额耗尽后，尝试注入 AI Credits 继续请求。
+// AttemptCreditsOveragesRetry retries with AI Credits after free-quota exhaustion.
 func (s *RetryAdapter) AttemptCreditsOveragesRetry(
 	p RetryInput,
 	baseURL string,

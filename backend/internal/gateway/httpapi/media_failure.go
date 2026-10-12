@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 )
 
-// MediaNoProvider 保存无可用提供商错误的分类结果。
+// MediaNoProvider contains the classification of a provider selection failure.
 type MediaNoProvider struct {
 	ModelNotFound bool
 	Status        int
@@ -35,7 +35,7 @@ type MediaFailurePorts interface {
 	MediaWarnFailure(bool) bool
 }
 
-// WriteGenerationFailure 根据流输出状态和上游错误分类写出生成错误。
+// WriteGenerationFailure writes a generation error according to the stream state and failure classification.
 func WriteGenerationFailure(f media.GenerationFailure, state MediaFailureContext, p MediaFailurePorts) {
 	if state.Grok {
 		writeGrokGenerationFailure(f, state, p)

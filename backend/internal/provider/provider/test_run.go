@@ -10,12 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestRun 保存单次平台测试的输出和执行状态。
+// TestRun holds output and execution state for one provider probe.
 type TestRun struct {
 	Context context.Context
 	Cancel  context.CancelFunc
 	Headers http.Header
-	// 这些状态供本次同步测试流程使用。
+	// The synchronous test flow owns these request fields.
 	RequestedProtocol  provider.TextProtocol
 	TaskRecoveryTried  bool
 	Automatic          bool
@@ -62,7 +62,7 @@ func (r *TestRun) SuppressCompletion() bool {
 	return r.suppressCompletion
 }
 
-// output 在首次输出失败时记录错误并取消执行，后续写入直接返回。
+// output records the first write failure and cancels execution; later calls return that error.
 func (r *TestRun) output(write func() error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

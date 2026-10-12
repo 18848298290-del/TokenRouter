@@ -33,7 +33,7 @@ type SubscriptionProgressInfo struct {
 	Progress     *billing.SubscriptionProgress `json:"progress"`
 }
 
-// RevokeSubscriptionResponse 表示用户撤销耗尽套餐后的接续与 Key 改绑结果。
+// RevokeSubscriptionResponse reports the revoked subscription, its replacement, and the number of rebound Keys.
 type RevokeSubscriptionResponse struct {
 	RevokedSubscriptionID     int64  `json:"revoked_subscription_id"`
 	ReplacementSubscriptionID *int64 `json:"replacement_subscription_id"`
@@ -107,7 +107,6 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 		return
 	}
 
-	// Get all active subscriptions with progress
 	subscriptions, err := h.subscriptionService.ListActiveUserSubscriptions(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -140,7 +139,6 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 		return
 	}
 
-	// Get all active subscriptions
 	subscriptions, err := h.subscriptionService.ListActiveUserSubscriptions(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -167,13 +165,12 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 			item.PlanName = billing.LocalizePlan(sub.Plan, locale.FromContext(c.Request.Context())).Name
 		}
 
-		// Format expiration time
 		if !sub.ExpiresAt.IsZero() {
 			formatted := sub.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
 			item.ExpiresAt = &formatted
 		}
 
-		// Track total usage (use monthly as the most comprehensive)
+		// The summary's total_used field sums monthly usage across active subscriptions.
 		totalUsed += sub.MonthlyUsageUSD
 
 		items = append(items, item)
@@ -192,7 +189,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 	response.Success(c, summary)
 }
 
-// Revoke 撤销当前用户额度耗尽的订阅。
+// Revoke revokes the current user's subscription when its highest configured quota is exhausted.
 // POST /api/v1/subscriptions/:id/revoke
 func (h *SubscriptionHandler) Revoke(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

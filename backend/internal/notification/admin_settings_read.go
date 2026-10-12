@@ -4,7 +4,7 @@ import (
 	"strconv"
 )
 
-// AdminReadSettings 包含 SMTP 参数及密码配置状态。
+// AdminReadSettings contains SMTP parameters and password configuration status.
 type AdminReadSettings struct {
 	SMTPFrom               string
 	SMTPFromName           string
@@ -16,7 +16,7 @@ type AdminReadSettings struct {
 	SMTPUsername           string
 }
 
-// ReadAdminSettings 从传入的设置值解析 SMTP 参数及密码配置状态。
+// ReadAdminSettings parses SMTP parameters and password status from stored settings.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.SMTPHost = settings[SettingKeySMTPHost]

@@ -52,7 +52,7 @@ type providerWire struct {
 	Groups                  []*groupWire
 }
 
-// groupWire 编码分组配置，ProviderGroups 写为 null，以兼容缓存格式。
+// groupWire encodes group settings with ProviderGroups as null for cache format compatibility.
 type groupWire struct {
 	*accessview.GroupConfig
 	ProviderGroups []json.RawMessage
@@ -65,8 +65,8 @@ type providerGroupWire struct {
 	Group      *groupWire
 }
 
-// recordSnapshot 包装提供商记录，调度器通过 SnapshotMetadata 读取重建元数据。
-// 执行适配器通过 RecordValue 取得含凭据的完整记录。
+// recordSnapshot wraps a provider record and exposes rebuild metadata through SnapshotMetadata.
+// Execution adapters obtain the full credential-bearing record through RecordValue.
 type recordSnapshot struct{ value *provider.Record }
 
 func encodeGroup(group *accessview.GroupConfig) *groupWire {
@@ -83,7 +83,7 @@ func decodeGroup(group *groupWire) *accessview.GroupConfig {
 	return group.GroupConfig
 }
 
-// MarshalProviderRecord 保留完整快照中的凭据、额外字段及 nil/空关系集合。
+// MarshalProviderRecord encodes full credentials, extra fields, and the distinction between nil and empty relations.
 func MarshalProviderRecord(value *provider.Record) ([]byte, error) {
 	return json.Marshal(recordToWire(value, make(map[*provider.Record]*providerWire)))
 }
@@ -148,7 +148,7 @@ func recordToWire(value *provider.Record, seen map[*provider.Record]*providerWir
 	return out
 }
 
-// UnmarshalProviderRecord 从缓存报文恢复完整提供商记录，供执行适配器读取。
+// UnmarshalProviderRecord decodes a full cached provider record for execution adapters.
 func UnmarshalProviderRecord(payload []byte) (*provider.Record, error) {
 	var wire providerWire
 	if err := json.Unmarshal(payload, &wire); err != nil {
@@ -227,7 +227,7 @@ func WrapRecord(value *provider.Record) scheduler.SnapshotProvider {
 	return recordSnapshot{value: value}
 }
 
-// RecordValue 为提供商读取和缓存编码返回完整记录，记录含有执行凭据。
+// RecordValue returns the full credential-bearing record for provider access and cache encoding.
 func RecordValue(value scheduler.SnapshotProvider) (*provider.Record, error) {
 	if value == nil {
 		return nil, nil

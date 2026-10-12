@@ -55,7 +55,7 @@ func (s *OrderQueries) GetDashboardStatsWithRange(ctx context.Context, start, en
 }
 
 func (s *OrderQueries) StatsFillPaymentDashboardTodayStats(ctx context.Context, st *DashboardStats, todayStart time.Time, paidStatuses []string) error {
-	// 今日卡片保持自然日口径，不跟随自定义历史范围变化。
+	// Today's cards use the current calendar day independently of the historical range.
 	todayOrders, err := s.store.PaidOrders(ctx, todayStart, todayStart.AddDate(0, 0, 1), paidStatuses)
 	if err != nil {
 		return err
@@ -115,13 +115,14 @@ func StatsComputeReasoningPointPurchaseUnitPrice(st *DashboardStats, orders []*O
 func StatsPaymentDashboardReasoningPointPurchase(o *Order) (principal float64, points float64, ok bool) {
 	switch o.OrderType {
 	case OrderTypeSubscription:
-		// 订阅订单只按月额度快照折算推理积分，避免日/周/无限额套餐混入口径。
+		// Subscription points use a positive monthly quota snapshot; daily, weekly, and unlimited quotas cannot
+		// supply this metric.
 		if o.PlanSnapshot.MonthlyLimitUSD == nil || *o.PlanSnapshot.MonthlyLimitUSD <= 0 || o.Amount <= 0 {
 			return 0, 0, false
 		}
 		return o.Amount, *o.PlanSnapshot.MonthlyLimitUSD, true
 	default:
-		// 余额充值的 amount 是到账推理积分，pay_amount 扣除手续费后得到充值本金。
+		// Amount is the credited reasoning points; PayAmount minus fees is the recharge principal.
 		principal = o.PayAmount - o.FeeAmount
 		if principal <= 0 || o.Amount <= 0 {
 			return 0, 0, false
@@ -234,7 +235,7 @@ func StatsBuildPurchaseDistribution(orders []*Order, planNames map[int64]string)
 }
 
 func StatsPurchaseDistributionKey(o *Order, planNames map[int64]string) (string, *PurchaseDistributionStat) {
-	// 按量充值统一成一个分组，订阅订单按套餐 ID 聚合，名称优先显示当前套餐名。
+	// Group balance recharges together and subscriptions by plan ID, preferring current plan names.
 	if o.OrderType != OrderTypeSubscription {
 		return OrderTypeBalance, &PurchaseDistributionStat{Type: OrderTypeBalance, Label: OrderTypeBalance}
 	}

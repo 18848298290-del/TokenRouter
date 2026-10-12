@@ -38,7 +38,7 @@ func TestProviderIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
 	require.True(t, (ModelPolicy{Record: provider}).Schedulable(context.Background(), "gemini-3-flash"))
 }
 
-// TestProtocolNativeMatrixAndSave 检查目录、保存和路线是否共用协议矩阵，并保留空协议集合与平台拒绝结果。
+// TestProtocolNativeMatrixAndSave checks the shared protocol matrix, empty protocol sets, and platform rejections.
 func TestProtocolNativeMatrixAndSave(t *testing.T) {
 	for _, tc := range []struct {
 		platform, kind, auth string
@@ -239,7 +239,7 @@ func TestIsModelRateLimited(t *testing.T) {
 				},
 			},
 			requestedModel: "gemini-3-pro-preview",
-			expected:       false, // gemini 平台不走 antigravity 映射
+			expected:       false, // Gemini does not apply Antigravity model mapping.
 		},
 		{
 			name: "antigravity platform - claude-opus-4-5-thinking mapped to opus-4-6-thinking",
@@ -594,9 +594,9 @@ func TestIsModelRateLimited_AnthropicFableFamilyKey(t *testing.T) {
 		expected       bool
 	}{
 		{"claude-fable-5", true},
-		{"claude-fable-5[1m]", true},      // 家族 key 覆盖变体
-		{"Claude-Fable-5-20260601", true}, // 大小写不敏感
-		{"claude-sonnet-4-6", false},      // 其他模型不受影响
+		{"claude-fable-5[1m]", true},      // The family key covers variants.
+		{"Claude-Fable-5-20260601", true}, // Case-insensitive match.
+		{"claude-sonnet-4-6", false},      // Other model families remain available.
 		{"claude-opus-4-8", false},
 	}
 

@@ -18,18 +18,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// sparkShadowValidatingGroupRepoStub 实现 groupExistenceBatchReader(ExistsByIDs),
-// 使 validateGroupIDsExist 走批量存在性校验路径。
+// sparkShadowValidatingGroupRepoStub implements batched group existence checks
+// so group validation exercises ExistsByIDs.
 type sparkShadowValidatingGroupRepoStub struct {
 	routing.GroupRepository
 	existing map[int64]bool
 }
 
-// shadowGroupsFixture 通过分组查询和校验返回提供商需要的字段。
+// shadowGroupsFixture adapts routing groups to provider management references.
 type shadowGroupsFixture struct{ routing.GroupRepository }
 
-// sparkShadowRepoStub 为 CreateShadow 测试保存提供商、分组和递增 ID。
-// 它嵌入 AdminStore 接口，提供本测试使用的存取方法。
+// sparkShadowRepoStub stores providers, group bindings, and incrementing IDs for shadow creation tests.
+// Embedded AdminStore methods outside this fixture's scope remain unimplemented.
 type sparkShadowRepoStub struct {
 	providercore.AdminStore
 	providersByID map[int64]*providercore.Record
@@ -38,7 +38,7 @@ type sparkShadowRepoStub struct {
 	groupsOf      map[int64][]int64 // providerID → []groupIDs
 }
 
-// providerServiceTestRepo 为提供商服务测试提供最小内存仓储。
+// providerServiceTestRepo provides in-memory records for provider management tests.
 type providerServiceTestRepo struct {
 	providercore.AdminStore
 	mu          sync.Mutex
@@ -47,7 +47,7 @@ type providerServiceTestRepo struct {
 	bulkUpdates []providercore.ProviderBulkUpdate
 }
 
-// cnProviderTestCredentials 模拟前端提交的自定义端点，验证保存时不会改成官方地址。
+// cnProviderTestCredentials supplies custom endpoints to check that saving retains the requested URLs.
 func cnProviderTestCredentials(platform, mode, protocol string) map[string]any {
 	credentials := map[string]any{
 		"api_key":       "sk-test",
@@ -68,7 +68,7 @@ func cnProviderTestCredentials(platform, mode, protocol string) map[string]any {
 	return credentials
 }
 
-// newProviderEditorForTest 为编辑夹具注入时钟、指纹种子和平台凭据校验函数。
+// newProviderEditorForTest injects time, fingerprint seed generation, and platform credential validation.
 func newProviderEditorForTest(repo providercore.AdminStore, groupPorts ...providercore.AdminGroups) *providercore.Admin {
 	var groups providercore.AdminGroups
 	if len(groupPorts) > 0 {
@@ -169,7 +169,7 @@ func (s *sparkShadowRepoStub) ListSchedulableByGroupID(_ context.Context, groupI
 	return result, nil
 }
 
-// ExistsByID 按 ID 判断替身里是否有该提供商。
+// ExistsByID reports whether the fixture contains the provider.
 func (s *sparkShadowRepoStub) ExistsByID(_ context.Context, id int64) (bool, error) {
 	_, ok := s.providers[id]
 	return ok, nil
@@ -203,7 +203,7 @@ func (s *sparkShadowRepoStub) ListWithFilters(_ context.Context, _ pagination.Pa
 	return nil, nil, nil
 }
 
-// GetByIDs 按请求顺序返回存在的提供商。
+// GetByIDs returns existing fixture records in request order.
 func (s *sparkShadowRepoStub) GetByIDs(_ context.Context, ids []int64) ([]*providercore.Record, error) {
 	var out []*providercore.Record
 	for _, id := range ids {
@@ -214,7 +214,7 @@ func (s *sparkShadowRepoStub) GetByIDs(_ context.Context, ids []int64) ([]*provi
 	return out, nil
 }
 
-// BulkUpdate 替身返回零行，影子同步由管理用例执行。
+// BulkUpdate reports no affected rows; the management use case performs shadow synchronization.
 func (*sparkShadowRepoStub) BulkUpdate(context.Context, []int64, providercore.ProviderBulkUpdate) (int64, error) {
 	return 0, nil
 }

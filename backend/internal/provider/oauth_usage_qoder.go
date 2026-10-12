@@ -12,13 +12,14 @@ const (
 	QoderUsageQuotaUpdatedAtExtraKey = "qoder_quota_updated_at"
 )
 
-// qoderUsageFlightResult 让同 key 的等待者核对本轮身份，不共享可变结果。
+// qoderUsageFlightResult lets waiters verify the credential identity before copying a shared result.
 type qoderUsageFlightResult struct {
 	Usage    *UsageInfo
 	Identity string
 }
 
-// QoderUsageOptions 只提供供应商请求、响应归一化和故障诊断；缓存与提供商写入由核心拥有。
+// QoderUsageOptions supplies upstream fetching, error conversion, and enrichment; the service owns caching and
+// writes.
 type QoderUsageOptions struct {
 	Fetch   func(context.Context, *Record, func() time.Time) (*UsageInfo, error)
 	Degrade func(error, *Record, time.Time) *UsageInfo

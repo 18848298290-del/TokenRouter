@@ -9,9 +9,8 @@ import (
 )
 
 var openAIAlphaSearchUnsupportedBodyFields = [...]string{
-	// Codex alpha/search 是 SearchRequest 独立协议，不是 /responses 子请求。
-	// 新版 Codex/第三方代理可能把 Responses 公共字段误带到搜索请求里；ChatGPT
-	// alpha/search 会对这些字段返回 Unknown parameter（例如 prompt_cache_key）。
+	// Codex alpha/search uses SearchRequest. Responses fields forwarded by clients
+	// or proxies, such as prompt_cache_key, cause Unknown parameter errors here.
 	"prompt_cache_key",
 	"prompt_cache_retention",
 	"store",

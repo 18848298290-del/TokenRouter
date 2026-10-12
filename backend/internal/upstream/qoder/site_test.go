@@ -127,7 +127,7 @@ func TestModelsAndAliasesAreSiteAware(t *testing.T) {
 	route, ok = AliasForSite(SiteCN, "minimax-m2.7")
 	require.True(t, ok)
 	require.Equal(t, "mmodel", route)
-	// Preview 既不是公开 alias，也不是已知 route；旧请求只能按 raw key 透传或由提供商显式映射。
+	// Removed preview names pass through as raw keys unless a provider maps them.
 	_, ok = AliasForSite(SiteGlobal, "qwen3.8-max-preview")
 	require.False(t, ok)
 	_, ok = AliasForSite(SiteCN, "qwen3.8-max-preview")
@@ -158,7 +158,7 @@ func TestThinkingCapabilityForSiteUsesSiteSnapshot(t *testing.T) {
 		{site: SiteGlobal, model: "glm-5.3", want: ThinkingLowHighMax},
 		{site: SiteGlobal, model: "glm-5.2", want: ThinkingHighMax},
 		{site: SiteGlobal, model: "kimi-k3", want: ThinkingUnsupported},
-		// 空站点与 ParseSite 一致，按国际站查询能力。
+		// An empty site selects global capabilities, as ParseSite does.
 		{site: "", model: "deepseek-v4-pro", want: ThinkingHighMax},
 		{site: SiteCN, model: "auto", want: ThinkingUnsupported},
 		{site: SiteCN, model: "qwen3.8-max", want: ThinkingToggleOnly},
@@ -180,10 +180,10 @@ func TestThinkingCapabilityForSiteUsesSiteSnapshot(t *testing.T) {
 		})
 	}
 
-	// 国内站已有的 route key、空白和大小写必须与公开 alias 得到相同能力。
+	// CN raw routes, case variants, and surrounding whitespace resolve like public aliases.
 	require.Equal(t, ThinkingToggleOnly, ThinkingCapabilityForSite(SiteCN, " QMODEL_LATEST "))
 	require.Equal(t, ThinkingHighMax, ThinkingCapabilityForSite(SiteCN, "dmodel"))
-	// 两站共有 route key 必须一致，国际站独有模型和未知路由仍保持隔离。
+	// Shared routes have matching capabilities; global-only and unknown routes remain site-specific.
 	require.Equal(t, ThinkingToggleOnly, ThinkingCapabilityForSite(SiteGlobal, " QMODEL_LATEST "))
 	require.Equal(t, ThinkingHighMax, ThinkingCapabilityForSite(SiteGlobal, "dmodel"))
 	require.Equal(t, ThinkingUnsupported, ThinkingCapabilityForSite(SiteGlobal, "kmodel_latest"))
@@ -204,7 +204,7 @@ func TestThinkingCapabilitySnapshotsCoverEveryModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 能力表必须显式覆盖站点的所有 route key，避免新增模型静默沿用零值能力。
+			// Every site route needs a capability entry so added models cannot silently inherit the zero value.
 			wantRoutes := make(map[string]struct{}, len(tt.aliases))
 			for _, model := range tt.models {
 				route, ok := tt.aliases[model]
@@ -223,7 +223,7 @@ func TestThinkingCapabilitySnapshotsCoverEveryModel(t *testing.T) {
 }
 
 func TestSharedThinkingCapabilitiesStayInSyncAcrossSites(t *testing.T) {
-	// 两站共有 route 必须使用同一能力，站点独有 route 则继续由各自快照维护。
+	// Shared routes use the same capabilities; site-only routes use their own snapshot.
 	for route, globalCapability := range globalThinkingCapabilities {
 		cnCapability, shared := cnThinkingCapabilities[route]
 		if !shared {

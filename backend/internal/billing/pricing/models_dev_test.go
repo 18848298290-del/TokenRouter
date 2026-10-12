@@ -69,7 +69,7 @@ func TestModelsDevZeroCacheWriteDoesNotUseModelFallback(t *testing.T) {
 	require.Zero(t, ComputeTokenBreakdown(base, UsageTokens{CacheCreationTokens: 10}, 1, "", true).TotalCost)
 }
 
-// TestModelsDevImageOutputScope 限定生图费率解释范围，避免根据图片模态改写研究模型或中继报价。
+// TestModelsDevImageOutputScope checks that image modalities do not reclassify research or relay output prices.
 func TestModelsDevImageOutputScope(t *testing.T) {
 	catalog, err := modelcatalog.Parse([]byte(`{"providers":{
 		"google":{"models":{
@@ -88,7 +88,7 @@ func TestModelsDevImageOutputScope(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, price, value.OutputPricePerToken, 1e-12)
 	}
-	// 已知缺少文本价时，不借用跨模型或旧媒体兜底价。
+	// A missing text price remains unavailable rather than borrowing another model's price.
 	_, err = ResolveModelPricing("gemini-image-test", entries["gemini-image-test"])
 	require.ErrorIs(t, err, ErrModelPricingUnavailable)
 }

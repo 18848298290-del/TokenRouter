@@ -56,7 +56,7 @@ func (d *PendingFlowDatabase) ApplyAdoptionAndConsume(ctx context.Context, p *id
 	return ApplyPendingOAuthAdoptionAndConsumeSession(ctx, d.Client, d.Auth, d.Profiles, PendingAuthSessionToEntity(p), IdentityAdoptionDecisionToEntity(choice), id)
 }
 
-// FinalizeCreatedAccount 只拥有原第二段事务；失败补偿在核心流程中执行。
+// FinalizeCreatedAccount owns the binding transaction; the identity flow compensates on failure.
 func (d *PendingFlowDatabase) FinalizeCreatedAccount(ctx context.Context, p identitycore.PendingAccountFinalization) error {
 	failure := func(phase string, err error) error { return &identitycore.PendingWriteError{Phase: phase, Cause: err} }
 	tx, err := d.Client.Tx(ctx)

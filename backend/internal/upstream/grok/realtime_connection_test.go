@@ -17,7 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// testWSFrames 将本地 WebSocket 连接适配为帧读写接口。
+// testWSFrames adapts the local WebSocket to the frame interface.
 type testWSFrames struct {
 	conn   *websocket.Conn
 	closed *atomic.Int64
@@ -57,7 +57,7 @@ func (f testDownFrames) WriteFrame(ctx context.Context, _ upstream.FrameKind, da
 }
 func (f testDownFrames) Close() error { return nil }
 
-// TestRealtimeNativeLocalWebSocket 验证本地 TLS WebSocket 验证上行 JSON、下行音频观测、取消及连接所有权。
+// A local TLS WebSocket checks JSON forwarding, audio observation, cancellation, and connection cleanup.
 func TestRealtimeNativeLocalWebSocket(t *testing.T) {
 	incoming := make(chan []byte, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +138,7 @@ func TestRealtimeNativeLocalWebSocket(t *testing.T) {
 	require.EqualValues(t, 1, released.Load())
 }
 
-// TestRealtimeNativeDialFailureAndProbeError 检查握手失败时释放活动登记，探测返回底层错误。
+// Failed handshakes release activity registration; probes expose the underlying dial error.
 func TestRealtimeNativeDialFailureAndProbeError(t *testing.T) {
 	sentinel := errors.New("fixture unavailable")
 	var released atomic.Int64

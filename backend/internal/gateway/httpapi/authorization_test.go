@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// gatewayLimitCache 返回指定准入结果，并记录请求结束后的租约释放。
+// gatewayLimitCache returns a configured admission result and counts lease releases.
 type gatewayLimitCache struct {
 	apikey.APIKeyCache
 	err      error
@@ -32,7 +32,7 @@ func (s *gatewayLimitCache) ReleaseRequest(context.Context, int64, string) error
 	return nil
 }
 
-// TestKeyRequestAdmissionHTTP 覆盖两种错误格式、非消费入口和处理结束后的释放。
+// TestKeyRequestAdmissionHTTP covers both error formats, non-consuming endpoints, and request-end release.
 func TestKeyRequestAdmissionHTTP(t *testing.T) {
 	for _, google := range []bool{false, true} {
 		for _, tc := range []struct {
@@ -72,7 +72,7 @@ func TestKeyRequestAdmissionHTTP(t *testing.T) {
 	}
 }
 
-// TestResponsesAdmissionUsesTurns 仅将实际 Responses 升级请求交给逐轮检查。
+// TestResponsesAdmissionUsesTurns checks that only Responses WebSocket upgrades use per-turn admission.
 func TestResponsesAdmissionUsesTurns(t *testing.T) {
 	for _, tc := range []struct {
 		method, path  string

@@ -7,21 +7,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AuthSourceParticipantFields 将已合并配置编码为更新字段，金额和历史值使用存储编码规则。
+// AuthSourceParticipantFields encodes merged grant settings using the persistent value format.
 func AuthSourceParticipantFields(value *AuthSourceDefaultSettings) settings.Fields {
 	result := settings.Fields{}
 	if value == nil {
 		return result
 	}
 	for key, encoded := range encodeAuthSourceSettings(value) {
-		// 编码字符串不会把旧数据库的非规范数值变成新的 JSON 数字校验。
+		// Encode stored values as JSON strings so legacy numeric text is not parsed as a JSON number.
 		raw, _ := json.Marshal(encoded)
 		result[key] = raw
 	}
 	return result
 }
 
-// prepareAuthSourceFields 准备认证来源的待保存配置。
+// prepareAuthSourceFields validates and prepares the supplied provider-grant fields for persistence.
 func (g *GrantSettings) prepareAuthSourceFields(ctx context.Context, input settings.Fields) (map[string]string, error) {
 	values := map[string]string{}
 	for _, key := range AuthSourceSettingKeys() {

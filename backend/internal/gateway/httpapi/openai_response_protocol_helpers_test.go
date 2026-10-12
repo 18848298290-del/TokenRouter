@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// TestSummarizeNoOutputBody_RespectsLogBodyConfig 检查错误体日志关闭时的结构化诊断。
-// 原始上游 body 片段由 gateway.log_upstream_error_body 控制。
+// TestSummarizeNoOutputBody_RespectsLogBodyConfig checks structured diagnostics with error-body logging
+// disabled.
+// gateway.log_upstream_error_body controls raw upstream body excerpts.
 func TestSummarizeNoOutputBody_RespectsLogBodyConfig(t *testing.T) {
 	body := []byte("data: {\"type\":\"response.in_progress\",\"response\":{\"status\":\"in_progress\"}}\n\n")
 	svc := newImagesFixture(imagesFixtureInputs{})

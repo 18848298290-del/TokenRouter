@@ -7,12 +7,12 @@ import (
 )
 
 const (
-	// openAIModelTransientStreakTTL 限制连续失败状态在没有新失败时的保留时间，
-	// 只用于避免长期不用的提供商与模型组合永久占用内存；正常情况下仅由成功结果清零。
+	// openAIModelTransientStreakTTL bounds retention of idle failure streaks.
+	// Success clears a streak immediately; the TTL reclaims inactive provider/model pairs.
 	//
-	// 该值必须明显长于所有冷却时间。若按较短的自然时间窗口重置连续失败，熔断灵敏度
-	// 会错误依赖请求频率：低于窗口频率的调用永远到不了第二次失败，故障上游也就不会
-	// 进入冷却，每个请求都要先承担一次失败尝试和故障转移，低流量部署反而受影响最大。
+	// Keep this substantially longer than every cooldown. A short expiration would
+	// reset streaks between sparse requests, preventing a failing upstream from
+	// reaching a cooldown and forcing each request to pay for another failed attempt.
 	openAIModelTransientStreakTTL     = 30 * time.Minute
 	openAIModelTransientShortCooldown = 10 * time.Second
 	openAIModelTransientLongCooldown  = 45 * time.Second
@@ -38,15 +38,15 @@ type ModelTransientDecision struct {
 	BlockUntil    time.Time
 }
 
-// ModelTransientState 保存提供商与模型组合的短暂失败状态，
-// 并通过容量上限避免异常模型名造成内存无界增长。
+// ModelTransientState tracks transient failures per provider and model.
+// Its capacity limit bounds memory use when requests contain arbitrary model names.
 type ModelTransientState struct {
 	mu         sync.Mutex
 	entries    map[openAIProviderModelKey]openAIProviderModelTransientEntry
 	maxEntries int
 }
 
-// NewModelTransientState 按原容量初始化唯一的提供商模型失败状态。
+// NewModelTransientState creates bounded failure state, using the default capacity for nonpositive values.
 func NewModelTransientState(maxEntries int) *ModelTransientState {
 	if maxEntries <= 0 {
 		maxEntries = openAIModelTransientDefaultMax
@@ -57,7 +57,7 @@ func NewModelTransientState(maxEntries int) *ModelTransientState {
 	}
 }
 
-// NormalizeTransientModel 规范化已映射的上游模型，拒绝过长输入。
+// NormalizeTransientModel trims and lowercases a model name, returning empty for oversized input.
 func NormalizeTransientModel(model string) string {
 	model = strings.TrimSpace(model)
 	if len(model) > openAIModelTransientMaxModelBytes {
@@ -74,7 +74,7 @@ func openAIProviderModelTransientKey(providerID int64, model string) (openAIProv
 	return openAIProviderModelKey{ProviderID: providerID, Model: model}, true
 }
 
-// RecordFailure 累加连续失败次数并返回对应的阶梯冷却时间。
+// RecordFailure increments the failure streak and returns its escalating cooldown.
 func (s *ModelTransientState) RecordFailure(providerID int64, model string, now time.Time) ModelTransientDecision {
 	key, ok := openAIProviderModelTransientKey(providerID, model)
 	if s == nil || !ok {
@@ -97,7 +97,7 @@ func (s *ModelTransientState) RecordFailure(providerID int64, model string, now 
 	if !exists {
 		s.evictOldestLocked()
 	}
-	// 成功时清零连续失败次数，条目超过 TTL 或时钟回拨时丢弃状态。
+	// Expired entries and backward clock jumps reset the streak; RecordSuccess clears it separately.
 	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientStreakTTL || now.Before(entry.lastFailure) {
 		entry.failureStreak = 0
 		entry.blockUntil = time.Time{}
@@ -106,7 +106,7 @@ func (s *ModelTransientState) RecordFailure(providerID int64, model string, now 
 	entry.lastFailure = now
 	entry.lastTouched = now
 
-	// 首次失败只计数，第二次开始冷却，连续三次及以上使用较长冷却时间。
+	// The second failure starts a short cooldown; the third and later failures use the long cooldown.
 	cooldown := time.Duration(0)
 	switch {
 	case entry.failureStreak >= 3:
@@ -127,7 +127,7 @@ func (s *ModelTransientState) RecordFailure(providerID int64, model string, now 
 	}
 }
 
-// RecordSuccess 清除成功提供商与模型的连续失败。
+// RecordSuccess clears the failure streak and cooldown for a provider/model pair.
 func (s *ModelTransientState) RecordSuccess(providerID int64, model string) {
 	key, ok := openAIProviderModelTransientKey(providerID, model)
 	if s == nil || !ok {
@@ -138,7 +138,7 @@ func (s *ModelTransientState) RecordSuccess(providerID int64, model string) {
 	s.mu.Unlock()
 }
 
-// IsBlocked 读取当前模型冷却状态。
+// IsBlocked reports whether the model's cooldown is still active.
 func (s *ModelTransientState) IsBlocked(providerID int64, model string, now time.Time) bool {
 	key, ok := openAIProviderModelTransientKey(providerID, model)
 	if s == nil || !ok {
@@ -163,7 +163,7 @@ func (s *ModelTransientState) IsBlocked(providerID int64, model string, now time
 	return !entry.blockUntil.IsZero() && now.Before(entry.blockUntil)
 }
 
-// evictOldestLocked 仅在持有 s.mu 时调用，并为新键淘汰最久未访问的条目。
+// evictOldestLocked evicts the least recently touched entry when full. The caller holds s.mu.
 func (s *ModelTransientState) evictOldestLocked() {
 	if len(s.entries) < s.maxEntries {
 		return

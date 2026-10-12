@@ -7,15 +7,15 @@ const (
 	maxDecompressedBodySize = 64 << 20
 )
 
-// BodyLimitError 表示规范化后的请求超过允许大小，由 HTTP 入口映射为原错误类型。
+// BodyLimitError reports a normalized body size limit violation for the HTTP adapter to translate.
 type BodyLimitError struct{ Limit int64 }
 
 func (e *BodyLimitError) Error() string {
 	return fmt.Sprintf("normalized JSON body exceeds %d bytes", e.Limit)
 }
 
-// NormalizeLenientJSONRequestBody 转义部分异常 OpenAI 兼容客户端
-// 直接写入 JSON 字符串的控制字节，并限制规范化后的最大大小。
+// NormalizeLenientJSONRequestBody escapes raw control bytes inside JSON strings
+// and enforces the resulting size limit. A nonpositive limit defaults to 64 MiB.
 func NormalizeLenientJSONRequestBody(body []byte, maxNormalizedBytes int64) ([]byte, error) {
 	if maxNormalizedBytes <= 0 {
 		maxNormalizedBytes = maxDecompressedBodySize
@@ -72,7 +72,7 @@ func NormalizeLenientJSONRequestBody(body []byte, maxNormalizedBytes int64) ([]b
 	return body, nil
 }
 
-// trimUTF8BOM 移除 JSON 请求体开头的 UTF-8 BOM。
+// trimUTF8BOM removes a leading UTF-8 BOM from a JSON request body.
 func trimUTF8BOM(body []byte) []byte {
 	if len(body) >= jsonUTF8BOMLen && body[0] == 0xef && body[1] == 0xbb && body[2] == 0xbf {
 		return body[jsonUTF8BOMLen:]
@@ -80,12 +80,12 @@ func trimUTF8BOM(body []byte) []byte {
 	return body
 }
 
-// isJSONControlByte 判断字节是否需要在 JSON 字符串中转义。
+// isJSONControlByte reports whether this compatibility pass escapes the byte inside a string.
 func isJSONControlByte(b byte) bool {
 	return b < 0x20 || b == 0x7f
 }
 
-// appendJSONUnicodeEscape 把控制字节追加为 \u00xx 形式的 JSON 转义。
+// appendJSONUnicodeEscape appends a control byte as a \u00xx JSON escape.
 func appendJSONUnicodeEscape(dst []byte, b byte) []byte {
 	const hex = "0123456789abcdef"
 	return append(dst, '\\', 'u', '0', '0', hex[b>>4], hex[b&0x0f])

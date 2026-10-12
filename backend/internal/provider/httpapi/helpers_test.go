@@ -21,7 +21,7 @@ type grokImportAdminService struct {
 	nextID int64
 }
 
-// 创建测试记录提交给用例的输入，其他接口留空。
+// managementCreateFixture records creation inputs; unused embedded operations remain unimplemented.
 type managementCreateFixture struct {
 	ProviderManagement
 	mu                sync.Mutex
@@ -29,7 +29,7 @@ type managementCreateFixture struct {
 	createProviderErr error
 }
 
-// managementListFixture 提供列表与评分候选，记录分页参数和调用次数。
+// managementListFixture supplies list and scoring candidates and records pagination and call counts.
 type managementListFixture struct {
 	ProviderManagement
 	providers                                                               []providercore.Record
@@ -49,7 +49,7 @@ type availableModelsAdminService struct {
 	provider providercore.Record
 }
 
-// managementMutationFixture 记录配置、凭据和失效输入，存储替身保持独立状态。
+// managementMutationFixture records configuration, credential, and invalidation inputs in its own state.
 type managementMutationFixture struct {
 	managementCreateFixture
 	providers                   []providercore.Record
@@ -89,7 +89,7 @@ func (s *grokImportAdminService) CreateProvider(_ context.Context, input *provid
 	}, nil
 }
 
-// newManagedRefreshFixture 构造独立的刷新协调器，注入当前测试的平台交换函数。
+// newManagedRefreshFixture creates a refresh coordinator using the test's platform exchange functions.
 func newManagedRefreshFixture(source interface {
 	providercore.ManagedCredentialStore
 	providercore.ManagedCredentialPrivacy
@@ -125,7 +125,7 @@ func (s *managementCreateFixture) ForceAntigravityPrivacy(context.Context, *prov
 	return ""
 }
 
-// newManagementCreateFixtureHandler 组合管理 HTTP、批量操作和展示组件。
+// newManagementCreateFixtureHandler connects management, batch creation, and response presentation.
 func newManagementCreateFixtureHandler(source *managementCreateFixture) *ManagementHandler {
 	presenter := NewRuntimePresenter(providercore.NewRuntimeStatusReader(providercore.RuntimeStatusOptions{}), source, nil)
 	batch := providercore.NewManagementBatch(source, nil, providercore.ManagementCreationOptions{Privacy: source})
@@ -251,7 +251,7 @@ func (s *managementMutationFixture) GetProvidersByIDs(ctx context.Context, ids [
 }
 
 func (s *managementMutationFixture) UpdateProvider(ctx context.Context, id int64, input *providercore.UpdateProviderInput) (*providercore.Record, error) {
-	// 夹具在锁内检查请求携带的身份条件，未提供条件时执行普通管理更新。
+	// Check the expected credential version under the lock; omitted expectations allow an ordinary update.
 	if input.ExpectedCredentials != nil {
 		for i := range s.providers {
 			if s.providers[i].ID == id && !providercore.MatchesCredentialVersion(&s.providers[i], *input.ExpectedCredentials) {
@@ -310,7 +310,7 @@ func (s *managementMutationFixture) EnsureAntigravityPrivacy(ctx context.Context
 
 func newManagementMutationFixture() *managementMutationFixture { return &managementMutationFixture{} }
 
-// newMutationHandler 组合提供商用例和展示组件。
+// newMutationHandler connects management operations and response presentation.
 func newMutationHandler(source *managementMutationFixture, invalidator providercore.TokenCacheInvalidator) *ManagementHandler {
 	options := providercore.ManagedRefreshOptions{Store: source, Privacy: source}
 	if invalidator != nil {

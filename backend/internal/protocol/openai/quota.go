@@ -1,6 +1,6 @@
 package openai
 
-// OpenAIRateLimitWindow 描述上游返回的单个限流窗口。
+// OpenAIRateLimitWindow describes one upstream rate limit window.
 type OpenAIRateLimitWindow struct {
 	UsedPercent        float64 `json:"used_percent"`
 	LimitWindowSeconds int64   `json:"limit_window_seconds"`
@@ -8,7 +8,7 @@ type OpenAIRateLimitWindow struct {
 	ResetAt            int64   `json:"reset_at"`
 }
 
-// OpenAIRateLimit 描述主窗口和可选的次级窗口限流状态。
+// OpenAIRateLimit holds the primary and optional secondary window status.
 type OpenAIRateLimit struct {
 	Allowed         bool                   `json:"allowed"`
 	LimitReached    bool                   `json:"limit_reached"`
@@ -16,25 +16,25 @@ type OpenAIRateLimit struct {
 	SecondaryWindow *OpenAIRateLimitWindow `json:"secondary_window,omitempty"`
 }
 
-// OpenAIAdditionalRateLimit 描述上游按功能返回的额外限流信息。
+// OpenAIAdditionalRateLimit holds a feature-specific upstream rate limit.
 type OpenAIAdditionalRateLimit struct {
 	LimitName      string           `json:"limit_name"`
 	MeteredFeature string           `json:"metered_feature"`
 	RateLimit      *OpenAIRateLimit `json:"rate_limit,omitempty"`
 }
 
-// OpenAIRateLimitResetCreditDetail 是暴露给前端的单个重置机会安全明细。
+// OpenAIRateLimitResetCreditDetail exposes the expiry of one reset credit to the frontend.
 type OpenAIRateLimitResetCreditDetail struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
-// OpenAIRateLimitResetCredits 描述当前可用的重置次数。
+// OpenAIRateLimitResetCredits describes the available reset credits.
 type OpenAIRateLimitResetCredits struct {
 	AvailableCount int                                `json:"available_count"`
 	Credits        []OpenAIRateLimitResetCreditDetail `json:"credits,omitempty"`
 }
 
-// OpenAIQuotaUsage 是暴露给前端的 /wham/usage 精简结果。
+// OpenAIQuotaUsage is the subset of /wham/usage exposed to the frontend.
 type OpenAIQuotaUsage struct {
 	UserID                string                       `json:"user_id,omitempty"`
 	ProviderID            string                       `json:"account_id,omitempty"`
@@ -46,7 +46,7 @@ type OpenAIQuotaUsage struct {
 	FetchedAt             int64                        `json:"fetched_at"`
 }
 
-// OpenAIQuotaResetCredit 描述被消耗的重置次数元信息。
+// OpenAIQuotaResetCredit describes a consumed reset credit.
 type OpenAIQuotaResetCredit struct {
 	ID              string `json:"id,omitempty"`
 	ResetType       string `json:"reset_type,omitempty"`
@@ -57,7 +57,7 @@ type OpenAIQuotaResetCredit struct {
 	RedeemedAt      string `json:"redeemed_at,omitempty"`
 }
 
-// OpenAIQuotaResetResult 是 /wham/rate-limit-reset-credits/consume 的精简结果。
+// OpenAIQuotaResetResult is the reduced /wham/rate-limit-reset-credits/consume result.
 type OpenAIQuotaResetResult struct {
 	Code         string                  `json:"code"`
 	Credit       *OpenAIQuotaResetCredit `json:"credit,omitempty"`

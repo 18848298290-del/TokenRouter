@@ -156,6 +156,8 @@ func buildProviderSchedulingThresholdErrorMessage(input ProviderSchedulingThresh
 	)
 }
 
+// tempUnschedStateFromStoredReason accepts structured or plain-text reasons.
+// RuleIndex -1 identifies system rules, and the stored deadline cannot shorten fallbackUntilUnix.
 func tempUnschedStateFromStoredReason(rawReason string, fallbackUntilUnix int64) *TempUnschedState {
 	state := &TempUnschedState{
 		UntilUnix: fallbackUntilUnix,

@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
-// TestRequestLogRoutesAdminOnly 检查用户 URL 已移除，管理员入口经过认证、审计和限流中间件。
+// TestRequestLogRoutesAdminOnly checks that user URLs return 404 and admin routes apply authentication, auditing, and rate limiting.
 func TestRequestLogRoutesAdminOnly(t *testing.T) {
 	router := gin.New()
 	var chain []string

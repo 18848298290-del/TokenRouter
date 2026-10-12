@@ -52,7 +52,8 @@ func newUsageQueryTest(t *testing.T, ignore bool) (*UpstreamUsageService, *usage
 	return NewUpstreamUsageService(r, e, UpstreamUsageOptions{}), r, e
 }
 
-// TestUpstreamQueriesStopOwnsDetachedWork 验证首个 HTTP 等待方离开后，共享网络查询仍由提供商实例持有并在停机时等待。
+// TestUpstreamQueriesStopOwnsDetachedWork checks that shared work survives caller cancellation and is awaited
+// on shutdown.
 func TestUpstreamQueriesStopOwnsDetachedWork(t *testing.T) {
 	s, r, e := newUsageQueryTest(t, false)
 	require.Zero(t, r.reads.Load())
@@ -79,7 +80,8 @@ func TestUpstreamQueriesStopOwnsDetachedWork(t *testing.T) {
 	require.Equal(t, reads, r.reads.Load())
 }
 
-// TestUpstreamQueriesStopTimeoutRemainsFailure 检查供应商忽略取消时报告超时，后续停止返回首次结果。
+// TestUpstreamQueriesStopTimeoutRemainsFailure checks that shutdown timeouts persist when upstream ignores
+// cancellation.
 func TestUpstreamQueriesStopTimeoutRemainsFailure(t *testing.T) {
 	s, _, e := newUsageQueryTest(t, true)
 	waiter := make(chan error, 1)
@@ -96,7 +98,8 @@ func TestUpstreamQueriesStopTimeoutRemainsFailure(t *testing.T) {
 	require.Same(t, err, s.StopContext(context.Background()))
 }
 
-// TestUpstreamUsageResultCopiesAllValues 验证结果复制保持 nil/空集合以及内部与 HTTP 的金额字段，并隔离所有嵌套可变值。
+// TestUpstreamUsageResultCopiesAllValues checks nil and empty collections, amount aliases, and isolation of
+// mutable values.
 func TestUpstreamUsageResultCopiesAllValues(t *testing.T) {
 	now := time.Now()
 	amount := 3.0
@@ -121,7 +124,7 @@ func TestUpstreamUsageResultCopiesAllValues(t *testing.T) {
 	require.Nil(t, CloneUpstreamUsageResult(&UpstreamUsageQueryResult{}).Balances)
 }
 
-// TestUpstreamQueriesNilCompatibility 检查实例缺失时返回不可用错误和空指标。
+// TestUpstreamQueriesNilCompatibility checks unavailable errors and empty metrics for a nil service.
 func TestUpstreamQueriesNilCompatibility(t *testing.T) {
 	var s *UpstreamUsageService
 	_, err := s.QueryProvider(context.Background(), 1)

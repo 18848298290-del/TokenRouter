@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// size 在锁内读取暂存条目数，供缓存生命周期测试核对。
+// size reads the entry count under the lock for cache lifecycle assertions.
 func (s *ModelTransientState) size() int {
 	if s == nil {
 		return 0
@@ -96,8 +96,8 @@ func TestOpenAIModelTransient_StaleStreakExpires(t *testing.T) {
 	assert.Zero(t, decision.Cooldown)
 }
 
-// TestOpenAIModelTransient_StreakSurvivesSparseTraffic 验证连续失败不能依赖网关调用频率。旧逻辑会在稀疏请求之间清零计数，
-// 导致故障提供商与模型组合永不冷却，每次请求都额外承担失败尝试和故障转移。
+// TestOpenAIModelTransient_StreakSurvivesSparseTraffic checks that failures accumulate across gaps
+// longer than the cooldown, so sparse traffic can still trip the model cooldown.
 func TestOpenAIModelTransient_StreakSurvivesSparseTraffic(t *testing.T) {
 	state := NewModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
@@ -118,7 +118,8 @@ func TestOpenAIModelTransient_StreakSurvivesSparseTraffic(t *testing.T) {
 	assert.True(t, state.IsBlocked(35, "gpt-5.5", now.Add(2*gap+time.Second)))
 }
 
-// TestOpenAIModelTransient_SuccessResetsStreakAcrossSparseTraffic 验证两次稀疏失败之间的成功结果仍会清零计数，间歇恢复的提供商不会被推进长冷却。
+// TestOpenAIModelTransient_SuccessResetsStreakAcrossSparseTraffic checks that intervening success clears
+// sparse failures.
 func TestOpenAIModelTransient_SuccessResetsStreakAcrossSparseTraffic(t *testing.T) {
 	state := NewModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)

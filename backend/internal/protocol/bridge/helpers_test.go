@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// collectStreamEvents 收集 Chat Completions 分片转换得到的 Responses 事件及收尾事件。
+// collectStreamEvents converts Chat Completions chunks and includes stream finalization events.
 func collectStreamEvents(t *testing.T, chunks []string) []ResponsesStreamEvent {
 	t.Helper()
 	state := NewChatCompletionsToResponsesStreamState(testRuntime(), "deepseek-v4-pro")
@@ -23,7 +23,7 @@ func collectStreamEvents(t *testing.T, chunks []string) []ResponsesStreamEvent {
 	return events
 }
 
-// responseObjectOf 从事件序列化后的 JSON 中取出 response 子对象。
+// responseObjectOf extracts the response object from a serialized event.
 func responseObjectOf(t *testing.T, evt ResponsesStreamEvent) map[string]any {
 	t.Helper()
 	m := marshalEvent(t, evt)
@@ -32,7 +32,7 @@ func responseObjectOf(t *testing.T, evt ResponsesStreamEvent) map[string]any {
 	return resp
 }
 
-// requireCreatedAt 返回响应中大于零的 Unix 创建时间。
+// requireCreatedAt asserts and returns a positive Unix creation timestamp.
 func requireCreatedAt(t *testing.T, resp map[string]any) int64 {
 	t.Helper()
 	raw, ok := resp["created_at"]
@@ -43,7 +43,7 @@ func requireCreatedAt(t *testing.T, resp map[string]any) int64 {
 	return int64(value)
 }
 
-// marshalEvent 通过自定义 MarshalJSON 序列化事件，并返回解码后的顶层对象。
+// marshalEvent exercises custom JSON serialization and returns the decoded object.
 func marshalEvent(t *testing.T, e ResponsesStreamEvent) map[string]any {
 	t.Helper()
 	b, err := json.Marshal(e)
@@ -55,5 +55,5 @@ func marshalEvent(t *testing.T, e ResponsesStreamEvent) map[string]any {
 
 func strPtr(s string) *string { return &s }
 
-// testRuntime 为协议转换测试提供当前时间和随机字节。
+// testRuntime supplies the clock and random source for conversion tests.
 func testRuntime() Runtime { return Runtime{Now: time.Now, ReadRandom: rand.Read} }

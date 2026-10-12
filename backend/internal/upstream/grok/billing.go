@@ -13,15 +13,15 @@ import (
 )
 
 const (
-	// cli-chat-proxy 的 billing 端点要求携带 CLI 客户端身份。
+	// CLITokenAuthHeader carries the CLI identity required by cli-chat-proxy billing.
 	CLITokenAuthHeader     = "x-xai-token-auth"
 	CLITokenAuthValue      = "xai-grok-cli"
 	CLIClientVersionHeader = "x-grok-client-version"
-	// CLIClientVersion 是 Grok CLI 固定版本的唯一来源，repository 与 service
-	// 均基于它构造客户端身份；版本需与 https://x.ai/cli/stable 保持同步。
+	// CLIClientVersion is the shared version used to construct Grok CLI request identities.
+	// Update it with the supported release at https://x.ai/cli/stable.
 	CLIClientVersion = "0.2.120"
-	// billingCLIUserAgent 是账单探测沿用的 pager/shell UA，
-	// 与 cli_identity.go 中 workspace 风格的 CLIUserAgent 不同。
+	// billingCLIUserAgent uses the pager/shell identity for billing probes.
+	// CLIUserAgent in cli_identity.go uses the workspace identity.
 	billingCLIUserAgent = "grok-pager/" + CLIClientVersion + " grok-shell/" + CLIClientVersion + " (macos; aarch64)"
 
 	BillingWeeklyPath  = "/billing?format=credits"
@@ -31,20 +31,20 @@ const (
 	SuperGrokHeavyLimitCents = 150_000 // $1,500.00
 )
 
-// BillingPeriod 描述当前周度或月度窗口。
+// BillingPeriod describes a weekly or monthly usage window.
 type BillingPeriod struct {
 	Type  string `json:"type,omitempty"`
 	Start string `json:"start,omitempty"`
 	End   string `json:"end,omitempty"`
 }
 
-// BillingProductUsage 表示周度 credits 窗口内单个产品的用量。
+// BillingProductUsage records one product in a weekly credits window.
 type BillingProductUsage struct {
 	Product      string   `json:"product,omitempty"`
 	UsagePercent *float64 `json:"usagePercent,omitempty"`
 }
 
-// BillingConfig 对应 /v1/billing 响应中的嵌套 config 对象。
+// BillingConfig is the nested config object from /v1/billing.
 type BillingConfig struct {
 	CurrentPeriod        *BillingPeriod        `json:"currentPeriod,omitempty"`
 	CreditUsagePercent   *float64              `json:"creditUsagePercent,omitempty"`
@@ -60,18 +60,18 @@ type BillingConfig struct {
 	BillingPeriodEnd     string                `json:"billingPeriodEnd,omitempty"`
 }
 
-// BillingPayload 对应 /v1/billing 的顶层响应体。
+// BillingPayload is the top-level /v1/billing response.
 type BillingPayload struct {
 	Config *BillingConfig `json:"config,omitempty"`
 }
 
-// BillingProductSummary 复用提供商展示叶子值；供应商解析仍由本包拥有。
+// BillingProductSummary is the shared display value for product usage.
 type BillingProductSummary = usageview.BillingProductSummary
 
-// BillingSummary 复用提供商展示叶子值；供应商解析仍由本包拥有。
+// BillingSummary is the shared display value for parsed billing data.
 type BillingSummary = usageview.BillingSummary
 
-// BuildBillingURL 构造 CLI chat proxy 的周度或月度 billing URL。
+// BuildBillingURL builds the CLI chat proxy weekly or monthly billing URL.
 func BuildBillingURL(formatCredits bool) string {
 	base := strings.TrimRight(DefaultCLIBaseURL, "/")
 	if formatCredits {
@@ -80,8 +80,8 @@ func BuildBillingURL(formatCredits bool) string {
 	return base + BillingMonthlyPath
 }
 
-// BuildBillingURLWithValidator 按调用方解析的基础地址构造周度或月度 billing URL，
-// 并先应用调用方的出站 URL 信任策略。使用自定义上游转发的提供商会在同一上游执行额度探测。
+// BuildBillingURLWithValidator validates the supplied base URL before adding the billing path.
+// Callers supply the forwarding base URL so custom upstreams also receive quota probes.
 func BuildBillingURLWithValidator(baseURL string, formatCredits bool, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -93,7 +93,7 @@ func BuildBillingURLWithValidator(baseURL string, formatCredits bool, validator 
 	return validatedBaseURL + BillingMonthlyPath, nil
 }
 
-// ApplyCLIBillingHeaders 为 billing GET 请求设置 Authorization 和 CLI 身份请求头。
+// ApplyCLIBillingHeaders sets bearer authentication and CLI identity headers for billing requests.
 func ApplyCLIBillingHeaders(req *http.Request, accessToken string) {
 	if req == nil {
 		return
@@ -109,7 +109,7 @@ func ApplyCLIBillingHeaders(req *http.Request, accessToken string) {
 	req.Header.Set("User-Agent", billingCLIUserAgent)
 }
 
-// ParseBillingPayload 解析 billing API 响应体。
+// ParseBillingPayload decodes a billing API response.
 func ParseBillingPayload(body []byte) (*BillingPayload, error) {
 	if len(body) == 0 {
 		return nil, fmt.Errorf("empty billing body")
@@ -121,7 +121,7 @@ func ParseBillingPayload(body []byte) (*BillingPayload, error) {
 	return &payload, nil
 }
 
-// BuildBillingSummary 将 billing 配置规范化为适合前端展示的摘要。
+// BuildBillingSummary normalizes billing configuration for display.
 func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	if config == nil {
 		return nil
@@ -131,7 +131,7 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	periodType := resolvePeriodType(period)
 	creditUsage := cloneFloat(config.CreditUsagePercent)
 
-	// 周度周期不能回退使用月度账单边界，否则周用量较高时会按月度截止时间停调提供商。
+	// Keep weekly dates separate: substituting a monthly end date could block an exhausted weekly quota until month end.
 	periodStart := ""
 	periodEnd := ""
 	if period != nil {
@@ -153,7 +153,7 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 
 	monthlyLimit := parseCentValue(config.MonthlyLimit)
 	used := parseCentValue(config.Used)
-	// credits 响应中的绝对金额以美元计，月度 limit/used 则以美分计。
+	// Credits amounts are in dollars; monthly limit and used values are in cents.
 	prepaid := parseCentValue(config.PrepaidBalance)
 	onDemandCap := parseCentValue(config.OnDemandCap)
 	onDemandUsed := parseCentValue(config.OnDemandUsed)
@@ -191,8 +191,7 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 		summary.PeriodStart = periodStart
 		summary.PeriodEnd = periodEnd
 	} else {
-		// 仅有月度数据时不要把月度百分比写入周度进度条使用的 UsagePercent。
-		// 前端只在 PeriodType 为 weekly 时渲染周度进度条。
+		// UsagePercent belongs to the weekly progress bar; monthly data uses UsedPercent.
 		summary.PeriodType = "monthly"
 		summary.PeriodStart = billingStart
 		summary.PeriodEnd = billingEnd
@@ -213,7 +212,7 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	if onDemandUsed != nil {
 		summary.OnDemandUsed = onDemandUsed
 	}
-	// 管理界面的绝对金额行以美元展示月度美分值。
+	// Convert monthly cents to dollars for the displayed absolute amounts.
 	if monthlyLimit != nil {
 		v := *monthlyLimit / 100
 		summary.MonthlyLimit = &v
@@ -228,7 +227,7 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	return summary
 }
 
-// MergeBillingProbeResult 更新探测成功的 billing 域，并为刷新失败的域保留旧值。
+// MergeBillingProbeResult updates successful probe windows and retains previous values for failed windows.
 func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK, monthlyOK bool) *BillingSummary {
 	var out BillingSummary
 	if previous != nil {
@@ -252,7 +251,7 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 		out.PeriodStart = weekly.PeriodStart
 		out.PeriodEnd = weekly.PeriodEnd
 		out.ProductUsage = weekly.ProductUsage
-		// 预付和按需绝对金额通常来自 credits 周度响应。
+		// The weekly credits response supplies prepaid and on-demand dollar amounts.
 		if weekly.PrepaidBalance != nil {
 			out.PrepaidBalance = weekly.PrepaidBalance
 		}
@@ -282,7 +281,7 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 		out.UsedPercent = monthly.UsedPercent
 		out.MonthlyLimit = monthly.MonthlyLimit
 		out.MonthlyUsed = monthly.MonthlyUsed
-		// credits 缺少按需上限时，月度探测也可能提供该值。
+		// Use monthly on-demand values when no value is already available.
 		if monthly.OnDemandCap != nil && out.OnDemandCap == nil {
 			out.OnDemandCap = monthly.OnDemandCap
 		}
@@ -307,7 +306,7 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 	return &out
 }
 
-// StampBillingSummary 设置拉取元数据。
+// StampBillingSummary sets fetch status, source, and timestamps in place.
 func StampBillingSummary(summary *BillingSummary, statusCode int, source string) *BillingSummary {
 	if summary == nil {
 		return nil
@@ -338,7 +337,7 @@ func resolvePlan(monthlyLimitCents *float64) string {
 	if monthlyLimitCents == nil {
 		return ""
 	}
-	// 容忍浮点数计算产生的轻微误差。
+	// Round away small floating-point errors before matching plan limits.
 	limit := math.Round(*monthlyLimitCents)
 	switch limit {
 	case SuperGrokLimitCents:
@@ -354,14 +353,14 @@ func parseCentValue(raw json.RawMessage) *float64 {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	// 对象形式：{"val": 123}
+	// Accept the wrapped form: {"val": 123}.
 	var obj struct {
 		Val any `json:"val"`
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil && obj.Val != nil {
 		return anyToFloat(obj.Val)
 	}
-	// 裸数字或字符串形式。
+	// Also accept a bare number or numeric string.
 	var n any
 	if err := json.Unmarshal(raw, &n); err != nil {
 		return nil

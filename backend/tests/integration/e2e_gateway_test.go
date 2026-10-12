@@ -16,40 +16,40 @@ import (
 )
 
 const (
-	// claudeAPIKeyEnv 指定 Claude E2E 测试读取密钥的环境变量。
+	// claudeAPIKeyEnv names the environment variable containing the Claude E2E key.
 	claudeAPIKeyEnv = "CLAUDE_API_KEY"
 
-	// geminiAPIKeyEnv 指定 Gemini E2E 测试读取密钥的环境变量。
+	// geminiAPIKeyEnv names the environment variable containing the Gemini E2E key.
 	geminiAPIKeyEnv = "GEMINI_API_KEY"
 )
 
 var (
 	baseURL = getEnv("BASE_URL", "http://localhost:8080")
-	// ENDPOINT_PREFIX: 端点前缀，支持混合模式和非混合模式测试
-	// - "" (默认): 使用 /v1/messages, /v1beta/models（混合模式，可调度 antigravity 提供商）
-	// - "/antigravity": 使用 /antigravity/v1/messages, /antigravity/v1beta/models（非混合模式，仅 antigravity 提供商）。
+	// endpointPrefix selects the endpoint family on the test deployment.
+	// An empty ENDPOINT_PREFIX uses /v1/messages and /v1beta/models.
+	// A value of /antigravity targets the corresponding legacy prefixed endpoints.
 	endpointPrefix = getEnv("ENDPOINT_PREFIX", "")
-	testInterval   = 1 * time.Second // 测试间隔，防止限流
+	testInterval   = 1 * time.Second // Delay between requests to reduce rate-limit pressure.
 
-	// Claude 模型列表。
+	// claudeModels contains model names expected by the E2E deployment.
 	claudeModels = []string{
-		// Opus 系列
-		"claude-opus-4-5-thinking", // 直接支持
-		"claude-opus-4",            // 映射到 claude-opus-4-5-thinking
-		"claude-opus-4-5-20251101", // 映射到 claude-opus-4-5-thinking
-		// Sonnet 系列
-		"claude-sonnet-4-5",          // 直接支持
-		"claude-sonnet-4-5-thinking", // 直接支持
-		"claude-sonnet-4-5-20250929", // 映射到 claude-sonnet-4-5-thinking
-		"claude-3-5-sonnet-20241022", // 映射到 claude-sonnet-4-5
-		// Haiku 系列（映射到 gemini-3-flash）
+		// Opus fixtures.
+		"claude-opus-4-5-thinking", // Expected direct model.
+		"claude-opus-4",            // Fixture expects a mapping to claude-opus-4-5-thinking.
+		"claude-opus-4-5-20251101", // Fixture expects a mapping to claude-opus-4-5-thinking.
+		// Sonnet fixtures.
+		"claude-sonnet-4-5",          // Expected direct model.
+		"claude-sonnet-4-5-thinking", // Expected direct model.
+		"claude-sonnet-4-5-20250929", // Fixture expects a mapping to claude-sonnet-4-5-thinking.
+		"claude-3-5-sonnet-20241022", // Fixture expects a mapping to claude-sonnet-4-5.
+		// Haiku fixtures expect a mapping to gemini-3-flash.
 		"claude-haiku-4",
 		"claude-haiku-4-5",
 		"claude-haiku-4-5-20251001",
 		"claude-3-haiku-20240307",
 	}
 
-	// Gemini 模型列表。
+	// geminiModels contains model names expected by the E2E deployment.
 	geminiModels = []string{
 		"gemini-2.5-flash",
 		"gemini-2.5-flash-lite",
@@ -77,7 +77,7 @@ func requireGeminiAPIKey(t *testing.T) string {
 	return key
 }
 
-// TestClaudeModelsList 测试 GET /v1/models。
+// TestClaudeModelsList checks GET /v1/models under the configured endpoint prefix.
 func TestClaudeModelsList(t *testing.T) {
 	claudeKey := requireClaudeAPIKey(t)
 	url := baseURL + endpointPrefix + "/v1/models"
@@ -113,7 +113,7 @@ func TestClaudeModelsList(t *testing.T) {
 	t.Logf("✅ 返回 %d 个模型", len(data))
 }
 
-// TestGeminiModelsList 测试 GET /v1beta/models。
+// TestGeminiModelsList checks GET /v1beta/models under the configured endpoint prefix.
 func TestGeminiModelsList(t *testing.T) {
 	geminiKey := requireGeminiAPIKey(t)
 	url := baseURL + endpointPrefix + "/v1beta/models"
@@ -145,7 +145,7 @@ func TestGeminiModelsList(t *testing.T) {
 	t.Logf("✅ 返回 %d 个模型", len(models))
 }
 
-// TestClaudeMessages 测试 Claude /v1/messages 接口。
+// TestClaudeMessages checks streaming and non-streaming Messages requests.
 func TestClaudeMessages(t *testing.T) {
 	claudeKey := requireClaudeAPIKey(t)
 	for i, model := range claudeModels {
@@ -193,7 +193,7 @@ func testClaudeMessage(t *testing.T, claudeKey string, model string, stream bool
 	}
 
 	if stream {
-		// 流式：读取 SSE 事件
+		// Stop after three SSE data lines; at least one is required.
 		scanner := bufio.NewScanner(resp.Body)
 		eventCount := 0
 		for scanner.Scan() {
@@ -210,7 +210,7 @@ func testClaudeMessage(t *testing.T, claudeKey string, model string, stream bool
 		}
 		t.Logf("✅ 收到 %d+ 个 SSE 事件", eventCount)
 	} else {
-		// 非流式：解析 JSON 响应
+		// A non-streaming response must decode as a message.
 		var result map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			t.Fatalf("解析响应失败: %v", err)
@@ -222,7 +222,7 @@ func testClaudeMessage(t *testing.T, claudeKey string, model string, stream bool
 	}
 }
 
-// TestGeminiGenerateContent 测试 Gemini /v1beta/models/:model 接口。
+// TestGeminiGenerateContent checks streaming and non-streaming Gemini generation requests.
 func TestGeminiGenerateContent(t *testing.T) {
 	geminiKey := requireGeminiAPIKey(t)
 	for i, model := range geminiModels {
@@ -281,7 +281,7 @@ func testGeminiGenerate(t *testing.T, geminiKey string, model string, stream boo
 	}
 
 	if stream {
-		// 流式：读取 SSE 事件
+		// Stop after three SSE data lines; at least one is required.
 		scanner := bufio.NewScanner(resp.Body)
 		eventCount := 0
 		for scanner.Scan() {
@@ -298,7 +298,7 @@ func testGeminiGenerate(t *testing.T, geminiKey string, model string, stream boo
 		}
 		t.Logf("✅ 收到 %d+ 个 SSE 事件", eventCount)
 	} else {
-		// 非流式：解析 JSON 响应
+		// A non-streaming response must contain candidates.
 		var result map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			t.Fatalf("解析响应失败: %v", err)
@@ -310,14 +310,14 @@ func testGeminiGenerate(t *testing.T, geminiKey string, model string, stream boo
 	}
 }
 
-// TestClaudeMessagesWithComplexTools 测试带复杂工具 schema 的请求
-// 模拟 Claude Code 发送的请求，包含需要清理的 JSON Schema 字段。
+// TestClaudeMessagesWithComplexTools sends Claude Code-style tool schemas
+// with fields that exercise upstream schema conversion.
 func TestClaudeMessagesWithComplexTools(t *testing.T) {
 	claudeKey := requireClaudeAPIKey(t)
-	// 测试模型列表（只测试几个代表性模型）
+	// Exercise representative Claude and Gemini-mapped fixtures.
 	models := []string{
-		"claude-opus-4-5-20251101",  // Claude 模型
-		"claude-haiku-4-5-20251001", // 映射到 Gemini
+		"claude-opus-4-5-20251101",  // Claude fixture.
+		"claude-haiku-4-5-20251001", // Fixture expects Gemini routing.
 	}
 
 	for i, model := range models {
@@ -333,8 +333,8 @@ func TestClaudeMessagesWithComplexTools(t *testing.T) {
 func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 	url := baseURL + endpointPrefix + "/v1/messages"
 
-	// 构造包含复杂 schema 的工具定义（模拟 Claude Code 的工具）
-	// 这些字段需要被 cleanJSONSchema 清理
+	// Claude Code-style tool definitions include schema keywords
+	// that may need normalization for the selected upstream.
 	tools := []map[string]any{
 		{
 			"name":        "read_file",
@@ -435,7 +435,7 @@ func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 				},
 			},
 		},
-		// 测试 required 引用不存在的属性（应被自动过滤）
+		// Exercise a required name absent from properties.
 		{
 			"name":        "invalid_required_tool",
 			"description": "Tool with invalid required field",
@@ -446,11 +446,11 @@ func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 						"type": "string",
 					},
 				},
-				// "nonexistent_field" 不存在于 properties 中，应被过滤掉
+				// The converter must remove this nonexistent required field for the intended upstream.
 				"required": []string{"name", "nonexistent_field"},
 			},
 		},
-		// 测试没有 properties 的 schema（应自动添加空 properties）
+		// Exercise an object schema with no properties.
 		{
 			"name":        "no_properties_tool",
 			"description": "Tool without properties",
@@ -459,7 +459,7 @@ func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 				"required": []string{"should_be_removed"},
 			},
 		},
-		// 测试没有 type 的 schema（应自动添加 type: OBJECT）
+		// Exercise a schema whose object type must be inferred from properties.
 		{
 			"name":        "no_type_tool",
 			"description": "Tool without type",
@@ -498,17 +498,17 @@ func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	// 400 错误说明 schema 清理不完整
+	// Treat a bad request as a failure of this schema-conversion scenario.
 	if resp.StatusCode == 400 {
 		t.Fatalf("Schema 清理失败，收到 400 错误: %s", string(respBody))
 	}
 
-	// 此测试将 503 作为可重试的服务不可用结果。
+	// Skip when the deployment reports temporary unavailability.
 	if resp.StatusCode == 503 {
 		t.Skipf("提供商暂时不可用 (503): %s", string(respBody))
 	}
 
-	// 429 是限流
+	// Skip when the deployment rate-limits the request.
 	if resp.StatusCode == 429 {
 		t.Skipf("请求被限流 (429): %s", string(respBody))
 	}
@@ -528,13 +528,13 @@ func testClaudeMessageWithTools(t *testing.T, claudeKey string, model string) {
 	t.Logf("✅ 复杂工具 schema 测试通过, id=%v", result["id"])
 }
 
-// TestClaudeMessagesWithThinkingAndTools 测试 thinking 模式下带工具调用的场景
-// 验证：当历史 assistant 消息包含 tool_use 但没有 signature 时，
-// 系统应补充 dummy thought_signature，使 Gemini 接受工具调用。
+// TestClaudeMessagesWithThinkingAndTools checks a thinking request with unsigned tool history.
+// The fixture expects Gemini routing and exercises signature repair for an assistant tool_use block.
+// The assertion checks acceptance of the converted request.
 func TestClaudeMessagesWithThinkingAndTools(t *testing.T) {
 	claudeKey := requireClaudeAPIKey(t)
 	models := []string{
-		"claude-haiku-4-5-20251001", // gemini-3-flash
+		"claude-haiku-4-5-20251001", // Fixture expects gemini-3-flash routing.
 	}
 	for i, model := range models {
 		if i > 0 {
@@ -549,13 +549,13 @@ func TestClaudeMessagesWithThinkingAndTools(t *testing.T) {
 func testClaudeThinkingWithToolHistory(t *testing.T, claudeKey string, model string) {
 	url := baseURL + endpointPrefix + "/v1/messages"
 
-	// 模拟历史对话：用户请求 → assistant 调用工具 → 工具返回 → 继续对话
-	// tool_use 块省略 signature，检查系统补充的 dummy signature。
+	// Continue a conversation after an assistant tool call and its result.
+	// Omit the tool signature to exercise signature repair.
 	payload := map[string]any{
 		"model":      model,
 		"max_tokens": 200,
 		"stream":     false,
-		// 开启 thinking 模式
+		// Enable thinking for the continuation.
 		"thinking": map[string]any{
 			"type":          "enabled",
 			"budget_tokens": 1024,
@@ -565,7 +565,7 @@ func testClaudeThinkingWithToolHistory(t *testing.T, claudeKey string, model str
 				"role":    "user",
 				"content": "List files in the current directory",
 			},
-			// assistant 消息包含 tool_use 但没有 signature
+			// The assistant history contains an unsigned tool_use block.
 			map[string]any{
 				"role": "assistant",
 				"content": []map[string]any{
@@ -578,11 +578,11 @@ func testClaudeThinkingWithToolHistory(t *testing.T, claudeKey string, model str
 						"id":    "toolu_01XGmNv",
 						"name":  "Bash",
 						"input": map[string]any{"command": "ls -la"},
-						// 故意不包含 signature
+						// Signature intentionally omitted.
 					},
 				},
 			},
-			// 工具结果
+			// Supply the result of the preceding tool call.
 			map[string]any{
 				"role": "user",
 				"content": []map[string]any{
@@ -626,17 +626,17 @@ func testClaudeThinkingWithToolHistory(t *testing.T, claudeKey string, model str
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	// 400 错误说明 thought_signature 处理失败
+	// Treat a bad request as a failure of this unsigned-tool-history scenario.
 	if resp.StatusCode == 400 {
 		t.Fatalf("thought_signature 处理失败，收到 400 错误: %s", string(respBody))
 	}
 
-	// 此测试将 503 作为可重试的服务不可用结果。
+	// Skip when the deployment reports temporary unavailability.
 	if resp.StatusCode == 503 {
 		t.Skipf("提供商暂时不可用 (503): %s", string(respBody))
 	}
 
-	// 429 是限流
+	// Skip when the deployment rate-limits the request.
 	if resp.StatusCode == 429 {
 		t.Skipf("请求被限流 (429): %s", string(respBody))
 	}
@@ -656,22 +656,22 @@ func testClaudeThinkingWithToolHistory(t *testing.T, claudeKey string, model str
 	t.Logf("✅ thinking 模式工具调用测试通过, id=%v", result["id"])
 }
 
-// TestClaudeMessagesWithGeminiModel 测试在 Claude 端点使用 Gemini 模型
-// 验证：通过 /v1/messages 端点传入 gemini 模型名的场景（含前缀映射）
-// 仅在 Antigravity 模式下运行（ENDPOINT_PREFIX="/antigravity"）。
+// TestClaudeMessagesWithGeminiModel sends Gemini model names through /v1/messages.
+// The fixture includes names expected to resolve through prefix mappings.
+// It runs when ENDPOINT_PREFIX is /antigravity.
 func TestClaudeMessagesWithGeminiModel(t *testing.T) {
 	if endpointPrefix != "/antigravity" {
 		t.Skip("仅在 Antigravity 模式下运行")
 	}
 	claudeKey := requireClaudeAPIKey(t)
 
-	// 测试通过 Claude 端点调用 Gemini 模型
+	// Gemini names sent through the Messages endpoint.
 	geminiViaClaude := []string{
-		"gemini-3-flash",       // 直接支持
-		"gemini-3-pro-low",     // 直接支持
-		"gemini-3-pro-high",    // 直接支持
-		"gemini-3-pro",         // 前缀映射 -> gemini-3-pro-high
-		"gemini-3-pro-preview", // 前缀映射 -> gemini-3-pro-high
+		"gemini-3-flash",       // Expected direct model.
+		"gemini-3-pro-low",     // Expected direct model.
+		"gemini-3-pro-high",    // Expected direct model.
+		"gemini-3-pro",         // Fixture expects a prefix mapping to gemini-3-pro-high.
+		"gemini-3-pro-preview", // Fixture expects a prefix mapping to gemini-3-pro-high.
 	}
 
 	for i, model := range geminiViaClaude {
@@ -688,12 +688,12 @@ func TestClaudeMessagesWithGeminiModel(t *testing.T) {
 	}
 }
 
-// TestClaudeMessagesWithNoSignature 测试历史 thinking block 不带 signature 的场景
-// 验证：Gemini 模型接受没有 signature 的 thinking block。
+// TestClaudeMessagesWithNoSignature checks acceptance of unsigned thinking history.
+// The fixture expects the configured deployment to route the request to Gemini.
 func TestClaudeMessagesWithNoSignature(t *testing.T) {
 	claudeKey := requireClaudeAPIKey(t)
 	models := []string{
-		"claude-haiku-4-5-20251001", // gemini-3-flash - 支持无 signature
+		"claude-haiku-4-5-20251001", // Fixture expects gemini-3-flash routing with unsigned thinking history.
 	}
 	for i, model := range models {
 		if i > 0 {
@@ -708,12 +708,12 @@ func TestClaudeMessagesWithNoSignature(t *testing.T) {
 func testClaudeWithNoSignature(t *testing.T, claudeKey string, model string) {
 	url := baseURL + endpointPrefix + "/v1/messages"
 
-	// 模拟历史对话包含 thinking block 但没有 signature
+	// Include an unsigned thinking block in the conversation history.
 	payload := map[string]any{
 		"model":      model,
 		"max_tokens": 200,
 		"stream":     false,
-		// 开启 thinking 模式
+		// Enable thinking for the continuation.
 		"thinking": map[string]any{
 			"type":          "enabled",
 			"budget_tokens": 1024,
@@ -723,14 +723,14 @@ func testClaudeWithNoSignature(t *testing.T, claudeKey string, model string) {
 				"role":    "user",
 				"content": "What is 2+2?",
 			},
-			// assistant 消息包含 thinking block 但没有 signature
+			// The assistant history contains an unsigned thinking block.
 			map[string]any{
 				"role": "assistant",
 				"content": []map[string]any{
 					{
 						"type":     "thinking",
 						"thinking": "Let me calculate 2+2...",
-						// 故意不包含 signature
+						// Signature intentionally omitted.
 					},
 					{
 						"type": "text",
@@ -787,15 +787,15 @@ func testClaudeWithNoSignature(t *testing.T, claudeKey string, model string) {
 	t.Logf("✅ 无 signature thinking 处理测试通过, id=%v", result["id"])
 }
 
-// TestGeminiEndpointWithClaudeModel 测试通过 Gemini 端点调用 Claude 模型
-// 仅在 Antigravity 模式下运行（ENDPOINT_PREFIX="/antigravity"）。
+// TestGeminiEndpointWithClaudeModel sends Claude names through the Gemini endpoint.
+// It runs when ENDPOINT_PREFIX is /antigravity.
 func TestGeminiEndpointWithClaudeModel(t *testing.T) {
 	if endpointPrefix != "/antigravity" {
 		t.Skip("仅在 Antigravity 模式下运行")
 	}
 	geminiKey := requireGeminiAPIKey(t)
 
-	// 测试通过 Gemini 端点调用 Claude 模型
+	// Claude names sent through the Gemini endpoint.
 	claudeViaGemini := []string{
 		"claude-sonnet-4-5",
 		"claude-opus-4-5-thinking",

@@ -10,13 +10,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// CompletionSubmission 在 HTTP 请求线程中捕获完成任务的数据。
+// CompletionSubmission captures completion work from the HTTP request goroutine.
 type CompletionSubmission struct {
 	pool    *completion.UsageRecordWorkerPool
 	options completion.SubmissionOptions
 }
 
-// NewCompletionSubmission 为 Messages 与 OpenAI 入口配置日志来源。
+// NewCompletionSubmission selects log sources for Messages or OpenAI endpoints.
 func NewCompletionSubmission(pool *completion.UsageRecordWorkerPool, openAI bool) CompletionSubmission {
 	prefix, component := "gateway", "handler.gateway.messages"
 	if openAI {
@@ -43,12 +43,13 @@ func NewCompletionSubmission(pool *completion.UsageRecordWorkerPool, openAI bool
 	}}
 }
 
-// NewQoderCompletionSubmission 保留池拒绝不内联、无池时脱离取消的原独立策略。
+// NewQoderCompletionSubmission does not retry ordinary pool-rejected tasks inline.
+// With no pool, it runs tasks with source values in a context detached from cancellation.
 func NewQoderCompletionSubmission(pool *completion.UsageRecordWorkerPool) CompletionSubmission {
 	return CompletionSubmission{pool: pool, options: completion.SubmissionOptions{PreserveSourceValues: true}}
 }
 
-// CompletionContext 捕获关联字段和模型映射链，供完成任务使用。
+// CompletionContext snapshots correlation fields and the model mapping chain for completion work.
 func CompletionContext(c *gin.Context) context.Context {
 	return completion.SnapshotContext(completionSource(c))
 }
@@ -68,7 +69,7 @@ func (s CompletionSubmission) SubmitMandatory(c *gin.Context, task completion.Us
 	completion.SubmitTask(s.pool, completionSource(c), task, true, s.options)
 }
 
-// SubmitImages 使用已确认的图片产出数量提交完成任务。
+// SubmitImages marks completion mandatory when a positive image count has been confirmed.
 func (s CompletionSubmission) SubmitImages(c *gin.Context, images int, task completion.UsageRecordTask) {
 	completion.SubmitTask(s.pool, completionSource(c), task, images > 0, s.options)
 }

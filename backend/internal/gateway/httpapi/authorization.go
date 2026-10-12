@@ -16,19 +16,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// AuthorizationSubscriptions 保留同一权益实例的读取、校验与窗口维护。
+// AuthorizationSubscriptions reads and validates subscriptions, including usage window maintenance.
 type AuthorizationSubscriptions interface {
 	admission.SubscriptionReader
 	admission.SubscriptionValidator
 }
 
-// APIKeyAuthorizationOptions 提供入口选项、观测接口和请求上下文数据。
+// APIKeyAuthorizationOptions configures authentication and binding of the authorized key to the request.
 type APIKeyAuthorizationOptions struct {
 	Authentication keyhttp.AuthenticationOptions
 	BindLegacyKey  func(*gin.Context, *apikey.APIKey)
 }
 
-// APIKeyIDFromContext 读取已认证主体的 Key ID，缺失或类型不匹配时返回零。
+// APIKeyIDFromContext returns the authenticated key ID, or zero for a missing or unexpected value.
 func APIKeyIDFromContext(c *gin.Context) int64 {
 	if c == nil {
 		return 0
@@ -69,7 +69,7 @@ func (o APIKeyAuthorizationOptions) bind(c *gin.Context, k *apikey.APIKey) {
 	}
 }
 
-// EffectiveAPIKey 只供新网关读取已经完成准入的最终 Key 视图。
+// EffectiveAPIKey returns the final key view saved after admission.
 func EffectiveAPIKey(c *gin.Context) (*apikey.APIKey, bool) {
 	value, ok := c.Get("gateway_effective_key")
 	if !ok {
@@ -101,18 +101,16 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 		if abortAuthorizationGroupNotAllowed(c, apiKey, options) {
 			return
 		}
-		// 通用入口在此绑定策略数据，Google 入口使用自己的策略处理。
+		// Bind the effective payer and Fast policy after final group authorization.
 		requestAccess := *access
 		requestAccess.PayerUserID = apiKey.User.ID
 		ctx := apikey.WithAccessSnapshot(c.Request.Context(), requestAccess)
 		c.Request = c.Request.WithContext(apikey.WithFastModePolicy(ctx, apiKey.FastModePolicy))
 		ApplyAPIKeyModelRedirect(c, apiKey)
-		// 批任务管理只读取已有数据或释放冻结；即使任务耗尽额度，结果仍应可取回或取消。
+		// Batch management remains accessible after quota exhaustion so users can retrieve results or cancel work.
 		skipBilling := IsAPIKeyUsageRequest(c.Request.Method, c.Request.URL.Path) ||
 			IsBatchImageBillingBypassRequest(c.Request.Method, c.Request.URL.Path) ||
 			(apiKey.IsComposite && IsGrokVideoTaskRead(c.Request.Method, c.Request.URL.Path))
-
-		// 解析 Key 的结算来源。
 
 		billingContext, billingErr := admission.ResolveFundingFromKey(c.Request.Context(), apiKey, subscriptionService, !skipBilling)
 		if billingErr != nil {
@@ -131,7 +129,7 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 			subscription = billingContext.Subscription
 		}
 
-		// 消费入口执行资金和 Key 限额检查。
+		// Check funding and key limits for consumption endpoints.
 
 		if !skipBilling {
 			checked, failure := admission.CheckConsumption(c.Request.Context(), admission.ConsumptionInput{Status: apiKey.Status, Limits: apiKey, Balance: apiKey.User.Balance, Subscription: subscription}, subscriptionService)
@@ -159,8 +157,6 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 			}
 		}
 
-		// 写入认证上下文后执行后续处理器。
-
 		if billingContext != nil {
 			c.Set("api_key_billing", billingContext)
 		}
@@ -186,7 +182,7 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 	}
 }
 
-// NewGoogleAPIKeyAuthorization 保留 Google 入口的认证与错误时序。
+// NewGoogleAPIKeyAuthorization authenticates Google endpoints and reports failures in Google format.
 func NewGoogleAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionService AuthorizationSubscriptions, options APIKeyAuthorizationOptions) gin.HandlerFunc {
 	options.Authentication.Google = true
 	return func(c *gin.Context) {
@@ -213,7 +209,7 @@ func NewGoogleAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscript
 			keyhttp.AbortGoogleError(c, 403, message)
 			return
 		}
-		// 专属分组授权校验：用户对该专属分组的授权被撤销后应拒绝（与主中间件一致，防止越权）。
+		// Recheck exclusive-group access so revoked membership cannot authorize this request.
 		if !admission.GroupAllowed(apiKey) {
 			options.business(c)
 			options.reject(c, "group_not_allowed")
@@ -225,7 +221,7 @@ func NewGoogleAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscript
 			IsBatchImageBillingBypassRequest(c.Request.Method, c.Request.URL.Path) ||
 			(apiKey.IsComposite && IsGrokVideoTaskRead(c.Request.Method, c.Request.URL.Path))
 
-		// 非消费请求（包括 /v1/usage 和批任务管理）读取配置快照，资金来源失效时仍可查询和管理。
+		// Non-consuming requests can read or manage existing data even when their configured funding source is invalid.
 		billingContext, billingErr := admission.ResolveFundingFromKey(c.Request.Context(), apiKey, subscriptionService, !skipBilling)
 		if billingErr != nil {
 			switch {
@@ -325,7 +321,7 @@ func IsOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 	return false
 }
 
-// AbortOpenAIQuotaError 输出与 OpenAI 兼容的配额不足响应。
+// AbortOpenAIQuotaError writes an OpenAI-compatible insufficient-quota response.
 func AbortOpenAIQuotaError(c *gin.Context, statusCode int, message string) {
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
@@ -339,7 +335,7 @@ func AbortOpenAIQuotaError(c *gin.Context, statusCode int, message string) {
 }
 
 func abortAuthorizationGroupUnavailable(c *gin.Context, key *apikey.APIKey, o APIKeyAuthorizationOptions) bool {
-	// 未绑普通 Key 在资金检查之前给出可操作提示；既有任务和本地用量查询仍可访问。
+	// Reject an unbound ordinary key before funding checks, while allowing existing-task and local usage access.
 	if key != nil && !key.IsComposite && key.GroupID == nil && !IsAPIKeyUsageRequest(c.Request.Method, c.Request.URL.Path) && !IsBatchImageBillingBypassRequest(c.Request.Method, c.Request.URL.Path) && !IsGrokVideoTaskRead(c.Request.Method, c.Request.URL.Path) {
 		o.business(c)
 		o.reject(c, "group_unassigned")
@@ -371,7 +367,7 @@ func abortAuthorizationGroupNotAllowed(c *gin.Context, key *apikey.APIKey, o API
 	return true
 }
 
-// acquireKeyRequest 在协议处理前预占请求额度，非消费接口跳过检查。
+// acquireKeyRequest reserves request capacity before protocol handling; non-consuming and per-turn endpoints bypass it.
 func acquireKeyRequest(c *gin.Context, keys *apikey.APIKeyService, key *apikey.APIKey, options APIKeyAuthorizationOptions) (func(), bool) {
 	if IsAPIKeyNonConsumingRequest(c.Request.Method, c.Request.URL.Path) || isResponsesTurnAdmission(c) {
 		return func() {}, true
@@ -405,7 +401,7 @@ func acquireKeyRequest(c *gin.Context, keys *apikey.APIKeyService, key *apikey.A
 	return nil, false
 }
 
-// isResponsesTurnAdmission 将 Responses 升级请求的 Key 限制交给逐轮准入。
+// isResponsesTurnAdmission identifies Responses upgrades whose key limits are enforced on each turn.
 func isResponsesTurnAdmission(c *gin.Context) bool {
 	if c.Request.Method != http.MethodGet || !IsResponsesWSUpgrade(c.Request) {
 		return false
@@ -418,7 +414,7 @@ func isResponsesTurnAdmission(c *gin.Context) bool {
 	}
 }
 
-// GetExecutionAPIKey 从请求上下文读取已认证的 API Key。
+// GetExecutionAPIKey reads the authenticated API key from the request context.
 func GetExecutionAPIKey(c interface{ Get(string) (any, bool) }) *apikey.APIKey {
 	if c == nil {
 		return nil

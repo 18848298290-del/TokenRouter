@@ -8,5 +8,5 @@ type Runtime struct {
 	*ProviderBindings
 }
 
-// ResumeService 向应用 HTTP 装配提供同一个签名实例，不重新读取配置。
+// ResumeService returns the lifecycle's signing instance for HTTP handlers.
 func (r *Runtime) ResumeService() *PaymentResumeService { return r.OrderLifecycle.resume }

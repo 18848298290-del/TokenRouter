@@ -10,7 +10,7 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// EmailOAuthIdentityInput 是 GitHub/Google/OIDC 这类已验证邮箱 OAuth 登录的身份输入。
+// EmailOAuthIdentityInput describes an OAuth identity with an email verified by a provider such as GitHub, Google, or OIDC.
 type EmailOAuthIdentityInput struct {
 	ProviderType     string
 	ProviderKey      string

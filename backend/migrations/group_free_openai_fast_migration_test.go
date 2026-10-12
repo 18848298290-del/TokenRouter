@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupFreeOpenAIFastMigration 锁定分组免费 Fast 字段的类型、默认值和用途说明。
+// TestGroupFreeOpenAIFastMigration checks the free Fast field's type, default, and column description.
 func TestGroupFreeOpenAIFastMigration(t *testing.T) {
 	content, err := FS.ReadFile("264_group_free_openai_fast.sql")
 	require.NoError(t, err)

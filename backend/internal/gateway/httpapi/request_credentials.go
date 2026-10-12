@@ -12,18 +12,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 凭据预算保存在 HTTP 请求中，平台准备器通过参数接收预算状态。
+// credentialBudgetKey stores the request's shared credential budget for platform preparation.
 const credentialBudgetKey = "grok_credential_failover_deadline"
 
-// CredentialObserver 将凭据故障分类记录到 Ops。
+// CredentialObserver records credential failure classifications in Ops.
 type CredentialObserver struct{ Context *gin.Context }
 
-// RequestCredentialExecutor 将同一凭据用例绑定到媒体、WS 和文本 HTTP 入口。
+// RequestCredentialExecutor binds shared credential resolution to media, WS, and text HTTP requests.
 type RequestCredentialExecutor struct {
 	Runtime *gatewayadapter.RequestCredentials
 }
 
-// RequestCredentialBudget 返回本请求共享的预算，计时由使用方启动。
+// RequestCredentialBudget returns the request's shared budget; consumers start its timer.
 func RequestCredentialBudget(c *gin.Context) *requeststate.CredentialBudget {
 	if c == nil {
 		return nil

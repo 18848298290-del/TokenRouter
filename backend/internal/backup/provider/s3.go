@@ -58,7 +58,7 @@ func NewS3BackupStoreFactory() backup.BackupObjectStoreFactory {
 	return func(ctx context.Context, cfg *backup.BackupS3Config) (backup.BackupObjectStore, error) {
 		region := cfg.Region
 		if region == "" {
-			region = "auto" // Cloudflare R2 默认 region
+			region = "auto" // Default region for Cloudflare R2
 		}
 
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
@@ -99,7 +99,7 @@ func (s *S3BackupStore) Upload(ctx context.Context, key string, body io.Reader, 
 	return s.uploadBackupSpooledPut(ctx, key, body, contentType)
 }
 
-// uploadBackupMultipart 使用单并发小分片上传未知长度的备份流，限制进程内缓冲区上限。
+// uploadBackupMultipart bounds buffering with small parts and one concurrent upload for unknown-length streams.
 func (s *S3BackupStore) uploadBackupMultipart(ctx context.Context, key string, body io.Reader, contentType string) (int64, error) {
 	progress := &s3UploadProgressListener{}
 	uploader := transfermanager.New(s.client, func(o *transfermanager.Options) {
@@ -128,7 +128,7 @@ func (s *S3BackupStore) uploadBackupMultipart(ctx context.Context, key string, b
 	return uploaded, nil
 }
 
-// uploadBackupSpooledPut 先写入权限受限的临时文件，再以已知长度执行兼容性更好的 PutObject。
+// uploadBackupSpooledPut stages input in a private temporary file for a known-length PutObject request.
 func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error) {
 	tmp, err := os.CreateTemp("", "tokenrouter-backup-upload-*.tmp")
 	if err != nil {
@@ -153,7 +153,7 @@ func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, 
 	return written, nil
 }
 
-// Read 在每次读取前检查取消信号，避免磁盘暂存阶段忽略任务超时。
+// Read checks cancellation before each read so disk spooling observes task deadlines.
 func (r *contextAwareReader) Read(p []byte) (int, error) {
 	select {
 	case <-r.ctx.Done():
@@ -163,12 +163,12 @@ func (r *contextAwareReader) Read(p []byte) (int, error) {
 	}
 }
 
-// UploadFile 面向几十 GB 级别的本地文件，超过单个分片后按固定缓冲区流式上传。
+// UploadFile streams large files using the configured multipart buffer sizes.
 func (s *S3BackupStore) UploadFile(ctx context.Context, key string, body io.Reader, contentType string) (int64, error) {
 	return s.UploadFileWithProgress(ctx, key, body, contentType, nil)
 }
 
-// UploadSized 对已知长度的备份分卷直接执行 PutObject，避免兼容模式重复写临时文件。
+// UploadSized sends a known-length part with PutObject, avoiding a second temporary copy.
 func (s *S3BackupStore) UploadSized(ctx context.Context, key string, body io.Reader, contentType string, sizeBytes int64) (int64, error) {
 	if sizeBytes < 0 {
 		return 0, fmt.Errorf("backup upload size must not be negative")
@@ -179,7 +179,7 @@ func (s *S3BackupStore) UploadSized(ctx context.Context, key string, body io.Rea
 	return sizeBytes, nil
 }
 
-// UploadFileWithProgress 面向几十 GB 级别的本地文件，使用官方 transfermanager 并发上传分片。
+// UploadFileWithProgress uploads parts concurrently through transfermanager and reports uploaded bytes.
 func (s *S3BackupStore) UploadFileWithProgress(ctx context.Context, key string, body io.Reader, contentType string, onProgress func(uploadedBytes int64)) (int64, error) {
 	partSizeBytes := int64(normalizeS3UploadPartSizeMB(s.uploadPartSizeMB)) * 1024 * 1024
 	progress := &s3UploadProgressListener{onProgress: onProgress}
@@ -253,8 +253,8 @@ func (s *S3BackupStore) Delete(ctx context.Context, key string) error {
 
 func (s *S3BackupStore) PresignURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	presignClient := s3.NewPresignClient(s.client)
-	// 使用 attachment disposition，浏览器打开该 URL 时触发下载，
-	// 前端无需依赖会被弹窗拦截的新标签页。
+	// Attachment disposition makes navigation to the URL start a download.
+	// The frontend can use the current tab and avoid popup blocking.
 	disposition := fmt.Sprintf("attachment; filename=%q", path.Base(key))
 	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket:                     &s.bucket,

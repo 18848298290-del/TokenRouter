@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// applyGeminiModelParameters 使用最终路线设置生成参数，控制字段来自客户端原始协议。
+// applyGeminiModelParameters applies final-route capabilities to controls from the original client protocol.
 func applyGeminiModelParameters(body, controls []byte, resolution modelcatalog.Resolution, convertThinking bool) ([]byte, error) {
 	result := resolution.ForRequest(gatewayprovider.ModelRequestState(controls))
 	var err error

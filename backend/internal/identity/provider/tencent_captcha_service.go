@@ -21,14 +21,14 @@ type tencentCaptchaVerifier struct {
 	newClient tencentCaptchaClientFactory
 }
 
-// NewTencentCaptchaVerifier 创建腾讯云验证码票据校验适配器。
+// NewTencentCaptchaVerifier creates a Tencent captcha ticket verifier.
 func NewTencentCaptchaVerifier() identity.TencentCaptchaVerifier {
 	return &tencentCaptchaVerifier{newClient: newTencentCaptchaSDKClient}
 }
 
-// newTencentCaptchaSDKClient 接入点由调用方按站点下发（中国站 / 国际站）。
-// service 层的 tencentCaptchaEndpoint 已保证 endpoint 非空；即便为空，
-// 腾讯 SDK 也会回落到服务默认域 captcha.tencentcloudapi.com（即中国站），不会失败。
+// newTencentCaptchaSDKClient uses the endpoint selected for the configured region.
+// The service supplies a nonempty endpoint.
+// An empty SDK endpoint defaults to captcha.tencentcloudapi.com, the China region.
 func newTencentCaptchaSDKClient(secretID, secretKey, endpoint string) (tencentCaptchaAPI, error) {
 	clientProfile := profile.NewClientProfile()
 	clientProfile.HttpProfile.Endpoint = endpoint

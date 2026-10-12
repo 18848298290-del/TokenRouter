@@ -23,7 +23,7 @@ const (
 	{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"SF"}}
 ]`
 
-	// minMaxOutputTokens 是协议测试中使用的最小输出预算期望值。
+	// minMaxOutputTokens is the minimum output budget expected by protocol tests.
 	minMaxOutputTokens = 128
 )
 
@@ -254,14 +254,12 @@ func TestAnthropicToResponses_ToolUse(t *testing.T) {
 	resp, err := AnthropicToResponses(req)
 	require.NoError(t, err)
 
-	// Check tools
 	require.Len(t, resp.Tools, 1)
 	assert.Equal(t, "function", resp.Tools[0].Type)
 	assert.Equal(t, "get_weather", resp.Tools[0].Name)
 	require.NotNil(t, resp.Tools[0].Strict)
 	assert.False(t, *resp.Tools[0].Strict)
 
-	// Check input items
 	var items []protocolopenai.ResponsesInputItem
 	require.NoError(t, json.Unmarshal(resp.Input, &items))
 	// user + assistant + function_call + function_call_output = 4
@@ -293,10 +291,10 @@ func TestAnthropicToResponses_ThinkingWithoutSignatureIgnored(t *testing.T) {
 
 	var items []protocolopenai.ResponsesInputItem
 	require.NoError(t, json.Unmarshal(resp.Input, &items))
-	// 用户消息 + 仅含文本的助手消息（忽略无签名 thinking）+ 用户消息，共 3 项。
+	// Three messages remain: user, assistant text with unsigned thinking omitted, then user.
 	require.Len(t, items, 3)
 	assert.Equal(t, "assistant", items[1].Role)
-	// Assistant content should only have text, not thinking.
+	// Unsigned thinking does not become assistant content.
 	var parts []protocolopenai.ResponsesContentPart
 	require.NoError(t, json.Unmarshal(items[1].Content, &parts))
 	require.Len(t, parts, 1)
@@ -320,7 +318,7 @@ func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
 
 	var items []protocolopenai.ResponsesInputItem
 	require.NoError(t, json.Unmarshal(resp.Input, &items))
-	// 用户消息 + 推理 + 助手文本 + 函数调用 + 函数调用结果。
+	// The sequence includes user, reasoning, assistant text, function call, and call result.
 	require.GreaterOrEqual(t, len(items), 4)
 	assert.Equal(t, "reasoning", items[1].Type)
 	assert.Equal(t, "enc-rs-1", items[1].EncryptedContent)
@@ -405,7 +403,7 @@ func TestAnthropicToResponses_NoThinking(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigOverridesDefault(t *testing.T) {
-	// Default is medium, but output_config.effort="low" overrides. low→low after mapping.
+	// output_config.effort="low" overrides the default medium effort.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -422,8 +420,8 @@ func TestAnthropicToResponses_OutputConfigOverridesDefault(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigWithoutThinking(t *testing.T) {
-	// No thinking field, but output_config.effort="medium" → creates reasoning.
-	// medium→medium after 1:1 mapping.
+	// output_config.effort creates reasoning even when thinking is absent.
+	// The medium value passes through unchanged.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -439,7 +437,7 @@ func TestAnthropicToResponses_OutputConfigWithoutThinking(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigHigh(t *testing.T) {
-	// output_config.effort="high" → mapped to "high" (1:1).
+	// The high effort value passes through unchanged.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -455,7 +453,7 @@ func TestAnthropicToResponses_OutputConfigHigh(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
-	// 未取得最终路线属性前，转换器保留客户端档位。
+	// Retain client effort until final route capabilities are available.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -471,7 +469,7 @@ func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigMaxForGPT56(t *testing.T) {
-	// GPT-5.6 支持 max 档位。
+	// Retain max effort for GPT-5.6.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.6-sol",
 		MaxTokens:    1024,
@@ -504,7 +502,7 @@ func TestAnthropicToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 }
 
 func TestAnthropicToResponses_NoOutputConfig(t *testing.T) {
-	// No output_config → default medium regardless of thinking.type.
+	// Without output_config, effort defaults to medium regardless of thinking.type.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
 		MaxTokens: 1024,
@@ -519,7 +517,7 @@ func TestAnthropicToResponses_NoOutputConfig(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigWithoutEffort(t *testing.T) {
-	// output_config present but effort empty (e.g. only format set) → default medium.
+	// An empty output_config effort uses the medium default.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -826,7 +824,7 @@ func TestAnthropicToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	assert.Equal(t, req.Temperature, resp.Temperature)
 	assert.Equal(t, req.TopP, resp.TopP)
 
-	// 路线参数处理发生在转换之后。
+	// Route-specific parameter filtering runs after conversion.
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"temperature"`)
@@ -902,9 +900,9 @@ func TestAnthropicToChatCompletionsRequest_ToolUseInAssistant(t *testing.T) {
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	// 依次包含 user、带 tool_calls 的 assistant 和 tool 回复。
+	// Expect user, assistant tool calls, and a tool reply in order.
 	require.GreaterOrEqual(t, len(out.Messages), 2)
-	// 定位带 tool_calls 的 assistant 消息。
+
 	var assistant *protocolopenai.ChatMessage
 	for i := range out.Messages {
 		if out.Messages[i].Role == "assistant" && len(out.Messages[i].ToolCalls) > 0 {
@@ -932,7 +930,7 @@ func TestAnthropicToChatCompletionsRequest_ToolResultBecomesToolMessage(t *testi
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	// 定位 tool 回复消息。
+
 	var toolMsg *protocolopenai.ChatMessage
 	for i := range out.Messages {
 		if out.Messages[i].Role == "tool" {
@@ -956,7 +954,7 @@ func TestAnthropicToChatCompletionsRequest_ThinkingDropped(t *testing.T) {
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
 	require.Len(t, out.Messages, 1)
-	// 仅保留文本，thinking 会被丢弃。
+	// A text-only turn drops thinking from the Chat payload.
 	require.Equal(t, `"answer"`, string(out.Messages[0].Content))
 	require.Empty(t, out.Messages[0].ReasoningContent)
 }
@@ -1087,7 +1085,7 @@ func TestAnthropicToChatCompletionsRequest_TemperaturePreservedForNonReasoningMo
 func TestAnthropicToChatCompletionsRequest_MaxTokensFloor(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
-		MaxTokens: 10, // 低于 minMaxOutputTokens（128）。
+		MaxTokens: 10, // Below minMaxOutputTokens (128).
 		Messages:  []protocolanthropic.AnthropicMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}},
 	}
 
@@ -1165,7 +1163,7 @@ func TestAnthropicToChatCompletionsRequest_ServerToolDropped(t *testing.T) {
 	require.Equal(t, "get_weather", out.Tools[0].Function.Name)
 }
 
-// TestDirectBridge_RequestMatchesDoubleConversion 验证直连请求与旧双转换链一致。
+// TestDirectBridge_RequestMatchesDoubleConversion compares direct conversion with the Responses intermediate path.
 func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 	temp := 0.5
 	req := &protocolanthropic.AnthropicRequest{
@@ -1184,17 +1182,16 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 		},
 	}
 
-	// 直连桥结果。
+	// Direct Anthropic-to-Chat conversion.
 	direct, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
 
-	// 旧双转换桥结果。
+	// Conversion through Responses.
 	responsesReq, err := AnthropicToResponses(req)
 	require.NoError(t, err)
 	double, err := protocolbridge.ResponsesToChatCompletionsRequestWithOptions(responsesReq, nil)
 	require.NoError(t, err)
 
-	// 比较转换后的模型、内容和用量字段。
 	require.Equal(t, double.Model, direct.Model)
 	require.Equal(t, double.Temperature, direct.Temperature)
 	require.Equal(t, double.MaxCompletionTokens, direct.MaxCompletionTokens)
@@ -1202,11 +1199,11 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 	require.Equal(t, string(double.ToolChoice), string(direct.ToolChoice))
 	require.Len(t, direct.Tools, len(double.Tools))
 
-	// 消息数量、角色和内容必须一致。
+	// Both paths must agree on message count, roles, and content.
 	require.Len(t, direct.Messages, len(double.Messages), "message count mismatch")
 	for i := range direct.Messages {
 		require.Equal(t, double.Messages[i].Role, direct.Messages[i].Role, "msg %d role mismatch", i)
-		// 两侧 content 都归一化为 JSON 后比较。
+		// Compare decoded JSON content to ignore encoding differences.
 		var dContent, dblContent any
 		_ = json.Unmarshal(double.Messages[i].Content, &dblContent)
 		_ = json.Unmarshal(direct.Messages[i].Content, &dContent)
@@ -1222,7 +1219,7 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 }
 
 func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
-	// tool_result 中的图片必须提升为后续 user 消息的 image_url part。
+	// Promote images in tool_result into image_url parts of a following user message.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
 		MaxTokens: 100,
@@ -1235,10 +1232,9 @@ func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	// 消息依次为 user、assistant(tool_use)、tool、user(image)。
+	// Expect user, assistant tool call, tool reply, then user image content.
 	require.GreaterOrEqual(t, len(out.Messages), 3)
 
-	// 定位包含图片的 user 消息。
 	var foundImage bool
 	for _, m := range out.Messages {
 		if m.Role != "user" {
@@ -1258,7 +1254,7 @@ func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 }
 
 func TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString(t *testing.T) {
-	// 纯文本数组以空行拼成字符串，部分 Chat 上游会拒绝无图片的数组 content。
+	// Join text-only arrays with blank lines because some Chat upstreams reject arrays without images.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1274,7 +1270,7 @@ func TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString(t *test
 }
 
 func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing.T) {
-	// 纯文本折叠为字符串，包含图片时保留 parts 数组，两者都必须与旧桥一致。
+	// Both conversion paths collapse text-only content and retain arrays containing images.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1304,7 +1300,7 @@ func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing
 }
 
 func TestAnthropicToChatCompletionsRequest_ToolChoiceUndeclaredDropped(t *testing.T) {
-	// 指向已丢弃或未知工具的具名 tool_choice 不得转发，否则 Chat 上游会返回 400。
+	// Drop named tool_choice values that refer to removed or unknown tools to avoid upstream rejection.
 	base := protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1360,7 +1356,7 @@ func TestAnthropicToChatCompletionsRequest_ThinkingBecomesReasoningContentOnTool
 	require.Equal(t, `"checking"`, string(assistant.Content), "text/tool_use 处理保持不变")
 }
 
-// TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire 验证上游线格式才是上游看到的东西：字段没序列化出去，等于没修。
+// TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire checks reasoning_content in the serialized payload.
 func TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire(t *testing.T) {
 	out, err := AnthropicToChatCompletionsRequest(anthropicAssistantMsg(t, anthropicThinkingToolTurn))
 	require.NoError(t, err)
@@ -1370,8 +1366,8 @@ func TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire(t *t
 	require.Contains(t, string(payload), `"reasoning_content":"user wants weather, call the tool"`)
 }
 
-// TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement 验证兄弟不变式：Responses→Chat 桥(buildChatMessagesFromItems 的 pendingReasoning)
-// 早就把 reasoning 挂到带 tool_calls 的 assistant 消息上了。等价历史下两条桥必须一致。
+// TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement compares both bridges for equivalent history.
+// Reasoning belongs on the assistant message containing tool_calls.
 func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *testing.T) {
 	responsesReq := &protocolopenai.ResponsesRequest{
 		Model: "deepseek-v4-flash",
@@ -1406,8 +1402,8 @@ func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *tes
 		"两条桥对等价历史必须产出同样的 reasoning_content 位置")
 }
 
-// TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped 检查纯文本轮次省略 reasoning_content。
-// 推理内容仅随工具调用回传。
+// TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped checks text-only turns omit reasoning_content.
+// Reasoning is passed back with tool calls.
 func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-flash",
@@ -1429,7 +1425,7 @@ func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(
 	require.NotContains(t, string(payload), "reasoning_content")
 }
 
-// TestChatReasoningAliasRequestConversion 验证历史 assistant reasoning 别名不会在 Chat 转 Responses 时丢失。
+// TestChatReasoningAliasRequestConversion checks that historical assistant reasoning aliases survive conversion to Responses.
 func TestChatReasoningAliasRequestConversion(t *testing.T) {
 	request := &protocolopenai.ChatCompletionsRequest{
 		Model: "reasoning-model",
@@ -1527,18 +1523,15 @@ func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	// (assistant message with empty content + tool_calls → only function_call items emitted)
 	require.Len(t, items, 3)
 
-	// Check function_call item
 	assert.Equal(t, "function_call", items[1].Type)
 	assert.Equal(t, "call_1", items[1].CallID)
 	assert.Empty(t, items[1].ID)
 	assert.Equal(t, "ping", items[1].Name)
 
-	// Check function_call_output item
 	assert.Equal(t, "function_call_output", items[2].Type)
 	assert.Equal(t, "call_1", items[2].CallID)
 	assert.Equal(t, "pong", items[2].Output)
 
-	// Check tools
 	require.Len(t, resp.Tools, 1)
 	assert.Equal(t, "function", resp.Tools[0].Type)
 	assert.Equal(t, "ping", resp.Tools[0].Name)
@@ -1842,7 +1835,7 @@ func TestChatCompletionsToResponses_FilePartFileID(t *testing.T) {
 }
 
 func TestChatCompletionsToResponses_EmptyFilePartSkipped(t *testing.T) {
-	// file_data 和 file_id 均缺失时丢弃文件 part，空 input_file 会触发上游 400。空图片 URL 同样丢弃。
+	// Drop file parts lacking file_data and file_id, and images with empty URLs, to avoid invalid upstream items.
 	content := `[{"type":"text","text":"Describe this"},{"type":"file","file":{"filename":"empty.pdf"}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1864,9 +1857,9 @@ func TestChatCompletionsToResponses_EmptyFilePartSkipped(t *testing.T) {
 }
 
 func TestChatCompletionsToResponses_EmptyContentNeverNull(t *testing.T) {
-	// 回归覆盖 #2515：上游 Responses API 会拒绝 content 为 JSON null 的
-	// input item。任何无法产生可用 content parts 的 chat-completions 消息，
-	// 都必须把 content 序列化成字符串。
+	// Regression #2515: Responses rejects input-item content serialized as JSON null.
+	// When a Chat message produces no usable content parts,
+	// serialize its content as a string.
 	cases := []struct {
 		name    string
 		content json.RawMessage
@@ -1949,7 +1942,6 @@ func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	assert.Equal(t, "function", resp.Tools[0].Type)
 	assert.Equal(t, "get_weather", resp.Tools[0].Name)
 
-	// tool_choice should be converted
 	require.NotNil(t, resp.ToolChoice)
 	var tc map[string]any
 	require.NoError(t, json.Unmarshal(resp.ToolChoice, &tc))
@@ -2002,7 +1994,7 @@ func TestChatCompletionsToResponses_SamplingPreservedBeforeResolution(t *testing
 	assert.Equal(t, req.Temperature, resp.Temperature)
 	assert.Equal(t, req.TopP, resp.TopP)
 
-	// 路线参数处理发生在转换之后。
+	// Route-specific parameter filtering runs after conversion.
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"temperature"`)
@@ -2245,22 +2237,22 @@ func TestAnthropicFastConvertsToOpenAIPriority(t *testing.T) {
 	require.Equal(t, "priority", converted.ServiceTier)
 }
 
-// TestCCChain_OrphanToolResultFromTrimmedHistory 验证复现线上 400：
+// TestCCChain_OrphanToolResultFromTrimmedHistory covers this upstream HTTP 400:
 //
 //	unexpected ...content.0: tool_use_id found in tool_result blocks:
 //	call_00_TgfbRvKlnD7oK6Dg00sL1661. Each tool_result block must have a
 //	corresponding tool_use block in the previous message.
 //
-// Chat Completions 客户端做滑动窗口上下文裁剪时，可能保留 tool 结果但丢掉声明该调用的
-// assistant tool_calls 消息。这个孤儿 tool_result 没有匹配 tool_use，会触发上游 400；
-// 修复逻辑会丢弃孤儿结果，让请求重新合法。
+// Sliding-window history may retain a tool result after dropping the assistant call declaration.
+// The orphan result has no matching tool_use, which Anthropic rejects.
+// Conversion removes the orphan to restore valid pairing.
 func TestCCChain_OrphanToolResultFromTrimmedHistory(t *testing.T) {
 	orphanID := "call_00_TgfbRvKlnD7oK6Dg00sL1661"
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
 		Model: "deepseek-v4-pro",
 		Messages: []protocolopenai.ChatMessage{
 			{Role: "user", Content: json.RawMessage(`"search the web for X"`)},
-			// 声明 orphanID 的 assistant tool_calls 消息已被裁剪。
+			// The assistant declaration of orphanID was trimmed from history.
 			{Role: "tool", ToolCallID: orphanID, Content: json.RawMessage(`"stale search results"`)},
 			{Role: "assistant", Content: json.RawMessage(`"Here is what I found."`)},
 			{Role: "user", Content: json.RawMessage(`"thanks, now do Y"`)},
@@ -2272,8 +2264,8 @@ func TestCCChain_OrphanToolResultFromTrimmedHistory(t *testing.T) {
 	}
 }
 
-// TestCCChain_ParallelToolOneResultMissing 验证并行 web_search 中某个 sibling 结果没有返回（工具失败或被跳过）。未回答 tool_use 会触发
-// Anthropic 的 “tool_use 缺少 tool_result” 校验；修复逻辑会丢弃它。
+// TestCCChain_ParallelToolOneResultMissing covers a parallel tool call whose result was omitted.
+// Conversion drops the unanswered tool_use so Anthropic receives complete pairs.
 func TestCCChain_ParallelToolOneResultMissing(t *testing.T) {
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
 		Model: "deepseek-v4-pro",
@@ -2284,7 +2276,7 @@ func TestCCChain_ParallelToolOneResultMissing(t *testing.T) {
 				{ID: "call_b", Type: "function", Function: protocolopenai.ChatFunctionCall{Name: "web_search", Arguments: `{"q":"B"}`}},
 			}},
 			{Role: "tool", ToolCallID: "call_a", Content: json.RawMessage(`"result A"`)},
-			// call_b 的结果缺失。
+			// The result for call_b is absent.
 		},
 	})
 	for _, m := range msgs {
@@ -2293,7 +2285,7 @@ func TestCCChain_ParallelToolOneResultMissing(t *testing.T) {
 	}
 }
 
-// TestCCChain_WellFormedMultiRound 验证基线：结构良好的多轮工具历史（每轮 assistant 含文本和 tool_calls）应能完整转换并正确配对。
+// TestCCChain_WellFormedMultiRound checks complete pairing across valid multi-round tool history.
 func TestCCChain_WellFormedMultiRound(t *testing.T) {
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
 		Model: "deepseek-v4-pro",
@@ -2310,7 +2302,7 @@ func TestCCChain_WellFormedMultiRound(t *testing.T) {
 			{Role: "assistant", Content: json.RawMessage(`"all done"`)},
 		},
 	})
-	// 两个调用都应保留且保持配对；assertAnthropicPairing 已验证配对关系。
+	// Both calls survive; assertAnthropicPairing checks their matching results.
 	var sawA, sawB bool
 	for _, m := range msgs {
 		blocks := parseContentBlocks(m.Content)
@@ -2320,7 +2312,7 @@ func TestCCChain_WellFormedMultiRound(t *testing.T) {
 	require.True(t, sawA && sawB, "both well-formed calls should be preserved")
 }
 
-// TestAnthropicReasoningBridgePreservesEffort 验证两种 OpenAI 入站协议不会把 xhigh 提升到会额外计费的 max。
+// TestAnthropicReasoningBridgePreservesEffort checks that neither OpenAI ingress format raises xhigh to max.
 func TestAnthropicReasoningBridgePreservesEffort(t *testing.T) {
 	for _, effort := range []string{"low", "medium", "high", "xhigh", "max"} {
 		t.Run(effort, func(t *testing.T) {
@@ -2340,7 +2332,7 @@ func TestAnthropicReasoningBridgePreservesEffort(t *testing.T) {
 	}
 }
 
-// chatEffortFixture 按 Chat 字段读取 effort，并使用模型能力规则规范化。
+// chatEffortFixture reads Chat effort and normalizes it with model capability rules.
 func chatEffortFixture(body []byte, models ...string) *string {
 	return ExtractEffort(body, true, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
@@ -2349,7 +2341,7 @@ func responsesEffortFixture(body []byte, models ...string) *string {
 	return ExtractEffort(body, false, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
 
-// AnthropicToResponses 为测试组合模型选项并调用协议转换。
+// AnthropicToResponses supplies model options to the protocol converter for tests.
 func AnthropicToResponses(req *protocolanthropic.AnthropicRequest) (*protocolopenai.ResponsesRequest, error) {
 	return protocolbridge.AnthropicToResponses(req, ConversionOptionsForModel(req.Model))
 }
@@ -2382,13 +2374,13 @@ func mustMarshalJSON(t *testing.T, value any) []byte {
 	return data
 }
 
-// assertAnthropicPairing 检查工具调用和结果相邻配对，配对错误会使 Anthropic 返回 400。
+// assertAnthropicPairing checks adjacent tool-call/result pairs required by Anthropic.
 func assertAnthropicPairing(t *testing.T, messages []protocolanthropic.AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
 		blocks := parseContentBlocks(m.Content)
 
-		// 不允许连续两条消息角色相同。
+		// Consecutive messages must alternate roles.
 		if i > 0 {
 			require.NotEqualf(t, messages[i-1].Role, m.Role, "consecutive %s messages at %d", m.Role, i)
 		}
@@ -2396,13 +2388,13 @@ func assertAnthropicPairing(t *testing.T, messages []protocolanthropic.Anthropic
 		for _, b := range blocks {
 			switch b.Type {
 			case "tool_result":
-				// tool_result 必须在前一条消息里有对应 tool_use。
+				// Each tool_result must match a tool_use in the preceding message.
 				require.Positivef(t, i, "tool_result %s has no previous message", b.ToolUseID)
 				prev := parseContentBlocks(messages[i-1].Content)
 				require.Truef(t, hasToolUse(prev, b.ToolUseID),
 					"tool_result %s has no corresponding tool_use in previous message", b.ToolUseID)
 			case "tool_use":
-				// tool_use 必须在后一条消息里有对应 tool_result。
+				// Each tool_use must have a result in the following message.
 				require.Lessf(t, i+1, len(messages), "tool_use %s has no following message", b.ID)
 				next := parseContentBlocks(messages[i+1].Content)
 				require.Truef(t, hasToolResult(next, b.ID),
@@ -2430,15 +2422,15 @@ func hasToolResult(blocks []protocolanthropic.AnthropicContentBlock, toolUseID s
 	return false
 }
 
-// parseContentBlocks 解码工具配对断言使用的内容块数组。
+// parseContentBlocks decodes blocks for tool-pairing assertions.
 func parseContentBlocks(raw json.RawMessage) []protocolanthropic.AnthropicContentBlock {
 	var blocks []protocolanthropic.AnthropicContentBlock
 	_ = json.Unmarshal(raw, &blocks)
 	return blocks
 }
 
-// ccChainToAnthropic 按 Anthropic 分组中 Chat 客户端的转发顺序执行转换：
-// 先 ChatCompletionsToResponses，再 ResponsesToAnthropicRequest，测试工具配对在两次转换后仍有效。
+// ccChainToAnthropic follows the Chat forwarding sequence for an Anthropic group:
+// ChatCompletionsToResponses, then ResponsesToAnthropicRequest. Tests check pairing after both conversions.
 func ccChainToAnthropic(t *testing.T, ccReq *protocolopenai.ChatCompletionsRequest) []protocolanthropic.AnthropicMessage {
 	t.Helper()
 	respReq, err := ChatCompletionsToResponses(ccReq)

@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokHealthInput 保存当前尝试的模型和观测数据。
+// GrokHealthInput contains the model and health observations for one attempt.
 type GrokHealthInput struct {
 	Observation     HealthObservation
 	Models          []string
@@ -29,7 +29,7 @@ func firstGrokHealthModel(models []string) string {
 	return strings.TrimSpace(models[0])
 }
 
-// ObserveError 依次处理配置策略、模型状态、配额和默认冷却。
+// ObserveError records quota observations and applies configured, model-specific, and default health rules.
 func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Record, input GrokHealthInput) providercore.UpstreamErrorDecision {
 	statusCode, headers, responseBody := input.Observation.Status, input.Observation.Headers, input.Observation.Body
 	canonicalModel := input.Models
@@ -62,7 +62,7 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		quotaModel = input.QuotaModel
 	}
 	providercore.StampGrokQuotaPlan(providercore.CloneRecord(value), quotaSnapshot, quotaModel, grok.ResolveGrokTextResponsesModelID, grok.ApplyGrok45ResponsesPlanSignal)
-	// 模型容量 429 按请求压力处理，保存额度观测，提供商限流状态保持不变。
+	// Capacity errors save quota observations without installing a provider-wide rate limit.
 	snapshotFailure := grok.ClassifyGrokUpstreamFailure(statusCode, responseBody, quotaModel)
 	s.StoreSnapshot(stateCtx, value, quotaSnapshot, snapshotFailure.Class != grok.GrokFailureModelCapacity, input.TeamModel)
 
@@ -92,7 +92,7 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		decision.StopScheduling = true
 		return decision
 	}
-	// 普通提供商先保留模型不存在等精确处理，再应用管理员临时规则。
+	// Handle precise model errors before administrator-defined temporary rules for ordinary providers.
 	if s.Health != nil && statusCode != http.StatusUnauthorized &&
 		!value.IsPoolMode() && !value.IsCustomErrorCodesEnabled() &&
 		s.Health.Core.HandleTempUnschedulable(stateCtx, providercore.CloneRecord(value), statusCode, responseBody, observation.EffectiveModel) {
@@ -104,8 +104,8 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		return decision
 	}
 
-	// Grok API Key 的 5xx 与 OpenAI API Key 共用提供商+最终模型的瞬态冷却；
-	// OAuth 提供商和模型未知的请求按提供商级规则退避。
+	// API key transient 5xx failures use shared provider/model cooldowns when the final model is known.
+	// OAuth and unknown-model requests continue through provider-wide health rules.
 	model := firstGrokHealthModel(canonicalModel)
 	if model == "" {
 		model = quotaModel
@@ -116,7 +116,7 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		return decision
 	}
 
-	// 响应体中的免费额度、账单、空输出和容量错误优先于通用状态码处理。
+	// Classify free quota, billing, empty output, and capacity failures before generic status handling.
 	failure := grok.ClassifyGrokUpstreamFailure(statusCode, responseBody, model)
 	if failure.ShouldCooldown && failure.Class != grok.GrokFailureNone && failure.Class != grok.GrokFailureRateLimit {
 		if failure.Class == grok.GrokFailureFreeUsage {
@@ -143,7 +143,6 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		decision.StopScheduling = true
 		return decision
 	case http.StatusPaymentRequired:
-		// 402 表示提供商计费不可用，此处将它短期停调。
 		s.TempUnschedule(stateCtx, value, 30*time.Minute, "grok payment required")
 		decision.StopScheduling = true
 		return decision
@@ -156,12 +155,11 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 		decision.StopScheduling = true
 		return decision
 	case http.StatusMethodNotAllowed:
-		// 提供商不支持所选 Grok 端点时，临时停调该提供商。
 		s.TempUnschedule(stateCtx, value, 30*time.Minute, "grok endpoint not supported (405)")
 		decision.StopScheduling = true
 		return decision
 	case http.StatusTooManyRequests:
-		// 快照处理已同时写入运行时和持久化限流状态。
+		// Snapshot handling above installs any observed active rate limit.
 		decision.StopScheduling = true
 		return decision
 	default:
@@ -174,8 +172,8 @@ func (s *GrokHealth) ObserveError(ctx context.Context, value *providercore.Recor
 	return decision
 }
 
-// ApplyFailure 将分类结果映射到提供商健康状态；返回 true 表示已完整处理，
-// 调用方不能再次应用状态码默认逻辑。
+// ApplyFailure applies a classified failure to provider health. A true result tells
+// the caller to skip generic status handling, including when the failure leaves health unchanged.
 func (s *GrokHealth) ApplyFailure(
 	ctx context.Context,
 	value *providercore.Record,
@@ -184,32 +182,30 @@ func (s *GrokHealth) ApplyFailure(
 	if s == nil || value == nil || !decision.ShouldCooldown || decision.Cooldown <= 0 {
 		return false
 	}
-	// 原因保持简短稳定，供运维界面和 temp_unschedulable_reason 使用。
+	// These reasons are persisted for the operations UI.
 	var reason string
 	switch decision.Class {
 	case grok.GrokFailureFreeUsage:
 		reason = "grok free usage exhausted"
-		// 模型级免费额度耗尽只软封禁该模型，使同提供商其它模型仍可调度。
+		// A model-specific free-quota limit leaves other models on this provider available.
 		low := strings.ToLower(decision.Reason)
 		if decision.Model != "" && providercore.IsGrokModelSpecificFreeUsage(low, decision.Model) {
 			until := time.Now().Add(decision.Cooldown)
 			providercore.MarkGrokModelQuotaBlock(value.ID, decision.Model, until)
-			// 上游已明确限定到单模型，提供商级冷却会错误移除健康的其它模型。
 			return true
 		}
 	case grok.GrokFailureBilling:
 		low := strings.ToLower(decision.Reason)
 		if strings.Contains(low, "spending") || strings.Contains(low, "credits") {
-			// 消费上限或 credits 耗尽属于账单窗口条件，保留提供商可恢复状态并由常规限流恢复解除。
+			// Spending and credit limits use a recoverable billing window cleared by normal rate-limit recovery.
 			s.RateLimit(ctx, value, providercore.GrokSpendingLimitResetAt(providercore.CloneRecord(value), time.Now()), teamModel)
 			return true
 		}
-		// 保留历史 402/payment 原因，兼容运维界面和回归测试。
 		reason = "grok payment required"
 	case grok.GrokFailureEmptyUpstream:
 		reason = "grok empty model output"
 	case grok.GrokFailureModelCapacity:
-		// 容量压力只作用于请求模型，提供商切换仍由外层有界重试决定。
+		// Capacity pressure cools the requested model; the caller decides whether to switch providers.
 		if model := strings.TrimSpace(decision.Model); model != "" {
 			cooldown := decision.Cooldown
 			if cooldown <= 0 {
@@ -219,12 +215,12 @@ func (s *GrokHealth) ApplyFailure(
 		}
 		return true
 	case grok.GrokFailureRateLimit:
-		// 429 响应未表明免费额度耗尽时，按 Retry-After 和额度响应头处理。
+		// Generic 429 handling uses quota headers and Retry-After outside this classifier.
 		return false
 	case grok.GrokFailureServer:
 		reason = "grok upstream temporary error"
 	case grok.GrokFailureCompatibility:
-		// 请求格式不兼容时交给外层切换提供商，当前健康状态保持不变。
+		// Compatibility failures leave health unchanged for the caller to handle through failover.
 		return true
 	default:
 		return false
@@ -233,7 +229,7 @@ func (s *GrokHealth) ApplyFailure(
 	return true
 }
 
-// applyForbiddenPolicy 保留非内容拒绝 403 的管理员规则；未匹配时使用原权益冷却。
+// applyForbiddenPolicy applies configured 403 cooldowns and reports whether a rule matched.
 func (s *GrokHealth) applyForbiddenPolicy(ctx context.Context, value *providercore.Record, responseBody []byte, effectiveModel string) bool {
 	if value == nil || !value.IsTempUnschedulableEnabled() {
 		return false
@@ -245,7 +241,7 @@ func (s *GrokHealth) applyForbiddenPolicy(ctx context.Context, value *providerco
 	}
 
 	match := matches[0]
-	// 存储可用时调用共享策略处理原因字段和缓存写入。
+	// Use the shared policy service for reason fields and cache writes when available.
 	if s != nil && s.Health != nil &&
 		s.Health.Limits.Plans !=
 			nil {
@@ -258,7 +254,7 @@ func (s *GrokHealth) applyForbiddenPolicy(ctx context.Context, value *providerco
 		}
 	}
 
-	// 服务未完整构造时（例如单元测试网关）仍遵循配置时长，不能静默回退到 30 分钟。
+	// When the shared service is unavailable, still honor the configured duration.
 	cooldown := time.Duration(match.Rule.DurationMinutes) * time.Minute
 	if cooldown > 0 {
 		s.TempUnschedule(ctx, value, cooldown, "grok configured forbidden rule")
@@ -266,7 +262,7 @@ func (s *GrokHealth) applyForbiddenPolicy(ctx context.Context, value *providerco
 	return true
 }
 
-// recordModelTransient 更新与选择器共用的提供商和模型状态，并记录日志。
+// recordModelTransient records a failure in the provider/model state shared with scheduling.
 func (s *GrokHealth) recordModelTransient(value *providercore.Record, model string) {
 	if s.ModelTransient == nil || value == nil {
 		return

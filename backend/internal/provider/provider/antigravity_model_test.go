@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestAntigravityFinalModelChecksWhitelistAfterThinking 检查 thinking 后缀作用于最终名称，映射在此前执行一次。
+// TestAntigravityFinalModelChecksWhitelistAfterThinking checks the final thinking suffix after one mapping.
 func TestAntigravityFinalModelChecksWhitelistAfterThinking(t *testing.T) {
 	enabled := true
 	disabled := false
@@ -42,7 +42,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 		providerMapping map[string]string
 		expected        string
 	}{
-		// 1. 提供商级映射优先
+		// Configured mappings determine the upstream model.
 		{
 			name:            "提供商映射优先",
 			requestedModel:  "claude-3-5-sonnet-20241022",
@@ -62,7 +62,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:        "my-opus",
 		},
 
-		// 2. 默认映射（DefaultAntigravityModelMapping）
+		// Unmapped names pass through unchanged.
 		{
 			name:            "未配置映射时透传 claude-opus-4-6",
 			requestedModel:  "claude-opus-4-6",
@@ -100,7 +100,6 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:        "claude-sonnet-4-5-20250929",
 		},
 
-		// 3. 默认映射中的透传（映射到自己）
 		{
 			name:            "默认映射透传 - claude-fable-5-1",
 			requestedModel:  "claude-fable-5-1",
@@ -168,7 +167,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:        "gemini-3-flash",
 		},
 
-		// 未配置白名单的型号直接交给上游。
+		// An empty whitelist permits unknown upstream models.
 		{
 			name:            "未知模型 - claude-unknown 保持原 ID",
 			requestedModel:  "claude-unknown",
@@ -207,7 +206,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 				Platform: capability.PlatformAntigravity,
 			}
 			if tt.providerMapping != nil {
-				// GetModelMapping 期望 model_mapping 是 map[string]any 格式
+				// Model mapping credentials use map[string]any, as decoded from JSON.
 				mappingAny := make(map[string]any)
 				for k, v := range tt.providerMapping {
 					mappingAny[k] = v
@@ -229,7 +228,6 @@ func TestAntigravityGatewayService_GetMappedModel_EdgeCases(t *testing.T) {
 		requestedModel string
 		expected       string
 	}{
-		// 空字符串保持为空，其他厂商型号交给上游。
 		{"空字符串", "", ""},
 		{"非claude/gemini前缀 - gpt", "gpt-4", "gpt-4"},
 		{"非claude/gemini前缀 - llama", "llama-3", "llama-3"},
@@ -244,8 +242,8 @@ func TestAntigravityGatewayService_GetMappedModel_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestMapAntigravityModel_WildcardTargetEqualsRequest 测试通配符映射目标恰好等于请求模型名的 edge case
-// 例如 {"claude-*": "claude-sonnet-4-5"}，请求 "claude-sonnet-4-5" 时应该通过。
+// TestMapAntigravityModel_WildcardTargetEqualsRequest accepts a wildcard whose target equals the
+// requested model.
 func TestMapAntigravityModel_WildcardTargetEqualsRequest(t *testing.T) {
 	tests := []struct {
 		name           string

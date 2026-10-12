@@ -49,7 +49,7 @@ const (
 	defaultMaxLineSize = upstream.DefaultSSELineLimit
 )
 
-// QoderModelInfo 包含上游请求的路由键和来源标记。
+// QoderModelInfo holds the upstream route key and its source.
 type QoderModelInfo struct {
 	Key    string `json:"key"`
 	Source string `json:"source"`
@@ -64,7 +64,7 @@ type QoderMessage struct {
 }
 
 type QoderStreamResult struct {
-	// HasUsage 标记上游已明确提供计量，显式零值与缺失分开。
+	// HasUsage distinguishes upstream-reported zero usage from absent usage.
 	HasUsage     bool
 	Usage        upstream.TokenUsage
 	UsageDetails UsageDetails
@@ -786,7 +786,7 @@ func (a *QoderOpenAIToolCallAccumulator) AppendDelta(event SSEEvent) []any {
 	if QoderToolCallDeltaIsEmptyPlaceholder(event) {
 		return []any{}
 	}
-	// type 只描述工具种类，解析器还会补齐 function，不能用它识别参数所属的调用。
+	// The parser may supply a default function type, so type cannot identify the call receiving arguments.
 	if event.ToolCallID == "" && !event.HasToolCallIndex && event.ToolName == "" && event.Arguments != "" && len(a.calls) > 1 {
 		return []any{}
 	}
@@ -1006,7 +1006,7 @@ func QoderToolArgumentStringIsEmptyPlaceholder(arguments string) bool {
 
 func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputContext, model string, resp *http.Response, options ...QoderOpenAIStreamResponseOption) (*QoderStreamResult, error) {
 	usageMapper, toolNameMapper, includeUsage := QoderOpenAIStreamResponseOptions(options)
-	// 确保无论成功或失败都关闭响应
+	// This writer owns the response body through completion or failure.
 	defer CloseQoderResponse(resp)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -1126,7 +1126,7 @@ func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputConte
 
 func WriteQoderAnthropicStreamResponse(ctx context.Context, c *upstream.OutputContext, model string, resp *http.Response, options ...QoderAnthropicStreamResponseOption) (*QoderStreamResult, error) {
 	usageMapper, toolNameMapper := QoderAnthropicStreamResponseOptions(options)
-	// 确保无论成功或失败都关闭响应
+	// This writer owns the response body through completion or failure.
 	defer CloseQoderResponse(resp)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -1955,7 +1955,7 @@ func ScanQoderEvents(ctx context.Context, resp *http.Response, results chan<- Qo
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// 显式处理 bufio.ErrTooLong：SSE event 超过 defaultMaxLineSize
+		// Include the configured limit when the SSE line exceeds the scanner buffer.
 		if errors.Is(err, bufio.ErrTooLong) {
 			QoderSendEventResult(ctx, results, QoderEventResult{
 				err: fmt.Errorf("SSE event exceeds max line size (%d bytes, buffer limit %d): %w", defaultMaxLineSize, 64*1024, err),
@@ -2440,9 +2440,9 @@ func QoderToolContinuationPromptText(messages []QoderMessage) string {
 		return ""
 	}
 
-	// 当 previous_response_id 承载前一次 assistant tool call 时，只有 tool 的
-	// Responses 续写是合法的。否则要求当前回放中存在紧邻的 assistant tool-call
-	// 轮次，避免普通历史 tool 消息被误提升为当前 prompt。
+	// Tool-only Responses continuations can refer to assistant calls through previous_response_id.
+	// When replay history precedes the tools, require an adjacent assistant tool-call turn
+	// so historical tool results do not become the current prompt.
 	if toolStart > 0 && !QoderMessageHasToolCalls(messages[toolStart-1]) {
 		return ""
 	}
@@ -2524,7 +2524,7 @@ func GjsonBool(body []byte, path string) bool {
 	return gjson.GetBytes(body, path).Bool()
 }
 
-// LookupQoderModelAlias 仅解析当前公开 alias，未命中的模型由调用方原样透传。
+// LookupQoderModelAlias resolves public aliases; callers pass unmatched model names through.
 func LookupQoderModelAlias(model string) (QoderModelInfo, bool) {
 	for _, site := range []Site{SiteGlobal, SiteCN} {
 		if info, ok := LookupQoderModelAliasForSite(site, model); ok {
@@ -2534,7 +2534,7 @@ func LookupQoderModelAlias(model string) (QoderModelInfo, bool) {
 	return QoderModelInfo{}, false
 }
 
-// LookupQoderModelAliasForSite 使用站点实际的路由映射。
+// LookupQoderModelAliasForSite resolves the alias using the site route map.
 func LookupQoderModelAliasForSite(site Site, model string) (QoderModelInfo, bool) {
 	key, ok := AliasForSite(site, NormalizeQoderAliasModel(model))
 	return QoderModelInfo{Key: key, Source: "system"}, ok
@@ -2553,7 +2553,7 @@ func FirstNonEmptyQoder(values ...string) string {
 	return ""
 }
 
-// qoderPartialStreamResult 保留已服务且已观测用量的失败结果，不推断缺失计量。
+// qoderPartialStreamResult returns failed stream results that contain both output and observed usage.
 func qoderPartialStreamResult(result *QoderStreamResult) *QoderStreamResult {
 	if result != nil && result.HasOutput && result.HasUsage {
 		return result

@@ -9,22 +9,22 @@ var openAILegacySessionHashKey = openAILegacySessionHashContextKey{}
 
 type agentTaskRecoveryKey struct{}
 
-// cacheBillingKey 标识当前尝试的强制缓存计费状态。
+// cacheBillingKey identifies forced cache billing for the current attempt.
 type cacheBillingKey struct{}
 
-// Hint 通过设置标记区分未提供与零值，保存传入数据的值副本。
+// Hint distinguishes an absent value from an explicit zero using Set.
 type Hint[T bool | int | int64] struct {
 	Value T
 	Set   bool
 }
 
-// ExecutionHints 是本次请求的执行参数快照；派生 attempt 不修改父请求。
+// ExecutionHints is a value snapshot; deriving an attempt leaves the parent request unchanged.
 type ExecutionHints struct {
-	// HealthModel 保存本次尝试规范化后的型号，健康观测直接使用该值。
+	// HealthModel is the normalized model used for this attempt's health observations.
 	HealthModel            string
 	SessionIsolationSource string
 	SessionIsolationHash   string
-	// 选择快照保存本次阈值、分组要求和单次降级标记。
+	// Selection thresholds, group requirements, and per-attempt bypass flags.
 	QuotaAutoPauseThreshold5h   float64
 	QuotaAutoPauseThreshold7d   float64
 	GroupPrivacyRequirement     Hint[bool]
@@ -46,29 +46,29 @@ type executionHintsKey struct{}
 
 type openAILegacySessionHashContextKey struct{}
 
-// WithAgentTaskRecovery 标记当前尝试序列已使用恢复机会。
+// WithAgentTaskRecovery marks the recovery opportunity as used for this attempt sequence.
 func WithAgentTaskRecovery(ctx context.Context) context.Context {
 	return context.WithValue(ctx, agentTaskRecoveryKey{}, true)
 }
 
-// AgentTaskRecoveryTried 返回当前尝试序列是否已使用恢复机会。
+// AgentTaskRecoveryTried reports whether this attempt sequence used its recovery opportunity.
 func AgentTaskRecoveryTried(ctx context.Context) bool {
 	value, _ := ctx.Value(agentTaskRecoveryKey{}).(bool)
 	return value
 }
 
-// IsForceCacheBilling 读取强制缓存计费标记，缺失或类型错误时返回 false。
+// IsForceCacheBilling returns false when the flag is absent or has the wrong type.
 func IsForceCacheBilling(ctx context.Context) bool {
 	value, _ := ctx.Value(cacheBillingKey{}).(bool)
 	return value
 }
 
-// WithForceCacheBilling 在派生的尝试 context 中设置强制缓存计费标记。
+// WithForceCacheBilling sets the flag in a derived attempt context.
 func WithForceCacheBilling(ctx context.Context) context.Context {
 	return context.WithValue(ctx, cacheBillingKey{}, true)
 }
 
-// IsClaudeCodeClient 返回入口保存的 Claude Code 客户端判断结果。
+// IsClaudeCodeClient returns the client classification recorded at entry.
 func IsClaudeCodeClient(ctx context.Context) bool {
 	return ExecutionHintsFromContext(ctx).ClaudeCode
 }
@@ -107,7 +107,7 @@ func OpenAIImagesEndpointFromContext(ctx context.Context) bool {
 	return ExecutionHintsFromContext(ctx).OpenAIImagesEndpoint
 }
 
-// ExecutionHintsFromContext 读取 context 中的执行提示，平台执行入口通过参数接收该值。
+// ExecutionHintsFromContext reads hints for passing to platform execution entry points.
 func ExecutionHintsFromContext(ctx context.Context) ExecutionHints {
 	if ctx == nil {
 		return ExecutionHints{}
@@ -182,12 +182,12 @@ func ProviderSwitchCountFromContext(ctx context.Context) (int, bool) {
 	return h.Value, h.Set
 }
 
-// WithSessionIsolation 保存入口解析出的指定会话身份，供分组回退时再次校验。
+// WithSessionIsolation saves the parsed session identity for revalidation after group failover.
 func WithSessionIsolation(ctx context.Context, source, hash string) context.Context {
 	return updateHints(ctx, func(h *ExecutionHints) { h.SessionIsolationSource, h.SessionIsolationHash = source, hash })
 }
 
-// WithOpenAILegacySessionHash 在派生 context 中保存去除两侧空白的旧会话散列。
+// WithOpenAILegacySessionHash stores a trimmed legacy session hash in a derived context.
 func WithOpenAILegacySessionHash(ctx context.Context, legacyHash string) context.Context {
 	if ctx == nil {
 		return nil
@@ -199,7 +199,7 @@ func WithOpenAILegacySessionHash(ctx context.Context, legacyHash string) context
 	return context.WithValue(ctx, openAILegacySessionHashKey, trimmed)
 }
 
-// OpenAILegacySessionHashFromContext 返回上下文中的旧会话散列。
+// OpenAILegacySessionHashFromContext returns the trimmed legacy session hash.
 func OpenAILegacySessionHashFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""

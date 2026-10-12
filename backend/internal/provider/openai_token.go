@@ -100,7 +100,7 @@ func (p *OpenAITokenSource) EnsureMetrics() {
 	}
 }
 
-// GetAccessToken returns a valid access_token.
+// GetAccessToken prefers cached credentials and refreshes near expiry according to policy.
 func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record) (string, error) {
 	p.EnsureMetrics()
 	if provider == nil {
@@ -112,7 +112,7 @@ func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record
 
 	cacheKey := OpenAITokenCacheKey(provider)
 
-	// 1) Try cache first.
+	// Prefer a nonempty cached token.
 	if p.Cache != nil {
 		if token, err := p.Cache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
 			p.Debug("openai_token_cache_hit", "provider_id", provider.ID)
@@ -124,13 +124,13 @@ func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record
 
 	p.Debug("openai_token_cache_miss", "provider_id", provider.ID)
 
-	// 2) Refresh if needed (pre-expiry skew).
+	// Refresh near expiry unless the credential mode or missing refresh token prevents it.
 	expiresAt := provider.GetCredentialAsTime("expires_at")
 	needsRefresh := !provider.IsOpenAIPersonalAccessToken() && (expiresAt == nil || time.Until(*expiresAt) <= openAITokenRefreshSkew)
 	if needsRefresh && strings.TrimSpace(provider.GetOpenAIRefreshToken()) == "" {
 		if expiresAt != nil && !time.Now().Before(*expiresAt) {
 			const reason = "openai access_token expired and refresh_token is missing"
-			// 缺失 refresh_token 的过期 OAuth 提供商无法自愈，需要立即剔出调度池。
+			// An expired OAuth token without a refresh token requires reauthorization, so block further scheduling.
 			p.DisableProviderMissingRefreshToken(provider, reason)
 			return "", errors.New(reason)
 		}
@@ -172,7 +172,7 @@ func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record
 			expiresAt = provider.GetCredentialAsTime("expires_at")
 		}
 	} else if needsRefresh && p.Cache != nil {
-		// Backward-compatible test path when refreshAPI is not injected.
+		// Use cache locking directly when no refresh callback is configured.
 		p.Metrics.refreshRequests.Add(1)
 		p.Metrics.touchNow()
 		locked, lockErr := p.Cache.AcquireRefreshLock(ctx, cacheKey, 30*time.Second)
@@ -201,7 +201,7 @@ func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record
 		return "", errors.New("access_token not found in credentials")
 	}
 
-	// 3) Populate cache with TTL.
+	// Check stored credential version before populating the cache.
 	if p.Cache != nil {
 		latestProvider, isStale := CheckTokenVersion(ctx, provider, p.Repository)
 		if isStale && latestProvider != nil {
@@ -239,8 +239,9 @@ func (p *OpenAITokenSource) GetAccessToken(ctx context.Context, provider *Record
 	return accessToken, nil
 }
 
-// DisableProviderMissingRefreshToken 将缺失 refresh_token 的过期 OpenAI OAuth 提供商标记为 error。
-// 请求 context 可能已经取消，因此这里使用后台 context 完成状态落库和缓存清理。
+// DisableProviderMissingRefreshToken marks an expired OAuth provider as errored and clears its cached token on
+// success.
+// A background context allows persistence and cache cleanup after the request has been canceled.
 func (p *OpenAITokenSource) DisableProviderMissingRefreshToken(provider *Record, reason string) {
 	if p == nil || p.Repository == nil || provider == nil {
 		return

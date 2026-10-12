@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 记录发往本地测试服务的签名请求。
+// bedrockRoutingTransport records signed requests and returns configured test responses.
 type bedrockRoutingTransport struct {
 	lastReq      *http.Request
 	lastBody     []byte
@@ -41,7 +41,7 @@ type bedrockRoutingTransport struct {
 	lastTLSProfile *tlsfingerprint.Profile
 }
 
-// newBedrockRoutingTestProvider 使用虚构凭据构造可调度提供商，测试不会访问真实 AWS。
+// newBedrockRoutingTestProvider builds a schedulable provider with fictitious AWS credentials.
 func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) gatewayprovider.ExecutionProvider {
 	provider := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -73,7 +73,8 @@ func newBedrockRoutingTestUpstream() *bedrockRoutingTransport {
 	}}
 }
 
-// TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute 验证正式转发与管理员测试必须使用相同 ID；全局推理不改变来源端点和 SigV4 签名范围。
+// TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute checks matching model IDs, source endpoints, and
+// SigV4 scope.
 func TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute(t *testing.T) {
 	for _, tc := range []struct {
 		name, model, region, wantID string
@@ -123,7 +124,8 @@ func TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute(t *testing.T) {
 	}
 }
 
-// TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream 验证无有效路由时不调用上游或写提供商状态，管理员仅在确有全局能力时收到开启提示。
+// TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream checks rejection before requests or health writes,
+// with hints only for supported global routes.
 func TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream(t *testing.T) {
 	for _, tc := range []struct {
 		name, model, region string

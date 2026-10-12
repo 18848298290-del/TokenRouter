@@ -428,7 +428,7 @@ func mustMarshalJSONForTest(t *testing.T, value string) []byte {
 	return encoded
 }
 
-// TestQualifiedGrokReasoningPreservesModel 验证能力识别不会改写供应商限定 ID。
+// Capability lookup must retain the requested vendor-qualified model ID.
 func TestQualifiedGrokReasoningPreservesModel(t *testing.T) {
 	codec := BodyCodec{Attributes: func(model string) modelcatalog.Attributes {
 		return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes
@@ -456,7 +456,7 @@ func TestQualifiedGrokReasoningPreservesModel(t *testing.T) {
 	}
 }
 
-// TestQualifiedGrokReasoningKeepsCapabilityBounds 验证前缀不会扩大档位能力或生成隐式型号。
+// Vendor prefixes must not add reasoning levels or implicitly rewrite model IDs.
 func TestQualifiedGrokReasoningKeepsCapabilityBounds(t *testing.T) {
 	codec := BodyCodec{Attributes: func(model string) modelcatalog.Attributes {
 		return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes

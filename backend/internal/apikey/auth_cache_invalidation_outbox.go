@@ -52,7 +52,7 @@ type AuthCacheInvalidationHealth struct {
 	OldestLag  time.Duration `json:"oldest_lag"`
 	LastError  string        `json:"last_error,omitempty"`
 	StatsError string        `json:"stats_error,omitempty"`
-	// HealthySLA 包含延迟安全重试；RecoverySLA 是 Redis 恢复后含上限退避在内的最大收敛时间。
+	// HealthySLA includes the safety pass; RecoverySLA also includes maximum retry backoff after Redis recovers.
 	HealthySLA  time.Duration `json:"healthy_sla"`
 	RecoverySLA time.Duration `json:"recovery_sla"`
 	MaxAttempts int           `json:"max_attempts"`
@@ -112,7 +112,7 @@ func (w *AuthCacheInvalidationWorker) Start() {
 	})
 }
 
-// StopContext 停止新认领并等待当前批次退出；未来重试和延迟事件保留在持久化 outbox。
+// StopContext stops claiming work and waits for the active batch. Pending retries remain in the outbox.
 func (w *AuthCacheInvalidationWorker) StopContext(ctx context.Context) error {
 	if w == nil {
 		return nil
@@ -136,7 +136,7 @@ func (w *AuthCacheInvalidationWorker) StopContext(ctx context.Context) error {
 	}
 }
 
-// Stop 兼容旧同步调用，app 使用有预算的停止入口。
+// Stop waits synchronously; application shutdown uses StopContext with a deadline.
 func (w *AuthCacheInvalidationWorker) Stop() { _ = w.StopContext(context.Background()) }
 
 func (w *AuthCacheInvalidationWorker) KeyRun() {

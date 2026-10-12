@@ -90,7 +90,7 @@ func createSecuritySecretIfAbsent(ctx context.Context, client *ent.Client, key, 
 	return persistSecuritySecretCandidate(ctx, client, key, value)
 }
 
-// persistSecuritySecretCandidate 在并发创建冲突后读取已持久化的密钥。
+// persistSecuritySecretCandidate reads the persisted secret after insert, including when another creator wins.
 func persistSecuritySecretCandidate(ctx context.Context, client *ent.Client, key, value string) (string, error) {
 	if err := client.SecuritySecret.Create().
 		SetKey(key).

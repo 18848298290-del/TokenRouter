@@ -42,7 +42,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest, options RequestOpti
 		ParallelToolCalls: req.ParallelToolCalls,
 	}
 
-	// 调用方根据模型规则指定是否移除采样参数。
+	// Callers choose which sampling parameters to drop using the model's rules.
 	if !options.DropSampling && !options.DropTemperature {
 		out.Temperature = req.Temperature
 	}
@@ -86,7 +86,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest, options RequestOpti
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
-	// tool_choice 已兼容目标格式，原样传递。
+	// Forward tool_choice verbatim; map legacy function_call when tool_choice is absent.
 	// Legacy function_call needs mapping.
 	if len(req.ToolChoice) > 0 {
 		out.ToolChoice = req.ToolChoice
@@ -161,10 +161,10 @@ func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	return []ResponsesInputItem{{Role: "user", Content: content}}, nil
 }
 
-// chatAssistantToResponses converts an assistant message. If there is both
-// text content and tool_calls, the text is emitted as an assistant message
-// first, then each tool_call becomes a function_call item. If the content is
-// empty/nil and there are tool_calls, only function_call items are emitted.
+// chatAssistantToResponses emits assistant text and tagged reasoning before tool calls.
+// Each tool_call becomes a function_call item.
+// When neither text nor reasoning is present, the assistant message is omitted
+// and any tool calls are emitted on their own.
 func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
 	content := ""
@@ -219,8 +219,8 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 // - JSON string
 // - JSON array of typed parts (e.g. [{"type":"text","text":"..."}])
 //
-// For structured thinking/reasoning parts, it preserves semantics by wrapping
-// the text in explicit tags so downstream can still distinguish it from normal text.
+// Thinking/reasoning parts are wrapped in <thinking> tags so downstream
+// readers can distinguish them from ordinary text.
 func parseAssistantContent(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
 		return "", nil
@@ -233,8 +233,8 @@ func parseAssistantContent(raw json.RawMessage) (string, error) {
 
 	var parts []map[string]any
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		// Keep compatibility with prior behavior: unsupported assistant content
-		// formats are ignored instead of failing the whole request conversion.
+		// Unsupported assistant content is ignored; it does not fail the
+		// rest of the request conversion.
 		return "", nil
 	}
 
@@ -356,8 +356,8 @@ func marshalChatInputContent(content chatMessageContent) (json.RawMessage, error
 	}
 	parts := convertChatContentPartsToResponses(content.Parts)
 	if len(parts) == 0 {
-		// nil slice 会被序列化为 JSON null，上游 Responses API 会拒绝该值
-		// （期望对象数组或字符串）。没有可用 parts 时回退为空字符串。
+		// Use an empty string when no parts survive. A nil slice would encode as null,
+		// which Responses rejects where a string or content array is required.
 		return json.Marshal("")
 	}
 	return json.Marshal(parts)
@@ -475,7 +475,7 @@ func defaultStrictFalse(src *bool) *bool {
 //	"none" → "none"
 //	{"name":"X"} → {"type":"function","name":"X"}
 func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, error) {
-	// 优先尝试 auto、none 等字符串形式，解析成功后原样传递。
+	// Try string choices such as auto and none first and forward them unchanged.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return json.Marshal(s)

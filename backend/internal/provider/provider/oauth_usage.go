@@ -20,7 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OAuthUsageTransport 只持有技术依赖；查询缓存与提供商状态复核由提供商用例拥有。
+// OAuthUsageTransport performs usage requests; the provider service owns query caching and identity
+// rechecks.
 type OAuthUsageTransport struct {
 	Transport    QoderTransport
 	Profiles     *egressprovider.TLSProfiles
@@ -31,12 +32,13 @@ type OAuthUsageTransport struct {
 	fallback     sync.Mutex
 }
 
-// ClaudeUsageClient 接收供应商用量查询需要的请求参数。
+// ClaudeUsageClient fetches upstream usage with provider request options.
 type ClaudeUsageClient interface {
 	FetchUsageWithOptions(context.Context, *anthropic.UsageFetchOptions) (*provider.ClaudeUsageResponse, error)
 }
 
-// ensureTask 优先调用注入的任务函数，缺省时用实例内的互斥锁执行 task 创建。
+// ensureTask uses the injected callback or supplies an instance-local fallback mutex to the task
+// coordinator.
 func (s *OAuthUsageTransport) ensureTask(ctx context.Context, value *provider.Record, expected string) error {
 	if s.EnsureTask != nil {
 		return s.EnsureTask(ctx, value, expected)
@@ -53,7 +55,7 @@ func (s *OAuthUsageTransport) profile(value *provider.Record) *tlsfingerprint.Pr
 	return s.Profiles.ResolveRequestTLS(egress.TLSSelection{Enabled: value.IsTLSFingerprintEnabled(), DirectProfileID: value.GetTLSFingerprintProfileID()})
 }
 
-// ProbeOpenAI 使用共享上游池和十五秒预算发送探测请求，并按平台规则设置 Header。
+// ProbeOpenAI sends a probe with a fifteen-second request timeout and platform identity headers.
 func (s *OAuthUsageTransport) ProbeOpenAI(ctx context.Context, value *provider.Record) (map[string]any, error) {
 	if value == nil || !value.IsOAuth() {
 		return nil, nil
@@ -102,7 +104,7 @@ func (s *OAuthUsageTransport) ProbeOpenAI(ctx context.Context, value *provider.R
 			req.Header.Set("User-Agent", strings.TrimSpace(fingerprint.UserAgent))
 		}
 	}
-	// 缓存指纹改变 User-Agent 后，仍按原顺序校正配套身份 Header。
+	// Keep identity headers consistent with the final User-Agent after applying the cached fingerprint.
 	openai.EnforceCodexIdentityHeaders(req.Header)
 	if value.IsOpenAIOAuthLike() {
 		openai.SetChatGPTAccountHeaders(req.Header, value.GetChatGPTAccountID(), value.IsChatGPTAccountFedRAMP())
@@ -131,7 +133,7 @@ func (s *OAuthUsageTransport) doOpenAI(request *http.Request, value *provider.Re
 	return client.Do(request)
 }
 
-// ExtractOpenAIUsageUpdates 优先保留错误响应中的额度 Header，再判断状态码。
+// ExtractOpenAIUsageUpdates accepts quota headers even on error responses before checking status.
 func ExtractOpenAIUsageUpdates(response *http.Response, now time.Time) (map[string]any, error) {
 	if response == nil {
 		return nil, nil

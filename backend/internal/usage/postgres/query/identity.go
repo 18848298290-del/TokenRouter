@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// IdentityUserLastUsedAtOrder 按事务内维护的用户活动时间排序，无记录用户按空值排序。
+// IdentityUserLastUsedAtOrder sorts by transactionally maintained activity, with missing users ordered as nulls.
 // @project-doc docs/operations/observability_and_data_lifecycle.md#user_activity_summary
 func IdentityUserLastUsedAtOrder(sortOrder string) []func(*entsql.Selector) {
 	orderExpr := func(direction, nulls string, tieOrder func(string) string) func(*entsql.Selector) {
@@ -35,7 +35,7 @@ func IdentityUserLastUsedAtOrder(sortOrder string) []func(*entsql.Selector) {
 	}
 }
 
-// GetLatestUsedAtByUserIDs 批量读取用户活动汇总，缺少记录的用户不进入结果。
+// GetLatestUsedAtByUserIDs reads activity in a batch and omits users with no activity row.
 func GetLatestUsedAtByUserIDs(ctx context.Context, db infra.Executor, userIDs []int64) (map[int64]*time.Time, error) {
 	result := make(map[int64]*time.Time, len(userIDs))
 	if len(userIDs) == 0 {

@@ -10,14 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// 用户/分组级 RPM 计数器 Redis 实现。
+// User and group RPM counters use Redis-clock minute buckets.
 //
-// 设计说明：
-//   - key 形式：rpm:ug:{uid}:{gid}:{minute}、rpm:u:{uid}:{minute}
-//   - 时间来源为 rdb.Time()，各实例共用 Redis 服务端时间。
-//   - 原子操作：TxPipeline (MULTI/EXEC) 执行 INCR+EXPIRE，兼容 Redis Cluster。
-//   - TTL：120s，覆盖当前分钟窗口 + 少量冗余。
-//   - 返回当前计数，由 RPMAdmission.Check 与 RPMLimit 比较以判断是否超限。
+// Storage rules:
+//   - Keys are rpm:ug:{uid}:{gid}:{minute} and rpm:u:{uid}:{minute}.
+//   - Redis TIME supplies the shared clock for all instances.
+//   - MULTI/EXEC groups INCR and EXPIRE for the same key.
+//   - The 120-second TTL covers the current minute plus expiry margin.
+//   - RPMAdmission.Check compares the returned count with the effective limit.
 const (
 	userGroupRPMKeyPrefix = "rpm:ug:"
 	userRPMKeyPrefix      = "rpm:u:"
@@ -29,12 +29,12 @@ type userRPMCacheImpl struct {
 	rdb *redis.Client
 }
 
-// NewUserRPMCache 创建用户/分组级 RPM 计数器。
+// NewUserRPMCache creates Redis-backed user and group RPM counters.
 func NewUserRPMCache(rdb *redis.Client) scheduler.UserRPMCache {
 	return &userRPMCacheImpl{rdb: rdb}
 }
 
-// minuteTS 获取当前 Redis 服务端分钟时间戳。
+// minuteTS returns Redis Unix seconds divided by 60.
 func (c *userRPMCacheImpl) minuteTS(ctx context.Context) (int64, error) {
 	t, err := c.rdb.Time(ctx).Result()
 	if err != nil {
@@ -43,7 +43,7 @@ func (c *userRPMCacheImpl) minuteTS(ctx context.Context) (int64, error) {
 	return t.Unix() / 60, nil
 }
 
-// atomicIncr 原子 INCR+EXPIRE。
+// atomicIncr increments and refreshes expiry in one Redis transaction.
 func (c *userRPMCacheImpl) atomicIncr(ctx context.Context, key string) (int, error) {
 	pipe := c.rdb.TxPipeline()
 	incr := pipe.Incr(ctx, key)
@@ -54,7 +54,7 @@ func (c *userRPMCacheImpl) atomicIncr(ctx context.Context, key string) (int, err
 	return int(incr.Val()), nil
 }
 
-// IncrementUserGroupRPM 递增 (user, group) 分钟计数。
+// IncrementUserGroupRPM increments the current (user, group) minute counter.
 func (c *userRPMCacheImpl) IncrementUserGroupRPM(ctx context.Context, userID, groupID int64) (int, error) {
 	minute, err := c.minuteTS(ctx)
 	if err != nil {
@@ -64,7 +64,7 @@ func (c *userRPMCacheImpl) IncrementUserGroupRPM(ctx context.Context, userID, gr
 	return c.atomicIncr(ctx, key)
 }
 
-// IncrementUserRPM 递增用户分钟计数。
+// IncrementUserRPM increments the user's current minute counter.
 func (c *userRPMCacheImpl) IncrementUserRPM(ctx context.Context, userID int64) (int, error) {
 	minute, err := c.minuteTS(ctx)
 	if err != nil {
@@ -74,7 +74,7 @@ func (c *userRPMCacheImpl) IncrementUserRPM(ctx context.Context, userID int64) (
 	return c.atomicIncr(ctx, key)
 }
 
-// GetUserGroupRPM 获取 (user, group) 当前分钟已用 RPM（只读）。
+// GetUserGroupRPM reads the current (user, group) count, returning zero for a missing key.
 func (c *userRPMCacheImpl) GetUserGroupRPM(ctx context.Context, userID, groupID int64) (int, error) {
 	minute, err := c.minuteTS(ctx)
 	if err != nil {
@@ -91,7 +91,7 @@ func (c *userRPMCacheImpl) GetUserGroupRPM(ctx context.Context, userID, groupID 
 	return val, nil
 }
 
-// GetUserRPM 获取用户当前分钟已用 RPM（只读）。
+// GetUserRPM reads the user's current minute count, returning zero for a missing key.
 func (c *userRPMCacheImpl) GetUserRPM(ctx context.Context, userID int64) (int, error) {
 	minute, err := c.minuteTS(ctx)
 	if err != nil {

@@ -22,7 +22,8 @@ type EmailOAuthTokenResponse struct {
 	Scope       string `json:"scope,omitempty"`
 }
 
-// EmailOAuthClient 只输出已验证的邮箱资料；GitHub 邮箱补查与 Google 字段规则由 provider 保留。
+// EmailOAuthClient exchanges tokens and fetches verified email profiles.
+// Provider implementations handle GitHub email lookup and Google profile validation.
 type EmailOAuthClient interface {
 	ExchangeCode(context.Context, EmailOAuthOptions, string) (*EmailOAuthTokenResponse, error)
 	FetchProfile(context.Context, string, EmailOAuthOptions, *EmailOAuthTokenResponse) (*EmailOAuthProfile, error)

@@ -1,8 +1,10 @@
 package server
 
-// 本文件覆盖 identity/httpapi/session_handler.go、apikey/httpapi/key_handler.go 和 usage/httpapi/usage_handler.go 的 API 响应。
-// 订阅和兑换请求覆盖 billing/httpapi/subscription_handler.go、admin_subscription_handler.go 与 redeem_handler.go。
-// 管理请求覆盖 settings/httpapi/composite_get.go 与 provider/httpapi/management_bulk.go。
+// These tests cover API responses in identity/httpapi/session_handler.go, apikey/httpapi/key_handler.go, and
+// usage/httpapi/usage_handler.go.
+// Subscription and redemption cases cover billing/httpapi/subscription_handler.go,
+// admin_subscription_handler.go, and redeem_handler.go.
+// Admin cases cover settings/httpapi/composite_get.go and provider/httpapi/management_bulk.go.
 
 import (
 	"bytes"
@@ -55,7 +57,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
-// 编译期检查测试存储是否实现业务仓储接口。
+// Compile-time checks that test stores satisfy repository interfaces.
 var (
 	_ identity.UserRepository            = (*stubUserRepo)(nil)
 	_ apikey.APIKeyRepository            = (*stubApiKeyRepo)(nil)
@@ -119,16 +121,16 @@ type stubSettingRepo struct {
 	all map[string]string
 }
 
-// contractProviderBulkStore 将批量写入转交测试存储，提供商规则由 Admin 执行。
+// contractProviderBulkStore forwards bulk writes to the test store; Admin applies provider rules.
 type contractProviderBulkStore struct {
 	providercore.AdminStore
 	source *stubProviderRepo
 }
 
-// contractSubscriptionGroups 读取分组并返回订阅套餐需要的分组名称。
+// contractSubscriptionGroups supplies group names for subscription plans.
 type contractSubscriptionGroups struct{ source routing.GroupRepository }
 
-// contractRedeemUsers 为兑换接口测试提供用户资料和余额。
+// contractRedeemUsers supplies user profiles and balances for redemption API tests.
 type contractRedeemUsers struct{ source identity.UserRepository }
 
 func TestAPIContracts(t *testing.T) {
@@ -473,7 +475,7 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/groups/available",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				// 用户分组列表返回公开字段和会话隔离开关。
+				// User group responses expose public fields and the session-isolation switch.
 				deps.groupRepo.SetActive([]routing.Group{
 					{
 						ID:             10,
@@ -540,14 +542,14 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/subscriptions",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				// 用户订阅接口返回用户可见字段。
+				// User subscription responses expose user-visible fields.
 				deps.userSubRepo.SetByUserID(1, []billing.UserSubscription{
 					{
 						ID:              501,
 						UserID:          1,
 						PlanID:          10,
 						StartsAt:        deps.now,
-						ExpiresAt:       time.Date(2099, 1, 2, 3, 4, 5, 0, time.UTC), // 使用未来日期避免 normalizeSubscriptionStatus 标记为过期
+						ExpiresAt:       time.Date(2099, 1, 2, 3, 4, 5, 0, time.UTC), // Future expiry keeps normalizeSubscriptionStatus from expiring the fixture.
 						Status:          billing.SubscriptionStatusActive,
 						DailyUsageUSD:   1.23,
 						WeeklyUsageUSD:  2.34,
@@ -593,7 +595,7 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/redeem/history",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				// 用户兑换历史返回用户可见字段。
+				// Redemption history exposes user-visible fields.
 				deps.redeemRepo.SetByUser(1, []billing.RedeemCode{
 					{
 						ID:        900,
@@ -1884,7 +1886,7 @@ func newContractDeps(t *testing.T, setup func(*testing.T, *contractDeps)) *contr
 		settingRepo: settingRepo,
 		redeemRepo:  redeemRepo,
 	}
-	// 先准备启动配置，再构造持有配置快照的读取器。
+	// Apply startup settings before constructing readers that capture configuration snapshots.
 	if setup != nil {
 		setup(t, deps)
 	}
@@ -2267,7 +2269,7 @@ func (stubGroupRepo) UpdateSortOrders(ctx context.Context, updates []routing.Gro
 	return nil
 }
 
-// LockGroupSortOrder 为 API 响应测试提供排序锁的成功结果。
+// LockGroupSortOrder simulates successful sort-lock acquisition for API tests.
 func (stubGroupRepo) LockGroupSortOrder(ctx context.Context) error {
 	return nil
 }
@@ -2743,7 +2745,7 @@ func (r *stubApiKeyRepo) MustSeed(key *apikey.APIKey) {
 		return
 	}
 	clone := *key
-	// API 测试夹具使用数据库默认策略。
+	// Match the database's default Fast mode policy in API fixtures.
 	if clone.FastModePolicy == "" {
 		clone.FastModePolicy = apikey.APIKeyFastModePolicyFollowRequest
 	}
@@ -3169,7 +3171,7 @@ func (r *stubUsageLogRepo) GetUserModelStats(ctx context.Context, userID int64, 
 func (r *stubUsageLogRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagecore.UsageLogFilters) ([]usagecore.UsageLog, *pagination.PaginationResult, error) {
 	logs := r.userLogs[filters.UserID]
 
-	// 用量查询按 Key、模型、流式标记、计费方式和时间范围筛选。
+	// Apply API-key, model, stream, billing-type, and time-range usage filters.
 	var filtered []usagecore.UsageLog
 	for _, log := range logs {
 		if filters.APIKeyID > 0 && log.APIKeyID != filters.APIKeyID {
@@ -3362,7 +3364,7 @@ func (p contractRedeemUsers) GetByID(ctx context.Context, id int64) (*billing.Us
 	return contractBillingUserSummary(v), err
 }
 
-// contractBillingUserSummary 复制资金测试需要的用户字段和通知邮箱列表。
+// contractBillingUserSummary copies user fields and notification email lists used by billing tests.
 func contractBillingUserSummary(u *identity.User) *billing.UserSummary {
 	if u == nil {
 		return nil
@@ -3396,7 +3398,7 @@ func contractBillingUserSummary(u *identity.User) *billing.UserSummary {
 	return out
 }
 
-// contractUsageKeys 将 APIKeyService 的查询和所有权检查接入用量接口测试。
+// contractUsageKeys adapts APIKeyService lookup and ownership checks for usage API tests.
 func contractUsageKeys(keys *apikey.APIKeyService) ports.KeyReader {
 	if keys == nil {
 		return nil

@@ -31,7 +31,7 @@ func provideAntigravityAuthorization(proxies egress.ProxyRepository) *provider.A
 	return provider.NewAntigravityAuthorization(options)
 }
 
-// provideAntigravityRetry 在健康配置绑定完成后构造平台重试组件，网关共用该实例。
+// provideAntigravityRetry constructs shared platform retry support after health configuration is bound.
 func provideAntigravityRetry(store *providerpostgres.ProviderStore, counter provider.Internal500CounterCache, runtime *providerHealthRuntime, snapshots *scheduler.SnapshotService, transport httpclient.UpstreamTransport, cfg *config.Config) *provideradapter.AntigravityRetry {
 	health := &provider.AntigravityHealth{
 		Store:     store,
@@ -75,12 +75,12 @@ func provideAntigravityRetry(store *providerpostgres.ProviderStore, counter prov
 	return core
 }
 
-// provideAntigravityProbe 与转发共用重试、提供商健康状态和请求跟踪器。
+// provideAntigravityProbe shares retry, provider health, and request tracking with forwarding.
 func provideAntigravityProbe(tokens *provider.AntigravityTokenSource, retry *provideradapter.AntigravityRetry, activity *gatewayRequestActivity) *provideradapter.AntigravityProbe {
 	return &provideradapter.AntigravityProbe{Tokens: tokens, Retry: retry, Enter: activity.Enter}
 }
 
-// provideAntigravityErrorObserver 使用重试器的健康状态组件，按错误处理顺序更新提供商状态。
+// provideAntigravityErrorObserver shares the retry component's health state and binds provider error updates.
 func provideAntigravityErrorObserver(core *provideradapter.AntigravityRetry, store *providerpostgres.ProviderStore, runtime *providerHealthRuntime, cfg *config.Config) *provideradapter.AntigravityErrorObserver {
 	health := core.Health
 
@@ -110,7 +110,8 @@ func provideAntigravityErrorObserver(core *provideradapter.AntigravityRetry, sto
 	}
 }
 
-// provideAntigravityQuota 为额度查询绑定模型响应读取上限和代理查询，代理缺失或读取失败时返回空地址与 false。
+// provideAntigravityQuota binds the model response byte limit and proxy lookup; missing or failed lookups
+// return an empty URL and false.
 func provideAntigravityQuota(cfg *config.Config, proxies egress.ProxyRepository) *provider.AntigravityQuota {
 	limit := resolveModelsListReadLimit(cfg)
 	options := provideradapter.AntigravityQuotaOptions(limit, func(ctx context.Context, id int64) (string, bool) {

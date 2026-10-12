@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestDashboardQueryValidationOrder 检查各查询入口的错误优先级及校验失败时的筛选条件。
+// TestDashboardQueryValidationOrder checks error precedence and filter state after validation failure.
 func TestDashboardQueryValidationOrder(t *testing.T) {
 	queries := map[string]func(*OpsService, *OpsDashboardFilter) error{
 		"overview": func(s *OpsService, f *OpsDashboardFilter) error {
@@ -40,7 +40,7 @@ func TestDashboardQueryValidationOrder(t *testing.T) {
 	now := time.Now()
 	for name, query := range queries {
 		t.Run(name, func(t *testing.T) {
-			// 嵌入空接口的方法若被调用会 panic，校验失败应当先于存储查询。
+			// Calling the nil embedded repository would panic; validation must fail before any storage query.
 			repo := struct{ OpsRepository }{}
 			for _, tc := range []struct {
 				name    string

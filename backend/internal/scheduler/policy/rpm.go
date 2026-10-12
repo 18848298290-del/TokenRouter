@@ -6,11 +6,11 @@ const (
 	RPMBlocked
 )
 
-// RPMAllowance 表示允许请求、仅允许粘性请求或拒绝请求三种状态。
+// RPMAllowance distinguishes ordinary admission, sticky-only admission, and rejection.
 type RPMAllowance int
 
-// CheckRPM 在计数达到 base 时限制为粘性请求，达到 base+buffer 时拒绝请求。
-// sticky_exempt 策略在超过 base 后仍允许粘性请求。
+// CheckRPM restricts admission to sticky requests at base and rejects at base+buffer.
+// The sticky_exempt strategy keeps admitting sticky requests above base without a buffer ceiling.
 func CheckRPM(current, base, buffer int, strategy string) RPMAllowance {
 	if base <= 0 || current < base {
 		return RPMAllowed
@@ -24,8 +24,8 @@ func CheckRPM(current, base, buffer int, strategy string) RPMAllowance {
 	return RPMBlocked
 }
 
-// RPMStickyBuffer 优先使用正数 override，否则将并发数与会话数相加。
-// base 为正时，缓冲至少为 base/5 且至少为 1；base 非正时返回零。
+// RPMStickyBuffer uses a positive override; otherwise it adds nonnegative concurrency and session counts.
+// With no override, a positive base sets a minimum of max(base/5, 1); a nonpositive base returns zero.
 func RPMStickyBuffer(base, concurrency, sessions, override int) int {
 	if override > 0 {
 		return override

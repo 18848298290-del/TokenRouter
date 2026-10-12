@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// billingAssemblyProviders 汇总 billing 模块的 Wire provider。
+// billingAssemblyProviders groups Wire providers for the billing module.
 var billingAssemblyProviders = wire.NewSet(
 	wire.Bind(new(identity.DefaultSubscriptionAssigner), new(*billing.SubscriptionService)),
 	wire.Bind(new(completion.Store), new(*billingpostgres.SettlementStore)),

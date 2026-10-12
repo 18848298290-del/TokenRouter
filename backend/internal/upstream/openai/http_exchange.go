@@ -35,6 +35,8 @@ type openAIRequestContextReadCloser struct {
 	err     error
 }
 
+// ExchangeHTTP sends a prepared request with an optional first-header deadline.
+// The caller must close the returned body to release the guarded request context.
 func ExchangeHTTP(ctx context.Context, body []byte, options HTTPExchangeOptions) (*http.Response, error) {
 	upstreamCtx, release := options.RequestContext(ctx)
 	var guard *openAIFirstOutputHeaderGuard

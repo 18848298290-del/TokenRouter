@@ -51,13 +51,13 @@ type UsageLog struct {
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
 	// UpstreamModelMismatch holds the value of the "upstream_model_mismatch" field.
 	UpstreamModelMismatch *bool `json:"upstream_model_mismatch,omitempty"`
-	// 共享价格配置 ID
+	// Shared pricing configuration ID
 	PricingConfigID *int64 `json:"pricing_config_id,omitempty"`
-	// 模型映射链
+	// Model mapping chain
 	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
-	// 计费层级标签
+	// Billing tier label
 	BillingTier *string `json:"billing_tier,omitempty"`
-	// 计费模式：token/per_request/image
+	// Billing mode: token/per_request/image
 	BillingMode *string `json:"billing_mode,omitempty"`
 	// GroupID holds the value of the "group_id" field.
 	GroupID *int64 `json:"group_id,omitempty"`
@@ -95,7 +95,7 @@ type UsageLog struct {
 	BillingAllocations []billing.BillingAllocation `json:"billing_allocations,omitempty"`
 	// RateMultiplier holds the value of the "rate_multiplier" field.
 	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
-	// 该请求是否因长上下文规则实际增加费用
+	// Records whether long-context rules increased this request's cost
 	LongContextBillingApplied bool `json:"long_context_billing_applied,omitempty"`
 	// ProviderRateMultiplier holds the value of the "provider_rate_multiplier" field.
 	ProviderRateMultiplier *float64 `json:"provider_rate_multiplier,omitempty"`
@@ -123,11 +123,11 @@ type UsageLog struct {
 	ImageSizeSource *string `json:"image_size_source,omitempty"`
 	// ImageSizeBreakdown holds the value of the "image_size_breakdown" field.
 	ImageSizeBreakdown map[string]int `json:"image_size_breakdown,omitempty"`
-	// 视频生成数量；>0 表示本行是视频生成用量
+	// Generated video count; a positive value identifies video usage
 	VideoCount int `json:"video_count,omitempty"`
-	// 计费用视频分辨率 480p/720p/1080p
+	// Video resolution used for billing: 480p/720p/1080p
 	VideoResolution *string `json:"video_resolution,omitempty"`
-	// 提交时请求的视频时长（秒），按秒计费的乘数
+	// Requested video duration at submission, in seconds, used for per-second billing
 	VideoDurationSeconds *int `json:"video_duration_seconds,omitempty"`
 	// CacheTTLOverridden holds the value of the "cache_ttl_overridden" field.
 	CacheTTLOverridden bool `json:"cache_ttl_overridden,omitempty"`

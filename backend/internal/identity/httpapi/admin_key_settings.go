@@ -7,15 +7,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AdminKeySettingsHandler 处理管理员凭据设置。
+// AdminKeySettingsHandler manages administrator API credentials.
 type AdminKeySettingsHandler struct{ settingService *identity.RuntimeSettings }
 
-// NewAdminKeySettingsHandler 接入同一身份设置实例。
+// NewAdminKeySettingsHandler uses the supplied identity settings instance.
 func NewAdminKeySettingsHandler(settings *identity.RuntimeSettings) *AdminKeySettingsHandler {
 	return &AdminKeySettingsHandler{settingService: settings}
 }
 
-// GetAdminAPIKey 保留已有管理员凭据管理响应。
+// GetAdminAPIKey returns whether a key exists and its masked value.
 func (h *AdminKeySettingsHandler) GetAdminAPIKey(c *gin.Context) {
 	maskedKey, exists, err := h.settingService.GetAdminAPIKeyStatus(c.Request.Context())
 	if err != nil {
@@ -29,7 +29,7 @@ func (h *AdminKeySettingsHandler) GetAdminAPIKey(c *gin.Context) {
 	})
 }
 
-// RegenerateAdminAPIKey 保留已有管理员凭据管理响应。
+// RegenerateAdminAPIKey generates a key and returns its full value.
 func (h *AdminKeySettingsHandler) RegenerateAdminAPIKey(c *gin.Context) {
 	key, err := h.settingService.GenerateAdminAPIKey(c.Request.Context())
 	if err != nil {
@@ -38,11 +38,11 @@ func (h *AdminKeySettingsHandler) RegenerateAdminAPIKey(c *gin.Context) {
 	}
 
 	httpx.Success(c, gin.H{
-		"key": key, // 完整 key 只在生成时返回一次
+		"key": key, // The full value is exposed in the generation response.
 	})
 }
 
-// DeleteAdminAPIKey 保留已有管理员凭据管理响应。
+// DeleteAdminAPIKey removes the configured administrator key.
 func (h *AdminKeySettingsHandler) DeleteAdminAPIKey(c *gin.Context) {
 	if err := h.settingService.DeleteAdminAPIKey(c.Request.Context()); err != nil {
 		httpx.ErrorFrom(c, err)

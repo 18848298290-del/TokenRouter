@@ -8,7 +8,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestRemoveOpenAIOAuthImportDefaultsMigration 检查模板删除、重复执行和其他设置的保存结果。
+// TestRemoveOpenAIOAuthImportDefaultsMigration checks template deletion, replay, and retention of other
+// settings.
 func TestRemoveOpenAIOAuthImportDefaultsMigration(t *testing.T) {
 	content, err := FS.ReadFile("291_remove_openai_oauth_import_defaults.sql")
 	require.NoError(t, err)
@@ -23,7 +24,7 @@ func TestRemoveOpenAIOAuthImportDefaultsMigration(t *testing.T) {
 		('openai_403_cooldown', '{"enabled":true}')`)
 	require.NoError(t, err)
 
-	// 配置清理支持重复执行。
+	// Configuration cleanup must tolerate replay.
 	for range 2 {
 		_, err = db.Exec(string(content))
 		require.NoError(t, err)

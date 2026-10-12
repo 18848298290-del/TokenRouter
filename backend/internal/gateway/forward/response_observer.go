@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// ResponseObserver 分别保存模型声明与实际服务档位，不改变出站请求和计费模型。
+// ResponseObserver records upstream model and service-tier declarations separately.
 type ResponseObserver struct {
 	model protocol.ResponseModelObserver
 
@@ -25,14 +25,14 @@ func (o *ResponseObserver) Observe(model string, terminal bool) {
 func (o *ResponseObserver) ObserveOpenAI(payload []byte, eventType string) {
 	model := firstValidTrimmedGJSONModel(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
-	// 上游只有携带 model 的事件才同时提供可信的 service_tier；无 model 的
-	// 增量帧不能作为计费依据。
+	// Tier observations require a model declaration; model-free delta frames
+	// cannot establish the tier used for billing.
 	if model == "" {
 		return
 	}
 	o.model.ObserveOpenAI(payload, eventType)
-	// Responses 的非终止事件通常只是回显请求档位，只有终止事件和无类型的
-	// Chat Completions/非流式 JSON 才能作为实际处理档位的证据。
+	// Typed nonterminal Responses events can echo the requested tier. Accept tier evidence
+	// from terminal events and untyped Chat Completions or nonstreaming JSON.
 	if !terminal && strings.TrimSpace(eventType) != "" {
 		return
 	}
@@ -49,7 +49,7 @@ func (o *ResponseObserver) ObserveAnthropic(payload []byte) {
 	o.ObserveServiceTier(tier, false)
 }
 
-// ObserveServiceTier 记录上游声明的档位，终态优先；非终态声明相互冲突时清除该观测。
+// ObserveServiceTier gives terminal declarations precedence and tracks conflicting nonterminal tiers.
 func (o *ResponseObserver) ObserveServiceTier(tier string, terminal bool) {
 	if o == nil || tier == "" {
 		return
@@ -67,7 +67,7 @@ func (o *ResponseObserver) ObserveServiceTier(tier string, terminal bool) {
 	}
 }
 
-// ServiceTier 返回无歧义的上游实际服务档位；没有声明或声明冲突时返回空。
+// ServiceTier returns the terminal tier, or an unambiguous nonterminal tier; otherwise it returns empty.
 func (o *ResponseObserver) ServiceTier() string {
 	if o == nil {
 		return ""
@@ -81,7 +81,7 @@ func (o *ResponseObserver) ServiceTier() string {
 	return o.firstTier
 }
 
-// NormalizeObservedOpenAIServiceTier 仅接受上游已知档位，保留 fast 的标准化规则。
+// NormalizeObservedOpenAIServiceTier accepts known tiers and normalizes fast to priority.
 func NormalizeObservedOpenAIServiceTier(raw string) string {
 	switch value := strings.ToLower(strings.TrimSpace(raw)); value {
 	case "priority", "fast":
@@ -117,14 +117,14 @@ func isUpstreamResponseModelTerminalEvent(event string) bool {
 	return protocol.IsResponseModelTerminalEvent(event)
 }
 
-// ResetModel 在再次发送上游请求前清空模型声明，保留既有服务档位处理。
+// ResetModel clears model observations before another request, retaining tier observations.
 func (o *ResponseObserver) ResetModel() {
 	if o != nil {
 		o.model = protocol.ResponseModelObserver{}
 	}
 }
 
-// ObserveOpenAIModel 仅补充模型声明，供原本不采集服务档位的透传路径使用。
+// ObserveOpenAIModel records model declarations for paths that do not collect service tiers.
 func (o *ResponseObserver) ObserveOpenAIModel(payload []byte, event string) {
 	if o != nil {
 		o.model.ObserveOpenAI(payload, event)

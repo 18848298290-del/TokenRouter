@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
 )
 
-// modelCatalogRuntimeReady 标记统一模型目录的生命周期已登记。
+// modelCatalogRuntimeReady marks registration of model catalog lifecycle hooks.
 type modelCatalogRuntimeReady struct{}
 
-// provideModelCatalogRuntime 先加载目录，再启动同步。初始化失败时记录告警并跳过同步启动。
+// provideModelCatalogRuntime registers loading before synchronization; initialization failure logs a warning and skips synchronization.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func provideModelCatalogRuntime(catalog *provider.Service, manager *lifecycle.Manager) *modelCatalogRuntimeReady {
 	catalogReady := false

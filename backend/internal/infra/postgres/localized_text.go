@@ -10,8 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// LocalizedTextExpression 为聚合查询生成与内容解析器相同的原文和有效译文选择。
-// 列名和原文表达式由查询代码提供，语言和字段使用 SQL 字面值转义。
+// LocalizedTextExpression builds SQL that selects current translations or source text.
+// The caller supplies trusted column and original SQL expressions; language and field
+// values are quoted as literals.
 func LocalizedTextExpression(ctx context.Context, column, field, original string) string {
 	if !locale.UserPresentation(ctx) {
 		return original
@@ -38,6 +39,6 @@ func LocalizedTextExpression(ctx context.Context, column, field, original string
 		expression = "CASE WHEN " + content + "->>'source_locale'=" + language + " THEN " + fallback +
 			" WHEN " + translation + "->>'source_revision'=" + content + "->>'source_revision' THEN COALESCE(" + value + ", " + fallback + ") ELSE " + expression + " END"
 	}
-	// 零版本内容尚未填写展示文案，使用业务字段。
+	// Unconfigured content uses the existing business field.
 	return "CASE WHEN COALESCE((" + content + "->>'revision')::bigint, 0) > 0 THEN " + expression + " ELSE " + original + " END"
 }

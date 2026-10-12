@@ -146,13 +146,14 @@ Bedrock 提供商的模型筛选，会统一解析型号、来源区域和全局
 
 ## 提供商自动停调阈值
 
-数据库运行时设置 `provider_scheduling_thresholds` 只接受 `openai`、`anthropic`、`grok` 三个平台，值为 1 到 100 的整数。缺少的平台补成 100，100 表示关闭这项门禁。提供商凭据里的 `provider_scheduling_threshold` 可以覆盖平台默认值，同样限定 1 到 100，浮点数四舍五入到最近的整数。Gemini、Kiro 和 Antigravity 即使带有观测字段，也不参与这项门禁。
+数据库运行时设置 `provider_scheduling_thresholds` 接受 `openai`、`anthropic`、`grok`、`kimi` 和 `zhipu`，值为 1 到 100 的整数。OpenAI、Anthropic 和 Grok 的缺省值为 100；Kimi 和 Zhipu 省略且没有提供商覆盖值时，评估器跳过这项门禁。100 表示关闭门禁。提供商凭据里的 `provider_scheduling_threshold` 可以覆盖平台默认值，同样限定 1 到 100，浮点数四舍五入到最近的整数。Gemini、Kiro 和 Antigravity 即使带有观测字段，也不参与这项门禁。
 
 每次调度候选前，用当前的额度快照评估阈值：
 
 - OpenAI：读取身份匹配、尚未重置、也没超过自动暂停陈旧期限的 Codex 5h 和 7d 窗口。`codex_*_used_percent` 始终按 0 到 100 的百分数解释，`1.0` 表示 1%。
 - Anthropic：utilization 字段按 0 到 1 的比例换算成百分比。
 - Grok：只读取响应头里的滚动 quota 窗口，官方 7d 和 30d 账单周期不参与。
+- Kimi、Zhipu：读取 Coding Plan 的统一用量快照，使用 `limits` 中的用量百分比和重置时间。
 
 多个窗口同时达到阈值时，取重置时间最晚的窗口作为暂停截止时间。快照已过期、明确陈旧、缺少截止时间、身份不匹配或没有观测数据时，提供商不会被暂停。
 

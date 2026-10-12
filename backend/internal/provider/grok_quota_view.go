@@ -19,7 +19,7 @@ type GrokQuotaView struct {
 	ParseTime           func(string) (time.Time, error)
 }
 
-// CloneGrokQuotaProbeResult 深拷贝探测结果中嵌套的展示数据。
+// CloneGrokQuotaProbeResult copies nested quota, billing, header, and local usage data for independent callers.
 func CloneGrokQuotaProbeResult(value *GrokQuotaProbeResult) *GrokQuotaProbeResult {
 	if value == nil {
 		return nil
@@ -39,7 +39,7 @@ func CloneGrokQuotaProbeResult(value *GrokQuotaProbeResult) *GrokQuotaProbeResul
 	return &out
 }
 
-// cloneGrokProbePointer 用于仅含标量的窗口值与可选字段。
+// cloneGrokProbePointer copies a pointed-to value; callers use it for scalar-only data.
 func cloneGrokProbePointer[T any](value *T) *T {
 	if value == nil {
 		return nil
@@ -90,7 +90,7 @@ func (f GrokQuotaView) BuildUsageInfo(provider *Record) *UsageInfo {
 		case 429:
 			usage.ErrorCode = "rate_limited"
 		}
-		// 官方周度或月度进度可清除“等待响应头确认”的未知状态。
+		// Official weekly or monthly progress resolves a missing-header unknown state.
 		if usage.ErrorCode == "quota_unknown" && (usage.SevenDay != nil || usage.ThirtyDay != nil) {
 			usage.ErrorCode = ""
 			if strings.Contains(strings.ToLower(usage.Error), "unknown until") ||
@@ -185,8 +185,8 @@ func NewerSuccessfulGrokActiveProbeClearsBillingForbidden(billing *upstreamusage
 
 	billingAt, billingOK := FirstGrokObservationTime(billing.UpdatedAt, billing.FetchedAt)
 	probeAt, probeOK := FirstGrokObservationTime(snapshot.LastProbeAt, snapshot.UpdatedAt)
-	// 两个快照都只有秒级精度，因此同一次刷新中 billing 请求之后的主动探测
-	// 可能与其具有合法的相同时间戳。
+	// Snapshots have second precision, so a later active probe in the same refresh
+	// may legitimately share the billing observation's timestamp.
 	return billingOK && probeOK && !probeAt.Before(billingAt)
 }
 
@@ -282,8 +282,8 @@ func GrokQuotaSnapshotFromExtra(extra map[string]any) (*upstreamusageview.QuotaS
 	}
 }
 
-// ApplyGrokBillingProgressWindows 根据账单探测摘要填充官方周度（seven_day）
-// 与月度（thirty_day）UsageProgress。
+// ApplyGrokBillingProgressWindows fills weekly (seven_day) and monthly (thirty_day)
+// usage progress from the billing summary.
 func (f GrokQuotaView) ApplyGrokBillingProgressWindows(usage *UsageInfo, billing *upstreamusageview.BillingSummary, now time.Time) {
 	if usage == nil || billing == nil {
 		return
@@ -327,7 +327,7 @@ func (f GrokQuotaView) ApplyGrokBillingProgressWindows(usage *UsageInfo, billing
 	}
 }
 
-// StampGrokQuotaPlan 从当前提供商快照读取历史档位信号。
+// StampGrokQuotaPlan resolves the model and applies tier evidence from the previous provider snapshot.
 func StampGrokQuotaPlan(record *Record, snapshot *upstreamusageview.QuotaSnapshot, model string, resolveModel func(string, ...string) string, applySignal func(*upstreamusageview.QuotaSnapshot, *upstreamusageview.QuotaSnapshot)) {
 	if snapshot == nil {
 		return

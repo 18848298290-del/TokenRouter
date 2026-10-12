@@ -134,6 +134,7 @@ func (c *GeminiBatchHTTPClient) CancelBatch(ctx context.Context, apiKey string, 
 	return c.doNoBody(req)
 }
 
+// DownloadFile opens the file stream. The caller closes the returned body.
 func (c *GeminiBatchHTTPClient) DownloadFile(ctx context.Context, apiKey string, fileName string) (io.ReadCloser, string, error) {
 	metaReq, err := c.newRequest(ctx, http.MethodGet, "/v1beta/"+strings.TrimLeft(fileName, "/"), apiKey, nil)
 	if err != nil {
@@ -154,8 +155,7 @@ func (c *GeminiBatchHTTPClient) DownloadFile(ctx context.Context, apiKey string,
 	if downloadURL == "" {
 		downloadURL = c.baseURL + "/v1beta/" + strings.TrimLeft(fileName, "/") + ":download"
 	}
-	// 纵深加固：downloadUri 来自上游响应，跟随前校验目标 host，
-	// 防止异常/被劫持的响应把带 api key 的请求带到任意主机。
+	// Validate the upstream download URI before sending the API key to its host.
 	if err := validateGeminiDownloadHost(downloadURL, c.baseURL); err != nil {
 		return nil, "", err
 	}
@@ -235,8 +235,8 @@ func (c *GeminiBatchHTTPClient) newRequest(ctx context.Context, method, path, ap
 	return req, nil
 }
 
-// validateGeminiDownloadHost 只允许跟随到 googleapis.com（含子域）
-// 或与配置的 baseURL 同 host 的下载地址。
+// validateGeminiDownloadHost accepts HTTPS URLs on googleapis.com, its subdomains,
+// or the hostname configured in baseURL.
 func validateGeminiDownloadHost(downloadURL, baseURL string) error {
 	parsed, err := url.Parse(downloadURL)
 	if err != nil {

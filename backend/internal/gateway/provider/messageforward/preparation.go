@@ -20,8 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// Dependencies 包含请求准备和执行共用的凭据、传输和策略依赖。
-// Prepare 与执行共用这些实例，动态设置在请求处理中读取。
+// Dependencies supplies credentials, transport, and policies shared by preparation and execution.
+// Dynamic settings are read during request handling.
 type Dependencies struct {
 	Attributes    *routing.ModelAttributeService
 	Credentials   *provider.MessageCredentialSource
@@ -39,23 +39,23 @@ type Dependencies struct {
 	GroupPolicies BedrockGroupPolicies
 }
 
-// BedrockGroupPolicies 在准备上游请求时读取分组功能开关。
+// BedrockGroupPolicies reads group feature settings during upstream request preparation.
 type BedrockGroupPolicies interface {
 	GetGroupPolicy(context.Context, int64) (*routing.GroupPolicyView, error)
 }
 
-// ProviderState 定义提供商临时停调状态的写入方法。
+// ProviderState records temporary provider unscheduling.
 type ProviderState interface {
 	SetTempUnschedulable(context.Context, int64, time.Time, string) error
 }
 
-// DebugObserver 接收本次请求的调试快照，实现方管理文件和日志资源。
+// DebugObserver receives request snapshots; implementations own their files and log resources.
 type DebugObserver interface {
 	Snapshot(string, http.Header, []byte, map[string]string)
 	Capture(*http.Request, []byte, *gatewayadapter.ExecutionProvider, string, bool, bool) string
 }
 
-// Runtime 包含 Messages 执行依赖，每次尝试分别保存状态、凭据和响应。
+// Runtime holds Messages dependencies. Each attempt keeps its own state, credentials, and response.
 type Runtime struct {
 	dependencies Dependencies
 	options      Options
@@ -66,7 +66,7 @@ func NewRuntime(dependencies Dependencies, options Options) *Runtime {
 	return &Runtime{dependencies: dependencies, options: options}
 }
 
-// checkBeta 在普通 Messages 的既有准备位置读取并保存结果，空集也代表已查询。
+// checkBeta saves the Messages beta policy result, including an empty filter set.
 func (r *Runtime) checkBeta(ctx context.Context, state *AttemptState, target *gatewayadapter.ExecutionProvider, header, model string) error {
 	result := r.evaluateBeta(ctx, target, header, model)
 	if result.BlockErr != nil {
@@ -80,7 +80,7 @@ func (r *Runtime) checkBeta(ctx context.Context, state *AttemptState, target *ga
 	return nil
 }
 
-// betaFilters 优先读取已保存的 Beta 过滤结果，缺少结果时查询设置。
+// betaFilters reuses an evaluated beta policy result or reads settings when it has not been evaluated.
 func (r *Runtime) betaFilters(ctx context.Context, state *AttemptState, target *gatewayadapter.ExecutionProvider, model string) map[string]struct{} {
 	if state.BetaEvaluated {
 		return state.BetaFilters
@@ -99,7 +99,7 @@ func (r *Runtime) evaluateBeta(ctx context.Context, target *gatewayadapter.Execu
 	return anthropic.EvaluateBetaPolicy(gatewayadapter.AnthropicBetaPolicy(settings), header, target.View().IsOAuth(), target.View().IsBedrock(), model)
 }
 
-// validateBaseURL 根据配置执行 URL 格式检查或允许列表校验。
+// validateBaseURL applies URL format validation or allowlist validation according to configuration.
 func (r *Runtime) validateBaseURL(raw string) (string, error) {
 	var normalized string
 	var err error

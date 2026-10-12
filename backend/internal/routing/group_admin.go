@@ -17,7 +17,7 @@ import (
 
 const GroupSortOrderStep = 10
 
-// ListGroups 按筛选条件分页查询分组，并返回总数。
+// ListGroups returns a filtered page of groups and the total match count.
 func (s *GroupAdmin) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]Group, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, search, isExclusive)
@@ -32,8 +32,8 @@ func (s *GroupAdmin) GetAllGroups(ctx context.Context) ([]Group, error) {
 }
 
 func (s *GroupAdmin) GetAllGroupsIncludingInactive(ctx context.Context) ([]Group, error) {
-	// ListWithFilters 的空 status 表示不按状态过滤，因此会返回启用和禁用分组。
-	// PageSize 10000 有意放宽；实际分组数量通常只是几十个。
+	// An empty status includes active and disabled groups.
+	// Fetch up to 10,000 groups in this unpaginated administrative view.
 	groups, _, err := s.groupRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10000}, "", "", "", nil)
 	return groups, err
 }
@@ -42,7 +42,8 @@ func (s *GroupAdmin) GetGroup(ctx context.Context, id int64) (*Group, error) {
 	return s.groupRepo.GetByID(ctx, id)
 }
 
-// GetGroupModelsListCandidates 新组展示默认建议，已有组按分组策略和提供商能力解析请求模型。
+// GetGroupModelsListCandidates returns default suggestions for new groups and resolves configured routes for
+// existing groups.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64, _ string) ([]string, error) {
 	if id <= 0 {
@@ -71,7 +72,7 @@ func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64,
 	return candidates, nil
 }
 
-// SanitizeGroupOpenAIFast 规范化功能配置，实际应用范围由执行提供商决定。
+// SanitizeGroupOpenAIFast normalizes group acceleration settings; execution providers determine applicability.
 func SanitizeGroupOpenAIFast(group *Group) {
 	if group == nil {
 		return
@@ -118,7 +119,6 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		return nil, infraerrors.Newf(infraerrors.Category(400), "INVALID_REASONING_EFFORT_MAPPING", "%v", err)
 	}
 
-	// 校验降级分组
 	if input.FallbackGroupID != nil {
 		if err := s.ValidateFallbackGroup(ctx, 0, *input.FallbackGroupID); err != nil {
 			return nil, err
@@ -137,14 +137,13 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	if fallbackOnInvalidRequest != nil && *fallbackOnInvalidRequest <= 0 {
 		fallbackOnInvalidRequest = nil
 	}
-	// 校验无效请求兜底分组
 	if fallbackOnInvalidRequest != nil {
 		if err := s.ValidateFallbackGroupOnInvalidRequest(ctx, 0, platform, *fallbackOnInvalidRequest); err != nil {
 			return nil, err
 		}
 	}
 
-	// MCPXMLInject：默认为 true，仅当显式传入 false 时关闭
+	// The legacy MCP XML setting defaults to true unless false is supplied.
 	mcpXMLInject := true
 	if input.MCPXMLInject != nil {
 		mcpXMLInject = *input.MCPXMLInject
@@ -153,10 +152,9 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	allowImageGeneration := input.AllowImageGeneration
 	allowBatchImageGeneration := input.AllowBatchImageGeneration && allowImageGeneration
 
-	// 如果指定了复制提供商的源分组，先获取提供商 ID 列表
+	// Resolve source bindings before creating the group.
 	var providerIDsToCopy []int64
 	if len(input.CopyProvidersFromGroupIDs) > 0 {
-		// 去重源分组 IDs
 		seen := make(map[int64]struct{})
 		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyProvidersFromGroupIDs))
 		for _, srcGroupID := range input.CopyProvidersFromGroupIDs {
@@ -166,7 +164,7 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 			}
 		}
 
-		// 校验源分组的平台是否与新分组一致
+		// Require every source group to exist.
 		for _, srcGroupID := range uniqueSourceGroupIDs {
 			_, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
 			if err != nil {
@@ -174,7 +172,7 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 			}
 		}
 
-		// 获取所有源分组的提供商（去重）
+		// Read the distinct provider IDs across the source groups.
 		var err error
 		providerIDsToCopy, err = s.groupRepo.GetProviderIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
 		if err != nil {
@@ -251,7 +249,7 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		return nil, err
 	}
 
-	// require_oauth_only: 过滤掉 apikey 类型提供商
+	// Exclude API-key providers when require_oauth_only is enabled.
 	if group.RequireOAuthOnly && len(providerIDsToCopy) > 0 {
 		providers, err := s.providerRepo.GetByIDs(ctx, providerIDsToCopy)
 		if err != nil {
@@ -283,7 +281,7 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		if err := s.groupRepo.Create(opCtx, group); err != nil {
 			return err
 		}
-		// 提供商复制与分组创建放在同一事务中，避免出现部分提交。
+		// Bind providers inside the creation transaction so a failed binding rolls back the new group.
 		if len(providerIDsToCopy) > 0 {
 			if err := s.groupRepo.BindProvidersToGroup(opCtx, group.ID, providerIDsToCopy); err != nil {
 				return fmt.Errorf("failed to bind providers to new group: %w", err)
@@ -301,7 +299,8 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	return group, nil
 }
 
-// NextGroupSortOrder 在创建事务内分配末尾排序值，避免并发新建产生重复位置。
+// NextGroupSortOrder allocates the next position. Call it inside the creation transaction; the optional
+// repository serializes allocation.
 func (s *GroupAdmin) NextGroupSortOrder(ctx context.Context) (int, error) {
 	if s.groupSortOrderRepo != nil {
 		if err := s.groupSortOrderRepo.LockGroupSortOrder(ctx); err != nil {
@@ -336,11 +335,11 @@ func (s *GroupAdmin) NextGroupSortOrder(ctx context.Context) (int, error) {
 	return next, nil
 }
 
-// ValidateFallbackGroup 校验降级分组的有效性
-// currentGroupID: 当前分组 ID（新建时为 0）
-// fallbackGroupID: 降级分组 ID。
+// ValidateFallbackGroup checks client-restriction fallback targets and rejects cycles.
+// Pass zero for currentGroupID when creating a group.
+// The immediate target must accept clients other than Claude Code.
 func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64) error {
-	// 不能将自己设置为降级分组
+	// A group cannot fall back to itself.
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as fallback group")
 	}
@@ -356,13 +355,13 @@ func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, 
 			return fmt.Errorf("fallback group cycle detected")
 		}
 
-		// 检查降级分组是否存在
+		// Each group in the fallback chain must exist.
 		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
 		if err != nil {
 			return fmt.Errorf("fallback group not found: %w", err)
 		}
 
-		// 降级分组不能启用 claude_code_only，否则会造成死循环
+		// The immediate fallback must accept the clients rejected by the source group.
 		if nextID == fallbackGroupID && fallbackGroup.ClaudeCodeOnly {
 			return fmt.Errorf("fallback group cannot have claude_code_only enabled")
 		}
@@ -374,10 +373,10 @@ func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, 
 	}
 }
 
-// ValidateFallbackGroupOnInvalidRequest 校验无效请求兜底分组的有效性。
-// currentGroupID: 当前分组 ID（新建时为 0）
-// platform: 当前分组的平台
-// fallbackGroupID: 兜底分组 ID。
+// ValidateFallbackGroupOnInvalidRequest requires an existing target with no invalid-request fallback of its own.
+// Pass zero for currentGroupID when creating a group.
+// The platform parameter is retained for callers and is not used for validation.
+// The target cannot be the current group.
 func (s *GroupAdmin) ValidateFallbackGroupOnInvalidRequest(ctx context.Context, currentGroupID int64, platform string, fallbackGroupID int64) error {
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as invalid request fallback group")
@@ -430,7 +429,7 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	if input.AllowedProtocols != nil {
 		group.AllowedProtocols = append([]wireprotocol.ProtocolID{}, *input.AllowedProtocols...)
 	} else {
-		// 字段缺省时保留原集合；切换平台只移除新平台不支持的协议。
+		// An omitted protocol field retains the effective selection.
 		group.AllowedProtocols = previousAllowedProtocols
 	}
 	if input.DisplayBrand != nil {
@@ -460,7 +459,7 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		}
 		group.RoutingPolicy = input.RoutingPolicy.Clone()
 	}
-	// 图片能力和批量图片策略独立于模型价卡。
+	// Image and batch permissions are stored independently of model price cards.
 	if input.AllowImageGeneration != nil {
 		group.AllowImageGeneration = *input.AllowImageGeneration
 	}
@@ -470,19 +469,18 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	if !group.AllowImageGeneration {
 		group.AllowBatchImageGeneration = false
 	}
-	// Claude Code 客户端限制
 	if input.ClaudeCodeOnly != nil {
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
 	}
 	if input.FallbackGroupID != nil {
-		// 校验降级分组
+		// Positive IDs select a validated fallback.
 		if *input.FallbackGroupID > 0 {
 			if err := s.ValidateFallbackGroup(ctx, id, *input.FallbackGroupID); err != nil {
 				return nil, err
 			}
 			group.FallbackGroupID = input.FallbackGroupID
 		} else {
-			// 传入 0 或负数表示清除降级分组
+			// Zero or a negative ID clears the fallback.
 			group.FallbackGroupID = nil
 		}
 	}
@@ -515,7 +513,6 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	}
 	group.UnavailableFallbackGroupID = unavailableFallbackGroupID
 
-	// 模型路由配置
 	if input.ModelRouting != nil {
 		group.ModelRouting = input.ModelRouting
 	}
@@ -526,12 +523,12 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		group.MCPXMLInject = *input.MCPXMLInject
 	}
 
-	// 支持的模型系列（仅 antigravity 平台使用）
+	// Retain compatibility input for Antigravity model families.
 	if input.SupportedModelScopes != nil {
 		group.SupportedModelScopes = *input.SupportedModelScopes
 	}
 
-	// 旧开关已在协议集合归一化阶段处理，此处只保留其它 OpenAI 专用配置。
+	// Legacy entry switches are normalized below; acceleration policy has its own validation.
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive
 	}
@@ -616,25 +613,23 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		return nil, err
 	}
 
-	// 如果指定了复制提供商的源分组，同步绑定（替换当前分组的提供商）
+	// Supplying source groups replaces the current provider bindings.
 	var providerIDsToCopy []int64
 	if len(input.CopyProvidersFromGroupIDs) > 0 {
-		// 去重源分组 IDs
 		seen := make(map[int64]struct{})
 		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyProvidersFromGroupIDs))
 		for _, srcGroupID := range input.CopyProvidersFromGroupIDs {
-			// 校验：源分组不能是自身
+			// Copying from the destination group itself is invalid.
 			if srcGroupID == id {
 				return nil, fmt.Errorf("cannot copy providers from self")
 			}
-			// 去重
 			if _, exists := seen[srcGroupID]; !exists {
 				seen[srcGroupID] = struct{}{}
 				uniqueSourceGroupIDs = append(uniqueSourceGroupIDs, srcGroupID)
 			}
 		}
 
-		// 校验源分组存在后复制提供商关联
+		// Require source groups to exist before copying their associations.
 		for _, srcGroupID := range uniqueSourceGroupIDs {
 			_, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
 			if err != nil {
@@ -642,13 +637,13 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 			}
 		}
 
-		// 获取所有源分组的提供商（去重）
+		// Read the distinct providers across source groups.
 		providerIDsToCopy, err = s.groupRepo.GetProviderIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get providers from source groups: %w", err)
 		}
 
-		// require_oauth_only: 过滤掉 apikey 类型提供商
+		// Exclude API-key providers when require_oauth_only is enabled.
 		if group.RequireOAuthOnly && len(providerIDsToCopy) > 0 {
 			providers, err := s.providerRepo.GetByIDs(ctx, providerIDsToCopy)
 			if err != nil {
@@ -674,7 +669,7 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		if err := s.groupRepo.Update(opCtx, group); err != nil {
 			return err
 		}
-		// 分组属性更新和提供商替换必须同事务提交，避免删绑成功一半。
+		// Update group settings and replace bindings in one transaction so a failure restores both.
 		if len(input.CopyProvidersFromGroupIDs) > 0 {
 			if _, err := s.groupRepo.DeleteProviderGroupsByGroupID(opCtx, id); err != nil {
 				return fmt.Errorf("failed to clear existing provider bindings: %w", err)
@@ -692,8 +687,8 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
 	}
-	// 共享价格配置缓存按分组及模型索引价卡；分组策略通过认证快照独立读取。
-	// 仅在平台实际变化且事务提交成功后失效，避免继续按旧平台匹配。
+	// Group policies are read through authentication snapshots.
+	// Shared pricing configuration is independent of these group updates.
 
 	return group, nil
 }
@@ -711,7 +706,7 @@ func (s *GroupAdmin) DeleteGroup(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// 注意：user_group_rate_multipliers 表通过外键 ON DELETE CASCADE 自动清理
+	// The foreign key cascades deletion to user_group_rate_multipliers.
 	if s.authCacheInvalidator != nil {
 		for _, key := range groupKeys {
 			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)

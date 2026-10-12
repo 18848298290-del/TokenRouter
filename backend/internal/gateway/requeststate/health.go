@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// FirstHealthModel 取第一个模型并清理两侧空白。
+// FirstHealthModel trims the first supplied model, returning empty for an empty slice.
 func FirstHealthModel(values []string) string {
 	if len(values) == 0 {
 		return ""
@@ -13,7 +13,7 @@ func FirstHealthModel(values []string) string {
 	return strings.TrimSpace(values[0])
 }
 
-// WithHealthModel 派生本次执行提示；空输入不覆盖已有模型或改变 nil context。
+// WithHealthModel sets a derived health hint; an empty first model returns ctx unchanged, including nil.
 func WithHealthModel(ctx context.Context, models []string) context.Context {
 	model := FirstHealthModel(models)
 	if model == "" {
@@ -25,7 +25,7 @@ func WithHealthModel(ctx context.Context, models []string) context.Context {
 	return updateHints(ctx, func(value *ExecutionHints) { value.HealthModel = model })
 }
 
-// HealthModel 优先使用本次传入的模型，缺省时读取当前尝试的提示。
+// HealthModel prefers the first supplied model and otherwise reads the attempt hint.
 func HealthModel(ctx context.Context, models []string) string {
 	if model := FirstHealthModel(models); model != "" {
 		return model
@@ -36,7 +36,7 @@ func HealthModel(ctx context.Context, models []string) string {
 	return strings.TrimSpace(ExecutionHintsFromContext(ctx).HealthModel)
 }
 
-// HealthThinking 返回思考状态的独立副本，区分未提供、true 和 false。
+// HealthThinking returns an independent bool pointer, or nil when the hint is absent.
 func HealthThinking(ctx context.Context) *bool {
 	if value, ok := ThinkingEnabledFromContext(ctx); ok {
 		return &value

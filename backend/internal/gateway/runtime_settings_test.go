@@ -112,7 +112,7 @@ func (s *openAIFastPolicyRepoStub) Set(ctx context.Context, key, value string) e
 	return nil
 }
 
-// GetMultiple 按请求键读取既有夹具数据，缺省设置继续由生产读取器处理。
+// GetMultiple returns fixture values for requested keys; the settings reader supplies missing defaults.
 func (s *openAIFastPolicyRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	values := make(map[string]string, len(keys))
 	for _, key := range keys {

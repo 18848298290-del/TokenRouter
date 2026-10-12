@@ -20,6 +20,9 @@ type GroupStatsWithUsageFiltersRepo interface {
 type UserStatsReader interface {
 	GetUserStatsWithFilters(context.Context, UsageLogFilters) (*UsageStats, error)
 }
+
+// QueryReaders contains optional query capabilities. Nil fields select the
+// UsageLogRepository methods used by the corresponding service operation.
 type QueryReaders struct {
 	UsageTrendWithFiltersRepo      UsageTrendWithFiltersRepo
 	ModelStatsWithUsageFiltersRepo ModelStatsWithUsageFiltersRepo

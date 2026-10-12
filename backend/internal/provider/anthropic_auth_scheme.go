@@ -12,7 +12,7 @@ const (
 	AnthropicAPIKeyAuthSchemeAuthorizationBearer = "authorization_bearer"
 )
 
-// GetAnthropicAPIKeyAuthScheme 返回 Anthropic API Key 提供商转发上游时使用的认证头方案。
+// GetAnthropicAPIKeyAuthScheme returns the upstream authentication header scheme for Anthropic and CN API Key providers.
 func (r *Record) GetAnthropicAPIKeyAuthScheme() string {
 	if r == nil || r.Type != capability.ProviderTypeAPIKey {
 		return AnthropicAPIKeyAuthSchemeXAPIKey

@@ -12,12 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestAllowUserViewErrorRequests_PersistsToDB 验证 buildSystemSettingsUpdates 会将
-// AllowUserViewErrorRequests 写入 updates map（即最终落库），这是对 bug 的回归测试：
-// 该字段曾因漏写而永远无法持久化。
+// TestAllowUserViewErrorRequests_PersistsToDB checks that Save includes the user
+// error-visibility flag in the repository update batch.
 func TestAllowUserViewErrorRequests_PersistsToDB(t *testing.T) {
-	// bmUpdateRepoStub 定义在 helpers_test.go。
-	// 本测试不触及需要 GetValue 的设置项，getValueFn 设为 nil 即可，无需 stub。
+	// Leaving GetValue unstubbed also catches unexpected single-setting reads.
 	repo := &bmUpdateRepoStub{}
 	svc := settingskit.NewComposite(repo, &config.Config{})
 
@@ -26,7 +24,6 @@ func TestAllowUserViewErrorRequests_PersistsToDB(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 断言 updates 中含有该 key，且值为 "true"
 	val, ok := repo.updates[usage.SettingKeyAllowUserViewErrorRequests]
 	require.True(t, ok, "updates map 中应包含 SettingKeyAllowUserViewErrorRequests，但未找到（bug：buildSystemSettingsUpdates 漏写）")
 	require.Equal(t, "true", val)

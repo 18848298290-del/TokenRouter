@@ -14,11 +14,8 @@ import (
 )
 
 const (
-	// schemaMigrationsTableDDL 定义迁移记录表的 DDL。
-	// 该表用于跟踪已应用的迁移文件及其校验和。
-	// - filename: 迁移文件名，作为主键唯一标识每个迁移
-	// - checksum: 文件内容的 SHA256 哈希值，用于检测迁移文件是否被篡改
-	// - applied_at: 迁移应用时间戳。
+	// schemaMigrationsTableDDL records each applied filename, its trimmed-content SHA256,
+	// and its application timestamp.
 	schemaMigrationsTableDDL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
 	filename   TEXT PRIMARY KEY,
@@ -44,9 +41,8 @@ CREATE TABLE IF NOT EXISTS atlas_schema_revisions (
 );
 `
 
-	// migrationsAdvisoryLockID 是用于序列化迁移操作的 PostgreSQL Advisory Lock ID。
-	// 在多实例部署场景下，该锁确保同一时间只有一个实例执行迁移。
-	// 任何稳定的 int64 值都可以，只要不与同一数据库中的其他锁冲突即可。
+	// migrationsAdvisoryLockID serializes migrations across application instances.
+	// Keep this value stable and distinct from other advisory locks in the database.
 	migrationsAdvisoryLockID                     int64 = 694208311321144027
 	migrationsLockRetryInterval                        = 500 * time.Millisecond
 	nonTransactionalMigrationSuffix                    = "_notx.sql"
@@ -67,9 +63,9 @@ CREATE TABLE IF NOT EXISTS atlas_schema_revisions (
 	auditLogsRequestIDIndex                            = "idx_audit_logs_request_id_created_at"
 )
 
-// migrationChecksumCompatibilityRules 仅用于兼容历史上误修改过的迁移文件 checksum。
-// 规则必须同时匹配「迁移名 + 数据库 checksum + 当前文件 checksum」且两者都落在该迁移的已知版本集合内才会放行，
-// 避免放宽全局校验，也允许将误改的历史 migration 回滚为已发布版本而不要求人工修 checksum。
+// migrationChecksumCompatibilityRules accepts known historical file versions.
+// Both the database and current file checksum must belong to the named migration's
+// allowlist, including when a historical file version is restored.
 var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibilityRule{
 	"054_drop_legacy_cache_columns.sql":                       newMigrationChecksumCompatibilityRule("82de761156e03876653e7a6a4eee883cd927847036f779b0b9f34c42a8af7a7d", "182c193f3359946cf094090cd9e57d5c3fd9abaffbc1e8fc378646b8a6fa12b4"),
 	"061_add_usage_log_request_type.sql":                      newMigrationChecksumCompatibilityRule("66207e7aa5dd0429c2e2c0fabdaf79783ff157fa0af2e81adff2ee03790ec65c", "08a248652cbab7cfde147fc6ef8cda464f2477674e20b718312faa252e0481c0", "222b4a09c797c22e5922b6b172327c824f5463aaa8760e4f621bc5c22e2be0f3"),
@@ -99,39 +95,22 @@ type migrationConnection interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-// pgAdvisoryLock 获取 PostgreSQL Advisory Lock。
-// Advisory Lock 是一种轻量级的锁机制，不与任何特定的数据库对象关联。
-// 它非常适合用于应用层面的分布式锁场景，如迁移序列化。
+// advisoryLockConnection supplies lock operations on one database session.
 type advisoryLockConnection interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// ApplyMigrations 是迁移执行的核心实现。
-// 它从指定的文件系统读取 SQL 迁移文件并按顺序应用。
-//
-// 迁移执行流程：
-//  1. 获取 PostgreSQL Advisory Lock，防止多实例并发迁移
-//  2. 确保 schema_migrations 表存在
-//  3. 按文件名排序读取所有 .sql 文件
-//  4. 对于每个迁移文件：
-//     - 计算文件内容的 SHA256 校验和
-//     - 检查该迁移是否已应用（通过 filename 查询）
-//     - 如果已应用，验证校验和是否匹配
-//     - 如果未应用，在事务中执行迁移并记录
-//  5. 释放 Advisory Lock
-//
-// 参数：
-//   - ctx: 上下文
-//   - db: 数据库连接
-//   - fsys: 包含迁移文件的文件系统（通常是 embed.FS）
+// ApplyMigrations applies SQL files in filename order under a session advisory lock.
+// It validates checksums of applied files and records each successful migration.
+// Ordinary files run in individual transactions; *_notx.sql files execute concurrent
+// index statements separately and must tolerate retries after partial completion.
 func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	if db == nil {
 		return errors.New("nil sql db")
 	}
 
-	// 获取分布式锁，确保多实例部署时只有一个实例执行迁移。
-	// 这是 PostgreSQL 特有的 Advisory Lock 机制。
+	// Use the same session for locking and migrations, including transaction creation.
 	lockConn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire migrations lock connection: %w", err)
@@ -141,35 +120,29 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		return err
 	}
 	defer func() {
-		// 无论迁移是否成功，都要释放锁。
-		// 独立超时确保原 ctx 取消后仍会尝试释放，但数据库链路异常不会
-		// 无限阻塞进程退出。
+		// Attempt unlock even after ctx is canceled, with a separate bounded timeout.
 		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = pgAdvisoryUnlock(unlockCtx, lockConn)
 	}()
 
-	// 创建迁移记录表（如果不存在）。
-	// 该表记录所有已应用的迁移及其校验和。
 	if _, err := lockConn.ExecContext(ctx, schemaMigrationsTableDDL); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	// 自动对齐 Atlas 基线（如果检测到 legacy schema_migrations 且缺失 atlas_schema_revisions）。
+	// Create an Atlas baseline when its revision table is missing or empty.
 	if err := ensureAtlasBaselineAligned(ctx, lockConn, fsys); err != nil {
 		return err
 	}
 
-	// 获取所有 .sql 迁移文件并按文件名排序。
-	// 命名规范：使用零填充数字前缀（如 001_init.sql, 002_add_users.sql）。
+	// Zero-padded prefixes such as 001_init.sql determine execution order.
 	files, err := fs.Glob(fsys, "*.sql")
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
-	sort.Strings(files) // 确保按文件名顺序执行迁移
+	sort.Strings(files)
 
 	for _, name := range files {
-		// 读取迁移文件内容
 		contentBytes, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
@@ -177,26 +150,22 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 		content := strings.TrimSpace(string(contentBytes))
 		if content == "" {
-			continue // 跳过空文件
+			continue
 		}
 
-		// 计算文件内容的 SHA256 校验和，用于检测文件是否被修改。
-		// 这是一种防篡改机制：如果有人修改了已应用的迁移文件，系统会拒绝启动。
+		// Hash trimmed content to detect edits to already-applied migrations.
 		sum := sha256.Sum256([]byte(content))
 		checksum := hex.EncodeToString(sum[:])
 
-		// 检查该迁移是否已经应用
 		var existing string
 		rowErr := lockConn.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE filename = $1", name).Scan(&existing)
 		if rowErr == nil {
-			// 迁移已应用，验证校验和是否匹配
 			if existing != checksum {
-				// 兼容特定历史误改场景（仅白名单规则），其余仍保持严格不可变约束。
+				// Allow only the documented historical checksum combinations.
 				if isMigrationChecksumCompatible(name, existing, checksum) {
 					continue
 				}
-				// 校验和不匹配意味着迁移文件在应用后被修改，这是危险的。
-				// 正确的做法是创建新的迁移文件来进行变更。
+				// Schema changes belong in new migration files.
 				return fmt.Errorf(
 					"migration %s checksum mismatch (db=%s file=%s)\n"+
 						"This means the migration file was modified after being applied to the database.\n"+
@@ -207,7 +176,7 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 					name, existing, checksum, name, name,
 				)
 			}
-			continue // 迁移已应用且校验和匹配，跳过
+			continue
 		}
 		if !errors.Is(rowErr, sql.ErrNoRows) {
 			return fmt.Errorf("check migration %s: %w", name, rowErr)
@@ -223,8 +192,8 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 				return fmt.Errorf("prepare migration %s: %w", name, err)
 			}
 
-			// *_notx.sql：用于 CREATE/DROP INDEX CONCURRENTLY 场景，必须非事务执行。
-			// 逐条语句执行，避免将多条 CONCURRENTLY 语句放入同一个隐式事务块。
+			// Execute each concurrent index statement separately: a multi-statement Exec
+			// would place them in an implicit transaction block.
 			statements := splitSQLStatements(content)
 			for i, stmt := range statements {
 				trimmed := strings.TrimSpace(stmt)
@@ -244,25 +213,22 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			continue
 		}
 
-		// 默认迁移在事务中执行，确保原子性：要么完全成功，要么完全回滚。
+		// Commit each ordinary migration together with its checksum record.
 		tx, err := lockConn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", name, err)
 		}
 
-		// 执行迁移 SQL
 		if _, err := tx.ExecContext(ctx, content); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 
-		// 记录迁移已完成，保存文件名和校验和
 		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)", name, checksum); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
 
-		// 提交事务
 		if err := tx.Commit(); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("commit migration %s: %w", name, err)
@@ -566,8 +532,7 @@ func pgAdvisoryLock(ctx context.Context, db advisoryLockConnection) error {
 	}
 }
 
-// pgAdvisoryUnlock 释放 PostgreSQL Advisory Lock。
-// 必须在获取锁后确保释放，否则会阻塞其他实例的迁移操作。
+// pgAdvisoryUnlock releases the migration lock on the session that acquired it.
 func pgAdvisoryUnlock(ctx context.Context, db advisoryLockConnection) error {
 	_, err := db.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockID)
 	if err != nil {

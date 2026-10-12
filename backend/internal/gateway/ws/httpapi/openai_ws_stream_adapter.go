@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// wsStreamAdapter 解析单次帧并应用提供商健康规则。
+// wsStreamAdapter parses upstream frames and applies provider health rules.
 type wsStreamAdapter struct {
 	*wsPassthroughAdapter
 	observer    *forwardcore.ResponseObserver

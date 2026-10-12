@@ -4,7 +4,7 @@ import (
 	"slices"
 )
 
-// clonePointer 隔离请求对标量与时间指针的修改，保留未设置状态。
+// clonePointer copies scalar and time values while retaining nil.
 func clonePointer[T any](v *T) *T {
 	if v == nil {
 		return nil
@@ -13,7 +13,7 @@ func clonePointer[T any](v *T) *T {
 	return &out
 }
 
-// cloneModelRouting 同时复制映射和候选提供商切片，不折叠 nil/空集合。
+// cloneModelRouting copies the map and provider slices, retaining the distinction between nil and empty.
 func cloneModelRouting(v map[string][]int64) map[string][]int64 {
 	if v == nil {
 		return nil
@@ -30,7 +30,7 @@ func cloneModelsList(v GroupModelsListConfig) GroupModelsListConfig {
 	return v
 }
 
-// cloneMembership 不允许请求中的窗口或成员修改影响认证缓存。
+// cloneMembership copies member data and window pointers so request changes stay outside the cache.
 func cloneMembership(v *TeamMembership) *TeamMembership {
 	if v == nil {
 		return nil

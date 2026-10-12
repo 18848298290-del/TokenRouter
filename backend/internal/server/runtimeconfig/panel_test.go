@@ -139,7 +139,7 @@ func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {
 	repo := &panelRateLimitSettingRepo{}
 	svc := newPanelRateLimitTestService(repo)
 
-	// 先填充缓存（默认值）
+	// Prime the cache with defaults before the write.
 	cached := svc.GetPanelRateLimitSettingsCached(context.Background())
 	require.Equal(t, *DefaultPanelRateLimitSettings(), cached)
 
@@ -152,11 +152,11 @@ func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {
 	}
 	require.NoError(t, svc.SetPanelRateLimitSettings(context.Background(), want))
 
-	// 写入后无需等待 TTL，缓存立即反映新值
+	// The write refreshes the cache before its TTL expires.
 	cached = svc.GetPanelRateLimitSettingsCached(context.Background())
 	require.Equal(t, *want, cached)
 
-	// DB 中持久化的值可直读
+	// A direct read confirms that the settings were persisted.
 	stored, err := svc.GetPanelRateLimitSettings(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, want, stored)

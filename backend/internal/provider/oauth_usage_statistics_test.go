@@ -8,7 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestWindowPairFailurePreservesPartialStats 合并失败时保留可读取窗口，取消时终止回退。
+// TestWindowPairFailurePreservesPartialStats checks partial results after a combined failure and cancellation
+// before retries.
 func TestWindowPairFailurePreservesPartialStats(t *testing.T) {
 	reader := &windowPairReader{failPair: true}
 	stats := NewLocalUsageStatistics(reader, nil, LocalUsageStatisticsOptions{})

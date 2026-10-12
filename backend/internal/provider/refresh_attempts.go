@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// RefreshTokenOperation 是兼容直接刷新路径的最小交换能力。
+// RefreshTokenOperation exchanges credentials for the direct refresh path.
 type RefreshTokenOperation interface {
 	Refresh(context.Context, *Record) (map[string]any, error)
 }
@@ -18,13 +18,14 @@ type ProviderRefreshAttemptGate interface {
 	AcquireRate(context.Context) (func(), error)
 }
 
-// GrokRefreshMutationWriter 提供 Grok 的条件更新和失败分类，其他平台使用通用失败写入。
+// GrokRefreshMutationWriter conditionally records Grok failures against the attempted credentials and proxy.
 type GrokRefreshMutationWriter interface {
 	SetGrokOAuthRefreshErrorIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, string) (bool, error)
 	SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, time.Time, string) (bool, error)
 }
 
-// RefreshAttempts 拥有单提供商的尝试、预算、重试、失败隔离与原后置动作顺序；共享 API 由 app 注入。
+// RefreshAttempts runs one provider's attempts, budgets, retries, failure handling, and post-refresh actions
+// using the injected API.
 type RefreshAttempts struct {
 	API                               *OAuthRefreshAPI
 	Tuning                            *RefreshTuning
@@ -75,7 +76,7 @@ func (s RefreshAttempts) Run(
 				}
 				acquireRate = providerGate.AcquireRate
 			} else {
-				// 兼容门只负责速率准入，仅在即将真正调用上游 Refresh 时获取。
+				// Legacy gates limit exchange rate; acquire immediately before calling upstream Refresh.
 				acquireRate = gate.Acquire
 			}
 		}
@@ -86,7 +87,7 @@ func (s RefreshAttempts) Run(
 		shortCircuit := false
 		credentialsPersisted := false
 
-		// 优先使用统一 API（带分布式锁 + DB 重读保护）
+		// Prefer the coordinated API for distributed locking and database rereads.
 		if s.API != nil && executor != nil {
 			actualExecutor := executor
 			if acquireRate != nil {
@@ -103,19 +104,19 @@ func (s RefreshAttempts) Run(
 			if refreshErr != nil {
 				err = refreshErr
 			} else if result.LockHeld {
-				// 锁被其他 worker 持有，由调用侧策略决定如何计数
+				// Let the caller policy classify lock contention.
 				err = s.Policy.HandleLockHeld()
 				shortCircuit = true
 			} else if !result.Refreshed {
-				// 已被其他路径刷新，由调用侧策略决定如何计数
+				// Let the caller policy classify an exchange skipped after a reread.
 				err = s.Policy.HandleAlreadyRefreshed()
 				shortCircuit = true
 			} else {
 				credentialsPersisted = result.NewCredentials != nil
-				_ = result.NewCredentials // 统一 API 已设置 _token_version 并更新 DB，无需重复操作
+				_ = result.NewCredentials // The API has already assigned _token_version and persisted credentials.
 			}
 		} else {
-			// 未配置协调器时调用 refresher。
+			// Call the refresher directly when no coordinator is configured.
 			failureProvider = CloneRecord(provider)
 			releaseRate := func() {}
 			if acquireRate != nil {
@@ -164,7 +165,8 @@ func (s RefreshAttempts) Run(
 				return ctxErr
 			}
 			if persistedAfterAttemptDeadline {
-				// 上游结果与精确状态 CAS 已持久化；仅内部尝试预算在有界清理期间耗尽，不能把成功转换为重试、冷却或熔断证据。
+				// The credentials are committed; a deadline reached during bounded cleanup must not turn success into retry or
+				// cooldown evidence.
 				s.SyncCleanup(ctx, provider)
 				return nil
 			}
@@ -187,16 +189,18 @@ func (s RefreshAttempts) Run(
 			return &ProviderCycleContainmentRefreshError{Cause: err}
 		}
 		if s.AmbiguousEntitlement(provider, err) {
-			// Grok 客户端将 token 端点的所有 403 标为权益拒绝，缺少归属证据时本轮暂停该平台，提供商保持当前状态。
+			// Grok token-endpoint 403 errors have ambiguous ownership; contain this platform for the cycle without
+			// changing provider health.
 			return &ProviderCycleContainmentRefreshError{Cause: err}
 		}
 
-		// 平台级 OAuth client 或 scope 故障不能证明所有提供商无效；返回类型化内部信号，仅隔离平台而不修改提供商状态。
+		// OAuth client or scope failures may affect the whole platform; return a platform error without marking
+		// individual providers invalid.
 		if s.SharedProviderError(err) {
 			return &ProviderConfigurationRefreshError{Cause: err}
 		}
 
-		// 不可重试错误（invalid_grant/invalid_client 等）直接标记 error 状态并返回
+		// Conditionally record permanent failure for a nonretryable provider error.
 		if s.NonRetryable(err) {
 			errorMsg := "Token refresh failed (non-retryable): " + logredact.RedactText(err.Error())
 			isGrokOAuth := provider.IsGrokOAuth()
@@ -278,7 +282,7 @@ func (s RefreshAttempts) Run(
 			"error", logredact.RedactText(err.Error()),
 		)
 
-		// 如果还有重试机会，等待后重试
+		// Back off before another attempt, allowing the cycle context to cancel the wait.
 		if attempt < maxRetries {
 			backoff := s.Tuning.RetryBackoff(provider.ID, attempt)
 			if backoff > 0 {
@@ -296,7 +300,7 @@ func (s RefreshAttempts) Run(
 		return err
 	}
 
-	// 可重试错误耗尽时临时停调该提供商，后续请求会跳过它。
+	// Exhausted retryable errors trigger a temporary scheduling block.
 	s.Warn("token_refresh.retry_exhausted",
 		"provider_id", provider.ID,
 		"platform", provider.Platform,
@@ -304,7 +308,7 @@ func (s RefreshAttempts) Run(
 		"error", logredact.RedactText(lastErr.Error()),
 	)
 
-	// 设置临时不可调度 10 分钟（不标记 error，保持 status=active 让下个刷新周期能继续尝试）
+	// Keep status active during the ten-minute cooldown so a later refresh cycle can try again.
 	until := s.Now().Add(TokenRefreshTempUnschedDuration)
 	reason := "token refresh retry exhausted"
 	if lastErr != nil {
@@ -347,7 +351,7 @@ func (s RefreshAttempts) Run(
 		return lastErr
 	}
 
-	// 排队或读取阶段尚未取得交换快照，失败时保持提供商状态不变。
+	// Queue or reread failures have no attempted identity to compare; leave provider health unchanged.
 	if failureProvider == nil {
 		return lastErr
 	}

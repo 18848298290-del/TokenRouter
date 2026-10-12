@@ -14,7 +14,7 @@ type clockEmailCache struct {
 	value *VerificationCodeData
 }
 
-// TestSessionClockControlsSigningAndValidation 确认签发、有效期与库内 JWT 校验使用同一注入时钟。
+// TestSessionClockControlsSigningAndValidation checks that JWT signing, expiry, and validation share the injected clock.
 func TestSessionClockControlsSigningAndValidation(t *testing.T) {
 	now := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	svc := NewSessionService(SessionOptions{Secret: "test-clock-fixture", ExpireHour: 1, Now: func() time.Time { return now }}, nil, nil, nil, nil)
@@ -47,7 +47,7 @@ func (c *clockEmailCache) SetNotifyVerifyCode(_ context.Context, _ string, data 
 	return nil
 }
 
-// TestNotifyClockKeepsSeparateReadPoints 检查 CreatedAt 和 ExpiresAt 分别读取时钟。
+// TestNotifyClockKeepsSeparateReadPoints checks that CreatedAt and ExpiresAt read the clock separately.
 func TestNotifyClockKeepsSeparateReadPoints(t *testing.T) {
 	base := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	calls := 0

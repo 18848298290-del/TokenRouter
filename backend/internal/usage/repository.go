@@ -56,7 +56,7 @@ type UsageLogRepository interface {
 	// Provider stats
 	GetProviderUsageStats(ctx context.Context, providerID int64, startTime, endTime time.Time) (*ProviderUsageStatsResponse, error)
 
-	// Aggregated stats (optimized)
+	// Database-aggregated statistics
 	GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*UsageStats, error)
 	GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*UsageStats, error)
 	GetProviderStatsAggregated(ctx context.Context, providerID int64, startTime, endTime time.Time) (*UsageStats, error)

@@ -31,7 +31,7 @@ func TruncateBatchImageMessage(message string, limit int) string {
 	return message[:limit]
 }
 
-// BatchImageRequestedModel 优先返回客户端模型，并兼容迁移前仅保存实际模型的任务。
+// BatchImageRequestedModel returns the client model, using the upstream model for older jobs.
 func BatchImageRequestedModel(job *BatchImageJob) string {
 	if job == nil {
 		return ""
@@ -42,7 +42,7 @@ func BatchImageRequestedModel(job *BatchImageJob) string {
 	return job.Model
 }
 
-// BatchImageInternalModel 返回提交时确定的内部模型，并兼容迁移前仅保存上游模型的任务。
+// BatchImageInternalModel returns the submission routing model, using the upstream model for older jobs.
 func BatchImageInternalModel(job *BatchImageJob) string {
 	if job == nil {
 		return ""

@@ -20,11 +20,9 @@ func TestGenerateNonce(t *testing.T) {
 		nonce, err := GenerateNonce()
 		require.NoError(t, err)
 
-		// Should be valid base64
 		decoded, err := base64.StdEncoding.DecodeString(nonce)
 		require.NoError(t, err)
 
-		// Should decode to 16 bytes
 		assert.Len(t, decoded, 16)
 	})
 
@@ -70,10 +68,8 @@ func TestGetNonceFromContext(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 
-		// Set a non-string value
 		c.Set(CSPNonceKey, 12345)
 
-		// Should return empty string for wrong type (safe type assertion)
 		nonce := GetNonceFromContext(c)
 		assert.Empty(t, nonce)
 	})
@@ -123,7 +119,7 @@ func TestSecurityHeaders(t *testing.T) {
 
 		csp := w.Header().Get("Content-Security-Policy")
 		assert.NotEmpty(t, csp)
-		// Policy is auto-enhanced with nonce and Cloudflare Insights domain
+		// The policy gains a nonce and required integration sources.
 		assert.Contains(t, csp, "default-src 'self'")
 		assert.Contains(t, csp, "'nonce-")
 		assert.Contains(t, csp, CloudflareInsightsDomain)
@@ -168,7 +164,6 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.NotContains(t, csp, "__CSP_NONCE__", "placeholder should be replaced")
 		assert.Contains(t, csp, "'nonce-", "should contain nonce directive")
 
-		// Verify nonce is stored in context
 		nonce := GetNonceFromContext(c)
 		assert.NotEmpty(t, nonce)
 		assert.Contains(t, csp, "'nonce-"+nonce+"'")
@@ -189,7 +184,7 @@ func TestSecurityHeaders(t *testing.T) {
 
 		csp := w.Header().Get("Content-Security-Policy")
 		assert.NotEmpty(t, csp)
-		// Default policy should contain these elements
+
 		assert.Contains(t, csp, "default-src 'self'")
 		assert.Contains(t, csp, TencentCaptchaDomain)
 	})
@@ -228,7 +223,6 @@ func TestSecurityHeaders(t *testing.T) {
 		csp := w.Header().Get("Content-Security-Policy")
 		nonce := GetNonceFromContext(c)
 
-		// Count occurrences of the nonce
 		count := strings.Count(csp, "'nonce-"+nonce+"'")
 		assert.Equal(t, 2, count, "both placeholders should be replaced with same nonce")
 	})
@@ -300,7 +294,6 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		policy := "default-src 'self'; script-src 'self' __CSP_NONCE__"
 		enhanced := enhanceCSPPolicy(policy)
 
-		// Should not duplicate
 		count := strings.Count(enhanced, NonceTemplate)
 		assert.Equal(t, 1, count)
 	})
@@ -322,8 +315,8 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "style-src", TencentCaptchaStaticDomain))
 		assert.Contains(t, config.DefaultCSPPolicy, "style-src 'self' 'unsafe-inline' https://*.captcha.gtimg.com")
 
-		// 入口脚本会再从 CDN 拉核心 JS，国际站还会换用 ca./global. 两个主机；
-		// 缺任意一个都会让天御 SDK 触发 script-src 拦截。
+		// The entry script loads core JavaScript from the CDN; international CAPTCHA
+		// also requires the ca. and global. hosts to pass script-src checks.
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "script-src", TencentCaptchaCDNDomain))
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "script-src", TencentCaptchaGlobalDomain))
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "script-src", TencentCaptchaGlobalCDNDomain))
@@ -357,7 +350,7 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 	})
 
 	t.Run("default_policy_already_carries_required_domains", func(t *testing.T) {
-		// 默认策略与中间件强制注入表必须同形，否则 config.example.yaml 会误导自建用户
+		// Keep the default policy consistent with runtime supplementation so deployment examples include required sources.
 		for _, required := range requiredCSPDirectiveValues {
 			assert.Equal(t, 1, countDirectiveValue(config.DefaultCSPPolicy, required.directive, required.value),
 				"DefaultCSPPolicy 缺少 %s %s", required.directive, required.value)
@@ -386,7 +379,6 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		policy := "script-src 'self' 'nonce-existing'"
 		enhanced := enhanceCSPPolicy(policy)
 
-		// Should not add placeholder if nonce already exists
 		assert.NotContains(t, enhanced, NonceTemplate)
 		assert.Contains(t, enhanced, "'nonce-existing'")
 	})
@@ -453,7 +445,7 @@ func TestAddToDirective(t *testing.T) {
 	})
 }
 
-// BenchmarkGenerateNonce 测量 nonce 生成的开销。
+// BenchmarkGenerateNonce measures nonce generation cost.
 func BenchmarkGenerateNonce(b *testing.B) {
 	for range b.N {
 		_, _ = GenerateNonce()
@@ -476,7 +468,7 @@ func BenchmarkSecurityHeadersMiddleware(b *testing.B) {
 	}
 }
 
-// TestGoogleIdentityCSPPreservesOfficialAccountsOrigins 验证 Google SDK 的域名是外部契约，默认和旧自定义策略都必须允许真实来源。
+// TestGoogleIdentityCSPPreservesOfficialAccountsOrigins checks Google's actual SDK sources in default and supplemented policies.
 func TestGoogleIdentityCSPPreservesOfficialAccountsOrigins(t *testing.T) {
 	expected := map[string]string{
 		"script-src":  "https://accounts.google.com/gsi/client",

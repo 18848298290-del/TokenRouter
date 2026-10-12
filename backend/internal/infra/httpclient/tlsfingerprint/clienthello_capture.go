@@ -15,7 +15,7 @@ const (
 	tlsHandshakeClientHello = 1
 )
 
-// CapturedClientHello 保存从原始 ClientHello 中提取的模板字段。
+// CapturedClientHello holds profile fields extracted from a raw ClientHello.
 type CapturedClientHello struct {
 	CipherSuites        []uint16
 	Curves              []uint16
@@ -31,7 +31,7 @@ type CapturedClientHello struct {
 	JA3Hash             string
 }
 
-// ParseCapturedClientHello 从 TLS 记录字节中解析 ClientHello。
+// ParseCapturedClientHello parses a ClientHello contained in a single TLS record.
 func ParseCapturedClientHello(record []byte) (*CapturedClientHello, error) {
 	if len(record) < 9 {
 		return nil, errors.New("client hello record too short")

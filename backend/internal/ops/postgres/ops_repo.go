@@ -134,7 +134,7 @@ func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInser
 }
 
 func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
-	// 尚未选定提供商的错误也保存明确平台，查询不再反查可变配置。
+	// Persist unknown when no provider platform is available; queries use this snapshot.
 	platform := strings.TrimSpace(input.Platform)
 	if platform == "" {
 		platform = "unknown"
@@ -181,8 +181,8 @@ func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
 	}
 }
 
-// opsErrorLogsOrderBy 按白名单构建 ORDER BY 子句。
-// 未知 SortBy 回退到 created_at，末尾追加 e.id 以稳定分页顺序。
+// opsErrorLogsOrderBy builds an ORDER BY clause from allowed columns.
+// Unknown columns use created_at; e.id breaks ties for stable pagination.
 func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	sortBy := ""
 	sortOrder := ""
@@ -196,8 +196,8 @@ func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	case "model":
 		column = "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model)"
 	case "status_code":
-		// 列表展示、status_code 过滤和排序共用 COALESCE(upstream_status_code, status_code, 0)。
-		// 请求最终成功但曾收到上游 5xx 时，排序和分页仍按展示的上游状态码处理。
+		// Display, status filters, and sorting use COALESCE(upstream_status_code, status_code, 0).
+		// Recovered requests therefore sort by the displayed upstream status.
 		column = "COALESCE(e.upstream_status_code, e.status_code, 0)"
 	default:
 		column = "e.created_at"
@@ -898,8 +898,8 @@ INSERT INTO ops_system_log_cleanup_audits (
 	return err
 }
 
-// escapeLikePattern 转义 LIKE/ILIKE 中的反斜杠、百分号和下划线。
-// Postgres 默认以反斜杠为转义符，无需额外 ESCAPE 子句。
+// escapeLikePattern escapes backslashes, percent signs, and underscores for LIKE/ILIKE.
+// PostgreSQL uses backslash as the default escape character.
 func escapeLikePattern(s string) string {
 	return likePatternReplacer.Replace(s)
 }
@@ -915,13 +915,13 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	}
 	// ops_error_logs stores client-visible error requests (status>=400),
 	// but we also persist "recovered" upstream errors (status<400) for upstream health visibility.
-	// If Resolved is not specified, do not filter by resolved state (backward-compatible).
+	// A nil Resolved filter includes both resolved and unresolved rows.
 	resolvedFilter := (*bool)(nil)
 	if filter != nil {
 		resolvedFilter = filter.Resolved
 	}
-	// 默认展示客户端可见错误，Ops 上游健康列表可包含 upstream/provider_auth 恢复记录。
-	// cyber_policy 流式命中可能是 200，但仍是对用户可见的拒绝，因此始终豁免。
+	// Provider health queries may include recovered upstream/provider_auth attempts.
+	// Streaming cyber_policy rejections can have status 200 and remain visible to clients.
 	if !opsFilterIncludesRecoveredProviderRows(filter, phaseFilter) {
 		clauses = append(clauses, "(COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy')")
 	}
@@ -950,7 +950,7 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		condition := "e.error_phase = $" + itoa(len(args))
-		// 历史阶段值不回填大表，筛选时兼容旧值并继续使用现有索引。
+		// Match the legacy phase through the existing index, avoiding a large-table backfill.
 		if phase == "provider_auth" {
 			args = append(args, "account_auth")
 			condition = "(" + condition + " OR e.error_phase = $" + itoa(len(args)) + ")"
@@ -973,7 +973,7 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	}
 
 	// View filter: errors vs excluded vs all.
-	// SLA 统计排除业务限制类错误和配置的客户端侧状态码。
+	// SLA counts exclude business limits and configured client-side statuses.
 	// Upstream 429/529 are included in errors view to match SLA calculation.
 	ignoredStatusCodes := []int(nil)
 	if filter != nil {
@@ -1088,7 +1088,7 @@ func opsFilterIncludesRecoveredProviderRows(filter *ops.OpsErrorLogFilter, phase
 	return sawProviderPhase
 }
 
-// opsRequestIDCondition 用候选数组筛选两列，精确命中本地 ID 时关闭外部别名展开。
+// opsRequestIDCondition matches candidate IDs against both columns; exact local IDs suppress external alias matching.
 func opsRequestIDCondition(alias string, parameter int) string {
 	lookup := fmt.Sprintf("ARRAY(SELECT id FROM request_lookup_ids($%d))", parameter)
 	return fmt.Sprintf("(%s.request_id = ANY(%s) OR (%s.client_request_id = ANY(%s)"+
@@ -1197,7 +1197,7 @@ func buildOpsSystemLogsCleanupWhere(filter *ops.OpsSystemLogCleanupFilter) (stri
 	return buildOpsSystemLogsWhere(listFilter)
 }
 
-// opsNullString 将非空字符串转换为有效的 SQL 可空字符串，其余输入返回空值。
+// opsNullString converts nonempty strings to valid SQL values and other inputs to NULL.
 func opsNullString(v any) any {
 	switch s := v.(type) {
 	case nil:
@@ -1248,8 +1248,8 @@ func opsNullInt(v any) any {
 	}
 }
 
-// opsNullableIntPointer 区分缺失值和零值，适用于状态码、连接池计数等字段。
-// 凭据阶段失败且没有发起推理请求时，上游状态 0 也会写入数据库。
+// opsNullableIntPointer distinguishes missing values from zero for statuses and pool counts.
+// Credential failures can store an upstream status of zero when inference was never attempted.
 func opsNullableIntPointer(v *int) any {
 	if v == nil {
 		return sql.NullInt64{}
@@ -1264,8 +1264,8 @@ func opsNullInt16(v *int16) any {
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
 }
 
-// itoa 将 SQL 参数序号转换为字符串。
+// itoa formats a SQL parameter index.
 func itoa(v int) string { return strconv.Itoa(v) }
 
-// nullInt64 将可选整数转换为 SQL 可空整数。
+// nullInt64 converts an optional integer to a nullable SQL integer.
 func nullInt64(v *int64) sql.NullInt64 { return infra.NullableInt64(v) }

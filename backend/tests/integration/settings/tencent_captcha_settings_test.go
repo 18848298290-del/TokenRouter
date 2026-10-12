@@ -54,7 +54,7 @@ func TestSettingService_GetPublicSettingsExposesOnlyTencentCaptchaAppID(t *testi
 	require.NoError(t, err)
 	require.True(t, settings.TencentCaptchaEnabled)
 	require.Equal(t, "123456789", settings.TencentCaptchaAppID)
-	// 公开设置下发站点名称，前端据此选择 SDK 脚本与构造函数。
+	// The public region lets the frontend choose the matching SDK script and constructor.
 	require.Equal(t, identity.TencentCaptchaRegionINTL, settings.TencentCaptchaRegion)
 
 	raw, err := json.Marshal(settings)
@@ -82,7 +82,7 @@ func TestSettingService_GetTencentCaptchaConfig(t *testing.T) {
 		AppSecretKey:   "app-secret",
 		CloudSecretID:  "cloud-secret-id",
 		CloudSecretKey: "cloud-secret-key",
-		// 未配置站点时使用中国站。
+		// An unspecified region defaults to the China site.
 		Region: identity.TencentCaptchaRegionCN,
 	}, got)
 }

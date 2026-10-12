@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 openai_responses_execution.go、openai_protocol_execution_chat.go、openai_protocol_execution_messages.go、input_tokens.go、openai_count_tokens.go 和 text_errors.go 的协议分派与错误输出。
+// These tests cover protocol dispatch, token counting, model mapping, and gateway error output.
 
 import (
 	"bytes"
@@ -41,7 +41,7 @@ type cnProtocolIngressCase struct {
 	forward func(*OpenAIResponsesExecutor, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) error
 }
 
-// tokenExecutionContract 为 HTTP、模型映射和尝试循环测试提供选择与网络交换替身。
+// tokenExecutionContract supplies selection and HTTP exchange fixtures for token execution tests.
 type tokenExecutionContract struct {
 	OpenAITokenExecution
 	t          *testing.T
@@ -126,7 +126,7 @@ func TestFixedCNResponsesProtocolOverridesStaleChatMode(t *testing.T) {
 	}
 }
 
-// TestGatewayErrorsUseEnglish 检查请求语言变化时错误类型和英文提示保持一致。
+// TestGatewayErrorsUseEnglish checks that request language does not change error types or built-in messages.
 func TestGatewayErrorsUseEnglish(t *testing.T) {
 	for _, language := range []string{"en", "zh-Hans"} {
 		for _, stream := range []bool{false, true} {
@@ -144,7 +144,8 @@ func TestGatewayErrorsUseEnglish(t *testing.T) {
 	require.Equal(t, "The API key five-hour limit has been reached", message)
 }
 
-// TestOpenAIAdministratorProtocolOverridesAllLegacyProbeState 验证故意将旧探测状态直接注入提供商对象，验证实际转发不依赖迁移或写入清理。
+// TestOpenAIAdministratorProtocolOverridesAllLegacyProbeState injects legacy probe values to check that configured
+// routing takes precedence.
 func TestOpenAIAdministratorProtocolOverridesAllLegacyProbeState(t *testing.T) {
 	for _, mode := range []string{"preserve_client_protocol", "force_responses", "force_chat_completions"} {
 		for _, legacy := range []any{false, true, "invalid"} {
@@ -157,7 +158,7 @@ func TestOpenAIAdministratorProtocolOverridesAllLegacyProbeState(t *testing.T) {
 					c, _ := gin.CreateTestContext(httptest.NewRecorder())
 					c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+inbound, bytes.NewReader(body))
 					c.Request.Header.Set("Content-Type", "application/json")
-					// 上游接收请求后返回固定错误，测试检查收到的目标和载荷。
+					// The upstream returns a fixed error so the test can inspect the destination and payload.
 					upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 						StatusCode: http.StatusBadRequest,
 						Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -367,7 +368,8 @@ func TestOpenAIGatewayEntrypointsRejectUltraBeforeUpstream(t *testing.T) {
 	})
 }
 
-// TestRemovedGPT56AliasAcrossGatewayProtocols 验证三种 HTTP 入口与 WS 模型解析按管理员配置映射，裸型号保持原名。
+// TestRemovedGPT56AliasAcrossGatewayProtocols checks configured model mappings and unchanged unmapped names across
+// HTTP and WS.
 func TestRemovedGPT56AliasAcrossGatewayProtocols(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeAPIKey} {
 		for _, explicit := range []bool{false, true} {
@@ -377,7 +379,7 @@ func TestRemovedGPT56AliasAcrossGatewayProtocols(t *testing.T) {
 					name += "/explicit_mapping"
 				}
 				t.Run(name, func(t *testing.T) {
-					// 上游返回固定错误，测试从出站请求读取模型名。
+					// The upstream returns a fixed error so the test can inspect the outbound model.
 					upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 						StatusCode: http.StatusBadRequest,
 						Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -532,7 +534,7 @@ func TestOpenAITokensNativeHTTPContracts(t *testing.T) {
 	}
 }
 
-// TestProtocolForwardUsesConfiguredTarget 通过转发器检查三个客户端协议到 CN 平台端点的 URL 和载荷，覆盖全部转换组合。
+// TestProtocolForwardUsesConfiguredTarget checks endpoint URLs and payloads for each configured protocol conversion.
 func TestProtocolForwardUsesConfiguredTarget(t *testing.T) {
 	for _, platform := range []string{capability.PlatformDeepseek, capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformGrok} {
 		for _, ingress := range cnProtocolIngressCases() {
@@ -603,7 +605,8 @@ func TestProtocolForwardUsesConfiguredTarget(t *testing.T) {
 	}
 }
 
-// TestProtocolForwardConvertedResponsesRetainsWireContract 验证把既有工具、usage 与流式回归接到新分组路线，验证协议统一未改变 wire 格式。
+// TestProtocolForwardConvertedResponsesRetainsWireContract checks tool calls, usage, and streaming output on
+// converted routes.
 func TestProtocolForwardConvertedResponsesRetainsWireContract(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, response string

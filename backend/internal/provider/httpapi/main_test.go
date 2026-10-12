@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestMain 在测试开始前设置 Gin 全局模式，供全部测试和并行夹具使用。
+// TestMain sets Gin's global mode before tests and parallel fixtures run.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	m.Run()

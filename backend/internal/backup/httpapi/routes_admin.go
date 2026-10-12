@@ -6,45 +6,40 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterBackupRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterBackupRoutes registers admin routes after app installs authentication, rate limits, and auditing.
 func RegisterBackupRoutes(admin *gin.RouterGroup, endpoint *BackupHandler, stepUpAuth gin.HandlerFunc) {
 	backup := admin.Group("/backups")
 	{
-		// 备份存储配置
 		backup.GET("/storage-config", endpoint.GetStorageConfig)
-		// 统一存储配置同样可以切换 S3 目标，必须执行二次验证。
+		// Changing the unified storage configuration can redirect backups to S3 and requires step-up verification.
 		backup.PUT("/storage-config", stepUpAuth, endpoint.UpdateStorageConfig)
 		backup.POST("/storage-config/test", endpoint.TestStorageConnection)
 
-		// 备份内容配置
 		backup.GET("/content-config", endpoint.GetContentConfig)
 		backup.PUT("/content-config", endpoint.UpdateContentConfig)
 
-		// S3 存储配置
 		backup.GET("/s3-config", endpoint.GetS3Config)
-		// 修改 S3 目标会改变数据库备份的接收位置，需要 step-up 二次验证。
+		// Changing the S3 destination requires step-up verification because it changes where database backups are sent.
 		backup.PUT("/s3-config", stepUpAuth, endpoint.UpdateS3Config)
 		backup.POST("/s3-config/test", endpoint.TestS3Connection)
 
-		// 定时备份配置
 		backup.GET("/schedule", endpoint.GetSchedule)
 		backup.PUT("/schedule", endpoint.UpdateSchedule)
 
-		// 备份操作
 		backup.POST("", stepUpAuth, endpoint.CreateBackup)
 		backup.GET("", endpoint.ListBackups)
 		backup.GET("/:id", RequireCanonicalBackupID, endpoint.GetBackup)
 		backup.DELETE("/:id", RequireCanonicalBackupID, endpoint.DeleteBackup)
-		// 备份下载链接可取得整库数据，需要 step-up 二次验证。
+		// Download URLs expose the selected database contents and require step-up verification.
 		backup.GET("/:id/download-url", RequireCanonicalBackupID, stepUpAuth, endpoint.GetDownloadURL)
 		backup.GET("/:id/download", RequireCanonicalBackupID, stepUpAuth, endpoint.DownloadBackup)
 
-		// 恢复会覆盖整库及安全设置，包括 step-up 开关，需要先通过二次验证。
+		// Restore can replace security settings, including the step-up toggle, so verify before starting it.
 		backup.POST("/:id/restore", RequireCanonicalBackupID, stepUpAuth, endpoint.RestoreBackup)
 	}
 }
 
-// RegisterDataManagementRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterDataManagementRoutes registers admin routes after app installs authentication, rate limits, and auditing.
 func RegisterDataManagementRoutes(admin *gin.RouterGroup, endpoint *DataManagementHandler, stepUpAuth gin.HandlerFunc) {
 	dataManagement := admin.Group("/data-management")
 	{
@@ -58,7 +53,7 @@ func RegisterDataManagementRoutes(admin *gin.RouterGroup, endpoint *DataManageme
 		dataManagement.POST("/sources/:source_type/profiles/:profile_id/activate", endpoint.SetActiveSourceProfile)
 		dataManagement.POST("/s3/test", endpoint.TestS3)
 		dataManagement.GET("/s3/profiles", endpoint.ListS3Profiles)
-		// 修改 S3 目标会改变备份的接收位置，需要 step-up 二次验证。
+		// Changing the S3 destination requires step-up verification because it redirects backups.
 		dataManagement.POST("/s3/profiles", stepUpAuth, endpoint.CreateS3Profile)
 		dataManagement.PUT("/s3/profiles/:profile_id", stepUpAuth, endpoint.UpdateS3Profile)
 		dataManagement.DELETE("/s3/profiles/:profile_id", endpoint.DeleteS3Profile)

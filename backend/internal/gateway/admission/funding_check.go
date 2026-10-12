@@ -8,28 +8,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// FundingCheck 根据计费检查输入验证权益。
+// FundingCheck validates funding availability.
 type FundingCheck interface {
 	Check(context.Context, billing.CheckInput) error
 }
 
-// RPMCheck 由调度模块拥有计数与覆盖规则。
+// RPMCheck applies scheduler-owned request counts and group overrides.
 type RPMCheck interface {
 	Check(context.Context, *scheduler.RPMUser, *scheduler.RPMGroup) error
 }
 
-// FundingAdmission 固定绑定两个用例，保持资金错误先于 RPM 消费。
+// FundingAdmission checks funds before consuming RPM capacity.
 type FundingAdmission struct {
 	funds FundingCheck
 	rpm   RPMCheck
 }
 
-// NewFundingAdmission 固定资金与 RPM 检查依赖。
+// NewFundingAdmission binds funding and RPM checks.
 func NewFundingAdmission(funds FundingCheck, rpm RPMCheck) *FundingAdmission {
 	return &FundingAdmission{funds: funds, rpm: rpm}
 }
 
-// Check 首先检查资金，通过后执行 RPM；不在资金拒绝时累计次数。
+// Check consumes RPM capacity after funding admission succeeds.
 func (a *FundingAdmission) Check(ctx context.Context, input billing.CheckInput, user *scheduler.RPMUser, group *scheduler.RPMGroup) error {
 	if err := a.CheckFunding(ctx, input); err != nil {
 		return err
@@ -40,12 +40,12 @@ func (a *FundingAdmission) Check(ctx context.Context, input billing.CheckInput, 
 	return a.rpm.Check(ctx, user, group)
 }
 
-// CheckFunding 在等待结束后复查权益，RPM 已在进入等待前累计。
+// CheckFunding rechecks funding after a wait; RPM was already counted before waiting.
 func (a *FundingAdmission) CheckFunding(ctx context.Context, input billing.CheckInput) error {
 	return a.funds.Check(ctx, input)
 }
 
-// CheckKey 从已认证并完成最终分组授权的 Key 提取资金和 RPM 检查字段。
+// CheckKey uses an authenticated key whose final group has been authorized. After a wait it checks funding alone.
 func (a *FundingAdmission) CheckKey(ctx context.Context, key *apikey.APIKey, subscription *billing.UserSubscription, platform string, afterWait bool) error {
 	var payer *billing.UserSummary
 	var user *scheduler.RPMUser

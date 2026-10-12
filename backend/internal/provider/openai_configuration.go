@@ -40,7 +40,8 @@ func HasOpenAIConfigurationPatch(credentials, extra map[string]any) bool {
 	return false
 }
 
-// NormalizeOpenAIAPIKeyConfiguration 将完整提供商配置规范化为唯一的新持久化形状。
+// NormalizeOpenAIAPIKeyConfiguration normalizes compaction settings and API-key workload and routing fields in
+// place.
 func NormalizeOpenAIAPIKeyConfiguration(provider *Record) error {
 	if provider != nil && provider.IsOpenAI() {
 		provider.Extra = maps.Clone(provider.Extra)
@@ -75,10 +76,10 @@ func NormalizeOpenAIAPIKeyConfiguration(provider *Record) error {
 	return NormalizeOpenAIResponsesContinuationSupported(provider.Extra, true)
 }
 
-// NormalizeOpenAIAPIKeyConfigurationPatch 规范化增量中提供的字段。
+// NormalizeOpenAIAPIKeyConfigurationPatch normalizes supplied fields in place.
 func NormalizeOpenAIAPIKeyConfigurationPatch(credentials, extra map[string]any) error {
-	// 增量中出现旧键表示旧客户端正在主动修改该项；即使它回传了不认识的新键，
-	// 也应让本次旧字段修改生效。完整持久化数据仍由全量规范化优先采用新键。
+	// Legacy keys in a patch represent edits from an older client and take priority over echoed new keys.
+	// Full-record normalization instead prefers the stored new keys.
 	if _, found := credentials[LegacyOpenAICapabilitiesCredentialKey]; found {
 		delete(credentials, OpenAIWorkloadCapabilitiesCredentialKey)
 	}
@@ -213,7 +214,7 @@ func NormalizeOpenAITextRouteMode(extra map[string]any, applyDefault bool) error
 	return nil
 }
 
-// NormalizeOpenAIResponsesContinuationSupported 规范化管理员维护的 HTTP continuation 能力开关。
+// NormalizeOpenAIResponsesContinuationSupported validates the HTTP continuation flag, mapping null to false.
 func NormalizeOpenAIResponsesContinuationSupported(extra map[string]any, applyDefault bool) error {
 	if extra == nil {
 		return nil

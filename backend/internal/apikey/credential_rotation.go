@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// RotateCredential 为所属用户原地生成新凭据，保留配置、状态和用量。
+// RotateCredential replaces an owned key's credential while retaining its configuration, status, and usage.
 // @project-doc docs/domains/identity_and_tenancy.md#api_key_rotation
 func (s *APIKeyService) RotateCredential(ctx context.Context, id, userID int64) (*APIKey, error) {
 	key, err := s.apiKeyRepo.GetByID(ctx, id)
@@ -33,7 +33,7 @@ func (s *APIKeyService) RotateCredential(ctx context.Context, id, userID int64) 
 		return nil, fmt.Errorf("rotate api key credential: %w", err)
 	}
 
-	// 数据库提交后即使客户端断开，也要完成新旧凭据的缓存失效。
+	// Complete invalidation of both credentials even if the client disconnects after commit.
 	invalidationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	s.InvalidateAuthCacheByKey(invalidationCtx, oldKey)

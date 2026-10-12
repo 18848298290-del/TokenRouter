@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 可控调度器避免测试依赖真实分钟边界，只记录实际启停及回调绑定。
+// The controllable scheduler records lifecycle calls and callbacks without depending on real minute boundaries.
 type probeScheduleStub struct {
 	starts int
 	stops  int
@@ -20,7 +20,7 @@ type probeScheduleStub struct {
 
 type probeExecutorStub struct{}
 
-// 即便底层暂不响应取消，关闭调用也受预算约束，只有其真正结束后才报告完成。
+// Shutdown stays bounded even if work ignores cancellation; completion is reported only after that work exits.
 type uncancellableProbeRepo struct {
 	groupAvailabilityProbeRunnerRepoStub
 	started chan struct{}

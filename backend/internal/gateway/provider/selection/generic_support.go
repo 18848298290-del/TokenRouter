@@ -9,9 +9,9 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-const stickySessionTTL = time.Hour // 粘性会话TTL
+const stickySessionTTL = time.Hour // Sticky-session lifetime.
 
-// providerWithLoad 提供商与负载信息的组合，用于负载感知调度。
+// providerWithLoad pairs a provider with its load snapshot for selection.
 type providerWithLoad struct {
 	provider *gatewayprovider.ExecutionProvider
 	loadInfo *schedulercore.ProviderLoadInfo
@@ -27,7 +27,7 @@ func shortSessionHash(sessionHash string) string {
 	return sessionHash[:8]
 }
 
-// derefGroupID safely dereferences *int64 to int64, returning 0 if nil.
+// derefGroupID returns the group ID or zero for nil.
 func derefGroupID(groupID *int64) int64 {
 	if groupID == nil {
 		return 0
@@ -46,13 +46,8 @@ func prefetchedStickyProviderIDFromContext(ctx context.Context, groupID *int64) 
 	return 0
 }
 
-// shouldClearStickySession 检查提供商是否处于不可调度状态，需要清理粘性会话绑定。
-// 委托 IsSchedulable() 判断提供商级可调度性（状态、配额、过载、限流等），
-// 额外检查模型级限流。
-//
-// shouldClearStickySession 检查提供商是否处于不可调度状态。
-// and the sticky session binding should be cleared.
-// Delegates to IsSchedulable() for provider-level checks, plus model-level rate limiting.
+// shouldClearStickySession reports whether provider unschedulability or a model cooldown invalidates a binding.
+// A nil provider returns false; callers handle missing records separately.
 func shouldClearStickySession(provider *gatewayprovider.ExecutionProvider, requestedModel string) bool {
 	if provider == nil {
 		return false
@@ -75,7 +70,7 @@ func (s *Generic) BindStickySession(ctx context.Context, groupID *int64, session
 }
 
 // GetCachedSessionProviderID retrieves the provider ID bound to a sticky session.
-// Returns 0 if no binding exists or on error.
+// Missing session input or cache returns zero without error; cache errors are returned with zero.
 func (s *Generic) GetCachedSessionProviderID(ctx context.Context, groupID *int64, sessionHash string) (int64, error) {
 	if sessionHash == "" || s.cache == nil {
 		return 0, nil

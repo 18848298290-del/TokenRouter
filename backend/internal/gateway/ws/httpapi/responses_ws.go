@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// ResponsesWSOptions 配置 HTTP 连接和首帧预算。
+// ResponsesWSOptions configures ingress connections and first-frame budgets.
 type ResponsesWSOptions struct {
 	Runtime                        *gatewayws.Runtime
 	MaxIngressConnectionsPerAPIKey int
@@ -28,7 +28,7 @@ type ResponsesWSOptions struct {
 	MaxProviderSwitches            int
 }
 
-// ResponsesWSCall 是连接升级后传给依赖工厂的请求数据。
+// ResponsesWSCall contains upgraded request data passed to the dependency factory.
 type ResponsesWSCall struct {
 	Key                 *gatewayws.EntryKey
 	Subject             gatewayws.EntrySubject
@@ -37,7 +37,7 @@ type ResponsesWSCall struct {
 	ClientIP, UserAgent string
 }
 
-// ResponsesWSBackend 提供认证数据和逐步执行接口。
+// ResponsesWSBackend supplies authentication data and entry operations.
 type ResponsesWSBackend interface {
 	Access(*gin.Context) (*gatewayws.EntryKey, bool)
 	Transport(*gin.Context)
@@ -58,7 +58,7 @@ func NewResponsesWSHandler(options ResponsesWSOptions, backend ResponsesWSBacken
 	return &ResponsesWSHandler{options: options, backend: backend, concurrency: concurrency}
 }
 
-// ResponsesWebSocket 拥有前置认证、入站连接租约、升级及首帧读取，之后调用唯一核心编排。
+// ResponsesWebSocket handles authentication checks, ingress leases, upgrade, and the first frame before calling RunEntry.
 func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {

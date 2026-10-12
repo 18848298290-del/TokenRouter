@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// ModelsDevPrices 将统一目录转换为计费字段，区分缺价和配置的零价。
+// ModelsDevPrices converts catalog prices into billing fields, distinguishing missing prices from explicit zero.
 func ModelsDevPrices(catalog *modelcatalog.Catalog) map[string]json.RawMessage {
 	result := map[string]json.RawMessage{}
 	for key, entry := range catalog.Entries {
@@ -59,8 +59,8 @@ func modelsDevPriceFields(entry modelcatalog.Entry, cost modelcatalog.Cost) map[
 	if entry.Attributes.OutputModalities != nil {
 		fields["supported_output_modalities"] = *entry.Attributes.OutputModalities
 	}
-	// 原厂 Gemini Image 系列的 output 是图片 token 费率，文本与思考价由本地补充提供。
-	// Omni、Deep Research 和中继继续使用普通输出价，输出模态本身不决定价格单位。
+	// First-party Gemini Image output prices are per image token; local supplements supply text and thinking prices.
+	// Omni, Deep Research, and relay entries keep ordinary output prices; image modality alone does not determine units.
 	imageOutput := entry.FirstParty && entry.Provider == "google" && strings.HasPrefix(entry.Model, "gemini-") &&
 		strings.Contains(entry.Model, "-image") && entry.Attributes.OutputModalities != nil &&
 		slices.Contains(*entry.Attributes.OutputModalities, "image")
@@ -78,7 +78,7 @@ func modelsDevPriceFields(entry modelcatalog.Entry, cost modelcatalog.Cost) map[
 	put("cache_read_input_token_cost", cost.CacheRead)
 	put("cache_creation_input_token_cost", cost.CacheWrite)
 	fields["supports_prompt_caching"] = cost.CacheRead != nil || cost.CacheWrite != nil
-	// 服务层级字段记录文本 token 价格，图片 Fast 价单独处理。
+	// Service-tier fields represent text token prices; image Fast prices need separate handling.
 	if entry.Fast != nil && !imageOutput {
 		fields["supports_service_tier"] = true
 		put("input_cost_per_token_priority", entry.Fast.Input)

@@ -19,31 +19,30 @@ const (
 	AuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	TokenURL     = "https://oauth2.googleapis.com/token"
 
-	// AIStudioOAuthRedirectURI 是 AI Studio OAuth 默认回调地址，供用户复制回调 URL。
-	// Google OAuth 客户端需要登记此地址，支持 localhost 回调的客户端类型除外。
+	// AIStudioOAuthRedirectURI is the default callback URL users copy after authorization.
+	// Register it with the Google OAuth client unless its client type permits localhost callbacks.
 	AIStudioOAuthRedirectURI = "http://localhost:1455/auth/callback"
 
-	// DefaultCodeAssistScopes 包含 Code Assist API 访问和用户信息权限。
+	// DefaultCodeAssistScopes grants Code Assist API and user profile access.
 	DefaultCodeAssistScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
 
-	// DefaultAIStudioScopes 配置普通 Google 账户访问 generativelanguage.googleapis.com 的 OAuth 权限。
-	// 权限包含 cloud-platform 和 generative-language.retriever。
-	// 参考：https://ai.google.dev/gemini-api/docs/oauth
+	// DefaultAIStudioScopes grants Google accounts access to the Gemini API.
+	// See https://ai.google.dev/gemini-api/docs/oauth.
 	DefaultAIStudioScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever"
 
-	// GeminiCLIRedirectURI 是 Gemini CLI 的 Code Assist OAuth 回调地址。
+	// GeminiCLIRedirectURI is the Gemini CLI Code Assist callback URL.
 	GeminiCLIRedirectURI = "https://codeassist.google.com/authcode"
 
-	// GeminiCLIOAuthClientID 是 Gemini CLI 使用的公开 OAuth 客户端 ID。
-	// 内置凭据支持直接登录，可用权限由 Google 限制。
+	// GeminiCLIOAuthClientID identifies the public Gemini CLI OAuth client.
+	// Google restricts the scopes available to this built-in client.
 	GeminiCLIOAuthClientID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-	// GeminiCLIOAuthClientSecret 是 Gemini CLI 使用的公开 OAuth 客户端密钥。
+	// GeminiCLIOAuthClientSecret is the public Gemini CLI OAuth client secret.
 	GeminiCLIOAuthClientSecret = "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"
 
-	// GeminiCLIOAuthClientSecretEnv 是覆盖内置客户端密钥的环境变量名。
+	// GeminiCLIOAuthClientSecretEnv supplies a secret when the built-in secret is empty.
 	GeminiCLIOAuthClientSecretEnv = "GEMINI_CLI_OAUTH_CLIENT_SECRET"
 
-	// GeminiCLIUserAgent 是请求内部接口时使用的 Gemini CLI User-Agent。
+	// GeminiCLIUserAgent identifies Gemini CLI requests to internal endpoints.
 	GeminiCLIUserAgent = "GeminiCLI/0.1.5 (Windows; AMD64)"
 )
 
@@ -82,14 +81,12 @@ func base64URLEncode(data []byte) string {
 	return oauthpkce.Base64URL(data)
 }
 
-// EffectiveOAuthConfig returns the effective OAuth configuration.
-// oauthType: "code_assist" or "ai_studio" (defaults to "code_assist" if empty).
+// EffectiveOAuthConfig resolves credentials and normalizes scopes for the OAuth type.
+// When scopes are omitted, empty or unknown types use Code Assist defaults.
 //
-// If ClientID/ClientSecret is not provided, this falls back to the built-in Gemini CLI OAuth client.
+// Leaving both credentials empty selects the built-in Gemini CLI client; supplying only one returns an error.
 //
-// Note: The built-in Gemini CLI OAuth client is restricted and may reject some scopes (e.g.
-// https://www.googleapis.com/auth/generative-language), which will surface as
-// "restricted_client" / "Unregistered scope(s)" errors during browser authorization.
+// The built-in client filters restricted scopes for ai_studio and google_one.
 func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error) {
 	effective := OAuthConfig{
 		ClientID:     strings.TrimSpace(cfg.ClientID),
@@ -102,8 +99,8 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 		effective.Scopes = strings.Join(strings.Fields(strings.ReplaceAll(effective.Scopes, ",", " ")), " ")
 	}
 
-	// Fall back to built-in Gemini CLI OAuth client when not configured.
-	// SECURITY: This repo does not embed the built-in client secret; it must be provided via env.
+	// Use the built-in credentials when both configured values are empty.
+	// The environment secret is consulted only when the built-in constant is empty.
 	if effective.ClientID == "" && effective.ClientSecret == "" {
 		secret := strings.TrimSpace(GeminiCLIOAuthClientSecret)
 		if secret == "" {
@@ -123,7 +120,6 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 	isBuiltinClient := effective.ClientID == GeminiCLIOAuthClientID
 
 	if effective.Scopes == "" {
-		// Use different default scopes based on OAuth type
 		switch oauthType {
 		case "ai_studio":
 			// Built-in client can't request some AI Studio scopes (notably generative-language).
@@ -133,11 +129,9 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 				effective.Scopes = DefaultAIStudioScopes
 			}
 		case "google_one":
-			// Google One always uses built-in Gemini CLI client (same as code_assist)
-			// Built-in client can't request restricted scopes like generative-language.retriever or drive.readonly
+			// Google One defaults to the scopes supported by the Gemini CLI client.
 			effective.Scopes = DefaultCodeAssistScopes
 		default:
-			// Default to Code Assist scopes
 			effective.Scopes = DefaultCodeAssistScopes
 		}
 	} else if (oauthType == "ai_studio" || oauthType == "google_one") && isBuiltinClient {

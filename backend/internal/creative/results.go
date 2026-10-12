@@ -48,7 +48,8 @@ func (s *Results) warn(event string, values ...any) {
 	}
 }
 
-// SanitizeCreativeMessage 截断错误消息，避免把上游细节原样抛给客户端。
+// SanitizeCreativeMessage trims whitespace, replaces control characters, and limits messages to 500 runes;
+// it does not redact secrets.
 func SanitizeCreativeMessage(message string) string {
 	message = strings.TrimSpace(message)
 	message = strings.Map(func(r rune) rune {
@@ -78,8 +79,9 @@ func firstAllocatedSubscriptionID(allocations []billing.BillingAllocation) *int6
 	return nil
 }
 
-// ReconcileCreativeTransientOnce 清理已进入终态且客户端已无须继续读取的 transient 数据。
-// 删除失败只保留日志，下一轮扫描会再次尝试；run 状态不会被清理动作改写。
+// ReconcileCreativeTransientOnce deletes temporary data selected by the repository's terminal-task cleanup
+// rules.
+// Deletion failures are logged for later retries; cleanup leaves task status unchanged.
 func (s *Results) ReconcileCreativeTransientOnce(ctx context.Context) (int, error) {
 	if s == nil || s.Repo == nil || s.TransientStore == nil {
 		return 0, nil
@@ -102,7 +104,7 @@ func (s *Results) ReconcileCreativeTransientOnce(ctx context.Context) (int, erro
 	return cleaned, nil
 }
 
-// RunCreativeTransientReconciler 周期性清理终态任务的 Redis 临时数据。
+// RunCreativeTransientReconciler periodically cleans temporary Redis data for eligible terminal tasks.
 func (s *Results) RunCreativeTransientReconciler(ctx context.Context) {
 	if s == nil || s.Repo == nil || s.TransientStore == nil {
 		return
@@ -122,8 +124,8 @@ func (s *Results) RunCreativeTransientReconciler(ctx context.Context) {
 	}
 }
 
-// ReconcileCreativeOutboxOnce 领取并处理一批创作台后台动作。
-// 图片仍只从 Redis 临时存储读取，outbox 本身只负责恢复入队和结算触发。
+// ReconcileCreativeOutboxOnce claims and processes one batch of recovery actions.
+// The outbox restores queueing and funding recovery; image bytes remain in temporary Redis storage.
 func (s *Results) ReconcileCreativeOutboxOnce(ctx context.Context) (int, error) {
 	if s == nil || s.Outbox == nil || s.Queue == nil || s.Repo == nil {
 		return 0, nil
@@ -188,7 +190,7 @@ func (s *Results) ReconcileCreativeProvision(ctx context.Context, run *CreativeR
 		}
 		return s.Repo.SetCreativeRunProvisioningPhase(ctx, run.RunID, CreativeProvisioningPhaseComplete)
 	}
-	// 只有 transient 已保存时才能在不持久化图片的前提下继续入队。
+	// A partially provisioned task can resume queueing only after its transient input was saved.
 	if run.ProvisioningPhase != CreativeProvisioningPhaseTransientSaved || s.TransientStore == nil {
 		return s.FailRun(ctx, run.RunID, "PROVISIONING_INCOMPLETE", "creative provisioning could not be recovered without transient input")
 	}
@@ -201,7 +203,7 @@ func (s *Results) ReconcileCreativeProvision(ctx context.Context, run *CreativeR
 	return s.Repo.SetCreativeRunProvisioningPhase(ctx, run.RunID, CreativeProvisioningPhaseEnqueued)
 }
 
-// RunCreativeOutboxReconciler 启动创作台 outbox 周期恢复循环。
+// RunCreativeOutboxReconciler polls the outbox until the context is cancelled.
 func (s *Results) RunCreativeOutboxReconciler(ctx context.Context) {
 	if s == nil || s.Outbox == nil || s.Queue == nil {
 		return
@@ -221,7 +223,7 @@ func (s *Results) RunCreativeOutboxReconciler(ctx context.Context) {
 	}
 }
 
-// EnsureCreativeOutbox 创建或恢复一个后台补偿动作；没有配置 outbox 时保持测试替身兼容。
+// EnsureCreativeOutbox creates or reactivates recovery work; an unconfigured outbox is a no-op.
 func (s *Results) EnsureCreativeOutbox(ctx context.Context, runID string, operation CreativeRunOutboxOperation) error {
 	if s == nil || s.Outbox == nil {
 		return nil
@@ -247,7 +249,8 @@ func (s *Results) InvalidateCreativeAuthCache(ctx context.Context, userID int64)
 	}
 }
 
-// MarkRunning 把任务从 queued 推进到 running 并回填提供商；重复调用幂等。
+// MarkRunning advances queued tasks to running and records the provider; running and terminal tasks are
+// unchanged.
 func (s *Results) MarkRunning(ctx context.Context, runID string, providerID int64) error {
 	if s == nil || s.Repo == nil {
 		return errors.New("creative service is not configured")
@@ -294,13 +297,14 @@ func (s *Results) SucceedRun(ctx context.Context, runID string, providerID int64
 	return s.GetRunPublic(ctx, runID)
 }
 
-// CreativeDelivery 使用当前 Results 的存储、时钟和 TTL 构造结果交付器。
+// CreativeDelivery creates a delivery helper with this Results instance's stores, clock, and TTL.
 func (s *Results) CreativeDelivery() ResultDelivery {
 	outcomes, _ := s.Repo.(ProviderOutcomeStore)
 	return ResultDelivery{Now: s.Now, Repo: s.Repo, Outcomes: outcomes, Store: s.TransientStore, TTL: s.TransientTTL}
 }
 
-// SettleRun 捕获 platform 已成功的结果并写 usage log；失败时保持 settlement_pending。
+// SettleRun captures confirmed provider work, checks delivery, and records usage; pending tasks remain
+// retryable on failure.
 func (s *Results) SettleRun(ctx context.Context, runID string) error {
 	if s == nil || s.Repo == nil {
 		return errors.New("creative service is not configured")
@@ -368,12 +372,12 @@ func (s *Results) SettleRun(ctx context.Context, runID string) error {
 			return err
 		}
 	}
-	// cancelled 竞态仍需写 usage log，但保持 cancelled 终态。
+	// Provider work completed during a cancellation race still needs a usage log; the task stays cancelled.
 	s.RecordCreativeUsageLog(ctx, run, actualCost, successCount, billingResult, s.now())
 	return nil
 }
 
-// ReleaseRun 释放未消耗 hold，成功后把 release_pending 推进到目标终态。
+// ReleaseRun releases the remaining hold and advances release_pending to its target terminal state.
 func (s *Results) ReleaseRun(ctx context.Context, runID string) error {
 	if s == nil || s.Repo == nil {
 		return errors.New("creative service is not configured")
@@ -409,7 +413,7 @@ func (s *Results) ReleaseRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-// FailRun 失败路径：先进入 release_pending，再由 ReleaseRun 完成释放和目标终态。
+// FailRun enters release_pending, schedules recovery, and attempts release before completing the failed state.
 func (s *Results) FailRun(ctx context.Context, runID, errorCode, errorMessage string) error {
 	if s == nil || s.Repo == nil {
 		return nil
@@ -449,7 +453,7 @@ func (s *Results) FailRun(ctx context.Context, runID, errorCode, errorMessage st
 	return nil
 }
 
-// CancelRunByWorker 是 worker 侧处理既有 cancelled 状态的入口。
+// CancelRunByWorker releases nonterminal tasks toward cancelled; existing terminal tasks are unchanged.
 func (s *Results) CancelRunByWorker(ctx context.Context, runID string) error {
 	if s == nil || s.Repo == nil {
 		return nil
@@ -475,8 +479,8 @@ func (s *Results) CancelRunByWorker(ctx context.Context, runID string) error {
 	return s.ReleaseRun(ctx, runID)
 }
 
-// MarkResultLost 把任务标记为 result_lost。
-// providerSucceeded 为 true（上游已确认成功且已捕获）时保持计费，否则释放预占。
+// MarkResultLost releases a nonterminal task toward result_lost when providerSucceeded is false.
+// Confirmed provider success is left to settlement so completed work stays billable.
 func (s *Results) MarkResultLost(ctx context.Context, runID string, providerSucceeded bool) error {
 	if s == nil || s.Repo == nil {
 		return nil
@@ -509,7 +513,7 @@ func (s *Results) MarkResultLost(ctx context.Context, runID string, providerSucc
 	return s.ReleaseRun(ctx, runID)
 }
 
-// RecordCreativeUsageLog 按成功输出数写入任务用量，并保存计费关联。
+// RecordCreativeUsageLog records successful image count, cost, and billing identifiers.
 func (s *Results) RecordCreativeUsageLog(ctx context.Context, run *CreativeRun, actualCost float64, successCount int, billingResult *billing.TaskFundsResult, createdAt time.Time) {
 	if s == nil || s.RecordUsage == nil || run == nil || run.ProviderID == nil || successCount <= 0 {
 		return
@@ -568,7 +572,7 @@ func (s *Results) RecordCreativeUsageLog(ctx context.Context, run *CreativeRun, 
 	s.RecordUsage(ctx, usageLog)
 }
 
-// now 保持各原取时点，构造时可注入同一时钟来源。
+// now returns the injected clock's time or the system time when no clock is configured.
 func (s *Results) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

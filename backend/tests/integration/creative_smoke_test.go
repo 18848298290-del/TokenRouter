@@ -25,27 +25,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// 冒烟测试使用 miniredis 和仓储、执行器替身，覆盖创建、入队、Reserve、执行、
-// 结算、取内容、ack，以及确认后的再次读取失败。
-// Redis 队列与 transient store 使用生产实现，Public、Results 和 worker 共同执行。
-// 创作台 PostgreSQL 仓储依赖 Ent 与 PostgreSQL，其事务由使用 Docker 的集成测试检查。
+// This smoke test uses miniredis and repository and executor stubs to cover creation,
+// enqueueing, reservation, execution, settlement, retrieval, acknowledgement, and expiry after
+// acknowledgement.
+// Public, Results, and the worker share the production Redis queue and transient store implementations.
+// PostgreSQL transaction behavior belongs to the Docker-backed repository integration tests.
 
-// smokeFakeRunRepo 是 CreativeRunRepository 的内存实现（仅实现本链路用到的方法）。
+// smokeFakeRunRepo stores the run and output state needed by this smoke test in memory.
 type smokeFakeRunRepo struct {
 	runs    map[string]*creative.CreativeRun
 	outputs map[string][]*creative.CreativeRunOutput
 }
 
-// smokeFakeBillingRepo 记录 capture/release 调用。
+// smokeFakeBillingRepo counts capture and release calls.
 type smokeFakeBillingRepo struct {
 	captureN int
 	releaseN int
 }
 
-// smokeFakeExecutor 返回固定输出。
+// smokeFakeExecutor returns a fixed image output.
 type smokeFakeExecutor struct{}
 
-// smokeFakeManagedKeyRepo 供应固定隐藏 Key。
+// smokeFakeManagedKeyRepo stores a managed key with a fixed ID.
 type smokeFakeManagedKeyRepo struct{ key *apikey.APIKey }
 
 type smokeFakeUserRepo struct{}
@@ -375,7 +376,7 @@ func (smokeCreativeSettingReader) GetCreativeModelSettings(context.Context) []cr
 	}}
 }
 
-// TestCreativeFullChainSmoke 串起创作台全链路（原生 Redis 实现 + miniredis）。
+// TestCreativeFullChainSmoke exercises the creative workflow with production Redis adapters and miniredis.
 func TestCreativeFullChainSmoke(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -436,7 +437,7 @@ func TestCreativeFullChainSmoke(t *testing.T) {
 	worker := creative.NewCreativeRunWorker(queue, repo, store, &smokeFakeExecutor{}, results, creative.CreativeWorkerOptions{ReserveBlockTimeout: time.Second, JobLockTTL: time.Minute, LockConflictDelay: time.Millisecond, ErrorRetryDelay: time.Millisecond, ErrorBackoff: time.Millisecond, StaleActiveAfter: time.Minute, MaxAttempts: 3}, creative.WorkerPorts{})
 	ctx := context.Background()
 
-	// 1. 创建任务（含源图 + prompt，经校验/审核跳过/估价/预占/暂存/入队）。
+	// Create a queued run with a source image and prompt, including estimation and reservation.
 	png := smokeTestPNG(t)
 	scope := creative.CreativeRunScope{UserID: 7, WorkspaceID: "11111111-1111-4111-8111-111111111111"}
 	created, err := svc.CreateRun(ctx, scope, creative.CreateCreativeRunParamsPublic{
@@ -452,30 +453,30 @@ func TestCreativeFullChainSmoke(t *testing.T) {
 	runID := created.ID
 	require.Equal(t, creative.PlatformGemini, repo.runs[runID].Platform)
 
-	// 2. worker 从原生队列实现 Reserve → 执行 fake provider → 成功结算。
+	// Reserve from the production queue, execute the fake provider, and capture the charge.
 	require.NoError(t, worker.RunOnce(ctx))
 	require.Equal(t, creative.CreativeRunStatusSucceeded, repo.runs[runID].Status)
 	require.Equal(t, 1, billing.captureN)
 	require.Equal(t, creative.CreativeRunOutputStatusSucceeded, repo.outputs[runID][0].Status)
 
-	// 3. 取回输出字节。
+	// Retrieve the generated output bytes.
 	content, err := svc.GetOutputContent(ctx, scope, runID, 0)
 	require.NoError(t, err)
 	require.Equal(t, []byte("smoke-image-bytes"), content.Content)
 	require.Equal(t, "image/png", content.ContentType)
 
-	// 4. ack 删除临时输出。
+	// Acknowledgement deletes the transient output.
 	require.NoError(t, svc.AckOutput(ctx, scope, runID, 0))
 	require.Equal(t, creative.CreativeRunOutputStatusAcked, repo.outputs[runID][0].Status)
 	_, err = store.LoadOutput(ctx, runID, 0)
 	require.Error(t, err, "ack 后临时输出必须已删除")
 
-	// 5. 再次获取返回 410 语义错误。
+	// Reading an acknowledged output returns ErrCreativeOutputExpired.
 	_, err = svc.GetOutputContent(ctx, scope, runID, 0)
 	require.ErrorIs(t, err, creative.ErrCreativeOutputExpired)
 }
 
-// smokeTestPNG 生成一张最小合法 PNG。
+// smokeTestPNG generates a valid 2-by-2 PNG fixture.
 func smokeTestPNG(t *testing.T) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
@@ -484,7 +485,7 @@ func smokeTestPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// RecordProviderOutcome 新成功事实端口沿用本冒烟测试的内存仓储；真正的原子回滚由 PostgreSQL 回归覆盖。
+// RecordProviderOutcome stores output snapshots in memory. PostgreSQL tests cover transactional rollback.
 func (r *smokeFakeRunRepo) RecordProviderOutcome(ctx context.Context, id string, providerID int64, outputs []creative.CreativeRunOutput, now time.Time) error {
 	run, err := r.GetCreativeRunByRunID(ctx, id)
 	if err != nil {

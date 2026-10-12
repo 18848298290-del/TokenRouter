@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// IdempotencyRecord 幂等请求记录表。
+// IdempotencyRecord stores request deduplication state and cached responses.
 type IdempotencyRecord struct {
 	ent.Schema
 }

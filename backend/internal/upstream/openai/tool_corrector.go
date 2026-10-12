@@ -15,7 +15,7 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// codexToolNameMapping 定义 Codex 原生工具名称到 OpenCode 工具名称的映射。
+// codexToolNameMapping maps Codex tool names and client aliases to OpenCode names.
 var codexToolNameMapping = map[string]string{
 	"apply_patch":  "edit",
 	"applyPatch":   "edit",
@@ -42,19 +42,19 @@ var codexToolNameMapping = map[string]string{
 	"webFetch":  "webfetch",
 }
 
-// ToolCorrectionStats 记录工具修正的统计信息（导出用于 JSON 序列化）。
+// ToolCorrectionStats counts tool renames and exposes the counts for JSON serialization.
 type ToolCorrectionStats struct {
 	TotalCorrected    int            `json:"total_corrected"`
 	CorrectionsByTool map[string]int `json:"corrections_by_tool"`
 }
 
-// CodexToolCorrector 处理 Codex 工具调用的自动修正。
+// CodexToolCorrector adapts tool names and arguments to OpenCode and tracks renames.
 type CodexToolCorrector struct {
 	stats ToolCorrectionStats
 	mu    sync.RWMutex
 }
 
-// NewCodexToolCorrector 创建新的工具修正器。
+// NewCodexToolCorrector returns a corrector with empty rename counters.
 func NewCodexToolCorrector() *CodexToolCorrector {
 	return &CodexToolCorrector{
 		stats: ToolCorrectionStats{
@@ -63,8 +63,8 @@ func NewCodexToolCorrector() *CodexToolCorrector {
 	}
 }
 
-// CorrectToolCallsInSSEData 修正 SSE 数据中的工具调用
-// 返回修正后的数据和是否进行了修正。
+// CorrectToolCallsInSSEData adapts tool calls in an SSE data payload.
+// The boolean reports whether the payload changed.
 func (c *CodexToolCorrector) CorrectToolCallsInSSEData(data string) (string, bool) {
 	if data == "" || data == "\n" {
 		return data, false
@@ -76,8 +76,8 @@ func (c *CodexToolCorrector) CorrectToolCallsInSSEData(data string) (string, boo
 	return string(correctedBytes), true
 }
 
-// CorrectToolCallsInSSEBytes 修正 SSE JSON 数据中的工具调用（字节路径）。
-// 返回修正后的数据和是否进行了修正。
+// CorrectToolCallsInSSEBytes adapts tool calls in a JSON payload.
+// The boolean reports whether the payload changed; unchanged input is returned directly.
 func (c *CodexToolCorrector) CorrectToolCallsInSSEBytes(data []byte) ([]byte, bool) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return data, false
@@ -86,7 +86,6 @@ func (c *CodexToolCorrector) CorrectToolCallsInSSEBytes(data []byte) ([]byte, bo
 		return data, false
 	}
 	if !gjson.ValidBytes(data) {
-		// 不是有效 JSON，直接返回原数据
 		return data, false
 	}
 
@@ -136,13 +135,13 @@ func (c *CodexToolCorrector) CorrectToolCallsInSSEBytes(data []byte) ([]byte, bo
 }
 
 func mayContainToolCallPayload(data []byte) bool {
-	// 快速路径：多数 token / 文本事件不包含工具字段，避免进入 JSON 解析热路径。
+	// Skip JSON parsing for the common text and token events that have no tool fields.
 	return bytes.Contains(data, []byte(`"tool_calls"`)) ||
 		bytes.Contains(data, []byte(`"function_call"`)) ||
 		bytes.Contains(data, []byte(`"function":{"name"`))
 }
 
-// correctToolCallsArrayAtPath 修正指定路径下 tool_calls 数组中的工具名称。
+// correctToolCallsArrayAtPath adapts the names and arguments of tools at the given path.
 func (c *CodexToolCorrector) correctToolCallsArrayAtPath(data []byte, toolCallsPath string) ([]byte, bool) {
 	count := int(gjson.GetBytes(data, toolCallsPath+".#").Int())
 	if count <= 0 {
@@ -160,7 +159,7 @@ func (c *CodexToolCorrector) correctToolCallsArrayAtPath(data []byte, toolCallsP
 	return updated, corrected
 }
 
-// correctFunctionAtPath 修正指定路径下单个函数调用的工具名称和参数。
+// correctFunctionAtPath adapts one function's name and arguments at the given path.
 func (c *CodexToolCorrector) correctFunctionAtPath(data []byte, functionPath string) ([]byte, bool) {
 	namePath := functionPath + ".name"
 	nameResult := gjson.GetBytes(data, namePath)
@@ -174,17 +173,15 @@ func (c *CodexToolCorrector) correctFunctionAtPath(data []byte, functionPath str
 	updated := data
 	corrected := false
 
-	// 查找并修正工具名称
 	if correctName, found := codexToolNameMapping[name]; found {
 		if next, err := sjson.SetBytes(updated, namePath, correctName); err == nil {
 			updated = next
 			c.recordCorrection(name, correctName)
 			corrected = true
-			name = correctName // 使用修正后的名称进行参数修正
+			name = correctName // Use the OpenCode name to select argument corrections.
 		}
 	}
 
-	// 修正工具参数（基于工具名称）
 	if next, changed := c.correctToolParametersAtPath(updated, functionPath+".arguments", name); changed {
 		updated = next
 		corrected = true
@@ -192,7 +189,7 @@ func (c *CodexToolCorrector) correctFunctionAtPath(data []byte, functionPath str
 	return updated, corrected
 }
 
-// correctToolParametersAtPath 修正指定路径下 arguments 参数。
+// correctToolParametersAtPath adapts arguments encoded as either an object or a JSON string.
 func (c *CodexToolCorrector) correctToolParametersAtPath(data []byte, argumentsPath, toolName string) ([]byte, bool) {
 	if toolName != "bash" && toolName != "edit" {
 		return data, false
@@ -239,7 +236,7 @@ func (c *CodexToolCorrector) correctToolParametersAtPath(data []byte, argumentsP
 	}
 }
 
-// correctToolArgumentsJSON 修正工具参数 JSON（对象字符串），返回修正后的 JSON 与是否变更。
+// correctToolArgumentsJSON adapts a JSON argument object and reports whether it changed.
 func (c *CodexToolCorrector) correctToolArgumentsJSON(argsJSON, toolName string) (string, bool) {
 	if !gjson.Valid(argsJSON) {
 		return argsJSON, false
@@ -251,10 +248,9 @@ func (c *CodexToolCorrector) correctToolArgumentsJSON(argsJSON, toolName string)
 	updated := argsJSON
 	corrected := false
 
-	// 根据工具名称应用特定的参数修正规则
 	switch toolName {
 	case "bash":
-		// OpenCode bash 支持 workdir；有些来源会输出 work_dir。
+		// OpenCode bash expects workdir; some clients send work_dir.
 		if !gjson.Get(updated, "workdir").Exists() {
 			if next, changed := moveJSONField(updated, "work_dir", "workdir"); changed {
 				updated = next
@@ -270,7 +266,7 @@ func (c *CodexToolCorrector) correctToolArgumentsJSON(argsJSON, toolName string)
 		}
 
 	case "edit":
-		// OpenCode edit 参数为 filePath/oldString/newString（camelCase）。
+		// OpenCode edit expects camelCase keys such as filePath, oldString, and newString.
 		if !gjson.Get(updated, "filePath").Exists() {
 			if next, changed := moveJSONField(updated, "file_path", "filePath"); changed {
 				updated = next
@@ -338,7 +334,7 @@ func deleteJSONField(input, path string) (string, bool) {
 	return next, true
 }
 
-// recordCorrection 记录一次工具名称修正。
+// recordCorrection increments the total and per-rename counters under the statistics lock.
 func (c *CodexToolCorrector) recordCorrection(from, to string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -351,12 +347,11 @@ func (c *CodexToolCorrector) recordCorrection(from, to string) {
 		from, to, c.stats.TotalCorrected)
 }
 
-// GetStats 获取工具修正统计信息。
+// GetStats returns a snapshot whose map can be modified independently of the corrector.
 func (c *CodexToolCorrector) GetStats() ToolCorrectionStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// 返回副本以避免并发问题
 	statsCopy := ToolCorrectionStats{
 		TotalCorrected:    c.stats.TotalCorrected,
 		CorrectionsByTool: make(map[string]int, len(c.stats.CorrectionsByTool)),
@@ -366,7 +361,7 @@ func (c *CodexToolCorrector) GetStats() ToolCorrectionStats {
 	return statsCopy
 }
 
-// CorrectToolName 直接修正工具名称（用于非 SSE 场景）。
+// CorrectToolName returns the OpenCode name and whether a mapping exists.
 func CorrectToolName(name string) (string, bool) {
 	if correctName, found := codexToolNameMapping[name]; found {
 		return correctName, true
@@ -374,7 +369,7 @@ func CorrectToolName(name string) (string, bool) {
 	return name, false
 }
 
-// CorrectResponseBody 修正响应体中的工具调用。
+// CorrectResponseBody adapts tool calls and normalizes Responses function arguments.
 func (c *CodexToolCorrector) CorrectResponseBody(body []byte) []byte {
 	if len(body) == 0 {
 		return body

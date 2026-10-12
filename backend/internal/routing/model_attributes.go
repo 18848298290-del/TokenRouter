@@ -19,7 +19,7 @@ var (
 	ErrAttributeConfigConflict = apperror.Conflict("ATTRIBUTE_CONFIG_CONFLICT", "configuration name or group association already exists")
 )
 
-// ModelAttributeRule 以最终上游模型匹配展示属性，不参与可请求性计算。
+// ModelAttributeRule applies attribute overrides to final upstream models and optional route conditions.
 type ModelAttributeRule struct {
 	ID         string                  `json:"id"`
 	Models     []string                `json:"models"`
@@ -27,7 +27,7 @@ type ModelAttributeRule struct {
 	Match      *ModelAttributeMatch    `json:"match,omitempty"`
 }
 
-// ModelAttributeConfig 是可以被多个分组共享的属性档案。
+// ModelAttributeConfig is an attribute profile shared by groups.
 type ModelAttributeConfig struct {
 	ExpectedUpdatedAt time.Time            `json:"-"`
 	ID                int64                `json:"id"`
@@ -40,7 +40,7 @@ type ModelAttributeConfig struct {
 	UpdatedAt         time.Time            `json:"updated_at"`
 }
 
-// ModelAttributeRepository 在同一事务中保存规则与分组关联。
+// ModelAttributeRepository stores rules and group associations in one transaction.
 type ModelAttributeRepository interface {
 	List(context.Context) ([]ModelAttributeConfig, error)
 	Get(context.Context, int64) (*ModelAttributeConfig, error)
@@ -50,7 +50,7 @@ type ModelAttributeRepository interface {
 	Delete(context.Context, int64) error
 }
 
-// ModelAttributeCatalog 是管理员默认查询的只读端口。
+// ModelAttributeCatalog supplies catalogue reads and refresh for admin attribute queries.
 type ModelAttributeCatalog struct {
 	Index      func() (modelcatalog.Index, ModelAttributeSnapshot)
 	View       func() modelcatalog.View
@@ -67,10 +67,11 @@ type ModelAttributeSnapshot struct {
 	LastError   string               `json:"last_error,omitempty"`
 }
 
-// EffectiveModelAttributes 保留多路差异，消费者不得据此过滤模型或协议。
+// EffectiveModelAttributes records route differences for display; consumers must not use it to filter models or
+// protocols.
 type EffectiveModelAttributes = modelcatalog.Presentation
 
-// ModelAttributeService 不保存跨请求配置缓存，所有实例直接读取提交后的数据库状态。
+// ModelAttributeService reads group configuration from the repository for each display query.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_attributes
 type ModelAttributeService struct {
 	Repo        ModelAttributeRepository
@@ -208,7 +209,7 @@ func (s *ModelAttributeService) invalidate(ctx context.Context, groups []int64) 
 	}
 }
 
-// ResolveModels 每个分组读取一次属性档案，按可请求结果中的最终模型生成展示属性。
+// ResolveModels reads one group profile and derives display attributes from resolved upstream models.
 func (s *ModelAttributeService) ResolveModels(ctx context.Context, groupID int64, models []RequestableModel) (map[string]EffectiveModelAttributes, error) {
 	var config *ModelAttributeConfig
 	if s.Repo != nil {
@@ -221,7 +222,7 @@ func (s *ModelAttributeService) ResolveModels(ctx context.Context, groupID int64
 	return s.resolveModels(s.viewForContext(ctx), config, models, locale.FromContext(ctx)), nil
 }
 
-// ResolveGroups 批量读取本次展示所需的属性档案，分组之间共享同一次数据库查询。
+// ResolveGroups batch-loads profiles for groups with visible models in one repository query.
 func (s *ModelAttributeService) ResolveGroups(ctx context.Context, groups map[int64][]RequestableModel) (map[int64]map[string]EffectiveModelAttributes, error) {
 	result := make(map[int64]map[string]EffectiveModelAttributes, len(groups))
 	ids := make([]int64, 0, len(groups))
@@ -248,7 +249,7 @@ func (s *ModelAttributeService) ResolveGroups(ctx context.Context, groups map[in
 	return result, nil
 }
 
-// resolveModels 将档案规则叠加到最终上游模型的目录属性上。
+// resolveModels applies profile overrides to catalogue attributes for final upstream models.
 func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *ModelAttributeConfig, models []RequestableModel, language string) map[string]EffectiveModelAttributes {
 	candidates := s.identityCandidates()
 	result := map[string]EffectiveModelAttributes{}
@@ -336,7 +337,7 @@ func (c *ModelAttributeConfig) match(model string, expand func(string) []string,
 	return modelcatalog.Attributes{}
 }
 
-// EnsureModelRuleIDs 给历史规则生成稳定标识，编辑模型匹配项后仍可找到对应译文。
+// EnsureModelRuleIDs fills missing stable IDs so translations remain associated after model-pattern edits.
 func EnsureModelRuleIDs(config *ModelAttributeConfig) {
 	for i := range config.Rules {
 		if config.Rules[i].ID != "" {

@@ -13,7 +13,6 @@ import (
 
 // UserAttributeValue holds a user's value for a specific attribute.
 //
-// This entity stores the actual values that users have for each attribute definition.
 // Values are stored as strings and converted to the appropriate type by the application.
 type UserAttributeValue struct {
 	ent.Schema
@@ -27,7 +26,7 @@ func (UserAttributeValue) Annotations() []schema.Annotation {
 
 func (UserAttributeValue) Mixin() []ent.Mixin {
 	return []ent.Mixin{
-		// Only use TimeMixin, no soft delete - values are hard deleted
+		// Attribute values are hard-deleted.
 		mixins.TimeMixin{},
 	}
 }

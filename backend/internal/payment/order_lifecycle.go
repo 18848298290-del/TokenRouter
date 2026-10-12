@@ -48,8 +48,8 @@ func (s *OrderLifecycle) AdminCancelOrder(ctx context.Context, orderID int64) (s
 	return s.CancelCore(ctx, o, OrderStatusCancelled, "admin", "admin cancelled order")
 }
 
-// ForceExpireOrder 由管理员显式确认后终结无法确认上游状态的待支付订单。
-// 保留 EXPIRED 状态使验签通过的迟到付款仍能进入既有恢复和履约流程。
+// ForceExpireOrder expires a pending order on an administrator request without querying upstream.
+// EXPIRED still accepts verified late payments for recovery and fulfillment.
 // @project-doc docs/domains/payments_and_entitlements.md#forced_expiration_recovery
 func (s *OrderLifecycle) ForceExpireOrder(ctx context.Context, orderID int64, reason string) error {
 	reason = strings.TrimSpace(reason)
@@ -89,7 +89,7 @@ func (s *OrderLifecycle) CancelCore(ctx context.Context, o *Order, fs, op, ad st
 			cancelErr := cp.CancelPayment(ctx, queryRef)
 			finishProviderCall()
 			if cancelErr != nil {
-				// 关闭请求可能与付款完成并发，必须二次查单后才能决定本地终态。
+				// Cancellation can race with payment; query again before choosing a local terminal state.
 				retryResp, retryErr := s.QueryPaymentOrderWithProvider(ctx, prov, queryRef)
 				if retryErr == nil {
 					retryOutcome, applyErr := s.ApplyQueriedPaymentStatus(ctx, o, prov, queryRef, retryResp)
@@ -171,7 +171,7 @@ func (s *OrderLifecycle) RecordPaymentCancelFailure(ctx context.Context, o *Orde
 		s.runtime.Audit(ctx, o.ID, "PAYMENT_CANCEL_FAILED", providerKey, detail)
 	}
 
-	// 每次失败都刷新时间戳，使超时任务按固定冷却窗口重试。
+	// Refresh the timestamp after each failure so expiry retries observe the cooldown.
 	if err := s.store.TouchPending(ctx, o.ID, s.runtime.Now()); err != nil {
 		s.runtime.Log("warn", "record payment cancellation retry time failed", "orderID", o.ID, "error", err)
 	}
@@ -364,14 +364,14 @@ func (s *OrderLifecycle) VerifyOrderByOutTradeNo(ctx context.Context, outTradeNo
 	if o.UserID != userID {
 		return nil, infraerrors.Forbidden("FORBIDDEN", "no permission for this order")
 	}
-	// 待支付和已过期订单允许主动补查；处理中订单交给低频后台对账。
+	// Verify pending and expired orders here; the background reconciler handles processing orders.
 	if o.Status == OrderStatusPending || o.Status == OrderStatusExpired {
 		result, checkErr := s.CheckPaid(ctx, o)
 		if checkErr != nil {
 			return nil, checkErr
 		}
 		if result == LifecycleCheckPaidResultAlreadyPaid || result == LifecycleCheckPaidResultProcessing {
-			// 重新读取以返回原子状态转换后的结果。
+			// Reload the result of the conditional state transition.
 			o, err = s.store.Order(ctx, o.ID)
 			if err != nil {
 				return nil, fmt.Errorf("reload order: %w", err)
@@ -381,7 +381,7 @@ func (s *OrderLifecycle) VerifyOrderByOutTradeNo(ctx context.Context, outTradeNo
 	return o, nil
 }
 
-// ReconcilePendingPaymentOrders 主动补偿未收到回调的支付宝和微信待支付订单，避免等到过期才发现已支付。
+// ReconcilePendingPaymentOrders checks pending Alipay and WeChat orders for missed payment callbacks.
 func (s *OrderLifecycle) ReconcilePendingPaymentOrders(ctx context.Context) (int, error) {
 	now := s.runtime.Now()
 	orders, err := s.store.PendingReconciliation(ctx, now, LifecyclePendingPaymentReconcileLimit)
@@ -460,7 +460,7 @@ func (s *OrderLifecycle) ExpireTimedOutOrdersAt(ctx context.Context, now time.Ti
 		if !s.ShouldRetryTimedOutOrder(ctx, o, now) {
 			continue
 		}
-		// 到期决策必须先确认上游状态并成功关闭待支付单据。
+		// Expiry requires confirming the upstream state and closing any pending provider payment.
 		outcome, cancelErr := s.CancelCore(ctx, o, OrderStatusExpired, "system", "order expired")
 		if cancelErr != nil {
 			s.runtime.Log("warn", "keep timed-out order pending after upstream cancellation failure", "orderID", o.ID, "error", cancelErr)
@@ -484,7 +484,7 @@ func (s *OrderLifecycle) ShouldRetryTimedOutOrder(ctx context.Context, order *Or
 	return !order.UpdatedAt.After(now.Add(-LifecyclePaymentExpiryRetryDelay))
 }
 
-// ReconcileProcessingOrders 低频补偿可能漏掉 Webhook 的渠道处理中订单。
+// ReconcileProcessingOrders checks provider-processing orders for missed webhooks.
 func (s *OrderLifecycle) ReconcileProcessingOrders(ctx context.Context) (int, error) {
 	return s.ReconcileProcessingOrdersAt(ctx, s.runtime.Now())
 }
@@ -533,7 +533,7 @@ func (s *OrderLifecycle) ReconcileProcessingOrdersAt(ctx context.Context, now ti
 	return recovered, nil
 }
 
-// ReconcilePaidFulfillmentOrders 重试已收款但尚未完成的幂等履约。
+// ReconcilePaidFulfillmentOrders retries idempotent fulfillment for paid, unfinished orders.
 func (s *OrderLifecycle) ReconcilePaidFulfillmentOrders(ctx context.Context) (int, error) {
 	return s.ReconcilePaidFulfillmentOrdersAt(ctx, s.runtime.Now())
 }
@@ -588,7 +588,7 @@ func ReconcilePageIDs(ids []int64, cursor uint64, limit int) []int64 {
 		return append([]int64(nil), ids...)
 	}
 
-	// 每轮推进一页，使长期不变的处理中订单也能覆盖整个待处理集合。
+	// Advance one page per run so unchanged processing orders cannot starve later pages.
 	pageCount := (len(ids) + limit - 1) / limit
 	page := int(cursor % uint64(pageCount))
 	start := page * limit

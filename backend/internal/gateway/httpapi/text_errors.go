@@ -21,22 +21,22 @@ import (
 
 func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, message string, streamStarted bool, observe func(*gin.Context, string, string, int)) {
 	if streamStarted {
-		// ping 或部分数据 Flush 后，状态码已提交为 200，错误通过 SSE 返回。
-		// 标记流内错误，ops_error_logger 据此补记 status < 400 的失败，例如并发限流。
+		// A flushed keepalive or data frame commits the status, so subsequent errors use SSE.
+		// Record stream errors so Ops can account for failures whose HTTP status is below 400.
 		if observe != nil {
 			observe(c, errType, message, status)
 		}
 
-		// Codex CLI 接受 response.completed、failed、incomplete 或 cancelled 终止事件，Anthropic 上游的 Responses 也按此格式输出。
+		// Responses clients require a terminal response event even when the upstream uses Anthropic.
 		if InboundIsResponses(c) {
 			if WriteResponsesFailedSSE(c, errType, code, message, ErrorRequestID(c), ErrorRequestModel(c)) {
 				return
 			}
 		}
-		// Stream already started, send error as SSE event then close
+		// Flush the protocol error before returning from the started stream.
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			// SSE 错误事件使用固定 schema，通过 Quote 拼接 JSON。
+			// Quote variable strings when constructing the fixed SSE error schema.
 			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
 			if code != "" {
 				errorObject := gin.H{"type": errType, "code": code, "message": message}
@@ -53,7 +53,7 @@ func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, messag
 		return
 	}
 
-	// Normal case: return JSON response with proper status code
+	// Before streaming starts, return JSON with the requested error status.
 	if code == "" {
 		WriteAnthropicError(c, status, errType, "", message)
 	} else {
@@ -92,8 +92,8 @@ func BillingErrorDetails(err error) (status int, code, message string, retryAfte
 		msg := apperror.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
 	}
-	// 用户/分组 RPM 超限统一映射为 HTTP 429；保留与其它 rate_limit 一致的错误码便于客户端分类。
-	// 返回 Retry-After 秒数（当前分钟剩余秒数），让 SDK 自动退避。
+	// User and group RPM limits return 429 with the shared rate_limit_exceeded code.
+	// Retry-After is the number of seconds remaining in the current minute.
 	if errors.Is(err, scheduler.ErrGroupRPMExceeded) || errors.Is(err, scheduler.ErrUserRPMExceeded) {
 		msg := apperror.Message(err)
 		retrySeconds := 60 - int(time.Now().Unix()%60)
@@ -111,7 +111,7 @@ func BillingErrorDetails(err error) (status int, code, message string, retryAfte
 	return http.StatusForbidden, "billing_error", msg, 0
 }
 
-// ErrorRequestID、ErrorRequestModel 读取原观测字段，不推断或恢复业务状态。
+// ErrorRequestID reads the telemetry correlation ID from the request context.
 func ErrorRequestID(c *gin.Context) string {
 	if c != nil && c.Request != nil {
 		value, _ := c.Request.Context().Value(telemetry.RequestID).(string)

@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// imageTokenCatalog 为指定图片型号提供按 token 计费的测试价格。
+// imageTokenCatalog supplies token prices for the specified image model.
 type imageTokenCatalog struct{}
 
 func (imageTokenCatalog) GetModelPricing(model string) *pricing.CatalogModelPricing {
@@ -23,7 +23,7 @@ func (imageTokenCatalog) GetModelPricing(model string) *pricing.CatalogModelPric
 
 func (imageTokenCatalog) ForceUpdate() error { return nil }
 
-// TestImageTokenUsageUsesExactTokenPricing 验证生图响应的实际 token 用量继续使用独立 token 价。
+// TestImageTokenUsageUsesExactTokenPricing checks image generation billing against reported token usage.
 func TestImageTokenUsageUsesExactTokenPricing(t *testing.T) {
 	calculator := billing.NewCalculator(imageTokenCatalog{}, billing.CalculatorOptions{})
 	recorder := NewRecorder(Dependencies{Calculator: calculator}, RecorderOptions{})

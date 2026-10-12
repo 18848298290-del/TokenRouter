@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupReasoningEffortOverLimitMigration 锁定新字段的类型、默认值和说明。
+// TestGroupReasoningEffortOverLimitMigration checks the over-limit policy's type, default, and description.
 func TestGroupReasoningEffortOverLimitMigration(t *testing.T) {
 	content, err := FS.ReadFile("263_group_reasoning_effort_over_limit.sql")
 	require.NoError(t, err)

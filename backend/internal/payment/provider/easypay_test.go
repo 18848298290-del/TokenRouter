@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// TestEasyPayNotificationRejectsCheckoutParameters 检查下单参数不能被当作通知接收。
+// TestEasyPayNotificationRejectsCheckoutParameters checks that checkout fields cannot authenticate as a notification.
 func TestEasyPayNotificationRejectsCheckoutParameters(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +39,7 @@ func TestEasyPayNotificationRejectsCheckoutParameters(t *testing.T) {
 	}
 }
 
-// TestEasyPayNotificationParameters 覆盖标准通知、额外字段和重复字段。
+// TestEasyPayNotificationParameters covers valid, extra, and duplicate notification fields.
 func TestEasyPayNotificationParameters(t *testing.T) {
 	t.Parallel()
 
@@ -107,7 +107,7 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 				notification.Metadata["pid"] != "1000" || notification.RawData != raw {
 				t.Fatalf("unexpected notification: %+v", notification)
 			}
-			// 同一份有效通知篡改金额后应当验签失败。
+			// Changing the amount after signing invalidates the notification.
 			values.Set("money", "651.00")
 			if _, err := e.VerifyNotification(context.Background(), values.Encode(), nil); err == nil || !strings.Contains(err.Error(), "invalid signature") {
 				t.Fatalf("tampered notification: %v", err)
@@ -116,7 +116,7 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 	}
 }
 
-// TestEasyPayNotificationRejectsInvalidFields 检查单个无效字段在验签前被拒绝。
+// TestEasyPayNotificationRejectsInvalidFields checks rejection of invalid fields before signature verification.
 func TestEasyPayNotificationRejectsInvalidFields(t *testing.T) {
 	t.Parallel()
 
@@ -697,7 +697,7 @@ func TestEasyPayVerifySignValid(t *testing.T) {
 
 	sign := easyPaySign(params, pkey)
 
-	// 支付通知同时携带签名和签名类型。
+	// Notifications carry both the signature and signature type.
 	params["sign"] = sign
 	params["sign_type"] = "MD5"
 
@@ -719,7 +719,7 @@ func TestEasyPayVerifySignTampered(t *testing.T) {
 
 	sign := easyPaySign(params, pkey)
 
-	// 签名生成后篡改金额。
+	// Change the amount after computing the signature.
 	params["money"] = "99.99"
 
 	if easyPayVerifySign(params, pkey, sign) {
@@ -806,8 +806,8 @@ func TestEasyPayMerchantIdentityMetadata(t *testing.T) {
 	}
 }
 
-// TestResolveEasyPayReturnedRef 检查相对支付地址的补全规则（issue #6292）。
-// 相对 qrcode 被 QRCode.toCanvas 编码后会成为裸路径，pay_url 在站点自身域名下会返回 404。
+// TestResolveEasyPayReturnedRef checks payment URL resolution rules (issue #6292).
+// Unresolved paths become bare QR payloads or open on the gateway origin.
 func TestResolveEasyPayReturnedRef(t *testing.T) {
 	t.Parallel()
 
@@ -820,7 +820,7 @@ func TestResolveEasyPayReturnedRef(t *testing.T) {
 		want    string
 	}{
 		{
-			// 根相对路径使用 apiBase 的协议与主机补全。
+			// Resolve root-relative paths with the apiBase scheme and host.
 			name:    "root relative path resolves against origin",
 			apiBase: apiBase,
 			ref:     "/api/pay/toapp/ORDER_ID",
@@ -850,7 +850,7 @@ func TestResolveEasyPayReturnedRef(t *testing.T) {
 			ref:     "/api/pay/toapp/ORDER_ID",
 			want:    "http://pay.example.com/api/pay/toapp/ORDER_ID",
 		},
-		// 这些输入均按输入原样返回。
+		// These values are returned unchanged.
 		{
 			name:    "empty stays empty",
 			apiBase: apiBase,
@@ -882,7 +882,7 @@ func TestResolveEasyPayReturnedRef(t *testing.T) {
 			want:    "wxp://f2f0Abc_dEfGhIjKlMnOpQrStU",
 		},
 		{
-			// 无前导斜杠的 token 可以作为二维码内容，按输入值返回。
+			// A token without a leading slash may be an opaque QR payload.
 			name:    "opaque token without leading slash is untouched",
 			apiBase: apiBase,
 			ref:     "OrderToken123",
@@ -960,7 +960,7 @@ func TestEasyPayCreatePaymentResolvesRelativeMobilePayURL2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
-	// 移动端优先使用 payurl2，并补全相对地址。
+	// Mobile checkout prefers payurl2 and resolves relative references.
 	if want := origin + "/h5/pay/ORDER_ID"; resp.PayURL != want {
 		t.Fatalf("PayURL = %q, want %q", resp.PayURL, want)
 	}
@@ -993,7 +993,7 @@ func TestEasyPayCreatePaymentKeepsUpstreamAbsoluteAndOpaqueValues(t *testing.T) 
 	}
 }
 
-// easyPayTestNotificationValues 提供没有签名的标准通知字段，供输入校验测试使用。
+// easyPayTestNotificationValues returns unsigned standard notification fields for validation tests.
 func easyPayTestNotificationValues() url.Values {
 	return url.Values{
 		"pid": {"1000"}, "trade_no": {"UPSTREAM123"}, "out_trade_no": {"ORDER123"},
@@ -1002,7 +1002,7 @@ func easyPayTestNotificationValues() url.Values {
 	}
 }
 
-// newTestEasyPay 使用测试商户信息创建 EasyPay 渠道。
+// newTestEasyPay creates a provider with test merchant credentials.
 func newTestEasyPay(t *testing.T, apiBase string) *EasyPay {
 	t.Helper()
 
@@ -1019,8 +1019,8 @@ func newTestEasyPay(t *testing.T, apiBase string) *EasyPay {
 	return provider
 }
 
-// newEasyPayMapiStub 返回使用固定响应的 mapi.php 渠道和测试服务地址。
-// basePath 用于检查根相对地址的处理。
+// newEasyPayMapiStub returns a provider with a fixed mapi.php response and its test server URL.
+// basePath exercises root-relative URL resolution.
 func newEasyPayMapiStub(t *testing.T, basePath, body string) (*EasyPay, string) {
 	t.Helper()
 

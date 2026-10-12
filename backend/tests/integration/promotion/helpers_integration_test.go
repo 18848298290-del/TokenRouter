@@ -14,7 +14,7 @@ import (
 	_ "github.com/TokenFlux/TokenRouter/ent/runtime"
 )
 
-// testStore 创建独立测试数据库和 Ent 客户端。
+// testStore creates an isolated test database and Ent client.
 func testStore(t *testing.T) (*dbent.Client, *sql.DB) {
 	t.Helper()
 	db := databaseSuite.New(t)
@@ -23,7 +23,7 @@ func testStore(t *testing.T) (*dbent.Client, *sql.DB) {
 	return client, db
 }
 
-// testEntClient 为需要提交事务的测试提供独立数据库。
+// testEntClient supplies an isolated database for tests that commit transactions.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	client, _ := testStore(t)

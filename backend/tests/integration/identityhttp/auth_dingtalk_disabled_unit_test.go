@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDingTalkOAuthStart_Disabled 使用现有真实设置夹具，验证禁用登录不签发授权状态。
+// TestDingTalkOAuthStart_Disabled checks that disabled login redirects without issuing authorization state.
 func TestDingTalkOAuthStart_Disabled(t *testing.T) {
 	h, _ := newWeChatOAuthTestHandler(t, false)
 	recorder := httptest.NewRecorder()

@@ -2,8 +2,8 @@ package openai
 
 import "strings"
 
-// TrimEncryptedReasoningItems 清理一次性解密错误恢复中的提供商绑定状态：
-// reasoning 保留可复用骨架，加密 compaction 则必须整项删除。
+// TrimEncryptedReasoningItems mutates input to remove provider-bound state for decryption recovery.
+// It retains reusable reasoning fields and drops encrypted compaction items.
 func TrimEncryptedReasoningItems(reqBody map[string]any) bool {
 	if len(reqBody) == 0 {
 		return false
@@ -107,7 +107,7 @@ func SanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep
 		changed = true
 	}
 
-	// xAI 422: "content": null 导致 untagged enum 反序列化失败
+	// xAI rejects null content with HTTP 422 during untagged enum deserialization.
 	if v, has := inputItem["content"]; has && v == nil {
 		delete(inputItem, "content")
 		changed = true

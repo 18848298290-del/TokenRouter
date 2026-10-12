@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokAuthorizationOptions 只绑定供应商原语与代理读取，授权状态由 provider 唯一持有。
+// GrokAuthorizationOptions binds platform operations and proxy lookup; the provider authorization
+// service owns sessions.
 func GrokAuthorizationOptions(proxies egress.ProxyRepository, passwordEnabled func() bool) provider.GrokAuthorizationOptions {
 	if passwordEnabled == nil {
 		passwordEnabled = func() bool { return false }

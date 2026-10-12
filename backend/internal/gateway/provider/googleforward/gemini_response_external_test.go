@@ -25,8 +25,8 @@ type inMemoryLogSink struct {
 	events []*logging.LogEvent
 }
 
-// TestHandleNativeNonStreamingResponse_FeedsImageCounter 验证端到端守住接线：/v1beta/models/{model}:generateContent 的非流式响应体
-// 必须真的喂进计数器，否则上面的单测全绿而线上依然记 $0。
+// TestHandleNativeNonStreamingResponse_FeedsImageCounter checks that native generateContent
+// response bodies reach image observation so returned images are available for billing.
 func TestHandleNativeNonStreamingResponse_FeedsImageCounter(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	c.Images = 0

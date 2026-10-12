@@ -23,7 +23,7 @@ func TestExtractOpenAIReasoningEffortFromBodyModelCandidates(t *testing.T) {
 		name       string
 		body       []byte
 		candidates []string
-		want       string // "" 表示期望 nil
+		want       string // Empty means nil is expected.
 	}{
 		{
 			name:       "原始模型后缀不生成档位",

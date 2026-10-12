@@ -63,7 +63,8 @@ func (r *deliveryContractRepo) UpdateCreativeRunOutput(_ context.Context, _ stri
 	return nil
 }
 
-// TestResultDeliveryDistinguishesUnavailableFromMissing 验证读取故障不能认定永久丢失，只有明确不存在才进入丢失分支。
+// TestResultDeliveryDistinguishesUnavailableFromMissing checks that read failures are retryable and
+// confirmed absence is loss.
 func TestResultDeliveryDistinguishesUnavailableFromMissing(t *testing.T) {
 	output := []*CreativeRunOutput{{Status: CreativeRunOutputStatusSucceeded, OutputIndex: 0}}
 	for _, test := range []struct {
@@ -87,7 +88,8 @@ func TestResultDeliveryDistinguishesUnavailableFromMissing(t *testing.T) {
 	}
 }
 
-// TestResultDeliveryRetriesOnlySaveAfterDurableFact 验证只重试临时保存，成功事实必须先于首次保存，耗尽后保留丢失标记。
+// TestResultDeliveryRetriesOnlySaveAfterDurableFact checks outcome-first ordering and the loss marker after
+// save retries expire.
 func TestResultDeliveryRetriesOnlySaveAfterDurableFact(t *testing.T) {
 	for _, test := range []struct {
 		name               string
@@ -112,7 +114,8 @@ func TestResultDeliveryRetriesOnlySaveAfterDurableFact(t *testing.T) {
 	}
 }
 
-// TestResultDeliveryCancellationStopsSaving 验证运行或租约取消后，已记录的事实保留，但不能继续保存或发布交付结果。
+// TestResultDeliveryCancellationStopsSaving checks that cancellation after outcome persistence stops saves
+// and delivery updates.
 func TestResultDeliveryCancellationStopsSaving(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -39,7 +39,7 @@ func createEntUser(t *testing.T, ctx context.Context, client *dbent.Client, emai
 
 func TestEntSoftDelete_ApiKey_DefaultFilterAndSkip(t *testing.T) {
 	ctx := context.Background()
-	// 使用独立 Ent 连接，确保软删除验证在实际持久化数据上进行。
+	// Use an isolated database to check soft deletion against committed rows.
 	integrationDB, client := identityDatabase(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-user")+"@example.com")
@@ -71,7 +71,7 @@ func TestEntSoftDelete_ApiKey_DefaultFilterAndSkip(t *testing.T) {
 
 func TestEntSoftDelete_ApiKey_DeleteIdempotent(t *testing.T) {
 	ctx := context.Background()
-	// 使用全局 ent client，避免事务回滚影响幂等性验证。
+	// Use an isolated database so repeated deletion observes committed rows.
 	integrationDB, client := identityDatabase(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-user2")+"@example.com")
@@ -91,7 +91,7 @@ func TestEntSoftDelete_ApiKey_DeleteIdempotent(t *testing.T) {
 
 func TestEntSoftDelete_ApiKey_HardDeleteViaSkipSoftDelete(t *testing.T) {
 	ctx := context.Background()
-	// 使用全局 ent client，确保 SkipSoftDelete 的硬删除语义可验证。
+	// Use an isolated database to check physical deletion through SkipSoftDelete.
 	integrationDB, client := identityDatabase(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-user3")+"@example.com")
@@ -116,8 +116,6 @@ func TestEntSoftDelete_ApiKey_HardDeleteViaSkipSoftDelete(t *testing.T) {
 		Only(mixins.SkipSoftDelete(ctx))
 	require.True(t, dbent.IsNotFound(err), "expected row to be hard deleted")
 }
-
-// --- UserSubscription 软删除测试 ---
 
 func createEntPlan(t *testing.T, ctx context.Context, client *dbent.Client, name string) *dbent.SubscriptionPlan {
 	t.Helper()
@@ -215,10 +213,9 @@ func TestEntSoftDelete_UserSubscription_ListExcludesDeleted(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(ctx, sub2), "create subscription 2")
 
-	// 软删除 sub1
 	require.NoError(t, repo.Delete(ctx, sub1.ID), "soft delete subscription 1")
 
-	// ListByUserID 应只返回未删除的订阅
+	// ListByUserID must exclude the soft-deleted subscription.
 	subs, err := repo.ListByUserID(ctx, u.ID)
 	require.NoError(t, err, "ListByUserID")
 	require.Len(t, subs, 1, "should only return non-deleted subscriptions")

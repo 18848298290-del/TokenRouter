@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CursorResponsesUnsupportedFields 列出 Cursor Responses 请求需要过滤的字段。
+// CursorResponsesUnsupportedFields lists fields removed from Responses-shaped Chat requests.
 var CursorResponsesUnsupportedFields = []string{"prompt_cache_retention", "safety_identifier", "metadata", "stream_options"}
 
 func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedModel string, compatPromptCacheTenantIsolated bool, p ChatPorts) (*Result, error) {
@@ -75,12 +75,12 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		return nil, err
 	}
 
-	// 某些客户端会把 Responses 形状请求发送到 Chat Completions URL；必须先于
-	// 自适应协议分流识别，否则会把 input 原样发给只接受 messages 的上游。
+	// Detect Responses-shaped bodies before adaptive dispatch so input is converted
+	// before reaching an upstream that expects messages.
 	isResponsesShape := !gjson.GetBytes(body, "messages").Exists() && gjson.GetBytes(body, "input").Exists()
 
-	// 自适应提供商的标准 Chat 入站使用供应商原生 CC 端点；Responses 形状下，
-	// DeepSeek / Kimi 保留原生 Responses，智谱先转换为 Chat。
+	// Adaptive providers send standard Chat bodies to Chat endpoints. Responses-shaped
+	// bodies use native Responses on DeepSeek/Kimi and convert to Chat on Zhipu.
 	if profile.Adaptive {
 		if !isResponsesShape {
 			return p.DispatchChat(ctx, DispatchRawChat, body, promptCacheKey, defaultMappedModel)
@@ -100,16 +100,15 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 			}
 			return p.DispatchChat(ctx, DispatchRawChat, chatBody, promptCacheKey, defaultMappedModel)
 		}
-		// DeepSeek / Kimi 原生 Responses 请求继续走下方 Responses→Chat 回程转换。
+		// Native CN Responses requests continue to the Responses-to-Chat output conversion below.
 	}
 
-	// 固定 Anthropic 协议走原生 Anthropic 端点。
 	if profile.Anthropic {
 		return p.DispatchChat(ctx, DispatchAnthropic, body, promptCacheKey, defaultMappedModel)
 	}
 
-	// 固定 Chat 协议的 CN 提供商，以及其他 APIKey 提供商在探测/管理员策略要求
-	// Chat 时，均走 CC 直转。
+	// RawChat includes CN providers fixed to Chat and API key providers whose resolved
+	// probe or administrator policy selects Chat.
 	if profile.RawChat {
 		return p.DispatchChat(ctx, DispatchRawChat, body, promptCacheKey, defaultMappedModel)
 	}
@@ -119,7 +118,6 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 
 	startTime := time.Now()
 
-	// 1. Parse Chat Completions request
 	var chatReq protocolopenai.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatReq); err != nil {
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
@@ -127,7 +125,7 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 	originalModel := chatReq.Model
 	clientStream := chatReq.Stream
 
-	// 2. 先解析最终模型，供兼容缓存键按上游模型族派生稳定种子。
+	// Resolve the final model before deriving a stable compatibility cache seed.
 	billingModel := p.BillingModel(originalModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
 	chatReq.Model = upstreamModel
@@ -143,9 +141,8 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		}
 	}
 
-	// 3. 构建 Responses 上游报文。Cursor 可能向 Chat 端点发送只有 input 的
-	// Responses 报文；套用 Chat 结构会丢失 input 并被上游拒绝。
-	// 此形状保留原文，只改写模型，后续 OAuth 转换仍处理 store/stream/instructions。
+	// Cursor can send a Responses input to the Chat URL. Decoding it through a Chat
+	// request would discard input, so patch the raw body before OAuth normalization.
 	var (
 		responsesReq  *protocolopenai.ResponsesRequest
 		responsesBody []byte
@@ -155,7 +152,7 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		if err != nil {
 			return nil, fmt.Errorf("rewrite model in responses-shape body: %w", err)
 		}
-		// 原文转换保留未知字段，因此在此移除 Codex 不支持的参数。
+		// Raw body patching retains unknown fields, so remove unsupported Codex fields here.
 		for _, field := range CursorResponsesUnsupportedFields {
 			if stripped, derr := sjson.DeleteBytes(responsesBody, field); derr == nil {
 				responsesBody = stripped
@@ -166,13 +163,13 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		if err != nil {
 			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
 		}
-		// 保留原文中的档位，供后续完成结果使用。
+		// Save the normalized tier for completion processing.
 		responsesReq = &protocolopenai.ResponsesRequest{
 			Model:       upstreamModel,
 			ServiceTier: normalizedServiceTier,
 		}
 	} else {
-		// 普通路径转换 Chat→Responses，转换器固定上游 stream=true。
+		// The Chat-to-Responses converter requests upstream streaming.
 		responsesReq, err = p.ChatToResponses(&chatReq)
 		if err != nil {
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
@@ -239,8 +236,8 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 			if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 				return nil, fmt.Errorf("unmarshal for prompt cache key injection: %w", err)
 			}
-			// API Key 提供商的 Chat Completions 转 Responses 路径不会经过 Codex transform，
-			// 需要在这里把入口解析出的 prompt_cache_key 补回上游请求体。
+			// API key conversion skips the Codex transform, so restore the ingress cache key
+			// in the outgoing body when no key is already present.
 			if existing, ok := reqBody["prompt_cache_key"].(string); !ok || strings.TrimSpace(existing) == "" {
 				reqBody["prompt_cache_key"] = trimmedKey
 				responsesBody, err = json.Marshal(reqBody)
@@ -251,14 +248,14 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		}
 	}
 
-	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).
+	// Apply the fast policy before recording the outgoing service tier.
 	updatedBody, policyErr := p.ApplyChatFast(ctx, upstreamModel, responsesBody)
 	if policyErr != nil {
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
-	// Usage Log 记录最终实际发送给上游的 effort，避免把转换过程中被丢弃的
-	// Chat Completions 非标准字段误记为已转发。
+	// Record the outgoing effort so fields discarded during conversion are not
+	// reported as forwarded controls in usage records.
 	reasoningEffort := p.EffectiveEffort(responsesBody, body, upstreamModel, billingModel, originalModel)
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, responsesBody, billingModel)
 	if serviceTier := p.ServiceTier(responsesBody); serviceTier != nil {
@@ -267,13 +264,11 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		responsesReq.ServiceTier = ""
 	}
 
-	// 5. Get access token
 	token, err := p.AccessToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build upstream request
 	upstreamCtx, releaseUpstreamCtx := p.UpstreamContext(ctx)
 	upstreamReq, err := p.BuildChat(upstreamCtx, responsesBody, token, promptCacheKey)
 	releaseUpstreamCtx()
@@ -290,7 +285,7 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		upstreamReq.Header.Set("session_id", p.SessionUUID(sessionKey))
 	}
 
-	// 发送前取得代理信息，本次重试复用该值。
+	// Resolve transport settings before sending; retries reuse this preparation.
 	p.PrepareTransport()
 	resp, err := p.Send(upstreamReq)
 	if err != nil {
@@ -298,7 +293,6 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, _ := p.ReadUpstreamError(resp)
 		if !p.AgentRecoveryTried(ctx) && p.IsAgentIdentity(ctx) && p.InvalidAgentTask(resp.StatusCode, respBody) {
@@ -316,7 +310,6 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		return p.ChatErrorResponse(resp, billingModel)
 	}
 
-	// 9. Handle normal response
 	var result *Result
 	var handleErr error
 	var nativeResult *openai.CompatResponseResult
@@ -335,10 +328,9 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		return nil, handleErr
 	}
 
-	// 将档位和最终 effort 传入完成结果供计费使用.
-	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
-	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
-	// 按原请求 Fast 计费。
+	// Attach the final effort and billing tier to successful results.
+	// Prefer the upstream's echoed tier, then the body after fast-policy processing.
+	// A filtered tier must not reappear from the original client request.
 	if handleErr == nil && result != nil {
 		if tier := p.ResolvedServiceTier(p.ServiceTier(responsesBody)); tier != nil {
 			result.ServiceTier = tier
@@ -346,8 +338,8 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 		result.ReasoningEffort = reasoningEffort
 	}
 
-	// OAuth 提供商从响应头提取并保存 Codex 用量快照。
-	// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新。
+	// Update Codex usage from response headers for eligible credentials.
+	// Spark shadows obtain their codex_* snapshot through QueryUsage's bengalfox query.
 	if handleErr == nil && profile.UsesCodex && !profile.Shadow {
 		p.UpdateCodexUsage(ctx, resp.Header)
 	}

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 预存其他请求的计数，验证失败放行不会取得其释放权。
+// waitOwnershipCache starts with another request's count to detect release of an unconfirmed increment.
 type waitOwnershipCache struct {
 	count   int
 	allowed bool

@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// CNConcurrencyLimitReason 保留并发限制状态的原来源标记。
+// CNConcurrencyLimitReason identifies concurrency-limit scheduling pauses.
 const CNConcurrencyLimitReason = "cn_concurrency_limit"
 
-// ApplyCNConcurrencyLimit 将 Kimi 并发限制写为短期临时不可调度，
-// 当前请求继续切换提供商，此类错误的累计 403 次数保持不变。
+// ApplyCNConcurrencyLimit briefly pauses a Kimi provider after a concurrency limit.
+// The caller can fail over without incrementing the accumulated 403 count.
 func (s *HealthService) ApplyCNConcurrencyLimit(
 	ctx context.Context,
 	provider *Record, reason string,
@@ -28,9 +28,9 @@ func (s *HealthService) ApplyCNConcurrencyLimit(
 	)
 }
 
-// ApplyCNInsufficientBalance 把余额不足标记为可恢复的临时停调：
-// 写入绑定身份的临时停调，冷却覆盖两个余额检测周期，
-// 由周期任务在余额恢复后清除。返回前已通知调度阻塞。
+// ApplyCNInsufficientBalance records a recoverable, identity-bound scheduling pause.
+// The cooldown spans two balance-check intervals; periodic monitoring can clear it after recovery.
+// Scheduling-block notification occurs before the function returns.
 func (s *HealthService) ApplyCNInsufficientBalance(
 	ctx context.Context,
 	provider *Record,
@@ -58,9 +58,9 @@ func (s *HealthService) ApplyCNInsufficientBalance(
 	)
 }
 
-// CNBalanceCooldownDuration 返回余额不足临时停调的持续时长（= 2× 余额检测周期，
-// 默认 20 分钟）。周期任务会在余额恢复后提前清除，故此处只需保证冷却覆盖到下一次
-// 周期检测即可。
+// CNBalanceCooldownDuration returns twice the balance-check interval, or 20 minutes by default.
+// Periodic monitoring can clear the pause early when the balance recovers.
+// The duration covers the next scheduled balance check.
 func CNBalanceCooldownDuration(intervalMinutes int) time.Duration {
 	minutes := 10
 	if intervalMinutes > 0 {
@@ -73,11 +73,11 @@ func CNBalanceCooldownDuration(intervalMinutes int) time.Duration {
 	return cooldown
 }
 
-// CNProviderQuotaSnapshotReset 读取 Coding Plan 统一快照中最早一个仍在未来的窗口
-// 重置时间（5h / weekly）。429 多数由 5h 滚动窗口触发，取较早的重置点可避免
-// 把提供商冷却到 weekly 重置（可达数天）的过度停调；如果确是 weekly 窗口耗尽，
-// 周期额度探测刷新快照后阈值评估会再次停调到正确的时间点。
-// 无快照或均已过期返回 nil。
+// CNProviderQuotaSnapshotReset returns the earliest future Coding Plan window reset.
+// Choosing the earlier 5h or weekly reset avoids pausing until the weekly reset
+// when a shorter window caused the 429 response.
+// Periodic quota monitoring can extend the pause if the weekly quota remains exhausted.
+// It returns nil when no valid snapshot or future reset exists.
 func CNProviderQuotaSnapshotReset(provider *Record, now time.Time) *time.Time {
 	if provider == nil || !provider.IsCNProvider() || !provider.IsCodingPlan() {
 		return nil
@@ -103,8 +103,8 @@ func (s *HealthService) ApplyCNQuotaSnapshotCooldown(ctx context.Context, provid
 	if provider == nil || !provider.IsCNProvider() {
 		return false
 	}
-	// 2) Coding Plan 窗口耗尽：冷却到快照中最早的窗口重置点（见
-	// CNProviderQuotaSnapshotReset 取较早窗口的重置时间，429 通常来自 5h 窗口。
+	// For Coding Plans, pause until the earliest future reset in the snapshot.
+	// Periodic quota monitoring reevaluates whether a later window still blocks scheduling.
 	if provider.IsCodingPlan() {
 		if until := CNProviderQuotaSnapshotReset(provider, s.options.Now()); until != nil {
 			s.notifyProviderSchedulingBlocked(provider, *until, "429")

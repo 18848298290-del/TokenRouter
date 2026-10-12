@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// 运行探针提供可控在途任务，验证取消、后续阶段与预算，不依赖外部服务。
+// expiryProbe controls in-flight work to test cancellation, later phases, and shutdown budgets.
 type expiryProbe struct {
 	entered      chan struct{}
 	release      chan struct{}

@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// APIKeyPassthrough 处理已选提供商的响应和部分用量，upstream 执行网络交换和协议流读取。
+// APIKeyPassthrough handles a selected provider response and partial usage; upstream performs the exchange and stream reading.
 func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput, input APIKeyInput) (*Result, error) {
 	done, err := p.Begin()
 	if err != nil {
@@ -34,10 +34,10 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 	p.MarkPassthrough()
 
 	input.Body = protocolanthropic.StripEmptyTextBlocks(input.Body)
-	// which reject server_tool_use with 400). input.RequestModel 已是映射后的模型 ID。
+	// Filter search history using the already mapped model to avoid unsupported server-tool blocks.
 	input.Body = p.FilterSearchHistory(input.Body, input.RequestModel)
 	if input.Parsed != nil {
-		// 透传分支也会改写实际 wire body，成功 usage hash 依赖这里同步当前 body。
+		// Keep the parsed request synchronized with wire changes so successful usage hashes use the current body.
 		if err := input.Parsed.ReplaceBody(input.Body); err != nil {
 			return nil, err
 		}

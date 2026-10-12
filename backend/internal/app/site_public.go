@@ -16,7 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// siteBillingSubscriptions 将 billing 的有效订阅转换为公告资格判断需要的数据。
+// siteBillingSubscriptions converts active billing subscriptions for announcement eligibility.
 type siteBillingSubscriptions struct {
 	repo billing.UserSubscriptionRepository
 }
@@ -37,7 +37,7 @@ func provideAnnouncementSubscriptions(repo billing.UserSubscriptionRepository) s
 	return siteBillingSubscriptions{repo: repo}
 }
 
-// provideAnnouncementExpiry 创建每分钟检查公告过期状态的服务。
+// provideAnnouncementExpiry creates a service that checks expiry every minute.
 func provideAnnouncementExpiry(repo site.AnnouncementRepository) *site.AnnouncementExpiryService {
 	return site.NewAnnouncementExpiryService(repo, time.Minute)
 }
@@ -58,7 +58,7 @@ func provideSitePublic(store *settings.Store, oauth *identity.OAuthSettings, cfg
 	return p
 }
 
-// provideSiteDisplay 按需读取前端回退地址，站点名称通过单键查询取得。
+// provideSiteDisplay reads the frontend fallback URL on demand and the site name by its setting key.
 func provideSiteDisplay(store *settings.Store, cfg *config.Config) *site.DisplaySettings {
 	return site.NewDisplaySettings(store, func() string { return cfg.Server.FrontendURL })
 }

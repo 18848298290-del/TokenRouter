@@ -19,7 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// provideCreativeExecutor 为创作台绑定任务用例和执行目标。
+// provideCreativeExecutor binds creative tasks to group policy and execution targets.
 func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.ExecutionGroups, targets *gatewayprovider.CreativeTargets, generic *selection.Generic, choices *selection.Compatible, attributes *routing.ModelAttributeService) *creative.Executor {
 	timeout := 5 * time.Minute
 	if cfg != nil && cfg.Creative.ExecuteTimeoutSeconds > 0 {
@@ -99,7 +99,7 @@ func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.Executi
 	return out
 }
 
-// provideCreativeTargets 为创作台任务绑定与 HTTP 入口共享的凭据、身份和传输实例。
+// provideCreativeTargets shares credentials, identity, and transport resources with HTTP execution.
 func provideCreativeTargets(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxiliary, tokens *provider.GeminiTokenSource, activity *gatewayRequestActivity) *gatewayprovider.CreativeTargets {
 	requests := auxiliary.Requests
 	return &gatewayprovider.CreativeTargets{

@@ -62,8 +62,8 @@ func TestBatchImageWorker_RequeuesWhenJobLockNotAcquired(t *testing.T) {
 	processor := &fakeBatchImageProcessor{}
 	worker := batchimage.NewBatchImageWorker(queue, processor, batchimage.BatchImageWorkerOptions{LockConflictDelay: 3 * time.Second})
 
-	// 锁冲突必须按冲突延迟重新入队；直接丢弃会让 job 滞留 active zset，
-	// 要等 StaleActiveAfter（默认 10 分钟）才被恢复。
+	// Lock contention requests a delayed requeue; dropping the job leaves it active
+	// until StaleActiveAfter recovery (ten minutes by default).
 	require.NoError(t, worker.RunOnce(context.Background()))
 	require.Empty(t, processor.processed)
 	require.Len(t, queue.requeued, 1)

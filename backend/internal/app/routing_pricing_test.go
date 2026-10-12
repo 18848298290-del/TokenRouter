@@ -18,7 +18,7 @@ import (
 	routinghttp "github.com/TokenFlux/TokenRouter/internal/routing/httpapi"
 )
 
-// TestModelsCatalogMediaQuotes 使用实际离线目录和管理页装配，区分输出能力与计费单位。
+// TestModelsCatalogMediaQuotes uses the offline catalog and admin assembly to distinguish output capabilities from billing units.
 func TestModelsCatalogMediaQuotes(t *testing.T) {
 	service := provider.NewService(provider.Options{
 		DataDir: t.TempDir(),
@@ -42,7 +42,7 @@ func TestModelsCatalogMediaQuotes(t *testing.T) {
 			}
 		})
 	}
-	// 检查专用媒体报价和 Gemini 图文 token 费率。
+	// Check dedicated media quotes and separate Gemini text and image token rates.
 	require.Equal(t, "video", rows["grok-imagine-video"].BillingMode)
 	require.Equal(t, "image", rows["gemini-3-pro-image"].BillingMode)
 	values := map[string]float64{}
@@ -66,7 +66,7 @@ func setupModelDefaultPricingRouter(billingSvc *billing.Calculator) *gin.Engine 
 	return router
 }
 
-// TestGetModelDefaultPricing_QoderMatchesOtherPlatforms 验证同一模型的默认价不受平台影响，Qoder 别名也可以读取内置价。
+// TestGetModelDefaultPricing_QoderMatchesOtherPlatforms checks platform-independent prices, including Qoder aliases.
 func TestGetModelDefaultPricing_QoderMatchesOtherPlatforms(t *testing.T) {
 	router := setupModelDefaultPricingRouter(billingtestkit.Calculator(nil, nil))
 	for _, model := range []string{"claude-opus-4-6", "CLAUDE-OPUS-4-6", "qwen3.8-max", "qmodel"} {

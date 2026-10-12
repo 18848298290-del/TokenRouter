@@ -11,13 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// TeamReportSource 保存已按团队权限过滤的统计数据源，参数均通过占位符传入。
+// TeamReportSource contains a team-filtered report source with bound parameters; callers authorize the team scope.
 type TeamReportSource struct {
 	CTE  string
 	Args []any
 }
 
-// TeamExecutor 直接复用团队调用方的 SQL 连接。
+// TeamExecutor uses the SQL connection supplied by the team caller.
 type TeamExecutor interface {
 	infra.Executor
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -43,7 +43,7 @@ func ListUsageLogs(ctx context.Context, db TeamExecutor, teamID int64, query tea
 	if err != nil {
 		return nil, 0, err
 	}
-	// 查询结束时关闭结果集，读取阶段的错误统一通过 rows.Err 返回。
+	// Close the result set on every exit; iteration errors are checked through rows.Err below.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamUsageLogItem, 0, query.Limit)
 	for rows.Next() {
@@ -59,7 +59,7 @@ func ListUsageLogs(ctx context.Context, db TeamExecutor, teamID int64, query tea
 	return items, total, nil
 }
 
-// RawTeamReportSource 为未启用预聚合的报表提供一次原始记录扫描。
+// RawTeamReportSource supplies a raw-record source when rollups are unavailable or disabled.
 func RawTeamReportSource(teamID int64, query team.TeamUsageQuery) TeamReportSource {
 	where, args := TeamUsageWhere(teamID, query)
 	return TeamReportSource{CTE: `WITH scoped AS NOT MATERIALIZED (
@@ -67,12 +67,12 @@ func RawTeamReportSource(teamID int64, query team.TeamUsageQuery) TeamReportSour
  FROM usage_logs ul WHERE ` + where + `)`, Args: args}
 }
 
-// ListMemberUsageSeries 按成员汇总原始记录，成员身份与历史用量共同决定展示范围。
+// ListMemberUsageSeries combines current membership with historical raw usage for member reports.
 func ListMemberUsageSeries(ctx context.Context, db TeamExecutor, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) ([]team.TeamMemberUsageSeries, error) {
 	return MemberUsageSeriesFromSource(ctx, db, RawTeamReportSource(teamID, query), teamID, query, calendar)
 }
 
-// MemberUsageSeriesFromSource 从日统计读取历史成员，避免再次扫描用量明细。
+// MemberUsageSeriesFromSource derives historical members from daily totals to avoid another raw scan.
 func MemberUsageSeriesFromSource(ctx context.Context, db infra.Executor, source TeamReportSource, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) ([]team.TeamMemberUsageSeries, error) {
 	args := append(append([]any{}, source.Args...), calendar.Location().String(), teamID)
 	tzPos, teamPos := len(args)-1, len(args)
@@ -128,12 +128,12 @@ func MemberUsageSeriesFromSource(ctx context.Context, db infra.Executor, source 
 	return items, rows.Err()
 }
 
-// GetUsageSummary 合并累计和日统计，保留数据库数值求和的精度。
+// GetUsageSummary computes totals and daily rows using database numeric sums.
 func GetUsageSummary(ctx context.Context, db TeamExecutor, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) (*team.TeamUsageSummary, error) {
 	return UsageSummaryFromSource(ctx, db, RawTeamReportSource(teamID, query), calendar)
 }
 
-// UsageSummaryFromSource 通过 GROUPING SETS 在同一次扫描中生成合计与每日行。
+// UsageSummaryFromSource uses GROUPING SETS to produce totals and daily rows in one scan.
 func UsageSummaryFromSource(ctx context.Context, db infra.Executor, source TeamReportSource, calendar timezone.Calendar) (*team.TeamUsageSummary, error) {
 	args := append(append([]any{}, source.Args...), calendar.Location().String())
 	rows, err := db.QueryContext(ctx, source.CTE+fmt.Sprintf(`

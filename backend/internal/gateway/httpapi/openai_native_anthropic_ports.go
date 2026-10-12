@@ -125,7 +125,7 @@ func (p *openAINativeAnthropicAdapter) OutputOptions() forward.AnthropicOutputOp
 	return p.s.Output.AnthropicOptions(p.c, p.errorWriter())
 }
 
-// writeTextResponsesError 保留转换入口的原响应提交与错误形状。
+// writeTextResponsesError writes a Responses conversion error and marks terminal output committed.
 func writeTextResponsesError(c *gin.Context, status int, code, message string) {
 	output := ForwardConversionOutput{Context: c, Responses: true, Commit: func() { MarkResponseCommitted(c) }}
 	output.Error(status, code, message)

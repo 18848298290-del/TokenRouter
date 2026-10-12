@@ -46,20 +46,20 @@ func TestGrokPreviousResponseSessionSeed(t *testing.T) {
 
 func TestResolveGrokCacheIdentityUsesPreviousResponseIDWhenNoOtherSeed(t *testing.T) {
 	c := newGrokCacheTestContext(301)
-	// 不提供 prompt_cache_key、请求头或可复用前缀，只使用 previous_response_id。
+	// Use previous_response_id with no prompt_cache_key, identity headers, or reusable prefix.
 	body := []byte(`{"model":"grok","input":[{"role":"user","content":"follow up"}],"previous_response_id":"resp_chain_001"}`)
 	got := ResolveGrokCacheIdentity(c, body, "", "grok-4.5")
 	require.NotEmpty(t, got)
 
-	// 相同 previous_response_id 生成相同身份，模型已经包含在隔离种子中。
+	// The same previous_response_id yields a stable identity scoped to the model.
 	again := ResolveGrokCacheIdentity(c, body, "", "grok-4.5")
 	require.Equal(t, got, again)
 
-	// 不同模型生成不同的缓存身份。
+	// Different models have separate cache identities.
 	otherModel := ResolveGrokCacheIdentity(c, body, "", "grok-4.3")
 	require.NotEqual(t, got, otherModel)
 
-	// prompt_cache_key 的优先级仍高于 previous_response_id。
+	// prompt_cache_key takes precedence over previous_response_id.
 	withCache := []byte(`{"model":"grok","prompt_cache_key":"client-session","previous_response_id":"resp_chain_001","input":[{"role":"user","content":"x"}]}`)
 	cacheID := ResolveGrokCacheIdentity(c, withCache, "", "grok-4.5")
 	require.NotEmpty(t, cacheID)
@@ -213,12 +213,10 @@ func TestResolveGrokCacheIdentityIDEHeaderPriority(t *testing.T) {
 	}
 }
 
-// TestResolveGrokCacheIdentitySideCallSharesParentCacheKey locks in the
-// grok-build side-call fix: recap-style side-calls (turn-summary /
-// title-refresh) send a fresh X-Grok-Conv-Id label but the parent session id
-// as body prompt_cache_key. The derived identity must follow the body key so
-// side-calls share the main turn's server-side cache prefix instead of
-// replaying the full conversation at full price on every call.
+// TestResolveGrokCacheIdentitySideCallSharesParentCacheKey checks parent cache identity for side calls.
+// Turn summaries and title refreshes can use a new X-Grok-Conv-Id while supplying
+// the parent session as prompt_cache_key. The body key must retain the parent cache identity.
+
 func TestResolveGrokCacheIdentitySideCallSharesParentCacheKey(t *testing.T) {
 	parentSession := "6f1c2f46-0f5e-4f9d-9d4e-2f0f1c3d5b7a"
 
@@ -267,10 +265,9 @@ func TestExplicitGrokCacheSeedPriority(t *testing.T) {
 		var want string
 		switch header.name {
 		case GrokConversationIDHeader:
-			// Client-declared prompt_cache_key outranks X-Grok-Conv-Id: the
-			// grok-build CLI pairs a fresh per-side-call conv label with the
-			// stable parent session id in the body field, and the body field
-			// is the official xAI cache-routing signal.
+			// prompt_cache_key takes precedence over X-Grok-Conv-Id so a side call can
+			// keep its parent session cache identity despite a new conversation label.
+
 			want = "body-key"
 		default:
 			want = header.value
@@ -353,7 +350,7 @@ func TestResolveGrokCacheIdentityPrefersClaudeCodeSession(t *testing.T) {
 	require.NotEmpty(t, first)
 	require.Equal(t, first, second, "same Claude Code session must keep stable Grok cache identity across turns")
 
-	// Claude Code 客户端使用 metadata.user_id 的 JSON 形式。
+	// Claude Code can encode session identity as JSON inside metadata.user_id.
 	metaBody := []byte(`{"model":"grok","metadata":{"user_id":"{\"session_id\":\"meta-session-xyz\"}"},"input":"hi"}`)
 	metaOnly := newGrokCacheTestContext(702)
 	metaID := ResolveGrokCacheIdentity(metaOnly, metaBody, "", "grok-4.5")
@@ -432,7 +429,8 @@ func TestGrokFreeMessagesClientToolCacheDefaultsOnForKnownFree(t *testing.T) {
 	}
 }
 
-// TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions 验证 Grok Build 将搜索工具声明为同名函数时，缓存路由转换并去重。
+// TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions checks conversion and deduplication of named search
+// functions.
 func TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(916, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -495,7 +493,7 @@ func TestApplyGrokCacheIdentityAppendsNativeToolsWhenSearchPresent(t *testing.T)
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(901, "access-token")
 	provider.Record.Credentials["subscription_tier"] = " FREE "
 
-	// 包含 web_search 的函数工具会转换为原生工具，并补齐 x_search。
+	// A web_search function is converted to a native tool and x_search is added.
 	intentBody := []byte(`{"model":"grok","tools":[{"type":"function","name":"lookup","description":"look up a value","parameters":{"type":"object"}},{"type":"function","name":"web_search","description":"search","parameters":{"type":"object"}}]}`)
 	body, err := xai.ApplyGrokResponsesCacheIdentity(intentBody, intentBody, "isolated-id", true)
 	require.NoError(t, err)
@@ -600,7 +598,7 @@ func TestGrokFreeClientToolCacheClaudeDesktopResponsesAutoOptIn(t *testing.T) {
 	for _, xApp := range []string{"cli", "cli-bg"} {
 		t.Run(xApp, func(t *testing.T) {
 			c := newGrokCacheTestContext(90141)
-			// 不依赖 desktop 描述文本，因为 CC Switch 和 Claude Desktop 可能调整 User-Agent 后缀。
+			// Use a different User-Agent suffix to verify detection does not depend on desktop description text.
 			c.Request.Header.Set("User-Agent", "claude-cli/2.1.215 (external, future-desktop, agent-sdk/0.3.215)")
 			c.Request.Header.Set("X-App", xApp)
 			c.Request.Header.Set("anthropic-client-platform", "desktop_app")
@@ -864,7 +862,7 @@ func TestApplyGrokCacheIdentityRequiresPatchedFunctionTools(t *testing.T) {
 }
 
 func TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier(t *testing.T) {
-	// 以函数形式声明 web_search 会触发搜索工具注入，纯客户端函数保持原样。
+	// A web_search function triggers search-tool injection; ordinary client functions retain their declarations.
 	intentBody := []byte(`{"model":"grok","tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"}],"tool_choice":"auto"}`)
 	tests := []struct {
 		name     string
@@ -1108,7 +1106,7 @@ func TestApplyGrokCacheIdentityUsesPreSanitizationToolIntent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 这是 gatewayprovider.GrokBodyCodec().PatchGrokResponsesBody 移除不受支持工具及关联 tool_choice 后的输入形态。
+			// This is the body after PatchGrokResponsesBody removes unsupported tools and their tool_choice.
 			patchedBody := []byte(`{"model":"grok-4.5","input":"hello"}`)
 			body, err := xai.ApplyGrokResponsesCacheIdentity(patchedBody, []byte(tt.intentBody), "isolated-id", true)
 
@@ -1168,7 +1166,7 @@ func TestResolveGrokCacheIdentityConcurrentDeterminism(t *testing.T) {
 	require.NotEmpty(t, first)
 }
 
-// TestGrokCacheHeaderBrandCompatibility 验证兼容请求头可用，新请求头的关闭值优先。
+// TestGrokCacheHeaderBrandCompatibility checks legacy headers and precedence of current-header opt-out.
 func TestGrokCacheHeaderBrandCompatibility(t *testing.T) {
 	for _, value := range []string{"", "0", "false"} {
 		provider := gatewaytestkit.HealthyGrokOAuthProvider(9014, "access-token")

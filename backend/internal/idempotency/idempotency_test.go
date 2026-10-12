@@ -507,7 +507,7 @@ func TestIdempotencyCoordinator_TruncatedStoredResponseRemainsUTF8(t *testing.T)
 	require.Contains(t, *stored.ResponseBody, "...(truncated)")
 }
 
-// TestIdempotencyCoordinatorTTLs 验证默认期限与显式覆盖随协调器实例保存，不依赖进程默认绑定。
+// TestIdempotencyCoordinatorTTLs checks instance-specific TTLs and defaults for a nil coordinator.
 func TestIdempotencyCoordinatorTTLs(t *testing.T) {
 	var empty *IdempotencyCoordinator
 	require.Equal(t, DefaultIdempotencyConfig().DefaultTTL, empty.DefaultWriteIdempotencyTTL())
@@ -837,17 +837,17 @@ func TestIdempotencyCoordinator_HelperBranches(t *testing.T) {
 		ObserveOnly:          false,
 	})
 
-	// conflictWithRetryAfter without locked_until should return base error.
+	// A missing lock deadline leaves the conflict category unchanged.
 	base := ErrIdempotencyInProgress
 	err := c.conflictWithRetryAfter(base, nil, time.Now())
 	require.Equal(t, infraerrors.CategoryOf(base), infraerrors.CategoryOf(err))
 
-	// marshalStoredResponse should truncate.
+	// Responses exceeding the byte limit carry a truncation marker.
 	body, err := c.marshalStoredResponse(map[string]any{"long": "abcdefghijklmnopqrstuvwxyz"})
 	require.NoError(t, err)
 	require.Contains(t, body, "...(truncated)")
 
-	// decodeStoredResponse empty and invalid json.
+	// Missing stored data decodes to an empty object; malformed JSON returns an error.
 	out, err := c.decodeStoredResponse(nil)
 	require.NoError(t, err)
 	_, ok := out.(map[string]any)
@@ -858,10 +858,10 @@ func TestIdempotencyCoordinator_HelperBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
-// ptrTime 构造边界场景的时间指针。
+// ptrTime returns a pointer for time-based test cases.
 func ptrTime(t time.Time) *time.Time { return &t }
 
-// resetIdempotencyMetricsForTest 隔离测试之间的进程级指标。
+// resetIdempotencyMetricsForTest clears process-wide counters between tests.
 func resetIdempotencyMetricsForTest() {
 	defaultIdempotencyMetrics.claimTotal.Store(0)
 	defaultIdempotencyMetrics.replayTotal.Store(0)

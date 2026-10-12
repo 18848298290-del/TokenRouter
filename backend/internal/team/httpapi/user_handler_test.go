@@ -12,7 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestTeamUsageQueryInjectedCalendar 检查带用户时区参数的查询仍按服务端时区计算日期范围。
+// TestTeamUsageQueryInjectedCalendar checks that server calendar dates take precedence over the query timezone.
 func TestTeamUsageQueryInjectedCalendar(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

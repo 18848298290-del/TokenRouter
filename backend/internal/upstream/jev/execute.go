@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Target 保存一次已选提供商请求需要的传输参数。
+// Target contains transport parameters for one selected provider request.
 type Target struct {
 	ProviderID   int64
 	URL, Model   string
@@ -30,36 +30,36 @@ type Target struct {
 	WriteHeaders func(http.Header, http.Header)
 }
 
-// HTTPError 保存上游状态和报文，供网关执行提供商错误策略。
+// HTTPError carries upstream status, headers, and body for gateway error policy.
 type HTTPError struct {
 	Status int
 	Header http.Header
 	Body   []byte
 }
 
-// Executor 完成一次 SystemOne 请求，用量有效性与答案有效性分别记录。
+// Executor executes one SystemOne request and records usage validity separately from answer validity.
 type Executor struct{}
 
-// TargetID 返回本次请求所属的提供商 ID。
+// TargetID returns the selected provider ID.
 func (t *Target) TargetID() int64 { return t.ProviderID }
 
-// String 将诊断输出限制为提供商 ID。
+// String exposes the provider ID for diagnostics while omitting request credentials.
 func (t *Target) String() string { return fmt.Sprintf("jev target provider=%d", t.ProviderID) }
 
-// GoString 使用与 String 相同的脱敏描述。
+// GoString uses the same redacted description as String.
 func (t *Target) GoString() string { return t.String() }
 
-// Error 返回可写入诊断日志的 HTTP 状态描述。
+// Error returns an HTTP status description suitable for diagnostic logs.
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("SystemOne upstream returned HTTP %d", e.Status)
 }
 
-// EndpointURL 按共享规则拼接版本路径，支持根地址和带版本的兼容上游。
+// EndpointURL uses shared OpenAI URL rules for root and version-prefixed bases.
 func EndpointURL(base, endpoint string) string {
 	return httpclient.BuildOpenAIEndpointURL(base, "/v1/"+endpoint)
 }
 
-// RetryAfterResetTime 解析 Jev 限流和过载响应中的未来重试时间。
+// RetryAfterResetTime returns a future retry time from Retry-After, or nil for invalid values.
 func RetryAfterResetTime(headers http.Header, now time.Time) *time.Time {
 	raw := strings.TrimSpace(headers.Get("Retry-After"))
 	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
@@ -75,7 +75,7 @@ func RetryAfterResetTime(headers http.Header, now time.Time) *time.Time {
 	return nil
 }
 
-// Execute 读取完整答案后交付响应，并将用量交给网关判断结算资格。
+// Execute buffers the answer before delivery and returns usage for gateway settlement decisions.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Do == nil || input.Protocol != protocol.ProtocolSystemOne {

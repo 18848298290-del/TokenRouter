@@ -16,7 +16,7 @@ func (s *compatiblePicker) filterGrokFreeQuotaProviders(_ context.Context, provi
 	return filterFreeQuotaProjection(gate, providers)
 }
 
-// loadFreeQuotaGate 通过 CAS 登记并复用一个门禁实例。
+// loadFreeQuotaGate publishes a gate with CAS and reuses the winning instance.
 func loadFreeQuotaGate(slot *atomic.Pointer[provider.FreeQuotaGate], factory func() *provider.FreeQuotaGate) *provider.FreeQuotaGate {
 	if gate := slot.Load(); gate != nil {
 		return gate
@@ -35,7 +35,7 @@ func (s *Generic) filterGrokFreeQuotaProvidersForGateway(_ context.Context, prov
 	return filterFreeQuotaProjection(s.freeQuotaGate, providers)
 }
 
-// filterFreeQuotaProjection 将执行提供商转换为门禁输入，再将筛选结果转换回来。
+// filterFreeQuotaProjection converts execution providers to quota candidates and returns the unblocked providers.
 func filterFreeQuotaProjection(gate *provider.FreeQuotaGate, providers []gatewayprovider.ExecutionProvider) []gatewayprovider.ExecutionProvider {
 	if gate == nil {
 		return providers

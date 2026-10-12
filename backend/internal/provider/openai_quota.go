@@ -50,10 +50,10 @@ type OpenAIQuotaService struct {
 	activity operationActivity
 }
 
-// QuotaResult 额度获取结果。
+// QuotaResult contains normalized usage and the upstream response.
 type QuotaResult struct {
-	UsageInfo *UsageInfo     // 转换后的使用信息
-	Raw       map[string]any // 原始响应，可存入 provider.Extra
+	UsageInfo *UsageInfo     // Normalized usage information.
+	Raw       map[string]any // Raw response suitable for provider Extra.
 }
 
 func (p PreparedOpenAIQuota) String() string { return "prepared OpenAI quota request" }
@@ -70,7 +70,7 @@ func remarshalOpenAIQuotaPayload(raw map[string]any, target any) error {
 	return json.Unmarshal(body, target)
 }
 
-// QueryUsage 查询提供商当前上游限流窗口和可用重置次数。
+// QueryUsage fetches current upstream rate-limit windows and available reset credits.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, providerID int64) (*openai.OpenAIQuotaUsage, error) {
 	ctx, done, activityErr := s.activity.begin(ctx, ErrOpenAIQuotaStopped)
 	if activityErr != nil {
@@ -113,8 +113,8 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, providerID int64) (
 	return &usage, nil
 }
 
-// CacheResetCreditsSnapshot 保存手动查询得到的完整重置次数快照。
-// 正数次数附带到期明细时才更新缓存，前端按明细到期时间刷新次数。
+// CacheResetCreditsSnapshot stores a complete reset-credit observation.
+// Positive counts require credit details so expiry can be reflected by clients.
 func (s *OpenAIQuotaService) CacheResetCreditsSnapshot(ctx context.Context, providerID int64, credits *openai.OpenAIRateLimitResetCredits) error {
 	ctx, done, activityErr := s.activity.begin(ctx, ErrOpenAIQuotaStopped)
 	if activityErr != nil {
@@ -125,7 +125,7 @@ func (s *OpenAIQuotaService) CacheResetCreditsSnapshot(ctx context.Context, prov
 	return s.cacheResetCreditsSnapshot(ctx, providerID, credits, nil)
 }
 
-// CachePostResetSnapshot 保存重置后观察到的 credits 与用量窗口。
+// CachePostResetSnapshot stores observed reset credits and usage windows after a reset.
 func (s *OpenAIQuotaService) CachePostResetSnapshot(ctx context.Context, providerID int64, usage *openai.OpenAIQuotaUsage) error {
 	ctx, done, activityErr := s.activity.begin(ctx, ErrOpenAIQuotaStopped)
 	if activityErr != nil {
@@ -144,8 +144,8 @@ func (s *OpenAIQuotaService) CachePostResetSnapshot(ctx context.Context, provide
 	)
 }
 
-// BuildOpenAIAutoResetUsageUpdates 将重置后 5 小时/7 天窗口写入提供商缓存，
-// 使下一次列表查询直接展示新配额而无需再次访问上游。
+// BuildOpenAIAutoResetUsageUpdates builds five-hour and seven-day cache updates after a reset.
+// The caller persists these fields for subsequent provider usage views.
 func BuildOpenAIAutoResetUsageUpdates(usage *openai.OpenAIQuotaUsage, now time.Time) map[string]any {
 	if usage == nil || usage.RateLimit == nil {
 		return nil
@@ -207,7 +207,7 @@ func (s *OpenAIQuotaService) queryResetCreditDetails(ctx context.Context, provid
 	details, err := openai.ParseOpenAIRateLimitResetCreditDetails(raw)
 	if err != nil {
 		s.Options.Warn("openai_quota_reset_credit_details_parse_failed", "provider_id", providerCtx.Provider.ID, "error", err)
-		// 列表解析失败时只接受独立有效的可用次数，列表本身仍保持 fail-closed。
+		// A malformed list can still supply an independently valid count; discard the malformed list.
 		if details.AvailableCount == nil {
 			return nil
 		}
@@ -218,7 +218,7 @@ func (s *OpenAIQuotaService) queryResetCreditDetails(ctx context.Context, provid
 	return &details
 }
 
-// ResetCredit 消耗一次限流窗口重置次数。
+// ResetCredit consumes a credit to reset upstream rate-limit windows.
 func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, providerID int64) (*openai.OpenAIQuotaResetResult, error) {
 	ctx, done, activityErr := s.activity.begin(ctx, ErrOpenAIQuotaStopped)
 	if activityErr != nil {
@@ -230,7 +230,7 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, providerID int64) 
 	if err != nil {
 		return nil, err
 	}
-	// 影子提供商与母提供商共用凭据和额度，重置操作需要指定母提供商。
+	// Shadows use parent credentials; credit-reset requests must target the parent.
 	if provider.IsCredentialShadow() {
 		return nil, ErrSparkShadowResetNotSupported
 	}
@@ -327,8 +327,8 @@ func (s *OpenAIQuotaService) LoadProvider(ctx context.Context, providerID int64)
 	return provider, nil
 }
 
-// BuildCodexSparkWindowExtraUpdates 从 /wham/usage 的 additional_rate_limits 中提取 Codex Spark 窗口。
-// 返回的 key 复用普通 codex_* 命名，影子提供商自己的 Extra 可直接被调度层和前端读取。
+// BuildCodexSparkWindowExtraUpdates extracts Spark windows from /wham/usage additional_rate_limits.
+// It uses codex_* keys on the shadow record so scheduling and display use the same field names.
 func BuildCodexSparkWindowExtraUpdates(usage *openai.OpenAIQuotaUsage, now time.Time) map[string]any {
 	if usage == nil {
 		return nil
@@ -345,7 +345,7 @@ func BuildCodexSparkWindowExtraUpdates(usage *openai.OpenAIQuotaUsage, now time.
 		return nil
 	}
 
-	// 复用普通 Codex 探测的窗口归一化逻辑，保证 primary/secondary 到 5h/7d 的映射一致。
+	// Use the shared normalizer to assign primary and secondary windows to five-hour and seven-day fields.
 	snap := &openai.OpenAICodexUsageSnapshot{}
 	if w := spark.PrimaryWindow; w != nil {
 		p := w.UsedPercent

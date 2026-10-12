@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// lookupPlanNode 读取 PostgreSQL 执行计划中的扫描方式与表名。
+// lookupPlanNode captures scan types and relation names from PostgreSQL execution plans.
 type lookupPlanNode struct {
 	Type     string           `json:"Node Type"`
 	Relation string           `json:"Relation Name"`
@@ -28,7 +28,7 @@ type lookupPlanNode struct {
 	Loops    float64          `json:"Actual Loops"`
 }
 
-// TestStoreLookupWithoutBillingStatistics 模拟大表已统计、新计费索引尚未统计的升级状态。
+// TestStoreLookupWithoutBillingStatistics models an upgrade with table statistics but no new billing-index statistics.
 func TestStoreLookupWithoutBillingStatistics(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -63,7 +63,7 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_stats WHERE tablename='idx_usage_logs_billing_key_api_key'`).Scan(&statistics))
 	require.Zero(t, statistics)
 
-	// 先还原旧函数确认夹具能够触发用量表全扫，再在同一份数据上重复执行修复迁移。
+	// Restore the previous function to reproduce a usage-table scan, then apply the repair twice to the same fixture.
 	previous, err := migrations.FS.ReadFile("294_request_lookup_child_billing.sql")
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, string(previous))
@@ -160,7 +160,7 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 	}
 }
 
-// captureLookupPlans 通过 auto_explain 读取函数内部实际执行的 SQL 计划。
+// captureLookupPlans uses auto_explain to capture executed SQL plans inside the lookup function.
 func captureLookupPlans(t *testing.T, conn *sql.Conn, query string, id string) ([]string, []lookupPlanNode) {
 	t.Helper()
 	ctx := t.Context()
@@ -208,7 +208,7 @@ SET auto_explain.log_min_duration=0;`)
 	return ids, plans
 }
 
-// TestStoreFindIncludesChildBillingAliases 父请求按子记录的 API Key 查找升级前的费用，并排除外部同名记录。
+// TestStoreFindIncludesChildBillingAliases resolves pre-upgrade usage through the child's API key and excludes unrelated aliases.
 func TestStoreFindIncludesChildBillingAliases(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -227,7 +227,7 @@ VALUES(101,101,101,101,'grok-video:old-task',NULL,'model'),(202,202,202,101,'oth
 		{RequestID: "child", ParentRequestID: "created", UserID: 101, APIKeyID: 101, StartedAt: now, UpdatedAt: now, State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "billing", Value: "grok-video:old-task"}}},
 		{RequestID: "unrelated", UserID: 202, StartedAt: now, UpdatedAt: now, State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "caller", Value: "created"}}},
 	}))
-	// 函数替换可重复执行，已建立的父子关系继续可查。
+	// Repeated function replacement must retain lookup of existing parent-child relationships.
 	for _, name := range []string{"294_request_lookup_child_billing.sql", "295_request_lookup_stages.sql"} {
 		migration, err := migrations.FS.ReadFile(name)
 		require.NoError(t, err)
@@ -251,7 +251,7 @@ VALUES(101,101,101,101,'grok-video:old-task',NULL,'model'),(202,202,202,101,'oth
 	}
 }
 
-// TestStoreLookupIsolationAndReplay 在实际迁移后的 PostgreSQL 上检查别名、归属和重放。
+// TestStoreLookupIsolationAndReplay checks aliases, ownership, and replay against migrated PostgreSQL.
 func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	db := postgrescontainer.New(t)
 	store := NewStore(db)
@@ -283,7 +283,7 @@ func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	items, err = store.Find(ctx, "shared", 101, false)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	// 纳秒版本号独立于 PostgreSQL 时间列的微秒精度。
+	// Nanosecond revisions distinguish updates below PostgreSQL timestamps' microsecond precision.
 	completed.UpdatedAt = completed.UpdatedAt.Add(time.Nanosecond)
 	completed.Model = "latest"
 	require.NoError(t, store.Save(ctx, []telemetry.RequestRecord{completed}))
@@ -326,7 +326,7 @@ func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	require.Empty(t, items)
 }
 
-// TestStoreBatchWriterFlushesFinalSnapshot 在 PostgreSQL 上确认关闭排空和同一请求的版本合并。
+// TestStoreBatchWriterFlushesFinalSnapshot checks shutdown draining and snapshot coalescing against PostgreSQL.
 func TestStoreBatchWriterFlushesFinalSnapshot(t *testing.T) {
 	store := NewStore(postgrescontainer.New(t))
 	service := requestlog.NewService(store, 30, nil)
@@ -354,7 +354,7 @@ func TestStoreBatchWriterFlushesFinalSnapshot(t *testing.T) {
 	require.Zero(t, health.Failures)
 }
 
-// TestStoreLookupIndexesAndAliases 检查历史标识、用户归属和稀疏 ID 查询的索引扫描。
+// TestStoreLookupIndexesAndAliases checks historical IDs, ownership, and indexed sparse-ID lookup.
 func TestStoreLookupIndexesAndAliases(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -425,7 +425,7 @@ ANALYZE usage_logs;`)
 	require.NoError(t, err)
 	require.Len(t, items, 4)
 
-	// 函数内部的两类历史日志查询都按 ID 定位。
+	// Both historical log sources should use indexed ID lookup inside the function.
 	conn, err := db.Conn(ctx)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, conn.Close()) }()
@@ -450,7 +450,7 @@ ANALYZE usage_logs;`)
 	}
 }
 
-// TestStoreExactIDIgnoresExternalCollisions 检查共享调用方 ID 和上游 ID 同名时的精确查询。
+// TestStoreExactIDIgnoresExternalCollisions checks exact lookup despite shared caller IDs and colliding upstream IDs.
 func TestStoreExactIDIgnoresExternalCollisions(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -498,7 +498,7 @@ VALUES ('local-first',101,502),('local-second',202,502);`)
 	require.Len(t, items, 1)
 	require.Equal(t, "local-first", items[0].RequestID)
 
-	// 父子关联来自请求摘要，查询子请求时保持自己的 ID 范围。
+	// Parent-child links come from request snapshots; looking up a child stays within that child's ID scope.
 	require.NoError(t, store.Save(ctx, []telemetry.RequestRecord{{
 		RequestID: "child", ParentRequestID: "local-first", UserID: 101, StartedAt: now, UpdatedAt: now,
 		State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "caller", Value: "shared"}},

@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// RuntimeBlockFallback 和 RuntimeRetryWindow 分别控制内存停调与同提供商重试预算。
+// RuntimeBlockFallback and RuntimeRetryWindow bound in-memory blocks and same-provider retry windows.
 const (
 	RuntimeBlockFallback = 2 * time.Minute
 	RuntimeRetryWindow   = 2 * time.Minute
 )
 
-// RuntimeBlockState 统一持有停调、刷新失败与恢复代次，所有权不依附 HTTP 执行器。
+// RuntimeBlockState owns scheduling blocks, refresh-failure blocks, and recovery generations shared by callers.
 type RuntimeBlockState struct {
 	until                         sync.Map
 	locks                         sync.Map
@@ -24,7 +24,7 @@ type RuntimeBlockState struct {
 	now                           func() time.Time
 }
 
-// NewRuntimeBlockState 使用装配传入的时钟创建运行状态。
+// NewRuntimeBlockState creates runtime state with the supplied clock, defaulting to time.Now.
 func NewRuntimeBlockState(now func() time.Time) *RuntimeBlockState {
 	if now == nil {
 		now = time.Now
@@ -32,7 +32,7 @@ func NewRuntimeBlockState(now func() time.Time) *RuntimeBlockState {
 	return &RuntimeBlockState{now: now}
 }
 
-// Block 只延长已有停调，重复声明仍推进代次，保护后续回滚所有权。
+// Block extends existing deadlines; every declaration advances the generation to protect rollback ownership.
 func (s *RuntimeBlockState) Block(id int64, until time.Time, reason string) {
 	if s == nil {
 		return
@@ -43,7 +43,7 @@ func (s *RuntimeBlockState) Block(id int64, until time.Time, reason string) {
 	_, _ = s.blockLocked(id, until, reason)
 }
 
-// BlockProviderScheduling 对支持的平台设置内存停调。
+// BlockProviderScheduling installs an in-memory block for OpenAI and Grok providers.
 func (s *RuntimeBlockState) BlockProviderScheduling(value *Record, until time.Time, reason string) {
 	if value == nil || (value.Platform != PlatformOpenAI && value.Platform != PlatformGrok) {
 		return
@@ -51,10 +51,10 @@ func (s *RuntimeBlockState) BlockProviderScheduling(value *Record, until time.Ti
 	s.Block(value.ID, until, reason)
 }
 
-// ResetRetry 在原成功回报位置清除同提供商恢复窗口。
+// ResetRetry clears the same-provider recovery window after success.
 func (s *RuntimeBlockState) ResetRetry(id int64) { s.retryStarted.Delete(id) }
 
-// RetryWindowActive 按原首次观测时点创建同提供商恢复窗口。
+// RetryWindowActive starts a window on first observation and reports whether it remains open.
 func (s *RuntimeBlockState) RetryWindowActive(providerID int64) bool {
 	if s == nil {
 		return false
@@ -69,7 +69,7 @@ func (s *RuntimeBlockState) RetryWindowActive(providerID int64) bool {
 	return now.Before(startedAt.Add(RuntimeRetryWindow))
 }
 
-// RetryDeadline 返回已有重试窗口的截止时间，窗口缺失时返回零值。
+// RetryDeadline returns the existing retry deadline, or zero when no window exists.
 func (s *RuntimeBlockState) RetryDeadline(providerID int64) time.Time {
 	if s == nil {
 		return time.Time{}
@@ -130,7 +130,7 @@ func (s *RuntimeBlockState) blockLocked(providerID int64, until time.Time, _ str
 	}
 }
 
-// ClearProviderSchedulingBlock 清除运行阻断和恢复预算，并递增清理代次。
+// ClearProviderSchedulingBlock clears blocks and retry state and advances the clear generation.
 func (s *RuntimeBlockState) ClearProviderSchedulingBlock(providerID int64) {
 	if s == nil || providerID <= 0 {
 		return
@@ -141,7 +141,7 @@ func (s *RuntimeBlockState) ClearProviderSchedulingBlock(providerID int64) {
 	s.clearLocked(providerID)
 }
 
-// ManagedRecoveryFence 取得管理员恢复使用的当前代次。
+// ManagedRecoveryFence returns the generation observed by administrative recovery.
 func (s *RuntimeBlockState) ManagedRecoveryFence(providerID int64) uint64 {
 	if s == nil || providerID <= 0 {
 		return 0
@@ -154,7 +154,7 @@ func (s *RuntimeBlockState) ManagedRecoveryFence(providerID int64) uint64 {
 	return generation
 }
 
-// ClearProviderSchedulingBlockIfFence 仅清理仍属于本次恢复观察的状态。
+// ClearProviderSchedulingBlockIfFence clears state when its generation still matches the recovery observation.
 func (s *RuntimeBlockState) ClearProviderSchedulingBlockIfFence(providerID int64, expected uint64) bool {
 	if s == nil || providerID <= 0 {
 		return false
@@ -180,7 +180,7 @@ func (s *RuntimeBlockState) clearLocked(providerID int64) {
 	s.refreshFailureClearGeneration.Store(providerID, generation)
 }
 
-// Blocked 先核对刷新凭据身份，再判断尚未到期的本地停调。
+// Blocked checks credential-scoped refresh failures and unexpired provider-wide cooldowns.
 func (s *RuntimeBlockState) Blocked(providerID int64, identity func() string) bool {
 	if s == nil {
 		return false
@@ -209,7 +209,7 @@ func (s *RuntimeBlockState) Blocked(providerID int64, identity func() string) bo
 	return false
 }
 
-// BlockRollback 返回本次暂定状态的撤销函数，执行时检查状态仍属于本次操作。
+// BlockRollback installs a provisional block and returns a rollback guarded by the installed generation.
 func (s *RuntimeBlockState) BlockRollback(providerID int64, until time.Time, reason string) func() {
 	if s == nil {
 		return func() {}
@@ -251,7 +251,7 @@ func (s *RuntimeBlockState) BlockRollback(providerID int64, until time.Time, rea
 	}
 }
 
-// PrepareRefreshFailure 在存储前记录清理代次，阻止迟到通知恢复已清除状态。
+// PrepareRefreshFailure captures the clear generation before persistence so late notices cannot restore cleared state.
 func (s *RuntimeBlockState) PrepareRefreshFailure(id int64) func(RefreshFailureNotice) {
 	if s == nil {
 		return func(RefreshFailureNotice) {}

@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// ForwardPorts 提供平台单次执行接口，gateway/text 负责切换提供商。
+// ForwardPorts supplies single-attempt platform execution; gateway/text owns provider failover.
 type ForwardPorts struct {
 	AntigravityAvailable   bool
 	BedrockCompat          func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
@@ -76,7 +76,7 @@ type ForwardPorts struct {
 	WriteMappedClaudeError func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error
 }
 
-// SelectionPorts 使用共享的提供商选择、会话与反馈服务。
+// SelectionPorts supplies shared provider selection, session, and scheduling feedback operations.
 type SelectionPorts struct {
 	ProviderSwitched    func(*gatewaycapture.SelectionResult)
 	BindSticky          func(context.Context, *int64, string, int64) error
@@ -90,7 +90,7 @@ type SelectionPorts struct {
 	TrackSession        func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
 }
 
-// Bindings 在构造期间固定依赖，Open 仅创建本请求和尝试的数据。
+// Bindings fixes runtime dependencies during construction; Open creates per-request attempt state.
 type Bindings struct {
 	Forward         ForwardPorts
 	Selection       SelectionPorts
@@ -197,7 +197,7 @@ type messageExecutionDependencies struct {
 	submitUsageRecordTask             func(*gin.Context, completion.UsageRecordTask)
 }
 
-// New 不启动任务、不读取设置，所有原生资源由 app 持有。
+// New binds application-owned resources to a text attempt runtime.
 func New(b Bindings) *Runtime {
 	output := gatewayhttp.MessagesErrorOutput{Rules: b.Errors}
 	d := &messageExecutionDependencies{
@@ -267,5 +267,5 @@ func New(b Bindings) *Runtime {
 	return &Runtime{dependencies: d}
 }
 
-// binding 依赖在构造时绑定，不在每个请求中重新创建执行器。
+// binding returns the dependencies fixed when the runtime was constructed.
 func (b *messageAttemptBridge) binding() *messageExecutionDependencies { return b.fixed }

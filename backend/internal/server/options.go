@@ -1,6 +1,6 @@
 package server
 
-// Options 包含 app 按配置优先级解析后的监听和 HTTP 参数。
+// Options contains listener and HTTP parameters resolved by app from configuration.
 type Options struct {
 	Address                  string
 	Mode                     string
@@ -13,7 +13,7 @@ type Options struct {
 	H2C                      H2COptions
 }
 
-// H2COptions 保留 HTTP/2 的原连接和缓冲上限。
+// H2COptions configures cleartext HTTP/2 connections and upload buffers.
 type H2COptions struct {
 	Enabled                      bool
 	MaxConcurrentStreams         uint32

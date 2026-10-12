@@ -8,10 +8,10 @@ import (
 )
 
 type ServiceTierBillingResolution struct {
-	Requested  string // 请求发送的档位，空值表示未指定
-	Observed   string // 上游响应声明的档位，空值表示未声明
-	Billing    string // 实际用于计费和日志的档位
-	Downgraded bool   // 计费档位是否低于请求档位
+	Requested  string // Outbound tier; empty when unspecified.
+	Observed   string // Tier declared by upstream; empty when absent.
+	Billing    string // Tier used for billing and logs.
+	Downgraded bool   // Whether billing uses a lower tier than requested.
 }
 
 func ResolveBillingServiceTier(requested, observed string) ServiceTierBillingResolution {
@@ -55,9 +55,8 @@ func applyCacheOverride(usage *TokenUsage, target string) bool {
 	return changed
 }
 
-// normalizeResult 根据请求快照和响应观测规范化本次结果的档位。
+// normalizeResult resolves image dimensions and the billing tier from request and response observations.
 func (s *Recorder) normalizeResult(r *Result, a *ProviderSnapshot, openAI bool, observedProvider *ProviderSnapshot, requestID string) ServiceTierBillingResolution {
-	// 缺失结果不产生档位调整或观测事件。
 	if r == nil {
 		return ServiceTierBillingResolution{}
 	}
@@ -100,7 +99,7 @@ func (s *Recorder) normalizeResult(r *Result, a *ProviderSnapshot, openAI bool, 
 	return resolution
 }
 
-// ResolveOpenAIServiceTierBilling 保留 OAuth default 回显的非权威性，其余响应只允许降档。
+// ResolveOpenAIServiceTierBilling ignores OAuth default echoes; other observations can lower the billed tier.
 func ResolveOpenAIServiceTierBilling(oauthLike bool, requested, observed string) ServiceTierBillingResolution {
 	if oauthLike && CodexOAuthResponseTierIsNonAuthoritative(observed) {
 		return ServiceTierBillingResolution{Requested: normalizeBillingServiceTier(requested), Observed: normalizeBillingServiceTier(observed), Billing: normalizeBillingServiceTier(requested)}

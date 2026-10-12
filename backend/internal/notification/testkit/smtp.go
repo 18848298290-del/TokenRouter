@@ -135,7 +135,7 @@ func (s *SMTPServer) LastMessage() string {
 	return s.messageBodies[len(s.messageBodies)-1]
 }
 
-// LastMessageBody 解析测试服务器收到的最后一封邮件并解码正文。
+// LastMessageBody parses the last received message and decodes its body.
 func (s *SMTPServer) LastMessageBody(t *testing.T) string {
 	t.Helper()
 

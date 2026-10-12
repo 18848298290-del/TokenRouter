@@ -18,7 +18,7 @@ var (
 	canListenErr  error
 )
 
-// TestFetchCatalogHTTP 检查 HTTP 客户端的条件请求、状态码和下载上限。
+// TestFetchCatalogHTTP checks conditional requests, status handling, and the download limit.
 func TestFetchCatalogHTTP(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -59,7 +59,7 @@ func TestFetchCatalogHTTP(t *testing.T) {
 	}
 }
 
-// TestFetchCatalogCancellation 检查取消信号传递给 HTTP 请求及非法地址处理。
+// TestFetchCatalogCancellation checks request cancellation and invalid URLs.
 func TestFetchCatalogCancellation(t *testing.T) {
 	started := make(chan struct{})
 	server := newLocalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +82,7 @@ func TestFetchCatalogCancellation(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestNewRemoteClient_InvalidProxy_NoFallback 验证代理错误不会触发未授权直连。
+// TestNewRemoteClient_InvalidProxy_NoFallback checks that a proxy error blocks direct access.
 func TestNewRemoteClient_InvalidProxy_NoFallback(t *testing.T) {
 	client := NewRemoteClient("://bad", false)
 	require.IsType(t, &remoteClientError{}, client)
@@ -90,7 +90,7 @@ func TestNewRemoteClient_InvalidProxy_NoFallback(t *testing.T) {
 	require.ErrorContains(t, err, "proxy client init failed")
 }
 
-// TestNewRemoteClient_InvalidProxy_WithFallback 检查允许直连回退时的代理错误处理。
+// TestNewRemoteClient_InvalidProxy_WithFallback checks that direct access can be allowed after a proxy error.
 func TestNewRemoteClient_InvalidProxy_WithFallback(t *testing.T) {
 	require.IsType(t, &remoteClient{}, NewRemoteClient("://bad", true))
 }

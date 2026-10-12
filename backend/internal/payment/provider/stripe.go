@@ -27,7 +27,6 @@ const (
 	stripeEventInvoiceFailed          = "invoice.payment_failed"
 )
 
-// Ensure interface compliance.
 var (
 	_ payment.Provider                 = (*Stripe)(nil)
 	_ payment.CancelableProvider       = (*Stripe)(nil)
@@ -95,7 +94,7 @@ func (s *Stripe) currency() string {
 	return currency
 }
 
-// CreatePayment 使用 Stripe Checkout Session 创建托管收银台支付单。
+// CreatePayment creates a hosted Stripe Checkout Session.
 func (s *Stripe) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	s.ensureInit()
 
@@ -143,7 +142,7 @@ func buildStripeCheckoutSessionCreateParams(customerID string, req payment.Creat
 		normalizedCurrency = payment.DefaultPaymentCurrency
 	}
 	metadata := stripePaymentMetadata(req.OrderID, instanceID)
-	// 账单资料来自本地表单预建的 Customer；不要允许 Checkout 或 Link 回写并覆盖发票抬头和地址。
+	// Use the Customer built from the local billing form; omit customer updates to retain its invoice name and address.
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode:              stripe.String(string(stripe.CheckoutSessionModePayment)),
 		Customer:          stripe.String(customerID),
@@ -159,7 +158,7 @@ func buildStripeCheckoutSessionCreateParams(customerID string, req payment.Creat
 		),
 	}
 	params.ExpiresAt = stripe.Int64(stripeCheckoutExpiresAt(req.ExpiresAt))
-	// Checkout 不传 payment_method_types，让 Stripe Dashboard 的动态支付方式决定 Alipay/Link/微信/卡片展示。
+	// Omit payment_method_types so Stripe Dashboard controls the methods displayed in Checkout.
 	params.AddExpand("customer")
 	params.AddExpand("invoice")
 	params.AddExpand("payment_intent")
@@ -226,7 +225,7 @@ func stripeCheckoutExpiresAt(expiresAt time.Time) int64 {
 }
 
 func stripeCheckoutExpiresAtAt(expiresAt time.Time, now time.Time) int64 {
-	// 额外预留一分钟创建耗时，确保请求到达 Stripe 时仍满足最短三十分钟限制。
+	// Allow one minute for creation latency beyond the thirty-minute minimum expiration.
 	minExpiresAt := now.Add(31 * time.Minute)
 	if expiresAt.IsZero() || expiresAt.Before(minExpiresAt) {
 		return minExpiresAt.Unix()
@@ -252,7 +251,7 @@ func stripePaymentMetadata(orderID string, instanceID string) map[string]string 
 	}
 }
 
-// QueryOrder 支持按 Checkout Session、Invoice ID 和旧 PaymentIntent 查询订单。
+// QueryOrder accepts Checkout Session, Invoice, and legacy PaymentIntent identifiers.
 func (s *Stripe) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	s.ensureInit()
 
@@ -440,7 +439,7 @@ func parseStripeEvent(event *stripe.Event, rawBody string) (*payment.PaymentNoti
 	case stripeEventPaymentSuccess:
 		return parseStripePaymentIntent(event, payment.ProviderStatusSuccess, rawBody)
 	case stripeEventInvoiceFailed, stripeEventPaymentFailed:
-		// 这两个事件只代表一次付款尝试失败，Checkout 仍可能允许用户重试。
+		// A failed attempt can still be retried in Checkout, so these events do not close the order.
 		return nil, nil
 	}
 
@@ -458,7 +457,7 @@ func parseStripeCheckoutSession(event *stripe.Event, status string, rawBody stri
 		tradeNo = session.ID
 	}
 	if status == payment.ProviderStatusProcessing {
-		// completed 事件必须明确为 paid 或 unpaid，其他状态不改变本地订单。
+		// For completed events, paid and unpaid are actionable; ignore other payment statuses.
 		switch session.PaymentStatus {
 		case stripe.CheckoutSessionPaymentStatusPaid:
 			status = payment.ProviderStatusSuccess
@@ -467,7 +466,7 @@ func parseStripeCheckoutSession(event *stripe.Event, status string, rawBody stri
 			return nil, nil
 		}
 	}
-	// 成功事件若携带未付款状态则拒绝履约，防止异常或不完整载荷提前发放。
+	// Require paid status before granting rights from a success event.
 	if status == payment.ProviderStatusSuccess && session.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
 		return nil, nil
 	}
@@ -537,7 +536,7 @@ func (s *Stripe) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 	if err != nil {
 		return nil, fmt.Errorf("stripe refund: %w", err)
 	}
-	// 托管账单订单可能只持久化 invoice id，退款前需要解析到实际的 PaymentIntent。
+	// Resolve a stored Checkout Session or Invoice ID to the PaymentIntent required for refunds.
 	paymentIntentID := strings.TrimSpace(req.TradeNo)
 	switch {
 	case strings.HasPrefix(paymentIntentID, "cs_"):
@@ -563,7 +562,7 @@ func (s *Stripe) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 		Amount:        stripe.Int64(amountInMinorUnit),
 		Reason:        stripe.String(string(stripe.RefundReasonRequestedByCustomer)),
 	}
-	// 同一订单和退款金额在重试时复用 Stripe 请求，金额变化则使用新的幂等键。
+	// Retries for the same order and minor-unit amount reuse the idempotency key.
 	params.SetIdempotencyKey(fmt.Sprintf("re-%s-%d", req.OrderID, amountInMinorUnit))
 	params.Context = ctx
 
@@ -583,7 +582,7 @@ func (s *Stripe) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 	}, nil
 }
 
-// QueryRefund 按 refund id 查询 Stripe 退款；缺少 refund id 时回退到 PaymentIntent 最新退款。
+// QueryRefund retrieves the refund ID, or the latest PaymentIntent refund when the ID is missing.
 func (s *Stripe) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
 	s.ensureInit()
 
@@ -650,7 +649,7 @@ func stripeIntentCurrency(raw stripe.Currency, fallback string) string {
 	return currency
 }
 
-// CancelPayment 对 Checkout Session 执行 expire，对 Invoice 执行 void，对旧 PaymentIntent 执行 cancel。
+// CancelPayment expires Checkout Sessions, voids Invoices, and cancels legacy PaymentIntents.
 func (s *Stripe) CancelPayment(ctx context.Context, tradeNo string) error {
 	s.ensureInit()
 
@@ -677,7 +676,7 @@ func (s *Stripe) CancelPayment(ctx context.Context, tradeNo string) error {
 	return nil
 }
 
-// GetPaymentDocument 优先返回 Stripe Invoice 链接，旧订单回退到 Charge receipt。
+// GetPaymentDocument prefers a Stripe Invoice link and uses a Charge receipt for legacy orders.
 func (s *Stripe) GetPaymentDocument(ctx context.Context, invoiceID string, tradeNo string) (*payment.PaymentDocumentResponse, error) {
 	s.ensureInit()
 
@@ -707,7 +706,7 @@ func (s *Stripe) GetPaymentDocument(ctx context.Context, invoiceID string, trade
 		if strings.TrimSpace(doc.URL) != "" {
 			return doc, nil
 		}
-		// Checkout 账单尚未生成时，回退到底层 PaymentIntent 的 receipt。
+		// Use the underlying PaymentIntent receipt when the Checkout invoice is unavailable.
 		tradeNo = stripeCheckoutTradeNo(session)
 		if !strings.HasPrefix(tradeNo, "pi_") {
 			return nil, fmt.Errorf("stripe checkout session document is unavailable")

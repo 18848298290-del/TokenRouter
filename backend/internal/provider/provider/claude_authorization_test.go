@@ -52,7 +52,6 @@ func TestNewOAuthService(t *testing.T) {
 		t.Fatal("sessionStore 应被自动初始化")
 	}
 
-	// 清理
 	stopClaudeAuthorization(t, svc)
 }
 
@@ -77,7 +76,6 @@ func TestOAuthService_GenerateAuthURL(t *testing.T) {
 		t.Fatal("SessionID 为空")
 	}
 
-	// 验证 session 已存储
 	session, ok := svc.Store.Get(result.SessionID)
 	if !ok {
 		t.Fatal("session 未在 sessionStore 中找到")
@@ -134,7 +132,6 @@ func TestOAuthService_GenerateSetupTokenURL(t *testing.T) {
 		t.Fatal("GenerateSetupTokenURL 返回 nil")
 	}
 
-	// 验证 scope 是 inference
 	session, ok := svc.Store.Get(result.SessionID)
 	if !ok {
 		t.Fatal("session 未在 sessionStore 中找到")
@@ -192,13 +189,12 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	svc.Start()
 	defer stopClaudeAuthorization(t, svc)
 
-	// 先生成 URL 以创建 session
+	// Creating the authorization URL also creates the session required for exchange.
 	result, err := svc.GenerateAuthURL(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GenerateAuthURL 返回错误: %v", err)
 	}
 
-	// 交换 code
 	tokenInfo, err := svc.ExchangeCode(context.Background(), &providercore.ClaudeExchangeCodeInput{
 		SessionID: result.SessionID,
 		Code:      "auth-code-123",
@@ -235,7 +231,6 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 		t.Fatal("ExpiresAt 不应为 0")
 	}
 
-	// 验证 session 已被删除
 	_, ok := svc.Store.Get(result.SessionID)
 	if ok {
 		t.Fatal("session 应在交换成功后被删除")
@@ -263,7 +258,7 @@ func TestOAuthService_ExchangeCode_SetupToken(t *testing.T) {
 	svc.Start()
 	defer stopClaudeAuthorization(t, svc)
 
-	// 使用 SetupToken URL（inference scope）
+	// Setup tokens request inference scope.
 	result, err := svc.GenerateSetupTokenURL(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GenerateSetupTokenURL 返回错误: %v", err)
@@ -376,7 +371,6 @@ func TestOAuthService_RefreshProviderToken_NoRefreshToken(t *testing.T) {
 	svc.Start()
 	defer stopClaudeAuthorization(t, svc)
 
-	// 无 refresh_token 的提供商
 	provider := &providercore.Record{
 		ID:       1,
 		Platform: capability.PlatformAnthropic,
@@ -545,10 +539,9 @@ func TestOAuthService_Stop_NoPanic(t *testing.T) {
 	svc := newClaudeAuthorizationForTest(&mockProxyRepoForOAuth{}, &mockClaudeOAuthClient{})
 	svc.Start()
 
-	// 调用 Stop 不应 panic
 	stopClaudeAuthorization(t, svc)
 
-	// 多次调用也不应 panic
+	// Stopping an already stopped service is safe.
 	stopClaudeAuthorization(t, svc)
 }
 

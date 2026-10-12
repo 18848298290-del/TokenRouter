@@ -13,7 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// CRSProviderStore 提供同步配置、影子关系和凭据写入操作。
+// CRSProviderStore supplies configuration, shadow, and credential operations for synchronization.
 type CRSProviderStore interface {
 	ShadowProxyStore
 	Create(context.Context, *Record) error
@@ -33,7 +33,7 @@ type CRSOptions struct {
 	Refresh func(context.Context, *Record) error
 }
 
-// CRSSync 按六类来源逐项同步和预览，通过接口执行网络登录与凭据交换。
+// CRSSync previews and imports six source categories using injected login and token exchange services.
 type CRSSync struct {
 	providerRepo CRSProviderStore
 	proxyRepo    CRSProxyStore
@@ -46,14 +46,14 @@ type SyncFromCRSInput struct {
 	Username            string
 	Password            string
 	SyncProxies         bool
-	SelectedProviderIDs []string // nil 创建全部；显式空只更新已存在提供商
+	SelectedProviderIDs []string // Nil creates all entries; an explicit empty list updates existing providers only.
 }
 
 type SyncFromCRSItemResult struct {
 	CRSAccountID string `json:"crs_account_id"`
 	Kind         string `json:"kind"`
 	Name         string `json:"name"`
-	Action       string `json:"action"` // 创建、更新、失败或跳过
+	Action       string `json:"action"` // created, updated, failed, or skipped.
 	Error        string `json:"error,omitempty"`
 }
 
@@ -65,13 +65,13 @@ type SyncFromCRSResult struct {
 	Items   []SyncFromCRSItemResult `json:"items"`
 }
 
-// PreviewFromCRSResult 保持原同步预览计数与逐项列表。
+// PreviewFromCRSResult separates new and existing providers in the synchronization preview.
 type PreviewFromCRSResult struct {
 	NewProviders      []CRSPreviewProvider `json:"new_providers"`
 	ExistingProviders []CRSPreviewProvider `json:"existing_providers"`
 }
 
-// CRSPreviewProvider 只包含预览展示字段。
+// CRSPreviewProvider contains fields displayed in the import preview.
 type CRSPreviewProvider struct {
 	CRSAccountID string `json:"crs_account_id"`
 	Kind         string `json:"kind"`
@@ -90,22 +90,22 @@ func NewCRSSync(providers CRSProviderStore, proxies CRSProxyStore, exporter CRSE
 	return &CRSSync{providers, proxies, exporter, options}
 }
 
-// refreshOAuthToken 在导入提交后尝试刷新，失败时该项仍计为导入成功。
+// refreshOAuthToken attempts refresh after import commits; refresh failure does not fail the imported item.
 func (s *CRSSync) refreshOAuthToken(ctx context.Context, value *Record) {
 	if s.options.Refresh != nil {
 		_ = s.options.Refresh(ctx, value)
 	}
 }
 
-// GuardCRSShadowParentInvariant 要求有 Spark 影子的母提供商保持 OpenAI OAuth，与管理更新使用相同约束。
-// CRS 按全局 crs_account_id 查找记录；跨平台或类型的 ID 碰撞可能使同步分支改写母提供商的 Platform/Type，
-// 导致影子无法解析凭据。因此必须同时检查目标平台和类型；修改为其他组合前须先删除影子。
-// 返回错误时，调用方跳过该提供商更新并将条目标记为 failed。
+// GuardCRSShadowParentInvariant requires Spark parents to remain OpenAI OAuth providers.
+// CRS looks up globally by crs_account_id, so collisions across source platforms or types could rewrite a parent.
+// Check both platform and type to protect shadow credential resolution; delete shadows before changing either.
+// On error, the caller skips the update and reports the item as failed.
 func GuardCRSShadowParentInvariant(ctx context.Context, repo ShadowProxyStore, existing *Record, newPlatform, newType string) error {
 	if existing == nil {
 		return nil
 	}
-	// 目标仍是合法影子父(OpenAI OAuth)→ 放行(常见:OpenAI OAuth 分支重新同步母提供商),免去一次查询。
+	// An OpenAI OAuth target remains a valid shadow parent, so no shadow lookup is needed.
 	if newPlatform == PlatformOpenAI && newType == ProviderTypeOAuth {
 		return nil
 	}
@@ -142,7 +142,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		proxies, _ = s.proxyRepo.ListActive(ctx)
 	}
 
-	// Claude 来源转换为 Anthropic OAuth 或 Setup Token。
+	// Claude sources become Anthropic OAuth or setup-token providers.
 	for _, src := range exported.Data.ClaudeProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -181,15 +181,15 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		}
 
 		credentials := CRSSanitizeCredentialsMap(src.Credentials)
-		// Claude 基地址去除末尾 /v1。
+		// Remove the trailing /v1 from Claude base URLs.
 		CRSCleanBaseURL(credentials, "/v1")
-		// 将 ISO 到期值转换为 Unix 时间戳。
+		// Convert RFC3339 expiry values to Unix timestamps.
 		if expiresAtStr, ok := credentials["expires_at"].(string); ok && expiresAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
 				credentials["expires_at"] = t.Unix()
 			}
 		}
-		// 未提供预热拦截开关时保持默认 false。
+		// Default warmup interception to false when omitted.
 		if _, exists := credentials["intercept_warmup_requests"]; !exists {
 			credentials["intercept_warmup_requests"] = false
 		}
@@ -197,7 +197,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		concurrency := 3
 		status := MapCRSStatus(src.IsActive, src.Status)
 
-		// 保留来源扩展字段并补入同步元数据。
+		// Copy source Extra fields before adding synchronization metadata.
 		extra := make(map[string]any)
 		if src.Extra != nil {
 			maps.Copy(extra, src.Extra)
@@ -205,7 +205,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
-		// 从凭据读取组织和提供商 ID，写入扩展信息。
+		// Copy organization and account IDs from source credentials to Extra.
 		if orgUUID, ok := src.Credentials["org_uuid"]; ok {
 			extra["org_uuid"] = orgUUID
 		}
@@ -254,7 +254,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 				result.Items = append(result.Items, item)
 				continue
 			}
-			// 创建成功后尽力刷新令牌。
+			// Refresh tokens after successful creation on a best-effort basis.
 			if targetType == ProviderTypeOAuth {
 				s.refreshOAuthToken(ctx, provider)
 			}
@@ -264,7 +264,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 母提供商守卫:CRS ID 跨平台碰撞时,本(Anthropic OAuth)分支不得改坏有 spark 影子的 OpenAI 母提供商。
+		// Protect existing OpenAI shadow parents from cross-platform CRS ID collisions.
 		if gerr := GuardCRSShadowParentInvariant(ctx, s.providerRepo, existing, PlatformAnthropic, targetType); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
@@ -273,7 +273,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 更新现有提供商配置。
+		// Apply source configuration to the existing provider.
 		existing.Extra = CloneValues(extra)
 		existing.Name = CRSDefaultName(src.Name, src.ID)
 		existing.Platform = PlatformAnthropic
@@ -295,7 +295,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 配置更新成功后尽力刷新令牌。
+		// Refresh tokens after the configuration write on a best-effort basis.
 		if targetType == ProviderTypeOAuth {
 			s.refreshOAuthToken(ctx, existing)
 		}
@@ -305,7 +305,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		result.Items = append(result.Items, item)
 	}
 
-	// Claude Console 来源转换为 Anthropic API Key。
+	// Claude Console sources become Anthropic API Key providers.
 	for _, src := range exported.Data.ClaudeConsoleProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -392,7 +392,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 母提供商守卫:CRS ID 跨平台碰撞时,本(Anthropic APIKey)分支不得改坏有 spark 影子的 OpenAI 母提供商。
+		// Protect existing OpenAI shadow parents from cross-platform CRS ID collisions.
 		if gerr := GuardCRSShadowParentInvariant(ctx, s.providerRepo, existing, PlatformAnthropic, ProviderTypeAPIKey); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
@@ -427,7 +427,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		result.Items = append(result.Items, item)
 	}
 
-	// OpenAI OAuth 来源保留 OAuth 类型。
+	// OpenAI OAuth sources remain OAuth providers.
 	for _, src := range exported.Data.OpenAIOAuthProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -459,11 +459,11 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		}
 
 		credentials := CRSSanitizeCredentialsMap(src.Credentials)
-		// 规范化令牌类型。
+		// Default a missing or blank token type to Bearer.
 		if v, ok := credentials["token_type"].(string); !ok || strings.TrimSpace(v) == "" {
 			credentials["token_type"] = "Bearer"
 		}
-		// 将 ISO 到期值转换为 Unix 时间戳。
+		// Convert RFC3339 expiry values to Unix timestamps.
 		if expiresAtStr, ok := credentials["expires_at"].(string); ok && expiresAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
 				credentials["expires_at"] = t.Unix()
@@ -473,7 +473,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		concurrency := 3
 		status := MapCRSStatus(src.IsActive, src.Status)
 
-		// 保留来源扩展字段并补入同步元数据。
+		// Copy source Extra fields before adding synchronization metadata.
 		extra := make(map[string]any)
 		if src.Extra != nil {
 			maps.Copy(extra, src.Extra)
@@ -481,7 +481,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
-		// 将来源的 crs_email 写入 email。
+		// Expose the source crs_email as email.
 		if crsEmail, ok := src.Extra["crs_email"]; ok {
 			extra["email"] = crsEmail
 		}
@@ -532,7 +532,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 				result.Items = append(result.Items, item)
 				continue
 			}
-			// 创建成功后尽力刷新令牌。
+			// Refresh tokens after successful creation on a best-effort basis.
 			s.refreshOAuthToken(ctx, provider)
 			item.Action = "created"
 			result.Created++
@@ -561,11 +561,11 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 配置更新成功后尽力刷新令牌。
+		// Refresh tokens after the configuration write on a best-effort basis.
 		s.refreshOAuthToken(ctx, existing)
 
-		// 母提供商的代理更新后同步到 Spark 影子，与管理编辑的继承规则一致。
-		// 母提供商更新已提交，影子同步失败时记录告警，该项保持成功。
+		// Propagate the parent's proxy to Spark shadows using the same inheritance rule as admin edits.
+		// The parent write has committed; warn on propagation failure while keeping the item successful.
 		if perr := PropagateProviderProxyToShadows(ctx, s.providerRepo, existing.ID, existing.ProxyID); perr != nil {
 			s.options.Warn("crs_sync_propagate_proxy_to_shadows_failed", "provider_id", existing.ID, "error", perr)
 		}
@@ -575,7 +575,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		result.Items = append(result.Items, item)
 	}
 
-	// OpenAI Responses 来源转换为 API Key。
+	// OpenAI Responses sources become API Key providers.
 	for _, src := range exported.Data.OpenAIResponsesProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -595,7 +595,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		if baseURL, ok := src.Credentials["base_url"].(string); !ok || strings.TrimSpace(baseURL) == "" {
 			src.Credentials["base_url"] = "https://api.openai.com"
 		}
-		// OpenAI 基地址去除末尾 /v1。
+		// Remove the trailing /v1 from OpenAI base URLs.
 		CRSCleanBaseURL(src.Credentials, "/v1")
 
 		proxyID, err := egress.MatchOrCreateCRSProxy(ctx, s.proxyRepo,
@@ -675,8 +675,8 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 有 Spark 影子的母提供商必须保持 OpenAI OAuth；此分支会改成 API Key，必须拒绝更新。
-		// 需要先删除影子，才能改变母提供商的凭据类型。
+		// This API Key conversion would invalidate an OpenAI OAuth shadow parent.
+		// Require shadows to be deleted before changing their parent's credential type.
 		if gerr := GuardCRSShadowParentInvariant(ctx, s.providerRepo, existing, PlatformOpenAI, ProviderTypeAPIKey); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
@@ -711,7 +711,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		result.Items = append(result.Items, item)
 	}
 
-	// Gemini OAuth 来源保留 OAuth 类型。
+	// Gemini OAuth sources remain OAuth providers.
 	for _, src := range exported.Data.GeminiOAuthProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -741,7 +741,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		if v, ok := credentials["token_type"].(string); !ok || strings.TrimSpace(v) == "" {
 			credentials["token_type"] = "Bearer"
 		}
-		// 按 Gemini 的格式将到期时间转换为 Unix 秒字符串。
+		// Convert expiry to Gemini's Unix-seconds string representation.
 		if expiresAtStr, ok := credentials["expires_at"].(string); ok && strings.TrimSpace(expiresAtStr) != "" {
 			if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
 				credentials["expires_at"] = strconv.FormatInt(t.Unix(), 10)
@@ -804,7 +804,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 母提供商守卫:CRS ID 跨平台碰撞时,本(Gemini OAuth)分支不得改坏有 spark 影子的 OpenAI 母提供商。
+		// Protect existing OpenAI shadow parents from cross-platform CRS ID collisions.
 		if gerr := GuardCRSShadowParentInvariant(ctx, s.providerRepo, existing, PlatformGemini, ProviderTypeOAuth); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
@@ -841,7 +841,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 		result.Items = append(result.Items, item)
 	}
 
-	// Gemini API Key 来源保留 API Key 类型。
+	// Gemini API Key sources remain API Key providers.
 	for _, src := range exported.Data.GeminiAPIKeyProviders {
 		item := SyncFromCRSItemResult{
 			CRSAccountID: src.ID,
@@ -927,7 +927,7 @@ func (s *CRSSync) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*Syn
 			continue
 		}
 
-		// 母提供商守卫:CRS ID 跨平台碰撞时,本(Gemini APIKey)分支不得改坏有 spark 影子的 OpenAI 母提供商。
+		// Protect existing OpenAI shadow parents from cross-platform CRS ID collisions.
 		if gerr := GuardCRSShadowParentInvariant(ctx, s.providerRepo, existing, PlatformGemini, ProviderTypeAPIKey); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
@@ -1024,7 +1024,7 @@ func CRSSanitizeCredentialsMap(input map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(input))
 	for k, v := range input {
-		// 按原约定省略 nil 凭据键。
+		// Omit nil credential values.
 		if v != nil {
 			out[k] = v
 		}
@@ -1042,7 +1042,7 @@ func MapCRSStatus(isActive bool, status string) string {
 	return "active"
 }
 
-// CRSCleanBaseURL 仅删除 Claude/OpenAI 基地址的既定末尾段。
+// CRSCleanBaseURL trims whitespace and removes the specified trailing base-URL segment.
 func CRSCleanBaseURL(credentials map[string]any, suffixToRemove string) {
 	if baseURL, ok := credentials["base_url"].(string); ok && baseURL != "" {
 		trimmed := strings.TrimSpace(baseURL)
@@ -1052,7 +1052,7 @@ func CRSCleanBaseURL(credentials map[string]any, suffixToRemove string) {
 	}
 }
 
-// CRSBuildSelectedSet 在未发送集合时选择全部条目，空集合表示新建数量为零。
+// CRSBuildSelectedSet returns nil for all entries and an empty set for no new creations.
 func CRSBuildSelectedSet(ids []string) map[string]struct{} {
 	if ids == nil {
 		return nil
@@ -1064,7 +1064,7 @@ func CRSBuildSelectedSet(ids []string) map[string]struct{} {
 	return set
 }
 
-// CRSShouldCreateProvider 仅决定是否创建，未选中不阻止更新已存在提供商。
+// CRSShouldCreateProvider decides creation eligibility; selection does not block updates to existing providers.
 func CRSShouldCreateProvider(crsID string, selectedSet map[string]struct{}) bool {
 	if selectedSet == nil {
 		return true
@@ -1073,14 +1073,14 @@ func CRSShouldCreateProvider(crsID string, selectedSet map[string]struct{}) bool
 	return ok
 }
 
-// PreviewFromCRS 先获取导出，再一次查询本地来源 ID，保持原分类顺序。
+// PreviewFromCRS fetches the export, reads local source IDs once, and classifies entries in source-category order.
 func (s *CRSSync) PreviewFromCRS(ctx context.Context, input SyncFromCRSInput) (*PreviewFromCRSResult, error) {
 	exported, err := s.exporter.Fetch(ctx, input.BaseURL, input.Username, input.Password)
 	if err != nil {
 		return nil, err
 	}
 
-	// 一次读取已存在的来源 ID。
+	// Read existing source IDs in one query.
 	existingCRSIDs, err := s.providerRepo.ListCRSAccountIDs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list existing CRS providers: %w", err)

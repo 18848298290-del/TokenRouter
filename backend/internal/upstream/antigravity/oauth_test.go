@@ -13,15 +13,13 @@ import (
 	"time"
 )
 
-// getClientSecret
-
 func TestGetClientSecret_环境变量设置(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
 	t.Cleanup(func() { defaultClientSecret = old })
 	t.Setenv(AntigravityOAuthClientSecretEnv, "my-secret-value")
 
-	// 需要重新触发 init 逻辑：手动从环境变量读取
+	// init has already run, so apply the environment value to its cached variable.
 	defaultClientSecret = os.Getenv(AntigravityOAuthClientSecretEnv)
 
 	secret, err := getClientSecret()
@@ -83,8 +81,6 @@ func TestGetClientSecret_环境变量有前后空格(t *testing.T) {
 	}
 }
 
-// ForwardBaseURLs
-
 func TestForwardBaseURLs_Daily优先(t *testing.T) {
 	urls := ForwardBaseURLs()
 	if len(urls) == 0 {
@@ -94,17 +90,14 @@ func TestForwardBaseURLs_Daily优先(t *testing.T) {
 		t.Fatalf("daily URL 未与官方客户端对齐: got %s", antigravityDailyBaseURL)
 	}
 
-	// daily URL 应排在第一位
 	if urls[0] != antigravityDailyBaseURL {
 		t.Errorf("第一个 URL 应为 daily: got %s, want %s", urls[0], antigravityDailyBaseURL)
 	}
 
-	// 应包含所有 URL
 	if len(urls) != len(BaseURLs) {
 		t.Errorf("URL 数量不匹配: got %d, want %d", len(urls), len(BaseURLs))
 	}
 
-	// 验证 prod URL 也在列表中
 	found := slices.Contains(urls, antigravityProdBaseURL)
 	if !found {
 		t.Error("ForwardBaseURLs 中缺少 prod URL")
@@ -114,13 +107,10 @@ func TestForwardBaseURLs_Daily优先(t *testing.T) {
 func TestForwardBaseURLs_不修改原切片(t *testing.T) {
 	originalFirst := BaseURLs[0]
 	_ = ForwardBaseURLs()
-	// 确保原始 BaseURLs 未被修改
 	if BaseURLs[0] != originalFirst {
 		t.Errorf("ForwardBaseURLs 不应修改原始 BaseURLs: got %s, want %s", BaseURLs[0], originalFirst)
 	}
 }
-
-// URLAvailability
 
 func TestNewURLAvailability(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
@@ -150,19 +140,16 @@ func TestURLAvailability_MarkSuccess(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	testURL := "https://example.com"
 
-	// 先标记为不可用
 	ua.MarkUnavailable(testURL)
 	if ua.IsAvailable(testURL) {
 		t.Error("标记为不可用后应不可用")
 	}
 
-	// 标记成功后应恢复可用
 	ua.MarkSuccess(testURL)
 	if !ua.IsAvailable(testURL) {
 		t.Error("MarkSuccess 后应恢复可用")
 	}
 
-	// 验证 lastSuccess 被设置
 	ua.mu.RLock()
 	if ua.lastSuccess != testURL {
 		t.Errorf("lastSuccess 不匹配: got %s, want %s", ua.lastSuccess, testURL)
@@ -171,12 +158,11 @@ func TestURLAvailability_MarkSuccess(t *testing.T) {
 }
 
 func TestURLAvailability_IsAvailable_TTL过期(t *testing.T) {
-	// 使用极短的 TTL
 	ua := NewURLAvailability(1 * time.Millisecond)
 	testURL := "https://example.com"
 
 	ua.MarkUnavailable(testURL)
-	// 等待 TTL 过期
+	// Allow the failure TTL to expire before checking eligibility.
 	time.Sleep(5 * time.Millisecond)
 
 	if !ua.IsAvailable(testURL) {
@@ -194,7 +180,6 @@ func TestURLAvailability_IsAvailable_未标记的URL(t *testing.T) {
 func TestURLAvailability_GetAvailableURLs(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 
-	// 默认所有 URL 都可用
 	urls := ua.GetAvailableURLsWithBase(BaseURLs)
 	if len(urls) != len(BaseURLs) {
 		t.Errorf("可用 URL 数量不匹配: got %d, want %d", len(urls), len(BaseURLs))
@@ -211,7 +196,6 @@ func TestURLAvailability_GetAvailableURLs_标记一个不可用(t *testing.T) {
 	ua.MarkUnavailable(BaseURLs[0])
 	urls := ua.GetAvailableURLsWithBase(BaseURLs)
 
-	// 标记的 URL 不应出现在可用列表中
 	for _, u := range urls {
 		if u == BaseURLs[0] {
 			t.Errorf("被标记不可用的 URL 不应出现在可用列表中: %s", BaseURLs[0])
@@ -239,11 +223,10 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess优先(t *testing.T
 	if len(urls) != 3 {
 		t.Fatalf("可用 URL 数量不匹配: got %d, want 3", len(urls))
 	}
-	// c.com 应排在第一位
 	if urls[0] != "https://c.com" {
 		t.Errorf("lastSuccess 应排在第一位: got %s, want https://c.com", urls[0])
 	}
-	// 其余按原始顺序
+	// Endpoints other than the preferred one retain their supplied order.
 	if urls[1] != "https://a.com" {
 		t.Errorf("第二个应为 a.com: got %s", urls[1])
 	}
@@ -260,7 +243,6 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不可用(t *testin
 	ua.MarkUnavailable("https://b.com")
 
 	urls := ua.GetAvailableURLsWithBase(customURLs)
-	// b.com 被标记不可用，不应出现
 	if len(urls) != 1 {
 		t.Fatalf("可用 URL 数量不匹配: got %d, want 1", len(urls))
 	}
@@ -276,15 +258,11 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不在列表中(t *
 	ua.MarkSuccess("https://not-in-list.com")
 
 	urls := ua.GetAvailableURLsWithBase(customURLs)
-	// lastSuccess 不在自定义列表中，不应被添加
+	// A successful endpoint outside this caller's list must not be added.
 	if len(urls) != 2 {
 		t.Fatalf("可用 URL 数量不匹配: got %d, want 2", len(urls))
 	}
 }
-
-// SessionStore
-
-// GenerateRandomBytes
 
 func TestGenerateRandomBytes_长度正确(t *testing.T) {
 	sizes := []int{0, 1, 16, 32, 64, 128}
@@ -308,13 +286,11 @@ func TestGenerateRandomBytes_不同调用产生不同结果(t *testing.T) {
 	if err != nil {
 		t.Fatalf("第二次调用失败: %v", err)
 	}
-	// 两次生成的随机字节应该不同（概率上几乎不可能相同）
+	// A collision between two 32-byte random values is negligibly likely.
 	if string(b1) == string(b2) {
 		t.Error("两次生成的随机字节相同，概率极低，可能有问题")
 	}
 }
-
-// GenerateState
 
 func TestGenerateState_返回值格式(t *testing.T) {
 	state, err := GenerateState()
@@ -324,11 +300,10 @@ func TestGenerateState_返回值格式(t *testing.T) {
 	if state == "" {
 		t.Error("GenerateState 返回空字符串")
 	}
-	// base64url 编码不应包含 +, /, =
 	if strings.ContainsAny(state, "+/=") {
 		t.Errorf("GenerateState 返回值包含非 base64url 字符: %s", state)
 	}
-	// 32 字节的 base64url 编码长度应为 43（去掉了尾部 = 填充）
+	// Encoding 32 bytes without base64 padding produces 43 characters.
 	if len(state) != 43 {
 		t.Errorf("GenerateState 返回值长度不匹配: got %d, want 43", len(state))
 	}
@@ -342,8 +317,6 @@ func TestGenerateState_唯一性(t *testing.T) {
 	}
 }
 
-// GenerateSessionID
-
 func TestGenerateSessionID_返回值格式(t *testing.T) {
 	id, err := GenerateSessionID()
 	if err != nil {
@@ -352,11 +325,10 @@ func TestGenerateSessionID_返回值格式(t *testing.T) {
 	if id == "" {
 		t.Error("GenerateSessionID 返回空字符串")
 	}
-	// 16 字节的 hex 编码长度应为 32
+	// Hex encoding uses two characters per byte.
 	if len(id) != 32 {
 		t.Errorf("GenerateSessionID 返回值长度不匹配: got %d, want 32", len(id))
 	}
-	// 验证是合法的 hex 字符串
 	if _, err := hex.DecodeString(id); err != nil {
 		t.Errorf("GenerateSessionID 返回值不是合法的 hex 字符串: %s, err: %v", id, err)
 	}
@@ -370,8 +342,6 @@ func TestGenerateSessionID_唯一性(t *testing.T) {
 	}
 }
 
-// GenerateCodeVerifier
-
 func TestGenerateCodeVerifier_返回值格式(t *testing.T) {
 	verifier, err := GenerateCodeVerifier()
 	if err != nil {
@@ -380,11 +350,10 @@ func TestGenerateCodeVerifier_返回值格式(t *testing.T) {
 	if verifier == "" {
 		t.Error("GenerateCodeVerifier 返回空字符串")
 	}
-	// base64url 编码不应包含 +, /, =
 	if strings.ContainsAny(verifier, "+/=") {
 		t.Errorf("GenerateCodeVerifier 返回值包含非 base64url 字符: %s", verifier)
 	}
-	// 32 字节的 base64url 编码长度应为 43
+	// Encoding 32 bytes without base64 padding produces 43 characters.
 	if len(verifier) != 43 {
 		t.Errorf("GenerateCodeVerifier 返回值长度不匹配: got %d, want 43", len(verifier))
 	}
@@ -398,14 +367,12 @@ func TestGenerateCodeVerifier_唯一性(t *testing.T) {
 	}
 }
 
-// GenerateCodeChallenge
-
 func TestGenerateCodeChallenge_SHA256_Base64URL(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 
 	challenge := GenerateCodeChallenge(verifier)
 
-	// 手动计算预期值
+	// Compute the PKCE challenge independently of the helper.
 	hash := sha256.Sum256([]byte(verifier))
 	expected := strings.TrimRight(base64.URLEncoding.EncodeToString(hash[:]), "=")
 
@@ -444,20 +411,16 @@ func TestGenerateCodeChallenge_不同输入不同输出(t *testing.T) {
 	}
 }
 
-// BuildAuthorizationURL
-
 func TestBuildAuthorizationURL_参数验证(t *testing.T) {
 	state := "test-state-123"
 	codeChallenge := "test-challenge-abc"
 
 	authURL := BuildAuthorizationURL(state, codeChallenge)
 
-	// 验证以 AuthorizeURL 开头
 	if !strings.HasPrefix(authURL, AuthorizeURL+"?") {
 		t.Errorf("URL 应以 %s? 开头: got %s", AuthorizeURL, authURL)
 	}
 
-	// 解析 URL 并验证参数
 	parsed, err := url.Parse(authURL)
 	if err != nil {
 		t.Fatalf("解析 URL 失败: %v", err)
@@ -494,7 +457,6 @@ func TestBuildAuthorizationURL_参数数量(t *testing.T) {
 	}
 
 	params := parsed.Query()
-	// 应包含 10 个参数
 	expectedCount := 10
 	if len(params) != expectedCount {
 		t.Errorf("参数数量不匹配: got %d, want %d", len(params), expectedCount)
@@ -512,13 +474,10 @@ func TestBuildAuthorizationURL_特殊字符编码(t *testing.T) {
 		t.Fatalf("解析 URL 失败: %v", err)
 	}
 
-	// 解析后应正确还原特殊字符
 	if got := parsed.Query().Get("state"); got != state {
 		t.Errorf("state 参数编码/解码不匹配: got %q, want %q", got, state)
 	}
 }
-
-// 常量值验证
 
 func TestConstants_值正确(t *testing.T) {
 	if AuthorizeURL != "https://accounts.google.com/o/oauth2/v2/auth" {

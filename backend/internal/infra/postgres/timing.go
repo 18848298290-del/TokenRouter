@@ -117,8 +117,8 @@ func (c *serverTimingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (
 		if opts.ReadOnly {
 			return nil, errors.New("driver does not support read-only transactions")
 		}
-		// 包装器实现了 ConnBeginTx，因此必须保留 database/sql 对仅实现 Conn.Begin 驱动的兼容回退。
-		tx, err = c.Conn.Begin() //nolint:staticcheck // 驱动兼容所需的回退逻辑。
+		// Support drivers that implement Begin but not ConnBeginTx.
+		tx, err = c.Conn.Begin() //nolint:staticcheck // Compatibility with legacy drivers.
 	}
 	servertiming.RecordInterval(ctx, servertiming.MetricDatabase, startedAt, time.Now())
 	if err != nil || tx == nil {
@@ -173,8 +173,8 @@ func (s *serverTimingStmt) ExecContext(ctx context.Context, args []driver.NamedV
 		var values []driver.Value
 		values, err = namedValues(args)
 		if err == nil {
-			// 包装器实现了 StmtExecContext，因此必须保留 database/sql 对旧式驱动语句的兼容回退。
-			result, err = s.Stmt.Exec(values) //nolint:staticcheck // 驱动兼容所需的回退逻辑。
+			// Support statements that implement Exec but not StmtExecContext.
+			result, err = s.Stmt.Exec(values) //nolint:staticcheck // Compatibility with legacy drivers.
 		}
 	}
 	servertiming.Record(ctx, servertiming.MetricDatabase, startedAt, time.Now(), 1)
@@ -193,8 +193,8 @@ func (s *serverTimingStmt) QueryContext(ctx context.Context, args []driver.Named
 		var values []driver.Value
 		values, err = namedValues(args)
 		if err == nil {
-			// 包装器实现了 StmtQueryContext，因此必须保留 database/sql 对旧式驱动语句的兼容回退。
-			rows, err = s.Stmt.Query(values) //nolint:staticcheck // 驱动兼容所需的回退逻辑。
+			// Support statements that implement Query but not StmtQueryContext.
+			rows, err = s.Stmt.Query(values) //nolint:staticcheck // Compatibility with legacy drivers.
 		}
 	}
 	servertiming.Record(ctx, servertiming.MetricDatabase, startedAt, time.Now(), 1)

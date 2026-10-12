@@ -24,13 +24,13 @@ const (
 	maxDownloadSize     = 500 * 1024 * 1024
 )
 
-// BinaryDownload 只执行已选资产的技术读取。
+// BinaryDownload downloads selected release assets and checksums.
 type BinaryDownload interface {
 	DownloadFile(context.Context, string, string, int64) error
 	FetchChecksumFile(context.Context, string) ([]byte, error)
 }
 
-// BinaryInstaller 只操作装配指定的二进制；测试传入临时可执行路径。
+// BinaryInstaller replaces the configured executable; tests supply a temporary path.
 type BinaryInstaller struct {
 	rename func(string, string) error
 
@@ -51,7 +51,7 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 	var downloadURL string
 	var checksumURL string
 
-	// 资产顺序由发布服务决定，优先选择新品牌归档，旧归档用于历史版本回退。
+	// Prefer tokenrouter archives; accept sub2api archives for historical releases.
 	for _, prefix := range []string{"tokenrouter_", "sub2api_"} {
 		for _, asset := range releaseAssets {
 			if strings.HasPrefix(asset.Name, prefix) && strings.Contains(asset.Name, archiveName) && !strings.HasSuffix(asset.Name, ".txt") {
@@ -95,8 +95,7 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 
 	exeDir := filepath.Dir(exePath)
 
-	// Create temp directory in the SAME directory as executable
-	// This ensures os.Rename is atomic (same filesystem)
+	// Stage beside the executable so each rename stays on the same filesystem.
 	tempDir, err := os.MkdirTemp(exeDir, ".tokenrouter-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
@@ -127,10 +126,10 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 		return fmt.Errorf("chmod failed: %w", err)
 	}
 
-	// Atomic replacement using rename pattern:
-	// 1. Rename current -> backup (atomic on Unix)
-	// 2. Rename new -> current (atomic on Unix, same filesystem)
-	// If step 2 fails, restore backup
+	// Replacement uses two renames, with a gap while the executable path is absent:
+	// 1. Move the current executable to its backup path.
+	// 2. Move the staged binary to the executable path.
+	// Attempt to restore the backup if the second rename fails.
 	backupPath := exePath + ".backup"
 
 	if err := ctx.Err(); err != nil {
@@ -153,8 +152,8 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 		return fmt.Errorf("replace failed (restored backup): %w", err)
 	}
 
-	// Success - backup file is kept for rollback capability
-	// It will be cleaned up on next successful update
+	// Keep the backup for rollback.
+	// The next update removes it before creating a replacement backup.
 	return nil
 }
 
@@ -183,9 +182,6 @@ func (s *BinaryInstaller) Rollback() error {
 	return nil
 }
 
-// RollbackToVersion 下载并安装指定旧版本。
-// 目标必须属于 ListRollbackVersions 返回的允许列表，当前版本和其他输入都会被拒绝。
-
 func (s *BinaryInstaller) downloadFile(ctx context.Context, downloadURL, dest string) error {
 	return s.githubClient.DownloadFile(ctx, downloadURL, dest, maxDownloadSize)
 }
@@ -196,8 +192,8 @@ func (s *BinaryInstaller) getArchiveName() string {
 	return fmt.Sprintf("%s_%s", osName, arch)
 }
 
-// validateDownloadURL checks if the URL is from an allowed domain
-// SECURITY: This prevents SSRF and ensures downloads only come from trusted GitHub domains
+// validateDownloadURL requires HTTPS and an allowed GitHub host or subdomain.
+// The check applies to this URL; redirects are handled by the download client.
 
 func validateDownloadURL(rawURL string) error {
 	parsedURL, err := url.Parse(rawURL)
@@ -292,8 +288,8 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 				return err
 			}
 
-			// SECURITY: Prevent Zip Slip / Path Traversal attack
-			// Only allow files with safe base names, no directory traversal
+			// Extract matching basenames into the fixed destination path.
+			// Reject entry names containing traversal components before extraction.
 			baseName := filepath.Base(hdr.Name)
 
 			// Check for path traversal attempts
@@ -308,7 +304,7 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 
 			// Only extract the specific binary we need
 			if baseName == "tokenrouter" || baseName == "tokenrouter.exe" || baseName == "sub2api" || baseName == "sub2api.exe" {
-				// Additional security: limit file size (max 500MB)
+				// Limit the extracted binary to 500 MiB.
 				const maxBinarySize = 500 * 1024 * 1024
 				if hdr.Size > maxBinarySize {
 					return fmt.Errorf("binary too large: %d bytes (max %d)", hdr.Size, maxBinarySize)
@@ -331,7 +327,7 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 				if baseName == "tokenrouter" || baseName == "tokenrouter.exe" {
 					return nil
 				}
-				// 旧文件仅作回退，继续查找同一归档中的新名称。
+				// Keep the legacy entry as a fallback while searching for a tokenrouter entry.
 				legacyExtracted = true
 			}
 		}

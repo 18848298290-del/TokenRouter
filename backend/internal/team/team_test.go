@@ -22,7 +22,7 @@ type fakeTeamInvitationLimiter struct {
 	err        error
 }
 
-// fakeTeamRepository 记录团队管理方法的参数并返回预设结果。
+// fakeTeamRepository records team management inputs and returns configured results.
 type fakeTeamRepository struct {
 	TeamRepository
 
@@ -46,7 +46,7 @@ type fakeTeamRepository struct {
 	previewAt         time.Time
 }
 
-// fakeTeamUserRepository 为邀请预览提供当前登录用户邮箱。
+// fakeTeamUserRepository supplies the signed-in user's email for invitation previews.
 type fakeTeamUserRepository struct {
 	UserReader
 

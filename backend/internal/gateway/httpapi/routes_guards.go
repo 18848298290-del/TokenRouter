@@ -22,17 +22,17 @@ const (
 	GroupClientProtocolErrorGoogle    GroupClientProtocolErrorFormat = "google"
 )
 
-// GatewayErrorWriter 定义网关错误响应格式（不同协议使用不同格式）。
+// GatewayErrorWriter writes an error in a client protocol's format.
 type GatewayErrorWriter func(c *gin.Context, status int, message string)
 
-// RouteAccess 是路由门禁从当前认证请求取得的数据。
+// RouteAccess holds authenticated request data used by route admission.
 type RouteAccess struct {
 	HasGroup         bool
 	Composite        bool
 	AllowedProtocols []wireprotocol.ProtocolID
 }
 
-// RouteMiddleware 在 app 一次装配，路由不构造认证、配置或观测服务。
+// RouteMiddleware contains authentication, settings, and observation callbacks assembled by app.
 type RouteMiddleware struct {
 	ModelAttributes                                                                                                gin.HandlerFunc
 	ClientGroupFallback                                                                                            ClientGroupFallbackResolver
@@ -44,12 +44,12 @@ type RouteMiddleware struct {
 	ObserveBusinessLimit                                                                                           func(*gin.Context, string)
 }
 
-// RouteGuards 使用路由表和当前请求的认证数据执行门禁。
+// RouteGuards checks route admission against authenticated request data.
 type RouteGuards struct{ options RouteMiddleware }
 
 type GroupClientProtocolErrorFormat string
 
-// AnthropicErrorWriter 按 Anthropic API 规范输出错误。
+// AnthropicErrorWriter writes an Anthropic permission error.
 func AnthropicErrorWriter(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{
 		"type":  "error",
@@ -57,7 +57,7 @@ func AnthropicErrorWriter(c *gin.Context, status int, message string) {
 	})
 }
 
-// GoogleErrorWriter 按 Google API 规范输出错误。
+// GoogleErrorWriter writes a Google error with the mapped status name.
 func GoogleErrorWriter(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{
 		"error": gin.H{
@@ -70,7 +70,7 @@ func GoogleErrorWriter(c *gin.Context, status int, message string) {
 
 func NewRouteGuards(options RouteMiddleware) *RouteGuards { return &RouteGuards{options: options} }
 
-// RequireGroupClientProtocol 在进入业务处理器前执行分组协议准入检查。
+// RequireGroupClientProtocol checks group protocol admission before the endpoint handler.
 func (g *RouteGuards) RequireGroupClientProtocol(protocol wireprotocol.ProtocolID, format GroupClientProtocolErrorFormat) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if g.EnforceGroupClientProtocol(c, protocol, format) {
@@ -79,7 +79,7 @@ func (g *RouteGuards) RequireGroupClientProtocol(protocol wireprotocol.ProtocolI
 	}
 }
 
-// WithGroupClientProtocol 把协议门禁包在已完成路径校验的终端处理器外层。
+// WithGroupClientProtocol wraps a terminal handler with admission after path validation.
 func (g *RouteGuards) WithGroupClientProtocol(protocol wireprotocol.ProtocolID, format GroupClientProtocolErrorFormat, next gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if g.EnforceGroupClientProtocol(c, protocol, format) {
@@ -88,7 +88,7 @@ func (g *RouteGuards) WithGroupClientProtocol(protocol wireprotocol.ProtocolID, 
 	}
 }
 
-// EnforceGroupClientProtocol 执行检查并在拒绝时写入协议原生错误。
+// EnforceGroupClientProtocol checks admission and writes a protocol error on rejection.
 func (g *RouteGuards) EnforceGroupClientProtocol(c *gin.Context, protocol wireprotocol.ProtocolID, format GroupClientProtocolErrorFormat) bool {
 	access := g.options.Access(c)
 	if protocol == wireprotocol.ProtocolOpenAIResponses && RouteProtocol(c.Request.Method, c.Request.URL.Path) == wireprotocol.ProtocolResponsesCompact {
@@ -97,7 +97,8 @@ func (g *RouteGuards) EnforceGroupClientProtocol(c *gin.Context, protocol wirepr
 	g.options.InstallClientProtocol(c, protocol)
 	group := routing.Group{AllowedProtocols: access.AllowedProtocols}
 	if !access.HasGroup || group.AllowsClientProtocol(protocol) {
-		// Messages 先读取正文识别客户端，其他协议在捕获任务、资金或会话归属前完成分组回退。
+		// Messages needs the body to identify the client; other protocols resolve group fallback before capturing
+		// task, funding, or session ownership.
 		if protocol != wireprotocol.ProtocolAnthropicMessages {
 			key, ok := EffectiveAPIKey(c)
 			if !ok {
@@ -168,7 +169,7 @@ func groupClientProtocolDeniedMessage(protocol wireprotocol.ProtocolID) string {
 	}
 }
 
-// RequireGeminiGenerateContentProtocol 只门禁 Gemini 的三个文本生成 POST 动作。
+// RequireGeminiGenerateContentProtocol gates Gemini's three text-generation POST actions.
 func (g *RouteGuards) RequireGeminiGenerateContentProtocol(c *gin.Context) {
 	rest := strings.TrimSpace(strings.TrimPrefix(c.Param("modelAction"), "/"))
 	separator := strings.LastIndexAny(rest, ":/")
@@ -184,17 +185,17 @@ func (g *RouteGuards) RequireGeminiGenerateContentProtocol(c *gin.Context) {
 	}
 }
 
-// ExtendedRouteProtocol 为非文本入口及别名统一命名；已有任务操作不受新建开关影响。
+// ExtendedRouteProtocol identifies non-text endpoints and aliases, with separate IDs for existing-task operations.
 func ExtendedRouteProtocol(method, path string) wireprotocol.ProtocolID {
 	protocol := RouteProtocol(method, path)
-	// Compact 在 Responses 通配路由完成路径校验后检查，无效路径返回路径错误。
+	// Compact admission follows wildcard-path validation so invalid paths receive a path error first.
 	if protocol == wireprotocol.ProtocolResponsesCompact {
 		return ""
 	}
 	return protocol
 }
 
-// RouteProtocol 按完整别名前缀匹配并移除前缀。
+// RouteProtocol removes complete alias prefixes before matching a route.
 func RouteProtocol(method, path string) wireprotocol.ProtocolID {
 	for _, prefix := range []string{"/backend-api/codex", "/v1"} {
 		if strings.HasPrefix(path, prefix+"/") {
@@ -205,7 +206,7 @@ func RouteProtocol(method, path string) wireprotocol.ProtocolID {
 	return protocol
 }
 
-// RequireExtendedProtocol 按入口协议检查分组许可，已有资源操作仍保持独立归属检查。
+// RequireExtendedProtocol checks group permission for the endpoint; resource handlers also check ownership.
 func (g *RouteGuards) RequireExtendedProtocol(c *gin.Context) {
 	protocol := ExtendedRouteProtocol(c.Request.Method, c.Request.URL.Path)
 	if protocol == "" || g.EnforceGroupClientProtocol(c, protocol, GroupClientProtocolErrorOpenAI) {

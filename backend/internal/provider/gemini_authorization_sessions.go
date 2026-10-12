@@ -17,7 +17,7 @@ type GeminiOAuthSession struct {
 	// For oauth types that support auto detection (google_one/code_assist), the server will prefer
 	// the detected tier and fall back to TierID when detection fails.
 	TierID    string    `json:"tier_id,omitempty"`
-	OAuthType string    `json:"oauth_type"` // "code_assist" 或 "ai_studio"
+	OAuthType string    `json:"oauth_type"` // code_assist, google_one, or ai_studio
 	CreatedAt time.Time `json:"created_at"`
 }
 type GeminiAuthorizationSessions struct {
@@ -65,7 +65,7 @@ func (s *GeminiAuthorizationSessions) Delete(sessionID string) {
 	delete(s.sessions, sessionID)
 }
 
-// Start 启动当前会话实例的清理循环。
+// Start starts the session cleanup loop once.
 func (s *GeminiAuthorizationSessions) Start() {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -76,7 +76,7 @@ func (s *GeminiAuthorizationSessions) Start() {
 	s.runtimeWG.Go(func() { ; s.cleanup() })
 }
 
-// Stop 幂等停止并等待清理循环，未启动实例也可安全关闭。
+// Stop stops cleanup and waits for it to finish. It is safe before Start and on repeated calls.
 func (s *GeminiAuthorizationSessions) Stop() {
 	s.runtimeMu.Lock()
 	if !s.runtimeStopped {

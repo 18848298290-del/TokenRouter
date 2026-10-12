@@ -65,7 +65,7 @@ func TestAntigravitySessionStore_Get_过期(t *testing.T) {
 
 	session := &AntigravityAuthorizationSession{
 		State:     "expired-state",
-		CreatedAt: time.Now().Add(-AntigravitySessionTTL - time.Minute), // 已过期
+		CreatedAt: time.Now().Add(-AntigravitySessionTTL - time.Minute), // Already expired.
 	}
 
 	store.Set("expired-session", session)
@@ -100,7 +100,7 @@ func TestAntigravitySessionStore_Delete_不存在(t *testing.T) {
 	store.Start()
 	defer store.Stop()
 
-	// 删除不存在的 session 不应 panic
+	// Deleting a missing session is safe.
 	store.Delete("nonexistent")
 }
 
@@ -109,7 +109,7 @@ func TestAntigravitySessionStore_Stop(t *testing.T) {
 	store.Start()
 	store.Stop()
 
-	// 多次 Stop 不应 panic
+	// Repeated Stop calls are safe.
 	store.Stop()
 }
 
@@ -126,7 +126,7 @@ func TestAntigravitySessionStore_多个Session(t *testing.T) {
 		store.Set("session-"+string(rune('0'+i)), session)
 	}
 
-	// 验证都能取到
+	// Every stored session remains independently retrievable.
 	for i := range 10 {
 		_, ok := store.Get("session-" + string(rune('0'+i)))
 		if !ok {

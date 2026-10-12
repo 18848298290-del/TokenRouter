@@ -28,7 +28,7 @@ const (
 	ConfigQuotaDimension
 )
 
-// 消费由 billing 写入，观测由对应维护入口写入；配置替换不得覆盖其最新值。
+// Billing owns usage counters and maintenance services own observations; configuration replacement retains their latest values.
 var managedConfigurationExtraKeys = []string{
 	"quota_used", "quota_daily_used", "quota_daily_start", "quota_weekly_used", "quota_weekly_start",
 	"grok_billing_snapshot", "grok_usage_snapshot", "grok_observed_models",
@@ -37,12 +37,12 @@ var managedConfigurationExtraKeys = []string{
 	"cn_usage_monitor_snapshot", "model_rate_limits", "antigravity_quota_scopes", "antigravity_credits_overages",
 }
 
-// ConfigurationFields 标明本次操作实际拥有的写权限，不包含活动时间、窗口或健康观测快照。
+// ConfigurationFields identifies writable configuration fields, excluding activity times, windows, and health observations.
 type ConfigurationFields uint32
 
-// ConfigurationChange 记录待修改的字段，省略的敏感子键从锁内最新凭据继承。
+// ConfigurationChange selects fields to update; omitted secrets can be inherited from the latest locked record.
 type ConfigurationChange struct {
-	// ExtraPatch 是维护字段的原始增量，不能含预读快照。
+	// ExtraPatch contains the raw maintenance patch, not a previously read snapshot.
 	ExtraPatch          map[string]any     `json:"-"`
 	CredentialPatch     map[string]any     `json:"-"`
 	ExpectedCredentials *CredentialVersion `json:"-"`
@@ -57,12 +57,12 @@ type ConfigurationChange struct {
 	NormalizeProtocols bool
 }
 
-// ConfigurationWriter 执行配置更新，参与外层事务时使用同一个连接。
+// ConfigurationWriter updates configuration using the caller's transaction connection when one is supplied.
 type ConfigurationWriter interface {
 	UpdateConfiguration(context.Context, *Record, ConfigurationChange) error
 }
 
-// ApplyConfigurationChange 只从 desired 取本次允许写入的字段，其余保留锁内最新状态。
+// ApplyConfigurationChange takes selected fields from desired and retains other values from the latest locked record.
 func ApplyConfigurationChange(current, desired *Record, change ConfigurationChange) (*Record, error) {
 	if change.ExpectedCredentials != nil && !MatchesCredentialVersion(current, *change.ExpectedCredentials) {
 		return nil, ErrRefreshProviderStateChanged
@@ -139,7 +139,7 @@ func ApplyConfigurationChange(current, desired *Record, change ConfigurationChan
 	}
 	out.Extra = CloneValues(out.Extra)
 	if change.Fields&ConfigCredentials != 0 && change.PreserveSensitive {
-		// desired 已通过平台校验，从锁内最新凭据补齐请求省略的敏感键。
+		// The desired values have passed platform validation; inherit omitted secrets from the locked record.
 		for _, key := range SensitiveCredentialKeys {
 			if _, provided := change.CredentialInput[key]; provided {
 				continue
@@ -149,7 +149,7 @@ func ApplyConfigurationChange(current, desired *Record, change ConfigurationChan
 				out.Credentials[key] = CloneValues(map[string]any{key: v})[key]
 			}
 		}
-		// 继承密钥后清理历史 SSO 和密码字段。
+		// Remove legacy SSO and password fields after inheriting secrets.
 		out.Credentials = SanitizeStoredCredentials(out.Platform, out.Credentials)
 	}
 	if change.Fields&ConfigExtra != 0 {
@@ -174,7 +174,7 @@ func ApplyConfigurationChange(current, desired *Record, change ConfigurationChan
 		if change.NormalizeWindowAt != nil {
 			NormalizeFixedQuotaWindows(out.Extra, *change.NormalizeWindowAt, current.LoadLocation)
 		}
-		// overages 是配置意图；仅清理该切换原本拥有的限流范围。
+		// Apply the overages toggle's rate-limit cleanup to the latest Extra state.
 		if current.Platform == PlatformAntigravity && current.IsOveragesEnabled() != out.IsOveragesEnabled() {
 			delete(out.Extra, "antigravity_credits_overages")
 			if out.IsOveragesEnabled() {
@@ -213,7 +213,7 @@ func ApplyConfigurationChange(current, desired *Record, change ConfigurationChan
 	return CloneRecord(out), nil
 }
 
-// WriteConfiguration 优先调用配置写入接口，通用 Update 仅支持整条记录更新。
+// WriteConfiguration uses ConfigurationWriter when supported, otherwise it falls back to whole-record Update.
 func WriteConfiguration(ctx context.Context, store interface {
 	Update(context.Context, *Record) error
 }, value *Record, change ConfigurationChange,
@@ -227,7 +227,7 @@ func WriteConfiguration(ctx context.Context, store interface {
 	return store.Update(ctx, value)
 }
 
-// CRSSyncConfiguration 返回 CRS 同步负责更新的字段。
+// CRSSyncConfiguration selects the fields owned by CRS synchronization.
 func CRSSyncConfiguration(proxyProvided bool) ConfigurationChange {
 	change := ConfigurationChange{Fields: ConfigName | ConfigPlatform | ConfigType | ConfigCredentials | ConfigExtra | ConfigConcurrency | ConfigPriority | ConfigStatus | ConfigSchedulable}
 	if proxyProvided {

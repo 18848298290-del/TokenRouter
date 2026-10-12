@@ -22,25 +22,25 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// marketplaceLoadingProtocols 是解析器给 alias 返回的客户端协议。
+// marketplaceLoadingProtocols contains the client protocols resolved for alias.
 var marketplaceLoadingProtocols = []capability.ProtocolID{capability.ProtocolAnthropicMessages, capability.ProtocolOpenAIChatCompletions}
 
-// modelCatalogFixture 保存测试提供的模型价格目录。
+// modelCatalogFixture holds test catalogue prices.
 type modelCatalogFixture struct {
 	pricingData map[string]*billingpricing.CatalogModelPricing
 }
 
-// marketplaceLoadingModels 为部分分组返回空目录，覆盖属性和观测查询的分组筛选。
+// marketplaceLoadingModels returns empty catalogues for some groups to test attribute and observation filtering.
 type marketplaceLoadingModels struct{}
 
-// marketplaceLoadingObservations 记录容量和可用率查询的分组。
+// marketplaceLoadingObservations records groups included in capacity and availability queries.
 type marketplaceLoadingObservations struct {
 	capacityCalls      int
 	capacityGroups     []int64
 	availabilityGroups []int64
 }
 
-// marketplaceLoadingPrices 记录报价和兼容模态查询。
+// marketplaceLoadingPrices records quotes and legacy modality queries.
 type marketplaceLoadingPrices struct {
 	requests      []routing.MarketplaceQuoteRequest
 	modalityCalls int
@@ -62,7 +62,8 @@ type marketplaceSettingRepoStub struct {
 	settings map[string]string
 }
 
-// TestMarketplaceBatchAttributesAndOptionalCapacity 覆盖批量读取、属性失败降级、容量开关和模型协议的透传。
+// TestMarketplaceBatchAttributesAndOptionalCapacity covers batch reads, attribute failures, capacity opt-out, and
+// protocol forwarding.
 func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 	for _, attributesFail := range []bool{false, true} {
 		for _, includeCapacity := range []bool{false, true} {
@@ -742,7 +743,8 @@ func TestModelMarketplacePublicModelsIncludeModalities(t *testing.T) {
 	require.Nil(t, models[1].OutputModalities)
 }
 
-// TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs 验证市场使用解析后的 PricingModel 查询能力，保留公开 ID 和完整音视频输入标记。
+// TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs checks metadata lookup by PricingModel while retaining
+// public IDs and audio/video inputs.
 func TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs(t *testing.T) {
 	pricing := &billingpricing.CatalogModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 1e-5,
@@ -776,7 +778,7 @@ func newModelCatalogFixture(fixture modelCatalogFixture) *provider.Service {
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// newMarketplaceFixture 为市场测试绑定价格配置和模型目录。
+// newMarketplaceFixture connects pricing configuration and model catalogue fixtures.
 func newMarketplaceFixture(groups routing.MarketplaceGroups, settings routing.MarketplaceSettings, calculator *billing.Calculator, resolver *billing.PriceResolver) *routing.Marketplace {
 	var prices routing.MarketplacePrices
 	if calculator != nil {
@@ -831,7 +833,7 @@ func (p *marketplaceLoadingPrices) GetModelModalities(string) ([]string, []strin
 	return []string{"text"}, []string{"text"}
 }
 
-// testImageModelPricing 创建图片模型的价格配置。
+// testImageModelPricing creates image-model prices for tests.
 func testImageModelPricing(prices map[string]*float64) []routing.ModelPricingEntry {
 	return testMediaModelPricing(routing.BillingModeImage, prices)
 }
@@ -858,7 +860,7 @@ func (p marketplaceQuoteFixture) GetModelModalities(model string) ([]string, []s
 	return p.calculator.GetModelModalities(model)
 }
 
-// marketplaceWithConfig 将市场报价连接到共享价格配置解析器。
+// marketplaceWithConfig connects marketplace quotes to the shared pricing resolver.
 func marketplaceWithConfig(calculator *billing.Calculator, groupID int64, settings billingpricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Marketplace {
 	configs := routingtestkit.ModelConfigFromData(routingtestkit.ModelConfigDataFromRows([]routingtestkit.Configuration{{ID: 1, Status: routing.StatusActive, GroupIDs: []int64{groupID}, BillingSettings: &settings, ModelPricing: cards}}, nil))
 	return newMarketplaceFixture(nil, nil, calculator, NewModelPricingResolver(configs, calculator))

@@ -27,11 +27,11 @@ const (
 
 var ErrModelPricingUnavailable = pricing.ErrModelPricingUnavailable
 
-// Result 仅保留完成处理需要的已观测结果，不携带响应体、HTTP Header 或平台执行器。
+// Result contains observed usage and metadata needed for completion processing.
 type Result struct {
-	// UpstreamResponseModel 是协议转换前的上游模型声明；空值表示未声明。
+	// UpstreamResponseModel is the model declared before protocol conversion; empty means absent.
 	UpstreamResponseModel string
-	// NativeUsage 表示执行器已将输入与缓存用量拆成独立分桶。
+	// NativeUsage indicates that input and cache counts are already separate billing buckets.
 	NativeUsage                                                                  bool
 	RequestID, ResponseID, Model, BillingModel, UpstreamModel                    string
 	UpstreamRequestID                                                            *string
@@ -48,7 +48,7 @@ type Result struct {
 	AudioUsage                                                                   *AudioUsage
 }
 
-// TokenUsage 区分未缓存输入和供应商返回的总输入，各入口负责转换计量分桶。
+// TokenUsage carries protocol usage buckets. Entrypoints determine whether input is total or uncached.
 type TokenUsage struct {
 	InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens         int
 	CacheCreation5mTokens, CacheCreation1hTokens, ImageInputTokens, ImageOutputTokens int
@@ -59,14 +59,14 @@ type AudioUsage struct {
 	DurationOrUnits float64
 }
 
-// PayerSnapshot 分别记录资金主体和行为主体。
+// PayerSnapshot captures the funding user and balance-notification data.
 type PayerSnapshot struct {
 	ID           int64
 	Balance      float64
 	Notification *billing.UserSummary
 }
 
-// ProviderSnapshot 不携带凭据或健康可变字段。
+// ProviderSnapshot captures provider billing and notification data.
 type ProviderSnapshot struct {
 	CacheTTLOverrideEnabled                                     bool
 	CacheTTLOverrideTarget                                      string
@@ -76,12 +76,12 @@ type ProviderSnapshot struct {
 	Type                                                        string
 	RateMultiplier                                              float64
 	OpenAI, CNProvider, OAuthLike, QuotaEligible, HasQuotaLimit bool
-	// CredentialProviderID 用于读取影子的母提供商。
+	// CredentialProviderID identifies the parent of a shadow provider.
 	CredentialProviderID *int64
 	Notification         *billing.QuotaNotifyProvider
 }
 
-// KeySnapshot 冻结请求取得的资金绑定；行为用户和付款用户不能互相替代。
+// KeySnapshot captures funding bindings and actor identity separately from the payer.
 type KeySnapshot struct {
 	ActorUserPresent                         bool
 	ID                                       int64
@@ -94,7 +94,7 @@ type KeySnapshot struct {
 	Group                                    *GroupSnapshot
 }
 
-// GroupSnapshot 保存完成计费所需的分组字段。
+// GroupSnapshot contains group fields used by completion billing.
 type GroupSnapshot struct {
 	ID                                      int64
 	RateMultiplier                          float64
@@ -107,9 +107,9 @@ type GroupSnapshot struct {
 	AudioPrice                              *pricing.AudioPriceConfig
 }
 
-// Input 保存异步完成所需的数据，调用方先调用 Snapshot 再提交队列。
+// Input contains asynchronous completion data. Call Snapshot before enqueueing.
 type Input struct {
-	// BillingKey 是资金操作的去重键，使用记录按 RequestID 关联请求。
+	// BillingKey deduplicates financial operations; RequestID correlates usage with the request.
 	BillingKey                                                               string
 	Result                                                                   *Result
 	APIKey                                                                   *KeySnapshot
@@ -136,7 +136,7 @@ type (
 
 type PricingOptions struct{ PricingAt time.Time }
 
-// Store 保持普通结算闭合事务，不把环境中的外层事务隐式传给资金参与者。
+// Store applies each settlement in its own transaction; implementations must not inherit an outer transaction implicitly.
 type Store interface {
 	Apply(context.Context, *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error)
 }
@@ -166,17 +166,17 @@ type ProviderStats interface {
 	ResolveProviderStats(context.Context, billing.ProviderStatsCostInput) *float64
 }
 
-// Effects 根据已提交的资金结果更新缓存并发送通知。
+// Effects updates caches and notifications after committed settlement.
 type Effects interface {
 	ProviderUsed(int64)
 	InvalidateAuth(context.Context, string)
 	Settled(SettlementInput, *billing.UsageBillingApplyResult)
 }
 
-// CacheInjectionPolicy 读取 Anthropic 一小时缓存 TTL 注入开关。
+// CacheInjectionPolicy reads the Anthropic one-hour cache TTL injection setting.
 type CacheInjectionPolicy interface{ IsAnthropicCacheTTL1hInjectionEnabled(context.Context) bool }
 
-// BillingEvent 将计费日志字段交给日志适配器。
+// BillingEvent contains fields for the billing log adapter.
 type BillingEvent struct {
 	Kind, Component, RequestID, RequestedModel, MappedModel, UpstreamModel, Model, Platform string
 	RequestedTier, ObservedTier, BilledTier                                                 string
@@ -187,7 +187,7 @@ type BillingEvent struct {
 	Err                                                                                     error
 }
 
-// Dependencies 提供完成器所需的读写接口和 billing 计算器。
+// Dependencies supplies storage, policy readers, and the billing calculator.
 type Dependencies struct {
 	RequestRecords func(telemetry.RequestRecord)
 	Emit           func(BillingEvent)
@@ -236,7 +236,7 @@ func (g *GroupSnapshot) PeakMultiplierAt(at time.Time) float64 {
 	return (&pricing.BillingSettings{PeakRateEnabled: g.PeakRateEnabled, PeakStart: g.PeakStart, PeakEnd: g.PeakEnd, PeakRateMultiplier: g.PeakRateMultiplier}).PeakMultiplierAt(at)
 }
 
-// NewRecorder 使用 app 传入的缓存、队列和服务实例构造记录器。
+// NewRecorder binds the dependencies supplied by app.
 func NewRecorder(d Dependencies, o RecorderOptions) *Recorder {
 	if o.Now == nil {
 		o.Now = time.Now
@@ -262,7 +262,7 @@ func NewRecorder(d Dependencies, o RecorderOptions) *Recorder {
 	}
 }
 
-// Record 记录已满足提交条件的完成结果，openAI 指定总输入分桶和媒体计价方式。
+// Record snapshots the input and selects OpenAI total-input billing unless usage is already in native buckets.
 func (s *Recorder) Record(ctx context.Context, input *Input, openAI bool) error {
 	input = Snapshot(input)
 	if openAI && (input == nil || input.Result == nil || !input.Result.NativeUsage) {

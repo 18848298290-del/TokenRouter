@@ -16,17 +16,17 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAINoAvailableSelectionError 提供错误消息，并支持 errors.Is 分类。
+// openAINoAvailableSelectionError carries a diagnostic message and unwraps to ErrNoAvailableProviders.
 type openAINoAvailableSelectionError struct {
 	message string
 }
 
-// BindStickySession 使用调度器默认期限绑定提供商会话。
+// BindStickySession binds a provider using the configured session TTL.
 func (s *Compatible) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, providerID int64) error {
 	return s.BindStickySessionWithTTL(ctx, groupID, sessionHash, providerID, s.SessionStickyTTL())
 }
 
-// BindStickySessionWithTTL 让 WS 请求按当前参数保存会话期限。
+// BindStickySessionWithTTL binds a session for the supplied TTL, leaving guardian parent bindings intact.
 func (s *Compatible) BindStickySessionWithTTL(ctx context.Context, groupID *int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	if sessionHash == "" || providerID <= 0 || requeststate.PreserveGuardianParentBinding(ctx, sessionHash) {
 		return nil
@@ -34,13 +34,13 @@ func (s *Compatible) BindStickySessionWithTTL(ctx context.Context, groupID *int6
 	return s.setStickySessionProviderID(ctx, groupID, sessionHash, providerID, ttl)
 }
 
-// SelectProviderForModel 选择支持请求模型的提供商。
+// SelectProviderForModel selects a provider supporting the requested model.
 func (s *Compatible) SelectProviderForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*gatewayprovider.ExecutionProvider, error) {
 	return s.SelectProviderForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, nil)
 }
 
-// SelectProviderForModelWithExclusions 选择支持请求模型且不在排除集合中的提供商。
-// SelectProviderForModelWithExclusions 选择支持指定模型的提供商，同时排除指定的提供商。
+// SelectProviderForModelWithExclusions selects a model-compatible provider outside the exclusion set.
+// Advanced groups use select-only mode and release any returned slot.
 func (s *Compatible) SelectProviderForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.ExecutionProvider, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	resolvedCtx, resolvedGroupID, err := s.resolveOpenAISchedulerGroup(ctx, groupID)
@@ -91,8 +91,8 @@ func shouldUseGroupModelUnsupportedError(ctx context.Context, providers []gatewa
 	return hasRelevantProvider
 }
 
-// SelectProviderForTokenCount 为不计费的 token 计数请求选择提供商。
-// 仍检查平台、模型、能力和运行资格，但不获取或等待生成槽位。
+// SelectProviderForTokenCount selects a provider for an unbilled token-count request.
+// It checks platform, model, capability, and runtime eligibility without acquiring generation slots.
 func (s *Compatible) SelectProviderForTokenCount(
 	ctx context.Context,
 	groupID *int64,
@@ -115,8 +115,8 @@ func (s *Compatible) SelectProviderForTokenCount(
 	)
 }
 
-// noAvailableOpenAISelectionErrorForRoutingWithDetails 仅在通用无提供商错误中追加调度诊断；
-// compact 不可用时返回能力错误，模型受分组限制时返回模型拒绝错误。
+// noAvailableOpenAISelectionErrorForRoutingWithDetails adds diagnostics to generic capacity errors.
+// Compact capability failures and group model restrictions return their specific errors.
 func noAvailableOpenAISelectionErrorForRoutingWithDetails(ctx context.Context, requestedModel string, routingModel string, compactBlocked bool, details string, providers ...[]gatewayprovider.ExecutionProvider) error {
 	if compactBlocked {
 		return schedulercore.ErrNoAvailableCompactProviders
@@ -156,7 +156,7 @@ func (s *Compatible) selectProviderForModelWithExclusions(ctx context.Context, g
 	return s.selectProviderForModelWithExclusionsForRouting(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, stickyProviderID, requiredCapability)
 }
 
-// selectProviderForModelWithExclusionsForRouting 使用已解析的提供商层模型执行基础调度。
+// selectProviderForModelWithExclusionsForRouting runs basic selection with an already resolved routing model.
 func (s *Compatible) selectProviderForModelWithExclusionsForRouting(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyProviderID int64, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.ExecutionProvider, error) {
 	resolvedCtx, _, groupErr := s.resolveOpenAISchedulerGroup(ctx, groupID)
 	if groupErr != nil {
@@ -172,7 +172,7 @@ func (s *Compatible) selectProviderForModelWithExclusionsForRouting(ctx context.
 	return scope.oldProvider(selected), err
 }
 
-// SelectProviderWithLoadAwareness 按负载选择提供商，并返回等待方案。
+// SelectProviderWithLoadAwareness selects by load and may return a wait plan.
 func (s *Compatible) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.SelectionResult, error) {
 	return s.selectProviderWithLoadAwareness(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, "", sessionHash, requestedModel, excludedIDs, false, "")
 }
@@ -182,7 +182,7 @@ func (s *Compatible) selectProviderWithLoadAwareness(ctx context.Context, groupI
 	return s.selectProviderWithLoadAwarenessForRouting(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, requiredCapability)
 }
 
-// selectProviderWithLoadAwarenessForRouting 使用已解析的提供商层模型执行负载感知调度。
+// selectProviderWithLoadAwarenessForRouting runs load-aware selection with an already resolved routing model.
 func (s *Compatible) selectProviderWithLoadAwarenessForRouting(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.SelectionResult, error) {
 	resolvedCtx, _, groupErr := s.resolveOpenAISchedulerGroup(ctx, groupID)
 	if groupErr != nil {
@@ -264,10 +264,10 @@ func (s *Compatible) resolveFreshSchedulableOpenAIProvider(ctx context.Context, 
 	return fresh
 }
 
-// parentProviderLookup 返回供 parentHealthyForShadow 使用的母提供商解析闭包:经 providerRepo
-// 按 ID 取当前 Provider(repo 为空时 fail-closed 返回 nil)。统一调度/粘连各路径的母提供商解析,
-// 取代各调用点重复内联的同一闭包(历史上 recheck 等路径还漏写过 providerRepo==nil 守卫)。
-// L2 候选循环改用带 per-pass 缓存的 parentLookupL2,不走此方法。
+// parentProviderLookup returns a repository-backed parent lookup for shadow health checks.
+// A missing repository or unsuccessful lookup returns nil, which fails parent eligibility.
+// Each call reads the current record.
+// Candidate passes may wrap this lookup with their own cache.
 func (s *Compatible) parentProviderLookup(ctx context.Context) func(int64) *gatewayprovider.ExecutionProvider {
 	return func(id int64) *gatewayprovider.ExecutionProvider {
 		if s.providerRepo == nil {
@@ -341,7 +341,7 @@ func (s *Compatible) openAIProviderMatchesSchedulingGroup(provider *gatewayprovi
 	return openAIStickyProviderMatchesGroup(provider, groupID)
 }
 
-// openAIProviderPassesPrivacyRequirement 判断提供商是否满足当前分组的隐私资格。
+// openAIProviderPassesPrivacyRequirement reports whether the provider satisfies the group's privacy requirement.
 func (s *Compatible) openAIProviderPassesPrivacyRequirement(ctx context.Context, groupID *int64, provider *gatewayprovider.ExecutionProvider) bool {
 	return provider != nil && (!s.openAIGroupRequiresPrivacySet(ctx, groupID) || provider.View().IsPrivacySet())
 }
@@ -371,8 +371,8 @@ func (s *Compatible) getSchedulableProvider(ctx context.Context, providerID int6
 	return provider, nil
 }
 
-// filterGrokFreeQuotaProvidersForOpenAI 为 OpenAI 兼容基础选择路径应用与
-// 本地免费层软性限制与通用选择使用同一规则。
+// filterGrokFreeQuotaProvidersForOpenAI applies the local Free OAuth soft gate
+// to basic compatible selection using the shared free-quota rules.
 func (s *Compatible) filterGrokFreeQuotaProvidersForOpenAI(ctx context.Context, providers []gatewayprovider.ExecutionProvider) []gatewayprovider.ExecutionProvider {
 	if s == nil {
 		return providers
@@ -441,7 +441,7 @@ func (s *Compatible) schedulingConfig() schedulercore.FlowOptions {
 	return s.options.Scheduling
 }
 
-// StickyProviderID 只读取当前分组会话的绑定，用于请求开始时固定缓存计费依据。
+// StickyProviderID reads the group's session binding for the request's cache billing basis.
 func (s *Compatible) StickyProviderID(ctx context.Context, groupID *int64, sessionHash string) int64 {
 	if s == nil || s.cache == nil || groupID == nil || *groupID <= 0 || sessionHash == "" {
 		return 0
@@ -453,7 +453,7 @@ func (s *Compatible) StickyProviderID(ctx context.Context, groupID *int64, sessi
 	return id
 }
 
-// readSchedulingGroup 通过配置的读取函数获取兼容请求的调度分组。
+// readSchedulingGroup reads the group through the configured scheduling-group reader.
 func (s *Compatible) readSchedulingGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	if s.schedulingGroups == nil {
 		return nil, nil

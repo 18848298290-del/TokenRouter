@@ -12,7 +12,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// TestSMTPRequest 测试 SMTP 连接请求。
+// TestSMTPRequest contains SMTP connection parameters to test.
 type TestSMTPRequest struct {
 	SMTPHost     string `json:"smtp_host"`
 	SMTPPort     int    `json:"smtp_port"`
@@ -21,7 +21,7 @@ type TestSMTPRequest struct {
 	SMTPUseTLS   *bool  `json:"smtp_use_tls"`
 }
 
-// SendTestEmailRequest 发送测试邮件请求。
+// SendTestEmailRequest contains a recipient and SMTP parameters for a test email.
 type SendTestEmailRequest struct {
 	Email        string `json:"email" binding:"required,email"`
 	SMTPHost     string `json:"smtp_host"`
@@ -33,7 +33,7 @@ type SendTestEmailRequest struct {
 	SMTPUseTLS   *bool  `json:"smtp_use_tls"`
 }
 
-// SiteNameReader 只读取公开站点名称。
+// SiteNameReader provides the public site name.
 type (
 	SiteNameReader interface{ GetSiteName(context.Context) string }
 	Handler        struct {
@@ -50,7 +50,7 @@ func ResolveSMTPUseTLS(requested *bool, savedConfig *notification.SMTPConfig) bo
 	return savedConfig != nil && savedConfig.UseTLS
 }
 
-// TestSMTPConnection 测试 SMTP 连接
+// TestSMTPConnection tests the requested SMTP connection settings.
 // POST /api/v1/admin/settings/test-smtp
 func (h *Handler) TestSMTPConnection(c *gin.Context) {
 	var req TestSMTPRequest
@@ -106,7 +106,7 @@ func (h *Handler) TestSMTPConnection(c *gin.Context) {
 	response.Success(c, gin.H{"message": "SMTP connection successful"})
 }
 
-// SendTestEmail 发送测试邮件
+// SendTestEmail sends a test message using the requested SMTP settings.
 // POST /api/v1/admin/settings/send-test-email
 func (h *Handler) SendTestEmail(c *gin.Context) {
 	var req SendTestEmailRequest
@@ -205,7 +205,7 @@ func (h *Handler) SendTestEmail(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Test email sent successfully"})
 }
 
-// ListEmailTemplates 返回全部可编辑的通知邮件模板。
+// ListEmailTemplates returns all editable notification templates.
 // GET /api/v1/admin/settings/email-templates
 func (h *Handler) ListEmailTemplates(c *gin.Context) {
 	if h.notificationEmailService == nil {
@@ -226,7 +226,7 @@ func (h *Handler) ListEmailTemplates(c *gin.Context) {
 	})
 }
 
-// GetEmailTemplate 返回指定事件和语言的通知邮件模板。
+// GetEmailTemplate returns the notification template for an event and locale.
 // GET /api/v1/admin/settings/email-templates/:event/:locale
 func (h *Handler) GetEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
@@ -241,7 +241,7 @@ func (h *Handler) GetEmailTemplate(c *gin.Context) {
 	response.Success(c, emailTemplateDetailToDTO(tmpl))
 }
 
-// UpdateEmailTemplate 保存指定事件和语言的模板覆盖内容。
+// UpdateEmailTemplate saves a template override for an event and locale.
 // PUT /api/v1/admin/settings/email-templates/:event/:locale
 func (h *Handler) UpdateEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
@@ -261,7 +261,7 @@ func (h *Handler) UpdateEmailTemplate(c *gin.Context) {
 	response.Success(c, emailTemplateDetailToDTO(tmpl))
 }
 
-// RestoreOfficialEmailTemplate 移除模板覆盖内容并返回内置模板。
+// RestoreOfficialEmailTemplate deletes the override and returns the built-in template.
 // POST /api/v1/admin/settings/email-templates/:event/:locale/restore-official
 func (h *Handler) RestoreOfficialEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
@@ -276,8 +276,8 @@ func (h *Handler) RestoreOfficialEmailTemplate(c *gin.Context) {
 	response.Success(c, emailTemplateDetailToDTO(tmpl))
 }
 
-// PreviewEmailTemplate 使用安全示例变量渲染模板但不保存。
-// POST /api/v1/admin/settings/email-templates/preview
+// PreviewEmailTemplate renders unsaved template content with sample variables and request overrides.
+// POST /api/v1/admin/settings/email-template-preview
 func (h *Handler) PreviewEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
 		response.InternalError(c, "notification email service is not configured")
@@ -368,7 +368,7 @@ func New(email *notification.Mailer, n *notification.NotificationEmailService, s
 	return &Handler{emailService: email, notificationEmailService: n, settingService: site}
 }
 
-// RegisterSettingsRoutes 登记 SMTP 测试和通知模板管理路由。
+// RegisterSettingsRoutes registers SMTP tests and notification template management routes.
 func RegisterSettingsRoutes(adminSettings *gin.RouterGroup, endpoint *Handler) {
 	adminSettings.POST("/test-smtp", endpoint.TestSMTPConnection)
 	adminSettings.POST("/send-test-email", endpoint.SendTestEmail)

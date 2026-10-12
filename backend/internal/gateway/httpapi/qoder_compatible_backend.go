@@ -106,7 +106,7 @@ func (h *QoderCompatibleRuntime) Execution(c *gin.Context, call QoderCompatibleC
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, provider.Snapshot().Platform)
 
-		// 入队前捕获资金和报文数据，worker 使用这份快照。
+		// Capture funding and request data before queueing so the worker uses this snapshot.
 		completionInput := provider.Completion(CompletionContext(c), QoderCompletionCapture{
 			Result: result, Key: apiKey, Subscription: subscription,
 			InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, ClientIP: clientIP,
@@ -120,7 +120,7 @@ func (h *QoderCompatibleRuntime) Execution(c *gin.Context, call QoderCompatibleC
 		})
 	}
 
-	// finishPartial 不把服务失败当成成功，也不允许已有服务的请求进入下一次推理。
+	// finishPartial records observed usage and ends the request with its error after any partial result.
 	finishPartial := func(provider QoderCompatibleTarget, result *forwardcore.MessagesResult, forwardErr error) bool {
 		if forwardErr == nil || result == nil {
 			return false

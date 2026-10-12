@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// AlphaSearchOptions 保存已准备的搜索请求和执行回调。请求含授权信息，仅供执行使用；日志和序列化需要使用脱敏数据。
+// AlphaSearchOptions holds a prepared request and execution callbacks. Redact its authorization data before logging or serialization.
 type AlphaSearchOptions struct {
 	ProviderID        int64
 	Request           *http.Request `json:"-"`
@@ -29,7 +29,7 @@ type AlphaSearchOptions struct {
 
 type AlphaSearch struct{ Options AlphaSearchOptions }
 
-// String 防止技术参数中的令牌或请求被默认日志展开。
+// String formats the provider ID while keeping request credentials out of formatted output.
 func (o AlphaSearchOptions) String() string {
 	return fmt.Sprintf("media AlphaSearch provider=%d", o.ProviderID)
 }

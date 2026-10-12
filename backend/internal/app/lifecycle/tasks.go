@@ -8,8 +8,8 @@ import (
 	"sync"
 )
 
-// Tasks 跟踪异步任务的完成状态，context、并发数和重试策略由调用方管理。
-// 等待期间允许在途任务继续派生子任务；全部完成后才封闭最终停止入口。
+// Tasks tracks asynchronous work; callers own contexts, concurrency limits, and retry policy.
+// Active tasks may spawn children while draining; final shutdown seals admission when the task count reaches zero.
 type Tasks struct {
 	mu       sync.Mutex
 	active   map[string]int
@@ -25,7 +25,8 @@ func NewTasks() *Tasks {
 	return &Tasks{active: make(map[string]int), idle: idle}
 }
 
-// Go 的任务参数需要在调用方提前求值，再传入闭包。
+// Go starts tracked work and returns false after admission closes. Evaluate task inputs before capturing them
+// in fn.
 func (t *Tasks) Go(name string, fn func()) bool {
 	t.mu.Lock()
 	if t.closed {
@@ -61,10 +62,10 @@ func (t *Tasks) complete(name string) {
 	}
 }
 
-// Wait 等待当前消费层派生的任务完成，后续消费层仍可提交异步任务。
+// Wait waits for the current task group to become idle while allowing later consumers to submit work.
 func (t *Tasks) Wait(ctx context.Context) error { return t.wait(ctx, false) }
 
-// Stop 在最后一个生产者完成后调用，最终封闭任务入口。
+// Stop seals admission when all tasks finish. Call it after the last producer completes.
 func (t *Tasks) Stop(ctx context.Context) error { return t.wait(ctx, true) }
 
 func (t *Tasks) wait(ctx context.Context, stop bool) error {

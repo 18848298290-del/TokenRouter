@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// 替身只代替资金预检与上游执行；HTTP、报文、完成捕获和计费均使用生产实现。
+// These probes replace funding preflight and upstream execution; HTTP handling and completion capture use production code.
 type searchFundingProbe struct{ calls int }
 
 type searchTargetProbe struct {

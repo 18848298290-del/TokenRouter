@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput 检查 Messages 流在输出分片后累计 usage。
+// TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput verifies that stopping iteration before all output skips the usage update.
 func TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput(t *testing.T) {
 	state := NewNativeGeminiMessagesStream(NativeGeminiRuntime{})
 	response := map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "hello"}}}}}}

@@ -20,7 +20,7 @@ var (
 	openAIMessageIDPattern  = regexp.MustCompile(`^(msg|message|item|chatcmpl)_[A-Za-z0-9_-]{1,256}$`)
 )
 
-// RemovePreviousResponseIDFromBody 删除请求体中的 previous_response_id，用于会话失配时改用完整 input 重建上下文。
+// RemovePreviousResponseIDFromBody removes previous_response_id so callers can rebuild context from full input.
 func RemovePreviousResponseIDFromBody(body []byte) []byte {
 	if len(body) == 0 {
 		return body
@@ -35,7 +35,7 @@ func RemovePreviousResponseIDFromBody(body []byte) []byte {
 	return newBody
 }
 
-// ClassifyOpenAIPreviousResponseIDKind 按前缀与字符格式区分响应、消息、空值和未知标识。
+// ClassifyOpenAIPreviousResponseIDKind classifies response, message, empty, and unknown IDs by their format.
 func ClassifyOpenAIPreviousResponseIDKind(id string) string {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {
@@ -50,7 +50,7 @@ func ClassifyOpenAIPreviousResponseIDKind(id string) string {
 	return OpenAIPreviousResponseIDKindUnknown
 }
 
-// StatelessResponsesRequest 设置 store=false 并移除 previous_response_id。
+// StatelessResponsesRequest sets store=false and removes previous_response_id when JSON patching succeeds.
 func StatelessResponsesRequest(body []byte) []byte {
 	normalized, err := sjson.SetBytes(body, "store", false)
 	if err != nil {

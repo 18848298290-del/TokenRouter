@@ -239,7 +239,8 @@ func (s *ConfigService) ConfigResolveEnabledVisibleMethodInstance(
 	return ConfigSelectVisibleMethodInstanceByProviderKey(matching, providerKey), nil
 }
 
-// UsesOfficialAlipayVisibleMethod 判断用户可见的支付宝方式是否解析到已启用的官方支付宝实例。
+// UsesOfficialAlipayVisibleMethod reports whether the visible Alipay method resolves to an enabled official
+// Alipay instance.
 func (s *ConfigService) UsesOfficialAlipayVisibleMethod(ctx context.Context) (bool, error) {
 	instance, err := s.ConfigResolveEnabledVisibleMethodInstance(ctx, TypeAlipay)
 	if err != nil {

@@ -22,7 +22,7 @@ const (
 
 var ErrCNMonitorStopped = errors.New("CN usage monitor is stopped")
 
-// CNMonitorStore 只提供监控所需的提供商读取、快照 CAS 和身份条件健康写入。
+// CNMonitorStore supplies monitor reads, snapshot CAS, and identity-conditional health writes.
 type CNMonitorStore interface {
 	GetByID(context.Context, int64) (*Record, error)
 	ListByPlatform(context.Context, string) ([]Record, error)
@@ -49,7 +49,7 @@ type CNMonitorOptions struct {
 	Warn, Debug                          func(string, ...any)
 }
 
-// CNUsageMonitor 拥有周期、身份复核与健康决策；手动 API Key 查询独立于此写入能力。
+// CNUsageMonitor owns periodic polling, identity rechecks, and health decisions.
 type CNUsageMonitor struct {
 	providerRepo                         CNMonitorStore
 	usageService                         CNMonitorQueries
@@ -133,7 +133,7 @@ func (s *CNUsageMonitor) StopContext(ctx context.Context) error {
 	return s.activity.stop(ctx, "CN usage monitor")
 }
 
-// acquireLease 保留竞争失败跳过、Redis 故障回退 DB 以及无后端时执行的原策略。
+// acquireLease skips contention, falls back from Redis errors to the database, and permits execution if neither backend exists.
 func (s *CNUsageMonitor) acquireLease(ctx context.Context) (func(), bool) {
 	return AcquireSingletonLease(ctx, s.options.Leader, s.options.Advisory, cnUsageMonitorLeaderLockKey, s.options.InstanceID, s.roundTimeout+30*time.Second)
 }
@@ -384,7 +384,7 @@ func CNUsageMonitorSnapshotFromExtra(extra map[string]any) *CNUsageMonitorSnapsh
 	return &snapshot
 }
 
-// ValidCNUsageMonitorSnapshot 只返回与提供商当前完整查询身份匹配的快照。
+// ValidCNUsageMonitorSnapshot returns a snapshot only when its query identity matches the current provider.
 func ValidCNUsageMonitorSnapshot(provider *Record) *CNUsageMonitorSnapshot {
 	if provider == nil || !provider.IsCNProvider() {
 		return nil

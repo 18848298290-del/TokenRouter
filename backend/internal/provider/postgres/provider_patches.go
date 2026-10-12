@@ -45,7 +45,7 @@ func (r *ProviderStore) UpdateExtra(ctx context.Context, id int64, updates map[s
 	return r.updateExtra(ctx, id, updates, nil)
 }
 
-// updateExtra 复用原 JSONB 合并及 outbox 原子范围；观测写入只附加行条件。
+// updateExtra merges JSONB keys and writes scheduler-relevant outbox events in the same transaction; version adds observation predicates.
 func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[string]any, version *acctcore.UsageObservationVersion) error {
 	acctcore.DiscardDeprecatedExtra(updates)
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
@@ -53,7 +53,7 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 		return nil
 	}
 
-	// 使用 JSONB 合并在一条语句中更新字段。
+	// Merge keys in SQL so concurrent updates to other Extra fields survive.
 	payload, err := json.Marshal(updates)
 	if err != nil {
 		return err
@@ -121,9 +121,9 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 			r.afterChange(baseCtx, id)
 		}
 	} else {
-		// 观测型 extra 字段不需要触发 bucket 重建，但仍同步单提供商快照，
-		// 让 sticky session / GetProvider 命中缓存时也能读到最新数据，
-		// 同时避免缓存局部 patch 覆盖掉并发写入的其它提供商字段。
+		// Observation fields need a refreshed provider snapshot even when scheduler buckets need no rebuild.
+		// Reload the snapshot so sticky sessions and GetProvider see current observations;
+		// patching cached fields could overwrite concurrent provider changes.
 		if dbent.TxFromContext(ctx) == nil {
 			r.afterChange(ctx, id)
 		}
@@ -131,8 +131,8 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 	return nil
 }
 
-// UpdateCNUsageMonitorSnapshotCAS 仅在提供商 updated_at 仍与探测身份快照一致时写入。
-// 快照会影响调度阈值，因此写入与 scheduler outbox 事件处于同一事务。
+// UpdateCNUsageMonitorSnapshotCAS writes when updated_at still matches the observed provider version.
+// The snapshot affects scheduling thresholds, so its update and outbox event share a transaction.
 func (r *ProviderStore) UpdateCNUsageMonitorSnapshotCAS(
 	ctx context.Context,
 	providerID int64,
@@ -219,7 +219,7 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 		idx++
 	}
 	if updates.ProxyID != nil {
-		// 0 表示清除代理，前端通过这个值提交清除操作。
+		// A proxy ID of zero is the frontend's request to clear the proxy.
 		if *updates.ProxyID == 0 {
 			setClauses = append(setClauses, "proxy_id = NULL")
 			ollamaProxyIdentityChanged = "proxy_id IS NOT NULL"
@@ -265,7 +265,7 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 		args = append(args, *updates.Schedulable)
 		idx++
 	}
-	// 使用 raw SQL 按键合并 JSONB。
+	// Merge credentials and Extra by JSONB key in SQL.
 	credentialPlaceholder := ""
 	if len(updates.Credentials) > 0 {
 		payload, err := json.Marshal(updates.Credentials)
@@ -427,7 +427,7 @@ func codexFingerprintSeedValidSQL(extraExpr string) string {
 	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
 }
 
-// ensureCodexFingerprintSeedSQL 在更新 SQL 中复用已有合法 seed，并发更新后身份保持稳定。
+// ensureCodexFingerprintSeedSQL reuses a valid stored seed during updates so concurrent writes keep the same identity.
 func ensureCodexFingerprintSeedSQL(extraExpr string) string {
 	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
 		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +

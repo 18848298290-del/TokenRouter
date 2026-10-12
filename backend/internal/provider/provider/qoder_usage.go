@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderUsage 绑定提供商会话与技术传输；用量缓存和健康条件写入仍由提供商核心拥有。
+// QoderUsage binds sessions and transport; the provider core owns usage caching and conditional health writes.
 type QoderUsage struct {
 	Sessions  *QoderTokenProvider
 	Transport QoderTransport
@@ -35,7 +35,7 @@ func (s *QoderUsage) Options() providercore.QoderUsageOptions {
 	}
 }
 
-// qoderQuotaProgressFromRaw 将站点用量结果转换为提供商展示数据。
+// qoderQuotaProgressFromRaw converts site quota progress into provider display data.
 func qoderQuotaProgressFromRaw(raw *qoder.QuotaProgress, useCapAsTotal bool) *providercore.QoderQuotaProgress {
 	value := qoder.NormalizeQuotaProgress(raw, useCapAsTotal)
 	if value == nil {
@@ -68,7 +68,7 @@ func (s *QoderUsage) fetchQoderQuotaUsage(ctx context.Context, provider *provide
 		return usage, err
 	}
 
-	// PAT 认证失败时丢弃缓存 session，重新交换后重试一次。
+	// On PAT authentication failure, discard the cached session and retry once after exchanging it again.
 	sessionSource.Invalidate(provider.ID)
 	return s.fetchQoderQuotaUsageWithProvider(ctx, provider, sessionSource)
 }
@@ -110,7 +110,8 @@ func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provi
 	return &usage, nil
 }
 
-// qoderQuotaUsesSignedAuth 对齐 1.24.2 客户端：国际站和 QoderCN20 使用 COSY 签名，国内旧会话使用普通 Bearer。
+// qoderQuotaUsesSignedAuth selects COSY signing for Global, CN PAT, and QoderCN20; legacy CN sessions use Bearer
+// auth.
 func qoderQuotaUsesSignedAuth(provider *providercore.Record, site qoder.Site) bool {
 	if site != qoder.SiteCN {
 		return true
@@ -121,7 +122,7 @@ func qoderQuotaUsesSignedAuth(provider *providercore.Record, site qoder.Site) bo
 	return strings.EqualFold(strings.TrimSpace(provider.GetCredential("refresh_mode")), qoder.RefreshModeQoderCN20)
 }
 
-// isQoderAuthenticationError 只把明确的 401/403 视为可通过 PAT 重建 session 的认证失败。
+// isQoderAuthenticationError accepts only 401 and 403 as reasons to rebuild a PAT session.
 func isQoderAuthenticationError(err error) bool {
 	var apiErr *qoder.APIError
 	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)

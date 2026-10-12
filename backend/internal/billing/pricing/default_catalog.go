@@ -1,13 +1,13 @@
 package pricing
 
-// DefaultPriceValue 描述一个带明确单位的默认价格或倍率；nil 表示不适用。
+// DefaultPriceValue is a default price or multiplier with a unit; nil means not applicable.
 type DefaultPriceValue struct {
 	Key   string   `json:"key"`
 	Value *float64 `json:"value"`
 	Unit  string   `json:"unit"`
 }
 
-// DefaultModelPrice 是管理员查询的模型基础价，分组和用户倍率在报价时另行应用。
+// DefaultModelPrice is the administrator's base-price view; quotes apply group and user multipliers separately.
 type DefaultModelPrice struct {
 	Source                        string                 `json:"source,omitempty"`
 	PriceSources                  map[string]string      `json:"price_sources,omitempty"`
@@ -21,14 +21,14 @@ type DefaultModelPrice struct {
 	LongContextThresholdInclusive bool                   `json:"long_context_threshold_inclusive,omitempty"`
 }
 
-// DefaultPriceInterval 让管理页展示任意数量的绝对上下文阶梯。
+// DefaultPriceInterval represents an absolute context price tier for the administration page.
 type DefaultPriceInterval struct {
 	MinTokens int                 `json:"min_tokens"`
 	MaxTokens *int                `json:"max_tokens"`
 	Prices    []DefaultPriceValue `json:"prices"`
 }
 
-// DefaultBillingMode 从已发布报价确定管理目录的计费分类，缺少媒体价格时可使用 token 价格。
+// DefaultBillingMode classifies published prices, using token pricing when media pricing is unavailable.
 func DefaultBillingMode(model, mode string, raw *CatalogModelPricing) string {
 	if raw != nil && len(raw.VideoPrices) > 0 {
 		return "video"

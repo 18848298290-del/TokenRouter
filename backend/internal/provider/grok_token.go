@@ -33,7 +33,7 @@ type GrokTokenSource struct {
 	Refresh    func(context.Context, *Record, time.Duration) (*OAuthRefreshResult, error)
 }
 
-// GrokStoredAccessToken 按提供商类型读取已存储的访问令牌。
+// GrokStoredAccessToken reads the stored token or API key appropriate to the provider type.
 func GrokStoredAccessToken(value *Record) (string, error) {
 	switch value.Type {
 	case capability.ProviderTypeOAuth:
@@ -172,14 +172,13 @@ func (p *GrokTokenSource) GetAccessToken(ctx context.Context, provider *Record) 
 	return accessToken, nil
 }
 
-// GetAccessTokenForManualTest 为管理员发起的“测试连接”返回访问令牌。它与
-// GetAccessToken 不同，不应用请求路径的调度资格门（手动调度开关、限流、过载或
-// 临时冷却），因为手动测试正是用来检查这些状态中的提供商，与 Codex/OpenAI
-// 测试不受调度状态影响的行为一致（#4598）。
+// GetAccessTokenForManualTest obtains credentials for an administrator's connection test.
+// It skips request scheduling gates such as manual pauses, rate limits, and overload,
+// so administrators can probe providers while diagnosing those states (#4598).
 //
-// 凭据完整性检查仍然生效，包括配置代理缺失、共享刷新锁协议和刷新 API 的提供商重读。
-// 非 active（禁用或错误）提供商的凭据轮换仍由 RefreshIfNeeded 拦截，其尚未过期的
-// 令牌只用于原样探测。
+// Credential checks, configured-proxy validation, refresh locking, and provider rereads still apply.
+// RefreshIfNeeded rejects rotation for inactive providers; a still-valid token can be used
+// to probe them as configured.
 func (p *GrokTokenSource) GetAccessTokenForManualTest(ctx context.Context, provider *Record) (string, error) {
 	if provider == nil {
 		return "", errors.New("provider is nil")
@@ -208,8 +207,8 @@ func (p *GrokTokenSource) GetAccessTokenForManualTest(ctx context.Context, provi
 		return "", ErrGrokOAuthRefreshNotConfigured
 	}
 
-	// 刻意不标记为请求路径刷新：该路径会在 RefreshIfNeeded 内再次应用调度资格，
-	// 而这正是手动测试需要绕过的门禁。
+	// Keep this refresh outside request-path classification so RefreshIfNeeded does not
+	// reapply the scheduling gates that manual tests are intended to bypass.
 	refreshCtx, cancel := context.WithTimeout(ctx, GrokRequestRefreshTimeout)
 	defer cancel()
 	result, err := p.Refresh(refreshCtx, provider, GrokTokenRefreshSkew)
@@ -279,7 +278,7 @@ func (p *GrokTokenSource) WaitForRefreshedToken(ctx context.Context, provider *R
 				changed := token != initialToken || (version > 0 && version > initialVersion)
 				valid := expiresAt != nil && time.Now().Before(*expiresAt)
 				if token != "" && changed && valid {
-					// 数据库凭据版本较新时，使用数据库 token 并尝试更新缓存。
+					// Use the newer valid database token and update a conflicting cached token.
 					if cachedToken != "" && cachedToken != token {
 						ttl := time.Until(*expiresAt)
 						if ttl > GrokTokenCacheSkew {
@@ -303,8 +302,8 @@ func (p *GrokTokenSource) WaitForRefreshedToken(ctx context.Context, provider *R
 				}
 				return "", fmt.Errorf("%w: %v", ErrRefreshProviderRereadFailed, lastProviderReadErr)
 			}
-			// 另一个 worker 仍持有刷新权且权威提供商行未变，不隔离旧凭据；
-			// 对方可能在本次有界等待结束后立即提交刷新结果。
+			// The refresh owner may commit just after this bounded wait ends.
+			// Report changed state so callers avoid isolating credentials still being refreshed.
 			return "", ErrRefreshProviderStateChanged
 		case <-ticker.C:
 		}

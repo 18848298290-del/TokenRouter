@@ -23,7 +23,7 @@ func TestSettingsReadersSharePublishedState(t *testing.T) {
 	searchRuntime := search.NewConfigService(store, nil, nil, search.NewRegistry())
 	readers := provideGatewayRuntimeReaders(store, gatewayRuntime, provider, quota, routing, moderation, searchRuntime, nil)
 	t.Cleanup(func() {
-		// 清除本测试安装的默认 UA 读取器，使同进程的其他测试使用各自的装配。
+		// Remove this test's global User-Agent readers so other tests can install their own bindings.
 		openai.SetCodexCanonicalUserAgentResolver(nil)
 		antigravity.SetUserAgentVersionResolver(nil)
 	})

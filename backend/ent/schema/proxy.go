@@ -67,10 +67,10 @@ func (Proxy) Fields() []ent.Field {
 	}
 }
 
-// Edges 定义代理实体的关联关系。
+// Edges relates proxies to their providers and backup proxies.
 func (Proxy) Edges() []ent.Edge {
 	return []ent.Edge{
-		// providers: 使用此代理的提供商（反向边）
+		// Providers that use this proxy.
 		edge.From("providers", Provider.Type).
 			Ref("proxy"),
 		edge.To("backup_proxy", Proxy.Type).

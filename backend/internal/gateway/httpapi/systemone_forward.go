@@ -27,7 +27,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
-// SystemOneExecutor 组合价格预检、提供商传输和单次 Jev 执行。
+// SystemOneExecutor combines pricing preflight, provider transport, and one Jev attempt.
 type SystemOneExecutor struct {
 	Transport    httpclient.UpstreamTransport
 	URLPolicy    egress.OperatorURLPolicy
@@ -38,7 +38,7 @@ type SystemOneExecutor struct {
 	Enter        func() (func(), error)
 }
 
-// Forward 在当前提供商上执行请求，返回交付失败时已观测到的用量。
+// Forward executes on the current provider and returns observed usage even if client delivery fails.
 func (s *SystemOneExecutor) Forward(ctx context.Context, c *gin.Context, target *gatewayprovider.ExecutionProvider, body []byte) (upstream.AttemptResult, error) {
 	var result upstream.AttemptResult
 	if s == nil || s.Pricing == nil || s.Pricing.Resolver == nil || s.Transport == nil {
@@ -97,7 +97,7 @@ func (s *SystemOneExecutor) Forward(ctx context.Context, c *gin.Context, target 
 		},
 		WriteHeaders: func(out, in http.Header) { egressprovider.WriteFilteredHeaders(out, in, s.HeaderFilter) },
 	}
-	// 配置的别名和复合前缀用于客户端响应，直连请求展示上游返回的版本。
+	// Configured aliases and composite prefixes appear in client responses; direct requests expose the upstream version.
 	responseModel := ""
 	if requested != mapped {
 		responseModel = requested
@@ -112,7 +112,7 @@ func (s *SystemOneExecutor) Forward(ctx context.Context, c *gin.Context, target 
 	}
 	if failure, ok := errors.AsType[*jev.HTTPError](err); ok {
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{Platform: provider.PlatformJev, ProviderID: selected.Record.ID, ProviderName: selected.Record.Name, UpstreamStatusCode: failure.Status, UpstreamRequestID: failure.Header.Get("x-request-id"), Kind: "upstream_error", Message: failure.Error()})
-		// 请求校验错误由上游报文解释，提供商健康不受此类输入影响。
+		// The upstream body explains input validation errors, which do not affect provider health.
 		if failure.Status == http.StatusUnprocessableEntity {
 			s.writeUpstreamError(c, failure)
 			return result, err
@@ -149,14 +149,14 @@ func (s *SystemOneExecutor) Forward(ctx context.Context, c *gin.Context, target 
 	return result, err
 }
 
-// writeUpstreamError 将已读取的 SystemOne 错误及允许的响应头交付客户端。
+// writeUpstreamError delivers a buffered SystemOne error and filtered response headers.
 func (s *SystemOneExecutor) writeUpstreamError(c *gin.Context, failure *jev.HTTPError) {
 	if c.Writer.Written() {
 		return
 	}
 	egressprovider.WriteFilteredHeaders(c.Writer.Header(), failure.Header, s.HeaderFilter)
 	if status, kind, message, matched := ApplyErrorPassthroughRule(c, provider.PlatformJev, failure.Status, failure.Body, failure.Status, "upstream_error", "Upstream request failed"); matched {
-		// 规则生成的正文是未压缩 JSON，响应头需要描述生成后的内容。
+		// A rewritten body is uncompressed JSON, so its headers must describe that representation.
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		c.Writer.Header().Del("Content-Encoding")
 		WriteSystemOneError(c, status, kind, "", "", message)
@@ -169,7 +169,7 @@ func (s *SystemOneExecutor) writeUpstreamError(c *gin.Context, failure *jev.HTTP
 	c.Data(failure.Status, contentType, failure.Body)
 }
 
-// WriteSystemOneFailoverExhausted 按 Jev 平台匹配最终错误规则，保留上游重试时间。
+// WriteSystemOneFailoverExhausted applies Jev error rules and forwards the upstream retry delay.
 func WriteSystemOneFailoverExhausted(c *gin.Context, failure *forward.UpstreamFailoverError) {
 	if c.Writer.Written() {
 		return

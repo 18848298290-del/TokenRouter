@@ -21,7 +21,7 @@ import (
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// 无法监听端口时跳过该用例。
+// Skip when the environment cannot listen on a local port.
 var oauthTestListenerCheck struct {
 	once sync.Once
 	err  error
@@ -216,8 +216,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_FormFields() {
 	require.Equal(s.T(), "rt2", resp.RefreshToken)
 }
 
-// TestRefreshToken_DefaultsToOpenAIClientID 验证未指定 client_id 时默认使用 OpenAI ClientID，
-// 且发送一次请求。
+// TestRefreshToken_DefaultsToOpenAIClientID verifies that an omitted client ID sends one request using ClientID.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	var seenClientIDs []string
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +233,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	resp, err := s.svc.RefreshToken(s.ctx, "rt", "")
 	require.NoError(s.T(), err, "RefreshToken")
 	require.Equal(s.T(), "at", resp.AccessToken)
-	// 只发送了一次请求，使用默认的 OpenAI ClientID
+	// The default client ID requires a single request.
 	require.Equal(s.T(), []string{ClientID}, seenClientIDs)
 }
 
@@ -505,7 +504,7 @@ func newOAuthLocalTestServer(t testing.TB, handler http.Handler) *httptest.Serve
 	return httptest.NewServer(handler)
 }
 
-// TestCreateOpenAIReqClient_Timeout120Seconds 检查 OAuth 客户端超时为 120 秒。
+// TestCreateOpenAIReqClient_Timeout120Seconds checks the 120-second OAuth client timeout.
 func TestCreateOpenAIReqClient_Timeout120Seconds(t *testing.T) {
 	client, err := CreateOAuthReqClient("http://proxy.local:8080")
 	require.NoError(t, err)

@@ -45,14 +45,14 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 }
 
 func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
-	// 默认（ModelFuzzy=false）保持精确匹配
+	// ModelFuzzy defaults to exact matching.
 	exact := &ops.OpsErrorLogFilter{Model: "claude"}
 	whereExact, _ := buildOpsErrorLogsWhere(exact)
 	if !strings.Contains(whereExact, "COALESCE(e.requested_model, e.model, '') = $") {
 		t.Fatalf("default should be exact match, got: %s", whereExact)
 	}
 
-	// ModelFuzzy=true 使用 ILIKE 匹配。
+	// ModelFuzzy enables ILIKE matching.
 	fuzzy := &ops.OpsErrorLogFilter{Model: "claude", ModelFuzzy: true}
 	whereFuzzy, args := buildOpsErrorLogsWhere(fuzzy)
 	if !strings.Contains(whereFuzzy, "COALESCE(e.requested_model, e.model, '') ILIKE $") {
@@ -62,7 +62,7 @@ func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 		t.Fatalf("expected arg \"%%claude%%\", got %v", args)
 	}
 
-	// 通配符转义：输入含 % 应被转义为字面量
+	// Percent signs in user input match literal characters.
 	esc := &ops.OpsErrorLogFilter{Model: "50%off", ModelFuzzy: true}
 	_, escArgs := buildOpsErrorLogsWhere(esc)
 	if len(escArgs) != 1 || escArgs[0] != `%50\%off%` {
@@ -76,9 +76,9 @@ func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 	}
 }
 
-// TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption 检查状态码为 200 的流式 cyber_policy 拒绝记录也能出现在管理端和用户端列表中。
+// TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption keeps streamed policy rejections with status 200 visible.
 func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
-	// 默认过滤允许 cyber_policy 记录通过，对其他错误检查状态码。
+	// The default filter exempts cyber_policy and checks other errors by status.
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{})
 	if !strings.Contains(where, "e.error_type = 'cyber_policy'") {
 		t.Fatalf("default filter must exempt cyber_policy from status >= 400 guard\nfull: %s", where)
@@ -87,7 +87,7 @@ func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 		t.Fatalf("default filter must still include the status >= 400 guard for non-cyber rows\nfull: %s", where)
 	}
 
-	// 未允许 recovered upstream 时，phase=upstream 按状态码过滤。
+	// Upstream queries retain the status guard unless recovered attempts are enabled.
 	whereUpstream, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{Phase: "upstream"})
 	if !strings.Contains(whereUpstream, "COALESCE(e.status_code, 0) >= 400") {
 		t.Fatalf("upstream phase without IncludeRecoveredUpstream must keep the status guard\nfull: %s", whereUpstream)
@@ -96,13 +96,13 @@ func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 		t.Fatalf("upstream phase filter must emit the error_phase condition\nfull: %s", whereUpstream)
 	}
 
-	// Ops 上游列表允许 recovered upstream 后跳过状态码过滤。
+	// Provider health queries can opt into recovered upstream attempts.
 	whereRecovered, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{Phase: "upstream", IncludeRecoveredUpstream: true})
 	if strings.Contains(whereRecovered, "COALESCE(e.status_code, 0) >= 400") {
 		t.Fatalf("upstream phase with IncludeRecoveredUpstream must not add the client-visible status guard\nfull: %s", whereRecovered)
 	}
 
-	// provider_auth 使用提供方健康开关，在单独的凭据阶段返回。
+	// Credential failures use the provider health option and their own phase.
 	whereProviderAuth, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{Phase: "provider_auth", IncludeRecoveredUpstream: true})
 	if strings.Contains(whereProviderAuth, "COALESCE(e.status_code, 0) >= 400") {
 		t.Fatalf("provider_auth phase with IncludeRecoveredUpstream must expose recovered rows\nfull: %s", whereProviderAuth)
@@ -151,7 +151,7 @@ func TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly(t *testing.T) {
 	}
 }
 
-// TestProviderAuthFilterIncludesLegacyRows 检查凭据阶段筛选是否包含数据库中的历史阶段值。
+// TestProviderAuthFilterIncludesLegacyRows checks compatibility with stored legacy phase names.
 func TestProviderAuthFilterIncludesLegacyRows(t *testing.T) {
 	where, args := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{Phase: "provider_auth"})
 	if !strings.Contains(where, " OR e.error_phase = $") {

@@ -10,7 +10,7 @@ func ParseOpsUpstreamErrors(raw string) ([]*OpsUpstreamErrorEvent, error) {
 	if raw == "" {
 		return []*OpsUpstreamErrorEvent{}, nil
 	}
-	// 读取历史日志时归一化实体字段，同时存在新旧字段时优先使用新字段。
+	// Normalize legacy event fields on read, preferring current fields when both exist.
 	var records []map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &records); err != nil {
 		return nil, err

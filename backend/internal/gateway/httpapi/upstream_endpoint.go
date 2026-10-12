@@ -13,14 +13,14 @@ import (
 
 const openAIUpstreamEndpointContextKey = "openai_actual_upstream_endpoint"
 
-// resolveOpenAITextProtocolForAttempt 解析当前提供商的文本协议，并在转发前写入当前尝试的端点元数据。
+// resolveOpenAITextProtocolForAttempt resolves the provider protocol and records this attempt's endpoint before forwarding.
 func resolveOpenAITextProtocolForAttempt(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
 	preferred providercore.TextProtocol,
 ) providercore.TextProtocol {
-	// OAuth 等专用提供商始终保留既有 Responses 桥；只有 API Key 提供商参与
-	// “客户端首选协议 + 路由模式 + 探测状态”的普通文本协议解析。
+	// API key providers resolve the preferred protocol through configured route mode.
+	// Other provider types default to Responses; a resolved Chat route overrides that default below.
 	protocol := providercore.TextProtocolResponses
 	if provider != nil && provider.Record.Type == capability.ProviderTypeAPIKey {
 		protocol = providercore.ResolveUpstreamTextProtocol(provider.Record.Extra, preferred)
@@ -40,8 +40,8 @@ func resolveOpenAITextProtocolForAttempt(
 	return protocol
 }
 
-// SetActualOpenAIUpstreamEndpoint 记录当前转发尝试选择的端点，供无法取得
-// OpenAIForwardResult 的错误路径记录用量和运维日志。
+// SetActualOpenAIUpstreamEndpoint records the selected endpoint for error paths
+// that have no forwarding result for usage or Ops logging.
 func SetActualOpenAIUpstreamEndpoint(c *gin.Context, endpoint string) {
 	if c == nil {
 		return
@@ -51,8 +51,8 @@ func SetActualOpenAIUpstreamEndpoint(c *gin.Context, endpoint string) {
 	}
 }
 
-// ClearActualOpenAIUpstreamEndpoint 清除当前转发尝试记录的端点。
-// Gin context 在提供商尝试间复用，每次转发前清理上一次的端点。
+// ClearActualOpenAIUpstreamEndpoint clears the recorded attempt endpoint.
+// Gin context is reused between attempts, so clear the previous endpoint before forwarding.
 func ClearActualOpenAIUpstreamEndpoint(c *gin.Context) {
 	if c == nil {
 		return
@@ -60,7 +60,7 @@ func ClearActualOpenAIUpstreamEndpoint(c *gin.Context) {
 	c.Set(openAIUpstreamEndpointContextKey, "")
 }
 
-// GetActualOpenAIUpstreamEndpoint 返回该请求最近一次转发尝试记录的端点。
+// GetActualOpenAIUpstreamEndpoint returns the most recently recorded attempt endpoint.
 func GetActualOpenAIUpstreamEndpoint(c *gin.Context) string {
 	if c == nil {
 		return ""

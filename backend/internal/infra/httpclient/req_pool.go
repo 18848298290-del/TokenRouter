@@ -13,24 +13,24 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
-// sharedReqClients 存储按配置参数缓存的 req 客户端实例
+// sharedReqClients caches req clients by construction options.
 //
-// sync.Map 缓存客户端：
-// 1. 相同配置（代理+超时+模拟设置）复用同一客户端
-// 2. 复用底层连接池，减少 TLS 握手开销
-// 3. LoadOrStore 保证并发安全，避免重复创建。
+// Clients share their underlying connection pools.
+// The key includes proxy, timeout, impersonation, and HTTP/2 settings.
+// Concurrent misses may construct multiple candidates.
+// LoadOrStore selects the shared instance returned to callers.
 var sharedReqClients sync.Map
 
-// ReqClientOptions 定义 req 客户端的构建参数。
+// ReqClientOptions configures shared req client construction.
 type ReqClientOptions struct {
-	ProxyURL    string        // 代理 URL（支持 http/https/socks5）
-	Timeout     time.Duration // 请求超时时间
-	Impersonate bool          // 是否模拟 Chrome 浏览器指纹
-	ForceHTTP2  bool          // 是否强制使用 HTTP/2
+	ProxyURL    string        // HTTP, HTTPS, SOCKS5, or SOCKS5H proxy URL
+	Timeout     time.Duration // Overall request timeout
+	Impersonate bool          // Use req's Chrome fingerprint
+	ForceHTTP2  bool          // Force HTTP/2
 }
 
-// GetSharedReqClient 获取共享的 req 客户端实例
-// 性能优化：相同配置复用同一客户端，避免重复创建。
+// GetSharedReqClient returns the shared req client for these options.
+// Callers must not mutate its configuration.
 func GetSharedReqClient(opts ReqClientOptions) (*req.Client, error) {
 	key := buildReqClientKey(opts)
 	if cached, ok := sharedReqClients.Load(key); ok {

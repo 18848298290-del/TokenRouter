@@ -30,7 +30,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
-// TestSystemOneErrorRepresentation 检查改写后的 JSON 头和未改写报文的透传头。
+// TestSystemOneErrorRepresentation checks headers for rewritten JSON and unchanged upstream bodies.
 func TestSystemOneErrorRepresentation(t *testing.T) {
 	for _, contentType := range []string{"text/plain; charset=utf-8", "text/html; charset=utf-8", "application/problem+json", "application/json"} {
 		for _, encoded := range []bool{false, true} {
@@ -77,7 +77,7 @@ func TestSystemOneErrorRepresentation(t *testing.T) {
 	}
 }
 
-// TestSystemOneTerminalErrorRules 检查终止请求的错误使用 Jev 或全平台规则。
+// TestSystemOneTerminalErrorRules checks that terminal errors match Jev or all-platform rules.
 func TestSystemOneTerminalErrorRules(t *testing.T) {
 	for _, sourceStatus := range []int{400, 422} {
 		for _, platform := range []string{"jev", "openai", ""} {
@@ -117,7 +117,7 @@ func TestSystemOneTerminalErrorRules(t *testing.T) {
 	}
 }
 
-// TestSystemOnePoolErrorPolicy 检查池重试资格、Retry-After 和自定义错误码优先级。
+// TestSystemOnePoolErrorPolicy checks pool retry eligibility, Retry-After, and custom error-code precedence.
 func TestSystemOnePoolErrorPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -171,7 +171,8 @@ func TestSystemOnePoolErrorPolicy(t *testing.T) {
 	}
 }
 
-// TestSystemOneForwardResponseModel 检查复合前缀、各级别名和上游版本名分别用于响应与观测。
+// TestSystemOneForwardResponseModel checks aliases and composite prefixes in responses while observing upstream
+// model versions.
 func TestSystemOneForwardResponseModel(t *testing.T) {
 	for _, tc := range []struct {
 		name, requested, groupMapped, composite, keyAlias, want string
@@ -227,7 +228,8 @@ func TestSystemOneForwardResponseModel(t *testing.T) {
 	}
 }
 
-// TestSystemOneForwardPricingAndMapping 检查三种计费来源、零价放行和原始模型观测。
+// TestSystemOneForwardPricingAndMapping checks all billing model sources, zero-price admission, and upstream model
+// observation.
 func TestSystemOneForwardPricingAndMapping(t *testing.T) {
 	for _, source := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		for _, priced := range []bool{false, true} {
@@ -301,7 +303,7 @@ func TestSystemOneForwardFailurePolicy(t *testing.T) {
 	}
 }
 
-// TestSystemOneRequiresPricing 检查装配缺价组件时在发送请求前失败。
+// TestSystemOneRequiresPricing checks that missing pricing dependencies fail before forwarding.
 func TestSystemOneRequiresPricing(t *testing.T) {
 	transport := &auxiliaryHTTPRecorder{}
 	for _, pricing := range []*admission.ModelPricing{nil, {}} {

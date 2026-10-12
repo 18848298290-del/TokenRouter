@@ -18,14 +18,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// TestResolveGrokStreamIdleTimeout 验证 Grok 流空闲超时的选择规则。
 func TestResolveGrokStreamIdleTimeout(t *testing.T) {
 	require.Equal(t, 90*time.Second, ResolveStreamIdleTimeout(90))
 	require.Equal(t, DefaultStreamIdleTimeout, ResolveStreamIdleTimeout(0))
 	require.Equal(t, DefaultStreamIdleTimeout, ResolveStreamIdleTimeout(-1))
 }
 
-// TestGrokResponsesExecuteReplayAndResourceOwnership 验证本地 HTTP 验证原生恢复只重放一次，关闭前一响应后才读取后一响应。
+// Decryption recovery retries once and closes the first response before reading the second.
 func TestGrokResponsesExecuteReplayAndResourceOwnership(t *testing.T) {
 	var calls, closes, active atomic.Int64
 	var replay atomic.Bool
@@ -94,11 +93,11 @@ func TestGrokResponsesExecuteReplayAndResourceOwnership(t *testing.T) {
 	require.Equal(t, "fixture-id", result.RequestID)
 	require.Equal(t, 7, result.Usage.InputTokens)
 	require.True(t, result.HasUsage)
-	// 仅响应 ID 不证明实际语义输出。
+	// A response ID alone does not establish semantic output.
 	require.False(t, result.Served)
 }
 
-// TestGrokResponsesExecutePreservesPartialObservation 验证新接口保留与读取错误并存的事实；不把错误变成成功，不按 ID 推断已服务。
+// Partial observations survive read errors; a response ID alone must not mark the attempt served.
 func TestGrokResponsesExecutePreservesPartialObservation(t *testing.T) {
 	failure := errors.New("fixture read failure")
 	elapsed := 3 * time.Millisecond

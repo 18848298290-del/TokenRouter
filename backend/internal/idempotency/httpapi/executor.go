@@ -6,8 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/idempotency"
 )
 
-// Executor 持有应用注入的协调器，零值保留独立 HTTP 夹具的无协调器行为。
-// 绑定只在提供请求前执行，运行时不替换其他处理器的依赖。
+// Executor holds the injected coordinator. Its zero value executes callbacks directly for HTTP fixtures.
+// Call BindIdempotency before serving requests; binding is not synchronized with execution.
 type Executor struct {
 	coordinator *idempotency.IdempotencyCoordinator
 }

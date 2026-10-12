@@ -4,8 +4,8 @@ import (
 	"time"
 )
 
-// TLSFingerprintProfile TLS 指纹配置模板
-// 包含完整的 ClientHello 参数，用于模拟特定客户端的 TLS 握手特征。
+// TLSFingerprintProfile configures TLS ClientHello parameters
+// used to reproduce a client's handshake fingerprint.
 type TLSFingerprintProfile struct {
 	ID                  int64     `json:"id"`
 	Name                string    `json:"name"`
@@ -24,7 +24,7 @@ type TLSFingerprintProfile struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
-// Validate 验证模板配置的有效性。
+// Validate requires a nonempty profile name.
 func (p *TLSFingerprintProfile) Validate() error {
 	if p.Name == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}

@@ -1,7 +1,7 @@
 package schema
 
-// 身份基础场景覆盖 auth_identity.go、auth_identity_channel.go、pending_auth_session.go、
-// identity_adoption_decision.go 和 user.go 的字段、唯一索引与注册来源验证器。
+// Identity foundation scenarios cover fields, unique indexes, and signup-source validation in
+// auth_identity.go, auth_identity_channel.go, pending_auth_session.go, identity_adoption_decision.go, and user.go.
 
 import (
 	"testing"
@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAuthIdentityFoundationSchemas 检查登录身份实体的字段、索引及用户注册来源。
+// TestAuthIdentityFoundationSchemas checks login identity fields, indexes, and user signup sources.
 func TestAuthIdentityFoundationSchemas(t *testing.T) {
 	spec, err := (&load.Config{Path: "."}).Load()
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 	require.Error(t, validator("twitter"))
 }
 
-// requireSchema 按实体名查找 Ent 加载结果。
+// requireSchema finds a loaded Ent schema by entity name.
 func requireSchema(t *testing.T, schemas map[string]*load.Schema, name string) *load.Schema {
 	t.Helper()
 
@@ -102,7 +102,7 @@ func requireSchema(t *testing.T, schemas map[string]*load.Schema, name string) *
 	return schema
 }
 
-// requireSchemaFields 检查实体包含指定字段。
+// requireSchemaFields checks that the entity contains the named fields.
 func requireSchemaFields(t *testing.T, schema *load.Schema, names ...string) {
 	t.Helper()
 
@@ -117,7 +117,7 @@ func requireSchemaFields(t *testing.T, schema *load.Schema, names ...string) {
 	}
 }
 
-// requireSchemaField 返回指定字段的加载描述。
+// requireSchemaField returns the loaded descriptor for a field.
 func requireSchemaField(t *testing.T, schema *load.Schema, name string) *load.Field {
 	t.Helper()
 
@@ -131,7 +131,7 @@ func requireSchemaField(t *testing.T, schema *load.Schema, name string) *load.Fi
 	return nil
 }
 
-// requireStringFieldValidator 返回字符串字段的首个验证器。
+// requireStringFieldValidator returns the first validator of a string field.
 func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) func(string) error {
 	t.Helper()
 
@@ -150,7 +150,7 @@ func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) 
 	return nil
 }
 
-// requireHasUniqueIndex 检查实体包含按指定字段顺序定义的唯一索引。
+// requireHasUniqueIndex checks for a unique index with the given field order.
 func requireHasUniqueIndex(t *testing.T, schema *load.Schema, fields ...string) {
 	t.Helper()
 

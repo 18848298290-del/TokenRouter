@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// deprecatedOpenAILongContextBillingExtraKey 是历史 OpenAI 长上下文计费开关键。
+// deprecatedOpenAILongContextBillingExtraKey identifies the retired OpenAI long-context billing toggle.
 const deprecatedOpenAILongContextBillingExtraKey = "openai_long_context_billing_enabled"
 
 func TestUpdateCNUsageMonitorSnapshotCASWritesSnapshotAndOutboxAtomically(t *testing.T) {

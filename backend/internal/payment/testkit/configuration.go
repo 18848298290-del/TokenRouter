@@ -12,7 +12,7 @@ import (
 	paymentadapter "github.com/TokenFlux/TokenRouter/internal/payment/provider"
 )
 
-// Configuration 仅组装原生配置用例，保持测试的环境读取及渠道验证行为。
+// Configuration builds payment configuration with process environment lookup and provider validation.
 func Configuration(client *dbent.Client, settings payment.ConfigurationSettings, key []byte) *payment.ConfigService {
 	var store payment.ConfigurationStore
 	if client != nil {

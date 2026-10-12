@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExplicitGrokIDsRemainUnchanged 验证文本、媒体和供应商限定名均保留原值。
+// Explicit text, media, and vendor-qualified IDs bypass default model selection.
 func TestExplicitGrokIDsRemainUnchanged(t *testing.T) {
 	for _, model := range []string{"grok", "grok-latest", "grok-4.6-latest", "grok-build-latest", "grok-4.20-multi-agent", "xai/grok-4.6", "grok-imagine-video-1.5-preview"} {
 		require.Equal(t, model, NormalizeModelID(model))

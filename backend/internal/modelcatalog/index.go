@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Index 固定一个已完成补充合并的目录。查询只复制选中的条目。
+// Index fixes a supplemented catalog version. Queries copy only the selected entries.
 type Index struct{ data *attributeIndex }
 
 type attributeIndex struct {
@@ -15,7 +15,7 @@ type attributeIndex struct {
 	names, providers, search []string
 }
 
-// AttributeQuery 的 Offset 从零开始，Limit 为零时返回全部匹配项。
+// AttributeQuery uses a zero-based Offset. A zero Limit returns all remaining matches.
 type AttributeQuery struct {
 	Search, Provider, Capability string
 	Offset, Limit                int

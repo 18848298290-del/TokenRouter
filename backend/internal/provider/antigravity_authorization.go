@@ -37,14 +37,14 @@ type AntigravityAuthorization struct {
 	activity operationActivity
 }
 
-// AntigravityAuthURLResult is the result of generating an authorization URL.
+// AntigravityAuthURLResult contains an authorization URL and its session identifiers.
 type AntigravityAuthURLResult struct {
 	AuthURL   string `json:"auth_url"`
 	SessionID string `json:"session_id"`
 	State     string `json:"state"`
 }
 
-// AntigravityExchangeCodeInput 交换 code 的输入。
+// AntigravityExchangeCodeInput supplies an authorization code and session proof for token exchange.
 type AntigravityExchangeCodeInput struct {
 	SessionID string
 	State     string
@@ -52,7 +52,7 @@ type AntigravityExchangeCodeInput struct {
 	ProxyID   *int64
 }
 
-// AntigravityTokenInfo token 信息。
+// AntigravityTokenInfo contains tokens, expiry, and discovered account metadata.
 type AntigravityTokenInfo struct {
 	AccessToken      string `json:"access_token"`
 	RefreshToken     string `json:"refresh_token"`
@@ -66,8 +66,8 @@ type AntigravityTokenInfo struct {
 	PrivacyMode      string `json:"-"`
 }
 
-// loadCodeAssistResult 封装 loadProjectIDWithRetry 的返回结果，
-// 同时携带从 LoadCodeAssist 响应中提取的 plan_type 信息。
+// loadCodeAssistResult contains the project ID and subscription metadata
+// returned by loadProjectIDWithRetry.
 type loadCodeAssistResult struct {
 	ProjectID    string
 	Subscription *AntigravitySubscriptionResult
@@ -82,7 +82,7 @@ func (s *AntigravityAuthorization) StopContext(ctx context.Context) error {
 	return s.activity.stop(ctx, "antigravity authorization")
 }
 
-// generateAuthURL 生成 Google OAuth 授权链接。
+// generateAuthURL creates a Google OAuth authorization URL and stores its PKCE session.
 func (s *AntigravityAuthorization) generateAuthURL(ctx context.Context, proxyID *int64) (*AntigravityAuthURLResult, error) {
 	state, err := s.Options.GenerateState()
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *AntigravityAuthorization) generateAuthURL(ctx context.Context, proxyID 
 	}, nil
 }
 
-// exchangeCode 用 authorization code 交换 token。
+// exchangeCode exchanges an authorization code after validating the stored session state.
 func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *AntigravityExchangeCodeInput) (*AntigravityTokenInfo, error) {
 	session, ok := s.Store.Get(input.SessionID)
 	if !ok {
@@ -135,7 +135,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 		return nil, fmt.Errorf("state 无效")
 	}
 
-	// 确定代理 URL
+	// A resolved request proxy overrides the proxy saved in the session.
 	proxyURL := session.ProxyURL
 	if input.ProxyID != nil {
 		if proxy, ok := s.Options.ResolveProxy(ctx, *input.ProxyID); ok {
@@ -148,16 +148,16 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 		return nil, fmt.Errorf("create antigravity client failed: %w", err)
 	}
 
-	// 交换 token
+	// Exchange using the session's PKCE verifier.
 	tokenResp, err := client.ExchangeCode(ctx, input.Code, session.CodeVerifier)
 	if err != nil {
 		return nil, fmt.Errorf("token 交换失败: %w", err)
 	}
 
-	// 删除 session
+	// Consume the session after a successful exchange.
 	s.Store.Delete(input.SessionID)
 
-	// 计算过期时间（减去 5 分钟安全窗口）
+	// Reserve a five-minute safety margin before token expiry.
 	expiresAt := time.Now().Unix() + tokenResp.ExpiresIn - 300
 
 	result := &AntigravityTokenInfo{
@@ -168,7 +168,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 		TokenType:    tokenResp.TokenType,
 	}
 
-	// 获取用户信息
+	// Failure to fetch the email does not invalidate the exchanged token.
 	userInfo, err := client.GetUserInfo(ctx, tokenResp.AccessToken)
 	if err != nil {
 		s.Options.Printf("[AntigravityOAuth] 警告: 获取用户信息失败: %v\n", err)
@@ -176,7 +176,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 		result.Email = userInfo.Email
 	}
 
-	// 获取 project_id + plan_type（部分提供商类型可能没有），失败时重试
+	// Retry project and subscription discovery; some account types may omit a project.
 	loadResult, loadErr := s.loadProjectIDWithRetry(ctx, tokenResp.AccessToken, proxyURL, 3)
 	if loadErr != nil {
 		s.Options.Printf("[AntigravityOAuth] 警告: 获取 project_id 失败（重试后）: %v\n", loadErr)
@@ -189,13 +189,13 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 		}
 	}
 
-	// 取得 token 后立即设置隐私。
+	// Apply privacy settings with the newly exchanged token.
 	result.PrivacyMode = s.SetPrivacy(ctx, result.AccessToken, result.ProjectID, proxyURL)
 
 	return result, nil
 }
 
-// refreshToken 刷新 token。
+// refreshToken refreshes tokens with bounded retries.
 func (s *AntigravityAuthorization) refreshToken(ctx context.Context, refreshToken, proxyURL string) (*AntigravityTokenInfo, error) {
 	var lastErr error
 
@@ -227,7 +227,7 @@ func (s *AntigravityAuthorization) refreshToken(ctx context.Context, refreshToke
 		if IsNonRetryableAntigravityOAuthError(err) {
 			return nil, err
 		}
-		// 代理连接错误（TCP 超时、连接拒绝、DNS 失败）不重试，立即返回
+		// Return connection failures immediately, including TCP timeouts, refused connections, and DNS errors.
 		if s.Options.IsConnectionError(err) {
 			return nil, fmt.Errorf("proxy unavailable: %w", err)
 		}
@@ -237,7 +237,7 @@ func (s *AntigravityAuthorization) refreshToken(ctx context.Context, refreshToke
 	return nil, fmt.Errorf("token 刷新失败 (重试后): %w", lastErr)
 }
 
-// validateRefreshToken 用 refresh token 验证并获取完整的 token 信息（含 email 和 project_id）。
+// validateRefreshToken refreshes a token and discovers its email and project metadata.
 func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, refreshToken string, proxyID *int64) (*AntigravityTokenInfo, error) {
 	var proxyURL string
 	if proxyID != nil {
@@ -246,13 +246,13 @@ func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, ref
 		}
 	}
 
-	// 刷新 token
+	// Refresh before using the token for account discovery.
 	tokenInfo, err := s.refreshToken(ctx, refreshToken, proxyURL)
 	if err != nil {
 		return nil, err
 	}
 
-	// 获取用户信息（email）
+	// Email discovery is best effort.
 	client, err := s.Options.NewClient(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("create antigravity client failed: %w", err)
@@ -264,7 +264,7 @@ func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, ref
 		tokenInfo.Email = userInfo.Email
 	}
 
-	// 获取 project_id + plan_type（容错，失败不阻塞）
+	// Project and subscription discovery failures do not discard the refreshed token.
 	loadResult, loadErr := s.loadProjectIDWithRetry(ctx, tokenInfo.AccessToken, proxyURL, 3)
 	if loadErr != nil {
 		s.Options.Printf("[AntigravityOAuth] 警告: 获取 project_id 失败（重试后）: %v\n", loadErr)
@@ -277,7 +277,7 @@ func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, ref
 		}
 	}
 
-	// 令牌刚获取，立即设置隐私
+	// Apply privacy settings with the refreshed token.
 	tokenInfo.PrivacyMode = s.SetPrivacy(ctx, tokenInfo.AccessToken, tokenInfo.ProjectID, proxyURL)
 
 	return tokenInfo, nil
@@ -299,7 +299,7 @@ func IsNonRetryableAntigravityOAuthError(err error) bool {
 	return false
 }
 
-// refreshProviderToken 刷新提供商的 token。
+// refreshProviderToken refreshes an Antigravity OAuth provider and its project metadata.
 func (s *AntigravityAuthorization) refreshProviderToken(ctx context.Context, provider *Record) (*AntigravityTokenInfo, error) {
 	if provider.Platform != PlatformAntigravity || provider.Type != ProviderTypeOAuth {
 		return nil, fmt.Errorf("非 Antigravity OAuth 提供商")
@@ -322,13 +322,13 @@ func (s *AntigravityAuthorization) refreshProviderToken(ctx context.Context, pro
 		return nil, err
 	}
 
-	// 保持已有的 email。
+	// Retain an existing email during refresh.
 	existingEmail := strings.TrimSpace(provider.GetCredential("email"))
 	if existingEmail != "" {
 		tokenInfo.Email = existingEmail
 	}
 
-	// 每次刷新都调用 LoadCodeAssist 获取 project_id + plan_type，失败时重试
+	// Refresh project and subscription metadata through LoadCodeAssist, with retries.
 	existingProjectID := strings.TrimSpace(provider.GetCredential("project_id"))
 	loadResult, loadErr := s.loadProjectIDWithRetry(ctx, tokenInfo.AccessToken, proxyURL, 3)
 
@@ -350,7 +350,7 @@ func (s *AntigravityAuthorization) refreshProviderToken(ctx context.Context, pro
 	return tokenInfo, nil
 }
 
-// loadProjectIDWithRetry 带重试机制获取 project_id，同时从响应中提取 plan_type。
+// loadProjectIDWithRetry retries project discovery and also returns subscription metadata.
 func (s *AntigravityAuthorization) loadProjectIDWithRetry(ctx context.Context, accessToken, proxyURL string, maxRetries int) (*loadCodeAssistResult, error) {
 	var lastErr error
 	var lastSubscription *AntigravitySubscriptionResult
@@ -453,7 +453,7 @@ func ResolveAntigravityDefaultTierID(loadRaw map[string]any) string {
 	return ""
 }
 
-// fillProjectID 仅获取 project_id，不刷新 OAuth token。
+// fillProjectID discovers a project using the supplied access token without refreshing it.
 func (s *AntigravityAuthorization) fillProjectID(ctx context.Context, provider *Record, accessToken string) (string, error) {
 	var proxyURL string
 	if provider.ProxyID != nil {
@@ -468,7 +468,7 @@ func (s *AntigravityAuthorization) fillProjectID(ctx context.Context, provider *
 	return "", err
 }
 
-// BuildProviderCredentials 构建提供商凭证。
+// BuildProviderCredentials converts token information to stored credential fields.
 func (s *AntigravityAuthorization) BuildProviderCredentials(tokenInfo *AntigravityTokenInfo) map[string]any {
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,

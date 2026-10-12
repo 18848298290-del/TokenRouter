@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupForceOpenAIFastMigration 锁定组级 Fast 开关的字段类型、默认值和用途说明。
+// TestGroupForceOpenAIFastMigration checks the group Fast switch's type, default, and column description.
 func TestGroupForceOpenAIFastMigration(t *testing.T) {
 	content, err := FS.ReadFile("262_group_force_openai_fast.sql")
 	require.NoError(t, err)

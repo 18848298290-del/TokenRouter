@@ -12,14 +12,14 @@ import (
 
 var ErrUsageLogNotFound = infraerrors.NotFound("USAGE_LOG_NOT_FOUND", "usage log not found")
 
-// UsageService 使用统计服务。
+// UsageService reads usage logs, summaries, and rankings.
 type UsageService struct {
 	statsQueryCache *querycache.Cache
 	usageRepo       UsageLogRepository
 	readers         QueryReaders
 }
 
-// NewUsageService 创建使用统计服务实例。
+// NewUsageService creates a usage reader with a 30-second statistics cache.
 func NewUsageService(usageRepo UsageLogRepository, optional ...QueryReaders) *UsageService {
 	readers := queryReaders(usageRepo)
 	if len(optional) > 0 {
@@ -32,7 +32,7 @@ func NewUsageService(usageRepo UsageLogRepository, optional ...QueryReaders) *Us
 	}
 }
 
-// GetByID 根据 ID 获取使用日志。
+// GetByID returns the usage log with the given ID.
 func (s *UsageService) GetByID(ctx context.Context, id int64) (*UsageLog, error) {
 	log, err := s.usageRepo.GetByID(ctx, id)
 	if err != nil {
@@ -41,7 +41,7 @@ func (s *UsageService) GetByID(ctx context.Context, id int64) (*UsageLog, error)
 	return log, nil
 }
 
-// ListByUser 获取用户的使用日志列表。
+// ListByUser lists a user's usage logs.
 func (s *UsageService) ListByUser(ctx context.Context, userID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error) {
 	logs, pagination, err := s.usageRepo.ListByUser(ctx, userID, params)
 	if err != nil {
@@ -50,7 +50,7 @@ func (s *UsageService) ListByUser(ctx context.Context, userID int64, params pagi
 	return logs, pagination, nil
 }
 
-// ListByAPIKey 获取 API Key 的使用日志列表。
+// ListByAPIKey lists an API key's usage logs.
 func (s *UsageService) ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error) {
 	logs, pagination, err := s.usageRepo.ListByAPIKey(ctx, apiKeyID, params)
 	if err != nil {
@@ -59,7 +59,7 @@ func (s *UsageService) ListByAPIKey(ctx context.Context, apiKeyID int64, params 
 	return logs, pagination, nil
 }
 
-// ListByProvider 获取提供商的使用日志列表。
+// ListByProvider lists a provider's usage logs.
 func (s *UsageService) ListByProvider(ctx context.Context, providerID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error) {
 	logs, pagination, err := s.usageRepo.ListByProvider(ctx, providerID, params)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *UsageService) ListByProvider(ctx context.Context, providerID int64, par
 	return logs, pagination, nil
 }
 
-// GetUsageRanking 获取指定时间范围内按配置指标排序的用户用量排行。
+// GetUsageRanking ranks users by the selected metric within the time range.
 func (s *UsageService) GetUsageRanking(ctx context.Context, startTime, endTime time.Time, limit int, sortBy UsageRankingSortBy) (*UsageRankingResponse, error) {
 	ranking, err := s.usageRepo.GetUsageRanking(ctx, startTime, endTime, limit, sortBy)
 	if err != nil {
@@ -77,7 +77,7 @@ func (s *UsageService) GetUsageRanking(ctx context.Context, startTime, endTime t
 	return ranking, nil
 }
 
-// Delete 删除使用日志（管理员功能，谨慎使用）。
+// Delete removes a usage log. Callers must authorize this administrator operation.
 func (s *UsageService) Delete(ctx context.Context, id int64) error {
 	if err := s.usageRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete usage log: %w", err)
@@ -85,7 +85,7 @@ func (s *UsageService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetUserDashboardStats 获取单个用户的仪表盘汇总统计。
+// GetUserDashboardStats returns dashboard totals for a user.
 func (s *UsageService) GetUserDashboardStats(ctx context.Context, userID int64) (*UserDashboardStats, error) {
 	stats, err := s.usageRepo.GetUserDashboardStats(ctx, userID)
 	if err != nil {
@@ -94,7 +94,7 @@ func (s *UsageService) GetUserDashboardStats(ctx context.Context, userID int64) 
 	return stats, nil
 }
 
-// GetAPIKeyDashboardStats 获取指定 API Key 的仪表盘汇总统计。
+// GetAPIKeyDashboardStats returns dashboard totals for an API key.
 func (s *UsageService) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*UserDashboardStats, error) {
 	stats, err := s.usageRepo.GetAPIKeyDashboardStats(ctx, apiKeyID)
 	if err != nil {
@@ -103,7 +103,7 @@ func (s *UsageService) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int
 	return stats, nil
 }
 
-// GetUserUsageTrendByUserID 获取指定用户的用量趋势。
+// GetUserUsageTrendByUserID returns a user's usage trend.
 func (s *UsageService) GetUserUsageTrendByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]TrendDataPoint, error) {
 	trend, err := s.usageRepo.GetUserUsageTrendByUserID(ctx, userID, startTime, endTime, granularity)
 	if err != nil {
@@ -112,7 +112,7 @@ func (s *UsageService) GetUserUsageTrendByUserID(ctx context.Context, userID int
 	return trend, nil
 }
 
-// GetUsageTrendWithFilters 使用统一过滤条件获取用量趋势。
+// GetUsageTrendWithFilters returns usage trends using the repository's supported filters.
 func (s *UsageService) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) ([]TrendDataPoint, error) {
 	if filterRepo := s.readers.UsageTrendWithFiltersRepo; filterRepo != nil {
 		trend, err := filterRepo.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, filters)
@@ -128,7 +128,7 @@ func (s *UsageService) GetUsageTrendWithFilters(ctx context.Context, startTime, 
 	return trend, nil
 }
 
-// GetUserModelStats 获取指定用户的模型用量统计。
+// GetUserModelStats returns a user's model usage.
 func (s *UsageService) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]ModelStat, error) {
 	stats, err := s.usageRepo.GetUserModelStats(ctx, userID, startTime, endTime)
 	if err != nil {
@@ -137,7 +137,7 @@ func (s *UsageService) GetUserModelStats(ctx context.Context, userID int64, star
 	return stats, nil
 }
 
-// GetModelStatsWithFiltersBySource 使用统一过滤条件按模型来源获取模型统计。
+// GetModelStatsWithFiltersBySource returns model statistics using the repository's supported model dimensions.
 func (s *UsageService) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, modelSource string) ([]ModelStat, error) {
 	normalizedSource := NormalizeModelSource(modelSource)
 
@@ -163,7 +163,7 @@ func (s *UsageService) GetModelStatsWithFiltersBySource(ctx context.Context, sta
 	return stats, nil
 }
 
-// GetGroupStatsWithFilters 使用统一过滤条件获取分组统计。
+// GetGroupStatsWithFilters returns group statistics using the repository's supported filters.
 func (s *UsageService) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) ([]GroupStat, error) {
 	if filterRepo := s.readers.GroupStatsWithUsageFiltersRepo; filterRepo != nil {
 		stats, err := filterRepo.GetGroupStatsWithUsageFilters(ctx, startTime, endTime, filters)
@@ -179,7 +179,7 @@ func (s *UsageService) GetGroupStatsWithFilters(ctx context.Context, startTime, 
 	return stats, nil
 }
 
-// GetAPIKeyModelStats 获取指定 API Key 的模型用量统计。
+// GetAPIKeyModelStats returns an API key's model usage.
 func (s *UsageService) GetAPIKeyModelStats(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]ModelStat, error) {
 	stats, err := s.usageRepo.GetModelStatsWithFilters(ctx, startTime, endTime, 0, apiKeyID, 0, 0, nil, nil, nil)
 	if err != nil {
@@ -188,12 +188,12 @@ func (s *UsageService) GetAPIKeyModelStats(ctx context.Context, apiKeyID int64, 
 	return stats, nil
 }
 
-// GetAPIKeyDailyUsage 返回用户指定 API Key 的按日用量统计。
+// GetAPIKeyDailyUsage returns daily usage filtered by user and API key.
 func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time) ([]APIKeyDailyUsagePoint, error) {
 	return s.getAPIKeyDailyUsage(ctx, userID, apiKeyID, startTime, endTime)
 }
 
-// GetAPIKeyDailyUsageByKey 供已由当前 Key 完成鉴权的网关自省使用。
+// GetAPIKeyDailyUsageByKey reads daily usage for gateway introspection after the caller authenticates the key.
 func (s *UsageService) GetAPIKeyDailyUsageByKey(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]APIKeyDailyUsagePoint, error) {
 	return s.getAPIKeyDailyUsage(ctx, 0, apiKeyID, startTime, endTime)
 }
@@ -221,7 +221,7 @@ func (s *UsageService) getAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID
 	return points, nil
 }
 
-// GetBatchAPIKeyUsageStats 获取多个 API Key 的今日/累计实际扣费。
+// GetBatchAPIKeyUsageStats returns today's and range-total user charges for multiple API keys.
 func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
 	stats, err := s.usageRepo.GetBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime)
 	if err != nil {
@@ -230,7 +230,7 @@ func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs [
 	return stats, nil
 }
 
-// ListWithFilters 按统一过滤条件列出用量日志。
+// ListWithFilters lists usage logs matching the supplied filters.
 func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error) {
 	logs, result, err := s.usageRepo.ListWithFilters(ctx, params, filters)
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.Pa
 	return logs, result, nil
 }
 
-// GetGlobalStats 获取指定时间范围内的全局用量统计。
+// GetGlobalStats returns global usage totals for the time range.
 func (s *UsageService) GetGlobalStats(ctx context.Context, startTime, endTime time.Time) (*UsageStats, error) {
 	stats, err := s.usageRepo.GetGlobalStats(ctx, startTime, endTime)
 	if err != nil {
@@ -248,7 +248,7 @@ func (s *UsageService) GetGlobalStats(ctx context.Context, startTime, endTime ti
 	return stats, nil
 }
 
-// GetStatsWithFilters 按统一过滤条件获取用量统计。
+// GetStatsWithFilters summarizes usage matching the supplied filters.
 func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	stats, err := s.usageRepo.GetStatsWithFilters(ctx, filters)
 	if err != nil {
@@ -257,7 +257,7 @@ func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters UsageLog
 	return stats, nil
 }
 
-// GetUserStatsWithFilters 获取用户摘要，不执行响应中会被移除的上游端点和路径查询。
+// GetUserStatsWithFilters uses a summary reader that omits upstream and path details when supported.
 func (s *UsageService) GetUserStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	reader := s.readers.UserStatsReader
 	ok := reader != nil

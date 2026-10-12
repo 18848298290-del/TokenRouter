@@ -18,8 +18,8 @@ type ResponsesEventToAnthropicState struct {
 	CurrentToolName     string
 	CurrentToolArgs     string
 	CurrentToolHadDelta bool
-	// PendingThinkingSignature 保存 reasoning.encrypted_content，并在 thinking 块
-	// 关闭前通过 signature_delta 发出。
+	// PendingThinkingSignature holds reasoning.encrypted_content until signature_delta
+	// is emitted before the thinking block closes.
 	PendingThinkingSignature string
 	HasToolCall              bool
 
@@ -58,8 +58,8 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 					_, _ = summaryText.WriteString(s.Text)
 				}
 			}
-			// 始终将 encrypted_content 暴露为 thinking.signature，让 Claude Code
-			// 等多轮客户端可以回传。模型未生成可见摘要时，仅含签名的 thinking 块也有效。
+			// Expose encrypted_content as thinking.signature for clients to replay on later turns.
+			// A signature-only block retains that state when there is no visible summary.
 			if summaryText.String() != "" || strings.TrimSpace(item.EncryptedContent) != "" {
 				blocks = append(blocks, AnthropicContentBlock{
 					Type:      "thinking",
@@ -211,7 +211,7 @@ func ResponsesEventToAnthropicEvents(
 	case "response.output_text.done":
 		return resToAnthHandleBlockDone(state)
 	case "response.function_call_arguments.delta",
-		// custom/freeform 工具的输入增量与 function_call 参数增量同形。
+		// Custom tool input deltas use the same field as function argument deltas.
 		"response.custom_tool_call_input.delta":
 		return resToAnthHandleFuncArgsDelta(evt, state)
 	case "response.function_call_arguments.done":
@@ -219,16 +219,14 @@ func ResponsesEventToAnthropicEvents(
 	case "response.output_item.done":
 		return resToAnthHandleOutputItemDone(evt, state)
 	case "response.reasoning_summary_text.delta",
-		// 原始推理文本增量，与 reasoning summary 一样映射为 thinking。
+		// Map raw reasoning text to thinking just like reasoning summaries.
 		"response.reasoning_text.delta":
 		return resToAnthHandleReasoningDelta(evt, state)
 	case "response.reasoning_summary_text.done":
-		// 保持 thinking 块开启直到 response.output_item.done。Grok/Codex 会在完成的
-		// reasoning 项上附加 encrypted_content；提前关闭会丢失 signature_delta，
-		// 导致多轮缓存失效。
+		// Keep thinking open until output_item.done supplies encrypted_content.
+		// Closing at summary.done would lose the signature needed for replay and cache reuse.
 		return nil
-	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
-	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
+	// Accept response.done from WebSocket and passthrough paths alongside response.completed.
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		return resToAnthHandleCompleted(evt, state)
 	default:
@@ -282,7 +280,7 @@ func ResponsesAnthropicEventToSSE(evt AnthropicStreamEvent) (string, error) {
 func resToAnthHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	if evt.Response != nil {
 		state.ResponseID = evt.Response.ID
-		// Only use upstream model if no override was set (e.g. originalModel)
+		// A caller-selected model takes precedence over the upstream model.
 		if state.Model == "" {
 			state.Model = evt.Response.Model
 		}
@@ -293,8 +291,7 @@ func resToAnthHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToAn
 	}
 	state.MessageStartSent = true
 
-	// Anthropic message_start 使用 stop_reason: null，已知时携带 input_tokens。
-	// response.completed 到来前，StopReason 为 nil、用量为零，供客户端判断回合结束并统计用量。
+	// message_start carries a null stop_reason and zero usage; completion supplies final values.
 	return []AnthropicStreamEvent{{
 		Type: "message_start",
 		Message: &AnthropicResponse{
@@ -318,8 +315,7 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	}
 
 	switch evt.Item.Type {
-	// function_call 与 custom_tool_call（custom/freeform 工具，如新版 apply_patch）
-	// 同样映射为 Anthropic 的 tool_use 块。
+	// Function and custom/freeform calls both become Anthropic tool_use blocks.
 	case "function_call", "custom_tool_call":
 		var events []AnthropicStreamEvent
 		events = append(events, closeCurrentBlock(state)...)
@@ -413,8 +409,8 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		return nil
 	}
 
-	// Read 的空 pages 只有在参数成为完整 JSON 后才能安全清洗；一旦完整便在 delta 阶段发出，
-	// arguments.done 缺失时也能完成参数处理。
+	// Read pages can be sanitized once the arguments form complete JSON. Emit at that point
+	// so an omitted arguments.done event does not prevent delivery.
 	if state.CurrentBlockType == "tool_use" && state.CurrentToolName == "Read" {
 		state.CurrentToolArgs += evt.Delta
 		if state.CurrentToolHadDelta || !json.Valid([]byte(state.CurrentToolArgs)) {
@@ -457,7 +453,7 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 }
 
 func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	// 上游可能在 completed 关闭 block 后补发或重复发送 done，已关闭时保持幂等。
+	// Ignore late or duplicate done events after the block has closed.
 	if !state.ContentBlockOpen {
 		return nil
 	}
@@ -480,13 +476,13 @@ func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 		raw = string(sanitized)
 	}
 
-	// 从事件的 OutputIndex 解析正确的 block index，与 resToAnthHandleFuncArgsDelta 对齐
+	// Resolve the same output-to-block mapping used for argument deltas.
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
 	if !ok {
 		blockIdx = state.ContentBlockIndex
 	}
 
-	// ContentBlockIndex 已越过该 block 时，参数已由 delta 输出，此处跳过补发。
+	// Do not emit arguments for a block whose index has already been passed.
 	if !state.ContentBlockOpen || blockIdx != state.ContentBlockIndex {
 		return nil
 	}
@@ -540,7 +536,7 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return resToAnthHandleWebSearchDone(evt, state)
 	}
 
-	// 在 reasoning 项完成时捕获 encrypted_content，它通常只会出现在此事件中。
+	// Capture encrypted_content from the completed reasoning item before closing the block.
 	if evt.Item.Type == "reasoning" {
 		if sig := strings.TrimSpace(evt.Item.EncryptedContent); sig != "" {
 			state.PendingThinkingSignature = sig
@@ -567,7 +563,6 @@ func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEve
 	}
 	inputJSON, _ := json.Marshal(map[string]string{"query": query})
 
-	// Emit server_tool_use block (start + stop).
 	idx1 := state.ContentBlockIndex
 	events = append(events, AnthropicStreamEvent{
 		Type:  "content_block_start",
@@ -585,9 +580,8 @@ func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEve
 	})
 	state.ContentBlockIndex++
 
-	// Emit web_search_tool_result block (start + stop).
-	// Content is empty because OpenAI does not expose individual search results;
-	// the model consumes them internally and produces text output.
+	// Emit a matching result block with no result entries.
+	// The converted web_search_call carries the query but no individual result payloads.
 	emptyResults, _ := json.Marshal([]struct{}{})
 	idx2 := state.ContentBlockIndex
 	events = append(events, AnthropicStreamEvent{
@@ -669,8 +663,8 @@ func closeCurrentBlock(state *ResponsesEventToAnthropicState) []AnthropicStreamE
 	}
 	idx := state.ContentBlockIndex
 	var events []AnthropicStreamEvent
-	// 在停止事件前发出 signature_delta，使 Claude 客户端为下一轮保留加密推理；
-	// Grok 多轮缓存依赖该数据。
+	// Emit the signature before block_stop so Claude clients can replay encrypted reasoning
+	// on later turns, including Grok cache reuse.
 	if state.CurrentBlockType == "thinking" {
 		if sig := strings.TrimSpace(state.PendingThinkingSignature); sig != "" {
 			events = append(events, AnthropicStreamEvent{

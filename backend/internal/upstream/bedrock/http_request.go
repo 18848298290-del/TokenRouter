@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// BuildRequest 构建 Bedrock 上游请求。
+// BuildRequest creates an Invoke request and signs it with SigV4.
 func BuildRequest(
 	ctx context.Context,
 	body []byte,
@@ -26,7 +26,6 @@ func BuildRequest(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	// SigV4 签名
 	if err := signer.SignRequest(ctx, req, body); err != nil {
 		return nil, fmt.Errorf("sign bedrock request: %w", err)
 	}
@@ -34,7 +33,7 @@ func BuildRequest(
 	return req, nil
 }
 
-// BuildRequestAPIKey 构建 Bedrock API Key (Bearer Token) 上游请求。
+// BuildRequestAPIKey creates an Invoke request authenticated with a bearer token.
 func BuildRequestAPIKey(
 	ctx context.Context,
 	body []byte,

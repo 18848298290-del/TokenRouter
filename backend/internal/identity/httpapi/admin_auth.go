@@ -11,10 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// AdminAuth 管理员认证中间件实现
-// 支持两种认证方式（通过不同的 header 区分）：
-// 1. Admin API Key: x-api-key: <admin-api-key>
-// 2. JWT Token: Authorization: Bearer <jwt-token> (需要管理员角色)。
+// AdminAuth accepts an administrator API key in x-api-key or an administrator JWT
+// in Authorization: Bearer or a WebSocket subprotocol.
 func AdminAuth(
 	authService SessionAuth,
 	userService AdminUserReader,
@@ -22,8 +20,8 @@ func AdminAuth(
 	auditService AuthObserver,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 浏览器 WebSocket 无法设置 Authorization，管理员 JWT 通过独立协议项传递。
-		// 例如 Sec-WebSocket-Protocol: tokenrouter-admin, jwt.<token>；旧基础协议同样可用。
+		// Browser WebSockets carry the administrator JWT in a separate subprotocol item.
+		// For example: Sec-WebSocket-Protocol: tokenrouter-admin, jwt.<token>.
 		if IsWebSocketUpgradeRequest(c) {
 			if token := ExtractJWTFromWebSocketSubprotocol(c); token != "" {
 				if !ValidateJWTForAdmin(c, token, authService, userService, settingService, auditService) {
@@ -34,7 +32,6 @@ func AdminAuth(
 			}
 		}
 
-		// 检查 x-api-key header（Admin API Key 认证）
 		apiKey := c.GetHeader("x-api-key")
 		if apiKey != "" {
 			if !ValidateAdminAPIKey(c, apiKey, settingService, userService) {
@@ -44,7 +41,6 @@ func AdminAuth(
 			return
 		}
 
-		// 检查 Authorization header（JWT 认证）
 		authHeader := c.GetHeader("Authorization")
 		if authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
@@ -62,7 +58,6 @@ func AdminAuth(
 			}
 		}
 
-		// 无有效认证信息
 		AbortWithError(c, 401, "UNAUTHORIZED", "Authorization required")
 	}
 }
@@ -105,7 +100,7 @@ func ExtractJWTFromWebSocketSubprotocol(c *gin.Context) string {
 	return ""
 }
 
-// ValidateAdminAPIKey 验证管理员 API Key。
+// ValidateAdminAPIKey checks the configured key and authenticates as the first administrator.
 func ValidateAdminAPIKey(
 	c *gin.Context,
 	key string,
@@ -118,13 +113,13 @@ func ValidateAdminAPIKey(
 		return false
 	}
 
-	// 未配置或不匹配，统一返回相同错误（避免信息泄露）
+	// Use the same error for missing and mismatched configured keys.
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(storedKey)) != 1 {
 		AbortWithError(c, 401, "INVALID_ADMIN_KEY", "Invalid admin API key")
 		return false
 	}
 
-	// 获取真实的管理员用户
+	// Resolve a stored administrator account for the API key principal.
 	admin, err := userService.GetFirstAdmin(c.Request.Context())
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "No admin user found")
@@ -136,7 +131,7 @@ func ValidateAdminAPIKey(
 	return true
 }
 
-// ValidateJWTForAdmin 验证 JWT 并检查管理员权限。
+// ValidateJWTForAdmin validates the token, current user, session binding, and administrator role.
 func ValidateJWTForAdmin(
 	c *gin.Context,
 	token string,
@@ -145,7 +140,6 @@ func ValidateJWTForAdmin(
 	settingService AuthSettings,
 	auditService AuthObserver,
 ) bool {
-	// 验证 JWT token
 	claims, err := authService.ValidateToken(token)
 	if err != nil {
 		if errors.Is(err, identity.ErrTokenExpired) {
@@ -156,31 +150,29 @@ func ValidateJWTForAdmin(
 		return false
 	}
 
-	// 从数据库获取用户
+	// Read current user state before granting access.
 	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
 	if err != nil {
 		AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
 		return false
 	}
 
-	// 检查用户状态
 	if !user.IsActive() {
 		AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
 		return false
 	}
 
-	// 校验 TokenVersion，确保管理员改密后旧 token 失效
+	// Reject tokens whose password-derived version is stale.
 	if claims.TokenVersion != user.TokenVersion {
 		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
 		return false
 	}
 
-	// 会话绑定校验：IP/UA 任一变化即撤销会话（功能可在系统设置中关闭）
+	// Enforce configured IP and User-Agent binding before granting access.
 	if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
 		return false
 	}
 
-	// 检查管理员权限
 	if !user.IsAdmin() {
 		AbortWithError(c, 403, "FORBIDDEN", "Admin access required")
 		return false

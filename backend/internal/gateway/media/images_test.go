@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestImageRequestRoutingAndMultipart 检查解析时允许别名，路由校验时检查模型的图片能力。
+// TestImageRequestRoutingAndMultipart checks alias parsing and image capability validation after routing.
 func TestImageRequestRoutingAndMultipart(t *testing.T) {
 	request, err := ParseImageRequest("/v1/images/generations", "application/json", []byte(`{"model":"my-alias","prompt":"draw"}`), false)
 	require.NoError(t, err)

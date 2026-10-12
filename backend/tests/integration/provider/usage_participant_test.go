@@ -15,8 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestProviderUsageParticipantKeepsOuterTransaction 检查用量写入和配置修改共用外层事务。
-// 断言覆盖事务隔离、outbox 数量和回滚后的数据。
+// TestProviderUsageParticipantKeepsOuterTransaction checks that usage and configuration writes share the caller's transaction.
+// It checks isolation, absence of new outbox events, and restoration of data after rollback.
 func TestProviderUsageParticipantKeepsOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

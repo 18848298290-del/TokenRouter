@@ -13,10 +13,11 @@ const (
 	OpenAI429QuotaReset
 )
 
-// OpenAI429Disposition 区分明确耗尽窗口和兼容重置观测，不决定请求重试。
+// OpenAI429Disposition classifies transient limits, exhausted windows, and reset observations; callers decide
+// retries.
 type OpenAI429Disposition uint8
 
-// OpenAIExhaustedWindow 优先判断 7d 窗口，缺少重置时间的满额窗口也视为耗尽。
+// OpenAIExhaustedWindow prioritizes the seven-day window and recognizes exhaustion even without a reset time.
 func OpenAIExhaustedWindow(snapshot *openaiprotocol.OpenAICodexUsageSnapshot, clock func() time.Time) (OpenAI429Disposition, *time.Time) {
 	if snapshot == nil {
 		return OpenAI429Transient, nil

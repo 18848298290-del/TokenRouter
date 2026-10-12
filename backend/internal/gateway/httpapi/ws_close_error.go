@@ -7,14 +7,15 @@ import (
 	coderws "github.com/coder/websocket"
 )
 
-// OpenAIWSClientCloseError 表示应以指定 WebSocket close code 主动关闭客户端连接的错误。
+// OpenAIWSClientCloseError requests that the client connection close with the
+// supplied WebSocket status and reason, while retaining the underlying error.
 type OpenAIWSClientCloseError struct {
 	statusCode coderws.StatusCode
 	reason     string
 	err        error
 }
 
-// NewOpenAIWSClientCloseError 创建一个客户端 WS 关闭错误。
+// NewOpenAIWSClientCloseError wraps err with a client close status and a trimmed reason.
 func NewOpenAIWSClientCloseError(statusCode coderws.StatusCode, reason string, err error) error {
 	return &OpenAIWSClientCloseError{
 		statusCode: statusCode,

@@ -64,7 +64,7 @@ func (s *OpenAIQuotaActions) Reset(ctx context.Context, providerID int64) (*Open
 		return nil, err
 	}
 	defer done()
-	// 消费阶段仍响应客户端取消，同时接受应用停止；成功消费后的收尾只屏蔽客户端取消。
+	// Credit consumption responds to caller cancellation and shutdown; post-consumption work responds to shutdown.
 	creditCtx, cancelCredit := context.WithCancel(ctx)
 	stopRuntimeCancel := context.AfterFunc(runtimeCtx, cancelCredit)
 	defer func() { stopRuntimeCancel(); cancelCredit() }()
@@ -80,7 +80,7 @@ func (s *OpenAIQuotaActions) Reset(ctx context.Context, providerID int64) (*Open
 	postCtx, cancelPost := context.WithTimeout(runtimeCtx, OpenAIQuotaResetPostProcessTimeout)
 	defer cancelPost()
 
-	// 重置次数一旦消费就不可退还，优先恢复提供商运行时状态，且不修改人工 schedulable 开关。
+	// After consumption, recover runtime state first while retaining the administrator's schedulable setting.
 	if s.Recovery == nil {
 		resetResponse.WarningCode = OpenAIQuotaResetWarningProviderRecoveryFailed
 		return &resetResponse, nil
@@ -94,7 +94,7 @@ func (s *OpenAIQuotaActions) Reset(ctx context.Context, providerID int64) (*Open
 	}
 	resetResponse.ProviderStateRecovered = true
 
-	// 状态恢复后回读上游额度；回读或缓存失败不能掩盖已经完成的提供商恢复。
+	// Report completed recovery even if the subsequent quota query or cache update fails.
 	usage, usageErr := s.Quota.QueryUsage(postCtx, providerID)
 	switch {
 	case usageErr != nil || usage == nil:
@@ -110,7 +110,7 @@ func (s *OpenAIQuotaActions) Reset(ctx context.Context, providerID int64) (*Open
 		}
 	}
 
-	// 返回恢复后的提供商数据，API 调用方据此更新限流展示。
+	// Return refreshed provider data so the caller can update its rate-limit display.
 	provider, err := s.Providers.GetProvider(postCtx, providerID)
 	if err != nil {
 		s.Warn("openai_quota_reset_provider_refresh_failed", "provider_id", providerID, "error", err)
@@ -138,7 +138,7 @@ func (s *OpenAIQuotaActions) Refresh(ctx context.Context, providerID int64) (*Op
 	}
 
 	refreshResponse := OpenAIQuotaRefreshOutcome{OpenAIQuotaUsage: *usage}
-	// 快照写入失败属于部分成功：实时查询结果仍返回给前端，旧缓存保持不变。
+	// A cache-write failure still returns live query data with CachePersisted false.
 	if err := s.Quota.CacheResetCreditsSnapshot(ctx, providerID, usage.RateLimitResetCredits); err != nil {
 		s.Warn("openai_quota_reset_credit_cache_persist_failed", "provider_id", providerID, "error", err)
 		return &refreshResponse, nil

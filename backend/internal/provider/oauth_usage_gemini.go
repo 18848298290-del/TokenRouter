@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// GeminiUsageOptions 接收当前额度、模型用量统计和时区。
+// GeminiUsageOptions supplies quota settings, model usage totals, and the quota timezone.
 type GeminiUsageOptions struct {
 	Quota    func(context.Context, *Record) (GeminiQuota, bool)
 	Totals   func(context.Context, int64, time.Time, time.Time) (GeminiUsageTotals, error)
@@ -36,7 +36,7 @@ func (s *OAuthUsageService) GetGeminiUsage(ctx context.Context, provider *Record
 
 	dailyResetAt := GeminiDailyResetTime(now, s.options.Gemini.Location())
 
-	// 按原共享或分模型 RPD 生成日窗口。
+	// A shared daily quota combines Pro and Flash usage; separate quotas retain their own totals.
 	if quota.SharedRPD > 0 {
 		totalReq := dayTotals.ProRequests + dayTotals.FlashRequests
 		totalTokens := dayTotals.ProTokens + dayTotals.FlashTokens
@@ -47,7 +47,7 @@ func (s *OAuthUsageService) GetGeminiUsage(ctx context.Context, provider *Record
 		usage.GeminiFlashDaily = BuildGeminiUsageProgress(dayTotals.FlashRequests, quota.FlashRPD, dailyResetAt, dayTotals.FlashTokens, dayTotals.FlashCost, now)
 	}
 
-	// 分钟窗口仍取当前分钟的固定窗口近似。
+	// Approximate the minute quota with the current fixed clock-minute window.
 	minuteStart := now.Truncate(time.Minute)
 	minuteResetAt := minuteStart.Add(time.Minute)
 	minuteTotals, err := s.options.Gemini.Totals(ctx, provider.ID, minuteStart, now)

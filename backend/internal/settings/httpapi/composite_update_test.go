@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRemovedCrossClientModelMappingField 检查废弃字段在读取或修改设置前被拒绝。
+// TestRemovedCrossClientModelMappingField checks rejection before settings are read or changed.
 func TestRemovedCrossClientModelMappingField(t *testing.T) {
 	for _, value := range []string{"true", "false", "null"} {
 		writer := httptest.NewRecorder()
@@ -23,7 +23,8 @@ func TestRemovedCrossClientModelMappingField(t *testing.T) {
 	}
 }
 
-// TestUpdateSettingsRejectsRemovedPlatformQuotas 检查平台额度字段（包括 null）在读取或保存其他设置前被拒绝。
+// TestUpdateSettingsRejectsRemovedPlatformQuotas checks rejection, including null, before other settings are
+// accessed.
 func TestUpdateSettingsRejectsRemovedPlatformQuotas(t *testing.T) {
 	for _, name := range []string{"default_platform_quotas", "auth_source_default_email_platform_quotas", "auth_source_default_linuxdo_platform_quotas", "auth_source_default_oidc_platform_quotas", "auth_source_default_wechat_platform_quotas", "auth_source_default_github_platform_quotas", "auth_source_default_google_platform_quotas", "auth_source_default_dingtalk_platform_quotas"} {
 		t.Run(name, func(t *testing.T) {
@@ -40,7 +41,7 @@ func TestUpdateSettingsRejectsRemovedPlatformQuotas(t *testing.T) {
 	}
 }
 
-// TestUpdateSettingsRejectsUngroupedScheduling 检查含未选组调度开关的请求在访问设置存储前被拒绝。
+// TestUpdateSettingsRejectsUngroupedScheduling checks rejection before accessing settings storage.
 func TestUpdateSettingsRejectsUngroupedScheduling(t *testing.T) {
 	for _, value := range []string{"true", "false", "null"} {
 		router := gin.New()

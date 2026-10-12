@@ -21,7 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// providePreAggregationHTTP 为预聚合管理入口注入任务实例。
+// providePreAggregationHTTP injects aggregation services into the administration handler.
 func providePreAggregationHTTP(settings *p.PreAggregationSettingsService, usage *usage.DashboardAggregationService, ops *ops.OpsAggregationService) *settingshttp.PreAggregationHandler {
 	return settingshttp.NewPreAggregationHandler(settings, usage, ops)
 }
@@ -49,7 +49,7 @@ func provideSystemLogSink(repo ops.OpsRepository) *ops.OpsSystemLogSink {
 	}})
 }
 
-// provideAuditRedactor 汇集各模块的敏感字段，供审计使用方共享脱敏规则。
+// provideAuditRedactor combines module-sensitive fields into shared audit redaction rules.
 func provideAuditRedactor() *audit.Redactor {
 	keys := append([]string(nil), provider.SensitiveCredentialKeys...)
 	for _, fields := range payment.ConfigProviderSensitiveConfigFields {

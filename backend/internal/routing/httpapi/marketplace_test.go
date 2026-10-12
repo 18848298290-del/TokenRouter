@@ -12,13 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// marketplaceHTTPGroups 提供带可见模型的公开分组。
+// marketplaceHTTPGroups supplies a public group with an active provider.
 type marketplaceHTTPGroups struct{}
 
-// marketplaceHTTPCapacity 记录 HTTP 参数是否触发容量聚合。
+// marketplaceHTTPCapacity counts capacity queries triggered by HTTP parameters.
 type marketplaceHTTPCapacity struct{ calls int }
 
-// marketplaceHTTPModels 提供真实目录解析形状，测试容量查询参数。
+// marketplaceHTTPModels supplies a requestable model for capacity-parameter tests.
 type marketplaceHTTPModels struct{}
 
 func (marketplaceHTTPGroups) ListActive(context.Context) ([]routing.Group, error) {
@@ -30,7 +30,7 @@ func (s *marketplaceHTTPCapacity) GetGroupCapacityByIDs(context.Context, []int64
 	return map[int64]routing.GroupCapacitySummary{1: {}}, nil
 }
 
-// TestMarketplaceCapacityQuery 保证默认响应附带容量，页面可跳过聚合，非法参数返回 400。
+// TestMarketplaceCapacityQuery checks the default, opt-out, and invalid capacity parameters.
 func TestMarketplaceCapacityQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {

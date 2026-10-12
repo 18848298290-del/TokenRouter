@@ -14,7 +14,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CreateProviderRequest 保留创建提供商的 HTTP 输入。
+// CreateProviderRequest contains the HTTP fields for provider creation.
 type CreateProviderRequest struct {
 	Name               string         `json:"name" binding:"required"`
 	Notes              *string        `json:"notes"`
@@ -32,8 +32,8 @@ type CreateProviderRequest struct {
 	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired"`
 }
 
-// UpdateProviderRequest 保留编辑提供商的 HTTP 输入。
-// 使用指针类型来区分"未提供"和"设置为 0"。
+// UpdateProviderRequest contains the HTTP fields for editing a provider.
+// Pointer fields distinguish omission from an explicit zero value.
 type UpdateProviderRequest struct {
 	Name               string         `json:"name"`
 	Notes              *string        `json:"notes"`
@@ -51,7 +51,7 @@ type UpdateProviderRequest struct {
 	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired"`
 }
 
-// Create 在原幂等范围内创建提供商。
+// Create creates a provider within the administrator idempotency scope.
 // POST /api/v1/admin/providers
 func (h *ManagementHandler) Create(c *gin.Context) {
 	var req CreateProviderRequest
@@ -64,15 +64,15 @@ func (h *ManagementHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	// base_rpm 输入校验：负值归零，超过 10000 截断
+	// Clamp base_rpm to the supported range of 0 through 10000.
 	SanitizeExtraBaseRPM(req.Extra)
 	if err := providercore.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// 捕获闭包内创建的提供商引用，用于创建成功后触发仍受支持的能力探测。
-	// 幂等重放时跳过闭包，createdProvider 为 nil，因此跳过后续调度。
+	// Capture the created provider so supported capability probes can run after successful creation.
+	// An idempotent replay skips this closure, leaving createdProvider nil and skipping probe scheduling.
 	var createdProvider *providercore.Record
 
 	result, err := h.ExecuteAdminIdempotent(c, "admin.providers.create", req, h.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
@@ -96,9 +96,9 @@ func (h *ManagementHandler) Create(c *gin.Context) {
 			return nil, execErr
 		}
 		createdProvider = provider
-		// Antigravity OAuth: 新提供商直接设置隐私
+		// Apply privacy settings to new Antigravity OAuth providers.
 		h.privacy.ForceAntigravityPrivacy(ctx, provider)
-		// OpenAI OAuth: 新提供商直接设置隐私
+		// Apply privacy settings to new OpenAI OAuth providers.
 		h.privacy.ForceOpenAIPrivacy(ctx, provider)
 		return h.presenter.Present(ctx, provider), nil
 	})
@@ -119,7 +119,7 @@ func (h *ManagementHandler) Create(c *gin.Context) {
 	response.Success(c, result.Data)
 }
 
-// Duplicate 根据已有提供商配置创建独立复制件。
+// Duplicate creates an independent copy of an existing provider's configuration.
 // POST /api/v1/admin/providers/:id/duplicate
 func (h *ManagementHandler) Duplicate(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -166,7 +166,7 @@ func (h *ManagementHandler) Duplicate(c *gin.Context) {
 	response.Success(c, result.Data)
 }
 
-// Update 编辑请求提供的字段，省略项保持当前值。
+// Update applies supplied fields and retains omitted values.
 // PUT /api/v1/admin/providers/:id
 func (h *ManagementHandler) Update(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -189,7 +189,7 @@ func (h *ManagementHandler) Update(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	// base_rpm 输入校验：负值归零，超过 10000 截断
+	// Clamp base_rpm to the supported range of 0 through 10000.
 	SanitizeExtraBaseRPM(req.Extra)
 	if err := providercore.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
@@ -203,8 +203,8 @@ func (h *ManagementHandler) Update(c *gin.Context) {
 		Credentials:        req.Credentials,
 		Extra:              req.Extra,
 		ProxyID:            req.ProxyID,
-		Concurrency:        req.Concurrency, // 指针类型，nil 表示未提供
-		Priority:           req.Priority,    // 指针类型，nil 表示未提供
+		Concurrency:        req.Concurrency, // nil means omitted.
+		Priority:           req.Priority,    // nil means omitted.
 		RateMultiplier:     req.RateMultiplier,
 		LoadFactor:         req.LoadFactor,
 		Status:             req.Status,

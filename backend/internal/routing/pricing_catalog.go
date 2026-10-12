@@ -10,7 +10,7 @@ type ModelPriceReader interface {
 	GetModelPricing(string) (*ModelPricing, error)
 }
 
-// PricingCatalog 提供价格目录快照、单价查询和更新函数。
+// PricingCatalog supplies catalogue snapshots, price queries, and refresh operations.
 type PricingCatalog struct {
 	Query    func(DefaultPricingQuery) DefaultPricingPage
 	Snapshot func() DefaultPricingSnapshot
@@ -18,7 +18,7 @@ type PricingCatalog struct {
 	Prices   ModelPriceReader
 }
 
-// DefaultPricingSnapshot 固定一次查询的模型名、价格和更新时间。
+// DefaultPricingSnapshot pins model names, prices, and update time for one query.
 type DefaultPricingSnapshot struct {
 	Version   string
 	LastError string

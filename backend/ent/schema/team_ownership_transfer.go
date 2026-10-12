@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// TeamOwnershipTransfer 保存需要目标成员确认的所有权转让。
+// TeamOwnershipTransfer stores a transfer that the target member must accept.
 type TeamOwnershipTransfer struct {
 	ent.Schema
 }

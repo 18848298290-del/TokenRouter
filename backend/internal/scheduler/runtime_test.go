@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestWorkerRuntimeStartsOnceAndCannotRestart 检查同一实例启动一次，Stop 后保持停止状态。
+// TestWorkerRuntimeStartsOnceAndCannotRestart checks one startup per instance and permanent shutdown.
 func TestWorkerRuntimeStartsOnceAndCannotRestart(t *testing.T) {
 	var runtime WorkerRuntime
 	var calls atomic.Int64
@@ -28,7 +28,7 @@ func TestWorkerRuntimeStartsOnceAndCannotRestart(t *testing.T) {
 	require.EqualValues(t, 1, calls.Load())
 }
 
-// TestWorkerRuntimeStopCancelsAndWaits 检查停止时先取消任务的 context，再等待任务返回。
+// TestWorkerRuntimeStopCancelsAndWaits checks cancellation before waiting for task completion.
 func TestWorkerRuntimeStopCancelsAndWaits(t *testing.T) {
 	var runtime WorkerRuntime
 	started := make(chan struct{})
@@ -45,7 +45,7 @@ func TestWorkerRuntimeStopCancelsAndWaits(t *testing.T) {
 	require.True(t, completed.Load())
 }
 
-// TestWorkerRuntimeStopTimeoutRemainsUnfinished 检查停止超时报告任务名称，任务稍后退出时仍返回首次超时结果。
+// TestWorkerRuntimeStopTimeoutRemainsUnfinished checks pending task names and reuse of the first shutdown error.
 func TestWorkerRuntimeStopTimeoutRemainsUnfinished(t *testing.T) {
 	var runtime WorkerRuntime
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})

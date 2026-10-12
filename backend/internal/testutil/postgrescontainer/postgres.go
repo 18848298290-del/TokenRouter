@@ -18,7 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// New 应用真实迁移，并在测试结束时先关闭连接、再销毁容器。
+// New applies the embedded migrations and closes connections before terminating the test container.
 func New(t *testing.T) *sql.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

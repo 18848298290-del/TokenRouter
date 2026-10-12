@@ -64,8 +64,8 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 	if apiKey == "" {
 		return nil, fmt.Errorf("provider %d missing api_key", provider.Record.ID)
 	}
-	// 协议感知：Anthropic 协议提供商的凭证 base_url 指向 /anthropic 端点，
-	// embeddings 需使用 OpenAI 格式 base。
+	// Anthropic protocol credentials may point at an /anthropic base URL.
+	// Embeddings requires the corresponding OpenAI-format base.
 	baseURL := gatewayprovider.ExecutionProtocolTarget(provider).GetOpenAIFormatBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"

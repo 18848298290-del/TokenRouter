@@ -12,10 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// 导入队列读取探测摘要。
+// grokQuotaImportProbe returns quota probe summaries to the import queue.
 type grokQuotaImportProbe struct{ Source *provider.GrokQuotaService }
 
-// provideProviderImportProbes 为提供商导入绑定按需启动的探测队列。
+// provideProviderImportProbes registers shutdown for the lazily started import probe queue.
 func provideProviderImportProbes(manager *lifecycle.Manager) *provider.GrokImportProbeScheduler {
 	queue := provider.NewGrokImportProbeScheduler(provider.GrokImportProbeOptions{Concurrency: 3, Timeout: 25 * time.Second, Debug: slog.Debug, Info: slog.Info, Warn: slog.Warn, Error: slog.Error})
 	manager.Register(lifecycle.Hook{Name: "ProviderImportProbes", StopOrder: 20, Stop: queue.StopContext})

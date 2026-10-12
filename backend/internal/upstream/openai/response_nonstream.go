@@ -54,22 +54,18 @@ func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstr
 	}
 	options.ObserveTier(body)
 
-	// Detect SSE responses for ALL provider types via Content-Type header.
-	// Some OpenAI-compatible upstreams (including other sub2api instances)
-	// may return SSE even when stream=false was requested.
+	// Compatible upstreams can return SSE even when stream=false was requested;
+	// recognize their Content-Type for every provider type.
 	if IsEventStreamResponse(resp.Header) {
 		options.ObserveSSE(string(body))
 		return ReadSSEAsJSON(ctx, resp, c, options, body, originalModel, mappedModel)
 	}
-	// SSE framing 要求 data:/event: 字段位于物理行首。直接搜索整个 body 会误命中
-	// JSON 字符串里的普通文本，导致 Compact JSON 错走 SSE 转换并丢失用量。
+	// SSE fields must start at a physical line boundary. Searching arbitrary body text
+	// can misclassify JSON strings and route Compact JSON through SSE conversion, losing usage.
 	bodyLooksLikeSSE := wire.BodyHasSSEFraming(body)
 
-	// For OAuth providers, also fall back to a body-content heuristic because
-	// the upstream may omit the Content-Type header while still sending SSE.
-	// This heuristic is NOT applied to API-key providers to avoid false
-	// positives on JSON responses that coincidentally contain "data:" or
-	// "event:" in their text content.
+	// OAuth can omit Content-Type while sending SSE, so inspect framing before JSON
+	// usage extraction. Other providers use the same heuristic if JSON usage extraction fails.
 	if options.OAuthProvider && bodyLooksLikeSSE {
 		options.ObserveSSE(string(body))
 		return ReadSSEAsJSON(ctx, resp, c, options, body, originalModel, mappedModel)

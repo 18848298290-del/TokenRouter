@@ -28,7 +28,7 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
-// wsPassthroughAdapter 保存当前平台的执行凭据、握手参数和单次操作接口。
+// wsPassthroughAdapter holds platform credentials, handshake parameters, and execution operations.
 type wsPassthroughAdapter struct {
 	gatewayws.RequestUsageDecoder
 	service  *OpenAIWebSocketExecutor

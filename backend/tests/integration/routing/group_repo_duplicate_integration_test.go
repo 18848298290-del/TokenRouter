@@ -38,6 +38,7 @@ func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
+	// Fail the transactional outbox write after copying the group and links to verify rollback.
 	functionName := fmt.Sprintf("fail_group_duplicate_outbox_%d", suffix)
 	triggerName := fmt.Sprintf("fail_group_duplicate_outbox_trigger_%d", suffix)
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`

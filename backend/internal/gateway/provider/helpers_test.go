@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 )
 
-// stubCredRepo 为凭据解析和影子提供商测试返回指定的母提供商。
-// 通过嵌入接口补齐方法集，调用未实现的方法会 panic。
+// stubCredRepo returns the configured parent for credential and shadow-provider tests.
+// Unimplemented methods on the embedded interface panic if called.
 type stubCredRepo struct {
 	ExecutionProviderStore
 

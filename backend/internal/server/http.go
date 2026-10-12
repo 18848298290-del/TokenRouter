@@ -12,13 +12,13 @@ import (
 	middleware2 "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// ProviderSet 提供服务器层的依赖。
+// ProviderSet supplies the router and HTTP server to Wire.
 var ProviderSet = wire.NewSet(
 	ProvideRouter,
 	ProvideHTTPServer,
 )
 
-// ProvideRouter 提供路由器。
+// ProvideRouter builds the router with recovery and trusted-proxy settings.
 func ProvideRouter(cfg Options, runtime *RouterRuntime) *gin.Engine {
 	if cfg.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -50,7 +50,7 @@ func configureTrustedProxies(r *gin.Engine, cfg Options) {
 	}
 }
 
-// ProvideHTTPServer 提供 HTTP 服务器
+// ProvideHTTPServer configures HTTP serving limits and optional H2C.
 // @project-doc docs/operations/edge_security.md#http_ingress_limits
 func ProvideHTTPServer(cfg Options, router *gin.Engine) *http.Server {
 	httpHandler := http.Handler(router)
@@ -58,12 +58,12 @@ func ProvideHTTPServer(cfg Options, router *gin.Engine) *http.Server {
 		Addr:           cfg.Address,
 		Handler:        httpHandler,
 		MaxHeaderBytes: cfg.MaxHeaderBytes,
-		// ReadHeaderTimeout: 读取请求头的超时时间，防止慢速请求头攻击
+		// Bound header reads to limit slow-header attacks.
 		ReadHeaderTimeout: time.Duration(cfg.ReadHeaderTimeout) * time.Second,
-		// IdleTimeout: 空闲连接超时时间，释放不活跃的连接资源
+		// Release inactive connections after the configured idle timeout.
 		IdleTimeout: time.Duration(cfg.IdleTimeout) * time.Second,
-		// 注意：不设置 WriteTimeout，因为流式响应可能持续十几分钟
-		// 不设置 ReadTimeout，因为大请求体可能需要较长时间读取
+		// Leave WriteTimeout unset because streaming responses can last many minutes.
+		// Leave ReadTimeout unset because large request bodies can take longer to upload.
 	}
 
 	globalMaxSize := cfg.MaxRequestBodySize
@@ -72,10 +72,10 @@ func ProvideHTTPServer(cfg Options, router *gin.Engine) *http.Server {
 		log.Printf("Global max request body size: %d bytes (%.2f MB)", globalMaxSize, float64(globalMaxSize)/(1<<20))
 	}
 
-	// 根据配置决定是否启用 H2C
+	// Enable cleartext HTTP/2 when configured.
 	if cfg.H2C.Enabled {
 		h2cConfig := cfg.H2C
-		//nolint:staticcheck // HTTP/1 与 h2c 使用独立空闲超时，http.HTTP2Config 尚无独立的 IdleTimeout 字段。
+		//nolint:staticcheck // HTTP/1 and h2c need separate idle timeouts; http.HTTP2Config has no separate IdleTimeout field.
 		if err := http2.ConfigureServer(server, &http2.Server{
 			MaxConcurrentStreams:         h2cConfig.MaxConcurrentStreams,
 			IdleTimeout:                  time.Duration(h2cConfig.IdleTimeout) * time.Second,

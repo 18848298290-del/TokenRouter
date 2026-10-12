@@ -10,7 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// ModelsPorts 读取模型目录和已选目标的模型资源。
+// ModelsPorts reads catalogues and model resources from selected targets.
 type ModelsPorts struct {
 	Catalogue interface {
 		ResolveRequestableModels(context.Context, *int64, string) routing.RequestableModelsResult
@@ -24,7 +24,7 @@ type ModelsPorts struct {
 	SafeSegment      func(string) bool
 }
 
-// Access 优先读取通过认证的 Key，返回请求独立的副本。
+// Access prefers the effective request key and otherwise copies the authenticated key.
 func (p ModelsPorts) Access(c *gin.Context) (*apikey.APIKey, bool) {
 	if key, ok := EffectiveAPIKey(c); ok {
 		return key, true
@@ -43,12 +43,12 @@ func (p ModelsPorts) Resolve(ctx context.Context, id *int64, platform string) ro
 	return p.Catalogue.ResolveRequestableModels(ctx, id, platform)
 }
 
-// ResolveSelected 校验本次单型号查询需要的名称。
+// ResolveSelected validates the names needed for a single-model query.
 func (p ModelsPorts) ResolveSelected(ctx context.Context, id *int64, platform string, models []string) routing.RequestableModelsResult {
 	return p.Catalogue.ResolveSelectedModels(ctx, id, platform, models)
 }
 
-// PreferredSubscription 为目录展示返回已确认的指定订阅。
+// PreferredSubscription returns the selected subscription from the billing context for catalogue display.
 func (p ModelsPorts) PreferredSubscription(c *gin.Context) (*billing.UserSubscription, bool) {
 	value, ok := p.ReadBilling(c)
 	if !ok || value == nil || value.Mode != apikey.APIKeyBillingModeSubscription || value.Subscription == nil {

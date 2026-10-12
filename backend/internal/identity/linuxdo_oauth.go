@@ -14,13 +14,13 @@ type LinuxDoOAuthOptions struct {
 	TokenURL            string `mapstructure:"token_url"`
 	UserInfoURL         string `mapstructure:"userinfo_url"`
 	Scopes              string `mapstructure:"scopes"`
-	RedirectURL         string `mapstructure:"redirect_url"`          // 后端回调地址（需在提供方后台登记）
-	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"` // 前端接收 token 的路由（默认：/auth/linuxdo/callback）
+	RedirectURL         string `mapstructure:"redirect_url"`          // Backend callback URL registered with the provider.
+	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"` // Frontend token callback route; defaults to /auth/linuxdo/callback.
 	TokenAuthMethod     string `mapstructure:"token_auth_method"`     // client_secret_post / client_secret_basic / none
 	UsePKCE             bool   `mapstructure:"use_pkce"`
 
-	// 可选：用于从 userinfo JSON 中提取字段的 gjson 路径。
-	// 为空时，服务端会尝试一组常见字段名。
+	// Optional gjson paths for fields in the userinfo response.
+	// Empty paths use a set of common field names.
 	UserInfoEmailPath    string `mapstructure:"userinfo_email_path"`
 	UserInfoIDPath       string `mapstructure:"userinfo_id_path"`
 	UserInfoUsernamePath string `mapstructure:"userinfo_username_path"`
@@ -41,7 +41,7 @@ type LinuxDoTokenExchangeError struct {
 	Body                string
 }
 
-// LinuxDoOAuthClient 隐藏外部 HTTP 与资料解析，回调只传入本次授权参数。
+// LinuxDoOAuthClient exchanges authorization codes and parses provider profiles.
 type LinuxDoOAuthClient interface {
 	ExchangeCode(context.Context, LinuxDoOAuthOptions, string, string, string) (*LinuxDoTokenResponse, error)
 	FetchUserInfo(context.Context, LinuxDoOAuthOptions, *LinuxDoTokenResponse) (string, string, string, string, string, error)

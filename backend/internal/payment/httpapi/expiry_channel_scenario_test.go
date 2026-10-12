@@ -1,6 +1,6 @@
 package httpapi
 
-// 本场景覆盖 payment/expiry.go、payment/order_lifecycle.go 和 payment/provider_bindings.go，检查停止过期任务时取消渠道 HTTP 请求并停止后续阶段。
+// These scenarios exercise expiry.go, order_lifecycle.go, and provider_bindings.go to verify that stopping expiry cancels provider HTTP requests and skips later phases.
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// expiryChannelOrders 提供测试订单数据，过期运行时、渠道绑定和 HTTP 取消使用生产实现。
+// expiryChannelOrders supplies orders while production expiry and provider code handle HTTP cancellation.
 type expiryChannelOrders struct {
 	payment.FulfillmentStore
 	nextPhase atomic.Int32

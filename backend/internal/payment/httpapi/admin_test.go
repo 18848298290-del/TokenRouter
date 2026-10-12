@@ -16,10 +16,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// missingRefundRecovery 返回需要人工核实的退款恢复错误，供 HTTP 错误响应测试使用。
+// missingRefundRecovery returns a manual-recovery error for HTTP response tests.
 type missingRefundRecovery struct{ payment.RefundStore }
 
-// TestPaymentDashboardRangeInjectedCalendar 检查支付查询的日期范围校验和指定服务端时区的日期解析。
+// TestPaymentDashboardRangeInjectedCalendar checks date ranges in the injected server time zone.
 func TestPaymentDashboardRangeInjectedCalendar(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

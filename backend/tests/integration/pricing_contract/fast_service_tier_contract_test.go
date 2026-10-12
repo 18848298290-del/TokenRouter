@@ -12,7 +12,7 @@ import (
 func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 	t.Parallel()
 
-	// 不因型号改写目录中的显式 priority 报价。
+	// Model names must leave the catalog's explicit priority prices intact.
 	catalog := map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.4": {
 			InputCostPerToken:               2.5e-6,
@@ -127,7 +127,7 @@ func TestOpenAIFastBilling_FastMultiplierOverridesCatalogRates(t *testing.T) {
 		"without FastMultiplier use the explicit catalog prices")
 }
 
-// TestModelNameDoesNotCreateCommercialRules 验证常见型号不会自动获得档位或缓存倍率。
+// TestModelNameDoesNotCreateCommercialRules checks that names alone add no tier or cache multipliers.
 func TestModelNameDoesNotCreateCommercialRules(t *testing.T) {
 	for _, model := range []string{"gpt-5.5", "gpt-5.6-sol", "claude-fable-5-1", "deepseek-v4-pro"} {
 		raw := &billingpricing.CatalogModelPricing{InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6}

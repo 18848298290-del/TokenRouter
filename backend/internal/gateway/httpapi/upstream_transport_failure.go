@@ -15,7 +15,7 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// UpstreamTransportFailure 保留无 HTTP 响应时的 Ops、取消和故障转移顺序。
+// transportFailureBody is the generic upstream error body used for transport failover.
 var transportFailureBody = []byte(`{"error":{"type":"upstream_error","message":"Upstream request failed"}}`)
 
 type UpstreamTransportFailure struct {

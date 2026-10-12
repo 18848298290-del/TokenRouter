@@ -14,8 +14,8 @@ type AuthNormalizedEmailBindingConflictChecker interface {
 	ExistsByNormalizedEmailExcluding(ctx context.Context, normalizedEmail string, excludedUserID int64) (bool, error)
 }
 
-// AuthEmailIdentityAliasGuardRepository 提供换绑主邮箱所需的事务内原子写入能力。
-// 通过可选接口接入，保留无数据库测试桩的兼容性。
+// AuthEmailIdentityAliasGuardRepository provides transactional primary-email replacement with alias checks.
+// The optional interface allows test repositories to operate without a database.
 type AuthEmailIdentityAliasGuardRepository interface {
 	UpdateEmailWithAliasGuard(ctx context.Context, userID int64, email string, passwordHash string) error
 }
@@ -87,7 +87,7 @@ func (s *AuthService) BindEmailIdentity(
 	fields := UserUpdateFields{Email: true, PasswordHash: true}
 	updateUser := s.Users.Update
 	if registrationNormalizedEmail != "" {
-		// 开启邮箱归一化后，绑定/换绑主邮箱也要复用同一套唯一性保护。
+		// Email binding uses the same normalized-address uniqueness guard as registration.
 		updateUser = func(updateCtx context.Context, updateUser *User, updateFields UserUpdateFields) error {
 			return s.Users.UpdateWithNormalizedEmailGuard(updateCtx, updateUser, registrationNormalizedEmail, updateFields)
 		}
@@ -150,7 +150,8 @@ func (s *AuthService) SendEmailIdentityBindCode(ctx context.Context, userID int6
 	return s.Email.SendVerifyCode(ctx, normalizedEmail, siteName, FirstEmailLocale(locale))
 }
 
-// AuthEnsureUserEmailChangeAllowed 只限制真实邮箱发生变化；首次绑定或验证现有邮箱仍保持可用。
+// AuthEnsureUserEmailChangeAllowed checks the change policy when replacing a real email address.
+// Initial binding and verification of the existing address remain allowed.
 func (s *AuthService) AuthEnsureUserEmailChangeAllowed(ctx context.Context, currentUser *User, targetEmail string) error {
 	if currentUser == nil {
 		return ErrUserNotFound
@@ -221,9 +222,9 @@ func (s *AuthService) AuthEnsureEmailBindingTargetAvailable(
 	return nil
 }
 
-// AuthEnsureEmailAliasTargetAvailable 检查邮箱是否已被其他用户的收件箱身份占用。
-// 真实仓储提供 owner 查询，因此当前用户把自己的邮箱换成另一个 alias 时不会被误拒；
-// 只有旧仓储仅提供布尔查询时才采取保守拒绝策略。
+// AuthEnsureEmailAliasTargetAvailable checks whether another user owns the mailbox alias.
+// Owner-aware stores allow another alias of the current user's mailbox.
+// Boolean-only stores reject occupied aliases because they cannot identify the owner.
 func (s *AuthService) AuthEnsureEmailAliasTargetAvailable(ctx context.Context, currentUser *User, email string) error {
 	if currentUser == nil {
 		return ErrUserNotFound
@@ -248,7 +249,7 @@ func (s *AuthService) AuthEnsureEmailAliasTargetAvailable(ctx context.Context, c
 		return ErrServiceUnavailable
 	}
 	if exists {
-		// 无法区分当前用户时拒绝，避免并发或历史重复数据造成占用绕过。
+		// Reject occupancy when the store cannot distinguish the current owner.
 		return ErrEmailExists
 	}
 	return nil
@@ -273,7 +274,7 @@ func (s *AuthService) AuthHasNormalizedEmailBindingConflict(
 		if checker := s.NormalizedEmailConflict; checker != nil {
 			return checker.ExistsByNormalizedEmailExcluding(ctx, registrationNormalizedEmail, currentUserID)
 		}
-		// 降级查询无法排除当前用户自身，此时返回未冲突。
+		// The boolean lookup cannot exclude this user, so it cannot establish a conflict.
 		return false, nil
 	}
 

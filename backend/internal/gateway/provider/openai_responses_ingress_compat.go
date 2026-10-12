@@ -27,9 +27,8 @@ type convertedLegacyResponsesMessages struct {
 	hasReasoningEffort bool
 }
 
-// NormalizeOpenAIResponsesLegacyIngress accepts the Chat Completions-shaped
-// payloads that a few Responses clients still emit. Native Responses input is
-// always authoritative because this path has no separate full-replay attempt.
+// NormalizeOpenAIResponsesLegacyIngress converts legacy Chat-shaped Responses payloads.
+// Existing non-null input takes precedence over messages and string prompt aliases.
 func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -58,17 +57,14 @@ func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 				delete(request, "previous_response_id")
 			}
 		}
-		// messages is not a Responses field. When native input is present but the
-		// two histories are ambiguous, retain input and drop only the legacy alias.
+		// Drop the legacy messages field after choosing the authoritative input history.
 		delete(request, "messages")
 		changed = true
 	}
 
 	if prompt, hasPrompt := request["prompt"]; hasPrompt {
-		// Only the legacy string alias is unambiguously equivalent to Responses
-		// input. Objects are native reusable prompt templates and must remain in
-		// prompt; arrays and other shapes are left for upstream validation rather
-		// than being relabeled as a structurally different input value.
+		// String prompts are legacy input aliases. Objects represent reusable prompt templates.
+		// Leave arrays and other shapes for upstream validation.
 		if promptText, isLegacyString := prompt.(string); isLegacyString {
 			if input, hasInput := request["input"]; !hasInput || input == nil {
 				request["input"] = promptText

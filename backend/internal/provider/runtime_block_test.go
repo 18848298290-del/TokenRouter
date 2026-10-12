@@ -9,7 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestManagedRecoveryFencePreservesNewRuntimeBlock 检查恢复期间出现新阻断时该状态保持不变，并检查管理员清理操作。
+// TestManagedRecoveryFencePreservesNewRuntimeBlock checks that recovery leaves newer blocks intact and can
+// clear the current generation.
 func TestManagedRecoveryFencePreservesNewRuntimeBlock(t *testing.T) {
 	s := NewRuntimeBlockState(time.Now)
 	a := &Record{LoadLocation: time.LoadLocation, ID: 72, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
@@ -23,7 +24,7 @@ func TestManagedRecoveryFencePreservesNewRuntimeBlock(t *testing.T) {
 	require.False(t, s.ClearProviderSchedulingBlockIfFence(a.ID, fence))
 }
 
-// TestOpenAIRuntimeBlock_DoesNotShortenExistingBlock 验证原停调延长与清理断言迁至状态所有者，直接检查私有缓存。
+// TestOpenAIRuntimeBlock_DoesNotShortenExistingBlock checks that the default cooldown cannot shorten a longer block.
 func TestOpenAIRuntimeBlock_DoesNotShortenExistingBlock(t *testing.T) {
 	svc := NewRuntimeBlockState(time.Now)
 	provider := &Record{ID: 46, Platform: PlatformOpenAI, Type: ProviderTypeOAuth}
@@ -50,7 +51,8 @@ func TestOpenAIRuntimeBlock_ClearProviderSchedulingBlock(t *testing.T) {
 	require.False(t, svc.Blocked(provider.ID, func() string { return RefreshCredentialIdentity(provider) }))
 }
 
-// TestRefreshRuntimeBlockIsCredentialScoped 验证刷新失败的内存桥接仅属于交换凭据；即便通知晚于管理员换凭据，也不能阻断新身份。
+// TestRefreshRuntimeBlockIsCredentialScoped checks that a late failure notice for old credentials cannot block
+// replacement credentials.
 func TestRefreshRuntimeBlockIsCredentialScoped(t *testing.T) {
 	gateway := NewRuntimeBlockState(time.Now)
 	old := &Record{ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"access_token": "old-fixture"}}
@@ -81,7 +83,7 @@ func TestRefreshRuntimePublicationHonorsClearAndOtherVersions(t *testing.T) {
 	require.True(t, blocked(a))
 	require.True(t, blocked(b))
 	require.False(t, blocked(c))
-	// 原提供商级容量/额度阻断继续覆盖全部身份，不被凭据作用域削弱。
+	// Provider-wide capacity and quota blocks cover every credential identity.
 	gateway.BlockProviderScheduling(c, time.Now().Add(time.Hour), "429")
 	require.True(t, blocked(c))
 	gateway.ClearProviderSchedulingBlock(1)
@@ -91,7 +93,7 @@ func TestRefreshRuntimePublicationHonorsClearAndOtherVersions(t *testing.T) {
 	require.False(t, blocked(b))
 	gateway.PrepareRefreshFailure(1)(notice(c))
 	require.True(t, blocked(c))
-	// 原 Grok 临时阻断的回滚不得抹掉独立的刷新身份阻断。
+	// Rolling back a provisional Grok block leaves independent credential-scoped failure blocks intact.
 	publishAfterProbe := gateway.PrepareRefreshFailure(1)
 	release := gateway.BlockRollback(1, time.Now().Add(time.Minute), "credential_probe")
 	release()

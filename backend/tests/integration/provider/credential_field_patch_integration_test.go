@@ -12,7 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestCredentialFieldPatchPreservesLockTimeState 验证管理校验后、配置行锁前发生真实凭据轮换；字段补丁必须保留新 token 和未选配置。
+// TestCredentialFieldPatchPreservesLockTimeState rotates credentials before the configuration lock and checks
+// that patches retain new tokens and untouched fields.
 func TestCredentialFieldPatchPreservesLockTimeState(t *testing.T) {
 	cases := []struct {
 		name, field   string

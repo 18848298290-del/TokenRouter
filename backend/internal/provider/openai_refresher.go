@@ -11,12 +11,12 @@ type OpenAIRefreshTokenService interface {
 }
 type OpenAITokenRefresher struct{ Authorization OpenAIRefreshTokenService }
 
-// CacheKey 返回用于分布式锁的缓存键。
+// CacheKey returns the token cache key also used for refresh locking.
 func (r *OpenAITokenRefresher) CacheKey(provider *Record) string {
 	return OpenAITokenCacheKey(provider)
 }
 
-// CanRefresh 检查是否能处理此提供商。
+// CanRefresh accepts OpenAI OAuth providers whose credentials are not inherited from a parent.
 func (r *OpenAITokenRefresher) CanRefresh(provider *Record) bool {
 	if provider.IsCredentialShadow() {
 		return false
@@ -24,8 +24,8 @@ func (r *OpenAITokenRefresher) CanRefresh(provider *Record) bool {
 	return provider.Platform == PlatformOpenAI && provider.Type == ProviderTypeOAuth
 }
 
-// NeedsRefresh 检查 token 是否需要刷新
-// expires_at 缺失且处于限流状态时需要刷新，防止限流期间 token 静默过期。
+// NeedsRefresh checks expiry for providers with a refresh token, excluding PATs.
+// When expiry is missing, a rate-limited provider is refreshed to avoid leaving an expired token unnoticed.
 func (r *OpenAITokenRefresher) NeedsRefresh(provider *Record, refreshWindow time.Duration) bool {
 	if provider.IsOpenAIPersonalAccessToken() {
 		return false
@@ -41,15 +41,15 @@ func (r *OpenAITokenRefresher) NeedsRefresh(provider *Record, refreshWindow time
 	return time.Until(*expiresAt) < refreshWindow
 }
 
-// Refresh 执行 token 刷新
-// 将 token 字段合并进 credentials，其余字段保持当前值。
+// Refresh obtains token metadata and merges it with stored credentials.
+// Fields omitted by the response remain, except OAuth-only fields removed for PAT credentials.
 func (r *OpenAITokenRefresher) Refresh(ctx context.Context, provider *Record) (map[string]any, error) {
 	tokenInfo, err := r.Authorization.RefreshProviderToken(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
 
-	// 构建刷新后的凭据，再补齐已有的其他字段。
+	// Merge returned fields before applying PAT-specific cleanup.
 	newCredentials := BuildOpenAIProviderCredentials(tokenInfo)
 	newCredentials = MergeCredentials(provider.Credentials, newCredentials)
 	newCredentials = NormalizeOpenAIPersonalAccessTokenCredentials(provider, tokenInfo, newCredentials)

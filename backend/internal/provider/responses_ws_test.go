@@ -36,7 +36,8 @@ func TestResponsesWSMigrationUsesSavedModeAndPreservesProtocols(t *testing.T) {
 	require.Error(t, NormalizeProviderProtocols(value))
 }
 
-// 旧桥接字段不能把非法协议输入转换成合法的空集合。
+// TestResponsesWSLegacyBridgeValidatesOriginalProtocols checks that legacy bridge settings cannot turn invalid
+// protocol input into a valid empty set.
 func TestResponsesWSLegacyBridgeValidatesOriginalProtocols(t *testing.T) {
 	for _, extra := range []map[string]any{{"openai_apikey_responses_websockets_v2_mode": "http_bridge"}, {"openai_ws_force_http": true}} {
 		for _, raw := range []any{"openai_responses", nil, false, []any{1}, []string{"unknown"}, []string{"openai_responses_websocket", "openai_responses_websocket"}} {

@@ -6,15 +6,15 @@ import (
 )
 
 const (
-	BillingTypeBalance      int8 = 0 // 钱包余额
-	BillingTypeSubscription int8 = 1 // 订阅套餐
+	BillingTypeBalance      int8 = 0 // Wallet balance
+	BillingTypeSubscription int8 = 1 // Subscription plan
 
 	RequestTypeUnknown      RequestType = 0
 	RequestTypeSync         RequestType = 1
 	RequestTypeStream       RequestType = 2
 	RequestTypeWSV2         RequestType = 3
-	RequestTypeCyberBlocked RequestType = 4 // cyber_policy 命中，已透传上游安全策略拒绝
-	// RequestTypeLive 表示按会话时长记录的 ChatGPT Frameless Live 请求。
+	RequestTypeCyberBlocked RequestType = 4 // Upstream safety refusal forwarded after a cyber_policy match
+	// RequestTypeLive identifies ChatGPT Frameless Live requests recorded by session duration.
 	RequestTypeLive RequestType = 5
 )
 

@@ -1,6 +1,6 @@
 package httpapi
 
-// 本文件检查 test_events.go 的事件输出与 test_handler.go 调用的提供商测试服务协作。
+// These scenarios cover test_events.go output and the provider test service invoked by test_handler.go.
 
 import (
 	"bytes"
@@ -59,7 +59,7 @@ type grokProviderTestRateLimitRepo struct {
 	resetAt          time.Time
 }
 
-// 夹具记录存储写入和平台请求，提供商测试使用生产实现。
+// These fixtures record store writes and platform requests while using the production test service.
 type grokTestStoreFixture struct {
 	providersByID map[int64]*providercore.Record
 }
@@ -72,7 +72,7 @@ type grokTestTransportFixture struct {
 
 type grokTestTargetLoader struct{ target providercore.TestTarget }
 
-// 替身记录健康字段写入和调用次数。
+// grokTestFailureStoreFixture records health writes and call counts.
 type grokTestFailureStoreFixture struct {
 	tempUnschedCalls, rateLimitedCalls int
 	lastRateLimitedID                  int64
@@ -106,7 +106,7 @@ type openAIProbeStore struct {
 	setErrorMsg        string
 }
 
-// openAIProbeOutput 包含 HTTP 请求和响应记录器。
+// openAIProbeOutput holds the HTTP request and response recorder.
 type openAIProbeOutput struct {
 	Request  *http.Request
 	recorder *httptest.ResponseRecorder
@@ -168,7 +168,7 @@ type qoderHTTPUpstreamRecorder struct {
 	requests            []*http.Request
 }
 
-// 夹具组合测试用例、平台目标和 HTTP 输出器，执行分支使用生产实现。
+// These fixtures connect test targets and HTTP output to the production execution paths.
 type qoderTestOutputFixture struct {
 	context.Context
 	recorder *httptest.ResponseRecorder
@@ -420,7 +420,7 @@ func TestProviderTestServiceCNProviderUsesConfiguredProtocol(t *testing.T) {
 				Credentials: map[string]any{"api_key": "deepseek-key", "api_protocol": providercore.APIProtocolResponses, "base_url": "https://relay.example"},
 			},
 			wantPath: "/v1/responses",
-			// Responses 提供商走 OpenAI 探针，空模型沿用 OpenAI 默认探针模型。
+			// Responses providers use the OpenAI probe and its default model when none is supplied.
 			wantModel:  openai.DefaultTestModel,
 			wantHeader: "Authorization",
 		},
@@ -572,7 +572,7 @@ func TestProviderTestService_TestProviderConnection_GrokDefaultsEmptyModelTo45(t
 			"access_token":  "grok-access-token",
 			"refresh_token": "grok-refresh-token",
 			"expires_at":    time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
-			// 空模型在提供商映射后使用默认值，因此跳过此处的映射键。
+			// The default model is selected after provider mapping, so this mapping key is skipped for empty input.
 			"model_mapping": map[string]any{"grok-4.5": "grok-4.3"},
 		},
 	}
@@ -1050,7 +1050,7 @@ func TestProviderTestService_TestProviderConnection_OpenAILegacyCompactUsesDedic
 	require.Empty(t, updateCalls, "手动压缩测试不应写入能力状态")
 }
 
-// TestManualCompactionTestsPreserveConfigurationAcrossOutcomes 检查手动测试的认证错误、限流处理和管理员能力配置。
+// TestManualCompactionTestsPreserveConfigurationAcrossOutcomes checks authentication failures, rate limits, and administrator capability settings.
 func TestManualCompactionTestsPreserveConfigurationAcrossOutcomes(t *testing.T) {
 	for _, mode := range []string{providercore.ProviderTestModeCompact, providercore.ProviderTestModeLegacyCompact} {
 		for _, status := range []int{200, 401, 404, 429} {
@@ -1325,7 +1325,7 @@ func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testin
 	}
 }
 
-// TestProviderTestServiceSkipsShadow 检查影子提供商测试通过母提供商解析凭据。
+// TestProviderTestServiceSkipsShadow checks that shadow probes resolve credentials through the parent.
 func TestProviderTestServiceSkipsShadow(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -1382,7 +1382,7 @@ func TestProviderTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 
-// TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56 检查管理员测试未知模型名时按输入透传。
+// TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56 checks that an unknown model name passes through unchanged.
 func TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1719,8 +1719,8 @@ func TestProviderTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, provider.RateLimitResetAt)
 }
 
-// TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe 验证 CN Responses
-// 提供商通过统一测试入口调用 OpenAI 探针。
+// TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe checks that CN Responses providers
+// use the OpenAI probe through the shared test entry point.
 func TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1895,7 +1895,7 @@ func TestProviderTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *te
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-// TestProviderTestServiceExplicitProtocolDoesNotMutateProvider 检查本次测试按选择的协议执行，持久化路由配置保持不变。
+// TestProviderTestServiceExplicitProtocolDoesNotMutateProvider checks that the selected protocol applies to this test while persisted routing stays intact.
 func TestProviderTestServiceExplicitProtocolDoesNotMutateProvider(t *testing.T) {
 	for _, protocol := range []string{"responses", "chat_completions"} {
 		t.Run(protocol, func(t *testing.T) {
@@ -2600,7 +2600,7 @@ func TestProviderTestService_QoderDefaultUserInfoProbeUsesHTTPUpstream(t *testin
 	require.Equal(t, int64(12), upstream.providerID)
 	require.Equal(t, 3, upstream.providerConcurrency)
 	require.True(t, upstream.profileSet)
-	// 检查探测使用注入的 Qoder session provider 及其代理和 TLS 配置。
+	// Check the Qoder session supplied to the probe through its session provider.
 	sessionProvider, ok := svc.Sessions.(*qoderProviderTestSessionProviderStub)
 	require.True(t, ok)
 	require.Equal(t, "user-12", sessionProvider.session.Identity.UID)
@@ -2825,7 +2825,7 @@ func executeGrokProbe(t *testing.T, executor *provideradapter.GrokProviderTest, 
 	return run.Result(executor.Execute(run, value, model))
 }
 
-// newProbeAgentKey 为签名器生成本地测试密钥。
+// newProbeAgentKey generates a local signing key for tests.
 func newProbeAgentKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
@@ -2948,7 +2948,7 @@ func (r openAIProbeRecords) GetByID(_ context.Context, id int64) (*providercore.
 	return providercore.CloneRecord(value), nil
 }
 
-// configureOpenAIProbe 组合策略、平台执行和事件处理用例。
+// configureOpenAIProbe connects policy, platform execution, and event handling.
 func configureOpenAIProbe(executor *provideradapter.OpenAIProviderTest) {
 	policy := &provideradapter.OpenAIProbePolicy{Available: true, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent}
 	if executor.Store != nil {
@@ -3027,7 +3027,7 @@ func (f *openAIProbeTransport) DoWithTLS(req *http.Request, _ string, _ int64, _
 	return f.resp, nil
 }
 
-// newCNProtocolTestCore 使用平台分派组件，存储为测试提供目标记录。
+// newCNProtocolTestCore connects platform dispatch to a test store that supplies target records.
 func newCNProtocolTestCore(read func(context.Context, int64) (*providercore.Record, error), transport provideradapter.QoderTransport) *providercore.TestService {
 	policy := egress.OperatorURLPolicy{}
 	openaiExecutor := &provideradapter.OpenAIProviderTest{Transport: transport, ValidateURL: policy.Validate}
@@ -3046,7 +3046,7 @@ func successfulOpenAIAutomaticProbeResponse() *http.Response {
 	}
 }
 
-// newOpenAIAutomaticProbeTestService 构造 TLS 缓存、Router 和提供商测试组件。
+// newOpenAIAutomaticProbeTestService builds the TLS cache, router, and provider test components.
 func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Record, transport *openAIProbeTransport, router *egress.TLSFingerprintRouter, profiles map[int64]*egress.TLSFingerprintProfile, urlPolicy *egress.OperatorURLPolicy) *providercore.TestService {
 	t.Helper()
 	profileStore := &automaticProbeProfileStore{}

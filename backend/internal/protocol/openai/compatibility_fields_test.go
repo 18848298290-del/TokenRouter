@@ -69,18 +69,18 @@ func TestReplaceModelInBody(t *testing.T) {
 }
 
 func TestReplaceModelInBody_InvalidJSON(t *testing.T) {
-	// 损坏的对象缺少可读的 model，sjson 仍尝试写入并返回修改后的字节。
+	// sjson attempts to write into this malformed object despite its unreadable model field.
 	brokenBody := []byte("{broken")
 	result := ReplaceModelInBody(brokenBody, "new-model")
 	require.NotNil(t, result)
 
-	// 数组输入使 sjson.SetBytes 返回错误，函数返回原始 body。
+	// Writing a model into an array fails, so the original bytes are returned.
 	arrayBody := []byte("[]")
 	result2 := ReplaceModelInBody(arrayBody, "new-model")
 	require.Equal(t, arrayBody, result2)
 }
 
-// assertJSONTokenOrder 按 JSON 原始字节中的位置检查字段顺序。
+// assertJSONTokenOrder checks field order using positions in the raw JSON bytes.
 func assertJSONTokenOrder(t *testing.T, body string, tokens ...string) {
 	t.Helper()
 

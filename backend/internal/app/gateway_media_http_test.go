@@ -283,7 +283,7 @@ func TestOpenAIGatewayHandlerImages_DisabledGroupRejectsBeforeScheduling(t *test
 	require.Contains(t, rec.Body.String(), gatewaymedia.ImageGenerationPermissionMessage)
 }
 
-// TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel 验证同步 Images 入口在分组映射后校验模型族。
+// TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel checks model-family validation after group mapping.
 func TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel(t *testing.T) {
 	groupID := int64(112)
 	pricingConfigService := newGatewayExecutionPricingConfigServiceForTest(groupID, capability.PlatformOpenAI, testkit.Configuration{
@@ -330,7 +330,8 @@ func TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel(t *testing.T) {
 	}
 }
 
-// TestImagesGroupMappedTextModelIsRejectedByActualCandidate 检查最终模型在选中候选后校验，提供商别名在该阶段解析。
+// TestImagesGroupMappedTextModelIsRejectedByActualCandidate checks the final model against the selected
+// provider rules.
 func TestImagesGroupMappedTextModelIsRejectedByActualCandidate(t *testing.T) {
 	groupID := int64(112)
 	policies := newGatewayExecutionPricingConfigServiceForTest(groupID, "openai", testkit.Configuration{ID: 112, Status: billing.StatusActive, ModelMapping: map[string]string{"gpt-image-2": "gpt-5.4"}})
@@ -529,7 +530,8 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Equal(t, "failover", events[1].Kind)
 }
 
-// TestMediaAssemblyKeepsReadAndStopBoundaries 检查媒体与辅助入口在读取正文前拒绝缺失依赖或已关闭的请求。
+// TestMediaAssemblyKeepsReadAndStopBoundaries checks that media and auxiliary handlers reject unavailable or
+// stopped services before reading the body.
 func TestMediaAssemblyKeepsReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("media-entry-contract")}
 	common := provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)

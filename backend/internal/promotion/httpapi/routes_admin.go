@@ -4,7 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterAffiliateRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterAffiliateRoutes adds admin affiliate routes to a group with app-installed authentication, rate
+// limits, and audit middleware.
 func RegisterAffiliateRoutes(admin *gin.RouterGroup, endpoint *AffiliateHandler) {
 	affiliates := admin.Group("/affiliates")
 	{
@@ -20,7 +21,8 @@ func RegisterAffiliateRoutes(admin *gin.RouterGroup, endpoint *AffiliateHandler)
 	}
 }
 
-// RegisterPromoCodeRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterPromoCodeRoutes adds admin promo routes to a group with app-installed authentication, rate
+// limits, and audit middleware.
 func RegisterPromoCodeRoutes(admin *gin.RouterGroup, endpoint *PromoHandler) {
 	promoCodes := admin.Group("/promo-codes")
 	{

@@ -20,7 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// GeminiProviderTest 为平台测试绑定提供商凭据和共享客户端。
+// GeminiProviderTest probes Gemini using provider credentials and a shared transport.
 type GeminiProviderTest struct {
 	Tokens      *providercore.GeminiTokenSource
 	Transport   QoderTransport
@@ -29,17 +29,16 @@ type GeminiProviderTest struct {
 	UserAgent   string
 }
 
-// Execute 按原提供商类型构造一次 Gemini 测试请求并同步输出事件。
+// Execute builds a credential-specific Gemini probe and emits its events synchronously.
 func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, testTypes ...string) error {
 	ctx := c.Context
 
-	// 保留缺省测试模型。
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// 静态凭据仅应用原精确模型映射。
+	// API key and service-account probes apply exact model mappings.
 	if value.Type == capability.ProviderTypeAPIKey || value.Type == capability.ProviderTypeServiceAccount {
 		mapping := providercore.ResolveModelMapping(value, ModelDefaults())
 		if len(mapping) > 0 {
@@ -49,13 +48,10 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		}
 	}
 
-	// 保留事件流开始时机。
 	c.Begin(true)
 
-	// 构造原 Gemini 测试报文。
 	payload := geminiTestPayload(testModelID, prompt, testTypes...)
 
-	// 按凭据类型选择原请求构造。
 	var req *http.Request
 	var err error
 
@@ -74,10 +70,8 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Failed to build request: %s", err.Error()))
 	}
 
-	// 请求构造成功后发送开始事件。
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
 
-	// 使用提供商原代理及共享传输。
 	proxyURL := ""
 	if value.ProxyID != nil && value.Proxy != nil {
 		proxyURL = value.Proxy.URL()
@@ -94,11 +88,10 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// 逐事件解析，不缓冲完整输出。
 	return (TestStreamOutput{}).Gemini(c, resp.Body)
 }
 
-// buildGeminiAPIKeyRequest 构造 API Key 请求。
+// buildGeminiAPIKeyRequest builds an authenticated streaming AI Studio request.
 func (s *GeminiProviderTest) buildGeminiAPIKeyRequest(ctx context.Context, value *providercore.Record, modelID string, payload []byte) (*http.Request, error) {
 	apiKey := value.GetCredential("api_key")
 	if strings.TrimSpace(apiKey) == "" {
@@ -114,7 +107,6 @@ func (s *GeminiProviderTest) buildGeminiAPIKeyRequest(ctx context.Context, value
 		return nil, err
 	}
 
-	// 保留 streamGenerateContent 的实时事件反馈。
 	fullURL, err := gemini.BuildGeminiAIStudioModelActionURL(normalizedBaseURL, modelID, "streamGenerateContent", true)
 	if err != nil {
 		return nil, err
@@ -132,13 +124,12 @@ func (s *GeminiProviderTest) buildGeminiAPIKeyRequest(ctx context.Context, value
 	return req, nil
 }
 
-// buildGeminiOAuthRequest 保留有无 project 的两条 OAuth 路径。
+// buildGeminiOAuthRequest selects Code Assist when project_id is present and AI Studio otherwise.
 func (s *GeminiProviderTest) buildGeminiOAuthRequest(ctx context.Context, value *providercore.Record, modelID string, payload []byte) (*http.Request, error) {
 	if s.Tokens == nil {
 		return nil, fmt.Errorf("gemini token provider not configured")
 	}
 
-	// 复用唯一 token source 及其原刷新行为。
 	accessToken, err := s.Tokens.GetAccessToken(ctx, value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get access token: %w", err)
@@ -146,7 +137,6 @@ func (s *GeminiProviderTest) buildGeminiOAuthRequest(ctx context.Context, value 
 
 	projectID := strings.TrimSpace(value.GetCredential("project_id"))
 	if projectID == "" {
-		// 无 project_id 时直接使用 AI Studio Bearer 请求。
 		baseURL := value.GetCredential("base_url")
 		if strings.TrimSpace(baseURL) == "" {
 			baseURL = geminicli.AIStudioBaseURL
@@ -170,7 +160,6 @@ func (s *GeminiProviderTest) buildGeminiOAuthRequest(ctx context.Context, value 
 		return req, nil
 	}
 
-	// 有 project_id 时保留 Code Assist 包装。
 	return s.buildCodeAssistRequest(ctx, accessToken, projectID, modelID, payload)
 }
 
@@ -196,7 +185,7 @@ func (s *GeminiProviderTest) buildGeminiServiceAccountRequest(ctx context.Contex
 	return req, nil
 }
 
-// buildCodeAssistRequest 构造原 Code Assist 包装和 Header。
+// buildCodeAssistRequest wraps the payload with the model and project and adds Code Assist headers.
 func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessToken, projectID, modelID string, payload []byte) (*http.Request, error) {
 	var inner map[string]any
 	if err := json.Unmarshal(payload, &inner); err != nil {
@@ -229,8 +218,8 @@ func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessT
 	return req, nil
 }
 
-// geminiTestPayload 按测试类型或模型名构造报文。
-// 图片类型使用图片生成配置，省略类型时按模型名判断。
+// geminiTestPayload builds a text or image probe.
+// An explicit test type takes precedence over model-name detection.
 func geminiTestPayload(modelID string, prompt string, testTypes ...string) []byte {
 	testType, explicitTestType := providercore.ProviderTestTypeFromArgs(testTypes...)
 	useImageTest := (explicitTestType && testType == providercore.ProviderTestTypeImage) ||

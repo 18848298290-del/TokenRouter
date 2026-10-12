@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// AcquireSingletonLease 保留 Redis 竞争跳过、故障回退数据库和无后端执行的原规则。
+// AcquireSingletonLease skips contended leader locks. If the leader backend is unavailable, it tries advisory locking.
+// If that backend is also absent, work proceeds without a lock. Call the release function when admitted work finishes.
 func AcquireSingletonLease(ctx context.Context, leader CNMonitorLeader, advisory func(context.Context, string) (func(), bool), key, owner string, ttl time.Duration) (func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()

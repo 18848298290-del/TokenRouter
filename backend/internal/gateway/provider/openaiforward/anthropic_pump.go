@@ -7,18 +7,18 @@ import (
 	"time"
 )
 
-// ErrAnthropicStreamIdle 表示上游流读间隔超时（见上方文件注释）。
+// ErrAnthropicStreamIdle indicates that the line pump's interval timer expired.
 var ErrAnthropicStreamIdle = errors.New("stream data interval timeout")
 
-// anthropicNativeLineEvent 是行泵交付的单次读取结果：line 为一行 SSE 文本，
-// err 为 scanner 读错误（流自然结束时 next 返回 io.EOF，不经过本字段）。
+// anthropicNativeLineEvent contains one SSE line or a scanner error.
+// Normal end of input closes the event channel, which Next reports as io.EOF.
 type anthropicNativeLineEvent struct {
 	line string
 	err  error
 }
 
-// AnthropicLinePump 以独立 goroutine 泵送 scanner 的行，并对逐行到达
-// 间隔施加 interval 上限（<=0 表示禁用，保持无界读的旧行为）。
+// AnthropicLinePump reads scanner lines in a goroutine and bounds waits with an interval timer.
+// A nonpositive interval disables the timer.
 type AnthropicLinePump struct {
 	events   chan anthropicNativeLineEvent
 	done     chan struct{}
@@ -26,7 +26,7 @@ type AnthropicLinePump struct {
 	interval time.Duration
 }
 
-// NewAnthropicLinePump 启动泵 goroutine；调用方 defer pump.stop()。
+// NewAnthropicLinePump starts the reader goroutine. The caller must call Stop once and close the underlying reader.
 func NewAnthropicLinePump(scanner *bufio.Scanner, interval time.Duration) *AnthropicLinePump {
 	p := &AnthropicLinePump{
 		events:   make(chan anthropicNativeLineEvent, 16),
@@ -55,9 +55,9 @@ func NewAnthropicLinePump(scanner *bufio.Scanner, interval time.Duration) *Anthr
 	return p
 }
 
-// Next 阻塞返回下一行。返回 io.EOF 表示上游正常收流；ErrAnthropicStreamIdle
-// 表示 interval 内无任何数据到达（计时从收到上一行时起算，事件处理耗时不算入，
-// 与 readOpenAICompatBufferedTerminal 的 resetTimeout 处理方式相同）。
+// Next waits for a line, scanner error, EOF, or ErrAnthropicStreamIdle.
+// The timer starts at construction and resets when Next consumes an event;
+// it continues running while the caller processes that event.
 func (p *AnthropicLinePump) Next() (string, error) {
 	var timeoutCh <-chan time.Time
 	if p.timer != nil {
@@ -75,7 +75,7 @@ func (p *AnthropicLinePump) Next() (string, error) {
 	}
 }
 
-// resetTimer 在收到一行后重启间隔计时器。
+// resetTimer restarts the interval timer after an event is consumed.
 func (p *AnthropicLinePump) resetTimer() {
 	if p.timer == nil {
 		return
@@ -89,8 +89,8 @@ func (p *AnthropicLinePump) resetTimer() {
 	p.timer.Reset(p.interval)
 }
 
-// Stop 终止泵 goroutine。注意：goroutine 若正阻塞在 scanner.Read 上，需由
-// 调用方关闭 resp.Body（间隔超时分支已做）才能真正退出。
+// Stop signals the pump to exit and stops its timer. Call it once.
+// The caller must close the underlying reader to unblock a goroutine inside scanner.Scan.
 func (p *AnthropicLinePump) Stop() {
 	close(p.done)
 	if p.timer != nil {

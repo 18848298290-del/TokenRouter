@@ -10,7 +10,7 @@ const (
 	OpsQueryModeRaw  OpsQueryMode = "raw"
 )
 
-// ErrOpsPreaggregatedNotPopulated 表示目标窗口尚未形成完整的运维聚合覆盖。
+// ErrOpsPreaggregatedNotPopulated indicates incomplete aggregate coverage for the requested window.
 var ErrOpsPreaggregatedNotPopulated = errors.New("ops pre-aggregated tables not populated")
 
 type OpsQueryMode string
@@ -71,7 +71,7 @@ func (s *OpsService) applyOpsIgnoredStatusCodes(ctx context.Context, filter *Ops
 		filter.IgnoredStatusCodes = NormalizeOpsIgnoredStatusCodes(filter.IgnoredStatusCodes)
 	}
 	if !OpsIgnoredStatusCodesEqual(filter.IgnoredStatusCodes, DefaultOpsIgnoredStatusCodes()) {
-		// 自定义忽略状态码使用 raw 查询，预聚合表按固定状态码生成。
+		// Custom ignored statuses require raw queries because aggregates use a fixed status policy.
 		filter.QueryMode = OpsQueryModeRaw
 	}
 }

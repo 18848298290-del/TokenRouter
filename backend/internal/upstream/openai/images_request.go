@@ -37,7 +37,7 @@ func BuildImagesRequest(ctx context.Context, body []byte, contentType string, op
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	// 提供商级请求头覆写（仅 openai api_key 提供商启用时生效；OAuth 路径 no-op）
+	// The callback applies enabled API-key provider overrides; OAuth supplies a no-op.
 	options.OverrideHeaders(req.Header)
 	return req, nil
 }

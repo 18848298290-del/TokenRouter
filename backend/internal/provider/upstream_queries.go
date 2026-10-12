@@ -23,12 +23,12 @@ const (
 
 var ErrUpstreamUsageStopped = errors.New("upstream usage queries are stopped")
 
-// UpstreamUsageReader 读取当前提供商身份。
+// UpstreamUsageReader reads the current provider identity and configuration.
 type UpstreamUsageReader interface {
 	GetByID(context.Context, int64) (*Record, error)
 }
 
-// UpstreamUsageExecution 由平台适配器实现用量查询协议。
+// UpstreamUsageExecution implements platform-specific usage queries.
 type UpstreamUsageExecution interface {
 	Available() bool
 	Supports(string) bool
@@ -37,7 +37,7 @@ type UpstreamUsageExecution interface {
 }
 type UpstreamUsageOptions struct{ Now func() time.Time }
 
-// UpstreamUsageService 唯一拥有合并查询、并发槽、指标与停止等待。
+// UpstreamUsageService coalesces queries and owns concurrency limits, metrics, and shutdown waits.
 type UpstreamUsageService struct {
 	providerRepo UpstreamUsageReader
 	execution    UpstreamUsageExecution
@@ -54,7 +54,7 @@ func NewUpstreamUsageService(reader UpstreamUsageReader, execution UpstreamUsage
 	return &UpstreamUsageService{providerRepo: reader, execution: execution, now: options.Now, querySlots: make(chan struct{}, upstreamUsageConcurrency), metrics: make(map[string]int64)}
 }
 
-// StopContext 阻止新认领，取消共享查询并等待实际完成；HTTP 等待方取消不终止其他等待方。
+// StopContext rejects new work, cancels shared queries, and waits until completion or the context expires.
 func (s *UpstreamUsageService) StopContext(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -82,7 +82,7 @@ func (s *UpstreamUsageService) recordMetric(adapter, outcome string) {
 	s.metrics[adapter+":"+outcome]++
 }
 
-// SnapshotMetrics 返回脱敏的适配器/结果分类计数，供监控或测试读取。
+// SnapshotMetrics returns an independent copy of counts by adapter and outcome.
 func (s *UpstreamUsageService) SnapshotMetrics() UpstreamUsageMetrics {
 	result := UpstreamUsageMetrics{Counts: make(map[string]int64)}
 	if s == nil {
@@ -94,7 +94,7 @@ func (s *UpstreamUsageService) SnapshotMetrics() UpstreamUsageMetrics {
 	return result
 }
 
-// QueryProvider 查询单个提供商的实时上游用量。
+// QueryProvider fetches current upstream usage. Caller cancellation stops waiting while shared work continues.
 func (s *UpstreamUsageService) QueryProvider(ctx context.Context, providerID int64) (*UpstreamUsageQueryResult, error) {
 	if s == nil || s.providerRepo == nil || s.execution == nil || !s.execution.Available() {
 		return nil, ErrUpstreamUsageUnavailable
@@ -113,8 +113,8 @@ func (s *UpstreamUsageService) QueryProvider(ctx context.Context, providerID int
 	queryDeadline := time.Now().Add(upstreamUsageTimeout)
 	preflightCtx, cancelPreflight := context.WithDeadline(ctx, queryDeadline)
 	defer cancelPreflight()
-	// 先读取一次身份快照，用它生成 singleflight 指纹。这样凭据、代理或
-	// 查询配置变化后，新请求使用新的 singleflight 标识。
+	// Read identity before choosing the singleflight key so credential, proxy,
+	// and query configuration changes start a separate shared query.
 	provider, err := s.loadQueryProvider(preflightCtx, providerID)
 	if err != nil {
 		return nil, err
@@ -126,8 +126,8 @@ func (s *UpstreamUsageService) QueryProvider(ctx context.Context, providerID int
 	if !queryConfig.Enabled {
 		return nil, ErrUpstreamUsageDisabled
 	}
-	// 国产供应商不允许管理员把协议适配器误选成通用站点适配器；按平台和
-	// provider_mode 决定用量适配器，查询同时检查开关和身份指纹。
+	// CN platforms select adapters by platform and provider mode, preventing a
+	// manual choice of a generic site adapter from overriding their usage protocol.
 	if provider.IsCNProvider() {
 		queryConfig.Adapter = CNUpstreamUsageAdapterName(provider)
 		if queryConfig.Adapter == "" {
@@ -140,8 +140,8 @@ func (s *UpstreamUsageService) QueryProvider(ctx context.Context, providerID int
 	fingerprint := UpstreamUsageContextFingerprint(provider, queryConfig, s.execution.BaseURL(provider))
 	key := fmt.Sprintf("%d:%s", providerID, fingerprint)
 	resultCh := s.queryFlight.DoChan(key, func() (any, error) {
-		// 共享操作保留首个调用方的值，但不继承其取消信号；固定截止时间
-		// 则把首次身份读取也计入约 60 秒的总预算。
+		// Shared work keeps the first caller's values and uses service cancellation.
+		// The deadline includes the initial identity read in the 60-second budget.
 		workCtx, finish, err := s.activity.begin(context.WithoutCancel(ctx), ErrUpstreamUsageStopped)
 		if err != nil {
 			return nil, err
@@ -166,7 +166,7 @@ func (s *UpstreamUsageService) QueryProvider(ctx context.Context, providerID int
 	}
 }
 
-// QueryBatch 查询多个提供商；单提供商错误通过 errors 返回，不中断其它提供商。
+// QueryBatch queries providers independently and returns per-provider failures in its second result.
 func (s *UpstreamUsageService) QueryBatch(ctx context.Context, providerIDs []int64) (map[int64]*UpstreamUsageQueryResult, map[int64]error, error) {
 	if s == nil || s.providerRepo == nil || s.execution == nil || !s.execution.Available() {
 		return nil, nil, ErrUpstreamUsageUnavailable
@@ -237,7 +237,7 @@ func (s *UpstreamUsageService) queryProvider(ctx context.Context, providerID int
 	provider, err := s.loadQueryProvider(ctx, providerID)
 	if err != nil {
 		if errors.Is(err, ErrUpstreamUsageProviderInvalid) || errors.Is(err, ErrUpstreamUsageProviderDisabled) {
-			// 预读后提供商类型、状态或记录发生变化时，返回身份冲突错误。
+			// A changed type, status, or deleted record invalidates the preflight identity.
 			return nil, ErrUpstreamUsageIdentityChanged
 		}
 		return nil, err
@@ -258,8 +258,8 @@ func (s *UpstreamUsageService) queryProvider(ctx context.Context, providerID int
 	current, err := s.providerRepo.GetByID(ctx, providerID)
 	if err != nil {
 		if errors.Is(err, ErrProviderNotFound) {
-			// 查询开始后提供商被删除也属于身份快照变化，不能把刚取得的结果
-			// 归到一个已经不存在的提供商上。
+			// Deletion during the query invalidates its identity; discard the result
+			// rather than attribute it to a provider that no longer exists.
 			return nil, ErrUpstreamUsageIdentityChanged
 		}
 		return nil, upstreamUsageRepositoryError(ctx, err)

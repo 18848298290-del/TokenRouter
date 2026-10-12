@@ -7,32 +7,32 @@ import (
 	"time"
 )
 
-// 等待间隔从 100 毫秒开始，按 1.5 倍增长，最大为 2 秒。
+// Backoff starts at 100 milliseconds, grows by a factor of 1.5, and is capped at 2 seconds.
 const (
 	InitialBackoff    = 100 * time.Millisecond
 	MaxBackoff        = 2 * time.Second
 	backoffMultiplier = 1.5
 )
 
-// ConcurrencyError 记录槽位类别和等待是否超时。
+// ConcurrencyError identifies the slot type and whether waiting timed out.
 type ConcurrencyError struct {
 	SlotType  string
 	IsTimeout bool
 }
 
-// WaitQueueFullError 表示用户等待队列已满。
+// WaitQueueFullError reports that the user's wait queue is full.
 type WaitQueueFullError struct {
 	SlotType string
 }
 
-// WaitObserver 同步发送等待事件，Begin 在进入等待时调用。立即取得槽位时跳过 Begin。
+// WaitObserver receives synchronous wait events. Begin is skipped when a slot is acquired immediately.
 type WaitObserver struct {
 	Interval  time.Duration
 	Begin     func() error
 	Heartbeat func() error
 }
 
-// UserAcquireOptions 仅包含本次准入及释放所需的独立输入。
+// UserAcquireOptions contains the inputs for user admission and resource release.
 type UserAcquireOptions struct {
 	UserID   int64
 	APIKeyID int64
@@ -53,7 +53,8 @@ func (e *WaitQueueFullError) Error() string {
 	return "Too many pending requests, please retry later"
 }
 
-// WaitForSlot 可先立即尝试获取槽位，失败后按退避间隔重试，直到取得槽位、父 context 取消或超时。
+// WaitForSlot optionally tries immediately, then retries with backoff until acquisition, cancellation,
+// or timeout.
 func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string, id int64, limit int, timeout time.Duration, immediate bool, observer WaitObserver) (func(), error) {
 	operation, finish, err := s.runtime.Enter(parent, "slot-wait")
 	if err != nil {
@@ -119,7 +120,7 @@ func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string
 	}
 }
 
-// AcquireUser 拥有实际取得的用户槽和 Key 统计槽，等待名额在离开队列时归还。
+// AcquireUser returns ownership of user and API key slots and releases queue capacity when waiting ends.
 func (s *ConcurrencyService) AcquireUser(ctx context.Context, options UserAcquireOptions) (*Lease, WaitResult, error) {
 	result, err := s.AcquireUserSlot(ctx, options.UserID, options.Limit)
 	if err != nil {
@@ -142,11 +143,11 @@ func (s *ConcurrencyService) AcquireUser(ctx context.Context, options UserAcquir
 			return nil, waited, err
 		}
 	}
-	// 先登记用户槽的释放函数，再尝试登记统计槽。调用方选择取消时的释放方式。
+	// Own the user slot before tracking the API key slot; the caller selects the cancellation release mode.
 	lease := NewLease(context.Background(), ReleaseOnCompletion, release)
 	if options.APIKeyID > 0 {
 		keyRelease := s.TrackAPIKeySlot(ctx, options.APIKeyID)
-		// 保留用户槽先释放、统计槽随后释放的兼容次序。
+		// Release the user slot before the API key statistics slot.
 		combined := NewLease(ctx, options.Mode, func() {
 			lease.Release()
 			if keyRelease != nil {
@@ -159,10 +160,8 @@ func (s *ConcurrencyService) AcquireUser(ctx context.Context, options UserAcquir
 }
 
 func NextBackoff(current time.Duration) time.Duration {
-	// 指数退避：当前时间 * 1.5
 	next := min(time.Duration(float64(current)*backoffMultiplier), MaxBackoff)
-	// 添加 ±20% 的随机抖动（jitter 范围 0.8 ~ 1.2）
-	// 抖动将多个请求的 Redis 重试分散到不同时间点。
+	// Apply +/-20% jitter to spread concurrent Redis retries over time.
 	jitter := 0.8 + rand.Float64()*0.4
 	jittered := time.Duration(float64(next) * jitter)
 	if jittered < InitialBackoff {

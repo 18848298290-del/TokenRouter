@@ -14,7 +14,7 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Providers 限定原候选查询和完整目标读取，不向选择器开放凭据刷新、CRUD 或资金写入。
+// Providers supplies candidate queries and full execution targets to selection.
 type Providers interface {
 	GetByID(context.Context, int64) (*gatewayadapter.ExecutionProvider, error)
 	ListSchedulableByPlatform(context.Context, string) ([]gatewayadapter.ExecutionProvider, error)
@@ -25,26 +25,26 @@ type Providers interface {
 	ListSchedulableUngroupedByPlatforms(context.Context, []string) ([]gatewayadapter.ExecutionProvider, error)
 }
 
-// Groups 保留轻量分组与完整设置的不同读取时点。
+// Groups supports lightweight and full group reads at their respective call sites.
 type Groups interface {
 	GetByID(context.Context, int64) (*routing.Group, error)
 	GetByIDLite(context.Context, int64) (*routing.Group, error)
 }
 
-// Snapshots 定义提供商快照读取方法，实现方负责缓存解码。
+// Snapshots supplies provider snapshots; implementations decode cached records.
 type Snapshots interface {
 	GetProvider(context.Context, int64) (*provider.Record, error)
 	ListProviders(context.Context, *int64, string, bool) ([]provider.Record, bool, error)
 }
 
-// Reads 包含提供商、分组和快照的数据来源。
+// Reads groups provider, group, and snapshot data sources.
 type Reads struct {
 	Providers Providers
 	Groups    Groups
 	Snapshot  Snapshots
 }
 
-// Shared 包含 app 构造的反馈、计数和配置实例，基础与高级选择共用这些实例。
+// Shared contains app-owned instances reused by basic and advanced selection.
 type Shared struct {
 	Cache         schedulercore.StickyCache
 	Concurrency   *schedulercore.ConcurrencyService
@@ -54,7 +54,7 @@ type Shared struct {
 	Feedback      *schedulercore.RuntimeStats
 }
 
-// GenericDependencies 保留窗口费用、RPM 与会话各自的作用域。
+// GenericDependencies supplies window-cost, RPM, session, and free-quota checks.
 type GenericDependencies struct {
 	Reads
 	Shared
@@ -66,7 +66,7 @@ type GenericDependencies struct {
 	SetProviderError        func(context.Context, int64, string) error
 }
 
-// CompatibleDependencies 包含兼容选择所需的响应归属、健康状态和配额观测依赖。
+// CompatibleDependencies supplies response ownership, health state, and quota observations for compatible selection.
 type CompatibleDependencies struct {
 	Generic *Generic
 	Gemini  *Gemini
@@ -82,14 +82,14 @@ type CompatibleDependencies struct {
 	NewAdvancedFreeQuota func() *provider.FreeQuotaGate
 }
 
-// GeminiDependencies 复用既有配额批量预检，不合并普通与混合池的选择顺序。
+// GeminiDependencies supplies shared selection resources and Gemini quota prechecks.
 type GeminiDependencies struct {
 	Reads
 	Shared
 	QuotaPrecheck *provider.GeminiPrecheck
 }
 
-// Options 包含启动配置，app 负责区分未配置和零值。
+// Options contains startup configuration. The app distinguishes unset values from explicit zero values.
 type Options struct {
 	Scheduling        schedulercore.FlowOptions
 	DebugRouting      bool
@@ -99,7 +99,7 @@ type Options struct {
 	WriteLegacySticky bool
 }
 
-// DefaultOptions 返回未提供进程配置时的默认值。
+// DefaultOptions returns defaults for omitted process configuration.
 func DefaultOptions() Options {
 	return Options{
 		Scheduling: schedulercore.FlowOptions{StickySessionMaxWaiting: 3, StickySessionWaitTimeout: 45 * time.Second, FallbackWaitTimeout: 30 * time.Second, FallbackMaxWaiting: 100, LoadBatchEnabled: true},

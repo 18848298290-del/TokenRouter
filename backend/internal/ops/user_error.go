@@ -2,12 +2,12 @@ package ops
 
 import "time"
 
-// UserErrorRequest 是用户错误请求的脱敏视图，字段按白名单提供。
-// message 是网关标准化描述，key_name 是用户在 KeysView 中可见的自有 API Key 名称。
-// client_ip、user_agent、group_name、request_type 和 stream 是用户自己的请求属性，
-// 根据 2026-07-03 的产品决定开放，与用量明细展示的字段一致。
-// error_body 在详情接口 GetUserErrorRequestDetail 校验记录归属后返回。
-// provider、api_key_prefix、upstream_endpoint 和 user_email 属于内部敏感字段，输出时需要移除。
+// UserErrorRequest exposes allowlisted fields from the user's error request.
+// Message is the gateway description; KeyName is the API key name visible to its owner.
+// Client IP, user agent, group, request type, and stream describe the user's own request,
+// matching the fields available in usage details.
+// GetUserErrorRequestDetail checks ownership before returning error_body.
+// Provider details, API key prefixes, upstream endpoints, and user email remain internal.
 type UserErrorRequest struct {
 	RequestID       string    `json:"request_id"`
 	ID              int64     `json:"id"`
@@ -27,7 +27,7 @@ type UserErrorRequest struct {
 	UserAgent       string    `json:"user_agent,omitempty"`
 }
 
-// UserErrorRequestList 是用户错误请求分页结果。
+// UserErrorRequestList is a page of user error requests.
 type UserErrorRequestList struct {
 	Items    []*UserErrorRequest `json:"items"`
 	Total    int                 `json:"total"`
@@ -35,16 +35,16 @@ type UserErrorRequestList struct {
 	PageSize int                 `json:"page_size"`
 }
 
-// UserErrorRequestDetail 是点击请求列表单行后展示的脱敏详情。
-// 它包含 UserErrorRequest 字段、上游错误正文 error_body 和 upstream_status_code。
+// UserErrorRequestDetail is the sanitized detail view for a selected request.
+// It adds the upstream error body and status to UserErrorRequest.
 type UserErrorRequestDetail struct {
 	UserErrorRequest
 	ErrorBody          string `json:"error_body"`
 	UpstreamStatusCode *int   `json:"upstream_status_code,omitempty"`
 }
 
-// MapUserErrorCategory 把后端 error_phase + error_type 映射为用户侧粗分类码。
-// 返回稳定的分类码，前端通过 i18n 显示文案。
+// MapUserErrorCategory maps an error phase and type to a user-facing category code.
+// The frontend localizes these stable codes.
 func MapUserErrorCategory(phase, errType string) string {
 	switch phase {
 	case "auth":
@@ -70,8 +70,8 @@ func MapUserErrorCategory(phase, errType string) string {
 	return "other"
 }
 
-// CategoryToFilter 将用户分类转换为 phase 和 type 的 ANY 过滤条件。
-// other 和未知分类返回空切片，表示查询全部分类。
+// CategoryToFilter converts a user category into phase and type ANY filters.
+// The other category and unknown values return empty slices to include all categories.
 func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 	switch category {
 	case "auth":
@@ -95,7 +95,7 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 	}
 }
 
-// ToUserErrorRequest 把内部 OpsErrorLog 裁剪为用户安全视图。
+// ToUserErrorRequest copies allowlisted fields from an internal error log.
 func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 	if e == nil {
 		return nil
@@ -128,7 +128,7 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 	}
 }
 
-// ToUserErrorRequestDetail 把内部 OpsErrorLogDetail 裁剪为用户安全详情视图。
+// ToUserErrorRequestDetail copies allowlisted fields from internal error details.
 func ToUserErrorRequestDetail(e *OpsErrorLogDetail) *UserErrorRequestDetail {
 	if e == nil {
 		return nil

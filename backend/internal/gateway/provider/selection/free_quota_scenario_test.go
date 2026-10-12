@@ -1,6 +1,6 @@
 package selection
 
-// 免费额度场景覆盖 free_quota.go 的额度过滤与 compatible_ports.go 的负载选择。
+// These scenarios cover free-quota filtering and compatible load-aware selection.
 
 import (
 	"context"
@@ -34,7 +34,7 @@ func TestOpenAIProviderSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T
 	}, cfg)
 	picker := &compatiblePicker{service: svc, stats: schedulercore.NewRuntimeStats(time.Now)}
 
-	// 通过后台刷新预热缓存，使负载均衡路径能够看到软性门禁结果。
+	// Warm the cache through a background refresh so selection observes the soft gate.
 	_ = picker.filterGrokFreeQuotaProviders(context.Background(), providers)
 	require.Eventually(t, func() bool {
 		filtered := picker.filterGrokFreeQuotaProviders(context.Background(), providers)

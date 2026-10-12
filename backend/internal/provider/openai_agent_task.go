@@ -18,7 +18,7 @@ type OpenAITaskOptions struct {
 	FallbackMutex *sync.Mutex
 }
 
-// OpenAITaskCoordinator 延续原进程内按提供商共享锁，不增加跨进程协调协议。
+// OpenAITaskCoordinator serializes task registration per provider within this process.
 type OpenAITaskCoordinator struct{ locks sync.Map }
 
 func (r *Record) IsOpenAIAgentIdentity() bool {
@@ -28,7 +28,7 @@ func (r *Record) IsOpenAIAgentIdentity() bool {
 	return strings.EqualFold(strings.TrimSpace(r.GetCredential(OpenAIAuthModeCredentialKey)), OpenAIAuthModeAgentIdentity)
 }
 
-// openAITaskCopyCredentials 浅拷贝任务更新需要的凭据 map。
+// openAITaskCopyCredentials shallow-copies credentials for task updates.
 func openAITaskCopyCredentials(values map[string]any) map[string]any {
 	if values == nil {
 		return nil
@@ -73,7 +73,7 @@ func (s *OpenAITaskCoordinator) Ensure(ctx context.Context, options OpenAITaskOp
 	}
 	sharedTaskMu.Lock()
 	defer sharedTaskMu.Unlock()
-	// 在共享锁内重读提供商，已有 task 时复用它。
+	// Re-read under the shared lock and reuse a task that differs from the one being replaced.
 	if options.Read != nil && credProvider.ID > 0 {
 		if refreshed, refreshErr := options.Read(ctx, credProvider.ID); refreshErr == nil && refreshed != nil {
 			if refreshed.IsCredentialShadow() {

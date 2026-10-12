@@ -51,12 +51,12 @@ func Decode(encoded string) ([]byte, error) {
 	n := len(mapped)
 	pivot := n / 3
 	standard := mapped[n-pivot:] + mapped[pivot:n-pivot] + mapped[:pivot]
-	// 重排后 padding 可能出现在中间，先移除再交给 RawStdEncoding 解码。
+	// Remove padding before raw base64 decoding, including padding inside the reordered input.
 	noPad := strings.ReplaceAll(standard, string(stdPad), "")
 	return base64.RawStdEncoding.DecodeString(noPad)
 }
 
-// DecodeString 解码字符串并以明文字符串返回。
+// DecodeString decodes a COSY string into plaintext.
 func DecodeString(encoded string) (string, error) {
 	b, err := Decode(encoded)
 	if err != nil {
@@ -65,8 +65,8 @@ func DecodeString(encoded string) (string, error) {
 	return string(b), nil
 }
 
-// EncodeJSON 直接编码 JSON 字节切片。
-// 调用方需传入已压缩的 JSON。
+// EncodeJSON encodes compact JSON bytes using the COSY alphabet.
+// The caller supplies already compacted JSON.
 func EncodeJSON(compactJSON []byte) string {
 	return Encode(compactJSON)
 }

@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterDashboardRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterDashboardRoutes registers dashboard routes after app installs authentication, rate limiting, and audit middleware.
 func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler) {
 	dashboard := admin.Group("/dashboard")
 	{
@@ -23,7 +23,7 @@ func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler)
 	}
 }
 
-// RegisterUsageRoutes 注册所属管理路由；组鉴权、限流和审计由 app 预先安装。
+// RegisterUsageRoutes registers usage routes after app installs authentication, rate limiting, and audit middleware.
 func RegisterUsageRoutes(admin *gin.RouterGroup, endpoint *UsageHandler) {
 	usage := admin.Group("/usage")
 	{

@@ -6,8 +6,9 @@ import (
 	"fmt"
 )
 
-// RefreshImported 对已落库的导入身份进行一次尽力交换。它共享生产刷新锁和停止预算，
-// 导入会刷新禁用提供商的凭据，并写入版本字段，刷新资格按导入流程判断。
+// RefreshImported attempts one exchange for a persisted import identity using the shared locks and stop lifecycle.
+// The import flow decides eligibility, including disabled providers; returned credential metadata is persisted
+// as supplied.
 func (api *OAuthRefreshAPI) RefreshImported(ctx context.Context, value *Record, key string, exchange func(context.Context, *Record) map[string]any) error {
 	if value == nil || value.IsCredentialShadow() || exchange == nil {
 		return nil
@@ -55,7 +56,7 @@ func (api *OAuthRefreshAPI) RefreshImported(ctx context.Context, value *Record, 
 		return err
 	}
 	if !applied {
-		// 比较失败时返回当前状态，本次 token 交换结果丢弃。
+		// A comparison miss discards the exchange result; reread to confirm that the provider still exists.
 		latest, readErr := api.providerRepo.GetByID(ctx, value.ID)
 		if readErr != nil {
 			return readErr

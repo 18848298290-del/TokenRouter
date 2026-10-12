@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// FableWindowReason 保留模型窗口持久化原因。
+// FableWindowReason identifies a persisted exhausted Fable window.
 const FableWindowReason = "anthropic_7d_oi_window_exhausted"
 
-// RateLimitReset 表达供应商限流头的重置观测，不执行提供商状态写入。
+// RateLimitReset contains reset times observed in provider headers.
 type RateLimitReset struct {
-	ResetAt       time.Time  // 限流重置时间
-	FiveHourReset *time.Time // 五小时窗口重置时间，缺失时为 nil
+	ResetAt       time.Time  // Selected rate-limit reset time.
+	FiveHourReset *time.Time // Five-hour reset, or nil when absent.
 }
 
 type WindowLimit struct {
@@ -68,8 +68,7 @@ func parseWindowReset(headers http.Header, window string, now time.Time) (time.T
 	return parseResetTimestamp(headers.Get("anthropic-ratelimit-unified-"+window+"-reset"), now, maxAge)
 }
 
-// parseResetTimestamp 解析 Anthropic reset 头的 Unix 时间戳（自动识别毫秒），
-// 并校验落在 (now, now+maxAge] 的合理区间内。
+// parseResetTimestamp accepts Unix seconds or milliseconds within (now, now+maxAge].
 func parseResetTimestamp(raw string, now time.Time, maxAge time.Duration) (time.Time, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -89,9 +88,9 @@ func parseResetTimestamp(raw string, now time.Time, maxAge time.Duration) (time.
 	return resetAt, true
 }
 
-// SelectFableWindowLimit 解析 Anthropic 7d_oi 响应头，返回 Fable 家族的限额窗口。
-// surpassed-threshold 为浮点数，status=rejected 或 utilization >= 1.0 时视为超限。
-// 缺少模型窗口 reset 时使用聚合 reset，其他模型按各自的窗口调度。
+// SelectFableWindowLimit returns an exhausted 7d_oi window when rejection or
+// utilization headers indicate exhaustion. Missing or invalid window reset times
+// use the aggregate reset; an unusable aggregate reset yields nil.
 func SelectFableWindowLimit(headers http.Header, now time.Time) *WindowLimit {
 	if !isWindowRejected(headers, "7d_oi") && !isWindowExceeded(headers, "7d_oi") {
 		return nil
@@ -110,12 +109,13 @@ func SelectFableWindowLimit(headers http.Header, now time.Time) *WindowLimit {
 	}
 }
 
-// parseAggregateReset 按 7 天窗口的合理范围解析聚合 reset 响应头。
+// parseAggregateReset accepts aggregate reset times up to eight days ahead.
 func parseAggregateReset(headers http.Header, now time.Time) (time.Time, bool) {
 	return parseResetTimestamp(headers.Get("anthropic-ratelimit-unified-reset"), now, 8*24*time.Hour)
 }
 
-// CalculateRateLimitReset 解析 5h/7d 响应头；缺少窗口时由调用方保留聚合头回退。
+// CalculateRateLimitReset selects a reset from the 5h/7d Unix-second headers.
+// A nil result lets the caller consider an aggregate reset header.
 func CalculateRateLimitReset(headers http.Header, info func(string, ...any)) *RateLimitReset {
 	reset5hStr := headers.Get("anthropic-ratelimit-unified-5h-reset")
 	reset7dStr := headers.Get("anthropic-ratelimit-unified-7d-reset")
@@ -145,11 +145,10 @@ func CalculateRateLimitReset(headers http.Header, info func(string, ...any)) *Ra
 			"reset_7d", reset7dStr,
 		)
 	}
-	// 按实际耗尽窗口选择重置时间。
 	var chosen *time.Time
 	switch {
 	case is5hExceeded && is7dExceeded:
-		// 两个窗口均耗尽时优先 7d，缺失则回退 5h。
+		// When both windows are exhausted, prefer seven days if available.
 		chosen = reset7d
 		if chosen == nil {
 			chosen = reset5h
@@ -159,7 +158,7 @@ func CalculateRateLimitReset(headers http.Header, info func(string, ...any)) *Ra
 	case is7dExceeded:
 		chosen = reset7d
 	default:
-		// 没有明确耗尽标记时沿用更早的重置时间。
+		// Without an exhaustion signal, use the earlier available reset.
 		chosen = pickSooner(reset5h, reset7d)
 	}
 
@@ -169,19 +168,17 @@ func CalculateRateLimitReset(headers http.Header, info func(string, ...any)) *Ra
 	return &RateLimitReset{ResetAt: *chosen, FiveHourReset: reset5h}
 }
 
-// isWindowExceeded 保留 surpassed-threshold 和 utilization 的原判定容差。
+// isWindowExceeded accepts surpassed-threshold=true or utilization within 1e-9 of one or higher.
 func isWindowExceeded(headers http.Header, window string) bool {
 	prefix := "anthropic-ratelimit-unified-" + window + "-"
 
-	// 优先读取明确的超限标记。
 	if st := headers.Get(prefix + "surpassed-threshold"); strings.EqualFold(st, "true") {
 		return true
 	}
 
-	// 再读取利用率。
 	if utilStr := headers.Get(prefix + "utilization"); utilStr != "" {
 		if util, err := strconv.ParseFloat(utilStr, 64); err == nil && util >= 1.0-1e-9 {
-			// 保留浮点容差。
+			// Allow rounding error near full utilization.
 			return true
 		}
 	}
@@ -189,7 +186,7 @@ func isWindowExceeded(headers http.Header, window string) bool {
 	return false
 }
 
-// pickSooner 返回非空且更早的时间；均缺失时返回 nil。
+// pickSooner returns the earlier non-nil time, or nil when both are absent.
 func pickSooner(a, b *time.Time) *time.Time {
 	switch {
 	case a != nil && b != nil:

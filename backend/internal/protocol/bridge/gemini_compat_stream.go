@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// NativeGeminiCompatStream 拥有 Gemini 经 Anthropic wire 转换的思考/文本/工具状态。
-// 下游 Responses/Chat 编排仍由调用方组合已有 bridge，写失败由迭代消费者决定退出。
+// NativeGeminiCompatStream tracks thinking, text, and tools while converting Gemini to Anthropic events.
+// Callers compose downstream Responses/Chat bridges and stop iteration on write failure.
 type NativeGeminiCompatStream struct {
 	runtime        NativeGeminiRuntime
 	finishReason   string
@@ -23,7 +23,7 @@ type NativeGeminiCompatStream struct {
 	usage          NativeGeminiUsage
 }
 
-// NewNativeGeminiCompatStream 构造仅创建本次流的状态；负索引表示尚未打开任何内容块。
+// NewNativeGeminiCompatStream initializes per-stream state; negative indexes mean no block is open.
 func NewNativeGeminiCompatStream(runtime NativeGeminiRuntime) *NativeGeminiCompatStream {
 	return &NativeGeminiCompatStream{runtime: runtime, openBlockIndex: -1, openToolIndex: -1}
 }
@@ -33,7 +33,7 @@ func (s *NativeGeminiCompatStream) Usage() *NativeGeminiUsage {
 	return &value
 }
 
-// Begin 保留空 content、nil stop_reason 与初始零用量字段。
+// Begin emits message_start with empty content, a null stop reason, and zero usage.
 func (s *NativeGeminiCompatStream) Begin(messageID, originalModel string) iter.Seq[*AnthropicStreamEvent] {
 	return func(yield func(*AnthropicStreamEvent) bool) {
 		emit := func(event *AnthropicStreamEvent) bool { return !yield(event) }
@@ -45,7 +45,7 @@ func (s *NativeGeminiCompatStream) Begin(messageID, originalModel string) iter.S
 				Role:       "assistant",
 				Model:      originalModel,
 				Content:    []AnthropicContentBlock{},
-				StopReason: nil, // 序列化为 JSON null。
+				StopReason: nil, // JSON null
 				Usage:      AnthropicUsage{},
 			},
 		}) {
@@ -54,7 +54,7 @@ func (s *NativeGeminiCompatStream) Begin(messageID, originalModel string) iter.S
 	}
 }
 
-// Process 由消费方逐事件推进，不提前处理尚未写出的后续分片。
+// Process yields events lazily and stops processing later parts when the consumer stops iteration.
 func (s *NativeGeminiCompatStream) Process(geminiResp map[string]any, raw []byte) iter.Seq[*AnthropicStreamEvent] {
 	return func(yield func(*AnthropicStreamEvent) bool) {
 		emit := func(event *AnthropicStreamEvent) bool { return !yield(event) }
@@ -187,7 +187,7 @@ func (s *NativeGeminiCompatStream) Process(geminiResp map[string]any, raw []byte
 	}
 }
 
-// Finish 保留块关闭、末尾 usage、message_delta 和 message_stop 的顺序。
+// Finish closes open blocks, emits usage with message_delta, then emits message_stop.
 func (s *NativeGeminiCompatStream) Finish() iter.Seq[*AnthropicStreamEvent] {
 	return func(yield func(*AnthropicStreamEvent) bool) {
 		emit := func(event *AnthropicStreamEvent) bool { return !yield(event) }

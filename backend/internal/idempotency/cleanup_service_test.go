@@ -14,7 +14,7 @@ type idempotencyCleanupRepoStub struct {
 	deleteErr   error
 }
 
-// blockingCleanupRepository 阻塞首轮清理，供测试检查 Stop 等待清理结束和重复启动行为。
+// blockingCleanupRepository holds cleanup open to test Stop waiting and repeated Start calls.
 type blockingCleanupRepository struct {
 	IdempotencyRepository
 	entered, release chan struct{}

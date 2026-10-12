@@ -24,14 +24,14 @@ type UserRepoAPIKeyGroupFilterSuite struct {
 	repo   *postgres.UserStore
 }
 
-// SetupSuite 为组合查询测试套件创建独立数据库。
+// SetupSuite creates an isolated database for combined user filters.
 func (s *UserRepoAPIKeyGroupFilterSuite) SetupSuite() { s.db, s.client = identityDatabase(s.T()) }
 
 func (s *UserRepoAPIKeyGroupFilterSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	s.repo = postgres.NewUserStoreWithSQL(s.client, s.db)
-	// api_keys 必须先于 users 清理（外键）；groups 也清理避免跨用例串扰。
+	// Delete API Keys before users to satisfy foreign keys, and clear groups between cases.
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM api_keys")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM user_allowed_groups")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
@@ -99,7 +99,7 @@ func (s *UserRepoAPIKeyGroupFilterSuite) listByAPIKeyGroup(groupID int64) []iden
 	return users
 }
 
-// TestFiltersUsersByAPIKeyGroup 验证命中：拥有绑定到该分组 API Key 的用户出现，绑定到其它分组的不出现。
+// TestFiltersUsersByAPIKeyGroup selects users whose keys belong to the requested group.
 func (s *UserRepoAPIKeyGroupFilterSuite) TestFiltersUsersByAPIKeyGroup() {
 	g := s.mustCreateGroup("grp-target")
 	other := s.mustCreateGroup("grp-other")
@@ -111,44 +111,44 @@ func (s *UserRepoAPIKeyGroupFilterSuite) TestFiltersUsersByAPIKeyGroup() {
 	s.Require().Equal([]int64{hit.ID}, s.ids(s.listByAPIKeyGroup(g.ID)))
 }
 
-// TestSoftDeletedAPIKeyExcluded 验证软删除的 API Key 不应命中（核心：软删除不会自动下沉到子查询，靠 DeletedAtIsNil 排除）。
+// TestSoftDeletedAPIKeyExcluded checks the subquery's explicit deleted_at filter.
 func (s *UserRepoAPIKeyGroupFilterSuite) TestSoftDeletedAPIKeyExcluded() {
 	g := s.mustCreateGroup("grp-soft")
 	u := s.mustCreateUser("soft@test.com")
 	ak := s.mustCreateAPIKey(u.ID, "sk-soft", "K", &g.ID)
-	// 软删除该 key：SoftDeleteMixin 的 Hook 把 Delete 转为 UPDATE deleted_at。
+	// The soft-delete hook turns Delete into an update of deleted_at.
 	s.Require().NoError(s.client.APIKey.DeleteOne(ak).Exec(s.ctx), "soft delete api key")
 
 	s.Require().Empty(s.listByAPIKeyGroup(g.ID), "user with only a soft-deleted key must not match")
 }
 
-// TestMultipleKeysAnyMatchDedup 验证多 Key：用户有多个 key，仅一个绑该分组 → 命中且只返回一条（EXISTS/去重）。
+// TestMultipleKeysAnyMatchDedup checks that one matching key returns the user once.
 func (s *UserRepoAPIKeyGroupFilterSuite) TestMultipleKeysAnyMatchDedup() {
 	g := s.mustCreateGroup("grp-multi")
 	other := s.mustCreateGroup("grp-multi-other")
 	u := s.mustCreateUser("multi@test.com")
 	s.mustCreateAPIKey(u.ID, "sk-m1", "K1", &other.ID)
 	s.mustCreateAPIKey(u.ID, "sk-m2", "K2", &g.ID)
-	s.mustCreateAPIKey(u.ID, "sk-m3", "K3", nil) // 无分组
+	s.mustCreateAPIKey(u.ID, "sk-m3", "K3", nil) // No group
 
 	s.Require().Equal([]int64{u.ID}, s.ids(s.listByAPIKeyGroup(g.ID)))
 }
 
-// TestAPIKeyGroupAndStatusFilter 验证叠加过滤：api_key_group_id 与 status 同时指定时取交集——只返回同时满足两者的用户。
+// TestAPIKeyGroupAndStatusFilter requires both group ownership and account status to match.
 func (s *UserRepoAPIKeyGroupFilterSuite) TestAPIKeyGroupAndStatusFilter() {
 	g := s.mustCreateGroup("grp-combined")
 
-	// active 用户，key 绑 target 分组 → 应命中
+	// This active user has a key in the target group.
 	active := s.mustCreateUser("active-hit@test.com")
 	s.mustCreateAPIKey(active.ID, "sk-active", "K", &g.ID)
 
-	// disabled 用户，key 也绑 target 分组 → 只用 group 过滤会命中，但 status=active 后排除
+	// This user matches the group but is excluded by the active-status filter.
 	disabled := s.mustCreateUser("disabled-hit@test.com")
 	s.mustCreateAPIKey(disabled.ID, "sk-disabled", "K2", &g.ID)
 	_, err := s.client.User.UpdateOneID(disabled.ID).SetStatus(billing.StatusDisabled).Save(s.ctx)
 	s.Require().NoError(err, "disable user")
 
-	// active 用户，key 绑其它分组 → group 过滤排除
+	// This active user is excluded by the group filter.
 	other := s.mustCreateGroup("grp-combined-other")
 	miss := s.mustCreateUser("active-miss@test.com")
 	s.mustCreateAPIKey(miss.ID, "sk-miss", "K3", &other.ID)
@@ -165,7 +165,7 @@ func (s *UserRepoAPIKeyGroupFilterSuite) TestAPIKeyGroupAndStatusFilter() {
 	s.Require().Equal([]int64{active.ID}, s.ids(users), "only active user with matching key group should match")
 }
 
-// TestZeroGroupIDNoFilter 验证缺省（APIKeyGroupID=0）不过滤：所有用户都返回。
+// TestZeroGroupIDNoFilter checks that zero leaves users unfiltered by API Key group.
 func (s *UserRepoAPIKeyGroupFilterSuite) TestZeroGroupIDNoFilter() {
 	g := s.mustCreateGroup("grp-zero")
 	u1 := s.mustCreateUser("z1@test.com")

@@ -8,7 +8,7 @@ import (
 	keycore "github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// GroupAccessWriter 是身份模块提供的同事务授权参与能力。
+// GroupAccessWriter lets identity grant group access within the key update transaction.
 type GroupAccessWriter interface {
 	AddGroupToAllowedGroups(context.Context, int64, int64) error
 }

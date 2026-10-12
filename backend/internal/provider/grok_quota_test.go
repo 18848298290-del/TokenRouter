@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGrokProbeDetachedWorkHasStopOwner 验证调用方取消后，后台共享探测仍须有可等待的停止拥有者。
+// TestGrokProbeDetachedWorkHasStopOwner checks that shutdown can wait for shared probes after their caller cancels.
 func TestGrokProbeDetachedWorkHasStopOwner(t *testing.T) {
 	svc := NewGrokQuotaService(GrokQuotaOptions{}, &ProbeRuntime{})
 	entered, exited, release := make(chan struct{}), make(chan struct{}), make(chan struct{})

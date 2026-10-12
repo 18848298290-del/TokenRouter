@@ -5,13 +5,13 @@ import (
 	"strings"
 )
 
-// DingTalkProfileSnapshot 包含钉钉资料同步所需的用户字段。
+// DingTalkProfileSnapshot contains provider fields used for profile synchronization.
 type DingTalkProfileSnapshot struct {
 	UserID, Name, Nickname, Email string
 	DeptIDs                       []int64
 }
 
-// DingTalkSyncOptions 保存本次登录读取的资料同步设置。
+// DingTalkSyncOptions contains the settings read for the current login.
 type DingTalkSyncOptions struct {
 	CorpRestrictionPolicy                                         string
 	SyncCorpEmail, SyncDisplayName, SyncDept                      bool
@@ -22,7 +22,7 @@ type DingTalkDepartmentReader interface {
 }
 type DingTalkDepartmentFunc func(context.Context, int64) (string, error)
 
-// ProfileSyncObserver 把既有诊断交给装配适配，核心不安装日志后端。
+// ProfileSyncObserver sends profile-sync diagnostics to the logger wired by app.
 type (
 	ProfileSyncObserver func(level, message string, args ...any)
 	DingTalkProfileSync struct {
@@ -42,9 +42,9 @@ func (s *DingTalkProfileSync) log(level, message string, args ...any) {
 	}
 }
 
-// Sync 在 internal_only 模式下，按三个 sync 开关把钉钉身份信息
-// 同步到用户属性表（以及 users.username）。
-// 同步出错时记录日志，登录流程继续执行。
+// Sync copies enabled DingTalk profile fields to user attributes in internal_only mode.
+// syncUsername also permits updating users.username.
+// Errors are logged so synchronization can run independently of login completion.
 func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions, client DingTalkDepartmentReader, userID int64, staff *DingTalkProfileSnapshot, syncUsername bool) {
 	s.log("info", "dingtalk sync: entry",
 		"user_id", userID,
@@ -74,8 +74,8 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 		return
 	}
 
-	// 仅首次注册时覆盖 users.username（避免每次登录覆盖用户后续手动改过的名字）。
-	// dingtalk_name 属性下面单独每次写入企业 name，不受此条件影响。
+	// Callers enable username synchronization at signup to retain later user edits.
+	// The display-name attribute is synchronized separately on every eligible login.
 	if syncUsername && cfg.SyncDisplayName {
 		username := strings.TrimSpace(staff.Nickname)
 		source := "nickname"
@@ -92,7 +92,7 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 		}
 	}
 
-	// 属性同步（目标 attr key 从 cfg 读取，默认值由 GetDingTalkConnectOAuthConfig 保证非空）
+	// Use configured attribute keys; the settings reader supplies their defaults.
 	type syncField struct {
 		key   string
 		value string
@@ -106,7 +106,7 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 		fields = append(fields, syncField{cfg.SyncCorpEmailAttrKey, strings.TrimSpace(staff.Email)})
 	}
 	if cfg.SyncDept && len(staff.DeptIDs) > 0 {
-		// 跳过根部门 ID=1，找第一个真实子部门；都是根则保留 1（最终写入空字符串覆盖旧值）。
+		// Prefer the first non-root department; otherwise use the first supplied department.
 		primaryDeptID := int64(0)
 		for _, id := range staff.DeptIDs {
 			if id > 1 {
@@ -122,7 +122,7 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 		if err != nil {
 			s.log("warn", "dingtalk sync: failed to resolve dept path", "user_id", userID, "dept_id", primaryDeptID, "err", err)
 		} else {
-			// path="" 表示公司直属（仅在根部门下），仍写入空串覆盖旧值。
+			// An empty root-department path clears the previous attribute value.
 			fields = append(fields, syncField{cfg.SyncDeptAttrKey, path})
 		}
 	}
@@ -131,7 +131,6 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 		return
 	}
 
-	// 逐 key 查 definition 并 upsert
 	for _, f := range fields {
 		if err := s.setUserAttributeByKey(ctx, userID, f.key, f.value); err != nil {
 			s.log("warn", "dingtalk sync: failed to set attribute", "user_id", userID, "key", f.key, "err", err)
@@ -139,9 +138,8 @@ func (s *DingTalkProfileSync) Sync(ctx context.Context, cfg DingTalkSyncOptions,
 	}
 }
 
-// setUserAttributeByKey 按 attribute key 查找 definition，再 upsert 用户属性值。
-// definition 不存在时记 warn 日志跳过（admin 在 settings 保存时已按需 upsert
-// 对应 def；缺失意味着 admin 改了 attr key 但未保存 settings，或 def 被手工删除）。
+// setUserAttributeByKey resolves the attribute definition and upserts its value.
+// Definition lookup failures are logged and skipped.
 func (s *DingTalkProfileSync) setUserAttributeByKey(ctx context.Context, userID int64, key, value string) error {
 	def, err := s.Attributes.GetDefinitionByKey(ctx, key)
 	if err != nil {
@@ -157,7 +155,7 @@ func (s *DingTalkProfileSync) setUserAttributeByKey(ctx context.Context, userID 
 	return nil
 }
 
-// DingTalkProfileFromClaims 从 upstreamClaims 重建最小 DingTalkProfileSnapshot。
+// DingTalkProfileFromClaims rebuilds the profile fields needed for synchronization.
 func DingTalkProfileFromClaims(claims map[string]any) *DingTalkProfileSnapshot {
 	if claims == nil {
 		return &DingTalkProfileSnapshot{}
@@ -175,7 +173,7 @@ func DingTalkProfileFromClaims(claims map[string]any) *DingTalkProfileSnapshot {
 	if v, ok := claims["corp_user_id"].(string); ok {
 		staff.UserID = v
 	}
-	// primary_dept_id 存为 int64 或 float64（JSON round-trip）
+	// JSON decoding changes numeric department IDs from int64 to float64.
 	switch v := claims["primary_dept_id"].(type) {
 	case int64:
 		if v > 0 {

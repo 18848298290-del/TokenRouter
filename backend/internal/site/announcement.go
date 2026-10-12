@@ -33,12 +33,12 @@ var (
 )
 
 type AnnouncementTargeting struct {
-	// AnyOf 表示 OR：任意一个条件组满足即可展示。
+	// AnyOf matches when any condition group matches.
 	AnyOf []AnnouncementConditionGroup `json:"any_of,omitempty"`
 }
 
 type AnnouncementConditionGroup struct {
-	// AllOf 表示 AND：组内所有条件都满足才算命中该组。
+	// AllOf matches when every condition in the group matches.
 	AllOf []AnnouncementCondition `json:"all_of,omitempty"`
 }
 
@@ -51,20 +51,20 @@ type AnnouncementCondition struct {
 	// - balance: gt/gte/lt/lte/eq
 	Operator string `json:"operator"`
 
-	// subscription 条件：匹配的订阅套餐（plan_id）
+	// plan IDs matched by a subscription condition
 	PlanIDs []int64 `json:"plan_ids,omitempty"`
 
-	// balance 条件：比较阈值
+	// comparison threshold for a balance condition
 	Value float64 `json:"value,omitempty"`
 }
 
-// AnnouncementCopy 将标题和正文作为同一语言版本保存。
+// AnnouncementCopy stores the title and body as one language version.
 type AnnouncementCopy struct {
 	Title   string `json:"title"`
 	Content string `json:"content"`
 }
 
-// AnnouncementLocalization 是公告的多语言内容。
+// AnnouncementLocalization contains localized announcement content.
 type AnnouncementLocalization locale.Content[AnnouncementCopy]
 
 type Announcement struct {
@@ -85,14 +85,14 @@ type Announcement struct {
 }
 
 func (t AnnouncementTargeting) Matches(balance float64, activePlanIDs map[int64]struct{}) bool {
-	// 空规则：展示给所有用户
+	// No targeting rules means the announcement is visible to all users.
 	if len(t.AnyOf) == 0 {
 		return true
 	}
 
 	for _, group := range t.AnyOf {
 		if len(group.AllOf) == 0 {
-			// 空条件组不命中（避免 OR 中出现无条件 “全命中”）
+			// An empty group must not make an OR expression match every user.
 			continue
 		}
 		allMatched := true
@@ -153,7 +153,7 @@ func (c AnnouncementCondition) Matches(balance float64, activePlanIDs map[int64]
 func (t AnnouncementTargeting) NormalizeAndValidate() (AnnouncementTargeting, error) {
 	normalized := AnnouncementTargeting{AnyOf: make([]AnnouncementConditionGroup, 0, len(t.AnyOf))}
 
-	// 允许空 targeting（展示给所有用户）
+	// Empty targeting is valid and matches all users.
 	if len(t.AnyOf) == 0 {
 		return normalized, nil
 	}
@@ -231,13 +231,13 @@ func (a *Announcement) IsActiveAt(now time.Time) bool {
 		return false
 	}
 	if a.EndsAt != nil && !now.Before(*a.EndsAt) {
-		// ends_at 语义：到点即下线
+		// The end time is exclusive.
 		return false
 	}
 	return true
 }
 
-// Resolve 按请求语言选取同一版本的公告标题和正文。
+// Resolve selects a title and body from the same content version for the requested language.
 func (c AnnouncementLocalization) Resolve(code string) (AnnouncementCopy, locale.Resolution) {
 	return locale.Content[AnnouncementCopy](c).Resolve(code)
 }

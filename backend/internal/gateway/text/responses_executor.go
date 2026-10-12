@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ResponseRuntime 在构造时绑定一次，Open 只创建当前请求状态。
+// ResponseRuntime binds shared dependencies at construction; Open creates request-local state.
 type ResponseRuntime interface {
 	Open(context.Context, execution.Request, upstream.OutputSink) (ResponsePorts, error)
 }

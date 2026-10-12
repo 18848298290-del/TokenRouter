@@ -7,17 +7,17 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// ProviderUsageParticipant 通过传入的连接写入提供商消费字段。
-// 普通调用可传数据库连接；跨模块操作必须传入调用方现有 Ent/SQL 事务连接。
+// ProviderUsageParticipant writes provider usage through the supplied connection.
+// Cross-module operations pass the caller's Ent or SQL transaction connection.
 type ProviderUsageParticipant struct{ exec postgresinfra.Executor }
 
 func ProviderUsageInTx(exec postgresinfra.Executor) ProviderUsageParticipant {
 	return ProviderUsageParticipant{exec: exec}
 }
 
-// Increment 原子递增提供商的配额用量（总/日/周三个维度）
-// 日/周额度在周期过期时自动重置为 0 再递增。
-// 支持滚动窗口（rolling）和固定时间（fixed）两种重置模式。
+// Increment atomically adds total usage and enabled daily/weekly usage, returning whether the total limit was crossed.
+// Expired daily and weekly windows reset before adding the amount.
+// Both rolling and fixed reset schedules are supported.
 func (p ProviderUsageParticipant) Increment(ctx context.Context, id int64, amount float64) (bool, error) {
 	rows, err := p.exec.QueryContext(ctx,
 		`UPDATE providers SET extra = (
@@ -82,7 +82,7 @@ func (p ProviderUsageParticipant) Increment(ctx context.Context, id int64, amoun
 	return limit > 0 && newUsed >= limit && (newUsed-amount) < limit, nil
 }
 
-// ResetAndClearRateLimitCooldown 原子重置消费与额度限流，不清除其他停调原因。
+// ResetAndClearRateLimitCooldown resets usage and quota cooldown fields while retaining other scheduling restrictions.
 func (p ProviderUsageParticipant) ResetAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	result, err := p.exec.ExecContext(ctx,
 		`UPDATE providers SET extra = (

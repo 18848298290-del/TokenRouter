@@ -7,23 +7,23 @@ import (
 	"time"
 )
 
-// Calendar 保存日期计算使用的时区和时钟。
+// Calendar holds the location and clock used for date calculations.
 type Calendar struct {
 	location *time.Location
 	now      func() time.Time
 }
 
-// NewCalendar 使用指定时区，nil 表示 time.Local。
+// NewCalendar uses loc for calendar calculations; nil selects time.Local.
 func NewCalendar(loc *time.Location) Calendar {
 	return Calendar{location: loc}
 }
 
-// NewCalendarWithClock 使用调用方提供的时钟，传 nil 时读取系统时间。
+// NewCalendarWithClock uses a supplied clock; nil reads system time.
 func NewCalendarWithClock(loc *time.Location, now func() time.Time) Calendar {
 	return Calendar{location: loc, now: now}
 }
 
-// Location 返回本对象的时区，零值使用 time.Local。
+// Location returns the calendar location, or time.Local for the zero value.
 func (c Calendar) Location() *time.Location {
 	if c.location == nil {
 		return time.Local
@@ -31,7 +31,8 @@ func (c Calendar) Location() *time.Location {
 	return c.location
 }
 
-// Now 返回日历时区的当前时间。零值直接返回系统时钟的时间和单调读数。
+// Now reads the configured clock and converts to the calendar location when set.
+// With no location, it returns the clock value unchanged, including its monotonic reading.
 func (c Calendar) Now() time.Time {
 	now := time.Now
 	if c.now != nil {
@@ -44,7 +45,7 @@ func (c Calendar) Now() time.Time {
 	return value.In(c.Location())
 }
 
-// UTCOffset 返回给定时刻在当前时区的 UTC 偏移文本。
+// UTCOffset formats the location's UTC offset at t as hours and minutes.
 func (c Calendar) UTCOffset(t time.Time) string {
 	_, offset := t.In(c.Location()).Zone()
 	hours := offset / 3600
@@ -60,46 +61,46 @@ func (c Calendar) UTCOffset(t time.Time) string {
 	return fmt.Sprintf("%s%02d:%02d", sign, hours, minutes)
 }
 
-// StartOfDay 返回给定时刻在日历时区中的零点。
+// StartOfDay returns midnight on t's date in the calendar location.
 func (c Calendar) StartOfDay(t time.Time) time.Time {
 	loc := c.Location()
 	t = t.In(loc)
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 }
 
-// Today 返回日历时区中当天的零点。
+// Today returns midnight on the current date in the calendar location.
 func (c Calendar) Today() time.Time {
 	return c.StartOfDay(c.Now())
 }
 
-// EndOfDay 返回给定日期的最后一纳秒。
+// EndOfDay returns the last nanosecond of t's date in the calendar location.
 func (c Calendar) EndOfDay(t time.Time) time.Time {
 	loc := c.Location()
 	t = t.In(loc)
 	return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, loc)
 }
 
-// StartOfWeek 返回所在周的星期一零点。
+// StartOfWeek returns Monday at midnight in the calendar location.
 func (c Calendar) StartOfWeek(t time.Time) time.Time {
 	loc := c.Location()
 	t = t.In(loc)
 	weekday := int(t.Weekday())
 	if weekday == 0 {
-		weekday = 7 // 星期日按一周中的第七天计算。
+		weekday = 7 // Treat Sunday as the seventh day of the week.
 	}
 	return time.Date(t.Year(), t.Month(), t.Day()-weekday+1, 0, 0, 0, 0, loc)
 }
 
-// StartOfMonth 返回所在月份的第一天零点。
+// StartOfMonth returns midnight on the first day of t's month in the calendar location.
 func (c Calendar) StartOfMonth(t time.Time) time.Time {
 	loc := c.Location()
 	t = t.In(loc)
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
 }
 
-// ParseInUserLocation 按用户时区解析日期，时区无效时使用日历时区。
+// ParseInUserLocation parses in userTZ, using the calendar location if it is invalid.
 func (c Calendar) ParseInUserLocation(layout, value, userTZ string) (time.Time, error) {
-	loc := c.Location() // 默认使用日历时区。
+	loc := c.Location()
 	if userTZ != "" {
 		if userLoc, err := time.LoadLocation(userTZ); err == nil {
 			loc = userLoc
@@ -108,7 +109,8 @@ func (c Calendar) ParseInUserLocation(layout, value, userTZ string) (time.Time, 
 	return time.ParseInLocation(layout, value, loc)
 }
 
-// ParseDateTimeInUserLocation 解析日期或时间，并报告输入是否只有日期。
+// ParseDateTimeInUserLocation parses a date or datetime and reports date-only input.
+// RFC3339 input retains its offset; unzoned input uses userTZ or the calendar location.
 func (c Calendar) ParseDateTimeInUserLocation(value, userTZ string) (parsed time.Time, dateOnly bool, err error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -145,7 +147,7 @@ func (c Calendar) ParseDateTimeInUserLocation(value, userTZ string) (parsed time
 	return time.Time{}, false, fmt.Errorf("invalid datetime %q", value)
 }
 
-// NowInUserLocation 返回用户时区的当前时间，时区无效时使用日历时区。
+// NowInUserLocation converts the current clock value to a valid userTZ; otherwise it returns Now.
 func (c Calendar) NowInUserLocation(userTZ string) time.Time {
 	if userTZ == "" {
 		return c.Now()
@@ -156,7 +158,7 @@ func (c Calendar) NowInUserLocation(userTZ string) time.Time {
 	return c.Now()
 }
 
-// StartOfDayInUserLocation 返回用户时区中的零点，时区无效时使用日历时区。
+// StartOfDayInUserLocation returns midnight in userTZ, using the calendar location if invalid.
 func (c Calendar) StartOfDayInUserLocation(t time.Time, userTZ string) time.Time {
 	loc := c.Location()
 	if userTZ != "" {
@@ -168,7 +170,7 @@ func (c Calendar) StartOfDayInUserLocation(t time.Time, userTZ string) time.Time
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 }
 
-// ParseFlexibleTimestamp 尝试 RFC3339、RFC3339Nano 和 UTC 时间戳格式。
+// ParseFlexibleTimestamp parses RFC3339 timestamps, including fractional seconds.
 func ParseFlexibleTimestamp(raw string) (time.Time, error) {
 	formats := []string{
 		time.RFC3339,

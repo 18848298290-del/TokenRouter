@@ -7,7 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// GatewayBetaPolicy 返回平台的 Beta 过滤规则。
+// GatewayBetaPolicy copies platform beta rules into gateway settings.
 func GatewayBetaPolicy(value *anthropic.BetaPolicySettings) *gateway.BetaPolicySettings {
 	if value == nil {
 		return nil
@@ -23,7 +23,7 @@ func GatewayBetaPolicy(value *anthropic.BetaPolicySettings) *gateway.BetaPolicyS
 	return result
 }
 
-// AnthropicBetaPolicy 保留旧平台执行入口所需类型，规则存取由 gateway 拥有。
+// AnthropicBetaPolicy copies gateway beta rules into the platform execution format.
 func AnthropicBetaPolicy(value *gateway.BetaPolicySettings) *anthropic.BetaPolicySettings {
 	if value == nil {
 		return nil

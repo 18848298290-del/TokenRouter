@@ -38,7 +38,7 @@ func (s *FastPolicySettingsRepo) Set(ctx context.Context, key, value string) err
 	return nil
 }
 
-// GetMultiple 按请求键读取夹具数据，缺省设置由生产读取器处理。
+// GetMultiple returns requested fixture values; production readers supply missing defaults.
 func (s *FastPolicySettingsRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	Values := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -61,7 +61,7 @@ func (s *FastPolicySettingsRepo) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }
 
-// RuntimeReaders 将 HTTP 夹具的动态设置数据交给设置读取器。
+// RuntimeReaders wires settings readers to HTTP fixture data.
 func RuntimeReaders(repo settings.Repository) *gatewayprovider.RuntimeReaders {
 	runtime := gateway.NewRuntimeSettings(repo, settings.ErrSettingNotFound, func() *gateway.BetaPolicySettings {
 		return gatewayprovider.GatewayBetaPolicy(anthropic.DefaultBetaPolicySettings())

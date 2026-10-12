@@ -26,7 +26,7 @@ type GeminiTokenOptions struct {
 	Logf         func(string, ...any)
 }
 
-// GeminiTokenSource 绑定请求所需的凭据接口，并调用 project 自动回填操作。
+// GeminiTokenSource obtains request credentials and optionally discovers and persists a missing project.
 type GeminiTokenSource struct {
 	Options GeminiTokenOptions
 }
@@ -56,14 +56,13 @@ func GetGeminiAccessToken(ctx context.Context, provider *Record, options GeminiT
 
 	cacheKey := GeminiOAuthTokenCacheKey(provider)
 
-	// 1) Try cache first.
 	if options.Cache != nil {
 		if token, err := options.Cache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
 			return token, nil
 		}
 	}
 
-	// 2) Refresh if needed (pre-expiry skew).
+	// Refresh before expiry using the configured skew.
 	expiresAt := provider.GetCredentialAsTime("expires_at")
 	needsRefresh := expiresAt == nil || time.Until(*expiresAt) <= GeminiTokenRefreshSkew
 
@@ -85,7 +84,7 @@ func GetGeminiAccessToken(ctx context.Context, provider *Record, options GeminiT
 			expiresAt = provider.GetCredentialAsTime("expires_at")
 		}
 	} else if needsRefresh && options.Cache != nil {
-		// Backward-compatible test path when refreshAPI is not injected.
+		// With no refresh callback, retain the cache lock coordination path.
 		locked, lockErr := options.Cache.AcquireRefreshLock(ctx, cacheKey, 30*time.Second)
 		if lockErr == nil && locked {
 			defer func() { _ = options.Cache.ReleaseRefreshLock(ctx, cacheKey) }()
@@ -99,9 +98,7 @@ func GetGeminiAccessToken(ctx context.Context, provider *Record, options GeminiT
 		return "", errors.New("access_token not found in credentials")
 	}
 
-	// project_id is optional now:
-	// - If present: use Code Assist API (requires project_id)
-	// - If absent: use AI Studio API with OAuth token.
+	// Project discovery is opt-in. A missing project still permits returning the access token.
 	projectID := strings.TrimSpace(provider.GetCredential("project_id"))
 	autoDetectProjectID := provider.GetCredential("auto_detect_project_id") == "true"
 
@@ -135,7 +132,7 @@ func GetGeminiAccessToken(ctx context.Context, provider *Record, options GeminiT
 		}
 	}
 
-	// 3) Populate cache with TTL.
+	// Check the stored token version before publishing to the cache.
 	if options.Cache != nil {
 		latestProvider, isStale := CheckTokenVersion(ctx, provider, options.Repository, options.Debug)
 		if isStale && latestProvider != nil {

@@ -22,7 +22,7 @@ func (r expirySettingsFixture) GetMultiple(context.Context, []string) (map[strin
 	return map[string]string{}, r.err
 }
 
-// TestExpiryNotificationReadinessBridge 检查 SMTP 未配置时，通知服务向订阅提醒返回对应状态。
+// TestExpiryNotificationReadinessBridge checks the subscription reminder status when SMTP is unconfigured.
 func TestExpiryNotificationReadinessBridge(t *testing.T) {
 	for _, failure := range []error{nil, errors.New("db down")} {
 		repo := expirySettingsFixture{err: failure}

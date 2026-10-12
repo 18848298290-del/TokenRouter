@@ -13,7 +13,7 @@ const (
 	postgresDeadlockMaxAttempts = postgresDeadlockMaxRetries + 1
 	postgresDeadlockRetryJitter = 30 * time.Millisecond
 
-	// DeadlockMaxAttempts 供调用方在降级日志中记录整段重试次数。
+	// DeadlockMaxAttempts includes the initial attempt and all permitted retries.
 	DeadlockMaxAttempts = postgresDeadlockMaxAttempts
 )
 
@@ -22,7 +22,8 @@ var postgresDeadlockRetryBaseDelays = [...]time.Duration{
 	50 * time.Millisecond,
 }
 
-// RetryDeadlock 对完整操作做有界重试；调用方必须确保每次 fn 都创建独立事务或语句。
+// RetryDeadlock retries a complete operation after PostgreSQL deadlocks.
+// Each fn call must use a fresh transaction or statement.
 func RetryDeadlock[T any](ctx context.Context, operation string, batchSize int, fn func() (T, error)) (T, error) {
 	var zero T
 	startedAt := time.Now()
@@ -69,7 +70,8 @@ func RetryDeadlock[T any](ctx context.Context, operation string, batchSize int, 
 	}
 }
 
-// WaitDeadlockRetry 使用可取消计时器等待，避免调用方超时后仍继续重试。
+// WaitDeadlockRetry waits for the indexed backoff with jitter and honors cancellation.
+// An out-of-range retryIndex returns immediately.
 func WaitDeadlockRetry(ctx context.Context, retryIndex int) error {
 	if retryIndex < 0 || retryIndex >= len(postgresDeadlockRetryBaseDelays) {
 		return nil

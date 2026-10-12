@@ -13,7 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CodexInviteFactory 在准备邀请操作时解析凭据、代理和专用 TLS 配置。
+// CodexInviteFactory resolves credentials, proxies, and invitation-specific TLS settings for invite
+// operations.
 type CodexInviteFactory struct {
 	Token     *provider.OpenAITokenSource
 	Proxy     func(context.Context, int64) (*egress.Proxy, error)
@@ -73,7 +74,7 @@ func (f CodexInviteFactory) Client(ctx context.Context, value *provider.Record) 
 	return client, nil
 }
 
-// resolveCodexInviteTLS 优先读取邀请重置路由配置，缺省时读取提供商的 TLS 配置。
+// resolveCodexInviteTLS prefers the invite/reset profile and otherwise uses the provider TLS profile.
 func resolveCodexInviteTLS(profiles *egressprovider.TLSProfiles, value *provider.Record, router *egress.TLSFingerprintRouter) *tlsfingerprint.Profile {
 	if profiles == nil {
 		return nil

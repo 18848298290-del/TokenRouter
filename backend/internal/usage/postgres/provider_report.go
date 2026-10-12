@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// providerReportData 保存同一范围内一次扫描得到的四类统计。
+// providerReportData holds four report breakdowns collected in one scan of a shared range.
 type providerReportData struct {
 	history           []ProviderUsageHistory
 	models            []ModelStat
@@ -19,7 +19,7 @@ type providerReportData struct {
 	durationCount     int64
 }
 
-// readProviderReport 在专用只读事务内关闭 JIT，设置随事务结束自动恢复。
+// readProviderReport disables JIT in a dedicated read-only transaction when a database handle is available.
 func (r *Store) readProviderReport(ctx context.Context, id int64, start, end time.Time) (*providerReportData, error) {
 	if r.db == nil {
 		return r.scanProviderReport(ctx, id, start, end)
@@ -43,7 +43,7 @@ func (r *Store) readProviderReport(ctx context.Context, id int64, start, end tim
 	return data, nil
 }
 
-// scanProviderReport 用 GROUPING SETS 合并日、模型和端点统计，平均耗时按记录数加权。
+// scanProviderReport uses GROUPING SETS for daily, model, and endpoint totals and counts non-null durations for averaging.
 func (r *Store) scanProviderReport(ctx context.Context, id int64, start, end time.Time) (*providerReportData, error) {
 	query := `WITH scoped AS (
 	 SELECT TO_CHAR(created_at,'YYYY-MM-DD') AS day,

@@ -14,7 +14,7 @@ const (
 	DataManagementAgentUnavailableReason = "DATA_MANAGEMENT_AGENT_UNAVAILABLE"
 )
 
-// ErrDataManagementDeprecated 用于已停用的数据管理 RPC 入口。
+// ErrDataManagementDeprecated identifies requests to the retired data-management RPC API.
 var ErrDataManagementDeprecated = infraerrors.ServiceUnavailable(
 	DataManagementDeprecatedReason,
 	"data management feature is deprecated",
@@ -26,6 +26,7 @@ type DataManagementAgentHealth struct {
 	SocketPath string
 }
 
+// DataManagementService retains the retired API and reports deprecation without contacting an agent.
 type DataManagementService struct {
 	socketPath string
 }

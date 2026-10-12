@@ -8,13 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// LegacyGroupProtocolPatch 只表达旧客户端明确修改的开关，缺省字段保持现状。
+// LegacyGroupProtocolPatch represents supplied legacy switches; nil fields retain the current selection.
 type LegacyGroupProtocolPatch struct {
 	Messages, Image, Batch, Live *bool
 }
 
-// EffectiveAllowedProtocols 为响应映射和编辑快照返回独立协议集合。
-// 返回独立副本，并把 nil 统一表达为合法的空集合。
+// EffectiveAllowedProtocols returns an independent protocol slice for responses and edit snapshots.
+// A nil group or selection produces a non-nil empty slice.
 func (g *Group) EffectiveAllowedProtocols() []protocol.ProtocolID {
 	if g == nil {
 		return []protocol.ProtocolID{}
@@ -22,7 +22,7 @@ func (g *Group) EffectiveAllowedProtocols() []protocol.ProtocolID {
 	return append([]protocol.ProtocolID{}, g.AllowedProtocols...)
 }
 
-// AllowsClientProtocol 判断分组是否允许指定客户端协议。
+// AllowsClientProtocol reports whether the group admits the requested protocol.
 func (g *Group) AllowsClientProtocol(protocol protocol.ProtocolID) bool {
 	if g == nil {
 		return false
@@ -30,7 +30,8 @@ func (g *Group) AllowsClientProtocol(protocol protocol.ProtocolID) bool {
 	return slices.Contains(g.AllowedProtocols, protocol)
 }
 
-// NormalizeGroupProtocolPolicy 校验一次原始集合，再应用兼容输入并生成旧字段镜像。
+// NormalizeGroupProtocolPolicy validates the original set before applying compatibility input and deriving
+// legacy fields.
 // @project-doc docs/interfaces/protocol_capabilities.md#group_protocol_routes
 func NormalizeGroupProtocolPolicy(group *Group, legacy *LegacyGroupProtocolPatch) error {
 	normalized, err := capability.ValidateGroupClientProtocols("", group.AllowedProtocols)
@@ -50,7 +51,7 @@ func NormalizeGroupProtocolPolicy(group *Group, legacy *LegacyGroupProtocolPatch
 		return infraerrors.BadRequest("GROUP_RESPONSES_IMAGE_POLICY_INVALID", err.Error())
 	}
 	group.ResponsesImagePolicy = policy
-	// 旧服务仍读取这些派生值；它们不再作为独立配置写入。
+	// Existing consumers read these derived fields; AllowedProtocols is the authoritative selection.
 	group.AllowMessagesDispatch = slices.Contains(group.AllowedProtocols, protocol.ProtocolAnthropicMessages)
 	group.AllowImageGeneration = slices.Contains(group.AllowedProtocols, protocol.ProtocolImagesGenerations) || slices.Contains(group.AllowedProtocols, protocol.ProtocolImagesEdits) || slices.Contains(group.AllowedProtocols, protocol.ProtocolImageBatches) || slices.Contains(group.AllowedProtocols, protocol.ProtocolGeminiGenerateContent)
 	group.AllowBatchImageGeneration = slices.Contains(group.AllowedProtocols, protocol.ProtocolImageBatches)
@@ -58,7 +59,8 @@ func NormalizeGroupProtocolPolicy(group *Group, legacy *LegacyGroupProtocolPatch
 	return nil
 }
 
-// ApplyLegacyGroupProtocolPatch 只修改已校验的集合，避免兼容转换掩盖非法输入。
+// ApplyLegacyGroupProtocolPatch updates a previously validated set. Validate first so conversion cannot hide
+// invalid input.
 func ApplyLegacyGroupProtocolPatch(group *Group, patch *LegacyGroupProtocolPatch) {
 	if patch == nil {
 		return
