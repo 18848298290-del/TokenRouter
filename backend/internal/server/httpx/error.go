@@ -7,10 +7,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ToHTTP converts an error into an HTTP status code and a JSON-serializable body.
-//
-// The returned body matches the project's apperror.Status shape:
-// { code, reason, message, metadata }.
+// Wrapped application errors carry the numeric response code, reason, and
+// message selected by their owner. Mapping extracts that same entity through
+// wrappers and copies its string metadata for the response, while unrecognized
+// errors become the generic internal-error body supplied by apperror.
+
+// ToHTTP returns the numeric code and serializable application-error status.
+// Nil input or a nil ApplicationError found through wrappers returns HTTP 200.
+// Unrecognized errors use the generic 500 message; recognized codes pass through
+// unchanged, and the returned metadata map can be edited independently.
 // @project-doc docs/interfaces/http_api.md#response_errors
 func ToHTTP(err error) (statusCode int, body apperror.Status) {
 	if err == nil {
@@ -34,12 +39,17 @@ func ToHTTP(err error) (statusCode int, body apperror.Status) {
 	return int(appErr.Code), body
 }
 
-// ErrorCode returns the HTTP code for an application error, including nil and custom legacy codes.
+// ErrorCode returns the numeric application category through error wrappers.
+// Nil interfaces yield 200, unknown errors yield 500, and custom codes pass
+// through. Callers provide a true nil interface for no error; CategoryOf
+// dereferences a typed nil ApplicationError found in a nonnil error chain.
 func ErrorCode(err error) int {
 	return int(apperror.CategoryOf(err))
 }
 
-// HTTPStatusToGoogleStatus maps an HTTP status to Google's error status name.
+// HTTPStatusToGoogleStatus maps named HTTP failures to their Google status names.
+// Unlisted statuses at or above 500 use INTERNAL, including custom server codes;
+// other unlisted statuses use UNKNOWN for the caller's Google error body.
 func HTTPStatusToGoogleStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:
@@ -53,6 +63,8 @@ func HTTPStatusToGoogleStatus(status int) string {
 	case http.StatusTooManyRequests:
 		return "RESOURCE_EXHAUSTED"
 	default:
+		// A custom code such as 529 still selects the server-error category here,
+		// keeping its returned status consistent with other failures in that numeric range.
 		if status >= 500 {
 			return "INTERNAL"
 		}

@@ -156,9 +156,16 @@ func TestSetupDatabaseConnection(cfg *SetupDatabaseConfig) error {
 	return nil
 }
 
-// TestSetupRedisConnection pings a temporary Redis client within a five-second
-// context. Enabled TLS selects TLS 1.2 or newer and cfg.Host as ServerName;
-// the acquired client is closed on return, with close failures logged.
+// TestSetupRedisConnection pings a temporary Redis client with a supplied
+// five-second context. Enabled TLS selects TLS 1.2 or newer and cfg.Host as
+// ServerName; the acquired client is closed on return, with close failures logged.
+//
+// Its options leave ContextTimeoutEnabled false and retain go-redis's default
+// network timeouts. Command socket reads and writes therefore use option-based
+// budgets, so the supplied context is not a strict end-to-end Ping deadline.
+// Pool waits and retry delays still observe that context's cancellation. The
+// omitted MaxRetries option permits three eligible retries after the initial
+// command attempt, so one Ping call can send more than one probe command.
 func TestSetupRedisConnection(cfg *SetupRedisConfig) error {
 	opts := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
@@ -167,8 +174,8 @@ func TestSetupRedisConnection(cfg *SetupRedisConfig) error {
 		DB:       cfg.DB,
 	}
 
-	// Match normal bootstrap's TLS floor and server-name selection, letting this
-	// setup probe check the same configured TLS connection used after installation.
+	// Use normal bootstrap's TLS minimum and host verification for this temporary
+	// probe, so setup checks those connection requirements before installing configuration.
 	if cfg.EnableTLS {
 		opts.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,

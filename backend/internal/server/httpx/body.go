@@ -16,21 +16,48 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// Compressed request headers describe transmitted bytes, while JSON consumers
+// need decoded bytes. Successful decoding clears Content-Encoding and the
+// transmitted Content-Length header, then records the returned byte count on
+// the request. The original body is consumed but stays installed, so owners
+// that need replay replace that reader with their returned data.
+//
+// Decoding reads through a fixed sixty-four-MiB limit that can return a
+// successful prefix. Completeness and raw-body size remain caller decisions;
+// the initial allocation hint bounds preallocation rather than total reading.
+// Strict binding separately decodes one JSON value, rejects unknown struct
+// fields, requires the trailing stream to end, and invokes Gin validation while
+// leaving dynamic map-key validation to its handlers.
+
 const (
+	// These capacities bound the initial buffer chosen from ContentLength.
+	// Actual copied bytes may grow the buffer, so neither value is a body-size limit.
 	requestBodyReadInitCap    = 512
 	requestBodyReadMaxInitCap = 1 << 20
-	maxDecompressedBodySize   = 64 << 20
+
+	// maxDecompressedBodySize bounds decoded bytes from compression readers;
+	// reaching the cap can return a successful prefix for later consumer validation.
+	maxDecompressedBodySize = 64 << 20
 )
 
-// ReadRequestBodyWithPrealloc reads the body and decodes supported Content-Encoding values.
-// Decoded data is truncated at 64 MiB; callers must validate completeness. Successful
-// decoding removes encoding and length headers and updates ContentLength. The caller
-// supplies any limit on the compressed or unencoded body and closes the original body.
+// ReadRequestBodyWithPrealloc returns consumed body bytes, decoding supported encodings.
+// Nil requests or bodies return nil without error. Empty and identity encodings
+// return raw bytes; zstd, gzip, x-gzip, and zlib-wrapped deflate are decoded.
+// Owners supply any raw-body limit, close the original body, and reinstall a
+// reader if another consumer needs to read the returned data.
+//
+// Compressed output may be truncated at sixty-four MiB with no size error, so
+// callers validate completeness. After successful decoding, encoding and length
+// headers are removed and ContentLength describes the returned decoded bytes.
+// Read or decode failure leaves those metadata fields as supplied, although the
+// original body may already have been consumed.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	if req == nil || req.Body == nil {
 		return nil, nil
 	}
 
+	// Treat ContentLength as an allocation hint within fixed initial bounds.
+	// Large declared lengths grow storage only as io.Copy actually consumes bytes.
 	capHint := requestBodyReadInitCap
 	if req.ContentLength > 0 {
 		switch {
@@ -59,6 +86,8 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
 	}
 
+	// Metadata now describes returned decoded bytes. Clear the transmitted
+	// encoding and length so a replay owner does not decompress or size them again.
 	req.Header.Del("Content-Encoding")
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded))
@@ -66,7 +95,14 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	return decoded, nil
 }
 
+// decompressRequestBody decodes buffered bytes in the named supported compression format.
+// Its readers are owned and closed here; gzip and zlib close errors are discarded
+// after the read result is chosen. Unsupported names return an error, and
+// decoded output can stop successfully at maxDecompressedBodySize without proving
+// the whole compressed stream was consumed.
 func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
+	// LimitReader supplies EOF at the cap without reading an extra byte to
+	// detect overflow. Every compression branch therefore exposes the same prefix behavior.
 	switch encoding {
 	case "zstd":
 		dec, err := zstd.NewReader(bytes.NewReader(raw))
@@ -80,6 +116,8 @@ func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// The buffered read result determines decoding success. Close releases
+		// decoder state afterward, and its error is discarded instead of replacing that result.
 		defer func() {
 			_ = gr.Close()
 		}()
@@ -89,6 +127,8 @@ func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Retain ReadAll's returned data and error as the decoding outcome.
+		// Deferred zlib closure cleans up the reader with its own error discarded.
 		defer func() {
 			_ = zr.Close()
 		}()
@@ -98,14 +138,18 @@ func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
 	}
 }
 
-// BindJSONStrict decodes one JSON value, rejects unknown struct fields, and applies binding validation.
-// Callers validate map contents such as credentials and extra.
+// BindJSONStrict decodes one JSON value and applies Gin validation to its target.
+// Supply a populated request body and a writable target accepted by encoding/json.
+// Unknown struct fields and trailing input are rejected; the target determines
+// the value's shape, while handlers validate dynamic maps such as credentials.
 func BindJSONStrict(c *gin.Context, target any) error {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
+	// A second decode must reach EOF, so another value or malformed suffix
+	// cannot be silently accepted after the target's first successful JSON decode.
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return fmt.Errorf("request must contain one JSON object")

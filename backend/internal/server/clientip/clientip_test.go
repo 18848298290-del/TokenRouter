@@ -9,6 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGetTrustedClientIPUsesGinClientIP
+// supplies forwarding headers from an untrusted peer.
+// With Gin forwarding trust disabled, the returned address must be the direct
+// connection's normalized IP despite the three header values.
 func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -29,6 +33,10 @@ func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
 
+// TestGetClientIPPreservesLegacyDockerForwardedHeaders
+// supplies private proxy addresses and a later XFF candidate.
+// Compatibility resolution must select the forwarded external address even
+// when Gin itself trusts no forwarding peers for its ClientIP result.
 func TestGetClientIPPreservesLegacyDockerForwardedHeaders(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -47,6 +55,10 @@ func TestGetClientIPPreservesLegacyDockerForwardedHeaders(t *testing.T) {
 	require.Equal(t, "203.0.113.42", w.Body.String())
 }
 
+// TestGetSecurityClientIPSwitchEnabledUsesLegacyHeaders
+// enables compatibility with Gin trust disabled.
+// The security resolver must use X-Real-IP under that mode, showing the switch's
+// observable effect on the address returned to the handler.
 func TestGetSecurityClientIPSwitchEnabledUsesLegacyHeaders(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -64,13 +76,17 @@ func TestGetSecurityClientIPSwitchEnabledUsesLegacyHeaders(t *testing.T) {
 	require.Equal(t, "1.2.3.4", w.Body.String())
 }
 
+// TestGetSecurityClientIPCustomHeaderPrecedenceAndFallback
+// combines custom sources, built-ins, and invalid values.
+// The captured request mode must control selection, with configured order,
+// nonprivate preference, private fallback, and direct-peer recovery matching each case.
 func TestGetSecurityClientIPCustomHeaderPrecedenceAndFallback(t *testing.T) {
 	tests := []struct {
-		name           string
-		trustForward   bool
-		headers        []string
-		requestHeaders map[string]string
-		want           string
+		name           string            // selection scenario for subtest output
+		trustForward   bool              // captured forwarding compatibility mode
+		headers        []string          // configured custom-header lookup order
+		requestHeaders map[string]string // forwarding values supplied by fixture
+		want           string            // expected selected client address
 	}{
 		{
 			name:         "configured order precedes built-ins",
@@ -177,6 +193,10 @@ func TestGetSecurityClientIPCustomHeaderPrecedenceAndFallback(t *testing.T) {
 	}
 }
 
+// TestGetSecurityClientIPSwitchDisabledUsesConfiguredTrustedProxy
+// disables compatibility for an explicitly trusted peer.
+// Gin's configured proxy chain must still resolve the forwarded address, proving
+// the disabled compatibility switch delegates to that configured trust policy.
 func TestGetSecurityClientIPSwitchDisabledUsesConfiguredTrustedProxy(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies([]string{"9.9.9.9"}))
@@ -193,6 +213,10 @@ func TestGetSecurityClientIPSwitchDisabledUsesConfiguredTrustedProxy(t *testing.
 	require.Equal(t, "1.2.3.4", w.Body.String())
 }
 
+// TestGetClientIPSwitchDisabledUsesTrustedProxyChain
+// captures a false mode with forwarding trust disabled.
+// GetClientIP must return the direct peer address even though X-Real-IP contains
+// another valid address that compatibility mode would otherwise accept.
 func TestGetClientIPSwitchDisabledUsesTrustedProxyChain(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -210,6 +234,10 @@ func TestGetClientIPSwitchDisabledUsesTrustedProxyChain(t *testing.T) {
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
 
+// TestGetSecurityClientIPRequestSnapshotCopiesCustomHeaders
+// changes the caller's header-name slice after capture.
+// Address resolution must still use the captured original name, so later caller
+// mutations cannot redirect this request to the other supplied header.
 func TestGetSecurityClientIPRequestSnapshotCopiesCustomHeaders(t *testing.T) {
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -230,12 +258,16 @@ func TestGetSecurityClientIPRequestSnapshotCopiesCustomHeaders(t *testing.T) {
 	require.Equal(t, "1.2.3.4", w.Body.String())
 }
 
+// TestGetSecurityClientIPRequestSnapshotOverridesLiveFallback
+// passes a fallback opposite to the captured mode.
+// Both true and false snapshots must win over that argument, returning the
+// compatibility address or direct peer according to the request's stored policy.
 func TestGetSecurityClientIPRequestSnapshotOverridesLiveFallback(t *testing.T) {
 	tests := []struct {
-		name          string
-		requestTrust  bool
-		fallbackTrust bool
-		want          string
+		name          string // captured-policy override scenario name
+		requestTrust  bool   // captured request forwarding mode
+		fallbackTrust bool   // opposing live fallback argument
+		want          string // expected captured-policy client address
 	}{
 		{name: "captured secure mode wins", requestTrust: false, fallbackTrust: true, want: "9.9.9.9"},
 		{

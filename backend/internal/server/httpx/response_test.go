@@ -13,7 +13,9 @@ import (
 	errors2 "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// parseResponseBody decodes the recorder's JSON response.
+// parseResponseBody decodes the recorder's envelope and fails the test on invalid JSON.
+// Data uses encoding/json's interface representations, so numbers become float64
+// and object payloads become maps when a caller inspects the returned response.
 func parseResponseBody(t *testing.T, w *httptest.ResponseRecorder) Response {
 	t.Helper()
 	var got Response
@@ -21,15 +23,19 @@ func parseResponseBody(t *testing.T, w *httptest.ResponseRecorder) Response {
 	return got
 }
 
-// parsePaginatedBody decodes the envelope and its PaginatedData payload.
+// parsePaginatedBody decodes the envelope and its page value into separate results.
+// The returned Response carries Code, Message, and Reason, while PaginatedData
+// contains the decoded data object. Either malformed encoding fails the test
+// before those result values are returned.
 func parsePaginatedBody(t *testing.T, w *httptest.ResponseRecorder) (Response, PaginatedData) {
 	t.Helper()
-	// Decode data separately because Response.Data has type any.
+	// Keep Data as raw JSON until its page shape is decoded. This retains
+	// typed navigation counts instead of reconstructing them from interface maps.
 	var raw struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Reason  string          `json:"reason,omitempty"`
-		Data    json.RawMessage `json:"data,omitempty"`
+		Code    int             `json:"code"`             // decoded numeric envelope code
+		Message string          `json:"message"`          // decoded response message text
+		Reason  string          `json:"reason,omitempty"` // decoded optional error reason
+		Data    json.RawMessage `json:"data,omitempty"`   // raw encoded page payload
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
 
@@ -39,7 +45,10 @@ func parsePaginatedBody(t *testing.T, w *httptest.ResponseRecorder) (Response, P
 	return Response{Code: raw.Code, Message: raw.Message, Reason: raw.Reason}, pd
 }
 
-// newContextWithQuery builds a Gin context with query parameters for pagination tests.
+// newContextWithQuery returns a recorder and GET context containing the supplied raw query.
+// Supply text valid in a request URL; httptest constructs the request directly.
+// The returned recorder observes responses, and the context exposes query values
+// to the pagination helper under test.
 func newContextWithQuery(query string) (*httptest.ResponseRecorder, *gin.Context) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -47,14 +56,18 @@ func newContextWithQuery(query string) (*httptest.ResponseRecorder, *gin.Context
 	return w, c
 }
 
+// TestErrorWithDetails
+// supplies plain and structured errors to a context with no request.
+// The HTTP status and decoded complete envelope must match the provided message,
+// reason, and metadata for those fixtures, which skip request-path localization.
 func TestErrorWithDetails(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		message    string
-		reason     string
-		metadata   map[string]string
-		want       Response
+		name       string            // fixture case for subtest output
+		statusCode int               // supplied HTTP error status
+		message    string            // supplied response message text
+		reason     string            // supplied structured error reason
+		metadata   map[string]string // supplied string metadata attributes
+		want       Response          // expected complete decoded envelope
 	}{
 		{
 			name:       "plain_error",
@@ -96,13 +109,17 @@ func TestErrorWithDetails(t *testing.T) {
 	}
 }
 
+// TestErrorFrom
+// maps nil, application, and generic errors through a request-free context.
+// Nil input must leave the recorder body empty; other cases must report a write
+// and return the expected status and complete mapped envelope.
 func TestErrorFrom(t *testing.T) {
 	tests := []struct {
-		name         string
-		err          error
-		wantWritten  bool
-		wantHTTPCode int
-		wantBody     Response
+		name         string   // fixture case for subtest output
+		err          error    // supplied nil or application error
+		wantWritten  bool     // expected response-written boolean result
+		wantHTTPCode int      // expected recorded HTTP status
+		wantBody     Response // declared expected fixture envelope
 	}{
 		{
 			name:        "nil_error",
@@ -199,12 +216,15 @@ func TestErrorFrom(t *testing.T) {
 	}
 }
 
+// TestSuccess writes string, nil, and map data through the success helper.
+// HTTP 200, code zero, message success, and nil-versus-present decoded data must
+// match the supplied cases; these assertions do not compare each nonnil payload value.
 func TestSuccess(t *testing.T) {
 	tests := []struct {
-		name     string
-		data     any
-		wantCode int
-		wantBody Response
+		name     string   // fixture case for subtest output
+		data     any      // supplied success response payload
+		wantCode int      // expected recorded response status
+		wantBody Response // declared expected fixture envelope
 	}{
 		{
 			name:     "返回字符串数据",
@@ -235,7 +255,7 @@ func TestSuccess(t *testing.T) {
 
 			require.Equal(t, tt.wantCode, w.Code)
 
-			// Compare code and message here; decoding any converts data into maps and slices.
+			// Assert the fixed envelope fields and payload presence for this fixture.
 			got := parseResponseBody(t, w)
 			require.Equal(t, 0, got.Code)
 			require.Equal(t, "success", got.Message)
@@ -249,11 +269,14 @@ func TestSuccess(t *testing.T) {
 	}
 }
 
+// TestCreated supplies present and nil creation data to a request-free context.
+// Both cases must produce HTTP 201, envelope code zero, and message success,
+// protecting the asserted creation status independently of their payload contents.
 func TestCreated(t *testing.T) {
 	tests := []struct {
-		name     string
-		data     any
-		wantCode int
+		name     string // fixture case for subtest output
+		data     any    // supplied success response payload
+		wantCode int    // expected recorded response status
 	}{
 		{
 			name:     "创建成功_返回数据",
@@ -283,11 +306,14 @@ func TestCreated(t *testing.T) {
 	}
 }
 
+// TestError supplies standard and custom statuses with request-free error messages.
+// The HTTP code, envelope code, and unchanged message must match, with reason,
+// metadata, and data empty in these fixtures.
 func TestError(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		message    string
+		name       string // fixture case for subtest output
+		statusCode int    // supplied HTTP error status
+		message    string // supplied response message text
 	}{
 		{
 			name:       "400错误",
@@ -325,6 +351,9 @@ func TestError(t *testing.T) {
 	}
 }
 
+// TestBadRequest supplies a Chinese invalid-parameter message with no request object.
+// The recorded HTTP and envelope codes must be 400, and the decoded message
+// must retain the exact text supplied to the wrapper.
 func TestBadRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -337,6 +366,9 @@ func TestBadRequest(t *testing.T) {
 	require.Equal(t, "参数无效", got.Message)
 }
 
+// TestUnauthorized writes a request-free authentication error with a Chinese message.
+// The recorded HTTP and envelope codes must be 401, and the returned message
+// must match the supplied text in this fixture.
 func TestUnauthorized(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -349,6 +381,9 @@ func TestUnauthorized(t *testing.T) {
 	require.Equal(t, "未登录", got.Message)
 }
 
+// TestForbidden writes a request-free permission error with a Chinese message.
+// The recorded HTTP and envelope codes must be 403, while decoded message text
+// must match the caller's supplied permission-failure text.
 func TestForbidden(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -361,6 +396,9 @@ func TestForbidden(t *testing.T) {
 	require.Equal(t, "无权限", got.Message)
 }
 
+// TestNotFound supplies a Chinese missing-resource message to a request-free context.
+// The recorder and envelope must report 404, and the decoded message must
+// retain the exact supplied text for that wrapper invocation.
 func TestNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -373,6 +411,9 @@ func TestNotFound(t *testing.T) {
 	require.Equal(t, "资源不存在", got.Message)
 }
 
+// TestInternalError supplies a Chinese server-error message with no request object.
+// The recorded HTTP and envelope codes must be 500, and the decoded message
+// must match the caller's provided text in this fixture.
 func TestInternalError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -385,17 +426,20 @@ func TestInternalError(t *testing.T) {
 	require.Equal(t, "服务器内部错误", got.Message)
 }
 
+// TestPaginated combines partial pages, exact division, and zero or small totals.
+// The response must report success and the expected total, page, page size,
+// and computed page count, including one page for the empty result case.
 func TestPaginated(t *testing.T) {
 	tests := []struct {
-		name         string
-		items        any
-		total        int64
-		page         int
-		pageSize     int
-		wantPages    int
-		wantTotal    int64
-		wantPage     int
-		wantPageSize int
+		name         string // fixture case for subtest output
+		items        any    // supplied page item collection
+		total        int64  // supplied matching item count
+		page         int    // supplied current page number
+		pageSize     int    // supplied items-per-page input
+		wantPages    int    // expected total page count
+		wantTotal    int64  // expected matching item count
+		wantPage     int    // expected current page number
+		wantPageSize int    // expected items-per-page result
 	}{
 		{
 			name:         "标准分页_多页",
@@ -474,15 +518,19 @@ func TestPaginated(t *testing.T) {
 	}
 }
 
+// TestPaginatedWithResult
+// supplies computed navigation values and an absent pagination pointer.
+// The response must copy the supplied counts or use the expected nil-pointer
+// defaults, with a success status, code, and message for each fixture.
 func TestPaginatedWithResult(t *testing.T) {
 	tests := []struct {
-		name         string
-		items        any
-		pagination   *PaginationResult
-		wantTotal    int64
-		wantPage     int
-		wantPageSize int
-		wantPages    int
+		name         string            // fixture case for subtest output
+		items        any               // supplied page item collection
+		pagination   *PaginationResult // supplied navigation values or nil
+		wantTotal    int64             // expected matching item count
+		wantPage     int               // expected current page number
+		wantPageSize int               // expected items-per-page result
+		wantPages    int               // expected total page count
 	}{
 		{
 			name:  "正常分页结果",
@@ -543,12 +591,16 @@ func TestPaginatedWithResult(t *testing.T) {
 	}
 }
 
+// TestParsePagination
+// exercises defaults, primary and alias sizes, and invalid query values.
+// Returned page and size must match each case, including accepted size bounds,
+// rejected oversized counts, and the supplied valid primary-over-alias precedence case.
 func TestParsePagination(t *testing.T) {
 	tests := []struct {
-		name         string
-		query        string
-		wantPage     int
-		wantPageSize int
+		name         string // fixture case for subtest output
+		query        string // raw pagination query string
+		wantPage     int    // expected current page number
+		wantPageSize int    // expected items-per-page result
 	}{
 		{
 			name:         "无参数_使用默认值",
@@ -672,12 +724,16 @@ func TestParsePagination(t *testing.T) {
 	}
 }
 
+// Test_parseInt
+// supplies ASCII digits, empty text, signs, separators, and mixed characters.
+// The tested inputs must return their expected integer or zero with nil error;
+// these fixtures establish their values without exercising native-int overflow.
 func Test_parseInt(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		wantVal int
-		wantErr bool
+		name    string // fixture case for subtest output
+		input   string // raw decimal parser input
+		wantVal int    // expected computed integer value
+		wantErr bool   // expected parser error presence
 	}{
 		{
 			name:    "正常数字",

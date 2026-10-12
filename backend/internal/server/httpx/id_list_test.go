@@ -6,11 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNormalizeInt64IDList
+// exercises empty, duplicated, invalid, and unordered collections.
+// Its cases must produce sorted unique positive identifiers while distinguishing
+// nil results for empty input from an allocated empty result for invalid supplied entries.
 func TestNormalizeInt64IDList(t *testing.T) {
 	tests := []struct {
-		name string
-		in   []int64
-		want []int64
+		name string  // normalization case for subtest output
+		in   []int64 // supplied resource ID collection
+		want []int64 // expected normalized result collection
 	}{
 		{"nil input", nil, nil},
 		{"empty input", []int64{}, nil},

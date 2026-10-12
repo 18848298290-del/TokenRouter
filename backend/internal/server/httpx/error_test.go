@@ -12,7 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestLegacyAndCategoryErrorCompatibility checks error identity, wrapping, status, and metadata copying.
+// TestLegacyAndCategoryErrorCompatibility
+// constructs matching application errors across standard and custom codes.
+// Equality, wrapping identity, mapped bodies, copied metadata, nil defaults, and
+// a generic error's retained cause must match the fixture's asserted representations.
 func TestLegacyAndCategoryErrorCompatibility(t *testing.T) {
 	for _, code := range []int{200, 400, 401, 403, 404, 409, 418, 429, 499, 500, 502, 503, 504, 529} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
@@ -48,13 +51,15 @@ func TestLegacyAndCategoryErrorCompatibility(t *testing.T) {
 	}
 }
 
-// TestToHTTP_Legacy checks nil and application-error status codes and response bodies.
+// TestToHTTP_Legacy maps a nil interface and a forbidden application error.
+// Both the numeric status and complete returned Status value must match their
+// expected success or structured-error representation in the supplied cases.
 func TestToHTTP_Legacy(t *testing.T) {
 	tests := []struct {
-		name           string
-		err            error
-		wantStatusCode int
-		wantBody       apperror.Status
+		name           string          // mapping case for subtest output
+		err            error           // supplied nil or application error
+		wantStatusCode int             // expected numeric HTTP status
+		wantBody       apperror.Status // expected serialized application status
 	}{
 		{
 			name:           "nil_error",
@@ -83,6 +88,10 @@ func TestToHTTP_Legacy(t *testing.T) {
 	}
 }
 
+// TestToHTTP_MetadataDeepCopy_Legacy
+// mutates input metadata and then the mapped error's entity metadata.
+// The response metadata must retain its earlier value after both changes,
+// protecting the independent string-map copy returned by ToHTTP.
 func TestToHTTP_MetadataDeepCopy_Legacy(t *testing.T) {
 	md := map[string]string{"k": "v"}
 	appErr := apperror.BadRequest("BAD_REQUEST", "invalid").WithMetadata(md)

@@ -29,43 +29,79 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/web"
 )
 
+// Process startup selects version output, terminal setup, web setup, or the full
+// application before handing serving to lifecycle. Bootstrap logging exists
+// before configuration can be read. Entry paths that end before an application
+// owns resources therefore still need a bounded attempt to flush their logs,
+// and a flush timeout remains part of the error returned to main.
+//
+// The setup and full-server paths each assume log-cleanup ownership before
+// their caller returns. Named errors let deferred cleanup join its failure with
+// the startup or serving cause. Signal cancellation and the Linux restarter
+// share the same serving context; closing the restarter retires pending work
+// before the deferred signal-stop call runs. main decides the process exit
+// status after these return paths finish their cleanup attempts.
+
 var (
+	// embeddedVersion stores the build-time VERSION contents used when the
+	// linker supplies no version with nonblank content to the process entry.
 	//go:embed VERSION
 	embeddedVersion string
 
-	// Build-time variables (can be set by ldflags).
-	Version   = ""
-	Commit    = "unknown"
-	Date      = "unknown"
-	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	// Version, Commit, Date, and BuildType are linker-overridable metadata read
+	// by version output and application construction. init resolves blank Version
+	// from embeddedVersion; the remaining fields keep their assigned defaults.
+	Version   = ""        // displayed build version
+	Commit    = "unknown" // source commit identifier
+	Date      = "unknown" // recorded build timestamp
+	BuildType = "source"  // "source" for manual builds, "release" for CI builds (set by ldflags)
 )
 
+// init resolves the process version before flags and application metadata use it.
+// A linker-supplied Version with nonblank trimmed content remains verbatim;
+// otherwise trimmed embedded contents are used, with a development label for an
+// empty embedded file.
 func init() {
-	// Keep the version supplied through ldflags, such as -X main.Version=...
 	if strings.TrimSpace(Version) != "" {
 		return
 	}
 
-	// Use the VERSION file embedded at build time when ldflags supplies no version.
 	Version = strings.TrimSpace(embeddedVersion)
+	// An empty embedded file still needs a display value for version output
+	// and application build metadata, so source builds receive the development label.
 	if Version == "" {
 		Version = "0.0.0-dev"
 	}
 }
 
-// main initializes bootstrap logging and exits with a nonzero status when the server fails.
+// main initializes bootstrap logging and reports run's final result as process status.
+// run owns entry-path cleanup before returning; an error is written to stderr
+// before exiting with status one, while successful completion returns normally.
 func main() {
 	logging.InitBootstrap()
 	err := run()
 	if err != nil {
+		// Reporting is best effort after cleanup. A stderr write failure must
+		// not change the nonzero exit status selected for the server's error.
 		_, _ = fmt.Fprintf(os.Stderr, "Server failed: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// run returns to main after cleanup so the main goroutine controls process exit.
+// run selects the requested startup path and returns its final cleanup-aware result.
+// Version output takes precedence over terminal setup, which precedes signal
+// registration. Normal startup either initializes from environment, serves the
+// web setup wizard, or constructs the configured application.
+//
+// The initial deferred log flush covers paths that end during this selection.
+// Setting syncOnReturn false transfers that responsibility to the selected
+// server entry, whose own manager supplies its cleanup budget. Signal cancellation
+// and restarts stop the same serving context; restarter cleanup finishes before
+// the deferred signal-stop call runs at this entry's return.
 func run() (err error) {
 	syncOnReturn := true
+	// Keep early-return diagnostics flushable before a server manager exists.
+	// Joining the flush result retains both the selected-path error and cleanup failure.
 	defer func() {
 		if syncOnReturn {
 			err = errors.Join(err, syncBootstrapLogs())
@@ -84,6 +120,8 @@ func run() (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	restarter := lifecycle.NewRestarter(runtime.GOOS, stop)
+	// Close cancels or waits for restart callbacks before the deferred signal-stop
+	// call runs, retiring timer work that also cancels the shared serving context.
 	defer restarter.Close()
 	if setup.NeedsSetup() {
 		if setup.AutoSetupEnabled() {
@@ -93,17 +131,27 @@ func run() (err error) {
 			}
 		} else {
 			log.Println("First run detected, starting setup wizard...")
+			// The setup manager now owns the final log flush, including serving
+			// errors. Disable this outer flush before returning through that manager.
 			syncOnReturn = false
 			return runSetupServer(ctx, restarter)
 		}
 	}
+	// runMainServer flushes early initialization failures and hands later cleanup
+	// to Application, keeping each return path under its selected log owner.
 	syncOnReturn = false
 	return runMainServer(ctx, restarter)
 }
 
+// runSetupServer serves installation routes and optional embedded frontend assets.
+// Supply the serving context and setup restarter; request tracking and log sync
+// belong to its lifecycle manager. Cleanup uses a fresh thirty-second budget and
+// joins manager failure with the serving result after HTTP's separate shutdown phase.
 func runSetupServer(ctx context.Context, restarter *lifecycle.Restarter) (err error) {
 	manager := lifecycle.New()
 	manager.Register(lifecycle.Hook{Name: "SetupLogs", StopOrder: 1000, Stop: func(context.Context) error { logging.Sync(); return nil }})
+	// Serving cancellation must not consume the cleanup budget. Use a fresh
+	// context so request tracking can finish before the final SetupLogs hook runs.
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -130,21 +178,29 @@ func runSetupServer(ctx context.Context, restarter *lifecycle.Restarter) (err er
 	protocols.SetUnencryptedHTTP2(true)
 
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           r,
+		Addr:    addr,
+		Handler: r,
+		// Setup has a fixed header-read budget to bound incomplete installation
+		// requests before route handlers begin consuming their submitted configuration.
 		ReadHeaderTimeout: 30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		Protocols:         protocols,
+		// Reuse browser connections within this two-minute idle window.
+		IdleTimeout: 120 * time.Second,
+		Protocols:   protocols,
 	}
 
 	lifecycle.TrackRequests(server, manager)
 	return lifecycle.Serve(ctx, server)
 }
 
-// runMainServer constructs the application and coordinates startup and shutdown.
+// runMainServer loads bootstrap configuration and runs the constructed application.
+// Configuration or logger initialization failures use the entry's bounded log
+// flush. After logging initialization succeeds, app.Initialize owns rollback and
+// logger cleanup, and Application.Run owns subsequent serving and shutdown.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func runMainServer(ctx context.Context, restarter *lifecycle.Restarter) (err error) {
 	syncOnReturn := true
+	// Before Initialize registers LogBackend, retain a bounded bootstrap flush
+	// for configuration and logger failures so their diagnostics survive early return.
 	defer func() {
 		if syncOnReturn {
 			err = errors.Join(err, syncBootstrapLogs())
@@ -157,6 +213,8 @@ func runMainServer(ctx context.Context, restarter *lifecycle.Restarter) (err err
 	if err := logging.Init(app.OptionsFromConfig(cfg.Log)); err != nil {
 		return fmt.Errorf("initialize logger: %w", err)
 	}
+	// Initialize registers LogBackend before graph construction, so its rollback
+	// now owns file closure and log sync even if a later dependency fails.
 	syncOnReturn = false
 	application, err := app.Initialize(ctx, cfg, app.BuildInfo{Version: Version, BuildType: BuildType}, restarter)
 	if err != nil {
@@ -165,10 +223,15 @@ func runMainServer(ctx context.Context, restarter *lifecycle.Restarter) (err err
 	return application.Run(ctx)
 }
 
-// syncBootstrapLogs bounds log flushing for entry points that do not construct the full application.
+// syncBootstrapLogs attempts log synchronization through a thirty-second lifecycle budget.
+// The manager reports timeout or unfinished cleanup, while logging.Sync discards
+// its underlying writer error. This entry-point cleanup returns the
+// manager result for joining with an earlier failure.
 func syncBootstrapLogs() error {
 	manager := lifecycle.New()
 	manager.Register(lifecycle.Hook{Name: "BootstrapLogs", Stop: func(context.Context) error { logging.Sync(); return nil }})
+	// Sync takes no context, so this budget bounds the manager's wait; a timed-out
+	// callback may continue while its unfinished status returns to the entry path.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return manager.Stop(ctx)

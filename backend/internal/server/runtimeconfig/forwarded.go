@@ -13,45 +13,83 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Storage keys for client IP settings and their compatibility migration marker.
+// Client-IP identity must follow one selected mode and ordered header list
+// across startup and administrator updates. Persisted values overlay process
+// defaults; a missing header key is backfilled, while malformed stored names
+// disable raw-header compatibility so security consumers use their peer policy.
+// The loader prepares these related values before publishing them together.
+//
+// A hidden marker makes the compatibility upgrade a one-time decision. Before
+// that marker is set, a stored false mode can become true when headers are valid
+// and no trusted-proxy policy was configured. Migration persistence precedes
+// publication, but a write failure still publishes the calculated policy and
+// returns its error. Startup reports the migration failure while this process
+// has the policy selected from its current inputs.
+
+// These keys store the mode, ordered custom sources, and one-time upgrade marker
+// used by startup loading and the shared administrator settings participant.
 const (
-	SettingKeyForwardedClientIPModeV2   = "forwarded_client_ip_mode_v2_migrated"
-	SettingKeyAPIKeyACLTrustForwardedIP = "api_key_acl_trust_forwarded_ip"
-	SettingKeyForwardedClientIPHeaders  = "forwarded_client_ip_headers"
+	SettingKeyForwardedClientIPModeV2   = "forwarded_client_ip_mode_v2_migrated" // completed compatibility-upgrade marker
+	SettingKeyAPIKeyACLTrustForwardedIP = "api_key_acl_trust_forwarded_ip"       // raw-header trust boolean text
+	SettingKeyForwardedClientIPHeaders  = "forwarded_client_ip_headers"          // ordered source-name JSON array
 )
 
 // ForwardedSettingsRepository reads client IP settings and persists migration updates.
 type ForwardedSettingsRepository interface {
+	// GetMultiple returns stored values among the requested keys under ctx.
+	// Missing keys are omitted so startup loading can distinguish persisted
+	// preferences from process defaults and absent migration metadata.
 	GetMultiple(context.Context, []string) (map[string]string, error)
+	// SetMultiple persists the selected migration keys under the supplied context.
+	// The loader returns write failures while publishing its calculated values,
+	// allowing startup to report persistence failure with a selected runtime policy.
 	SetMultiple(context.Context, map[string]string) error
 }
 
 // ForwardedSettingsOptions contains initial client IP settings and runtime publication callbacks.
 type ForwardedSettingsOptions struct {
-	InitialTrust             bool
+	// InitialTrust supplies mode when no persisted value exists. A stored value
+	// takes precedence before the one-time compatibility migration is evaluated.
+	InitialTrust bool
+	// TrustedProxiesConfigured prevents the one-time upgrade from enabling raw
+	// headers when the operator supplied a peer-trust policy, including an empty list.
 	TrustedProxiesConfigured bool
-	Headers                  func() []string
-	Publish                  func(bool, []string)
+	// Headers supplies fallback names after a successful repository read. Return
+	// validated, nonnil names so an absent header key can be persisted as a JSON array.
+	Headers func() []string
+	// Publish receives the chosen mode and names synchronously. It must be
+	// callable, and it owns any copy needed before retaining the supplied slice.
+	Publish func(bool, []string)
 }
 
 // ForwardedSettings migrates persisted client IP settings and publishes them to the runtime.
 type ForwardedSettings struct {
+	// settingRepo remains caller-owned. A nil repository makes startup Load a
+	// no-op, so construction can represent a loader with no persistent source.
 	settingRepo ForwardedSettingsRepository
-	options     ForwardedSettingsOptions
+	options     ForwardedSettingsOptions // captured startup defaults and callbacks
 }
 
-// ForwardedInput contains the editable client IP settings.
+// ForwardedInput carries the editable raw-header mode and ordered client-IP sources.
 type ForwardedInput struct {
-	APIKeyACLTrustForwardedIP bool     `json:"api_key_acl_trust_forwarded_ip"`
-	ForwardedClientIPHeaders  []string `json:"forwarded_client_ip_headers"`
+	APIKeyACLTrustForwardedIP bool `json:"api_key_acl_trust_forwarded_ip"` // raw forwarding-header trust flag
+	// ForwardedClientIPHeaders is the editable source order. PrepareForwardedSettings
+	// canonicalizes and copies names before encoding a nonnull persisted JSON array.
+	ForwardedClientIPHeaders []string `json:"forwarded_client_ip_headers"`
 }
 
-// NewForwardedSettings creates a settings loader; app calls LoadForwardedClientIPSettings during startup.
+// NewForwardedSettings stores startup defaults and callbacks for later policy loading.
+// A configured repository requires callable Headers and Publish callbacks;
+// Headers returns validated, nonnil names. App calls LoadForwardedClientIPSettings
+// during startup, and the caller retains repository ownership.
 func NewForwardedSettings(repo ForwardedSettingsRepository, options ForwardedSettingsOptions) *ForwardedSettings {
 	return &ForwardedSettings{settingRepo: repo, options: options}
 }
 
-// PrepareForwardedSettings validates header names and encodes values for persistence.
+// PrepareForwardedSettings returns validated input and encoded mode/header persistence values.
+// Header names become canonical, unique, and independently allocated. Invalid
+// names produce BadRequest with the supplied input and no values; callers use
+// the normalized result after successful preparation.
 func PrepareForwardedSettings(value ForwardedInput) (ForwardedInput, map[string]string, error) {
 	headers, err := policy.NormalizeForwardedClientIPHeaders(value.ForwardedClientIPHeaders)
 	if err != nil {
@@ -65,12 +103,23 @@ func PrepareForwardedSettings(value ForwardedInput) (ForwardedInput, map[string]
 	return value, map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: strconv.FormatBool(value.APIKeyACLTrustForwardedIP), SettingKeyForwardedClientIPHeaders: string(raw)}, nil
 }
 
-// Apply publishes the supplied settings to the runtime.
+// Apply synchronously publishes the supplied mode and names through the configured callback.
+// Supply prepared input and a callable Publish implementation. Header storage
+// is passed directly, so the callback owns copying before it retains mutable names.
 func (s *ForwardedSettings) Apply(value ForwardedInput) {
 	s.options.Publish(value.APIKeyACLTrustForwardedIP, value.ForwardedClientIPHeaders)
 }
 
-// SettingsParticipant prepares client IP values for the shared settings write.
+// SettingsParticipant registers the client-IP mode and header list with shared
+// settings preparation. Its callback accepts a sparse field map; an empty map
+// produces no writes, and supplied header names are validated and normalized
+// before persistence values are returned.
+//
+// JSON conversion initializes omitted bool and slice fields to their zero
+// values. PrepareForwardedSettings encodes both fields, so the callback removes
+// keys that were absent from input before returning the batch. This keeps an
+// omitted mode or header list unchanged while preserving supplied false and
+// empty-list updates as writes.
 func SettingsParticipant() settings.Participant {
 	return settings.Participant{Module: "server", Fields: []string{"api_key_acl_trust_forwarded_ip", "forwarded_client_ip_headers"}, Keys: []string{SettingKeyAPIKeyACLTrustForwardedIP, SettingKeyForwardedClientIPHeaders}, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {
 		if len(input) == 0 {
@@ -88,6 +137,8 @@ func SettingsParticipant() settings.Participant {
 		if err != nil {
 			return settings.PreparedChange{}, err
 		}
+		// Binding creates zero values for absent fields. Remove their encoded keys
+		// before the shared write so partial updates retain omitted persisted settings.
 		for key := range values {
 			if _, ok := input[key]; !ok {
 				delete(values, key)
@@ -97,7 +148,9 @@ func SettingsParticipant() settings.Participant {
 	}}
 }
 
-// ParseForwardedHeaders rejects malformed JSON, null, and invalid header names.
+// ParseForwardedHeaders returns normalized names decoded from a persisted JSON array.
+// Malformed JSON, null, and invalid names return errors; an empty array is valid.
+// Successful results use independently allocated storage in the supplied source order.
 func ParseForwardedHeaders(value string) ([]string, error) {
 	var headers []string
 	if err := json.Unmarshal([]byte(value), &headers); err != nil {
@@ -113,7 +166,20 @@ func ParseForwardedHeaders(value string) ([]string, error) {
 	return normalized, nil
 }
 
-// LoadForwardedClientIPSettings loads and migrates settings, disabling forwarded trust on read or header parse errors.
+// LoadForwardedClientIPSettings selects and publishes the startup client-IP policy.
+// A nil receiver or repository makes no change. Configured loaders use ctx for
+// repository calls and require the constructor's callbacks; read failure publishes
+// false mode with no custom sources before returning the error.
+//
+// Stored mode initially enables compatibility for literal "true". Invalid
+// stored headers clear the source list and disable the mode, while missing
+// headers use the supplied nonnil fallback. Before the upgrade marker exists,
+// a computed false stored mode may become true when no peer policy is configured
+// and header processing succeeded.
+//
+// Missing metadata is persisted before the final publication. A migration write
+// failure still publishes the calculated values and joins persistence and header
+// errors, so the caller can report incomplete persistence with the current policy.
 func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) error {
 	if s == nil || s.settingRepo == nil {
 		return nil
@@ -125,6 +191,8 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 		SettingKeyForwardedClientIPModeV2,
 	})
 	if err != nil {
+		// Stored preferences could not be inspected. Publish peer-policy mode so
+		// stale raw-header trust cannot survive this failed startup settings read.
 		s.options.Publish(false, nil)
 		return fmt.Errorf("get forwarded client ip settings: %w", err)
 	}
@@ -140,6 +208,8 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	if storedHeaders, ok := values[SettingKeyForwardedClientIPHeaders]; ok {
 		headers, headersErr = ParseForwardedHeaders(storedHeaders)
 		if headersErr != nil {
+			// Invalid persisted names remove the raw-header mode as well as sources;
+			// otherwise a malformed custom list could leave built-in raw trust enabled.
 			enabled = false
 			headers = []string{}
 			headersErr = fmt.Errorf("load forwarded client ip headers: %w", headersErr)
@@ -150,6 +220,8 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	if _, hasStoredHeaders := values[SettingKeyForwardedClientIPHeaders]; !hasStoredHeaders {
 		headersJSON, marshalErr := json.Marshal(headers)
 		if marshalErr != nil {
+			// Keep migration metadata serializable with an empty array and retain
+			// the preparation error for the caller to report after policy publication.
 			headers = []string{}
 			headersErr = errors.Join(headersErr, fmt.Errorf("marshal forwarded client ip headers: %w", marshalErr))
 			headersJSON = []byte("[]")
@@ -158,13 +230,16 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	}
 	if values[SettingKeyForwardedClientIPModeV2] != "true" {
 		updates[SettingKeyForwardedClientIPModeV2] = "true"
-		// Older installations stored false by default; restore compatibility only when no trusted proxy policy was configured.
+		// Before the marker is stored, a computed false mode can be upgraded.
+		// Configured peer policies and invalid headers retain peer-policy resolution.
 		if headersErr == nil && hasStoredValue && !enabled && !s.options.TrustedProxiesConfigured {
 			enabled = true
 			updates[SettingKeyAPIKeyACLTrustForwardedIP] = "true"
 		}
 	}
 	if len(updates) > 0 {
+		// Publish after the persistence attempt, including its failure path. The
+		// calculated runtime mode remains usable while startup reports unfinished migration.
 		if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 			s.options.Publish(enabled, headers)
 			return errors.Join(headersErr, fmt.Errorf("migrate forwarded client ip setting: %w", err))
@@ -175,7 +250,15 @@ func (s *ForwardedSettings) LoadForwardedClientIPSettings(ctx context.Context) e
 	return headersErr
 }
 
-// ReadForwardedSettings overlays persisted values and disables forwarded trust if header parsing fails.
+// ReadForwardedSettings builds editable settings from prior values and persisted keys.
+// Missing keys retain the corresponding prior value, including shared prior
+// header storage. Stored mode enables compatibility only for literal "true";
+// parsed headers receive normalized, independently allocated storage.
+//
+// Invalid stored header text overrides an enabled mode by clearing the sources
+// and selecting false. The parsing failure is logged, and callers receive that
+// usable value to show the security state implied by the stored input. This
+// overlay leaves persistence and runtime publication to its consumers.
 func ReadForwardedSettings(settings map[string]string, prior ForwardedInput) ForwardedInput {
 	apiKeyACLTrustForwardedIP := prior.APIKeyACLTrustForwardedIP
 	forwardedClientIPHeaders := prior.ForwardedClientIPHeaders
@@ -185,6 +268,8 @@ func ReadForwardedSettings(settings map[string]string, prior ForwardedInput) For
 	if value, ok := settings[SettingKeyForwardedClientIPHeaders]; ok {
 		parsed, err := ParseForwardedHeaders(value)
 		if err != nil {
+			// A malformed persisted source list cannot justify raw header trust.
+			// Return the disabled display state and retain the parse cause in logs.
 			slog.Error("invalid persisted forwarded client IP headers; forwarded trust disabled", "error", err)
 			apiKeyACLTrustForwardedIP = false
 			forwardedClientIPHeaders = []string{}

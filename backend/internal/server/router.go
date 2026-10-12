@@ -6,14 +6,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RouterRuntime contains middleware, the frontend handler, and route registration functions supplied by app.
+// Public health and setup-status endpoints remain available alongside module
+// routes. App supplies one ordered middleware chain and an optional frontend
+// handler, then module registration callbacks add their endpoints to the same
+// Gin engine after the common routes.
+
+// RouterRuntime holds app's ordered middleware and module registrations for one engine.
 type RouterRuntime struct {
-	Middleware []gin.HandlerFunc
-	Frontend   gin.HandlerFunc
-	Register   []func(*gin.Engine)
+	Middleware []gin.HandlerFunc // global middleware in execution order
+	// Frontend is installed after Middleware when nonnil, so SPA serving sees
+	// the same request context before common and module routes run.
+	Frontend gin.HandlerFunc
+	Register []func(*gin.Engine) // module route registration callbacks
 }
 
-// SetupRouter installs global middleware, the frontend handler, and routes in that order.
+// SetupRouter installs middleware, optional frontend serving, and all routes.
+// Callers provide a nonnil runtime and engine before serving requests; registration
+// callbacks run in slice order after the common endpoints have been registered.
 func SetupRouter(r *gin.Engine, runtime *RouterRuntime) *gin.Engine {
 	r.Use(runtime.Middleware...)
 	if runtime.Frontend != nil {
@@ -26,7 +35,9 @@ func SetupRouter(r *gin.Engine, runtime *RouterRuntime) *gin.Engine {
 	return r
 }
 
-// RegisterCommonRoutes registers health, telemetry, and setup status endpoints.
+// RegisterCommonRoutes adds public health, telemetry acknowledgement, and setup status.
+// The setup response describes an already configured process; callers register
+// these routes once per engine because Gin rejects duplicate method/path pairs.
 func RegisterCommonRoutes(r *gin.Engine) {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
