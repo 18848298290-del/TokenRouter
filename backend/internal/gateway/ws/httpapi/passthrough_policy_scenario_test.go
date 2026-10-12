@@ -1,7 +1,5 @@
 package httpapi
 
-// Passthrough policy scenarios cover service-tier filtering, client frames, usage snapshots, and turn transitions.
-
 import (
 	"context"
 	"encoding/json"
@@ -33,38 +31,73 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
-// fakePassthroughFrameConn returns queued frames, then ErrWSConnClosed, and records writes for assertions.
+// Fast policy checks read a frame's current or retained session model before
+// deciding whether its service tier is accepted, removed or blocked. These
+// scenarios compare default policy, user rules, explicit force and filtering,
+// including requests that omit model or tier after a prior turn. Post-policy
+// metadata describes the actual accepted frame rather than the client's
+// pre-filter tier.
+//
+// Fixture frame wrappers call the production policy and lifecycle helpers
+// while retaining observable scripted reads and writes. Separate usage atoms
+// hold effort and request tier; session.update changes the fallback model
+// while response.create publishes accepted turn metadata. Terminal-delivery
+// scenarios hold the admission barrier through its write outcome and inspect
+// the waiting flag after the next accepted request.
+
+// fakePassthroughFrameConn returns queued frames, then ErrWSConnClosed, and
+// records writes for assertions.
 type fakePassthroughFrameConn struct {
-	reads     [][]byte
-	idx       int
-	writes    [][]byte
-	closeOnce bool
+	// reads and idx identify the next queued frame; writes retains copied payloads
+	// for assertions. closeOnce records a close request but does not stop scripted
+	// reads or writes, and tests serialize access to this unsynchronized fixture.
+	reads     [][]byte // scripted client text frame bytes
+	idx       int      // next scripted frame index
+	writes    [][]byte // copied outbound frame payloads
+	closeOnce bool     // fixture close call observed
 }
 
+// openAIWSPolicyEnforcingFrameConn adapts fixture policy callbacks to production frame filtering.
 type openAIWSPolicyEnforcingFrameConn struct {
-	inner       openaiwsv2.FrameConn
-	filter      func(coderws.MessageType, []byte) ([]byte, *tierpolicy.BlockedError, error)
-	writeFilter func(coderws.MessageType, []byte) ([]byte, error)
-	onBlock     func(*tierpolicy.BlockedError)
-	once        sync.Once
-	core        gatewayws.FrameConn
+	// filter, writeFilter and onBlock are optional and are bound when once creates
+	// core. Configure inner and callbacks before first use, then keep them stable;
+	// once publishes construction, while frame synchronization belongs to inner.
+	inner       openaiwsv2.FrameConn                                                        // wrapped fixture frame transport
+	filter      func(coderws.MessageType, []byte) ([]byte, *tierpolicy.BlockedError, error) // optional inbound frame policy callback
+	writeFilter func(coderws.MessageType, []byte) ([]byte, error)                           // optional outbound frame transformation
+	onBlock     func(*tierpolicy.BlockedError)                                              // optional typed policy block observer
+	once        sync.Once                                                                   // core frame wrapper initialization guard
+	core        gatewayws.FrameConn                                                         // retained production frame wrapper
 }
 
+// openAIWSClientFrameConn exposes production turn-activity state for admission fixtures.
 type openAIWSClientFrameConn struct {
-	interTurnStarted   chan struct{}
-	waitingForNextTurn atomic.Bool
+	// waitingForNextTurn records the activity atom, and interTurnStarted carries
+	// a nonblocking idle notification. Lifecycle callers order these publications
+	// by invoking the helpers under its admission or terminal-delivery lock.
+	interTurnStarted   chan struct{} // completed turn idle notifications
+	waitingForNextTurn atomic.Bool   // client waiting between accepted turns
 }
 
-// openAIWSPassthroughUsageMeta holds session usage and reasoning effort.
+// openAIWSPassthroughUsageMeta exposes production session metadata and its shared
+// effort atom to passthrough policy assertions.
 type openAIWSPassthroughUsageMeta struct {
-	*gatewayws.UsageMeta
-	// Shared atomic reasoning-effort value.
+	*gatewayws.UsageMeta // shared production request metadata atoms
+	// reasoningEffort points to the embedded UsageMeta.ReasoningEffort atomic.
+	// Assertions read that same publication rather than a separately copied value.
 	reasoningEffort *atomic.Pointer[string]
 }
 
-// openAIWSPassthroughTurnLifecycle wraps the shared turn barrier.
-type openAIWSPassthroughTurnLifecycle struct{ *gatewayws.TurnLifecycle }
+// openAIWSPassthroughTurnLifecycle exposes the production turn admission barrier
+// for fixture terminal-delivery and next-request coordination.
+type openAIWSPassthroughTurnLifecycle struct {
+	*gatewayws.TurnLifecycle /* production admission and terminal barrier */
+}
 
+// TestWSResponseCreate_DefaultPassesPriorityAndNormalizesFast supplies
+// priority, fast and padded mixed-case aliases under default policy. Priority
+// survives, aliases become priority, and the first request retains its type,
+// model and input text.
 func TestWSResponseCreate_DefaultPassesPriorityAndNormalizesFast(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -74,7 +107,8 @@ func TestWSResponseCreate_DefaultPassesPriorityAndNormalizesFast(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, blocked)
 	require.Equal(t, "priority", gjson.GetBytes(updated, "service_tier").String(), "default policy should preserve priority tier")
-	// Tier normalization leaves the remaining request fields unchanged.
+	// Tier normalization targets service_tier; assert type, model and input text
+	// alongside it so the helper cannot silently alter those observed request fields.
 	require.Equal(t, "response.create", gjson.GetBytes(updated, "type").String())
 	require.Equal(t, "gpt-5.5", gjson.GetBytes(updated, "model").String())
 	require.Equal(t, "hi", gjson.GetBytes(updated, "input.0.text").String())
@@ -85,7 +119,8 @@ func TestWSResponseCreate_DefaultPassesPriorityAndNormalizesFast(t *testing.T) {
 	require.Nil(t, blocked)
 	require.Equal(t, "priority", gjson.GetBytes(updated, "service_tier").String(), "fast alias should normalize before reaching upstream")
 
-	// Mixed case and surrounding whitespace also normalize to priority.
+	// The same protocol alias can arrive with case and padding; exercise those
+	// spellings so normalization reaches canonical priority under the pass action.
 	frame = []byte(`{"type":"response.create","model":"gpt-5.5","service_tier":"  Fast  "}`)
 	updated, blocked, err = gatewayws.ApplyServiceTierFrame(frame, "gpt-5.5", svc.Input(context.Background(), provider, "gpt-5.5"))
 	require.NoError(t, err)
@@ -93,6 +128,10 @@ func TestWSResponseCreate_DefaultPassesPriorityAndNormalizesFast(t *testing.T) {
 	require.Equal(t, "priority", gjson.GetBytes(updated, "service_tier").String())
 }
 
+// TestWSResponseCreate_RejectsUltraBeforeUpstream supplies ultra reasoning in
+// response.create and session.update frames. The frame helper returns a
+// not-supported error with unchanged bytes and no service-tier block result
+// for both inputs.
 func TestWSResponseCreate_RejectsUltraBeforeUpstream(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -109,6 +148,9 @@ func TestWSResponseCreate_RejectsUltraBeforeUpstream(t *testing.T) {
 	}
 }
 
+// TestWSResponseCreate_ExplicitFilterStripsServiceTier supplies priority and
+// fast frames to an explicit priority filter. Both return no error or block
+// and remove service_tier from the resulting frame.
 func TestWSResponseCreate_ExplicitFilterStripsServiceTier(t *testing.T) {
 	svc := newWSFastPolicy(t, openAIFastFilterPriorityPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -126,6 +168,9 @@ func TestWSResponseCreate_ExplicitFilterStripsServiceTier(t *testing.T) {
 	require.NotContains(t, string(updated), `"service_tier"`)
 }
 
+// TestWSResponseCreate_UserScopedRuleOverridesGlobalRule combines a global
+// priority filter with a pass rule for payer 42. That user retains priority
+// while payer 43 receives a frame with no service_tier.
 func TestWSResponseCreate_UserScopedRuleOverridesGlobalRule(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{
@@ -159,6 +204,10 @@ func TestWSResponseCreate_UserScopedRuleOverridesGlobalRule(t *testing.T) {
 	require.NotContains(t, string(updated), `"service_tier"`)
 }
 
+// TestWSResponseCreate_ForcePriorityRewritesKnownTier applies an any-tier
+// force action to seven recognized tier spellings. Each successful
+// response.create returns priority with no blocked result, including flex,
+// default, fast and ultrafast inputs.
 func TestWSResponseCreate_ForcePriorityRewritesKnownTier(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -180,6 +229,9 @@ func TestWSResponseCreate_ForcePriorityRewritesKnownTier(t *testing.T) {
 	}
 }
 
+// TestWSResponseCreate_FlexPassThrough submits flex to the empty default
+// policy. The helper returns no error or blocked result and retains flex in
+// the outbound WS frame.
 func TestWSResponseCreate_FlexPassThrough(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -192,6 +244,10 @@ func TestWSResponseCreate_FlexPassThrough(t *testing.T) {
 	require.Equal(t, "flex", gjson.GetBytes(updated, "service_tier").String(), "flex frames must reach upstream untouched under default policy")
 }
 
+// TestWSResponseCreate_BlockReturnsTypedError supplies a whitelisted priority
+// frame to a block action. The separate typed block carries the configured
+// message, while the ordinary error stays nil and returned payload bytes
+// remain equal to input.
 func TestWSResponseCreate_BlockReturnsTypedError(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -211,10 +267,14 @@ func TestWSResponseCreate_BlockReturnsTypedError(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, blocked)
 	require.Equal(t, "ws fast blocked", blocked.Message)
-	// On block, payload returned unchanged so caller can inspect / log it.
+	// Keep the input request available for rejection diagnostics when a block
+	// supplies its separate typed result rather than accepted upstream payload.
 	require.Equal(t, string(frame), string(updated))
 }
 
+// TestWSResponseCreate_NoServiceTierUntouched supplies a response.create with
+// no requested tier under default policy. The helper returns byte-equal
+// payload with no error or blocked result.
 func TestWSResponseCreate_NoServiceTierUntouched(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -226,6 +286,10 @@ func TestWSResponseCreate_NoServiceTierUntouched(t *testing.T) {
 	require.Equal(t, string(frame), string(updated), "no service_tier present must result in zero mutation")
 }
 
+// TestWSResponseCreate_NonResponseCreateFrameUntouched supplies
+// response.cancel with a tier-shaped field under a broad filter rule. The
+// frame is returned byte-equal with no policy error or block because this
+// event is outside tier rewriting.
 func TestWSResponseCreate_NonResponseCreateFrameUntouched(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -247,7 +311,9 @@ func TestWSResponseCreate_NonResponseCreateFrameUntouched(t *testing.T) {
 	require.Equal(t, string(frame), string(updated))
 }
 
-// TestWSResponseCreate_EmptyTypeFrameUntouched checks that missing or empty types bypass response.create policy.
+// TestWSResponseCreate_EmptyTypeFrameUntouched supplies absent and empty event
+// types with priority fields under a filter. Both bodies remain byte-equal and
+// produce no error or block in this direct frame-helper scenario.
 func TestWSResponseCreate_EmptyTypeFrameUntouched(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -261,8 +327,8 @@ func TestWSResponseCreate_EmptyTypeFrameUntouched(t *testing.T) {
 	svc := newWSFastPolicy(t, settings)
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
-	// Frame with no "type" field: must pass through completely unchanged
-	// even with a service_tier-shaped field present.
+	// Direct frame policy requires a recognized event label; the missing-type
+	// input remains byte-equal even with a field shaped like a requested tier.
 	frame := []byte(`{"service_tier":"priority","model":"gpt-5.5"}`)
 	updated, blocked, err := gatewayws.ApplyServiceTierFrame(frame, "gpt-5.5", svc.Input(context.Background(), provider, "gpt-5.5"))
 	require.NoError(t, err)
@@ -277,6 +343,9 @@ func TestWSResponseCreate_EmptyTypeFrameUntouched(t *testing.T) {
 	require.Equal(t, string(frame), string(updated))
 }
 
+// ReadFrame returns the next scripted text payload by reference and advances
+// its index. Exhausted frames return ErrWSConnClosed with text type; context
+// and closeOnce are ignored, so tests control ending through the read script.
 func (f *fakePassthroughFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if f.idx >= len(f.reads) {
 		return coderws.MessageText, nil, openai.ErrWSConnClosed
@@ -286,19 +355,27 @@ func (f *fakePassthroughFrameConn) ReadFrame(ctx context.Context) (coderws.Messa
 	return coderws.MessageText, payload, nil
 }
 
+// WriteFrame copies payload bytes into the fixture's writes slice and returns
+// nil. It ignores context, message type and closeOnce; callers serialize this
+// fixture and inspect copied payloads independently of their input buffers.
 func (f *fakePassthroughFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
 	cp := append([]byte(nil), payload...)
 	f.writes = append(f.writes, cp)
 	return nil
 }
 
+// Close records that fixture cleanup was called and returns nil. It changes no
+// scripted read or write behavior, so later fixture operations remain
+// available for assertions regardless of closeOnce.
 func (f *fakePassthroughFrameConn) Close() error {
 	f.closeOnce = true
 	return nil
 }
 
-// gpt55WhitelistFastPolicy supplies a model whitelist to make captured-model selection observable.
-// The empty default policy would produce the same result with or without a captured model.
+// gpt55WhitelistFastPolicy returns a priority filter whose whitelist names
+// gpt-5.5 and its suffix forms. Other models select pass, making the retained
+// model visible in output where an empty default rule set would yield
+// identical frames.
 func gpt55WhitelistFastPolicy() *tierpolicy.OpenAIFastPolicySettings {
 	return &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -311,10 +388,13 @@ func gpt55WhitelistFastPolicy() *tierpolicy.OpenAIFastPolicySettings {
 	}
 }
 
-// TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel checks policy matching against the first frame's model.
+// TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel
+// retains gpt-5.5 from the first frame and filters a model-omitting followup.
+// The wrapper removes service_tier while retaining response.create, making
+// model reuse observable through the whitelist rule.
 func TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel(t *testing.T) {
-	// A whitelist makes captured-model reuse observable:
-	// the empty default policy would pass this frame in either case.
+	// A whitelist produces different output for a missing retained model: its pass
+	// fallback leaves priority present while an inherited gpt-5.5 selects filtering.
 	svc := newWSFastPolicy(t, gpt55WhitelistFastPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
@@ -326,7 +406,7 @@ func TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel(t *
 	// Later frames can omit model and use the captured session model.
 	followupFrame := []byte(`{"type":"response.create","service_tier":"priority"}`)
 
-	inner := &fakePassthroughFrameConn{
+	inner := &fakePassthroughFrameConn{ // wrapped fixture frame transport
 		reads: [][]byte{followupFrame},
 	}
 	wrapper := &openAIWSPolicyEnforcingFrameConn{
@@ -336,6 +416,8 @@ func TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel(t *
 				return payload, nil, nil
 			}
 			model := openAIWSPassthroughPolicyModelForFrame(provider, payload)
+			// An omitted model uses the captured session choice so this frame's whitelist
+			// decision follows the same conversation as the earlier model-bearing frame.
 			if model == "" {
 				model = capturedSessionModel
 			}
@@ -343,9 +425,8 @@ func TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel(t *
 		},
 	}
 
-	// Read the follow-up frame through the wrapper. The policy MUST still
-	// trigger filter (gpt-5.5 + priority → filter), so the service_tier
-	// field is gone by the time the relay sees it.
+	// Read through the production wrapper to observe the whitelist filter selected
+	// from retained gpt-5.5, with the resulting response.create still identifiable.
 	_, payload, err := wrapper.ReadFrame(context.Background())
 	require.NoError(t, err)
 	require.NotContains(t, string(payload), `"service_tier"`,
@@ -353,6 +434,10 @@ func TestPolicyEnforcingFrameConn_FollowupFrameWithoutModelUsesCapturedModel(t *
 	require.Equal(t, "response.create", gjson.GetBytes(payload, "type").String())
 }
 
+// TestOpenAIWSPassthroughPolicyModelDoesNotApplyProviderMapping enables
+// passthrough on a provider mapping public-model to private-model. Fixture
+// model readers return public-model for both response.create and
+// session.update, checking their passthrough rule directly.
 func TestOpenAIWSPassthroughPolicyModelDoesNotApplyProviderMapping(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -372,14 +457,17 @@ func TestOpenAIWSPassthroughPolicyModelDoesNotApplyProviderMapping(t *testing.T)
 	require.Equal(t, "public-model", openAIWSPassthroughPolicyModelFromSessionFrame(provider, sessionUpdate))
 }
 
-// TestPolicyEnforcingFrameConn_WithoutCapturedFallbackPolicyMisses checks a missing frame and session model against the whitelist.
+// TestPolicyEnforcingFrameConn_WithoutCapturedFallbackPolicyMisses filters a
+// model-omitting frame while intentionally supplying no retained model. The
+// whitelist misses and its pass fallback leaves service_tier present,
+// contrasting the captured-model fixture's observable result.
 func TestPolicyEnforcingFrameConn_WithoutCapturedFallbackPolicyMisses(t *testing.T) {
 	// Use a whitelist to expose the missing captured model.
 	svc := newWSFastPolicy(t, gpt55WhitelistFastPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
 	followupFrame := []byte(`{"type":"response.create","service_tier":"priority"}`)
-	inner := &fakePassthroughFrameConn{reads: [][]byte{followupFrame}}
+	inner := &fakePassthroughFrameConn{reads: [][]byte{followupFrame}} // wrapped fixture frame transport
 	wrapper := &openAIWSPolicyEnforcingFrameConn{
 		inner: inner,
 		filter: func(msgType coderws.MessageType, payload []byte) ([]byte, *tierpolicy.BlockedError, error) {
@@ -396,8 +484,10 @@ func TestPolicyEnforcingFrameConn_WithoutCapturedFallbackPolicyMisses(t *testing
 		"sanity: without capturedSessionModel fallback the leak (D5) reproduces — confirms the fix is load-bearing")
 }
 
-// TestApplyOpenAIFastPolicyToBody_BlockShortCircuitsUpstream checks the typed block error and unchanged payload.
-// Chat Completions and Messages callers use the error to end the request.
+// TestApplyOpenAIFastPolicyToBody_BlockShortCircuitsUpstream applies a
+// model-scoped priority block to an HTTP body. ApplyBody returns the
+// configured typed BlockedError and byte-equal body, allowing its caller to
+// stop before exchange.
 func TestApplyOpenAIFastPolicyToBody_BlockShortCircuitsUpstream(t *testing.T) {
 	settings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -421,8 +511,10 @@ func TestApplyOpenAIFastPolicyToBody_BlockShortCircuitsUpstream(t *testing.T) {
 	require.Equal(t, string(body), string(updated), "block must not mutate body")
 }
 
-// TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault checks beta fast-mode conversion
-// to Responses priority and passage through the default policy using the conversion and policy helpers.
+// TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault
+// converts an Anthropic request and supplies priority corresponding to its
+// tested Fast beta token. Applying default policy to the converted Responses
+// body retains that priority tier without error.
 func TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -434,7 +526,8 @@ func TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault(
 	responsesReq, err := protocolbridge.AnthropicToResponses(&anthropicReq, protocolforward.ConversionOptionsForModel(anthropicReq.Model))
 	require.NoError(t, err)
 
-	// The fast-mode beta header selects priority.
+	// Supply priority directly after recognizing the beta token; the fixture checks
+	// subsequent policy handling after that manual tier assignment in the Responses body.
 	headers := http.Header{}
 	headers.Set("anthropic-beta", claude.BetaFastMode)
 	require.True(t, claude.ContainsBetaToken(headers.Get("anthropic-beta"), claude.BetaFastMode))
@@ -454,8 +547,10 @@ func TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault(
 		"default policy should pass service_tier=priority through to upstream")
 }
 
-// TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel checks the session model update.
-// After gpt-4o changes to gpt-5.5, a response.create without model inherits gpt-5.5 and matches the tier filter.
+// TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel starts with
+// gpt-4o, forwards a session.update to gpt-5.5 and reads a model-omitting
+// followup. The initial priority survives, session bytes remain equal, and the
+// followup matches the filter and loses service_tier.
 func TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel(t *testing.T) {
 	svc := newWSFastPolicy(t, gpt55WhitelistFastPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -467,7 +562,7 @@ func TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel(t *testing.T
 	// The third frame omits model and inherits gpt-5.5.
 	followup := []byte(`{"type":"response.create","service_tier":"priority"}`)
 
-	inner := &fakePassthroughFrameConn{reads: [][]byte{first, rotate, followup}}
+	inner := &fakePassthroughFrameConn{reads: [][]byte{first, rotate, followup}} // wrapped fixture frame transport
 
 	// Share capturedSessionModel across frames as the passthrough session does.
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(provider, first)
@@ -482,6 +577,8 @@ func TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel(t *testing.T
 				capturedSessionModel = updated
 			}
 			model := openAIWSPassthroughPolicyModelForFrame(provider, payload)
+			// An omitted model uses the captured session choice so this frame's whitelist
+			// decision follows the same conversation as the earlier model-bearing frame.
 			if model == "" {
 				model = capturedSessionModel
 			}
@@ -507,7 +604,10 @@ func TestPolicyEnforcingFrameConn_SessionUpdateRotatesCapturedModel(t *testing.T
 		"fix1: post-rotate response.create without model must use refreshed capturedSessionModel and trigger filter")
 }
 
-// TestPolicyModelFromSessionFrame_OnlySessionUpdate checks that other events return no model update.
+// TestPolicyModelFromSessionFrame_OnlySessionUpdate supplies a server
+// session.created, response.create with session data and a model-less
+// session.update. Every fixture model read returns empty, leaving the caller's
+// retained session model available.
 func TestPolicyModelFromSessionFrame_OnlySessionUpdate(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
@@ -524,7 +624,10 @@ func TestPolicyModelFromSessionFrame_OnlySessionUpdate(t *testing.T) {
 	require.Empty(t, openAIWSPassthroughPolicyModelFromSessionFrame(provider, noModel))
 }
 
-// TestApplyOpenAIFastPolicyToBody_PassNormalizesFastAlias checks normalization to priority even when policy passes.
+// TestApplyOpenAIFastPolicyToBody_PassNormalizesFastAlias uses a whitelist
+// miss that selects pass. Fast and padded mixed-case aliases become priority,
+// canonical priority stays byte-equal, and unknown turbo also stays
+// byte-equal.
 func TestApplyOpenAIFastPolicyToBody_PassNormalizesFastAlias(t *testing.T) {
 	// Use a policy that deliberately misses gpt-4 so the action is pass.
 	settings := &tierpolicy.OpenAIFastPolicySettings{
@@ -565,34 +668,38 @@ func TestApplyOpenAIFastPolicyToBody_PassNormalizesFastAlias(t *testing.T) {
 	require.Equal(t, string(body), string(updated))
 }
 
-// TestPassthroughBilling_PostFilterServiceTier checks that filtering priority leaves the outbound billing tier nil.
+// TestPassthroughBilling_PostFilterServiceTier compares request metadata
+// before and after an explicit priority filter. Outbound tier extraction
+// becomes nil, and applying the filter again leaves the already filtered frame
+// byte-equal.
 func TestPassthroughBilling_PostFilterServiceTier(t *testing.T) {
 	svc := newWSFastPolicy(t, openAIFastFilterPriorityPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
 	raw := []byte(`{"type":"response.create","model":"gpt-5.5","service_tier":"priority"}`)
 
-	// Extract billing metadata after filtering, since the input still contains priority.
+	// Read the pre-policy tier as a control; the later extraction uses the filtered
+	// frame to observe the actual outbound billing metadata after policy removal.
 	pre := requeststate.ExtractOpenAIServiceTierFromBody(raw)
 	require.NotNil(t, pre)
 	require.Equal(t, "priority", *pre,
 		"sanity: raw first frame carries priority that pre-fix billing would have reported")
 
-	// The gpt-5.5 priority rule filters the tier.
+	// Filtering changes the accepted request before billing metadata is extracted,
+	// so the next assertion reads the outbound frame rather than pre-policy intent.
 	filtered, blocked, err := gatewayws.ApplyServiceTierFrame(raw, "gpt-5.5", svc.Input(context.Background(), provider, "gpt-5.5"))
 	require.NoError(t, err)
 	require.Nil(t, blocked)
 	require.NotContains(t, string(filtered), `"service_tier"`)
 
-	// Post-filter: extracting from the rewritten frame returns nil. This
-	// is the outbound tier stored in the forwarding result;
-	// any observed response tier remains separate for usage-time resolution.
+	// Post-filter extraction supplies the outbound tier stored in forwarding
+	// results. Observed response tier is recorded separately and does not replace
+	// this extraction result before completion receives those values.
 	post := requeststate.ExtractOpenAIServiceTierFromBody(filtered)
 	require.Nil(t, post, "fix3: post-filter extraction must preserve a nil outbound tier")
 
-	// And the byte-level invariant the adapter relies on: filtering an
-	// already-filtered frame is a no-op (idempotent), so re-running the
-	// policy doesn't accidentally re-introduce the field.
+	// Apply policy again after removal to check byte equality; repeated filtering
+	// cannot create a tier value absent from the already accepted outbound request.
 	again, blocked2, err := gatewayws.ApplyServiceTierFrame(filtered, "gpt-5.5", svc.Input(context.Background(), provider, "gpt-5.5"))
 	require.NoError(t, err)
 	require.Nil(t, blocked2)
@@ -600,7 +707,10 @@ func TestPassthroughBilling_PostFilterServiceTier(t *testing.T) {
 		"policy is idempotent: filtering an already-filtered frame leaves bytes unchanged")
 }
 
-// TestApplyOpenAIFastPolicyToBody_NonStringServiceTier checks that non-string tiers bypass policy unchanged.
+// TestApplyOpenAIFastPolicyToBody_NonStringServiceTier supplies numeric, null,
+// object, array and boolean tier values. HTTP ApplyBody returns byte-equal
+// input without error. The WS inputs omit type, so their byte equality and
+// absent blocked result exercise the helper's missing-event pass-through path.
 func TestApplyOpenAIFastPolicyToBody_NonStringServiceTier(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -631,11 +741,11 @@ func TestApplyOpenAIFastPolicyToBody_NonStringServiceTier(t *testing.T) {
 	}
 }
 
-// TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames checks billing metadata after each turn's filter.
-// Each response.create can specify its own service_tier.
-// Successful response.create filtering updates the atomic tier pointer.
-// Turn one filters priority to nil; turn two retains flex.
-// Turn three omits the tier and resets it to nil; response.cancel leaves the pointer unchanged.
+// TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames simulates
+// accepted-frame tier publication across priority, flex and omitted-tier
+// requests. Filtering priority clears the atom, flex becomes current,
+// response.cancel leaves flex intact, and a later omitted tier clears it
+// again.
 func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing.T) {
 	svc := newWSFastPolicy(t, openAIFastFilterPriorityPolicy())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -643,7 +753,7 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 	// Mirror per-frame atomic storage to check billing metadata across turns.
 	var requestServiceTierPtr atomic.Pointer[string]
 	capturedSessionModel := ""
-	filter := func(msgType coderws.MessageType, payload []byte) ([]byte, *tierpolicy.BlockedError, error) {
+	filter := func(msgType coderws.MessageType, payload []byte) ([]byte, *tierpolicy.BlockedError, error) { // optional inbound frame policy callback
 		if msgType != coderws.MessageText {
 			return payload, nil, nil
 		}
@@ -651,12 +761,16 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 			capturedSessionModel = updated
 		}
 		model := openAIWSPassthroughPolicyModelForFrame(provider, payload)
+		// An omitted model uses the captured session choice so this frame's whitelist
+		// decision follows the same conversation as the earlier model-bearing frame.
 		if model == "" {
 			model = capturedSessionModel
 		}
 		out, blocked, policyErr := gatewayws.ApplyServiceTierFrame(payload, model, svc.Input(context.Background(), provider, model))
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+			// Publish the accepted post-policy tier only after both ordinary error and
+			// block checks pass, leaving previous metadata intact for rejected frames.
 			requestServiceTierPtr.Store(requeststate.ExtractOpenAIServiceTierFromBody(out))
 		}
 		return out, blocked, policyErr
@@ -683,9 +797,8 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 	require.NotNil(t, tier2, "turn 2: billing must update to reflect flex")
 	require.Equal(t, "flex", *tier2)
 
-	// A non-response.create frame with a stray service_tier-shaped field
-	// must NOT overwrite the billing pointer (those frames don't carry
-	// per-response service_tier in the Realtime spec).
+	// The simulated publisher updates tier only for accepted response.create;
+	// exercise cancel with a tier-shaped field so prior flex remains the current atom.
 	cancelFrame := []byte(`{"type":"response.cancel","service_tier":"priority"}`)
 	_, blockedCancel, errCancel := filter(coderws.MessageText, cancelFrame)
 	require.NoError(t, errCancel)
@@ -695,9 +808,8 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 	require.Equal(t, "flex", *tierAfterCancel,
 		"non-response.create frames must not update billing tier even if they carry a service_tier-shaped field")
 
-	// Turn 3: response.create without any service_tier. We deliberately
-	// overwrite billing back to nil so it tracks what the upstream actually
-	// sees on this turn (default tier).
+	// An accepted request with no tier publishes absence for its own turn;
+	// retaining the earlier flex value here would misidentify this outbound request.
 	turn3 := []byte(`{"type":"response.create","model":"gpt-5.5"}`)
 	out3, blocked3, err3 := filter(coderws.MessageText, turn3)
 	require.NoError(t, err3)
@@ -707,6 +819,10 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 		"turn 3: response.create without service_tier overwrites billing to nil to match upstream default")
 }
 
+// TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns observes medium,
+// flat x-high, explicit max and absent effort. Session update and cancel leave
+// current medium intact, accepted requests publish xhigh and max, and a later
+// request without usable effort clears the atom.
 func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -728,12 +844,16 @@ func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 		meta.updateSessionRequestModel(payload)
 		requestModelForThisFrame := meta.requestModelForFrame(payload)
 		model := openAIWSPassthroughPolicyModelForFrame(provider, payload)
+		// An omitted model uses the captured session choice so this frame's whitelist
+		// decision follows the same conversation as the earlier model-bearing frame.
 		if model == "" {
 			model = capturedSessionModel
 		}
 		out, blocked, policyErr := gatewayws.ApplyServiceTierFrame(payload, model, svc.Input(context.Background(), provider, model))
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+			// Capture effort from the accepted transformed frame; session updates and
+			// canceled or blocked frames keep the current turn's effort observation intact.
 			meta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 		}
 		return out, blocked, policyErr
@@ -769,7 +889,10 @@ func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 	require.Nil(t, meta.reasoningEffort.Load(), "新的 response.create 无 effort 且无可推导后缀时必须清空旧值")
 }
 
-// TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier checks that a blocked frame leaves the previous billing tier intact.
+// TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier initializes
+// prior accepted tier flex, then submits a blocked priority request to its
+// simulated filter. The blocked result is present and the tier atom still
+// holds flex.
 func TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier(t *testing.T) {
 	blockSettings := &tierpolicy.OpenAIFastPolicySettings{
 		Rules: []tierpolicy.OpenAIFastPolicyRule{{
@@ -786,15 +909,17 @@ func TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier(t *testing.T) {
 
 	var requestServiceTierPtr atomic.Pointer[string]
 	flexValue := "flex"
-	requestServiceTierPtr.Store(&flexValue) // simulate prior turn billed as flex
+	requestServiceTierPtr.Store(&flexValue) // simulate prior accepted turn's flex tier
 
-	filter := func(msgType coderws.MessageType, payload []byte) ([]byte, *tierpolicy.BlockedError, error) {
+	filter := func(msgType coderws.MessageType, payload []byte) ([]byte, *tierpolicy.BlockedError, error) { // optional inbound frame policy callback
 		if msgType != coderws.MessageText {
 			return payload, nil, nil
 		}
 		out, blocked, policyErr := gatewayws.ApplyServiceTierFrame(payload, "gpt-5.5", svc.Input(context.Background(), provider, "gpt-5.5"))
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+			// Publish the accepted post-policy tier only after both ordinary error and
+			// block checks pass, leaving previous metadata intact for rejected frames.
 			requestServiceTierPtr.Store(requeststate.ExtractOpenAIServiceTierFromBody(out))
 		}
 		return out, blocked, policyErr
@@ -811,6 +936,16 @@ func TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier(t *testing.T) {
 		"blocked frame is never sent upstream; billing must retain the previous turn's tier")
 }
 
+// runtime returns the production policy frame wrapper constructed once from the
+// stable fixture transport and callbacks. It converts message types and retains
+// a recognized BlockedError cause by pointer when passing a policy block to the
+// fixture observer. An unrecognized cause produces a new message-only
+// BlockedError for that observer.
+//
+// Configure inner and callbacks before first invocation and keep them stable
+// for the wrapper's lifetime. sync.Once publishes the completed core wrapper,
+// while synchronization of later frame operations remains with the wrapped
+// transport and production policy implementation.
 func (c *openAIWSPolicyEnforcingFrameConn) runtime() gatewayws.FrameConn {
 	c.once.Do(func() {
 		var filter func(int, []byte) ([]byte, *gatewayws.PolicyBlocked, error)
@@ -831,6 +966,8 @@ func (c *openAIWSPolicyEnforcingFrameConn) runtime() gatewayws.FrameConn {
 		if c.onBlock != nil {
 			block = func(b *gatewayws.PolicyBlocked) {
 				original, ok := b.Cause.(*tierpolicy.BlockedError)
+				// Core blocks can carry another cause representation; recreate the fixture
+				// type from its message so the optional observer still receives its expected value.
 				if !ok {
 					original = &tierpolicy.BlockedError{Message: b.Message}
 				}
@@ -844,6 +981,10 @@ func (c *openAIWSPolicyEnforcingFrameConn) runtime() gatewayws.FrameConn {
 	return c.core
 }
 
+// ReadFrame delegates fixture policy reading to the retained production
+// wrapper and converts its message type. Nil receiver or inner transport
+// returns ErrWSConnClosed directly; the core handles accepted, transformed and
+// blocked frame outcomes.
 func (c *openAIWSPolicyEnforcingFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if c == nil || c.inner == nil {
 		return coderws.MessageText, nil, openai.ErrWSConnClosed
@@ -852,6 +993,10 @@ func (c *openAIWSPolicyEnforcingFrameConn) ReadFrame(ctx context.Context) (coder
 	return coderws.MessageType(typ), body, err
 }
 
+// WriteFrame delegates a client-bound write through the optional production
+// write filter. Nil receiver or inner transport returns ErrWSConnClosed; the
+// caller's context and bytes reach the retained wrapper with integer message
+// type.
 func (c *openAIWSPolicyEnforcingFrameConn) WriteFrame(ctx context.Context, typ coderws.MessageType, body []byte) error {
 	if c == nil || c.inner == nil {
 		return openai.ErrWSConnClosed
@@ -859,6 +1004,10 @@ func (c *openAIWSPolicyEnforcingFrameConn) WriteFrame(ctx context.Context, typ c
 	return c.runtime().WriteFrame(ctx, int(typ), body)
 }
 
+// Close releases the inner transport through the production policy wrapper.
+// Nil receiver or missing transport returns nil; wrapper initialization occurs
+// before a present transport's close, retaining the same optional callback
+// wiring.
 func (c *openAIWSPolicyEnforcingFrameConn) Close() error {
 	if c == nil || c.inner == nil {
 		return nil
@@ -866,19 +1015,30 @@ func (c *openAIWSPolicyEnforcingFrameConn) Close() error {
 	return c.runtime().Close()
 }
 
+// markTurnStarted clears the fixture's waiting flag through production
+// TurnActivity for an accepted request. Nil fixtures are ignored; callers use
+// the lifecycle admission callback to order this atomic store against terminal
+// completion.
 func (c *openAIWSClientFrameConn) markTurnStarted() {
 	if c != nil {
 		gatewayws.TurnActivity{Waiting: &c.waitingForNextTurn, Started: c.interTurnStarted}.MarkStarted()
 	}
 }
 
+// markTurnCompleted publishes completed-turn waiting state through production
+// TurnActivity and its optional notification. Nil fixtures are ignored;
+// channel signaling is nonblocking so idle publication does not wait for a
+// reader.
 func (c *openAIWSClientFrameConn) markTurnCompleted() {
 	if c != nil {
 		gatewayws.TurnActivity{Waiting: &c.waitingForNextTurn, Started: c.interTurnStarted}.MarkCompleted()
 	}
 }
 
-// openAIWSPassthroughPolicyModelForFrame resolves the policy model, skipping provider mapping when passthrough is enabled.
+// openAIWSPassthroughPolicyModelForFrame returns this fixture's policy model
+// from the root field. Missing provider, empty payload or blank model returns
+// empty; passthrough retains the client spelling, while other providers apply
+// mapping then platform normalization.
 func openAIWSPassthroughPolicyModelForFrame(provider *gatewayprovider.ExecutionProvider, payload []byte) string {
 	if provider == nil || len(payload) == 0 {
 		return ""
@@ -893,9 +1053,11 @@ func openAIWSPassthroughPolicyModelForFrame(provider *gatewayprovider.ExecutionP
 	return gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(gatewayprovider.ExecutionModelPolicy(provider).Mapped(original))
 }
 
-// openAIWSPassthroughPolicyModelFromSessionFrame resolves session.model from session.update.
-// It returns empty for other events or a missing model, leaving the captured model unchanged.
-// Later response.create frames that omit model use the captured value for Fast policy matching.
+// openAIWSPassthroughPolicyModelFromSessionFrame returns a fixture policy
+// model only for session.update with nonblank session.model. Missing provider
+// or bytes and other events return empty. Passthrough retains client spelling;
+// otherwise mapping and normalization precede publication to the caller's
+// retained model.
 func openAIWSPassthroughPolicyModelFromSessionFrame(provider *gatewayprovider.ExecutionProvider, payload []byte) string {
 	if provider == nil || len(payload) == 0 {
 		return ""
@@ -914,33 +1076,57 @@ func openAIWSPassthroughPolicyModelFromSessionFrame(provider *gatewayprovider.Ex
 	return gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(gatewayprovider.ExecutionModelPolicy(provider).Mapped(original))
 }
 
+// newOpenAIWSPassthroughUsageMeta constructs production UsageMeta from the
+// initial model and body. It exposes the embedded effort atom through a
+// pointer alias so assertions read the same state updated by subsequent
+// fixture callbacks.
 func newOpenAIWSPassthroughUsageMeta(model string, body []byte) *openAIWSPassthroughUsageMeta {
 	meta := gatewayws.NewUsageMeta(model, body, gatewayws.RequestUsageDecoder{})
 	return &openAIWSPassthroughUsageMeta{UsageMeta: meta, reasoningEffort: &meta.ReasoningEffort}
 }
 
+// initFromFirstFrame publishes production metadata from the supplied accepted
+// first-frame bytes. Nil wrapper is ignored and model is unused; the embedded
+// UsageMeta retains its constructor's session model while reading tier and
+// effort from this body.
 func (m *openAIWSPassthroughUsageMeta) initFromFirstFrame(body []byte, model string) {
 	if m != nil {
 		m.InitFromFirstFrame(body)
 	}
 }
 
+// updateSessionRequestModel delegates session.update model publication to
+// production UsageMeta. Nil wrapper is ignored; the core changes its fallback
+// model from recognized input while current accepted turn effort and tier
+// remain separately published.
 func (m *openAIWSPassthroughUsageMeta) updateSessionRequestModel(body []byte) {
 	if m != nil {
 		m.UpdateSessionRequestModel(body)
 	}
 }
 
+// updateFromResponseCreate delegates accepted request metadata publication to
+// production UsageMeta. Nil wrapper is ignored and mapped or requested
+// arguments are unused; tier and effort are extracted directly from the
+// supplied post-policy bytes.
 func (m *openAIWSPassthroughUsageMeta) updateFromResponseCreate(body []byte, mapped, requested string) {
 	if m != nil {
 		m.UpdateFromResponseCreate(body)
 	}
 }
 
+// newOpenAIWSPassthroughTurnLifecycle returns the production admission barrier
+// with supplied initial in-flight state. The fixture exposes its terminal
+// write operations so tests can pair delivery outcome with later
+// response.create admission.
 func newOpenAIWSPassthroughTurnLifecycle(inFlight bool) *openAIWSPassthroughTurnLifecycle {
 	return &openAIWSPassthroughTurnLifecycle{gatewayws.NewTurnLifecycle(inFlight)}
 }
 
+// beginResponseCreate requests production turn admission and invokes the
+// optional callback under its barrier lock after acceptance. Nil fixture
+// returns false; callbacks do not reenter the lifecycle, and active-turn
+// rejection leaves the next request unaccepted.
 func (l *openAIWSPassthroughTurnLifecycle) beginResponseCreate(fn func()) bool {
 	if l == nil {
 		return false
@@ -948,19 +1134,30 @@ func (l *openAIWSPassthroughTurnLifecycle) beginResponseCreate(fn func()) bool {
 	return l.BeginResponseCreate(fn)
 }
 
+// beginTerminalWrite acquires production terminal write ownership and holds it
+// until finishTerminalWrite. Nil fixture is ignored; callers pair every
+// successful begin with one finish, including failed client sends, to release
+// the barrier.
 func (l *openAIWSPassthroughTurnLifecycle) beginTerminalWrite() {
 	if l != nil {
 		l.BeginTerminalWrite()
 	}
 }
 
+// finishTerminalWrite releases a previously acquired terminal write barrier
+// and publishes idle only after successful delivery. Nil fixture is ignored;
+// the optional callback runs under the core lock and does not reenter
+// lifecycle methods.
 func (l *openAIWSPassthroughTurnLifecycle) finishTerminalWrite(ok bool, fn func()) {
 	if l != nil {
 		l.FinishTerminalWrite(ok, fn)
 	}
 }
 
-// requestModelForFrame reads atomic session model metadata for concurrency tests.
+// requestModelForFrame returns explicit or retained session model through
+// production UsageMeta. Nil wrapper uses the protocol's direct frame model
+// reader, allowing assertions to distinguish missing-session state from
+// inherited-model selection.
 func (m *openAIWSPassthroughUsageMeta) requestModelForFrame(body []byte) string {
 	if m == nil {
 		return gatewayws.RequestModelForFrame(body)
@@ -968,12 +1165,19 @@ func (m *openAIWSPassthroughUsageMeta) requestModelForFrame(body []byte) string 
 	return m.RequestModelForFrame(body)
 }
 
+// TestOpenAIWSPassthroughTurnLifecycle_SerializesTerminalCommitAndNextTurn
+// holds terminal write ownership while a later request attempts admission. No
+// result arrives during the initial scheduling window; successful terminal
+// delivery permits admission and clears waiting state, while failed delivery
+// returns false and skips idle publication.
 func TestOpenAIWSPassthroughTurnLifecycle_SerializesTerminalCommitAndNextTurn(t *testing.T) {
 	clientFrameConn := &openAIWSClientFrameConn{interTurnStarted: make(chan struct{}, 1)}
 	clientFrameConn.markTurnCompleted()
 	lifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
 	lifecycle.beginTerminalWrite()
 
+	// Buffer one admission outcome while terminal ownership is held, then inspect
+	// a scheduling window before releasing success; the window does not prove worker entry.
 	admitted := make(chan bool, 1)
 	go func() {
 		admitted <- lifecycle.beginResponseCreate(clientFrameConn.markTurnStarted)
@@ -995,6 +1199,8 @@ func TestOpenAIWSPassthroughTurnLifecycle_SerializesTerminalCommitAndNextTurn(t 
 
 	lifecycle = newOpenAIWSPassthroughTurnLifecycle(true)
 	lifecycle.beginTerminalWrite()
+	// A failed terminal send retains in-flight state even if the admission worker
+	// runs after release, so either schedule must produce rejection and no idle callback.
 	admitted = make(chan bool, 1)
 	go func() {
 		admitted <- lifecycle.beginResponseCreate(nil)

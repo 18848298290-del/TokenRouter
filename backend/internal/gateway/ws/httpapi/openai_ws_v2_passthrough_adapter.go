@@ -22,22 +22,56 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
+// Dedicated per-session Responses forwarding adapts client and provider frames
+// to the gateway controller, which owns turn admission and read deadlines.
+// Relay exits retain whether output reached the client, allowing first-output
+// timeout to choose provider failover initially and reconnect after prior
+// delivery.
+//
+// Typed close instructions keep their chosen status and cause, while handshake
+// mapping retains upstream headers and body for diagnostics. A canceled dial
+// returns its cancellation directly; timeouts, 429, authentication rejection
+// and other client-status handshakes select different close reasons. Cyber
+// event observation reads usage before marking policy evidence, and its
+// bounded diagnostic body retains the response status separately from the
+// event's HTTP transport success.
+
+// openaiWSV2PassthroughModeFields supplies stable dedicated-relay labels on every
+// passthrough diagnostic so transport selection is identifiable beside per-event fields.
 const openaiWSV2PassthroughModeFields = "ws_mode=passthrough ws_router=v2"
 
-// gateway/ws owns first-output and active-read timeouts.
-
 // openAIWSCoreFrames adapts upstream frame transport to the gateway interface.
-type openAIWSCoreFrames struct{ openaiwsv2.FrameConn }
+type openAIWSCoreFrames struct {
+	openaiwsv2.FrameConn /* retained upstream frame transport */
+}
 
+// ReadFrame delegates one upstream frame read and converts its transport enum
+// to the gateway integer. Payload and error remain the supplied transport
+// result; the caller's context controls that underlying read.
 func (c openAIWSCoreFrames) ReadFrame(ctx context.Context) (int, []byte, error) {
 	typ, body, err := c.FrameConn.ReadFrame(ctx)
 	return int(typ), body, err
 }
 
+// WriteFrame converts the gateway message type and delegates one upstream
+// frame write. It forwards the caller's context and bytes directly, with
+// transport cleanup and write timeout controlled by the session owner.
 func (c openAIWSCoreFrames) WriteFrame(ctx context.Context, typ int, body []byte) error {
 	return c.FrameConn.WriteFrame(ctx, coderws.MessageType(typ), body)
 }
 
+// proxyResponsesWebSocketV2Passthrough binds a selected provider and client
+// connection to dedicated session execution. Missing executor, client or
+// provider fails before relay; bearer validation accepts Agent Identity's
+// dial-time authentication. Required shared services and request context must
+// be initialized.
+//
+// The parameter callback reads Runtime for later turns, otherwise static
+// Options or DefaultParameters. Optional HTTP hooks become gateway admission
+// and completion callbacks while retaining client lifetime, initial model and
+// first-turn timing. The gateway core owns normalization, dialing, relay
+// cancellation and transport release; this adapter returns its final close or
+// failover error to entry.
 func (s *OpenAIWebSocketExecutor) proxyResponsesWebSocketV2Passthrough(
 	ctx context.Context,
 	c *gin.Context,
@@ -78,6 +112,17 @@ func (s *OpenAIWebSocketExecutor) proxyResponsesWebSocketV2Passthrough(
 	return runtime.Run(ctx, gatewayhttp.WSClientFrames{Conn: clientConn}, firstClientMessage)
 }
 
+// openAIWSPassthroughRelayClientClose returns an optional close status and
+// reason for a dedicated relay exit. Explicit typed closes take precedence,
+// followed by active-turn timeout. A first-output timeout returns reconnect
+// only after completed turns or downstream writes; an initial pre-output
+// timeout remains available for failover.
+//
+// A non-graceful read_upstream exit produces an internal-error close. Other
+// exits return false so the controller can classify graceful client
+// termination or ordinary errors separately. The completed-turn count and
+// WroteDownstream flag therefore prevent a later idle upstream failure from
+// being presented as a new initial provider attempt.
 func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTurns int) (coderws.StatusCode, string, bool) {
 	if closeErr, ok := errors.AsType[*gatewayhttp.OpenAIWSClientCloseError](exit.Err); ok {
 		return closeErr.StatusCode(), closeErr.Reason(), true
@@ -97,6 +142,10 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 	return 0, "", false
 }
 
+// markOpenAIWSV2PassthroughCyberPolicy records detected Cyber error evidence
+// with any completed-event usage. Unmatched payloads return false; matches
+// store code, message and a UTF-8-limited body under HTTP 200 because the
+// failure arrived inside an accepted WS event stream.
 func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
 	hit, code, message := upstreamopenai.DetectOpenAICyberPolicy(payload)
 	if !hit {
@@ -105,8 +154,10 @@ func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
 	usage := openai.ForwardUsage{}
 	openai.ParseWSResponseUsageFromCompletedEvent(payload, &usage)
 	gatewayhttp.MarkOpsCyberPolicy(c, moderationflow.Mark{
-		Code:           code,
-		Message:        message,
+		Code:    code,
+		Message: message,
+		// Limit the policy diagnostic excerpt at a UTF-8 boundary while retaining
+		// parsed usage separately for Cyber observation of the failed WS turn.
 		Body:           logredact.TruncateUTF8(string(payload), 4096),
 		UpstreamStatus: http.StatusOK,
 		UpstreamInTok:  usage.InputTokens,
@@ -115,6 +166,16 @@ func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
 	return true
 }
 
+// mapOpenAIWSPassthroughDialError retains handshake diagnostics and selects
+// the client instruction for a dedicated dial failure. Nil error returns nil.
+// Existing WSDialError values stay wrapped as supplied; other errors gain
+// cloned headers and copied handshake body when available.
+//
+// Cancellation returns the original error even after diagnostic preparation.
+// Deadline and 429 use try-again-later, 401 or 403 use authentication policy
+// closure, and other 4xx statuses use handshake-rejected policy closure.
+// Remaining failures return a wrapped diagnostic error, leaving entry to
+// choose its general failure presentation.
 func (s *OpenAIWebSocketExecutor) mapOpenAIWSPassthroughDialError(
 	err error,
 	statusCode int,
@@ -124,6 +185,8 @@ func (s *OpenAIWebSocketExecutor) mapOpenAIWSPassthroughDialError(
 		return nil
 	}
 	wrappedErr := err
+	// Attach handshake evidence before choosing the client close status so wrapped
+	// non-WebSocket errors still expose upstream rejection details to entry diagnostics.
 	if _, ok := errors.AsType[*upstreamopenai.WSDialError](err); !ok {
 		var handshakeErr *upstreamopenai.WSHandshakeError
 		var responseBody []byte
@@ -172,6 +235,8 @@ func (s *OpenAIWebSocketExecutor) mapOpenAIWSPassthroughDialError(
 	return fmt.Errorf("openai ws passthrough dial: %w", wrappedErr)
 }
 
+// logOpenAIWSV2Passthrough writes a legacy structured diagnostic with
+// dedicated relay mode labels.
 func logOpenAIWSV2Passthrough(format string, args ...any) {
 	logging.LegacyPrintf(
 		"service.openai_ws_v2",

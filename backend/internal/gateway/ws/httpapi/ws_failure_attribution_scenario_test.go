@@ -1,7 +1,5 @@
 package httpapi
 
-// These tests check HTTP close errors against gateway/ws provider-failure classification.
-
 import (
 	"errors"
 	"fmt"
@@ -15,7 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestShouldReportOpenAIWSProxyProviderFailure checks that local routing rejections do not penalize provider health.
+// Local model eligibility and reasoning ceiling failures are presented as WS
+// policy closes yet have distinct provider-reporting rules. The scenarios
+// compare those local causes with upstream authentication and generic read
+// failures while checking that wrappers retain the original error chain.
+
+// TestShouldReportOpenAIWSProxyProviderFailure compares wrapped local model
+// rejection, excessive reasoning and upstream WS failures. Local causes skip
+// provider failure reporting while retaining their close and cause; upstream
+// authentication and read errors report, and nil reports no failure.
 func TestShouldReportOpenAIWSProxyProviderFailure(t *testing.T) {
 	t.Run("本地模型路由拒绝不惩罚提供商", func(t *testing.T) {
 		routingErr := errors.New("model is not supported by the selected websocket provider")

@@ -15,6 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestOpenAIWSStandaloneFailedStructured403AppliesProviderSideEffectsOnce
+// supplies a nested credential rejection in response.failed. The helper
+// reports applied effects, writes the provider error once, and marks that
+// provider blocked.
 func TestOpenAIWSStandaloneFailedStructured403AppliesProviderSideEffectsOnce(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -26,6 +30,10 @@ func TestOpenAIWSStandaloneFailedStructured403AppliesProviderSideEffectsOnce(t *
 	require.True(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIWSPairedStructured403SideEffectsCanBeDeduplicated processes a
+// workspace-suspended error followed by its matching failed event. The
+// caller's applied flag skips the second helper call, leaving one recorded
+// provider error.
 func TestOpenAIWSPairedStructured403SideEffectsCanBeDeduplicated(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -42,6 +50,10 @@ func TestOpenAIWSPairedStructured403SideEffectsCanBeDeduplicated(t *testing.T) {
 	require.Equal(t, 1, repo.setErrorCalls)
 }
 
+// TestMarkOpenAIWSClientVisibleFailure_ResponseFailedNestedError marks a
+// nested context-length rejection selected for client delivery. Ops retains
+// the supplied 400 status, type, code and message and marks the failure as
+// counting toward SLA.
 func TestMarkOpenAIWSClientVisibleFailure_ResponseFailedNestedError(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	markOpenAIWSClientVisibleFailure(c, "response.failed", []byte(`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long","status_code":400}}}`))
@@ -55,6 +67,10 @@ func TestMarkOpenAIWSClientVisibleFailure_ResponseFailedNestedError(t *testing.T
 	require.Equal(t, "too long", got.Message)
 }
 
+// TestMarkOpenAIWSClientVisibleFailure_ErrorAndSuccessBoundary compares a
+// standalone rate-limit error with a completed event. The error receives a
+// derived 429 Ops status; completion leaves the Ops stream-error observation
+// absent.
 func TestMarkOpenAIWSClientVisibleFailure_ErrorAndSuccessBoundary(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(nil)

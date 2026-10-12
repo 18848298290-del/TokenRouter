@@ -22,6 +22,23 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// WebSocket handshakes derive their endpoint, Codex identity, routing hint,
+// and continuation headers from the selected provider and normalized turn. Raw
+// client session values remain available in the returned resolution for
+// diagnostics; the outgoing Codex headers use the Key and provider namespace
+// shared with HTTP requests.
+//
+// Endpoint preparation validates configured API Key base URLs before changing
+// their schemes for WebSocket dialing. OAuth-like setup tokens use Codex
+// endpoints and store-disabled affinity rules, while ordinary bearer paths
+// require a token. Store recovery permission belongs to provider
+// configuration; the ingress mode accessor currently selects strict affinity
+// for all callers that ask it for a mode.
+
+// validateOpenAIWSBearerToken rejects a missing provider or blank token on
+// bearer-authenticated paths. Agent Identity accepts an empty token because
+// the dial-time header refresh supplies assertion authentication for that
+// provider.
 func validateOpenAIWSBearerToken(provider *gatewayprovider.ExecutionProvider, token string) error {
 	if provider == nil {
 		return errors.New("provider is nil")
@@ -32,6 +49,11 @@ func validateOpenAIWSBearerToken(provider *gatewayprovider.ExecutionProvider, to
 	return nil
 }
 
+// buildOpenAIResponsesWSURL returns the selected provider's Responses endpoint
+// with a WebSocket scheme. OAuth and OAuth-like setup tokens use Codex; API
+// Key endpoints follow configured protocol targeting and base-URL validation.
+// HTTP and HTTPS become WS and WSS, existing WebSocket schemes remain
+// accepted, and other schemes return an error.
 func (s *OpenAIWebSocketExecutor) buildOpenAIResponsesWSURL(provider *gatewayprovider.ExecutionProvider) (string, error) {
 	if provider == nil {
 		return "", errors.New("provider is nil")
@@ -49,6 +71,8 @@ func (s *OpenAIWebSocketExecutor) buildOpenAIResponsesWSURL(provider *gatewaypro
 	case capability.ProviderTypeAPIKey:
 		baseURL := gatewayprovider.ExecutionProtocolTarget(provider).GetOpenAIBaseURL()
 		if _, unified := provider.Record.Credentials[providercore.UpstreamProtocolsKey]; gatewayprovider.ExecutionProtocolTarget(provider).UsesNativeCNResponses() && (unified || gatewayprovider.ExecutionProtocolTarget(provider).IsAdaptiveAPIProtocol()) {
+			// Unified or adaptive CN Responses configuration chooses its protocol-specific
+			// base URL before validation, matching the endpoint used by Responses HTTP.
 			baseURL = gatewayprovider.ExecutionProtocolTarget(provider).GetCNProtocolBaseURL(providercore.APIProtocolResponses)
 		}
 		if baseURL == "" {
@@ -70,17 +94,32 @@ func (s *OpenAIWebSocketExecutor) buildOpenAIResponsesWSURL(provider *gatewaypro
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "https":
+		// Retain endpoint path and query while converting the validated HTTP scheme
+		// to its WebSocket counterpart, so dialing targets the same Responses API.
 		parsed.Scheme = "wss"
 	case "http":
 		parsed.Scheme = "ws"
 	case "wss", "ws":
-		// WebSocket schemes already match the target transport.
+		// Accept WebSocket schemes supplied by endpoint configuration; rewriting an
+		// already selected transport scheme would discard a usable dial target.
 	default:
 		return "", fmt.Errorf("unsupported scheme for ws: %s", parsed.Scheme)
 	}
 	return parsed.String(), nil
 }
 
+// buildOpenAIWSHeaders builds handshake headers and returns the raw client
+// session resolution used to derive them. It binds HTTP-shared Codex identity
+// scoping, staged fingerprints, provider credentials, user-agent policy, beta
+// features, and final-model routing diagnostics into BuildWSHeaders. Required
+// Requests services and the provider must be available for those callbacks.
+//
+// ResolveSession captures unscoped session and conversation IDs for the
+// returned resolution. Outbound identity headers use the authenticated Key and
+// provider namespace so HTTP and WS requests from the same client derive
+// matching identities. Routing hints are generated from the supplied final
+// model and tier after provider overrides and capability negotiation; header-
+// build errors stop acquisition before a connection is leased.
 func (s *OpenAIWebSocketExecutor) buildOpenAIWSHeaders(
 	ctx context.Context,
 	c *gin.Context,
@@ -152,6 +191,9 @@ func (s *OpenAIWebSocketExecutor) buildOpenAIWSHeaders(
 	return headers, sessionResolution, err
 }
 
+// isOpenAIWSStoreRecoveryAllowed reports whether the provider enables store
+// recovery. A nil provider returns false, so OAuth-like requests then use
+// store-disabled continuation rules even if their payload asks for storage.
 func (s *OpenAIWebSocketExecutor) isOpenAIWSStoreRecoveryAllowed(provider *gatewayprovider.ExecutionProvider) bool {
 	if provider != nil && provider.View().IsOpenAIWSAllowStoreRecoveryEnabled() {
 		return true
@@ -160,8 +202,14 @@ func (s *OpenAIWebSocketExecutor) isOpenAIWSStoreRecoveryAllowed(provider *gatew
 	return false
 }
 
+// openAIWSStoreDisabledConnMode returns the strict disabled-store connection
+// affinity mode.
 func (s *OpenAIWebSocketExecutor) openAIWSStoreDisabledConnMode() string { return "strict" }
 
+// isOpenAIWSStoreDisabledInRequestRaw reports whether the request needs
+// disabled-store affinity. Codex providers with recovery disabled return true
+// before payload inspection; otherwise only a present JSON boolean false
+// disables storage. Empty, absent, or nonboolean store values return false.
 func (s *OpenAIWebSocketExecutor) isOpenAIWSStoreDisabledInRequestRaw(reqBody []byte, provider *gatewayprovider.ExecutionProvider) bool {
 	if provider != nil && provider.View().UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(provider) {
 		return true

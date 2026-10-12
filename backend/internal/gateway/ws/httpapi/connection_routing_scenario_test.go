@@ -1,7 +1,5 @@
 package httpapi
 
-// Connection-routing scenarios cover session headers, HTTP request construction, WS connection reuse, and pool shutdown.
-
 import (
 	"bytes"
 	"context"
@@ -25,19 +23,33 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// OAuth routing hints contain final model and canonical tier, while the same
+// hint is advisory when a client names a particular continuation connection.
+// The scenarios distinguish forced continuation reuse from ordinary soft
+// affinity, and exercise HTTP beta headers and connection-owner shutdown
+// alongside those pool choices.
+
+// openAIWSCountingDialer counts fixture dials and retains their TLS profile reference.
 type openAIWSCountingDialer struct {
-	mu             sync.Mutex
-	dialCount      int
-	lastTLSProfile *tlsfingerprint.Profile
+	// mu protects dialCount and lastTLSProfile as Dial publishes them and getters
+	// observe them. Configuration and transport payload are supplied by the caller;
+	// this dialer returns a fresh fake connection each time.
+	mu             sync.Mutex              // dial observation state lock
+	dialCount      int                     // recorded handshake attempt count
+	lastTLSProfile *tlsfingerprint.Profile // last supplied TLS profile reference
 }
 
+// TestSetOpenAICodexRoutingHintCanonicalizesOfficialServiceTiers builds OAuth
+// hints across aliases, supported tiers and invalid models. Hints canonicalize
+// Fast, omit unsupported tiers or invalid model bytes, strip both supplied API
+// Key spoofed header casings, and replace OAuth spoofing with derived values.
 func TestSetOpenAICodexRoutingHintCanonicalizesOfficialServiceTiers(t *testing.T) {
 	oauthProvider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	tests := []struct {
-		name        string
-		model       string
-		serviceTier string
-		want        string
+		name        string // routing scenario diagnostic label
+		model       string // requested final model input
+		serviceTier string // requested service tier input
+		want        string // expected derived routing hint
 	}{
 		{name: "fast alias", model: "gpt-5.6", serviceTier: " fast ", want: "model=gpt-5.6;tier=priority"},
 		{name: "priority", model: "gpt-5.6", serviceTier: "priority", want: "model=gpt-5.6;tier=priority"},
@@ -91,6 +103,10 @@ func TestSetOpenAICodexRoutingHintCanonicalizesOfficialServiceTiers(t *testing.T
 	})
 }
 
+// TestOpenAIOAuthHTTPBuildersSendRoutingHintFromFinalBody compares ordinary
+// and passthrough OAuth request builders for several service tiers. Both emit
+// the same final-body routing hint, including canonical priority and
+// model-only default or omitted tier.
 func TestOpenAIOAuthHTTPBuildersSendRoutingHintFromFinalBody(t *testing.T) {
 	oauthProvider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -104,9 +120,9 @@ func TestOpenAIOAuthHTTPBuildersSendRoutingHintFromFinalBody(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 
 	tests := []struct {
-		name string
-		body []byte
-		want string
+		name string // routing scenario diagnostic label
+		body []byte // prepared HTTP request payload bytes
+		want string // expected derived routing hint
 	}{
 		{name: "fast", body: []byte(`{"model":"gpt-5.6-codex","service_tier":"fast"}`), want: "model=gpt-5.6-codex;tier=priority"},
 		{name: "flex", body: []byte(`{"model":"gpt-5.6-codex","service_tier":"flex"}`), want: "model=gpt-5.6-codex;tier=flex"},
@@ -142,6 +158,10 @@ func TestOpenAIOAuthHTTPBuildersSendRoutingHintFromFinalBody(t *testing.T) {
 	}
 }
 
+// TestOpenAIHTTPPassthroughStripsOnlyOAuthLegacyResponsesBeta supplies legacy
+// and independent beta tokens through several header casings. OAuth removes
+// the legacy Responses token and keeps independent values, while API Key
+// passthrough retains the caller's beta list.
 func TestOpenAIHTTPPassthroughStripsOnlyOAuthLegacyResponsesBeta(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Request: gatewayhttp.OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{Enabled: false}}}})
 	body := []byte(`{"model":"gpt-5.6-codex","service_tier":"priority"}`)
@@ -202,6 +222,10 @@ func TestOpenAIHTTPPassthroughStripsOnlyOAuthLegacyResponsesBeta(t *testing.T) {
 	})
 }
 
+// TestOpenAIWSConnPoolPreferredContinuationIgnoresRoutingHintChanges changes
+// model-tier hint while forcing the previously leased connection ID. Every
+// continuation reuses that same connection, and the dial counter remains one
+// despite alternating priority and model-only hints.
 func TestOpenAIWSConnPoolPreferredContinuationIgnoresRoutingHintChanges(t *testing.T) {
 	options := &wsFixtureOptions{}
 	options.Pool.MaxConnsPerProvider = 2
@@ -248,6 +272,10 @@ func TestOpenAIWSConnPoolPreferredContinuationIgnoresRoutingHintChanges(t *testi
 	require.Equal(t, 1, dialer.DialCount(), "routing hint is dial-time advisory, not continuation compatibility")
 }
 
+// TestOpenAIWSConnPoolUsesRoutingHintAsSoftDialAffinity acquires matching
+// priority hints before changing tier and model. Repeated matching hints reuse
+// their connections; flex, another model and model-only defaults receive
+// distinct connections, with four total dials.
 func TestOpenAIWSConnPoolUsesRoutingHintAsSoftDialAffinity(t *testing.T) {
 	options := &wsFixtureOptions{}
 	options.Pool.MaxConnsPerProvider = 4
@@ -305,6 +333,10 @@ func TestOpenAIWSConnPoolUsesRoutingHintAsSoftDialAffinity(t *testing.T) {
 	require.Equal(t, 4, dialer.DialCount())
 }
 
+// Dial increments the count and retains the supplied TLS profile under mu,
+// then returns a fresh fake connection. URL, headers, proxy and context are
+// ignored; zero status and nil handshake headers model a successful fixture
+// dial.
 func (d *openAIWSCountingDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -323,19 +355,27 @@ func (d *openAIWSCountingDialer) Dial(
 	return &openAIWSFakeConn{}, 0, nil, nil
 }
 
+// DialCount returns the number of captured fixture dials under the state
+// mutex.
 func (d *openAIWSCountingDialer) DialCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.dialCount
 }
 
+// LastTLSProfile returns the retained TLS profile pointer under the state
+// mutex. The getter copies no profile data, so fixture callers keep the
+// pointed-to configuration stable while transport assertions use it.
 func (d *openAIWSCountingDialer) LastTLSProfile() *tlsfingerprint.Profile {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.lastTLSProfile
 }
 
-// TestOpenAIWSConnPoolShutdownSealsLazyCreation verifies that shutdown prevents lazy pool creation and acquisition.
+// TestOpenAIWSConnPoolShutdownSealsLazyCreation closes an owner before first
+// Pool access and separately closes a constructed pool. The owner returns nil
+// from Pool; closed-pool acquisition returns ErrWSConnClosed, and calling Close
+// again returns successfully.
 func TestOpenAIWSConnPoolShutdownSealsLazyCreation(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	svc.Connections.Close()

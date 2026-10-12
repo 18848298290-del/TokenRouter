@@ -10,27 +10,57 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
-// wsPlatformFrames converts gateway frame types to the upstream relay enum.
-type wsPlatformFrames struct{ gatewayws.FrameConn }
+// The dedicated upstream relay reports usage, terminal identity and timing for
+// individual turns as well as aggregate connection observations. Callback
+// conversion passes those values to the gateway controller with message-type
+// translation, keeping paired client writes and close preparation attached to
+// the same relay execution.
 
+// wsPlatformFrames converts gateway frame types to the upstream relay enum.
+type wsPlatformFrames struct {
+	gatewayws.FrameConn /* gateway frame transport reference */
+}
+
+// ReadFrame forwards a gateway read and converts its integer type to the
+// upstream enum. It returns the same bytes and error, with read cancellation
+// governed by the supplied context and wrapped transport.
 func (c wsPlatformFrames) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	typ, body, err := c.FrameConn.ReadFrame(ctx)
 	return coderws.MessageType(typ), body, err
 }
 
+// WriteFrame converts an upstream message type and forwards its payload to the
+// gateway transport. The caller's context controls the synchronous write;
+// final transport release remains owned by the surrounding session.
 func (c wsPlatformFrames) WriteFrame(ctx context.Context, typ coderws.MessageType, body []byte) error {
 	return c.FrameConn.WriteFrame(ctx, int(typ), body)
 }
 
+// relayUsage copies upstream relay token counters into the gateway's usage
+// representation.
 func relayUsage(u openaiwsv2.Usage) wire.ForwardUsage {
 	return wire.ForwardUsage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CacheCreationInputTokens: u.CacheCreationInputTokens, CacheReadInputTokens: u.CacheReadInputTokens, ImageOutputTokens: u.ImageOutputTokens}
 }
 
+// relayExitProjection copies relay exit cause, stage and output observations
+// for the gateway controller.
 func relayExitProjection(e openaiwsv2.RelayExit) gatewayws.RelayExit {
 	return gatewayws.RelayExit{Stage: e.Stage, Err: e.Err, Graceful: e.Graceful, WroteDownstream: e.WroteDownstream}
 }
 
-// RunRelay adapts frame transport; the gateway supplies admission, snapshot, and completion callbacks.
+// RunRelay invokes the upstream bidirectional relay with gateway transports
+// and converted callbacks. Optional callbacks retain their ordering, accepted
+// timestamps, terminal values and write outcomes; FirstMessageSent tells the
+// upstream relay whether initial bytes already reached the provider. Returned
+// observations can coexist with an exit error and must be assessed by the
+// gateway session.
+//
+// Transport and diagnostic callbacks may run from different workers, so
+// supplied callbacks satisfy the gateway RelayOptions concurrency rules.
+// BeforeClientWrite and AfterClientWrite remain paired around terminal
+// delivery, while BeforeRelayCancel lets the controller prepare client closure
+// before internal cancellation. The upstream relay owns worker coordination;
+// the surrounding session owns final client presentation and upstream close.
 func (p *wsPassthroughAdapter) RunRelay(input gatewayws.RelayInput) (gatewayws.RelayResult, *gatewayws.RelayExit) {
 	o := input.Options
 	opts := openaiwsv2.RelayOptions{

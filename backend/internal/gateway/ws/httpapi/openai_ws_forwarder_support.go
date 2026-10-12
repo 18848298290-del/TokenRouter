@@ -21,14 +21,33 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Responses WebSocket failures can carry HTTP status and diagnostic fields in
+// standalone errors or nested response failures. Their selected status
+// controls provider policy, while the event shape controls warning observation
+// and client close presentation. Explicit numeric statuses retain priority
+// over inferred code or type labels.
+//
+// Provider health and client reporting run at different points. Request-scoped
+// rejections bypass provider policy, paired error and failed events can share
+// a single health update, and Ops failure data is marked when an error is
+// selected for client delivery. Callers decide whether output progress still
+// permits provider failover; these helpers return decisions and close
+// instructions for that execution path.
+
 // openAIWSTerminalPolicyDecision contains the terminal event and provider-policy result.
 // Callers check generic-error and failover decisions before writing to the client.
 type openAIWSTerminalPolicyDecision struct {
-	TerminalEvent string
-	StatusCode    int
-	Decision      providercore.UpstreamErrorDecision
+	TerminalEvent string // canonical response terminal label
+	// StatusCode remains zero for terminals other than response.failed. Failure
+	// status is resolved from the payload before applying the provider policy.
+	StatusCode int
+	Decision   providercore.UpstreamErrorDecision // applied provider policy result
 }
 
+// normalizeOpenAIWSTerminalEvent returns canonical terminal labels, folding
+// canceled into cancelled. Unsupported or nonterminal trimmed labels return
+// empty, letting callers retain their current turn rather than complete it
+// from an unrecognized event.
 func normalizeOpenAIWSTerminalEvent(eventType string) string {
 	switch strings.TrimSpace(eventType) {
 	case "response.completed":
@@ -46,6 +65,16 @@ func normalizeOpenAIWSTerminalEvent(eventType string) string {
 	}
 }
 
+// openAIWSPayloadTransientStatus selects a transient-health status from
+// numeric fields before code and type labels. Numeric precedence is
+// response.error.status_code, response.error.status, error.status_code, then
+// error.status. A recognized transient status is returned; another nonzero
+// value stops inference and returns zero, including explicit 529.
+//
+// When no numeric status exists, overloaded or slow-down codes select 503 and
+// server, internal, or upstream error labels select 500. This distinction
+// keeps provider-wide statuses from being recast as model-transient failures
+// merely because their code or type also says server error.
 func openAIWSPayloadTransientStatus(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
@@ -63,6 +92,8 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 	if gatewayprovider.IsTransientProviderFailure(status, payload) {
 		return status
 	}
+	// An explicit nontransient status wins over textual server-error labels, so
+	// provider-wide overload and policy statuses cannot become model cooldowns here.
 	if status != 0 {
 		return 0
 	}
@@ -89,8 +120,17 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 	}
 }
 
-// openAIWSErrorPolicyStatus resolves the status used by provider error policies.
-// It prefers a valid status in the event, then maps the WebSocket error type.
+// openAIWSErrorPolicyStatus resolves a provider-policy status from an event
+// payload. It checks valid 400 through 599 numeric fields in top-level error
+// before response.error, using status_code before status at each location.
+// Empty payloads return zero; absent or invalid numeric fields continue to
+// protocol classification.
+//
+// Code and type come from ParseWSErrorEventFields, with missing values filled
+// individually from response.error. WSErrorHTTPStatusFromRaw supplies the
+// final mapping. Retaining an explicit status keeps custom provider rules, 429
+// handling, and close presentation tied to the event's supplied failure rather
+// than its broader error label.
 func openAIWSErrorPolicyStatus(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
@@ -116,6 +156,11 @@ func openAIWSErrorPolicyStatus(payload []byte) int {
 	return upstreamopenai.WSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw)
 }
 
+// handleOpenAIWSTerminalTransientFailure returns terminal identity and applied
+// provider policy. Only response.failed resolves policy status; other labels
+// retain zero and ErrorPolicyNone. For 429, handshake headers are retained
+// only when canonicalModel is Spark and the provider is OAuth-like. Other
+// semantic 429 cases discard handshake headers before the health helper runs.
 func (s *OpenAIWebSocketExecutor) handleOpenAIWSTerminalTransientFailure(ctx context.Context, provider *gatewayprovider.ExecutionProvider, canonicalModel string, headers http.Header, payload []byte) openAIWSTerminalPolicyDecision {
 	eventType, _, _ := openai.ParseWSEventEnvelope(payload)
 	result := openAIWSTerminalPolicyDecision{
@@ -128,6 +173,8 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSTerminalTransientFailure(ctx con
 	result.StatusCode = openAIWSErrorPolicyStatus(payload)
 	if result.StatusCode != 0 {
 		if result.StatusCode == http.StatusTooManyRequests {
+			// Reuse handshake quota headers when the requested model is Spark and the
+			// provider is OAuth-like; other semantic 429 cases lack those matching windows.
 			headers = gatewayprovider.OpenAISemantic429Headers(provider, canonicalModel, headers)
 		}
 		result.Decision = s.applyOpenAIWSEventErrorPolicy(ctx, provider, canonicalModel, result.StatusCode, headers, payload)
@@ -135,6 +182,11 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSTerminalTransientFailure(ctx con
 	return result
 }
 
+// handleOpenAIWSErrorEventTransientFailure applies provider policy for
+// standalone error frames. Other labels return ErrorPolicyNone. A 429 retains
+// handshake headers only when canonicalModel is Spark and the provider is
+// OAuth-like; the shared policy helper then returns the health decision used
+// by downstream presentation.
 func (s *OpenAIWebSocketExecutor) handleOpenAIWSErrorEventTransientFailure(ctx context.Context, provider *gatewayprovider.ExecutionProvider, canonicalModel string, headers http.Header, payload []byte) providercore.UpstreamErrorDecision {
 	eventType, _, _ := openai.ParseWSEventEnvelope(payload)
 	if eventType != "error" {
@@ -142,13 +194,24 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSErrorEventTransientFailure(ctx c
 	}
 	status := openAIWSErrorPolicyStatus(payload)
 	if status == http.StatusTooManyRequests {
+		// Handshake quota headers describe Spark OAuth-like rate windows; retain
+		// them for that model and drop them for other semantic 429 provider cases.
 		headers = gatewayprovider.OpenAISemantic429Headers(provider, canonicalModel, headers)
 	}
 	return s.applyOpenAIWSEventErrorPolicy(ctx, provider, canonicalModel, status, headers, payload)
 }
 
-// markOpenAIWSClientVisibleFailure records delivered error events for Ops,
-// excluding internal failures recovered by failover.
+// markOpenAIWSClientVisibleFailure stores Ops error attributes for a delivered
+// error or response.failed event. Other labels leave observation unchanged.
+// Failed responses prefer response.error; if all three descriptive values are
+// empty they use the top-level error object, after which status follows the
+// selected prefix.
+//
+// An error frame can also supply a root status. Missing status falls back to
+// code and type classification, and missing descriptive fields receive
+// default diagnostic labels and a generic message. Calling this after the
+// execution path accepts client delivery prevents an internally recovered
+// provider error from becoming the session's visible Ops failure.
 func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte) {
 	eventType = strings.TrimSpace(eventType)
 	if eventType != "error" && eventType != "response.failed" {
@@ -161,6 +224,8 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	code := strings.TrimSpace(gjson.GetBytes(payload, prefix+".code").String())
 	errType := strings.TrimSpace(gjson.GetBytes(payload, prefix+".type").String())
 	message := strings.TrimSpace(gjson.GetBytes(payload, prefix+".message").String())
+	// Some failed frames place diagnostics in the standalone error object; use
+	// that object only when the nested descriptive fields supply no identity.
 	if eventType == "response.failed" && code == "" && errType == "" && message == "" {
 		prefix = "error"
 		code = strings.TrimSpace(gjson.GetBytes(payload, prefix+".code").String())
@@ -189,8 +254,11 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	gatewayhttp.MarkOpsStreamFailure(c, errType, code, message, status)
 }
 
-// handleOpenAIWSFailureProviderSideEffects applies provider health updates for an error event.
-// Its result lets the caller deduplicate paired error and response.failed events.
+// handleOpenAIWSFailureProviderSideEffects applies health effects and reports
+// whether a recognized provider failure was handled. Authentication, rate-
+// limit, overload, and structured provider 403 failures use terminal effects;
+// other transient failures use response-health policy. Callers retain the true
+// result to suppress a paired event's duplicate effect.
 func (s *OpenAIWebSocketExecutor) handleOpenAIWSFailureProviderSideEffects(ctx context.Context, provider *gatewayprovider.ExecutionProvider, canonicalModel string, headers http.Header, payload []byte) bool {
 	message := upstreamopenai.ExtractOpenAISSEErrorMessage(payload)
 	status := upstreamopenai.OpenAIStreamFailureStatus(payload, message)
@@ -205,6 +273,8 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSFailureProviderSideEffects(ctx c
 		s.Output.TerminalProviderEffects(nil, provider, payload, message, headers, canonicalModel)
 		return true
 	}
+	// Terminal-specific provider effects did not apply; classify a model-transient
+	// observation while preserving explicit nontransient statuses from the event.
 	status = openAIWSPayloadTransientStatus(payload)
 	if status == 0 {
 		return false
@@ -213,6 +283,10 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSFailureProviderSideEffects(ctx c
 	return true
 }
 
+// handleOpenAIWSDialTransientFailure applies provider policy from a
+// WSDialError's handshake status, headers, and body. Other errors return
+// ErrorPolicyNone, leaving connection-capacity and cancellation failures to
+// the acquisition caller's close rules.
 func (s *OpenAIWebSocketExecutor) handleOpenAIWSDialTransientFailure(ctx context.Context, provider *gatewayprovider.ExecutionProvider, canonicalModel string, err error) providercore.UpstreamErrorDecision {
 	var dialErr *upstreamopenai.WSDialError
 	if !errors.As(err, &dialErr) || dialErr == nil {
@@ -221,8 +295,12 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSDialTransientFailure(ctx context
 	return s.applyOpenAIWSEventErrorPolicy(ctx, provider, canonicalModel, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
 }
 
-// applyOpenAIWSEventErrorPolicy applies shared provider policy to handshake and event failures.
-// Request-scoped failures receive no policy; callers can fail over before client output starts.
+// applyOpenAIWSEventErrorPolicy returns provider health policy for a
+// classified handshake or event failure. A zero status or
+// OpenAIWSHTTPBridgeRequestScopedError match returns ErrorPolicyNone;
+// otherwise the selected platform chooses Grok or OpenAI health handling. The
+// caller separately gates failover using output progress and the returned
+// decision.
 func (s *OpenAIWebSocketExecutor) applyOpenAIWSEventErrorPolicy(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -240,7 +318,10 @@ func (s *OpenAIWebSocketExecutor) applyOpenAIWSEventErrorPolicy(
 	return gatewayprovider.ApplyOpenAIResponseHealth(ctx, s.Output.Health, provider, statusCode, headers, payload, false, canonicalModel)
 }
 
-// shouldFailoverOpenAIWSError uses platform HTTP error classification for WS handshake and event failures.
+// shouldFailoverOpenAIWSError reports the platform's default failover
+// eligibility for a WS failure. Zero status returns false; Grok uses its
+// Responses classifier and OpenAI receives the query-sanitized upstream
+// message with the status and body.
 func (s *OpenAIWebSocketExecutor) shouldFailoverOpenAIWSError(provider *gatewayprovider.ExecutionProvider, statusCode int, payload []byte) bool {
 	if statusCode == 0 {
 		return false
@@ -252,7 +333,10 @@ func (s *OpenAIWebSocketExecutor) shouldFailoverOpenAIWSError(provider *gatewayp
 	return gatewayprovider.ShouldFailoverOpenAIResponse(statusCode, upstreamMsg, payload)
 }
 
-// openAIWSGenericPolicyCloseError closes an ingress connection with the generic message before client output.
+// openAIWSGenericPolicyCloseError returns an internal-error close instruction
+// retaining the provider status in GenericPolicyError. It constructs no
+// transport action; the entry or relay controller presents the generic reason
+// and closes the client when it receives this error.
 func openAIWSGenericPolicyCloseError(statusCode int) error {
 	return gatewayhttp.NewOpenAIWSClientCloseError(
 		coderws.StatusInternalError,
@@ -260,6 +344,10 @@ func openAIWSGenericPolicyCloseError(statusCode int) error {
 	)
 }
 
+// stripCodexSparkImageGenerationToolFromRawPayload removes image-generation
+// declarations for a Spark model. Other models return the supplied bytes with
+// a false changed flag; callers replace their body only after a successful
+// changed result.
 func stripCodexSparkImageGenerationToolFromRawPayload(payload []byte, model string) ([]byte, bool, error) {
 	if !gatewayprovider.IsCodexSparkModel(model) {
 		return payload, false, nil

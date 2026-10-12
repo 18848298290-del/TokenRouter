@@ -1,7 +1,5 @@
 package httpapi
 
-// HTTP transport scenarios cover forwarding with WS configured, retries, and authentication failures.
-
 import (
 	"bytes"
 	"context"
@@ -26,6 +24,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Public HTTP Responses requests keep their HTTP transport and official API
+// Key continuation even when provider metadata enables WS. The scenarios also
+// model explicit ciphertext rejection and wrapped errors, checking one exact
+// repair while retaining valid reasoning summaries and pre-output
+// authentication failover markers.
+
+// TestOpenAIGatewayService_Forward_HTTPIngressStaysHTTPWhenWSEnabled forwards
+// an explicitly HTTP-labeled request through a WS-enabled provider fixture. It
+// uses HTTP, retains previous_response_id and records client_protocol_http as
+// the transport reason instead of producing a WS result.
 func TestOpenAIGatewayService_Forward_HTTPIngressStaysHTTPWhenWSEnabled(t *testing.T) {
 	wsFallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -85,6 +93,11 @@ func TestOpenAIGatewayService_Forward_HTTPIngressStaysHTTPWhenWSEnabled(t *testi
 	require.Equal(t, "client_protocol_http", reason)
 }
 
+// TestOpenAIGatewayService_Forward_HTTPIngressRetriesInvalidEncryptedContentOnce
+// scripts an explicit encrypted-content rejection before success. Two HTTP
+// exchanges retain continuation and valid reasoning summary, while only the
+// retried body removes ciphertext; the transport observation stays
+// client_protocol_http.
 func TestOpenAIGatewayService_Forward_HTTPIngressRetriesInvalidEncryptedContentOnce(t *testing.T) {
 	wsFallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -164,6 +177,10 @@ func TestOpenAIGatewayService_Forward_HTTPIngressRetriesInvalidEncryptedContentO
 	require.Equal(t, "client_protocol_http", reason)
 }
 
+// TestOpenAIGatewayService_Forward_HTTPIngressRetriesWrappedInvalidEncryptedContentOnce
+// wraps the upstream rejection inside its message before a successful
+// response. Two HTTP attempts remove rejected ciphertext only from the second
+// body and retain the summary, while WS mode remains false.
 func TestOpenAIGatewayService_Forward_HTTPIngressRetriesWrappedInvalidEncryptedContentOnce(t *testing.T) {
 	wsFallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -241,6 +258,10 @@ func TestOpenAIGatewayService_Forward_HTTPIngressRetriesWrappedInvalidEncryptedC
 	require.Equal(t, "client_protocol_http", reason)
 }
 
+// TestOpenAIGatewayService_Forward_APIKeyHTTPPreservesPreviousResponseIDWhenWSDisabled
+// forwards an API Key request without explicitly setting an inbound transport
+// label. The recorded HTTP body retains previous_response_id even though
+// provider fixture metadata enables Responses WS.
 func TestOpenAIGatewayService_Forward_APIKeyHTTPPreservesPreviousResponseIDWhenWSDisabled(t *testing.T) {
 	wsFallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -292,12 +313,16 @@ func TestOpenAIGatewayService_Forward_APIKeyHTTPPreservesPreviousResponseIDWhenW
 	require.Equal(t, "resp_123", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
 }
 
-// TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover checks configured same-provider retries before failover.
+// TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover
+// supplies configured 401 and default 403 pool-mode authentication failures.
+// Forward returns a typed upstream failure with matching status and
+// same-provider retry eligibility while leaving writer and response commitment
+// untouched.
 func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover(t *testing.T) {
 	tests := []struct {
-		name        string
-		statusCode  int
-		credentials map[string]any
+		name        string         // authentication scenario diagnostic label
+		statusCode  int            // scripted upstream HTTP failure status
+		credentials map[string]any // per-scenario pool policy overrides
 	}{
 		{
 			name:       "configured_401",

@@ -19,46 +19,100 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// ResponsesWSOptions configures ingress connections and first-frame budgets.
+// An authenticated HTTP request reserves an ingress connection allowance
+// before upgrading to Responses WebSocket. The allowance can renew
+// independently of the client transport and cancel the control context when
+// ownership is lost. Runtime settings are captured at entry so connection
+// limits, read limits, and the first-message budget remain fixed for that
+// connection.
+//
+// The original client context is retained separately from the lease context
+// and passed to the turn loop for downstream delivery. First-frame validation
+// finishes before RunEntry selects a provider. Deferred transport cleanup and
+// lease release cover every return after acquisition, while the request
+// lifetime barrier stays active through the complete session.
+
+// ResponsesWSOptions supplies entry limits and the provider-switch budget.
+// Runtime, when supplied, replaces connection and first-frame values at upgrade.
 type ResponsesWSOptions struct {
-	Runtime                        *gatewayws.Runtime
-	MaxIngressConnectionsPerAPIKey int
-	ReadLimit                      int64
-	FirstMessageTimeout            time.Duration
-	MaxProviderSwitches            int
+	// Runtime is optional; its snapshot overrides MaxIngressConnectionsPerAPIKey,
+	// ReadLimit, and FirstMessageTimeout before capacity acquisition. The static
+	// MaxProviderSwitches value continues into RunEntry independently of Runtime.
+	Runtime                        *gatewayws.Runtime // entry parameter snapshot source
+	MaxIngressConnectionsPerAPIKey int                // maximum accepted connections per Key
+	ReadLimit                      int64              // bytes
+	FirstMessageTimeout            time.Duration      // initial client frame budget
+	MaxProviderSwitches            int                // entry provider switch budget
 }
 
-// ResponsesWSCall contains upgraded request data passed to the dependency factory.
+// ResponsesWSCall passes authenticated entry metadata and the upgraded transport
+// to the backend that constructs per-session operations for RunEntry.
 type ResponsesWSCall struct {
-	Key                 *gatewayws.EntryKey
-	Subject             gatewayws.EntrySubject
+	Key     *gatewayws.EntryKey    // authenticated entry Key view
+	Subject gatewayws.EntrySubject // authenticated user concurrency data
+	// Conn remains owned by ResponsesWebSocket, which closes it when RunEntry
+	// returns. Entry operations may read, write, or send close instructions meanwhile.
 	Conn                *coderws.Conn
-	Logger              *zap.Logger
-	ClientIP, UserAgent string
+	Logger              *zap.Logger // request-scoped session diagnostic logger
+	ClientIP, UserAgent string      // client address and user-agent labels
 }
 
-// ResponsesWSBackend supplies authentication data and entry operations.
+// ResponsesWSBackend connects HTTP authentication, diagnostics, and entry construction
+// to the handler before and after the WebSocket upgrade.
 type ResponsesWSBackend interface {
+	// Access reads the Key already authenticated by request middleware. False
+	// rejects the request before upgrade; the returned entry view supplies the Key
+	// ID, group, and policy data used by RunEntry.
 	Access(*gin.Context) (*gatewayws.EntryKey, bool)
+	// Transport records the inbound WebSocket transport for request diagnostics
+	// before upgrade.
 	Transport(*gin.Context)
+	// Error writes an OpenAI HTTP error before the WebSocket upgrade. Calls use
+	// the supplied status, kind, and message; once upgraded, the handler presents
+	// failures through close frames instead.
 	Error(*gin.Context, int, string, string)
+	// Dependencies checks whether the injected services needed by this entry are
+	// available. False means it has already handled the HTTP failure, so the
+	// handler returns before capacity acquisition and upgrade.
 	Dependencies(*gin.Context, *zap.Logger) bool
+	// SummarizeRead extracts printable close status and reason labels from a
+	// first-frame failure.
 	SummarizeRead(error) (string, string)
+	// Entry constructs operations for the authenticated, upgraded session and its
+	// captured client metadata. The handler retains connection cleanup ownership
+	// and invokes RunEntry with the resulting operations and first frame.
 	Entry(*gin.Context, ResponsesWSCall) gatewayws.EntryPorts
 }
-type ResponsesWSHandler struct {
-	gatewayhttp.RequestLifetime
 
-	options     ResponsesWSOptions
-	backend     ResponsesWSBackend
-	concurrency *gatewayhttp.ConcurrencyHelper
+// ResponsesWSHandler owns upgrade and ingress-lease cleanup around the gateway
+// entry loop for each accepted HTTP request.
+type ResponsesWSHandler struct {
+	gatewayhttp.RequestLifetime // application request lifetime barrier
+
+	options     ResponsesWSOptions             // constructor supplied entry limits
+	backend     ResponsesWSBackend             // HTTP and session entry operations
+	concurrency *gatewayhttp.ConcurrencyHelper // ingress capacity lease provider
 }
 
+// NewResponsesWSHandler retains options and the required backend and
+// concurrency services. It constructs no transports or leases; callers bind
+// RequestLifetime before serving requests when shutdown tracking is required.
 func NewResponsesWSHandler(options ResponsesWSOptions, backend ResponsesWSBackend, concurrency *gatewayhttp.ConcurrencyHelper) *ResponsesWSHandler {
 	return &ResponsesWSHandler{options: options, backend: backend, concurrency: concurrency}
 }
 
-// ResponsesWebSocket handles authentication checks, ingress leases, upgrade, and the first frame before calling RunEntry.
+// ResponsesWebSocket upgrades an authenticated request and runs its first
+// validated frame through RunEntry. Upgrade headers, Key and subject data,
+// dependencies, and ingress capacity are checked in that order before the
+// transport is accepted. The request barrier, lease, and client transport are
+// released when the session returns.
+//
+// The lease context controls session admission and closure, while
+// ClientLifecycleContext retains the original request lifetime for downstream
+// writes. A lost lease before the first message sends a reconnect close; other
+// first-read or malformed-frame failures use policy closure. Provider
+// switching begins only after a valid text or binary JSON frame has been
+// received.
 func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -104,6 +158,8 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 		value := options.Runtime.Snapshot()
 		options.MaxIngressConnectionsPerAPIKey = value.MaxIngressConnectionsPerAPIKey
 		options.ReadLimit = value.ClientReadLimitBytes
+		// Freeze the configured seconds as this connection's initial read timer,
+		// before upgrade so later runtime updates apply to newly accepted connections.
 		options.FirstMessageTimeout = time.Duration(value.ClientFirstMessageTimeoutSeconds) * time.Second
 	}
 	maxIngressConnections := options.MaxIngressConnectionsPerAPIKey
@@ -115,11 +171,14 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	if !ingressLeaseAcquired {
 		reqLog.Info("openai.websocket_ingress_capacity_rejected", zap.Int("max_ingress_connections_per_api_key", maxIngressConnections))
+		// Tell capacity-rejected clients to wait five seconds before reconnecting.
 		c.Header("Retry-After", "5")
 		h.backend.Error(c, http.StatusTooManyRequests, "rate_limit_error", "Too many open WebSocket connections, please retry later")
 		return
 	}
 	if ingressLease != nil {
+		// Keep capacity renewal active for the whole session and release it on every
+		// exit; a lost lease cancels admission through its replacement request context.
 		defer ingressLease.Release()
 		ctx = ingressLease.Context()
 		c.Request = c.Request.WithContext(ctx)
@@ -140,6 +199,8 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 		)
 		return
 	}
+	// Transport teardown follows any explicit close presentation and also covers
+	// entry-loop failures, ensuring the ingress lease can return after this session.
 	defer func() {
 		_ = wsConn.CloseNow()
 	}()

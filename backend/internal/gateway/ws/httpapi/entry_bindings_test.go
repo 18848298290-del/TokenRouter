@@ -28,36 +28,55 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// turnAuthentication supplies current Key results and records later admission
+// inputs.
 type turnAuthentication struct {
-	key        *apikey.APIKey
-	err        error
-	input      apikey.AuthenticationInput
-	acquired   *apikey.APIKey
-	acquireErr error
+	key        *apikey.APIKey             // returned current authenticated Key
+	err        error                      // configured reauthentication failure result
+	input      apikey.AuthenticationInput // last reauthentication policy input
+	acquired   *apikey.APIKey             // last reserved allowance Key
+	acquireErr error                      // configured request allowance error
 }
 
+// turnSubscriptions returns a supplied subscription reference for current
+// funding checks.
 type turnSubscriptions struct {
-	current *billing.UserSubscription
+	current *billing.UserSubscription // returned current subscription reference
 }
 
-type entryKeyReader struct{ calls int }
+// entryKeyReader counts unexpected eager lookups while access views are
+// constructed.
+type entryKeyReader struct {
+	calls int /* Key reader invocation count */
+}
 
+// GetByKey panics when authorization uses a cached Key lookup in this fixture.
+// Later-turn tests require Reauthenticate to supply their current Key instead,
+// so the panic exposes an unexpected authentication path.
 func (a *turnAuthentication) GetByKey(context.Context, string) (*apikey.APIKey, error) {
 	panic("unexpected cached lookup")
 }
 
+// Reauthenticate records the supplied client and member-limit input and
+// returns the configured Key and error. It keeps the supplied Key pointer
+// intact so funding assertions can check the exact current snapshot.
 func (a *turnAuthentication) Reauthenticate(_ context.Context, _ *apikey.APIKey, input apikey.AuthenticationInput) (*apikey.APIKey, error) {
 	a.input = input
 	return a.key, a.err
 }
 
-// AcquireRequest supplies releasable admission for authentication tests with no limiter.
+// AcquireRequest records the Key used for allowance reservation and returns
+// the supplied context, no-op release and configured error. Its zero wait
+// value models immediate admission for later-turn limit assertions.
 func (a *turnAuthentication) AcquireRequest(ctx context.Context, key *apikey.APIKey) (context.Context, func(), time.Duration, error) {
 	a.acquired = key
 	return ctx, func() {}, 0, a.acquireErr
 }
 
-// TestAuthorizeTurn checks funding with the current snapshot and retains the prior snapshot on authentication failure.
+// TestAuthorizeTurn compares allowed, deleted, funding-denied and
+// missing-subscription reauthorization. Funding receives the current Key only
+// when earlier checks permit it, member limits and client IP are supplied, and
+// the original rate limit remains unchanged.
 func TestAuthorizeTurn(t *testing.T) {
 	for _, name := range []string{"allowed", "deleted", "funding_denied", "subscription_missing"} {
 		t.Run(name, func(t *testing.T) {
@@ -99,23 +118,36 @@ func TestAuthorizeTurn(t *testing.T) {
 	}
 }
 
+// GetUsableSubscription returns the fixture's current subscription reference,
+// false flag and nil error. Callers use this controlled funding result without
+// repository reads or mutation of the supplied subscription.
 func (s turnSubscriptions) GetUsableSubscription(context.Context, int64, ...int64) (*billing.UserSubscription, bool, error) {
 	return s.current, false, nil
 }
 
+// GetSubscriptionForAPIKey returns the supplied current subscription reference
+// for every lookup. It ignores user and subscription identifiers, letting
+// authorization tests control the funding record while retaining its identity
+// for assertions.
 func (s turnSubscriptions) GetSubscriptionForAPIKey(context.Context, int64, int64) (*billing.UserSubscription, error) {
 	return s.current, nil
 }
 
+// ValidateAndCheckLimits accepts the fixture subscription with a false flag
+// and nil error. Actual funding denial is injected through CheckFunding in
+// these tests, so subscription validation itself supplies no limit failure.
 func (s turnSubscriptions) ValidateAndCheckLimits(*billing.UserSubscription) (bool, error) {
 	return false, nil
 }
 
-// TestAuthorizeTurnReloadsSubscription checks funding against current subscription usage.
+// TestAuthorizeTurnReloadsSubscription supplies exhausted current funding
+// beside an unused initial subscription. The funding checker sees the current
+// subscription and returns its denial while the adapter retains the initial
+// subscription reference and usage.
 func TestAuthorizeTurnReloadsSubscription(t *testing.T) {
-	key := &apikey.APIKey{ID: 1, User: &identity.User{ID: 2}, Group: &routing.Group{AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesWebSocket}}}
+	key := &apikey.APIKey{ID: 1, User: &identity.User{ID: 2}, Group: &routing.Group{AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesWebSocket}}} // returned current authenticated Key
 	old := &billing.UserSubscription{ID: 3, DailyUsageUSD: 0}
-	current := &billing.UserSubscription{ID: 3, DailyUsageUSD: 10}
+	current := &billing.UserSubscription{ID: 3, DailyUsageUSD: 10} // returned current subscription reference
 	denied := errors.New("subscription exhausted")
 	adapter := &openAIWSEntryAdapter{key: key, subscription: old, bindings: Bindings{
 		Keys: &turnAuthentication{key: key}, Subscriptions: turnSubscriptions{current: current},
@@ -129,7 +161,10 @@ func TestAuthorizeTurnReloadsSubscription(t *testing.T) {
 	require.Zero(t, old.DailyUsageUSD)
 }
 
-// TestKeyAdmissionUsesCurrentTurnLimits verifies that later turns use limits from reauthentication.
+// TestKeyAdmissionUsesCurrentTurnLimits reserves allowance before and after
+// successful reauthorization with a reduced RPM limit. Later admission uses
+// the current Key and presents RPM rejection as 1013, while the original Key's
+// limit stays unchanged.
 func TestKeyAdmissionUsesCurrentTurnLimits(t *testing.T) {
 	original := &apikey.APIKey{ID: 1, User: &identity.User{ID: 2}, BillingMode: billing.APIKeyBillingModeBalance, RPMLimit: 20}
 	original.Group = &routing.Group{AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesWebSocket}}
@@ -150,7 +185,10 @@ func TestKeyAdmissionUsesCurrentTurnLimits(t *testing.T) {
 	require.Equal(t, 20, original.RPMLimit)
 }
 
-// TestAuthorizeTurnRejectsRevokedWSProtocol rejects before funding checks and keeps the completed-turn snapshot independent.
+// TestAuthorizeTurnRejectsRevokedWSProtocol reauthenticates a Key whose
+// current group permits HTTP Responses but revokes WS. Authorization fails
+// before funding, requestKey remains unset, and the initial group's WS
+// permission stays intact.
 func TestAuthorizeTurnRejectsRevokedWSProtocol(t *testing.T) {
 	original := &apikey.APIKey{
 		ID: 1, User: &identity.User{ID: 2}, BillingMode: billing.APIKeyBillingModeBalance,
@@ -172,25 +210,36 @@ func TestAuthorizeTurnRejectsRevokedWSProtocol(t *testing.T) {
 	require.Nil(t, adapter.requestKey)
 }
 
+// GetByKey counts a lookup and returns no Key and no error. Access tests
+// expect no call while constructing entry data; a later refresh would treat
+// this empty result as unusable policy.
 func (r *entryKeyReader) GetByKey(context.Context, string) (*apikey.APIKey, error) {
 	r.calls++
 	return nil, nil
 }
 
+// Reauthenticate counts the call and reports API Key not found. This fixture
+// leaves current authorization unavailable so entry-view tests can detect any
+// unexpected eager identity lookup.
 func (r *entryKeyReader) Reauthenticate(context.Context, *apikey.APIKey, apikey.AuthenticationInput) (*apikey.APIKey, error) {
 	r.calls++
 	return nil, apikey.ErrAPIKeyNotFound
 }
 
-// AcquireRequest supplies admission for access-snapshot tests.
+// AcquireRequest returns the supplied context with a no-op release, zero wait
+// and no error. It models immediate allowance admission without a limiter so
+// entry-view fixtures satisfy the bound Key interface.
 func (r *entryKeyReader) AcquireRequest(ctx context.Context, _ *apikey.APIKey) (context.Context, func(), time.Duration, error) {
 	return ctx, func() {}, 0, nil
 }
 
-// TestEntryAccessKeepsProjectionIndependentAndLazy checks lazy policy refresh and independent model and effort mappings.
+// TestEntryAccessKeepsProjectionIndependentAndLazy builds an entry view with
+// model and effort mappings and an available Key reader. Access enables later
+// refresh without querying the reader; mutating the view's model map leaves
+// the Key map unchanged and effort storage is distinct.
 func TestEntryAccessKeepsProjectionIndependentAndLazy(t *testing.T) {
 	reader := &entryKeyReader{}
-	key := &apikey.APIKey{ID: 9, UserID: 7, Key: "fixture-key", ModelMapping: map[string]string{"alias": "original"}, Group: &routing.Group{ReasoningEffortMappings: []routing.ReasoningEffortMapping{{}}}}
+	key := &apikey.APIKey{ID: 9, UserID: 7, Key: "fixture-key", ModelMapping: map[string]string{"alias": "original"}, Group: &routing.Group{ReasoningEffortMappings: []routing.ReasoningEffortMapping{{}}}} // returned current authenticated Key
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(string(keyhttp.ContextKeyAPIKey), key)
 	view, ok := (openAIWSHTTPBackend{bindings: Bindings{Keys: reader}}).Access(c)
@@ -202,7 +251,10 @@ func TestEntryAccessKeepsProjectionIndependentAndLazy(t *testing.T) {
 	require.NotSame(t, &key.Group.ReasoningEffortMappings[0], &view.Group.ReasoningEffortMappings[0])
 }
 
-// TestWSTurnPricing covers model changes, zero per-request prices, and group-specific pricing.
+// TestWSTurnPricing alternates a zero-priced model with an unpriced model in
+// one group, then changes the group. Zero per-request price permits the priced
+// turn, while missing or other-group prices produce local admission failure
+// that does not report provider health.
 func TestWSTurnPricing(t *testing.T) {
 	zero := 0.0
 	prices := &admission.ModelPricing{Resolver: testkit.ResolverWithCards(t, billing.NewCalculator(nil, billing.CalculatorOptions{}), []routing.ModelPricingEntry{{
@@ -237,7 +289,10 @@ func TestWSTurnPricing(t *testing.T) {
 	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
 }
 
-// TestPrepareCompletionKeepsTurnIdentity catches connection context leaking into turn settlement.
+// TestPrepareCompletionKeepsTurnIdentity captures two child request contexts
+// beneath one connection context. Each completion receives its child request
+// ID and response billing key, while the Gin request continues to carry the
+// connection ID.
 func TestPrepareCompletionKeepsTurnIdentity(t *testing.T) {
 	root := telemetry.WithRequestCapture(context.WithValue(context.Background(), telemetry.RequestID, "connection"), telemetry.RequestRecord{RequestID: "connection", UserID: 2, APIKeyID: 1, StartedAt: time.Now(), State: "running"}, nil)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

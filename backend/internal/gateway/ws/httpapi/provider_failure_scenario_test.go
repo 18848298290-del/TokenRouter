@@ -1,7 +1,5 @@
 package httpapi
 
-// Provider failure scenarios cover error classification, reconnect conditions, and provider retry deadlines.
-
 import (
 	"errors"
 	"net/http"
@@ -18,12 +16,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// WS provider failures use close status, disabled-store mode and HTTP retry
+// policy to select different recovery actions. These scenarios retain
+// diagnostic body and headers while checking that OAuth rate-limit retries
+// receive a deadline and bounded delay, unlike ordinary API Key 429 behavior.
+
+// TestClassifyOpenAIWSReadFallbackReason compares policy-violation,
+// message-too-big and generic read errors. The shared classifier returns their
+// distinct fallback reason labels for pool reconnect diagnostics.
 func TestClassifyOpenAIWSReadFallbackReason(t *testing.T) {
 	require.Equal(t, "policy_violation", gatewayprovider.ClassifyOpenAIWSReadFallbackReason(coderws.CloseError{Code: coderws.StatusPolicyViolation}))
 	require.Equal(t, "message_too_big", gatewayprovider.ClassifyOpenAIWSReadFallbackReason(coderws.CloseError{Code: coderws.StatusMessageTooBig}))
 	require.Equal(t, "read_event", gatewayprovider.ClassifyOpenAIWSReadFallbackReason(errors.New("io")))
 }
 
+// TestShouldForceNewConnOnStoreDisabled compares strict, off and adaptive
+// policies after several read outcomes. Strict always selects a new
+// connection, off never does, and adaptive selects known policy or size
+// failures including a prewarm prefix.
 func TestShouldForceNewConnOnStoreDisabled(t *testing.T) {
 	require.True(t, openai.ShouldForceNewConnOnStoreDisabled(openAIWSStoreDisabledConnModeStrict, ""))
 	require.False(t, openai.ShouldForceNewConnOnStoreDisabled(openAIWSStoreDisabledConnModeOff, "policy_violation"))
@@ -33,6 +43,10 @@ func TestShouldForceNewConnOnStoreDisabled(t *testing.T) {
 	require.False(t, openai.ShouldForceNewConnOnStoreDisabled(openAIWSStoreDisabledConnModeAdaptive, "read_event"))
 }
 
+// TestOpenAIWSRateLimitFailoverError_OAuthKeepsSameProviderDeadline compares
+// OAuth and API Key 429 failures with a Retry-After header. OAuth retains
+// same-provider retry with a deadline and delay at most eight seconds; API Key
+// has neither, and OAuth diagnostics retain the original body and header.
 func TestOpenAIWSRateLimitFailoverError_OAuthKeepsSameProviderDeadline(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	headers := http.Header{"Retry-After": []string{"30"}}

@@ -19,6 +19,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestBuildOpenAIWSHeadersSendsOAuthRoutingHintOnly builds OAuth and API Key
+// WS handshakes with several tiers. OAuth hints use the final model and
+// canonical priority or ultrafast tier, while API Key headers omit the hint.
 func TestBuildOpenAIWSHeadersSendsOAuthRoutingHintOnly(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -59,6 +62,10 @@ func TestBuildOpenAIWSHeadersSendsOAuthRoutingHintOnly(t *testing.T) {
 	require.Empty(t, build(t, &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}, "priority").Get("x-codex-routing-hint"))
 }
 
+// TestOpenAIRoutingDiagnosticsUseFinalDerivedValuesOnly injects caller
+// credentials and a forged routing hint into HTTP and WS preparation. Captured
+// diagnostics contain the derived model, canonical tier, transport and
+// affinity labels, with none of those supplied credential fields.
 func TestOpenAIRoutingDiagnosticsUseFinalDerivedValuesOnly(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -105,6 +112,10 @@ func TestOpenAIRoutingDiagnosticsUseFinalDerivedValuesOnly(t *testing.T) {
 	require.False(t, logSink.ContainsFieldValue("routing_hint", "caller-secret"))
 }
 
+// TestValidateOpenAIWSBearerTokenAllowsAgentIdentityWithoutStoredToken
+// compares assertion-authenticated Agent Identity with bearer OAuth, PAT and
+// API Key providers. Only Agent Identity accepts an empty token for dial-time
+// authentication.
 func TestValidateOpenAIWSBearerTokenAllowsAgentIdentityWithoutStoredToken(t *testing.T) {
 	t.Run("Given Agent Identity When a WS path receives no bearer token Then dial-time assertion auth is allowed", func(t *testing.T) {
 		provider := &gatewayprovider.ExecutionProvider{
@@ -133,6 +144,10 @@ func TestValidateOpenAIWSBearerTokenAllowsAgentIdentityWithoutStoredToken(t *tes
 	})
 }
 
+// TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthProvider sends the
+// same client identity through two OAuth providers. Repeated builds for one
+// provider match, different providers derive different identities, and HTTP
+// and WS derive the same session header for one provider.
 func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthProvider(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -172,6 +187,10 @@ func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthProvider(t *testing.T
 	require.Equal(t, httpRequest.Header.Get("session_id"), first.Get("session_id"), "HTTP and WS must derive the same identity from the raw client key")
 }
 
+// TestOpenAISetupTokenWSCompatibility builds an OpenAI setup-token WS endpoint
+// and handshake alongside a foreign setup-token endpoint. It checks Codex
+// authentication and session scoping, the foreign platform URL, and disabled-
+// store handling even when the payload requests storage.
 func TestOpenAISetupTokenWSCompatibility(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))

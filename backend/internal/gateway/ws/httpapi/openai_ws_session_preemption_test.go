@@ -20,17 +20,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openAIWSSessionPreemptCacheStub models atomic owner token replacement for session tests.
 type openAIWSSessionPreemptCacheStub struct {
-	session.GatewayCache
-	mu     sync.Mutex
-	owners map[string][]byte
+	session.GatewayCache // unused ordinary gateway cache methods
+	// mu protects owners across claims and token comparisons. Stored and returned
+	// tokens are copied by Claim so fixture callers cannot change ownership bytes
+	// through a retained slice. TTL and context cancellation are not simulated.
+	mu     sync.Mutex        // owner token mutation lock
+	owners map[string][]byte // group and cache-hash owners
 }
 
+// key formats the supplied group and cache hash for fixture owner lookup.
 func (c *openAIWSSessionPreemptCacheStub) key(groupID int64, hash string) string {
 	return fmt.Sprintf("%d:%s", groupID, hash)
 }
 
+// ClaimOpenAIResponsesSessionWindow replaces ownership for groupID and hash and
+// returns a copied previous token. It ignores context and TTL, so tests use
+// this owner map to model replacement separately from expiry and cancellation.
+// The supplied new token is copied before storage so later mutation of the
+// input bytes leaves ownership unchanged.
+//
+// The mutex covers prior-owner lookup and new-token publication as one
+// operation. A first claim returns nil previous bytes; later claims observe the
+// token installed by the preceding serialized claim.
 func (c *openAIWSSessionPreemptCacheStub) ClaimOpenAIResponsesSessionWindow(_ context.Context, groupID int64, hash string, owner []byte, _ time.Duration) ([]byte, error) {
+	// Publish a copied token and read the prior copied value in one critical
+	// section so concurrent fixture claims cannot observe a partially replaced owner.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.owners == nil {
@@ -42,12 +58,26 @@ func (c *openAIWSSessionPreemptCacheStub) ClaimOpenAIResponsesSessionWindow(_ co
 	return previous, nil
 }
 
+// CompareAndRefreshOpenAIResponsesSessionWindow compares stored token bytes
+// with expected under the fixture mutex. It ignores TTL and cancellation and
+// performs no expiry update. An absent map entry compares as empty bytes, so an
+// empty expected token also matches absence; tests use nonempty owner tokens
+// for replacement detection.
 func (c *openAIWSSessionPreemptCacheStub) CompareAndRefreshOpenAIResponsesSessionWindow(_ context.Context, groupID int64, hash string, expected []byte, _ time.Duration) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return string(c.owners[c.key(groupID, hash)]) == string(expected), nil
 }
 
+// CompareAndDeleteOpenAIResponsesSessionWindow deletes the keyed owner when its
+// bytes match expected and reports that match. A mismatch leaves the map
+// unchanged. Context is ignored and the fixture models no expiry.
+//
+// Comparison and deletion share one mutex, so a claim cannot publish a
+// replacement between those steps. An absent entry compares as empty bytes:
+// empty expected therefore returns true even when deletion changes no entry.
+// The core supplies nonempty tokens, allowing stale release tests to
+// distinguish live ownership from absence.
 func (c *openAIWSSessionPreemptCacheStub) CompareAndDeleteOpenAIResponsesSessionWindow(_ context.Context, groupID int64, hash string, expected []byte) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -59,10 +89,16 @@ func (c *openAIWSSessionPreemptCacheStub) CompareAndDeleteOpenAIResponsesSession
 	return true, nil
 }
 
+// openAIWSSessionPreemptCacheHash returns the core's Key-scoped hash for
+// remote owner fixtures.
 func openAIWSSessionPreemptCacheHash(apiKeyID int64, sessionHash string) string {
 	return ws.CacheHash(apiKeyID, sessionHash)
 }
 
+// TestOpenAIWSSessionPreemptRegistryCancelsSameScopedSessionOnly registers
+// equal session hashes under two Keys and replaces one scope. Only that
+// scope's prior context is canceled, and its stale cleanup leaves the
+// replacement context live.
 func TestOpenAIWSSessionPreemptRegistryCancelsSameScopedSessionOnly(t *testing.T) {
 	var registry openAIWSSessionPreemptRegistry
 	key := openAIWSSessionPreemptKey{groupID: 7, apiKeyID: 11, sessionHash: "sess"}
@@ -87,6 +123,10 @@ func TestOpenAIWSSessionPreemptRegistryCancelsSameScopedSessionOnly(t *testing.T
 	otherCleanup()
 }
 
+// TestOpenAIWSSessionPreemptContextEligibilityAndLocalCancellation compares
+// API Key, Grok and HTTP one-shot ineligibility with pooled OpenAI OAuth
+// replacement. Eligible replacement cancels the first context with the
+// preemption cause and clears its saved turn-state and connection hints.
 func TestOpenAIWSSessionPreemptContextEligibilityAndLocalCancellation(t *testing.T) {
 	stateStore := session.NewOpenAIWSStateStore(nil, gatewayprovider.LogOpenAIWSModeInfo)
 	svc := newWSFixture(wsFixtureInputs{state: stateStore})
@@ -122,6 +162,10 @@ func TestOpenAIWSSessionPreemptContextEligibilityAndLocalCancellation(t *testing
 	secondCleanup()
 }
 
+// TestOpenAIWSIngressSessionPreemptionSurvivesNestedForwardCleanup enters
+// preemption again under an already armed context and invokes nested cleanup.
+// The first owner stays active until a separate connection replaces it,
+// confirming registration survives attempt cleanup.
 func TestOpenAIWSIngressSessionPreemptionSurvivesNestedForwardCleanup(t *testing.T) {
 	groupID := int64(7)
 	newContext := func() *gin.Context {
@@ -159,6 +203,10 @@ func TestOpenAIWSIngressSessionPreemptionSurvivesNestedForwardCleanup(t *testing
 	require.True(t, ws.IsSessionPreemptedError(context.Cause(firstCtx)))
 }
 
+// TestOpenAIWSIngressSessionPreemptionRespectsResolvedMode starts matching
+// sessions in dedicated and pooled connection modes. Dedicated sessions remain
+// unarmed and uncanceled; pooled replacement arms ownership and cancels the
+// first owner's context.
 func TestOpenAIWSIngressSessionPreemptionRespectsResolvedMode(t *testing.T) {
 	groupID := int64(7)
 	newContext := func() *gin.Context {
@@ -212,6 +260,10 @@ func TestOpenAIWSIngressSessionPreemptionRespectsResolvedMode(t *testing.T) {
 	require.True(t, ws.IsSessionPreemptedError(context.Cause(sharedCtx)), "ctx_pool must retain shared-session preemption")
 }
 
+// TestOpenAIWSSessionPreemptRemoteClaimAndStaleReleaseAreAtomic claims two
+// successive remote owner tokens then releases the first. The second claim
+// reports the previous token, and stale compare-delete leaves the second owner
+// stored.
 func TestOpenAIWSSessionPreemptRemoteClaimAndStaleReleaseAreAtomic(t *testing.T) {
 	cache := &openAIWSSessionPreemptCacheStub{}
 	svc := newWSFixture(wsFixtureInputs{cache: cache})
@@ -231,6 +283,9 @@ func TestOpenAIWSSessionPreemptRemoteClaimAndStaleReleaseAreAtomic(t *testing.T)
 	require.Equal(t, "owner-b", current, "stale cleanup must preserve the replacement owner")
 }
 
+// TestNewOpenAIWSSessionPreemptKeyRequiresFullIsolationScope supplies missing
+// group, Key and hash values before a valid padded hash. Invalid scope returns
+// false, and the valid result retains the trimmed session hash.
 func TestNewOpenAIWSSessionPreemptKeyRequiresFullIsolationScope(t *testing.T) {
 	_, ok := newOpenAIWSSessionPreemptKey(0, 11, "sess")
 	require.False(t, ok)
