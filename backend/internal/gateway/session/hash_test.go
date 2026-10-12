@@ -13,27 +13,40 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// benchmarkStringSink retains session hash and cache-content benchmark results.
+// benchmarkStringSink retains generated hashes and cache text after benchmark
+// calls so the measured results remain observable outside each loop iteration.
 var benchmarkStringSink string
 
-// hashTestAdapter invokes GenerateSessionHash with observation disabled.
+// hashTestAdapter delegates fixture requests to the generator with observation
+// disabled.
 type hashTestAdapter struct{}
 
 type (
+	// SessionContext aliases the source identity shared by these request-hash fixtures.
 	SessionContext = requeststate.SessionContext
-	ParsedRequest  = requeststate.ParsedRequest
+	// ParsedRequest aliases parsed body ranges and source state used by these fixtures.
+	ParsedRequest = requeststate.ParsedRequest
 )
 
+// TestGenerateSessionHash_NilParsedRequest passes a nil parsed request through
+// the adapter. The generator returns empty so no affinity can be inferred from
+// a missing request object.
 func TestGenerateSessionHash_NilParsedRequest(t *testing.T) {
 	svc := &hashTestAdapter{}
 	require.Empty(t, svc.GenerateSessionHash(nil))
 }
 
+// TestGenerateSessionHash_EmptyRequest supplies a zero-valued parsed request
+// with no source context. Its lack of metadata, marked content, and readable
+// fallback data produces an empty hash.
 func TestGenerateSessionHash_EmptyRequest(t *testing.T) {
 	svc := &hashTestAdapter{}
 	require.Empty(t, svc.GenerateSessionHash(&ParsedRequest{}))
 }
 
+// TestGenerateSessionHash_MetadataHasHighestPriority supplies valid legacy
+// metadata together with system and user text. The result equals the parsed
+// session ID rather than a content-derived hash for that request.
 func TestGenerateSessionHash_MetadataHasHighestPriority(t *testing.T) {
 	svc := &hashTestAdapter{}
 	metadata := "user_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2_account__session_123e4567-e89b-12d3-a456-426614174000"
@@ -43,6 +56,9 @@ func TestGenerateSessionHash_MetadataHasHighestPriority(t *testing.T) {
 	require.Equal(t, "123e4567-e89b-12d3-a456-426614174000", hash, "metadata session_id should have highest priority")
 }
 
+// TestGenerateSessionHash_SystemPlusMessages compares the same user message
+// with and without system text. Both cases produce hashes and the distinct
+// system contribution changes the compared fallback values.
 func TestGenerateSessionHash_SystemPlusMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	withSystem := mustParseSessionHashRequest(t, anthropicSessionBody("You are a helpful assistant.", []any{msg("user", "hello")}, ""), nil)
@@ -55,6 +71,9 @@ func TestGenerateSessionHash_SystemPlusMessages(t *testing.T) {
 	require.NotEqual(t, h1, h2, "system prompt should be part of digest, producing different hash")
 }
 
+// TestGenerateSessionHash_SystemOnlyProducesHash supplies system text with no
+// messages or source context. The fallback still returns a nonempty hash from
+// that readable system data alone.
 func TestGenerateSessionHash_SystemOnlyProducesHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed := mustParseSessionHashRequest(t, anthropicSessionBody("You are a helpful assistant.", nil, ""), nil)
@@ -63,6 +82,10 @@ func TestGenerateSessionHash_SystemOnlyProducesHash(t *testing.T) {
 	require.NotEmpty(t, hash, "system prompt alone should produce a hash as part of full digest")
 }
 
+// TestGenerateSessionHash_DifferentSystemsSameMessages changes system text
+// while retaining the same user-message fixture. The two fallback hashes
+// differ, showing that the compared system values contribute to this identity
+// path.
 func TestGenerateSessionHash_DifferentSystemsSameMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed1 := mustParseSessionHashRequest(t, anthropicSessionBody("You are assistant A.", []any{msg("user", "hello")}, ""), nil)
@@ -73,6 +96,9 @@ func TestGenerateSessionHash_DifferentSystemsSameMessages(t *testing.T) {
 	require.NotEqual(t, h1, h2, "different system prompts with same messages should produce different hashes")
 }
 
+// TestGenerateSessionHash_SameSystemSameMessages parses matching system and
+// conversation data in two request objects. The generated hashes remain equal
+// for repeated readable fallback content in this fixture.
 func TestGenerateSessionHash_SameSystemSameMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	mk := func() *ParsedRequest {
@@ -84,6 +110,10 @@ func TestGenerateSessionHash_SameSystemSameMessages(t *testing.T) {
 	require.Equal(t, h1, h2, "same system + same messages should produce identical hash")
 }
 
+// TestGenerateSessionHash_DifferentMessagesProduceDifferentHash changes one
+// user question under equal system text. The Go and Python question fixtures
+// produce different fallback hashes from their distinct readable message
+// content.
 func TestGenerateSessionHash_DifferentMessagesProduceDifferentHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed1 := mustParseSessionHashRequest(t, anthropicSessionBody("You are a helpful assistant.", []any{msg("user", "help me with Go")}, ""), nil)
@@ -94,6 +124,10 @@ func TestGenerateSessionHash_DifferentMessagesProduceDifferentHash(t *testing.T)
 	require.NotEqual(t, h1, h2, "same system but different messages should produce different hashes")
 }
 
+// TestGenerateSessionHash_DifferentSessionContextProducesDifferentHash uses
+// equal message text under two different client-source contexts. Both hashes
+// are nonempty and differ when the supplied address, client product, and API
+// Key change together.
 func TestGenerateSessionHash_DifferentSessionContextProducesDifferentHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "hello")}, "")
@@ -107,6 +141,9 @@ func TestGenerateSessionHash_DifferentSessionContextProducesDifferentHash(t *tes
 	require.NotEqual(t, h1, h2, "same messages but different SessionContext should produce different hashes")
 }
 
+// TestGenerateSessionHash_SameSessionContextProducesSameHash reparses matching
+// messages with the same source-context pointer. Both calls return equal
+// hashes from the supplied content and client-source values in this fixture.
 func TestGenerateSessionHash_SameSessionContextProducesSameHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "192.168.1.1", UserAgent: "Mozilla/5.0", APIKeyID: 100}
@@ -118,6 +155,10 @@ func TestGenerateSessionHash_SameSessionContextProducesSameHash(t *testing.T) {
 	require.Equal(t, h1, h2, "same messages + same SessionContext should produce identical hash")
 }
 
+// TestGenerateSessionHash_MetadataOverridesSessionContext combines valid
+// legacy metadata with a populated client-source context. The parsed metadata
+// session ID is returned, demonstrating its priority before the supplied
+// source fields.
 func TestGenerateSessionHash_MetadataOverridesSessionContext(t *testing.T) {
 	svc := &hashTestAdapter{}
 	metadata := "user_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2_account__session_123e4567-e89b-12d3-a456-426614174000"
@@ -127,6 +168,10 @@ func TestGenerateSessionHash_MetadataOverridesSessionContext(t *testing.T) {
 	require.Equal(t, "123e4567-e89b-12d3-a456-426614174000", hash, "metadata session_id should take priority over SessionContext")
 }
 
+// TestGenerateSessionHash_MetadataJSON_HasHighestPriority supplies a valid
+// JSON-encoded metadata identity with system and message text. The generator
+// returns that encoded identity's session ID before considering the readable
+// content fallback.
 func TestGenerateSessionHash_MetadataJSON_HasHighestPriority(t *testing.T) {
 	svc := &hashTestAdapter{}
 	metadata := `{"device_id":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2","account_uuid":"","session_id":"c72554f2-1234-5678-abcd-123456789abc"}`
@@ -136,6 +181,10 @@ func TestGenerateSessionHash_MetadataJSON_HasHighestPriority(t *testing.T) {
 	require.Equal(t, "c72554f2-1234-5678-abcd-123456789abc", hash, "JSON format metadata session_id should have highest priority")
 }
 
+// TestGenerateSessionHash_NilSessionContextBackwardCompatible parses the same
+// message twice with nil source context in both cases. The resulting hashes
+// are equal; this comparison covers repeated nil-context behavior rather than
+// a historical implementation.
 func TestGenerateSessionHash_NilSessionContextBackwardCompatible(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "hello")}, "")
@@ -147,6 +196,10 @@ func TestGenerateSessionHash_NilSessionContextBackwardCompatible(t *testing.T) {
 	require.Equal(t, h1, h2, "nil SessionContext should produce same hash as no SessionContext")
 }
 
+// TestGenerateSessionHash_ContinuousConversation_HashChangesWithMessages grows
+// an Anthropic conversation through three distinct transcript snapshots. Every
+// hash is nonempty and each pair differs as additional readable message text
+// enters the fallback.
 func TestGenerateSessionHash_ContinuousConversation_HashChangesWithMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -165,6 +218,10 @@ func TestGenerateSessionHash_ContinuousConversation_HashChangesWithMessages(t *t
 	require.NotEqual(t, h1, h3, "round 1 and round 3 should differ")
 }
 
+// TestGenerateSessionHash_ContinuousConversation_SameRoundSameHash parses the
+// same multi-turn snapshot twice under equal source context. The hash repeats
+// for that identical conversation state, supporting retry affinity for this
+// fixture.
 func TestGenerateSessionHash_ContinuousConversation_SameRoundSameHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -176,6 +233,9 @@ func TestGenerateSessionHash_ContinuousConversation_SameRoundSameHash(t *testing
 	require.Equal(t, h1, h2, "same conversation state should produce identical hash on retry")
 }
 
+// TestGenerateSessionHash_ResponsesDifferentInputProducesDifferentHash changes
+// the first Responses user question under one source context. The two nonempty
+// hashes differ for the Go and Python anchor texts supplied in those requests.
 func TestGenerateSessionHash_ResponsesDifferentInputProducesDifferentHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "codex_cli_rs/0.1.0", APIKeyID: 1}
@@ -189,6 +249,10 @@ func TestGenerateSessionHash_ResponsesDifferentInputProducesDifferentHash(t *tes
 	require.NotEqual(t, h1, h2, "different Responses input should produce different hashes for the same client")
 }
 
+// TestGenerateSessionHash_ResponsesGrowingInputKeepsStableHash extends
+// Responses history after equal developer text and first user input. The
+// extended request keeps the first request's nonempty hash because later
+// dialogue lies beyond its selected anchor.
 func TestGenerateSessionHash_ResponsesGrowingInputKeepsStableHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "codex_cli_rs/0.1.0", APIKeyID: 1}
@@ -201,6 +265,10 @@ func TestGenerateSessionHash_ResponsesGrowingInputKeepsStableHash(t *testing.T) 
 	require.Equal(t, h1, h2, "Responses input growth should preserve the hash when the conversation prefix is stable")
 }
 
+// TestGenerateSessionHash_MessagesPathIgnoresResponsesInput supplies readable
+// messages alongside two different Responses input strings. Both hashes remain
+// equal because message text takes precedence over the alternative input
+// representation.
 func TestGenerateSessionHash_MessagesPathIgnoresResponsesInput(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -212,6 +280,10 @@ func TestGenerateSessionHash_MessagesPathIgnoresResponsesInput(t *testing.T) {
 	require.Equal(t, h1, h2, "existing messages fallback should remain authoritative when messages contain text")
 }
 
+// TestGenerateSessionHash_ResponsesInputDoesNotOverrideHigherPrioritySources
+// adds Responses input alongside metadata or marked system evidence. Valid
+// metadata yields its session ID, while matching ephemeral text yields equal
+// hashes across the two distinct source contexts.
 func TestGenerateSessionHash_ResponsesInputDoesNotOverrideHigherPrioritySources(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -230,6 +302,9 @@ func TestGenerateSessionHash_ResponsesInputDoesNotOverrideHigherPrioritySources(
 	})
 }
 
+// TestGenerateSessionHash_MessageRollback changes the final user message in a
+// multi-turn Anthropic transcript. The compared hashes differ, confirming that
+// this Messages fallback includes the edited last-turn text.
 func TestGenerateSessionHash_MessageRollback(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -241,6 +316,9 @@ func TestGenerateSessionHash_MessageRollback(t *testing.T) {
 	require.NotEqual(t, hOrig, hRollback, "rollback with different last message should produce different hash")
 }
 
+// TestGenerateSessionHash_MessageRollbackSameContent reparses the same shorter
+// conversation state for two invocations. Both hashes remain equal under the
+// same context and content, covering a repeated shorter request.
 func TestGenerateSessionHash_MessageRollbackSameContent(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -252,6 +330,9 @@ func TestGenerateSessionHash_MessageRollbackSameContent(t *testing.T) {
 	require.Equal(t, h1, h2, "rollback and resend same content should produce same hash")
 }
 
+// TestGenerateSessionHash_SameSystemDifferentUsers combines equal system text
+// with different questions and source identities. The resulting hashes differ
+// for these fixtures; content and context both change in the comparison.
 func TestGenerateSessionHash_SameSystemDifferentUsers(t *testing.T) {
 	svc := &hashTestAdapter{}
 	user1 := mustParseSessionHashRequest(t, anthropicSessionBody("You are a code reviewer.", []any{msg("user", "Review this Go code")}, ""), &SessionContext{ClientIP: "1.1.1.1", UserAgent: "vscode", APIKeyID: 1})
@@ -262,6 +343,10 @@ func TestGenerateSessionHash_SameSystemDifferentUsers(t *testing.T) {
 	require.NotEqual(t, h1, h2, "different users with different messages should get different hashes")
 }
 
+// TestGenerateSessionHash_SameSystemSameMessageDifferentContext reuses the
+// same system and message under different addresses and API Keys. The two
+// fallback hashes differ despite equal content, exposing the source-context
+// contribution in this comparison.
 func TestGenerateSessionHash_SameSystemSameMessageDifferentContext(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody("You are a helpful assistant.", []any{msg("user", "hello")}, "")
@@ -273,6 +358,10 @@ func TestGenerateSessionHash_SameSystemSameMessageDifferentContext(t *testing.T)
 	require.NotEqual(t, h1, h2, "CRITICAL: same system+messages but different users should get different hashes")
 }
 
+// TestGenerateSessionHash_SessionContext_IPDifference changes the client IP
+// with equal message, client product, and API Key. The fallback hashes differ
+// for the two supplied addresses, isolating the address contribution to the
+// comparison.
 func TestGenerateSessionHash_SessionContext_IPDifference(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -285,6 +374,10 @@ func TestGenerateSessionHash_SessionContext_IPDifference(t *testing.T) {
 	require.NotEqual(t, h1, h2, "different IP should produce different hash")
 }
 
+// TestGenerateSessionHash_SessionContext_UADifference changes the User-Agent
+// product under equal IP, key, and content. The Mozilla and curl fixture
+// products produce different fallback hashes after client-product
+// normalization.
 func TestGenerateSessionHash_SessionContext_UADifference(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -297,6 +390,10 @@ func TestGenerateSessionHash_SessionContext_UADifference(t *testing.T) {
 	require.NotEqual(t, h1, h2, "different User-Agent should produce different hash")
 }
 
+// TestGenerateSessionHash_SessionContext_UAVersionNoiseIgnored changes only
+// the version of the product-style Codex User-Agent. Equal content and other
+// source fields retain the same hash after those version values are
+// normalized.
 func TestGenerateSessionHash_SessionContext_UAVersionNoiseIgnored(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -309,6 +406,10 @@ func TestGenerateSessionHash_SessionContext_UAVersionNoiseIgnored(t *testing.T) 
 	require.Equal(t, h1, h2, "version-only User-Agent changes should not perturb the sticky session hash")
 }
 
+// TestGenerateSessionHash_SessionContext_FreeformUAVersionNoiseIgnored changes
+// only the freeform Codex CLI version in source context. The compared hashes
+// stay equal for these fixtures while address, API Key, and message text
+// remain fixed.
 func TestGenerateSessionHash_SessionContext_FreeformUAVersionNoiseIgnored(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -321,6 +422,10 @@ func TestGenerateSessionHash_SessionContext_FreeformUAVersionNoiseIgnored(t *tes
 	require.Equal(t, h1, h2, "free-form version-only User-Agent changes should not perturb the sticky session hash")
 }
 
+// TestGenerateSessionHash_SessionContext_APIKeyIDDifference changes the API
+// Key ID with equal IP, User-Agent, and message. The two fallback hashes
+// differ, isolating credential identity as the changed source component in
+// this fixture.
 func TestGenerateSessionHash_SessionContext_APIKeyIDDifference(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -333,6 +438,10 @@ func TestGenerateSessionHash_SessionContext_APIKeyIDDifference(t *testing.T) {
 	require.NotEqual(t, h1, h2, "different APIKeyID should produce different hash")
 }
 
+// TestGenerateSessionHash_MultipleUsersSameFirstMessage supplies one greeting
+// under five different source contexts. Every generated hash is nonempty and
+// distinct within that finite address, client-product, and API Key fixture
+// set.
 func TestGenerateSessionHash_MultipleUsersSameFirstMessage(t *testing.T) {
 	svc := &hashTestAdapter{}
 	hashes := make(map[string]bool)
@@ -347,6 +456,10 @@ func TestGenerateSessionHash_MultipleUsersSameFirstMessage(t *testing.T) {
 	require.Len(t, hashes, 5, "5 different users should produce 5 unique hashes")
 }
 
+// TestGenerateSessionHash_SameUserGrowingConversation extends one user's
+// Messages transcript through successive odd-length prefixes. Each round
+// produces a new nonempty hash, while repeating an unchanged round returns the
+// same value.
 func TestGenerateSessionHash_SameUserGrowingConversation(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "browser", APIKeyID: 42}
@@ -369,6 +482,9 @@ func TestGenerateSessionHash_SameUserGrowingConversation(t *testing.T) {
 	}
 }
 
+// TestGenerateSessionHash_MultipleUserMessages changes the second of five user
+// messages in one conversation. The hash differs even though the first user
+// message is unchanged, covering full Messages text selection.
 func TestGenerateSessionHash_MultipleUserMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -381,6 +497,9 @@ func TestGenerateSessionHash_MultipleUserMessages(t *testing.T) {
 	require.NotEqual(t, h, h2, "changing any message should change the hash")
 }
 
+// TestGenerateSessionHash_MessageOrderMatters reverses two readable
+// user-message strings under the same source context. The compared fallback
+// hashes differ when those text pieces are concatenated in the opposite order.
 func TestGenerateSessionHash_MessageOrderMatters(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -392,6 +511,9 @@ func TestGenerateSessionHash_MessageOrderMatters(t *testing.T) {
 	require.NotEqual(t, h1, h2, "message order should affect the hash")
 }
 
+// TestGenerateSessionHash_StructuredContent supplies one message containing
+// two text-typed blocks. Its generated hash is nonempty, covering readable
+// array content under the supplied context without asserting nontext handling.
 func TestGenerateSessionHash_StructuredContent(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -402,6 +524,9 @@ func TestGenerateSessionHash_StructuredContent(t *testing.T) {
 	require.NotEmpty(t, h, "structured content should produce a hash")
 }
 
+// TestGenerateSessionHash_ArraySystemPrompt supplies two system text blocks
+// with a user message. The generator returns a nonempty hash for that array
+// representation combined with the populated source context.
 func TestGenerateSessionHash_ArraySystemPrompt(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -412,6 +537,10 @@ func TestGenerateSessionHash_ArraySystemPrompt(t *testing.T) {
 	require.NotEmpty(t, h, "array system prompt should produce a hash")
 }
 
+// TestGenerateSessionHash_CacheControlOverridesSessionContext uses matching
+// ephemeral system text under two different source contexts. The compared
+// hashes are equal because selected marked content is hashed before the
+// client-source fallback.
 func TestGenerateSessionHash_CacheControlOverridesSessionContext(t *testing.T) {
 	svc := &hashTestAdapter{}
 	system := []any{map[string]any{"type": "text", "text": "You are a tool-specific assistant.", "cache_control": map[string]any{"type": "ephemeral"}}}
@@ -424,6 +553,9 @@ func TestGenerateSessionHash_CacheControlOverridesSessionContext(t *testing.T) {
 	require.Equal(t, h1, h2, "cache_control ephemeral has higher priority, SessionContext should not affect result")
 }
 
+// TestGenerateSessionHash_EmptyMessages supplies an empty messages array and a
+// populated source context. The generator still returns a nonempty
+// source-derived hash even though no readable message text is available.
 func TestGenerateSessionHash_EmptyMessages(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed := mustParseSessionHashRequest(t, anthropicSessionBody(nil, []any{}, ""), &SessionContext{ClientIP: "1.1.1.1", UserAgent: "test", APIKeyID: 1})
@@ -432,6 +564,9 @@ func TestGenerateSessionHash_EmptyMessages(t *testing.T) {
 	require.NotEmpty(t, h, "empty messages with SessionContext should still produce a hash from context")
 }
 
+// TestGenerateSessionHash_EmptyMessagesNoContext supplies an empty messages
+// array without system data or source context. The generator returns empty
+// because no metadata, marked anchor, or combined fallback seed remains.
 func TestGenerateSessionHash_EmptyMessagesNoContext(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed := mustParseSessionHashRequest(t, anthropicSessionBody(nil, []any{}, ""), nil)
@@ -440,6 +575,10 @@ func TestGenerateSessionHash_EmptyMessagesNoContext(t *testing.T) {
 	require.Empty(t, h, "empty messages without SessionContext should produce empty hash")
 }
 
+// TestGenerateSessionHash_SessionContextWithEmptyFields compares an
+// empty-field source context with a nil context for equal text. Their hashes
+// differ because a present context still contributes separators and its zero
+// API Key value.
 func TestGenerateSessionHash_SessionContextWithEmptyFields(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := anthropicSessionBody(nil, []any{msg("user", "test")}, "")
@@ -451,6 +590,9 @@ func TestGenerateSessionHash_SessionContextWithEmptyFields(t *testing.T) {
 	require.NotEqual(t, h1, h2, "empty-field SessionContext should still differ from nil SessionContext")
 }
 
+// TestGenerateSessionHash_LongConversation builds twenty user/assistant pairs
+// and adds one more pair. The first hash is nonempty and the extension changes
+// it as new readable text enters the Messages fallback.
 func TestGenerateSessionHash_LongConversation(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "test", APIKeyID: 1}
@@ -470,6 +612,10 @@ func TestGenerateSessionHash_LongConversation(t *testing.T) {
 	require.NotEqual(t, h, h2, "adding more messages to long conversation should change hash")
 }
 
+// TestGenerateSessionHash_GeminiContentsProducesHash parses a Gemini user-text
+// part with a populated source context. The shared generator returns a
+// nonempty hash, covering the parsed Gemini parts representation on this
+// fallback path.
 func TestGenerateSessionHash_GeminiContentsProducesHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	parsed := mustParseGeminiSessionHashRequest(t, geminiSessionBody(nil, []any{geminiMsg("user", "Hello from Gemini")}), &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1})
@@ -478,6 +624,10 @@ func TestGenerateSessionHash_GeminiContentsProducesHash(t *testing.T) {
 	require.NotEmpty(t, h, "Gemini contents with parts should produce a non-empty hash")
 }
 
+// TestGenerateSessionHash_GeminiDifferentContentsDifferentHash changes one
+// Gemini user-text part while retaining source context. The Hello and Goodbye
+// fixtures return different hashes from their distinct readable Gemini
+// content.
 func TestGenerateSessionHash_GeminiDifferentContentsDifferentHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -489,6 +639,10 @@ func TestGenerateSessionHash_GeminiDifferentContentsDifferentHash(t *testing.T) 
 	require.NotEqual(t, h1, h2, "different Gemini contents should produce different hashes")
 }
 
+// TestGenerateSessionHash_GeminiSameContentsSameHash parses the same
+// user/model Gemini exchange twice. The hashes match for repeated parts and
+// source context, establishing deterministic output for that supplied
+// conversation.
 func TestGenerateSessionHash_GeminiSameContentsSameHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -500,6 +654,9 @@ func TestGenerateSessionHash_GeminiSameContentsSameHash(t *testing.T) {
 	require.Equal(t, h1, h2, "same Gemini contents should produce identical hash")
 }
 
+// TestGenerateSessionHash_GeminiMultiTurnHashChanges extends a Gemini request
+// with a model reply and later question. Both hashes are nonempty and differ
+// as the parsed parts add readable message text to the fallback.
 func TestGenerateSessionHash_GeminiMultiTurnHashChanges(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -513,6 +670,10 @@ func TestGenerateSessionHash_GeminiMultiTurnHashChanges(t *testing.T) {
 	require.NotEqual(t, h1, h2, "Gemini multi-turn should produce different hashes per round")
 }
 
+// TestGenerateSessionHash_GeminiDifferentUsersSameContentDifferentHash uses
+// identical Gemini parts under different addresses and API Keys. The compared
+// hashes differ for those source identities while the client product and
+// content remain equal.
 func TestGenerateSessionHash_GeminiDifferentUsersSameContentDifferentHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := geminiSessionBody(nil, []any{geminiMsg("user", "hello")})
@@ -524,6 +685,10 @@ func TestGenerateSessionHash_GeminiDifferentUsersSameContentDifferentHash(t *tes
 	require.NotEqual(t, h1, h2, "CRITICAL: different Gemini users with same content must get different hashes")
 }
 
+// TestGenerateSessionHash_GeminiSystemInstructionAffectsHash adds Gemini
+// system-instruction parts to otherwise equal content and context. The
+// generated hash differs from the request without those parts, covering the
+// parsed system contribution.
 func TestGenerateSessionHash_GeminiSystemInstructionAffectsHash(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -535,6 +700,9 @@ func TestGenerateSessionHash_GeminiSystemInstructionAffectsHash(t *testing.T) {
 	require.NotEqual(t, h1, h2, "systemInstruction should affect the hash")
 }
 
+// TestGenerateSessionHash_GeminiMultiPartMessage changes the middle text part
+// of a three-part Gemini user message. The first hash is nonempty and the
+// edited-parts hash differs despite equal first and final part text.
 func TestGenerateSessionHash_GeminiMultiPartMessage(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -547,6 +715,10 @@ func TestGenerateSessionHash_GeminiMultiPartMessage(t *testing.T) {
 	require.NotEqual(t, h, h2, "changing a part should change the hash")
 }
 
+// TestGenerateSessionHash_GeminiNonTextPartsIgnored supplies one text part
+// alongside inline-image data under a populated context. The hash is nonempty;
+// this assertion does not isolate the image contribution or compare against a
+// text-only request.
 func TestGenerateSessionHash_GeminiNonTextPartsIgnored(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "1.2.3.4", UserAgent: "gemini-cli", APIKeyID: 1}
@@ -557,6 +729,10 @@ func TestGenerateSessionHash_GeminiNonTextPartsIgnored(t *testing.T) {
 	require.NotEmpty(t, h, "Gemini message with mixed parts should still produce a hash from text parts")
 }
 
+// TestGenerateSessionHash_GeminiMultiTurnHashNotSticky compares three growing
+// Gemini transcripts under one source identity. The three hashes differ
+// pairwise, and reparsing the second transcript returns its previous hash for
+// unchanged content.
 func TestGenerateSessionHash_GeminiMultiTurnHashNotSticky(t *testing.T) {
 	svc := &hashTestAdapter{}
 	ctx := &SessionContext{ClientIP: "10.0.0.1", UserAgent: "gemini-cli", APIKeyID: 42}
@@ -581,6 +757,10 @@ func TestGenerateSessionHash_GeminiMultiTurnHashNotSticky(t *testing.T) {
 	require.Equal(t, hashes[1], h2Again, "retry of same round should produce same hash")
 }
 
+// TestGenerateSessionHash_GeminiEndToEnd parses Gemini system parts and a
+// multi-turn conversation before hashing. Repeated content/context returns the
+// same nonempty hash, while changing address and API Key produces a different
+// value.
 func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 	svc := &hashTestAdapter{}
 	body := geminiSessionBody([]any{map[string]any{"text": "You are a coding assistant."}}, []any{geminiMsg("user", "Write a Go function"), geminiMsg("model", "Here is a function..."), geminiMsg("user", "Now add error handling")})
@@ -598,6 +778,10 @@ func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 	require.NotEqual(t, h, h3, "different user with same Gemini request should get different hash")
 }
 
+// mustParseSessionHashRequest parses an Anthropic fixture and binds the
+// supplied source-context reference. A parse error fails the calling test
+// through require; the returned parsed request retains its newly encoded body
+// bytes.
 func mustParseSessionHashRequest(t *testing.T, body string, ctx *SessionContext) *ParsedRequest {
 	t.Helper()
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(body)), capability.PlatformAnthropic)
@@ -606,6 +790,9 @@ func mustParseSessionHashRequest(t *testing.T, body string, ctx *SessionContext)
 	return parsed
 }
 
+// mustParseGeminiSessionHashRequest parses a Gemini fixture and attaches the
+// supplied source-context reference. Parsing failure fails the calling test,
+// while the returned body ranges expose Gemini instruction and content parts.
 func mustParseGeminiSessionHashRequest(t *testing.T, body string, ctx *SessionContext) *ParsedRequest {
 	t.Helper()
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(body)), capability.PlatformGemini)
@@ -614,6 +801,9 @@ func mustParseGeminiSessionHashRequest(t *testing.T, body string, ctx *SessionCo
 	return parsed
 }
 
+// mustParseResponsesSessionHashRequest parses a Responses fixture and attaches
+// its supplied source-context reference. The test fails on a parse error;
+// otherwise the returned ranges retain that fixture's encoded input bytes.
 func mustParseResponsesSessionHashRequest(t *testing.T, body string, ctx *SessionContext) *ParsedRequest {
 	t.Helper()
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(body)), "responses")
@@ -622,6 +812,10 @@ func mustParseResponsesSessionHashRequest(t *testing.T, body string, ctx *Sessio
 	return parsed
 }
 
+// anthropicSessionBody encodes supplied system, messages, and nonempty
+// metadata into fixture JSON. Nil system/messages and empty metadata are
+// omitted; marshal errors are discarded, so callers supply encodable values to
+// obtain usable bytes.
 func anthropicSessionBody(system any, messages []any, metadataUserID string) string {
 	body := map[string]any{}
 	if system != nil {
@@ -633,10 +827,16 @@ func anthropicSessionBody(system any, messages []any, metadataUserID string) str
 	if metadataUserID != "" {
 		body["metadata"] = map[string]any{"user_id": metadataUserID}
 	}
+	// Fixture encoders expose no marshal error result; an unsupported supplied
+	// value can yield empty bytes, so callers use the encodable maps shown by these tests.
 	data, _ := json.Marshal(body)
 	return string(data)
 }
 
+// geminiSessionBody encodes nonnil system parts and contents into Gemini
+// fixture JSON. Nil fields are omitted; marshal failures produce the returned
+// byte text, so these helpers expect JSON-encodable values in their calling
+// tests.
 func geminiSessionBody(systemParts []any, contents []any) string {
 	body := map[string]any{}
 	if systemParts != nil {
@@ -645,14 +845,20 @@ func geminiSessionBody(systemParts []any, contents []any) string {
 	if contents != nil {
 		body["contents"] = contents
 	}
+	// Fixture encoders expose no marshal error result; an unsupported supplied
+	// value can yield empty bytes, so callers use the encodable maps shown by these tests.
 	data, _ := json.Marshal(body)
 	return string(data)
 }
 
+// msg builds a fresh fixture message map containing the supplied role and
+// content. Mutable content values remain shared with their caller, so tests
+// coordinate later changes before encoding this message.
 func msg(role string, content any) map[string]any {
 	return map[string]any{"role": role, "content": content}
 }
 
+// geminiMsg builds fresh part maps for the supplied role and text strings.
 func geminiMsg(role string, texts ...string) map[string]any {
 	parts := make([]any, 0, len(texts))
 	for _, text := range texts {
@@ -661,19 +867,33 @@ func geminiMsg(role string, texts ...string) map[string]any {
 	return map[string]any{"role": role, "parts": parts}
 }
 
+// GenerateSessionHash delegates to the shared generator with diagnostics
+// disabled. Nil requests return empty through that generator; other inputs
+// follow its metadata, marked-content, and readable-text priority rules for
+// these fixtures.
 func (*hashTestAdapter) GenerateSessionHash(p *ParsedRequest) string {
 	return GenerateSessionHash(p, nil)
 }
 
+// ParseGatewayRequest delegates fixture parsing to requeststate using the
+// supplied body reference and protocol. Parsing errors are returned to the
+// caller; accepted requests retain the supplied body storage for range-based
+// reads.
 func ParseGatewayRequest(body *requeststate.RequestBodyRef, protocol string) (*ParsedRequest, error) {
 	return requeststate.ParseGatewayRequest(body, protocol)
 }
 
+// NewRequestBodyRef wraps fixture bytes without copying their backing storage.
+// The returned reference retains the slice, so callers keep bytes stable while
+// parsed request ranges or JSON views read them.
 func NewRequestBodyRef(body []byte) *requeststate.RequestBodyRef {
 	return requeststate.NewRequestBodyRef(body)
 }
 
-// BenchmarkGenerateSessionHash_Metadata measures metadata parsing and session extraction.
+// BenchmarkGenerateSessionHash_Metadata parses a request containing an
+// unrecognized metadata user_id on each iteration. The measured path includes
+// metadata rejection, readable-message hashing, and synchronous slog.Info
+// observation, with allocations reported by the harness.
 func BenchmarkGenerateSessionHash_Metadata(b *testing.B) {
 	body := []byte(`{"metadata":{"user_id":"session_123e4567-e89b-12d3-a456-426614174000"},"messages":[{"content":"hello"}]}`)
 
@@ -687,6 +907,10 @@ func BenchmarkGenerateSessionHash_Metadata(b *testing.B) {
 	}
 }
 
+// BenchmarkGenerateSessionHash_LargeAnthropicMessages hashes already parsed
+// Messages bodies at four target sizes. Marked content selects the early
+// message anchor; parsing and payload construction are outside ResetTimer,
+// while generator diagnostics remain inside the measured loop.
 func BenchmarkGenerateSessionHash_LargeAnthropicMessages(b *testing.B) {
 	for _, size := range benchmarkBodySizes() {
 		b.Run(size.name, func(b *testing.B) {
@@ -706,7 +930,10 @@ func BenchmarkGenerateSessionHash_LargeAnthropicMessages(b *testing.B) {
 	}
 }
 
-// BenchmarkExtractCacheableContent_System measures system-text concatenation.
+// BenchmarkExtractCacheableContent_System repeatedly extracts twelve ephemeral
+// system-text blocks from parsed fixture state. The allocation-reporting loop
+// retains the concatenated result, measuring extraction rather than request
+// parsing or session hash generation.
 func BenchmarkExtractCacheableContent_System(b *testing.B) {
 	req := buildSystemCacheableRequest(12)
 
@@ -716,14 +943,15 @@ func BenchmarkExtractCacheableContent_System(b *testing.B) {
 	}
 }
 
-// benchmarkBodySizes lists target payload sizes for session hash benchmarks.
+// benchmarkBodySizes returns the four target byte sizes used by hash
+// benchmarks.
 func benchmarkBodySizes() []struct {
-	name  string
-	bytes int
+	name  string // named benchmark payload size
+	bytes int    // target encoded payload bytes
 } {
 	return []struct {
-		name  string
-		bytes int
+		name  string // named benchmark payload size
+		bytes int    // target encoded payload bytes
 	}{
 		{name: "4MB", bytes: 4 << 20},
 		{name: "8MB", bytes: 8 << 20},
@@ -732,9 +960,14 @@ func benchmarkBodySizes() []struct {
 	}
 }
 
-// buildLargeAnthropicMessagesBody builds repeated-text messages with optional cache markers.
+// buildLargeAnthropicMessagesBody appends complete repeated-text messages
+// until the requested byte target is reached, then closes JSON framing. The
+// result can exceed targetBytes; callers supply a nonnegative capacity target
+// for builder.Grow. When enabled, every thirty-second message beginning with
+// the first is marked.
 func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) []byte {
 	var builder strings.Builder
+	// Reserve additional capacity for message framing beyond the target payload.
 	builder.Grow(targetBytes + 1024)
 	_, _ = builder.WriteString(`{"model":"claude-sonnet-4-5","stream":true,"system":[{"type":"text","text":"system seed"}],"messages":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
@@ -745,6 +978,8 @@ func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) 
 		_, _ = builder.WriteString(strings.Repeat("anthropic payload ", 64))
 		_, _ = builder.WriteString(strconv.Itoa(i))
 		_ = builder.WriteByte('"')
+		// Mark every thirty-second message, including the first, to model repeated
+		// anchors while ExtractCacheableContent still stops at its earliest marked message.
 		if includeCacheControl && i%32 == 0 {
 			_, _ = builder.WriteString(`,"cache_control":{"type":"ephemeral"}`)
 		}
@@ -754,7 +989,10 @@ func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) 
 	return []byte(builder.String())
 }
 
-// buildSystemCacheableRequest builds system blocks that each carry a cache marker.
+// buildSystemCacheableRequest parses an array of numbered, ephemeral system
+// blocks for benchmarking. Nonpositive parts produces an empty array;
+// generated JSON parsing failure panics because the caller requires usable
+// parsed fixture state.
 func buildSystemCacheableRequest(parts int) *requeststate.ParsedRequest {
 	var builder strings.Builder
 	_, _ = builder.WriteString(`{"system":[`)

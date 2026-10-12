@@ -7,14 +7,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSanitizeSessionID exercises correlation IDs at the Unicode column limit and
+// with malformed bytes or control characters. Accepted IDs retain their trimmed
+// spelling, while invalid or oversized IDs return empty.
 func TestSanitizeSessionID(t *testing.T) {
 	longRunes := strings.Repeat("a", MaxPersistedSessionIDLength+50)
 	multibyte := strings.Repeat("好", MaxPersistedSessionIDLength+10)
 
 	tests := []struct {
-		name string
-		in   string
-		want string
+		name string // named validation fixture
+		in   string // supplied client session bytes
+		want string // expected accepted session value
 	}{
 		{"empty", "", ""},
 		{"whitespace only", "   \t  ", ""},
@@ -36,7 +39,8 @@ func TestSanitizeSessionID(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := SanitizeClientSessionID(tc.in)
 			require.Equal(t, tc.want, got, "SanitizeClientSessionID(%q)", tc.in)
-			// The database limit counts Unicode characters.
+			// Count runes because PostgreSQL limits this correlation column by
+			// characters, including accepted multibyte IDs rather than UTF-8 bytes.
 			require.LessOrEqual(t, len([]rune(got)), MaxPersistedSessionIDLength)
 		})
 	}

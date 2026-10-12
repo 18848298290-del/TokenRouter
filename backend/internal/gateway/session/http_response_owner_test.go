@@ -8,24 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ownerReaderProbe supplies stored ownership and counts authorization lookups.
+// ownerReaderProbe returns configured ownership and counts serial authorization reads.
 type ownerReaderProbe struct {
-	user, key int64
-	found     bool
-	err       error
-	reads     int
+	user, key int64 // stored user and key IDs
+	found     bool  // configured ownership presence result
+	err       error // configured ownership lookup failure
+	reads     int   // serial ownership lookup count
 }
 
+// GetHTTPResponseOwner counts the lookup and returns the configured ownership tuple.
 func (p *ownerReaderProbe) GetHTTPResponseOwner(context.Context, int64, string) (int64, int64, bool, error) {
 	p.reads++
 	return p.user, p.key, p.found, p.err
 }
 
+// TestHTTPResponseOwnershipPreservesTenantAndLegacyKeys supplies modern user-owned
+// records and legacy key-only records. Continuation accepts another key for the
+// same user, rejects other users, and requires the legacy key to match.
 func TestHTTPResponseOwnershipPreservesTenantAndLegacyKeys(t *testing.T) {
 	for _, tc := range []struct {
-		name                               string
-		user, key, requestUser, requestKey int64
-		found, want                        bool
+		name                               string // named ownership comparison fixture
+		user, key, requestUser, requestKey int64  // stored and requesting owner IDs
+		found, want                        bool   // record presence and expected authorization
 	}{
 		{"same-user-another-key", 1, 4, 1, 5, true, true},
 		{"other-user-same-key", 1, 4, 2, 4, true, false},
@@ -43,14 +47,17 @@ func TestHTTPResponseOwnershipPreservesTenantAndLegacyKeys(t *testing.T) {
 	}
 }
 
+// TestHTTPResponseOwnershipPreservesShortCircuitAndFailure supplies blank response
+// IDs, invalid requester IDs, and a failing reader. Invalid inputs skip reader
+// creation, while the valid lookup returns the configured storage error.
 func TestHTTPResponseOwnershipPreservesShortCircuitAndFailure(t *testing.T) {
 	reads := 0
 	storeErr := errors.New("owner read unavailable")
 	reader := &ownerReaderProbe{found: true, user: 1, key: 2, err: storeErr}
 	get := func() HTTPResponseOwnerReader { reads++; return reader }
 	for _, tc := range []struct {
-		id        string
-		user, key int64
+		id        string // supplied continuation response ID
+		user, key int64  // invalid requester owner IDs
 	}{{" ", 1, 2}, {"resp_1", 0, 2}, {"resp_1", 1, 0}} {
 		ok, err := ValidateHTTPResponseOwner(context.Background(), get, 1, tc.id, tc.user, tc.key)
 		require.NoError(t, err)

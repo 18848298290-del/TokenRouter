@@ -13,6 +13,9 @@ import (
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// TestDigestSessionStore_SaveAndFind stores one exact digest binding within a group
+// and source namespace. Lookup returns the saved session UUID and provider with
+// the presence flag set, confirming the binding is usable.
 func TestDigestSessionStore_SaveAndFind(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -24,6 +27,8 @@ func TestDigestSessionStore_SaveAndFind(t *testing.T) {
 	assert.Equal(t, int64(100), providerID)
 }
 
+// TestDigestSessionStore_PrefixMatch stores an earlier conversation and queries a longer chain.
+// The shorter stored prefix supplies the same UUID, provider, and matched chain.
 func TestDigestSessionStore_PrefixMatch(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -38,6 +43,9 @@ func TestDigestSessionStore_PrefixMatch(t *testing.T) {
 	assert.Equal(t, "u:a-m:b", matchedChain)
 }
 
+// TestDigestSessionStore_LongestPrefixMatch stores three increasingly long digest prefixes.
+// Lookup selects the longest matching one, then uses a shorter binding when the
+// next component differs.
 func TestDigestSessionStore_LongestPrefixMatch(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -58,6 +66,9 @@ func TestDigestSessionStore_LongestPrefixMatch(t *testing.T) {
 	assert.Equal(t, int64(2), providerID)
 }
 
+// TestDigestSessionStore_SaveDeletesOldChain replaces an earlier conversation
+// key with its longer chain.
+// The old chain stops matching and the replacement retains its UUID and provider.
 func TestDigestSessionStore_SaveDeletesOldChain(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -78,6 +89,9 @@ func TestDigestSessionStore_SaveDeletesOldChain(t *testing.T) {
 	assert.Equal(t, int64(100), providerID)
 }
 
+// TestDigestSessionStore_DifferentSessionsNoInterference stores different
+// first-user digests sharing a system component.
+// Each extended conversation recovers its own UUID and provider from the distinct stored prefix.
 func TestDigestSessionStore_DifferentSessionsNoInterference(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -96,6 +110,8 @@ func TestDigestSessionStore_DifferentSessionsNoInterference(t *testing.T) {
 	assert.Equal(t, int64(200), providerID)
 }
 
+// TestDigestSessionStore_NoMatch queries a digest unrelated to the stored chain.
+// It returns found=false after the supplied candidate and its shorter prefixes fail to match.
 func TestDigestSessionStore_NoMatch(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -106,6 +122,9 @@ func TestDigestSessionStore_NoMatch(t *testing.T) {
 	assert.False(t, found)
 }
 
+// TestDigestSessionStore_DifferentPrefixHash stores a chain under one source
+// prefix and reads another.
+// The identical chain returns no match when its request-source namespace differs.
 func TestDigestSessionStore_DifferentPrefixHash(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -116,6 +135,8 @@ func TestDigestSessionStore_DifferentPrefixHash(t *testing.T) {
 	assert.False(t, found)
 }
 
+// TestDigestSessionStore_DifferentGroupID stores a chain for one group and reads another.
+// The identical source hash and chain return no match in that other group namespace.
 func TestDigestSessionStore_DifferentGroupID(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -126,6 +147,8 @@ func TestDigestSessionStore_DifferentGroupID(t *testing.T) {
 	assert.False(t, found)
 }
 
+// TestDigestSessionStore_EmptyDigestChain supplies an empty chain to saving and lookup.
+// The ignored save leaves no match for the empty lookup, even with a supplied UUID and provider.
 func TestDigestSessionStore_EmptyDigestChain(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -135,6 +158,8 @@ func TestDigestSessionStore_EmptyDigestChain(t *testing.T) {
 	assert.False(t, found)
 }
 
+// TestDigestSessionStore_TTLExpiration uses a short-lived cache with its own cleanup interval.
+// The binding matches immediately and stops matching after the test waits beyond its deadline.
 func TestDigestSessionStore_TTLExpiration(t *testing.T) {
 	store := &DigestSessionStore{
 		cache: gocache.New(100*time.Millisecond, 50*time.Millisecond),
@@ -146,7 +171,8 @@ func TestDigestSessionStore_TTLExpiration(t *testing.T) {
 	_, _, _, found := store.Find(1, "prefix", "u:a-m:b")
 	require.True(t, found)
 
-	// Wait beyond both the TTL and cleanup interval.
+	// Wait three configured TTLs so the fixture read observes expiration;
+	// its shorter janitor interval also permits physical cleanup before the assertion.
 	time.Sleep(300 * time.Millisecond)
 
 	// Expired bindings must not match.
@@ -154,13 +180,21 @@ func TestDigestSessionStore_TTLExpiration(t *testing.T) {
 	assert.False(t, found)
 }
 
+// TestDigestSessionStore_ConcurrentSafety runs overlapping save and lookup
+// loops under five source prefixes.
+// All worker loops join; returned lookup values are discarded, so this test
+// does not assert concurrent replacement ordering.
 func TestDigestSessionStore_ConcurrentSafety(t *testing.T) {
 	store := NewDigestSessionStore()
 
 	var wg sync.WaitGroup
+	// Fifty workers provide overlapping cache access for this fixture workload.
 	const goroutines = 50
+	// Each worker adds one hundred distinct chains to exercise repeated access.
 	const operations = 100
 
+	// Join all workers before returning so concurrent cache operations finish
+	// within this test; their lookup values are intentionally not asserted here.
 	wg.Add(goroutines)
 	for g := range goroutines {
 		go func(id int) {
@@ -177,13 +211,15 @@ func TestDigestSessionStore_ConcurrentSafety(t *testing.T) {
 	wg.Wait()
 }
 
+// TestDigestSessionStore_MultipleSessions stores three chains with distinct UUID/provider bindings.
+// Exact lookups recover each pair and an extension of the second chain reuses its binding.
 func TestDigestSessionStore_MultipleSessions(t *testing.T) {
 	store := NewDigestSessionStore()
 
 	sessions := []struct {
-		chain      string
-		uuid       string
-		providerID int64
+		chain      string // stored conversation digest chain
+		uuid       string // expected session UUID value
+		providerID int64  // expected bound provider identifier
 	}{
 		{"u:session1", "uuid-1", 1},
 		{"u:session2-m:reply2", "uuid-2", 2},
@@ -209,6 +245,9 @@ func TestDigestSessionStore_MultipleSessions(t *testing.T) {
 	assert.Equal(t, int64(2), providerID)
 }
 
+// TestDigestSessionStore_Performance1000Sessions populates a thousand sessions
+// and times repeated extension lookups.
+// Every lookup must match; elapsed timing is logged and has no acceptance threshold.
 func TestDigestSessionStore_Performance1000Sessions(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -220,6 +259,7 @@ func TestDigestSessionStore_Performance1000Sessions(t *testing.T) {
 
 	// Measure repeated prefix lookups across the populated cache.
 	start := time.Now()
+	// Ten thousand lookups produce a repeatable timing workload without a speed threshold.
 	const lookups = 10000
 	for i := range lookups {
 		idx := i % 1000
@@ -231,6 +271,8 @@ func TestDigestSessionStore_Performance1000Sessions(t *testing.T) {
 	t.Logf("%d lookups in %v (%.0f ns/op)", lookups, elapsed, float64(elapsed.Nanoseconds())/lookups)
 }
 
+// TestDigestSessionStore_FindReturnsMatchedChain queries an exact chain and a longer extension.
+// Both results return the stored matched chain for a caller to pass to replacement saving.
 func TestDigestSessionStore_FindReturnsMatchedChain(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -247,6 +289,10 @@ func TestDigestSessionStore_FindReturnsMatchedChain(t *testing.T) {
 	assert.Equal(t, "u:a-m:b-u:c", matchedChain)
 }
 
+// TestDigestSessionStore_CacheItemCountStable extends one hundred conversations
+// sequentially across ten rounds.
+// Passing each matched chain to Save leaves no more than one hundred physical
+// entries in this workload.
 func TestDigestSessionStore_CacheItemCountStable(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -275,6 +321,10 @@ func TestDigestSessionStore_CacheItemCountStable(t *testing.T) {
 	t.Logf("Cache item count after 100 conversations × 10 rounds: %d", itemCount)
 }
 
+// TestDigestSessionStore_TTLPreventsUnboundedGrowth writes five hundred new
+// sessions into a short-TTL cache.
+// Its enabled janitor removes all entries after the wait; this fixture differs
+// from the production constructor without a janitor.
 func TestDigestSessionStore_TTLPreventsUnboundedGrowth(t *testing.T) {
 	// A short TTL checks cleanup after a burst of new sessions.
 	store := &DigestSessionStore{
@@ -289,12 +339,16 @@ func TestDigestSessionStore_TTLPreventsUnboundedGrowth(t *testing.T) {
 
 	assert.Equal(t, 500, store.cache.ItemCount())
 
-	// Wait beyond both the TTL and cleanup interval.
+	// Wait three configured TTLs so the fixture read observes expiration;
+	// its shorter janitor interval also permits physical cleanup before the assertion.
 	time.Sleep(300 * time.Millisecond)
 
 	assert.Equal(t, 0, store.cache.ItemCount(), "all items should be expired and cleaned up")
 }
 
+// TestDigestSessionStore_SaveSameChainNoDelete saves an identical current and old chain.
+// The replayed binding remains present with its UUID and provider because
+// replacement cleanup skips equal chains.
 func TestDigestSessionStore_SaveSameChainNoDelete(t *testing.T) {
 	store := NewDigestSessionStore()
 
@@ -311,7 +365,9 @@ func TestDigestSessionStore_SaveSameChainNoDelete(t *testing.T) {
 	assert.Equal(t, int64(100), providerID)
 }
 
-// TestGeminiSessionContinuousConversation checks digest matching across successive turns.
+// TestGeminiSessionContinuousConversation builds three growing Gemini transcripts.
+// The second and third turns recover the first turn's session and provider through
+// stored prefixes while matched-chain replacement advances the saved conversation.
 func TestGeminiSessionContinuousConversation(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)
@@ -398,7 +454,9 @@ func TestGeminiSessionContinuousConversation(t *testing.T) {
 	}
 }
 
-// TestGeminiSessionDifferentConversations checks isolation between unrelated prompts.
+// TestGeminiSessionDifferentConversations stores one Gemini user prompt and queries
+// another under the same source namespace. The unrelated prompt returns no match,
+// so its digest does not reuse the first session.
 func TestGeminiSessionDifferentConversations(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)
@@ -428,7 +486,9 @@ func TestGeminiSessionDifferentConversations(t *testing.T) {
 	}
 }
 
-// TestGeminiSessionPrefixMatchingOrder checks that the longest prefix wins.
+// TestGeminiSessionPrefixMatchingOrder stores three conversation prefixes under
+// different providers. A longer request returns provider three from the longest
+// stored prefix, making the lookup priority observable.
 func TestGeminiSessionPrefixMatchingOrder(t *testing.T) {
 	store := NewDigestSessionStore()
 	groupID := int64(1)

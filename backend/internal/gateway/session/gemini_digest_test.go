@@ -7,10 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// TestShortHash hashes empty, plain-text, and JSON byte fixtures.
+// Each result repeats deterministically and fits the thirteen-character bound of an encoded uint64.
 func TestShortHash(t *testing.T) {
 	tests := []struct {
-		name  string
-		input []byte
+		name  string // named digest or encoding fixture
+		input []byte // bytes supplied to short hashing
 	}{
 		{"empty", []byte{}},
 		{"simple", []byte("hello world")},
@@ -20,7 +22,7 @@ func TestShortHash(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := upstream.ShortHash(tt.input)
-			// A Base36 uint64 fits in 13 characters.
+			// Thirteen characters bound the Base36 uint64 representation returned here.
 			if len(result) > 13 {
 				t.Errorf("shortHash result too long: %d characters", len(result))
 			}
@@ -33,12 +35,15 @@ func TestShortHash(t *testing.T) {
 	}
 }
 
+// TestBuildGeminiDigestChain supplies nil, empty, and system-bearing Gemini conversations.
+// The resulting chain has the expected component count and each component uses
+// a system, user, or model prefix.
 func TestBuildGeminiDigestChain(t *testing.T) {
 	tests := []struct {
-		name     string
-		req      *protocolgemini.GeminiRequest
-		wantLen  int  // Expected number of chain segments.
-		hasEmpty bool // Whether an empty chain is expected.
+		name     string                        // named digest or encoding fixture
+		req      *protocolgemini.GeminiRequest // supplied Gemini request fixture
+		wantLen  int                           // expected digest component count
+		hasEmpty bool                          // expected empty chain result
 	}{
 		{
 			name:     "nil request",
@@ -132,6 +137,9 @@ func TestBuildGeminiDigestChain(t *testing.T) {
 	}
 }
 
+// TestGenerateGeminiPrefixHash compares repeated source identity and a different user ID.
+// The repeated hash matches, the changed-user fixture differs, and the compact
+// encoding contains sixteen characters.
 func TestGenerateGeminiPrefixHash(t *testing.T) {
 	hash1 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Mozilla/5.0", "antigravity", "gemini-2.5-pro")
 	hash2 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Mozilla/5.0", "antigravity", "gemini-2.5-pro")
@@ -147,12 +155,16 @@ func TestGenerateGeminiPrefixHash(t *testing.T) {
 		t.Errorf("GenerateGeminiPrefixHash collision for different inputs")
 	}
 
-	// Twelve bytes encode to 16 URL-safe Base64 characters.
+	// Twelve retained hash bytes occupy sixteen unpadded URL-safe Base64 characters.
 	if len(hash1) != 16 {
 		t.Errorf("expected 16 characters, got %d: %s", len(hash1), hash1)
 	}
 }
 
+// TestGenerateGeminiPrefixHash_IgnoresUserAgentVersionNoise changes a
+// product-style client version in an otherwise equal source.
+// The two Gemini prefix hashes remain equal after User-Agent normalization
+// removes that supplied version difference.
 func TestGenerateGeminiPrefixHash_IgnoresUserAgentVersionNoise(t *testing.T) {
 	hash1 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Mozilla/5.0 codex_cli_rs/0.1.0", "antigravity", "gemini-2.5-pro")
 	hash2 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Mozilla/5.0 codex_cli_rs/0.1.1", "antigravity", "gemini-2.5-pro")
@@ -162,6 +174,9 @@ func TestGenerateGeminiPrefixHash_IgnoresUserAgentVersionNoise(t *testing.T) {
 	}
 }
 
+// TestGenerateGeminiPrefixHash_IgnoresFreeformUserAgentVersionNoise changes the
+// version in a freeform Codex CLI User-Agent.
+// The two otherwise equal sources produce the same prefix hash for these supplied version strings.
 func TestGenerateGeminiPrefixHash_IgnoresFreeformUserAgentVersionNoise(t *testing.T) {
 	hash1 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Codex CLI 0.1.0", "antigravity", "gemini-2.5-pro")
 	hash2 := GenerateGeminiPrefixHash(1, 100, "192.168.1.1", "Codex CLI 0.1.1", "antigravity", "gemini-2.5-pro")
@@ -171,13 +186,16 @@ func TestGenerateGeminiPrefixHash_IgnoresFreeformUserAgentVersionNoise(t *testin
 	}
 }
 
+// TestParseGeminiSessionValue parses empty, malformed, ordinary, and colon-containing UUID values.
+// Valid fixtures return the complete UUID and provider; malformed separators
+// or numeric suffixes return ok=false.
 func TestParseGeminiSessionValue(t *testing.T) {
 	tests := []struct {
-		name      string
-		value     string
-		wantUUID  string
-		wantAccID int64
-		wantOK    bool
+		name      string // named digest or encoding fixture
+		value     string // stored UUID/provider text fixture
+		wantUUID  string // expected recovered UUID text
+		wantAccID int64  // expected parsed provider identifier
+		wantOK    bool   // expected value parsing success
 	}{
 		{
 			name:   "empty",
@@ -230,6 +248,8 @@ func TestParseGeminiSessionValue(t *testing.T) {
 	}
 }
 
+// TestFormatGeminiSessionValue formats one UUID/provider pair and parses it back.
+// The encoded value matches its expected text, then decoding recovers the same UUID and provider ID.
 func TestFormatGeminiSessionValue(t *testing.T) {
 	result := FormatGeminiSessionValue("test-uuid", 123)
 	expected := "test-uuid:123"
@@ -247,7 +267,9 @@ func TestFormatGeminiSessionValue(t *testing.T) {
 	}
 }
 
-// splitChain splits digest chains at hyphens.
+// splitChain splits test digest components at hyphens without validating their
+// format. Empty input returns nil; a trailing hyphen contributes no final empty
+// component, while an internal repeated hyphen retains an empty component.
 func splitChain(chain string) []string {
 	if chain == "" {
 		return nil
@@ -266,6 +288,9 @@ func splitChain(chain string) []string {
 	return parts
 }
 
+// TestDigestChainDifferentSysInstruction changes only a Gemini system-instruction text fixture.
+// The otherwise identical user content produces different full digest chains
+// when that system instruction changes.
 func TestDigestChainDifferentSysInstruction(t *testing.T) {
 	req1 := &protocolgemini.GeminiRequest{
 		SystemInstruction: &protocolgemini.GeminiContent{
@@ -296,6 +321,8 @@ func TestDigestChainDifferentSysInstruction(t *testing.T) {
 	}
 }
 
+// TestDigestChainTamperedMiddleContent edits a model reply between unchanged user turns.
+// The full chain and model component differ while the first-user digest component stays equal.
 func TestDigestChainTamperedMiddleContent(t *testing.T) {
 	req1 := &protocolgemini.GeminiRequest{
 		Contents: []protocolgemini.GeminiContent{
@@ -335,12 +362,16 @@ func TestDigestChainTamperedMiddleContent(t *testing.T) {
 	}
 }
 
+// TestGenerateGeminiDigestSessionKey supplies long, exact-width, short, and
+// empty prefix/UUID components.
+// Keys match the asserted byte prefixes, repeat deterministically, and differ
+// for the tested distinct first-eight-byte UUID values.
 func TestGenerateGeminiDigestSessionKey(t *testing.T) {
 	tests := []struct {
-		name       string
-		prefixHash string
-		uuid       string
-		want       string
+		name       string // named digest or encoding fixture
+		prefixHash string // supplied source prefix hash
+		uuid       string // supplied conversation UUID text
+		want       string // expected compact sticky key
 	}{
 		{
 			name:       "normal 16 char hash with uuid",
@@ -386,7 +417,7 @@ func TestGenerateGeminiDigestSessionKey(t *testing.T) {
 	// Identical inputs produce identical session keys.
 	t.Run("deterministic", func(t *testing.T) {
 		hash := "testprefix123456"
-		uuid := "test-uuid-12345"
+		uuid := "test-uuid-12345" // supplied conversation UUID text
 		result1 := GenerateGeminiDigestSessionKey(hash, uuid)
 		result2 := GenerateGeminiDigestSessionKey(hash, uuid)
 		if result1 != result2 {
