@@ -16,16 +16,41 @@ import (
 	openaierrors "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAICompactSessionSeedKey stores the HTTP request's compact session seed.
+// Remote compaction can retain the ordinary Responses stream or become a unary
+// Compact request, depending on its path, trigger, and parsed stream intent.
+// Native V2 keeps the Responses route and receives a negotiation marker. Other
+// body-triggered compaction on bare Responses paths is promoted to Compact;
+// existing response subpaths keep their own routing behavior.
+//
+// Promotion captures session and client-output intent before the Compact codec
+// removes unsupported fields. That saved request state supplies later upstream
+// session construction and any SSE bridge for the client. Outcome logging also
+// checks the request's stream-error observation, because a heartbeat can commit
+// HTTP 200 before compaction fails and leave the HTTP status alone misleading.
+
+// OpenAICompactSessionSeedKey stores a captured prompt-cache seed before Compact
+// normalization removes that field, allowing later request construction to retain its session input.
 const OpenAICompactSessionSeedKey = "openai_compact_session_seed"
 
 // IsOpenAIResponsesCompactPath identifies the legacy compact endpoint and allowed subpaths.
+// It compares the trimmed Responses path suffix with compact or its descendants.
+// Missing request context produces no matching suffix, leaving ordinary Responses
+// paths available for body-triggered detection.
 func IsOpenAIResponsesCompactPath(c *gin.Context) bool {
 	suffix := strings.TrimSpace(OpenAIResponsesRequestPathSuffix(c))
 	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
 }
 
-// ResolveOpenAICompactSessionID uses a session header, then a saved seed, then a random ID.
+// ResolveOpenAICompactSessionID selects session_id, conversation_id, then the
+// saved prompt-cache seed for legacy Compact construction. A nonnil context
+// carries a request; header candidates are trimmed, and a blank or mistyped
+// saved seed is skipped.
+//
+// Compact normalization removes prompt_cache_key from the body, so the captured
+// context seed supplies that identity after header candidates have been checked.
+// With no usable candidate, including a nil context, each call generates a fresh
+// UUID. Callers retain the returned value when repeated construction needs to
+// use one generated session.
 func ResolveOpenAICompactSessionID(c *gin.Context) string {
 	if c != nil {
 		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
@@ -40,11 +65,15 @@ func ResolveOpenAICompactSessionID(c *gin.Context) string {
 			}
 		}
 	}
+	// Normalization may remove prompt_cache_key before upstream construction. If
+	// no captured seed or client session remains, give this call a generated session value.
 	return uuid.NewString()
 }
 
 // IsBareOpenAIResponsesPath matches Responses endpoints without subpaths such as /compact.
 // Body-triggered compact promotion applies here; /responses/{id}/... subpaths keep their own handling.
+// Nil request data returns false. Surrounding whitespace and trailing slashes
+// are removed before matching the supported versioned, unversioned, OpenAI, and Codex aliases.
 func IsBareOpenAIResponsesPath(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
 		return false
@@ -58,28 +87,50 @@ func IsBareOpenAIResponsesPath(c *gin.Context) bool {
 	}
 }
 
-// IsOpenAIRemoteCompactionV2Request identifies native remote compaction v2 by its wire format.
+// IsOpenAIRemoteCompactionV2Request reports native streaming compaction intent
+// from body fields. A boolean true stream and an input item whose type is
+// compaction_trigger both need to be present. Missing, false, and nonboolean
+// stream values cannot qualify, even when a trigger is present.
+//
+// HTTP handling separately limits this recognition to bare Responses paths and
+// installs negotiation state afterward. The field queries do not establish that
+// the complete body is valid JSON, so structural validation remains a separate
+// caller step. Beta-header values do not participate in this body decision.
 func IsOpenAIRemoteCompactionV2Request(body []byte) bool {
 	stream, valid := ParseOpenAICompatibleStream(body)
 	return valid && stream && protocolopenai.HasCompactionTriggerInInput(body)
 }
 
-// normalizeOpenAIResponsesCompactRequest uses streaming Responses for native v2 and the Compact bridge for other body
-// triggers.
-// It returns the normalized body; false means an error response has been written and the caller must stop.
+// normalizeOpenAIResponsesCompactRequest selects streaming Responses for native
+// V2 and the Compact bridge for other body triggers. It returns the normalized
+// body; false means an error response was written and the caller must stop.
+// Callers supply a request-bearing context and logger. Existing Compact paths
+// use the unary codec, while body promotion is limited to bare Responses paths.
+//
+// Trigger ordering is normalized before deciding native V2; an ordering error
+// is logged and leaves the body available for the remaining decision. Legacy
+// promotion changes the path and saves session and streaming intent before
+// fields are removed. A later codec failure can therefore leave those markers
+// already installed, but writes a bad-request response and returns false so
+// the caller never forwards that incomplete preparation.
 func (h *OpenAITextHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := IsOpenAIResponsesCompactPath(c)
 	if !isCompactRequest && IsBareOpenAIResponsesPath(c) && protocolopenai.HasCompactionTriggerInInput(body) {
 		if normalized, changed, err := protocolopenai.NormalizeCompactionTriggerInputOrder(body); err != nil {
+			// Trigger ordering is a compatibility preparation step. Keep the captured
+			// body on failure so native recognition or Compact validation can still handle its input.
 			reqLog.Warn("codex.remote_compact.trigger_order_normalization_failed", zap.Error(err))
 		} else if changed {
 			body = normalized
 		}
 		if IsOpenAIRemoteCompactionV2Request(body) {
-			// Save v2 negotiation state for outbound header construction.
+			// Native V2 stays on Responses and needs its outbound beta feature.
+			// Record negotiation here before ordinary forwarding builds the upstream headers.
 			MarkOpenAINativeCompactionV2(c)
 			return body, true
 		}
+		// Legacy promotion chooses the unary endpoint while retaining client stream
+		// intent separately, allowing output to bridge the result after stream is removed from input.
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
 		isCompactRequest = true
 		clientStream := gjson.GetBytes(body, "stream").Bool()
@@ -92,6 +143,8 @@ func (h *OpenAITextHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Contex
 		return body, true
 	}
 	if compactSeed := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); compactSeed != "" {
+		// The unary codec removes prompt_cache_key. Save its session seed first
+		// so later upstream request construction can still select this client-supplied identity.
 		c.Set(OpenAICompactSessionSeedKey, compactSeed)
 	}
 	normalizedCompactBody, normalizedCompact, compactErr := openaierrors.NormalizeOpenAICompactRequestBody(body)
@@ -105,6 +158,15 @@ func (h *OpenAITextHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Contex
 	return body, true
 }
 
+// LogRemoteCompactOutcome reports legacy Compact status and request observations.
+// Non-Compact paths are skipped. startedAt anchors nonnegative elapsed
+// milliseconds, and available request, model, provider, and upstream-ID values
+// are included in the structured event.
+//
+// A 2xx status initially counts as success, but a recorded Ops stream error
+// changes the outcome to failed. This accounts for heartbeats committing HTTP
+// 200 before a terminal error is emitted. Success logs at info and failure
+// at warn, so consumers use compact_outcome together with the retained HTTP status.
 func (h *OpenAITextHandler) LogRemoteCompactOutcome(c *gin.Context, startedAt time.Time) {
 	if !IsOpenAIResponsesCompactPath(c) {
 		return
@@ -131,12 +193,14 @@ func (h *OpenAITextHandler) LogRemoteCompactOutcome(c *gin.Context, startedAt ti
 	if status >= 200 && status < 300 {
 		outcome = "succeeded"
 	}
-	// After a heartbeat commits HTTP 200, MarkOpsStreamError records the failure represented by response.failed.
+	// Heartbeats can commit HTTP 200 before an upstream failure. Consult the
+	// recorded stream error so that committed status cannot turn this diagnostic into success.
 	if outcome == "succeeded" && c != nil {
 		if _, hasStreamErr := GetOpsStreamError(c); hasStreamErr {
 			outcome = "failed"
 		}
 	}
+	// Clamp elapsed milliseconds when the supplied start lies in the future.
 	latencyMs := max(time.Since(startedAt).Milliseconds(), 0)
 
 	fields := []zap.Field{

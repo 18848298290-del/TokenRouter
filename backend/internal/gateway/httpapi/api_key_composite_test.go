@@ -11,7 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// TestSystemOneCompositeErrorUsesDecisionEndpoint checks endpoint matching and machine-readable prefix errors.
+// SystemOne composite-prefix failures use the decision endpoint's model error
+// envelope, including its machine-readable code. Endpoint matching accepts a
+// trailing slash while keeping unrelated SystemOne-like paths out of that response choice.
+
+// TestSystemOneCompositeErrorUsesDecisionEndpoint exercises the decision path
+// with and without a trailing slash. Both requests must abort with a model
+// parameter error and the composite-prefix-required code, while other paths
+// retain their own endpoint classification.
 func TestSystemOneCompositeErrorUsesDecisionEndpoint(t *testing.T) {
 	for _, path := range []string{EndpointSystemOne, EndpointSystemOne + "/"} {
 		require.True(t, IsSystemOneEndpoint(path))

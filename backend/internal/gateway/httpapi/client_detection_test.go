@@ -11,6 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// Client-format recognition applies a lightweight User-Agent path to model
+// reads and stricter payload checks to ordinary Messages. These fixtures supply
+// the required headers and body evidence, and verify that already parsed fields
+// take precedence over unusable raw JSON.
+
+// newClientContextFixture returns a Gin request context and its response recorder.
 func newClientContextFixture(method, path string) (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -18,6 +24,7 @@ func newClientContextFixture(method, path string) (*gin.Context, *httptest.Respo
 	return c, rec
 }
 
+// validClaudeCodeBodyJSON supplies the identity prompt and metadata used by strict validation.
 func validClaudeCodeBodyJSON() []byte {
 	return []byte(`{
 		"model":"claude-3-5-sonnet-20241022",
@@ -26,6 +33,9 @@ func validClaudeCodeBodyJSON() []byte {
 	}`)
 }
 
+// TestSetClaudeCodeClientContext_FastPathAndStrictPath compares model reads with
+// ordinary Messages under CLI and non-CLI headers. Recognition must accept the
+// lightweight model path, require valid Messages evidence, and reject unrelated User-Agents.
 func TestSetClaudeCodeClientContext_FastPathAndStrictPath(t *testing.T) {
 	t.Run("non_cli_user_agent_sets_false", func(t *testing.T) {
 		c, _ := newClientContextFixture(http.MethodPost, "/v1/messages")
@@ -60,6 +70,9 @@ func TestSetClaudeCodeClientContext_FastPathAndStrictPath(t *testing.T) {
 	})
 }
 
+// TestSetClaudeCodeClientContext_ReuseParsedRequest supplies validated parsed fields
+// alongside invalid raw JSON. Recognition must succeed from the parsed request,
+// protecting callers that already decoded identity evidence from another body decode.
 func TestSetClaudeCodeClientContext_ReuseParsedRequest(t *testing.T) {
 	t.Run("reuse parsed request without body unmarshal", func(t *testing.T) {
 		c, _ := newClientContextFixture(http.MethodPost, "/v1/messages")
@@ -70,7 +83,8 @@ func TestSetClaudeCodeClientContext_ReuseParsedRequest(t *testing.T) {
 
 		parsedReq, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(validClaudeCodeBodyJSON()), "")
 		require.NoError(t, err)
-		// Invalid JSON proves detection reuses parsedReq instead of decoding the body again.
+		// Supply invalid raw JSON after a valid parse. Successful recognition then
+		// demonstrates that the supplied parsed fields take precedence over body decoding.
 		SetClaudeCodeClientContext(c, []byte(`{invalid`), parsedReq)
 		require.True(t, requeststate.IsClaudeCodeClient(c.Request.Context()))
 	})

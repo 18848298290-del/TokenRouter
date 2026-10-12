@@ -21,22 +21,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Client-group resolution changes the key, subscription, and route that later
+// HTTP phases consume. These scenarios check that text and extended-protocol
+// entries plan with the resolved group, keep the authenticated actor and forced
+// platform, and stop before execution when resolution fails.
+
+// clientFallbackExecutor records execution input after the handler finishes group resolution.
 type clientFallbackExecutor struct {
+	// request holds the value from the latest Execute call. Tests inspect its
+	// group and funding fields after the synchronous handler invocation has returned.
 	request execution.Request
-	calls   int
+	calls   int // execution invocation count
 }
 
+// clientFallbackFunding checks that funding admission receives the resolved target group.
 type clientFallbackFunding struct {
-	t            *testing.T
-	calls        int
+	t     *testing.T // current test assertions
+	calls int        // funding check count
+	// subscription is the expected selected object. CheckKey compares its pointer
+	// with the supplied subscription, including nil when the scenario uses balance funding.
 	subscription *billing.UserSubscription
 }
 
+// Execute records the supplied request value and counts one downstream execution.
+// It returns an empty successful result so each handler test can inspect group
+// and funding selection after admission without requiring an upstream exchange.
 func (e *clientFallbackExecutor) Execute(_ context.Context, in execution.Request, _ upstream.OutputSink) (execution.ExecutionResult, error) {
 	e.request, e.calls = in, e.calls+1
 	return execution.ExecutionResult{}, nil
 }
 
+// CheckKey verifies the target group and expected subscription before allowing admission.
+// Tests supply a key with GroupID and expect group 20; the counter proves
+// that the handler performs its final funding check after group resolution.
 func (f *clientFallbackFunding) CheckKey(_ context.Context, key *apikey.APIKey, sub *billing.UserSubscription, _ string, _ bool) error {
 	require.Equal(f.t, int64(20), *key.GroupID)
 	require.Same(f.t, f.subscription, sub)
@@ -44,12 +61,15 @@ func (f *clientFallbackFunding) CheckKey(_ context.Context, key *apikey.APIKey, 
 	return nil
 }
 
-// TestClientGroupFallbackPrecedesPoliciesAndExecution checks HTTP adapter ordering with stubbed authorization,
-// funding, and execution.
+// TestClientGroupFallbackPrecedesPoliciesAndExecution checks HTTP adapter
+// ordering with resolver, funding, and execution fixtures.
+// Each entry must plan and execute against the target group and selected
+// subscription, while the source key, authenticated actor, and forced-platform
+// setting remain available with their asserted identities.
 func TestClientGroupFallbackPrecedesPoliciesAndExecution(t *testing.T) {
 	cases := []struct {
-		name   string
-		source protocol.ProtocolID
+		name   string              // HTTP entry scenario
+		source protocol.ProtocolID // inbound client protocol
 	}{
 		{"messages", protocol.ProtocolAnthropicMessages},
 		{"responses", protocol.ProtocolOpenAIResponses},
@@ -136,6 +156,9 @@ func TestClientGroupFallbackPrecedesPoliciesAndExecution(t *testing.T) {
 	}
 }
 
+// TestClientGroupFallbackFailureKeepsOriginalRequestSnapshot supplies a funding
+// denial from the group resolver before planning. Each entry must return
+// forbidden, leave its source group in context, and avoid planning or executing a request.
 func TestClientGroupFallbackFailureKeepsOriginalRequestSnapshot(t *testing.T) {
 	for _, source := range []protocol.ProtocolID{protocol.ProtocolAnthropicMessages, protocol.ProtocolOpenAIResponses, protocol.ProtocolOpenAIChatCompletions} {
 		p, h, c, response, _ := newOpenAITextEntryProbe(t, `{"model":"client-model","messages":[],"input":"hi"}`)
@@ -162,8 +185,14 @@ func TestClientGroupFallbackFailureKeepsOriginalRequestSnapshot(t *testing.T) {
 	}
 }
 
+// TestRouteGuardClientFallbackCoversNonMessageProtocols resolves a restricted group
+// at shared route guards across media, live, WS, and auxiliary entries.
+// Each allowed case must invoke the resolver and expose the target effective key
+// after the guard returns successfully.
 func TestRouteGuardClientFallbackCoversNonMessageProtocols(t *testing.T) {
-	for _, spec := range []struct{ method, path string }{
+	for _, spec := range []struct {
+		method, path string // method: request verb; path: guarded endpoint
+	}{
 		{"POST", "/v1/images/batches"}, {"POST", "/v1/web_search"}, {"POST", "/v1/x_search"}, {"POST", "/v1/images/generations"}, {"POST", "/v1/videos"}, {"POST", "/v1/tts"}, {"GET", "/v1/realtime"}, {"GET", "/v1/responses"}, {"POST", "/v1/live"}, {"POST", "/v1/systemone"}, {"POST", "/v1/embeddings"}, {"POST", "/v1/alpha/search"}, {"POST", "/v1/responses/input_tokens"},
 	} {
 		t.Run(spec.method+spec.path, func(t *testing.T) {
@@ -206,6 +235,9 @@ func TestRouteGuardClientFallbackCoversNonMessageProtocols(t *testing.T) {
 	}
 }
 
+// TestCountTokensResolvesClientGroupBeforeFundingAndPlanning substitutes a target
+// group for an unrecognized Messages client at token counting. Funding and the
+// final route must use the target, while the supplied source key stays unchanged.
 func TestCountTokensResolvesClientGroupBeforeFundingAndPlanning(t *testing.T) {
 	sourceID, targetID := int64(10), int64(20)
 	source := &apikey.APIKey{ID: 7, GroupID: &sourceID, Group: &routing.Group{ID: sourceID, Status: "active", ClaudeCodeOnly: true, FallbackGroupID: &targetID}}
@@ -233,6 +265,9 @@ func TestCountTokensResolvesClientGroupBeforeFundingAndPlanning(t *testing.T) {
 	require.Equal(t, sourceID, *source.GroupID)
 }
 
+// TestClientGroupFallbackKeepsDetectedClaudeInOriginalGroup marks a Messages client
+// as recognized Claude Code. Resolution must return the same key and skip
+// the configured resolver because that client can use its existing restricted group.
 func TestClientGroupFallbackKeepsDetectedClaudeInOriginalGroup(t *testing.T) {
 	c, _ := prefaceContext("")
 	key := &apikey.APIKey{Group: &routing.Group{ID: 10, ClaudeCodeOnly: true}}
@@ -246,6 +281,9 @@ func TestClientGroupFallbackKeepsDetectedClaudeInOriginalGroup(t *testing.T) {
 	require.Same(t, key, resolved)
 }
 
+// TestRouteGuardClientFallbackRejectsBeforeHandler makes target authorization fail
+// at an image route guard. The guard must return false and abort with forbidden,
+// while its existing API-key view remains installed after the rejection.
 func TestRouteGuardClientFallbackRejectsBeforeHandler(t *testing.T) {
 	c, response := prefaceContext("")
 	c.Request.Method, c.Request.URL.Path = "POST", "/v1/images/generations"

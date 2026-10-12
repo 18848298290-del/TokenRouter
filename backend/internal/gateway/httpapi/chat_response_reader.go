@@ -12,6 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Responses upstream events can serve a Chat client that requests either JSON
+// or SSE output. Gateway output binds request-specific error and observation
+// callbacks to the upstream converter, then adds the selected billing model to
+// its usage result for completion processing.
+
+// ChatBuffered collects a Responses terminal event and writes converted Chat JSON.
+// The caller supplies a live response and request context and owns response-body
+// cleanup. Errors retain the upstream reader's classification; a nil upstream
+// result stays nil while successful results receive billingModel.
 func (p *OpenAIResponseOutput) ChatBuffered(
 	resp *http.Response,
 	c *gin.Context,
@@ -25,6 +34,10 @@ func (p *OpenAIResponseOutput) ChatBuffered(
 	return gatewayprovider.ChatForwardResult(result, billingModel), err
 }
 
+// ChatStreaming writes Responses events as Chat SSE and returns observed usage.
+// requestBodyLen informs silent-refusal detection, while startTime anchors timing
+// measurements. The caller owns response-body cleanup and considers any returned
+// partial result alongside the error before deciding whether another attempt is safe.
 func (p *OpenAIResponseOutput) ChatStreaming(
 	resp *http.Response,
 	c *gin.Context,

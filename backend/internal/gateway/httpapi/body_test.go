@@ -11,8 +11,16 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Raw control bytes expand when represented as JSON escapes, so a body that
+// fits its input limit can exceed the normalized limit. These cases also keep
+// compatibility repair distinct from structural JSON validation by endpoint handlers.
+
+// TestReadLenientJSONRequestBodyWithPreallocUsesGatewayLimit supplies raw control
+// bytes whose escaping exceeds the configured normalized size. Reading must
+// return MaxBytesError carrying that gateway limit rather than accepting the smaller input size.
 func TestReadLenientJSONRequestBodyWithPreallocUsesGatewayLimit(t *testing.T) {
 	body := []byte("{\"input\":\"\x00\x00\"}")
+	// Permit one escape's growth so the second exceeds the normalized limit.
 	limit := int64(len(body) + 5)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 
@@ -23,13 +31,19 @@ func TestReadLenientJSONRequestBodyWithPreallocUsesGatewayLimit(t *testing.T) {
 	require.Equal(t, limit, maxErr.Limit)
 }
 
+// TestNormalizeLenientJSONRequestBodyAcceptsClientControlCharsInStrings supplies
+// null, ANSI escape, and leading BOM fixtures rejected by strict parsing.
+// Normalization must produce valid JSON and retain the decoded string values
+// with the expected escaped representation.
 func TestNormalizeLenientJSONRequestBodyAcceptsClientControlCharsInStrings(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    []byte
-		path    string
-		want    string
-		wantRaw string
+		name string // repair scenario label
+		body []byte // client JSON bytes
+		path string // decoded value path
+		// want and wantRaw describe the same string after normalization. The
+		// decoded value retains control bytes while the raw JSON spelling contains their escapes.
+		want    string // decoded string value
+		wantRaw string // escaped JSON spelling
 	}{
 		{
 			name:    "null byte in message content",
@@ -70,10 +84,13 @@ func TestNormalizeLenientJSONRequestBodyAcceptsClientControlCharsInStrings(t *te
 	}
 }
 
+// TestNormalizeLenientJSONRequestBodyKeepsInvalidStructureInvalid supplies truncated
+// JSON and a control byte outside a string. Normalization can succeed as a
+// byte transformation, but both outputs must still fail structural JSON validation.
 func TestNormalizeLenientJSONRequestBodyKeepsInvalidStructureInvalid(t *testing.T) {
 	tests := []struct {
-		name string
-		body []byte
+		name string // invalid structure label
+		body []byte // malformed client bytes
 	}{
 		{
 			name: "truncated JSON",
@@ -95,6 +112,9 @@ func TestNormalizeLenientJSONRequestBodyKeepsInvalidStructureInvalid(t *testing.
 	}
 }
 
+// TestReadLenientJSONRequestBodyWithPreallocAcceptsClientControlChars reads a Chat
+// request containing a raw null byte in message content. The adapter must
+// return strict-parser-compatible JSON whose decoded content still contains that byte.
 func TestReadLenientJSONRequestBodyWithPreallocAcceptsClientControlChars(t *testing.T) {
 	body := []byte("{\"model\":\"gpt-5.5\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\x00world\"}]}")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
@@ -106,6 +126,9 @@ func TestReadLenientJSONRequestBodyWithPreallocAcceptsClientControlChars(t *test
 	require.Equal(t, "hello\x00world", gjson.GetBytes(got, "messages.0.content").String())
 }
 
+// TestNormalizeLenientJSONRequestBodyEnforcesLimit compares exact-size acceptance
+// with oversized input and normalization expansion. Both rejected paths must
+// expose MaxBytesError with the configured limit so HTTP handlers report consistent size failures.
 func TestNormalizeLenientJSONRequestBodyEnforcesLimit(t *testing.T) {
 	t.Run("unchanged body at exact limit", func(t *testing.T) {
 		body := []byte(`{"input":"hello"}`)
@@ -117,6 +140,7 @@ func TestNormalizeLenientJSONRequestBodyEnforcesLimit(t *testing.T) {
 
 	t.Run("raw body past limit", func(t *testing.T) {
 		body := []byte(`{"input":"hello"}`)
+		// Place the valid input one byte past its limit.
 		limit := int64(len(body) - 1)
 
 		_, err := NormalizeLenientJSONRequestBody(body, limit)
@@ -127,6 +151,7 @@ func TestNormalizeLenientJSONRequestBodyEnforcesLimit(t *testing.T) {
 
 	t.Run("normalization expansion past limit", func(t *testing.T) {
 		body := []byte("{\"input\":\"\x00\x00\"}")
+		// Permit one escape's growth so the second exceeds the normalized limit.
 		limit := int64(len(body) + 5)
 
 		_, err := NormalizeLenientJSONRequestBody(body, limit)

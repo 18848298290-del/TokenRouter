@@ -13,6 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Fingerprint state can outlive a failed attempt in Gin context, so applying it
+// requires both current staging and matching provider ownership. These cases
+// clear staged IDs on an off-mode attempt and reject another provider's IDs
+// before outbound headers or body metadata change.
+
+// newTestOAuthProvider creates an OpenAI OAuth record for fingerprint scenarios.
+// Seed-requiring modes receive the test seed when absent. A supplied extra map
+// is reused and can gain that entry, so fixtures retain any preexisting seed.
 func newTestOAuthProvider(id int64, extra map[string]any) *providercore.Record {
 	if providercore.CodexFingerprintModeRequiresSeed(providercore.CodexFingerprintModeFromExtra(extra)) {
 		if extra == nil {
@@ -30,13 +38,18 @@ func newTestOAuthProvider(id int64, extra map[string]any) *providercore.Record {
 	}
 }
 
+// TestStageCodexFingerprintIDs_NilOverwritesPreviousProvider stages IDs and then
+// clears them for an off-mode attempt. Header application must keep the new
+// session unchanged and omit the previous provider's installation ID.
 func TestStageCodexFingerprintIDs_NilOverwritesPreviousProvider(t *testing.T) {
 	c := newFingerprintStageTestContext(t)
 	providerA := newTestOAuthProvider(1001, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
 	idsA := provideradapter.CodexFingerprintIDs(providerA, "sess-x", providercore.CodexFingerprintSession)
 	require.NotNil(t, idsA)
 	StageCodexFingerprintIDs(c, idsA)
-	StageCodexFingerprintIDs( // Failover to an off-mode provider clears IDs from the previous provider.
+	// Clear the previous attempt's IDs so off-mode header output uses the newly
+	// selected provider's session alone when the request moves to the next record.
+	StageCodexFingerprintIDs(
 		c, nil)
 
 	h := http.Header{}
@@ -47,6 +60,9 @@ func TestStageCodexFingerprintIDs_NilOverwritesPreviousProvider(t *testing.T) {
 	assert.Empty(t, h.Get("x-codex-installation-id"))
 }
 
+// TestApplyStagedCodexFingerprintRejectsDifferentOAuthProvider retains staged IDs
+// while selecting an unrelated OAuth record. Both header and body application
+// must leave that record's session unchanged and report no body rewrite.
 func TestApplyStagedCodexFingerprintRejectsDifferentOAuthProvider(t *testing.T) {
 	c := newFingerprintStageTestContext(t)
 	providerA := newTestOAuthProvider(1003, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
@@ -68,6 +84,9 @@ func TestApplyStagedCodexFingerprintRejectsDifferentOAuthProvider(t *testing.T) 
 	assert.Equal(t, "provider-b-session", clientMetadata["session_id"])
 }
 
+// TestApplyStagedCodexFingerprintHeaders_SkipsNonOAuthProvider selects an OpenAI
+// API-key record after staging OAuth IDs. Header application must omit the
+// staged installation ID because this record fails Codex protocol eligibility.
 func TestApplyStagedCodexFingerprintHeaders_SkipsNonOAuthProvider(t *testing.T) {
 	c := newFingerprintStageTestContext(t)
 	oauthIDs := provideradapter.CodexFingerprintIDs(newTestOAuthProvider(1003, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"}), "sess-y", providercore.CodexFingerprintSession)

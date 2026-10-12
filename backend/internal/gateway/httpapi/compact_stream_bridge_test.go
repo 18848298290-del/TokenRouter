@@ -15,12 +15,20 @@ import (
 	httpapitestkit "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/testkit"
 )
 
-// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents checks that committed streams append success
-// events.
+// Unary Compact output becomes ordered Responses events for marked streaming
+// clients. These cases check successful item and terminal framing, failure after
+// heartbeat commitment, generated IDs, malformed usage removal, and the failed
+// response object's timestamp and status fields.
+
+// TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents waits for
+// comments before a successful Compact result. After stripping comments, output
+// must contain one item event and the completed response with its upstream ID.
 func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
 	defer stop()
+	// Allow comment framing before the result arrives. The bridge must stop
+	// the controller before appending item and terminal events to that existing stream.
 	waitForKeepaliveBeats()
 
 	finalResponse := []byte(`{"id":"resp_ka_1","output":[{"id":"cmp_ka","type":"compaction","encrypted_content":"x"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
@@ -37,10 +45,14 @@ func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents(t *testin
 
 // TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent checks response.failed and Ops
 // observation after HTTP 200.
+// The terminal object must include a failure message and generated ID, while
+// the saved Ops error retains the intended bad-gateway status for monitoring.
 func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
 	defer stop()
+	// Let heartbeat setup choose the stream first, so failure must be observed
+	// through an appended terminal event while Ops retains the intended error status.
 	waitForKeepaliveBeats()
 
 	require.True(t, WriteOpenAICompactSSEBridge(c, http.StatusBadGateway, []byte(`{"error":{"message":"upstream exploded"}}`), MarkOpsStreamError))
@@ -59,8 +71,12 @@ func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitFailureEmitsFailedEvent
 
 // TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath checks that uncommitted failures leave
 // JSON output to the caller.
+// A bad-gateway result must return false with an empty recorder after the
+// controller stops before its first beat, leaving response construction unclaimed.
 func TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
+	// Delay the first heartbeat and stop immediately so the bridge receives
+	// an uncommitted writer and must leave the bad-gateway result for ordinary HTTP handling.
 	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
 	stop()
 
@@ -68,6 +84,10 @@ func TestWriteOpenAICompactSSEBridge_BeforeKeepaliveCommitFailureKeepsJSONPath(t
 	require.Zero(t, rec.Body.Len())
 }
 
+// TestBuildOpenAICompactSSEPayload_EmitsItemsAndCompleted converts a response with
+// compaction and message output. Item events must retain their asserted fields
+// and indexes, followed by a completed event carrying the response ID, usage,
+// and both output objects.
 func TestBuildOpenAICompactSSEPayload_EmitsItemsAndCompleted(t *testing.T) {
 	finalResponse := []byte(`{
 		"id":"resp_compact_1",
@@ -109,6 +129,9 @@ func TestBuildOpenAICompactSSEPayload_EmitsItemsAndCompleted(t *testing.T) {
 	require.Len(t, gjson.Get(completed, "response.output").Array(), 2)
 }
 
+// TestBuildOpenAICompactSSEPayload_InjectsMissingResponseID supplies output with no
+// response ID. Conversion must emit item and completed events, with the
+// completed response carrying a nonempty generated identifier after the resp_ prefix.
 func TestBuildOpenAICompactSSEPayload_InjectsMissingResponseID(t *testing.T) {
 	payload, ok := BuildOpenAICompactSSEPayload([]byte(`{"output":[{"type":"compaction","encrypted_content":"x"}]}`))
 	require.True(t, ok)
@@ -116,12 +139,16 @@ func TestBuildOpenAICompactSSEPayload_InjectsMissingResponseID(t *testing.T) {
 	events := httpapitestkit.ParseCompactSSE(t, string(payload))
 	require.Len(t, events, 2)
 	completed := events[1][1]
-	// A generated nonempty response.id lets Codex parse ResponseCompleted.
+	// Checking the prefix alone could accept an empty generated ID. Require a
+	// nonempty suffix for the completed response before accepting its identifier.
 	id := gjson.Get(completed, "response.id").String()
 	require.True(t, strings.HasPrefix(id, "resp_"), "缺失 id 必须注入 resp_* 兜底: %q", id)
 	require.NotEqual(t, "resp_", id)
 }
 
+// TestBuildOpenAICompactSSEPayload_ReplacesNonStringResponseID supplies a numeric
+// response ID in otherwise usable output. Conversion must replace that value
+// with a string carrying the Responses prefix in the completed event.
 func TestBuildOpenAICompactSSEPayload_ReplacesNonStringResponseID(t *testing.T) {
 	payload, ok := BuildOpenAICompactSSEPayload([]byte(`{"id":123,"output":[{"type":"compaction","encrypted_content":"x"}]}`))
 	require.True(t, ok)
@@ -132,6 +159,9 @@ func TestBuildOpenAICompactSSEPayload_ReplacesNonStringResponseID(t *testing.T) 
 	require.True(t, strings.HasPrefix(id.String(), "resp_"))
 }
 
+// TestBuildOpenAICompactSSEPayload_DropsMalformedUsage varies incomplete counts,
+// fractions, negatives, exponent notation, and string values. Conversion must
+// still complete successfully while omitting those unusable usage objects from the terminal response.
 func TestBuildOpenAICompactSSEPayload_DropsMalformedUsage(t *testing.T) {
 	for name, usage := range map[string]string{
 		"缺少字段": `{"prompt_tokens":9,"completion_tokens":4}`,
@@ -147,12 +177,16 @@ func TestBuildOpenAICompactSSEPayload_DropsMalformedUsage(t *testing.T) {
 
 			events := httpapitestkit.ParseCompactSSE(t, string(payload))
 			completed := events[len(events)-1][1]
-			// Remove usage that cannot decode into integer token fields, allowing the completed event to parse.
+			// Keep the terminal response available when its usage violates unsigned
+			// token-count spelling; the converter removes that object before the event is emitted.
 			require.False(t, gjson.Get(completed, "response.usage").Exists())
 		})
 	}
 }
 
+// TestBuildOpenAICompactSSEPayload_KeepsWellFormedUsage supplies unsigned token
+// counts with nested cached-token details. The completed response must keep
+// its asserted input and cached counts after unary-to-stream conversion.
 func TestBuildOpenAICompactSSEPayload_KeepsWellFormedUsage(t *testing.T) {
 	payload, ok := BuildOpenAICompactSSEPayload([]byte(`{
 		"id":"resp_1",
@@ -167,6 +201,9 @@ func TestBuildOpenAICompactSSEPayload_KeepsWellFormedUsage(t *testing.T) {
 	require.Equal(t, int64(2), gjson.Get(completed, "response.usage.input_tokens_details.cached_tokens").Int())
 }
 
+// TestBuildOpenAICompactSSEPayload_RejectsNonJSONObject supplies empty, SSE, array,
+// text, and boolean bodies. None may be claimed as a Compact JSON object,
+// so conversion must return false for each supplied representation.
 func TestBuildOpenAICompactSSEPayload_RejectsNonJSONObject(t *testing.T) {
 	for name, body := range map[string][]byte{
 		"empty":     nil,
@@ -180,20 +217,26 @@ func TestBuildOpenAICompactSSEPayload_RejectsNonJSONObject(t *testing.T) {
 	}
 }
 
+// TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus compares unmarked
+// output, a marked uncommitted error, and marked success. The first two
+// cases must remain unclaimed with no bytes, while success selects SSE and emits completion.
 func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) {
 	finalResponse := []byte(`{"id":"resp_1","output":[{"type":"compaction","encrypted_content":"x"}]}`)
 
-	// Unmarked clients keep JSON output.
+	// An unmarked client has not delegated output to this bridge. Returning
+	// false and writing no bytes lets the caller continue its own response construction.
 	c, rec := newCompactBridgeTestContext(t, false)
 	require.False(t, WriteOpenAICompactSSEBridge(c, http.StatusOK, finalResponse, MarkOpsStreamError))
 	require.Zero(t, rec.Body.Len())
 
-	// Before commitment, non-2xx responses keep HTTP status handling for client retry decisions.
+	// Keep the writer uncommitted for a non-2xx result. The bridge must leave
+	// output unclaimed so the caller can select the corresponding HTTP error status.
 	c, rec = newCompactBridgeTestContext(t, true)
 	require.False(t, WriteOpenAICompactSSEBridge(c, http.StatusBadGateway, finalResponse, MarkOpsStreamError))
 	require.Zero(t, rec.Body.Len())
 
-	// A marked 2xx response is converted to SSE.
+	// A marked 2xx object permits bridge takeover. Its completion event and SSE
+	// header identify the selected client framing after the earlier unclaimed cases.
 	c, rec = newCompactBridgeTestContext(t, true)
 	require.True(t, WriteOpenAICompactSSEBridge(c, http.StatusOK, finalResponse, MarkOpsStreamError))
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -201,9 +244,9 @@ func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) 
 	require.Contains(t, rec.Body.String(), "event: response.completed")
 }
 
-// TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt checks the required timestamp in failure events (#5601).
-// Strict Responses clients reject a missing created_at field and cannot recognize the terminal event.
-// An unrecognized terminal event can cause a stream-closed retry.
+// TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt decodes the generated
+// failure event into its expected response shape. The event and response
+// kinds must identify failure, and created_at must contain a positive Unix timestamp.
 func TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -217,13 +260,13 @@ func TestWriteOpenAICompactSSEFailureMessage_CarriesCreatedAt(t *testing.T) {
 	require.True(t, found, "SSE 帧必须带 data 行: %q", body)
 
 	var event struct {
-		Type     string `json:"type"`
+		Type     string `json:"type"` // terminal event kind
 		Response struct {
-			ID        string `json:"id"`
-			Object    string `json:"object"`
-			CreatedAt int64  `json:"created_at"`
-			Status    string `json:"status"`
-		} `json:"response"`
+			ID        string `json:"id"`         // generated response identifier
+			Object    string `json:"object"`     // expected response kind
+			CreatedAt int64  `json:"created_at"` // Unix seconds
+			Status    string `json:"status"`     // terminal failed status
+		} `json:"response"` // decoded terminal response
 	}
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(payload)), &event))
 

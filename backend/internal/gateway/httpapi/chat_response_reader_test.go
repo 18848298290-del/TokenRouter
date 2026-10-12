@@ -22,8 +22,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-type openAICompatBufferedReadErrorCloser struct{ err error }
+// Chat conversion can fail while reading a Responses stream before output or
+// after partial output has committed the client response. These cases distinguish
+// replayable buffered transport failures from committed streams, cancellation,
+// and scanner-limit failures that retain their own error behavior.
 
+// openAICompatBufferedReadErrorCloser fails a buffered read before returning any payload.
+type openAICompatBufferedReadErrorCloser struct {
+	err error // configured terminal read failure
+}
+
+// TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt supplies
+// reasoning-summary output without ordinary text at the silent-refusal threshold.
+// Conversion must emit reasoning_content and the completion sentinel instead of
+// classifying the response as a silent refusal.
 func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -60,6 +72,9 @@ func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *test
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError interrupts the upstream
+// stream after text output. Conversion must return a nonnil result with committed
+// output and an HTTP/2 error whose message omits peer-specific stream details.
 func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -99,15 +114,22 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	require.NotContains(t, message, "INTERNAL_ERROR")
 }
 
+// Read returns zero bytes and the configured terminal transport failure.
+// Buffered conversion encounters this error before it can obtain a terminal
+// Responses event, letting the test inspect replay classification with untouched client output.
 func (r *openAICompatBufferedReadErrorCloser) Read([]byte) (int, error) { return 0, r.err }
 
+// Close reports successful cleanup for this resource-free buffered-read fixture.
 func (r *openAICompatBufferedReadErrorCloser) Close() error { return nil }
 
+// TestChatCompletionsBufferedResponsesReadErrorReturnsFailover fails buffered
+// reading with unexpected EOF or an HTTP/2 reset. Both failures must produce
+// a gateway failover error retaining the upstream request ID, with client output uncommitted.
 func TestChatCompletionsBufferedResponsesReadErrorReturnsFailover(t *testing.T) {
 	readErrors := []struct {
-		name string
-		err  error
-		code string
+		name string // read failure label
+		err  error  // simulated transport failure
+		code string // expected classified error code
 	}{
 		{name: "unexpected_eof", err: io.ErrUnexpectedEOF, code: openai.OpenAIUpstreamStreamReadErrorCode},
 		{name: "http2_reset", err: errors.New("stream error: stream ID 7; INTERNAL_ERROR; received from peer"), code: openai.OpenAIUpstreamHTTP2StreamErrorCode},
@@ -139,10 +161,15 @@ func TestChatCompletionsBufferedResponsesReadErrorReturnsFailover(t *testing.T) 
 	}
 }
 
+// TestChatCompletionsBufferedResponsesReadErrorDoesNotFailoverAfterClientCancel
+// presents a buffered read failure after request cancellation. The error must
+// remain terminal for that request and return no completion result or failover signal.
 func TestChatCompletionsBufferedResponsesReadErrorDoesNotFailoverAfterClientCancel(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	requestContext, cancel := context.WithCancel(context.Background())
+	// Cancel before reading so the same transport failure cannot authorize replay
+	// for a request whose caller has already ended its processing context.
 	cancel()
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(requestContext)
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &openAICompatBufferedReadErrorCloser{err: io.ErrUnexpectedEOF}}
@@ -156,6 +183,9 @@ func TestChatCompletionsBufferedResponsesReadErrorDoesNotFailoverAfterClientCanc
 	require.NotErrorAs(t, err, &failoverErr)
 }
 
+// TestChatCompletionsBufferedResponsesOversizedLineDoesNotFailover supplies the
+// scanner's oversized-line error to buffered conversion. The original error must
+// stay discoverable, and the result must remain nil without a provider failover signal.
 func TestChatCompletionsBufferedResponsesOversizedLineDoesNotFailover(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
