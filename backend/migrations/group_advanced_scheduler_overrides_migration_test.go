@@ -7,7 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupAdvancedSchedulerOverridesMigration checks override defaults, JSON type, and constraints.
+// TestGroupAdvancedSchedulerOverridesMigration inspects sparse scheduler override SQL.
+// It requires a non-null empty-object default, a groups-scoped JSON object
+// constraint, and the column description identifying sparse per-group overrides.
 func TestGroupAdvancedSchedulerOverridesMigration(t *testing.T) {
 	content, err := FS.ReadFile("239_add_group_advanced_scheduler_overrides.sql")
 	require.NoError(t, err)

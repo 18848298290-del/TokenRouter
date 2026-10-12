@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAPIKeyModelMappingMigration inspects the embedded model-mapping migration.
+// It requires an empty JSONB default, cleanup of NULL mappings, and the
+// not-null constraint needed for existing and newly created key records.
 func TestAPIKeyModelMappingMigration(t *testing.T) {
 	content, err := FS.ReadFile("231_add_api_key_model_mapping.sql")
 	require.NoError(t, err)

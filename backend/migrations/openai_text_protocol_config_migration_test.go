@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpenAITextProtocolConfigMigration checks targeted providers, replacement fields, and removal of legacy
-// keys.
+// TestOpenAITextProtocolConfigMigration inspects the OpenAI API-key configuration
+// conversion SQL. It requires provider targeting, replacement workload and text
+// route fields, removal of legacy capability keys, and temporary-function cleanup.
 func TestOpenAITextProtocolConfigMigration(t *testing.T) {
 	sqlBytes, err := FS.ReadFile("247_migrate_openai_text_protocol_config.sql")
 	require.NoError(t, err)

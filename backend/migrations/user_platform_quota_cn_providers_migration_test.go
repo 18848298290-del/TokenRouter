@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUserPlatformQuotasCNProvidersMigration checks that migration 248 adds kimi,
-// zhipu, and deepseek to the user_platform_quotas.platform CHECK constraint.
-// Rejecting these platforms would abort inserts that seed their default quotas
-// and updates that configure their limits.
+// TestUserPlatformQuotasCNProvidersMigration inspects the platform quota constraint
+// update. It requires dropping the previous constraint and the complete accepted
+// platform list including Kimi, Zhipu, and DeepSeek, protecting the SQL used for
+// their quota configuration.
 func TestUserPlatformQuotasCNProvidersMigration(t *testing.T) {
 	content, err := FS.ReadFile("248_allow_cn_user_platform_quotas.sql")
 	require.NoError(t, err)

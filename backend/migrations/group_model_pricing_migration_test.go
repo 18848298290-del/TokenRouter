@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMigration246AddsGroupModelPricingWithLongContextEnabled inspects group pricing
+// schema and backfill SQL. It requires JSONB pricing, a true long-context
+// default, and an update covering existing values distinct from true.
 func TestMigration246AddsGroupModelPricingWithLongContextEnabled(t *testing.T) {
 	content, err := FS.ReadFile("246_group_model_pricing.sql")
 	require.NoError(t, err)

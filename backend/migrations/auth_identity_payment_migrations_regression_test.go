@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMigration112UsesIdempotentAddColumn inspects the payment provider-key snapshot
+// addition. It requires ADD COLUMN IF NOT EXISTS and rejects the unguarded
+// variant, protecting repeat execution of that migration statement.
 func TestMigration112UsesIdempotentAddColumn(t *testing.T) {
 	content, err := FS.ReadFile("112_add_payment_order_provider_key_snapshot.sql")
 	require.NoError(t, err)
@@ -16,6 +19,9 @@ func TestMigration112UsesIdempotentAddColumn(t *testing.T) {
 	require.NotContains(t, sql, "ADD COLUMN provider_key VARCHAR(30);")
 }
 
+// TestMigration118DoesNotForceOverwriteAuthSourceGrantDefaults inspects default-setting
+// seed SQL. It rejects setting updates and forced false assignments, while
+// requiring conflict-ignore insertion and the empty-value branch in the migration.
 func TestMigration118DoesNotForceOverwriteAuthSourceGrantDefaults(t *testing.T) {
 	content, err := FS.ReadFile("118_wechat_dual_mode_and_auth_source_defaults.sql")
 	require.NoError(t, err)
@@ -27,6 +33,10 @@ func TestMigration118DoesNotForceOverwriteAuthSourceGrantDefaults(t *testing.T) 
 	require.Contains(t, sql, "THEN ''")
 }
 
+// TestAuthIdentityReportTypeWideningRunsBeforeLongReportWritersAndStillReconcilesAt121
+// inspects the preflight, compatibility backfill, and later report migrations.
+// It requires VARCHAR(80) widening in both widening scripts and rejects that
+// table change inside the intervening report-writing migration.
 func TestAuthIdentityReportTypeWideningRunsBeforeLongReportWritersAndStillReconcilesAt121(t *testing.T) {
 	preflightContent, err := FS.ReadFile("108a_widen_auth_identity_migration_report_type.sql")
 	require.NoError(t, err)
@@ -49,6 +59,10 @@ func TestAuthIdentityReportTypeWideningRunsBeforeLongReportWritersAndStillReconc
 	require.Contains(t, followupSQL, "ALTER COLUMN report_type TYPE VARCHAR(80)")
 }
 
+// TestMigration119DefersPaymentIndexRolloutToOnlineFollowup inspects the payment
+// order-number index rollout sequence. It requires a deferred initial migration,
+// the concurrent follow-up's precheck and index fragments, retention of its
+// unique index, old-index removal, and the later index-name alignment.
 func TestMigration119DefersPaymentIndexRolloutToOnlineFollowup(t *testing.T) {
 	content, err := FS.ReadFile("119_enforce_payment_orders_out_trade_no_unique.sql")
 	require.NoError(t, err)
@@ -78,6 +92,9 @@ func TestMigration119DefersPaymentIndexRolloutToOnlineFollowup(t *testing.T) {
 	require.Contains(t, alignmentSQL, "RENAME TO paymentorder_out_trade_no")
 }
 
+// TestMigration110SeedsAuthSourceSignupGrantsDisabledByDefault inspects signup grant
+// seeds for email, LinuxDo, OIDC, and WeChat. It requires false defaults for
+// those sources and rejects a true default for the email grant.
 func TestMigration110SeedsAuthSourceSignupGrantsDisabledByDefault(t *testing.T) {
 	content, err := FS.ReadFile("110_pending_auth_and_provider_default_grants.sql")
 	require.NoError(t, err)
@@ -90,6 +107,9 @@ func TestMigration110SeedsAuthSourceSignupGrantsDisabledByDefault(t *testing.T) 
 	require.NotContains(t, sql, "('auth_source_default_email_grant_on_signup', 'true')")
 }
 
+// TestMigration122ScrubsPendingOAuthCompletionTokensAtRest inspects pending-session
+// cleanup SQL. It requires the session update and completion-response access,
+// refresh, expiry, and token-type names used to remove stored completion credentials.
 func TestMigration122ScrubsPendingOAuthCompletionTokensAtRest(t *testing.T) {
 	content, err := FS.ReadFile("122_pending_auth_completion_token_cleanup.sql")
 	require.NoError(t, err)
@@ -103,6 +123,10 @@ func TestMigration122ScrubsPendingOAuthCompletionTokensAtRest(t *testing.T) {
 	require.Contains(t, sql, "token_type")
 }
 
+// TestMigration123BackfillsLegacyAuthSourceGrantDefaultsSafely inspects the corrective
+// signup-default SQL. It requires migration-history and timestamp references,
+// the grant-name suffix, a false-value condition, and the migration-report table
+// used by that historical repair.
 func TestMigration123BackfillsLegacyAuthSourceGrantDefaultsSafely(t *testing.T) {
 	content, err := FS.ReadFile("123_fix_legacy_auth_source_grant_on_signup_defaults.sql")
 	require.NoError(t, err)
@@ -116,6 +140,9 @@ func TestMigration123BackfillsLegacyAuthSourceGrantDefaultsSafely(t *testing.T) 
 	require.Contains(t, sql, "auth_identity_migration_reports")
 }
 
+// TestMigration134AllowsEmailOAuthProviderTypes inspects GitHub and Google identity
+// support SQL. It requires the five constraint names, both provider names,
+// redirect setting keys, and conflict-ignore insertion in the embedded migration.
 func TestMigration134AllowsEmailOAuthProviderTypes(t *testing.T) {
 	content, err := FS.ReadFile("134_allow_email_oauth_provider_types.sql")
 	require.NoError(t, err)
@@ -133,6 +160,10 @@ func TestMigration134AllowsEmailOAuthProviderTypes(t *testing.T) {
 	require.Contains(t, sql, "ON CONFLICT (key) DO NOTHING")
 }
 
+// TestMigration140ExtendsUserProviderDefaultGrantsProviderTypes inspects migration
+// 137's grant-provider extension. It requires GitHub, Google, and DingTalk in
+// the grant constraint text while rejecting changes to signup-source or
+// canonical-identity constraint names.
 func TestMigration140ExtendsUserProviderDefaultGrantsProviderTypes(t *testing.T) {
 	content, err := FS.ReadFile("137_extend_user_provider_default_grants_check.sql")
 	require.NoError(t, err)
@@ -146,6 +177,9 @@ func TestMigration140ExtendsUserProviderDefaultGrantsProviderTypes(t *testing.T)
 	require.NotContains(t, sql, "auth_identities_provider_type_check")
 }
 
+// TestMigration124BackfillsLegacyOIDCSecurityFlagsSafely inspects legacy OIDC flag
+// seed SQL. It requires PKCE and ID-token-validation settings, conflict-ignore
+// insertion, and references to enabled state and the false value used by the repair.
 func TestMigration124BackfillsLegacyOIDCSecurityFlagsSafely(t *testing.T) {
 	content, err := FS.ReadFile("124_backfill_legacy_oidc_security_flags.sql")
 	require.NoError(t, err)
@@ -158,6 +192,9 @@ func TestMigration124BackfillsLegacyOIDCSecurityFlagsSafely(t *testing.T) {
 	require.Contains(t, sql, "'false'")
 }
 
+// TestMigration129AddsImageGenerationGroupControls inspects the historical image
+// group-setting SQL. It requires guarded fields with disabled independent-rate
+// defaults, a unit multiplier, and the OpenAI/Gemini/Antigravity backfill platform list.
 func TestMigration129AddsImageGenerationGroupControls(t *testing.T) {
 	content, err := FS.ReadFile("129_image_generation_group_controls.sql")
 	require.NoError(t, err)
@@ -169,6 +206,9 @@ func TestMigration129AddsImageGenerationGroupControls(t *testing.T) {
 	require.Contains(t, sql, "WHERE platform IN ('openai', 'gemini', 'antigravity')")
 }
 
+// TestMigration163AddsAccountAutoPauseExpiryPartialIndex inspects the concurrent
+// expiry lookup index SQL. It requires the expiration key and a predicate
+// selecting undeleted, schedulable, auto-pausing accounts with a recorded expiry.
 func TestMigration163AddsAccountAutoPauseExpiryPartialIndex(t *testing.T) {
 	content, err := FS.ReadFile("163_account_autopause_expiry_index_notx.sql")
 	require.NoError(t, err)
@@ -182,6 +222,9 @@ func TestMigration163AddsAccountAutoPauseExpiryPartialIndex(t *testing.T) {
 	require.Contains(t, sql, "expires_at IS NOT NULL")
 }
 
+// TestMigration171AllowsGrokUserPlatformQuotas reads the historical quota platform
+// update. It requires replacing the platform check constraint and including
+// Grok in its SQL, protecting the declaration needed for Grok quota rows.
 func TestMigration171AllowsGrokUserPlatformQuotas(t *testing.T) {
 	content, err := FS.ReadFile("171_allow_grok_user_platform_quotas.sql")
 	require.NoError(t, err)
@@ -192,6 +235,9 @@ func TestMigration171AllowsGrokUserPlatformQuotas(t *testing.T) {
 	require.Contains(t, sql, "'grok'")
 }
 
+// TestMigration178BackfillsGrokMediaGenerationGroups inspects the Grok group backfill
+// SQL. It requires enabling image generation with both the Grok platform
+// condition and the predicate selecting groups where the flag is false.
 func TestMigration178BackfillsGrokMediaGenerationGroups(t *testing.T) {
 	content, err := FS.ReadFile("178_enable_grok_media_generation_groups.sql")
 	require.NoError(t, err)
@@ -203,6 +249,9 @@ func TestMigration178BackfillsGrokMediaGenerationGroups(t *testing.T) {
 	require.Contains(t, sql, "AND allow_image_generation = false")
 }
 
+// TestMigration179AllowsQoderUserPlatformQuotas inspects the quota platform constraint
+// replacement. It requires drop and add statements plus Qoder and Grok names,
+// protecting the accepted platform entries in that historical SQL.
 func TestMigration179AllowsQoderUserPlatformQuotas(t *testing.T) {
 	content, err := FS.ReadFile("179_allow_qoder_user_platform_quotas.sql")
 	require.NoError(t, err)
@@ -214,6 +263,9 @@ func TestMigration179AllowsQoderUserPlatformQuotas(t *testing.T) {
 	require.Contains(t, sql, "'grok'")
 }
 
+// TestMigration192AddsGrokVideoPricingControls inspects group video-rate fields.
+// It requires a disabled independent-rate default, a unit multiplier, and
+// separate decimal price declarations for 480p, 720p, and 1080p resolutions.
 func TestMigration192AddsGrokVideoPricingControls(t *testing.T) {
 	content, err := FS.ReadFile("192_add_grok_video_pricing_controls.sql")
 	require.NoError(t, err)
@@ -226,6 +278,9 @@ func TestMigration192AddsGrokVideoPricingControls(t *testing.T) {
 	require.Contains(t, sql, "video_price_1080p DECIMAL(20,8)")
 }
 
+// TestMigration193AllowsVideoUsageWithoutImageSize inspects the usage image-size
+// constraint replacement. It requires dropping the previous constraint, the
+// video-billing exception, and the retained four-value image-size list in the SQL.
 func TestMigration193AllowsVideoUsageWithoutImageSize(t *testing.T) {
 	content, err := FS.ReadFile("193_allow_video_usage_without_image_size.sql")
 	require.NoError(t, err)
@@ -236,6 +291,9 @@ func TestMigration193AllowsVideoUsageWithoutImageSize(t *testing.T) {
 	require.Contains(t, sql, "image_size IN ('1K', '2K', '4K', 'mixed')")
 }
 
+// TestMigration194AddsVideoPerSecondBillingMetadata inspects video usage and pricing
+// metadata SQL. It requires zero-default video count, resolution and duration
+// fields, the positive-count exception, and the USD-per-second price description.
 func TestMigration194AddsVideoPerSecondBillingMetadata(t *testing.T) {
 	content, err := FS.ReadFile("194_video_per_second_billing_metadata.sql")
 	require.NoError(t, err)
@@ -248,6 +306,10 @@ func TestMigration194AddsVideoPerSecondBillingMetadata(t *testing.T) {
 	require.Contains(t, sql, "每秒单价 (USD/s)")
 }
 
+// TestMigration175AddsSparkShadowColumnsAndConstraintsWithoutHotIndexes inspects the
+// shadow-provider foundation SQL. It requires parent and dimension fields,
+// non-global child dimensions, restrictive parent references, and deferred
+// validation, while rejecting index and concurrent-DDL text in this script.
 func TestMigration175AddsSparkShadowColumnsAndConstraintsWithoutHotIndexes(t *testing.T) {
 	content, err := FS.ReadFile("175_account_spark_shadow.sql")
 	require.NoError(t, err)
@@ -256,7 +318,8 @@ func TestMigration175AddsSparkShadowColumnsAndConstraintsWithoutHotIndexes(t *te
 	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS parent_account_id BIGINT")
 	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS quota_dimension VARCHAR(20) NOT NULL DEFAULT 'global'")
 	require.Contains(t, sql, "chk_accounts_parent_dimension")
-	// Shadow providers require a non-global dimension; the constraint accepts dimensions other than spark.
+	// The child constraint accepts dimensions beyond Spark when they are non-global.
+	// Require that broader condition and reject a predicate restricting every child to Spark.
 	require.Contains(t, sql, "parent_account_id IS NOT NULL AND quota_dimension <> 'global'")
 	require.NotContains(t, sql, "parent_account_id IS NOT NULL AND quota_dimension = 'spark'")
 	require.Contains(t, sql, "chk_accounts_parent_not_self")
@@ -269,6 +332,10 @@ func TestMigration175AddsSparkShadowColumnsAndConstraintsWithoutHotIndexes(t *te
 	require.NotContains(t, sql, "CONCURRENTLY")
 }
 
+// TestMigration176AddsSparkShadowIndexesConcurrently inspects the follow-up parent
+// lookup and Spark uniqueness indexes. It requires concurrent guarded creation
+// with non-null parent, Spark dimension, and active-row predicate fragments in
+// the embedded SQL.
 func TestMigration176AddsSparkShadowIndexesConcurrently(t *testing.T) {
 	content, err := FS.ReadFile("176_account_spark_shadow_indexes_notx.sql")
 	require.NoError(t, err)
@@ -282,6 +349,9 @@ func TestMigration176AddsSparkShadowIndexesConcurrently(t *testing.T) {
 	require.Contains(t, sql, "deleted_at IS NULL")
 }
 
+// TestMigration195AllowsCyberBlockedUsageRequestType inspects request-type expansion
+// and embedded file ordering. It requires migration 195 to follow 194 and
+// the replacement check accepting types zero through four with deferred validation.
 func TestMigration195AllowsCyberBlockedUsageRequestType(t *testing.T) {
 	entries, err := FS.ReadDir(".")
 	require.NoError(t, err)

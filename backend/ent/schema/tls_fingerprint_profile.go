@@ -10,30 +10,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// TLSFingerprintProfile defines a TLS ClientHello template.
-//
-// Profiles reproduce TLS handshake characteristics of clients such as Claude Code or Node.js.
-// Each profile configures cipher suites, curves, extensions, and other ClientHello parameters.
-// Providers select a profile through Extra.tls_fingerprint_profile_id.
+// A ClientHello template records the ordered TLS parameters used for an
+// outbound connection. Stored profiles let egress construct a fingerprint for
+// providers or router selections, using cipher suites, groups, and extensions
+// supplied by administrators.
+
+// TLSFingerprintProfile stores the configurable parameters of a TLS ClientHello.
 type TLSFingerprintProfile struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
-// Annotations sets the database table name.
+// Annotations maps profile queries and mutations to the tls_fingerprint_profiles table.
 func (TLSFingerprintProfile) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "tls_fingerprint_profiles"},
 	}
 }
 
-// Mixin supplies creation and update timestamps.
+// Mixin adds creation and update timestamps to stored TLS profiles.
 func (TLSFingerprintProfile) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
 	}
 }
 
-// Fields defines the TLS ClientHello parameters.
+// Fields describes a named TLS profile and its ClientHello parameter lists.
+// Lists use PostgreSQL JSONB columns and may be omitted; GREASE is disabled
+// until enabled for the profile.
 func (TLSFingerprintProfile) Fields() []ent.Field {
 	return []ent.Field{
 		// Unique profile name.
@@ -42,12 +45,12 @@ func (TLSFingerprintProfile) Fields() []ent.Field {
 			NotEmpty().
 			Unique(),
 
-		// Profile description.
+		// Administrator profile description.
 		field.Text("description").
 			Optional().
 			Nillable(),
 
-		// Enables GREASE extensions in the ClientHello.
+		// GREASE extension preference.
 		field.Bool("enable_grease").
 			Default(false),
 
@@ -66,7 +69,7 @@ func (TLSFingerprintProfile) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// Signature algorithms.
+		// Signature algorithm identifiers.
 		field.JSON("signature_algorithms", []uint16{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),

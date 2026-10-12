@@ -12,28 +12,39 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// PromoCodeUsage holds the schema definition for the PromoCodeUsage entity.
-//
-// Records each user's use of a promotion code.
+// A signup promotion grant records the credited amount at the time of use.
+// The promotion and user pair is unique, so concurrent grant attempts cannot
+// persist two receipts for the same user even when the code allows unlimited
+// total usage.
+
+// PromoCodeUsage records a user's signup promotion grant and credited amount.
 type PromoCodeUsage struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
+// Annotations maps recorded signup promotion grants to the promo_code_usages table.
 func (PromoCodeUsage) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "promo_code_usages"},
 	}
 }
 
+// Fields declares the promotion, recipient, credited amount, and use timestamp.
+// Grant amounts use USD decimal columns. used_at receives application time
+// when the granting repository omits an observed timestamp.
 func (PromoCodeUsage) Fields() []ent.Field {
 	return []ent.Field{
+		// Applied promotion identity.
 		field.Int64("promo_code_id").
 			Comment("Promotion code ID"),
+		// Credited user identity.
 		field.Int64("user_id").
 			Comment("User ID that used the code"),
+		// USD granted credit.
 		field.Float("bonus_amount").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Comment("Actual balance credit amount"),
+		// Successful grant timestamp.
 		field.Time("used_at").
 			Default(time.Now).
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
@@ -41,6 +52,9 @@ func (PromoCodeUsage) Fields() []ent.Field {
 	}
 }
 
+// Edges requires each grant receipt to reference its promotion and user.
+// Scalar identity fields back the unique entity edges, so receipts can be
+// traversed from either the granting code or recipient account.
 func (PromoCodeUsage) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("promo_code", PromoCode.Type).
@@ -56,6 +70,9 @@ func (PromoCodeUsage) Edges() []ent.Edge {
 	}
 }
 
+// Indexes enforces one use of a promotion code per user.
+// Separate promotion and user indexes support listing grants for either
+// entity while the pair protects repeated application.
 func (PromoCodeUsage) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("promo_code_id"),

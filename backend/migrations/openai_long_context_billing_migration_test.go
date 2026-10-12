@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMigration203DefaultsOrdinaryOpenAIAndInheritsForSparkShadows inspects the
+// historical long-context setting SQL. It requires ordinary-parent selection,
+// Spark-shadow handling, parent extras, and JSON type checks around the setting.
 func TestMigration203DefaultsOrdinaryOpenAIAndInheritsForSparkShadows(t *testing.T) {
 	content, err := FS.ReadFile("203_default_openai_long_context_billing.sql")
 	require.NoError(t, err)
@@ -18,6 +21,10 @@ func TestMigration203DefaultsOrdinaryOpenAIAndInheritsForSparkShadows(t *testing
 	require.Contains(t, sql, "openai_long_context_billing_enabled")
 }
 
+// TestMigration203GuardsMixedVersionAccountWrites inspects the historical trigger
+// and notification SQL. It requires write-trigger declarations, boolean checks,
+// account-change outbox text, shadow propagation, and access to the previous
+// setting value during updates.
 func TestMigration203GuardsMixedVersionAccountWrites(t *testing.T) {
 	content, err := FS.ReadFile("203_default_openai_long_context_billing.sql")
 	require.NoError(t, err)

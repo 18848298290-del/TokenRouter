@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRegistrationEmailNormalizationIndexMigration checks concurrent indexing and email-provider
-// normalization rules.
+// TestRegistrationEmailNormalizationIndexMigration reads the concurrent email-index
+// SQL. It requires Googlemail handling, normalized domain and plus-suffix
+// expressions, and the active-row predicate used by registration lookup.
 func TestRegistrationEmailNormalizationIndexMigration(t *testing.T) {
 	content, err := FS.ReadFile("220_users_registration_email_normalized_index_notx.sql")
 	require.NoError(t, err)

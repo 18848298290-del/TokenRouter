@@ -7,8 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUsageAnalyticsRollupMigrationAvoidsLargeTableRewrite checks new tables and small setting updates
-// without rewriting usage logs.
+// TestUsageAnalyticsRollupMigrationAvoidsLargeTableRewrite inspects analytics table
+// and setting SQL. It requires rollup/state table declarations and setting
+// cleanup, while rejecting usage-log mutation and immediate hourly backfill
+// statement patterns.
 func TestUsageAnalyticsRollupMigrationAvoidsLargeTableRewrite(t *testing.T) {
 	content, err := FS.ReadFile("229_usage_analytics_rollups.sql")
 	require.NoError(t, err)
@@ -24,8 +26,9 @@ func TestUsageAnalyticsRollupMigrationAvoidsLargeTableRewrite(t *testing.T) {
 	require.Contains(t, sql, "DELETE FROM SETTINGS WHERE KEY = 'OPS_QUERY_MODE_DEFAULT'")
 }
 
-// TestManualBackfillStateMigrationAvoidsUsageLogs checks that cursor migration targets the singleton state
-// table.
+// TestManualBackfillStateMigrationAvoidsUsageLogs inspects manual backfill cursor
+// additions. It requires changes to the aggregation-state table and the start
+// and cursor names, while rejecting SQL fragments reading or changing usage logs.
 func TestManualBackfillStateMigrationAvoidsUsageLogs(t *testing.T) {
 	content, err := FS.ReadFile("230_pre_aggregation_manual_backfill.sql")
 	require.NoError(t, err)
@@ -39,8 +42,10 @@ func TestManualBackfillStateMigrationAvoidsUsageLogs(t *testing.T) {
 	require.NotContains(t, sql, "FROM USAGE_LOGS")
 }
 
-// TestUsageAnalyticsModelDimensionResetInvalidatesOldBuckets checks aggregate reset while retaining raw
-// records.
+// TestUsageAnalyticsModelDimensionResetInvalidatesOldBuckets inspects aggregate-reset
+// SQL. It requires hourly/daily truncation and reset watermark, coverage, and
+// cursor fields, while rejecting update or source-query fragments targeting
+// the raw usage logs.
 func TestUsageAnalyticsModelDimensionResetInvalidatesOldBuckets(t *testing.T) {
 	content, err := FS.ReadFile("232_reset_usage_analytics_model_dimension.sql")
 	require.NoError(t, err)

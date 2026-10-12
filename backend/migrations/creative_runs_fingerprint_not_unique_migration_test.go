@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeRunsFingerprintNotUniqueMigration checks removal of fingerprint uniqueness.
-// Idempotency keys govern retries; submitting identical content again must remain possible.
+// TestCreativeRunsFingerprintNotUniqueMigration inspects the fingerprint constraint
+// removal SQL. It requires dropping the named uniqueness constraint, allowing
+// repeated content submissions to use distinct run records and idempotency keys.
 func TestCreativeRunsFingerprintNotUniqueMigration(t *testing.T) {
 	content, err := FS.ReadFile("255_creative_runs_fingerprint_not_unique.sql")
 	require.NoError(t, err)

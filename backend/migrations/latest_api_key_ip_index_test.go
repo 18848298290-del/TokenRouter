@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLatestAPIKeyIPIndexMigration inspects the concurrent latest-address index SQL.
+// It requires key-first descending time and ID order, included address data,
+// and a predicate excluding NULL or empty addresses from the index.
 func TestLatestAPIKeyIPIndexMigration(t *testing.T) {
 	content, err := FS.ReadFile("201_add_usage_logs_api_key_latest_ip_index_notx.sql")
 	require.NoError(t, err)

@@ -15,7 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestProductBrandMigration checks fresh databases, exact matches, custom brands, and replay in PostgreSQL.
+// TestProductBrandMigration applies the full migration chain and replays brand
+// cleanup in PostgreSQL. It requires selected exact old-brand values, including
+// case and whitespace variants, to become TokenRouter while custom and unrelated
+// setting values remain unchanged.
 func TestProductBrandMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("brand"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -25,8 +28,12 @@ func TestProductBrandMigration(t *testing.T) {
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	// Cleanup runs in reverse registration order, so close the SQL pool before
+	// terminating the PostgreSQL container that supplies this fixture's connections.
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	require.NoError(t, postgres.ApplyMigrations(ctx, db, migrations.FS))
+	// Applying the complete chain again exercises the recorded-migration path
+	// before the selected script is replayed directly against the brand fixtures.
 	require.NoError(t, postgres.ApplyMigrations(ctx, db, migrations.FS))
 	migration, err := migrations.FS.ReadFile("283_rename_product_defaults.sql")
 	require.NoError(t, err)

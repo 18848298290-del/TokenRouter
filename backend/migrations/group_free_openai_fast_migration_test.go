@@ -7,7 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGroupFreeOpenAIFastMigration checks the free Fast field's type, default, and column description.
+// TestGroupFreeOpenAIFastMigration inspects the free-Fast group setting SQL.
+// It requires a non-null false default and a COMMENT ON COLUMN declaration,
+// keeping the opt-in field and its database documentation in the migration.
 func TestGroupFreeOpenAIFastMigration(t *testing.T) {
 	content, err := FS.ReadFile("264_group_free_openai_fast.sql")
 	require.NoError(t, err)

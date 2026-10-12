@@ -14,33 +14,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// IdentityAdoptionDecision stores the one-time profile adoption choice captured during a pending auth flow.
+// A pending authentication flow records whether the user accepts an upstream
+// display name or avatar. The decision belongs to one pending session and can
+// reference the resulting canonical identity, keeping the selected profile
+// choices associated with that authentication outcome.
+
+// IdentityAdoptionDecision stores profile choices associated with one pending
+// authentication session.
 type IdentityAdoptionDecision struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
+// Annotations maps recorded profile choices to the identity_adoption_decisions database table.
 func (IdentityAdoptionDecision) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "identity_adoption_decisions"},
 	}
 }
 
+// Mixin supplies creation and update times for persisted profile decisions.
 func (IdentityAdoptionDecision) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
 	}
 }
 
+// Fields declares the pending session, optional identity, and selected profile
+// choices. Both adoption flags default to false. decided_at uses application
+// time on insertion and remains immutable through generated Ent updates.
 func (IdentityAdoptionDecision) Fields() []ent.Field {
 	return []ent.Field{
+		// Originating pending session.
 		field.Int64("pending_auth_session_id"),
+		// Resulting canonical identity.
 		field.Int64("identity_id").
 			Optional().
 			Nillable(),
+		// adopt_display_name and adopt_avatar are independent profile choices.
+		// Either can remain false while the other is accepted, and both are
+		// stored on the same pending-session decision.
+		// Display-name adoption choice.
 		field.Bool("adopt_display_name").
 			Default(false),
+		// Avatar adoption choice.
 		field.Bool("adopt_avatar").
 			Default(false),
+		// Immutable decision timestamp.
 		field.Time("decided_at").
 			Immutable().
 			Default(time.Now).
@@ -48,6 +67,9 @@ func (IdentityAdoptionDecision) Fields() []ent.Field {
 	}
 }
 
+// Edges requires one pending session and optionally associates a canonical identity.
+// The scalar identity fields back unique entity edges, and the session's
+// unique index restricts each flow to one recorded decision.
 func (IdentityAdoptionDecision) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("pending_auth_session", PendingAuthSession.Type).
@@ -62,6 +84,9 @@ func (IdentityAdoptionDecision) Edges() []ent.Edge {
 	}
 }
 
+// Indexes enforces one profile decision per pending session and supports identity
+// lookup. identity_id is separately indexed so decisions associated with one
+// canonical identity can be retrieved together.
 func (IdentityAdoptionDecision) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("pending_auth_session_id").Unique(),

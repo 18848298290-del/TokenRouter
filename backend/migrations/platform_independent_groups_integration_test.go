@@ -17,7 +17,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestPlatformIndependentGroupsMigration checks historical snapshots, replay, and rollback in PostgreSQL.
+// TestPlatformIndependentGroupsMigration upgrades historical group and provider
+// fixtures in PostgreSQL. It checks rollback of a failed conversion, archived
+// quota/settings rows, protocol and whitelist conversion, and retained request
+// attribution. Replaying after provider edits must keep the recorded usage
+// platform and the post-upgrade empty whitelist.
 func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("groups_migration"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -27,9 +31,12 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	// Register SQL cleanup after container cleanup so the pool closes first
+	// under testing's reverse cleanup order, releasing this fixture's database connections.
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-	// Build the pre-upgrade schema from historical migrations, including its original columns and constraints.
+	// Include scripts before migration 277 so seeded rows use the historical
+	// platform columns and constraints expected by the conversion being tested.
 	before := fstest.MapFS{}
 	entries, err := fs.ReadDir(migrations.FS, ".")
 	require.NoError(t, err)
@@ -69,8 +76,9 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	migration, err := migrations.FS.ReadFile("277_platform_independent_groups.sql")
 	require.NoError(t, err)
 
-	// A failure after migration SQL must roll back schema, backfills, and archives so the upgrade can be
-	// retried.
+	// Force a SQL error after the conversion statements, then roll back the
+	// transaction. The following assertions require the historical group column
+	// to remain and the newly created archive table to disappear.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migration)+"\nSELECT 1/0;")
@@ -83,6 +91,8 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('platform_independent_group_archive')::text`).Scan(&archive))
 	require.False(t, archive.Valid)
 
+	// Include the follow-up scripts through 280 so protocol normalization and
+	// backfills run with the platform conversion before its resulting rows are inspected.
 	through280 := fstest.MapFS{}
 	for _, entry := range entries {
 		if entry.Name() >= "281_" {
@@ -127,6 +137,9 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT provider FROM creative_runs WHERE run_id='legacy-creative'`).Scan(&platform))
 	require.Equal(t, "openai", platform)
 
+	// Change live provider data after a successful upgrade, then execute and
+	// commit a replay before reading through db. The assertions require the
+	// recorded usage platform and edited empty whitelist to retain their values.
 	_, err = db.ExecContext(ctx, `UPDATE accounts SET platform='gemini' WHERE id=7001;
         UPDATE accounts SET extra='{"openai_passthrough":true}', credentials='{"model_whitelist":[]}' WHERE id=7002`)
 	require.NoError(t, err)
@@ -137,8 +150,8 @@ func TestPlatformIndependentGroupsMigration(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT platform FROM usage_logs WHERE request_id='legacy-platform'`).Scan(&platform))
 	require.Equal(t, "anthropic", platform)
-	// An empty post-upgrade whitelist selects the default catalogue; replay must not widen it using the legacy
-	// passthrough flag.
+	// The fixture writes an empty whitelist after the upgrade. Replay must retain
+	// that array despite the legacy passthrough flag still stored on the provider.
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT credentials->'model_whitelist' FROM accounts WHERE id=7002`).Scan(&whitelist))
 	require.JSONEq(t, `[]`, whitelist)
 }

@@ -2,7 +2,13 @@ package migrations
 
 import "embed"
 
-// FS embeds all SQL migration files in this directory.
+// Deployment carries migration SQL inside the application binary. Bootstrap and
+// maintenance pass this embedded filesystem to the PostgreSQL runner, which
+// orders migration filenames and checks stored checksums before applying the
+// scripts required by the running version.
+
+// FS embeds the migration scripts used by database initialization and upgrade
+// runners, making the SQL available independently of the deployment's working directory.
 //
 // Migration names:
 //   - Use zero-padded numeric prefixes to determine execution order.

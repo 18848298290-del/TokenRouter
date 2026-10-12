@@ -12,24 +12,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// UserAttributeDefinition holds the schema definition for custom user attributes.
-//
-// This entity defines the metadata for user attributes, such as:
-//   - Attribute key (unique identifier like "company_name")
-//   - Display name shown in forms
-//   - Field type (text, number, select, etc.)
-//   - Validation rules
-//   - Whether the field is required or enabled
+// Administrators describe custom user attributes separately from users' stored
+// values. A definition supplies form presentation, value type, and validation
+// rules; soft deletion lets a later definition reuse the key while retained
+// definitions remain distinguishable by their numeric identities.
+
+// UserAttributeDefinition stores presentation and validation rules for user attributes.
 type UserAttributeDefinition struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
+// Annotations maps custom-attribute definitions to the user_attribute_definitions database table.
 func (UserAttributeDefinition) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "user_attribute_definitions"},
 	}
 }
 
+// Mixin adds timestamps and default soft-deletion handling to attribute definitions.
+// Ordinary queries hide deleted definitions, while SkipSoftDelete contexts let
+// maintenance inspect or physically remove those retained rows.
 func (UserAttributeDefinition) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
@@ -37,20 +39,22 @@ func (UserAttributeDefinition) Mixin() []ent.Mixin {
 	}
 }
 
+// Fields describes an attribute's key, form presentation, type, and validation
+// configuration. Definitions start enabled and optional. Options and validation
+// use JSONB columns, while omitted help and placeholder text default to empty.
 func (UserAttributeDefinition) Fields() []ent.Field {
 	return []ent.Field{
-		// key: Unique identifier for the attribute (e.g., "company_name")
-		// Used for programmatic reference
+		// Attribute lookup key.
 		field.String("key").
 			MaxLen(100).
 			NotEmpty(),
 
-		// name: Display name shown in forms (e.g., "Company Name")
+		// Form display name.
 		field.String("name").
 			MaxLen(255).
 			NotEmpty(),
 
-		// description: Optional description/help text for the attribute
+		// Optional attribute help.
 		field.String("description").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
@@ -60,13 +64,17 @@ func (UserAttributeDefinition) Fields() []ent.Field {
 			MaxLen(20).
 			NotEmpty(),
 
-		// options: Select options for select/multi_select types (stored as JSONB)
+		// options supplies value-label choices for select and multi_select
+		// attributes. The user editing form presents these entries as the
+		// available selections for that definition.
 		// Format: [{"value": "xxx", "label": "XXX"}, ...]
 		field.JSON("options", []map[string]any{}).
 			Default([]map[string]any{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// required: Whether this attribute is required when editing a user
+		// required controls user editing and collection validation. Existing users
+		// can lack a value, so the flag does not establish a database-level
+		// completeness guarantee for historical user records.
 		field.Bool("required").
 			Default(false),
 
@@ -76,21 +84,25 @@ func (UserAttributeDefinition) Fields() []ent.Field {
 			Default(map[string]any{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// placeholder: Placeholder text shown in input fields
+		// Form input placeholder.
 		field.String("placeholder").
 			MaxLen(255).
 			Default(""),
 
-		// display_order: Order in which attributes are displayed (lower = first)
+		// display_order controls the attribute's position in user forms. Lower
+		// values place the definition ahead of higher-valued definitions.
 		field.Int("display_order").
 			Default(0),
 
-		// enabled: Whether this attribute is active and shown in forms
+		// enabled controls whether user forms show this definition. Disabling it
+		// retains previously saved values, which continue to belong to the
+		// existing user and attribute records.
 		field.Bool("enabled").
 			Default(true),
 	}
 }
 
+// Edges exposes users' stored values for each custom attribute definition.
 func (UserAttributeDefinition) Edges() []ent.Edge {
 	return []ent.Edge{
 		// values: All user values for this attribute definition
@@ -98,9 +110,11 @@ func (UserAttributeDefinition) Edges() []ent.Edge {
 	}
 }
 
+// Indexes supports definition lookup, form filtering, ordering, and retained-row
+// queries. Migration 018 enforces key uniqueness for rows with deleted_at NULL;
+// the Ent key index itself is nonunique.
 func (UserAttributeDefinition) Indexes() []ent.Index {
 	return []ent.Index{
-		// Partial unique index on key (WHERE deleted_at IS NULL) via migration
 		index.Fields("key"),
 		index.Fields("enabled"),
 		index.Fields("display_order"),

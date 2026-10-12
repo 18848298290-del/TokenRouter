@@ -15,16 +15,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/intercept"
 )
 
-// SoftDeleteMixin implements soft deletion using deleted_at.
+// A soft-deleted entity stays in its table with deleted_at set to the
+// application time. Ordinary Ent queries hide these rows, while maintenance
+// callers can use SkipSoftDelete to inspect deleted entities or remove them
+// physically. Query traversal and mutation hooks apply the same active-row
+// condition across schemas that include the mixin.
 //
-// Default behavior:
-//   - Deletes set deleted_at to the current application time.
-//   - Ent queries filter for deleted_at IS NULL.
-//   - SkipSoftDelete allows queries to include deleted rows and deletes to remove rows physically.
-//
-// Implementation:
-//   - An Ent traversal interceptor adds the deleted_at IS NULL predicate.
-//   - A mutation hook converts delete operations to updates of deleted_at.
+// Delete builders are created for deletion, so changing a mutation's operation
+// also requires dispatching it through the generated client as an update. The
+// helper obtains that client through reflection because generated Ent code
+// imports the mixins package. The converted mutation retains its existing row
+// predicates and adds the active-row condition before assigning the timestamp.
+
+// SoftDeleteMixin implements retained deletion records and default active-row queries.
 //
 // Example:
 //
@@ -34,20 +37,19 @@ import (
 //	    }
 //	}
 type SoftDeleteMixin struct {
-	mixin.Schema
+	mixin.Schema // reusable schema definition
 }
 
 // softDeleteKey marks contexts that bypass soft deletion.
 // Its private type prevents collisions with keys from other packages.
 type softDeleteKey struct{}
 
-// Fields defines the nullable deletion timestamp.
-// deleted_at uses:
-//   - PostgreSQL TIMESTAMPTZ for deletion time.
-//   - Optional and Nillable so omitted values are NULL.
-//   - NULL for active rows and a timestamp for deleted rows.
+// Fields defines the nullable timestamp distinguishing active from deleted rows.
+// Query filtering uses NULL as the active state; a retained deletion stores
+// the application time in this PostgreSQL time-zone-aware column.
 func (SoftDeleteMixin) Fields() []ent.Field {
 	return []ent.Field{
+		// Retained deletion timestamp.
 		field.Time("deleted_at").
 			Optional().
 			Nillable().
@@ -58,11 +60,8 @@ func (SoftDeleteMixin) Fields() []ent.Field {
 }
 
 // SkipSoftDelete derives a context that bypasses query filtering and delete conversion.
-//
-// Use it to:
-//   - Include soft-deleted rows in queries.
-//   - Delete rows physically.
-//   - Access deleted rows for restoration.
+// Ent operations using the derived context can read retained rows, and delete
+// operations remove their matching rows physically.
 //
 // Example:
 //
@@ -84,16 +83,23 @@ func (d SoftDeleteMixin) Interceptors() []ent.Interceptor {
 			if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
 				return nil
 			}
-			// The generated query wrapper supplies WhereP for adding the predicate across entity types.
+			// Traversal applies the active-row condition to each participating entity
+			// query, including edges followed by a larger query over mixed schemas.
 			d.applyPredicate(q)
 			return nil
 		}),
 	}
 }
 
-// Hooks converts Ent delete operations to timestamp updates.
-// The hook uses time.Now from the application process for deleted_at.
-// Rows remain in the table until deleted with SkipSoftDelete.
+// Hooks converts delete mutations into updates that set the deletion timestamp.
+// Non-delete operations and SkipSoftDelete contexts continue through the supplied
+// mutator. Converted deletes require a generated mutation exposing SetOp,
+// SetDeletedAt, and WhereP; an unexpected mutation type returns an error.
+//
+// The hook adds the active-row predicate before setting application time, so
+// already deleted rows retain their timestamp. It redispatches through the
+// mutation's generated client because the original builder still represents
+// a delete operation, while the modified mutation needs an update builder.
 func (d SoftDeleteMixin) Hooks() []ent.Hook {
 	return []ent.Hook{
 		func(next ent.Mutator) ent.Mutator {
@@ -104,16 +110,21 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 				if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
 					return next.Mutate(ctx, m)
 				}
-				// The generated mutation must support updating deleted_at and adding SQL predicates.
+				// Schemas using this mixin generate the timestamp setter and SQL
+				// predicate method needed to execute deletion as an active-row update.
 				mx, ok := m.(interface {
+					// SetOp selects the operation executed by the generated mutation client.
 					SetOp(ent.Op)
+					// SetDeletedAt supplies the timestamp stored by the converted update mutation.
 					SetDeletedAt(time.Time)
+					// WhereP appends SQL predicates restricting the rows changed by this mutation.
 					WhereP(...func(*sql.Selector))
 				})
 				if !ok {
 					return nil, fmt.Errorf("unexpected mutation type %T", m)
 				}
-				// Exclude rows that have already been soft-deleted.
+				// Keep an existing deletion time when another delete targets the same
+				// retained row; the active-row predicate excludes that row from this update.
 				d.applyPredicate(mx)
 				mx.SetOp(ent.OpUpdate)
 				mx.SetDeletedAt(time.Now())
@@ -124,20 +135,34 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 }
 
 // applyPredicate restricts a query or mutation to rows with deleted_at IS NULL.
-func (d SoftDeleteMixin) applyPredicate(w interface{ WhereP(...func(*sql.Selector)) }) {
+func (d SoftDeleteMixin) applyPredicate(w interface {
+	// WhereP appends selector predicates used to restrict matching database rows.
+	WhereP(...func(*sql.Selector))
+},
+) {
 	w.WhereP(
 		sql.FieldIsNull(d.Fields()[0].Descriptor().Name),
 	)
 }
 
-// mutateWithClient dispatches the converted update through the generated client.
-// Reflection avoids importing the generated ent package, which imports these mixins.
+// mutateWithClient dispatches a converted mutation through its generated client.
+// Callers pass a non-nil context and generated mutation. Client() must return
+// the generated client, whose Mutate method accepts ctx and m. Missing methods
+// or unexpected argument and result counts return errors. A non-nil mutation
+// error is propagated, and a nil successful value is rejected.
+//
+// Reflection keeps the mixins package independent of the generated client
+// package that imports it. The fallback argument is unused. Mutations with
+// incompatible method types can panic during the reflected calls; this helper
+// relies on the generated method types rather than checking their assignability.
 func mutateWithClient(ctx context.Context, m ent.Mutation, fallback ent.Mutator) (ent.Value, error) {
 	clientMethod := reflect.ValueOf(m).MethodByName("Client")
 	if !clientMethod.IsValid() || clientMethod.Type().NumIn() != 0 || clientMethod.Type().NumOut() != 1 {
 		return nil, fmt.Errorf("soft delete: mutation client method not found for %T", m)
 	}
 	client := clientMethod.Call(nil)[0]
+	// The operation changed after the delete builder was constructed. Dispatching
+	// through Client.Mutate selects an update builder for that same mutation.
 	mutateMethod := client.MethodByName("Mutate")
 	if !mutateMethod.IsValid() {
 		return nil, fmt.Errorf("soft delete: mutation client missing Mutate for %T", m)

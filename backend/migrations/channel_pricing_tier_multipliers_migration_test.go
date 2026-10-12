@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestChannelPricingTierMultipliersMigration inspects the tier and token-category
+// multiplier SQL. It requires the six decimal multiplier declarations and their
+// named positivity constraints across model pricing and interval pricing tables.
 func TestChannelPricingTierMultipliersMigration(t *testing.T) {
 	content, err := FS.ReadFile("251_channel_pricing_tier_multipliers.sql")
 	require.NoError(t, err)

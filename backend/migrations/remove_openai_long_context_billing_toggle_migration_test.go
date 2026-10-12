@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMigration241RemovesOpenAILongContextBillingToggle inspects retirement of the
+// historical account toggle. It requires both trigger removals, both function
+// removals, and deletion of the corresponding extra key in the migration SQL.
 func TestMigration241RemovesOpenAILongContextBillingToggle(t *testing.T) {
 	content, err := FS.ReadFile("241_remove_openai_long_context_billing_toggle.sql")
 	require.NoError(t, err)

@@ -11,7 +11,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// ErrorPassthroughRule defines how upstream errors are returned to clients.
+// Upstream error responses can be selected by status code, body keywords, and
+// provider platform. Stored rules decide which upstream details reach clients
+// and whether a matched response is included in operations error monitoring.
+
+// ErrorPassthroughRule stores matching conditions and client-facing error settings.
 //
 // Rules combine the following settings:
 //   - Match error codes and keywords.
@@ -19,105 +23,106 @@ import (
 //   - Select the response status code.
 //   - Restrict the rule to selected platforms.
 type ErrorPassthroughRule struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
-// Annotations sets the database table name.
+// Annotations maps generated error-rule operations to the error_passthrough_rules table.
 func (ErrorPassthroughRule) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "error_passthrough_rules"},
 	}
 }
 
-// Mixin supplies creation and update timestamps.
+// Mixin adds automatic creation and update timestamps to error-rule records.
 func (ErrorPassthroughRule) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
 	}
 }
 
-// Fields defines error matching and response settings.
+// Fields defines error matching, response replacement, and monitoring settings.
+// Rules default to enabled, any-category matching with upstream status and body
+// passthrough; optional values configure narrower matching or replacement content.
 func (ErrorPassthroughRule) Fields() []ent.Field {
 	return []ent.Field{
-		// Display name for the rule.
+		// Rule display name.
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
 
-		// Whether the rule is enabled.
+		// Rule activation flag.
 		field.Bool("enabled").
 			Default(true),
 
-		// Lower priority values are checked first.
-		// The first matching rule determines the response.
+		// priority determines evaluation order in the error-policy service. Lower
+		// values are checked first, and the first matching rule sets the response.
 		field.Int("priority").
 			Default(0),
 
-		// Match any listed error code.
-		// For example, [422, 400] matches either code.
+		// error_codes and keywords form independently optional condition
+		// categories. match_mode "any" accepts either configured category;
+		// "all" requires every configured category. With neither configured,
+		// the error-policy service rejects the rule as a match.
+		// Matching upstream statuses.
 		field.JSON("error_codes", []int{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// Match any listed keyword.
-		// For example, ["context limit", "model not supported"].
-		// Keyword matching is case-insensitive.
+		// keywords contains alternatives for case-insensitive body matching. The
+		// error-policy service searches the first 8 KiB of the upstream body.
 		field.JSON("keywords", []string{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// match_mode combines code and keyword matches:
-		// - "any": either a code or a keyword matches.
-		// - "all": both a code and a keyword match.
+		// Category combination mode.
 		field.String("match_mode").
 			MaxLen(10).
 			Default("any"),
 
-		// Platforms to which the rule applies.
-		// For example, ["anthropic", "openai", "gemini", "antigravity", "qoder", "grok"].
-		// An empty list applies to all platforms.
+		// platforms limits evaluation to the listed provider platforms. The
+		// error-policy service treats an empty list as applying to every platform.
 		field.JSON("platforms", []string{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// Selects whether to pass through the upstream status code.
-		// true uses the upstream status code.
-		// false uses response_code.
+		// passthrough_code and response_code choose the client status together.
+		// A true passthrough_code uses the upstream status; false enables the
+		// configured response_code replacement for the matched error.
+		// Upstream status preference.
 		field.Bool("passthrough_code").
 			Default(true),
 
-		// Custom response status code.
-		// Used when passthrough_code is false.
+		// Replacement response status.
 		field.Int("response_code").
 			Optional().
 			Nillable(),
 
-		// Selects whether to pass through the upstream error message.
-		// true uses the upstream error message.
-		// false uses custom_message.
+		// passthrough_body and custom_message select the client message together.
+		// A true passthrough_body uses upstream content; false enables the stored
+		// custom_message replacement for the matched error.
+		// Upstream message preference.
 		field.Bool("passthrough_body").
 			Default(true),
 
-		// Custom error message.
-		// Used when passthrough_body is false.
+		// Replacement error message.
 		field.Text("custom_message").
 			Optional().
 			Nillable(),
 
-		// Controls whether matched errors are recorded in operations monitoring.
-		// true omits matched errors from ops_error_logs.
-		// false records them, which is the default.
+		// skip_monitoring suppresses the matched error's operations-log entry.
+		// The default false value lets operations monitoring record matching
+		// errors along with other upstream failures.
 		field.Bool("skip_monitoring").
 			Default(false),
 
-		// Describes the rule's purpose.
+		// Administrator rule description.
 		field.Text("description").
 			Optional().
 			Nillable(),
 	}
 }
 
-// Indexes supports enabled-rule lookup and priority ordering.
+// Indexes supports enabled-rule filtering and the configured priority evaluation order.
 func (ErrorPassthroughRule) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("enabled"),  // Enabled-rule lookup.

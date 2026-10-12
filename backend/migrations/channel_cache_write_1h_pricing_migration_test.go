@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestChannelCacheWrite1hPricingMigration reads the one-hour cache-write pricing SQL.
+// It requires all four pricing tables, the decimal price column, and the
+// compatibility note that NULL continues to use the existing cache-write price.
 func TestChannelCacheWrite1hPricingMigration(t *testing.T) {
 	content, err := FS.ReadFile("261_channel_cache_write_1h_pricing.sql")
 	require.NoError(t, err)

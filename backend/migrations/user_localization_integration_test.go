@@ -19,8 +19,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUserLocalizationMigrations checks fresh upgrades, historical content, language preferences, and
-// rollback.
+// TestUserLocalizationMigrations applies localization to fresh and historical
+// PostgreSQL schemas. It checks revision-sensitive group display, migration
+// replay, canonical user language, migrated site and entity text, retained
+// announcement receipts, retired setting keys, and rollback of the preferred
+// language column after an intentional transaction failure.
 func TestUserLocalizationMigrations(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("localization"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -30,13 +33,22 @@ func TestUserLocalizationMigrations(t *testing.T) {
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	// The SQL cleanup is registered after container cleanup, so testing closes
+	// the pool before terminating the PostgreSQL instance used by these scenarios.
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	require.NoError(t, postgres.ApplyMigrations(ctx, db, migrations.FS))
-	// Aggregate queries and page display share resolution of missing, empty, valid, and stale translations.
+	// Exercise LocalizedTextExpression against missing and empty content, a current
+	// English translation, and a stale translation that must resolve to source
+	// text. These fixtures check the SQL expression's selected display value.
 	t.Run("group display expression", func(t *testing.T) {
 		userContext := locale.WithUserPresentation(locale.WithLanguage(ctx, "en"), true)
 		expression := postgres.LocalizedTextExpression(userContext, "g.localization", "display_name", "g.name")
-		for _, sample := range []struct{ content, want string }{
+		// content supplies the stored localization envelope, while want identifies
+		// the selected display text. Revision mismatch in the final fixture
+		// makes the expression choose source text over the stale translation.
+		for _, sample := range []struct {
+			content, want string /* content is persisted JSON; want is the resolved display text. */
+		}{
 			{`null`, "business"},
 			{`{"revision":0,"source":{"display_name":""},"translations":null}`, "business"},
 			{`{"revision":1,"source_revision":1,"source":{"display_name":"Original"},"translations":{"en":{"source_revision":1,"value":{"display_name":"English"}}}}`, "English"},
@@ -56,6 +68,8 @@ func TestUserLocalizationMigrations(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_name='error_passthrough_rules' AND column_name='message_localization'`).Scan(&count))
 	require.Zero(t, count)
+	// Replace the fresh schema with the pre-290 migration state before seeding
+	// legacy language settings, so the next upgrade exercises historical content conversion.
 	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
 	require.NoError(t, err)
 	prior := fstest.MapFS{}
@@ -79,7 +93,9 @@ func TestUserLocalizationMigrations(t *testing.T) {
  ('site_title_zh','中文标题'),('site_subtitle','  '),('site_subtitle_zh',''),('site_subtitle_en',''),('notification_email_locale:user:991','zh'),
  ('notification_email_template:auth.verify_code:zh','{"subject":"验证码","html":"<p>正文</p>"}');`)
 	require.NoError(t, err)
-	// A later failure in the transaction rolls back the migration's new fields and content.
+	// Fail after localization SQL has completed, then roll back that transaction.
+	// The following column query must still observe the historical schema
+	// before the runner retries the migration successfully.
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	migration, err := migrations.FS.ReadFile("290_user_localization.sql")
@@ -118,7 +134,10 @@ func TestUserLocalizationMigrations(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-// TestHomeTextMigration checks empty legacy fields, translations, and replay.
+// TestHomeTextMigration converts missing, empty, whitespace, and translated home
+// settings in a minimal PostgreSQL schema. It checks whether usable content
+// exists, the selected source and initial revision, preservation of an unrelated
+// setting, and stable results after two executions.
 func TestHomeTextMigration(t *testing.T) {
 	ctx := context.Background()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("home_text"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -128,6 +147,8 @@ func TestHomeTextMigration(t *testing.T) {
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	// Register pool cleanup after container cleanup so the shared fixture's SQL
+	// connections close before testing terminates the isolated PostgreSQL instance.
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, err = db.Exec(`CREATE TABLE settings(key text PRIMARY KEY, value text NOT NULL, updated_at timestamptz DEFAULT now());
 CREATE TABLE users(id bigint);
@@ -137,9 +158,22 @@ CREATE TABLE subscription_plans(name text, description text, features text, prod
 	require.NoError(t, err)
 	migration, err := migrations.FS.ReadFile("290_user_localization.sql")
 	require.NoError(t, err)
+	// source, chinese, and english supply the legacy text inputs; wantSource
+	// identifies the selected usable text. missing distinguishes absent keys
+	// from stored empty strings, while configured records expected content availability.
 	for _, tc := range []struct {
+		// name labels the subtest; source is legacy default text; chinese is
+		// legacy zh text; english is legacy en text; wantSource is the expected
+		// selected source text after conversion.
 		name, source, chinese, english, wantSource string
-		missing, configured                        bool
+		// missing skips all three legacy language keys for both title and
+		// subtitle. This case models absent input settings, while other cases
+		// insert their supplied values.
+		//
+		// configured selects the expected existence of migrated home content.
+		// Empty and whitespace inputs produce no entry when no translated
+		// value is usable.
+		missing, configured bool // missing: skip legacy inputs; configured: expect usable content
 	}{
 		{name: "missing", missing: true},
 		{name: "empty"},
@@ -150,6 +184,9 @@ CREATE TABLE subscription_plans(name text, description text, features text, prod
 		{name: "blank source with translation", source: " \t", english: "English title", wantSource: "English title", configured: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Clear settings from the previous scenario and seed an unrelated value
+			// before inserting this case's legacy inputs. The reused schema stays
+			// available while each case receives an independent setting fixture.
 			_, err := db.Exec(`DELETE FROM settings; INSERT INTO settings(key,value) VALUES('unrelated','plain text')`)
 			require.NoError(t, err)
 			if !tc.missing {
@@ -158,6 +195,8 @@ CREATE TABLE subscription_plans(name text, description text, features text, prod
 					require.NoError(t, err)
 				}
 			}
+			// Repeat the conversion after legacy keys have been migrated. The
+			// result must retain its chosen source and initial revision on replay.
 			for range 2 {
 				_, err = db.Exec(string(migration))
 				require.NoError(t, err)

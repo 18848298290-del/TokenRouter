@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreativeRunDurableSettlementMigration checks settlement fields, the outbox, and managed-key uniqueness
-// in one migration.
+// TestCreativeRunDurableSettlementMigration inspects the recovery and settlement
+// schema additions. It requires seven run columns, the unique run-operation
+// outbox declaration, and the named managed-key index in the embedded SQL.
 func TestCreativeRunDurableSettlementMigration(t *testing.T) {
 	content, err := FS.ReadFile("257_creative_run_durable_settlement.sql")
 	require.NoError(t, err)

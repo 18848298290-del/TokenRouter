@@ -7,7 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBatchImageInternalModelMigration checks the independent internal-model snapshot column.
+// TestBatchImageInternalModelMigration inspects the internal-model snapshot migration.
+// It requires a non-null empty-default column and the absence of job update
+// statements, protecting historical jobs from an inferred internal-model backfill.
 func TestBatchImageInternalModelMigration(t *testing.T) {
 	content, err := FS.ReadFile("233_add_batch_image_internal_model.sql")
 	require.NoError(t, err)
