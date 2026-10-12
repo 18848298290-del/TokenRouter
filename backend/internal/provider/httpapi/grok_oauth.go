@@ -14,88 +14,196 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Grok authorization distinguishes browser sessions, raw refresh text and SSO
+// import material before provider persistence. The HTTP refresh path accepts a
+// legacy rt alias but requires a selected proxy to resolve successfully. Import
+// responses contain redacted created records and preserve each failed input's
+// position separately from successful conversion.
+//
+// Credential reconciliation requires complementary dry-run and apply flags,
+// defaulting omission to planning. The handler limits refresh-window seconds
+// before converting the duration and delegates identity checks to the
+// reconciler. Quota queries use the shared service, and its unsupported reset
+// result remains a domain error; runtime diagnostics comes from a separately
+// supplied sanitized callback.
+
+// GrokGenerateAuthURLRequest selects optional proxy and callback hints for a
+// Grok session.
 type GrokGenerateAuthURLRequest struct {
-	ProxyID     *int64 `json:"proxy_id"`
-	RedirectURI string `json:"redirect_uri"`
+	// ProxyID selects the proxy retained by the new session. Omission supplies an
+	// empty route; lookup failures or missing selected records reject generation.
+	ProxyID *int64 `json:"proxy_id"` // selected egress proxy
+	// RedirectURI is trimmed before session creation. Blank input selects the
+	// configured upstream callback default, and the session retains that effective
+	// URI for exchange.
+	RedirectURI string `json:"redirect_uri"` // authorization callback URI
 }
 
+// GrokExchangeCodeRequest carries the required Grok session and authorization
+// input for exchange.
 type GrokExchangeCodeRequest struct {
-	SessionID   string `json:"session_id" binding:"required"`
-	Code        string `json:"code" binding:"required"`
-	State       string `json:"state"`
-	RedirectURI string `json:"redirect_uri"`
-	ProxyID     *int64 `json:"proxy_id"`
+	SessionID string `json:"session_id" binding:"required"` // authorization session identifier
+	Code      string `json:"code" binding:"required"`       // authorization exchange code
+	// State can be omitted from code-exchange input when authorization derives it
+	// from pasted code or callback text. The resolved value still needs to match
+	// the stored session.
+	State string `json:"state"` // authorization state value
+	// RedirectURI is an optional consistency check after trimming. Nonblank input
+	// must match the stored session callback; exchange uses the stored URI.
+	RedirectURI string `json:"redirect_uri"` // authorization callback URI
+	// ProxyID overrides the session route when supplied and successfully resolved.
+	// Omission retains that route; lookup failures or missing selected records
+	// reject exchange.
+	ProxyID *int64 `json:"proxy_id"` // selected egress proxy
 }
 
+// GrokRefreshTokenRequest carries current or legacy refresh-token text and
+// optional client settings.
 type GrokRefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token"`
-	RT           string `json:"rt"`
-	ClientID     string `json:"client_id"`
-	ProxyID      *int64 `json:"proxy_id"`
+	// RefreshToken and RT carry current and legacy token text. Trimmed nonempty
+	// RefreshToken takes precedence, while blank selection falls back to trimmed
+	// RT.
+	RefreshToken string `json:"refresh_token"` // supplied OAuth refresh token
+	RT           string `json:"rt"`            // legacy refresh token alias
+	// ClientID is forwarded unchanged to authorization. The configured upstream
+	// client trims it and selects its effective default for blank text before
+	// constructing the refresh form.
+	ClientID string `json:"client_id"` // OAuth client identifier
+	// ProxyID requires a successful found lookup when supplied. Lookup errors or
+	// missing records stop raw refresh; omission sends the empty proxy URL.
+	ProxyID *int64 `json:"proxy_id"` // selected egress proxy
 }
 
+// GrokSSOTokenRequest supplies browser SSO material and optional proxy
+// selection for token conversion.
 type GrokSSOTokenRequest struct {
-	SSOToken string `json:"sso_token"`
-	ProxyID  *int64 `json:"proxy_id"`
+	// SSOToken is trimmed and validated by authorization before conversion. Blank
+	// input is rejected, and successful token information excludes this raw cookie
+	// value.
+	SSOToken string `json:"sso_token"` // browser SSO cookie text
+	// ProxyID selects SSO conversion transport. Omission uses the empty route;
+	// lookup failures or missing selected records reject authorization before
+	// conversion.
+	ProxyID *int64 `json:"proxy_id"` // selected egress proxy
 }
 
+// GrokPasswordAuthorizeRequest carries account login input for the optional SSO
+// password flow.
 type GrokPasswordAuthorizeRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	ProxyID  *int64 `json:"proxy_id"`
+	// Email is trimmed after password authorization is enabled. Blank text is
+	// rejected before login, and the trimmed value reaches the configured client.
+	Email string `json:"email"` // account login email
+	// Password is checked for blank text after trimming but sent to login as
+	// supplied. Successful token information excludes the raw login password.
+	Password string `json:"password"` // account login password
+	// ProxyID selects transport after password capability validation. Omission uses
+	// the empty route; lookup failures or missing selected records reject the
+	// enabled authorization flow.
+	ProxyID *int64 `json:"proxy_id"` // selected egress proxy
 }
 
+// GrokOAuthReconcileRequest selects reconciliation mode, cursor, population
+// limit and token refresh window.
 type GrokOAuthReconcileRequest struct {
-	DryRun               *bool `json:"dry_run"`
-	Apply                bool  `json:"apply"`
-	AfterID              int64 `json:"after_id"`
-	Limit                int   `json:"limit"`
-	RefreshWindowSeconds int64 `json:"refresh_window_seconds"`
+	// DryRun and Apply select complementary modes after DryRun defaults to true.
+	// Mutation requires Apply=true and DryRun=false; equal flags are rejected
+	// before reconciliation.
+	DryRun *bool `json:"dry_run"` // optional planning-only mode selector
+	Apply  bool  `json:"apply"`   // explicit mutation mode selector
+	// AfterID is forwarded as the exclusive population cursor. The production
+	// reconciler rejects negative values and starts from its initial cursor when
+	// zero is supplied.
+	AfterID int64 `json:"after_id"` // exclusive scan cursor identifier
+	// Limit zero selects the production reconciler's fifty-record default.
+	// Supplied limits must be between one and five hundred before population
+	// scanning begins.
+	Limit int `json:"limit"` // requested provider scan capacity
+	// RefreshWindowSeconds is admitted from zero through one day before duration
+	// conversion. The production reconciler uses its configured Skew for zero
+	// input and raises any smaller admitted lookahead to that same minimum.
+	RefreshWindowSeconds int64 `json:"refresh_window_seconds"` // seconds
 }
 
+// GrokSSOToOAuthRequest reuses the core request for per-item SSO conversion and
+// provider creation.
 type GrokSSOToOAuthRequest = providercore.GrokSSOToOAuthRequest
 
+// GrokSSOToOAuthItemResult presents one source item with a redacted provider or
+// failure text.
 type GrokSSOToOAuthItemResult struct {
-	Index    int           `json:"index"`
-	Name     string        `json:"name,omitempty"`
-	Email    string        `json:"email,omitempty"`
-	Provider *dto.Provider `json:"provider,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Index    int           `json:"index"`              // original SSO input position
+	Name     string        `json:"name,omitempty"`     // provider display name
+	Email    string        `json:"email,omitempty"`    // account login email
+	Provider *dto.Provider `json:"provider,omitempty"` // optional redacted created provider
+	Error    string        `json:"error,omitempty"`    // source item failure message
 }
 
+// GrokSSOToOAuthResponse separates successfully created providers from failed
+// SSO import items.
 type GrokSSOToOAuthResponse struct {
-	Created []GrokSSOToOAuthItemResult `json:"created"`
-	Failed  []GrokSSOToOAuthItemResult `json:"failed"`
+	Created []GrokSSOToOAuthItemResult `json:"created"` // successful SSO import items
+	Failed  []GrokSSOToOAuthItemResult `json:"failed"`  // failed SSO import items
 }
 
-// GrokOAuthReconciler reconciles authorized credentials with provider records.
+// GrokOAuthReconciler supplies dry-run and apply credential reconciliation for
+// administrator selections.
 type GrokOAuthReconciler interface {
+	// ReconcileGrokOAuth scans the requested population and returns planned or
+	// applied credential outcomes. The core owns identity checks and bounded
+	// refresh work; callers select complementary DryRun and Apply modes before
+	// invocation.
 	ReconcileGrokOAuth(context.Context, providercore.GrokOAuthReconcileInput) (*providercore.GrokOAuthReconcileResult, error)
 }
+
+// GrokOAuthHTTPOptions supplies proxy lookup, sanitized runtime diagnostics and
+// optional reconciliation.
 type GrokOAuthHTTPOptions struct {
-	ProxyURL      func(context.Context, int64) (string, bool, error)
-	RuntimeSanity func() any
-	Reconciler    GrokOAuthReconciler
-}
-type GrokOAuthHandler struct {
-	grokOAuthService *providercore.GrokAuthorization
-	imports          *providercore.GrokProviderImport
-	quotaService     *providercore.GrokQuotaService
-	reconciler       GrokOAuthReconciler
-	options          GrokOAuthHTTPOptions
+	// ProxyURL resolves a selected raw-refresh proxy into URL, found flag and
+	// error. Lookup errors or a false found flag reject the request before Grok
+	// token exchange.
+	ProxyURL func(context.Context, int64) (string, bool, error) // selected proxy URL lookup
+	// RuntimeSanity is required when the diagnostics route is mounted. Its
+	// callback selects sanitized output before the handler sends the returned value.
+	RuntimeSanity func() any // sanitized runtime diagnostics callback
+	// Reconciler is optional during construction. A reconciliation request
+	// returns the unavailable response when this implementation was not supplied.
+	Reconciler GrokOAuthReconciler // optional credential reconciliation service
 }
 
+// GrokOAuthHandler binds Grok authorization, imports, quota observations and
+// reconciliation to administration.
+type GrokOAuthHandler struct {
+	grokOAuthService *providercore.GrokAuthorization  // borrowed Grok authorization instance
+	imports          *providercore.GrokProviderImport // borrowed Grok provider importer
+	quotaService     *providercore.GrokQuotaService   // optional Grok quota maintenance
+	reconciler       GrokOAuthReconciler              // optional credential reconciliation service
+	options          GrokOAuthHTTPOptions             // HTTP lookup and diagnostics callbacks
+}
+
+// NewGrokOAuthHandler borrows authorization, import, quota and optional
+// reconciliation for administrator routes. Mounted endpoints require their
+// reached dependencies; the owner manages session cleanup and query shutdown
+// for the supplied instances.
 func NewGrokOAuthHandler(auth *providercore.GrokAuthorization, imports *providercore.GrokProviderImport, quota *providercore.GrokQuotaService, options GrokOAuthHTTPOptions) *GrokOAuthHandler {
 	return &GrokOAuthHandler{grokOAuthService: auth, imports: imports, quotaService: quota, reconciler: options.Reconciler, options: options}
 }
 
+// GetCapabilities returns the authorization service's current Grok login
+// capability display. The service controls whether password authorization is
+// enabled, and the HTTP wrapper encodes its result through the common success
+// envelope.
 func (h *GrokOAuthHandler) GetCapabilities(c *gin.Context) {
 	response.Success(c, h.grokOAuthService.GetCapabilities())
 }
 
+// GenerateAuthURL returns a Grok authorization session using optional proxy and
+// callback hints. Any JSON binding error discards the decoded request and
+// selects defaults; authorization errors retain their shared domain mapping.
 func (h *GrokOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req GrokGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		// URL generation accepts omitted JSON. Discard partially decoded values
+		// after any binding error so default proxy and callback selection remain together.
 		req = GrokGenerateAuthURLRequest{}
 	}
 	result, err := h.grokOAuthService.GenerateAuthURL(c.Request.Context(), req.ProxyID, req.RedirectURI)
@@ -106,6 +214,10 @@ func (h *GrokOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// ExchangeCode binds the required Grok session and authorization input before
+// exchange. State and callback checks belong to authorization, which can derive
+// state from pasted input and returns domain failures through the shared
+// mapping.
 func (h *GrokOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req GrokExchangeCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -130,12 +242,24 @@ func (h *GrokOAuthHandler) ExchangeCode(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
+// RefreshToken exchanges trimmed refresh-token text, preferring refresh_token
+// over its rt alias. Empty token selection returns 400. A requested proxy needs
+// a successful found lookup, so errors or missing records stop this endpoint
+// before exchange.
+//
+// The raw client_id value is passed to authorization. The configured upstream
+// client trims that value and selects its effective default when blank.
+// Successful token information is returned for later provider use. This handler owns request binding and proxy error mapping,
+// while authorization owns token exchange and optional session-independent
+// metadata handling.
 func (h *GrokOAuthHandler) RefreshToken(c *gin.Context) {
 	var req GrokRefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	// Current and compatibility spellings feed one exchange. Prefer populated
+	// current input so the rt alias cannot replace that same request's selected credential.
 	refreshToken := strings.TrimSpace(req.RefreshToken)
 	if refreshToken == "" {
 		refreshToken = strings.TrimSpace(req.RT)
@@ -166,8 +290,10 @@ func (h *GrokOAuthHandler) RefreshToken(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// ValidateSSOToken exchanges a Web SSO cookie for Build OAuth tokens.
-// The response contains the resulting OAuth token information.
+// ValidateSSOToken exchanges supplied Web SSO material for Build OAuth token
+// information. Authorization validates the input and selected proxy, and the
+// response returns its token metadata while raw cookie handling remains in the
+// use case.
 func (h *GrokOAuthHandler) ValidateSSOToken(c *gin.Context) {
 	var req GrokSSOTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -182,8 +308,10 @@ func (h *GrokOAuthHandler) ValidateSSOToken(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// AuthorizePassword exchanges an email and password for Build OAuth tokens through SSO.
-// The response excludes the password and raw SSO token.
+// AuthorizePassword forwards email, password and optional proxy to the enabled
+// SSO authorization flow. The returned token information omits login secrets,
+// while capability checks and credential failures retain their domain response
+// mapping.
 func (h *GrokOAuthHandler) AuthorizePassword(c *gin.Context) {
 	var req GrokPasswordAuthorizeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -198,6 +326,9 @@ func (h *GrokOAuthHandler) AuthorizePassword(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
+// RefreshProviderToken requests import maintenance for the decimal
+// path-selected Grok provider and returns a redacted DTO. GrokImportInputError
+// maps to 400, while other failures retain their shared domain mapping.
 func (h *GrokOAuthHandler) RefreshProviderToken(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -216,6 +347,16 @@ func (h *GrokOAuthHandler) RefreshProviderToken(c *gin.Context) {
 	response.Success(c, dto.ProviderFromRecord(value))
 }
 
+// ReconcileOAuthProviders binds an administrator reconciliation selection with
+// dry_run=true by default. Apply and the effective dry-run value must differ,
+// so mutation requires apply=true with dry_run=false. Refresh-window seconds
+// are admitted from zero through one day before conversion.
+//
+// A missing reconciler returns 500 after input validation. The core receives
+// cursor, limit and duration and owns its population rules and identity-checked
+// maintenance. Dry-run output exposes planned outcomes, while apply output
+// describes performed work; handler validation prevents omitted or conflicting
+// flags from accidentally choosing mutation.
 func (h *GrokOAuthHandler) ReconcileOAuthProviders(c *gin.Context) {
 	var req GrokOAuthReconcileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -230,6 +371,8 @@ func (h *GrokOAuthHandler) ReconcileOAuthProviders(c *gin.Context) {
 		response.ErrorFrom(c, providercore.ErrGrokOAuthReconcileMode)
 		return
 	}
+	// Reconciliation accepts at most one day of refresh lookahead. Bound the
+	// HTTP seconds value before duration multiplication and the core's skew normalization.
 	if req.RefreshWindowSeconds < 0 || req.RefreshWindowSeconds > int64((24*time.Hour)/time.Second) {
 		response.ErrorFrom(c, providercore.ErrGrokOAuthReconcileWindow)
 		return
@@ -247,6 +390,7 @@ func (h *GrokOAuthHandler) ReconcileOAuthProviders(c *gin.Context) {
 
 		Limit: req.Limit,
 
+		// The HTTP value uses seconds, while the reconciler consumes a duration.
 		RefreshWindow: time.Duration(req.RefreshWindowSeconds) * time.Second,
 	})
 	if err != nil {
@@ -256,17 +400,36 @@ func (h *GrokOAuthHandler) ReconcileOAuthProviders(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// CreateProviderFromOAuth strictly binds the required session and code and
+// delegates Grok provider creation. The importer owns authorization session
+// exchange, configuration persistence and follow-up dispatch, and the HTTP
+// result redacts provider credentials.
 func (h *GrokOAuthHandler) CreateProviderFromOAuth(c *gin.Context) {
 	var req struct {
-		SessionID   string  `json:"session_id" binding:"required"`
-		Code        string  `json:"code" binding:"required"`
-		State       string  `json:"state"`
-		RedirectURI string  `json:"redirect_uri"`
-		ProxyID     *int64  `json:"proxy_id"`
-		Name        string  `json:"name"`
-		Concurrency int     `json:"concurrency"`
-		Priority    int     `json:"priority"`
-		GroupIDs    []int64 `json:"group_ids"`
+		SessionID string `json:"session_id" binding:"required"` // authorization session identifier
+		Code      string `json:"code" binding:"required"`       // authorization exchange code
+		// State can be omitted from code-exchange input when authorization derives it
+		// from pasted code or callback text. The resolved value still needs to match
+		// the stored session.
+		State string `json:"state"` // authorization state value
+		// RedirectURI is trimmed and checked against the stored session when nonblank.
+		// Token exchange uses that stored callback after the consistency check.
+		RedirectURI string `json:"redirect_uri"` // authorization callback URI
+		// ProxyID can override exchange transport after successful lookup and is also
+		// forwarded as the provider's creation binding. An omitted selection can reuse
+		// the session route for exchange while creating a provider with no proxy ID.
+		ProxyID *int64 `json:"proxy_id"` // selected egress proxy
+		// Name is trimmed by the importer. Blank input prefers returned email and then
+		// the fixed Grok OAuth Provider label before administrative creation.
+		Name string `json:"name"` // provider display name
+		// Concurrency and Priority are forwarded as supplied to administrative
+		// creation. This OAuth path supplies no PAT-style pointer defaults, so zero
+		// reaches the corresponding administrator rules.
+		Concurrency int `json:"concurrency"` // provider request capacity
+		Priority    int `json:"priority"`    // scheduler priority value
+		// GroupIDs supplies the requested group associations for validation and
+		// creation. An empty selection creates no automatically chosen default group.
+		GroupIDs []int64 `json:"group_ids"` // associated routing groups
 	}
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -290,6 +453,9 @@ func (h *GrokOAuthHandler) CreateProviderFromOAuth(c *gin.Context) {
 	response.Success(c, dto.ProviderFromRecord(value))
 }
 
+// CreateProvidersFromSSO strictly binds a core SSO import request and returns
+// created and failed item arrays. Core input errors map to 400; each successful
+// provider is redacted before the separate outcome collections are encoded.
 func (h *GrokOAuthHandler) CreateProvidersFromSSO(c *gin.Context) {
 	var req GrokSSOToOAuthRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
@@ -318,6 +484,9 @@ func (h *GrokOAuthHandler) CreateProvidersFromSSO(c *gin.Context) {
 	response.Success(c, out)
 }
 
+// QueryQuota returns the quota service's live Grok observation for a decimal
+// provider identifier. A nil service returns 400, while query eligibility and
+// upstream maintenance belong to the shared quota use case.
 func (h *GrokOAuthHandler) QueryQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -336,6 +505,10 @@ func (h *GrokOAuthHandler) QueryQuota(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// ResetQuota delegates to the Grok quota-reset operation after decimal ID
+// validation and service availability. The current service reports
+// GROK_QUOTA_RESET_UNSUPPORTED through domain error mapping because its
+// configured OAuth reset operation is unavailable.
 func (h *GrokOAuthHandler) ResetQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -346,7 +519,8 @@ func (h *GrokOAuthHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "grok quota service is not enabled")
 		return
 	}
-	// ResetQuota returns GROK_QUOTA_RESET_UNSUPPORTED because xAI has no OAuth quota reset endpoint.
+	// The configured quota service reports GROK_QUOTA_RESET_UNSUPPORTED for this
+	// operation. Keep the domain response mapping so administrators receive that typed reason.
 	//nolint:staticcheck // SA4023
 	result, err := h.quotaService.ResetQuota(c.Request.Context(), providerID)
 	if err != nil { //nolint:staticcheck // SA4023
@@ -356,6 +530,9 @@ func (h *GrokOAuthHandler) ResetQuota(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// RuntimeSanity returns the supplied diagnostics callback's sanitized Grok
+// configuration display. The callback is required when this route is mounted
+// and owns field selection before the HTTP wrapper encodes the result.
 func (h *GrokOAuthHandler) RuntimeSanity(c *gin.Context) {
 	response.Success(c, h.options.RuntimeSanity())
 }

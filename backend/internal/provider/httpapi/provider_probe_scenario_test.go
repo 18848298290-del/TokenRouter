@@ -1,7 +1,5 @@
 package httpapi
 
-// These scenarios cover test_events.go output and the provider test service invoked by test_handler.go.
-
 import (
 	"bytes"
 	"context"
@@ -41,141 +39,312 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Provider probes select their upstream protocol, credential source and client
+// identity before emitting test events. Scenarios cover test_events.go and the
+// TestService invoked by test_handler.go, using provider/provider OpenAI, CN,
+// Grok and Qoder executors with controlled streams and health-write
+// observations. Explicit test kinds and protocols override compatibility
+// selection without replacing stored provider configuration.
+//
+// Fixture records, requests and profile pointers have different copy rules:
+// store reads clone supported provider containers, some CN reads are shallow,
+// captured request bytes are copied and configured response bodies are consumed
+// once. Automatic TLS-route fixtures warm local caches from stable records
+// and register Stop callbacks; their nil cache backends create no subscription
+// for those callbacks to stop. Rate-limit and task-recovery assertions inspect
+// logical fixture dispatch and mutated observations. Actual persistence and
+// concurrent-store guarantees remain with the corresponding use cases and store
+// tests.
+
+// compactionTestV2SSESuccessBody supplies native compaction output plus its
+// terminal event, allowing manual-probe scenarios to exercise complete stream validation.
 const compactionTestV2SSESuccessBody = "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"compaction\",\"id\":\"cmp_probe\",\"encrypted_content\":\"blob\"}}\n\n" +
 	"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_probe\",\"output\":[]}}\n\n"
 
+// cnProviderTestRepo supplies one nonnil provider through shallow serial record
+// reads.
 type cnProviderTestRepo struct {
-	provider *providercore.Record
+	// provider is borrowed and required by GetByID's shallow copy. Configure this
+	// record before serial calls and keep its nested values stable while readers
+	// use them.
+	provider *providercore.Record // selected provider fixture record
 }
 
+// cnProviderTestHTTP captures one admitted protocol request and returns a
+// controlled stopping error.
 type cnProviderTestHTTP struct {
-	request *http.Request
-	body    string
+	// request is a metadata clone of the captured HTTP request. Request.Clone
+	// copies headers and URL, while its Body remains the consumed original reader.
+	request *http.Request // captured HTTP metadata clone
+	body    string        // captured request body text
 }
 
+// grokProviderTestRateLimitRepo records reset observations beyond its embedded
+// no-op Grok store.
 type grokProviderTestRateLimitRepo struct {
-	*grokTestStoreFixture
-	rateLimitedCalls int
-	resetAt          time.Time
+	*grokTestStoreFixture           // borrowed no-op Grok store operations
+	rateLimitedCalls      int       // serial logical limit-write count
+	resetAt               time.Time // selected fixture recovery timestamp
 }
 
-// These fixtures record store writes and platform requests while using the production test service.
+// grokTestStoreFixture supplies configured provider clones and accepts unused
+// health writes.
 type grokTestStoreFixture struct {
-	providersByID map[int64]*providercore.Record
+	// providersByID borrows configured records for CloneRecord reads. Initialize
+	// the map before requests and keep its records stable while the serial fixture
+	// copies them.
+	providersByID map[int64]*providercore.Record // configured provider fixture pointers
 }
 
+// grokTestTransportFixture captures a borrowed request and body before
+// returning configured response state.
 type grokTestTransportFixture struct {
-	resp     *http.Response
-	lastReq  *http.Request
-	lastBody []byte
+	// resp is returned after the request body has been captured successfully.
+	// Body-read errors return before it; the caller consumes and closes its
+	// configured response body.
+	resp *http.Response // borrowed fixed consumable response
+	// lastReq is assigned before its body is read. lastBody changes only after
+	// a successful read, so read failures can leave the latest borrowed request
+	// beside bytes from the previous serial call; successful captures consume
+	// the request reader.
+	lastReq  *http.Request // last borrowed HTTP request
+	lastBody []byte        // last captured request body bytes
 }
 
-type grokTestTargetLoader struct{ target providercore.TestTarget }
+// grokTestTargetLoader holds a borrowed target selected by the controlled Grok
+// scenario.
+type grokTestTargetLoader struct {
+	// target is retained and returned for every load. The test initializes its
+	// executor and record before invoking shared service dispatch through this
+	// loader.
+	target providercore.TestTarget // borrowed configured test target
+}
 
-// grokTestFailureStoreFixture records health writes and call counts.
+// grokTestFailureStoreFixture records serial rate-limit and temporary-block
+// dispatch from Grok failures.
 type grokTestFailureStoreFixture struct {
+	// tempUnschedCalls: serial logical temporary-block count; rateLimitedCalls:
+	// serial logical limit-write count
 	tempUnschedCalls, rateLimitedCalls int
-	lastRateLimitedID                  int64
-	lastRateLimitResetAt               time.Time
+	lastRateLimitedID                  int64     // last limit-write provider identifier
+	lastRateLimitResetAt               time.Time // last limit-write recovery timestamp
 }
 
+// probeAgentStore holds serial Agent Identity credentials and records logical
+// permanent-error writes.
 type probeAgentStore struct {
-	provideradapter.OpenAIProviderTestStore
-	provider      *providercore.Record
-	setErrorCalls int
+	provideradapter.OpenAIProviderTestStore // unused embedded provider-test store operations
+	// provider holds borrowed serial state. GetByID clones it, while
+	// UpdateCredentials replaces this record's credential map after accepted task
+	// registration; callers inspect that same stored fixture object afterward.
+	provider      *providercore.Record // selected provider fixture record
+	setErrorCalls int                  // serial logical permanent-error count
 }
 
-type probeAgentInvalidations struct{ providerIDs []int64 }
+// probeAgentInvalidations records serial provider identifiers after accepted
+// task credential maintenance.
+type probeAgentInvalidations struct {
+	providerIDs []int64 // captured fixture invalidation provider identifiers
+}
 
+// queuedHTTPUpstream consumes ordered response pointers while retaining serial
+// request and TLS observations.
 type queuedHTTPUpstream struct {
-	responses []*http.Response
-	requests  []*http.Request
-	tlsFlags  []bool
+	// responses is consumed from the front by the serial transport. Its entries
+	// retain response pointers and bodies, so each queued request needs a separate
+	// readable fixture body.
+	responses []*http.Response // ordered consumable response pointers
+	// requests and tlsFlags are appended together before response selection,
+	// including exhausted-queue failures. The request pointers remain borrowed;
+	// tests inspect these aligned serial observations after execution.
+	requests []*http.Request // captured borrowed HTTP request pointers
+	tlsFlags []bool          // captured TLS-profile presence flags
 }
 
+// openAIProbeStore records serial provider health and configuration dispatch
+// for OpenAI scenarios. Extra observation can block on its optional channel;
+// record reads use its embedded configured clone fixture.
 type openAIProbeStore struct {
-	openAIProbeRecords
-	updateExtraCalls   chan map[string]any
-	updatedExtra       map[string]any
-	bulkUpdatedIDs     []int64
-	bulkUpdatedPayload providercore.ProviderBulkUpdate
-	rateLimitedID      int64
-	rateLimitedAt      *time.Time
-	clearedErrorID     int64
-	setErrorID         int64
-	setErrorMsg        string
+	openAIProbeRecords // configured provider clone lookup
+	// updateExtraCalls is optional and publication is blocking when configured.
+	// Tests supply channel capacity or consume each observation; its copied
+	// top-level map can still share nested values.
+	updateExtraCalls chan map[string]any // optional blocking Extra observation channel
+	// updatedExtra and bulkUpdatedPayload retain supplied maps after their serial
+	// fixture calls. Keep those maps stable through assertions; bulkUpdatedIDs
+	// receives its own copy of the submitted ID slice.
+	updatedExtra       map[string]any                  // borrowed latest Extra update map
+	bulkUpdatedIDs     []int64                         // copied bulk-update provider identifiers
+	bulkUpdatedPayload providercore.ProviderBulkUpdate // borrowed captured bulk-update payload
+	rateLimitedID      int64                           // captured limit-write provider identifier
+	rateLimitedAt      *time.Time                      // copied limit reset timestamp
+	clearedErrorID     int64                           // captured error-clear provider identifier
+	setErrorID         int64                           // captured error-write provider identifier
+	setErrorMsg        string                          // captured provider error message
 }
 
-// openAIProbeOutput holds the HTTP request and response recorder.
+// openAIProbeOutput pairs a borrowed HTTP request and shared recorder for
+// synchronous event execution.
 type openAIProbeOutput struct {
-	Request  *http.Request
-	recorder *httptest.ResponseRecorder
+	// Request and recorder are shared with execution helpers and event assertions.
+	// The test finishes synchronous output before inspecting the recorder and keeps
+	// request metadata stable while helpers read it.
+	Request  *http.Request              // borrowed fixture HTTP request
+	recorder *httptest.ResponseRecorder // shared fixture response recorder
 }
 
+// openAIProbeRecords indexes stable provider fixture pointers for cloned
+// store-backed test dispatch.
 type openAIProbeRecords struct {
-	providersByID map[int64]*providercore.Record
+	// providersByID retains configured record pointers for CloneRecord reads.
+	// Tests finish population setup before request dispatch and keep these serial
+	// inputs stable while the fixture copies them.
+	providersByID map[int64]*providercore.Record // configured provider fixture pointers
 }
 
+// openAIProbeTransport captures serial request bytes and TLS selections with
+// ordered or fixed response pointers. Captured body slices are copied,
+// request/profile pointers remain borrowed and configured response bodies are
+// consumed by callers.
 type openAIProbeTransport struct {
-	requests       []*http.Request
-	bodies         [][]byte
-	responses      []*http.Response
-	resp           *http.Response
-	err            error
-	lastReq        *http.Request
-	lastBody       []byte
-	lastTLSProfile *tlsfingerprint.Profile
+	// requests records every admitted request by pointer; bodies receives a
+	// separate copied byte slice only after a nonnil body is read successfully.
+	// Bodyless or failed reads can therefore leave these capture lengths different.
+	requests []*http.Request // captured borrowed HTTP request pointers
+	bodies   [][]byte        // copied captured request body slices
+	// responses is consumed from the front by the serial transport. Its entries
+	// retain response pointers and bodies, so each queued request needs a separate
+	// readable fixture body.
+	responses []*http.Response // ordered consumable response pointers
+	// resp is the fixed response used when err is nil and responses has no
+	// remaining entries. Its body remains consumable, so configure fresh response
+	// state before reuse.
+	resp *http.Response // borrowed fixed consumable response
+	// err is returned after request and readable-body capture, before response
+	// selection. Captured observations remain available for assertions even when
+	// this configured transport failure wins.
+	err error // configured fixture callback failure
+	// lastReq borrows the latest request and can be replaced even on failed body
+	// capture. Its successfully read body is replaced with a reader over lastBody,
+	// so keep those captured bytes stable through later request-body assertions.
+	lastReq  *http.Request // last borrowed HTTP request
+	lastBody []byte        // last captured request body bytes
+	// lastTLSProfile retains the profile pointer supplied to DoWithTLS. Keep that
+	// object stable during assertions; cache-backed policy may have constructed it
+	// from copied profile values before transport capture.
+	lastTLSProfile *tlsfingerprint.Profile // borrowed latest selected TLS profile
 }
 
+// automaticProbeProfileStore supplies stable borrowed profiles to the local
+// cache-owner fixture.
 type automaticProbeProfileStore struct {
-	egress.TLSFingerprintProfileRepository
-	values []*egress.TLSFingerprintProfile
+	egress.TLSFingerprintProfileRepository // unused embedded profile storage operations
+	// values is returned directly by List during cache initialization. Configure
+	// the slice and its pointed-to profiles before Start, then keep them stable
+	// while the fixture service copies their values.
+	values []*egress.TLSFingerprintProfile // borrowed stable cache initialization values
 }
 
+// automaticProbeRouterStore supplies stable borrowed router records to the
+// local cache-owner fixture.
 type automaticProbeRouterStore struct {
-	egress.TLSFingerprintRouterRepository
-	values []*egress.TLSFingerprintRouter
+	egress.TLSFingerprintRouterRepository // unused embedded router storage operations
+	// values is returned directly by List during route-cache initialization.
+	// Configure the slice and its routers before Start and keep those borrowed
+	// records stable while the service loads them.
+	values []*egress.TLSFingerprintRouter // borrowed stable cache initialization values
 }
 
+// qoderProviderTestSessionProviderStub returns borrowed session state and
+// captures serial provider invalidation IDs.
 type qoderProviderTestSessionProviderStub struct {
-	session     *qoder.SessionContext
-	err         error
-	invalidated []int64
+	// session is returned by pointer when err is nil. Probe preparation can mutate
+	// its Identity with user-info results, and serial assertions inspect that same
+	// object after execution.
+	session *qoder.SessionContext // borrowed mutable Qoder session
+	// err takes precedence over session when GetSession is invoked. A configured
+	// failure returns nil session; otherwise callers borrow the configured session
+	// pointer for probe preparation.
+	err         error   // configured fixture callback failure
+	invalidated []int64 // captured session invalidation provider identifiers
 }
 
+// qoderProviderTestClientStub captures serial request bytes and returns
+// controlled wrapped-stream data. Input header maps are borrowed, while
+// recorded body slices are copied for later assertions.
 type qoderProviderTestClientStub struct {
-	request  *http.Request
-	requests []*http.Request
-	body     string
-	bodies   [][]byte
-	err      error
-	headers  map[string]string
+	// request and requests retain constructed request pointers after capture,
+	// while bodies receives independent copies of each input byte slice. Configure
+	// the fixed response body before calls and read captures after serial execution.
+	request  *http.Request   // captured borrowed HTTP request
+	requests []*http.Request // captured borrowed HTTP request pointers
+	body     string          // configured wrapped-stream response text
+	bodies   [][]byte        // copied captured request body slices
+	// err is returned after request bytes and headers are captured. A configured
+	// failure bypasses fixed stream response or doer invocation while retaining
+	// those observations.
+	err error // configured fixture callback failure
+	// headers retains the map supplied by stream request preparation. Callers keep
+	// that map stable while the serial fixture and request assertions inspect the
+	// recorded values.
+	headers map[string]string // borrowed supplied request header map
 }
 
+// qoderProviderTestOAuthClientStub captures the session token used for serial
+// user-info preparation.
 type qoderProviderTestOAuthClientStub struct {
-	token string
-	err   error
+	token string // captured user-info session token
+	// err is returned after token text is captured for user-info assertions. A nil
+	// failure supplies the fixed fixture user identity to the probe preparation
+	// path.
+	err error // configured fixture callback failure
 }
 
+// qoderHTTPUpstreamRecorder records serial transport choices and supplies fixed
+// user-info or stream responses.
 type qoderHTTPUpstreamRecorder struct {
-	body                string
-	userInfoBody        string
-	userInfoStatusCode  int
-	proxyURL            string
-	providerID          int64
-	providerConcurrency int
-	profileSet          bool
-	requests            []*http.Request
+	body string // configured stream response text
+	// userInfoBody supplies matching user-info GET response text. An empty value
+	// selects the fixed default user object; ordinary stream requests instead use
+	// body.
+	userInfoBody string // configured user-info response text
+	// userInfoStatusCode overrides the status for matching user-info GET requests
+	// when nonzero. Zero retains the fixture default HTTP 200; other requests use
+	// their ordinary stream status.
+	userInfoStatusCode int // optional user-info HTTP status
+	// proxyURL, providerID, providerConcurrency and profileSet describe the latest
+	// serial transport call. requests retains the history of borrowed request
+	// pointers; tests finish execution before comparing these observations.
+	proxyURL            string          // captured selected transport proxy
+	providerID          int64           // captured TokenRouter provider identifier
+	providerConcurrency int             // captured provider request capacity
+	profileSet          bool            // captured TLS-profile presence flag
+	requests            []*http.Request // captured borrowed HTTP request pointers
 }
 
-// These fixtures connect test targets and HTTP output to the production execution paths.
+// qoderTestOutputFixture pairs a borrowed execution context and shared HTTP
+// recorder for Qoder scenarios.
 type qoderTestOutputFixture struct {
-	context.Context
-	recorder *httptest.ResponseRecorder
+	// Context and recorder are retained by synchronous Qoder execution helpers.
+	// The test supplies a usable context and inspects the shared recorder after
+	// event output finishes.
+	context.Context                            // borrowed fixture execution context
+	recorder        *httptest.ResponseRecorder // shared fixture response recorder
 }
 
-type qoderTargetFixture struct{ target providercore.TestTarget }
+// qoderTargetFixture holds the borrowed target selected for shared Qoder test
+// preparation.
+type qoderTargetFixture struct {
+	// target is returned for every fixture load. Its executor and provider record
+	// are configured by the test before shared preparation and kept usable through
+	// synchronous execution.
+	target providercore.TestTarget // borrowed configured test target
+}
 
+// TestProviderTestService_AdaptiveChatOnlyProvidersTestChatAndAnthropicEndpoints
+// runs adaptive Zhipu against controlled Chat and Messages streams. Both
+// endpoint credentials and URLs match configuration, and one start plus one
+// completion encloses the two successful checks.
 func TestProviderTestService_AdaptiveChatOnlyProvidersTestChatAndAnthropicEndpoints(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(301, capability.PlatformZhipu)
 	svc, upstream := adaptiveCNProviderTestService(
@@ -198,6 +367,10 @@ func TestProviderTestService_AdaptiveChatOnlyProvidersTestChatAndAnthropicEndpoi
 	require.Contains(t, recorder.Body.String(), "已通过原生 /v1/messages 验证")
 }
 
+// TestProviderTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint runs
+// adaptive DeepSeek through Chat, Messages and Responses fixtures. Its
+// Responses request uses the provider-specific path, OpenAI transport profile
+// and stream fields, with one final completion event.
 func TestProviderTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(302, capability.PlatformDeepseek)
 	svc, upstream := adaptiveCNProviderTestService(
@@ -222,6 +395,10 @@ func TestProviderTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint(t *testi
 	require.Contains(t, recorder.Body.String(), "已通过原生 /responses 验证")
 }
 
+// TestProviderTestService_AdaptiveKimiAlsoTestsResponsesEndpoint runs adaptive
+// Kimi through three configured native endpoints. Its Responses request uses
+// the v1 path and expected stream fields, with one final successful completion
+// event.
 func TestProviderTestService_AdaptiveKimiAlsoTestsResponsesEndpoint(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(306, capability.PlatformKimi)
 	svc, upstream := adaptiveCNProviderTestService(
@@ -246,6 +423,10 @@ func TestProviderTestService_AdaptiveKimiAlsoTestsResponsesEndpoint(t *testing.T
 	require.Contains(t, recorder.Body.String(), "已通过原生 /responses 验证")
 }
 
+// TestProviderTestService_AdaptiveStopsAndNamesFailingEndpoint injects a
+// missing Messages route after successful Chat. The adaptive check stops after
+// two requests and emits an endpoint-specific error with no terminal success
+// event.
 func TestProviderTestService_AdaptiveStopsAndNamesFailingEndpoint(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(303, capability.PlatformDeepseek)
 	svc, upstream := adaptiveCNProviderTestService(
@@ -264,6 +445,10 @@ func TestProviderTestService_AdaptiveStopsAndNamesFailingEndpoint(t *testing.T) 
 	require.NotContains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestService_AdaptiveRejectsInvalidAnthropicSuccessBody returns
+// HTML with HTTP 200 from an adaptive Messages endpoint. Missing message_stop
+// makes the check fail after two requests, and SSE output reports failure
+// rather than completion.
 func TestProviderTestService_AdaptiveRejectsInvalidAnthropicSuccessBody(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(305, capability.PlatformKimi)
 	svc, upstream := adaptiveCNProviderTestService(
@@ -282,6 +467,9 @@ func TestProviderTestService_AdaptiveRejectsInvalidAnthropicSuccessBody(t *testi
 	require.NotContains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestService_FixedCNChatProtocolStillTestsOnlyChatEndpoint selects
+// a fixed Chat protocol on a Zhipu record. The test sends one request to its
+// configured Chat path and emits one successful completion.
 func TestProviderTestService_FixedCNChatProtocolStillTestsOnlyChatEndpoint(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(304, capability.PlatformZhipu)
 	provider.Credentials["api_protocol"] = providercore.APIProtocolChatCompletions
@@ -297,6 +485,10 @@ func TestProviderTestService_FixedCNChatProtocolStillTestsOnlyChatEndpoint(t *te
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_complete"`))
 }
 
+// TestProviderTestService_FixedCNAnthropicUsesNativeEndpointWithoutBetaQuery
+// selects fixed Anthropic protocol and its configured Zhipu base URL. The
+// request uses the native Messages path and API-key header with no beta query
+// string.
 func TestProviderTestService_FixedCNAnthropicUsesNativeEndpointWithoutBetaQuery(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(306, capability.PlatformZhipu)
 	provider.Credentials["api_protocol"] = providercore.APIProtocolAnthropic
@@ -314,6 +506,9 @@ func TestProviderTestService_FixedCNAnthropicUsesNativeEndpointWithoutBetaQuery(
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestService_FixedCNAnthropicUsesProviderDefault selects Anthropic
+// protocol while removing protocol-specific base URLs from a Zhipu record. One
+// request uses the platform's fixed Messages default and the test succeeds.
 func TestProviderTestService_FixedCNAnthropicUsesProviderDefault(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(307, capability.PlatformZhipu)
 	provider.Credentials["api_protocol"] = providercore.APIProtocolAnthropic
@@ -328,6 +523,10 @@ func TestProviderTestService_FixedCNAnthropicUsesProviderDefault(t *testing.T) {
 	require.Equal(t, "https://open.bigmodel.cn/api/anthropic/v1/messages", upstream.requests[0].URL.String())
 }
 
+// TestProviderTestService_FixedCNAnthropicRejectsOpenAIBaseURLAndMarksAuthErrors
+// checks a misconfigured Zhipu URL and a separate forbidden response. URL
+// mismatch sends no request, while an admitted 403 records provider error state
+// through the fixture store.
 func TestProviderTestService_FixedCNAnthropicRejectsOpenAIBaseURLAndMarksAuthErrors(t *testing.T) {
 	t.Run("misconfigured base URL", func(t *testing.T) {
 		provider := adaptiveCNProviderTestProvider(308, capability.PlatformZhipu)
@@ -358,6 +557,10 @@ func TestProviderTestService_FixedCNAnthropicRejectsOpenAIBaseURLAndMarksAuthErr
 	})
 }
 
+// TestProviderTestService_AdaptiveSelectedProtocolTestsOnlyThatEndpoint selects
+// Anthropic explicitly for an adaptive DeepSeek record. One configured Messages
+// request runs inside one start/completion pair, protecting per-test protocol
+// selection from full adaptive enumeration.
 func TestProviderTestService_AdaptiveSelectedProtocolTestsOnlyThatEndpoint(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(310, capability.PlatformDeepseek)
 	svc, upstream := adaptiveCNProviderTestService(provider, adaptiveCNAnthropicTestResponse())
@@ -372,6 +575,9 @@ func TestProviderTestService_AdaptiveSelectedProtocolTestsOnlyThatEndpoint(t *te
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_complete"`))
 }
 
+// TestProviderTestService_SelectedProtocolMustBeEnabled selects Anthropic for a
+// Zhipu provider whose enabled set contains only Chat. Preparation rejects the
+// selection locally and captures no upstream request.
 func TestProviderTestService_SelectedProtocolMustBeEnabled(t *testing.T) {
 	provider := adaptiveCNProviderTestProvider(311, capability.PlatformZhipu)
 	provider.Credentials[providercore.UpstreamProtocolsKey] = []any{string(protocol.ProtocolOpenAIChatCompletions)}
@@ -385,13 +591,17 @@ func TestProviderTestService_SelectedProtocolMustBeEnabled(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "Test protocol anthropic is not supported for this provider")
 }
 
+// TestProviderTestServiceCNProviderUsesConfiguredProtocol varies Kimi Chat,
+// Zhipu Messages and DeepSeek Responses provider configuration. The injected
+// 400 response stops execution after capture, whose URL, auth header and model
+// match the selected protocol.
 func TestProviderTestServiceCNProviderUsesConfiguredProtocol(t *testing.T) {
 	tests := []struct {
-		name       string
-		provider   *providercore.Record
-		wantPath   string
-		wantModel  string
-		wantHeader string
+		name       string               // scenario description text
+		provider   *providercore.Record // selected provider fixture record
+		wantPath   string               // expected upstream URL path
+		wantModel  string               // expected outgoing model identifier
+		wantHeader string               // expected authorization header name
 	}{
 		{
 			name: "Kimi Chat Completions",
@@ -443,6 +653,10 @@ func TestProviderTestServiceCNProviderUsesConfiguredProtocol(t *testing.T) {
 	}
 }
 
+// TestProviderTestService_TestProviderConnection_GrokUsesXAIResponses probes
+// Grok OAuth with a configured model mapping and controlled text stream. The
+// CLI Responses endpoint receives mapped model, token and client headers, and
+// emits a successful completion.
 func TestProviderTestService_TestProviderConnection_GrokUsesXAIResponses(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          13,
@@ -497,6 +711,9 @@ func TestProviderTestService_TestProviderConnection_GrokUsesXAIResponses(t *test
 	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestService_TestProviderConnection_GrokUsesCustomTextPrompt
+// probes Grok OAuth using an explicit text prompt. The outgoing Responses input
+// retains that prompt and the controlled completed stream returns success.
 func TestProviderTestService_TestProviderConnection_GrokUsesCustomTextPrompt(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          17,
@@ -530,6 +747,10 @@ func TestProviderTestService_TestProviderConnection_GrokUsesCustomTextPrompt(t *
 	require.Equal(t, "describe this provider in one sentence", gjson.GetBytes(upstream.lastBody, "input").String())
 }
 
+// TestProviderTestService_TestProviderConnection_GrokExplicitImageUsesMediaEndpoint
+// requests an explicit image test for a Grok API-key alias. Its media request
+// retains model and prompt, authenticates with the API key and emits the
+// returned image data URL.
 func TestProviderTestService_TestProviderConnection_GrokExplicitImageUsesMediaEndpoint(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          18,
@@ -559,6 +780,10 @@ func TestProviderTestService_TestProviderConnection_GrokExplicitImageUsesMediaEn
 	require.Contains(t, recorder.Body.String(), "data:image/png;base64,aGVsbG8=")
 }
 
+// TestProviderTestService_TestProviderConnection_GrokDefaultsEmptyModelTo45
+// probes Grok OAuth with empty model input and a mapping for the default name.
+// Default selection occurs after mapping, so the outgoing model stays the
+// current default.
 func TestProviderTestService_TestProviderConnection_GrokDefaultsEmptyModelTo45(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          16,
@@ -599,6 +824,9 @@ func TestProviderTestService_TestProviderConnection_GrokDefaultsEmptyModelTo45(t
 	require.Contains(t, recorder.Body.String(), `"model":"grok-4.5"`)
 }
 
+// TestProviderTestService_Grok429PersistsRateLimitReset returns Grok 429 with
+// Retry-After forty-five seconds. The fixture records one rate-limit write and
+// a reset deadline near that supplied wait.
 func TestProviderTestService_Grok429PersistsRateLimitReset(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          14,
@@ -635,6 +863,9 @@ func TestProviderTestService_Grok429PersistsRateLimitReset(t *testing.T) {
 	require.WithinDuration(t, time.Now().Add(45*time.Second), repo.resetAt, time.Second)
 }
 
+// TestProviderTestService_Grok429WithoutQuotaHeadersUsesFallback returns Grok
+// 429 without quota or retry headers. One rate-limit write uses the controlled
+// two-minute recovery fallback near the test's observed start time.
 func TestProviderTestService_Grok429WithoutQuotaHeadersUsesFallback(t *testing.T) {
 	provider := &providercore.Record{
 		ID: 15, Name: "grok-oauth-limited-no-headers", Platform: capability.PlatformGrok,
@@ -664,6 +895,9 @@ func TestProviderTestService_Grok429WithoutQuotaHeadersUsesFallback(t *testing.T
 	require.WithinDuration(t, before.Add(2*time.Minute), repo.resetAt, time.Second)
 }
 
+// TestProviderTestServiceGrokAPIKeyUsesXAIResponses probes a configured xAI
+// API-key record with a completed Responses stream. URL and authorization match
+// the API-key route and the event sink contains successful completion.
 func TestProviderTestServiceGrokAPIKeyUsesXAIResponses(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          54,
@@ -696,6 +930,10 @@ func TestProviderTestServiceGrokAPIKeyUsesXAIResponses(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestServiceGrokAPIKeyAllowsConfiguredHTTPWhenGlobalPolicyDoes
+// permits an HTTP relay through the operator URL policy. The API-key request
+// reaches that relay with its bearer key and omits the CLI client-version
+// header.
 func TestProviderTestServiceGrokAPIKeyAllowsConfiguredHTTPWhenGlobalPolicyDoes(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          55,
@@ -729,6 +967,10 @@ func TestProviderTestServiceGrokAPIKeyAllowsConfiguredHTTPWhenGlobalPolicyDoes(t
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestServiceGrokOAuthPaymentRequiredTemporarilyUnschedulesProvider
+// returns spending-limit 402 from a Grok OAuth probe. The fixture records a
+// ten-minute rate-limit write, no temporary-unschedulable write and an endpoint
+// error event.
 func TestProviderTestServiceGrokOAuthPaymentRequiredTemporarilyUnschedulesProvider(t *testing.T) {
 	provider := healthyGrokOAuthGatewayTestProvider(56, "access-token")
 	repo := &grokTestFailureStoreFixture{}
@@ -758,6 +1000,10 @@ func TestProviderTestServiceGrokOAuthPaymentRequiredTemporarilyUnschedulesProvid
 	require.Contains(t, recorder.Body.String(), "Grok Responses API returned 402")
 }
 
+// TestProviderTestServiceOpenAICompactAgentIdentityUsesFreshAssertion probes
+// native compaction using local Agent Identity credentials. The request carries
+// an assertion plus account/FedRAMP headers, and its authorization text omits
+// the raw private key.
 func TestProviderTestServiceOpenAICompactAgentIdentityUsesFreshAssertion(t *testing.T) {
 	key, privateKey := newProbeAgentKey(t)
 	provider := providercore.Record{
@@ -796,6 +1042,10 @@ func TestProviderTestServiceOpenAICompactAgentIdentityUsesFreshAssertion(t *test
 	require.NotContains(t, upstream.lastReq.Header.Get("Authorization"), privateKey)
 }
 
+// TestProviderTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce
+// returns invalid_task_id before one successful compaction response. One local
+// registration installs the new task ID and triggers invalidation, with two
+// requests and no permanent provider error write.
 func TestProviderTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t *testing.T) {
 	key, privateKey := newProbeAgentKey(t)
 	provider := &providercore.Record{
@@ -818,8 +1068,12 @@ func TestProviderTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t 
 	registerCalls := 0
 	registerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registerCalls++
+		// A response-write failure remains visible to the foreground registration
+		// client and its probe assertions; this callback records arrival before attempting its fixed reply.
 		_, _ = io.WriteString(w, `{"task_id":"task-compact-new"}`)
 	}))
+	// Task recovery uses this local registration endpoint during the foreground
+	// probe. Close it after assertions to join server ownership before the fixture leaves scope.
 	defer registerServer.Close()
 
 	upstream := &openAIProbeTransport{responses: []*http.Response{
@@ -840,6 +1094,10 @@ func TestProviderTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t 
 	require.Equal(t, []int64{provider.ID}, invalidator.providerIDs)
 }
 
+// TestProviderTestService_TestProviderConnection_OpenAICompactOAuthUsesNativeV2AndDoesNotPersistSupport
+// probes OAuth native compaction with a complete compaction stream. Codex URL,
+// client headers and trigger payload match the request path, while manual
+// testing leaves capability Extra writes absent.
 func TestProviderTestService_TestProviderConnection_OpenAICompactOAuthUsesNativeV2AndDoesNotPersistSupport(t *testing.T) {
 	updateCalls := make(chan map[string]any, 1)
 	provider := providercore.Record{
@@ -893,6 +1151,10 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactOAuthUsesNative
 	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
+// TestProviderTestService_TestProviderConnection_OpenAICompactOAuth404DoesNotChangeCapability
+// returns 404 during a manual OAuth compaction test with configured capability.
+// The test emits failure and records no capability Extra update from this
+// manual result.
 func TestProviderTestService_TestProviderConnection_OpenAICompactOAuth404DoesNotChangeCapability(t *testing.T) {
 	updateCalls := make(chan map[string]any, 1)
 	provider := providercore.Record{
@@ -933,6 +1195,10 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactOAuth404DoesNot
 	require.Contains(t, rec.Body.String(), `"type":"error"`)
 }
 
+// TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyUsesNativeResponsesPath
+// probes API-key native compaction with a separate legacy mapping configured.
+// The request uses Responses and the requested model, advertises v2 beta and
+// records no capability write.
 func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyUsesNativeResponsesPath(t *testing.T) {
 	updateCalls := make(chan map[string]any, 1)
 	provider := providercore.Record{
@@ -974,6 +1240,10 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyUsesNativ
 	require.Empty(t, updateCalls, "手动压缩测试不应写入能力状态")
 }
 
+// TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyDefaultBaseURLUsesResponsesPath
+// probes native compaction with an API key and no custom root. The request uses
+// the default OpenAI Responses URL and leaves manual capability-write capture
+// empty.
 func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyDefaultBaseURLUsesResponsesPath(t *testing.T) {
 	updateCalls := make(chan map[string]any, 1)
 	provider := providercore.Record{
@@ -1010,6 +1280,10 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyDefaultBa
 	require.Empty(t, updateCalls)
 }
 
+// TestProviderTestService_TestProviderConnection_OpenAILegacyCompactUsesDedicatedPathWithoutState
+// probes legacy compaction using a separate compact model mapping. The request
+// uses the dedicated compact path and mapped model, while capability state
+// capture remains empty.
 func TestProviderTestService_TestProviderConnection_OpenAILegacyCompactUsesDedicatedPathWithoutState(t *testing.T) {
 	updateCalls := make(chan map[string]any, 1)
 	provider := providercore.Record{
@@ -1050,7 +1324,10 @@ func TestProviderTestService_TestProviderConnection_OpenAILegacyCompactUsesDedic
 	require.Empty(t, updateCalls, "手动压缩测试不应写入能力状态")
 }
 
-// TestManualCompactionTestsPreserveConfigurationAcrossOutcomes checks authentication failures, rate limits, and administrator capability settings.
+// TestManualCompactionTestsPreserveConfigurationAcrossOutcomes varies
+// compaction modes and success, authentication, missing-route and rate-limit
+// responses. Capability choices stay configured while 401 and 429 still reach
+// their separate health-write fixtures.
 func TestManualCompactionTestsPreserveConfigurationAcrossOutcomes(t *testing.T) {
 	for _, mode := range []string{providercore.ProviderTestModeCompact, providercore.ProviderTestModeLegacyCompact} {
 		for _, status := range []int{200, 401, 404, 429} {
@@ -1096,6 +1373,10 @@ func TestManualCompactionTestsPreserveConfigurationAcrossOutcomes(t *testing.T) 
 	}
 }
 
+// TestProviderTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback
+// supplies image result in output_item.done followed by completed output with
+// no image item. The OAuth image test emits that saved image data and
+// successful completion through the event sink.
 func TestProviderTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1134,6 +1415,10 @@ func TestProviderTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *te
 	require.Contains(t, rec.Body.String(), "\"success\":true")
 }
 
+// TestProviderTestService_OpenAIImageOAuthForwardsTLSProfile probes OAuth image
+// generation with provider fingerprint enablement. The controlled transport
+// receives a nonnil TLS profile and the OpenAI request-context profile while
+// the image stream succeeds.
 func TestProviderTestService_OpenAIImageOAuthForwardsTLSProfile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1174,6 +1459,10 @@ func TestProviderTestService_OpenAIImageOAuthForwardsTLSProfile(t *testing.T) {
 	require.Equal(t, upstreamcore.HTTPUpstreamProfileOpenAI, upstreamcore.HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 }
 
+// TestProviderTestService_OpenAIImageAPIKeyUsesConfiguredV1BaseURL probes
+// API-key image generation against a configured v1 root. The outgoing image
+// path and authorization match, and returned base64 image data appears in
+// successful event output.
 func TestProviderTestService_OpenAIImageAPIKeyUsesConfiguredV1BaseURL(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1213,6 +1502,10 @@ func TestProviderTestService_OpenAIImageAPIKeyUsesConfiguredV1BaseURL(t *testing
 	require.Contains(t, rec.Body.String(), "\"success\":true")
 }
 
+// TestProviderTestService_OpenAIExplicitImageTypeDoesNotInspectModelName
+// selects image testing for a model alias containing no image marker. Endpoint
+// selection follows the explicit kind and the request retains the supplied
+// alias and image prompt.
 func TestProviderTestService_OpenAIExplicitImageTypeDoesNotInspectModelName(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1249,6 +1542,9 @@ func TestProviderTestService_OpenAIExplicitImageTypeDoesNotInspectModelName(t *t
 	require.Equal(t, "draw a lighthouse", gjson.GetBytes(body, "prompt").String())
 }
 
+// TestProviderTestService_OpenAIExplicitTextTypeDoesNotInspectModelName selects
+// text testing for an image-named model ID. The outgoing request still uses
+// Responses text input, retaining the supplied model and prompt.
 func TestProviderTestService_OpenAIExplicitTextTypeDoesNotInspectModelName(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1285,12 +1581,16 @@ func TestProviderTestService_OpenAIExplicitTextTypeDoesNotInspectModelName(t *te
 	require.Equal(t, "reply briefly", gjson.GetBytes(body, "input.0.content.0.text").String())
 }
 
+// TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages returns a
+// valid HTTPS image URL, missing image data or an invalid URL. Valid output
+// emits image and success, while unusable results report the expected
+// empty-image failure.
 func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testing.T) {
 	cases := []struct {
-		name    string
-		body    string
-		wantErr bool
-		want    string
+		name    string // scenario description text
+		body    string // configured or captured fixture text
+		wantErr bool   // expected execution error presence
+		want    string // expected event body text
 	}{
 		{"url 返回", `{"data":[{"url":"https://cdn.example/cat.png"}]}`, false, `"image_url":"https://cdn.example/cat.png"`},
 		{"没有图片数据", `{"data":[{"revised_prompt":"draw a cat"}]}`, true, "Upstream returned no image data"},
@@ -1325,7 +1625,9 @@ func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testin
 	}
 }
 
-// TestProviderTestServiceSkipsShadow checks that shadow probes resolve credentials through the parent.
+// TestProviderTestServiceSkipsShadow loads a credential shadow with its parent
+// absent from the store. The probe returns the parent-resolution error before
+// it can construct a usable credential request.
 func TestProviderTestServiceSkipsShadow(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -1343,6 +1645,10 @@ func TestProviderTestServiceSkipsShadow(t *testing.T) {
 	require.Contains(t, err.Error(), "resolve spark shadow parent")
 }
 
+// TestProviderTestService_OpenAISuccessPersistsSnapshotFromHeaders returns a
+// completed OAuth stream with reversed primary/secondary window durations. The
+// captured Extra maps percentages to five-hour and seven-day windows and event
+// output reports completion.
 func TestProviderTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1382,7 +1688,10 @@ func TestProviderTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 
-// TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56 checks that an unknown model name passes through unchanged.
+// TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56 probes an
+// explicitly supplied bare model name using a controlled completed stream. The
+// outgoing request retains that exact model and custom prompt after OAuth test
+// preparation.
 func TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1411,6 +1720,9 @@ func TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56(t *testing.
 	require.Equal(t, "connection probe", gjson.GetBytes(body, "input.0.content.0.text").String())
 }
 
+// TestProviderTestService_OpenAIOAuthUsesConfiguredUserAgent probes OAuth with
+// a stored custom client user agent. The transport receives that exact agent
+// and its recognized originator while the completed stream succeeds.
 func TestProviderTestService_OpenAIOAuthUsesConfiguredUserAgent(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1438,6 +1750,10 @@ func TestProviderTestService_OpenAIOAuthUsesConfiguredUserAgent(t *testing.T) {
 	require.Equal(t, "codex-tui", upstream.requests[0].Header.Get("Originator"))
 }
 
+// TestProviderTestService_OpenAIShadowUsesParentCredentialsAndShadowModel loads
+// a Spark shadow with its parent fixture record. The outgoing request uses
+// parent token/account hints and the shadow's requested model, then emits
+// success.
 func TestProviderTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1495,6 +1811,9 @@ func TestProviderTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
+// TestProviderTestService_OpenAIStreamEOFBeforeCompletedFails ends an OAuth
+// stream after one text delta with no completed event. The test returns error
+// and its SSE output mentions the missing terminal event without success.
 func TestProviderTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1519,6 +1838,10 @@ func TestProviderTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+// TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHeader
+// runs the background test use case with an explicit prompt and agent string.
+// The result reports success and transport headers retain the supplied agent
+// and recognized originator.
 func TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHeader(t *testing.T) {
 	resp := newJSONResponse(http.StatusOK, "")
 	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
@@ -1549,6 +1872,10 @@ func TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHea
 	require.Equal(t, "codex-tui", upstream.requests[0].Header.Get("Originator"))
 }
 
+// TestProviderTestService_OpenAI429PersistsSnapshotAndRateLimitState returns
+// 429 with quota headers and a reset-bearing error for a stale-error provider.
+// Snapshot percentages and rate-limit writes are captured, and the observed
+// record clears its stale error.
 func TestProviderTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1584,6 +1911,10 @@ func TestProviderTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testi
 	require.NotNil(t, provider.RateLimitResetAt)
 }
 
+// TestProviderTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleError
+// returns a reset-bearing 429 body with no quota headers. Rate-limit recovery
+// clears the observed stale error and installs its reset deadline while Extra
+// snapshot capture remains empty.
 func TestProviderTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleError(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1613,6 +1944,10 @@ func TestProviderTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleErr
 	require.Empty(t, repo.updatedExtra)
 }
 
+// TestProviderTestService_OpenAI429SyncsObservedPlanType returns a
+// reset-bearing 429 that reports a different subscription plan. The fixture
+// captures the selected plan credential update and the observed record receives
+// that plan and reset state.
 func TestProviderTestService_OpenAI429SyncsObservedPlanType(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1639,6 +1974,10 @@ func TestProviderTestService_OpenAI429SyncsObservedPlanType(t *testing.T) {
 	require.NotNil(t, provider.RateLimitResetAt)
 }
 
+// TestProviderTestService_OpenAI429ActiveProviderDoesNotClearError returns a
+// reset-bearing 429 for an already active provider. Rate-limit state is
+// recorded while the error-clear fixture remains unused and active status stays
+// visible.
 func TestProviderTestService_OpenAI429ActiveProviderDoesNotClearError(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1665,6 +2004,10 @@ func TestProviderTestService_OpenAI429ActiveProviderDoesNotClearError(t *testing
 	require.NotNil(t, provider.RateLimitResetAt)
 }
 
+// TestProviderTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeState
+// returns 429 with no usable reset observation for a stale-error provider. No
+// rate-limit or error-clear call occurs, and its stored error fields remain on
+// the observed record.
 func TestProviderTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeState(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1693,6 +2036,10 @@ func TestProviderTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeStat
 	require.Nil(t, provider.RateLimitResetAt)
 }
 
+// TestProviderTestService_OpenAI401SetsPermanentErrorOnly returns
+// authentication failure from an OAuth probe. The store captures the
+// authentication error text, while rate-limit and stale-error clearing
+// observations remain absent.
 func TestProviderTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1719,8 +2066,10 @@ func TestProviderTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, provider.RateLimitResetAt)
 }
 
-// TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe checks that CN Responses providers
-// use the OpenAI probe through the shared test entry point.
+// TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe loads a DeepSeek
+// API-key record configured for Responses through the shared test service. One
+// request reaches its configured Responses URL and the controlled completed
+// stream succeeds.
 func TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) {
 	ctx, _ := newTestContext()
 
@@ -1756,6 +2105,10 @@ func TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) 
 	require.Equal(t, "https://relay.example.com/v1/responses", upstream.requests[0].URL.String())
 }
 
+// TestProviderTestService_OpenAIAPIKeySelectedChatUsesChatCompletionsPath
+// forces Chat routing for an API-key text probe with a custom prompt. URL,
+// headers and messages match Chat format, and streamed text plus
+// endpoint-specific success appear in event output.
 func TestProviderTestService_OpenAIAPIKeySelectedChatUsesChatCompletionsPath(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1806,6 +2159,9 @@ func TestProviderTestService_OpenAIAPIKeySelectedChatUsesChatCompletionsPath(t *
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
+// TestProviderTestService_OpenAIChatCompletionsPathReturns4xx returns HTTP 400
+// from an API-key Chat probe. The failure identifies the Chat endpoint in both
+// returned error and event output, with no successful completion.
 func TestProviderTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1834,6 +2190,10 @@ func TestProviderTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+// TestProviderTestService_OpenAIChatCompletionsPathTimeout injects
+// context.DeadlineExceeded from the controlled Chat transport. The returned
+// error retains the selected endpoint and injected cause, and event output
+// excludes success.
 func TestProviderTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1863,6 +2223,9 @@ func TestProviderTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+// TestProviderTestService_OpenAIChatCompletionsPathRejectsNonJSONStream returns
+// invalid JSON inside a nominally successful Chat stream. The test reports an
+// invalid endpoint response and emits failure rather than a success event.
 func TestProviderTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *testing.T) {
 	ctx, recorder := newTestContext()
 
@@ -1895,7 +2258,10 @@ func TestProviderTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *te
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-// TestProviderTestServiceExplicitProtocolDoesNotMutateProvider checks that the selected protocol applies to this test while persisted routing stays intact.
+// TestProviderTestServiceExplicitProtocolDoesNotMutateProvider selects
+// Responses or Chat against the opposite stored routing choice and injects
+// request failure. Capture confirms the selected per-test path while the source
+// record retains its configured route value.
 func TestProviderTestServiceExplicitProtocolDoesNotMutateProvider(t *testing.T) {
 	for _, protocol := range []string{"responses", "chat_completions"} {
 		t.Run(protocol, func(t *testing.T) {
@@ -1919,6 +2285,10 @@ func TestProviderTestServiceExplicitProtocolDoesNotMutateProvider(t *testing.T) 
 	}
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeUsesMatchedRoute runs a
+// background OAuth probe through an exact TLS-router match. The selected route
+// supplies its TLS profile, upstream user agent and originator to the captured
+// request.
 func TestProviderTestService_AutomaticOpenAIProbeUsesMatchedRoute(t *testing.T) {
 	provider := providercore.Record{
 		ID:          1001,
@@ -1969,15 +2339,19 @@ func TestProviderTestService_AutomaticOpenAIProbeUsesMatchedRoute(t *testing.T) 
 	require.Equal(t, "codex_vscode", upstream.lastReq.Header.Get("Originator"))
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeRejectsClientPolicyLocally varies
+// TLS-router and Codex-client policy rejections for background probes. Results
+// report the selected policy and reason with failed status, while no upstream
+// request is captured.
 func TestProviderTestService_AutomaticOpenAIProbeRejectsClientPolicyLocally(t *testing.T) {
 	tests := []struct {
-		name       string
-		policy     string
-		userAgent  string
-		runDefault bool
-		reason     string
-		router     *egress.TLSFingerprintRouter
-		extra      map[string]any
+		name       string                       // scenario description text
+		policy     string                       // configured automatic-client policy selector
+		userAgent  string                       // supplied automatic-probe user agent
+		runDefault bool                         // use background default-agent entry point
+		reason     string                       // expected local rejection reason
+		router     *egress.TLSFingerprintRouter // configured TLS-router fixture record
+		extra      map[string]any               // configured provider feature settings
 	}{
 		{
 			name:      "TLS 路由未命中",
@@ -2051,6 +2425,10 @@ func TestProviderTestService_AutomaticOpenAIProbeRejectsClientPolicyLocally(t *t
 	}
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeFallsBackToProviderTLSProfile
+// runs a background probe whose TLS router has no matching rule. The provider's
+// configured profile is used and the controlled completed stream still reports
+// success.
 func TestProviderTestService_AutomaticOpenAIProbeFallsBackToProviderTLSProfile(t *testing.T) {
 	provider := providercore.Record{
 		ID:          1201,
@@ -2093,6 +2471,10 @@ func TestProviderTestService_AutomaticOpenAIProbeFallsBackToProviderTLSProfile(t
 	require.Equal(t, "fixed", upstream.lastTLSProfile.Name)
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRouting
+// runs background probes without an explicit agent for a shadow and an ordinary
+// provider. Parent-derived or built-in client identity participates in router
+// matching and selects the expected agent/profile.
 func TestProviderTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRouting(t *testing.T) {
 	parentID := int64(1301)
 	parent := providercore.Record{
@@ -2131,13 +2513,13 @@ func TestProviderTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRou
 	}
 
 	tests := []struct {
-		name            string
-		providers       []providercore.Record
-		providerID      int64
-		pattern         string
-		routeProfileID  int64
-		expectedUA      string
-		expectedProfile string
+		name            string                // scenario description text
+		providers       []providercore.Record // configured source provider records
+		providerID      int64                 // captured TokenRouter provider identifier
+		pattern         string                // configured router-match agent text
+		routeProfileID  int64                 // selected route profile identifier
+		expectedUA      string                // expected outgoing user agent
+		expectedProfile string                // expected selected profile name
 	}{
 		{
 			name:            "凭据提供商自定义 UA",
@@ -2191,6 +2573,10 @@ func TestProviderTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRou
 	}
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeMissingRouteProfileFallsBack
+// matches a router rule whose referenced profile is missing. The background
+// probe succeeds with the configured provider profile, protecting fallback
+// selection from an unavailable route profile.
 func TestProviderTestService_AutomaticOpenAIProbeMissingRouteProfileFallsBack(t *testing.T) {
 	provider := providercore.Record{
 		ID:          1401,
@@ -2231,6 +2617,10 @@ func TestProviderTestService_AutomaticOpenAIProbeMissingRouteProfileFallsBack(t 
 	require.Equal(t, "fixed", upstream.lastTLSProfile.Name)
 }
 
+// TestProviderTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages
+// runs background Chat and OAuth image probes through matched routers. The Chat
+// endpoint receives its routed agent, while the image request receives its
+// selected TLS profile and client headers.
 func TestProviderTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(t *testing.T) {
 	t.Run("Chat Completions", func(t *testing.T) {
 		provider := providercore.Record{
@@ -2326,6 +2716,10 @@ func TestProviderTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(
 	})
 }
 
+// TestProviderTestService_ManualOpenAITestDoesNotEnforceAutomaticPolicy runs a
+// manual OAuth test against a record with unmatched automatic-client
+// restrictions. One upstream request is admitted and its controlled completed
+// stream succeeds through the manual entry point.
 func TestProviderTestService_ManualOpenAITestDoesNotEnforceAutomaticPolicy(t *testing.T) {
 	provider := providercore.Record{
 		ID:          1601,
@@ -2358,6 +2752,10 @@ func TestProviderTestService_ManualOpenAITestDoesNotEnforceAutomaticPolicy(t *te
 	require.Len(t, upstream.requests, 1)
 }
 
+// TestProviderTestService_QoderCosyUsesNativeTestPath runs a COSY session
+// through wrapped Qoder reasoning and text deltas. Content output includes
+// visible text and completion but omits reasoning-only text and generic type
+// rejection.
 func TestProviderTestService_QoderCosyUsesNativeTestPath(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2396,6 +2794,11 @@ func TestProviderTestService_QoderCosyUsesNativeTestPath(t *testing.T) {
 	require.NotNil(t, client.request)
 }
 
+// TestProviderTestService_QoderPATRebuildsSessionForConnectionTest probes a
+// PAT-backed COSY record using a controlled session provider. Testing
+// records one prior-session invalidation dispatch and succeeds through the
+// supplied completed stream. The session fixture returns its configured pointer
+// after that recorded call.
 func TestProviderTestService_QoderPATRebuildsSessionForConnectionTest(t *testing.T) {
 	ctx, _ := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2424,6 +2827,9 @@ func TestProviderTestService_QoderPATRebuildsSessionForConnectionTest(t *testing
 	require.Equal(t, []int64{provider.ID}, tokenSource.invalidated)
 }
 
+// TestProviderTestService_QoderProbesUserInfoBeforeStream probes a COSY session
+// with a controlled user-info client before completion. The client receives the
+// session token and streaming uses the default auto model selector.
 func TestProviderTestService_QoderProbesUserInfoBeforeStream(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2452,6 +2858,9 @@ func TestProviderTestService_QoderProbesUserInfoBeforeStream(t *testing.T) {
 	require.Equal(t, "auto", client.headers["x-model-key"])
 }
 
+// TestProviderTestService_QoderWrappedErrorIsVisible supplies a wrapped
+// forbidden Qoder stream error with a signature code. The test returns failure
+// and emits that normalized error text through the shared event sink.
 func TestProviderTestService_QoderWrappedErrorIsVisible(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2480,6 +2889,9 @@ func TestProviderTestService_QoderWrappedErrorIsVisible(t *testing.T) {
 	require.NotContains(t, body, "Unsupported provider type: cosy")
 }
 
+// TestProviderTestService_QoderReasoningOnlyDoesNotEmitContent supplies a
+// wrapped reasoning delta followed by stream completion. The test succeeds with
+// a terminal event while no content event or reasoning text appears.
 func TestProviderTestService_QoderReasoningOnlyDoesNotEmitContent(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2509,6 +2921,10 @@ func TestProviderTestService_QoderReasoningOnlyDoesNotEmitContent(t *testing.T) 
 	require.Contains(t, body, `"type":"test_complete"`)
 }
 
+// TestProviderTestService_QoderUsesHTTPUpstreamForProxyAndTLS probes a COSY
+// record with selected proxy and fingerprint enablement. The controlled
+// transport receives its proxy URL, provider ID and TLS profile and event
+// output includes visible text.
 func TestProviderTestService_QoderUsesHTTPUpstreamForProxyAndTLS(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	proxyID := int64(12)
@@ -2554,6 +2970,10 @@ func TestProviderTestService_QoderUsesHTTPUpstreamForProxyAndTLS(t *testing.T) {
 	require.NotNil(t, client.request)
 }
 
+// TestProviderTestService_QoderDefaultUserInfoProbeUsesHTTPUpstream omits the
+// separate user-info client so the controlled transport handles both
+// preparation and stream requests. The session receives observed UID and proxy,
+// concurrency and TLS choices are retained.
 func TestProviderTestService_QoderDefaultUserInfoProbeUsesHTTPUpstream(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	proxyID := int64(12)
@@ -2606,6 +3026,10 @@ func TestProviderTestService_QoderDefaultUserInfoProbeUsesHTTPUpstream(t *testin
 	require.Equal(t, "user-12", sessionProvider.session.Identity.UID)
 }
 
+// TestProviderTestService_QoderUserInfoProbeRedactsSensitiveErrorBody returns
+// user-info failure containing token, cookie and identity text. Event output
+// reports normalized failure with redaction markers while those fixture secrets
+// remain absent.
 func TestProviderTestService_QoderUserInfoProbeRedactsSensitiveErrorBody(t *testing.T) {
 	ctx, recorder := newQoderProviderTestContext()
 	provider := &providercore.Record{
@@ -2643,6 +3067,10 @@ func TestProviderTestService_QoderUserInfoProbeRedactsSensitiveErrorBody(t *test
 	require.Contains(t, body, "***")
 }
 
+// adaptiveCNProviderTestProvider constructs an active API-key fixture with
+// independent protocol root selections. Its returned credential maps remain
+// mutable for each scenario to choose fixed or adaptive endpoint behavior
+// before execution.
 func adaptiveCNProviderTestProvider(id int64, platform string) *providercore.Record {
 	return &providercore.Record{
 		ID:          id,
@@ -2663,6 +3091,10 @@ func adaptiveCNProviderTestProvider(id int64, platform string) *providercore.Rec
 	}
 }
 
+// adaptiveCNProviderTestService binds one provider to the controlled queued
+// transport and permits its HTTP fixture roots. Supplied response pointers are
+// consumed in order, and the returned executor delegates preparation through
+// the shared probe helpers.
 func adaptiveCNProviderTestService(provider *providercore.Record, responses ...*http.Response) (*provideradapter.OpenAIProviderTest, *openAIProbeTransport) {
 	repo := &openAIProbeStore{
 		openAIProbeRecords: openAIProbeRecords{
@@ -2677,6 +3109,9 @@ func adaptiveCNProviderTestService(provider *providercore.Record, responses ...*
 	}, upstream
 }
 
+// adaptiveCNChatTestResponse constructs a fresh successful Chat stream with
+// visible text and termination. The executor consumes and closes this body, so
+// each expected request needs its own response instance.
 func adaptiveCNChatTestResponse() *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -2689,6 +3124,9 @@ data: [DONE]
 	}
 }
 
+// adaptiveCNAnthropicTestResponse constructs a fresh successful Messages stream
+// ending with message_stop. Its executor consumes and closes the body, so
+// queued scenarios supply one response instance per expected request.
 func adaptiveCNAnthropicTestResponse() *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -2701,6 +3139,9 @@ data: {"type":"message_stop"}
 	}
 }
 
+// adaptiveCNResponsesTestResponse constructs a fresh successful Responses
+// stream ending with response.completed. The executor consumes and closes its
+// body, so callers allocate another response for any later probe request.
 func adaptiveCNResponsesTestResponse() *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -2713,15 +3154,24 @@ data: {"type":"response.completed"}
 	}
 }
 
+// GetByID returns a shallow copy of the configured nonnil provider regardless
+// of requested ID. Credential and Extra maps remain borrowed, and this serial
+// fixture captures protocol dispatch rather than storage lookup semantics.
 func (r *cnProviderTestRepo) GetByID(context.Context, int64) (*providercore.Record, error) {
 	copy := *r.provider
 	return &copy, nil
 }
 
+// Do delegates protocol-request capture to the TLS-capable fixture path with no
+// profile. The request needs a readable body, and returned response body
+// ownership follows that controlled capture operation.
 func (h *cnProviderTestHTTP) Do(req *http.Request, proxyURL string, providerID int64, concurrency int) (*http.Response, error) {
 	return h.DoWithTLS(req, proxyURL, providerID, concurrency, nil)
 }
 
+// DoWithTLS consumes and captures the request body and a cloned request before
+// returning a fixed 400. Body-read failure is ignored, and the nonnil request
+// body is required by this serial capture fixture.
 func (h *cnProviderTestHTTP) DoWithTLS(
 	req *http.Request,
 	_ string,
@@ -2729,6 +3179,8 @@ func (h *cnProviderTestHTTP) DoWithTLS(
 	_ int,
 	_ *tlsfingerprint.Profile,
 ) (*http.Response, error) {
+	// Request capture intentionally keeps bytes returned with a read failure.
+	// The fixed 400 still stops dispatch, so this fixture does not test body-read error handling.
 	payload, _ := io.ReadAll(req.Body)
 	h.body = string(payload)
 	h.request = req.Clone(req.Context())
@@ -2738,12 +3190,18 @@ func (h *cnProviderTestHTTP) DoWithTLS(
 	}, nil
 }
 
+// SetRateLimited records one serial logical write and its selected reset
+// timestamp. It ignores provider ID and context, allowing Grok error tests to
+// inspect recovery timing without actual rate-limit storage.
 func (r *grokProviderTestRateLimitRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
 	r.rateLimitedCalls++
 	r.resetAt = resetAt
 	return nil
 }
 
+// GetByID clones a matching fixture provider and returns a formatted error for
+// missing IDs. CloneRecord copies its supported maps and slices, while
+// unsupported mutable credential values can remain shared.
 func (s *grokTestStoreFixture) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	value, ok := s.providersByID[id]
 	if !ok {
@@ -2752,14 +3210,23 @@ func (s *grokTestStoreFixture) GetByID(_ context.Context, id int64) (*providerco
 	return providercore.CloneRecord(value), nil
 }
 
+// UpdateExtra accepts the unused Grok fixture snapshot write and records no
+// state.
 func (*grokTestStoreFixture) UpdateExtra(context.Context, int64, map[string]any) error { return nil }
 
+// SetRateLimited accepts the unused Grok fixture limit write and records no
+// state.
 func (*grokTestStoreFixture) SetRateLimited(context.Context, int64, time.Time) error { return nil }
 
+// SetTempUnschedulable accepts the unused Grok fixture temporary-block write
+// and records no state.
 func (*grokTestStoreFixture) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	return nil
 }
 
+// Do captures the borrowed request and consumed body bytes before returning its
+// configured response. Body-read errors propagate, and each fixture response
+// body is consumed by its production executor caller.
 func (u *grokTestTransportFixture) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	u.lastReq = req
 	body, err := io.ReadAll(req.Body)
@@ -2770,10 +3237,16 @@ func (u *grokTestTransportFixture) Do(req *http.Request, _ string, _ int64, _ in
 	return u.resp, nil
 }
 
+// LoadTestTarget returns its configured borrowed target for every fixture
+// request. Selection is controlled by the test, allowing the shared service to
+// exercise event preparation without provider-store dispatch.
 func (l grokTestTargetLoader) LoadTestTarget(context.Context, providercore.TestRequest) (providercore.TestTarget, error) {
 	return l.target, nil
 }
 
+// executeGrokProviderTest runs a fixed Grok target through the shared test
+// service and HTTP sink. Only the first optional test kind is supplied, while
+// the test context controls execution and result events.
 func executeGrokProviderTest(t *testing.T, executor *provideradapter.GrokProviderTest, value *providercore.Record, recorder *httptest.ResponseRecorder, model, prompt, mode string, types ...string) error {
 	t.Helper()
 	core := providercore.NewTestService(grokTestTargetLoader{target: executor.Target(value)}, providercore.TestOptions{Now: time.Now, Error: func(string) {}, WriteError: func(error) {}})
@@ -2784,6 +3257,10 @@ func executeGrokProviderTest(t *testing.T, executor *provideradapter.GrokProvide
 	return core.Test(t.Context(), request, NewTestEventSink(recorder))
 }
 
+// healthyGrokOAuthGatewayTestProvider constructs active OAuth credentials with
+// whole-second expiry text roughly two refresh-skew windows ahead. The
+// controlled probes therefore start beyond the ordinary refresh window while
+// retaining the default CLI root and supplied access token.
 func healthyGrokOAuthGatewayTestProvider(id int64, token string) *providercore.Record {
 	return &providercore.Record{
 		ID:          id,
@@ -2802,10 +3279,15 @@ func healthyGrokOAuthGatewayTestProvider(id int64, token string) *providercore.R
 	}
 }
 
+// UpdateExtra accepts the Grok failure fixture's unused snapshot write and
+// records no state.
 func (f *grokTestFailureStoreFixture) UpdateExtra(context.Context, int64, map[string]any) error {
 	return nil
 }
 
+// SetRateLimited records serial provider ID and reset observations for a failed
+// Grok request. It returns success without mutating provider storage, leaving
+// assertions focused on health dispatch and selected recovery deadline.
 func (f *grokTestFailureStoreFixture) SetRateLimited(_ context.Context, id int64, reset time.Time) error {
 	f.rateLimitedCalls++
 	f.lastRateLimitedID = id
@@ -2813,19 +3295,28 @@ func (f *grokTestFailureStoreFixture) SetRateLimited(_ context.Context, id int64
 	return nil
 }
 
+// SetTempUnschedulable counts the failure fixture's logical temporary-block
+// write and records no deadline.
 func (f *grokTestFailureStoreFixture) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	f.tempUnschedCalls++
 	return nil
 }
 
+// executeGrokProbe creates a derived TestRun using the fixture request context
+// and headers. It executes Grok directly, reports the run's output-aware result
+// and cancels its derived context before returning.
 func executeGrokProbe(t *testing.T, executor *provideradapter.GrokProviderTest, output *openAIProbeOutput, value *providercore.Record, model string) error {
 	t.Helper()
 	run := provideradapter.NewTestRun(output.Request.Context(), output.Request.Header, NewTestEventSink(output.recorder))
+	// Each helper owns the derived TestRun context. Release that cancellation
+	// ownership after execution so the fixture request and output writer stay bounded to the call.
 	defer run.Cancel()
 	return run.Result(executor.Execute(run, value, model))
 }
 
-// newProbeAgentKey generates a local signing key for tests.
+// newProbeAgentKey generates local Ed25519 signing material with fixed runtime
+// and task IDs. It returns both the signing key and base64 PKCS8 private-key
+// text for controlled Agent Identity preparation.
 func newProbeAgentKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
@@ -2835,28 +3326,46 @@ func newProbeAgentKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	return openai.AgentIdentityKey{RuntimeID: "runtime-test", TaskID: "task-test", PrivateKey: private}, base64.StdEncoding.EncodeToString(der)
 }
 
+// GetByID clones the configured Agent Identity provider regardless of supplied
+// ID. Supported credential containers become copied values, while unsupported
+// mutable members remain subject to CloneRecord's sharing rules.
 func (r *probeAgentStore) GetByID(context.Context, int64) (*providercore.Record, error) {
 	return providercore.CloneRecord(r.provider), nil
 }
 
+// UpdateCredentials replaces the configured provider's credential map with the
+// supplied borrowed map. This serial fixture allows task-registration helpers
+// to update their observed record and capture later credential use.
 func (r *probeAgentStore) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
 	r.provider.Credentials = credentials
 	return nil
 }
 
+// Update rejects an unexpected full-record write from the Agent Identity
+// fixture path.
 func (*probeAgentStore) Update(context.Context, *providercore.Record) error {
 	return fmt.Errorf("unexpected full provider update")
 }
 
+// UpdateExtra accepts the Agent Identity fixture's unused Extra write and
+// records no state.
 func (*probeAgentStore) UpdateExtra(context.Context, int64, map[string]any) error { return nil }
 
+// SetError counts a serial logical authentication-error write without storing
+// its message or identifier.
 func (r *probeAgentStore) SetError(context.Context, int64, string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// Invalidate records the supplied provider identifier in a serial fixture
+// observation slice.
 func (r *probeAgentInvalidations) Invalidate(id int64) { r.providerIDs = append(r.providerIDs, id) }
 
+// probeAgentTasks constructs task coordination using fixture rereads and
+// production registration/persistence helpers. An optional invalidator records
+// accepted credential maintenance, and the supplied endpoint selects the local
+// registration server for recovery scenarios.
 func probeAgentTasks(store *probeAgentStore, endpoint string, invalidator *probeAgentInvalidations) *provideradapter.ProbeTasks {
 	options := providercore.OpenAITaskOptions{
 		Read: store.GetByID,
@@ -2874,15 +3383,24 @@ func probeAgentTasks(store *probeAgentStore, endpoint string, invalidator *probe
 	return &provideradapter.ProbeTasks{Coordinator: &providercore.OpenAITaskCoordinator{}, Options: options}
 }
 
+// executeOpenAIProbeRequestType passes explicit model, prompt, kind, mode and
+// protocol through the shared test service. It uses the fixture HTTP context
+// and sink, preserving per-test selection separate from source provider
+// configuration.
 func executeOpenAIProbeRequestType(t *testing.T, executor *provideradapter.OpenAIProviderTest, output *openAIProbeOutput, id int64, model, prompt, kind, mode, protocol string) error {
 	t.Helper()
 	return openAIProbeCore(executor).Test(output.Request.Context(), providercore.TestRequest{ProviderID: id, Model: model, Prompt: prompt, Mode: mode, Type: &kind, Protocol: protocol}, NewTestEventSink(output.recorder))
 }
 
+// Do rejects an unexpected non-TLS transport call in this ordered-response
+// fixture.
 func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	return nil, fmt.Errorf("unexpected Do call")
 }
 
+// DoWithTLS records the borrowed request and profile-presence flag before
+// consuming one queued response. An exhausted queue returns an error; callers
+// supply responses with fresh bodies for every expected request.
 func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.requests = append(u.requests, req)
 	u.tlsFlags = append(u.tlsFlags, profile != nil)
@@ -2894,6 +3412,9 @@ func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ i
 	return resp, nil
 }
 
+// newJSONResponse constructs a fresh response with the selected status, empty
+// headers and owned body reader. Its consumer closes the body after parsing,
+// and each call creates independent fixture response state.
 func newJSONResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
@@ -2902,44 +3423,67 @@ func newJSONResponse(status int, body string) *http.Response {
 	}
 }
 
+// newTestContext returns a request and recorder wrapper for synchronous
+// provider-test event capture. The wrapper and separately returned recorder
+// share one output object, allowing execution helpers and assertions to observe
+// the same stream.
 func newTestContext() (*openAIProbeOutput, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	return &openAIProbeOutput{Request: httptest.NewRequest(http.MethodPost, "/test", nil), recorder: recorder}, recorder
 }
 
+// UpdateExtra retains the borrowed patch and optionally publishes a top-level
+// copied observation to the fixture channel. Nested values remain shared, and a
+// configured channel requires capacity or a receiver because publication is
+// blocking.
 func (r *openAIProbeStore) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	r.updatedExtra = updates
 	if r.updateExtraCalls != nil {
 		copy := make(map[string]any, len(updates))
 		maps.Copy(copy, updates)
+		// Publish a copied top-level observation after retaining the borrowed update.
+		// Tests supply channel capacity because this fixture send does not select cancellation.
 		r.updateExtraCalls <- copy
 	}
 	return nil
 }
 
+// BulkUpdate copies selected provider IDs and borrows the supplied payload for
+// serial observation. It reports all IDs updated without changing fixture rows,
+// allowing plan-sync assertions to inspect dispatched credential intent.
 func (r *openAIProbeStore) BulkUpdate(_ context.Context, ids []int64, updates providercore.ProviderBulkUpdate) (int64, error) {
 	r.bulkUpdatedIDs = append([]int64(nil), ids...)
 	r.bulkUpdatedPayload = updates
 	return int64(len(ids)), nil
 }
 
+// SetRateLimited records the selected provider ID and an allocated copy of its
+// reset timestamp. This serial substitute records health dispatch without
+// writing actual provider or cache state.
 func (r *openAIProbeStore) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitedID = id
 	r.rateLimitedAt = &resetAt
 	return nil
 }
 
+// ClearError records the selected provider identifier for a serial logical
+// health-clear invocation.
 func (r *openAIProbeStore) ClearError(_ context.Context, id int64) error {
 	r.clearedErrorID = id
 	return nil
 }
 
+// SetError records the selected provider identifier and authentication failure
+// message for serial assertions.
 func (r *openAIProbeStore) SetError(_ context.Context, id int64, errorMsg string) error {
 	r.setErrorID = id
 	r.setErrorMsg = errorMsg
 	return nil
 }
 
+// GetByID clones a configured record by its numeric fixture identifier. Missing
+// IDs return a formatted error; supported provider containers are copied while
+// unsupported mutable map values can remain shared.
 func (r openAIProbeRecords) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	value, ok := r.providersByID[id]
 	if !ok {
@@ -2948,7 +3492,10 @@ func (r openAIProbeRecords) GetByID(_ context.Context, id int64) (*providercore.
 	return providercore.CloneRecord(value), nil
 }
 
-// configureOpenAIProbe connects policy, platform execution, and event handling.
+// configureOpenAIProbe fills missing preparation, routing and TLS callbacks
+// from a production probe policy. Existing callbacks remain selected, and
+// available store lookup becomes the policy's credential-parent reader for this
+// executor.
 func configureOpenAIProbe(executor *provideradapter.OpenAIProviderTest) {
 	policy := &provideradapter.OpenAIProbePolicy{Available: true, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent}
 	if executor.Store != nil {
@@ -2965,41 +3512,74 @@ func configureOpenAIProbe(executor *provideradapter.OpenAIProviderTest) {
 	}
 }
 
+// executeOpenAIProbe applies fixture policy defaults and runs OpenAI execution
+// with the supplied record and choices. The derived TestRun uses HTTP context
+// and headers, returns output-aware failure and is canceled before returning.
 func executeOpenAIProbe(t *testing.T, executor *provideradapter.OpenAIProviderTest, output *openAIProbeOutput, value *providercore.Record, model, prompt, mode string, types ...string) error {
 	t.Helper()
 	configureOpenAIProbe(executor)
 	run := provideradapter.NewTestRun(output.Request.Context(), output.Request.Header, NewTestEventSink(output.recorder))
+	// Each helper owns the derived TestRun context. Release that cancellation
+	// ownership after execution so the fixture request and output writer stay bounded to the call.
 	defer run.Cancel()
 	return run.Result(executor.Execute(run, value, model, prompt, mode, types...))
 }
 
+// executeOpenAIImageAPIKeyProbe applies policy defaults and invokes the API-key
+// image branch with the supplied execution context. TestRun derives from the
+// fixture HTTP request, and its deferred cancellation runs before this helper
+// returns the output-aware result.
 func executeOpenAIImageAPIKeyProbe(t *testing.T, executor *provideradapter.OpenAIProviderTest, output *openAIProbeOutput, ctx context.Context, value *providercore.Record, model, prompt string) error {
 	t.Helper()
 	configureOpenAIProbe(executor)
 	run := provideradapter.NewTestRun(output.Request.Context(), output.Request.Header, NewTestEventSink(output.recorder))
+	// Each helper owns the derived TestRun context. Release that cancellation
+	// ownership after execution so the fixture request and output writer stay bounded to the call.
 	defer run.Cancel()
 	return run.Result(executor.ExecuteImageAPIKey(run, ctx, value, model, prompt))
 }
 
+// executeOpenAIImageOAuthProbe applies policy defaults and invokes the OAuth
+// image branch with the supplied execution context. Its TestRun derives from
+// fixture request headers and context, then releases derived cancellation
+// ownership on return.
 func executeOpenAIImageOAuthProbe(t *testing.T, executor *provideradapter.OpenAIProviderTest, output *openAIProbeOutput, ctx context.Context, value *providercore.Record, model, prompt string) error {
 	t.Helper()
 	configureOpenAIProbe(executor)
 	run := provideradapter.NewTestRun(output.Request.Context(), output.Request.Header, NewTestEventSink(output.recorder))
+	// Each helper owns the derived TestRun context. Release that cancellation
+	// ownership after execution so the fixture request and output writer stay bounded to the call.
 	defer run.Cancel()
 	return run.Result(executor.ExecuteImageOAuth(run, ctx, value, model, prompt))
 }
 
+// openAIProbeCore connects provider reads and OpenAI/CN execution to one shared
+// test service. A usable Store is required for request dispatch, and supplied
+// policy callbacks are retained through configureOpenAIProbe.
 func openAIProbeCore(executor *provideradapter.OpenAIProviderTest) *providercore.TestService {
 	configureOpenAIProbe(executor)
 	targets := &provideradapter.TestTargets{Read: executor.Store.GetByID, OpenAI: executor, CN: &provideradapter.CNProviderTest{Transport: executor.Transport, Store: executor.Store, ValidateURL: executor.ValidateURL, Responses: executor}}
 	return providercore.NewTestService(targets, providercore.TestOptions{Now: time.Now, Error: func(string) {}, WriteError: func(error) {}})
 }
 
+// executeOpenAIProbeRequest passes model, prompt and mode through store-backed
+// shared test dispatch. The fixture HTTP context and event sink carry execution
+// and output, with kind omitted for compatibility selection.
 func executeOpenAIProbeRequest(t *testing.T, executor *provideradapter.OpenAIProviderTest, output *openAIProbeOutput, id int64, model, prompt, mode string) error {
 	t.Helper()
 	return openAIProbeCore(executor).Test(output.Request.Context(), providercore.TestRequest{ProviderID: id, Model: model, Prompt: prompt, Mode: mode}, NewTestEventSink(output.recorder))
 }
 
+// DoWithTLS captures request, TLS profile and body observations before
+// returning a selected response or failure. Body bytes are copied into capture
+// so assertions can retain them. Reading and closing errors return before
+// response selection, while request capture already exists.
+//
+// A successfully captured body is replaced with a fresh reader because later
+// test assertions read the same request again. Configured transport error wins
+// over queued responses; otherwise one queued response is consumed before the
+// fixed fallback pointer is used. Request/profile pointers remain borrowed, and
+// response bodies remain consumable caller-owned fixture resources.
 func (f *openAIProbeTransport) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	f.lastReq = req
 	f.requests = append(f.requests, req)
@@ -3011,14 +3591,20 @@ func (f *openAIProbeTransport) DoWithTLS(req *http.Request, _ string, _ int64, _
 		}
 		f.lastBody = body
 		f.bodies = append(f.bodies, append([]byte(nil), body...))
+		// Close the consumed reader before installing a replay reader. Captured
+		// bytes remain available if closing fails, while response selection is skipped.
 		if err := req.Body.Close(); err != nil {
 			return nil, err
 		}
+		// Later assertions read this same request body. Replay its captured bytes
+		// so transport observation does not leave those consumers with an exhausted reader.
 		req.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	if f.err != nil {
 		return nil, f.err
 	}
+	// Queued responses model retries with distinct bodies; fixed response supports
+	// single-request scenarios. Consume the ordered queue before selecting that configured fixed result.
 	if len(f.responses) > 0 {
 		response := f.responses[0]
 		f.responses = f.responses[1:]
@@ -3027,7 +3613,10 @@ func (f *openAIProbeTransport) DoWithTLS(req *http.Request, _ string, _ int64, _
 	return f.resp, nil
 }
 
-// newCNProtocolTestCore connects platform dispatch to a test store that supplies target records.
+// newCNProtocolTestCore binds supplied record lookup to CN dispatch with the
+// production URL policy and OpenAI Responses executor. Empty observation
+// callbacks keep tests focused on protocol requests and event results from the
+// controlled transport.
 func newCNProtocolTestCore(read func(context.Context, int64) (*providercore.Record, error), transport provideradapter.QoderTransport) *providercore.TestService {
 	policy := egress.OperatorURLPolicy{}
 	openaiExecutor := &provideradapter.OpenAIProviderTest{Transport: transport, ValidateURL: policy.Validate}
@@ -3036,6 +3625,9 @@ func newCNProtocolTestCore(read func(context.Context, int64) (*providercore.Reco
 	return providercore.NewTestService(targets, providercore.TestOptions{Now: time.Now, Error: func(string) {}, WriteError: func(error) {}})
 }
 
+// successfulOpenAIAutomaticProbeResponse constructs a fresh successful stream
+// with one completed Responses event. Its executor consumes and closes the
+// body; callers supply another response instance for a later automatic probe.
 func successfulOpenAIAutomaticProbeResponse() *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -3046,7 +3638,17 @@ func successfulOpenAIAutomaticProbeResponse() *http.Response {
 	}
 }
 
-// newOpenAIAutomaticProbeTestService builds the TLS cache, router, and provider test components.
+// newOpenAIAutomaticProbeTestService warms local TLS-profile and optional
+// router caches for controlled background probes. Start loads the fixture
+// repositories synchronously. The services have nil cache backends, so their
+// registered Stop callbacks have no subscriber to stop or join. Record pointers
+// borrow the supplied slice entries; keep that population stable during probes.
+//
+// The production probe policy selects client identity, routing and TLS using
+// those caches, while the supplied transport controls response bytes. API-key
+// URL validation requires the optional URL policy when reached. Store-backed
+// shared dispatch then exercises automatic-policy behavior with these fixture
+// dependencies rather than external network or profile storage.
 func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Record, transport *openAIProbeTransport, router *egress.TLSFingerprintRouter, profiles map[int64]*egress.TLSFingerprintProfile, urlPolicy *egress.OperatorURLPolicy) *providercore.TestService {
 	t.Helper()
 	profileStore := &automaticProbeProfileStore{}
@@ -3054,6 +3656,8 @@ func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Reco
 		profileStore.values = append(profileStore.values, value)
 	}
 	profileService := egressadapter.NewTLSProfiles(egress.NewTLSFingerprintProfileService(profileStore, nil))
+	// Automatic policy reads profiles loaded during Start. Register the lifecycle
+	// stop callback even though this fixture's nil cache backend has no update subscriber.
 	profileService.Start()
 	t.Cleanup(profileService.Stop)
 	records := openAIProbeRecords{providersByID: make(map[int64]*providercore.Record, len(values))}
@@ -3064,6 +3668,8 @@ func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Reco
 	policy := &provideradapter.OpenAIProbePolicy{Available: true, Read: store.GetByID, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Profiles: profileService, ManualProfiles: profileService}
 	if router != nil {
 		routers := egress.NewTLSFingerprintRouterService(&automaticProbeRouterStore{values: []*egress.TLSFingerprintRouter{router}}, nil)
+		// Router matching uses routes loaded during Start. Register Stop with the
+		// test lifecycle; this nil cache backend supplies no subscription or work to join.
 		routers.Start()
 		t.Cleanup(routers.Stop)
 		policy.Routers = routers
@@ -3077,14 +3683,23 @@ func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Reco
 	return openAIProbeCore(executor)
 }
 
+// List returns the borrowed configured TLS-profile slice for local cache
+// initialization. Callers treat its entries as stable after service start,
+// because the fixture supplies no synchronization for later mutation.
 func (s *automaticProbeProfileStore) List(context.Context) ([]*egress.TLSFingerprintProfile, error) {
 	return s.values, nil
 }
 
+// List returns the borrowed configured TLS-router slice for local cache
+// initialization. Callers configure entries before service start and keep them
+// stable while the background test policy reads its cache.
 func (s *automaticProbeRouterStore) List(context.Context) ([]*egress.TLSFingerprintRouter, error) {
 	return s.values, nil
 }
 
+// GetSession returns its configured failure or borrowed Qoder session pointer.
+// The production probe can fill user identity on that session, so serial
+// fixture assertions inspect the same object after execution.
 func (s *qoderProviderTestSessionProviderStub) GetSession(context.Context, *providercore.Record) (*qoder.SessionContext, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -3092,11 +3707,18 @@ func (s *qoderProviderTestSessionProviderStub) GetSession(context.Context, *prov
 	return s.session, nil
 }
 
+// Invalidate records the selected provider identifier in the Qoder session
+// fixture's observation slice.
 func (s *qoderProviderTestSessionProviderStub) Invalidate(providerID int64) {
 	s.invalidated = append(s.invalidated, providerID)
 }
 
+// StreamRequestContext captures request and copied input bytes and borrows the
+// supplied header map. A configured error ends the call; otherwise a fresh
+// response body exposes the fixed wrapped-stream text for serial parsing.
 func (s *qoderProviderTestClientStub) StreamRequestContext(ctx context.Context, _ *qoder.SessionContext, _ string, bodyJSON []byte, headers map[string]string) (*http.Response, error) {
+	// The fixed method and URL are valid, and execution supplies a nonnil context.
+	// Ignore request-construction error here; nil context would leave the captured request nil.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api1.qoder.sh/test", strings.NewReader(string(bodyJSON)))
 	s.request = req
 	s.requests = append(s.requests, req)
@@ -3111,7 +3733,13 @@ func (s *qoderProviderTestClientStub) StreamRequestContext(ctx context.Context, 
 	}, nil
 }
 
+// StreamRequestContextWithDoer records the same request, body and header
+// observations before invoking the supplied doer. Configured errors bypass that
+// callback; the callback is required for admitted requests and its response
+// passes through to the probe caller for body consumption and closing.
 func (s *qoderProviderTestClientStub) StreamRequestContextWithDoer(ctx context.Context, _ *qoder.SessionContext, _ string, bodyJSON []byte, headers map[string]string, doer qoder.RequestDoer) (*http.Response, error) {
+	// The fixed method and URL are valid, and execution supplies a nonnil context.
+	// Ignore request-construction error here; nil context would leave the captured request nil.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api1.qoder.sh/test", strings.NewReader(string(bodyJSON)))
 	s.request = req
 	s.requests = append(s.requests, req)
@@ -3123,6 +3751,10 @@ func (s *qoderProviderTestClientStub) StreamRequestContextWithDoer(ctx context.C
 	return doer(req)
 }
 
+// GetUserInfo records supplied token text and returns configured failure or
+// fixed user information. This serial fixture observes user-info preparation
+// while leaving credential authentication and real transport to production
+// adapter tests.
 func (s *qoderProviderTestOAuthClientStub) GetUserInfo(_ context.Context, token string) (*qoder.UserInfo, error) {
 	s.token = token
 	if s.err != nil {
@@ -3131,10 +3763,18 @@ func (s *qoderProviderTestOAuthClientStub) GetUserInfo(_ context.Context, token 
 	return &qoder.UserInfo{ID: "user-1", Name: "Qoder User"}, nil
 }
 
+// Do delegates fixed Qoder endpoint response handling with no TLS profile
+// selected. The serial fixture records transport choices and returns a fresh
+// body that the production executor consumes and closes.
 func (u *qoderHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return u.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS records borrowed request and transport selections for serial Qoder
+// assertions. User-info GET requests select their configured body/status or
+// default successful user object; other requests receive the configured wrapped
+// stream body. Each result owns a fresh body for the probe caller to consume
+// and close after parsing.
 func (u *qoderHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.proxyURL = proxyURL
 	u.providerID = providerID
@@ -3144,6 +3784,8 @@ func (u *qoderHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string
 	body := u.body
 	if req.Method == http.MethodGet && strings.Contains(req.URL.Path, qoder.UserInfoPath) {
 		body = u.userInfoBody
+		// User-info preparation can use a standard successful fixture identity when
+		// no custom payload was configured, while stream response text remains independently selected.
 		if body == "" {
 			body = `{"id":"user-1","name":"Qoder User"}`
 		}
@@ -3158,15 +3800,25 @@ func (u *qoderHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string
 	}, nil
 }
 
+// newQoderProviderTestContext returns a background context wrapper and recorder
+// for synchronous Qoder tests. Both outputs share the same response recorder,
+// keeping the event sink and fixture assertions on one stream.
 func newQoderProviderTestContext() (*qoderTestOutputFixture, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	return &qoderTestOutputFixture{Context: context.Background(), recorder: recorder}, recorder
 }
 
+// LoadTestTarget returns the configured borrowed Qoder target for every fixture
+// request. The test controls that target selection so shared service
+// preparation and output can be exercised without provider-store routing.
 func (l qoderTargetFixture) LoadTestTarget(context.Context, providercore.TestRequest) (providercore.TestTarget, error) {
 	return l.target, nil
 }
 
+// executeQoderTest binds the production model-rewrite helper and runs the
+// selected Qoder target through shared service preparation. It uses the wrapper
+// context and HTTP sink, retaining controlled fixture transport and event
+// observations.
 func executeQoderTest(t *testing.T, output *qoderTestOutputFixture, executor *provideradapter.QoderProviderTest, value *providercore.Record, model, prompt, mode string) error {
 	t.Helper()
 	executor.RewriteModel = openaiprotocol.ReplaceModelInBody

@@ -14,10 +14,20 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// Qoder site selection and required session fields are exercised through
+// qoder_oauth.go with the production authorization adapter. Device sessions are
+// generated locally, and each fixture starts then cleans up its session owner
+// so repeated tests retain their authorization lifetime.
+
+// TestQoderOAuthHandlerGenerateAuthURL generates a device session with empty
+// JSON and production option defaults. The response contains the global browser
+// URL, session, state, expiration and polling interval.
 func TestQoderOAuthHandlerGenerateAuthURL(t *testing.T) {
 	router := gin.New()
 	svc := provideradapter.NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
+	// Core.Start runs session cleanup for this fixture. Stop that owner after
+	// the handler assertions so cleanup and any registered authorization work finish.
 	t.Cleanup(func() { require.NoError(t, svc.Core.StopContext(context.Background())) })
 	handler := NewQoderOAuthHandler(svc)
 	router.POST("/api/v1/admin/qoder/oauth/auth-url", handler.GenerateAuthURL)
@@ -40,10 +50,15 @@ func TestQoderOAuthHandlerGenerateAuthURL(t *testing.T) {
 	require.NotZero(t, data["interval"])
 }
 
+// TestQoderOAuthHandlerExchangeCodeValidatesRequest submits state while
+// omitting the required session identifier. HTTP binding returns 400 and names
+// SessionID before device authorization can perform completion.
 func TestQoderOAuthHandlerExchangeCodeValidatesRequest(t *testing.T) {
 	router := gin.New()
 	svc := provideradapter.NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
+	// Core.Start runs session cleanup for this fixture. Stop that owner after
+	// the handler assertions so cleanup and any registered authorization work finish.
 	t.Cleanup(func() { require.NoError(t, svc.Core.StopContext(context.Background())) })
 	handler := NewQoderOAuthHandler(svc)
 	router.POST("/api/v1/admin/qoder/oauth/exchange-code", handler.ExchangeCode)
@@ -57,10 +72,16 @@ func TestQoderOAuthHandlerExchangeCodeValidatesRequest(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "SessionID")
 }
 
+// TestQoderOAuthHandlerGenerateAuthURLAcceptsCNAndRejectsUnknownSite requests a
+// CN device session and an unsupported site. CN output identifies its browser
+// host and site, while unsupported input returns 400 with the site validation
+// message.
 func TestQoderOAuthHandlerGenerateAuthURLAcceptsCNAndRejectsUnknownSite(t *testing.T) {
 	router := gin.New()
 	svc := provideradapter.NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
+	// Core.Start runs session cleanup for this fixture. Stop that owner after
+	// the handler assertions so cleanup and any registered authorization work finish.
 	t.Cleanup(func() { require.NoError(t, svc.Core.StopContext(context.Background())) })
 	handler := NewQoderOAuthHandler(svc)
 	router.POST("/api/v1/admin/qoder/oauth/auth-url", handler.GenerateAuthURL)

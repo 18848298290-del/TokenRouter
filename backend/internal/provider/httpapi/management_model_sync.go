@@ -12,7 +12,15 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SyncUpstreamModels fetches the provider's currently supported models from upstream.
+// Live model queries use the model-sync use case for stored or temporary
+// credentials. The HTTP layer distinguishes local configuration failures from
+// upstream failures and sends sanitized messages; preview constructs an unsaved
+// record so query results can be inspected before provider creation.
+
+// SyncUpstreamModels loads provider credentials and requests a live
+// supported-model list. Lookup failures map to 404, configuration or
+// unsupported errors to 400, and other query failures to sanitized 502
+// responses.
 // POST /api/v1/admin/providers/:id/models/sync-upstream
 func (h *ManagementHandler) SyncUpstreamModels(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -53,14 +61,17 @@ func (h *ManagementHandler) SyncUpstreamModels(c *gin.Context) {
 	response.Success(c, gin.H{"models": models})
 }
 
-// SyncUpstreamModelsPreview fetches supported models using credentials for an unsaved provider.
+// SyncUpstreamModelsPreview strictly binds temporary API-key credentials and
+// queries an unsaved provider record. It applies the same sanitized error
+// categories as stored-provider synchronization, and the handler performs no
+// provider configuration write.
 // POST /api/v1/admin/providers/models/sync-upstream-preview
 func (h *ManagementHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform" binding:"required"`
-		Type     string `json:"type" binding:"required"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key" binding:"required"`
+		Platform string `json:"platform" binding:"required"` // temporary upstream platform identifier
+		Type     string `json:"type" binding:"required"`     // temporary provider authentication kind
+		BaseURL  string `json:"base_url"`                    // temporary upstream root URL
+		APIKey   string `json:"api_key" binding:"required"`  // temporary upstream API key
 	}
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())

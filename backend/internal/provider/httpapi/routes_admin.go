@@ -4,22 +4,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ProviderRouteEndpoints holds constructed provider HTTP handlers.
+// Provider administration mounts management, credential exchange, usage and
+// connection-test endpoints under the caller's administrator group. The group
+// supplies authentication, rate limiting and auditing before registration, and
+// the raw-credential export route adds its own supplied step-up middleware.
+
+// ProviderRouteEndpoints holds constructed handler dependencies used when
+// administrator routes are registered.
 type ProviderRouteEndpoints struct {
-	ProviderArchive     *ArchiveHandler
-	ProviderCRS         *CRSHandler
-	ProviderCodexImport *CodexImportHandler
-	ProviderManagement  *ManagementHandler
-	ProviderOAuthUsage  *OAuthUsageHandler
-	ProviderOllama      *OllamaUsageHandler
-	ProviderTests       *TestHandler
-	CodexInviteReset    *CodexInviteResetHandler
-	OAuth               *ClaudeOAuthHandler
-	OpenAIOAuth         *OpenAIOAuthHandler
-	UpstreamUsage       *UpstreamUsageHandler
+	ProviderArchive     *ArchiveHandler          // raw credential backup transfers
+	ProviderCRS         *CRSHandler              // external CRS source synchronization
+	ProviderCodexImport *CodexImportHandler      // Codex credential session imports
+	ProviderManagement  *ManagementHandler       // provider configuration and maintenance
+	ProviderOAuthUsage  *OAuthUsageHandler       // OAuth usage and local statistics
+	ProviderOllama      *OllamaUsageHandler      // managed Ollama usage and sessions
+	ProviderTests       *TestHandler             // streaming provider connection tests
+	CodexInviteReset    *CodexInviteResetHandler // Codex invitations and reset credits
+	OAuth               *ClaudeOAuthHandler      // Claude scoped authorization sessions
+	OpenAIOAuth         *OpenAIOAuthHandler      // OpenAI authorization and quota actions
+	UpstreamUsage       *UpstreamUsageHandler    // manual API-key upstream usage
 }
 
-// RegisterAntigravityOAuthRoutes registers Antigravity endpoints on an authenticated, rate-limited, audited administrator group.
+// RegisterAntigravityOAuthRoutes mounts Google session generation, code
+// exchange and refresh-token validation under antigravity. The caller supplies
+// an administrator group already protected by authentication, rate limiting and
+// auditing before registration.
 func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *AntigravityOAuthHandler) {
 	antigravity := admin.Group("/antigravity")
 	{
@@ -29,7 +38,10 @@ func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *Antigravit
 	}
 }
 
-// RegisterGeminiOAuthRoutes registers Gemini endpoints on an authenticated, rate-limited, audited administrator group.
+// RegisterGeminiOAuthRoutes mounts Gemini session generation, exchange and
+// capability display under gemini. The caller supplies the protected
+// administrator group and a constructed authorization handler before route
+// registration.
 func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHandler) {
 	gemini := admin.Group("/gemini")
 	{
@@ -39,7 +51,10 @@ func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHand
 	}
 }
 
-// RegisterGrokOAuthRoutes registers Grok endpoints on an authenticated, rate-limited, audited administrator group.
+// RegisterGrokOAuthRoutes mounts Grok authorization, SSO imports,
+// reconciliation, quota and runtime diagnostics under grok. The caller supplies
+// a constructed handler and an authenticated, rate-limited, audited
+// administrator group.
 func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler) {
 	grok := admin.Group("/grok")
 	{
@@ -59,7 +74,10 @@ func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler)
 	}
 }
 
-// RegisterOpenAIOAuthRoutes registers OpenAI endpoints on an authenticated, rate-limited, audited administrator group.
+// RegisterOpenAIOAuthRoutes mounts OpenAI authorization, provider import and
+// quota maintenance under openai. Authentication, rate limiting and auditing
+// belong to the supplied administrator group, whose lifetime covers the
+// constructed handler dependencies.
 func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHandler) {
 	openai := admin.Group("/openai")
 	{
@@ -75,7 +93,10 @@ func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHand
 	}
 }
 
-// RegisterQoderOAuthRoutes registers Qoder endpoints on an authenticated, rate-limited, audited administrator group.
+// RegisterQoderOAuthRoutes mounts Qoder device session generation, exchange and
+// polling under qoder. The caller supplies a constructed device-authorization
+// handler and an administrator group with authentication, rate limiting and
+// auditing.
 func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandler) {
 	qoder := admin.Group("/qoder")
 	{
@@ -85,7 +106,9 @@ func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandle
 	}
 }
 
-// RegisterScheduledTestRoutes registers test schedules on an authenticated, rate-limited, audited administrator group.
+// RegisterScheduledTestRoutes mounts plan mutations and result history plus the
+// provider-nested plan list. The caller supplies a constructed schedule handler
+// and an authenticated, rate-limited, audited administrator group.
 func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTestHandler) {
 	plans := admin.Group("/scheduled-test-plans")
 	{
@@ -98,7 +121,10 @@ func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTest
 	admin.GET("/providers/:id/scheduled-test-plans", endpoint.ListByProvider)
 }
 
-// RegisterProviderRoutes registers provider management routes and invokes the supplied scheduler diagnostics registration.
+// RegisterProviderRoutes mounts provider administration and invokes the
+// supplied scheduler diagnostics registration. All endpoint pointers and
+// registration callbacks are required by the routes that use them; the caller
+// supplies the protected administrator group and raw-export step-up middleware.
 func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpoints, stepUp gin.HandlerFunc, registerDiagnostics func(*gin.RouterGroup)) {
 	providers := admin.Group("/providers")
 	{
@@ -143,7 +169,8 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 		providers.GET("/:id/models", endpoints.ProviderManagement.GetAvailableModels)
 		providers.POST("/:id/models/sync-upstream", endpoints.ProviderManagement.SyncUpstreamModels)
 		providers.POST("/batch", endpoints.ProviderManagement.BatchCreate)
-		// Exports contain raw upstream credentials and require step-up authentication.
+		// Raw provider and proxy secrets are part of the backup format. Add the
+		// supplied step-up middleware here before the archive exporter can return those values.
 		providers.GET("/data", stepUp, endpoints.ProviderArchive.ExportData)
 		providers.POST("/data", endpoints.ProviderArchive.ImportData)
 		providers.POST("/batch-update-credentials", endpoints.ProviderManagement.BatchUpdateCredentials)

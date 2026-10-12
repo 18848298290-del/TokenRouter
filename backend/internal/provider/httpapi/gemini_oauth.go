@@ -11,49 +11,102 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Gemini authorization accepts three OAuth variants and defaults blank type
+// input to Code Assist. The HTTP callback hint is derived from Origin or
+// forwarded request fields, while authorization chooses its built-in or
+// custom-client callback and stores the effective variant with the session.
+//
+// URL-generation errors containing known missing-client markers are reported as
+// configuration failures. Exchange still validates the submitted variant here,
+// but the production authorization service uses the session's stored variant
+// when exchanging credentials; a submitted tier can provide discovery fallback.
+// These distinctions keep frontend request compatibility separate from the
+// provider data selected by the session.
+
+// GeminiAuthorizationUseCase supplies OAuth capability display, session
+// generation and code exchange.
 type GeminiAuthorizationUseCase interface {
+	// GetOAuthConfig returns the authorization configuration capabilities for
+	// administrator display. The handler forwards this result directly, so the
+	// implementation supplies the current enabled variants and required
+	// client-configuration information.
 	GetOAuthConfig() *provider.GeminiOAuthCapabilities
+	// GenerateAuthURL creates a Google session from proxy, callback, project,
+	// OAuth variant and tier hints. The implementation selects its effective
+	// client callback, and callers retain the returned session and state for
+	// exchange.
 	GenerateAuthURL(context.Context, *int64, string, string, string, string) (*provider.GeminiAuthURLResult, error)
+	// ExchangeCode validates the session and state and returns Google token
+	// metadata after exchange. The production implementation takes its effective
+	// OAuth variant from the stored session and uses a supplied tier as discovery
+	// fallback.
 	ExchangeCode(context.Context, *provider.GeminiExchangeCodeInput) (*provider.GeminiTokenInfo, error)
 }
+
+// GeminiOAuthHandler validates Google authorization variants and binds
+// administrator requests to authorization.
 type GeminiOAuthHandler struct {
-	geminiOAuthService GeminiAuthorizationUseCase
+	geminiOAuthService GeminiAuthorizationUseCase // borrowed Google authorization use case
 }
 
+// GeminiGenerateAuthURLRequest carries optional proxy, project, variant and
+// fallback-tier choices.
 type GeminiGenerateAuthURLRequest struct {
-	ProxyID   *int64 `json:"proxy_id"`
-	ProjectID string `json:"project_id"`
-	// OAuthType accepts "code_assist", "google_one", or "ai_studio".
-	// An omitted value defaults to "code_assist" for older clients.
-	OAuthType string `json:"oauth_type"`
-	// TierID is a user-selected tier to be used when auto detection is unavailable or fails.
-	TierID string `json:"tier_id"`
+	// ProxyID supplies session generation's proxy lookup. Omitted or unresolved
+	// selection leaves an empty route retained for the later Google exchange.
+	ProxyID *int64 `json:"proxy_id"` // optional session proxy selection
+	// ProjectID is trimmed into the session and takes precedence over account
+	// discovery when nonempty. Blank input leaves project discovery to authorization.
+	ProjectID string `json:"project_id"` // requested Google project identifier
+	// OAuthType selects code_assist, google_one or ai_studio during session
+	// generation. Blank input defaults to code_assist, and the selected variant is
+	// stored for later exchange.
+	OAuthType string `json:"oauth_type"` // requested OAuth variant selector
+	// TierID supplies a fallback for later account tier discovery. Session
+	// generation normalizes this choice according to its selected OAuth variant
+	// before storing the hint.
+	TierID string `json:"tier_id"` // requested fallback tier identifier
 }
 
+// GeminiExchangeCodeRequest binds session credentials and optional frontend
+// variant and tier values.
 type GeminiExchangeCodeRequest struct {
-	SessionID string `json:"session_id" binding:"required"`
-	State     string `json:"state" binding:"required"`
-	Code      string `json:"code" binding:"required"`
-	ProxyID   *int64 `json:"proxy_id"`
-	// OAuthType must match the type used to generate the authorization URL.
-	OAuthType string `json:"oauth_type"`
-	// TierID is a user-selected tier to be used when auto detection is unavailable or fails.
-	// This field is optional; when omitted, the server uses the tier stored in the OAuth session.
-	TierID string `json:"tier_id"`
+	SessionID string `json:"session_id" binding:"required"` // authorization session identifier
+	State     string `json:"state" binding:"required"`      // authorization state value
+	Code      string `json:"code" binding:"required"`       // authorization exchange code
+	// ProxyID overrides the session route only when its lookup resolves. Omitted
+	// or unresolved selection retains the stored proxy through Google exchange.
+	ProxyID *int64 `json:"proxy_id"` // optional exchange proxy selection
+	// OAuthType is validated here as code_assist, google_one or ai_studio. Blank
+	// input selects code_assist; production exchange uses the variant stored in
+	// the authorization session.
+	OAuthType string `json:"oauth_type"` // requested OAuth variant selector
+	// TierID supplies a fallback when account tier discovery cannot choose a tier.
+	// During exchange, a blank supplied tier permits the session's stored tier
+	// fallback.
+	TierID string `json:"tier_id"` // requested fallback tier identifier
 }
 
+// NewGeminiOAuthHandler borrows Google authorization for capability display and
+// session exchange. Its owner supplies current client configuration and manages
+// the stored-session cleanup lifetime used by these endpoints.
 func NewGeminiOAuthHandler(geminiOAuthService GeminiAuthorizationUseCase) *GeminiOAuthHandler {
 	return &GeminiOAuthHandler{geminiOAuthService: geminiOAuthService}
 }
 
-// GetCapabilities returns the Gemini OAuth configuration capabilities.
+// GetCapabilities returns the authorization use case's current Gemini client
+// capability settings. The service supplies its configured values on this call,
+// allowing the frontend to choose available authorization variants.
 // GET /api/v1/admin/gemini/oauth/capabilities
 func (h *GeminiOAuthHandler) GetCapabilities(c *gin.Context) {
 	cfg := h.geminiOAuthService.GetOAuthConfig()
 	response.Success(c, cfg)
 }
 
-// GenerateAuthURL generates Google OAuth authorization URL for Gemini.
+// GenerateAuthURL validates a Gemini variant and requests its authorization
+// session with proxy, project and tier hints. Blank variant means code_assist;
+// recognized missing-client messages map to 400 and other generation failures
+// to 500.
 // POST /api/v1/admin/gemini/oauth/auth-url
 func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req GeminiGenerateAuthURLRequest
@@ -62,7 +115,8 @@ func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		return
 	}
 
-	// Default to code_assist for clients that omit oauth_type.
+	// Older clients omit oauth_type. Normalize blank input to Code Assist before
+	// validating the variant names accepted by the administrator authorization flow.
 	oauthType := strings.TrimSpace(req.OAuthType)
 	if oauthType == "" {
 		oauthType = "code_assist"
@@ -72,13 +126,14 @@ func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		return
 	}
 
-	// Always pass the "hosted" callback URI; the OAuth service may override it depending on
-	// oauth_type and whether the built-in Gemini CLI OAuth client is used.
+	// The hosted callback is an HTTP-derived hint. Production authorization chooses
+	// its built-in or custom-client callback before exchanging the stored session.
 	redirectURI := deriveGeminiRedirectURI(c)
 	result, err := h.geminiOAuthService.GenerateAuthURL(c.Request.Context(), req.ProxyID, redirectURI, req.ProjectID, oauthType, req.TierID)
 	if err != nil {
 		msg := err.Error()
-		// Treat missing/invalid OAuth client configuration as a user/config error.
+		// These authorization messages identify missing client configuration that an
+		// administrator can supply; classify them as input errors before the generic 500.
 		if strings.Contains(msg, "OAuth client not configured") ||
 			strings.Contains(msg, "requires your own OAuth Client") ||
 			strings.Contains(msg, "requires a custom OAuth Client") ||
@@ -94,7 +149,9 @@ func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ExchangeCode exchanges authorization code for tokens.
+// ExchangeCode binds required session, state and code and validates the
+// frontend OAuth variant. Blank type defaults to code_assist, while production
+// authorization derives the effective exchange variant from the stored session.
 // POST /api/v1/admin/gemini/oauth/exchange-code
 func (h *GeminiOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req GeminiExchangeCodeRequest
@@ -103,7 +160,8 @@ func (h *GeminiOAuthHandler) ExchangeCode(c *gin.Context) {
 		return
 	}
 
-	// Default to code_assist for clients that omit oauth_type.
+	// Older clients omit oauth_type. Normalize blank input to Code Assist before
+	// validating the variant names accepted by the administrator authorization flow.
 	oauthType := strings.TrimSpace(req.OAuthType)
 	if oauthType == "" {
 		oauthType = "code_assist"
@@ -129,6 +187,15 @@ func (h *GeminiOAuthHandler) ExchangeCode(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
+// deriveGeminiRedirectURI derives the hosted callback hint from the incoming
+// request. Nonempty Origin wins and loses trailing slashes; otherwise forwarded
+// headers supply their first comma-separated values before TLS and request-host
+// defaults. The helper trusts these header values as supplied.
+//
+// The hint is passed into session generation, where GeminiAuthorization
+// replaces it with the client's configured callback. Header parsing therefore
+// describes the frontend hint, while the stored session determines the actual
+// callback used for token exchange.
 func deriveGeminiRedirectURI(c *gin.Context) string {
 	origin := strings.TrimSpace(c.GetHeader("Origin"))
 	if origin != "" {
@@ -139,6 +206,8 @@ func deriveGeminiRedirectURI(c *gin.Context) string {
 	if c.Request.TLS != nil {
 		scheme = "https"
 	}
+	// Forwarded proto and host can contain comma-separated observations. Their
+	// first tokens supply the hosted callback hint consumed by authorization session generation.
 	if xfProto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); xfProto != "" {
 		scheme = strings.TrimSpace(strings.Split(xfProto, ",")[0])
 	}

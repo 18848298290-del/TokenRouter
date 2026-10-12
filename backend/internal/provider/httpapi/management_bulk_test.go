@@ -24,18 +24,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// OpenAI API-key bulk edits should use configured protocol choices without
+// triggering a separate capability probe. management_bulk.go is exercised with
+// a mounted test endpoint and synchronized request/write observations; the
+// timed absence assertion covers this controlled fixture window.
+
+// bulkUpdateProbeProviderRepo exposes shallow record reads and synchronized
+// capability-write observation for bulk-update tests.
 type bulkUpdateProbeProviderRepo struct {
-	provideradapter.OpenAIProviderTestStore
-	mu        sync.Mutex
-	providers map[int64]*providercore.Record
-	done      chan int64
+	provideradapter.OpenAIProviderTestStore            // unused embedded test-store operations
+	mu                                      sync.Mutex // captured state synchronization mutex
+	// providers is read and edited under mu during fixture calls. Record copies
+	// share nested maps, so the test reads captured Extra only while holding that
+	// mutex.
+	providers map[int64]*providercore.Record // configured fixture record pointers
+	// done receives a best-effort provider ID after a Responses status write. An
+	// unavailable channel receiver drops the signal after the fixture has
+	// completed its map update.
+	done chan int64 // optional capability-write observation channel
 }
 
+// bulkUpdateProbeHTTPUpstream counts captured request URLs while supplying a
+// fixed missing-route response.
 type bulkUpdateProbeHTTPUpstream struct {
-	mu   sync.Mutex
-	urls []string
+	mu sync.Mutex // captured state synchronization mutex
+	// urls is appended under mu while an unexpected probe can run. The test holds
+	// that same mutex when asserting the captured request collection is empty.
+	urls []string // captured upstream request URLs
 }
 
+// TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe updates OpenAI API-key
+// credentials with a separately mounted probe endpoint. During the observation
+// window, the update produces no upstream requests or recorded
+// Responses-capability Extra write.
 func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	provider := providercore.Record{
 		ID:          11,
@@ -68,6 +89,8 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	router.POST("/api/v1/admin/providers/:id/test", NewTestHandler(tests, nil).Test)
 	router.POST("/api/v1/admin/providers/bulk-update", providerHandler.BulkUpdate)
 
+	// These bulk request values use JSON-compatible scalars and maps. An encoding
+	// failure leaves an empty body and is detected by the later HTTP-success assertion.
 	body, _ := json.Marshal(map[string]any{
 		"provider_ids": []int64{provider.ID},
 		"credentials": map[string]any{
@@ -80,7 +103,8 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	// Allow time for an unexpected asynchronous probe, then check upstream requests and capability writes.
+	// Give an unexpected background probe a fixture observation window before
+	// reading synchronized request and Extra captures; the timeout bounds this absence assertion.
 	select {
 	case <-repo.done:
 		t.Fatal("OpenAI capability probe must not run")
@@ -95,10 +119,15 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	repo.mu.Unlock()
 }
 
+// TestBulkUpdateAcceptsFilterTargetRequest supplies bulk list filters and a
+// scheduling-switch change instead of explicit provider IDs. The handler admits
+// that filter selection and returns the common successful response envelope.
 func TestBulkUpdateAcceptsFilterTargetRequest(t *testing.T) {
 	adminSvc := newManagementMutationFixture()
 	router := setupProviderMutationContractRouter(adminSvc)
 
+	// These bulk request values use JSON-compatible scalars and maps. An encoding
+	// failure leaves an empty body and is detected by the later HTTP-success assertion.
 	body, _ := json.Marshal(map[string]any{
 		"filters": map[string]any{
 			"platform":     "openai",
@@ -121,6 +150,9 @@ func TestBulkUpdateAcceptsFilterTargetRequest(t *testing.T) {
 	require.Equal(t, float64(0), resp["code"])
 }
 
+// GetByID copies the selected record struct while holding the fixture mutex.
+// Missing IDs return provider-not-found, while copied record maps and pointers
+// remain borrowed from fixture storage.
 func (r *bulkUpdateProbeProviderRepo) GetByID(ctx context.Context, id int64) (*providercore.Record, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -132,6 +164,10 @@ func (r *bulkUpdateProbeProviderRepo) GetByID(ctx context.Context, id int64) (*p
 	return &copy, nil
 }
 
+// UpdateExtra merges supplied values into the configured record under the
+// mutex. A Responses-probe status key sends a best-effort completion signal
+// after unlocking, allowing the test to detect unexpected capability
+// persistence.
 func (r *bulkUpdateProbeProviderRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	r.mu.Lock()
 	provider := r.providers[id]
@@ -147,15 +183,23 @@ func (r *bulkUpdateProbeProviderRepo) UpdateExtra(ctx context.Context, id int64,
 		select {
 		case r.done <- id:
 		default:
+			// Capability observation is best effort: a full or absent fixture channel
+			// cannot block the already completed Extra write or the surrounding HTTP request.
 		}
 	}
 	return nil
 }
 
+// Do records a fixture request through the TLS-capable method with no profile.
+// It returns a fresh 404 response body for the probe caller to consume and
+// close, using the same synchronized URL capture as DoWithTLS.
 func (u *bulkUpdateProbeHTTPUpstream) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return u.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS records the request URL under the fixture mutex and returns a new
+// 404 body. Tests read the captured collection under that lock; proxy and
+// profile input do not change the fixed response.
 func (u *bulkUpdateProbeHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.mu.Lock()
 	u.urls = append(u.urls, req.URL.String())

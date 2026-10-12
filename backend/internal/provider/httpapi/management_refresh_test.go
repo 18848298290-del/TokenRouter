@@ -20,35 +20,58 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Tests use production refresh and SDK parsing with fixed local transport responses.
+// Manual refresh results can arrive after an administrator changes provider
+// identity or disables scheduling. management_refresh.go and
+// ManagedRefreshService are exercised with inline credential replacement,
+// partial Extra maintenance and a fixed Grok exchange, keeping the fixture's
+// direct coordinator distinct from production lock ownership.
+
+// agRecoveryIdentityAdmin models serial administrator state changed during
+// Antigravity project discovery.
 type agRecoveryIdentityAdmin struct {
-	providercore.ManagedCredentialStore
-	current providercore.Record
-	clears  int
+	providercore.ManagedCredentialStore                     // unused embedded credential store operations
+	current                             providercore.Record // serial mutable administrator record
+	clears                              int                 // serial error-clear invocation count
 }
 
-type agRecoveryIdentityTransport struct{ admin *agRecoveryIdentityAdmin }
+// agRecoveryIdentityTransport returns local responses and installs an inline
+// administrator identity change.
+type agRecoveryIdentityTransport struct {
+	admin *agRecoveryIdentityAdmin // borrowed mutable administrator fixture
+}
 
+// grokRefreshOAuthStub records the selected provider and supplies fixed Grok
+// exchange information.
 type grokRefreshOAuthStub struct {
-	provider *providercore.Record
-	info     *providercore.GrokTokenInfo
-	calls    int
+	provider *providercore.Record        // borrowed last exchange provider
+	info     *providercore.GrokTokenInfo // borrowed configured token response
+	calls    int                         // serial exchange invocation count
 }
 
+// grokRefreshAdminService captures merged credential writes for the serial Grok
+// refresh test.
 type grokRefreshAdminService struct {
-	*managementMutationFixture
-	updatedCredentials map[string]any
+	*managementMutationFixture                // borrowed serial administrator fixture
+	updatedCredentials         map[string]any // borrowed captured credential update
 }
 
+// applyOAuthTokenInvalidator records borrowed provider pointers targeted by
+// serial reauthorization invalidation.
 type applyOAuthTokenInvalidator struct {
-	providers []*providercore.Record
+	providers []*providercore.Record // borrowed invalidation provider observations
 }
 
+// TestAntigravityManualRecoveryDoesNotClearNewAdministratorState replaces
+// administrator status and credentials during controlled project recovery. The
+// late manual recovery keeps the disabled state and records no conditional
+// error-clearing operation.
 func TestAntigravityManualRecoveryDoesNotClearNewAdministratorState(t *testing.T) {
 	admin := &agRecoveryIdentityAdmin{current: providercore.Record{ID: 82, Platform: capability.PlatformAntigravity, Type: capability.ProviderTypeOAuth, Status: providercore.StatusError, ErrorMessage: "missing_project_id: original", Credentials: map[string]any{"access_token": "old", "refresh_token": "old"}}}
 	observed := admin.current
 	transport := http.DefaultTransport
 	http.DefaultTransport = agRecoveryIdentityTransport{admin}
+	// The serial fixture temporarily redirects default HTTP requests to its
+	// controlled transport. Restore that process-wide dependency after the recovery assertions.
 	t.Cleanup(func() { http.DefaultTransport = transport })
 	h := newManagedRefreshFixture(admin, &providercore.ManualCredentialExchange{Antigravity: providercore.NewAntigravityAuthorization(provideradapter.AntigravityAuthorizationOptions(nil))})
 	_, _, err := h.Refresh(context.Background(), &observed)
@@ -57,6 +80,10 @@ func TestAntigravityManualRecoveryDoesNotClearNewAdministratorState(t *testing.T
 	require.Zero(t, admin.clears)
 }
 
+// TestRefreshSingleProviderRoutesGrokThroughGrokOAuthService refreshes Grok
+// OAuth with a fixed exchange result and existing metadata. The exchange
+// receives the selected provider, token fields change and unselected base URL
+// and entitlement values remain in the captured update.
 func TestRefreshSingleProviderRoutesGrokThroughGrokOAuthService(t *testing.T) {
 	t.Parallel()
 
@@ -94,8 +121,9 @@ func TestRefreshSingleProviderRoutesGrokThroughGrokOAuthService(t *testing.T) {
 	require.Equal(t, adminSvc.updatedCredentials, updated.Credentials)
 }
 
-// TestRefreshSingleProvider_RejectsShadow checks that manual refresh rejects Spark shadows before contacting upstream.
-// Shadows use their parent's credentials; single and batch refresh share this check.
+// TestRefreshSingleProvider_RejectsShadow supplies an OpenAI OAuth credential
+// shadow to an otherwise empty managed service. Validation returns the shadow
+// rejection as 400 before any unconfigured exchange dependency can be reached.
 func TestRefreshSingleProvider_RejectsShadow(t *testing.T) {
 	h := providercore.NewManagedRefreshService(providercore.ManagedRefreshOptions{}) // Shadow validation returns before using dependencies.
 	parentID := int64(5)
@@ -112,6 +140,10 @@ func TestRefreshSingleProvider_RejectsShadow(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpx.ErrorCode(err))
 }
 
+// TestApplyOAuthCredentialsDiscardsDeprecatedLongContextBillingExtra submits
+// reauthorization credentials with retired and retained Extra fields. Captured
+// credential and Extra maintenance succeeds, drops the retired key and keeps
+// the selected neighboring value.
 func TestApplyOAuthCredentialsDiscardsDeprecatedLongContextBillingExtra(t *testing.T) {
 	stub := newManagementMutationFixture()
 	stub.providers = []providercore.Record{{
@@ -137,6 +169,10 @@ func TestApplyOAuthCredentialsDiscardsDeprecatedLongContextBillingExtra(t *testi
 	require.Equal(t, "value", stub.updateExtraCalls[0]["preserved"])
 }
 
+// TestProviderHandlerApplyOAuthCredentials_MergesExtraAndInvalidatesToken
+// reauthorizes a fixture through strict HTTP input and an invalidation
+// recorder. Credentials update separately from the selected Extra patch, and
+// error clearing plus token invalidation target the provider.
 func TestProviderHandlerApplyOAuthCredentials_MergesExtraAndInvalidatesToken(t *testing.T) {
 	adminSvc := newManagementMutationFixture()
 	invalidator := &applyOAuthTokenInvalidator{}
@@ -175,7 +211,10 @@ func TestProviderHandlerApplyOAuthCredentials_MergesExtraAndInvalidatesToken(t *
 	require.Equal(t, int64(3), invalidator.providers[0].ID)
 }
 
-// TestManualRefreshDoesNotOverwriteNewAdministratorCredentials checks that reauthorization during exchange discards a late refresh result.
+// TestManualRefreshDoesNotOverwriteNewAdministratorCredentials replaces
+// administrator credentials inside the exchange callback before a late refresh
+// result returns. Conditional maintenance rejects the stale write and returns
+// the newer fixture credentials without recording an update input.
 func TestManualRefreshDoesNotOverwriteNewAdministratorCredentials(t *testing.T) {
 	adminSvc := newManagementMutationFixture()
 	adminSvc.providers = []providercore.Record{{ID: 977, Platform: capability.PlatformQoder, Type: capability.ProviderTypeCosy, Status: billing.StatusActive, Credentials: map[string]any{"refresh_token": "observed", "security_oauth_token": "old", "machine_id": "machine"}}}
@@ -191,16 +230,27 @@ func TestManualRefreshDoesNotOverwriteNewAdministratorCredentials(t *testing.T) 
 	require.Equal(t, "administrator", updated.GetCredential("refresh_token"))
 }
 
+// GetProvider returns a shallow copy of serial administrator state for the
+// identity fixture. Nested credential maps remain borrowed until the inline
+// transport replaces them, matching the controlled observed-record
+// interleaving.
 func (s *agRecoveryIdentityAdmin) GetProvider(context.Context, int64) (*providercore.Record, error) {
 	v := s.current
 	return &v, nil
 }
 
+// UpdateProvider replaces fixture credentials and returns the borrowed current
+// record. It implements the test's serial store behavior, with conditional
+// recovery validation provided by the separate ClearManagedRefreshError
+// operation.
 func (s *agRecoveryIdentityAdmin) UpdateProvider(_ context.Context, _ int64, input *providercore.UpdateProviderInput) (*providercore.Record, error) {
 	s.current.Credentials = input.Credentials
 	return &s.current, nil
 }
 
+// ClearProviderError records a serial unconditional recovery and sets active
+// status. The identity test expects this compatibility path to remain unused
+// after newer administrator state appears.
 func (s *agRecoveryIdentityAdmin) ClearProviderError(context.Context, int64) (*providercore.Record, error) {
 	s.clears++
 	s.current.Status = billing.StatusActive
@@ -208,14 +258,22 @@ func (s *agRecoveryIdentityAdmin) ClearProviderError(context.Context, int64) (*p
 	return &s.current, nil
 }
 
+// EnsureAntigravityPrivacy returns the fixed successful observation for this
+// serial recovery fixture.
 func (s *agRecoveryIdentityAdmin) EnsureAntigravityPrivacy(context.Context, *providercore.Record) string {
 	return "privacy_set"
 }
 
+// EnsureOpenAIPrivacy returns an empty observation for the unused OpenAI
+// privacy path.
 func (s *agRecoveryIdentityAdmin) EnsureOpenAIPrivacy(context.Context, *providercore.Record) string {
 	return ""
 }
 
+// RoundTrip supplies fixed token and project-discovery responses for manual
+// recovery. The project request installs newer disabled administrator state
+// before returning its observation, so later conditional recovery sees the
+// changed identity.
 func (t agRecoveryIdentityTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	body := `{}`
 	if strings.Contains(r.URL.Path, "token") {
@@ -228,7 +286,10 @@ func (t agRecoveryIdentityTransport) RoundTrip(r *http.Request) (*http.Response,
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
 
-// ClearManagedRefreshError models the conditional update; integration tests cover SQL interleaving.
+// ClearManagedRefreshError compares the observed recovery fields with serial
+// fixture state before clearing error. Mismatch returns the current record with
+// applied=false; acceptance records a clear and returns the borrowed active
+// record.
 func (s *agRecoveryIdentityAdmin) ClearManagedRefreshError(_ context.Context, old *providercore.Record) (*providercore.Record, bool, error) {
 	if !providercore.ObserveManagedRecovery(old).Matches(&s.current) {
 		return &s.current, false, nil
@@ -239,12 +300,19 @@ func (s *agRecoveryIdentityAdmin) ClearManagedRefreshError(_ context.Context, ol
 	return &s.current, true, nil
 }
 
+// RefreshProviderToken records a serial exchange call and its borrowed provider
+// input. It returns the configured token-info pointer, allowing tests to
+// compare complete input and the resulting captured administrative credential
+// write.
 func (s *grokRefreshOAuthStub) RefreshProviderToken(_ context.Context, provider *providercore.Record) (*providercore.GrokTokenInfo, error) {
 	s.calls++
 	s.provider = provider
 	return s.info, nil
 }
 
+// BuildProviderCredentials constructs Grok fixture token fields from supplied
+// token information. The fixed base URL lets the managed merge test observe
+// that its preexisting administrator URL takes precedence.
 func (s *grokRefreshOAuthStub) BuildProviderCredentials(info *providercore.GrokTokenInfo) map[string]any {
 	return map[string]any{
 		"access_token":  info.AccessToken,
@@ -254,6 +322,9 @@ func (s *grokRefreshOAuthStub) BuildProviderCredentials(info *providercore.GrokT
 	}
 }
 
+// UpdateProvider records the borrowed credential input and returns an active
+// Grok record using that map. This serial fixture captures merged metadata but
+// supplies no durable storage or identity check.
 func (s *grokRefreshAdminService) UpdateProvider(_ context.Context, id int64, input *providercore.UpdateProviderInput) (*providercore.Record, error) {
 	s.updatedCredentials = input.Credentials
 	return &providercore.Record{
@@ -265,6 +336,9 @@ func (s *grokRefreshAdminService) UpdateProvider(_ context.Context, id int64, in
 	}, nil
 }
 
+// InvalidateToken appends the borrowed provider pointer to a serial observation
+// slice. Tests inspect its identifier after reauthorization to distinguish
+// invalidation dispatch from actual external cache deletion.
 func (i *applyOAuthTokenInvalidator) InvalidateToken(ctx context.Context, provider *providercore.Record) error {
 	i.providers = append(i.providers, provider)
 	return nil

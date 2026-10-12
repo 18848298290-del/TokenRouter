@@ -11,6 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Batch creation must forward an explicitly configured scheduler load factor
+// into each administrative creation input. The management_create.go test uses a
+// required Qoder COSY credential object and records the supplied pointer
+// through the shared creation fixture.
+
+// TestProviderHandler_BatchCreate_ForwardsLoadFactor submits one Qoder COSY
+// provider with an explicit load factor. The HTTP batch succeeds and the
+// captured administrative creation input retains the nonnil pointer value
+// twenty.
 func TestProviderHandler_BatchCreate_ForwardsLoadFactor(t *testing.T) {
 	adminSvc := &managementCreateFixture{}
 	handler := newManagementCreateFixtureHandler(adminSvc)

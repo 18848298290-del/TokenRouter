@@ -16,16 +16,43 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ArchiveHandler binds backup requests, applies idempotency, and delegates export and import to provider.Archive.
+// Provider backup exports contain raw upstream credentials and can include the
+// selected proxies, so route registration protects export with step-up
+// authentication. Explicit IDs override list filters; otherwise filter parsing
+// distinguishes ungrouped selection from a positive group ID. Search is
+// byte-limited before the export use case receives it.
+//
+// Import validates the archive header and strips deprecated Extra before
+// response idempotency fingerprints the data. The archive use case owns proxy
+// handling, per-provider creation and privacy follow-up. Export input errors
+// receive 400, while storage errors keep their normal mapping; parsing
+// preserves supplied ID order and duplicates for the use case to interpret.
+
+// ArchiveHandler binds raw provider backup transfers to the archive use case
+// and response idempotency.
 type ArchiveHandler struct {
-	idempotencyhttp.Executor
-	archive *provider.Archive
+	idempotencyhttp.Executor                   // administrator write idempotency binding
+	archive                  *provider.Archive // borrowed provider backup use case
 }
 
+// NewArchiveHandler borrows provider archive operations for administrator
+// backup transfers. Bind response idempotency separately and mount export
+// behind step-up authentication because its payload contains raw provider and
+// proxy credentials.
 func NewArchiveHandler(archive *provider.Archive) *ArchiveHandler {
 	return &ArchiveHandler{archive: archive}
 }
 
+// ExportData returns raw provider backup data selected by explicit IDs or list
+// filters. ID parsing rejects nonpositive values; a nonempty ID list bypasses
+// group parsing and list selection. A supplied list-filter group must be
+// ungrouped or a positive integer.
+//
+// Search is trimmed and truncated to one hundred bytes before export,
+// potentially splitting UTF-8 text. Proxy inclusion is supplied as a deferred
+// parser for the archive use case. ArchiveInputError becomes 400, while other
+// failures retain their shared error mapping; callers obtain step-up protection
+// from route registration.
 func (h *ArchiveHandler) ExportData(c *gin.Context) {
 	ids, err := parseProviderIDs(c)
 	if err != nil {
@@ -33,6 +60,8 @@ func (h *ArchiveHandler) ExportData(c *gin.Context) {
 		return
 	}
 	query := provider.ArchiveExportQuery{IDs: ids, Platform: c.Query("platform"), Type: c.Query("type"), Status: c.Query("status"), PrivacyMode: strings.TrimSpace(c.Query("privacy_mode")), Search: strings.TrimSpace(c.Query("search")), SortBy: c.DefaultQuery("sort_by", "name"), SortOrder: c.DefaultQuery("sort_order", "asc"), IncludeProxies: func() (bool, error) { return parseIncludeProxies(c) }}
+	// Archive list search follows the management request's byte budget. The
+	// truncation can split UTF-8 text because the storage query receives bytes as supplied.
 	if len(query.Search) > 100 {
 		query.Search = query.Search[:100]
 	}
@@ -62,6 +91,10 @@ func (h *ArchiveHandler) ExportData(c *gin.Context) {
 	response.Success(c, payload)
 }
 
+// ImportData strictly binds an archive, validates its format header and strips
+// retired provider Extra keys. Administrator response idempotency wraps the
+// delegated import, whose per-item outcomes are produced by the archive use
+// case.
 func (h *ArchiveHandler) ImportData(c *gin.Context) {
 	var req transfer.DataImportRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
@@ -83,6 +116,10 @@ func (h *ArchiveHandler) ImportData(c *gin.Context) {
 	})
 }
 
+// parseProviderIDs returns positive decimal IDs from repeated or
+// comma-separated query values. Whitespace and empty parts are skipped; missing
+// input returns nil, while order and duplicates are retained for archive
+// selection.
 func parseProviderIDs(c *gin.Context) ([]int64, error) {
 	values := c.QueryArray("ids")
 	if len(values) == 0 {
@@ -112,6 +149,9 @@ func parseProviderIDs(c *gin.Context) ([]int64, error) {
 	return ids, nil
 }
 
+// parseIncludeProxies interprets trimmed, case-insensitive boolean query
+// spellings and defaults omission to true. Unrecognized text returns true with
+// an error, which the export use case handles before using the inclusion value.
 func parseIncludeProxies(c *gin.Context) (bool, error) {
 	raw := strings.TrimSpace(strings.ToLower(c.Query("include_proxies")))
 	if raw == "" {

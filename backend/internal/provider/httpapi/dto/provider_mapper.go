@@ -12,6 +12,31 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
+// A management DTO combines redacted provider configuration with
+// platform-specific display controls. Mapping first clones the record's
+// supported containers and pointers, then removes classified credential secrets
+// and managed Extra before exposing effective cost, session, RPM, TLS and quota
+// values. Extra usage-query configuration has its own allowlist because
+// historical objects can contain credentials.
+//
+// Shallow mapping stops before proxy and group relationships, and membership
+// mapping uses that form to bound recursion. Optional usage totals follow
+// positive-limit rules; expired daily or weekly quota usage is displayed as
+// zero without updating storage. CloneValues handles its listed JSON
+// containers, while unsupported mutable values can remain shared and need
+// immutable use during serialization.
+
+// ProviderFromRecordShallow builds a redacted provider view with
+// platform-qualified display controls. Nil input returns nil. The record is
+// cloned before redaction, copying the supported credential and Extra
+// containers plus record pointers; unsupported mutable values inside those maps
+// can remain shared.
+//
+// Effective getters choose optional controls, including reserve and
+// idle-timeout defaults. Expired daily and weekly quota usage is shown as zero,
+// while stored accounting remains unchanged. Proxy and group relationships are
+// left for the full mapper, and parent account display fields are filled by
+// RuntimePresenter.
 func ProviderFromRecordShallow(a *provider.Record) *Provider {
 	if a == nil {
 		return nil
@@ -63,7 +88,8 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		QuotaDimension:          a.QuotaDimension,
 	}
 
-	// Expose Anthropic OAuth/Setup Token cost and session controls stored in Extra.
+	// Anthropic getters supply effective defaults as well as configured values.
+	// Include positive controls independently so the browser can display the same rules.
 	if a.IsAnthropicOAuthOrSetupToken() {
 		if limit := runtime.GetWindowCostLimit(); limit > 0 {
 			out.WindowCostLimit = &limit
@@ -110,7 +136,8 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		}
 	}
 
-	// TLS fingerprint settings apply to Anthropic OAuth/Setup Token and OpenAI OAuth providers.
+	// Provider support gates the TLS display group. Nonzero selectors remain
+	// visible independently of enablement so editing can retain a configured profile or router.
 	if a.SupportsTLSFingerprint() {
 		if a.IsTLSFingerprintEnabled() {
 			enabled := true
@@ -129,7 +156,8 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		out.OpenAIOAuthClientPolicy = &policy
 	}
 
-	// Expose quota limits for API key and Bedrock providers.
+	// Quota values belong to API Key and Bedrock accounting. Read effective
+	// limits before exposing their consumption, and treat expired windows as unused for display.
 	if a.IsAPIKeyOrBedrock() {
 		if limit := a.GetQuotaLimit(); limit > 0 {
 			out.QuotaLimit = &limit
@@ -139,6 +167,8 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		if limit := a.GetQuotaDailyLimit(); limit > 0 {
 			out.QuotaDailyLimit = &limit
 			used := a.GetQuotaDailyUsed()
+			// An expired daily period represents a fresh display allowance. Zero this
+			// response value while leaving stored accounting to the quota-maintenance path.
 			if a.IsDailyQuotaPeriodExpired() {
 				used = 0
 			}
@@ -147,6 +177,8 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		if limit := a.GetQuotaWeeklyLimit(); limit > 0 {
 			out.QuotaWeeklyLimit = &limit
 			used := a.GetQuotaWeeklyUsed()
+			// An expired weekly period represents a fresh display allowance. Zero this
+			// response value while leaving stored accounting to the quota-maintenance path.
 			if a.IsWeeklyQuotaPeriodExpired() {
 				used = 0
 			}
@@ -201,6 +233,10 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 	return out
 }
 
+// redactProviderManagedExtra copies permitted Extra values while excluding the
+// three Ollama-managed keys. Nil stays nil. Upstream usage-query configuration
+// follows a separate display allowlist, and other values use CloneValues'
+// supported copying rules with unsupported references potentially shared.
 func redactProviderManagedExtra(extra map[string]any) map[string]any {
 	if extra == nil {
 		return nil
@@ -211,6 +247,8 @@ func redactProviderManagedExtra(extra map[string]any) map[string]any {
 		case provider.OllamaCloudUsageSessionExtraKey,
 			provider.OllamaCloudUsageAutoRefreshExtraKey,
 			provider.OllamaCloudUsageSnapshotExtraKey:
+			// Session encryption, managed refresh policy and saved usage data have
+			// their own redacted Ollama view, so raw Extra omits these storage values.
 			continue
 		case provider.UpstreamUsageQueryExtraKey:
 			// Historical Extra values may contain credentials inside the usage query configuration.
@@ -223,13 +261,27 @@ func redactProviderManagedExtra(extra map[string]any) map[string]any {
 	return redacted
 }
 
+// redactUpstreamUsageQuery returns permitted display fields from a usage-query
+// object. Values other than map[string]any are first converted through JSON;
+// failed conversion returns an empty map. Only boolean enabled, registered
+// string adapters and HTTP(S) URLs with a host are retained.
+//
+// URL user information, query strings and fragments reject the base URL field
+// because historical configuration may place secrets there. This is
+// serialization redaction rather than upstream destination validation: allowed
+// path text is retained, and the result owns a new top-level map containing
+// accepted scalar values.
 func redactUpstreamUsageQuery(value any) map[string]any {
 	object, ok := value.(map[string]any)
 	if !ok {
 		payload, err := json.Marshal(value)
 		if err != nil {
+			// An unsupported representation cannot be safely inspected for secrets.
+			// Return an empty display object instead of forwarding historical raw values.
 			return map[string]any{}
 		}
+		// JSON decoding admits equivalent object representations while rejecting
+		// scalar and null values that cannot supply the permitted configuration fields.
 		if err := json.Unmarshal(payload, &object); err != nil || object == nil {
 			return map[string]any{}
 		}
@@ -239,11 +291,14 @@ func redactUpstreamUsageQuery(value any) map[string]any {
 		result["enabled"] = enabled
 	}
 	if adapter, ok := object["adapter"].(string); ok {
-		// Restrict adapter names to registered values; arbitrary historical strings may contain credentials.
+		// Arbitrary historical adapter strings may contain secret text. Expose a
+		// recognized adapter name so old credential-shaped values cannot reach the browser.
 		if adapter == provider.UpstreamUsageAdapterSub2API || adapter == provider.UpstreamUsageAdapterNewAPI || adapter == provider.UpstreamUsageAdapterZivv {
 			result["adapter"] = adapter
 		}
 	}
+	// Historical URLs can embed secrets in user information, queries or fragments.
+	// Keep a scalar base URL only when those positions are absent and its scheme is HTTP(S).
 	if baseURL, ok := object["base_url"].(string); ok {
 		if parsed, err := url.Parse(strings.TrimSpace(baseURL)); err == nil && parsed.Scheme != "" && parsed.Host != "" &&
 			parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" &&
@@ -254,6 +309,9 @@ func redactUpstreamUsageQuery(value any) map[string]any {
 	return result
 }
 
+// ProviderFromRecord adds loaded proxy and group relationships to the shallow
+// redacted view. Nil records return nil; nested membership provider views
+// remain shallow to stop recursive provider-to-group association expansion.
 func ProviderFromRecord(a *provider.Record) *Provider {
 	if a == nil {
 		return nil
@@ -276,6 +334,9 @@ func ProviderFromRecord(a *provider.Record) *Provider {
 	return out
 }
 
+// ProviderGroupFromRecord maps a loaded membership into provider and routing
+// group display objects. Nil membership returns nil, and its provider side uses
+// the shallow mapper so loaded associations do not recurse indefinitely.
 func ProviderGroupFromRecord(ag *provider.GroupMembership) *ProviderGroup {
 	if ag == nil {
 		return nil
@@ -289,10 +350,14 @@ func ProviderGroupFromRecord(ag *provider.GroupMembership) *ProviderGroup {
 	}
 }
 
+// timeToUnixSeconds returns an independently allocated Unix-second value for a
+// supplied timestamp. Nil input stays nil, retaining absent expiry in JSON;
+// subsecond precision is discarded by time.Time.Unix.
 func timeToUnixSeconds(value *time.Time) *int64 {
 	if value == nil {
 		return nil
 	}
+	// HTTP expiry uses whole Unix seconds, dropping source subsecond precision.
 	ts := value.Unix()
 	return &ts
 }

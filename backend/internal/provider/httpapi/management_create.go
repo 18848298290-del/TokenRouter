@@ -9,15 +9,25 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BatchCreate applies idempotency to batch creation and dispatches follow-up work on the first execution.
+// Batch creation accepts a strict list of complete provider requests and
+// returns an outcome for each supplied item. Deprecated Extra keys are
+// discarded before response idempotency records the payload, while the batch
+// use case owns privacy and post-creation task dispatch.
+
+// BatchCreate strictly binds at least one creation request and applies
+// administrator response idempotency. ManagementBatch owns item creation and
+// follow-up work; the HTTP response contains names, successful IDs and failure
+// messages.
 func (h *ManagementHandler) BatchCreate(c *gin.Context) {
 	var req struct {
-		Providers []CreateProviderRequest `json:"providers" binding:"required,min=1"`
+		Providers []CreateProviderRequest `json:"providers" binding:"required,min=1"` // ordered provider creation requests
 	}
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	// Strip retired settings before the executor fingerprints the entire batch,
+	// so ignored client fields cannot distinguish otherwise equivalent creation requests.
 	for i := range req.Providers {
 		provider.DiscardDeprecatedProviderExtra(req.Providers[i].Extra)
 	}

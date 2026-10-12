@@ -17,17 +17,28 @@ import (
 	routingprovider "github.com/TokenFlux/TokenRouter/internal/routing/provider"
 )
 
-// adminModelRules supplies candidates and eligibility checks for administrator catalog tests.
+// Catalogue response encoding has platform-specific zero-value fields, while
+// provider rules determine the admitted model candidates. management_catalog.go
+// is tested using fixed metadata plus current mapping and platform policies,
+// covering response shape and nil-versus-empty model collections.
+
+// adminModelRules adapts a prepared provider model snapshot to catalogue
+// candidate and eligibility callbacks.
 type adminModelRules struct {
-	routing.CatalogueRules
-	models *providercore.ModelRulesSnapshot
+	routing.CatalogueRules // unused embedded catalogue rule methods
+	// models retains the prepared snapshot used by both catalogue callbacks.
+	// Initialize it before Supports or ConfiguredModels; either callback dereferences
+	// this pointer.
+	models *providercore.ModelRulesSnapshot // prepared provider model snapshot
 }
 
-// TestAdminCatalogResponseWireVariants checks zero-value fields and Grok field omission.
+// TestAdminCatalogResponseWireVariants encodes one model through each platform
+// catalogue shape, followed by nil and empty model slices. Exact JSON protects
+// optional-field omission and the null-versus-empty-array distinction.
 func TestAdminCatalogResponseWireVariants(t *testing.T) {
 	for _, tc := range []struct {
-		kind routing.AdminCatalogKind
-		want string
+		kind routing.AdminCatalogKind // requested catalogue response variant
+		want string                   // expected platform JSON representation
 	}{
 		{routing.CatalogOpenAI, `[{"id":"custom","object":"model","created":0,"owned_by":"","type":"model","display_name":"custom"}]`},
 		{routing.CatalogGrok, `[{"id":"custom","object":"model","owned_by":"xai","display_name":"custom"}]`},
@@ -55,15 +66,22 @@ func TestAdminCatalogResponseWireVariants(t *testing.T) {
 	}
 }
 
-// TestAvailableModelsUsesUnifiedCatalog checks that provider configuration selects candidates and the catalog supplies display data.
+// TestAvailableModelsUsesUnifiedCatalog varies platform, whitelist, mapping,
+// shadow and site configuration against a controlled catalogue. Configured
+// candidates retain nonempty display names, while listed exclusions stay absent
+// from the administrator response.
 func TestAvailableModelsUsesUnifiedCatalog(t *testing.T) {
 	parent := int64(1)
 	for _, tc := range []struct {
+		// name: catalogue scenario description; platform: configured upstream
+		// platform identifier; kind: configured authentication kind
 		name, platform, kind string
-		credentials          map[string]any
-		extra                map[string]any
-		parent               *int64
-		includes, excludes   []string
+		credentials          map[string]any // configured provider model rules
+		extra                map[string]any // configured provider feature values
+		parent               *int64         // optional credential-parent provider identifier
+		// includes: expected included model identifiers; excludes: expected excluded
+		// model identifiers
+		includes, excludes []string
 	}{
 		{name: "empty", platform: "anthropic", kind: "apikey", excludes: []string{"catalog-model", "gpt-5.4"}},
 		{name: "oauth", platform: "openai", kind: "oauth", excludes: []string{"catalog-model", "gpt-5.4", "gemini-new-model", "glm-4.7"}},
@@ -86,9 +104,9 @@ func TestAvailableModelsUsesUnifiedCatalog(t *testing.T) {
 			setupAvailableModelsRouter(svc).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers/42/models", nil))
 			require.Equal(t, http.StatusOK, rec.Code)
 			var response struct {
-				Data []struct {
-					ID   string `json:"id"`
-					Name string `json:"display_name"`
+				Data []struct { // returned catalogue model collection
+					ID   string `json:"id"`           // returned requestable model identifier
+					Name string `json:"display_name"` // returned catalogue display name
 				} `json:"data"`
 			}
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
@@ -107,6 +125,10 @@ func TestAvailableModelsUsesUnifiedCatalog(t *testing.T) {
 	}
 }
 
+// setupAvailableModelsRouter mounts the catalogue handler using a fixed
+// metadata catalogue and production provider rules. Each loaded record prepares
+// its own candidate snapshot, while the supplied administrator provides HTTP
+// lookup.
 func setupAvailableModelsRouter(adminSvc ProviderManagement) *gin.Engine {
 	router := gin.New()
 	handler := NewManagementHandler(adminSvc, ManagementOptions{Catalog: routing.NewAdminCatalog(routingprovider.AdminCatalogOptions(catalogtest.New("catalog-model", "gpt-5.4", "gemini-new-model", "glm-4.7"))), ModelDefaults: provideradapter.ModelDefaults(), ModelRules: func(v *providercore.Record) routing.CatalogueRules {
@@ -116,7 +138,15 @@ func setupAvailableModelsRouter(adminSvc ProviderManagement) *gin.Engine {
 	return router
 }
 
+// ConfiguredModels returns a copied sorted slice of concrete model candidates
+// from the prepared snapshot. A nonnil models snapshot is required; nil and
+// empty slice shapes survive the copy, and callers can edit returned elements
+// independently.
 func (r adminModelRules) ConfiguredModels() []string { return r.models.ConfiguredModels() }
+
+// Supports reports model eligibility through the prepared provider snapshot
+// for this fixture. Configure models before catalogue callbacks run; the
+// context argument is ignored, and each check uses the already captured rules.
 func (r adminModelRules) Supports(_ context.Context, model string) bool {
 	return r.models.Supports(model)
 }

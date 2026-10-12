@@ -9,7 +9,14 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SetPrivacy handles setting privacy for a single OpenAI/Antigravity OAuth provider
+// Privacy requests produce an upstream mode observation for eligible OpenAI or
+// Antigravity OAuth providers. The mode may be returned after a persistence
+// error, and response rereading distinguishes the current stored view from a
+// locally applied observation when that reread fails.
+
+// SetPrivacy requests a fresh eligible OAuth privacy mode and rereads the
+// provider for response presentation. A nonempty mode is an observation that
+// may outlive a write error; failed rereads apply it locally.
 // POST /api/v1/admin/providers/:id/set-privacy
 func (h *ManagementHandler) SetPrivacy(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -40,10 +47,12 @@ func (h *ManagementHandler) SetPrivacy(c *gin.Context) {
 		response.BadRequest(c, "Cannot set privacy: missing access_token")
 		return
 	}
-	// Reload the persisted privacy state for the response.
+	// Read current stored state after the upstream observation. A returned mode
+	// can survive a write error, so the reread supplies authoritative response fields.
 	updated, err := h.adminService.GetProvider(c.Request.Context(), providerID)
 	if err != nil {
-		// Privacy was set successfully; if reloading fails, update the response's in-memory copy.
+		// When rereading fails, retain a useful upstream observation in the borrowed
+		// response record; this local assignment does not establish durable privacy storage.
 		if provider.Extra == nil {
 			provider.Extra = make(map[string]any)
 		}

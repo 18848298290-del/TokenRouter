@@ -12,28 +12,61 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// OAuth usage queries can use stored passive observations or active upstream
+// maintenance, while today statistics come from local usage data. Batch
+// today-statistics responses reuse a process-wide thirty-second snapshot keyed
+// by the normalized provider selection and supply an ETag for conditional
+// requests.
+//
+// Normalization sorts and removes invalid or duplicate IDs before cache lookup.
+// A cache hit can return 304 without another statistics query; a miss queries
+// and replaces the snapshot. Active usage batches instead return result and
+// error maps directly. The cache key carries provider IDs, so all handler
+// instances in this process share a selection's snapshot until its expiration.
+
+// providerTodayStatsBatchCache retains normalized provider-selection statistics
+// for thirty seconds across handler instances and pairs cached payloads with
+// conditional response tags.
 var providerTodayStatsBatchCache = response.NewSnapshotCache(30 * time.Second)
 
-// OAuthUsageHandler serves active and passive usage queries, batch queries, statistics, and ETag responses.
+// OAuthUsageHandler binds provider usage maintenance and local statistics to
+// administrator HTTP responses.
 type OAuthUsageHandler struct {
-	core  *provider.OAuthUsageService
-	stats *provider.LocalUsageStatistics
+	core  *provider.OAuthUsageService    // borrowed OAuth usage maintenance
+	stats *provider.LocalUsageStatistics // borrowed local usage statistics
 }
 
-// BatchTodayStatsRequest identifies providers for today's statistics.
+// BatchTodayStatsRequest identifies the providers selected for local
+// calendar-day statistics.
 type BatchTodayStatsRequest struct {
-	ProviderIDs []int64 `json:"provider_ids" binding:"required"`
-}
-type BatchUsageRequest struct {
-	ProviderIDs []int64 `json:"provider_ids" binding:"required"`
-	Force       bool    `json:"force"`
+	// ProviderIDs is normalized into positive unique sorted IDs before use. An
+	// empty normalized selection returns an empty object without querying local
+	// statistics.
+	ProviderIDs []int64 `json:"provider_ids" binding:"required"` // requested provider selection identifiers
 }
 
+// BatchUsageRequest selects providers and optional forced refresh for active
+// usage observations.
+type BatchUsageRequest struct {
+	// ProviderIDs is normalized into positive unique sorted IDs before active
+	// usage dispatch. No remaining IDs returns two empty usage and error objects.
+	ProviderIDs []int64 `json:"provider_ids" binding:"required"` // requested provider selection identifiers
+	// Force is forwarded to OAuthUsageService for platform-specific refresh
+	// selection. Omission and JSON null retain false, leaving its ordinary cache
+	// and throttling rules available.
+	Force bool `json:"force"` // force active usage refresh
+}
+
+// NewOAuthUsageHandler borrows OAuth usage and local statistics services for
+// mounted requests. Their owner manages query shutdown, while the package-level
+// statistics snapshot cache is shared across handler instances.
 func NewOAuthUsageHandler(core *provider.OAuthUsageService, stats *provider.LocalUsageStatistics) *OAuthUsageHandler {
 	return &OAuthUsageHandler{core, stats}
 }
 
-// GetUsage queries a provider's usage.
+// GetUsage returns passive observations when source equals passive exactly, and
+// otherwise requests active usage. Force is enabled only by the exact query
+// text true; the use case owns refresh and eligibility.
 // GET /api/v1/admin/providers/:id/usage?source=passive|active&force=true
 func (h *OAuthUsageHandler) GetUsage(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -59,7 +92,9 @@ func (h *OAuthUsageHandler) GetUsage(c *gin.Context) {
 	response.Success(c, usage)
 }
 
-// GetTodayStats handles getting provider today statistics
+// GetTodayStats parses a decimal provider identifier and returns the local
+// service's calendar-day statistics. Parse failures return 400, and service
+// failures retain the common domain error mapping before response encoding.
 // GET /api/v1/admin/providers/:id/today-stats
 func (h *OAuthUsageHandler) GetTodayStats(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -77,7 +112,16 @@ func (h *OAuthUsageHandler) GetTodayStats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// GetBatchTodayStats returns today's statistics for multiple providers.
+// GetBatchTodayStats normalizes selected IDs and serves their local statistics
+// from a shared snapshot when available. A normalized empty selection returns
+// an empty stats object. Cache hits expose their stored ETag, allowing matching
+// requests to return 304 before another local statistics query.
+//
+// A miss loads statistics with the HTTP context and stores a thirty-second
+// snapshot before sending success. The returned payload and tag follow
+// SnapshotCache's supported copying rules; the selection key is process-wide
+// and contains no administrator identity. X-Snapshot-Cache marks successful hit
+// or miss responses, while matching 304 responses return earlier.
 // POST /api/v1/admin/providers/today-stats/batch
 func (h *OAuthUsageHandler) GetBatchTodayStats(c *gin.Context) {
 	var req BatchTodayStatsRequest
@@ -93,6 +137,8 @@ func (h *OAuthUsageHandler) GetBatchTodayStats(c *gin.Context) {
 	}
 
 	cacheKey := BuildProviderTodayStatsBatchCacheKey(providerIDs)
+	// Normalized IDs make equivalent selections share a snapshot. A hit supplies
+	// the payload and matching tag together, allowing conditional response before another query.
 	if cached, ok := providerTodayStatsBatchCache.Get(cacheKey); ok {
 		if cached.ETag != "" {
 			c.Header("ETag", cached.ETag)
@@ -123,7 +169,9 @@ func (h *OAuthUsageHandler) GetBatchTodayStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchUsage returns current usage for multiple providers.
+// GetBatchUsage normalizes selected provider IDs before active usage
+// maintenance and returns result and error maps. An empty normalized selection
+// succeeds with two empty objects; Force is forwarded to the usage use case.
 // POST /api/v1/admin/providers/usage/batch
 func (h *OAuthUsageHandler) GetBatchUsage(c *gin.Context) {
 	var req BatchUsageRequest
@@ -153,12 +201,18 @@ func (h *OAuthUsageHandler) GetBatchUsage(c *gin.Context) {
 	})
 }
 
+// BuildProviderTodayStatsBatchCacheKey joins decimal IDs in supplied order into
+// the selection cache key. Empty input uses a distinct key; callers normalize
+// and sort selections beforehand when equivalent inputs should share cache
+// entries.
 func BuildProviderTodayStatsBatchCacheKey(providerIDs []int64) string {
 	if len(providerIDs) == 0 {
 		return "providers_today_stats_empty"
 	}
 	var b strings.Builder
 	b.Grow(len(providerIDs) * 6)
+	// strings.Builder append methods return nil errors. Discard their error
+	// values throughout this sequence because every append contributes directly to the selection key.
 	_, _ = b.WriteString("providers_today_stats:")
 	for i, id := range providerIDs {
 		if i > 0 {

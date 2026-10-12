@@ -10,31 +10,47 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// The three catalog response shapes differ in zero-value fields and omission rules.
+// Administrator model candidates come from provider configuration and platform
+// rules, while the unified catalogue supplies display values. Response encoding
+// follows the selected platform shape: OpenAI includes zero-valued fields, Grok
+// omits optional empty fields, and the default shape carries a textual creation
+// timestamp.
+
+// claudeCatalogModel encodes the default catalogue response with textual
+// creation time.
 type claudeCatalogModel struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	DisplayName string `json:"display_name"`
-	CreatedAt   string `json:"created_at"`
-}
-type openAICatalogModel struct {
-	ID          string `json:"id"`
-	Object      string `json:"object"`
-	Created     int64  `json:"created"`
-	OwnedBy     string `json:"owned_by"`
-	Type        string `json:"type"`
-	DisplayName string `json:"display_name"`
-}
-type grokCatalogModel struct {
-	ID          string `json:"id"`
-	Object      string `json:"object"`
-	Type        string `json:"type,omitempty"`
-	Created     int64  `json:"created,omitempty"`
-	OwnedBy     string `json:"owned_by"`
-	DisplayName string `json:"display_name,omitempty"`
+	ID          string `json:"id"`           // requestable model identifier
+	Type        string `json:"type"`         // model record kind
+	DisplayName string `json:"display_name"` // administrator model display label
+	CreatedAt   string `json:"created_at"`   // catalogue creation time text
 }
 
-// GetAvailableModels loads a provider and returns its model catalog in the platform's response format.
+// openAICatalogModel encodes OpenAI catalogue fields, including their explicit
+// zero values.
+type openAICatalogModel struct {
+	ID          string `json:"id"`           // requestable model identifier
+	Object      string `json:"object"`       // model object label
+	Created     int64  `json:"created"`      // Unix seconds
+	OwnedBy     string `json:"owned_by"`     // catalogue owner label
+	Type        string `json:"type"`         // model record kind
+	DisplayName string `json:"display_name"` // administrator model display label
+}
+
+// grokCatalogModel encodes Grok catalogue entries with optional zero-valued
+// fields omitted.
+type grokCatalogModel struct {
+	ID          string `json:"id"`                     // requestable model identifier
+	Object      string `json:"object"`                 // model object label
+	Type        string `json:"type,omitempty"`         // model record kind
+	Created     int64  `json:"created,omitempty"`      // Unix seconds
+	OwnedBy     string `json:"owned_by"`               // catalogue owner label
+	DisplayName string `json:"display_name,omitempty"` // administrator model display label
+}
+
+// GetAvailableModels loads provider configuration and checks its candidate
+// models against requestability rules. Every provider lookup failure maps to
+// 404, catalogue failures map to 400, and success uses the selected platform
+// response shape.
 func (h *ManagementHandler) GetAvailableModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -57,6 +73,9 @@ func (h *ManagementHandler) GetAvailableModels(c *gin.Context) {
 	response.Success(c, adminCatalogResponse(result))
 }
 
+// adminCatalogResponse maps catalogue entries into their platform JSON shape.
+// Nil model slices remain null and nonnil empty slices remain empty arrays;
+// unsupported kinds use the Claude-shaped response values.
 func adminCatalogResponse(v routing.AdminCatalogResult) any {
 	switch v.Kind {
 	case routing.CatalogOpenAI:
@@ -89,7 +108,9 @@ func adminCatalogResponse(v routing.AdminCatalogResult) any {
 	}
 }
 
-// GetAntigravityDefaultModelMapping returns a copy of the defaults supplied during application assembly.
+// GetAntigravityDefaultModelMapping returns a cloned Antigravity mapping from
+// the injected defaults. This copies the string map for response ownership, and
+// no provider lookup or live model query is performed.
 func (h *ManagementHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, maps.Clone(h.modelDefaults.Antigravity()))
 }

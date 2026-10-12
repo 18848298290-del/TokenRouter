@@ -13,54 +13,107 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Shared provider HTTP fixtures separate serial query and mutation captures
+// from the few concurrently written creation observations. helpers_test.go
+// supplies creation, listing, catalogue and credential-maintenance substitutes
+// used by multiple handler tests, recording the fields each scenario needs
+// while leaving unused embedded operations unimplemented.
+//
+// Creation input appends and Grok ID allocation use their owning mutexes, but
+// record maps, list populations and mutation captures remain borrowed or
+// serial. The refresh fixture invokes its callback directly and provides no
+// production locking. Expected-credential comparison in the mutation fixture
+// likewise models one serial decision, so handler assertions cannot establish
+// cross-request store coordination through these helpers.
+
+// deprecatedLongContextBillingExtraKey identifies the retired Extra field
+// supplied by handler compatibility scenarios to test discard and fingerprint behavior.
 const deprecatedLongContextBillingExtraKey = "openai_long_context_billing_enabled"
 
+// grokImportAdminService allocates unique fixture IDs under a mutex for
+// concurrent SSO creation. Returned records borrow input maps and pointers,
+// while shared embedded mutation observations retain their separate serial
+// usage rules.
 type grokImportAdminService struct {
-	*managementMutationFixture
-	mu     sync.Mutex
-	nextID int64
+	*managementMutationFixture            // borrowed shared serial mutation captures
+	mu                         sync.Mutex // fixture capture synchronization mutex
+	nextID                     int64      // next unique fixture provider identifier
 }
 
-// managementCreateFixture records creation inputs; unused embedded operations remain unimplemented.
+// managementCreateFixture records borrowed creation requests under mu and
+// supplies a configurable error. Tests set the error before concurrent creation
+// and read captured pointers after their batch has finished.
 type managementCreateFixture struct {
-	ProviderManagement
-	mu                sync.Mutex
-	createdProviders  []*providercore.CreateProviderInput
-	createProviderErr error
+	ProviderManagement                                     // unused embedded administrator operations
+	mu                 sync.Mutex                          // fixture capture synchronization mutex
+	createdProviders   []*providercore.CreateProviderInput // borrowed captured provider creation inputs
+	createProviderErr  error                               // configured creation callback failure
 }
 
-// managementListFixture supplies list and scoring candidates and records pagination and call counts.
+// managementListFixture supplies serial list and score populations and captures
+// request predicates. Returned record slices and nested values remain borrowed;
+// configure populations before invoking a list handler and inspect observations
+// afterward.
 type managementListFixture struct {
-	ProviderManagement
-	providers                                                               []providercore.Record
-	providerSchedulerScoreFilterProviders                                   []providercore.Record
-	openAISchedulerScorePoolProviders                                       []providercore.Record
+	ProviderManagement // unused embedded administrator operations
+	// configured serial provider records
+	providers []providercore.Record
+	// providerSchedulerScoreFilterProviders overrides providers when nonnil. An
+	// explicitly empty slice keeps the score population empty, while nil selects
+	// the ordinary configured rows.
+	// optional serial score-filter population
+	providerSchedulerScoreFilterProviders []providercore.Record
+	// openAISchedulerScorePoolProviders overrides providers when nonnil. Nil
+	// selects the ordinary rows; a supplied empty slice admits no group-scoring
+	// candidates through this serial fixture.
+	// optional serial group-score population
+	openAISchedulerScorePoolProviders []providercore.Record
+	// schedulerScoreFilterCalls: serial filter-query invocation count;
+	// openAISchedulerScorePoolCalls: serial score-pool invocation count;
+	// getGroupCalls: serial group-read observation count
 	schedulerScoreFilterCalls, openAISchedulerScorePoolCalls, getGroupCalls int
-	openAISchedulerScorePoolGroupIDs                                        []int64
-	lastListProviders                                                       struct {
+	// captured queried routing-group identifiers
+	openAISchedulerScorePoolGroupIDs []int64
+	// captured serial list-query predicates
+	lastListProviders struct {
+		// platform: supplied upstream platform filter; providerType: supplied
+		// authentication kind filter; status: supplied provider state filter; search:
+		// supplied provider search text; privacyMode: supplied provider privacy
+		// filter; sortBy: supplied sorting column selector; sortOrder: supplied
+		// sorting direction selector
 		platform, providerType, status, search, privacyMode, sortBy, sortOrder string
-		groupID                                                                int64
-		calls                                                                  int
+		groupID                                                                int64 // supplied routing group filter
+		calls                                                                  int   // serial list-query invocation count
 	}
 }
 
+// availableModelsAdminService provides one selected catalogue record before
+// delegating other lookups. The selected record is shallowly copied, so its
+// configuration maps remain borrowed during synchronous catalogue preparation.
 type availableModelsAdminService struct {
-	*managementMutationFixture
-	provider providercore.Record
+	*managementMutationFixture                     // borrowed shared serial mutation captures
+	provider                   providercore.Record // borrowed configured catalogue record
 }
 
-// managementMutationFixture records configuration, credential, and invalidation inputs in its own state.
+// managementMutationFixture captures serial configuration and credential
+// operations for HTTP tests. The embedded creation capture uses its own mutex,
+// while update inputs, provider rows, Extra observations and bulk fields need
+// serial fixture access.
 type managementMutationFixture struct {
-	managementCreateFixture
-	providers                   []providercore.Record
-	updateProviderInput         *providercore.UpdateProviderInput
-	updateProviderErr           error
-	updateExtraCalls            []map[string]any
-	clearProviderErrorIDs       []int64
-	lastBulkUpdateProviderInput *providercore.BulkUpdateProvidersInput
-	bulkUpdateProviderErr       error
+	managementCreateFixture                                            // creation captures with their own mutex
+	providers                   []providercore.Record                  // configured serial provider records
+	updateProviderInput         *providercore.UpdateProviderInput      // borrowed last credential/configuration input
+	updateProviderErr           error                                  // configured provider update failure
+	updateExtraCalls            []map[string]any                       // borrowed serial Extra patch observations
+	clearProviderErrorIDs       []int64                                // captured serial error-clear identifiers
+	lastBulkUpdateProviderInput *providercore.BulkUpdateProvidersInput // borrowed last bulk editing input
+	bulkUpdateProviderErr       error                                  // configured bulk editing failure
 }
 
+// newGrokImportAdminService initializes concurrent SSO creation with the shared
+// mutation fixture and an ID counter starting at five hundred. Its
+// CreateProvider method owns counter synchronization, while embedded mutation
+// methods remain serial fixtures.
 func newGrokImportAdminService() *grokImportAdminService {
 	return &grokImportAdminService{
 		managementMutationFixture: newManagementMutationFixture(),
@@ -68,6 +121,10 @@ func newGrokImportAdminService() *grokImportAdminService {
 	}
 }
 
+// CreateProvider reserves a unique fixture identifier under mu and returns an
+// active record from the supplied creation values. Input credential maps, Extra
+// and proxy pointers remain borrowed; this substitute does not append shared
+// creation captures.
 func (s *grokImportAdminService) CreateProvider(_ context.Context, input *providercore.CreateProviderInput) (*providercore.Record, error) {
 	s.mu.Lock()
 	s.nextID++
@@ -89,10 +146,13 @@ func (s *grokImportAdminService) CreateProvider(_ context.Context, input *provid
 	}, nil
 }
 
-// newManagedRefreshFixture creates a refresh coordinator using the test's platform exchange functions.
+// newManagedRefreshFixture connects the supplied store and privacy fixture to
+// platform exchange helpers. Its Coordinate callback invokes apply directly on
+// the selected record; it provides no production refresh lock or locked reread,
+// so concurrency guarantees belong to separate coordinator tests.
 func newManagedRefreshFixture(source interface {
-	providercore.ManagedCredentialStore
-	providercore.ManagedCredentialPrivacy
+	providercore.ManagedCredentialStore   // borrowed fixture credential operations
+	providercore.ManagedCredentialPrivacy // borrowed fixture privacy observations
 }, exchange *providercore.ManualCredentialExchange,
 ) *providercore.ManagedRefreshService {
 	return providercore.NewManagedRefreshService(providercore.ManagedRefreshOptions{
@@ -107,6 +167,10 @@ func newManagedRefreshFixture(source interface {
 	})
 }
 
+// CreateProvider records the borrowed creation input under mu before returning
+// its configured error or a synthetic active result. The error field is read
+// after unlocking and is configured before requests start; tests inspect
+// captures after joining their batch.
 func (s *managementCreateFixture) CreateProvider(_ context.Context, input *providercore.CreateProviderInput) (*providercore.Record, error) {
 	s.mu.Lock()
 	s.createdProviders = append(s.createdProviders, input)
@@ -117,21 +181,32 @@ func (s *managementCreateFixture) CreateProvider(_ context.Context, input *provi
 	return &providercore.Record{ID: 300, Name: input.Name, Status: providercore.StatusActive}, nil
 }
 
+// ForceOpenAIPrivacy returns the empty observation for the creation fixture's
+// OpenAI path.
 func (s *managementCreateFixture) ForceOpenAIPrivacy(context.Context, *providercore.Record) string {
 	return ""
 }
 
+// ForceAntigravityPrivacy returns the empty observation for the creation
+// fixture's Antigravity path.
 func (s *managementCreateFixture) ForceAntigravityPrivacy(context.Context, *providercore.Record) string {
 	return ""
 }
 
-// newManagementCreateFixtureHandler connects management, batch creation, and response presentation.
+// newManagementCreateFixtureHandler binds shared creation captures to
+// ManagementBatch, privacy callbacks and runtime presentation. Only creation
+// routes are configured for this fixture, whose empty privacy observations keep
+// follow-up effects controlled.
 func newManagementCreateFixtureHandler(source *managementCreateFixture) *ManagementHandler {
 	presenter := NewRuntimePresenter(providercore.NewRuntimeStatusReader(providercore.RuntimeStatusOptions{}), source, nil)
 	batch := providercore.NewManagementBatch(source, nil, providercore.ManagementCreationOptions{Privacy: source})
 	return NewManagementHandler(source, ManagementOptions{Presenter: presenter, Privacy: source, Batch: batch})
 }
 
+// ListProviders captures list predicates and slices the configured serial
+// record population by page. Filters and sorting are recorded rather than
+// applied. Invalid page selects one, nonpositive page size uses the population
+// length and out-of-range pages return an empty slice.
 func (s *managementListFixture) ListProviders(ctx context.Context, page, pageSize int, platform, providerType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]providercore.Record, int64, error) {
 	s.lastListProviders.platform = platform
 	s.lastListProviders.providerType = providerType
@@ -154,24 +229,42 @@ func (s *managementListFixture) ListProviders(ctx context.Context, page, pageSiz
 	if start >= total {
 		return []providercore.Record{}, int64(total), nil
 	}
+	// Bound the borrowed page by the available fixture row count.
 	end := min(start+pageSize, total)
 	return providers[start:end], int64(total), nil
 }
 
+// ListProvidersForSchedulerScoreFilter counts the serial candidate query and
+// prefers its configured nonnil score population. Nil falls back to providers,
+// while an explicitly empty nonnil slice remains an empty candidate population.
 func (s *managementListFixture) ListProvidersForSchedulerScoreFilter(_ context.Context, platform, providerType, status, search string, groupID int64, privacyMode string) ([]providercore.Record, error) {
 	s.schedulerScoreFilterCalls++
+	// A configured empty candidate slice remains an intentional empty population.
+	// Nil alone selects the broader provider fixture for score-filter queries.
 	if s.providerSchedulerScoreFilterProviders != nil {
 		return s.providerSchedulerScoreFilterProviders, nil
 	}
 	return s.providers, nil
 }
 
+// ListSchedulableProvidersForAdvancedSchedulerScore records group-pool queries
+// and selects configured schedulable fixture providers. Callers configure rows
+// before invocation and inspect the serial counters afterward; returned record
+// values retain shared nested maps and pointers.
+//
+// A nil dedicated score population reuses providers, while a nonnil empty one
+// stays empty. Platform and schedulability filtering precede group selection.
+// Nil group admits records with neither ProviderGroups nor GroupIDs; a supplied
+// group matches loaded ProviderGroups alone, so bare GroupIDs do not establish
+// membership for this substitute.
 func (s *managementListFixture) ListSchedulableProvidersForAdvancedSchedulerScore(_ context.Context, groupID *int64, platform string) ([]providercore.Record, error) {
 	s.openAISchedulerScorePoolCalls++
 	if groupID != nil {
 		s.openAISchedulerScorePoolGroupIDs = append(s.openAISchedulerScorePoolGroupIDs, *groupID)
 	}
 	providers := s.openAISchedulerScorePoolProviders
+	// Nil score-pool input reuses the configured provider population, while an
+	// explicit empty slice keeps the pool empty for this group-query scenario.
 	if providers == nil {
 		providers = s.providers
 	}
@@ -196,11 +289,18 @@ func (s *managementListFixture) ListSchedulableProvidersForAdvancedSchedulerScor
 	return out, nil
 }
 
+// newManagementListFixture initializes one active Anthropic OAuth provider with
+// UTC fixture timestamps. The caller can replace its serial population before
+// HTTP requests, while the initial record supplies the standard list response.
 func newManagementListFixture() *managementListFixture {
 	now := time.Now().UTC()
 	return &managementListFixture{providers: []providercore.Record{{ID: 3, Name: "provider", Platform: providercore.PlatformAnthropic, Type: providercore.ProviderTypeOAuth, Status: providercore.StatusActive, CreatedAt: now, UpdatedAt: now}}}
 }
 
+// setupProviderMutationContractRouter mounts creation, editing and bulk editing
+// with the supplied shared mutation fixture. Each test controls captured inputs
+// after synchronous requests, and response presentation uses empty
+// runtime-observation defaults.
 func setupProviderMutationContractRouter(adminSvc *managementMutationFixture) *gin.Engine {
 	router := gin.New()
 	providerHandler := newMutationHandler(adminSvc, nil)
@@ -210,6 +310,10 @@ func setupProviderMutationContractRouter(adminSvc *managementMutationFixture) *g
 	return router
 }
 
+// GetProvider returns a shallow copy of the configured matching catalogue
+// provider. Other IDs delegate to the shared synthetic-record fixture using a
+// background context, leaving this adapter's observed catalogue configuration
+// unchanged.
 func (s *availableModelsAdminService) GetProvider(_ context.Context, id int64) (*providercore.Record, error) {
 	if s.provider.ID == id {
 		acc := s.provider
@@ -218,6 +322,10 @@ func (s *availableModelsAdminService) GetProvider(_ context.Context, id int64) (
 	return s.managementMutationFixture.GetProvider(context.Background(), id)
 }
 
+// GetProvider returns a shallow copy of a matching serial fixture record or a
+// synthetic active Anthropic OAuth record. Nested maps and pointers remain
+// borrowed, and missing configured IDs therefore do not model production
+// not-found behavior.
 func (s *managementMutationFixture) GetProvider(ctx context.Context, id int64) (*providercore.Record, error) {
 	for i := range s.providers {
 		if s.providers[i].ID == id {
@@ -229,6 +337,10 @@ func (s *managementMutationFixture) GetProvider(ctx context.Context, id int64) (
 	return &provider, nil
 }
 
+// GetProvidersByIDs preserves requested order and duplicates while shallowly
+// copying matching fixture records. Missing configured IDs receive synthetic
+// active records, allowing management tests to observe selection behavior
+// without real storage existence checks.
 func (s *managementMutationFixture) GetProvidersByIDs(ctx context.Context, ids []int64) ([]*providercore.Record, error) {
 	out := make([]*providercore.Record, 0, len(ids))
 	for _, id := range ids {
@@ -250,8 +362,21 @@ func (s *managementMutationFixture) GetProvidersByIDs(ctx context.Context, ids [
 	return out, nil
 }
 
+// UpdateProvider models serial credential comparison and selected map mutation
+// for managed refresh tests. A supplied ExpectedCredentials is compared with
+// each matching stored fixture record before configured write failure is
+// checked; omitted expectations permit ordinary edits. The comparison acquires
+// no mutex and establishes no concurrent store guarantee.
+//
+// Accepted calls capture the borrowed input and replace or patch credentials on
+// a matching row. PatchCredentials uses the core merge helper so selected
+// credential fields can retain neighboring values. Other configuration fields
+// are captured rather than comprehensively persisted, and missing rows return a
+// synthetic record. Returned record copies can share nested containers with
+// this serial fixture.
 func (s *managementMutationFixture) UpdateProvider(ctx context.Context, id int64, input *providercore.UpdateProviderInput) (*providercore.Record, error) {
-	// Check the expected credential version under the lock; omitted expectations allow an ordinary update.
+	// This serial substitute compares the observed credential version before any
+	// fixture mutation. No mutex covers this check, so it cannot prove production concurrency.
 	if input.ExpectedCredentials != nil {
 		for i := range s.providers {
 			if s.providers[i].ID == id && !providercore.MatchesCredentialVersion(&s.providers[i], *input.ExpectedCredentials) {
@@ -281,17 +406,26 @@ func (s *managementMutationFixture) UpdateProvider(ctx context.Context, id int64
 	return &provider, nil
 }
 
+// UpdateProviderExtra records the borrowed update map in a serial capture
+// slice. It returns success without applying Extra to fixture rows, allowing
+// reauthorization tests to inspect patch dispatch separately from persistence.
 func (s *managementMutationFixture) UpdateProviderExtra(ctx context.Context, id int64, updates map[string]any) error {
 	s.updateExtraCalls = append(s.updateExtraCalls, updates)
 	return nil
 }
 
+// ClearProviderError records the selected identifier and returns a synthetic
+// active Anthropic OAuth record. Existing fixture rows are unchanged, so this
+// method captures recovery dispatch rather than a durable row-state transition.
 func (s *managementMutationFixture) ClearProviderError(ctx context.Context, id int64) (*providercore.Record, error) {
 	s.clearProviderErrorIDs = append(s.clearProviderErrorIDs, id)
 	provider := providercore.Record{ID: id, Name: "provider", Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive}
 	return &provider, nil
 }
 
+// BulkUpdateProviders captures the borrowed bulk input and returns one success
+// per supplied ID unless a configured error wins. It does not resolve filters,
+// and returned SuccessIDs shares the input selection slice.
 func (s *managementMutationFixture) BulkUpdateProviders(ctx context.Context, input *providercore.BulkUpdateProvidersInput) (*providercore.BulkUpdateProvidersResult, error) {
 	s.lastBulkUpdateProviderInput = input
 	if s.bulkUpdateProviderErr != nil {
@@ -300,17 +434,26 @@ func (s *managementMutationFixture) BulkUpdateProviders(ctx context.Context, inp
 	return &providercore.BulkUpdateProvidersResult{Success: len(input.ProviderIDs), Failed: 0, SuccessIDs: input.ProviderIDs}, nil
 }
 
+// EnsureOpenAIPrivacy returns an empty observation for the shared fixture's
+// OpenAI maintenance.
 func (s *managementMutationFixture) EnsureOpenAIPrivacy(ctx context.Context, provider *providercore.Record) string {
 	return ""
 }
 
+// EnsureAntigravityPrivacy returns an empty observation for the shared
+// fixture's Antigravity maintenance.
 func (s *managementMutationFixture) EnsureAntigravityPrivacy(ctx context.Context, provider *providercore.Record) string {
 	return ""
 }
 
+// newManagementMutationFixture constructs empty serial provider mutation and
+// creation observation storage.
 func newManagementMutationFixture() *managementMutationFixture { return &managementMutationFixture{} }
 
-// newMutationHandler connects management operations and response presentation.
+// newMutationHandler connects serial mutation captures to managed refresh,
+// batch operations and runtime presentation. An optional invalidator is bound
+// by callback, while empty privacy results keep credential-maintenance
+// assertions focused on requested store operations.
 func newMutationHandler(source *managementMutationFixture, invalidator providercore.TokenCacheInvalidator) *ManagementHandler {
 	options := providercore.ManagedRefreshOptions{Store: source, Privacy: source}
 	if invalidator != nil {

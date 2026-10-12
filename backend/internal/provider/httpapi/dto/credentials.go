@@ -4,11 +4,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// RedactCredentials copies in and removes keys classified as sensitive by provider.IsSensitiveCredentialKey.
-// The status map records has_<key> for sensitive values considered present by isCredentialValuePresent.
+// Administrator credential responses expose permitted configuration and
+// sensitive-key presence separately. The provider classifier removes known
+// secret keys even when unconfigured, and presence flags use value-specific
+// rules so empty strings and false do not appear as configured secrets.
+
+// RedactCredentials returns permitted credential values and flags for
+// configured sensitive keys. Nil input returns two nil maps, and sensitive keys
+// are removed regardless of presence. Flags are allocated only for present
+// sensitive values.
 //
-// A nil input returns nil, nil so the response can omit both objects.
-// Non-sensitive values are cloned for serialization; the input is unchanged.
+// Each retained value is copied with CloneValues, whose concrete JSON map and
+// slice cases support independent container edits. Unsupported mutable values
+// can remain shared, and callers keep those values immutable through
+// serialization. The input map is not changed by redaction; arbitrary
+// unclassified keys remain available in the output.
 func RedactCredentials(in map[string]any) (out map[string]any, status map[string]bool) {
 	if in == nil {
 		return nil, nil
@@ -22,6 +32,8 @@ func RedactCredentials(in map[string]any) (out map[string]any, status map[string
 				}
 				status["has_"+k] = true
 			}
+			// Known secret keys are omitted even when their values count as absent.
+			// The response exposes presence only for configured values through the separate flag map.
 			continue
 		}
 		out[k] = provider.CloneValues(map[string]any{k: v})[k]
@@ -29,8 +41,10 @@ func RedactCredentials(in map[string]any) (out map[string]any, status map[string
 	return out, status
 }
 
-// isCredentialValuePresent treats nil, empty strings, and false as unconfigured.
-// All other values count as present, including numeric zero and empty containers.
+// isCredentialValuePresent reports whether a sensitive credential value counts
+// as configured. Nil, an exactly empty string and false report absent;
+// whitespace strings, numeric zero, empty containers and other values report
+// present.
 func isCredentialValuePresent(v any) bool {
 	switch x := v.(type) {
 	case nil:

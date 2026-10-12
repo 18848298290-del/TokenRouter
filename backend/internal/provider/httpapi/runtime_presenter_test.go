@@ -9,6 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/httpapi/dto"
 )
 
+// Shadow parent hints are filled only for a loaded matching parent, leaving
+// ordinary and orphaned provider views usable. The fixture in
+// runtime_presenter.go's enrichment test separates upstream account identifiers
+// from TokenRouter IDs and checks all five copied hint fields.
+
+// TestEnrichShadowParentInfo supplies a matching parent, ordinary provider and
+// orphaned shadow. Matching shadow hints are populated from parent credentials
+// and Extra, while the other two response objects retain empty parent email.
 func TestEnrichShadowParentInfo(t *testing.T) {
 	pid := int64(100)
 	parent := &provider.Record{
@@ -40,4 +48,6 @@ func TestEnrichShadowParentInfo(t *testing.T) {
 	require.Empty(t, items[2].ParentEmail, "母提供商缺失时优雅留空")
 }
 
+// ptrInt64 returns an independently allocated pointer to a fixture provider
+// identifier.
 func ptrInt64(v int64) *int64 { return &v }

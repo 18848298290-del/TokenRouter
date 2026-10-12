@@ -11,23 +11,50 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UpstreamUsageQueries provides administrator usage query operations.
+// API-key upstream usage is returned as normalized display data, with batch
+// successes and errors encoded separately. This handler requires positive
+// provider IDs, limits the supplied batch to one hundred entries before
+// querying, and keeps domain error reason and status fields in each serialized
+// item failure.
+
+// UpstreamUsageQueries supplies normalized administrator usage results for
+// individual and batch requests.
 type UpstreamUsageQueries interface {
+	// QueryProvider queries normalized usage for the supplied provider and request
+	// context. The implementation owns upstream eligibility, identity checks and
+	// query lifetime, and returns domain errors for the handler to serialize.
 	QueryProvider(context.Context, int64) (*provider.UpstreamUsageQueryResult, error)
+	// QueryBatch returns separate maps of successful normalized results and
+	// provider-specific errors. A batch-level error rejects the request; item
+	// errors remain visible alongside other providers' successful results.
 	QueryBatch(context.Context, []int64) (map[int64]*provider.UpstreamUsageQueryResult, map[int64]error, error)
 }
-type UpstreamUsageHandler struct{ queries UpstreamUsageQueries }
 
-// UpstreamUsageBatchRequest identifies API key providers for an upstream usage query.
-type UpstreamUsageBatchRequest struct {
-	ProviderIDs []int64 `json:"provider_ids" binding:"required"`
+// UpstreamUsageHandler binds usage selections and serializes normalized results
+// and per-provider errors.
+type UpstreamUsageHandler struct {
+	queries UpstreamUsageQueries // optional normalized usage queries
 }
 
+// UpstreamUsageBatchRequest carries the required provider selection for a
+// manual batch usage query.
+type UpstreamUsageBatchRequest struct {
+	// ProviderIDs is checked as supplied: the handler admits one to one hundred
+	// positive entries and forwards duplicate IDs to QueryBatch unchanged.
+	ProviderIDs []int64 `json:"provider_ids" binding:"required"` // supplied usage query identifiers
+}
+
+// NewUpstreamUsageHandler borrows the usage query implementation for manual
+// administrator requests. A nil implementation remains nil and mounted query
+// methods return the domain service-unavailable error when reached.
 func NewUpstreamUsageHandler(queries UpstreamUsageQueries) *UpstreamUsageHandler {
 	return &UpstreamUsageHandler{queries: queries}
 }
 
-// QueryUpstreamUsage fetches an API key provider's current upstream usage.
+// QueryUpstreamUsage validates a positive path identifier and returns its
+// normalized API-key usage. Missing query dependencies return the unavailable
+// domain error; provider eligibility and upstream execution belong to the query
+// implementation.
 // POST /api/v1/admin/providers/:id/upstream-usage/query
 func (h *UpstreamUsageHandler) QueryUpstreamUsage(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -47,7 +74,9 @@ func (h *UpstreamUsageHandler) QueryUpstreamUsage(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// QueryBatchUpstreamUsage fetches current upstream usage for multiple API key providers.
+// QueryBatchUpstreamUsage admits one to one hundred positive IDs and returns
+// successes plus structured item errors. Duplicate IDs are passed through as
+// supplied; batch-level query errors end the whole HTTP request.
 // POST /api/v1/admin/providers/upstream-usage/query/batch
 func (h *UpstreamUsageHandler) QueryBatchUpstreamUsage(c *gin.Context) {
 	var req UpstreamUsageBatchRequest

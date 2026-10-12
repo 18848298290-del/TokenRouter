@@ -13,22 +13,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// decisionTestLoader records fields passed from HTTP input to the test service.
+// Structured decision input must reach the provider test use case unchanged,
+// while malformed JSON must fail before target loading. test_handler.go is
+// exercised with a serial Jev target fixture that emits successful completion
+// and records the admitted request.
+
+// decisionTestLoader records serial HTTP request binding and emits a successful
+// Jev test target.
 type decisionTestLoader struct {
-	request provider.TestRequest
-	loads   int
+	// request is a shallow capture of admitted input. Its SystemOne bytes and
+	// Type pointer remain shared, and this serial fixture keeps them stable through
+	// the later binding assertions.
+	request provider.TestRequest // last admitted test request
+	loads   int                  // serial target-loading invocation count
 }
 
+// LoadTestTarget records the supplied request and returns this fixture as its
+// target. Its serial counter lets tests detect malformed input rejected before
+// any target preparation.
 func (l *decisionTestLoader) LoadTestTarget(_ context.Context, request provider.TestRequest) (provider.TestTarget, error) {
 	l.loads++
 	l.request = request
 	return l, nil
 }
 
+// Information returns the fixed Jev API-key target identity for decision
+// request preparation.
 func (l *decisionTestLoader) Information() provider.TestTargetInfo {
 	return provider.TestTargetInfo{ProviderSnapshot: provider.ProviderSnapshot{Platform: provider.PlatformJev, Type: provider.ProviderTypeAPIKey}}
 }
 
+// Execute commits the stream and emits a successful terminal fixture event.
+// Preparation and write errors propagate, while this target performs no
+// upstream work or decision calculation.
 func (l *decisionTestLoader) Execute(ctx context.Context, _ provider.PreparedTestRequest, sink provider.TestEventSink) error {
 	if err := sink.Begin(ctx, true); err != nil {
 		return err
@@ -36,12 +53,15 @@ func (l *decisionTestLoader) Execute(ctx context.Context, _ provider.PreparedTes
 	return sink.Emit(ctx, provider.TestEvent{Type: "test_complete", Success: true})
 }
 
-// TestTestHandlerDecisionJSON checks structured input binding and early rejection of malformed JSON.
+// TestTestHandlerDecisionJSON submits structured decision input, an empty body
+// and malformed JSON to the HTTP test route. Valid input reaches target loading
+// with its exact structured payload, while malformed input stops before
+// loading.
 func TestTestHandlerDecisionJSON(t *testing.T) {
 	for _, tc := range []struct {
-		name, body string
-		status     int
-		loads      int
+		name, body string // name: request scenario description; body: HTTP request JSON text
+		status     int    // expected HTTP response status
+		loads      int    // serial target-loading invocation count
 	}{
 		{"decision", `{"model_id":"jev-latest","test_type":"decision","systemone":{"state":["ready"],"questions":{"x":{"type":"noul","instructions":"Ready?"}}}}`, http.StatusOK, 1},
 		{"empty probe", ``, http.StatusOK, 1},

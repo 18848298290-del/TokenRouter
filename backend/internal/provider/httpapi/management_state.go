@@ -8,12 +8,23 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// SetSchedulableRequest represents the request body for setting schedulable status.
+// The administrator scheduling switch, quota accounting and recoverable errors
+// have separate maintenance operations. State responses reread or use the
+// updated provider before runtime presentation, while proxy-fallback
+// restoration returns a confirmation after the administration operation
+// succeeds.
+
+// SetSchedulableRequest carries the administrator scheduling switch, with
+// omission binding as false.
 type SetSchedulableRequest struct {
-	Schedulable bool `json:"schedulable"`
+	// Schedulable writes the administrator switch as supplied. Omission and JSON
+	// null bind to false here and therefore request disabling that switch.
+	Schedulable bool `json:"schedulable"` // administrator scheduling switch
 }
 
-// SetSchedulable handles toggling provider schedulable status
+// SetSchedulable writes the scheduling switch from a strict JSON body and
+// returns the updated view. An omitted schedulable field binds as false because
+// this request uses a plain boolean.
 // POST /api/v1/admin/providers/:id/schedulable
 func (h *ManagementHandler) SetSchedulable(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -37,7 +48,9 @@ func (h *ManagementHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.presenter.Present(c.Request.Context(), provider))
 }
 
-// ResetQuota handles resetting provider quota usage
+// ResetQuota resets provider quota accounting and rereads the runtime view for
+// the response. A failed reread does not roll back the completed reset; both
+// stages retain their standard error mapping.
 // POST /api/v1/admin/providers/:id/reset-quota
 func (h *ManagementHandler) ResetQuota(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -60,7 +73,9 @@ func (h *ManagementHandler) ResetQuota(c *gin.Context) {
 	response.Success(c, h.presenter.Present(c.Request.Context(), provider))
 }
 
-// ClearError handles clearing provider error
+// ClearError delegates provider error recovery to the managed credential
+// service and presents its returned record. Decimal path parsing precedes
+// maintenance, and use-case failures prevent runtime response presentation.
 // POST /api/v1/admin/providers/:id/clear-error
 func (h *ManagementHandler) ClearError(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -78,7 +93,9 @@ func (h *ManagementHandler) ClearError(c *gin.Context) {
 	response.Success(c, h.presenter.Present(c.Request.Context(), provider))
 }
 
-// RevertProxyFallback handles reverting provider proxy to original before fallback.
+// RevertProxyFallback asks administration to restore the recorded pre-fallback
+// proxy selection. Malformed decimal IDs return 400, and the fixed confirmation
+// is sent after the use case reports success.
 // POST /api/v1/admin/providers/:id/revert-proxy-fallback
 func (h *ManagementHandler) RevertProxyFallback(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

@@ -16,27 +16,59 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// These fixtures exercise defaults, response fields, and failures through the handler and use case.
-type crsHTTPStore struct{ provider.CRSProviderStore }
+// An empty CRS export isolates HTTP defaults and error mapping from provider
+// creation. CRSHandler calls through CRSSync so these tests can observe whether
+// proxy synchronization was requested and distinguish preview, invalid input
+// and injected source failures.
 
-type crsHTTPProxy struct{ reads int }
+// crsHTTPStore supplies source identity indexing while other embedded store
+// operations remain unused.
+type crsHTTPStore struct {
+	provider.CRSProviderStore // unused embedded provider operations
+}
 
-type crsHTTPExport struct{ failure error }
+// crsHTTPProxy records serial proxy-list calls for default synchronization
+// selection.
+type crsHTTPProxy struct {
+	reads int // serial proxy-list invocation count
+}
 
+// crsHTTPExport supplies an empty source payload and optional top-level fetch
+// failure.
+type crsHTTPExport struct {
+	failure error // configured source fetch error
+}
+
+// ListCRSAccountIDs returns a fixed existing source identity map for these
+// handler tests. The result makes an empty export a valid synchronization
+// scenario without invoking other embedded provider operations.
 func (crsHTTPStore) ListCRSAccountIDs(context.Context) (map[string]int64, error) {
 	return map[string]int64{"old": 1}, nil
 }
 
+// ListActive counts a logical proxy-list invocation and returns no configured
+// proxies. Tests use this serial counter to distinguish default synchronization
+// from disabled and preview paths.
 func (p *crsHTTPProxy) ListActive(context.Context) ([]egress.Proxy, error) {
 	p.reads++
 	return nil, nil
 }
+
+// Create panics when unexpected proxy creation reaches this empty-export
+// fixture.
 func (*crsHTTPProxy) Create(context.Context, *egress.Proxy) error { panic("未请求创建代理") }
 
+// Fetch returns an empty CRS export together with its configured failure. The
+// fixture ignores source login and context because tests observe handler
+// response mapping and proxy-read dispatch.
 func (e crsHTTPExport) Fetch(context.Context, string, string, string) (*transfer.CRSExportResponse, error) {
 	return &transfer.CRSExportResponse{}, e.failure
 }
 
+// TestCRSHandlerDefaultsAndErrorEnvelope exercises default proxy
+// synchronization, explicit disabling, preview and injected source failures.
+// Successful responses use the common envelope, invalid input returns 400 and
+// source failures retain the endpoint-specific 500 text.
 func TestCRSHandlerDefaultsAndErrorEnvelope(t *testing.T) {
 	for _, mode := range []string{"default", "disabled", "preview", "sync_failure", "preview_failure", "invalid"} {
 		t.Run(mode, func(t *testing.T) {

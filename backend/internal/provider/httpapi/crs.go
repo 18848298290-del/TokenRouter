@@ -7,25 +7,48 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// CRSHandler binds administrator requests and delegates synchronization and per-item results to provider.CRSSync.
-type CRSHandler struct{ core *provider.CRSSync }
+// CRS synchronization can update existing providers and create selected source
+// entries, with proxy synchronization enabled by default. The handler preserves
+// nil versus empty selections when delegating to CRSSync, and preview reads
+// source data before any synchronization request is applied.
 
+// CRSHandler binds administrator source credentials to provider synchronization
+// and preview use cases.
+type CRSHandler struct {
+	core *provider.CRSSync // borrowed source synchronization use case
+}
+
+// SyncFromCRSRequest carries source login, proxy policy and optional
+// source-provider selection.
 type SyncFromCRSRequest struct {
-	BaseURL             string   `json:"base_url" binding:"required"`
-	Username            string   `json:"username" binding:"required"`
-	Password            string   `json:"password" binding:"required"`
-	SyncProxies         *bool    `json:"sync_proxies"`
-	SelectedProviderIDs []string `json:"selected_provider_ids"`
-}
-type PreviewFromCRSRequest struct {
-	BaseURL  string `json:"base_url" binding:"required"`
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	BaseURL  string `json:"base_url" binding:"required"` // source CRS root URL
+	Username string `json:"username" binding:"required"` // source administrator login name
+	Password string `json:"password" binding:"required"` // source administrator login password
+	// SyncProxies defaults to true when omitted. An explicit false disables proxy
+	// synchronization while provider source handling remains delegated to CRSSync.
+	SyncProxies *bool `json:"sync_proxies"` // source proxy synchronization policy
+	// SelectedProviderIDs distinguishes nil from an explicit empty slice. Nil
+	// admits all new source entries; empty selection updates existing providers
+	// and creates no selected new entries.
+	SelectedProviderIDs []string `json:"selected_provider_ids"` // selected source provider identifiers
 }
 
+// PreviewFromCRSRequest carries source login values for a read-only
+// synchronization preview.
+type PreviewFromCRSRequest struct {
+	BaseURL  string `json:"base_url" binding:"required"` // source CRS root URL
+	Username string `json:"username" binding:"required"` // source administrator login name
+	Password string `json:"password" binding:"required"` // source administrator login password
+}
+
+// NewCRSHandler borrows the CRS synchronization use case for administrator
+// source operations. The caller keeps its provider store, proxy store and
+// source exporter usable while mounted requests execute.
 func NewCRSHandler(core *provider.CRSSync) *CRSHandler { return &CRSHandler{core: core} }
 
-// SyncFromCRS synchronizes the selected CRS accounts for an administrator.
+// SyncFromCRS binds source login and selection and requests provider
+// synchronization. Omitted sync_proxies defaults true; binding failures return
+// 400 and top-level use-case failures use the endpoint's 500 message.
 // POST /api/v1/admin/providers/sync/crs
 func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 	var req SyncFromCRSRequest
@@ -56,7 +79,9 @@ func (h *CRSHandler) SyncFromCRS(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// PreviewFromCRS returns a preview before synchronization.
+// PreviewFromCRS binds source login values and returns the synchronization
+// preview. Binding failures return 400; the use case inspects source entries
+// and maps top-level preview errors to the endpoint's 500 message.
 // POST /api/v1/admin/providers/sync/crs/preview
 func (h *CRSHandler) PreviewFromCRS(c *gin.Context) {
 	var req PreviewFromCRSRequest

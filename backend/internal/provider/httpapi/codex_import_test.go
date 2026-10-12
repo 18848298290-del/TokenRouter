@@ -23,15 +23,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Codex import identity differs between exact access-token digests, full OAuth
+// account hints and team-scoped Agent Identity runtimes. codex_import.go and
+// the provider importer are exercised with controlled serial storage to
+// distinguish creation, update and retained refresh credentials across related
+// inputs.
+//
+// Locally generated Ed25519 keys establish valid Agent Identity material, while
+// JWT-shaped fixture text carries unsigned metadata for import hint decoding.
+// Account IDs here are upstream strings, distinct from numeric TokenRouter
+// provider IDs. The memory store copies record slices and top-level credential
+// maps but retains nested references and captured input pointers, so these
+// tests protect matching outcomes rather than concurrent database isolation.
+
+// codexImportMemoryAdminService keeps serial import rows and captured
+// creation/update requests. Stored top-level maps are copied by fixture
+// methods, while nested values and captured input pointers remain borrowed for
+// post-import assertions.
 type codexImportMemoryAdminService struct {
-	*managementMutationFixture
-	nextID           int64
-	updatedProviders []struct {
-		id    int64
-		input *provider.UpdateProviderInput
+	*managementMutationFixture            // borrowed shared mutation observations
+	nextID                     int64      // next serial provider identifier
+	updatedProviders           []struct { // captured serial provider update requests
+		id    int64                         // updated TokenRouter provider identifier
+		input *provider.UpdateProviderInput // borrowed provider update input
 	}
 }
 
+// TestNormalizeCodexImportEntryAcceptsAgentIdentityAuthJSON normalizes an Agent
+// Identity object with a locally generated Ed25519 private key. Runtime and
+// upstream account hints are retained, OAuth tokens stay absent and warning
+// text remains available.
 func TestNormalizeCodexImportEntryAcceptsAgentIdentityAuthJSON(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -67,6 +88,9 @@ func TestNormalizeCodexImportEntryAcceptsAgentIdentityAuthJSON(t *testing.T) {
 	require.NotEmpty(t, item.WarningTexts)
 }
 
+// TestImportCodexSessionsKeepsAgentIdentityTeamsSeparate imports two runtime
+// identities for different teams sharing one user. The controlled store records
+// two new providers and no update or skip result.
 func TestImportCodexSessionsKeepsAgentIdentityTeamsSeparate(t *testing.T) {
 	first := buildAgentIdentityImportValue(t, "runtime-a", "team-a", "same-user", "task-a")
 	second := buildAgentIdentityImportValue(t, "runtime-b", "team-b", "same-user", "task-b")
@@ -81,6 +105,9 @@ func TestImportCodexSessionsKeepsAgentIdentityTeamsSeparate(t *testing.T) {
 	require.Len(t, svc.createdProviders, 2)
 }
 
+// TestImportCodexSessionsMergesAgentIdentityRuntimesForSameTeam imports a new
+// runtime for an existing Agent Identity in the same team and user. One update
+// replaces runtime and task IDs without creating another provider.
 func TestImportCodexSessionsMergesAgentIdentityRuntimesForSameTeam(t *testing.T) {
 	first := buildAgentIdentityImportValue(t, "runtime-a", "team-a", "same-user", "task-a")
 	second := buildAgentIdentityImportValue(t, "runtime-b", "team-a", "same-user", "task-b")
@@ -111,6 +138,10 @@ func TestImportCodexSessionsMergesAgentIdentityRuntimesForSameTeam(t *testing.T)
 	require.Equal(t, "task-b", svc.updatedProviders[0].input.Credentials["task_id"])
 }
 
+// TestImportCodexSessionsCreatesAgentIdentityWithoutOAuthExpiry imports Agent
+// Identity material with a valid local private-key encoding. Creation succeeds
+// with no OAuth token fields and no provider-expiry or automatic-pause pointer
+// override.
 func TestImportCodexSessionsCreatesAgentIdentityWithoutOAuthExpiry(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -144,6 +175,10 @@ func TestImportCodexSessionsCreatesAgentIdentityWithoutOAuthExpiry(t *testing.T)
 	require.NotContains(t, created.Credentials, "refresh_token")
 }
 
+// TestCodexSessionImportDiscardsDeprecatedLongContextBillingExtra imports
+// access-token content through the strict HTTP handler with retired and
+// retained Extra. One captured creation omits the retired key and keeps the
+// neighboring configuration value.
 func TestCodexSessionImportDiscardsDeprecatedLongContextBillingExtra(t *testing.T) {
 	stub := newCodexImportMemoryAdminService(nil)
 	handler := NewCodexImportHandler(newCodexImportFixture(stub))
@@ -166,6 +201,9 @@ func TestCodexSessionImportDiscardsDeprecatedLongContextBillingExtra(t *testing.
 	require.Equal(t, "value", stub.createdProviders[0].Extra["preserved"])
 }
 
+// TestImportCodexSessionsAccessTokenOnlySameWorkspaceDifferentUsersCreatesTwoProviders
+// imports access-only tokens for two users in one workspace. Two providers are
+// created, and their stored user hints differ after normalization.
 func TestImportCodexSessionsAccessTokenOnlySameWorkspaceDifferentUsersCreatesTwoProviders(t *testing.T) {
 	svc := newCodexImportMemoryAdminService(nil)
 	handler := newCodexImportFixture(svc)
@@ -190,6 +228,10 @@ func TestImportCodexSessionsAccessTokenOnlySameWorkspaceDifferentUsersCreatesTwo
 	}
 }
 
+// TestImportCodexSessionsAccessTokenOnlySameWorkspaceAndUserDifferentTokensCreatesTwoProviders
+// imports access-only tokens sharing workspace and user hints but carrying
+// different JWT IDs. Both become new providers, protecting access-token digest
+// identity from hint-based collapse.
 func TestImportCodexSessionsAccessTokenOnlySameWorkspaceAndUserDifferentTokensCreatesTwoProviders(t *testing.T) {
 	svc := newCodexImportMemoryAdminService(nil)
 	handler := newCodexImportFixture(svc)
@@ -227,6 +269,9 @@ func TestImportCodexSessionsAccessTokenOnlySameWorkspaceAndUserDifferentTokensCr
 	}
 }
 
+// TestImportCodexSessionsAccessTokenOnlySameUserUpdatesExisting imports the
+// exact access token already stored for a workspace and user. The importer
+// updates that provider once, with no new creation or failed item.
 func TestImportCodexSessionsAccessTokenOnlySameUserUpdatesExisting(t *testing.T) {
 	existingToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
 	svc := newCodexImportMemoryAdminService([]provider.Record{{
@@ -261,6 +306,10 @@ func TestImportCodexSessionsAccessTokenOnlySameUserUpdatesExisting(t *testing.T)
 	}
 }
 
+// TestImportCodexSessionsUpgradesAccessTokenOnlyProviderWithRefreshToken
+// imports newer access and refresh tokens for an existing access-only provider
+// identity. One update targets the existing provider and installs the supplied
+// new refresh token.
 func TestImportCodexSessionsUpgradesAccessTokenOnlyProviderWithRefreshToken(t *testing.T) {
 	oldToken := buildCodexAccessTokenWithJTI(t, "workspace-1", "user-1", "old-token", time.Now().Add(time.Hour))
 	newToken := buildCodexAccessTokenWithJTI(t, "workspace-1", "user-1", "new-token", time.Now().Add(time.Hour))
@@ -299,6 +348,10 @@ func TestImportCodexSessionsUpgradesAccessTokenOnlyProviderWithRefreshToken(t *t
 	}
 }
 
+// TestImportCodexSessionsAccessTokenOnlyPreservesExistingRefreshToken imports
+// the exact access token of a provider that already has refresh credentials.
+// The update retains its refresh token and client ID and leaves provider-expiry
+// policy overrides absent.
 func TestImportCodexSessionsAccessTokenOnlyPreservesExistingRefreshToken(t *testing.T) {
 	existingToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
 	svc := newCodexImportMemoryAdminService([]provider.Record{{
@@ -342,6 +395,10 @@ func TestImportCodexSessionsAccessTokenOnlyPreservesExistingRefreshToken(t *test
 	}
 }
 
+// TestImportCodexSessionsBatchOldAccessTokenDoesNotRollbackRefreshToken imports
+// new OAuth credentials followed by an older access-only token in one batch.
+// The existing provider is updated once, the stale token creates a separate
+// entry and stored refresh credentials stay new.
 func TestImportCodexSessionsBatchOldAccessTokenDoesNotRollbackRefreshToken(t *testing.T) {
 	oldToken := buildCodexAccessTokenWithJTI(t, "workspace-1", "user-1", "old-token", time.Now().Add(time.Hour))
 	newToken := buildCodexAccessTokenWithJTI(t, "workspace-1", "user-1", "new-token", time.Now().Add(time.Hour))
@@ -389,6 +446,10 @@ func TestImportCodexSessionsBatchOldAccessTokenDoesNotRollbackRefreshToken(t *te
 	}
 }
 
+// TestImportCodexSessionsWithRefreshTokenKeepsExistingDedup imports refreshed
+// OAuth credentials for an existing workspace and user identity. One update
+// replaces the refresh token on that provider, with no new creation or failed
+// item.
 func TestImportCodexSessionsWithRefreshTokenKeepsExistingDedup(t *testing.T) {
 	existingToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
 	svc := newCodexImportMemoryAdminService([]provider.Record{{
@@ -421,6 +482,9 @@ func TestImportCodexSessionsWithRefreshTokenKeepsExistingDedup(t *testing.T) {
 	}
 }
 
+// buildAgentIdentityImportValue creates locally generated Ed25519 Agent
+// Identity input for the supplied runtime, team, user and task. Its private key
+// uses base64 PKCS8 encoding validated by the production key parser.
 func buildAgentIdentityImportValue(t *testing.T, runtimeID, providerID, userID, taskID string) map[string]any {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -439,6 +503,10 @@ func buildAgentIdentityImportValue(t *testing.T, runtimeID, providerID, userID, 
 	}
 }
 
+// newCodexImportMemoryAdminService copies the supplied record slice and
+// initializes serial IDs from one hundred. Record containers remain shallowly
+// shared, so tests replace or clone credential maps through the importer
+// fixture operations.
 func newCodexImportMemoryAdminService(providers []provider.Record) *codexImportMemoryAdminService {
 	stub := newManagementMutationFixture()
 	stub.providers = append([]provider.Record(nil), providers...)
@@ -448,12 +516,18 @@ func newCodexImportMemoryAdminService(providers []provider.Record) *codexImportM
 	}
 }
 
-// newCodexImportFixture connects the importer to the in-memory archive and provider store.
+// newCodexImportFixture binds the production Codex importer to the serial
+// memory administrator and archive index. Clock, OAuth client and Ed25519 key
+// validation come from the fixture options used by each import.
 func newCodexImportFixture(svc *codexImportMemoryAdminService) *provider.CodexImporter {
 	archive := provider.NewArchive(svc, nil, provider.ArchiveOptions{Now: time.Now})
 	return provider.NewCodexImporter(svc, archive, codexImportFixtureOptions())
 }
 
+// CreateProvider records borrowed creation input and appends a synthetic active
+// provider using copied top-level maps. A configured creation failure returns
+// before row insertion; nested map values remain shared by the fixture clone
+// helper.
 func (s *codexImportMemoryAdminService) CreateProvider(ctx context.Context, input *provider.CreateProviderInput) (*provider.Record, error) {
 	s.createdProviders = append(s.createdProviders, input)
 	if s.createProviderErr != nil {
@@ -473,10 +547,13 @@ func (s *codexImportMemoryAdminService) CreateProvider(ctx context.Context, inpu
 	return &provider, nil
 }
 
+// UpdateProvider records the requested ID and borrowed update input before
+// applying fixture credential and Extra maps. A configured failure leaves rows
+// unchanged; successful matching-row results borrow the stored record address.
 func (s *codexImportMemoryAdminService) UpdateProvider(ctx context.Context, id int64, input *provider.UpdateProviderInput) (*provider.Record, error) {
 	s.updatedProviders = append(s.updatedProviders, struct {
-		id    int64
-		input *provider.UpdateProviderInput
+		id    int64                         // updated TokenRouter provider identifier
+		input *provider.UpdateProviderInput // borrowed provider update input
 	}{id: id, input: input})
 	if s.updateProviderErr != nil {
 		return nil, s.updateProviderErr
@@ -492,6 +569,9 @@ func (s *codexImportMemoryAdminService) UpdateProvider(ctx context.Context, id i
 	return &provider, nil
 }
 
+// GetProvider returns a borrowed matching stored row from this serial fixture.
+// Missing IDs delegate to the shared mutation fixture's synthetic record path,
+// so this substitute does not establish production not-found behavior.
 func (s *codexImportMemoryAdminService) GetProvider(ctx context.Context, id int64) (*provider.Record, error) {
 	for idx := range s.providers {
 		if s.providers[idx].ID == id {
@@ -501,6 +581,9 @@ func (s *codexImportMemoryAdminService) GetProvider(ctx context.Context, id int6
 	return s.managementMutationFixture.GetProvider(ctx, id)
 }
 
+// buildCodexAccessOnlyImportValue creates an access-only fixture object for
+// supplied upstream account and user IDs. The metadata JWT expires one hour
+// from construction and is decoded by import without signature authentication.
 func buildCodexAccessOnlyImportValue(t *testing.T, providerID, userID string) map[string]any {
 	t.Helper()
 	return map[string]any{
@@ -508,6 +591,10 @@ func buildCodexAccessOnlyImportValue(t *testing.T, providerID, userID string) ma
 	}
 }
 
+// buildCodexRefreshImportValue creates access and refresh credential input for
+// supplied upstream identities. The access JWT carries fixture metadata, while
+// the refresh text lets importer matching use its complete-OAuth identity
+// rules.
 func buildCodexRefreshImportValue(t *testing.T, providerID, userID, refreshToken string) map[string]any {
 	t.Helper()
 	return map[string]any{
@@ -516,11 +603,18 @@ func buildCodexRefreshImportValue(t *testing.T, providerID, userID, refreshToken
 	}
 }
 
+// buildCodexAccessToken creates an unsigned metadata JWT with the supplied
+// account, user and expiry. It omits the optional JWT identifier so callers can
+// choose the default access-token representation.
 func buildCodexAccessToken(t *testing.T, providerID, userID string, exp time.Time) string {
 	t.Helper()
 	return buildCodexAccessTokenWithJTI(t, providerID, userID, "", exp)
 }
 
+// buildCodexAccessTokenWithJTI creates metadata JWT claims for upstream account
+// and user hints and an optional identifier. Distinct supplied JWT IDs change
+// token text, allowing access-only digest matching tests to separate otherwise
+// equal identity hints.
 func buildCodexAccessTokenWithJTI(t *testing.T, providerID, userID, jti string, exp time.Time) string {
 	t.Helper()
 	claims := map[string]any{
@@ -535,6 +629,9 @@ func buildCodexAccessTokenWithJTI(t *testing.T, providerID, userID, jti string, 
 	return buildCodexImportTestJWT(t, exp, claims)
 }
 
+// cloneCodexImportTestMap copies a credential or Extra top-level map and
+// retains nil input. Nested mutable values remain shared, so serial fixture
+// assertions do not establish an independent deep copy.
 func cloneCodexImportTestMap(input map[string]any) map[string]any {
 	if input == nil {
 		return nil
@@ -544,6 +641,17 @@ func cloneCodexImportTestMap(input map[string]any) map[string]any {
 	return out
 }
 
+// buildCodexImportTestJWT encodes an unsigned JWT-shaped value for
+// metadata-only import parsing. Its header declares alg=none and the token ends
+// after the second separator, so the fixture supplies no authentication
+// signature. Default claims include subject, expiry and issued-at time.
+//
+// Extra claims are copied over those defaults before JSON encoding, allowing
+// callers to supply user identity, account metadata and JWT IDs for matching
+// scenarios. The resulting exact text matters to access-only digest selection:
+// two tokens with equal hints and different identifiers remain different
+// credentials. Encoding errors fail the test rather than producing malformed
+// fixture text.
 func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string]any) string {
 	t.Helper()
 	header := map[string]any{
@@ -567,12 +675,19 @@ func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
 
-// codexImportFixtureOptions supplies the key parser, clock, and OAuth client ID.
+// codexImportFixtureOptions supplies the production OAuth client identifier and
+// Agent Identity key parser with the real fixture clock. The parser validates
+// private-key encoding, while JWT helpers intentionally supply metadata without
+// signatures.
 func codexImportFixtureOptions() provider.CodexImportOptions {
 	return provider.CodexImportOptions{Now: time.Now, OAuthClientID: openai.ClientID, ValidatePrivateKey: func(value string) error { _, err := openai.ParseAgentIdentityPrivateKey(value); return err }}
 }
 
-// ListProviders returns paginated records for the import index.
+// ListProviders delegates paging over current fixture rows to the shared list
+// adapter for importer indexing. Filters are captured by that adapter but do
+// not perform production filtering. The returned page borrows the stored row
+// slice and its nested values, so callers keep this serial population stable
+// while import indexing reads it.
 func (s *codexImportMemoryAdminService) ListProviders(ctx context.Context, page, size int, platform, kind, status, search string, gid int64, privacy, sortBy, order string) ([]provider.Record, int64, error) {
 	source := managementListFixture{providers: s.providers}
 	return source.ListProviders(ctx, page, size, platform, kind, status, search, gid, privacy, sortBy, order)

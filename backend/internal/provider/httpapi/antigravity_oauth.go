@@ -9,39 +9,74 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Antigravity authorization binds Google OAuth session, state and code before
+// delegating token exchange. Invalid bodies are rejected here, URL-generation
+// failures use 500, code-exchange failures use 400, and refresh-token
+// validation keeps the common domain error mapping.
+
+// AntigravityOAuthHandler binds administrator authorization inputs to the
+// Antigravity authorization use case.
 type AntigravityOAuthHandler struct {
-	antigravityOAuthService AntigravityAuthorizationUseCase
+	antigravityOAuthService AntigravityAuthorizationUseCase // borrowed Google authorization use case
 }
 
+// AntigravityGenerateAuthURLRequest optionally selects the proxy used for a
+// Google authorization session.
 type AntigravityGenerateAuthURLRequest struct {
-	ProxyID *int64 `json:"proxy_id"`
+	// ProxyID supplies session generation's proxy lookup. Omitted or unresolved
+	// selection leaves the empty route retained with the generated Google session.
+	ProxyID *int64 `json:"proxy_id"` // optional session proxy selection
 }
 
+// AntigravityExchangeCodeRequest carries the required session, state and code
+// for Google token exchange.
 type AntigravityExchangeCodeRequest struct {
-	SessionID string `json:"session_id" binding:"required"`
-	State     string `json:"state" binding:"required"`
-	Code      string `json:"code" binding:"required"`
-	ProxyID   *int64 `json:"proxy_id"`
+	SessionID string `json:"session_id" binding:"required"` // authorization session identifier
+	State     string `json:"state" binding:"required"`      // authorization state value
+	Code      string `json:"code" binding:"required"`       // authorization exchange code
+	// ProxyID overrides the stored route only when its lookup resolves. Omitted
+	// or unresolved selection retains the authorization session's proxy URL.
+	ProxyID *int64 `json:"proxy_id"` // optional exchange proxy selection
 }
 
-// AntigravityRefreshTokenRequest represents the request for validating Antigravity refresh token.
+// AntigravityRefreshTokenRequest carries a required refresh token and optional
+// proxy for validation.
 type AntigravityRefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-	ProxyID      *int64 `json:"proxy_id"`
+	RefreshToken string `json:"refresh_token" binding:"required"` // supplied OAuth refresh token
+	// ProxyID supplies raw refresh validation's proxy lookup. Omitted or
+	// unresolved selection leaves an empty URL for the token and discovery calls.
+	ProxyID *int64 `json:"proxy_id"` // optional refresh proxy selection
 }
 
-// AntigravityAuthorizationUseCase provides authorization URL, code exchange, and refresh-token validation operations.
+// AntigravityAuthorizationUseCase supplies Google authorization sessions, code
+// exchange and refresh-token validation.
 type AntigravityAuthorizationUseCase interface {
+	// GenerateAuthURL prepares a Google authorization URL and stored session for
+	// the optional proxy. Its caller uses the returned session and state during
+	// exchange, while session retention belongs to authorization.
 	GenerateAuthURL(context.Context, *int64) (*provider.AntigravityAuthURLResult, error)
+	// ExchangeCode validates a stored session and its state before exchanging the
+	// supplied code. Proxy selection and session consumption follow authorization;
+	// returned token metadata can contain partial optional discovery results.
 	ExchangeCode(context.Context, *provider.AntigravityExchangeCodeInput) (*provider.AntigravityTokenInfo, error)
+	// ValidateRefreshToken exchanges the supplied refresh token and resolves
+	// optional Antigravity metadata through the selected proxy. Its caller
+	// receives credentials for later provider creation rather than a provider
+	// storage mutation.
 	ValidateRefreshToken(context.Context, string, *int64) (*provider.AntigravityTokenInfo, error)
 }
 
+// NewAntigravityOAuthHandler borrows the Google authorization use case for
+// Antigravity administrator routes. Session storage and token metadata
+// discovery remain with that instance, whose owner manages request shutdown and
+// cleanup.
 func NewAntigravityOAuthHandler(antigravityOAuthService AntigravityAuthorizationUseCase) *AntigravityOAuthHandler {
 	return &AntigravityOAuthHandler{antigravityOAuthService: antigravityOAuthService}
 }
 
-// GenerateAuthURL generates Google OAuth authorization URL
+// GenerateAuthURL binds the optional proxy and returns the generated Google
+// authorization session. Invalid JSON returns 400, while every use-case
+// generation error is reported with the endpoint's 500 message.
 // POST /api/v1/admin/antigravity/oauth/auth-url
 func (h *AntigravityOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req AntigravityGenerateAuthURLRequest
@@ -59,7 +94,9 @@ func (h *AntigravityOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ExchangeCode exchanges an authorization code for tokens.
+// ExchangeCode binds the required session, state and authorization code before
+// exchanging Google tokens. Invalid bodies and use-case exchange failures
+// return 400; token information is returned after a successful exchange.
 // POST /api/v1/admin/antigravity/oauth/exchange-code
 func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req AntigravityExchangeCodeRequest
@@ -82,7 +119,10 @@ func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-// RefreshToken validates an Antigravity refresh token and returns full token info
+// RefreshToken validates a supplied Antigravity refresh token through
+// authorization and returns its token information. A missing required token is
+// a binding error; authorization failures retain the common domain error
+// mapping.
 // POST /api/v1/admin/antigravity/oauth/refresh-token
 func (h *AntigravityOAuthHandler) RefreshToken(c *gin.Context) {
 	var req AntigravityRefreshTokenRequest

@@ -11,6 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Provider mapper responses are checked both as DTO values and serialized JSON
+// so removed secret values cannot reappear during encoding. Fixtures cover
+// credentials, Ollama-managed Extra, historical usage query redaction and
+// supported nested map ownership in provider_mapper.go.
+
+// TestProviderFromServiceShallow_RedactsSensitiveCredentials maps an Anthropic
+// OAuth record with tokens and ordinary model configuration. DTO and JSON
+// output omit the supplied secrets while presence flags and source credentials
+// remain available.
 func TestProviderFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	src := &provider.Record{
 		Now: time.Now, LoadLocation: time.LoadLocation,
@@ -59,6 +68,10 @@ func TestProviderFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	require.Equal(t, "rt-secret", src.Credentials["refresh_token"])
 }
 
+// TestProviderFromServiceShallow_RedactsOllamaCloudManagedExtra maps eligible
+// Ollama configuration with encrypted session and saved usage. Raw managed
+// Extra and credential secrets disappear from JSON, while the separate usage
+// view retains its display state.
 func TestProviderFromServiceShallow_RedactsOllamaCloudManagedExtra(t *testing.T) {
 	snapshot := map[string]any{
 		"status":          provider.OllamaCloudUsageStatusOK,
@@ -99,6 +112,10 @@ func TestProviderFromServiceShallow_RedactsOllamaCloudManagedExtra(t *testing.T)
 	require.Contains(t, src.Extra, provider.OllamaCloudUsageSessionExtraKey)
 }
 
+// TestProviderFromServiceShallow_RedactsLegacyUpstreamUsageSecrets provides
+// historical usage configuration containing secret-shaped adapter and URL
+// fields. Only permitted enablement remains visible, and the original
+// historical object still contains its input keys.
 func TestProviderFromServiceShallow_RedactsLegacyUpstreamUsageSecrets(t *testing.T) {
 	src := &provider.Record{
 		Now: time.Now, LoadLocation: time.LoadLocation,
@@ -117,12 +134,15 @@ func TestProviderFromServiceShallow_RedactsLegacyUpstreamUsageSecrets(t *testing
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "legacy-secret")
-	// Mapping leaves historical database values intact.
+	// The fixture's retained source object still contains its historical input.
 	legacyConfig, ok := src.Extra[provider.UpstreamUsageQueryExtraKey].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, legacyConfig, "api_key")
 }
 
+// TestProviderFromServiceShallow_PreservesZivvAdapterSelection provides a
+// registered Zivv adapter in usage-query configuration. The mapped Extra keeps
+// its enabled flag and adapter name together for administrator display.
 func TestProviderFromServiceShallow_PreservesZivvAdapterSelection(t *testing.T) {
 	src := &provider.Record{
 		Now: time.Now, LoadLocation: time.LoadLocation,
@@ -137,6 +157,9 @@ func TestProviderFromServiceShallow_PreservesZivvAdapterSelection(t *testing.T) 
 	}, got.Extra[provider.UpstreamUsageQueryExtraKey])
 }
 
+// TestProviderFromServiceShallow_NilCredentialsOmitsStatus maps an OAuth record
+// whose credential map is absent. The resulting DTO keeps both credentials and
+// sensitive-presence status nil, preserving the missing-input representation.
 func TestProviderFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {
 	src := &provider.Record{Now: time.Now, LoadLocation: time.LoadLocation, ID: 1, Name: "n", Platform: "anthropic", Type: "oauth"}
 	got := ProviderFromRecordShallow(src)
@@ -145,6 +168,9 @@ func TestProviderFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {
 	require.Nil(t, got.CredentialsStatus)
 }
 
+// TestProviderFromServiceShallow_OpenAIOAuthTLSFingerprint maps an OpenAI OAuth
+// record with fingerprint enablement and profile -1. The optional DTO fields
+// retain true and that exact nonzero selector for JSON presentation.
 func TestProviderFromServiceShallow_OpenAIOAuthTLSFingerprint(t *testing.T) {
 	src := &provider.Record{
 		Now: time.Now, LoadLocation: time.LoadLocation,
@@ -166,7 +192,9 @@ func TestProviderFromServiceShallow_OpenAIOAuthTLSFingerprint(t *testing.T) {
 	require.Equal(t, int64(-1), *got.TLSFingerprintProfileID)
 }
 
-// TestProviderDTOHasIndependentNestedValues checks that editing nested DTO values leaves source maps intact.
+// TestProviderDTOHasIndependentNestedValues edits nested model mapping and
+// policy maps in a returned DTO. Those supported map containers stay
+// independent of the corresponding source credential and Extra maps.
 func TestProviderDTOHasIndependentNestedValues(t *testing.T) {
 	value := &provider.Record{Now: time.Now, LoadLocation: time.LoadLocation, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "model"}}, Extra: map[string]any{"policy": map[string]any{"enabled": true}}}
 	view := ProviderFromRecordShallow(value)

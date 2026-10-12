@@ -9,14 +9,25 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ApplyOAuthCredentialsRequest carries OAuth credentials obtained by reauthorization.
+// Manual credential refresh and reauthorization share ManagedRefreshService,
+// which owns platform eligibility, persistence and recovery. The HTTP wrapper
+// maps a temporary Antigravity project-discovery warning to a message response;
+// otherwise it presents the record returned by the maintenance use case.
+
+// ApplyOAuthCredentialsRequest carries required authorization values and
+// optional Extra updates from reauthorization.
 type ApplyOAuthCredentialsRequest struct {
-	Type        string         `json:"type" binding:"required,oneof=oauth setup-token"`
-	Credentials map[string]any `json:"credentials" binding:"required"`
-	Extra       map[string]any `json:"extra"`
+	Type        string         `json:"type" binding:"required,oneof=oauth setup-token"` // replacement authorization kind
+	Credentials map[string]any `json:"credentials" binding:"required"`                  // exchanged authorization values
+	// Extra supplies a selected patch after the credential update. ManagedRefreshService
+	// merges these values separately, retaining unrelated stored configuration when
+	// the patch is absent.
+	Extra map[string]any `json:"extra"` // additional reauthorization settings
 }
 
-// Refresh returns the refresh result and any missing-project warning.
+// Refresh loads a provider before managed credential exchange and returns the
+// resulting runtime view. Every lookup failure returns 404; the missing-project
+// warning instead produces the dedicated message and warning response.
 // POST /api/v1/admin/providers/:id/refresh
 func (h *ManagementHandler) Refresh(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -49,13 +60,11 @@ func (h *ManagementHandler) Refresh(c *gin.Context) {
 	response.Success(c, h.presenter.Present(c.Request.Context(), updatedProvider))
 }
 
-// ApplyOAuthCredentials saves reauthorized credentials and merges Extra by key.
+// ApplyOAuthCredentials strictly binds reauthorization values and delegates
+// saving, Extra merging and recovery to ManagedRefreshService. Deprecated
+// settings are removed before dispatch; lookup failure returns 404 and
+// completed use-case results receive runtime presentation.
 // POST /api/v1/admin/providers/:id/apply-oauth-credentials
-//
-// This endpoint accepts type, credentials, and extra:
-// - Credentials replace the authorization values.
-// - Extra merges by JSONB key, retaining unrelated base_rpm, quota_*, and privacy_mode settings.
-// - Error state is cleared and the token cache is invalidated so later requests use the new credentials.
 func (h *ManagementHandler) ApplyOAuthCredentials(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -68,6 +77,8 @@ func (h *ManagementHandler) ApplyOAuthCredentials(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	// Reauthorization accepts historical Extra payloads. Remove retired keys
+	// before the selected patch reaches managed maintenance, keeping retained neighboring settings eligible.
 	providercore.DiscardDeprecatedProviderExtra(req.Extra)
 
 	ctx := c.Request.Context()

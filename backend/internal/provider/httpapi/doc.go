@@ -1,4 +1,7 @@
-// Package httpapi handles provider administration, authorization, usage queries, and connection tests over HTTP.
+// Package httpapi binds administrator provider requests to management,
+// authorization, usage and connection-test use cases. Transport binding and
+// response encoding stay here, while provider use cases own credential
+// persistence, runtime maintenance and upstream query lifetimes.
 //
 // Reading entry points:
 //   - routes_admin.go registers administrator and platform authorization endpoints.

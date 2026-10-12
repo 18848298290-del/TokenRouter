@@ -19,11 +19,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Model-query HTTP errors distinguish invalid local credentials from upstream
+// failures and return safe messages. management_model_sync.go is tested through
+// the production model catalogue adapter with fixed consumable responses,
+// including preview parsing and duplicate-ID normalization.
+
+// syncUpstreamHTTPUpstream returns a controlled model-list response or injected
+// transport error.
 type syncUpstreamHTTPUpstream struct {
-	resp *http.Response
-	err  error
+	// resp is returned by pointer when err is nil. Its body is consumed by the
+	// production query, so callers supply a fresh configured response for each
+	// request.
+	resp *http.Response // borrowed consumable upstream response
+	err  error          // injected upstream transport failure
 }
 
+// TestProviderHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest loads an
+// API-key provider without its required key. The handler returns 400 with the
+// configuration message before a usable upstream model query can complete.
 func TestProviderHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {
 	svc := &availableModelsAdminService{
 		managementMutationFixture: newManagementMutationFixture(),
@@ -48,6 +61,10 @@ func TestProviderHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testi
 	require.Contains(t, rec.Body.String(), "No OpenAI API key is available")
 }
 
+// TestProviderHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody supplies
+// an upstream 502 response containing secret-shaped body text. The
+// administrator sees the safe status message and that body secret remains
+// absent from the HTTP response.
 func TestProviderHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {
 	svc := &availableModelsAdminService{
 		managementMutationFixture: newManagementMutationFixture(),
@@ -79,6 +96,10 @@ func TestProviderHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *tes
 	require.NotContains(t, rec.Body.String(), "SECRET_TOKEN")
 }
 
+// TestProviderHandlerSyncUpstreamModelsPreview_UsesProvidedCredentials supplies
+// temporary API-key configuration and a model list with duplicates. Preview
+// succeeds and returns the de-duplicated model order produced by the production
+// catalogue adapter.
 func TestProviderHandlerSyncUpstreamModelsPreview_UsesProvidedCredentials(t *testing.T) {
 	router := setupSyncUpstreamModelsRouter(newManagementMutationFixture(), &syncUpstreamHTTPUpstream{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -98,14 +119,18 @@ func TestProviderHandlerSyncUpstreamModelsPreview_UsesProvidedCredentials(t *tes
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var resp struct {
-		Data struct {
-			Models []string `json:"models"`
+		Data struct { // decoded HTTP success envelope
+			Models []string `json:"models"` // returned normalized model identifiers
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Equal(t, []string{"gpt-5.1", "o3"}, resp.Data.Models)
 }
 
+// TestProviderHandlerSyncUpstreamModelsPreview_ConfigErrorReturnsBadRequest
+// omits the required temporary API key from preview JSON. Binding rejects the
+// request with 400 and exposes the required-field message before querying
+// models.
 func TestProviderHandlerSyncUpstreamModelsPreview_ConfigErrorReturnsBadRequest(t *testing.T) {
 	router := setupSyncUpstreamModelsRouter(newManagementMutationFixture(), &syncUpstreamHTTPUpstream{})
 
@@ -122,6 +147,9 @@ func TestProviderHandlerSyncUpstreamModelsPreview_ConfigErrorReturnsBadRequest(t
 	require.Contains(t, rec.Body.String(), "required")
 }
 
+// Do returns the configured response or injected transport error for this
+// model-query fixture. Response bodies are consumable and reused by pointer, so
+// each test supplies a fresh response for its request.
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	if u.err != nil {
 		return nil, u.err
@@ -129,10 +157,17 @@ func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, provid
 	return u.resp, nil
 }
 
+// DoWithTLS delegates to the fixed response path while ignoring profile
+// selection. The returned response and body are shared with Do; callers supply
+// a fresh consumable response for each request.
 func (u *syncUpstreamHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// setupSyncUpstreamModelsRouter mounts stored and preview model queries using
+// the production catalogue parser and URL policy. The supplied transport
+// controls responses, and an eight-MiB body limit bounds parsed fixture
+// results.
 func setupSyncUpstreamModelsRouter(adminSvc ProviderManagement, upstream provideradapter.QoderTransport) *gin.Engine {
 	router := gin.New()
 	modelPolicy := egress.OperatorURLPolicy{}

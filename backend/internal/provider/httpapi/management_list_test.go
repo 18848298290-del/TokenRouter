@@ -24,6 +24,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// Provider list observations distinguish response redaction and entity tags
+// from optional scheduler-score queries. management_list.go uses one item shape
+// for either lite input, so the lite-named tests protect tag behavior and
+// controlled payload budgets while other scenarios inspect candidate
+// populations, hydrated groups and platform-specific sticky weights.
+
+// TestProviderHandlerListLiteUsesCompactDTOAndETag requests a lite-tagged
+// provider list containing credentials and loaded groups. Secret values are
+// redacted, selection fields remain visible, a matching tag returns 304 and a
+// request omitting lite still includes relationships.
 func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -45,8 +55,8 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	require.NotEmpty(t, rec.Header().Get("ETag"))
 
 	var litePayload struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
+		Data struct { // decoded paginated response object
+			Items []map[string]any `json:"items"` // returned provider page items
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &litePayload))
@@ -70,14 +80,15 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	router.ServeHTTP(rec304, req304)
 	require.Equal(t, http.StatusNotModified, rec304.Code)
 
-	// Omitting lite returns the full response structure.
+	// Lite participates in tag construction, while the handler returns the same
+	// DTO shape. This request checks loaded relationships when the flag is absent.
 	recFull := httptest.NewRecorder()
 	reqFull := httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers?page=1&page_size=20", nil)
 	router.ServeHTTP(recFull, reqFull)
 	require.Equal(t, http.StatusOK, recFull.Code)
 	var fullPayload struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
+		Data struct { // decoded paginated response object
+			Items []map[string]any `json:"items"` // returned provider page items
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(recFull.Body.Bytes(), &fullPayload))
@@ -85,6 +96,10 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	require.Contains(t, fullPayload.Data.Items[0], "provider_groups")
 }
 
+// TestProviderHandlerListLiteStaysBelowResponseBudget serializes twenty
+// controlled provider records with loaded group descriptions under lite input.
+// This fixture payload stays below its raw and gzip byte budgets, without
+// asserting a different compact DTO format.
 func TestProviderHandlerListLiteStaysBelowResponseBudget(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -107,9 +122,12 @@ func TestProviderHandlerListLiteStaysBelowResponseBudget(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers?page=1&page_size=20&lite=1", nil)
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
+	// The raw-response budget applies to these twenty complete fixture DTOs.
 	require.Less(t, rec.Body.Len(), 80*1024)
 
 	var compressed bytes.Buffer
+	// Compression has buffered framing bytes. Close the writer before measuring
+	// its complete fixture payload against the compressed response budget.
 	zw := gzip.NewWriter(&compressed)
 	_, err := zw.Write(rec.Body.Bytes())
 	require.NoError(t, err)
@@ -117,6 +135,9 @@ func TestProviderHandlerListLiteStaysBelowResponseBudget(t *testing.T) {
 	require.Less(t, compressed.Len(), 15*1024)
 }
 
+// TestProviderHandlerListIncludesCreatedAt requests created-at sorting against
+// the list fixture. The sort selector reaches administration, and the returned
+// creation timestamp parses as UTC text with a zero timezone offset.
 func TestProviderHandlerListIncludesCreatedAt(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 
@@ -128,10 +149,10 @@ func TestProviderHandlerListIncludesCreatedAt(t *testing.T) {
 	require.Equal(t, "created_at", adminSvc.lastListProviders.sortBy)
 
 	var payload struct {
-		Data struct {
-			Items []struct {
-				ID        int64  `json:"id"`
-				CreatedAt string `json:"created_at"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				ID        int64  `json:"id"`         // returned TokenRouter provider identifier
+				CreatedAt string `json:"created_at"` // returned provider creation timestamp
 			} `json:"items"`
 		} `json:"data"`
 	}
@@ -147,6 +168,10 @@ func TestProviderHandlerListIncludesCreatedAt(t *testing.T) {
 	require.Equal(t, 0, offset)
 }
 
+// TestProviderHandlerListReturnsSchedulerScoresPerGroup lists two OpenAI group
+// peers with different priorities and requested scoring. Each response includes
+// its group identity and the higher-priority fixture receives the greater base
+// score.
 func TestProviderHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -192,16 +217,16 @@ func TestProviderHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var payload struct {
-		Data struct {
-			Items []struct {
-				ID             int64 `json:"id"`
-				SchedulerScore struct {
-					BaseScore float64 `json:"base_score"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				ID             int64    `json:"id"` // returned TokenRouter provider identifier
+				SchedulerScore struct { // overall filter-pool score observation
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_score"`
-				SchedulerScores []struct {
-					GroupID   *int64  `json:"group_id"`
-					GroupName string  `json:"group_name"`
-					BaseScore float64 `json:"base_score"`
+				SchedulerScores []struct { // returned group score observations
+					GroupID   *int64  `json:"group_id"`   // returned routing group identifier
+					GroupName string  `json:"group_name"` // returned routing group name
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_scores"`
 			} `json:"items"`
 		} `json:"data"`
@@ -210,14 +235,14 @@ func TestProviderHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	require.Len(t, payload.Data.Items, 2)
 
 	var high, low *struct {
-		ID             int64 `json:"id"`
-		SchedulerScore struct {
-			BaseScore float64 `json:"base_score"`
+		ID             int64    `json:"id"` // returned TokenRouter provider identifier
+		SchedulerScore struct { // overall filter-pool score observation
+			BaseScore float64 `json:"base_score"` // returned scheduler base score
 		} `json:"scheduler_score"`
-		SchedulerScores []struct {
-			GroupID   *int64  `json:"group_id"`
-			GroupName string  `json:"group_name"`
-			BaseScore float64 `json:"base_score"`
+		SchedulerScores []struct { // returned group score observations
+			GroupID   *int64  `json:"group_id"`   // returned routing group identifier
+			GroupName string  `json:"group_name"` // returned routing group name
+			BaseScore float64 `json:"base_score"` // returned scheduler base score
 		} `json:"scheduler_scores"`
 	}
 	for i := range payload.Data.Items {
@@ -238,6 +263,10 @@ func TestProviderHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	require.Greater(t, high.SchedulerScores[0].BaseScore, low.SchedulerScores[0].BaseScore)
 }
 
+// TestProviderHandlerListNonOpenAIStickyScoreExcludesPreviousResponse scores a
+// Gemini provider with separate previous-response and session weights. Its
+// group sticky score equals base plus session weight, protecting the
+// platform-specific exclusion of previous-response affinity.
 func TestProviderHandlerListNonOpenAIStickyScoreExcludesPreviousResponse(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -273,11 +302,11 @@ func TestProviderHandlerListNonOpenAIStickyScoreExcludesPreviousResponse(t *test
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var payload struct {
-		Data struct {
-			Items []struct {
-				SchedulerScores []struct {
-					BaseScore   float64 `json:"base_score"`
-					StickyScore float64 `json:"sticky_score"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				SchedulerScores []struct { // returned group score observations
+					BaseScore   float64 `json:"base_score"`   // returned scheduler base score
+					StickyScore float64 `json:"sticky_score"` // returned scheduler sticky score
 				} `json:"scheduler_scores"`
 			} `json:"items"`
 		} `json:"data"`
@@ -286,9 +315,14 @@ func TestProviderHandlerListNonOpenAIStickyScoreExcludesPreviousResponse(t *test
 	require.Len(t, payload.Data.Items, 1)
 	require.Len(t, payload.Data.Items[0].SchedulerScores, 1)
 	score := payload.Data.Items[0].SchedulerScores[0]
+	// Allow floating-point addition rounding in the selected sticky-score sum.
 	require.InDelta(t, score.BaseScore+sessionWeight, score.StickyScore, 0.000001)
 }
 
+// TestProviderHandlerListReusesHydratedGroupsWithoutRepositoryLookups lists two
+// providers with shared loaded groups and repeated group IDs. Group reads
+// remain absent, pool lookups occur once per distinct group and each response
+// contains two group score observations.
 func TestProviderHandlerListReusesHydratedGroupsWithoutRepositoryLookups(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -331,10 +365,10 @@ func TestProviderHandlerListReusesHydratedGroupsWithoutRepositoryLookups(t *test
 	require.Equal(t, 2, adminSvc.openAISchedulerScorePoolCalls)
 
 	var payload struct {
-		Data struct {
-			Items []struct {
-				SchedulerScores []struct {
-					GroupID *int64 `json:"group_id"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				SchedulerScores []struct { // returned group score observations
+					GroupID *int64 `json:"group_id"` // returned routing group identifier
 				} `json:"scheduler_scores"`
 			} `json:"items"`
 		} `json:"data"`
@@ -348,6 +382,9 @@ func TestProviderHandlerListReusesHydratedGroupsWithoutRepositoryLookups(t *test
 	}
 }
 
+// TestProviderHandlerListSkipsSchedulerScoresByDefault lists an OpenAI provider
+// without the include-score query flag. Both score candidate query counters
+// remain zero and optional score fields stay absent from the response.
 func TestProviderHandlerListSkipsSchedulerScoresByDefault(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -375,8 +412,8 @@ func TestProviderHandlerListSkipsSchedulerScoresByDefault(t *testing.T) {
 	require.Zero(t, adminSvc.openAISchedulerScorePoolCalls)
 
 	var payload struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
+		Data struct { // decoded paginated response object
+			Items []map[string]any `json:"items"` // returned provider page items
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
@@ -385,6 +422,10 @@ func TestProviderHandlerListSkipsSchedulerScoresByDefault(t *testing.T) {
 	require.NotContains(t, payload.Data.Items[0], "scheduler_scores")
 }
 
+// TestProviderHandlerListKeepsSchedulerScoreScopedToFilter returns one visible
+// provider while supplying a hidden peer in score populations. The response's
+// overall and group-specific base scores agree for the visible provider and
+// retain the selected group identity.
 func TestProviderHandlerListKeepsSchedulerScoreScopedToFilter(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -431,15 +472,15 @@ func TestProviderHandlerListKeepsSchedulerScoreScopedToFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var payload struct {
-		Data struct {
-			Items []struct {
-				ID             int64 `json:"id"`
-				SchedulerScore struct {
-					BaseScore float64 `json:"base_score"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				ID             int64    `json:"id"` // returned TokenRouter provider identifier
+				SchedulerScore struct { // overall filter-pool score observation
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_score"`
-				SchedulerScores []struct {
-					GroupID   *int64  `json:"group_id"`
-					BaseScore float64 `json:"base_score"`
+				SchedulerScores []struct { // returned group score observations
+					GroupID   *int64  `json:"group_id"`   // returned routing group identifier
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_scores"`
 			} `json:"items"`
 		} `json:"data"`
@@ -453,6 +494,10 @@ func TestProviderHandlerListKeepsSchedulerScoreScopedToFilter(t *testing.T) {
 	require.Equal(t, item.SchedulerScores[0].BaseScore, item.SchedulerScore.BaseScore)
 }
 
+// TestProviderHandlerListSchedulerScoreIgnoresPagination returns one page item
+// while including an additional unpaged scoring candidate. The visible base
+// score reflects that wider candidate population and no group-specific scores
+// are emitted.
 func TestProviderHandlerListSchedulerScoreIgnoresPagination(t *testing.T) {
 	router, adminSvc := setupProviderListRouter()
 	now := time.Now().UTC()
@@ -489,15 +534,15 @@ func TestProviderHandlerListSchedulerScoreIgnoresPagination(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var payload struct {
-		Data struct {
-			Items []struct {
-				ID             int64 `json:"id"`
-				SchedulerScore struct {
-					BaseScore float64 `json:"base_score"`
+		Data struct { // decoded paginated response object
+			Items []struct { // returned provider page items
+				ID             int64    `json:"id"` // returned TokenRouter provider identifier
+				SchedulerScore struct { // overall filter-pool score observation
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_score"`
-				SchedulerScores []struct {
-					GroupID   *int64  `json:"group_id"`
-					BaseScore float64 `json:"base_score"`
+				SchedulerScores []struct { // returned group score observations
+					GroupID   *int64  `json:"group_id"`   // returned routing group identifier
+					BaseScore float64 `json:"base_score"` // returned scheduler base score
 				} `json:"scheduler_scores"`
 			} `json:"items"`
 		} `json:"data"`
@@ -509,6 +554,10 @@ func TestProviderHandlerListSchedulerScoreIgnoresPagination(t *testing.T) {
 	require.Empty(t, payload.Data.Items[0].SchedulerScores)
 }
 
+// setupProviderListRouter returns a narrow list router and its initialized
+// provider fixture. The caller can replace configured rows before requests,
+// while production ManagementList and RuntimePresenter supply observation and
+// encoding behavior.
 func setupProviderListRouter() (*gin.Engine, *managementListFixture) {
 	router := gin.New()
 	adminSvc := newManagementListFixture()
@@ -517,7 +566,10 @@ func setupProviderListRouter() (*gin.Engine, *managementListFixture) {
 	return router, adminSvc
 }
 
-// newManagementListFixtureHandler connects listing, scoring, and presentation with test defaults.
+// newManagementListFixtureHandler connects production listing, scoring and
+// presentation with fixed effective score defaults. Hydrated advanced groups
+// apply their overrides, while runtime status uses the empty observation
+// options for these controlled tests.
 func newManagementListFixtureHandler(source *managementListFixture) *ManagementHandler {
 	runtime := provider.NewRuntimeStatusReader(provider.RuntimeStatusOptions{})
 	scores := provider.NewSchedulerScoreView(source, provideradapter.SchedulerScoreOptions(nil, nil, func(_ context.Context, group *accessview.GroupConfig) policy.EffectiveSettings {

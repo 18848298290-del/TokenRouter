@@ -10,34 +10,60 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// ScheduledTestHandler handles administrator requests for scheduled provider tests.
+// Scheduled provider tests expose plan and result values directly as JSON on
+// successful administration calls. Creation enables a plan by default, update
+// retains values for omitted optional booleans and empty strings, and the
+// provider service validates cron expressions and computes the next execution
+// time before storage.
+
+// ScheduledTestHandler binds recurring provider-test plan and result
+// administration to the provider service.
 type ScheduledTestHandler struct {
-	scheduledTestSvc *provider.ScheduledTestService
+	scheduledTestSvc *provider.ScheduledTestService // borrowed plan and result administration
 }
 
+// createScheduledTestPlanRequest supplies a provider selection, required cron
+// expression and optional plan controls.
 type createScheduledTestPlanRequest struct {
-	ProviderID     int64  `json:"provider_id" binding:"required"`
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression" binding:"required"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	ProviderID     int64  `json:"provider_id" binding:"required"`     // scheduled test provider identifier
+	ModelID        string `json:"model_id"`                           // requested test model identifier
+	CronExpression string `json:"cron_expression" binding:"required"` // recurring schedule expression text
+	// Enabled defaults to true when omitted. A supplied false creates a disabled
+	// plan while still validating and storing its cron expression.
+	Enabled *bool `json:"enabled"` // optional plan enablement flag
+	// MaxResults limits retained test history for the plan. Nonpositive creation
+	// values select fifty through ScheduledTestService before the plan is
+	// persisted.
+	MaxResults int `json:"max_results"` // retained test result count
+	// AutoRecover defaults to false when omitted. A supplied value controls
+	// whether the runner requests state recovery after a successful scheduled
+	// test.
+	AutoRecover *bool `json:"auto_recover"` // optional successful-test recovery flag
 }
 
+// updateScheduledTestPlanRequest supplies selected mutable fields for an
+// existing provider-test plan.
 type updateScheduledTestPlanRequest struct {
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	// ModelID and CronExpression replace stored values only when nonempty.
+	// MaxResults replaces its stored value only when positive, while Enabled and
+	// AutoRecover replace theirs whenever supplied pointers are nonnil.
+	ModelID        string `json:"model_id"`        // selected test model edit
+	CronExpression string `json:"cron_expression"` // selected recurring schedule edit
+	Enabled        *bool  `json:"enabled"`         // optional plan enablement edit
+	MaxResults     int    `json:"max_results"`     // retained result count edit
+	AutoRecover    *bool  `json:"auto_recover"`    // optional test recovery edit
 }
 
-// NewScheduledTestHandler binds the scheduled test service.
+// NewScheduledTestHandler borrows recurring plan and result administration for
+// HTTP routes. The owner keeps repositories and schedule callbacks available
+// during requests; plan creation here does not start the scheduled runner.
 func NewScheduledTestHandler(scheduledTestSvc *provider.ScheduledTestService) *ScheduledTestHandler {
 	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc}
 }
 
-// ListByProvider returns the provider's scheduled test plans.
+// ListByProvider parses a decimal provider identifier and returns its plans
+// directly as JSON. Read failures use the endpoint's 500 response, while
+// malformed identifiers are rejected with 400 before repository access.
 func (h *ScheduledTestHandler) ListByProvider(c *gin.Context) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -53,7 +79,10 @@ func (h *ScheduledTestHandler) ListByProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, plans)
 }
 
-// Create creates a scheduled test plan.
+// Create binds a provider and required cron expression and returns the stored
+// plan directly as JSON. Omitted enablement defaults true, omitted
+// auto-recovery defaults false, and the service defaults nonpositive
+// retained-result limits to fifty.
 func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	var req createScheduledTestPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -83,7 +112,9 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusOK, created)
 }
 
-// Update edits an existing scheduled test plan.
+// Update loads a plan before binding selected edits and returns its updated
+// value directly as JSON. Empty model or cron strings and nonpositive result
+// limits retain stored values; optional booleans permit explicit false.
 func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -127,7 +158,9 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// Delete removes a scheduled test plan.
+// Delete removes the decimal path-selected plan and returns its confirmation
+// directly as JSON. Identifier failures return 400, while service deletion
+// failures use the endpoint's 500 error response.
 func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -142,7 +175,9 @@ func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
-// ListResults returns recent results for a scheduled test plan.
+// ListResults returns a plan's result history directly as JSON using a default
+// limit of fifty. A positive parsed limit is forwarded unchanged, and read
+// failures use the endpoint's 500 response.
 func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
