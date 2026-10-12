@@ -6,7 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestModelMappingDefaultsAreLazyAndIsolated checks that defaults are read on demand and copied.
+// TestModelMappingDefaultsAreLazyAndIsolated supplies explicit Antigravity rules
+// before clearing credentials. It checks that defaults are called on demand and
+// mutating a returned default map leaves subsequent reads unchanged.
 func TestModelMappingDefaultsAreLazyAndIsolated(t *testing.T) {
 	calls := 0
 	defaults := map[string]string{"alias": "default-model"}
@@ -23,14 +25,16 @@ func TestModelMappingDefaultsAreLazyAndIsolated(t *testing.T) {
 	require.Equal(t, "default-model", ResolveModelMapping(r, options)["alias"])
 }
 
-// TestResolveMappedModelPreservesMatchOrder checks raw exact, raw wildcard, then trimmed matching.
+// TestResolveMappedModelPreservesMatchOrder combines whitespace-bearing requests
+// with exact keys, wildcards, and a mapping chain. It checks raw-match precedence,
+// trimmed retry, unchanged misses, and the returned one-hop match flag.
 func TestResolveMappedModelPreservesMatchOrder(t *testing.T) {
 	cases := []struct {
-		name      string
-		mapping   map[string]string
-		requested string
-		want      string
-		matched   bool
+		name      string            // matching scenario display name
+		mapping   map[string]string // configured source target pairs
+		requested string            // raw supplied request spelling
+		want      string            // expected returned model spelling
+		matched   bool              // expected mapping match flag
 	}{
 		{name: "原始精确值优先", mapping: map[string]string{" model ": "raw", "model": "trimmed", "*": "wildcard"}, requested: " model ", want: "raw", matched: true},
 		{name: "原始通配符优先", mapping: map[string]string{"model": "trimmed", "*": "wildcard"}, requested: " model ", want: "wildcard", matched: true},
@@ -47,7 +51,9 @@ func TestResolveMappedModelPreservesMatchOrder(t *testing.T) {
 	}
 }
 
-// TestExplicitAntigravityMappingIsNotAugmented checks that explicit mappings stay separate from defaults.
+// TestExplicitAntigravityMappingIsNotAugmented supplies a custom target and an
+// identity mapping with no default factory. It checks the exact copied map,
+// source isolation, and unchanged resolution through a nil mapping.
 func TestExplicitAntigravityMappingIsNotAugmented(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "custom", "gemini-3.1-pro-high": "gemini-3.1-pro-high"}
 	value := &Record{Platform: PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}

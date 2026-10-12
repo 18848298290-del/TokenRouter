@@ -7,7 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestObservedCapacityRetainsWindowBoundaryAndIndependentValues checks window times and copied runtime values at observation time.
+// Quota capacity observations use reset times independently of configured
+// session and RPM limits. The fixture compares pause eligibility before and at
+// reset, then changes source settings to distinguish stored scalar results from
+// the mutable Extra map.
+
+// TestObservedCapacityRetainsWindowBoundaryAndIndependentValues observes an
+// OpenAI quota window before and at reset. It checks the pause boundary and
+// initial session, idle, and RPM values. Changing source max_sessions then leaves
+// the earlier snapshot's session count intact.
 func TestObservedCapacityRetainsWindowBoundaryAndIndependentValues(t *testing.T) {
 	now := time.Date(2026, 9, 13, 1, 0, 0, 0, time.UTC)
 	row := GroupProviderCapacityRow{ProviderID: 9, Platform: PlatformOpenAI, Concurrency: 2, Extra: map[string]any{"max_sessions": 4, "session_idle_timeout_minutes": 3, "base_rpm": 12, "codex_7d_used_percent": 99.0, "codex_7d_reset_at": now.Add(time.Hour).Format(time.RFC3339), "codex_usage_updated_at": now.Format(time.RFC3339)}}

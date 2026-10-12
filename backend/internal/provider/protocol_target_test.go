@@ -8,8 +8,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestGetAPIProtocol checks platform-specific legacy protocol selection.
-// DeepSeek and Kimi accept Responses; missing or invalid values default to Chat Completions.
+// TestGetAPIProtocol supplies supported, absent, and invalid legacy variants
+// across CN platforms. It checks recognized routing modes, Zhipu's Responses
+// fallback, and default Chat selection on an OpenAI record.
 func TestGetAPIProtocol(t *testing.T) {
 	t.Parallel()
 
@@ -35,6 +36,9 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.Equal(t, APIProtocolChatCompletions, (ProtocolTarget{Record: &Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}).GetAPIProtocol(), "非 CN 供应商恒为默认")
 }
 
+// TestGetCodingPlanProviderUsesPlatformInsteadOfURL supplies coding-plan records
+// with custom or another platform's endpoint spelling. It checks that Kimi and
+// Zhipu identity comes from Platform rather than their configured URL.
 func TestGetCodingPlanProviderUsesPlatformInsteadOfURL(t *testing.T) {
 	t.Parallel()
 	kimi := ProtocolTarget{Record: &Record{
@@ -55,6 +59,9 @@ func TestGetCodingPlanProviderUsesPlatformInsteadOfURL(t *testing.T) {
 	require.Equal(t, capability.PlatformZhipu, zhipu.GetCodingPlanProvider(), "中继路径不得改变平台身份")
 }
 
+// TestSupportsNativeCNResponses compares DeepSeek, Kimi, Zhipu, and OpenAI
+// platform records, including Kimi coding mode. It checks that native Responses
+// support follows platform identity for those supplied configurations.
 func TestSupportsNativeCNResponses(t *testing.T) {
 	t.Parallel()
 	require.True(t, (ProtocolTarget{Record: &Record{Platform: capability.PlatformDeepseek}}).SupportsNativeCNResponses())
@@ -64,16 +71,19 @@ func TestSupportsNativeCNResponses(t *testing.T) {
 	require.False(t, (ProtocolTarget{Record: &Record{Platform: capability.PlatformOpenAI}}).SupportsNativeCNResponses())
 }
 
+// TestAdaptiveProtocolBaseURLs combines adaptive selection with each supported
+// CN platform and provider mode. It checks their default Chat, Messages, and
+// Responses addresses plus the Messages endpoint convenience method.
 func TestAdaptiveProtocolBaseURLs(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name          string
-		platform      string
-		mode          string
-		wantChat      string
-		wantAnthropic string
-		wantResponses string
+		name          string // endpoint scenario display name
+		platform      string // configured CN platform identity
+		mode          string // configured provider billing mode
+		wantChat      string // expected default Chat address
+		wantAnthropic string // expected default Messages address
+		wantResponses string // expected default Responses address
 	}{
 		{"kimi payg", capability.PlatformKimi, ProviderModePayG, DefaultKimiPayGBaseURL, DefaultKimiPayGAnthropicBaseURL, DefaultKimiPayGBaseURL},
 		{"kimi coding", capability.PlatformKimi, ProviderModeCoding, DefaultKimiCodingBaseURL, DefaultKimiCodingAnthropicBaseURL, DefaultKimiCodingBaseURL},
@@ -96,6 +106,9 @@ func TestAdaptiveProtocolBaseURLs(t *testing.T) {
 	}
 }
 
+// TestAdaptiveProtocolBaseURLOverrides supplies three distinct protocol slots
+// alongside a legacy Chat base on a DeepSeek record. It checks that adaptive
+// lookup uses the corresponding slot for every asserted endpoint.
 func TestAdaptiveProtocolBaseURLOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -115,8 +128,9 @@ func TestAdaptiveProtocolBaseURLOverrides(t *testing.T) {
 	require.Equal(t, "https://responses.example.com", provider.GetCNProtocolBaseURL(APIProtocolResponses))
 }
 
-// TestAnthropicProtocolBaseURL checks platform defaults and custom overrides
-// for legacy Messages configurations.
+// TestAnthropicProtocolBaseURL supplies fixed legacy Messages records with
+// platform defaults and a custom relay. It checks the selected Messages bases
+// and an empty result for a fixed Chat configuration.
 func TestAnthropicProtocolBaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -151,8 +165,9 @@ func TestAnthropicProtocolBaseURL(t *testing.T) {
 	}}).GetAnthropicProtocolBaseURL())
 }
 
-// TestGetOpenAIFormatBaseURL_ProtocolAware checks model-list bases for Messages configurations.
-// Platform endpoints map to Chat defaults; custom relays retain their host and path prefix.
+// TestGetOpenAIFormatBaseURL_ProtocolAware supplies built-in and custom legacy
+// Messages bases plus a Chat record. It checks platform Chat defaults, terminal
+// Messages-path removal on relays, and direct use of the supplied Chat base.
 func TestGetOpenAIFormatBaseURL_ProtocolAware(t *testing.T) {
 	t.Parallel()
 

@@ -13,7 +13,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// newCodexDetectorTestContext supplies a lazy HTTP client-header reader.
+// newCodexDetectorTestContext returns a lazy reader for fixed user-agent and
+// originator test headers. Empty inputs leave their headers absent; subsequent
+// reads return the same fixture strings for detector predicates.
 func newCodexDetectorTestContext(ua string, originator string) func() (string, string) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	if ua != "" {
@@ -25,10 +27,16 @@ func newCodexDetectorTestContext(ua string, originator string) func() (string, s
 	return func() (string, string) { return req.Header.Get("User-Agent"), req.Header.Get("originator") }
 }
 
+// newCodexDetectorFixture binds the actual OpenAI identity predicates for tests.
+// A nil configuration disables ForceCLI; other configurations copy its current
+// flag into detector options for the fixture's lifetime.
 func newCodexDetectorFixture(cfg *config.Config) *CodexClientDetector {
 	return &CodexClientDetector{Options: CodexClientOptions{ForceCLI: cfg != nil && cfg.Gateway.ForceCodexCLI, OfficialUserAgent: openai.IsCodexOfficialClientRequestStrict, OfficialOriginator: openai.IsCodexOfficialClientOriginator, AllowedClients: openai.MatchAllowedClients}}
 }
 
+// TestOpenAICodexClientRestrictionDetector_Detect exercises disabled enforcement,
+// recognized header formats, unrecognized spellings, and the force override.
+// It checks the enforcement flag, match result, and reason chosen for each fixture.
 func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 	t.Run("未开启开关时绕过", func(t *testing.T) {
 		detector := newCodexDetectorFixture(nil)
@@ -198,6 +206,10 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 	})
 }
 
+// TestOpenAICodexClientRestrictionDetector_Detect_AllowedClients combines named
+// provider and global exceptions with matching and mismatched header pairs.
+// It checks their acceptance, disabled-policy behavior, and provider reason
+// precedence when both exception lists match.
 func TestOpenAICodexClientRestrictionDetector_Detect_AllowedClients(t *testing.T) {
 	const (
 		claudeCodeUA         = "Claude Code/0.5.0 (Macos 15.5; arm64) iTerm2.app (Claude Code; 1.0.4)"
@@ -336,6 +348,10 @@ func TestOpenAICodexClientRestrictionDetector_Detect_AllowedClients(t *testing.T
 	})
 }
 
+// TestOpenAICodexClientRestrictionDetector_Detect_ClientPolicy supplies explicit
+// unrestricted, Codex, and TLS-router policies alongside legacy or header inputs.
+// It checks policy precedence and router presence/match decisions, including
+// acceptance independent of the supplied user agent under TLS policy.
 func TestOpenAICodexClientRestrictionDetector_Detect_ClientPolicy(t *testing.T) {
 	detector := newCodexDetectorFixture(nil)
 

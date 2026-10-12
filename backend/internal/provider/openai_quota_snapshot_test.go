@@ -7,6 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestCodexSnapshotBaseTime uses nil, absent, valid, and malformed snapshot
+// timestamps.
+// It checks that valid observation time wins and the other fixtures return the
+// supplied fallback time unchanged.
 func TestCodexSnapshotBaseTime(t *testing.T) {
 	fallback := time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC)
 
@@ -40,6 +44,10 @@ func TestCodexSnapshotBaseTime(t *testing.T) {
 	})
 }
 
+// TestCodexResetAtRFC3339 supplies absent, positive, and negative reset
+// intervals.
+// It checks nil output, the expected ninety-second timestamp, and clamping a
+// negative interval to the base timestamp.
 func TestCodexResetAtRFC3339(t *testing.T) {
 	base := time.Date(2026, 2, 16, 10, 0, 0, 0, time.UTC)
 
@@ -74,6 +82,10 @@ func TestCodexResetAtRFC3339(t *testing.T) {
 	})
 }
 
+// TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt supplies primary
+// seven-day and secondary five-hour observations.
+// It checks the saved update time and both absolute resets against the snapshot
+// timestamp rather than the later fallback clock.
 func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	primaryUsed := 88.0
 	primaryReset := 86400
@@ -108,9 +120,10 @@ func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	}
 }
 
-// TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994 checks that used percentages
-// stay used percentages.
-// A one-percent secondary observation becomes one-percent five-hour usage (issue #2994, PR #2918).
+// TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994
+// supplies low used percentages in long and short windows. It checks that the
+// normalized values remain two percent and one percent used, protecting the
+// issue #2994 / PR #2918 case from percent inversion.
 func TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue2994(t *testing.T) {
 	secondaryUsed := 1.0 // Five-hour window with little usage.
 	secondaryWindow := 300
@@ -138,6 +151,10 @@ func TestBuildCodexUsageExtraUpdates_FreshProviderUsedPercentNotInverted_Issue29
 	}
 }
 
+// TestBuildCodexUsageExtraUpdates_FallbackToNowWhenUpdatedAtInvalid uses a
+// malformed update time and one short window.
+// It checks that both the update timestamp and thirty-second reset use the
+// supplied fallback observation clock.
 func TestBuildCodexUsageExtraUpdates_FallbackToNowWhenUpdatedAtInvalid(t *testing.T) {
 	primaryUsed := 15.0
 	primaryReset := 30
@@ -164,6 +181,10 @@ func TestBuildCodexUsageExtraUpdates_FallbackToNowWhenUpdatedAtInvalid(t *testin
 	}
 }
 
+// TestBuildCodexUsageExtraUpdates_ClampNegativeResetSeconds supplies a
+// negative short-window reset and a valid timestamp.
+// It checks that the raw negative count remains observable while the absolute
+// five-hour reset equals the snapshot time.
 func TestBuildCodexUsageExtraUpdates_ClampNegativeResetSeconds(t *testing.T) {
 	primaryUsed := 90.0
 	primaryReset := 7200
@@ -195,12 +216,20 @@ func TestBuildCodexUsageExtraUpdates_ClampNegativeResetSeconds(t *testing.T) {
 	}
 }
 
+// TestBuildCodexUsageExtraUpdates_NilSnapshot passes no quota observation
+// with a real fallback clock.
+// It checks that the builder returns nil, so a missing snapshot supplies no Extra
+// update patch.
 func TestBuildCodexUsageExtraUpdates_NilSnapshot(t *testing.T) {
 	if got := BuildCodexUsageExtraUpdates(nil, time.Now()); got != nil {
 		t.Fatalf("expected nil updates, got %v", got)
 	}
 }
 
+// TestBuildCodexUsageExtraUpdates_WithoutNormalizedWindowFields supplies a
+// utilization observation with no reset interval or update time.
+// It checks the fallback update timestamp and absence of both absolute reset
+// keys in the returned patch.
 func TestBuildCodexUsageExtraUpdates_WithoutNormalizedWindowFields(t *testing.T) {
 	primaryUsed := 42.0
 	fallbackNow := time.Date(2026, 2, 20, 9, 15, 0, 0, time.UTC)

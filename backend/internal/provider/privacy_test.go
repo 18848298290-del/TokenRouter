@@ -12,11 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// privacyLifecycleStore counts writes to detect persistence after a canceled operation returns late.
-type privacyLifecycleStore struct{ writes atomic.Int32 }
+// privacyLifecycleStore counts conditional write attempts after upstream privacy
+// callbacks return, allowing lifecycle tests to detect canceled observations.
+type privacyLifecycleStore struct {
+	writes atomic.Int32 // conditional write attempt count
+}
 
-// TestForceOpenAIPrivacy_SkipsShadow checks that shadow privacy is left to the parent.
-// The service has no dependencies configured and returns an empty result.
+// TestForceOpenAIPrivacy_SkipsShadow supplies a credential shadow to a service
+// with no privacy callbacks or stores configured. It checks that the force call
+// returns an empty result for that fixture.
 func TestForceOpenAIPrivacy_SkipsShadow(t *testing.T) {
 	svc := NewPrivacyService(nil, nil, PrivacyOptions{})
 	pid := int64(1)
@@ -24,6 +28,9 @@ func TestForceOpenAIPrivacy_SkipsShadow(t *testing.T) {
 	require.Equal(t, "", svc.ForceOpenAIPrivacy(context.Background(), shadow), "影子隐私设置应跳过")
 }
 
+// applyAntigravitySubscriptionResult builds shallow credential and Extra copies
+// from a nonnil test record, then applies plan and subscription observations.
+// Empty status or error strings remove those fields; nested values remain shared.
 func applyAntigravitySubscriptionResult(provider *Record, result AntigravitySubscriptionResult) (map[string]any, map[string]any) {
 	credentials := make(map[string]any)
 	maps.Copy(credentials, provider.Credentials)
@@ -31,6 +38,9 @@ func applyAntigravitySubscriptionResult(provider *Record, result AntigravitySubs
 
 	extra := make(map[string]any)
 	maps.Copy(extra, provider.Extra)
+	// Apply status and error together from this subscription result. Empty values
+	// remove stale observations while unrelated Extra entries, including
+	// privacy_mode, remain copied.
 	if result.SubscriptionStatus != "" {
 		extra["subscription_status"] = result.SubscriptionStatus
 	} else {
@@ -44,6 +54,9 @@ func applyAntigravitySubscriptionResult(provider *Record, result AntigravitySubs
 	return credentials, extra
 }
 
+// TestApplyAntigravityPrivacyMode_SetsInMemoryExtra begins with a record lacking
+// Extra and applies privacy_set. It checks that Extra is initialized and contains
+// the requested mode after local application.
 func TestApplyAntigravityPrivacyMode_SetsInMemoryExtra(t *testing.T) {
 	provider := &Record{}
 
@@ -57,6 +70,9 @@ func TestApplyAntigravityPrivacyMode_SetsInMemoryExtra(t *testing.T) {
 	}
 }
 
+// TestApplyAntigravityPrivacyMode_PreservedBySubscriptionResult applies privacy
+// before building a subscription update. It checks that the update keeps both
+// privacy_set and an unrelated existing Extra entry.
 func TestApplyAntigravityPrivacyMode_PreservedBySubscriptionResult(t *testing.T) {
 	provider := &Record{
 		Credentials: map[string]any{
@@ -80,11 +96,19 @@ func TestApplyAntigravityPrivacyMode_PreservedBySubscriptionResult(t *testing.T)
 	}
 }
 
+// UpdatePrivacyModeIfUnchanged counts the fixture's write attempt and reports
+// successful persistence for any supplied version and privacy mode.
 func (s *privacyLifecycleStore) UpdatePrivacyModeIfUnchanged(context.Context, UsageObservationVersion, string) (bool, error) {
+	// Parallel maintenance may reach this fixture. Count each attempted write
+	// atomically so lifecycle assertions observe the total after joining the operation.
 	s.writes.Add(1)
 	return true, nil
 }
 
+// TestPrivacyLifecycleCancelsAndPreventsLateWrites stops an entered upstream
+// callback that either honors cancellation or ignores it until released. It checks
+// shutdown results, empty late observations, zero writes, rejected later requests,
+// and reuse of the first shutdown result.
 func TestPrivacyLifecycleCancelsAndPreventsLateWrites(t *testing.T) {
 	for _, ignore := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cancel", true: "deadline"}[ignore], func(t *testing.T) {
@@ -104,6 +128,8 @@ func TestPrivacyLifecycleCancelsAndPreventsLateWrites(t *testing.T) {
 			}})
 			value := &Record{ID: 1, Platform: PlatformOpenAI, Type: ProviderTypeOAuth, Credentials: map[string]any{"access_token": "fixture"}}
 			require.Zero(t, calls.Load())
+			// Wait for the callback's entry before shutdown so cancellation and deadline
+			// assertions concern registered work rather than a request rejected before starting.
 			go func() { done <- core.ForceOpenAIPrivacy(context.Background(), value) }()
 			<-entered
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -115,6 +141,8 @@ func TestPrivacyLifecycleCancelsAndPreventsLateWrites(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+			// Release the cancellation-ignoring branch after StopContext returns, then
+			// join its result to verify the late mode was discarded before persistence.
 			close(release)
 			require.Empty(t, <-done)
 			require.Zero(t, store.writes.Load())

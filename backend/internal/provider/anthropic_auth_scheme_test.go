@@ -8,11 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Messages authentication scheme selection depends on provider platform and
+// authentication type as well as the Extra value. Fixtures cover default,
+// explicit, and unrecognized settings and compare an unsupported platform with
+// a CN API-key record.
+
+// TestProvider_GetAnthropicAPIKeyAuthScheme supplies default, bearer, invalid,
+// and unsupported-platform configurations. Each result must select the asserted
+// scheme while keeping the unsupported provider on the default header choice.
 func TestProvider_GetAnthropicAPIKeyAuthScheme(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		want     string
+		name     string  // named authentication scheme scenario
+		provider *Record // configured provider record fixture
+		want     string  // expected authentication header scheme
 	}{
 		{
 			name: "缺省使用 x-api-key",
@@ -64,8 +72,9 @@ func TestProvider_GetAnthropicAPIKeyAuthScheme(t *testing.T) {
 	}
 }
 
-// TestGetAnthropicAPIKeyAuthScheme_CNProvider checks CN overrides in Extra
-// and the default x-api-key scheme.
+// TestGetAnthropicAPIKeyAuthScheme_CNProvider uses a Zhipu API-key record for
+// the Messages protocol. Its missing Extra value must select x-api-key, and an
+// explicit bearer setting must replace that selection.
 func TestGetAnthropicAPIKeyAuthScheme_CNProvider(t *testing.T) {
 	t.Parallel()
 
