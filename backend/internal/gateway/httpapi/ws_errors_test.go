@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpenAIWSIngressEndedByClient_BareNormalClosureIsNotProviderFailure
+// supplies the network library's unwrapped normal-close error. It requires
+// client-end attribution even though the error is not a gateway close wrapper.
 func TestOpenAIWSIngressEndedByClient_BareNormalClosureIsNotProviderFailure(t *testing.T) {
 	err := coderws.CloseError{Code: coderws.StatusNormalClosure, Reason: "client done"}
 
@@ -22,6 +25,9 @@ func TestOpenAIWSIngressEndedByClient_BareNormalClosureIsNotProviderFailure(t *t
 	require.True(t, ResponsesWSEndedByClient(err, ResponsesWSCloseInfo(err)))
 }
 
+// TestOpenAIWSIngressEndedByClient_WrappedBareNormalClosureIsNotProviderFailure
+// wraps a library normal-close error with turn context. Client-end attribution
+// must still recognize the normal status through the error chain.
 func TestOpenAIWSIngressEndedByClient_WrappedBareNormalClosureIsNotProviderFailure(t *testing.T) {
 	err := fmt.Errorf("ingress turn 3: %w",
 		coderws.CloseError{Code: coderws.StatusNormalClosure, Reason: "client done"})
@@ -29,6 +35,10 @@ func TestOpenAIWSIngressEndedByClient_WrappedBareNormalClosureIsNotProviderFailu
 	require.True(t, ResponsesWSEndedByClient(err, ResponsesWSCloseInfo(err)))
 }
 
+// TestOpenAIWSIngressEndedByClient_ClientCancelDuringTurnIsNotProviderFailure
+// wraps cancellation with a going-away close code. It requires client-end
+// attribution from the cause even though the selected code differs from normal
+// closure.
 func TestOpenAIWSIngressEndedByClient_ClientCancelDuringTurnIsNotProviderFailure(t *testing.T) {
 	err := NewOpenAIWSClientCloseError(
 		coderws.StatusGoingAway, "websocket request canceled", context.Canceled)
@@ -42,6 +52,9 @@ func TestOpenAIWSIngressEndedByClient_ClientCancelDuringTurnIsNotProviderFailure
 	require.True(t, ResponsesWSEndedByClient(err, ResponsesWSCloseInfo(err)))
 }
 
+// TestOpenAIWSIngressEndedByClient_GatewayNormalClosureStillRecognised wraps
+// deadline expiry with a normal idle close instruction. The explicit normal
+// status keeps this gateway control result attributed to the client.
 func TestOpenAIWSIngressEndedByClient_GatewayNormalClosureStillRecognised(t *testing.T) {
 	err := NewOpenAIWSClientCloseError(
 		coderws.StatusNormalClosure, "websocket idle timeout", context.DeadlineExceeded)

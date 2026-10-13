@@ -6,13 +6,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequestLifetime references the application's active-request barrier.
-type RequestLifetime struct{ enter func() (func(), error) }
+// Requests can enqueue completion work until their handlers finish. The
+// application supplies one activity barrier so shutdown can wait for that work
+// before closing completion and storage dependencies; a rejected entry is
+// reported in the inbound protocol.
 
-// BindRequestActivity must be called during assembly, before serving HTTP requests.
+// RequestLifetime holds the application callback used to count active requests.
+type RequestLifetime struct {
+	// enter is bound during assembly and read by handlers after serving begins.
+	// Its owner decides shutdown admission and supplies the accepted activity release.
+	enter func() (func(), error)
+}
+
+// BindRequestActivity installs the application-owned request entry callback.
+// Assembly calls it before serving requests, because handlers read the binding
+// directly and do not coordinate concurrent replacement.
 func (r *RequestLifetime) BindRequestActivity(enter func() (func(), error)) { r.enter = enter }
 
-// BeginRequest enters the activity barrier and returns a release function; a closed barrier rejects the request.
+// BeginRequest enters the shared activity barrier and returns its accepted
+// release callback. Callers release accepted activity after request cleanup and
+// completion capture. An absent binding accepts with an empty callback; an
+// entry error writes a protocol-specific 503 and returns false before the
+// handler reads its body.
 func (r *RequestLifetime) BeginRequest(c *gin.Context, format string) (func(), bool) {
 	if r.enter == nil {
 		return func() {}, true

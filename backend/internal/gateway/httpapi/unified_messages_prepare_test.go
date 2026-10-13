@@ -22,26 +22,40 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// nativeQueueProbe records serialization, throttle and release observations
+// with an injected error.
 type nativeQueueProbe struct {
+	// acquired counts serialization calls; throttled counts spacing calls for the
+	// configured fixture.
 	acquired, throttled int
-	released            atomic.Int32
-	err                 error
+	released            atomic.Int32 // atomic serial release count
+	err                 error        // injected queue operation failure
 }
 
+// nativeBedrockPolicy supplies the compatibility setting used by native
+// preparation tests.
 type nativeBedrockPolicy struct{}
 
+// AcquireWithWait counts serialization, marks ping commitment and returns a
+// counted release. It also returns the injected error, allowing preparation
+// tests to observe any callback retained alongside diagnostic queue failure.
 func (q *nativeQueueProbe) AcquireWithWait(_ *gin.Context, _ int64, _ int, _ bool, started *bool, _ time.Duration, _ *zap.Logger) (func(), error) {
 	q.acquired++
 	*started = true
 	return func() { q.released.Add(1) }, q.err
 }
 
+// ThrottleWithPing counts spacing requests, marks stream state and returns the
+// injected error. It obtains no release callback, so tests can distinguish
+// throttle observation from serialization ownership.
 func (q *nativeQueueProbe) ThrottleWithPing(_ *gin.Context, _ int64, _ int, _ bool, started *bool, _ time.Duration, _ *zap.Logger) error {
 	q.throttled++
 	*started = true
 	return q.err
 }
 
+// nativePrepareContext constructs a Messages request using the supplied
+// context.
 func nativePrepareContext(ctx context.Context) (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -49,8 +63,10 @@ func nativePrepareContext(ctx context.Context) (*gin.Context, *httptest.Response
 	return c, recorder
 }
 
-// TestUnifiedWarmupStopsBeforeQueueAndUpstream checks that warmup interception retains the caller context and
-// bypasses queueing and forwarding.
+// TestUnifiedWarmupStopsBeforeQueueAndUpstream supplies a recognized native
+// warmup probe with an explicit execution deadline. It requires local synthetic
+// output, no queue admission and retention of that deadline in Gin request
+// context.
 func TestUnifiedWarmupStopsBeforeQueueAndUpstream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -70,7 +86,10 @@ func TestUnifiedWarmupStopsBeforeQueueAndUpstream(t *testing.T) {
 	require.Equal(t, deadline, retained)
 }
 
-// TestUnifiedMessageQueueOwnsOneRelease checks release on upstream acceptance or cancellation and repeated outer cleanup.
+// TestUnifiedMessageQueueOwnsOneRelease drives upstream acceptance and
+// cancellation against the same queue callback. It requires one underlying
+// release despite repeated outer cleanup, shared ping state and removal of the
+// parsed acceptance callback.
 func TestUnifiedMessageQueueOwnsOneRelease(t *testing.T) {
 	for _, cancelBeforeAccept := range []bool{false, true} {
 		t.Run(map[bool]string{false: "accepted", true: "canceled"}[cancelBeforeAccept], func(t *testing.T) {
@@ -88,6 +107,9 @@ func TestUnifiedMessageQueueOwnsOneRelease(t *testing.T) {
 			require.Equal(t, 1, queue.acquired)
 			require.True(t, streamStarted)
 			require.NotNil(t, parsed.OnUpstreamAccepted)
+			// Select cancellation or upstream acceptance before repeating outer cleanup,
+			// demonstrating that those independently triggered paths converge on one
+			// counted release.
 			if cancelBeforeAccept {
 				cancel()
 				require.Eventually(t, func() bool { return queue.released.Load() == 1 }, time.Second, time.Millisecond)
@@ -103,6 +125,9 @@ func TestUnifiedMessageQueueOwnsOneRelease(t *testing.T) {
 	}
 }
 
+// TestUnifiedMessageThrottleAndToolResults configures provider throttle mode
+// with an injected spacing failure. Preparation must continue and skip queueing
+// a later tool-result-only message while retaining a valid cleanup function.
 func TestUnifiedMessageThrottleAndToolResults(t *testing.T) {
 	c, _ := nativePrepareContext(context.Background())
 	queue := &nativeQueueProbe{err: errors.New("queue unavailable")}
@@ -119,10 +144,16 @@ func TestUnifiedMessageThrottleAndToolResults(t *testing.T) {
 	require.Equal(t, 1, queue.throttled, "工具结果不进入真实用户消息队列")
 }
 
+// GetGroupPolicy returns enabled Bedrock Claude-Code compatibility for every
+// group lookup.
 func (nativeBedrockPolicy) GetGroupPolicy(context.Context, int64) (*routing.GroupPolicyView, error) {
 	return &routing.GroupPolicyView{GroupRoutingPolicy: routing.GroupRoutingPolicy{Enabled: true, FeaturesConfig: map[string]any{"bedrock_cc_compat": map[string]any{"anthropic": true}}}}, nil
 }
 
+// TestUnifiedMessagePreparationKeepsBedrockCompatibility supplies native
+// Claude-Code headers and unsupported Bedrock fields. It requires removal of
+// service_tier, context_management and the beta header, and checks the installed
+// Bedrock Anthropic version.
 func TestUnifiedMessagePreparationKeepsBedrockCompatibility(t *testing.T) {
 	c, _ := nativePrepareContext(context.Background())
 	groupID := int64(7)

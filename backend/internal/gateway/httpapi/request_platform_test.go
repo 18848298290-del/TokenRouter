@@ -9,7 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestOpenAICompatibleRequestPlatformStaysUnspecifiedBeforeSelection checks that candidates may span platforms.
+// TestOpenAICompatibleRequestPlatformStaysUnspecifiedBeforeSelection supplies
+// absent and present API Key group data. Both produce an unspecified platform
+// so provider capability selection remains responsible for the candidate
+// platform.
 func TestOpenAICompatibleRequestPlatformStaysUnspecifiedBeforeSelection(t *testing.T) {
 	require.Empty(t, OpenAICompatibleRequestPlatform(nil))
 	require.Empty(t, OpenAICompatibleRequestPlatform(&apikey.APIKey{Group: &routing.Group{}}))

@@ -12,6 +12,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
+// TestSendMockInterceptResponse_MaxTokensOneHaiku answers a one-token Haiku
+// probe locally. It requires max_tokens termination, the fixed character,
+// synthetic token count and the supported Messages ID and stop-details shape.
 func TestSendMockInterceptResponse_MaxTokensOneHaiku(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -44,6 +47,9 @@ func TestSendMockInterceptResponse_MaxTokensOneHaiku(t *testing.T) {
 	require.NotContains(t, usage, "total_tokens")
 }
 
+// TestSendMockInterceptStream_UsesAnthropicSchema answers a suggestion probe
+// with synthetic streaming events. It requires Messages IDs, stop details and
+// separated start/terminal usage fields in the emitted event sequence.
 func TestSendMockInterceptStream_UsesAnthropicSchema(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)

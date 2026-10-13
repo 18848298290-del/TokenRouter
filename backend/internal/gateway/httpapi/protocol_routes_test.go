@@ -9,12 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestProtocolRouteMethodAndResourceBoundaries checks method and subresource admission, including separate
-// task-operation switches.
+// TestProtocolRouteMethodAndResourceBoundaries supplies methods and paths for
+// generation, WebSocket and resource operations. It requires separate protocol
+// admission for new work while existing-task paths remain outside those
+// generation switches.
 func TestProtocolRouteMethodAndResourceBoundaries(t *testing.T) {
 	for _, tc := range []struct {
+		// method is the HTTP verb; path is its normalized resource target.
 		method, path string
-		want         ProtocolID
+		want         ProtocolID // expected admission protocol identifier
 	}{
 		{http.MethodGet, "/responses", ProtocolResponsesWebSocket},
 		{http.MethodPost, "/responses", ""},
@@ -41,7 +44,9 @@ func TestProtocolRouteMethodAndResourceBoundaries(t *testing.T) {
 	}
 }
 
-// TestProtocolCatalogRoutesAreIndependent checks that modifying returned routes leaves global admission metadata unchanged.
+// TestProtocolCatalogRoutesAreIndependent mutates a route returned by the
+// catalogue accessor. Global admission matching must retain the original path,
+// and embedding capability remains present for both checked platforms.
 func TestProtocolCatalogRoutesAreIndependent(t *testing.T) {
 	for _, protocol := range ProtocolEndpoints() {
 		if protocol.ID == ProtocolEmbeddings {

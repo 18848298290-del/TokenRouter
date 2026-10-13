@@ -26,17 +26,22 @@ import (
 
 // nativeGeminiPricingFixture counts forwarding, slot release, and scheduling feedback.
 type nativeGeminiPricingFixture struct {
-	bridge   *nativeGeminiAttemptBridge
-	response *httptest.ResponseRecorder
-	forwards int
-	releases int
-	reports  int
+	bridge   *nativeGeminiAttemptBridge // retained native attempt adapter
+	response *httptest.ResponseRecorder // captured Google HTTP output
+	forwards int                        // platform forwarding call count
+	releases int                        // provider cleanup call count
+	reports  int                        // scheduler feedback call count
 }
 
-// TestNativeGeminiForwardRejectsMissingPricing covers both generation actions, three Gemini credential types, and
-// Antigravity.
+// TestNativeGeminiForwardRejectsMissingPricing spans generation actions and
+// Gemini or Antigravity credential kinds. Missing prices must stop before
+// forwarding and feedback, release the slot, and report local Google pricing
+// denial.
 func TestNativeGeminiForwardRejectsMissingPricing(t *testing.T) {
-	for _, target := range []struct{ platform, kind string }{
+	for _, target := range []struct {
+		// platform identifies the provider family; kind identifies its credential type.
+		platform, kind string
+	}{
 		{provider.PlatformGemini, "apikey"},
 		{provider.PlatformGemini, "oauth"},
 		{provider.PlatformGemini, "service_account"},
@@ -62,14 +67,20 @@ func TestNativeGeminiForwardRejectsMissingPricing(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardPricingModels checks the admitted billing model against price cards and model mappings.
+// TestNativeGeminiForwardPricingModels combines explicit cards and requested,
+// mapped or upstream billing sources on both platforms. It protects forwarding
+// and feedback only for an admitted priced model, while every attempt releases
+// capacity.
 func TestNativeGeminiForwardPricingModels(t *testing.T) {
 	input, zero, multiplier := 2e-6, 0.0, 2.0
 	for _, platform := range []string{provider.PlatformGemini, provider.PlatformAntigravity} {
 		for _, tc := range []struct {
+			// name labels the price scenario; requested is the client name; mapped is
+			// the group route; upstream is the provider target; source chooses the
+			// billing model origin.
 			name, requested, mapped, upstream, source string
-			card                                      *routing.ModelPricingEntry
-			missing                                   bool
+			card                                      *routing.ModelPricingEntry // optional explicit price card
+			missing                                   bool                       // expected price admission failure
 		}{
 			{name: "catalog", mapped: "gemini-2.5-flash"},
 			{name: "manual", card: &routing.ModelPricingEntry{InputPrice: &input}},
@@ -122,10 +133,14 @@ func TestNativeGeminiForwardPricingModels(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardPricingScope leaves counting and action validation to the platform executor and uses
-// shared rules for image models.
+// TestNativeGeminiForwardPricingScope supplies countTokens, an unsupported
+// action and an image generation model. The text pricing preflight leaves those
+// cases to their platform or media rules and returns provider ownership.
 func TestNativeGeminiForwardPricingScope(t *testing.T) {
-	for _, tc := range []struct{ action, model string }{
+	for _, tc := range []struct {
+		// action names the Google method; model names the requested native model.
+		action, model string
+	}{
 		{"countTokens", "unpriced-gemini-model"},
 		{"unsupportedAction", "unpriced-gemini-model"},
 		{"generateContent", "gpt-image-1"},
@@ -142,7 +157,10 @@ func TestNativeGeminiForwardPricingScope(t *testing.T) {
 	}
 }
 
-// TestNativeGeminiForwardRechecksProviderPricing checks pricing again with the replacement provider's mapping.
+// TestNativeGeminiForwardRechecksProviderPricing first admits a provider
+// mapping to a priced model, then replaces the provider. The new unpriced
+// mapping must stop before another forward or feedback while releasing the
+// second attempt.
 func TestNativeGeminiForwardRechecksProviderPricing(t *testing.T) {
 	fixture := newNativeGeminiPricingFixture(t, provider.PlatformGemini, "generateContent")
 	bridge := fixture.bridge
@@ -159,7 +177,10 @@ func TestNativeGeminiForwardRechecksProviderPricing(t *testing.T) {
 	require.Equal(t, 2, fixture.releases)
 }
 
-// TestNativeGeminiForwardRouteErrorReleasesSlot checks that route rejection ends the attempt and releases its slot.
+// TestNativeGeminiForwardRouteErrorReleasesSlot selects unsupported Antigravity
+// API Key routing. It requires a safe server pricing-check error with the
+// original route cause, no forward or feedback, and returned provider
+// ownership.
 func TestNativeGeminiForwardRouteErrorReleasesSlot(t *testing.T) {
 	fixture := newNativeGeminiPricingFixture(t, provider.PlatformAntigravity, "generateContent")
 	bridge := fixture.bridge
@@ -178,7 +199,10 @@ func TestNativeGeminiForwardRouteErrorReleasesSlot(t *testing.T) {
 	require.False(t, bridge.c.GetBool(gatewayhttp.OpsClientBusinessLimitedKey))
 }
 
-// newNativeGeminiPricingFixture builds an attempt with fixed catalogue prices and optional group price cards.
+// newNativeGeminiPricingFixture constructs native attempt state with fixed
+// catalogue pricing and optional group cards. Platform callbacks count
+// forwarding and enforce the expected platform; the fixture retains a response
+// recorder plus independent release and scheduling-feedback counts.
 func newNativeGeminiPricingFixture(t *testing.T, platform, action string, cards ...routing.ModelPricingEntry) *nativeGeminiPricingFixture {
 	t.Helper()
 	fixture := &nativeGeminiPricingFixture{response: httptest.NewRecorder()}

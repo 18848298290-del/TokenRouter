@@ -10,32 +10,62 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Gateway correction switches and beta rules are runtime settings stored
+// through one shared service. Admin updates validate their supplied shape, save
+// the complete configuration and read it back for response DTOs; empty pattern
+// or rule lists are presented as JSON arrays.
+
 // GatewaySettingsEndpoints declares HTTP operations for the gateway settings service.
 type GatewaySettingsEndpoints interface {
+	// GetRectifierSettings presents the shared correction settings, including an
+	// array for empty pattern storage. Implementations use the request context and
+	// return shared HTTP errors when settings cannot be read.
 	GetRectifierSettings(*gin.Context)
+	// UpdateRectifierSettings replaces correction switches and bounded cleaned
+	// patterns from JSON input. Implementations save before readback, so a later
+	// read error can be reported after the configuration has persisted.
 	UpdateRectifierSettings(*gin.Context)
+	// GetBetaPolicySettings presents ordered beta rules from the shared runtime
+	// service. Implementations map those rules to HTTP DTO values and report
+	// service read errors using the normal response envelope.
 	GetBetaPolicySettings(*gin.Context)
+	// UpdateBetaPolicySettings validates and replaces ordered beta rules supplied
+	// in JSON. Implementations persist before reading the response state again; a
+	// failed readback cannot imply that the preceding save was rolled back.
 	UpdateBetaPolicySettings(*gin.Context)
 }
 
-// RuntimeSettingsHandler reads and updates gateway policy settings.
-type RuntimeSettingsHandler struct{ settingService *gateway.RuntimeSettings }
+// RuntimeSettingsHandler reads and replaces gateway policy settings through the
+// shared service.
+type RuntimeSettingsHandler struct {
+	settingService *gateway.RuntimeSettings // shared gateway settings service
+}
 
-// UpdateRectifierSettingsRequest contains request-correction switches and signature patterns.
+// UpdateRectifierSettingsRequest binds complete correction switches and custom
+// signature patterns from JSON.
 type UpdateRectifierSettingsRequest struct {
-	Enabled                  bool     `json:"enabled"`
-	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
-	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
-	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
-	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
+	Enabled bool `json:"enabled"` // global correction switch
+	// thinking signature correction switch
+	ThinkingSignatureEnabled bool `json:"thinking_signature_enabled"`
+	// thinking budget correction switch
+	ThinkingBudgetEnabled bool `json:"thinking_budget_enabled"`
+	// API Key signature recovery switch
+	APIKeySignatureEnabled bool `json:"apikey_signature_enabled"`
+	// APIKeySignaturePatterns is bounded before saving: supplied entries count
+	// toward fifty, blank trimmed strings are dropped, and retained strings have a
+	// five-hundred-byte limit.
+	APIKeySignaturePatterns []string `json:"apikey_signature_patterns"`
 }
 
 // UpdateBetaPolicySettingsRequest contains the beta policy rules to save.
 type UpdateBetaPolicySettingsRequest struct {
-	Rules []gatewaydto.BetaPolicyRule `json:"rules"`
+	Rules []gatewaydto.BetaPolicyRule `json:"rules"` // ordered replacement beta rules
 }
 
-// RegisterGatewaySettingsRoutes requires a settings group with authentication and auditing installed.
+// RegisterGatewaySettingsRoutes binds rectifier and beta policy reads and
+// updates below adminSettings. Assembly installs authentication and auditing on
+// that parent group before registration; these routes reuse the supplied
+// settings endpoint implementation.
 func RegisterGatewaySettingsRoutes(adminSettings *gin.RouterGroup, endpoint GatewaySettingsEndpoints) {
 	adminSettings.GET("/rectifier", endpoint.GetRectifierSettings)
 	adminSettings.PUT("/rectifier", endpoint.UpdateRectifierSettings)
@@ -43,12 +73,15 @@ func RegisterGatewaySettingsRoutes(adminSettings *gin.RouterGroup, endpoint Gate
 	adminSettings.PUT("/beta-policy", endpoint.UpdateBetaPolicySettings)
 }
 
-// NewRuntimeSettingsHandler binds the shared runtime settings service.
+// NewRuntimeSettingsHandler binds the shared service used for gateway settings.
 func NewRuntimeSettingsHandler(settings *gateway.RuntimeSettings) *RuntimeSettingsHandler {
 	return &RuntimeSettingsHandler{settingService: settings}
 }
 
-// GetRectifierSettings returns request-correction settings.
+// GetRectifierSettings returns stored or service-default request-correction
+// settings in the HTTP success envelope. Missing pattern slices become JSON
+// arrays, and service failures use shared error presentation with the request
+// context.
 func (h *RuntimeSettingsHandler) GetRectifierSettings(c *gin.Context) {
 	settings, err := h.settingService.GetRectifierSettings(c.Request.Context())
 	if err != nil {
@@ -57,6 +90,8 @@ func (h *RuntimeSettingsHandler) GetRectifierSettings(c *gin.Context) {
 	}
 
 	patterns := settings.APIKeySignaturePatterns
+	// Expose empty storage as a JSON array so the settings form can iterate
+	// signature patterns using the same shape as populated responses.
 	if patterns == nil {
 		patterns = []string{}
 	}
@@ -69,7 +104,10 @@ func (h *RuntimeSettingsHandler) GetRectifierSettings(c *gin.Context) {
 	})
 }
 
-// UpdateRectifierSettings updates request-correction settings.
+// UpdateRectifierSettings replaces the correction switches and cleaned
+// signature patterns. It bounds supplied entry count before trimming, drops
+// blank patterns and limits each retained string by bytes. Saving precedes a
+// readback response; a readback failure can follow successful persistence.
 func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 	var req UpdateRectifierSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -77,7 +115,8 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	// Bound the pattern count and length before trimming and saving.
+	// Bound supplied list work before cleaning; retained patterns are measured
+	// in bytes after trimming so their stored text stays within the HTTP budget.
 	const maxPatterns = 50
 	const maxPatternLen = 500
 	if len(req.APIKeySignaturePatterns) > maxPatterns {
@@ -110,6 +149,9 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
+	// Read settings after the save to report their stored representation; failure
+	// here reports unavailable readback while the preceding persistence remains
+	// complete.
 	updatedSettings, err := h.settingService.GetRectifierSettings(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)
@@ -117,6 +159,8 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 	}
 
 	updatedPatterns := updatedSettings.APIKeySignaturePatterns
+	// Normalize empty readback storage to an array so the update response has the
+	// same pattern shape as the settings read endpoint.
 	if updatedPatterns == nil {
 		updatedPatterns = []string{}
 	}
@@ -129,7 +173,9 @@ func (h *RuntimeSettingsHandler) UpdateRectifierSettings(c *gin.Context) {
 	})
 }
 
-// GetBetaPolicySettings returns beta policy settings.
+// GetBetaPolicySettings returns the shared service's ordered beta rules as HTTP
+// DTO values. A zero-length list is encoded as an array; service errors are
+// presented using the request context and shared response helper.
 func (h *RuntimeSettingsHandler) GetBetaPolicySettings(c *gin.Context) {
 	settings, err := h.settingService.GetBetaPolicySettings(c.Request.Context())
 	if err != nil {
@@ -144,7 +190,10 @@ func (h *RuntimeSettingsHandler) GetBetaPolicySettings(c *gin.Context) {
 	httpx.Success(c, gatewaydto.BetaPolicySettings{Rules: rules})
 }
 
-// UpdateBetaPolicySettings updates beta policy settings.
+// UpdateBetaPolicySettings replaces the supplied ordered beta rules after
+// service validation. The service can normalize whitelist strings in those
+// rules, and the response reads settings again after saving; readback failure
+// does not roll back persisted configuration.
 func (h *RuntimeSettingsHandler) UpdateBetaPolicySettings(c *gin.Context) {
 	var req UpdateBetaPolicySettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -163,6 +212,9 @@ func (h *RuntimeSettingsHandler) UpdateBetaPolicySettings(c *gin.Context) {
 		return
 	}
 
+	// Read the validated stored rules after saving so the response includes
+	// service normalization; later read failure leaves the persisted replacement
+	// in place.
 	updated, err := h.settingService.GetBetaPolicySettings(c.Request.Context())
 	if err != nil {
 		httpx.ErrorFrom(c, err)

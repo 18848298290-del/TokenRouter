@@ -31,20 +31,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-type unifiedRecordWriter struct{ rows []*usage.UsageLog }
+// unifiedRecordWriter retains usage rows produced by the common completion
+// recorder.
+type unifiedRecordWriter struct {
+	rows []*usage.UsageLog // retained recorded usage-row pointers
+}
 
+// unifiedRecordEffects supplies inert completion side effects for native
+// accounting assertions.
 type unifiedRecordEffects struct{}
 
+// unifiedRecordModels supplies one exact pricing candidate for native usage
+// recording.
 type unifiedRecordModels struct{}
 
+// unifiedSearchSource supplies an absent search backend during native protocol
+// dispatch.
 type unifiedSearchSource struct{}
 
-// TestTextPricingCompactModel checks Compact global models, provider overrides, and the final billing model.
+// TestTextPricingCompactModel combines global and provider Compact mappings
+// with billing sources and passthrough mode. It requires forwarding the chosen
+// priced model, or local rejection before transport when the selected billing
+// name lacks a price.
 func TestTextPricingCompactModel(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		for _, tc := range []struct {
+			// name labels the scenario; requested is the client model; global is the
+			// default Compact model; providerCompact is the override; upstream is the
+			// expected target; billingSource selects its price origin.
 			name, requested, global, providerCompact, upstream, billingSource string
-			ordinary, rejected                                                bool
+			// ordinary selects the normal Responses path; rejected marks expected
+			// pricing denial.
+			ordinary, rejected bool
 		}{
 			{name: "unpriced_global", requested: "gpt-5.6-luna", global: "private-compact", rejected: true},
 			{name: "priced_global", requested: "private-model", global: "gpt-5.6-luna", upstream: "gpt-5.6-luna"},
@@ -107,7 +125,9 @@ func TestTextPricingCompactModel(t *testing.T) {
 	}
 }
 
-// TestTextPricingResolvesResponsesChatRoute checks preflight against forwarding when Responses resolves to Chat.
+// TestTextPricingResolvesResponsesChatRoute permits only Chat conversion for a
+// Responses request and maps the provider model. It requires matching pricing
+// and forwarding names while the original target route remains unchanged.
 func TestTextPricingResolvesResponsesChatRoute(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		t.Run(fmt.Sprintf("passthrough=%t", passthrough), func(t *testing.T) {
@@ -138,7 +158,9 @@ func TestTextPricingResolvesResponsesChatRoute(t *testing.T) {
 	}
 }
 
-// TestTextPricingRouteErrorPreservesCause checks that protocol rejection reaches route-error handling.
+// TestTextPricingRouteErrorPreservesCause disables allowed conversion for a
+// Chat-only target. It requires the route error rather than a missing-price
+// classification and verifies no client output has been committed.
 func TestTextPricingRouteErrorPreservesCause(t *testing.T) {
 	group := &routing.Group{ID: 100, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolOpenAIResponses: {}}}
 	ctx := requeststate.WithClientProtocol(context.Background(), protocol.ProtocolOpenAIResponses)
@@ -154,10 +176,15 @@ func TestTextPricingRouteErrorPreservesCause(t *testing.T) {
 	require.False(t, c.Writer.Written())
 }
 
-// TestUnifiedTextDispatchUsesSelectedProvider installs the selected platform's executor so incorrect dispatch
-// fails immediately.
+// TestUnifiedTextDispatchUsesSelectedProvider configures only the selected
+// platform executor for each scenario. It requires the expected upstream path,
+// delivered content and native-usage presence appropriate to that platform.
 func TestUnifiedTextDispatchUsesSelectedProvider(t *testing.T) {
-	tests := []struct{ platform, model, path, response string }{
+	tests := []struct {
+		// platform names the selected provider; model names its request target;
+		// path names the expected endpoint; response supplies native reply JSON.
+		platform, model, path, response string
+	}{
 		{"anthropic", "claude-sonnet-4-5", "/v1/messages", `{"id":"msg-native","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3,"cache_creation_input_tokens":7,"cache_read_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":5},"speed":"fast"}}`},
 		{"gemini", "gemini-2.5-flash", ":generateContent", `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"totalTokenCount":13}}`},
 		{"openai", "gpt-5.4", "/v1/responses", `{"id":"resp-native","object":"response","status":"completed","model":"gpt-5.4","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}}`},
@@ -200,21 +227,33 @@ func TestUnifiedTextDispatchUsesSelectedProvider(t *testing.T) {
 	}
 }
 
+// Create appends the supplied usage-row pointer for fixture recording
+// assertions.
 func (w *unifiedRecordWriter) Create(_ context.Context, row *usage.UsageLog) (bool, error) {
 	w.rows = append(w.rows, row)
 	return true, nil
 }
 
+// ProviderUsed satisfies completion effects without scheduling a fixture
+// provider update.
 func (unifiedRecordEffects) ProviderUsed(int64) {}
 
+// InvalidateAuth satisfies completion effects without changing fixture
+// authentication cache state.
 func (unifiedRecordEffects) InvalidateAuth(context.Context, string) {}
 
+// Settled satisfies completion effects without adding settlement notifications
+// to this fixture.
 func (unifiedRecordEffects) Settled(completion.SettlementInput, *billing.UsageBillingApplyResult) {}
 
+// Candidates returns the supplied model as the fixture's sole pricing
+// candidate.
 func (unifiedRecordModels) Candidates(model string, _ ...string) []string { return []string{model} }
 
-// TestUnifiedNativeUsageSurvivesCaptureAndRecord checks native input-token categories through conversion, capture,
-// and billing.
+// TestUnifiedNativeUsageSurvivesCaptureAndRecord converts and captures native
+// cache buckets, then records their billing input. It requires independent
+// usage values and retained native billing categories, with a separate OpenAI
+// interpretation subtracting cache counts.
 func TestUnifiedNativeUsageSurvivesCaptureAndRecord(t *testing.T) {
 	tier := "priority"
 	native := &forward.MessagesResult{RequestID: "native-usage", Model: "claude-sonnet-4-5", UpstreamModel: "claude-sonnet-4-5", Usage: protocol.TokenUsage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 30, CacheCreationInputTokens: 12, CacheCreation5mTokens: 5, CacheCreation1hTokens: 7, Speed: "fast"}, Stream: true, ClientDisconnect: true, ServiceTier: &tier, Duration: time.Second}
@@ -252,4 +291,5 @@ func TestUnifiedNativeUsageSurvivesCaptureAndRecord(t *testing.T) {
 	require.Equal(t, 58, logs.rows[1].InputTokens)
 }
 
+// Current reports no external searcher for native dispatch fixture execution.
 func (unifiedSearchSource) Current() searchtools.Searcher { return nil }

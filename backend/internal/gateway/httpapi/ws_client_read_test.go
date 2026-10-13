@@ -15,15 +15,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// TestReadOpenAIWSClientMessage_ControlCloseFrames drives idle expiry,
+// missing-first-message expiry and ingress lease loss through a real WebSocket
+// pair. It protects the received close status and reason and requires the
+// server reader to return matching control details.
 func TestReadOpenAIWSClientMessage_ControlCloseFrames(t *testing.T) {
 	tests := []struct {
-		name          string
-		timeout       time.Duration
-		timeoutStatus coderws.StatusCode
-		timeoutReason string
-		cancelCause   error
-		wantStatus    coderws.StatusCode
-		wantReason    string
+		name          string             // close scenario label
+		timeout       time.Duration      // idle read budget
+		timeoutStatus coderws.StatusCode // timeout close code
+		timeoutReason string             // timeout close text
+		cancelCause   error              // injected control cancellation
+		wantStatus    coderws.StatusCode // expected client close code
+		wantReason    string             // expected client close text
 	}{
 		{
 			name:          "inter-turn idle sends normal close",
@@ -62,6 +66,8 @@ func TestReadOpenAIWSClientMessage_ControlCloseFrames(t *testing.T) {
 					return
 				}
 				defer func() { _ = conn.CloseNow() }()
+				// Signal after acceptance so lease cancellation tests target the reader
+				// control phase and the client can observe its selected close handshake.
 				close(readStarted)
 				_, _, err = ReadOpenAIWSClientMessage(
 					controlCtx,
@@ -92,6 +98,8 @@ func TestReadOpenAIWSClientMessage_ControlCloseFrames(t *testing.T) {
 			require.Equal(t, tt.wantStatus, clientClose.Code)
 			require.Equal(t, tt.wantReason, clientClose.Reason)
 
+			// Bound the server join observation so a delivered client close cannot hide
+			// a reader that remains blocked after transport shutdown.
 			select {
 			case serverErr := <-serverResult:
 				var closeErr *OpenAIWSClientCloseError
@@ -105,6 +113,9 @@ func TestReadOpenAIWSClientMessage_ControlCloseFrames(t *testing.T) {
 	}
 }
 
+// TestReadOpenAIWSClientMessage_ParentCancellationStillJoinsRead cancels a
+// parent context after a real server reader starts. The client receives a
+// going-away close and the server read returns before the join deadline.
 func TestReadOpenAIWSClientMessage_ParentCancellationStillJoinsRead(t *testing.T) {
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	serverResult := make(chan error, 1)
@@ -116,6 +127,8 @@ func TestReadOpenAIWSClientMessage_ParentCancellationStillJoinsRead(t *testing.T
 			return
 		}
 		defer func() { _ = conn.CloseNow() }()
+		// Signal transport readiness before parent cancellation so the client
+		// can receive the control close while the background reader remains active.
 		close(readStarted)
 		_, _, err = ReadOpenAIWSClientMessage(controlCtx, conn, 0, 0, "")
 		serverResult <- err
@@ -137,6 +150,8 @@ func TestReadOpenAIWSClientMessage_ParentCancellationStillJoinsRead(t *testing.T
 	require.Equal(t, coderws.StatusGoingAway, clientClose.Code)
 	require.Equal(t, "websocket request canceled", clientClose.Reason)
 
+	// Wait for server completion after receiving closure; the test fails if parent
+	// cancellation leaves the gateway reader running.
 	select {
 	case <-serverResult:
 	case <-time.After(time.Second):

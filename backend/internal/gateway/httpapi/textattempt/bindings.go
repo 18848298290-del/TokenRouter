@@ -20,184 +20,276 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Text attempt runtimes share application services while each Open call owns
+// its current selection, provider and forwarding result. Binding copies
+// callback values into a dependency object, connecting platform attempts to the
+// common text loop and synchronous HTTP error output before requests begin.
+
 // ForwardPorts supplies single-attempt platform execution; gateway/text owns provider failover.
 type ForwardPorts struct {
-	AntigravityAvailable   bool
-	BedrockCompat          func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
+	// AntigravityAvailable gates compatible Chat and Responses execution before
+	// those callbacks are called. False reports missing compatibility service and
+	// ends that selected attempt.
+	AntigravityAvailable bool
+	// Bedrock client compatibility transformation
+	BedrockCompat func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
+	// Antigravity Messages attempt execution
 	ForwardAntigravity     func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte, bool) (*forwardcore.MessagesResult, error)
-	ForwardAntigravityChat func(
+	ForwardAntigravityChat func( // Antigravity Chat conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
+	// Antigravity native Gemini execution
 	ForwardAntigravityGemini    func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, string, string, bool, []byte, bool, ...forwardcore.GeminiSessionOption) (*forwardcore.MessagesResult, error)
-	ForwardAntigravityResponses func(
+	ForwardAntigravityResponses func( // Antigravity Responses conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	ForwardChat func(
+	ForwardChat func( // generic Chat attempt execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		parsed *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
+	// Gemini Messages conversion execution
 	ForwardGemini     func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
-	ForwardGeminiChat func(
+	ForwardGeminiChat func( // Gemini Chat conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 	) (*forwardcore.MessagesResult, error)
+	// native Gemini action execution
 	ForwardGeminiNative    func(ctx context.Context, c *gin.Context, provider *gatewaycapture.ExecutionProvider, originalModel string, action string, stream bool, body []byte) (*forwardcore.MessagesResult, error)
-	ForwardGeminiResponses func(
+	ForwardGeminiResponses func( // Gemini Responses conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
+	// native Messages attempt execution
 	ForwardMessages  func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, *requeststate.ParsedRequest) (*forwardcore.MessagesResult, error)
-	ForwardResponses func(
+	ForwardResponses func( // generic Responses attempt execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		parsed *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	GeminiAvailable        bool
-	ReplaceModel           func(body []byte, newModel string) []byte
-	SaveGeminiSession      func(_ context.Context, groupID int64, prefixHash, digestChain, uuid string, providerID int64, oldDigestChain string) error
+	// GeminiAvailable gates compatible Gemini execution before its callbacks are
+	// used. Native Gemini has its own execution path and does not consult this
+	// compatibility availability flag.
+	GeminiAvailable bool
+	// request model replacement callback
+	ReplaceModel func(body []byte, newModel string) []byte
+	// digest-based Gemini affinity persistence
+	SaveGeminiSession func(_ context.Context, groupID int64, prefixHash, digestChain, uuid string, providerID int64, oldDigestChain string) error
+	// mapped Claude failure presentation
 	WriteMappedClaudeError func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error
 }
 
 // SelectionPorts supplies shared provider selection, session, and scheduling feedback operations.
 type SelectionPorts struct {
-	ProviderSwitched    func(*gatewaycapture.SelectionResult)
-	BindSticky          func(context.Context, *int64, string, int64) error
-	IncrementRPM        func(context.Context, int64) error
-	NewSessionAttempts  func() *scheduler.SessionAttempts
-	ReportSchedule      func(*gatewaycapture.SelectionResult, int64, bool, *forwardcore.MessagesResult)
-	CachedSession       func(context.Context, *int64, string) (int64, error)
-	SelectProvider      func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
+	// selected-provider switch observation
+	ProviderSwitched func(*gatewaycapture.SelectionResult)
+	// selected provider affinity persistence
+	BindSticky func(context.Context, *int64, string, int64) error
+	// successful provider RPM increment
+	IncrementRPM func(context.Context, int64) error
+	// request session attempt tracker factory
+	NewSessionAttempts func() *scheduler.SessionAttempts
+	// attempt scheduler feedback callback
+	ReportSchedule func(*gatewaycapture.SelectionResult, int64, bool, *forwardcore.MessagesResult)
+	// cached sticky provider lookup
+	CachedSession func(context.Context, *int64, string) (int64, error)
+	// provider selection with credential target
+	SelectProvider func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
+	// single-provider group eligibility check
 	SingleProviderGroup func(context.Context, *int64) bool
-	TempUnschedule      func(context.Context, int64, *forwardcore.UpstreamFailoverError)
-	TrackSession        func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
+	// exhausted failure scheduling penalty
+	TempUnschedule func(context.Context, int64, *forwardcore.UpstreamFailoverError)
+	// selected provider session tracking
+	TrackSession func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
 }
 
 // Bindings fixes runtime dependencies during construction; Open creates per-request attempt state.
 type Bindings struct {
-	Forward         ForwardPorts
-	Selection       SelectionPorts
+	Forward   ForwardPorts   // bound platform execution callbacks
+	Selection SelectionPorts // bound selection and feedback callbacks
+	// authorized replacement-group funding resolver
 	ResolveFallback func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
-	Diagnoser       routing.ModelAvailabilityDiagnoser
-	Quota           gatewaycapture.QuotaUpdater
-	Recorder        *completion.Recorder
-	Pricing         *admission.ModelPricing
-	Concurrency     *gatewayhttp.ConcurrencyHelper
-	Queue           *gatewayhttp.UserMsgQueueHelper
-	QueueWait       time.Duration
+	// model availability failure diagnoser
+	Diagnoser routing.ModelAvailabilityDiagnoser
+	Quota     gatewaycapture.QuotaUpdater // Key quota update service
+	Recorder  *completion.Recorder        // shared usage completion recorder
+	// Pricing optionally checks attempt billing models before generation. Nil
+	// keeps this admission check disabled while the selected platform execution
+	// path remains available.
+	Pricing     *admission.ModelPricing
+	Concurrency *gatewayhttp.ConcurrencyHelper  // shared HTTP slot management
+	Queue       *gatewayhttp.UserMsgQueueHelper // shared serial message queue
+	QueueWait   time.Duration                   // queue acquisition timeout duration
 
-	PlanRoute  func(context.Context, *apikey.APIKey, string) routing.RoutePlan
+	// effective group route planner
+	PlanRoute func(context.Context, *apikey.APIKey, string) routing.RoutePlan
+	// QueueMode supplies the default when an eligible provider has no queue mode.
+	// An absent Queue or ineligible request leaves serial queue handling disabled.
 	QueueMode  string
-	Errors     *errorpolicy.ErrorPassthroughService
-	Submission gatewayhttp.CompletionSubmission
+	Errors     *errorpolicy.ErrorPassthroughService // shared final error-rule service
+	Submission gatewayhttp.CompletionSubmission     // bound completion task submission
 }
+
+// messageExecutionDependencies retains shared application operations read by
+// serial text attempt adapters.
 type messageExecutionDependencies struct {
+	// geminiAvailable gates Gemini compatibility; antigravityAvailable gates
+	// Antigravity compatibility. Each flag is retained with the platform callbacks
+	// configured during runtime assembly.
 	geminiAvailable, antigravityAvailable bool
-	forwardResponses                      func(
+	forwardResponses                      func( // generic Responses attempt execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		parsed *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	forwardChat func(
+	forwardChat func( // generic Chat attempt execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		parsed *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	forwardAntigravityResponses func(
+	forwardAntigravityResponses func( // Antigravity Responses conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	forwardAntigravityChat func(
+	forwardAntigravityChat func( // Antigravity Chat conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	forwardGeminiResponses func(
+	forwardGeminiResponses func( // Gemini Responses conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 		_ *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	forwardGeminiChat func(
+	forwardGeminiChat func( // Gemini Chat conversion execution
 		ctx context.Context,
 		c *gin.Context,
 		provider *gatewaycapture.ExecutionProvider,
 		body []byte,
 	) (*forwardcore.MessagesResult, error)
-	forwardGeminiNative              func(ctx context.Context, c *gin.Context, provider *gatewaycapture.ExecutionProvider, originalModel string, action string, stream bool, body []byte) (*forwardcore.MessagesResult, error)
-	saveGeminiSession                func(_ context.Context, groupID int64, prefixHash, digestChain, uuid string, providerID int64, oldDigestChain string) error
-	replaceModel                     func(body []byte, newModel string) []byte
-	responsesErrorResponse           func(c *gin.Context, status int, code, message string)
-	chatCompletionsErrorResponse     func(c *gin.Context, status int, errType, message string)
+	// native Gemini action execution
+	forwardGeminiNative func(ctx context.Context, c *gin.Context, provider *gatewaycapture.ExecutionProvider, originalModel string, action string, stream bool, body []byte) (*forwardcore.MessagesResult, error)
+	// digest-based Gemini affinity persistence
+	saveGeminiSession func(_ context.Context, groupID int64, prefixHash, digestChain, uuid string, providerID int64, oldDigestChain string) error
+	// request model replacement callback
+	replaceModel func(body []byte, newModel string) []byte
+	// Responses JSON error presentation
+	responsesErrorResponse func(c *gin.Context, status int, code, message string)
+	// Chat JSON error presentation
+	chatCompletionsErrorResponse func(c *gin.Context, status int, errType, message string)
+	// Responses exhaustion error presentation
 	handleResponsesFailoverExhausted func(c *gin.Context, lastErr *forwardcore.UpstreamFailoverError, streamStarted bool)
-	handleCCFailoverExhausted        func(c *gin.Context, lastErr *forwardcore.UpstreamFailoverError, streamStarted bool)
-	handleGeminiFailoverExhausted    func(c *gin.Context, failoverErr *forwardcore.UpstreamFailoverError)
+	// Chat exhaustion error presentation
+	handleCCFailoverExhausted func(c *gin.Context, lastErr *forwardcore.UpstreamFailoverError, streamStarted bool)
+	// native Gemini exhaustion presentation
+	handleGeminiFailoverExhausted func(c *gin.Context, failoverErr *forwardcore.UpstreamFailoverError)
 
-	prepareGatewayAttemptRequest      func(context.Context, *requeststate.ParsedRequest, []byte, *apikey.APIKey, string) (*requeststate.ParsedRequest, routing.GroupMappingResult, error)
-	selectProvider                    func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
-	trackSession                      func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
-	newSessionAttempts                func() *scheduler.SessionAttempts
-	singleProviderGroup               func(context.Context, *int64) bool
-	reportSchedule                    func(*gatewaycapture.SelectionResult, int64, bool, *forwardcore.MessagesResult)
-	incrementRPM                      func(context.Context, int64) error
-	bindSticky                        func(context.Context, *int64, string, int64) error
-	cachedSession                     func(context.Context, *int64, string) (int64, error)
-	providerSwitched                  func(*gatewaycapture.SelectionResult)
-	tempUnschedule                    func(context.Context, int64, *forwardcore.UpstreamFailoverError)
-	bedrockCompat                     func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
-	forwardMessages                   func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, *requeststate.ParsedRequest) (*forwardcore.MessagesResult, error)
-	forwardAntigravity                func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte, bool) (*forwardcore.MessagesResult, error)
-	forwardGemini                     func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
-	forwardAntigravityGemini          func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, string, string, bool, []byte, bool, ...forwardcore.GeminiSessionOption) (*forwardcore.MessagesResult, error)
-	writeMappedClaudeError            func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error
-	resolveFallback                   func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
-	planRoute                         func(context.Context, *apikey.APIKey, string) routing.RoutePlan
-	diagnoser                         routing.ModelAvailabilityDiagnoser
-	apiKeyService                     gatewaycapture.QuotaUpdater
-	recorder                          *completion.Recorder
-	pricing                           *admission.ModelPricing
-	concurrencyHelper                 *gatewayhttp.ConcurrencyHelper
-	userMsgQueueHelper                *gatewayhttp.UserMsgQueueHelper
-	messageWaitTimeout                time.Duration
-	getUserMsgQueueMode               func(*gatewaycapture.ExecutionProvider, *requeststate.ParsedRequest) string
-	errorResponse                     func(*gin.Context, int, string, string)
-	handleStreamingAwareError         func(*gin.Context, int, string, string, bool)
+	// per-attempt group input preparation
+	prepareGatewayAttemptRequest func(context.Context, *requeststate.ParsedRequest, []byte, *apikey.APIKey, string) (*requeststate.ParsedRequest, routing.GroupMappingResult, error)
+	// provider target and capacity selection
+	selectProvider func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
+	// selected provider session tracking
+	trackSession func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
+	// request session attempt tracker factory
+	newSessionAttempts func() *scheduler.SessionAttempts
+	// single-provider group eligibility check
+	singleProviderGroup func(context.Context, *int64) bool
+	// observed attempt scheduling feedback
+	reportSchedule func(*gatewaycapture.SelectionResult, int64, bool, *forwardcore.MessagesResult)
+	// successful provider RPM update
+	incrementRPM func(context.Context, int64) error
+	// selected provider affinity persistence
+	bindSticky func(context.Context, *int64, string, int64) error
+	// cached sticky provider lookup
+	cachedSession func(context.Context, *int64, string) (int64, error)
+	// selected provider switch observation
+	providerSwitched func(*gatewaycapture.SelectionResult)
+	// exhausted failure scheduling penalty
+	tempUnschedule func(context.Context, int64, *forwardcore.UpstreamFailoverError)
+	// Bedrock client compatibility transformation
+	bedrockCompat func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
+	// native Messages attempt execution
+	forwardMessages func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, *requeststate.ParsedRequest) (*forwardcore.MessagesResult, error)
+	// Antigravity Messages attempt execution
+	forwardAntigravity func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte, bool) (*forwardcore.MessagesResult, error)
+	// Gemini Messages conversion execution
+	forwardGemini func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
+	// Antigravity native Gemini execution
+	forwardAntigravityGemini func(context.Context, *gin.Context, *gatewaycapture.ExecutionProvider, string, string, bool, []byte, bool, ...forwardcore.GeminiSessionOption) (*forwardcore.MessagesResult, error)
+	// mapped Claude failure presentation
+	writeMappedClaudeError func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error
+	// authorized replacement-group funding resolver
+	resolveFallback func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
+	// effective group route planner
+	planRoute func(context.Context, *apikey.APIKey, string) routing.RoutePlan
+	// model availability failure diagnoser
+	diagnoser routing.ModelAvailabilityDiagnoser
+	// Key quota update service
+	apiKeyService gatewaycapture.QuotaUpdater
+	// shared usage completion recorder
+	recorder *completion.Recorder
+	// pricing enables billing-model admission for generation attempts when nonnil.
+	// A nil service leaves preflight disabled; the platform still handles its
+	// selected action.
+	pricing *admission.ModelPricing
+	// shared HTTP slot management
+	concurrencyHelper *gatewayhttp.ConcurrencyHelper
+	// shared serial message queue
+	userMsgQueueHelper *gatewayhttp.UserMsgQueueHelper
+	messageWaitTimeout time.Duration // message queue wait budget
+	// eligible provider queue-mode resolver
+	getUserMsgQueueMode func(*gatewaycapture.ExecutionProvider, *requeststate.ParsedRequest) string
+	// Messages JSON error presentation
+	errorResponse func(*gin.Context, int, string, string)
+	// Messages stream-aware error presentation
+	handleStreamingAwareError func(*gin.Context, int, string, string, bool)
+	// coded Messages stream error presentation
 	handleStreamingAwareErrorWithCode func(*gin.Context, int, string, string, string, bool)
-	handleConcurrencyError            func(*gin.Context, error, string, bool)
-	handleFailoverExhausted           func(*gin.Context, *forwardcore.UpstreamFailoverError, string, bool)
-	handleFailoverExhaustedSimple     func(*gin.Context, int, bool)
-	ensureForwardErrorResponse        func(*gin.Context, bool) bool
-	submitUsageRecordTask             func(*gin.Context, completion.UsageRecordTask)
+	// slot acquisition failure presentation
+	handleConcurrencyError func(*gin.Context, error, string, bool)
+	// Messages exhausted-attempt error presentation
+	handleFailoverExhausted func(*gin.Context, *forwardcore.UpstreamFailoverError, string, bool)
+	// Messages exhausted-status error presentation
+	handleFailoverExhaustedSimple func(*gin.Context, int, bool)
+	// uncommunicated failure output completion
+	ensureForwardErrorResponse func(*gin.Context, bool) bool
+	// configured completion task submission
+	submitUsageRecordTask func(*gin.Context, completion.UsageRecordTask)
 }
 
-// New binds application-owned resources to a text attempt runtime.
+// New binds application-owned forwarding, selection, recording and HTTP output
+// dependencies to a Runtime. Each Open call creates serial request-local state
+// while these service references stay shared. Queue mode uses provider settings
+// when nonempty, otherwise the configured binding default; callers configure
+// every operation used by their selected entry kind.
 func New(b Bindings) *Runtime {
 	output := gatewayhttp.MessagesErrorOutput{Rules: b.Errors}
 	d := &messageExecutionDependencies{
@@ -267,5 +359,5 @@ func New(b Bindings) *Runtime {
 	return &Runtime{dependencies: d}
 }
 
-// binding returns the dependencies fixed when the runtime was constructed.
+// binding returns the shared dependencies retained by this request attempt.
 func (b *messageAttemptBridge) binding() *messageExecutionDependencies { return b.fixed }

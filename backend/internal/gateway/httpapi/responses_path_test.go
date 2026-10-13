@@ -11,14 +11,17 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestOpenAIResponsesRequestPathSuffix supplies root paths, aliases and nested
+// operations. It requires normalized suffixes for Responses markers and an
+// empty suffix for unrelated paths.
 func TestOpenAIResponsesRequestPathSuffix(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
 	tests := []struct {
-		name string
-		path string
-		want string
+		name string // path scenario label
+		path string // inbound request path
+		want string // normalized suffix expectation
 	}{
 		{name: "exact v1 responses", path: "/v1/responses", want: ""},
 		{name: "compact v1 responses", path: "/v1/responses/compact", want: "/compact"},
@@ -80,6 +83,9 @@ func TestOpenAIResponsesRequestPathSuffixRejectsNonConformingSubpaths(t *testing
 	}
 }
 
+// TestIsOpenAIResponsesInputTokensRequestPath checks token preflight across
+// versioned, bare and Codex aliases. Each valid input_tokens suffix is
+// recognized while a compact suffix remains excluded.
 func TestIsOpenAIResponsesInputTokensRequestPath(t *testing.T) {
 	for _, path := range []string{"/v1/responses/input_tokens", "/responses/input_tokens", "/backend-api/codex/responses/input_tokens"} {
 		c := newResponsesSuffixTestContext(t, path)
@@ -89,6 +95,7 @@ func TestIsOpenAIResponsesInputTokensRequestPath(t *testing.T) {
 	require.False(t, IsOpenAIResponsesInputTokensRequestPath(c))
 }
 
+// newResponsesSuffixTestContext builds a Gin request with the supplied path.
 func newResponsesSuffixTestContext(t *testing.T, path string) *gin.Context {
 	t.Helper()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

@@ -10,28 +10,55 @@ import (
 	wireprotocol "github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// Gateway aliases need the same authentication and selected-group protocol
+// rules as their versioned entry points. Route registration fixes the inbound
+// protocol before endpoint execution, while compatible text dispatch chooses
+// platform execution from the selected provider. General and text body limits
+// are installed at their endpoint scopes.
+//
+// Responses wildcard paths are validated before forwarding and before Compact
+// admission, preventing malformed suffixes from altering an upstream target.
+// Google's model:action form requires wildcard capture in Gin. Dedicated
+// Antigravity routes install their platform restriction before credential
+// admission, and removed Codex model paths are rejected before the dynamic Live
+// sideband route can treat them as call IDs.
+
 // RouteEndpoints collects gateway HTTP handlers and externally supplied endpoint functions.
 type RouteEndpoints struct {
-	CountTokens            *CountTokensHandler
-	QoderCompatible        *QoderCompatibleHandler
-	CompatibleText         *CompatibleTextHandler
-	GeminiNative           *GeminiNativeHandler
-	OpenAIText             *OpenAITextHandler
-	OpenAITokens           *OpenAITokensHandler
-	ResponsesWS            gin.HandlerFunc
-	Models                 *ModelsHandler
-	Messages               *MessagesHandler
-	Media                  *MediaHandler
-	Auxiliary              *AuxiliaryHandler
-	Live                   *LiveHandler
-	Search                 *SearchHandler
+	CountTokens     *CountTokensHandler     // Messages token-count HTTP handler
+	QoderCompatible *QoderCompatibleHandler // Qoder compatible text handler
+	CompatibleText  *CompatibleTextHandler  // compatible text request handler
+	GeminiNative    *GeminiNativeHandler    // Gemini native protocol handler
+	OpenAIText      *OpenAITextHandler      // unified OpenAI text handler
+	OpenAITokens    *OpenAITokensHandler    // OpenAI token preflight handler
+	ResponsesWS     gin.HandlerFunc         // Responses WebSocket ingress handler
+	Models          *ModelsHandler          // client model catalogue handler
+	Messages        *MessagesHandler        // Antigravity Messages entry handler
+	Media           *MediaHandler           // image and video HTTP handlers
+	Auxiliary       *AuxiliaryHandler       // auxiliary and voice HTTP handlers
+	Live            *LiveHandler            // Live creation and sideband handlers
+	Search          *SearchHandler          // standalone Web and X handlers
+	// PublicUsage handles authenticated usage lookup; QoderChat supplies the Qoder
+	// chat endpoint function.
 	PublicUsage, QoderChat gin.HandlerFunc
 }
 
-// RegisterGatewayRoutes registers protocol paths and aliases with their ordered middleware.
+// RegisterGatewayRoutes installs gateway endpoint families with ordered
+// middleware and aliases. Assembly provides required handlers, authentication,
+// request limits and batch registration before serving requests. The root group
+// fixes English protocol error language, and optional model attributes precede
+// route admission.
+//
+// Shared aliases retain the same client protocol controls and provider
+// execution entry. Responses wildcard suffixes validate before their terminal
+// protocol gate, so malformed paths cannot contribute to an upstream target.
+// Google model actions use wildcard capture because their colon syntax shares a
+// path segment. Antigravity families install a forced platform before
+// authentication and retain it through their selected-group execution.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#gateway_pipeline
 func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options RouteMiddleware, registerBatchImages func(*gin.RouterGroup)) {
-	// Gateway protocol responses use English; website routes handle account and site language settings.
+	// Install protocol language before admission middleware writes errors, so
+	// credential and handler failures use the gateway's fixed English response language.
 	r := engine.Group("", func(c *gin.Context) {
 		ctx := locale.WithLanguage(c.Request.Context(), "en")
 		c.Request = c.Request.WithContext(ctx)
@@ -67,7 +94,8 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	responsesInputTokensHandler := func(c *gin.Context) { endpoints.OpenAITokens.ResponsesInputTokens(c) }
 	// Forced-platform aliases are carried through to the count_tokens handler.
 
-	// Token counting uses the Messages protocol admission gate.
+	// Count requests consume the Messages permission even though their helper
+	// entry performs preflight counting instead of generating or billing an answer.
 	countTokensProtocolGate := func(c *gin.Context) { messagesProtocolGate(c) }
 	countTokensHandler := func(c *gin.Context) { countTokensHTTP.CountTokens(c) }
 	imagesHandler := func(c *gin.Context) { mediaHTTP.Images(c) }
@@ -78,7 +106,8 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	videoExtensionHandler := func(c *gin.Context) { mediaHTTP.GrokVideoExtension(c) }
 
 	responsesWebSocketHandler := func(c *gin.Context) { responsesWSHTTP(c) }
-	// Reject the removed Codex models path before the dynamic sideband route consumes it.
+	// The dynamic call-ID route also matches models. Reject that removed
+	// resource before authentication or sideband lookup can interpret it as a Live call.
 	rejectRemovedCodexRoute := func(c *gin.Context) {
 		if c.Param("call_id") == "models" {
 			c.AbortWithStatus(http.StatusNotFound)
@@ -202,7 +231,8 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	{
 		gemini.GET("/models", modelsHTTP.GeminiV1BetaListModels)
 		gemini.GET("/models/*model", modelsHTTP.GeminiV1BetaGetModel)
-		// Gin treats ":" as a parameter marker, but Gemini uses "{model}:{action}" in one segment.
+		// Capture the whole model/action suffix because Gemini places a colon
+		// inside its segment and Gin otherwise interprets it as a route parameter marker.
 		gemini.POST("/models/*modelAction", requireGeminiGenerateContentProtocol, geminiNativeHTTP.GeminiV1BetaModels)
 	}
 
@@ -246,7 +276,8 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	r.POST("/embeddings", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, func(c *gin.Context) { auxiliaryHTTP.Embeddings(c) })
 	r.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, imagesHandler)
 	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, imagesHandler)
-	// OpenAI-style clients can create video tasks through this /v1/videos alias.
+	// Bare video creation aliases share the generation control and handler with
+	// /v1/videos, while status and content routes retain task ownership checks.
 	r.POST("/videos", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, videoGenerationHandler)
 	r.POST("/videos/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, videoGenerationHandler)
 	r.POST("/videos/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, videoEditHandler)
@@ -319,6 +350,10 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	}
 }
 
+// grokCustomVoiceEndpoint constructs the upstream custom-voice resource path
+// from the route parameter. A matched audio route appends /audio; callers
+// establish the valid resource route and voice ID before forwarding this
+// endpoint.
 func grokCustomVoiceEndpoint(c *gin.Context) string {
 	endpoint := "custom-voices/" + c.Param("voice_id")
 	if strings.HasSuffix(c.FullPath(), "/:voice_id/audio") {

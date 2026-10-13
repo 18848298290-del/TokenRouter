@@ -19,80 +19,135 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// ingressRejectSettingRepo counts settings lookups that an ingress skip should
+// bypass.
 type ingressRejectSettingRepo struct {
-	settingscore.Repository
-	getValueCalls int
+	settingscore.Repository     // unimplemented fixture repository methods
+	getValueCalls           int // counted settings read calls
 }
 
+// ingressRejectOpsRepo retains submitted diagnostic pointers for persistence
+// assertions in serial tests.
 type ingressRejectOpsRepo struct {
-	opscore.OpsRepository
-	insertCalls int
-	entries     []*opscore.OpsInsertErrorLogInput
+	opscore.OpsRepository     // unimplemented fixture repository methods
+	insertCalls           int // counted repository submission calls
+	// entries retains submitted pointers in order. Tests serialize access and keep
+	// referenced inputs stable before checking the observation passed to
+	// persistence.
+	entries []*opscore.OpsInsertErrorLogInput
 }
 
+// blockingOpsResponseWriter delays one delegated write to expose capture
+// release ordering.
 type blockingOpsResponseWriter struct {
-	gin.ResponseWriter
-	writeStarted chan struct{}
-	writeRelease chan struct{}
+	gin.ResponseWriter // embedded client response writer
+	// writeStarted closes when the sole delegated write begins, while writeRelease
+	// blocks its return. The test coordinates release and assertions through those
+	// channels before reusing pooled state.
+	writeStarted chan struct{} // delegated write entry signal
+	writeRelease chan struct{} // delegated write return gate
 }
 
+// deterministicOpsCaptureWriterStatePool retains states in LIFO order for
+// deterministic serial lease-reuse tests.
 type deterministicOpsCaptureWriterStatePool struct {
+	// states retains unowned reusable capture states for LIFO acquisition. This
+	// fixture has no mutex, so tests serialize pool access. Pending-release
+	// inspection occurs behind the blocked writer gate, and reuse waits for the
+	// release-completion channel.
 	states []*opsCaptureWriterState
 }
 
+// setupOpsErrorLogTestQueue installs isolated synchronous submission state for
+// a serial test. Cleanup restores the prior global queue and counters; callers
+// keep these tests nonparallel because the fixture swaps shared package
+// variables.
 func setupOpsErrorLogTestQueue(t *testing.T, size int) {
 	t.Helper()
+	// Swap fixture globals before the serial request runs and restore both in
+	// cleanup, so subsequent tests observe their own queue and health counters.
 	previous, previousQueue := opsErrorLogQueue, testOpsCaptureQueue
 	opsErrorLogQueue = make(chan opsErrorLogJob, size)
 	testOpsCaptureQueue = &captureOpsErrorQueue{}
 	t.Cleanup(func() { opsErrorLogQueue, testOpsCaptureQueue = previous, previousQueue })
 }
 
+// flushOpsErrorLogBatch records each usable queued fixture job with a
+// background context. Nil jobs are skipped and service errors are discarded, so
+// callers inspect their repository fixture to assert observable persistence
+// effects.
 func flushOpsErrorLogBatch(batch []opsErrorLogJob) {
 	for _, job := range batch {
 		if job.ops != nil && job.entry != nil {
+			// Discard fixture recording errors because these tests assert the repository
+			// submission itself; background context keeps the explicit flush independent
+			// of a completed request.
 			_ = job.ops.RecordErrorBatch(context.Background(), []*opscore.OpsInsertErrorLogInput{job.entry})
 		}
 	}
 }
 
-// OpsErrorLogQueueLength tracks synchronous test submissions; Ops integration tests cover workers and shutdown.
+// OpsErrorLogQueueLength returns the fixture health length counted at
+// synchronous submission. The fixture does not decrement this observation when
+// tests manually receive channel jobs; callers use it as submitted-job
+// evidence.
 func OpsErrorLogQueueLength() int64 { return testOpsCaptureQueue.Health().Length }
 
+// OpsErrorLogEnqueuedTotal returns the fixture total of accepted synchronous
+// error submissions.
 func OpsErrorLogEnqueuedTotal() int64 { return testOpsCaptureQueue.Health().Enqueued }
 
+// newOpsServiceFixture constructs Ops with supplied repository and settings
+// dependencies for capture tests.
 func newOpsServiceFixture(repo opscore.OpsRepository, settings opscore.Settings) *opscore.OpsService {
 	return opscore.NewOpsService(repo, settings, nil, nil, nil, nil, nil, nil)
 }
 
+// markOpsIngressRejectedFixture marks ingress denial for the fixture
+// observation accessor.
 func markOpsIngressRejectedFixture(c *gin.Context) { c.Set("ops_test_rejected", true) }
 
+// GetValue counts a fixture settings read and returns the missing-setting
+// sentinel.
 func (r *ingressRejectSettingRepo) GetValue(context.Context, string) (string, error) {
 	r.getValueCalls++
 	return "", settingscore.ErrSettingNotFound
 }
 
+// GetMultiple counts a fixture settings read and returns an empty settings map.
 func (r *ingressRejectSettingRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
 	r.getValueCalls++
 	return map[string]string{}, nil
 }
 
+// Set accepts a fixture settings write and returns success without storing its
+// input.
 func (r *ingressRejectSettingRepo) Set(context.Context, string, string) error {
 	return nil
 }
 
+// InsertErrorLog counts one fixture repository submission and retains the
+// supplied entry pointer. Tests serialize access and keep that input stable
+// before examining retained persistence evidence; the returned ID is zero.
 func (r *ingressRejectOpsRepo) InsertErrorLog(_ context.Context, entry *opscore.OpsInsertErrorLogInput) (int64, error) {
 	r.insertCalls++
 	r.entries = append(r.entries, entry)
 	return 0, nil
 }
 
+// BatchInsertErrorLogs counts one fixture batch and appends the supplied entry
+// pointers in order. Inputs remain shared, so tests keep them stable while
+// inspecting the repository and use the returned zero ID only as a successful
+// fixture result.
 func (r *ingressRejectOpsRepo) BatchInsertErrorLogs(_ context.Context, entries []*opscore.OpsInsertErrorLogInput) (int64, error) {
 	r.insertCalls++
 	r.entries = append(r.entries, entries...)
 	return 0, nil
 }
 
+// TestOpsCaptureWriterPool_ResetOnRelease writes an error body, releases
+// capture and acquires another handle. The acquired handle must expose an empty
+// diagnostic body rather than bytes belonging to the earlier request.
 func TestOpsCaptureWriterPool_ResetOnRelease(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -113,12 +168,19 @@ func TestOpsCaptureWriterPool_ResetOnRelease(t *testing.T) {
 	require.Empty(t, reused.capturedBytes(), "writer should be reset before reuse")
 }
 
+// TestOpsCaptureWriterPool_DropsLargeBuffers grows capture storage beyond its
+// retention budget. The release-time eligibility predicate must reject that
+// oversized capacity instead of admitting it for reuse.
 func TestOpsCaptureWriterPool_DropsLargeBuffers(t *testing.T) {
 	state := &opsCaptureWriterState{}
 	state.buf.Grow(opsCaptureWriterPoolMaxRetainedCapacity + 1)
 	require.False(t, shouldPoolOpsCaptureWriterState(state))
 }
 
+// TestOpsErrorLoggerMiddleware_HardSkipsIngressRejection marks an
+// authentication denial as ingress rejected. The client body must remain intact
+// while the request performs no monitoring settings read, repository insert or
+// error-queue submission.
 func TestOpsErrorLoggerMiddleware_HardSkipsIngressRejection(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -146,6 +208,9 @@ func TestOpsErrorLoggerMiddleware_HardSkipsIngressRejection(t *testing.T) {
 	require.Zero(t, OpsErrorLogEnqueuedTotal(), "ingress rejection must not enter the error queue")
 }
 
+// TestOpsErrorLoggerMiddleware_OrdinaryPermissionStillRecords returns a
+// permission error without an ingress rejection marker. Normal capture must
+// queue one permission failure with its forbidden HTTP status.
 func TestOpsErrorLoggerMiddleware_OrdinaryPermissionStillRecords(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -167,6 +232,10 @@ func TestOpsErrorLoggerMiddleware_OrdinaryPermissionStillRecords(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, job.entry.StatusCode)
 }
 
+// TestOpsErrorLoggerMiddleware_RecordsRecoveredUpstreamTelemetryOutsideFailureSLA
+// returns success after an upstream rate-limit observation. Queued and
+// persisted diagnostics must keep status 200 while retaining the earlier
+// attempt in prepared JSON and its recovered summary.
 func TestOpsErrorLoggerMiddleware_RecordsRecoveredUpstreamTelemetryOutsideFailureSLA(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -210,6 +279,10 @@ func TestOpsErrorLoggerMiddleware_RecordsRecoveredUpstreamTelemetryOutsideFailur
 	require.Equal(t, http.StatusTooManyRequests, persistedEvents[0].UpstreamStatusCode)
 }
 
+// TestOpsErrorLoggerMiddleware_RecoveredTelemetryFiltersSkipMonitoringAttempts
+// recovers after one visible and one hidden attempt. The queued summary and
+// serialized event list must contain the visible rate-limit evidence and omit
+// the hidden retry.
 func TestOpsErrorLoggerMiddleware_RecoveredTelemetryFiltersSkipMonitoringAttempts(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -237,6 +310,9 @@ func TestOpsErrorLoggerMiddleware_RecoveredTelemetryFiltersSkipMonitoringAttempt
 	require.Equal(t, "visible retry", events[0].Message)
 }
 
+// TestOpsErrorLoggerMiddleware_RecoveredTelemetrySkipsAllHiddenAttempts returns
+// success after a single hidden upstream attempt. The middleware must queue no
+// recovered diagnostic entry when filtering leaves no visible attempt evidence.
 func TestOpsErrorLoggerMiddleware_RecoveredTelemetrySkipsAllHiddenAttempts(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -258,6 +334,9 @@ func TestOpsErrorLoggerMiddleware_RecoveredTelemetrySkipsAllHiddenAttempts(t *te
 	require.Equal(t, int64(0), OpsErrorLogQueueLength())
 }
 
+// TestOpsErrorLoggerMiddleware_IntermediateSkipMonitoringDoesNotHideFinalVisibleFailure
+// records a hidden retry before a visible final failure. Normal monitoring must
+// still queue the final 503 and its message.
 func TestOpsErrorLoggerMiddleware_IntermediateSkipMonitoringDoesNotHideFinalVisibleFailure(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -280,6 +359,9 @@ func TestOpsErrorLoggerMiddleware_IntermediateSkipMonitoringDoesNotHideFinalVisi
 	require.Equal(t, "visible final", job.entry.ErrorMessage)
 }
 
+// TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE splits a
+// Responses terminal event name and payload across writes under HTTP 200. The
+// queued entry must infer 429 and retain the final rate-limit message.
 func TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -306,14 +388,18 @@ func TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE(t *testing.T) 
 	require.Contains(t, job.entry.ErrorMessage, "Too many pending requests")
 }
 
+// TestOpsCaptureWriter_CapturesSplitDataOnlyTerminalMarkers splits terminal
+// payload type spellings across data-only writes. Capture must retain no
+// partial body until recognition and then extract each expected category, code
+// and message within the probe budget.
 func TestOpsCaptureWriter_CapturesSplitDataOnlyTerminalMarkers(t *testing.T) {
 	tests := []struct {
-		name      string
-		prefix    string
-		suffix    string
-		wantType  string
-		wantCode  string
-		wantError string
+		name      string // named fixture case label
+		prefix    string // first attempted frame fragment
+		suffix    string // remaining attempted frame fragment
+		wantType  string // expected extracted error category
+		wantCode  string // expected extracted error code
+		wantError string // expected extracted failure message
 	}{
 		{
 			name:      "response failed with space",
@@ -367,6 +453,10 @@ func TestOpsCaptureWriter_CapturesSplitDataOnlyTerminalMarkers(t *testing.T) {
 	}
 }
 
+// TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptContext
+// stores an earlier transport error before a terminal context-length failure.
+// The queued logical status and upstream summary must use the terminal 400,
+// leaving the client wire at 200.
 func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptContext(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -396,6 +486,9 @@ func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptConte
 	require.Equal(t, "input exceeds the context window", *job.entry.UpstreamErrorMessage)
 }
 
+// TestOpsErrorLoggerMiddleware_PrefersContextRequestID supplies different
+// request IDs in telemetry and the response header. The queued observation must
+// retain the platform context ID for correlation.
 func TestOpsErrorLoggerMiddleware_PrefersContextRequestID(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -417,9 +510,10 @@ func TestOpsErrorLoggerMiddleware_PrefersContextRequestID(t *testing.T) {
 	require.Equal(t, "context-request-id", job.entry.RequestID)
 }
 
-// TestLogOpsStreamError_RecordsInBandConcurrencyLimit checks MarkOpsStreamError capture for concurrency
-// failures inside HTTP 200 streams.
-// Severity uses IntendedStatus=429 while StatusCode retains the committed 200.
+// TestLogOpsStreamError_RecordsInBandConcurrencyLimit marks a concurrency
+// timeout after successful HTTP commitment. Logging must classify severity from
+// intended 429 while retaining wire status 200 and client business restriction
+// attribution.
 func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -448,6 +542,9 @@ func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
 	require.Equal(t, "Concurrency limit exceeded for provider, please retry later", job.entry.ErrorMessage)
 }
 
+// TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA marks an upstream
+// stream failure after HTTP 200 commitment. The queued entry must record
+// logical 502 for SLA accounting while retaining the supplied failure code.
 func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -476,7 +573,9 @@ func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
 	require.Contains(t, job.entry.ErrorBody, openai.OpenAIUpstreamHTTP2StreamErrorCode)
 }
 
-// TestLogOpsStreamError_NoopWhenNotMarked checks that an unmarked successful stream creates no error log.
+// TestLogOpsStreamError_NoopWhenNotMarked invokes stream logging with no
+// failure marker. No diagnostic job may enter the queue merely because the
+// request uses a stream path.
 func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -490,7 +589,9 @@ func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 }
 
-// TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring checks suppression by skip_monitoring=true.
+// TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring marks a stream
+// failure covered by a request suppression flag. Stream logging must leave the
+// error queue empty for that hidden failure.
 func TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -506,6 +607,10 @@ func TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring(t *testing.T) {
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 }
 
+// TestShouldSkipFinalOpsFailureUsesOnlyFinalAttemptRule supplies attempts with
+// different monitoring decisions and a nil element. The final nonnil attempt
+// must decide whether this failure is suppressed, independently of the earlier
+// attempt.
 func TestShouldSkipFinalOpsFailureUsesOnlyFinalAttemptRule(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(OpsUpstreamErrorsKey, []*opscore.OpsUpstreamErrorEvent{
@@ -522,7 +627,9 @@ func TestShouldSkipFinalOpsFailureUsesOnlyFinalAttemptRule(t *testing.T) {
 	require.True(t, shouldSkipFinalOpsFailure(c))
 }
 
-// TestMarkOpsStreamError_FirstWins checks that later generic error frames do not replace the first marker.
+// TestMarkOpsStreamError_FirstWins records two HTTP in-band failures in
+// sequence. The first marker must retain its category, message and intended
+// status after a later generic observation.
 func TestMarkOpsStreamError_FirstWins(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -536,6 +643,9 @@ func TestMarkOpsStreamError_FirstWins(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, se.IntendedStatus)
 }
 
+// TestLogOpsStreamError_RecordsOneFailurePerWebSocketTurn records repeated
+// observations across two ordered WebSocket turns. Logging must queue one
+// retained failure per turn with its corresponding message and intended status.
 func TestLogOpsStreamError_RecordsOneFailurePerWebSocketTurn(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 
@@ -564,6 +674,9 @@ func TestLogOpsStreamError_RecordsOneFailurePerWebSocketTurn(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, second.entry.StatusCode)
 }
 
+// TestClassifyOpsNoAvailableProvidersExcludedFromSLA marks a no-provider
+// routing error as capacity limited. Classification must select routing
+// ownership and business restriction evidence for SLA exclusion.
 func TestClassifyOpsNoAvailableProvidersExcludedFromSLA(t *testing.T) {
 	const message = "No available providers"
 
@@ -581,6 +694,10 @@ func TestClassifyOpsNoAvailableProvidersExcludedFromSLA(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
+// TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA
+// uses a generic error message with a routing-capacity marker. That explicit
+// evidence must retain routing ownership and business-limit classification
+// despite masked selection text.
 func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -600,6 +717,9 @@ func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t
 	require.Equal(t, "gateway", errorSource)
 }
 
+// TestClassifyOpsLocalModelConfigurationRejection marks a missing locally
+// configured model as a client business restriction. Classification must assign
+// the failure to gateway routing and platform ownership.
 func TestClassifyOpsLocalModelConfigurationRejection(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -619,6 +739,10 @@ func TestClassifyOpsLocalModelConfigurationRejection(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
+// TestClassifyOpsLocalModelConfigurationOverridesStaleUpstreamMarkers combines
+// a local model rejection marker with stale provider-auth evidence. Local
+// routing attribution must win, retaining business restriction and gateway
+// ownership.
 func TestClassifyOpsLocalModelConfigurationOverridesStaleUpstreamMarkers(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalModelConfiguration)
@@ -636,6 +760,9 @@ func TestClassifyOpsLocalModelConfigurationOverridesStaleUpstreamMarkers(t *test
 	require.Equal(t, "gateway", source)
 }
 
+// TestClassifyOpsLocalModelConfigurationRequiresMarkerAndReason stores the
+// local configuration reason without the business marker. Existing upstream
+// failure evidence must retain provider ownership and remain a counted failure.
 func TestClassifyOpsLocalModelConfigurationRequiresMarkerAndReason(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(OpsClientBusinessLimitedReasonKey, OpsClientBusinessLimitedReasonLocalModelConfiguration)
@@ -649,6 +776,10 @@ func TestClassifyOpsLocalModelConfigurationRequiresMarkerAndReason(t *testing.T)
 	require.Equal(t, "upstream_http", source)
 }
 
+// TestOpsErrorLoggerMiddleware_LocalModelConfigurationFields returns a marked
+// local model rejection with stale provider and attempt fields. Queued routing
+// diagnostics must clear provider identity, upstream endpoint/model and prior
+// error evidence.
 func TestOpsErrorLoggerMiddleware_LocalModelConfigurationFields(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 1)
 
@@ -697,13 +828,17 @@ func TestOpsErrorLoggerMiddleware_LocalModelConfigurationFields(t *testing.T) {
 	require.Empty(t, job.entry.UpstreamEndpoint)
 }
 
+// TestClassifyOpsAuthClientErrorsExcludedFromSLA supplies recognized client
+// authentication error types, codes and messages. Each case must be classified
+// as a client business restriction while retaining its expected authentication
+// attribution.
 func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
 	tests := []struct {
-		name    string
-		errType string
-		message string
-		code    string
-		status  int
+		name    string // named fixture case label
+		errType string // supplied client error category
+		message string // supplied client failure message
+		code    string // supplied client error code
+		status  int    // supplied client HTTP status
 	}{
 		{
 			name:    "standard invalid API key",
@@ -833,13 +968,17 @@ func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
 	}
 }
 
+// TestClassifyOpsClientHTTPAuthStatusesUseQueryTimeExclusion supplies generic
+// local 401 and 403 failures. It requires a false business-limit flag and
+// classifications other than provider ownership or upstream_http source; query
+// exclusion remains outside these assertions.
 func TestClassifyOpsClientHTTPAuthStatusesUseQueryTimeExclusion(t *testing.T) {
 	tests := []struct {
-		name    string
-		errType string
-		message string
-		code    string
-		status  int
+		name    string // named fixture case label
+		errType string // supplied client error category
+		message string // supplied client failure message
+		code    string // supplied client error code
+		status  int    // supplied client HTTP status
 	}{
 		{
 			name:    "generic local unauthorized",
@@ -872,15 +1011,19 @@ func TestClassifyOpsClientHTTPAuthStatusesUseQueryTimeExclusion(t *testing.T) {
 	}
 }
 
+// TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA supplies local
+// funding, quota, feature and policy denials. Each case must retain the
+// expected normalized type and phase while identifying client business
+// restriction evidence.
 func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 	tests := []struct {
-		name        string
-		errType     string
-		message     string
-		code        string
-		status      int
-		wantErrType string
-		wantPhase   string
+		name        string // named fixture case label
+		errType     string // supplied client error category
+		message     string // supplied client failure message
+		code        string // supplied client error code
+		status      int    // supplied client HTTP status
+		wantErrType string // expected normalized error category
+		wantPhase   string // expected classified failure phase
 	}{
 		{
 			name:        "standard API key quota exhausted",
@@ -1162,6 +1305,9 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 	}
 }
 
+// TestClassifyOpsIPRestrictionAccessDeniedExcludedFromSLA combines access
+// denial with a Key IP-restriction marker. Classification must retain a client
+// business restriction for that local authorization failure.
 func TestClassifyOpsIPRestrictionAccessDeniedExcludedFromSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1177,6 +1323,10 @@ func TestClassifyOpsIPRestrictionAccessDeniedExcludedFromSLA(t *testing.T) {
 	require.Equal(t, "client_request", errorSource)
 }
 
+// TestClassifyOpsClientBusinessLimitedMarkerExcludesCustomPolicyDenialFromSLA
+// uses custom denial text with a client restriction marker. That marker must
+// supply business-limit evidence even when the message is outside built-in
+// matching spellings.
 func TestClassifyOpsClientBusinessLimitedMarkerExcludesCustomPolicyDenialFromSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1192,6 +1342,10 @@ func TestClassifyOpsClientBusinessLimitedMarkerExcludesCustomPolicyDenialFromSLA
 	require.Equal(t, "client_request", errorSource)
 }
 
+// TestClassifyOpsUpstreamInvalidRequest400ExcludedFromSLA supplies the
+// property-name-length code with both upstream and client 400 status. This
+// specific exception must classify as a client request restriction even though
+// upstream response evidence exists.
 func TestClassifyOpsUpstreamInvalidRequest400ExcludedFromSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1212,6 +1366,9 @@ func TestClassifyOpsUpstreamInvalidRequest400ExcludedFromSLA(t *testing.T) {
 	require.Equal(t, "client_request", errorSource)
 }
 
+// TestClassifyOpsUpstreamServerErrorStillCountsForSLA supplies upstream and
+// client 502 evidence. Classification must retain provider ownership and leave
+// that server failure outside the client business restriction category.
 func TestClassifyOpsUpstreamServerErrorStillCountsForSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1231,6 +1388,10 @@ func TestClassifyOpsUpstreamServerErrorStillCountsForSLA(t *testing.T) {
 	require.Equal(t, "upstream_http", errorSource)
 }
 
+// TestClassifyOpsOtherUpstreamInvalidRequestStillCountsForSLA supplies an
+// ordinary upstream invalid request outside the property-name exception. The
+// provider failure must remain eligible for SLA accounting despite
+// client-facing status 400.
 func TestClassifyOpsOtherUpstreamInvalidRequestStillCountsForSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1250,6 +1411,9 @@ func TestClassifyOpsOtherUpstreamInvalidRequestStillCountsForSLA(t *testing.T) {
 	require.Equal(t, "upstream_http", errorSource)
 }
 
+// TestClassifyOpsOtherErrorsStillCountForSLA classifies an ordinary internal
+// server error without client restriction evidence. The result must remain a
+// counted failure with its server attribution.
 func TestClassifyOpsOtherErrorsStillCountForSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1264,6 +1428,9 @@ func TestClassifyOpsOtherErrorsStillCountForSLA(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
+// TestClassifyOpsUnsupportedModelExcludedFromSLA marks a locally unsupported
+// model failure. Classification must identify routing and business restriction
+// evidence rather than a provider inference failure.
 func TestClassifyOpsUnsupportedModelExcludedFromSLA(t *testing.T) {
 	tests := []string{
 		"No available providers: no available providers supporting model: made-up-model",
@@ -1290,6 +1457,9 @@ func TestClassifyOpsUnsupportedModelExcludedFromSLA(t *testing.T) {
 	}
 }
 
+// TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA uses no-provider text
+// without the routing-capacity marker. Text alone must not label the failure
+// business limited for SLA exclusion.
 func TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1308,12 +1478,16 @@ func TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
+// TestClassifyOpsUpstreamAuthTextStillCountsForSLA supplies upstream status
+// evidence with authentication or local-looking denial text. Classification
+// must retain provider failure ownership rather than treating those messages as
+// local client restrictions.
 func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {
 	tests := []struct {
-		name    string
-		message string
-		code    string
-		status  int
+		name    string // named fixture case label
+		message string // supplied client failure message
+		code    string // supplied client error code
+		status  int    // supplied client HTTP status
 	}{
 		{
 			name:    "invalid API key",
@@ -1483,6 +1657,9 @@ func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {
 	}
 }
 
+// TestClassifyOpsUpstreamNoAvailableTextStillCountsForSLA combines no-provider
+// wording with real upstream failure evidence. Classification must keep
+// upstream ownership and leave the failure counted for SLA.
 func TestClassifyOpsUpstreamNoAvailableTextStillCountsForSLA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1502,6 +1679,9 @@ func TestClassifyOpsUpstreamNoAvailableTextStillCountsForSLA(t *testing.T) {
 	require.Equal(t, "upstream_http", errorSource)
 }
 
+// TestParseOpsErrorResponsePreservesNestedStringCode parses a nested gateway
+// error containing a string code. The extracted metadata must retain that exact
+// code alongside its error category and message.
 func TestParseOpsErrorResponsePreservesNestedStringCode(t *testing.T) {
 	parsed := parseOpsErrorResponse([]byte(`{"error":{"type":"permission_error","code":"GROUP_DELETED","message":"API Key 所属分组已删除"}}`))
 
@@ -1510,13 +1690,17 @@ func TestParseOpsErrorResponsePreservesNestedStringCode(t *testing.T) {
 	require.Equal(t, "API Key 所属分组已删除", parsed.Message)
 }
 
+// TestParseOpsErrorResponsePreservesStructuredTopLevelSemantics parses
+// top-level and string-error response forms. Each case must extract its
+// supported type, scalar code and message instead of reducing structured
+// evidence to raw body text.
 func TestParseOpsErrorResponsePreservesStructuredTopLevelSemantics(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		wantType string
-		wantCode string
-		wantMsg  string
+		name     string // named fixture case label
+		body     string // supplied encoded error response
+		wantType string // expected extracted error category
+		wantCode string // expected extracted error code
+		wantMsg  string // expected extracted failure message
 	}{
 		{
 			name:     "model not found",
@@ -1543,6 +1727,10 @@ func TestParseOpsErrorResponsePreservesStructuredTopLevelSemantics(t *testing.T)
 	}
 }
 
+// TestApplyOpsUpstreamFieldsUsesLastNonNilAttempt combines stale context
+// diagnostics with an ordered attempt list containing nil entries. The final
+// nonnil attempt must provide status, message and detail while the complete
+// list remains retained.
 func TestApplyOpsUpstreamFieldsUsesLastNonNilAttempt(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	SetOpsUpstreamError(c, http.StatusUnauthorized, "stale context", "stale detail")
@@ -1565,6 +1753,9 @@ func TestApplyOpsUpstreamFieldsUsesLastNonNilAttempt(t *testing.T) {
 	require.Len(t, entry.UpstreamErrors, 4)
 }
 
+// TestApplyOpsUpstreamFieldsFinalStatuslessAttemptClearsStaleContext ends with
+// a statusless transport failure after an earlier response. Its message and
+// detail must replace prior evidence while the upstream status becomes absent.
 func TestApplyOpsUpstreamFieldsFinalStatuslessAttemptClearsStaleContext(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	SetOpsUpstreamError(c, http.StatusBadGateway, "stale response", "stale body")
@@ -1583,6 +1774,9 @@ func TestApplyOpsUpstreamFieldsFinalStatuslessAttemptClearsStaleContext(t *testi
 	require.Equal(t, "connection reset", *entry.UpstreamErrorDetail)
 }
 
+// TestOpsCaptureWriter_ProtocolLevelTerminalFrameDetection splits a padded
+// event field and payload across CRLF writes. Protocol parsing must recover the
+// terminal code, message and logical service-unavailable status.
 func TestOpsCaptureWriter_ProtocolLevelTerminalFrameDetection(t *testing.T) {
 	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
 	chunks := []string{
@@ -1603,12 +1797,16 @@ func TestOpsCaptureWriter_ProtocolLevelTerminalFrameDetection(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, inferStreamFailureStatus(nil, parsed))
 }
 
+// TestParseOpsSSEFailure_TopLevelErrorsAndUnknownStatus supplies flattened
+// terminal errors, unknown codes and an explicit status. Inference must use
+// terminal evidence for each expected status despite stale unauthorized
+// context.
 func TestParseOpsSSEFailure_TopLevelErrorsAndUnknownStatus(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantType   string
-		wantStatus int
+		name       string // named fixture case label
+		body       string // supplied encoded error response
+		wantType   string // expected extracted error category
+		wantStatus int    // expected inferred HTTP status
 	}{
 		{
 			name:       "top-level permission",
@@ -1648,6 +1846,9 @@ func TestParseOpsSSEFailure_TopLevelErrorsAndUnknownStatus(t *testing.T) {
 	}
 }
 
+// TestOpsCaptureWriter_OversizedNonTerminalFrameRemainsBounded writes an
+// oversized successful data frame before a terminal error. Probe capacity must
+// remain bounded, and the following valid failure must still activate capture.
 func TestOpsCaptureWriter_OversizedNonTerminalFrameRemainsBounded(t *testing.T) {
 	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
 	state.captureResponseChunk([]byte("data: "+strings.Repeat("x", opsTerminalSSEFrameProbeLimit*2)+"\n\n"), http.StatusOK)
@@ -1659,6 +1860,10 @@ func TestOpsCaptureWriter_OversizedNonTerminalFrameRemainsBounded(t *testing.T) 
 	require.NotEmpty(t, state.buf.Bytes())
 }
 
+// TestOpsCaptureWriter_TerminalMetadataSurvivesBodyCaptureTruncation puts
+// terminal details beyond the captured-body limit but inside the metadata
+// probe. Known failure and its richer parsed category/message must survive the
+// bounded diagnostic prefix.
 func TestOpsCaptureWriter_TerminalMetadataSurvivesBodyCaptureTruncation(t *testing.T) {
 	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
 	frame := "event: response.failed\ndata: {\"padding\":\"" + strings.Repeat("x", opsCaptureWriterLimit) + "\",\"type\":\"response.failed\",\"error\":{\"code\":\"service_unavailable\",\"message\":\"busy\"}}\n\n"
@@ -1672,6 +1877,10 @@ func TestOpsCaptureWriter_TerminalMetadataSurvivesBodyCaptureTruncation(t *testi
 	require.Equal(t, "busy", state.terminalError.Message)
 }
 
+// TestOpsErrorLoggerMiddleware_LargeTerminalFrameUsesEventFallback writes a
+// terminal event with oversized credential-bearing JSON. Queueing must retain
+// generic logical failure and replace the truncated payload so the secret
+// appears in neither message nor body.
 func TestOpsErrorLoggerMiddleware_LargeTerminalFrameUsesEventFallback(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -1697,6 +1906,10 @@ func TestOpsErrorLoggerMiddleware_LargeTerminalFrameUsesEventFallback(t *testing
 	require.Contains(t, job.entry.ErrorBody, `"payload_truncated":true`)
 }
 
+// TestOpsErrorLoggerMiddleware_DetectsTerminalDataAtEOFWithoutBlankLine ends a
+// data-only terminal payload without a blank frame terminator. Middleware
+// finalization must still queue its permission error and logical forbidden
+// status.
 func TestOpsErrorLoggerMiddleware_DetectsTerminalDataAtEOFWithoutBlankLine(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -1718,6 +1931,9 @@ func TestOpsErrorLoggerMiddleware_DetectsTerminalDataAtEOFWithoutBlankLine(t *te
 	require.Equal(t, "denied", job.entry.ErrorMessage)
 }
 
+// TestOpsCaptureWriter_DetectsCROnlySSEFrame terminates a data-only error frame
+// using carriage returns alone. Capture must recognize terminal evidence and
+// extract the expected service-unavailable error category.
 func TestOpsCaptureWriter_DetectsCROnlySSEFrame(t *testing.T) {
 	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
 	state.captureResponseChunk([]byte("data: {\"type\":\"error\",\"code\":\"service_unavailable\",\"message\":\"busy\"}\r\r"), http.StatusOK)
@@ -1728,6 +1944,10 @@ func TestOpsCaptureWriter_DetectsCROnlySSEFrame(t *testing.T) {
 	require.Equal(t, "service_unavailable_error", parsed.ErrorType)
 }
 
+// TestSanitizeOpsSSEDataForPersistence_RedactsJSONFields splits one JSON
+// payload across two SSE data lines containing credentials. Persistence
+// sanitation must join and redact both direct authorization and nested API Key
+// values.
 func TestSanitizeOpsSSEDataForPersistence_RedactsJSONFields(t *testing.T) {
 	body := []byte("event: error\ndata: {\"type\":\"error\",\"authorization\":\"Bearer secret\",\ndata: \"nested\":{\"api_key\":\"sk-secret\"}}\n\n")
 	sanitized := sanitizeOpsSSEDataForPersistence(body)
@@ -1737,6 +1957,10 @@ func TestSanitizeOpsSSEDataForPersistence_RedactsJSONFields(t *testing.T) {
 	require.Contains(t, sanitized, `"api_key":"[REDACTED]"`)
 }
 
+// TestSanitizeOpsSSEDataForPersistence_DropsTruncatedJSONFragment supplies an
+// incomplete JSON payload containing authorization text. Sanitation must
+// replace that fragment with the payload-truncated marker and remove the
+// secret.
 func TestSanitizeOpsSSEDataForPersistence_DropsTruncatedJSONFragment(t *testing.T) {
 	body := []byte("event: error\ndata: {\"type\":\"error\",\"authorization\":\"Bearer leaked")
 	sanitized := sanitizeOpsSSEDataForPersistence(body)
@@ -1744,6 +1968,9 @@ func TestSanitizeOpsSSEDataForPersistence_DropsTruncatedJSONFragment(t *testing.
 	require.Contains(t, sanitized, `data: {"payload_truncated":true}`)
 }
 
+// BenchmarkOpsCaptureWriterSuccessfulSSEFrames repeatedly observes complete
+// successful SSE frames and reports allocations. Its guard requires the
+// final diagnostic body to stay empty after the successful-stream workload.
 func BenchmarkOpsCaptureWriterSuccessfulSSEFrames(b *testing.B) {
 	frame := []byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n")
 	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
@@ -1756,6 +1983,9 @@ func BenchmarkOpsCaptureWriterSuccessfulSSEFrames(b *testing.B) {
 	}
 }
 
+// TestSetOpsEndpointContext_SetsContextKeys stores an upstream model with a
+// stream request-type value. The Gin observations must retain the supplied
+// model string and the exact int16 request type.
 func TestSetOpsEndpointContext_SetsContextKeys(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1775,6 +2005,9 @@ func TestSetOpsEndpointContext_SetsContextKeys(t *testing.T) {
 	require.Equal(t, int16(2), rtVal)
 }
 
+// TestSetOpsEndpointContext_EmptyModelNotStored supplies an empty model on a
+// fresh context. The setter must leave model attribution absent while still
+// publishing the int16 request type.
 func TestSetOpsEndpointContext_EmptyModelNotStored(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1791,18 +2024,30 @@ func TestSetOpsEndpointContext_EmptyModelNotStored(t *testing.T) {
 	require.Equal(t, int16(1), rtVal)
 }
 
+// TestSetOpsEndpointContext_NilContext passes no context to endpoint
+// observation setup. The nil guard must permit the call to return without a
+// panic or request state.
 func TestSetOpsEndpointContext_NilContext(t *testing.T) {
 	require.NotPanics(t, func() {
 		SetOpsEndpointContext(nil, "model", int16(1))
 	})
 }
 
+// WriteString signals entry into one delegated fixture write and waits for its
+// release channel. It then returns the embedded writer result; callers invoke
+// it once because closing writeStarted again would panic.
 func (w *blockingOpsResponseWriter) WriteString(s string) (int, error) {
+	// Signal the delegated call before blocking it, allowing the test to probe the
+	// capture mutex during this write and then start release while work remains
+	// active.
 	close(w.writeStarted)
 	<-w.writeRelease
 	return w.ResponseWriter.WriteString(s)
 }
 
+// Get removes the most recently returned fixture state, or allocates one when
+// empty. Tests serialize pool access because this deterministic LIFO fixture
+// has no mutex and is used to prove reuse of specific storage.
 func (p *deterministicOpsCaptureWriterStatePool) Get() any {
 	if len(p.states) == 0 {
 		return &opsCaptureWriterState{limit: opsCaptureWriterLimit}
@@ -1813,12 +2058,19 @@ func (p *deterministicOpsCaptureWriterStatePool) Get() any {
 	return state
 }
 
+// Put retains a nonnil capture-state pointer for deterministic fixture reuse.
+// Other values are ignored; tests serialize mutation with reads and acquires,
+// since this fixture intentionally supplies no concurrent pool synchronization.
 func (p *deterministicOpsCaptureWriterStatePool) Put(value any) {
 	if state, ok := value.(*opsCaptureWriterState); ok && state != nil {
 		p.states = append(p.states, state)
 	}
 }
 
+// TestOpsCaptureWriter_NilInnerWriter_NoPanic calls every supported writer
+// operation on an inactive handle. It checks scalar and write-result defaults,
+// nonnil fallback headers/channels and a Hijack error with no connection or
+// buffered reader.
 func TestOpsCaptureWriter_NilInnerWriter_NoPanic(t *testing.T) {
 	w := &opsCaptureWriter{}
 
@@ -1870,6 +2122,9 @@ func TestOpsCaptureWriter_NilInnerWriter_NoPanic(t *testing.T) {
 	})
 }
 
+// TestOpsCaptureWriter_StaleLeaseCannotReachReacquiredState reuses the same
+// state through a fresh handle. The stale handle must neither write nor read
+// the new request and must not return its active state to the pool.
 func TestOpsCaptureWriter_StaleLeaseCannotReachReacquiredState(t *testing.T) {
 	pool := &deterministicOpsCaptureWriterStatePool{}
 
@@ -1897,7 +2152,8 @@ func TestOpsCaptureWriter_StaleLeaseCannotReachReacquiredState(t *testing.T) {
 	require.Equal(t, []byte("current"), current.capturedBytes())
 	require.NotContains(t, secondRecorder.Body.String(), "stale")
 
-	// Releasing the stale handle must not return an active state to the pool.
+	// Releasing an older generation must leave the current request outside the
+	// pool, so a third acquire cannot steal state still owned by that active handle.
 	releaseOpsCaptureWriter(stale)
 	thirdRecorder := httptest.NewRecorder()
 	thirdContext, _ := gin.CreateTestContext(thirdRecorder)
@@ -1906,6 +2162,10 @@ func TestOpsCaptureWriter_StaleLeaseCannotReachReacquiredState(t *testing.T) {
 	require.NotSame(t, current.state, other.state)
 }
 
+// TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex
+// blocks a registered network write while starting release. The state mutex
+// is probed during the blocked write. Pooling must wait until that write returns,
+// and the completed release must then make one state available for reuse.
 func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(t *testing.T) {
 	pool := &deterministicOpsCaptureWriterStatePool{}
 	recorder := httptest.NewRecorder()
@@ -1917,6 +2177,9 @@ func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(
 	}
 	w := acquireOpsCaptureWriterFromPool(pool, inner)
 
+	// Keep the delegated operation active behind its channel gate while probing
+	// the state mutex, then start release before permitting the network write to
+	// finish.
 	writeDone := make(chan struct{})
 	go func() {
 		defer close(writeDone)
@@ -1929,6 +2192,9 @@ func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(
 	}
 	w.state.mu.Unlock()
 
+	// Release proceeds independently of the blocked writer; its completion channel
+	// lets this test distinguish premature pooling from cleanup after the
+	// registered operation joins.
 	releaseDone := make(chan struct{})
 	go func() {
 		releaseOpsCaptureWriter(w)
@@ -1951,6 +2217,10 @@ func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(
 	require.Len(t, pool.states, 1)
 }
 
+// TestOpsClassificationTreatsCredentialFailureAsAuthNotInference ends an
+// inference error list with a statusless credential failure. Classification
+// must select provider authentication, clear old inference status/detail and
+// retain both attempt records.
 func TestOpsClassificationTreatsCredentialFailureAsAuthNotInference(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(OpsUpstreamStatusCodeKey, http.StatusForbidden)
@@ -1983,6 +2253,9 @@ func TestOpsClassificationTreatsCredentialFailureAsAuthNotInference(t *testing.T
 	require.Equal(t, http.StatusForbidden, entry.UpstreamErrors[0].UpstreamStatusCode)
 }
 
+// TestOpsCaptureWriterDoesNotCopyIngressRejectBody marks ingress rejection
+// before writing an authentication body. The write must return no error while
+// the wrapper keeps its diagnostic buffer empty.
 func TestOpsCaptureWriterDoesNotCopyIngressRejectBody(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	writer := acquireOpsCaptureWriter(context.Writer)
@@ -1996,6 +2269,9 @@ func TestOpsCaptureWriterDoesNotCopyIngressRejectBody(t *testing.T) {
 	require.Empty(t, writer.capturedBytes())
 }
 
+// TestKeyPrefix supplies long and short credential strings to byte-prefix
+// extraction. The long key must be cut to eight bytes, while the shorter key
+// remains whole.
 func TestKeyPrefix(t *testing.T) {
 	if got := keyPrefix("sk-3f2a9c7e", 8); got != "sk-3f2a9" {
 		t.Errorf("keyPrefix=%q want %q", got, "sk-3f2a9")

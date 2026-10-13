@@ -20,17 +20,43 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// CheckTextModelPricing checks the model selected by this attempt's mapping and billing source.
-// Pass a CompactExecutor for Compact requests; nil uses ordinary request pricing.
+// A text request can carry different requested, group-mapped and provider model
+// names. Price preflight checks the completion billing choice after resolving
+// this attempt's protocol, so a configured upstream or requested source cannot
+// borrow a price from another name in that chain. Image generation models use
+// the separate media admission rule.
+//
+// Compact can replace the ordinary upstream name through provider or global
+// compaction settings, while passthrough and WebSocket completion supply
+// different billing inputs. The shared completion selector combines those
+// inputs with group mapping fields before the price service is queried for the
+// effective group. Each provider attempt repeats this decision before
+// forwarding begins.
+
+// CheckTextModelPricing checks the billing model this attempt would use after
+// protocol and model resolution. Nil pricing disables preflight, and mapped
+// image-generation models remain with media pricing. Supply mapped as the
+// current group-routed name; a route plan supplies its mapping fields and
+// requested name when present.
+//
+// Provider policy interprets mapped to obtain the upstream name, with Compact
+// mappings applied for its eligible Responses profile. WebSocket and HTTP
+// passthrough choose distinct completion billing inputs, then the shared
+// completion selector applies the configured requested, group-mapped or
+// upstream source. The resulting name is checked in the effective Key group,
+// keeping that chosen source authoritative even when another name has a known
+// price.
 func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, key *apikey.APIKey, target *gatewayprovider.ExecutionProvider, requested, mapped string, compact *CompactExecutor, source protocol.ProtocolID) error {
 	if prices == nil {
 		return nil
 	}
-	// Media pricing handles image models; text requests with image tools still need text pricing.
+	// Image model requests are admitted by media pricing. A text model that
+	// merely declares image tools still reaches this text billing-model check.
 	if media.IsImageGenerationModel(mapped) {
 		return nil
 	}
-	// Preflight and execution use the same request route rules to resolve upstream protocol and model.
+	// Resolve the same candidate protocol used by execution before model policy
+	// lookup, so conversion-specific mappings cannot price a different forwarding route.
 	target, err := gatewayprovider.ProviderForProtocolAttempt(ctx, target)
 	if err != nil {
 		return err
@@ -55,13 +81,15 @@ func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, 
 	case protocol.ProtocolOpenAIResponses:
 		profile := openAIForwardProfile(target)
 		if compact != nil && target.View().IsOpenAICompatible() && !profile.Grok && !profile.RawChat && !profile.Anthropic {
-			// Compact provider mappings take precedence over its global model; ordinary Responses uses regular mappings.
+			// Resolve eligible Compact mappings before completion chooses its billing
+			// source; provider compaction overrides can replace the configured global model.
 			if model := compact.ResolveModel(target, mapped); model != "" {
 				result.UpstreamModel = model
 			}
 		}
 		if profile.Passthrough && !profile.RawChat && !profile.Anthropic {
-			// HTTP passthrough completion uses the group-mapped request name as Model.
+			// HTTP passthrough completion uses the group-routed name in Model. Clear
+			// the preliminary billing override before applying that same source selector.
 			result.BillingModel = ""
 		}
 	}
@@ -73,7 +101,11 @@ func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, 
 	return prices.Check(ctx, groupID, model)
 }
 
-// checkPricing writes a missing-price error in the client's protocol before text execution.
+// checkPricing checks the selected text target before execution and presents a
+// classified missing-price denial. Compact paths use the bound CompactExecutor
+// when available, otherwise its default instance. Other errors retain their
+// cause; only price rejection records local policy limitation and writes the
+// inbound protocol error.
 func (e *UnifiedTextExecutor) checkPricing(c *gin.Context, target *gatewayprovider.ExecutionProvider, body []byte, source protocol.ProtocolID) error {
 	if e.Pricing == nil {
 		return nil

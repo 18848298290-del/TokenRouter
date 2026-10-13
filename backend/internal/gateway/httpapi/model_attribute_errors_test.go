@@ -15,18 +15,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// unavailableAttributeRepo injects group lookup failure into attribute resolution.
 type unavailableAttributeRepo struct {
-	routing.ModelAttributeRepository
+	routing.ModelAttributeRepository // unused repository operations
 }
 
+// ForGroup returns a database failure for every group attribute lookup.
 func (unavailableAttributeRepo) ForGroup(context.Context, int64) (*routing.ModelAttributeConfig, error) {
 	return nil, errors.New("database offline")
 }
 
+// TestModelAttributeFailureHTTPProtocols establishes unavailable model
+// attributes before writing Responses, Messages and Gemini errors. Each
+// protocol must return 503 with a safe configuration message that excludes the
+// repository failure.
 func TestModelAttributeFailureHTTPProtocols(t *testing.T) {
 	for _, tc := range []struct {
-		name, path string
-		write      func(*gin.Context)
+		name, path string             // protocol case name and request path
+		write      func(*gin.Context) // protocol error writer
 	}{
 		{"responses", "/v1/responses", func(c *gin.Context) {
 			DefaultOpenAIErrorOutput().EnsureResponse(c, false, errors.New("wrapped configuration failure"))

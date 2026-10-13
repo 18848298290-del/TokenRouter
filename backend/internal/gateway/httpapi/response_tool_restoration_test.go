@@ -12,6 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestRestoreCodexToolNamesFromContext_HTTPAndWSPayloadShapes restores aliases
+// in streaming item and unary output nodes. It requires unrelated text to
+// remain literal and verifies clearing the reverse map leaves later tool names
+// unchanged.
 func TestRestoreCodexToolNamesFromContext_HTTPAndWSPayloadShapes(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	SetCodexToolNameReverse(c, map[string]string{openai.CodexPythonToolAlias: "python"})
@@ -34,6 +38,10 @@ func TestRestoreCodexToolNamesFromContext_HTTPAndWSPayloadShapes(t *testing.T) {
 	)
 }
 
+// TestRestoreCodexToolNamesInJSON_OnlyTouchesResponseToolCallNodesAndPreservesNumbers
+// combines tool calls, ordinary name metadata and a large numeric literal. It
+// requires targeted name restoration while unrelated names and exact numeric
+// spelling survive.
 func TestRestoreCodexToolNamesInJSON_OnlyTouchesResponseToolCallNodesAndPreservesNumbers(t *testing.T) {
 	reverse := map[string]string{openai.CodexPythonToolAlias: "python"}
 	body := []byte(`{"type":"response.completed","response":{"output":[{"type":"function_call","name":"python__tokenrouter"},{"type":"message","name":"python__tokenrouter","content":[]}]},"metadata":{"name":"python__tokenrouter"},"sequence":900719925474099312345}`)
@@ -45,12 +53,15 @@ func TestRestoreCodexToolNamesInJSON_OnlyTouchesResponseToolCallNodesAndPreserve
 	require.Equal(t, "900719925474099312345", gjson.GetBytes(restored, "sequence").Raw)
 }
 
+// TestRestoreCodexToolNamesInJSON_ExplicitHTTPAndSSEToolCallProtocols supplies
+// Chat unary/delta and Messages tool-use shapes. Only their supported tool name
+// nodes must be restored, leaving unrelated metadata names literal.
 func TestRestoreCodexToolNamesInJSON_ExplicitHTTPAndSSEToolCallProtocols(t *testing.T) {
 	reverse := map[string]string{openai.CodexPythonToolAlias: "python"}
 	tests := []struct {
-		name string
-		body string
-		path string
+		name string // response shape scenario
+		body string // protocol input JSON
+		path string // restored tool name path
 	}{
 		{
 			name: "chat http",
@@ -77,6 +88,10 @@ func TestRestoreCodexToolNamesInJSON_ExplicitHTTPAndSSEToolCallProtocols(t *test
 	}
 }
 
+// TestCodexToolNameReverse_WSSessionReplacementDoesNotChangeActiveTurn replaces
+// future session declarations while active output uses earlier names. It
+// protects active/session separation, explicit declaration precedence and later
+// inheritance when a turn omits its own tools.
 func TestCodexToolNameReverse_WSSessionReplacementDoesNotChangeActiveTurn(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	SetCodexToolNameReverse(c, nil)
@@ -106,6 +121,10 @@ func TestCodexToolNameReverse_WSSessionReplacementDoesNotChangeActiveTurn(t *tes
 	require.Equal(t, "python", gjson.GetBytes(inheritedOutput, "item.name").String())
 }
 
+// TestRestoreCodexToolNamesFromSSEContextUsesEventLineTypeWithoutAddingType
+// omits payload type while providing the event line classification. It requires
+// restored tool naming and unchanged unrelated metadata, with no synthetic type
+// left in successful output.
 func TestRestoreCodexToolNamesFromSSEContextUsesEventLineTypeWithoutAddingType(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	SetCodexToolNameReverse(c, map[string]string{openai.CodexPythonToolAlias: openai.CodexReservedPythonToolName})
@@ -118,6 +137,9 @@ func TestRestoreCodexToolNamesFromSSEContextUsesEventLineTypeWithoutAddingType(t
 	require.False(t, gjson.GetBytes(restored, "type").Exists())
 }
 
+// TestClearGrokResponsesClientToolMappingRemovesStaleContextState seeds a
+// meaningful Grok lowered-tool mapping in request state. Clearing must make the
+// getter report absent restoration data for the next consumer.
 func TestClearGrokResponsesClientToolMappingRemovesStaleContextState(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -132,6 +154,10 @@ func TestClearGrokResponsesClientToolMappingRemovesStaleContextState(t *testing.
 	require.False(t, remains)
 }
 
+// TestClearOpenAIResponsesClientToolMappingRemovesStaleContextState seeds an
+// OpenAI custom-tool mapping before another output phase. Clearing must remove
+// its meaningful-presence flag so later restoration cannot reuse stale
+// evidence.
 func TestClearOpenAIResponsesClientToolMappingRemovesStaleContextState(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	SetOpenAIResponsesClientToolMapping(c, bridge.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}})

@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLogRequestBodyReadFailureClassifiesWithoutPayload injects a decoding
+// error containing a private payload marker. It requires normalized metadata
+// and confirms that the captured diagnostic excludes the marker.
 func TestLogRequestBodyReadFailureClassifiesWithoutPayload(t *testing.T) {
 	log, logs := newObservedLogger(t)
 	req, err := http.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("secret-payload-marker"))
@@ -30,6 +33,9 @@ func TestLogRequestBodyReadFailureClassifiesWithoutPayload(t *testing.T) {
 	require.NotContains(t, entries[0].Message+fmt.Sprint(fields), "secret-payload-marker")
 }
 
+// TestRequestBodyReadErrorKind supplies unsupported encoding, truncated input
+// and a maximum-size error. It protects their diagnostic labels and the other
+// category for arbitrary encoding text.
 func TestRequestBodyReadErrorKind(t *testing.T) {
 	require.Equal(t, "unsupported_content_encoding", requestBodyReadErrorKind(errors.New(`decode Content-Encoding "br": unsupported Content-Encoding`)))
 	require.Equal(t, "truncated_body", requestBodyReadErrorKind(io.ErrUnexpectedEOF))

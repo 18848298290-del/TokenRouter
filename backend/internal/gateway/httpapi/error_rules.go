@@ -9,52 +9,101 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Final upstream error rules are administered as complete stored values, but
+// HTTP updates accept partial JSON fields. Creation supplies enabled and
+// passthrough defaults, while updating starts from the loaded rule so omitted
+// settings retain their current values. Condition lists are normalized to
+// arrays before the service validates and saves them.
+//
+// The request representation treats null scalar pointers and null lists like
+// omitted input. Empty arrays can clear condition lists, but null cannot clear
+// response-code, custom-message or description pointers through this handler.
+// Rule matching, priority and publication remain owned by the shared service;
+// HTTP validates route and body syntax, maps validation errors and returns its
+// saved result.
+
 // ErrorPassthroughHandler serves HTTP requests for error passthrough rules.
 type ErrorPassthroughHandler struct {
-	service *errorpolicy.ErrorPassthroughService
+	service *errorpolicy.ErrorPassthroughService // shared persisted error-rule service
 }
 
 // CreateErrorPassthroughRuleRequest contains fields for creating an error rule.
 type CreateErrorPassthroughRuleRequest struct {
-	Name            string   `json:"name" binding:"required"`
-	Enabled         *bool    `json:"enabled"`
-	Priority        int      `json:"priority"`
-	ErrorCodes      []int    `json:"error_codes"`
-	Keywords        []string `json:"keywords"`
-	MatchMode       string   `json:"match_mode"`
-	Platforms       []string `json:"platforms"`
-	PassthroughCode *bool    `json:"passthrough_code"`
-	ResponseCode    *int     `json:"response_code"`
-	PassthroughBody *bool    `json:"passthrough_body"`
-	CustomMessage   *string  `json:"custom_message"`
-	SkipMonitoring  *bool    `json:"skip_monitoring"`
-	Description     *string  `json:"description"`
+	// required rule display name
+	Name string `json:"name" binding:"required"`
+	// Enabled defaults true when omitted or null during creation. A supplied false
+	// value disables the new rule while retaining its configured conditions.
+	Enabled    *bool `json:"enabled"`
+	Priority   int   `json:"priority"`    // rule evaluation ordering number
+	ErrorCodes []int `json:"error_codes"` // upstream status match candidates
+	// case-insensitive message match candidates
+	Keywords []string `json:"keywords"`
+	// MatchMode defaults to any when the supplied string is empty. The service
+	// validates whether a nonempty value names a supported condition combination.
+	MatchMode string   `json:"match_mode"`
+	Platforms []string `json:"platforms"` // eligible upstream platform names
+	// PassthroughCode defaults true when omitted or null during creation. False
+	// selects ResponseCode and requires a usable replacement status during service
+	// validation.
+	PassthroughCode *bool `json:"passthrough_code"`
+	// ResponseCode supplies the replacement status when PassthroughCode is false.
+	// Its pointer is passed to service validation, which requires a positive value
+	// for that action.
+	ResponseCode *int `json:"response_code"`
+	// PassthroughBody defaults true when omitted or null during creation. False
+	// selects CustomMessage and requires a nonempty replacement message during
+	// service validation.
+	PassthroughBody *bool `json:"passthrough_body"`
+	// CustomMessage supplies client replacement text when PassthroughBody is
+	// false. The service rejects a missing or empty message when that response
+	// action is selected.
+	CustomMessage *string `json:"custom_message"`
+	// ordinary Ops monitoring suppression
+	SkipMonitoring *bool `json:"skip_monitoring"`
+	// optional administrator rule explanation
+	Description *string `json:"description"`
 }
 
 // UpdateErrorPassthroughRuleRequest contains optional fields for a partial rule update.
 type UpdateErrorPassthroughRuleRequest struct {
-	Name            *string  `json:"name"`
-	Enabled         *bool    `json:"enabled"`
-	Priority        *int     `json:"priority"`
-	ErrorCodes      []int    `json:"error_codes"`
-	Keywords        []string `json:"keywords"`
-	MatchMode       *string  `json:"match_mode"`
-	Platforms       []string `json:"platforms"`
-	PassthroughCode *bool    `json:"passthrough_code"`
-	ResponseCode    *int     `json:"response_code"`
-	PassthroughBody *bool    `json:"passthrough_body"`
-	CustomMessage   *string  `json:"custom_message"`
-	SkipMonitoring  *bool    `json:"skip_monitoring"`
-	Description     *string  `json:"description"`
+	// Name, Enabled, Priority, MatchMode, PassthroughCode, ResponseCode,
+	// PassthroughBody, CustomMessage, SkipMonitoring and Description retain
+	// existing values when their pointers are nil. Supplied pointers can replace
+	// them with zero values. ErrorCodes, Keywords and Platforms retain existing
+	// lists when nil; supplied empty arrays clear those lists.
+	Name       *string  `json:"name"`        // supplied rule display name
+	Enabled    *bool    `json:"enabled"`     // supplied rule enabled state
+	Priority   *int     `json:"priority"`    // supplied rule ordering number
+	ErrorCodes []int    `json:"error_codes"` // supplied upstream status candidates
+	Keywords   []string `json:"keywords"`    // supplied message match candidates
+	MatchMode  *string  `json:"match_mode"`  // supplied condition combination mode
+	Platforms  []string `json:"platforms"`   // supplied upstream platform candidates
+	// supplied upstream status passthrough
+	PassthroughCode *bool `json:"passthrough_code"`
+	// ResponseCode supplies a replacement status when the merged PassthroughCode
+	// is false. The rule service validates that resulting action before persisting
+	// this partial update.
+	ResponseCode *int `json:"response_code"`
+	// supplied upstream message passthrough
+	PassthroughBody *bool `json:"passthrough_body"`
+	// CustomMessage supplies client text when the merged PassthroughBody is false.
+	// A supplied empty string can therefore fail resulting rule validation when
+	// message passthrough is disabled.
+	CustomMessage  *string `json:"custom_message"`
+	SkipMonitoring *bool   `json:"skip_monitoring"` // supplied ordinary Ops suppression
+	// supplied administrator rule explanation
+	Description *string `json:"description"`
 }
 
-// NewErrorPassthroughHandler creates an HTTP handler for error rules.
+// NewErrorPassthroughHandler binds the shared error-rule service to HTTP
+// handlers.
 func NewErrorPassthroughHandler(service *errorpolicy.ErrorPassthroughService) *ErrorPassthroughHandler {
 	return &ErrorPassthroughHandler{service: service}
 }
 
-// List returns all error rules.
-// GET /api/v1/admin/error-passthrough-rules
+// List returns the shared service's error rules in the admin success envelope.
+// It uses the request context; service failures pass through the common error
+// response helper for this authenticated route.
 func (h *ErrorPassthroughHandler) List(c *gin.Context) {
 	rules, err := h.service.List(c.Request.Context())
 	if err != nil {
@@ -64,8 +113,9 @@ func (h *ErrorPassthroughHandler) List(c *gin.Context) {
 	response.Success(c, rules)
 }
 
-// GetByID returns an error rule by ID.
-// GET /api/v1/admin/error-passthrough-rules/:id
+// GetByID reads one rule using the decimal route ID. Invalid ID syntax receives
+// 400, missing rules receive 404 and service errors use shared presentation;
+// this handler does not apply rule matching to the lookup.
 func (h *ErrorPassthroughHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -86,8 +136,10 @@ func (h *ErrorPassthroughHandler) GetByID(c *gin.Context) {
 	response.Success(c, rule)
 }
 
-// Create creates an error rule.
-// POST /api/v1/admin/error-passthrough-rules
+// Create binds JSON and constructs an error rule with enabled and passthrough
+// switches defaulting true. Empty match mode selects any; optional response
+// fields retain their pointers. Nil condition lists become arrays before
+// validation and service persistence, and validation failures receive 400.
 func (h *ErrorPassthroughHandler) Create(c *gin.Context) {
 	var req CreateErrorPassthroughRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -130,7 +182,8 @@ func (h *ErrorPassthroughHandler) Create(c *gin.Context) {
 	rule.CustomMessage = req.CustomMessage
 	rule.Description = req.Description
 
-	// Encode empty lists as JSON arrays.
+	// Normalize missing condition and platform slices before persistence so saved
+	// rule responses expose arrays and rule matching sees empty configured lists.
 	if rule.ErrorCodes == nil {
 		rule.ErrorCodes = []int{}
 	}
@@ -154,8 +207,17 @@ func (h *ErrorPassthroughHandler) Create(c *gin.Context) {
 	response.Success(c, created)
 }
 
-// Update applies the supplied fields to an existing rule.
-// PUT /api/v1/admin/error-passthrough-rules/:id
+// Update applies supplied JSON fields to the rule loaded by decimal ID and
+// persists the resulting complete value. Missing IDs return 404 and invalid
+// input returns 400 before saving.
+//
+// Scalar pointers distinguish supplied values from omitted or null fields,
+// which retain existing values. Slice fields follow the same nil check, but an
+// empty array replaces the old list. Optional response-code, custom-message and
+// description pointers cannot be cleared by JSON null through this request
+// representation. Starting from existing values keeps omitted settings and rule
+// identity together before service validation; nil lists are normalized for
+// response shape.
 func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -179,7 +241,8 @@ func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Initialize from the existing rule so omitted fields retain their values.
+	// Begin with all loaded values before applying pointer and slice presence
+	// checks, keeping partial HTTP input from resetting omitted rule actions or conditions.
 	rule := &errorpolicy.ErrorPassthroughRule{
 		ID:              id,
 		Name:            existing.Name,
@@ -237,7 +300,8 @@ func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 		rule.SkipMonitoring = *req.SkipMonitoring
 	}
 
-	// Encode empty lists as JSON arrays.
+	// Normalize missing condition and platform slices before persistence so saved
+	// rule responses expose arrays and rule matching sees empty configured lists.
 	if rule.ErrorCodes == nil {
 		rule.ErrorCodes = []int{}
 	}
@@ -261,8 +325,9 @@ func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 	response.Success(c, updated)
 }
 
-// Delete deletes an error rule.
-// DELETE /api/v1/admin/error-passthrough-rules/:id
+// Delete removes the rule identified by the decimal route ID. Invalid syntax
+// returns 400, service failures use shared presentation and successful removal
+// returns the standard admin success envelope with its completion message.
 func (h *ErrorPassthroughHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -278,8 +343,10 @@ func (h *ErrorPassthroughHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Rule deleted successfully"})
 }
 
-// RegisterErrorPassthroughRoutes registers admin endpoints; app must install group authentication, rate limits, and
-// auditing first.
+// RegisterErrorPassthroughRoutes binds rule list, lookup, create, update and
+// removal below the admin group. Assembly installs authentication, rate limits
+// and auditing on that group before registration so these handlers receive the
+// admin request context.
 func RegisterErrorPassthroughRoutes(admin *gin.RouterGroup, endpoint *ErrorPassthroughHandler) {
 	rules := admin.Group("/error-passthrough-rules")
 	{

@@ -26,23 +26,25 @@ import (
 
 // openAITransportProviderRepoStub records temporary scheduling blocks for transport-health tests.
 type openAITransportProviderRepoStub struct {
-	tempUnschedCalls []tempUnschedCall
+	tempUnschedCalls []tempUnschedCall // captured scheduling block writes
 }
 
-// tempUnschedCall captures a provider scheduling-block write.
+// tempUnschedCall records the identity, expiry and reason of a scheduling block.
 type tempUnschedCall struct {
-	providerID int64
-	until      time.Time
-	reason     string
+	providerID int64     // blocked provider identity
+	until      time.Time // scheduling block expiry time
+	reason     string    // recorded scheduling block explanation
 }
 
-// TestClassifyUpstreamTransportError checks persistent and transient transport classifications.
-// The classification distinguishes provider-blocking failures from transient retry candidates.
+// TestClassifyUpstreamTransportError supplies typed and textual network
+// failures alongside cancellation and deadlines. It protects the persistent
+// classification that decides whether transport health should temporarily block
+// provider scheduling.
 func TestClassifyUpstreamTransportError(t *testing.T) {
 	cases := []struct {
-		name       string
-		err        error
-		persistent bool
+		name       string // transport scenario label
+		err        error  // injected network failure
+		persistent bool   // expected scheduling-block classification
 	}{
 		// Configuration, credential, and routing failures are classified as persistent.
 		{"socks5 proxy credential rejected", errors.New(`Post "https://chatgpt.com/backend-api/codex/responses": socks connect tcp 85.255.176.68:12324->chatgpt.com:443: username/password authentication failed`), true},
@@ -104,11 +106,15 @@ func TestClassifyUpstreamTransportError(t *testing.T) {
 	}
 }
 
+// SetTempUnschedulable appends the attempted scheduling block for later fixture
+// assertions.
 func (r *openAITransportProviderRepoStub) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
 	r.tempUnschedCalls = append(r.tempUnschedCalls, tempUnschedCall{providerID: id, until: until, reason: reason})
 	return nil
 }
 
+// newOpenAITransportErrTestContext builds a Responses request and recording Gin
+// writer.
 func newOpenAITransportErrTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -116,6 +122,10 @@ func newOpenAITransportErrTestContext() (*gin.Context, *httptest.ResponseRecorde
 	return c, rec
 }
 
+// TestHandleOpenAIUpstreamTransportError_PersistentEvictsAndFailsOver injects
+// rejected SOCKS credentials on a selected provider. It requires 502 failover
+// classification, one persisted ten-minute block, an active runtime block and
+// no client body.
 func TestHandleOpenAIUpstreamTransportError_PersistentEvictsAndFailsOver(t *testing.T) {
 	repo := &openAITransportProviderRepoStub{}
 	svc := transportHealthFixture(repo, nil)
@@ -139,6 +149,10 @@ func TestHandleOpenAIUpstreamTransportError_PersistentEvictsAndFailsOver(t *test
 	require.Equal(t, 0, rec.Body.Len())
 }
 
+// TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction
+// injects a client transport timeout after provider selection. It requires
+// failover while stored and runtime scheduling blocks remain absent and client
+// output remains empty.
 func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t *testing.T) {
 	repo := &openAITransportProviderRepoStub{}
 	svc := transportHealthFixture(repo, nil)
@@ -155,6 +169,9 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	require.Equal(t, 0, rec.Body.Len())
 }
 
+// TestHandleOpenAIUpstreamTransportError_ContextCanceledNoFailover supplies
+// direct request cancellation. It requires no provider failover wrapper or
+// scheduling block and leaves the client body untouched.
 func TestHandleOpenAIUpstreamTransportError_ContextCanceledNoFailover(t *testing.T) {
 	repo := &openAITransportProviderRepoStub{}
 	svc := transportHealthFixture(repo, nil)
@@ -170,6 +187,10 @@ func TestHandleOpenAIUpstreamTransportError_ContextCanceledNoFailover(t *testing
 	require.Equal(t, 0, rec.Body.Len())
 }
 
+// TestHandleOpenAIUpstreamTransportError_WrappedContextCanceledNoFailover wraps
+// request cancellation with transport context. Wrapped-error matching must
+// still prevent failover classification and both stored and runtime provider
+// blocks.
 func TestHandleOpenAIUpstreamTransportError_WrappedContextCanceledNoFailover(t *testing.T) {
 	repo := &openAITransportProviderRepoStub{}
 	svc := transportHealthFixture(repo, nil)
@@ -184,7 +205,9 @@ func TestHandleOpenAIUpstreamTransportError_WrappedContextCanceledNoFailover(t *
 	require.False(t, svc.Failure.Health.Runtime.Blocked(provider.Record.ID, nil))
 }
 
-// TestHandleOpenAIUpstreamTransportError_RecordsOllamaActivityOnly checks activity recording for Ollama Cloud targets.
+// TestHandleOpenAIUpstreamTransportError_RecordsOllamaActivityOnly sends
+// transport faults to Ollama Cloud and ordinary OpenAI targets. After deferred
+// work drains, activity must exist only for the Ollama provider.
 func TestHandleOpenAIUpstreamTransportError_RecordsOllamaActivityOnly(t *testing.T) {
 	deferred, activity := gatewaytestkit.DeferredActivityRecorder(t)
 	svc := transportHealthFixture(&openAITransportProviderRepoStub{}, deferred)
@@ -212,8 +235,9 @@ func TestHandleOpenAIUpstreamTransportError_RecordsOllamaActivityOnly(t *testing
 	require.False(t, ok, "non-Ollama transport error must not schedule Ollama activity")
 }
 
-// TestHandleOpenAIUpstreamTransportError_ContextCanceledSkipsOllamaActivity checks that cancellation skips
-// activity recording.
+// TestHandleOpenAIUpstreamTransportError_ContextCanceledSkipsOllamaActivity
+// cancels an Ollama Cloud attempt. It requires the cancellation cause and
+// confirms that draining deferred work records no provider activity.
 func TestHandleOpenAIUpstreamTransportError_ContextCanceledSkipsOllamaActivity(t *testing.T) {
 	deferred, activity := gatewaytestkit.DeferredActivityRecorder(t)
 	svc := transportHealthFixture(&openAITransportProviderRepoStub{}, deferred)
@@ -233,7 +257,9 @@ func TestHandleOpenAIUpstreamTransportError_ContextCanceledSkipsOllamaActivity(t
 	require.False(t, ok, "context.Canceled is client disconnect before a fault; do not count as Ollama activity")
 }
 
-// TestHandleOpenAIProviderUpstreamError_RecordsOllamaActivityOnly checks Ollama Cloud activity on non-2xx responses.
+// TestHandleOpenAIProviderUpstreamError_RecordsOllamaActivityOnly applies
+// non-success response health to Ollama Cloud and ordinary targets. After
+// deferred work drains, only the Ollama provider may have activity recorded.
 func TestHandleOpenAIProviderUpstreamError_RecordsOllamaActivityOnly(t *testing.T) {
 	deferred, activity := gatewaytestkit.DeferredActivityRecorder(t)
 	svc := transportHealthFixture(nil, deferred)
@@ -260,7 +286,10 @@ func TestHandleOpenAIProviderUpstreamError_RecordsOllamaActivityOnly(t *testing.
 	require.False(t, ok, "non-Ollama non-2xx must not schedule Ollama activity")
 }
 
-// transportHealthFixture supplies shared runtime block state and deferred activity recording.
+// transportHealthFixture binds one runtime block state to failure and response
+// health. An optional store supplies persistent transport writes, and optional
+// deferred activity supplies Ollama updates; tests inspect that shared state
+// across both paths.
 func transportHealthFixture(store *openAITransportProviderRepoStub, deferred *providercore.DeferredService) *GrokExecutor {
 	state := providercore.NewRuntimeBlockState(time.Now)
 	health := &provideradapter.TransportHealth{Runtime: state, Deferred: deferred}

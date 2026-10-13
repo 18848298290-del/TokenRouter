@@ -11,11 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestShouldUseAntigravityCompat compares provider platforms and credential
+// kinds with an absent target. The compatibility branch must select Antigravity
+// OAuth while rejecting setup token, API Key, upstream and unrelated OAuth
+// targets.
 func TestShouldUseAntigravityCompat(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		want     bool
+		name     string                             // provider eligibility scenario
+		provider *gatewayprovider.ExecutionProvider // selected execution target
+		want     bool                               // Antigravity OAuth compatibility expectation
 	}{
 		{"oauth", &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity, Type: capability.ProviderTypeOAuth}}, true},
 		{"setup token", &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity, Type: capability.ProviderTypeSetupToken}}, false},

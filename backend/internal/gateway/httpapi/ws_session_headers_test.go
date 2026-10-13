@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestResolveOpenAIWSSessionHeadersPrefersCodexHyphenHeader supplies both
+// header spellings and a prompt cache key. The hyphenated value must win and
+// retain its matching diagnostic source label.
 func TestResolveOpenAIWSSessionHeadersPrefersCodexHyphenHeader(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -22,6 +25,9 @@ func TestResolveOpenAIWSSessionHeadersPrefersCodexHyphenHeader(t *testing.T) {
 	require.Equal(t, "header_session-id", resolution.SessionSource)
 }
 
+// TestResolveOpenAIWSSessionHeadersFallsBackToLegacyHeader supplies the legacy
+// header and a prompt cache key. The header value must win and identify the
+// legacy header as its source.
 func TestResolveOpenAIWSSessionHeadersFallsBackToLegacyHeader(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

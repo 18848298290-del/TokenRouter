@@ -18,19 +18,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// nativeAnthropicReaderFixture supplies output options for protocol-reader tests.
-type nativeAnthropicReaderFixture struct{ output *OpenAIResponseOutput }
+// nativeAnthropicReaderFixture binds HTTP output options for native
+// protocol-reader assertions.
+type nativeAnthropicReaderFixture struct {
+	output *OpenAIResponseOutput // bound conversion output settings
+}
 
+// newNativeAnthropicHangTestService binds an inactivity budget measured in
+// seconds. It supplies the default scanner limit and configured output options;
+// tests use these callbacks with their own response writer and upstream pipe.
 func newNativeAnthropicHangTestService(intervalSec int) *nativeAnthropicReaderFixture {
 	return &nativeAnthropicReaderFixture{output: &OpenAIResponseOutput{Options: OpenAIResponseOptions{Configured: true, StreamDataIntervalTimeout: intervalSec, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}}
 }
 
+// newHangingUpstreamResponse returns a successful response whose body reads
+// from a synchronous pipe. The reader remains blocked until the writer supplies
+// data or closes; callers retain both endpoints and close them during fixture
+// cleanup.
 func newHangingUpstreamResponse() (*http.Response, *io.PipeReader, *io.PipeWriter) {
 	pr, pw := io.Pipe()
 	return &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}, pr, pw
 }
 
-// miniAnthropicSSEStream is a minimal convertible Anthropic event stream.
+// miniAnthropicSSEStream returns a complete text stream with terminal token
+// usage.
 func miniAnthropicSSEStream() string {
 	return strings.Join([]string{
 		"event: message_start",
@@ -55,6 +66,8 @@ func miniAnthropicSSEStream() string {
 	}, "\n")
 }
 
+// toolAnthropicSSEStream returns a tool-use stream carrying JSON argument
+// fragments.
 func toolAnthropicSSEStream() string {
 	return strings.Join([]string{
 		"event: message_start",
@@ -78,6 +91,9 @@ func toolAnthropicSSEStream() string {
 	}, "\n")
 }
 
+// TestCCStreamingFromNativeAnthropic_HangTimesOut supplies a pipe with no
+// upstream events and a one-second inactivity budget. It requires interval
+// timeout, a result carrier and completion within a bounded observation period.
 func TestCCStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(1)
 
@@ -102,6 +118,9 @@ func TestCCStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	}
 }
 
+// TestCCBufferedFromNativeAnthropic_HangTimesOut supplies a stalled pipe during
+// buffered Chat conversion. It requires interval timeout within the observation
+// budget and the safe stream-timeout response body.
 func TestCCBufferedFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(1)
 
@@ -126,6 +145,10 @@ func TestCCBufferedFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	}
 }
 
+// TestResponsesStreamingFromNativeAnthropic_HangTimesOut stalls native
+// Anthropic input before converted Responses events arrive. It requires an
+// interval timeout, a result carrier and completion within the observation
+// bound.
 func TestResponsesStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(1)
 
@@ -150,6 +173,10 @@ func TestResponsesStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	}
 }
 
+// TestResponsesStreamingFromNativeAnthropicClientDisconnectDrainsUsage rejects
+// the first downstream write while a complete native stream remains readable.
+// It requires disconnected-result attribution and final input/output usage
+// retained after upstream draining.
 func TestResponsesStreamingFromNativeAnthropicClientDisconnectDrainsUsage(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(5)
 
@@ -159,6 +186,8 @@ func TestResponsesStreamingFromNativeAnthropicClientDisconnectDrainsUsage(t *tes
 	c.Writer = &httptestkit.FailingWriter{ResponseWriter: c.Writer, FailAfter: 0}
 
 	resp, pr, pw := newHangingUpstreamResponse()
+	// Feed the synchronous pipe from another goroutine so writes can progress with
+	// the reader, then close its writer to expose end-of-stream.
 	go func() {
 		_, _ = pw.Write([]byte(miniAnthropicSSEStream()))
 		_ = pw.Close()
@@ -186,6 +215,9 @@ func TestResponsesStreamingFromNativeAnthropicClientDisconnectDrainsUsage(t *tes
 	}
 }
 
+// TestCCStreamingFromNativeAnthropic_HappyPathStillConverts supplies a complete
+// native text stream to Chat output. It requires successful conversion with
+// visible text and a DONE terminator in the client stream.
 func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(5)
 
@@ -194,6 +226,8 @@ func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	resp, pr, pw := newHangingUpstreamResponse()
+	// Feed the synchronous pipe from another goroutine so writes can progress with
+	// the reader, then close its writer to expose end-of-stream.
 	go func() {
 		_, _ = pw.Write([]byte(miniAnthropicSSEStream()))
 		_ = pw.Close()
@@ -216,6 +250,9 @@ func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	}
 }
 
+// TestCCBufferedFromNativeAnthropic_HappyPathStillConverts buffers a complete
+// native text stream for Chat output. It requires converted text and final
+// native input/output token counts in the result.
 func TestCCBufferedFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(5)
 
@@ -224,6 +261,8 @@ func TestCCBufferedFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 
 	resp, pr, pw := newHangingUpstreamResponse()
+	// Feed the synchronous pipe from another goroutine so writes can progress with
+	// the reader, then close its writer to expose end-of-stream.
 	go func() {
 		_, _ = pw.Write([]byte(miniAnthropicSSEStream()))
 		_ = pw.Close()
@@ -246,6 +285,10 @@ func TestCCBufferedFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	}
 }
 
+// TestCCBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON converts native
+// tool-use argument fragments into a buffered Chat response. It requires one
+// tool call whose argument string is valid JSON and matches the supplied
+// object.
 func TestCCBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(5)
 	rec := httptest.NewRecorder()
@@ -258,11 +301,11 @@ func TestCCBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var body struct {
-		Choices []struct {
-			Message struct {
-				ToolCalls []struct {
-					Function struct {
-						Arguments string `json:"arguments"`
+		Choices []struct { // decoded Chat result choices
+			Message struct { // decoded assistant message
+				ToolCalls []struct { // decoded assistant tool calls
+					Function struct { // decoded function-call payload
+						Arguments string `json:"arguments"` // JSON
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"message"`
@@ -280,6 +323,10 @@ func TestCCBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	}
 }
 
+// TestResponsesBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON converts
+// native tool-use fragments into buffered Responses output. It requires one
+// function-call item and an argument string matching the complete valid JSON
+// object.
 func TestResponsesBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	svc := newNativeAnthropicHangTestService(5)
 	rec := httptest.NewRecorder()
@@ -292,9 +339,9 @@ func TestResponsesBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testi
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var body struct {
-		Output []struct {
-			Type      string `json:"type"`
-			Arguments string `json:"arguments"`
+		Output []struct { // decoded Responses output items
+			Type      string `json:"type"`      // output item type
+			Arguments string `json:"arguments"` // JSON
 		} `json:"output"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -308,8 +355,10 @@ func TestResponsesBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testi
 	}
 }
 
-// handleCCBufferedFromNativeAnthropic collects Anthropic SSE into a complete response
-// and converts it through Responses to Chat Completions.
+// handleCCBufferedFromNativeAnthropic delegates native stream collection and
+// Chat conversion using deferred HTTP output. It passes model identities and
+// timing separately, converts the result for assertions and leaves response
+// cleanup with the fixture caller.
 func (s *nativeAnthropicReaderFixture) handleCCBufferedFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -323,8 +372,10 @@ func (s *nativeAnthropicReaderFixture) handleCCBufferedFromNativeAnthropic(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleCCStreamingFromNativeAnthropic converts each Anthropic SSE event to
-// Responses events and then writes Chat Completions chunks.
+// handleCCStreamingFromNativeAnthropic delegates incremental native-to-Chat
+// conversion through deferred output. It passes includeUsage to control stream
+// usage events, returns the converted result and error, and leaves upstream
+// body cleanup with the test caller.
 func (s *nativeAnthropicReaderFixture) handleCCStreamingFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -339,8 +390,10 @@ func (s *nativeAnthropicReaderFixture) handleCCStreamingFromNativeAnthropic(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleResponsesBufferedFromNativeAnthropic collects Anthropic SSE into
-// a complete response and converts it to Responses.
+// handleResponsesBufferedFromNativeAnthropic delegates native stream collection
+// to buffered Responses conversion. Client tool mappings accompany model
+// identities and timing; the caller retains upstream cleanup while result
+// conversion preserves the reader error for assertions.
 func (s *nativeAnthropicReaderFixture) handleResponsesBufferedFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -355,8 +408,10 @@ func (s *nativeAnthropicReaderFixture) handleResponsesBufferedFromNativeAnthropi
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// handleResponsesStreamingFromNativeAnthropic converts Anthropic SSE events
-// to Responses SSE events for the client.
+// handleResponsesStreamingFromNativeAnthropic delegates incremental conversion
+// with the supplied client tool mapping. The shared reader owns drain and
+// timeout behavior; tests retain body cleanup and inspect both the converted
+// result and error.
 func (s *nativeAnthropicReaderFixture) handleResponsesStreamingFromNativeAnthropic(
 	resp *http.Response,
 	c *gin.Context,

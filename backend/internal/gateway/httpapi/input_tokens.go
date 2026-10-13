@@ -17,14 +17,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Responses input-token preflight checks a request without generating an answer
+// or submitting usage completion. Funding eligibility precedes group route
+// planning here, and the original requested model remains separate from the
+// mapped routing name passed into the counting attempt adapter.
+
+// InputTokensCall retains requested and routed identity for Responses counting
+// execution.
 type InputTokensCall struct {
-	Key                                        *apikey.APIKey
-	Body                                       []byte
+	// authenticated effective API Key
+	Key  *apikey.APIKey
+	Body []byte // mapped counting request bytes
+	// Model, RoutingModel, Platform and SessionHash describe the same counting
+	// request. Model retains the client request name; RoutingModel names the
+	// mapped selection model; Platform constrains eligible provider candidates;
+	// SessionHash is the sticky selection seed for that counting request.
 	Model, RoutingModel, Platform, SessionHash string
-	Log                                        *zap.Logger
+	// request counting diagnostic logger
+	Log *zap.Logger
 }
 
-// ResponsesInputTokens handles Codex input-token preflight without generation concurrency slots or usage recording.
+// ResponsesInputTokens executes authenticated Responses input-token preflight
+// under the request activity barrier. It validates protocol permission and JSON
+// model input, checks funding eligibility, then binds the group route and
+// mapped body before opening the bounded text counting loop. This path performs
+// no generation completion submission; selected resource handling belongs to
+// its execution adapter.
 func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -90,7 +108,8 @@ func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	}
 	h.backend.AuthLatency(c, time.Since(requestStart).Milliseconds())
 
-	// The route plan captures the effective group and model mapping.
+	// Plan after funding eligibility and retain the client model separately, so
+	// mapped request bytes and selection use the group route without losing request attribution.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)

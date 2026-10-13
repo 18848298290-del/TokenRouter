@@ -8,34 +8,43 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// Extended gateway routes share admission metadata with the protocol display
+// catalogue. Matching checks methods and complete prefix segments, while core
+// text entries and upstream-only entries can carry display information without
+// extended routes; those entries are gated by their dedicated handlers.
+
+// These aliases retain shared protocol identifiers for HTTP display and group
+// admission metadata; they do not introduce separate persisted capability IDs.
 const (
-	ProtocolAnthropicMessages     = protocol.ProtocolAnthropicMessages
-	ProtocolOpenAIResponses       = protocol.ProtocolOpenAIResponses
-	ProtocolOpenAIChatCompletions = protocol.ProtocolOpenAIChatCompletions
-	ProtocolGeminiGenerateContent = protocol.ProtocolGeminiGenerateContent
-	ProtocolSystemOne             = protocol.ProtocolSystemOne
-	ProtocolEmbeddings            = protocol.ProtocolEmbeddings
-	ProtocolImagesGenerations     = protocol.ProtocolImagesGenerations
-	ProtocolImagesEdits           = protocol.ProtocolImagesEdits
-	ProtocolImageBatches          = protocol.ProtocolImageBatches
-	ProtocolVideosGenerations     = protocol.ProtocolVideosGenerations
-	ProtocolVideosEdits           = protocol.ProtocolVideosEdits
-	ProtocolVideosExtensions      = protocol.ProtocolVideosExtensions
-	ProtocolTTS                   = protocol.ProtocolTTS
-	ProtocolSTT                   = protocol.ProtocolSTT
-	ProtocolCustomVoices          = protocol.ProtocolCustomVoices
-	ProtocolVoiceRealtime         = protocol.ProtocolVoiceRealtime
-	ProtocolResponsesWebSocket    = protocol.ProtocolResponsesWebSocket
-	ProtocolLive                  = protocol.ProtocolLive
-	ProtocolResponsesCompact      = protocol.ProtocolResponsesCompact
-	ProtocolAlphaSearch           = protocol.ProtocolAlphaSearch
-	ProtocolWebSearch             = protocol.ProtocolWebSearch
-	ProtocolXSearch               = protocol.ProtocolXSearch
-	ProtocolQoderChat             = protocol.ProtocolQoderChat
-	ProtocolGeminiBatch           = protocol.ProtocolGeminiBatch
-	ProtocolVertexBatch           = protocol.ProtocolVertexBatch
+	ProtocolAnthropicMessages     = protocol.ProtocolAnthropicMessages     // Anthropic Messages client protocol
+	ProtocolOpenAIResponses       = protocol.ProtocolOpenAIResponses       // OpenAI Responses client protocol
+	ProtocolOpenAIChatCompletions = protocol.ProtocolOpenAIChatCompletions // OpenAI Chat client protocol
+	ProtocolGeminiGenerateContent = protocol.ProtocolGeminiGenerateContent // Gemini native text protocol
+	ProtocolSystemOne             = protocol.ProtocolSystemOne             // SystemOne decision request protocol
+	ProtocolEmbeddings            = protocol.ProtocolEmbeddings            // embedding request protocol
+	ProtocolImagesGenerations     = protocol.ProtocolImagesGenerations     // image generation request protocol
+	ProtocolImagesEdits           = protocol.ProtocolImagesEdits           // image editing request protocol
+	ProtocolImageBatches          = protocol.ProtocolImageBatches          // persistent image job protocol
+	ProtocolVideosGenerations     = protocol.ProtocolVideosGenerations     // video generation request protocol
+	ProtocolVideosEdits           = protocol.ProtocolVideosEdits           // video editing request protocol
+	ProtocolVideosExtensions      = protocol.ProtocolVideosExtensions      // video extension request protocol
+	ProtocolTTS                   = protocol.ProtocolTTS                   // speech synthesis request protocol
+	ProtocolSTT                   = protocol.ProtocolSTT                   // speech transcription request protocol
+	ProtocolCustomVoices          = protocol.ProtocolCustomVoices          // custom voice resource protocol
+	ProtocolVoiceRealtime         = protocol.ProtocolVoiceRealtime         // realtime voice WebSocket protocol
+	ProtocolResponsesWebSocket    = protocol.ProtocolResponsesWebSocket    // Responses WebSocket client protocol
+	ProtocolLive                  = protocol.ProtocolLive                  // Live session creation protocol
+	ProtocolResponsesCompact      = protocol.ProtocolResponsesCompact      // Responses compact request protocol
+	ProtocolAlphaSearch           = protocol.ProtocolAlphaSearch           // Alpha search request protocol
+	ProtocolWebSearch             = protocol.ProtocolWebSearch             // Web search request protocol
+	ProtocolXSearch               = protocol.ProtocolXSearch               // X search request protocol
+	ProtocolQoderChat             = protocol.ProtocolQoderChat             // Qoder upstream chat protocol
+	ProtocolGeminiBatch           = protocol.ProtocolGeminiBatch           // Gemini upstream batch protocol
+	ProtocolVertexBatch           = protocol.ProtocolVertexBatch           // Vertex upstream batch protocol
 )
 
+// protocolEndpoints combines display-only entries with normalized extended
+// route metadata; ProtocolEndpoints clones it for catalogue consumers.
 var protocolEndpoints = []ProtocolEndpoint{
 	{ID: ProtocolAnthropicMessages, Endpoint: "POST /v1/messages"},
 	{ID: ProtocolOpenAIResponses, Endpoint: "POST /v1/responses"},
@@ -69,21 +78,29 @@ type ProtocolID = protocol.ProtocolID
 
 // ProtocolRoute describes a normalized endpoint subject to group admission; routing removes alias prefixes.
 type ProtocolRoute struct {
-	// An empty method matches all methods. Prefix matches require a complete path segment.
-	Method    string
-	Path      string
-	Prefix    bool
+	// Method constrains route matching when nonempty; an empty method admits
+	// every HTTP method for this route before resource ownership checks.
+	Method string
+	Path   string // normalized endpoint path
+	Prefix bool   // slash-segment child matching enabled
+	// WebSocket adds the display annotation in httpProtocol. ProtocolForRoute
+	// matches method and path, leaving upgrade validation to the endpoint handler.
 	WebSocket bool
 }
 
 // ProtocolEndpoint holds the shared HTTP display and admission metadata.
 type ProtocolEndpoint struct {
-	ID       ProtocolID
-	Endpoint string
-	Routes   []ProtocolRoute
+	ID       ProtocolID // shared protocol identifier
+	Endpoint string     // displayed method and endpoint
+	// Routes supplies normalized extended admission paths. Nil routes keep this
+	// entry available for display while dedicated text or upstream handling
+	// supplies its separate behavior.
+	Routes []ProtocolRoute
 }
 
-// httpProtocol derives the catalogue display from admission route metadata.
+// httpProtocol builds display text and route metadata from one primary route
+// plus aliases. The display uses the /v1 prefix and optional method and
+// WebSocket annotation; matching retains normalized route paths for admission.
 func httpProtocol(id ProtocolID, primary ProtocolRoute, aliases ...ProtocolRoute) ProtocolEndpoint {
 	endpoint := "/v1" + primary.Path
 	if primary.Method != "" {
@@ -95,7 +112,10 @@ func httpProtocol(id ProtocolID, primary ProtocolRoute, aliases ...ProtocolRoute
 	return ProtocolEndpoint{ID: id, Endpoint: endpoint, Routes: append([]ProtocolRoute{primary}, aliases...)}
 }
 
-// ProtocolForRoute resolves a normalized method and path to an extended protocol.
+// ProtocolForRoute matches supplied method and normalized path against extended
+// route metadata. Empty route methods accept every method, and prefixes require
+// a slash-separated child path. Entries with no Routes do not match; callers
+// normalize aliases and apply separate text protocol gates.
 func ProtocolForRoute(method, path string) (ProtocolID, bool) {
 	for _, protocol := range protocolEndpoints {
 		for _, route := range protocol.Routes {
@@ -110,7 +130,10 @@ func ProtocolForRoute(method, path string) (ProtocolID, bool) {
 	return "", false
 }
 
-// ProtocolEndpoints returns independent copies, including route slices, for callers to modify.
+// ProtocolEndpoints returns a copied catalogue with independently cloned route
+// slices. Callers may edit the returned entries and routes; source admission
+// metadata remains unchanged, while immutable strings and scalar route fields
+// copy by value.
 func ProtocolEndpoints() []ProtocolEndpoint {
 	out := slices.Clone(protocolEndpoints)
 	for i := range out {

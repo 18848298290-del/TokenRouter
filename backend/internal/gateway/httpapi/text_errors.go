@@ -19,6 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Gateway errors may occur after a wait heartbeat has committed a streaming
+// response. Final output then uses the inbound protocol's error event, while
+// funding and rate failures retain a safe status, code and message and can
+// supply the remaining RPM-window seconds.
+
+// WriteAnthropicStreamError writes a protocol error using streamStarted to
+// choose SSE or JSON. Started Responses paths receive a terminal
+// response.failed event; other started streams use Anthropic error data when
+// Flush is available. The optional observer records intended error status
+// before output, and callers end processing after the helper returns.
 func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, message string, streamStarted bool, observe func(*gin.Context, string, string, int)) {
 	if streamStarted {
 		// A flushed keepalive or data frame commits the status, so subsequent errors use SSE.
@@ -27,13 +37,16 @@ func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, messag
 			observe(c, errType, message, status)
 		}
 
-		// Responses clients require a terminal response event even when the upstream uses Anthropic.
+		// Responses clients recognize stream completion through terminal response
+		// events, so select that envelope even when this caller uses Anthropic output.
 		if InboundIsResponses(c) {
 			if WriteResponsesFailedSSE(c, errType, code, message, ErrorRequestID(c), ErrorRequestModel(c)) {
 				return
 			}
 		}
-		// Flush the protocol error before returning from the started stream.
+		// Anthropic error data also requires http.Flusher on this same writer.
+		// A Responses failure rejected for missing Flush therefore emits nothing
+		// here; non-Responses streams use this Anthropic path directly.
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
 			// Quote variable strings when constructing the fixed SSE error schema.
@@ -41,6 +54,8 @@ func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, messag
 			if code != "" {
 				errorObject := gin.H{"type": errType, "code": code, "message": message}
 				payload, err := json.Marshal(gin.H{"type": "error", "error": errorObject})
+				// Keep the quoted fixed error event if structured encoding fails, so
+				// variable text still has escaped JSON in the started SSE response.
 				if err == nil {
 					errorEvent = "data: " + string(payload) + "\n\n"
 				}
@@ -61,6 +76,9 @@ func WriteAnthropicStreamError(c *gin.Context, status int, errType, code, messag
 	}
 }
 
+// WriteAnthropicError writes an Anthropic JSON error with the supplied status.
+// A nonempty code adds its machine-readable field; callers choose the status
+// and retain responsibility for any separate Ops or stream observation.
 func WriteAnthropicError(c *gin.Context, status int, errType, code, message string) {
 	errorObject := gin.H{"type": errType, "message": message}
 	if code != "" {
@@ -72,6 +90,12 @@ func WriteAnthropicError(c *gin.Context, status int, errType, code, message stri
 	})
 }
 
+// BillingErrorDetails maps funding and rate failures to client status, code,
+// message and retry seconds. RPM limits count seconds until the next
+// Unix-minute boundary; rolling Key limits omit Retry-After. An unavailable
+// service with no message uses fixed unavailable text. Remaining failures use
+// 403, logging an absent application message before returning generic billing
+// text.
 func BillingErrorDetails(err error) (status int, code, message string, retryAfter int) {
 	if errors.Is(err, billing.ErrBillingServiceUnavailable) {
 		msg := apperror.Message(err)
@@ -101,6 +125,8 @@ func BillingErrorDetails(err error) (status int, code, message string, retryAfte
 	}
 
 	msg := apperror.Message(err)
+	// A failure with no safe application message is logged for diagnosis and
+	// receives generic billing text rather than exposing its raw error.
 	if msg == "" {
 		logging.L().With(
 			zap.String("component", "handler.gateway.billing"),
@@ -111,7 +137,9 @@ func BillingErrorDetails(err error) (status int, code, message string, retryAfte
 	return http.StatusForbidden, "billing_error", msg, 0
 }
 
-// ErrorRequestID reads the telemetry correlation ID from the request context.
+// ErrorRequestID returns the telemetry request correlation value as a string. A
+// missing Gin request or a context value of another type yields empty, allowing
+// protocol error writers to generate their own response identifier.
 func ErrorRequestID(c *gin.Context) string {
 	if c != nil && c.Request != nil {
 		value, _ := c.Request.Context().Value(telemetry.RequestID).(string)
@@ -120,6 +148,10 @@ func ErrorRequestID(c *gin.Context) string {
 	return ""
 }
 
+// ErrorRequestModel returns the trimmed model retained for Ops error
+// presentation. Nil context or an absent string yields empty, which lets
+// terminal Responses failures omit the model field when request metadata is
+// unavailable.
 func ErrorRequestModel(c *gin.Context) string {
 	if c == nil {
 		return ""

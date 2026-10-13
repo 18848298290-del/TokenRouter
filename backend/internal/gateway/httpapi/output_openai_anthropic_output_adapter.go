@@ -19,6 +19,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// Native Anthropic and converted OpenAI output share request-level header
+// filtering and tool restoration. The option adapters supply synchronous HTTP
+// callbacks while their platform readers own buffering, terminal detection and
+// cancellation; selected provider observations remain tied to the retained
+// execution target.
+
+// AnthropicOptions binds conversion output to this HTTP request and supplied
+// error writer. Line-size and header-filter callbacks read bound output
+// settings when invoked; reverse-tool mapping reads current request state. The
+// upstream converter receives clock and entropy functions and owns
+// protocol conversion.
 func (p *OpenAIResponseOutput) AnthropicOptions(c *gin.Context, writeError func(*gin.Context, int, string, string)) forward.AnthropicOutputOptions {
 	return forward.AnthropicOutputOptions{
 		Runtime: bridge.Runtime{Now: time.Now, ReadRandom: rand.Read},
@@ -40,6 +51,12 @@ func (p *OpenAIResponseOutput) AnthropicOptions(c *gin.Context, writeError func(
 	}
 }
 
+// AnthropicDirectOptions binds native Anthropic reading to the selected
+// provider and request. ProviderID is captured immediately, while observer
+// callbacks inspect the retained provider at invocation. Bounded-body reads
+// leave cleanup with their caller; interval callbacks interpret configured
+// seconds, and header/tool callbacks use current bound output and request
+// state.
 func (p *OpenAIResponseOutput) AnthropicDirectOptions(c *gin.Context, provider *gatewayprovider.ExecutionProvider) forward.NativeAnthropicOptions {
 	return forward.NativeAnthropicOptions{
 		ProviderID: provider.Record.ID,
@@ -66,6 +83,8 @@ func (p *OpenAIResponseOutput) AnthropicDirectOptions(c *gin.Context, provider *
 		StreamInterval: p.TextStreamInterval,
 		KeepaliveInterval: func() time.Duration {
 			if p.Options.Configured && p.Options.StreamKeepaliveInterval > 0 {
+				// Convert the configured keepalive spacing from seconds for the native
+				// Anthropic reader.
 				return time.Duration(p.Options.StreamKeepaliveInterval) * time.Second
 			}
 			return 0

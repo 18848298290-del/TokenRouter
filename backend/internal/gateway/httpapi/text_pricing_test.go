@@ -25,14 +25,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestTextModelPricingSources distinguishes catalogue prices, manual zero prices, and multiplier-only entries
-// without base prices.
+// TestTextModelPricingSources compares catalogue, manual zero, interval and
+// multiplier-only price cards. It requires admission for a usable base price
+// and missing-price classification when configured multipliers supply no base
+// rate.
 func TestTextModelPricingSources(t *testing.T) {
 	zero, input, multiplier := 0.0, 2e-7, 2.0
 	for _, tc := range []struct {
+		// name labels the price source scenario; model identifies its lookup target.
 		name, model string
-		card        *routing.ModelPricingEntry
-		missing     bool
+		card        *routing.ModelPricingEntry // optional explicit price card
+		missing     bool                       // expected missing-price result
 	}{
 		{name: "catalog", model: "gpt-5.6-luna"},
 		{name: "missing", model: "codex-auto-review", missing: true},
@@ -59,14 +62,22 @@ func TestTextModelPricingSources(t *testing.T) {
 	}
 }
 
-// TestTextPricingUsesBillingModel covers key, group, and provider mappings across all billing model sources.
+// TestTextPricingUsesBillingModel combines Key, group and provider mappings
+// with each billing source. It requires admission based on the selected source
+// across HTTP passthrough and WebSocket input rules, rather than another priced
+// name.
 func TestTextPricingUsesBillingModel(t *testing.T) {
 	prices := textPricingFixture(t)
 	key := &apikey.APIKey{GroupID: testkit.GroupID()}
 	for _, tc := range []struct {
+		// name labels the scenario; requested names the client model; mapped names
+		// the group route; upstream names the provider target; source selects the
+		// configured billing origin.
 		name, requested, mapped, upstream, source string
-		missing, passthrough                      bool
-		protocol                                  protocol.ProtocolID
+		// missing indicates expected rejection; passthrough selects the HTTP
+		// forwarding profile.
+		missing, passthrough bool
+		protocol             protocol.ProtocolID // inbound completion protocol identifier
 	}{
 		{name: "key_redirect", requested: "gpt-5.6-luna", mapped: "gpt-5.6-luna", source: routing.BillingModelSourceRequested},
 		{name: "group_mapping", requested: "codex-auto-review", mapped: "gpt-5.6-luna", source: routing.BillingModelSourceGroupMapped},
@@ -101,7 +112,10 @@ func TestTextPricingUsesBillingModel(t *testing.T) {
 	}
 }
 
-// TestTextPricingRejectsBeforeForward checks that missing prices prevent streaming and non-streaming upstream calls.
+// TestTextPricingRejectsBeforeForward requests an unpriced model through each
+// text protocol with streaming enabled or disabled. It requires local pricing
+// rejection and nil execution result before any platform forwarding dependency
+// is needed.
 func TestTextPricingRejectsBeforeForward(t *testing.T) {
 	executor := &UnifiedTextExecutor{Pricing: textPricingFixture(t)}
 	target := gatewayprovider.NewExecutionProvider(&provider.Record{ID: 1, Platform: "openai", Type: "apikey"})
@@ -135,7 +149,10 @@ func TestTextPricingRejectsBeforeForward(t *testing.T) {
 	}
 }
 
-// TestAutoReviewConfiguredPriceForwardsAndBills checks admission and billing with configured review-model rates and usage.
+// TestAutoReviewConfiguredPriceForwardsAndBills supplies explicit review-model
+// input, output and cache-read rates. It requires forwarding and the calculated
+// cost from observed token buckets, separating cached input from ordinary input
+// exactly once.
 func TestAutoReviewConfiguredPriceForwardsAndBills(t *testing.T) {
 	input, output, cache := 2e-7, 1.2e-6, 2e-8
 	prices := textPricingFixture(t, routing.ModelPricingEntry{Models: []string{"codex-auto-review"}, InputPrice: &input, OutputPrice: &output, CacheReadPrice: &cache})

@@ -19,16 +19,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// Group model mapping rebuilds a Chat request from retained client bytes at
+// each attempt. A Gemini-valued request platform skips selected targets from
+// other platforms after returning their capacity; ordinary platform dispatch
+// receives the current Gin request context and its rebuilt body.
+//
+// The result and writer-size change answer separate loop questions. A result
+// can retain partial usage while an error remains. Gin changes size from -1 to
+// zero on first header commitment, so a size change can close this attempt's
+// retry window before body bytes exist; prior commitment can also predate the
+// attempt. Provider ownership returns after the exchange before scheduling
+// feedback, while completion later captures
+// admitted funding and original request attribution. Missing compatibility
+// services end before the exchange and release their selected capacity after
+// presenting a local error.
+
 // genericChatAttemptBridge holds forwarding state for one Chat Completions request.
 type genericChatAttemptBridge struct {
-	messageAttemptBridge
-	requestCtx                          context.Context
-	forwardBody                         []byte
+	messageAttemptBridge                 // embedded admitted request attempt state
+	requestCtx           context.Context // retained selection-loop context
+	// prepared current forwarding request bytes
+	forwardBody []byte
+	// groupPlatform retains the request selection platform; selectionSessionHash
+	// supplies its sticky selection identity. Forward skips non-Gemini targets
+	// when groupPlatform equals Gemini.
 	groupPlatform, selectionSessionHash string
-	groupMapping                        routing.GroupMappingResult
+	// admitted group model mapping
+	groupMapping routing.GroupMappingResult
 }
 
-// Select chooses a provider for the current Chat Completions attempt.
+// Select obtains the current Chat provider target and retains its selection
+// result for Acquire and Forward. Excluded IDs pass to shared selection, and
+// successful selection records the actual provider platform for request Ops
+// before returning loop metadata.
 func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
 	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.selectionSessionHash, b.reqModel, excluded, "", int64(0))
@@ -40,7 +63,10 @@ func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure writes the error from the initial provider selection.
+// FirstSelectionFailure first handles group business restrictions for Chat
+// output. Remaining errors are diagnosed and refined for model or rate
+// conditions; non-model failures append the selection error and may record
+// routing capacity limitation before writing the client envelope.
 func (b *genericChatAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().chatCompletionsErrorResponse(b.c, status, errType, message)
@@ -59,10 +85,14 @@ func (b *genericChatAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	b.binding().chatCompletionsErrorResponse(b.c, cls.Status, cls.ErrType, message)
 }
 
-// Acquire acquires or adopts the selected provider's concurrency slot.
+// Acquire adopts the selected provider release or waits for its plan when
+// capacity was not acquired. A missing plan writes a no-provider error and
+// returns false. Successful ownership is wrapped for request cancellation, and
+// later forwarding or cleanup releases it idempotently.
 func (b *genericChatAttemptBridge) Acquire() bool {
 	var err error
-	// Reuse an acquired slot or follow the selection's wait plan.
+	// Adopt the scheduler's acquired ownership first; waiting obtains a replacement
+	// callback only when selection returned a plan rather than active capacity.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -84,15 +114,29 @@ func (b *genericChatAttemptBridge) Acquire() bool {
 			return false
 		}
 	}
+	// Share provider cleanup between request cancellation and normal forwarding
+	// return, allowing both paths to call the same lease-managed callback safely.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward dispatches Chat Completions to the selected provider's platform.
+// Forward executes one Chat attempt from the retained client body, applying its
+// group mapping for this provider. A Gemini-valued groupPlatform skips targets
+// from other platforms after returning their slot; missing compatible services
+// release ownership and stop with an error.
+//
+// Normal dispatch uses the current Gin request context, retains partial results
+// and releases capacity before scheduler feedback. Any writer-size change closes
+// the reported retry window, including Gin's -1-to-zero first header commitment.
+// HTTPCommitted separately records whether this writer has committed at all.
+// Beta denial and typed failover supply separate classifications
+// so the shared loop can choose policy output, switching or completion capture.
 func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Outcome {
 	var err error
 
+	// A Gemini-valued request platform excludes this selected non-Gemini target
+	// here; return its capacity before asking the loop to skip that attempt.
 	if b.groupPlatform == capability.PlatformGemini && b.provider.Record.Platform != capability.PlatformGemini {
 		if b.providerReleaseFunc != nil {
 			b.providerReleaseFunc()
@@ -100,14 +144,21 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 
 		return textflow.Outcome{Skip: true}
 	}
-	// Capture writer size before forwarding so later errors can detect prior output.
+	// Compare size around this exchange for the loop's retry decision. Gin's first
+	// header commitment changes -1 to zero even before body bytes are written.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	b.forwardBody = b.body
+	// Rebuild model replacement from retained client bytes for this attempt,
+	// keeping the original requested name available for completion pricing and
+	// attribution.
 	if b.groupMapping.Mapped {
 		b.forwardBody = b.binding().replaceModel(b.body, b.groupMapping.MappedModel)
 	}
 	gatewayhttp.SetActualUpstreamEndpoint(b.c, "")
 	if b.provider.Record.Platform == capability.PlatformGemini {
+		// A missing Gemini compatibility executor ends this attempt before an
+		// exchange; present the local service error and return its already acquired
+		// capacity.
 		if !b.binding().geminiAvailable {
 			b.binding().chatCompletionsErrorResponse(b.c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
 			if b.providerReleaseFunc != nil {
@@ -117,6 +168,9 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 		}
 		b.result, err = b.binding().forwardGeminiChat(b.c.Request.Context(), b.c, b.provider, b.forwardBody)
 	} else if shouldUseAntigravityCompat(b.provider) {
+		// A missing Antigravity compatibility executor ends this attempt before an
+		// exchange; present the local service error and return its already acquired
+		// capacity.
 		if !b.binding().antigravityAvailable {
 			b.binding().chatCompletionsErrorResponse(b.c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
 			if b.providerReleaseFunc != nil {
@@ -130,6 +184,9 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 		b.result, err = b.binding().forwardChat(b.c.Request.Context(), b.c, b.provider, b.forwardBody, b.parsedReq)
 	}
 
+	// Return capacity after the exchange before scheduler feedback; retained
+	// partial usage stays available while later completion captures this attempt's
+	// result.
 	if b.providerReleaseFunc != nil {
 		b.providerReleaseFunc()
 	}
@@ -149,10 +206,16 @@ func (b *genericChatAttemptBridge) Forward(_ textflow.AttemptState) textflow.Out
 	return out
 }
 
-// OtherFailure reports forwarding errors that were not communicated to the client.
+// OtherFailure fills an uncommunicated Chat forwarding error and logs the
+// result. Prior writer changes or already-communicated errors suppress
+// duplicate client output; otherwise the shared error helper decides whether a
+// final envelope can be written.
 func (b *genericChatAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
+	// Fill an error only when the platform did not communicate this failure,
+	// preventing a generic response from replacing already delivered protocol
+	// error output.
 	if !upstreamErrorAlreadyCommunicated {
 		wroteFallback = b.binding().ensureForwardErrorResponse(b.c, *b.streamStarted)
 	}
@@ -164,9 +227,13 @@ func (b *genericChatAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Complete captures usage and records the completed attempt.
+// Complete captures a nonnil retained result with admitted funding, provider
+// metadata and request attribution before submitting usage work. The supplied
+// loop state is ignored, including ForceCacheBilling. The callback retains its
+// completion snapshot and logger so recording does not revisit live Gin state.
 func (b *genericChatAttemptBridge) Complete(_ textflow.AttemptState) {
-	// Capture request metadata before submitting completion work.
+	// Read client attribution while Gin is still owned by this request; usage
+	// submission retains the captured values rather than revisiting live headers.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
@@ -175,7 +242,8 @@ func (b *genericChatAttemptBridge) Complete(_ textflow.AttemptState) {
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// Capture funding and request data before queueing so the worker uses this snapshot.
+	// Capture the result and admitted funding before asynchronous submission,
+	// keeping subsequent request-state changes outside the recorder's input snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -205,20 +273,33 @@ func (b *genericChatAttemptBridge) Complete(_ textflow.AttemptState) {
 	})
 }
 
+// Context returns the retained selection context supplied when this bridge
+// opened.
 func (b *genericChatAttemptBridge) Context() context.Context { return b.requestCtx }
 
+// Begin leaves this prepared Chat bridge ready for the shared loop.
 func (b *genericChatAttemptBridge) Begin() {}
 
+// PrepareAttempt accepts the Chat input already supplied by request
+// preparation.
 func (b *genericChatAttemptBridge) PrepareAttempt() bool { return true }
 
+// Intercept reports no local probe interception for this generic Chat adapter.
 func (b *genericChatAttemptBridge) Intercept() bool { return false }
 
+// SingleProviderRetry leaves retry-context flags untouched for generic Chat
+// attempts.
 func (b *genericChatAttemptBridge) SingleProviderRetry() {}
 
+// Abandon requires no additional session cleanup for this generic Chat adapter.
 func (b *genericChatAttemptBridge) Abandon(int64) {}
 
+// Success adds no adapter-specific effects after this generic Chat attempt.
 func (b *genericChatAttemptBridge) Success() {}
 
+// Exhausted presents the final Chat failure with streaming state from the loop
+// or wait output. Typed failover retains upstream evidence for final rules;
+// absent typed evidence uses the generic exhausted-provider response.
 func (b *genericChatAttemptBridge) Exhausted(err *textflow.AttemptFailure, _ string, stream bool) {
 	var original *forwardcore.UpstreamFailoverError
 	if err != nil && errors.As(err.Cause, &original) {
@@ -228,6 +309,9 @@ func (b *genericChatAttemptBridge) Exhausted(err *textflow.AttemptFailure, _ str
 	}
 }
 
+// PolicyFailure presents a recognized beta-policy denial as an invalid request
+// and local policy observation. Other error types make no change here, because
+// the shared loop calls separate handlers for their failure classification.
 func (b *genericChatAttemptBridge) PolicyFailure(err error) {
 	if original, ok := errors.AsType[*anthropic.BetaBlockedError](err); ok {
 		gatewayhttp.MarkOpsClientBusinessLimited(b.c, gatewayhttp.OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -235,7 +319,8 @@ func (b *genericChatAttemptBridge) PolicyFailure(err error) {
 	}
 }
 
-// shouldUseAntigravityCompat reports whether this is an Antigravity OAuth provider.
+// shouldUseAntigravityCompat reports whether the target is an Antigravity OAuth
+// provider.
 func shouldUseAntigravityCompat(provider *gatewaycapture.ExecutionProvider) bool {
 	return provider != nil &&
 		provider.Record.Platform == capability.PlatformAntigravity &&

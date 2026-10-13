@@ -15,7 +15,15 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// LogRequestBodyReadFailure records the error category, declared length, and content encoding.
+// Body-read failures may contain user data in their error text. Read
+// diagnostics use bounded category names, declared content length and content
+// encoding, allowing size, decoding and disconnect failures to be investigated
+// with no payload copied into these fields.
+
+// LogRequestBodyReadFailure records a read-error category, declared content
+// length and encoding category. Nil errors or loggers skip reporting; a nil
+// request supplies unknown length and identity encoding. Error text and body
+// contents are excluded from these fields.
 func LogRequestBodyReadFailure(reqLog *zap.Logger, req *http.Request, err error) {
 	if reqLog == nil || err == nil {
 		return
@@ -35,6 +43,10 @@ func LogRequestBodyReadFailure(reqLog *zap.Logger, req *http.Request, err error)
 	)
 }
 
+// requestContentEncodingCategory maps trimmed case-insensitive encoding names
+// to bounded diagnostic labels. Empty values select identity, x-gzip shares
+// gzip, and unrecognized values become other so arbitrary header contents do
+// not enter the log category.
 func requestContentEncodingCategory(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "identity":
@@ -45,11 +57,17 @@ func requestContentEncodingCategory(value string) string {
 		return "zstd"
 	case "deflate":
 		return "deflate"
+	// Group unknown encoding values under one label so arbitrary client header
+	// text cannot become diagnostic field content.
 	default:
 		return "other"
 	}
 }
 
+// requestBodyReadErrorKind classifies wrapped read errors into stable
+// diagnostic labels. Size-limit errors precede decoding-message checks, then
+// cancellation and connection errors, truncated bodies and transport errors;
+// remaining failures use io_read, while nil returns none.
 func requestBodyReadErrorKind(err error) string {
 	if err == nil {
 		return "none"
@@ -73,10 +91,15 @@ func requestBodyReadErrorKind(err error) string {
 	if _, ok := errors.AsType[net.Error](err); ok {
 		return "transport"
 	}
+	// Use a stable catch-all category after known failure checks; read error
+	// strings may include private request content.
 	return "io_read"
 }
 
-// RequestLogger derives a logger from the request context and component name.
+// RequestLogger derives a logger with the supplied component and additional
+// fields. A request context supplies the base when available; otherwise the
+// global logger is used. An empty component leaves only the caller-provided
+// fields.
 func RequestLogger(c *gin.Context, component string, fields ...zap.Field) *zap.Logger {
 	base := logger.L()
 	if c != nil && c.Request != nil {

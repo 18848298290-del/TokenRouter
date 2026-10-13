@@ -19,15 +19,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// Generic Responses dispatch receives the prepared forwarding bytes and
+// selection context retained when its bridge opens. Selection and platform
+// callbacks use that retained context, while capacity acquisition reads the
+// current Gin request context; later Gin context changes therefore do not
+// replace the argument passed to these platform callbacks.
+//
+// An exchange records HTTP commitment separately from a writer-size change.
+// Any size change closes its retry window, including Gin's -1-to-zero first
+// header commitment before body output. A partial result can still accompany
+// an error. The adapter returns provider capacity before scheduler
+// feedback, then completion captures admitted funding and request attribution
+// for asynchronous recording. Unconfigured compatibility branches stop with
+// their client error and release the selected capacity before any platform
+// exchange occurs.
+
 // genericResponsesAttemptBridge holds request-local state for the shared text attempt loop.
 type genericResponsesAttemptBridge struct {
-	messageAttemptBridge
-	requestCtx   context.Context
-	forwardBody  []byte
-	groupMapping routing.GroupMappingResult
+	messageAttemptBridge                            // embedded admitted request attempt state
+	requestCtx           context.Context            // retained selection-loop context
+	forwardBody          []byte                     // prepared current forwarding request bytes
+	groupMapping         routing.GroupMappingResult // admitted group model mapping
 }
 
-// Select chooses a provider for the current Responses attempt.
+// Select obtains the current Responses provider target and retains its
+// selection result for Acquire and Forward. Excluded IDs pass to shared
+// selection, and successful selection records the actual provider platform for
+// request Ops before returning loop metadata.
 func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
 	b.selection, err = b.binding().selectProvider(b.requestCtx, b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0))
@@ -39,7 +57,11 @@ func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (tex
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure classifies initial selection failure and writes a Responses error.
+// FirstSelectionFailure diagnoses initial Responses provider rejection and
+// writes its client envelope. Model configuration failures retain the diagnosed
+// message; other failures append the selection error text and may record
+// routing capacity limitation. Concrete rate evidence refines the diagnosed
+// fallback.
 func (b *genericResponsesAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	cls := classifyNoProviderErrorFromGin(b.c, b.binding().diagnoser, b.apiKey, b.reqModel, b.reqModel, gatewayhttp.EffectiveAPIKeyPlatform(b.c, b.apiKey))
 	cls = gatewayhttp.RefineSelectionError(err, cls)
@@ -53,10 +75,14 @@ func (b *genericResponsesAttemptBridge) FirstSelectionFailure(err error, _ bool)
 	b.binding().responsesErrorResponse(b.c, cls.Status, cls.ErrType, message)
 }
 
-// Acquire acquires or adopts the selected provider's concurrency slot.
+// Acquire adopts the selected provider release or waits for its plan when
+// capacity was not acquired. A missing plan writes a no-provider error and
+// returns false. Successful ownership is wrapped for request cancellation, and
+// later forwarding or cleanup releases it idempotently.
 func (b *genericResponsesAttemptBridge) Acquire() bool {
 	var err error
-	// Reuse an acquired slot or follow the selection's wait plan.
+	// Adopt the scheduler's acquired ownership first; waiting obtains a replacement
+	// callback only when selection returned a plan rather than active capacity.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -78,18 +104,33 @@ func (b *genericResponsesAttemptBridge) Acquire() bool {
 			return false
 		}
 	}
+	// Share provider cleanup between request cancellation and normal forwarding
+	// return, allowing both paths to call the same lease-managed callback safely.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward dispatches a Responses attempt to Gemini or the generic executor.
+// Forward executes one Responses attempt using the retained target and prepared
+// request state. Missing platform compatibility writes an error and releases
+// provider ownership before stopping; normal dispatch retains the result even
+// when execution also fails.
+//
+// The provider release runs before scheduling feedback. A writer-size change
+// closes this attempt's retry window, including Gin's -1-to-zero first header
+// commitment; HTTPCommitted separately records overall commitment. Beta denial
+// and typed failover carry their separate failure classifications; completion
+// can still use a nonnil partial result after an ordinary execution error.
 func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflow.Outcome {
 	var err error
-	// Capture writer size before forwarding so later errors can detect prior output.
+	// Compare size around this exchange for the loop's retry decision. Gin's first
+	// header commitment changes -1 to zero even before body bytes are written.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	gatewayhttp.SetActualUpstreamEndpoint(b.c, "")
 	if b.provider.Record.Platform == capability.PlatformGemini {
+		// A missing Gemini compatibility executor ends this attempt before an
+		// exchange; present the local service error and return its already acquired
+		// capacity.
 		if !b.binding().geminiAvailable {
 			b.binding().responsesErrorResponse(b.c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
 			if b.providerReleaseFunc != nil {
@@ -100,6 +141,9 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 		gatewayhttp.SetActualUpstreamEndpoint(b.c, gatewayhttp.EndpointGeminiModels)
 		b.result, err = b.binding().forwardGeminiResponses(b.requestCtx, b.c, b.provider, b.forwardBody, b.parsedReq)
 	} else if shouldUseAntigravityCompat(b.provider) {
+		// A missing Antigravity compatibility executor ends this attempt before an
+		// exchange; present the local service error and return its already acquired
+		// capacity.
 		if !b.binding().antigravityAvailable {
 			b.binding().responsesErrorResponse(b.c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
 			if b.providerReleaseFunc != nil {
@@ -113,6 +157,9 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 		b.result, err = b.binding().forwardResponses(b.requestCtx, b.c, b.provider, b.forwardBody, b.parsedReq)
 	}
 
+	// Return capacity after the exchange before scheduler feedback; retained
+	// partial usage stays available while later completion captures this attempt's
+	// result.
 	if b.providerReleaseFunc != nil {
 		b.providerReleaseFunc()
 	}
@@ -132,10 +179,16 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 	return out
 }
 
-// OtherFailure reports forwarding errors that were not communicated to the client.
+// OtherFailure fills an uncommunicated Responses forwarding error and logs the
+// result. Prior writer changes or already-communicated errors suppress
+// duplicate client output; otherwise the shared error helper decides whether a
+// final envelope can be written.
 func (b *genericResponsesAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
+	// Fill an error only when the platform did not communicate this failure,
+	// preventing a generic response from replacing already delivered protocol
+	// error output.
 	if !upstreamErrorAlreadyCommunicated {
 		wroteFallback = b.binding().ensureForwardErrorResponse(b.c, *b.streamStarted)
 	}
@@ -147,9 +200,13 @@ func (b *genericResponsesAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Complete captures usage and records the completed attempt.
+// Complete captures a nonnil retained result with admitted funding, provider
+// metadata and request attribution before submitting usage work. The supplied
+// loop state is ignored, including ForceCacheBilling. The callback retains its
+// completion snapshot and logger so recording does not revisit live Gin state.
 func (b *genericResponsesAttemptBridge) Complete(_ textflow.AttemptState) {
-	// Capture request metadata before submitting completion work.
+	// Read client attribution while Gin is still owned by this request; usage
+	// submission retains the captured values rather than revisiting live headers.
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
@@ -158,7 +215,8 @@ func (b *genericResponsesAttemptBridge) Complete(_ textflow.AttemptState) {
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// Capture funding and request data before queueing so the worker uses this snapshot.
+	// Capture the result and admitted funding before asynchronous submission,
+	// keeping subsequent request-state changes outside the recorder's input snapshot.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -188,13 +246,36 @@ func (b *genericResponsesAttemptBridge) Complete(_ textflow.AttemptState) {
 	})
 }
 
+// Context returns the retained selection context supplied when this bridge
+// opened.
 func (b *genericResponsesAttemptBridge) Context() context.Context { return b.requestCtx }
-func (b *genericResponsesAttemptBridge) Begin()                   {}
-func (b *genericResponsesAttemptBridge) PrepareAttempt() bool     { return true }
-func (b *genericResponsesAttemptBridge) Intercept() bool          { return false }
-func (b *genericResponsesAttemptBridge) SingleProviderRetry()     {}
-func (b *genericResponsesAttemptBridge) Abandon(int64)            {}
-func (b *genericResponsesAttemptBridge) Success()                 {}
+
+// Begin leaves this prepared Responses bridge ready for the shared loop.
+func (b *genericResponsesAttemptBridge) Begin() {}
+
+// PrepareAttempt accepts the Responses input already supplied by request
+// preparation.
+func (b *genericResponsesAttemptBridge) PrepareAttempt() bool { return true }
+
+// Intercept reports no local probe interception for this generic Responses
+// adapter.
+func (b *genericResponsesAttemptBridge) Intercept() bool { return false }
+
+// SingleProviderRetry leaves retry-context flags untouched for generic
+// Responses attempts.
+func (b *genericResponsesAttemptBridge) SingleProviderRetry() {}
+
+// Abandon requires no additional session cleanup for this generic Responses
+// adapter.
+func (b *genericResponsesAttemptBridge) Abandon(int64) {}
+
+// Success adds no adapter-specific effects after this generic Responses
+// attempt.
+func (b *genericResponsesAttemptBridge) Success() {}
+
+// Exhausted presents the final Responses failure with streaming state from the
+// loop or wait output. Typed failover retains upstream evidence for final
+// rules; absent typed evidence uses the generic exhausted-provider response.
 func (b *genericResponsesAttemptBridge) Exhausted(err *textflow.AttemptFailure, _ string, stream bool) {
 	var original *forwardcore.UpstreamFailoverError
 	if err != nil && errors.As(err.Cause, &original) {
@@ -204,6 +285,9 @@ func (b *genericResponsesAttemptBridge) Exhausted(err *textflow.AttemptFailure, 
 	}
 }
 
+// PolicyFailure presents a recognized beta-policy denial as an invalid request
+// and local policy observation. Other error types make no change here, because
+// the shared loop calls separate handlers for their failure classification.
 func (b *genericResponsesAttemptBridge) PolicyFailure(err error) {
 	if original, ok := errors.AsType[*anthropic.BetaBlockedError](err); ok {
 		gatewayhttp.MarkOpsClientBusinessLimited(b.c, gatewayhttp.OpsClientBusinessLimitedReasonLocalPolicyDenied)

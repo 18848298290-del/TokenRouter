@@ -12,7 +12,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
-// WriteInterceptStream writes a synthetic streaming response for an intercepted request.
+// Claude Code probes can be answered locally before provider forwarding begins.
+// Synthetic Messages responses retain message IDs, stop fields and usage shape
+// expected by the client; streaming emits the same staged block lifecycle while
+// unary one-token Haiku probes carry their max_tokens stop reason.
+
+// WriteInterceptStream emits an Anthropic-shaped synthetic stream for local
+// probe interception. Suggestion mode returns empty text with one output token;
+// other modes use the warmup text and two tokens. Each event is flushed with a
+// short pause, and write errors are discarded because this local response has
+// no upstream attempt to retry.
 func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta.InterceptType) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -56,6 +65,9 @@ func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta
 		`event: message_stop`+"\n"+`data: {"type":"message_stop"}`,
 	)
 
+	// Emit each synthetic lifecycle event with a separate flush and pause; failed
+	// client writes do not trigger an upstream retry for this intercepted local
+	// answer.
 	for _, event := range events {
 		_, _ = c.Writer.WriteString(event + "\n\n")
 		c.Writer.Flush()
@@ -63,13 +75,20 @@ func WriteInterceptStream(c *gin.Context, model string, interceptType clientmeta
 	}
 }
 
-// GenerateInterceptMessageID returns msg_01 followed by 22 Base62 characters.
+// GenerateInterceptMessageID generates msg_01 plus twenty-two Base62 characters
+// from random bytes, with modulo mapping rather than a collision check. The
+// pinned Go runtime fills the random slice or terminates on entropy failure;
+// its Read implementation never returns the error that selects the defensive
+// timestamp branch below.
 func GenerateInterceptMessageID() string {
 	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	// Match the twenty-two-character suffix accepted by the Messages probe shape.
 	const idLen = 22
 	randomBytes := make([]byte, idLen)
 	if _, err := rand.Read(randomBytes); err != nil {
-		// If entropy is unavailable, retain the expected ID shape using a timestamp.
+		// This branch defines a timestamp-shaped ID if Read returns an error. The
+		// pinned Go implementation terminates on entropy failure before this path
+		// can provide a response.
 		return fmt.Sprintf("msg_01%022d", time.Now().UnixNano())
 	}
 	b := make([]byte, idLen)
@@ -79,7 +98,10 @@ func GenerateInterceptMessageID() string {
 	return "msg_01" + string(b)
 }
 
-// WriteInterceptResponse writes a synthetic non-streaming response for an intercepted request.
+// WriteInterceptResponse writes an Anthropic-shaped synthetic JSON result for
+// intercepted probes. Suggestion mode returns empty text, the one-token Haiku
+// probe returns # with max_tokens termination, and other modes return warmup
+// text; synthetic usage and model metadata are provided directly.
 func WriteInterceptResponse(c *gin.Context, model string, interceptType clientmeta.InterceptType) {
 	var msgID, text, stopReason string
 	var outputTokens int
@@ -94,7 +116,9 @@ func WriteInterceptResponse(c *gin.Context, model string, interceptType clientme
 		msgID = GenerateInterceptMessageID()
 		text = "#"
 		outputTokens = 1
-		stopReason = "max_tokens" // A max_tokens=1 probe reports max_tokens as its stop reason.
+		// The one-token probe needs its requested limit reflected in termination,
+		// so its fixed one-character answer uses max_tokens rather than end_turn.
+		stopReason = "max_tokens"
 	default: // clientmeta.InterceptTypeWarmup
 		msgID = GenerateInterceptMessageID()
 		text = "New Conversation"

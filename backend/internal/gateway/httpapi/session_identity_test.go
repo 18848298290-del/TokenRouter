@@ -22,6 +22,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// guardianAffinityTestContext builds review lineage headers and returns the
+// resulting affinity context. A blank parent or metadata argument omits that
+// header, allowing tests to exercise their independent evidence and conflict
+// rules.
 func guardianAffinityTestContext(t *testing.T, model, subagent, parentHeader, metadata string) context.Context {
 	t.Helper()
 
@@ -38,6 +42,10 @@ func guardianAffinityTestContext(t *testing.T, model, subagent, parentHeader, me
 	return WithOpenAIGuardianParentAffinity(context.Background(), c, nil, model)
 }
 
+// TestWithOpenAIGuardianParentAffinityRequiresUnambiguousReviewLineage compares
+// accepted guardian lineage with missing or conflicting parent/subagent
+// evidence. Only recognized review relationships may bind the expected current
+// parent hash.
 func TestWithOpenAIGuardianParentAffinityRequiresUnambiguousReviewLineage(t *testing.T) {
 	parentID := "11111111-1111-4111-8111-111111111111"
 	wantHash, _ := scheduler.DeriveSessionHashes(parentID)
@@ -82,6 +90,10 @@ func TestWithOpenAIGuardianParentAffinityRequiresUnambiguousReviewLineage(t *tes
 	}
 }
 
+// TestGrokConversationHeaderIsScopedToGrokRequestScheduling supplies Grok
+// header evidence before and after selecting OpenAI. Grok uses its native
+// conversation signal, while a known OpenAI target retains body-session
+// selection and the same ordinary hash.
 func TestGrokConversationHeaderIsScopedToGrokRequestScheduling(t *testing.T) {
 	body := []byte(`{"model":"grok","prompt_cache_key":"body-session","input":"hi"}`)
 
@@ -101,6 +113,10 @@ func TestGrokConversationHeaderIsScopedToGrokRequestScheduling(t *testing.T) {
 	require.Equal(t, GenerateOpenAISessionHash(withoutGrokHeader, body), GenerateOpenAISessionHash(openAIContext, body))
 }
 
+// TestGrokMediaVideoRequestBindingIsScopedToUserAndAPIKey binds one video
+// request to its provider with user and Key identity. Matching lookup succeeds,
+// while changing either identity rejects access despite a shared client session
+// header.
 func TestGrokMediaVideoRequestBindingIsScopedToUserAndAPIKey(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/video-request-123", nil)
@@ -130,6 +146,9 @@ func TestGrokMediaVideoRequestBindingIsScopedToUserAndAPIKey(t *testing.T) {
 	require.Zero(t, providerID)
 }
 
+// TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey supplies
+// Messages metadata with no upstream cache key. It requires a sticky session
+// hash while the returned prompt cache key remains empty.
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
 
@@ -139,6 +158,9 @@ func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *tes
 	require.Empty(t, promptCacheKey)
 }
 
+// TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey
+// combines Messages metadata with a supplied cache key. It requires a routing
+// hash and retains that exact upstream cache input.
 func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t *testing.T) {
 	body := []byte(`{"metadata":{"user_id":"claude-code-session"}}`)
 
@@ -148,6 +170,10 @@ func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t 
 	require.Equal(t, "explicit-cache", promptCacheKey)
 }
 
+// TestResolveOpenAIMessagesMetadataSession_ClaudeCodeHeaderOverridesContentFallback
+// changes prompt bodies under one Claude session header. It requires stable
+// header affinity despite different content seeds and creates no upstream
+// prompt cache key.
 func TestResolveOpenAIMessagesMetadataSession_ClaudeCodeHeaderOverridesContentFallback(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -170,6 +196,9 @@ func TestResolveOpenAIMessagesMetadataSession_ClaudeCodeHeaderOverridesContentFa
 	require.Empty(t, cacheKey2, "routing-only fix must not create an upstream prompt cache key")
 }
 
+// TestResolveOpenAIMessagesMetadataSession_OpenAISignalWinsOverClaudeHeader
+// combines a Claude header with existing OpenAI affinity and cache input. The
+// supplied OpenAI hash and prompt key must remain authoritative.
 func TestResolveOpenAIMessagesMetadataSession_OpenAISignalWinsOverClaudeHeader(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -181,6 +210,9 @@ func TestResolveOpenAIMessagesMetadataSession_OpenAISignalWinsOverClaudeHeader(t
 	require.Equal(t, "explicit-openai-session", cacheKey)
 }
 
+// TestResolveOpenAIMessagesMetadataSession_BlankClaudeHeaderKeepsContentFallback
+// supplies a whitespace Claude header alongside content affinity. The helper
+// must retain the content hash and keep its empty upstream cache key.
 func TestResolveOpenAIMessagesMetadataSession_BlankClaudeHeaderKeepsContentFallback(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -192,11 +224,17 @@ func TestResolveOpenAIMessagesMetadataSession_BlankClaudeHeaderKeepsContentFallb
 	require.Empty(t, cacheKey)
 }
 
-// metadataSessionForTest combines HTTP session headers and content seeds through the production session resolver.
+// metadataSessionForTest delegates Messages affinity resolution with its
+// sanitized Claude header. Existing hash and prompt key are passed separately,
+// so tests can distinguish routing identity selection from upstream cache-key
+// derivation.
 func metadataSessionForTest(c *gin.Context, hash, key, model string, body []byte) (string, string) {
 	return gatewaysession.MessagesMetadataSession(ClaudeCodeSessionIDFromHeader(c), hash, key, model, body)
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_Priority removes session and
+// conversation headers in sequence before body cache input. Each selected seed
+// changes the hash, and removing all session/content signals returns empty.
 func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -239,6 +277,9 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	}
 }
 
+// TestOpenAIGatewayService_ClientSessionHeaderPriority removes each populated
+// header in configured order. Explicit affinity must select and hash the next
+// remaining value before the root body cache key is considered.
 func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -246,8 +287,8 @@ func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	c.Set("api_key", &apikey.APIKey{ID: 901, Group: &routing.Group{}})
 
 	headers := []struct {
-		name  string
-		value string
+		name  string // ordered session header name
+		value string // expected selected header value
 	}{
 		{name: "session-id", value: "codex-session"},
 		{name: "session_id", value: "generic-session"},
@@ -273,6 +314,9 @@ func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	require.Equal(t, "body-session", ExplicitOpenAIRequestSessionID(c, body))
 }
 
+// TestOpenAIGatewayService_CodexSessionIDKeepsReconnectHashStable compares
+// warmup and business frames under one Codex header. Their hashes must match
+// while explicit request identity remains the reconnect session.
 func TestOpenAIGatewayService_CodexSessionIDKeepsReconnectHashStable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -295,6 +339,10 @@ func TestOpenAIGatewayService_CodexSessionIDKeepsReconnectHashStable(t *testing.
 	require.Equal(t, "codex-reconnect-session", ExplicitOpenAIRequestSessionID(c, business))
 }
 
+// TestOpenAIGatewayService_ClientSessionHeadersIgnorePerRequestIDs supplies
+// rotating request and message correlation headers only. Explicit session
+// readers and hashing must remain empty because those values do not identify a
+// conversation.
 func TestOpenAIGatewayService_ClientSessionHeadersIgnorePerRequestIDs(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -311,6 +359,9 @@ func TestOpenAIGatewayService_ClientSessionHeadersIgnorePerRequestIDs(t *testing
 	require.Empty(t, GenerateExplicitOpenAISessionHash(c, nil))
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64 supplies a fixed
+// session header. It requires the current affinity representation to equal the
+// padded hexadecimal XXHash64 value of that exact seed.
 func TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -323,6 +374,9 @@ func TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_AttachesLegacyHashToContext
+// derives affinity from a session header. It requires a current hash and
+// nonempty legacy evidence attached to the live request context.
 func TestOpenAIGatewayService_GenerateSessionHash_AttachesLegacyHashToContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -337,6 +391,10 @@ func TestOpenAIGatewayService_GenerateSessionHash_AttachesLegacyHashToContext(t 
 	require.NotEmpty(t, requeststate.OpenAILegacySessionHashFromContext(c.Request.Context()))
 }
 
+// TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback
+// compares stateless image content with explicit cache and header signals.
+// Content alone stays unbound, while explicit values produce the expected hash
+// with header precedence.
 func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
 
@@ -370,6 +428,10 @@ func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t
 	})
 }
 
+// TestOpenAIGatewayService_GenerateSessionHashWithFallback supplies empty
+// normal request evidence and a connection seed. It requires that seed's
+// current hash and legacy attachment, while a whitespace fallback returns
+// empty.
 func TestOpenAIGatewayService_GenerateSessionHashWithFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -385,6 +447,10 @@ func TestOpenAIGatewayService_GenerateSessionHashWithFallback(t *testing.T) {
 	require.Equal(t, "", empty)
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_ContentFallback extends a
+// conversation after its initial system/user anchor. The selected content hash
+// stays stable for that extension and differs for another initial user
+// question.
 func TestOpenAIGatewayService_GenerateSessionHash_ContentFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -407,6 +473,9 @@ func TestOpenAIGatewayService_GenerateSessionHash_ContentFallback(t *testing.T) 
 	require.NotEqual(t, hash, hashDifferent, "different content should produce different hash")
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContent
+// first derives content affinity, then supplies an explicit header. The second
+// nonempty hash must differ, protecting explicit session precedence.
 func TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -422,6 +491,9 @@ func TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContent(
 	require.NotEqual(t, contentHash, explicitHash, "explicit session_id should override content fallback")
 }
 
+// TestOpenAIGatewayService_GenerateSessionHash_EmptyBodyStillEmpty has no
+// header or usable content signal. Empty JSON and nil body must both yield
+// empty affinity for this request context.
 func TestOpenAIGatewayService_GenerateSessionHash_EmptyBodyStillEmpty(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -430,6 +502,8 @@ func TestOpenAIGatewayService_GenerateSessionHash_EmptyBodyStillEmpty(t *testing
 	require.Empty(t, GenerateOpenAISessionHash(c, nil))
 }
 
+// newSessionHeaderContext builds a Messages request with the supplied header
+// values.
 func newSessionHeaderContext(t *testing.T, headers map[string]string) *gin.Context {
 	t.Helper()
 
@@ -442,24 +516,36 @@ func newSessionHeaderContext(t *testing.T, headers map[string]string) *gin.Conte
 	return c
 }
 
+// TestExtractClientSessionID_NilContext resolves persisted correlation with no
+// Gin context. It requires an empty value so absent request state cannot supply
+// a client session identity.
 func TestExtractClientSessionID_NilContext(t *testing.T) {
 	require.Equal(t, "", ExtractClientSessionID(nil))
 }
 
+// TestExtractClientSessionID_NilRequest supplies a Gin context without its HTTP
+// request. The persistence reader must return empty safely instead of
+// attempting to inspect missing headers.
 func TestExtractClientSessionID_NilRequest(t *testing.T) {
 	require.Equal(t, "", ExtractClientSessionID(&gin.Context{}))
 }
 
+// TestExtractClientSessionID_AbsentReturnsEmpty supplies a valid request with
+// no configured session headers. It requires empty persisted correlation rather
+// than inventing a conversation value.
 func TestExtractClientSessionID_AbsentReturnsEmpty(t *testing.T) {
 	c := newSessionHeaderContext(t, nil)
 	require.Equal(t, "", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_SupportedHeaders supplies each supported common
+// conversation header independently. The persistence reader must return the
+// exact valid value selected for that request.
 func TestExtractClientSessionID_SupportedHeaders(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
-		value  string
+		name   string // persistence scenario label
+		header string // supplied supported header name
+		value  string // expected valid session value
 	}{
 		{"session_id", "session_id", "sess-A"},
 		{"conversation_id", "conversation_id", "conv-B"},
@@ -477,6 +563,9 @@ func TestExtractClientSessionID_SupportedHeaders(t *testing.T) {
 	}
 }
 
+// TestExtractClientSessionID_HeaderPrecedence populates several common session
+// headers in one request. The reader must return the first supported value
+// according to persistence priority.
 func TestExtractClientSessionID_HeaderPrecedence(t *testing.T) {
 	// session_id takes precedence over conversation_id and supported X-* headers.
 	c := newSessionHeaderContext(t, map[string]string{
@@ -486,11 +575,17 @@ func TestExtractClientSessionID_HeaderPrecedence(t *testing.T) {
 	require.Equal(t, "primary", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_Sanitizes surrounds a supported session value with
+// spaces. The persistence reader must return its trimmed identity while
+// retaining the internal characters as supplied.
 func TestExtractClientSessionID_Sanitizes(t *testing.T) {
 	c := newSessionHeaderContext(t, map[string]string{OpenCodeSessionIDHeader: "  clean-123  "})
 	require.Equal(t, "clean-123", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_IgnoresNonSessionHeaders supplies cache-key and
+// request-correlation headers with no session header. The persistence reader
+// must remain empty because those sources are excluded from its identity rule.
 func TestExtractClientSessionID_IgnoresNonSessionHeaders(t *testing.T) {
 	// Cache keys and per-request IDs are excluded from the persisted client session ID.
 	c := newSessionHeaderContext(t, map[string]string{
@@ -500,6 +595,9 @@ func TestExtractClientSessionID_IgnoresNonSessionHeaders(t *testing.T) {
 	require.Equal(t, "", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_GrokConversationHeader supplies a Grok
+// conversation header and ordinary Key data. With no stronger platform
+// evidence, the persistence reader must accept that native conversation signal.
 func TestExtractClientSessionID_GrokConversationHeader(t *testing.T) {
 	c := newSessionHeaderContext(t, map[string]string{GrokConversationIDHeader: "grok-native-session"})
 	c.Set("api_key", &apikey.APIKey{
@@ -510,6 +608,9 @@ func TestExtractClientSessionID_GrokConversationHeader(t *testing.T) {
 	require.Equal(t, "grok-native-session", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_EmptyForcedRouteUsesExplicitGrokHeader binds an
+// empty forced platform and Grok header evidence. The blank constraint must
+// leave native header fallback available for persisted correlation.
 func TestExtractClientSessionID_EmptyForcedRouteUsesExplicitGrokHeader(t *testing.T) {
 	c := newSessionHeaderContext(t, map[string]string{GrokConversationIDHeader: "grok-group-session"})
 	c.Set("api_key", &apikey.APIKey{
@@ -521,6 +622,9 @@ func TestExtractClientSessionID_EmptyForcedRouteUsesExplicitGrokHeader(t *testin
 	require.Equal(t, "grok-group-session", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_GrokConversationHeaderForForcedRoute binds an
+// explicit Grok platform and its native header. The persistence reader must
+// accept that Grok signal for the forced request.
 func TestExtractClientSessionID_GrokConversationHeaderForForcedRoute(t *testing.T) {
 	c := newSessionHeaderContext(t, map[string]string{GrokConversationIDHeader: "grok-composite-session"})
 	c.Set("api_key", &apikey.APIKey{
@@ -532,6 +636,9 @@ func TestExtractClientSessionID_GrokConversationHeaderForForcedRoute(t *testing.
 	require.Equal(t, "grok-composite-session", ExtractClientSessionID(c))
 }
 
+// TestExtractClientSessionID_InjectionHeaderDropped injects CRLF into a
+// supported conversation header. The complete invalid value must be rejected,
+// leaving empty persisted session correlation in this single-header fixture.
 func TestExtractClientSessionID_InjectionHeaderDropped(t *testing.T) {
 	// Reject the entire supported header value when it contains CRLF.
 	c := newSessionHeaderContext(t, map[string]string{"session_id": "abc"})

@@ -11,9 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// An attempt can fail before a forwarding result supplies its actual endpoint.
+// Recording the selected Chat or Responses endpoint in request-local state lets
+// failure capture attribute that attempt; clearing the value keeps subsequent
+// attempts from inheriting stale attribution.
+
+// openAIUpstreamEndpointContextKey names the request-local endpoint value read by
+// failure capture when execution returns no result carrying upstream metadata.
 const openAIUpstreamEndpointContextKey = "openai_actual_upstream_endpoint"
 
-// resolveOpenAITextProtocolForAttempt resolves the provider protocol and records this attempt's endpoint before forwarding.
+// resolveOpenAITextProtocolForAttempt chooses this attempt's text protocol and
+// records its endpoint for errors with no forwarding result. API Key settings
+// interpret preferred; an already resolved Chat or Responses route then takes
+// precedence over that choice. Other targets begin with Responses.
 func resolveOpenAITextProtocolForAttempt(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -26,6 +36,8 @@ func resolveOpenAITextProtocolForAttempt(
 		protocol = providercore.ResolveUpstreamTextProtocol(provider.Record.Extra, preferred)
 	}
 
+	// Use the resolved route ahead of raw provider preferences, because scheduling
+	// may have selected a different protocol conversion path for this attempt.
 	if provider != nil && provider.Route.Protocol() == protocolcore.ProtocolOpenAIChatCompletions {
 		protocol = providercore.TextProtocolChatCompletions
 	}
@@ -40,8 +52,10 @@ func resolveOpenAITextProtocolForAttempt(
 	return protocol
 }
 
-// SetActualOpenAIUpstreamEndpoint records the selected endpoint for error paths
-// that have no forwarding result for usage or Ops logging.
+// SetActualOpenAIUpstreamEndpoint records a nonblank trimmed endpoint for this
+// attempt. Nil contexts and blank values are ignored; callers clear prior
+// attempt state separately before forwarding so omitted updates cannot reuse
+// it.
 func SetActualOpenAIUpstreamEndpoint(c *gin.Context, endpoint string) {
 	if c == nil {
 		return
@@ -51,8 +65,10 @@ func SetActualOpenAIUpstreamEndpoint(c *gin.Context, endpoint string) {
 	}
 }
 
-// ClearActualOpenAIUpstreamEndpoint clears the recorded attempt endpoint.
-// Gin context is reused between attempts, so clear the previous endpoint before forwarding.
+// ClearActualOpenAIUpstreamEndpoint clears the endpoint retained across
+// attempts in Gin context. Call before starting another forwarding attempt so
+// failure capture cannot attribute an unset endpoint to the previous provider
+// exchange.
 func ClearActualOpenAIUpstreamEndpoint(c *gin.Context) {
 	if c == nil {
 		return
@@ -60,7 +76,9 @@ func ClearActualOpenAIUpstreamEndpoint(c *gin.Context) {
 	c.Set(openAIUpstreamEndpointContextKey, "")
 }
 
-// GetActualOpenAIUpstreamEndpoint returns the most recently recorded attempt endpoint.
+// GetActualOpenAIUpstreamEndpoint returns the trimmed endpoint retained for the
+// current attempt. A missing context, absent value or value of another type
+// yields empty, allowing error capture to use its protocol default.
 func GetActualOpenAIUpstreamEndpoint(c *gin.Context) string {
 	if c == nil {
 		return ""

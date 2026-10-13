@@ -14,6 +14,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Buffered Chat conversion can lose its upstream stream before a complete
+// client response exists. Only eligible transport interruptions enter stream
+// policy: scanner-line limits, excluded body-size errors and request
+// cancellation keep their existing error path. Request context therefore
+// participates in deciding whether the read failure can trigger failover.
+//
+// Stream policy can replace a failure body with a generic envelope while
+// recording health and retry evidence. The adapter restores the classified
+// transport payload after that call so final error rules and client output can
+// still identify the transport code after retry exhaustion.
+
+// BufferedReadFailure converts eligible buffered-stream transport interruptions
+// into policy failover evidence. It returns unrelated errors, scanner-line
+// limits, request cancellation and excluded body-size errors unchanged; a
+// missing request leaves classification without request-cancellation evidence.
+//
+// Response headers accompany the classified error when available. Stream
+// policy performs its health and retry handling before the adapter restores
+// the safe transport payload, because that policy can otherwise substitute a
+// generic envelope that drops the transport code needed by final error rules.
 func (p *OpenAIResponseOutput) BufferedReadFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -29,6 +49,9 @@ func (p *OpenAIResponseOutput) BufferedReadFailure(
 	if c != nil && c.Request != nil {
 		requestContext = c.Request.Context()
 	}
+	// Keep cancellation and excluded read limits in their existing failure path;
+	// policy failover here is reserved for eligible upstream transport
+	// interruptions.
 	if !openai.ShouldClassifyUpstreamStreamReadError(readErr.Unwrap(), httpclient.ErrResponseBodyTooLarge, requestContext) {
 		return err
 	}

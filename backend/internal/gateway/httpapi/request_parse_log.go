@@ -8,13 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// parseFailureSnippetLen bounds each head and tail snippet to 256 bytes.
-// Bodies longer than this limit are logged as snippets rather than in full.
+// Invalid JSON can result from malformed values or a body cut off in transit.
+// Parse diagnostics retain the byte length and bounded beginning and ending
+// excerpts, escaping their contents so each field remains one log value.
+
+// parseFailureSnippetLen limits each logged body excerpt in bytes, bounding
+// the request data copied into parsing diagnostics for large invalid bodies.
 const parseFailureSnippetLen = 256
 
-// LogRequestBodyParseFailure logs a JSON parsing or validation error with body diagnostics.
-// The error, byte length, and escaped head and tail help diagnose invalid or truncated input.
-// Callers using gjson.ValidBytes can pass nil to derive an error from the body.
+// LogRequestBodyParseFailure logs parsing diagnostics with escaped body
+// excerpts and total byte length. A nil logger skips reporting; a nil error
+// asks requeststate to diagnose malformed JSON. Large bodies retain separate
+// bounded beginning and ending excerpts.
 func LogRequestBodyParseFailure(reqLog *zap.Logger, body []byte, err error) {
 	if reqLog == nil {
 		return
@@ -25,6 +30,8 @@ func LogRequestBodyParseFailure(reqLog *zap.Logger, body []byte, err error) {
 
 	head := body
 	var tail []byte
+	// Keep both ends when the full body exceeds the excerpt budget; the length
+	// field still reports the original byte count.
 	if len(body) > parseFailureSnippetLen {
 		head = body[:parseFailureSnippetLen]
 		tail = body[len(body)-parseFailureSnippetLen:]
@@ -41,7 +48,8 @@ func LogRequestBodyParseFailure(reqLog *zap.Logger, body []byte, err error) {
 	reqLog.Warn("parse request body failed", fields...)
 }
 
-// SanitizeBodySnippet quotes control characters and invalid UTF-8 for a single-line log value.
+// SanitizeBodySnippet returns a quoted string with escaped controls and invalid
+// UTF-8.
 func SanitizeBodySnippet(b []byte) string {
 	return strconv.Quote(string(b))
 }
