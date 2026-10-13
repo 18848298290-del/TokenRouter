@@ -15,6 +15,15 @@ import (
 	identitycore "github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// Account identity tests reuse historical WeChat keys and start two adoption
+// calls for the same SQLite decision. Stored row identifiers and metadata
+// expose alias reuse, while the first-create gate holds one mutation and gives
+// the second caller a timed scheduling opportunity before both results are read.
+
+// TestUserRepositoryBindAuthIdentityToUserCanonicalizesLegacyWeChatAlias binds
+// a canonical WeChat key over legacy identity and channel records for the same
+// account. It checks retained IDs, rewritten keys and metadata, and one stored
+// row per tuple.
 func TestUserRepositoryBindAuthIdentityToUserCanonicalizesLegacyWeChatAlias(t *testing.T) {
 	repo, client := newUserEntRepo(t)
 	ctx := context.Background()
@@ -106,6 +115,10 @@ func TestUserRepositoryBindAuthIdentityToUserCanonicalizesLegacyWeChatAlias(t *t
 	require.Equal(t, 1, channelCount)
 }
 
+// TestUserRepositoryUpsertIdentityAdoptionDecisionIsIdempotentUnderConcurrency
+// blocks the first adoption create while starting another call for the same
+// session and identity. It checks matching returned IDs, one stored decision,
+// and retained identity and adoption flags.
 func TestUserRepositoryUpsertIdentityAdoptionDecisionIsIdempotentUnderConcurrency(t *testing.T) {
 	repo, client := newUserEntRepo(t)
 	ctx := context.Background()
@@ -140,6 +153,9 @@ func TestUserRepositoryUpsertIdentityAdoptionDecisionIsIdempotentUnderConcurrenc
 		Save(ctx)
 	require.NoError(t, err)
 
+	// Gate the first create after it enters mutation, then launch the second
+	// writer before release. Result collection accepts either finishing order;
+	// the timed start does not establish the second writer's database position.
 	firstCreateStarted := make(chan struct{})
 	releaseFirstCreate := make(chan struct{})
 	var firstCreate sync.Once
@@ -159,9 +175,11 @@ func TestUserRepositoryUpsertIdentityAdoptionDecisionIsIdempotentUnderConcurrenc
 		})
 	})
 
+	// adoptionResult transports a concurrent decision result and its persistence
+	// failure for assertion.
 	type adoptionResult struct {
-		decision *dbent.IdentityAdoptionDecision
-		err      error
+		decision *dbent.IdentityAdoptionDecision // returned stored adoption decision
+		err      error                           // returned adoption persistence failure
 	}
 
 	input := IdentityAdoptionDecisionInput{
@@ -184,6 +202,9 @@ func TestUserRepositoryUpsertIdentityAdoptionDecisionIsIdempotentUnderConcurrenc
 		results <- adoptionResult{decision: decision, err: err}
 	}()
 
+	// Give the second writer a scheduling opportunity before releasing the first
+	// create. The elapsed delay does not itself prove that the second goroutine
+	// reached a particular database stage.
 	time.Sleep(100 * time.Millisecond)
 	close(releaseFirstCreate)
 

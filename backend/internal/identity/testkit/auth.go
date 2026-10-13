@@ -12,9 +12,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
-type affiliate struct{ source *promotion.AffiliateService }
+// Authentication fixtures need the same account persistence participation as
+// production use cases. Auth attaches an Ent-backed AuthState and discovers
+// optional email/domain capabilities from the supplied user repository, while
+// small adapters convert concrete mail and promotion pointers into the
+// interfaces authentication expects.
+//
+// The dependency pointer is retained and updated during assembly. A missing
+// observer gets the legacy logger, discovered user capabilities replace
+// matching fields, and AuthState.Rules is assigned after the core service
+// exists. Other dependency fields keep the caller configuration. Nil concrete
+// optional services become nil interfaces, so authentication can observe
+// absence instead of receiving a typed-nil implementation.
 
-// AuthOptions copies startup configuration for tests without reading runtime settings or the environment.
+// affiliate adapts referral creation results to the authentication affiliate
+// interface.
+type affiliate struct {
+	source *promotion.AffiliateService // retained referral service pointer
+}
+
+// AuthOptions copies the selected startup authentication settings into a new
+// options value. Nil configuration returns nil; the copied fields cover
+// account defaults, token settings, server mode, and Turnstile requirement.
 func AuthOptions(cfg *config.Config) *identity.AuthOptions {
 	if cfg == nil {
 		return nil
@@ -28,7 +47,16 @@ func AuthOptions(cfg *config.Config) *identity.AuthOptions {
 	return out
 }
 
-// Auth wires the transaction adapter and optional capabilities supported by the supplied user repository.
+// Auth constructs authentication with Ent-backed state and the caller
+// dependency pointer. Supply nonnil dependencies, including the services
+// required by the exercised flow.
+//
+// Assembly fills a missing observer and discovers domain registration,
+// normalized-email conflict, alias guard, and alias lookup capabilities from
+// Users. Matching capabilities replace dependency fields; unmatched fields
+// retain their supplied configuration. AuthState and AuthService share those
+// dependencies, and the final Rules assignment lets state writes call the
+// constructed core validation service.
 func Auth(client *dbent.Client, deps *identity.AuthDependencies) *identity.AuthService {
 	if deps.Observer.Log == nil {
 		deps.Observer.Log = logging.LegacyPrintf
@@ -54,7 +82,9 @@ func Auth(client *dbent.Client, deps *identity.AuthDependencies) *identity.AuthS
 	return core
 }
 
-// Email returns a nil interface when the concrete email service is nil.
+// Email returns the concrete challenge service as an authentication email
+// interface. A nil pointer becomes a nil interface, so callers can use
+// ordinary interface absence checks for optional mail support.
 func Email(value *identity.EmailChallenges) identity.AuthEmail {
 	if value == nil {
 		return nil
@@ -62,7 +92,9 @@ func Email(value *identity.EmailChallenges) identity.AuthEmail {
 	return value
 }
 
-// EmailQueue returns a nil interface when the queue pointer is nil.
+// EmailQueue returns the concrete mail queue as an authentication queue
+// interface. A nil pointer becomes a nil interface, so optional queue absence
+// is visible to authentication callers.
 func EmailQueue(value *notification.EmailQueueService) identity.AuthEmailQueue {
 	if value == nil {
 		return nil
@@ -70,7 +102,9 @@ func EmailQueue(value *notification.EmailQueueService) identity.AuthEmailQueue {
 	return value
 }
 
-// Promo adapts a promotion service to authentication operations, preserving nil.
+// Promo returns the concrete signup-promotion service as the authentication
+// promotion interface. A nil pointer becomes a nil interface, retaining the
+// optional capability check used by the core service.
 func Promo(value *promotion.PromoService) identity.AuthPromo {
 	if value == nil {
 		return nil
@@ -78,7 +112,9 @@ func Promo(value *promotion.PromoService) identity.AuthPromo {
 	return value
 }
 
-// Affiliate adapts return values while delegating referral rules to the promotion service.
+// Affiliate wraps the concrete referral service for authentication call
+// signatures. Nil input returns a nil interface; the wrapper retains the
+// supplied service and delegates creation and inviter-binding operations.
 func Affiliate(value *promotion.AffiliateService) identity.AuthAffiliate {
 	if value == nil {
 		return nil
@@ -86,11 +122,16 @@ func Affiliate(value *promotion.AffiliateService) identity.AuthAffiliate {
 	return affiliate{value}
 }
 
+// EnsureUserAffiliate requests the account referral record and returns the
+// service error. The authentication interface discards the created record
+// value; the retained source service is required for this operation.
 func (a affiliate) EnsureUserAffiliate(ctx context.Context, id int64) error {
 	_, err := a.source.EnsureUserAffiliate(ctx, id)
 	return err
 }
 
+// BindInviterByCode delegates inviter selection for the supplied account and
+// code to promotion.
 func (a affiliate) BindInviterByCode(ctx context.Context, id int64, code string) error {
 	return a.source.BindInviterByCode(ctx, id, code)
 }

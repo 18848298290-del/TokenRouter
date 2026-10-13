@@ -1,6 +1,5 @@
 package httpapi
 
-// These tests cover login-start checks for email OAuth, LinuxDo, OIDC, WeChat, and DingTalk.
 import (
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Anonymous GET starts reach the same CAPTCHA gate across email_oauth.go,
+// linuxdo_oauth.go, oidc_oauth.go, wechat_oauth.go, and dingtalk_oauth.go. A
+// bind intent in the query alone leaves the login-start path subject to that
+// check before provider configuration or cookie writes.
+
+// TestOAuthStartGetRejectsAnonymousLoginWhenTencentEnabledWithoutSideEffects
+// sends anonymous GET login starts carrying a bind intent query to every
+// provider handler. It checks the CAPTCHA rejection, absent redirects and
+// cookies, and zero verifier calls.
 func TestOAuthStartGetRejectsAnonymousLoginWhenTencentEnabledWithoutSideEffects(t *testing.T) {
 	for provider, start := range oauthStartHandlers() {
 		t.Run(provider, func(t *testing.T) {

@@ -8,64 +8,80 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// TotpHandler handles TOTP-related requests.
+// TOTP account management uses the authenticated Gin subject for setup,
+// activation, disabling, and status reads. Sensitive-operation verification
+// stores a grant under StepUpSessionKey, matching the key used by step-up
+// middleware; HTTP responses convert activation times and grant durations to
+// seconds for panel clients.
+
+// TotpHandler handles current-account authenticator setup, status, and
+// sensitive-operation verification.
 type TotpHandler struct {
-	totpService *identity.TotpService
+	totpService *identity.TotpService // authenticator setup and grant service
 }
 
-// TotpStatusResponse represents the TOTP status response.
+// TotpStatusResponse reports account activation beside the global
+// authenticator feature switch.
 type TotpStatusResponse struct {
-	Enabled        bool   `json:"enabled"`
-	EnabledAt      *int64 `json:"enabled_at,omitempty"` // Unix seconds.
-	FeatureEnabled bool   `json:"feature_enabled"`
+	Enabled        bool   `json:"enabled"`              // account authenticator activation flag
+	EnabledAt      *int64 `json:"enabled_at,omitempty"` // Unix seconds
+	FeatureEnabled bool   `json:"feature_enabled"`      // global authenticator feature switch
 }
 
-// TotpSetupRequest represents the request to initiate TOTP setup.
+// TotpSetupRequest carries optional account proof for starting authenticator
+// enrollment.
 type TotpSetupRequest struct {
-	EmailCode string `json:"email_code"`
-	Password  string `json:"password"`
+	EmailCode string `json:"email_code"` // account email verification code
+	Password  string `json:"password"`   // current account password proof
 }
 
-// TotpSetupResponse represents the TOTP setup response.
+// TotpSetupResponse supplies the authenticator secret, enrollment URL, and
+// temporary setup token.
 type TotpSetupResponse struct {
-	Secret     string `json:"secret"`
-	QRCodeURL  string `json:"qr_code_url"`
-	SetupToken string `json:"setup_token"`
-	Countdown  int    `json:"countdown"`
+	Secret     string `json:"secret"`      // authenticator secret enrollment text
+	QRCodeURL  string `json:"qr_code_url"` // authenticator enrollment QR URL
+	SetupToken string `json:"setup_token"` // temporary authenticator setup token
+	Countdown  int    `json:"countdown"`   // seconds
 }
 
-// TotpEnableRequest represents the request to enable TOTP.
+// TotpEnableRequest supplies the temporary setup token and six-character
+// authenticator code.
 type TotpEnableRequest struct {
-	TotpCode   string `json:"totp_code" binding:"required,len=6"`
-	SetupToken string `json:"setup_token" binding:"required"`
+	TotpCode   string `json:"totp_code" binding:"required,len=6"` // six-character authenticator code
+	SetupToken string `json:"setup_token" binding:"required"`     // temporary authenticator setup token
 }
 
-// TotpDisableRequest represents the request to disable TOTP.
+// TotpDisableRequest carries account proof for removing an enabled
+// authenticator.
 type TotpDisableRequest struct {
-	EmailCode string `json:"email_code"`
-	Password  string `json:"password"`
+	EmailCode string `json:"email_code"` // account email verification code
+	Password  string `json:"password"`   // current account password proof
 }
 
-// TotpStepUpRequest supplies a TOTP code for a sensitive-operation grant.
+// TotpStepUpRequest carries an authenticator code for a temporary
+// sensitive-operation grant.
 type TotpStepUpRequest struct {
-	Code string `json:"code" binding:"required"`
+	Code string `json:"code" binding:"required"` // submitted authenticator verification code
 }
 
-// TotpStepUpResponse reports verification and the grant lifetime.
+// TotpStepUpResponse reports successful verification and the remaining session
+// grant lifetime.
 type TotpStepUpResponse struct {
-	Verified  bool  `json:"verified"`
-	ExpiresIn int64 `json:"expires_in"` // Remaining grant lifetime in seconds.
+	Verified  bool  `json:"verified"`   // verification success response flag
+	ExpiresIn int64 `json:"expires_in"` // seconds
 }
 
-// NewTotpHandler creates a new TotpHandler.
+// NewTotpHandler retains the supplied authenticator service for account
+// management requests.
 func NewTotpHandler(totpService *identity.TotpService) *TotpHandler {
 	return &TotpHandler{
 		totpService: totpService,
 	}
 }
 
-// GetStatus returns the TOTP status for the current user
-// GET /api/v1/user/totp/status
+// GetStatus writes activation and feature settings for the authenticated
+// current account. An enabled-at timestamp is converted to Unix seconds;
+// missing identity and service failures produce panel error responses.
 func (h *TotpHandler) GetStatus(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -85,6 +101,9 @@ func (h *TotpHandler) GetStatus(c *gin.Context) {
 	}
 
 	if status.EnabledAt != nil {
+		// Panel status clients consume activation timestamps as Unix seconds.
+		// Convert the stored time while retaining omission when the account has no
+		// activation timestamp.
 		ts := status.EnabledAt.Unix()
 		resp.EnabledAt = &ts
 	}
@@ -92,8 +111,10 @@ func (h *TotpHandler) GetStatus(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// InitiateSetup starts the TOTP setup process
-// POST /api/v1/user/totp/setup
+// InitiateSetup begins authenticator enrollment for the authenticated account
+// using optional email or password proof. Any JSON-binding error resets the
+// request to empty proof fields before the service applies its verification
+// rules.
 func (h *TotpHandler) InitiateSetup(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -103,7 +124,9 @@ func (h *TotpHandler) InitiateSetup(c *gin.Context) {
 
 	var req TotpSetupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// Allow empty body (optional params)
+		// Setup proof fields are optional at HTTP decoding. A malformed body is
+		// treated like an empty request, leaving account proof requirements to the
+		// authenticator service.
 		req = TotpSetupRequest{}
 	}
 
@@ -121,8 +144,9 @@ func (h *TotpHandler) InitiateSetup(c *gin.Context) {
 	})
 }
 
-// Enable completes the TOTP setup
-// POST /api/v1/user/totp/enable
+// Enable completes enrollment with a required setup token and six-character
+// authenticator code. The authenticated account owns the setup operation;
+// malformed JSON and service errors produce panel error responses.
 func (h *TotpHandler) Enable(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -144,8 +168,9 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
-// Disable disables TOTP for the current user
-// POST /api/v1/user/totp/disable
+// Disable removes the authenticated account authenticator after the service
+// checks supplied email or password proof. Malformed JSON stops before that
+// operation, while service failures use the shared panel response mapping.
 func (h *TotpHandler) Disable(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -167,8 +192,10 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
-// GetVerificationMethod returns the identity check required for the user's TOTP operations.
-// GET /api/v1/user/totp/verification-method
+// GetVerificationMethod reports the account proof needed for the authenticated
+// user authenticator operation. Missing Gin identity writes unauthorized;
+// service failures use the shared error response before any method is
+// returned.
 func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -184,8 +211,9 @@ func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
 	response.Success(c, method)
 }
 
-// SendVerifyCode sends an email verification code for TOTP operations
-// POST /api/v1/user/totp/send-code
+// SendVerifyCode requests authenticator-operation email proof for the
+// authenticated account. Accept-Language is forwarded to the service for mail
+// selection; missing identity and service errors use panel responses.
 func (h *TotpHandler) SendVerifyCode(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -201,8 +229,9 @@ func (h *TotpHandler) SendVerifyCode(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
-// StepUp verifies a TOTP code and grants the current session temporary access to sensitive operations.
-// POST /api/v1/user/totp/step-up
+// StepUp verifies a required authenticator code for the account and selected
+// session key. The returned grant lifetime is converted to integer seconds;
+// future sensitive operations query the same StepUpSessionKey.
 func (h *TotpHandler) StepUp(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -223,6 +252,8 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 		return
 	}
 
+	// Expose whole seconds of the granted duration to panel clients; the stored
+	// grant remains scoped to the selected user and session key.
 	response.Success(c, TotpStepUpResponse{
 		Verified:  true,
 		ExpiresIn: int64(ttl.Seconds()),

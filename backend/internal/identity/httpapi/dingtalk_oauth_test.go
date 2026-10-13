@@ -10,15 +10,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// dingTalkStaffClient records staff lookups and returns configured results or errors.
+// DingTalk staff lookup depends on organization policy after unionID
+// resolution. The fixture records user-ID and staff-profile requests, injects
+// failure at either stage, and checks that internal_only propagates the
+// failing stage while other policies continue with an empty profile.
+
+// dingTalkStaffClient records lookup order and supplies configured staff
+// results and errors.
 type dingTalkStaffClient struct {
-	identity.DingTalkOAuthClient
+	identity.DingTalkOAuthClient // unused provider methods fixture
+	// userErr is the user-ID lookup failure; staffErr is the profile lookup
+	// failure. A userErr stops the second lookup, while staffErr is observed
+	// after both calls are recorded.
 	userErr, staffErr error
-	calls             []string
-	profile           *identity.DingTalkProfileSnapshot
+	calls             []string                          // ordered lookup call records
+	profile           *identity.DingTalkProfileSnapshot // configured staff profile pointer
 }
 
-// TestDingTalkStaffLookupPolicy checks lookup order, results, and policy-specific failures.
+// TestDingTalkStaffLookupPolicy varies organization policy and the failing
+// directory stage. It checks lookup order, internal-only stage errors, and
+// empty profiles for tolerated failures under the other supplied policies.
 func TestDingTalkStaffLookupPolicy(t *testing.T) {
 	for _, policy := range []string{"none", "", "internal_only", "unknown"} {
 		for _, failure := range []string{"", "get_user_id", "get_staff_info"} {
@@ -55,11 +66,17 @@ func TestDingTalkStaffLookupPolicy(t *testing.T) {
 	}
 }
 
+// GetUserIdByUnionId records the unionID lookup and returns the fixture staff
+// ID. The configured userErr is returned with that ID, allowing the caller to
+// exercise its policy-specific failure path.
 func (c *dingTalkStaffClient) GetUserIdByUnionId(_ context.Context, id string) (string, error) {
 	c.calls = append(c.calls, "user:"+id)
 	return "staff-id", c.userErr
 }
 
+// GetStaffInfoByUserId records the supplied staff ID and returns the
+// configured profile pointer. Its configured staffErr lets tests distinguish
+// failures after successful unionID resolution from first-stage failure.
 func (c *dingTalkStaffClient) GetStaffInfoByUserId(_ context.Context, id string) (*identity.DingTalkProfileSnapshot, error) {
 	c.calls = append(c.calls, "staff:"+id)
 	return c.profile, c.staffErr

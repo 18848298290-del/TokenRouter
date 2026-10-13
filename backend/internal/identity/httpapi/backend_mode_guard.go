@@ -10,11 +10,24 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// BackendModeReader reports whether backend mode is enabled.
-type BackendModeReader interface{ IsBackendModeEnabled(context.Context) bool }
+// Backend mode keeps administrator login continuations available while
+// disabling user self-service. Auth-route filtering permits selected login and
+// pending paths; user-route filtering relies on JWT middleware having already
+// resolved the role, and handlers enforce the remaining account-specific
+// rules.
 
-// BackendModeUserGuard blocks non-admin users from accessing user routes when backend mode is enabled.
-// Register it after JWT authentication so the user role is available in context.
+// BackendModeReader supplies the runtime switch controlling panel self-service
+// access.
+type BackendModeReader interface {
+	// IsBackendModeEnabled reports whether the runtime panel restricts user
+	// self-service.
+	IsBackendModeEnabled(context.Context) bool
+}
+
+// BackendModeUserGuard rejects self-service requests from nonadministrators
+// while backend mode is enabled. Register it after JWT authentication; a nil
+// settings reader permits requests, and an available administrator role
+// bypasses the restriction.
 func BackendModeUserGuard(settingService BackendModeReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService == nil || !settingService.IsBackendModeEnabled(c.Request.Context()) {
@@ -31,7 +44,13 @@ func BackendModeUserGuard(settingService BackendModeReader) gin.HandlerFunc {
 	}
 }
 
+// backendModeAllowsAuthPath reports whether a normalized URL path can continue
+// authentication in backend mode. Matching uses suffixes and a pending-path
+// substring, so callers remain responsible for registering the actual
+// supported endpoints.
 func backendModeAllowsAuthPath(path string) bool {
+	// Compare route suffixes independently of a mounting prefix; normalized case
+	// and whitespace keep the guard comparison independent of the exact URL spelling.
 	path = strings.ToLower(strings.TrimSpace(path))
 	for _, suffix := range []string{
 		"/auth/login",
@@ -77,10 +96,10 @@ func backendModeAllowsAuthPath(path string) bool {
 	return strings.Contains(path, "/auth/oauth/pending/")
 }
 
-// BackendModeAuthGuard selectively blocks auth endpoints when backend mode is enabled.
-// Allows the minimal auth surface admins still need in backend mode, including
-// OAuth callbacks and pending continuations. Handler-level backend mode checks
-// still enforce admin-only login and forbid self-service registration.
+// BackendModeAuthGuard restricts public authentication routes to the
+// backend-mode continuation allowlist. A nil settings reader permits requests;
+// accepted callbacks and pending paths still rely on their handlers to reject
+// nonadministrator login and self-service registration.
 func BackendModeAuthGuard(settingService BackendModeReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService == nil || !settingService.IsBackendModeEnabled(c.Request.Context()) {

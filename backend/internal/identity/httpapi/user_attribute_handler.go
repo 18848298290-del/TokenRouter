@@ -11,91 +11,125 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Administrator attribute definitions describe input rules separately from the
+// per-account string values they validate. HTTP updates preserve optional
+// definition edits, translate ordered IDs to display positions, and format
+// stored timestamps as RFC3339 text for the panel response.
+//
+// Batch reads normalize positive unique account IDs before encoding a snapshot
+// key, so input order and duplicate IDs select the same cached result. The
+// process-wide snapshot cache keeps those ID-keyed values for thirty seconds,
+// and these mutation handlers do not invalidate it. Successful writes can
+// therefore precede a later batch response using an unexpired earlier
+// snapshot; ordinary account value reads still call the attribute service.
+
+// UserAttributesBatchCache retains process-wide account attribute snapshots
+// for thirty seconds, keyed by normalized user IDs during administrator batch
+// reads.
 var UserAttributesBatchCache = response.NewSnapshotCache(30 * time.Second)
 
-// UserAttributeHandler handles user attribute management.
+// UserAttributeHandler serves administrator attribute definitions and current
+// per-account string values.
 type UserAttributeHandler struct {
-	attrService *identity.UserAttributeService
+	attrService *identity.UserAttributeService // attribute definition and value service
 }
 
-// CreateAttributeDefinitionRequest contains a new attribute definition.
+// CreateAttributeDefinitionRequest carries the input rules for a new
+// administrator-defined attribute.
 type CreateAttributeDefinitionRequest struct {
-	Key         string                           `json:"key" binding:"required,min=1,max=100"`
-	Name        string                           `json:"name" binding:"required,min=1,max=255"`
-	Description string                           `json:"description"`
-	Type        string                           `json:"type" binding:"required"`
-	Options     []identity.UserAttributeOption   `json:"options"`
-	Required    bool                             `json:"required"`
-	Validation  identity.UserAttributeValidation `json:"validation"`
-	Placeholder string                           `json:"placeholder"`
-	Enabled     bool                             `json:"enabled"`
+	Key         string                           `json:"key" binding:"required,min=1,max=100"`  // unique definition key text
+	Name        string                           `json:"name" binding:"required,min=1,max=255"` // definition display name text
+	Description string                           `json:"description"`                           // definition descriptive help text
+	Type        string                           `json:"type" binding:"required"`               // attribute input kind label
+	Options     []identity.UserAttributeOption   `json:"options"`                               // selectable attribute input choices
+	Required    bool                             `json:"required"`                              // editing required-input flag
+	Validation  identity.UserAttributeValidation `json:"validation"`                            // attribute value validation limits
+	Placeholder string                           `json:"placeholder"`                           // definition input placeholder text
+	Enabled     bool                             `json:"enabled"`                               // definition display enabled flag
 }
 
-// UpdateAttributeDefinitionRequest contains optional changes to an attribute definition.
+// UpdateAttributeDefinitionRequest carries optional edits to an existing
+// attribute definition.
 type UpdateAttributeDefinitionRequest struct {
-	Name        *string                           `json:"name"`
-	Description *string                           `json:"description"`
-	Type        *string                           `json:"type"`
-	Options     *[]identity.UserAttributeOption   `json:"options"`
-	Required    *bool                             `json:"required"`
-	Validation  *identity.UserAttributeValidation `json:"validation"`
-	Placeholder *string                           `json:"placeholder"`
-	Enabled     *bool                             `json:"enabled"`
+	// Name, Description, Type, Options, Required, Validation, Placeholder, and
+	// Enabled use pointers to retain supplied zero and empty edits. Nil values
+	// leave the existing definition fields to service update handling.
+	Name        *string                           `json:"name"`        // definition display name text
+	Description *string                           `json:"description"` // definition descriptive help text
+	Type        *string                           `json:"type"`        // attribute input kind label
+	Options     *[]identity.UserAttributeOption   `json:"options"`     // selectable attribute input choices
+	Required    *bool                             `json:"required"`    // editing required-input flag
+	Validation  *identity.UserAttributeValidation `json:"validation"`  // attribute value validation limits
+	Placeholder *string                           `json:"placeholder"` // definition input placeholder text
+	Enabled     *bool                             `json:"enabled"`     // definition display enabled flag
 }
 
-// ReorderRequest lists attribute IDs in display order.
+// ReorderRequest lists definition IDs whose array positions become display
+// order values.
 type ReorderRequest struct {
-	IDs []int64 `json:"ids" binding:"required"`
+	IDs []int64 `json:"ids" binding:"required"` // definition IDs in requested order
 }
 
-// UpdateUserAttributesRequest maps attribute IDs to their new values.
+// UpdateUserAttributesRequest supplies attribute IDs and replacement strings
+// for one account.
 type UpdateUserAttributesRequest struct {
-	Values map[int64]string `json:"values" binding:"required"`
+	Values map[int64]string `json:"values" binding:"required"` // definition ID replacement strings
 }
 
-// BatchGetUserAttributesRequest identifies users whose attributes are requested.
+// BatchGetUserAttributesRequest names the account IDs requested for a cached
+// attribute snapshot.
 type BatchGetUserAttributesRequest struct {
-	UserIDs []int64 `json:"user_ids" binding:"required"`
+	UserIDs []int64 `json:"user_ids" binding:"required"` // requested account row identifiers
 }
 
-// BatchUserAttributesResponse groups attribute values by user.
+// BatchUserAttributesResponse maps account IDs to their stored definition-ID
+// value maps.
 type BatchUserAttributesResponse struct {
-	// Map of userID -> map of attributeID -> value
-	Attributes map[int64]map[int64]string `json:"attributes"`
+	Attributes map[int64]map[int64]string `json:"attributes"` // account ID definition value maps
 }
 
-// AttributeDefinitionResponse is the API representation of an attribute definition.
+// AttributeDefinitionResponse exposes input rules and ordered display metadata
+// for administrator clients.
 type AttributeDefinitionResponse struct {
-	ID           int64                            `json:"id"`
-	Key          string                           `json:"key"`
-	Name         string                           `json:"name"`
-	Description  string                           `json:"description"`
-	Type         string                           `json:"type"`
-	Options      []identity.UserAttributeOption   `json:"options"`
-	Required     bool                             `json:"required"`
-	Validation   identity.UserAttributeValidation `json:"validation"`
-	Placeholder  string                           `json:"placeholder"`
-	DisplayOrder int                              `json:"display_order"`
-	Enabled      bool                             `json:"enabled"`
-	CreatedAt    string                           `json:"created_at"`
-	UpdatedAt    string                           `json:"updated_at"`
+	ID          int64  `json:"id"`          // stored attribute row identifier
+	Key         string `json:"key"`         // unique definition key text
+	Name        string `json:"name"`        // definition display name text
+	Description string `json:"description"` // definition descriptive help text
+	Type        string `json:"type"`        // attribute input kind label
+	// Options shares the supplied definition's entries. Copy the slice before
+	// changing selectable values or labels in an independent response.
+	Options  []identity.UserAttributeOption `json:"options"`  // selectable attribute input choices
+	Required bool                           `json:"required"` // editing required-input flag
+	// Validation copies the rule struct and retains its optional pointers. Copy
+	// those values before changing bounds or pattern text in an independent response.
+	Validation   identity.UserAttributeValidation `json:"validation"`    // attribute value validation limits
+	Placeholder  string                           `json:"placeholder"`   // definition input placeholder text
+	DisplayOrder int                              `json:"display_order"` // definition display order position
+	Enabled      bool                             `json:"enabled"`       // definition display enabled flag
+	CreatedAt    string                           `json:"created_at"`    // RFC3339
+	UpdatedAt    string                           `json:"updated_at"`    // RFC3339
 }
 
-// AttributeValueResponse is the API representation of a stored attribute value.
+// AttributeValueResponse exposes one stored account attribute value with
+// formatted row timestamps.
 type AttributeValueResponse struct {
-	ID          int64  `json:"id"`
-	UserID      int64  `json:"user_id"`
-	AttributeID int64  `json:"attribute_id"`
-	Value       string `json:"value"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID          int64  `json:"id"`           // stored attribute row identifier
+	UserID      int64  `json:"user_id"`      // owning account row identifier
+	AttributeID int64  `json:"attribute_id"` // owning definition row identifier
+	Value       string `json:"value"`        // stored account attribute string
+	CreatedAt   string `json:"created_at"`   // RFC3339
+	UpdatedAt   string `json:"updated_at"`   // RFC3339
 }
 
-// NewUserAttributeHandler creates a new handler.
+// NewUserAttributeHandler retains the supplied attribute service for
+// administrator definition and value requests.
 func NewUserAttributeHandler(attrService *identity.UserAttributeService) *UserAttributeHandler {
 	return &UserAttributeHandler{attrService: attrService}
 }
 
+// DefToResponse maps a nonnil definition to its administrator JSON shape and
+// formats timestamps as RFC3339. Options and any validation pointers retain
+// sharing with the supplied domain value.
 func DefToResponse(def *identity.UserAttributeDefinition) *AttributeDefinitionResponse {
 	return &AttributeDefinitionResponse{
 		ID:           def.ID,
@@ -114,6 +148,9 @@ func DefToResponse(def *identity.UserAttributeDefinition) *AttributeDefinitionRe
 	}
 }
 
+// ValueToResponse maps a nonnil stored attribute value to administrator JSON
+// fields. Created and updated timestamps become RFC3339 text, while
+// identifiers and the saved value string copy directly.
 func ValueToResponse(val *identity.UserAttributeValue) *AttributeValueResponse {
 	return &AttributeValueResponse{
 		ID:          val.ID,
@@ -125,8 +162,9 @@ func ValueToResponse(val *identity.UserAttributeValue) *AttributeValueResponse {
 	}
 }
 
-// ListDefinitions lists definitions, optionally restricted to enabled definitions.
-// GET /admin/user-attributes
+// ListDefinitions writes administrator definition data, optionally selecting
+// enabled entries. Only exact enabled=true activates that filter; service
+// errors stop conversion, and empty results use an allocated response slice.
 func (h *UserAttributeHandler) ListDefinitions(c *gin.Context) {
 	enabledOnly := c.Query("enabled") == "true"
 
@@ -144,8 +182,9 @@ func (h *UserAttributeHandler) ListDefinitions(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// CreateDefinition creates a new attribute definition
-// POST /admin/user-attributes
+// CreateDefinition validates request JSON before passing prepared definition
+// rules to the attribute service. The service validates supported input kinds
+// and rules; successful storage returns the administrator response shape.
 func (h *UserAttributeHandler) CreateDefinition(c *gin.Context) {
 	var req CreateAttributeDefinitionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -172,8 +211,9 @@ func (h *UserAttributeHandler) CreateDefinition(c *gin.Context) {
 	response.Success(c, DefToResponse(def))
 }
 
-// UpdateDefinition updates an attribute definition
-// PUT /admin/user-attributes/:id
+// UpdateDefinition parses the route ID and passes optional rule edits to the
+// service. A nonnil type string is converted to the domain kind; omitted
+// pointer fields remain nil in its update input.
 func (h *UserAttributeHandler) UpdateDefinition(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -210,8 +250,9 @@ func (h *UserAttributeHandler) UpdateDefinition(c *gin.Context) {
 	response.Success(c, DefToResponse(def))
 }
 
-// DeleteDefinition deletes an attribute definition
-// DELETE /admin/user-attributes/:id
+// DeleteDefinition parses the route ID and requests definition removal through
+// the attribute service. Invalid IDs stop before service work, while
+// successful deletion writes the panel completion message.
 func (h *UserAttributeHandler) DeleteDefinition(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -227,8 +268,9 @@ func (h *UserAttributeHandler) DeleteDefinition(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Attribute definition deleted successfully"})
 }
 
-// ReorderDefinitions reorders attribute definitions
-// PUT /admin/user-attributes/reorder
+// ReorderDefinitions maps supplied definition IDs to their zero-based array
+// positions before service persistence. Repeated IDs select their final
+// position in the map, and malformed JSON stops before the write.
 func (h *UserAttributeHandler) ReorderDefinitions(c *gin.Context) {
 	var req ReorderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -236,7 +278,9 @@ func (h *UserAttributeHandler) ReorderDefinitions(c *gin.Context) {
 		return
 	}
 
-	// Convert IDs array to orders map (position in array = display_order)
+	// Display order uses the request position for each ID. A repeated definition
+	// ID overwrites its earlier map entry, so the last occurrence determines the
+	// stored position.
 	orders := make(map[int64]int, len(req.IDs))
 	for i, id := range req.IDs {
 		orders[id] = i
@@ -250,8 +294,9 @@ func (h *UserAttributeHandler) ReorderDefinitions(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Reorder successful"})
 }
 
-// GetUserAttributes gets a user's attribute values
-// GET /admin/users/:id/attributes
+// GetUserAttributes returns stored values for the parsed administrator account
+// route ID. Service errors stop the response, while successful results convert
+// each row with RFC3339 timestamps and an allocated outer slice.
 func (h *UserAttributeHandler) GetUserAttributes(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -273,8 +318,10 @@ func (h *UserAttributeHandler) GetUserAttributes(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// UpdateUserAttributes updates a user's attribute values
-// PUT /admin/users/:id/attributes
+// UpdateUserAttributes submits definition-ID replacement strings for the
+// parsed account ID, then reads stored values for its response. A later read
+// error can follow a successful update; request map iteration supplies no
+// input ordering.
 func (h *UserAttributeHandler) UpdateUserAttributes(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -315,8 +362,15 @@ func (h *UserAttributeHandler) UpdateUserAttributes(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// GetBatchUserAttributes gets attribute values for multiple users
-// POST /admin/user-attributes/batch
+// GetBatchUserAttributes returns values for normalized positive unique account
+// IDs using a thirty-second process snapshot. Invalid-only selections return
+// an empty map; cache hits write the stored payload, while misses call the
+// service and save a snapshot.
+//
+// The cache key encodes sorted IDs, so reordered or duplicate input shares a
+// result. Attribute mutations in this handler leave existing snapshots until
+// expiry. Concurrent misses can load separately because this path uses
+// separate Get and Set calls rather than the cache load-coordination API.
 func (h *UserAttributeHandler) GetBatchUserAttributes(c *gin.Context) {
 	var req BatchGetUserAttributesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -330,8 +384,11 @@ func (h *UserAttributeHandler) GetBatchUserAttributes(c *gin.Context) {
 		return
 	}
 
+	// Encoding normalized sorted IDs makes equivalent account selections share
+	// one key. This key contains only the supported integer slice, so the ignored
+	// marshal error has no alternate payload path.
 	keyRaw, _ := json.Marshal(struct {
-		UserIDs []int64 `json:"user_ids"`
+		UserIDs []int64 `json:"user_ids"` // requested account row identifiers
 	}{
 		UserIDs: userIDs,
 	})
@@ -349,6 +406,9 @@ func (h *UserAttributeHandler) GetBatchUserAttributes(c *gin.Context) {
 	}
 
 	payload := BatchUserAttributesResponse{Attributes: attrs}
+	// Save the service result after a successful batch read. This snapshot
+	// remains keyed to the account selection until expiry even when a later
+	// mutation changes attribute values.
 	UserAttributesBatchCache.Set(cacheKey, payload)
 	c.Header("X-Snapshot-Cache", "miss")
 	response.Success(c, payload)

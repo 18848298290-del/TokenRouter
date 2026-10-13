@@ -9,7 +9,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// CreateInitialAdmin checks user and admin counts before creating the bootstrap administrator.
+// Initial setup creates an administrator only when the observed user database
+// is empty. Separate SQL counts identify existing administrators or ordinary
+// accounts, and DecideAdminBootstrap supplies the skip reason before any
+// password generation or insert is attempted.
+//
+// The counts include every stored user row and are read before the insert
+// outside an owned transaction. That observation does not reserve an empty
+// database for concurrent setup callers. A blank supplied password invokes the
+// generator; setup supplies a clock for both timestamps, and the insert saves
+// the hashed credential with the requested concurrency allowance.
+
+// CreateInitialAdmin reads user counts and inserts an initial active
+// administrator when the bootstrap decision permits it. The boolean reports
+// insertion, and the reason identifies creation or a skipped database state.
+//
+// Supply a nonnil clock and a password generator when the input password is
+// blank after trimming. Count reads and the insert use the supplied pool
+// separately, so this helper does not serialize concurrent initial setup.
+// Password-generation, hashing, and SQL failures stop the result and remain
+// errors for the setup caller.
 func CreateInitialAdmin(ctx context.Context, db *sql.DB, input identity.InitialAdminInput, password func() (string, error)) (bool, string, error) {
 	var total, admins int64
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&total); err != nil {

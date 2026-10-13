@@ -12,17 +12,47 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Administrator account deletion and group replacement combine account
+// permissions with API Key mutations. A configured Ent client supplies an
+// owned transaction, and the selected key participant plus user repository
+// receive its context so their related writes can share completion.
+//
+// Manual provider binding inspects compatible identity and channel records
+// before creating or updating them. It rejects another owner, retains existing
+// row identifiers when a compatible record is reused, and writes the canonical
+// provider key with supplied metadata and verification time. Optional issuer
+// and metadata inputs update existing values when present. Commit precedes the
+// returned bound-identity view, while rollback is attempted on failing
+// database paths.
+
+// AdminMutations implements account deletion, group migration, and manual
+// provider binding persistence.
 type AdminMutations struct {
-	Client   *dbent.Client
-	Users    identitycore.UserRepository
-	Keys     identitycore.AdminKeyParticipant
-	KeysInTx func(*dbent.Tx) identitycore.AdminKeyParticipant
-	Observer identitycore.Observer
+	// Client starts owned transactions; Users and the selected Keys writer
+	// receive their injected context. KeysInTx takes precedence when configured,
+	// and these supplied participants retain responsibility for using that
+	// transaction scope.
+	Client   *dbent.Client                                    // administrator mutation transaction client
+	Users    identitycore.UserRepository                      // account mutation repository participant
+	Keys     identitycore.AdminKeyParticipant                 // default audited API Key participant
+	KeysInTx func(*dbent.Tx) identitycore.AdminKeyParticipant // transaction-bound API Key participant factory
+	Observer identitycore.Observer                            // mutation failure diagnostic observer
 }
 
+// HasDatabase reports whether administrator mutation storage has an Ent client
+// configured.
 func (s *AdminMutations) HasDatabase() bool { return s != nil && s.Client != nil }
 
-// DeleteUserAndKeys deletes a user and keys in one transaction when a client is configured.
+// DeleteUserAndKeys deletes supplied API Key summaries and their account,
+// using an owned transaction when Client is configured. A configured KeysInTx
+// callback selects the transaction-specific participant.
+//
+// The selected writer handles each positive key ID before Users.Delete runs.
+// Any failure stops the sequence and reaches deferred rollback when a
+// transaction was created. With no Client, the supplied participants run
+// directly and their earlier writes can survive a later failure. Successful
+// transactional work is committed before return; caller-provided participants
+// must honor its context for combined persistence.
 func (s *AdminMutations) DeleteUserAndKeys(ctx context.Context, id int64, keys []identitycore.AdminKeySummary) error {
 	opCtx := ctx
 	writer := s.Keys
@@ -33,6 +63,9 @@ func (s *AdminMutations) DeleteUserAndKeys(ctx context.Context, id int64, keys [
 		if err != nil {
 			return err
 		}
+		// An owned deletion transaction rolls back successful earlier key writes
+		// when later deletion fails. Cleanup errors are discarded in favor of the
+		// operation failure.
 		defer func() { _ = tx.Rollback() }()
 		opCtx = dbent.NewTxContext(ctx, tx)
 		if s.KeysInTx != nil {
@@ -43,11 +76,23 @@ func (s *AdminMutations) DeleteUserAndKeys(ctx context.Context, id int64, keys [
 		return err
 	}
 	if tx != nil {
+		// Commit only after audited key deletion and account deletion succeed,
+		// keeping their selected transaction participants in one completed
+		// administrator removal.
 		return tx.Commit()
 	}
 	return nil
 }
 
+// DeleteUserWithKeys deletes positive key summaries through the supplied
+// writer before deleting the account. A nil writer skips key operations, and
+// the caller provides the persistence scope for these steps.
+//
+// A key failure stops later key and account writes after recording its
+// diagnostic. An account failure can follow completed key deletes and also
+// receives a diagnostic. The surrounding owner rolls back those earlier writes
+// when the participants share its transaction; this helper creates no separate
+// transaction or compensation path.
 func (s *AdminMutations) DeleteUserWithKeys(ctx context.Context, id int64, keys []identitycore.AdminKeySummary, writer identitycore.AdminKeyParticipant) error {
 	if writer != nil {
 		for _, key := range keys {
@@ -67,7 +112,16 @@ func (s *AdminMutations) DeleteUserWithKeys(ctx context.Context, id int64, keys 
 	return nil
 }
 
-func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) { // Group grants and key migration commit together.
+// ReplaceUserGroup grants the destination, moves matching account keys, and
+// revokes the preceding grant inside an owned Ent transaction. A configured
+// client and usable selected key writer are required.
+//
+// The destination grant precedes key migration so the moved keys have their
+// new permission in the same transaction. Old-grant removal follows migration,
+// and any stage failure returns before commit with rollback attempted. The
+// returned count comes from the key participant; supplied user and key
+// dependencies retain transaction participation responsibility.
+func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	if s.Client == nil {
 		return 0, fmt.Errorf("entClient is nil, cannot perform group replacement")
 	}
@@ -75,6 +129,9 @@ func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupI
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
+	// Roll back the destination grant and any migrated keys when a later
+	// replacement stage fails. Discard cleanup errors while retaining that
+	// failing stage for the administrator caller.
 	defer func() { _ = tx.Rollback() }()
 	opCtx := dbent.NewTxContext(ctx, tx)
 	writer := s.Keys
@@ -82,22 +139,25 @@ func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupI
 		writer = s.KeysInTx(tx)
 	}
 
-	// Grant access before moving keys to the new group.
+	// Grant destination access before migrating keys, then remove the preceding
+	// grant. The selected participants share the injected transaction so a later
+	// stage can roll back the permission change.
 	if err := s.Users.AddGroupToAllowedGroups(opCtx, userID, newGroupID); err != nil {
 		return 0, fmt.Errorf("add new group to allowed groups: %w", err)
 	}
 
-	// Move keys that reference the old group.
 	migrated, err := writer.UpdateGroupIDByUserAndGroup(opCtx, userID, oldGroupID, newGroupID)
 	if err != nil {
 		return 0, fmt.Errorf("migrate api keys: %w", err)
 	}
 
-	// Revoke the old grant after moving its keys.
 	if err := s.Users.RemoveGroupFromUserAllowedGroups(opCtx, userID, oldGroupID); err != nil {
 		return 0, fmt.Errorf("remove old group from allowed groups: %w", err)
 	}
 
+	// Commit the destination grant, migrated key references, and preceding-grant
+	// removal together before reporting the migration count to the administrator
+	// caller.
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit transaction: %w", err)
 	}
@@ -105,6 +165,17 @@ func (s *AdminMutations) ReplaceUserGroup(ctx context.Context, userID, oldGroupI
 	return migrated, nil
 }
 
+// BindAuthIdentity writes a prepared provider identity and optional channel
+// after checking compatible-record ownership. The caller validates provider
+// keys, subject, account, and verification time before supplying this prepared
+// input.
+//
+// Any compatible row owned by another account rejects the operation. An owned
+// record is reused and canonicalized, retaining its identifier; missing
+// records are created. Non-nil issuer and metadata replace those fields on
+// existing identities, while channel linkage and supplied channel metadata are
+// updated together. All stages use an owned transaction, and the returned view
+// follows successful commit.
 func (s *AdminMutations) BindAuthIdentity(ctx context.Context, p identitycore.PreparedAdminIdentityBinding) (*identitycore.AdminBoundAuthIdentity, error) {
 	userID, providerType, providerSubject := p.UserID, p.ProviderType, p.ProviderSubject
 	canonicalProviderKey, compatibleProviderKeys := p.ProviderKey, p.CompatibleKeys
@@ -114,8 +185,14 @@ func (s *AdminMutations) BindAuthIdentity(ctx context.Context, p identitycore.Pr
 	if err != nil {
 		return nil, infraerrors.InternalServer("ADMIN_AUTH_IDENTITY_BIND_TX_FAILED", "failed to start auth identity bind transaction").WithCause(err)
 	}
+	// Rollback keeps a failed channel or metadata stage from leaving its
+	// preceding identity create or canonicalization committed. Cleanup errors
+	// remain secondary to the binding failure.
 	defer func() { _ = tx.Rollback() }()
 
+	// Inspect every compatible provider-key record before selecting an owned row,
+	// so canonicalization cannot claim an external subject already stored for
+	// another account.
 	identityRecords, err := tx.AuthIdentity.Query().
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
@@ -164,6 +241,9 @@ func (s *AdminMutations) BindAuthIdentity(ctx context.Context, p identitycore.Pr
 		}
 	}
 
+	// After identity persistence, inspect and save channel ownership in the same
+	// transaction; a channel conflict rolls back any preceding identity create or
+	// update.
 	var channel *dbent.AuthIdentityChannel
 	if channelInput != nil {
 		channelRecords, err := tx.AuthIdentityChannel.Query().
@@ -212,12 +292,18 @@ func (s *AdminMutations) BindAuthIdentity(ctx context.Context, p identitycore.Pr
 		}
 	}
 
+	// Commit the selected canonical identity and optional channel before
+	// constructing the returned bound view, so a response cannot claim completion
+	// of an uncommitted binding.
 	if err := tx.Commit(); err != nil {
 		return nil, infraerrors.InternalServer("ADMIN_AUTH_IDENTITY_BIND_COMMIT_FAILED", "failed to commit auth identity bind").WithCause(err)
 	}
 	return AdminBuildAdminBoundAuthIdentity(identity, channel), nil
 }
 
+// AdminSelectOwnedAdminAuthIdentity chooses the supplied account record with
+// the lowest provider-key rank. Ties retain input order, absent owned records
+// return nil, and callers supply nonnil records from their compatible lookup.
 func AdminSelectOwnedAdminAuthIdentity(records []*dbent.AuthIdentity, userID int64) *dbent.AuthIdentity {
 	var selected *dbent.AuthIdentity
 	for _, record := range records {
@@ -231,6 +317,9 @@ func AdminSelectOwnedAdminAuthIdentity(records []*dbent.AuthIdentity, userID int
 	return selected
 }
 
+// AdminHasAdminAuthIdentityOwnershipConflict reports whether any supplied
+// identity belongs to another account. Empty input returns false, and callers
+// provide nonnil records from the compatible provider-subject ownership query.
 func AdminHasAdminAuthIdentityOwnershipConflict(records []*dbent.AuthIdentity, userID int64) bool {
 	for _, record := range records {
 		if record.UserID != userID {
@@ -240,6 +329,10 @@ func AdminHasAdminAuthIdentityOwnershipConflict(records []*dbent.AuthIdentity, u
 	return false
 }
 
+// AdminSelectOwnedAdminAuthIdentityChannel chooses an account-owned channel
+// with the lowest provider-key rank. Missing identity edges are skipped and
+// ties retain input order; callers load the channel identity relationship
+// before selection.
 func AdminSelectOwnedAdminAuthIdentityChannel(records []*dbent.AuthIdentityChannel, userID int64) *dbent.AuthIdentityChannel {
 	var selected *dbent.AuthIdentityChannel
 	for _, record := range records {
@@ -253,6 +346,10 @@ func AdminSelectOwnedAdminAuthIdentityChannel(records []*dbent.AuthIdentityChann
 	return selected
 }
 
+// AdminHasAdminAuthIdentityChannelOwnershipConflict reports another owner
+// through a loaded channel identity edge. Missing edges do not establish a
+// conflict, so callers use WithIdentity when checking compatible channel
+// records.
 func AdminHasAdminAuthIdentityChannelOwnershipConflict(records []*dbent.AuthIdentityChannel, userID int64) bool {
 	for _, record := range records {
 		if record.Edges.Identity != nil && record.Edges.Identity.UserID != userID {
@@ -262,6 +359,10 @@ func AdminHasAdminAuthIdentityChannelOwnershipConflict(records []*dbent.AuthIden
 	return false
 }
 
+// AdminBuildAdminBoundAuthIdentity maps committed identity and optional
+// channel values to the administration response. Nil identity returns nil,
+// metadata receives outer copies, and optional issuer and verification
+// pointers remain shared.
 func AdminBuildAdminBoundAuthIdentity(identity *dbent.AuthIdentity, channel *dbent.AuthIdentityChannel) *identitycore.AdminBoundAuthIdentity {
 	if identity == nil {
 		return nil

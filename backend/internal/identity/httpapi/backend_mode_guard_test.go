@@ -17,14 +17,27 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Backend-mode guards either permit the configured administrator
+// authentication surface or reject panel self-service. Tests install simple
+// routes and runtime switches, checking user-role handling separately from the
+// public auth-path allowlist and the nil-reader bypass.
+
+// bmSettingRepo supplies the runtime string settings needed by backend-mode
+// guard fixtures.
 type bmSettingRepo struct {
-	values map[string]string
+	values map[string]string // configured runtime setting strings
 }
 
+// Get panics when a guard fixture reaches this unsupported settings repository
+// operation. Tests supply direct value reads and bulk writes, so other access
+// reveals an unexpected settings dependency.
 func (r *bmSettingRepo) Get(_ context.Context, _ string) (*settingscore.Setting, error) {
 	panic("unexpected Get call")
 }
 
+// GetValue returns the configured runtime string for the supplied fixture key.
+// Missing keys return the settings sentinel so readers can apply their
+// unconfigured backend-mode behavior.
 func (r *bmSettingRepo) GetValue(_ context.Context, key string) (string, error) {
 	v, ok := r.values[key]
 	if !ok {
@@ -33,14 +46,23 @@ func (r *bmSettingRepo) GetValue(_ context.Context, key string) (string, error) 
 	return v, nil
 }
 
+// Set panics when a guard fixture reaches this unsupported settings repository
+// operation. Tests supply direct value reads and bulk writes, so other access
+// reveals an unexpected settings dependency.
 func (r *bmSettingRepo) Set(_ context.Context, _, _ string) error {
 	panic("unexpected Set call")
 }
 
+// GetMultiple panics when a guard fixture reaches this unsupported settings
+// repository operation. Tests supply direct value reads and bulk writes, so
+// other access reveals an unexpected settings dependency.
 func (r *bmSettingRepo) GetMultiple(_ context.Context, _ []string) (map[string]string, error) {
 	panic("unexpected GetMultiple call")
 }
 
+// SetMultiple copies supplied setting entries into the mutable fixture map. A
+// nil map is allocated on demand, and keys absent from this write retain their
+// existing values.
 func (r *bmSettingRepo) SetMultiple(_ context.Context, settings map[string]string) error {
 	if r.values == nil {
 		r.values = make(map[string]string, len(settings))
@@ -49,14 +71,23 @@ func (r *bmSettingRepo) SetMultiple(_ context.Context, settings map[string]strin
 	return nil
 }
 
+// GetAll panics when a guard fixture reaches this unsupported settings
+// repository operation. Tests supply direct value reads and bulk writes, so
+// other access reveals an unexpected settings dependency.
 func (r *bmSettingRepo) GetAll(_ context.Context) (map[string]string, error) {
 	panic("unexpected GetAll call")
 }
 
+// Delete panics when a guard fixture reaches this unsupported settings
+// repository operation. Tests supply direct value reads and bulk writes, so
+// other access reveals an unexpected settings dependency.
 func (r *bmSettingRepo) Delete(_ context.Context, _ string) error {
 	panic("unexpected Delete call")
 }
 
+// newBackendModeSettingService builds a backend-mode reader and publishes the
+// supplied enabled observation. Only exact true text publishes an enabled
+// value; the fixture retains that raw string in its settings map.
 func newBackendModeSettingService(t *testing.T, enabled string) *admission.BackendMode {
 	t.Helper()
 
@@ -71,17 +102,23 @@ func newBackendModeSettingService(t *testing.T, enabled string) *admission.Backe
 	return svc
 }
 
+// stringPtr returns a pointer to the supplied fixture role text.
 func stringPtr(v string) *string {
 	return &v
 }
 
+// TestBackendModeUserGuard varies the runtime switch, reader presence, and
+// supplied Gin role. It checks administrator admission plus rejection of
+// ordinary, empty, or absent roles when the mode is enabled.
 func TestBackendModeUserGuard(t *testing.T) {
 	tests := []struct {
-		name       string
-		nilService bool
-		enabled    string
+		name       string // guard fixture case
+		nilService bool   // settings reader omitted flag
+		enabled    string // raw backend-mode setting text
+		// role supplies the Gin role when present. Nil leaves the compatibility
+		// role absent so the guard exercises its missing-role response.
 		role       *string
-		wantStatus int
+		wantStatus int // expected HTTP response status
 	}{
 		{
 			name:       "disabled_allows_all",
@@ -154,13 +191,17 @@ func TestBackendModeUserGuard(t *testing.T) {
 	}
 }
 
+// TestBackendModeAuthGuard varies runtime enablement across login, callback,
+// pending, and self-service paths. It checks the allowlisted continuation
+// statuses and rejects start, registration, and password-recovery routes under
+// backend mode.
 func TestBackendModeAuthGuard(t *testing.T) {
 	tests := []struct {
-		name       string
-		nilService bool
-		enabled    string
-		path       string
-		wantStatus int
+		name       string // guard fixture case
+		nilService bool   // settings reader omitted flag
+		enabled    string // raw backend-mode setting text
+		path       string // requested authentication route path
+		wantStatus int    // expected HTTP response status
 	}{
 		{
 			name:       "disabled_allows_all",

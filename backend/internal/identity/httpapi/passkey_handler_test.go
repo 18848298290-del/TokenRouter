@@ -12,7 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony checks that missing CAPTCHA proof blocks ceremony creation.
+// Anonymous Passkey begin requests check Tencent action proof before creating
+// a ceremony. A disabled Passkey service distinguishes rejection at the
+// CAPTCHA gate from successful proof verification that reaches the next
+// service and receives its feature-disabled response.
+
+// TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony submits empty
+// proof with Tencent enabled and a disabled Passkey service. It checks the
+// CAPTCHA error and zero verifier calls before ceremony handling.
 func TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony(t *testing.T) {
 	authHandler, verifier := newOAuthCaptchaTestHandler(true)
 	passkeys := identity.NewPasskeyService(false, nil, nil, nil, nil)
@@ -30,8 +37,10 @@ func TestPasskeyBeginLoginRequiresTencentCaptchaBeforeCeremony(t *testing.T) {
 	require.Zero(t, verifier.calls)
 }
 
-// TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService checks that valid proof reaches the Passkey service.
-// The disabled service fixture then returns its feature-disabled error.
+// TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService supplies
+// valid Tencent proof with the Passkey service disabled. It checks the
+// recorded proof and the subsequent PASSKEY_DISABLED response from that
+// service.
 func TestPasskeyBeginLoginVerifiesTencentCaptchaBeforePasskeyService(t *testing.T) {
 	authHandler, verifier := newOAuthCaptchaTestHandler(true)
 	passkeys := identity.NewPasskeyService(false, nil, nil, nil, nil)

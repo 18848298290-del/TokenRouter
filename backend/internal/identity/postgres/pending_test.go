@@ -18,11 +18,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// SQLite pending-state cases inspect stored browser proof, one-time code
+// consumption, adoption references, and scrubbed legacy credential fields. A
+// gated adoption case starts two callers and checks one stored decision after
+// a timed scheduling opportunity; the legacy null-session case stays skipped
+// because this unit schema rejects that historical row.
+
+// newAuthPendingIdentityServiceTestClient creates the shared-name SQLite
+// pending fixture and enables foreign keys. Ent and pool cleanup are
+// registered in reverse close order; callers keep these shared-name fixtures
+// sequential.
 func newAuthPendingIdentityServiceTestClient(t *testing.T) (*AuthPendingIdentityService, *dbent.Client) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", "file:auth_pending_identity_service?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register pool cleanup before later fixture setup. Ent cleanup is added
+	// afterward and runs first; cleanup close failures are discarded by this
+	// SQLite fixture.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -30,11 +43,17 @@ func newAuthPendingIdentityServiceTestClient(t *testing.T) (*AuthPendingIdentity
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Ent cleanup runs before the earlier registered pool close, keeping the
+	// client driver teardown ahead of the final underlying pool cleanup.
 	t.Cleanup(func() { _ = client.Close() })
 
 	return NewAuthPendingIdentityService(client), client
 }
 
+// TestAuthPendingIdentityService_CreatePendingSessionStoresSeparatedState
+// stores browser pending input containing a target and separate provider and
+// local maps. It checks the generated token, provider identity, target ID, and
+// retained claim/progression values.
 func TestAuthPendingIdentityService_CreatePendingSessionStoresSeparatedState(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -71,6 +90,10 @@ func TestAuthPendingIdentityService_CreatePendingSessionStoresSeparatedState(t *
 	require.Equal(t, "email_required", session.LocalFlowState["step"])
 }
 
+// TestAuthPendingIdentityService_CompletionCodeIsBrowserBoundAndOneTime issues
+// a completion code and tries wrong-browser, valid-browser, and repeated
+// consumption. It checks mismatch rejection, cleared digest/expiry after
+// consumption, and invalid-code replay.
 func TestAuthPendingIdentityService_CompletionCodeIsBrowserBoundAndOneTime(t *testing.T) {
 	svc, _ := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -108,6 +131,9 @@ func TestAuthPendingIdentityService_CompletionCodeIsBrowserBoundAndOneTime(t *te
 	require.ErrorIs(t, err, ErrPendingAuthCodeInvalid)
 }
 
+// TestAuthPendingIdentityService_CompletionCodeExpires issues a short-lived
+// code then moves its stored expiry into the past. It checks the
+// completion-code expiry error when consumption reads that changed row.
 func TestAuthPendingIdentityService_CompletionCodeExpires(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -139,6 +165,9 @@ func TestAuthPendingIdentityService_CompletionCodeExpires(t *testing.T) {
 	require.ErrorIs(t, err, ErrPendingAuthCodeExpired)
 }
 
+// TestAuthPendingIdentityService_UpsertAdoptionDecision saves one session
+// choice before updating it with an identity and avatar flag. It checks
+// retained decision ID and the requested reference and flag values.
 func TestAuthPendingIdentityService_UpsertAdoptionDecision(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -193,6 +222,10 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision(t *testing.T) {
 	require.True(t, second.AdoptAvatar)
 }
 
+// TestAuthPendingIdentityService_UpsertAdoptionDecision_ReassignsExistingIdentityReference
+// assigns one provider identity to choices for two pending sessions. It checks
+// the second reference and that the earlier decision reference was cleared in
+// storage.
 func TestAuthPendingIdentityService_UpsertAdoptionDecision_ReassignsExistingIdentityReference(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -259,6 +292,10 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_ReassignsExistingIden
 	require.Nil(t, reloadedFirst.IdentityID)
 }
 
+// TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConcurrency
+// gates the first adoption create while another call uses the same session and
+// identity. It checks matching returned IDs and one stored decision with the
+// requested identity reference.
 func TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConcurrency(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -290,6 +327,9 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConc
 	})
 	require.NoError(t, err)
 
+	// Hold the first create after it reaches mutation and start the second call
+	// before release. Results are collected afterward so the assertions do not
+	// select a finishing goroutine.
 	firstCreateStarted := make(chan struct{})
 	releaseFirstCreate := make(chan struct{})
 	var firstCreate sync.Once
@@ -309,9 +349,11 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConc
 		})
 	})
 
+	// adoptionResult carries one concurrent adoption result and its failure to
+	// the assertion goroutine.
 	type adoptionResult struct {
-		decision *dbent.IdentityAdoptionDecision
-		err      error
+		decision *dbent.IdentityAdoptionDecision // returned stored adoption decision
+		err      error                           // returned adoption persistence failure
 	}
 
 	input := PendingIdentityAdoptionDecisionInput{
@@ -334,6 +376,9 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConc
 		results <- adoptionResult{decision: decision, err: err}
 	}()
 
+	// Allow the second call a scheduling opportunity before releasing the first
+	// create. The fixed delay does not certify entry into a specific database or
+	// lock stage.
 	time.Sleep(100 * time.Millisecond)
 	close(releaseFirstCreate)
 
@@ -360,6 +405,10 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_IsIdempotentUnderConc
 	require.Equal(t, identity.ID, *loaded.IdentityID)
 }
 
+// TestAuthPendingIdentityService_UpsertAdoptionDecision_ClearsLegacyNullSessionReference
+// describes reassignment of a historical null-session identity reference. It
+// is skipped because the SQLite unit schema rejects that row, so the written
+// assertions do not currently verify the scenario.
 func TestAuthPendingIdentityService_UpsertAdoptionDecision_ClearsLegacyNullSessionReference(t *testing.T) {
 	t.Skip("legacy NULL pending_auth_session_id rows only exist in production PostgreSQL history; sqlite unit schema rejects NULL")
 
@@ -427,6 +476,10 @@ func TestAuthPendingIdentityService_UpsertAdoptionDecision_ClearsLegacyNullSessi
 	require.Nil(t, reloadedLegacy.IdentityID)
 }
 
+// TestAuthPendingIdentityService_ConsumeBrowserSession tries a mismatched
+// browser before consuming a valid stored session and replaying it. It checks
+// mismatch rejection, the saved consumption timestamp, and the
+// consumed-session replay error.
 func TestAuthPendingIdentityService_ConsumeBrowserSession(t *testing.T) {
 	svc, _ := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -458,6 +511,10 @@ func TestAuthPendingIdentityService_ConsumeBrowserSession(t *testing.T) {
 	require.ErrorIs(t, err, ErrPendingAuthSessionConsumed)
 }
 
+// TestAuthPendingIdentityService_ConsumeBrowserSessionRejectsStaleLoadedSessionReplay
+// retains an unconsumed loaded entity across one successful claim, then reuses
+// it. It checks that the conditional write rejects replay despite that stale
+// object.
 func TestAuthPendingIdentityService_ConsumeBrowserSessionRejectsStaleLoadedSessionReplay(t *testing.T) {
 	svc, _ := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()
@@ -484,6 +541,10 @@ func TestAuthPendingIdentityService_ConsumeBrowserSessionRejectsStaleLoadedSessi
 	require.ErrorIs(t, err, ErrPendingAuthSessionConsumed)
 }
 
+// TestAuthPendingIdentityService_ConsumeBrowserSessionScrubsLegacyCompletionTokens
+// stores legacy completion credentials before browser session consumption. It
+// reloads the row and checks removal of credential fields while the local
+// redirect remains.
 func TestAuthPendingIdentityService_ConsumeBrowserSessionScrubsLegacyCompletionTokens(t *testing.T) {
 	svc, client := newAuthPendingIdentityServiceTestClient(t)
 	ctx := context.Background()

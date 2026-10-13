@@ -12,6 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// OAuth start admission and response writing are tested independently of
+// provider authorization clients. Enabled Tencent verification requires proof
+// in POST JSON, while disabled verification permits redirect responses and
+// current-user bind paths bypass the anonymous proof.
+
+// TestOAuthStartPostReturnsAuthorizeURLAfterTencentVerification supplies
+// Tencent proof for each provider path and then writes the authorize response.
+// It checks HTTP 200, the JSON URL, and the exact proof recorded once.
 func TestOAuthStartPostReturnsAuthorizeURLAfterTencentVerification(t *testing.T) {
 	for provider := range oauthStartHandlers() {
 		t.Run(provider, func(t *testing.T) {
@@ -36,6 +44,9 @@ func TestOAuthStartPostReturnsAuthorizeURLAfterTencentVerification(t *testing.T)
 	}
 }
 
+// TestOAuthStartPostRequiresTencentProofWhenEnabled submits empty POST proof
+// for each provider path. It checks rejection with the CAPTCHA error before
+// the verifier receives any ticket.
 func TestOAuthStartPostRequiresTencentProofWhenEnabled(t *testing.T) {
 	for provider := range oauthStartHandlers() {
 		t.Run(provider, func(t *testing.T) {
@@ -53,6 +64,9 @@ func TestOAuthStartPostRequiresTencentProofWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestOAuthBindingPathRemainsOutsideTencentGate uses an OIDC bind-start URL
+// with empty session dependencies. It checks that the admission helper accepts
+// the path without needing anonymous CAPTCHA services.
 func TestOAuthBindingPathRemainsOutsideTencentGate(t *testing.T) {
 	handler := &AuthenticationHandler{Session: &SessionHandler{}}
 	recorder := httptest.NewRecorder()
@@ -63,6 +77,9 @@ func TestOAuthBindingPathRemainsOutsideTencentGate(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 }
 
+// TestOAuthStartGetRemainsCompatibleWhenTencentDisabled sends a GitHub GET
+// start to the shared helper. It checks the 302 Location response and that
+// Tencent verification was never invoked.
 func TestOAuthStartGetRemainsCompatibleWhenTencentDisabled(t *testing.T) {
 	handler, verifier := newOAuthCaptchaTestHandler(false)
 	recorder := httptest.NewRecorder()

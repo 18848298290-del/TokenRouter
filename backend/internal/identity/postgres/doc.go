@@ -1,16 +1,21 @@
-// Package postgres persists users, authentication identities, pending sessions, and group grants.
+// Package postgres stores accounts, provider identities, browser pending
+// state, and account group grants. Its adapters join caller transactions where
+// their operations support participation, while account and pending workflows
+// own the required ordering, rollback, and stored-row checks before
+// completion.
 //
-// Reading entry points:
-//   - user_repo.go: user profiles, email uniqueness, group grants, and balance operations.
-//   - auth_state.go: identity writes during registration and login.
-//   - pending.go: pending sessions, completion codes, and profile adoption choices.
+// Begin with user_repo.go for accounts, email uniqueness, grants, and balance
+// operations, auth_state.go for registration and login writes, and pending.go
+// for browser sessions, completion codes, and adoption choices.
 //
-// File groups:
-//   - user_*.go: user repositories, identity bindings, attributes, and entity conversion.
-//   - auth_*.go and oauth_lookup.go: registration, login, and OAuth identity lookup.
-//   - pending*.go: pending sessions, identity binding, and profile adoption.
-//   - admin_mutations.go and bootstrap_admin.go: bootstrap and administrative user operations.
-//   - group_access_*.go: grant changes within caller-owned transactions.
-//   - passkey.go: credential storage, lookup, and updates.
-//   - concurrency.go and risk_status.go: concurrency limits and risk-based disabling.
+// The user_*.go group contains profile and attribute repositories, identity
+// bindings, and entity conversion. auth_*.go and oauth_lookup.go support
+// registration, login, and provider lookup. pending*.go implements session
+// state, binding, and profile adoption.
+//
+// admin_mutations.go and bootstrap_admin.go implement administrative account
+// writes and initial administrator creation. group_access_*.go participates in
+// caller transactions for grant changes. passkey.go stores WebAuthn
+// credentials; concurrency.go and risk_status.go write allowance and
+// account-disable state.
 package postgres

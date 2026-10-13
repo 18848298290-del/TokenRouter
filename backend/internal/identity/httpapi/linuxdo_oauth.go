@@ -20,45 +20,81 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// LinuxDo login uses the stable provider subject for account identity and a
+// synthetic email for binding, while a provider email remains a compatibility
+// hint. Start captures browser proof, login or current-user intent, and
+// optional PKCE material; callback verifies that state before asking the
+// identity flow to select an account.
+//
+// Existing provider ownership becomes a pending login target, and current-user
+// binding retains its signed target cookie. A real-email match or local email
+// policy selects account choice instead of establishing ownership from that
+// hint. Eligible direct signup saves its provider binding before delivering
+// credentials in a fragment; invitation-required results continue in pending
+// state. Redirect helpers also retain compatibility handling for encoded local
+// paths and byte-bounded fragment values.
+
+// LinuxDo browser cookie values, intent labels, fragment bounds, and local
+// defaults carry authorization state and the selected account continuation
+// through provider navigation.
 const (
 	LinuxDoOAuthCookiePath         = "/api/v1/auth/oauth/linuxdo"
 	OauthBindAccessTokenCookiePath = "/api/v1/auth/oauth"
-	LinuxDoOAuthStateCookieName    = "linuxdo_oauth_state"
-	LinuxDoOAuthVerifierCookie     = "linuxdo_oauth_verifier"
-	LinuxDoOAuthRedirectCookie     = "linuxdo_oauth_redirect"
-	LinuxDoOAuthIntentCookieName   = "linuxdo_oauth_intent"
-	LinuxDoOAuthBindUserCookieName = "linuxdo_oauth_bind_user"
-	OauthBindAccessTokenCookieName = "oauth_bind_access_token"
-	LinuxDoOAuthCookieMaxAgeSec    = 10 * 60 // 10 minutes
+	LinuxDoOAuthStateCookieName    = "linuxdo_oauth_state"     // LinuxDo authorization state cookie
+	LinuxDoOAuthVerifierCookie     = "linuxdo_oauth_verifier"  // LinuxDo PKCE verifier cookie
+	LinuxDoOAuthRedirectCookie     = "linuxdo_oauth_redirect"  // LinuxDo local return cookie
+	LinuxDoOAuthIntentCookieName   = "linuxdo_oauth_intent"    // LinuxDo account intent cookie
+	LinuxDoOAuthBindUserCookieName = "linuxdo_oauth_bind_user" // signed target account cookie
+	OauthBindAccessTokenCookieName = "oauth_bind_access_token" // shared bind credential cookie
+	LinuxDoOAuthCookieMaxAgeSec    = 10 * 60                   // seconds
 	LinuxDoOAuthDefaultRedirectTo  = "/dashboard"
 	LinuxDoOAuthDefaultFrontendCB  = "/auth/linuxdo/callback"
 
-	LinuxDoOAuthMaxFragmentValueLen = 512
+	LinuxDoOAuthMaxFragmentValueLen = 512 // bytes
 
-	OauthIntentLogin           = "login"
-	OauthIntentBindCurrentUser = "bind_current_user"
+	OauthIntentLogin           = "login"             // external account login intent
+	OauthIntentBindCurrentUser = "bind_current_user" // authenticated account binding intent
 )
 
+// LinuxDoHandler manages subject-based LinuxDo login and browser current-user
+// binding continuations.
 type LinuxDoHandler struct {
-	*PendingHandler
-	binding    *OAuthBindHandler
-	client     identity.LinuxDoOAuthClient
-	loadConfig func(context.Context) (identity.LinuxDoOAuthOptions, error)
+	*PendingHandler                                                             // shared browser pending authentication
+	binding         *OAuthBindHandler                                           // signed current-account binding helper
+	client          identity.LinuxDoOAuthClient                                 // LinuxDo authorization and profile client
+	loadConfig      func(context.Context) (identity.LinuxDoOAuthOptions, error) // current LinuxDo configuration callback
 }
 
+// CompleteLinuxDoOAuthRequest carries invitation and profile choices for
+// legacy pending signup completion.
 type CompleteLinuxDoOAuthRequest struct {
-	InvitationCode   string `json:"invitation_code" binding:"required"`
-	AffCode          string `json:"aff_code,omitempty"` // Affiliate code used when creating a new account.
-	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
-	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
+	InvitationCode string `json:"invitation_code" binding:"required"` // required registration invitation code
+	AffCode        string `json:"aff_code,omitempty"`                 // optional signup affiliate code
+	// AdoptDisplayName and AdoptAvatar keep omitted choices as nil and supplied
+	// false values as refusals. The helper retains saved values for omitted
+	// flags and otherwise defaults those flags to false before applying supplied
+	// choices.
+	AdoptDisplayName *bool `json:"adopt_display_name,omitempty"` // optional provider-name adoption choice
+	AdoptAvatar      *bool `json:"adopt_avatar,omitempty"`       // optional provider-avatar adoption choice
 }
 
+// NewLinuxDoHandler retains shared pending and binding handlers, provider
+// client, and configuration reader. Initialize dependencies for the registered
+// login and binding paths before serving authorization requests.
 func NewLinuxDoHandler(p *PendingHandler, b *OAuthBindHandler, client identity.LinuxDoOAuthClient, load func(context.Context) (identity.LinuxDoOAuthOptions, error)) *LinuxDoHandler {
 	return &LinuxDoHandler{p, b, client, load}
 }
 
-// LinuxDoOAuthStart starts the LinuxDo Connect login flow.
-// GET /api/v1/auth/oauth/linuxdo/start?redirect=/dashboard
+// LinuxDoOAuthStart checks applicable action CAPTCHA and records browser state
+// before returning the authorize URL. It normalizes intent, captures signup
+// context, and signs the current-account target when binding is selected.
+//
+// A browser key replaces prior pending-session proof, and configured PKCE
+// generates a verifier cookie with the matching S256 challenge. Return paths
+// use the validated local default when unusable. Cookies are emitted before
+// later binding, PKCE, or URL construction can fail, so a failed start can
+// leave partial browser state. POST receives the authorize URL as JSON; other
+// accepted methods redirect.
 func (h *LinuxDoHandler) LinuxDoOAuthStart(c *gin.Context) {
 	if !h.RequireActionCaptchaForOAuthLoginStart(c) {
 		return
@@ -87,6 +123,9 @@ func (h *LinuxDoHandler) LinuxDoOAuthStart(c *gin.Context) {
 	}
 
 	secureCookie := IsRequestHTTPS(c)
+	// Replace browser proof and expire its prior pending token beside the new
+	// LinuxDo start context. Binding and PKCE work follows, so its failures can
+	// leave these already emitted cookie headers.
 	LinuxDoSetCookie(c, LinuxDoOAuthStateCookieName, EncodeCookieValue(state), LinuxDoOAuthCookieMaxAgeSec, secureCookie)
 	LinuxDoSetCookie(c, LinuxDoOAuthRedirectCookie, EncodeCookieValue(redirectTo), LinuxDoOAuthCookieMaxAgeSec, secureCookie)
 	intent := NormalizeOAuthIntent(c.Query("intent"))
@@ -131,8 +170,18 @@ func (h *LinuxDoHandler) LinuxDoOAuthStart(c *gin.Context) {
 	RespondOAuthStart(c, authURL)
 }
 
-// LinuxDoOAuthCallback resolves the provider identity and redirects through pending login or registration.
-// GET /api/v1/auth/oauth/linuxdo/callback?code=...&state=...
+// LinuxDoOAuthCallback verifies state, browser proof, and configured PKCE
+// before resolving the external subject. Required account dependencies are
+// supplied by handler assembly.
+//
+// The provider real email is retained as compatibility data while the
+// subject-derived synthetic address feeds binding identity. Signed
+// current-user targets and existing provider owners become pending sessions.
+// Otherwise real-email matches or local verification policies require account
+// choice. Eligible direct signup can persist an account and binding before
+// fragment delivery; invitation-required results become pending choice.
+// Callback cleanup is registered after required code/state input, leaving
+// earlier failure cookies until expiry.
 func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	cfg, cfgErr := h.loadConfig(c.Request.Context())
 	if cfgErr != nil {
@@ -158,6 +207,9 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	}
 
 	secureCookie := IsRequestHTTPS(c)
+	// Once code and state are present, expire LinuxDo callback and promotion
+	// cookies on every later exit. Pending browser proof remains available for
+	// the continuation created by successful resolution.
 	defer func() {
 		LinuxDoClearCookie(c, LinuxDoOAuthStateCookieName, secureCookie)
 		LinuxDoClearCookie(c, LinuxDoOAuthVerifierCookie, secureCookie)
@@ -173,21 +225,32 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	// An unreadable return cookie contributes empty text, then local-path
+	// validation selects the dashboard default. Browser proof is checked
+	// separately and cannot be replaced by that return value.
 	redirectTo, _ := ReadCookieDecoded(c, LinuxDoOAuthRedirectCookie)
 	redirectTo = SanitizeFrontendRedirectPath(redirectTo)
 	if redirectTo == "" {
 		redirectTo = LinuxDoOAuthDefaultRedirectTo
 	}
+	// Read failures produce empty browser proof, so missing or malformed cookies
+	// are rejected before provider exchange and pending state creation.
 	browserSessionKey, _ := ReadOAuthPendingBrowserCookie(c)
 	if strings.TrimSpace(browserSessionKey) == "" {
 		RedirectOAuthError(c, frontendCallback, "missing_browser_session", "missing oauth browser session", "")
 		return
 	}
+	// An unreadable intent has no binding label. Normalization selects login, so
+	// a leftover bind-target cookie cannot by itself select the current-user
+	// binding branch.
 	intent, _ := ReadCookieDecoded(c, LinuxDoOAuthIntentCookieName)
 	intent = NormalizeOAuthIntent(intent)
 
 	codeVerifier := ""
 	if cfg.UsePKCE {
+		// A missing or malformed encoded verifier becomes empty and ends this
+		// callback. Accepted code exchange receives the verifier recorded with the
+		// authorization challenge.
 		codeVerifier, _ = ReadCookieDecoded(c, LinuxDoOAuthVerifierCookie)
 		if codeVerifier == "" {
 			RedirectOAuthError(c, frontendCallback, "missing_verifier", "missing pkce verifier", "")
@@ -206,6 +269,7 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 		description := ""
 		var exchangeErr *identity.LinuxDoTokenExchangeError
 		if errors.As(err, &exchangeErr) && exchangeErr != nil {
+			// Bound response bodies to two KiB at complete UTF-8 prefixes for logs.
 			log.Printf(
 				"[LinuxDo OAuth] token exchange failed: status=%d provider_error=%q provider_description=%q body=%s",
 				exchangeErr.StatusCode,
@@ -312,6 +376,9 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 			RedirectOAuthError(c, frontendCallback, "session_error", infraerrors.Reason(err), infraerrors.Message(err))
 			return
 		}
+		// Authentication may issue a pair before external-subject binding succeeds.
+		// Keep that binding ahead of fragment delivery; failure withholds the response
+		// after earlier account or credential work.
 		tokenPair, user, err := h.authService.LoginOrRegisterOAuthWithTokenPairAndPromoCode(c.Request.Context(), email, username, "", "", ReadOAuthPromoCode(c), "linuxdo")
 		if err == nil {
 			if err := h.flow.Database.ApplyBinding(c.Request.Context(), identity.PendingBinding{Session: &identity.PendingAuthSession{
@@ -355,9 +422,17 @@ func (h *LinuxDoHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	RedirectToFrontendCallback(c, frontendCallback)
 }
 
-// CompleteLinuxDoOAuthRegistration completes a pending OAuth registration by validating
-// the invitation code and creating the user account.
-// POST /api/v1/auth/oauth/linuxdo/complete-registration
+// CompleteLinuxDoOAuthRegistration handles a browser-bound legacy invitation
+// completion or returns updated account-choice state. The flow first
+// reevaluates local email requirements and backend-mode registration
+// admission.
+//
+// A usable synthetic email and username plus available provider identity are
+// required before creating or resolving the account. Saved adoption choice
+// then enters the combined adoption-and-consumption database operation.
+// Credentials may already have been issued by authentication before that later
+// operation fails. Successful completion records login, expires pending
+// cookies, and writes a top-level token response.
 func (h *LinuxDoHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 	var req CompleteLinuxDoOAuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -438,6 +513,9 @@ func (h *LinuxDoHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// Authentication has already produced credentials. Persist adoption and the
+	// browser claim together before returning them; transaction failure leaves
+	// that earlier credential issuance outside this rollback scope.
 	if err := h.flow.Database.ApplyAdoptionAndConsume(c.Request.Context(), session, decision, user.ID); err != nil {
 		RespondPendingOAuthBindingApplyError(c, err)
 		return
@@ -454,6 +532,9 @@ func (h *LinuxDoHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 	})
 }
 
+// BuildLinuxDoAuthorizeURL encodes client, redirect, state, and optional
+// scopes into the configured authorize URL. A nonblank challenge adds the S256
+// PKCE parameters; unrelated existing query values remain in the parsed URL.
 func BuildLinuxDoAuthorizeURL(cfg identity.LinuxDoOAuthOptions, state string, codeChallenge string, redirectURI string) (string, error) {
 	u, err := url.Parse(cfg.AuthorizeURL)
 	if err != nil {
@@ -477,6 +558,9 @@ func BuildLinuxDoAuthorizeURL(cfg identity.LinuxDoOAuthOptions, state string, co
 	return u.String(), nil
 }
 
+// RedirectOAuthError builds a bounded error fragment and delegates frontend
+// redirect writing. Blank message or description fields are omitted, while
+// each supplied value passes through the shared fragment truncation rule.
 func RedirectOAuthError(c *gin.Context, frontendCallback string, code string, message string, description string) {
 	fragment := url.Values{}
 	fragment.Set("error", TruncateOAuthFragment(code))
@@ -489,6 +573,16 @@ func RedirectOAuthError(c *gin.Context, frontendCallback string, code string, me
 	RedirectOAuthFragment(c, frontendCallback, fragment)
 }
 
+// RedirectOAuthTokenPair builds a credential and local-return fragment for the
+// frontend callback. Nil token pairs omit credentials, and supplied credential
+// values pass through the shared byte truncation rule.
+//
+// Return paths are query-decoded at most twice to accept encoded callback
+// values. A changed decoded value is used only when the local-path sanitizer
+// accepts it; otherwise the original supplied text returns. Callers sanitize
+// that original path before invoking this helper. Selected redirect and
+// credential values are capped at the fragment limit, so oversized credential
+// text can be shortened before delivery.
 func RedirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *identity.TokenPair, redirectTo string) {
 	fragment := url.Values{}
 	if tokenPair != nil {
@@ -499,6 +593,9 @@ func RedirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *
 	}
 	if redirect := strings.TrimSpace(redirectTo); redirect != "" {
 		originalRedirect := redirect
+		// Decode at most two query-encoding layers used by compatibility return
+		// values. Retain the caller original text when a changed decoded path fails
+		// the local-path check.
 		for range 2 {
 			decoded, err := url.QueryUnescape(redirect)
 			if err != nil || decoded == redirect {
@@ -518,13 +615,22 @@ func RedirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *
 	RedirectOAuthFragment(c, frontendCallback, fragment)
 }
 
+// RedirectOAuthFragment replaces an accepted callback URL fragment with
+// encoded values and adds cache prevention headers. Parse failure or a non-HTTP
+// scheme redirects directly to the local dashboard before those headers are
+// set; relative and HTTP(S) callbacks remain allowed.
 func RedirectOAuthFragment(c *gin.Context, frontendCallback string, fragment url.Values) {
 	u, err := url.Parse(frontendCallback)
 	if err != nil {
-		// If the callback URL cannot be parsed, return to the default dashboard.
+		// Invalid callback configuration cannot carry the prepared fragment. Send
+		// the browser to the known local dashboard before setting fragment response
+		// headers.
 		c.Redirect(http.StatusFound, LinuxDoOAuthDefaultRedirectTo)
 		return
 	}
+	// A parsed callback with another scheme bypasses fragment delivery as well.
+	// The local dashboard supplies a navigation destination for this rejected
+	// configuration.
 	if u.Scheme != "" && !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
 		c.Redirect(http.StatusFound, LinuxDoOAuthDefaultRedirectTo)
 		return
@@ -535,6 +641,8 @@ func RedirectOAuthFragment(c *gin.Context, frontendCallback string, fragment url
 	c.Redirect(http.StatusFound, u.String())
 }
 
+// OAuthSingleLine trims text and collapses whitespace runs into one
+// space-separated line.
 func OAuthSingleLine(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -543,6 +651,9 @@ func OAuthSingleLine(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+// LinuxDoSetCookie emits the supplied encoded value at the LinuxDo browser
+// cookie path. maxAgeSec is seconds; the caller supplies HTTPS state, and
+// HttpOnly/SameSite Lax support provider callback navigation.
 func LinuxDoSetCookie(c *gin.Context, name string, value string, maxAgeSec int, secure bool) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
@@ -555,6 +666,9 @@ func LinuxDoSetCookie(c *gin.Context, name string, value string, maxAgeSec int, 
 	})
 }
 
+// LinuxDoClearCookie emits deletion of a LinuxDo state cookie at its matching
+// path. The caller supplies HTTPS state, while HttpOnly and SameSite Lax
+// attributes match the browser continuation cookie.
 func LinuxDoClearCookie(c *gin.Context, name string, secure bool) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
@@ -567,12 +681,22 @@ func LinuxDoClearCookie(c *gin.Context, name string, secure bool) {
 	})
 }
 
+// TruncateOAuthFragment trims fragment text and returns at most the configured
+// byte limit. Values within that limit pass through without UTF-8 validation,
+// while oversized values first select a byte prefix before URL encoding.
+//
+// The loop removes trailing bytes until the whole prefix is valid UTF-8. A
+// split final rune loses its partial bytes, and an invalid byte earlier in the
+// prefix also removes every later byte, potentially yielding empty text. This
+// shortening applies to credential fragments as well as error descriptions.
 func TruncateOAuthFragment(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
 	if len(value) > LinuxDoOAuthMaxFragmentValueLen {
+		// The byte cap can split UTF-8. Back off the shortened tail until valid
+		// before URL encoding; this can leave fewer bytes than the cap.
 		value = value[:LinuxDoOAuthMaxFragmentValueLen]
 		for !utf8.ValidString(value) {
 			value = value[:len(value)-1]
@@ -581,6 +705,9 @@ func TruncateOAuthFragment(value string) string {
 	return value
 }
 
+// NormalizeOAuthIntent returns login or bind_current_user after trimming and
+// case folding. Empty, login, and unknown inputs select login; bind is
+// accepted as the binding alias for provider start handlers.
 func NormalizeOAuthIntent(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", OauthIntentLogin:
@@ -588,10 +715,17 @@ func NormalizeOAuthIntent(raw string) string {
 	case "bind", OauthIntentBindCurrentUser:
 		return OauthIntentBindCurrentUser
 	default:
+		// Unknown labels cannot select authenticated binding. Continue as login so
+		// the provider flow still establishes an owner through its normal pending
+		// account checks.
 		return OauthIntentLogin
 	}
 }
 
+// CreateLinuxDoChoiceSession prepares account-choice state from provider and
+// local email observations, then stores the pending draft. The identity helper
+// owns policy precedence, and persistence errors remain visible to the
+// callback caller.
 func (h *LinuxDoHandler) CreateLinuxDoChoiceSession(
 	c *gin.Context,
 	identityKey identity.PendingAuthIdentityKey,

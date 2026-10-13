@@ -11,6 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// Account DTO conversion carries deletion and activity timestamps into panel
+// responses. These tests use fixed times to inspect pointer presence and
+// values, including the separate latest panel activity and latest request-use
+// timestamps visible to administrators.
+
+// TestUserFromServiceShallow_MapsDeletedAt converts one deleted account and
+// one current account. It checks that the deletion timestamp is retained for
+// the former and absent for the latter.
 func TestUserFromServiceShallow_MapsDeletedAt(t *testing.T) {
 	ts := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 
@@ -22,6 +30,9 @@ func TestUserFromServiceShallow_MapsDeletedAt(t *testing.T) {
 	require.Nil(t, active.DeletedAt, "active user must have nil DeletedAt")
 }
 
+// TestUserFromServiceAdmin_MapsActivityTimestamps converts an administrator
+// with distinct panel and request-use timestamps. It checks that both response
+// pointers contain their respective fixture times within one second.
 func TestUserFromServiceAdmin_MapsActivityTimestamps(t *testing.T) {
 	t.Parallel()
 
@@ -46,12 +57,16 @@ func TestUserFromServiceAdmin_MapsActivityTimestamps(t *testing.T) {
 	require.WithinDuration(t, lastUsedAt, *out.LastUsedAt, time.Second)
 }
 
-// UserFromServiceShallow copies the user into an HTTP response.
+// UserFromServiceShallow makes a shallow account copy before converting its
+// panel fields. Nil input returns nil, and referenced slices and pointers keep
+// the sharing documented by identity.CopyUser.
 func UserFromServiceShallow(v *identity.User) *User[json.RawMessage] {
 	return UserFromIdentityShallow[json.RawMessage](identity.CopyUser(v))
 }
 
-// UserFromServiceAdmin copies the user into an administrator response.
+// UserFromServiceAdmin makes a shallow account copy before producing
+// administrator JSON fields. It supplies no API Key elements and retains the
+// referenced account collections according to the DTO converter.
 func UserFromServiceAdmin(v *identity.User) *AdminUser[json.RawMessage] {
 	return AdminUserFromIdentity[json.RawMessage](identity.CopyUser(v), nil)
 }

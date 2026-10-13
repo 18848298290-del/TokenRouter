@@ -18,12 +18,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// SQLite account tests compare normalized email lookup, mailbox alias probes,
+// registration-domain guards, and two-caller creation results. SQL mocks inspect
+// redeem adjustment expressions and missing-row results, while a
+// migration-text assertion compares the normalized email expression after
+// whitespace removal.
+
+// TestUserRepositoryExistsByEmailAlias compares stored and probed addresses
+// across Gmail, plus suffixes, root dots, literal wildcards, and distinct
+// mailboxes. It checks the expected alias match for each fixture.
 func TestUserRepositoryExistsByEmailAlias(t *testing.T) {
 	cases := []struct {
-		name   string
-		stored string
-		probe  string
-		want   bool
+		name   string // email alias fixture case
+		stored string // stored account email text
+		probe  string // queried mailbox email text
+		want   bool   // expected mailbox match flag
 	}{
 		{name: "same address", stored: "someone@gmail.com", probe: "someone@gmail.com", want: true},
 		{name: "gmail plus alias", stored: "someone@gmail.com", probe: "someone+bulk@gmail.com", want: true},
@@ -52,6 +61,9 @@ func TestUserRepositoryExistsByEmailAlias(t *testing.T) {
 	}
 }
 
+// TestUserRepositoryEmailAliasOwnerPrefersOtherUser stores two aliases for one
+// mailbox and identifies the caller as one owner. It checks that another owner
+// wins the lookup so a binding conflict can be detected.
 func TestUserRepositoryEmailAliasOwnerPrefersOtherUser(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -64,6 +76,9 @@ func TestUserRepositoryEmailAliasOwnerPrefersOtherUser(t *testing.T) {
 	require.Equal(t, other.ID, ownerID)
 }
 
+// TestUserRepositoryEmailAliasIgnoresMalformedInput probes malformed email
+// text beside one valid stored Gmail account. It checks a false alias match
+// and no lookup error for that unsupported input.
 func TestUserRepositoryEmailAliasIgnoresMalformedInput(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	seedAliasUser(t, repo, "someone@gmail.com")
@@ -73,6 +88,9 @@ func TestUserRepositoryEmailAliasIgnoresMalformedInput(t *testing.T) {
 	require.False(t, got)
 }
 
+// TestUserRepositoryGetByEmailNormalizesLegacySpacingAndCase stores an email
+// containing surrounding spaces and mixed case. It checks normalized lookup
+// success and retention of the stored email text in the returned account.
 func TestUserRepositoryGetByEmailNormalizesLegacySpacingAndCase(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -91,6 +109,9 @@ func TestUserRepositoryGetByEmailNormalizesLegacySpacingAndCase(t *testing.T) {
 	require.Equal(t, " Legacy@Example.com ", got.Email)
 }
 
+// TestUserRepositoryExistsByEmailNormalizesLegacySpacingAndCase stores a
+// spaced mixed-case email and probes another spelling of that address. It
+// checks that exact normalized lookup reports an existing account.
 func TestUserRepositoryExistsByEmailNormalizesLegacySpacingAndCase(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -109,6 +130,9 @@ func TestUserRepositoryExistsByEmailNormalizesLegacySpacingAndCase(t *testing.T)
 	require.True(t, exists)
 }
 
+// TestUserRepositoryCreateRejectsNormalizedEmailDuplicate creates one spaced
+// mixed-case account before a normalized duplicate. It checks ErrEmailExists
+// for the second repository create using the same normalized address.
 func TestUserRepositoryCreateRejectsNormalizedEmailDuplicate(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -132,6 +156,9 @@ func TestUserRepositoryCreateRejectsNormalizedEmailDuplicate(t *testing.T) {
 	require.ErrorIs(t, err, identity.ErrEmailExists)
 }
 
+// TestUserRepositoryUpdateRejectsNormalizedEmailDuplicate creates two accounts
+// then requests the first normalized address on the second. It checks
+// ErrEmailExists when the guarded update attempts that duplicate.
 func TestUserRepositoryUpdateRejectsNormalizedEmailDuplicate(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -159,6 +186,9 @@ func TestUserRepositoryUpdateRejectsNormalizedEmailDuplicate(t *testing.T) {
 	require.ErrorIs(t, err, identity.ErrEmailExists)
 }
 
+// TestUserRepositoryGetByEmailReportsNormalizedEmailConflict seeds two
+// conflicting email rows directly through Ent before repository lookup. It
+// checks the multiple-user normalized-email error instead of choosing one row.
 func TestUserRepositoryGetByEmailReportsNormalizedEmailConflict(t *testing.T) {
 	repo, client := newUserEntRepo(t)
 	ctx := context.Background()
@@ -186,10 +216,17 @@ func TestUserRepositoryGetByEmailReportsNormalizedEmailConflict(t *testing.T) {
 	require.ErrorContains(t, err, "normalized email lookup matched multiple users")
 }
 
+// TestUserRepositoryCreateSerializesNormalizedEmailConflictsUnderConcurrency
+// gates one create while another call uses the same normalized address. It
+// checks one success, one ErrEmailExists result, and one stored matching
+// account.
 func TestUserRepositoryCreateSerializesNormalizedEmailConflictsUnderConcurrency(t *testing.T) {
 	repo, client := newUserEntRepo(t)
 	ctx := context.Background()
 
+	// Pause the first create after entering mutation and start the other caller
+	// against the same normalized email. Collect both results after release to
+	// inspect storage serialization.
 	firstCreateStarted := make(chan struct{})
 	releaseFirstCreate := make(chan struct{})
 	var firstCreate sync.Once
@@ -209,8 +246,10 @@ func TestUserRepositoryCreateSerializesNormalizedEmailConflictsUnderConcurrency(
 		})
 	})
 
+	// createResult carries one concurrent account-create failure back to the
+	// assertion goroutine.
 	type createResult struct {
-		err error
+		err error // returned account creation failure
 	}
 
 	results := make(chan createResult, 2)
@@ -236,6 +275,9 @@ func TestUserRepositoryCreateSerializesNormalizedEmailConflictsUnderConcurrency(
 		})}
 	}()
 
+	// Give the second caller time to be scheduled before releasing the first
+	// create. This delay supplies overlap opportunity, while row counts and
+	// returned errors establish the observed result.
 	time.Sleep(100 * time.Millisecond)
 	close(releaseFirstCreate)
 
@@ -263,6 +305,9 @@ func TestUserRepositoryCreateSerializesNormalizedEmailConflictsUnderConcurrency(
 	require.Equal(t, 1, count)
 }
 
+// TestUserRepositoryCountUsersByEmailDomain stores root-domain, subdomain, and
+// unrelated accounts before a subdomain probe. It checks that
+// registrable-domain counting includes the root and its subdomain together.
 func TestUserRepositoryCountUsersByEmailDomain(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -282,6 +327,10 @@ func TestUserRepositoryCountUsersByEmailDomain(t *testing.T) {
 	require.Equal(t, 2, count)
 }
 
+// TestUserRepositoryCountUsersByEmailDomainIgnoresDeletedAndEscapesWildcards
+// stores literal-underscore domain accounts plus a similar wildcard-looking
+// domain and deletes one match. It checks one current literal-domain account
+// in the count.
 func TestUserRepositoryCountUsersByEmailDomainIgnoresDeletedAndEscapesWildcards(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -299,6 +348,10 @@ func TestUserRepositoryCountUsersByEmailDomainIgnoresDeletedAndEscapesWildcards(
 	require.Equal(t, 1, count)
 }
 
+// TestUserRepositoryCreateWithRegistrationEmailGuardsRejectsSecondDomainAccount
+// creates one custom-domain account then attempts its subdomain with the
+// registration guard. It checks the shared registrable-domain quota error on
+// the second account.
 func TestUserRepositoryCreateWithRegistrationEmailGuardsRejectsSecondDomainAccount(t *testing.T) {
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
@@ -311,7 +364,10 @@ func TestUserRepositoryCreateWithRegistrationEmailGuardsRejectsSecondDomainAccou
 	require.ErrorIs(t, err, identity.ErrEmailDomainRegistrationLimit)
 }
 
-// TestNormalizedUserEmailSQLMatchesMigrationIndex guards query and expression-index consistency.
+// TestNormalizedUserEmailSQLMatchesMigrationIndex loads the published
+// normalized-email index migration and removes whitespace from it and the
+// query expression. It checks inclusion of the complete current query
+// expression in that migration.
 func TestNormalizedUserEmailSQLMatchesMigrationIndex(t *testing.T) {
 	content, err := migrations.FS.ReadFile("220_users_registration_email_normalized_index_notx.sql")
 	require.NoError(t, err)
@@ -329,6 +385,9 @@ func TestNormalizedUserEmailSQLMatchesMigrationIndex(t *testing.T) {
 	require.Contains(t, compactMigration, compactQueryExpression)
 }
 
+// TestApplyRedeemBalanceAdjustment_UsesAtomicFloor submits a negative redeem
+// amount through the account facade with a SQL mock. It checks the zero-floor
+// expression, current-row filter, arguments, and completed expectation.
 func TestApplyRedeemBalanceAdjustment_UsesAtomicFloor(t *testing.T) {
 	repo, mock := newRedeemAdjustmentRepoMock(t)
 	mock.ExpectExec(`UPDATE users SET balance = GREATEST\(balance \+ \$1, 0\), updated_at = NOW\(\) WHERE id = \$2 AND deleted_at IS NULL`).
@@ -339,6 +398,9 @@ func TestApplyRedeemBalanceAdjustment_UsesAtomicFloor(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyRedeemAdjustment_MissingUser returns zero affected rows for a
+// mocked redeem balance adjustment. It checks ErrUserNotFound and completed
+// SQL expectations for the missing-account result.
 func TestApplyRedeemAdjustment_MissingUser(t *testing.T) {
 	repo, mock := newRedeemAdjustmentRepoMock(t)
 	mock.ExpectExec(`UPDATE users SET balance = GREATEST\(balance \+ \$1, 0\), updated_at = NOW\(\) WHERE id = \$2 AND deleted_at IS NULL`).
@@ -350,7 +412,9 @@ func TestApplyRedeemAdjustment_MissingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// seedAliasUser creates a user for email alias tests.
+// seedAliasUser creates an active account with the supplied email for alias
+// probes. Repository creation errors fail the test, and the returned account
+// contains its stored ID and timestamps.
 func seedAliasUser(t *testing.T, repo *UserStore, email string) *identity.User {
 	t.Helper()
 	user := &identity.User{

@@ -13,6 +13,23 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Provider email hints can match a local account without proving that account
+// belongs to the external subject. Compatibility lookups normalize email text,
+// reject synthetic addresses, and report ambiguous rows so pending flows can
+// request account proof before binding.
+//
+// WeChat lookup also connects canonical subjects, channel-scoped openids, and
+// historical provider-key records. It checks canonical identity first, then a
+// complete mode/application/openid channel, and finally legacy openid
+// subjects. Multiple owners are rejected, missing account rows do not
+// authorize login, and inactive accounts return their status error. Runtime
+// repair saves identity and channel data in an owned transaction before
+// preparing the browser login continuation.
+
+// FindLinuxDoCompatEmailUser returns one current account matching a normalized
+// real provider email hint. Blank or synthetic addresses yield nil; multiple
+// matches return USER_EMAIL_CONFLICT, and the result alone does not prove
+// ownership.
 func (d *PendingFlowDatabase) FindLinuxDoCompatEmailUser(ctx context.Context, email string) (*identitycore.User, error) {
 	client := d.Client
 	if client == nil {
@@ -45,6 +62,9 @@ func (d *PendingFlowDatabase) FindLinuxDoCompatEmailUser(ctx context.Context, em
 	}
 }
 
+// FindOIDCCompatEmailUser returns one current account matching a normalized
+// real email hint. Blank, synthetic, or missing addresses yield nil; other
+// normalized-email failures retain compatibility lookup error context.
 func (d *PendingFlowDatabase) FindOIDCCompatEmailUser(ctx context.Context, email string) (*identitycore.User, error) {
 	client := d.Client
 	if client == nil {
@@ -62,6 +82,9 @@ func (d *PendingFlowDatabase) FindOIDCCompatEmailUser(ctx context.Context, email
 
 	userEntity, err := FindUserByNormalizedEmail(ctx, client, email)
 	if err != nil {
+		// Compatibility email supplies an optional account-choice observation. An
+		// absent normalized address leaves no local candidate, allowing pending
+		// proof to continue without a compatibility storage failure.
 		if errors.Is(err, identitycore.ErrUserNotFound) {
 			return nil, nil
 		}
@@ -70,7 +93,10 @@ func (d *PendingFlowDatabase) FindOIDCCompatEmailUser(ctx context.Context, email
 	return UserFromEntity(userEntity), nil
 }
 
-// FindDingTalkCompatEmailUser finds an existing account eligible for DingTalk binding by real email.
+// FindDingTalkCompatEmailUser returns one current account matching a
+// normalized real staff email hint. Blank or synthetic addresses yield nil,
+// while ambiguous rows return conflict; pending completion still requires
+// account proof.
 func (d *PendingFlowDatabase) FindDingTalkCompatEmailUser(ctx context.Context, email string) (*identitycore.User, error) {
 	client := d.Client
 	if client == nil {
@@ -103,6 +129,11 @@ func (d *PendingFlowDatabase) FindDingTalkCompatEmailUser(ctx context.Context, e
 	}
 }
 
+// EnsureWeChatBindOwnership prechecks compatible WeChat subjects and supplied
+// channel data against the target account. Other current active owners are
+// rejected; missing-owner rows do not conflict here, while inactive-owner
+// lookup remains an error. Channel lookup requires nonblank application ID and
+// subject and uses the trimmed mode as supplied, including blank mode.
 func (d *PendingFlowDatabase) EnsureWeChatBindOwnership(
 	ctx context.Context,
 	userID int64,
@@ -170,6 +201,17 @@ func (d *PendingFlowDatabase) EnsureWeChatBindOwnership(
 	return nil
 }
 
+// FindWeChatUserByLegacyOpenIDEntity resolves compatible WeChat identity forms
+// to one current active account. A configured database is required, and the
+// supplied channel is used only when mode, application ID, and openid are all
+// populated.
+//
+// Canonical subject matches take precedence over channel records, followed by
+// historical identities whose subject equals openid. Each set must resolve to
+// at most one loaded user, then that account is reloaded for active-state
+// admission. A resolved missing account returns nil instead of trying
+// lower-priority identities; conflicts and inactive-account errors stop the
+// lookup.
 func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenIDEntity(
 	ctx context.Context,
 	identity identitycore.PendingAuthIdentityKey,
@@ -184,6 +226,9 @@ func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenIDEntity(
 	providerType := strings.TrimSpace(identity.ProviderType)
 	providerSubject := strings.TrimSpace(identity.ProviderSubject)
 	providerKeys := identitycore.WeChatCompatibleProviderKeys(identity.ProviderKey)
+	// Prefer the canonical subject lookup before channel or legacy-openid
+	// records. Once a subject set resolves an account, its current-user admission
+	// result determines the lookup outcome.
 	if providerSubject != "" {
 		records, err := client.AuthIdentity.Query().
 			Where(
@@ -207,6 +252,9 @@ func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenIDEntity(
 	openid = strings.TrimSpace(openid)
 	channel := strings.TrimSpace(cfg.Mode)
 	channelAppID := strings.TrimSpace(cfg.AppID)
+	// A channel openid is scoped by mode and application ID. Use that complete
+	// tuple before legacy subject matching so an openid cannot select an
+	// unrelated application record.
 	if openid != "" && channel != "" && channelAppID != "" {
 		records, err := client.AuthIdentityChannel.Query().
 			Where(
@@ -231,6 +279,9 @@ func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenIDEntity(
 		}
 	}
 
+	// Canonical and complete channel lookup found no user. A supplied openid can
+	// still identify a historical subject record under the compatible
+	// provider-key set.
 	if openid == "" {
 		return nil, nil
 	}
@@ -253,11 +304,24 @@ func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenIDEntity(
 	return FindActiveUserByID(ctx, client, user.ID)
 }
 
+// FindWeChatUserByLegacyOpenID maps the legacy-compatible WeChat account
+// lookup into identity domain data. Missing matches return nil with no error,
+// while ambiguous ownership and inactive account results remain errors.
 func (d *PendingFlowDatabase) FindWeChatUserByLegacyOpenID(ctx context.Context, k identitycore.PendingAuthIdentityKey, ch identitycore.WeChatIdentityChannel, openid string) (*identitycore.User, error) {
 	v, e := d.FindWeChatUserByLegacyOpenIDEntity(ctx, k, ch, openid)
 	return UserFromEntity(v), e
 }
 
+// EnsureWeChatRuntimeIdentityBinding repairs the supplied account's compatible
+// WeChat identity and channel data in a new owned transaction. Callers supply
+// verified subject and channel observations and keep nested claim values
+// stable while the outer metadata copy is encoded.
+//
+// The injected transaction context reaches the pending identity helper, which
+// can update a reused row and then its channel. A later binding failure
+// returns before commit and deferred rollback attempts to undo those writes.
+// Successful commit precedes the callback's pending-login continuation;
+// credentials and browser-state creation remain with that caller.
 func (d *PendingFlowDatabase) EnsureWeChatRuntimeIdentityBinding(
 	ctx context.Context,
 	userID int64,
@@ -273,6 +337,9 @@ func (d *PendingFlowDatabase) EnsureWeChatRuntimeIdentityBinding(
 	if err != nil {
 		return infraerrors.InternalServer("AUTH_IDENTITY_BIND_FAILED", "failed to begin wechat identity repair transaction").WithCause(err)
 	}
+	// Keep canonical identity and channel repair in the same owned transaction.
+	// Rollback is attempted on failure, with its cleanup error discarded in favor
+	// of the binding error.
 	defer func() { _ = tx.Rollback() }()
 
 	_, err = EnsurePendingOAuthIdentityForUser(dbent.NewTxContext(ctx, tx), tx, &dbent.PendingAuthSession{
@@ -284,9 +351,15 @@ func (d *PendingFlowDatabase) EnsureWeChatRuntimeIdentityBinding(
 	if err != nil {
 		return err
 	}
+	// Commit compatible WeChat identity and channel repair before the callback
+	// uses that account for pending login, keeping the returned continuation
+	// after the owned storage completion.
 	return tx.Commit()
 }
 
+// singleWeChatIdentityUser returns one loaded user shared by the supplied
+// identity records. Missing records or user edges are skipped; two different
+// loaded user IDs return the identity ownership conflict.
 func singleWeChatIdentityUser(records []*dbent.AuthIdentity) (*dbent.User, error) {
 	var resolved *dbent.User
 	for _, record := range records {
@@ -304,6 +377,9 @@ func singleWeChatIdentityUser(records []*dbent.AuthIdentity) (*dbent.User, error
 	return resolved, nil
 }
 
+// singleWeChatChannelUser returns one loaded user shared by the supplied
+// channel identity edges. Missing records or relationships are skipped; two
+// different loaded user IDs return the channel ownership conflict.
 func singleWeChatChannelUser(records []*dbent.AuthIdentityChannel) (*dbent.User, error) {
 	var resolved *dbent.User
 	for _, record := range records {
@@ -321,6 +397,9 @@ func singleWeChatChannelUser(records []*dbent.AuthIdentityChannel) (*dbent.User,
 	return resolved, nil
 }
 
+// FindOAuthBindTarget reads the pending binding account and maps its current
+// row. Missing users return authentication required and other failures carry
+// lookup context; this method does not independently check active status.
 func (d *PendingFlowDatabase) FindOAuthBindTarget(ctx context.Context, id int64) (*identitycore.User, error) {
 	v, e := d.Client.User.Get(ctx, id)
 	if e != nil {

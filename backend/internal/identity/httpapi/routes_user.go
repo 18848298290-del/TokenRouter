@@ -2,8 +2,15 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes adds profile and authentication-factor endpoints to an authenticated group.
-// The caller installs shared authentication, rate limits, and auditing.
+// User profile and authentication-factor operations share an authenticated
+// panel group. Email and provider binding, notification recipients, TOTP, and
+// Passkey endpoints all use that account context; public Passkey login is
+// registered separately with the public auth routes.
+
+// RegisterUserRoutes adds current-account profile, binding, notification,
+// TOTP, and Passkey-management endpoints. The caller supplies initialized
+// handlers and installs shared authentication, panel limits, auditing, and
+// backend-mode checks on the group.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *UserHandler, totpEndpoint *TotpHandler, passkeyEndpoint *PasskeyHandler) {
 	user := authenticated.Group("/user")
 	{

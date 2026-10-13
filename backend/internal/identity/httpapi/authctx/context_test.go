@@ -9,7 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// TestPrincipalOwnsLegacyProjection checks that compatibility context writes do not overwrite the authentication record.
+// Authentication readers use a private record when present and typed Gin
+// compatibility fields otherwise. These cases overwrite compatibility values
+// after recording a principal and separate the API Key actor from the payer to
+// check which values remain observable.
+
+// TestPrincipalOwnsLegacyProjection overwrites public Gin user and role values
+// after SetPrincipal records a JWT identity. It checks that principal,
+// concurrency, and role readers still return the recorded account.
 func TestPrincipalOwnsLegacyProjection(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	principal := identity.Principal{UserID: 7, Role: "user", SessionID: "session-1", CredentialKind: "jwt"}
@@ -27,7 +34,9 @@ func TestPrincipalOwnsLegacyProjection(t *testing.T) {
 	require.Equal(t, "user", role)
 }
 
-// TestAPIKeyPrincipalKeepsActorSeparateFromPayer checks that the caller and paying user remain distinct.
+// TestAPIKeyPrincipalKeepsActorSeparateFromPayer records an API Key caller
+// after installing a different paying user. It checks caller identity
+// separately from the retained payer ID and administrator role.
 func TestAPIKeyPrincipalKeepsActorSeparateFromPayer(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set(ContextKeyUser, AuthSubject{UserID: 11, Concurrency: 4})
@@ -46,7 +55,9 @@ func TestAPIKeyPrincipalKeepsActorSeparateFromPayer(t *testing.T) {
 	require.Equal(t, "admin", role, "旧网关展示投影仍按原付款用户提供")
 }
 
-// TestLegacyOnlyContextRemainsReadable checks reading user and role data from compatibility Gin fields.
+// TestLegacyOnlyContextRemainsReadable supplies compatibility user and role
+// fields with no private record. It checks that those values remain readable
+// while GetPrincipal reports no authenticated principal.
 func TestLegacyOnlyContextRemainsReadable(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set(ContextKeyUser, AuthSubject{UserID: 9})
@@ -61,6 +72,9 @@ func TestLegacyOnlyContextRemainsReadable(t *testing.T) {
 	require.Equal(t, "user", role)
 }
 
+// TestAuthSubjectHelpers_RoundTrip stores a typed account and administrator
+// role directly in Gin. It checks that the compatibility readers return the
+// user ID, concurrency allowance, and role.
 func TestAuthSubjectHelpers_RoundTrip(t *testing.T) {
 	c := &gin.Context{}
 	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1, Concurrency: 2})

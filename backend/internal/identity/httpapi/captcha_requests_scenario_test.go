@@ -1,6 +1,5 @@
 package httpapi
 
-// These tests cover CAPTCHA request fields in session, pending, OAuth-start, and Passkey handlers.
 import (
 	"encoding/json"
 	"testing"
@@ -10,12 +9,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// Tencent action proof travels through the JSON request types in
+// session_handler.go, pending_handler.go, oauth_start.go, and
+// passkey_handler.go. These cases decode the same payload into each request
+// and inspect ticket and random-string transport before any provider
+// verification runs.
+
+// TestAuthRequestsBindTencentCaptchaProof decodes one Tencent ticket payload
+// through eight authentication request types. It checks that each resulting
+// proof retains the exact ticket and random string.
 func TestAuthRequestsBindTencentCaptchaProof(t *testing.T) {
 	const payload = `{"email":"user@example.com","password":"secret-123","tencent_captcha_ticket":"ticket-value","tencent_captcha_randstr":"@rand-value"}`
 
 	tests := []struct {
-		name   string
-		decode func([]byte) identity.CaptchaProof
+		name   string                             // request fixture case
+		decode func([]byte) identity.CaptchaProof // request proof decoder callback
 	}{
 		{
 			name: "登录",

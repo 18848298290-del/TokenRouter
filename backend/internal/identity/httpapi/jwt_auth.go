@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// JWTAuth validates a bearer JWT against current user state and session binding.
+// Panel JWTs are checked against a current user before a request receives
+// authenticated Gin values. A valid signature alone is insufficient when the
+// account is inactive, the credential fingerprint changed, or the configured
+// session binding rejects the request.
+
+// JWTAuth builds middleware that validates a Bearer token, loads its current
+// user, and applies session binding before recording a JWT principal. Supply
+// initialized authentication and user readers; optional activity recording
+// runs after successful authentication and before downstream handlers.
 func JWTAuth(
 	authService SessionAuth,
 	userService UserReader,
@@ -59,13 +67,16 @@ func JWTAuth(
 			return
 		}
 
-		// Reject tokens whose password-derived version is stale.
+		// Credential changes update the current user fingerprint; comparing it with
+		// the signed version prevents an earlier token from authenticating
+		// afterward.
 		if claims.TokenVersion != user.TokenVersion {
 			AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
 			return
 		}
 
-		// Apply the configured IP and User-Agent binding check.
+		// Binding enforcement can revoke the refresh family and abort this request;
+		// publish authenticated Gin values only after that check accepts the token.
 		if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
 			return
 		}

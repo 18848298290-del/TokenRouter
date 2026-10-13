@@ -20,12 +20,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// bindingUsersFixture supplies the target user while the binding adapter owns database writes.
+// Administrator binding tests exercise Ent-backed identity and channel writes
+// on SQLite while a fixture supplies the selected account. Assertions inspect
+// canonical provider keys, retained row counts, metadata, owner conflicts, and
+// provider validation; they do not establish PostgreSQL concurrency behavior.
+
+// bindingUsersFixture supplies a fixed account for administrator
+// identity-binding validation around Ent writes.
 type bindingUsersFixture struct {
+	// UserRepository leaves unimplemented fixture operations unavailable. These
+	// binding cases call the supplied GetByID method; an unexpected promoted
+	// operation reaches the nil embedded repository.
 	identitycore.UserRepository
-	user *identitycore.User
+	user *identitycore.User // fixed binding target account
 }
 
+// TestAdminServiceBindUserAuthIdentityCreatesCanonicalAndChannelBinding
+// creates a WeChat subject with one scoped channel and supplied metadata. It
+// checks returned verification state plus the stored owner, canonical key,
+// channel link, and metadata.
 func TestAdminServiceBindUserAuthIdentityCreatesCanonicalAndChannelBinding(t *testing.T) {
 	client := newAdminServiceAuthIdentityBindingTestClient(t)
 	ctx := context.Background()
@@ -87,6 +100,9 @@ func TestAdminServiceBindUserAuthIdentityCreatesCanonicalAndChannelBinding(t *te
 	require.Equal(t, "migration", channel.Metadata["scene"])
 }
 
+// TestAdminServiceBindUserAuthIdentityRejectsOtherOwner supplies an OIDC
+// subject already stored for a different current account. It checks the
+// ownership conflict returned when binding that subject to the fixture target.
 func TestAdminServiceBindUserAuthIdentityRejectsOtherOwner(t *testing.T) {
 	client := newAdminServiceAuthIdentityBindingTestClient(t)
 	ctx := context.Background()
@@ -126,6 +142,9 @@ func TestAdminServiceBindUserAuthIdentityRejectsOtherOwner(t *testing.T) {
 	require.Equal(t, "AUTH_IDENTITY_OWNERSHIP_CONFLICT", apperror.Reason(err))
 }
 
+// TestAdminServiceBindUserAuthIdentityIsIdempotentForSameUser binds the same
+// OIDC subject twice for one account with different metadata. It checks one
+// stored identity row and the replacement metadata on the second result.
 func TestAdminServiceBindUserAuthIdentityIsIdempotentForSameUser(t *testing.T) {
 	client := newAdminServiceAuthIdentityBindingTestClient(t)
 	ctx := context.Background()
@@ -170,6 +189,10 @@ func TestAdminServiceBindUserAuthIdentityIsIdempotentForSameUser(t *testing.T) {
 	require.Equal(t, "second", identities[0].Metadata["source"])
 }
 
+// TestAdminServiceBindUserAuthIdentityReusesLegacyWeChatAliasRecords starts
+// with legacy WeChat identity and channel keys before manual binding requests
+// the canonical key. It checks reused IDs, rewritten keys and metadata, and
+// one row per identity/channel.
 func TestAdminServiceBindUserAuthIdentityReusesLegacyWeChatAliasRecords(t *testing.T) {
 	client := newAdminServiceAuthIdentityBindingTestClient(t)
 	ctx := context.Background()
@@ -254,6 +277,10 @@ func TestAdminServiceBindUserAuthIdentityReusesLegacyWeChatAliasRecords(t *testi
 	require.Equal(t, 1, channelCount)
 }
 
+// TestAdminServiceBindUserAuthIdentityRejectsInvalidProviderType submits
+// GitHub as an unsupported manual-binding provider for the fixture account. It
+// checks the service rejection reason before a supported provider binding can
+// be saved.
 func TestAdminServiceBindUserAuthIdentityRejectsInvalidProviderType(t *testing.T) {
 	client := newAdminServiceAuthIdentityBindingTestClient(t)
 	ctx := context.Background()
@@ -277,12 +304,17 @@ func TestAdminServiceBindUserAuthIdentityRejectsInvalidProviderType(t *testing.T
 	require.Equal(t, "INVALID_INPUT", apperror.Reason(err))
 }
 
-// newAdminServiceAuthIdentityBindingTestClient creates a SQLite client for identity binding tests.
+// newAdminServiceAuthIdentityBindingTestClient creates the shared-name SQLite
+// binding fixture with foreign keys enabled. Cleanup closes the Ent client
+// before its underlying pool, and callers run these fixtures sequentially.
 func newAdminServiceAuthIdentityBindingTestClient(t *testing.T) *dbent.Client {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", "file:admin_service_auth_identity_binding?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
+	// Register pool cleanup before later fixture setup so initialization failure
+	// still closes it. Ent cleanup is added afterward and runs first; both close
+	// errors are discarded.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -290,15 +322,23 @@ func newAdminServiceAuthIdentityBindingTestClient(t *testing.T) *dbent.Client {
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Close the Ent client before the earlier registered pool cleanup runs, so
+	// driver teardown precedes the final pool close at fixture completion.
 	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 
+// GetByID returns the fixed fixture account pointer for administrator
+// validation. The requested ID is ignored, so tests prepare the account
+// corresponding to the route or service target.
 func (s bindingUsersFixture) GetByID(context.Context, int64) (*identitycore.User, error) {
 	return s.user, nil
 }
 
-// newIdentityBindingAdminForTest builds an admin service with real transactions and a fixed user.
+// newIdentityBindingAdminForTest constructs administrator use cases with
+// SQLite transaction-backed binding and a fixed account reader. Other embedded
+// repository operations remain unavailable, isolating identity persistence and
+// provider validation.
 func newIdentityBindingAdminForTest(client *dbent.Client, user *identitycore.User) *identitycore.UserAdmin {
 	users := bindingUsersFixture{user: user}
 	return identitycore.NewUserAdmin(identitycore.AdminDependencies{Users: users, Transactions: &AdminMutations{Client: client, Users: users}})

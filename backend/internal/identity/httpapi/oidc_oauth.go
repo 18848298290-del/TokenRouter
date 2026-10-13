@@ -18,39 +18,75 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// OIDC subjects belong to an issuer namespace, so callback resolution combines
+// the selected issuer with the stable subject instead of using provider email
+// as account ownership. Browser state carries login or current-user binding
+// intent, optional PKCE verifier, and nonce when ID-token validation is
+// enabled.
+//
+// The callback can combine ID-token and userinfo observations but rejects
+// conflicting nonblank subjects. Userinfo email-verification state takes
+// precedence when present, even when false. Existing subject ownership or
+// signed binding targets enter pending state; an eligible verified real email
+// can use direct signup, while account matches and local policies require
+// choice. Legacy invitation completion persists adoption and consumption after
+// authentication has already produced credentials.
+
+// OIDC cookie names, provider path, lifetime, and frontend defaults carry
+// authorization state, nonce, PKCE material, and account intent through
+// browser callback navigation.
 const (
-	OidcOAuthCookiePath         = "/api/v1/auth/oauth/oidc"
-	OidcOAuthStateCookieName    = "oidc_oauth_state"
-	OidcOAuthVerifierCookie     = "oidc_oauth_verifier"
-	OidcOAuthRedirectCookie     = "oidc_oauth_redirect"
-	OidcOAuthNonceCookie        = "oidc_oauth_nonce"
-	OidcOAuthIntentCookieName   = "oidc_oauth_intent"
-	OidcOAuthBindUserCookieName = "oidc_oauth_bind_user"
-	OidcOAuthCookieMaxAgeSec    = 10 * 60 // 10 minutes
-	OidcOAuthDefaultRedirectTo  = "/dashboard"
-	OidcOAuthDefaultFrontendCB  = "/auth/oidc/callback"
+	OidcOAuthCookiePath         = "/api/v1/auth/oauth/oidc" // OIDC browser cookie path
+	OidcOAuthStateCookieName    = "oidc_oauth_state"        // OIDC authorization state cookie
+	OidcOAuthVerifierCookie     = "oidc_oauth_verifier"     // OIDC PKCE verifier cookie
+	OidcOAuthRedirectCookie     = "oidc_oauth_redirect"     // OIDC local return cookie
+	OidcOAuthNonceCookie        = "oidc_oauth_nonce"        // OIDC token nonce cookie
+	OidcOAuthIntentCookieName   = "oidc_oauth_intent"       // OIDC account intent cookie
+	OidcOAuthBindUserCookieName = "oidc_oauth_bind_user"    // signed target account cookie
+	OidcOAuthCookieMaxAgeSec    = 10 * 60                   // seconds
+	OidcOAuthDefaultRedirectTo  = "/dashboard"              // default local login destination
+	OidcOAuthDefaultFrontendCB  = "/auth/oidc/callback"     // default OIDC browser callback
 )
 
+// OIDCHandler resolves issuer-scoped provider identities into panel login and
+// binding continuations.
 type OIDCHandler struct {
-	*PendingHandler
-	binding    *OAuthBindHandler
-	client     identity.OIDCOAuthClient
-	loadConfig func(context.Context) (identity.OIDCOAuthOptions, error)
+	*PendingHandler                                                          // shared browser pending authentication
+	binding         *OAuthBindHandler                                        // signed current-account binding helper
+	client          identity.OIDCOAuthClient                                 // OIDC authorization and claims client
+	loadConfig      func(context.Context) (identity.OIDCOAuthOptions, error) // current issuer configuration callback
 }
 
+// CompleteOIDCOAuthRequest carries invitation and profile choices for legacy
+// OIDC pending signup.
 type CompleteOIDCOAuthRequest struct {
-	InvitationCode   string `json:"invitation_code" binding:"required"`
-	AffCode          string `json:"aff_code,omitempty"` // Affiliate code used when creating a new account.
-	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
-	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
+	InvitationCode string `json:"invitation_code" binding:"required"` // required registration invitation code
+	AffCode        string `json:"aff_code,omitempty"`                 // optional signup affiliate code
+	// AdoptDisplayName and AdoptAvatar keep omitted choices as nil and supplied
+	// false values as refusals. The helper retains saved values for omitted
+	// flags and otherwise defaults those flags to false before applying supplied
+	// choices.
+	AdoptDisplayName *bool `json:"adopt_display_name,omitempty"` // optional provider-name adoption choice
+	AdoptAvatar      *bool `json:"adopt_avatar,omitempty"`       // optional provider-avatar adoption choice
 }
 
+// NewOIDCHandler retains shared pending and binding handlers, OIDC client, and
+// configuration reader. Initialize dependencies for the exposed issuer login
+// and current-user binding paths before serving requests.
 func NewOIDCHandler(p *PendingHandler, b *OAuthBindHandler, client identity.OIDCOAuthClient, load func(context.Context) (identity.OIDCOAuthOptions, error)) *OIDCHandler {
 	return &OIDCHandler{p, b, client, load}
 }
 
-// OIDCOAuthStart starts the OIDC login flow.
-// GET /api/v1/auth/oauth/oidc/start?redirect=/dashboard
+// OIDCOAuthStart checks action CAPTCHA and stores issuer browser state before
+// returning its authorize URL. It captures intent and local return path,
+// replacing earlier pending-session proof with a new browser key.
+//
+// Current-user intent signs the target account cookie. PKCE and ID-token
+// validation independently create verifier and nonce cookies with their
+// matching authorization parameters. Cookie emission precedes later
+// configuration or URL errors, so a failed start can leave partial browser
+// state. POST writes an authorize URL envelope, while accepted navigation
+// starts redirect.
 func (h *OIDCHandler) OIDCOAuthStart(c *gin.Context) {
 	if !h.RequireActionCaptchaForOAuthLoginStart(c) {
 		return
@@ -79,6 +115,9 @@ func (h *OIDCHandler) OIDCOAuthStart(c *gin.Context) {
 	}
 
 	secureCookie := IsRequestHTTPS(c)
+	// Publish issuer start context beside replacement browser proof before target,
+	// verifier, nonce, and URL preparation. A failure in those later stages leaves
+	// the earlier cookie headers while the prior pending token is expired.
 	OIDCSetCookie(c, OidcOAuthStateCookieName, EncodeCookieValue(state), OidcOAuthCookieMaxAgeSec, secureCookie)
 	OIDCSetCookie(c, OidcOAuthRedirectCookie, EncodeCookieValue(redirectTo), OidcOAuthCookieMaxAgeSec, secureCookie)
 	intent := NormalizeOAuthIntent(c.Query("intent"))
@@ -133,8 +172,18 @@ func (h *OIDCHandler) OIDCOAuthStart(c *gin.Context) {
 	RespondOAuthStart(c, authURL)
 }
 
-// OIDCOAuthCallback validates provider tokens as configured and resolves pending login or registration.
-// GET /api/v1/auth/oauth/oidc/callback?code=...&state=...
+// OIDCOAuthCallback verifies state, browser proof, configured PKCE, and
+// optional ID-token nonce before issuer account resolution. The configured
+// provider client performs token and claim validation.
+//
+// ID-token subject and issuer are preferred, with userinfo subject and
+// configured issuer supplying missing values; conflicting nonblank subjects
+// reject the callback. Present userinfo verification state wins over ID-token
+// verification state. Existing identity owners and signed current-user targets
+// enter pending state. Otherwise configured verification, real-email lookup,
+// and local signup policy decide direct verified-email signup or account
+// choice. Cookie cleanup starts after required code/state input, and later
+// errors can follow completed provider or account work.
 func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 	cfg, cfgErr := h.loadConfig(c.Request.Context())
 	if cfgErr != nil {
@@ -160,6 +209,9 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 	}
 
 	secureCookie := IsRequestHTTPS(c)
+	// Expire issuer state, verifier, nonce, intent, target, redirect, and
+	// promotion cookies on exits after code/state validation. Pending browser
+	// proof remains for any successful continuation draft.
 	defer func() {
 		OIDCClearCookie(c, OidcOAuthStateCookieName, secureCookie)
 		OIDCClearCookie(c, OidcOAuthVerifierCookie, secureCookie)
@@ -176,21 +228,32 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	// An unreadable return cookie contributes empty text, and local-path
+	// validation selects the dashboard destination. The required browser proof
+	// below remains a separate continuation check.
 	redirectTo, _ := ReadCookieDecoded(c, OidcOAuthRedirectCookie)
 	redirectTo = SanitizeFrontendRedirectPath(redirectTo)
 	if redirectTo == "" {
 		redirectTo = OidcOAuthDefaultRedirectTo
 	}
+	// Read failures produce empty browser proof, so missing or malformed cookies
+	// are rejected before provider exchange and pending state creation.
 	browserSessionKey, _ := ReadOAuthPendingBrowserCookie(c)
 	if strings.TrimSpace(browserSessionKey) == "" {
 		RedirectOAuthError(c, frontendCallback, "missing_browser_session", "missing oauth browser session", "")
 		return
 	}
+	// An unreadable intent has no binding label. Normalization selects login, so
+	// a leftover bind-target cookie cannot by itself select the current-user
+	// binding branch.
 	intent, _ := ReadCookieDecoded(c, OidcOAuthIntentCookieName)
 	intent = NormalizeOAuthIntent(intent)
 
 	codeVerifier := ""
 	if cfg.UsePKCE {
+		// A missing or malformed encoded verifier becomes empty and ends this
+		// callback. Accepted code exchange receives the verifier recorded with the
+		// authorization challenge.
 		codeVerifier, _ = ReadCookieDecoded(c, OidcOAuthVerifierCookie)
 		if codeVerifier == "" {
 			RedirectOAuthError(c, frontendCallback, "missing_verifier", "missing pkce verifier", "")
@@ -200,6 +263,9 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 
 	expectedNonce := ""
 	if cfg.ValidateIDToken {
+		// Unreadable nonce proof becomes empty and rejects this configured ID-token
+		// callback before exchange. A present value reaches provider validation for
+		// the authorization nonce comparison.
 		expectedNonce, _ = ReadCookieDecoded(c, OidcOAuthNonceCookie)
 		if expectedNonce == "" {
 			RedirectOAuthError(c, frontendCallback, "missing_nonce", "missing oauth nonce", "")
@@ -218,6 +284,7 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 		description := ""
 		var exchangeErr *identity.OIDCTokenExchangeError
 		if errors.As(err, &exchangeErr) && exchangeErr != nil {
+			// Bound response bodies to two KiB at complete UTF-8 prefixes for logs.
 			log.Printf(
 				"[OIDC OAuth] token exchange failed: status=%d provider_error=%q provider_description=%q body=%s",
 				exchangeErr.StatusCode,
@@ -256,6 +323,9 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	// Combine subject and issuer observations after configured token validation.
+	// A nonblank ID-token subject must agree with userinfo before either source
+	// can identify the local provider tuple.
 	subject := ""
 	if idClaims != nil {
 		subject = strings.TrimSpace(idClaims.Subject)
@@ -279,6 +349,9 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	// A present userinfo verification value, including false, takes precedence.
+	// Consult ID-token verification only when userinfo omitted that claim so
+	// policy sees the selected observation accurately.
 	emailVerified := userInfoClaims.EmailVerified
 	if emailVerified == nil && idClaims != nil {
 		emailVerified = idClaims.EmailVerified
@@ -452,9 +525,15 @@ func (h *OIDCHandler) OIDCOAuthCallback(c *gin.Context) {
 	RedirectToFrontendCallback(c, frontendCallback)
 }
 
-// CompleteOIDCOAuthRegistration completes a pending OAuth registration by validating
-// the invitation code and creating the user account.
-// POST /api/v1/auth/oauth/oidc/complete-registration
+// CompleteOIDCOAuthRegistration completes legacy browser OIDC signup after
+// reevaluating email and backend policy. It returns account-choice progression
+// when the pending flow still requires additional local proof.
+//
+// Usable stored email and username plus available issuer identity are required
+// before invitation-based authentication. Saved profile choices enter the
+// combined adoption-and-consumption database operation afterward, so
+// credentials can be issued before its failure. Success records login, clears
+// pending cookies, and returns the legacy top-level token shape.
 func (h *OIDCHandler) CompleteOIDCOAuthRegistration(c *gin.Context) {
 	var req CompleteOIDCOAuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -535,6 +614,9 @@ func (h *OIDCHandler) CompleteOIDCOAuthRegistration(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// The returned pair precedes this adoption and browser claim transaction.
+	// Commit those pending writes before response delivery; their rollback cannot
+	// compensate the earlier authentication operation.
 	if err := h.flow.Database.ApplyAdoptionAndConsume(c.Request.Context(), session, decision, user.ID); err != nil {
 		RespondPendingOAuthBindingApplyError(c, err)
 		return
@@ -551,6 +633,9 @@ func (h *OIDCHandler) CompleteOIDCOAuthRegistration(c *gin.Context) {
 	})
 }
 
+// BuildOIDCAuthorizeURL encodes client, redirect, state, and optional scopes
+// into the issuer URL. Nonblank nonce and challenge add their parameters,
+// including S256 PKCE; unrelated existing query values remain.
 func BuildOIDCAuthorizeURL(cfg identity.OIDCOAuthOptions, state, nonce, codeChallenge, redirectURI string) (string, error) {
 	u, err := url.Parse(cfg.AuthorizeURL)
 	if err != nil {
@@ -577,6 +662,9 @@ func BuildOIDCAuthorizeURL(cfg identity.OIDCOAuthOptions, state, nonce, codeChal
 	return u.String(), nil
 }
 
+// OIDCSetCookie emits a supplied encoded value at the OIDC browser path with a
+// seconds-based lifetime. The caller supplies HTTPS state, while HttpOnly and
+// SameSite Lax support issuer callback navigation.
 func OIDCSetCookie(c *gin.Context, name, value string, maxAgeSec int, secure bool) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
@@ -589,6 +677,9 @@ func OIDCSetCookie(c *gin.Context, name, value string, maxAgeSec int, secure boo
 	})
 }
 
+// OIDCClearCookie expires a named OIDC browser cookie at its matching provider
+// path. The caller supplies HTTPS state, and HttpOnly/SameSite Lax match the
+// stored callback value.
 func OIDCClearCookie(c *gin.Context, name string, secure bool) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
@@ -601,8 +692,17 @@ func OIDCClearCookie(c *gin.Context, name string, secure bool) {
 	})
 }
 
-// TryOIDCVerifiedEmailFastPath attempts direct login or signup for a provider-verified email.
-// It returns true after writing a redirect; false asks the caller to continue the account-choice flow.
+// TryOIDCVerifiedEmailFastPath attempts direct authentication for a
+// caller-validated verified real email with no matched local account. True
+// means a redirect was written; false asks the callback to prepare account
+// choice.
+//
+// Missing dependencies, forced email collection, or invitation policy skip
+// this attempt. Backend-mode refusal is handled with a redirect and
+// pending-cookie cleanup. Authentication failures are logged and return false,
+// while success delivers issued credentials through the frontend fragment and
+// clears pending proof. The caller provides the issuer subject, profile
+// claims, and sanitized return path before selecting this path.
 func (h *OIDCHandler) TryOIDCVerifiedEmailFastPath(
 	c *gin.Context,
 	frontendCallback string,
@@ -634,6 +734,9 @@ func (h *OIDCHandler) TryOIDCVerifiedEmailFastPath(
 
 	tokenPair, _, err := h.authService.LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(ctx, input, "", "", ReadOAuthPromoCode(c))
 	if err != nil {
+		// A direct authentication error leaves account-choice handling to the
+		// callback. Log the reason and report unhandled status instead of writing a
+		// second error redirect here.
 		log.Printf("[OIDC OAuth] verified-email fast path skipped: reason=%s", infraerrors.Reason(err))
 		return false
 	}
@@ -650,6 +753,10 @@ func (h *OIDCHandler) TryOIDCVerifiedEmailFastPath(
 	return true
 }
 
+// CreateOIDCChoiceSession prepares issuer account-choice data and stores its
+// browser pending draft. The identity helper owns local email and
+// matched-account policy selection, and persistence errors remain visible to
+// the callback.
 func (h *OIDCHandler) CreateOIDCChoiceSession(
 	c *gin.Context,
 	identityKey identity.PendingAuthIdentityKey,

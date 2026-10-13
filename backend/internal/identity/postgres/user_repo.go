@@ -35,6 +35,23 @@ import (
 	usagequery "github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// Account persistence keeps email uniqueness, provider email identity, and
+// per-user group permissions beside the user row. Guarded creation and updates
+// join or own Ent transactions so permission and email-identity writes can
+// follow the selected account mutation before completion.
+//
+// Email lookup normalization folds case and spacing, while registration
+// normalization and mailbox alias probes have their separate rules and locks.
+// Alias probes load a bounded candidate set and recheck it in Go, preferring
+// another owner over the caller. List filtering counts the same selected
+// account query before ordering and paging, then separately loads grants and
+// optional subscriptions. Raw SQL and Ent client selection differ by method;
+// callers supply matching storage dependencies and keep their pools available
+// through those operations.
+
+// Normalized email expressions match registration policy and the published
+// index, while lock namespace and alias candidate bounds govern guarded
+// account email operations.
 const (
 	// Keep these expressions consistent with identitycore.NormalizeRegistrationEmailAddress
 	// and the index in 220_users_registration_email_normalized_index_notx.sql.
@@ -55,6 +72,9 @@ const (
 	IdentityEmailAliasCandidateLimit = 50
 )
 
+// LIKE escaping values quote literal mailbox and domain text before wildcard
+// probes, while their callers add the intended substring or plus-suffix
+// pattern components.
 var (
 	// IdentityLikeWildcardEscaper quotes %, _, and backslashes in email local parts for LIKE.
 	IdentityLikeWildcardEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
@@ -62,45 +82,81 @@ var (
 	likePatternReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 )
 
+// UserStore persists accounts, email identity, and group permissions with Ent
+// and raw SQL.
 type UserStore struct {
-	client *dbent.Client
-	sql    SQLExecutor
+	// client supplies entity operations, and sql supplies raw activity,
+	// attribute, and email queries. Context-aware methods can select a
+	// transaction client; other methods use these retained defaults, so callers
+	// provide matching database dependencies.
+	client *dbent.Client // default account entity client
+	sql    SQLExecutor   // default raw account query executor
 }
 
+// NewUserStore retains the supplied Ent client and SQL pool through the
+// account store constructor. Callers provide matching database dependencies
+// and retain ownership of their lifetime while account operations run.
 func NewUserStore(client *dbent.Client, sqlDB *sql.DB) *UserStore {
 	return NewUserStoreWithSQL(client, sqlDB)
 }
 
+// NewUserStoreWithSQL retains the Ent client and caller-supplied raw SQL
+// executor. Query paths requiring raw SQL need a usable executor, while
+// context-aware operations may select their injected transaction client.
 func NewUserStoreWithSQL(client *dbent.Client, sqlq SQLExecutor) *UserStore {
 	return &UserStore{client: client, sql: sqlq}
 }
 
+// Create delegates guarded account creation with exact normalized-email
+// uniqueness and account permissions. Nil user input succeeds; the helper owns
+// or joins the transaction and refreshes stored account metadata after its
+// writes succeed.
 func (r *UserStore) Create(ctx context.Context, userIn *identitycore.User) error {
 	return r.IdentityCreateWithNormalizationGuard(ctx, userIn, "", "")
 }
 
+// CreateWithNormalizedEmailGuard delegates account creation with the supplied
+// registration-normalized email guard. The shared helper also checks trimmed
+// case-folded email uniqueness and keeps permission and email-identity writes
+// in its selected persistence scope.
 func (r *UserStore) CreateWithNormalizedEmailGuard(ctx context.Context, userIn *identitycore.User, normalizedEmail string) error {
 	return r.IdentityCreateWithNormalizationGuard(ctx, userIn, normalizedEmail, "")
 }
 
-// CountUsersByEmailDomain counts undeleted users in a registrable domain and its subdomains.
+// CountUsersByEmailDomain delegates current account counting for the
+// normalized registrable domain and subdomains. It selects the context Ent
+// client when present, with blank domain or missing client producing zero.
 func (r *UserStore) CountUsersByEmailDomain(ctx context.Context, domain string) (int, error) {
 	return IdentityCountUsersByEmailDomainWithClient(ctx, clientFromContext(ctx, r.client), domain)
 }
 
-// CreateWithRegistrationEmailGuards creates a user under email uniqueness and domain quota locks.
+// CreateWithRegistrationEmailGuards delegates account creation with email
+// uniqueness and normalized registrable-domain quota. The helper serializes
+// destination email and domain keys before rechecking current account count
+// and storing permissions.
 func (r *UserStore) CreateWithRegistrationEmailGuards(ctx context.Context, userIn *identitycore.User, normalizedEmail, domain string) error {
 	return r.IdentityCreateWithNormalizationGuard(ctx, userIn, normalizedEmail, IdentityNormalizeEmailDomain(domain))
 }
 
+// IdentityCreateWithNormalizationGuard stores an account, group permissions,
+// and its email identity in the selected transaction. Nil user input is a
+// successful no-op.
+//
+// An injected transaction is preferred; otherwise a new transaction is owned,
+// or an already-bound configured client retains its external owner. Sorted
+// scoped email/domain locks precede current-row uniqueness and quota checks.
+// Account creation, permission synchronization, and email identity follow
+// those checks before an owned commit. The supplied user receives stored
+// identifiers and timestamps afterward; external transaction callers still
+// complete their persistence scope.
 func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, userIn *identitycore.User, normalizedEmail, domainLimit string) error {
 	if userIn == nil {
 		return nil
 	}
 
-	// User, invitation, and group writes share the Ent transaction from the context.
-	// An Ent client built manually from *sql.Tx fails the ExecQuerier assertion.
-	// Starting a separate transaction could commit the user while the invitation rolls back.
+	// Prefer the injected transaction so account, permission, and email-identity
+	// writes share the caller's completion with invitation consumption. Opening
+	// another transaction here would give account creation a separate commit.
 	var txClient *dbent.Client
 	txCtx := ctx
 	var ownedTx *dbent.Tx
@@ -111,6 +167,9 @@ func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, us
 		switch {
 		case err == nil:
 			ownedTx = tx
+			// Rollback the owned account, grant, and email-identity writes when a later
+			// creation stage fails. An injected or already-bound transaction instead
+			// keeps that recovery with its external owner.
 			defer func() { _ = ownedTx.Rollback() }()
 			txClient = tx.Client()
 			txCtx = dbent.NewTxContext(ctx, tx)
@@ -181,6 +240,9 @@ func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, us
 	}
 
 	if ownedTx != nil {
+		// Commit guarded account creation with its grant, denial, and email-identity
+		// rows before publishing stored identifiers and timestamps onto the caller
+		// account value.
 		if err := ownedTx.Commit(); err != nil {
 			return err
 		}
@@ -190,6 +252,10 @@ func (r *UserStore) IdentityCreateWithNormalizationGuard(ctx context.Context, us
 	return nil
 }
 
+// GetByID loads the account and separately reads sorted grant and denial lists
+// through the configured client. Missing accounts map to ErrUserNotFound;
+// successful restriction reads mark GroupRestrictionsLoaded even when their
+// maps contain no entries.
 func (r *UserStore) GetByID(ctx context.Context, id int64) (*identitycore.User, error) {
 	m, err := r.client.User.Query().Where(dbuser.IDEQ(id)).Only(ctx)
 	if err != nil {
@@ -215,6 +281,10 @@ func (r *UserStore) GetByID(ctx context.Context, id int64) (*identitycore.User, 
 	return out, nil
 }
 
+// GetByIDIncludeDeleted skips account soft-delete filtering before loading the
+// row and its group restrictions. Missing accounts map to ErrUserNotFound, and
+// successful restriction reads set the complete-restrictions flag on the
+// returned value.
 func (r *UserStore) GetByIDIncludeDeleted(ctx context.Context, id int64) (*identitycore.User, error) {
 	ctx = mixins.SkipSoftDelete(ctx)
 	m, err := r.client.User.Query().Where(dbuser.IDEQ(id)).Only(ctx)
@@ -240,6 +310,10 @@ func (r *UserStore) GetByIDIncludeDeleted(ctx context.Context, id int64) (*ident
 	return out, nil
 }
 
+// GetByEmail selects one trimmed, case-folded email match through the
+// configured client and loads group restrictions. No match returns
+// ErrUserNotFound, multiple matches return an error, and the stored email text
+// remains unchanged.
 func (r *UserStore) GetByEmail(ctx context.Context, email string) (*identitycore.User, error) {
 	matches, err := r.client.User.Query().
 		Where(IdentityUserEmailLookupPredicate(email)).
@@ -275,20 +349,42 @@ func (r *UserStore) GetByEmail(ctx context.Context, email string) (*identitycore
 	return out, nil
 }
 
+// Update delegates flagged account edits and related group/email identity
+// writes to the shared guarded updater. Nil user or empty flags succeeds
+// without persistence; the helper selects transaction completion
+// responsibility.
 func (r *UserStore) Update(ctx context.Context, userIn *identitycore.User, fields identitycore.UserUpdateFields) error {
 	return r.IdentityUpdateWithNormalizationGuard(ctx, userIn, "", fields)
 }
 
+// UpdateWithNormalizedEmailGuard delegates flagged account changes with
+// supplied registration-normalized email validation. Destination email writes
+// receive scoped uniqueness checks, while the shared helper owns or joins the
+// related permission and identity updates.
 func (r *UserStore) UpdateWithNormalizedEmailGuard(ctx context.Context, userIn *identitycore.User, normalizedEmail string, fields identitycore.UserUpdateFields) error {
 	return r.IdentityUpdateWithNormalizationGuard(ctx, userIn, normalizedEmail, fields)
 }
 
+// IdentityUpdateWithNormalizationGuard writes flagged account fields, selected
+// group relations, and stored email identity together. Nil user or empty flags
+// is a no-op.
+//
+// The configured client is asked to start a transaction first. A regular
+// client therefore opens an owned transaction even when context carries one;
+// only ErrTxStarted selects an injected or retained transaction client. Email
+// edits lock and recheck the destination before loading the preceding stored
+// address. Permission flags choose relation synchronization, and the email
+// identity is ensured before old-subject removal. An owned transaction commits
+// before UpdatedAt is refreshed; external callers retain rollback
+// responsibility.
 func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, userIn *identitycore.User, normalizedEmail string, fields identitycore.UserUpdateFields) error {
 	if userIn == nil || fields.IsEmpty() {
 		return nil
 	}
 
-	// Update user fields and group relations in one Ent transaction.
+	// Start an owned transaction for selected account fields, permission
+	// relations, and email identity writes. An already-active client follows the
+	// external-transaction path below instead of creating another owner.
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
@@ -297,11 +393,16 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 	var txClient *dbent.Client
 	txCtx := ctx
 	if err == nil {
+		// Rollback selected account fields and preceding relation writes when a
+		// later guarded update fails. Cleanup errors are discarded; an external
+		// transaction retains its own completion responsibility.
 		defer func() { _ = tx.Rollback() }()
 		txClient = tx.Client()
 		txCtx = dbent.NewTxContext(ctx, tx)
 	} else {
-		// Reuse an external transaction; its caller owns commit and rollback.
+		// An already-active client uses the injected transaction when available,
+		// otherwise its retained client. Those paths leave commit and rollback with
+		// the caller spanning the related account writes.
 		if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
 			txClient = existingTx.Client()
 		} else {
@@ -309,7 +410,9 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 		}
 	}
 
-	// Serialize writes to the destination email address.
+	// Lock the requested destination before uniqueness checks and account
+	// mutation. Other email writers using the same scoped key cannot interleave
+	// that check with their own destination update.
 	if fields.Email {
 		releaseEmailLock, err := IdentityLockRepositoryScopedKeys(
 			txCtx,
@@ -360,12 +463,17 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 			return err
 		}
 	}
-	// Synchronize the email identity from the stored address; repeated calls are idempotent.
+	// Ensure identity from the stored updated email before removing the preceding
+	// subject, keeping the selected account credential and sign-in identity in
+	// the same persistence scope.
 	if err := IdentityReplaceEmailAuthIdentityWithClient(txCtx, txClient, updated.ID, oldEmail, updated.Email, "user_repo_update"); err != nil {
 		return err
 	}
 
 	if tx != nil {
+		// Commit flagged account fields, selected permission changes, and
+		// email-identity replacement before refreshing UpdatedAt, keeping the
+		// response observation after the owned database completion.
 		if err := tx.Commit(); err != nil {
 			return err
 		}
@@ -375,6 +483,17 @@ func (r *UserStore) IdentityUpdateWithNormalizationGuard(ctx context.Context, us
 	return nil
 }
 
+// IdentityEnsureEmailAuthIdentityWithClient attempts a real-email identity
+// insert and checks the reloaded owner when present. An injected transaction
+// client takes precedence over the supplied client, while missing storage,
+// nonpositive account ID, or a blank or synthetic normalized subject skips
+// work.
+//
+// The insert records current UTC time in VerifiedAt and uses do-nothing
+// conflict handling for the email tuple. Recognized no-row insert results
+// continue to readback. Another owner is rejected, but an absent readback
+// succeeds, so callers cannot infer row existence solely from nil error or use
+// this helper as email verification proof.
 func IdentityEnsureEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client, userID int64, email string, source string) error {
 	client = clientFromContext(ctx, client)
 	if client == nil || userID <= 0 {
@@ -400,6 +519,9 @@ func IdentityEnsureEmailAuthIdentityWithClient(ctx context.Context, client *dben
 		).
 		DoNothing().
 		Exec(ctx); err != nil {
+		// Do-nothing insertion can report no returned SQL row. Continue to ownership
+		// readback for that result, allowing a preexisting row to determine whether
+		// this email binding conflicts.
 		if !isSQLNoRowsError(err) {
 			return err
 		}
@@ -413,6 +535,9 @@ func IdentityEnsureEmailAuthIdentityWithClient(ctx context.Context, client *dben
 		).
 		Only(ctx)
 	if err != nil {
+		// Readback absence is accepted after this conflict-tolerant insert. Callers
+		// therefore cannot infer that an email identity row exists solely from this
+		// helper returning no error.
 		if dbent.IsNotFound(err) {
 			return nil
 		}
@@ -424,6 +549,16 @@ func IdentityEnsureEmailAuthIdentityWithClient(ctx context.Context, client *dben
 	return nil
 }
 
+// IdentityReplaceEmailAuthIdentityWithClient attempts the new owned email
+// subject before removing the preceding subject. Callers supply the
+// transaction spanning account credentials and identity replacement; the
+// ensure helper prefers a transaction injected into context.
+//
+// Synthetic or blank new email can skip insertion, and missing readback can
+// also succeed. A different nonempty old subject is then deleted for this
+// account, even after that no-op result. Equal or empty old subjects skip
+// deletion. A failed later delete returns before completion and needs rollback
+// by the enclosing account operation.
 func IdentityReplaceEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client, userID int64, oldEmail, newEmail string, source string) error {
 	newSubject := IdentityNormalizeEmailAuthIdentitySubject(newEmail)
 	if err := IdentityEnsureEmailAuthIdentityWithClient(ctx, client, userID, newEmail, source); err != nil {
@@ -446,6 +581,10 @@ func IdentityReplaceEmailAuthIdentityWithClient(ctx context.Context, client *dbe
 	return err
 }
 
+// IdentityNormalizeEmailAuthIdentitySubject returns trimmed lowercase
+// real-email text for account identity. Blank input and the four configured
+// provider synthetic-email suffixes return empty, so those addresses do not
+// create local email identities.
 func IdentityNormalizeEmailAuthIdentitySubject(email string) string {
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	if normalized == "" {
@@ -460,8 +599,20 @@ func IdentityNormalizeEmailAuthIdentitySubject(email string) string {
 	return normalized
 }
 
+// Delete removes provider identity references and deletes the account using
+// an injected, owned, or already-bound Ent transaction. Ordinary context
+// soft-deletes the user, while SkipSoftDelete selects physical removal.
+//
+// Identity deletion clears adoption references and channel rows before
+// removing the user identity and account. Any stage failure returns before an
+// owned commit, with rollback attempted to restore earlier writes. Missing
+// account deletion maps to ErrUserNotFound, and the PostgreSQL team-owner
+// trigger error becomes the team transfer requirement. The external
+// transaction path leaves completion to its caller.
 func (r *UserStore) Delete(ctx context.Context, id int64) error {
-	// Reuse the caller's transaction so administrative key and user deletion commit together.
+	// Reuse an injected transaction so administrator key deletion and
+	// account-reference removal can share one commit. This path leaves earlier
+	// writes and any rollback responsibility with that transaction owner.
 	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
 		return r.IdentityDeleteUser(ctx, existingTx.Client(), id)
 	}
@@ -472,6 +623,9 @@ func (r *UserStore) Delete(ctx context.Context, id int64) error {
 	}
 	exec := r.client
 	if err == nil {
+		// Rollback earlier adoption-reference and channel/identity removals if the
+		// account delete fails. Cleanup errors are discarded while the account or
+		// team-owner failure remains the operation result.
 		defer func() { _ = tx.Rollback() }()
 		exec = tx.Client()
 	}
@@ -481,6 +635,9 @@ func (r *UserStore) Delete(ctx context.Context, id int64) error {
 	}
 
 	if tx != nil {
+		// Commit account deletion after its provider references are removed, so an
+		// owned removal finishes those linked writes before reporting successful
+		// account deletion.
 		if err := tx.Commit(); err != nil {
 			return translatePersistenceError(err, identitycore.ErrUserNotFound, nil)
 		}
@@ -488,7 +645,17 @@ func (r *UserStore) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// IdentityDeleteUser deletes a user and identity references using a caller-managed transaction.
+// IdentityDeleteUser clears provider adoption references and channels before
+// deleting identities and the account through Ent. Ordinary context
+// soft-deletes the user; SkipSoftDelete removes it physically. The supplied
+// client belongs to the caller persistence scope.
+//
+// Identity IDs are loaded before those reference writes, and each failure
+// stops later deletion. A later account failure can follow completed reference
+// deletion, so transaction owners roll back the combined sequence. Zero
+// affected accounts return ErrUserNotFound. The recognized PostgreSQL
+// team-owner trigger refusal is returned as the ownership-transfer domain
+// error instead of a raw storage failure.
 func (r *UserStore) IdentityDeleteUser(ctx context.Context, exec *dbent.Client, id int64) error {
 	identityIDs, err := exec.AuthIdentity.Query().
 		Where(authidentity.UserIDEQ(id)).
@@ -497,6 +664,9 @@ func (r *UserStore) IdentityDeleteUser(ctx context.Context, exec *dbent.Client, 
 		return translatePersistenceError(err, identitycore.ErrUserNotFound, nil)
 	}
 	if len(identityIDs) > 0 {
+		// Remove decision references and channel rows before their identities.
+		// The account delete follows in the same caller scope, so its failure needs
+		// rollback to restore these earlier relationship removals.
 		if _, err := exec.IdentityAdoptionDecision.Update().
 			Where(identityadoptiondecision.IdentityIDIn(identityIDs...)).
 			ClearIdentityID().
@@ -529,12 +699,29 @@ func (r *UserStore) IdentityDeleteUser(ctx context.Context, exec *dbent.Client, 
 	return nil
 }
 
+// List delegates account paging with an empty filter set to ListWithFilters.
+// The shared query uses its default related-data selection and ordering, while
+// errors remain visible to account readers.
 func (r *UserStore) List(ctx context.Context, params pagination.PaginationParams) ([]identitycore.User, *pagination.PaginationResult, error) {
 	return r.ListWithFilters(ctx, params, identitycore.UserListFilters{})
 }
 
+// ListWithFilters counts and pages accounts using the same selected filters
+// before loading requested related data. IncludeDeleted affects account
+// queries, while the remaining relation queries use the ordinary supplied
+// context.
+//
+// Attribute matching resolves an intersection of account IDs before count and
+// page; an empty intersection returns an empty result immediately. Ordered
+// paging selects the requested account rows, then active subscriptions with
+// plans load unless explicitly disabled. Grant and denial reads populate
+// complete restriction state. These are separate observations through retained
+// dependencies, so this method does not create an encompassing read
+// transaction.
 func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters identitycore.UserListFilters) ([]identitycore.User, *pagination.PaginationResult, error) {
-	// IncludeDeleted affects user queries; subscription and group queries retain soft-delete filtering.
+	// Use include-deleted context for user-table observations only. Subscription
+	// and group queries retain their normal context, so those related collections
+	// continue to omit rows hidden by soft-delete filtering.
 	userCtx := ctx
 	if filters.IncludeDeleted {
 		userCtx = mixins.SkipSoftDelete(ctx)
@@ -567,7 +754,9 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 		))
 	}
 
-	// Resolve attribute matches to user IDs before counting and paging.
+	// Resolve the complete attribute intersection before count and page
+	// selection. Filtering after pagination would omit qualifying accounts and
+	// give the panel a total for a different query.
 	var allowedUserIDs []int64
 	if len(filters.Attributes) > 0 {
 		var attrErr error
@@ -656,7 +845,10 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	return outUsers, pagination.ResultFromTotal(int64(total), params), nil
 }
 
-// identityUserSearch queries each field separately so each can use its fuzzy-search index.
+// identityUserSearch builds a UNION of case-insensitive email, username, note,
+// and API Key candidate account IDs. The outer user query controls account
+// soft deletion; key candidate search has no independent deleted-key
+// predicate.
 func identityUserSearch(search string) predicate.User {
 	return func(s *entsql.Selector) {
 		builder := entsql.Dialect(s.Dialect())
@@ -674,6 +866,10 @@ func identityUserSearch(search string) predicate.User {
 	}
 }
 
+// IdentityUserListOrder returns the selected field order with an ID tie break
+// in the same direction. Unknown fields select ID, last_active_at places nulls
+// last in either direction, and last_used_at delegates its activity-specific
+// ordering.
 func IdentityUserListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderDesc)
@@ -739,6 +935,9 @@ func IdentityUserListOrder(params pagination.PaginationParams) []func(*entsql.Se
 	return []func(*entsql.Selector){dbent.Desc(field), dbent.Desc(dbuser.FieldID)}
 }
 
+// GetLatestUsedAtByUserIDs delegates activity-summary lookup through the
+// retained raw executor. Empty input returns an allocated empty map, while
+// activity-query errors remain errors for administrator account readers.
 func (r *UserStore) GetLatestUsedAtByUserIDs(ctx context.Context, userIDs []int64) (map[int64]*time.Time, error) {
 	if len(userIDs) == 0 {
 		return map[int64]*time.Time{}, nil
@@ -746,6 +945,9 @@ func (r *UserStore) GetLatestUsedAtByUserIDs(ctx context.Context, userIDs []int6
 	return usagequery.GetLatestUsedAtByUserIDs(ctx, r.sql, userIDs)
 }
 
+// GetLatestUsedAtByUserID returns the selected account latest usage timestamp
+// from the batch summary reader. Missing map entries yield nil; lookup
+// failures stop the result before a timestamp is selected.
 func (r *UserStore) GetLatestUsedAtByUserID(ctx context.Context, userID int64) (*time.Time, error) {
 	latestByUserID, err := r.GetLatestUsedAtByUserIDs(ctx, []int64{userID})
 	if err != nil {
@@ -754,11 +956,22 @@ func (r *UserStore) GetLatestUsedAtByUserID(ctx context.Context, userID int64) (
 	return latestByUserID[userID], nil
 }
 
+// IdentityUserLastUsedAtOrder delegates activity timestamp and account ID
+// ordering to usage queries. The supplied sort direction selects their null
+// placement and tie-break behavior before account paging.
 func IdentityUserLastUsedAtOrder(sortOrder string) []func(*entsql.Selector) {
 	return usagequery.IdentityUserLastUsedAtOrder(sortOrder)
 }
 
-// IdentityFilterUsersByAttributes returns user IDs matching every attribute filter.
+// IdentityFilterUsersByAttributes returns account IDs matching every supplied
+// attribute substring filter. Empty filters return nil with no error; the
+// retained raw executor is required for nonempty selections.
+//
+// Each attribute contributes an ID/value alternative, and grouped account rows
+// must match the distinct attribute count before they qualify. Input text
+// enters ILIKE patterns with wildcard behavior retained. SQL rows close on all
+// exits, with close errors discarded while scan or iteration failure
+// determines the returned result.
 func (r *UserStore) IdentityFilterUsersByAttributes(ctx context.Context, attrs map[int64]string) ([]int64, error) {
 	if len(attrs) == 0 {
 		return nil, nil
@@ -792,6 +1005,9 @@ func (r *UserStore) IdentityFilterUsersByAttributes(ctx context.Context, attrs m
 	if err != nil {
 		return nil, err
 	}
+	// Close attribute query rows on early or completed exits. Cleanup failures
+	// are discarded while scan and iterator failures remain the result used by
+	// the account list caller.
 	defer func() { _ = rows.Close() }()
 
 	result := make([]int64, 0)
@@ -808,19 +1024,31 @@ func (r *UserStore) IdentityFilterUsersByAttributes(ctx context.Context, attrs m
 	return result, nil
 }
 
+// UpdateBalance delegates a balance delta and positive recharge-base increment
+// to billing storage. The injected transaction is selected when present, and a
+// missing matched account remains the billing operation error.
 func (r *UserStore) UpdateBalance(ctx context.Context, id int64, amount float64) error {
 	return r.IdentityBillingBalance(ctx).UpdateBalance(ctx, id, amount)
 }
 
+// AddBalance delegates the supplied balance delta to billing storage while
+// retaining the cumulative recharge amount. Zero succeeds before persistence,
+// and context transactions take precedence over the retained billing client.
 func (r *UserStore) AddBalance(ctx context.Context, id int64, amount float64) error {
 	return r.IdentityBillingBalance(ctx).AddBalance(ctx, id, amount)
 }
 
+// ApplyRedeemBalanceAdjustment delegates the signed redemption delta and zero
+// floor to billing storage. It filters deleted accounts, uses an injected
+// transaction when present, and leaves cumulative recharges unchanged.
 func (r *UserStore) ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, delta float64) error {
 	return r.IdentityBillingBalance(ctx).ApplyRedeemBalanceAdjustment(ctx, id, delta)
 }
 
-// DeductBalance deducts from positive balances down to zero and leaves existing negative balances unchanged.
+// DeductBalance delegates capped positive available-balance deduction using
+// the selected raw executor. Existing nonpositive balances yield zero
+// deduction; missing executor and billing-query failures remain errors before
+// the amount is reported.
 func (r *UserStore) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	sqlq := r.IdentitySqlExecutorFromContext(ctx)
 	if sqlq == nil {
@@ -834,26 +1062,45 @@ func (r *UserStore) DeductBalance(ctx context.Context, id int64, amount float64)
 	return deductedAmount, nil
 }
 
+// AdjustBalance delegates a delta and old/new reporting to billing storage.
+// The selected transaction retains the update scope, and insufficient or
+// missing funds remain the billing domain results for the caller.
 func (r *UserStore) AdjustBalance(ctx context.Context, id int64, delta float64) (identitycore.BalanceChange, error) {
 	return r.IdentityBillingBalance(ctx).AdjustBalance(ctx, id, delta)
 }
 
+// SetBalance delegates balance replacement and old/new reporting to billing
+// storage. The selected transaction retains update scope, while negative
+// replacement and missing account cases remain the billing domain results.
 func (r *UserStore) SetBalance(ctx context.Context, id int64, value float64) (identitycore.BalanceChange, error) {
 	return r.IdentityBillingBalance(ctx).SetBalance(ctx, id, value)
 }
 
+// UpdateConcurrency delegates a signed allowance delta to ConcurrencyStore
+// using the configured Ent client. Context transactions take precedence in
+// that store, and a missing matched account returns ErrUserNotFound.
 func (r *UserStore) UpdateConcurrency(ctx context.Context, id int64, amount int) error {
 	return NewConcurrencyStore(r.client).UpdateConcurrency(ctx, id, amount)
 }
 
+// ApplyRedeemConcurrencyAdjustment delegates redemption allowance adjustment
+// with a zero floor to ConcurrencyStore. It selects the context transaction
+// when present and reports missing current accounts through the delegated
+// result.
 func (r *UserStore) ApplyRedeemConcurrencyAdjustment(ctx context.Context, id int64, delta int) error {
 	return NewConcurrencyStore(r.client).ApplyRedeemConcurrencyAdjustment(ctx, id, delta)
 }
 
+// BatchSetConcurrency replaces current-account allowances through the selected
+// raw executor, flooring negative input to zero. Empty IDs return zero before
+// persistence; affected-count read errors are discarded after a successful
+// statement.
 func (r *UserStore) BatchSetConcurrency(ctx context.Context, userIDs []int64, value int) (int, error) {
 	if len(userIDs) == 0 {
 		return 0, nil
 	}
+	// Account concurrency replacement cannot store a negative allowance; clamp
+	// the requested value before building the current-account update.
 	if value < 0 {
 		value = 0
 	}
@@ -867,10 +1114,16 @@ func (r *UserStore) BatchSetConcurrency(ctx context.Context, userIDs []int64, va
 	if err != nil {
 		return 0, fmt.Errorf("batch set concurrency: %w", err)
 	}
+	// The SQL mutation already succeeded. Discard affected-count errors and
+	// return the observed count, so an unavailable count can appear as zero after
+	// a completed write.
 	affected, _ := res.RowsAffected()
 	return int(affected), nil
 }
 
+// BatchAddConcurrency adds the supplied allowance delta with an atomic zero
+// floor for current accounts. Empty IDs return zero before persistence, while
+// affected-count read errors are discarded after successful SQL execution.
 func (r *UserStore) BatchAddConcurrency(ctx context.Context, userIDs []int64, delta int) (int, error) {
 	if len(userIDs) == 0 {
 		return 0, nil
@@ -885,11 +1138,17 @@ func (r *UserStore) BatchAddConcurrency(ctx context.Context, userIDs []int64, de
 	if err != nil {
 		return 0, fmt.Errorf("batch add concurrency: %w", err)
 	}
+	// The SQL mutation already succeeded. Discard affected-count errors and
+	// return the observed count, so an unavailable count can appear as zero after
+	// a completed write.
 	affected, _ := res.RowsAffected()
 	return int(affected), nil
 }
 
-// BatchUpdateLimits sets supplied concurrency and RPM limits for selected users in one SQL statement.
+// BatchUpdateLimits replaces supplied concurrency and RPM fields in one
+// current-account SQL update. Nil limit pointers leave their columns
+// unchanged, negative supplied limits floor to zero, and absent IDs or both
+// limits skip persistence.
 func (r *UserStore) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
 	if len(userIDs) == 0 || (concurrency == nil && rpmLimit == nil) {
 		return 0, nil
@@ -923,28 +1182,48 @@ func (r *UserStore) BatchUpdateLimits(ctx context.Context, userIDs []int64, conc
 	if err != nil {
 		return 0, fmt.Errorf("batch update user limits: %w", err)
 	}
+	// The SQL mutation already succeeded. Discard affected-count errors and
+	// return the observed count, so an unavailable count can appear as zero after
+	// a completed write.
 	affected, _ := res.RowsAffected()
 	return int(affected), nil
 }
 
+// ExistsByEmail checks trimmed, case-folded email presence using the selected
+// Ent client. Empty normalized input uses the original exact text predicate;
+// ordinary user soft-delete filtering remains with the query context.
 func (r *UserStore) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	client := clientFromContext(ctx, r.client)
 	return client.User.Query().Where(IdentityUserEmailLookupPredicate(email)).Exist(ctx)
 }
 
-// ExistsByEmailAlias reports whether a user owns the same normalized mailbox.
-// The User soft-delete interceptor filters deleted users.
+// ExistsByEmailAlias delegates normalized mailbox ownership lookup with no
+// current account preference. The bounded candidate probe and Go recheck
+// determine its result, and ordinary user soft-delete filtering remains
+// context dependent.
 func (r *UserStore) ExistsByEmailAlias(ctx context.Context, email string) (bool, error) {
 	_, exists, err := r.EmailAliasOwnerID(ctx, email, 0)
 	return exists, err
 }
 
-// EmailAliasOwnerID returns the mailbox owner, using currentUserID to identify the caller.
-// When duplicate rows exist, another owner takes precedence so callers can detect conflicts.
+// EmailAliasOwnerID delegates bounded mailbox ownership lookup using the
+// selected Ent client. Another matching owner takes precedence over the
+// supplied currentUserID, while absent or unsupported mailbox input reports no
+// owner.
 func (r *UserStore) EmailAliasOwnerID(ctx context.Context, email string, currentUserID int64) (int64, bool, error) {
 	return IdentityEmailAliasOwnerIDWithClient(ctx, clientFromContext(ctx, r.client), email, currentUserID)
 }
 
+// IdentityEmailAliasOwnerIDWithClient probes at most fifty possible mailbox
+// aliases and rechecks them with Go normalization. Missing client or unusable
+// email probes return no owner.
+//
+// SQL dot-stripped equality and plus-suffix patterns produce a broad candidate
+// set, with wildcard escaping retaining literal input characters. Go recheck
+// restores domain-specific alias rules before selection. Another matching
+// account wins over the current user; otherwise its matching row can be
+// returned. The candidate cap limits this observed search and does not
+// establish completeness across an arbitrarily large ambiguous candidate set.
 func IdentityEmailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Client, email string, currentUserID int64) (int64, bool, error) {
 	if client == nil {
 		return 0, false, nil
@@ -959,7 +1238,9 @@ func IdentityEmailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Clie
 		probeEmail := probe.Local + "@" + probe.Domain
 		preds = append(preds,
 			IdentityDotStrippedEmailEQ(probeEmail),
-			// The plus suffix is unknown, so match the escaped local-part prefix.
+			// The stored plus suffix is unknown, so use a wildcard after the escaped
+			// base local part. Go recheck then decides whether the candidate belongs to
+			// the same mailbox.
 			IdentityDotStrippedEmailLike(IdentityEscapeLikeWildcards(probe.Local)+"+%@"+IdentityEscapeLikeWildcards(probe.Domain)),
 		)
 	}
@@ -991,14 +1272,18 @@ func IdentityEmailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Clie
 	return selfID, selfExists, nil
 }
 
-// IdentityDotStrippedEmailExpr removes dots for an alias candidate probe, including Gmail
-// local-part dots and a domain root dot. Go normalization rechecks the candidates.
+// IdentityDotStrippedEmailExpr writes a broad lowercase trimmed dot-removal
+// expression for alias candidate SQL. The later Go mailbox recheck restores
+// distinctions that this candidate expression deliberately does not retain.
 func IdentityDotStrippedEmailExpr(b *entsql.Builder, s *entsql.Selector) *entsql.Builder {
 	return b.WriteString("REPLACE(LOWER(TRIM(").
 		Ident(s.C(dbuser.FieldEmail)).
 		WriteString(")), '.', '')")
 }
 
+// IdentityDotStrippedEmailEQ returns exact SQL matching against the
+// dot-stripped candidate expression. Callers supply their normalized probe
+// value and recheck resulting accounts with the full Go mailbox alias rules.
 func IdentityDotStrippedEmailEQ(value string) predicate.User {
 	return predicate.User(func(s *entsql.Selector) {
 		s.Where(entsql.P(func(b *entsql.Builder) {
@@ -1007,6 +1292,10 @@ func IdentityDotStrippedEmailEQ(value string) predicate.User {
 	})
 }
 
+// IdentityDotStrippedEmailLike returns LIKE matching against the dot-stripped
+// candidate expression with backslash escaping. Callers escape literal
+// components before adding their intended wildcards, then recheck selected
+// account mailboxes in Go.
 func IdentityDotStrippedEmailLike(pattern string) predicate.User {
 	return predicate.User(func(s *entsql.Selector) {
 		s.Where(entsql.P(func(b *entsql.Builder) {
@@ -1015,12 +1304,22 @@ func IdentityDotStrippedEmailLike(pattern string) predicate.User {
 	})
 }
 
+// IdentityEscapeLikeWildcards escapes backslash, percent, and underscore
+// before alias wildcard construction.
 func IdentityEscapeLikeWildcards(value string) string {
 	return IdentityLikeWildcardEscaper.Replace(value)
 }
 
-// UpdateEmailWithAliasGuard locks and rechecks mailbox ownership in the caller's transaction
-// before updating the email and password hash, closing the gap after the service precheck.
+// UpdateEmailWithAliasGuard writes account email and password after a locked
+// mailbox ownership recheck in the caller Ent transaction. Positive account
+// ID, nonblank email, and password hash are required.
+//
+// Sorted exact-email and alias lock keys serialize writes to the destination
+// mailbox. The owner probe prefers another account over the current one,
+// returning ErrEmailExists when that conflict is observed. The caller
+// transaction covers this credential write and later identity or grant stages.
+// Missing transaction is an error, and storage failures use the configured
+// account error mapping.
 func (r *UserStore) UpdateEmailWithAliasGuard(
 	ctx context.Context,
 	userID int64,
@@ -1068,14 +1367,26 @@ func (r *UserStore) UpdateEmailWithAliasGuard(
 	return nil
 }
 
+// ExistsByNormalizedEmail delegates current-row lookup with no account
+// excluded. Callers supply already registration-normalized text; selected raw
+// executor or query failures remain errors rather than an absent-email
+// observation.
 func (r *UserStore) ExistsByNormalizedEmail(ctx context.Context, normalizedEmail string) (bool, error) {
 	return r.IdentityExistsByNormalizedEmail(ctx, normalizedEmail, 0)
 }
 
+// ExistsByNormalizedEmailExcluding delegates registration-normalized email
+// presence while excluding the supplied account ID. Zero exclusion retains all
+// current rows, and raw executor/query errors remain errors for registration
+// guards.
 func (r *UserStore) ExistsByNormalizedEmailExcluding(ctx context.Context, normalizedEmail string, excludedUserID int64) (bool, error) {
 	return r.IdentityExistsByNormalizedEmail(ctx, normalizedEmail, excludedUserID)
 }
 
+// IdentityExistsByNormalizedEmail runs the shared registration-normalized SQL
+// expression against current user rows. A nonzero excluded ID removes that
+// account, and a missing selected raw executor returns an error before
+// querying.
 func (r *UserStore) IdentityExistsByNormalizedEmail(ctx context.Context, normalizedEmail string, excludedUserID int64) (bool, error) {
 	sqlq := r.IdentitySqlExecutorFromContext(ctx)
 	if sqlq == nil {
@@ -1098,6 +1409,10 @@ func (r *UserStore) IdentityExistsByNormalizedEmail(ctx context.Context, normali
 	return exists, nil
 }
 
+// LockRegistrationEmail takes a transaction-scoped PostgreSQL lock for the
+// supplied normalized address. Blank input and configured non-PostgreSQL
+// dialects skip the lock; the caller keeps subsequent guarded writes in the
+// same database transaction.
 func (r *UserStore) LockRegistrationEmail(ctx context.Context, normalizedEmail string) error {
 	if normalizedEmail == "" {
 		return nil
@@ -1119,6 +1434,10 @@ func (r *UserStore) LockRegistrationEmail(ctx context.Context, normalizedEmail s
 	return err
 }
 
+// IdentityEnsureNormalizedEmailAvailableWithClient rejects a trimmed
+// case-folded email owned by another selected account row. Missing client
+// succeeds, and the supplied userID permits its own row while ordinary
+// soft-delete context controls matches.
 func IdentityEnsureNormalizedEmailAvailableWithClient(ctx context.Context, client *dbent.Client, userID int64, email string) error {
 	client = clientFromContext(ctx, client)
 	if client == nil {
@@ -1139,6 +1458,10 @@ func IdentityEnsureNormalizedEmailAvailableWithClient(ctx context.Context, clien
 	return nil
 }
 
+// IdentityUserEmailLookupPredicate matches trimmed lowercase email text
+// without rewriting the stored column. Empty normalized input uses exact
+// original text; query callers separately apply lifecycle and transaction
+// selection rules.
 func IdentityUserEmailLookupPredicate(email string) predicate.User {
 	normalized := IdentityNormalizeEmailLookupValue(email)
 	if normalized == "" {
@@ -1154,10 +1477,15 @@ func IdentityUserEmailLookupPredicate(email string) predicate.User {
 	})
 }
 
+// IdentityNormalizeEmailLookupValue returns trimmed lowercase email text for
+// exact account lookup.
 func IdentityNormalizeEmailLookupValue(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+// IdentityNormalizedEmailUniquenessLockKey returns the scoped lock key for
+// trimmed lowercase email text. Empty normalized input returns an empty key,
+// which scoped lock normalization omits before acquisition.
 func IdentityNormalizedEmailUniquenessLockKey(email string) string {
 	normalized := IdentityNormalizeEmailLookupValue(email)
 	if normalized == "" {
@@ -1166,7 +1494,10 @@ func IdentityNormalizedEmailUniquenessLockKey(email string) string {
 	return "users:normalized-email:" + normalized
 }
 
-// IdentityEmailAliasUniquenessLockKey serializes changes across aliases of the same mailbox.
+// IdentityEmailAliasUniquenessLockKey returns the shared lock key for aliases
+// of one normalized mailbox. Unsupported or empty mailbox input yields no key,
+// and caller transaction participation protects the subsequent ownership
+// write.
 func IdentityEmailAliasUniquenessLockKey(email string) string {
 	identity := identitycore.NormalizeEmailForAliasDedup(email)
 	if identity == "" {
@@ -1175,6 +1506,9 @@ func IdentityEmailAliasUniquenessLockKey(email string) string {
 	return "users:email-alias-identity:" + identity
 }
 
+// IdentityRegistrationEmailDomainLockKey returns a scoped key for the
+// normalized registrable email domain. Empty normalization yields no key,
+// letting guarded creation omit unusable domain observations before locking.
 func IdentityRegistrationEmailDomainLockKey(domain string) string {
 	domain = IdentityNormalizeEmailDomain(domain)
 	if domain == "" {
@@ -1183,10 +1517,16 @@ func IdentityRegistrationEmailDomainLockKey(domain string) string {
 	return "users:registration-email-domain:" + domain
 }
 
+// IdentityNormalizeEmailDomain delegates registrable-domain normalization used
+// by account quota keys and predicates.
 func IdentityNormalizeEmailDomain(domain string) string {
 	return identitycore.NormalizeRegistrationEmailDomain(domain)
 }
 
+// IdentityCountUsersByEmailDomainWithClient counts selected user rows in a
+// normalized registrable domain and its subdomains. Missing client or blank
+// domain returns zero, while ordinary query context retains soft-delete
+// filtering.
 func IdentityCountUsersByEmailDomainWithClient(ctx context.Context, client *dbent.Client, domain string) (int, error) {
 	client = clientFromContext(ctx, client)
 	domain = IdentityNormalizeEmailDomain(domain)
@@ -1196,6 +1536,10 @@ func IdentityCountUsersByEmailDomainWithClient(ctx context.Context, client *dben
 	return client.User.Query().Where(IdentityUserEmailDomainPredicate(domain)).Count(ctx)
 }
 
+// IdentityUserEmailDomainPredicate matches normalized root-domain and
+// subdomain suffixes using escaped literal domain components. Stored case,
+// outer spacing, and root dots are normalized in the expression before the
+// caller user query filters lifecycle.
 func IdentityUserEmailDomainPredicate(domain string) predicate.User {
 	domain = IdentityNormalizeEmailDomain(domain)
 	escapedDomain := escapeLikePattern(domain)
@@ -1217,6 +1561,9 @@ func IdentityUserEmailDomainPredicate(domain string) predicate.User {
 	})
 }
 
+// AddGroupToAllowedGroups stores one account/group grant with do-nothing
+// conflict handling in the selected client. Recognized SQL no-row conflict
+// results succeed, and the caller owns any surrounding transaction completion.
 func (r *UserStore) AddGroupToAllowedGroups(ctx context.Context, userID int64, groupID int64) error {
 	client := clientFromContext(ctx, r.client)
 	err := client.UserAllowedGroup.Create().
@@ -1225,14 +1572,19 @@ func (r *UserStore) AddGroupToAllowedGroups(ctx context.Context, userID int64, g
 		OnConflictColumns(userallowedgroup.FieldUserID, userallowedgroup.FieldGroupID).
 		DoNothing().
 		Exec(ctx)
+	// Conflict-tolerant grant insertion can report no returned SQL row. Accept
+	// that result so repeated requests for an existing account/group grant do not
+	// become operation failures.
 	if isSQLNoRowsError(err) {
 		return nil
 	}
 	return err
 }
 
+// RemoveGroupFromAllowedGroups deletes the selected group grants through the
+// configured client and returns its count. This method uses the relation table
+// directly and leaves transaction selection to that retained client.
 func (r *UserStore) RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error) {
-	// Grants are stored in user_allowed_groups; users.allowed_groups is deprecated.
 	affected, err := r.client.UserAllowedGroup.Delete().
 		Where(userallowedgroup.GroupIDEQ(groupID)).
 		Exec(ctx)
@@ -1242,7 +1594,9 @@ func (r *UserStore) RemoveGroupFromAllowedGroups(ctx context.Context, groupID in
 	return int64(affected), nil
 }
 
-// RemoveGroupFromUserAllowedGroups revokes one user's access to the given group.
+// RemoveGroupFromUserAllowedGroups removes one account/group grant through the
+// selected Ent client. Absent grants succeed when Ent reports no error, and
+// the caller owns any injected transaction completion.
 func (r *UserStore) RemoveGroupFromUserAllowedGroups(ctx context.Context, userID int64, groupID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserAllowedGroup.Delete().
@@ -1251,6 +1605,9 @@ func (r *UserStore) RemoveGroupFromUserAllowedGroups(ctx context.Context, userID
 	return err
 }
 
+// GetFirstAdmin returns the first active administrator by ascending account ID
+// through the configured client. It loads sorted grant and denial data and
+// marks complete restrictions; no matching account maps to ErrUserNotFound.
 func (r *UserStore) GetFirstAdmin(ctx context.Context) (*identitycore.User, error) {
 	m, err := r.client.User.Query().
 		Where(
@@ -1282,6 +1639,9 @@ func (r *UserStore) GetFirstAdmin(ctx context.Context) (*identitycore.User, erro
 	return out, nil
 }
 
+// IdentityLoadAllowedGroups returns sorted grant IDs by supplied user ID
+// through the configured client. Empty input returns an allocated map, and
+// users with no grant rows have no map entry.
 func (r *UserStore) IdentityLoadAllowedGroups(ctx context.Context, userIDs []int64) (map[int64][]int64, error) {
 	out := make(map[int64][]int64, len(userIDs))
 	if len(userIDs) == 0 {
@@ -1306,6 +1666,9 @@ func (r *UserStore) IdentityLoadAllowedGroups(ctx context.Context, userIDs []int
 	return out, nil
 }
 
+// IdentityLoadDisabledPublicGroups returns sorted public-denial IDs by
+// supplied user ID through the configured client. Empty input returns an
+// allocated map, while users without denial rows have no map entry.
 func (r *UserStore) IdentityLoadDisabledPublicGroups(ctx context.Context, userIDs []int64) (map[int64][]int64, error) {
 	out := make(map[int64][]int64, len(userIDs))
 	if len(userIDs) == 0 {
@@ -1330,8 +1693,15 @@ func (r *UserStore) IdentityLoadDisabledPublicGroups(ctx context.Context, userID
 	return out, nil
 }
 
-// IdentitySyncUserAllowedGroupsWithClient synchronizes grants using the supplied Ent client.
-// Grants are stored in user_allowed_groups; users.allowed_groups is deprecated.
+// IdentitySyncUserAllowedGroupsWithClient updates an account grant set through
+// the caller supplied client. Positive unique requested IDs form the desired
+// set; callers provide the transaction containing its removals and additions.
+//
+// Existing grants absent from the desired set are removed before missing
+// requested grants are inserted in bulk. Do-nothing conflicts tolerate already
+// stored pairs, with recognized no-row outcomes accepted. A later failure can
+// follow completed removals, so transaction rollback belongs to the enclosing
+// account operation. Nil client succeeds without work.
 func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context, client *dbent.Client, userID int64, groupIDs []int64) error {
 	if client == nil {
 		return nil
@@ -1360,6 +1730,9 @@ func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context,
 			removed = append(removed, row.GroupID)
 		}
 	}
+	// Remove obsolete grants before inserting the desired missing pairs. A later
+	// insertion failure requires caller rollback, so this intermediate grant set
+	// is not a completed synchronization result.
 	if len(removed) > 0 {
 		if _, err := client.UserAllowedGroup.Delete().
 			Where(userallowedgroup.UserIDEQ(userID), userallowedgroup.GroupIDIn(removed...)).
@@ -1380,6 +1753,10 @@ func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context,
 			OnConflictColumns(userallowedgroup.FieldUserID, userallowedgroup.FieldGroupID).
 			DoNothing().
 			Exec(ctx); err != nil {
+			// A recognized no-row result from do-nothing bulk insertion counts as
+			// successful synchronization. Earlier grant removals have already run, so
+			// callers use their surrounding transaction to recover other insert
+			// failures.
 			if isSQLNoRowsError(err) {
 				return nil
 			}
@@ -1390,13 +1767,24 @@ func (r *UserStore) IdentitySyncUserAllowedGroupsWithClient(ctx context.Context,
 	return nil
 }
 
-// IdentitySyncUserDisabledPublicGroupsWithClient replaces the user's disabled public groups.
-// Only groups verified as public are inserted.
+// IdentitySyncUserDisabledPublicGroupsWithClient replaces the account denial
+// set using verified current public groups. The caller supplies the
+// transaction spanning deletion, group lookup, and bulk insertion.
+//
+// It removes preceding denials first, then deduplicates positive requested IDs
+// and looks up groups whose exclusive flag is false. Only those selected
+// public IDs are inserted in sorted candidate order. Empty or wholly invalid
+// selections leave the set empty. Lookup or insertion failure relies on caller
+// rollback of the preceding delete, and recognized do-nothing no-row outcomes
+// succeed.
 func (r *UserStore) IdentitySyncUserDisabledPublicGroupsWithClient(ctx context.Context, client *dbent.Client, userID int64, groupIDs []int64) error {
 	if client == nil {
 		return nil
 	}
 
+	// Removing the preceding set first lets empty or invalid requested IDs clear
+	// all denials. A later public-group lookup or insert failure needs caller
+	// rollback to restore that removed set.
 	if _, err := client.UserDisabledPublicGroup.Delete().Where(userdisabledpublicgroup.UserIDEQ(userID)).Exec(ctx); err != nil {
 		return err
 	}
@@ -1447,6 +1835,9 @@ func (r *UserStore) IdentitySyncUserDisabledPublicGroupsWithClient(ctx context.C
 		OnConflictColumns(userdisabledpublicgroup.FieldUserID, userdisabledpublicgroup.FieldGroupID).
 		DoNothing().
 		Exec(ctx); err != nil {
+		// No-row conflict results are accepted after denial replacement. The
+		// preceding deletion has already run, so callers own transactional recovery
+		// when another insertion error is returned.
 		if isSQLNoRowsError(err) {
 			return nil
 		}
@@ -1456,6 +1847,9 @@ func (r *UserStore) IdentitySyncUserDisabledPublicGroupsWithClient(ctx context.C
 	return nil
 }
 
+// IdentityApplyUserEntityToService refreshes identifiers, signup source, and
+// row activity/timestamps on the supplied account. Nil source or destination
+// is ignored, and optional activity pointers remain shared with the entity.
 func IdentityApplyUserEntityToService(dst *identitycore.User, src *dbent.User) {
 	if dst == nil || src == nil {
 		return
@@ -1468,6 +1862,9 @@ func IdentityApplyUserEntityToService(dst *identitycore.User, src *dbent.User) {
 	dst.UpdatedAt = src.UpdatedAt
 }
 
+// IdentitySqlExecutorFromContext returns the injected Ent transaction client
+// or retained raw executor. A missing retained executor can return nil, which
+// raw-query callers check before executing their operation.
 func (r *UserStore) IdentitySqlExecutorFromContext(ctx context.Context) SQLExecutor {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1475,11 +1872,18 @@ func (r *UserStore) IdentitySqlExecutorFromContext(ctx context.Context) SQLExecu
 	return r.sql
 }
 
-// IdentityDeductUserBalance delegates balance deductions to billing.
+// IdentityDeductUserBalance delegates available-funds deduction and
+// prior-balance reporting to billing queries. The caller supplies the query
+// executor and surrounding transaction, while billing owns capped deduction
+// and missing-account results.
 func IdentityDeductUserBalance(ctx context.Context, q sqlQueryer, userID int64, amount float64) (float64, float64, error) {
 	return billingpostgres.DeductAvailableBalance(ctx, q, userID, amount)
 }
 
+// IdentityUpdateWithClient writes the selected scalar account flags through
+// the supplied client. Nil locale, activity timestamp, or notification
+// threshold pointers clear their selected fields, while permission and
+// identity synchronization remain with the enclosing updater.
 func (r *UserStore) IdentityUpdateWithClient(ctx context.Context, client *dbent.Client, userIn *identitycore.User, fields identitycore.UserUpdateFields) (*dbent.User, error) {
 	updateOp := client.User.UpdateOneID(userIn.ID)
 	if fields.Email {
@@ -1549,6 +1953,10 @@ func (r *UserStore) IdentityUpdateWithClient(ctx context.Context, client *dbent.
 	return updateOp.Save(ctx)
 }
 
+// IdentityCreateWithClient stores prepared account fields through the caller
+// client and applies initial funds through billing. Signup source receives its
+// supported default, and the enclosing creator owns permissions, email
+// identity, and transaction completion.
 func (r *UserStore) IdentityCreateWithClient(ctx context.Context, client *dbent.Client, userIn *identitycore.User) (*dbent.User, error) {
 	createOp := client.User.Create().
 		SetEmail(userIn.Email).
@@ -1567,6 +1975,9 @@ func (r *UserStore) IdentityCreateWithClient(ctx context.Context, client *dbent.
 	return createOp.Save(ctx)
 }
 
+// IdentityUserSignupSourceOrDefault returns a supported trimmed lowercase
+// signup-source label. Blank, email, and unsupported values select email,
+// while the configured external provider labels retain their normalized names.
 func IdentityUserSignupSourceOrDefault(signupSource string) string {
 	switch strings.TrimSpace(strings.ToLower(signupSource)) {
 	case "", "email":
@@ -1578,12 +1989,16 @@ func IdentityUserSignupSourceOrDefault(signupSource string) string {
 	}
 }
 
-// IdentityMarshalExtraEmails encodes notification email entries as storage JSON.
+// IdentityMarshalExtraEmails delegates notification-recipient JSON encoding
+// for the stored account field.
 func IdentityMarshalExtraEmails(entries []identitycore.NotifyEmailEntry) string {
 	return identitycore.MarshalNotifyEmails(entries)
 }
 
-// UpdateTotpSecret replaces or clears the user's encrypted TOTP secret.
+// UpdateTotpSecret replaces the account encrypted authenticator secret or
+// clears it for nil input. Context transaction client takes precedence, and
+// missing accounts map to ErrUserNotFound through persistence error
+// translation.
 func (r *UserStore) UpdateTotpSecret(ctx context.Context, userID int64, encryptedSecret *string) error {
 	client := clientFromContext(ctx, r.client)
 	update := client.User.UpdateOneID(userID)
@@ -1599,7 +2014,9 @@ func (r *UserStore) UpdateTotpSecret(ctx context.Context, userID int64, encrypte
 	return nil
 }
 
-// EnableTotp enables TOTP and records the activation time.
+// EnableTotp saves account authenticator enablement and its current activation
+// time together. It selects the context transaction client when present and
+// maps missing rows to ErrUserNotFound before returning.
 func (r *UserStore) EnableTotp(ctx context.Context, userID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.User.UpdateOneID(userID).
@@ -1612,7 +2029,9 @@ func (r *UserStore) EnableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// DisableTotp disables TOTP and clears its secret and activation time.
+// DisableTotp clears account authenticator secret and activation time while
+// saving disabled state. It selects the context transaction client when
+// present and maps missing rows to ErrUserNotFound before returning.
 func (r *UserStore) DisableTotp(ctx context.Context, userID int64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.User.UpdateOneID(userID).
@@ -1626,7 +2045,10 @@ func (r *UserStore) DisableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// IdentityBillingBalance uses the Ent transaction from ctx for balance operations when available.
+// IdentityBillingBalance returns billing storage participating in the injected
+// Ent transaction when present. Otherwise it retains the configured client for
+// ordinary account funds operations, with transaction completion left to
+// callers.
 func (r *UserStore) IdentityBillingBalance(ctx context.Context) *billingpostgres.BalanceStore {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return billingpostgres.BalanceInTx(tx)
@@ -1634,7 +2056,9 @@ func (r *UserStore) IdentityBillingBalance(ctx context.Context) *billingpostgres
 	return billingpostgres.NewBalanceStore(r.client)
 }
 
-// clientFromContext returns the Ent transaction client from ctx or the default client.
+// clientFromContext returns the injected Ent transaction client before the
+// supplied default client. It creates no transaction, and callers configure
+// the default needed when their context has no transaction.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1642,8 +2066,10 @@ func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.
 	return defaultClient
 }
 
-// translatePersistenceError maps missing records and unique conflicts to supplied application errors.
-// A nil target skips that mapping; unmatched errors are returned unchanged.
+// translatePersistenceError maps recognized missing rows or unique conflicts
+// to supplied application errors with their causes. Nil mapping targets skip
+// that category, nil input succeeds, and unmatched errors retain their
+// original result.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
@@ -1661,21 +2087,27 @@ func translatePersistenceError(err error, notFound, conflict *infraerrors.Applic
 	return err
 }
 
-// isUniqueConstraintViolation recognizes PostgreSQL code 23505 and supported message patterns.
+// isUniqueConstraintViolation delegates recognition of supported PostgreSQL
+// and message-based uniqueness failures.
 func isUniqueConstraintViolation(err error) bool {
 	return postgresinfra.IsUniqueConstraintViolation(err)
 }
 
-// isSQLNoRowsError reports whether the SQL operation found no record.
+// isSQLNoRowsError delegates recognition of a SQL operation reporting no
+// matching record.
 func isSQLNoRowsError(err error) bool { return postgresinfra.IsNoRows(err) }
 
-// scanSingleRow queries one row and scans its columns into dest.
+// scanSingleRow delegates one-row querying and destination decoding to
+// infrastructure storage. The selected executor owns its transaction
+// participation, while missing, scanning, iteration, and cleanup errors follow
+// that helper.
 func scanSingleRow(ctx context.Context, q sqlQueryer, query string, args []any, dest ...any) error {
 	return postgresinfra.ScanSingleRow(ctx, q, query, args, dest...)
 }
 
-// escapeLikePattern escapes backslashes, percent signs, and underscores in LIKE/ILIKE patterns.
-// PostgreSQL uses backslash as the default pattern escape character.
+// escapeLikePattern escapes backslash, percent, and underscore in literal LIKE
+// pattern components. Callers add the intended wildcard structure afterward,
+// retaining literal domain and mailbox input during SQL probing.
 func escapeLikePattern(s string) string {
 	return likePatternReplacer.Replace(s)
 }

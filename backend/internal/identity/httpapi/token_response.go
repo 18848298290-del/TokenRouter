@@ -12,6 +12,14 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Successful login responses require a present, active account before
+// credentials are issued. Token-pair failure triggers a separate access-token
+// attempt, so clients can receive an access credential with omitted refresh
+// and expiry fields when the second issuance succeeds.
+
+// EnsureLoginUserActive rejects a missing or inactive account before login
+// credentials are issued. Nil users receive INVALID_USER, while inactive
+// accounts return the identity error used by the other login paths.
 func EnsureLoginUserActive(user *identity.User) error {
 	if user == nil {
 		return infraerrors.Unauthorized("INVALID_USER", "user not found")
@@ -22,6 +30,9 @@ func EnsureLoginUserActive(user *identity.User) error {
 	return nil
 }
 
+// RespondWithTokenPair writes credentials and account data for an active user.
+// Pair issuance errors are logged and trigger an access-token-only attempt; if
+// that also fails, the response reports an internal error.
 func RespondWithTokenPair(c *gin.Context, authService *identity.AuthService, user *identity.User) {
 	if err := EnsureLoginUserActive(user); err != nil {
 		response.ErrorFrom(c, err)
@@ -31,7 +42,9 @@ func RespondWithTokenPair(c *gin.Context, authService *identity.AuthService, use
 	tokenPair, err := authService.GenerateTokenPair(c.Request.Context(), user, "")
 	if err != nil {
 		slog.Error("failed to generate token pair", "error", err, "user_id", user.ID)
-		// If pair issuance fails, attempt an access-token-only response.
+		// Pair issuance can fail before a refresh credential is available. A
+		// separate access-token attempt lets the caller complete login when that
+		// issuance path still succeeds, with refresh and expiry fields omitted.
 		token, tokenErr := authService.GenerateToken(c.Request.Context(), user)
 		if tokenErr != nil {
 			response.InternalError(c, "Failed to generate token")

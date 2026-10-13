@@ -10,11 +10,27 @@ import (
 	ip "github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// SessionBindingContext stores the resolved client IP and normalized User-Agent
-// in request context for token issuance, binding checks, and audit records.
-// It shares forwarding settings with API key IP restrictions.
-// When forwarding is enabled, configured headers supply the address;
-// otherwise the Gin trusted-proxy chain resolves it.
+// Access-token binding depends on the client address and User-Agent used
+// during issuance. Request middleware resolves the security address once and
+// normalizes the header before adding a SessionBinding, so later issuance,
+// verification, and audit records can read the same request values.
+//
+// Forwarded-address settings come from the gateway IP-restriction
+// configuration. Readers use the injected binding when present and the
+// trusted-proxy address otherwise. Binding enforcement accepts tokens with no
+// stored digest and rejects a changed digest after attempting refresh-family
+// revocation; revocation failure does not turn that rejected request into an
+// authenticated one.
+
+// SessionBindingContext resolves client-address settings and injects
+// normalized binding data before downstream handlers run. Supply a nonnil
+// settings callback; it is evaluated for each request.
+//
+// The normalized User-Agent replaces the request header as well as entering
+// the binding value, so issuance and audit consumers see the same bounded
+// text. Security IP resolution uses configured forwarding headers when enabled
+// and the trusted-proxy path otherwise. The request context carries these
+// values through authentication and token generation.
 func SessionBindingContext(settings func() ForwardedIPSettings) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		forwardedIPSettings := settings()
@@ -30,34 +46,44 @@ func SessionBindingContext(settings func() ForwardedIPSettings) gin.HandlerFunc 
 	}
 }
 
-// RequestSessionBinding returns injected binding data so checks match token issuance.
-// Without injected data, it uses the trusted-proxy address and normalized User-Agent.
+// RequestSessionBinding returns the binding injected into this request when
+// available. Otherwise it constructs a binding from the trusted-proxy address
+// and normalized User-Agent; callers receive the injected pointer directly.
 func RequestSessionBinding(c *gin.Context) *identity.SessionBinding {
 	if binding := identity.SessionBindingFromContext(c.Request.Context()); binding != nil {
 		return binding
 	}
+	// Direct handler calls have no captured forwarding policy. Use Gin's trusted
+	// proxy resolution so an unconfigured raw forwarding header cannot supply
+	// this binding's address.
 	return &identity.SessionBinding{
 		IP:        ip.GetTrustedClientIP(c),
 		UserAgent: normalizePersistentText(c.Request.UserAgent(), authctx.MaxPersistentUserAgentBytes),
 	}
 }
 
-// SecurityClientIP returns the address used for security-sensitive records.
-// It prefers injected session-binding data, then uses the trusted-proxy chain.
+// SecurityClientIP returns the address used by authentication and security
+// records. It uses a nonblank injected binding address, then the trusted-proxy
+// resolver when the binding is absent or its address is blank.
 func SecurityClientIP(c *gin.Context) string {
 	if binding := identity.SessionBindingFromContext(c.Request.Context()); binding != nil &&
 		strings.TrimSpace(binding.IP) != "" {
 		return binding.IP
 	}
+	// An absent or blank captured address cannot identify the request for security
+	// records, so Gin's configured proxy resolution supplies the usable address.
 	return ip.GetTrustedClientIP(c)
 }
 
-// EnforceSessionBinding checks an access token's IP/User-Agent fingerprint when enabled.
-// A mismatch attempts family revocation, records an audit event when configured, and returns 401.
-// False means the request was aborted.
+// EnforceSessionBinding reports whether an access token passes the enabled
+// request-binding check. Disabled settings, missing claims or stored hashes,
+// and an empty current hash pass; a mismatch writes a 401 response and returns
+// false.
 //
-// Tokens with no binding hash are accepted; a later refresh can add the binding.
-// An empty current fingerprint also bypasses the comparison.
+// On mismatch it attempts family revocation and optionally records the user
+// and request details for audit. The caller stops processing when false is
+// returned. Family-revocation errors are discarded, so the current request
+// remains denied even when session cleanup fails.
 func EnforceSessionBinding(
 	c *gin.Context,
 	authService SessionAuth,
@@ -77,12 +103,16 @@ func EnforceSessionBinding(
 		return true
 	}
 
+	// Deny this request independently of refresh-family cleanup; an unavailable
+	// revocation path leaves the mismatched access token rejected here.
 	if authService != nil {
 		_ = authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
 	}
 	if auditService != nil {
 		uid := claims.UserID
 		path := c.FullPath()
+		// Unmatched routes have no registered pattern, so retain the actual URL path
+		// to keep the binding-mismatch audit attributable to this request.
 		if path == "" {
 			path = c.Request.URL.Path
 		}
