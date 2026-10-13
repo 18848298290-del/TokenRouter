@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// TestAdvancedSchedulerCoreUsesRuntimeFeedbackAndNeutralOptionalSignals
+// reports repeated failures for one provider and successes for an otherwise
+// equal peer. It checks the healthier peer's higher score and absent TTFT
+// observations for both providers.
 func TestAdvancedSchedulerCoreUsesRuntimeFeedbackAndNeutralOptionalSignals(t *testing.T) {
 	providers := []*ScoreProvider{
 		{ID: 11, Priority: 1, Platform: capability.PlatformGemini},
@@ -43,6 +47,10 @@ func TestAdvancedSchedulerCoreUsesRuntimeFeedbackAndNeutralOptionalSignals(t *te
 	require.False(t, candidates[1].HasTTFT)
 }
 
+// TestAdvancedSchedulerCoreTreatsMissingErrorRateAsZero compares unknown load
+// with an observed neutral load and missing error, latency, and window
+// feedback. It requires equal scores, full error-health factors, and zero
+// deviation with one known load.
 func TestAdvancedSchedulerCoreTreatsMissingErrorRateAsZero(t *testing.T) {
 	providers := []*ScoreProvider{
 		{ID: 21, Priority: 1, Platform: capability.PlatformGemini},
@@ -75,6 +83,10 @@ func TestAdvancedSchedulerCoreTreatsMissingErrorRateAsZero(t *testing.T) {
 	require.InDelta(t, 1.0, candidates[1].Factors.ErrorRate, 0.000001)
 }
 
+// TestAdvancedSchedulerCoreTopKUsesStableOrderForMixedKnownAndUnknownLoads
+// scores four equal-priority records with zero factor weights and mixed load
+// availability. Every input permutation must select the same two lowest
+// provider IDs, protecting deterministic tie ordering.
 func TestAdvancedSchedulerCoreTopKUsesStableOrderForMixedKnownAndUnknownLoads(t *testing.T) {
 	base, _ := ScoreCandidates(
 		[]*ScoreProvider{
@@ -98,7 +110,9 @@ func TestAdvancedSchedulerCoreTopKUsesStableOrderForMixedKnownAndUnknownLoads(t 
 	require.True(t, base[2].LoadKnown)
 	require.False(t, base[3].LoadKnown)
 
-	// Zero weights should produce the same Top-K for every ordering of known and unknown loads.
+	// Zero factor weights erase load differences from ranking. Enumerate every
+	// candidate ordering so an input-position preference cannot hide behind one
+	// arranged fixture.
 	permutation := []int{0, 1, 2, 3}
 	var verifyPermutations func(int)
 	verifyPermutations = func(position int) {
@@ -121,6 +135,10 @@ func TestAdvancedSchedulerCoreTopKUsesStableOrderForMixedKnownAndUnknownLoads(t 
 	verifyPermutations(0)
 }
 
+// TestAdvancedSchedulerCoreRanksFirstFailureBelowUnknownProvider reports one
+// failure beside an unobserved equal-priority provider. Error-only scoring
+// must rank the failed record lower, protecting updates from the zero-error
+// baseline.
 func TestAdvancedSchedulerCoreRanksFirstFailureBelowUnknownProvider(t *testing.T) {
 	failed := &ScoreProvider{ID: 31, Priority: 1, Platform: capability.PlatformGemini}
 	unknown := &ScoreProvider{ID: 32, Priority: 1, Platform: capability.PlatformGemini}
@@ -141,6 +159,10 @@ func TestAdvancedSchedulerCoreRanksFirstFailureBelowUnknownProvider(t *testing.T
 	require.Equal(t, unknown.ID, candidates[1].Provider.ID)
 }
 
+// TestAdvancedSchedulerCoreUsesWeightedSamplingForStickyCandidate supplies
+// precomputed scores and varies session seeds for a two-candidate Top-K. It
+// requires both retained IDs and observes either one first; this exercises
+// ordering rather than bonus computation.
 func TestAdvancedSchedulerCoreUsesWeightedSamplingForStickyCandidate(t *testing.T) {
 	candidates := []CandidateScore{
 		{Provider: &ScoreProvider{ID: 1, Priority: 1}, LoadInfo: &ProviderLoadInfo{}, Score: 10},
@@ -166,6 +188,9 @@ func TestAdvancedSchedulerCoreUsesWeightedSamplingForStickyCandidate(t *testing.
 	require.True(t, observedNonSticky, "粘性加权不能退化为强制置首")
 }
 
+// TestSelectTopKOpenAICandidates ranks precomputed scores with priority
+// differences and a final-score tie. It checks the two selected IDs and the
+// complete order when the requested sample covers the pool.
 func TestSelectTopKOpenAICandidates(t *testing.T) {
 	candidates := []CandidateScore{
 		{
@@ -203,6 +228,10 @@ func TestSelectTopKOpenAICandidates(t *testing.T) {
 	require.Equal(t, int64(14), topAll[3].Provider.ID)
 }
 
+// TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed samples the
+// same scored pool twice with fixed session, group, and model context. It
+// requires identical provider order, protecting repeatability for those
+// supplied seed inputs.
 func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing.T) {
 	candidates := []CandidateScore{
 		{
@@ -236,6 +265,9 @@ func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing
 	}
 }
 
+// TestDeriveOpenAISelectionSeed_NoAffinityAddsEntropy derives two model-only
+// seeds separated by a brief clock delay. It checks nonzero and different
+// outputs for those calls, protecting the ordinary no-affinity clock mix.
 func TestDeriveOpenAISelectionSeed_NoAffinityAddsEntropy(t *testing.T) {
 	req := ScoreInput{
 		RequestedModel: "gpt-5.1",
@@ -248,6 +280,10 @@ func TestDeriveOpenAISelectionSeed_NoAffinityAddsEntropy(t *testing.T) {
 	require.NotEqual(t, seed1, seed2)
 }
 
+// TestBuildOpenAIWeightedSelectionOrder_HandlesInvalidScores samples a pool
+// containing NaN, infinity, and a negative score. It checks complete length
+// and distinct provider membership so repaired individual weights still
+// produce every supplied record once.
 func TestBuildOpenAIWeightedSelectionOrder_HandlesInvalidScores(t *testing.T) {
 	candidates := []CandidateScore{
 		{
@@ -279,6 +315,10 @@ func TestBuildOpenAIWeightedSelectionOrder_HandlesInvalidScores(t *testing.T) {
 	require.Len(t, seen, len(candidates))
 }
 
+// TestOpenAISelectionRNG_SeedZeroStillWorks constructs the generator with zero
+// input seed and draws several values. It requires different integer outputs
+// and fractional range checks, protecting the constructor's usable default
+// state.
 func TestOpenAISelectionRNG_SeedZeroStillWorks(t *testing.T) {
 	rng := NewSelectionRNG(0)
 	v1 := rng.NextUint64()
@@ -288,11 +328,15 @@ func TestOpenAISelectionRNG_SeedZeroStillWorks(t *testing.T) {
 	require.Less(t, rng.NextFloat64(), 1.0)
 }
 
+// BenchmarkOpenAIProviderSchedulerSelectTopK compares heap Top-K with a
+// full-sort helper on fixed synthetic pool sizes. Its timed loops report
+// allocations and require a nonempty result, providing a local algorithm
+// workload rather than production latency evidence.
 func BenchmarkOpenAIProviderSchedulerSelectTopK(b *testing.B) {
 	cases := []struct {
-		name string
-		size int
-		topK int
+		name string // benchmark pool scenario name
+		size int    // synthetic candidate pool size
+		topK int    // requested retained sample size
 	}{
 		{name: "n_16_k_3", size: 16, topK: 3},
 		{name: "n_64_k_3", size: 64, topK: 3},
@@ -322,6 +366,10 @@ func BenchmarkOpenAIProviderSchedulerSelectTopK(b *testing.B) {
 	}
 }
 
+// TestOpenAIProviderCandidateHeap_PushPopAndInvalidType adds and removes one
+// CandidateScore through the heap adapter and then supplies the wrong dynamic
+// type. It checks size, restored ID, and panic rejection of that invalid
+// insertion.
 func TestOpenAIProviderCandidateHeap_PushPopAndInvalidType(t *testing.T) {
 	h := candidateHeap{}
 	h.Push(CandidateScore{
@@ -340,6 +388,8 @@ func TestOpenAIProviderCandidateHeap_PushPopAndInvalidType(t *testing.T) {
 	})
 }
 
+// advancedSchedulerTestWeights returns equal basic factor weights for isolated
+// scoring assertions.
 func advancedSchedulerTestWeights() policy.ScoreWeights {
 	return policy.ScoreWeights{
 		Priority:  1,
@@ -350,14 +400,23 @@ func advancedSchedulerTestWeights() policy.ScoreWeights {
 	}
 }
 
-// scoreGroupIDForTest returns a group ID pointer for selection seed tests.
+// scoreGroupIDForTest returns a pointer to a separate copy of the supplied
+// group ID.
 func scoreGroupIDForTest(value int64) *int64 { return &value }
 
+// buildOpenAISchedulerBenchmarkCandidates creates deterministic records for
+// local ranking benchmarks. Nonpositive size returns nil, while positive size
+// allocates provider and load records with varied priority and precomputed
+// scores; its error-rate arithmetic performs integer division and therefore
+// yields zero.
 func buildOpenAISchedulerBenchmarkCandidates(size int) []CandidateScore {
 	if size <= 0 {
 		return nil
 	}
 	candidates := make([]CandidateScore, 0, size)
+	// Cycle scalar observations to populate repeatable ranking workloads. These
+	// fields are synthetic input; the error fraction remains zero because integer
+	// division precedes its float conversion.
 	for i := range size {
 		providerID := int64(10_000 + i)
 		candidates = append(candidates, CandidateScore{
@@ -379,6 +438,10 @@ func buildOpenAISchedulerBenchmarkCandidates(size int) []CandidateScore {
 	return candidates
 }
 
+// selectTopKOpenAICandidatesBySortBenchmark copies and fully sorts candidate
+// values before truncating the sample. Empty input returns nil, nonpositive k
+// selects one, and metadata/load pointers remain borrowed from the benchmark
+// fixture.
 func selectTopKOpenAICandidatesBySortBenchmark(candidates []CandidateScore, topK int) []CandidateScore {
 	if len(candidates) == 0 {
 		return nil
@@ -393,9 +456,15 @@ func selectTopKOpenAICandidatesBySortBenchmark(candidates []CandidateScore, topK
 	if topK > len(ranked) {
 		topK = len(ranked)
 	}
+	// Truncation drops lower-ranked copies while retaining the caller's complete
+	// candidate pool for later benchmark iterations.
 	return ranked[:topK]
 }
 
+// TestAdvancedSchedulerRuntimeStatsUsesIndependentEWMAFactors reports error
+// outcomes and positive latencies with separate coefficients. It checks the
+// resulting error fraction and latency average, protecting independent error
+// and TTFT blends.
 func TestAdvancedSchedulerRuntimeStatsUsesIndependentEWMAFactors(t *testing.T) {
 	stats := NewRuntimeStats(time.Now)
 	stats.Report(31, false, nil, policy.FeedbackConfig{ErrorRateAlpha: 0.8, TtftAlpha: 0.4})
@@ -411,6 +480,10 @@ func TestAdvancedSchedulerRuntimeStatsUsesIndependentEWMAFactors(t *testing.T) {
 	require.InDelta(t, 125, feedback.TTFT, 0.000001)
 }
 
+// TestAdvancedSchedulerRuntimeFeedbackSnapshot_RecordsSamplesAndObservedTime
+// reports one positive latency and another failed outcome. It checks sample
+// counts, populated observation times, and expected feedback values for their
+// different reporting histories.
 func TestAdvancedSchedulerRuntimeFeedbackSnapshot_RecordsSamplesAndObservedTime(t *testing.T) {
 	stats := NewRuntimeStats(time.Now)
 	ttft := 240
@@ -428,6 +501,10 @@ func TestAdvancedSchedulerRuntimeFeedbackSnapshot_RecordsSamplesAndObservedTime(
 	require.InDelta(t, 240, snapshot.TTFT, 0.000001)
 }
 
+// TestOpenAIProviderRuntimeStats_ReportAndSnapshot reports success followed by
+// two latency-bearing failures for one provider. It checks the expected error
+// and latency EWMAs, positive latency presence, and one retained provider
+// statistic.
 func TestOpenAIProviderRuntimeStats_ReportAndSnapshot(t *testing.T) {
 	stats := NewRuntimeStats(time.Now)
 	stats.Report(1001, true, nil)
@@ -443,9 +520,17 @@ func TestOpenAIProviderRuntimeStats_ReportAndSnapshot(t *testing.T) {
 	require.Equal(t, 1, stats.Size())
 }
 
+// TestOpenAIProviderRuntimeStats_ReportConcurrent dispatches concurrent
+// reports across four provider IDs and joins all workers. It checks retained
+// provider count, bounded error fractions, and positive observed latency,
+// protecting concurrent update results without asserting a coherent snapshot
+// tuple.
 func TestOpenAIProviderRuntimeStats_ReportConcurrent(t *testing.T) {
 	stats := NewRuntimeStats(time.Now)
 
+	// Use several workers on the same small provider set so reports contend on
+	// shared atomic records rather than creating an independent record per
+	// worker.
 	const (
 		providerCount = 4
 		workers       = 16
@@ -454,6 +539,9 @@ func TestOpenAIProviderRuntimeStats_ReportConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for worker := range workers {
+		// Worker reports can compete on the same provider's atomic values. Join
+		// every worker before inspecting the final samples so assertions observe
+		// completed update work.
 		go func() {
 			defer wg.Done()
 			for i := range iterations {
@@ -476,12 +564,18 @@ func TestOpenAIProviderRuntimeStats_ReportConcurrent(t *testing.T) {
 	}
 }
 
+// TestClamp01_AllBranches supplies finite values below zero, inside the unit
+// interval, and above one. It checks both endpoint clamps and the retained
+// middle value for those inputs.
 func TestClamp01_AllBranches(t *testing.T) {
 	require.Equal(t, 0.0, Clamp01(-0.2))
 	require.Equal(t, 1.0, Clamp01(1.3))
 	require.Equal(t, 0.5, Clamp01(0.5))
 }
 
+// TestCalcLoadSkewByMoments_Branches supplies one-sample, deliberately
+// negative-variance, and ordinary moments. It checks zero recovery for the
+// first cases and a nonnegative result for the multi-sample calculation.
 func TestCalcLoadSkewByMoments_Branches(t *testing.T) {
 	require.Equal(t, 0.0, LoadSkewByMoments(1, 1, 1))
 	// A negative sumSquares/count - mean^2 is clamped to zero before taking the square root.

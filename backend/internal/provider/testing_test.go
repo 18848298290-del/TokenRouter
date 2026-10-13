@@ -11,28 +11,66 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Administrator test input can select an explicit kind or leave it for
+// inference, and legacy mode/type arguments can arrive in two orders. The
+// normalization tables keep the selected mode, kind, and presence flag
+// observable together. Provider metadata then decides which prepared request
+// reaches execution, including Jev decision input and Gemini image handling.
+//
+// A target can ignore the first sink failure and return nil. The fixture makes
+// two emission attempts while recording only the first, so the public service
+// has to expose output failure and cancel the context. Background fixtures use
+// invalid UTF-8, unencodable event data, and a later empty error to observe wire
+// normalization and final status. A controlled clock checks stored latency
+// independently of elapsed test runtime.
+
+// testLoaderStub records one service invocation and supplies configured test
+// loading outcomes.
 type testLoaderStub struct {
-	target  TestTarget
-	err     error
-	loads   int
+	// target and err are returned together after recording the load. Tests
+	// configure them before synchronous use, supplying a usable target for
+	// successful loading.
+	target TestTarget // configured provider test target
+	err    error      // injected target loading error
+	loads  int        // synchronous target load count
+	// request records the loader input by value. Its Type pointer and SystemOne
+	// bytes stay shared with that invocation and remain stable during the test.
 	request TestRequest
 }
 
+// testTargetStub exposes fixture metadata and a callback for prepared test
+// execution.
 type testTargetStub struct {
+	// info is returned by value for eligibility checks. Nested protocol slices and
+	// optional snapshot pointers remain shared and stable during the fixture
+	// invocation.
 	info TestTargetInfo
-	run  func(context.Context, PreparedTestRequest, TestEventSink) error
+	// run is required on the execution path and receives the supplied context,
+	// prepared request, and guard directly. Tests use it to observe dispatch and
+	// output.
+	run func(context.Context, PreparedTestRequest, TestEventSink) error
 }
 
+// testSinkStub records synchronous preparation and events while injecting output
+// failures.
 type testSinkStub struct {
+	// emitted keeps event values from synchronous writes. Mutable Data values are
+	// still borrowed from the producer and remain stable until fixture assertions
+	// finish.
 	emitted []TestEvent
-	begin   int
-	err     error
+	begin   int // synchronous preparation call count
+	// err is configured before use and returned after recording each write. The
+	// guard decides whether later operations may reach this fixture again.
+	err error
 }
 
+// TestNormalizeProviderTestMode supplies omitted, padded, uppercase, known, and
+// unknown mode strings. It verifies the recognized compact spellings survive
+// normalization and absent or unknown choices select default mode.
 func TestNormalizeProviderTestMode(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		input string // supplied mode argument text
+		want  string // expected normalized mode value
 	}{
 		{input: "", want: ProviderTestModeDefault},
 		{input: "default", want: ProviderTestModeDefault},
@@ -49,7 +87,9 @@ func TestNormalizeProviderTestMode(t *testing.T) {
 	}
 }
 
-// TestDecisionTestingRequiresJev checks that Jev receives structured decision input and other platforms reject it.
+// TestDecisionTestingRequiresJev sends a structured explicit decision request to
+// Jev and OpenAI metadata. It verifies Jev receives the selected family, kind
+// and original payload, while OpenAI rejects the request before execution.
 func TestDecisionTestingRequiresJev(t *testing.T) {
 	for _, platform := range []string{PlatformJev, PlatformOpenAI} {
 		t.Run(platform, func(t *testing.T) {
@@ -75,14 +115,20 @@ func TestDecisionTestingRequiresJev(t *testing.T) {
 	}
 }
 
+// TestResolveProviderTestModeAndType supplies explicit kinds, an omitted kind, a
+// mode alias, and reversed arguments. It verifies the complete
+// mode/type/presence triple, including empty kind for legacy compact inference.
 func TestResolveProviderTestModeAndType(t *testing.T) {
 	tests := []struct {
-		name      string
-		mode      string
-		testTypes []string
-		wantMode  string
-		wantType  string
-		explicit  bool
+		name      string   // normalization scenario display name
+		mode      string   // supplied mode slot argument
+		testTypes []string // supplied kind slot arguments
+		// wantMode, wantType, and explicit describe one expected normalized choice.
+		// The omitted-kind row keeps an empty wantType with false so inference stays
+		// observable.
+		wantMode string // expected normalized execution mode
+		wantType string // expected normalized test kind
+		explicit bool   // expected kind presence flag
 	}{
 		{name: "explicit image", mode: "default", testTypes: []string{"image"}, wantMode: ProviderTestModeDefault, wantType: ProviderTestTypeImage, explicit: true},
 		{name: "explicit text", mode: "default", testTypes: []string{"text"}, wantMode: ProviderTestModeDefault, wantType: ProviderTestTypeText, explicit: true},
@@ -101,27 +147,44 @@ func TestResolveProviderTestModeAndType(t *testing.T) {
 	}
 }
 
+// LoadTestTarget counts loading, records the original request, and returns the
+// configured target and error. The request copy retains its Type pointer and
+// SystemOne storage, which the synchronous fixture caller keeps stable.
 func (l *testLoaderStub) LoadTestTarget(_ context.Context, request TestRequest) (TestTarget, error) {
 	l.loads++
 	l.request = request
 	return l.target, l.err
 }
 
+// Information returns the configured provider metadata by value for eligibility
+// checks. Its nested protocol slice and optional pointers remain fixture-owned,
+// so callers keep them stable during the synchronous test.
 func (t testTargetStub) Information() TestTargetInfo { return t.info }
 
+// Execute calls the configured fixture callback and forwards its result. Tests
+// supply a usable callback before execution; the context, prepared request, and
+// sink reach it directly for dispatch and cancellation assertions.
 func (t testTargetStub) Execute(ctx context.Context, request PreparedTestRequest, sink TestEventSink) error {
 	return t.run(ctx, request, sink)
 }
 
+// Begin counts a synchronous preparation call and returns the injected write
+// error. The context and commit flag are unused; validation tests inspect begin
+// to verify rejection before stream preparation occurs.
 func (s *testSinkStub) Begin(context.Context, bool) error { s.begin++; return s.err }
 
+// Emit appends a synchronous event and returns the injected output error. Event
+// values are retained directly, so any mutable payload remains producer-owned
+// and stable until this fixture has finished its assertions.
 func (s *testSinkStub) Emit(_ context.Context, event TestEvent) error {
 	s.emitted = append(s.emitted, event)
 	return s.err
 }
 
-// TestTestingValidatesBeforeLoadAndPreservesMissingProvider checks early protocol validation and sanitized
-// load errors.
+// TestTestingValidatesBeforeLoadAndPreservesMissingProvider supplies padded
+// invalid protocol syntax and a private loading error. It verifies syntax fails
+// before loading or preparation and loading failure emits the sanitized Provider
+// not found message.
 func TestTestingValidatesBeforeLoadAndPreservesMissingProvider(t *testing.T) {
 	loader := &testLoaderStub{err: errors.New("private database error")}
 	svc := NewTestService(loader, TestOptions{})
@@ -134,8 +197,9 @@ func TestTestingValidatesBeforeLoadAndPreservesMissingProvider(t *testing.T) {
 	require.Equal(t, "Provider not found", sink.emitted[1].Error)
 }
 
-// TestTestingDispatchesExplicitImageWithoutDuplicateLoad checks that image type overrides Compact with one
-// provider load.
+// TestTestingDispatchesExplicitImageWithoutDuplicateLoad requests an image with
+// compact mode from Gemini metadata. It verifies one load, Gemini routing,
+// default prepared mode, and the explicit-kind flag.
 func TestTestingDispatchesExplicitImageWithoutDuplicateLoad(t *testing.T) {
 	var got PreparedTestRequest
 	loader := &testLoaderStub{target: testTargetStub{info: TestTargetInfo{ProviderSnapshot: ProviderSnapshot{Platform: PlatformGemini, Type: ProviderTypeAPIKey}}, run: func(_ context.Context, req PreparedTestRequest, _ TestEventSink) error { got = req; return nil }}}
@@ -148,8 +212,10 @@ func TestTestingDispatchesExplicitImageWithoutDuplicateLoad(t *testing.T) {
 	require.True(t, got.ExplicitType)
 }
 
-// TestTestingCancelsExecutionOnFirstWriteFailure checks cancellation and error reuse when an executor ignores
-// a write failure.
+// TestTestingCancelsExecutionOnFirstWriteFailure has a target emit twice and
+// return nil after its first write fails. It verifies immediate context
+// cancellation, errors.Is matching for both attempts and the public result,
+// and one invocation of the underlying sink.
 func TestTestingCancelsExecutionOnFirstWriteFailure(t *testing.T) {
 	failed := errors.New("sink failed")
 	sink := &testSinkStub{err: failed}
@@ -157,18 +223,25 @@ func TestTestingCancelsExecutionOnFirstWriteFailure(t *testing.T) {
 		require.ErrorIs(t, out.Emit(ctx, TestEvent{Type: "content", Text: "one"}), failed)
 		require.ErrorIs(t, ctx.Err(), context.Canceled)
 		require.ErrorIs(t, out.Emit(ctx, TestEvent{Type: "content", Text: "two"}), failed)
+		// Return nil from the fixture target after its write failure so Test must
+		// surface the guard error even when execution omits it.
 		return nil
 	}}}
 	require.ErrorIs(t, NewTestService(loader, TestOptions{}).Test(context.Background(), TestRequest{}, sink), failed)
 	require.Len(t, sink.emitted, 1)
 }
 
-// TestTestingBackgroundPreservesWireTextAndClock checks UTF-8 normalization, dropped unencodable events, and
-// the last error.
+// TestTestingBackgroundPreservesWireTextAndClock emits invalid UTF-8,
+// unencodable content data, an image, and an error followed by empty error text.
+// It verifies normalized retained text, successful final status, half-second
+// latency, and automatic/user-agent forwarding.
 func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 	start := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	clockCalls := 0
 	loader := &testLoaderStub{target: testTargetStub{info: TestTargetInfo{}, run: func(ctx context.Context, _ PreparedTestRequest, sink TestEventSink) error {
+		// A channel in Data makes the entire content event unencodable. Combine it
+		// with a later empty error so collection can be checked independently from
+		// execution failure.
 		for _, event := range []TestEvent{
 			{Type: "content", Text: "a\xff"},
 			{Type: "content", Text: "ignored", Data: make(chan int)},
@@ -180,6 +253,8 @@ func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 		}
 		return nil
 	}}}
+	// Advance the injected clock by half a second per reading to verify latency
+	// uses the surrounding clock samples rather than elapsed test runtime.
 	svc := NewTestService(loader, TestOptions{Now: func() time.Time {
 		at := start.Add(time.Duration(clockCalls) * 500 * time.Millisecond)
 		clockCalls++
@@ -196,14 +271,16 @@ func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 	require.Equal(t, "probe/1.0", loader.request.UserAgent)
 }
 
-// TestTestingRejectsProtocolOutsideProviderCapability checks text protocol restrictions and separate image
-// eligibility.
+// TestTestingRejectsProtocolOutsideProviderCapability supplies OpenAI and CN
+// text protocol choices with differing eligibility. It verifies execution agrees
+// with each expected decision and a Gemini image accepts a known explicit
+// protocol.
 func TestTestingRejectsProtocolOutsideProviderCapability(t *testing.T) {
 	cases := []struct {
-		name     string
-		snapshot ProviderSnapshot
-		protocol string
-		allowed  bool
+		name     string           // protocol scenario display name
+		snapshot ProviderSnapshot // supplied provider eligibility metadata
+		protocol string           // requested administrator protocol spelling
+		allowed  bool             // expected request execution admission
 	}{
 		{"OpenAI API Key 可选 Chat", ProviderSnapshot{Platform: PlatformOpenAI, Type: ProviderTypeAPIKey}, APIProtocolChatCompletions, true},
 		{"OpenAI API Key 不支持 Messages", ProviderSnapshot{Platform: PlatformOpenAI, Type: ProviderTypeAPIKey}, APIProtocolAnthropic, false},
