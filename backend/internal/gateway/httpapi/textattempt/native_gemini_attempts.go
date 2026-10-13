@@ -37,23 +37,22 @@ import (
 // funding and usage, but that optional cache write failure does not suppress
 // the usage submission.
 
-// nativeGeminiAttemptBridge adapts Gemini-native requests with Google error output and Gemini wait handling.
+// nativeGeminiAttemptBridge adapts Gemini-native requests with Google error
+// output and Gemini wait handling.
 type nativeGeminiAttemptBridge struct {
 	messageAttemptBridge // embedded admitted native request state
-	// modelName is the mapped native model; action is the requested Google method
-	// name.
+	// modelName is the mapped native model; action is the requested Google
+	// method name.
 	modelName, action string
-	// native client streaming intent
-	stream bool
+	stream            bool // native client streaming intent
 	// native HTTP capacity helper
 	geminiConcurrency *gatewayhttp.ConcurrencyHelper
-	// digest affinity persistence enabled
-	useDigestFallback bool
-	// geminiDigestChain stores the current digest chain; geminiPrefixHash stores
-	// its transcript prefix hash; geminiSessionUUID is the session identifier;
-	// matchedDigestChain names the previously matched chain. Complete saves these
-	// together when useDigestFallback is true and the current chain and prefix
-	// hash are nonempty.
+	useDigestFallback bool // digest affinity persistence enabled
+	// geminiDigestChain stores the current digest chain; geminiPrefixHash
+	// stores its transcript prefix hash; geminiSessionUUID is the session
+	// identifier; matchedDigestChain names the previously matched chain.
+	// Complete saves these together when useDigestFallback is true and the
+	// current chain and prefix hash are nonempty.
 	geminiDigestChain, geminiPrefixHash, geminiSessionUUID, matchedDigestChain string
 	// admitted group pricing mapping
 	groupMapping routing.GroupMappingResult
@@ -72,8 +71,9 @@ type nativeGeminiAttemptBridge struct {
 // fingerprints read that retained result. This state belongs to one serial
 // request, and callers acquire capacity before platform execution.
 func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
-	// Selection receives the client name because shared scheduling owns group
-	// mapping; this native path passes zero for the Anthropic-specific session limit.
+	// Selection receives the client name because shared scheduling owns
+	// group mapping; this native path passes zero for the
+	// Anthropic-specific session limit.
 	var err error
 	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini does not apply the Anthropic session limit.
 	if err != nil {
@@ -83,8 +83,8 @@ func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflo
 	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
 	change := b.signatureState.Select(b.provider.Record.ID, b.sessionKey != "", b.body)
 	// Clean retained native signatures before another provider receives the
-	// history, using the state's missing-owner flag to distinguish that diagnostic
-	// from a known provider switch.
+	// history, using the state's missing-owner flag to distinguish that
+	// diagnostic from a known provider switch.
 	if change.Clean {
 		if change.Missing {
 			b.reqLog.Info("gemini.sticky_session_binding_missing", zap.Bool("clean_thought_signature", true))
@@ -127,8 +127,9 @@ func (b *nativeGeminiAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 // locally cleared flag prevents repeated success cleanup from removing another
 // entry.
 func (b *nativeGeminiAttemptBridge) Acquire() bool {
-	// Adopt active selection capacity before registering wait ownership; waiting
-	// replaces the release callback only after its provider slot is actually obtained.
+	// Adopt active selection capacity before registering wait ownership;
+	// waiting replaces the release callback only after its provider slot is
+	// actually obtained.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -139,9 +140,9 @@ func (b *nativeGeminiAttemptBridge) Acquire() bool {
 		providerWaitCounted := false
 		waitEntry, err := b.geminiConcurrency.EnterProviderWait(b.c.Request.Context(), b.provider.Record.ID, b.selection.WaitPlan.MaxWaiting)
 		canWait := waitEntry.Allowed
-		// An error entering wait registration leaves no acquired entry; log it and
-		// proceed to the bounded provider acquisition path, which retains its own
-		// error handling.
+		// An error entering wait registration leaves no acquired entry;
+		// log it and proceed to the bounded provider acquisition path,
+		// which retains its own error handling.
 		if err != nil {
 			b.reqLog.Warn("gemini.provider_wait_counter_increment_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		} else if !canWait {
@@ -155,9 +156,9 @@ func (b *nativeGeminiAttemptBridge) Acquire() bool {
 		if err == nil && canWait {
 			providerWaitCounted = true
 		}
-		// Waiting failure and cancellation still release an allowed registration.
-		// WaitResult skips uncertain increments, and the success path clears this
-		// local flag after early cleanup.
+		// Waiting failure and cancellation still release an allowed
+		// registration. WaitResult skips uncertain increments, and the
+		// success path clears this local flag after early cleanup.
 		defer func() {
 			if providerWaitCounted {
 				waitEntry.Release()
@@ -177,22 +178,23 @@ func (b *nativeGeminiAttemptBridge) Acquire() bool {
 			gatewayhttp.WriteGoogleError(b.c, http.StatusTooManyRequests, err.Error())
 			return false
 		}
-		// Remove allowed wait ownership before publishing stickiness so the selected
-		// active request no longer occupies a confirmed queue entry during that cache
-		// write.
+		// Remove allowed wait ownership before publishing stickiness so
+		// the selected active request no longer occupies a confirmed
+		// queue entry during that cache write.
 		if providerWaitCounted {
 			waitEntry.Release()
 			providerWaitCounted = false
 		}
-		// Sticky persistence failure leaves the acquired slot available to this
-		// attempt; keep the warning while returning ownership with its
-		// cancellation-safe release.
+		// Sticky persistence failure leaves the acquired slot available
+		// to this attempt; keep the warning while returning ownership
+		// with its cancellation-safe release.
 		if err := b.binding().bindSticky(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.provider.Record.ID); err != nil {
 			b.reqLog.Warn("gemini.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
 	// Wrap active provider ownership for cancellation as well as forwarding
-	// return, sharing one release when request teardown and completion overlap.
+	// return, sharing one release when request teardown and completion
+	// overlap.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
@@ -219,7 +221,8 @@ func (b *nativeGeminiAttemptBridge) Forward(state textflow.AttemptState) textflo
 	if state.SwitchCount > 0 {
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
-	// Token counting is handled by the platform executor; each generation attempt checks pricing again.
+	// Token counting is handled by the platform executor; each generation
+	// attempt checks pricing again.
 	if b.action == "generateContent" || b.action == "streamGenerateContent" {
 		err := gatewayhttp.CheckTextModelPricing(
 			requestCtx, b.binding().pricing, b.apiKey, b.provider,
@@ -287,8 +290,9 @@ func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 	userAgent := b.c.GetHeader("User-Agent")
 	clientIP := clientip.GetClientIP(b.c)
 
-	// Save qualifying digest affinity before usage capture so later requests can
-	// match this provider history; cache failure remains diagnostic and recording proceeds.
+	// Save qualifying digest affinity before usage capture so later
+	// requests can match this provider history; cache failure remains
+	// diagnostic and recording proceeds.
 	if b.useDigestFallback && b.geminiDigestChain != "" && b.geminiPrefixHash != "" {
 		if err := b.binding().saveGeminiSession(
 			b.c.Request.Context(),
@@ -307,12 +311,14 @@ func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
 	inboundEndpoint := gatewayhttp.GetInboundEndpoint(b.c)
 	upstreamEndpoint := gatewayhttp.GetUpstreamEndpoint(b.c, b.provider.Record.Platform)
-	// Capture the cache-billing flag by value so completion does not retain the failover body.
+	// Capture the cache-billing flag by value so completion does not retain
+	// the failover body.
 	forceCacheBilling := state.ForceCacheBilling
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
-	// Capture admitted funding, usage and request attribution before submission,
-	// letting the recorder run after Gin and provider attempt state have moved on.
+	// Capture admitted funding, usage and request attribution before
+	// submission, letting the recorder run after Gin and provider attempt
+	// state have moved on.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -333,7 +339,8 @@ func (b *nativeGeminiAttemptBridge) Complete(state textflow.AttemptState) {
 	})
 	completionRuntime := b.binding().recorder
 	b.binding().submitUsageRecordTask(b.c, func(ctx context.Context) {
-		// Shared billing applies catalogue long-context tiers and the group's pricing settings.
+		// Shared billing applies catalogue long-context tiers and the
+		// group's pricing settings.
 		if err := completionRuntime.Record(ctx, completionInput, false); err != nil {
 			logging.L().With(
 				zap.String("component", "handler.gemini_v1beta.models"),

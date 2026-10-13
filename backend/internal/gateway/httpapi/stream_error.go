@@ -22,8 +22,9 @@ type ResponsesFailedError struct {
 	Message string `json:"message"` // client-safe failure description text
 }
 
-// ResponsesFailedBody is the response object carried by a failure event.
-// The writer supplies an empty Output slice and CreatedAt for clients that require these fields.
+// ResponsesFailedBody is the response object carried by a failure event. The
+// writer supplies an empty Output slice and CreatedAt for clients that require
+// these fields.
 type ResponsesFailedBody struct {
 	// synthetic response correlation identifier
 	ID        string `json:"id"`
@@ -32,15 +33,16 @@ type ResponsesFailedBody struct {
 	// optional trimmed request model
 	Model  string `json:"model,omitempty"`
 	Status string `json:"status"` // failed response status label
-	// Output is an empty array in WriteResponsesFailedSSE, allowing clients to
-	// read the ordinary response output shape even when generation failed before
-	// content.
+	// Output is an empty array in WriteResponsesFailedSSE, allowing clients
+	// to read the ordinary response output shape even when generation
+	// failed before content.
 	Output []any                `json:"output"`
 	Error  ResponsesFailedError `json:"error"` // terminal client error details
 }
 
-// ResponsesFailedEvent is the top-level JSON object on an SSE data line.
-// It omits sequence_number because this writer does not know the last emitted sequence.
+// ResponsesFailedEvent is the top-level JSON object on an SSE data line. It
+// omits sequence_number because this writer does not know the last emitted
+// sequence.
 type ResponsesFailedEvent struct {
 	Type     string              `json:"type"`     // terminal failure event type
 	Response ResponsesFailedBody `json:"response"` // failed response metadata object
@@ -72,15 +74,17 @@ func WriteResponsesFailedSSE(c *gin.Context, errType, code, message, requestID, 
 			},
 		},
 	})
-	// Attach serialization failure to the request and return handled, preventing
-	// callers from appending a second incompatible envelope to the started stream.
+	// Attach serialization failure to the request and return handled,
+	// preventing callers from appending a second incompatible envelope to
+	// the started stream.
 	if err != nil {
 		_ = c.Error(err)
 		return true
 	}
 
-	// Attach delivery failure and finish this error path; the committed stream
-	// cannot recover by switching to an ordinary JSON status response.
+	// Attach delivery failure and finish this error path; the committed
+	// stream cannot recover by switching to an ordinary JSON status
+	// response.
 	if _, err := fmt.Fprintf(c.Writer, "event: response.failed\ndata: %s\n\n", payload); err != nil {
 		_ = c.Error(err)
 		return true
@@ -97,8 +101,9 @@ func InboundIsResponses(c *gin.Context) bool {
 		return false
 	}
 	p := strings.TrimRight(c.FullPath(), "/")
-	// Unmatched test contexts and early error paths lack a Gin route pattern; use
-	// their URL path to select the same terminal Responses envelope.
+	// Unmatched test contexts and early error paths lack a Gin route
+	// pattern; use their URL path to select the same terminal Responses
+	// envelope.
 	if p == "" && c.Request != nil && c.Request.URL != nil {
 		p = strings.TrimRight(c.Request.URL.Path, "/")
 	}
@@ -142,7 +147,8 @@ func SynthesizeResponseID(requestID string) string {
 	if requestID = strings.TrimSpace(requestID); requestID != "" {
 		return "resp_" + strings.ReplaceAll(requestID, "-", "")
 	}
-	// Generate a response identifier when correlation is absent, retaining the
-	// resp_ shape expected by clients reading terminal Responses events.
+	// Generate a response identifier when correlation is absent, retaining
+	// the resp_ shape expected by clients reading terminal Responses
+	// events.
 	return "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }

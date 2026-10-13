@@ -11,6 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A Responses entry may be incompletely assembled or reach validation after an
+// HTTP response was committed. These cases check diagnostic ordering and client
+// error output so missing dependencies remain observable at either point.
+
+// TestOpenAIMissingResponsesDependencies exercises absent handlers and
+// partially bound services. It checks the handler short circuit, service-name
+// ordering, and empty results when every dependency is present.
 func TestOpenAIMissingResponsesDependencies(t *testing.T) {
 	t.Run("nil_handler", func(t *testing.T) {
 		h := OpenAIDependencies{}
@@ -31,6 +38,9 @@ func TestOpenAIMissingResponsesDependencies(t *testing.T) {
 	})
 }
 
+// TestOpenAIEnsureResponsesDependencies uses unwritten and committed Gin
+// writers. It checks the 503 error body for missing services, retention of
+// committed output, and successful readiness without writing a response.
 func TestOpenAIEnsureResponsesDependencies(t *testing.T) {
 	t.Run("missing_dependencies_returns_503", func(t *testing.T) {
 		w := httptest.NewRecorder()

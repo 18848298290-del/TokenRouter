@@ -12,13 +12,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// OpenCode conversation forwarding trusts the exact HTTPS opencode.ai host for
+// API-key providers. The table compares that accepted target with lookalike
+// hosts, subdomains, HTTP targets, OAuth providers, and missing client values
+// to check which outgoing headers receive a conversation ID.
+
+// TestApplyOpenCodeSessionHeaderTrustBoundary varies target origin, provider
+// type, and caller session text. It checks trimming for the trusted HTTPS
+// API-key case and empty outgoing headers for each rejected fixture.
 func TestApplyOpenCodeSessionHeaderTrustBoundary(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  *gatewayprovider.ExecutionProvider
-		targetURL string
-		incoming  string
-		want      string
+		name      string                             // origin-policy scenario label
+		provider  *gatewayprovider.ExecutionProvider // selected credential-type fixture
+		targetURL string                             // outgoing request target URL
+		incoming  string                             // caller conversation-header value
+		want      string                             // expected outgoing session value
 	}{
 		{
 			name:      "official origin",

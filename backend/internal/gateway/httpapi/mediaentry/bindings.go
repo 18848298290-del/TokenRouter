@@ -39,8 +39,9 @@ import (
 // settings to request adapters.
 type Options struct {
 	MaxSwitches int // allowed provider transition count
-	// ImageKeepalive schedules nonstreaming JSON padding. Nonpositive durations
-	// disable that heartbeat through StartOpenAIImagesJSONKeepalive at the request entry.
+	// ImageKeepalive schedules nonstreaming JSON padding. Nonpositive
+	// durations disable that heartbeat through
+	// StartOpenAIImagesJSONKeepalive at the request entry.
 	ImageKeepalive time.Duration
 }
 
@@ -61,17 +62,17 @@ type PlatformPorts struct {
 	AlphaSearch func(context.Context, *gin.Context, *gatewayadapter.ExecutionProvider, []byte, ...egress.TLSFingerprintRouterMatchResult) (*forward.OpenAIResult, error)
 	// selected-provider Grok Voice execution
 	Voice func(context.Context, *gin.Context, *gatewayadapter.ExecutionProvider, string, []byte, string) (*forward.OpenAIResult, error)
-	// upstream Realtime connection opening
-	// OpenRealtime returns an upstream frame connection after successful
-	// dialing. Its caller transfers that connection into a Realtime lease and
-	// closes it before releasing provider capacity.
+	// upstream Realtime connection opening OpenRealtime returns an upstream
+	// frame connection after successful dialing. Its caller transfers that
+	// connection into a Realtime lease and closes it before releasing
+	// provider capacity.
 	OpenRealtime func(context.Context, *gatewayadapter.ExecutionProvider, string, string) (upstream.FrameConn, error)
 	// upstream Realtime handshake failure policy
 	RealtimeError func(context.Context, *gatewayadapter.ExecutionProvider, int, []byte)
-	// bidirectional Realtime frame exchange
-	// RelayRealtime reports audio observation while exchanging frames. The HTTP
-	// owner retains client and upstream connection cleanup, using accepted
-	// closure status before capturing any completion.
+	// bidirectional Realtime frame exchange RelayRealtime reports audio
+	// observation while exchanging frames. The HTTP owner retains client
+	// and upstream connection cleanup, using accepted closure status before
+	// capturing any completion.
 	RelayRealtime func(context.Context, upstream.FrameConn, upstream.FrameConn) (bool, error)
 	// selected-provider credential resolution callback
 	Credential func(context.Context, *gin.Context, *gatewayadapter.ExecutionProvider) (string, string, error)
@@ -83,43 +84,42 @@ type PlatformPorts struct {
 // Bindings retains application services used by media HTTP factories and
 // request adapters.
 type Bindings struct {
-	// shared attempt and completion services
-	// Common, Platform and Resources retain shared application services. Factories
-	// copy binding values into request adapters while the referenced service owners
-	// remain responsible for usable lifetime through requests and completion recording.
-	Common openaiattempt.Bindings
-	// bound media platform attempt operations
-	Platform PlatformPorts
+	// shared attempt and completion services Common, Platform and Resources
+	// retain shared application services. Factories copy binding values
+	// into request adapters while the referenced service owners remain
+	// responsible for usable lifetime through requests and completion
+	// recording.
+	Common   openaiattempt.Bindings
+	Platform PlatformPorts // bound media platform attempt operations
 	// application-owned HTTP concurrency resources
 	Resources *gatewayhttp.OpenAIHTTPResources
 	// entry dependency availability checks
 	Dependencies gatewayhttp.OpenAIDependencies
-	// retained media request execution settings
-	Options Options
-	// optional API Key quota updater
-	// Quota optionally updates Key usage after recorded completion. Nil leaves
-	// the recorder without this Key-specific updater while other accounting proceeds.
+	Options      Options // retained media request execution settings
+	// optional API Key quota updater Quota optionally updates Key usage
+	// after recorded completion. Nil leaves the recorder without this
+	// Key-specific updater while other accounting proceeds.
 	Quota gatewayadapter.QuotaUpdater
-	// authenticated funding and RPM checker
-	// CheckFunding expects the authenticated Key and resolved subscription. Its
-	// final flag selects funding-only recheck when true and funding plus RPM
-	// policy when false.
+	// authenticated funding and RPM checker CheckFunding expects the
+	// authenticated Key and resolved subscription. Its final flag selects
+	// funding-only recheck when true and funding plus RPM policy when
+	// false.
 	CheckFunding func(context.Context, *apikey.APIKey, *billing.UserSubscription, string, bool) error
 	// current group route planning callback
 	PlanRoute func(context.Context, *apikey.APIKey, string) routing.RoutePlan
-	// explicit session ownership check callback
-	// Isolate is needed when an image request supplies an explicit session hash.
-	// It checks that hash under the authenticated Key and user ownership.
+	// explicit session ownership check callback Isolate is needed when an
+	// image request supplies an explicit session hash. It checks that hash
+	// under the authenticated Key and user ownership.
 	Isolate func(context.Context, *apikey.APIKey, int64, string, string) error
 	// saved video task service accessor
 	// VideoTasks supplies the shared saved-owner and deferred-video-billing
 	// service. Video lookup and accepted creation completion require this
 	// callback and a usable returned service.
 	VideoTasks func() *media.VideoTasks
-	// optional Grok billing eligibility probe
-	// EligibilityProber is optional when cached policy observations determine
-	// eligibility. Missing billing observations require the probe; absent
-	// binding then returns an eligibility reason and error.
+	// optional Grok billing eligibility probe EligibilityProber is optional
+	// when cached policy observations determine eligibility. Missing
+	// billing observations require the probe; absent binding then returns
+	// an eligibility reason and error.
 	EligibilityProber gatewayadapter.GrokMediaEligibilityProber
 }
 
@@ -163,8 +163,9 @@ func (h *Runtime) handleOpenAISessionIsolationError(c *gin.Context, err error, s
 	if err == nil {
 		return false
 	}
-	// Ownership conflicts have a permission response; unavailable isolation checks
-	// use a temporary-service response so explicit sessions do not proceed unchecked.
+	// Ownership conflicts have a permission response; unavailable isolation
+	// checks use a temporary-service response so explicit sessions do not
+	// proceed unchecked.
 	if errors.Is(err, session.ErrSessionIsolationConflict) {
 		gatewayhttp.DefaultOpenAIErrorOutput().StreamError(c, http.StatusForbidden, "permission_error", session.SessionIsolationConflictMessage, started)
 		return true

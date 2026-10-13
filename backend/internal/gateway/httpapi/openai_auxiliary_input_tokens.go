@@ -21,8 +21,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ForwardResponsesInputTokens forwards OpenAI POST /responses/input_tokens.
-// Providers with unsupported counting endpoints use local estimates.
+// Native input_tokens preflight returns the upstream count payload for
+// supported OpenAI targets and estimates locally for selected compatibility
+// targets. Preparation retains the requested model alongside provider mapping,
+// allowing count results and failure policy to refer to the actual upstream
+// model.
+//
+// Local-provider selection and unsupported upstream endpoints produce a
+// successful response.input_tokens estimate, with a minimum for missing or
+// invalid estimates. A generic upstream 404 uses this path, while OAuth scope
+// failures follow the shared compatibility predicate. Other failures apply
+// provider-health and retry policy before writing terminal OpenAI output or
+// returning failover evidence.
+
+// ForwardResponsesInputTokens handles one selected provider's native
+// token-count preflight. Unsupported platforms receive a handled 404. Grok, CN,
+// and configured compatibility targets use local estimation; other targets
+// resolve credentials and send converted counting input through the upstream
+// counter, which owns response-body cleanup.
+//
+// An upstream 404 or recognized OAuth incompatibility becomes a local estimate.
+// Other HTTP failures may return failover evidence without writing output. A
+// nil error can accompany a locally handled result or unsupported response, so
+// this auxiliary call is separate from generation completion eligibility.
 func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 	ctx context.Context,
 	c *gin.Context,
@@ -34,7 +55,9 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		return fmt.Errorf("responses input_tokens: missing provider")
 	}
 
-	// This preflight supports OpenAI, Grok, and CN providers.
+	// Restrict this native count path to the platforms with a prepared
+	// Responses or local-estimate representation; other selections receive
+	// a handled unsupported response.
 	if provider.Record.Platform != "openai" && !provider.View().IsGrok() && !provider.View().IsCNProvider() {
 		writeOpenAIResponsesInputTokensError(c, http.StatusNotFound, "not_found_error", "Responses input token counting is not supported for this provider")
 		return nil
@@ -46,6 +69,9 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		return err
 	}
 
+	// Compatibility target selection can choose local counting before
+	// credentials or network preparation, so a custom relay does not need
+	// an upstream counting endpoint.
 	if gatewayprovider.EstimateInputTokensLocally(provider) {
 		writeOpenAIResponsesInputTokensFallback(c, provider, prepared, 0, "local_provider")
 		return nil
@@ -88,6 +114,10 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		},
 		ReadBody: s.readResponsesInputTokensBody,
 		HTTPError: func(resp *http.Response, respBody []byte) error {
+			// Native preflight treats any 404 as endpoint
+			// incompatibility. OAuth scope evidence uses the same
+			// local-estimate path before ordinary health or
+			// failover policy.
 			if resp.StatusCode == http.StatusNotFound || (provider.Record.Type == capability.ProviderTypeOAuth && isOpenAIOAuthInputTokensUnsupported(resp.StatusCode, respBody)) {
 				writeOpenAIResponsesInputTokensFallback(c, provider, prepared, resp.StatusCode, "upstream_unsupported")
 				return nil
@@ -98,7 +128,15 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 	}, ResponseSink{Writer: c.Writer})
 }
 
+// writeOpenAIResponsesInputTokensFallback writes the native shape of a local
+// count estimate. Missing prepared input, estimator errors, and nonpositive
+// results use the minimum. Provider and model logging tolerate absent metadata;
+// the response includes object response.input_tokens and the selected positive
+// count.
 func writeOpenAIResponsesInputTokensFallback(c *gin.Context, provider *gatewayprovider.ExecutionProvider, prepared *gatewayprovider.InputTokensPrepared, statusCode int, reason string) {
+	// Missing or unusable prepared input cannot provide a positive count.
+	// Keep the compatibility minimum unless estimation succeeds with a
+	// positive token count.
 	estimated := openAIInputTokensFallbackMinimum
 	if prepared != nil {
 		if got, err := tokenestimate.Responses(prepared.Request); err == nil && got > 0 {
@@ -126,11 +164,20 @@ func writeOpenAIResponsesInputTokensFallback(c *gin.Context, provider *gatewaypr
 	})
 }
 
+// writeOpenAIResponsesInputTokensError writes native preflight failures with
+// OpenAI error framing.
 func writeOpenAIResponsesInputTokensError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message}})
 }
 
+// readResponsesInputTokensBody returns nonempty bytes captured by the shared
+// error-body reader. That reader applies its byte limit and discards read
+// errors, so returned bytes can be partial. An empty capture becomes a counting
+// read error.
 func (s *OpenAIAuxiliary) readResponsesInputTokensBody(resp *http.Response) ([]byte, error) {
+	// The shared reader can return partial bytes after a read error or size
+	// limit; this adapter rejects empty captures and leaves numeric-count
+	// validation upstream.
 	body := s.Output.ReadErrorBody(resp)
 	if len(body) == 0 {
 		return nil, fmt.Errorf("responses input_tokens: empty upstream response")
@@ -138,6 +185,11 @@ func (s *OpenAIAuxiliary) readResponsesInputTokensBody(resp *http.Response) ([]b
 	return body, nil
 }
 
+// handleResponsesInputTokensUpstreamError applies health and retry policy to a
+// captured count failure. Callers pass prepared input and response metadata
+// after compatibility recovery has been ruled out. Generic-policy decisions
+// write a 500; retry decisions return captured body/header evidence, and
+// remaining failures write safe client-facing output.
 func (s *OpenAIAuxiliary) handleResponsesInputTokensUpstreamError(
 	ctx context.Context,
 	c *gin.Context,
@@ -161,6 +213,9 @@ func (s *OpenAIAuxiliary) handleResponsesInputTokensUpstreamError(
 	if provider.Record.Platform == capability.PlatformGrok {
 		defaultFailover = gatewayprovider.ShouldFailoverGrokResponse(resp.StatusCode, body)
 	}
+	// Return retry classification with captured response evidence before
+	// writing a client error, keeping the preflight loop's provider-switch
+	// opportunity available for this failure.
 	if decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode, defaultFailover) {
 		return &forwardcore.UpstreamFailoverError{
 			StatusCode:              resp.StatusCode,

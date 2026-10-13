@@ -29,23 +29,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-type countTokensRuntimeStateRepo struct {
-	gatewayprovider.ExecutionProviderStore
+// Compatibility counting can query the official Responses endpoint or return
+// local estimates for platform and scope limitations. The fixtures compare
+// converted request fields, client count framing, and provider-health writes;
+// an optional credentialed comparison checks estimator error against actual
+// count responses.
 
-	tempUnschedCalls int
-	setErrorCalls    int
+// countTokensRuntimeStateRepo records health mutations attempted during
+// token-count execution.
+type countTokensRuntimeStateRepo struct {
+	gatewayprovider.ExecutionProviderStore // unused embedded repository methods
+
+	tempUnschedCalls int // temporary exclusion write count
+	setErrorCalls    int // persistent provider-error write count
 }
 
+// SetTempUnschedulable counts attempted temporary scheduling exclusions in the
+// fixture.
 func (r *countTokensRuntimeStateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.tempUnschedCalls++
 	return nil
 }
 
+// SetError counts attempted persistent provider-error writes in the counting
+// fixture.
 func (r *countTokensRuntimeStateRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesInputTokens
+// converts Messages input for an API-key count target. It checks Anthropic
+// count framing, authentication, mapped model, Responses input, and absence of
+// Messages fields.
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesInputTokens(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -91,13 +107,17 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 }
 
+// TestOpenAIGatewayServiceForwardCountTokensCNProvidersAlwaysEstimateLocally
+// varies CN platform, provider mode, and configured protocol. It checks
+// positive local counts, absent upstream requests, and zero temporary or
+// persistent health writes.
 func TestOpenAIGatewayServiceForwardCountTokensCNProvidersAlwaysEstimateLocally(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}]}`)
 	tests := []struct {
-		name     string
-		platform string
-		mode     string
-		protocol string
+		name     string // counting test scenario label
+		platform string // selected CN provider platform
+		mode     string // configured provider billing mode
+		protocol string // configured upstream protocol kind
 	}{
 		{name: "kimi_payg_chat", platform: capability.PlatformKimi, mode: providercore.ProviderModePayG, protocol: providercore.APIProtocolChatCompletions},
 		{name: "kimi_coding_anthropic", platform: capability.PlatformKimi, mode: providercore.ProviderModeCoding, protocol: providercore.APIProtocolAnthropic},
@@ -142,6 +162,10 @@ func TestOpenAIGatewayServiceForwardCountTokensCNProvidersAlwaysEstimateLocally(
 	}
 }
 
+// TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPlatformEndpointUnsupported
+// returns scope, HTML, and absent-endpoint errors from OAuth counting. It
+// checks the local Responses estimate, official count target, bearer
+// authentication, and zero temporary-exclusion and persistent-error writes.
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPlatformEndpointUnsupported(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-1","messages":[{"role":"user","content":"hello"}]}`)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -166,9 +190,9 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPl
 	require.NoError(t, err)
 
 	cases := []struct {
-		name       string
-		statusCode int
-		body       string
+		name       string // counting test scenario label
+		statusCode int    // upstream counting HTTP status
+		body       string // upstream counting error body
 	}{
 		{
 			name:       "401_missing_responses_write_scope",
@@ -225,6 +249,10 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPl
 	}
 }
 
+// TestOpenAIGatewayService_OpenAIOAuthInputTokensFallbackUsesMinimumWhenEstimateFails
+// supplies malformed prepared Responses input. It checks the compatibility
+// helper writes HTTP 200 with the minimum positive input-token count after
+// estimator failure.
 func TestOpenAIGatewayService_OpenAIOAuthInputTokensFallbackUsesMinimumWhenEstimateFails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -242,21 +270,27 @@ func TestOpenAIGatewayService_OpenAIOAuthInputTokensFallbackUsesMinimumWhenEstim
 	require.JSONEq(t, `{"input_tokens":1}`, rec.Body.String())
 }
 
+// TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI compares local estimates
+// with credentialed upstream counts for prepared Messages examples. It checks
+// absolute error within the larger of 24 tokens or a quarter of the actual
+// count, skipping unavailable credentials and recognized network failures.
 func TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI(t *testing.T) {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	// Skip obviously incomplete local credentials before attempting the live comparison.
+	// This live comparison requires a plausible credential. Skip short sk-
+	// values before any external request so placeholder configuration does
+	// not trigger authentication traffic.
 	if strings.HasPrefix(apiKey, "sk-") && len(apiKey) < 20 {
 		t.Skip("OPENAI_API_KEY looks incomplete")
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	cases := []struct {
-		name               string
-		anthropicBody      []byte
-		defaultOpenAIModel string
+		name               string // counting test scenario label
+		anthropicBody      []byte // source Messages request bytes
+		defaultOpenAIModel string // mapped OpenAI count model
 	}{
 		{
 			name:               "simple user text",
@@ -286,7 +320,10 @@ func TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI(t *testing.T) {
 
 			actual, err := callOpenAIInputTokensAPIForTest(client, apiKey, prepared.Request)
 			if err != nil {
-				// Skip live comparisons when credentials are rejected or a network error occurs.
+				// Authentication rejection and recognized
+				// network failures make the live reference
+				// unavailable. Skip those cases rather than
+				// treating them as estimator discrepancies.
 				var netErr net.Error
 				if strings.Contains(err.Error(), "status=401") ||
 					strings.Contains(err.Error(), "invalid_api_key") ||
@@ -301,11 +338,19 @@ func TestEstimateOpenAIInputTokens_CompareWithOpenAIAPI(t *testing.T) {
 				diff = -diff
 			}
 			t.Logf("model=%s estimated=%d actual=%d diff=%d", prepared.Request.Model, estimated, actual, diff)
+			// Small examples tolerate 24 tokens; larger counts
+			// allow 25 percent because this estimator comparison
+			// measures approximation rather than protocol field
+			// identity.
 			require.LessOrEqual(t, diff, maxLocalInt(24, actual/4))
 		})
 	}
 }
 
+// callOpenAIInputTokensAPIForTest sends prepared counting input with the
+// supplied client and credential. It closes the response after reading and
+// returns input_tokens when present. HTTP status failures and missing fields
+// return diagnostic errors to the live comparison.
 func callOpenAIInputTokensAPIForTest(client *http.Client, apiKey string, reqBody tokenestimate.Request) (int, error) {
 	body, err := wirejson.Marshal(reqBody)
 	if err != nil {
@@ -340,6 +385,8 @@ func callOpenAIInputTokensAPIForTest(client *http.Client, apiKey string, reqBody
 	return int(value.Int()), nil
 }
 
+// maxLocalInt returns the larger integer for the live-comparison error
+// allowance.
 func maxLocalInt(a, b int) int {
 	if a > b {
 		return a

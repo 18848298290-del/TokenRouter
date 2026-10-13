@@ -40,26 +40,25 @@ type qoderCompatibleAttemptBridge struct {
 	// model: original requested client model
 	hash, model string
 	stream      bool // client stream intent
-	// streamStarted is shared with HTTP waits and failure presentation. Admission
-	// supplies a nonnil pointer that remains valid throughout the serial loop.
-	// shared stream output marker
+	// streamStarted is shared with HTTP waits and failure presentation.
+	// Admission supplies a nonnil pointer that remains valid throughout the
+	// serial loop. shared stream output marker
 	streamStarted *bool
-	// group-mapped attempt input bytes
-	body []byte
-	// request-scoped diagnostic logger
-	log *zap.Logger
+	body          []byte      // group-mapped attempt input bytes
+	log           *zap.Logger // request-scoped diagnostic logger
 	// completion capture and submission callback
 	record func(QoderCompatibleTarget, *forwardcore.MessagesResult)
 	// partial completion and error callback
 	partial func(QoderCompatibleTarget, *forwardcore.MessagesResult, error) bool
-	// selection and provider belong to the current serial attempt. Acquire sets
-	// release and writerSize; Forward stores result, releases the slot, then
-	// reports feedback before the loop decides completion or recovery.
+	// selection and provider belong to the current serial attempt. Acquire
+	// sets release and writerSize; Forward stores result, releases the
+	// slot, then reports feedback before the loop decides completion or
+	// recovery.
 	selection QoderCompatibleSelection    // current provider selection handle
 	provider  QoderCompatibleTarget       // current selected execution target
 	result    *forwardcore.MessagesResult // last forwarding result observations
-	// release follows explicit Forward completion for streams; buffered requests
-	// also share its idempotent cleanup with request cancellation.
+	// release follows explicit Forward completion for streams; buffered
+	// requests also share its idempotent cleanup with request cancellation.
 	release    func() // current wrapped slot cleanup
 	writerSize int    // attempt response byte baseline
 }
@@ -107,8 +106,9 @@ func (b *qoderCompatibleAttemptBridge) SelectionFailed(err error, pending, first
 		b.h.errorResponse(b.c, http.StatusServiceUnavailable, "api_error", "No available providers: "+err.Error(), b.endpoint)
 		return
 	}
-	// This loop passes its last ordinary error directly rather than retaining an
-	// Anthropic FailoverState, so exhaustion cannot apply that state’s single-provider backoff.
+	// This loop passes its last ordinary error directly rather than
+	// retaining an Anthropic FailoverState, so exhaustion cannot apply that
+	// state’s single-provider backoff.
 	if b.Context().Err() != nil {
 		return
 	}
@@ -132,8 +132,9 @@ func (b *qoderCompatibleAttemptBridge) SelectionFailed(err error, pending, first
 func (b *qoderCompatibleAttemptBridge) Acquire(retry bool) bool {
 	var err error
 	if retry {
-		// Capture before the retry wait so its heartbeat output also blocks another
-		// replay; the initial acquisition instead captures after its admission wait.
+		// Capture before the retry wait so its heartbeat output also
+		// blocks another replay; the initial acquisition instead
+		// captures after its admission wait.
 		b.writerSize = b.c.Writer.Size()
 		b.release, err = b.h.acquireQoderRetryProviderSlot(b.c, qoderTargetSnapshot(b.provider), b.selection, b.stream, b.streamStarted)
 	} else {
@@ -184,8 +185,9 @@ func (b *qoderCompatibleAttemptBridge) Forward() textflow.QoderCompatibleOutcome
 	default:
 		b.result, err = b.provider.Forward(b.Context(), b.c, b.body, protocol.ProtocolAnthropicMessages, b.model)
 	}
-	// Finish this slot before reporting outcome so refresh or provider selection
-	// cannot retain the prior attempt’s occupied resource during recovery.
+	// Finish this slot before reporting outcome so refresh or provider
+	// selection cannot retain the prior attempt’s occupied resource during
+	// recovery.
 	if b.release != nil {
 		b.release()
 		b.release = nil
@@ -199,8 +201,9 @@ func (b *qoderCompatibleAttemptBridge) Forward() textflow.QoderCompatibleOutcome
 // in-progress recovery returns Pending, and other failures produce neither
 // ready nor pending.
 func (b *qoderCompatibleAttemptBridge) Refresh() textflow.QoderRefreshResult {
-	// Recovery becomes usable only with a returned target and nil error; pending
-	// or failed refresh must not authorize retrying the retained old credentials.
+	// Recovery becomes usable only with a returned target and nil error;
+	// pending or failed refresh must not authorize retrying the retained
+	// old credentials.
 	provider, err := b.h.refreshQoderProvider(b.Context(), b.provider)
 	if err == nil && provider != nil {
 		b.log.Info("qoder.provider_refreshed_after_auth_error", zap.Int64("provider_id", b.provider.Snapshot().ID))

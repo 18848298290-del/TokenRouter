@@ -12,6 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Image requests contend for a process-local limit before upstream execution.
+// A one-slot fixture keeps its first acquisition active while making a second
+// request, checking that saturation produces the OpenAI rate-limit response.
+
+// TestOpenAIGatewayHandlerAcquireImageGenerationSlot_Returns429WhenFull holds
+// the only image slot while attempting another acquisition. It checks the
+// rejected release callback, HTTP 429, error type, and client-visible
+// concurrency message.
 func TestOpenAIGatewayHandlerAcquireImageGenerationSlot_Returns429WhenFull(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

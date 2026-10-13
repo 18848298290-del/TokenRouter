@@ -16,12 +16,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Responses builders resolve the selected provider's protocol target before
+// adding credentials and caller metadata. Ordinary and passthrough requests
+// share dynamic identity, session, and header callbacks; the upstream builders
+// apply them in order, while this adapter applies model attributes and native
+// CN normalization.
+
+// Target supplies deferred Responses URL selection for the current execution
+// provider. OAuth and eligible setup-token providers choose Codex; API-key
+// providers use a validated protocol base. Passthrough affects setup-token
+// eligibility, and every resolved target receives the validated inbound
+// Responses path suffix.
 func (s *OpenAIRequests) Target(c *gin.Context, a *gatewayprovider.ExecutionProvider, passthrough bool) forward.RequestTargetOptions {
 	oauth := a.Record.Type == capability.ProviderTypeOAuth || a.Record.Type == capability.ProviderTypeSetupToken && (!passthrough || a.View().IsOpenAIOAuthLike())
 	return forward.RequestTargetOptions{
 		OAuthTarget: oauth, APIKey: a.Record.Type == capability.ProviderTypeAPIKey, DefaultURL: OpenaiPlatformAPIURL, CodexURL: ChatgptCodexURL,
 		BaseURL: func() string {
 			base := gatewayprovider.ExecutionProtocolTarget(a).GetOpenAIBaseURL()
+			// Native CN Responses use their protocol-specific base
+			// when unified or adaptive routing is configured, so
+			// generic OpenAI addressing cannot mask it.
 			if _, unified := a.Record.Credentials[provider.UpstreamProtocolsKey]; gatewayprovider.ExecutionProtocolTarget(a).UsesNativeCNResponses() && (unified || gatewayprovider.ExecutionProtocolTarget(a).IsAdaptiveAPIProtocol()) {
 				base = gatewayprovider.ExecutionProtocolTarget(a).GetCNProtocolBaseURL(provider.APIProtocolResponses)
 			}
@@ -32,6 +46,11 @@ func (s *OpenAIRequests) Target(c *gin.Context, a *gatewayprovider.ExecutionProv
 	}
 }
 
+// ResponseOptions binds synchronous header-building callbacks to this HTTP
+// attempt. Callers keep c, provider, and request services available until the
+// builder finishes. Identity and fingerprint callbacks read the staged attempt
+// state; provider overrides, OpenCode sessions, beta capabilities, and routing
+// diagnostics use their final inputs.
 func (s *OpenAIRequests) ResponseOptions(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, token, targetURL string, isCodexCLI bool, routerMatch ...egress.TLSFingerprintRouterMatchResult) openai.ResponsesRequestOptions {
 	return openai.ResponsesRequestOptions{
 		URL: targetURL, ForwardHeaders: func() http.Header { return c.Request.Header },
@@ -72,7 +91,11 @@ func (s *OpenAIRequests) ResponseOptions(ctx context.Context, c *gin.Context, pr
 	}
 }
 
-// Build passes the execution target and request options to the request builder.
+// Build constructs an ordinary Responses request for the selected provider.
+// Model attribute preparation may fail before target construction. The
+// delegated builder records the selected endpoint, normalizes native CN input,
+// and applies request-specific headers using c and the supplied execution
+// context.
 func (s *OpenAIRequests) Build(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...egress.TLSFingerprintRouterMatchResult) (*http.Request, error) {
 	var err error
 	body, err = s.applyModelAttributes(ctx, provider, body, "openai_responses")
@@ -86,6 +109,11 @@ func (s *OpenAIRequests) Build(ctx context.Context, c *gin.Context, provider *ga
 	})
 }
 
+// BuildPassthrough constructs a Responses request with the passthrough header
+// policy. It applies model attributes and native CN normalization before the
+// upstream builder. Absent inbound request headers become nil; timeout
+// forwarding uses startup permission, and user-agent selection receives
+// passthrough mode for the current provider.
 func (s *OpenAIRequests) BuildPassthrough(
 	ctx context.Context,
 	c *gin.Context,
@@ -103,6 +131,9 @@ func (s *OpenAIRequests) BuildPassthrough(
 		return forward.NormalizeCNResponsesBody(provider != nil && gatewayprovider.ExecutionProtocolTarget(provider).UsesNativeCNResponses(), b)
 	}, func(target string) openai.PassthroughRequestOptions {
 		options := s.ResponseOptions(ctx, c, provider, token, target, false, routerMatch...)
+		// Passthrough can be built without inbound headers; a nil
+		// source leaves authentication and required upstream headers to
+		// the request builder callbacks.
 		options.ForwardHeaders = func() http.Header {
 			if c == nil || c.Request == nil {
 				return nil
@@ -127,6 +158,10 @@ func (s *OpenAIRequests) BuildPassthrough(
 	})
 }
 
+// isOpenAIPassthroughAllowedRequestHeader reports whether a lowercase header
+// may pass through. Recognized timeout headers follow allowTimeoutHeaders
+// independently of the general allowlist. Empty names are rejected; callers
+// normalize header names before checking.
 func isOpenAIPassthroughAllowedRequestHeader(lowerKey string, allowTimeoutHeaders bool) bool {
 	if lowerKey == "" {
 		return false
@@ -137,6 +172,8 @@ func isOpenAIPassthroughAllowedRequestHeader(lowerKey string, allowTimeoutHeader
 	return openaiPassthroughAllowedHeaders[lowerKey]
 }
 
+// isOpenAIPassthroughTimeoutHeader recognizes the supported lowercase client
+// timeout header names.
 func isOpenAIPassthroughTimeoutHeader(lowerKey string) bool {
 	switch lowerKey {
 	case "x-stainless-timeout", "x-stainless-read-timeout", "x-stainless-connect-timeout", "x-request-timeout", "request-timeout", "grpc-timeout":

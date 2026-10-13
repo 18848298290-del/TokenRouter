@@ -10,14 +10,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// noProviderErrorClassification aliases the shared HTTP selection error type.
+// Provider selection errors distinguish absent model support from temporary
+// pool capacity using the effective group's diagnosis. HTTP adapters retain the
+// routing model for that lookup and the display model for client messages, then
+// mark model-configuration limitations separately from routing-capacity
+// observations.
+
+// noProviderErrorClassification aliases the HTTP selection response and its
+// model-support attribution.
 type noProviderErrorClassification = gatewayhttp.SelectionErrorResponse
 
+// classifySelectionFailureError refines fallback output using scheduler error
+// evidence. It delegates model-not-found precedence and rate-limit recognition
+// to the shared HTTP classifier, returning fallback when the error supplies no
+// stronger classification.
 func classifySelectionFailureError(err error, fallback noProviderErrorClassification) noProviderErrorClassification {
 	return gatewayhttp.RefineSelectionError(err, fallback)
 }
 
-// classifyNoProviderError uses the final key group for diagnostics and HTTP error mapping.
+// classifyNoProviderError diagnoses selection against the effective key's
+// optional group. The routing model controls lookup and displayModel controls
+// client text. Missing key data passes a nil group to the shared classifier's
+// availability defaults.
 func classifyNoProviderError(
 	ctx context.Context,
 	diag routing.ModelAvailabilityDiagnoser,
@@ -33,7 +47,11 @@ func classifyNoProviderError(
 	return gatewayhttp.ClassifySelectionError(ctx, diag, groupID, routingModel, displayModel, platform)
 }
 
-// ClassifyNoProviderErrorFromGin reads the request context from Gin for selection diagnostics.
+// ClassifyNoProviderErrorFromGin diagnoses request selection and publishes
+// local model attribution. It uses the inbound context when available,
+// otherwise background context. Model-not-found results mark the HTTP request
+// as locally limited; the returned classification still remains usable when c
+// is nil.
 func ClassifyNoProviderErrorFromGin(
 	c *gin.Context,
 	diag routing.ModelAvailabilityDiagnoser,
@@ -53,7 +71,10 @@ func ClassifyNoProviderErrorFromGin(
 	return classification
 }
 
-// ClassifyOpenAICompatibleNoProviderErrorFromGin diagnoses group candidates under an optional forced platform.
+// ClassifyOpenAICompatibleNoProviderErrorFromGin diagnoses compatible model
+// availability for the effective key. Its platform argument comes from the
+// shared compatible-request resolver, allowing mixed-group lookup when that
+// resolver supplies an empty filter.
 func ClassifyOpenAICompatibleNoProviderErrorFromGin(
 	c *gin.Context,
 	diag routing.ModelAvailabilityDiagnoser,

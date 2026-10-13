@@ -37,8 +37,8 @@ const InvalidStreamFieldTypeMessage = "invalid stream field type"
 // ParsedRequest retains validated client input and arrival timing for Qoder
 // preparation.
 type ParsedRequest struct {
-	// Body retains the validated request slice for synchronous preparation; this
-	// representation is passed onward without a new body copy here.
+	// Body retains the validated request slice for synchronous preparation;
+	// this representation is passed onward without a new body copy here.
 	Body      []byte    // retained validated JSON body
 	Model     string    // trimmed client requested model
 	Stream    bool      // validated client stream intent
@@ -50,8 +50,8 @@ type ParsedRequest struct {
 type HTTPFailure struct {
 	Status        int    // client HTTP error status
 	Type, Message string // Type: client error category; Message: client error message
-	// RetryAfter adds decimal seconds to the response header only when positive;
-	// zero or negative values leave that header unset here.
+	// RetryAfter adds decimal seconds to the response header only when
+	// positive; zero or negative values leave that header unset here.
 	RetryAfter int // retry delay in seconds
 }
 
@@ -60,32 +60,33 @@ type HTTPFailure struct {
 type QoderChatHandler struct {
 	RequestLifetime // shared application request barrier
 
-	// Executor, PrepareRequest and Observer form the preferred path whenever
-	// Executor exists. Prepare and UseCase supply the legacy path otherwise;
-	// each chosen path requires its request builder and execution service.
+	// Executor, PrepareRequest and Observer form the preferred path
+	// whenever Executor exists. Prepare and UseCase supply the legacy path
+	// otherwise; each chosen path requires its request builder and
+	// execution service.
 	Executor interface {
-		// Execute forwards a prepared request to the supplied output and returns its
-		// observed result and error. The HTTP handler supplies request context and
-		// owns presenting any returned failure that execution has not suppressed.
+		// Execute forwards a prepared request to the supplied output
+		// and returns its observed result and error. The HTTP handler
+		// supplies request context and owns presenting any returned
+		// failure that execution has not suppressed.
 		Execute(context.Context, gateway.Request, upstream.OutputSink) (gateway.ExecutionResult, error)
 	} // preferred request execution service
 	// preferred execution request builder
 	PrepareRequest func(*gin.Context, ParsedRequest) (gateway.Request, error)
-	// Observer is optional on the preferred Executor path; when configured, its
-	// request-specific observation joins the active response sink before
-	// execution.
-	// optional execution observation builder
+	// Observer is optional on the preferred Executor path; when configured,
+	// its request-specific observation joins the active response sink
+	// before execution. optional execution observation builder
 	Observer func(*gin.Context, gateway.Request) gateway.ExecutionObserver
-	// Preflight is optional and runs before body reading; any returned error ends
-	// admission through the handler’s normal failure presentation.
-	// optional before-body admission check
+	// Preflight is optional and runs before body reading; any returned
+	// error ends admission through the handler’s normal failure
+	// presentation. optional before-body admission check
 	Preflight func(*gin.Context) error
-	// legacy request execution service
-	UseCase *gateway.QoderUseCase
+	UseCase   *gateway.QoderUseCase // legacy request execution service
 	// legacy request and ports builder
 	Prepare func(*gin.Context, ParsedRequest) (gateway.Request, gateway.RequestPorts, error)
-	// Failure can return nil to suppress output. Without it, fail preserves a
-	// typed HTTPFailure when present and otherwise uses a generic upstream error.
+	// Failure can return nil to suppress output. Without it, fail preserves
+	// a typed HTTPFailure when present and otherwise uses a generic
+	// upstream error.
 	Failure func(*gin.Context, error) *HTTPFailure
 }
 
@@ -185,15 +186,17 @@ func (h *QoderChatHandler) ChatCompletions(c *gin.Context) {
 // 502 details.
 func (h *QoderChatHandler) fail(c *gin.Context, err error, stream bool) {
 	// An ended request context suppresses this outer error write even for a
-	// classified failure, retaining any output execution already left on the writer.
+	// classified failure, retaining any output execution already left on
+	// the writer.
 	if c.Request.Context().Err() != nil {
 		return
 	}
 	failure := &HTTPFailure{Status: 502, Type: "upstream_error", Message: "Upstream request failed"}
 	if h.Failure != nil {
 		failure = h.Failure(c, err)
-		// A nil presenter result explicitly declines another handler response; honor
-		// that decision rather than replacing it with the generic upstream fallback.
+		// A nil presenter result explicitly declines another handler
+		// response; honor that decision rather than replacing it with
+		// the generic upstream fallback.
 		if failure == nil {
 			return
 		}
@@ -216,16 +219,18 @@ func (h *QoderChatHandler) fail(c *gin.Context, err error, stream bool) {
 // writer; other requests receive the ordinary JSON error with the selected
 // status. The supplied failure remains unchanged for other consumers.
 func (h *QoderChatHandler) writeError(c *gin.Context, f *HTTPFailure, stream bool) {
-	// Model-attribute state changes only this response; copy the failure first
-	// so a presenter-owned value remains reusable without request-specific status mutation.
+	// Model-attribute state changes only this response; copy the failure
+	// first so a presenter-owned value remains reusable without
+	// request-specific status mutation.
 	copy := *f
 	f = &copy
 	f.Status, f.Message = modelAttributeError(c, f.Status, f.Message)
 	if f.RetryAfter > 0 {
 		c.Header("Retry-After", strconv.Itoa(f.RetryAfter))
 	}
-	// Already-written streaming headers keep their existing status; quote dynamic
-	// fields into terminal frames and discard writer errors at this presentation boundary.
+	// Already-written streaming headers keep their existing status; quote
+	// dynamic fields into terminal frames and discard writer errors at this
+	// presentation boundary.
 	if stream && c.Writer.Written() {
 		_, _ = c.Writer.WriteString(`data: {"error":{"type":` + strconv.Quote(f.Type) + `,"message":` + strconv.Quote(f.Message) + "}}\n\ndata: [DONE]\n\n")
 		c.Writer.Flush()
@@ -250,7 +255,8 @@ func ParseOpenAICompatibleStream(body []byte) (bool, bool) {
 // least one binary megabyte use truncated integer MiB magnitude with the
 // existing MB suffix; smaller values retain their byte magnitude.
 func BodyLimitLabel(limit int64) string {
-	// Truncate binary megabyte magnitude while retaining the existing MB suffix.
+	// Truncate binary megabyte magnitude while retaining the existing MB
+	// suffix.
 	if limit >= 1024*1024 {
 		return fmt.Sprintf("%dMB", limit/(1024*1024))
 	}

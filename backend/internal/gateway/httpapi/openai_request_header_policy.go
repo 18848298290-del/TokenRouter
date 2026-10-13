@@ -2,14 +2,25 @@ package httpapi
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 
-// Responses endpoints use separate header policies for standard, passthrough, and raw Chat requests.
+// Outgoing header permissions differ between Codex Responses and raw Chat.
+// Standard and passthrough Responses retain session and device metadata for
+// later identity rewriting, while raw Chat forwards general client headers and
+// lets request construction supply authentication and protocol headers.
+
+// ChatgptCodexURL and OpenaiPlatformAPIURL select the default OAuth and API-key
+// Responses targets before provider-specific base URLs and inbound path
+// suffixes are applied.
 const (
-	ChatgptCodexURL      = "https://chatgpt.com/backend-api/codex/responses"
+	// ChatgptCodexURL is the ChatGPT OAuth Responses endpoint.
+	ChatgptCodexURL = "https://chatgpt.com/backend-api/codex/responses"
+	// OpenaiPlatformAPIURL is the public API-key Responses endpoint.
 	OpenaiPlatformAPIURL = "https://api.openai.com/v1/responses"
 )
 
 var (
-	// openaiAllowedHeaders lists client headers accepted by standard Responses requests.
+	// openaiAllowedHeaders permits standard Responses client metadata for
+	// subsequent session isolation, provider identity rewriting, and
+	// required upstream header completion.
 	openaiAllowedHeaders = map[string]bool{
 		"accept-language": true,
 		"content-type":    true,
@@ -17,7 +28,9 @@ var (
 		"user-agent":      true,
 		"originator":      true,
 		"session_id":      true,
-		// Keep Codex device and session identifiers for provider namespace isolation.
+		// Request builders rewrite device and session identifiers after
+		// this admission check, so client metadata reaches the
+		// provider-namespace isolation step.
 		"installation_id":            true,
 		"x-codex-installation-id":    true,
 		"session-id":                 true,
@@ -35,8 +48,10 @@ var (
 		media.ResponsesLiteHeaderKey: true,
 	}
 
-	// openaiPassthroughAllowedHeaders lists client headers accepted by passthrough requests.
-	// Restrict forwarding to known headers because other headers can trigger upstream risk checks.
+	// openaiPassthroughAllowedHeaders permits passthrough Responses
+	// metadata, including explicit beta negotiation. Client timeout names
+	// are admitted separately according to the request service's
+	// timeout-header permission.
 	openaiPassthroughAllowedHeaders = map[string]bool{
 		"accept":                     true,
 		"accept-language":            true,
@@ -63,19 +78,22 @@ var (
 		media.ResponsesLiteHeaderKey: true,
 	}
 
-	// openaiCCRawAllowedHeaders lists client headers accepted by raw Chat Completions.
-	// Codex identity and session headers belong to ChatGPT OAuth requests.
-	// Compatible upstreams may ignore these headers or reject them with 400 unknown parameter.
-	// Forward general HTTP headers here; request construction sets content-type, authorization, and accept.
-	// Keep this list separate from Codex header policies because the upstream trust domains differ.
+	// openaiCCRawAllowedHeaders permits language and user-agent metadata on
+	// raw Chat. SendChatRequest supplies authentication, content type, and
+	// the stream-dependent Accept header before provider overrides are
+	// applied.
 	openaiCCRawAllowedHeaders = map[string]bool{
 		"accept-language": true,
 		"user-agent":      true,
 	}
 )
 
-// AllowOpenAIRawChatHeader shares the general header allowlist with media and native Chat entries.
+// AllowOpenAIRawChatHeader checks the lowercase general-client header policy
+// for raw Chat.
 func AllowOpenAIRawChatHeader(name string) bool { return openaiCCRawAllowedHeaders[name] }
 
-// AllowOpenAIPassthroughHeader excludes client timeout headers from image requests.
+// AllowOpenAIPassthroughHeader checks the lowercase passthrough header
+// allowlist used by images. Timeout names have no entries in this map, so image
+// callers receive no additional timeout-header permission through this
+// function.
 func AllowOpenAIPassthroughHeader(name string) bool { return openaiPassthroughAllowedHeaders[name] }

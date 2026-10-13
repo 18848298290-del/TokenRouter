@@ -25,11 +25,12 @@ import (
 // callback values into a dependency object, connecting platform attempts to the
 // common text loop and synchronous HTTP error output before requests begin.
 
-// ForwardPorts supplies single-attempt platform execution; gateway/text owns provider failover.
+// ForwardPorts supplies single-attempt platform execution; gateway/text owns
+// provider failover.
 type ForwardPorts struct {
-	// AntigravityAvailable gates compatible Chat and Responses execution before
-	// those callbacks are called. False reports missing compatibility service and
-	// ends that selected attempt.
+	// AntigravityAvailable gates compatible Chat and Responses execution
+	// before those callbacks are called. False reports missing
+	// compatibility service and ends that selected attempt.
 	AntigravityAvailable bool
 	// Bedrock client compatibility transformation
 	BedrockCompat func(*gin.Context, []byte, string, *gatewaycapture.ExecutionProvider, *int64) []byte
@@ -84,9 +85,9 @@ type ForwardPorts struct {
 		body []byte,
 		parsed *requeststate.ParsedRequest,
 	) (*forwardcore.MessagesResult, error)
-	// GeminiAvailable gates compatible Gemini execution before its callbacks are
-	// used. Native Gemini has its own execution path and does not consult this
-	// compatibility availability flag.
+	// GeminiAvailable gates compatible Gemini execution before its
+	// callbacks are used. Native Gemini has its own execution path and does
+	// not consult this compatibility availability flag.
 	GeminiAvailable bool
 	// request model replacement callback
 	ReplaceModel func(body []byte, newModel string) []byte
@@ -96,7 +97,8 @@ type ForwardPorts struct {
 	WriteMappedClaudeError func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error
 }
 
-// SelectionPorts supplies shared provider selection, session, and scheduling feedback operations.
+// SelectionPorts supplies shared provider selection, session, and scheduling
+// feedback operations.
 type SelectionPorts struct {
 	// selected-provider switch observation
 	ProviderSwitched func(*gatewaycapture.SelectionResult)
@@ -120,7 +122,8 @@ type SelectionPorts struct {
 	TrackSession func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
 }
 
-// Bindings fixes runtime dependencies during construction; Open creates per-request attempt state.
+// Bindings fixes runtime dependencies during construction; Open creates
+// per-request attempt state.
 type Bindings struct {
 	Forward   ForwardPorts   // bound platform execution callbacks
 	Selection SelectionPorts // bound selection and feedback callbacks
@@ -130,9 +133,9 @@ type Bindings struct {
 	Diagnoser routing.ModelAvailabilityDiagnoser
 	Quota     gatewaycapture.QuotaUpdater // Key quota update service
 	Recorder  *completion.Recorder        // shared usage completion recorder
-	// Pricing optionally checks attempt billing models before generation. Nil
-	// keeps this admission check disabled while the selected platform execution
-	// path remains available.
+	// Pricing optionally checks attempt billing models before generation.
+	// Nil keeps this admission check disabled while the selected platform
+	// execution path remains available.
 	Pricing     *admission.ModelPricing
 	Concurrency *gatewayhttp.ConcurrencyHelper  // shared HTTP slot management
 	Queue       *gatewayhttp.UserMsgQueueHelper // shared serial message queue
@@ -140,8 +143,9 @@ type Bindings struct {
 
 	// effective group route planner
 	PlanRoute func(context.Context, *apikey.APIKey, string) routing.RoutePlan
-	// QueueMode supplies the default when an eligible provider has no queue mode.
-	// An absent Queue or ineligible request leaves serial queue handling disabled.
+	// QueueMode supplies the default when an eligible provider has no queue
+	// mode. An absent Queue or ineligible request leaves serial queue
+	// handling disabled.
 	QueueMode  string
 	Errors     *errorpolicy.ErrorPassthroughService // shared final error-rule service
 	Submission gatewayhttp.CompletionSubmission     // bound completion task submission
@@ -150,9 +154,9 @@ type Bindings struct {
 // messageExecutionDependencies retains shared application operations read by
 // serial text attempt adapters.
 type messageExecutionDependencies struct {
-	// geminiAvailable gates Gemini compatibility; antigravityAvailable gates
-	// Antigravity compatibility. Each flag is retained with the platform callbacks
-	// configured during runtime assembly.
+	// geminiAvailable gates Gemini compatibility; antigravityAvailable
+	// gates Antigravity compatibility. Each flag is retained with the
+	// platform callbacks configured during runtime assembly.
 	geminiAvailable, antigravityAvailable bool
 	forwardResponses                      func( // generic Responses attempt execution
 		ctx context.Context,
@@ -251,14 +255,13 @@ type messageExecutionDependencies struct {
 	// effective group route planner
 	planRoute func(context.Context, *apikey.APIKey, string) routing.RoutePlan
 	// model availability failure diagnoser
-	diagnoser routing.ModelAvailabilityDiagnoser
-	// Key quota update service
-	apiKeyService gatewaycapture.QuotaUpdater
+	diagnoser     routing.ModelAvailabilityDiagnoser
+	apiKeyService gatewaycapture.QuotaUpdater // Key quota update service
 	// shared usage completion recorder
 	recorder *completion.Recorder
-	// pricing enables billing-model admission for generation attempts when nonnil.
-	// A nil service leaves preflight disabled; the platform still handles its
-	// selected action.
+	// pricing enables billing-model admission for generation attempts when
+	// nonnil. A nil service leaves preflight disabled; the platform still
+	// handles its selected action.
 	pricing *admission.ModelPricing
 	// shared HTTP slot management
 	concurrencyHelper *gatewayhttp.ConcurrencyHelper

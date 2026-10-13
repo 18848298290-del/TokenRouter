@@ -23,13 +23,40 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Messages-compatible counting converts Anthropic input to the Responses
+// counting format while retaining client, billing, and upstream model names in
+// preparation. Grok and CN targets instead estimate Anthropic input locally.
+// Other targets send a controlled input_tokens request and return the count
+// using Anthropic's response shape, independently of generation completion.
+//
+// OAuth scope and endpoint-compatibility failures select local Responses
+// estimation before provider-health handling. A positive estimate becomes the
+// result; failed or nonpositive estimation uses a minimum count. Other HTTP
+// failures apply the selected provider's error policy and can return failover
+// evidence to the count caller, while an unsupported API-key endpoint receives
+// a handled 404 response.
+
+// openaiPlatformAPIInputTokensURL selects the official count endpoint, and
+// openAIInputTokensFallbackMinimum supplies a positive result when
+// compatibility estimation fails or reports no tokens.
 const (
-	openaiPlatformAPIInputTokensURL  = "https://api.openai.com/v1/responses/input_tokens"
+	// openaiPlatformAPIInputTokensURL is the public Responses count
+	// endpoint.
+	openaiPlatformAPIInputTokensURL = "https://api.openai.com/v1/responses/input_tokens"
+	// openAIInputTokensFallbackMinimum is the minimum handled estimate.
 	openAIInputTokensFallbackMinimum = 1
 )
 
-// ForwardCountTokensAsAnthropic bridges Anthropic /v1/messages/count_tokens to
-// OpenAI POST /v1/responses/input_tokens and returns an Anthropic-compatible result.
+// ForwardCountTokensAsAnthropic returns a Messages-compatible count using the
+// selected provider. Grok and CN targets estimate Anthropic input locally.
+// Other targets convert the body and map its model before credential resolution
+// and upstream counting; the upstream counter closes its response body before
+// returning.
+//
+// OAuth incompatibility uses local estimation without reaching provider-health
+// updates. Unsupported API-key counting writes 404 and returns nil, while other
+// HTTP failures can return classified failover errors or write terminal output.
+// Callers therefore inspect the written response as well as the returned error.
 func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 	ctx context.Context,
 	c *gin.Context,
@@ -42,8 +69,9 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 		return fmt.Errorf("count_tokens: missing provider")
 	}
 
-	// CN providers and Grok use local estimates regardless of their configured protocol.
-	// These providers bypass upstream counting and provider health updates.
+	// Grok and CN counts use the local Anthropic estimator regardless of
+	// configured upstream protocol, leaving their inference transport and
+	// health state unused here.
 	if provider.View().IsCNProvider() || provider.View().IsGrok() {
 		estimated, err := tokenestimate.Anthropic(body)
 		if err != nil {
@@ -117,10 +145,17 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 		},
 		HTTPError: func(resp *http.Response, respBody []byte) error {
 			upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
+			// Scope and endpoint incompatibility can block OAuth
+			// counting despite usable inference credentials. Handle
+			// those counts locally before any provider-health
+			// update.
 			if provider.Record.Type == capability.ProviderTypeOAuth && isOpenAIOAuthInputTokensUnsupported(resp.StatusCode, respBody) {
 				writeOpenAIOAuthInputTokensFallback(c, provider, prepared, resp.StatusCode)
 				return nil
 			}
+			// An explicitly absent API-key count endpoint is a
+			// handled client 404, so the single-count caller stops
+			// without treating it as another exchange failure.
 			if isOpenAIInputTokensUnsupported(resp.StatusCode, respBody) {
 				writeAnthropicCountTokensError(c, http.StatusNotFound, "not_found_error", "Token counting is not supported by upstream")
 				return nil
@@ -139,6 +174,10 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 			if provider.Record.Platform == capability.PlatformGrok {
 				defaultFailover = gatewayprovider.ShouldFailoverGrokResponse(resp.StatusCode, respBody)
 			}
+			// Keep the captured HTTP body and headers with retry
+			// classification, letting an outer counting caller
+			// distinguish provider recovery from already-written
+			// terminal output.
 			if decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode, defaultFailover) {
 				return &protocolforward.UpstreamFailoverError{
 					StatusCode:              resp.StatusCode,
@@ -154,6 +193,10 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 				if maxBytes <= 0 {
 					maxBytes = 2048
 				}
+				// Bound optional diagnostic body detail at a
+				// UTF-8 character boundary, while retry
+				// classification above retains the captured
+				// response bytes for its own handling.
 				upstreamDetail = logredact.TruncateUTF8(string(respBody), maxBytes)
 			}
 			SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
@@ -185,6 +228,11 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 	}, ResponseSink{Writer: c.Writer})
 }
 
+// buildInputTokensUpstreamRequest constructs a counting POST with
+// selected-provider authentication. API-key targets may replace the official
+// base after validation. Inbound user-agent and language headers are read when
+// available, and the upstream builder applies provider user-agent and header
+// overrides afterward.
 func (s *OpenAIAuxiliary) buildInputTokensUpstreamRequest(
 	ctx context.Context,
 	c *gin.Context,
@@ -213,6 +261,8 @@ func (s *OpenAIAuxiliary) buildInputTokensUpstreamRequest(
 	return openai.BuildInputTokensRequest(ctx, body, options, provider.View().GetOpenAIUserAgent)
 }
 
+// writeAnthropicCountTokensError writes the count failure using Anthropic error
+// framing.
 func writeAnthropicCountTokensError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{
 		"type": "error",
@@ -223,6 +273,10 @@ func writeAnthropicCountTokensError(c *gin.Context, status int, errType, message
 	})
 }
 
+// isOpenAIInputTokensUnsupported recognizes a 404 explicitly describing an
+// absent input_tokens endpoint. It lowercases extracted error text and requires
+// both the endpoint name and not-found wording; a generic 404 remains outside
+// this predicate.
 func isOpenAIInputTokensUnsupported(statusCode int, body []byte) bool {
 	if statusCode != http.StatusNotFound {
 		return false
@@ -231,7 +285,14 @@ func isOpenAIInputTokensUnsupported(statusCode int, body []byte) bool {
 	return strings.Contains(msg, "input_tokens") && strings.Contains(msg, "not found")
 }
 
+// writeOpenAIOAuthInputTokensFallback writes a local count after OAuth counting
+// incompatibility. Callers supply nonnil prepared input and provider metadata.
+// A positive estimate is returned; failed or nonpositive estimation writes the
+// minimum count and logs the estimate outcome with upstream status and model.
 func writeOpenAIOAuthInputTokensFallback(c *gin.Context, provider *gatewayprovider.ExecutionProvider, prepared *gatewayprovider.InputTokensPrepared, statusCode int) {
+	// An unavailable or zero estimate still needs a positive compatibility
+	// count. Keep the minimum unless the prepared Responses estimator
+	// supplies positive evidence.
 	estimated := openAIInputTokensFallbackMinimum
 	if got, err := tokenestimate.Responses(prepared.Request); err == nil {
 		if got > 0 {
@@ -258,6 +319,10 @@ func writeOpenAIOAuthInputTokensFallback(c *gin.Context, provider *gatewayprovid
 	})
 }
 
+// isOpenAIOAuthInputTokensUnsupported identifies scope or endpoint failures
+// eligible for local estimation. Only 401, 403, and 404 are considered.
+// Missing-scope evidence, an HTML 403, and recognized input_tokens unsupported
+// text select compatibility recovery before ordinary provider-health handling.
 func isOpenAIOAuthInputTokensUnsupported(statusCode int, body []byte) bool {
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
@@ -280,8 +345,9 @@ func isOpenAIOAuthInputTokensUnsupported(statusCode int, body []byte) bool {
 		return true
 	}
 
-	// An upstream proxy can return an HTML 403 before the request reaches the OAuth API.
-	// Treat this as an unavailable counting endpoint and estimate locally without changing provider health.
+	// HTML 403 bodies are classified as counting incompatibility on this
+	// OAuth path, selecting local estimation before the forwarding adapter
+	// applies provider-health policy.
 	if statusCode == http.StatusForbidden && upstream.IsHTMLResponse(body) {
 		return true
 	}

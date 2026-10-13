@@ -30,6 +30,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Embedding requests can use a client alias while the selected provider
+// requires a different model and protocol base. The payload uses the mapped,
+// normalized model; completion data keeps the original client name, billing
+// name, and upstream name separately. Batch content and other input fields
+// remain in the bytes sent to the native executor.
+//
+// The native executor builds the POST, owns response cleanup, and parses usage.
+// HTTP policy distinguishes invalid input from provider failures before
+// applying configured health and retry decisions. Failover returns captured
+// response evidence before output is committed, while terminal responses use
+// filtered headers and bounded body reading. The outer media entry owns
+// completion submission after this attempt returns.
+
+// ForwardEmbeddings executes selected-provider embedding input and returns
+// observed usage. It requires a model, protocol API key, and validated
+// OpenAI-format base before sending. Native execution owns response cleanup and
+// uses DetachUpstreamContext; caller-facing errors can be written before a
+// returned execution failure.
+//
+// Provider mapping determines the wire model and billing identity while the
+// returned Model retains the client's trimmed name. Invalid-input errors pass
+// through before health policy. Classified provider failures return to the
+// outer media loop with retry evidence while its client writer remains
+// available.
 func (s *OpenAIAuxiliary) ForwardEmbeddings(
 	ctx context.Context,
 	c *gin.Context,
@@ -49,6 +73,9 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 	upstreamModel := gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(billingModel)
 	SetOpsUpstreamModel(c, upstreamModel)
 	upstreamBody := body
+	// Replace the wire model while retaining originalModel for client
+	// attribution and billingModel for completion, so provider aliases do
+	// not replace the client's identity.
 	if upstreamModel != originalModel {
 		upstreamBody = openaiprotocol.ReplaceModelInBody(body, upstreamModel)
 	}
@@ -64,8 +91,9 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 	if apiKey == "" {
 		return nil, fmt.Errorf("provider %d missing api_key", provider.Record.ID)
 	}
-	// Anthropic protocol credentials may point at an /anthropic base URL.
-	// Embeddings requires the corresponding OpenAI-format base.
+	// A provider's Anthropic protocol base can end in /anthropic. Use its
+	// OpenAI-format base so embeddings follows the corresponding compatible
+	// API path rather than that suffix.
 	baseURL := gatewayprovider.ExecutionProtocolTarget(provider).GetOpenAIFormatBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
@@ -136,6 +164,10 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 		HTTPError: func(resp *http.Response, respBody []byte) error {
 			upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
 			var decision providercore.UpstreamErrorDecision
+			// Invalid client input passes through before
+			// provider-health effects; the shared resolver then
+			// orders policy, generic output, and retryable provider
+			// failures.
 			return gatewaymedia.ResolveEmbeddingFailure(resp.StatusCode, gatewaymedia.EmbeddingFailurePorts{
 				InvalidRequest: func() bool { return openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, respBody) },
 				ApplyPolicy: func() {
@@ -160,6 +192,12 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 						if maxBytes <= 0 {
 							maxBytes = 2048
 						}
+						// Cap optional diagnostics at a
+						// UTF-8 boundary while
+						// returning captured response
+						// bytes separately for the
+						// outer retry classification
+						// and error handling.
 						upstreamDetail = logredact.TruncateUTF8(string(respBody), maxBytes)
 					}
 					AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
@@ -181,8 +219,18 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 					})
 				},
 				NewFailover: func() error {
+					// Failover construction reapplies
+					// OpenAI health and uses its stop
+					// result to gate pool retries after the
+					// shared resolver applied the initial
+					// policy.
 					shouldDisable := gatewayprovider.ApplyOpenAIResponseHealth(ctx, s.Output.Health, provider, resp.StatusCode, resp.Header, respBody, false, upstreamModel).StopScheduling
 					retryableOnSameProvider := !shouldDisable && provider.View().IsPoolMode() && provider.View().IsPoolModeRetryableStatus(resp.StatusCode)
+					// OAuth 429 and access-state failures
+					// carry typed recovery metadata;
+					// ordinary embedding failures retain
+					// the status/body shape used by the
+					// outer media retry loop.
 					if provider.View().IsOpenAIOAuth() && resp.StatusCode == http.StatusTooManyRequests {
 						return (gatewayprovider.OpenAIFailoverPolicy{Health: s.Output.Health}).NewProviderFailure(provider, resp.StatusCode, resp.Header, respBody, upstreamMsg, shouldDisable, retryableOnSameProvider)
 					}
@@ -246,6 +294,8 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 	}, nil
 }
 
+// buildOpenAIEmbeddingsURL appends the embedding endpoint using
+// OpenAI-compatible base-path handling.
 func buildOpenAIEmbeddingsURL(base string) string {
 	return httpclient.BuildOpenAIEndpointURL(base, "/v1/embeddings")
 }

@@ -20,15 +20,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// A conversation header carries client state to one trusted API-key origin,
+// while Codex routing hints describe the final model and service tier sent by
+// an OAuth attempt. Provider overrides and model rewrites can otherwise leave
+// headers referring to a different conversation or routing choice. Session
+// forwarding uses an exact HTTPS hostname check and runs after provider
+// overrides.
+//
+// Routing hints are rebuilt after deleting all casing variants from the
+// outgoing map. The encoded model rejects delimiter characters, and the tier is
+// reduced to the recognized Codex values before header validation. API-key
+// attempts therefore clear inherited Codex hints, while diagnostics describe
+// the final body and the header actually produced for the current provider.
+
+// openCodeSessionHeader and OpenAICodexRoutingHintHeader name the outbound
+// conversation identifier and final-route hint inspected by request
+// construction and routing diagnostics.
 const (
-	openCodeSessionHeader        = "X-OpenCode-Session"
+	// openCodeSessionHeader carries the caller's OpenCode conversation ID.
+	openCodeSessionHeader = "X-OpenCode-Session"
+	// OpenAICodexRoutingHintHeader names the final OAuth model/tier hint.
 	OpenAICodexRoutingHintHeader = "x-codex-routing-hint"
 )
 
-// ApplyOpenCodeSessionHeader forwards the caller-owned conversation identifier
-// to HTTPS targets on opencode.ai. The caller applies this after provider
-// header overrides so a per-conversation value cannot be replaced by a fixed
-// provider-wide override.
+// ApplyOpenCodeSessionHeader forwards a trimmed client conversation ID to HTTPS
+// opencode.ai. Callers invoke it after provider overrides with the final target
+// URL and header map. Only API-key providers qualify; missing caller values
+// leave existing overrides intact.
+//
+// A nonempty caller ID replaces every casing variant in the outgoing map before
+// setting the canonical header. This keeps that conversation's identity
+// authoritative when an override used a different casing or a fixed
+// provider-wide value.
 func ApplyOpenCodeSessionHeader(c *gin.Context, provider *gatewayprovider.ExecutionProvider, targetURL string, headers http.Header) {
 	if c == nil || c.Request == nil || provider == nil || provider.Record.Type != capability.ProviderTypeAPIKey || headers == nil {
 		return
@@ -43,6 +66,9 @@ func ApplyOpenCodeSessionHeader(c *gin.Context, provider *gatewayprovider.Execut
 	if sessionID == "" {
 		return
 	}
+	// Provider overrides can create noncanonical map keys. Remove every
+	// variant before installing the conversation ID so upstream sees one
+	// authoritative value.
 	for key := range headers {
 		if strings.EqualFold(key, openCodeSessionHeader) {
 			delete(headers, key)
@@ -51,6 +77,10 @@ func ApplyOpenCodeSessionHeader(c *gin.Context, provider *gatewayprovider.Execut
 	headers.Set(openCodeSessionHeader, sessionID)
 }
 
+// ResolveOpenAIUpstreamOriginator resolves the outbound identity from HTTP
+// originator and routing. A nil Gin context supplies an empty originator. The
+// upstream resolver evaluates the official-client flag and the first optional
+// TLS-router match.
 func ResolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool, routerMatch ...egress.TLSFingerprintRouterMatchResult) string {
 	return ResolveOpenAIUpstreamOriginatorForClient(func() string {
 		if c == nil {
@@ -60,7 +90,10 @@ func ResolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool, rout
 	}, isOfficialClient, routerMatch...)
 }
 
-// ResolveOpenAIUpstreamOriginatorForClient passes the router match to the upstream originator resolver.
+// ResolveOpenAIUpstreamOriginatorForClient delegates identity selection using
+// the first optional router match. Callers provide an originator reader and
+// official-client decision; the upstream resolver decides whether the client,
+// router, or canonical identity supplies the value.
 func ResolveOpenAIUpstreamOriginatorForClient(read func() string, official bool, matches ...egress.TLSFingerprintRouterMatchResult) string {
 	var match egress.TLSFingerprintRouterMatchResult
 	if len(matches) > 0 {
@@ -69,15 +102,23 @@ func ResolveOpenAIUpstreamOriginatorForClient(read func() string, official bool,
 	return openai.ResolveUpstreamOriginator(read, official, match.Matched, match.UpstreamOriginator)
 }
 
-// SetOpenAICodexRoutingHint generates a Codex routing hint for OpenAI OAuth requests.
-// Callers supply the final upstream model and service tier after local rewrites and filtering.
+// SetOpenAICodexRoutingHint rebuilds the OAuth hint from final model and tier
+// values. Callers supply values after request rewrites and tier filtering.
+// Existing casing variants are removed before checking provider eligibility or
+// validating the new hint.
+//
+// Only nonblank models without hint delimiters can be encoded. Recognized
+// priority, flex, and ultrafast tiers are included after normalization; other
+// values produce a model-only hint. Invalid HTTP header values leave the old
+// hint cleared rather than advertising stale routing data.
 func SetOpenAICodexRoutingHint(headers http.Header, provider *gatewayprovider.ExecutionProvider, model string, serviceTier string) {
 	if headers == nil {
 		return
 	}
 
-	// Remove every casing variant before writing the final routing hint.
-	// Header.Del removes the canonical key, but inbound maps may also contain lowercase keys.
+	// A previous attempt or override may have supplied noncanonical keys.
+	// Delete them before eligibility checks so another provider cannot
+	// inherit the hint.
 	DeleteOpenAIHeaderEqualFold(headers, OpenAICodexRoutingHintHeader)
 	if provider == nil || !provider.View().IsOpenAIOAuthLike() {
 		return
@@ -88,10 +129,13 @@ func SetOpenAICodexRoutingHint(headers http.Header, provider *gatewayprovider.Ex
 		return
 	}
 
-	// Codex default omits the tier; fast becomes priority, while flex and ultrafast remain unchanged.
+	// Normalize the protocol's fast alias to priority before encoding it in
+	// the Codex hint; tier filtering below leaves unsupported values
+	// model-only.
 	canonicalTier := protocolopenai.ServiceTierValue(serviceTier)
-	// Without a Codex model catalogue snapshot, arbitrary tier IDs cannot be validated.
-	// Send recognized Codex tiers; default, empty, and other compatibility values send only the model.
+	// The hint encodes the recognized Codex routing tiers. Empty, default,
+	// and other compatibility values omit tier metadata while retaining the
+	// final model.
 	switch canonicalTier {
 	case tierpolicy.OpenAIFastTierPriority, tierpolicy.OpenAIFastTierFlex, tierpolicy.OpenAIFastTierUltrafast:
 	default:
@@ -108,6 +152,9 @@ func SetOpenAICodexRoutingHint(headers http.Header, provider *gatewayprovider.Ex
 	headers.Set(OpenAICodexRoutingHintHeader, hint)
 }
 
+// DeleteOpenAIHeaderEqualFold removes every outgoing key matching the trimmed
+// header name. It trims keys as well as comparing case-insensitively, covering
+// directly constructed header maps. A nil map needs no mutation.
 func DeleteOpenAIHeaderEqualFold(headers http.Header, name string) {
 	if headers == nil {
 		return
@@ -120,12 +167,20 @@ func DeleteOpenAIHeaderEqualFold(headers http.Header, name string) {
 	}
 }
 
+// SetOpenAICodexRoutingHintFromBody extracts final model and tier values for
+// hint construction. It passes gjson's string rendering of model and
+// service_tier, with missing or null fields rendered empty.
+// SetOpenAICodexRoutingHint applies provider eligibility, normalization, and
+// header validation to those values.
 func SetOpenAICodexRoutingHintFromBody(headers http.Header, provider *gatewayprovider.ExecutionProvider, body []byte) {
 	fields := gjson.GetManyBytes(body, "model", "service_tier")
 	SetOpenAICodexRoutingHint(headers, provider, fields[0].String(), fields[1].String())
 }
 
-// LogOpenAIRoutingDiagnostics records routing values derived by the gateway.
+// LogOpenAIRoutingDiagnostics logs final routing metadata for one transport
+// decision. A nil context uses background logging and a nil provider uses ID
+// zero. String values are trimmed, and the service tier uses protocol
+// normalization.
 func LogOpenAIRoutingDiagnostics(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -154,6 +209,9 @@ func LogOpenAIRoutingDiagnostics(
 	)
 }
 
+// LogOpenAIRoutingDiagnosticsFromBody logs route values from the final outgoing
+// payload. It derives hint presence from the outgoing header map and passes the
+// transport and WebSocket affinity decision to the shared diagnostic logger.
 func LogOpenAIRoutingDiagnosticsFromBody(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,

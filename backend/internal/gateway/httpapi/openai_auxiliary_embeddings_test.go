@@ -21,13 +21,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Embedding aliases and batch content travel through a compatible OpenAI
+// endpoint while completion retains separate client and provider model
+// identities. These fixtures check endpoint assembly, image/cache usage
+// parsing, and retry metadata for access-state and ordinary rate-limit failures
+// before client output.
+
+// TestBuildOpenAIEmbeddingsURL supplies bare, versioned, complete, and
+// third-party base paths. It checks endpoint construction appends missing
+// suffixes without duplicating an existing version prefix or embedding
+// endpoint.
 func TestBuildOpenAIEmbeddingsURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		base string
-		want string
+		name string // endpoint construction scenario label
+		base string // supplied upstream base URL
+		want string // expected embedding endpoint URL
 	}{
 		{"bare domain", "https://api.openai.com", "https://api.openai.com/v1/embeddings"},
 		{"bare /v1", "https://api.openai.com/v1", "https://api.openai.com/v1/embeddings"},
@@ -43,6 +53,9 @@ func TestBuildOpenAIEmbeddingsURL(t *testing.T) {
 	}
 }
 
+// TestExtractOpenAIEmbeddingsUsage_ParsesImageInputTokens decodes embedding
+// usage with image and cached input details. It checks total input, image
+// input, cache read, and zero output tokens for that fixture.
 func TestExtractOpenAIEmbeddingsUsage_ParsesImageInputTokens(t *testing.T) {
 	body := []byte(`{
 		"usage":{
@@ -63,6 +76,10 @@ func TestExtractOpenAIEmbeddingsUsage_ParsesImageInputTokens(t *testing.T) {
 	require.Zero(t, usage.OutputTokens)
 }
 
+// TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput sends a
+// batch under a client alias. It checks credentialed target construction,
+// mapped wire model, retained batch/options, and returned client, billing,
+// upstream, and usage identities.
 func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing.T) {
 	reqBody := []byte(`{
 		"model":"nowledge-embedding",
@@ -130,6 +147,10 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 	require.Equal(t, int64(256), gjson.GetBytes(upstream.lastBody, "dimensions").Int())
 }
 
+// TestForwardEmbeddings_AccessStateUsesTypedFailover returns a
+// deactivated-workspace error from an embedding target. It checks typed
+// provider-auth recovery, safe client status/message, retained request ID, and
+// unwritten client output.
 func TestForwardEmbeddings_AccessStateUsesTypedFailover(t *testing.T) {
 	reqBody := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
 	rec := httptest.NewRecorder()
@@ -174,6 +195,10 @@ func TestForwardEmbeddings_AccessStateUsesTypedFailover(t *testing.T) {
 	require.False(t, c.Writer.Written())
 }
 
+// TestForwardEmbeddings_NonAccessFailoverKeepsLegacyShape returns a generic 429
+// from embedding execution. It checks retry evidence retains empty typed
+// access-state metadata and leaves the client response available for provider
+// recovery.
 func TestForwardEmbeddings_NonAccessFailoverKeepsLegacyShape(t *testing.T) {
 	reqBody := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
 	rec := httptest.NewRecorder()

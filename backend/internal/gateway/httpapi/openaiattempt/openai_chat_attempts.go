@@ -19,13 +19,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAIChatAttemptBridge holds execution state for the current Chat request.
+// Chat input is rebuilt from the admitted body for each selected provider,
+// using the current group mapping and prompt-cache identity. The bridge checks
+// client policy with the selected TLS route before sending, then retains result
+// and usage observations after releasing the provider's capacity.
+//
+// Retry readiness compares the writer size captured immediately before
+// forwarding with its size after error handling. Client disconnection or
+// changed bytes ends replay and invokes terminal OpenAI output; accepted
+// retries report scheduling failure according to the classified error. Partial
+// images and native usage remain distinct outcome evidence for the shared text
+// loop, and completion captures its own group pricing fields before
+// asynchronous recording can read the result.
+
+// openAIChatAttemptBridge adds Chat prompt-cache identity to shared
+// request-attempt state.
 type openAIChatAttemptBridge struct {
-	responsesAttemptBridge
-	promptCacheKey string
+	responsesAttemptBridge        // embedded admitted request state
+	promptCacheKey         string // retained Chat prompt-cache identity
 }
 
-// Select chooses a text-capable provider and records its identity in the request.
+// Select resolves a text-capable Chat provider under the current group and
+// exclusions. An error returns to the text loop; no usable target writes
+// diagnosed output. Successful selection retains provider/session identity and
+// publishes the selected platform before returning loop metadata for
+// acquisition.
 func (b *openAIChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.ResponseSelection, error) {
 	b.reqLog.Debug("openai_chat_completions.provider_selecting", zap.Int("excluded_provider_count", len(excluded)))
 	var scheduleDecision scheduler.PlatformDecision
@@ -61,7 +79,11 @@ func (b *openAIChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.
 	return b.selectedView(), nil
 }
 
-// SelectionFailure writes a Chat selection or exhausted-failover error unless the client disconnected.
+// SelectionFailure formats terminal Chat selection output while the request
+// remains connected. Initial business errors are handled first, then model
+// diagnosis and scheduler refinement. After provider exclusions, a captured
+// upstream failure uses exhausted handling; missing failure evidence writes the
+// default upstream error.
 func (b *openAIChatAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
@@ -95,17 +117,33 @@ func (b *openAIChatAttemptBridge) SelectionFailure(err error, excludedCount int,
 	}
 }
 
-// Forward applies group mapping and client policy, then records the Chat attempt result and timing.
+// Forward executes the current Chat provider with group-mapped input and client
+// policy. It rebuilds forwardBody from the admitted body before reading TLS
+// identity and checking policy. Acquired provider cleanup runs when that
+// exchange returns, before Cyber processing and outcome capture for the outer
+// text loop.
+//
+// Response latency subtracts the positive upstream phase only when measured
+// total forward time exceeds it. Result presence, images, native partial usage,
+// HTTP commitment, and classified failures remain separate observations. The
+// raw writer size before execution becomes RetryReady's baseline for
+// determining whether an error can be replayed through another provider.
 func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 	var err error
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsRoutingLatencyMsKey, time.Since(b.routingStart).Milliseconds())
 	forwardStart := time.Now()
 
+	// Rebuild input from the admitted body for each provider, applying the
+	// current group mapping before platform conversion so prior attempt
+	// edits cannot become source input.
 	b.forwardBody = b.body
 	if b.groupMapping.Mapped {
 		b.forwardBody = b.binding().replaceModelInBody(b.body, b.groupMapping.MappedModel)
 	}
 	b.writerSizeBeforeForward = b.c.Writer.Size()
+	// Release provider capacity on policy rejection and exchange return
+	// before Cyber and completion handling consume the retained
+	// provider/result observations for this attempt.
 	b.result, err = func() (*forwardcore.OpenAIResult, error) {
 		defer func() {
 			if b.providerReleaseFunc != nil {
@@ -127,6 +165,9 @@ func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 	forwardDurationMs := time.Since(forwardStart).Milliseconds()
 	upstreamLatencyMs, _ := GetContextInt64(b.c, gatewayhttp.OpsUpstreamLatencyMsKey)
 	responseLatencyMs := forwardDurationMs
+	// Use the upstream phase only when it fits inside measured forwarding
+	// duration; missing or larger observations leave total time as the
+	// response-latency estimate.
 	if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
 		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
 	}
@@ -143,7 +184,10 @@ func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 	return out
 }
 
-// Complete captures and submits the Chat completion record.
+// Complete captures Chat usage and group pricing before submitting its
+// recording task. Nil result returns immediately. The callback retains the
+// completed input and scalar logging identities, so Recorder consumes snapshots
+// after submission rather than rereading the active HTTP bridge.
 func (b *openAIChatAttemptBridge) Complete() {
 	res := b.result
 
@@ -171,7 +215,8 @@ func (b *openAIChatAttemptBridge) Complete() {
 	})
 }
 
-// PartialImages logs forwarding failures that still produced images.
+// PartialImages reports the selected Chat provider's error and observed image
+// count.
 func (b *openAIChatAttemptBridge) PartialImages(err error) {
 	b.reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -180,7 +225,16 @@ func (b *openAIChatAttemptBridge) PartialImages(err error) {
 	)
 }
 
-// RetryReady rejects retries after disconnection or output and reports eligible provider failures.
+// RetryReady accepts a classified Chat retry before downstream byte output
+// changes. Callers supply a nonnil failure. A nonfailover cause or disconnected
+// client ends recovery; warning recording is attempted before the writer-size
+// comparison.
+//
+// Changed output invokes health observation and terminal error handling, then
+// returns false so the text loop cannot append another provider's content.
+// Unchanged output permits retry, with schedule failure reported only when the
+// classified upstream error requests that observation. Waiting and switch
+// budgets remain with the outer text loop.
 func (b *openAIChatAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bool {
 	err := failure.Cause
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -195,6 +249,9 @@ func (b *openAIChatAttemptBridge) RetryReady(failure *textflow.AttemptFailure) b
 		return false
 	}
 	b.binding().recordOpenAICyberWarning(b.c, b.reqLog, b.apiKey, b.provider, b.reqModel, failoverErr.StatusCode, failoverErr.ResponseBody, err.Error())
+	// Warning handling can already have written protocol output. Recheck
+	// its byte count before accepting replay so the client cannot receive
+	// content from another provider.
 	if b.c.Writer.Size() != b.writerSizeBeforeForward {
 		b.binding().observeOpenAIProviderHealthFailure(b.c.Request.Context(), b.provider, err)
 		b.binding().handleFailoverExhausted(b.c, failoverErr, true)
@@ -206,7 +263,10 @@ func (b *openAIChatAttemptBridge) RetryReady(failure *textflow.AttemptFailure) b
 	return true
 }
 
-// RetryWait logs the same-provider retry budget and delay.
+// RetryWait logs the Chat provider's chosen retry count, allowance, and delay.
+// The supplied failure carries UpstreamFailoverError metadata. The outer loop
+// performs its context-aware wait; this callback records the selected retry
+// parameters.
 func (b *openAIChatAttemptBridge) RetryWait(failure *textflow.AttemptFailure, retryLimit, retryCount int, retryDelay time.Duration) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -219,7 +279,9 @@ func (b *openAIChatAttemptBridge) RetryWait(failure *textflow.AttemptFailure, re
 	)
 }
 
-// Switching logs the provider switch count and limit.
+// Switching records the Chat provider and the loop's switch count and limit.
+// Callers supply a classified upstream failure. Provider exclusion and the next
+// selection remain with the text loop rather than this diagnostic callback.
 func (b *openAIChatAttemptBridge) Switching(failure *textflow.AttemptFailure, switchCount, maxProviderSwitches int) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -231,7 +293,15 @@ func (b *openAIChatAttemptBridge) Switching(failure *textflow.AttemptFailure, sw
 	)
 }
 
-// OtherFailure records health and cyber warnings, then writes an error if none was delivered.
+// OtherFailure records Chat warnings and scheduling failure before supplying
+// missing output. It prefers warning evidence carried by the error chain, then
+// passes error text to the recorder when that evidence is absent.
+//
+// Communicated-error state and the raw writer size are checked after warning
+// handling. A recorded warning allows fallback while size remains unchanged;
+// communicated errors suppress that path. Once eligible, classified stream-read
+// output takes precedence over the general OpenAI fallback, and the chosen
+// output result is logged.
 func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	statusCode := 0
 	if v, ok := GetContextInt64(b.c, gatewayhttp.OpsUpstreamStatusCodeKey); ok {
@@ -244,7 +314,13 @@ func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, nil), false, nil, err)
 	upstreamErrorAlreadyCommunicated := gatewayhttp.OpenAIForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	b.wroteFallback = false
+	// Warning recording may already have supplied terminal output. Combine
+	// its evidence with communicated-error and byte-count checks before
+	// choosing another missing error response.
 	if !upstreamErrorAlreadyCommunicated && (!recordedWarning || b.c.Writer.Size() == b.writerSizeBeforeForward) {
+		// Prefer classified stream-read output before the generic
+		// upstream fallback, preserving that failure's code and message
+		// while emitting at most this selected missing error path.
 		b.wroteFallback = b.binding().ensureOpenAIStreamReadErrorResponse(b.c, err, *b.streamStarted)
 		if !b.wroteFallback {
 			b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
@@ -258,7 +334,10 @@ func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Success reports scheduling success and observed first-token latency.
+// Success reports Chat scheduling success with the final model and optional
+// first-token latency. A nil result still reports success with absent latency.
+// Completion recording and funding effects are handled separately by the text
+// loop.
 func (b *openAIChatAttemptBridge) Success() {
 	if b.result != nil {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, b.result), true, b.result.FirstTokenMs)
@@ -267,7 +346,7 @@ func (b *openAIChatAttemptBridge) Success() {
 	}
 }
 
-// Completed logs the serving provider and total switch count.
+// Completed records the serving Chat provider and final provider-switch count.
 func (b *openAIChatAttemptBridge) Completed(switchCount int) {
 	b.reqLog.Debug("openai_chat_completions.request_completed",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -275,5 +354,12 @@ func (b *openAIChatAttemptBridge) Completed(switchCount int) {
 	)
 }
 
+// CanAttempt reports whether the Chat client remains available for another
+// provider attempt. It delegates that request check to FailoverClientGone.
+// RetryReady separately checks written bytes when a completed forwarding
+// attempt proposes recovery.
 func (b *openAIChatAttemptBridge) CanAttempt() bool { return !gatewayhttp.FailoverClientGone(b.c) }
-func (b *openAIChatAttemptBridge) Failed()          {}
+
+// Failed satisfies the Chat terminal hook after its protocol-specific failure
+// notification.
+func (b *openAIChatAttemptBridge) Failed() {}

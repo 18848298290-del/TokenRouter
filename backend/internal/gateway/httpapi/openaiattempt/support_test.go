@@ -21,14 +21,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Compatible text entries can dispatch through Chat or Responses independently
+// of their inbound URL. The fixtures check result/context/default endpoint
+// precedence, request cancellation and explicit post-write recovery permission,
+// and proxy observations that expose selected connection metadata without
+// credential fields.
+
+// TestResolveOpenAIUpstreamEndpointPrefersForwardResult varies inbound,
+// recorded, and returned endpoint evidence across providers. It checks the
+// result wins, then attempt context, then the selected platform's default for
+// compatible execution.
 func TestResolveOpenAIUpstreamEndpointPrefersForwardResult(t *testing.T) {
 	tests := []struct {
-		name            string
-		provider        *gatewayprovider.ExecutionProvider
-		result          *forwardcore.OpenAIResult
-		inboundEndpoint string
-		runtimeEndpoint string
-		want            string
+		name            string                             // endpoint precedence scenario label
+		provider        *gatewayprovider.ExecutionProvider // selected provider platform fixture
+		result          *forwardcore.OpenAIResult          // returned execution endpoint evidence
+		inboundEndpoint string                             // incoming client endpoint path
+		runtimeEndpoint string                             // recorded actual attempt endpoint
+		want            string                             // expected resolved upstream endpoint
 	}{
 		{
 			name:            "grok raw chat result overrides stale context",
@@ -115,6 +125,10 @@ func TestResolveOpenAIUpstreamEndpointPrefersForwardResult(t *testing.T) {
 	}
 }
 
+// TestOpenAIForwardMayFailoverOnlyAfterNonSemanticWrite writes and flushes an
+// SSE comment before checking recovery. It verifies the explicit
+// SafeToFailoverAfterWrite flag permits replay after changed output size, while
+// its absence rejects that path.
 func TestOpenAIForwardMayFailoverOnlyAfterNonSemanticWrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -130,6 +144,10 @@ func TestOpenAIForwardMayFailoverOnlyAfterNonSemanticWrite(t *testing.T) {
 	require.False(t, OpenAIForwardMayFailover(c, before, &forwardcore.UpstreamFailoverError{}))
 }
 
+// TestOpenAIRequestAllowsFailoverReplayStopsCanceledClient supplies missing and
+// active request contexts, then cancels the active one. It checks missing input
+// rejects replay and cancellation changes the active request from allowed to
+// denied.
 func TestOpenAIRequestAllowsFailoverReplayStopsCanceledClient(t *testing.T) {
 	require.False(t, OpenAIRequestAllowsFailoverReplay(nil))
 
@@ -139,11 +157,16 @@ func TestOpenAIRequestAllowsFailoverReplayStopsCanceledClient(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestCtx)
 
 	require.True(t, OpenAIRequestAllowsFailoverReplay(c))
+	// End the request before another replay check, isolating cancellation
+	// from output-size evidence so no disconnected client can authorize an
+	// additional upstream attempt.
 	cancel()
 	require.False(t, OpenAIRequestAllowsFailoverReplay(c))
 }
 
-// TestAppendOpenAIProviderProxyLogFields checks complete proxy diagnostics without credential exposure.
+// TestAppendOpenAIProviderProxyLogFields logs a provider with a loaded
+// credentialed proxy. It checks selected ID/name/host/port are present and
+// username, password, and URL fields are absent from the captured observation.
 func TestAppendOpenAIProviderProxyLogFields(t *testing.T) {
 	proxyID := int64(17)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -176,8 +199,9 @@ func TestAppendOpenAIProviderProxyLogFields(t *testing.T) {
 	require.NotContains(t, fields, "proxy_url")
 }
 
-// TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID checks lookup by ID when the proxy is not
-// preloaded.
+// TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID supplies a provider
+// with only its proxy reference loaded. It checks the log contains that
+// identifier as the sole proxy field for the partial record.
 func TestAppendOpenAIProviderProxyLogFields_FallsBackToProxyID(t *testing.T) {
 	proxyID := int64(23)
 	core, logs := observer.New(zap.WarnLevel)

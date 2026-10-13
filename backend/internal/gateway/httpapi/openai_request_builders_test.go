@@ -27,12 +27,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-type codexProviderIdentityRepoStub struct {
-	gatewayprovider.ExecutionProviderStore
+// Outgoing Responses requests derive authentication and session identity from
+// the selected OAuth credential, including shadow-provider sources. Builder
+// tests inspect headers and payloads at construction time, covering staged
+// fingerprints, Compact routing, caller identity repair, and trusted OpenCode
+// conversation forwarding.
 
-	provider *gatewayprovider.ExecutionProvider
+// codexProviderIdentityRepoStub supplies one execution provider for shadow
+// identity lookup.
+type codexProviderIdentityRepoStub struct {
+	gatewayprovider.ExecutionProviderStore // unused embedded repository methods
+
+	provider *gatewayprovider.ExecutionProvider // returned shadow identity source
 }
 
+// TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders compares
+// Agent Assertion and OAuth passthrough requests. It checks authentication
+// mode, provider-scoped session headers, account identity, and retention of
+// prompt_cache_key in the outgoing body.
 func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -70,7 +82,8 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
 
-	// Compare the same OAuth request to check session isolation and prompt caching across authentication modes.
+	// Compare the same OAuth request to check session isolation and prompt
+	// caching across authentication modes.
 	oauthProvider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, ID: 26,
@@ -92,6 +105,10 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.Equal(t, oauthReq.Header.Get("conversation_id"), req.Header.Get("conversation_id"))
 }
 
+// TestOpenAIAgentIdentityErrorRedactionDoesNotLeakCredentialValues embeds
+// identity and credential strings in an error payload. It checks runtime ID,
+// task ID, access token, and assertion text are replaced with a redaction
+// marker.
 func TestOpenAIAgentIdentityErrorRedactionDoesNotLeakCredentialValues(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -118,12 +135,15 @@ func TestOpenAIAgentIdentityErrorRedactionDoesNotLeakCredentialValues(t *testing
 	require.Contains(t, string(redacted), "[redacted]")
 }
 
+// TestOpenAIAuthenticationHeadersPreserveOAuthPATAndAPIKeyBearerModes supplies
+// runtime tokens for OAuth, PAT, and API-key providers. It checks each
+// supported credential mode produces the expected Bearer authorization value.
 func TestOpenAIAuthenticationHeadersPreserveOAuthPATAndAPIKeyBearerModes(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		token    string
+		name     string                             // authentication-mode scenario label
+		provider *gatewayprovider.ExecutionProvider // selected authentication provider fixture
+		token    string                             // supplied runtime bearer token
 	}{
 		{name: "oauth", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}, token: "oauth-runtime-token"},
 		{name: "personal access token", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"auth_mode": providercore.OpenAIAuthModePersonalAccessToken}}}, token: "pat-runtime-token"},
@@ -138,6 +158,10 @@ func TestOpenAIAuthenticationHeadersPreserveOAuthPATAndAPIKeyBearerModes(t *test
 	}
 }
 
+// newFingerprintExecutionProvider creates an OAuth fixture with configured
+// fingerprint extras. Modes requiring a seed fill the test seed when absent.
+// The helper may mutate and retain the supplied extra map, so callers use
+// fixture-owned maps.
 func newFingerprintExecutionProvider(id int64, extra map[string]any) *gatewayprovider.ExecutionProvider {
 	if providercore.CodexFingerprintModeRequiresSeed(providercore.CodexFingerprintModeFromExtra(extra)) {
 		if extra == nil {
@@ -157,9 +181,15 @@ func newFingerprintExecutionProvider(id int64, extra map[string]any) *gatewaypro
 	}
 }
 
+// TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint stages
+// session-mode IDs before constructing passthrough output. It checks session,
+// device, window, thread, and turn metadata use those IDs while unrelated
+// sandbox metadata remains.
 func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
-	// Check outbound passthrough headers with fingerprint unification enabled (#5610).
+	// Supply an explicit session-mode configuration so staged IDs can be
+	// compared with final passthrough headers after provider identity
+	// rewriting is applied.
 	provider := newFingerprintExecutionProvider(2001, map[string]any{
 		"openai_oauth_passthrough": true,
 		"codex_fingerprint_mode":   "session",
@@ -171,7 +201,9 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	c.Request.Header.Set("originator", "codex_cli_rs")
 	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt"}`)
 
-	// Reproduce passthrough parsing and staging with the default session mode.
+	// Stage the request's generated IDs before construction, matching the
+	// execution adapter's order so header assertions observe the same
+	// fingerprint group.
 	ids := provideradapter.CodexFingerprintIDsFromRequest(provider.View(), c.Request.Header)
 	require.NotNil(t, ids)
 	StageCodexFingerprintIDs(c, ids)
@@ -190,6 +222,10 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	assert.Contains(t, turnMetadata, `"sandbox":"seatbelt"`, "turn-metadata 未指定字段应原样保留")
 }
 
+// TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession stages
+// nil fingerprint IDs under off mode. It checks the outgoing session remains
+// isolated, differs from the converged ID, and has no fingerprint window
+// header.
 func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	provider := newFingerprintExecutionProvider(2002, map[string]any{
@@ -214,10 +250,17 @@ func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *te
 	assert.Empty(t, req.Header.Get("x-codex-window-id"))
 }
 
+// GetByID returns the fixed execution provider for shadow-source identity
+// resolution. The fixture ignores the requested ID and retains pointer
+// identity. Callers read the supplied provider as the shared fixture value.
 func (s *codexProviderIdentityRepoStub) GetByID(_ context.Context, _ int64) (*gatewayprovider.ExecutionProvider, error) {
 	return s.provider, nil
 }
 
+// TestCodexProviderIdentitySourceResolvesShadowAndOverwritesFailoverContext
+// prepares a shadow provider followed by a different OAuth provider. It checks
+// parent identity selection, parent-scoped session construction, and
+// replacement of the previously bound HTTP identity source.
 func TestCodexProviderIdentitySourceResolvesShadowAndOverwritesFailoverContext(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -254,6 +297,10 @@ func TestCodexProviderIdentitySourceResolvesShadowAndOverwritesFailoverContext(t
 	require.Same(t, next.View(), CodexIdentityRecord(c, shadow.View()))
 }
 
+// TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthProvider builds
+// repeated requests under two OAuth credentials. It checks observed outbound
+// identity headers are stable for one provider and differ for the other across
+// at least five headers.
 func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthProvider(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	body := []byte(`{"model":"gpt-5.6-codex","stream":true,"prompt_cache_key":"client-session"}`)
@@ -316,6 +363,10 @@ func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthProvider(t *testing.T
 	require.GreaterOrEqual(t, checked, 5, "test must exercise the real outbound identity surface")
 }
 
+// TestOpenAIOAuthCompactHTTPBuildersUsePreservedServiceTierInRoutingHint
+// normalizes Compact input containing priority tier. It checks ordinary and
+// passthrough builders encode that retained tier with the final model in the
+// routing hint.
 func TestOpenAIOAuthCompactHTTPBuildersUsePreservedServiceTierInRoutingHint(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.6-sol",
@@ -340,8 +391,8 @@ func TestOpenAIOAuthCompactHTTPBuildersUsePreservedServiceTierInRoutingHint(t *t
 	svc := newResponsesFixture(responsesFixtureInputs{})
 
 	tests := []struct {
-		name  string
-		build func(*gin.Context) (*http.Request, error)
+		name  string                                    // Responses builder scenario label
+		build func(*gin.Context) (*http.Request, error) // request builder under test
 	}{
 		{
 			name: "ordinary",
@@ -384,6 +435,9 @@ func TestOpenAIOAuthCompactHTTPBuildersUsePreservedServiceTierInRoutingHint(t *t
 	}
 }
 
+// TestOpenAIInvalidBaseURLWhenAllowlistDisabled supplies a malformed API-key
+// base URL under format validation. It checks ordinary Responses construction
+// returns an error even when host-allowlist enforcement is disabled.
 func TestOpenAIInvalidBaseURLWhenAllowlistDisabled(t *testing.T) {
 	cfg := &responsesFixtureOptions{Request: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{Enabled: false}}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: cfg})
@@ -406,6 +460,10 @@ func TestOpenAIInvalidBaseURLWhenAllowlistDisabled(t *testing.T) {
 	}
 }
 
+// TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath builds an
+// OAuth Compact passthrough request. It checks target suffix, JSON Accept,
+// client version, isolated session, upstream profile, and absence of a
+// synthesized legacy beta header.
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -424,6 +482,10 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	require.Equal(t, upstreamcore.HTTPUpstreamProfileOpenAI, upstreamcore.HTTPUpstreamProfileFromContext(req.Context()))
 }
 
+// TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesExplicitAPIKeyBetaHeader
+// supplies explicit beta negotiation on API-key input. It checks passthrough
+// retains that declared value when constructing the outgoing compatible
+// Responses request.
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesExplicitAPIKeyBetaHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -438,6 +500,10 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesExplicitAPIKeyBetaH
 	require.Equal(t, "api-key-specific-beta", req.Header.Get("OpenAI-Beta"), "OAuth-only backport must not alter API-key passthrough headers")
 }
 
+// TestOpenAIBuildUpstreamRequestOpenAIPassthroughDoesNotPropagateInternalRequestID
+// supplies TokenRouter's internal correlation header on inbound OAuth input. It
+// checks that header is absent from the constructed upstream passthrough
+// request.
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughDoesNotPropagateInternalRequestID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -451,6 +517,10 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughDoesNotPropagateInternalRequ
 	require.Empty(t, req.Header.Get("X-TokenRouter-Request-ID"))
 }
 
+// TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth builds ordinary
+// OAuth Compact input. It checks the Compact suffix, JSON Accept, version,
+// isolated session, HTTP profile, and omission of the synthesized legacy beta
+// header.
 func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -474,6 +544,10 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 	require.Equal(t, upstreamcore.HTTPUpstreamProfileOpenAI, upstreamcore.HTTPUpstreamProfileFromContext(req.Context()))
 }
 
+// TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly builds
+// translated Messages input carrying a prompt-cache key. It checks an isolated
+// session is present and conversation, beta, and originator headers are absent
+// for this bridge.
 func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -498,6 +572,9 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 	require.Empty(t, req.Header.Get("originator"))
 }
 
+// TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL supplies a
+// versioned compatible base and Compact request suffix. It checks the outgoing
+// URL contains one version prefix followed by the Responses Compact path.
 func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -517,15 +594,20 @@ func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testi
 	require.Equal(t, "https://example.com/v1/responses/compact", req.URL.String())
 }
 
+// TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility
+// varies inbound official and third-party identities. It checks the final
+// user-agent and originator pair follows official metadata or the canonical
+// identity when input cannot supply a recognized pair.
 func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t *testing.T) {
-	// The upstream requires originator to match the leading token of the final User-Agent (issue #3901).
-	// Derive originator from the final UA; an unrecognized identity uses the default Codex TUI identity.
+	// Exercise the identity pairing enforced by the OAuth builder:
+	// recognized user-agents supply the originator, while incomplete or
+	// third-party identity selects Codex defaults.
 	tests := []struct {
-		name           string
-		userAgent      string
-		originator     string
-		wantOriginator string
-		wantUA         string
+		name           string // outbound identity scenario label
+		userAgent      string // inbound caller user-agent value
+		originator     string // inbound caller originator value
+		wantOriginator string // expected paired originator value
+		wantUA         string // expected outgoing user-agent value
 	}{
 		{name: "official ua pairs originator", userAgent: "Codex Desktop/1.2.3", wantOriginator: "Codex Desktop", wantUA: "Codex Desktop/1.2.3"},
 		{
@@ -568,6 +650,10 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 	}
 }
 
+// TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders supplies a
+// matching TLS rule with outbound identity values. It checks that rule's
+// user-agent and originator override the provider's configured fallback during
+// request construction.
 func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -601,6 +687,10 @@ func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 	require.Equal(t, routerMatch.UpstreamOriginator, req.Header.Get("originator"))
 }
 
+// TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesProviderFallback supplies a
+// matched TLS rule with empty identity values. It checks the provider's
+// configured user-agent is used and its paired originator is derived for OAuth
+// output.
 func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesProviderFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -625,6 +715,10 @@ func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesProviderFallback(t *testing.
 	require.Equal(t, "codex-tui", req.Header.Get("originator"))
 }
 
+// TestOpenAIBuildUpstreamRequestOpenAIPassthroughForwardsResponsesLiteHeader
+// sets the Lite header on inbound Responses input. It checks passthrough
+// construction carries the true value into the selected provider's outgoing
+// request.
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughForwardsResponsesLiteHeader(t *testing.T) {
 	c, _ := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.98.0")
 	c.Request.Header.Set(media.ResponsesLiteHeader, "true")
@@ -642,14 +736,18 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughForwardsResponsesLiteHeader(
 	require.Equal(t, "true", req.Header.Get(media.ResponsesLiteHeader))
 }
 
+// TestOpenCodeSessionForwardedByResponsesBuildersAfterProviderOverride
+// constructs ordinary and passthrough requests with conflicting session
+// overrides. It checks both outgoing maps contain one authoritative caller
+// conversation header for OpenCode.
 func TestOpenCodeSessionForwardedByResponsesBuildersAfterProviderOverride(t *testing.T) {
 	svc := openCodeSessionTestService()
 	provider := openCodeSessionTestProvider("https://opencode.ai/zen/v1")
 	body := []byte(`{"model":"gpt-5","input":"hello"}`)
 
 	tests := []struct {
-		name  string
-		build func(*gin.Context) (*http.Request, error)
+		name  string                                    // Responses builder scenario label
+		build func(*gin.Context) (*http.Request, error) // request builder under test
 	}{
 		{
 			name: "normal responses",
@@ -675,6 +773,10 @@ func TestOpenCodeSessionForwardedByResponsesBuildersAfterProviderOverride(t *tes
 	}
 }
 
+// TestOpenCodeSessionMissingCallerValueKeepsExistingOverrideBehavior omits the
+// caller's conversation header for a trusted OpenCode target. It checks the
+// configured provider-wide override remains available in the built Responses
+// request.
 func TestOpenCodeSessionMissingCallerValueKeepsExistingOverrideBehavior(t *testing.T) {
 	svc := openCodeSessionTestService()
 	provider := openCodeSessionTestProvider("https://opencode.ai/zen/v1")
@@ -688,6 +790,10 @@ func TestOpenCodeSessionMissingCallerValueKeepsExistingOverrideBehavior(t *testi
 	require.Equal(t, "fixed-provider-value", anthropic.GetHeaderRaw(req.Header, "x-opencode-session"))
 }
 
+// TestOpenCodeSessionIsNotForwardedToOtherUpstreams supplies a private
+// conversation ID to OpenAI, lookalike, and subdomain targets. It checks
+// ordinary Responses construction omits the OpenCode session header for all
+// three destinations.
 func TestOpenCodeSessionIsNotForwardedToOtherUpstreams(t *testing.T) {
 	svc := openCodeSessionTestService()
 	body := []byte(`{"model":"gpt-5","input":"hello"}`)

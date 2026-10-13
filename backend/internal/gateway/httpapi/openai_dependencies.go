@@ -7,9 +7,27 @@ import (
 	"go.uber.org/zap"
 )
 
-type OpenAIDependencies struct{ Handler, Gateway, Funding, Keys, Concurrency bool }
+// Responses admission distinguishes a missing handler from missing services
+// used by that handler. Dependency checks return ordered diagnostic names and
+// write a 503 only while the HTTP response is still available for an error
+// body.
 
-// Missing returns missing dependencies in order. An absent handler returns only "handler".
+// OpenAIDependencies records which Responses entry dependencies were bound at
+// startup. Handler determines whether the remaining service flags are
+// inspected.
+type OpenAIDependencies struct {
+	// Handler, Gateway, Funding, Keys, and Concurrency describe one entry's
+	// installed dependencies. Missing checks the service flags after
+	// Handler confirms that the handler itself exists.
+	// Handler: entry instance presence. Gateway: provider selection service
+	// presence. Funding: billing eligibility reader presence. Keys: API-key
+	// service presence. Concurrency: user-slot helper presence.
+	Handler, Gateway, Funding, Keys, Concurrency bool
+}
+
+// Missing returns diagnostic names for dependencies absent from the Responses
+// entry. An absent Handler ends the check immediately; otherwise Gateway,
+// Funding, Keys, and Concurrency are reported in that order.
 func (d OpenAIDependencies) Missing() []string {
 	missing := make([]string, 0, 5)
 	if !d.Handler {
@@ -30,6 +48,10 @@ func (d OpenAIDependencies) Missing() []string {
 	return missing
 }
 
+// Ensure reports whether the Responses dependencies are ready and logs missing
+// names. A nil logger selects the request logger. Missing dependencies produce
+// a 503 only when c has an unwritten response writer; callers stop processing
+// on false.
 func (d OpenAIDependencies) Ensure(c *gin.Context, log *zap.Logger) bool {
 	missing := d.Missing()
 	if len(missing) == 0 {

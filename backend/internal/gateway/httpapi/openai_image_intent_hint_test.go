@@ -21,15 +21,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Canonical image intent is cached per HTTP request, and transformed attempts
+// can produce a different decision without replacing that cache. Tests compare
+// true, false, unknown, mapped, and concurrent request cases; the benchmark
+// measures classification reuse for a multi-attempt large payload.
+
+// openAIImageIntentHintBenchmarkSink retains benchmark classification results
+// so the repeated classifier work remains observable to the benchmark harness.
 var openAIImageIntentHintBenchmarkSink bool
 
-// TestResolveOpenAIGroupMappedImageIntent checks image intent against the group-mapped model and body.
+// TestResolveOpenAIGroupMappedImageIntent maps text and image aliases to
+// opposite model categories. It checks the routing model, rewritten body model,
+// and image classification all follow the group-mapped target.
 func TestResolveOpenAIGroupMappedImageIntent(t *testing.T) {
 	tests := []struct {
-		name           string
-		requestedModel string
-		mappedModel    string
-		wantIntent     bool
+		name           string // test scenario label
+		requestedModel string // client alias model name
+		mappedModel    string // effective group model name
+		wantIntent     bool   // expected mapped image intent
 	}{
 		{
 			name:           "普通别名映射为生图模型",
@@ -64,12 +73,15 @@ func TestResolveOpenAIGroupMappedImageIntent(t *testing.T) {
 	}
 }
 
+// TestSeedOpenAIForwardImageIntentHint seeds positive and negative unmapped
+// decisions and leaves mapped input unresolved. It checks known boolean values
+// are stored only when the handler can use the current canonical model.
 func TestSeedOpenAIForwardImageIntentHint(t *testing.T) {
 	tests := []struct {
-		name        string
-		groupMapped bool
-		imageIntent bool
-		wantHint    bool
+		name        string // test scenario label
+		groupMapped bool   // group model-mapping enabled flag
+		imageIntent bool   // incoming canonical image decision
+		wantHint    bool   // expected cached boolean presence
 	}{
 		{name: "seed true", imageIntent: true, wantHint: true},
 		{name: "seed false", imageIntent: false, wantHint: true},
@@ -98,12 +110,18 @@ func TestSeedOpenAIForwardImageIntentHint(t *testing.T) {
 	}
 }
 
+// newOpenAIImageIntentHintTestContext creates a Gin context with the chosen
+// transport identity.
 func newOpenAIImageIntentHintTestContext(transport OpenAIClientTransport) *gin.Context {
 	c := &gin.Context{}
 	SetOpenAIClientTransport(c, transport)
 	return c
 }
 
+// countingOpenAIImageIntentClassifier wraps production classification with an
+// atomic call counter. The returned closure shares the supplied counter across
+// requests and records every invocation before delegating the endpoint, model,
+// and payload.
 func countingOpenAIImageIntentClassifier(calls *atomic.Int64) ImageIntentClassifier {
 	return func(endpoint string, requestedModel string, body []byte) bool {
 		calls.Add(1)
@@ -111,11 +129,14 @@ func countingOpenAIImageIntentClassifier(calls *atomic.Int64) ImageIntentClassif
 	}
 }
 
+// TestResolveOpenAIImageIntentHintCachesTrueAndFalse resolves image and text
+// input twice on HTTP contexts. It checks one classifier call per request and a
+// known cached decision for both positive and negative results.
 func TestResolveOpenAIImageIntentHintCachesTrueAndFalse(t *testing.T) {
 	tests := []struct {
-		name string
-		body []byte
-		want bool
+		name string // test scenario label
+		body []byte // canonical classifier request bytes
+		want bool   // expected image-intent boolean decision
 	}{
 		{name: "true", body: []byte(`{"model":"gpt-5.4","tools":[{"type":"image_generation"}]}`), want: true},
 		{name: "false is known", body: []byte(`{"model":"gpt-5.4","input":"write code"}`), want: false},
@@ -137,6 +158,9 @@ func TestResolveOpenAIImageIntentHintCachesTrueAndFalse(t *testing.T) {
 	}
 }
 
+// TestResolveOpenAIImageIntentHintUsesHandlerSeed supplies each boolean
+// canonical hint before resolution. It checks the seeded result is returned and
+// the classifier remains unused even when a body is supplied.
 func TestResolveOpenAIImageIntentHintUsesHandlerSeed(t *testing.T) {
 	for _, seeded := range []bool{false, true} {
 		c := newOpenAIImageIntentHintTestContext(OpenAIClientTransportHTTP)
@@ -150,6 +174,9 @@ func TestResolveOpenAIImageIntentHintUsesHandlerSeed(t *testing.T) {
 	}
 }
 
+// TestResolveOpenAIPassthroughImageIntentReusesCanonicalAcrossFailover repeats
+// an unchanged passthrough attempt three times. It checks all results remain
+// negative and the canonical body is classified once for that HTTP request.
 func TestResolveOpenAIPassthroughImageIntentReusesCanonicalAcrossFailover(t *testing.T) {
 	c := newOpenAIImageIntentHintTestContext(OpenAIClientTransportHTTP)
 	body := []byte(`{"model":"gpt-5.4","input":"write code"}`)
@@ -162,6 +189,10 @@ func TestResolveOpenAIPassthroughImageIntentReusesCanonicalAcrossFailover(t *tes
 	require.Equal(t, int64(1), calls.Load())
 }
 
+// TestResolveOpenAIPassthroughImageIntentKeepsCompactMappingAttemptLocal
+// changes text to image and image to text models for Compact attempts. It
+// checks the attempt result changes while the cached canonical decision remains
+// reusable.
 func TestResolveOpenAIPassthroughImageIntentKeepsCompactMappingAttemptLocal(t *testing.T) {
 	t.Run("text to image", func(t *testing.T) {
 		c := newOpenAIImageIntentHintTestContext(OpenAIClientTransportHTTP)
@@ -199,6 +230,10 @@ func TestResolveOpenAIPassthroughImageIntentKeepsCompactMappingAttemptLocal(t *t
 	})
 }
 
+// TestResolveOpenAIPassthroughImageIntentInvalidationDoesNotPolluteCanonical
+// removes an image tool from one attempt. It checks separate canonical and
+// attempt classifications, retention of the positive canonical cache, and reuse
+// on unchanged input.
 func TestResolveOpenAIPassthroughImageIntentInvalidationDoesNotPolluteCanonical(t *testing.T) {
 	c := newOpenAIImageIntentHintTestContext(OpenAIClientTransportHTTP)
 	canonicalBody := []byte(`{"model":"gpt-5.4","tools":[{"type":"image_generation"}]}`)
@@ -216,6 +251,10 @@ func TestResolveOpenAIPassthroughImageIntentInvalidationDoesNotPolluteCanonical(
 	require.Equal(t, int64(2), calls.Load())
 }
 
+// TestResolveOpenAIPassthroughImageIntentMappedBodyStartsUnknownThenSeedsCanonical
+// starts without a cached decision and evaluates a rewritten text attempt. It
+// checks two classifications and retention of the canonical image-model
+// decision.
 func TestResolveOpenAIPassthroughImageIntentMappedBodyStartsUnknownThenSeedsCanonical(t *testing.T) {
 	c := newOpenAIImageIntentHintTestContext(OpenAIClientTransportHTTP)
 	canonicalBody := []byte(`{"model":"gpt-image-2","input":"draw"}`)
@@ -232,12 +271,16 @@ func TestResolveOpenAIPassthroughImageIntentMappedBodyStartsUnknownThenSeedsCano
 	require.True(t, cached)
 }
 
+// TestResolveOpenAIPassthroughImageIntentReusesAcrossInvariantMutations
+// supplies attempt bodies with policy and namespace changes marked as
+// invariant. It checks repeated resolutions reuse one canonical negative
+// decision for each request.
 func TestResolveOpenAIPassthroughImageIntentReusesAcrossInvariantMutations(t *testing.T) {
 	tests := []struct {
-		name          string
-		canonicalBody []byte
-		attemptBody   []byte
-		want          bool
+		name          string // test scenario label
+		canonicalBody []byte // unchanged canonical request bytes
+		attemptBody   []byte // transformed per-attempt request bytes
+		want          bool   // expected image-intent boolean decision
 	}{
 		{
 			name:          "oauth sanitize fast policy and reasoning",
@@ -266,6 +309,9 @@ func TestResolveOpenAIPassthroughImageIntentReusesAcrossInvariantMutations(t *te
 	}
 }
 
+// TestResolveOpenAIImageIntentHintExcludesWebSocketAndUnknownTransport resolves
+// unchanged input on transports without HTTP caching. It checks two classifier
+// calls and an unknown stored hint after both resolutions.
 func TestResolveOpenAIImageIntentHintExcludesWebSocketAndUnknownTransport(t *testing.T) {
 	for _, transport := range []OpenAIClientTransport{OpenAIClientTransportWS, OpenAIClientTransportUnknown} {
 		c := newOpenAIImageIntentHintTestContext(transport)
@@ -281,6 +327,10 @@ func TestResolveOpenAIImageIntentHintExcludesWebSocketAndUnknownTransport(t *tes
 	}
 }
 
+// TestResolveOpenAIImageIntentHintConcurrentRequestsAreIsolated runs separate
+// HTTP contexts concurrently with alternating image intent. It checks each
+// request's repeated result agrees with its input and the shared classifier
+// count equals requests.
 func TestResolveOpenAIImageIntentHintConcurrentRequestsAreIsolated(t *testing.T) {
 	const requests = 32
 	var calls atomic.Int64
@@ -288,6 +338,9 @@ func TestResolveOpenAIImageIntentHintConcurrentRequestsAreIsolated(t *testing.T)
 	var wg sync.WaitGroup
 	results := make([][2]bool, requests)
 
+	// Each goroutine owns a separate Gin context and result index. The
+	// shared atomic counter measures classifier calls while Wait protects
+	// subsequent result assertions.
 	for i := range requests {
 		wg.Add(1)
 		go func(index int, image bool) {
@@ -309,8 +362,15 @@ func TestResolveOpenAIImageIntentHintConcurrentRequestsAreIsolated(t *testing.T)
 	require.Equal(t, int64(requests), calls.Load())
 }
 
+// BenchmarkOpenAIPassthroughImageIntentHintLargeBody compares rescanning with
+// cached canonical classification over four attempts on a large payload. It
+// reports allocations and classifier calls per operation while retaining each
+// result.
 func BenchmarkOpenAIPassthroughImageIntentHintLargeBody(b *testing.B) {
+	// Four MiB of text makes repeated payload scans measurable.
 	body := []byte(`{"model":"gpt-5.4","input":"` + strings.Repeat("x", 4<<20) + `"}`)
+	// Four attempts expose per-request classification reuse in the
+	// benchmark.
 	const attempts = 4
 
 	b.Run("scan_each_attempt", func(b *testing.B) {
@@ -318,6 +378,9 @@ func BenchmarkOpenAIPassthroughImageIntentHintLargeBody(b *testing.B) {
 		b.ReportAllocs()
 		calls := 0
 		for range b.N {
+			// Reset the hint to an unknown value for each benchmark
+			// operation, so reuse is measured across its attempts
+			// rather than across separate requests.
 			c.Set(openAIImageIntentHintContextKey, struct{}{})
 			for range attempts {
 				calls++
@@ -336,6 +399,9 @@ func BenchmarkOpenAIPassthroughImageIntentHintLargeBody(b *testing.B) {
 			return gatewayprovider.ImageIntent().IsImageGenerationIntent(endpoint, requestedModel, candidate)
 		}
 		for range b.N {
+			// Reset the hint to an unknown value for each benchmark
+			// operation, so reuse is measured across its attempts
+			// rather than across separate requests.
 			c.Set(openAIImageIntentHintContextKey, struct{}{})
 			for range attempts {
 				openAIImageIntentHintBenchmarkSink = ResolveOpenAIPassthroughImageIntent(c, "gpt-5.4", body, "gpt-5.4", body, false, classify)
@@ -345,13 +411,17 @@ func BenchmarkOpenAIPassthroughImageIntentHintLargeBody(b *testing.B) {
 	})
 }
 
+// TestOpenAIGatewayServicePassthroughCompactImageIntentIsAttemptLocal forwards
+// Compact requests with mappings between text and image models. It checks image
+// attempt rejection or upstream forwarding follows the mapped model while
+// canonical cache values remain tied to original input.
 func TestOpenAIGatewayServicePassthroughCompactImageIntentIsAttemptLocal(t *testing.T) {
 	tests := []struct {
-		name           string
-		canonicalModel string
-		compactModel   string
-		wantRejected   bool
-		wantCanonical  bool
+		name           string // test scenario label
+		canonicalModel string // canonical request model name
+		compactModel   string // mapped Compact attempt model
+		wantRejected   bool   // expected local image rejection
+		wantCanonical  bool   // expected cached canonical decision
 	}{
 		{
 			name:           "text to image rejects",

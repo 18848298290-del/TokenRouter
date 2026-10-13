@@ -19,8 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform checks target-group model and sticky plans while leaving
-// the original key and mapping intact.
+// Group fallback replaces request routing after a recoverable prompt-size
+// failure. The fixtures inspect the destination's mapping and sticky identity,
+// the retained forced platform, and output/cancellation guards that prevent a
+// second authorization path from starting after recovery is no longer
+// available.
+
+// TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform switches from one group
+// to an authorized mapped destination. It checks rebuilt input, destination
+// sticky prefetch, retained forced platform, unchanged original key group, and
+// a single resolution attempt.
 func TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx := requeststate.WithClientProtocol(context.Background(), protocol.ProtocolAnthropicMessages)
@@ -74,8 +82,9 @@ func TestGroupFallbackRebuildsPlanAndKeepsForcedPlatform(t *testing.T) {
 	require.Equal(t, 1, resolveCount)
 }
 
-// TestGroupFallbackStopsAfterOutputOrCancellation checks that committed output and cancellation prevent
-// fallback authorization.
+// TestGroupFallbackStopsAfterOutputOrCancellation supplies committed headers, a
+// started stream, and a cancelled request. It checks each condition returns
+// unhandled without requiring fallback authorization or planning callbacks.
 func TestGroupFallbackStopsAfterOutputOrCancellation(t *testing.T) {
 	for _, scenario := range []string{"output", "stream", "cancelled"} {
 		t.Run(scenario, func(t *testing.T) {

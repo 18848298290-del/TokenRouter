@@ -17,16 +17,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAICountCall carries request identity, routing inputs, and a mapped-body reader for token counting.
+// Messages-shaped counts route the client model through the effective group's
+// plan before querying the selected platform. The original requested name
+// remains available for diagnostics while the provider-layer name and mapped
+// body guide counting. Grok's standalone count entry instead estimates its
+// parsed Anthropic input locally and uses the same response shape.
+//
+// Authenticated compatibility counting checks funding before its single
+// slot-free selection. That request carries its mapping, body reader, session
+// hash, and start time into the count adapter. Prompt replacement happens
+// before parsing and route planning, so the counted content follows that
+// replacement; none of these paths submits a generation result for settlement.
+
+// OpenAICountCall carries authenticated routing input and observations for one
+// compatibility count.
 type OpenAICountCall struct {
-	Key                                              *apikey.APIKey
+	Key *apikey.APIKey // effective authenticated API key
+	// Model, ProviderLayerModel, SessionHash, and Platform describe one
+	// count. Model keeps the client-facing identity while
+	// ProviderLayerModel follows group routing; SessionHash and Platform
+	// constrain the corresponding selection.
+	// Model: original client model. ProviderLayerModel: trimmed group
+	// model.
+	// SessionHash: sticky selection digest. Platform: optional
+	// provider-platform filter.
 	Model, ProviderLayerModel, SessionHash, Platform string
-	Mapping                                          routing.GroupMappingResult
-	MappedBody                                       func(bool, string) []byte
-	Log                                              *zap.Logger
-	StartedAt                                        time.Time
+	Mapping                                          routing.GroupMappingResult // effective group model mapping
+	// MappedBody retains a request-local model replacement cache. Returned
+	// bytes may share its storage, so the counting target treats them as
+	// immutable.
+	MappedBody func(bool, string) []byte
+	Log        *zap.Logger // request count diagnostic logger
+	StartedAt  time.Time   // authentication preparation start time
 }
 
+// GrokCountTokens parses Anthropic-shaped input and returns a local token
+// estimate. It enters the request activity barrier and validates a nonempty
+// body and model. Backend authentication, funding, and provider selection are
+// skipped by this method; the gateway route supplies its surrounding admission.
+// Successful estimates publish request observations and write input_tokens,
+// while parsing failures use Anthropic errors. The estimator runs on the parsed
+// body, so no outgoing provider request or generation completion is created.
 func (h *OpenAITokensHandler) GrokCountTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "anthropic")
 	if !accepted {
@@ -72,6 +103,17 @@ func (h *OpenAITokensHandler) GrokCountTokens(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"input_tokens": estimated})
 }
 
+// CountTokens executes one authenticated Messages-compatible token-count
+// request. It requires an effective key, user subject, protocol permission, and
+// backend services before reading input. User prompt replacement precedes
+// parsing and group route planning, and funding eligibility is checked before
+// selecting a provider.
+//
+// The route's mapped model drives the provider-layer name and mapped-body
+// cache, while reqModel remains the client-facing identity. The dedicated text
+// adapter performs at most one slot-free selection and count; it records
+// selection latency even when selection fails and submits no generation
+// completion.
 func (h *OpenAITokensHandler) CountTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "anthropic")
 	if !accepted {
@@ -147,7 +189,9 @@ func (h *OpenAITokensHandler) CountTokens(c *gin.Context) {
 	h.backend.ObserveRequest(c, reqModel, false)
 	h.backend.ObserveEndpoint(c, false)
 
-	// Capture the group and mapping in a request-local route plan.
+	// Bind group routing before deriving provider-layer identity, keeping
+	// the client model available for error text while selection reads the
+	// route's mapping.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
@@ -171,7 +215,9 @@ func (h *OpenAITokensHandler) CountTokens(c *gin.Context) {
 	}
 
 	sessionHash := h.backend.SessionHash(c, OpenAISelectionSession, body)
-	// The dedicated selector skips slots and profit admission. Counting makes one attempt and records no usage.
+	// Funding has passed before this slot-free count begins. The
+	// single-count adapter reports selection latency and error output
+	// without entering generation completion.
 	textflow.RunSingleCountTokens(h.backend.CountExecution(c, OpenAICountCall{
 		Key: apiKey, Model: reqModel, ProviderLayerModel: providerLayerModel, SessionHash: sessionHash,
 		Platform: requestPlatform, Mapping: groupMapping, MappedBody: mappedBodyForMessages, Log: reqLog, StartedAt: requestStart,

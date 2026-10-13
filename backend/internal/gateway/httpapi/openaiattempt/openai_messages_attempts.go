@@ -20,15 +20,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAIMessageAttemptBridge shares Responses resources with Messages-specific error and usage handling.
+// Messages attempts retain the provider-layer model separately from the
+// original client model and use a request-local cache for group-mapped body
+// bytes. Each selected provider receives those bytes with its own
+// TLS/client-policy check, and the common bridge supplies capacity and admitted
+// funding state.
+//
+// Native interception stops execution before Cyber and completion observation.
+// Otherwise the attempt separates result presence, images, native partial
+// usage, and commitment for the text loop. Reasoning-limit rejection stops a
+// nonimage result locally; usage-bearing partial results remain available to
+// completion. Writer-size changes close retry readiness, and terminal failures
+// use Messages output while successful completion captures the
+// Messages-specific group mapping rather than the embedded Responses mapping.
+
+// openAIMessageAttemptBridge adds Messages model mapping and body caching to
+// shared attempts.
 type openAIMessageAttemptBridge struct {
-	responsesAttemptBridge
+	responsesAttemptBridge // embedded admitted request state
+	// providerLayerModel, currentRoutingModel, and promptCacheKey belong to
+	// this admitted Messages request. Group fallback replaces routing
+	// identities while prompt-cache identity remains available to
+	// selected-provider conversion.
+	// providerLayerModel: mapped provider selection model.
+	// currentRoutingModel: scheduling feedback model name.
+	// promptCacheKey: retained Messages cache identity.
 	providerLayerModel, currentRoutingModel, promptCacheKey string
-	groupMappingMsg                                         routing.GroupMappingResult
-	mappedBodyForMessages                                   func(bool, string) []byte
+	// groupMappingMsg retains the Messages group mapping used for mapped
+	// input and completion pricing. Group fallback updates it after the
+	// shared destination switch.
+	groupMappingMsg routing.GroupMappingResult
+	// mappedBodyForMessages caches request-local model replacement results.
+	// Forward reads its retained bytes as immutable across serial provider
+	// selections and retries.
+	mappedBodyForMessages func(bool, string) []byte
 }
 
-// Select chooses a provider using the Messages routing model and records its identity.
+// Select resolves a Messages provider with separate client and provider-layer
+// models. Selection errors return to the loop. An unavailable target is
+// diagnosed using the routed model and displayed with the client name;
+// successful selection retains provider/session identity and publishes platform
+// observations.
 func (b *openAIMessageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.ResponseSelection, error) {
 	b.reqLog.Debug("openai_messages.provider_selecting", zap.Int("excluded_provider_count", len(excluded)))
 	var scheduleDecision scheduler.PlatformDecision
@@ -65,7 +97,11 @@ func (b *openAIMessageAttemptBridge) Select(excluded map[int64]struct{}) (textfl
 	return b.selectedView(), nil
 }
 
-// SelectionFailure writes Messages selection or exhausted-failover errors unless the client disconnected.
+// SelectionFailure formats terminal Messages selection output while the client
+// remains connected. Initial nonnil errors check business handling before
+// routed-model diagnosis. After exclusions, captured failover evidence uses
+// Anthropic exhaustion output; missing evidence writes the default upstream
+// failure.
 func (b *openAIMessageAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
@@ -102,16 +138,32 @@ func (b *openAIMessageAttemptBridge) SelectionFailure(err error, excludedCount i
 	}
 }
 
-// Forward applies Messages mapping and client policy, then records the result and timing.
+// Forward executes group-mapped Messages input with the current selected
+// provider. It binds the shared native stream marker and obtains immutable
+// mapped bytes from the request-local cache. Provider cleanup runs after policy
+// or exchange return, and native interception returns a stop outcome before
+// later request observations.
+//
+// Other results record Cyber handling and measured response latency,
+// subtracting upstream time only when it fits inside the total duration. Native
+// usage, images, HTTP commitment, and retry classification remain independent
+// outcome evidence. A reasoning-effort limit error without images sets Stop
+// locally; the text loop handles remaining partial-result and completion
+// decisions.
 func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	gatewayhttp.BindNativeMessageStreamState(b.c, b.streamStarted)
 	var err error
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsRoutingLatencyMsKey, time.Since(b.routingStart).Milliseconds())
 	forwardStart := time.Now()
 
-	// Apply the group model mapping to the attempt body.
+	// Read mapped input from this request's canonical cache before platform
+	// conversion, keeping each provider attempt from inheriting mutable
+	// output from the previous conversion.
 	attemptBody := b.mappedBodyForMessages(b.groupMappingMsg.Mapped, b.groupMappingMsg.MappedModel)
 	b.writerSizeBeforeForward = b.c.Writer.Size()
+	// Retire provider capacity after policy rejection or exchange return,
+	// while retaining the result for native interception, Cyber processing,
+	// and completion capture by the loop.
 	b.result, err = func() (*forwardcore.OpenAIResult, error) {
 		defer func() {
 			if b.providerReleaseFunc != nil {
@@ -135,6 +187,9 @@ func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	forwardDurationMs := time.Since(forwardStart).Milliseconds()
 	upstreamLatencyMs, _ := GetContextInt64(b.c, gatewayhttp.OpsUpstreamLatencyMsKey)
 	responseLatencyMs := forwardDurationMs
+	// Subtract the positive upstream phase only when measured total time
+	// contains it; other observations keep total duration instead of a
+	// negative response-latency estimate.
 	if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
 		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
 	}
@@ -145,6 +200,9 @@ func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	out := textflow.ResponseOutcome{Outcome: textflow.Outcome{Attempt: openAIObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil}, Images: b.result != nil && b.result.ImageCount > 0}
 	out.NativePartial = err != nil && b.result != nil && b.result.NativeUsage != nil && (b.result.NativeUsage.HasObservedTokens() || b.result.ImageCount > 0)
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
+	// Local reasoning limits end a nonimage request before provider retry.
+	// Image-bearing partial results remain available to the common loop's
+	// existing completion and error decisions.
 	if err != nil && !out.Images {
 		if overLimit, ok := errors.AsType[*routing.ReasoningEffortOverLimitError](err); ok {
 			b.reqLog.Info("openai_messages.reasoning_effort_policy_denied", zap.String("reason", overLimit.Error()))
@@ -158,7 +216,10 @@ func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 	return out
 }
 
-// Complete captures Messages usage, payload hash, and pricing fields before submission.
+// Complete captures Messages usage, request hash, and its own group pricing
+// mapping. A nil result skips submission. The queued task retains captured
+// completion input and logging identity values, allowing Recorder to run
+// independently of subsequent HTTP bridge changes.
 func (b *openAIMessageAttemptBridge) Complete() {
 	res := b.result
 
@@ -187,7 +248,8 @@ func (b *openAIMessageAttemptBridge) Complete() {
 	})
 }
 
-// PartialImages logs forwarding failures that still produced images.
+// PartialImages reports the selected Messages provider's error and observed
+// image count.
 func (b *openAIMessageAttemptBridge) PartialImages(err error) {
 	b.reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -196,7 +258,17 @@ func (b *openAIMessageAttemptBridge) PartialImages(err error) {
 	)
 }
 
-// RetryReady rejects retries after disconnection or output and reports eligible provider failures.
+// RetryReady accepts classified Messages recovery before downstream output size
+// changes. A nonfailover cause or client disconnection ends recovery. Callers
+// supply a nonnil failure, and warning recording runs before the byte baseline
+// is checked.
+//
+// Changed output delegates health observation and Anthropic terminal error
+// handling before returning false, protecting the current stream from a second
+// provider's content. Otherwise the classified error decides whether scheduling
+// failure is reported using currentRoutingModel. The text loop owns retry
+// waiting and provider switch allowances after this readiness callback returns
+// true.
 func (b *openAIMessageAttemptBridge) RetryReady(failure *textflow.AttemptFailure) bool {
 	err := failure.Cause
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -211,6 +283,9 @@ func (b *openAIMessageAttemptBridge) RetryReady(failure *textflow.AttemptFailure
 		return false
 	}
 	b.binding().recordOpenAICyberWarning(b.c, b.reqLog, b.apiKey, b.provider, b.reqModel, failoverErr.StatusCode, failoverErr.ResponseBody, err.Error())
+	// Cyber warning handling can emit Messages output. Recheck actual bytes
+	// against the captured baseline before replay so another provider
+	// cannot extend that started response.
 	if b.c.Writer.Size() != b.writerSizeBeforeForward {
 		b.binding().observeOpenAIProviderHealthFailure(b.c.Request.Context(), b.provider, err)
 		b.binding().handleAnthropicFailoverExhausted(b.c, failoverErr, true)
@@ -222,7 +297,10 @@ func (b *openAIMessageAttemptBridge) RetryReady(failure *textflow.AttemptFailure
 	return true
 }
 
-// RetryWait logs the same-provider retry budget and delay.
+// RetryWait logs Messages same-provider retry parameters from the classified
+// failure. Callers supply UpstreamFailoverError evidence with retry allowance,
+// count, and delay. The outer loop owns waiting and cancellation after this
+// observation.
 func (b *openAIMessageAttemptBridge) RetryWait(failure *textflow.AttemptFailure, retryLimit, retryCount int, retryDelay time.Duration) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -235,7 +313,10 @@ func (b *openAIMessageAttemptBridge) RetryWait(failure *textflow.AttemptFailure,
 	)
 }
 
-// Switching logs the provider switch count and limit.
+// Switching logs the Messages provider and the loop's chosen switch budget.
+// Callers supply a classified upstream failure. The text loop owns provider
+// exclusion and subsequent selection after the callback records this
+// transition.
 func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure, switchCount, maxProviderSwitches int) {
 	var failoverErr *forwardcore.UpstreamFailoverError
 	errors.As(failure.Cause, &failoverErr)
@@ -247,7 +328,17 @@ func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure,
 	)
 }
 
-// OtherFailure handles disconnection and cyber warnings, then writes any missing Anthropic error.
+// OtherFailure supplies missing Messages failure output after warning and
+// scheduling observations. A result reporting client disconnection returns
+// after its disconnect log, keeping that path separate from warning handling
+// and fallback output.
+//
+// Other failures prefer warning evidence from the error chain before recording
+// error text. After those callbacks, communicated-error evidence and the raw
+// writer size decide whether a default Anthropic response is needed. A recorded
+// warning permits fallback while size remains unchanged; communicated errors
+// suppress it. Diagnostics retain the selected fallback and communication
+// observations.
 func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 	if b.result != nil && b.result.ClientDisconnect {
 		b.reqLog.Info("openai_messages.client_disconnected",
@@ -267,6 +358,9 @@ func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 	b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), false, nil, err)
 	upstreamErrorAlreadyCommunicated := gatewayhttp.OpenAIForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	b.wroteFallback = false
+	// Cyber warning callbacks can write Messages errors. Recheck
+	// communication and byte observations before supplying a default
+	// response so their terminal output is retained.
 	if !upstreamErrorAlreadyCommunicated && (!recordedWarning || b.c.Writer.Size() == b.writerSizeBeforeForward) {
 		b.wroteFallback = b.binding().ensureAnthropicErrorResponse(b.c, *b.streamStarted)
 	}
@@ -278,7 +372,10 @@ func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 	)
 }
 
-// Success reports scheduling success and observed first-token latency.
+// Success reports Messages scheduling success under currentRoutingModel and
+// observed latency. Missing result reports success with nil first-token
+// latency. Request completion and settlement use their independently captured
+// result rather than this feedback callback.
 func (b *openAIMessageAttemptBridge) Success() {
 	if b.result != nil {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), true, b.result.FirstTokenMs)
@@ -287,7 +384,8 @@ func (b *openAIMessageAttemptBridge) Success() {
 	}
 }
 
-// Completed logs the serving provider and total switch count.
+// Completed records the serving Messages provider and final provider-switch
+// count.
 func (b *openAIMessageAttemptBridge) Completed(switchCount int) {
 	b.reqLog.Debug("openai_messages.request_completed",
 		zap.Int64("provider_id", b.provider.Record.ID),
@@ -295,8 +393,20 @@ func (b *openAIMessageAttemptBridge) Completed(switchCount int) {
 	)
 }
 
+// CanAttempt reports whether the Messages client remains connected for provider
+// execution. It delegates request disconnection detection to
+// FailoverClientGone. Completed-attempt output and retry permission are checked
+// separately by RetryReady.
 func (b *openAIMessageAttemptBridge) CanAttempt() bool { return !gatewayhttp.FailoverClientGone(b.c) }
-func (b *openAIMessageAttemptBridge) Failed()          {}
+
+// Failed satisfies the Messages terminal hook after protocol-specific failure
+// handling.
+func (b *openAIMessageAttemptBridge) Failed() {}
+
+// Exhausted writes Messages terminal recovery output for the last failure. A
+// classified upstream cause uses Anthropic failover formatting. Missing or
+// unclassified failure data writes the default 502 with the current stream
+// marker.
 func (b *openAIMessageAttemptBridge) Exhausted(failure *textflow.AttemptFailure) {
 	var original *forwardcore.UpstreamFailoverError
 	if failure != nil && errors.As(failure.Cause, &original) {

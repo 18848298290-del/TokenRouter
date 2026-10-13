@@ -30,23 +30,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Standalone and hosted search use different outgoing protocols but share
+// search billing and recovery rules. These fixtures inspect request identity,
+// PAT metadata backfill, conversion output, provider-error writes, and the
+// original response-body closure when captured failure bytes are replayed for
+// health handling.
+
+// alphaResponseBody counts closure attempts on the original upstream search
+// body.
 type alphaResponseBody struct {
-	io.ReadCloser
-	closes int
+	io.ReadCloser     // original wrapped response reader
+	closes        int // observed body closure attempts
 }
 
+// alphaSearchProviderStateRepo records search health writes and persisted PAT
+// metadata.
 type alphaSearchProviderStateRepo struct {
-	gatewayprovider.ExecutionProviderStore
+	gatewayprovider.ExecutionProviderStore // unused embedded repository methods
 
-	setErrorCalls      int
-	lastError          string
+	setErrorCalls int    // persistent provider-error write count
+	lastError     string // last provider-error message written
+	// updatedCredentials retains the top-level copied credential update
+	// from the last fixture write. Nested values remain shared with the
+	// supplied map.
 	updatedCredentials map[string]any
 }
 
+// Close counts the fixture cleanup and returns the wrapped body closure error.
 func (b *alphaResponseBody) Close() error { b.closes++; return b.ReadCloser.Close() }
 
-// TestAlphaSearchFailoverClosesOriginalResponse checks that retryable responses are closed before returning
-// for failover.
+// TestAlphaSearchFailoverClosesOriginalResponse returns a rate-limit response
+// whose body tracks closure. It checks typed retry evidence, unwritten client
+// output, and one closure of the originally acquired body before return.
 func TestAlphaSearchFailoverClosesOriginalResponse(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -90,17 +105,24 @@ func TestAlphaSearchFailoverClosesOriginalResponse(t *testing.T) {
 	require.Equal(t, 1, closedBody.closes, "上游响应体必须在本次返回前释放")
 }
 
+// SetError records the attempted provider error text and increments its
+// counter.
 func (r *alphaSearchProviderStateRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
 	r.setErrorCalls++
 	r.lastError = errorMsg
 	return nil
 }
 
+// UpdateCredentials retains a shallow top-level copy of credential updates for
+// assertions. Nested credential values remain shared with the supplied map. The
+// fixture returns nil for every write and records no independent durable state.
 func (r *alphaSearchProviderStateRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
 	r.updatedCredentials = querycache.ShallowMap(credentials)
 	return nil
 }
 
+// alphaSearchResponsesSSE builds text, citation, and completion events for
+// hosted-search conversion.
 func alphaSearchResponsesSSE(output string) string {
 	return "event: response.output_text.delta\n" +
 		`data: {"type":"response.output_text.delta","delta":` + strconv.Quote(output) + `}` + "\n\n" +
@@ -110,7 +132,10 @@ func alphaSearchResponsesSSE(output string) string {
 		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(output) + `}]}]}}` + "\n\n"
 }
 
-// TestForwardAlphaSearchOAuthPreservesWire checks alpha payload passthrough with User-Agent and TLS routing.
+// TestForwardAlphaSearchOAuthPreservesWire sends standalone OAuth search with a
+// matched TLS identity rule. It checks unchanged sanitized-compatible payload,
+// query forwarding, provider-scoped metadata, TLS profile, result identity, and
+// one per-call search billing unit.
 func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	body := []byte(`{
 		"id":"search-session",
@@ -184,6 +209,10 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	require.JSONEq(t, string(body), string(upstream.lastBody))
 }
 
+// TestForwardAlphaSearchPATUsesResponsesWebSearchFallback supplies PAT search
+// input and Responses SSE output. It checks hosted tool conversion, filtered
+// capabilities, provider identity, mapped search JSON/citations, endpoint
+// metadata, and one successful search-call unit.
 func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	body := []byte(`{
 		"id":"search-session",
@@ -275,6 +304,10 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String(), `"search_query"`)
 }
 
+// TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata starts a PAT
+// without account identity and serves validation metadata locally. It checks
+// one discovery call, outgoing account/FedRAMP headers, request credential
+// updates, and persistence of the discovered PAT identity.
 func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"OpenAI news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -340,8 +373,10 @@ func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.
 	require.Equal(t, providercore.OpenAIAuthModePersonalAccessToken, repo.updatedCredentials["auth_mode"])
 }
 
-// TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError checks model mapping and non-retryable error
-// passthrough.
+// TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError returns a
+// nonretryable 400 from a mapped compatible search target. It checks outgoing
+// model and commands, upstream error passthrough, and a nil completion result
+// despite nil returned error.
 func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -374,7 +409,9 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	result, err := service.ForwardAlphaSearch(context.Background(), c, provider, body)
 
 	require.NoError(t, err)
-	// A passed-through error returns no result, so per-search billing is skipped.
+	// This handled HTTP failure supplies no completion result, leaving the
+	// per-call billing adapter without a successful search unit despite a
+	// nil execution error.
 	require.Nil(t, result)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.JSONEq(t, upstreamBody, recorder.Body.String())
@@ -384,8 +421,10 @@ func TestForwardAlphaSearchAPIKeyMapsModelAndPassesThroughError(t *testing.T) {
 	require.True(t, gjson.GetBytes(upstream.lastBody, "commands.search_query").IsArray())
 }
 
-// TestForwardAlphaSearchReturnsFailoverBeforeWriting checks that retryable errors return before writing a
-// response.
+// TestForwardAlphaSearchReturnsFailoverBeforeWriting returns a retryable
+// API-key 429. It checks status-based failover evidence, empty access-state
+// metadata, default search target, and an unwritten response body available for
+// outer provider recovery.
 func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -426,6 +465,10 @@ func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+// TestForwardAlphaSearchSetupToken429CarriesSameProviderRetryWindow returns 429
+// with Retry-After for a setup token. It checks same-provider retry
+// eligibility, one-second delay, bounded deadline, response request ID, and
+// uncommitted client output.
 func TestForwardAlphaSearchSetupToken429CarriesSameProviderRetryWindow(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -468,6 +511,10 @@ func TestForwardAlphaSearchSetupToken429CarriesSameProviderRetryWindow(t *testin
 	require.False(t, c.Writer.Written())
 }
 
+// TestForwardAlphaSearchAccessStateUsesTypedFailover returns a
+// deactivated-workspace error from standalone OAuth search. It checks
+// provider-auth classification and client-safe recovery metadata while
+// retaining the Codex target and unwritten output.
 func TestForwardAlphaSearchAccessStateUsesTypedFailover(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -504,6 +551,10 @@ func TestForwardAlphaSearchAccessStateUsesTypedFailover(t *testing.T) {
 	require.False(t, c.Writer.Written())
 }
 
+// TestForwardAlphaSearchPATFallbackAccessStateUsesTypedFailover returns an
+// account-disabled error on hosted PAT search. It checks provider-auth
+// recovery, Responses target, request correlation, and absence of client output
+// before the returned failover.
 func TestForwardAlphaSearchPATFallbackAccessStateUsesTypedFailover(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -541,6 +592,10 @@ func TestForwardAlphaSearchPATFallbackAccessStateUsesTypedFailover(t *testing.T)
 	require.False(t, c.Writer.Written())
 }
 
+// assertOpenAIAlphaSearchAccessStateFailover checks typed provider-auth
+// recovery and client-safe output metadata. It also checks the upstream request
+// ID and disallows same-provider retry for these supplied search access-state
+// fixtures.
 func assertOpenAIAlphaSearchAccessStateFailover(t *testing.T, err error, requestID string) {
 	t.Helper()
 	var failoverErr *forwardcore.UpstreamFailoverError
@@ -556,6 +611,10 @@ func assertOpenAIAlphaSearchAccessStateFailover(t *testing.T, err error, request
 	require.Equal(t, requestID, http.Header(failoverErr.ResponseHeaders).Get("x-request-id"))
 }
 
+// TestForwardAlphaSearchUnauthorizedDoesNotMarkProviderError supplies an
+// at-prefixed token without an auth-mode marker and returns 401. It checks
+// failover evidence, zero provider-error writes, and an unwritten client
+// response after search execution.
 func TestForwardAlphaSearchUnauthorizedDoesNotMarkProviderError(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -581,7 +640,10 @@ func TestForwardAlphaSearchUnauthorizedDoesNotMarkProviderError(t *testing.T) {
 			Type:        capability.ProviderTypeOAuth,
 			Concurrency: 1,
 			Credentials: map[string]any{
-				// Omit auth_mode to cover PATs imported as ordinary OAuth credentials.
+				// Keep auth_mode absent so the at-prefixed
+				// token itself selects PAT compatibility
+				// handling, covering credential records that
+				// lack an explicit authentication-mode marker.
 				"access_token":       "at-test-token",
 				"chatgpt_account_id": "chatgpt-provider",
 			},
@@ -599,6 +661,10 @@ func TestForwardAlphaSearchUnauthorizedDoesNotMarkProviderError(t *testing.T) {
 	require.False(t, c.Writer.Written())
 }
 
+// TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkProviderError
+// returns 401 for explicit PAT hosted search. It checks Responses/SSE request
+// construction, beta negotiation, retry evidence, zero provider-error writes,
+// and uncommitted client output.
 func TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkProviderError(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -645,9 +711,10 @@ func TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkProviderEr
 	require.False(t, c.Writer.Written())
 }
 
-// TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver checks failover when an API-key search endpoint
-// returns 404.
-// The provider remains schedulable so a mixed group can try another candidate.
+// TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver returns 404 from a
+// compatible API-key search endpoint. It checks failover evidence, zero
+// persistent provider-error writes, and empty client output so another target
+// can be selected.
 func TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -690,7 +757,9 @@ func TestForwardAlphaSearchAPIKeyEndpointNotFoundFailsOver(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
-// TestForwardAlphaSearchOAuthNotFoundPassesThrough checks passthrough of a ChatGPT search endpoint 404.
+// TestForwardAlphaSearchOAuthNotFoundPassesThrough returns 404 from standalone
+// OAuth search. It checks the upstream JSON/status reaches the client and the
+// call returns nil error with no completion result for search billing.
 func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -725,6 +794,10 @@ func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
 	require.JSONEq(t, upstreamBody, recorder.Body.String())
 }
 
+// TestShouldApplyOpenAIAlphaSearchProviderErrorSideEffects compares
+// authentication, endpoint, forbidden, and rate-limit statuses. It checks
+// 401/404/405 skip effects, while 403 and 429 permit the shared search
+// provider-health path.
 func TestShouldApplyOpenAIAlphaSearchProviderErrorSideEffects(t *testing.T) {
 	require.False(t, media.AlphaProviderErrorSideEffects(http.StatusUnauthorized))
 	require.False(t, media.AlphaProviderErrorSideEffects(http.StatusNotFound))
@@ -733,6 +806,9 @@ func TestShouldApplyOpenAIAlphaSearchProviderErrorSideEffects(t *testing.T) {
 	require.True(t, media.AlphaProviderErrorSideEffects(http.StatusTooManyRequests))
 }
 
+// TestOpenAIAlphaSearchSchedulingModelUsesCanonicalProviderMapping configures
+// one client-to-provider alias. It checks health feedback uses the mapped
+// canonical name for that alias and retains an unmapped model unchanged.
 func TestOpenAIAlphaSearchSchedulingModelUsesCanonicalProviderMapping(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Credentials: map[string]any{
 		"model_mapping": map[string]any{"client-visible": "canonical-upstream"},
@@ -741,6 +817,10 @@ func TestOpenAIAlphaSearchSchedulingModelUsesCanonicalProviderMapping(t *testing
 	require.Equal(t, "unmapped", openAIAlphaSearchSchedulingModel(provider, "unmapped"))
 }
 
+// TestSanitizeOpenAIAlphaSearchBody_RemovesResponsesOnlyFields supplies storage
+// and prompt-cache fields alongside a search command. It checks sanitization
+// removes those Responses fields while retaining the query text in Alpha Search
+// input.
 func TestSanitizeOpenAIAlphaSearchBody_RemovesResponsesOnlyFields(t *testing.T) {
 	body := []byte(`{"id":"search-session","store":false,"prompt_cache_key":"cache","commands":{"search_query":[{"q":"news"}]}}`)
 
@@ -751,6 +831,9 @@ func TestSanitizeOpenAIAlphaSearchBody_RemovesResponsesOnlyFields(t *testing.T) 
 	require.Equal(t, "news", gjson.GetBytes(normalized, "commands.search_query.0.q").String())
 }
 
+// TestIsOpenAIAlphaSearchEndpointUnsupported compares missing-endpoint statuses
+// on API-key, OAuth, and absent providers. It checks 404/405 select API-key
+// endpoint recovery, while 400, OAuth 404, and missing providers do not.
 func TestIsOpenAIAlphaSearchEndpointUnsupported(t *testing.T) {
 	apiKey := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 	oauth := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}

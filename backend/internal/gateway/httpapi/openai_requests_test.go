@@ -6,6 +6,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// Operator base URLs can use format validation or a configured host allowlist.
+// The request service tests both paths and the disabled policy's HTTP
+// permission, checking the returned URL alongside rejection of disallowed
+// schemes and hosts.
+
+// TestOpenAIValidateUpstreamBaseURLDisabledRequiresHTTPS disables the host
+// allowlist while retaining HTTPS enforcement. It rejects an HTTP target and
+// checks that an accepted HTTPS URL is returned unchanged.
 func TestOpenAIValidateUpstreamBaseURLDisabledRequiresHTTPS(t *testing.T) {
 	cfg := &responsesFixtureOptions{Request: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{Enabled: false}}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: cfg})
@@ -22,6 +30,9 @@ func TestOpenAIValidateUpstreamBaseURLDisabledRequiresHTTPS(t *testing.T) {
 	}
 }
 
+// TestOpenAIValidateUpstreamBaseURLDisabledAllowsHTTP enables insecure HTTP
+// under format validation. It checks that an HTTP base URL is accepted and
+// returned unchanged when the host allowlist is disabled.
 func TestOpenAIValidateUpstreamBaseURLDisabledAllowsHTTP(t *testing.T) {
 	cfg := &responsesFixtureOptions{Request: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{
 		Enabled:           false,
@@ -38,6 +49,9 @@ func TestOpenAIValidateUpstreamBaseURLDisabledAllowsHTTP(t *testing.T) {
 	}
 }
 
+// TestOpenAIValidateUpstreamBaseURLEnabledEnforcesAllowlist configures one
+// permitted HTTPS host. It checks acceptance of that host and rejection of
+// another host through the request service's base-URL validation.
 func TestOpenAIValidateUpstreamBaseURLEnabledEnforcesAllowlist(t *testing.T) {
 	cfg := &responsesFixtureOptions{Request: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{
 		Enabled:       true,

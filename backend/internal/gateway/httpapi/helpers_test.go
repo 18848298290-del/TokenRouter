@@ -88,15 +88,16 @@ import (
 // Empty cache and repository substitutes describe their configured omissions so
 // a successful fixture result does not imply production persistence or expiry.
 
-// Fingerprint fixtures use a stable UUID seed, while keepalive fixtures use
-// a short interval to observe heartbeat output and cleanup within unit scenarios.
+// Fingerprint fixtures use a stable UUID seed, while keepalive fixtures use a
+// short interval to observe heartbeat output and cleanup within unit scenarios.
 const (
 	testCodexFingerprintSeed = "11111111-1111-4111-8111-111111111111"
 	keepaliveTestInterval    = 10 * time.Millisecond
 )
 
 // Log capture serializes logger replacement across fixtures. Interface checks
-// keep the configured substitutes compatible with session, settings and execution callers.
+// keep the configured substitutes compatible with session, settings and
+// execution callers.
 var (
 	handlerStructuredLogCaptureMu sync.Mutex
 	_                             gatewaysession.CyberSessionBlockStore = (*fakeCyberBlockStore)(nil)
@@ -104,18 +105,21 @@ var (
 	_                             gatewaysession.GatewayCache           = (*comboCacheAndStore)(nil)
 	_                             gatewaysession.CyberSessionBlockStore = (*comboCacheAndStore)(nil)
 
-	// These assertions keep provider lookup and sticky cache fixtures usable
-	// through the execution interfaces exercised by HTTP forwarding tests.
+	// These assertions keep provider lookup and sticky cache fixtures
+	// usable through the execution interfaces exercised by HTTP forwarding
+	// tests.
 	_ gatewayprovider.ExecutionProviderStore = (*stubOpenAIProviderRepo)(nil)
 	_ gatewaysession.GatewayCache            = (*sessiontestkit.StickyCache)(nil)
 
-	// The signature and short fixture suffix are enough for MIME sniffing to
-	// report image/png; this payload is not a complete image for decoding assertions.
+	// The signature and short fixture suffix are enough for MIME sniffing
+	// to report image/png; this payload is not a complete image for
+	// decoding assertions.
 	b64BackfillPNGBytes = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
 
-	// opsErrorLogQueue and testOpsCaptureQueue hold each serial test's prepared
-	// submission channel and health recorder. setupOpsErrorLogTestQueue swaps both
-	// and restores them in cleanup before another scenario begins.
+	// opsErrorLogQueue and testOpsCaptureQueue hold each serial test's
+	// prepared submission channel and health recorder.
+	// setupOpsErrorLogTestQueue swaps both and restores them in cleanup
+	// before another scenario begins.
 	opsErrorLogQueue    chan opsErrorLogJob
 	testOpsCaptureQueue *captureOpsErrorQueue
 )
@@ -123,13 +127,13 @@ var (
 // handlerInMemoryLogSink retains copied log-event values for synchronized
 // fixture assertions.
 type handlerInMemoryLogSink struct {
-	// mu serializes events append and assertion reads within this sink. Captured
-	// event structs and outer maps are copied before publication, while nested
-	// mutable field values remain caller-shared.
+	// mu serializes events append and assertion reads within this sink.
+	// Captured event structs and outer maps are copied before publication,
+	// while nested mutable field values remain caller-shared.
 	mu sync.Mutex // captured event list mutex
-	// events retains copied event structs and outer Fields maps. Values within
-	// those maps remain shared, requiring stable caller input during later log
-	// assertions.
+	// events retains copied event structs and outer Fields maps. Values
+	// within those maps remain shared, requiring stable caller input during
+	// later log assertions.
 	events []*logging.LogEvent
 }
 
@@ -140,8 +144,9 @@ type countHTTPContract struct {
 	t             *testing.T // owning fixture assertion context
 	events        []string   // ordered count execution phases
 	attempts      int        // selected count target number
-	// bodies contains independently copied attempted body bytes. Tests inspect
-	// this serially collected history after the real count-attempt loop finishes.
+	// bodies contains independently copied attempted body bytes. Tests
+	// inspect this serially collected history after the real count-attempt
+	// loop finishes.
 	bodies   [][]byte
 	group    int64  // expected selected group identity
 	platform string // observed funding platform label
@@ -157,9 +162,10 @@ type countHTTPContractTarget struct {
 // fakeCyberBlockStore retains blocked fixture keys and scopes without expiry
 // processing.
 type fakeCyberBlockStore struct {
-	// blocked and scopes retain boolean fixture state while findCalls counts
-	// ordered lookups. TTL never expires these maps, and tests serialize
-	// publication with lookup before inspecting the returned matching key.
+	// blocked and scopes retain boolean fixture state while findCalls
+	// counts ordered lookups. TTL never expires these maps, and tests
+	// serialize publication with lookup before inspecting the returned
+	// matching key.
 	blocked   map[string]bool // retained blocked session keys
 	scopes    map[string]bool // retained active block scopes
 	findCalls int             // counted ordered block lookups
@@ -168,8 +174,9 @@ type fakeCyberBlockStore struct {
 // fakeSettingRepo supplies configured value reads and rejects other settings
 // repository operations.
 type fakeSettingRepo struct {
-	// vals supplies GetValue results as stored. Tests populate it before use and
-	// serialize accesses because this fixture map has no internal synchronization.
+	// vals supplies GetValue results as stored. Tests populate it before
+	// use and serialize accesses because this fixture map has no internal
+	// synchronization.
 	vals map[string]string
 }
 
@@ -188,11 +195,13 @@ type cyberTestPorts struct {
 	scope          bool                // configured scope eligibility result
 	scopeErr       error               // configured scope lookup error
 	mark           moderationflow.Mark // shared moderation observation state
-	// task retains the accepted callback without launching it. Tests invoke this
-	// work explicitly when checking warning, blocking and Ops observation order.
+	// task retains the accepted callback without launching it. Tests invoke
+	// this work explicitly when checking warning, blocking and Ops
+	// observation order.
 	task func()
-	// entry retains the submitted Ops pointer without queue preparation. Tests
-	// inspect it as shared input and coordinate any mutation after observation.
+	// entry retains the submitted Ops pointer without queue preparation.
+	// Tests inspect it as shared input and coordinate any mutation after
+	// observation.
 	entry   *ops.OpsInsertErrorLogInput
 	enabled bool   // configured Cyber enablement result
 	found   string // configured blocked session key
@@ -202,9 +211,9 @@ type cyberTestPorts struct {
 // updates to fixture providers.
 type grokQuotaProviderRepo struct {
 	*grokFixtureProviders // shared fixture provider storage
-	// updates retains supplied Extra update maps by provider ID. Their values
-	// remain shared with recorded input, so tests keep them stable during
-	// assertions.
+	// updates retains supplied Extra update maps by provider ID. Their
+	// values remain shared with recorded input, so tests keep them stable
+	// during assertions.
 	updates               map[int64]map[string]any
 	updateCalls           int       // counted Extra update submissions
 	rateLimitedCalls      int       // counted rate limit submissions
@@ -224,9 +233,9 @@ type grokQuotaProviderRepo struct {
 // in serial tests.
 type grokFixtureProviders struct {
 	gatewaytestkit.HealthStoreBase // other fixture health operations
-	// providersByID retains mutable provider pointers returned by GetByID. Tests
-	// serialize reads with Extra updates and keep these shared records stable
-	// during forwarding.
+	// providersByID retains mutable provider pointers returned by GetByID.
+	// Tests serialize reads with Extra updates and keep these shared
+	// records stable during forwarding.
 	providersByID map[int64]*gatewayprovider.ExecutionProvider
 	getByIDCalls  int // counted direct provider lookups
 }
@@ -243,9 +252,9 @@ type wsFixtureOptions struct {
 // wsFixtureInputs supplies shared connection/session dependencies and I/O
 // substitutes for executor construction.
 type wsFixtureInputs struct {
-	// options supplies copied request/output configuration but remains retained by
-	// the returned fixture. Nil selects constructor defaults; tests coordinate
-	// later changes with live callbacks and forwarding.
+	// options supplies copied request/output configuration but remains
+	// retained by the returned fixture. Nil selects constructor defaults;
+	// tests coordinate later changes with live callbacks and forwarding.
 	options   *wsFixtureOptions
 	providers gatewayprovider.ExecutionProviderStore // fixture execution provider storage
 	cache     gatewaysession.GatewayCache            // shared session/cache fixture dependency
@@ -253,14 +262,14 @@ type wsFixtureInputs struct {
 	transport httpclient.UpstreamTransport           // fixture upstream HTTP transport
 	dialer    openaicore.WSClientDialer              // fixture WebSocket client dialer
 	pool      *openaiws.WSConnPool                   // shared WebSocket connection pool
-	// state optionally supplies shared Responses session state. Nil constructs
-	// state over cache, and callers keep supplied mutable stores valid until
-	// fixture connection cleanup completes.
+	// state optionally supplies shared Responses session state. Nil
+	// constructs state over cache, and callers keep supplied mutable stores
+	// valid until fixture connection cleanup completes.
 	state gatewaysession.OpenAIWSStateStore
 
-	// readers supplies live Gateway setting callbacks and attribute readers. Tests
-	// keep its dependencies valid while constructed executors use those callbacks
-	// during forwarding.
+	// readers supplies live Gateway setting callbacks and attribute
+	// readers. Tests keep its dependencies valid while constructed
+	// executors use those callbacks during forwarding.
 	readers   *gatewayprovider.RuntimeReaders
 	corrector *openaicore.CodexToolCorrector // shared Codex tool corrector
 }
@@ -291,9 +300,9 @@ type modelsBackendStub struct {
 	ModelsBackend                                 // unconfigured fixture model operations
 	key           *apikey.APIKey                  // configured authenticated fixture Key
 	result        routing.RequestableModelsResult // default requestable model result
-	// byGroup takes precedence when both it and a requested group ID exist. A
-	// missing map entry returns zero results, so tests configure each needed
-	// group.
+	// byGroup takes precedence when both it and a requested group ID exist.
+	// A missing map entry returns zero results, so tests configure each
+	// needed group.
 	byGroup           map[int64]routing.RequestableModelsResult
 	forced            string             // configured forced platform text
 	resolvedPlatforms []string           // observed model resolver platforms
@@ -326,9 +335,9 @@ type openAIStream403ProviderRepo struct {
 type agentIdentityForwardRepo struct {
 	gatewayprovider.ExecutionProviderStore // unconfigured fixture provider operations
 
-	// provider retains mutable credential state for GetByID and UpdateCredentials.
-	// Tests serialize map replacement and forwarding before checking the
-	// registration result.
+	// provider retains mutable credential state for GetByID and
+	// UpdateCredentials. Tests serialize map replacement and forwarding
+	// before checking the registration result.
 	provider *gatewayprovider.ExecutionProvider
 }
 
@@ -340,9 +349,9 @@ type auxiliaryFixtureInputs struct {
 	profiles  *egressprovider.TLSProfiles  // shared TLS fingerprint profiles
 	// fixture execution provider storage
 	store gatewayprovider.ExecutionProviderStore
-	// credentials remains the supplied mutable credential resolver. When store is
-	// present, newAuxiliaryFixture replaces its Parent callback with a live
-	// fixture provider lookup.
+	// credentials remains the supplied mutable credential resolver. When
+	// store is present, newAuxiliaryFixture replaces its Parent callback
+	// with a live fixture provider lookup.
 	credentials   *providercore.OpenAIExecutionCredentials
 	observer      *provideradapter.UpstreamHealth   // shared upstream health observer
 	authorization *providercore.OpenAIAuthorization // shared authorization request helper
@@ -351,9 +360,9 @@ type auxiliaryFixtureInputs struct {
 // auxiliaryHTTPRecorder records attempted request input and consumes configured
 // fixture responses serially.
 type auxiliaryHTTPRecorder struct {
-	// checkContext rejects an already canceled request before recording input.
-	// Enabling it requires a valid nonnil request because the fixture reads its
-	// context directly.
+	// checkContext rejects an already canceled request before recording
+	// input. Enabling it requires a valid nonnil request because the
+	// fixture reads its context directly.
 	checkContext bool
 	lastReq      *http.Request   // last retained request pointer
 	lastBody     []byte          // last captured request bytes
@@ -375,9 +384,9 @@ type auxiliaryHTTPRecorder struct {
 // delegated attempts.
 type openAIChatFailingWriter struct {
 	gin.ResponseWriter // embedded client response writer
-	// failAfter limits delegated write attempts. Nonpositive values reject the
-	// first call, and failed delegated writes still consume the counter increment
-	// made before delivery.
+	// failAfter limits delegated write attempts. Nonpositive values reject
+	// the first call, and failed delegated writes still consume the counter
+	// increment made before delivery.
 	failAfter int
 	writes    int // counted delegated write attempts
 }
@@ -395,9 +404,10 @@ type openAIChatStreamReadErrorCloser struct {
 type passthroughFlushTestWriter struct {
 	gin.ResponseWriter                            // embedded client response writer
 	recorder           *httptest.ResponseRecorder // shared response body recorder
-	// failAfterWrites limits nil-error delegated writes before injection, including
-	// short writes with nil error. Negative values disable failure; rejected calls
-	// increment failedWrites, while delegated errors do not advance successfulWrites.
+	// failAfterWrites limits nil-error delegated writes before injection,
+	// including short writes with nil error. Negative values disable
+	// failure; rejected calls increment failedWrites, while delegated
+	// errors do not advance successfulWrites.
 	failAfterWrites  int
 	successfulWrites int   // counted successful delegated writes
 	failedWrites     int   // counted injected write failures
@@ -407,27 +417,27 @@ type passthroughFlushTestWriter struct {
 // openAIResponseFlushRecorder captures body snapshots and lets tests hold one
 // flush active.
 type openAIResponseFlushRecorder struct {
-	// header is returned directly by Header and remains caller-shared. Initialize
-	// it before use and serialize header mutations independently of the
-	// body/status mutex.
+	// header is returned directly by Header and remains caller-shared.
+	// Initialize it before use and serialize header mutations independently
+	// of the body/status mutex.
 	header http.Header
 	mu     sync.Mutex   // body/status and snapshot mutex
 	body   bytes.Buffer // accepted fixture response bytes
 	status int          // first accepted HTTP status
 	writes int          // counted accepted body attempts
-	// failAfterWrites rejects writes at the accepted-attempt threshold. Negative
-	// values disable rejection, allowing all supplied fixture bytes to reach the
-	// body buffer.
+	// failAfterWrites rejects writes at the accepted-attempt threshold.
+	// Negative values disable rejection, allowing all supplied fixture
+	// bytes to reach the body buffer.
 	failAfterWrites int
 	flushSnapshots  []string // captured body text per flush
-	// flushEvents receives each snapshot count after mu is released. Tests supply
-	// a consumer or sufficient buffering because every Flush can block on this
-	// send.
+	// flushEvents receives each snapshot count after mu is released. Tests
+	// supply a consumer or sufficient buffering because every Flush can
+	// block on this send.
 	flushEvents chan int
-	// blockFlush, flushBlocked and releaseFlush coordinate the selected flush
-	// independently of body locking. blockFlush chooses one count, flushBlocked
-	// signals entry, and releaseFlush permits that call to return after the test
-	// completes its ordering assertions.
+	// blockFlush, flushBlocked and releaseFlush coordinate the selected
+	// flush independently of body locking. blockFlush chooses one count,
+	// flushBlocked signals entry, and releaseFlush permits that call to
+	// return after the test completes its ordering assertions.
 	blockFlush   int             // selected blocking flush number
 	flushBlocked chan struct{}   // selected flush entry signal
 	releaseFlush <-chan struct{} // selected flush completion gate
@@ -438,9 +448,10 @@ type openAIResponseFlushRecorder struct {
 type stubOpenAIProviderRepo struct {
 	gatewayprovider.ExecutionProviderStore // unconfigured fixture provider operations
 
-	// providers supplies shared records for pointers and shallow list results.
-	// Tests configure platform/eligibility themselves because fixture lists filter
-	// platform without checking groups or schedulability.
+	// providers supplies shared records for pointers and shallow list
+	// results. Tests configure platform/eligibility themselves because
+	// fixture lists filter platform without checking groups or
+	// schedulability.
 	providers []gatewayprovider.ExecutionProvider
 }
 
@@ -468,8 +479,9 @@ type imagesFixtureInputs struct {
 // httpRuntimeClock selects injected atomic nanoseconds or wall time for fixture
 // expiry observations.
 type httpRuntimeClock struct {
-	// nanos stores injected Unix nanoseconds atomically. A stored zero makes Now
-	// read wall time, so deterministic fixtures choose a nonzero instant.
+	// nanos stores injected Unix nanoseconds atomically. A stored zero
+	// makes Now read wall time, so deterministic fixtures choose a nonzero
+	// instant.
 	nanos atomic.Int64 // Unix nanoseconds
 }
 
@@ -505,16 +517,17 @@ type responsesFixtureInputs struct {
 	credentials     *providercore.OpenAIExecutionCredentials
 	registerTaskURL string                        // optional fixture task-registration endpoint
 	grokTokens      *providercore.GrokTokenSource // shared Grok credential source
-	// readers is shallow-copied before replacing Attributes with offline model
-	// metadata. Dynamic Gateway callbacks still read supplied dependencies,
-	// requiring them to remain valid through fixture execution.
+	// readers is shallow-copied before replacing Attributes with offline
+	// model metadata. Dynamic Gateway callbacks still read supplied
+	// dependencies, requiring them to remain valid through fixture
+	// execution.
 	readers      *gatewayprovider.RuntimeReaders
 	cache        gatewaysession.GatewayCache  // shared session/cache fixture dependency
 	compactModel string                       // configured Compact default model
 	transport    httpclient.UpstreamTransport // fixture upstream request transport
 	// options supplies copied request/output and policy configuration. Nil
-	// produces default configuration, and a zero output read limit is resolved by
-	// newResponsesFixture.
+	// produces default configuration, and a zero output read limit is
+	// resolved by newResponsesFixture.
 	options *responsesFixtureOptions
 }
 
@@ -524,31 +537,31 @@ type openAITextEntryProbe struct {
 	openAITextHTTPBackend                // embedded production HTTP adapter
 	events                []string       // ordered text entry phases
 	key                   *apikey.APIKey // configured authenticated fixture Key
-	// allowed, owned, image and canceled choose independent entry-check outcomes
-	// before no-attempt execution. Tests set these flags before invoking the
-	// handler and keep them stable through that request.
-	// allowed permits Messages input; owned accepts session ownership; image
-	// selects image-model classification; canceled rejects user-slot admission.
+	// allowed, owned, image and canceled choose independent entry-check
+	// outcomes before no-attempt execution. Tests set these flags before
+	// invoking the handler and keep them stable through that request.
+	// allowed permits Messages input; owned accepts session ownership;
+	// image selects image-model classification; canceled rejects user-slot
+	// admission.
 	allowed, owned, image, canceled bool
 	eligibility                     error // configured funding admission error
 	// rewrite replaces input whenever nonnil, including an empty slice. The
-	// fixture returns shared replacement bytes, so callers keep them stable while
-	// inspecting execution input.
-	rewrite []byte
-	// configured shared moderation decision
-	decision *moderation.Decision
-	// call captures prepared execution by value while retaining body, funding and
-	// other nested references. Tests inspect it before modifying the shared
-	// fixture input.
+	// fixture returns shared replacement bytes, so callers keep them stable
+	// while inspecting execution input.
+	rewrite  []byte
+	decision *moderation.Decision // configured shared moderation decision
+	// call captures prepared execution by value while retaining body,
+	// funding and other nested references. Tests inspect it before
+	// modifying the shared fixture input.
 	call *OpenAITextCall
 }
 
-// openAITextNoAttempt is the inactive ResponsePorts value returned by the fixture
-// Execution method. CanAttempt is its configured operation; direct loop callers
-// stop when it returns false before consulting the embedded methods.
+// openAITextNoAttempt is the inactive ResponsePorts value returned by the
+// fixture Execution method. CanAttempt is its configured operation; direct loop
+// callers stop when it returns false before consulting the embedded methods.
 type openAITextNoAttempt struct {
-	// ResponsePorts stays unconfigured; CanAttempt ends a direct loop before
-	// another required operation can reach this nil interface.
+	// ResponsePorts stays unconfigured; CanAttempt ends a direct loop
+	// before another required operation can reach this nil interface.
 	textflow.ResponsePorts /* unconfigured attempt-loop methods */
 }
 
@@ -563,33 +576,34 @@ type openAITextReadProbe struct {
 // service.
 type opsErrorLogJob struct {
 	ops *ops.OpsService // target fixture Ops service
-	// entry retains prepared mutable input submitted through the test queue.
-	// Producers stop mutating it after send, and tests inspect it after request
-	// logging finishes.
+	// entry retains prepared mutable input submitted through the test
+	// queue. Producers stop mutating it after send, and tests inspect it
+	// after request logging finishes.
 	entry *ops.OpsInsertErrorLogInput
 }
 
 // captureOpsErrorQueue prepares synchronous fixture inputs and counts
 // nonblocking channel submissions.
 type captureOpsErrorQueue struct {
-	// health changes during synchronous Enqueue and remains a plain value. Tests
-	// serialize those submissions with Health reads and inspect returned copies.
+	// health changes during synchronous Enqueue and remains a plain value.
+	// Tests serialize those submissions with Health reads and inspect
+	// returned copies.
 	health ops.ErrorLogQueueHealth // serial submission health counters
 }
 
 // qoderRuntimeContract records attempt and completion phases with configured
 // usage-bearing output.
 type qoderRuntimeContract struct {
-	t       *testing.T // owning fixture assertion context
-	partial bool       // configured partial-output failure mode
-	// expected selected wire protocol
-	wire   protocol.ProtocolID
-	events []string // ordered Qoder execution phases
-	// captures, records, binds and refreshes count distinct Qoder phases during a
-	// serial request. Tests inspect each counter after completion to distinguish
-	// captured usage from persistence, sticky binding and credential refresh.
-	// captures counts completion snapshots; records counts completion submissions;
-	// binds counts sticky publications; refreshes counts credential refreshes.
+	t       *testing.T          // owning fixture assertion context
+	partial bool                // configured partial-output failure mode
+	wire    protocol.ProtocolID // expected selected wire protocol
+	events  []string            // ordered Qoder execution phases
+	// captures, records, binds and refreshes count distinct Qoder phases
+	// during a serial request. Tests inspect each counter after completion
+	// to distinguish captured usage from persistence, sticky binding and
+	// credential refresh. captures counts completion snapshots; records
+	// counts completion submissions; binds counts sticky publications;
+	// refreshes counts credential refreshes.
 	captures, records, binds, refreshes int
 }
 
@@ -721,8 +735,8 @@ func newCompactBridgeTestContext(t *testing.T, markClientStream bool) (*gin.Cont
 // recorder; elapsed sleep alone does not establish that concurrent writes have
 // ended.
 func waitForKeepaliveBeats() {
-	// Allow multiple short heartbeat intervals for fixture output, then let the
-	// caller stop and join its writer before any recorder assertions.
+	// Allow multiple short heartbeat intervals for fixture output, then let
+	// the caller stop and join its writer before any recorder assertions.
 	time.Sleep(20 * keepaliveTestInterval)
 }
 
@@ -733,9 +747,9 @@ func waitForKeepaliveBeats() {
 func stripKeepaliveComments(body string) string {
 	var blocks []string
 	for block := range strings.SplitSeq(strings.TrimSpace(body), "\n\n") {
-		// These fixtures emit isolated comment blocks as keepalives. Remove each whole
-		// block before payload assertions so heartbeat text cannot enter their event
-		// comparisons.
+		// These fixtures emit isolated comment blocks as keepalives.
+		// Remove each whole block before payload assertions so
+		// heartbeat text cannot enter their event comparisons.
 		if strings.HasPrefix(strings.TrimSpace(block), ":") {
 			continue
 		}
@@ -758,9 +772,9 @@ func (s *handlerInMemoryLogSink) WriteLogEvent(event *logging.LogEvent) {
 	if event == nil {
 		return
 	}
-	// Copy event and outer field storage before publishing under the sink mutex,
-	// so subsequent source-map replacement cannot change the stored fixture log
-	// entries.
+	// Copy event and outer field storage before publishing under the sink
+	// mutex, so subsequent source-map replacement cannot change the stored
+	// fixture log entries.
 	cloned := *event
 	if event.Fields != nil {
 		cloned.Fields = make(map[string]any, len(event.Fields))
@@ -807,10 +821,11 @@ func (s *handlerInMemoryLogSink) ContainsFieldValue(field, substr string) bool {
 	return false
 }
 
-// FieldValueForMessage returns the first matching message that contains field
-// under the sink mutex. No matching message with that field returns false;
-// earlier matches lacking it are skipped. The returned any value stays shared,
-// so callers keep mutable values stable after the lock is released.
+// FieldValueForMessage returns field from the first captured event with the
+// requested message and field under the sink mutex. No matching message with
+// that field returns false; earlier matches lacking it are skipped. The
+// returned any value stays shared, so callers keep mutable values stable after
+// the lock is released.
 func (s *handlerInMemoryLogSink) FieldValueForMessage(message, field string) (any, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -837,9 +852,9 @@ func (s *handlerInMemoryLogSink) FieldValueForMessage(message, field string) (an
 // inside copied field maps still require stable caller input.
 func captureHandlerStructuredLog(t *testing.T) (*handlerInMemoryLogSink, func()) {
 	t.Helper()
-	// Hold the package capture mutex across logger initialization and sink use,
-	// keeping another fixture from replacing global logging while this test emits
-	// observations.
+	// Hold the package capture mutex across logger initialization and sink
+	// use, keeping another fixture from replacing global logging while this
+	// test emits observations.
 	handlerStructuredLogCaptureMu.Lock()
 
 	err := logging.Init(logging.InitOptions{
@@ -857,8 +872,9 @@ func captureHandlerStructuredLog(t *testing.T) (*handlerInMemoryLogSink, func())
 
 	sink := &handlerInMemoryLogSink{}
 	logging.SetSink(sink)
-	// Clear the active sink before releasing global capture ownership, so a later
-	// fixture can install its own recorder after this test stops logging.
+	// Clear the active sink before releasing global capture ownership, so a
+	// later fixture can install its own recorder after this test stops
+	// logging.
 	return sink, func() {
 		logging.SetSink(nil)
 		handlerStructuredLogCaptureMu.Unlock()
@@ -943,8 +959,9 @@ func (t countHTTPContractTarget) ForwardCountTokens(_ context.Context, c *gin.Co
 	f.events = append(f.events, "forward")
 	f.bodies = append(f.bodies, append([]byte(nil), parsed.Body.Bytes()...))
 	require.Equal(f.t, f.group, *parsed.GroupID)
-	// Fail the first selected target with a retryable 503 so the real count loop
-	// must exclude it, release its session and select another provider.
+	// Fail the first selected target with a retryable 503 so the real count
+	// loop must exclude it, release its session and select another
+	// provider.
 	if t.id == 1 {
 		return &forwardcore.UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}
 	}
@@ -967,9 +984,9 @@ func (f *fakeCyberBlockStore) SetCyberSessionBlocked(_ context.Context, scopeKey
 	if f.blocked == nil {
 		f.blocked = map[string]bool{}
 	}
-	// Publish key flags and a nonempty scope together in this serial fixture;
-	// ignored TTL deliberately keeps block evidence available throughout later
-	// lookup assertions.
+	// Publish key flags and a nonempty scope together in this serial
+	// fixture; ignored TTL deliberately keeps block evidence available
+	// throughout later lookup assertions.
 	for _, key := range keys {
 		f.blocked[key] = true
 	}
@@ -1247,9 +1264,9 @@ func (r *grokQuotaProviderRepo) UpdateExtra(_ context.Context, id int64, updates
 	if r.updates == nil {
 		r.updates = make(map[int64]map[string]any)
 	}
-	// Retain the submitted map for call assertions, then copy its entries into
-	// shared provider Extra so subsequent fixture reads observe the same health
-	// update.
+	// Retain the submitted map for call assertions, then copy its entries
+	// into shared provider Extra so subsequent fixture reads observe the
+	// same health update.
 	r.updates[id] = updates
 	if r.grokFixtureProviders != nil {
 		value := r.providersByID[id]
@@ -1364,9 +1381,9 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	}
 	output.Responses = state
 	output.ProxyCircuit = egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings())
-	// Use reasoning history only when the supplied cache exposes that interface;
-	// other cache fixtures leave the history dependency absent for its own read
-	// handling.
+	// Use reasoning history only when the supplied cache exposes that
+	// interface; other cache fixtures leave the history dependency absent
+	// for its own read handling.
 	history, _ := v.cache.(gatewaysession.ReasoningContentCache)
 	output.Reasoning = &gatewaysession.ReasoningHistory{Cache: history, Warn: gatewayprovider.WarnReasoningCacheFailure}
 	output.Redact = requests.Identity.Redact
@@ -1374,8 +1391,8 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	if v.options != nil {
 		ws := v.options.WS
 		if ws.StickyResponseIDTTLSeconds > 0 {
-			// Configured sticky seconds become the duration used by shared response
-			// lineage.
+			// Configured sticky seconds become the duration used by
+			// shared response lineage.
 			choicesOptions.ResponseTTL = time.Duration(ws.StickyResponseIDTTLSeconds) * time.Second
 		}
 	}
@@ -1530,8 +1547,8 @@ func (p *modelsBackendStub) Resolve(_ context.Context, id *int64, platform strin
 
 // ResolveSelected records requested model IDs and filters the chosen fixture
 // result. A nonnil id with configured byGroup chooses that map entry, including
-// zero results for an absent key; other calls use result. The outer output slice
-// is new while references inside model entries remain shared.
+// zero results for an absent key; other calls use result. The outer output
+// slice is new while references inside model entries remain shared.
 func (p *modelsBackendStub) ResolveSelected(_ context.Context, id *int64, platform string, models []string) routing.RequestableModelsResult {
 	p.resolvedPlatforms = append(p.resolvedPlatforms, platform)
 	p.selectedModels = append(p.selectedModels, models...)
@@ -1639,9 +1656,9 @@ func newAuxiliaryFixture(v auxiliaryFixtureInputs) *OpenAIAuxiliary {
 	if credentials == nil {
 		credentials = &providercore.OpenAIExecutionCredentials{}
 	}
-	// Install parent lookup on the selected credentials object before constructing
-	// requests; a supplied resolver remains shared and therefore exposes this
-	// fixture callback to its caller.
+	// Install parent lookup on the selected credentials object before
+	// constructing requests; a supplied resolver remains shared and
+	// therefore exposes this fixture callback to its caller.
 	if v.store != nil {
 		credentials.Parent = func(ctx context.Context, id int64) (*providercore.Record, error) {
 			a, err := v.store.GetByID(ctx, id)
@@ -1679,15 +1696,15 @@ func (u *auxiliaryHTTPRecorder) Do(req *http.Request, proxyURL string, providerI
 	u.lastReq = req
 	u.lastProxyURL = proxyURL
 	if req != nil && req.Body != nil {
-		// Retain any bytes returned by body reading even when it fails, allowing
-		// request-construction assertions to inspect the attempted content before
-		// injected transport errors.
+		// Retain any bytes returned by body reading even when it fails,
+		// allowing request-construction assertions to inspect the
+		// attempted content before injected transport errors.
 		b, _ := io.ReadAll(req.Body)
 		u.lastBody = b
 		u.bodies = append(u.bodies, append([]byte(nil), b...))
-		// Close and replace the consumed fixture body so retained request pointers
-		// can be reread during assertions; close failures are ignored by this
-		// transport substitute.
+		// Close and replace the consumed fixture body so retained
+		// request pointers can be reread during assertions; close
+		// failures are ignored by this transport substitute.
 		_ = req.Body.Close()
 		req.Body = io.NopCloser(bytes.NewReader(b))
 	}
@@ -1744,9 +1761,9 @@ func newCompactBridgeTestService() *OpenAIResponseOutput {
 // counter increments before delegation, including downstream errors, so it
 // measures attempted writes rather than successful delivery.
 func (w *openAIChatFailingWriter) Write(p []byte) (int, error) {
-	// Inject disconnect at the delegation threshold before another downstream
-	// call, so tests can reproduce forwarding cleanup after attempted writes
-	// rather than requiring a real socket.
+	// Inject disconnect at the delegation threshold before another
+	// downstream call, so tests can reproduce forwarding cleanup after
+	// attempted writes rather than requiring a real socket.
 	if w.writes >= w.failAfter {
 		return 0, errors.New("write failed: client disconnected")
 	}
@@ -1760,8 +1777,8 @@ func (w *openAIChatFailingWriter) Write(p []byte) (int, error) {
 // failure fixture.
 func (r *openAIChatStreamReadErrorCloser) Read(p []byte) (int, error) {
 	// Mark the first payload sent before copying, so later reads return the
-	// injected error even if the initial destination discarded bytes beyond its
-	// capacity.
+	// injected error even if the initial destination discarded bytes beyond
+	// its capacity.
 	if !r.sent {
 		r.sent = true
 		return copy(p, r.payload), nil
@@ -1803,9 +1820,9 @@ func assertGrokInlineImageTools(t *testing.T, body []byte, pathTemplate string) 
 // error leaves successfulWrites unchanged, while the original count/error pair
 // is returned to the caller.
 func (w *passthroughFlushTestWriter) Write(data []byte) (int, error) {
-	// Base disconnect injection on nil-error delegated calls, keeping a downstream
-	// error from advancing the later threshold while retaining each injected
-	// rejection in its separate failure counter.
+	// Base disconnect injection on nil-error delegated calls, keeping a
+	// downstream error from advancing the later threshold while retaining
+	// each injected rejection in its separate failure counter.
 	if w.failAfterWrites >= 0 && w.successfulWrites >= w.failAfterWrites {
 		w.failedWrites++
 		return 0, errors.New("client disconnected")
@@ -1851,8 +1868,9 @@ func collectPassthroughArgsSSEDataPayloads(t *testing.T, body string) []string {
 		if !ok {
 			continue
 		}
-		// DONE terminates the fixture stream without a JSON event. Exclude it before
-		// validation because later helpers inspect decoded event fields and call IDs.
+		// DONE terminates the fixture stream without a JSON event.
+		// Exclude it before validation because later helpers inspect
+		// decoded event fields and call IDs.
 		if strings.TrimSpace(data) == "[DONE]" {
 			continue
 		}
@@ -1863,9 +1881,10 @@ func collectPassthroughArgsSSEDataPayloads(t *testing.T, body string) []string {
 	return events
 }
 
-// findPassthroughArgsSSEEvent returns the first fixture event with the requested
-// type and optional call ID. A blank callID accepts the first event of that
-// type; supplied identities and type names compare exactly, without trimming.
+// findPassthroughArgsSSEEvent returns the first fixture event with the
+// requested type and optional call ID. A blank callID accepts the first event
+// of that type; supplied identities and type names compare exactly, without
+// trimming.
 //
 // Argument deltas carry call_id at the root while output-item events can carry
 // item.call_id. Checking both forms lets a caller locate the same tool call
@@ -1877,8 +1896,9 @@ func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callI
 		if gjson.Get(event, "type").String() != eventType {
 			continue
 		}
-		// Accept the requested identity in either supported event shape so root-level
-		// argument deltas and nested output items can identify the same fixture call.
+		// Accept the requested identity in either supported event shape
+		// so root-level argument deltas and nested output items can
+		// identify the same fixture call.
 		if callID == "" ||
 			gjson.Get(event, "call_id").String() == callID ||
 			gjson.Get(event, "item.call_id").String() == callID {
@@ -1890,9 +1910,9 @@ func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callI
 }
 
 // accumulateFunctionArgumentDeltas joins argument delta text for one exact call
-// ID in the supplied event order. It reads response.function_call_arguments.delta
-// events and compares the root call_id; a blank requested ID also matches an
-// absent or empty field.
+// ID in the supplied event order. It reads
+// response.function_call_arguments.delta events and compares the root call_id;
+// a blank requested ID also matches an absent or empty field.
 //
 // Interleaved calls can contribute fragments to the same stream. Filtering by
 // identity before appending keeps another call's argument text out of this
@@ -1901,9 +1921,9 @@ func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callI
 // returns accumulated text without parsing it as an argument object.
 func accumulateFunctionArgumentDeltas(events []string, callID string) string {
 	var b strings.Builder
-	// Filter type and call identity before appending so interleaved tools retain
-	// separate argument strings while each matching fragment keeps its arrival
-	// order.
+	// Filter type and call identity before appending so interleaved tools
+	// retain separate argument strings while each matching fragment keeps
+	// its arrival order.
 	for _, event := range events {
 		if gjson.Get(event, "type").String() != "response.function_call_arguments.delta" {
 			continue
@@ -2004,9 +2024,9 @@ func (w *openAIResponseFlushRecorder) Flush() {
 	w.mu.Lock()
 	w.flushSnapshots = append(w.flushSnapshots, w.body.String())
 	count := len(w.flushSnapshots)
-	// Release body ownership before channel publication and the optional blocking
-	// gate, allowing the test to inspect a snapshot while this flush remains
-	// active.
+	// Release body ownership before channel publication and the optional
+	// blocking gate, allowing the test to inspect a snapshot while this
+	// flush remains active.
 	w.mu.Unlock()
 	w.flushEvents <- count
 	if count == w.blockFlush {
@@ -2395,9 +2415,9 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 	if readers == nil {
 		readers = gatewaytestkit.RuntimeReaders(&fakeSettingRepo{})
 	} else {
-		// Copy the reader struct before replacing offline Attributes, leaving the
-		// caller's field intact while nested reader dependencies and dynamic Gateway
-		// callbacks remain shared.
+		// Copy the reader struct before replacing offline Attributes,
+		// leaving the caller's field intact while nested reader
+		// dependencies and dynamic Gateway callbacks remain shared.
 		copy := *readers
 		readers = &copy
 	}
@@ -2428,9 +2448,9 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 	}
 	aux.Output.Corrector = openaicore.NewCodexToolCorrector()
 	aux.Output.Turns = aux.Requests.Turns
-	// A cache without reasoning-history support leaves that optional dependency
-	// absent; the shared history reader owns the resulting missing-content
-	// handling during forwarding.
+	// A cache without reasoning-history support leaves that optional
+	// dependency absent; the shared history reader owns the resulting
+	// missing-content handling during forwarding.
 	history, _ := v.cache.(gatewaysession.ReasoningContentCache)
 	aux.Output.Reasoning = &gatewaysession.ReasoningHistory{Cache: history}
 	store := gatewaysession.NewOpenAIWSStateStore(v.cache, gatewayprovider.LogOpenAIWSModeInfo)
@@ -2554,9 +2574,10 @@ func testOpenAIStreamingRepairsConcatenatedJSONDocuments(t *testing.T, passthrou
 }
 
 // assertOpenAISSEFrames checks decoded event types and valid JSON frame data.
-// Frames emitted by AddLine also require a nonempty event label to match payload
-// type. Finish validates a retained EOF frame's JSON and appends its type without
-// comparing that frame's event label; the complete type order is then checked.
+// When AddLine emits a frame with a nonempty event label, that label must match
+// payload type. Finish validates a retained EOF frame's JSON and appends its
+// type without comparing that frame's event label; the complete type order is
+// then checked.
 func assertOpenAISSEFrames(t *testing.T, body string, expectedTypes []string) {
 	t.Helper()
 	var parser protocolopenai.OpenAICompatSSEFrameParser
@@ -2593,8 +2614,8 @@ func assertOpenAISSEFrames(t *testing.T, body string, expectedTypes []string) {
 // defining the split-repair input precisely.
 func openAIConcatenatedJSONTestEvents(t *testing.T) (string, string, string) {
 	t.Helper()
-	// Place the adjacent document after exactly 68106 bytes so JSON reports the
-	// second root at the next byte, matching the parser repair fixture.
+	// Place the adjacent document after exactly 68106 bytes so JSON reports
+	// the second root at the next byte, matching the parser repair fixture.
 	const javascriptErrorPosition = 68106
 	prefix := `{"type":"response.in_progress","response":{"id":"resp_large","status":"in_progress","instructions":"`
 	suffix := `"},"sequence_number":1}`
@@ -2616,8 +2637,8 @@ func openAIConcatenatedJSONTestEvents(t *testing.T) (string, string, string) {
 func (p *openAITextEntryProbe) mark(s string) { p.events = append(p.events, s) }
 
 // Access records fixture Key lookup and returns its retained pointer with
-// presence determined by nonnil key. Tests keep the shared Key data stable while
-// the handler prepares its request and captures execution input.
+// presence determined by nonnil key. Tests keep the shared Key data stable
+// while the handler prepares its request and captures execution input.
 func (p *openAITextEntryProbe) Access(*gin.Context) (*apikey.APIKey, bool) {
 	p.mark("access")
 	return p.key, p.key != nil
@@ -2720,8 +2741,8 @@ func (p *openAITextEntryProbe) ImageIntent(model string, body []byte, _ routing.
 func (p *openAITextEntryProbe) UserSlot(c *gin.Context, _ int64, _ int, _ bool, _ *bool, _ *zap.Logger) (func(), bool) {
 	p.mark("user-slot")
 	// Model canceled admission before any fixture release callback exists,
-	// allowing the entry test to verify that prepared forwarding never begins for
-	// this request.
+	// allowing the entry test to verify that prepared forwarding never
+	// begins for this request.
 	if p.canceled {
 		c.Status(499)
 		return nil, false
@@ -2869,9 +2890,9 @@ func (q *captureOpsErrorQueue) Enqueue(s *ops.OpsService, e *ops.OpsInsertErrorL
 	if s == nil || e == nil {
 		return
 	}
-	// Prepare the mutable entry before channel submission, matching the fixture's
-	// assertion that raw attempts are serialized and sanitized even when
-	// preparation later drops input.
+	// Prepare the mutable entry before channel submission, matching the
+	// fixture's assertion that raw attempts are serialized and sanitized
+	// even when preparation later drops input.
 	sanitized, err := ops.PrepareErrorLogInput(e)
 	if sanitized {
 		q.health.Sanitized++
@@ -2880,8 +2901,9 @@ func (q *captureOpsErrorQueue) Enqueue(s *ops.OpsService, e *ops.OpsInsertErrorL
 		q.health.Dropped++
 		return
 	}
-	// Use a nonblocking fixture send after preparation so a full channel records a
-	// drop without blocking the HTTP request being asserted by the test.
+	// Use a nonblocking fixture send after preparation so a full channel
+	// records a drop without blocking the HTTP request being asserted by
+	// the test.
 	select {
 	case opsErrorLogQueue <- opsErrorLogJob{ops: s, entry: e}:
 		q.health.Length++
@@ -2910,9 +2932,10 @@ func opsAccessFixture() OpsObservationAccess {
 			if key, ok := EffectiveAPIKey(c); ok && key != nil {
 				return key
 			}
-			// When effective request Key evidence is absent, use the explicit fixture
-			// fallback so error-attribution tests can supply identity independently of
-			// normal authentication setup.
+			// When effective request Key evidence is absent, use
+			// the explicit fixture fallback so error-attribution
+			// tests can supply identity independently of normal
+			// authentication setup.
 			value, _ := c.Get("ops_fallback_api_key")
 			key, _ := value.(*apikey.APIKey)
 			return key
@@ -3000,9 +3023,9 @@ func (f *qoderRuntimeContract) Forward(_ context.Context, c *gin.Context, body [
 	require.Equal(f.t, "client-model", model)
 	require.Equal(f.t, "upstream-model", gjson.GetBytes(body, "model").String())
 	result := &forwardcore.MessagesResult{RequestID: "response-id", Model: model, UpstreamModel: "upstream-model", Usage: upstreamcore.TokenUsage{InputTokens: 3, OutputTokens: 2}}
-	// Return usage alongside an error after writing partial SSE, letting the real
-	// attempt flow prove completion accounting still runs when delivery has
-	// already started.
+	// Return usage alongside an error after writing partial SSE, letting
+	// the real attempt flow prove completion accounting still runs when
+	// delivery has already started.
 	if f.partial {
 		c.Writer.WriteHeader(http.StatusOK)
 		_, err := c.Writer.Write([]byte("data: {\"text\":\"partial\"}\n\n"))
@@ -3161,8 +3184,8 @@ func (s *searchHTTPStub) CanSwitch(error) bool { return false }
 // gone.
 func (s *searchHTTPStub) Complete(_ *gin.Context, _ searchtools.StandaloneRequest, _ searchtools.StandaloneResult, _ bool) {
 	// Reject completion after provider release because this fixture checks
-	// snapshot capture while selected execution evidence remains held by the
-	// owning request flow.
+	// snapshot capture while selected execution evidence remains held by
+	// the owning request flow.
 	if s.released {
 		panic("provider released before completion snapshot")
 	}
@@ -3466,7 +3489,7 @@ func (p *prefaceBackend) Execute(_ context.Context, in execution.Request, _ upst
 }
 
 // Execute retains the unified request and requires a MessagesOutput fixture
-// sink. Another sink returns a typed diagnostic error before output capture;
+// sink. Another sink returns an error naming its type before output capture;
 // accepted execution retains shared input/output references and records entry
 // in the base fixture.
 func (p *geminiPrefaceBackend) Execute(_ context.Context, in execution.Request, out upstreamcore.OutputSink) (execution.ExecutionResult, error) {

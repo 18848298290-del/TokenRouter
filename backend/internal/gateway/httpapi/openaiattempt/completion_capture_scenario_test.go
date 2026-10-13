@@ -1,7 +1,5 @@
 package openaiattempt
 
-// These scenarios cover group fallback and completion capture across Responses, Chat, and Messages attempts.
-
 import (
 	"context"
 	"net/http"
@@ -30,20 +28,46 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// Background completion reads snapshots captured by the request before
+// submission. The fixtures mutate effective key, provider, subscription, usage,
+// body, and HTTP metadata inside the submission callback, then run the saved
+// task to check the recording and settlement input still reflects the captured
+// request values.
+
+// completionAttempt exposes group switching and completion capture for
+// protocol-specific fixtures.
 type completionAttempt interface {
+	// Complete captures the current result and submits a usage-recording
+	// task. A nil result returns before using recorder or submission
+	// bindings. The test can mutate source state after capture and before
+	// executing that task.
 	Complete()
+	// TryGroupFallback attempts the fixture's configured destination before
+	// completion capture. Its handled and retry flags let tests verify the
+	// effective key and mapping were replaced before invoking the
+	// protocol-specific Complete operation.
 	TryGroupFallback(error) (bool, bool)
 }
 
+// completionCaptureEffects retains settlement input delivered by the deferred
+// recording task.
 type completionCaptureEffects struct {
+	// input stores the last settlement argument by taking its parameter
+	// address. It remains nil until the recording task invokes Settled for
+	// this fixture.
 	input *completion.SettlementInput
 }
 
+// TestCompletionCaptureBeforeSubmission captures each text protocol after group
+// fallback and mutates inputs during task submission. It checks saved identity,
+// funding, usage, mappings, reasoning, endpoints, and image observations
+// survive until deferred recording for ordinary, partial, and typed-nil quota
+// fixtures.
 func TestCompletionCaptureBeforeSubmission(t *testing.T) {
 	for _, entry := range []struct {
-		name     string
-		endpoint string
-		protocol protocol.ProtocolID
+		name     string              // text protocol scenario label
+		endpoint string              // incoming text endpoint path
+		protocol protocol.ProtocolID // request client protocol identity
 	}{
 		{"responses", "/v1/responses", protocol.ProtocolOpenAIResponses},
 		{"chat", "/v1/chat/completions", protocol.ProtocolOpenAIChatCompletions},
@@ -115,6 +139,12 @@ func TestCompletionCaptureBeforeSubmission(t *testing.T) {
 					require.True(t, retry)
 					require.Same(t, key, active.apiKey)
 					if entry.name == "messages" {
+						// Give the embedded bridge a
+						// conflicting mapping so
+						// Messages completion
+						// assertions prove it captures
+						// groupMappingMsg rather than
+						// the shared base field.
 						active.groupMapping = routing.GroupMappingResult{Mapped: true, MappedModel: "other-entry", PricingConfigID: 999}
 					}
 					wantHash := billing.HashUsageRequestPayload(active.body)
@@ -130,6 +160,12 @@ func TestCompletionCaptureBeforeSubmission(t *testing.T) {
 						require.Equal(t, 1, gotResult.ImageCount)
 						require.Equal(t, "medium", *gotResult.RequestedReasoningEffort)
 						require.Zero(t, nowCalls)
+						// Mutate the live sources
+						// before running the submitted
+						// task so downstream assertions
+						// distinguish captured
+						// snapshots from references
+						// into ongoing request state.
 						key.ID, key.User.ID, key.User.Balance = 200, 300, 150
 						*key.GroupID, key.Group.RateMultiplier = 22, 9
 						target.Record.ID, providerRate = 400, 9
@@ -189,6 +225,10 @@ func TestCompletionCaptureBeforeSubmission(t *testing.T) {
 	}
 }
 
+// TestCompletionCaptureNilResultDoesNotSubmit creates each protocol attempt
+// without result or submission dependencies. It checks Complete returns without
+// panic, exercising the nil-result guard before any recording task can be
+// submitted.
 func TestCompletionCaptureNilResultDoesNotSubmit(t *testing.T) {
 	for _, entry := range []string{"responses", "chat", "messages"} {
 		t.Run(entry, func(t *testing.T) {
@@ -198,6 +238,10 @@ func TestCompletionCaptureNilResultDoesNotSubmit(t *testing.T) {
 	}
 }
 
+// newCompletionAttempt creates the protocol fixture and returns its active base
+// bridge. Chat and Messages copy the supplied base struct while retaining its
+// reference fields; unknown names use the Responses base directly for the
+// shared assertions.
 func newCompletionAttempt(entry string, base *responsesAttemptBridge) (completionAttempt, *responsesAttemptBridge) {
 	switch entry {
 	case "chat":
@@ -211,10 +255,18 @@ func newCompletionAttempt(entry string, base *responsesAttemptBridge) (completio
 	}
 }
 
+// ProviderUsed accepts provider observations without adding state to the
+// settlement fixture.
 func (e *completionCaptureEffects) ProviderUsed(int64) {}
 
+// InvalidateAuth accepts invalidation observations without changing the
+// settlement capture fixture.
 func (e *completionCaptureEffects) InvalidateAuth(context.Context, string) {}
 
+// Settled retains the value copy of settlement input passed to the fixture.
+// Nested pointer, map, and slice fields remain the supplied references; the
+// snapshot-copy assertions inspect those recorded values after the deferred
+// task runs.
 func (e *completionCaptureEffects) Settled(input completion.SettlementInput, _ *billing.UsageBillingApplyResult) {
 	e.input = &input
 }

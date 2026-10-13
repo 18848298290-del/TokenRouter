@@ -18,6 +18,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Native Responses preflight uses local counting when a selected target cannot
+// provide the official count endpoint. The fixtures compare a custom relay,
+// Grok, and an official API-key target returning 404, checking positive
+// estimates and whether a network request was attempted.
+
+// TestForwardResponsesInputTokensCustomRelayUsesLocalEstimate supplies a custom
+// OpenAI relay with text and tools. It checks positive response.input_tokens
+// output and confirms the recording transport receives no upstream request.
 func TestForwardResponsesInputTokensCustomRelayUsesLocalEstimate(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -43,6 +51,10 @@ func TestForwardResponsesInputTokensCustomRelayUsesLocalEstimate(t *testing.T) {
 	require.Nil(t, upstream.lastReq)
 }
 
+// TestForwardResponsesInputTokensGrokUsesLocalEstimate supplies Grok OAuth
+// input to native preflight. It checks a successful response.input_tokens
+// object and positive local count despite no configured upstream transport for
+// this fixture.
 func TestForwardResponsesInputTokensGrokUsesLocalEstimate(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -57,6 +69,10 @@ func TestForwardResponsesInputTokensGrokUsesLocalEstimate(t *testing.T) {
 	require.Positive(t, gjson.Get(recorder.Body.String(), "input_tokens").Int())
 }
 
+// TestForwardResponsesInputTokensUpstream404FallsBackLocally returns a generic
+// 404 from the official counting target. It checks an upstream request occurred
+// and the client receives a successful native object with a positive local
+// estimate.
 func TestForwardResponsesInputTokensUpstream404FallsBackLocally(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

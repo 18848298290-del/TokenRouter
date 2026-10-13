@@ -25,13 +25,13 @@ import (
 // InputTokensCall retains requested and routed identity for Responses counting
 // execution.
 type InputTokensCall struct {
-	// authenticated effective API Key
-	Key  *apikey.APIKey
-	Body []byte // mapped counting request bytes
-	// Model, RoutingModel, Platform and SessionHash describe the same counting
-	// request. Model retains the client request name; RoutingModel names the
-	// mapped selection model; Platform constrains eligible provider candidates;
-	// SessionHash is the sticky selection seed for that counting request.
+	Key  *apikey.APIKey // authenticated effective API Key
+	Body []byte         // mapped counting request bytes
+	// Model, RoutingModel, Platform and SessionHash describe the same
+	// counting request. Model retains the client request name; RoutingModel
+	// names the mapped selection model; Platform constrains eligible
+	// provider candidates; SessionHash is the sticky selection seed for
+	// that counting request.
 	Model, RoutingModel, Platform, SessionHash string
 	// request counting diagnostic logger
 	Log *zap.Logger
@@ -108,8 +108,9 @@ func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	}
 	h.backend.AuthLatency(c, time.Since(requestStart).Milliseconds())
 
-	// Plan after funding eligibility and retain the client model separately, so
-	// mapped request bytes and selection use the group route without losing request attribution.
+	// Plan after funding eligibility and retain the client model
+	// separately, so mapped request bytes and selection use the group route
+	// without losing request attribution.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
