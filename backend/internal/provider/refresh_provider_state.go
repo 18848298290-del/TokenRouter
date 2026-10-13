@@ -31,9 +31,12 @@ type RefreshAttemptGate interface {
 // RefreshProviderState combines shared admission gates with one cycle's platform
 // failure decisions.
 type RefreshProviderState struct {
-	rateGate RefreshAttemptGate // optional shared rate admission
-	// optional shared capacity admission
-	poolGate *RefreshConcurrencyGate
+	// rateGate and poolGate are borrowed across platform cycles and stay usable
+	// through each admission. Nil skips that gate stage and returns a no-op
+	// release; nonnil implementations retain their own reservation and capacity
+	// rules.
+	rateGate RefreshAttemptGate      // optional shared rate admission
+	poolGate *RefreshConcurrencyGate // optional shared capacity admission
 	// failureThreshold trips this cycle once counted failures reach it; a
 	// nonpositive value therefore trips on the first counted failure.
 	failureThreshold int

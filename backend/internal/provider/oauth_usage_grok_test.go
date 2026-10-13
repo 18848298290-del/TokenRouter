@@ -12,23 +12,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grokQuotaUsageLogRepo records serial window requests and returns configured
+// borrowed totals.
 type grokQuotaUsageLogRepo struct {
-	stats      *WindowStats
-	err        error
-	calls      int
-	startTimes []time.Time
+	// stats is returned as the configured borrowed totals observation. Keep its
+	// fields stable until the production helper finishes copying that result.
+	stats      *WindowStats // borrowed configured window totals
+	err        error        // configured window read failure
+	calls      int          // serial window query count
+	startTimes []time.Time  // captured window query origins
 }
 
+// GetProviderWindowStats increments and records the serial request before
+// returning configured totals/error. The totals pointer stays borrowed; tests
+// keep fixture state stable until the production helper makes its copy.
 func (r *grokQuotaUsageLogRepo) GetProviderWindowStats(_ context.Context, _ int64, start time.Time) (*WindowStats, error) {
 	r.calls++
 	r.startTimes = append(r.startTimes, start)
 	return r.stats, r.err
 }
 
+// GetProviderTodayStats returns nil successful totals for this window-only
+// fixture.
 func (r *grokQuotaUsageLogRepo) GetProviderTodayStats(context.Context, int64) (*WindowStats, error) {
 	return nil, nil
 }
 
+// TestGrokLocalUsage24hUsesRollingUTCWindow supplies a non-UTC clock and
+// configured read outcomes. It checks exact rolling UTC start, returned token
+// count, failed/missing-reader absence, and invalid-row query suppression.
 func TestGrokLocalUsage24hUsesRollingUTCWindow(t *testing.T) {
 	t.Parallel()
 
@@ -62,6 +74,10 @@ func TestGrokLocalUsage24hUsesRollingUTCWindow(t *testing.T) {
 	})
 }
 
+// TestGrokLocalUsageForQuotaSelectsFreeOrPaidWindows varies billing authority
+// while retaining known date ranges. It checks exclusive rolling or
+// weekly/monthly results and the exact ordered query starts for those
+// configured summaries.
 func TestGrokLocalUsageForQuotaSelectsFreeOrPaidWindows(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +117,10 @@ func TestGrokLocalUsageForQuotaSelectsFreeOrPaidWindows(t *testing.T) {
 	})
 }
 
+// TestGrokLocalUsageForBillingOnlyReturnsAvailableWindows provides a weekly
+// range, a read error, or missing billing data. It checks partial
+// observations, returned token totals, and query counts for those availability
+// cases.
 func TestGrokLocalUsageForBillingOnlyReturnsAvailableWindows(t *testing.T) {
 	t.Parallel()
 
@@ -137,7 +157,10 @@ func TestGrokLocalUsageForBillingOnlyReturnsAvailableWindows(t *testing.T) {
 	})
 }
 
-// TestGrokUsageOwnsProviderAndProbeResults checks isolation of returned statistics and nested billing values.
+// TestGrokUsageOwnsProviderAndProbeResults reuses shared billing/display/probe
+// objects across forced queries. It mutates returned weekly totals and plan,
+// then checks retained source values and independent later results for those
+// fields.
 func TestGrokUsageOwnsProviderAndProbeResults(t *testing.T) {
 	billing := &providerusageview.BillingSummary{Plan: "SuperGrok"}
 	shared := &UsageInfo{SevenDay: &UsageProgress{}, GrokBilling: billing}

@@ -6,7 +6,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// oauthForeignModelPrefixes lists model-family prefixes excluded from OpenAI OAuth scheduling.
+// OpenAI OAuth admission rejects known foreign model families before Codex
+// forwarding. The filter examines a lowercased model segment while unknown
+// names and aliases remain eligible for later whitelist and upstream checks;
+// eligibility alone cannot establish execution support.
+
+// oauthForeignModelPrefixes lists model-family prefixes excluded from OpenAI
+// OAuth scheduling.
 // These known foreign families are filtered before forwarding to Codex.
 // Unrecognized names remain eligible for subsequent model and upstream checks.
 //
@@ -40,19 +46,22 @@ var oauthForeignModelPrefixes = []string{
 	"yi-",
 }
 
-// IsOpenAIOAuthServableModel rejects known foreign model families for OpenAI OAuth.
-// Unknown names and custom aliases remain eligible for later validation.
-// A true result alone does not establish upstream support.
+// IsOpenAIOAuthServableModel rejects configured foreign prefixes and bare Kimi
+// Code names. Empty and unlisted names return true for later caller
+// validation; matching ignores case and examines the final model segment.
 func IsOpenAIOAuthServableModel(requestedModel string) bool {
 	model := strings.ToLower(capability.LastOpenAIModelSegment(requestedModel))
-	// Inspect the path's last segment for eligibility; forwarding and pricing retain the complete name.
+	// Inspect the path's last segment for eligibility; forwarding and pricing
+	// retain the complete name.
 	if index := strings.LastIndexByte(model, '/'); index >= 0 {
 		model = model[index+1:]
 	}
 	if model == "" {
 		return true // Required-model validation belongs to the caller.
 	}
-	// Bare Kimi Code IDs lack the family prefix used by the filter below.
+	// Bare Kimi Code names lack the hyphenated family prefixes. Reject those
+	// precise IDs separately so the prefix filter cannot admit this known foreign
+	// family.
 	if model == "k3" || model == "k3-256k" {
 		return false
 	}

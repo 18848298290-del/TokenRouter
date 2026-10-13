@@ -12,50 +12,79 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// antigravityHealthStoreFixture records writes; unimplemented embedded methods panic.
+// antigravityHealthStoreFixture captures serial model/Extra writes with
+// unexpected embedded operations unused.
 type antigravityHealthStoreFixture struct {
-	AntigravityHealthStore
+	AntigravityHealthStore // unused embedded health operations
+	// modelRateLimitCalls and extraUpdateCalls retain serial request captures
+	// without locking. Scalar limit arguments are copied, while Extra patches
+	// keep their supplied nested objects borrowed for later assertions.
+	// captured model rate-limit arguments
 	modelRateLimitCalls []struct {
-		providerID int64
-		modelKey   string
-		resetAt    time.Time
+		providerID int64     // captured provider row identifier
+		modelKey   string    // captured exact model key
+		resetAt    time.Time // captured model reset deadline
 	}
+	// captured metadata patch arguments
 	extraUpdateCalls []struct {
-		providerID int64
-		updates    map[string]any
+		providerID int64 // captured provider row identifier
+		// updates remains a borrowed patch retained by the serial capture.
+		// Keep its nested values stable while the test inspects this observation.
+		updates map[string]any
 	}
 }
 
+// mockInternal500Cache records serial counter calls and returns configured
+// count/errors.
 type mockInternal500Cache struct {
-	incrementCount int64
-	incrementErr   error
-	resetErr       error
+	incrementCount int64 // configured increment return count
+	incrementErr   error // configured increment failure result
+	resetErr       error // configured reset failure result
 
-	incrementCalls []int64 // Provider IDs passed to IncrementInternal500Count.
-	resetCalls     []int64 // Provider IDs passed to ResetInternal500Count.
+	incrementCalls []int64 // captured increment row identifiers
+	resetCalls     []int64 // captured reset row identifiers
 }
 
+// internal500ProviderRepoStub records temporary pause and error writes for
+// serial penalty tests.
 type internal500ProviderRepoStub struct {
-	AntigravityHealthStore // Unexpected calls to embedded methods panic.
+	// AntigravityHealthStore leaves other operations unset. Tests only call the
+	// overridden methods; dispatch through this nil embedded dependency panics.
+	AntigravityHealthStore
 
+	// captured temporary scheduling pauses
 	tempUnschedCalls []tempUnschedCall
-	setErrorCalls    []setErrorCall
+	setErrorCalls    []setErrorCall // captured persistent error writes
 }
 
+// tempUnschedCall captures provider identity, pause deadline, and its
+// diagnostic reason.
 type tempUnschedCall struct {
-	providerID int64
-	until      time.Time
-	reason     string
+	providerID int64     // captured provider row identifier
+	until      time.Time // captured temporary pause deadline
+	reason     string    // captured health diagnostic text
 }
 
+// setErrorCall captures provider identity and accepted error text for
+// assertions.
 type setErrorCall struct {
-	providerID int64
-	reason     string
+	providerID int64  // captured provider row identifier
+	reason     string // captured health diagnostic text
 }
 
-// The publisher records the provider it receives.
-type antigravityPublicationFixture struct{ setProviderCalls []*Record }
+// antigravityPublicationFixture retains borrowed record pointers passed to
+// serial publication calls.
+type antigravityPublicationFixture struct {
+	// setProviderCalls retains borrowed record pointers without locking or
+	// copying.
+	// Tests serialize publication and inspect them while their records stay
+	// stable.
+	setProviderCalls []*Record
+}
 
+// TestClearCreditsExhausted varies absent records, Extra, limits, and AI
+// Credits entries. It checks no writes for missing markers and deletion plus
+// one Extra write while the configured ordinary model entry remains.
 func TestClearCreditsExhausted(t *testing.T) {
 	t.Run("provider 为 nil 不操作", func(t *testing.T) {
 		repo := &antigravityHealthStoreFixture{}
@@ -128,43 +157,66 @@ func TestClearCreditsExhausted(t *testing.T) {
 	})
 }
 
+// SetModelRateLimit appends scalar arguments to an unlocked call slice and
+// returns success. Context and optional sources are ignored; tests serialize
+// access before inspecting captured model keys and deadlines.
 func (s *antigravityHealthStoreFixture) SetModelRateLimit(_ context.Context, id int64, key string, at time.Time, _ ...string) error {
 	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct {
-		providerID int64
-		modelKey   string
-		resetAt    time.Time
+		providerID int64     // captured provider row identifier
+		modelKey   string    // captured exact model key
+		resetAt    time.Time // captured model reset deadline
 	}{id, key, at})
 	return nil
 }
 
+// UpdateExtra records row ID and the borrowed patch map in an unlocked slice.
+// It returns success without copying nested values, so tests serialize calls
+// and keep retained patches stable while inspecting them.
 func (s *antigravityHealthStoreFixture) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	s.extraUpdateCalls = append(s.extraUpdateCalls, struct {
-		providerID int64
-		updates    map[string]any
+		providerID int64 // captured provider row identifier
+		// updates remains a borrowed patch retained by the serial capture.
+		// Keep its nested values stable while the test inspects this observation.
+		updates map[string]any
 	}{id, updates})
 	return nil
 }
 
+// IncrementInternal500Count records its row and returns the configured
+// count/error. The fixture does not increment a stored count or simulate
+// atomic storage; tests configure and inspect its unlocked slices serially.
 func (m *mockInternal500Cache) IncrementInternal500Count(_ context.Context, providerID int64) (int64, error) {
 	m.incrementCalls = append(m.incrementCalls, providerID)
 	return m.incrementCount, m.incrementErr
 }
 
+// ResetInternal500Count records the requested row and returns its configured
+// failure. It changes no count state and ignores context; the serial fixture
+// retains captured IDs for assertions after return.
 func (m *mockInternal500Cache) ResetInternal500Count(_ context.Context, providerID int64) error {
 	m.resetCalls = append(m.resetCalls, providerID)
 	return m.resetErr
 }
 
+// SetTempUnschedulable appends the supplied row, deadline, and reason for
+// serial assertions. It returns success without durable storage, and tests
+// serialize access to its unlocked capture slice.
 func (r *internal500ProviderRepoStub) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
 	r.tempUnschedCalls = append(r.tempUnschedCalls, tempUnschedCall{providerID: id, until: until, reason: reason})
 	return nil
 }
 
+// SetError records the row and supplied error text in an unlocked fixture
+// slice. It returns success, ignores context, and requires serial test access
+// before the captured arguments are inspected.
 func (r *internal500ProviderRepoStub) SetError(_ context.Context, id int64, errorMsg string) error {
 	r.setErrorCalls = append(r.setErrorCalls, setErrorCall{providerID: id, reason: errorMsg})
 	return nil
 }
 
+// TestApplyInternal500Penalty supplies zero, first, second, and later
+// exhausted-round counts. It checks selected write kind, row/reason, and
+// constant-based pause deadlines for the two temporary penalty tiers.
 func TestApplyInternal500Penalty(t *testing.T) {
 	t.Run("count=1 → SetTempUnschedulable 10 分钟", func(t *testing.T) {
 		repo := &internal500ProviderRepoStub{}
@@ -181,7 +233,9 @@ func TestApplyInternal500Penalty(t *testing.T) {
 		call := repo.tempUnschedCalls[0]
 		require.Equal(t, int64(1), call.providerID)
 		require.Contains(t, call.reason, "INTERNAL 500")
-		// The deadline is between before+10m and after+10m.
+		// Compare against the configured first-tier duration with one-second timing
+		// tolerance, allowing execution delay while rejecting a different penalty
+		// duration from the current thirty-minute policy.
 		require.True(t, call.until.After(before.Add(Internal500PenaltyTier1Duration).Add(-time.Second)))
 		require.True(t, call.until.Before(after.Add(Internal500PenaltyTier1Duration).Add(time.Second)))
 	})
@@ -201,6 +255,7 @@ func TestApplyInternal500Penalty(t *testing.T) {
 		call := repo.tempUnschedCalls[0]
 		require.Equal(t, int64(2), call.providerID)
 		require.Contains(t, call.reason, "INTERNAL 500")
+		// Allow one second of execution delay around the configured penalty deadline.
 		require.True(t, call.until.After(before.Add(Internal500PenaltyTier2Duration).Add(-time.Second)))
 		require.True(t, call.until.Before(after.Add(Internal500PenaltyTier2Duration).Add(time.Second)))
 	})
@@ -247,6 +302,10 @@ func TestApplyInternal500Penalty(t *testing.T) {
 	})
 }
 
+// TestHandleInternal500RetryExhausted varies missing counter, increment
+// failure, and configured first/later counts. It checks counter call
+// identities and selected penalty captures, including suppression of penalties
+// after failed increment.
 func TestHandleInternal500RetryExhausted(t *testing.T) {
 	t.Run("internal500Cache 为 nil → 不 panic，不调用任何方法", func(t *testing.T) {
 		repo := &internal500ProviderRepoStub{}
@@ -312,6 +371,9 @@ func TestHandleInternal500RetryExhausted(t *testing.T) {
 	})
 }
 
+// TestResetInternal500Counter supplies missing, failed, and successful reset
+// fixtures. It checks normal return plus the captured provider IDs for reached
+// callbacks, without asserting actual stored-count deletion.
 func TestResetInternal500Counter(t *testing.T) {
 	t.Run("internal500Cache 为 nil → 不 panic", func(t *testing.T) {
 		svc := newInternal500Health(nil, nil)
@@ -345,19 +407,23 @@ func TestResetInternal500Counter(t *testing.T) {
 	})
 }
 
-// newInternal500Health combines counter and storage fixtures for health assertions.
+// newInternal500Health retains the supplied storage/counter fixtures and
+// installs no-op diagnostics. Publisher and model expansion remain unset, so
+// callers use this helper only for counter and penalty paths.
 func newInternal500Health(store AntigravityHealthStore, counter Internal500CounterCache) *AntigravityHealth {
 	noop := func(string, ...any) {}
 	return &AntigravityHealth{Store: store, Counter: counter, Error: noop, Warn: noop, Info: noop, Logf: noop}
 }
 
-// TestSetModelRateLimitByModelName_UsesOfficialModelID checks the stored upstream model ID.
+// TestSetModelRateLimitByModelName_UsesOfficialModelID supplies three model
+// IDs and empty input. It checks exact stored key, row/deadline, success
+// result, and no capture for the empty-name case.
 func TestSetModelRateLimitByModelName_UsesOfficialModelID(t *testing.T) {
 	tests := []struct {
-		name             string
-		modelName        string
-		expectedModelKey string
-		expectedSuccess  bool
+		name             string // model storage case name
+		modelName        string // input upstream model identifier
+		expectedModelKey string // expected exact stored key
+		expectedSuccess  bool   // expected storage success result
 	}{
 		{
 			name:             "claude-sonnet-4-5 should be stored as-is",
@@ -418,7 +484,9 @@ func TestSetModelRateLimitByModelName_UsesOfficialModelID(t *testing.T) {
 	}
 }
 
-// TestSetModelRateLimitByModelName_NotConvertToScope protects model IDs from scope conversion.
+// TestSetModelRateLimitByModelName_NotConvertToScope submits the configured
+// upstream model ID after smart retry. It checks accepted storage under that
+// exact key and rejection of the separate scope spelling in the capture.
 func TestSetModelRateLimitByModelName_NotConvertToScope(t *testing.T) {
 	repo := &antigravityHealthStoreFixture{}
 	resetAt := time.Now().Add(30 * time.Second)
@@ -445,7 +513,9 @@ func TestSetModelRateLimitByModelName_NotConvertToScope(t *testing.T) {
 	require.NotEqual(t, "claude_sonnet", call.modelKey, "should NOT be scope")
 }
 
-// TestUpdateProviderModelRateLimitInCache_UpdatesExtraAndCallsCache checks record mutation and publication.
+// TestUpdateProviderModelRateLimitInCache_UpdatesExtraAndCallsCache starts
+// with absent Extra and a configured publisher. It checks created model
+// timestamps and one captured publication carrying the expected row ID.
 func TestUpdateProviderModelRateLimitInCache_UpdatesExtraAndCallsCache(t *testing.T) {
 	cache := &antigravityPublicationFixture{}
 	svc := &AntigravityHealth{Publish: cache.publish}
@@ -474,7 +544,9 @@ func TestUpdateProviderModelRateLimitInCache_UpdatesExtraAndCallsCache(t *testin
 	require.Equal(t, provider.ID, cache.setProviderCalls[0].ID)
 }
 
-// TestUpdateProviderModelRateLimitInCache_NilSchedulerSnapshot checks that a nil publisher is safe.
+// TestUpdateProviderModelRateLimitInCache_NilSchedulerSnapshot supplies no
+// publisher with absent Extra. It checks that the method returns normally and
+// leaves Extra nil, covering the pre-mutation publication gate.
 func TestUpdateProviderModelRateLimitInCache_NilSchedulerSnapshot(t *testing.T) {
 	svc := &AntigravityHealth{}
 
@@ -487,7 +559,9 @@ func TestUpdateProviderModelRateLimitInCache_NilSchedulerSnapshot(t *testing.T) 
 	require.Nil(t, provider.Extra)
 }
 
-// TestUpdateProviderModelRateLimitInCache_PreservesExistingExtra protects unrelated Extra fields.
+// TestUpdateProviderModelRateLimitInCache_PreservesExistingExtra adds a model
+// limit beside an existing map entry. It checks the unrelated value and both
+// model keys remain present in the caller record.
 func TestUpdateProviderModelRateLimitInCache_PreservesExistingExtra(t *testing.T) {
 	cache := &antigravityPublicationFixture{}
 	svc := &AntigravityHealth{Publish: cache.publish}
@@ -516,6 +590,9 @@ func TestUpdateProviderModelRateLimitInCache_PreservesExistingExtra(t *testing.T
 	require.NotNil(t, limits["claude-sonnet-4-5"])
 }
 
+// publish appends the supplied borrowed record pointer and returns success.
+// Tests serialize capture access and keep records stable while inspecting
+// them; this fixture copies no publication snapshot.
 func (s *antigravityPublicationFixture) publish(_ context.Context, v *Record) error {
 	s.setProviderCalls = append(s.setProviderCalls, v)
 	return nil

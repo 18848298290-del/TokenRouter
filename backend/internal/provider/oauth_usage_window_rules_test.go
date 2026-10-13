@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow supplies explicit
+// reset times around a fixed expiry reference. It checks expired
+// percentages/countdown and retained active percentage, with countdown using
+// the independent real clock callback.
 func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 3, 16, 12, 0, 0, 0, time.UTC)
@@ -62,6 +66,9 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 	})
 }
 
+// TestCodexWindowStatsStart supplies future, missing, nil, and expired reset
+// observations. It checks future-reset alignment and the configured rolling
+// fallback for each other case using a fixed reference time.
 func TestCodexWindowStatsStart(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -69,9 +76,11 @@ func TestCodexWindowStatsStart(t *testing.T) {
 	activeReset := now.Add(2 * time.Hour)
 
 	tests := []struct {
-		name     string
+		name string // window-start scenario name
+		// progress is borrowed by the case and may be nil or omit reset timing.
+		// The test keeps any referenced reset time stable during comparison.
 		progress *UsageProgress
-		want     time.Time
+		want     time.Time // expected statistics start time
 	}{
 		{
 			name:     "active reset window",
@@ -92,9 +101,11 @@ func TestCodexWindowStatsStart(t *testing.T) {
 
 	expiredReset := now.Add(-time.Minute)
 	tests = append(tests, struct {
-		name     string
+		name string // window-start scenario name
+		// progress is borrowed by the case and carries an expired reset timing.
+		// The test keeps its referenced reset stable during start-time comparison.
 		progress *UsageProgress
-		want     time.Time
+		want     time.Time // expected statistics start time
 	}{
 		name:     "expired reset falls back",
 		progress: &UsageProgress{ResetsAt: &expiredReset},
@@ -110,9 +121,13 @@ func TestCodexWindowStatsStart(t *testing.T) {
 	}
 }
 
+// TestBuildUsageInfo_SevenDayFable supplies a future overage-included reset
+// and then an empty response. It checks Fable percentage, exact parsed reset,
+// positive countdown, and absence when the reset observation is missing.
 func TestBuildUsageInfo_SevenDayFable(t *testing.T) {
 	now := time.Now()
 
+	// Match the timestamp representation's whole seconds for exact reset equality.
 	resetAt := now.Add(72 * time.Hour).UTC().Truncate(time.Second)
 	var resp ClaudeUsageResponse
 	resp.FiveHour.Utilization = 10
@@ -135,6 +150,10 @@ func TestBuildUsageInfo_SevenDayFable(t *testing.T) {
 	require.Nil(t, info.SevenDayFable)
 }
 
+// TestBuildPassiveUsageWindow varies combined usage/reset observations,
+// utilization-only data, missing data, and an expired reset. It checks
+// converted percentages, reset identity, positive/zero countdown, and nil
+// observations for the configured missing cases.
 func TestBuildPassiveUsageWindow(t *testing.T) {
 	future := time.Now().Add(48 * time.Hour).Unix()
 
@@ -144,6 +163,7 @@ func TestBuildPassiveUsageWindow(t *testing.T) {
 			"passive_usage_7d_oi_reset":       float64(future),
 		}, "passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset", time.Now)
 		require.NotNil(t, window)
+		// Allow floating representation error in fractional percentage conversion.
 		require.InDelta(t, 87.0, window.Utilization, 1e-9)
 		require.NotNil(t, window.ResetsAt)
 		require.Equal(t, future, window.ResetsAt.Unix())
@@ -168,11 +188,15 @@ func TestBuildPassiveUsageWindow(t *testing.T) {
 	t.Run("utilization only", func(t *testing.T) {
 		window := BuildPassiveUsageWindow(map[string]any{"u": 0.25}, "u", "r", time.Now)
 		require.NotNil(t, window)
+		// Allow floating representation error in fractional percentage conversion.
 		require.InDelta(t, 25.0, window.Utilization, 1e-9)
 		require.Nil(t, window.ResetsAt)
 	})
 }
 
+// TestEstimateSetupTokenUsage_ExpiredWindowZeroes supplies a past session end
+// with sampled fraction. It checks the retained FiveHour object has zero
+// usage/countdown and no reset pointer after expiry.
 func TestEstimateSetupTokenUsage_ExpiredWindowZeroes(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +222,9 @@ func TestEstimateSetupTokenUsage_ExpiredWindowZeroes(t *testing.T) {
 	}
 }
 
+// TestEstimateSetupTokenUsage_ActiveWindowPreservesUtilization supplies a
+// future session end and sampled fraction. It checks percentage conversion,
+// reset equality, and positive countdown in the resulting FiveHour estimate.
 func TestEstimateSetupTokenUsage_ActiveWindowPreservesUtilization(t *testing.T) {
 	t.Parallel()
 

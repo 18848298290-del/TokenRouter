@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsOpenAIOAuthServableModel compares recognized, unknown, case-varied,
+// and path-qualified model names. Admission must reject the listed foreign
+// prefixes and bare Kimi IDs while allowing unlisted aliases.
 func TestIsOpenAIOAuthServableModel(t *testing.T) {
 	require.True(t, IsOpenAIOAuthServableModel("gpt-5.4-high"))
 	require.True(t, IsOpenAIOAuthServableModel("  gpt-5.3-codex  "))

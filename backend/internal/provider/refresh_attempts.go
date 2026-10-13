@@ -65,16 +65,16 @@ type RefreshAttempts struct {
 	// API selects coordinated execution when the caller also supplies an executor.
 	// Otherwise Run uses its direct refresher and Persist callback instead.
 	API *OAuthRefreshAPI
-	// shared retry and backoff settings
-	Tuning *RefreshTuning
-	// unperformed exchange statistics policy
-	Policy BackgroundRefreshPolicy
+	// Tuning permits nil for helper defaults. Keep supplied settings stable
+	// during Run; BackgroundRefreshService replaces this reference with its
+	// captured configuration copy.
+	Tuning *RefreshTuning          // shared retry and backoff settings
+	Policy BackgroundRefreshPolicy // unperformed exchange statistics policy
 	// AttemptTimeout is supplied as a positive context budget by assembly; it
 	// begins after capacity admission and does not force noncooperative I/O to
 	// return.
 	AttemptTimeout time.Duration
-	// direct version and cooldown clock
-	Now func() time.Time
+	Now            func() time.Time // direct version and cooldown clock
 	// Info reports identity-conflict skips and accepted cooldown writes. Warn reports
 	// retry attempts, exhaustion and cache/deadline-write failures. Error reports
 	// permanent health-write failures. Run invokes the reached callbacks directly;
@@ -86,7 +86,9 @@ type RefreshAttempts struct {
 	// Run requires both on reached ordinary error paths and checks SharedProviderError
 	// before NonRetryable so shared configuration cannot be attributed to one provider.
 	NonRetryable, SharedProviderError func(error) bool
-	// reached Grok entitlement classifier
+	// AmbiguousEntitlement is required after an ordinary exchange error. It
+	// identifies uncertain Grok rejection before shared or individual health
+	// classification proceeds.
 	AmbiguousEntitlement func(*Record, error) bool
 	// Persist is required on a direct successful nonnil map result. Its
 	// implementation needs to honor the passed context, including parent
@@ -96,13 +98,17 @@ type RefreshAttempts struct {
 	FailureWriter RefreshFailureWriter
 	// conditional Grok health mutation writer
 	GrokMutation GrokRefreshMutationWriter
-	// optional failed-token invalidation callback
+	// Invalidate optionally evicts failed rotating credentials. A missing
+	// callback sets CacheInvalidationFailed on the permanent-failure result so
+	// management can report incomplete cleanup.
 	Invalidate func(context.Context, *Record) error
 	// PrepareFailure accepts an attempted snapshot, including nil, and returns a
 	// callable publisher. Capturing it before the conditional write lets the
 	// observer reject publication after an interleaved runtime clear.
 	PrepareFailure func(*Record) func(time.Time, string)
-	// matched one-time flag cleanup callback
+	// ClearRefreshRequest is required after a matched permanent health write.
+	// It clears the attempted Antigravity flag before publishing that failure
+	// notice.
 	ClearRefreshRequest func(context.Context, *Record, string)
 	// PostActions handles ordinary success, and SyncCleanup handles a detected
 	// successful rotation when an attempt deadline or outer cancellation is

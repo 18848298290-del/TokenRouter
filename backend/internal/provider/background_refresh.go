@@ -42,7 +42,8 @@ type RefreshRegistration struct {
 	// Refresher and Executor borrow platform clients from application assembly.
 	// Their implementations remain usable through all scans and reconciliation
 	// calls, including waits for actual completion during service shutdown.
-	Refresher BackgroundTokenRefresher // candidate checks and direct exchange
+	// candidate checks and direct exchange
+	Refresher BackgroundTokenRefresher
 	// Executor enables coordinated locking and rereads when Attempts.API is
 	// also configured; a nil executor selects the direct Refresher path.
 	Executor OAuthRefreshExecutor
@@ -54,14 +55,12 @@ type BackgroundRefreshOptions struct {
 	// Tuning is copied at construction, and the captured copy replaces
 	// Attempts.Tuning so scanning and attempts read the same settings.
 	Tuning *RefreshTuning
-	// shared candidate page reader
-	Pager OAuthRefreshCandidatePager
+	Pager  OAuthRefreshCandidatePager // shared candidate page reader
 	// Registrations has a copied slice with shared refresher and executor
 	// dependencies. Periodic grouping uses the last duplicate platform entry,
 	// while reconciliation selects the first usable Grok registration.
 	Registrations []RefreshRegistration
-	// captured provider attempt callbacks
-	Attempts RefreshAttempts
+	Attempts      RefreshAttempts // captured provider attempt callbacks
 	// Reconciliation borrows its injected dependencies; construction replaces
 	// its Pager and Execution callbacks to use this service's registered
 	// platforms.
@@ -149,6 +148,8 @@ func (s *BackgroundRefreshService) StartContext(ctx context.Context) error {
 		return nil
 	}
 	interval := time.Duration(tuning.CheckIntervalMinutes) * time.Minute
+	// Subminute configured intervals select the standard service cadence for
+	// periodic scans before RefreshLoop validates and creates its ticker.
 	if interval < time.Minute {
 		interval = 5 * time.Minute
 	}

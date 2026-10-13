@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray mixes raw,
+// object, and array content in one request. It checks three entries and their
+// normalized token or decoded email values in source order.
 func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T) {
 	token1 := "raw-access-token-1"
 	token2 := buildCodexTestJWTForTest(t, time.Now().Add(time.Hour), map[string]any{
@@ -56,6 +59,9 @@ func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T
 	}
 }
 
+// TestParseCodexSessionImportEntriesFallsBackToLineModeForMixedJSONAndToken
+// starts with JSON followed by a raw token. It checks recovered two-entry
+// parsing and each normalized token value after whole-stream decoding fails.
 func TestParseCodexSessionImportEntriesFallsBackToLineModeForMixedJSONAndToken(t *testing.T) {
 	req := CodexSessionImportRequest{
 		Content: "{\"accessToken\":\"json-line-token\"}\nraw-line-token",
@@ -86,6 +92,10 @@ func TestParseCodexSessionImportEntriesFallsBackToLineModeForMixedJSONAndToken(t
 	}
 }
 
+// TestNormalizeCodexSessionJSONExtractsCredentialsAndIgnoresSessionToken
+// combines explicit account/user data with different JWT hints and a browser
+// session token. It checks explicit identity precedence, ignored renewal
+// material, session metadata, and parsed token expiry.
 func TestNormalizeCodexSessionJSONExtractsCredentialsAndIgnoresSessionToken(t *testing.T) {
 	accessToken := buildCodexTestJWTForTest(t, time.Now().Add(time.Hour), map[string]any{
 		"email": "claim@example.com",
@@ -145,6 +155,10 @@ func TestNormalizeCodexSessionJSONExtractsCredentialsAndIgnoresSessionToken(t *t
 	}
 }
 
+// TestMergeCodexImportCredentialsPreservesExistingRefreshFieldsWhenIncomingHasNoRefreshToken
+// supplies an access-only update over renewable credentials. It checks
+// incoming token/account replacement, retained refresh/client fields, removed
+// ID token, and the listed unrelated fields.
 func TestMergeCodexImportCredentialsPreservesExistingRefreshFieldsWhenIncomingHasNoRefreshToken(t *testing.T) {
 	existing := map[string]any{
 		"access_token":       "old-access-token",
@@ -189,6 +203,9 @@ func TestMergeCodexImportCredentialsPreservesExistingRefreshFieldsWhenIncomingHa
 	}
 }
 
+// TestMergeCodexImportCredentialsKeepsRefreshFieldsWhenIncomingHasRefreshToken
+// supplies new renewal, client, and ID token data. It checks those incoming
+// values replace the configured existing credential fields.
 func TestMergeCodexImportCredentialsKeepsRefreshFieldsWhenIncomingHasRefreshToken(t *testing.T) {
 	existing := map[string]any{
 		"refresh_token": "old-refresh-token",
@@ -220,6 +237,9 @@ func TestMergeCodexImportCredentialsKeepsRefreshFieldsWhenIncomingHasRefreshToke
 	}
 }
 
+// TestNormalizeCodexImportRejectsExpiredAccessToken imports an unsigned
+// metadata JWT expired an hour earlier. It checks normalization returns an
+// error containing the configured expired-token diagnostic.
 func TestNormalizeCodexImportRejectsExpiredAccessToken(t *testing.T) {
 	expiredToken := buildCodexTestJWTForTest(t, time.Now().Add(-time.Hour), map[string]any{})
 
@@ -232,6 +252,9 @@ func TestNormalizeCodexImportRejectsExpiredAccessToken(t *testing.T) {
 	}
 }
 
+// TestResolveCodexImportExpiryForNoRefreshTokenUsesTokenExpiry supplies token
+// expiry with an explicitly disabled pause request. It checks both selected
+// lifetimes, forced pause, and at least one returned warning.
 func TestResolveCodexImportExpiryForNoRefreshTokenUsesTokenExpiry(t *testing.T) {
 	tokenExpiresAt := time.Now().Add(time.Hour).UTC()
 	item := &CodexImportProvider{
@@ -261,6 +284,10 @@ func TestResolveCodexImportExpiryForNoRefreshTokenUsesTokenExpiry(t *testing.T) 
 	}
 }
 
+// TestResolveCodexImportExpiryForNoRefreshTokenRequiresExpiry supplies an
+// opaque token without renewal or expiry. It checks rejection with the
+// missing-access-token-expiration diagnostic before provider scheduling
+// lifetime can be selected.
 func TestResolveCodexImportExpiryForNoRefreshTokenRequiresExpiry(t *testing.T) {
 	item := &CodexImportProvider{
 		AccessToken:  "opaque-access-token",
@@ -277,6 +304,9 @@ func TestResolveCodexImportExpiryForNoRefreshTokenRequiresExpiry(t *testing.T) {
 	}
 }
 
+// TestResolveCodexImportExpiryForNoRefreshTokenUsesEarlierRequestExpiry
+// supplies a request expiry earlier than token expiry. It checks that both
+// provider and credential lifetimes select the earlier configured value.
 func TestResolveCodexImportExpiryForNoRefreshTokenUsesEarlierRequestExpiry(t *testing.T) {
 	tokenExpiresAt := time.Now().Add(2 * time.Hour).UTC()
 	requestExpiresAt := time.Now().Add(time.Hour).UTC()
@@ -301,6 +331,10 @@ func TestResolveCodexImportExpiryForNoRefreshTokenUsesEarlierRequestExpiry(t *te
 	}
 }
 
+// TestCodexIdentityKeysPreferStrongIdentifiers varies renewal presence and
+// account/user availability. It checks user-first/account-last ordering, email
+// exclusion or fallback, and fingerprint-only matching for access-only
+// credentials.
 func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	keys := BuildCodexImportIdentityKeys("acct-1", "user-1", "same@example.com", "token", "refresh")
 	if len(keys) == 0 || keys[0] != "user:user-1" {
@@ -332,6 +366,9 @@ func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexImportUsesJWTSubForAccessTokenOnlyIdentity supplies a
+// subject claim without a ChatGPT user claim. It checks the subject fills user
+// metadata while access-only matching still uses only a fingerprint key.
 func TestNormalizeCodexImportUsesJWTSubForAccessTokenOnlyIdentity(t *testing.T) {
 	accessToken := buildCodexTestJWTForTest(t, time.Now().Add(time.Hour), map[string]any{
 		"sub": "user-from-access-token",
@@ -355,6 +392,10 @@ func TestNormalizeCodexImportUsesJWTSubForAccessTokenOnlyIdentity(t *testing.T) 
 	}
 }
 
+// buildCodexTestJWTForTest creates an unsigned three-part metadata token with
+// supplied expiry and overriding claims. Extra claims can replace defaults;
+// marshal failure terminates the calling test, and the empty signature
+// supports decode-only fixtures.
 func buildCodexTestJWTForTest(t *testing.T, exp time.Time, extraClaims map[string]any) string {
 	t.Helper()
 	header := map[string]any{
@@ -378,7 +419,10 @@ func buildCodexTestJWTForTest(t *testing.T, exp time.Time, extraClaims map[strin
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
 
-// TestCodexImportInjectedClockAndExpiryBoundaries checks the strict JWT grace comparison and inclusive expiry cutoff.
+// TestCodexImportInjectedClockAndExpiryBoundaries fixes the clock around the
+// two-minute grace boundary. It checks strict JWT expiry versus inclusive
+// access-only expiry, captured client ID, and Agent Identity expiry bypass
+// without reading that clock.
 func TestCodexImportInjectedClockAndExpiryBoundaries(t *testing.T) {
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	options := CodexImportOptions{Now: func() time.Time { return now }, OAuthClientID: "fixture-client"}
@@ -407,6 +451,9 @@ func TestCodexImportInjectedClockAndExpiryBoundaries(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestCodexImportCredentialMergeIndependentNestedValues mutates a supported
+// nested map after merge. It checks retained source values and nil versus
+// empty slice presence for those configured copied containers.
 func TestCodexImportCredentialMergeIndependentNestedValues(t *testing.T) {
 	input := map[string]any{"nested": map[string]any{"values": []any{"original"}}, "nil": []any(nil), "empty": []any{}}
 	out := MergeCodexImportMap(nil, input)
@@ -420,6 +467,9 @@ func TestCodexImportCredentialMergeIndependentNestedValues(t *testing.T) {
 	require.Equal(t, []any{}, out["empty"])
 }
 
+// TestBuildCodexAgentIdentityKeysUseChatGPTAccountOnly supplies one signing
+// account identifier. It checks that the generated key list contains exactly
+// that provider account key for this import mode.
 func TestBuildCodexAgentIdentityKeysUseChatGPTAccountOnly(t *testing.T) {
 	keys := BuildCodexAgentIdentityKeys("team-a")
 	require.Equal(t, []string{"provider:team-a"}, keys)

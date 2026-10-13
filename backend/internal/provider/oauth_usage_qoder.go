@@ -7,25 +7,66 @@ import (
 	"time"
 )
 
+// Qoder display queries share work by provider row while associating cached
+// and completed observations with credential identity. Force skips the
+// caller’s cache checks but can still join an existing flight, whose captured
+// identity is validated before returning independently copied display values.
+//
+// New queries use detached thirty-second activity so caller cancellation does
+// not end shared fetching and service shutdown still owns completion. Fetch
+// failures may become cached diagnostics with nil returned error. Successful
+// quota results attempt conditional snapshot persistence before scheduling
+// signals; a comparison miss aborts, while a persistence error still permits
+// later scheduling/cache work. JSON conversion failure and absent quota/store
+// are treated as skipped persistence success. Callers retain stable records
+// and reached callbacks through the shared query.
+
+// Qoder usage keys identify the stored JSON quota snapshot and observation
+// timestamp used by later provider display and quota recovery consumers.
 const (
 	QoderUsageQuotaSnapshotExtraKey  = "qoder_quota_snapshot"
 	QoderUsageQuotaUpdatedAtExtraKey = "qoder_quota_updated_at"
 )
 
-// qoderUsageFlightResult lets waiters verify the credential identity before copying a shared result.
+// qoderUsageFlightResult ties shared display data to the credential identity
+// that fetched it.
 type qoderUsageFlightResult struct {
+	// Usage is shared by row-key flight waiters. Each identity-matching caller
+	// copies its mutable fields before independently editing returned display
+	// data.
 	Usage    *UsageInfo
-	Identity string
+	Identity string // queried credential identity digest
 }
 
-// QoderUsageOptions supplies upstream fetching, error conversion, and enrichment; the service owns caching and
-// writes.
+// QoderUsageOptions binds quota fetching, diagnostic conversion, and account
+// display enrichment.
 type QoderUsageOptions struct {
-	Fetch   func(context.Context, *Record, func() time.Time) (*UsageInfo, error)
+	// Fetch is required for cache misses and supplies nonnil successful display
+	// data under detached work. Its record and clock remain stable through
+	// enrichment.
+	Fetch func(context.Context, *Record, func() time.Time) (*UsageInfo, error)
+	// Degrade is required after fetch failure and supplies nonnil diagnostic
+	// display data. The enriched result is cached with nil API error.
 	Degrade func(error, *Record, time.Time) *UsageInfo
-	Enrich  func(*UsageInfo, *Record)
+	// Enrich is required after fetch or degradation and mutates the owned view.
+	// It completes before conditional persistence and copied cache publication
+	// begin.
+	Enrich func(*UsageInfo, *Record)
 }
 
+// GetQoderUsage returns copied cached or queried display data for a stable
+// record. Nil record returns a dated empty view, while constructor-initialized
+// cache and reached Fetch/Enrich/Degrade callbacks are required for shared
+// work.
+//
+// Force bypasses local cache reuse but still joins same-row flights. Detached
+// cancellation returns an error; other fetch failures become enriched cached
+// diagnostics. Snapshot comparison miss stops scheduling and cache
+// publication, but persistence error allows both to proceed. Final nonnil
+// flight data must match the captured credential identity before copying. The
+// nil-cache repair is unsynchronized, so manually constructed services
+// initialize it before concurrent use. Supply a nonnil context when a cache
+// miss reaches detached activity registration.
 func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record, force bool) (*UsageInfo, error) {
 	now := s.options.Now()
 	if provider == nil {
@@ -50,6 +91,9 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 			}
 		}
 
+		// Shared work keeps context values while ignoring caller cancellation.
+		// Service shutdown still cancels this registered fetch and joins its actual
+		// completion under the independent thirty-second budget.
 		fetchCtx, cancel, beginErr := s.BeginDetached(ctx, 30*time.Second)
 		if beginErr != nil {
 			return nil, beginErr
@@ -60,6 +104,9 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 		if fetchCtx.Err() == context.Canceled {
 			return nil, fetchCtx.Err()
 		}
+		// A non-shutdown fetch error becomes cacheable display diagnostics.
+		// Returning nil flight error lets matching waiters receive that enriched
+		// view, with error fields controlling its shorter cache lifetime.
 		if err != nil {
 			degraded := s.options.Qoder.Degrade(err, provider, s.options.Now())
 			s.options.Qoder.Enrich(degraded, provider)
@@ -69,6 +116,9 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 
 		s.options.Qoder.Enrich(usage, provider)
 		version := ObserveUsageVersion(provider)
+		// Persist the identity-associated snapshot before scheduling or caching.
+		// A clean comparison miss rejects this observation; an operational error
+		// retains the existing best-effort follow-up path.
 		applied, persistErr := s.persistQoderQuotaSnapshot(fetchCtx, version, usage.QoderQuota)
 		if persistErr == nil && !applied {
 			return nil, ErrUsageObservationChanged
@@ -90,10 +140,24 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 	return CloneUsageInfo(completed.Usage), nil
 }
 
+// persistQoderQuotaSnapshot conditionally stores a quota JSON object and UTC
+// timestamp for its observed identity. Nil service/store/quota and JSON
+// encode/decode failure return true with nil error, reporting skipped work
+// rather than durable storage.
+//
+// Usable data requires UsageObservationWriter, whose absence returns the
+// missing-writer error. A false successful comparison reports identity change
+// to the query caller and blocks later scheduling/cache work. Storage errors
+// are logged and returned, while the surrounding query still permits those
+// later best-effort actions. Keep the quota stable during JSON conversion and
+// provide reached Warn.
 func (s *OAuthUsageService) persistQoderQuotaSnapshot(ctx context.Context, version UsageObservationVersion, quota *QoderQuotaInfo) (bool, error) {
 	if s == nil || s.providerRepo == nil || quota == nil {
 		return true, nil
 	}
+	// Convert the typed quota to the stored generic JSON shape. Encoding or
+	// decoding failure skips persistence without failing the query, so a true
+	// result here does not prove that storage accepted an observation.
 	raw, err := json.Marshal(quota)
 	if err != nil {
 		return true, nil
@@ -116,6 +180,16 @@ func (s *OAuthUsageService) persistQoderQuotaSnapshot(ctx context.Context, versi
 	return applied, err
 }
 
+// applyQoderQuotaSchedulingSignal best-effort sets or clears the rate limit
+// for a stable record observation. Missing service/store/record skips work,
+// and a missing conditional writer is diagnosed.
+//
+// Future exhausted quota selects its expiry for a rate limit. Otherwise
+// clearing requires a live matching quota window without active overload and
+// no remaining exhaustion signal. Conditional writer errors are logged,
+// comparison results are ignored, and the local record is not updated.
+// Snapshot persistence is a separate earlier operation, so these scheduling
+// effects can fail independently while display caching continues.
 func (s *OAuthUsageService) applyQoderQuotaSchedulingSignal(ctx context.Context, provider *Record, quota *QoderQuotaInfo) {
 	if s == nil || s.providerRepo == nil || provider == nil {
 		return

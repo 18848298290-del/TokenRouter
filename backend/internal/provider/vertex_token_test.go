@@ -10,33 +10,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// vertexCacheFixture scripts token-cache operations and atomically captures
+// their invocation counts.
 type vertexCacheFixture struct {
-	AccessTokenCache
-	reads    atomic.Int32
-	get      func(context.Context, int32) (string, error)
-	lock     func(context.Context) (bool, error)
+	AccessTokenCache              // unimplemented token-cache fixture methods
+	reads            atomic.Int32 // token read invocation count
+	// get is required by token reads and receives their incremented ordinal.
+	// Configure it before acquisition to script miss and peer outcomes.
+	get func(context.Context, int32) (string, error)
+	// lock is required by admission and supplies its scripted outcome. Tests can
+	// cancel the caller from this callback before the contention wait.
+	lock func(context.Context) (bool, error)
+	// set is required when exchange succeeds and cache publication runs. Failed
+	// exchange scenarios can leave it unset because publication is skipped.
 	set      func(string, time.Duration)
-	releases atomic.Int32
+	releases atomic.Int32 // refresh lock release count
 }
 
+// GetAccessToken increments the read counter and invokes the required get
+// callback. Tests configure that callback before acquisition and use its
+// ordinal to script a peer token.
 func (c *vertexCacheFixture) GetAccessToken(ctx context.Context, _ string) (string, error) {
 	return c.get(ctx, c.reads.Add(1))
 }
 
+// AcquireRefreshLock invokes the required lock callback and ignores key and
+// TTL. The fixture records admission outcomes through that callback rather
+// than retaining lock ownership state.
 func (c *vertexCacheFixture) AcquireRefreshLock(ctx context.Context, _ string, ttl time.Duration) (bool, error) {
 	return c.lock(ctx)
 }
 
+// ReleaseRefreshLock atomically counts cleanup and returns success for the
+// fixture.
 func (c *vertexCacheFixture) ReleaseRefreshLock(context.Context, string) error {
 	c.releases.Add(1)
 	return nil
 }
 
+// SetAccessToken forwards the token and TTL to the required set callback. It
+// ignores context and cache key, letting successful-exchange tests assert the
+// requested publication values.
 func (c *vertexCacheFixture) SetAccessToken(_ context.Context, _ string, token string, ttl time.Duration) error {
 	c.set(token, ttl)
 	return nil
 }
 
+// TestVertexTokenLockCancellationStopsReadsAndExchange cancels during rejected
+// lock admission. Acquisition must return cancellation after its first cache
+// read, with no exchange or unowned lock release.
 func TestVertexTokenLockCancellationStopsReadsAndExchange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -53,6 +75,9 @@ func TestVertexTokenLockCancellationStopsReadsAndExchange(t *testing.T) {
 	require.Zero(t, c.releases.Load())
 }
 
+// TestVertexTokenPeerWaitAndOwnedRelease compares a peer token, owned-lock
+// exchange failure, and cache outage. The peer waits and skips release, owned
+// failure releases once, and outage exchanges and publishes the supplied TTL.
 func TestVertexTokenPeerWaitAndOwnedRelease(t *testing.T) {
 	t.Run("peer", func(t *testing.T) {
 		var lockTime time.Time

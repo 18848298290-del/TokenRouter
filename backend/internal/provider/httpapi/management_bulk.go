@@ -18,25 +18,28 @@ type BulkUpdateProvidersRequest struct {
 	// ProviderIDs supplies explicit targets and takes precedence over Filters when
 	// nonempty. An empty list requires a Filters object for this handler to accept
 	// selection.
-	ProviderIDs []int64 `json:"provider_ids"` // selected provider identifiers
+	// selected provider identifiers
+	ProviderIDs []int64 `json:"provider_ids"`
 	// Filters supplies list predicates when ProviderIDs is empty. A present object
 	// with empty fields still counts as a selection and is interpreted by
 	// administration.
-	Filters *BulkUpdateProviderFilters `json:"filters"` // provider selection filters
-	Name    string                     `json:"name"`    // provider display name
+	// provider selection filters
+	Filters *BulkUpdateProviderFilters `json:"filters"`
+	// provider display name
+	Name string `json:"name"`
 	// ProxyID, Concurrency, Priority, RateMultiplier, LoadFactor and Schedulable
 	// use pointer presence for updates. Nil preserves each target's corresponding
 	// value, while supplied zero or false reaches administrative validation.
 	ProxyID *int64 `json:"proxy_id"` // optional egress proxy update
 	// optional provider request capacity
 	Concurrency *int `json:"concurrency"`
-	// optional scheduler priority update
-	Priority *int `json:"priority"`
+	Priority    *int `json:"priority"` // optional scheduler priority update
 	// optional provider billing multiplier
 	RateMultiplier *float64 `json:"rate_multiplier"`
 	// optional scheduler capacity override
-	LoadFactor *int   `json:"load_factor"`
-	Status     string `json:"status" binding:"omitempty,oneof=active inactive error"` // stored provider state
+	LoadFactor *int `json:"load_factor"`
+	// stored provider state
+	Status string `json:"status" binding:"omitempty,oneof=active inactive error"`
 	// optional administrator scheduling switch
 	Schedulable *bool `json:"schedulable"`
 	// GroupIDs distinguishes omission from a supplied collection. Nil retains each
@@ -46,8 +49,10 @@ type BulkUpdateProvidersRequest struct {
 	// Credentials and Extra contain selected bulk configuration changes. Nonempty
 	// maps count as supplied updates, and administration sanitizes and validates
 	// them before applying per-provider write outcomes.
-	Credentials map[string]any `json:"credentials"` // selected authorization field changes
-	Extra       map[string]any `json:"extra"`       // selected provider configuration changes
+	// selected authorization field changes
+	Credentials map[string]any `json:"credentials"`
+	// selected provider configuration changes
+	Extra map[string]any `json:"extra"`
 }
 
 // BulkUpdateProviderFilters describes the administrator list predicates used to
@@ -71,6 +76,7 @@ func (h *ManagementHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	// Reject negative billing overrides before submitting per-provider edits.
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return

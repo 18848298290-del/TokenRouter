@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// TestSessionStore_SetAndGet stores a fresh Code Assist authorization session.
+// Get must find its identifier and return the saved state used by later code
+// exchange.
 func TestSessionStore_SetAndGet(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -27,6 +30,9 @@ func TestSessionStore_SetAndGet(t *testing.T) {
 	}
 }
 
+// TestSessionStore_GetNotFound queries an absent identifier in initialized
+// Gemini storage. Get must report false so missing proof remains
+// distinguishable from a usable authorization session.
 func TestSessionStore_GetNotFound(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -38,6 +44,9 @@ func TestSessionStore_GetNotFound(t *testing.T) {
 	}
 }
 
+// TestSessionStore_GetExpired inserts a session one minute beyond its TTL.
+// Lookup must reject that stale proof immediately, independently of the
+// cleanup worker's next removal tick.
 func TestSessionStore_GetExpired(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -57,6 +66,9 @@ func TestSessionStore_GetExpired(t *testing.T) {
 	}
 }
 
+// TestSessionStore_Delete confirms a fresh session exists before removing it.
+// Get must report false after deletion so the previously stored identifier
+// cannot supply consumed proof.
 func TestSessionStore_Delete(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -80,6 +92,9 @@ func TestSessionStore_Delete(t *testing.T) {
 	}
 }
 
+// TestSessionStore_Stop_Idempotent starts the cleanup worker and invokes Stop
+// three times. Each call must finish normally, exercising shutdown with an
+// already-closed cleanup signal.
 func TestSessionStore_Stop_Idempotent(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -90,6 +105,10 @@ func TestSessionStore_Stop_Idempotent(t *testing.T) {
 	store.Stop()
 }
 
+// TestSessionStore_ConcurrentAccess races fresh writes, lookups, and deletions
+// across overlapping identifiers. All workers must finish normally; this
+// scenario permits either lookup outcome during concurrent replacement and
+// removal.
 func TestSessionStore_ConcurrentAccess(t *testing.T) {
 	store := NewGeminiAuthorizationSessions()
 	store.Start()
@@ -99,7 +118,9 @@ func TestSessionStore_ConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines * 3)
 
-	// Race writes with reads and deletions of the same session IDs.
+	// Overlapping identifiers make map readers compete with replacement and
+	// deletion. Join every worker before cleanup, while accepting either read
+	// outcome during those races.
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()

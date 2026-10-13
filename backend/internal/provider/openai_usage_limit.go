@@ -9,13 +9,40 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAIPlanWriter applies partial provider updates for observed plan information.
+// OpenAI 429 observations combine utilization with relative reset timing to
+// choose a provider cooldown. An exhausted weekly window takes precedence over
+// an exhausted short window even when its reset count is zero or negative;
+// only the fallback choice requires a positive interval.
+//
+// The same response can contribute plan metadata through a separate durable
+// update. Credential shadows skip that write because their effective metadata
+// comes from the parent. Stored plan comparison trims existing text and
+// ignores case, while accepted incoming text is retained as supplied.
+// Persistence precedes local credential mutation, but a nil-error bulk write
+// is accepted regardless of affected count. Callers keep mutable observations
+// and records stable, synchronize local credential sharing, and provide
+// reached diagnostics.
+
+// OpenAIPlanWriter applies partial provider credential updates for observed
+// account plans.
 type OpenAIPlanWriter interface {
+	// BulkUpdate applies the supplied partial update to provider identifiers.
+	// This plan observer treats nil error as acceptance regardless of affected
+	// count, then mutates its caller-owned record locally.
 	BulkUpdate(context.Context, []int64, ProviderBulkUpdate) (int64, error)
 }
 
-// OpenAI429ResetTime selects a recovery time from observed rate-limit windows.
-// It returns nil when the observation supplies no usable reset time.
+// OpenAI429ResetTime chooses a relative cooldown from a stable optional quota
+// snapshot. Nil observation returns nil; reached clock and info callbacks are
+// required, and reset intervals must fit time.Duration arithmetic.
+//
+// Normalize keeps each used/reset pair associated while assigning short and
+// weekly categories. Exhaustion means at least one hundred percent, and the
+// exhausted weekly reset wins whenever present, including zero/negative
+// seconds. Otherwise an exhausted short reset wins with the same presence
+// rule. Only when neither exhausted window supplies timing does the longest
+// positive reset win. No usable fallback returns nil; this selection does not
+// validate an exhausted reset as a future deadline.
 func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() time.Time, info func(string, ...any)) *time.Time {
 	if snapshot == nil {
 		return nil
@@ -28,11 +55,13 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 
 	now := clock()
 
-	// Treat utilization of at least 100 percent as exhaustion.
+	// One hundred percent marks exhaustion in the observed upstream window.
 	is7dExhausted := normalized.Used7dPercent != nil && *normalized.Used7dPercent >= 100
 	is5hExhausted := normalized.Used5hPercent != nil && *normalized.Used5hPercent >= 100
 
-	// Prefer an exhausted window's reset, checking seven days before five hours.
+	// Let exhausted weekly timing precede exhausted short timing when a reset
+	// pointer exists. Zero/negative observations still select their deadline here,
+	// preserving presence rather than applying the positive-only fallback rule.
 	if is7dExhausted && normalized.Reset7dSeconds != nil {
 		resetAt := now.Add(time.Duration(*normalized.Reset7dSeconds) * time.Second)
 		info("openai_429_7d_limit_exhausted", "reset_after_seconds", *normalized.Reset7dSeconds, "reset_at", resetAt)
@@ -44,7 +73,9 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 		return &resetAt
 	}
 
-	// If no exhausted window supplies a reset, use the longest positive reset observed.
+	// Without exhausted-window timing, use the longest positive observed interval
+	// so the fallback waits for both available windows; nonpositive observations
+	// cannot supply a fallback cooldown.
 	var maxResetSecs int
 	if normalized.Reset7dSeconds != nil && *normalized.Reset7dSeconds > maxResetSecs {
 		maxResetSecs = *normalized.Reset7dSeconds
@@ -61,13 +92,25 @@ func OpenAI429ResetTime(snapshot *openai.OpenAICodexUsageSnapshot, clock func() 
 	return nil
 }
 
-// PersistOpenAIObservedPlan writes the plan type observed in a 429 response to provider credentials.
+// PersistOpenAIObservedPlan writes observed plan text before changing a
+// caller-owned record. Missing repository/record, other platform, credential
+// shadow, or exactly empty input skips work; reached info/warn callbacks are
+// required.
+//
+// Comparison trims current credential text and ignores case against the
+// incoming text as supplied. A different input is persisted unchanged through
+// BulkUpdate, then copied into local credentials only after nil error;
+// affected-row count is ignored, including zero. Storage failure logs and
+// leaves the local record unchanged, while accepted writes retain their local
+// mutation. Callers synchronize shared credentials and keep the record stable
+// through the repository call and diagnostics.
 func PersistOpenAIObservedPlan(ctx context.Context, repo OpenAIPlanWriter, provider *Record, planType string, info, warn func(string, ...any)) {
 	if repo == nil || provider == nil || provider.Platform != capability.PlatformOpenAI {
 		return
 	}
-	// Credential shadows inherit plan metadata from the parent, so exclude them before the bulk write.
-	// The parent's own requests maintain its plan_type.
+	// Skip the shadow row before writing because its credentials are inherited
+	// from the parent. Its own observed plan must not become a competing local
+	// credential owner through this update.
 	if provider.IsCredentialShadow() {
 		return
 	}
@@ -81,6 +124,9 @@ func PersistOpenAIObservedPlan(ctx context.Context, repo OpenAIPlanWriter, provi
 		return
 	}
 
+	// Persist before local credential mutation so a rejected write leaves the
+	// caller record unchanged. Nil error accepts even zero affected rows, matching
+	// this observer's success criterion rather than proving durable row change.
 	if _, err := repo.BulkUpdate(ctx, []int64{provider.ID}, ProviderBulkUpdate{
 		Credentials: map[string]any{"plan_type": planType},
 	}); err != nil {

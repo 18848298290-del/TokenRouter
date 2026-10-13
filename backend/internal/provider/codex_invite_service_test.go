@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// TestNormalizeCodexInviteResetGrantType combines reward presence with
+// recognized, absent, and future actions. It checks explicit no-reward
+// precedence, two known administrator values, and unknown results for the
+// configured unresolved cases.
 func TestNormalizeCodexInviteResetGrantType(t *testing.T) {
 	hasRewards := true
 	hasNoRewards := false
@@ -20,6 +24,10 @@ func TestNormalizeCodexInviteResetGrantType(t *testing.T) {
 	require.Equal(t, "unknown", normalizeCodexInviteResetGrantType(nil, ""))
 }
 
+// TestNormalizeCodexInviteEmailsRejectsInvalidAndTooMany supplies malformed
+// text and six unique addresses in one input. It checks bad-request
+// classification and the configured five-address-limit reason for these
+// rejected invitation lists.
 func TestNormalizeCodexInviteEmailsRejectsInvalidAndTooMany(t *testing.T) {
 	_, err := normalizeCodexInviteEmails([]string{"bad-email"})
 	require.Error(t, err)

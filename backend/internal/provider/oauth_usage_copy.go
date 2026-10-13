@@ -7,8 +7,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
-// CloneUsageInfo copies nested display values so callers can mutate results independently of caches and shared
-// queries.
+// Usage query results contain mutable windows, maps, capability pointers, and
+// nested quota pools. Copying those values before cache storage or caller
+// editing keeps one display update from changing another observation,
+// including scalar pointers inside Grok product billing entries.
+
+// CloneUsageInfo copies every current mutable display field into independent
+// storage. Nil remains nil, while nested windows, reset times, quota maps,
+// capability pointers, Qoder pools, and Grok billing values can be edited
+// independently; callers keep the source stable during copying.
 func CloneUsageInfo(value *UsageInfo) *UsageInfo {
 	if value == nil {
 		return nil
@@ -52,6 +59,9 @@ func CloneUsageInfo(value *UsageInfo) *UsageInfo {
 	return &out
 }
 
+// cloneUsageProgress copies the window, reset timestamp, and local totals. Nil
+// remains nil; all current nested values are scalar data, so the returned
+// window can be edited independently.
 func cloneUsageProgress(value *UsageProgress) *UsageProgress {
 	if value == nil {
 		return nil
@@ -62,6 +72,9 @@ func cloneUsageProgress(value *UsageProgress) *UsageProgress {
 	return &out
 }
 
+// cloneAntigravityModelDetail copies optional capability pointers and MIME
+// flags. Nil remains nil, and callers can independently change each copied
+// pointer or map while keeping the source stable during copying.
 func cloneAntigravityModelDetail(value *AntigravityModelDetail) *AntigravityModelDetail {
 	if value == nil {
 		return nil
@@ -77,6 +90,9 @@ func cloneAntigravityModelDetail(value *AntigravityModelDetail) *AntigravityMode
 	return &out
 }
 
+// cloneQoderQuota copies account timestamps and all three optional quota
+// pools. Nil remains nil; each current pool contains scalar fields, so its
+// returned values can be edited independently.
 func cloneQoderQuota(value *QoderQuotaInfo) *QoderQuotaInfo {
 	if value == nil {
 		return nil

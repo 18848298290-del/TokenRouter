@@ -8,11 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// TestNormalizeTier supplies empty, recognized substring, mixed-case, and
+// unknown account labels. It checks the configured uppercase category or empty
+// value returned by the local display normalizer.
 func TestNormalizeTier(t *testing.T) {
 	tests := []struct {
-		name     string
-		raw      string
-		expected string
+		name     string // tier display case name
+		raw      string // input upstream tier text
+		expected string // expected normalized tier label
 	}{
 		{name: "empty string", raw: "", expected: ""},
 		{name: "free-tier", raw: "free-tier", expected: "FREE"},
@@ -33,10 +36,18 @@ func TestNormalizeTier(t *testing.T) {
 	}
 }
 
+// aqfBoolPtr creates an independently allocated boolean fixture capability
+// value.
 func aqfBoolPtr(v bool) *bool { return &v }
 
+// aqfIntPtr creates an independently allocated integer fixture capability
+// value.
 func aqfIntPtr(v int) *int { return &v }
 
+// TestBuildUsageInfo_BasicModels combines two quota-bearing models with
+// optional capability values. It checks observation/tier metadata, exact model
+// utilization/reset text, selected pointers, MIME flags, and missing
+// capability values.
 func TestBuildUsageInfo_BasicModels(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -114,6 +125,9 @@ func TestBuildUsageInfo_BasicModels(t *testing.T) {
 	require.Equal(t, aqfIntPtr(65536), geminiDetail.MaxOutputTokens)
 }
 
+// TestBuildUsageInfo_DeprecatedModels supplies two deprecated-model
+// replacements beside an available model. It checks both redirect entries
+// carry the configured replacement identifiers in the constructed display map.
 func TestBuildUsageInfo_DeprecatedModels(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -138,6 +152,9 @@ func TestBuildUsageInfo_DeprecatedModels(t *testing.T) {
 	require.Equal(t, "claude-haiku-3.5-latest", info.ModelForwardingRules["claude-3-haiku-20240307"])
 }
 
+// TestBuildUsageInfo_NoDeprecatedModels supplies model quota without any
+// deprecated identifiers. It checks the constructed forwarding map remains
+// nil, retaining absence for this response shape.
 func TestBuildUsageInfo_NoDeprecatedModels(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -154,6 +171,9 @@ func TestBuildUsageInfo_NoDeprecatedModels(t *testing.T) {
 	require.Nil(t, info.ModelForwardingRules, "ModelForwardingRules should be nil when no deprecated models")
 }
 
+// TestBuildUsageInfo_EmptyModels supplies an empty model response. It checks
+// nonnil empty quota/capability maps and an absent FiveHour view when no
+// fixed-priority model is available.
 func TestBuildUsageInfo_EmptyModels(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -171,6 +191,9 @@ func TestBuildUsageInfo_EmptyModels(t *testing.T) {
 	require.Nil(t, info.FiveHour, "FiveHour should be nil when no priority model exists")
 }
 
+// TestBuildUsageInfo_ModelWithNilQuotaInfo supplies a model whose capability
+// data has no quota. It checks both quota and capability display maps omit
+// that model in this configured response.
 func TestBuildUsageInfo_ModelWithNilQuotaInfo(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -190,10 +213,15 @@ func TestBuildUsageInfo_ModelWithNilQuotaInfo(t *testing.T) {
 	require.Empty(t, info.AntigravityQuotaDetails, "models with nil QuotaInfo should be skipped from details too")
 }
 
+// TestBuildUsageInfo_FiveHourPriorityOrder supplies the first and third
+// priority models with differing balances. It checks the first model's
+// floating utilization and a parsed reset pointer for the compatibility
+// window.
 func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
-	// priorityModels = ["claude-sonnet-4-20250514", "claude-sonnet-4", "gemini-2.5-pro"]
+	// priorityModels = ["claude-sonnet-4-20250514", "claude-sonnet-4",
+	// "gemini-2.5-pro"]
 	// FiveHour uses the first available priority model's quota.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
@@ -217,14 +245,19 @@ func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 	require.NotNil(t, info.FiveHour, "FiveHour should be set when a priority model exists")
 	// claude-sonnet-4-20250514 takes precedence over the other priority models.
 	expectedUtilization := (1.0 - 0.80) * 100 // 20
+	// Allow floating representation error in the converted percentage.
 	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
 	require.NotNil(t, info.FiveHour.ResetsAt, "ResetsAt should be parsed from ResetTime")
 }
 
+// TestBuildUsageInfo_FiveHourFallbackToClaude4 omits the first priority model
+// but supplies the second and third. It checks the second model’s utilization
+// determines the compatibility FiveHour view.
 func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
-	// Only the second priority model, claude-sonnet-4, is available.
+	// The absent first candidate lets claude-sonnet-4 take precedence over the
+	// supplied third candidate, so display selection does not depend on map order.
 	modelsResp := &antigravity.FetchAvailableModelsResponse{
 		Models: map[string]antigravity.ModelInfo{
 			"claude-sonnet-4": {
@@ -245,9 +278,13 @@ func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
 
 	require.NotNil(t, info.FiveHour)
 	expectedUtilization := (1.0 - 0.60) * 100 // 40
+	// Allow floating representation error in the converted percentage.
 	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
 }
 
+// TestBuildUsageInfo_FiveHourFallbackToGemini supplies the third priority
+// model beside an unrelated model. It checks the third model’s utilization
+// populates FiveHour when earlier candidates are absent.
 func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -271,9 +308,13 @@ func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
 
 	require.NotNil(t, info.FiveHour)
 	expectedUtilization := (1.0 - 0.30) * 100 // 70
+	// Allow floating representation error in the converted percentage.
 	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
 }
 
+// TestBuildUsageInfo_FiveHourNoPriorityModel supplies quota only for an
+// unrelated model. It checks the compatibility FiveHour view remains nil
+// rather than selecting arbitrary response-map order.
 func TestBuildUsageInfo_FiveHourNoPriorityModel(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -293,6 +334,9 @@ func TestBuildUsageInfo_FiveHourNoPriorityModel(t *testing.T) {
 	require.Nil(t, info.FiveHour, "FiveHour should be nil when no priority model exists")
 }
 
+// TestBuildUsageInfo_FiveHourWithEmptyResetTime supplies a priority model with
+// quota and empty reset text. It checks a present window with nil reset
+// pointer and zero countdown for unavailable timing.
 func TestBuildUsageInfo_FiveHourWithEmptyResetTime(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -314,6 +358,9 @@ func TestBuildUsageInfo_FiveHourWithEmptyResetTime(t *testing.T) {
 	require.Equal(t, 0, info.FiveHour.RemainingSeconds)
 }
 
+// TestBuildUsageInfo_FullUtilization supplies a model with zero remaining
+// fraction. It checks the per-model entry exists and displays one hundred used
+// under this exact quota observation.
 func TestBuildUsageInfo_FullUtilization(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -335,6 +382,9 @@ func TestBuildUsageInfo_FullUtilization(t *testing.T) {
 	require.Equal(t, 100, quota.Utilization)
 }
 
+// TestBuildUsageInfo_ZeroUtilization supplies a model with complete remaining
+// fraction. It checks the per-model entry exists and displays zero used for
+// this available quota observation.
 func TestBuildUsageInfo_ZeroUtilization(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 
@@ -354,6 +404,9 @@ func TestBuildUsageInfo_ZeroUtilization(t *testing.T) {
 	require.Equal(t, 0, quota.Utilization)
 }
 
+// TestBuildUsageInfo_AICredits supplies a paid-tier credit entry with numeric
+// amount and minimum text. It checks one display credit retains its type and
+// the configured converted balance values.
 func TestBuildUsageInfo_AICredits(t *testing.T) {
 	fetcher := &AntigravityQuota{}
 	modelsResp := &antigravity.FetchAvailableModelsResponse{

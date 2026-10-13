@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOAuthUsageCacheLoadCopies mutates source and returned API, local,
+// Antigravity, and Qoder observations. It checks retained identity/timestamps
+// and independent selected scalar or nested quota values on later reads.
 func TestOAuthUsageCacheLoadCopies(t *testing.T) {
 	now := time.Now()
 	t.Run("api", func(t *testing.T) {
@@ -71,6 +74,9 @@ func TestOAuthUsageCacheLoadCopies(t *testing.T) {
 	}
 }
 
+// TestOAuthUsageCacheLoadMisses stores typed-nil entries and also queries
+// absent IDs. Every platform reader is checked for false presence and a nil
+// result in both cases.
 func TestOAuthUsageCacheLoadMisses(t *testing.T) {
 	cache := NewOAuthUsageCache()
 	cache.StoreAPI(1, nil)

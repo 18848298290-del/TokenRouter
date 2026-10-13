@@ -13,11 +13,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Shared provider HTTP fixtures separate serial query and mutation captures
-// from the few concurrently written creation observations. helpers_test.go
-// supplies creation, listing, catalogue and credential-maintenance substitutes
-// used by multiple handler tests, recording the fields each scenario needs
-// while leaving unused embedded operations unimplemented.
+// Provider creation tests can submit several records concurrently, while list
+// and credential-maintenance scenarios read and mutate their captures serially.
+// Creation callbacks record borrowed request pointers for later assertions;
+// catalogue and query callbacks retain configured record data, and unused
+// embedded operations remain unimplemented.
 //
 // Creation input appends and Grok ID allocation use their owning mutexes, but
 // record maps, list populations and mutation captures remain borrowed or
@@ -35,19 +35,26 @@ const deprecatedLongContextBillingExtraKey = "openai_long_context_billing_enable
 // while shared embedded mutation observations retain their separate serial
 // usage rules.
 type grokImportAdminService struct {
-	*managementMutationFixture            // borrowed shared serial mutation captures
-	mu                         sync.Mutex // fixture capture synchronization mutex
-	nextID                     int64      // next unique fixture provider identifier
+	*managementMutationFixture // borrowed shared serial mutation captures
+	// mu protects nextID reservation for concurrent creation. Each accepted call
+	// increments before returning its record; embedded mutation captures retain
+	// their independent serial-use rule.
+	mu     sync.Mutex // fixture capture synchronization mutex
+	nextID int64      // next unique fixture provider identifier
 }
 
 // managementCreateFixture records borrowed creation requests under mu and
 // supplies a configurable error. Tests set the error before concurrent creation
 // and read captured pointers after their batch has finished.
 type managementCreateFixture struct {
-	ProviderManagement                                     // unused embedded administrator operations
-	mu                 sync.Mutex                          // fixture capture synchronization mutex
-	createdProviders   []*providercore.CreateProviderInput // borrowed captured provider creation inputs
-	createProviderErr  error                               // configured creation callback failure
+	ProviderManagement // unused embedded administrator operations
+	// mu protects append operations on createdProviders. Those inputs remain
+	// borrowed until tests inspect completed requests; createProviderErr stays
+	// fixed while concurrent callbacks read it after unlocking.
+	mu sync.Mutex // fixture capture synchronization mutex
+	// borrowed captured provider creation inputs
+	createdProviders  []*providercore.CreateProviderInput
+	createProviderErr error // configured creation callback failure
 }
 
 // managementListFixture supplies serial list and score populations and captures
@@ -82,8 +89,9 @@ type managementListFixture struct {
 		// filter; sortBy: supplied sorting column selector; sortOrder: supplied
 		// sorting direction selector
 		platform, providerType, status, search, privacyMode, sortBy, sortOrder string
-		groupID                                                                int64 // supplied routing group filter
-		calls                                                                  int   // serial list-query invocation count
+		// supplied routing group filter
+		groupID int64
+		calls   int // serial list-query invocation count
 	}
 }
 
@@ -91,8 +99,9 @@ type managementListFixture struct {
 // delegating other lookups. The selected record is shallowly copied, so its
 // configuration maps remain borrowed during synchronous catalogue preparation.
 type availableModelsAdminService struct {
-	*managementMutationFixture                     // borrowed shared serial mutation captures
-	provider                   providercore.Record // borrowed configured catalogue record
+	*managementMutationFixture // borrowed shared serial mutation captures
+	// borrowed configured catalogue record
+	provider providercore.Record
 }
 
 // managementMutationFixture captures serial configuration and credential
@@ -100,14 +109,21 @@ type availableModelsAdminService struct {
 // while update inputs, provider rows, Extra observations and bulk fields need
 // serial fixture access.
 type managementMutationFixture struct {
-	managementCreateFixture                                            // creation captures with their own mutex
-	providers                   []providercore.Record                  // configured serial provider records
-	updateProviderInput         *providercore.UpdateProviderInput      // borrowed last credential/configuration input
-	updateProviderErr           error                                  // configured provider update failure
-	updateExtraCalls            []map[string]any                       // borrowed serial Extra patch observations
-	clearProviderErrorIDs       []int64                                // captured serial error-clear identifiers
-	lastBulkUpdateProviderInput *providercore.BulkUpdateProvidersInput // borrowed last bulk editing input
-	bulkUpdateProviderErr       error                                  // configured bulk editing failure
+	managementCreateFixture // creation captures with their own mutex
+	// providers, updateProviderInput, updateExtraCalls, clearProviderErrorIDs and
+	// lastBulkUpdateProviderInput retain serial rows or captured inputs. Nested
+	// maps and captured pointers remain borrowed; tests inspect them after each
+	// synchronous request and configure both error fields before use.
+	providers []providercore.Record // configured serial provider records
+	// borrowed last credential/configuration input
+	updateProviderInput *providercore.UpdateProviderInput
+	updateProviderErr   error // configured provider update failure
+	// borrowed serial Extra patch observations
+	updateExtraCalls      []map[string]any
+	clearProviderErrorIDs []int64 // captured serial error-clear identifiers
+	// borrowed last bulk editing input
+	lastBulkUpdateProviderInput *providercore.BulkUpdateProvidersInput
+	bulkUpdateProviderErr       error // configured bulk editing failure
 }
 
 // newGrokImportAdminService initializes concurrent SSO creation with the shared
@@ -340,7 +356,8 @@ func (s *managementMutationFixture) GetProvider(ctx context.Context, id int64) (
 // GetProvidersByIDs preserves requested order and duplicates while shallowly
 // copying matching fixture records. Missing configured IDs receive synthetic
 // active records, allowing management tests to observe selection behavior
-// without real storage existence checks.
+// without real storage existence checks. Nested maps and pointers in copied
+// records remain borrowed from the configured population.
 func (s *managementMutationFixture) GetProvidersByIDs(ctx context.Context, ids []int64) ([]*providercore.Record, error) {
 	out := make([]*providercore.Record, 0, len(ids))
 	for _, id := range ids {

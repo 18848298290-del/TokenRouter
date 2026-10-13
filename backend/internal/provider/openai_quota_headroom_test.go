@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpenAIQuotaHeadroomFactor_PrimaryUsedPercent supplies fresh primary
+// usage with a future reset. Twenty-percent utilization must produce the
+// remaining fraction of 0.8 as the scheduling factor.
 func TestOpenAIQuotaHeadroomFactor_PrimaryUsedPercent(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	provider := &Record{
@@ -20,6 +23,9 @@ func TestOpenAIQuotaHeadroomFactor_PrimaryUsedPercent(t *testing.T) {
 	require.InDelta(t, 0.8, OpenAIQuotaHeadroomFactor(provider, now), 0.0001)
 }
 
+// TestOpenAIQuotaHeadroomFactor_PrimaryMissingIsNeutral supplies a fresh
+// timestamp with no primary measurement. Scoring must return the configured
+// neutral factor for this incomplete observation.
 func TestOpenAIQuotaHeadroomFactor_PrimaryMissingIsNeutral(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	provider := &Record{
@@ -31,6 +37,9 @@ func TestOpenAIQuotaHeadroomFactor_PrimaryMissingIsNeutral(t *testing.T) {
 	require.Equal(t, openAIQuotaHeadroomNeutralFactor, OpenAIQuotaHeadroomFactor(provider, now))
 }
 
+// TestOpenAIQuotaHeadroomFactor_PrimaryResetExpiredIsNeutral supplies fresh
+// utilization whose primary reset has passed. The expired window must
+// contribute the neutral scheduling factor despite its earlier measurement.
 func TestOpenAIQuotaHeadroomFactor_PrimaryResetExpiredIsNeutral(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	provider := &Record{
@@ -44,6 +53,9 @@ func TestOpenAIQuotaHeadroomFactor_PrimaryResetExpiredIsNeutral(t *testing.T) {
 	require.Equal(t, openAIQuotaHeadroomNeutralFactor, OpenAIQuotaHeadroomFactor(provider, now))
 }
 
+// TestOpenAIQuotaHeadroomFactor_SecondaryLowHeadroomDiscountsPrimary combines
+// primary remaining quota with live secondary exhaustion pressure. The
+// secondary five-percent remainder must halve the primary 0.8 factor to 0.4.
 func TestOpenAIQuotaHeadroomFactor_SecondaryLowHeadroomDiscountsPrimary(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	provider := &Record{

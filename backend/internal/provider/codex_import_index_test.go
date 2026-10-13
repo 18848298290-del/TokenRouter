@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCodexProviderIndexDoesNotMatchDifferentUsersInSameChatGPTAccount
+// compares two known users sharing an account. It checks different-user
+// rejection through account fallback and successful matching of the configured
+// same user.
 func TestCodexProviderIndexDoesNotMatchDifferentUsersInSameChatGPTAccount(t *testing.T) {
 	existing := Record{
 		ID: 10,
@@ -31,6 +35,9 @@ func TestCodexProviderIndexDoesNotMatchDifferentUsersInSameChatGPTAccount(t *tes
 	}
 }
 
+// TestCodexProviderIndexFallsBackToProviderKeyWhenRefreshTokenExistsAndUserIDMissing
+// varies which side lacks user identity. It checks both legacy upgrade
+// directions and the account key selected when the stored user is absent.
 func TestCodexProviderIndexFallsBackToProviderKeyWhenRefreshTokenExistsAndUserIDMissing(t *testing.T) {
 	// A full OAuth import with a user ID can match a stored provider
 	// whose chatgpt_user_id is missing and fill that field.
@@ -73,6 +80,10 @@ func TestCodexProviderIndexFallsBackToProviderKeyWhenRefreshTokenExistsAndUserID
 	}
 }
 
+// TestCodexProviderIndexAccessTokenOnlyUsesTokenFingerprint supplies equal
+// account/user metadata with different or equal access tokens. It checks
+// rejection for different token and successful access-fingerprint matching for
+// the exact duplicate.
 func TestCodexProviderIndexAccessTokenOnlyUsesTokenFingerprint(t *testing.T) {
 	existing := Record{
 		ID: 22,
@@ -99,6 +110,10 @@ func TestCodexProviderIndexAccessTokenOnlyUsesTokenFingerprint(t *testing.T) {
 	}
 }
 
+// TestCodexProviderIndexKeepsAllCandidatesForSharedProviderKey reverses
+// legacy/member insertion order under one account. It checks unknown-user
+// fallback to the legacy row and known-user matching to the member through its
+// user key.
 func TestCodexProviderIndexKeepsAllCandidatesForSharedProviderKey(t *testing.T) {
 	legacy := Record{
 		ID: 30,
@@ -146,6 +161,9 @@ func TestCodexProviderIndexKeepsAllCandidatesForSharedProviderKey(t *testing.T) 
 	}
 }
 
+// TestCodexProviderIndexUpsertReplacesSameProvider adds revised credentials
+// under an existing row ID. It checks rejection using the formerly missing
+// user identity and selection of the updated row for its new user.
 func TestCodexProviderIndexUpsertReplacesSameProvider(t *testing.T) {
 	legacy := Record{
 		ID: 40,
@@ -184,6 +202,9 @@ func TestCodexProviderIndexUpsertReplacesSameProvider(t *testing.T) {
 	}
 }
 
+// TestCodexProviderIndexUpdateRemovesAllPreviousKeys replaces account, user,
+// token, and runtime data on one row. It checks every generated old key misses
+// and every generated new key selects the updated provider.
 func TestCodexProviderIndexUpdateRemovesAllPreviousKeys(t *testing.T) {
 	legacy := Record{
 		ID: 50,
@@ -225,6 +246,9 @@ func TestCodexProviderIndexUpdateRemovesAllPreviousKeys(t *testing.T) {
 	}
 }
 
+// TestCodexProviderIndexUpdatePreservesSharedKeyCandidateOrder updates the
+// first of two account-sharing rows. It checks that a subsequent account-only
+// lookup still returns that first row after its token replacement.
 func TestCodexProviderIndexUpdatePreservesSharedKeyCandidateOrder(t *testing.T) {
 	first := Record{
 		ID: 60,
@@ -251,6 +275,10 @@ func TestCodexProviderIndexUpdatePreservesSharedKeyCandidateOrder(t *testing.T) 
 	}
 }
 
+// TestCodexIdentitySeenDistinguishesTeamMembers records one full OAuth entry
+// and probes different or repeated user identities. It checks cross-user
+// nonduplication, same-user prior index, and access-only fingerprint isolation
+// for the configured cases.
 func TestCodexIdentitySeenDistinguishesTeamMembers(t *testing.T) {
 	seen := map[string]CodexSeenIdentity{}
 	member1 := BuildCodexImportIdentityKeys("team-1", "user-1", "", "token-1", "refresh-1")
@@ -267,7 +295,8 @@ func TestCodexIdentitySeenDistinguishesTeamMembers(t *testing.T) {
 		t.Fatalf("same user re-entry dedup = (%d, %v), want (1, true)", index, ok)
 	}
 
-	// An entry without a user ID must not deduplicate against team members by provider ID.
+	// An entry without a user ID must not deduplicate against team members by
+	// provider ID.
 	// Its access-token fingerprint determines duplication.
 	opaque := BuildCodexImportIdentityKeys("team-1", "", "", "token-4", "")
 	index, ok = FirstSeenCodexIdentity(seen, opaque, "")
@@ -276,7 +305,10 @@ func TestCodexIdentitySeenDistinguishesTeamMembers(t *testing.T) {
 	}
 }
 
-// TestCodexImportIndexSnapshotIsolation checks independent stored and returned credential copies.
+// TestCodexImportIndexSnapshotIsolation mutates supported nested credential
+// maps before and after index lookup. It checks copied stored values and
+// unchanged later results for that map shape, leaving opaque types outside its
+// assertions.
 func TestCodexImportIndexSnapshotIsolation(t *testing.T) {
 	original := Record{ID: 7, Credentials: map[string]any{"access_token": "token", "refresh_token": "refresh", "chatgpt_account_id": "team", "nested": map[string]any{"value": "original"}}}
 	index := BuildCodexProviderIndex([]Record{original})
@@ -297,6 +329,9 @@ func TestCodexImportIndexSnapshotIsolation(t *testing.T) {
 	require.Equal(t, "original", again["value"])
 }
 
+// TestCodexAgentIdentityIndexSeparatesTeamsForSameUser supplies signing keys
+// for two accounts sharing one user. It checks no other-account match and the
+// stored row/account key returned for the matching account.
 func TestCodexAgentIdentityIndexSeparatesTeamsForSameUser(t *testing.T) {
 	existing := Record{
 		ID: 1,

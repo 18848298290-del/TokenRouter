@@ -10,6 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestBuildClaudeProviderCredentials_Full supplies renewal and scope alongside
+// exchanged token data. It checks every expected stored credential, including
+// decimal-second lifetime and absolute Unix expiry strings.
 func TestBuildClaudeProviderCredentials_Full(t *testing.T) {
 	tokenInfo := &ClaudeTokenInfo{
 		AccessToken:  "at-123",
@@ -30,6 +33,9 @@ func TestBuildClaudeProviderCredentials_Full(t *testing.T) {
 	require.Equal(t, "openid", creds["scope"])
 }
 
+// TestBuildClaudeProviderCredentials_Minimal omits refresh token and scope
+// from exchange data. It checks required token and expiry fields and verifies
+// that those optional credential keys are absent.
 func TestBuildClaudeProviderCredentials_Minimal(t *testing.T) {
 	tokenInfo := &ClaudeTokenInfo{
 		AccessToken: "at-789",
@@ -50,14 +56,17 @@ func TestBuildClaudeProviderCredentials_Minimal(t *testing.T) {
 	require.False(t, hasScope, "scope should not be set when empty")
 }
 
+// TestClaudeTokenRefresher_NeedsRefresh varies stored expiry encodings,
+// invalid values, and absent maps. It checks expired versus far-future
+// eligibility and rejection of unusable expiry for the configured window.
 func TestClaudeTokenRefresher_NeedsRefresh(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 	refreshWindow := 30 * time.Minute
 
 	tests := []struct {
-		name        string
-		credentials map[string]any
-		wantRefresh bool
+		name        string         // refresh qualification case name
+		credentials map[string]any // input stored credential values
+		wantRefresh bool           // expected expiry refresh decision
 	}{
 		{
 			name: "expires_at as string - expired",
@@ -141,6 +150,9 @@ func TestClaudeTokenRefresher_NeedsRefresh(t *testing.T) {
 	}
 }
 
+// TestClaudeTokenRefresher_NeedsRefresh_WithinWindow supplies a fifteen-minute
+// expiry as numeric text and float64. Both cases assert refresh eligibility
+// within a thirty-minute background qualification window.
 func TestClaudeTokenRefresher_NeedsRefresh_WithinWindow(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 	refreshWindow := 30 * time.Minute
@@ -149,8 +161,8 @@ func TestClaudeTokenRefresher_NeedsRefresh_WithinWindow(t *testing.T) {
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	tests := []struct {
-		name        string
-		credentials map[string]any
+		name        string         // refresh qualification case name
+		credentials map[string]any // input stored credential values
 	}{
 		{
 			name: "string type - within refresh window",
@@ -180,6 +192,9 @@ func TestClaudeTokenRefresher_NeedsRefresh_WithinWindow(t *testing.T) {
 	}
 }
 
+// TestClaudeTokenRefresher_NeedsRefresh_OutsideWindow supplies a one-hour
+// expiry in numeric text and float64 forms. Both cases assert ineligibility
+// within the configured thirty-minute refresh window.
 func TestClaudeTokenRefresher_NeedsRefresh_OutsideWindow(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 	refreshWindow := 30 * time.Minute
@@ -188,8 +203,8 @@ func TestClaudeTokenRefresher_NeedsRefresh_OutsideWindow(t *testing.T) {
 	expiresAt := time.Now().Add(1 * time.Hour).Unix()
 
 	tests := []struct {
-		name        string
-		credentials map[string]any
+		name        string         // refresh qualification case name
+		credentials map[string]any // input stored credential values
 	}{
 		{
 			name: "string type - outside refresh window",
@@ -219,14 +234,17 @@ func TestClaudeTokenRefresher_NeedsRefresh_OutsideWindow(t *testing.T) {
 	}
 }
 
+// TestClaudeTokenRefresher_CanRefresh varies platform and authentication type
+// across the table. It checks Anthropic OAuth and Setup Token acceptance and
+// API Key or other-platform rejection.
 func TestClaudeTokenRefresher_CanRefresh(t *testing.T) {
 	refresher := &ClaudeTokenRefresher{}
 
 	tests := []struct {
-		name     string
-		platform string
-		accType  string
-		want     bool
+		name     string // refresh qualification case name
+		platform string // input provider platform name
+		accType  string // input provider authentication type
+		want     bool   // expected platform qualification decision
 	}{
 		{
 			name:     "anthropic oauth - can refresh",

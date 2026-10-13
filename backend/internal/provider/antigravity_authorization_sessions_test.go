@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// TestNewAntigravitySessionStore constructs, starts, and stops session
+// storage. The constructor must provide a nonnil store and initialized entry
+// map for subsequent authorization session operations.
 func TestNewAntigravitySessionStore(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -18,6 +21,9 @@ func TestNewAntigravitySessionStore(t *testing.T) {
 	}
 }
 
+// TestAntigravitySessionStore_SetAndGet stores fresh OAuth proof and proxy
+// data under one identifier. Lookup must find that entry and return its state,
+// verifier, and selected proxy.
 func TestAntigravitySessionStore_SetAndGet(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -47,6 +53,9 @@ func TestAntigravitySessionStore_SetAndGet(t *testing.T) {
 	}
 }
 
+// TestAntigravitySessionStore_Get_不存在 requests an identifier absent from
+// initialized storage. Get must report false so the exchange caller can reject
+// missing authorization proof.
 func TestAntigravitySessionStore_Get_不存在(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -58,6 +67,9 @@ func TestAntigravitySessionStore_Get_不存在(t *testing.T) {
 	}
 }
 
+// TestAntigravitySessionStore_Get_过期 stores proof older than the configured
+// TTL. Lookup must report false even though the entry was just inserted and
+// periodic cleanup may not have removed it.
 func TestAntigravitySessionStore_Get_过期(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -76,6 +88,9 @@ func TestAntigravitySessionStore_Get_过期(t *testing.T) {
 	}
 }
 
+// TestAntigravitySessionStore_Delete inserts and removes one fresh session. A
+// later Get must report false for that identifier so consumed proof cannot be
+// retrieved again.
 func TestAntigravitySessionStore_Delete(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -95,6 +110,9 @@ func TestAntigravitySessionStore_Delete(t *testing.T) {
 	}
 }
 
+// TestAntigravitySessionStore_Delete_不存在 removes an absent identifier from
+// initialized storage. The operation must return normally while the test-owned
+// cleanup worker remains available for final Stop.
 func TestAntigravitySessionStore_Delete_不存在(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -104,6 +122,9 @@ func TestAntigravitySessionStore_Delete_不存在(t *testing.T) {
 	store.Delete("nonexistent")
 }
 
+// TestAntigravitySessionStore_Stop starts cleanup and invokes Stop twice. Both
+// calls must return normally, exercising repeated shutdown after the store has
+// closed its cleanup signal.
 func TestAntigravitySessionStore_Stop(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()
@@ -113,6 +134,9 @@ func TestAntigravitySessionStore_Stop(t *testing.T) {
 	store.Stop()
 }
 
+// TestAntigravitySessionStore_多个Session inserts ten fresh sessions under
+// separate identifiers. Every identifier must remain retrievable so one entry
+// cannot replace another differently keyed authorization session.
 func TestAntigravitySessionStore_多个Session(t *testing.T) {
 	store := NewAntigravityAuthorizationSessions()
 	store.Start()

@@ -25,8 +25,7 @@ import (
 // RefreshPostActions binds identity-checked health cleanup and success follow-up
 // services for credential refresh.
 type RefreshPostActions struct {
-	// active cooldown observation clock
-	Now func() time.Time
+	Now func() time.Time // active cooldown observation clock
 	// Info reports matched health clears and request-flag outcomes. Warn reports
 	// health writes, token invalidation and snapshot publication failures. Debug
 	// reports successful token invalidation and scheduler publication. Reached

@@ -4,13 +4,16 @@ import (
 	"testing"
 )
 
+// TestCanonicalGeminiTierID varies current, historical, hyphenated, padded,
+// mixed-case, blank, and unknown labels. Every table case checks its exact
+// canonical identifier or empty unresolved result.
 func TestCanonicalGeminiTierID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		raw  string
-		want string
+		name string // tier normalization case name
+		raw  string // input tier identifier text
+		want string // expected canonical tier identifier
 	}{
 		{name: "空字符串", raw: "", want: ""},
 		{name: "纯空白", raw: "   ", want: ""},
@@ -68,14 +71,18 @@ func TestCanonicalGeminiTierID(t *testing.T) {
 	}
 }
 
+// TestCanonicalGeminiTierIDForOAuthType combines variant families with
+// canonical and legacy tiers. It checks compatible labels, foreign-family
+// rejection, unknown-variant pass-through, and case/whitespace normalization
+// for the configured inputs.
 func TestCanonicalGeminiTierIDForOAuthType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		oauthType string
-		tierID    string
-		want      string
+		name      string // tier normalization case name
+		oauthType string // input OAuth variant text
+		tierID    string // input account tier text
+		want      string // expected canonical tier identifier
 	}{
 		// Google One accepts its own tiers and compatible legacy aliases.
 		{name: "google_one + google_one_free", oauthType: "google_one", tierID: "google_one_free", want: GeminiTierGoogleOneFree},

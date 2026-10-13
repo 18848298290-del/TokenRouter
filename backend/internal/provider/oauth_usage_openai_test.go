@@ -10,14 +10,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// openAIUsageWriteOwner blocks writes to test snapshot ownership and bounded shutdown waits.
+// openAIUsageWriteOwner captures one conditional write while explicit release
+// controls completion.
 type openAIUsageWriteOwner struct {
-	OAuthUsageReader
+	OAuthUsageReader // unused embedded reader operations
+	// entered, release, and exited order capture, explicit completion, and cleanup
+	// joining for one writer call. Cancellation cannot replace release, so tests
+	// can inspect a timed-out stop before allowing the retained work to finish.
+	// entered: completed capture signal; release: writer completion gate;
+	// exited: completed writer signal.
 	entered, release, exited chan struct{}
-	version                  UsageObservationVersion
-	updates                  map[string]any
+	// version retains the observer's supported-container identity copy. Tests read
+	// it after entered and keep it stable until release permits writer completion.
+	version UsageObservationVersion
+	// updates retains the observer's supplied patch without fixture-side copying.
+	// Entry signalling publishes it for assertions before the blocked write exits.
+	updates map[string]any
 }
 
+// TestShouldRefreshOpenAICodexSnapshot supplies complete, missing-window,
+// rate-limited, and stale WS observations. It checks the specified refresh
+// decisions without asserting an upstream request, timestamp reservation, or
+// persistence outcome.
 func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -53,8 +67,10 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	}
 }
 
-// TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 checks expiration of shadow snapshots.
-// Shadows query /wham/usage, so requiring WS capability would leave their usage frozen after the first fetch.
+// TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 varies
+// stale/fresh shadow timestamps and a complete ordinary non-WS view. It checks
+// shadow age eligibility without WS and ordinary capability gating for
+// timestamp-only refresh.
 func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	t.Parallel()
 
@@ -67,7 +83,8 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	freshAt := now.Add(-time.Minute).Format(time.RFC3339)
 	parentID := int64(7001)
 
-	// A complete shadow snapshot still needs refreshing once its timestamp expires.
+	// A complete shadow snapshot still needs refreshing once its timestamp
+	// expires.
 	shadowStale := &Record{
 		Platform:         capability.PlatformOpenAI,
 		Type:             capability.ProviderTypeOAuth,
@@ -91,7 +108,8 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected fresh spark shadow to skip refresh (TTL not elapsed)")
 	}
 
-	// Regular providers without upstream WS capability do not trigger this probe on expiration alone.
+	// Regular providers without upstream WS capability do not trigger this probe
+	// on expiration alone.
 	normalNoWS := &Record{
 		Credentials: map[string]any{"upstream_protocols": []string{"openai_responses"}},
 		Platform:    capability.PlatformOpenAI,
@@ -103,7 +121,19 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	}
 }
 
+// UpdateUsageExtraIfUnchanged captures supplied version and patch, signals
+// entry, then waits for explicit release. Tests use one call with initialized
+// open channels and inspect captures only after entry.
+//
+// The fixture ignores cancellation while blocked, returning false with the
+// eventual context error after release. Its captured maps remain borrowed from
+// the observer arguments rather than cloned by this fixture. Closing exited at
+// return lets cleanup join the writer, separating snapshot-copy assertions
+// from actual conditional persistence and the service's bounded shutdown wait.
 func (w *openAIUsageWriteOwner) UpdateUsageExtraIfUnchanged(ctx context.Context, v UsageObservationVersion, updates map[string]any) (bool, error) {
+	// Publish captures before entry so the waiting test can inspect them without
+	// racing assignment. Explicit release still controls completion even after
+	// shutdown cancels the supplied writer context.
 	w.version = v
 	w.updates = updates
 	close(w.entered)
@@ -112,12 +142,22 @@ func (w *openAIUsageWriteOwner) UpdateUsageExtraIfUnchanged(ctx context.Context,
 	return false, ctx.Err()
 }
 
+// TestOAuthUsageOpenAIWritebackHasBoundedOwner blocks a detached writer before
+// mutating source credential and nested maps. It checks captured supported
+// values remain unchanged, stop times out with unfinished diagnostics, and
+// repeated stop retains that error.
 func TestOAuthUsageOpenAIWritebackHasBoundedOwner(t *testing.T) {
 	store := &openAIUsageWriteOwner{entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{})}
+	// Release and join the blocked writer during cleanup after bounded-stop
+	// assertions. The writer return signal prevents its callback from remaining
+	// blocked; observer activity cleanup follows that return in its goroutine.
 	t.Cleanup(func() { close(store.release); <-store.exited })
 	core := NewOAuthUsageService(store, nil, nil, OAuthUsageOptions{})
 	observed := &Record{ID: 2, Credentials: map[string]any{"access_token": "observed"}}
 	updates := map[string]any{"nested": map[string]any{"used": float64(1)}}
+	// Wait for asynchronous capture before mutating the source maps, so assertions
+	// distinguish observer-owned supported copies from the original caller data
+	// without racing fixture capture assignments.
 	core.PersistOpenAICodexProbeSnapshot(observed, updates)
 	<-store.entered
 	observed.Credentials["access_token"] = "changed"
@@ -128,6 +168,9 @@ func TestOAuthUsageOpenAIWritebackHasBoundedOwner(t *testing.T) {
 	copied, ok := store.updates["nested"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, float64(1), copied["used"])
+	// Bound stop while explicit release remains pending, exposing
+	// unfinished work even after cancellation. Cleanup later releases actual
+	// completion, while repeated stop must retain the first timeout result.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	err := core.StopContext(ctx)
@@ -136,7 +179,10 @@ func TestOAuthUsageOpenAIWritebackHasBoundedOwner(t *testing.T) {
 	require.Same(t, err, core.StopContext(context.Background()))
 }
 
-// TestOpenAIUsesOneWindowQuery checks reset-based windows and independence of returned statistics.
+// TestOpenAIUsesOneWindowQuery supplies stored windows with future reset times
+// and a pair-statistics fixture. It checks one combined query, reset-based
+// starts, no single queries, and independent short/weekly request totals after
+// caller mutation.
 func TestOpenAIUsesOneWindowQuery(t *testing.T) {
 	now := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	reset5 := now.Add(time.Hour)

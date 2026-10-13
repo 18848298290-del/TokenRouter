@@ -9,13 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// geminiBatchUsageFixture records serial aggregate calls and supplies fixed
+// daily/minute totals.
 type geminiBatchUsageFixture struct {
+	// minute selects the fixture result for a minute query. Other start
+	// values use the fixed daily observation, independent of requested ID
+	// contents.
 	minute time.Time
-	calls  [][]int64
+	// calls owns copied ID slices and is appended without locking. The
+	// scenario makes serial batch calls before inspecting this observed order.
+	calls [][]int64
 }
 
+// geminiUsageReaderFunc adapts a configured callback to local model usage
+// reads.
 type geminiUsageReaderFunc func(context.Context, int64, time.Time, time.Time) ([]GeminiModelUsage, error)
 
+// TestGeminiPrecheckSingleQuota varies shared/class daily and minute usage,
+// zero limits, and empty model input. It checks admission, ordered query
+// starts, requested row/end time, and one clock observation per case.
 func TestGeminiPrecheckSingleQuota(t *testing.T) {
 	now := time.Date(2026, 9, 13, 12, 0, 30, 0, time.UTC)
 	dailyStart := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
@@ -23,15 +35,21 @@ func TestGeminiPrecheckSingleQuota(t *testing.T) {
 	sharedPolicy := `{"shared_rpd":1000,"rpm":60,"gemini_pro":{"rpd":1,"rpm":1},"gemini_flash":{"rpd":1,"rpm":1}}`
 
 	tests := []struct {
-		name        string
-		model       string
-		policy      string
-		dailyPro    int64
-		dailyFlash  int64
-		minutePro   int64
-		minuteFlash int64
-		wantAllowed bool
-		wantQueries int
+		name  string // quota admission case name
+		model string // requested model identifier text
+		// policy supplies the case quota-rule fragment. Empty selects local
+		// AI Studio defaults, so the expected request limits follow that default
+		// table.
+		policy string
+		// dailyPro, dailyFlash, minutePro, and minuteFlash provide request totals
+		// for their class and window. The callback switches by query start while
+		// all cases retain the same end-time observation.
+		dailyPro    int64 // Pro daily fixture requests
+		dailyFlash  int64 // Flash daily fixture requests
+		minutePro   int64 // Pro minute fixture requests
+		minuteFlash int64 // Flash minute fixture requests
+		wantAllowed bool  // expected local admission decision
+		wantQueries int   // expected ordered query count
 	}{
 		{
 			name: "shared daily quota", model: "gemini-2.5-flash", policy: sharedPolicy,
@@ -115,14 +133,24 @@ func TestGeminiPrecheckSingleQuota(t *testing.T) {
 	}
 }
 
+// GetModelUsage delegates provider and window values to its configured nonnil
+// function. This adapter copies no returned rows, so ownership and injected
+// failures remain defined by the callback used in each test.
 func (f geminiUsageReaderFunc) GetModelUsage(ctx context.Context, providerID int64, start, end time.Time) ([]GeminiModelUsage, error) {
 	return f(ctx, providerID, start, end)
 }
 
+// GetModelUsage panics if this aggregate-capable fixture is queried per
+// provider. That panic makes an unexpected fallback visible, while the
+// configured batch method supplies the totals needed by this scenario.
 func (q *geminiBatchUsageFixture) GetModelUsage(context.Context, int64, time.Time, time.Time) ([]GeminiModelUsage, error) {
 	panic("批量能力存在时不能退回逐提供商查询")
 }
 
+// GetGeminiUsageTotalsBatch copies requested IDs into the unlocked call log
+// and returns fixed totals. Minute start selects row two; other starts select
+// row one, so tests serialize access and the real helper projects requested
+// IDs.
 func (q *geminiBatchUsageFixture) GetGeminiUsageTotalsBatch(_ context.Context, ids []int64, start, _ time.Time) (map[int64]GeminiUsageTotals, error) {
 	q.calls = append(q.calls, append([]int64(nil), ids...))
 	out := map[int64]GeminiUsageTotals{}
@@ -134,8 +162,10 @@ func (q *geminiBatchUsageFixture) GetGeminiUsageTotalsBatch(_ context.Context, i
 	return out, nil
 }
 
-// TestGeminiPrecheckBatchKeepsQueriesAndDailyCache checks daily-cache reuse and excludes daily-exhausted
-// providers from minute queries.
+// TestGeminiPrecheckBatchKeepsQueriesAndDailyCache supplies a daily-exhausted
+// provider, an eligible provider, and nil. It checks admission results,
+// exclusion from minute reads, and repeated-call reuse of daily cache with
+// only another minute query.
 func TestGeminiPrecheckBatchKeepsQueriesAndDailyCache(t *testing.T) {
 	now := time.Date(2026, 9, 13, 12, 0, 30, 0, time.UTC)
 	queries := &geminiBatchUsageFixture{minute: now.Truncate(time.Minute)}

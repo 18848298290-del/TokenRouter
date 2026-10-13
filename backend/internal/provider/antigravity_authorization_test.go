@@ -11,13 +11,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// antigravityAuthFixture records serial protocol events and supplies
+// configured refresh behavior.
 type antigravityAuthFixture struct {
-	AntigravityAuthorizationClient
+	AntigravityAuthorizationClient // unused embedded protocol operations
+	// events is borrowed and appended without locking by serial protocol calls.
+	// Tests initialize the slice before invoking the authorization workflow.
 	events      *[]string
-	exchangeErr error
-	refresh     func(context.Context) (*google.AntigravityTokenResponse, error)
+	exchangeErr error // configured code exchange failure
+	// refresh is required by the shutdown scenario and controls completion.
+	// The test retains its channels until the callback returns after explicit
+	// release.
+	refresh func(context.Context) (*google.AntigravityTokenResponse, error)
 }
 
+// ExchangeCode appends its serial event and returns fixture tokens or
+// exchangeErr. The event slice is borrowed and needs initialization; input
+// proof is ignored by this protocol fixture.
 func (f *antigravityAuthFixture) ExchangeCode(context.Context, string, string) (*google.AntigravityTokenResponse, error) {
 	*f.events = append(*f.events, "exchange")
 	if f.exchangeErr != nil {
@@ -26,34 +36,57 @@ func (f *antigravityAuthFixture) ExchangeCode(context.Context, string, string) (
 	return &google.AntigravityTokenResponse{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600, TokenType: "Bearer"}, nil
 }
 
+// RefreshToken delegates to the configured nonnil refresh callback using ctx.
+// Tests choose cancellation-sensitive or deliberately blocked behavior through
+// that callback, while this fixture imposes no additional retry policy.
 func (f *antigravityAuthFixture) RefreshToken(ctx context.Context, _ string) (*google.AntigravityTokenResponse, error) {
 	return f.refresh(ctx)
 }
 
+// GetUserInfo appends the user event and returns the fixed fixture email. The
+// borrowed events pointer must be initialized, and callers serialize protocol
+// operations while inspecting this slice.
 func (f *antigravityAuthFixture) GetUserInfo(context.Context, string) (*google.AntigravityUserInfo, error) {
 	*f.events = append(*f.events, "user")
 	return &google.AntigravityUserInfo{Email: "fixture@example.invalid"}, nil
 }
 
+// LoadCodeAssist appends its event and returns the fixed project and paid
+// tier. Initialize the borrowed event slice before calls; raw onboarding data
+// is nil because this fixture already supplies a project.
 func (f *antigravityAuthFixture) LoadCodeAssist(context.Context, string) (*google.AntigravityLoadCodeAssistResponse, map[string]any, error) {
 	*f.events = append(*f.events, "load")
 	return &google.AntigravityLoadCodeAssistResponse{CloudAICompanionProject: "project", PaidTier: &google.AntigravityPaidTierInfo{ID: "g1-pro-tier"}}, nil, nil
 }
 
+// SetUserSettings records its event and returns settings without
+// telemetryEnabled. Initialize the borrowed event slice before this serial
+// call, whose successful response lets the real privacy predicate proceed.
 func (f *antigravityAuthFixture) SetUserSettings(context.Context, string) (*google.AntigravitySetUserSettingsResponse, error) {
 	*f.events = append(*f.events, "set-privacy")
 	return &google.AntigravitySetUserSettingsResponse{UserSettings: map[string]any{}}, nil
 }
 
+// FetchUserInfo records verification and returns settings without
+// telemetryEnabled. Its initialized event pointer is shared with earlier
+// protocol calls, and the response exercises accepted privacy verification for
+// the supplied project.
 func (f *antigravityAuthFixture) FetchUserInfo(context.Context, string, string) (*google.AntigravityFetchUserInfoResponse, error) {
 	*f.events = append(*f.events, "verify-privacy")
 	return &google.AntigravityFetchUserInfoResponse{UserSettings: map[string]any{}}, nil
 }
 
+// authFixtureOptions binds fixed PKCE proof, URL, and one borrowed protocol
+// client. Proxy lookup is unavailable and diagnostics are no-ops; tests
+// configure the client before serial use.
 func authFixtureOptions(client AntigravityAuthorizationClient) AntigravityAuthorizationOptions {
 	return AntigravityAuthorizationOptions{NewClient: func(string) (AntigravityAuthorizationClient, error) { return client, nil }, ResolveProxy: func(context.Context, int64) (string, bool) { return "", false }, GenerateState: func() (string, error) { return "state", nil }, GenerateCodeVerifier: func() (string, error) { return "verifier", nil }, GenerateSessionID: func() (string, error) { return "session", nil }, GenerateCodeChallenge: func(v string) string { return v }, BuildAuthorizationURL: func(string, string) string { return "https://fixture.invalid/authorize" }, IsConnectionError: func(error) bool { return false }, Printf: func(string, ...any) {}, Warn: func(string, ...any) {}, Info: func(string, ...any) {}}
 }
 
+// TestAntigravityAuthorizationConsumptionAndPrivacyOrder rejects wrong state
+// and preserves sessions after exchange failure. It checks successful protocol
+// event order, plan/project/privacy metadata, expiry margin, and consumed
+// proof rejection.
 func TestAntigravityAuthorizationConsumptionAndPrivacyOrder(t *testing.T) {
 	events := []string{}
 	client := &antigravityAuthFixture{events: &events}
@@ -85,9 +118,16 @@ func TestAntigravityAuthorizationConsumptionAndPrivacyOrder(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestAntigravityAuthorizationStopWaitsAndReportsBudget blocks a refresh
+// callback beyond shutdown budget. It checks deadline reporting, stopped
+// admission, eventual refresh failure, stopped cleanup, and retention of the
+// first shutdown result.
 func TestAntigravityAuthorizationStopWaitsAndReportsBudget(t *testing.T) {
 	entered, finish := make(chan struct{}), make(chan struct{})
 	client := &antigravityAuthFixture{refresh: func(context.Context) (*google.AntigravityTokenResponse, error) {
+		// Keep refresh active after shutdown cancellation so the budget reports
+		// unfinished work. Explicit release lets the original registered operation
+		// finally return.
 		close(entered)
 		<-finish
 		return nil, errors.New("invalid_grant: fixture")
@@ -110,6 +150,8 @@ func TestAntigravityAuthorizationStopWaitsAndReportsBudget(t *testing.T) {
 	require.ErrorContains(t, err, "stopped")
 	core.Start()
 	require.True(t, core.Store.runtimeStopped)
+	// Release the noncooperative callback after checking stopped admission so
+	// its later return cannot hide the first shutdown deadline result.
 	close(finish)
 	select {
 	case err := <-done:
@@ -120,13 +162,16 @@ func TestAntigravityAuthorizationStopWaitsAndReportsBudget(t *testing.T) {
 	require.ErrorIs(t, core.StopContext(context.Background()), context.DeadlineExceeded, "重复 Stop 共用第一次结果")
 }
 
+// TestResolveDefaultTierID supplies absent, incomplete, nondefault, and
+// whitespace-padded allowed-tier objects. It checks empty unresolved results
+// and the trimmed ID selected from the configured default entries.
 func TestResolveDefaultTierID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		loadRaw map[string]any
-		want    string
+		name    string         // default tier case name
+		loadRaw map[string]any // input raw tier response
+		want    string         // expected selected tier identifier
 	}{
 		{
 			name:    "nil loadRaw",

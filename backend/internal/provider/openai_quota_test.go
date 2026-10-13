@@ -13,12 +13,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// quotaLifecycleClient blocks serial requests to test cancellation and stop
+// result retention.
 type quotaLifecycleClient struct {
+	// entered is closed by the single fixture query. Tests wait for that signal
+	// before shutdown, ensuring cancellation/wait assertions cover admitted work.
 	entered chan struct{}
+	// release optionally holds the query even after cancellation. The test closes
+	// it after a stop timeout so request completion can be observed separately.
 	release chan struct{}
 }
 
+// GetJSON signals one admitted request before waiting and returns nil with
+// ctx.Err afterward. Callers provide an open entered channel and serialize the
+// single fixture call.
+//
+// With release configured, cancellation alone cannot complete the request; the
+// test must close release after observing the shutdown timeout. Without
+// release, the request waits directly for cancellation. Returning the eventual
+// context error after either wait lets lifecycle assertions separate
+// cancellation delivery from actual completion, rather than simulate a
+// successful quota response.
 func (c *quotaLifecycleClient) GetJSON(ctx context.Context, _ string, _ map[string]string) (map[string]any, error) {
+	// Signal one admitted query before waiting, letting stop assertions cover
+	// active work. Explicit release can hold completion beyond cancellation so
+	// the suite can observe its bounded shutdown result first.
 	close(c.entered)
 	if c.release != nil {
 		<-c.release
@@ -28,16 +47,21 @@ func (c *quotaLifecycleClient) GetJSON(ctx context.Context, _ string, _ map[stri
 	return nil, ctx.Err()
 }
 
+// GetJSONRaw reports an unexpected detail call without accessing fixture
+// state.
 func (*quotaLifecycleClient) GetJSONRaw(context.Context, string, map[string]string) ([]byte, error) {
 	return nil, errors.New("unexpected credit detail request")
 }
 
+// PostJSON reports an unexpected consumption call without accessing fixture
+// state.
 func (*quotaLifecycleClient) PostJSON(context.Context, string, map[string]any) (map[string]any, error) {
 	return nil, errors.New("unexpected quota reset")
 }
 
-// TestOpenAIQuotaLifecycleCancelsAndWaits checks cancellation, waiting, and rejection of queries after
-// shutdown.
+// TestOpenAIQuotaLifecycleCancelsAndWaits starts a blocked query then shuts
+// down its service. It checks cancellation, repeated stop success, later query
+// rejection, and one reader invocation without constructor-side reads.
 func TestOpenAIQuotaLifecycleCancelsAndWaits(t *testing.T) {
 	client := &quotaLifecycleClient{entered: make(chan struct{})}
 	var reads atomic.Int32
@@ -58,6 +82,8 @@ func TestOpenAIQuotaLifecycleCancelsAndWaits(t *testing.T) {
 	})
 	require.Zero(t, reads.Load())
 	finished := make(chan error, 1)
+	// Dispatch the tracked query and wait for client entry before stopping, so
+	// shutdown must cancel an active request rather than only reject future work.
 	go func() { _, err := service.QueryUsage(context.Background(), 1); finished <- err }()
 	<-client.entered
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -70,7 +96,10 @@ func TestOpenAIQuotaLifecycleCancelsAndWaits(t *testing.T) {
 	require.EqualValues(t, 1, reads.Load())
 }
 
-// TestOpenAIQuotaLifecycleReportsUnfinishedRequest checks that repeated stops retain the first timeout result.
+// TestOpenAIQuotaLifecycleReportsUnfinishedRequest blocks a client that
+// ignores cancellation until release. It checks bounded stop timeout, eventual
+// canceled query, service-labelled diagnostics, and retention of that first
+// timeout after completion.
 func TestOpenAIQuotaLifecycleReportsUnfinishedRequest(t *testing.T) {
 	client := &quotaLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
 	service := NewOpenAIQuotaService(OpenAIQuotaOptions{
@@ -88,8 +117,14 @@ func TestOpenAIQuotaLifecycleReportsUnfinishedRequest(t *testing.T) {
 		Client: func(context.Context, *Record, string) (OpenAIQuotaClient, error) { return client, nil },
 	})
 	finished := make(chan error, 1)
+	// Dispatch and await client entry before stop, ensuring the held request is
+	// registered active work whose completion remains owned until explicit
+	// release, separately from cancellation already delivered to its context.
 	go func() { _, err := service.QueryUsage(context.Background(), 1); finished <- err }()
 	<-client.entered
+	// Bound shutdown while the fixture still awaits explicit release, exposing
+	// unfinished ownership independently of cancellation already sent to its
+	// context. The later release lets its deferred activity completion run.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	err := service.StopContext(ctx)
@@ -100,10 +135,10 @@ func TestOpenAIQuotaLifecycleReportsUnfinishedRequest(t *testing.T) {
 	require.Equal(t, err, service.StopContext(context.Background()))
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys checks normalized Spark snapshot fields:
-//   - codex_5h_used_percent and codex_7d_used_percent are present.
-//   - No codex_spark_ keys are emitted.
-//   - The shorter primary window maps to five hours and the longer secondary to seven days.
+// TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys supplies a shorter
+// primary and longer secondary Spark observation. It checks both ordinary
+// Codex percentage keys and values, and rejects codex_spark_ spelling in all
+// emitted keys.
 func TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys(t *testing.T) {
 	now := time.Now().UTC()
 	usage := &openai.OpenAIQuotaUsage{
@@ -133,23 +168,31 @@ func TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys(t *testing.T) {
 	require.Contains(t, updates, "codex_5h_used_percent")
 	require.Contains(t, updates, "codex_7d_used_percent")
 
-	// Separate codex_spark_ keys would bypass readers of the shared Codex fields.
+	// Reject separate Spark key spelling because ordinary Codex display/scheduling
+	// readers consume the shared fields. This assertion checks all output keys
+	// but does not assert each reset timestamp value.
 	for k := range updates {
 		require.False(t, strings.Contains(k, "codex_spark_"),
 			"unexpected Method-Z prefix in key: %s", k)
 	}
 
-	// Values follow the window duration: primary is five hours, secondary is seven days.
+	// Values follow the window duration: primary is five hours, secondary is
+	// seven days.
+	// Allow floating representation error in the observed percentages.
 	require.InDelta(t, 0.42, updates["codex_5h_used_percent"], 1e-9)
 	require.InDelta(t, 0.15, updates["codex_7d_used_percent"], 1e-9)
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_NilUsage checks the absent-observation result.
+// TestBuildCodexSparkWindowExtraUpdates_NilUsage supplies nil usage to the
+// Spark converter. It checks conversion returns nil, keeping that absent
+// observation visible to callers of the Extra builder.
 func TestBuildCodexSparkWindowExtraUpdates_NilUsage(t *testing.T) {
 	require.Nil(t, BuildCodexSparkWindowExtraUpdates(nil, time.Now()))
 }
 
-// TestBuildCodexSparkWindowExtraUpdates_NoBengalfox checks that unrelated metered features produce no updates.
+// TestBuildCodexSparkWindowExtraUpdates_NoBengalfox supplies only an unrelated
+// metered feature. It checks the converter returns no patch when the specific
+// Spark feature observation is unavailable.
 func TestBuildCodexSparkWindowExtraUpdates_NoBengalfox(t *testing.T) {
 	usage := &openai.OpenAIQuotaUsage{
 		AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{

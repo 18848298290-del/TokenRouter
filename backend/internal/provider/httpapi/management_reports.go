@@ -23,9 +23,8 @@ type ProviderReportOptions struct {
 	// handler. Now and StartOfDay share a calendar; Query receives the resulting
 	// half-open date range under the HTTP request context.
 	// calendar current-time callback
-	Now func() time.Time
-	// configured calendar day boundary
-	StartOfDay func(time.Time) time.Time
+	Now        func() time.Time
+	StartOfDay func(time.Time) time.Time // configured calendar day boundary
 	// provider usage range query
 	Query func(context.Context, int64, time.Time, time.Time) (*usage.ProviderUsageStatsResponse, error)
 }

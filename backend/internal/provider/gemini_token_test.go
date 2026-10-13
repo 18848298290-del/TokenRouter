@@ -6,11 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGeminiTokenCacheKey supplies populated, padded, empty, absent, and nil
+// project credentials. It checks that project keys are trimmed and each
+// missing project uses the configured row-ID namespace.
 func TestGeminiTokenCacheKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		expected string
+		name     string  // cache identity case name
+		provider *Record // input provider credential record
+		expected string  // expected complete cache key
 	}{
 		{
 			name: "with_project_id",

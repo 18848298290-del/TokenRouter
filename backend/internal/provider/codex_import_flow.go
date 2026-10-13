@@ -7,8 +7,33 @@ import (
 	"time"
 )
 
-// Import processes entries independently and returns per-entry failures in the result.
-// A failure to load the existing-provider index aborts the import with an error.
+// Codex session imports load one stored-provider population, then normalize
+// and persist each entry independently. Fatal initial lookup failure aborts
+// the batch, while normalization, expiry, and row-write failures become item
+// results and leave already completed rows in place.
+//
+// Identity is marked seen before persistence, so a failed item can still
+// suppress a later same-batch duplicate. Existing-row updates retain refresh
+// credentials omitted by access-only input and remove its new provider-expiry
+// pause override in that case. Token invalidation follows accepted updates and
+// is best effort. Successful nonnil returned records update the index for
+// later matching; nil successful results retain the existing row ID for
+// updates or zero for creation. Callers supply stable request values and
+// initialized importer dependencies.
+
+// Import normalizes and saves stable entries against one loaded OpenAI OAuth
+// population. Initial archive failure aborts, while individual failures
+// accumulate and earlier accepted writes remain committed.
+//
+// Full OAuth, access-only, and Agent Identity keys follow their distinct
+// matching policies. Seen identity is reserved before create/update, even when
+// that write later fails. Updates merge supported credential/Extra values,
+// retain omitted existing renewal fields, and avoid a new access-only expiry
+// pause when renewal remains available. Optional invalidation errors do not
+// reverse success. Returned records refresh the local index; nil successful
+// records use the prior update ID or zero creation ID. Defaults apply only
+// where creation owns them, and the caller retains request synchronization
+// throughout processing.
 func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportRequest, entries []CodexImportEntry) (CodexSessionImportResult, error) {
 	result := CodexSessionImportResult{
 		Total: len(entries),
@@ -98,6 +123,9 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 			})
 			continue
 		}
+		// Reserve identity before persistence so later same-batch duplicates are
+		// skipped even if this item’s create or update fails. The result records
+		// that failed first attempt independently.
 		MarkCodexIdentitySeen(seenIdentity, item.IdentityKeys, entry.Index, item.UserID)
 
 		existing, matchedKey := index.Find(item.IdentityKeys, item.UserID)
@@ -112,6 +140,9 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 			}
 			preserveExistingRefresh := item.RefreshToken == "" &&
 				CodexCredentialString(existing.Credentials, "refresh_token") != ""
+			// Existing renewal remains usable when access-only input omits it.
+			// Clear this input’s provider-expiry/pause overrides so the update does
+			// not turn that renewable row into an access-only scheduling lifetime.
 			if preserveExistingRefresh {
 				result.Warnings = append(result.Warnings, CodexSessionImportMessage{
 					Index:   entry.Index,
@@ -156,6 +187,8 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 				})
 				continue
 			}
+			// Invalidate after the accepted row update. Failure leaves persisted
+			// credentials in place and does not change this item’s success count.
 			if h.options.Invalidate != nil && updated != nil {
 				_ = h.options.Invalidate(ctx, updated)
 			}
@@ -163,6 +196,9 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 			providerID := existing.ID
 			if updated != nil {
 				providerID = updated.ID
+				// Returned identities replace stored candidates
+				// after persistence, so later entries match the
+				// accepted row data rather than stale keys.
 				index.Add(*updated)
 			}
 			result.Items = append(result.Items, CodexSessionImportItem{
@@ -205,6 +241,9 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 			})
 			continue
 		}
+		// A nonnil created row contributes its identities only after accepted
+		// persistence. Nil successful data still counts creation but adds no
+		// row-specific matching information to this batch’s index.
 		if provider != nil {
 			index.Add(*provider)
 		}
